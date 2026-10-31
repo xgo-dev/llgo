@@ -8,11 +8,12 @@ import (
 	"go/types"
 	"testing"
 
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-func buildLinkOnceSSAPackage(t *testing.T, src string) *ssa.Package {
+func buildLinkOnceSSAPackage(t *testing.T, src string) (*ssa.Package, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
@@ -25,16 +26,22 @@ func buildLinkOnceSSAPackage(t *testing.T, src string) *ssa.Package {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ssapkg
+	return ssapkg, f
 }
 
-func linkOnceTestMethodValue(t *testing.T, ssapkg *ssa.Package, recv types.Type, name string) (*context, *ssa.Function) {
+func linkOnceTestMethodValue(t *testing.T, ssapkg *ssa.Package, file *ast.File, recv types.Type, name string) (*context, *ssa.Function) {
 	t.Helper()
 	sel := ssapkg.Prog.MethodSets.MethodSet(recv).Lookup(nil, name)
 	if sel == nil {
 		t.Fatalf("%v has no method %s", recv, name)
 	}
+	prog := llssa.NewProgram(nil)
+	t.Cleanup(prog.Dispose)
+	if err := ParsePkgSyntax(prog, ssapkg.Prog.Fset, ssapkg.Pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
 	ctx := &context{
+		prog:        prog,
 		goProg:      ssapkg.Prog,
 		goTyps:      ssapkg.Pkg,
 		linkOnceFns: make(map[*ssa.Function]none),
@@ -43,11 +50,11 @@ func linkOnceTestMethodValue(t *testing.T, ssapkg *ssa.Package, recv types.Type,
 	if fn == nil {
 		t.Fatalf("MethodValue(%v.%s) returned nil", recv, name)
 	}
-	return ctx, fn
+	return ctx, fn.SSA
 }
 
 func TestNeedsLinkOnceSkipsNonGenericPromotedWrapper(t *testing.T) {
-	ssapkg := buildLinkOnceSSAPackage(t, `package p
+	ssapkg, file := buildLinkOnceSSAPackage(t, `package p
 
 type Inner struct{}
 
@@ -58,7 +65,7 @@ type Outer struct {
 }
 `)
 	outer := ssapkg.Pkg.Scope().Lookup("Outer").(*types.TypeName).Type()
-	ctx, fn := linkOnceTestMethodValue(t, ssapkg, types.NewPointer(outer), "M")
+	ctx, fn := linkOnceTestMethodValue(t, ssapkg, file, types.NewPointer(outer), "M")
 	if fn.Pkg != nil || fn.Origin() != nil {
 		t.Fatalf("test expected a non-generic on-demand wrapper, got pkg=%v origin=%v", fn.Pkg, fn.Origin())
 	}
@@ -68,7 +75,7 @@ type Outer struct {
 }
 
 func TestNeedsLinkOnceMarksGenericPromotedWrapper(t *testing.T) {
-	ssapkg := buildLinkOnceSSAPackage(t, `package p
+	ssapkg, file := buildLinkOnceSSAPackage(t, `package p
 
 type Inner[T any] struct{}
 
@@ -79,7 +86,7 @@ type Outer struct {
 }
 `)
 	outer := ssapkg.Pkg.Scope().Lookup("Outer").(*types.TypeName).Type()
-	ctx, fn := linkOnceTestMethodValue(t, ssapkg, types.NewPointer(outer), "M")
+	ctx, fn := linkOnceTestMethodValue(t, ssapkg, file, types.NewPointer(outer), "M")
 	if fn.Origin() != nil {
 		t.Fatalf("test expected a wrapper around a generic method, got generic instance %s", fn)
 	}
@@ -89,7 +96,7 @@ type Outer struct {
 }
 
 func TestNeedsLinkOnceMarksGenericMethodInstance(t *testing.T) {
-	ssapkg := buildLinkOnceSSAPackage(t, `package p
+	ssapkg, file := buildLinkOnceSSAPackage(t, `package p
 
 type Box[T any] struct{}
 
@@ -100,7 +107,7 @@ func (Box[T]) M() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, fn := linkOnceTestMethodValue(t, ssapkg, boxInt, "M")
+	ctx, fn := linkOnceTestMethodValue(t, ssapkg, file, boxInt, "M")
 	if fn.Origin() == nil {
 		t.Fatalf("test expected a generic method instance, got %s", fn)
 	}
@@ -112,7 +119,7 @@ func (Box[T]) M() {}
 // Regression for golang.org/x/tools/go/ssa MethodValue canonicalizing a
 // receiver-bearing method signature as a generic function signature.
 func TestMethodValueDoesNotCorruptGenericFunctionSignature(t *testing.T) {
-	ssapkg := buildLinkOnceSSAPackage(t, `package p
+	ssapkg, _ := buildLinkOnceSSAPackage(t, `package p
 
 type Set[T comparable] map[T]struct{}
 

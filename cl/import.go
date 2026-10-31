@@ -26,13 +26,12 @@ import (
 	"os"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
-
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 // -----------------------------------------------------------------------------
@@ -66,7 +65,7 @@ func (p *pkgSymInfo) addSym(fset *token.FileSet, pos token.Pos, fullName, inPkgN
 			}
 		}
 		p.syms[inPkgName] = symInfo{file, fullName, isVar}
-		if alias := parenthesizedMethodName(inPkgName); alias != "" {
+		if alias := directive.ParenthesizedMethodName(inPkgName); alias != "" {
 			p.syms[alias] = symInfo{file, fullName, isVar}
 		}
 	}
@@ -173,7 +172,7 @@ start:
 		switch obj := obj.(type) {
 		case *types.Func:
 			if pos := obj.Pos(); pos != token.NoPos {
-				fullName, inPkgName := typesFuncName(pkgPath, obj)
+				fullName, inPkgName := directive.FuncName(pkgPath, obj)
 				syms.addSym(fset, pos, fullName, inPkgName, false)
 			}
 		case *types.TypeName:
@@ -181,7 +180,7 @@ start:
 				if t, ok := obj.Type().(*types.Named); ok {
 					for i, n := 0, t.NumMethods(); i < n; i++ {
 						fn := t.Method(i)
-						fullName, inPkgName := typesFuncName(pkgPath, fn)
+						fullName, inPkgName := directive.FuncName(pkgPath, fn)
 						syms.addSym(fset, fn.Pos(), fullName, inPkgName, false)
 					}
 				}
@@ -195,29 +194,14 @@ start:
 	syms.initLinknames(p)
 }
 
-func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
+func (p *context) initFiles(pkgPath string, files []*ast.File) {
 	preloaded := p.options.PreloadedSyntax
-	aliases := receiverAliases(files)
+	for name, export := range p.prog.Functions().Exports(p.goTyps) {
+		p.pkg.SetExport(name, export)
+	}
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
-				if preloaded {
-					if exportName, ok := p.prog.PackageExport(fullName); ok {
-						p.pkg.SetExport(fullName, exportName)
-					}
-					continue
-				}
-				p.processNoInterfaceByDoc(decl.Doc, fullName)
-				if !p.processLinknameByDoc(decl.Doc, fullName, inPkgName, false, true) && cPkg {
-					// package C (https://github.com/xgo-dev/llgo/issues/1165)
-					if decl.Recv == nil && token.IsExported(inPkgName) {
-						exportName := strings.TrimPrefix(inPkgName, "X")
-						p.prog.SetLinkname(fullName, exportName)
-						p.pkg.SetExport(fullName, exportName)
-					}
-				}
 			case *ast.GenDecl:
 				switch decl.Tok {
 				case token.VAR:
@@ -310,117 +294,13 @@ func (p *context) collectSkip(line string, prefix int) {
 	}
 }
 
-// collectDeclarationDirectives caches source metadata needed after the syntax
-// pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
-	_, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
-}
-
-func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
-	directives := directive.ParseGroup(doc)
-	linkCollected := false
-	hasClosureEnv := false
-	wasmImportSeen := false
-	for n := len(directives) - 1; n >= 0; n-- {
-		item := directives[n]
-		switch item.Name {
-		case "go:linkname", "llgo:link":
-			fields := strings.Fields(item.Args)
-			if item.Name == "llgo:link" {
-				if len(fields) < 2 {
-					return false, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
-				}
-				if fields[0] != inPkgName && fields[0] != parenthesizedMethodName(inPkgName) {
-					return false, fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
-				}
-			}
-			if linkCollected {
-				continue
-			}
-			if len(fields) >= 2 && (fields[0] == inPkgName || fields[0] == parenthesizedMethodName(inPkgName)) {
-				prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-				linkCollected = true
-			}
-		case "export":
-			if linkCollected || item.Args == "" {
-				continue
-			}
-			if item.Args != inPkgName && !options.ExportRename {
-				return false, fmt.Errorf("export comment has wrong name %q", item.Args)
-			}
-			prog.SetLinkname(fullName, item.Args)
-			prog.SetPackageExport(fullName, item.Args)
-			linkCollected = true
-		case "llgo:env":
-			if funcPos.IsValid() {
-				hasClosureEnv = true
-			}
-		case "go:wasmimport":
-			if !funcPos.IsValid() || wasmImportSeen {
-				continue
-			}
-			wasmImportSeen = true
-			fields := strings.Fields(item.Args)
-			if len(fields) == 2 {
-				prog.SetWasmImport(fullName, fields[0], fields[1])
-			}
-		}
+func publishFunctionBindings(prog llssa.Program, fullName string, info directive.FunctionDirectives) {
+	if info.Linkname != "" {
+		prog.SetLinkname(fullName, info.Linkname)
 	}
-	if hasClosureEnv {
-		prog.SetClosureEnvDirective(fset, fullName, funcPos)
+	if info.ExportName != "" {
+		prog.SetPackageExport(fullName, info.ExportName)
 	}
-	return linkCollected, nil
-}
-
-// A value receiver can be written either T.M or (T).M in a link directive.
-// This also applies when T is an alias for a pointer type.
-func parenthesizedMethodName(name string) string {
-	if i := strings.IndexByte(name, '.'); i > 0 && name[0] != '(' {
-		return "(" + name[:i] + ")" + name[i:]
-	}
-	return ""
-}
-
-// collectPackageLinknames follows cmd/compile's package-scoped go:linkname
-// behavior and diagnoses method names that would otherwise be silently ignored.
-func collectPackageLinknames(prog llssa.Program, fset *token.FileSet, files []*ast.File, syms map[string]string, linkDocs map[*ast.CommentGroup]bool) error {
-	for _, file := range files {
-		importsUnsafe := false
-		for _, imp := range file.Imports {
-			if imp.Path.Value == `"unsafe"` {
-				importsUnsafe = true
-				break
-			}
-		}
-		for _, group := range file.Comments {
-			for _, item := range directive.ParseGroup(group) {
-				if item.Name != "llgo:link" && (item.Name != "go:linkname" || !importsUnsafe) {
-					continue
-				}
-				fields := strings.Fields(item.Args)
-				if item.Name == "llgo:link" {
-					// LLGo links must be attached to the declaration they name.
-					// Declaration scanning above has already validated and stored them.
-					if len(fields) < 2 {
-						return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
-					}
-					if linkDocs[group] {
-						continue
-					}
-					return fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(item.Pos), fields[0])
-				}
-				if len(fields) < 2 {
-					continue // Single-name go:linkname is a valid export annotation.
-				}
-				if fullName, ok := syms[fields[0]]; ok {
-					prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-				} else if strings.Contains(fields[0], ".") {
-					return fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), fields[0])
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgName string, isVar, allowExport bool) bool {
@@ -436,22 +316,6 @@ func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgNam
 		}
 	}
 	return false
-}
-
-func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
-	if doc == nil {
-		return
-	}
-	for n := len(doc.List) - 1; n >= 0; n-- {
-		line := doc.List[n].Text
-		if line == "//go:nointerface" {
-			p.prog.SetNoInterfaceMethod(fullName)
-			return
-		}
-		if !strings.HasPrefix(line, "//go:") {
-			return
-		}
-	}
 }
 
 const (
@@ -514,133 +378,7 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 	}
 }
 
-func recvTypeName(typ ast.Expr) string {
-retry:
-	switch t := typ.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
-	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
-	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
-	}
-	panic("unreachable")
-}
-
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
-}
-
-// inPkgName:
-// - func: name
-// - method: T.name, (*T).name
-// fullName:
-// - func: pkg.name
-// - method: pkg.(T).name, pkg.(*T).name
-func astFuncName(pkgPath string, fn *ast.FuncDecl, aliases map[string]ast.Expr) (fullName, inPkgName string) {
-	name := fn.Name.Name
-	if recv := fn.Recv; recv != nil && len(recv.List) == 1 {
-		t := ast.Unparen(recv.List[0].Type)
-		pointer := false
-		if tp, ok := t.(*ast.StarExpr); ok {
-			t, pointer = tp.X, true
-		}
-		recvName := recvTypeName(t)
-		canonical := recvName
-		canonicalPtr := pointer
-		// Preloading runs before type checking. Resolve local receiver aliases
-		// from syntax, including forward and cross-file references. Bound the
-		// walk so invalid alias cycles are left for go/types to diagnose.
-		for n := 0; n < len(aliases); n++ {
-			rhs, ok := aliases[canonical]
-			if !ok {
-				break
-			}
-			rhs = ast.Unparen(rhs)
-			ptr, isPtr := rhs.(*ast.StarExpr)
-			if isPtr {
-				rhs = ast.Unparen(ptr.X)
-			}
-			ident, ok := rhs.(*ast.Ident)
-			if !ok {
-				break // Stop local alias resolution; go/types handles this type.
-			}
-			canonical, canonicalPtr = ident.Name, canonicalPtr || isPtr
-		}
-		if pointer {
-			recvName = "(*" + recvName + ")"
-		}
-		if canonicalPtr {
-			canonical = "(*" + canonical + ")"
-		}
-		return pkgPath + "." + canonical + "." + name, recvName + "." + name
-	}
-	return pkgPath + "." + name, name
-}
-
-func receiverAliases(files []*ast.File) map[string]ast.Expr {
-	aliases := make(map[string]ast.Expr)
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			if decl, ok := decl.(*ast.GenDecl); ok && decl.Tok == token.TYPE {
-				for _, spec := range decl.Specs {
-					if spec := spec.(*ast.TypeSpec); spec.Assign.IsValid() {
-						aliases[spec.Name.Name] = spec.Type
-					}
-				}
-			}
-		}
-	}
-	return aliases
-}
-
-// Keep the source receiver spelling for matching directives, but register them
-// under the unaliased receiver used by SSA and the linker.
-func typesRecvName(typ types.Type) (canonical, source string) {
-	switch t := typ.(type) {
-	case *types.Alias:
-		canonical, _ = typesRecvName(types.Unalias(t))
-		return canonical, t.Obj().Name()
-	case *types.Pointer:
-		canonical, source = typesRecvName(t.Elem())
-		return "(*" + canonical + ")", "(*" + source + ")"
-	case *types.Named:
-		return t.Obj().Name(), t.Obj().Name()
-	}
-	panic(fmt.Errorf("invalid recv type: %v", typ))
-}
-
-func typesFuncName(pkgPath string, fn *types.Func) (fullName, inPkgName string) {
-	sig := fn.Type().(*types.Signature)
-	name := fn.Name()
-	if recv := sig.Recv(); recv != nil {
-		canonical, source := typesRecvName(recv.Type())
-		return pkgPath + "." + canonical + "." + name, source + "." + name
-	}
-	return pkgPath + "." + name, name
-}
-
-// An SSA function with declaration syntax may lack a types.Func object. Use
-// its receiver type when available so an alias still has its canonical name.
-func declarationFuncName(pkgPath string, decl *ast.FuncDecl, obj types.Object, recv *types.Var) string {
-	if fn, ok := obj.(*types.Func); ok {
-		fullName, _ := typesFuncName(pkgPath, fn)
-		return fullName
-	}
-	if recv != nil && recvNamedOk(recv.Type()) != nil {
-		canonical, _ := typesRecvName(recv.Type())
-		return pkgPath + "." + canonical + "." + decl.Name.Name
-	}
-	fullName, _ := astFuncName(pkgPath, decl, nil)
-	return fullName
-}
-
-// TODO(xsw): may can use typesFuncName
+// TODO(xsw): may use directive.FuncName
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
@@ -841,7 +579,8 @@ func extractTrampolineCName(name string) string {
 	return base
 }
 
-func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
+func (p *context) funcName(source *directive.Function) (*types.Package, string, int) {
+	fn := source.SSA
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
@@ -875,7 +614,7 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, fn, false)
 	}
-	if v, ok := p.prog.Linkname(orgName); ok {
+	if v := source.Directives.Linkname; v != "" {
 		if p.options.CExportWrappers {
 			if export, ok := p.pkg.ExportFuncs()[orgName]; ok && export == v {
 				return pkg, funcName(pkg, fn, false), goFunc
@@ -1021,12 +760,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
 		return err
 	}
-	ctx := &context{prog: prog, options: options}
-	pkgPath := llssa.PathOf(pkg)
 	cPkg := IsCPackage(pkg.Name())
-	aliases := receiverAliases(files)
-	syms := make(map[string]string)
-	linkDocs := make(map[*ast.CommentGroup]bool)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
@@ -1037,42 +771,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				if err := locality.ValidateFuncBody(fset, decl.Body); err != nil {
 					return err
 				}
-				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
-				syms[inPkgName] = fullName
-				if alias := parenthesizedMethodName(inPkgName); alias != "" {
-					syms[alias] = fullName
-				}
-				if decl.Doc != nil {
-					linkDocs[decl.Doc] = true
-				}
-				hasLinkname, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, fullName, inPkgName, decl.Pos(), options)
-				if err != nil {
-					return err
-				}
-				if !hasLinkname && cPkg && decl.Recv == nil && token.IsExported(inPkgName) {
-					exportName := strings.TrimPrefix(inPkgName, "X")
-					prog.SetLinkname(fullName, exportName)
-					prog.SetPackageExport(fullName, exportName)
-				}
-				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
 				if decl.Tok == token.VAR {
-					for _, spec := range decl.Specs {
-						for _, name := range spec.(*ast.ValueSpec).Names {
-							syms[name.Name] = pkgPath + "." + name.Name
-						}
-					}
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							if decl.Doc != nil {
-								linkDocs[decl.Doc] = true
-							}
-							if _, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, pkgPath+"."+inPkgName, inPkgName, token.NoPos, options); err != nil {
-								return err
-							}
-						}
-					}
 					vars, err := locality.ScanPackageVar(fset, decl)
 					if err != nil {
 						return err
@@ -1093,8 +793,12 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 			}
 		}
 	}
-	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
+	bindings, err := prog.Functions().PreparePackage(fset, pkg, files, cPkg, options.ExportRename)
+	if err != nil {
 		return err
+	}
+	for name, info := range bindings {
+		publishFunctionBindings(prog, name, info)
 	}
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil

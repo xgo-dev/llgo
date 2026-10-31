@@ -295,8 +295,14 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 
 func buildWasmReflectTestProgram(t *testing.T, src string) *ssa.Package {
 	t.Helper()
+	pkg, _ := buildWasmReflectTestPackage(t, src)
+	return pkg
+}
+
+func buildWasmReflectTestPackage(t *testing.T, src string) (*ssa.Package, *ast.File) {
+	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,5 +315,5 @@ func buildWasmReflectTestProgram(t *testing.T, src string) *ssa.Package {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pkg
+	return pkg, file
 }

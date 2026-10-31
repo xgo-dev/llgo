@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -94,13 +95,6 @@ func (A) StackedHidden() {}
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
-
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
-		{Text: "// not a directive"},
-		{Text: "//go:nointerface"},
-	}}, "example.com/p.NonDirectiveStops")
 
 	if !prog.PackageSyntaxParsed(pkg) {
 		t.Fatal("package syntax was not marked as parsed")
@@ -216,22 +210,6 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 }
 
 func TestAstAndTypesFuncNameCoverage(t *testing.T) {
-	full, inPkg := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
-	if full != "example.com/p.F" || inPkg != "F" {
-		t.Fatalf("astFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.F", "F")
-	}
-
-	ptrRecv := &ast.FuncDecl{
-		Name: &ast.Ident{Name: "M"},
-		Recv: &ast.FieldList{List: []*ast.Field{
-			{Type: &ast.StarExpr{X: &ast.ParenExpr{X: &ast.Ident{Name: "T"}}}},
-		}},
-	}
-	full, inPkg = astFuncName("example.com/p", ptrRecv, nil)
-	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
-		t.Fatalf("astFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
-	}
-
 	pkg := types.NewPackage("example.com/p", "p")
 	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
 	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
@@ -239,43 +217,23 @@ func TestAstAndTypesFuncNameCoverage(t *testing.T) {
 	methodPtr := types.NewFunc(token.NoPos, pkg, "M", types.NewSignature(
 		types.NewVar(token.NoPos, pkg, "", types.NewPointer(named)), nil, nil, false,
 	))
-	full, inPkg = typesFuncName(pkg.Path(), methodPtr)
+	full, inPkg := directive.FuncName(pkg.Path(), methodPtr)
 	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
-		t.Fatalf("typesFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
+		t.Fatalf("directive.FuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
 	}
 
 	methodVal := types.NewFunc(token.NoPos, pkg, "N", types.NewSignature(
 		types.NewVar(token.NoPos, pkg, "", named), nil, nil, false,
 	))
-	full, inPkg = typesFuncName(pkg.Path(), methodVal)
+	full, inPkg = directive.FuncName(pkg.Path(), methodVal)
 	if full != "example.com/p.T.N" || inPkg != "T.N" {
-		t.Fatalf("typesFuncName(method val)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.T.N", "T.N")
+		t.Fatalf("directive.FuncName(method val)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.T.N", "T.N")
 	}
 
 	fn := types.NewFunc(token.NoPos, pkg, "Top", types.NewSignature(nil, nil, nil, false))
-	full, inPkg = typesFuncName(pkg.Path(), fn)
+	full, inPkg = directive.FuncName(pkg.Path(), fn)
 	if full != "example.com/p.Top" || inPkg != "Top" {
-		t.Fatalf("typesFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.Top", "Top")
-	}
-}
-
-func TestDeclarationFuncNameWithoutObject(t *testing.T) {
-	pkg := types.NewPackage("example.com/p", "p")
-	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
-	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
-	aliasObj := types.NewTypeName(token.NoPos, pkg, "Alias", nil)
-	alias := types.NewAlias(aliasObj, types.NewPointer(named))
-	decl := &ast.FuncDecl{
-		Name: ast.NewIdent("M"),
-		Recv: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("Alias")}}},
-	}
-	recv := types.NewVar(token.NoPos, pkg, "", alias)
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, recv), "example.com/p.(*T).M"; got != want {
-		t.Fatalf("declarationFuncName without object = %q, want %q", got, want)
-	}
-	decl.Recv = nil
-	if got, want := declarationFuncName(pkg.Path(), decl, nil, nil), "example.com/p.M"; got != want {
-		t.Fatalf("declarationFuncName without receiver = %q, want %q", got, want)
+		t.Fatalf("directive.FuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.Top", "Top")
 	}
 }
 
@@ -308,10 +266,9 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 			}
 		})
 	}
-	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
-	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
-		t.Fatal("mismatched linkname was collected")
+	binding, err := testVariableBinding(&ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, "Sigsetjmp")
+	if err != nil || binding.Linkname != "" {
+		t.Fatalf("mismatched linkname was collected: %+v, %v", binding, err)
 	}
 
 	crossSrc := []string{
@@ -327,7 +284,7 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		}
 		crossFiles = append(crossFiles, file)
 	}
-	prog = llssa.NewProgram(nil)
+	prog := llssa.NewProgram(nil)
 	crossPkg := types.NewPackage("example.com/p", "p")
 	crossPkg.Scope().Insert(types.NewFunc(token.NoPos, crossPkg, "alias", types.NewSignature(nil, nil, nil, false)))
 	if err := ParsePkgSyntax(prog, crossFset, crossPkg, crossFiles); err != nil {
@@ -336,6 +293,10 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 	if got, ok := prog.Linkname("example.com/p.alias"); !ok || got != "C.alias" {
 		t.Fatalf("cross-file linkname = (%q,%v), want (C.alias,true)", got, ok)
 	}
+	if got, prepared := testPreparedFunctionInfo(prog, crossPkg, "alias"); !prepared || got.Linkname != "C.alias" {
+		t.Fatalf("cross-file function binding = %+v, prepared = %v", got, prepared)
+	}
+
 }
 
 func TestParsePkgSyntaxCollectsClosureEnvDirectives(t *testing.T) {
@@ -366,15 +327,13 @@ func plain() {}
 	want := map[string]bool{"env": true, "spaced": true, "plain": false}
 	for _, node := range file.Decls {
 		decl := node.(*ast.FuncDecl)
-		fullName, _ := astFuncName(pkg.Path(), decl, nil)
-		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
+		info, _ := testPreparedFunctionInfo(prog, pkg, decl.Name.Name)
+		got := info.ClosureEnv
 		if got != want[decl.Name.Name] {
 			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])
 		}
 	}
-	if prog.HasClosureEnvDirective(fset, "example.com/p.missing", token.NoPos) {
-		t.Fatal("missing declaration unexpectedly has cached directives")
-	}
+
 }
 
 func TestParsePkgSyntaxCollectsWasmImportDirectives(t *testing.T) {
@@ -400,26 +359,25 @@ func malformed()
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
-	module, name, ok := prog.WasmImport("example.com/p.fdRead")
-	if !ok || module != "wasi_snapshot_preview1" || name != "fd_read" {
-		t.Fatalf("WasmImport(fdRead) = (%q, %q, %v), want (wasi_snapshot_preview1, fd_read, true)", module, name, ok)
+	info, prepared := testPreparedFunctionInfo(prog, pkg, "fdRead")
+	if !prepared || info.WasmModule != "wasi_snapshot_preview1" || info.WasmName != "fd_read" {
+		t.Fatalf("wasm import = %+v, want wasi_snapshot_preview1.fd_read", info)
 	}
 	for _, symbol := range []string{"value", "malformed"} {
-		if module, name, ok := prog.WasmImport("example.com/p." + symbol); ok {
-			t.Fatalf("WasmImport(%s) = (%q, %q, true), want no import", symbol, module, name)
+		info, _ := testPreparedFunctionInfo(prog, pkg, symbol)
+		if info.WasmName != "" {
+			t.Fatalf("%s has unexpected wasm import: %+v", symbol, info)
 		}
 	}
 }
 
 func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
-	prog := llssa.NewProgram(nil)
 	doc := &ast.CommentGroup{List: []*ast.Comment{
 		{Text: "//go:noinline"},
 		{Text: "//llgointernal:tls"},
 	}}
-	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
-	if _, ok := prog.Linkname(fullName); ok {
+	binding, err := testVariableBinding(doc, "Value")
+	if err != nil || binding != (directive.FunctionDirectives{}) {
 		t.Fatal("non-link directives installed a linkname")
 	}
 }

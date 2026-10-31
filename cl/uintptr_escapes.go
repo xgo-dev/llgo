@@ -18,8 +18,8 @@ package cl
 
 import (
 	"go/types"
-	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -29,20 +29,10 @@ import (
 // the callee can publish its uintptr parameters. Go/defer argument records and
 // variadic backing arrays are scanned heap allocations and retain the values
 // while the call is pending; the callee roots cover the executing call.
-func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
+func uintptrEscapesRoots(function *directive.Function, functions *directive.Functions) map[ssa.Value]struct{} {
+	fn := function.SSA
 	roots := make(map[ssa.Value]struct{})
-	// Repeated calls in one function share immutable directive facts, without
-	// introducing mutable state shared by parallel package backends.
-	directives := make(map[*ssa.Function]bool)
-	hasDirective := func(callee *ssa.Function) bool {
-		value, ok := directives[callee]
-		if !ok {
-			value = hasUintptrEscapesDirective(callee)
-			directives[callee] = value
-		}
-		return value
-	}
-	if hasDirective(fn) {
+	if function.Directives.UintptrEscapes {
 		for _, param := range fn.Params {
 			if basicKind(param.Type()) == types.Uintptr {
 				roots[param] = struct{}{}
@@ -99,7 +89,7 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 			call, ok := instr.(ssa.CallInstruction)
 			// Interface dispatch has no static callee and does not inherit
 			// an implementation's pragma, matching Go's call-site contract.
-			if !ok || !hasDirective(call.Common().StaticCallee()) {
+			if !ok || !functions.Function(call.Common().StaticCallee()).Directives.UintptrEscapes {
 				continue
 			}
 			args := call.Common().Args
@@ -115,41 +105,4 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 		}
 	}
 	return roots
-}
-
-func hasUintptrEscapesDirective(fn *ssa.Function) bool {
-	seen := make(map[*ssa.Function]bool)
-	var visit func(*ssa.Function) bool
-	visit = func(fn *ssa.Function) bool {
-		if fn == nil || seen[fn] {
-			return false
-		}
-		seen[fn] = true
-		// Generic directives belong to the source declaration. Visit it
-		// first; an instantiated body may also retain the same syntax.
-		if origin := fn.Origin(); origin != nil && visit(origin) {
-			return true
-		}
-		if hasFuncDirective(fn, "go:uintptrescapes") {
-			return true
-		}
-		// SSA promoted-method wrappers, thunks (method expressions), and
-		// bound-method wrappers have no FuncDecl of their own. Only these
-		// transparent adapters inherit the target's pragma;
-		// an ordinary function that happens to call it must not inherit it.
-		if !strings.HasPrefix(fn.Synthetic, "wrapper for ") &&
-			!strings.HasPrefix(fn.Synthetic, "thunk for ") &&
-			!strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") {
-			return false
-		}
-		for _, block := range fn.Blocks {
-			for _, instr := range block.Instrs {
-				if call, ok := instr.(*ssa.Call); ok && visit(call.Call.StaticCallee()) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return visit(fn)
 }

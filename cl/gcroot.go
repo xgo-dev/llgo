@@ -21,12 +21,14 @@ import (
 	"go/types"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/gcrootplan"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
-func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
+func (p *context) prepareGCRoots(source *directive.Function, hasClosureContext bool) {
+	fn := source.SSA
 	p.gcRoots = nil
 	p.gcClosureRoot = llssa.Nil
 	if !p.prog.GCRootsEnabled() {
@@ -40,7 +42,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		}
 		if call, ok := value.(*ssa.Call); ok {
 			if callee, ok := call.Call.Value.(*ssa.Function); ok {
-				if _, _, kind := p.funcOf(callee); kind == llgoFuncAddr {
+				if _, _, kind := p.funcOf(p.sourceFunction(callee)); kind == llgoFuncAddr {
 					// llgo.funcAddr has an unsafe.Pointer signature but lowers
 					// to a code pointer, not a Go heap pointer.
 					return false
@@ -53,7 +55,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		typ := p.type_(value.Type(), llssa.GoDecl)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
-	for value := range uintptrEscapesRoots(fn) {
+	for value := range uintptrEscapesRoots(source, p.prog.Functions()) {
 		planned[value] = struct{}{}
 	}
 	if p.safepointEntry {

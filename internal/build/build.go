@@ -38,9 +38,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
-
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/buildenv"
@@ -68,12 +65,13 @@ import (
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
+	llruntime "github.com/xgo-dev/llgo/runtime"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
-
-	llruntime "github.com/xgo-dev/llgo/runtime"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 type Mode int
@@ -961,8 +959,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	frontendOptions.PreloadedSyntax = true
 
 	output := conf.OutFile != ""
+	selected := make(map[string]*types.Package, len(patches))
+	for path, patch := range patches {
+		selected[path] = patch.Types
+	}
+	prog.BeginFunctionCompilation(selected)
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, callerTracking: cl.NewCallerTracking(),
+		patches: patches, callerTracking: cl.NewCallerTracking(prog.Functions()),
 		initial: initial, mode: mode,
 		fingerprinting:   make(map[string]bool),
 		pkgs:             map[*packages.Package]Package{},
@@ -1018,6 +1021,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+	prog.Functions().Prepare(ctx.progSSA)
 	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 	callerSpan.done()
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)

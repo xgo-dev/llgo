@@ -10,34 +10,6 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestClosureEnvDirectiveCacheUsesSourceIdentity(t *testing.T) {
-	prog := NewProgram(nil)
-	defer prog.Dispose()
-	fset := token.NewFileSet()
-	otherFset := token.NewFileSet()
-	const (
-		name = "example.com/p.entry"
-		pos  = token.Pos(7)
-	)
-	prog.SetClosureEnvDirective(fset, name, pos)
-	if !prog.HasClosureEnvDirective(fset, name, pos) {
-		t.Fatal("HasClosureEnvDirective() = false, want true")
-	}
-	for _, key := range []struct {
-		fset *token.FileSet
-		name string
-		pos  token.Pos
-	}{
-		{otherFset, name, pos},
-		{fset, "example.com/p.alias", pos},
-		{fset, name, pos + 1},
-	} {
-		if prog.HasClosureEnvDirective(key.fset, key.name, key.pos) {
-			t.Fatalf("distinct source declaration (%p, %q, %d) shared cached directives", key.fset, key.name, key.pos)
-		}
-	}
-}
-
 func TestClosureEnvABIForTarget(t *testing.T) {
 	tests := []struct {
 		triple string

@@ -36,9 +36,8 @@ import (
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
-	"golang.org/x/tools/go/ssa"
-
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 // -----------------------------------------------------------------------------
@@ -172,7 +171,7 @@ type context struct {
 	prog                 llssa.Program
 	pkg                  llssa.Package
 	fn                   llssa.Function
-	goFn                 *ssa.Function
+	goFn                 *directive.Function
 	fset                 *token.FileSet
 	goProg               *ssa.Program
 	goTyps               *types.Package
@@ -424,12 +423,12 @@ func (p *context) compileMethods(pkg llssa.Package, typ types.Type) {
 }
 
 func (p *context) compileSyntheticMethods(pkg llssa.Package, typ types.Type) {
-	p.compileMethodsIf(pkg, typ, func(m *ssa.Function) bool {
-		return p.needsLinkOnce(m)
+	p.compileMethodsIf(pkg, typ, func(m *directive.Function) bool {
+		return p.needsLinkOnce(m.SSA)
 	})
 }
 
-func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(*ssa.Function) bool) {
+func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(*directive.Function) bool) {
 	prog := p.goProg
 	mthds := prog.MethodSets.MethodSet(typ)
 	for i, n := 0, mthds.Len(); i < n; i++ {
@@ -484,7 +483,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	}
 }
 
-func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
+func (p *context) makeClosureCtx(fn *directive.Function, pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
 	oldGoFn := p.goFn
 	p.goFn = fn
 	defer func() {
@@ -566,12 +565,15 @@ func isCgoFuncPtrVar(name string) bool {
 	return strings.HasPrefix(name, "__cgo_")
 }
 
-func (p *context) methodValue(sel *types.Selection) *ssa.Function {
+func (p *context) methodValue(sel *types.Selection) *directive.Function {
 	f := p.goProg.MethodValue(sel)
 	if f != nil && f.Pkg == nil && hasGenericInstantiation(f) {
 		p.markLinkOnce(f)
 	}
-	return f
+	if f == nil {
+		return nil
+	}
+	return p.sourceFunction(f)
 }
 
 func (p *context) markLinkOnce(f *ssa.Function) {
@@ -630,8 +632,9 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 	return false
 }
 
-func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
-	pkgTypes, name, ftype := p.funcName(f)
+func (p *context) compileFuncDecl(pkg llssa.Package, source *directive.Function) (llssa.Function, llssa.PyObjRef, int) {
+	f := source.SSA
+	pkgTypes, name, ftype := p.funcName(source)
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)
 	simdDecl = simdDecl && f.Pkg == p.goPkg
 	if simdDecl {
@@ -647,7 +650,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	sig := func() *types.Signature {
 		oldGoFn := p.goFn
-		p.goFn = f
+		p.goFn = source
 		defer func() {
 			p.goFn = oldGoFn
 		}()
@@ -665,20 +668,14 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	fn := pkg.FuncOf(name)
 	hasFreeVars := len(f.FreeVars) > 0
 	elideFreeVarEnv := p.canElideZeroSizedClosureEnv(f)
-	hasExplicitEnv := false
-	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
-	// its source-declaration cache; imported env entries use NewEnvFunc.
-	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
-		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
-	}
+	hasExplicitEnv := source.Directives.ClosureEnv
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
 	if elideFreeVarEnv {
 		dbgInstrln("==> NewZeroSizedClosure", name, "type:", sig)
 	} else if hasFreeVars {
 		dbgInstrln("==> NewClosure", name, "type:", sig)
-		ctx = p.makeClosureCtx(f, pkgTypes, f.FreeVars)
+		ctx = p.makeClosureCtx(source, pkgTypes, f.FreeVars)
 	} else if hasExplicitEnv {
 		dbgInstrln("==> NewEnvFunc", name, "type:", sig)
 		ctx = types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
@@ -715,15 +712,10 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 	}
 	p.markSIMDFMV(fn, f)
-	if p.prog.Target().GOARCH == "wasm" {
-		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-			fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
-			if module, importName, ok := p.prog.WasmImport(fullName); ok {
-				fn.SetWasmImport(module, importName)
-			}
-		}
+	if p.prog.Target().GOARCH == "wasm" && source.Directives.WasmName != "" {
+		fn.SetWasmImport(source.Directives.WasmModule, source.Directives.WasmName)
 	}
-	noInlineDirective := hasNoInlineDirective(f)
+	noInlineDirective := source.Directives.NoInline
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
 	usesRecover := p.functionUsesRecover(f)
@@ -781,7 +773,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			parentInits := p.inits
 			p.inits = nil
 			for _, af := range f.AnonFuncs {
-				p.compileFuncDecl(pkg, af)
+				p.compileFuncDecl(pkg, p.sourceFunction(af))
 			}
 			childInits = append(childInits, p.inits...)
 			p.inits = parentInits
@@ -807,7 +799,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldGCRoots, oldGCClosureRoot := p.gcRoots, p.gcClosureRoot
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
-			p.goFn = f
+			p.goFn = source
 			p.callerFrameMark = llssa.Nil
 			p.locality.function = localityFunction{}
 			p.state = state // restore pkgState when compiling funcBody
@@ -848,8 +840,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
-			p.prepareCooperativeSafepoints(f, isCgo)
-			p.prepareGCRoots(f, hasCtx)
+			p.prepareCooperativeSafepoints(source, isCgo)
+			p.prepareGCRoots(source, hasCtx)
 			p.initGCRoots(b, f)
 			off := make([]int, len(f.Blocks))
 			if isCgo {
@@ -894,23 +886,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 // affected.
 func funcInfoDisplayName(goName string) string {
 	return normalizeRuntimeAnonFuncName(goName)
-}
-
-func hasNoInlineDirective(f *ssa.Function) bool {
-	return hasFuncDirective(f, "go:noinline")
-}
-
-func hasFuncDirective(f *ssa.Function, name string) bool {
-	decl, _ := f.Syntax().(*ast.FuncDecl)
-	if decl == nil || decl.Doc == nil {
-		return false
-	}
-	for _, item := range directive.ParseGroup(decl.Doc) {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
@@ -1330,7 +1305,7 @@ func (p *context) isDirectTailUnreachableCall(instr ssa.Instruction, tail []ssa.
 	if !ok {
 		return false
 	}
-	_, name, kind := p.funcName(fn)
+	_, name, kind := p.funcName(p.sourceFunction(fn))
 	if kind != llgoInstr || llgoInstrs[name] != llgoUnreachable {
 		return false
 	}
@@ -1839,7 +1814,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		elem := p.type_(t.Elem(), llssa.GoDecl)
 		hoistToEntry := true
-		if p.goFn != nil && (p.goFn.Synthetic == "package initializer" || p.goFn.Name() == "init") {
+		if p.goFn != nil && (p.goFn.SSA.Synthetic == "package initializer" || p.goFn.SSA.Name() == "init") {
 			inLoop := false
 			if blk := v.Block(); blk != nil && blk.Index < len(p.blkInfos) {
 				inLoop = p.blkInfos[blk.Index].Kind == llssa.DeferInLoop
@@ -1916,7 +1891,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				}
 			case *ssa.Call:
 				if fn, ok := ref.Call.Value.(*ssa.Function); ok {
-					if _, _, ftype := p.funcOf(fn); ftype == llgoFuncAddr || ftype == llgoFuncPCABI0 { // llgo.funcAddr/funcPCABI0
+					if _, _, ftype := p.funcOf(p.sourceFunction(fn)); ftype == llgoFuncAddr || ftype == llgoFuncPCABI0 { // llgo.funcAddr/funcPCABI0
 						return
 					}
 				}
@@ -2548,16 +2523,17 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 	return div
 }
 
-func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
+func (p *context) compileFunction(source *directive.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
+	v := source.SSA
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
 	if v.Pkg == p.goPkg || v.Pkg == nil {
 		// function in this package
-		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
+		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, source)
 		if kind != ignoredFunc {
 			return
 		}
 	}
-	return p.funcOf(v)
+	return p.funcOf(source)
 }
 
 func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
@@ -2573,10 +2549,11 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
-		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
-			v = ssawrap.MakeCallWrapper(p.goProg, v)
+		source := p.sourceFunction(v)
+		if _, _, ftype := p.funcName(source); ftype == llgoInstr {
+			source = p.sourceFunction(ssawrap.MakeCallWrapper(p.goProg, v))
 		}
-		aFn, pyFn, _ := p.compileFunction(v)
+		aFn, pyFn, _ := p.compileFunction(source)
 		if aFn != nil {
 			return aFn.Expr
 		}
@@ -2709,7 +2686,7 @@ func (p *context) functionHasExplicitStackDeferSeen(fn *ssa.Function, seen map[*
 // defer statement (goroot issue14646, issue5856).
 func (p *context) deferRunPos(fallback token.Pos) token.Pos {
 	if p.goFn != nil {
-		switch syntax := p.goFn.Syntax().(type) {
+		switch syntax := p.goFn.SSA.Syntax().(type) {
 		case *ast.FuncDecl:
 			if syntax.Body != nil && syntax.Body.Rbrace.IsValid() {
 				return syntax.Body.Rbrace
@@ -2780,8 +2757,11 @@ func (p *context) returnNeedsImplicitRunDefers(ret *ssa.Return) bool {
 // Alloc instructions, while Return.Results only exposes the values currently
 // used to form a particular return tuple.
 func (p *context) namedResultSlot(index int) *ssa.Alloc {
-	fn := p.goFn
-	if fn == nil || index < 0 || index >= fn.Signature.Results().Len() {
+	if p.goFn == nil {
+		return nil
+	}
+	fn := p.goFn.SSA
+	if index < 0 || index >= fn.Signature.Results().Len() {
 		return nil
 	}
 	result := fn.Signature.Results().At(index)
@@ -2900,6 +2880,8 @@ func NewPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (ret ll
 // use NewPackageExWithEmbed with a shared CallerTracking instead.
 
 // NewPackageEx compiles a Go package to LLVM IR package.
+// Source dependencies must first be prepared with ParsePkgSyntax; this entry
+// point prepares the supplied root files automatically.
 //
 // Parameters:
 //   - prog: target LLVM SSA program context
@@ -2977,8 +2959,14 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		defer ret.FinalizeDebug()
 	}
 
-	if ct == nil {
-		ct = NewCallerTracking()
+	prepareFunctions := ct == nil
+	if prepareFunctions {
+		selected := make(map[string]*types.Package, len(patches))
+		for path, patch := range patches {
+			selected[path] = patch.Types
+		}
+		prog.BeginFunctionCompilation(selected)
+		ct = NewCallerTracking(prog.Functions())
 	}
 	ctx := &context{
 		prog:             prog,
@@ -3001,10 +2989,6 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		cgoSymbols:       make([]string, 0, 128),
 		rewrites:         rewrites,
 		staticByteArrays: options.StaticByteArrays,
-
-		trackCallerFrames:  options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
-		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
-		panicSiteFuncs:     recoverPanicSiteFuncSet(ct, pkg),
 	}
 	if embedMap != nil {
 		ctx.embedMap = *embedMap
@@ -3015,7 +2999,20 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, cPkg)
+	ctx.initFiles(pkgPath, files)
+	if prepareFunctions {
+		// One-shot entrypoints must publish imported symbol bindings before
+		// wrapping functions. Normal builds have already prepared all sources.
+		if !options.PreloadedSyntax {
+			for _, dep := range pkgProg.AllPackages() {
+				ctx.ensureLoaded(dep.Pkg)
+			}
+		}
+		prog.Functions().Prepare(pkgProg)
+	}
+	ctx.trackCallerFrames = options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg)
+	ctx.runtimeCallerFuncs = runtimeCallerFuncSet(ct, pkg)
+	ctx.panicSiteFuncs = recoverPanicSiteFuncSet(ct, pkg)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)
@@ -3107,7 +3104,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 				// Do not try to build generic (non-instantiated) functions.
 				continue
 			}
-			ctx.compileFuncDecl(ret, member)
+			ctx.compileFuncDecl(ret, ctx.sourceFunction(member))
 		case *ssa.Type:
 			ctx.compileType(ret, member)
 		case *ssa.Global:
@@ -3216,7 +3213,7 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 }
 
 func (p *context) patchLocalGenericNamed(t *types.Named) (*types.Named, bool) {
-	if p.goFn == nil || len(p.goFn.TypeArgs()) == 0 || !p.isGenericLocalType(t.Obj()) {
+	if p.goFn == nil || len(p.goFn.SSA.TypeArgs()) == 0 || !p.isGenericLocalType(t.Obj()) {
 		return nil, false
 	}
 	if isPatchedLocalGenericName(t.Obj().Name()) {
@@ -3262,10 +3259,10 @@ func (p *context) localNamedName(t *types.Named, suffix bool) string {
 func (p *context) localTypeOuterArgs(obj types.Object) []string {
 	// localNamedName is also used by non-local type arguments, so keep this
 	// guard here even though patchLocalGenericNamed has already checked it.
-	if p.goFn == nil || len(p.goFn.TypeArgs()) == 0 || !p.isGenericLocalType(obj) {
+	if p.goFn == nil || len(p.goFn.SSA.TypeArgs()) == 0 || !p.isGenericLocalType(obj) {
 		return nil
 	}
-	args := p.goFn.TypeArgs()
+	args := p.goFn.SSA.TypeArgs()
 	ret := make([]string, len(args))
 	for i, arg := range args {
 		ret[i] = p.typeArgName(arg)
@@ -3428,7 +3425,7 @@ func (p *context) enclosingFunctionSyntax(pos token.Pos) ast.Node {
 	}
 	// Instantiated local types may lose their scope parent while a nested
 	// closure still refers to a declaration in its enclosing generic function.
-	for fn := p.goFn; fn != nil; fn = fn.Parent() {
+	for fn := p.currentSSA(); fn != nil; fn = fn.Parent() {
 		syntaxFn := fn
 		if origin := fn.Origin(); origin != nil {
 			syntaxFn = origin

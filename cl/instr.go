@@ -28,10 +28,10 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
-
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 var asmRegisterRegex = regexp.MustCompile(`\{[a-zA-Z]+\}`)
@@ -381,7 +381,7 @@ func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
 		if fn, ok := args[0].(*ssa.MakeInterface); ok {
 			switch f := fn.X.(type) {
 			case *ssa.Function:
-				if aFn, _, _ := p.compileFunction(f); aFn != nil {
+				if aFn, _, _ := p.compileFunction(p.sourceFunction(f)); aFn != nil {
 					return aFn.Expr
 				}
 			default:
@@ -415,7 +415,7 @@ func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
 			cfn := b.Pkg.NewFunc(cname, fnSig, llssa.CDecl)
 			return b.Convert(p.type_(types.Typ[types.Uintptr], llssa.GoDecl), cfn.Expr)
 		}
-		if aFn, _, _ := p.compileFunction(v); aFn != nil {
+		if aFn, _, _ := p.compileFunction(p.sourceFunction(v)); aFn != nil {
 			return b.Convert(p.type_(types.Typ[types.Uintptr], llssa.GoDecl), aFn.Expr)
 		}
 	case *ssa.MakeClosure:
@@ -713,8 +713,9 @@ var llgoInstrs = map[string]int{
 
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
 // or returns nil and set ftype = llgoCstr, llgoAlloca, llgoUnreachable, etc.
-func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
-	pkgTypes, name, ftype := p.funcName(fn)
+func (p *context) funcOf(source *directive.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
+	fn := source.SSA
+	pkgTypes, name, ftype := p.funcName(source)
 	switch ftype {
 	case pyFunc:
 		if kind, mod := pkgKindByScope(pkgTypes.Scope()); kind == PkgPyModule {
@@ -943,7 +944,7 @@ func (p *context) shouldTrackCallerFrames() bool {
 	if p == nil || p.pkg == nil || p.fn == nil || p.goFn == nil || !p.trackCallerFrames {
 		return false
 	}
-	if !p.options.DebuggerFrames && !p.runtimeCallerFuncs[p.goFn] {
+	if !p.options.DebuggerFrames && !p.runtimeCallerFuncs[p.goFn.SSA] {
 		return false
 	}
 	if target := p.prog.Target(); target != nil && target.Target != "" && target.GOARCH != "wasm" {
@@ -1026,7 +1027,7 @@ func callerTrackingFuncSetsForPackage(c *CallerTracking, pkg *ssa.Package) calle
 	}
 	base := runtimeCallerBaseSet(c, pkg)
 	funcs, trackable := collectRuntimeCallerFunctions(pkg)
-	sets := computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+	sets := computeRuntimeCallerFuncSets(preparedFunctions(c.functions, trackable), c.recoverAnalysis(), pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 		return runtimeCallerBaseSet(c, dep)
 	})
 	c.extended[pkg] = sets
@@ -1038,12 +1039,13 @@ type callerTrackingFuncSets struct {
 	recoverPanicSites map[*ssa.Function]bool
 }
 
-func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
+func computeRuntimeCallerFuncSets(functions []*directive.Function, recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
 	frames := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		frames[fn] = true
 	}
-	for fn := range trackable {
+	for _, source := range functions {
+		fn := source.SSA
 		if frames[fn] {
 			continue
 		}
@@ -1059,7 +1061,7 @@ func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs
 		// so statement anchors are free of the usual inlining cost — their
 		// panic-traceback lines become exact instead of
 		// declaration-adjacent.
-		if hasNoInlineDirective(fn) {
+		if source.Directives.NoInline {
 			frames[fn] = true
 			continue
 		}
@@ -1275,6 +1277,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
+	functions   *directive.Functions
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1330,7 +1333,7 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		base[i] = analyses[i].base
 	}
 	for i := range pkgs {
-		extended[i] = computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+		extended[i] = computeRuntimeCallerFuncSets(preparedFunctions(c.functions, analyses[i].trackable), c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 			j, ok := index[dep]
 			if !ok {
 				panic("caller-tracking dependency was not precomputed")
@@ -1421,11 +1424,12 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 }
 
 // NewCallerTracking creates the frontend-analysis caches for one compilation.
-func NewCallerTracking() *CallerTracking {
+func NewCallerTracking(functions *directive.Functions) *CallerTracking {
 	return &CallerTracking{
-		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
-		extended: make(map[*ssa.Package]callerTrackingFuncSets),
-		recover:  newRecoverFacts(),
+		functions: functions,
+		base:      make(map[*ssa.Package]map[*ssa.Function]bool),
+		extended:  make(map[*ssa.Package]callerTrackingFuncSets),
+		recover:   newRecoverFacts(),
 	}
 }
 
@@ -1960,8 +1964,8 @@ func (p *context) runtimeCallerFrameName() string {
 	if p == nil {
 		return ""
 	}
-	if p.goFn != nil && p.goFn.Pkg != nil && p.goFn.Pkg.Pkg != nil {
-		return runtimeFrameName(funcName(p.goFn.Pkg.Pkg, p.goFn, false))
+	if p.goFn != nil && p.goFn.SSA.Pkg != nil && p.goFn.SSA.Pkg.Pkg != nil {
+		return runtimeFrameName(funcName(p.goFn.SSA.Pkg.Pkg, p.currentSSA(), false))
 	}
 	if p.fn != nil {
 		return runtimeFrameName(p.fn.Name())
@@ -2009,7 +2013,7 @@ func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
 
 func (p *context) recordPanicSite(b llssa.Builder, pos token.Pos) {
 	p.recordPanicLocation(b, pos)
-	if p.panicSiteFuncs[p.goFn] {
+	if p.panicSiteFuncs[p.currentSSA()] {
 		p.emitPCLineLabel(b, pos)
 		p.panicSitePos = pos
 		// Install once per builder, not once per instruction. Nil-check
@@ -2382,7 +2386,7 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	if owner := p.funcs[fn]; owner != nil {
 		return owner
 	}
-	owner, _, kind := p.compileFunction(fn)
+	owner, _, kind := p.compileFunction(p.sourceFunction(fn))
 	if kind == ignoredFunc {
 		return nil
 	}
@@ -2396,7 +2400,7 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	}
 	switch act {
 	case llssa.Call, llssa.Go:
-		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+		if act == llssa.Call && isRecoverTransparentWrapper(p.currentSSA()) {
 			return b.CallRecoverAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
 		}
 		return b.Do(act, fn, buildCall, args...)
@@ -2631,7 +2635,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		o := p.compileValue(b, cv)
 		var fn llssa.Expr
 		needsRecoverToken := act != llssa.Call && act != llssa.Go
-		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+		if act == llssa.Call && isRecoverTransparentWrapper(p.currentSSA()) {
 			needsRecoverToken = true
 		}
 		if needsRecoverToken {
@@ -2685,7 +2689,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
 			return
 		}
-		aFn, pyFn, ftype := p.compileFunction(cv)
+		aFn, pyFn, ftype := p.compileFunction(p.sourceFunction(cv))
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
 		case cFunc, stdcallFunc:
@@ -2693,8 +2697,8 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			args := p.compileValues(b, args, kind)
 			p.inCFunc = false
 			forward := false
-			if isCVariadicWrapperForwarding(p.goFn, call) {
-				reason := p.cVariadicWrapperForwardingReason(p.goFn, call)
+			if isCVariadicWrapperForwarding(p.currentSSA(), call) {
+				reason := p.cVariadicWrapperForwardingReason(p.currentSSA(), call)
 				if reason == "" && (act != llssa.Call || !b.CanForwardVarargs(aFn.Expr)) {
 					reason = "incompatible fixed LLVM prototypes, calling conventions, or result conversion"
 				}
@@ -2704,7 +2708,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 					if p.variadicErrors == nil {
 						p.variadicErrors = make(map[*ssa.Function]error)
 					}
-					p.variadicErrors[p.goFn] = p.cVariadicForwardingError(p.goFn, reason)
+					p.variadicErrors[p.goFn.SSA] = p.cVariadicForwardingError(p.currentSSA(), reason)
 				}
 			}
 			if forward {

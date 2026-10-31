@@ -43,11 +43,11 @@ func (p *context) debugAlloc(b llssa.Builder, alloc *ssa.Alloc, addr llssa.Expr)
 	}
 	pos := p.goProg.Fset.Position(variable.Pos())
 	var dbgVar llssa.DIVar
-	if argNo := debugParameterArgNo(p.goFn, variable); argNo != 0 {
+	if argNo := debugParameterArgNo(p.currentSSA(), variable); argNo != 0 {
 		dbgVar = b.DIVarParam(p.fn, pos, variable.Name(), p.type_(variable.Type(), llssa.GoDecl), argNo)
 		p.debugDIVars[variable] = dbgVar
 	} else {
-		dbgVar = p.getLocalVariable(b, p.goFn, variable)
+		dbgVar = p.getLocalVariable(b, p.currentSSA(), variable)
 	}
 	diScope := b.DIScope(p.fn, variable.Parent())
 	b.DIDeclare(variable, addr, dbgVar, diScope, pos, b.Func.Block(alloc.Block().Index))

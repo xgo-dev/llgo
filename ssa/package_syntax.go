@@ -31,9 +31,7 @@ type packageSyntaxData struct {
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
 	linknames             map[string]string
-	wasmImports           map[string]wasmImport
 	exports               map[string]string
-	closureEnvDirectives  map[closureEnvDirectiveKey]none
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
@@ -43,21 +41,14 @@ type packageSyntaxData struct {
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		linknames:            make(map[string]string),
-		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
-		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
-		noInterface:          make(map[string]none),
-		typeCallConvs:        make(map[string]CallConv),
-		nativeStructFields:   make(map[token.Pos]bool),
-		nativeStructVars:     make(map[*types.Var]bool),
+		linknames:          make(map[string]string),
+		exports:            make(map[string]string),
+		parsedPackages:     make(map[*types.Package]struct{}),
+		noInterface:        make(map[string]none),
+		typeCallConvs:      make(map[string]CallConv),
+		nativeStructFields: make(map[token.Pos]bool),
+		nativeStructVars:   make(map[*types.Var]bool),
 	}
-}
-
-type wasmImport struct {
-	module string
-	name   string
 }
 
 // SetPackageExport records an export directive before the LLVM Package that

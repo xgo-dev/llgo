@@ -127,7 +127,7 @@ func (p *context) validateCVariadicWrapperUses() error {
 							selection = pointerMethods.Lookup(selection.Obj().Pkg(), selection.Obj().Name())
 						}
 						if wrapper := p.methodValue(selection); wrapper != nil {
-							if err := p.cVariadicWrapperError(wrapper, checked); err != nil {
+							if err := p.cVariadicWrapperError(wrapper.SSA, checked); err != nil {
 								return positioned(err, instr.Pos(), fn)
 							}
 						}

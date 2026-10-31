@@ -473,15 +473,15 @@ func TestInstrHelperEdges(t *testing.T) {
 	}
 
 	ssaPkg, _ := buildOffsetofPackage(t, `package foo
+//go:linkname fakeUnknown llgo.fakeUnknown
 func fakeUnknown() {}
 `)
 	fn := ssaPkg.Func("fakeUnknown")
 	ctx = &context{
-		prog:   newLLSSAProg(t),
+		prog:   testFunctionProgram(t, ssaPkg.Prog),
 		goTyps: ssaPkg.Pkg,
 		loaded: make(map[*types.Package]*pkgInfo),
 	}
-	ctx.prog.SetLinkname("foo.fakeUnknown", "llgo.fakeUnknown")
 	old, hadOld := llgoInstrs["fakeUnknown"]
 	llgoInstrs["fakeUnknown"] = llgoInstrBase + 0x7f
 	defer func() {
