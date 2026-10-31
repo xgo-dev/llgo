@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package gotest
+package llgoext
 
 import (
 	"testing"
