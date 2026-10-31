@@ -152,6 +152,12 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn('/pull/123', self.submit())
         self.assertEqual(self.api.writes, [])
 
+    def test_oversized_legacy_full_zip_is_rejected(self):
+        self.api.assets[0]['size'] = winget.manifests.MAX_ZIP_SIZE + 1
+        with self.assertRaisesRegex(ValueError, 'Published Windows ZIP exceeds'):
+            self.submit()
+        self.assertEqual(self.api.writes, [])
+
     def test_partial_failure_reuses_branch_without_writing_it_again(self):
         self.api.fail_pull = True
         with self.assertRaises(HTTPError):

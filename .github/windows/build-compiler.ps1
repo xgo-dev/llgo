@@ -44,12 +44,12 @@ if ($GoArch -eq 'arm64') {
 }
 
 if ($GoArch -eq '386') {
-  $toolchain = Get-Content -Raw (Join-Path $PSScriptRoot 'espressif-toolchain.json') | ConvertFrom-Json
+  $toolchain = Get-Content -Raw (Join-Path $PSScriptRoot '../../internal/crosscompile/espressif.json') | ConvertFrom-Json
   if ($toolchain.sdk.version -ne $llvmVersion) { throw 'The x86 SDK pin does not match the host LLVM version' }
   $parent = Join-Path $env:RUNNER_TEMP 'llgo-release-x86-sdk'
   if (Test-Path $parent) { Remove-Item -Recurse -Force $parent }
   Expand-ReleaseXz `
-    -URL "https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/$($toolchain.release)/$($toolchain.sdk.asset)" `
+    -URL "https://github.com/$($toolchain.sdk.repository)/releases/download/$($toolchain.sdk.release)/$($toolchain.sdk.asset)" `
     -SHA256 $toolchain.sdk.sha256 `
     -CacheDirectory (Join-Path $env:RUNNER_TOOL_CACHE 'llgo-release-downloads/llvm-x86') `
     -Destination $parent
@@ -111,6 +111,17 @@ $linkFlags = "-X github.com/xgo-dev/llgo/internal/env.buildVersion=v$($metadata.
 if ($LASTEXITCODE -ne 0) { throw 'Building the Windows release compiler failed' }
 Copy-ReleaseDLLs -ReadObj $readObj -Executable $executable -GoArch $GoArch -Profile 'msvc' `
   -SourceDirectories @((Join-Path $llvmRoot 'bin'))
+
+# CI-only inspection tools travel with the host artifact, never in release ZIPs.
+# This permits DLL/startup checks before any SDK is installed on a fresh runner.
+$inspection = Join-Path $stage 'inspection'
+New-Item -ItemType Directory -Force $inspection | Out-Null
+$inspector = Join-Path $inspection 'llvm-readobj.exe'
+Copy-Item -LiteralPath $readObj -Destination $inspector
+$inspectionMachine = (Get-ReleasePE -ReadObj $readObj -Path $readObj).Machine
+$inspectionArch = @{ AMD64 = 'amd64'; ARM64 = 'arm64'; I386 = '386' }[$inspectionMachine]
+Copy-ReleaseDLLs -ReadObj $readObj -Executable $inspector -GoArch $inspectionArch -Profile 'mingw' `
+  -SourceDirectories @((Split-Path $readObj))
 
 # Each architecture has one host compiler, shared by both native ABI packages.
 # LLVM/C++ remains static; native C ABI selection belongs to the user's tools.

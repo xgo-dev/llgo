@@ -228,12 +228,19 @@ jobs:
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-arm64
           key: llgo-release-llvm-archive-v1-de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1
+      - name: Read Windows x86 LLVM SDK archive digest
+        if: matrix.goarch == '386'
+        id: llvm-sdk-pin
+        shell: pwsh
+        run: |
+          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          "sha256=$($pins.sdk.sha256)" >> $env:GITHUB_OUTPUT
       - name: Cache Windows x86 LLVM SDK archive
         if: matrix.goarch == '386'
         uses: actions/cache@v6
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-x86
-          key: llgo-release-llvm-x86-v1-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
+          key: llgo-release-llvm-x86-v1-${{ steps.llvm-sdk-pin.outputs.sha256 }}
       - name: Download release metadata
         uses: actions/download-artifact@v8
         with:
@@ -297,12 +304,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps: &windows-package-steps
       - uses: actions/checkout@v7
-      - name: Cache ESP release archive
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp
-          key: llgo-release-esp-archive-v3-${{ matrix.goarch }}-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
-          enableCrossOsArchive: true
       - name: Download release metadata
         uses: actions/download-artifact@v8
         with:
@@ -316,7 +317,19 @@ jobs:
         with:
           name: windows-host-compiler-${{ matrix.goarch }}
           path: ${{ runner.temp }}/llgo-windows-compiler
-      - name: Build integrated Windows archive
+      - name: Read bundled ESP archive digest
+        id: esp-pin
+        shell: pwsh
+        run: |
+          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          $target = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32'; '386' = 'i686-w64-mingw32' }['${{ matrix.goarch }}']
+          "sha256=$($pins.payloads.$target.sha256)" >> $env:GITHUB_OUTPUT
+      - name: Cache bundled ESP archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp-${{ matrix.goarch }}
+          key: llgo-esp-archive-v1-${{ matrix.goarch }}-${{ steps.esp-pin.outputs.sha256 }}
+      - name: Build compact Windows archive
         shell: pwsh
         run: >-
           ./.github/windows/build-release.ps1
@@ -404,10 +417,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
+      - name: Download compiler inspection tools
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-host-compiler-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/llgo-release-inspection
       - name: Verify standalone compiler and archive
         shell: pwsh
         run: >-
           ./.github/windows/test-release.ps1 -CheckOnly
+          -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
       - name: Install native target dependencies
         uses: ./.github/actions/setup-deps
@@ -426,11 +445,23 @@ jobs:
           bash test/installer/install_msys_path_test.sh
           .windows-dist/*.windows-${{ matrix.goarch }}-mingw.zip
           "$RUNNER_TEMP/llgo-release-install"
-      - name: Test extracted native and embedded compiler
+      - name: Test native compilation and bundled ESP toolchain
         shell: pwsh
         run: >-
           ./.github/windows/test-release.ps1
+          -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+
+      - name: Upload Windows bundled ESP validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-runtime-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          path: |
+            ${{ runner.temp }}/llgo-esp-runtime-${{ matrix.goarch }}-${{ matrix.abi }}/*.log
+            ${{ runner.temp }}/llgo-esp-runtime-${{ matrix.goarch }}-${{ matrix.abi }}/results.json
+          if-no-files-found: warn
+          retention-days: 7
 
   test-windows-artifacts-x86:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -480,6 +511,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-15-intel
@@ -533,8 +565,16 @@ jobs:
             "versions/$version/${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "$LLGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
 
+      - name: Verify Unix runtime payload
+        run: bash .github/unix/test-release.sh "$RUNNER_TEMP/llgo-release-install/current"
+
       - name: Test Hello World
         uses: ./.github/actions/test-helloworld
+        env:
+          # Use the installed runtime toolchain, with no cache from a source build.
+          LLVM_CONFIG: ${{ runner.temp }}/llgo-release-install/current/crosscompile/clang/bin/llvm-config
+          LLGO_BUILD_CACHE: '0'
+          LLGO_ROOT: ''
         with:
           mod-version: ${{ matrix.go-mod-version }}
 
@@ -547,6 +587,23 @@ jobs:
 
       - name: Test native assembly shared-library calls
         run: bash dev/test_native_asm.sh
+
+      - name: Test bundled ESP runtime and firmware
+        run: >-
+          python3 .github/unix/test-esp-runtime.py
+          "$RUNNER_TEMP/llgo-release-install/current"
+          --output "$RUNNER_TEMP/llgo-esp-runtime"
+
+      - name: Upload bundled ESP validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-runtime-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            ${{ runner.temp }}/llgo-esp-runtime/*.log
+            ${{ runner.temp }}/llgo-esp-runtime/results.json
+          if-no-files-found: warn
+          retention-days: 7
 
   test-linux-distributions:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -617,7 +674,7 @@ jobs:
           pattern: llgo-windows-*
           merge-multiple: true
           path: .windows-dist
-      - name: Verify all six Windows ZIPs
+      - name: Verify all six compact Windows ZIPs
         shell: bash
         run: |
           set -euo pipefail

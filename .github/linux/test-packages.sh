@@ -12,7 +12,9 @@ for format in deb rpm; do
     test "${#package[@]}" = 1
     test -s "${package[0]}"
     if [[ "$format" == deb ]]; then
-        image=ubuntu:24.04
+        # LLVM 22 is in the standard Ubuntu 26.04 repository. Older releases
+        # need apt.llvm.org enabled before installing the DEB.
+        image=ubuntu:26.04
     else
         image=fedora:44
     fi

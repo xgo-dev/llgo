@@ -138,11 +138,11 @@ function Get-ReleaseArchive {
     } finally {
       if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial }
     }
+  } else {
+    # Restored caches are untrusted; fresh downloads were checked before moving.
+    $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
+    if ($actual -ne $SHA256) { throw "SHA-256 for $URL is $actual, expected $SHA256" }
   }
-  # Restored caches are untrusted. Verify the pinned archive on every use and
-  # always extract it afresh; neither extracted files nor markers are cached.
-  $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
-  if ($actual -ne $SHA256) { throw "SHA-256 for $URL is $actual, expected $SHA256" }
   return $archive
 }
 

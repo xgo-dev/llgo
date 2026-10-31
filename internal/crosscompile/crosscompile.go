@@ -332,18 +332,10 @@ func targetDebugInfoPolicy(linker, llvmTarget string) DebugInfoPolicy {
 var (
 	wasiSdkUrl      = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz"
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
-	espClangBaseUrl = "https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/" + espClangVersion
-	espClangSHA256  = map[string]string{
-		"aarch64-apple-darwin": "31cb1b87c84531bd777a4d7493a5a35070e6dd860e4c600b63937f5b449c3064",
-		"aarch64-linux-gnu":    "4a88902abe7977c0cbdecb239ac1a4d24185557e451a3e1f59aebbd56371124d",
-		"aarch64-w64-mingw32":  "02521d03911dadbd84ecfb27903e59dae1d9f12c45245982caea7dad6e6d4188",
-		"x86_64-apple-darwin":  "c31d127230d87bc468e6ea5e709db20d0729ecf6407222ef33f2378e2f847416",
-		"x86_64-linux-gnu":     "735f9d343863e5693179908acd946a0e85468463246f11210f2aa690b47784ab",
-		"x86_64-w64-mingw32":   "49ba5159967f1f3cdc11b51d902595baaf0f94bf6c73fb4b880940f30a2d6f4f",
-	}
+	espClangBaseUrl = "https://github.com/" + espPins.Repository + "/releases/download"
+	espClangVersion = espPins.Release
+	espClangSHA256  = espClangChecksums()
 )
-
-const espClangVersion = "22.1.4_20260912"
 
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
@@ -401,21 +393,37 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
-	// Try to download ESP Clang if platform is supported
+	// Install bundled ESP Clang, or download it for source checkouts.
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
+		version := espClangVersion
 		checksum, ok := espClangSHA256[platformSuffix]
 		if !ok {
 			err = fmt.Errorf("missing ESP Clang checksum for %s", platformSuffix)
 			return
+		}
+		pin := espPins.Payloads[platformSuffix]
+		if pin.Asset == "" {
+			return "", fmt.Errorf("missing ESP Clang asset for %s", platformSuffix)
 		}
 		cacheClangDir := espClangCacheDir(platformSuffix)
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
-			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(espClangBaseUrl, espClangVersion, platformSuffix, checksum, cacheClangDir); err != nil {
+			bundle := filepath.Join(filepath.Dir(espClangRoot), pin.Asset)
+			_, bundleErr := os.Stat(bundle)
+			switch {
+			case bundleErr == nil:
+				fmt.Fprintln(os.Stderr, "Using bundled ESP Clang archive:", bundle)
+				err = checkInstallESPClangArchive(bundle, checksum, cacheClangDir)
+			case errors.Is(bundleErr, fs.ErrNotExist):
+				fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
+				err = checkDownloadAndExtractESPClang(espClangBaseUrl+"/"+version, pin.Asset, checksum, cacheClangDir)
+			default:
+				return "", bundleErr
+			}
+			if err != nil {
 				return
 			}
 		}
@@ -452,8 +460,9 @@ func getESPClangPlatform(goos, goarch string) string {
 		}
 	case "windows":
 		switch goarch {
-		case "386", "amd64":
-			// 32-bit LLGo hosts run the x64 tools as separate processes.
+		case "386":
+			return "i686-w64-mingw32"
+		case "amd64":
 			return "x86_64-w64-mingw32"
 		case "arm64":
 			return "aarch64-w64-mingw32"

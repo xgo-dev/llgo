@@ -30,3 +30,5 @@ jobs:
         run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Test WinGet publication
         run: python -m unittest discover -s .github/windows -p 'test_*winget.py' -v
+      - name: Test Unix runtime packaging
+        run: python -m unittest discover -s .github/unix -p 'test_*.py' -v
