@@ -43,8 +43,19 @@ try {
       $libraryDirectory = Join-Path $temporary $directory
       New-Item -ItemType Directory -Force $libraryDirectory | Out-Null
       $env:CGO_LDFLAGS = Get-ReleaseMSVCLinkFlags -LibraryDirectory $libraryDirectory
-      & $Go build -o (Join-Path $temporary 'cgo-test.exe') .
+      $executable = Join-Path $temporary 'cgo-test.exe'
+      $linkFlags = Get-ReleaseCompilerLinkFlags -Version '1.2.3' -BuildTime '2026-11-01T00:00:00Z'
+      & $Go build -ldflags $linkFlags -o $executable .
       if ($LASTEXITCODE -ne 0) { throw 'The release CGO_LDFLAGS failed a real Go build' }
+      $sections = & llvm-readobj --sections $executable
+      if ($LASTEXITCODE -ne 0) { throw 'Inspecting release debug sections failed' }
+      if ($sections -match 'Name: \.z?debug_') {
+        throw 'Release compiler must omit DWARF to preserve the compact package budget'
+      }
+      $symbols = & $Go tool nm $executable
+      if ($LASTEXITCODE -ne 0 -or -not ($symbols -match '\smain\.main$')) {
+        throw 'Release compiler must retain ordinary Go symbols'
+      }
     }
   } finally {
     Pop-Location
