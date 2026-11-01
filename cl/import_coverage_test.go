@@ -95,9 +95,8 @@ func (A) StackedHidden() {}
 		t.Fatal(err)
 	}
 
-	ctx := &context{prog: prog}
-	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
-	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
+	collectNoInterfaceDirective(prog, nil, "example.com/p.NilDoc")
+	collectNoInterfaceDirective(prog, &ast.CommentGroup{List: []*ast.Comment{
 		{Text: "// not a directive"},
 		{Text: "//go:nointerface"},
 	}}, "example.com/p.NonDirectiveStops")
@@ -309,7 +308,9 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		})
 	}
 	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	if _, _, err := collectDeclarationDirectivesWithOptions(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
 	}
@@ -418,7 +419,9 @@ func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
 		{Text: "//llgointernal:tls"},
 	}}
 	const fullName = "example.com/p.Value"
-	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
+	if _, _, err := collectDeclarationDirectivesWithOptions(prog, nil, doc, fullName, "Value", token.NoPos, Options{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := prog.Linkname(fullName); ok {
 		t.Fatal("non-link directives installed a linkname")
 	}

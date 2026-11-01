@@ -17,8 +17,13 @@
 package build
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -84,10 +89,27 @@ func TestDropUnusedWindowsTestMain(t *testing.T) {
 
 	t.Run("export root", func(t *testing.T) {
 		ctx, pkg, lpkg := newFixture(t)
-		ctx.prog.SetPackageExport(symbol, "main")
+		lpkg.SetExport(symbol, "main")
 		dropUnusedWindowsTestMain(ctx, pkg, lpkg.Module())
 		if lpkg.Module().NamedFunction(symbol).IsNil() {
 			t.Fatal("exported original test main was removed")
+		}
+	})
+
+	t.Run("another package instance export", func(t *testing.T) {
+		ctx, pkg, lpkg := newFixture(t)
+		other := types.NewPackage(pkg.PkgPath, "main")
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "main.go", "package main\n//export main\nfunc main() {}", parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cl.ParsePkgSyntax(ctx.prog, fset, other, []*ast.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		dropUnusedWindowsTestMain(ctx, pkg, lpkg.Module())
+		if !lpkg.Module().NamedFunction(symbol).IsNil() {
+			t.Fatal("another package instance's export retained the unused test main")
 		}
 	})
 

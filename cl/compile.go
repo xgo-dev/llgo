@@ -701,11 +701,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			// generated at final link. Give that entry the native wasm ABI so
 			// Memory32 size_t/uintptr_t parameters remain i32 while the function
 			// body continues to use the Go 64-bit word model.
-			for _, exportName := range p.pkg.ExportFuncs() {
-				if exportName == name {
-					cc = llssa.CDecl
-					break
-				}
+			if p.pkg.IsExportedSymbol(name) {
+				cc = llssa.CDecl
 			}
 		}
 		if hasCtx {
@@ -3015,7 +3012,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, cPkg)
+	ctx.initFiles(files)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)

@@ -19,6 +19,7 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"maps"
 	"testing"
 )
 
@@ -41,11 +42,10 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	pkg := types.NewPackage("example.com/p", "p")
 	fset := token.NewFileSet()
 	coordinator.SetLinkname("example.com/p.Entry", "entry")
-	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
 	coordinator.SetClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7))
-	coordinator.MarkPackageSyntaxParsed(pkg)
+	coordinator.MarkPackageSyntaxParsed(pkg, map[string]string{"example.com/p.Entry": "entry"})
 	coordinator.SetLocalityInfo("example.com/p.Value", LocalityInfo{Locality: ThreadLocal})
 	coordinator.SetPython(func() *types.Package { return nil })
 
@@ -69,8 +69,8 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if !backend.HasLinknameTarget("entry") || backend.HasLinknameTarget("missing") {
 		t.Fatal("backend Program did not preserve linkname target lookup")
 	}
-	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
-		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)
+	if exports := maps.Collect(backend.PackageExports(pkg)); len(exports) != 1 || exports["example.com/p.Entry"] != "entry" {
+		t.Fatalf("backend lost prepared package exports: %v", exports)
 	}
 	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
@@ -90,5 +90,73 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 		!backend.enableFuncInfoMetadata || !backend.enableFuncInfoSites || backend.debugInfoOptimized ||
 		!backend.emitCodeViewDebugInfo {
 		t.Fatal("backend Program did not preserve coordinator configuration")
+	}
+}
+
+func TestPreparedPackageExportsKeepPackageIdentity(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	first := types.NewPackage("example.com/p", "p")
+	second := types.NewPackage("example.com/p", "p")
+	empty := types.NewPackage("example.com/p", "p")
+	unknown := types.NewPackage("example.com/p", "p")
+	exports := map[string]string{"example.com/p.Entry": "first_entry"}
+	prog.MarkPackageSyntaxParsed(first, exports)
+	exports["example.com/p.Entry"] = "second_entry"
+	prog.MarkPackageSyntaxParsed(second, exports)
+	prog.MarkPackageSyntaxParsed(empty, nil)
+	for pkg, want := range map[*types.Package]string{first: "first_entry", second: "second_entry"} {
+		got := maps.Collect(prog.PackageExports(pkg))
+		if len(got) != 1 || got["example.com/p.Entry"] != want {
+			t.Fatalf("prepared package exports = %v, want Entry: %s", got, want)
+		}
+	}
+	if !prog.PackageSyntaxParsed(empty) || len(maps.Collect(prog.PackageExports(empty))) != 0 {
+		t.Fatal("prepared empty package inherited another package's export")
+	}
+	if prog.PackageSyntaxParsed(unknown) || len(maps.Collect(prog.PackageExports(unknown))) != 0 {
+		t.Fatal("unknown package inherited another package's preparation")
+	}
+}
+
+func TestPreparedPackageExportsEarlyStop(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := types.NewPackage("example.com/p", "p")
+	exports := map[string]string{"example.com/p.A": "a", "example.com/p.B": "b"}
+	prog.MarkPackageSyntaxParsed(pkg, exports)
+	seq := prog.PackageExports(pkg)
+	visited := 0
+	for name, export := range seq {
+		visited++
+		if name != "example.com/p.A" || export != "a" {
+			t.Fatalf("first export = (%q, %q), want (example.com/p.A, a)", name, export)
+		}
+		break
+	}
+	if visited != 1 {
+		t.Fatalf("visited %d exports, want 1", visited)
+	}
+	if got := maps.Collect(seq); !maps.Equal(got, exports) {
+		t.Fatalf("iteration after early stop = %v, want %v", got, exports)
+	}
+}
+
+func TestPackageExportSymbolReplacement(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := prog.NewPackage("p", "example.com/p")
+	pkg.SetExport("example.com/p.First", "shared")
+	pkg.SetExport("example.com/p.Second", "shared")
+	pkg.SetExport("example.com/p.First", "first")
+	if !pkg.IsExportedSymbol("shared") || !pkg.IsExportedSymbol("first") {
+		t.Fatal("replacing one export lost a symbol still exported by another declaration")
+	}
+	pkg.SetExport("example.com/p.Second", "second")
+	if pkg.IsExportedSymbol("shared") || !pkg.IsExportedSymbol("second") {
+		t.Fatal("symbol lookup retained a replaced export or lost its replacement")
+	}
+	if got, ok := pkg.LookupExport("example.com/p.First"); !ok || got != "first" {
+		t.Fatalf("first export = (%q, %v), want (first, true)", got, ok)
 	}
 }

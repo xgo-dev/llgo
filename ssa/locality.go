@@ -341,14 +341,6 @@ func linknameReachesLocal(name string, links map[string]string, localNames map[s
 	return false
 }
 
-func (p Program) PackageSyntaxParsed(pkg *types.Package) bool {
-	return p.packageSyntaxParsed(pkg)
-}
-
-func (p Program) MarkPackageSyntaxParsed(pkg *types.Package) {
-	p.markPackageSyntaxParsed(pkg)
-}
-
 // PackageLocalities returns the legacy canonical-only metadata view. Its
 // result is unspecified when a canonical path has multiple declaration
 // owners; use PackageLocalitiesFor in owner-aware code.
