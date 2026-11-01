@@ -121,6 +121,13 @@ function Get-ReleaseMSVCLinkFlags {
   return (@('"-L' + $path + '"') + $LibraryFlags) -join ' '
 }
 
+function Get-ReleaseCompilerLinkFlags {
+  param([string]$Version, [string]$BuildTime)
+
+  return "-X github.com/xgo-dev/llgo/internal/env.buildVersion=v$Version " +
+    "-X github.com/xgo-dev/llgo/internal/env.buildTime=$BuildTime"
+}
+
 function Get-ReleaseArchive {
   param([string]$URL, [string]$SHA256, [string]$CacheDirectory)
 
