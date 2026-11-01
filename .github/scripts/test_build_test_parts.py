@@ -99,6 +99,34 @@ class BuildPartsTests(unittest.TestCase):
             self.assertEqual((root / "coverage-build.txt").read_text(),
                              "mode: set\np/a.go:1.1,2.2 1 1\np/a.go:3.1,4.2 2 1\np/a.go:5.1,6.2 1 0\n")
 
+    def test_collector_reassembles_benchmark_frames_and_retains_strict_result_counts(self):
+        for variant in ("split", "missing-metrics", "duplicate-result"):
+            with self.subTest(case=variant), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                inventory, parts, _ = self.parts_fixture(root)
+                for path in parts.rglob("build.jsonl"):
+                    changed = []
+                    for line in path.read_text().splitlines():
+                        event = json.loads(line)
+                        if event.get("Output", "").startswith("BenchmarkGo126Fixture-2"):
+                            prefix, metrics = event["Output"].split("\t", 1)
+                            frame = {**event, "Test": "BenchmarkGo126Fixture", "OutputType": "frame"}
+                            changed.append({**frame, "Output": prefix + "\t"})
+                            if variant != "missing-metrics":
+                                changed.append({**frame, "Output": metrics})
+                            if variant == "duplicate-result":
+                                changed.append(event)
+                        else:
+                            changed.append(event)
+                    path.write_text("".join(json.dumps(event) + "\n" for event in changed))
+                if variant == "split":
+                    self.collect(root, inventory, parts)
+                    self.assertTrue((root / "coverage-build.txt").is_file())
+                else:
+                    with self.assertRaisesRegex(ValueError, "incomplete benchmark|duplicate benchmark"):
+                        self.collect(root, inventory, parts)
+                    self.assertFalse((root / "coverage-build.txt").exists())
+
     def test_rolling_image_revision_is_retained_without_changing_profile_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
