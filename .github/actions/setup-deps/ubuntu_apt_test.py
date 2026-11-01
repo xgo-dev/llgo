@@ -18,8 +18,14 @@ class UbuntuAPTTest(unittest.TestCase):
              "https://archive.ubuntu.com/ubuntu/\tpriority:2",
              "http://security.ubuntu.com/ubuntu/\tpriority:1\n"
              "https://security.ubuntu.com/ubuntu/\tpriority:2"),
-            ("arm64", "https://ports.ubuntu.com/ubuntu-ports/",
-             "https://ports.ubuntu.com/ubuntu-ports/"),
+            ("arm64", "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2",
+             "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2"),
+            ("armhf", "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2",
+             "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2"),
         ):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as tmp:
                 root = pathlib.Path(tmp)
