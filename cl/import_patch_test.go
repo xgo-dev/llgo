@@ -65,7 +65,7 @@ func TestVarNameGoLinkRuntimeAndNonRuntime(t *testing.T) {
 	key := llssa.FullName(pkg, global.Name())
 	prog.SetLinkname(key, "go:example.com/p.G")
 	name, vtyp, define = c.varName(pkg, global)
-	if name != "go:example.com/p.G" || vtyp != goVar || define {
-		t.Fatalf("non-runtime varName = (%q,%d,%v), want (%q,%d,%v)", name, vtyp, define, "go:example.com/p.G", goVar, false)
+	if name != "go:example.com/p.G" || vtyp != goVar || !define {
+		t.Fatalf("non-runtime varName = (%q,%d,%v), want (%q,%d,%v)", name, vtyp, define, "go:example.com/p.G", goVar, true)
 	}
 }
