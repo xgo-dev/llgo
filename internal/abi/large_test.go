@@ -107,11 +107,13 @@ func TestLowerAggregateCopiesAllocUDebugLoc(t *testing.T) {
 	const testIR = `
 define void @copy(ptr %src, ptr %dst, ptr %other) !dbg !3 {
 entry:
-  %v = load [4096 x i8], ptr %src, !dbg !4
-  call void @mutate(ptr %src), !dbg !4
-  store [4096 x i8] %v, ptr %dst, !dbg !4
-  store [4096 x i8] %v, ptr %other, !dbg !4
-  ret void, !dbg !4
+  %v = load [4096 x i8], ptr %src
+  %w = load [4096 x i8], ptr %other
+  call void @mutate(ptr %src)
+  store [4096 x i8] %v, ptr %dst
+  store [4096 x i8] %v, ptr %other
+  store [4096 x i8] %w, ptr %src
+  ret void
 }
 declare void @mutate(ptr)
 !llvm.dbg.cu = !{!0}
@@ -119,10 +121,9 @@ declare void @mutate(ptr)
 !0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "t", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !1 = !DIFile(filename: "t.c", directory: "/")
 !2 = !{i32 2, !"Debug Info Version", i32 3}
-!3 = distinct !DISubprogram(name: "copy", scope: !1, file: !1, line: 1, type: !5, spFlags: DISPFlagDefinition, unit: !0)
-!4 = !DILocation(line: 1, column: 1, scope: !3)
-!5 = !DISubroutineType(types: !6)
-!6 = !{null}
+!3 = distinct !DISubprogram(name: "copy", scope: !1, file: !1, line: 1, type: !4, spFlags: DISPFlagDefinition, unit: !0)
+!4 = !DISubroutineType(types: !5)
+!5 = !{null}
 `
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -141,15 +142,77 @@ declare void @mutate(ptr)
 	defer mod.Dispose()
 	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
 	defer td.Dispose()
-	if got := LowerAggregateCopies(td, mod, AggregateLoweringConfig{GoWordSize: 8}); got != 1 {
-		t.Fatalf("lowered %d copies, want 1:\n%s", got, mod.String())
+	if got := LowerAggregateCopies(td, mod, AggregateLoweringConfig{GoWordSize: 8}); got != 2 {
+		t.Fatalf("lowered %d copies, want 2:\n%s", got, mod.String())
 	}
 	body := mod.NamedFunction("copy").String()
-	if !strings.Contains(body, "AllocU") || !strings.Contains(body, "!dbg") {
-		t.Fatalf("AllocU snapshot missing debug location:\n%s", body)
+	allocs := 0
+	for alloc := mod.NamedFunction("copy").FirstBasicBlock().FirstInstruction(); !alloc.IsNil(); alloc = llvm.NextInstruction(alloc) {
+		call := alloc.IsACallInst()
+		if !call.IsNil() && strings.Contains(call.CalledValue().Name(), "runtime.AllocU") {
+			allocs++
+			if alloc.InstructionDebugLoc().IsNil() {
+				t.Fatalf("generated AllocU call has no debug location:\n%s", body)
+			}
+		}
+	}
+	if allocs != 2 {
+		t.Fatalf("found %d AllocU calls, want 2:\n%s", allocs, body)
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("debug function with AllocU snapshot failed verify: %v\n%s", err, mod.String())
+	}
+}
+
+func TestLowerAggregateCopiesReplacedFunctionDebugLoc(t *testing.T) {
+	var ir strings.Builder
+	ir.WriteString("declare [65537 x i8] @leaf()\ndeclare void @mutate(ptr)\n")
+	for i := 0; i < 3; i++ {
+		fmt.Fprintf(&ir, `define [65537 x i8] @f%d(ptr %%src, ptr %%dst, ptr %%other) !dbg !%d {
+entry:
+  %%r = call [65537 x i8] @leaf()
+  %%v = load [70000 x i8], ptr %%src
+  call void @mutate(ptr %%src)
+  store [70000 x i8] %%v, ptr %%dst
+  store [70000 x i8] %%v, ptr %%other
+  ret [65537 x i8] %%r
+}
+`, i, 10+i)
+	}
+	ir.WriteString("!llvm.dbg.cu = !{!0}\n!llvm.module.flags = !{!2}\n!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: \"review\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)\n!1 = !DIFile(filename: \"review.c\", directory: \"/\")\n!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n!3 = !DISubroutineType(types: !4)\n!4 = !{null}\n")
+	for i := 0; i < 3; i++ {
+		fmt.Fprintf(&ir, `!%d = distinct !DISubprogram(name: "f%d", scope: !1, file: !1, line: %d, type: !3, spFlags: DISPFlagDefinition, unit: !0)
+`, 10+i, i, 100+i)
+	}
+	mod := parseAggregateIR(t, ir.String())
+	td := llvm.NewTargetData("e-m:o-i64:64-i128:128-n32:64-S128")
+	defer td.Dispose()
+	LowerLargeAggregates(td, mod, AggregateLoweringConfig{GoWordSize: 8})
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("lowered module is invalid: %v\n%s", err, mod.String())
+	}
+	module := mod.String()
+	for i := 0; i < 3; i++ {
+		body := mod.NamedFunction(fmt.Sprintf("f%d", i)).String()
+		call := strings.Index(body, "runtime.AllocU")
+		if call < 0 {
+			t.Fatalf("f%d has no AllocU call:\n%s", i, body)
+		}
+		marker := body[call:]
+		start := strings.Index(marker, "!dbg !")
+		if start < 0 {
+			t.Fatalf("f%d AllocU has no debug location:\n%s", i, body)
+		}
+		start += len("!dbg !")
+		end := start
+		for end < len(marker) && marker[end] >= '0' && marker[end] <= '9' {
+			end++
+		}
+		loc := "!" + marker[start:end]
+		want := fmt.Sprintf("%s = !DILocation(line: %d, scope:", loc, 100+i)
+		if !strings.Contains(module, want) {
+			t.Fatalf("f%d AllocU uses wrong debug scope %s, want line %d:\n%s", i, loc, 100+i, module)
+		}
 	}
 }
 

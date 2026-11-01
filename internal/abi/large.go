@@ -114,6 +114,13 @@ type stackSnapshotSlot struct {
 	ranges []snapshotRange
 }
 
+type debugLocation struct {
+	loc       llvm.Metadata
+	synthetic bool
+	line      uint
+	scope     llvm.Metadata
+}
+
 type largeAggregateLowerer struct {
 	td                     llvm.TargetData
 	goWordSize             int
@@ -129,6 +136,7 @@ type largeAggregateLowerer struct {
 	bbIndex                map[llvm.BasicBlock]int
 	bbs                    []llvm.BasicBlock
 	bbPreds                [][]int
+	debugLocs              map[llvm.Value]debugLocation
 }
 
 func newLargeAggregateLowerer(td llvm.TargetData, config AggregateLoweringConfig) largeAggregateLowerer {
@@ -392,6 +400,7 @@ func (l *largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
 	}
 
 	fn.ReplaceAllUsesWith(nfn)
+	delete(l.debugLocs, fn)
 	fn.EraseFromParentAsFunction()
 }
 
@@ -616,6 +625,43 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 	intType := ctx.IntType(l.goWordSize * 8)
 	ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 	size := llvm.ConstInt(intType, l.td.TypeAllocSize(typ), false)
+	synthetic := false
+	if loc.IsNil() {
+		fn := b.GetInsertBlock().Parent()
+		if l.debugLocs == nil {
+			l.debugLocs = make(map[llvm.Value]debugLocation)
+		}
+		if cached, ok := l.debugLocs[fn]; ok {
+			loc = cached.loc
+			synthetic = cached.synthetic
+			if cached.synthetic {
+				b.SetCurrentDebugLocation(cached.line, 0, cached.scope, llvm.Metadata{})
+			}
+		} else {
+			// The source instruction can be synthetic and have no !dbg even
+			// when its function has debug info. Reuse a location from the same
+			// function, or create a location at the subprogram line with column
+			// zero so LLVM's inlinable-call verifier accepts the call.
+			for bb := fn.FirstBasicBlock(); !bb.IsNil() && loc.IsNil(); bb = llvm.NextBasicBlock(bb) {
+				for instr := bb.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
+					loc = instr.InstructionDebugLoc()
+					if !loc.IsNil() {
+						break
+					}
+				}
+			}
+			line := uint(0)
+			var scope llvm.Metadata
+			if loc.IsNil() {
+				if sp := fn.Subprogram(); !sp.IsNil() {
+					line, scope, synthetic = sp.SubprogramLine(), sp, true
+					// The builder creates a valid DILocation for the call below.
+					b.SetCurrentDebugLocation(line, 0, scope, llvm.Metadata{})
+				}
+			}
+			l.debugLocs[fn] = debugLocation{loc: loc, synthetic: synthetic, line: line, scope: scope}
+		}
+	}
 	align := uint64(l.td.ABITypeAlignment(typ))
 	var result llvm.Value
 	if align > uint64(l.goWordSize) {
@@ -624,16 +670,21 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 		if fn.IsNil() {
 			fn = llvm.AddFunction(m, runtimeAllocUAligned, fnType)
 		}
-		result = llvm.CreateCall(b, fnType, fn, []llvm.Value{size, llvm.ConstInt(intType, align, false)})
+		result = b.CreateCall(fnType, fn, []llvm.Value{size, llvm.ConstInt(intType, align, false)}, "")
 	} else {
 		fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)
 		fn := m.NamedFunction(runtimeAllocU)
 		if fn.IsNil() {
 			fn = llvm.AddFunction(m, runtimeAllocU, fnType)
 		}
-		result = llvm.CreateCall(b, fnType, fn, []llvm.Value{size})
+		result = b.CreateCall(fnType, fn, []llvm.Value{size}, "")
 	}
-	result.InstructionSetDebugLoc(loc)
+	if !synthetic {
+		result.InstructionSetDebugLoc(loc)
+	} else {
+		// Do not let the synthetic location leak to later builder instructions.
+		b.SetCurrentDebugLocation(0, 0, llvm.Metadata{}, llvm.Metadata{})
+	}
 	l.allocations = append(l.allocations, result)
 	return result
 }
