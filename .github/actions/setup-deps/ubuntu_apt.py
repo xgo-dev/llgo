@@ -8,8 +8,14 @@ import sys
 
 def configure(apt_dir, architecture):
     if architecture in ("amd64", "i386"):
-        archive = "https://archive.ubuntu.com/ubuntu/"
-        security = "https://security.ubuntu.com/ubuntu/"
+        # Ubuntu's ordinary HTTP transport retains APT's signed Release and
+        # package-hash verification. Keep HTTPS as an independent transport
+        # fallback when the TLS endpoint is unavailable on a runner.
+        # mirror+file priorities are supported by all Ubuntu CI APT versions.
+        archive = ("http://archive.ubuntu.com/ubuntu/\tpriority:1\n"
+                   "https://archive.ubuntu.com/ubuntu/\tpriority:2")
+        security = ("http://security.ubuntu.com/ubuntu/\tpriority:1\n"
+                    "https://security.ubuntu.com/ubuntu/\tpriority:2")
     else:
         archive = security = "https://ports.ubuntu.com/ubuntu-ports/"
 
