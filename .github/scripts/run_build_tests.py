@@ -108,6 +108,35 @@ def root_event(event):
         return {key: event[key] for key in ("Test", "Action")}
 
 
+class RootEventReader:
+    """Normalize complete benchmark lines across Go JSON output fragments."""
+
+    def __init__(self):
+        self.partial = {}
+
+    def feed(self, event):
+        if not isinstance(event, dict) or event.get("Package") != PACKAGE:
+            return []
+        if event.get("Action") != "output":
+            observed = root_event(event)
+            return [observed] if observed else []
+
+        # Go can emit the benchmark name and its measurements separately.
+        # Keep independent test streams separate when worker output interleaves.
+        key = event.get("Test", "")
+        output = self.partial.pop(key, "") + event.get("Output", "")
+        results = []
+        for line in output.splitlines(keepends=True):
+            if line.endswith(("\n", "\r")):
+                observed = root_event({**event, "Output": line})
+                if observed:
+                    results.append(observed)
+            elif (key.startswith("Benchmark") or line.startswith("Benchmark")
+                  or "Benchmark".startswith(line)):
+                self.partial[key] = line
+        return results
+
+
 def outcome_errors(names, events):
     """Test roots need RUN/terminal once; benchmarks use Go's bench events."""
     actions = {name: [] for name in names if not name.startswith("Benchmark")}
@@ -262,6 +291,7 @@ def run(args):
             environment = {**os.environ, "GOMAXPROCS": str(args.gomaxprocs)}
             outcomes = []
             root_events = []
+            root_reader = RootEventReader()
             native_events = []
             with subprocess.Popen(command, cwd=root,
                                   env=environment, stdout=subprocess.PIPE,
@@ -277,9 +307,7 @@ def run(args):
                             and event.get("Action") in ("pass", "skip", "fail")
                             and event.get("Test") and "/" not in event["Test"]):
                         outcomes.append(event["Test"])
-                    observed = root_event(event)
-                    if observed:
-                        root_events.append(observed)
+                    root_events.extend(root_reader.feed(event))
                     if (args.require_arm64_atomic and isinstance(event, dict)
                             and event.get("Package") == PACKAGE
                             and event.get("Test") in ARM64_ATOMIC_TESTS

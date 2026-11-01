@@ -27,11 +27,17 @@ class BuildShardsTest(unittest.TestCase):
         variants = (
             ("complete", [run, complete], 0),
             ("split", [run, prefix, metrics], 0),
+            ("split-name-and-metrics", [run, *[
+                {**output, "Output": chunk}
+                for chunk in ("Ben", "chmarkGo126Fragment-", "2\t", "1\t292", ".0 ns/op", "\n")
+            ]], 0),
             ("interleaved-package", [run, prefix, unrelated, metrics], 0),
             ("optional-bench-frame", [run, prefix, metrics,
                                       {**run, "Test": name + "-2", "Action": "bench"}], 0),
             ("missing-metrics", [run, prefix], 1),
             ("duplicate-result", [run, prefix, metrics, complete], 1),
+            ("duplicate-lines-in-one-event", [run, {**complete,
+                                                     "Output": complete["Output"] * 2}], 1),
         )
         for label, events, expected in variants:
             with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
