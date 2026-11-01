@@ -1,8 +1,10 @@
 package ssa
 
 import (
+	"go/ast"
 	"go/build"
 	"go/importer"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"strings"
@@ -10,6 +12,61 @@ import (
 
 	"github.com/xgo-dev/llvm"
 )
+
+func TestNativePackedReflectBridges(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "packed.go", `package p
+//llgo:packed
+type Packed struct { B byte; X uint32 }
+type Nested struct { A [2]Packed }
+type Plain struct { X uint32 }
+func plain(Plain) Plain
+func pointer(*Packed) *Packed
+func packed(Packed) Packed
+func nested(Nested) Nested
+func (Packed) method() uint32
+`, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goPkg := types.NewPackage("example.com/p", "p")
+	if err := prog.ParseLayoutSyntax(fset, goPkg, []*ast.File{file}, nil); err != nil {
+		t.Fatal(err)
+	}
+	conf := types.Config{Sizes: prog.TypeSizes(types.SizesFor("gc", "amd64"))}
+	if err := types.NewChecker(&conf, fset, goPkg, nil).Files([]*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	pkg := prog.NewPackage("p", goPkg.Path())
+	for _, name := range []string{"plain", "pointer", "packed", "nested", "method"} {
+		var sig *types.Signature
+		if name == "method" {
+			sig = goPkg.Scope().Lookup("Packed").Type().(*types.Named).Method(0).Type().(*types.Signature)
+		} else {
+			sig = goPkg.Scope().Lookup(name).Type().(*types.Signature)
+		}
+		want := name != "plain" && name != "pointer"
+		if got := prog.signatureNeedsLayoutBridge(sig); got != want {
+			t.Errorf("%s: needs bridge = %t, want %t", name, got, want)
+		}
+		if want {
+			bridge := pkg.wasmReflectBridge(methodExprSignature(sig))
+			ir := bridge.call.impl.String()
+			// Native closures use a hidden environment; bound methods pass an
+			// ordinary receiver. Both must coexist with the plain-call path.
+			if strings.Count(ir, "call ") != 3 || strings.Count(ir, " nest ") != 1 {
+				t.Errorf("%s: missing distinct plain/closure/method ABI paths:\n%s", name, ir)
+			}
+		}
+	}
+	if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestWasmReflectBridgeProviderSelection(t *testing.T) {
 	tests := []struct {

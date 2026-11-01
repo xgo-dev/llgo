@@ -126,6 +126,12 @@ func (v Value) pointer() unsafe.Pointer {
 	if v.typ_.IsClosure() {
 		return v.ptr
 	}
+	if v.typ_.TFlag&abi.TFlagNative != 0 && v.kind() == Func {
+		if v.flag&flagIndir != 0 {
+			return (*nativeFuncSlot)(v.ptr).Code
+		}
+		return v.ptr
+	}
 	if v.typ().Size() != goarch.PtrSize || !v.typ().Pointers() {
 		panic("can't call pointer on a non-pointer Value")
 	}
@@ -134,6 +140,9 @@ func (v Value) pointer() unsafe.Pointer {
 	}
 	return v.ptr
 }
+
+//llgo:cdecl
+type nativeFuncSlot struct{ Code unsafe.Pointer }
 
 // packEface converts v to the empty interface.
 func packEface(v Value) any {
@@ -2033,6 +2042,13 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		v = makeMethodValue(context, v)
 	}
 	typ := v.typ()
+	if v.Kind() == Func {
+		publicDst := toPublicType(dst).common()
+		publicSrc := v.Type().common()
+		if publicDst.Kind() == abi.Func && (publicDst.TFlag^publicSrc.TFlag)&abi.TFlagNative != 0 && directlyAssignable(publicDst, publicSrc) {
+			return cvtFunc(v, toType(publicDst))
+		}
+	}
 	if typ.Kind() == abi.Func {
 		typ = closureOf(typ.FuncType())
 	}
@@ -2383,6 +2399,9 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
+		if typ.TFlag&abi.TFlagNative != 0 {
+			return ffi.TypePointer
+		}
 		return ffiTypeClosure
 	case abi.Interface:
 		return ffi.TypeInterface
@@ -2419,8 +2438,12 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		fields = append(fields, toFFIType(fs.Typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
-	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
-	// Go-visible size without consuming registers in llgo's callable ABI.
+	// The compiler materializes trailing zero-sized-field padding in the
+	// callable aggregate too. Omitting it can change a register argument into
+	// an indirect argument (or vice versa) and shift the following parameters.
+	if off < typ.Size_ {
+		fields, _ = appendFFIPadding(fields, off, typ.Size_-off)
+	}
 	return ffi.StructOf(fields...)
 }
 
@@ -2511,7 +2534,9 @@ func (v Value) call(op string, in []Value) (out []Value) {
 			storeRcvr(v, unsafe.Pointer(&ptr))
 			args = append(args, unsafe.Pointer(&ptr))
 		} else {
-			if v.flag&flagIndir != 0 {
+			if v.typ_.TFlag&abi.TFlagNative != 0 {
+				fn = v.pointer()
+			} else if v.flag&flagIndir != 0 {
 				fn = *(*unsafe.Pointer)(v.ptr)
 			} else {
 				fn = v.ptr
@@ -2581,7 +2606,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	if nin != len(ft.In) {
 		panic("reflect.Value.Call: wrong argument count")
 	}
-	if useWasmReflectBridges {
+	if useWasmReflectBridges || ft.Call_ != nil || isCompiledReflectOnly(fn) {
 		return callWasmBridge(ft, fn, env, v.flag&flagMethod != 0, args, in)
 	}
 
@@ -3135,11 +3160,18 @@ func convertOp(dst, src *abi.Type) func(Value, Type) Value {
 		}
 	case Func:
 		if dst.Kind() == abi.Func {
-			return cvtFunc
+			if haveIdenticalUnderlyingType(dst, src, false) {
+				return cvtFunc
+			}
+			return nil
 		}
 	}
 
 	// dst and src have same underlying type.
+	if dst.Kind() == abi.Pointer && src.Kind() == abi.Pointer &&
+		!sameLayout(dst.Elem(), src.Elem(), true, make(map[[2]*abi.Type]bool)) {
+		return nil
+	}
 	if haveIdenticalUnderlyingType(dst, src, false) {
 		return cvtDirect
 	}
@@ -3358,6 +3390,25 @@ func cvtSliceArray(v Value, t Type) Value {
 func cvtDirect(v Value, typ Type) Value {
 	f := v.flag
 	t := typ.common()
+	if (t.Kind() == abi.Struct || t.Kind() == abi.Array) && !sameLayout(t, v.typ(), false, make(map[[2]*abi.Type]bool)) {
+		out := New(typ).Elem()
+		copyField := func(dst, src Value) {
+			dst.flag &^= flagRO
+			src.flag &^= flagRO
+			dst.Set(src.Convert(dst.Type()))
+		}
+		if t.Kind() == abi.Struct {
+			for i := 0; i < out.NumField(); i++ {
+				copyField(out.Field(i), v.Field(i))
+			}
+		} else {
+			for i := 0; i < out.Len(); i++ {
+				copyField(out.Index(i), v.Index(i))
+			}
+		}
+		out.flag = out.flag&^flagAddr | v.flag.ro()
+		return out
+	}
 	ptr := v.ptr
 	if f&flagAddr != 0 {
 		// indirect, mutable word - make a copy
@@ -3369,10 +3420,63 @@ func cvtDirect(v Value, typ Type) Value {
 	return Value{t, ptr, v.flag.ro() | f} // v.flag.ro()|f == f?
 }
 
+// Layout-changing value conversions copy members. Pointer conversions cannot
+// do that and must also preserve the representation of reachable pointees.
+func sameLayout(x, y *abi.Type, pointers bool, seen map[[2]*abi.Type]bool) bool {
+	if x == y {
+		return true
+	}
+	key := [2]*abi.Type{x, y}
+	if seen[key] {
+		return true
+	}
+	seen[key] = true
+	if x.Size_ != y.Size_ || x.Align_ != y.Align_ || x.Kind() != y.Kind() {
+		return false
+	}
+	switch x.Kind() {
+	case abi.Struct:
+		xs, ys := x.StructType().Fields, y.StructType().Fields
+		if len(xs) != len(ys) {
+			return false
+		}
+		for i := range xs {
+			if xs[i].Offset != ys[i].Offset || !sameLayout(xs[i].Typ, ys[i].Typ, pointers, seen) {
+				return false
+			}
+		}
+	case abi.Array:
+		return x.ArrayType().Len == y.ArrayType().Len && sameLayout(x.Elem(), y.Elem(), pointers, seen)
+	case abi.Pointer:
+		if pointers {
+			return sameLayout(x.Elem(), y.Elem(), true, seen)
+		}
+	}
+	return true
+}
+
 // convertOp: func copy
 func cvtFunc(v Value, typ Type) Value {
 	f := v.flag
 	t := typ.common()
+	if (v.typ().TFlag^t.TFlag)&abi.TFlagNative != 0 && v.IsNil() {
+		return Zero(typ)
+	}
+	if v.typ().TFlag&abi.TFlagNative != 0 && t.TFlag&abi.TFlagNative == 0 {
+		// Copy the code pointer now: later writes to an addressable source must
+		// not change the converted Go value. MakeFunc supplies the Go ABI entry,
+		// including wasm native-pointer/integer widening and its environment.
+		copy := Value{v.typ(), unsafe_New(v.typ()), flagIndir | flag(Func)}
+		(*nativeFuncSlot)(copy.ptr).Code = v.pointer()
+		return MakeFunc(typ, func(in []Value) []Value { return copy.Call(in) })
+	}
+	if v.typ().TFlag&abi.TFlagNative == 0 && t.TFlag&abi.TFlagNative != 0 {
+		// A conversion snapshots the function value, even if its source is
+		// addressable and subsequently assigned a different closure.
+		copy := New(v.Type()).Elem()
+		copy.Set(v)
+		return MakeFunc(typ, func(in []Value) []Value { return copy.Call(in) })
+	}
 	if t.Kind() == abi.Func {
 		t = closureOf(t.FuncType())
 	}

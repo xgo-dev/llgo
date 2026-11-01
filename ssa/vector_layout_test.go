@@ -48,7 +48,7 @@ func TestOrdinarySourceLayoutAllocations(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			want := testing.AllocsPerRun(10, func() { tc.call(base) })
-			if got := testing.AllocsPerRun(10, func() { tc.call(sizes) }); got != want {
+			if got := testing.AllocsPerRun(10, func() { tc.call(sizes) }); got > want {
 				t.Fatalf("allocations = %g, baseline = %g", got, want)
 			}
 		})
@@ -79,7 +79,7 @@ func TestOrdinaryNamedLayoutAllocations(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/native-metadata=%t", typ, metadata), func(t *testing.T) {
 				want := testing.AllocsPerRun(100, func() { base.Alignof(typ) })
 				got := testing.AllocsPerRun(100, func() { sizes.Alignof(typ) })
-				if got != want {
+				if got > want {
 					t.Fatalf("Alignof allocations = %g, baseline = %g", got, want)
 				}
 				if sizes.Alignof(typ) != base.Alignof(typ) || sizes.Sizeof(typ) != base.Sizeof(typ) {

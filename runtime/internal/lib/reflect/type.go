@@ -246,7 +246,14 @@ func (t *rtype) String() string {
 	return t.t.String()
 }
 
-func (t *rtype) Size() uintptr { return t.t.Size() }
+func (t *rtype) Size() uintptr {
+	if t.t.Kind() == abi.Func && t.t.TFlag&abi.TFlagNative == 0 {
+		// The internal function descriptor describes a code pointer. Public
+		// Go function values also store their closure environment.
+		return 2 * pointerSize
+	}
+	return t.t.Size()
+}
 
 func (t *rtype) Bits() int {
 	if t == nil {
@@ -687,7 +694,7 @@ func (t *structType) Field(i int) (f StructField) {
 	if !abi.IsExported(p.Name_) {
 		f.PkgPath = t.PkgPath_
 	}
-	if tag := p.Tag_; tag != "" {
+	if tag := llgoFieldTag(p.Tag_); tag != "" {
 		f.Tag = StructTag(tag)
 	}
 	f.Offset = p.Offset
@@ -1292,7 +1299,7 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 			if cmpTags && tf.Tag_ != vf.Tag_ {
 				return false
 			}
-			if tf.Offset != vf.Offset {
+			if cmpTags && tf.Offset != vf.Offset {
 				return false
 			}
 			if tf.Embedded() != vf.Embedded() {
@@ -2369,6 +2376,9 @@ var closureLookupCache struct {
 
 // Struct returns a struct type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
+	if ftyp.TFlag&abi.TFlagNative != 0 {
+		return &ftyp.Type
+	}
 	if ftyp.HasName() {
 		namedFuncTypes.Lock()
 		cached := namedFuncTypes.closures[ftyp]
@@ -2730,7 +2740,7 @@ func eqTypes(s1, s2 []*abi.Type) bool {
 
 func findFunc(in, out []*abi.Type, variadic bool) *abi.FuncType {
 	for _, typ := range typelist {
-		if typ.Kind() == abi.Func {
+		if typ.Kind() == abi.Func && typ.TFlag&abi.TFlagNative == 0 {
 			if ft := typ.FuncType(); ft.Variadic() == variadic && eqTypes(ft.In, in) && eqTypes(ft.Out, out) {
 				return ft
 			}

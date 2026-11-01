@@ -75,7 +75,7 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
 	for i, fld := range flds {
 		fld = b.wrapStructField(t, i, fld)
-		b.impl.CreateStore(fld, llvm.CreateStructGEP(b.impl, t.ll, ptr, i))
+		b.storageAccessAlignment(b.impl.CreateStore(fld, llvm.CreateStructGEP(b.impl, t.ll, ptr, i)))
 	}
 }
 
@@ -507,13 +507,16 @@ func (b Builder) Load(ptr Expr) Expr {
 	if storageType.kind == vkSIMD {
 		stored := llvm.CreateLoad(b.impl, telem.ll, ptr.impl)
 		stored.SetAlignment(int(b.Prog.AlignOf(storageType)))
+		b.storageAccessAlignment(stored)
 		return Expr{stored, telem}
 	}
 	if b.Prog.needsWidePointerStorage(storageType) {
 		stored := llvm.CreateLoad(b.impl, b.Prog.tyInt(), ptr.impl)
+		b.storageAccessAlignment(stored)
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
 	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
+	b.storageAccessAlignment(stored)
 	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
@@ -535,12 +538,25 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	if storageType.kind == vkSIMD {
 		stored := b.impl.CreateStore(val.impl, ptr.impl)
 		stored.SetAlignment(int(b.Prog.AlignOf(storageType)))
+		b.storageAccessAlignment(stored)
 		return Expr{stored, b.Prog.Void()}
 	}
 	if b.Prog.needsWidePointerStorage(storageType) {
-		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+		return Expr{b.storageAccessAlignment(b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl)), b.Prog.Void()}
 	}
-	return Expr{b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+	return Expr{b.storageAccessAlignment(b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl)), b.Prog.Void()}
+}
+
+// Packed field addresses may escape through pointers, calls and interface
+// conversions. Their Go pointer type carries no alignment qualifier. Once a
+// source graph contains packed storage, use conservative alignment for ordinary
+// memory accesses; LLVM can infer stronger alignment from allocations and GEPs.
+// Atomic operations retain their separate, naturally aligned contract.
+func (b Builder) storageAccessAlignment(instruction llvm.Value) llvm.Value {
+	if b.Prog.packageSyntax.layout.HasPacked() {
+		instruction.SetAlignment(1)
+	}
+	return instruction
 }
 
 // Advance returns the pointer ptr advanced by offset.

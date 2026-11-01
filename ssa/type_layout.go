@@ -23,11 +23,18 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+// LayoutStorageWrapperPrefix marks field storage that must survive native ABI
+// normalization. Its padding and alignment are part of the declared layout.
+const LayoutStorageWrapperPrefix = "$llgo.layout.storage"
+
 type structLayout struct {
 	wrapped []bool
 }
 
 func (p Program) hasNativeStructLayout(raw *types.Named) bool {
+	if p.packageSyntax.layout.TypeAttrs(raw).Native {
+		return true
+	}
 	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
 		return false
 	}
@@ -53,51 +60,72 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 	return layout.(structLayout), true
 }
 
-// toLLVMStructBody preserves the native target layout for C types. When Go's
-// language layout differs from LLVM's physical target layout (currently 386
-// and profiled wasm32), it wraps only affected fields and keeps the Go field
-// index as the outer LLVM element index.
+// toLLVMStructBody materializes the shared source layout, including explicit
+// padding and pack directives. Extra bytes belong to the preceding field's
+// storage wrapper; the next field still starts at its source offset. Thus Go
+// field indexes and addresses need no synthetic addressable padding fields.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
-	fields := p.toLLVMFields(raw, native)
-	goarch := p.target.effectiveGOARCH()
-	if native || len(fields) == 0 {
-		return fields, nil
+	p.packageSyntax.layout.RecordType(raw)
+	if err := p.sourceSizes.Validate(raw); err != nil {
+		panic(err)
 	}
-	// Only presence is needed here. Computing the source layout would query
-	// sizes before the standalone SSA API's fallback below is initialized.
-	if goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) {
+	goFields := make([]*types.Var, raw.NumFields())
+	for i := range goFields {
+		f := raw.Field(i)
+		goFields[i] = f
+		if patched := p.patch(f.Type()); patched != f.Type() {
+			goFields[i] = types.NewField(f.Pos(), f.Pkg(), f.Name(), patched, f.Embedded())
+		}
+	}
+	attrs := p.packageSyntax.layout.StructAttrs
+	if len(goFields) != 0 {
+		native = native || attrs(goFields[0]).Native || p.nativeFields(goFields)
+	}
+	fields := p.toLLVMFields(raw, native)
+	if len(fields) == 0 {
 		return fields, nil
 	}
 
-	sizes := p.sizes
-	if sizes == nil {
-		sizes = &types.StdSizes{WordSize: int64(p.GoWordSize()), MaxAlign: int64(p.GoWordSize())}
-		p.sizes = sizes
+	// Go function values have already been converted to closure structs here;
+	// remaining raw signatures denote native code pointers. Do not let source
+	// function-value sizing expand those pointers for a second time.
+	sizes := *p.sourceSizes
+	nativeTypeHook := sizes.NativeType
+	sizes.NativeType = func(t types.Type) bool {
+		if _, ok := t.(*types.Signature); ok {
+			return true
+		}
+		return nativeTypeHook != nil && nativeTypeHook(t)
 	}
-	offsets := make([]int64, len(fields))
+	storage := make(map[types.Type][2]int64, len(fields))
+	for i, f := range goFields {
+		a := sizes.Alignof(f.Type())
+		if p.fieldNativeStorage(f.Type(), native) {
+			a = int64(p.td.ABITypeAlignment(fields[i]))
+		}
+		storage[f.Type()] = [2]int64{int64(p.td.TypeAllocSize(fields[i])), a}
+	}
+	sizes.StorageLayout = func(t types.Type) (int64, int64, bool) {
+		layout, ok := storage[t]
+		return layout[0], layout[1], ok
+	}
+	layout, offsets := sizes.FieldsLayout(goFields, native)
+	goSize, goAlign := layout[0], layout[1]
+	if goSize < 0 {
+		panic("struct layout exceeds addressable storage: " + raw.String())
+	}
 	alignments := make([]int64, len(fields))
-	goAlign := int64(1)
-	goSize := int64(0)
-	for i, field := range fields {
-		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
-		if p.hasNativeTypeLayout(raw.Field(i).Type()) {
-			fieldAlign = int64(p.td.ABITypeAlignment(field))
+	pack := attrs(goFields[0]).Pack
+	for i, field := range goFields {
+		a := sizes.Alignof(field.Type())
+		if p.fieldNativeStorage(field.Type(), native) {
+			a = int64(p.td.ABITypeAlignment(fields[i]))
 		}
-		alignments[i] = fieldAlign
-		if fieldAlign > goAlign {
-			goAlign = fieldAlign
+		if pack > 0 && a > pack {
+			a = pack
 		}
-		goSize = align(goSize, fieldAlign)
-		offsets[i] = goSize
-		fieldSize := int64(p.td.TypeAllocSize(field))
-		if i == len(fields)-1 && goSize > 0 && fieldSize == 0 {
-			// Match cmd/compile: a final zero-sized field must have an
-			// address inside the enclosing non-zero-sized object.
-			fieldSize = 1
-		}
-		goSize += fieldSize
+		alignments[i] = a
 	}
-	goSize = align(goSize, goAlign)
 
 	nativeType := p.ctx.StructType(fields, false)
 	if int64(p.td.TypeAllocSize(nativeType)) == goSize &&
@@ -134,6 +162,24 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 				parts = append(parts, llvm.ArrayType(p.tyInt8(), int(padding)))
 			}
 			field = p.ctx.StructType(parts, true)
+			if p.target.effectiveGOOS() == "windows" && p.target.effectiveGOARCH() == "386" &&
+				(pack != 0 || fieldAlign <= goFieldAlign) {
+				// Win32's legacy ABI adapter unwraps ordinary Go/386 scalar
+				// alignment adjustments. Packing and explicit storage padding
+				// must retain their bytes and offsets at the call boundary.
+				// Reuse each physical shape: repeated tuple/metadata lowering
+				// must not introduce distinct LLVM identities for equal layouts.
+				if p.layoutStorageWrappers == nil {
+					p.layoutStorageWrappers = make(map[llvm.Type]llvm.Type)
+				}
+				wrapper, ok := p.layoutStorageWrappers[field]
+				if !ok {
+					wrapper = p.ctx.StructCreateNamed(LayoutStorageWrapperPrefix)
+					wrapper.StructSetBody(parts, true)
+					p.layoutStorageWrappers[field] = wrapper
+				}
+				field = wrapper
+			}
 			wrapped[i] = true
 		}
 		body = append(body, field)
@@ -162,6 +208,9 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 }
 
 func (p Program) hasNativeTypeLayout(raw types.Type) bool {
+	if p.packageSyntax.layout.TypeAttrs(raw).Native {
+		return true
+	}
 	switch t := types.Unalias(raw).(type) {
 	case *types.Named:
 		return p.hasNativeStructLayout(t)
@@ -169,4 +218,64 @@ func (p Program) hasNativeTypeLayout(raw types.Type) bool {
 		return p.hasNativeTypeLayout(t.Elem())
 	}
 	return false
+}
+
+func (p Program) fieldNativeStorage(t types.Type, parentNative bool) bool {
+	if p.hasNativeTypeLayout(t) {
+		return true
+	}
+	switch t := types.Unalias(t).(type) {
+	case *types.Named:
+		return false
+	case *types.Array:
+		return p.fieldNativeStorage(t.Elem(), parentNative)
+	}
+	return parentNative
+}
+
+func (b Builder) checkPointerLayoutConversion(to, from Type) {
+	x, ok := from.RawType().Underlying().(*types.Pointer)
+	if !ok {
+		return
+	}
+	y, ok := to.RawType().Underlying().(*types.Pointer)
+	if !ok || types.Identical(x.Elem(), y.Elem()) {
+		return
+	}
+	// unsafe.Pointer remains the explicit escape hatch. Ordinary pointer
+	// conversions cannot perform the field-by-field copy used for values.
+	if !b.Prog.sameStorageShape(b.Prog.rawType(x.Elem()), b.Prog.rawType(y.Elem()), make(map[[2]types.Type]bool)) {
+		panic(fmt.Errorf("cannot convert pointers between different LLGo layouts: %s to %s", from.RawType(), to.RawType()))
+	}
+}
+
+func (p Program) sameStorageShape(x, y Type, seen map[[2]types.Type]bool) bool {
+	key := [2]types.Type{x.RawType(), y.RawType()}
+	if seen[key] {
+		return true
+	}
+	seen[key] = true
+	if p.SizeOf(x) != p.SizeOf(y) || p.AlignOf(x) != p.AlignOf(y) {
+		return false
+	}
+	switch xt := x.RawType().Underlying().(type) {
+	case *types.Struct:
+		yt, ok := y.RawType().Underlying().(*types.Struct)
+		if !ok || xt.NumFields() != yt.NumFields() {
+			return false
+		}
+		for i := 0; i < xt.NumFields(); i++ {
+			if p.OffsetOf(x, i) != p.OffsetOf(y, i) || !p.sameStorageShape(p.Field(x, i), p.Field(y, i), seen) {
+				return false
+			}
+		}
+	case *types.Array:
+		yt, ok := y.RawType().Underlying().(*types.Array)
+		return ok && xt.Len() == yt.Len() && p.sameStorageShape(p.Index(x), p.Index(y), seen)
+	case *types.Pointer:
+		if yt, ok := y.RawType().Underlying().(*types.Pointer); ok {
+			return p.sameStorageShape(p.rawType(xt.Elem()), p.rawType(yt.Elem()), seen)
+		}
+	}
+	return true
 }
