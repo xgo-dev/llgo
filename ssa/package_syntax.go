@@ -24,6 +24,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -36,6 +38,7 @@ type packageSyntaxData struct {
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
 	closureEnvDirectives  map[closureEnvDirectiveKey]none
+	functions             directive.FunctionIndex
 	preparedPackages      map[*types.Package]preparedPackage
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv

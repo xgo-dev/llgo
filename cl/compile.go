@@ -32,7 +32,6 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
@@ -720,7 +719,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 		}
 	}
-	noInlineDirective := directive.ReadFunctionPragmas(f).NoInline
+	noInlineDirective := p.prog.FunctionDirectives(f).NoInline
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
 	usesRecover := p.functionUsesRecover(f)
@@ -2941,6 +2940,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
 			return nil, nil, err
 		}
+		prog.PrepareSSAFunctionDirectives(pkgProg)
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err
@@ -2958,7 +2958,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 
 	if ct == nil {
-		ct = NewCallerTracking()
+		ct = NewCallerTrackingWithSyntax(prog)
 	}
 	ctx := &context{
 		prog:             prog,

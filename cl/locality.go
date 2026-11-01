@@ -23,6 +23,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/locality"
 	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -73,8 +74,16 @@ func prepareLocalVariables(prog llssa.Program, fset *token.FileSet, pkg *types.P
 		}
 		prog.SetLocalStorageFor(pkg, fullName, localitylayout.StorageForType(object.Type()))
 	}
-	_, err = planLocalPackageWithDecls(prog, pkg, decls)
-	return err
+	if _, err = planLocalPackageWithDecls(prog, pkg, decls); err != nil {
+		return err
+	}
+	if len(prepared) != 0 && prog.PackageSyntaxParsed(pkg) {
+		// Locality preparation can append initializer declarations after syntax
+		// preparation. Publish their records before SSA and caller analysis;
+		// the index preserves the snapshots of existing source declarations.
+		prog.AddFunctionDirectives(directive.CollectFunctions(files))
+	}
+	return nil
 }
 
 func validateLocalInitializers(prog llssa.Program, pkg *types.Package) error {

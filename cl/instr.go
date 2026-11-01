@@ -30,7 +30,6 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -1027,7 +1026,7 @@ func callerTrackingFuncSetsForPackage(c *CallerTracking, pkg *ssa.Package) calle
 	}
 	base := runtimeCallerBaseSet(c, pkg)
 	funcs, trackable := collectRuntimeCallerFunctions(pkg)
-	sets := computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+	sets := computeRuntimeCallerFuncSets(c, pkg, funcs, base, trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 		return runtimeCallerBaseSet(c, dep)
 	})
 	c.extended[pkg] = sets
@@ -1039,7 +1038,7 @@ type callerTrackingFuncSets struct {
 	recoverPanicSites map[*ssa.Function]bool
 }
 
-func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
+func computeRuntimeCallerFuncSets(c *CallerTracking, pkg *ssa.Package, funcs, base, trackable map[*ssa.Function]bool, baseSet func(*ssa.Package) map[*ssa.Function]bool) callerTrackingFuncSets {
 	frames := make(map[*ssa.Function]bool, len(base))
 	for fn := range base {
 		frames[fn] = true
@@ -1060,7 +1059,7 @@ func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs
 		// so statement anchors are free of the usual inlining cost — their
 		// panic-traceback lines become exact instead of
 		// declaration-adjacent.
-		if directive.ReadFunctionPragmas(fn).NoInline {
+		if c.hasNoInlineDirective(fn) {
 			frames[fn] = true
 			continue
 		}
@@ -1077,7 +1076,7 @@ func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs
 			}
 		})
 	}
-	recoverPanicSites := addRecoverObservableCallees(recover, pkg, funcs, base, frames, trackable, baseSet)
+	recoverPanicSites := addRecoverObservableCallees(c.recoverAnalysis(), pkg, funcs, base, frames, trackable, baseSet)
 	if len(frames) == 0 {
 		frames = nil
 	}
@@ -1276,6 +1275,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
+	prog        llssa.Program
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
@@ -1331,7 +1331,7 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		base[i] = analyses[i].base
 	}
 	for i := range pkgs {
-		extended[i] = computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
+		extended[i] = computeRuntimeCallerFuncSets(c, pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 			j, ok := index[dep]
 			if !ok {
 				panic("caller-tracking dependency was not precomputed")
@@ -1422,12 +1422,23 @@ func uniqueCallerTrackingPackages(pkgs []*ssa.Package) []*ssa.Package {
 }
 
 // NewCallerTracking creates the frontend-analysis caches for one compilation.
+// It reads source attributes directly, for standalone SSA analysis. Compiler
+// drivers with prepared syntax should use NewCallerTrackingWithSyntax.
 func NewCallerTracking() *CallerTracking {
 	return &CallerTracking{
 		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended: make(map[*ssa.Package]callerTrackingFuncSets),
 		recover:  newRecoverFacts(),
 	}
+}
+
+// NewCallerTrackingWithSyntax creates caller tracking that consumes the same
+// prepared source attributes as lowering. Preparation must finish before
+// Precompute or lazy caller-tracking queries begin.
+func NewCallerTrackingWithSyntax(prog llssa.Program) *CallerTracking {
+	c := NewCallerTracking()
+	c.prog = prog
+	return c
 }
 
 func isProgramUniqueFrame(pkg *ssa.Package, fn *ssa.Function) bool {

@@ -962,7 +962,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, callerTracking: cl.NewCallerTracking(),
+		patches: patches, callerTracking: cl.NewCallerTrackingWithSyntax(prog),
 		initial: initial, mode: mode,
 		fingerprinting:   make(map[string]bool),
 		pkgs:             map[*packages.Package]Package{},

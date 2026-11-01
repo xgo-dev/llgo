@@ -1055,6 +1055,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
 		return err
 	}
+	prog.AddFunctionDirectives(directive.CollectFunctions(files))
 	prog.MarkPackageSyntaxParsed(pkg, exports)
 	return nil
 }

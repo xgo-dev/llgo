@@ -34,14 +34,17 @@ type FunctionPragmas struct {
 // It neither caches the result nor follows generic origins or synthetic
 // wrappers; consumers retain their existing inheritance rules.
 func ReadFunctionPragmas(fn *ssa.Function) (pragmas FunctionPragmas) {
-	if fn == nil {
-		return
-	}
-	decl, _ := fn.Syntax().(*ast.FuncDecl)
+	decl := functionDecl(fn)
 	if decl == nil {
 		return
 	}
-	for _, item := range ParseGroup(decl.Doc) {
+	return ParseFunctionPragmas(decl.Doc)
+}
+
+// ParseFunctionPragmas reads attributes from a source declaration comment.
+// It is also used during package preparation, before SSA functions exist.
+func ParseFunctionPragmas(doc *ast.CommentGroup) (pragmas FunctionPragmas) {
+	for _, item := range ParseGroup(doc) {
 		switch item.Name {
 		case "go:noinline":
 			pragmas.NoInline = true
