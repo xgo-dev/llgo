@@ -33,12 +33,48 @@ try {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $null) }
   $env:CGO_ENABLED = '1'
   $env:GOWORK = 'off'
+  $env:GOOS = (& $Go env GOHOSTOS).Trim()
+  $env:GOARCH = (& $Go env GOHOSTARCH).Trim()
   Set-Content (Join-Path $temporary 'go.mod') "module release-cgo-test`n`ngo 1.20`n"
-  Set-Content (Join-Path $temporary 'main.go') "package main`nimport `"C`"`nfunc main() {}`n"
+  @'
+package main
+
+import "C"
+import (
+    "fmt"
+    "runtime"
+    "runtime/debug"
+    "strings"
+)
+
+func main() {
+    var pcs [1]uintptr
+    if runtime.Callers(1, pcs[:]) != 1 {
+        panic("missing runtime frame")
+    }
+    frame, _ := runtime.CallersFrames(pcs[:]).Next()
+    if frame.Function != "main.main" {
+        panic("runtime function name was lost")
+    }
+    info, ok := debug.ReadBuildInfo()
+    if !ok || info.Path != "release-cgo-test" {
+        panic("build info was lost")
+    }
+    for _, setting := range info.Settings {
+        if setting.Key == "-ldflags" &&
+            strings.Contains(setting.Value, "buildVersion=v1.2.3") &&
+            strings.Contains(setting.Value, "buildTime=2026-11-01T00:00:00Z") {
+            fmt.Println("release runtime metadata: ok")
+            return
+        }
+    }
+    panic("release version or time metadata was lost")
+}
+'@ | Set-Content (Join-Path $temporary 'main.go')
   Push-Location $temporary
   try {
-    # Compile, but do not execute: Windows CI may be using an x64 bootstrap
-    # compiler on an ARM64 host. Cover both the CI path and a spaced SDK path.
+    # Match the running Go tool's architecture, including an x64 Go tool on
+    # ARM64 Windows. Cover both the CI path and a spaced SDK path.
     foreach ($directory in @('lib', 'LLVM SDK/lib')) {
       $libraryDirectory = Join-Path $temporary $directory
       New-Item -ItemType Directory -Force $libraryDirectory | Out-Null
@@ -52,10 +88,13 @@ try {
       if ($sections -match 'Name: \.z?debug_') {
         throw 'Release compiler must omit DWARF to preserve the compact package budget'
       }
-      $symbols = & $Go tool nm $executable
-      if ($LASTEXITCODE -ne 0 -or -not ($symbols -match '\smain\.main$')) {
-        throw 'Release compiler must retain ordinary Go symbols'
+      # MSVC external linking need not emit a COFF symbol table. The runtime
+      # must still recover function names and build info without DWARF.
+      $runtimeMetadata = & $executable
+      if ($LASTEXITCODE -ne 0 -or ($runtimeMetadata -join "`n").Trim() -ne 'release runtime metadata: ok') {
+        throw 'Release compiler must retain executable Go runtime metadata'
       }
+      Write-Host "Verified release runtime metadata: $directory ($env:GOARCH)"
     }
   } finally {
     Pop-Location
