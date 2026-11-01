@@ -9,7 +9,7 @@ import subprocess
 
 from run_build_tests import (PACKAGE, arm64_atomic_result, merge_coverage,
                              outcome_errors, partition, source_identity,
-                             root_event, event_root, shard_index)
+                             RootEventReader, event_root, shard_index)
 
 
 def profile_identity(profile):
@@ -22,6 +22,7 @@ def profile_identity(profile):
 
 def read_events(path, owned):
     events, starts, passes = [], 0, 0
+    root_reader = RootEventReader()
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             event = json.loads(line)
@@ -34,9 +35,7 @@ def read_events(path, owned):
         if event.get("Package") == PACKAGE and not event.get("Test"):
             starts += event.get("Action") == "start"
             passes += event.get("Action") == "pass"
-        observed = root_event(event)
-        if observed:
-            events.append(observed)
+        events.extend(root_reader.feed(event))
     if starts != 4 or passes != 4:
         raise ValueError("raw Go JSON lacks four completed package commands")
     errors = outcome_errors(owned, events)
