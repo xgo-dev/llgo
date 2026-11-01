@@ -76,12 +76,19 @@ def run(command, output, suite, summary=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path("go-test-timings"))
+    parser.add_argument("--packages-from-stdin", action="store_true",
+                        help="append the complete go list output in one native subprocess")
     parser.add_argument("suite", choices=("main", "build", "compiler", "language",
                                           "traceback", "embedded"))
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if not args.command:
         parser.error("a go test -json command is required")
+    if args.packages_from_stdin:
+        packages = [line.strip() for line in sys.stdin if line.strip()]
+        if not packages:
+            parser.error("the package list is empty")
+        args.command.extend(packages)
     return run(args.command, args.output_dir, args.suite, os.getenv("GITHUB_STEP_SUMMARY"))
 
 

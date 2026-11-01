@@ -11,6 +11,9 @@ concurrency:
   group: targets.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
+permissions:
+  contents: read
+
 jobs:
   prepare:
     uses: ./.github/workflows/ci-prepare.yml
@@ -33,7 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-24.04
         llvm: [22]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     steps:
@@ -80,8 +83,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2022]
-    runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+        # Other host profiles run daily in llgo-compat/ci's Target profiles.
+        os: [ubuntu-24.04]
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     env:
       GOMAXPROCS: '4'
       GOFLAGS: '-p=2'
@@ -100,41 +104,7 @@ jobs:
       # tools, not the pinned compiler environment installed by setup-deps.
       - uses: ./.github/actions/setup-gdb
       - name: Install Linux emulator and LLDB
-        if: runner.os == 'Linux'
         run: sudo apt-get install -y qemu-system-arm lldb-22
-      - name: Install macOS emulator
-        if: runner.os == 'macOS'
-        run: brew install qemu
-      - name: Install Windows emulator in the isolated debugger environment
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        env:
-          LLGO_PACMAN_RETRY_DELAY_SECONDS: "30"
-        run: |
-          set -euo pipefail
-          source .github/actions/setup-deps/pacman_retry.sh
-          pacman_with_retry --noconfirm -S --needed mingw-w64-clang-x86_64-qemu
-          echo "QEMU_SYSTEM_ARM=$(cygpath -m /clang64/bin/qemu-system-arm.exe)" >> "$GITHUB_ENV"
-      - name: Install matching Windows LLDB Python runtime
-        if: runner.os == 'Windows'
-        id: lldb-python
-        uses: actions/setup-python@v7
-        with:
-          # The LLVM 22.1.8 Windows LLDB installer links python311.dll.
-          python-version: '3.11.9'
-          architecture: x64
-          update-environment: false
-      - name: Configure matching Windows LLDB Python runtime
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          LLDB_PYTHON: ${{ steps.lldb-python.outputs.python-path }}
-        run: |
-          $prefix = (& $env:LLDB_PYTHON -c "import sys; print(sys.base_prefix)").Trim()
-          if (-not (Test-Path (Join-Path $prefix 'python311.dll'))) {
-            throw "The LLVM 22 LLDB Python runtime is incomplete: $prefix"
-          }
-          "LLGO_WINDOWS_LLDB_PYTHON_HOME=$prefix" >> $env:GITHUB_ENV
       # Separate steps keep both backends observable and run LLDB even when
       # the GDB acceptance test fails, as the former fail-fast:false matrix did.
       - name: Test GDB preloaded and explicit-download Cortex-M sessions

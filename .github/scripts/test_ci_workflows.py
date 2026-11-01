@@ -19,9 +19,9 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 21, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 21, "go.yml": 6, "targets.yml": 2, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
-    "mise.yml": 5, "pixi.yml": 5,
+    "mise.yml": 1, "pixi.yml": 1,
 }
 BOOTSTRAP_RUNNER_JOBS = {
     ("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy"),
@@ -349,7 +349,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
     def test_embedded_debuggers_share_setup_without_losing_backend_failures(self):
         job = load("targets.yml")["jobs"]["embedded-debug"]
         self.assertCountEqual(job["strategy"]["matrix"]["os"],
-                              ["ubuntu-24.04", "macos-15", "windows-2022"])
+                              ["ubuntu-24.04"])
+        self.assertEqual(job["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
         self.assertNotIn("backend", job["strategy"]["matrix"])
         for backend in ("gdb", "lldb"):
             step = next(step for step in job["steps"]
@@ -710,7 +712,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertEqual(job["runs-on"], expected)
                 self.assertNotIn("needs", job)
 
-    def test_linux_environment_checks_keep_native_arm64_and_fork_fallbacks(self):
+    def test_environment_checks_use_the_shared_linux_runner_policy(self):
         for filename in ("mise.yml", "pixi.yml"):
             workflow = load(filename)
             job = workflow["jobs"]["devenv"]
@@ -719,9 +721,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertIn("prepare", needs(job))
                 self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
                 self.assertEqual(job["runs-on"],
-                                 "${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}")
+                                 "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
                 self.assertCountEqual(job["strategy"]["matrix"]["os"],
-                                      ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2025"])
+                                      ["ubuntu-24.04"])
 
     def test_release_artifact_runner_migration_keeps_native_architectures(self):
         jobs = load("release-build.yml")["jobs"]
