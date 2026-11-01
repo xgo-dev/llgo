@@ -354,7 +354,13 @@ jobs:
           subprocess.run([str(compiler), "-O2", ".github/windows/test-bdwgc-heap-lock.c",
                           "-I" + str(prefix / "include"), "-L" + str(prefix / "lib"),
                           "-lgc", "-o", str(executable)], check=True)
-          subprocess.run([str(executable)], check=True, timeout=30)
+          for delayed in (False, True):
+              env = dict(os.environ)
+              env.pop("LLGO_TEST_GC_DELAY_REGISTER", None)
+              if delayed:
+                  env["LLGO_TEST_GC_DELAY_REGISTER"] = "1"
+              print(f"GC heap-lock test: delayed registration={delayed}", flush=True)
+              subprocess.run([str(executable)], env=env, check=True, timeout=30)
 
       - name: Run Go 1.27 LLGo core tests
         env:
