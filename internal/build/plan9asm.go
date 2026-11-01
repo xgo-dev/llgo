@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -14,8 +15,13 @@ import (
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
-func plan9asmTranslateOptions(conf *Config) llplan9asm.TranslateOptions {
-	opt := llplan9asm.TranslateOptions{GOARM: conf.GOARM, GOAMD64: conf.GOAMD64}
+func plan9asmTranslateOptions(ctx *context) llplan9asm.TranslateOptions {
+	conf := ctx.buildConf
+	opt := llplan9asm.TranslateOptions{
+		GOROOT: ctx.commands.lookup("GOROOT"), Overlay: conf.Overlay,
+		GO386: conf.GO386, GOARM: conf.GOARM, GOAMD64: conf.GOAMD64, GOARM64: conf.GOARM64,
+		ToolTags: conf.toolTags,
+	}
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
 		opt.X87Mode = extplan9asm.X87Software
 	}
@@ -53,7 +59,7 @@ func compiledPkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 			// Some stdlib .s files are placeholders without any TEXT bodies
 			// (e.g. runtime/debug/debug.s). They carry no executable asm and
 			// are safe to ignore.
-			hasText, err := llplan9asm.HasAnyTextAsm(ctx.buildConf.Overlay, sfiles)
+			hasText, err := llplan9asm.HasAnyTextAsmForPkg(pkg, sfiles, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx))
 			if err != nil {
 				return nil, fmt.Errorf("%s: inspect asm files: %w", pkg.PkgPath, err)
 			}
@@ -75,10 +81,14 @@ func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Packag
 	skipDarwinDynimportTrampolines := shouldCheckDarwinDynimportTrampolineAsm(ctx, pkg)
 	objFiles := make([]string, 0, len(sfiles))
 	for _, sfile := range sfiles {
-		src, err := llplan9asm.ReadFileWithOverlay(ctx.buildConf.Overlay, sfile)
+		opt := plan9asmTranslateOptions(ctx)
+		src, err := llplan9asm.PreprocessFileForPkg(pkg, sfile, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
 		if err != nil {
-			return nil, fmt.Errorf("%s: read %s: %w", pkg.PkgPath, sfile, err)
+			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, sfile, err)
 		}
+		// Native routing, the trampoline filter and typed translation must all
+		// see the same source. Do not expand macro output a second time.
+		opt.SourcePreprocessed = true
 		if shouldSkipDarwinDynimportTrampolineAsm(skipDarwinDynimportTrampolines, sfile, src) {
 			continue
 		}
@@ -88,7 +98,7 @@ func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Packag
 				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
 			}
 		} else {
-			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
 			if err != nil {
 				// Some stdlib .s files are comment-only placeholders (e.g. internal/cpu/cpu.s).
 				// Skip those silently.
@@ -315,11 +325,20 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		return nil, err
 	}
 	for _, sfile := range sfiles {
-		src, err := llplan9asm.ReadFileWithOverlay(ctx.buildConf.Overlay, sfile)
+		opt := plan9asmTranslateOptions(ctx)
+		src, err := llplan9asm.PreprocessFileForPkg(pkg, sfile, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
 		if err != nil {
-			return nil, fmt.Errorf("%s: read %s: %w", pkg.PkgPath, sfile, err)
+			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, sfile, err)
 		}
-		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+		if _, native, err := foreignNativeImports(ctx, pkg, src); native {
+			if err != nil {
+				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
+			}
+			// Native carriers have physical-register contracts, not Go signatures.
+			continue
+		}
+		opt.SourcePreprocessed = true
+		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue
@@ -454,6 +473,21 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 		return nil, fmt.Errorf("package %s assembly files were not prepared before backend execution", pkg.PkgPath)
 	}
 	paths := selectedSFiles(pkg.OtherFiles)
+	if len(paths) != 0 {
+		inputs, err := llgoPkgFileInputs(ctx, pkg)
+		if err != nil {
+			return nil, err
+		}
+		// Explicit LLGoFiles and implicit cgo assembly are compiled by Clang,
+		// not Plan 9. All three Plan 9 consumers use this same owner list.
+		native := make(map[string]bool)
+		for _, input := range inputs {
+			if nativeAssemblyFile(input.path) {
+				native[filepath.Clean(input.path)] = true
+			}
+		}
+		paths = slices.DeleteFunc(paths, func(path string) bool { return native[filepath.Clean(path)] })
+	}
 
 	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
 	// Until full vector lowering lands, force the generic stub entry, which

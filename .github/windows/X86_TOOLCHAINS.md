@@ -44,5 +44,10 @@ reuses the CRT's existing exception-action table.
 `test-bdwgc-heap-lock.c` covers collection on a fresh thread while another
 registered thread holds the heap lock for a bounded interval, as well as
 application exception-handler preservation. The native MinGW x86 job runs the
-check with an external timeout. Dependency cache keys include the patch and
+check with an external timeout. Both helper routines acknowledge completion of
+GC thread registration before collection starts; a returned thread handle alone
+does not establish readiness and can deadlock the collection callback.
+CI repeats the test with an explicit registration delay to keep that ordering
+regression deterministic.
+Dependency cache keys include the patch and
 port preparation script; upgrading BDWGC requires reviewing the patch.

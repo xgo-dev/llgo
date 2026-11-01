@@ -3545,6 +3545,7 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if !ctx.passOpt {
 		return nil
 	}
+	releaseGoHeapForLLVM()
 	mod.SetDataLayout(ctx.prog.DataLayout())
 	mod.SetTarget(ctx.prog.Target().Spec().Triple)
 	pbo := gllvm.NewPassBuilderOptions()
@@ -4666,6 +4667,14 @@ func llgoPkgFileInputs(ctx *context, pkg *packages.Package) ([]llgoFileInput, er
 			}
 		}
 	}
+	if err := validateExplicitAssemblyOwners(inputs); err != nil {
+		return nil, err
+	}
+	native, err := cgoAssemblyInputs(ctx, pkg, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("package %s assembly inputs: %w", pkg.PkgPath, err)
+	}
+	inputs = append(inputs, native...)
 	ctx.llgoFilesCache[pkg] = inputs
 	return inputs, nil
 }
@@ -4703,9 +4712,10 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 	baseName := expFile + filepath.Base(cFile)
 	args = llgoFileCompilerArgs(ctx, args, cFile)
 
-	// If GenLL is enabled, first emit .ll for debugging, then compile to .o
+	// Native assembly has no LLVM IR representation. GenLL still compiles
+	// its real object, but must not publish an empty .ll from ignored flags.
 	printCmds := ctx.shouldPrintCommands(verbose)
-	if ctx.buildConf.GenLL {
+	if ctx.buildConf.GenLL && !llgoFileIsAssembly(ctx, args, cFile) {
 		llFile, err := genLLGoFileOutput(cFile, ".ll")
 		if err != nil {
 			return "", fmt.Errorf("create temporary LLVM IR output for %s: %w", cFile, err)

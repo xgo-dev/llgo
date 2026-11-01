@@ -1,16 +1,168 @@
+import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import run_build_tests
 
 
 class BuildShardsTest(unittest.TestCase):
+    def test_worker_reassembles_benchmark_output_without_hiding_incomplete_or_duplicate_results(self):
+        name = "BenchmarkGo126Fragment"
+        run = {"Package": run_build_tests.PACKAGE, "Test": name, "Action": "run"}
+        output = {**run, "Action": "output", "OutputType": "frame"}
+        prefix = {**output, "Output": name + "-2\t"}
+        metrics = {**output, "Output": "1\t292.0 ns/op\n"}
+        complete = {**output, "Output": prefix["Output"] + metrics["Output"]}
+        unrelated = {**metrics, "Package": "another/package"}
+        variants = (
+            ("complete", [run, complete], 0),
+            ("split", [run, prefix, metrics], 0),
+            ("split-name-and-metrics", [run, *[
+                {**output, "Output": chunk}
+                for chunk in ("Ben", "chmarkGo126Fragment-", "2\t", "1\t292", ".0 ns/op", "\n")
+            ]], 0),
+            ("interleaved-package", [run, prefix, unrelated, metrics], 0),
+            ("optional-bench-frame", [run, prefix, metrics,
+                                      {**run, "Test": name + "-2", "Action": "bench"}], 0),
+            ("missing-metrics", [run, prefix], 1),
+            ("duplicate-result", [run, prefix, metrics, complete], 1),
+            ("duplicate-lines-in-one-event", [run, {**complete,
+                                                     "Output": complete["Output"] * 2}], 1),
+        )
+        for label, events, expected in variants:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = argparse.Namespace(workers=1, gomaxprocs=2, overlay="", ldflags="",
+                                          require_arm64_atomic=False)
+
+                def start(command, **unused):
+                    profile = next(word.split("=", 1)[1] for word in command
+                                   if word.startswith("-coverprofile="))
+                    Path(profile).write_text("mode: set\np/a.go:1.1,2.2 1 1\n")
+                    process = mock.MagicMock()
+                    process.__enter__.return_value = process
+                    process.stdout = iter(json.dumps(event) + "\n" for event in events)
+                    process.wait.return_value = 0
+                    return process
+
+                with mock.patch.object(run_build_tests, "__file__", str(root / ".github/scripts/runner.py")), \
+                        mock.patch.object(run_build_tests.subprocess, "check_output",
+                                          side_effect=[name + "\n", b""]), \
+                        mock.patch.object(run_build_tests.subprocess, "Popen", side_effect=start), \
+                        mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = run_build_tests.run(args)
+                self.assertEqual(status, expected)
+
+    def test_missing_required_tools_fail_before_starting_a_command(self):
+        real_which = shutil.which
+        for missing in ("go", "git"):
+            with self.subTest(tool=missing), \
+                    mock.patch.object(shutil, "which", side_effect=lambda tool:
+                                      None if tool == missing else real_which(tool)), \
+                    mock.patch.object(subprocess, "run",
+                                      side_effect=AssertionError("must fail before starting a command")):
+                namespace = runpy.run_path(__file__)
+                result = unittest.TestResult()
+                namespace["BuildShardsTest"](
+                    "test_real_go_tests_keep_helpers_coverage_and_failures").run(result)
+                self.assertEqual(result.skipped, [], "missing CI tools must not become skips")
+                self.assertEqual(result.errors, [])
+                self.assertEqual(len(result.failures), 1)
+                self.assertIn("required CI tool is missing: " + missing, result.failures[0][1])
+
+    def test_native_atomic_acceptance_requires_exact_run_pass_and_actual_host(self):
+        self.assertEqual(run_build_tests.ARM64_ATOMIC_TESTS, (
+            "TestRuntimeAtomicARM64ActualWrappersMatchOriginalGo",
+            "TestRuntimeAtomicARM64OriginalSDKTests",
+        ))
+        names = list(run_build_tests.ARM64_ATOMIC_TESTS)
+        events = [{"Package": run_build_tests.PACKAGE, "Test": name, "Action": action}
+                  for name in names for action in ("run", "pass")]
+        # Unrelated SDK alignment and helper SKIPs retain their original meaning.
+        events.append({"Package": run_build_tests.PACKAGE, "Test": "TestUnaligned64",
+                       "Action": "skip"})
+        for machine in ("arm64", "aarch64"):
+            self.assertTrue(run_build_tests.arm64_atomic_result(machine, names, events)["success"])
+        variants = {
+            "skip": events[:1] + [{**events[1], "Action": "skip"}] + events[2:],
+            "fail": events[:1] + [{**events[1], "Action": "fail"}] + events[2:],
+            "missing-terminal": events[:1] + events[2:],
+            "no-run": events[1:],
+            "duplicate-run": events[:1] + events,
+            "duplicate-terminal": events[:2] + events[1:],
+            "terminal-before-run": [events[1], events[0]] + events[2:],
+            "foreign-package": [{**event, "Package": "another/package"} for event in events],
+            "child-only": [{**event, "Test": event["Test"] + "/child"} for event in events],
+        }
+        for label, changed in variants.items():
+            with self.subTest(case=label):
+                result = run_build_tests.arm64_atomic_result("arm64", names, changed)
+                self.assertFalse(result["success"])
+        for machine, selected in (("x86_64", names), ("arm64", names[1:]),
+                                  ("arm64", names + names[:1])):
+            with self.subTest(machine=machine, selected=selected):
+                result = run_build_tests.arm64_atomic_result(machine, selected, events)
+                self.assertFalse(result["success"])
+
+    def test_native_atomic_gate_uses_the_same_drained_suite_report(self):
+        # Fake only the subprocess boundary: no Go or LLVM command runs here.
+        # The real runner still lists, partitions, drains and writes its report.
+        for terminal in ("pass", "skip"):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                names = list(run_build_tests.ARM64_ATOMIC_TESTS) + ["TestOptionalHelper"]
+                args = argparse.Namespace(workers=2, gomaxprocs=2, overlay="", ldflags="",
+                                          require_arm64_atomic=True)
+                commands = []
+
+                def start(command, **unused):
+                    commands.append(command)
+                    profile = next(word.split("=", 1)[1] for word in command
+                                   if word.startswith("-coverprofile="))
+                    Path(profile).write_text("mode: set\np/a.go:1.1,2.2 1 1\n")
+                    selected = next(word for word in command if word.startswith("-run="))
+                    events = []
+                    for name in names:
+                        if name not in selected:
+                            continue
+                        outcome = terminal if name in run_build_tests.ARM64_ATOMIC_TESTS else "skip"
+                        events += [{"Package": run_build_tests.PACKAGE,
+                                    "Test": name, "Action": action}
+                                   for action in ("run", outcome)]
+                    process = mock.MagicMock()
+                    process.__enter__.return_value = process
+                    process.stdout = iter(json.dumps(event) + "\n" for event in events)
+                    process.wait.return_value = 0
+                    return process
+
+                with mock.patch.object(run_build_tests, "__file__", str(root / ".github/scripts/runner.py")), \
+                        mock.patch.object(run_build_tests.platform, "machine", return_value="arm64"), \
+                        mock.patch.object(run_build_tests.subprocess, "check_output",
+                                          side_effect=["\n".join(names), b""]), \
+                        mock.patch.object(run_build_tests.subprocess, "Popen", side_effect=start), \
+                        mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = run_build_tests.run(args)
+                self.assertEqual(status, int(terminal != "pass"))
+                self.assertEqual(len(commands), 2)  # The gate does not rerun either root.
+                report = json.loads((root / "go-test-timings/build-shards.json").read_text())
+                self.assertEqual(len(report["results"]), 2)
+                self.assertTrue(all(result["status"] == 0 for result in report["results"]))
+                self.assertEqual(report["native_arm64_atomic"]["success"], terminal == "pass")
+                for actions in report["native_arm64_atomic"]["actions"].values():
+                    self.assertEqual(actions, ["run", terminal])
+
     def test_partition_keeps_existing_and_new_tests_exactly_once(self):
         names = [f"TestCase{i}" for i in range(100)] + ["ExampleBuild", "FuzzInputs", "BenchmarkGo126New"]
         groups = run_build_tests.partition(names, 2)
@@ -37,8 +189,9 @@ class BuildShardsTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     run_build_tests.merge_coverage([first, second], output)
 
-    @unittest.skipUnless(shutil.which("go") and shutil.which("git"), "requires Go and Git")
     def test_real_go_tests_keep_helpers_coverage_and_failures(self):
+        for tool in ("go", "git"):
+            self.assertIsNotNone(shutil.which(tool), "required CI tool is missing: " + tool)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "repo with spaces"
             root.mkdir()
@@ -96,6 +249,9 @@ func TestHelper(t *testing.T) {
  if os.Getenv("SHARD_HELPER") != "1" { t.Skip("subprocess only") }
  if ChildOnly() != 33 { t.Fatal("child") }
 }
+func BenchmarkGo126Fixture(b *testing.B) {
+ for i := 0; i < b.N; i++ { if First() != 11 { b.Fatal("benchmark") } }
+}
 """.replace("FIRST", names[0]).replace("SECOND", names[1]), encoding="utf-8")
             unused = root / "unused"
             unused.mkdir()
@@ -139,6 +295,45 @@ func TestHelper(t *testing.T) {
             self.assertTrue(child.endswith(" 1"), child)
             unused = next(line for line in results[1].splitlines() if "fixture.go:5." in line)
             self.assertTrue(unused.endswith(" 0"), unused)
+            # The core lists independently; two outer parts execute eight
+            # logical commands with two workers apiece. The collector is a
+            # real subprocess and must preserve helper-only and zero coverage.
+            common = ["--shards", "8", "--workers", "2", "--parts", "2",
+                      "--ldflags=" + ldflags]
+            collector = script.with_name("collect_build_test_parts.py")
+            shutil.copy2(Path(run_build_tests.__file__).with_name(collector.name), collector)
+            subprocess.run(["git", "add", ".github/scripts"], cwd=root, check=True,
+                           capture_output=True)
+            subprocess.run(["git", "-c", "user.name=CI fixture", "-c", "user.email=ci@example.invalid",
+                            "commit", "-qm", "fixture"], cwd=root, check=True, capture_output=True)
+            result = subprocess.run([sys.executable, str(script), *common, "--inventory-only"],
+                                    cwd=root, env=environment, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            inventory = root / "go-test-timings/build-inventory.json"
+            parts = root / "parts"
+            for part in range(2):
+                result = subprocess.run([sys.executable, str(script), *common, "--part", str(part)],
+                                        cwd=root, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                report = json.loads((root / "go-test-timings/build-shards.json").read_text())
+                self.assertEqual(len(report["results"]), 4)
+                self.assertTrue(report["success"])
+                (root / "go-test-timings/build.jsonl").write_text(result.stdout, encoding="utf-8")
+                shutil.copytree(root / "go-test-timings", parts / str(part))
+            command = [sys.executable, str(collector), "--inventory", str(inventory),
+                       "--parts-directory", str(parts)]
+            result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                                    text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((root / "coverage-build.txt").read_text(), results[0])
+            # A missing part may retain its raw evidence but cannot publish
+            # the profile from the preceding successful collection.
+            (parts / "1/build-shards.json").unlink()
+            result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                                    text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing or duplicate build parts", result.stderr)
+            self.assertFalse((root / "coverage-build.txt").exists())
 
 
 if __name__ == "__main__":
