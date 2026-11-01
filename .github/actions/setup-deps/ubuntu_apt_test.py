@@ -10,8 +10,14 @@ from ubuntu_apt import configure
 class UbuntuAPTTest(unittest.TestCase):
     def test_runner_mirror_lists(self):
         for arch, archive, security in (
-            ("amd64", "https://archive.ubuntu.com/ubuntu/",
-             "https://security.ubuntu.com/ubuntu/"),
+            ("amd64", "http://archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+             "http://security.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2"),
+            ("i386", "http://archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+             "http://security.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2"),
             ("arm64", "https://ports.ubuntu.com/ubuntu-ports/",
              "https://ports.ubuntu.com/ubuntu-ports/"),
         ):
@@ -42,6 +48,19 @@ class UbuntuAPTTest(unittest.TestCase):
             self.assertFalse((root / "apt-mirrors.txt").exists())
             self.assertFalse((root / "apt-mirrors-security.txt").exists())
             self.assertTrue((root / "apt.conf.d" / "80-llgo-downloads").is_file())
+
+    def test_transport_fallback_preserves_authentication_and_strict_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "apt.conf.d").mkdir()
+            configure(root, "amd64")
+            settings = (root / "apt.conf.d" / "80-llgo-downloads").read_text()
+            self.assertIn('APT::Update::Error-Mode "any";', settings)
+            self.assertIn('Acquire::Retries "3";', settings)
+            self.assertNotIn("AllowUnauthenticated", settings)
+            self.assertNotIn("AllowInsecure", settings)
+            self.assertNotIn("Verify-Peer", settings)
+            self.assertNotIn("Verify-Host", settings)
 
 
 if __name__ == "__main__":
