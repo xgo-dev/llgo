@@ -95,25 +95,22 @@ run_worker_llgo_test() {
 run_worker_go_test() {
 	local target="$1"
 	local output="${work_dir}/test-go-${target}.out"
-	local module="${work_dir}/test-go-${target}.mjs"
 	# Run the full Go-language package: the small reflection fixture alone
 	# does not exercise continuous collection after the larger live heap.
 	# Collection-heavy cases can exceed three minutes after the larger live
 	# heap. Budget this package separately, including compilation, while
 	# retaining the shorter limits on the small acceptance fixtures.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
-		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
-		-skip '^TestRuntimeNumGoroutineIncludesNewProc$' \
+		-target "${target}" -emulator -v -count=1 -timeout=480s \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
-	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
-	# that subprocess itself; reuse the compiled module in a fresh process so
-	# exiting goroutines cannot cancel the measured count increment.
-	run_with_timeout env LLGO_WASM_WORKERS=2 \
-		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
-		-test.v -test.count=1 -test.timeout=180s \
-		-test.run '^TestRuntimeNumGoroutineIncludesNewProc$' \
-		2>&1 | tee "${output}.numgoroutine"
+	# Use the independent counter-test package so neither earlier test bodies
+	# nor test/go's init fixtures can cancel the measured count increment.
+	# Wasm cannot spawn the os/exec child used by native repetitions.
+	run_with_timeout env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
+		-target "${target}" -emulator -v -count=1 -timeout=180s \
+		-run '^TestRuntimeNumGoroutineIncludesNewProc$' \
+		"${repo_root}/test/go/numgoroutine" 2>&1 | tee "${output}.numgoroutine"
 	grep -Fxq "PASS" "${output}.numgoroutine"
 }
 
@@ -129,7 +126,7 @@ run_libffi_go_test() {
 	fi
 	run_with_timeout env "${env_args[@]}" "${llgo_cmd}" test "${target_args[@]}" \
 		-tags=llgo.wasm.reflect.libffi -v -count=1 -timeout=180s \
-		"${repo_root}/test/go" 2>&1 | tee "${output}"
+		"${repo_root}/test/go" "${repo_root}/test/go/numgoroutine" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
 }
 

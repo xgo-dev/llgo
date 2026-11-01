@@ -38,16 +38,33 @@ func TestArm64HFAParameterLayout(t *testing.T) {
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()
 			tr := NewTransformer(prog, target.triple, "", true)
-			for _, base := range []llvm.Type{ctx.FloatType(), ctx.DoubleType()} {
+			for _, base := range []llvm.Type{ctx.FloatType(), ctx.DoubleType(), llvm.VectorType(ctx.FloatType(), 2), llvm.VectorType(ctx.FloatType(), 4), llvm.VectorType(ctx.Int8Type(), 16)} {
 				for n := 1; n <= 4; n++ {
 					// Nested arrays must use the same flattened HFA parameter.
 					typ := ctx.StructType([]llvm.Type{llvm.ArrayType(base, n)}, false)
 					info := checkTypeInfo(t, tr, typ, 1, AttrWidthType, llvm.ArrayType(base, n).String())
-					if uint64(info.StackAlign) != target.stackAlign {
-						t.Fatalf("%s: stack alignment = %d, want %d", typ, info.StackAlign, target.stackAlign)
+					wantAlign := target.stackAlign
+					if wantAlign != 0 && tr.Alignof(base) == 16 {
+						wantAlign = 16
+					}
+					if uint64(info.StackAlign) != wantAlign {
+						t.Fatalf("%s: stack alignment = %d, want %d", typ, info.StackAlign, wantAlign)
 					}
 					checkTypeInfo(t, tr, typ, 0, AttrNone, typ.String())
 				}
+			}
+			vec := llvm.VectorType(ctx.FloatType(), 4)
+			mixed := ctx.StructType([]llvm.Type{vec, llvm.VectorType(ctx.Int8Type(), 16)}, false)
+			checkTypeInfo(t, tr, mixed, 1, AttrWidthType, "[2 x <4 x float>]")
+			checkTypeInfo(t, tr, mixed, 0, AttrNone, mixed.String())
+			for _, nonHVA := range []llvm.Type{
+				ctx.StructType([]llvm.Type{vec, llvm.VectorType(ctx.FloatType(), 2)}, false),
+				ctx.StructType([]llvm.Type{vec, ctx.FloatType()}, false),
+				llvm.ArrayType(vec, 5),
+				llvm.ArrayType(llvm.VectorType(ctx.FloatType(), 8), 2),
+			} {
+				checkTypeInfo(t, tr, nonHVA, 1, AttrPointer, "ptr")
+				checkTypeInfo(t, tr, nonHVA, 0, AttrPointer, "ptr")
 			}
 			// A zero-sized alignment carrier retains a 16-byte-aligned HFA
 			// without contributing another homogeneous element.
@@ -65,6 +82,8 @@ func TestArm64HFAParameterLayout(t *testing.T) {
 			const ir = `
 %HFA = type { float, [2 x float] }
 %Padded = type { [0 x i128], float }
+%HVA = type { <4 x float>, [2 x <16 x i8>] }
+define %HVA @vector_roundtrip(%HVA %x) { ret %HVA %x }
 define double @callee(double %a, %HFA %h) { ret double %a }
 define float @padded(%Padded %h) {
   %f = extractvalue %Padded %h, 1
@@ -88,6 +107,10 @@ define double @caller(ptr %p, double %a, %HFA %h) {
 			}
 			defer mod.Dispose()
 			tr.TransformModule("test", mod)
+			vector := mod.NamedFunction("vector_roundtrip").GlobalValueType()
+			if vector.ParamTypes()[0].String() != "[3 x <4 x float>]" || vector.ReturnType().StructName() != "HVA" {
+				t.Fatal("incorrect HVA signature", mod.String())
+			}
 			callee := mod.NamedFunction("callee")
 			if got := callee.GlobalValueType().ParamTypes()[1].String(); got != "[3 x float]" {
 				t.Fatalf("parameter = %s\n%s", got, mod.String())

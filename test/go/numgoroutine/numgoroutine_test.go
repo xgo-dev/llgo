@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-package gotest
+// This process-global counter test needs its own package: even a child of the
+// larger test/go binary reruns its init fixtures, whose goroutines may still
+// be exiting while the baseline is sampled.
+package numgoroutine_test
 
 import (
 	"os"

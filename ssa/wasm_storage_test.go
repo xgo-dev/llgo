@@ -429,9 +429,22 @@ func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 	}
 
 	pkg := prog.NewPackage("p", "example.com/p")
+	// Go expressions use 64-bit uintptr values even when their destination
+	// is a native C field. Exercise both global and instruction aggregates.
+	word := prog.IntVal(7, prog.Uintptr())
+	constant := prog.ConstStruct(typ, []Expr{prog.Nil(prog.VoidPtr()), word})
+	if got := constant.impl.Operand(1).Type(); got != nativeWord.ll {
+		t.Fatalf("native constant field type = %s, want %s", got, nativeWord.ll)
+	}
+	pkg.NewVarEx("example.com/p.iovec", prog.Pointer(typ)).Init(constant)
 	fn := pkg.NewFunc("example.com/p.root", NoArgsNoRet, GoDecl)
 	b := fn.MakeBody(1)
+	aggregate := b.Aggregate(typ, prog.Nil(prog.VoidPtr()), word)
+	if got := b.wrapStructField(typ, 1, word.impl).Type(); got != nativeWord.ll {
+		t.Fatalf("native aggregate field type = %s, want %s", got, nativeWord.ll)
+	}
 	iovec := b.Alloc(typ, false)
+	b.Store(iovec, aggregate)
 	size := b.FieldAddr(iovec, 1)
 	b.Store(size, prog.IntVal(7, prog.Uintptr()))
 	b.Load(size).SetVolatile(true)
