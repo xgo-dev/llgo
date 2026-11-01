@@ -5,11 +5,11 @@ that backend; they do not introduce an M:N scheduler on native or WASI targets.
 
 ## Fixed failure modes
 
-- The default runner is the unmodified Wasmer 7.5.0 CLI with Cranelift on Unix
-  and V8 on Windows,
+- The default runner is the Wasmer CLI pinned by [the installer](install_wasmer.sh),
+  with Cranelift on Unix and V8 on Windows,
   standard Wasm EH, SIMD and shared memory. LLVM emits standard EH directly
   with `-wasm-use-legacy-eh=false`, including the LTO link; no Binaryen
-  translation or runtime patch is needed. WASI libc supplies pthread creation
+  exception translation is needed. WASI libc supplies pthread creation
   and TLS, and the runtime maps `pthread_exit` to `wasix_32v1.thread_exit`.
   This is a Preview 1 + WASI threads + WASIX thread-exit host contract, not a
   portable single-thread Preview 1 binary. The earlier WAMR exception failures
