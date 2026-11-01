@@ -124,7 +124,7 @@ function Get-ReleaseMSVCLinkFlags {
 function Get-ReleaseCompilerLinkFlags {
   param([string]$Version, [string]$BuildTime)
 
-  # Release ZIPs retain Go symbols and runtime metadata, but omit bulky DWARF.
+  # Release ZIPs retain runtime metadata, but omit bulky DWARF.
   return "-w -X github.com/xgo-dev/llgo/internal/env.buildVersion=v$Version " +
     "-X github.com/xgo-dev/llgo/internal/env.buildTime=$BuildTime"
 }
