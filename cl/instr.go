@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -1059,7 +1060,7 @@ func computeRuntimeCallerFuncSets(recover *recoverFacts, pkg *ssa.Package, funcs
 		// so statement anchors are free of the usual inlining cost — their
 		// panic-traceback lines become exact instead of
 		// declaration-adjacent.
-		if hasNoInlineDirective(fn) {
+		if directive.ReadFunctionPragmas(fn).NoInline {
 			frames[fn] = true
 			continue
 		}
