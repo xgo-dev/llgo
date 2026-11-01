@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -838,5 +839,19 @@ func get() Handle { return value }
 	}
 	if !strings.Contains(ir, `call ptr @"example.com/locality.__llgo_local_block"()`) {
 		t.Fatalf("named pointer did not use package storage:\n%s", ir)
+	}
+}
+
+func TestPreparedFunctionDirectivesIncludeLocalInitializerHelpers(t *testing.T) {
+	_, ir := compileLocalitySourceWithOptions(t, `package locality
+//go:noinline
+func mark(value int) int { return value }
+//llgointernal:tls
+var value = mark(7)
+func read() int { return value }
+`, Options{PreloadedSyntax: true})
+	helper := regexp.MustCompile(`(?s)define [^\n]*@"example[.]com/locality[.]__llgo_local_init_0"\([^\n]*\).*?\n}`).FindString(ir)
+	if !strings.Contains(helper, `call i64 @"example.com/locality.mark"`) {
+		t.Fatalf("generated initializer lost its body:\n%s", helper)
 	}
 }

@@ -214,11 +214,8 @@ func genExternDeclsByClang(compiler *llclang.Cmd, pkg *aPackage, src string, cfl
 			// C takes the address of the public export, whose final-link wrapper
 			// registers foreign threads. A same-named Go implementation (or a
 			// private Go function shadowing a renamed export) must not bypass it.
-			for _, exportName := range pkg.LPkg.ExportFuncs() {
-				if exportName == cfuncName {
-					gofn = pkg.LPkg.FuncOf(cfuncName)
-					break
-				}
+			if pkg.LPkg.IsExportedSymbol(cfuncName) {
+				gofn = pkg.LPkg.FuncOf(cfuncName)
 			}
 			if gofn != nil {
 				pkg.LPkg.ReplaceVarWith(cgoName, gofn.Expr)

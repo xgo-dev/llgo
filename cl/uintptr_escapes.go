@@ -20,6 +20,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -130,7 +131,7 @@ func hasUintptrEscapesDirective(fn *ssa.Function) bool {
 		if origin := fn.Origin(); origin != nil && visit(origin) {
 			return true
 		}
-		if hasFuncDirective(fn, "go:uintptrescapes") {
+		if directive.ReadFunctionPragmas(fn).UintptrEscapes {
 			return true
 		}
 		// SSA promoted-method wrappers, thunks (method expressions), and

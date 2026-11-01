@@ -962,7 +962,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	output := conf.OutFile != ""
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
-		patches: patches, callerTracking: cl.NewCallerTracking(),
+		patches: patches, callerTracking: cl.NewCallerTrackingWithSyntax(prog),
 		initial: initial, mode: mode,
 		fingerprinting:   make(map[string]bool),
 		pkgs:             map[*packages.Package]Package{},
@@ -1536,7 +1536,7 @@ func hasLocalCExports(pkg llssa.Package) bool {
 	if pkg == nil {
 		return false
 	}
-	for name := range pkg.ExportFuncs() {
+	for name := range pkg.Exports() {
 		if !strings.Contains(name, ".") || strings.HasPrefix(name, pkg.Path()+".") {
 			return true
 		}
@@ -2788,7 +2788,7 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 	// root, so their final linker names must seed the analysis explicitly.
 	var exports []string
 	for _, pkg := range pkgs {
-		for goName, cName := range pkg.LPkg.ExportFuncs() {
+		for goName, cName := range pkg.LPkg.Exports() {
 			name := cName
 			if fn := pkg.LPkg.FuncOf(goName); fn != nil && fn.Name() == goName {
 				name = goName
@@ -2811,7 +2811,7 @@ func packageCExportDeclarations(pkg llssa.Package) []cExport {
 		return nil
 	}
 	var exports []cExport
-	for goName, cName := range pkg.ExportFuncs() {
+	for goName, cName := range pkg.Exports() {
 		if strings.Contains(goName, ".") && !strings.HasPrefix(goName, pkg.Path()+".") {
 			continue
 		}
@@ -3708,7 +3708,7 @@ func dropUnusedWindowsTestMain(ctx *context, pkg *aPackage, mod gllvm.Module) {
 	if fn.IsNil() || fn.IsDeclaration() || !fn.FirstUse().IsNil() || ctx.prog.HasLinknameTarget(symbol) {
 		return
 	}
-	if _, exported := ctx.prog.PackageExport(symbol); exported {
+	if _, exported := pkg.LPkg.LookupExport(symbol); exported {
 		return
 	}
 	fn.EraseFromParentAsFunction()

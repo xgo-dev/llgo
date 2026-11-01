@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"iter"
 	"log"
+	"maps"
 	"runtime"
 	"strconv"
 	"unsafe"
@@ -1036,15 +1038,35 @@ func (p Package) FinishMetaCollection() error {
 }
 
 func (p Package) SetExport(name, export string) {
+	previous, replaced := p.export[name]
 	p.export[name] = export
 	p.preserveSyms[export] = struct{}{}
+	if replaced && previous != export {
+		// Keep the symbol index exact when a declaration's export is replaced.
+		// Other declarations may still export the previous symbol.
+		for _, symbol := range p.export {
+			if symbol == previous {
+				return
+			}
+		}
+		delete(p.preserveSyms, previous)
+	}
 }
 
-func (p Package) ExportFuncs() map[string]string {
-	return p.export
+// LookupExport returns the public export name for a Go declaration.
+func (p Package) LookupExport(goName string) (string, bool) {
+	export, ok := p.export[goName]
+	return export, ok
 }
 
-func (p Package) isPreservedName(name string) bool {
+// Exports iterates the Go declaration names and their public export names.
+// Both function and variable exports are included.
+func (p Package) Exports() iter.Seq2[string, string] {
+	return maps.All(p.export)
+}
+
+// IsExportedSymbol reports whether name is a public export symbol.
+func (p Package) IsExportedSymbol(name string) bool {
 	_, ok := p.preserveSyms[name]
 	return ok
 }

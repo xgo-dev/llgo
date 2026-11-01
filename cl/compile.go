@@ -32,7 +32,6 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/blocks"
 	"github.com/xgo-dev/llgo/cl/ssawrap"
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/typepatch"
@@ -701,11 +700,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			// generated at final link. Give that entry the native wasm ABI so
 			// Memory32 size_t/uintptr_t parameters remain i32 while the function
 			// body continues to use the Go 64-bit word model.
-			for _, exportName := range p.pkg.ExportFuncs() {
-				if exportName == name {
-					cc = llssa.CDecl
-					break
-				}
+			if p.pkg.IsExportedSymbol(name) {
+				cc = llssa.CDecl
 			}
 		}
 		if hasCtx {
@@ -723,7 +719,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 		}
 	}
-	noInlineDirective := hasNoInlineDirective(f)
+	noInlineDirective := p.prog.FunctionDirectives(f).NoInline
 	runtimeStackNoInline := needsRuntimeStackNoInline(pkgTypes, f)
 	pcLineNoInline := p.needsPCLineNoInline(f)
 	usesRecover := p.functionUsesRecover(f)
@@ -894,23 +890,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 // affected.
 func funcInfoDisplayName(goName string) string {
 	return normalizeRuntimeAnonFuncName(goName)
-}
-
-func hasNoInlineDirective(f *ssa.Function) bool {
-	return hasFuncDirective(f, "go:noinline")
-}
-
-func hasFuncDirective(f *ssa.Function, name string) bool {
-	decl, _ := f.Syntax().(*ast.FuncDecl)
-	if decl == nil || decl.Doc == nil {
-		return false
-	}
-	for _, item := range directive.ParseGroup(decl.Doc) {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func needsRuntimeStackNoInline(pkg *types.Package, f *ssa.Function) bool {
@@ -2961,6 +2940,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
 			return nil, nil, err
 		}
+		prog.PrepareSSAFunctionDirectives(pkgProg)
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err
@@ -2978,7 +2958,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 
 	if ct == nil {
-		ct = NewCallerTracking()
+		ct = NewCallerTrackingWithSyntax(prog)
 	}
 	ctx := &context{
 		prog:             prog,
@@ -3015,7 +2995,7 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		}
 	}
 	ctx.initPyModule()
-	ctx.initFiles(pkgPath, files, cPkg)
+	ctx.initFiles(files)
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)

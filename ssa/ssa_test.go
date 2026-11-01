@@ -2214,8 +2214,8 @@ func TestPackageCoverageHelpers(t *testing.T) {
 	prog := NewProgram(nil)
 	_ = prog.CIntPtr()
 	pkg := prog.NewPackage("bar", "foo/bar")
-	if len(pkg.ExportFuncs()) != 0 {
-		t.Fatal("ExportFuncs should be empty for new package")
+	for range pkg.Exports() {
+		t.Fatal("Exports should be empty for new package")
 	}
 
 	fn := pkg.NewFunc("noop", NoArgsNoRet, GoDecl)
