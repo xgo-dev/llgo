@@ -102,6 +102,20 @@ static unsigned __stdcall collect(void *unused)
     return 0;
 }
 
+/* Force the registration/start ordering which exposed the readiness race. */
+static unsigned __stdcall delayed_registered_heap(void *unused)
+{
+    struct GC_stack_base base;
+    unsigned result;
+    Sleep(100);
+    if (GC_get_stack_base(&base) != GC_SUCCESS
+        || GC_register_my_thread(&base) != GC_SUCCESS)
+        TerminateProcess(GetCurrentProcess(), 11);
+    result = hold_heap(unused);
+    GC_unregister_my_thread();
+    return result;
+}
+
 int main(void)
 {
     HANDLE threads[2], ready[2];
@@ -114,7 +128,13 @@ int main(void)
     collector_ready = CreateEventW(NULL, TRUE, FALSE, NULL);
     collect_start = CreateEventW(NULL, TRUE, FALSE, NULL);
     release_heap = CreateEventW(NULL, TRUE, FALSE, NULL);
-    threads[0] = (HANDLE)GC_beginthreadex(NULL, 0, hold_heap, NULL, 0, NULL);
+    if (GetEnvironmentVariableA("LLGO_TEST_GC_DELAY_REGISTER", NULL, 0)) {
+        GC_allow_register_threads();
+        threads[0] = (HANDLE)_beginthreadex(NULL, 0, delayed_registered_heap,
+                                          NULL, 0, NULL);
+    } else {
+        threads[0] = (HANDLE)GC_beginthreadex(NULL, 0, hold_heap, NULL, 0, NULL);
+    }
     threads[1] = (HANDLE)GC_beginthreadex(NULL, 0, collect, NULL, 0, NULL);
     if (!threads[0] || !threads[1])
         return 4;

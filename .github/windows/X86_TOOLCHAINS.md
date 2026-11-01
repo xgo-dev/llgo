@@ -47,5 +47,7 @@ application exception-handler preservation. The native MinGW x86 job runs the
 check with an external timeout. Both helper routines acknowledge completion of
 GC thread registration before collection starts; a returned thread handle alone
 does not establish readiness and can deadlock the collection callback.
+CI repeats the test with an explicit registration delay to keep that ordering
+regression deterministic.
 Dependency cache keys include the patch and
 port preparation script; upgrading BDWGC requires reviewing the patch.
