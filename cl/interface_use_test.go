@@ -13,7 +13,7 @@ import (
 func TestInterfaceUseLowering(t *testing.T) {
 	const src = `package domain
 //llgo:link used llgo.interfaceKindUsed
-func used(kind int) bool
+func used(kind int) bool { panic("placeholder") }
 type Alias = float64
 func Basic(x any) (float64, bool) { v, ok := x.(float64); return v, ok }
 func Aliased(x any) (Alias, bool) { v, ok := x.(Alias); return v, ok }
@@ -73,7 +73,7 @@ func TestInterfaceKindUsedInvalidArguments(t *testing.T) {
 		{"string", "func used(kind int) bool", fmt.Sprintf("used(%d)", types.String), "expected a constant floating-point kind"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "package domain\n//llgo:link used llgo.interfaceKindUsed\n" + tc.decl + "\nfunc bad(kind int) bool { return " + tc.call + " }"
+			src := "package domain\n//llgo:link used llgo.interfaceKindUsed\n" + tc.decl + " { panic(\"placeholder\") }\nfunc bad(kind int) bool { return " + tc.call + " }"
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: "wasm"})
 			defer prog.Dispose()

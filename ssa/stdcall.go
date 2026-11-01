@@ -130,6 +130,12 @@ func (b Builder) setNativeCallConv(call llvm.Value, fn Expr) {
 func (b Builder) stdcallCallback(typ types.Type, fn Expr) Expr {
 	dst := b.Prog.Type(typ, Stdcall)
 	expected := b.Prog.stdcallCallConv()
+	if fn.impl.IsNull() {
+		return b.Prog.Nil(dst)
+	}
+	if b.Prog.isStdcallType(fn.raw.Type) {
+		return Expr{fn.impl, dst}
+	}
 	direct := fn.impl.IsAFunction()
 	if direct.IsNil() {
 		panic("stdcall callback must be a direct function reference")

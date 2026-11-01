@@ -2819,7 +2819,11 @@ func packageCExportDeclarations(pkg llssa.Package) []cExport {
 		if fn := pkg.FuncOf(goName); fn != nil {
 			sig, _ = fn.RawType().(*types.Signature)
 		}
-		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig})
+		native, isNative := pkg.Prog.NativeExport(goName)
+		if isNative {
+			sig = pkg.NativeExportSignature(goName)
+		}
+		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig, callConv: native.CallConv})
 	}
 	return exports
 }

@@ -530,7 +530,7 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*typ
 
 func (p Program) SetLinkname(name, link string) {
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.linknames[name] = link
+	p.packageSyntax.setLinkname(name, link)
 	p.packageSyntax.mu.Unlock()
 }
 
@@ -566,12 +566,7 @@ func (p Program) WasmImport(name string) (module, importName string, ok bool) {
 func (p Program) HasLinknameTarget(target string) bool {
 	p.packageSyntax.mu.RLock()
 	defer p.packageSyntax.mu.RUnlock()
-	for _, link := range p.packageSyntax.linknames {
-		if link == target {
-			return true
-		}
-	}
-	return false
+	return p.packageSyntax.linknameTargets[target] != 0
 }
 
 type closureEnvDirectiveKey struct {
@@ -1007,9 +1002,10 @@ type aPackage struct {
 	metaBuilder         *meta.Builder
 	abiTypeWithUncommon map[llvm.Value]struct{}
 
-	export         map[string]string   // pkgPath.nameInPkg => exportname
-	preserveSyms   map[string]struct{} // set of exported symbol names
-	llvmUsedValues []llvm.Value
+	nativeExportSignatures map[string]*types.Signature
+	export                 map[string]string   // pkgPath.nameInPkg => exportname
+	preserveSyms           map[string]struct{} // set of exported symbol names
+	llvmUsedValues         []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
 
@@ -1038,6 +1034,20 @@ func (p Package) FinishMetaCollection() error {
 func (p Package) SetExport(name, export string) {
 	p.export[name] = export
 	p.preserveSyms[export] = struct{}{}
+}
+
+// SetNativeExportSignature retains the checked Go signature before ABI lowering.
+// Preloading runs before type checking, and RawType already contains lowered
+// closure representations, so neither supplies a native wrapper's source type.
+func (p Package) SetNativeExportSignature(name string, sig *types.Signature) {
+	if p.nativeExportSignatures == nil {
+		p.nativeExportSignatures = make(map[string]*types.Signature)
+	}
+	p.nativeExportSignatures[name] = sig
+}
+
+func (p Package) NativeExportSignature(name string) *types.Signature {
+	return p.nativeExportSignatures[name]
 }
 
 func (p Package) ExportFuncs() map[string]string {
