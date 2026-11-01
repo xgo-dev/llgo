@@ -16,6 +16,48 @@ import run_build_tests
 
 
 class BuildShardsTest(unittest.TestCase):
+    def test_worker_reassembles_benchmark_output_without_hiding_incomplete_or_duplicate_results(self):
+        name = "BenchmarkGo126Fragment"
+        run = {"Package": run_build_tests.PACKAGE, "Test": name, "Action": "run"}
+        output = {**run, "Action": "output", "OutputType": "frame"}
+        prefix = {**output, "Output": name + "-2\t"}
+        metrics = {**output, "Output": "1\t292.0 ns/op\n"}
+        complete = {**output, "Output": prefix["Output"] + metrics["Output"]}
+        unrelated = {**metrics, "Package": "another/package"}
+        variants = (
+            ("complete", [run, complete], 0),
+            ("split", [run, prefix, metrics], 0),
+            ("interleaved-package", [run, prefix, unrelated, metrics], 0),
+            ("optional-bench-frame", [run, prefix, metrics,
+                                      {**run, "Test": name + "-2", "Action": "bench"}], 0),
+            ("missing-metrics", [run, prefix], 1),
+            ("duplicate-result", [run, prefix, metrics, complete], 1),
+        )
+        for label, events, expected in variants:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = argparse.Namespace(workers=1, gomaxprocs=2, overlay="", ldflags="",
+                                          require_arm64_atomic=False)
+
+                def start(command, **unused):
+                    profile = next(word.split("=", 1)[1] for word in command
+                                   if word.startswith("-coverprofile="))
+                    Path(profile).write_text("mode: set\np/a.go:1.1,2.2 1 1\n")
+                    process = mock.MagicMock()
+                    process.__enter__.return_value = process
+                    process.stdout = iter(json.dumps(event) + "\n" for event in events)
+                    process.wait.return_value = 0
+                    return process
+
+                with mock.patch.object(run_build_tests, "__file__", str(root / ".github/scripts/runner.py")), \
+                        mock.patch.object(run_build_tests.subprocess, "check_output",
+                                          side_effect=[name + "\n", b""]), \
+                        mock.patch.object(run_build_tests.subprocess, "Popen", side_effect=start), \
+                        mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = run_build_tests.run(args)
+                self.assertEqual(status, expected)
+
     def test_missing_required_tools_fail_before_starting_a_command(self):
         real_which = shutil.which
         for missing in ("go", "git"):
