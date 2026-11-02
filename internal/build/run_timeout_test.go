@@ -102,10 +102,22 @@ func assertTimeoutHelperStopped(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("descendant did not start: %v", err)
 	}
-	time.Sleep(150 * time.Millisecond)
-	after, err := os.Stat(path)
-	if err != nil || after.Size() != before.Size() {
-		t.Fatalf("descendant kept writing after timeout: %v", err)
+	// SIGKILL delivery and an in-flight write can finish after kill returns.
+	// Still reject a live descendant, but allow bounded time to become quiet.
+	deadline := time.Now().Add(time.Second)
+	for {
+		time.Sleep(150 * time.Millisecond)
+		after, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("descendant heartbeat after timeout: %v", err)
+		}
+		if after.Size() == before.Size() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("descendant kept writing after timeout: %d -> %d bytes", before.Size(), after.Size())
+		}
+		before = after
 	}
 }
 
