@@ -75,8 +75,12 @@ func TestSIMD256Calls(t *testing.T) {
 	}
 	checkSIMD256Lanes(t, updated.Values[0], func(i int) float32 { return a[i]*b[i] + a[i] })
 	checkSIMD256Lanes(t, updated.Values[1], func(i int) float32 { return b[i] })
-	if unsafe.Offsetof(block.Values) != 8 || unsafe.Sizeof(block) != 80 || unsafe.Alignof(block) != 8 {
-		t.Fatal("wide vector changed Go storage layout")
+	wantOffset, wantSize, wantAlign := uintptr(8), uintptr(80), uintptr(8)
+	if runtime.Compiler == "llgo" {
+		wantOffset, wantSize, wantAlign = 32, 128, 32
+	}
+	if unsafe.Offsetof(block.Values) != wantOffset || unsafe.Sizeof(block) != wantSize || unsafe.Alignof(block) != wantAlign {
+		t.Fatal("wide vector storage layout")
 	}
 	values := [10]archsimd.Float32x8{}
 	for j := range values {

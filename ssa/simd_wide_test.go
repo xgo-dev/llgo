@@ -23,7 +23,7 @@ func TestSIMD256StorageAndNativeBoundary(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	typ := prog.Type(vector, GoDecl)
-	if typ.ll.TypeKind() != llvm.VectorTypeKind || typ.ll.VectorSize() != 8 || prog.SizeOf(typ) != 32 || prog.AlignOf(typ) != 8 {
+	if typ.ll.TypeKind() != llvm.VectorTypeKind || typ.ll.VectorSize() != 8 || prog.SizeOf(typ) != 32 || prog.AlignOf(typ) != 32 {
 		t.Fatal("wide value or Go storage shape")
 	}
 	record := types.NewStruct([]*types.Var{
@@ -32,8 +32,8 @@ func TestSIMD256StorageAndNativeBoundary(t *testing.T) {
 		types.NewField(token.NoPos, nil, "suffix", types.Typ[types.Byte], false),
 	}, nil)
 	storage := prog.Type(record, GoDecl)
-	if prog.OffsetOf(storage, 1) != 8 || prog.OffsetOf(storage, 2) != 40 || prog.SizeOf(storage) != 48 {
-		t.Fatal("native vector alignment leaked into Go aggregate")
+	if prog.OffsetOf(storage, 1) != 32 || prog.OffsetOf(storage, 2) != 64 || prog.SizeOf(storage) != 96 {
+		t.Fatal("wide vector alignment was not preserved in Go aggregate")
 	}
 	for _, param := range []types.Type{vector, record, types.NewArray(vector, 2)} {
 		func() {
