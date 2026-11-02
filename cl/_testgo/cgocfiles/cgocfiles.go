@@ -21,8 +21,7 @@ var checkErrno = func(error) {}
 // CHECK: [[HAS_ERR:%[0-9]+]] = icmp ne i32 [[ERRNO]], 0
 // CHECK: [[ERRNO_VALUE:%[0-9]+]] = sext i32 [[ERRNO]] to i64
 // CHECK: store i64 [[ERRNO_VALUE]], ptr [[ERRNO_BOX:%[0-9]+]]
-// CHECK: [[ERRNO_ITAB:%[0-9]+]] = call ptr @"{{.*}}NewItab"(ptr {{.*}}, ptr @_llgo_syscall.Errno)
-// CHECK: [[ERR_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" {{.*}}, ptr [[ERRNO_BOX]], 1
+// CHECK: [[ERR_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[ERRNO_BOX]], 1
 // CHECK: br i1 [[HAS_ERR]], label %[[ERR_BLOCK:[^, ]+]], label %[[OK_BLOCK:[^, ]+]]
 // CHECK: [[ERR_PAIR:%[0-9]+]] = insertvalue { i32, %"{{.*}}iface" } {{.*}}, %"{{.*}}iface" [[ERR_IFACE]], 1
 // CHECK-NEXT: ret { i32, %"{{.*}}iface" } [[ERR_PAIR]]
