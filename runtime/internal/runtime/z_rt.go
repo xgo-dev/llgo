@@ -224,7 +224,6 @@ func Goexit() {
 func init() {
 	gp := getg()
 	gp.isMain = true
-	markTracebackOwned(gp)
 }
 
 // -----------------------------------------------------------------------------

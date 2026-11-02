@@ -2,4 +2,4 @@
 
 package runtime
 
-func markTracebackOwned(*g) {}
+func MarkMainThreadOwned() {}

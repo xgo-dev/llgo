@@ -34,6 +34,10 @@ atomics; it never calls Go, allocates, or acquires application locks.
 
 ## Linux ownership and barrier
 
+The [all-thread ownership contract](ALLTHREADS.md) defines thread classes,
+creation and exit ordering, signal and callback behavior, platform scope, and
+the production activation boundary for issue #2130.
+
 Public `AllThreadsSyscall` and `AllThreadsSyscall6` retain Go's libc/cgo guard
 and return `ENOTSUP` in LLGo native Linux executables and C shared/archive
 libraries. Every such executable links pthread/libc code; an import graph or
@@ -70,12 +74,13 @@ threads. On success, every other participant executes once; all result words
 and errno must agree. Disagreement, or a peer blocked after execution starts,
 terminates the process because partial state cannot be rolled back.
 
-The private bridge uses an explicit allowlist: raw `setuid`, `setgid`,
-`setreuid`, `setregid`, `setresuid`, `setresgid`, and `setgroups`. These change
-per-thread kernel credentials and return zero on success. Every other trap
+The private bridge uses an explicit allowlist: the harmless `getpid` probe and
+raw `setuid`, `setgid`, `setreuid`, `setregid`, `setresuid`, `setresgid`, and
+`setgroups`. The credential setters change per-thread kernel credentials and
+return zero on success. Every other trap
 returns `ENOTSUP` before executing the caller syscall, including process-wide
-operations such as `umask`, `chdir`, and `setsid`, and read-only probes such as
-`getpid`. No host-cooperation API or production enable switch is exposed.
+operations such as `umask`, `chdir`, and `setsid`, and thread-dependent probes
+such as `gettid`. No host-cooperation API or production enable switch is exposed.
 
 The tests cover executables and both C library modes on Linux/macOS, packed
 calls with GC, nested callbacks, signals and unwind, credential errors, and the
@@ -83,5 +88,9 @@ Linux native protocol under creation/exit stress plus ASan/UBSan. Executable
 and library-mode tests require `ENOTSUP`. A linked C shared-library integration
 test checks rejection before pthread creation, while its thread is live, and
 after joining it, including the direct runtime hook. A C-only native test
-supplies a controlled owned cohort for no-op `setresuid(-1, -1, -1)` calls,
-rejected process-wide calls with an unchanged umask, and barrier cancellation.
+supplies a controlled owned cohort for `getpid` and no-op
+`setresuid(-1, -1, -1)` calls, rejected process-wide calls with an unchanged
+umask, and barrier cancellation. Thread-local seccomp filters verify caller
+failure and fatal result disagreement. C hosts in both library modes exercise
+threads created before runtime initialization, adopted callbacks, and threads
+created afterward.

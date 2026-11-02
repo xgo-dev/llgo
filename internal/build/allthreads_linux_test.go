@@ -104,6 +104,64 @@ func main() {
 	}
 }
 
+func TestAllThreadsLibraryHost(t *testing.T) {
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
+		t.Skip("native Linux library host")
+	}
+	setPCLNIntegrationEnv(t)
+	flags, err := exec.Command("pkg-config", "--libs", "bdw-gc", "libffi").CombinedOutput()
+	if err != nil {
+		t.Fatalf("native library flags: %v\n%s", err, flags)
+	}
+	// libunwind is optional; native builds can use the compiler unwinder.
+	if unwind, err := exec.Command("pkg-config", "--libs", "libunwind").Output(); err == nil {
+		flags = append(flags, unwind...)
+	}
+	source, err := filepath.Abs("testdata/allthreads/library.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []BuildMode{BuildModeCShared, BuildModeCArchive} {
+		t.Run(string(mode), func(t *testing.T) {
+			dir := t.TempDir()
+			library := filepath.Join(dir, "liballthreads.a")
+			if mode == BuildModeCShared {
+				library = filepath.Join(dir, "liballthreads.so")
+			}
+			conf := NewDefaultConf(ModeBuild)
+			conf.BuildMode, conf.OutFile = mode, library
+			if _, err := Do([]string{source}, conf); err != nil {
+				t.Fatal(err)
+			}
+			object := filepath.Join(dir, "host.o")
+			args := []string{"-Wall", "-Wextra", "-Werror", "-pthread", "-c", "testdata/allthreads/host.c", "-o", object}
+			if mode == BuildModeCShared {
+				args = append(args, "-DSHARED")
+			}
+			if out, err := exec.Command("cc", args...).CombinedOutput(); err != nil {
+				t.Fatalf("compile host: %v\n%s", err, out)
+			}
+			binary := filepath.Join(dir, "host")
+			args = []string{object, "-o", binary}
+			if mode == BuildModeCArchive {
+				args = append(args, library)
+			}
+			args = append(args, "-pthread", "-ldl", "-lm", "-lresolv")
+			args = append(args, strings.Fields(string(flags))...)
+			if out, err := exec.Command("clang++", args...).CombinedOutput(); err != nil {
+				t.Fatalf("link host: %v\n%s", err, out)
+			}
+			ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, binary, library)
+			cmd.Env = append(os.Environ(), "GC_MARKERS=1")
+			if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "allthreads-library-ok") {
+				t.Fatalf("C library with preexisting and adopted threads: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 func TestAllThreadsNativeProtocol(t *testing.T) {
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		t.Skip("native Linux 64-bit signal protocol")
@@ -128,11 +186,29 @@ func TestAllThreadsNativeProtocol(t *testing.T) {
 			if out, err := exec.Command("cc", args...).CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
-			ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), time.Minute)
-			defer cancel()
-			out, err := exec.CommandContext(ctx, binary).CombinedOutput()
-			if err != nil || !strings.Contains(string(out), "allthreads-ok") {
-				t.Fatalf("cohort, cancellation and creation/exit stress: %v\n%s", err, out)
+			for _, scenario := range []struct {
+				name string
+				args []string
+				code int
+				want string
+			}{
+				{"cohort", nil, 0, "allthreads-ok"},
+				{"caller-error", []string{"caller-error"}, 0, "allthreads-caller-error-ok"},
+				{"peer-error", []string{"peer-error"}, 2, "AllThreadsSyscall results differ"},
+				{"probe-mismatch", []string{"probe-mismatch"}, 2, "AllThreadsSyscall results differ"},
+			} {
+				t.Run(scenario.name, func(t *testing.T) {
+					ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), time.Minute)
+					defer cancel()
+					cmd := exec.CommandContext(ctx, binary, scenario.args...)
+					out, err := cmd.CombinedOutput()
+					if len(scenario.args) != 0 && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 77 && strings.Contains(string(out), "allthreads: seccomp unavailable") {
+						t.Skip("thread-local seccomp filters unavailable on this host")
+					}
+					if ctx.Err() != nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != scenario.code || !strings.Contains(string(out), scenario.want) {
+						t.Fatalf("protocol %s: %v\n%s", scenario.name, err, out)
+					}
+				})
 			}
 		})
 	}

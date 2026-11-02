@@ -216,6 +216,10 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		}
 		defineCExportWrappers(mainPkg, cfg.cExports, nil)
 	}
+	var ownedInit llssa.Function
+	if cfg.rtInit && ctx.buildConf.Goos == "linux" && ctx.buildConf.Goarch != "wasm" {
+		ownedInit = declareNoArgFunc(mainPkg, rtPkgPath+".MarkMainThreadOwned")
+	}
 	var wasmRunMain llssa.Function
 	if wasmRuntimeScheduler {
 		defineWasmMainTask(mainPkg, packageInits, mainInit, mainMain)
@@ -238,6 +242,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		pyInit:       pyInit,
 		pyFinalize:   pyFinalize,
 		rtInit:       rtInit,
+		ownedInit:    ownedInit,
 		callbackInit: callbackInit,
 		processExit:  processExit,
 		stdioFlush:   stdioFlush,
@@ -467,6 +472,7 @@ type entryFunctions struct {
 	pyInit       llssa.Function
 	pyFinalize   llssa.Function
 	rtInit       llssa.Function
+	ownedInit    llssa.Function
 	callbackInit llssa.Function
 	processExit  llssa.Function
 	stdioFlush   llssa.Function
@@ -548,6 +554,9 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	}
 	if fns.rtInit != nil {
 		b.Call(fns.rtInit.Expr)
+	}
+	if fns.ownedInit != nil {
+		b.Call(fns.ownedInit.Expr)
 	}
 	if fns.callbackInit != nil {
 		b.Call(fns.callbackInit.Expr)
