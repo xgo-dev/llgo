@@ -13,7 +13,6 @@ LLGo contains source derived from the [TinyGo project](https://github.com/tinygo
 - firmware image support in `internal/firmware/esp.go`, `nrfutil.go`, `objcopy.go`, and `uf2.go`;
 - the marked flashing-support portions of `internal/flash/flash.go`;
 - serial monitoring and panic-location support in `internal/monitor/monitor.go`;
-- the deprecated archive builder in `chore/_deprecated/ar/ar.go`;
 - target configurations and support files under `targets`.
 
 Reference snapshots contemporaneous with the initial LLGo imports are:
