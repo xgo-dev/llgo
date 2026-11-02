@@ -1380,7 +1380,6 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 			lines[i] = replaceDiagnosticPrefix(lines[i], source.full, source.short)
 		}
 	}
-	lines = normalizeCompilerDiagnostics(lines)
 	lines = preferSpecificDiagnostics(lines)
 	var wanted []wantedError
 	sourceLines := make(map[string][]string, len(sources))
@@ -1474,22 +1473,6 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 		errs = append(errs, fmt.Errorf("unmatched errors:\n%s", strings.Join(local, "\n")))
 	}
 	return errors.Join(errs...)
-}
-
-// normalizeCompilerDiagnostics maps the go/types spellings emitted by llgo to
-// equivalent gc spellings already accepted by GOROOT's ERROR expressions.
-func normalizeCompilerDiagnostics(lines []string) []string {
-	for i, line := range lines {
-		diagnostic, ok := parseCompilerDiagnostic(line)
-		if !ok {
-			continue
-		}
-		message := normalizeCompilerDiagnosticMessage(diagnostic.message)
-		if message != diagnostic.message {
-			lines[i] = line[:len(line)-len(diagnostic.message)] + message
-		}
-	}
-	return lines
 }
 
 func normalizeCompilerDiagnosticMessage(message string) string {
@@ -1605,6 +1588,9 @@ func filterSecondaryDiagnostics(lines []string, matched []matchedDiagnostic, sou
 }
 
 func isSecondaryDiagnostic(diagnostic compilerDiagnostic, matched []matchedDiagnostic, source []string) bool {
+	// Classify equivalent secondary spellings without changing the diagnostic
+	// text used for ERROR matching or unmatched-error reports.
+	diagnostic.message = normalizeCompilerDiagnosticMessage(diagnostic.message)
 	if strings.HasPrefix(diagnostic.message, "initialization cycle for ") &&
 		hasMatchedDiagnostic(matched, diagnostic.file, diagnostic.line, func(item matchedDiagnostic) bool {
 			return strings.Contains(item.expected.pattern, "initialization loop")
@@ -2014,6 +2000,12 @@ func matchesExpectedDiagnostic(expected *regexp.Regexp, message string) bool {
 		aliases = []string{"string not terminated"}
 	}
 	aliases = append(aliases, goTypesDiagnosticAliases(message)...)
+	// Preserve diagnostics that already match upstream ERROR expressions. The
+	// alternate spelling is only a fallback, including aliases of that spelling.
+	if normalized := normalizeCompilerDiagnosticMessage(message); normalized != message {
+		aliases = append(aliases, normalized)
+		aliases = append(aliases, goTypesDiagnosticAliases(normalized)...)
+	}
 	for _, alias := range aliases {
 		if expected.MatchString(alias) {
 			return true
