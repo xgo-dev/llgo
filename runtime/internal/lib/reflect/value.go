@@ -2416,7 +2416,13 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		if fs.Typ.Size_ == 0 {
 			continue
 		}
-		fields = append(fields, toFFIType(fs.Typ))
+		if fs.Typ.Kind() == abi.Func {
+			// Field descriptors retain Go closure structs. A raw Func field is
+			// a native callback pointer, not a two-word Go function value.
+			fields = append(fields, ffi.TypePointer)
+		} else {
+			fields = append(fields, toFFIType(fs.Typ))
+		}
 		off = fs.Offset + fs.Typ.Size_
 	}
 	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
