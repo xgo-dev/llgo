@@ -3904,13 +3904,14 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
+	defer os.Remove(f.Name())
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return "", err
 	}
 	err = f.Close()
 	if err != nil {
-		return exportFile, err
+		return "", err
 	}
 	if ctx.buildConf.CheckLLFiles {
 		if msg, err := llcCheck(ctx.commands, f.Name()); err != nil {
@@ -3931,14 +3932,21 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
-	objFile.Close()
+	if err := objFile.Close(); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
 	args := []string{"-o", objFile.Name(), "-c", f.Name(), "-Wno-override-module"}
 	if ctx.shouldPrintCommands(false) {
 		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", f.Name(), pkgPath)
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.irCompiler()
-	return objFile.Name(), cmd.Compile(args...)
+	if err := cmd.Compile(args...); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
+	return objFile.Name(), nil
 }
 
 func llcCheck(commands commandEnv, exportFile string) (msg string, err error) {
