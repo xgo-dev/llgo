@@ -719,7 +719,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertIn("prepare", needs(job))
                 self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
                 self.assertEqual(job["runs-on"],
-                                 "${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}")
+                                 "${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os == 'windows-2025' && fromJSON(needs.prepare.outputs.windows_2025_runner) || matrix.os }}")
                 self.assertCountEqual(job["strategy"]["matrix"]["os"],
                                       ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2025"])
 
@@ -766,7 +766,8 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         job = workflow["jobs"]["prepare"]
         outputs = workflow["on"]["workflow_call"]["outputs"]
         self.assertEqual(set(outputs), {"run_code_ci", "run_doc_checks", "pr_head_sha",
-                                       "pr_merge_base", "linux_runner", "linux_large_runner"})
+                                       "pr_merge_base", "linux_runner", "linux_large_runner",
+                                       "windows_2022_runner", "windows_2025_runner"})
         for key in outputs:
             self.assertEqual(outputs[key]["value"], f"${{{{ jobs.prepare.outputs.{key} }}}}")
             self.assertEqual(job["outputs"][key], f"${{{{ steps.policy.outputs.{key} }}}}")
