@@ -21,7 +21,6 @@ import (
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
-	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
 // -----------------------------------------------------------------------------
@@ -36,8 +35,8 @@ type Chan struct {
 	elemsize int
 	closed   bool
 
-	// Published under mutex: nonzero when closed, buffered, or a sender is
-	// queued. Nonblocking receivers skip the lock and queues when this is zero.
+	// When enabled, published under mutex: nonzero when closed, buffered, or a
+	// sender is queued. Nonblocking receivers can skip the lock when it is zero.
 	// Blocking receives and all sends still inspect state under the lock.
 	recvReady uint32
 	recvx     int
@@ -169,20 +168,12 @@ func panicMakeChanSize() {
 	panic(errorString("makechan: size out of range"))
 }
 
-// unlock publishes a consistent receive-readiness snapshot. A nonblocking
+// unlock publishes a receive-readiness snapshot where enabled. A nonblocking
 // receiver may return default while another operation is still in progress;
 // once that operation unlocks, its readiness is visible through the atomic.
 // A positive snapshot is only a hint: selection and data access still lock.
 func (p *Chan) unlock() {
-	var ready uint32
-	if p.closed || p.qcount != 0 || p.sendq.first != nil {
-		ready = 1
-	}
-	// The mutex serializes publishers. Avoid a write when readiness has not
-	// changed; receivers take the lock before accessing values or closed state.
-	if atomic.Load(&p.recvReady) != ready {
-		atomic.Store(&p.recvReady, ready)
-	}
+	p.publishRecvReady()
 	p.mutex.Unlock()
 }
 
@@ -478,7 +469,7 @@ func chanTryRecvLocked(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, try
 
 func ChanTryRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, tryOK bool) {
 	checkSynctestChannel(p)
-	if p == nil || atomic.Load(&p.recvReady) == 0 {
+	if p == nil || !p.recvMayBeReady() {
 		return false, false
 	}
 	p.mutex.Lock()
@@ -519,7 +510,7 @@ func ChanClose(p *Chan) {
 	p.closed = true
 	// A woken receiver can observe close before this goroutine unlocks.
 	// Publish first so its subsequent nonblocking receive cannot miss close.
-	atomic.Store(&p.recvReady, 1)
+	p.publishRecvClosed()
 	for {
 		w := p.recvq.dequeue()
 		if w == nil {
@@ -633,7 +624,7 @@ func TrySelect(ops ...ChanOp) (isel int, recvOK, tryOK bool) {
 	for i := 0; i < n; i++ {
 		isel = (start + i) % n
 		op := ops[isel]
-		if op.C == nil || (!op.Send && atomic.Load(&op.C.recvReady) == 0) {
+		if op.C == nil || (!op.Send && !op.C.recvMayBeReady()) {
 			continue
 		}
 		op.C.mutex.Lock()
