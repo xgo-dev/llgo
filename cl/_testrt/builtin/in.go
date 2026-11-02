@@ -71,8 +71,9 @@ func demo() {
 // make([]byte, 4, 10) must preserve both the requested length and capacity.
 // CHECK: [[D_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
 // CHECK: [[D:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[D_STORAGE]], i64 1, i64 10, i64 0, i64 4, i1 true, i1 true, i1 true)
-// append(s, 5, 6, 7, 8) forwards the materialized four-element tail.
+// len("hello"[5:]) keeps the empty string slice's bounds.
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}String" { ptr @{{.*}}, i64 5 }, i64 5, i64 5)
+// append(s, 5, 6, 7, 8) forwards the materialized four-element tail.
 // CHECK: call void @llvm.memset.p0.i64(ptr [[INT_TAIL]], i8 0, i64 32, i1 false)
 // CHECK: [[INT_TAIL_0:%.*]] = getelementptr inbounds i64, ptr [[INT_TAIL]], i64 0
 // CHECK: store i64 5, ptr [[INT_TAIL_0]]

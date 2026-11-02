@@ -15,7 +15,11 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 	if !alloc.Heap || alloc.Comment != "varargs" || alloc.Block() == nil {
 		return false
 	}
-	array, ok := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+	pointer, ok := alloc.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	array, ok := pointer.Elem().Underlying().(*types.Array)
 	if !ok || p.prog.SizeOf(p.type_(array, llssa.GoDecl)) == 0 {
 		return false
 	}
@@ -40,6 +44,7 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 			}
 			for _, use := range uses {
 				store, ok := use.(*ssa.Store)
+				// Initializing a slot is safe; storing its address would escape.
 				if !ok || store.Block() != alloc.Block() || store.Addr != ref || store.Val == ref {
 					return false
 				}
@@ -50,6 +55,7 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 				return false
 			}
 			call, ok := uses[0].(*ssa.Call)
+			// The temporary is the copied source, never append's destination.
 			if !ok || call.Block() != alloc.Block() || len(call.Call.Args) != 2 || call.Call.Args[1] != ref || call.Call.Args[0] == ref {
 				return false
 			}
@@ -62,5 +68,6 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 			return false
 		}
 	}
+	// Require one consuming copy of the temporary's elements.
 	return appends == 1
 }
