@@ -955,7 +955,9 @@ jobs:
         # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
         # command and caller regressions exhausted the 60-minute job limit.
         suite: [runtime, workers, test-command, simd]
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+    # The complete profile/LTO matrices exceed the Qiniu template's disk even
+    # after temporary IR cleanup. Keep them on the hosted Ubuntu filesystem.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
@@ -1014,6 +1016,9 @@ jobs:
         run: |
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Report WebAssembly build disk usage
+        run: df -h . "$RUNNER_TEMP" /tmp
 
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
