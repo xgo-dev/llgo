@@ -2693,7 +2693,6 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
 			return
 		}
-		}
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {

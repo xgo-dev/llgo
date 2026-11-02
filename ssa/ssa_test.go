@@ -829,9 +829,9 @@ func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
 
 	pkg := prog.NewPackage("deadcodedrop", pkgTypes.Path())
 	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
-	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), GoDecl)
 	b := fn.MakeBody(1)
-	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
 	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
 		t.Fatal("deadcode-drop T2I emitted a static itab vtable")
 	}
@@ -927,7 +927,7 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 
 	pkg := prog.NewPackage("runtimeitab", pkgTypes.Path())
 	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
-	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), InGo)
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), GoDecl)
 	b := fn.MakeBody(1)
 	tabi := b.abiType(intf)
 	tcon := b.abiType(concrete)
@@ -936,7 +936,7 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	if !ok1 || !ok2 || itab1.impl != itab2.impl {
 		t.Fatal("repeated T2I did not reuse the static itab global")
 	}
-	b.Return(b.MakeInterface(prog.Type(intf, InGo), prog.Zero(prog.Type(concrete, InGo))))
+	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
 	b.EndBuild()
 
 	ir := pkg.String()
@@ -968,9 +968,9 @@ func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
 		types.NewVar(token.NoPos, nil, "", empty),
 		types.NewVar(token.NoPos, nil, "", empty),
 	)
-	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
 	b := fn.MakeBody(1)
-	tany := prog.Type(empty, InGo)
+	tany := prog.Type(empty, GoDecl)
 	e1 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("a", 28)))
 	e2 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("b", 28)))
 	b.Return(e1, e2)
@@ -1036,9 +1036,9 @@ func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
 	empty := types.NewInterfaceType(nil, nil)
 	empty.Complete()
 	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
-	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
 	b := fn.MakeBody(1)
-	tany := prog.Type(empty, InGo)
+	tany := prog.Type(empty, GoDecl)
 	c := prog.IntVal(42, prog.Int64())
 	e1 := b.MakeInterface(tany, c)
 	e2 := b.MakeInterface(tany, c)
@@ -1125,9 +1125,9 @@ func TestStaticIfaceBoxReusesByName(t *testing.T) {
 	empty := types.NewInterfaceType(nil, nil)
 	empty.Complete()
 	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
-	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
 	b := fn.MakeBody(1)
-	tany := prog.Type(empty, InGo)
+	tany := prog.Type(empty, GoDecl)
 	first := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
 	pkg.ifaceBoxByValue = nil
 	second := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
@@ -1160,9 +1160,9 @@ func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
 	empty.Complete()
 	z := types.NewStruct(nil, nil)
 	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
-	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), InGo)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
 	b := fn.MakeBody(1)
-	e := b.MakeInterface(prog.Type(empty, InGo), prog.Zero(prog.Type(z, InGo)))
+	e := b.MakeInterface(prog.Type(empty, GoDecl), prog.Zero(prog.Type(z, GoDecl)))
 	b.Return(e)
 	b.EndBuild()
 	zero := pkg.Module().NamedGlobal(moduleZeroName)

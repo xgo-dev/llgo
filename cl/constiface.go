@@ -49,8 +49,8 @@ func (p *context) foldConstantMakeValue(b llssa.Builder, fn *ssa.Function, call 
 	if !ok || c.Value == nil {
 		return llssa.Expr{}, false
 	}
-	x := b.Const(c.Value, p.type_(concrete, llssa.InGo))
-	retTy := p.type_(call.Signature().Results().At(0).Type(), llssa.InGo)
+	x := b.Const(c.Value, p.type_(concrete, llssa.GoDecl))
+	retTy := p.type_(call.Signature().Results().At(0).Type(), llssa.GoDecl)
 	return b.MakeInterface(retTy, x), true
 }
 
