@@ -36,8 +36,9 @@ type Chan struct {
 	elemsize int
 	closed   bool
 
-	// Published under mutex before unlock; zero means open with no buffered
-	// values or queued senders. Readers never inspect the queues without it.
+	// Published under mutex: nonzero when closed, buffered, or a sender is
+	// queued. Nonblocking receivers skip the lock and queues when this is zero.
+	// Blocking receives and all sends still inspect state under the lock.
 	recvReady uint32
 	recvx     int
 	sendx     int
@@ -177,7 +178,11 @@ func (p *Chan) unlock() {
 	if p.closed || p.qcount != 0 || p.sendq.first != nil {
 		ready = 1
 	}
-	atomic.Store(&p.recvReady, ready)
+	// The mutex serializes publishers. Avoid a write when readiness has not
+	// changed; receivers take the lock before accessing values or closed state.
+	if atomic.Load(&p.recvReady) != ready {
+		atomic.Store(&p.recvReady, ready)
+	}
 	p.mutex.Unlock()
 }
 

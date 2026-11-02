@@ -3,6 +3,7 @@ package gotest
 import (
 	"reflect"
 	"runtime"
+	"strconv"
 	"testing"
 )
 
@@ -142,5 +143,40 @@ func BenchmarkChannelPollEmpty(b *testing.B) {
 			b.Fatal("unexpected receive")
 		default:
 		}
+	}
+}
+
+func BenchmarkChannelBufferedRoundTrip(b *testing.B) {
+	for _, capacity := range []int{1, 64, 1024} {
+		b.Run(strconv.Itoa(capacity), func(b *testing.B) {
+			ch := make(chan int, capacity)
+			for i := 0; i < b.N; i++ {
+				ch <- i
+				if got := <-ch; got != i {
+					b.Fatal("incorrect value", got)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkChannelSPSC(b *testing.B) {
+	for _, capacity := range []int{1, 64, 1024} {
+		b.Run(strconv.Itoa(capacity), func(b *testing.B) {
+			ch := make(chan int, capacity)
+			done := make(chan struct{})
+			go func() {
+				for i := 0; i < b.N; i++ {
+					ch <- i
+				}
+				close(done)
+			}()
+			for i := 0; i < b.N; i++ {
+				if got := <-ch; got != i {
+					b.Fatal("incorrect value", got)
+				}
+			}
+			<-done
+		})
 	}
 }
