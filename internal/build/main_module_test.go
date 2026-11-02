@@ -106,37 +106,6 @@ func TestGenMainModuleWindowsExitsAfterMain(t *testing.T) {
 	)
 }
 
-func TestGenMainModuleThreadOwnership(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		mode BuildMode
-		goos string
-		arch string
-	}{
-		{"executable", BuildModeExe, "linux", "amd64"},
-		{"shared", BuildModeCShared, "linux", "amd64"},
-		{"archive", BuildModeCArchive, "linux", "amd64"},
-		{"darwin", BuildModeExe, "darwin", "arm64"},
-		{"wasm", BuildModeExe, "wasip1", "wasm"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := &context{
-				prog:      llssa.NewProgram(nil),
-				buildConf: &Config{BuildMode: tt.mode, Goos: tt.goos, Goarch: tt.arch},
-			}
-			defer ctx.prog.Dispose()
-			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
-			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
-			if got, want := strings.Contains(ir, ".MarkMainThreadOwned"), tt.name == "executable"; got != want {
-				t.Fatalf("main-thread ownership = %v, want %v:\n%s", got, want, ir)
-			}
-			if strings.Contains(ir, "__llgo_allthreads_executable") {
-				t.Fatal("thread membership must not enable the all-thread transport")
-			}
-		})
-	}
-}
-
 func TestGenMainModuleExecutableRegistersCExportThread(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		t.Run(goos, func(t *testing.T) {

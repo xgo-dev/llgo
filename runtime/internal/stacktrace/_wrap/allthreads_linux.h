@@ -172,10 +172,6 @@ static int allcall_complete_cohort(void)
 static int allcall_allowed_trap(uintptr_t trap)
 {
     switch (trap) {
-    /* A process-wide, read-only result also qualifies the barrier without
-     * requiring credentials or changing the caller's state. */
-    case SYS_getpid:
-        return 1;
     /* Kernel credentials are per-thread; these setters return zero on
      * success. Unlisted syscalls must not execute even on the caller. */
     case SYS_setuid: case SYS_setgid: case SYS_setreuid: case SYS_setregid:

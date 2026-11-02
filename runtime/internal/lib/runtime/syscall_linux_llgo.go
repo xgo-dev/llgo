@@ -15,11 +15,11 @@ type allThreadsCall struct {
 //go:linkname c_allThreadsCall C.llgo_traceback_all_threads_syscall
 func c_allThreadsCall(*allThreadsCall)
 
-// Production builds retain ENOTSUP, including executables: the registry cannot
-// exclude foreign C thread creators. The private native test transport freezes
-// registration/exit and parks its controlled cohort before any syscall runs.
-// A masked transport or pending creation returns EAGAIN before execution.
-// See runtime/ALLTHREADS.md for the ownership and activation requirements.
+// The native registry freezes creation/exit and parks the complete thread set
+// before any syscall runs. Libraries and processes with unregistered C threads
+// retain ENOTSUP. A masked transport or a pending creation returns EAGAIN before
+// executing anything. Calls must be nonblocking and preserve signal/thread
+// lifecycle; the native bridge rejects those incompatible syscall families.
 //
 //go:linkname syscall_runtime_doAllThreadsSyscall syscall.runtime_doAllThreadsSyscall
 //go:uintptrescapes
