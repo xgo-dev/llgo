@@ -121,6 +121,26 @@ func TestAMD64AlignedIntegerAggregate(t *testing.T) {
 	}
 }
 
+func BenchmarkAMD64NestedArrayClassification(b *testing.B) {
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	typ := ctx.Int8Type()
+	for depth := 0; depth < 18; depth++ {
+		typ = llvm.ArrayType(typ, 2)
+	}
+	ftyp := llvm.FunctionType(typ, []llvm.Type{typ}, false)
+	tr := NewTransformer(prog, prog.Target().Spec().Triple, "", false)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tr.GetTypeInfo(ctx, ftyp, typ, 1)
+	}
+}
+
 func TestAMD64PackedAggregate(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
@@ -131,30 +151,38 @@ func TestAMD64PackedAggregate(t *testing.T) {
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
 	packed := ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int64Type()}, true)
+	marker := llvm.ArrayType(llvm.VectorType(ctx.Int32Type(), 4), 0)
 	for _, tc := range []struct {
-		name   string
-		typ    llvm.Type
-		memory bool
+		name       string
+		typ        llvm.Type
+		byvalAlign int
 	}{
-		{"unaligned", packed, true},
-		{"nested", ctx.StructType([]llvm.Type{packed}, false), true},
-		{"array", llvm.ArrayType(packed, 1), true},
-		{"array stride", llvm.ArrayType(ctx.StructType([]llvm.Type{ctx.Int32Type(), ctx.Int8Type()}, true), 2), true},
-		{"aligned", ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int64Type()}, false), false},
-		{"packed aligned member", ctx.StructType([]llvm.Type{ctx.Int64Type()}, true), false},
-		{"unaligned empty member", ctx.StructType([]llvm.Type{ctx.Int8Type(), llvm.ArrayType(ctx.Int64Type(), 0)}, true), true},
-		{"unaligned empty member after array", ctx.StructType([]llvm.Type{llvm.ArrayType(ctx.Int8Type(), 2), llvm.ArrayType(ctx.Int64Type(), 0)}, true), true},
-		{"aligned empty member", ctx.StructType([]llvm.Type{llvm.ArrayType(ctx.Int8Type(), 8), llvm.ArrayType(ctx.Int64Type(), 0)}, true), false},
+		{"unaligned", packed, 8},
+		{"nested", ctx.StructType([]llvm.Type{packed}, false), 8},
+		{"array", llvm.ArrayType(packed, 1), 8},
+		{"array stride", llvm.ArrayType(ctx.StructType([]llvm.Type{ctx.Int32Type(), ctx.Int8Type()}, true), 2), 8},
+		{"nested array stride", llvm.ArrayType(llvm.ArrayType(ctx.StructType([]llvm.Type{ctx.Int16Type(), ctx.Int8Type()}, true), 2), 2), 8},
+		{"aligned nested array", llvm.ArrayType(llvm.ArrayType(ctx.Int16Type(), 2), 2), 0},
+		{"aligned", ctx.StructType([]llvm.Type{ctx.Int8Type(), ctx.Int64Type()}, false), 0},
+		{"packed aligned member", ctx.StructType([]llvm.Type{ctx.Int64Type()}, true), 0},
+		{"unaligned empty member", ctx.StructType([]llvm.Type{ctx.Int8Type(), llvm.ArrayType(ctx.Int64Type(), 0)}, true), 8},
+		{"unaligned empty member after array", ctx.StructType([]llvm.Type{llvm.ArrayType(ctx.Int8Type(), 2), llvm.ArrayType(ctx.Int64Type(), 0)}, true), 8},
+		{"aligned empty member", ctx.StructType([]llvm.Type{llvm.ArrayType(ctx.Int8Type(), 8), llvm.ArrayType(ctx.Int64Type(), 0)}, true), 0},
+		{"over-aligned packed member", ctx.StructType([]llvm.Type{marker, packed}, false), 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ftyp := llvm.FunctionType(tc.typ, []llvm.Type{tc.typ}, false)
 			for _, index := range []int{0, 1} {
 				info := tr.GetTypeInfo(ctx, ftyp, tc.typ, index)
-				if got := info.Kind == AttrPointer; got != tc.memory {
-					t.Fatalf("index %d: memory = %t, want %t", index, got, tc.memory)
+				memory := tc.byvalAlign != 0
+				if got := info.Kind == AttrPointer; got != memory {
+					t.Fatalf("index %d: memory = %t, want %t", index, got, memory)
 				}
-				if tc.memory && info.ByValAlign != 8 {
-					t.Fatalf("index %d: byval alignment = %d, want 8", index, info.ByValAlign)
+				if memory && info.Type1 != llvm.PointerType(tc.typ, 0) {
+					t.Fatalf("index %d: memory type = %s, want pointer", index, info.Type1)
+				}
+				if memory && index == 1 && info.ByValAlign != tc.byvalAlign {
+					t.Fatalf("parameter byval alignment = %d, want %d", info.ByValAlign, tc.byvalAlign)
 				}
 			}
 		})
