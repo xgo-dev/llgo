@@ -15,10 +15,9 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 	if !alloc.Heap || alloc.Comment != "varargs" || alloc.Block() == nil {
 		return false
 	}
-	pointer, ok := alloc.Type().Underlying().(*types.Pointer)
-	if !ok {
-		return false
-	}
+	// Alloc always has a raw pointer type; all values inspected below are SSA
+	// registers with an available Referrers list.
+	pointer := alloc.Type().(*types.Pointer)
 	array, ok := pointer.Elem().Underlying().(*types.Array)
 	if !ok || p.prog.SizeOf(p.type_(array, llssa.GoDecl)) == 0 {
 		return false
@@ -27,10 +26,7 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 		// Explicit roots trace heap objects, not the contents of stack arrays.
 		return false
 	}
-	refs, ok := nonDebugReferrers(alloc)
-	if !ok {
-		return false
-	}
+	refs, _ := nonDebugReferrers(alloc)
 	appends := 0
 	for _, ref := range refs {
 		if ref.Block() != alloc.Block() {
@@ -38,10 +34,7 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 		}
 		switch ref := ref.(type) {
 		case *ssa.IndexAddr:
-			uses, ok := nonDebugReferrers(ref)
-			if !ok {
-				return false
-			}
+			uses, _ := nonDebugReferrers(ref)
 			for _, use := range uses {
 				store, ok := use.(*ssa.Store)
 				// Initializing a slot is safe; storing its address would escape.
@@ -50,8 +43,8 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 				}
 			}
 		case *ssa.Slice:
-			uses, ok := nonDebugReferrers(ref)
-			if !ok || len(uses) != 1 {
+			uses, _ := nonDebugReferrers(ref)
+			if len(uses) != 1 {
 				return false
 			}
 			call, ok := uses[0].(*ssa.Call)
