@@ -2625,10 +2625,6 @@ func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directi
 	if !*flagKeep {
 		defer ws.cleanup()
 	}
-	importCfg := filepath.Join(ws.rootDir, "importcfg")
-	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
-		return nil, nil, 0, 0, err
-	}
 	sourcePath := tc.SourcePath()
 	if strings.HasSuffix(filepath.Base(tc.Dir), ".dir") {
 		sourcePath, err = stageNestedCompilerCase(ws.workDir, tc)
@@ -2636,9 +2632,11 @@ func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directi
 			return nil, nil, 0, 0, err
 		}
 	}
-	args := []string{"tool", "compile", "-e", "-p=p", "-importcfg=" + importCfg}
+	// LLGo resolves imports from source and does not emit gc object files.
+	// Keep the case's explicit flags, but do not synthesize gc-only options.
+	args := []string{"tool", "compile", "-e"}
 	if errorCheck {
-		args = append(args, "-C", "-d=panic", "-o", filepath.Join(ws.rootDir, "a.o"))
+		args = append(args, "-C", "-d=panic")
 	}
 	args = append(args, opts.CompilerFlags...)
 	if errorCheck && !hasSSACheckFlag(opts.CompilerFlags) {
@@ -2729,10 +2727,6 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 	if err := ensureModuleWorkspace(ws.workDir, "test", modVersion); err != nil {
 		return err
 	}
-	importCfg := filepath.Join(ws.rootDir, "importcfg")
-	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
-		return err
-	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, append(opts.ExtraEnv, "GO111MODULE=on"))
 	compilerEnv := gorootTargetEnv(env)
 	var diagnosticErrs []error
@@ -2741,7 +2735,7 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 		if pkg.name != "main" {
 			pkgDir = filepath.Join(ws.workDir, pkg.dir)
 		}
-		args := []string{"tool", "compile", "-e", "-C", "-d=panic", "-importcfg=" + importCfg}
+		args := []string{"tool", "compile", "-e", "-C", "-d=panic"}
 		args = append(args, opts.CompilerFlags...)
 		var sources []diagnosticSource
 		for _, fileName := range pkg.files {

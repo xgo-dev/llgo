@@ -3265,6 +3265,29 @@ func TestIsStandardLibraryPackage(t *testing.T) {
 	}
 }
 
+func TestDoReportsInvalidMethodReceiver(t *testing.T) {
+	for _, test := range []struct {
+		name, source, want string
+	}{
+		{"nonlocal", "import \"bufio\"\nfunc (b bufio.Reader) Buffered() int { return -1 }", "cannot define new methods on non-local type bufio.Reader"},
+		{"nonlocal pointer", "import \"bufio\"\nfunc (b *bufio.Reader) Buffered() int { return -1 }", "cannot define new methods on non-local type bufio.Reader"},
+		{"nested pointer", "type T struct{}\nfunc (**T) M() {}", "invalid receiver type **T"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "invalid.go")
+			if err := os.WriteFile(file, []byte("package p\n"+test.source+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			readStderr := captureStderr(t)
+			_, err := Do([]string{file}, NewDefaultConf(ModeGen))
+			output := readStderr()
+			if err == nil || !strings.Contains(output, test.want) {
+				t.Fatalf("Do error = %v, diagnostics = %q, want %q", err, output, test.want)
+			}
+		})
+	}
+}
+
 func TestDoRejectsLocalityLinkname(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+env.LLGoRuntimePkg+"/_test/invalidalias\n\ngo 1.27.0\n"), 0o644); err != nil {
