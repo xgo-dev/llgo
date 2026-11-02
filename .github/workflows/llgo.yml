@@ -406,6 +406,18 @@ jobs:
           fi
           echo "Testing C header generation in different build modes..."
           cd _demo/go/export
+          if [[ "${{ github.repository_owner }}" == 'xgo-dev' && "${{ matrix.os }}" == 'windows-2022' && "${{ matrix.windows_abi }}" == 'mingw' && "${{ matrix.windows_arch }}" == 'amd64' ]]; then
+            echo 'Go environment in the direct shell:'
+            command -v go
+            printf 'GOPATH=%s\nGOMODCACHE=%s\n' "${GOPATH-}" "${GOMODCACHE-}"
+            go env GOPATH GOMODCACHE
+            echo 'Go environment in a make recipe:'
+            if (cd use && printf 'ci-env:\n\t@command -v go; printenv GOPATH GOMODCACHE; go env GOPATH GOMODCACHE\n' | make --no-print-directory -f Makefile -f - ci-env); then
+              :
+            else
+              echo 'Make environment diagnostic failed'
+            fi
+          fi
           chmod +x test.sh
           ./test.sh
 
