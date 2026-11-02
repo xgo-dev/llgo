@@ -954,11 +954,10 @@ jobs:
       matrix:
         # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
         # command and caller regressions exhausted the 60-minute job limit.
-        # Standard-library link jobs need a fresh disk after the runtime and
-        # debug fixtures, especially on the 17-GiB ephemeral runner image.
-        suite: [runtime, workers, test-command, simd, stdlib]
-    # The complete profile/LTO matrices exceed the Qiniu template's disk even
-    # after temporary IR cleanup. Keep them on the hosted Ubuntu filesystem.
+        # Optimization and stdlib links need fresh disks after the runtime
+        # and debug fixtures on the 17-GiB ephemeral runner image.
+        suite: [runtime, workers, test-command, simd, stdlib, optimization]
+    # Keep these matrices outside the smaller Qiniu runner template.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -979,7 +978,7 @@ jobs:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite == 'runtime' || matrix.suite == 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'workers' || matrix.suite == 'optimization'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -989,7 +988,7 @@ jobs:
         uses: ./.github/actions/setup-binaryen
 
       - name: Set up Wasmtime
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
           version: "39.0.1"
@@ -997,20 +996,22 @@ jobs:
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
         with:
-          # This runtime job nearly fills the 17-GiB runner. Cache archive
-          # creation needs another copy of the payload during post-job save.
-          cache: ${{ matrix.suite != 'runtime' }}
+          # These runtime/optimization jobs nearly fill the 17-GiB runner.
+          # Cache archives need another payload copy during post-job save.
+          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || 'readwrite' }}
+          build-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite' }}
           build-cache-scope: wasm-${{ matrix.suite }}
-          crosscompile-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || 'readwrite' }}
-          wasmer-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || (matrix.suite != 'workers' && 'readwrite' || 'off') }}
+          # These suites need only WASI or Emscripten, not a shared snapshot
+          # containing other targets' downloaded toolchains.
+          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'off' || 'readwrite' }}
+          wasmer-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
@@ -1024,7 +1025,13 @@ jobs:
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Report WebAssembly build disk usage
-        run: df -h . "$RUNNER_TEMP" /tmp
+        run: |
+          df -h . "$RUNNER_TEMP" /tmp
+          source dev/llgo_cache_dir.sh
+          du -sh "$GOCACHE" "$GOMODCACHE"
+          if [[ -d "$(llgo_cache_dir)" ]]; then
+            du -sh "$(llgo_cache_dir)"
+          fi
 
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
@@ -1073,7 +1080,7 @@ jobs:
           python3 dev/test_wasm_debug_info.py --opt z --strip-symbols --source-maps --artifact embedded --artifact external
 
       - name: Test optimized Emscripten runtime boundaries
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'optimization'
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
@@ -1153,6 +1160,15 @@ jobs:
         run: |
           bash dev/test_wasm_stdlib_test.sh
           bash dev/test_wasm_stdlib.sh
+
+      - name: Test wasm map and formatting regressions
+        if: matrix.suite == 'stdlib'
+        timeout-minutes: 20
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "off"
+        run: |
           llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
           go build -tags=dev -o "$llgo_dev" ./cmd/llgo
           for target in wasi emscripten emscripten-memory64; do
