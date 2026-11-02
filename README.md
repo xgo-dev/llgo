@@ -262,7 +262,7 @@ Examples built on these bindings:
 
 You can import a Python library in LLGo!
 
-You can import Python libraries into `llgo` through `llpyg` (see [Development tools](#development-tools)). Available bindings include:
+You can import Python libraries into `llgo` through [llpyg](https://github.com/xgo-dev/llpyg). Available bindings include:
 
 * [py](https://pkg.go.dev/github.com/goplus/lib/py) (abi)
 * [py/std](https://pkg.go.dev/github.com/goplus/lib/py/std) (builtins)
