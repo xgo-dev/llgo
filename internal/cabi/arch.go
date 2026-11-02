@@ -94,7 +94,16 @@ func (p *TypeInfoAmd64) SkipEmptyParams() bool {
 }
 
 func (p *TypeInfoAmd64) IsWrapType(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) bool {
-	return elementTypesCount(typ) >= 2
+	if elementTypesCount(typ) >= 2 {
+		return true
+	}
+	// An unaligned zero-sized member can require MEMORY even when the
+	// aggregate contains only one non-empty element.
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind, llvm.ArrayTypeKind:
+		return p.hasUnalignedField(typ, 0)
+	}
+	return false
 }
 
 func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) *TypeInfo {
@@ -180,11 +189,12 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 }
 
 func (p *TypeInfoAmd64) hasUnalignedField(typ llvm.Type, offset uint64) bool {
-	if p.td.TypeAllocSize(typ) == 0 {
-		return false
-	}
+	// Zero-length array members still impose an alignment requirement.
 	if offset%uint64(p.Alignof(typ)) != 0 {
 		return true
+	}
+	if p.td.TypeAllocSize(typ) == 0 {
+		return false
 	}
 	switch typ.TypeKind() {
 	case llvm.StructTypeKind:
