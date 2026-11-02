@@ -714,7 +714,7 @@ var mapLitSeq atomic.Uint64
 func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
 	n := len(elems)
 	prog := b.Prog
-	arrTy := prog.Type(types.NewArray(elems[0].raw.Type, int64(n)), InGo)
+	arrTy := prog.Type(types.NewArray(elems[0].raw.Type, int64(n)), GoDecl)
 	if n > 0 {
 		ok := true
 		for _, e := range elems {

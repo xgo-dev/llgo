@@ -346,9 +346,9 @@ func (p *context) compileMapLitConst(b llssa.Builder, c *ssa.Const) llssa.Expr {
 	if basic, ok := t.Underlying().(*types.Basic); ok && basic.Kind() == types.String {
 		return b.Pkg.ConstString(constant.StringVal(c.Value))
 	}
-	bg := llssa.InGo
+	bg := llssa.GoDecl
 	if p.inCFunc {
-		bg = llssa.InC
+		bg = llssa.CDecl
 	}
 	return b.Const(c.Value, p.type_(t, bg))
 }
@@ -379,7 +379,7 @@ func (p *context) compileMapLitComplit(b llssa.Builder, v ssa.Value, structTy ty
 		}
 		flds[i] = folded
 	}
-	return b.StructLit(p.type_(structTy, llssa.InGo), flds), true
+	return b.StructLit(p.type_(structTy, llssa.GoDecl), flds), true
 }
 
 func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {
