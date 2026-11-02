@@ -5,6 +5,7 @@ package synctest_test
 import (
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -21,7 +22,7 @@ func TestBubbleRejections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"channel", "timer", "wait", "nested", "concurrent-wait", "cond", "waitgroup"} {
+	for _, mode := range []string{"channel", "channel-poll", "channel-reflect-poll", "timer", "wait", "nested", "concurrent-wait", "cond", "waitgroup"} {
 		t.Run(mode, func(t *testing.T) {
 			cmd := exec.Command(self, "-test.run=^TestBubbleRejectedChild$")
 			cmd.Env = append(os.Environ(), "LLGO_SYNCTEST_REJECT="+mode)
@@ -41,6 +42,17 @@ func TestBubbleRejectedChild(t *testing.T) {
 		var ch chan int
 		run(func() { ch = make(chan int, 1) })
 		ch <- 1
+	case "channel-poll", "channel-reflect-poll":
+		var ch chan int
+		run(func() { ch = make(chan int) })
+		if os.Getenv("LLGO_SYNCTEST_REJECT") == "channel-reflect-poll" {
+			reflect.ValueOf(ch).TryRecv()
+		} else {
+			select {
+			case <-ch:
+			default:
+			}
+		}
 	case "timer":
 		var timer *time.Timer
 		run(func() { timer = time.NewTimer(time.Hour) })
