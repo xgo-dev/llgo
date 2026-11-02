@@ -385,13 +385,13 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                      if step.get("uses") == "./.github/actions/setup-llgo-cache")
         self.assertLess(go, cache)
         self.assertNotIn("if", steps[cache])
-        self.assertEqual(steps[go]["with"]["cache"], "${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' }}")
-        restore_runtime = "${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite' }}"
+        self.assertEqual(steps[go]["with"]["cache"], "${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}")
+        restore_runtime = "${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}"
         self.assertEqual(steps[cache]["with"]["build-cache-mode"], restore_runtime)
         self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
         self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"],
-                         "${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'off' || 'readwrite' }}")
-        self.assertIn("matrix.suite == 'runtime' && 'restore'",
+                         "${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}")
+        self.assertIn("(matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore'",
                       steps[cache]["with"]["wasmer-cache-mode"])
         self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
 
@@ -404,6 +404,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                      "Test SIMD on JavaScript targets with off, Thin and Full LTO"):
             self.assertEqual(steps[name]["if"], "matrix.suite == 'simd'")
             self.assertNotIn("continue-on-error", steps[name])
+            self.assertEqual(steps[name]["env"]["LLGO_BUILD_CACHE"], "off")
         for name in ("Compare JavaScript call semantics with Go",
                      "Run caller and large-function regressions on browser targets"):
             self.assertEqual(steps[name]["if"], "matrix.suite == 'test-command'")

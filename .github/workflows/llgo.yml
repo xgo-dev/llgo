@@ -996,19 +996,19 @@ jobs:
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
         with:
-          # These runtime/optimization jobs nearly fill the 17-GiB runner.
+          # Profile/LTO caches nearly fill the 17-GiB runner.
           # Cache archives need another payload copy during post-job save.
-          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' }}
+          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite' }}
+          build-cache-mode: ${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}
           build-cache-scope: wasm-${{ matrix.suite }}
           # These suites need only WASI or Emscripten, not a shared snapshot
           # containing other targets' downloaded toolchains.
-          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'off' || 'readwrite' }}
-          wasmer-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
+          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}
+          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
         if: matrix.suite != 'workers' && matrix.suite != 'optimization'
@@ -1125,6 +1125,7 @@ jobs:
         shell: bash
         env:
           GOEXPERIMENT: simd
+          LLGO_BUILD_CACHE: "off"
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
           for opt in 0 2; do
@@ -1138,7 +1139,9 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "1"
+          # Target/optimization/LTO variants have different cache keys. Keep
+          # each build's dependency DAG, without retaining every variant.
+          LLGO_BUILD_CACHE: "off"
         run: dev/test_wasm_simd.sh
 
       - name: Compare JavaScript call semantics with Go
