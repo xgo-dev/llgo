@@ -116,7 +116,7 @@ Place these directives in a struct field's documentation comment:
 | Directive | Placement | Effect for a zero-sized field |
 | --- | --- | --- |
 | `//llgo:padding` | Generic or non-generic field | Adds one byte after a non-final field. On the final field, warns and keeps ordinary layout. |
-| `//llgo:no-padding` | Last field of a non-generic struct | Suppresses the ordinary Go trailing padding byte. |
+| `//llgo:no-padding` | Last, singly named field of a non-generic struct | Suppresses the ordinary Go trailing padding byte. |
 | `//llgo:padding-if` | Field of a generic struct | Suppresses trailing padding unless a same-type direct member or embedded base occupies the same address; a conflict moves the field to the next available aligned address and reserves one byte. |
 
 For nonzero-sized fields these directives do not add padding. Conflicting

@@ -589,7 +589,7 @@ func (p *context) atomic(b llssa.Builder, op llssa.AtomicOp, args []llssa.Expr) 
 func (p *context) atomicLoad(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 1 {
 		addr := args[0]
-		return b.Load(addr).SetOrdering(llssa.OrderingSeqConsistent)
+		return b.SetOrdering(b.Load(addr), llssa.OrderingSeqConsistent)
 	}
 	panic("atomicLoad(addr *T) T: invalid arguments")
 }
@@ -598,14 +598,14 @@ func (p *context) atomicStore(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 2 {
 		addr := args[0]
 		val := args[1]
-		return b.Store(addr, val).SetOrdering(llssa.OrderingSeqConsistent)
+		return b.SetOrdering(b.Store(addr, val), llssa.OrderingSeqConsistent)
 	}
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
 func (p *context) atomicStoreUnordered(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 2 {
-		return b.Store(args[0], args[1]).SetOrdering(llssa.OrderingUnordered)
+		return b.SetOrdering(b.Store(args[0], args[1]), llssa.OrderingUnordered)
 	}
 	panic("atomicStoreUnordered(addr *T, val T): invalid arguments")
 }

@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
 
 	"github.com/xgo-dev/llvm"
@@ -233,7 +234,22 @@ func (p Program) fieldNativeStorage(t types.Type, parentNative bool) bool {
 	return parentNative
 }
 
-func (b Builder) checkPointerLayoutConversion(to, from Type) {
+// LayoutConversionError reports a pointer conversion between incompatible
+// physical layouts. Frontends may return this user error from SSA lowering.
+type LayoutConversionError struct {
+	Pos      token.Position
+	From, To types.Type
+}
+
+func (e *LayoutConversionError) Error() string {
+	message := fmt.Sprintf("cannot convert pointers between different LLGo layouts: %s to %s", e.From, e.To)
+	if e.Pos.IsValid() {
+		return fmt.Sprintf("%s: %s", e.Pos, message)
+	}
+	return message
+}
+
+func (b Builder) checkPointerLayoutConversion(to, from Type, pos token.Position) {
 	x, ok := from.RawType().Underlying().(*types.Pointer)
 	if !ok {
 		return
@@ -245,7 +261,7 @@ func (b Builder) checkPointerLayoutConversion(to, from Type) {
 	// unsafe.Pointer remains the explicit escape hatch. Ordinary pointer
 	// conversions cannot perform the field-by-field copy used for values.
 	if !b.Prog.sameStorageShape(b.Prog.rawType(x.Elem()), b.Prog.rawType(y.Elem()), make(map[[2]types.Type]bool)) {
-		panic(fmt.Errorf("cannot convert pointers between different LLGo layouts: %s to %s", from.RawType(), to.RawType()))
+		panic(&LayoutConversionError{Pos: pos, From: from.RawType(), To: to.RawType()})
 	}
 }
 

@@ -60,6 +60,7 @@ type LLGoLayout struct {
 	metadataMu    sync.Mutex
 	mu            sync.RWMutex
 	types         map[llgoDeclKey]llgoTypeDecl
+	typeAttrCache map[llgoDeclKey]LLGoTypeAttrs
 	structs       map[llgoFieldKey]llgoDeclKey
 	attrs         map[llgoFieldKey]LLGoTypeAttrs
 	padding       map[llgoFieldKey]string
@@ -94,9 +95,21 @@ func (m *LLGoLayout) TypeAttrs(t types.Type) LLGoTypeAttrs {
 		attrs, _, _ = llgoTagLayout(st.Tag(0))
 	}
 	if obj := llgoObjectName(t); obj != nil {
+		key := llgoDeclKey{obj.Pkg(), obj.Name()}
 		m.mu.RLock()
-		defer m.mu.RUnlock()
-		source := m.typeAttrs(llgoDeclKey{obj.Pkg(), obj.Name()}, make(map[llgoDeclKey]bool))
+		source, cached := m.typeAttrCache[key]
+		m.mu.RUnlock()
+		if !cached {
+			m.mu.Lock()
+			if source, cached = m.typeAttrCache[key]; !cached {
+				source = m.typeAttrs(key, make(map[llgoDeclKey]bool))
+				if m.typeAttrCache == nil {
+					m.typeAttrCache = make(map[llgoDeclKey]LLGoTypeAttrs)
+				}
+				m.typeAttrCache[key] = source
+			}
+			m.mu.Unlock()
+		}
 		if source.Native {
 			attrs.Native, attrs.CallConv = true, source.CallConv
 		}
@@ -268,6 +281,11 @@ func (m *LLGoLayout) RecordPackage(pkg *types.Package) {
 			}
 		}
 	}
+	// Custom importers may have populated export metadata since an earlier
+	// lookup. Invalidate inherited results in importing packages as well.
+	m.mu.Lock()
+	m.typeAttrCache = nil
+	m.mu.Unlock()
 }
 
 type llgoDirective struct {
@@ -304,6 +322,7 @@ func llgoLayoutDirective(name string) bool {
 func (m *LLGoLayout) ParseSyntax(fset *token.FileSet, pkg *types.Package, files []*ast.File, warn func(error)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.typeAttrCache = nil
 	if m.types == nil {
 		m.types = make(map[llgoDeclKey]llgoTypeDecl)
 		m.structs = make(map[llgoFieldKey]llgoDeclKey)

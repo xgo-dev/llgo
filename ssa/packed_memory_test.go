@@ -43,8 +43,8 @@ func TestPackedMemoryAlignment(t *testing.T) {
 					t.Fatalf("possibly unaligned SIMD access: alignment = %d, want 1", got)
 				}
 			}
-			x := b.Load(fn.Param(1)).SetOrdering(OrderingSeqConsistent)
-			store = b.Store(fn.Param(1), x).SetOrdering(OrderingSeqConsistent)
+			x := b.SetOrdering(b.Load(fn.Param(1)), OrderingSeqConsistent)
+			store = b.SetOrdering(b.Store(fn.Param(1), x), OrderingSeqConsistent)
 			for _, inst := range []Expr{x, store} {
 				if got := inst.memoryInstruction().Alignment(); got != 8 {
 					t.Fatalf("i64 atomic access: alignment = %d, want 8", got)

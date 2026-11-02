@@ -1774,7 +1774,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			break
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.ChangeType(p.type_(t, llssa.GoDecl), x)
+		ret = b.ChangeTypeAt(p.type_(t, llssa.GoDecl), x, p.goProg.Fset.Position(v.Pos()))
 	case *ssa.Convert:
 		t := v.Type()
 		if isUntypedNilConst(v.X) {
@@ -1782,7 +1782,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			break
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.Convert(p.type_(t, llssa.GoDecl), x)
+		ret = b.ConvertAt(p.type_(t, llssa.GoDecl), x, p.goProg.Fset.Position(v.Pos()))
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
 		p.recordPanicSite(b, v.Pos())
@@ -2906,6 +2906,15 @@ func NewPackageExWithEmbedMetaOptions(prog llssa.Program, ct *CallerTracking, pa
 }
 
 func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			if conversion, ok := value.(*llssa.LayoutConversionError); ok {
+				ret, externs, err = nil, nil, conversion
+			} else {
+				panic(value)
+			}
+		}
+	}()
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
 	oldTypes := pkgTypes

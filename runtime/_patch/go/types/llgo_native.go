@@ -18,29 +18,19 @@ import (
 func (m *LLGoLayout) nativeFunctionExpr(pkg *Package, expr ast.Expr, cc string) ast.Expr {
 	switch x := expr.(type) {
 	case *ast.IndexListExpr:
-		x.X = m.nativeFunctionExpr(pkg, x.X, cc)
+		if !m.nativeFunctionReference(pkg, x.X, len(x.Indices)) {
+			x.X = m.nativeFunctionExpr(pkg, x.X, cc)
+		}
 		for i, arg := range x.Indices {
 			x.Indices[i] = m.nativeFunctionExpr(pkg, arg, cc)
 		}
 	case *ast.IndexExpr:
-		x.X = m.nativeFunctionExpr(pkg, x.X, cc)
+		if !m.nativeFunctionReference(pkg, x.X, 1) {
+			x.X = m.nativeFunctionExpr(pkg, x.X, cc)
+		}
 		x.Index = m.nativeFunctionExpr(pkg, x.Index, cc)
 	case *ast.Ident:
-		if strings.HasPrefix(x.Name, "__llgo_native_") {
-			parts := strings.Split(strings.TrimPrefix(x.Name, "__llgo_native_"), "_")
-			if len(parts) == 4 {
-				nin, e1 := strconv.Atoi(parts[1])
-				nout, e2 := strconv.Atoi(parts[2])
-				variadic, e3 := strconv.ParseBool(parts[3])
-				convention := "C"
-				if parts[0] == "Stdcall" {
-					convention = "stdcall"
-				}
-				if e1 == nil && e2 == nil && e3 == nil && nin >= 0 && nout >= 0 && (!variadic || nin > 0) {
-					m.nativeFunctionName(pkg, convention, nin, nout, variadic)
-				}
-			}
-		}
+		m.nativeFunctionReference(pkg, x, 0)
 	case *ast.ParenExpr:
 		x.X = m.nativeFunctionExpr(pkg, x.X, cc)
 	case *ast.ArrayType:
@@ -79,6 +69,39 @@ func (m *LLGoLayout) nativeFunctionExpr(pkg *Package, expr ast.Expr, cc string) 
 		return result
 	}
 	return expr
+}
+
+// Rechecking rewritten syntax must restore canonical callbacks. Only trust
+// arities backed by actual type arguments in the syntax, rather than allocating
+// from arbitrary integers in a user-written identifier. Subtraction avoids an
+// overflow in nin+nout; invalid references remain ordinary checker errors.
+func (m *LLGoLayout) nativeFunctionReference(pkg *Package, expr ast.Expr, nargs int) bool {
+	for {
+		if paren, ok := expr.(*ast.ParenExpr); ok {
+			expr = paren.X
+			continue
+		}
+		break
+	}
+	id, ok := expr.(*ast.Ident)
+	if !ok || !strings.HasPrefix(id.Name, "__llgo_native_") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(id.Name, "__llgo_native_"), "_")
+	if len(parts) != 4 || (parts[0] != "Cdecl" && parts[0] != "Stdcall") {
+		return true
+	}
+	nin, e1 := strconv.Atoi(parts[1])
+	nout, e2 := strconv.Atoi(parts[2])
+	variadic, e3 := strconv.ParseBool(parts[3])
+	if e1 == nil && e2 == nil && e3 == nil && nin >= 0 && nin <= nargs && nout == nargs-nin && (!variadic || nin > 0) {
+		cc := "C"
+		if parts[0] == "Stdcall" {
+			cc = "stdcall"
+		}
+		m.nativeFunctionName(pkg, cc, nin, nout, variadic)
+	}
+	return true
 }
 
 func (m *LLGoLayout) nativeFunctionName(pkg *Package, cc string, nin, nout int, variadic bool) string {

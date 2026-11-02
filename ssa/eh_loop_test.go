@@ -76,7 +76,7 @@ func TestDeferAtomicInLoopIR(t *testing.T) {
 	ptr := fn.Param(0)
 	val := b.Const(constant.MakeInt64(1), prog.Int64())
 	b.Defer(ssa.DeferInLoop, ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return b.Store(ptr, val).SetOrdering(ssa.OrderingSeqConsistent)
+		return b.SetOrdering(b.Store(ptr, val), ssa.OrderingSeqConsistent)
 	})
 	b.EndBuild()
 

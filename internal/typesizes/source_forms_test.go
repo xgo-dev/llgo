@@ -1,6 +1,7 @@
 package typesizes
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -8,6 +9,95 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestMalformedNativeCallbackReferences(t *testing.T) {
+	for _, ref := range []string{
+		"__llgo_native_Cdecl_4096_4096_false",
+		"__llgo_native_Cdecl_2000000000_2000000000_false",
+		"__llgo_native_Cdecl_9223372036854775807_1_false",
+		"__llgo_native_Cdecl_1_0_false",
+		"__llgo_native_Cdecl_2_0_false[int]",
+		"__llgo_native_Cdecl_0_0_true",
+		"__llgo_native_Unknown_0_0_false",
+	} {
+		t.Run(ref, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "callback.go", "package p\n//llgo:cdecl\ntype Native struct { F "+ref+" }", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := LLGoSizesFor("amd64")
+			s.Layout = new(LLGoLayout)
+			pkg := types.NewPackage("p", "p")
+			if err := s.Layout.ParseSyntax(fset, pkg, []*ast.File{file}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(s.Layout.nativeFuncs) != 0 {
+				t.Fatal("malformed callback reference created a native signature")
+			}
+			conf := types.Config{Sizes: s}
+			err = types.NewChecker(&conf, fset, pkg, nil).Files([]*ast.File{file})
+			if err == nil || !strings.Contains(err.Error(), "callback.go:3:") || !strings.Contains(err.Error(), "undefined:") {
+				t.Fatalf("expected positioned checker diagnostic, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLayoutAttributeCacheInvalidation(t *testing.T) {
+	fset := token.NewFileSet()
+	pkg := types.NewPackage("p", "p")
+	layout := new(LLGoLayout)
+	callback := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Callback", nil), types.NewSignatureType(nil, nil, nil, nil, nil, false), nil)
+	pkg.Scope().Insert(callback.Obj())
+	if got := layout.TypeAttrs(callback); got.Native {
+		t.Fatal("ordinary function was native")
+	}
+	file, err := parser.ParseFile(fset, "callback.go", "package p\n//llgo:stdcall\ntype Callback func()", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.ParseSyntax(fset, pkg, []*ast.File{file}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if got := layout.TypeAttrs(callback); !got.Native || got.CallConv != "stdcall" {
+			t.Fatalf("lookup %d after syntax registration: %+v", i, got)
+		}
+	}
+	// An independent layout first sees an ordinary imported callback; metadata
+	// exported later must replace that cached result when the importer records it.
+	importerLayout := new(LLGoLayout)
+	if got := importerLayout.TypeAttrs(callback); got.Native {
+		t.Fatal("unrecorded export metadata was native")
+	}
+	layout.RecordPackage(pkg)
+	importerLayout.RecordPackage(pkg)
+	if got := importerLayout.TypeAttrs(callback); !got.Native || got.CallConv != "stdcall" {
+		t.Fatalf("lookup after recording export metadata: %+v", got)
+	}
+}
+
+func BenchmarkLayoutTypeAttrs(b *testing.B) {
+	for _, native := range []bool{false, true} {
+		b.Run(fmt.Sprintf("native=%t", native), func(b *testing.B) {
+			pkg := types.NewPackage("p", "p")
+			layout := new(LLGoLayout)
+			typ := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.NewStruct(nil, nil), nil)
+			if native {
+				layout.types = map[llgoDeclKey]llgoTypeDecl{{pkg, "T"}: {attrs: LLGoTypeAttrs{Native: true}}}
+			}
+			layout.TypeAttrs(typ)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if got := layout.TypeAttrs(typ); got.Native != native {
+					b.Fatal(got)
+				}
+			}
+		})
+	}
+}
 
 func TestNativeCallbackContainers(t *testing.T) {
 	fset := token.NewFileSet()
