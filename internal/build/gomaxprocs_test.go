@@ -45,13 +45,14 @@ func main() {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		value string
-		want  int // zero selects the host CPU default
+		value       string
+		want        int
+		wantDefault bool
 	}{
-		{"", 0}, {"0", 0}, {"-1", 0}, {"+4", 0}, {"invalid", 0},
-		{" 4", 0}, {"4 ", 0}, {"4x", 0}, {"0x4", 0}, {"1.5", 0},
-		{"2147483648", 0}, {"999999999999999999999999999999999999", 0},
-		{"1", 1}, {"4", 4}, {"0004", 4}, {"2147483647", 2147483647},
+		{"", 0, true}, {"0", 0, true}, {"-1", 0, true}, {"+4", 0, true}, {"invalid", 0, true},
+		{" 4", 0, true}, {"4 ", 0, true}, {"4x", 0, true}, {"0x4", 0, true}, {"1.5", 0, true},
+		{"2147483648", 0, true}, {"999999999999999999999999999999999999", 0, true},
+		{"1", 1, false}, {"4", 4, false}, {"0004", 4, false}, {"2147483647", 2147483647, false},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			cmd := exec.Command(conf.OutFile)
@@ -77,7 +78,7 @@ func main() {
 				}
 			}
 			want := tc.want
-			if want == 0 {
+			if tc.wantDefault {
 				want = values[3]
 			}
 			if values[0] != want || values[1] != want || values[2] != 1 || values[3] < 1 || values[4] != values[3] {

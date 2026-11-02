@@ -4,6 +4,8 @@ import "sync/atomic"
 
 // Initialize before application package initialization. Reading the environment
 // lazily on the first query would incorrectly observe an os.Setenv in init.
+// Use a machine word to preserve every positive int accepted by the setter;
+// only the startup environment parser has an int32 bound.
 var gomaxprocsSetting atomic.Uintptr
 
 func init() {
@@ -37,10 +39,11 @@ func gomaxprocsDefault() int {
 // Match the positive int32 startup environment accepted by the Go runtime.
 // An invalid, zero, negative or overflowing value selects the default.
 func parseGOMAXPROCS(value string) int {
+	const maxEnvironmentValue = 1<<31 - 1
 	n := 0
 	for i := 0; i < len(value); i++ {
 		digit := int(value[i]) - '0'
-		if digit < 0 || digit > 9 || n > (1<<31-1-digit)/10 {
+		if digit < 0 || digit > 9 || n > (maxEnvironmentValue-digit)/10 {
 			return 0
 		}
 		n = n*10 + digit

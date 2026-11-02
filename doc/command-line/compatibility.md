@@ -100,8 +100,9 @@ runtime samples. `-cpu` is also rejected until native `GOMAXPROCS` enforces the
 requested execution limit. Merely repeating a test with CPU suffixes does not
 provide that behavior. The runtime preserves positive `GOMAXPROCS` settings,
 returns the previous setting, and reads its initial value from the process
-environment. `SetDefaultGOMAXPROCS` restores the host CPU default and ignores
-that environment override. LLGo's schedulers do not enforce these settings as
+environment, falling back to the host CPU default for a missing or invalid
+value. `SetDefaultGOMAXPROCS` restores the host CPU default and ignores that
+environment override. LLGo's schedulers do not enforce these settings as
 execution-parallelism limits, including on the native one-to-one thread
 backend; automatic CPU-quota updates are also not implemented.
 

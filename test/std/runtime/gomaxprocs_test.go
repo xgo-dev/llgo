@@ -2,9 +2,25 @@ package runtime_test
 
 import (
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 )
+
+func TestGOMAXPROCSFullIntSetting(t *testing.T) {
+	if runtime.Compiler != "llgo" || strconv.IntSize != 64 {
+		t.Skip("LLGo settings preserve positive int values without allocating scheduler resources")
+	}
+	// Convert a variable so this test also compiles on 32-bit targets.
+	wide := int64(1) << 33
+	want := int(wide)
+	original := runtime.GOMAXPROCS(want)
+	got := runtime.GOMAXPROCS(0)
+	previous := runtime.GOMAXPROCS(original)
+	if got != want || previous != want {
+		t.Fatalf("wide setting: query=%d, previous=%d, want %d", got, previous, want)
+	}
+}
 
 func TestGOMAXPROCSSetting(t *testing.T) {
 	if runtime.GOARCH == "wasm" && runtime.Compiler != "llgo" {
