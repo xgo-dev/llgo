@@ -94,16 +94,11 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 // memoryInstruction returns the underlying load or atomic instruction when a
 // storage-width conversion represents its logical Go value to callers.
 func (v Expr) memoryInstruction() llvm.Value {
-	if cast := v.impl.IsAIntToPtrInst(); !cast.IsNil() {
-		return cast.Operand(0)
+	inst := v.impl
+	for !inst.IsAIntToPtrInst().IsNil() || !inst.IsATruncInst().IsNil() || !inst.IsAZExtInst().IsNil() || !inst.IsASExtInst().IsNil() {
+		inst = inst.Operand(0)
 	}
-	if cast := v.impl.IsAZExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	if cast := v.impl.IsASExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	return v.impl
+	return inst
 }
 
 func (v Expr) SetName(alias string) Expr {
