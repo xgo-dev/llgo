@@ -234,7 +234,7 @@ void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
         return 0;
     node->id = id; node->parent = parent; node->created = created;
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
-    /* NewProc children; only the standalone executable entry marks main. */
+    /* NewProc children; init marks main only in standalone executables. */
     node->owned = parent != 0;
 #endif
     node->state = 1; /* runnable */

@@ -221,9 +221,21 @@ func Goexit() {
 	Rethrow(gp.defer_)
 }
 
+// Supplied by the entry module, as in Go's linker/runtime contract:
+// https://github.com/golang/go/blob/go1.27.3/src/runtime/runtime2.go#L1499-L1503
+//
+//llgo:link islibrary C.runtime.islibrary
+var islibrary bool
+
+//llgo:link isarchive C.runtime.isarchive
+var isarchive bool
+
 func init() {
 	gp := getg()
 	gp.isMain = true
+	if !islibrary && !isarchive {
+		markTracebackOwned(gp)
+	}
 }
 
 // -----------------------------------------------------------------------------

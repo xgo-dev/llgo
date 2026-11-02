@@ -90,6 +90,14 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
+	// Match Go's linker flags; static data is available before runtime.init.
+	// https://github.com/golang/go/blob/go1.27.3/src/cmd/link/internal/ld/lib.go#L805-L819
+	islibrary := mainPkg.NewVarEx("runtime.islibrary", prog.Pointer(prog.Bool()))
+	islibrary.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCShared))
+	isarchive := mainPkg.NewVarEx("runtime.isarchive", prog.Pointer(prog.Bool()))
+	isarchive.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCArchive))
+	mainPkg.Module().NamedGlobal("runtime.islibrary").SetVisibility(llvm.HiddenVisibility)
+	mainPkg.Module().NamedGlobal("runtime.isarchive").SetVisibility(llvm.HiddenVisibility)
 	funcInfo := cfg.funcInfo
 	if needsRuntimeMainFrame(ctx) {
 		// The native process entry is the physical frame below runtime.main,
@@ -216,10 +224,6 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		}
 		defineCExportWrappers(mainPkg, cfg.cExports, nil)
 	}
-	var ownedInit llssa.Function
-	if cfg.rtInit && ctx.buildConf.Goos == "linux" && ctx.buildConf.Goarch != "wasm" {
-		ownedInit = declareNoArgFunc(mainPkg, rtPkgPath+".MarkMainThreadOwned")
-	}
 	var wasmRunMain llssa.Function
 	if wasmRuntimeScheduler {
 		defineWasmMainTask(mainPkg, packageInits, mainInit, mainMain)
@@ -242,7 +246,6 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		pyInit:       pyInit,
 		pyFinalize:   pyFinalize,
 		rtInit:       rtInit,
-		ownedInit:    ownedInit,
 		callbackInit: callbackInit,
 		processExit:  processExit,
 		stdioFlush:   stdioFlush,
@@ -472,7 +475,6 @@ type entryFunctions struct {
 	pyInit       llssa.Function
 	pyFinalize   llssa.Function
 	rtInit       llssa.Function
-	ownedInit    llssa.Function
 	callbackInit llssa.Function
 	processExit  llssa.Function
 	stdioFlush   llssa.Function
@@ -554,9 +556,6 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	}
 	if fns.rtInit != nil {
 		b.Call(fns.rtInit.Expr)
-	}
-	if fns.ownedInit != nil {
-		b.Call(fns.ownedInit.Expr)
 	}
 	if fns.callbackInit != nil {
 		b.Call(fns.callbackInit.Expr)

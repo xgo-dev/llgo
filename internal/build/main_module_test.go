@@ -76,7 +76,6 @@ func TestGenMainModuleExecutable(t *testing.T) {
 	assertInOrder(t, ir,
 		"call void @Py_Initialize()",
 		`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`,
-		`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.MarkMainThreadOwned"()`,
 		`call void @"example.com/b.init"()`,
 		`call void @"example.com/z.init"()`,
 		`call void @"example.com/a.init"()`,
@@ -104,6 +103,41 @@ func TestGenMainModuleWindowsExitsAfterMain(t *testing.T) {
 		`call i32 @fflush(ptr null)`,
 		`call void @runtime.exit(i32 0)`,
 	)
+}
+
+func TestGenMainModuleBuildModeFlags(t *testing.T) {
+	for _, goos := range []string{"linux", "wasip1", "js"} {
+		for _, mode := range []BuildMode{BuildModeExe, BuildModeCShared, BuildModeCArchive} {
+			t.Run(goos+"/"+string(mode), func(t *testing.T) {
+				arch := "amd64"
+				if isWasmTarget(goos) {
+					arch = "wasm"
+				}
+				ctx := &context{
+					prog:      llssa.NewProgram(nil),
+					buildConf: &Config{BuildMode: mode, Goos: goos, Goarch: arch},
+				}
+				defer ctx.prog.Dispose()
+				pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
+				mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.Module()
+				for name, want := range map[string]bool{
+					"runtime.islibrary": mode == BuildModeCShared,
+					"runtime.isarchive": mode == BuildModeCArchive,
+				} {
+					flag := mod.NamedGlobal(name)
+					if flag.IsNil() || flag.Initializer().IsNil() {
+						t.Fatalf("%s must be defined before runtime.init", name)
+					}
+					if got := flag.Initializer().ZExtValue() != 0; got != want {
+						t.Fatalf("%s = %v, want %v", name, got, want)
+					}
+					if flag.Visibility() != llvm.HiddenVisibility {
+						t.Fatalf("%s must belong to its own runtime instance", name)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestGenMainModuleExecutableRegistersCExportThread(t *testing.T) {
