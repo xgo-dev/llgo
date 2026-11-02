@@ -106,7 +106,7 @@ func (a *resultEscapeAnalysis) borrowed(value ssa.Value, seen map[ssa.Value]bool
 			}
 		case *ssa.Convert:
 			_, pointer := ref.Type().Underlying().(*types.Pointer)
-			if !pointer && basicKind(ref.Type()) != types.UnsafePointer || !a.borrowed(ref, seen) {
+			if (!pointer && basicKind(ref.Type()) != types.UnsafePointer) || !a.borrowed(ref, seen) {
 				return false
 			}
 		case *ssa.Phi:
@@ -118,6 +118,7 @@ func (a *resultEscapeAnalysis) borrowed(value ssa.Value, seen map[ssa.Value]bool
 			if callee == nil || callee.Pkg != a.pkg || len(callee.Blocks) == 0 {
 				return false
 			}
+			// A linkname can lower to an intrinsic instead of its visible body.
 			_, _, kind := a.context.funcName(callee)
 			if kind != goFunc {
 				return false

@@ -48,6 +48,16 @@ func phiBranch(op int, x uint64) (r Pair) {
 	*p = x
 	return
 }
+func compareBranch(x uint64) (r Pair) {
+	if p := &r; p != nil { p.Hi = x }
+	return
+}
+type PairPtr *Pair
+func changeType(x uint64) (r Pair) {
+	p := PairPtr(&r)
+	p.Hi = x
+	return
+}
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -58,7 +68,7 @@ func phiBranch(op int, x uint64) (r Pair) {
 		for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
 			t.Run(fmt.Sprintf("%s/%s/%v", target.GOOS, target.GOARCH, mode), func(t *testing.T) {
 				ir := compileWithRewritesModeTarget(t, src, nil, mode, &target)
-				for _, name := range []string{"pointerBranch", "fieldBranch", "interfaceBranch", "arrayBranch", "phiBranch", "scalar"} {
+				for _, name := range []string{"pointerBranch", "fieldBranch", "interfaceBranch", "arrayBranch", "phiBranch", "scalar", "compareBranch", "changeType"} {
 					body := llvmFunction(t, ir, "resultalloc."+name)
 					if strings.Contains(body, "runtime.Alloc") || !strings.Contains(body, "alloca ") {
 						t.Errorf("%s should use stack result storage:\n%s", name, body)
