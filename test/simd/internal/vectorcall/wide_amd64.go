@@ -20,6 +20,12 @@ func WidePair(x, y archsimd.Float32x8, mutate func()) (archsimd.Float32x8, archs
 func WideCompute(x, y archsimd.Float32x8) archsimd.Float32x8 { return x.Mul(y).Add(x) }
 
 //go:noinline
+func WideBridge(x archsimd.Float32x8) (archsimd.Float32x8, archsimd.Int32x8) {
+	y := x.Sqrt()
+	return y, y.ConvertToInt32()
+}
+
+//go:noinline
 func WideUpdate(x WideBlock, mutate func()) WideBlock {
 	mutate()
 	x.Values[0] = WideCompute(x.Values[0], x.Values[1])

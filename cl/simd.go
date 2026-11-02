@@ -427,6 +427,11 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		if d.signature == simdBitcast && simdVectorBits(result) != simdVectorBits(vector) {
 			return false
 		}
+		// The portable256 bridge needs lane-preserving conversions. Keep
+		// cross-width and lane-count-changing conversions for a separate stage.
+		if wide && d.signature == simdConvert && (shape.Len() != lanes.Len() || simdVectorBits(result) != simdVectorBits(vector)) {
+			return false
+		}
 		if d.signature == simdConvert && shape.Len() != lanes.Len() {
 			fromFloat := lanes.Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0
 			toFloat := shape.Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0
@@ -480,15 +485,18 @@ func simdVectorBits(typ types.Type) int64 {
 	return 0
 }
 
-// The first wide stage consists of elementwise operations and memory/mask
-// primitives. Resizing, conversions and target-specific shuffles are qualified
-// separately rather than inheriting the SIMD128 implementation by name.
+// Wide operations include the portable256 bridge's intrinsic dependencies.
+// Resizing, lane-count-changing conversions and target-specific shuffles are
+// qualified separately rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
 	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
 		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,
 		llssa.SIMDNeg, llssa.SIMDNot, llssa.SIMDAbs,
+		llssa.SIMDAddSaturated, llssa.SIMDSubSaturated, llssa.SIMDAverage,
+		llssa.SIMDMin, llssa.SIMDMax, llssa.SIMDSqrt, llssa.SIMDFMA,
+		llssa.SIMDConvert, llssa.SIMDCarrylessMultiply,
 		llssa.SIMDLoad, llssa.SIMDStore, llssa.SIMDStoreMasked, llssa.SIMDBroadcast,
 		llssa.SIMDSplatLane0, llssa.SIMDExtractLane, llssa.SIMDInsertLane,
 		llssa.SIMDGetLo, llssa.SIMDGetHi, llssa.SIMDSetLo, llssa.SIMDSetHi,

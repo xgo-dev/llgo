@@ -81,17 +81,22 @@ structs, and zero-length vector fields. Pointers to vectors and slices of vector
 use their ordinary scalar ABI and remain supported. WASM reflection bridges
 continue to support SIMD128 values.
 
-## AMD64 SIMD256 foundation
+## AMD64 SIMD256
 
 The ten numeric SIMD256 types and four mask shapes use native vector storage
-alignment, including arrays and nested structs, following the storage rules
-above. Computation uses LLVM vectors. The initial operation set covers loads/stores, broadcasting,
+alignment (32 bytes on amd64), including arrays and nested structs, following
+the storage rules above. Computation uses LLVM vectors. Operations cover loads/stores, broadcasting,
 arithmetic and bitwise operations, comparisons and masks, same-width bitcasts,
 uniform integer shifts, and 128-bit half extraction/insertion. Official Go helper
 bodies are reused, including byte multiplication and partial memory operations.
-A static-call-closure test checks their intrinsic dependencies. Conversions,
-integer resizing, and other wide target-specific operations are later stages;
-unimplemented intrinsic declarations retain the recoverable panic fallback.
+The portable256 bridge's intrinsic dependencies are also implemented: integer
+and floating min/max, byte/word saturating add/subtract, rounded unsigned
+averages, square root, fused multiply-add, lane-preserving numeric/signedness
+conversions, and carryless multiplication independently within each 128-bit
+group. The bridge call-graph test covers all 350 entries in Go 1.27.0, including
+their private intrinsic dependencies. Cross-width and lane-count-changing
+conversions, integer resizing, and other wide target-specific operations remain
+separate stages; unimplemented declarations retain the recoverable panic.
 
 Wide Go parameters and results use an explicit memory carrier on amd64,
 including indirect calls, cross-package calls and multiple-result tuples.
@@ -108,6 +113,9 @@ multiple results, source mutation during calls, interfaces, closures, recovery
 and goroutine scheduling. The native amd64 matrix includes these tests at O0/O2,
 Thin/Full LTO, and with optional CPU features disabled. Compiler tests check the
 pointer carriers and baseline instruction safety on Linux and Windows.
+Bridge tests additionally cover every byte pair for saturation/average,
+word saturation boundaries, NaNs and signed zeros, invalid floating conversions,
+single-rounding/subnormal FMA cases, and all four carryless lane selectors.
 
 Official Go controls require AVX2. Its mask bitmap constructors and some other
 256-bit operations require AVX512; LLGo's baseline implementations use scalar

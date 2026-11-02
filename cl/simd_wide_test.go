@@ -1,6 +1,9 @@
 package cl
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"go/types"
 	"os"
 	"strings"
@@ -11,6 +14,55 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestSIMD256BridgeSignatures(t *testing.T) {
+	const declarations = `package archsimd
+type v128 struct { _ [0]func() }
+type v256 struct { _ [0]func() }
+type Float32x4 struct { tag v128; vals [4]float32 }
+type Float32x8 struct { tag v256; vals [8]float32 }
+type Float64x4 struct { tag v256; vals [4]float64 }
+type Int32x8 struct { tag v256; vals [8]int32 }
+type Uint32x8 struct { tag v256; vals [8]uint32 }
+type Int64x4 struct { tag v256; vals [4]int64 }
+type Uint64x4 struct { tag v256; vals [4]uint64 }
+`
+	for _, tc := range []struct {
+		receiver, method string
+		want             llssa.SIMDOp
+	}{
+		{"Float32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
+		{"Int64x4", "ConvertToFloat64() Float64x4", llssa.SIMDConvert},
+		{"Uint32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
+		{"Float64x4", "ConvertToFloat32() Float32x4", llssa.SIMDUnimplemented},
+		{"Float64x4", "ConvertToFloat32() Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x4", "ConvertToFloat64() Float64x4", llssa.SIMDUnimplemented},
+		{"Uint64x4", "carrylessMultiply(uint8, Uint64x4) Uint64x4", llssa.SIMDCarrylessMultiply},
+		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llssa.SIMDFMA},
+		{"Int32x8", "MulAdd(Int32x8, Int32x8) Int32x8", llssa.SIMDUnimplemented},
+	} {
+		t.Run(tc.receiver+"."+tc.method, func(t *testing.T) {
+			fs := token.NewFileSet()
+			file, err := parser.ParseFile(fs, "simd.go", declarations+"func (x "+tc.receiver+") "+tc.method, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg, err := new(types.Config).Check("simd/archsimd", fs, []*ast.File{file}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := ssa.NewProgram(fs, 0)
+			prog.CreatePackage(pkg, nil, nil, true)
+			method := pkg.Scope().Lookup(tc.receiver).Type().(*types.Named).Method(0)
+			op, ok := lookupSIMD(prog.FuncValue(method), "amd64")
+			wantOK := tc.want != llssa.SIMDUnimplemented
+			if ok != wantOK || ok && op.op != tc.want {
+				t.Fatalf("operation = %v (%v), want %v", op.op, ok, tc.want)
+			}
+		})
+	}
+}
 
 // Public helpers such as byte multiplication and broadcasting call narrower
 // intrinsic declarations. Qualify those transitive dependencies too.
