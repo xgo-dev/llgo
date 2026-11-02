@@ -121,6 +121,7 @@ C.clock_gettime_nsec_np`,
 runtime/internal/runtime/_wrap/setjmp_windows_arm64.c`,
 	},
 	{"C.__llgo_wasm_main", "compiler-generated Wasm scheduler entry", "internal/build/main_module.go"},
+	{"C.runtime.islibrary C.runtime.isarchive", "compiler-generated Go build-mode flags", "internal/build/main_module.go"},
 	{
 		`C.llgo_libc_call C.llgo_cgo_argset_call C.llgo_cgo_setuid C.llgo_cgo_seteuid C.llgo_cgo_setgid
 C.llgo_cgo_setegid C.llgo_cgo_setreuid C.llgo_cgo_setregid C.llgo_cgo_setresuid

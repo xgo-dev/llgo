@@ -90,6 +90,14 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
+	// Match Go's islibrary/isarchive linker flags, read by runtime.init.
+	// https://github.com/golang/go/blob/go1.27.3/src/cmd/link/internal/ld/lib.go#L805-L819
+	islibrary := mainPkg.NewVarEx("runtime.islibrary", prog.Pointer(prog.Bool()))
+	islibrary.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCShared))
+	isarchive := mainPkg.NewVarEx("runtime.isarchive", prog.Pointer(prog.Bool()))
+	isarchive.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCArchive))
+	mainPkg.Module().NamedGlobal("runtime.islibrary").SetVisibility(llvm.HiddenVisibility)
+	mainPkg.Module().NamedGlobal("runtime.isarchive").SetVisibility(llvm.HiddenVisibility)
 	funcInfo := cfg.funcInfo
 	if needsRuntimeMainFrame(ctx) {
 		// The native process entry is the physical frame below runtime.main,
