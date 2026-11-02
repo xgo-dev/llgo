@@ -23,7 +23,8 @@ class WorkerReuseTests(unittest.TestCase):
             fake.write_text(
                 "import json, os, pathlib, sys\n"
                 "args = sys.argv[1:]\n"
-                "kind = 'compile' if '-emulator' in args else 'run'\n"
+                "kind = ('compile' if '-emulator' in args else\n"
+                "        'gc' if '^TestGCConcurrentTypedMutation$' in args else 'run')\n"
                 "with open(os.environ['TRACE'], 'a') as out:\n"
                 "    out.write(json.dumps([kind, args, os.getenv('LLGO_WASM_WORKERS')]) + '\\n')\n"
                 "if os.getenv('FAIL_TOOL') == kind: sys.exit(7)\n"
@@ -54,15 +55,19 @@ class WorkerReuseTests(unittest.TestCase):
             with self.subTest(target=target):
                 result, calls = self.run_worker(target)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual([call[0] for call in calls], ["compile", "run"])
-                compile_args, run_args = calls[0][1], calls[1][1]
-                self.assertIn(f"{target}-runner.mjs", run_args[0])
-                self.assertEqual(compile_args[compile_args.index("-o") + 1], run_args[1])
+                self.assertEqual([call[0] for call in calls], ["compile", "gc", "run"])
+                compile_args, gc_args, run_args = [call[1] for call in calls]
+                for args in (gc_args, run_args):
+                    self.assertIn(f"{target}-runner.mjs", args[0])
+                    self.assertEqual(compile_args[compile_args.index("-o") + 1], args[1])
                 self.assertEqual(compile_args[compile_args.index("-skip") + 1],
-                                 "^TestRuntimeNumGoroutineIncludesNewProc$")
+                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation)$")
+                self.assertEqual(gc_args[gc_args.index("-test.run") + 1],
+                                 "^TestGCConcurrentTypedMutation$")
+                self.assertIn("-test.timeout=480s", gc_args)
                 self.assertEqual(run_args[run_args.index("-test.run") + 1],
                                  "^TestRuntimeNumGoroutineIncludesNewProc$")
-                self.assertEqual([call[2] for call in calls], ["2", "2"])
+                self.assertEqual([call[2] for call in calls], ["2", "2", "2"])
 
     def test_compile_failure_stops_before_isolated_process(self):
         result, calls = self.run_worker("emscripten", "compile")
@@ -70,9 +75,12 @@ class WorkerReuseTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["compile"])
 
     def test_isolated_process_failure_fails_acceptance(self):
-        result, calls = self.run_worker("emscripten", "run")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual([call[0] for call in calls], ["compile", "run"])
+        for failure in ("gc", "run"):
+            with self.subTest(failure=failure):
+                result, calls = self.run_worker("emscripten", failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([call[0] for call in calls],
+                                 ["compile", "gc"] if failure == "gc" else ["compile", "gc", "run"])
 
 
 if __name__ == "__main__":

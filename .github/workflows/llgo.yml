@@ -952,7 +952,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [runtime, workers, test-command]
+        # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
+        # command and caller regressions exhausted the 60-minute job limit.
+        suite: [runtime, workers, test-command, simd]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
     steps:
       - uses: actions/checkout@v7
@@ -973,7 +975,7 @@ jobs:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite != 'test-command'
+        if: matrix.suite == 'runtime' || matrix.suite == 'workers'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -1083,7 +1085,7 @@ jobs:
         run: dev/wasm_ci_report_test.sh
 
       - name: Test single-worker wasm schedulers
-        if: matrix.suite != 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'test-command'
         shell: bash
         env:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -1101,7 +1103,7 @@ jobs:
         run: dev/test_wasm_workers.sh
 
       - name: Test SIMD behavior on WebAssembly
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           GOEXPERIMENT: simd
@@ -1114,7 +1116,7 @@ jobs:
           LLGO="$RUNNER_TEMP/llgo-bin/llgo" bash dev/test_portable_simd_wasi.sh
 
       - name: Test SIMD on JavaScript targets with off, Thin and Full LTO
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo

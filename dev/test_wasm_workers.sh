@@ -96,16 +96,22 @@ run_worker_go_test() {
 	local target="$1"
 	local output="${work_dir}/test-go-${target}.out"
 	local module="${work_dir}/test-go-${target}.mjs"
-	# Run the full Go-language package: the small reflection fixture alone
-	# does not exercise continuous collection after the larger live heap.
-	# Collection-heavy cases can exceed three minutes after the larger live
-	# heap. Budget this package separately, including compilation, while
-	# retaining the shorter limits on the small acceptance fixtures.
+	# Keep reflection and the other language cases together: the small
+	# reflection fixture alone misses collection after the larger live heap.
+	# Typed mutation consumed 377s in CI, leaving too little of the 480s
+	# package deadline for MakeFunc's continuous-GC race. Run that stress test
+	# separately below, reusing the module and preserving all its iterations.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
 		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
-		-skip '^TestRuntimeNumGoroutineIncludesNewProc$' \
+		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation)$' \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+		-test.v -test.count=1 -test.timeout=480s \
+		-test.run '^TestGCConcurrentTypedMutation$' \
+		2>&1 | tee "${output}.typed-mutation"
+	grep -Fxq "PASS" "${output}.typed-mutation"
 	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
 	# that subprocess itself; reuse the compiled module in a fresh process so
 	# exiting goroutines cannot cancel the measured count increment.

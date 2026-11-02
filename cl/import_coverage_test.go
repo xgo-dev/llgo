@@ -216,8 +216,8 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 }
 
 func TestAstAndTypesFuncNameCoverage(t *testing.T) {
-	full, inPkg := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
-	if full != "example.com/p.F" || inPkg != "F" {
+	full, inPkg, ok := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
+	if !ok || full != "example.com/p.F" || inPkg != "F" {
 		t.Fatalf("astFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.F", "F")
 	}
 
@@ -227,8 +227,8 @@ func TestAstAndTypesFuncNameCoverage(t *testing.T) {
 			{Type: &ast.StarExpr{X: &ast.ParenExpr{X: &ast.Ident{Name: "T"}}}},
 		}},
 	}
-	full, inPkg = astFuncName("example.com/p", ptrRecv, nil)
-	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
+	full, inPkg, ok = astFuncName("example.com/p", ptrRecv, nil)
+	if !ok || full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
 		t.Fatalf("astFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
 	}
 
@@ -276,6 +276,48 @@ func TestDeclarationFuncNameWithoutObject(t *testing.T) {
 	decl.Recv = nil
 	if got, want := declarationFuncName(pkg.Path(), decl, nil, nil), "example.com/p.M"; got != want {
 		t.Fatalf("declarationFuncName without receiver = %q, want %q", got, want)
+	}
+}
+
+func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
+	for _, receiver := range []string{"bufio.Reader", "*bufio.Reader", "**T", "[]T", "map[int]T"} {
+		t.Run(receiver, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "invalid.go", "package p\n//export invalid_receiver\nfunc (b "+receiver+") M() {}", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llssa.NewProgram(nil)
+			defer prog.Dispose()
+			pkg := types.NewPackage("example.com/p", "p")
+			if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: true}); err != nil {
+				t.Fatal(err)
+			}
+			if !prog.PackageSyntaxParsed(pkg) {
+				t.Fatal("package syntax was not marked parsed")
+			}
+			// Both entry points collect metadata before lowering declarations.
+			for _, preloaded := range []bool{false, true} {
+				ctx := &context{prog: prog, options: Options{PreloadedSyntax: preloaded, ExportRename: true}}
+				ctx.initFiles(pkg.Path(), []*ast.File{file}, false)
+			}
+			if prog.HasLinknameTarget("invalid_receiver") {
+				t.Fatal("invalid receiver collected export/linkname metadata")
+			}
+		})
+	}
+}
+
+func TestAstFuncNameRejectsInvalidReceivers(t *testing.T) {
+	for _, fields := range [][]*ast.Field{
+		nil,
+		{{Type: ast.NewIdent("T")}, {Type: ast.NewIdent("T")}},
+		{{Type: &ast.BadExpr{}}},
+	} {
+		decl := &ast.FuncDecl{Name: ast.NewIdent("M"), Recv: &ast.FieldList{List: fields}}
+		if full, inPkg, ok := astFuncName("p", decl, nil); ok || full != "" || inPkg != "" {
+			t.Fatalf("invalid receiver returned (%q, %q, %v)", full, inPkg, ok)
+		}
 	}
 }
 
@@ -366,7 +408,10 @@ func plain() {}
 	want := map[string]bool{"env": true, "spaced": true, "plain": false}
 	for _, node := range file.Decls {
 		decl := node.(*ast.FuncDecl)
-		fullName, _ := astFuncName(pkg.Path(), decl, nil)
+		fullName, _, ok := astFuncName(pkg.Path(), decl, nil)
+		if !ok {
+			t.Fatalf("astFuncName(%s) rejected valid declaration", decl.Name.Name)
+		}
 		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
 		if got != want[decl.Name.Name] {
 			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])
