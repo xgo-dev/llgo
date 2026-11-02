@@ -755,10 +755,10 @@ sys.exit(subprocess.call(command + ['./internal/build']))
 
     def test_linux_container_jobs_use_large_runners_and_check_privileges(self):
         jobs = load("release-build.yml")["jobs"]
-        for name in ("populate-linux-sysroot", "build"):
-            self.assertEqual(jobs[name]["runs-on"],
-                             "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
-            self.assertIn("prepare", needs(jobs[name]))
+        sysroot = jobs["populate-linux-sysroot"]
+        self.assertEqual(sysroot["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        self.assertIn("prepare", needs(sysroot))
         probe = jobs["populate-linux-sysroot"]["steps"][0]
         self.assertNotIn("if", probe)  # A sysroot cache hit must still check the new runner.
         self.assertIn("docker run --rm --privileged", probe["run"])
@@ -769,6 +769,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(jobs["test-linux-distributions"]["strategy"]["matrix"]["include"],
                          [{"os": "ubuntu-24.04", "goarch": "amd64"}, {"os": "ubuntu-24.04-arm", "goarch": "arm64"}])
         self.assertEqual(jobs["release"]["runs-on"], "ubuntu-latest")
+        self.assertEqual(jobs["build"]["runs-on"], jobs["release"]["runs-on"])
         workflow = load("installer-shells.yml")
         self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
         installer = workflow["jobs"]["installer-shells"]
