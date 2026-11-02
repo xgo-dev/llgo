@@ -213,7 +213,7 @@ var NotSlice = map[string]int{"a": 1}
 func Use() int { return Keep["a"][0] + Skip["a"][0] + NotMap + NotSlice["a"] + Rewritten["a"][0] + Linked["a"][0] + __cgo_cb["a"][0] }
 `)
 	prog := ssatest.NewProgram(t, nil)
-	prog.SetLinkname("foo.Linked", "bar.Linked")
+	prog.SetLinkname("foo.Linked", "C.Linked")
 	prog.SetLocalityInfo(llssa.FullName(pkg.Pkg, "Keep"), llssa.LocalityInfo{Locality: llssa.ThreadLocal})
 	ctx := &context{
 		prog:     prog,
@@ -478,7 +478,7 @@ var M = map[string][]int{"a": {1}}
 func Use() int { return M["a"][0] }
 `)
 	prog := ssatest.NewProgram(t, nil)
-	prog.SetLinkname(llssa.FullName(pkg.Pkg, "M"), "bar.M")
+	prog.SetLinkname(llssa.FullName(pkg.Pkg, "M"), "C.M")
 	ctx := &context{prog: prog, pkg: prog.NewPackage("foo", "foo")}
 	ctx.collectStaticMapInits(pkg)
 	if ctx.staticMapSliceValues != nil {

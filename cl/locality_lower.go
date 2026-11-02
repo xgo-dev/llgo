@@ -173,22 +173,22 @@ func (p *context) localVariableFor(pkg llssa.Package, global *ssa.Global, define
 	return &localVariable{planned: planned, owner: owner}, true, nil
 }
 
-func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, name string, typ types.Type, cc llssa.CallConv) (llssa.Global, bool) {
+func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, name string, typ types.Type, cc llssa.CallConv) (llssa.Global, bool, llssa.VariableLocality) {
 	info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name()))
 	if !ok || info.Locality == locality.None {
-		return pkg.NewVar(name, typ, cc), false
+		return pkg.NewVar(name, typ, cc), false, info
 	}
 	variable := p.locality.variables[global]
 	if variable == nil {
 		panic(fmt.Sprintf("missing locality layout for %s", name))
 	}
 	if p.prog.LogicalGoroutineLocalityEnabled() && variable.planned.Info.Locality == locality.Goroutine {
-		return nil, true
+		return nil, true, info
 	}
 	if variable.planned.Storage == localitylayout.StoragePackage {
-		return nil, true
+		return nil, true, info
 	}
-	return variable.owner.direct[variable.planned.Name], false
+	return variable.owner.direct[variable.planned.Name], false, info
 }
 
 func (p *context) localityAllowsGlobalDebug(global *ssa.Global) bool {

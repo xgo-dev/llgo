@@ -179,6 +179,8 @@ Two conclusions follow:
 - Initializer presence alone cannot distinguish a definition from a reference. A declaration with no initializer is still a definition.
 - Multiple initializers do not always imply a duplicate-definition error. Only conflicting *static* nonzero initializers do.
 
+Trusted `//go:cgo_import_dynamic` and `//go:cgo_import_static` declarations also mark their Go symbol as imported storage. This suppresses ordinary zero/BSS definitions across packages, including a declaration with its default package-qualified name. A nonzero static Go initializer remains a definition and takes precedence. These directives require `unsafe` in the same source file or a generated `_cgo_` filename; a sibling file or `//line` directive does not grant that trust.
+
 Ordinary function variables keep Go function-value semantics. `//go:linkname Foo foo` with `var Foo func()` makes `Foo` a Go closure variable, exactly as an ordinary `func()` variable is. It is not a C function pointer. To get a native function pointer, spell the prefix out as shown above.
 
 ### Go-defined variables seen from C

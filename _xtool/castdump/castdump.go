@@ -7,12 +7,12 @@ import (
 	"unsafe"
 
 	"github.com/goplus/lib/c"
-	"github.com/goplus/lib/c/clang"
+	"github.com/llarhub/clang-c"
 )
 
 type Data struct {
 	Depth c.Uint
-	Unit  *clang.TranslationUnit
+	Unit  clang.TranslationUnit
 }
 
 var accessMap = map[clang.CXXAccessSpecifier]string{
@@ -42,32 +42,32 @@ func visit(cursor, parent clang.Cursor, ClientData c.Pointer) clang.ChildVisitRe
 func printType(t clang.Type, data *Data) {
 	printIndent(data.Depth)
 
-	typeSpell := t.String()
-	typeKind := t.Kind.String()
+	typeSpell := t.Spelling()
+	typeKind := t.Kind.Spelling()
 
-	if t.Kind == clang.TypeInvalid {
-	} else if t.Kind == clang.TypeUnexposed {
+	if t.Kind == clang.Type_Invalid {
+	} else if t.Kind == clang.Type_Unexposed {
 		c.Printf(c.Str("<UnexposedType|%s>: %s\n"), typeKind.CStr(), typeSpell.CStr())
-	} else if t.Kind >= clang.TypeFirstBuiltin && t.Kind <= clang.TypeLastBuiltin {
+	} else if t.Kind >= clang.Type_FirstBuiltin && t.Kind <= clang.Type_LastBuiltin {
 		c.Printf(c.Str("<BuiltinType|%s>: %s\n"), typeKind.CStr(), typeSpell.CStr())
-	} else if t.Kind > clang.TypeComplex {
+	} else if t.Kind > clang.Type_Complex {
 		c.Printf(c.Str("<ComplexType|%s>: %s\n"), typeKind.CStr(), typeSpell.CStr())
 	}
 
 	data.Depth++
 	switch t.Kind {
-	case clang.TypePointer:
-		printType(t.PointeeType(), data)
-	case clang.TypeIncompleteArray, clang.TypeVariableArray, clang.TypeDependentSizedArray, clang.TypeConstantArray:
-		printType(t.ArrayElementType(), data)
-	case clang.TypeTypedef:
-		printType(t.TypeDeclaration().TypedefDeclUnderlyingType(), data)
-	case clang.TypeElaborated:
-		printType(t.NamedType(), data)
-	case clang.TypeFunctionProto:
-		printType(t.ResultType(), data)
+	case clang.Type_Pointer:
+		printType(t.Pointee(), data)
+	case clang.Type_IncompleteArray, clang.Type_VariableArray, clang.Type_DependentSizedArray, clang.Type_ConstantArray:
+		printType(t.ArrayElement(), data)
+	case clang.Type_Typedef:
+		printType(t.Declaration().TypedefDeclUnderlyingType(), data)
+	case clang.Type_Elaborated:
+		printType(t.Named(), data)
+	case clang.Type_FunctionProto:
+		printType(t.Result(), data)
 		for i := 0; i < int(t.NumArgTypes()); i++ {
-			printType(t.ArgType(c.Uint(i)), data)
+			printType(t.Arg(c.Uint(i)), data)
 		}
 	}
 	data.Depth--
@@ -81,16 +81,16 @@ func printLocation(cursor clang.Cursor) {
 	var file clang.File
 	var line, column c.Uint
 
-	loc.SpellingLocation(&file, &line, &column, nil)
-	filename := file.FileName()
+	loc.Spelling(&file, &line, &column, nil)
+	filename := file.Name()
 	defer filename.Dispose()
 
 	c.Printf(c.Str("(Loc:%s:%d:%d)\n"), filename.CStr(), line, column)
 }
 
 func printAccess(cursor clang.Cursor) {
-	kind := cursor.Kind.String()
-	spell := cursor.String()
+	kind := cursor.Kind.Spelling()
+	spell := cursor.Spelling()
 	defer kind.Dispose()
 	defer spell.Dispose()
 
@@ -98,8 +98,8 @@ func printAccess(cursor clang.Cursor) {
 	printLocation(cursor)
 }
 
-func printMacro(cursor clang.Cursor, unit *clang.TranslationUnit) {
-	kind := cursor.Kind.String()
+func printMacro(cursor clang.Cursor, unit clang.TranslationUnit) {
+	kind := cursor.Kind.Spelling()
 	defer kind.Dispose()
 
 	c.Printf(c.Str("%s: "), kind.CStr())
@@ -111,7 +111,7 @@ func printMacro(cursor clang.Cursor, unit *clang.TranslationUnit) {
 
 	tokensSlice := unsafe.Slice(tokens, int(numTokens))
 	for _, tok := range tokensSlice {
-		tokStr := unit.Token(tok)
+		tokStr := unit.TokenSpelling(tok)
 		c.Printf(c.Str("%s "), tokStr.CStr())
 		tokStr.Dispose()
 	}
@@ -119,8 +119,8 @@ func printMacro(cursor clang.Cursor, unit *clang.TranslationUnit) {
 }
 
 func printFunc(cursor clang.Cursor, data *Data) {
-	kind := cursor.Kind.String()
-	spell := cursor.String()
+	kind := cursor.Kind.Spelling()
+	spell := cursor.Spelling()
 	symbol := cursor.Mangling()
 	defer symbol.Dispose()
 	defer kind.Dispose()
@@ -132,8 +132,8 @@ func printFunc(cursor clang.Cursor, data *Data) {
 }
 
 func printEnumConstant(cursor clang.Cursor) {
-	kind := cursor.Kind.String()
-	spell := cursor.String()
+	kind := cursor.Kind.Spelling()
+	spell := cursor.Spelling()
 	defer kind.Dispose()
 	defer spell.Dispose()
 
@@ -142,13 +142,13 @@ func printEnumConstant(cursor clang.Cursor) {
 }
 
 func printDefault(cursor clang.Cursor, data *Data) {
-	kind := cursor.Kind.String()
-	spell := cursor.String()
+	kind := cursor.Kind.Spelling()
+	spell := cursor.Spelling()
 	defer kind.Dispose()
 	defer spell.Dispose()
 
 	// node which has type
-	if cursor.Type().Kind != clang.TypeInvalid {
+	if cursor.Type().Kind != clang.Type_Invalid {
 		c.Printf(c.Str("%s: %s"), kind.CStr(), spell.CStr())
 		printLocation(cursor)
 		printType(cursor.Type(), data)
@@ -158,19 +158,19 @@ func printDefault(cursor clang.Cursor, data *Data) {
 }
 
 func printAST(cursor clang.Cursor, data *Data) {
-	kind := cursor.Kind.String()
-	spell := cursor.String()
+	kind := cursor.Kind.Spelling()
+	spell := cursor.Spelling()
 
 	printIndent(data.Depth)
 
 	switch cursor.Kind {
-	case clang.CursorCXXAccessSpecifier:
+	case clang.Cursor_CXXAccessSpecifier:
 		printAccess(cursor)
-	case clang.CursorMacroDefinition:
+	case clang.Cursor_MacroDefinition:
 		printMacro(cursor, data.Unit)
-	case clang.CursorFunctionDecl, clang.CursorCXXMethod, clang.CursorConstructor, clang.CursorDestructor:
+	case clang.Cursor_FunctionDecl, clang.Cursor_CXXMethod, clang.Cursor_Constructor, clang.Cursor_Destructor:
 		printFunc(cursor, data)
-	case clang.CursorEnumConstantDecl:
+	case clang.Cursor_EnumConstantDecl:
 		printEnumConstant(cursor)
 	default:
 		printDefault(cursor, data)
@@ -201,7 +201,7 @@ func main() {
 		sourceFile,
 		unsafe.SliceData(args), 3,
 		nil, 0,
-		clang.DetailedPreprocessingRecord,
+		c.Uint(clang.TranslationUnit_DetailedPreprocessingRecord),
 	)
 	defer index.Dispose()
 	defer unit.Dispose()
