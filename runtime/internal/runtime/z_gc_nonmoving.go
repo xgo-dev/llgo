@@ -48,6 +48,7 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 }
 
 func AllocZ(size uintptr) unsafe.Pointer {
+	// tinygogc.Alloc already clears storage, including reused blocks.
 	return AllocU(size)
 }
 

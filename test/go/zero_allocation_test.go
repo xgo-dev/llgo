@@ -21,6 +21,8 @@ func zeroAllocationRecords(n int) []zeroAllocationRecord {
 }
 
 func TestAllocationZeroed(t *testing.T) {
+	// TestRuntimeAlignedAllocationZeroed/GC in aligned_alloc_llgo_test.go
+	// additionally cover higher alignments, fallback storage, and bad requests.
 	// Dirty objects and collect between rounds to exercise reused storage as
 	// well as fresh allocations, including allocator size-class boundaries.
 	for round := 0; round < 4; round++ {
