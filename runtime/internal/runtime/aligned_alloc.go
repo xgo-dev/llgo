@@ -56,6 +56,13 @@ func allocUAlignedFallback(size, alignment uintptr) unsafe.Pointer {
 
 // AllocZAligned is the zero-initialized counterpart of AllocUAligned.
 func AllocZAligned(size, alignment uintptr) unsafe.Pointer {
+	if alignment != 0 && alignment&(alignment-1) == 0 &&
+		alignment <= unsafe.Sizeof(uintptr(0)) && size <= maxAlloc {
+		// Ordinary slice allocations use this entry too. Let the backend's
+		// zeroing allocator handle natural alignment; higher alignments and
+		// invalid requests still go through AllocUAligned below.
+		return AllocZ(size)
+	}
 	p := AllocUAligned(size, alignment)
 	c.Memset(p, 0, size)
 	return p
