@@ -2727,6 +2727,7 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 		if pkg.name != "main" {
 			pkgDir = filepath.Join(ws.workDir, pkg.dir)
 		}
+		// LLGo loads imports from source and does not consume gc object metadata.
 		args := []string{"tool", "compile", "-e", "-C", "-d=panic"}
 		args = append(args, opts.CompilerFlags...)
 		var sources []diagnosticSource
