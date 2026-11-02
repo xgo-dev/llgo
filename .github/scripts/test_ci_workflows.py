@@ -385,9 +385,13 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                      if step.get("uses") == "./.github/actions/setup-llgo-cache")
         self.assertLess(go, cache)
         self.assertNotIn("if", steps[cache])
-        self.assertEqual(steps[cache]["with"]["build-cache-mode"], "readwrite")
+        self.assertEqual(steps[go]["with"]["cache"], "${{ matrix.suite != 'runtime' }}")
+        restore_runtime = "${{ matrix.suite == 'runtime' && 'restore' || 'readwrite' }}"
+        self.assertEqual(steps[cache]["with"]["build-cache-mode"], restore_runtime)
         self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
-        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], "readwrite")
+        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], restore_runtime)
+        self.assertIn("matrix.suite == 'runtime' && 'restore'",
+                      steps[cache]["with"]["wasmer-cache-mode"])
         self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
 
     def test_wasm_simd_runs_separately_from_command_regressions(self):

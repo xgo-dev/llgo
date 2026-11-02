@@ -996,14 +996,18 @@ jobs:
 
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
+        with:
+          # This runtime job nearly fills the 17-GiB runner. Cache archive
+          # creation needs another copy of the payload during post-job save.
+          cache: ${{ matrix.suite != 'runtime' }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: readwrite
+          build-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || 'readwrite' }}
           build-cache-scope: wasm-${{ matrix.suite }}
-          crosscompile-cache-mode: readwrite
-          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
+          crosscompile-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || 'readwrite' }}
+          wasmer-cache-mode: ${{ matrix.suite == 'runtime' && 'restore' || (matrix.suite != 'workers' && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
         if: matrix.suite != 'workers'
