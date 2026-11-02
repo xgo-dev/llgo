@@ -58,6 +58,8 @@ func changeType(x uint64) (r Pair) {
 	p.Hi = x
 	return
 }
+func borrowZero(*struct{}) {}
+func zero() (r struct{}) { borrowZero(&r); return }
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -73,6 +75,9 @@ func changeType(x uint64) (r Pair) {
 					if strings.Contains(body, "runtime.Alloc") || !strings.Contains(body, "alloca ") {
 						t.Errorf("%s should use stack result storage:\n%s", name, body)
 					}
+				}
+				if body := llvmFunction(t, ir, "resultalloc.zero"); strings.Contains(body, "alloca ") {
+					t.Errorf("zero-sized result must retain the shared heap sentinel:\n%s", body)
 				}
 			})
 		}
@@ -106,9 +111,16 @@ func mixed(first, second *uint64) { *first = 1; saved = second }
 		{"unsafe pointer", `func result() (r uint64, p unsafe.Pointer) { p = unsafe.Pointer(&r); return }`},
 		{"pointer", `func result() (r uint64, p *uint64) { p = &r; return }`},
 		{"field", `func result() (r struct { x uint64 }) { saved = &r.x; return }`},
+		{"index", `func result() (r [2]uint64) { saved = &r[1]; return }`},
+		{"named pointer", `type Ptr *uint64; var named Ptr; func result() (r uint64) { named = Ptr(&r); return }`},
+		{"phi", `func result(b bool) (r uint64) { p := &r; if b { p = saved }; saved = p; return }`},
 		{"slice", `func result() (r [2]uint64, s []uint64) { s = r[:]; return }`},
 		{"recursive", `func result(n int) (r uint64) { recursive(&r, n); return }`},
 		{"large", `func result() (r [16385]uint64) { borrow(&r[0]); return }`},
+		{"analysis limit", "func result() (r uint64) {" + strings.Repeat("borrow(&r);", 1025) + "return }"},
+		{"intrinsic body", `//go:linkname intrinsic llgo.atomicLoad
+func intrinsic(p *uint64) uint64 { return *p }
+func result() (r uint64) { _ = intrinsic(&r); return }`},
 	} {
 		for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
 			t.Run(fmt.Sprintf("%s/%v", tc.name, mode), func(t *testing.T) {
@@ -117,6 +129,25 @@ func mixed(first, second *uint64) { *first = 1; saved = second }
 					t.Fatalf("result must retain heap storage:\n%s", body)
 				}
 			})
+		}
+	}
+}
+
+func TestResultEscapeAnalysisRejectsUnsupportedUses(t *testing.T) {
+	pkg, _, _ := buildGoSSAPkg(t, `package resultalloc
+func receive(c <-chan int) { <-c }
+func add(n int) int { return n + 1 }
+`)
+	// Missing referrers and operations outside the supported pointer-use
+	// subset must never be taken as proof that a value is only borrowed.
+	for _, value := range []ssa.Value{
+		ssa.NewConst(nil, pkg.Func("receive").Params[0].Type()),
+		pkg.Func("receive").Params[0],
+		pkg.Func("add").Params[0],
+	} {
+		analysis := resultEscapeAnalysis{budget: 1024}
+		if analysis.borrowed(value, make(map[ssa.Value]bool)) {
+			t.Errorf("unsupported use of %s was classified as borrowed", value)
 		}
 	}
 }
