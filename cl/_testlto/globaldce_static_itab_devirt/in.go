@@ -5,6 +5,7 @@ import "reflect"
 
 // SYMBOL-DAG: main{{.*}}A{{.*}}M
 // SYMBOL-NOT: main{{.*}}B{{.*}}M
+// After LTO, callM is proven to use A only, so the static itab is unused and dropped.
 // SYMBOL-NOT: _llgo_itab
 
 type I interface {
@@ -47,8 +48,8 @@ func main() {
 	// signature-wide method capability would retain B.M through that descriptor.
 	ok := keepType(B{})
 	direct := I(A{})
-	// Interface equality relies on canonical runtime itab identity. The static
-	// template is analysis-only; the direct conversion must still agree with an
-	// interface assembled through reflection.
+	// LTO T2I still calls NewItab; the static itab is only a de-virt template
+	// and is dropped after the plugin. Equality with a reflection-built
+	// interface still holds via the (inter, _type) pair if tab pointers differ.
 	println(callM(direct), direct == reflectedI(A{}), ok)
 }
