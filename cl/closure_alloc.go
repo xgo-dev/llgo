@@ -13,8 +13,9 @@ func (p *context) canStackAllocateClosure(closure *ssa.MakeClosure) bool {
 		// Explicit roots trace heap contexts, not pointer fields on the stack.
 		return false
 	}
-	refs, ok := nonDebugReferrers(closure)
-	if !ok || len(refs) == 0 {
+	// MakeClosure and the Alloc/FreeVar nodes below always carry Referrers.
+	refs, _ := nonDebugReferrers(closure)
+	if len(refs) == 0 {
 		return false
 	}
 	for _, ref := range refs {
@@ -43,10 +44,7 @@ func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
 	if elem := alloc.Type().(*types.Pointer).Elem(); p.prog.SizeOf(p.type_(elem, llssa.GoDecl)) == 0 {
 		return false
 	}
-	refs, ok := nonDebugReferrers(alloc)
-	if !ok {
-		return false
-	}
+	refs, _ := nonDebugReferrers(alloc)
 	captured := false
 	for _, ref := range refs {
 		if captureStorageUse(ref, alloc) {
@@ -56,19 +54,14 @@ func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
 		if !ok || !p.canStackAllocateClosure(closure) {
 			return false
 		}
-		callee, ok := closure.Fn.(*ssa.Function)
-		if !ok {
-			return false
-		}
+		// MakeClosure.Fn is always a Function in Go SSA.
+		callee := closure.Fn.(*ssa.Function)
 		for i, binding := range closure.Bindings {
 			if binding != alloc {
 				continue
 			}
 			// Go SSA pairs each binding with the free variable at the same index.
-			uses, ok := nonDebugReferrers(callee.FreeVars[i])
-			if !ok {
-				return false
-			}
+			uses, _ := nonDebugReferrers(callee.FreeVars[i])
 			for _, use := range uses {
 				if !captureStorageUse(use, callee.FreeVars[i]) {
 					return false

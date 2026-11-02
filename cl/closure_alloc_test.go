@@ -14,6 +14,7 @@ import "unsafe"
 func pointer(p unsafe.Pointer) unsafe.Pointer { return func() unsafe.Pointer { return p }() }
 func mutate(x int) int { func(){x++}(); return x }
 func loop(x int, n int) int { for i:=0;i<n;i++ { func(){x+=n}() }; return x }
+func zero(x struct{}) { func(){ _ = x }() }
 func escape(x int) func() int { return func() int { return x } }
 func address(x int) *int { return func() *int { return &x }() }
 func deferred(x int) (r int) { defer func(){r=x}(); return }
@@ -54,6 +55,7 @@ func _Cfunc_scalar(p0 uint64)(r1 uint64) {
 	_cgo_runtime_cgocall(_cgo_scalar,uintptr(unsafe.Pointer(&p0)))
 	return
 }
+
 func _Cfunc_pair(p0 uint64)(r1 pair) {
 	_cgo_runtime_cgocall(_cgo_pair,uintptr(unsafe.Pointer(&p0)))
 	return
@@ -69,5 +71,44 @@ func _Cfunc_noargs()(r1 uint64) {
 		if strings.Contains(body, "runtime.Alloc") {
 			t.Fatalf("%s retains unused argument/result frame:\n%s", name, body)
 		}
+	}
+}
+
+func TestImmediateClosureRejectsAdditionalUses(t *testing.T) {
+	for _, scenario := range []string{"no calls", "also passed as argument"} {
+		t.Run(scenario, func(t *testing.T) {
+			pkg, _, _ := buildGoSSAPkg(t, `package captureuses
+func f(x int) int { return func(y int) int { return x+y }(1) }
+`)
+			var closure *ssa.MakeClosure
+			var call *ssa.Call
+			for _, block := range pkg.Func("f").Blocks {
+				for _, instr := range block.Instrs {
+					switch instr := instr.(type) {
+					case *ssa.MakeClosure:
+						closure = instr
+					case *ssa.Call:
+						call = instr
+					}
+				}
+			}
+			if closure == nil || call == nil {
+				t.Fatal("missing closure graph")
+			}
+			ctx := &context{prog: newLLSSAProg(t)}
+			if !ctx.canStackAllocateClosure(closure) {
+				t.Fatal("control closure was not eligible")
+			}
+			if scenario == "no calls" {
+				*closure.Referrers() = nil
+			} else {
+				// A use-def rewrite must not hide an additional argument use
+				// behind the same instruction's synchronous callee use.
+				call.Call.Args = append(call.Call.Args, closure)
+			}
+			if ctx.canStackAllocateClosure(closure) {
+				t.Fatal("additional use was accepted")
+			}
+		})
 	}
 }
