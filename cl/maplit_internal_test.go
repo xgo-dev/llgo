@@ -129,6 +129,129 @@ func TestCollectLiveIntValuesNotLowered(t *testing.T) {
 	}
 }
 
+func setMapLitRefs(v ssa.Value, refs ...ssa.Instruction) {
+	*v.Referrers() = refs
+}
+
+func TestMapLitInstructionBoundaries(t *testing.T) {
+	if instrIndex(&ssa.Store{}) != -1 {
+		t.Fatal("instruction without a block was assigned an index")
+	}
+	if instrIsAfter(&ssa.Store{}, nil, 0) {
+		t.Fatal("instruction without block was ordered")
+	}
+	fn := buildTestSSA(t, `package foo
+func F() int { return 1 }
+`)
+	block := fn.Blocks[0]
+	if len(block.Instrs) == 0 || instrIndex(block.Instrs[0]) < 0 {
+		t.Fatal("SSA instruction was not indexed")
+	}
+	if instrIsAfter(block.Instrs[0], block, instrIndex(block.Instrs[0])) {
+		t.Fatal("instruction was ordered after itself")
+	}
+}
+
+func TestMapLitSafeToDelayRejectsInvalidUses(t *testing.T) {
+	makeMap := &ssa.MakeMap{}
+	update := &ssa.MapUpdate{Map: makeMap}
+	block := &ssa.BasicBlock{Index: 0, Instrs: []ssa.Instruction{update}}
+	_ = block
+	cases := []struct {
+		name string
+		refs []ssa.Instruction
+		want bool
+	}{
+		{"missing block", nil, false},
+		{"foreign update", []ssa.Instruction{&ssa.MapUpdate{}}, false},
+		{"wrong store", []ssa.Instruction{&ssa.Store{}}, false},
+		{"before update", []ssa.Instruction{&ssa.Store{}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "missing block" {
+				setMapLitRefs(makeMap, tc.refs...)
+				if mapLitSafeToDelay(makeMap, []*ssa.MapUpdate{update}) {
+					t.Fatal("map without a block was accepted")
+				}
+				return
+			}
+			setMapLitRefs(makeMap, tc.refs...)
+			got := mapLitSafeToDelay(makeMap, []*ssa.MapUpdate{update})
+			if got != tc.want {
+				t.Fatalf("mapLitSafeToDelay = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMapLitValueHelpersRejectMalformedSSA(t *testing.T) {
+	if !allConstMapValues(nil) {
+		t.Fatal("empty update list was not treated as vacuously constant")
+	}
+	if _, ok := constantMakeCall(&ssa.Const{}); ok {
+		t.Fatal("constant was treated as a boxing call")
+	}
+	store := &ssa.Store{Val: &ssa.Const{}}
+	if extra, ok := skipStoredValue(store); !ok || len(extra) != 0 {
+		t.Fatalf("plain stored value = (%v, %v), want empty success", extra, ok)
+	}
+	call := &ssa.Call{}
+	setMapLitRefs(call, store, &ssa.Store{})
+	store.Val = call
+	if _, ok := skipStoredValue(store); ok {
+		t.Fatal("call with unavailable referrers was accepted")
+	}
+	if _, ok := constantMakeCall(call); ok {
+		t.Fatal("malformed call was accepted as constant boxing")
+	}
+}
+
+func TestMapValueComplitRejectsMalformedSSA(t *testing.T) {
+	alloc := &ssa.Alloc{}
+	load := &ssa.UnOp{Op: token.MUL, X: alloc}
+	if _, _, _, _, ok := mapValueComplit(&ssa.Const{}); ok {
+		t.Fatal("non-load value accepted")
+	}
+	setMapLitRefs(alloc, load)
+	if _, _, _, _, ok := mapValueComplit(load); ok {
+		t.Fatal("load without fields accepted")
+	}
+	field := &ssa.FieldAddr{X: alloc, Field: 0}
+	setMapLitRefs(alloc, field, load)
+	setMapLitRefs(field)
+	if _, _, _, _, ok := mapValueComplit(load); ok {
+		t.Fatal("field without store accepted")
+	}
+}
+
+func TestCompileLargeMapLits(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`package foo
+
+type item struct { Typ string; Value any }
+func boxInt(x int64) any { return x }
+func F() map[string]int {
+	return map[string]int{
+`)
+	for i := 0; i <= maxUnrolledMapUpdates; i++ {
+		fmt.Fprintf(&b, "\t\t%q: %d,\n", fmt.Sprintf("k%d", i), i)
+	}
+	b.WriteString(`	}
+}
+func G() map[string]item {
+	return map[string]item{
+`)
+	for i := 0; i <= maxUnrolledMapUpdates; i++ {
+		fmt.Fprintf(&b, "\t\t%q: {Typ: %q, Value: boxInt(%d)},\n", fmt.Sprintf("k%d", i), "int", i)
+	}
+	b.WriteString("\t}\n}\n")
+	_, mod := mustCompileLLPkgFromSrc(t, b.String())
+	if mustNamedFunction(t, mod, "foo.F").IsNil() || mustNamedFunction(t, mod, "foo.G").IsNil() {
+		t.Fatal("large map functions were not compiled")
+	}
+}
+
 func TestCollectRuntimeValuesNotLowered(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`package foo
