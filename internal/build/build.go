@@ -3911,7 +3911,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	}
 	err = f.Close()
 	if err != nil {
-		return "", err
+		return exportFile, err
 	}
 	if ctx.buildConf.CheckLLFiles {
 		if msg, err := llcCheck(ctx.commands, f.Name()); err != nil {
@@ -3932,10 +3932,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
-	if err := objFile.Close(); err != nil {
-		os.Remove(objFile.Name())
-		return "", err
-	}
+	objFile.Close()
 	args := []string{"-o", objFile.Name(), "-c", f.Name(), "-Wno-override-module"}
 	if ctx.shouldPrintCommands(false) {
 		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", f.Name(), pkgPath)
