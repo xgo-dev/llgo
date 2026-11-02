@@ -1846,7 +1846,8 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 			hoistToEntry = inLoop
 		}
-		ret = b.AllocEx(elem, v.Heap, hoistToEntry)
+		heap := v.Heap && !p.canStackAllocateResult(v)
+		ret = b.AllocEx(elem, heap, hoistToEntry)
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v)
 		if p.isRecoverSlotAddr(v) {
