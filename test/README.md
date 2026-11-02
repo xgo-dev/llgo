@@ -35,6 +35,23 @@ The program reports Go-thread and C-thread reentry separately, after checking
 allocation/GC, retained outer values, and all nested defers. Compiler IR and
 symbol checks remain in `cl/_test*` and `internal/build`.
 
+On Linux amd64/arm64, `cgo/allthreads_linux_test.go` builds and runs a standalone
+executable plus C shared/archive hosts to check all-thread syscall ownership.
+The isolated `cgo/testdata/allthreadsownership` fixture enables the private
+transport only for its controlled cohort, with `GC_MARKERS=1`; public APIs must
+still return `ENOTSUP`. The executable's owned main must complete a no-op
+`setresuid(-1, -1, -1)`, while an adopted library host must reject it. This
+reproduces the C host ownership defect on main commit `08e759300`: both library
+cases incorrectly execute the syscall. Run the regression with:
+
+```sh
+llgo test ./test/cgo -run TestAllThreadsMainThreadOwnership -count=1 -v
+```
+
+The same test also runs under `go test ./test/cgo`, building fixtures in-process
+to contribute compiler coverage. Native protocol stress and sanitizer tests
+remain in `internal/build`.
+
 Use the version runner for an older release or a smaller local package set:
 
 ```sh
