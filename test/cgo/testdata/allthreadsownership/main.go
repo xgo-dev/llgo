@@ -1,7 +1,9 @@
 package main
 
-import "syscall"
-import _ "unsafe"
+import (
+	"syscall"
+	_ "unsafe"
+)
 
 const LLGoFiles = "_wrap/probe.c"
 

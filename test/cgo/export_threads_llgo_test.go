@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// mode optionally selects a single build mode; omission uses exe.
 func buildCExportFixture(t *testing.T, dir, output string, mode ...string) {
 	t.Helper()
 	compiler := os.Getenv("LLGO_TEST_LLGO")

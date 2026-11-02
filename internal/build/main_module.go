@@ -90,7 +90,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
-	// Match Go's linker flags; static data is available before runtime.init.
+	// Match Go's islibrary/isarchive linker flags, read by runtime.init.
 	// https://github.com/golang/go/blob/go1.27.3/src/cmd/link/internal/ld/lib.go#L805-L819
 	islibrary := mainPkg.NewVarEx("runtime.islibrary", prog.Pointer(prog.Bool()))
 	islibrary.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCShared))
