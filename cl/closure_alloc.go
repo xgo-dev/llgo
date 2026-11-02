@@ -40,7 +40,7 @@ func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
 	if !alloc.Heap || fn == nil || fn.Recover != nil || alloc.Block() != fn.Blocks[0] || p.prog.GCRootsEnabled() {
 		return false
 	}
-	if elem := alloc.Type().Underlying().(*types.Pointer).Elem(); p.prog.SizeOf(p.type_(elem, llssa.GoDecl)) == 0 {
+	if elem := alloc.Type().(*types.Pointer).Elem(); p.prog.SizeOf(p.type_(elem, llssa.GoDecl)) == 0 {
 		return false
 	}
 	refs, ok := nonDebugReferrers(alloc)
@@ -64,6 +64,7 @@ func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
 			if binding != alloc {
 				continue
 			}
+			// Go SSA pairs each binding with the free variable at the same index.
 			uses, ok := nonDebugReferrers(callee.FreeVars[i])
 			if !ok {
 				return false
