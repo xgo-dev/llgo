@@ -77,7 +77,10 @@ func fullGoexitLifecycleCommand(p profile, root, goRoot, artifact string) comman
 	return fullChildCommand(p, root, goRoot, artifact, "-llgo.main-goexit-lifecycle-child")
 }
 
-const fullBuiltinPrintWant = "1e+07\n(1e+07-1e+07i)\n(1.5+0i)\nNaN\n+Inf\n-Inf\n(1+NaNi)\n(1+Infi)\n(1-Infi)\n"
+const fullBuiltinPrintWant = "false true\n" +
+	"0 1 -1 -9223372036854775808 9223372036854775807\n" +
+	"0 1 9223372036854775808 18446744073709551615\n0x0\n" +
+	"1e+07\n(1e+07-1e+07i)\n(1.5+0i)\nNaN\n+Inf\n-Inf\n(1+NaNi)\n(1+Infi)\n(1-Infi)\n"
 
 func validateFullBuiltinPrint(out []byte, runErr error) error {
 	if runErr != nil {

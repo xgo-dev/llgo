@@ -25,11 +25,11 @@ const (
 	LLGoPackage = "decl"
 )
 
-//go:linkname Stdin __stdinp
+//go:linkname Stdin C.__stdinp
 var Stdin FilePtr
 
-//go:linkname Stdout __stdoutp
+//go:linkname Stdout C.__stdoutp
 var Stdout FilePtr
 
-//go:linkname Stderr __stderrp
+//go:linkname Stderr C.__stderrp
 var Stderr FilePtr

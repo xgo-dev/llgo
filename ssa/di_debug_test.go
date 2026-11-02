@@ -249,8 +249,10 @@ func inspect(first, second int) {}
 }
 
 func TestDebugGoTypeEncodings(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "types.go", `package p
+	for _, packageName := range []string{"p", "main"} {
+		t.Run(packageName, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "types.go", `package `+packageName+`
 type Named int64
 type Large [129]byte
 type Recursive struct { Next *Recursive }
@@ -266,57 +268,62 @@ type Shape struct {
 	Recursive *Recursive
 }
 `, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+			if err != nil {
+				t.Fatal(err)
+			}
+			typesPkg, err := (&types.Config{}).Check("example.com/p", fset, []*ast.File{file}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	prog := NewProgram(nil)
-	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
-	prog.SetRuntime(newDebugRuntimePackage())
-	pkg := prog.NewPackage("p", "example.com/p")
-	pkg.InitDebug("p", "example.com/p", fset)
+			prog := NewProgram(nil)
+			defer prog.Dispose()
+			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+			prog.SetRuntime(newDebugRuntimePackage())
+			pkg := prog.NewPackage(packageName, "example.com/p")
+			pkg.InitDebug(packageName, "example.com/p", fset)
 
-	shape := typesPkg.Scope().Lookup("Shape").Type()
-	global := pkg.NewVar("example.com/p.GlobalShape", types.NewPointer(shape), GoDecl)
-	fn := pkg.NewFunc("debugTypes", NoArgsNoRet, GoDecl)
-	builder := fn.NewBuilder()
-	defer builder.impl.Dispose()
-	builder.DIGlobal(global.Expr, "GlobalShape", fset.Position(typesPkg.Scope().Lookup("Shape").Pos()))
+			shape := typesPkg.Scope().Lookup("Shape").Type()
+			global := pkg.NewVar("example.com/p.GlobalShape", types.NewPointer(shape), GoDecl)
+			fn := pkg.NewFunc("debugTypes", NoArgsNoRet, GoDecl)
+			builder := fn.NewBuilder()
+			defer builder.impl.Dispose()
+			builder.DIGlobal(global.Expr, "GlobalShape", fset.Position(typesPkg.Scope().Lookup("Shape").Pos()))
 
-	fallback := token.Position{Filename: "fallback.go", Line: 7}
-	noPos := types.NewNamed(types.NewTypeName(token.NoPos, typesPkg, "NoPos", nil), types.Typ[types.Int], nil)
-	if got := pkg.di.typeDeclarationPosition(noPos, fallback); got != fallback {
-		t.Fatalf("invalid declaration position = %v, want %v", got, fallback)
-	}
+			fallback := token.Position{Filename: "fallback.go", Line: 7}
+			noPos := types.NewNamed(types.NewTypeName(token.NoPos, typesPkg, "NoPos", nil), types.Typ[types.Int], nil)
+			if got := pkg.di.typeDeclarationPosition(noPos, fallback); got != fallback {
+				t.Fatalf("invalid declaration position = %v, want %v", got, fallback)
+			}
 
-	pkg.FinalizeDebug()
-	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
-		t.Fatalf("Go type debug metadata is invalid: %v\n%s", err, pkg.Module().String())
-	}
-	ir := pkg.Module().String()
-	for _, want := range []string{
-		"DW_LANG_C",
-		"DW_ATE_complex_float",
-		"!DISubroutineType",
-		`name: "map[string]example.com/p.Named"`,
-		`name: "hash<string,example.com/p.Named>"`,
-		`name: "bucket<string,example.com/p.Named>"`,
-		`name: "indirectkeys"`,
-		`name: "indirectvalues"`,
-		`name: "chan example.com/p.Named"`,
-		`name: "hchan<example.com/p.Named>"`,
-		`name: "waitq<example.com/p.Named>"`,
-		`name: "sudog<example.com/p.Named>"`,
-		`name: "example.com/p.Recursive"`,
-	} {
-		if !strings.Contains(ir, want) {
-			t.Errorf("module is missing %q:\n%s", want, ir)
-		}
+			pkg.FinalizeDebug()
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("Go type debug metadata is invalid: %v\n%s", err, pkg.Module().String())
+			}
+			ir := pkg.Module().String()
+			for _, want := range []string{
+				"DW_LANG_C",
+				"DW_ATE_complex_float",
+				"!DISubroutineType",
+				`name: "map[string]example.com/p.Named"`,
+				`name: "hash<string,example.com/p.Named>"`,
+				`name: "bucket<string,example.com/p.Named>"`,
+				`name: "indirectkeys"`,
+				`name: "indirectvalues"`,
+				`name: "chan example.com/p.Named"`,
+				`name: "hchan<example.com/p.Named>"`,
+				`name: "waitq<example.com/p.Named>"`,
+				`name: "sudog<example.com/p.Named>"`,
+				`name: "example.com/p.Recursive"`,
+			} {
+				if packageName == "main" {
+					want = strings.ReplaceAll(want, "example.com/p", "main")
+				}
+				if !strings.Contains(ir, want) {
+					t.Errorf("module is missing %q:\n%s", want, ir)
+				}
+			}
+		})
 	}
 }
 

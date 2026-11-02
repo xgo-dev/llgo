@@ -32,6 +32,7 @@ func TestCollectArtifacts(t *testing.T) {
 	elf := write("app.elf", "elf-data")
 	dwarf := write("app.debug.wasm", "debug")
 	pcln := write("app.wasm.pclntab", "pcln")
+	manifest := write("app.wasm-manifest.json", "manifest")
 	bin := write("app.bin", "bin")
 	hex := write("app.hex", "hex-data")
 
@@ -41,6 +42,15 @@ func TestCollectArtifacts(t *testing.T) {
 		out  OutFmtDetails
 		want []Artifact
 	}{
+		{
+			name: "final pipeline manifest",
+			conf: Config{Goarch: "wasm", DebugArtifactMode: DebugArtifactNone},
+			out:  OutFmtDetails{Out: main, WasmManifest: manifest},
+			want: []Artifact{
+				{Role: ArtifactRoleDeployment, Format: "wasm", Path: main, Size: 4},
+				{Role: ArtifactRoleDeployment, Format: "wasm-manifest", Path: manifest, Size: 8},
+			},
+		},
 		{
 			name: "embedded",
 			conf: Config{Goarch: "wasm", DebugArtifactMode: DebugArtifactEmbedded},
@@ -200,6 +210,7 @@ func TestCollectArtifactsValidation(t *testing.T) {
 		{name: "missing DWARF", mode: DebugArtifactExternal, out: OutFmtDetails{Out: main, DWARF: main + ".debug.wasm"}, role: ArtifactRoleDebug},
 		{name: "missing runtime symbols", mode: DebugArtifactNone, out: OutFmtDetails{Out: main, PCLN: main + ".pclntab"}, role: ArtifactRoleRuntimeSymbols},
 		{name: "missing deployment format", mode: DebugArtifactNone, out: OutFmtDetails{Out: main, Bin: main + ".bin"}, role: ArtifactRoleDeployment},
+		{name: "missing final manifest", mode: DebugArtifactNone, out: OutFmtDetails{Out: main, WasmManifest: main + ".wasm-manifest.json"}, role: ArtifactRoleDeployment},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := CollectArtifacts(&Config{DebugArtifactMode: tt.mode}, &tt.out)

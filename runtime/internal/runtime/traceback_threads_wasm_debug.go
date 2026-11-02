@@ -11,6 +11,12 @@ import (
 
 const wasmDebuggerEnabled = true
 
+// Only debugger builds retain native frame bases. Ordinary builds embed an
+// empty type, preserving CallerFrame size and avoiding frameaddress calls.
+type wasmCallerFrame struct {
+	base uintptr
+}
+
 // wasmDebuggerNode describes a logical G, including a parked fiber. The
 // debugger must stop all workers before reading mutable G and caller state.
 // Nodes use libc storage so registering the initial G cannot recurse into
@@ -32,6 +38,25 @@ var wasmDebuggerRegistry struct {
 
 var wasmDebuggerLock uint32
 var TracebackCreator func() uintptr
+
+func SetWasmCallerFrameBase(mark int, base uintptr) {
+	update := beginWasmCallerUpdate()
+	store := callerLocationStoreCurrent
+	if store != nil && mark >= 0 && mark < len(store.stack) {
+		store.stack[mark].base = base
+	}
+	endWasmCallerUpdate(update)
+}
+
+func clearWasmPanicFrameBases(store *callerLocationStore) {
+	update := beginWasmCallerUpdate()
+	// Recover can clear panicDepth before all retained logical frames are
+	// popped. Their physical stacks may already have been reused by a defer.
+	for i := 0; i < store.panicDepth && i < len(store.stack); i++ {
+		store.stack[i].base = 0
+	}
+	endWasmCallerUpdate(update)
+}
 
 func lockWasmDebugger() {
 	for {

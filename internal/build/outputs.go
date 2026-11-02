@@ -96,8 +96,8 @@ func determineBaseNameAndDir(pkgName string, conf *Config, multiPkg bool) (baseN
 			// This preserves the information that user specified an output file
 			return baseName, dir
 		}
-		if conf.CompileOnly {
-			// -c without -o: write pkg.test in current directory
+		if conf.CompileOnly || conf.RetainTestBinary {
+			// -c or profiling without -o: write pkg.test in current directory
 			// pkgName for test packages already includes .test suffix
 			return pkgName, "."
 		}
@@ -122,7 +122,7 @@ func implicitExecutionTempPrefix(conf *Config) string {
 	case ModeRun, ModeCmpTest:
 		return "llgo-run-*"
 	case ModeTest:
-		if !conf.CompileOnly {
+		if !conf.CompileOnly && !conf.RetainTestBinary {
 			return "llgo-test-*"
 		}
 	}
@@ -236,7 +236,7 @@ func buildOutputPath(baseName, dir string, conf *Config, multiPkg bool, appExt s
 		return filepath.Join(dir, baseName+appExt), nil
 	} else if (conf.Mode == ModeBuild && multiPkg) || (conf.Mode != ModeBuild && conf.Mode != ModeInstall && conf.Mode != ModeTest) {
 		return genTempOutputFile(baseName, appExt)
-	} else if conf.Mode == ModeTest && !conf.CompileOnly && conf.OutFile == "" {
+	} else if conf.Mode == ModeTest && !conf.CompileOnly && !conf.RetainTestBinary && conf.OutFile == "" {
 		// Only create temp file for test mode when:
 		// - Not compile-only (-c flag not set)
 		// - No output file specified (-o flag not set)
@@ -277,9 +277,11 @@ func buildOutFmts(pkgName string, conf *Config, multiPkg bool, crossCompile *cro
 	if conf.DebugArtifactMode == DebugArtifactExternal {
 		details.DWARF = dwarfSidecarPath(debugWasmModulePath(conf, details.Out))
 	}
-	if conf.Goos == "darwin" && shouldStripNativeSymbols(conf, crossCompile) && shouldEmitDebugInfo(conf, crossCompile) {
-		// stripNativeSymbolsWith requires this adjacent bundle before it can
-		// discard the executable's debug map while preserving DWARF.
+	compressDSYM := conf.Target == "" && conf.Mode != ModeGen && conf.BuildMode != BuildModeCArchive &&
+		conf.LinkOptions.DWARFCompression == DWARFCompressionEnabled && crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatMachO
+	if conf.Goos == "darwin" && (shouldStripNativeSymbols(conf, crossCompile) || compressDSYM) && shouldEmitDebugInfo(conf, crossCompile) {
+		// Stripping with retained DWARF and explicit native compression both
+		// publish an adjacent bundle that cleanup and artifact reports own.
 		details.DSYM = details.Out + ".dSYM"
 	}
 

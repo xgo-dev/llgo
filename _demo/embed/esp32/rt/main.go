@@ -7,103 +7,103 @@ import (
 )
 
 //
-//go:linkname absvdi2 __absvdi2
+//go:linkname absvdi2 C.__absvdi2
 func absvdi2(a int64) int64
 
-//go:linkname absvsi2 __absvsi2
+//go:linkname absvsi2 C.__absvsi2
 func absvsi2(a int32) int32
 
-//go:linkname adddf3 __adddf3
+//go:linkname adddf3 C.__adddf3
 func adddf3(a, b float64) float64
 
-//go:linkname addsf3 __addsf3
+//go:linkname addsf3 C.__addsf3
 func addsf3(a, b float32) float32
 
-//go:linkname addvdi3 __addvdi3
+//go:linkname addvdi3 C.__addvdi3
 func addvdi3(a, b int64) int64
 
-//go:linkname addvsi3 __addvsi3
+//go:linkname addvsi3 C.__addvsi3
 func addvsi3(a, b int32) int32
 
-//go:linkname udivdi3 __udivdi3
+//go:linkname udivdi3 C.__udivdi3
 func udivdi3(a, b uint64) uint64
 
-//go:linkname clzdi2 __clzdi2
+//go:linkname clzdi2 C.__clzdi2
 func clzdi2(a uint64) int32
 
-//go:linkname clzsi2 __clzsi2
+//go:linkname clzsi2 C.__clzsi2
 func clzsi2(a uint32) int32
 
-//go:linkname ctzdi2 __ctzdi2
+//go:linkname ctzdi2 C.__ctzdi2
 func ctzdi2(a uint64) int32
 
-//go:linkname ctzsi2 __ctzsi2
+//go:linkname ctzsi2 C.__ctzsi2
 func ctzsi2(a uint32) int32
 
-//go:linkname popcountdi2 __popcountdi2
+//go:linkname popcountdi2 C.__popcountdi2
 func popcountdi2(a uint64) int32
 
-//go:linkname popcountsi2 __popcountsi2
+//go:linkname popcountsi2 C.__popcountsi2
 func popcountsi2(a uint32) int32
 
-//go:linkname divdf3 __divdf3
+//go:linkname divdf3 C.__divdf3
 func divdf3(a, b float64) float64
 
-//go:linkname divsf3 __divsf3
+//go:linkname divsf3 C.__divsf3
 func divsf3(a, b float32) float32
 
-//go:linkname mulsf3 __mulsf3
+//go:linkname mulsf3 C.__mulsf3
 func mulsf3(a, b float32) float32
 
-//go:linkname divdi3 __divdi3
+//go:linkname divdi3 C.__divdi3
 func divdi3(a, b int64) int64
 
-//go:linkname muldf3 __muldf3
+//go:linkname muldf3 C.__muldf3
 func muldf3(a, b float64) float64
 
-//go:linkname muldi3 __muldi3
+//go:linkname muldi3 C.__muldi3
 func muldi3(a, b int64) int64
 
-//go:linkname subdf3 __subdf3
+//go:linkname subdf3 C.__subdf3
 func subdf3(a, b float64) float64
 
-//go:linkname subsf3 __subsf3
+//go:linkname subsf3 C.__subsf3
 func subsf3(a, b float32) float32
 
-//go:linkname extendsfdf2 __extendsfdf2
+//go:linkname extendsfdf2 C.__extendsfdf2
 func extendsfdf2(a float32) float64
 
-//go:linkname fixdfdi __fixdfdi
+//go:linkname fixdfdi C.__fixdfdi
 func fixdfdi(a float64) int64
 
-//go:linkname fixdfsi __fixdfsi
+//go:linkname fixdfsi C.__fixdfsi
 func fixdfsi(a float64) int32
 
-//go:linkname fixsfdi __fixsfdi
+//go:linkname fixsfdi C.__fixsfdi
 func fixsfdi(a float32) int64
 
-//go:linkname fixsfsi __fixsfsi
+//go:linkname fixsfsi C.__fixsfsi
 func fixsfsi(a float32) int32
 
-//go:linkname floatdidf __floatdidf
+//go:linkname floatdidf C.__floatdidf
 func floatdidf(a int64) float64
 
-//go:linkname floatsidf __floatsidf
+//go:linkname floatsidf C.__floatsidf
 func floatsidf(a int32) float64
 
-//go:linkname ashldi3 __ashldi3
+//go:linkname ashldi3 C.__ashldi3
 func ashldi3(a int64, b int32) int64
 
-//go:linkname ashrdi3 __ashrdi3
+//go:linkname ashrdi3 C.__ashrdi3
 func ashrdi3(a int64, b int32) int64
 
-//go:linkname lshrdi3 __lshrdi3
+//go:linkname lshrdi3 C.__lshrdi3
 func lshrdi3(a uint64, b int32) uint64
 
-//go:linkname bswapdi2 __bswapdi2
+//go:linkname bswapdi2 C.__bswapdi2
 func bswapdi2(a uint64) uint64
 
-//go:linkname bswapsi2 __bswapsi2
+//go:linkname bswapsi2 C.__bswapsi2
 func bswapsi2(a uint32) uint32
 
 var totalTests = 0

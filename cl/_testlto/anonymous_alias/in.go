@@ -34,5 +34,5 @@ func (S) NewPoint(dx, dy float64) *MyPoint {
 func main() {
 	var s I = S{}
 	pt := s.NewPoint(float64(3), float64(4))
-	println(pt.x, pt.y)
+	println(pt.x == 3, pt.y == 4)
 }

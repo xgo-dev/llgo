@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"debug/macho"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	gobuild "go/build"
@@ -45,12 +46,16 @@ func TestMain(m *testing.M) {
 	if os.Getenv("LLGO_TEST_NODE_HELPER") == "1" && strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "node" {
 		os.Exit(0)
 	}
-	if mode := os.Getenv("LLGO_TEST_WASM_OPT_HELPER"); mode != "" {
+	if mode := os.Getenv("LLGO_TEST_WASM_OPT_HELPER"); mode != "" && (os.Getenv("LLGO_TEST_FINAL_WASM") != "1" || strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "wasm-opt") {
 		if len(os.Args) == 2 && os.Args[1] == "--version" {
 			if mode == "fail-version" {
 				os.Exit(7)
 			}
-			fmt.Println("wasm-opt version 132 (test helper)")
+			if os.Getenv("LLGO_TEST_FINAL_WASM") == "1" && mode != "wrong-version" {
+				fmt.Println("wasm-opt version 132")
+			} else {
+				fmt.Println("wasm-opt version 132 (test helper)")
+			}
 			os.Exit(0)
 		}
 		if argsFile := os.Getenv("ARGS_FILE"); argsFile != "" {
@@ -69,6 +74,9 @@ func TestMain(m *testing.M) {
 		if mode == "fail" {
 			os.Exit(7)
 		}
+		if mode == "missing-output" {
+			os.Exit(0)
+		}
 		var input, output string
 		for i := 1; i < len(os.Args); i++ {
 			if os.Args[i] == "-o" && i+1 < len(os.Args) {
@@ -80,6 +88,23 @@ func TestMain(m *testing.M) {
 			}
 		}
 		data, err := os.ReadFile(input)
+		for _, arg := range os.Args[1:] {
+			if strings.HasPrefix(arg, "--output-source-map=") && mode != "missing-output-map" {
+				mapping := []byte(`{"version":3,"sources":["../input.go"],"names":[],"mappings":"AAAA"}`)
+				if mode == "invalid-output-map" {
+					mapping = []byte("invalid map")
+				}
+				if err := os.WriteFile(strings.TrimPrefix(arg, "--output-source-map="), mapping, 0600); err != nil {
+					os.Exit(8)
+				}
+			}
+		}
+		if mode == "rewrite-wasm" {
+			data = []byte("\x00asm\x01\x00\x00\x00\x0a\x01\x00")
+		}
+		if mode == "invalid-wasm" {
+			data = []byte("invalid Wasm")
+		}
 		if err == nil {
 			err = os.WriteFile(output, data, 0o666)
 		}
@@ -113,6 +138,9 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "link failed")
 			os.Exit(8)
 		}
+		if mode == "missing-output" {
+			os.Exit(0)
+		}
 		var output string
 		for i := 1; i+1 < len(os.Args); i++ {
 			if os.Args[i] == "-o" {
@@ -125,6 +153,35 @@ func TestMain(m *testing.M) {
 			os.Exit(9)
 		}
 		payload := "linked"
+		if mode == "write-wasm" {
+			payload = "\x00asm\x01\x00\x00\x00"
+		}
+		if mode == "write-debug-wasm" {
+			payload = "\x00asm\x01\x00\x00\x00\x00\x0d\x0b.debug_info\x00"
+		}
+		if mode == "write-emscripten" || mode == "write-emscripten-map" {
+			payload = "export default async function () {}"
+			module := strings.TrimSuffix(output, filepath.Ext(output)) + ".wasm"
+			data := []byte("\x00asm\x01\x00\x00\x00")
+			if mode == "write-emscripten-map" {
+				name, url := "sourceMappingURL", "https://debug.example/app.wasm.map"
+				custom := append([]byte{byte(len(name))}, name...)
+				custom = append(custom, byte(len(url)))
+				custom = append(custom, url...)
+				data = append(data, 0, byte(len(custom)))
+				data = append(data, custom...)
+				if err := os.WriteFile(module+".map", []byte("original map"), 0600); err != nil {
+					os.Exit(10)
+				}
+			}
+			if err := os.WriteFile(module, data, 0o666); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(10)
+			}
+		}
+		if mode == "write-padded-wasm" {
+			payload = "\x00asm\x01\x00\x00\x00\x0a\x81\x80\x80\x80\x00\x00"
+		}
 		if mode == "write-html" {
 			payload = `<html><script type=module>import init from"./main.js"</script></html>`
 		}
@@ -146,6 +203,7 @@ func TestMain(m *testing.M) {
 func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	input := &Config{
 		RunArgs:      []string{"run"},
+		Exec:         []string{"wrapper", "argument"},
 		GoBuildFlags: []string{"-tags=custom"},
 		Overlay:      map[string][]byte{"input.go": []byte("package input")},
 		Coverage:     &CoverageConfig{Mode: "count"},
@@ -157,6 +215,7 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	}
 	cloned := input.clone()
 	cloned.RunArgs[0] = "changed"
+	cloned.Exec[0] = "changed"
 	cloned.GoBuildFlags[0] = "-tags=changed"
 	cloned.Overlay["input.go"][0] = 'P'
 	cloned.GlobalRewrites["example.com/p"]["value"] = "changed"
@@ -165,6 +224,9 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 
 	if got := input.RunArgs[0]; got != "run" {
 		t.Fatalf("input RunArgs changed to %q", got)
+	}
+	if got := input.Exec[0]; got != "wrapper" {
+		t.Fatalf("input execution wrapper changed to %q", got)
 	}
 	if got := input.GoBuildFlags[0]; got != "-tags=custom" {
 		t.Fatalf("input GoBuildFlags changed to %q", got)
@@ -923,6 +985,12 @@ func TestConfigureWasmGCWASIThreads(t *testing.T) {
 }
 
 func TestNeedStartWASITargetAliases(t *testing.T) {
+	if needStart(&context{
+		buildConf:    &Config{Target: "wasi-small"},
+		crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderWASI},
+	}) {
+		t.Fatal("inherited WASI target must use libc startup")
+	}
 	for _, target := range []string{"wasi", "wasip1"} {
 		if needStart(&context{buildConf: &Config{Target: target}}) {
 			t.Errorf("target %q unexpectedly requested LLGo's generic _start", target)
@@ -1368,13 +1436,24 @@ func TestBaremetalRuntimeKeepsSchedulerFreeLifecycleStubs(t *testing.T) {
 
 func TestNeedsLinuxExportDynamic(t *testing.T) {
 	t.Setenv(llgoFuncInfo, "")
-	ctx := &context{buildConf: &Config{Goos: "linux"}}
+	ctx := &context{buildConf: &Config{Goos: "linux", BuildMode: BuildModeExe}}
 	if !needsLinuxExportDynamic(ctx) {
 		t.Fatal("linux funcinfo executable should export dynamic symbols")
 	}
 	if got := linuxExportDynamicArgs(ctx); strings.Join(got, " ") != "-Wl,--export-dynamic-symbol=main.* -Wl,--export-dynamic-symbol=command-line-arguments.*" {
 		t.Fatalf("linuxExportDynamicArgs = %v", got)
 	}
+	sites := true
+	ctx.linkRuntimeSites = &sites
+	if got := linuxExportDynamicArgs(ctx); got != nil {
+		t.Fatalf("entry sites should not need dynamic exports: %v", got)
+	}
+	ctx.buildConf.PCLNMode = PCLNExternal
+	if needsLinuxExportDynamic(ctx) {
+		t.Fatal("external PCLN should not need dynamic exports")
+	}
+	ctx.buildConf.PCLNMode = PCLNEmbedded
+	sites = false
 	t.Setenv(llgoFuncInfo, "0")
 	if needsLinuxExportDynamic(ctx) {
 		t.Fatal("LLGO_FUNCINFO=0 should disable dynamic symbol export")
@@ -1391,6 +1470,13 @@ func TestNeedsLinuxExportDynamic(t *testing.T) {
 	ctx.buildConf.Target = "wasi"
 	if needsLinuxExportDynamic(ctx) {
 		t.Fatal("named targets should not force host linux dynamic symbol export")
+	}
+	ctx.buildConf.Target = ""
+	for _, mode := range []BuildMode{BuildModeCShared, BuildModeCArchive} {
+		ctx.buildConf.BuildMode = mode
+		if needsLinuxExportDynamic(ctx) {
+			t.Fatalf("%s should not use executable export policy", mode)
+		}
 	}
 }
 
@@ -1492,17 +1578,38 @@ func TestExtest(t *testing.T) {
 		outputChan <- data.String()
 	}()
 
-	var testingBuilds int
-	conf := &Config{Mode: ModeTest, BuildParallelism: 2}
-	conf.ModuleHook = func(pkg Package) {
-		if pkg.PkgPath == "testing" {
-			testingBuilds++
-		}
-	}
+	// ModuleHook forces the coordinator backend. Count the shared package
+	// through tracing so the same build also exercises the native parallel DAG.
+	trace := filepath.Join(t.TempDir(), "build.json")
+	conf := &Config{Mode: ModeTest, BuildParallelism: 2, BuildTrace: trace}
 	mockRun([]string{"../../cl/_testgo/runextest/..."}, conf)
 
 	w.Close()
 	got := <-outputChan
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatal(err)
+	}
+	var testingBuilds int
+	var isolated bool
+	for _, event := range events {
+		if event.Phase != "X" {
+			continue
+		}
+		if event.Name == "backend+publish testing" {
+			testingBuilds++
+		}
+		if event.Args["class"] == "isolated" {
+			isolated = true
+		}
+	}
+	if !isolated {
+		t.Error("native test DAG did not use the isolated backend")
+	}
 	if testingBuilds != 1 {
 		t.Errorf("testing package builds = %d, want 1 shared build", testingBuilds)
 	}
@@ -1519,10 +1626,6 @@ func TestExtest(t *testing.T) {
 			t.Errorf("output does not contain result for %s:\n%s", pkg, got)
 		}
 	}
-}
-
-func TestExtestNativeTestDAG(t *testing.T) {
-	mockRun([]string{"../../cl/_testgo/runextest/..."}, &Config{Mode: ModeTest, BuildParallelism: 2})
 }
 
 func TestExtestNativeTestDAGFailFast(t *testing.T) {
@@ -3194,6 +3297,17 @@ func TestDoReportsAltPackageLocalityDirectiveError(t *testing.T) {
 	if err := os.MkdirAll(runtimePkgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Keep the source-reuse entry points so this minimal runtime reaches the
+	// invalid locality directive below instead of failing source selection.
+	for _, name := range []string{"utf8.go", "utf8_index.go", "utf8_index_go127.go"} {
+		data, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimePkgDir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(runtimeDir, "go.mod"), []byte("module github.com/xgo-dev/llgo/runtime\n\ngo 1.24.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -3291,6 +3405,9 @@ func TestLinkExecutionKeepsSitePolicyAfterBackendDisposal(t *testing.T) {
 				wantEntrySites := enabled && test.entrySites
 				if got := shouldEmitRuntimeEntrySites(linkCtx); got != wantEntrySites {
 					t.Fatalf("entry sites = %v, want %v", got, wantEntrySites)
+				}
+				if got, want := needsLinuxExportDynamic(linkCtx), test.goos == "linux" && !enabled; got != want {
+					t.Fatalf("legacy dynamic exports after backend disposal = %v, want %v", got, want)
 				}
 				// A missing output must reach the rewriter when entry sites are enabled.
 				// Checking the diagnostic also catches silently skipping the rewrite

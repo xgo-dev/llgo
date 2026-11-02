@@ -61,6 +61,10 @@ func inspectAddressable(seed int) [2]int {
 	backed[0] = 42
 	return backed
 }
+
+func capture(seed int) func() int {
+	return func() int { return seed }
+}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "debug_compile.go", source, 0)
@@ -104,6 +108,8 @@ func inspectAddressable(seed int) [2]int {
 		`name: "x"`,
 		`name: "local"`,
 		`name: "value"`,
+		`name: "$env"`,
+		`flags: DIFlagArtificial`,
 		"isOptimized: false",
 	} {
 		if !strings.Contains(ir, want) {

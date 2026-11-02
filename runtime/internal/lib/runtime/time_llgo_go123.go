@@ -2,7 +2,10 @@
 
 package runtime
 
-import "unsafe"
+import (
+	rt "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"unsafe"
+)
 
 // runtimeTimer is internal timer state for llgo. It is not required to match
 // the Go runtime timer layout for go1.23+.
@@ -15,6 +18,7 @@ type runtimeTimer struct {
 	seq      uintptr
 	nextwhen int64
 	status   uint32
+	fake     *rt.SynctestTimer
 }
 
 // timeTimer matches the beginning of time.Timer/time.Ticker for go1.23+.

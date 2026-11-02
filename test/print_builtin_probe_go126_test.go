@@ -5,6 +5,7 @@ package test
 import (
 	"os"
 	"strings"
+	"unsafe"
 )
 
 const builtinPrintChildArg = "-llgo.builtin-print-child"
@@ -22,6 +23,11 @@ func init() {
 }
 
 func builtinPrintProbe() {
+	println(false, true)
+	println(int64(0), int64(1), int64(-1), int64(-9223372036854775808), int64(9223372036854775807))
+	println(uint64(0), uint64(1), uint64(9223372036854775808), uint64(18446744073709551615))
+	println(unsafe.Pointer(nil))
+
 	zero := 0.0
 	nan := zero / zero
 	posInf := 1.0 / zero
@@ -40,6 +46,10 @@ func builtinPrintProbe() {
 
 func builtinPrintWant() string {
 	return strings.Join([]string{
+		"false true",
+		"0 1 -1 -9223372036854775808 9223372036854775807",
+		"0 1 9223372036854775808 18446744073709551615",
+		"0x0",
 		"1e+07",
 		"(1e+07-1e+07i)",
 		"(1.5+0i)",

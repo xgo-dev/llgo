@@ -26,6 +26,86 @@ func TestWindowsNativeArtifacts(t *testing.T) {
 	t.Run("c-shared", testWindowsCSharedArtifact)
 }
 
+func TestMinGWSharedExactOutput(t *testing.T) {
+	compiler, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("Clang is not installed")
+	}
+	linker, err := exec.LookPath("ld.lld")
+	if err != nil {
+		t.Skip("LLD is not installed")
+	}
+	ctx := &context{
+		mode: ModeBuild,
+		buildConf: &Config{
+			Goos: "windows", Goarch: "amd64", BuildMode: BuildModeCShared,
+			LinkOptions: LinkOptions{DWARF: DWARFOmit},
+		},
+		crossCompile: crosscompile.Export{
+			CC:      compiler,
+			CCFLAGS: []string{"--target=x86_64-w64-windows-gnu", "-ffreestanding"},
+			LDFLAGS: []string{"--target=x86_64-w64-windows-gnu", "--ld-path=" + linker},
+			Toolchain: crosscompile.NativeToolchain{
+				ObjectFormat: crosscompile.ObjectFormatCOFF, ABI: crosscompile.PlatformABIGNU,
+			},
+		},
+	}
+	dir := t.TempDir()
+	object := compileWindowsArtifact(t, ctx, dir, "shared.c", `
+__declspec(dllexport) int answer_from_dll(void) { return 42; }
+int DllMainCRTStartup(void *module, unsigned reason, void *reserved) { return 1; }
+`)
+	consumer := compileWindowsArtifact(t, ctx, dir, "consumer.c", `
+__declspec(dllimport) int answer_from_dll(void);
+int mainCRTStartup(void) { return answer_from_dll() == 42 ? 0 : 23; }
+`)
+	for _, name := range []string{"shared output", "shared.custom"} {
+		t.Run(name, func(t *testing.T) {
+			output := filepath.Join(dir, name)
+			if err := os.WriteFile(output, []byte("stale output"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := linkObjFiles(ctx, output, []string{object}, []string{"-nostdlib"}, false); err != nil {
+				t.Fatal(err)
+			}
+			file, err := pe.Open(output)
+			if err != nil {
+				t.Fatalf("exact shared output: %v", err)
+			}
+			if file.FileHeader.Characteristics&pe.IMAGE_FILE_DLL == 0 {
+				t.Error("shared output is not a DLL")
+			}
+			file.Close()
+			imports := strings.TrimSuffix(output, filepath.Ext(output)) + ".lib"
+			consumerCtx := *ctx
+			conf := *ctx.buildConf
+			conf.BuildMode = BuildModeExe
+			consumerCtx.buildConf = &conf
+			executable := output + "-consumer.exe"
+			if err := linkObjFiles(&consumerCtx, executable, []string{consumer, imports}, []string{"-nostdlib", "-Wl,--entry,mainCRTStartup"}, false); err != nil {
+				t.Fatal(err)
+			}
+			file, err = pe.Open(executable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			symbols, err := file.ImportedSymbols()
+			file.Close()
+			want := name
+			if filepath.Ext(name) == "" {
+				want += "."
+			}
+			want = "answer_from_dll:" + want
+			if err != nil || !slices.Equal(symbols, []string{want}) {
+				t.Fatalf("consumer imports = %q, %v; want %q", symbols, err, want)
+			}
+			if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+				runTool(t, executable)
+			}
+		})
+	}
+}
+
 func TestWindowsConsumesMSVCLibrary(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("native MSVC interoperability test")

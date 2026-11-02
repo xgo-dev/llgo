@@ -1850,7 +1850,7 @@ func (v Value) grow(n int) {
 		// plain 3-word struct may use a different calling convention.
 		// Reinterpret the header as a builtin slice so the call ABI matches.
 		sh := *(*[]byte)(unsafe.Pointer(p))
-		sh = growslice(sh, n, int(t.Size_))
+		sh = growslice(sh, n, int(t.Size_), int(t.Align_))
 		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&sh))
 		p.Len = oldLen // set oldLen back
 	}
@@ -2162,9 +2162,9 @@ func verifyNotInHeapPtr(p uintptr) bool {
 	return true
 }
 
-func growslice(src []byte, num, etSize int) []byte {
+func growslice(src []byte, num, etSize, etAlign int) []byte {
 	rs := *(*runtime.Slice)(unsafe.Pointer(&src))
-	rs = runtime.GrowSlice(rs, num, etSize)
+	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign)
 	return *(*[]byte)(unsafe.Pointer(&rs))
 }
 
@@ -2364,6 +2364,13 @@ var (
 )
 
 func toFFIType(typ *abi.Type) *ffi.Type {
+	// Vector storage (including zero-length arrays and enclosing aggregates)
+	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
+	// descriptions cannot represent its vector calling convention. Check before
+	// skipping zero-sized fields; pointers and slice headers retain scalar ABI.
+	if typ.Align_ > 8 {
+		panic("reflect: libffi calls with vector storage are not supported")
+	}
 	kind := typ.Kind()
 	switch kind {
 	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
@@ -2599,7 +2606,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		panic(err)
 	}
 	if sig.RType != ffi.TypeVoid {
-		v := runtime.AllocZ(sig.RType.Size)
+		v := runtime.AllocZAligned(sig.RType.Size, uintptr(sig.RType.Alignment))
 		// libffi expects rvalue to point to the return value storage.
 		ret = v
 	}
@@ -2623,8 +2630,8 @@ func (v Value) call(op string, in []Value) (out []Value) {
 }
 
 func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Value {
-	if ffiType.Size != typ.Size_ {
-		storage := runtime.AllocZ(typ.Size_)
+	if ffiType.Size != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
+		storage := runtime.AllocZAligned(typ.Size_, uintptr(typ.Align_))
 		size := ffiType.Size
 		if typ.Size_ < size {
 			size = typ.Size_
@@ -3498,7 +3505,7 @@ func MakeChan(typ Type, buffer int) Value {
 		panic("reflect.MakeChan: unidirectional channel type")
 	}
 	t := typ.common()
-	ch := makechan(int(t.Elem().Size()), buffer)
+	ch := unsafe.Pointer(runtime.NewChanAligned(int(t.Elem().Size()), buffer, int(t.Elem().Align_)))
 	return Value{t, ch, flag(Chan)}
 }
 

@@ -2,6 +2,7 @@
 """Run optimized Emscripten products through their actual host boundaries."""
 
 import argparse
+import json
 import os
 import pathlib
 import subprocess
@@ -67,6 +68,27 @@ def main():
                          "workers" if workers > 1 else "single"],
                         env=browser_env, check=True, timeout=90,
                     )
+            # Explicit native exports and cwrap remain part of the host ABI
+            # when size mode stops publishing incidental JS implementation names.
+            output = pathlib.Path(directory) / f"{target}-exports.mjs"
+            subprocess.run(
+                [llgo, "build", "-target", target, "-Oz", "-ldflags=-s",
+                 "-o", str(output), str(ROOT / "internal/build/testdata/wasm-exports")],
+                env=dict(env, LLGO_WASM_WORKERS="1"), check=True, timeout=300,
+            )
+            manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
+            if manifest["optimization"] != "size" or manifest["strip"] != "debug":
+                raise RuntimeError(f"{target}: -Oz/-s policy was not applied")
+            subprocess.run(
+                [node, "--input-type=module", "-e", '''
+import {pathToFileURL} from "node:url";
+const {default: init} = await import(pathToFileURL(process.argv[1]));
+const module = await init();
+const add = module.cwrap("llgo_public_add", "number", ["number", "number"]);
+if (add(19, 23) !== 42) throw new Error("public C/Go export failed");
+console.log("wasm public export ok");
+''', str(output)], env=env, check=True, timeout=60,
+            )
         # Raw js/wasm uses the GoJS provider but shares Emscripten linking.
         output = pathlib.Path(directory) / "raw-js-Oz.mjs"
         raw_env = dict(env, GOOS="js", GOARCH="wasm", LLGO_WASM_WORKERS="1")

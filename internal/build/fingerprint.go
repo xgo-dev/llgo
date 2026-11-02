@@ -127,6 +127,7 @@ type commonSection struct {
 	WasmProvider         string       `yaml:"WASM_PROVIDER,omitempty"`
 	WasmReflectBridges   bool         `yaml:"WASM_REFLECT_BRIDGES,omitempty"`
 	WasmFuncInfoEntries  bool         `yaml:"WASM_FUNCINFO_ENTRIES,omitempty"`
+	WasmRuntimeFree      bool         `yaml:"WASM_RUNTIME_FREE,omitempty"`
 	PlatformABI          string       `yaml:"PLATFORM_ABI,omitempty"`
 	ObjectFormat         string       `yaml:"OBJECT_FORMAT,omitempty"`
 	DriverFlavor         string       `yaml:"DRIVER_FLAVOR,omitempty"`
@@ -138,6 +139,7 @@ type commonSection struct {
 	CRTVersion           string       `yaml:"CRT_VERSION,omitempty"`
 	ToolsetVersion       string       `yaml:"TOOLSET_VERSION,omitempty"`
 	GoGlobalDCE          bool         `yaml:"GO_GLOBAL_DCE,omitempty"`
+	DeadcodeDrop         bool         `yaml:"DEADCODE_DROP,omitempty"`
 	EnableLTOPlugin      bool         `yaml:"ENABLE_LTO_PLUGIN,omitempty"`
 	EmitDWARF            bool         `yaml:"EMIT_DWARF,omitempty"`
 	EmitCodeView         bool         `yaml:"EMIT_CODEVIEW,omitempty"`
@@ -162,10 +164,10 @@ type commonSection struct {
 
 func (s *commonSection) empty() bool {
 	return len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
-		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
+		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
-		!s.GoGlobalDCE && !s.EnableLTOPlugin && !s.EmitDWARF && !s.EmitCodeView && s.PCLNMode == "" &&
+		!s.GoGlobalDCE && !s.DeadcodeDrop && !s.EnableLTOPlugin && !s.EmitDWARF && !s.EmitCodeView && s.PCLNMode == "" &&
 		!s.DisableBoundsChecks && !s.SaturatingFloatToInt && !s.LocalContext &&
 		s.CC == "" && len(s.CCArgs) == 0 && s.CCIdentity == "" && s.CXX == "" &&
 		len(s.CXXArgs) == 0 && s.CXXIdentity == "" && len(s.CCFlags) == 0 &&
@@ -174,6 +176,7 @@ func (s *commonSection) empty() bool {
 }
 
 type packageSection struct {
+	DeadInits        []string          `yaml:"unused_global_inits,omitempty"`
 	PthreadStackSize int64             `yaml:"pthread_stack_size,omitempty"`
 	PkgPath          string            `yaml:"pkg_path,omitempty"`
 	PkgID            string            `yaml:"pkg_id,omitempty"`
@@ -187,7 +190,7 @@ type packageSection struct {
 }
 
 func (s *packageSection) empty() bool {
-	return s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

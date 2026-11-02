@@ -23,4 +23,6 @@ package c
 type (
 	Long  = int32
 	Ulong = uint32
+	// Windows uses LLP64: ssize_t/SSIZE_T follows the pointer, not C long.
+	SsizeT = int
 )

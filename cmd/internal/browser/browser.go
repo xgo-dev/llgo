@@ -119,6 +119,7 @@ func Run(artifact string, options Options, stdin io.Reader, stdout, stderr io.Wr
 	}
 	if !options.DisableTools {
 		args = append(args, "--auto-open-devtools-for-tabs")
+		args = append(args, "--remote-debugging-port=0")
 	}
 	sessionURL := session.URL
 	if options.DisableTools {
@@ -130,7 +131,15 @@ func Run(artifact string, options Options, stdin io.Reader, stdout, stderr io.Wr
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
-	if err := command.Run(); err != nil {
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("llgo debug: Chromium session: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !options.DisableTools {
+		session.StartWorkerControl(ctx, profile)
+	}
+	if err := command.Wait(); err != nil {
 		return fmt.Errorf("llgo debug: Chromium session: %w", err)
 	}
 	return nil
@@ -304,6 +313,7 @@ type Session struct {
 	pluginRequests  atomic.Uint64
 	pluginReady     atomic.Uint64
 	runtimeReady    atomic.Uint64
+	workers         atomic.Pointer[workerControl]
 }
 
 // StartSession starts the loopback HTTP portion of a browser debug session.
@@ -318,7 +328,10 @@ func StartSession(artifact string, mappings []browserdebug.PathMapping, sourceRo
 	if err != nil {
 		return nil, err
 	}
-	indexJSON, err := json.Marshal(bundle.Index)
+	indexJSON, err := json.Marshal(struct {
+		browserdebug.Index
+		WorkerControl bool `json:"worker_control"`
+	}{bundle.Index, true})
 	if err != nil {
 		return nil, err
 	}
@@ -386,6 +399,16 @@ func StartSession(artifact string, mappings []browserdebug.PathMapping, sourceRo
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/__llgo/worker-state", func(response http.ResponseWriter, request *http.Request) {
+		setDebugHeaders(response)
+		if request.Method != http.MethodGet {
+			response.Header().Set("Allow", http.MethodGet)
+			http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(session.checkedWorkerState(request.Context()))
+	})
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		setDebugHeaders(response)
 		if request.URL.Path == "/" {
@@ -518,6 +541,9 @@ func debugPage(modulePath, gluePath string) string {
 func (s *Session) Close() error {
 	if s == nil || s.Server == nil {
 		return nil
+	}
+	if control := s.workers.Load(); control != nil {
+		control.cancel()
 	}
 	context, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

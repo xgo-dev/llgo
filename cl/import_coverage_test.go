@@ -2,6 +2,7 @@ package cl
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -435,4 +436,56 @@ func TestBoolToUint8InvalidArgs(t *testing.T) {
 		}
 	}()
 	_ = ctx.boolToUint8(nil, []llssa.Expr{})
+}
+
+func TestNativeEmbeddedFieldPositions(t *testing.T) {
+	const source = `package p
+import "sync"
+type Plain struct{}
+type Generic[A any] struct{}
+type Pair[A, B any] struct{}
+//llgo:cdecl
+type A struct{ Plain }
+//llgo:cdecl
+type B struct{ *Plain }
+//llgo:cdecl
+type C struct{ sync.Mutex }
+//llgo:cdecl
+type D struct{ *sync.Mutex }
+//llgo:cdecl
+type E struct{ Generic[int] }
+//llgo:cdecl
+type F struct{ Pair[int, string] }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", source, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	pkg := types.NewPackage("p", "p")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+	conf := &types.Config{Importer: importer.Default()}
+	if err := types.NewChecker(conf, fset, pkg, info).Files([]*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		spec := gen.Specs[0].(*ast.TypeSpec)
+		st := spec.Type.(*ast.StructType)
+		if len(st.Fields.List) == 0 {
+			continue
+		}
+		field := info.Defs[spec.Name].Type().Underlying().(*types.Struct).Field(0)
+		if got := embeddedStructFieldPos(st.Fields.List[0].Type); got != field.Pos() {
+			t.Errorf("%s: field position %v, want %v", spec.Name, got, field.Pos())
+		}
+	}
 }

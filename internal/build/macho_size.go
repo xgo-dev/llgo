@@ -42,10 +42,8 @@ func darwinLTOObjectArgs(ctx *context, app string, cmd *clang.Cmd, args []string
 		!shouldEmitDebugInfo(conf, &ctx.crossCompile) {
 		return nil, nil
 	}
-	for _, arg := range cmd.LinkArguments(args...) {
-		if strings.Contains(arg, "object_path_lto") {
-			return nil, nil
-		}
+	if hasDarwinLTOObjectPath(cmd.LinkArguments(args...)) {
+		return nil, nil
 	}
 	root := darwinLTOObjectDir(app)
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -56,6 +54,34 @@ func darwinLTOObjectArgs(ctx *context, app string, cmd *clang.Cmd, args []string
 		return nil, err
 	}
 	return []string{"-Xlinker", "-object_path_lto", "-Xlinker", filepath.Join(dir, "lto.o")}, nil
+}
+
+func hasDarwinLTOObjectPath(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--":
+			return false
+		case "-o", "-L", "-F", "-isysroot", "--sysroot":
+			i++ // The next token is a driver option's value, not a linker option.
+		case "-object_path_lto":
+			return true
+		case "-Xlinker":
+			i++
+			if i < len(args) && args[i] == "-object_path_lto" {
+				return true
+			}
+		default:
+			if strings.HasPrefix(arg, "-Wl,") {
+				for _, option := range strings.Split(strings.TrimPrefix(arg, "-Wl,"), ",") {
+					if option == "-object_path_lto" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func darwinLTOObjectDir(app string) string {

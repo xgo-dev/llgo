@@ -70,7 +70,39 @@ const (
 	SIMDCarrylessMultiply
 	SIMDCarrylessMultiplyLo
 	SIMDStoreMasked
+	SIMDExtendLo
+	SIMDExtendHi
+	SIMDSaturate
+	SIMDSaturateConcat
 )
+
+// simdTagIndex recognizes the official zero-sized alignment/noncomparability
+// tag. Giving the tag native alignment propagates through defined types,
+// unnamed underlying structs, and every enclosing array or struct.
+func simdTagIndex(t types.Type) (int, bool) {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok || n.Obj().Pkg() == nil || n.Obj().Pkg().Path() != "simd/archsimd" {
+		return 0, false
+	}
+	index := -1
+	switch n.Obj().Name() {
+	case "v128":
+		index = 0
+	case "v256":
+		index = 1
+	case "v512":
+		index = 2
+	}
+	if index < 0 {
+		return 0, false
+	}
+	st, ok := n.Underlying().(*types.Struct)
+	if !ok || st.NumFields() != 1 {
+		return 0, false
+	}
+	a, ok := st.Field(0).Type().(*types.Array)
+	return index, ok && a.Len() == 0
+}
 
 // SIMDNumericShape validates the official numeric aggregate representation.
 // Keep storage knowledge here, separate from operation selection and features.
@@ -181,6 +213,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdStoreMasked(args[0], args[1], args[2])
 	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
 		return b.simdPermute(op, args[0], args[1])
+	case SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat:
+		return b.simdIntegerResize(op, result, args)
 	case SIMDConvert:
 		return b.simdConvert(result, args[0])
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:

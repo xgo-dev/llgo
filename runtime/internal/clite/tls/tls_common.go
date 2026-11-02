@@ -48,6 +48,7 @@ import (
 	"unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/diagnostic"
 	"github.com/xgo-dev/llgo/runtime/internal/thread"
 )
 
@@ -60,7 +61,7 @@ type Handle[T any] struct {
 func Alloc[T any](destructor func(*T)) Handle[T] {
 	var key thread.Key
 	if ret := key.Create(thread.KeyDestructor(slotDestructor[T])); ret != 0 {
-		c.Fprintf(c.Stderr, c.Str("tls: thread-local key creation failed (error=%d)\n"), ret)
+		diagnostic.Error("tls: thread-local key creation failed ", ret)
 		panic("tls: failed to create thread local storage key")
 	}
 	return Handle[T]{key: key, destructor: destructor}
@@ -108,7 +109,7 @@ func (h Handle[T]) ensureSlot() *slot[T] {
 	}
 	if ret := h.key.Set(mem); ret != 0 {
 		freeSlot(mem)
-		c.Fprintf(c.Stderr, c.Str("tls: thread-local value installation failed (error=%d)\n"), ret)
+		diagnostic.Error("tls: thread-local value installation failed ", ret)
 		panic("tls: failed to set thread local storage value")
 	}
 	return s

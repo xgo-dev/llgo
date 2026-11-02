@@ -88,7 +88,7 @@ func initWasmScheduler(gp *g) {
 	wasmSched.started = true
 }
 
-//go:linkname wasmMainTask __llgo_wasm_main
+//go:linkname wasmMainTask C.__llgo_wasm_main
 func wasmMainTask(unsafe.Pointer) unsafe.Pointer
 
 // RunWasmMain keeps host waits on the original Emscripten system context and

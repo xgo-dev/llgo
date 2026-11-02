@@ -27,6 +27,11 @@ function Get-LLGoNativeArchitecture {
   }
 }
 
+function Resolve-LLGoInstallArchitecture {
+  if ($env:LLGO_ARCH) { return ConvertTo-LLGoArchitecture $env:LLGO_ARCH }
+  return Get-LLGoNativeArchitecture
+}
+
 function ConvertTo-LLGoVersion {
   param([Parameter(Mandatory = $true)][string]$Version)
 
@@ -612,10 +617,7 @@ function Install-LLGo {
     throw 'install.ps1 supports Windows only; use install.sh on macOS or Linux'
   }
 
-  $architecture = Get-LLGoNativeArchitecture
-  if ($architecture -eq '386') {
-    throw 'LLGo supports windows/386 as a target, but does not publish a 32-bit Windows host archive; use 64-bit Windows on amd64 or arm64'
-  }
+  $architecture = Resolve-LLGoInstallArchitecture
   $abi = Resolve-LLGoWindowsABI -Architecture $architecture
   $version = if ($env:LLGO_VERSION) {
     ConvertTo-LLGoVersion $env:LLGO_VERSION
@@ -633,6 +635,8 @@ function Install-LLGo {
 
   $installDependencies = if ($env:LLGO_INSTALL_DEPS) {
     $env:LLGO_INSTALL_DEPS
+  } elseif ($architecture -eq '386') {
+    '0' # The maintained native x86 SDK/dependency environment is supplied separately.
   } else {
     '1'
   }
@@ -644,6 +648,9 @@ function Install-LLGo {
     throw 'LLGO_UPDATE_PATH must be 0 or 1'
   }
 
+  if ($installDependencies -eq '1' -and $architecture -eq '386') {
+    throw 'Automatic x86 development dependency installation is unavailable; configure a native i686 toolchain and use LLGO_INSTALL_DEPS=0'
+  }
   New-Item -ItemType Directory -Force $root | Out-Null
   $dependencyPaths = @()
   if ($installDependencies -eq '1') {

@@ -41,6 +41,9 @@ func TestGenMainModuleExecutable(t *testing.T) {
 		t.Fatalf("unexpected export file: %s", mod.ExportFile)
 	}
 	ir := mod.LPkg.String()
+	if strings.Contains(ir, "__llgo_allthreads_executable") {
+		t.Fatal("an executable cannot prove ownership of foreign C thread creators")
+	}
 	checks := []string{
 		"define i32 @" + processEntrySymbol + "(",
 		"define void @runtime.main()",
@@ -527,6 +530,9 @@ func TestGenMainModuleLibrary(t *testing.T) {
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
 	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
 	ir := mod.LPkg.String()
+	if strings.Contains(ir, "__llgo_allthreads_executable") {
+		t.Fatal("C archive must not enable standalone all-thread ownership")
+	}
 	if strings.Contains(ir, "define i32 @main") {
 		t.Fatalf("library mode should not emit main function:\n%s", ir)
 	}

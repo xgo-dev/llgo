@@ -290,6 +290,9 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 			if signed {
 				panicIndex = "PanicExtendIndex"
 			}
+		}
+		fn := b.Pkg.rtFunc(RuntimeSymbol(panicIndex, "PanicIndex", "PanicIndexU", "PanicExtendIndex", "PanicExtendIndexU"))
+		if extended {
 			checkBytes := prog.SizeOf(checkIdx.Type)
 			wordBytes := prog.SizeOf(prog.Uint())
 			if checkBytes != 8 || wordBytes != 4 {
@@ -302,9 +305,9 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 				hiType = prog.Int()
 			}
 			hi := Expr{castInt(b, hi64, prog.Uint64(), hiType), hiType}
-			b.InlineCall(b.Pkg.rtFunc(panicIndex), hi, lo, max)
+			b.InlineCall(fn, hi, lo, max)
 		} else {
-			b.InlineCall(b.Pkg.rtFunc(panicIndex), nativeIdx, max)
+			b.InlineCall(fn, nativeIdx, max)
 		}
 		// Keep the failure path disconnected from the successful continuation,
 		// while retaining a post-call instruction for return-address line info.
@@ -377,6 +380,10 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 	dbgInstrf("Slice %v, %v, %v\n", x.impl, low.impl, high.impl)
 	prog := b.Prog
+	// Preserve the original widths before FitIntSize truncates wide indices.
+	// Only signed indices that fit a native int use the smaller string entry.
+	nativeIndices := (low.IsNil() || prog.SizeOf(low.Type) <= prog.SizeOf(prog.Int())) &&
+		(high.IsNil() || prog.SizeOf(high.Type) <= prog.SizeOf(prog.Int()))
 	var nCap Expr
 	var nEltSize Expr
 	var base Expr
@@ -415,6 +422,8 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 		ret.Type = x.Type
 		if prog.disableBoundsChecks {
 			ret.impl = b.stringSliceUnchecked(x, low, high).impl
+		} else if nativeIndices && lowSigned && highSigned {
+			ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice"), x, low, high).impl
 		} else {
 			ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice2"), x, lowArg, highArg, prog.BoolVal(lowSigned), prog.BoolVal(highSigned)).impl
 		}
@@ -549,7 +558,13 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 		len = b.FitIntSize(len)
 		cap = b.FitIntSize(cap)
 	}
-	ret = b.InlineCall(b.Pkg.rtFunc(fn), len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int()))
+	args := []Expr{len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int())}
+	if alignment := prog.AlignOf(telem); alignment > uint64(prog.GoWordSize()) {
+		fn += "Aligned"
+		args = append(args, prog.IntVal(alignment, prog.Int()))
+	}
+	ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+		"MakeSlice", "MakeSlice64", "MakeSliceAligned", "MakeSlice64Aligned")), args...)
 	ret.Type = t
 	return
 }
@@ -629,8 +644,13 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		}
 		args = append(args, b.Pkg.mapZeroAddr(vsize, int(prog.AlignOf(vtyp))))
 	}
+	fn := b.Pkg.rtFunc(RuntimeSymbol(name,
+		"MapAccess1", "MapAccess2", "MapAccess1Fat", "MapAccess2Fat", "MapAccess1Fast32",
+		"MapAccess2Fast32", "MapAccess1Fast64", "MapAccess2Fast64", "MapAccess1FastStr",
+		"MapAccess2FastStr",
+	))
 	if commaOk {
-		vals := b.Call(b.Pkg.rtFunc(name), args...)
+		vals := b.Call(fn, args...)
 		valuePtr := b.getField(vals, 0)
 		valuePtr.Type = prog.Pointer(vtyp)
 		val := b.Load(valuePtr)
@@ -638,7 +658,7 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		t := prog.Struct(vtyp, prog.Bool())
 		return b.aggregateValue(t, val.impl, ok)
 	} else {
-		val := b.Call(b.Pkg.rtFunc(name), args...)
+		val := b.Call(fn, args...)
 		val.Type = prog.Pointer(vtyp)
 		ret = b.Load(val)
 	}
@@ -666,7 +686,10 @@ func (b Builder) MapUpdate(m, k, v Expr) {
 	typ := b.abiType(m.raw.Type)
 	kind := mapKeyFastKind(b.Prog, m.raw.Type)
 	arg := b.mapKeyAssignArg(m, k, kind)
-	ret := b.Call(b.Pkg.rtFunc(kind.assignName()), typ, m, arg)
+	ret := b.Call(b.Pkg.rtFunc(RuntimeSymbol(kind.assignName(),
+		"MapAssign", "MapAssignFast32", "MapAssignFast64", "MapAssignFast32Ptr", "MapAssignFast64Ptr",
+		"MapAssignFastStr",
+	)), typ, m, arg)
 	ret.Type = b.Prog.Pointer(v.Type)
 	b.Store(ret, v)
 }
@@ -939,7 +962,13 @@ func (b Builder) MakeChan(t Type, size Expr) (ret Expr) {
 		size = b.FitIntSize(size)
 	}
 	ret.Type = t
-	ret.impl = b.InlineCall(b.Pkg.rtFunc(fn), eltSize, size).impl
+	args := []Expr{eltSize, size}
+	if alignment := prog.AlignOf(prog.Elem(t)); alignment > uint64(prog.GoWordSize()) {
+		fn += "Aligned"
+		args = append(args, prog.IntVal(alignment, prog.Int()))
+	}
+	ret.impl = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+		"NewChan", "NewChan64", "NewChanAligned", "NewChan64Aligned")), args...).impl
 	return
 }
 
@@ -1116,3 +1145,14 @@ func (b Builder) chanOp(s *SelectState) Expr {
 }
 
 // -----------------------------------------------------------------------------
+
+// appendSlice selects aligned storage only for element types that need it.
+func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
+	args := []Expr{src, data, count, b.Prog.Val(int(size))}
+	fn := "SliceAppend"
+	if alignment := b.Prog.AlignOf(b.Prog.Elem(src.Type)); alignment > uint64(b.Prog.GoWordSize()) {
+		fn += "Aligned"
+		args = append(args, b.Prog.IntVal(alignment, b.Prog.Int()))
+	}
+	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
+}

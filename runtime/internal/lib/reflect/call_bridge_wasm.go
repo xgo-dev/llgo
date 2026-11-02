@@ -6,20 +6,11 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
 const useWasmReflectBridges = true
-
-var (
-	wasmReflectOnlyPointer    unsafe.Pointer
-	wasmMakeFuncInvokePointer unsafe.Pointer
-)
-
-func init() {
-	wasmReflectOnlyPointer = ValueOf(wasmReflectOnly).UnsafePointer()
-	wasmMakeFuncInvokePointer = ValueOf(wasmMakeFuncInvoke).UnsafePointer()
-}
 
 func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefix []unsafe.Pointer, in []Value) []Value {
 	if method {
@@ -33,9 +24,9 @@ func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefi
 	results := make([]unsafe.Pointer, len(tout))
 	out := make([]Value, len(tout))
 	for i, typ := range tout {
-		results[i] = runtime.AllocZ(typ.Size_)
+		results[i] = runtime.AllocZAligned(typ.Size_, uintptr(typ.Align_))
 	}
-	if fn == wasmReflectOnlyPointer && !method {
+	if fn == c.Func(wasmReflectOnly) && !method {
 		wasmMakeFuncInvoke(env, unsafe.SliceData(args), unsafe.SliceData(results))
 	} else {
 		code := ft.Call_
@@ -76,10 +67,10 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	if code == nil {
 		// A FuncOf signature with dynamically created parameter types cannot
 		// appear at a compiled call site. It remains callable via reflection.
-		code = wasmReflectOnlyPointer
+		code = c.Func(wasmReflectOnly)
 	}
 	data := &wasmMakeFuncData{
-		callback: wasmMakeFuncInvokePointer,
+		callback: c.Func(wasmMakeFuncInvoke),
 		data: funcData{
 			ftyp: ft, tout: toRuntimeTypes(ft.Out), fn: fn, nin: len(ft.In),
 			recoverFrom: code, recoverTo: recoverTo,

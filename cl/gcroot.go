@@ -67,6 +67,20 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			}
 		}
 	}
+	if p.prog.DeadcodeDropEnabled() && p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+		owners := make(map[ssa.Value]struct{}, len(planned))
+		for value := range planned {
+			value = gcRootOwner(value)
+			switch value.(type) {
+			case *ssa.Const, *ssa.Global, *ssa.Function, *ssa.FreeVar:
+				// Static storage needs no heap root; free variables are kept
+				// by the separately rooted closure context.
+				continue
+			}
+			owners[value] = struct{}{}
+		}
+		planned = owners
+	}
 	counts := make(map[ssa.Value]int, len(planned))
 	total := 0
 	count := func(value ssa.Value) {
@@ -193,13 +207,17 @@ func (p *context) functionHasGCSafepoint(fn *ssa.Function) bool {
 
 func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
 	if load, ok := instr.(*ssa.UnOp); ok && load.Op == token.MUL {
-		switch load.Type().Underlying().(type) {
-		case *types.Array, *types.Struct:
-			// ABI lowering snapshots large aggregate loads on the heap after
-			// this root plan is built. Account for that added allocation now.
-			size := p.prog.SizeOf(p.type_(load.Type(), llssa.GoDecl))
-			if size > llabi.MaxImplicitStackVarSize ||
-				(p.prog.Target().GOARCH == "wasm" && size >= llabi.MinWasmAggregateCopySize) {
+		// ABI lowering may snapshot these loads with AllocU after this root
+		// plan is built. Keep the predicate in sync with abi.ShouldSnapshotAggregateLoad.
+		size := p.prog.SizeOf(p.type_(load.Type(), llssa.GoDecl))
+		ptrSize := p.prog.PointerSize()
+		switch t := load.Type().Underlying().(type) {
+		case *types.Array:
+			if llabi.ShouldSnapshotAggregateLoad(true, int(t.Len()), false, size, ptrSize) {
+				return true
+			}
+		case *types.Struct:
+			if llabi.ShouldSnapshotAggregateLoad(false, 0, true, size, ptrSize) {
 				return true
 			}
 		}
@@ -282,5 +300,51 @@ func (p *context) publishGCRoot(b llssa.Builder, value ssa.Value, expr llssa.Exp
 	}
 	for i, root := range roots {
 		b.SetGCRoot(slots[i], root)
+	}
+}
+
+// gcRootOwner follows views into the same allocation. Root slots are published
+// at their SSA definition and never cleared until function return, so keeping
+// the owner also keeps every derived interior pointer alive.
+func gcRootOwner(value ssa.Value) ssa.Value {
+	for {
+		switch v := value.(type) {
+		case *ssa.FieldAddr:
+			value = v.X
+		case *ssa.IndexAddr:
+			value = v.X
+		case *ssa.Slice:
+			// LLGo can replace a synthetic makeslice array with a fresh
+			// allocation at this slice and omit the array entirely. Keep
+			// that result rooted even if its SSA input looks like an owner.
+			if alloc, ok := v.X.(*ssa.Alloc); ok && alloc.Comment == "makeslice" {
+				return value
+			}
+			value = v.X
+		case *ssa.SliceToArrayPointer:
+			value = v.X
+		case *ssa.ChangeType:
+			// Function/aggregate conversions can have a different lowered
+			// ABI. Only these views preserve their backing allocation.
+			switch v.Type().Underlying().(type) {
+			case *types.Pointer, *types.Slice:
+			default:
+				if kind := basicKind(v.Type()); kind != types.String && kind != types.UnsafePointer {
+					return value
+				}
+			}
+			value = v.X
+		case *ssa.Convert:
+			pointer := func(t types.Type) bool {
+				_, ptr := t.Underlying().(*types.Pointer)
+				return ptr || basicKind(t) == types.UnsafePointer
+			}
+			if !pointer(v.Type()) || !pointer(v.X.Type()) {
+				return value
+			}
+			value = v.X
+		default:
+			return value
+		}
 	}
 }

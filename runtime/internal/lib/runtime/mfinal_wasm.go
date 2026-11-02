@@ -8,6 +8,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
 )
 
 type wasmFinalizerInterfaceArg struct {
@@ -21,7 +22,7 @@ type wasmFinalizerClosure struct {
 }
 
 type wasmFinalizerEntry struct {
-	fn              any
+	fn              unsafe.Pointer
 	interfaceType   unsafe.Pointer
 	result          wasmFinalizerResult
 	resultSize      uintptr
@@ -41,7 +42,7 @@ const (
 
 var wasmFinalizers struct {
 	mu wasmFinalizerMutex
-	m  map[uintptr]*wasmFinalizerEntry
+	m  wordmap.Map[uintptr, *wasmFinalizerEntry]
 }
 
 // SetFinalizer implements the Go finalizer contract for the linear-memory
@@ -61,13 +62,7 @@ func SetFinalizer(obj any, finalizer any) {
 		throw("runtime.SetFinalizer: first argument is nil")
 	}
 
-	key := ^uintptr(objPtr)
-	lockWasmFinalizers()
-	if old := wasmFinalizers.m[key]; old != nil {
-		delete(wasmFinalizers.m, key)
-		old.cancelCollector()
-	}
-	wasmFinalizers.mu.Unlock()
+	clearWasmFinalizer(objPtr)
 
 	finalizerFace := (*eface)(unsafe.Pointer(&finalizer))
 	if finalizerFace._type == nil {
@@ -89,18 +84,54 @@ func SetFinalizer(obj any, finalizer any) {
 	}
 	result, resultSize := classifyWasmFinalizerResult(fnType.Out)
 	entry := &wasmFinalizerEntry{
-		fn:            finalizer,
+		fn:            finalizerFace.data,
 		interfaceType: interfaceType,
 		result:        result,
 		resultSize:    resultSize,
 	}
+	registerWasmFinalizer(objPtr, entry)
+	KeepAlive(obj)
+}
+
+// llgoSetFinalizerPointer is used when the compiler proves the object and
+// callback have identical pointer types. The callback returns either nothing
+// or one interface, whose aggregate result is discarded by the existing ABI
+// bridge. Its boxed closure remains a GC pointer without retaining type data.
+func llgoSetFinalizerPointer(objPtr, fn unsafe.Pointer, resultSize uintptr) {
+	if objPtr == nil {
+		throw("runtime.SetFinalizer: first argument is nil")
+	}
+	clearWasmFinalizer(objPtr)
+	if fn == nil {
+		return
+	}
+	result := wasmFinalizerVoid
+	if resultSize != 0 {
+		result = wasmFinalizerSRet
+	}
+	registerWasmFinalizer(objPtr, &wasmFinalizerEntry{fn: fn, result: result, resultSize: resultSize})
+	KeepAlive(objPtr)
+}
+
+func clearWasmFinalizer(objPtr unsafe.Pointer) {
+	key := ^uintptr(objPtr)
+	lockWasmFinalizers()
+	if old := wasmFinalizers.m.Get(key); old != nil {
+		wasmFinalizers.m.Delete(key)
+		old.cancelCollector()
+	}
+	wasmFinalizers.mu.Unlock()
+}
+
+func registerWasmFinalizer(objPtr unsafe.Pointer, entry *wasmFinalizerEntry) {
+	key := ^uintptr(objPtr)
 	cancel, registered := tinygogc.AddFinalizer(objPtr, func(ptr unsafe.Pointer) {
 		lockWasmFinalizers()
-		if wasmFinalizers.m[key] != entry {
+		if wasmFinalizers.m.Get(key) != entry {
 			wasmFinalizers.mu.Unlock()
 			return
 		}
-		delete(wasmFinalizers.m, key)
+		wasmFinalizers.m.Delete(key)
 		wasmFinalizers.mu.Unlock()
 		callWasmFinalizer(entry, ptr)
 	})
@@ -110,9 +141,8 @@ func SetFinalizer(obj any, finalizer any) {
 	entry.cancelCollector = cancel
 
 	lockWasmFinalizers()
-	wasmFinalizers.m[key] = entry
+	wasmFinalizers.m.Set(key, entry)
 	wasmFinalizers.mu.Unlock()
-	KeepAlive(obj)
 }
 
 func wasmFinalizerObjectPointer(e *eface) unsafe.Pointer {
@@ -211,12 +241,11 @@ func wasmFinalizerResultsSize(results []*abi.Type) uintptr {
 }
 
 func callWasmFinalizer(entry *wasmFinalizerEntry, ptr unsafe.Pointer) {
-	face := (*eface)(unsafe.Pointer(&entry.fn))
 	if entry.interfaceType == nil {
-		callWasmPointerFinalizer(face.data, ptr, entry.result, entry.resultSize)
+		callWasmPointerFinalizer(entry.fn, ptr, entry.result, entry.resultSize)
 	} else {
 		arg := wasmFinalizerInterfaceArg{typeOrItab: entry.interfaceType, data: ptr}
-		callWasmInterfaceFinalizer(face.data, arg, entry.result, entry.resultSize)
+		callWasmInterfaceFinalizer(entry.fn, arg, entry.result, entry.resultSize)
 	}
 	KeepAlive(entry.fn)
 }

@@ -40,12 +40,17 @@ for profile in O0-off O2-off O2-thin O2-full; do
   echo "SIMD: amd64 $profile"
   for suite in arch portable; do
     package=./test/simd
-    filter='^TestSIMD(FMV|Bridge)'
+    filter='^TestSIMD(FMV|Bridge|Extend|Narrow|Resize)'
     settings=(cpu.avx2=off cpu.avx=off cpu.fma=off cpu.all=off)
     if [[ "$suite" == portable ]]; then
       package+=/portable
       filter='^TestPortable'
       settings+=(simd=0 simd=128 simd=+128)
+      for width in 0 128; do
+        for feature in avx2 avx fma all; do
+          settings+=("simd=$width,cpu.$feature=off")
+        done
+      done
     fi
     binary="$output/simd-$suite-$profile.exe"
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"

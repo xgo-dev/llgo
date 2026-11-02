@@ -74,6 +74,9 @@ func panicCallerSnapshotAvailable() bool {
 
 func clearPanicCallerSnapshot() {
 	if store := callerLocationStoreCurrent; store != nil {
+		if wasmDebuggerEnabled {
+			clearWasmPanicFrameBases(store)
+		}
 		store.panicDepth = 0
 	}
 }

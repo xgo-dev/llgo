@@ -140,6 +140,15 @@ func (l *Loader) mergeConfig(dst, src *Config) {
 	if src.WasmProvider != "" {
 		dst.WasmProvider = src.WasmProvider
 	}
+	if src.WasmInitialMemory != 0 {
+		dst.WasmInitialMemory = src.WasmInitialMemory
+	}
+	if src.WasmMaxMemory != 0 {
+		dst.WasmMaxMemory = src.WasmMaxMemory
+	}
+	if src.WasmStackSize != 0 {
+		dst.WasmStackSize = src.WasmStackSize
+	}
 	if src.Libc != "" {
 		dst.Libc = src.Libc
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"strings"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
@@ -36,6 +37,7 @@ const (
 	simdWidenBinary
 	simdCarrylessSelector
 	simdStoreMasked
+	simdIntegerResize
 )
 
 type simdOperation struct {
@@ -115,6 +117,28 @@ func init() {
 	for _, name := range []string{"ConvertToInt8", "ConvertToUint8", "ConvertToInt16", "ConvertToUint16", "ConvertToInt32", "ConvertToUint32", "ConvertToInt64", "ConvertToUint64", "ConvertToFloat32", "ConvertToFloat64"} {
 		simdOperations[simdKey{"numeric", name}] = simdOperation{llssa.SIMDConvert, simdConvert, 0}
 	}
+	for _, elem := range []string{"Int16", "Uint16", "Int32", "Uint32", "Int64", "Uint64"} {
+		lanes := 8
+		switch elem {
+		case "Int32", "Uint32":
+			lanes = 4
+		case "Int64", "Uint64":
+			lanes = 2
+		}
+		for _, part := range []struct {
+			name string
+			op   llssa.SIMDOp
+		}{{"Lo", llssa.SIMDExtendLo}, {"Hi", llssa.SIMDExtendHi}} {
+			name := fmt.Sprintf("Extend%s%dTo%s", part.name, lanes, elem)
+			simdOperations[simdKey{"numeric", name}] = simdOperation{part.op, simdIntegerResize, types.IsInteger}
+		}
+	}
+	for _, elem := range []string{"Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32"} {
+		simdOperations[simdKey{"numeric", "SaturateTo" + elem}] = simdOperation{llssa.SIMDSaturate, simdIntegerResize, types.IsInteger}
+	}
+	for _, name := range []string{"SaturateToInt16Concat", "SaturateToUint16Concat"} {
+		simdOperations[simdKey{"numeric", name}] = simdOperation{llssa.SIMDSaturateConcat, simdIntegerResize, types.IsInteger}
+	}
 	for _, name := range []string{"Mask8x16", "Mask16x8", "Mask32x4", "Mask64x2"} {
 		simdOperations[simdKey{"", name + "FromBits"}] = simdOperation{llssa.SIMDMaskFromBits, simdMaskFromBits, 0}
 	}
@@ -183,6 +207,24 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if desc.op == llssa.SIMDLookupOrZero && arch != "arm64" && arch != "wasm" {
 		return fallback()
 	}
+	if desc.signature == simdIntegerResize {
+		// The spelling describes the result shape, not just the operation.
+		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
+		elem := shape.Elem().(*types.Basic).Name()
+		elem = strings.ToUpper(elem[:1]) + elem[1:]
+		name := "SaturateTo" + elem
+		switch desc.op {
+		case llssa.SIMDExtendLo:
+			name = fmt.Sprintf("ExtendLo%dTo%s", shape.Len(), elem)
+		case llssa.SIMDExtendHi:
+			name = fmt.Sprintf("ExtendHi%dTo%s", shape.Len(), elem)
+		case llssa.SIMDSaturateConcat:
+			name += "Concat"
+		}
+		if key.name != name {
+			return fallback()
+		}
+	}
 	return desc, true
 }
 
@@ -211,6 +253,39 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		params = []types.Type{types.Typ[types.Uint64]}
 	case simdCarrylessSelector:
 		params = []types.Type{types.Typ[types.Uint8], vector}
+	case simdIntegerResize:
+		if sig.Results().Len() != 1 {
+			return false
+		}
+		result = sig.Results().At(0).Type()
+		shape, ok := llssa.SIMDNumericShape(result)
+		if !ok {
+			return false
+		}
+		from := lanes.Elem().Underlying().(*types.Basic).Info()
+		to := shape.Elem().Underlying().(*types.Basic).Info()
+		if to&types.IsInteger == 0 {
+			return false
+		}
+		switch d.op {
+		case llssa.SIMDExtendLo, llssa.SIMDExtendHi:
+			if shape.Len() >= lanes.Len() || from&types.IsUnsigned != to&types.IsUnsigned {
+				return false
+			}
+			if d.op == llssa.SIMDExtendHi && shape.Len()*2 != lanes.Len() {
+				return false
+			}
+		default:
+			if shape.Len() <= lanes.Len() || from&types.IsUnsigned != 0 && to&types.IsUnsigned == 0 {
+				return false
+			}
+			if d.op == llssa.SIMDSaturateConcat {
+				if shape.Len() != lanes.Len()*2 {
+					return false
+				}
+				params = []types.Type{vector}
+			}
+		}
 	case simdWidenBinary:
 		if sig.Results().Len() != 1 {
 			return false

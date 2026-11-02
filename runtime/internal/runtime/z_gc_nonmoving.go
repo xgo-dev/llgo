@@ -38,6 +38,15 @@ func AllocU(size uintptr) unsafe.Pointer {
 	return ret
 }
 
+func allocUAligned(size, alignment uintptr) unsafe.Pointer {
+	ret := tinygogc.AllocAligned(size, alignment)
+	if ret == nil {
+		panic("out of memory")
+	}
+	recordMemProfileAlloc(size)
+	return ret
+}
+
 func AllocZ(size uintptr) unsafe.Pointer {
 	return AllocU(size)
 }

@@ -2,7 +2,11 @@
 
 package runtime
 
-import _ "unsafe"
+import (
+	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
+)
 
 // The single-worker WebAssembly runtime is non-reentrant: host waits unwind
 // to Node/the WASI host and resume before another timer mutation can run. It
@@ -12,7 +16,7 @@ import _ "unsafe"
 
 var (
 	timerSchedulerHeap []*timerState
-	timerSchedulerMap  map[*runtimeTimer]*timerState
+	timerSchedulerMap  wordmap.Map[unsafe.Pointer, *timerState]
 )
 
 //go:linkname registerWasmTimerHooks github.com/xgo-dev/llgo/runtime/internal/runtime.RegisterWasmTimerHooks
@@ -22,21 +26,17 @@ func init() {
 	registerWasmTimerHooks(wasmPollTimers, wasmTimerWait)
 }
 
-func ensureTimerScheduler() {
-	if timerSchedulerMap == nil {
-		timerSchedulerMap = make(map[*runtimeTimer]*timerState)
-	}
-}
-
 func startRuntimeTimer(r *runtimeTimer) {
+	if r != nil && startSynctestTimer(r) {
+		return
+	}
 	if r == nil {
 		return
 	}
-	ensureTimerScheduler()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
-		timerSchedulerMap[r] = st
+		timerSchedulerMap.Set(unsafe.Pointer(r), st)
 	} else if st.active {
 		timerHeapRemove(st.heapIndex)
 	}
@@ -46,16 +46,18 @@ func startRuntimeTimer(r *runtimeTimer) {
 }
 
 func stopRuntimeTimer(r *runtimeTimer) bool {
+	if r != nil && r.fake != nil {
+		return r.fake.Stop()
+	}
 	if r == nil {
 		return false
 	}
-	ensureTimerScheduler()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if wasActive {
 		timerHeapRemove(st.heapIndex)
 		st.active = false
-		delete(timerSchedulerMap, r)
+		timerSchedulerMap.Delete(unsafe.Pointer(r))
 	}
 	return wasActive
 }
@@ -63,15 +65,23 @@ func stopRuntimeTimer(r *runtimeTimer) bool {
 // resetRuntimeTimer updates all fields before taking the new callback snapshot.
 // update is used only by the pre-Go 1.23 modTimer ABI.
 func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool {
+	if r != nil && r.fake != nil {
+		r.fake.Check()
+		if update != nil {
+			update()
+		}
+		r.when, r.period = when, period
+		callback := snapshotRuntimeTimer(r)
+		return r.fake.Reset(when, period, callback.run)
+	}
 	if r == nil {
 		return false
 	}
-	ensureTimerScheduler()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
-		timerSchedulerMap[r] = st
+		timerSchedulerMap.Set(unsafe.Pointer(r), st)
 	} else if st.active {
 		timerHeapRemove(st.heapIndex)
 	}
@@ -115,7 +125,7 @@ func wasmPollTimers() {
 			timerHeapAdd(st)
 		} else {
 			st.active = false
-			delete(timerSchedulerMap, st.r)
+			timerSchedulerMap.Delete(unsafe.Pointer(st.r))
 		}
 
 		delay := now - when

@@ -34,6 +34,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/llgen"
 	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
@@ -194,6 +195,9 @@ func TestRunAndTestRuntimeCodegen(t *testing.T) {
 
 func TestRunAndTestFromTestmeta(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeRun)
+	// These goldens inspect metadata captured before LLVM optimization.
+	// Still force a fresh compile and run every fixture, including imports.
+	conf.OptLevel = optlevel.O0
 	conf.CollectPackageMeta = true
 	cltest.RunAndTestFromDir(t, "", "./_testmeta", nil,
 		cltest.WithRunConfig(conf),
@@ -302,15 +306,6 @@ func TestBuildAndCheckSymbolsFromTestdrop(t *testing.T) {
 	)
 }
 
-// Plugin passes run inside the linker's LLVM, which can differ from LLGo's
-// LLVM 22 library. Keep the test driver paired with the plugin build.
-func testLTOPluginOpt() string {
-	if path := os.Getenv("LLGO_LTO_OPT"); path != "" {
-		return path
-	}
-	return filepath.Join(llvmenv.New("").BinDir(), "opt")
-}
-
 func testltoLTOPluginConf(t *testing.T, mode build.Mode) *build.Config {
 	t.Helper()
 	if !buildenv.Dev {
@@ -399,7 +394,7 @@ attributes #2 = { "llgo.interface.call"="1" "llgo.interface.count"="1" "llgo.int
 !6 = !{i64 8, !"go.method.N:func()"}
 !7 = !{i64 1}
 `
-	opt := testLTOPluginOpt()
+	opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 	cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
 		"-passes=llgo-interface-method-typeids", "-S", "-o", "-")
 	cmd.Stdin = strings.NewReader(input)
@@ -455,7 +450,7 @@ func TestLTOPluginRejectsMalformedInterfaceAttributes(t *testing.T) {
 			attrs:  `"llgo.interface.call"="1" "llgo.interface.count"="2" "llgo.interface.id"="go.method.i.I" "llgo.interface.index"="0" "llgo.interface.method.0"="go.method.M:func()" "llgo.interface.method.1"="go.method.N:func()"`,
 		},
 	}
-	opt := testLTOPluginOpt()
+	opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			input := `
@@ -544,7 +539,7 @@ func runTestltoLTOPluginAggregateABI(t *testing.T, fixture string) string {
 		t.Fatalf("MethodByName string argument was not captured in aggregate form:\n%s", aggregateIR)
 	}
 
-	opt := testLTOPluginOpt()
+	opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 	cmd := exec.Command(opt, "-load-pass-plugin="+plugin,
 		"-passes=llgo-lto-pre-globaldce", "-S", "-o", "-")
 	cmd.Stdin = strings.NewReader(aggregateIR)
@@ -631,7 +626,7 @@ define void @entry(%iface %unknown) {
 		{"escaping_function", "call void @sink(ptr @invoke)", 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			opt := testLTOPluginOpt()
+			opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 			cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
 				"-passes=llgo-lto-pre-globaldce", "-verify-each", "-S", "-o", "-")
 			cmd.Stdin = strings.NewReader(strings.Replace(input, "; EXTRA_CALL", tt.extra, 1))
@@ -682,7 +677,7 @@ entry:
 
 !0 = !{i64 24, !"go.method.M:func()"}
 `
-	opt := testLTOPluginOpt()
+	opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 	cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
 		"-passes=llgo-lto-pre-globaldce", "-S", "-o", "-")
 	cmd.Stdin = strings.NewReader(input)

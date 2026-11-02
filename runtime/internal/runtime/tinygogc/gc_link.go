@@ -32,23 +32,27 @@ func __wrap_realloc(ptr unsafe.Pointer, size uintptr) unsafe.Pointer {
 	return Realloc(ptr, size)
 }
 
-//go:linkname _heapStart _heapStart
+//go:linkname _heapStart C._heapStart
 var _heapStart [0]byte
 
-//go:linkname _heapEnd _heapEnd
+//go:linkname _heapEnd C._heapEnd
 var _heapEnd [0]byte
 
-//go:linkname _stackStart _stack_top
+//go:linkname _stackStart C._stack_top
 var _stackStart [0]byte
 
-//go:linkname _stackEnd _stack_end
+//go:linkname _stackEnd C._stack_end
 var _stackEnd [0]byte
 
-//go:linkname _globals_start _globals_start
+//go:linkname _globals_start C._globals_start
 var _globals_start [0]byte
 
-//go:linkname _globals_end _globals_end
+//go:linkname _globals_end C._globals_end
 var _globals_end [0]byte
+
+// Baremetal heap bases come from the target linker script; do not assume
+// stronger alignment than the machine word.
+const allocationAlignment = unsafe.Sizeof(uintptr(0))
 
 func gcMemoryLayout() (heapStart, heapEnd, globalsStart, globalsEnd, stackTop uintptr) {
 	// Reserve 2 KiB for libc internal allocation that cannot be wrapped.

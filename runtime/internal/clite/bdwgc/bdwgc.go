@@ -57,6 +57,11 @@ func UnregisterMyThread() c.Int
 //go:linkname Malloc C.GC_malloc
 func Malloc(size uintptr) c.Pointer
 
+// Memalign allocates scanned storage; the result may be an interior pointer.
+//
+//go:linkname Memalign C.GC_memalign
+func Memalign(alignment, size uintptr) c.Pointer
+
 // MallocUncollectable allocates scanned memory that is not reclaimed until Free.
 //
 //go:linkname MallocUncollectable C.GC_malloc_uncollectable
@@ -64,6 +69,11 @@ func MallocUncollectable(size uintptr) c.Pointer
 
 //go:linkname Realloc C.GC_realloc
 func Realloc(ptr c.Pointer, size uintptr) c.Pointer
+
+// Base returns the collector allocation containing ptr, or nil for a non-heap pointer.
+//
+//go:linkname Base C.GC_base
+func Base(ptr c.Pointer) c.Pointer
 
 //go:linkname Free C.GC_free
 func Free(ptr c.Pointer)

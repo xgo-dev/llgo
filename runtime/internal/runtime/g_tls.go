@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/diagnostic"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 	"github.com/xgo-dev/llgo/runtime/internal/thread"
 )
@@ -58,7 +59,7 @@ func ensureGLifecycleKey() {
 	}
 	if _, won := atomic.CompareAndExchange(&gLifecycleKeyState, 0, 1); won {
 		if ret := gLifecycleKey.Create(gLifecycleDestructor(destroyG)); ret != 0 {
-			c.Fprintf(c.Stderr, c.Str("runtime: thread-local key creation failed (error=%d)\n"), ret)
+			diagnostic.Error("runtime: thread-local key creation failed ", ret)
 			c.Exit(2)
 		}
 		atomic.Store(&gLifecycleKeyState, 2)
@@ -77,7 +78,7 @@ func getg() *g {
 	gp := initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
 	if ret := setAutoG(gp); ret != 0 {
 		destroyG(c.Pointer(unsafe.Pointer(gp)))
-		c.Fprintf(c.Stderr, c.Str("runtime: thread-local value installation failed (error=%d)\n"), ret)
+		diagnostic.Error("runtime: thread-local value installation failed ", ret)
 		panic("runtime: failed to install g")
 	}
 	return gp
@@ -87,7 +88,7 @@ func setg(gp *g) {
 	if currentGHasLifecycle {
 		old := (*g)(unsafe.Pointer(currentG))
 		if ret := gLifecycleKey.Set(nil); ret != 0 {
-			c.Fprintf(c.Stderr, c.Str("runtime: thread-local value clear failed (error=%d)\n"), ret)
+			diagnostic.Error("runtime: thread-local value clear failed ", ret)
 			panic("runtime: failed to clear g lifecycle key")
 		}
 		currentGHasLifecycle = false

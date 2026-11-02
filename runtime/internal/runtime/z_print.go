@@ -30,15 +30,40 @@ func boolCStr(v bool) *c.Char {
 }
 
 func PrintBool(v bool) {
-	c.Fprintf(c.Stderr, boolCStr(v))
+	c.Fputs(boolCStr(v), c.Stderr)
 }
 
 func PrintUint(v uint64) {
-	c.Fprintf(c.Stderr, printFormatPrefixUInt, v)
+	printDecimal(v, false)
 }
 
 func PrintInt(v int64) {
-	c.Fprintf(c.Stderr, printFormatPrefixInt, v)
+	u := uint64(v)
+	negative := v < 0
+	if negative {
+		u = 0 - u
+	}
+	printDecimal(u, negative)
+}
+
+func printDecimal(v uint64, negative bool) {
+	// uint64 needs at most 20 digits. Use stack storage explicitly because
+	// printing is also used on panic paths and before runtime initialization.
+	buf := c.Alloca(21)
+	i := uintptr(21)
+	for {
+		i--
+		*(*byte)(unsafe.Add(buf, i)) = '0' + byte(v%10)
+		v /= 10
+		if v == 0 {
+			break
+		}
+	}
+	if negative {
+		i--
+		*(*byte)(unsafe.Add(buf, i)) = '-'
+	}
+	c.Fwrite(unsafe.Add(buf, i), 1, 21-i, c.Stderr)
 }
 
 func PrintFloat(v float64) {
@@ -50,15 +75,37 @@ func PrintComplex(v complex128) {
 }
 
 func PrintHex(v uint64) {
-	c.Fprintf(c.Stderr, printFormatPrefixHex, v)
+	printHex(v, false)
 }
 
 func PrintPointer(p unsafe.Pointer) {
 	// Match Go's builtin print/println pointer formatting (0x... even for nil).
-	c.Fprintf(c.Stderr, c.Str("0x"))
-	// %llx consumes an unsigned long long. On 32-bit targets, passing uintptr
-	// directly leaves the upper half of the variadic argument unspecified.
-	c.Fprintf(c.Stderr, printFormatPrefixHex, uint64(uintptr(p)))
+	printHex(uint64(uintptr(p)), true)
+}
+
+func printHex(v uint64, prefix bool) {
+	buf := c.Alloca(18) // 16 digits and an optional 0x prefix.
+	i := uintptr(18)
+	for {
+		i--
+		digit := byte(v & 15)
+		if digit < 10 {
+			digit += '0'
+		} else {
+			digit += 'a' - 10
+		}
+		*(*byte)(unsafe.Add(buf, i)) = digit
+		v >>= 4
+		if v == 0 {
+			break
+		}
+	}
+	if prefix {
+		i -= 2
+		*(*byte)(unsafe.Add(buf, i)) = '0'
+		*(*byte)(unsafe.Add(buf, i+1)) = 'x'
+	}
+	c.Fwrite(unsafe.Add(buf, i), 1, 18-i, c.Stderr)
 }
 
 func PrintSlice(s Slice) {

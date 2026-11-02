@@ -17,6 +17,7 @@
 package build
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/clang"
@@ -55,6 +56,9 @@ func defaultWASIHeapArgs(ctx *context, linker *clang.Cmd, args []string) []strin
 				return nil
 			}
 		}
+	}
+	if size := ctx.crossCompile.WASIInitialMemory; size != 0 {
+		return []string{"-Wl,--initial-memory=" + strconv.FormatUint(size, 10)}
 	}
 	return []string{defaultWASIHeapFlag}
 }

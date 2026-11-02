@@ -45,7 +45,7 @@ func testFilesystem() {
 	done := make(chan int64)
 	workers := make(map[int64]bool)
 	multiWorker := len(os.Args) > 1 && strings.Contains(os.Args[1], "workers")
-	gcStress := multiWorker && len(os.Args) > 2 && os.Args[2] == "--gc-stress"
+	gcStress := len(os.Args) > 2 && os.Args[2] == "--gc-stress"
 	operations := 16
 	if gcStress {
 		operations = 128

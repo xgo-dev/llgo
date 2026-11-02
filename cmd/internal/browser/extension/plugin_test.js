@@ -64,8 +64,106 @@ const schema = {
   }},
 };
 
+test('coordinated inspection rejects changed stops and stale expanded objects', async () => {
+  const index = {...fixtureIndex(), worker_control: true};
+  let state = {enabled: true, ready: true, paused: true, stopId: 7};
+  const plugin = new LLGoLanguageExtensionPlugin({
+    getWasmLocal: async () => {
+      state = {...state, stopId: 8};
+      return {type: 'i32', value: 42};
+    },
+  }, async url => {
+    if (url.endsWith('/debug-index.json')) return response(index);
+    if (url.endsWith('/debug-schema.json')) return response(schema);
+    if (url.endsWith('/worker-state')) return response(state);
+    if (url.endsWith('/plugin-ready')) return new Response(null, {status: 204});
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await plugin.addRawModule('module', undefined, {
+    url: 'http://127.0.0.1:1234/program.wasm', code: moduleBytes().buffer,
+  });
+  const context = {rawModuleId: 'module', codeOffset: 12, inlineFrameIndex: 0};
+  assert.equal((await plugin.evaluate('constant', context, 1n)).value, 41);
+  await assert.rejects(plugin.evaluate('local', context, 1n), /resumed or changed/);
+  const module = plugin.module('module');
+  await assert.rejects(plugin.withWorkerStop(module, async () => {
+    const value = plugin.snapshotObject(module, {type: 'object'}, []);
+    state = {...state, stopId: state.stopId + 1};
+    return value;
+  }), /resumed or changed/);
+  assert.equal(plugin.objects.size, 0, 'rejected inspection releases unpublished handles');
+  const object = await plugin.withWorkerStop(module, async () =>
+    plugin.snapshotObject(module, {type: 'object'}, [{name: 'id', value: {type: 'number', value: 1}}]));
+  state = {...state, paused: false, stopId: 9};
+  await assert.rejects(plugin.getProperties(object.objectId), /resumed or changed/);
+  state = {...state, error: 'worker transport disconnected'};
+  await assert.rejects(plugin.evaluate('constant', context, 1n), /transport disconnected/);
+});
+
 function response(value, init) {
   return new Response(typeof value === 'string' ? value : JSON.stringify(value), init);
+}
+
+for (const width of [4, 8]) {
+test(`closure captures preserve reference and value storage (${width} bytes)`, async () => {
+  const index = fixtureIndex();
+  index.record.pointer_size = width;
+  index.function_values = [{index: 7, name: 'main.capture$1', environment: 'envptr'},
+    {index: 8, name: 'main.opaque', environment: 'word'},
+    {index: 9, name: 'main.incomplete', environment: 'missingptr'}];
+  index.types.push(
+    {id: 'word', kind: 'integer', name: 'uintptr', size: width, complete: true},
+    {id: 'intptr', kind: 'pointer', name: '*int32', size: width, elem: 'int32', complete: true},
+    {id: 'envptr', kind: 'pointer', size: width, elem: 'env', complete: true},
+    {id: 'missingptr', kind: 'pointer', size: width, elem: 'missing', complete: true},
+    {id: 'missing', kind: 'struct', size: width, complete: false},
+    {id: 'env', kind: 'struct', name: 'captures', size: width + 4, complete: true,
+      fields: [{name: 'reference', type: 'intptr', offset: 0}, {name: 'value', type: 'int32', offset: width}]},
+    {id: 'fn', kind: 'struct', name: 'struct{$f func(); $data unsafe.Pointer}', size: width * 2, complete: true,
+      fields: [{name: '$f', type: 'word', offset: 0}, {name: '$data', type: 'word', offset: width}]},
+  );
+  const memory = new Uint8Array(256), view = new DataView(memory.buffer);
+  const word = (at, value) => width === 4 ? view.setUint32(at, value, true) : view.setBigUint64(at, BigInt(value), true);
+  word(16, 7); word(16 + width, 128); word(128, 192);
+  view.setInt32(128 + width, 23, true); view.setInt32(192, 41, true);
+  const plugin = new LLGoLanguageExtensionPlugin({
+    getWasmLinearMemory: async (offset, length) => memory.slice(offset, offset + length).buffer,
+  }, async url => {
+    if (url.endsWith('/debug-index.json')) return response(index);
+    if (url.endsWith('/debug-schema.json')) return response(debuggerSchema);
+    if (url.endsWith('/plugin-ready')) return new Response(null, {status: 204});
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await plugin.addRawModule('module', undefined, {
+    url: 'http://host/closure.wasm', code: moduleBytes({pointerSize: width}).buffer,
+  });
+  const module = plugin.module('module');
+  const read = () => plugin.remoteObject(module, module.types.get('fn'), {kind: 'address', value: 16n}, 'stop');
+  for (const value of [41, 52]) {
+    view.setInt32(192, value, true);
+    const fn = await read();
+    assert.equal(fn.description, 'func[7] main.capture$1 data=0x80');
+    const captures = (await plugin.getProperties(fn.objectId)).find(p => p.name === 'captures').value;
+    const fields = Object.fromEntries((await plugin.getProperties(captures.objectId)).map(p => [p.name, p.value]));
+    assert.equal(fields.value.value, 23);
+    assert.equal((await plugin.getProperties(fields.reference.objectId))[0].value.value, value);
+    await plugin.releaseObject(fn.objectId);
+    assert.equal(plugin.objects.size, 0, 'release includes captured pointers');
+  }
+  for (const code of [8, 9, 99]) {
+    word(16, code);
+    const fn = await read();
+    assert.ok(!(await plugin.getProperties(fn.objectId)).some(p => p.name === 'captures'),
+      'opaque, incomplete and unknown functions have no guessed capture layout');
+    await plugin.releaseObject(fn.objectId);
+  }
+  word(16, 7); word(16 + width, 0);
+  const empty = await read();
+  assert.ok(!(await plugin.getProperties(empty.objectId)).some(p => p.name === 'captures'));
+  await plugin.releaseObject(empty.objectId);
+  word(16, 0);
+  assert.equal((await read()).type, 'null');
+});
 }
 
 test('LLGo language extension maps DWARF index and evaluates constants and Wasm locals', async () => {
@@ -206,7 +304,8 @@ test('LLGo language extension rejects stale browser indexes', async () => {
   }), /build_id mismatch/);
 });
 
-test('LLGo language extension consumes common interface, function, map and channel layouts without native goroutine claims', async () => {
+for (const structPrefix of ['', 'struct ']) {
+test(`LLGo language extension presents runtime layouts with struct prefix ${JSON.stringify(structPrefix)}`, async () => {
   const index = fixtureIndex();
   index.types.push(
       {id: 'u8', name: 'uint8', kind: 'integer', size: 1, complete: true},
@@ -285,6 +384,10 @@ test('LLGo language extension consumes common interface, function, map and chann
        locations: [{expression: '0368000000'}]},
   );
 
+  for (const type of index.types) {
+    if (type.kind === 'struct') type.name = structPrefix + type.name;
+  }
+
   const memory = new Uint8Array(1024);
   const view = new DataView(memory.buffer);
   const u32 = (address, value) => view.setUint32(address, value, true);
@@ -361,7 +464,65 @@ test('LLGo language extension consumes common interface, function, map and chann
   assert.ok(!(await plugin.listVariablesInScope(context)).some(variable => variable.name === '$goroutines'));
   assert.match((await plugin.evaluate('$goroutines', context, 'stop')).value, /build with llgo.wasm.debugger/);
 });
+}
 
+
+for (const width of [4, 8]) {
+test(`interface type lookup uses runtime import paths and preserves pointer identity (${width} bytes)`, async () => {
+  const prefix = 'github.com/xgo-dev/llgo/runtime/abi.';
+  const types = [
+    {id: 'byte', kind: 'integer', size: 1},
+    {id: 'word', kind: 'integer', size: width},
+    {id: 'string', name: 'struct string', kind: 'struct', size: 2 * width,
+      fields: [{name: 'data', type: 'word', offset: 0}, {name: 'len', type: 'word', offset: width}]},
+    {id: 'metadata', name: prefix + 'Type', kind: 'struct', size: 3 * width,
+      fields: [{name: 'TFlag', type: 'byte', offset: 0}, {name: 'Kind_', type: 'byte', offset: 1},
+        {name: 'Str_', type: 'string', offset: width}]},
+    {id: 'pointerMetadata', name: prefix + 'PtrType', kind: 'struct', size: 4 * width,
+      fields: [{name: 'Elem', type: 'word', offset: 3 * width}]},
+    {id: 'uncommon', name: prefix + 'UncommonType', kind: 'struct', size: 2 * width,
+      fields: [{name: 'PkgPath_', type: 'string', offset: 0}]},
+    {id: 'int', name: 'int32', kind: 'integer', size: 4, signed: true},
+    {id: 'actual', name: 'example.com/one.Record', kind: 'typedef', elem: 'int', size: 4},
+    {id: 'pointer', name: '*example.com/one.Record', kind: 'pointer', elem: 'actual', size: width},
+    {id: 'decoy', name: 'pkg.Record', kind: 'integer', size: 1},
+    {id: 'other', name: 'example.com/two.Record', kind: 'integer', size: 1},
+  ];
+  const memory = new Uint8Array(2048);
+  const view = new DataView(memory.buffer);
+  function word(address, value) {
+    if (width === 8) view.setBigUint64(address, BigInt(value), true);
+    else view.setUint32(address, value, true);
+  }
+  function string(address, text, data) {
+    const bytes = new TextEncoder().encode(text);
+    memory.set(bytes, data);
+    word(address, data);
+    word(address + width, bytes.length);
+  }
+  memory[256] = 5; // named + uncommon
+  memory[257] = 2; // int
+  string(256 + width, 'pkg.Record', 1024);
+  string(256 + 3 * width, 'example.com/one', 1088);
+  memory[385] = 22 | 32; // pointer + direct interface, no uncommon metadata
+  string(384 + width, '*pkg.Record', 1152);
+  word(384 + 3 * width, 256);
+  const plugin = new LLGoLanguageExtensionPlugin({
+    getWasmLinearMemory: async (offset, length) => memory.slice(offset, offset + length).buffer,
+  });
+  const module = {record: {pointer_size: width}, layout: debuggerSchema.runtime_layouts['2'],
+    types: new Map(types.map(type => [type.id, type])), typesByName: new Map(types.map(type => [type.name, type]))};
+  assert.equal((await plugin.interfaceValueType(module, 256n, 'pkg.Record', 'stop')).id, 'actual');
+  assert.equal((await plugin.interfaceValueType(module, 384n, '*pkg.Record', 'stop')).id, 'pointer');
+  string(256 + 3 * width, 'example.com/missing', 1088);
+  assert.equal(await plugin.interfaceValueType(module, 256n, 'pkg.Record', 'stop'), null,
+    'a short-name collision must not substitute another package');
+  memory[256] = 4; // named but unavailable uncommon metadata
+  assert.equal(await plugin.interfaceValueType(module, 256n, 'pkg.Record', 'stop'), null);
+  word(384 + 3 * width, 384); // corrupt recursive pointer metadata
+  assert.equal(await plugin.interfaceValueType(module, 384n, '*pkg.Record', 'stop'), null);
+});
+}
 
 test('DWARF frame bases retain J64 addresses and Wasm float and signed local values', async () => {
   const index = fixtureIndex();

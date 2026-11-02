@@ -79,6 +79,10 @@
     const gFields = fields(g, [spec.id, spec.parent_id, spec.status]);
     const stackFields = fields(stack, [module.layout.slice.data, module.layout.slice.length]);
     const frameFields = fields(frame, [spec.function, spec.file, spec.line]);
+    // Older artifacts have logical frames without saved native bases.
+    const debugField = frame.fields.find(field => field.name === spec.frame_debug);
+    const debugBase = debugField && fields(fieldType(module, frame, spec.frame_debug), [spec.frame_base])[spec.frame_base];
+    const panicDepth = debugBase && fields(caller, [spec.panic_depth])[spec.panic_depth];
     const stringFields = Object.fromEntries([spec.function, spec.file].map(name =>
       [name, fields(fieldType(module, frame, name), [module.layout.string.data, module.layout.string.length])]));
     const strings = new Map();
@@ -115,6 +119,10 @@
       if (processor >= 0n) record.processor = String(processor);
       const storeAddress = unsigned(nodeBytes, nodeFields[spec.callers]);
       if (storeAddress !== 0n) {
+        // A panic snapshot can retain frames whose native stacks have already
+        // unwound. Their source locations remain useful, their addresses do not.
+        const liveBases = debugBase && record.state === 'waiting' &&
+          unsigned(await memory(storeAddress, caller.size), panicDepth) === 0n;
         const stackBytes = await memory(storeAddress + BigInt(stackField.offset), stack.size);
         const data = unsigned(stackBytes, stackFields[module.layout.slice.data]);
         const count = unsigned(stackBytes, stackFields[module.layout.slice.length]);
@@ -122,8 +130,13 @@
         const frameBytes = await memory(data, Number(count) * frame.size);
         for (let index = Number(count) - 1; index >= 0; --index) {
           const base = index * frame.size;
-          record.frames.push({function: await text(frameBytes, base, spec.function), file: await text(frameBytes, base, spec.file),
-            line: String(unsigned(frameBytes, frameFields[spec.line], base))});
+          const value = {function: await text(frameBytes, base, spec.function), file: await text(frameBytes, base, spec.file),
+            line: String(unsigned(frameBytes, frameFields[spec.line], base))};
+          if (liveBases) {
+            const address = unsigned(frameBytes, debugBase, base + debugField.offset);
+            if (address !== 0n) value.base = String(address);
+          }
+          record.frames.push(value);
         }
       }
       // The trailing scalar reads must stay fresh, outside the cached blocks.
@@ -135,5 +148,69 @@
     return results;
   }
 
-  globalThis.LLGoWasmGoroutines = {read};
+  // A logical stack has no exact Wasm PC. Only expose a variable when its
+  // scope and a single fbreg location cover the entire function. In particular,
+  // never borrow the paused worker's Wasm locals/operand stack for a parked G.
+  async function locals(plugin, module, frame, stopId) {
+    const unavailable = message => ({type: 'string', value: `<unavailable: ${message}>`, hasChildren: false});
+    const functions = module.index.functions?.filter(fn => fn.name === frame.function) || [];
+    if (functions.length !== 1 || !functions[0].ranges?.length || !frame.base) {
+      return [{name: 'status', value: unavailable('no unambiguous saved frame')}];
+    }
+    const ranges = functions[0].ranges;
+    const covers = (regions, range) => {
+      let start = range.start;
+      for (const region of [...(regions || [])].sort((a, b) => a.start - b.start)) {
+        if (region.start > start) break;
+        if (region.end > start) start = region.end;
+        if (start >= range.end) return true;
+      }
+      return false;
+    };
+    const variables = module.index.variables.filter(variable => variable.scope !== 'GLOBAL' &&
+      variable.ranges?.some(v => ranges.some(r => v.start < r.end && r.start < v.end)));
+    const names = new Map();
+    for (const variable of variables) names.set(variable.name, (names.get(variable.name) || 0) + 1);
+    const properties = [], seen = new Set();
+    try {
+      for (const variable of variables) {
+        if (seen.has(variable.name)) continue;
+        seen.add(variable.name);
+        let value = unavailable('register location or changing scope');
+        const location = variable.locations?.length === 1 && variable.locations[0];
+        if (names.get(variable.name) === 1 && ranges.every(range => covers(variable.ranges, range)) && location &&
+            ((!location.start && !location.end) || ranges.every(range => covers([location], range)))) {
+          const hex = location.expression;
+          if (/^91(?:[0-9a-f]{2})+$/i.test(hex)) {
+            const bytes = Uint8Array.from(hex.slice(2).match(/../g), byte => parseInt(byte, 16));
+            let offset = 0n, shift = 0n;
+            for (let index = 0; index < bytes.length && index < 10; ++index) {
+              const byte = bytes[index];
+              offset |= BigInt(byte & 0x7f) << shift;
+              shift += 7n;
+              if (!(byte & 0x80)) {
+                if (index !== bytes.length - 1) break; // Not a standalone fbreg.
+                if (byte & 0x40) offset -= 1n << shift;
+                const address = BigInt(frame.base) + offset;
+                if (offset < -(1n << 63n) || offset >= (1n << 63n) || address < 0n ||
+                    address >= (1n << BigInt(module.record.pointer_size * 8))) break;
+                value = await plugin.remoteObject(module, module.types.get(variable.type),
+                  {kind: 'address', value: address}, stopId) || unavailable('unsupported type');
+                break;
+              }
+            }
+          }
+        }
+        properties.push({name: variable.name, value});
+      }
+    } catch (error) {
+      for (const property of properties) {
+        if (property.value.objectId) await plugin.releaseObject(property.value.objectId);
+      }
+      throw error;
+    }
+    return properties;
+  }
+
+  globalThis.LLGoWasmGoroutines = {read, locals};
 })();

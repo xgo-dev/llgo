@@ -4,5 +4,5 @@ package main
 
 import "unsafe"
 
-//go:linkname stderr stderr
+//go:linkname stderr C.stderr
 var stderr unsafe.Pointer

@@ -67,13 +67,17 @@ func configureTestOutput(conf *Config, args []string, initial []*packages.Packag
 	if conf.testOutput != nil {
 		return
 	}
+	conf.testOutput = newTestOutputPolicy(conf, len(args) == 0, testPackageCount(initial))
+}
+
+func testPackageCount(initial []*packages.Package) int {
 	paths := make(map[string]bool)
 	for _, pkg := range initial {
 		if pkg.ForTest == "" && !strings.HasSuffix(pkg.PkgPath, ".test") {
 			paths[pkg.PkgPath] = true
 		}
 	}
-	conf.testOutput = newTestOutputPolicy(conf, len(args) == 0, len(paths))
+	return len(paths)
 }
 
 type lockedTestWriter struct {

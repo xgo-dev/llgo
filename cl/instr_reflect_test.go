@@ -101,3 +101,41 @@ pkg.caller:
 		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestReflectValueMethodInvokeDemands(t *testing.T) {
+	reflectPkg := types.NewPackage("reflect", "reflect")
+	value := types.NewNamed(types.NewTypeName(token.NoPos, reflectPkg, "Value", nil), types.NewStruct(nil, nil), nil)
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, nil, "V", nil), value)
+	for _, tt := range []struct {
+		name, method string
+		result       types.Type
+		args         []ssa.Value
+		want         string
+	}{
+		{"index", "Method", value, []ssa.Value{ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])}, "[Reflect]\n    pkg.caller\n\n"},
+		{"alias", "Method", alias, []ssa.Value{&ssa.Parameter{}}, "[Reflect]\n    pkg.caller\n\n"},
+		{"name", "MethodByName", alias, []ssa.Value{ssa.NewConst(constant.MakeString("Keep"), types.Typ[types.String])}, "[UseNamedMethod]\npkg.caller:\n    Keep\n\n"},
+		{"dynamic name", "MethodByName", value, []ssa.Value{&ssa.Parameter{}}, "[Reflect]\n    pkg.caller\n\n"},
+		{"other method", "Other", value, []ssa.Value{&ssa.Parameter{}}, ""},
+		{"other result", "Method", types.Typ[types.Int], []ssa.Value{&ssa.Parameter{}}, ""},
+		{"no argument", "Method", value, nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			prog := llssa.NewProgram(nil)
+			defer prog.Dispose()
+			pkg := prog.NewPackageEx("pkg", "pkg", true)
+			fn := pkg.NewFunc("pkg.caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.GoDecl)
+			ctx := &context{pkg: pkg, fn: fn}
+			result := types.NewTuple(types.NewVar(token.NoPos, nil, "", tt.result))
+			method := types.NewFunc(token.NoPos, nil, tt.method, types.NewSignatureType(nil, nil, nil, nil, result, false))
+			ctx.recordReflectValueMethodInvoke(&ssa.CallCommon{Args: tt.args}, method)
+			if err := pkg.FinishMetaCollection(); err != nil {
+				t.Fatal(err)
+			}
+			defer pkg.Meta.Close()
+			if got := pkg.Meta.String(); got != tt.want {
+				t.Fatalf("metadata = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -9,3 +9,6 @@ dev/activate_pixi.bat text eol=crlf
 _demo/go/export/libexport.h.want text eol=lf
 # Golden test output must retain its exact bytes during checkout.
 internal/test2json/testdata/*.test -text
+
+# Preserve the unified diff on Windows; blank context lines contain one space.
+.github/windows/bdwgc-windows-fault-guard.patch text eol=lf -whitespace

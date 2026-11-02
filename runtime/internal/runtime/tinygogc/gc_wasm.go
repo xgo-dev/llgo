@@ -11,6 +11,9 @@ import (
 
 const LLGoFiles = "_wrap/gc_wasm.c"
 
+// Every Wasm heap segment starts on a GC block boundary.
+const allocationAlignment = bytesPerBlock
+
 const wasmPageSize = uintptr(64 << 10)
 
 func gcMemoryLayout() (heapStart, heapEnd, globalsStart, globalsEnd, stackTop uintptr) {

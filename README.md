@@ -4,6 +4,7 @@ LLGo - A Go compiler based on LLVM
 [![Build Status](https://github.com/xgo-dev/llgo/actions/workflows/go.yml/badge.svg)](https://github.com/xgo-dev/llgo/actions/workflows/go.yml)
 [![GitHub release](https://img.shields.io/github/v/tag/xgo-dev/llgo.svg?label=release)](https://github.com/xgo-dev/llgo/releases)
 [![Coverage Status](https://codecov.io/gh/xgo-dev/llgo/branch/main/graph/badge.svg)](https://codecov.io/gh/xgo-dev/llgo)
+[![LLGo bindings](https://img.shields.io/badge/llarhub-LLGo_Bindings-brightgreen.svg)](https://github.com/xgo-dev/llgo/blob/main/doc/LLGo-Bindings.md)
 [![Benchmark](https://img.shields.io/badge/benchmark-LLGo_vs_Go-yellowgreen.svg)](https://llgo-test.github.io/benchmarks/)
 [![GoDoc](https://pkg.go.dev/badge/github.com/xgo-dev/llgo.svg)](https://pkg.go.dev/github.com/xgo-dev/llgo)
 [![XGo](https://img.shields.io/badge/project-XGo-blue.svg)](https://github.com/goplus/xgo)
@@ -53,7 +54,7 @@ Other targets may not provide every OS service or implementation-specific runtim
 
 | Target | Current coverage |
 | --- | --- |
-| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
+| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows 386/amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
 | WebAssembly | `js/wasm` and `wasip1/wasm` builds; WASI and Emscripten CI coverage |
 | Embedded | [`-target`](doc/Embedded_Cmd.md) configurations for supported boards and MCUs, with selected QEMU/emulator smoke tests |
 
@@ -124,6 +125,24 @@ func main() {
 ```
 
 Because calls into C compile to native calls against the C ABI, there is no Go-to-C stack or scheduler transition, so frequent C calls stay cheap.
+
+#### Promoted C variadic methods
+
+Forwarding an incoming C ellipsis through a promoted-method wrapper, including
+an interface call, is currently supported only on hosted native targets without
+an explicit `-target` profile. The underlying C method must have a pointer
+receiver. The wrapper and callee must have matching fixed LLVM prototypes and
+calling conventions, with no result conversion. Fixed parameters must be
+scalars, with zero or one scalar result: booleans, integers, floating-point
+values, and pointers qualify.
+
+Value receivers, aggregate fixed parameters or results, multiple results,
+Wasm, and explicit `-target` profiles (including custom native profiles) remain
+outside this support. Selecting an unsupported forwarding wrapper through an
+interface conversion, method expression, or bound method produces a compiler
+error naming the method, target, and reason forwarding is unsupported. Call the C-linked method
+or function directly with explicit C-compatible arguments when forwarding is
+unavailable. Unused synthetic wrappers do not prevent those direct calls.
 
 #### Windows API
 
@@ -235,8 +254,8 @@ Examples built on these bindings:
 
 * [llama2-c](_demo/c/llama2-c): inference Llama 2 (the first LLGo AI example)
 * [mkjson](https://github.com/goplus/lib/tree/main/c/cjson/_demo/mkjson): create a JSON object and print it
-* [sqlitedemo](https://github.com/goplus/lib/tree/main/c/sqlite/_demo/sqlitedemo): a basic SQLite demo
-* [tetris](https://github.com/goplus/lib/tree/main/c/raylib/_demo/tetris): a Tetris game based on raylib
+* [sqlitedemo](https://github.com/llarhub/sqlite/tree/main/demo/sqlitedemo): a basic SQLite demo
+* [tetris](https://github.com/llarhub/raylib/tree/main/demo/tetris): a Tetris game based on raylib
 
 
 ## Python support
@@ -340,7 +359,7 @@ llgo run .
 - [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
 - [LLVM 22](https://llvm.org)
 - [Clang 22](https://clang.llvm.org)
-- [LLD](https://lld.llvm.org): 23.x >= 23.1.3 for macOS arm64 native links; 22 for other native platforms and LLVM 22 cross-target links
+- [LLD 22](https://lld.llvm.org)
 - [LLDB](https://lldb.llvm.org) (LLVM 22 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
@@ -348,20 +367,6 @@ llgo run .
 - [OpenSSL 3.0+](https://www.openssl.org/)
 - [zlib 1.2+](https://github.com/madler/zlib)
 - [Python 3.12+](https://www.python.org) (optional, for [github.com/goplus/lib/py](https://pkg.go.dev/github.com/goplus/lib/py))
-
-On macOS arm64, the installer installs or upgrades Homebrew `lld@23`
-(including its LLVM 23 library dependencies). Native links use
-`$HOMEBREW_PREFIX/opt/lld@23/bin/ld64.lld`, defaulting to `/opt/homebrew`.
-LLD 23.1.3 is required for macOS 27 SDK stubs; LLGo and ESP Clang remain on
-LLVM 22. No separate linker is bundled. An explicit Clang `--ld-path` retains
-precedence, including when supplied through an `@response-file`.
-Keep the matching LLVM 22 and LLD 22 tools on PATH for WASI and other
-cross-target links. LLD 23 is selected separately for native macOS arm64 links;
-Intel and embedded linker selection are unchanged.
-
-For macOS arm64 native links, ThinLTO and FullLTO use LLD's LLVM 23 backend,
-so optional [LTO plugins](ltoplugin/README.md) must also be built against
-LLVM 23. Other native platforms continue to use LLVM 22 for LTO and its plugins.
 
 ## How to install
 
@@ -398,15 +403,42 @@ brew update
 brew install llvm@22 lld@22 bdw-gc openssl cjson libffi libuv pkg-config
 brew install python@3.12 # optional
 brew link --force --overwrite llvm@22 lld@22 libffi
-# install.sh also provisions lld@23 for native macOS arm64 links.
 ./install.sh
 ```
+
+Native macOS builds use LLVM/LLD 22 and require a macOS SDK older than 27.
+LLGo keeps the active SDK when it meets that requirement; otherwise it selects
+the newest installed older SDK from Xcode or Command Line Tools. SDK 27 and
+newer are excluded. Set `SDKROOT` to pin an installed older SDK; an unsupported
+or missing explicit SDK is an error. If no older SDK is installed, install one
+before building. The selected SDK is used for both compilation and linking.
 
 Homebrew's versioned LLVM 22 formula does not ship LLDB and there is no `lldb@22` formula. LLGo checks common Homebrew and system locations, then `lldb` on `PATH`; use `LLGO_LLDB` or `llgo lldb -lldb` to select one explicitly.
 
 ### on Linux
 
+The APT/YUM configurations below accept packages without GPG signature verification
+(`trusted=yes` / `gpgcheck=0`); downloads use HTTPS.
+
 #### Debian/Ubuntu
+
+The DEB contains LLGo's compiler, runtime, targets, licenses and a pinned ESP
+runtime archive, unpacked locally on the first embedded build. Native LLVM 22,
+Clang, LLD and native libraries are installed as system dependencies. Ubuntu
+26.04 provides LLVM 22 in its standard repositories; on older Debian/Ubuntu
+releases, enable the matching [apt.llvm.org LLVM 22 repository](https://apt.llvm.org/)
+before installing LLGo.
+
+Install the latest stable release for amd64 or arm64 from the APT repository:
+
+```sh
+echo 'deb [trusted=yes] https://pkgs.goplus.org/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
+sudo apt-get update
+sudo apt-get install -y llgo
+llgo version
+```
+
+For source builds, install the build dependencies:
 
 <!-- embedme doc/_readme/scripts/install_ubuntu.sh#L2-L1000 -->
 
@@ -434,9 +466,29 @@ export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
 
 #### Fedora Linux 44 or newer
 
-Fedora 44 and 45 ship LLVM 22 as the default LLVM stack. Fedora 43 still
-ships LLVM 21 and is not a supported default-toolchain environment for this
-LLGo release.
+The RPM contains LLGo and a pinned ESP runtime archive, unpacked locally for
+embedded builds. Native compilation uses the system LLVM/Clang/LLD 22 packages
+and native libraries.
+
+Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
+
+```sh
+sudo tee /etc/yum.repos.d/fury.repo > /dev/null <<'EOF'
+[fury]
+name=goplus (Gemfury)
+baseurl=https://pkgs.goplus.org/yum/
+enabled=1
+gpgcheck=0
+EOF
+sudo dnf install -y llgo
+llgo version
+```
+
+With YUM, use `sudo yum install -y llgo` for the installation command.
+
+For source builds, Fedora 44 and 45 ship LLVM 22 as the default LLVM stack.
+Fedora 43 still ships LLVM 21 and is not a supported default-toolchain
+environment for this LLGo release.
 
 ```sh
 sudo dnf install -y llvm-devel clang-devel lld lldb libcxx-devel llvm-libunwind-devel \
@@ -455,11 +507,11 @@ llgo run .
 
 ### on Windows
 
-The release workflow builds four integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. The MSVC compiler links LLVM statically; MinGW archives include the native LLVM and C++ DLL dependencies beside `llgo.exe`.
+The release workflow builds six compact Windows ZIPs: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Each contains LLGo, its DLL dependencies, `runtime`, `targets` and licenses. Add the extracted `bin` directory to `PATH`. Each architecture's MSVC and MinGW archives contain the same statically linked `llgo.exe`. The pinned ESP runtime archive is bundled and unpacked locally into the user cache on the first ESP build.
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
+Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. Bundled ESP Clang matches the host architecture, including native i686 and ARM64 tools for those hosts.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 

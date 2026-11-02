@@ -370,6 +370,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	if err != nil {
 		panic(err)
 	}
+	if canPruneEmbeddedPCLN(ctx) {
+		ctx.pclnEmbedded = funcInfoPCLNData(ctx, records, encoded)
+	}
 	if len(encoded.Records) == 0 && len(encoded.PCLines) == 0 {
 		tablePtr.SetInitializer(llvm.ConstPointerNull(tablePtr.GlobalValueType()))
 		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
@@ -582,6 +585,20 @@ func initExternalFuncInfoGlobals(g externalFuncInfoGlobals, countType llvm.Type)
 	}
 }
 
+func funcInfoPCLNData(ctx *context, records []funcInfoRecord, encoded buildfuncinfo.Table) *pclnmap.Data {
+	symbolRecords := collectFuncInfoSymbolIndexRecords(records)
+	symbolIndex := make([]pclnmap.SymbolIndexEntry, 0, len(symbolRecords))
+	for _, rec := range symbolRecords {
+		if rec.funcIndex != 0 && int(rec.funcIndex) <= len(encoded.Records) {
+			symbolIndex = append(symbolIndex, pclnmap.SymbolIndexEntry{SymbolID: rec.symbolID, FuncIndex: rec.funcIndex})
+		}
+	}
+	return &pclnmap.Data{
+		GOOS: ctx.buildConf.Goos, GOARCH: ctx.buildConf.Goarch,
+		PointerSize: ctx.prog.PointerSize(), Table: encoded, SymbolIndex: symbolIndex,
+	}
+}
+
 // emitExternalFuncInfoTable emits only writable runtime ABI globals, final-PC
 // site boundaries and a post-link identity slot. The table payload is kept in
 // the build context and serialized beside the linked executable; it is never
@@ -592,20 +609,7 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 	if err != nil {
 		panic(err)
 	}
-	symbolRecords := collectFuncInfoSymbolIndexRecords(records)
-	symbolIndex := make([]pclnmap.SymbolIndexEntry, 0, len(symbolRecords))
-	for _, rec := range symbolRecords {
-		if rec.funcIndex != 0 && int(rec.funcIndex) <= len(encoded.Records) {
-			symbolIndex = append(symbolIndex, pclnmap.SymbolIndexEntry{SymbolID: rec.symbolID, FuncIndex: rec.funcIndex})
-		}
-	}
-	ctx.pclnExternal = &pclnmap.Data{
-		GOOS:        ctx.buildConf.Goos,
-		GOARCH:      ctx.buildConf.Goarch,
-		PointerSize: ctx.prog.PointerSize(),
-		Table:       encoded,
-		SymbolIndex: symbolIndex,
-	}
+	ctx.pclnExternal = funcInfoPCLNData(ctx, records, encoded)
 
 	identityType := llvm.ArrayType(typ.i8, 32)
 	identity := llvm.AddGlobal(mod, identityType, pclnIdentitySymbol)

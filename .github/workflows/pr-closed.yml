@@ -1,0 +1,30 @@
+name: PR closed
+run-name: 'PR #${{ github.event.pull_request.number }} closed'
+
+on:
+  pull_request_target:
+    types: [closed]
+
+# Only trusted base-branch code receives the cancellation token.
+permissions: {}
+
+jobs:
+  cancel-pr-ci:
+    # No concurrency group: an old close must never evict a newer PR run.
+    runs-on: ${{ fromJSON(github.repository_owner == 'xgo-dev' && '["qiniu", "ubuntu-24.04"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - name: Cancel runs from before this close
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pr_ci.py

@@ -86,7 +86,7 @@ func use(typ reflect.Type) {
 	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llssa.Program) {
 		prog.EnableGoGlobalDCE(true)
 	})
-	start := strings.Index(ir, `define %reflect.Method @"foo.Type.Method$thunk"`)
+	start := strings.Index(ir, `define %reflect.Method @"foo.Type.reflect.Method$thunk"`)
 	if start < 0 {
 		t.Fatalf("missing reflect.Type.Method thunk:\n%s", ir)
 	}

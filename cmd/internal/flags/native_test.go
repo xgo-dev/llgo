@@ -28,6 +28,53 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
+func TestExecFlagQuotedWords(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(new(bytes.Buffer))
+	words := AddExecFlag(fs)
+	if err := fs.Parse([]string{`-exec="path with spaces/wrapper" 'one argument' literal;word`}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"path with spaces/wrapper", "one argument", "literal;word"}; !reflect.DeepEqual(*words, want) {
+		t.Fatalf("execution wrapper = %q, want %q", *words, want)
+	}
+	before := append([]string{}, (*words)...)
+	if err := fs.Parse([]string{`-exec="unterminated`}); err == nil {
+		t.Fatal("unterminated wrapper accepted")
+	}
+	if !reflect.DeepEqual(*words, before) {
+		t.Fatal("malformed wrapper changed the execution command")
+	}
+}
+
+func TestMemProfileRateFullCountingOnly(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(new(bytes.Buffer))
+	AddTestBinaryFlags(fs)
+	if err := fs.Parse([]string{"-test.memprofilerate=1"}); err != nil || TestMemProfileRate != 1 {
+		t.Fatalf("full-counting mode: rate=%d error=%v", TestMemProfileRate, err)
+	}
+	for _, value := range []string{"0", "2", "512000", "invalid"} {
+		if err := fs.Parse([]string{"-memprofilerate=" + value}); err == nil || TestMemProfileRate != 1 {
+			t.Fatalf("unsupported rate %q changed the mode: rate=%d error=%v", value, TestMemProfileRate, err)
+		}
+	}
+}
+
+func TestOtherCommandsIgnoreKnownTestAliasDefaults(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOFLAGS", "-test.run=TestAlias")
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	AddCommonFlags(fs)
+	if err := Parse(fs, []string{"."}); err != nil {
+		t.Fatalf("build rejected a known test-only GOFLAGS default: %v", err)
+	}
+	t.Setenv("GOFLAGS", "-test.json")
+	if err := Parse(fs, []string{"."}); err == nil {
+		t.Fatal("accepted an unknown test-binary alias in GOFLAGS")
+	}
+}
+
 func TestCompilerOptionSpellingsFromCLIAndGOFLAGS(t *testing.T) {
 	t.Setenv("GOENV", "off")
 	for _, tc := range []struct {

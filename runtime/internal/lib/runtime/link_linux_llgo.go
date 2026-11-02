@@ -61,7 +61,7 @@ func os_runtime_args() []string {
 	return args
 }
 
-//go:linkname c_environ environ
+//go:linkname c_environ C.environ
 var c_environ **c.Char
 
 //go:linkname syscall_runtime_envs syscall.runtime_envs

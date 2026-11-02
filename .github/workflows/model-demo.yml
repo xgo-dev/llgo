@@ -16,8 +16,8 @@ jobs:
   ci-gate:
     name: CI gate (Model demo)
     needs: prepare
-    if: always()
-    runs-on: ubuntu-24.04
+    if: always() && !cancelled()
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
         run: test "${{ needs.prepare.result }}" = "success"

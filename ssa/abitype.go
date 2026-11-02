@@ -23,6 +23,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/ssa/abi"
@@ -127,12 +128,24 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	case "":
 		equal = prog.Nil(prog.Type(equalFunc, GoDecl))
 	case "structequal", "arrayequal":
-		equal = b.Pkg.rtEnvFunc(name)
-		b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
-		env := b.abiType(t)
-		equal = b.aggregateValue(prog.Type(equalFunc, GoDecl), equal.impl, env.impl)
+		// Hidden regular-memory structs may lose their field metadata during
+		// dev Wasm DCE. Compare bytes without consulting that metadata.
+		if prog.enableDeadcodeDrop && prog.target.effectiveGOARCH() == "wasm" && ab.IsRegularMemory(t) {
+			equal = b.Pkg.regularMemoryEqual(uint64(ab.Size(t)))
+			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
+			typ := prog.Type(equal.raw.Type, GoDecl)
+			equal = checkExpr(equal, typ.raw.Type, b)
+		} else {
+			equal = b.Pkg.rtEnvFunc(RuntimeSymbol(name, "structequal", "arrayequal"))
+			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
+			env := b.abiType(t)
+			equal = b.aggregateValue(prog.Type(equalFunc, GoDecl), equal.impl, env.impl)
+		}
 	default:
-		equal = b.Pkg.rtFunc(name)
+		equal = b.Pkg.rtFunc(RuntimeSymbol(name,
+			"memequal0", "memequal8", "memequal16", "memequal32", "memequal64", "memequalptr", "f32equal",
+			"f64equal", "c64equal", "c128equal", "strequal", "nilinterequal", "interequal",
+		))
 		b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 		typ := b.Prog.Type(equal.raw.Type, GoDecl)
 		equal = checkExpr(equal, typ.raw.Type, b)
@@ -150,6 +163,118 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 		fields = append(fields, b.abiType(ptr).impl)
 	}
 	return
+}
+
+// Share one metadata-independent equality function per size, including arrays.
+func (p Package) regularMemoryEqual(size uint64) Expr {
+	switch size {
+	case 0, 1, 2, 4, 8, 16:
+		return p.rtFunc(RuntimeSymbol("memequal"+strconv.FormatUint(size*8, 10),
+			"memequal0", "memequal8", "memequal16", "memequal32", "memequal64", "memequal128"))
+	}
+	name := "_llgo_memequal." + strconv.FormatUint(size, 10)
+	fn := p.FuncOf(name)
+	if fn == nil {
+		fn = p.NewFunc(name, equalFunc, GoDecl)
+		fn.impl.SetLinkage(llvm.WeakODRLinkage)
+		builder := fn.MakeBody(1)
+		defer builder.Dispose()
+		builder.Return(builder.Call(p.rtFunc("memequal"), fn.Param(0), fn.Param(1), p.Prog.IntVal(size, p.Prog.Uintptr())))
+		builder.EndBuild()
+	}
+	return fn.Expr
+}
+
+// Match typehashImpl exactly, including its distinct 4/8-byte algorithms.
+func (p Package) regularMemoryHash(size uint64) Expr {
+	// Omit size 0: typehashImpl calls memhash(p, seed, 0), whereas memhash0
+	// returns the seed unchanged. Zero-sized keys need the wrapper below.
+	switch size {
+	case 1, 2, 4, 8, 16:
+		return p.rtFunc(RuntimeSymbol("memhash"+strconv.FormatUint(size*8, 10),
+			"memhash8", "memhash16", "memhash32", "memhash64", "memhash128"))
+	}
+	name := "_llgo_memhash." + strconv.FormatUint(size, 10)
+	fn := p.FuncOf(name)
+	if fn == nil {
+		fn = p.NewFunc(name, hashFunc, GoDecl)
+		fn.impl.SetLinkage(llvm.WeakODRLinkage)
+		builder := fn.MakeBody(1)
+		defer builder.Dispose()
+		builder.Return(builder.Call(p.rtFunc("memhash"), fn.Param(0), fn.Param(1), p.Prog.IntVal(size, p.Prog.Uintptr())))
+		builder.EndBuild()
+	}
+	return fn.Expr
+}
+
+func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
+	prog, pkg := b.Prog, b.Pkg
+	var hash Expr
+	if prog.enableDeadcodeDrop && prog.target.effectiveGOARCH() == "wasm" {
+		if prog.abi.IsRegularMemory(key) {
+			hash = pkg.regularMemoryHash(uint64(prog.abi.Size(key)))
+		} else if basic, ok := key.Underlying().(*types.Basic); ok {
+			var name string
+			switch basic.Kind() {
+			case types.String:
+				name = "strhash"
+			case types.Float32:
+				name = "f32hash"
+			case types.Float64:
+				name = "f64hash"
+			case types.Complex64:
+				name = "c64hash"
+			case types.Complex128:
+				name = "c128hash"
+			}
+			if name != "" {
+				hash = pkg.rtFunc(RuntimeSymbol(name, "strhash", "f32hash", "f64hash", "c64hash", "c128hash"))
+			}
+		}
+	}
+	if !hash.IsNil() {
+		pkg.recordAbiTypeFakeUse(global, hash.impl)
+		return checkExpr(hash, prog.Type(hashFunc, GoDecl).raw.Type, b)
+	}
+	hash = pkg.rtEnvFunc("typehash")
+	pkg.recordAbiTypeFakeUse(global, hash.impl)
+	return b.aggregateValue(prog.Type(hashFunc, GoDecl), hash.impl, b.abiType(key).impl)
+}
+
+func (b Builder) abiMapBucket(t *types.Map, bucket types.Type) Expr {
+	prog, pkg := b.Prog, b.Pkg
+	if !prog.enableDeadcodeDrop || prog.target.effectiveGOARCH() != "wasm" {
+		return b.abiType(bucket)
+	}
+	// Buckets are allocator records, not source Go values. Like reflect.bucketOf,
+	// retain their physical layout without comparison algorithms or fields.
+	// A separate symbol prevents sharing the stripped descriptor with any Go
+	// struct of the same layout, and keeps it out of the reflection type list.
+	name, _ := prog.abi.TypeName(t)
+	name += "$bucket"
+	g := pkg.VarOf(name)
+	if g == nil {
+		ab := prog.abi
+		typ := prog.AbiType()
+		g = pkg.doNewVar(name, prog.AbiTypePtr())
+		fields := []llvm.Value{
+			prog.IntVal(uint64(ab.Size(bucket)), prog.Uintptr()).impl,
+			prog.IntVal(uint64(ab.PtrBytes(bucket)), prog.Uintptr()).impl,
+			prog.IntVal(0, prog.Uint32()).impl, // Hash
+			prog.IntVal(0, prog.Byte()).impl,   // TFlag
+			prog.IntVal(uint64(ab.Align(bucket)), prog.Byte()).impl,
+			prog.IntVal(uint64(ab.FieldAlign(bucket)), prog.Byte()).impl,
+			prog.IntVal(uint64(ab.Kind(bucket)), prog.Byte()).impl,
+			prog.Nil(prog.Type(equalFunc, GoDecl)).impl,
+			prog.Nil(prog.Pointer(prog.Byte())).impl, // GCData, as for other static types
+			b.Str("bucket").impl,
+			prog.Nil(prog.AbiTypePtr()).impl,
+		}
+		g.impl.SetInitializer(prog.constStructValue(typ, fields))
+		g.impl.SetGlobalConstant(true)
+		pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
+	}
+	return Expr{g.impl, prog.AbiTypePtr()}
 }
 
 /*
@@ -325,17 +450,14 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		if flags&2 != 0 {
 			elemSize = prog.abi.PtrSize
 		}
-		hash := b.Pkg.rtEnvFunc("typehash")
-		b.Pkg.recordAbiTypeFakeUse(global, hash.impl)
-		env := b.abiType(t.Key())
-		hasher := b.aggregateValue(prog.Type(hashFunc, GoDecl), hash.impl, env.impl)
+		hasher := b.abiMapHasher(t.Key(), global)
 		fields = []llvm.Value{
 			b.abiType(abi.PublicType(t.Key())).impl,
 			// Map operations use Elem for physical copies during bucket
 			// evacuation. Keep LLGo's two-word closure representation here;
 			// reflect converts it back to the public function type in Elem.
 			b.abiType(t.Elem()).impl,
-			b.abiType(bucket).impl,
+			b.abiMapBucket(t, bucket).impl,
 			hasher.impl,
 			prog.IntVal(uint64(keySize), prog.Byte()).impl,
 			prog.IntVal(uint64(elemSize), prog.Byte()).impl,
@@ -431,6 +553,11 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 		}
 		return children
 	case *types.Named:
+		if basic, ok := t.Underlying().(*types.Basic); ok && basic.Info()&(types.IsFloat|types.IsComplex) != 0 {
+			// Panic printing can inspect a named floating-point kind without
+			// converting it to the corresponding basic interface type.
+			return []types.Type{basic}
+		}
 		return b.structuralTypeChildren(t.Underlying())
 	}
 	return nil
@@ -699,7 +826,7 @@ func (b Builder) abiType(t types.Type) Expr {
 			methods = b.abiInterfaceMethods(mset)
 		}
 		methodCount := len(methods)
-		rt := prog.rtNamed(prog.abi.RuntimeName(t))
+		rt := prog.rtNamedABI(t)
 		var typ types.Type = rt
 		if hasUncommon {
 			ut := prog.rtNamed("uncommonType")
@@ -786,7 +913,7 @@ func (p Package) RegisterAbiTypes(infos []AbiTypeInfo) {
 		if hasUncommon {
 			methods = builder.abiInterfaceMethods(mset)
 		}
-		rt := p.Prog.rtNamed(p.Prog.abi.RuntimeName(t))
+		rt := p.Prog.rtNamedABI(t)
 		var typ types.Type = rt
 		if hasUncommon {
 			ut := p.Prog.rtNamed("uncommonType")
@@ -878,3 +1005,11 @@ func (p Package) InitAbiTypes(fname string) Function {
 }
 
 // -----------------------------------------------------------------------------
+
+// Keep the descriptor selector and its audited literal domain in one place.
+func (p Program) rtNamedABI(t types.Type) *types.Named {
+	return p.rtNamed(RuntimeSymbol(p.abi.RuntimeName(t),
+		"_type", "ptrtype", "slicetype", "functype", "interfacetype", "structtype",
+		"maptype", "arraytype", "chantype",
+	))
+}

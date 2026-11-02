@@ -93,35 +93,11 @@ func TestSplitPkgConfigFlags(t *testing.T) {
 		ftest("-framework\t Foundation -framework", `["-framework" "Foundation" "-framework"]`)
 	})
 
-	t.Run("at_sign_in_paths", func(t *testing.T) {
-		ftest("-I/tmp/include @generated -L @libs", `["-I/tmp/include @generated" "-L@libs"]`)
-	})
-
 	// case for https://github.com/xgo-dev/llgo/issues/1244
 	t.Run("w_pipe", func(t *testing.T) {
 		ftest("-w -pipe", `["-w" "-pipe"]`)
 		ftest("-Os -w -pipe", `["-Os" "-w" "-pipe"]`)
 	})
-}
-
-func TestSplitDriverFlags(t *testing.T) {
-	ftest := func(s, want string) {
-		t.Helper()
-		if got := toString(SplitDriverFlags(s)); got != want {
-			t.Errorf("SplitDriverFlags(%q) = %s, want %s", s, got, want)
-		}
-	}
-	ftest("@link.rsp", `["@link.rsp"]`)
-	ftest("-O2 @one.rsp @two.rsp -L/lib path", `["-O2" "@one.rsp" "@two.rsp" "-L/lib path"]`)
-	ftest(`@"file with spaces.rsp" -w`, `["@file with spaces.rsp" "-w"]`)
-	ftest(`"@file with spaces.rsp" -w`, `["@file with spaces.rsp" "-w"]`)
-	ftest(`-w '@file with spaces.rsp'`, `["-w" "@file with spaces.rsp"]`)
-	ftest(`@escaped\ space.rsp @'quote\'file.rsp'`, `["@escaped space.rsp" "@quote'file.rsp"]`)
-	ftest("\n@a.rsp\n@b.rsp", `["@a.rsp" "@b.rsp"]`)
-	ftest("-O2\n@a.rsp\r\n-O3", `["-O2" "@a.rsp" "-O3"]`)
-	ftest("-Wl,@linker.rsp -L/lib", `["-Wl,@linker.rsp" "-L/lib"]`)
-	ftest("-I @headers -L @libs", `["-I@headers" "-L@libs"]`)
-	ftest(`-I/tmp/include\ @generated`, `["-I/tmp/include @generated"]`)
 }
 
 func toString(ss []string) string {

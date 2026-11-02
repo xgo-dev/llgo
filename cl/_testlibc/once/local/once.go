@@ -11,7 +11,7 @@ const (
 
 type Once C.pthread_once_t
 
-//go:linkname OnceInit llgoSyncOnceInitVal
+//go:linkname OnceInit C.llgoSyncOnceInitVal
 var OnceInit Once
 
 // llgo:link (*Once).Do C.pthread_once

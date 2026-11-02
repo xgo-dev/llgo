@@ -33,7 +33,7 @@ func TestESPClangHostDownload(t *testing.T) {
 		{"darwin", "amd64", "x86_64-apple-darwin"},
 		{"linux", "arm64", "aarch64-linux-gnu"},
 		{"linux", "amd64", "x86_64-linux-gnu"},
-		{"windows", "386", "x86_64-w64-mingw32"},
+		{"windows", "386", "i686-w64-mingw32"},
 		{"windows", "amd64", "x86_64-w64-mingw32"},
 		{"windows", "arm64", "aarch64-w64-mingw32"},
 	}
@@ -49,11 +49,45 @@ func TestESPClangHostDownload(t *testing.T) {
 	}
 }
 
+func TestMalformedESPPinsFailBeforeUse(t *testing.T) {
+	for name, data := range map[string]string{
+		"truncated JSON":     "{",
+		"wrong release type": `{"release":22}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("malformed embedded pins must fail before download URLs or checksums are used")
+				}
+			}()
+			mustParseESPPins([]byte(data))
+		})
+	}
+}
+
+func TestESPClangPinsMatchDownloads(t *testing.T) {
+	for platform, pin := range espPins.Payloads {
+		if pin.Asset != "clang-esp-"+espClangVersion+"-"+platform+".tar.xz" {
+			t.Errorf("wrong %s download asset: %s", platform, pin.Asset)
+		}
+		if len(pin.SHA256) != 64 || espClangSHA256[platform] != pin.SHA256 {
+			t.Errorf("missing %s payload checksum", platform)
+		}
+		if !strings.Contains(espClangCacheDir(platform), espPins.Release+"-"+platform) {
+			t.Errorf("wrong %s cache key", platform)
+		}
+	}
+	if len(espPins.Payloads) != 7 {
+		t.Fatal("ESP payloads must cover four Unix and three Windows hosts")
+	}
+}
+
 func TestESPClangCacheSeparatesHosts(t *testing.T) {
 	legacy := filepath.Join(cacheDir(), "esp-clang-"+espClangVersion)
+	x86 := espClangCacheDir(getESPClangPlatform("windows", "386"))
 	x64 := espClangCacheDir(getESPClangPlatform("windows", "amd64"))
 	arm64 := espClangCacheDir(getESPClangPlatform("windows", "arm64"))
-	if x64 == arm64 || x64 == legacy || arm64 == legacy {
+	if x86 == x64 || x86 == arm64 || x64 == arm64 || x64 == legacy || arm64 == legacy {
 		t.Fatalf("ESP payload caches overlap: x64=%q arm64=%q legacy=%q", x64, arm64, legacy)
 	}
 }
@@ -227,8 +261,8 @@ func TestUseCrossCompileSDK(t *testing.T) {
 						}
 					} else if tc.name == "Same Platform" {
 						// For same platform, we expect sysroot only on macOS
-						if runtime.GOOS == "darwin" && !hasSysroot {
-							t.Error("Missing --sysroot flag in CCFLAGS on macOS")
+						if runtime.GOOS == "darwin" && !slices.Contains(export.CCFLAGS, "-isysroot") {
+							t.Error("Missing -isysroot flag in CCFLAGS on macOS")
 						}
 						// On Linux and other platforms, sysroot is not necessarily required
 					}
@@ -392,6 +426,23 @@ func TestEnableWasmReflectLibffi(t *testing.T) {
 	}
 }
 
+// Configuration assertions do not need freshly compiled picolibc, newlib and
+// compiler-rt archives for every optimization/LTO combination. Keep real target
+// resolution and library plans; real compilation stays in TestUseTargetESPClang,
+// the compile package tests, and the ABI and embedded integration suites.
+func targetConfiguration(t *testing.T, name string, level optlevel.Level, mode lto.Mode) (Export, error) {
+	t.Helper()
+	skipDownload := needSkipDownload
+	needSkipDownload = true
+	defer func() { needSkipDownload = skipDownload }()
+	return useTarget(name, level, mode, func(cfg compile.CompileConfig, _ string, options compile.CompileOptions) ([]string, error) {
+		if len(cfg.Groups) == 0 || options.CC == "" {
+			t.Fatal("missing target library build plan")
+		}
+		return nil, nil
+	})
+}
+
 func TestUseTarget(t *testing.T) {
 	// Test cases for target-based configuration
 	testCases := []struct {
@@ -465,7 +516,7 @@ func TestUseTarget(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			export, err := UseTarget(tc.targetName, optlevel.Oz, lto.Thin)
+			export, err := targetConfiguration(t, tc.targetName, optlevel.Oz, lto.Thin)
 
 			if tc.expectError {
 				if err == nil {
@@ -869,6 +920,53 @@ func TestNamedWasmTargetUsesInheritedProfile(t *testing.T) {
 	}
 }
 
+func TestNamedWASITargetMemory(t *testing.T) {
+	writeWasmTargetFixture(t, "base", `{
+		"llvm-target":"wasm32-unknown-wasip1",
+		"goos":"wasip1","goarch":"wasm","wasm-profile":"w32","wasm-provider":"wasi",
+		"wasm-initial-memory":16777216,"wasm-max-memory":134217728,"wasm-stack-size":1048576
+	}`)
+	root := os.Getenv("LLGO_ROOT")
+	// Configuration resolution only needs the SDK directory to exist.
+	if err := os.MkdirAll(filepath.Join(root, "crosscompile", "wasi-libc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "targets", "child.json"),
+		[]byte(`{"inherits":["base"],"wasm-stack-size":2097152}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"base", "child", ""} {
+		export, err := Use("wasip1", "wasm", target, false, optlevel.Os, lto.Off, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		initial, stack, maximum := uint64(16<<20), "stack-size=1048576", "-Wl,--max-memory=134217728"
+		if target == "child" {
+			stack = "stack-size=2097152"
+		} else if target == "" {
+			initial, stack, maximum = 0, "stack-size=10485760", "-Wl,--max-memory=536870912"
+		}
+		if export.WASIInitialMemory != initial || !slices.Contains(export.LDFLAGS, stack) || !slices.Contains(export.LDFLAGS, maximum) {
+			t.Fatalf("target %q: initial=%d flags=%v", target, export.WASIInitialMemory, export.LDFLAGS)
+		}
+		var stacks, maxima int
+		for _, flag := range export.LDFLAGS {
+			if strings.HasPrefix(flag, "stack-size=") {
+				stacks++
+			}
+			if strings.HasPrefix(flag, "-Wl,--max-memory=") {
+				maxima++
+			}
+		}
+		if stacks != 1 || maxima != 1 {
+			t.Fatalf("target %q: expected one stack and maximum memory flag, got %d/%d", target, stacks, maxima)
+		}
+		if !slices.Contains(export.BuildTags, "llgo.wasi_threads") || !slices.Contains(export.LDFLAGS, "-Wl,--import-memory") {
+			t.Fatalf("target %q lost WASI threads/shared memory", target)
+		}
+	}
+}
+
 func TestWasmProfileValidationErrors(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -1123,7 +1221,7 @@ func TestTargetDebugInfoPolicy(t *testing.T) {
 }
 
 func TestOptimizationFlagPlacement(t *testing.T) {
-	export, err := UseTarget("rp2040", optlevel.Oz, lto.Off)
+	export, err := targetConfiguration(t, "rp2040", optlevel.Oz, lto.Off)
 	if err != nil {
 		t.Fatalf("UseTargetWithOptLevel(rp2040) failed: %v", err)
 	}
@@ -1437,7 +1535,7 @@ func hasFlagValue(flags []string, flag, value string) bool {
 func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 	const target = "k210"
 
-	noLTO, err := UseTarget(target, optlevel.Oz, lto.Off)
+	noLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Off)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, off) error: %v", target, err)
 	}
@@ -1454,7 +1552,7 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 		t.Fatalf("missing -mabi=lp64 in CCFLAGS: %v", noLTO.CCFLAGS)
 	}
 
-	withLTO, err := UseTarget(target, optlevel.Oz, lto.Thin)
+	withLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Thin)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, thin) error: %v", target, err)
 	}
@@ -1474,7 +1572,7 @@ func TestUseTargetCodegenFlagsOnlyAddedToLDFlagsWithLTO(t *testing.T) {
 		t.Fatalf("missing -mllvm -target-abi=lp64 in LDFLAGS when LTO enabled: %v", withLTO.LDFLAGS)
 	}
 
-	fullLTO, err := UseTarget(target, optlevel.Oz, lto.Full)
+	fullLTO, err := targetConfiguration(t, target, optlevel.Oz, lto.Full)
 	if err != nil {
 		t.Fatalf("UseTarget(%q, full) error: %v", target, err)
 	}

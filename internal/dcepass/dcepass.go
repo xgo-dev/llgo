@@ -5,23 +5,135 @@ package dcepass
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/xgo-dev/llgo/internal/meta"
+	"github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
+
+// EmitInterfaceUseOverrides resolves predicates only after the complete
+// interface domain is known. A nil predicate keeps every assertion possible.
+// Constant-returning functions also fold during final Wasm optimization without
+// LTO; linear-memory flags cannot be treated as immutable by that optimizer.
+func EmitInterfaceUseOverrides(dst llvm.Module, srcMods []llvm.Module, reject func(string) bool) {
+	seen := make(map[string]bool)
+	builder := dst.Context().NewBuilder()
+	defer builder.Dispose()
+	for _, src := range srcMods {
+		for fn := src.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+			name := fn.Name()
+			typ, ok := strings.CutPrefix(name, meta.InterfaceUsePrefix)
+			if !ok || seen[name] {
+				continue
+			}
+			seen[name] = true
+			value := uint64(1)
+			if reject != nil && reject(typ) {
+				value = 0
+			}
+			result := dst.Context().IntType(fn.GlobalValueType().ReturnType().IntTypeWidth())
+			target := dst.NamedFunction(name)
+			if target.IsNil() {
+				target = llvm.AddFunction(dst, name, llvm.FunctionType(result, nil, false))
+			}
+			if target.BasicBlocksCount() != 0 {
+				continue
+			}
+			builder.SetInsertPointAtEnd(dst.Context().AddBasicBlock(target, "entry"))
+			builder.CreateRet(llvm.ConstInt(result, value, false))
+		}
+	}
+}
 
 const (
 	abiMethodTypeName     = "github.com/xgo-dev/llgo/runtime/abi.Method"
 	unreachableMethodName = "github.com/xgo-dev/llgo/runtime/internal/runtime.unreachableMethod"
 )
 
+// EmitRegularTypeFieldOverrides removes inaccessible field tables after method
+// overrides. Regular-memory types use byte-wise equality and hashing, so neither
+// needs the table. Keep descriptor prefixes and any earlier method compaction.
+func EmitRegularTypeFieldOverrides(dst llvm.Module, sources []llvm.Module, drop func(string) bool) {
+	if drop == nil {
+		return
+	}
+	emitter := newOverrideEmitter(dst)
+	seen := make(map[string]bool)
+	for _, src := range sources {
+		for g := src.FirstGlobal(); !g.IsNil(); g = llvm.NextGlobal(g) {
+			if seen[g.Name()] || !g.IsGlobalConstant() || !drop(g.Name()) {
+				continue
+			}
+			trimmed, changed := trimRegularTypeFields(g.Initializer())
+			if !changed {
+				continue
+			}
+			seen[g.Name()] = true
+			target := dst.NamedGlobal(g.Name())
+			if target.IsNil() {
+				target = llvm.AddGlobal(dst, emitter.cloneType(g.GlobalValueType()), g.Name())
+			}
+			value := target.Initializer()
+			if value.IsNil() {
+				emitter.values[g] = target
+				value = emitter.cloneConst(trimmed)
+			} else {
+				value, _ = trimRegularTypeFields(value)
+			}
+			target.SetInitializer(value)
+			target.SetGlobalConstant(true)
+			target.SetLinkage(llvm.ExternalLinkage)
+			copyGlobalAttrs(target, g)
+		}
+	}
+}
+
+func trimRegularTypeFields(value llvm.Value) (llvm.Value, bool) {
+	if value.IsNil() || value.IsAConstantStruct().IsNil() || value.OperandsCount() == 0 {
+		return value, false
+	}
+	fields := make([]llvm.Value, value.OperandsCount())
+	for i := range fields {
+		fields[i] = value.Operand(i)
+	}
+	if value.Type().StructName() == "github.com/xgo-dev/llgo/runtime/abi.StructType" {
+		if len(fields) != 3 {
+			return value, false
+		}
+		common := fields[0]
+		if common.OperandsCount() < 4 || common.Operand(3).IsAConstantInt().IsNil() ||
+			common.Operand(3).ZExtValue()&uint64(abi.TFlagRegularMemory) == 0 || fields[2].IsNull() {
+			return value, false
+		}
+		fields[2] = llvm.ConstNull(fields[2].Type())
+	} else {
+		first, changed := trimRegularTypeFields(fields[0])
+		if !changed {
+			return value, false
+		}
+		fields[0] = first
+	}
+	return constStructOfType(value.Type(), fields), true
+}
+
 // EmitStrongTypeOverrides emits method-pruned strong ABI type symbols into dst.
 // srcMods contains the original package modules. For each constant ABI type
 // global with a method array, it creates a same-name strong global in dst and
 // clears IFn/TFn for method slots not listed in liveSlots[typeName].
-// When verbose is true, dropped method slots are reported to os.Stderr.
-func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, verbose bool) {
+// dropMetadata can remove method storage for types proven invisible to
+// interfaces and reflection; nil preserves them. verbose logs removed slots.
+func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, dropMetadata func(string) bool, verbose bool) {
 	emitted := make(map[string]bool)
 	emitter := newOverrideEmitter(dst)
+	type override struct {
+		src, dst, methods llvm.Value
+		elem              llvm.Type
+		keep              map[int]bool
+		compact           bool
+	}
+	var overrides []override
+	var replaced [][2]llvm.Value
 	for _, src := range srcMods {
 		for g := src.FirstGlobal(); !g.IsNil(); g = llvm.NextGlobal(g) {
 			name := g.Name()
@@ -32,9 +144,43 @@ func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots m
 			if !ok {
 				continue
 			}
-			emitter.emitTypeOverride(g, methodsVal, elemTy, liveSlotSet(liveSlots[name]), verbose)
+			drop := dropMetadata != nil && dropMetadata(name)
+			keep := liveSlotSet(liveSlots[name])
+			init := g.Initializer()
+			compact := drop && len(keep) == 0 && init.OperandsCount() == 3 &&
+				init.Operand(1).Type().TypeKind() == llvm.StructTypeKind &&
+				init.Operand(1).Type().StructName() == "github.com/xgo-dev/llgo/runtime/abi.UncommonType"
+			typ := emitter.cloneType(g.GlobalValueType())
+			if compact {
+				fields := typ.StructElementTypes()
+				fields[2] = llvm.ArrayType(emitter.cloneType(elemTy), 0)
+				typ = dst.Context().StructType(fields, typ.IsStructPacked())
+			}
+			old := dst.NamedGlobal(name)
+			target := old
+			if old.IsNil() {
+				target = llvm.AddGlobal(dst, typ, name)
+			} else if old.GlobalValueType() != typ {
+				target = llvm.AddGlobal(dst, typ, "")
+				emitter.values[old] = target
+				replaced = append(replaced, [2]llvm.Value{old, target})
+			}
+			emitter.values[g] = target
+			overrides = append(overrides, override{g, target, methodsVal, elemTy, keep, compact})
 			emitted[name] = true
 		}
+	}
+	// Reserve every descriptor before cloning references between descriptors.
+	// Keep replaced globals alive until all initializers have been cloned: dst
+	// may also be a source module, and RAUW can invalidate source constants.
+	for _, o := range overrides {
+		emitter.emitTypeOverride(o.src, o.dst, o.methods, o.elem, o.keep, o.compact, verbose)
+	}
+	for _, pair := range replaced {
+		name := pair[0].Name()
+		pair[0].ReplaceAllUsesWith(pair[1])
+		pair[0].EraseFromParentAsGlobal()
+		pair[1].SetName(name)
 	}
 }
 
@@ -52,15 +198,33 @@ func newOverrideEmitter(dst llvm.Module) *overrideEmitter {
 	}
 }
 
-func (e *overrideEmitter) emitTypeOverride(srcType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, verbose bool) {
+func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, compact, verbose bool) {
 	init := srcType.Initializer()
-	dstType := e.ensureOverrideGlobal(srcType)
-	e.values[srcType] = dstType
 
 	fieldCount := init.OperandsCount()
 	fields := make([]llvm.Value, fieldCount)
 	for i := 0; i < fieldCount-1; i++ {
 		fields[i] = e.cloneConst(init.Operand(i))
+	}
+	// Preserve prefix offsets and a valid methodless uncommon header, while
+	// removing the inaccessible trailing array and its transitive references.
+	if compact {
+		uncommon := fields[1]
+		parts := make([]llvm.Value, uncommon.OperandsCount())
+		for i := range parts {
+			parts[i] = uncommon.Operand(i)
+		}
+		parts[1], parts[2] = llvm.ConstNull(parts[1].Type()), llvm.ConstNull(parts[2].Type())
+		fields[1] = constStructOfType(uncommon.Type(), parts)
+		fields[2] = llvm.ConstNull(dstType.GlobalValueType().StructElementTypes()[2])
+		dstType.SetInitializer(constStructOfType(dstType.GlobalValueType(), fields))
+		dstType.SetGlobalConstant(true)
+		dstType.SetLinkage(llvm.ExternalLinkage)
+		copyGlobalAttrs(dstType, srcType)
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[dce] drop unobserved method metadata %s\n", srcType.Name())
+		}
+		return
 	}
 
 	unreachableMethod := e.unreachableMethod()
@@ -123,16 +287,6 @@ func (e *overrideEmitter) unreachableMethod() llvm.Value {
 			llvm.FunctionType(e.dst.Context().VoidType(), nil, false))
 	}
 	return fn
-}
-
-func (e *overrideEmitter) ensureOverrideGlobal(src llvm.Value) llvm.Value {
-	name := src.Name()
-	dst := e.dst.NamedGlobal(name)
-	if dst.IsNil() {
-		dst = llvm.AddGlobal(e.dst, e.cloneType(src.GlobalValueType()), name)
-	}
-	e.values[src] = dst
-	return dst
 }
 
 func (e *overrideEmitter) cloneConst(v llvm.Value) llvm.Value {

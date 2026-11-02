@@ -42,7 +42,8 @@ func (r *Resolver) Resolve(targetName string) (*Config, error) {
 	return config, nil
 }
 
-// ResolveAll resolves all available target configurations
+// ResolveAll resolves all available configurations for inspection. Use Resolve
+// to validate a selected target before building it.
 func (r *Resolver) ResolveAll() (map[string]*Config, error) {
 	return r.loader.LoadAll()
 }
@@ -58,8 +59,28 @@ func (r *Resolver) validateConfig(config *Config) error {
 		return fmt.Errorf("target name is required")
 	}
 
-	// For now, we don't require any specific fields since different targets
-	// may have different requirements. This can be extended in the future.
+	if config.WasmInitialMemory != 0 || config.WasmMaxMemory != 0 || config.WasmStackSize != 0 {
+		if config.GOOS != "wasip1" || config.GOARCH != "wasm" || config.WasmProfile != "w32" || config.WasmProvider != "wasi" {
+			return fmt.Errorf("wasm memory/stack settings require the w32/wasi profile")
+		}
+		for _, field := range []struct {
+			name  string
+			value uint64
+		}{
+			{"wasm-initial-memory", config.WasmInitialMemory},
+			{"wasm-max-memory", config.WasmMaxMemory},
+		} {
+			if field.value > 1<<32 || field.value%65536 != 0 {
+				return fmt.Errorf("%s must be a multiple of 65536 bytes and at most 4 GiB", field.name)
+			}
+		}
+		// Memory can span 4 GiB, but a wasm32 stack pointer cannot hold 2^32.
+		if config.WasmStackSize >= 1<<32 || config.WasmStackSize%16 != 0 {
+			return fmt.Errorf("wasm-stack-size must be a multiple of 16 bytes and below 4 GiB")
+		}
+		// Compare effective initial/maximum sizes in wasm-ld, after explicit
+		// linker flags and response files have overridden inherited defaults.
+	}
 
 	return nil
 }

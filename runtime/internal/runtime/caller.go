@@ -23,6 +23,7 @@ import (
 )
 
 type CallerFrame struct {
+	wasmCallerFrame
 	PC        uintptr
 	Entry     uintptr
 	Function  string

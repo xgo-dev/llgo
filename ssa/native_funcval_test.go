@@ -127,3 +127,41 @@ func TestNativeIntegerFuncvalRejectsVariadicForwarding(t *testing.T) {
 	}()
 	body.ChangeType(prog.Type(sig, GoDecl), native.Expr)
 }
+
+func TestNativeFunctionPointerStore(t *testing.T) {
+	for _, test := range nativeIntegerABITests {
+		for _, source := range []string{"nil", "native-pointer", "Go-closure"} {
+			t.Run(test.target.GOOS+"/"+test.target.GOARCH+"/"+test.target.LLVMTarget+"/"+source, func(t *testing.T) {
+				prog := NewProgram(&test.target)
+				defer prog.Dispose()
+				setTestRuntime(t, prog)
+				pkg := prog.NewPackage("p", "example.com/p")
+				sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(
+					types.NewParam(token.NoPos, nil, "fn", NoArgsNoRet),
+				), nil, false)
+				owner := pkg.NewFunc(pkg.Path()+".store", sig, GoDecl)
+				body := owner.MakeBody(1)
+				global := pkg.NewVar("native_callback", types.NewPointer(NoArgsNoRet), CDecl)
+				value := prog.Nil(prog.Type(NoArgsNoRet, GoDecl))
+				switch source {
+				case "native-pointer":
+					value = body.Load(global.Expr)
+				case "Go-closure":
+					value = body.Param(0)
+				}
+				stored := body.Store(global.Expr, value)
+				if got := stored.impl.Operand(0).Type(); got.TypeKind() != llvm.PointerTypeKind {
+					t.Fatalf("native function pointer store writes %s instead of one pointer:\n%s", got, stored.impl)
+				}
+				body.Return()
+				body.EndBuild()
+				if source == "Go-closure" && !strings.Contains(pkg.String(), "C callback must not capture variables") {
+					t.Fatalf("native callback assignment lost the closure environment check:\n%s", pkg.String())
+				}
+				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+					t.Fatalf("invalid native function pointer store: %v\n%s", err, pkg.String())
+				}
+			})
+		}
+	}
+}

@@ -80,6 +80,9 @@ def find_frame(
 def create_session(executable: str) -> tuple[lldb.SBDebugger, lldb.SBTarget]:
     debugger = lldb.SBDebugger.Create()
     debugger.SetAsync(False)
+    # The fixtures contain their DWARF. Keep inferior launch and unwinding
+    # independent of external symbol servers, as in the runtime debug suite.
+    debugger.HandleCommand("settings set symbols.enable-external-lookup false")
     target = debugger.CreateTarget(executable)
     if not target.IsValid():
         lldb.SBDebugger.Destroy(debugger)
@@ -232,6 +235,7 @@ def run_all(executable: str, optimized_executable: str, source_root: str) -> Non
         ("invalid-memory", "main.invalidMemory", "LLDB_STOP: invalid_memory"),
     )
     for scenario, function, marker in panic_cases:
+        print(f"Native debug acceptance: {scenario}", flush=True)
         check_go_panic(
             executable,
             cwd,
@@ -239,7 +243,9 @@ def run_all(executable: str, optimized_executable: str, source_root: str) -> Non
             function,
             marker_line(root / "main.go", marker),
         )
+    print("Native debug acceptance: optimized inline", flush=True)
     check_optimized_inline(optimized_executable, cwd, root)
+    print("Native debug acceptance: optimized aggregate", flush=True)
     check_optimized_aggregate(optimized_executable, cwd, root)
     print("NATIVE_DEBUG_ACCEPTANCE_OK")
 

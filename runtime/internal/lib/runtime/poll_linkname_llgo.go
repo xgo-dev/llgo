@@ -338,5 +338,3 @@ func poll_runtime_pollUnblock(ctx uintptr) {
 
 //go:linkname poll_runtime_isPollServerDescriptor internal/poll.runtime_isPollServerDescriptor
 func poll_runtime_isPollServerDescriptor(fd uintptr) bool { return false }
-
-func nanotime() int64 { return runtimeNano() }

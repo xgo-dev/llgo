@@ -7,12 +7,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/clite/setjmp"
 )
 
-var (
-	printFormatPrefixInt  = c.Str("%ld")
-	printFormatPrefixUInt = c.Str("%lu")
-	printFormatPrefixHex  = c.Str("%lx")
-)
-
 // Rethrow rethrows a panic.
 // In baremetal single-threaded environment, we use longjmp to execute defers.
 func Rethrow(link *Defer) {

@@ -2,8 +2,10 @@
 
 """Exercise the default WASI pthread backend under Wasmer."""
 
+import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -87,6 +89,27 @@ def run_llgo(env, args, marker, timeout=180):
         raise SystemExit(f"LLGo {' '.join(args)} failed with exit code {result.returncode}")
 
 
+def check_size_probe(env, module):
+    if b"unusedFunctionMetadata" in module.read_bytes():
+        raise SystemExit(f"{module.name}: dead function metadata survived")
+    source = ROOT / "internal/build/testdata/wasm-size/main.go"
+    panic_line = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
+                      if line.startswith("func panicSite()"))
+    for args, expected_exit, marker in (
+        ((), 0, 'effects=2 map=5 value=0000002a float=1.25 text="中"'),
+        (("panic",), 2, "panic: size-probe-panic"),
+    ):
+        result = subprocess.run(wasmer_command(module, *args), env=env,
+                                capture_output=True, text=True, timeout=60)
+        output = result.stdout + result.stderr
+        print(output, end="", flush=True)
+        if result.returncode != expected_exit or marker not in output.splitlines():
+            raise SystemExit(f"{module.name} {args}: exit {result.returncode}")
+        if args and ("main.panicSite" not in output
+                     or f"/wasm-size/main.go:{panic_line}" not in output):
+            raise SystemExit(f"{module.name}: panic source location lost")
+
+
 def run_arena_boundaries(env, directory):
     module = pathlib.Path(directory) / "gc-arena.wasm"
     subprocess.run(
@@ -109,6 +132,101 @@ def run_arena_boundaries(env, directory):
             raise SystemExit(f"Wasmer arena boundary {size} failed: {result.returncode}")
 
 
+def run_memory_config_probe(env, directory):
+    # Budget assertions require a known linker policy, including the negative
+    # case. Inherited flags or @response files must not override these targets.
+    probe_env = dict(env, CCFLAGS="", CFLAGS="", LDFLAGS="")
+    # Reuse one target name to exercise a changed link policy with warm package
+    # caches. The final module, including imported shared memory, is authoritative.
+    with tempfile.NamedTemporaryFile(dir=ROOT / "targets", prefix="wasi-memory-",
+                                     suffix=".json", delete=False) as file:
+        target = pathlib.Path(file.name)
+    try:
+        for initial, maximum, stack in ((16 << 20, 128 << 20, 1 << 20),
+                                         (8 << 20, 64 << 20, 2 << 20)):
+            target.write_text(json.dumps({
+                "inherits": ["wasip1"], "wasm-initial-memory": initial,
+                "wasm-max-memory": maximum, "wasm-stack-size": stack,
+            }), encoding="utf-8")
+            module = pathlib.Path(directory) / "memory-config.wasm"
+            build_env = dict(probe_env, LDFLAGS="-Wl,--export=__stack_low,--export=__stack_high")
+            subprocess.run([
+                LLGO, "build", "-target", target.stem,
+                "-o", str(module), str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup"),
+            ], check=True, env=build_env, timeout=180)
+            wat = subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "print", str(module)],
+                                 check=True, capture_output=True, text=True, timeout=30).stdout
+            memory = re.search(r'\(import "env" "memory" \(memory (?:\$\S+ )?\(;\d+;\) (\d+) (\d+) shared\)\)', wat)
+            if not memory or tuple(map(int, memory.groups())) != (initial // 65536, maximum // 65536):
+                raise SystemExit("WASI target memory limits did not reach the final module")
+            globals_by_id = {}
+            for match in re.finditer(r'\(global (?:(\$\S+) )?\(;(\d+);\) i32 \(?i32.const (\d+)\)?\)', wat):
+                name, index, value = match.groups()
+                globals_by_id[index] = globals_by_id[name] = int(value)
+            bounds = []
+            for name in ("__stack_low", "__stack_high"):
+                match = re.search(r'\(export "' + name + r'" \(global ([^)]+)\)\)', wat)
+                if not match or match.group(1) not in globals_by_id:
+                    raise SystemExit(f"missing WASI process-stack bound {name}")
+                bounds.append(globals_by_id[match.group(1)])
+            if bounds[1] - bounds[0] != stack:
+                raise SystemExit(f"WASI process stack is {bounds}, expected {stack} bytes")
+            result = subprocess.run(wasmer_command(module), env=env, capture_output=True,
+                                    text=True, timeout=30)
+            if result.returncode != 0 or "wasi thread startup ok" not in (result.stdout + result.stderr).splitlines():
+                raise SystemExit(f"configured WASI pthread startup failed: {result}")
+            print(f"wasi target memory: initial={initial}, max={maximum}, stack={stack} ok", flush=True)
+        target.write_text(json.dumps({
+            "inherits": ["wasi"], "wasm-initial-memory": 65536,
+            "wasm-stack-size": 1048576,
+        }), encoding="utf-8")
+        result = subprocess.run([
+            LLGO, "build", "-target", target.stem,
+            "-o", str(pathlib.Path(directory) / "too-small.wasm"),
+            str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup"),
+        ], env=probe_env, capture_output=True, text=True, timeout=180)
+        if result.returncode == 0 or "initial memory too small" not in result.stderr:
+            raise SystemExit(f"WASI accepted an insufficient initial-memory budget: {result}")
+        print("wasi target memory rejects an insufficient initial budget", flush=True)
+        run_inherited_memory_overrides(probe_env, directory, target)
+    finally:
+        target.unlink()
+
+
+def run_inherited_memory_overrides(env, directory, parent):
+    parent.write_text(json.dumps({"inherits": ["wasi"], "wasm-initial-memory": 16 << 20,
+                                  "wasm-max-memory": 128 << 20, "wasm-stack-size": 1 << 20}), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(dir=ROOT / "targets", prefix="wasi-memory-child-",
+                                     suffix=".json", delete=False) as file:
+        child = pathlib.Path(file.name)
+    try:
+        child.write_text(json.dumps({"inherits": [parent.stem], "wasm-max-memory": 8 << 20}), encoding="utf-8")
+        response = pathlib.Path(directory) / "memory.rsp"
+        response.write_text("--initial-memory=8388608", encoding="utf-8")
+        response_flag = "-Wl,@" + response.as_posix().replace(" ", "\\ ")
+        for name, flags, success in (
+            ("conflict", "", False),
+            ("initial", "-Wl,--initial-memory=8388608", True),
+            ("heap", "-Wl,--initial-heap=1048576", True),
+            ("response", response_flag, True),
+        ):
+            module = pathlib.Path(directory) / f"memory-override-{name}.wasm"
+            result = subprocess.run([LLGO, "build", "-target", child.stem,
+                                     "-o", str(module), str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup")],
+                                    env=dict(env, LDFLAGS=flags), capture_output=True, text=True, timeout=180)
+            if success:
+                if result.returncode != 0:
+                    raise SystemExit(f"inherited WASI budget override {name} rejected: {result}")
+                result = subprocess.run(wasmer_command(module), env=env, capture_output=True, text=True, timeout=30)
+                if result.returncode != 0 or "wasi thread startup ok" not in (result.stdout + result.stderr).splitlines():
+                    raise SystemExit(f"inherited WASI budget override {name} failed: {result}")
+            elif result.returncode == 0 or "maximum memory too small" not in result.stderr:
+                raise SystemExit(f"inherited WASI budget conflict did not reach wasm-ld: {result}")
+            print(f"wasi inherited memory override {name} ok", flush=True)
+    finally:
+        child.unlink()
+
+
 def main():
     wasmer = shutil.which(WASMER)
     if wasmer is None:
@@ -121,6 +239,12 @@ def main():
     env.pop("LLGO_WASI_THREADS", None)
     env["PATH"] = str(pathlib.Path(wasmer).resolve().parent) + os.pathsep + env["PATH"]
     with tempfile.TemporaryDirectory(prefix="llgo-wasi-threads-") as directory:
+        module = pathlib.Path(directory) / "size.wasm"
+        subprocess.run([LLGO, "build", "-target", "wasi", "-o", str(module),
+                        str(ROOT / "internal/build/testdata/wasm-size")],
+                       check=True, env=env, timeout=300)
+        check_size_probe(env, module)
+        run_memory_config_probe(env, directory)
         run_output_cache_probe(env, directory)
         simd = pathlib.Path(directory) / "simd-threads-eh.wasm"
         subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",

@@ -3,12 +3,13 @@ module github.com/xgo-dev/llgo
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/goplus/cobra v1.9.12 //xgo:class
 	github.com/goplus/gogen v1.24.8
-	github.com/goplus/lib v0.6.3
+	github.com/goplus/lib v0.7.0
 	github.com/goplus/mod v0.22.1
 	github.com/mattn/go-tty v0.0.8
-	github.com/qiniu/x v1.19.2
+	github.com/qiniu/x v1.19.3
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/xgo-dev/llvm v0.10.1
 	github.com/xgo-dev/plan9asm v0.6.2
@@ -26,3 +27,6 @@ require (
 )
 
 replace github.com/xgo-dev/llgo/runtime => ./runtime
+
+// v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
+replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1

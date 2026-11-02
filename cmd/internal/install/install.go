@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
@@ -40,6 +41,7 @@ func init() {
 	Cmd.Run = runCmd
 	goBuildFlags = flags.CaptureGoBuildFlags(Cmd)
 	flags.AddCommonFlags(&Cmd.Flag)
+	flags.AddCompilerVerboseFlag(&Cmd.Flag)
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag)
 	flags.FinalizeNativeFlags("install", &Cmd.Flag)
@@ -52,6 +54,13 @@ func runCmd(cmd *base.Command, args []string) {
 			mockable.Exit(1)
 		}
 		return
+	}
+	for _, operand := range cmd.Flag.Args() {
+		if strings.Contains(operand, "@") && !strings.HasSuffix(operand, ".go") {
+			fmt.Fprintln(os.Stderr, "versioned install operands are unsupported: LLGo does not yet provide an isolated versioned-install module graph")
+			mockable.Exit(1)
+			return
+		}
 	}
 
 	conf := build.NewDefaultConf(build.ModeInstall)

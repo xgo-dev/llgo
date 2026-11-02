@@ -44,6 +44,57 @@ type pass struct {
 
 // Analyze returns live ABI method slot indexes by concrete type symbol name.
 func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
+	return AnalyzeProgram(info, rootNames).LiveSlots
+}
+
+// Analysis keeps interface/reflection visibility and method liveness from the
+// same fixed point. It borrows info and must not outlive its package metadata.
+type Analysis struct {
+	LiveSlots  map[string][]int
+	info       *meta.GlobalSummary
+	visible    map[meta.Symbol]struct{}
+	typeLookup bool
+}
+
+// CanDropTypeFields excludes reflection-visible types and dynamic type lookup.
+// StructOf can find a static descriptor without converting that type to an
+// interface. Callers must also prove equality and hashing do not read Fields.
+func (a Analysis) CanDropTypeFields(name string) bool {
+	return !a.typeLookup && a.unobservedType(name)
+}
+
+// CanRejectInterfaceType reports whether a concrete type is absent from the
+// closed interface domain. Unknown metadata must retain the runtime check.
+// Callers must restrict predicates to basic types: reflection can synthesize
+// composite types without a recorded conversion to that exact type.
+func (a Analysis) CanRejectInterfaceType(name string) bool {
+	return a.unobservedType(name)
+}
+
+func (a Analysis) unobservedType(name string) bool {
+	typ, known := a.info.LookupSymbol(name)
+	if !known || !a.info.HasFacts(typ) {
+		return false
+	}
+	_, visible := a.visible[typ]
+	return !visible
+}
+
+// CanDropMethodMetadata requires a known type that cannot be observed through
+// an interface, including reflection through child and method-result types.
+// Callers must additionally rule out opaque native consumers of Go metadata.
+func (a Analysis) CanDropMethodMetadata(name string) bool {
+	typ, known := a.info.LookupSymbol(name)
+	if !known || !a.info.HasFacts(typ) || len(a.info.MethodSlots(typ)) == 0 {
+		return false
+	}
+	_, visible := a.visible[typ]
+	return !visible
+}
+
+// AnalyzeProgram computes method liveness and interface visibility together.
+// The returned Analysis borrows info and must not outlive its package metadata.
+func AnalyzeProgram(info *meta.GlobalSummary, rootNames []string) Analysis {
 	roots := make([]meta.Symbol, 0, len(rootNames))
 	for _, name := range rootNames {
 		if sym, ok := info.LookupSymbol(name); ok {
@@ -51,18 +102,30 @@ func Analyze(info *meta.GlobalSummary, rootNames []string) map[string][]int {
 		}
 	}
 
-	liveSlots := deadcode(info, roots)
-	out := make(map[string][]int, len(liveSlots))
-	for typ, slots := range liveSlots {
+	pass := deadcode(info, roots)
+	out := make(map[string][]int, len(pass.liveSlots))
+	for typ, slots := range pass.liveSlots {
 		name := info.SymbolName(typ)
 		sorted := append([]int(nil), slots...)
 		sort.Ints(sorted)
 		out[name] = sorted
 	}
-	return out
+	typeLookup := false
+	for _, name := range []string{
+		"github.com/xgo-dev/llgo/runtime/internal/runtime.typelist",
+		"github.com/xgo-dev/llgo/runtime/internal/lib/reflect.typelist",
+		"reflect.typelist",
+	} {
+		if sym, ok := info.LookupSymbol(name); ok {
+			if _, live := pass.reachable[sym]; live {
+				typeLookup = true
+			}
+		}
+	}
+	return Analysis{LiveSlots: out, info: info, visible: pass.usedInIface, typeLookup: typeLookup}
 }
 
-func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) map[meta.Symbol][]int {
+func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) *pass {
 	d := &pass{
 		info:               info,
 		methodImplKeys:     make(map[methodID][]ifaceMethodKey),
@@ -86,7 +149,7 @@ func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) map[meta.Symbol][]i
 		d.flood()
 		changed := d.methodMarkingLoop()
 		if len(d.workQueue) == 0 && !changed {
-			return d.liveSlots
+			return d
 		}
 	}
 }

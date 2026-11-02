@@ -109,9 +109,9 @@ func stripNativeSymbolsWithIO(ctx *context, out *OutFmtDetails, darwinExports []
 	if err != nil {
 		return err
 	}
-	discardStage := true
+	publication := dsymPublication{destination: out.DSYM, files: files}
 	defer func() {
-		if discardStage {
+		if !publication.keepBackup {
 			_ = files.removeAll(dir)
 		}
 	}()
@@ -130,8 +130,13 @@ func stripNativeSymbolsWithIO(ctx *context, out *OutFmtDetails, darwinExports []
 				return fmt.Errorf("strip symbols: retained Darwin DWARF needs a dSYM output")
 			}
 			stagedDSYM = filepath.Join(dir, "debug.dSYM")
-			if err := run("dsymutil", out.Out, "-o", stagedDSYM); err != nil {
+			if err := run("dsymutil", dsymutilInput(out.Out), "-o", stagedDSYM); err != nil {
 				return err
+			}
+			if ctx.buildConf.LinkOptions.DWARFCompression == DWARFCompressionEnabled {
+				if err := compressDSYMBundle(stagedDSYM, filepath.Base(out.Out)); err != nil {
+					return err
+				}
 			}
 			// LLDB does not expose all non-DWARF globals from a dSYM's
 			// symbol table. Retain the adapter's discovery names in the image.
@@ -191,44 +196,14 @@ func stripNativeSymbolsWithIO(ctx *context, out *OutFmtDetails, darwinExports []
 		return closeErr
 	}
 
-	backup := ""
 	if stagedDSYM != "" {
-		if st, err := files.lstat(out.DSYM); err == nil {
-			if !st.IsDir() {
-				return fmt.Errorf("dSYM output %q is not a directory", out.DSYM)
-			}
-			backup = filepath.Join(dir, "previous.dSYM")
-			if err := files.rename(out.DSYM, backup); err != nil {
-				return err
-			}
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		if err := files.rename(stagedDSYM, out.DSYM); err != nil {
-			if backup != "" {
-				if restoreErr := files.rename(backup, out.DSYM); restoreErr != nil {
-					discardStage = false
-					return fmt.Errorf("publish dSYM: %v; previous bundle retained at %s: %w", err, backup, restoreErr)
-				}
-			}
+		if err := publication.publish(stagedDSYM, filepath.Join(dir, "previous.dSYM")); err != nil {
 			return err
 		}
 	}
 	if err := files.rename(staged, out.Out); err != nil {
 		if stagedDSYM != "" {
-			if removeErr := files.removeAll(out.DSYM); removeErr != nil {
-				if backup != "" {
-					discardStage = false
-					return fmt.Errorf("publish stripped executable: %v; previous dSYM retained at %s: %w", err, backup, removeErr)
-				}
-				return fmt.Errorf("publish stripped executable: %v; cannot remove newly published dSYM %s: %w", err, out.DSYM, removeErr)
-			}
-			if backup != "" {
-				if restoreErr := files.rename(backup, out.DSYM); restoreErr != nil {
-					discardStage = false
-					return fmt.Errorf("publish stripped executable: %v; previous dSYM retained at %s: %w", err, backup, restoreErr)
-				}
-			}
+			return publication.rollback(err)
 		}
 		return err
 	}

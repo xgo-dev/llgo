@@ -19,12 +19,26 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/compat"
 	"github.com/xgo-dev/llgo/cmd/internal/gocommand"
 	"github.com/xgo-dev/llgo/internal/quoted"
 )
+
+// ValidateMemProfileRate accepts the full-allocation mode implemented by LLGo.
+// Size-class counters do not implement Go's probabilistic sampling intervals.
+func ValidateMemProfileRate(value string) error {
+	n, err := strconv.ParseInt(value, 0, 0)
+	if err != nil {
+		return fmt.Errorf("invalid memory profile rate: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("-memprofilerate=%s is unsupported: LLGo supports only 1 (full allocation counting)", value)
+	}
+	return nil
+}
 
 func rejectValue(fs *flag.FlagSet, name, reason string) {
 	fs.Func(name, "Unsupported: "+reason, func(string) error {
@@ -36,6 +50,22 @@ func rejectBool(fs *flag.FlagSet, name, reason string) {
 	fs.BoolFunc(name, "Unsupported: "+reason, func(string) error {
 		return fmt.Errorf("-%s is recognized but unsupported: %s", name, reason)
 	})
+}
+
+// AddExecFlag uses the Go command's quoted-word syntax. Wrappers are invoked
+// directly with the linked artifact followed by program arguments, without a
+// shell or target-template substitution.
+func AddExecFlag(fs *flag.FlagSet) *[]string {
+	words := new([]string)
+	fs.Func("exec", "Execute the linked program using a quoted command and optional arguments", func(value string) error {
+		parsed, err := quoted.Split(value)
+		if err != nil {
+			return err
+		}
+		*words = parsed
+		return nil
+	})
+	return words
 }
 
 var buildFlagDescriptions = map[string]string{
@@ -175,7 +205,8 @@ func defaults(fs *flag.FlagSet) ([]string, error) {
 			// Go validates flag names across commands, then applies only the
 			// defaults relevant to this command (for example, -run is ignored
 			// by build). Native rejections remain registered and fail below.
-			known := compat.Extensions[name] != ""
+			known := compat.Extensions[name] != "" || (strings.HasPrefix(name, "test.") &&
+				slices.Contains(strings.Fields(compat.TestBinaryFlags), strings.TrimPrefix(name, "test.")))
 			for _, names := range surface.Commands {
 				known = known || slices.Contains(names, name)
 			}

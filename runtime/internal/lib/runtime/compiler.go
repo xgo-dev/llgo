@@ -10,4 +10,7 @@ package runtime
 //   - gc      Also known as cmd/compile.
 //   - gccgo   The gccgo front end, part of the GCC compiler suite.
 //   - llgo    Our project
+//
+// The source patch in runtime/_patch/runtime/compiler.go supplies this value
+// before importers fold constants; keep both declarations in sync.
 const Compiler = "llgo"

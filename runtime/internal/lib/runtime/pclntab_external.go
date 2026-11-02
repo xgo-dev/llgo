@@ -70,7 +70,7 @@ const (
 	externalPCLNUnavailable
 )
 
-//go:linkname runtimePCLNIdentity __llgo_pclntab_identity
+//go:linkname runtimePCLNIdentity C.__llgo_pclntab_identity
 var runtimePCLNIdentity [32]byte
 
 var externalPCLNState uint32

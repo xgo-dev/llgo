@@ -62,7 +62,7 @@ func TestEmitStrongTypeOverrides(t *testing.T) {
 					os.Stderr = stderr
 					logFile.Close()
 				}()
-				EmitStrongTypeOverrides(dst, []llvm.Module{src}, tt.liveSlots, true)
+				EmitStrongTypeOverrides(dst, []llvm.Module{src}, tt.liveSlots, nil, true)
 			}()
 			log, err := os.ReadFile(logPath)
 			if err != nil {
@@ -483,4 +483,178 @@ func parseModule(t *testing.T, ctx *llvm.Context, path string) llvm.Module {
 		t.Fatal(err)
 	}
 	return mod
+}
+
+func TestDropUnobservedMethodMetadata(t *testing.T) {
+	srcContext := llvm.NewContext()
+	defer srcContext.Dispose()
+	dstContext := llvm.NewContext()
+	defer dstContext.Dispose()
+	text := `
+%"github.com/xgo-dev/llgo/runtime/abi.UncommonType" = type { { ptr, i64 }, i16, i16, i32 }
+%"github.com/xgo-dev/llgo/runtime/abi.Method" = type { { ptr, i64 }, ptr, ptr, ptr }
+@method.name = private constant [4 x i8] c"Drop"
+@method.type = external constant i8
+@_llgo_hidden = weak_odr constant { i64, %"github.com/xgo-dev/llgo/runtime/abi.UncommonType", [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] } {
+ i64 42,
+ %"github.com/xgo-dev/llgo/runtime/abi.UncommonType" { { ptr, i64 } zeroinitializer, i16 1, i16 1, i32 24 },
+ [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [ %"github.com/xgo-dev/llgo/runtime/abi.Method" { { ptr, i64 } { ptr @method.name, i64 4 }, ptr @method.type, ptr @method, ptr @method } ]
+}
+declare void @method()
+`
+	path := filepath.Join(t.TempDir(), "type.ll")
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	src := parseModule(t, &srcContext, path)
+	defer src.Dispose()
+	for _, drop := range []bool{false, true} {
+		dst := dstContext.NewModule("override")
+		EmitStrongTypeOverrides(dst, []llvm.Module{src}, nil, func(string) bool { return drop }, false)
+		if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+		init := dst.NamedGlobal("_llgo_hidden").Initializer()
+		wantCount := uint64(1)
+		if drop {
+			wantCount = 0
+		}
+		if got := init.Operand(1).Operand(1).ZExtValue(); got != wantCount {
+			t.Fatalf("drop=%v: method count=%d", drop, got)
+		}
+		if got := init.Operand(2).IsNull(); got != drop {
+			t.Fatalf("drop=%v: zero method storage=%v", drop, got)
+		}
+		if got := init.Operand(2).Type().ArrayLength(); got != int(wantCount) {
+			t.Fatalf("drop=%v: method storage length=%d", drop, got)
+		}
+		if drop && (!dst.NamedGlobal("method.type").IsNil() || !dst.NamedFunction("method").IsNil()) {
+			t.Fatal("cleared methods still reference signature or function")
+		}
+		dst.Dispose()
+	}
+}
+
+func TestCompactMethodStorageReferences(t *testing.T) {
+	for _, bits := range []int{32, 64} {
+		for _, mode := range []string{"new", "declaration", "in-place", "live"} {
+			t.Run(fmt.Sprintf("%d/%s", bits, mode), func(t *testing.T) {
+				srcCtx, dstCtx := llvm.NewContext(), llvm.NewContext()
+				defer srcCtx.Dispose()
+				defer dstCtx.Dispose()
+				text := `
+%"github.com/xgo-dev/llgo/runtime/abi.UncommonType" = type { { ptr, i64 }, i16, i16, i32 }
+%"github.com/xgo-dev/llgo/runtime/abi.Method" = type { { ptr, i64 }, ptr, ptr, ptr }
+%descriptor = type { ptr, %"github.com/xgo-dev/llgo/runtime/abi.UncommonType", [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] }
+@first = weak_odr hidden constant %descriptor { ptr @second, %"github.com/xgo-dev/llgo/runtime/abi.UncommonType" { { ptr, i64 } zeroinitializer, i16 1, i16 1, i32 24 }, [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [%"github.com/xgo-dev/llgo/runtime/abi.Method" { { ptr, i64 } zeroinitializer, ptr null, ptr @method, ptr @method }] }, align 32
+@second = weak_odr constant %descriptor { ptr @first, %"github.com/xgo-dev/llgo/runtime/abi.UncommonType" { { ptr, i64 } zeroinitializer, i16 1, i16 1, i32 24 }, [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [%"github.com/xgo-dev/llgo/runtime/abi.Method" { { ptr, i64 } zeroinitializer, ptr null, ptr @method, ptr @method }] }
+@reference = constant ptr getelementptr (%descriptor, ptr @second, i32 0, i32 1)
+declare void @method()
+`
+				path := filepath.Join(t.TempDir(), "types.ll")
+				if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+					t.Fatal(err)
+				}
+				src := parseModule(t, &srcCtx, path)
+				defer src.Dispose()
+				dst := src
+				if mode != "in-place" {
+					dst = dstCtx.NewModule("dst")
+					defer dst.Dispose()
+				}
+				layout := fmt.Sprintf("e-p:%d:%d-i64:64", bits, bits)
+				src.SetDataLayout(layout)
+				dst.SetDataLayout(layout)
+				data := llvm.NewTargetData(layout)
+				defer data.Dispose()
+				original := src.NamedGlobal("first").GlobalValueType()
+				before := data.TypeAllocSize(original)
+				if mode == "declaration" {
+					e := newOverrideEmitter(dst)
+					// Existing uses of a full-size declaration must also be rebound.
+					r := llvm.AddGlobal(dst, e.cloneType(src.NamedGlobal("reference").GlobalValueType()), "reference")
+					r.SetInitializer(e.cloneConst(src.NamedGlobal("reference").Initializer()))
+				}
+				var live map[string][]int
+				if mode == "live" {
+					live = map[string][]int{"first": {0}, "second": {0}}
+				}
+				EmitStrongTypeOverrides(dst, []llvm.Module{src}, live, func(string) bool { return true }, false)
+				if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{"first", "second"} {
+					g := dst.NamedGlobal(name)
+					typ := g.GlobalValueType()
+					want := before
+					if mode != "live" {
+						want -= data.TypeAllocSize(original.StructElementTypes()[2])
+					}
+					if got := data.TypeAllocSize(typ); got != want {
+						t.Fatalf("%s: storage=%d, want %d", name, got, want)
+					}
+					for i := 0; i < 3; i++ {
+						if data.ElementOffset(typ, i) != data.ElementOffset(original, i) {
+							t.Fatalf("%s: field %d moved", name, i)
+						}
+					}
+					other := "first"
+					if name == "first" {
+						other = "second"
+					}
+					if g.Initializer().Operand(0) != dst.NamedGlobal(other) {
+						t.Fatalf("%s: stale cross-descriptor reference", name)
+					}
+				}
+				first := dst.NamedGlobal("first")
+				if first.Visibility() != llvm.HiddenVisibility || first.Alignment() != 32 || first.Linkage() != llvm.ExternalLinkage {
+					t.Fatal("descriptor attributes changed")
+				}
+				if ref := dst.NamedGlobal("reference"); !ref.IsNil() && ref.Initializer().Operand(0) != dst.NamedGlobal("second") {
+					t.Fatal("existing GEP still refers to the old descriptor")
+				}
+			})
+		}
+	}
+}
+
+func TestEmitInterfaceUseOverrides(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		t.Run(fmt.Sprint(known), func(t *testing.T) {
+			sc, dc := llvm.NewContext(), llvm.NewContext()
+			defer sc.Dispose()
+			defer dc.Dispose()
+			src, dst := sc.NewModule("src"), dc.NewModule("dst")
+			defer src.Dispose()
+			defer dst.Dispose()
+			for _, name := range []string{"dead", "live", "unknown"} {
+				llvm.AddFunction(src, "_llgo_iface_use."+name, llvm.FunctionType(sc.Int8Type(), nil, false))
+			}
+			llvm.AddFunction(src, "unrelated", llvm.FunctionType(sc.VoidType(), nil, false))
+			llvm.AddFunction(dst, "_llgo_iface_use.live", llvm.FunctionType(dc.Int8Type(), nil, false))
+			var reject func(string) bool
+			if known {
+				reject = func(name string) bool { return name == "dead" }
+			}
+			EmitInterfaceUseOverrides(dst, []llvm.Module{src, src}, reject)
+			// Idempotent when a destination module also appears in the input.
+			EmitInterfaceUseOverrides(dst, []llvm.Module{dst}, reject)
+			for _, name := range []string{"dead", "live", "unknown"} {
+				g := dst.NamedFunction("_llgo_iface_use." + name)
+				want := uint64(1)
+				if known && name == "dead" {
+					want = 0
+				}
+				if g.FirstBasicBlock().FirstInstruction().Operand(0).ZExtValue() != want {
+					t.Fatalf("%s: %s", name, g.String())
+				}
+			}
+			if !dst.NamedFunction("unrelated").IsNil() {
+				t.Fatal("copied an unrelated function")
+			}
+			if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

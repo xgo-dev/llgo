@@ -677,10 +677,8 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 		fnName = fn.Name()
 	}
 	if recv != nil {
-		// funcName's pkg is the receiver named type's package for wrappers.
-		// Keep it identical to the receiver package passed by abiUncommonMethods
-		// when it declares the itab target, or definition and reference symbols
-		// will diverge for promoted unexported methods.
+		// Keep ordinary methods and interface metadata on the same symbol,
+		// including the declaring package of promoted unexported methods.
 		if method, ok := fn.Object().(*types.Func); ok {
 			fnName = llssa.MethodSymbolName(pkg, method, fnName)
 			if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(method.Type()) {
@@ -689,9 +687,19 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 				}
 			}
 		}
-		// Synthesized $thunk/$bound functions have no Object. Their references
-		// are produced through this same funcName path, so the wrapper name is
-		// already internally consistent and needs no declaring-package suffix.
+		// Bound methods and thunks can be emitted in the consuming package.
+		// Preserve the receiver's package when imported types share a name.
+		if strings.HasSuffix(name, "$bound") || strings.HasSuffix(name, "$thunk") {
+			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil {
+				recvPath := llssa.PathOf(named.Obj().Pkg())
+				if recvPath != llssa.PathOf(pkg) {
+					prefix := recvPath + "."
+					if !strings.HasPrefix(fnName, prefix) {
+						fnName = prefix + fnName
+					}
+				}
+			}
+		}
 	}
 	return llssa.FuncName(pkg, fnName, recv, org)
 }
@@ -773,21 +781,23 @@ const (
 	llgoCgoCheckPointer = llgoCgoBase + 0x6
 	llgoCgoCgocall      = llgoCgoBase + 0x7
 
-	llgoAsm                = llgoInstrBase + 0x40
-	llgoStackSave          = llgoInstrBase + 0x41
-	llgoFuncPCABI0         = llgoInstrBase + 0x42
-	llgoSkip               = llgoInstrBase + 0x43
-	llgoSyscall            = llgoInstrBase + 0x44
-	llgoAtomicCmpXchgOK    = llgoInstrBase + 0x45
-	llgoAtomicAddReturnNew = llgoInstrBase + 0x46
-	llgoBoolToUint8        = llgoInstrBase + 0x47
-	llgoClosureEnv         = llgoInstrBase + 0x48
-	llgoFloat32FromBits    = llgoInstrBase + 0x49
-	llgoFloat32Bits        = llgoInstrBase + 0x4a
-	llgoFloat64FromBits    = llgoInstrBase + 0x4b
-	llgoFloat64Bits        = llgoInstrBase + 0x4c
-	llgoUMulOverflow       = llgoInstrBase + 0x4d
-	llgoSIMD               = llgoInstrBase + 0x4e
+	llgoAsm                  = llgoInstrBase + 0x40
+	llgoStackSave            = llgoInstrBase + 0x41
+	llgoFuncPCABI0           = llgoInstrBase + 0x42
+	llgoSkip                 = llgoInstrBase + 0x43
+	llgoSyscall              = llgoInstrBase + 0x44
+	llgoAtomicCmpXchgOK      = llgoInstrBase + 0x45
+	llgoAtomicAddReturnNew   = llgoInstrBase + 0x46
+	llgoBoolToUint8          = llgoInstrBase + 0x47
+	llgoClosureEnv           = llgoInstrBase + 0x48
+	llgoFloat32FromBits      = llgoInstrBase + 0x49
+	llgoFloat32Bits          = llgoInstrBase + 0x4a
+	llgoFloat64FromBits      = llgoInstrBase + 0x4b
+	llgoFloat64Bits          = llgoInstrBase + 0x4c
+	llgoUMulOverflow         = llgoInstrBase + 0x4d
+	llgoSIMD                 = llgoInstrBase + 0x4e
+	llgoInterfaceKindUsed    = llgoInstrBase + 0x4f
+	llgoAtomicStoreUnordered = llgoInstrBase + 0x50
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )
@@ -896,22 +906,18 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if orgName == "hash/maphash.escapeForHash" {
 		return nil, "skip", llgoInstr
 	}
-	// The 386 C ABI returns floating-point values through x87. Loading a
-	// signaling NaN into x87 quiets it, so a normal call to the standard
-	// library's pointer-based frombits helpers would not preserve the bit
-	// pattern promised by package math. Lower all four bit conversions at the
-	// caller on 386, matching the Go compiler's intrinsic treatment.
-	if target := p.prog.Target(); target != nil && target.GOARCH == "386" {
-		switch orgName {
-		case "math.Float32frombits":
-			return nil, "float32FromBits", llgoInstr
-		case "math.Float32bits":
-			return nil, "float32Bits", llgoInstr
-		case "math.Float64frombits":
-			return nil, "float64FromBits", llgoInstr
-		case "math.Float64bits":
-			return nil, "float64Bits", llgoInstr
-		}
+	// Lower bit conversions at the caller on every target. The pointer-based
+	// library helpers otherwise allocate without escape analysis. On 386 this
+	// also avoids x87 calls that would quiet signaling NaNs during conversion.
+	switch orgName {
+	case "math.Float32frombits":
+		return nil, "float32FromBits", llgoInstr
+	case "math.Float32bits":
+		return nil, "float32Bits", llgoInstr
+	case "math.Float64frombits":
+		return nil, "float64FromBits", llgoInstr
+	case "math.Float64bits":
+		return nil, "float64Bits", llgoInstr
 	}
 	return pkg, funcName(pkg, fn, false), goFunc
 }
@@ -928,6 +934,9 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
 		if v, ok := p.prog.Linkname(name); ok {
+			if strings.HasPrefix(v, "C.") {
+				return v[2:], cVar, false
+			}
 			if strings.HasPrefix(v, "stdcall.") {
 				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
 			}
@@ -1130,7 +1139,35 @@ func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.name, fset.Position(cc.pos), cc.replacement)
 	}
 	prog.SetTypeCallConv(pkg.Path()+"."+spec.Name.Name, toCallConv(cc.bg))
+	if st, ok := spec.Type.(*ast.StructType); ok {
+		var positions []token.Pos
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				positions = append(positions, embeddedStructFieldPos(field.Type))
+			}
+			for _, name := range field.Names {
+				positions = append(positions, name.Pos())
+			}
+		}
+		prog.SetNativeStructFields(positions)
+	}
 	return nil
+}
+
+// go/types assigns an embedded field the position of its identifier, rather
+// than the start of a pointer or qualified type expression.
+func embeddedStructFieldPos(expr ast.Expr) token.Pos {
+	switch expr := expr.(type) {
+	case *ast.StarExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.SelectorExpr:
+		return expr.Sel.Pos()
+	case *ast.IndexExpr:
+		return embeddedStructFieldPos(expr.X)
+	case *ast.IndexListExpr:
+		return embeddedStructFieldPos(expr.X)
+	}
+	return expr.Pos()
 }
 
 // Directive names, normalized by the directive package (the "//" / "// "

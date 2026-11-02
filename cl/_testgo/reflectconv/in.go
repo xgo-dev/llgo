@@ -47,11 +47,11 @@ type namedFunc func(int) int
 // CHECK: call void @main.nanConversion()
 
 // CHECK-LABEL: define void @main.nanConversion(){{.*}} {
-// CHECK: [[NAN:%[0-9]+]] = call float @math.Float32frombits(i32 2139095041)
+// CHECK-NOT: call float @math.Float32frombits
 // CHECK: [[NAN_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(
 // CHECK: [[FLOAT_TYPE:%[0-9]+]] = call %{{.*}} @reflect.TypeOf(
 // CHECK: [[FLOAT_VALUE:%[0-9]+]] = call %reflect.Value @reflect.Value.Convert(%reflect.Value [[NAN_VALUE]], {{.*}} [[FLOAT_TYPE]])
-// CHECK: call i32 @math.Float32bits(
+// CHECK: bitcast float {{.*}} to i32
 
 // CHECK-LABEL: define void @main.numericConversions(){{.*}} {
 // CHECK: [[INT_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(

@@ -19,19 +19,21 @@ package version
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
+	"github.com/xgo-dev/llgo/cmd/internal/gocommand"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 // llgo version
 var Cmd = &base.Command{
-	UsageLine: "llgo version",
-	Short:     "Print LLGo version",
+	UsageLine: "llgo version [-m] [-v] [-json] [file ...]",
+	Short:     "Print LLGo version or inspect Go executable build information",
 }
 
 func init() {
@@ -40,7 +42,13 @@ func init() {
 
 func runCmd(cmd *base.Command, args []string) {
 	fs := flag.NewFlagSet("llgo version", flag.ContinueOnError)
+	// Parse only to distinguish LLGo's identity query from file inspection.
+	// Go owns inspection diagnostics, including invalid flags and help.
+	fs.SetOutput(io.Discard)
 	flags.AddDirectoryFlag(fs)
+	modules := fs.Bool("m", false, "Print embedded Go module information")
+	fs.Bool("v", false, "Report unrecognized files during Go executable inspection")
+	json := fs.Bool("json", false, "Print Go executable build information as JSON")
 	flags.FinalizeNativeFlags("version", fs)
 	remaining, err := flags.ChangeDirectory(args)
 	if err != nil {
@@ -49,14 +57,11 @@ func runCmd(cmd *base.Command, args []string) {
 		return
 	}
 	if err := fs.Parse(remaining); err != nil {
-		if err != flag.ErrHelp {
-			mockable.Exit(1)
-		}
+		gocommand.Main("version", remaining)
 		return
 	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "llgo version: binary file inspection is not implemented")
-		mockable.Exit(1)
+	if fs.NArg() != 0 || *modules || *json {
+		gocommand.Main("version", remaining)
 		return
 	}
 	fmt.Printf("llgo %s %s/%s\n", env.Version(), runtime.GOOS, runtime.GOARCH)

@@ -773,17 +773,18 @@ func TestBuildPackageGroupEmpty(t *testing.T) {
 
 func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 	coordinator := &context{
-		conf:            &packages.Config{},
-		mode:            ModeBuild,
-		buildConf:       &Config{BuildMode: BuildModeExe},
-		commands:        commandEnv{dir: t.TempDir()},
-		frontendOptions: cl.Options{Debug: true},
-		sfilesCache:     map[string][]string{"example.com/p": {"asm.s"}},
-		llgoFilesCache:  make(map[*packages.Package][]llgoFileInput),
-		plan9asmReady:   true,
-		plan9asmMode:    plan9asmEnvSelected,
-		plan9asmPkgs:    map[string]bool{"example.com/p": true},
-		goVersion:       "go1.21.13",
+		conf:              &packages.Config{},
+		mode:              ModeBuild,
+		buildConf:         &Config{BuildMode: BuildModeExe},
+		commands:          commandEnv{dir: t.TempDir()},
+		frontendOptions:   cl.Options{Debug: true},
+		wasmClosedProgram: true,
+		sfilesCache:       map[string][]string{"example.com/p": {"asm.s"}},
+		llgoFilesCache:    make(map[*packages.Package][]llgoFileInput),
+		plan9asmReady:     true,
+		plan9asmMode:      plan9asmEnvSelected,
+		plan9asmPkgs:      map[string]bool{"example.com/p": true},
+		goVersion:         "go1.21.13",
 	}
 
 	task := coordinator.newBackendTask(backendSession{})
@@ -807,6 +808,14 @@ func TestNewBackendTaskUsesPackageLocalState(t *testing.T) {
 	}
 	if task.plan9asmPkgs["example.com/p"] != coordinator.plan9asmPkgs["example.com/p"] {
 		t.Fatal("backend task lost prepared Plan9 package policy")
+	}
+	if !task.wasmClosedProgram {
+		t.Fatal("backend task lost the closed-program visibility proof")
+	}
+	coordinator.wasmClosedProgram = false
+	next := coordinator.newBackendTask(backendSession{})
+	if next.wasmClosedProgram || !task.wasmClosedProgram {
+		t.Fatal("backend tasks did not snapshot their coordinator's visibility proof")
 	}
 	if task.goVersion != coordinator.goVersion {
 		t.Fatal("backend task lost source GOROOT GOVERSION")

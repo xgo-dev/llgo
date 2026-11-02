@@ -18,8 +18,10 @@ package ssa
 
 import (
 	"go/types"
+	"strconv"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -71,19 +73,9 @@ func (p Function) NewGCRoots(count int) []Expr {
 	frameType := prog.ctx.StructType([]llvm.Type{rootStorageType, rootStorageType, rootArrayType}, false)
 	originalEntry := entry.first
 	prologue := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.entry")
-	initialize := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.init")
 	b.impl.SetInsertPointAtEnd(prologue)
 	frame := llvm.CreateAlloca(b.impl, frameType)
-
-	chain := Expr{p.gcRootChain(), prog.Pointer(rootValueType)}
-	prev := b.Load(chain)
 	nextSlot := llvm.CreateStructGEP(b.impl, frameType, frame, 0)
-	reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
-	sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
-	// SJLJ replays discarded function entries on the way back to a setjmp.
-	// Their stack slots must be reused without publishing dead frames.
-	reusingFrame := b.impl.CreateOr(reentered, sjljReplaying, "")
-
 	frameMap := p.newGCRootMap(count)
 	roots := make([]Expr, count)
 	rootArray := llvm.CreateStructGEP(b.impl, frameType, frame, 2)
@@ -94,15 +86,27 @@ func (p Function) NewGCRoots(count int) []Expr {
 		root := llvm.CreateInBoundsGEP(b.impl, rootArrayType, rootArray, []llvm.Value{zero, index})
 		roots[i] = Expr{root, rootSlotType}
 	}
-	b.impl.CreateCondBr(reusingFrame, originalEntry, initialize)
-
-	b.impl.SetInsertPointAtEnd(initialize)
-	b.Store(Expr{nextSlot, rootSlotType}, prev)
-	b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), rootSlotType}, Expr{frameMap, rootValueType})
-	for _, root := range roots {
-		b.Store(root, prog.Nil(rootValueType))
+	if p.outlineGCRoots() {
+		helper := p.gcRootHelper(true, count)
+		b.impl.CreateCall(helper.GlobalValueType(), helper, []llvm.Value{frame, frameMap}, "")
+	} else {
+		chain := Expr{p.gcRootChain(), rootSlotType}
+		prev := b.Load(chain)
+		reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
+		sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
+		// SJLJ replays discarded function entries on the way back to a setjmp.
+		// Their stack slots must be reused without publishing dead frames.
+		reusingFrame := b.impl.CreateOr(reentered, sjljReplaying, "")
+		initialize := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.init")
+		b.impl.CreateCondBr(reusingFrame, originalEntry, initialize)
+		b.impl.SetInsertPointAtEnd(initialize)
+		b.Store(Expr{nextSlot, rootSlotType}, prev)
+		b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), rootSlotType}, Expr{frameMap, rootValueType})
+		for _, root := range roots {
+			b.Store(root, prog.Nil(rootValueType))
+		}
+		b.Store(chain, Expr{frame, rootValueType})
 	}
-	b.Store(chain, Expr{frame, rootValueType})
 	b.impl.CreateBr(originalEntry)
 	p.gcRootFrame = Expr{frame, rootValueType}
 	p.gcRootPrev = Expr{nextSlot, rootSlotType}
@@ -165,6 +169,9 @@ func (p Function) newGCRootMap(count int) llvm.Value {
 		llvm.ConstInt(prog.tyInt32(), 0, false),
 	}))
 	global.SetGlobalConstant(true)
+	// Only the root count is observed, never the map address. Let LLVM
+	// merge identical immutable maps, including across LTO modules.
+	global.SetUnnamedAddr(true)
 	global.SetLinkage(llvm.InternalLinkage)
 	global.SetAlignment(4)
 	return global
@@ -174,6 +181,10 @@ func (p Function) endGCRoots(b Builder) {
 	if p.gcRootPrev.IsNil() {
 		return
 	}
+	var helper llvm.Value
+	if p.outlineGCRoots() {
+		helper = p.gcRootHelper(false, 0)
+	}
 	chain := p.gcRootChain()
 	for block := p.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
 		term := block.LastInstruction()
@@ -181,6 +192,10 @@ func (p Function) endGCRoots(b Builder) {
 			continue
 		}
 		b.impl.SetInsertPointBefore(term)
+		if !helper.IsNil() {
+			b.impl.CreateCall(helper.GlobalValueType(), helper, []llvm.Value{p.gcRootFrame.impl}, "")
+			continue
+		}
 		chainSlot := Expr{chain, p.Prog.Pointer(p.Prog.VoidPtr())}
 		current := b.Load(chainSlot)
 		prev := b.Load(p.gcRootPrev)
@@ -271,4 +286,83 @@ func (p Function) ClosureContextParam() Expr {
 		return Nil
 	}
 	return Expr{p.impl.Param(0), p.env}
+}
+
+// Outlining trades two small helper calls for repeated frame bookkeeping.
+// Keep it within dev Wasm DCE at Oz: small hot functions pay measurable
+// call overhead, so Os and speed/debug builds retain inline bookkeeping.
+func (p Function) outlineGCRoots() bool {
+	target := p.Prog.Target()
+	if !p.Prog.DeadcodeDropEnabled() || target == nil || target.GOARCH != "wasm" {
+		return false
+	}
+	return target.effectiveOptLevel() == optlevel.Oz
+}
+
+// These LLVM-only helpers cannot allocate, yield or unwind. They use the same
+// stored-pointer layout and SjLj replay/head guards as inline root frames.
+// In particular, initialization must finish before publishing the chain head.
+func (p Function) gcRootHelper(push bool, count int) llvm.Value {
+	name := "__llgo_gcroot_pop"
+	if push {
+		name = "__llgo_gcroot_push_" + strconv.Itoa(count)
+	}
+	if p.Prog.threadLocalGCRoots {
+		name += "_tls"
+	}
+	mod := p.Pkg.mod
+	fn := mod.NamedFunction(name)
+	if !fn.IsNil() {
+		return fn
+	}
+	prog := p.Prog
+	ptr := prog.VoidPtr()
+	params := []llvm.Type{ptr.ll}
+	if push {
+		params = append(params, ptr.ll)
+	}
+	fn = llvm.AddFunction(mod, name, llvm.FunctionType(prog.ctx.VoidType(), params, false))
+	fn.SetLinkage(llvm.LinkOnceODRLinkage)
+	fn.SetVisibility(llvm.HiddenVisibility)
+	fn.AddFunctionAttr(prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+	fn.AddFunctionAttr(prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nounwind"), 0))
+	b := p.NewBuilder()
+	defer b.Dispose()
+	entry := prog.ctx.AddBasicBlock(fn, "entry")
+	b.impl.SetInsertPointAtEnd(entry)
+	stored := prog.storageType(ptr)
+	frameType := prog.ctx.StructType([]llvm.Type{stored, stored, llvm.ArrayType(stored, 0)}, false)
+	frame := fn.Param(0)
+	chain := Expr{p.gcRootChain(), prog.Pointer(ptr)}
+	current := b.Load(chain)
+	previous := Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 0), prog.Pointer(ptr)}
+	same := llvm.CreateICmp(b.impl, llvm.IntEQ, current.impl, frame)
+	if !push {
+		prev := b.Load(previous)
+		selected := llvm.CreateSelect(b.impl, same, prev.impl, current.impl)
+		b.Store(chain, Expr{selected, ptr})
+		b.impl.CreateRetVoid()
+		return fn
+	}
+	replay := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
+	initialize := prog.ctx.AddBasicBlock(fn, "initialize")
+	done := prog.ctx.AddBasicBlock(fn, "done")
+	b.impl.CreateCondBr(b.impl.CreateOr(same, replay, ""), done, initialize)
+	b.impl.SetInsertPointAtEnd(initialize)
+	b.Store(previous, current)
+	b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), prog.Pointer(ptr)}, Expr{fn.Param(1), ptr})
+	// Specialize the byte count so small frames clear with fixed stores,
+	// avoiding a dynamic memset call on every function entry.
+	size := llvm.ConstInt(prog.ctx.Int64Type(), uint64(count)*prog.SizeOf(ptr), false)
+	memset := mod.NamedFunction("llvm.memset.p0.i64")
+	if memset.IsNil() {
+		memset = llvm.AddFunction(mod, "llvm.memset.p0.i64", llvm.FunctionType(prog.ctx.VoidType(), []llvm.Type{ptr.ll, prog.ctx.Int8Type(), prog.ctx.Int64Type(), prog.ctx.Int1Type()}, false))
+	}
+	array := llvm.CreateStructGEP(b.impl, frameType, frame, 2)
+	b.impl.CreateCall(memset.GlobalValueType(), memset, []llvm.Value{array, llvm.ConstInt(prog.ctx.Int8Type(), 0, false), size, llvm.ConstInt(prog.ctx.Int1Type(), 0, false)}, "")
+	b.Store(chain, Expr{frame, ptr})
+	b.impl.CreateBr(done)
+	b.impl.SetInsertPointAtEnd(done)
+	b.impl.CreateRetVoid()
+	return fn
 }

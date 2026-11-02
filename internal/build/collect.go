@@ -148,6 +148,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
 	}
 	m.common.Target = c.buildConf.Target
+	m.common.WasmRuntimeFree = c.wasmRuntimeFree
 	m.common.TargetABI = c.crossCompile.TargetABI
 	m.common.WasmProfile = string(c.crossCompile.WasmProfile)
 	m.common.WasmProvider = string(c.crossCompile.WasmProvider)
@@ -166,6 +167,9 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	m.common.CRTVersion = c.crossCompile.Toolchain.CRTVersion
 	m.common.ToolsetVersion = c.crossCompile.Toolchain.ToolsetVersion
 	m.common.GoGlobalDCE = c.buildConf.goGlobalDCEEnabled()
+	// Original DCE inserts interface-visibility predicates into package IR.
+	// A non-DCE link cannot resolve those predicates from a cached archive.
+	m.common.DeadcodeDrop = c.buildConf.deadcodeDropEnabled()
 	m.common.EnableLTOPlugin = c.buildConf.LTOPlugin.Enabled()
 	m.common.EmitDWARF = shouldEmitDebugInfo(c.buildConf, &c.crossCompile)
 	m.common.EmitCodeView = shouldEmitCodeView(c.buildConf, &c.crossCompile)
@@ -233,6 +237,11 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 	m.pkg.PkgPath = p.PkgPath
 	m.pkg.PkgID = p.ID
+	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
+	if pkg.AltPkg != nil && c.progSSA != nil {
+		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)
+		slices.Sort(m.pkg.DeadInits)
+	}
 	if p.PkgPath == llssa.PkgRuntime {
 		// Only the runtime embeds this setting; goroutine callers have a
 		// configuration-independent ABI. Match SetPthreadStackSize in Build.

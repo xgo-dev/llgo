@@ -17,3 +17,7 @@ func PrintByte(v byte) {
 func PrintString(s String) {
 	emscripten.WriteStderr(s.data, uintptr(s.len))
 }
+
+func PrintString32(data unsafe.Pointer, size uint32) {
+	emscripten.WriteStderr(data, uintptr(size))
+}

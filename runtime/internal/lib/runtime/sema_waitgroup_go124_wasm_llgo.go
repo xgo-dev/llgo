@@ -6,5 +6,5 @@ import _ "unsafe"
 
 //go:linkname sync_runtime_SemacquireWaitGroup sync.runtime_SemacquireWaitGroup
 func sync_runtime_SemacquireWaitGroup(addr *uint32) {
-	syncWaitGroupAcquire(addr)
+	syncWaitGroupAcquire(addr, false)
 }

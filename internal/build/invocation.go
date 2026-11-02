@@ -58,6 +58,7 @@ func (e commandEnv) lookup(name string) string {
 }
 
 func resolveOutputs(dir string, out *OutFmtDetails) {
+	out.WasmManifest = resolvePath(dir, out.WasmManifest)
 	out.Out = resolvePath(dir, out.Out)
 	out.PCLN = resolvePath(dir, out.PCLN)
 	out.DWARF = resolvePath(dir, out.DWARF)

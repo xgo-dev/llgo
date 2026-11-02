@@ -67,7 +67,7 @@ func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
 	if x.ll.ElementType().TypeKind() == llvm.FloatTypeKind {
 		name = "SIMDFMA32"
 	}
-	fn := b.Pkg.rtFunc(name)
+	fn := b.Pkg.rtFunc(RuntimeSymbol(name, "SIMDFMA32", "SIMDFMA64"))
 	vector := llvm.Undef(result.ll)
 	for i := 0; i < result.ll.VectorSize(); i++ {
 		lane := llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)

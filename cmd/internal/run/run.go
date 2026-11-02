@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
@@ -36,7 +37,7 @@ var (
 
 // llgo run
 var Cmd = &base.Command{
-	UsageLine: "llgo run [-target platform] [build flags] package [arguments...]",
+	UsageLine: "llgo run [-target platform] [build flags] package|files [arguments...]",
 	Short:     "Compile and run Go program",
 }
 
@@ -50,6 +51,7 @@ var (
 	runGoBuildFlags     *base.PassArgs
 	cmpTestGoBuildFlags *base.PassArgs
 	runTimeout          time.Duration
+	runExec             *[]string
 )
 
 func init() {
@@ -57,10 +59,12 @@ func init() {
 	CmpTestCmd.Run = runCmpTest
 	runGoBuildFlags = flags.CaptureGoBuildFlags(Cmd)
 	flags.AddCommonFlags(&Cmd.Flag)
+	flags.AddCompilerVerboseFlag(&Cmd.Flag)
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddEmulatorFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag) // for -target support
 	Cmd.Flag.DurationVar(&runTimeout, "timeout", 0, "Timeout for the executed program (0 disables)")
+	runExec = flags.AddExecFlag(&Cmd.Flag)
 
 	cmpTestGoBuildFlags = flags.CaptureGoBuildFlags(CmpTestCmd)
 	flags.AddCommonFlags(&CmpTestCmd.Flag)
@@ -101,10 +105,15 @@ func runCmdEx(cmd *base.Command, args []string, mode build.Mode, goBuildFlags *b
 
 	args = cmd.Flag.Args()
 	args, runArgs, err := parseRunArgs(args)
-	check(err)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		mockable.Exit(1)
+		return
+	}
 	conf.RunArgs = runArgs
 	if mode == build.ModeRun {
 		conf.RunnerTimeout = runTimeout
+		conf.Exec = *runExec
 	}
 	_, err = build.Do(args, conf)
 	if err != nil {
@@ -122,11 +131,18 @@ func parseRunArgs(args []string) ([]string, []string, error) {
 		return nil, nil, errNoProj
 	}
 
-	return args[:1], args[1:], nil
-}
-
-func check(err error) {
-	if err != nil {
-		panic(err)
+	if strings.HasSuffix(args[0], ".go") {
+		n := 0
+		for n < len(args) && strings.HasSuffix(args[n], ".go") {
+			if strings.HasSuffix(args[n], "_test.go") {
+				return nil, nil, fmt.Errorf("llgo: cannot run *_test.go files (%s)", args[n])
+			}
+			n++
+		}
+		return args[:n], args[n:], nil
 	}
+	if strings.Contains(args[0], "@") {
+		return nil, nil, fmt.Errorf("llgo: versioned run operands are unsupported; use a module with pinned dependencies: %s", args[0])
+	}
+	return args[:1], args[1:], nil
 }

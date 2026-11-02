@@ -190,7 +190,7 @@ var RecoverMark func()
 const (
 	// LLGoFiles: the frame-pointer helper must live in the runtime core —
 	// programs that never import "runtime" still link Recover.
-	LLGoFiles = "_wrap/fp.c" + tracebackLLGoFiles + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles + wasiGCLLGoFiles
+	LLGoFiles = "_wrap/fp.c; _wrap/synctest_heap.c" + tracebackLLGoFiles + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles + wasiGCLLGoFiles
 )
 
 //go:linkname c_framepointer C.llgo_framepointer
@@ -222,7 +222,9 @@ func Goexit() {
 }
 
 func init() {
-	getg().isMain = true
+	gp := getg()
+	gp.isMain = true
+	markTracebackOwned(gp)
 }
 
 // -----------------------------------------------------------------------------
@@ -261,12 +263,12 @@ func stringTracef(fp c.FilePtr, format *c.Char, s String) {
 
 // New allocates memory and initializes it to zero.
 func New(t *Type) unsafe.Pointer {
-	return AllocZ(t.Size_)
+	return AllocZAligned(t.Size_, uintptr(t.Align_))
 }
 
 // NewArray allocates memory for an array and initializes it to zero.
 func NewArray(t *Type, n int) unsafe.Pointer {
-	return AllocZ(uintptr(n) * t.Size_)
+	return AllocZAligned(uintptr(n)*t.Size_, uintptr(t.Align_))
 }
 
 // -----------------------------------------------------------------------------

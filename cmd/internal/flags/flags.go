@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cmd/internal/compat"
 	"github.com/xgo-dev/llgo/cmd/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
@@ -201,7 +202,7 @@ func AddOptLevelFlags(fs *flag.FlagSet) {
 	fs.BoolFunc("O2", "Optimize for performance", optLevelBoolFunc(optlevel.O2, "-O2"))
 	fs.BoolFunc("O3", "Optimize aggressively", optLevelBoolFunc(optlevel.O3, "-O3"))
 	fs.BoolFunc("Os", "Optimize for size", optLevelBoolFunc(optlevel.Os, "-Os"))
-	fs.BoolFunc("Oz", "Optimize aggressively for size", optLevelBoolFunc(optlevel.Oz, "-Oz"))
+	fs.BoolFunc("Oz", "Optimize aggressively for size, including final hosted WebAssembly optimization", optLevelBoolFunc(optlevel.Oz, "-Oz"))
 	fs.Func("O", "Optimization level (0,1,2,3,s,z; default s for host, z for targets)", func(val string) error {
 		level, err := optlevel.Parse(val)
 		if err != nil {
@@ -224,6 +225,7 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	fs.StringVar(&LTOPluginPath, "lto-pass-plugin", "", "Load an LLVM LTO pass plugin during full LTO (ELF lld or Mach-O ld64.lld)")
 	AddGlobalDCEFlag(fs)
 	addPCLNFlag(fs)
+	addWasmFinalFlags(fs)
 	addDebugArtifactFlag(fs)
 	fs.StringVar(&Tags, "tags", "", "Build tags")
 	fs.Var(&PthreadStackSize, "goroutine-stack-size", "Stack size for native threads and WebAssembly goroutines, e.g. 2MB (0 uses the platform default)")
@@ -290,45 +292,41 @@ func AddCoverageFlags(fs *flag.FlagSet) {
 
 // Test binary flags
 var (
-	TestRun              string
-	TestBench            string
-	TestTimeout          string
-	TestShort            bool
-	TestCount            int
-	TestCPU              string
-	TestCoverProfile     string
-	TestParallel         int
-	TestFailfast         bool
-	TestJSON             bool
-	TestList             string
-	TestSkip             string
-	TestShuffle          string
-	TestFullpath         bool
-	TestBenchmem         bool
-	TestBenchtime        string
-	TestCPUProfile       string
-	TestMemProfile       string
-	TestMemProfileRate   int
-	TestOutputDir        string
-	TestPaniconexit0     bool
-	TestTestLogFile      string
-	TestGoCoverDir       string
-	TestFuzzWorker       bool
-	TestFuzzCacheDir     string
-	TestFuzz             string
-	TestFuzzTime         string
-	TestFuzzMinimizeTime string
+	TestRun            string
+	TestBench          string
+	TestTimeout        string
+	TestShort          bool
+	TestCount          int
+	TestCoverProfile   string
+	TestParallel       int
+	TestFailfast       bool
+	TestJSON           bool
+	TestList           string
+	TestSkip           string
+	TestShuffle        string
+	TestFullpath       bool
+	TestBenchmem       bool
+	TestBenchtime      string
+	TestCPUProfile     string
+	TestMemProfile     string
+	TestMemProfileRate int
+	TestOutputDir      string
+	TestPaniconexit0   bool
+	TestTestLogFile    string
+	TestGoCoverDir     string
+	TestArtifacts      bool
 )
 
 func AddTestBinaryFlags(fs *flag.FlagSet) {
 	AddCoverageFlags(fs)
 	TestCoverProfile = ""
+	fs.BoolVar(&TestArtifacts, "artifacts", false, "Save test artifacts in the output directory")
 	fs.StringVar(&TestRun, "run", "", "Run only tests matching the regular expression")
 	fs.StringVar(&TestBench, "bench", "", "Run benchmarks matching the regular expression")
 	fs.StringVar(&TestTimeout, "timeout", DefaultTestTimeout, "Test timeout duration (e.g., 10m, 30s)")
 	fs.BoolVar(&TestShort, "short", false, "Tell long-running tests to shorten their run time")
 	fs.IntVar(&TestCount, "count", 1, "Run each test and benchmark n times")
-	fs.StringVar(&TestCPU, "cpu", "", "Comma-separated list of GOMAXPROCS values for which the tests or benchmarks should be executed")
+	rejectValue(fs, "cpu", compat.Flag("test", "cpu").Note)
 	fs.Func("coverprofile", "Write coverage profile to file", func(value string) error {
 		TestCoverProfile = value
 		Cover = true
@@ -346,7 +344,14 @@ func AddTestBinaryFlags(fs *flag.FlagSet) {
 	rejectValue(fs, "blockprofilerate", "LLGo does not implement goroutine blocking samples")
 	fs.StringVar(&TestCPUProfile, "cpuprofile", "", "Write a CPU profile to the specified file")
 	fs.StringVar(&TestMemProfile, "memprofile", "", "Write an allocation profile to the file")
-	fs.IntVar(&TestMemProfileRate, "memprofilerate", 0, "Enable more precise (and expensive) memory allocation profiles by setting runtime.MemProfileRate")
+	TestMemProfileRate = 0
+	fs.Func("memprofilerate", "LLGo allocation profile rate: only 1 (full allocation counting) is supported", func(value string) error {
+		if err := ValidateMemProfileRate(value); err != nil {
+			return err
+		}
+		TestMemProfileRate = 1
+		return nil
+	})
 	rejectValue(fs, "blockprofile", "LLGo does not implement goroutine blocking samples")
 	rejectValue(fs, "mutexprofile", "LLGo does not implement mutex contention samples")
 	rejectValue(fs, "mutexprofilefraction", "LLGo does not implement mutex contention samples")
@@ -355,11 +360,16 @@ func AddTestBinaryFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&TestPaniconexit0, "paniconexit0", false, "Panic on call to os.Exit(0)")
 	fs.StringVar(&TestTestLogFile, "testlogfile", "", "Write test action log to file")
 	fs.StringVar(&TestGoCoverDir, "gocoverdir", "", "Directory where intermediate coverage files are written")
-	fs.BoolVar(&TestFuzzWorker, "fuzzworker", false, "Coordinate with the parent process to fuzz random values (for use only by cmd/go)")
-	fs.StringVar(&TestFuzzCacheDir, "fuzzcachedir", "", "Directory where interesting fuzzing inputs are stored (for use only by cmd/go)")
-	fs.StringVar(&TestFuzz, "fuzz", "", "Run the fuzz test matching the regular expression")
-	fs.StringVar(&TestFuzzTime, "fuzztime", "", "Run fuzzing for the specified duration (e.g., 10s, 1m)")
-	fs.StringVar(&TestFuzzMinimizeTime, "fuzzminimizetime", "", "Time to spend minimizing a value after finding a crash (default: 60s)")
+	rejectBool(fs, "fuzzworker", compat.Flag("test", "fuzz").Note)
+	rejectValue(fs, "fuzzcachedir", compat.Flag("test", "fuzz").Note)
+	for _, name := range []string{"fuzz", "fuzztime", "fuzzminimizetime"} {
+		rejectValue(fs, name, compat.Flag("test", name).Note)
+	}
+	for _, name := range strings.Fields(compat.TestBinaryFlags) {
+		if f := fs.Lookup(name); f != nil {
+			fs.Var(f.Value, "test."+name, f.Usage+" (alias for -"+name+")")
+		}
+	}
 }
 
 func AddEmulatorFlags(fs *flag.FlagSet) {
@@ -391,8 +401,8 @@ func UpdateConfig(conf *build.Config) error {
 	conf.Verbose = Verbose
 	conf.PrintPackages = false
 	switch conf.Mode {
-	case build.ModeBuild:
-		// Keep go build -v's package-only output, but report packages only after
+	case build.ModeBuild, build.ModeRun, build.ModeInstall:
+		// Keep Go build/run/install -v package output, reporting packages after
 		// successful compilation. The legacy LLGo compiler output is available
 		// through -compiler-verbose.
 		conf.Verbose = CompilerVerbose
@@ -415,6 +425,9 @@ func UpdateConfig(conf *build.Config) error {
 	}
 	if LTO.Specified {
 		conf.LTO = LTO.Mode
+	}
+	if WasmStrip != "" {
+		conf.WasmStrip = build.WasmStripMode(WasmStrip)
 	}
 	if PCLN.Specified {
 		conf.PCLNMode = PCLN.Mode

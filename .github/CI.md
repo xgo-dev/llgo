@@ -46,15 +46,60 @@ silently measuring a different commit.
 
 `linux_runner` and `linux_large_runner` contain JSON runner labels. The upstream
 `xgo-dev` repository uses its qiniu runners; workflows running in forks use
-GitHub-hosted Ubuntu 24.04. Consume them with `fromJSON(...)`. Public-network
-link checks and release packaging keep their explicitly selected hosted runners.
-Windows and macOS platform matrices remain in their owning workflows.
+GitHub-hosted Ubuntu 24.04. Consume them with `fromJSON(...)`.
 
-PR updates share a concurrency group and cancel superseded runs. Main and tag
-runs use `github.run_id` in their group so later commits neither cancel running
-checks nor replace pending checks. Workflow-level concurrency cannot consume
+Prepare, the independent CI policy check, and PR-close cancellation select their
+runner directly from the workflow repository owner: they cannot wait for prepare
+outputs. These are the only bootstrap exceptions to centralized runner selection,
+and the contract tests check that their labels match the policy. CI gates use
+`linux_runner`, with a hosted fallback if preparation fails before producing outputs. This
+keeps ordinary PR startup and completion jobs out of the hosted runner queue.
+
+The amd64 Mise/Pixi environment checks, release artifact verification, Linux
+sysroot generation, snapshot cross-build, package/container validation, and
+installer distro containers use `linux_large_runner`. WinGet manifest
+preparation uses `linux_runner`. The sysroot job first verifies Docker daemon
+access and a privileged container's mount capability, even on cache hits;
+cache misses also exercise QEMU/binfmt registration before cross-building.
+Native ARM64, Windows and macOS coverage keeps its existing architecture and
+runner selection. Public-network link checks and tag publishing keep their
+explicitly selected hosted runners.
+
+Release artifact tests explicitly install Clang on Linux for the native
+assembly shared-library fixture; `install-llvm: false` does not provide it on
+minimal runners. The main Linux LLGo test job uses a private LLDB launcher that
+skips initialization files and clears the debuginfod server list. Ubuntu's
+system LLDB initialization file otherwise enables its symbol server even when
+`DEBUGINFOD_URLS` is empty. Tests retain local symbol lookup without waiting
+for external symbol servers.
+
+PR updates share a concurrency group and cancel superseded runs. Main pushes
+use a separate main group and also cancel superseded runs. Tags and other
+events use `github.run_id` to keep their runs independent. Workflow-level concurrency cannot consume
 prepare outputs; `test_ci_workflows.py` enforces the common expression instead.
 The reusable prepare workflow has no concurrency group of its own.
+
+Closing or merging a PR cancels its existing CI runs. The `PR closed` workflow
+handles `pull_request_target: closed` using only the base commit's cleanup
+script (`github.sha`), never PR code, artifacts, dependencies or caches. Only
+that job receives Actions write permission. It uses qiniu upstream and hosted
+Ubuntu in forks. It does not enter any PR's concurrency group.
+
+The script snapshots active `pull_request` runs, matches their PR association,
+and cancels individual run IDs only when their creation/start time precedes the
+close event. Runs in the same second as the close and manual reruns are preserved.
+It rechecks each run and the live PR state before cancellation; a reopened PR or
+a different close event stops cleanup. Fork runs with no PR association require
+a matching head repository/branch used by exactly one historical PR; ambiguous
+heads are preserved. API failures fail the cleanup job without broad cancellation.
+GitHub does not provide an atomic run-attempt/state-and-cancel operation, so a
+run that finishes and is manually rerun between its final check and POST remains
+a narrow API race; new run IDs after a reopen are never cancellation candidates.
+
+Concurrency keys use workflow filenames, independent of display names. Contract
+tests discover both `.yml` and `.yaml` files and traverse all jobs and local
+reusable workflows. CI gates use `always() && !cancelled()` so cancellation can
+stop them too. The close policy takes effect after merge to main.
 
 Every workflow that uses prepare has a uniquely named `CI gate (...)` job. It
 runs even if prepare fails and reports that failure. Branch protection should
@@ -77,10 +122,10 @@ container images. These checks gate tag publishing and require no Fury token.
 Stable `vX.Y.Z` tags upload DEB/RPM packages to Gemfury as public packages after
 the release succeeds.
 Set the repository Actions secret `FURY_TOKEN` to an upload-only Gemfury Push
-token. The target account defaults to the repository owner (`xgo-dev` upstream);
-set the repository variable `FURY_ACCOUNT` to use another account. Prerelease
-tags publish their GitHub assets and container version tags without uploading
-to Fury.
+token. The upstream `xgo-dev` organization publishes to the Gemfury account
+`goplus`. Forks default to their repository owner. Set the repository variable
+`FURY_ACCOUNT` to override the target account. Prerelease tags publish their
+GitHub assets and container version tags without uploading to Fury.
 
 GHCR publishing uses `GITHUB_TOKEN` with `packages: write`. After the first
 publish, set the container package visibility to public to allow anonymous pulls.

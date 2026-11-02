@@ -10,13 +10,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: ci-policy.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 # This independent check must never be gated by the policy it tests.
 jobs:
   policy:
-    runs-on: ubuntu-24.04
+    # Validate the policy independently, without waiting for prepare outputs.
+    runs-on: ${{ fromJSON(github.repository_owner == 'xgo-dev' && '["qiniu", "ubuntu-24.04"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -27,3 +28,7 @@ jobs:
         run: python -m pip install -r .github/scripts/requirements-ci.txt
       - name: Test decisions and workflow contracts
         run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Test WinGet publication
+        run: python -m unittest discover -s .github/windows -p 'test_*winget.py' -v
+      - name: Test Unix runtime packaging
+        run: python -m unittest discover -s .github/unix -p 'test_*.py' -v

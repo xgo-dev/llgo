@@ -245,6 +245,9 @@ func validateSessionTarget(conf *build.Config, target *targets.Config, selected 
 	if err := validateBackendOptions(selected, opts); err != nil {
 		return err
 	}
+	if target == nil && (conf.Goos == "darwin" || conf.Goos == "windows") && selected == backendLLDB && conf.LinkOptions.DWARFCompression == build.DWARFCompressionEnabled {
+		return errors.New("llgo debug: LLDB cannot read experimental compressed Mach-O/PE DWARF; use -ldflags=-compressdwarf=false")
+	}
 	if selected != backendBrowser && target == nil && opts.remote == "" && (conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH) {
 		return fmt.Errorf("llgo debug: cannot launch a %s/%s program on %s/%s without -remote", conf.Goos, conf.Goarch, runtime.GOOS, runtime.GOARCH)
 	}

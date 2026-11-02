@@ -227,8 +227,11 @@ for target in "${targets_to_build[@]}"; do
 		continue
 	fi
 
-	output=$(../../../dev/llgo.sh build -target $target -o hello.elf "./$test_dir" 2>&1)
-	if [ $? -eq 0 ]; then
+	started=$SECONDS
+	output=$(../../../dev/llgo.sh build -target "$target" -o hello.elf "./$test_dir" 2>&1)
+	result=$?
+	echo "Target timing: $test_dir/$target $((SECONDS - started))s"
+	if [ "$result" -eq 0 ]; then
 		echo ✅ $target `file hello.elf`
 		successful_targets+=("$target")
 	else

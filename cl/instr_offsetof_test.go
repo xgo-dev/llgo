@@ -29,6 +29,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 	gossa "golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -195,6 +196,8 @@ func explicit[T any](v *outer[T]) uintptr {
 		Field: 0,
 	}); !ok || got.IsNil() {
 		t.Fatalf("offsetOfBuiltinArg(Field) = (%v, %v), want zero offset", got, ok)
+	} else if !types.Identical(got.RawType(), types.Typ[types.Uintptr]) {
+		t.Fatalf("offsetOfBuiltinArg(Field) type = %v, want uintptr", got.RawType())
 	}
 	validSynthetic := &gossa.FieldAddr{
 		X:     fakeSSAValue{typ: types.NewPointer(stubStruct)},
@@ -310,6 +313,60 @@ func Offset() uintptr { return F(1) }
 `)
 	if fn := module.NamedFunction("foo.Offset"); fn.IsNil() {
 		t.Fatal("missing compiled Offset function")
+	}
+}
+
+func TestCompileGenericOffsetofUnsignedConsumers(t *testing.T) {
+	const src = `package foo
+import "unsafe"
+type nested[T any] struct { first, second T }
+type value[T any] struct {
+	first T
+	word int32
+	nested nested[T]
+}
+func pointer[T any](v *value[T], shift uint) uintptr {
+	println(unsafe.Offsetof(v.nested))
+	return ^unsafe.Offsetof(v.nested) >> shift
+}
+func composite[T any](v T, shift uint) uintptr {
+	println(unsafe.Offsetof(struct { pad byte; item T }{item: v}.item))
+	return ^unsafe.Offsetof(struct { pad byte; item T }{item: v}.item) >> shift
+}
+func Result(shift uint) uintptr {
+	return pointer(&value[bool]{}, shift) + composite(true, shift)
+}
+`
+	for _, target := range []struct {
+		name string
+		arch *llssa.Target
+	}{
+		{"native", nil},
+		{"386", &llssa.Target{GOOS: "windows", GOARCH: "386"}},
+		{"wasm32", &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}},
+		{"wasm64", &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"}},
+	} {
+		t.Run(target.name, func(t *testing.T) {
+			ssaPkg, _, files := buildGoSSAPkg(t, src)
+			prog := newLLSSAProgForTarget(t, target.arch)
+			t.Cleanup(prog.Dispose)
+			pkg, err := NewPackage(prog, ssaPkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := pkg.Module()
+			t.Cleanup(module.Dispose)
+			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			if module.NamedFunction(llssa.PkgRuntime+".PrintUint").IsNil() || !module.NamedFunction(llssa.PkgRuntime+".PrintInt").IsNil() {
+				t.Error("generic Offsetof printing did not use only the unsigned helper")
+			}
+			ir := module.String()
+			if !strings.Contains(ir, "lshr ") || strings.Contains(ir, "ashr ") {
+				t.Error("generic Offsetof right shift did not retain unsigned semantics")
+			}
+		})
 	}
 }
 
@@ -520,8 +577,10 @@ func buildPackageWithFiles(t *testing.T, src string) (*gossa.Package, *token.Fil
 
 func offsetOfArg(t *testing.T, ctx *context, arg gossa.Value) int {
 	t.Helper()
-	if _, ok := ctx.offsetOfBuiltinArg(arg); !ok {
+	if got, ok := ctx.offsetOfBuiltinArg(arg); !ok {
 		t.Fatal("offsetOfBuiltinArg returned false")
+	} else if !types.Identical(got.RawType(), types.Typ[types.Uintptr]) {
+		t.Fatalf("offsetOfBuiltinArg type = %v, want uintptr", got.RawType())
 	}
 	load := arg.(*gossa.UnOp)
 	field := load.X.(*gossa.FieldAddr)

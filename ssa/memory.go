@@ -29,7 +29,7 @@ import (
 func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
-	ptr := b.allocUninited(prog.IntVal(size, prog.Uintptr())).impl
+	ptr := b.allocTyped("AllocU", t, prog.IntVal(size, prog.Uintptr())).impl
 	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
@@ -80,6 +80,9 @@ func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
 }
 
 func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value {
+	if _, ok := simdTagIndex(t.RawType()); ok {
+		return llvm.ConstNull(t.ll.StructElementTypes()[index])
+	}
 	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
 		return value
 	}
@@ -94,6 +97,9 @@ func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value
 }
 
 func (b Builder) unwrapStructField(t Type, index int, value llvm.Value) llvm.Value {
+	if _, ok := simdTagIndex(t.RawType()); ok {
+		return b.Prog.Zero(b.Prog.Field(t, index)).impl
+	}
 	layout, ok := b.Prog.structLayout(t)
 	if ok && index < len(layout.wrapped) && layout.wrapped[index] {
 		// LLVM instructions such as cmpxchg have a fixed native aggregate result
@@ -158,7 +164,7 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 		if prog.SizeOf(elem) == 0 {
 			return pkg.moduleZeroSizedAlloc(elem)
 		}
-		ret = b.InlineCall(pkg.rtFunc("AllocZ"), size)
+		ret = b.allocTyped("AllocZ", elem, size)
 	} else {
 		// Stack-local zero-sized variables keep a distinct alloca. Only heap
 		// allocations and package globals use the shared module sentinel.
@@ -193,7 +199,15 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 func (b Builder) AllocU(elem Type, n ...int64) (ret Expr) {
 	prog := b.Prog
 	size := SizeOf(prog, elem, n...)
-	return Expr{b.allocUninited(size).impl, prog.Pointer(elem)}
+	return Expr{b.allocTyped("AllocU", elem, size).impl, prog.Pointer(elem)}
+}
+
+func (b Builder) allocTyped(helper string, elem Type, size Expr) Expr {
+	alignment := b.Prog.AlignOf(elem)
+	if alignment > uint64(b.Prog.GoWordSize()) {
+		return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper+"Aligned", "AllocUAligned", "AllocZAligned")), size, b.Prog.IntVal(alignment, b.Prog.Uintptr()))
+	}
+	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocU", "AllocZ")), size)
 }
 
 func (b Builder) allocUninited(size Expr) (ret Expr) {
@@ -507,9 +521,17 @@ func (b Builder) Load(ptr Expr) Expr {
 func (b Builder) Store(ptr, val Expr) Expr {
 	raw := ptr.raw.Type
 	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
-	val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
-	b.assertStaticNilDeref(ptr)
 	storageType := b.Prog.Elem(ptr.Type)
+	if storageType.kind == vkFuncPtr && val.kind == vkClosure {
+		// The raw signature alone does not distinguish a C pointer slot from
+		// a Go funcval. Use the actual storage representation so a two-word
+		// Go value cannot overwrite the next native variable. ChangeType also
+		// rejects closure environments that a native callback cannot carry.
+		val = b.ChangeType(storageType, val)
+	} else {
+		val = checkExpr(val, raw.(*types.Pointer).Elem(), b)
+	}
+	b.assertStaticNilDeref(ptr)
 	if storageType.kind == vkSIMD {
 		stored := b.impl.CreateStore(val.impl, ptr.impl)
 		stored.SetAlignment(int(b.Prog.AlignOf(storageType)))

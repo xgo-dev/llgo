@@ -30,6 +30,7 @@ func (s *chanSignal) ready() {
 func (*chanSignal) destroy() {}
 
 func chanBlockForever() {
+	NewSynctestWaiter().Block()
 	CurrentSchedulerWaiter().Park()
 	fatal("runtime: permanently parked goroutine was resumed")
 }

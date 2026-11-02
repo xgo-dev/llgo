@@ -475,9 +475,12 @@ func staticPointerInitOfVisited(store *ssa.Store, visited map[*ssa.Alloc]bool) (
 }
 
 func staticInitFunctionOf(value ssa.Value, terminalStore *ssa.Store) (*ssa.Function, bool) {
+	// A lexical parent does not imply an environment: a function literal with
+	// no free variables has the same static code/nil-context value as a named
+	// function. buildStaticInitExpr still checks the lowered environment ABI.
 	switch value := value.(type) {
 	case *ssa.Function:
-		if value.Parent() == nil && len(value.FreeVars) == 0 {
+		if len(value.FreeVars) == 0 {
 			return value, true
 		}
 	case *ssa.MakeClosure:
@@ -485,7 +488,7 @@ func staticInitFunctionOf(value ssa.Value, terminalStore *ssa.Store) (*ssa.Funct
 			return nil, false
 		}
 		function, ok := value.Fn.(*ssa.Function)
-		if !ok || function.Parent() != nil || len(function.FreeVars) != 0 {
+		if !ok || len(function.FreeVars) != 0 {
 			return nil, false
 		}
 		refs, ok := nonDebugReferrers(value)

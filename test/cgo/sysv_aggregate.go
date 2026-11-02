@@ -22,7 +22,7 @@ import "unsafe"
 //llgo:cdecl
 type sysVFloatPairEntry func(float64, float64, float64, float64, float64, float64, float64, float64, C.llgo_sysv_float_pair, float64) float64
 
-//go:linkname linkedSysVFloatPair llgo_test_sysv_float_pair
+//go:linkname linkedSysVFloatPair C.llgo_test_sysv_float_pair
 func linkedSysVFloatPair(float64, float64, float64, float64, float64, float64, float64, float64, C.llgo_sysv_float_pair, float64) float64
 
 func directSysVFloatPair() float64 {

@@ -15,6 +15,13 @@ fail() {
     exit 1
 }
 
+# Distro CI bounds each startup separately so a stuck shell still reports its
+# captured output. Leave local and platform tests free of a coreutils dependency.
+timeout_binary=""
+if [[ -n "${LLGO_SHELL_TEST_TIMEOUT:-}" ]]; then
+    timeout_binary="$(command -v timeout || command -v gtimeout)" || fail 'GNU timeout is required'
+fi
+
 # Use the real piped entrypoint and archive/link installation, without network
 # downloads or a compiler build. Release CI separately executes real archives.
 mkdir -p "$temporary/payload/bin" "$temporary/payload/runtime"
@@ -51,10 +58,17 @@ check_new_shell() {
             continue
         fi
         printf 'START %s %s (%s)\n' "$shell_name" "$mode" "$scenario"
-        if ! "${clean_env[@]}" LLGO_TEST_BIN="$install_root/bin" \
-            "$shell_binary" "$mode" "$assertion" >"$temporary/shell.log" 2>&1; then
+        local startup=("${clean_env[@]}" LLGO_TEST_BIN="$install_root/bin"
+            "$shell_binary" "$mode" "$assertion")
+        if [[ -n "$timeout_binary" ]]; then
+            startup=("$timeout_binary" --verbose -k 2 "$LLGO_SHELL_TEST_TIMEOUT" "${startup[@]}")
+        fi
+        if "${startup[@]}" </dev/null >"$temporary/shell.log" 2>&1; then
+            :
+        else
+            local status=$?
             cat "$temporary/install.log" "$temporary/shell.log" >&2
-            fail "$shell_name $mode ($scenario) did not find exactly one installed PATH entry"
+            fail "$shell_name $mode ($scenario) did not find exactly one installed PATH entry (exit $status)"
         fi
     done
 }

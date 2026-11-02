@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 func TestRecordRoundTrip(t *testing.T) {
@@ -126,14 +128,31 @@ func TestSchemaV1Contract(t *testing.T) {
 	}
 
 	var runtimeType struct {
-		Kind                string `json:"kind"`
-		DirectInterfaceFlag int    `json:"direct_interface_flag"`
+		Kind                string              `json:"kind"`
+		DirectInterfaceFlag int                 `json:"direct_interface_flag"`
+		UncommonFlag        int                 `json:"uncommon_flag"`
+		NamedFlag           int                 `json:"named_flag"`
+		KindMask            int                 `json:"kind_mask"`
+		PointerKind         int                 `json:"pointer_kind"`
+		KindTypes           map[abi.Kind]string `json:"kind_types"`
 	}
 	if err := json.Unmarshal(categories["runtime_type"], &runtimeType); err != nil {
 		t.Fatal(err)
 	}
 	if runtimeType.Kind != "Kind_" || runtimeType.DirectInterfaceFlag != 32 {
 		t.Fatalf("direct interface contract = %+v", runtimeType)
+	}
+	if runtimeType.UncommonFlag != int(abi.TFlagUncommon) || runtimeType.NamedFlag != int(abi.TFlagNamed) ||
+		runtimeType.KindMask != abi.KindMask || runtimeType.PointerKind != int(abi.Pointer) {
+		t.Fatalf("runtime type identity contract = %+v", runtimeType)
+	}
+	for kind, name := range map[abi.Kind]string{
+		abi.Array: "ArrayType", abi.Chan: "ChanType", abi.Func: "FuncType", abi.Interface: "InterfaceType",
+		abi.Map: "MapType", abi.Pointer: "PtrType", abi.Slice: "SliceType", abi.Struct: "StructType",
+	} {
+		if got := runtimeType.KindTypes[kind]; got != "github.com/xgo-dev/llgo/runtime/abi."+name {
+			t.Errorf("runtime kind %d type = %q, want %s", kind, got, name)
+		}
 	}
 
 	first := SchemaV1()

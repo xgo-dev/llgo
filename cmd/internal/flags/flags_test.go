@@ -638,7 +638,11 @@ func TestUpdateConfigVerboseCompatibility(t *testing.T) {
 		{name: "build flags can be combined", mode: build.ModeBuild, verbose: true, compilerVerbose: true, wantVerbose: true, wantPrintPackages: true},
 		{name: "test v is reserved for test binary", mode: build.ModeTest, verbose: true},
 		{name: "test verbose prints debug output", mode: build.ModeTest, compilerVerbose: true, wantVerbose: true},
-		{name: "other commands keep v behavior", mode: build.ModeRun, verbose: true, wantVerbose: true},
+		{name: "run v prints packages", mode: build.ModeRun, verbose: true, wantPrintPackages: true},
+		{name: "install v prints packages", mode: build.ModeInstall, verbose: true, wantPrintPackages: true},
+		{name: "run compiler verbosity", mode: build.ModeRun, compilerVerbose: true, wantVerbose: true},
+		{name: "install compiler verbosity", mode: build.ModeInstall, compilerVerbose: true, wantVerbose: true},
+		{name: "cmptest keeps v behavior", mode: build.ModeCmpTest, verbose: true, wantVerbose: true},
 	}
 
 	for _, tt := range tests {

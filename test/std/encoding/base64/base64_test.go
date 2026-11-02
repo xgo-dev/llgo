@@ -2,6 +2,7 @@ package base64_test
 
 import (
 	"bytes"
+	"encoding/base32"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -184,5 +185,34 @@ func TestCorruptInputError(t *testing.T) {
 	}
 	if corrupt.Error() == "" {
 		t.Fatal("CorruptInputError.Error should return message")
+	}
+}
+
+var boundAppendBase32 = base32.StdEncoding.AppendEncode
+var boundAppendBase64 = base64.StdEncoding.AppendEncode
+var boundLenBase32 = base32.StdEncoding.EncodedLen
+var boundLenBase64 = base64.StdEncoding.EncodedLen
+
+func TestBoundMethodsAcrossEncodingPackages(t *testing.T) {
+	src := []byte{13}
+	for _, test := range []struct {
+		name   string
+		encode func([]byte, []byte) []byte
+		length func(int) int
+		want   string
+	}{
+		{"base32", boundAppendBase32, boundLenBase32, "BU======"},
+		{"base64", boundAppendBase64, boundLenBase64, "DQ=="},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.encode(nil, src)
+			if string(got) != test.want || test.length(len(src)) != len(test.want) {
+				t.Fatalf("got %q, length %d; want %q", got, test.length(len(src)), test.want)
+			}
+		})
+	}
+	local32, local64 := base32.StdEncoding.AppendEncode, base64.StdEncoding.AppendEncode
+	if string(local32(nil, src)) != "BU======" || string(local64(nil, src)) != "DQ==" {
+		t.Fatal("local method values lost receiver package")
 	}
 }

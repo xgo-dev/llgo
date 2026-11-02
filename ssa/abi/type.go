@@ -386,8 +386,9 @@ func (b *Builder) PtrBytes(t types.Type) uintptr {
 		for i := 0; i < n; i++ {
 			f := t.Field(i)
 			fields[i] = f
-			if bytes = b.PtrBytes(f.Type()); bytes != 0 {
+			if ptrBytes := b.PtrBytes(f.Type()); ptrBytes != 0 {
 				field = i
+				bytes = ptrBytes
 			}
 		}
 		if field == -1 {

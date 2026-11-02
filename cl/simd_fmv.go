@@ -39,7 +39,7 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 			return
 		}
 		t = types.Unalias(t)
-		if _, ok := llssa.SIMDVectorShape(t); ok {
+		if simdFMVVector(t) {
 			hasVector = true
 			return
 		}
@@ -84,4 +84,32 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	}
 	// CPU queries are marked independently of vector signatures.
 	fn.MarkSIMDFMV(available && hasVector, simdCPUQuery(source))
+}
+
+// Midway's hardware representations are defined bridge types, not aliases of
+// archsimd vectors. Recognize their checked storage without changing their ABI.
+func simdFMVVector(t types.Type) bool {
+	if _, ok := llssa.SIMDVectorShape(t); ok {
+		return true
+	}
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/internal/bridge" {
+		return false
+	}
+	var arch *types.Package
+	for _, pkg := range named.Obj().Pkg().Imports() {
+		if pkg.Path() == "simd/archsimd" {
+			arch = pkg
+			break
+		}
+	}
+	if arch == nil {
+		return false
+	}
+	obj, ok := arch.Scope().Lookup(named.Obj().Name()).(*types.TypeName)
+	if !ok {
+		return false
+	}
+	_, vector := llssa.SIMDVectorShape(obj.Type())
+	return vector && types.Identical(named.Underlying(), obj.Type().Underlying())
 }

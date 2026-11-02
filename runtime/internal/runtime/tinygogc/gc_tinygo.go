@@ -135,7 +135,7 @@ func lazyInit() {
 }
 
 func gcPanic(s *c.Char) {
-	c.Printf(c.Str("%s"), s)
+	c.Fputs(s, c.Stdout)
 	c.Exit(2)
 }
 

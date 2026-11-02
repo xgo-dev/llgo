@@ -67,7 +67,7 @@ func main() {
 // CHECK: br i1 %[[PTRNIL]], label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
 // CHECK: %[[PTRFMT:[0-9]+]] = load ptr, ptr %[[PTRFIELD]], align 8
-// CHECK: %[[PTRRET:[0-9]+]] = call i32 (ptr, ...) @printf(ptr %[[PTRFMT]])
+// CHECK: %[[PTRRET:[0-9]+]] = {{(musttail )?}}call i32 (ptr, ...) @printf(ptr %[[PTRFMT]]{{(, \.\.\.)?}})
 // CHECK: ret i32 %[[PTRRET]]
 
 // CHECK-LABEL: define void @"main.(*CFmt).SetFormat"(

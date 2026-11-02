@@ -29,9 +29,6 @@ local_checkout_root() {
 
 install_local_checkout() {
     local root="$1"
-    if [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 && "${LLGO_INSTALL_DEPS:-1}" != 0 ]]; then
-        install_macos_lld
-    fi
     printf 'Installing llgo from local source...\n'
     (cd "$root" && go install ./cmd/llgo)
     if [[ -n "${GITHUB_ENV:-}" ]]; then
@@ -144,7 +141,7 @@ install_windows_release() {
     fi
 
     export LLGO_ABI=mingw
-    export LLGO_VERSION LLGO_INSTALL_DEPS LLGO_UPDATE_PATH LLGO_GO_VERSION
+    export LLGO_VERSION LLGO_INSTALL_DEPS LLGO_UPDATE_PATH LLGO_GO_VERSION LLGO_ARCH
     LLGO_INSTALL_ROOT="$(windows_native_path "$LLGO_INSTALL_ROOT")"
     export LLGO_INSTALL_ROOT
     if [[ -n "$local_archive" ]]; then
@@ -176,33 +173,6 @@ run_as_root() {
     fi
 }
 
-# Keep this version policy in sync with internal/build/darwin_linker.go's compatibleDarwinLLD.
-macos_lld_is_compatible() {
-    local version
-    version="$("$1" --version)" || return 1
-    [[ "$version" =~ (^|[[:space:]])LLD[[:space:]]23\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
-    (( BASH_REMATCH[2] > 1 || (BASH_REMATCH[2] == 1 && BASH_REMATCH[3] >= 3) ))
-}
-
-install_macos_lld() {
-    # LLD 23.1.2 still rejects SDK 27's arm64e.x1 stubs. Keep the supported
-    # major pinned even after Homebrew's unversioned formula moves to LLVM 24.
-    local formula=lld@23
-    local linker
-    linker="$(brew --prefix "$formula")/bin/ld64.lld"
-    if macos_lld_is_compatible "$linker" 2>/dev/null; then
-        return
-    fi
-    # Runner images can disable auto-update and retain an older 23.x formula.
-    brew update
-    # install also upgrades an outdated formula, while --skip-link keeps the
-    # matching LLD 22 drivers on PATH. brew upgrade has no --skip-link option.
-    HOMEBREW_NO_INSTALL_UPGRADE='' brew install --skip-link "$formula"
-    linker="$(brew --prefix "$formula")/bin/ld64.lld"
-    macos_lld_is_compatible "$linker" ||
-        die "LLD 23.x >= 23.1.3 is required for macOS arm64; update Homebrew and install lld@23 with --skip-link"
-}
-
 install_macos_dependencies() {
     command_exists xcode-select || die "xcode-select is required on macOS"
     if ! xcode-select -p >/dev/null 2>&1; then
@@ -220,9 +190,6 @@ install_macos_dependencies() {
     done
     if ((${#missing[@]})); then
         brew install "${missing[@]}"
-    fi
-    if [[ "$1" == arm64 ]]; then
-        install_macos_lld
     fi
 }
 
@@ -370,16 +337,12 @@ install_dependencies() {
     local os="$2"
     local arch="$3"
     export PATH="$root/bin:$PATH"
-    local profile=unix-v1
-    if [[ "$os-$arch" == darwin-arm64 ]]; then
-        profile=unix-v2-lld23
-    fi
-    local marker="$root/dependencies/$profile-$os-$arch-go-$LLGO_GO_VERSION.complete"
+    local marker="$root/dependencies/unix-v1-$os-$arch-go-$LLGO_GO_VERSION.complete"
     if [[ -f "$marker" ]] && system_go_is_compatible; then
         return
     fi
     case "$os" in
-        darwin) install_macos_dependencies "$arch" ;;
+        darwin) install_macos_dependencies ;;
         linux) install_linux_dependencies ;;
     esac
     ensure_go "$root" "$os" "$arch"
@@ -567,6 +530,15 @@ EOF
 }
 
 main() {
+    local checkout_root=""
+    if [[ -z "${LLGO_ARCHIVE_PATH:-}" ]]; then
+        checkout_root="$(local_checkout_root || true)"
+    fi
+    if [[ -n "$checkout_root" ]]; then
+        install_local_checkout "$checkout_root"
+        return
+    fi
+
     LLGO_VERSION="${LLGO_VERSION:-}"
     LLGO_INSTALL_ROOT="${LLGO_INSTALL_ROOT:-$HOME/.llgo}"
     LLGO_INSTALL_DEPS="${LLGO_INSTALL_DEPS:-1}"
@@ -600,15 +572,6 @@ main() {
 
     [[ "$LLGO_INSTALL_DEPS" == 0 || "$LLGO_INSTALL_DEPS" == 1 ]] || die "LLGO_INSTALL_DEPS must be 0 or 1"
     [[ "$LLGO_UPDATE_PATH" == 0 || "$LLGO_UPDATE_PATH" == 1 ]] || die "LLGO_UPDATE_PATH must be 0 or 1"
-    local checkout_root=""
-    if [[ -z "$local_archive" ]]; then
-        checkout_root="$(local_checkout_root || true)"
-    fi
-    if [[ -n "$checkout_root" ]]; then
-        install_local_checkout "$checkout_root"
-        return
-    fi
-
     local os
     os="$(normalize_os "$(uname -s)")" || die "unsupported operating system: $(uname -s)"
     if [[ "$os" == windows ]]; then

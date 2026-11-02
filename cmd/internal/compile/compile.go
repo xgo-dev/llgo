@@ -68,17 +68,10 @@ type options struct {
 	noOpt     countFlag
 	noInline  countFlag
 	allErrors countFlag
-	showOpt   countFlag
-	writeBar  countFlag
 
-	complete    bool
-	dynlink     bool
-	live        bool
-	race        bool
-	smallFrames bool
-	standard    bool
-	runtimePkg  bool
-	version     bool
+	complete bool
+	standard bool
+	version  bool
 }
 
 func newFlagSet(opts *options) *flag.FlagSet {
@@ -89,24 +82,22 @@ func newFlagSet(opts *options) *flag.FlagSet {
 	fs.Func("D", "Unsupported: gc local import paths", func(string) error { return fmt.Errorf("-D is unsupported by LLGo") })
 	fs.Func("I", "Unsupported: gc import search paths", func(string) error { return fmt.Errorf("-I is unsupported by LLGo") })
 	fs.Var(&opts.noOpt, "N", "disable optimizations")
-	fs.BoolVar(&opts.runtimePkg, "+", false, "compiling runtime")
 	fs.BoolVar(&opts.version, "V", false, "print version and exit")
 	fs.IntVar(&opts.concurrency, "c", 0, "concurrency during compilation (1 means no concurrency)")
 	fs.BoolVar(&opts.complete, "complete", false, "compiling complete package (no C or assembly)")
 	fs.Var(&opts.debug, "d", "enable debugging settings")
-	fs.BoolVar(&opts.dynlink, "dynlink", false, "support references to Go symbols defined in shared libraries")
 	fs.Var(&opts.allErrors, "e", "no limit on number of errors reported")
 	fs.Func("importcfg", "Unsupported: gc object import configuration", func(string) error { return fmt.Errorf("-importcfg is unsupported by LLGo") })
 	fs.StringVar(&opts.lang, "lang", "", "Go language version source code expects")
 	fs.Var(&opts.noInline, "l", "disable inlining")
-	fs.Var(&opts.showOpt, "m", "print optimization decisions")
-	fs.BoolVar(&opts.live, "live", false, "debug liveness analysis")
 	fs.Func("o", "Unsupported: gc object output", func(string) error { return fmt.Errorf("-o is unsupported by LLGo") })
 	fs.Func("p", "Unsupported: gc package import identity", func(string) error { return fmt.Errorf("-p is unsupported by LLGo") })
-	fs.BoolVar(&opts.race, "race", false, "enable race detector")
-	fs.BoolVar(&opts.smallFrames, "smallframes", false, "reduce the size limit for stack allocated objects")
 	fs.BoolVar(&opts.standard, "std", false, "compiling standard library")
-	fs.Var(&opts.writeBar, "wb", "enable write barrier")
+	for _, name := range []string{"+", "dynlink", "h", "live", "m", "race", "smallframes", "wb"} {
+		fs.BoolFunc(name, "Unsupported: gc backend or diagnostics", func(string) error {
+			return fmt.Errorf("-%s is recognized but unsupported by LLGo", name)
+		})
+	}
 	return fs
 }
 
@@ -194,13 +185,7 @@ func (opts *options) unsupported() []string {
 			out = append(out, name)
 		}
 	}
-	appendFlag(opts.dynlink, "-dynlink")
-	appendFlag(opts.showOpt.value != 0, "-m")
-	appendFlag(opts.live, "-live")
-	appendFlag(opts.race, "-race")
-	appendFlag(opts.smallFrames, "-smallframes")
-	appendFlag(opts.runtimePkg, "-+")
-	appendFlag(opts.writeBar.set, "-wb")
+	appendFlag(opts.noInline.value < 0 || opts.noInline.value > 1, "-l (only 0 and 1 are supported)")
 	for _, setting := range opts.debug {
 		for _, item := range strings.Split(setting, ",") {
 			if compatibleDebugSetting(item) {

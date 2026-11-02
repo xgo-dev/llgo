@@ -108,7 +108,7 @@ func Chroot(path *c.Char) c.Int
 
 // -----------------------------------------------------------------------------
 
-//go:linkname Environ environ
+//go:linkname Environ C.environ
 var Environ **c.Char
 
 //go:linkname Getenv C.getenv

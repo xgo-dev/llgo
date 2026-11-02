@@ -174,6 +174,15 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		return runCoveredTest(commands, program, conf, stdout, stderr)
 	}
 	defer removeOutFmts(program.temporaryOutputs)
+	if len(conf.Exec) != 0 {
+		if program.pkgDir != "" {
+			commands.dir = program.pkgDir
+			commands.environ = withEnv(commands.environ, "PWD="+program.pkgDir)
+		}
+		return runWithExec(commands, program.app, conf,
+			runnerDetails{phase: "test", target: conf.Target, profile: program.profile, artifact: program.app, packageName: program.pkgName, timeout: conf.RunnerTimeout},
+			stdout, stderr)
+	}
 	if program.runner != "" {
 		// Like native go test, execute each package in its source directory.
 		// WASI runners forward PWD explicitly into the guest environment.
@@ -217,6 +226,17 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		fmt.Fprintf(stderr, "failed to run test %s: %v\n", program.app, err)
 	}
 	return err
+}
+
+func runWithExec(commands commandEnv, app string, conf *Config, details runnerDetails, stdout, stderr io.Writer) error {
+	args := make([]string, 0, len(conf.Exec)+len(conf.RunArgs))
+	args = append(args, conf.Exec[1:]...)
+	args = append(args, app)
+	args = append(args, conf.RunArgs...)
+	if conf.PrintCommands {
+		fmt.Fprintf(stderr, "%s %s\n", conf.Exec[0], strings.Join(args, " "))
+	}
+	return runRunnerCommand(commands, conf.Exec[0], args, details, stdout, stderr)
 }
 
 func runNativeTestPrograms(commands commandEnv, programs []testProgram, conf *Config, stdout, stderr io.Writer) testRunResult {

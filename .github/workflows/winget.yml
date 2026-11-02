@@ -1,0 +1,61 @@
+name: Submit WinGet PRs
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      dry_run:
+        default: false
+        type: boolean
+    secrets:
+      WINGET_PR_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release tag (e.g. v1.0.8)
+        required: true
+        type: string
+      dry_run:
+        description: Verify release assets and report existing or proposed PRs without writing
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    if: github.repository == 'xgo-dev/llgo' || inputs.dry_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [msvc, mingw]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Submit release manifests
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PROFILE: ${{ matrix.profile }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          WINGET_PR_TOKEN: ${{ !inputs.dry_run && secrets.WINGET_PR_TOKEN || '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--tag "$RELEASE_TAG" --profile "$PROFILE")
+          if [[ "$DRY_RUN" == true ]]; then
+            args+=(--dry-run)
+          fi
+          python .github/windows/submit-winget.py "${args[@]}"

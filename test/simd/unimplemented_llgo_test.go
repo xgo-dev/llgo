@@ -9,22 +9,22 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname simdExtendLo simd/archsimd.Uint8x16.ExtendLo8ToUint16
-func simdExtendLo(x archsimd.Uint8x16) archsimd.Uint16x8
+//go:linkname simdOnesCount simd/archsimd.Int8x16.OnesCount
+func simdOnesCount(x archsimd.Int8x16) archsimd.Int8x16
 
 func TestUnimplementedSIMD(t *testing.T) {
-	var x archsimd.Uint8x16
-	method := x.ExtendLo8ToUint16
+	var x archsimd.Int8x16
+	method := x.OnesCount
 	for _, tc := range []struct {
 		name   string
 		call   func()
 		symbol string
 	}{
-		{"direct", func() { x.ExtendLo8ToUint16() }, "simd/archsimd.Uint8x16.ExtendLo8ToUint16"},
-		{"method value", func() { method() }, "simd/archsimd.Uint8x16.ExtendLo8ToUint16"},
-		{"method expression", func() { indirectExtendLo(archsimd.Uint8x16.ExtendLo8ToUint16, x) }, "simd/archsimd.Uint8x16.ExtendLo8ToUint16"},
-		{"deferred", func() { defer x.ExtendLo8ToUint16() }, "simd/archsimd.Uint8x16.ExtendLo8ToUint16"},
-		{"linkname", func() { simdExtendLo(x) }, "simd/archsimd.Uint8x16.ExtendLo8ToUint16"},
+		{"direct", func() { x.OnesCount() }, "simd/archsimd.Int8x16.OnesCount"},
+		{"method value", func() { method() }, "simd/archsimd.Int8x16.OnesCount"},
+		{"method expression", func() { indirectOnesCount(archsimd.Int8x16.OnesCount, x) }, "simd/archsimd.Int8x16.OnesCount"},
+		{"deferred", func() { defer x.OnesCount() }, "simd/archsimd.Int8x16.OnesCount"},
+		{"linkname", func() { simdOnesCount(x) }, "simd/archsimd.Int8x16.OnesCount"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
@@ -44,6 +44,6 @@ func TestUnimplementedSIMD(t *testing.T) {
 }
 
 //go:noinline
-func indirectExtendLo(f func(archsimd.Uint8x16) archsimd.Uint16x8, x archsimd.Uint8x16) archsimd.Uint16x8 {
+func indirectOnesCount(f func(archsimd.Int8x16) archsimd.Int8x16, x archsimd.Int8x16) archsimd.Int8x16 {
 	return f(x)
 }

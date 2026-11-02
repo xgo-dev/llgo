@@ -42,7 +42,18 @@ function ready(instance, run) {
     globalThis.__llgoDebugStatus = {state: 'running'};
     runButton.disabled = true;
     status.textContent = 'LLGo WebAssembly running';
-    try { await run(); } catch (error) { fail(error); }
+    try {
+      for (let attempt = 0; ; ++attempt) {
+        const response = await fetch('/__llgo/worker-state', {cache: 'no-store'});
+        if (!response.ok) throw new Error('Cannot read browser worker control state');
+        const state = await response.json();
+        if (state.error) throw new Error(state.error);
+        if (!state.enabled || state.ready) break;
+        if (attempt === 200) throw new Error('Browser worker control did not become ready');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      await run();
+    } catch (error) { fail(error); }
   };
   runButton.addEventListener('click', globalThis.__llgoDebugRun);
   runButton.disabled = false;

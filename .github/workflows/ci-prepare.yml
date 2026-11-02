@@ -28,7 +28,8 @@ permissions:
 # Do not use the caller's concurrency group here: it would cancel the caller.
 jobs:
   prepare:
-    runs-on: ubuntu-24.04
+    # Bootstrap cannot consume its own outputs. Forks keep a hosted runner.
+    runs-on: ${{ fromJSON(github.repository_owner == 'xgo-dev' && '["qiniu", "ubuntu-24.04"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 5
     outputs:
       run_code_ci: ${{ steps.policy.outputs.run_code_ci }}
@@ -39,9 +40,14 @@ jobs:
       linux_large_runner: ${{ steps.policy.outputs.linux_large_runner }}
     steps:
       - uses: actions/checkout@v7
+        env:
+          # Let fetch retries run before the five-minute job timeout.
+          GIT_HTTP_LOW_SPEED_LIMIT: '1'
+          GIT_HTTP_LOW_SPEED_TIME: '60'
         with:
-          # The PR merge checkout contains both event commits and their history.
+          # Keep the PR commit graph, fetching historical blobs only on demand.
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          filter: blob:none
           persist-credentials: false
       - name: Resolve CI policy and changed paths
         id: policy

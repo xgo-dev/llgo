@@ -185,6 +185,11 @@ func efaceOf(ep *any) *eface {
 	return (*eface)(unsafe.Pointer(ep))
 }
 
+// interfaceKindUsed includes named values of the requested underlying kind.
+//
+//go:linkname interfaceKindUsed llgo.interfaceKindUsed
+func interfaceKindUsed(kind abi.Kind) bool
+
 func printanycustomtype(i any) {
 	e := efaceOf(&i)
 	typestring := e._type.String()
@@ -211,21 +216,29 @@ func printanycustomtype(i any) {
 			print(typestring, "(", *(*uint64)(e.data), ")")
 		}
 	case abi.Float32:
-		if isDirectIface(e._type) {
-			print(typestring, "(", bitcast.ToFloat32(int32(uintptr(e.data))), ")")
-		} else {
-			print(typestring, "(", *(*float32)(e.data), ")")
+		if interfaceKindUsed(abi.Float32) {
+			if isDirectIface(e._type) {
+				print(typestring, "(", bitcast.ToFloat32(int32(uintptr(e.data))), ")")
+			} else {
+				print(typestring, "(", *(*float32)(e.data), ")")
+			}
 		}
 	case abi.Float64:
-		if isDirectIface(e._type) {
-			print(typestring, "(", bitcast.ToFloat64(int64(uintptr(e.data))), ")")
-		} else {
-			print(typestring, "(", *(*float64)(e.data), ")")
+		if interfaceKindUsed(abi.Float64) {
+			if isDirectIface(e._type) {
+				print(typestring, "(", bitcast.ToFloat64(int64(uintptr(e.data))), ")")
+			} else {
+				print(typestring, "(", *(*float64)(e.data), ")")
+			}
 		}
 	case abi.Complex64:
-		println(typestring, *(*complex64)(e.data))
+		if interfaceKindUsed(abi.Complex64) {
+			println(typestring, *(*complex64)(e.data))
+		}
 	case abi.Complex128:
-		println(typestring, *(*complex128)(e.data))
+		if interfaceKindUsed(abi.Complex128) {
+			println(typestring, *(*complex128)(e.data))
+		}
 	default:
 		print("(", typestring, ") ", e.data)
 	}

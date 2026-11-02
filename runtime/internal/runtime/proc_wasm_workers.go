@@ -158,7 +158,7 @@ func initWasmScheduler(gp *g) {
 	}
 }
 
-//go:linkname wasmMainTask __llgo_wasm_main
+//go:linkname wasmMainTask C.__llgo_wasm_main
 func wasmMainTask(unsafe.Pointer) unsafe.Pointer
 
 func RunWasmMain() {

@@ -2,10 +2,12 @@ package cl_test
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build"
+	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 func TestLTOPluginReflectFoldedReturnLength(t *testing.T) {
@@ -65,7 +67,7 @@ attributes #0 = { "llgo.reflect.methodbyname"="value" }
 					"%s = insertvalue { ptr, i64 } %s0, i64 5, 1",
 					"%len = select i1 %choice, i64 5, i64 6\n  %s = insertvalue { ptr, i64 } %s0, i64 %len, 1", 1)
 			}
-			opt := testLTOPluginOpt()
+			opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
 			cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
 				"-passes=llgo-lto-pre-globaldce", "-verify-each", "-S", "-o", "-")
 			cmd.Stdin = strings.NewReader(source)

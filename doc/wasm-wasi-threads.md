@@ -54,6 +54,41 @@ WASI goroutines. A C call that cannot acknowledge a safepoint causes that
 collection attempt to be skipped; the collector does not scan an actively
 mutating foreign stack.
 
+## Memory and process-stack budgets
+
+A target under `targets/` can inherit `wasi` or `wasip1` and set byte budgets:
+
+```json
+{
+  "inherits": ["wasip1"],
+  "wasm-initial-memory": 16777216,
+  "wasm-max-memory": 134217728,
+  "wasm-stack-size": 1048576
+}
+```
+
+Save this as `targets/wasi-small.json` under `LLGO_ROOT`, then build with
+`llgo build -target=wasi-small`. The initial and maximum memory sizes must be
+multiples of 64 KiB, at most 4 GiB. The process stack must be 16-byte aligned
+and smaller than 4 GiB. Omitted or zero fields inherit the parent's setting;
+otherwise the toolchain defaults apply. These fields are supported by W32 WASI
+targets only. The linker rejects budgets too small for the actual static data
+and process stack. The initial/maximum comparison is also left to the linker,
+after explicit flags and response files can override inherited defaults.
+
+The initial size covers the whole linear memory, including static data and the
+process stack. Memory may grow up to the maximum; a small initial size does not
+cap runtime allocation. The process stack is separate from goroutine/pthread
+stacks (`-stacksize`) and the Wasmer host stack (`--stack-size`).
+
+Explicit linker flags remain authoritative. An explicit `--initial-memory`,
+`--initial-heap`, or user response file suppresses the target's initial-memory
+default. Stack/maximum linker flags follow the existing driver argument order.
+Without a configured initial size, LLGo retains the 54 MiB initial heap
+budget in addition to static data and the process stack. The default process
+stack is 10 MiB and maximum memory is 512 MiB, including on the raw
+`GOOS=wasip1 GOARCH=wasm` path.
+
 Run `python3 dev/test_wasm_wasi_threads.py` for pthread/GC, EH, filesystem,
 run/test, selected standard-library, and GOROOT checks. Run
 `python3 dev/test_wasm_debug_info.py --profile w32` to validate final Go/C++

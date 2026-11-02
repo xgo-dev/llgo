@@ -45,8 +45,8 @@ log=
 trap '[[ -z "${log}" ]] || rm -f "${log}"' EXIT
 log="$(mktemp "${TMPDIR:-/tmp}/llgo-go-test-windows.XXXXXX")"
 set +e
-"$@" 2>&1 | tee "${log}"
-status=${PIPESTATUS[0]}
+python "$(dirname "$0")/run_logged_command.py" "${log}" "$@"
+status=$?
 set -e
 
 if [[ ${status} -eq 0 ]] || ! is_known_runtime_corruption "${log}"; then

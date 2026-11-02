@@ -38,32 +38,36 @@ runs:
             # The x86 target DLL directories must precede the x64 host on PATH
             # when generated programs run. Put the host compiler's DLL closure
             # beside llgo.exe so Windows resolves it before consulting PATH.
-            $compilerDir = Split-Path $hostCompilerPath
-            $queue = [Collections.Generic.Queue[string]]::new()
-            $queue.Enqueue($hostCompilerPath)
-            $copied = @{}
-            while ($queue.Count -ne 0) {
-              $binary = $queue.Dequeue()
-              foreach ($line in (& $objdump -p $binary)) {
-                if ($line -notmatch '^\s*DLL Name:\s*(\S+)\s*$') {
-                  continue
+            $headers = (& (Join-Path $hostBin 'llvm-readobj.exe') --file-headers $hostCompilerPath | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw 'Inspecting the LLGo compiler host failed' }
+            if ($headers -notmatch 'IMAGE_FILE_MACHINE_I386') {
+              $compilerDir = Split-Path $hostCompilerPath
+              $queue = [Collections.Generic.Queue[string]]::new()
+              $queue.Enqueue($hostCompilerPath)
+              $copied = @{}
+              while ($queue.Count -ne 0) {
+                $binary = $queue.Dequeue()
+                foreach ($line in (& $objdump -p $binary)) {
+                  if ($line -notmatch '^\s*DLL Name:\s*(\S+)\s*$') {
+                    continue
+                  }
+                  $name = $Matches[1]
+                  if ($copied.ContainsKey($name)) {
+                    continue
+                  }
+                  $source = Join-Path $hostBin $name
+                  if (-not (Test-Path $source)) {
+                    continue
+                  }
+                  $destination = Join-Path $compilerDir $name
+                  Copy-Item -LiteralPath $source -Destination $destination -Force
+                  $copied[$name] = $true
+                  $queue.Enqueue($destination)
                 }
-                $name = $Matches[1]
-                if ($copied.ContainsKey($name)) {
-                  continue
-                }
-                $source = Join-Path $hostBin $name
-                if (-not (Test-Path $source)) {
-                  continue
-                }
-                $destination = Join-Path $compilerDir $name
-                Copy-Item -LiteralPath $source -Destination $destination -Force
-                $copied[$name] = $true
-                $queue.Enqueue($destination)
               }
-            }
-            if ($copied.Count -eq 0) {
-              throw "No MinGW host runtime DLLs were discovered for $hostCompilerPath"
+              if ($copied.Count -eq 0) {
+                throw "No MinGW host runtime DLLs were discovered for $hostCompilerPath"
+              }
             }
           }
           Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_TEST_COMPILER=$hostCompilerPath"

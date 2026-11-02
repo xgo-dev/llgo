@@ -147,7 +147,9 @@ addToLibrary({
         }
         args[1] = HEAPU8.subarray(pointer, pointer + length);
       }
-      const host = globalThis[target];
+      // The browser shim defers public fs callbacks. Worker RPC needs the
+      // underlying synchronous host operations to serialize its reply here.
+      const host = target === 'fs' ? globalThis.llgoWasmFSHost || globalThis.fs : globalThis[target];
       let value;
       if (target === 'fs' && !name.endsWith('Sync')) {
         let called = false;

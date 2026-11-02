@@ -26,6 +26,16 @@ func plan9asmTranslateOptions(conf *Config) llplan9asm.TranslateOptions {
 // loader for this package/target into LLVM IR, compiles them to .o, and returns
 // the object files for linking.
 func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbose bool) ([]string, error) {
+	sfiles, err := compiledPkgSFiles(ctx, pkg)
+	if err != nil || len(sfiles) == 0 {
+		return nil, err
+	}
+	return compileSelectedPkgSFiles(ctx, aPkg, pkg, sfiles, verbose)
+}
+
+// compiledPkgSFiles shares assembly selection between compilation and analyses
+// that must account for references outside Go SSA.
+func compiledPkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	if len(ctx.patchFiles[pkg.PkgPath]) != 0 && llruntime.SourcePatchReplacesAsmForGOARCH(pkg.PkgPath, ctx.buildConf.Goarch) {
 		return nil, nil
 	}
@@ -54,6 +64,10 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 		}
 		return nil, nil
 	}
+	return sfiles, nil
+}
+
+func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, sfiles []string, verbose bool) ([]string, error) {
 	if pkg.Types == nil || pkg.Types.Scope() == nil {
 		return nil, fmt.Errorf("%s: missing types (needed for asm signatures)", pkg.PkgPath)
 	}

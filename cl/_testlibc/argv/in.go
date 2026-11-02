@@ -6,10 +6,10 @@ import _ "unsafe"
 
 type integer interface{ ~int32 }
 
-//go:linkname argc __llgo_argc
+//go:linkname argc C.__llgo_argc
 var argc int32
 
-//go:linkname argv __llgo_argv
+//go:linkname argv C.__llgo_argv
 var argv **int8
 
 // llgo:link index llgo.index

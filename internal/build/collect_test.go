@@ -1644,3 +1644,18 @@ func findPkg(pkgs []Package, pkgPath string) Package {
 	}
 	return nil
 }
+
+func TestDeadcodeDropCollectFingerprint(t *testing.T) {
+	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+		var fingerprints [2]string
+		for i, enabled := range []bool{false, true} {
+			ctx := &context{buildConf: &Config{DeadcodeDrop: enabled, LTO: mode, DisableGoGlobalDCE: true}}
+			manifest := newManifestBuilder()
+			ctx.collectCommonInputs(manifest)
+			fingerprints[i] = manifest.Fingerprint()
+		}
+		if got := fingerprints[0] != fingerprints[1]; got != buildenv.Dev {
+			t.Fatalf("%s: original DCE changes cached lowering=%v, want %v", mode, got, buildenv.Dev)
+		}
+	}
+}

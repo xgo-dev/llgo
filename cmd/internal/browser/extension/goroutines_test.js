@@ -178,3 +178,96 @@ test('P0 is a valid processor; minus one means the G has not run yet', async () 
     assert.equal(records[0].processor, null);
   }
 });
+
+function parkedFixture(width) {
+  const f = fixture(width), {module, memory, u64} = f;
+  const frame = module.types.get('frame');
+  module.types.set('frameDebug', {id: 'frameDebug', kind: 'struct', size: 8,
+    fields: [{name: 'base', type: 'u64', offset: 0}]});
+  frame.fields.push({name: 'wasmCallerFrame', type: 'frameDebug', offset: 40});
+  frame.size = 48;
+  module.types.get('store').fields.push({name: 'panicDepth', type: 'u64', offset: 24});
+  module.types.get('store').size = 32;
+  memory.set(memory.slice(512, 552), 1024);
+  memory.set(memory.slice(552, 592), 1072);
+  f.ptr(480, 1024);
+  u64(1064, 8192); u64(1112, 9216);
+  module.types.set('array', {id: 'array', name: '[4]int', kind: 'array', elem: 'u64', count: 4, size: 32});
+  for (let i = 0; i < 4; i++) u64(9200 + i * 8, 40 + i);
+  module.index.functions = [{name: 'main.wait', ranges: [{start: 100, end: 200}]}];
+  module.index.variables.push({name: 'local', scope: 'LOCAL', type: 'array',
+    ranges: [{start: 100, end: 200}], locations: [{expression: '9170'}]});
+  for (const name of ['getWasmLocal', 'getWasmOp', 'getWasmGlobal']) {
+    f.plugin.languageServices[name] = async () => assert.fail('parked locals must not use current Wasm registers');
+  }
+  return f;
+}
+
+for (const width of [4, 8]) {
+  test(`Memory${width * 8} parked frame locals, stale stops and recursive release`, async () => {
+    const f = parkedFixture(width), {plugin, module, context} = f;
+    let stopId = 7;
+    module.index.worker_control = true;
+    module.rawModule = {url: 'http://localhost/module.wasm'};
+    plugin.fetcher = async () => ({ok: true, json: async () => ({enabled: true, ready: true, paused: true, stopId})});
+    const root = await plugin.evaluate('$goroutines', context, 'stop');
+    const goroutines = await plugin.getProperties(root.objectId);
+    const properties = await plugin.getProperties(goroutines[0].value.objectId);
+    const frames = await plugin.getProperties(properties.find(p => p.name === 'frames').value.objectId);
+    const locals = await plugin.getProperties(frames[0].value.objectId);
+    assert.deepEqual((await plugin.getProperties(locals[0].value.objectId)).map(p => p.value.value), [40, 41, 42, 43]);
+    module.types.set('nested', {id: 'nested', kind: 'array', count: 1, elem: 'array', size: 32});
+    const aggregate = await plugin.remoteObject(module, module.types.get('nested'), {kind: 'address', value: 9200n}, 'stop');
+    const children = await plugin.getProperties(aggregate.objectId);
+    assert.ok(children[0].value.objectId);
+    await plugin.releaseObject(aggregate.objectId);
+    assert.equal(plugin.objects.has(children[0].value.objectId), false, 'aggregate children follow their owner');
+    stopId++;
+    await assert.rejects(plugin.getProperties(frames[0].value.objectId), /workers resumed or changed/);
+    await plugin.releaseObject(root.objectId);
+    assert.equal(plugin.objects.size, 0);
+  });
+
+  test(`Memory${width * 8} unwound, running and unpublished frame bases stay unavailable`, async () => {
+    for (const mutate of [f => f.u64(504, 1), f => f.u32(272, 2), f => { f.u64(1064, 0); f.u64(1112, 0); }]) {
+      const f = parkedFixture(width);
+      mutate(f);
+      const records = await LLGoWasmGoroutines.read(f.plugin, f.module, f.context, 'stop');
+      assert.ok(records.every(record => record.frames.every(frame => !frame.base)));
+    }
+  });
+}
+
+test('parked locals reject register, changing, ambiguous and malformed locations', async t => {
+  for (const [name, mutate] of [
+    ['Wasm register', v => v.locations[0].expression = 'ed00019f'],
+    ['nested scope', v => v.ranges[0].start = 110],
+    ['scope gap', v => v.ranges = [{start: 100, end: 110}, {start: 120, end: 200}]],
+    ['location range', v => v.locations[0] = {start: 100, end: 150, expression: '9170'}],
+    ['multiple locations', v => v.locations.push({expression: '9170'})],
+    ['truncated SLEB', v => v.locations[0].expression = '9180'],
+    ['extra opcode', v => v.locations[0].expression = '91709f'],
+    ['oversized SLEB', v => v.locations[0].expression = '91' + '80'.repeat(12) + '00'],
+    ['overflowing SLEB', v => v.locations[0].expression = '91' + 'ff'.repeat(9) + '01'],
+  ]) await t.test(name, async () => {
+    const f = parkedFixture(4);
+    mutate(f.module.index.variables[1]);
+    const locals = await LLGoWasmGoroutines.locals(f.plugin, f.module, {function: 'main.wait', base: '9216'}, 'stop');
+    assert.match(locals[0].value.value, /unavailable/);
+    assert.equal(f.reads.length, 0);
+  });
+  const f = parkedFixture(4);
+  f.module.index.variables.push({...f.module.index.variables[1]});
+  assert.match((await LLGoWasmGoroutines.locals(f.plugin, f.module, {function: 'main.wait', base: '9216'}, 'stop'))[0].value.value, /unavailable/);
+  f.module.index.functions.push({...f.module.index.functions[0]});
+  assert.match((await LLGoWasmGoroutines.locals(f.plugin, f.module, {function: 'main.wait', base: '9216'}, 'stop'))[0].value.value, /unambiguous/);
+  assert.equal(f.reads.length, 0);
+});
+
+test('failed parked reads release objects allocated by earlier locals', async () => {
+  const f = parkedFixture(4);
+  f.module.index.variables.push({...f.module.index.variables[1], name: 'bad', type: 'u64'});
+  f.plugin.languageServices.getWasmLinearMemory = async () => { throw new Error('read failed'); };
+  await assert.rejects(LLGoWasmGoroutines.locals(f.plugin, f.module, {function: 'main.wait', base: '9216'}, 'stop'), /read failed/);
+  assert.equal(f.plugin.objects.size, 0);
+});

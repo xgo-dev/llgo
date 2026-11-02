@@ -116,6 +116,15 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 			}
 		}
 	}
+	if conf.Goarch == "wasm" {
+		if _, err := os.Stat(modulePath + ".map"); err == nil {
+			if err := add(ArtifactRoleDebug, "wasm-source-map", modulePath+".map"); err != nil {
+				return nil, err
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	// Use the same ownership rule as publication. Raw GoJS and native outputs
 	// must not pick up another build's wasm_fs.js from the output directory.
 	if driverOut := emscriptenDriverOutput(conf, out.Out); needsEmscriptenBrowserHost(conf, driverOut) {
@@ -173,6 +182,9 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 		if err := add(ArtifactRoleDeployment, deployment.format, deployment.path); err != nil {
 			return nil, err
 		}
+	}
+	if err := add(ArtifactRoleDeployment, "wasm-manifest", out.WasmManifest); err != nil {
+		return nil, err
 	}
 	return artifacts, nil
 }

@@ -84,7 +84,24 @@
         "extra_star_flag": 2,
         "string": "Str_",
         "kind": "Kind_",
-        "direct_interface_flag": 32
+        "direct_interface_flag": 32,
+        "uncommon_flag": 1,
+        "named_flag": 4,
+        "kind_mask": 31,
+        "pointer_kind": 22,
+        "pointer_element": "Elem",
+        "uncommon_type": "github.com/xgo-dev/llgo/runtime/abi.UncommonType",
+        "package_path": "PkgPath_",
+        "kind_types": {
+          "17": "github.com/xgo-dev/llgo/runtime/abi.ArrayType",
+          "18": "github.com/xgo-dev/llgo/runtime/abi.ChanType",
+          "19": "github.com/xgo-dev/llgo/runtime/abi.FuncType",
+          "20": "github.com/xgo-dev/llgo/runtime/abi.InterfaceType",
+          "21": "github.com/xgo-dev/llgo/runtime/abi.MapType",
+          "22": "github.com/xgo-dev/llgo/runtime/abi.PtrType",
+          "23": "github.com/xgo-dev/llgo/runtime/abi.SliceType",
+          "25": "github.com/xgo-dev/llgo/runtime/abi.StructType"
+        }
       },
       "function": {
         "type_pattern": "^struct\\{\\$f func.*; \\$data unsafe\\.Pointer\\}$",
@@ -152,6 +169,9 @@
         "status": "atomicstatus",
         "processor_id": "processorID",
         "stack": "stack",
+        "panic_depth": "panicDepth",
+        "frame_debug": "wasmCallerFrame",
+        "frame_base": "base",
         "function": "Function",
         "file": "File",
         "line": "Line"

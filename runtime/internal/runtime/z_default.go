@@ -9,12 +9,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/clite/debug"
 )
 
-var (
-	printFormatPrefixInt  = c.Str("%lld")
-	printFormatPrefixUInt = c.Str("%llu")
-	printFormatPrefixHex  = c.Str("%llx")
-)
-
 // Rethrow rethrows a panic.
 func Rethrow(link *Defer) {
 	gp := getg()

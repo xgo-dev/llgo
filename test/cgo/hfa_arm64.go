@@ -12,7 +12,7 @@ import "unsafe"
 //llgo:cdecl
 type hfaPairEntry func(float64, float64, float64, float64, float64, float64, float64, float64, C.llgo_hfa_pair, float64) float64
 
-//go:linkname linkedHFAPair llgo_test_hfa_pair
+//go:linkname linkedHFAPair C.llgo_test_hfa_pair
 func linkedHFAPair(float64, float64, float64, float64, float64, float64, float64, float64, C.llgo_hfa_pair, float64) float64
 
 func directHFAPair() float64 {

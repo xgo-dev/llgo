@@ -23,6 +23,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -227,6 +228,20 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr 
 //	t1 = make interface{} <- int (42:int)
 //	t2 = make Stringer <- t0
 func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
+	return b.makeInterface(tinter, x, true)
+}
+
+// MakeInterfaceDataOnly boxes an argument for a statically checked runtime
+// call. Its type word is unobservable and remains nil; the ordinary interface
+// data word and GC-root layout retain the argument across allocating calls.
+func (b Builder) MakeInterfaceDataOnly(tinter Type, x Expr) Expr {
+	if tinter.raw.Type.Underlying().(*types.Interface).NumMethods() != 0 {
+		panic("data-only interface must be empty")
+	}
+	return b.makeInterface(tinter, x, false)
+}
+
+func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
@@ -235,8 +250,11 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 	}
 	prog := b.Prog
 	typ := x.Type
-	b.recordUseIface(typ)
-	tabi := b.abiType(typ.raw.Type)
+	tabi := prog.Nil(prog.AbiTypePtr())
+	if observable {
+		b.recordUseIface(typ)
+		tabi = b.abiType(typ.raw.Type)
+	}
 	if !directIfaceType(typ.raw.Type) {
 		vptr := b.AllocU(typ)
 		b.Store(vptr, x)
@@ -443,6 +461,13 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 			val = func() Expr { return b.valFromData(assertedTyp, b.faceData(x.impl)) }
 		} else {
 			eq = b.BinOp(token.EQL, tx, tabi)
+			// Reflection can synthesize new composite types (including an empty
+			// struct) without a static conversion to that exact interface type.
+			basicType, basic := types.Unalias(assertedTyp.raw.Type).(*types.Basic)
+			if basic && b.Prog.enableDeadcodeDrop && b.Prog.target.effectiveGOARCH() == "wasm" {
+				live := b.InterfaceBasicTypeUsed(basicType)
+				eq.impl = llvm.CreateAnd(b.impl, eq.impl, live.impl)
+			}
 			val = func() Expr { return b.valFromData(assertedTyp, b.faceData(x.impl)) }
 		}
 	}
@@ -534,3 +559,17 @@ func (b Builder) faceAbiType(x Expr) Expr {
 }
 
 // -----------------------------------------------------------------------------
+
+// InterfaceBasicTypeUsed reports link-time visibility of a basic type. Floating-
+// point domains also include named types with that underlying kind. It defaults
+// to true outside a closed Wasm executable using the development dead-code pass.
+func (b Builder) InterfaceBasicTypeUsed(t *types.Basic) Expr {
+	if !b.Prog.enableDeadcodeDrop || b.Prog.target.effectiveGOARCH() != "wasm" {
+		return b.Prog.BoolVal(true)
+	}
+	name, _ := b.Prog.abi.TypeName(t)
+	result := types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]))
+	sig := types.NewSignatureType(nil, nil, nil, nil, result, false)
+	predicate := b.Pkg.NewFunc(meta.InterfaceUsePrefix+name, sig, CDecl)
+	return b.Call(predicate.Expr)
+}

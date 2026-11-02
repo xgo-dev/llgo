@@ -20,6 +20,10 @@ architecture.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
   low-half multiplication, and carryless multiplication.
+- Integer low/high-lane extension, saturating narrowing with zero-filled upper
+  lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
+  unsigned saturation follow each architecture's official declarations. The
+  current WASM API provides extension methods but no saturating narrowing methods.
 - Numeric bitcasts, signedness conversions, and SIMD128 numeric conversions,
   with defined results for NaN and out-of-range floating inputs.
 - Four mask shapes, comparisons, mask bitmaps where provided, and the official
@@ -30,7 +34,8 @@ architecture.
 
 Tests cover NaNs, signed zero, wrapping/saturation boundaries, large shift
 counts, every byte lookup index, element-aligned addresses, short slices,
-nil arrays, and values crossing interfaces, tuples, closures, package calls,
+nil arrays, exhaustive byte/word resize inputs, saturation boundaries at every
+integer width, and values crossing interfaces, tuples, closures, package calls,
 defer/recover, goroutines, and scheduling. The hex-encoding workload checks
 all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
 It is a correctness workload, not a performance benchmark.
@@ -40,6 +45,41 @@ implementations panic with their symbol name; `unimplemented_llgo_test.go`
 checks direct, indirect, deferred, and linkname calls. SIMD reflection,
 general FMV, and 256/512-bit vectors remain
 outside this implemented stage.
+
+The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
+`SaturateTo`, and `SaturateTo*Concat` declaration. Shared cases run under official
+Go and LLGo; AMD64 unary saturation requires AVX512 in the official compiler,
+so those cases use scalar references under LLGo at the v1 baseline. LLVM
+verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
+WASM, including callable intrinsic definitions. This does not add wider-vector
+ABIs or instructions absent from an architecture's Go API.
+
+## Native archsimd storage alignment
+
+LLGo gives `archsimd` vector types native vector alignment, including ordinary Go
+variables, defined types, arrays and containing structs. SIMD128 is 16-byte
+aligned on the supported targets. This intentionally differs from the official
+Go implementation: a byte followed by `archsimd.Float32x4` has the vector at
+offset 16 and total size 32. Source `unsafe.Sizeof`/`Alignof`/`Offsetof`, LLVM
+storage and reflection agree. Stack/global storage, heap allocation, slice
+growth, channel buffers and reflection allocations honor this alignment.
+Zero-sized SIMD arrays retain their alignment; a final zero-sized field still
+receives Go's in-object-address padding.
+
+Array Load/Store APIs retain the scalar array's alignment requirements; an
+aligned vector result does not require aligned input. This storage rule does
+not change the Go/C calling convention or add support for new native aggregate
+signatures.
+
+Vector storage cannot appear by value in map keys or values, including inside
+arrays or structs. Use an array of scalars or a pointer instead. Layout is
+recognized directly from type identity, without import-order prerequisites.
+
+On native targets, `reflect.Call`, `CallSlice`, and `MakeFunc` reject signatures
+that pass or return vector storage by value through libffi. This includes arrays,
+structs, and zero-length vector fields. Pointers to vectors and slices of vectors
+use their ordinary scalar ABI and remain supported. WASM reflection bridges
+continue to support SIMD128 values.
 
 ## Portable SIMD Midway
 
@@ -146,6 +186,15 @@ bodyless assembly declarations retain their original calls. Ordinary calls
 and indirect calls retain the original entry. Arbitrary feature
 combinations are not yet specialized.
 
+Midway's 128-bit bridge types also qualify for these direct-call variants,
+including when nested in arrays and structs. The compiler validates the bridge
+identity and storage against the corresponding official archsimd type while
+retaining its aggregate ABI. This lets an AVX2 implementation call another
+package's specialized portable function without LTO. Emulated bridge types do
+not qualify as vector callees. A CPU-querying function can still specialize in
+either representation: `simd=0` does not imply that AVX2 is disabled, and a
+128-bit representation does not imply that AVX2 is enabled.
+
 The transform is implemented in Go using the LLVM Go API. It discovers CPU
 queries, clones eligible functions, rewrites direct calls and creates dispatch
 blocks without registering a custom LLVM pass. Generic LLVM cloning and local
@@ -193,11 +242,15 @@ LLGO=/path/to/llgo bash dev/test_native_simd.sh
 On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
+The same overrides also exercise integer extension and narrowing.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.
 The portable suite also runs each amd64 profile with the same CPU overrides
-and explicit emulated/128-bit requests. On other native SIMD targets the script
+and explicit emulated/128-bit requests, including these requests crossed
+with AVX2, AVX, FMA, and all optional CPU features disabled. The composition
+fixtures cover cross-package aggregates and arrays, function values, methods,
+interfaces, closures, generics, and initialization. On other native SIMD targets the script
 retains the O0/O2 suite and an additional portable emulation run.
 
 ## Running

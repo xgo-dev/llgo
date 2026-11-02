@@ -22,10 +22,16 @@ for image in "$@"; do
             setup='pacman -Syu --needed --noconfirm bash zsh fish tar gzip'
             ;;
         alpine:*)
-            setup='apk add --no-cache bash zsh fish tar gzip'
+            # BusyBox timeout only signals its direct child. Use the same
+            # process-group watchdog as the other distributions.
+            setup='apk add --no-cache bash zsh fish tar gzip coreutils'
             ;;
         opensuse/*:*)
-            setup='sed -i s,http://,https://,g /etc/zypp/repos.d/*.repo && zypper --non-interactive refresh && zypper --non-interactive install --no-recommends bash zsh fish tar gzip'
+            # These packages and their dependencies are in OSS. Unrelated
+            # non-OSS and codec repositories must not gate shell startup tests.
+            # Use the official CDN: download.opensuse.org DNS/connection failures
+            # on self-hosted runners otherwise stop the test before shell startup.
+            setup='sed -i -e s,http://,https://,g -e "/^[[:space:]]*baseurl=/s,//download[.]opensuse[.]org/,//cdn.opensuse.org/,g" /etc/zypp/repos.d/*.repo && zypper --non-interactive refresh --repo repo-oss && zypper --non-interactive install --no-recommends --repo repo-oss bash zsh fish tar gzip'
             ;;
         *) printf 'Unsupported shell-test image: %s\n' "$image" >&2; exit 1 ;;
     esac
@@ -34,8 +40,9 @@ for image in "$@"; do
     # downloads so a stuck interactive shell fails visibly, not at job timeout.
     # An init process keeps test tools out of PID 1's special signal semantics
     # and reaps their children. In particular, GNU timeout must not be PID 1.
-    if docker run --rm --init -v "$repository:/src:ro" -w /src "$image" \
-        sh -ec "$setup && timeout -k 5 120 bash test/installer/install_shell_test.sh bash zsh fish sh"; then
+    if docker run --rm --init -e LLGO_SHELL_TEST_TIMEOUT=10 \
+        -v "$repository:/src:ro" -w /src "$image" \
+        sh -ec "$setup && fish --version && timeout --verbose -k 5 120 bash test/installer/install_shell_test.sh bash zsh fish sh"; then
         printf 'PASS %s\n' "$image"
     else
         printf 'FAIL %s (exit %s)\n' "$image" "$?" >&2

@@ -23,17 +23,6 @@ import "strings"
 // spaces within paths. Other options remain intact, except that -framework and
 // -weak_framework retain their required separate name argument.
 func SplitPkgConfigFlags(s string) []string {
-	return splitFlags(s, false)
-}
-
-// SplitDriverFlags also recognizes @response-file arguments using GNU quoting.
-// Escape a space before @ when it belongs to an ordinary flag's path rather
-// than separating a response-file argument, e.g. -I/include\ @generated.
-func SplitDriverFlags(s string) []string {
-	return splitFlags(s, true)
-}
-
-func splitFlags(s string, driver bool) []string {
 	// Whitespace-only output (including newlines, as produced by a
 	// pkg-config query that resolves to no flags) carries no arguments.
 	// Treat it as empty so callers do not receive a spurious "-" argument,
@@ -45,10 +34,6 @@ func splitFlags(s string, driver bool) []string {
 
 	var result []string
 	var current strings.Builder
-	space := func(c byte) bool {
-		return c == ' ' || c == '\t' || driver && (c == '\r' || c == '\n')
-	}
-	response := func(s string) bool { return driver && startsResponseFile(s) }
 	i := 0
 	flush := func() {
 		if current.Len() == 0 {
@@ -65,41 +50,13 @@ func splitFlags(s string, driver bool) []string {
 	}
 
 	// Skip leading whitespace
-	for i < len(s) && space(s[i]) {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
 
 	for i < len(s) {
 		// Start a new part
 		flush()
-		if response(s[i:]) {
-			// Unlike pkg-config's -I/-L paths, @file ends at unquoted whitespace.
-			// This keeps adjacent response files separate and permits @"a b.rsp".
-			var quote byte
-			for i < len(s) {
-				c := s[i]
-				if quote == 0 && space(c) {
-					break
-				}
-				if c == '\\' && i+1 < len(s) {
-					i++
-					current.WriteByte(s[i])
-				} else if quote != 0 && c == quote {
-					quote = 0
-				} else if quote == 0 && (c == '\'' || c == '"') {
-					quote = c
-				} else {
-					current.WriteByte(c)
-				}
-				i++
-			}
-			result = append(result, current.String())
-			current.Reset()
-			for i < len(s) && space(s[i]) {
-				i++
-			}
-			continue
-		}
 		// Write "-" and the flag character
 		current.WriteByte('-')
 		i++
@@ -108,35 +65,33 @@ func splitFlags(s string, driver bool) []string {
 			i++
 		}
 		// Skip spaces after flag character
-		for i < len(s) && space(s[i]) {
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 			i++
 		}
 
 		// Check if next character is another flag (short flag with no argument)
-		// Preserve attached operands for short options such as -I @headers.
-		shortOperand := current.Len() == 2 && strings.ContainsAny(current.String()[1:], "ILFDBUolx")
-		if i < len(s) && (s[i] == '-' || response(s[i:]) && !shortOperand) {
+		if i < len(s) && s[i] == '-' {
 			// This is a short flag with no argument, finish current flag
 			continue
 		}
 
 		// Read content until next space
 		for i < len(s) {
-			if s[i] == '\\' && i+1 < len(s) && space(s[i+1]) {
+			if s[i] == '\\' && i+1 < len(s) && (s[i+1] == ' ' || s[i+1] == '\t') {
 				// Skip backslash and write the escaped space
 				i++
 				current.WriteByte(s[i])
 				i++
 				continue
 			}
-			if space(s[i]) {
+			if s[i] == ' ' || s[i] == '\t' {
 				// Skip consecutive spaces
 				j := i
-				for j < len(s) && space(s[j]) {
+				for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 					j++
 				}
 				// If we've seen content, check for new flag
-				if j < len(s) && (s[j] == '-' || response(s[j:])) {
+				if j < len(s) && s[j] == '-' {
 					i = j
 					break
 				}
@@ -152,8 +107,4 @@ func splitFlags(s string, driver bool) []string {
 	// Add the last part
 	flush()
 	return result
-}
-
-func startsResponseFile(s string) bool {
-	return strings.HasPrefix(s, "@") || strings.HasPrefix(s, `"@`) || strings.HasPrefix(s, "'@")
 }

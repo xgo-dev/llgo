@@ -16,13 +16,7 @@ func wasmMemalign(alignment, size uintptr) unsafe.Pointer {
 	if !wasmValidMemalign(alignment) {
 		return nil
 	}
-	if alignment <= bytesPerBlock {
-		return Alloc(size)
-	}
-	if size > ^uintptr(0)-(alignment-1) {
-		return nil
-	}
-	return unsafe.Pointer(alignUp(uintptr(Alloc(size+alignment-1)), alignment))
+	return AllocAligned(size, alignment)
 }
 
 func wasmValidMemalign(alignment uintptr) bool {

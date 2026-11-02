@@ -93,6 +93,37 @@ func TestSourceGoToolTagsAcrossSIMDTargets(t *testing.T) {
 	}
 }
 
+func TestSourceGoCGOSelection(t *testing.T) {
+	for _, enabled := range []string{"0", "1"} {
+		t.Run(enabled, func(t *testing.T) {
+			commands := experimentCommands(t, "")
+			commands.environ = withEnv(commands.environ, "CGO_ENABLED="+enabled)
+			cfg := mustResolveSourceGo(t, commands, "")
+			if cfg.CGO_ENABLED != enabled {
+				t.Fatalf("CGO_ENABLED = %q, want %q", cfg.CGO_ENABLED, enabled)
+			}
+			isCgo := cfg.CGO_ENABLED == "1"
+			ctx, err := newSourcePatchMatchContext(cfg.GOROOT, sourcePatchBuildContext{
+				goos: "linux", goarch: "amd64", goversion: cfg.GOVERSION, cgoEnabled: &isCgo})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "cgo.go"), []byte("//go:build cgo\n\npackage p\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			match, err := ctx.MatchFile(dir, "cgo.go")
+			if err != nil || match != isCgo {
+				t.Fatalf("cgo source selection = %v, %v", match, err)
+			}
+			commands.environ = cfg.apply(withEnv(commands.environ, "CGO_ENABLED="+map[string]string{"0": "1", "1": "0"}[enabled]))
+			if next := mustResolveSourceGo(t, commands, ""); next.CGO_ENABLED != enabled {
+				t.Fatalf("resolved CGO selection changed to %q", next.CGO_ENABLED)
+			}
+		})
+	}
+}
+
 func TestGOEXPERIMENTSnapshotFromGOENV(t *testing.T) {
 	for _, initial := range []string{"", "simd"} {
 		t.Run(initial, func(t *testing.T) {

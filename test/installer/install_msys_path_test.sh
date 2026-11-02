@@ -7,6 +7,8 @@ archive="$(cygpath -au "$1")"
 install_root="$(cygpath -au "$2")"
 version="${archive##*/llgo}"
 version="${version%%.windows-*}"
+architecture="${archive##*.windows-}"
+architecture="${architecture%%-*}"
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/llgo-msys-path.XXXXXXXX")"
 trap 'rm -rf "$temporary"' EXIT
 
@@ -16,7 +18,7 @@ trap 'rm -rf "$temporary"' EXIT
 # Run the file so it finds this checkout's install.ps1, not main's companion.
 # LLGO_ARCHIVE_PATH selects release installation even inside a source checkout.
 env HOME="$temporary" SHELL=/bin/bash \
-    LLGO_VERSION="$version" LLGO_INSTALL_ROOT="$install_root" \
+    LLGO_VERSION="$version" LLGO_ARCH="$architecture" LLGO_INSTALL_ROOT="$install_root" \
     LLGO_ARCHIVE_PATH="$archive" LLGO_INSTALL_DEPS=0 LLGO_UPDATE_PATH=1 \
     bash "$repository/install.sh"
 

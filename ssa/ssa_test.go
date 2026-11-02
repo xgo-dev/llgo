@@ -1073,6 +1073,7 @@ func TestRecordTypeChildren(t *testing.T) {
 		types.NewVar(token.NoPos, pkgTypes, "S", types.Typ[types.String]),
 	}, nil))
 	b.recordTypeChildren("pkg.named", namedType)
+	b.recordTypeChildren("pkg.namedFloat", types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Number", nil), types.Typ[types.Float64], nil))
 	b.recordTypeChildren("pkg.interface", interfaceType)
 
 	pm, err := pkg.metaBuilder.Build()
@@ -1091,6 +1092,8 @@ pkg.map:
     _llgo_string
 pkg.named:
     _llgo_bool
+pkg.namedFloat:
+    _llgo_float64
 pkg.pointer:
     _llgo_int
 pkg.signature:
@@ -1214,6 +1217,42 @@ pkg.named:
 `
 	if got := pm.String(); got != want {
 		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestReflectInterfaceWrappersRetainMethodCapabilities(t *testing.T) {
+	for _, tt := range []struct {
+		caller, callee string
+		want           bool
+	}{
+		{"reflect.(*Value).Method", "reflect.Value.Method", true},
+		{"reflect.(*Value).MethodByName", "reflect.Value.MethodByName", true},
+		{"reflect.Value.MethodByName", "reflect.Value.Method", false},
+		{"reflect.(*Value).Method", "reflect.Value.Other", false},
+	} {
+		t.Run(tt.caller+"/"+tt.callee, func(t *testing.T) {
+			prog := NewProgram(nil)
+			defer prog.Dispose()
+			prog.EnableGoGlobalDCE(true)
+			pkg := prog.NewPackage("reflect", "reflect")
+			value := prog.Struct(prog.VoidPtr(), prog.VoidPtr(), prog.Uintptr())
+			result := types.NewTuple(types.NewVar(token.NoPos, nil, "", value.RawType()))
+			sig := types.NewSignatureType(nil, nil, nil, nil, result, false)
+			lookup := pkg.NewFunc(tt.callee, sig, GoDecl)
+			wrapper := pkg.NewFunc(tt.caller, sig, GoDecl)
+			b := wrapper.MakeBody(1)
+			b.Return(b.Call(lookup.Expr))
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			ir := pkg.String()
+			if got := strings.Contains(ir, "@llvm.type.checked.load"); got != tt.want {
+				t.Fatalf("method capability present=%v, want %v:\n%s", got, tt.want, ir)
+			}
+			if pkg.NeedAbiInit != 0 {
+				t.Fatal("an unused wrapper requested global ABI registration")
+			}
+		})
 	}
 }
 
@@ -3468,5 +3507,36 @@ func TestRtFuncResolvesLinkname(t *testing.T) {
 
 	if got := pkg.RuntimeFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
 		t.Fatalf("rtFunc linkname = %q, want %q", got, "sigsetjmp")
+	}
+}
+
+func TestInterfaceBasicTypeUsed(t *testing.T) {
+	for _, tc := range []struct {
+		arch      string
+		enabled   bool
+		predicate bool
+	}{{"wasm", false, false}, {"amd64", true, false}, {"wasm", true, true}} {
+		t.Run(fmt.Sprintf("%s/%v", tc.arch, tc.enabled), func(t *testing.T) {
+			prog := NewProgram(&Target{GOARCH: tc.arch})
+			defer prog.Dispose()
+			prog.EnableDeadcodeDrop(tc.enabled)
+			pkg := prog.NewPackage("predicate", "predicate")
+			fn := pkg.NewFunc("check", NoArgsNoRet, CDecl)
+			b := fn.MakeBody(1)
+			b.InterfaceBasicTypeUsed(types.Typ[types.Float64])
+			b.InterfaceBasicTypeUsed(types.Typ[types.Float64])
+			b.Return()
+			b.EndBuild()
+			flag := pkg.Module().NamedFunction("_llgo_iface_use._llgo_float64")
+			if !flag.IsNil() != tc.predicate {
+				t.Fatalf("predicate present=%v, want %v", !flag.IsNil(), tc.predicate)
+			}
+			if tc.predicate && !flag.IsDeclaration() {
+				t.Fatal("package compilation must not resolve the predicate")
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

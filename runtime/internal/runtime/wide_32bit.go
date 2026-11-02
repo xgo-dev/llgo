@@ -21,11 +21,15 @@ package runtime
 // NewChan64 follows runtime.makechan64. It preserves the range check for a
 // wide make operand on 32-bit targets before calling the native-int fast path.
 func NewChan64(eltSize int, cap64 int64) *Chan {
+	return NewChan64Aligned(eltSize, cap64, 1)
+}
+
+func NewChan64Aligned(eltSize int, cap64 int64, eltAlign int) *Chan {
 	cap := int(cap64)
 	if int64(cap) != cap64 {
 		panicMakeChanSize()
 	}
-	return NewChan(eltSize, cap)
+	return NewChanAligned(eltSize, cap, eltAlign)
 }
 
 // PanicExtendIndex and PanicExtendIndexU preserve a 64-bit index on 32-bit
@@ -43,6 +47,10 @@ func PanicExtendIndexU(hi uint, lo uint, y int) {
 // targets when either source operand is wider than int, so an out-of-range
 // value is rejected before it can be truncated into an apparently valid size.
 func MakeSlice64(len64, cap64 int64, etSize int) Slice {
+	return MakeSlice64Aligned(len64, cap64, etSize, 1)
+}
+
+func MakeSlice64Aligned(len64, cap64 int64, etSize, etAlign int) Slice {
 	len := int(len64)
 	if int64(len) != len64 {
 		panicmakeslicelen()
@@ -51,5 +59,5 @@ func MakeSlice64(len64, cap64 int64, etSize int) Slice {
 	if int64(cap) != cap64 {
 		panicmakeslicecap()
 	}
-	return MakeSlice(len, cap, etSize)
+	return MakeSliceAligned(len, cap, etSize, etAlign)
 }

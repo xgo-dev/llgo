@@ -42,7 +42,7 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 		ExportFile: "pkg.a",
 	}, &genConfig{})
 
-	if err := applyDeadcodeDropOverrides([]Package{srcAPkg}, entryPkg, false, false); err != nil {
+	if err := applyDeadcodeDropOverrides([]Package{srcAPkg}, entryPkg, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestDCEEntryRootCandidates(t *testing.T) {
 
 func TestApplyDeadcodeDropRejectsMissingMetadata(t *testing.T) {
 	pkg := &aPackage{Package: &packages.Package{PkgPath: "example.com/missing"}}
-	err := applyDeadcodeDropOverrides([]Package{pkg}, nil, false, false)
+	err := applyDeadcodeDropOverrides([]Package{pkg}, nil, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "missing dead-code metadata for linked package example.com/missing") {
 		t.Fatalf("applyDeadcodeDropOverrides() = %v, want missing metadata diagnostic", err)
 	}
@@ -150,6 +150,24 @@ func TestLinkedCExportsValidation(t *testing.T) {
 			LPkg:    lpkg,
 		}
 	}
+
+	t.Run("empty C name", func(t *testing.T) {
+		_, err := linkedCExports(ctx, []Package{
+			newExport("main", "main.Exported", "", llssa.NoArgsNoRet, true),
+		})
+		if err == nil || !strings.Contains(err.Error(), "empty export name") {
+			t.Fatalf("linkedCExports() error = %v, want empty export name", err)
+		}
+	})
+
+	t.Run("Unicode C name", func(t *testing.T) {
+		exports, err := linkedCExports(ctx, []Package{
+			newExport("main", "main.函数", "函数", llssa.NoArgsNoRet, true),
+		})
+		if err != nil || len(exports) != 1 || exports[0].cName != "函数" {
+			t.Fatalf("linkedCExports() = (%+v, %v), want Unicode name preserved", exports, err)
+		}
+	})
 
 	t.Run("duplicate C name", func(t *testing.T) {
 		_, err := linkedCExports(ctx, []Package{
@@ -307,4 +325,32 @@ func addMethodTypeGlobal(mod llvm.Module, name string) {
 	typeDesc.SetInitializer(llvm.ConstNamedStruct(typeTy, []llvm.Value{
 		llvm.ConstNull(ctx.Int8Type()), methods,
 	}))
+}
+
+func TestInterfacePredicatesRequireClosedProgram(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		prog := llssa.NewProgram(nil)
+		defer prog.Dispose()
+		src := prog.NewPackage("source", "source")
+		dst := prog.NewPackage("entry", "entry")
+		name := "_llgo_iface_use._llgo_float64"
+		llvm.AddFunction(src.Module(), name, llvm.FunctionType(src.Module().Context().Int1Type(), nil, false))
+		builder := meta.NewBuilder()
+		typ := builder.Sym("_llgo_float64")
+		builder.AddOrdinaryEdge(typ, typ)
+		pm, err := builder.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pm.Close()
+		pkg := &aPackage{Package: &packages.Package{PkgPath: "source"}, LPkg: src, Meta: pm}
+		entry := &aPackage{LPkg: dst}
+		if err := applyDeadcodeDropOverrides([]Package{pkg}, entry, false, closed, false); err != nil {
+			t.Fatal(err)
+		}
+		value := dst.Module().NamedFunction(name).FirstBasicBlock().FirstInstruction().Operand(0).ZExtValue()
+		if (value == 0) != closed {
+			t.Fatalf("closed=%v: predicate=%d", closed, value)
+		}
+	}
 }

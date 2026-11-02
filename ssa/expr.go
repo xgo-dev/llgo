@@ -23,6 +23,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"math"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -180,7 +181,7 @@ func (p Program) Zero(t Type) Expr {
 		} else {
 			name = "Iface"
 		}
-		ret = p.Zero(p.rtType(name)).impl
+		ret = p.Zero(p.rtType(RuntimeSymbol(name, "Eface", "Iface"))).impl
 	case *types.Map:
 		ret = p.Zero(p.Pointer(p.rtType("Map"))).impl
 	case *types.Tuple:
@@ -1182,7 +1183,7 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 				if arg.impl.Type() != arg.Type.ll {
 					arg.impl = castInt(b, x.impl, srcType, arg.Type)
 				}
-				ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(fn), arg).impl
+				ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64", "StringFromUint64")), arg).impl
 				return
 			}
 		case types.Complex128:
@@ -1380,7 +1381,7 @@ func castFloatToInt386(b Builder, x llvm.Value, typ Type, dstSize uint64) llvm.V
 	if typ.kind == vkUnsigned {
 		fn = "Float64ToUint64"
 	}
-	return b.InlineCall(b.Pkg.rtFunc(fn), Expr{input, b.Prog.Float64()}).impl
+	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "Float64ToInt64", "Float64ToUint64")), Expr{input, b.Prog.Float64()}).impl
 }
 
 func castFloatToSignedIntX86(b Builder, x llvm.Value, typ Type, bits uint64) llvm.Value {
@@ -1485,6 +1486,35 @@ func (b Builder) InlineCall(fn Expr, args ...Expr) (ret Expr) {
 	return b.Call(fn, args...)
 }
 
+// CanForwardVarargs checks the unlowered ABI of a direct variadic forwarding
+// call. The physical result must equal the logical Go result so Call cannot
+// insert a result conversion between the tail call and its return.
+func (b Builder) CanForwardVarargs(fn Expr) bool {
+	if fn.kind != vkFuncDecl || !b.Func.hasVArg || fn.ll != b.Func.ll ||
+		fn.impl.FunctionCallConv() != b.Func.impl.FunctionCallConv() {
+		return false
+	}
+	sig := fn.raw.Type.(*types.Signature)
+	return fn.ll.ReturnType() == b.Prog.retType(sig).ll
+}
+
+// CallForwardVarargs forwards a variadic thunk's incoming ellipsis unchanged.
+// CanForwardVarargs must hold, the caller must return the result immediately,
+// and later ABI lowering must preserve the call and return without rewrites.
+func (b Builder) CallForwardVarargs(fn Expr, args ...Expr) Expr {
+	if !b.CanForwardVarargs(fn) {
+		panic(fmt.Sprintf("cannot forward C variadic arguments from %s to %s: incompatible ABI",
+			b.Func.Name(), fn.impl.Name()))
+	}
+	ret := b.Call(fn, args...)
+	// The preflight result check guarantees Call returns its raw instruction.
+	// LLVM's thunk attribute makes musttail forward the incoming ellipsis,
+	// including arguments that have no explicit operands in the call IR.
+	b.Func.impl.AddFunctionAttr(b.Prog.ctx.CreateStringAttribute("thunk", ""))
+	ret.impl.SetTailCallKind(llvm.TailCallKindMustTail)
+	return ret
+}
+
 // The Call instruction represents a function call.
 //
 // The Call instruction yields the function result if there is exactly
@@ -1540,6 +1570,8 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	var reflectCheck ReflectMethodCheck
 	if b.Pkg.Path() != "reflect" {
 		reflectCheck = b.checkReflect(fn, args)
+	} else {
+		reflectCheck = reflectMethodWrapperCheck(b.Func.Name(), fn.Name())
 	}
 	ret.Type = b.Prog.retType(sig)
 	params := llvmParamsEx(data, args, sig.Params(), b)
@@ -1684,6 +1716,21 @@ const (
 	reflectTypeMethodMask = ReflectTypeMethodByIndex | ReflectTypeMethodByName | ReflectTypeMethodDynamic
 	ReflectMethodMask     = ReflectMethodByIndex | ReflectMethodByName | ReflectMethodDynamic | reflectTypeMethodMask
 )
+
+// Interface dispatch reaches the pointer wrapper instead of a direct Value
+// lookup. Put its capability check in that wrapper, so unreachable wrappers
+// do not retain methods and ordinary user-defined lookups gain no assumptions
+// about the reflect.Value they return. This does not request global ABI init.
+func reflectMethodWrapperCheck(caller, callee string) ReflectMethodCheck {
+	switch {
+	case caller == "reflect.(*Value).Method" && callee == "reflect.Value.Method":
+		return ReflectMethodCheck{Kind: ReflectMethodDynamic}
+	case caller == "reflect.(*Value).MethodByName" && callee == "reflect.Value.MethodByName":
+		return ReflectMethodCheck{Kind: ReflectMethodDynamic | ReflectMethodByName}
+	default:
+		return ReflectMethodCheck{}
+	}
+}
 
 func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 	pkg := b.Pkg
@@ -1930,8 +1977,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 				case vkSlice:
 					etSize := b.Prog.SizeOf(b.Prog.Elem(elem.Type))
 					ret.Type = src.Type
-					ret.impl = b.InlineCall(b.Pkg.rtFunc("SliceAppend"),
-						src, b.SliceData(elem), b.SliceLen(elem), b.Prog.Val(int(etSize))).impl
+					ret.impl = b.appendSlice(src, b.SliceData(elem), b.SliceLen(elem), etSize).impl
 					return
 				case vkString:
 					etSize := b.Prog.SizeOf(b.Prog.Byte())
@@ -1942,8 +1988,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 				default:
 					etSize := b.Prog.SizeOf(elem.Type)
 					ret.Type = src.Type
-					ret.impl = b.InlineCall(b.Pkg.rtFunc("SliceAppend"),
-						src, elem, b.Const(constant.MakeInt64(1), b.Prog.Int()), b.Prog.Val(int(etSize))).impl
+					ret.impl = b.appendSlice(src, elem, b.Const(constant.MakeInt64(1), b.Prog.Int()), etSize).impl
 					return
 				}
 			}
@@ -1997,7 +2042,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 			t := b.abiType(m.raw.Type)
 			kind := mapKeyFastKind(b.Prog, m.raw.Type)
 			arg := b.mapKeyAccessArg(m, args[1], kind)
-			b.Call(b.Pkg.rtFunc(kind.deleteName()), t, m, arg)
+			b.Call(b.Pkg.rtFunc(RuntimeSymbol(kind.deleteName(), "MapDelete", "MapDeleteFast32", "MapDeleteFast64", "MapDeleteFastStr")), t, m, arg)
 			return
 		}
 	case "clear":
@@ -2103,6 +2148,14 @@ func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
 			fn = "PrintPointer"
 			typ = prog.VoidPtr()
 		case vkString:
+			if prog.target.GOARCH == "wasm" {
+				length := b.StringLen(arg)
+				if value := length.impl.IsAConstantInt(); !value.IsNil() && value.ZExtValue() <= math.MaxUint32 {
+					b.InlineCall(b.Pkg.rtFunc("PrintString32"), b.Convert(prog.VoidPtr(), b.StringData(arg)),
+						prog.IntVal(value.ZExtValue(), prog.Uint32()))
+					continue
+				}
+			}
 			fn = "PrintString"
 		case vkEface:
 			fn = "PrintEface"
@@ -2123,7 +2176,10 @@ func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
 		if typ != arg.Type {
 			arg = b.Convert(typ, arg)
 		}
-		b.InlineCall(b.Pkg.rtFunc(fn), arg)
+		b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+			"PrintBool", "PrintInt", "PrintUint", "PrintFloat", "PrintSlice", "PrintPointer",
+			"PrintString", "PrintEface", "PrintIface", "PrintComplex",
+		)), arg)
 	}
 	if ln {
 		b.InlineCall(b.Pkg.rtFunc("PrintByte"), prog.IntVal('\n', prog.Byte()))
@@ -2160,7 +2216,9 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 	}
 	if v.kind == vkClosure {
 		if _, ok := t.Underlying().(*types.Signature); ok {
-			if dst := b.Prog.Type(t, GoDecl); dst.kind == vkFuncPtr {
+			// Assignment destinations are already lowered raw types. A raw
+			// signature is a native pointer, not a two-word Go function value.
+			if dst := b.Prog.rawType(t); dst.kind == vkFuncPtr {
 				return b.ChangeType(dst, v)
 			}
 		}

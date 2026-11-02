@@ -136,6 +136,30 @@ func TestDarwinLTOObjectPolicy(t *testing.T) {
 	}
 }
 
+func TestDarwinLTOObjectPathArguments(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"direct option", []string{"-object_path_lto", "chosen.o"}, true},
+		{"driver option", []string{"-Xlinker", "-object_path_lto", "-Xlinker", "chosen.o"}, true},
+		{"comma options", []string{"-Wl,-dead_strip,-object_path_lto,chosen.o"}, true},
+		{"output substring", []string{"-o", "object_path_lto-probe"}, false},
+		{"output matching token", []string{"-o", "-object_path_lto"}, false},
+		{"library substring", []string{"-L/tmp/object_path_lto/lib", "-lobject_path_lto"}, false},
+		{"separate library path", []string{"-L", "/tmp/object_path_lto"}, false},
+		{"linker path value", []string{"-Wl,-rpath,/tmp/object_path_lto"}, false},
+		{"input after separator", []string{"--", "-object_path_lto"}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasDarwinLTOObjectPath(tt.args); got != tt.want {
+				t.Fatalf("hasDarwinLTOObjectPath(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDarwinLTOFailedLinkPreservesOlderObjects(t *testing.T) {
 	t.Setenv("LLGO_TEST_LINKER_HELPER", "fail")
 	for _, occupied := range []bool{false, true} {
@@ -223,7 +247,7 @@ func TestLinuxDWARFCompressionArgs(t *testing.T) {
 	}{
 		{"default", Config{Goos: "linux", BuildMode: BuildModeExe}, true},
 		{"shared", Config{Goos: "linux", BuildMode: BuildModeCShared, LinkOptions: LinkOptions{DWARF: DWARFPreserve}}, true},
-		{"disabled", Config{Goos: "linux", LinkOptions: LinkOptions{DisableDWARFCompression: true}}, false},
+		{"disabled", Config{Goos: "linux", LinkOptions: LinkOptions{DWARFCompression: DWARFCompressionDisabled}}, false},
 		{"omit", Config{Goos: "linux", LinkOptions: LinkOptions{DWARF: DWARFOmit}}, false},
 		{"archive", Config{Goos: "linux", BuildMode: BuildModeCArchive}, false},
 		{"fixed-target", Config{Goos: "linux", Target: "esp32c3", LinkOptions: LinkOptions{DWARF: DWARFPreserve}}, false},
@@ -245,7 +269,11 @@ func TestLinuxCompressedDWARF(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		t.Run(strconv.FormatBool(disabled), func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "compressed-dwarf")
-			conf := &Config{Mode: ModeBuild, OutFile: bin, LinkOptions: LinkOptions{DWARF: DWARFPreserve, DisableDWARFCompression: disabled}}
+			compression := DWARFCompressionDefault
+			if disabled {
+				compression = DWARFCompressionDisabled
+			}
+			conf := &Config{Mode: ModeBuild, OutFile: bin, LinkOptions: LinkOptions{DWARF: DWARFPreserve, DWARFCompression: compression}}
 			if _, err := Do([]string{"./testdata/ldflagsstrip"}, conf); err != nil {
 				t.Fatal(err)
 			}
@@ -296,7 +324,7 @@ func TestDarwinDWARFSizeSymbols(t *testing.T) {
 				// physical panic frames without imposing new inline-line rules.
 				input = panicFixture
 			}
-			bin := filepath.Join(t.TempDir(), "debug-size")
+			bin := filepath.Join(t.TempDir(), "object_path_lto-debug-size")
 			conf := &Config{Mode: ModeBuild, OutFile: bin, OptLevel: optlevel.Os, LTO: mode, LinkOptions: LinkOptions{DWARF: DWARFPreserve}}
 			if _, err := Do([]string{input}, conf); err != nil {
 				t.Fatal(err)

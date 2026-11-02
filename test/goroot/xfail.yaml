@@ -187,9 +187,6 @@ timeouts:
     reason: nosplit run runs past the default timeout on linux/amd64
 flakes:
 xfails:
-  - directive: run
-    case: genmeth1.go
-    reason: the current go/types and x/tools SSA path panics while instantiating the new generic-method test
   - platform: windows/amd64
     directive: run
     case: fixedbugs/issue58300.go

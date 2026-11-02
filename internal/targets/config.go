@@ -18,6 +18,12 @@ type Config struct {
 	// concrete host implementation without creating another source profile.
 	WasmProfile  string `json:"wasm-profile"`
 	WasmProvider string `json:"wasm-provider"`
+	// WASI linear-memory and process-stack budgets, in bytes. Zero inherits
+	// the parent's value or keeps the toolchain default. These are link-only
+	// settings; WasmStackSize does not change goroutine/pthread stack sizes.
+	WasmInitialMemory uint64 `json:"wasm-initial-memory"`
+	WasmMaxMemory     uint64 `json:"wasm-max-memory"`
+	WasmStackSize     uint64 `json:"wasm-stack-size"`
 
 	// Compiler and linker configuration
 	Libc         string   `json:"libc"`

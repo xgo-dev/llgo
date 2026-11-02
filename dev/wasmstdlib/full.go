@@ -217,6 +217,8 @@ func fullSourceExclusion(p profile, pkg string) (string, bool) {
 		return "the Go cgo frontend does not support GOARCH=wasm; C interoperability is covered by dedicated LLGo target tests", true
 	case "test/std/runtime/cgo":
 		return "runtime/cgo requires the unsupported GOARCH=wasm cgo frontend; handle and host-boundary behavior has dedicated target tests", true
+	case "test/std/runtime/abicall":
+		return "native libc ABI, signal, and foreign-thread tests explicitly exclude wasm; host boundaries are covered by dedicated target tests", true
 	case "test/llgoext", "test/llgoext/localitymulti":
 		if p.Reference {
 			return "LLGo extension tests require LLGo-only build tags and runtime APIs", true
@@ -353,7 +355,7 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			e.Status, e.Reason = "separate-suite", "host-side compiler integration suite is executed by the regular Go workflow"
 		case e.Package == "test/sizereport":
 			e.Status, e.Reason = "separate-suite", "host-side final-artifact size reporting is executed by the regular Go workflow"
-		case e.Package == "test/simd":
+		case e.Package == "test/simd" || e.Package == "test/simd/portable":
 			e.Status, e.Reason = "separate-suite", "experimental SIMD requires GOEXPERIMENT=simd and is executed by the native and W32-WASI SIMD jobs in the regular Go workflow"
 		case excluded:
 			e.Status, e.Reason = "not-applicable", exclusionReason

@@ -11,7 +11,7 @@ on:
     branches: ["**"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  group: llgo.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
@@ -21,8 +21,8 @@ jobs:
   ci-gate:
     name: CI gate (LLGo)
     needs: prepare
-    if: always()
-    runs-on: ubuntu-24.04
+    if: always() && !cancelled()
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
     steps:
       - name: Verify CI preparation succeeded
         run: test "${{ needs.prepare.result }}" = "success"
@@ -190,6 +190,22 @@ jobs:
             -Profile "${{ matrix.windows_abi }}" `
             -GoArch "${{ matrix.windows_arch || 'amd64' }}"
 
+      - name: Check BDWGC collection under the Windows heap lock
+        if: runner.os == 'Windows' && matrix.windows_abi == 'mingw' && matrix.windows_arch == '386'
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+
+          compiler = Path(os.environ["LLGO_MINGW_TARGET_BIN"]) / "i686-w64-mingw32-clang.exe"
+          prefix = Path(os.environ["LLGO_MINGW_TARGET_VCPKG_ROOT"])
+          executable = Path(os.environ["RUNNER_TEMP"]) / "bdwgc-heap-lock.exe"
+          subprocess.run([str(compiler), "-O2", ".github/windows/test-bdwgc-heap-lock.c",
+                          "-I" + str(prefix / "include"), "-L" + str(prefix / "lib"),
+                          "-lgc", "-o", str(executable)], check=True)
+          subprocess.run([str(executable)], check=True, timeout=30)
+
       - name: Run Go 1.27 LLGo core tests
         env:
           LLGO_BUILD_CACHE: "1"
@@ -210,9 +226,23 @@ jobs:
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
 
+          # GC_malloc returns zeroed memory, so check allocation clearing with
+          # the malloc-backed runtime too. Poison fresh allocations on glibc.
+          (
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              export MALLOC_PERTURB_=165
+            fi
+            "$LLGO" test -tags=nogc -run '^TestRuntimeAlignedAllocationZeroed$' -count=1 ./test/go
+          )
+
           python .github/scripts/check_llgo_coverage.py coverage-llgo.txt
 
+          # Literal formatting must preserve arbitrary Writers' caller frames.
+          "$LLGO" run ./internal/build/testdata/wasm-fmt-literal-debugger
+          "$LLGO" run -O0 ./internal/build/testdata/wasm-fmt-literal-debugger
+
           # Native thread and TLS regressions live outside test/.
+          (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/wordmap)
           (cd runtime && "$LLGO" test -v -run '^TestSlot(GCAllocation|DestructorGCRegistration)$' -count=20 -timeout=2m ./internal/clite/tls)
           if [[ "$RUNNER_OS" != Windows ]]; then
             (cd runtime && "$LLGO" test -v -run '^Test(KeyNativeLayout|DetachedStateNativeValue)$' -timeout=2m ./internal/thread)
@@ -427,7 +457,20 @@ jobs:
 
       - name: Install LLDB for integration tests
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt-get install -y lldb-${{matrix.llvm}} gdb
+        run: |
+          sudo apt-get install -y lldb-${{matrix.llvm}} gdb
+          # Ubuntu's /etc/lldb/lldbinit enables its symbol server even when
+          # DEBUGINFOD_URLS is empty. Keep this job's debugger tests offline
+          # without changing the runner's shared initialization files.
+          wrapper="$RUNNER_TEMP/llgo-ci-lldb"
+          cat > "$wrapper" <<'EOF'
+          #!/usr/bin/env bash
+          exec /usr/bin/lldb-${{ matrix.llvm }} --no-lldbinit \
+            -O 'settings clear plugin.symbol-locator.debuginfod.server-urls' "$@"
+          EOF
+          chmod +x "$wrapper"
+          "$wrapper" --batch -o 'settings show plugin.symbol-locator.debuginfod.server-urls'
+          echo "LLGO_LLDB=$wrapper" >> "$GITHUB_ENV"
 
       - name: GDB values, registry and complete worker unwind (Linux)
         if: ${{ matrix.os == 'ubuntu-latest' }}
@@ -707,7 +750,8 @@ jobs:
   cross-compile:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
-    timeout-minutes: 30
+    # Allow the threaded-runtime, LTO and size-build suites to finish on a cold cache.
+    timeout-minutes: 45
     strategy:
       matrix:
         # WASI output is host-independent; keep this qualification on Ubuntu.
@@ -764,12 +808,16 @@ jobs:
 
       - name: Test WASI pthread backend and threaded GC (Wasmer)
         shell: bash
-        run: python3 dev/test_wasm_wasi_threads.py
+        run: |
+          python3 -m unittest discover -s dev -p test_wasm_wasi_threads_test.py
+          python3 dev/test_wasm_wasi_threads.py
 
       - name: Test dev WASI Thin and Full LTO (Wasmer)
         shell: bash
         run: |
           set -euo pipefail
+          go test -tags=dev ./internal/build -count=1 \
+            -run '^Test(DeadcodeDropCollectFingerprint|DevLTOGlobalDCECollectFingerprint)$'
           go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
           LLGO="$RUNNER_TEMP/llgo-dev" python3 dev/test_wasm_wasi_lto.py
 
@@ -782,13 +830,22 @@ jobs:
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
-    name: windows GNU cross (${{ matrix.os }}, ${{ matrix.windows_arch }})
+    name: windows GNU cross (${{ matrix.os }}, ${{ matrix.windows_arch == 'all' && 'amd64 + arm64 + 386' || matrix.windows_arch }})
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest]
-        windows_arch: [amd64, arm64, "386"]
+        include:
+          - os: ubuntu-24.04
+            windows_arch: amd64
+          - os: ubuntu-24.04
+            windows_arch: arm64
+          - os: ubuntu-24.04
+            windows_arch: "386"
+          # Share the host compiler, llvm-mingw archive and vcpkg bootstrap
+          # across targets while retaining every macOS-to-Windows build.
+          - os: macos-latest
+            windows_arch: all
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -804,6 +861,7 @@ jobs:
           go-version: "1.27.0"
 
       - name: Build Unix host compiler
+        id: host_compiler
         shell: bash
         run: |
           go build -p=2 -o "$RUNNER_TEMP/llgo-host" ./cmd/llgo
@@ -812,11 +870,26 @@ jobs:
           # available to the following cross-host builds.
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
-      - name: Test cross-host windows/${{ matrix.windows_arch }}
+      - name: Test cross-host windows/amd64
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == 'amd64') }}
         uses: ./.github/actions/test-windows-cross
         with:
           llgo: ${{ runner.temp }}/llgo-host
-          windows-arch: ${{ matrix.windows_arch }}
+          windows-arch: amd64
+
+      - name: Test cross-host windows/arm64
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == 'arm64') }}
+        uses: ./.github/actions/test-windows-cross
+        with:
+          llgo: ${{ runner.temp }}/llgo-host
+          windows-arch: arm64
+
+      - name: Test cross-host windows/386
+        if: ${{ !cancelled() && steps.host_compiler.outcome == 'success' && (matrix.windows_arch == 'all' || matrix.windows_arch == '386') }}
+        uses: ./.github/actions/test-windows-cross
+        with:
+          llgo: ${{ runner.temp }}/llgo-host
+          windows-arch: "386"
 
   wasm-browser-debug:
     permissions:
@@ -866,7 +939,7 @@ jobs:
           version: "11.3.1"
           token: ${{ secrets.CODECOV_TOKEN }}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-browser/j32-embedded.out,coverage-browser/j32-external.out,coverage-browser/j64-embedded.out,coverage-browser/j64-external.out
+          files: coverage-browser/j32-embedded.out,coverage-browser/j32-external.out,coverage-browser/j64-embedded.out,coverage-browser/j64-external.out,coverage-browser/j32-goroutines-1.out,coverage-browser/j32-goroutines-2.out,coverage-browser/j32-goroutines-4.out,coverage-browser/j32-goroutines-2-optimized.out,coverage-browser/j64-goroutines-1.out,coverage-browser/j64-goroutines-2.out,coverage-browser/j64-goroutines-4.out,coverage-browser/j64-goroutines-2-optimized.out
           flags: go-tests
           disable_search: true
           fail_ci_if_error: true
@@ -915,11 +988,16 @@ jobs:
         with:
           version: "39.0.1"
 
-      - name: Restore Wasmer cache
-        if: matrix.suite != 'workers'
+      - name: Set up Go for building llgo
+        uses: ./.github/actions/setup-go
+
+      - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          wasmer-cache-mode: readwrite
+          build-cache-mode: readwrite
+          build-cache-scope: wasm-${{ matrix.suite }}
+          crosscompile-cache-mode: readwrite
+          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
 
       - name: Install Wasmer for W32
         if: matrix.suite != 'workers'
@@ -929,9 +1007,6 @@ jobs:
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
           version: "1.243.0"
-
-      - name: Set up Go for building llgo
-        uses: ./.github/actions/setup-go
 
       - name: Install llgo
         run: |
@@ -982,6 +1057,7 @@ jobs:
         run: |
           python3 -m unittest discover -s dev -p test_wasm_debug_info_test.py
           python3 dev/test_wasm_debug_info.py --profile j32 --profile j64 --profile w32 --artifact embedded --artifact external
+          python3 dev/test_wasm_debug_info.py --opt z --strip-symbols --source-maps --artifact embedded --artifact external
 
       - name: Test optimized Emscripten runtime boundaries
         if: matrix.suite == 'runtime'
@@ -1064,6 +1140,19 @@ jobs:
         run: |
           bash dev/test_wasm_stdlib_test.sh
           bash dev/test_wasm_stdlib.sh
+          llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
+          go build -tags=dev -o "$llgo_dev" ./cmd/llgo
+          for target in wasi emscripten emscripten-memory64; do
+            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
+            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
+              -run '^TestLiteral' ./test/std/fmt
+            "$LLGO" run -target "$target" -emulator -O2 \
+              ./internal/build/testdata/wasm-fmt-literal-callers
+            "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
+              ./internal/build/testdata/wasm-fmt-literal-debugger
+            "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \
+              ./internal/build/testdata/wasm-map-metadata
+          done
 
       - name: Run caller and large-function regressions on browser targets
         if: matrix.suite == 'test-command'

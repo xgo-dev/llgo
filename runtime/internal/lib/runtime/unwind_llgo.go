@@ -252,7 +252,7 @@ const maxFPStride = 1 << 20
 // functions were compiled with the frame-pointer attribute
 // (ssa.Program.NeedsFramePointer).
 //
-//go:linkname runtimeFPChain __llgo_fp_chain
+//go:linkname runtimeFPChain C.__llgo_fp_chain
 var runtimeFPChain uint8
 
 // fpUnwindAvailable reports whether the physical walk can be used for the

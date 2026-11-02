@@ -4,8 +4,8 @@ project(LLGOLTOPlugin LANGUAGES C CXX)
 
 find_package(LLVM REQUIRED CONFIG)
 
-if(NOT LLVM_VERSION_MAJOR EQUAL 22 AND NOT LLVM_VERSION_MAJOR EQUAL 23)
-  message(FATAL_ERROR "LLGo LTO plugin requires LLVM 22.x or 23.x matching the linker, found ${LLVM_PACKAGE_VERSION}")
+if(NOT LLVM_VERSION_MAJOR EQUAL 22)
+  message(FATAL_ERROR "LLGo LTO plugin requires LLVM 22.x, found ${LLVM_PACKAGE_VERSION}")
 endif()
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")

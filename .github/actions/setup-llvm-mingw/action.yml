@@ -86,7 +86,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}\llgo-mingw-vcpkg\${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}\386
-        key: llgo-llvm-mingw-20260616-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20260616-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
 
     - name: Build llvm-mingw target dependencies
       if: runner.os == 'Windows' && steps.llvm_mingw_vcpkg_cache.outputs.cache-hit != 'true'
@@ -115,9 +115,15 @@ runs:
         if ($LASTEXITCODE -ne 0) {
           throw "Bootstrapping vcpkg failed with exit code $LASTEXITCODE"
         }
+        $overlayRoot = Join-Path $env:RUNNER_TEMP "llgo-mingw-port-overlay"
+        python .github/windows/prepare-bdwgc-port.py $sourceRoot $overlayRoot
+        if ($LASTEXITCODE -ne 0) {
+          throw "Preparing the BDWGC Windows fault-guard overlay failed"
+        }
         & (Join-Path $sourceRoot "vcpkg.exe") install `
           --triplet=x86-mingw-dynamic `
           --host-triplet=x64-windows `
+          "--overlay-ports=$overlayRoot" `
           "--x-manifest-root=$manifestRoot" `
           "--x-install-root=$installRoot" `
           --clean-after-build
@@ -276,7 +282,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}/llgo-mingw-vcpkg/${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}/${{ runner.os }}-${{ runner.arch }}/${{ inputs.windows-arch }}
-        key: llgo-llvm-mingw-20260616-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}
+        key: llgo-llvm-mingw-20260616-ucrt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.windows-arch }}-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
 
     - name: Build cross-host target dependencies
       if: runner.os != 'Windows' && steps.cross_host_vcpkg_cache.outputs.cache-hit != 'true'
@@ -315,8 +321,11 @@ runs:
         if [[ ! -x "$source_root/vcpkg" ]]; then
           "$source_root/bootstrap-vcpkg.sh" -disableMetrics
         fi
+        overlay_root="$RUNNER_TEMP/llgo-mingw-port-overlay"
+        python .github/windows/prepare-bdwgc-port.py "$source_root" "$overlay_root"
         "$source_root/vcpkg" install \
           "--triplet=$triplet" \
+          "--overlay-ports=$overlay_root" \
           "--x-manifest-root=$manifest_root" \
           "--x-install-root=$install_root" \
           --clean-after-build

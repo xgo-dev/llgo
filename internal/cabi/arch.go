@@ -157,7 +157,10 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 					align := p.Alignof(sub)
 					n = (n + p.Sizeof(sub) + align - 1) &^ (align - 1)
 				}
-				n = (n + info.Align - 1) &^ (info.Align - 1)
+				// Each SysV register component occupies at most one
+				// eightbyte, even when the aggregate is over-aligned.
+				align := min(info.Align, 8)
+				n = (n + align - 1) &^ (align - 1)
 				return ctx.IntType(n * 8)
 			}
 			info.Kind = AttrWidthType2

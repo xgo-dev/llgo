@@ -418,6 +418,24 @@
   };
   addSyncMethods(global.fs);
 
+  // Worker RPC executes these operations synchronously on the runtime thread;
+  // its internal completion callback never enters Go.
+  global.llgoWasmFSHost = global.fs;
+  global.fs = { ...global.fs };
+
+  // Match Node's asynchronous callback contract. Calling Go inline can park
+  // the callback while another goroutine calls fs, nesting JS/Asyncify stacks
+  // until they overflow. Keep the synchronous adapters bound to the original
+  // operations above, and deliver async results after the caller returns.
+  for (const [name, operation] of Object.entries(global.fs)) {
+    if (typeof operation !== "function" || name.endsWith("Sync")) continue;
+    global.fs[name] = function (...args) {
+      const callback = args.pop();
+      args.push((...result) => queueMicrotask(() => callback(...result)));
+      return operation.apply(this, args);
+    };
+  }
+
   if (!global.process) {
     global.process = {
       getuid() { return 0; },

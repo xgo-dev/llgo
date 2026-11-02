@@ -58,26 +58,9 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 	if err != nil {
 		return fmt.Errorf("analyze external pclntab: %w", err)
 	}
-	data := *ctx.pclnExternal
-	if analysis.PointerSize != data.PointerSize {
-		return fmt.Errorf("external pclntab pointer size changed from %d to %d", data.PointerSize, analysis.PointerSize)
-	}
-	data.ImageBase = analysis.ImageBase
-	data.TextStart = analysis.TextStart
-	data.TextEnd = analysis.TextEnd
-	data.Identity = analysis.Identity
-	data.EntrySites = make([]pclnmap.Site, len(analysis.EntrySites))
-	for i, site := range analysis.EntrySites {
-		data.EntrySites[i] = pclnmap.Site{PCOffset: site.PCOffset, ID: site.ID}
-	}
-	data.PCSites = make([]pclnmap.Site, len(analysis.PCLineSites))
-	pcSiteOwners := make([]string, len(analysis.PCLineSites))
-	for i, site := range analysis.PCLineSites {
-		data.PCSites[i] = pclnmap.Site{PCOffset: site.PCOffset, ID: site.ID}
-		pcSiteOwners[i] = site.OwnerSymbol
-	}
-	if err := filterExternalPCLNJoins(&data, pcSiteOwners); err != nil {
-		return err
+	data, err := linkedPCLNData(*ctx.pclnExternal, analysis)
+	if err != nil {
+		return fmt.Errorf("prune external pclntab: %w", err)
 	}
 	raw, err := pclnmap.Encode(data)
 	if err != nil {

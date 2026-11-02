@@ -81,6 +81,11 @@ type Options struct {
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
+	UnusedGlobalInits *UnusedGlobalInits
+	// StaticByteArrays are package-level [N]byte payloads extracted after
+	// type checking and before ssa.Package.Build so go/ssa does not emit
+	// one store per element. Keys use StaticByteArrayKey(pkg.Path(), name).
+	StaticByteArrays map[string][]byte
 }
 
 // SetDebug sets debug flags.
@@ -180,6 +185,7 @@ type context struct {
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
+	variadicErrors       map[*ssa.Function]error
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -195,6 +201,7 @@ type context struct {
 	safepointEntry       bool
 	safepoints           map[ssa.Instruction]struct{}
 	pcLineSeq            uint64
+	pcLineIDs            map[pcLinePosition]uint64
 	panicSitePos         token.Pos
 	// The runtime PC-line table stores file and line, but not column. Keep the
 	// last emitted position within one SSA basic block so repeated checks for a
@@ -235,7 +242,34 @@ type context struct {
 	staticInitStores     map[*ssa.Store]none
 	staticInitInstrs     map[ssa.Instruction]none
 	staticMapSliceValues map[*ssa.MapUpdate]llssa.Expr
+	staticByteArrays     map[string][]byte
 	locality             localityLowering
+}
+
+func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llssa.Global) bool {
+	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
+		return false
+	}
+	data, ok := p.staticByteArrays[staticByteArrayDeclKey(gbl)]
+	if !ok {
+		return false
+	}
+	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	arr, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array)
+	if !ok || arr.Len() != int64(len(data)) {
+		return false
+	}
+	// Length is the restore-time check. Byte contents are trusted because
+	// StripLargeStaticByteArrays only accepts INT/CHAR literals.
+	basic, ok := arr.Elem().Underlying().(*types.Basic)
+	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
+		return false
+	}
+	g.Init(p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data))
+	return true
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -429,6 +463,9 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 		return
 	}
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
+		return
+	}
+	if p.initStaticByteArrayGlobal(define, gbl, g) {
 		return
 	}
 	if value, ok := p.rewriteValue(name); ok {
@@ -1106,6 +1143,7 @@ func (p *context) debugRefValue(b llssa.Builder, value ssa.Value) (llssa.Expr, b
 }
 
 func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
+	b.DIClosureEnv(p.fset.Position(f.Pos()), p.fn.Block(0))
 	params := f.Params
 	if llssa.HasNameValist(f.Signature) {
 		// C ellipsis has no fixed parameter slot. For example, the promoted
@@ -1750,10 +1788,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			if v.Op == token.MUL {
 				if t := p.type_(v.Type(), llssa.GoDecl); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.assertNilDerefBase(b, v.X)
+					p.emitNilDerefBaseCheck(b, v.X)
 				}
 				if isInterfaceCompareDeref(v) {
-					p.assertNilDerefBase(b, v.X)
+					// Preserve p.bvals: a branch-local reload would break SSA dominance.
+					p.emitNilDerefBaseCheck(b, v.X)
 					b.AssertNilDeref(x)
 				}
 			}
@@ -1863,6 +1902,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.GoDecl)
 	case *ssa.MakeInterface:
+		if p.finalizerDataOnly(v) {
+			ret = b.MakeInterfaceDataOnly(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X))
+			break
+		}
 		if refs, _ := nonDebugReferrers(v); len(refs) == 1 {
 			switch ref := refs[0].(type) {
 			case *ssa.Store:
@@ -2295,7 +2338,7 @@ func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its
 // traversal in sync with emitNilDerefBaseCheck, which emits cold failure
-// branches without replacing cached addresses for delayed receiver checks.
+// branches while preserving cached addresses and their SSA dominance.
 func (p *context) assertNilDerefBase(b llssa.Builder, addr ssa.Value) {
 	switch addr := addr.(type) {
 	case *ssa.UnOp:
@@ -2955,8 +2998,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},
-		cgoSymbols: make([]string, 0, 128),
-		rewrites:   rewrites,
+		cgoSymbols:       make([]string, 0, 128),
+		rewrites:         rewrites,
+		staticByteArrays: options.StaticByteArrays,
 
 		trackCallerFrames:  options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
@@ -3002,6 +3046,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		ctx.initAfter = nil
 		fn()
 	}
+	if err = ctx.validateCVariadicWrapperUses(); err != nil {
+		return nil, nil, err
+	}
 	ret.MaterializePreserveSyms()
 	if metaCollect {
 		if err := ret.FinishMetaCollection(); err != nil {
@@ -3024,6 +3071,7 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 
 	ctx.collectStaticGlobalInits(pkg)
 	ctx.collectStaticMapInits(pkg)
+	ctx.collectUnusedGlobalInits(pkg)
 
 	members := make([]*namedMember, 0, len(pkg.Members))
 	skips := ctx.skips

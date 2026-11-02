@@ -15,11 +15,12 @@ func TestWASIHeapReachesLinker(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	t.Setenv("LLGO_TEST_LINKER_HELPER", "write")
 	for _, test := range []struct {
-		name     string
-		goos     string
-		config   []string
-		args     []string
-		wantHeap bool
+		name          string
+		goos          string
+		config        []string
+		args          []string
+		wantHeap      bool
+		initialMemory uint64
 	}{
 		{name: "single worker default", goos: "wasip1", wantHeap: true},
 		{name: "explicit initial memory", goos: "wasip1", args: []string{"-Wl,--initial-memory=33554432"}},
@@ -29,6 +30,8 @@ func TestWASIHeapReachesLinker(t *testing.T) {
 		{name: "configured response", goos: "wasip1", config: []string{"-Xlinker", "@user flags.rsp"}},
 		{name: "shared memory default", goos: "wasip1", config: []string{"-Wl,--import-memory", "-Wl,--max-memory=536870912"}, wantHeap: true},
 		{name: "emscripten unchanged", goos: "js"},
+		{name: "target memory", goos: "wasip1", initialMemory: 16 << 20},
+		{name: "target overridden by heap", goos: "wasip1", initialMemory: 16 << 20, args: []string{"-Wl,--initial-heap=1048576"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -39,7 +42,7 @@ func TestWASIHeapReachesLinker(t *testing.T) {
 					Goos: test.goos, Goarch: "wasm", BuildMode: BuildModeExe,
 					LinkOptions: LinkOptions{DWARF: DWARFOmit},
 				},
-				crossCompile: crosscompile.Export{Linker: os.Args[0], LDFLAGS: test.config},
+				crossCompile: crosscompile.Export{Linker: os.Args[0], LDFLAGS: test.config, WASIInitialMemory: test.initialMemory},
 			}
 			if err := linkObjFiles(ctx, filepath.Join(dir, "app.wasm"), nil, test.args, false); err != nil {
 				t.Fatal(err)
@@ -51,6 +54,9 @@ func TestWASIHeapReachesLinker(t *testing.T) {
 			args := strings.Split(strings.TrimSpace(string(data)), "\n")
 			if got := slices.Contains(args, defaultWASIHeapFlag); got != test.wantHeap {
 				t.Fatalf("default heap in linker arguments = %v, want %v: %q", got, test.wantHeap, args)
+			}
+			if want := test.name == "target memory"; slices.Contains(args, "-Wl,--initial-memory=16777216") != want {
+				t.Fatalf("target memory default in linker arguments: %q", args)
 			}
 			for _, flag := range slices.Concat(test.config, test.args) {
 				if !slices.Contains(args, flag) {

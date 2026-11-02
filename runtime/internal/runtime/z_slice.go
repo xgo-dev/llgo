@@ -90,8 +90,12 @@ func newSliceUnchecked(base unsafe.Pointer, eltSize, i, j, k int) (s Slice) {
 
 // SliceAppend append elem data and returns a slice.
 func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int) Slice {
+	return SliceAppendAligned(src, data, num, etSize, 1)
+}
+
+func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int) Slice {
 	oldLen := src.len
-	src = GrowSlice(src, num, etSize)
+	src = GrowSliceAligned(src, num, etSize, etAlign)
 	if etSize == 0 {
 		return src
 	}
@@ -101,6 +105,10 @@ func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int) Slice {
 
 // GrowSlice grows slice and returns the grown slice.
 func GrowSlice(src Slice, num, etSize int) Slice {
+	return GrowSliceAligned(src, num, etSize, 1)
+}
+
+func GrowSliceAligned(src Slice, num, etSize, etAlign int) Slice {
 	oldLen := src.len
 	newLen := oldLen + num
 	if newLen < 0 {
@@ -112,7 +120,7 @@ func GrowSlice(src Slice, num, etSize int) Slice {
 		if overflow || mem > maxAlloc {
 			panicgrowslicelen()
 		}
-		p := AllocZ(mem)
+		p := AllocZAligned(mem, uintptr(etAlign))
 		if oldLen != 0 {
 			c.Memcpy(p, src.data, uintptr(oldLen*etSize))
 		}
@@ -171,6 +179,10 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 }
 
 func MakeSlice(len, cap int, etSize int) Slice {
+	return MakeSliceAligned(len, cap, etSize, 1)
+}
+
+func MakeSliceAligned(len, cap, etSize, etAlign int) Slice {
 	mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(len))
@@ -179,7 +191,7 @@ func MakeSlice(len, cap int, etSize int) Slice {
 		}
 		panicmakeslicecap()
 	}
-	return Slice{AllocZ(mem), len, cap}
+	return Slice{AllocZAligned(mem, uintptr(etAlign)), len, cap}
 }
 
 func panicmakeslicelen() {

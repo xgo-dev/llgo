@@ -36,6 +36,16 @@ const (
 	DWARFOmit
 )
 
+// DWARFCompressionMode distinguishes platform defaults from an explicit
+// -compressdwarf request. Mach-O/PE compression is experimental and opt-in.
+type DWARFCompressionMode uint8
+
+const (
+	DWARFCompressionDefault DWARFCompressionMode = iota
+	DWARFCompressionEnabled
+	DWARFCompressionDisabled
+)
+
 // LinkOptions is the typed linker intent consumed by the build backend.
 // Command packages are responsible for parsing user-facing flag syntax into
 // this representation.
@@ -44,9 +54,9 @@ type LinkOptions struct {
 	// after runtime PCLN has consumed the linker's ordinary symbols.
 	OmitSymbolTable bool
 	DWARF           DWARFMode
-	// DisableDWARFCompression implements -compressdwarf=false. Native Linux
-	// links compress retained DWARF with zlib by default.
-	DisableDWARFCompression bool
+	// Native Linux links compress retained DWARF by default. Other native
+	// formats require an explicit -compressdwarf=true request.
+	DWARFCompression DWARFCompressionMode
 	// ExternalLinker and ExternalLinkerFlags retain the Go linker's -extld
 	// command and -extldflags argument-list spelling. The native toolchain
 	// resolver applies Go's quoted command parsing after target selection.
@@ -55,6 +65,11 @@ type LinkOptions struct {
 }
 
 func (o LinkOptions) validate() error {
+	switch o.DWARFCompression {
+	case DWARFCompressionDefault, DWARFCompressionEnabled, DWARFCompressionDisabled:
+	default:
+		return fmt.Errorf("invalid DWARF compression mode %d", o.DWARFCompression)
+	}
 	switch o.DWARF {
 	case DWARFDefault, DWARFPreserve, DWARFOmit:
 		return nil
@@ -173,7 +188,7 @@ func debugInfoLinkerArgs(conf *Config, target *crosscompile.Export) []string {
 	args := slices.Clone(target.DebugInfo.PreserveLinkFlags)
 	if conf.Target == "" && conf.Goos == "linux" &&
 		target.Toolchain.ObjectFormat == crosscompile.ObjectFormatELF &&
-		!conf.LinkOptions.DisableDWARFCompression {
+		conf.LinkOptions.DWARFCompression != DWARFCompressionDisabled {
 		args = append(args, "-Wl,--compress-debug-sections=zlib")
 	}
 	return args

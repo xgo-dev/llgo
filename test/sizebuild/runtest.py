@@ -28,13 +28,43 @@ def command(args, env, timeout=300):
     return result.stdout + result.stderr
 
 
+def runtime_free_cache_probe(llgo, wasmer, directory, env):
+    marker = "llgo: runtime startup omitted: proven allocation-free WASI program"
+    # The same helper package contains a pure path and a panic path. Reuse its
+    # normal cache while alternating whole-program runtime requirements.
+    for fixture in ("wasm-runtime-free", "wasm-runtime-required", "wasm-runtime-free"):
+        module = directory / f"{fixture}.wasm"
+        log = command([str(llgo), "build", "-compiler-verbose", "-target=wasi", "-debug-artifact=none",
+                       "-o", str(module), f"./internal/build/testdata/{fixture}"], env)
+        minimal = fixture == "wasm-runtime-free"
+        if (marker in log) != minimal:
+            raise RuntimeError(f"{fixture}: incorrect runtime policy\n{log}")
+        result = subprocess.run([wasmer, "run", "--enable-exceptions", "--enable-simd",
+                                 "--stack-size=1048576", str(module)], cwd=ROOT, env=env,
+                                capture_output=True, timeout=90)
+        if minimal:
+            expected = "zero\x00 世界 42 false -9223372036854775808 18446744073709551615\n".encode()
+            if result.returncode or result.stdout or result.stderr != expected:
+                raise RuntimeError(f"minimal program changed stderr/output: {result}")
+        elif (result.returncode == 0 or b"runtime-free cache sentinel" not in result.stderr
+              or b"helper.Fail" not in result.stderr or b"helper.go:6" not in result.stderr):
+            raise RuntimeError(f"cached helper lost runtime or panic location: {result}")
+    print("WASI runtime-free/full-runtime cache switching and stderr semantics passed", flush=True)
+
+
+def controlled_environment(source):
+    env = dict(source, LLGO_ROOT=str(ROOT), LLGO_BUILD_CACHE="1")
+    # Ambient compiler/linker flags can invalidate the runtime-free proof.
+    for name in ("LLGO_LTO_PLUGIN", "LLGO_PLAN9ASM_PKGS", "CCFLAGS", "CFLAGS", "LDFLAGS"):
+        env.pop(name, None)
+    return env
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
     args = parser.parse_args()
-    env = dict(os.environ, LLGO_ROOT=str(ROOT), LLGO_BUILD_CACHE="1")
-    env.pop("LLGO_LTO_PLUGIN", None)
-    env.pop("LLGO_PLAN9ASM_PKGS", None)
+    env = controlled_environment(os.environ)
     with tempfile.TemporaryDirectory(prefix="llgo-size-build-") as directory:
         directory = pathlib.Path(directory)
         suffix = ".exe" if os.name == "nt" else ""
@@ -58,7 +88,10 @@ def main():
         if not shutil.which(wasmer):
             raise RuntimeError(f"Wasmer runner not found: {wasmer}")
         env["RUST_LOG"] = "off"
-        cases = (("full", "println"), ("thin", "println"),
+        runtime_free_cache_probe(llgo, wasmer, directory, env)
+        cases = (("off", "cprintf"), ("off", "println"),
+                 ("thin", "cprintf"), ("full", "cprintf"),
+                 ("full", "println"), ("thin", "println"),
                  ("full", "fmtprintf"), ("full", "goexit-defer"),
                  ("thin", "goexit-defer"), ("full", "threaded-gc"))
         probes = {
@@ -76,8 +109,10 @@ def main():
             for cold in builds:
                 output = directory / f"{sample}-{mode}.wasm"
                 flags = ["-a"] if cold else []
+                if mode != "off":
+                    flags.append(f"-lto={mode}")
                 command([str(llgo), "build", *flags, "-target=wasi",
-                         f"-lto={mode}", "-o", str(output), fixture], env)
+                         "-o", str(output), fixture], env)
                 actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
                                   "--stack-size=1048576", "--volume=" + str(ROOT),
                                   "--volume=/tmp", str(output)], env, timeout=90)

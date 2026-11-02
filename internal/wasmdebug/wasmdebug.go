@@ -107,7 +107,7 @@ func parse(raw []byte) ([]section, error) {
 			return nil, errors.New("truncated WebAssembly section")
 		}
 		end := off + int(size)
-		entry := section{raw: raw[start:end], id: id}
+		entry := section{raw: raw[start:end], id: id, content: raw[off:end]}
 		if id == 0 {
 			payloadOff := off
 			entry.name, err = readName(raw[:end], &payloadOff)

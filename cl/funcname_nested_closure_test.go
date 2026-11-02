@@ -583,3 +583,27 @@ var bb = B(0).f
 	bounds := collectFuncNamesBySSAName(ssapkg, "f$bound")
 	expectTwoDistinctNamesForTypes(t, bounds, "f$bound")
 }
+
+func TestFunctionNamesBoundMethodsDistinctPackages(t *testing.T) {
+	pkg := buildSSAPackage(t, `package foo
+ import("encoding/base32";"encoding/base64")
+ var a=base32.StdEncoding.AppendEncode
+ var b=base64.StdEncoding.AppendEncode
+ var c=base32.StdEncoding.EncodedLen
+ var d=base64.StdEncoding.EncodedLen
+ func use(){f:=base32.StdEncoding.AppendEncode;g:=base64.StdEncoding.AppendEncode;_,_=f(nil,nil),g(nil,nil)}
+ `)
+	for _, method := range []string{"AppendEncode", "EncodedLen"} {
+		names := collectFuncNamesBySSAName(pkg, method+"$bound")
+		var got []string
+		for _, name := range names {
+			if len(got) == 0 || got[len(got)-1] != name {
+				got = append(got, name)
+			}
+		}
+		want := []string{"foo.(*Encoding).encoding/base32." + method + "$bound", "foo.(*Encoding).encoding/base64." + method + "$bound"}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("%s wrappers: %v; want %v", method, got, want)
+		}
+	}
+}

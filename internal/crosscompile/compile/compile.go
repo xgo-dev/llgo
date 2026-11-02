@@ -1,15 +1,20 @@
 package compile
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/xgo-dev/llgo/internal/clang"
 )
+
+const maxCompileWorkers = 4
 
 type CompileOptions struct {
 	CC      string // Compiler to use
@@ -55,36 +60,49 @@ func (g CompileGroup) Compile(
 
 	cfg := clang.NewConfig(options.CC, compileCCFlags, compileCFFlags, compileLDFlags, options.Linker)
 
-	var objFiles []string
-
-	compiler := clang.NewCompiler(cfg)
-
-	compiler.Verbose = true
+	// Keep archive members in source order even when compiles finish out of
+	// order. Duplicate symbol resolution can depend on archive member order.
+	// Each worker writes one distinct index; the backing array is never resized
+	// and compileFiles joins every worker before the archive reads it.
+	objFiles := make([]string, len(g.Files))
 
 	archive := filepath.Join(outputDir, filepath.Base(g.OutputFileName))
 	fmt.Fprintf(os.Stderr, "Start to compile group %s to %s...\n", g.OutputFileName, archive)
 
-	for _, file := range g.Files {
-		var tempObjFile *os.File
-		tempObjFile, err = os.CreateTemp(tmpCompileDir, objectFilePattern(file))
+	err = compileFiles(len(g.Files), func(index int) error {
+		file := g.Files[index]
+		tempObjFile, err := os.CreateTemp(tmpCompileDir, objectFilePattern(file))
 		if err != nil {
-			return
+			return err
 		}
 		tempObjName := tempObjFile.Name()
 		if err = tempObjFile.Close(); err != nil {
-			return
+			return err
 		}
 
 		lang := "c"
 		if filepath.Ext(file) == ".S" {
 			lang = "assembler-with-cpp"
 		}
+		compiler := clang.NewCompiler(cfg)
+		compiler.Verbose = true
+		// Clang writes diagnostics in multiple chunks. Buffer each subprocess
+		// so concurrent compiles cannot split another file's diagnostic lines.
+		var stdout, stderr bytes.Buffer
+		compiler.Stdout = &stdout
+		compiler.Stderr = &stderr
 		err = compiler.Compile("-o", tempObjName, "-x", lang, "-c", file)
+		os.Stdout.Write(stdout.Bytes())
+		os.Stderr.Write(stderr.Bytes())
 		if err != nil {
-			return
+			return fmt.Errorf("compile %s: %w", file, err)
 		}
 
-		objFiles = append(objFiles, tempObjName)
+		objFiles[index] = tempObjName
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	ccDir := filepath.Dir(options.CC)
@@ -105,6 +123,44 @@ func (g CompileGroup) Compile(
 		return fmt.Errorf("llvm-ar rcs %s: %w", archive, err)
 	}
 	return nil
+}
+
+// compileFiles bounds the out-of-process Clang workload independently of the
+// number of library sources. Stop assigning work on failure, but join every
+// active compile before the caller removes its temporary object directory.
+func compileFiles(count int, compile func(int) error) error {
+	var mu sync.Mutex
+	var firstErr error
+	next := 0
+	var workers sync.WaitGroup
+	// Respect restricted Go runtimes and avoid launching one Clang per CPU on
+	// large hosts, where other compiler stages or CI jobs may also be active.
+	for range min(count, runtime.GOMAXPROCS(0), maxCompileWorkers) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for {
+				mu.Lock()
+				if firstErr != nil || next == count {
+					mu.Unlock()
+					return
+				}
+				index := next
+				next++
+				mu.Unlock()
+				if err := compile(index); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	return firstErr
 }
 
 func writeArchiveResponseFile(dir string, objFiles []string) (string, error) {

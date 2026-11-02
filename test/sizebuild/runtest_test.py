@@ -3,7 +3,22 @@ import subprocess
 import sys
 import unittest
 
-from runtest import command
+from runtest import ROOT, command, controlled_environment
+
+
+class EnvironmentTest(unittest.TestCase):
+    def test_inherited_flags_do_not_change_qualification(self):
+        inherited = {"PATH": "/tools", "LLVM_CONFIG": "/tools/llvm-config",
+                     "WASMOPT": "/tools/wasm-opt", "CCFLAGS": "-DLOCAL",
+                     "CFLAGS": "-g", "LDFLAGS": "-Wl,-Map=local.map",
+                     "LLGO_LTO_PLUGIN": "/local/plugin", "LLGO_PLAN9ASM_PKGS": "none",
+                     "LLGO_ROOT": "/other", "LLGO_BUILD_CACHE": "0"}
+        before = inherited.copy()
+        actual = controlled_environment(inherited)
+        self.assertEqual(actual, {"PATH": "/tools", "LLVM_CONFIG": "/tools/llvm-config",
+                                  "WASMOPT": "/tools/wasm-opt", "LLGO_ROOT": str(ROOT),
+                                  "LLGO_BUILD_CACHE": "1"})
+        self.assertEqual(inherited, before)
 
 
 class CommandTest(unittest.TestCase):

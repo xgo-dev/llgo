@@ -1,6 +1,7 @@
 package build
 
 import (
+	"go/ast"
 	gobuild "go/build"
 	"go/parser"
 	"go/token"
@@ -72,7 +73,19 @@ func TestNativeRuntimeTimerRemainsReplaceAltPackage(t *testing.T) {
 					t.Fatal(err)
 				}
 				if match {
-					t.Fatalf("native target selected runtime source patch %s; timer reuse must stay in the replacement runtime", name)
+					// Constants must reach the frontend before it checks importers.
+					// Runtime implementations, including timers, still come from
+					// the replace-mode alternative package.
+					file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, decl := range file.Decls {
+						gen, ok := decl.(*ast.GenDecl)
+						if !ok || gen.Tok != token.CONST {
+							t.Fatalf("native runtime source patch %s contains implementation declarations; timer reuse must stay in the replacement runtime", name)
+						}
+					}
 				}
 			}
 		})

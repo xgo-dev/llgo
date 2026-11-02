@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -64,6 +63,9 @@ type Export struct {
 	DebugInfo    DebugInfoPolicy
 	WasmPostLink WasmPostLink
 	WasmRuntime  WasmRuntime
+	// WASIInitialMemory is a target default applied at final link only when
+	// explicit linker arguments do not already select an initial memory/heap.
+	WASIInitialMemory uint64
 
 	// Flashing/Debugging configuration
 	Device flash.Device // Device configuration for flashing/debugging
@@ -103,7 +105,9 @@ const (
 	// wasi-libc manages its own heap inside the module memory.
 	// The runner resolves the working-directory preopen to an absolute path
 	// before execution and also grants Go's default /tmp directory.
-	WASIThreadedEmulator = `wasmer run --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp "{}"`
+	WASIThreadedEmulator     = `wasmer run --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp "{}"`
+	defaultWASIStackFlag     = "stack-size=10485760"
+	defaultWASIMaxMemoryFlag = "-Wl,--max-memory=536870912"
 
 	WasmProfileNone WasmProfile = ""
 	WasmProfileJ32  WasmProfile = "j32"
@@ -328,18 +332,10 @@ func targetDebugInfoPolicy(linker, llvmTarget string) DebugInfoPolicy {
 var (
 	wasiSdkUrl      = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz"
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
-	espClangBaseUrl = "https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/" + espClangVersion
-	espClangSHA256  = map[string]string{
-		"aarch64-apple-darwin": "31cb1b87c84531bd777a4d7493a5a35070e6dd860e4c600b63937f5b449c3064",
-		"aarch64-linux-gnu":    "4a88902abe7977c0cbdecb239ac1a4d24185557e451a3e1f59aebbd56371124d",
-		"aarch64-w64-mingw32":  "02521d03911dadbd84ecfb27903e59dae1d9f12c45245982caea7dad6e6d4188",
-		"x86_64-apple-darwin":  "c31d127230d87bc468e6ea5e709db20d0729ecf6407222ef33f2378e2f847416",
-		"x86_64-linux-gnu":     "735f9d343863e5693179908acd946a0e85468463246f11210f2aa690b47784ab",
-		"x86_64-w64-mingw32":   "49ba5159967f1f3cdc11b51d902595baaf0f94bf6c73fb4b880940f30a2d6f4f",
-	}
+	espClangBaseUrl = "https://github.com/" + espPins.Repository + "/releases/download"
+	espClangVersion = espPins.Release
+	espClangSHA256  = espClangChecksums()
 )
-
-const espClangVersion = "22.1.4_20260912"
 
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
@@ -381,16 +377,6 @@ func getCanonicalArchName(triple string) string {
 	return arch
 }
 
-// getMacOSSysroot returns the macOS SDK path using xcrun
-func getMacOSSysroot() (string, error) {
-	cmd := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
 // getESPClangRoot returns the ESP Clang root directory, checking LLGoROOT first,
 // then downloading if needed and platform is supported
 func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
@@ -407,21 +393,37 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
-	// Try to download ESP Clang if platform is supported
+	// Install bundled ESP Clang, or download it for source checkouts.
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
+		version := espClangVersion
 		checksum, ok := espClangSHA256[platformSuffix]
 		if !ok {
 			err = fmt.Errorf("missing ESP Clang checksum for %s", platformSuffix)
 			return
+		}
+		pin := espPins.Payloads[platformSuffix]
+		if pin.Asset == "" {
+			return "", fmt.Errorf("missing ESP Clang asset for %s", platformSuffix)
 		}
 		cacheClangDir := espClangCacheDir(platformSuffix)
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
-			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(espClangBaseUrl, espClangVersion, platformSuffix, checksum, cacheClangDir); err != nil {
+			bundle := filepath.Join(filepath.Dir(espClangRoot), pin.Asset)
+			_, bundleErr := os.Stat(bundle)
+			switch {
+			case bundleErr == nil:
+				fmt.Fprintln(os.Stderr, "Using bundled ESP Clang archive:", bundle)
+				err = checkInstallESPClangArchive(bundle, checksum, cacheClangDir)
+			case errors.Is(bundleErr, fs.ErrNotExist):
+				fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
+				err = checkDownloadAndExtractESPClang(espClangBaseUrl+"/"+version, pin.Asset, checksum, cacheClangDir)
+			default:
+				return "", bundleErr
+			}
+			if err != nil {
 				return
 			}
 		}
@@ -458,8 +460,9 @@ func getESPClangPlatform(goos, goarch string) string {
 		}
 	case "windows":
 		switch goarch {
-		case "386", "amd64":
-			// 32-bit LLGo hosts run the x64 tools as separate processes.
+		case "386":
+			return "i686-w64-mingw32"
+		case "amd64":
 			return "x86_64-w64-mingw32"
 		case "arm64":
 			return "aarch64-w64-mingw32"
@@ -704,13 +707,16 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 
 		// Add sysroot for macOS only
 		if goos == "darwin" {
-			sysrootPath, sysrootErr := getMacOSSysroot()
+			sdk, sysrootErr := getMacOSSDK()
 			if sysrootErr != nil {
 				err = fmt.Errorf("failed to get macOS SDK path: %w", sysrootErr)
 				return
 			}
-			export.CCFLAGS = append(export.CCFLAGS, []string{"--sysroot=" + sysrootPath}...)
-			export.LDFLAGS = append(export.LDFLAGS, []string{"--sysroot=" + sysrootPath}...)
+			// Override both Clang config spellings: -isysroot selects headers,
+			// but a configured --sysroot takes precedence for the linker's SDK.
+			export.CCFLAGS = append(export.CCFLAGS, "-isysroot", sdk.path)
+			export.LDFLAGS = append(export.LDFLAGS, "-isysroot", sdk.path, "--sysroot="+sdk.path)
+			export.Toolchain.SDKVersion = sdk.version
 		}
 
 		ccflags, ldflags := nativeSectionFlags(export.Toolchain)
@@ -819,7 +825,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			"-Wl,--stack-first",
 			"-mbulk-memory",
 			"-mmultimemory",
-			"-z", "stack-size=10485760", // 10MB
+			"-z", defaultWASIStackFlag,
 			"-Wl,--export=malloc", "-Wl,--export=free",
 			"-lc",
 			"-lcrypt",
@@ -837,7 +843,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			export.LDFLAGS,
 			// Leave room for 256 default 1 MiB pthread stacks, the process
 			// stack, libc metadata, and independently owned GC arenas.
-			"-Wl,--max-memory=536870912",
+			defaultWASIMaxMemoryFlag,
 			"-Wl,--import-memory",
 			"-lpthread",
 		)
@@ -955,6 +961,12 @@ func usesNativePlatformToolchain(hostGOOS, hostGOARCH, targetGOOS, targetGOARCH 
 
 // UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
 func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+	return useTarget(targetName, level, ltoMode, compileWithConfig)
+}
+
+func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
+	buildLibrary func(compile.CompileConfig, string, compile.CompileOptions) ([]string, error),
+) (export Export, err error) {
 	resolver := targets.NewDefaultResolver()
 
 	config, err := resolver.Resolve(targetName)
@@ -1179,7 +1191,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		if err != nil {
 			return
 		}
-		libcLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
+		libcLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
 			CCFLAGS: ccflags,
@@ -1205,7 +1217,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 		if err != nil {
 			return
 		}
-		rtLibLDFlags, err = compileWithConfig(compileConfig, outputDir, compile.CompileOptions{
+		rtLibLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
 			CC:      export.CC,
 			Linker:  export.Linker,
 			CCFLAGS: ccflags,
@@ -1281,6 +1293,19 @@ func UseWithGOARMAndToolchain(goos, goarch, goarm, targetName string, forceEspCl
 		export.Emulator = WASIThreadedEmulator
 	}
 	export.BuildTags = appendUniqueStrings(export.BuildTags, config.BuildTags...)
+	if wasmProvider == WasmProviderWASI {
+		export.WASIInitialMemory = config.WasmInitialMemory
+		// The base WASI exporter emits each default exactly once, using these
+		// same constants. Override those defaults before package linker flags.
+		for i, flag := range export.LDFLAGS {
+			switch {
+			case flag == defaultWASIStackFlag && config.WasmStackSize != 0:
+				export.LDFLAGS[i] = fmt.Sprintf("stack-size=%d", config.WasmStackSize)
+			case flag == defaultWASIMaxMemoryFlag && config.WasmMaxMemory != 0:
+				export.LDFLAGS[i] = fmt.Sprintf("-Wl,--max-memory=%d", config.WasmMaxMemory)
+			}
+		}
+	}
 	if wasmProvider == WasmProviderEmscripten {
 		// The existing raw js/wasm path remains browser/worker-only. Named
 		// Emscripten targets also promise their configured Node emulator, so
