@@ -954,7 +954,9 @@ jobs:
       matrix:
         # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
         # command and caller regressions exhausted the 60-minute job limit.
-        suite: [runtime, workers, test-command, simd]
+        # Standard-library link jobs need a fresh disk after the runtime and
+        # debug fixtures, especially on the 17-GiB ephemeral runner image.
+        suite: [runtime, workers, test-command, simd, stdlib]
     # The complete profile/LTO matrices exceed the Qiniu template's disk even
     # after temporary IR cleanup. Keep them on the hosted Ubuntu filesystem.
     runs-on: ubuntu-24.04
@@ -1138,7 +1140,7 @@ jobs:
             ./internal/build/testdata/wasm-test
 
       - name: Test wasm standard-library packages
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'stdlib'
         timeout-minutes: 20
         shell: bash
         env:

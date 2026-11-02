@@ -5,6 +5,12 @@ set -euo pipefail
 # Re-enter this file as a deterministic compiler stand-in. These checks test
 # acceptance accounting, not the standard library itself.
 if [[ "${1:-}" == test ]]; then
+	# The real acceptance run must keep final links serial without dropping a
+	# package or changing the ordinary test deadline.
+	case " $* " in
+		*" -p=1 "*) ;;
+		*) echo "missing bounded build parallelism" >&2; exit 20 ;;
+	esac
 	mode="${LLGO_WASM_STDLIB_FAKE_MODE}"
 	case "${mode}" in
 		compiler-failure) exit 19 ;;

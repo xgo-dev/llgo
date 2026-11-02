@@ -19,7 +19,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 22, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 23, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -393,7 +393,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
     def test_wasm_simd_runs_separately_from_command_regressions(self):
         job = load("llgo.yml")["jobs"]["wasm-runtime"]
         self.assertCountEqual(job["strategy"]["matrix"]["suite"],
-                              ["runtime", "workers", "test-command", "simd"])
+                              ["runtime", "workers", "test-command", "simd", "stdlib"])
         steps = {step.get("name"): step for step in job["steps"]}
         for name in ("Test SIMD behavior on WebAssembly",
                      "Test SIMD on JavaScript targets with off, Thin and Full LTO"):
@@ -402,6 +402,8 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         for name in ("Compare JavaScript call semantics with Go",
                      "Run caller and large-function regressions on browser targets"):
             self.assertEqual(steps[name]["if"], "matrix.suite == 'test-command'")
+        self.assertEqual(steps["Test wasm standard-library packages"]["if"],
+                         "matrix.suite == 'stdlib'")
         # The single-worker script only accepts runtime/test-command/all.
         # A broad != 'workers' guard would also send it the new simd suite.
         self.assertEqual(steps["Test single-worker wasm schedulers"]["if"],
