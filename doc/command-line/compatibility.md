@@ -98,8 +98,15 @@ Execution trace and block/mutex profile controls are rejected, including their
 reserved `-test.*` spellings after `-args`, because LLGo does not produce those
 runtime samples. `-cpu` is also rejected until native `GOMAXPROCS` enforces the
 requested execution limit. Merely repeating a test with CPU suffixes does not
-provide that behavior. Fuzz engine and worker/cache controls are rejected
-until instrumentation, minimization, crash and cache behavior are qualified.
+provide that behavior. The runtime preserves positive `GOMAXPROCS` settings,
+returns the previous setting, and reads its initial value from the process
+environment. `SetDefaultGOMAXPROCS` restores the host CPU default and ignores
+that environment override. LLGo's schedulers do not enforce these settings as
+execution-parallelism limits, including on the native one-to-one thread
+backend; automatic CPU-quota updates are also not implemented.
+
+Fuzz engine and worker/cache controls are rejected until instrumentation,
+minimization, crash and cache behavior are qualified.
 Fuzz seed cases still run as ordinary tests without `-fuzz`.
 
 Profiling is qualified for native Linux, macOS and Windows runtimes without
