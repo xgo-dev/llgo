@@ -1094,12 +1094,17 @@ func TestStaticIfaceBoxReusesByName(t *testing.T) {
 	if len(pkg.ifaceBoxByValue) != 1 {
 		t.Fatalf("name-cache reuse size = %d, want 1", len(pkg.ifaceBoxByValue))
 	}
+	pkg.ifaceBoxByValue = nil
+	if _, ok := b.staticIfaceBox(prog.Type(types.Typ[types.Int64], GoDecl), prog.IntVal(42, prog.Int64())); !ok {
+		t.Fatal("VarOf fallback did not reuse the static box")
+	}
 	b.Return(first)
 	b.EndBuild()
 	ir := pkg.String()
 	if strings.Count(ir, `_llgo_ifacebox$`) == 0 {
 		t.Fatalf("missing ifacebox after VarOf reuse:\n%s", ir)
 	}
+	pkg.ifaceBoxByValue = nil
 }
 
 func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
@@ -1129,6 +1134,9 @@ func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
 	ir := pkg.String()
 	if strings.Contains(ir, `_llgo_ifacebox$`) {
 		t.Fatalf("zero-sized value used an ifacebox:\n%s", ir)
+	}
+	if _, ok := b.staticIfaceBox(prog.Type(z, GoDecl), prog.Zero(prog.Type(z, GoDecl))); ok {
+		t.Fatal("zero-sized value returned a static box")
 	}
 }
 

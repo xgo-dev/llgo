@@ -107,6 +107,7 @@ type T int
 func plain(x int) any { return x }
 func changed(x T) any { return int(x) }
 func iface(x I) any { return x }
+func ifaceChange(x I) any { var y interface{ M() }; y = x; return y }
 func side(x int) any { println(x); return x }
 func dynamic(x int) any { return x + 1 }
 func direct(x int) int { return x }
@@ -119,18 +120,19 @@ func recovering(x int) any { defer func() { recover() }(); return x }
 func (T) method(x int) any { return x }
 `, false)
 	checks := map[string]bool{
-		"plain":      true,
-		"changed":    true,
-		"iface":      false,
-		"side":       false,
-		"dynamic":    false,
-		"direct":     false,
-		"duplicate":  false,
-		"branched":   false,
-		"multi":      false,
-		"noinline":   false,
-		"recovering": false,
-		"(T).method": false,
+		"plain":       true,
+		"changed":     true,
+		"iface":       false,
+		"ifaceChange": false,
+		"side":        false,
+		"dynamic":     false,
+		"direct":      false,
+		"duplicate":   false,
+		"branched":    false,
+		"multi":       false,
+		"noinline":    false,
+		"recovering":  false,
+		"(T).method":  false,
 	}
 	for name, want := range checks {
 		fn := pkg.Func(name)
