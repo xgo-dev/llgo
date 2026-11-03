@@ -32,4 +32,4 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
 
 // Pending https://github.com/xgo-dev/llvm/pull/58; switch to upstream after merge.
-replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20261103132357-d147053b073a
+replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20261103140222-ef45e2e7ee86

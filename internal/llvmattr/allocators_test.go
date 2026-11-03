@@ -9,7 +9,7 @@ import (
 )
 
 func TestAllocatorContracts(t *testing.T) {
-	for _, bits := range []int{32, 64} {
+	for _, bits := range []int{1, 32, 64, 65, 128} {
 		for _, roots := range []bool{false, true} {
 			t.Run(fmt.Sprintf("i%d/roots=%v", bits, roots), func(t *testing.T) {
 				ctx := llvm.NewContext()
@@ -47,7 +47,7 @@ func TestAllocatorContracts(t *testing.T) {
 						call := b.CreateCall(fnType, fn, args, "")
 						ApplyAllocatorCall(ctx, call, fn, args, roots)
 						attr := call.GetCallSiteEnumAttribute(-1, llvm.AttributeKindID("allockind"))
-						wantKind := wantSize && !roots && i == 2
+						wantKind := wantSize && !roots && i == 2 && bits >= 2 && bits <= 64
 						if got := !attr.IsNil(); got != wantKind {
 							t.Fatalf("%s size %s: allockind = %v", name, size.String(), got)
 						}

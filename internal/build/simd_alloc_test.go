@@ -16,30 +16,33 @@ import (
 )
 
 const simdArrayAllocSource = `package main
+
 import "simd/archsimd"
 
 //go:noinline
 func arrayAdd(a, b uint64) uint64 {
- x := archsimd.LoadUint64x2Array(&[2]uint64{a, 0})
- y := archsimd.LoadUint64x2Array(&[2]uint64{b, 0})
- var out [2]uint64
- x.Add(y).StoreArray(&out)
- return out[0]
+	x := archsimd.LoadUint64x2Array(&[2]uint64{a, 0})
+	y := archsimd.LoadUint64x2Array(&[2]uint64{b, 0})
+	var out [2]uint64
+	x.Add(y).StoreArray(&out)
+	return out[0]
 }
 
 func zeroed() uint64 {
- var out [2]uint64
- return archsimd.LoadUint64x2Array(&out).GetElem(0)
+	var out [2]uint64
+	return archsimd.LoadUint64x2Array(&out).GetElem(0)
 }
 
 func escaped(a uint64) *[2]uint64 {
- var out [2]uint64
- archsimd.LoadUint64x2Array(&[2]uint64{a, 0}).StoreArray(&out)
- return &out
+	var out [2]uint64
+	archsimd.LoadUint64x2Array(&[2]uint64{a, 0}).StoreArray(&out)
+	return &out
 }
 
 var saved *[2]uint64
+
 func published(a uint64) { saved = escaped(a) }
+
 func main() {}
 `
 
@@ -48,10 +51,10 @@ func main() {}
 // the local buffers on the heap (issue #2983).
 func TestSIMDArrayAllocationsO2(t *testing.T) {
 	dir := t.TempDir()
-	for name, source := range map[string]string{
-		"go.mod": "module simdalloc\n\ngo 1.27\n", "main.go": simdArrayAllocSource,
+	for _, file := range []struct{ name, source string }{
+		{"go.mod", "module simdalloc\n\ngo 1.27\n"}, {"main.go", simdArrayAllocSource},
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file.name), []byte(file.source), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,27 +121,36 @@ func TestSIMDArrayAllocationsExecution(t *testing.T) {
 	dir := t.TempDir()
 	source := strings.Replace(simdArrayAllocSource, `import "simd/archsimd"`, `import ("simd/archsimd"; "runtime"; "fmt")`, 1)
 	source = strings.Replace(source, "func main() {}", `func main() {
- const n uint64 = 100000
- for round := 0; round < 2; round++ {
-  var before, after runtime.MemStats
-  runtime.ReadMemStats(&before)
-  var sum uint64
-  for i := uint64(0); i < n; i++ { sum += arrayAdd(i, 17) }
-  runtime.ReadMemStats(&after)
-  if sum != n*(n-1)/2 + 17*n { panic("wrong SIMD sum") }
-  // TotalAlloc is approximate under BDWGC. Allow incidental runtime work,
-  // while rejecting the old roughly 9.6 MB per round of local buffers.
-  if bytes := after.TotalAlloc-before.TotalAlloc; bytes > 256*1024 {
-   panic(fmt.Sprintf("local SIMD buffers allocated %d bytes", bytes))
-  }
- }
- p := escaped(42)
- runtime.GC()
- if p[0] != 42 || p[1] != 0 { panic("escaped buffer lost") }
- fmt.Println("ok")
-}`, 1)
-	for name, contents := range map[string]string{"go.mod": "module simdalloc\n\ngo 1.27\n", "main.go": source} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
+	const n uint64 = 100000
+	for round := 0; round < 2; round++ {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		var sum uint64
+		for i := uint64(0); i < n; i++ {
+			sum += arrayAdd(i, 17)
+		}
+		runtime.ReadMemStats(&after)
+		if sum != n*(n-1)/2+17*n {
+			panic("wrong SIMD sum")
+		}
+		// TotalAlloc is approximate under BDWGC. Allow incidental runtime work,
+		// while rejecting the old roughly 9.6 MB per round of local buffers.
+		if bytes := after.TotalAlloc - before.TotalAlloc; bytes > 256*1024 {
+			panic(fmt.Sprintf("local SIMD buffers allocated %d bytes", bytes))
+		}
+	}
+	p := escaped(42)
+	runtime.GC()
+	if p[0] != 42 || p[1] != 0 {
+		panic("escaped buffer lost")
+	}
+	fmt.Println("ok")
+}
+`, 1)
+	for _, file := range []struct{ name, contents string }{
+		{"go.mod", "module simdalloc\n\ngo 1.27\n"}, {"main.go", source},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file.name), []byte(file.contents), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

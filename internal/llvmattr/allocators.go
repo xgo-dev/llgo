@@ -43,11 +43,13 @@ func ApplyAllocatorFunction(ctx llvm.Context, fn llvm.Value) {
 
 // ApplyAllocatorCall enables allocation elision and Attributor heap-to-stack
 // for positive constant-size AllocU/AllocZ calls. Unknown sizes and zero-sized
-// sentinel identities retain their original behavior. Explicit-root collectors
-// cannot scan pointer fields in newly introduced stack storage, so they keep
+// sentinel identities retain their original behavior. Sizes above the signed
+// maximum of the argument type are not treated as proven positive.
+// Explicit-root collectors cannot scan pointer fields in newly introduced
+// stack storage, so they keep
 // their heap allocations as well.
 func ApplyAllocatorCall(ctx llvm.Context, call, callee llvm.Value, args []llvm.Value, gcRoots bool) {
-	if gcRoots || callee.IsAFunction().IsNil() || len(args) != 1 {
+	if gcRoots || len(args) != 1 || callee.IsAFunction().IsNil() {
 		return
 	}
 	kind := allocatorKinds[callee.Name()]
@@ -58,8 +60,12 @@ func ApplyAllocatorCall(ctx llvm.Context, call, callee llvm.Value, args []llvm.V
 	if size.IsNil() {
 		return
 	}
+	width := size.Type().IntTypeWidth()
+	if width < 2 || width > 64 {
+		return
+	}
 	n := size.ZExtValue()
-	maxSize := (uint64(1) << (size.Type().IntTypeWidth() - 1)) - 1
+	maxSize := (uint64(1) << (width - 1)) - 1
 	if n == 0 || n > maxSize {
 		return
 	}
