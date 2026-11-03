@@ -12,12 +12,10 @@ import (
 // Restrict every use to the allocating block so a loop can reuse one stack
 // slot without overlapping lifetimes. Do not change the shared Go SSA graph.
 func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
-	if !alloc.Heap || alloc.Comment != "varargs" || alloc.Block() == nil {
+	pointer, ok := alloc.Type().(*types.Pointer)
+	if !ok || !alloc.Heap || alloc.Comment != "varargs" || alloc.Block() == nil {
 		return false
 	}
-	// Alloc always has a raw pointer type; all values inspected below are SSA
-	// registers with an available Referrers list.
-	pointer := alloc.Type().(*types.Pointer)
 	array, ok := pointer.Elem().Underlying().(*types.Array)
 	if !ok || p.prog.SizeOf(p.type_(array, llssa.GoDecl)) == 0 {
 		return false
@@ -26,7 +24,10 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 		// Explicit roots trace heap objects, not the contents of stack arrays.
 		return false
 	}
-	refs, _ := nonDebugReferrers(alloc)
+	refs, ok := nonDebugReferrers(alloc)
+	if !ok || len(refs) == 0 {
+		return false
+	}
 	appends := 0
 	for _, ref := range refs {
 		if ref.Block() != alloc.Block() {
@@ -34,7 +35,10 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 		}
 		switch ref := ref.(type) {
 		case *ssa.IndexAddr:
-			uses, _ := nonDebugReferrers(ref)
+			uses, ok := nonDebugReferrers(ref)
+			if !ok {
+				return false
+			}
 			for _, use := range uses {
 				store, ok := use.(*ssa.Store)
 				// Initializing a slot is safe; storing its address would escape.
@@ -43,8 +47,8 @@ func (p *context) canStackAllocateAppendArgs(alloc *ssa.Alloc) bool {
 				}
 			}
 		case *ssa.Slice:
-			uses, _ := nonDebugReferrers(ref)
-			if len(uses) != 1 {
+			uses, ok := nonDebugReferrers(ref)
+			if !ok || len(uses) != 1 {
 				return false
 			}
 			call, ok := uses[0].(*ssa.Call)

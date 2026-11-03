@@ -48,11 +48,17 @@ func zero(s []struct{}) []struct{} { return append(s, struct{}{}) }
 	}
 }
 
+func TestAppendTemporaryRejectsUnknownType(t *testing.T) {
+	if (&context{}).canStackAllocateAppendArgs(&ssa.Alloc{Heap: true, Comment: "varargs"}) {
+		t.Fatal("untyped allocation was accepted")
+	}
+}
+
 func TestAppendTemporaryRejectsExposedStorage(t *testing.T) {
 	// The generated array has no source-level name. Model subsequent SSA
 	// rewrites exposing its address, adding a consumer, or extending its life
 	// across blocks; none may make it eligible for stack-slot reuse.
-	for _, scenario := range []string{"cross block", "array read", "element address escapes", "element read", "returned slice", "second consumer", "append destination"} {
+	for _, scenario := range []string{"no array users", "cross block", "array read", "element address escapes", "element read", "returned slice", "second consumer", "append destination"} {
 		t.Run(scenario, func(t *testing.T) {
 			pkg, _, _ := buildGoSSAPkg(t, `package appenduses
 var saved *int
@@ -115,6 +121,8 @@ func f(s []int, x int, b bool, a *[1]int) []int {
 				t.Fatal("control array was not eligible")
 			}
 			switch scenario {
+			case "no array users":
+				*alloc.Referrers() = nil
 			case "cross block":
 				var foreign *ssa.Slice
 				for _, block := range fn.Blocks {
@@ -151,7 +159,10 @@ func f(s []int, x int, b bool, a *[1]int) []int {
 				copy := *call
 				*slice.Referrers() = append(*slice.Referrers(), &copy)
 			case "append destination":
-				call.Call.Args[0] = slice
+				copy := *call
+				copy.Call.Args = append([]ssa.Value(nil), call.Call.Args...)
+				copy.Call.Args[0] = slice
+				*slice.Referrers() = []ssa.Instruction{&copy}
 			}
 			if ctx.canStackAllocateAppendArgs(alloc) {
 				t.Fatal("exposed storage was accepted")
