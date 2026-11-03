@@ -72,17 +72,6 @@ var pollDescRoots map[uintptr]*llgoPollDesc
 func pollInit() {
 	pollDescMu.Init(nil)
 	pollDescRoots = make(map[uintptr]*llgoPollDesc)
-
-}
-
-func setCloseOnExec(fd c.Int) bool {
-	flags := cliteos.Fcntl(fd, c.Int(csyscall.F_GETFD))
-	return flags >= 0 && cliteos.Fcntl(fd, c.Int(csyscall.F_SETFD), uintptr(flags)|uintptr(csyscall.FD_CLOEXEC)) >= 0
-}
-
-func setNonblock(fd c.Int) bool {
-	flags := cliteos.Fcntl(fd, c.Int(csyscall.F_GETFL))
-	return flags >= 0 && cliteos.Fcntl(fd, c.Int(csyscall.F_SETFL), uintptr(flags)|uintptr(csyscall.O_NONBLOCK)) >= 0
 }
 
 func pollRootAdd(pd *llgoPollDesc) uintptr {
@@ -109,12 +98,7 @@ func pollRootDel(ctx uintptr) {
 // either precedes that inspection or finds this waiter under pollDescMu.
 func pollAddWaiter(pd *llgoPollDesc, mode int) *pollWaiter {
 	var fds [2]c.Int
-	if cliteos.Pipe(&fds) != 0 {
-		return nil
-	}
-	if !setCloseOnExec(fds[0]) || !setCloseOnExec(fds[1]) || !setNonblock(fds[0]) || !setNonblock(fds[1]) {
-		cliteos.Close(fds[0])
-		cliteos.Close(fds[1])
+	if !pollPipe(&fds) {
 		return nil
 	}
 	w := &pollWaiter{mode: mode, r: fds[0], w: fds[1]}
@@ -146,10 +130,12 @@ func pollWake(pd *llgoPollDesc, mode int) {
 		if mode != 0 && mode != 'r'+'w' && mode != w.mode {
 			continue
 		}
+		// Only readability matters; repeated notifications may coalesce.
 		var b byte
 		for cliteos.Write(w.w, unsafe.Pointer(&b), 1) < 0 {
 			if int(cliteos.Errno()) != int(csyscall.EINTR) {
-				// EAGAIN means this private pipe already has a notification.
+				// EAGAIN means a notification is already pending. Other
+				// errors also stop retries so remaining waiters can be signaled.
 				break
 			}
 		}
