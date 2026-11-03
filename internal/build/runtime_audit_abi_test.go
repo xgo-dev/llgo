@@ -90,9 +90,9 @@ func TestRuntimeAuditMemory64Layout(t *testing.T) {
 	if len(report.Missing) != 0 || len(report.UnresolvedBoundaries) != 0 || len(report.DynamicCompilerUses) != 0 {
 		t.Fatalf("memory64 runtime boundaries: missing=%v, external=%v, dynamic=%v", report.Missing, report.UnresolvedBoundaries, report.DynamicCompilerUses)
 	}
-	// gc's Wasm port uses 64-bit words; Memory64 selects that physical width
-	// for LLGo too, while the descriptor and function-value layouts still differ.
-	if got := report.ABI; got.LLGoTarget != "wasm64-unknown-emscripten" || got.LLGoType.Size != 72 || got.GoType.Size != 48 || got.LLGoFuncValueBytes != 16 {
+	// Memory64 uses 64-bit words. Go function values now occupy one word in
+	// both compilers; the runtime type descriptors still have different layouts.
+	if got := report.ABI; got.LLGoTarget != "wasm64-unknown-emscripten" || got.LLGoType.Size != 64 || got.GoType.Size != 48 || got.GoFuncValueBytes != 8 || got.LLGoFuncValueBytes != 8 || got.GoRuntimeASMReady || len(got.Blockers) == 0 {
 		t.Fatalf("memory64 profile lost: %+v", got)
 	}
 }

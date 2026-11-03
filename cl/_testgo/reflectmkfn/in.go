@@ -6,17 +6,21 @@ import (
 	"strings"
 )
 
+// CHECK: [[MAKE_CALLBACK:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.main$1", ptr null }
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: %[[FUNC_TYPE:[0-9]+]] = call %"g{{.*}}/runtime/internal/runtime.iface" @reflect.FuncOf(
-// CHECK: %[[FUNC_VALUE:[0-9]+]] = call %reflect.Value @reflect.MakeFunc(%"g{{.*}}/runtime/internal/runtime.iface" %[[FUNC_TYPE]], { ptr, ptr } { ptr @"main.main$1", ptr null })
+// CHECK: %[[FUNC_VALUE:[0-9]+]] = call %reflect.Value @reflect.MakeFunc(%"g{{.*}}/runtime/internal/runtime.iface" %[[FUNC_TYPE]], ptr [[MAKE_CALLBACK]])
 // CHECK: %[[FUNC_IFACE:[0-9]+]] = call %"g{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[FUNC_VALUE]])
 // CHECK: %[[DYNAMIC_TYPE:[0-9]+]] = extractvalue %"g{{.*}}/runtime/internal/runtime.eface" %[[FUNC_IFACE]], 0
 // CHECK: %[[MATCH:[0-9]+]] = call i1 @"g{{.*}}/runtime/internal/runtime.MatchesClosure"({{.*}}ptr %[[DYNAMIC_TYPE]])
 // CHECK: br i1 %[[MATCH]]
 // CHECK: %[[FUNC_DATA:[0-9]+]] = extractvalue %"g{{.*}}/runtime/internal/runtime.eface" %[[FUNC_IFACE]], 1
-// CHECK: %[[FUNC_PAIR:[0-9]+]] = load { ptr, ptr }, ptr %[[FUNC_DATA]]
-// CHECK: %[[CALL_DATA:[0-9]+]] = extractvalue { ptr, ptr } %[[FUNC_PAIR]], 1
-// CHECK: %[[CALL_PTR:[0-9]+]] = extractvalue { ptr, ptr } %[[FUNC_PAIR]], 0
+// CHECK: [[CALL_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %[[FUNC_DATA]]
+// CHECK-NEXT: [[CALL_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CALL_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: %[[CALL_DATA:[0-9]+]] = load ptr, ptr [[CALL_ENV_SLOT]]
+// CHECK: [[CALL_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %[[FUNC_DATA]]
+// CHECK-NEXT: [[CALL_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CALL_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: %[[CALL_PTR:[0-9]+]] = load ptr, ptr [[CALL_CODE_SLOT]]
 // CHECK: %[[CALL_CODE:__llgo_funcval_code]] = call ptr asm "", "=r,0"(ptr %[[CALL_PTR]])
 // ARM64: %[[RESULT:[0-9]+]] = call %"g{{.*}}/runtime/internal/runtime.String" %[[CALL_CODE]](ptr swiftself %[[CALL_DATA]], %"g{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 3 }, i64 2)
 // AMD64: %[[RESULT:[0-9]+]] = call %"g{{.*}}/runtime/internal/runtime.String" %[[CALL_CODE]](ptr nest %[[CALL_DATA]], %"g{{.*}}/runtime/internal/runtime.String" { ptr @{{.*}}, i64 3 }, i64 2)

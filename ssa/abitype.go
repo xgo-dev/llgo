@@ -767,10 +767,14 @@ func (b Builder) abiInterfaceMethods(mset *types.MethodSet) []*types.Selection {
 	return methods
 }
 
-// closure func type
+// Reflection describes the Go callable type. Explicit native C variadics keep
+// their native role; method code entries are retained separately in Ifn/Tfn.
 func funcType(prog Program, typ types.Type) types.Type {
-	ftyp := prog.Type(typ, GoDecl)
-	return ftyp.raw.Type.(*types.Struct).Field(0).Type()
+	value := prog.Type(typ, GoDecl).raw.Type.(*types.Struct)
+	if HasNameValist(typ.Underlying().(*types.Signature)) {
+		return value.Field(0).Type()
+	}
+	return value
 }
 
 func abiMethodName(obj types.Object) string {

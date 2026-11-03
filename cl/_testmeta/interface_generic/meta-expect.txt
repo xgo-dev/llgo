@@ -1,7 +1,7 @@
 [TypeChildren]
 *_llgo_main.Box[int]:
     _llgo_main.Box[int]
-_llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
+_llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s:
     _llgo_int
 _llgo_main.Box[int]:
     *_llgo_main.Box[int]
@@ -9,23 +9,32 @@ _llgo_main.Box[int]:
 
 [OrdinaryEdges]
 *_llgo_main.Box[int]:
+    _llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231
     _llgo_main.Box[int]
-    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
-_llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA:
+_llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s:
     _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA$out
 _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA$out:
     _llgo_int
-_llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8:
-    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods
-    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
-_llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods:
-    _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-_llgo_int:
+_llgo_funcval$65ca4976d166a6fca2f4c19f74eaa1268112be690390058bcf86e8180feefe74:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
+_llgo_funcval$df28404ce0408a7df48c8b3018797ebe037f20133ce3935bdb33a311fa041f67:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
+_llgo_funcval$e38c22598de8ee9d36b05fdc155508d2c256bde06ad3e1064fdc581a99471e3e:
+    _llgo_main.Box[int]
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal_varlen
+_llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8:
+    _llgo_funcval$df28404ce0408a7df48c8b3018797ebe037f20133ce3935bdb33a311fa041f67
+    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods
+_llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8$imethods:
+    _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+_llgo_int:
+    _llgo_funcval$65ca4976d166a6fca2f4c19f74eaa1268112be690390058bcf86e8180feefe74
 _llgo_main.Box[int]:
     *_llgo_main.Box[int]
+    _llgo_funcval$e38c22598de8ee9d36b05fdc155508d2c256bde06ad3e1064fdc581a99471e3e
     github.com/xgo-dev/llgo/cl/_testmeta/interface_generic.struct$lOhriNu2BrWBR2Mh8k-KggMYlAw0Wx-2ftE2_gNyubg$fields
-    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal_varlen
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic.struct$lOhriNu2BrWBR2Mh8k-KggMYlAw0Wx-2ftE2_gNyubg$fields:
     _llgo_int
 main.init:
@@ -45,13 +54,13 @@ main.main:
 
 [UseIfaceMethod]
 main.useInt:
-    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8 Value _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
+    _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8 Value _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
 
 [MethodInfo]
 *_llgo_main.Box[int]:
-    0 Value _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA main.(*Box[int]).Value main.(*Box[int]).Value
+    0 Value _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s main.(*Box[int]).Value main.(*Box[int]).Value
 
 [InterfaceInfo]
 _llgo_iface$Jvxc0PCI_drlfK7S5npMGdZkQLeRkQ_x2e2CifPE6w8:
-    Value _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
+    Value _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
 

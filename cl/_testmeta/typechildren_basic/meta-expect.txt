@@ -6,16 +6,26 @@ _llgo_main.Outer:
     _llgo_main.Inner
 
 [OrdinaryEdges]
-_llgo_int:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
-_llgo_main.Inner:
-    _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields
+_llgo_funcval$1551ccd1af6bbf38055b141bb144f3d36a9a9a8ef0f82f0d9645a6a29d13b892:
+    _llgo_main.Inner
     github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
-_llgo_main.Outer:
-    _llgo_struct$Z-8Mj1VAYg5xS_jUvJKfmUcA_2fP_OEHpanbgA_46rE$fields
-    github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
-_llgo_string:
+_llgo_funcval$5833d99c9f9c201db47c5c15a5d5a306c123e8d69caea634dbe691637cca3b46:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
+_llgo_funcval$65ca4976d166a6fca2f4c19f74eaa1268112be690390058bcf86e8180feefe74:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_funcval$c723e47d1549ca87eeb8bb29e7062be071b0bb977365ffb58298c65cbc628bdb:
+    _llgo_main.Outer
+    github.com/xgo-dev/llgo/runtime/internal/runtime.structequal
+_llgo_int:
+    _llgo_funcval$65ca4976d166a6fca2f4c19f74eaa1268112be690390058bcf86e8180feefe74
+_llgo_main.Inner:
+    _llgo_funcval$1551ccd1af6bbf38055b141bb144f3d36a9a9a8ef0f82f0d9645a6a29d13b892
+    _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields
+_llgo_main.Outer:
+    _llgo_funcval$c723e47d1549ca87eeb8bb29e7062be071b0bb977365ffb58298c65cbc628bdb
+    _llgo_struct$Z-8Mj1VAYg5xS_jUvJKfmUcA_2fP_OEHpanbgA_46rE$fields
+_llgo_string:
+    _llgo_funcval$5833d99c9f9c201db47c5c15a5d5a306c123e8d69caea634dbe691637cca3b46
 _llgo_struct$MTAKiWNMPODH0G9-y5PI3BUGLd6hRciSbX1QTpCDOZg$fields:
     _llgo_string
 _llgo_struct$Z-8Mj1VAYg5xS_jUvJKfmUcA_2fP_OEHpanbgA_46rE$fields:

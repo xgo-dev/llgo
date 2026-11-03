@@ -1184,9 +1184,9 @@ _llgo_example.com/pkg.T:
 
 [MethodInfo]
 *_llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.(*T).M
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 example.com/pkg.(*T).M example.com/pkg.(*T).M
 _llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.T.M
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 example.com/pkg.(*T).M example.com/pkg.T.M
 
 `
 	if got := pm.String(); got != want {
