@@ -39,10 +39,6 @@ func Version() string {
 	return buildVersion
 }
 
-func GOMAXPROCS(n int) int {
-	return int(c_maxprocs())
-}
-
 func Goexit() {
 	runtime.Goexit()
 }

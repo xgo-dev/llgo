@@ -3904,6 +3904,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
+	defer os.Remove(f.Name())
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return "", err
@@ -3938,7 +3939,11 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.irCompiler()
-	return objFile.Name(), cmd.Compile(args...)
+	if err := cmd.Compile(args...); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
+	return objFile.Name(), nil
 }
 
 func llcCheck(commands commandEnv, exportFile string) (msg string, err error) {

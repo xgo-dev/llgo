@@ -19,7 +19,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 22, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 24, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 5, "pixi.yml": 5,
 }
@@ -385,29 +385,40 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                      if step.get("uses") == "./.github/actions/setup-llgo-cache")
         self.assertLess(go, cache)
         self.assertNotIn("if", steps[cache])
-        self.assertEqual(steps[cache]["with"]["build-cache-mode"], "readwrite")
+        self.assertEqual(steps[go]["with"]["cache"], "${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}")
+        restore_runtime = "${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}"
+        self.assertEqual(steps[cache]["with"]["build-cache-mode"], restore_runtime)
         self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
-        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], "readwrite")
+        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"],
+                         "${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}")
+        self.assertIn("(matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore'",
+                      steps[cache]["with"]["wasmer-cache-mode"])
         self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
 
     def test_wasm_simd_runs_separately_from_command_regressions(self):
         job = load("llgo.yml")["jobs"]["wasm-runtime"]
         self.assertCountEqual(job["strategy"]["matrix"]["suite"],
-                              ["runtime", "workers", "test-command", "simd"])
+                              ["runtime", "workers", "test-command", "simd", "stdlib", "optimization"])
         steps = {step.get("name"): step for step in job["steps"]}
         for name in ("Test SIMD behavior on WebAssembly",
                      "Test SIMD on JavaScript targets with off, Thin and Full LTO"):
             self.assertEqual(steps[name]["if"], "matrix.suite == 'simd'")
             self.assertNotIn("continue-on-error", steps[name])
+            self.assertEqual(steps[name]["env"]["LLGO_BUILD_CACHE"], "off")
         for name in ("Compare JavaScript call semantics with Go",
                      "Run caller and large-function regressions on browser targets"):
             self.assertEqual(steps[name]["if"], "matrix.suite == 'test-command'")
+        for name in ("Test wasm standard-library packages", "Test wasm map and formatting regressions"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'stdlib'")
+            self.assertEqual(steps[name]["timeout-minutes"], "20")
+        self.assertEqual(steps["Test optimized Emscripten runtime boundaries"]["if"],
+                         "matrix.suite == 'optimization'")
         # The single-worker script only accepts runtime/test-command/all.
         # A broad != 'workers' guard would also send it the new simd suite.
         self.assertEqual(steps["Test single-worker wasm schedulers"]["if"],
                          "matrix.suite == 'runtime' || matrix.suite == 'test-command'")
         self.assertEqual(steps["Set up Chrome for browser acceptance"]["if"],
-                         "matrix.suite == 'runtime' || matrix.suite == 'workers'")
+                         "matrix.suite == 'runtime' || matrix.suite == 'workers' || matrix.suite == 'optimization'")
 
     def test_benchmark_runtime_manifest_keeps_versions_and_full_demo_dependencies(self):
         root = WORKFLOWS.parents[1]
@@ -755,10 +766,10 @@ sys.exit(subprocess.call(command + ['./internal/build']))
 
     def test_linux_container_jobs_use_large_runners_and_check_privileges(self):
         jobs = load("release-build.yml")["jobs"]
-        for name in ("populate-linux-sysroot", "build"):
-            self.assertEqual(jobs[name]["runs-on"],
-                             "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
-            self.assertIn("prepare", needs(jobs[name]))
+        sysroot = jobs["populate-linux-sysroot"]
+        self.assertEqual(sysroot["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        self.assertIn("prepare", needs(sysroot))
         probe = jobs["populate-linux-sysroot"]["steps"][0]
         self.assertNotIn("if", probe)  # A sysroot cache hit must still check the new runner.
         self.assertIn("docker run --rm --privileged", probe["run"])
@@ -769,6 +780,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(jobs["test-linux-distributions"]["strategy"]["matrix"]["include"],
                          [{"os": "ubuntu-24.04", "goarch": "amd64"}, {"os": "ubuntu-24.04-arm", "goarch": "arm64"}])
         self.assertEqual(jobs["release"]["runs-on"], "ubuntu-latest")
+        self.assertEqual(jobs["build"]["runs-on"], jobs["release"]["runs-on"])
         workflow = load("installer-shells.yml")
         self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
         installer = workflow["jobs"]["installer-shells"]

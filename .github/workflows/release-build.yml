@@ -95,7 +95,9 @@ jobs:
           retention-days: 3
   build:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+    # The four build SDKs plus goreleaser-cross exhaust the Qiniu template's
+    # disk. Use the same hosted runner as the actual tag-release build.
+    runs-on: ubuntu-latest
     needs: [prepare, populate-linux-sysroot]
     steps:
       - name: Check out code
@@ -107,6 +109,11 @@ jobs:
           path: .sysroot
       - name: Set up Release
         uses: ./.github/actions/setup-goreleaser
+      - name: Report release build disk usage
+        run: |
+          df -h . /var/lib/docker
+          du -sh .sysroot .release-toolchains .esp-runtime-downloads
+          docker system df
       - name: Run GoReleaser (Build & Test)
         env:
           GITHUB_TOKEN: ${{github.token}}
