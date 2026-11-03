@@ -525,6 +525,21 @@ func TestParserSourceOverlayAndMissingFiles(t *testing.T) {
 	}
 }
 
+func TestLLGoFilesIgnoreCImport(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/patchcgo\ngo 1.24\n")
+	pkg := &Package{ID: "example.com/patchcgo", PkgPath: "example.com/patchcgo"}
+	patch := filepath.Join(dir, "patch.go")
+	if err := loadLLGoFileImports([]*Package{pkg}, loadTestConfig(dir),
+		map[string][]string{pkg.PkgPath: {patch}},
+		map[string][]byte{patch: []byte("package patchcgo\nimport \"C\"\n")}); err != nil {
+		t.Fatalf("attempted to load metadata for cgo's pseudo-package: %v", err)
+	}
+	if pkg.Imports["C"] != nil {
+		t.Fatal("C was added as a Go metadata dependency")
+	}
+}
+
 func TestLLGoFilesAddImportGraph(t *testing.T) {
 	dir := t.TempDir()
 	const module = "example.com/patchimports"

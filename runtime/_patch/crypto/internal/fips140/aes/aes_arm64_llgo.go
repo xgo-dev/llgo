@@ -10,6 +10,7 @@ import (
 
 var supportsAES = cpu.ARM64.HasAES
 
+// LLGo always enables purego, excluding aes_asm.go and its registration init.
 // Use a variable initializer: a patch init declaration would replace every
 // upstream init, including cast.go's AES-CBC self-test.
 var llgoAESRegistration = llgoRegisterAES()

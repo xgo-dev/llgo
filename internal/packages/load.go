@@ -317,7 +317,8 @@ func loadLLGoFileImports(initial []*Package, cfg *Config, files map[string][]str
 					if err != nil {
 						return err
 					}
-					if p.Imports[path] != nil {
+					// C is a cgo pseudo-package, not a Go metadata dependency.
+					if path == "C" || p.Imports[path] != nil {
 						continue
 					}
 					dep := byPath[path]
