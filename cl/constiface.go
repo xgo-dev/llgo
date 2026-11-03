@@ -31,6 +31,9 @@ import (
 // it changes the value (int32→string, narrowing) and cannot reuse the
 // argument's raw constant.
 func (p *context) foldConstantMakeValue(b llssa.Builder, fn *ssa.Function, call *ssa.CallCommon) (llssa.Expr, bool) {
+	if call == nil || (call.Value == nil && call.Method == nil) {
+		return llssa.Expr{}, false
+	}
 	param, concrete, ok := analyzeTrivialIfaceBox(fn)
 	if !ok {
 		return llssa.Expr{}, false

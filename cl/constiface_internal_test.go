@@ -38,17 +38,20 @@ func box(x int) any { return x }
 func no(x int) any { return x + 1 }
 `, false)
 	goFn := pkg.Func("box")
-	call := &ssa.CallCommon{Args: []ssa.Value{ssa.NewConst(nil, types.Typ[types.Int])}}
+	call := &ssa.CallCommon{
+		Value: goFn,
+		Args:  []ssa.Value{ssa.NewConst(nil, types.Typ[types.Int])},
+	}
 	ctx, b := newNilCompileContext(t)
 	ctx.goFn = goFn
-	if _, ok := ctx.foldConstantMakeValue(b, goFn, call); ok {
-		t.Error("foldConstantMakeValue accepted a nil context type mapping")
-	}
 	if _, ok := ctx.foldConstantMakeValue(b, pkg.Func("no"), call); ok {
 		t.Error("foldConstantMakeValue accepted a non-box function")
 	}
+	if _, ok := ctx.foldConstantMakeValue(b, goFn, nil); ok {
+		t.Error("foldConstantMakeValue accepted a nil call")
+	}
 	if _, ok := ctx.foldConstantMakeValue(b, goFn, &ssa.CallCommon{}); ok {
-		t.Error("foldConstantMakeValue accepted a call without arguments")
+		t.Error("foldConstantMakeValue accepted a call without callee")
 	}
 }
 
