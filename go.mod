@@ -31,5 +31,5 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
 
-// Pending https://github.com/xgo-dev/llvm/pull/59; switch to upstream after merge.
+// Pending https://github.com/xgo-dev/llvm/pull/58; switch to upstream after merge.
 replace github.com/xgo-dev/llvm => github.com/zhouguangyuan0718/go-llvm v0.0.0-20261103132357-d147053b073a
