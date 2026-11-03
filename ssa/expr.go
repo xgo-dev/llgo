@@ -1026,6 +1026,13 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		return Expr{b.simdFromStorage(x.impl, t), t}
 	}
 	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
+	if t.kind == vkFuncPtr && (x.kind == vkFuncPtr || x.kind == vkFuncDecl) {
+		destination := t.RawType().Underlying().(*types.Signature)
+		source := x.RawType().Underlying().(*types.Signature)
+		if HasNameValist(destination) != HasNameValist(source) {
+			panic("ssa: native function conversion changes variadic ABI")
+		}
+	}
 	if t.kind == vkClosure {
 		if b.needsStdcallFuncval(x) {
 			return b.stdcallFuncval(t, x)

@@ -341,7 +341,14 @@ func typeStringWithPkg(t types.Type) string {
 
 func (p Program) rawType(raw types.Type) Type {
 	if v := p.typs.At(raw); v != nil {
-		return v.(Type)
+		cached := v.(Type)
+		if signature, ok := raw.(*types.Signature); ok &&
+			HasNameValist(signature) != HasNameValist(cached.RawType().Underlying().(*types.Signature)) {
+			// Parameter names do not affect Go type identity, but the explicit
+			// native ellipsis marker changes the physical call prototype.
+			return p.toType(signature)
+		}
+		return cached
 	}
 	ret := p.toType(raw)
 	p.typs.Set(raw, ret)
