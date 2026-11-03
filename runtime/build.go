@@ -80,6 +80,7 @@ func SourcePatchReplacesAsmForGOARCH(path, goarch string) bool {
 }
 
 var sourcePatchPkgs = map[string]struct{}{
+	"crypto/internal/fips140/aes":  {},
 	"crypto/internal/constanttime": {},
 	"crypto/internal/sysrand":      {},
 	"fmt":                          {},

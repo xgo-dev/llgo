@@ -524,3 +524,44 @@ func TestParserSourceOverlayAndMissingFiles(t *testing.T) {
 		t.Fatalf("source hook changed missing-file diagnostic: %v", err)
 	}
 }
+
+func TestLLGoFilesAddImportGraph(t *testing.T) {
+	dir := t.TempDir()
+	const module = "example.com/patchimports"
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module "+module+"\ngo 1.24\n")
+	for _, name := range []string{"base", "extra", "leaf"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport (\""+module+"/base\"; \""+module+"/leaf\")\nvar V = base.V + leaf.V\n")
+	writeLoadTestFile(t, filepath.Join(dir, "base", "base.go"), "package base\nvar V = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "extra", "extra.go"), "package extra\nvar V = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "leaf", "leaf.go"), "package leaf\nconst V = 42\n")
+	// Keep patches outside the module so the ordinary metadata driver cannot
+	// see either of the newly introduced edges. The second is transitive.
+	patchDir := t.TempDir()
+	basePatch := filepath.Join(patchDir, "base.go")
+	extraPatch := filepath.Join(patchDir, "extra.go")
+	writeLoadTestFile(t, basePatch, "package base\nimport \""+module+"/extra\"\nvar Patched = extra.V\n")
+	writeLoadTestFile(t, extraPatch, "package extra\nimport \""+module+"/leaf\"\nvar Patched = leaf.V\n")
+	dedup := NewDeduper()
+	dedup.SetLLGoFiles(map[string][]string{
+		module + "/base": {basePatch}, module + "/extra": {extraPatch},
+	})
+	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].IllTyped {
+		t.Fatalf("patched import graph did not typecheck: %v", pkgs)
+	}
+	base := pkgs[0].Imports[module+"/base"]
+	extra := base.Imports[module+"/extra"]
+	if extra == nil || extra.Imports[module+"/leaf"] == nil || extra.IllTyped {
+		t.Fatalf("transitive patch imports missing: %v", base.Imports)
+	}
+	if extra.Imports[module+"/leaf"] != pkgs[0].Imports[module+"/leaf"] {
+		t.Fatal("patch import duplicated an existing package identity")
+	}
+}
