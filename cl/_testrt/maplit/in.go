@@ -6,8 +6,7 @@ import "go/constant"
 
 // Large static map literals lower to a counted loop of mapassign over
 // private constant key/value arrays, matching cmd/compile's maplit (>25 entries).
-// CHECK: maplit{{.*}}.k" = private unnamed_addr constant [26 x
-// CHECK: maplit{{.*}}.v" = private unnamed_addr constant [26 x
+// CHECK: @"_llgo_maplit{{[$]}}{{.*}}" = private unnamed_addr constant [26 x
 
 // CHECK-LABEL: define {{.*}} @main.big(){{.*}} {
 // CHECK: icmp slt
