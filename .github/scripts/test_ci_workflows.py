@@ -349,7 +349,6 @@ class WorkflowContractTests(unittest.TestCase):
             "Test export with different symbol names on embedded targets",
             "Test ESP serial smoke",
             "Test ESP32-C3 startup regression",
-            "_xtool build tests",
             "Show test result",
             "Install LLDB for integration tests",
             "GDB values, registry and complete worker unwind (Linux)",
