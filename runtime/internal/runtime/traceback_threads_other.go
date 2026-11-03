@@ -10,3 +10,6 @@ func unregisterTraceback(gp *g)       {}
 func releaseFaultSnapshot()           {}
 
 func TracebackWaiting(bool) {}
+
+// Non-native builds do not register native creator-PC snapshots.
+func TracebackParentPCs() (uint64, []uintptr) { return 0, nil }
