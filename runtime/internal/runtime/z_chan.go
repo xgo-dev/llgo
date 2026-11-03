@@ -34,8 +34,13 @@ type Chan struct {
 	buf      unsafe.Pointer
 	elemsize int
 	closed   bool
-	recvx    int
-	sendx    int
+
+	// When enabled, published under mutex: nonzero when closed, buffered, or a
+	// sender is queued. Nonblocking receivers can skip the lock when it is zero.
+	// Blocking receives and all sends still inspect state under the lock.
+	recvReady uint32
+	recvx     int
+	sendx     int
 
 	sendq chanWaitq
 	recvq chanWaitq
@@ -163,13 +168,22 @@ func panicMakeChanSize() {
 	panic(errorString("makechan: size out of range"))
 }
 
+// unlock publishes a receive-readiness snapshot where enabled. A nonblocking
+// receiver may return default while another operation is still in progress;
+// once that operation unlocks, its readiness is visible through the atomic.
+// A positive snapshot is only a hint: selection and data access still lock.
+func (p *Chan) unlock() {
+	p.publishRecvReady()
+	p.mutex.Unlock()
+}
+
 func ChanLen(p *Chan) (n int) {
 	if p == nil {
 		return 0
 	}
 	p.mutex.Lock()
 	n = p.qcount
-	p.mutex.Unlock()
+	p.unlock()
 	return
 }
 
@@ -379,7 +393,7 @@ func ChanTrySend(p *Chan, v unsafe.Pointer, eltSize int) bool {
 	}
 	p.mutex.Lock()
 	ok, closed := chanTrySendLocked(p, v, eltSize)
-	p.mutex.Unlock()
+	p.unlock()
 	if closed {
 		panicSendOnClosedChan()
 	}
@@ -395,16 +409,16 @@ func ChanSend(p *Chan, v unsafe.Pointer, eltSize int) bool {
 	p.mutex.Lock()
 	ok, closed := chanTrySendLocked(p, v, eltSize)
 	if closed {
-		p.mutex.Unlock()
+		p.unlock()
 		panicSendOnClosedChan()
 	}
 	if ok {
-		p.mutex.Unlock()
+		p.unlock()
 		return true
 	}
 	w := newChanWaiter(p, v, eltSize, true)
 	p.sendq.enqueue(w)
-	p.mutex.Unlock()
+	p.unlock()
 
 	w.wait()
 	if w.status.panicOnWake() {
@@ -455,12 +469,12 @@ func chanTryRecvLocked(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, try
 
 func ChanTryRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, tryOK bool) {
 	checkSynctestChannel(p)
-	if p == nil {
+	if p == nil || !p.recvMayBeReady() {
 		return false, false
 	}
 	p.mutex.Lock()
 	recvOK, tryOK = chanTryRecvLocked(p, v, eltSize)
-	p.mutex.Unlock()
+	p.unlock()
 	return
 }
 
@@ -472,12 +486,12 @@ func ChanRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool) {
 	}
 	p.mutex.Lock()
 	if recvOK, tryOK := chanTryRecvLocked(p, v, eltSize); tryOK {
-		p.mutex.Unlock()
+		p.unlock()
 		return recvOK
 	}
 	w := newChanWaiter(p, v, eltSize, false)
 	p.recvq.enqueue(w)
-	p.mutex.Unlock()
+	p.unlock()
 
 	w.wait()
 	return w.status.recvOK()
@@ -490,10 +504,13 @@ func ChanClose(p *Chan) {
 	}
 	p.mutex.Lock()
 	if p.closed {
-		p.mutex.Unlock()
+		p.unlock()
 		panic("close of closed channel")
 	}
 	p.closed = true
+	// A woken receiver can observe close before this goroutine unlocks.
+	// Publish first so its subsequent nonblocking receive cannot miss close.
+	p.publishRecvClosed()
 	for {
 		w := p.recvq.dequeue()
 		if w == nil {
@@ -512,7 +529,7 @@ func ChanClose(p *Chan) {
 			continue
 		}
 	}
-	p.mutex.Unlock()
+	p.unlock()
 }
 
 func blockForever() {
@@ -607,7 +624,7 @@ func TrySelect(ops ...ChanOp) (isel int, recvOK, tryOK bool) {
 	for i := 0; i < n; i++ {
 		isel = (start + i) % n
 		op := ops[isel]
-		if op.C == nil {
+		if op.C == nil || (!op.Send && !op.C.recvMayBeReady()) {
 			continue
 		}
 		op.C.mutex.Lock()
@@ -615,13 +632,13 @@ func TrySelect(ops ...ChanOp) (isel int, recvOK, tryOK bool) {
 			var closed bool
 			tryOK, closed = chanTrySendLocked(op.C, op.Val, int(op.Size))
 			recvOK = true
-			op.C.mutex.Unlock()
+			op.C.unlock()
 			if closed {
 				panicSendOnClosedChan()
 			}
 		} else {
 			recvOK, tryOK = chanTryRecvLocked(op.C, op.Val, int(op.Size))
-			op.C.mutex.Unlock()
+			op.C.unlock()
 		}
 		if tryOK {
 			return
@@ -742,7 +759,7 @@ func lockSelectChannels(chans *selectChanList) {
 
 func unlockSelectChannels(chans *selectChanList) {
 	for i := chans.len - 1; i >= 0; i-- {
-		chans.get(i).mutex.Unlock()
+		chans.get(i).unlock()
 	}
 }
 
@@ -753,7 +770,7 @@ func cleanupSelectWaiter(w *chanWaiter) {
 	} else {
 		w.ch.recvq.remove(w)
 	}
-	w.ch.mutex.Unlock()
+	w.ch.unlock()
 }
 
 func selectStart(n int) int {

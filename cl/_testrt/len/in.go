@@ -62,4 +62,40 @@ func main() {
 	println(len(d.s), len(d.c), len(d.m), len(d.a), cap(d.c), cap(d.a))
 	v := &data{s: "hello", c: make(chan int, 2), m: map[int]string{1: "hello"}, a: []int{1, 2, 3}}
 	println(len(v.s), len(v.c), len(v.m), len(v.a), cap(v.c), cap(v.a))
+	checkChannelPoll()
+}
+
+// This fixture also runs on baremetal, where the receive-readiness hint is
+// disabled. Nonblocking receives must still take the original locked path.
+func checkChannelPoll() {
+	var nilChannel chan int
+	select {
+	case <-nilChannel:
+		panic("nil receive selected")
+	default:
+	}
+	ch := make(chan int, 1)
+	select {
+	case <-ch:
+		panic("empty receive selected")
+	default:
+	}
+	ch <- 7
+	select {
+	case value, ok := <-ch:
+		if value != 7 || !ok {
+			panic("buffered receive corrupted")
+		}
+	default:
+		panic("buffered receive missed")
+	}
+	close(ch)
+	select {
+	case value, ok := <-ch:
+		if value != 0 || ok {
+			panic("closed receive corrupted")
+		}
+	default:
+		panic("closed receive missed")
+	}
 }
