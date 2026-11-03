@@ -4,4 +4,5 @@
 package runtime
 
 func SetDefaultGOMAXPROCS() {
+	GOMAXPROCS(gomaxprocsDefault())
 }

@@ -262,7 +262,7 @@ Examples built on these bindings:
 
 You can import a Python library in LLGo!
 
-You can import Python libraries into `llgo` through `llpyg` (see [Development tools](#development-tools)). Available bindings include:
+You can import Python libraries into `llgo` through [llpyg](https://github.com/xgo-dev/llpyg). Available bindings include:
 
 * [py](https://pkg.go.dev/github.com/goplus/lib/py) (abi)
 * [py/std](https://pkg.go.dev/github.com/goplus/lib/py/std) (builtins)
@@ -590,13 +590,8 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 
 `build`, `clean`, `install`, `run`, `test`, `version`, and `tool compile` remain LLGo-specific. The Go `bug`, `doc`, and `telemetry` commands are not exposed: the first and last operate Go services, while `go doc` cannot select LLGo-only sources because it has no build-tag option.
 
-* [pydump](_xtool/pydump): It is the first production program compiled with `llgo` rather than `go`. It outputs symbol information (functions, variables, and constants) from a Python library in JSON format, preparing for the generation of corresponding packages in `llgo`.
-* [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
-* [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
-* [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
 * [gentests](chore/gentests): It refreshes runtime-output and package-metadata golden data under `cl/_test*`. LLVM IR checks live in Go sources as `// LITTEST` FileCheck directives.
 * [litgen](chore/litgen): It maintains explicitly opted-in, source-embedded FileCheck snapshots. It supports function/global selection, update-only operation, stale-check verification, and stable LLVM value abstractions. Small handwritten checks remain manual.
-* [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
 
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
 
@@ -609,10 +604,6 @@ git clone https://github.com/xgo-dev/llgo.git
 cd llgo
 go install -v ./cmd/...
 go install -v ./chore/...  # compile all tools except pydump
-export LLGO_ROOT=$PWD
-cd _xtool
-llgo install ./...   # compile pydump
-go install github.com/goplus/hdq/chore/pysigfetch@v0.8.1  # compile pysigfetch
 ```
 
 ## Key modules

@@ -442,16 +442,6 @@ jobs:
           fi
           ./test_esp32c3_startup.sh "${args[@]}"
 
-      - name: _xtool build tests
-        # _xtool contains host developer utilities that link the host LLVM and
-        # Python libraries. Windows amd64 already covers that build; the 386
-        # and ARM64 lanes qualify target programs and cannot link those x64
-        # host libraries into target-native tools.
-        if: runner.os != 'Windows' || matrix.windows_arch == 'amd64'
-        run: |
-          cd _xtool
-          llgo build -v ./...
-
       - name: Show test result
         run: cat result.md
 
@@ -954,8 +944,11 @@ jobs:
       matrix:
         # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
         # command and caller regressions exhausted the 60-minute job limit.
-        suite: [runtime, workers, test-command, simd]
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+        # Optimization and stdlib links need fresh disks after the runtime
+        # and debug fixtures on the 17-GiB ephemeral runner image.
+        suite: [runtime, workers, test-command, simd, stdlib, optimization]
+    # Keep these matrices outside the smaller Qiniu runner template.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
@@ -975,7 +968,7 @@ jobs:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite == 'runtime' || matrix.suite == 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'workers' || matrix.suite == 'optimization'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -985,24 +978,30 @@ jobs:
         uses: ./.github/actions/setup-binaryen
 
       - name: Set up Wasmtime
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
           version: "39.0.1"
 
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
+        with:
+          # Profile/LTO caches nearly fill the 17-GiB runner.
+          # Cache archives need another payload copy during post-job save.
+          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: readwrite
+          build-cache-mode: ${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}
           build-cache-scope: wasm-${{ matrix.suite }}
-          crosscompile-cache-mode: readwrite
-          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
+          # These suites need only WASI or Emscripten, not a shared snapshot
+          # containing other targets' downloaded toolchains.
+          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}
+          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
@@ -1014,6 +1013,15 @@ jobs:
         run: |
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Report WebAssembly build disk usage
+        run: |
+          df -h . "$RUNNER_TEMP" /tmp
+          source dev/llgo_cache_dir.sh
+          du -sh "$GOCACHE" "$GOMODCACHE"
+          if [[ -d "$(llgo_cache_dir)" ]]; then
+            du -sh "$(llgo_cache_dir)"
+          fi
 
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
@@ -1062,7 +1070,7 @@ jobs:
           python3 dev/test_wasm_debug_info.py --opt z --strip-symbols --source-maps --artifact embedded --artifact external
 
       - name: Test optimized Emscripten runtime boundaries
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'optimization'
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
@@ -1107,6 +1115,7 @@ jobs:
         shell: bash
         env:
           GOEXPERIMENT: simd
+          LLGO_BUILD_CACHE: "off"
         run: |
           GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
           for opt in 0 2; do
@@ -1120,7 +1129,9 @@ jobs:
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "1"
+          # Target/optimization/LTO variants have different cache keys. Keep
+          # each build's dependency DAG, without retaining every variant.
+          LLGO_BUILD_CACHE: "off"
         run: dev/test_wasm_simd.sh
 
       - name: Compare JavaScript call semantics with Go
@@ -1133,7 +1144,7 @@ jobs:
             ./internal/build/testdata/wasm-test
 
       - name: Test wasm standard-library packages
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'stdlib'
         timeout-minutes: 20
         shell: bash
         env:
@@ -1142,6 +1153,15 @@ jobs:
         run: |
           bash dev/test_wasm_stdlib_test.sh
           bash dev/test_wasm_stdlib.sh
+
+      - name: Test wasm map and formatting regressions
+        if: matrix.suite == 'stdlib'
+        timeout-minutes: 20
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "off"
+        run: |
           llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
           go build -tags=dev -o "$llgo_dev" ./cmd/llgo
           for target in wasi emscripten emscripten-memory64; do

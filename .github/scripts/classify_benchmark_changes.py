@@ -117,7 +117,7 @@ def classify_path(raw_path: str) -> str:
     if _under_any(path, COMPILER_DIRS):
         return "compiler"
 
-    if _under_any(path, {"_xtool", "chore", "dev"}) or path == "install.sh":
+    if _under_any(path, {"chore", "dev"}) or path == "install.sh":
         return "tooling"
     return "other"
 

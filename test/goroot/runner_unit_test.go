@@ -1216,6 +1216,40 @@ var _ = missing // ERROR "undefined: missing"
 	}
 }
 
+func TestCheckExpectedErrorsPreservesFrontendWording(t *testing.T) {
+	guardTestTimeout(t)
+	tests := []struct {
+		name, message, pattern string
+	}{
+		{"raw field suggestion", "unknown field DoneChan in struct literal of type http.Server, but does have unexported doneChan", `^unknown field DoneChan in struct literal of type http.Server, but does have unexported doneChan$`},
+		{"raw unexported selector", "s.doneChan undefined (cannot refer to unexported field doneChan)", `^s.doneChan undefined [(]cannot refer to unexported field doneChan[)]$`},
+		{"raw nearby field", "i1.floats undefined (type it has no field or method floats, but does have field Floats)", `^i1.floats undefined [(]type it has no field or method floats, but does have field Floats[)]$`},
+		{"raw label", "label L declared and not used", `^label L declared and not used$`},
+		{"quoted field fallback", "unknown field 'foo' in struct literal of type struct{}", `^unknown field foo in struct literal of type struct[{][}]$`},
+		{"quoted unicode field fallback", "unknown field '字段' in struct literal of type T", `^unknown field 字段 in struct literal of type T$`},
+		{"normalized field fallback", "unknown field foo in struct literal of type T", `^unknown field 'foo' in struct literal of type T$`},
+		{"normalized selector fallback", "s.doneChan undefined (cannot refer to unexported field doneChan)", `^s.doneChan undefined [(]cannot refer to unexported field or method doneChan[)]$`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			source := fmt.Sprintf("package p\nvar _ = 0 // ERROR \"%s\"\n", tt.pattern)
+			if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(file+":2: "+tt.message, file, "case.go"); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(file+":2: unrelated diagnostic", file, "case.go"); err == nil {
+				t.Fatal("unrelated diagnostic satisfied ERROR")
+			}
+			if err := checkExpectedErrors(file+":3: "+tt.message, file, "case.go"); err == nil {
+				t.Fatal("diagnostic on a different line satisfied ERROR")
+			}
+		})
+	}
+}
+
 func TestCheckExpectedErrorsNormalizesLexicalDiagnostics(t *testing.T) {
 	guardTestTimeout(t)
 	file := filepath.Join(t.TempDir(), "case.go")
