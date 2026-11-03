@@ -846,62 +846,6 @@ func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
 	}
 }
 
-func TestTypeHashFromGlobal(t *testing.T) {
-	prog := NewProgram(nil)
-	pkg := prog.NewPackage("thash", "thash")
-
-	if _, ok := typeHashFromGlobal(llvm.Value{}); ok {
-		t.Fatal("nil value produced a hash")
-	}
-	if _, ok := typeHashFromGlobal(prog.IntVal(1, prog.Int()).impl); ok {
-		t.Fatal("non-global produced a hash")
-	}
-	g := pkg.NewVarEx("noinit", prog.Pointer(prog.Int()))
-	if _, ok := typeHashFromGlobal(g.impl); ok {
-		t.Fatal("uninitialized global produced a hash")
-	}
-
-	two := prog.rawType(types.NewStruct([]*types.Var{
-		types.NewVar(token.NoPos, nil, "a", types.Typ[types.Int]),
-		types.NewVar(token.NoPos, nil, "b", types.Typ[types.Int]),
-	}, nil))
-	g2 := pkg.NewVarEx("two", prog.Pointer(two))
-	g2.impl.SetInitializer(prog.constStructValue(two, []llvm.Value{
-		prog.IntVal(1, prog.Int()).impl,
-		prog.IntVal(2, prog.Int()).impl,
-	}))
-	if _, ok := typeHashFromGlobal(g2.impl); ok {
-		t.Fatal("two-field struct produced a hash")
-	}
-
-	ptr := prog.VoidPtr()
-	null := llvm.ConstPointerNull(prog.tyVoidPtr())
-	bad := prog.rawType(types.NewStruct([]*types.Var{
-		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
-		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
-		types.NewVar(token.NoPos, nil, "c", ptr.RawType()),
-	}, nil))
-	g3 := pkg.NewVarEx("badhash", prog.Pointer(bad))
-	g3.impl.SetInitializer(prog.constStructValue(bad, []llvm.Value{null, null, null}))
-	if _, ok := typeHashFromGlobal(g3.impl); ok {
-		t.Fatal("non-int hash field produced a hash")
-	}
-
-	okTy := prog.rawType(types.NewStruct([]*types.Var{
-		types.NewVar(token.NoPos, nil, "a", ptr.RawType()),
-		types.NewVar(token.NoPos, nil, "b", ptr.RawType()),
-		types.NewVar(token.NoPos, nil, "h", types.Typ[types.Uint32]),
-	}, nil))
-	g4 := pkg.NewVarEx("okhash", prog.Pointer(okTy))
-	g4.impl.SetInitializer(prog.constStructValue(okTy, []llvm.Value{
-		null, null, prog.IntVal(0x11, prog.Uint32()).impl,
-	}))
-	h, ok := typeHashFromGlobal(g4.impl)
-	if !ok || h != 0x11 {
-		t.Fatalf("hash=%#x ok=%v", h, ok)
-	}
-}
-
 func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
@@ -935,6 +879,9 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	itab2, ok2 := b.staticItab(intf, concrete, tabi, tcon)
 	if !ok1 || !ok2 || itab1.impl != itab2.impl {
 		t.Fatal("repeated T2I did not reuse the static itab global")
+	}
+	if got := len(pkg.staticItabByType); got != 1 {
+		t.Fatalf("static itab cache has %d entries, want 1", got)
 	}
 	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
 	b.EndBuild()
@@ -1106,8 +1053,15 @@ func TestConstantFingerprintKinds(t *testing.T) {
 		t.Fatalf("constant string fingerprint = %q, want b:ab", got)
 	}
 
-	if got := constantFingerprint(llvm.Undef(ctx.Int32Type())); got != "?" {
+	undef := llvm.Undef(ctx.Int32Type())
+	if got := constantFingerprint(undef); got != "?" {
 		t.Fatalf("undef fingerprint = %q, want ?", got)
+	}
+	if isSafeStaticIfaceConstant(undef, nil) {
+		t.Fatal("undef was accepted as a static interface constant")
+	}
+	if !isSafeStaticIfaceConstant(llvm.ConstInt(ctx.Int32Type(), 1, false), nil) {
+		t.Fatal("integer constant was rejected as a static interface constant")
 	}
 }
 

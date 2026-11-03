@@ -1019,6 +1019,7 @@ type aPackage struct {
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
+	staticItabByType    map[staticItabKey]Expr
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }

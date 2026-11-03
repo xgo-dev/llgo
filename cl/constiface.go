@@ -26,12 +26,12 @@ import (
 // foldConstantMakeValue inlines a trivial "box a parameter as an interface"
 // function when the argument is a compile-time constant. The callee is
 // recognized by its SSA body (ChangeType/ChangeInterface of a param, then
-// MakeInterface, then return), not by name. That matches cmd/compile
-// inlining constructors such as constant.MakeInt64. Convert is excluded:
+// MakeInterface, then return), not by name. This folds trivial boxing
+// constructors. Convert is excluded:
 // it changes the value (int32→string, narrowing) and cannot reuse the
 // argument's raw constant.
 func (p *context) foldConstantMakeValue(b llssa.Builder, fn *ssa.Function, call *ssa.CallCommon) (llssa.Expr, bool) {
-	if call == nil || (call.Value == nil && call.Method == nil) {
+	if call == nil || call.Value == nil {
 		return llssa.Expr{}, false
 	}
 	param, concrete, ok := analyzeTrivialIfaceBox(fn)

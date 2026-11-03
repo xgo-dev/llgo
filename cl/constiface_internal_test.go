@@ -2,6 +2,7 @@ package cl
 
 import (
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -60,6 +61,44 @@ func no(x int) any { return x + 1 }
 	}
 }
 
+func TestFoldConstantMakeValue(t *testing.T) {
+	pkg := buildConstIfaceSSA(t, `package constiface
+func box(x int) any { return x }
+func F() any { return box(42) }
+`, false)
+	var call *ssa.Call
+	for _, instr := range pkg.Func("F").Blocks[0].Instrs {
+		if candidate, ok := instr.(*ssa.Call); ok {
+			call = candidate
+			break
+		}
+	}
+	if call == nil {
+		t.Fatal("missing constructor call")
+	}
+	ctx, b := newNilCompileContext(t)
+	value, ok := ctx.foldConstantMakeValue(b, pkg.Func("box"), &call.Call)
+	if !ok || value.IsNil() {
+		t.Fatal("constant interface constructor was not folded")
+	}
+	b.Return()
+	b.EndBuild()
+}
+
+func TestFoldConstantMakeValueArgumentGuards(t *testing.T) {
+	pkg := buildConstIfaceSSA(t, `package constiface
+func box(x, y int) any { return y }
+`, false)
+	ctx, b := newNilCompileContext(t)
+	call := &ssa.CallCommon{
+		Value: pkg.Func("box"),
+		Args:  []ssa.Value{ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])},
+	}
+	if _, ok := ctx.foldConstantMakeValue(b, pkg.Func("box"), call); ok {
+		t.Error("foldConstantMakeValue accepted a missing parameter argument")
+	}
+}
+
 func TestAnalyzeTrivialIfaceBoxGuards(t *testing.T) {
 	pkg := buildConstIfaceSSA(t, `package constiface
 
@@ -71,6 +110,7 @@ func iface(x I) any { return x }
 func side(x int) any { println(x); return x }
 func dynamic(x int) any { return x + 1 }
 func direct(x int) int { return x }
+func duplicate(x int) any { if false { return x }; return x }
 func branched(x int) any { if x > 0 { return x }; return x }
 func multi(x int) (any, int) { return x, 1 }
 //go:noinline
@@ -85,6 +125,7 @@ func (T) method(x int) any { return x }
 		"side":       false,
 		"dynamic":    false,
 		"direct":     false,
+		"duplicate":  false,
 		"branched":   false,
 		"multi":      false,
 		"noinline":   false,
@@ -122,6 +163,22 @@ func box(x int) any { return x }
 	}
 }
 
+func TestAnalyzeTrivialIfaceBoxRejectsUnexpectedValue(t *testing.T) {
+	pkg := buildConstIfaceSSA(t, `package constiface
+func box(x int) any { return x }
+`, false)
+	fn := pkg.Func("box")
+	for _, instr := range fn.Blocks[0].Instrs {
+		if mi, ok := instr.(*ssa.MakeInterface); ok {
+			mi.X = &ssa.ChangeType{X: ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])}
+			break
+		}
+	}
+	if _, _, ok := analyzeTrivialIfaceBox(fn); ok {
+		t.Fatal("non-parameter interface payload was accepted")
+	}
+}
+
 func TestBlockHasExtraInstrs(t *testing.T) {
 	pkg := buildConstIfaceSSA(t, `package constiface
 func box(x int) any { return x }
@@ -142,6 +199,22 @@ func box(x int) any { return x }
 	}
 	if blockHasExtraInstrs(fn.Blocks[0], chain) {
 		t.Error("complete instruction chain was classified as having extra instructions")
+	}
+}
+
+func TestAnalyzeTrivialIfaceBoxRejectsDuplicateReturn(t *testing.T) {
+	pkg := buildConstIfaceSSA(t, `package constiface
+func box(x int) any { return x }
+`, false)
+	fn := pkg.Func("box")
+	for _, instr := range fn.Blocks[0].Instrs {
+		if ret, ok := instr.(*ssa.Return); ok {
+			fn.Blocks[0].Instrs = append(fn.Blocks[0].Instrs, ret)
+			break
+		}
+	}
+	if _, _, ok := analyzeTrivialIfaceBox(fn); ok {
+		t.Fatal("duplicate return was accepted")
 	}
 }
 

@@ -19,7 +19,6 @@ package ssa
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"go/token"
 	"go/types"
 	"math"
@@ -48,6 +47,11 @@ func (b Builder) newItab(tintf, typ Expr) Expr {
 	return b.Call(b.Pkg.rtFunc("NewItab"), tintf, typ)
 }
 
+type staticItabKey struct {
+	intf     *types.Interface
+	concrete types.Type
+}
+
 func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf, typ Expr) (Expr, bool) {
 	prog := b.Prog
 	if rawIntf.NumMethods() == 0 || concrete == nil {
@@ -59,13 +63,19 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		return Expr{}, false
 	}
 	rawIntf = rawIntf.Complete()
+	key := staticItabKey{rawIntf, concrete}
+	if itab, ok := b.Pkg.staticItabByType[key]; ok {
+		return itab, true
+	}
 	intfName, _ := prog.abi.TypeName(rawIntf)
 	typeName, _ := prog.abi.TypeName(concrete)
 	sum := sha256.Sum256([]byte(intfName + "\x00" + typeName))
 	name := "_llgo_itab$" + base64.RawURLEncoding.EncodeToString(sum[:])
 	itabTy := prog.Pointer(prog.rtType("Itab"))
 	if global := b.Pkg.VarOf(name); global != nil {
-		return Expr{global.impl, itabTy}, true
+		itab := Expr{global.impl, itabTy}
+		b.Pkg.cacheStaticItab(key, itab)
+		return itab, true
 	}
 	if !types.AssignableTo(concrete, rawIntf) {
 		return Expr{}, false
@@ -97,11 +107,12 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		}
 		funcs[i] = ifn
 	}
-	hash, ok := typeHashFromGlobal(typ.impl)
-	if !ok {
-		hashBytes := sha256.Sum256([]byte(typeName))
-		hash = binary.LittleEndian.Uint32(hashBytes[:4])
-	}
+	// abiType returns a pointer derived from the descriptor global, so the
+	// descriptor's nested layout is not available here. Use the same stable
+	// type-name hash that runtime.NewItab uses when it initializes Type.Hash.
+	hashBytes := sha256.Sum256([]byte(typeName))
+	hash := uint32(hashBytes[0]) | uint32(hashBytes[1])<<8 |
+		uint32(hashBytes[2])<<16 | uint32(hashBytes[3])<<24
 	global := b.Pkg.NewVarEx(name, prog.Pointer(staticType))
 	global.impl.SetInitializer(prog.constStructValue(staticType, []llvm.Value{
 		tintf.impl,
@@ -138,7 +149,16 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		// still uses NewItab so GlobalDCE can drop unused itab methods.
 		b.Pkg.markLLVMUsed(global.impl)
 	}
-	return Expr{global.impl, itabTy}, true
+	itab := Expr{global.impl, itabTy}
+	b.Pkg.cacheStaticItab(key, itab)
+	return itab, true
+}
+
+func (p Package) cacheStaticItab(key staticItabKey, itab Expr) {
+	if p.staticItabByType == nil {
+		p.staticItabByType = make(map[staticItabKey]Expr)
+	}
+	p.staticItabByType[key] = itab
 }
 
 // staticIfaceBox puts a compile-time constant in a read-only global and
@@ -146,7 +166,7 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 // for non-direct interface data. Integers and bools stay IfaceIndir (data is
 // a pointer to the copy), so reflect and equality keep Go's layout.
 func (b Builder) staticIfaceBox(typ Type, x Expr) (llvm.Value, bool) {
-	if x.impl.IsNil() || x.impl.IsAConstant().IsNil() {
+	if x.impl.IsNil() || x.impl.IsAConstant().IsNil() || !isSafeStaticIfaceConstant(x.impl, nil) {
 		return llvm.Value{}, false
 	}
 	if box, ok := b.Pkg.ifaceBoxByValue[x.impl]; ok {
@@ -185,6 +205,38 @@ func (p Package) cacheIfaceBox(val, box llvm.Value) {
 		p.ifaceBoxByValue = make(map[llvm.Value]llvm.Value)
 	}
 	p.ifaceBoxByValue[val] = box
+}
+
+func isSafeStaticIfaceConstant(v llvm.Value, seen map[llvm.Value]bool) bool {
+	if v.IsNil() || v.IsAConstant().IsNil() {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[llvm.Value]bool)
+	}
+	if seen[v] {
+		return false
+	}
+	seen[v] = true
+	defer delete(seen, v)
+	if !v.IsAConstantFP().IsNil() {
+		value, _ := v.DoubleValue()
+		return !math.IsNaN(value)
+	}
+	if !v.IsAGlobalVariable().IsNil() {
+		init := v.Initializer()
+		return init.IsNil() || isSafeStaticIfaceConstant(init, seen)
+	}
+	if v.OperandsCount() == 0 {
+		return !v.IsAConstantInt().IsNil() || !v.IsAConstantPointerNull().IsNil() ||
+			!v.IsAConstantAggregateZero().IsNil() || !v.IsAFunction().IsNil() || v.IsConstantString()
+	}
+	for i := 0; i < v.OperandsCount(); i++ {
+		if !isSafeStaticIfaceConstant(v.Operand(i), seen) {
+			return false
+		}
+	}
+	return true
 }
 
 func constantFingerprint(v llvm.Value) string {
@@ -246,23 +298,6 @@ func (b Builder) unsafeInterface(rawIntf *types.Interface, concrete types.Type, 
 	}
 	dyn := b.newItab(tintf, t)
 	return b.unsafeIface(dyn.impl, data)
-}
-
-// typeHashFromGlobal reads Hash (field 2 of abi.Type) from a type descriptor
-// global so the itab matches NewItab's typ.Hash.
-func typeHashFromGlobal(typ llvm.Value) (uint32, bool) {
-	if typ.IsNil() || typ.IsAGlobalVariable().IsNil() {
-		return 0, false
-	}
-	init := typ.Initializer()
-	if init.IsNil() || init.OperandsCount() <= 2 {
-		return 0, false
-	}
-	h := init.Operand(2)
-	if h.IsNil() || h.IsAConstantInt().IsNil() {
-		return 0, false
-	}
-	return uint32(h.ZExtValue()), true
 }
 
 func iMethodOf(rawIntf *types.Interface, method *types.Func) int {
