@@ -727,7 +727,7 @@ func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
 	if ok {
 		nameInput := elems[0].raw.Type.String() + "\x00" + suffix
 		for _, e := range elems {
-			nameInput += "\x00" + constantFingerprint(e.impl)
+			nameInput += "\x00" + e.impl.String()
 		}
 		sum := sha256.Sum256([]byte(nameInput))
 		name := "_llgo_maplit$" + base64.RawURLEncoding.EncodeToString(sum[:])
