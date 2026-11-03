@@ -434,7 +434,7 @@ func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {
 		for i, u := range plan.updates {
 			val, ok := p.compileMapLitComplit(b, u.Value, plan.structTy)
 			if !ok {
-				return false
+				panic("map literal static composite plan became invalid")
 			}
 			vals[i] = val
 		}

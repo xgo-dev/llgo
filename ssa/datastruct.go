@@ -17,10 +17,11 @@
 package ssa
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"go/token"
 	"go/types"
-	"sync/atomic"
 
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
@@ -709,31 +710,35 @@ func llvmConstant(v Expr) bool {
 	return !v.impl.IsNil() && !v.impl.IsAConstant().IsNil()
 }
 
-var mapLitSeq atomic.Uint64
-
 func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
 	n := len(elems)
+	if n == 0 {
+		panic("mapLitArray: empty elements")
+	}
 	prog := b.Prog
 	arrTy := prog.Type(types.NewArray(elems[0].raw.Type, int64(n)), GoDecl)
-	if n > 0 {
-		ok := true
+	ok := true
+	for _, e := range elems {
+		if !llvmConstant(e) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		nameInput := elems[0].raw.Type.String() + "\x00" + suffix
 		for _, e := range elems {
-			if !llvmConstant(e) {
-				ok = false
-				break
-			}
+			nameInput += "\x00" + constantFingerprint(e.impl)
 		}
-		if ok {
-			name := fmt.Sprintf("%s.$maplit%d.%s", b.Func.Name(), mapLitSeq.Add(1), suffix)
-			g := b.Pkg.NewVarEx(name, prog.Pointer(arrTy))
-			g.Init(prog.ConstArray(arrTy, elems))
-			if !g.impl.IsNil() {
-				g.impl.SetLinkage(llvm.PrivateLinkage)
-				g.impl.SetGlobalConstant(true)
-				g.impl.SetUnnamedAddr(true)
-			}
-			return g.Expr
+		sum := sha256.Sum256([]byte(nameInput))
+		name := "_llgo_maplit$" + base64.RawURLEncoding.EncodeToString(sum[:])
+		g := b.Pkg.NewVarEx(name, prog.Pointer(arrTy))
+		g.Init(prog.ConstArray(arrTy, elems))
+		if !g.impl.IsNil() {
+			g.impl.SetLinkage(llvm.PrivateLinkage)
+			g.impl.SetGlobalConstant(true)
+			g.impl.SetUnnamedAddr(true)
 		}
+		return g.Expr
 	}
 	ptr := b.AllocaT(arrTy)
 	intTy := prog.Int()
