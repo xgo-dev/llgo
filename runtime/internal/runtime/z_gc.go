@@ -21,7 +21,6 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
@@ -54,9 +53,9 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	ret := AllocU(size)
-	c.Memset(ret, 0, size)
-	return ret
+	// AllocU uses GC_malloc, whose non-atomic allocations are already cleared.
+	// Keep its zero-size sentinel, failure check, and allocation accounting.
+	return AllocU(size)
 }
 
 func AllocRoot(size uintptr) unsafe.Pointer {
