@@ -1251,8 +1251,12 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		if isCgoCfunc || isCgoC2 || isCgoCmacro {
 			switch instr := instr.(type) {
 			case *ssa.Alloc:
-				// return value allocation
-				p.compileInstr(b, instr)
+				// Cfunc/C2func return the direct C call's SSA value. Their gc
+				// argument/result frame is unused after this rewrite. Cmacro
+				// still loads its result through the generated address.
+				if isCgoCmacro {
+					p.compileInstr(b, instr)
+				}
 			case *ssa.UnOp:
 				// load cgo function pointer
 				varName := instr.X.Name()
@@ -1853,7 +1857,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 			hoistToEntry = inLoop
 		}
-		heap := v.Heap && !p.canStackAllocateResult(v) && !p.canStackAllocateAppendArgs(v)
+		heap := v.Heap && !p.canStackAllocateResult(v) && !p.canStackAllocateAppendArgs(v) && !p.canStackAllocateCapture(v)
 		ret = b.AllocEx(elem, heap, hoistToEntry)
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v)
@@ -1968,7 +1972,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if !p.canElideZeroSizedClosureEnv(goFn) {
 			bindings = p.compileValues(b, v.Bindings, 0)
 		}
-		ret = b.MakeClosure(fn, bindings)
+		ret = b.MakeClosureEx(fn, bindings, !p.canStackAllocateClosure(v))
 	case *ssa.TypeAssert:
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.GoDecl)

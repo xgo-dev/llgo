@@ -24,9 +24,11 @@ func main() {
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.main$1"(ptr %0){{.*}} {
-// CHECK: [[RESOLVE_SLOT:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[INNER_ALLOCATION:%.*]] = alloca { { ptr, ptr }, { ptr } }, align 8
+// CHECK-NEXT: [[RESOLVE_SLOT:%.*]] = alloca ptr, align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[RESOLVE_SLOT]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: store ptr %0, ptr [[RESOLVE_SLOT]], align 8
-// CHECK: [[INNER_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[INNER_ALLOCATION]], i8 0, i64 24, i1 false)
 // CHECK-NEXT: [[INNER_DESCRIPTOR:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[INNER_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[INNER_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[INNER_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[INNER_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[INNER_ENV]], i32 0, i32 0

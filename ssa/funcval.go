@@ -136,14 +136,20 @@ func (b Builder) makeFuncval(t Type, code, env llvm.Value) Expr {
 // A captured closure owns its header and captures in one allocation. The
 // environment remains the layout expected by the compiled entry; the value
 // and all its copies point to the same header and therefore share identity.
-func (b Builder) makeCapturedFuncval(t Type, code llvm.Value, captures Type, fields []llvm.Value) Expr {
+func (b Builder) makeCapturedFuncval(t Type, code llvm.Value, captures Type, fields []llvm.Value, heap bool) Expr {
 	prog := b.Prog
 	if prog.SizeOf(captures) == 0 {
 		env := b.Pkg.moduleZeroSizedAlloc(captures)
 		return b.makeFuncval(t, code, env.impl)
 	}
 	header := prog.funcvalDescriptorType(t)
-	allocation := b.AllocU(prog.Struct(header, captures))
+	layout := prog.Struct(header, captures)
+	var allocation Expr
+	if heap {
+		allocation = b.AllocU(layout)
+	} else {
+		allocation = b.Alloc(layout, false)
+	}
 	ptr := b.FieldAddr(allocation, 0)
 	env := b.FieldAddr(allocation, 1)
 	b.aggregateInit(env.impl, captures, fields...)

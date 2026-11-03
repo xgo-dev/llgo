@@ -1430,6 +1430,12 @@ func (b Builder) PtrCast(t Type, x Expr) Expr {
 //	t0 = make closure anon@1.2 [x y z]
 //	t1 = make closure bound$(main.I).add [i]
 func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
+	return b.MakeClosureEx(fn, bindings, true)
+}
+
+// MakeClosureEx permits stack storage only when the caller has proved that
+// the closure is invoked synchronously and never retained.
+func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
 	prog := b.Prog
 	sig := fn.raw.Type.(*types.Signature)
@@ -1440,7 +1446,7 @@ func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 		if len(bindings) != rawCtx.NumFields() {
 			panic("ssa: closure environment binding count mismatch")
 		}
-		return b.makeCapturedFuncval(tclosure, fn.impl, tctx, llvmFields(bindings, rawCtx, b))
+		return b.makeCapturedFuncval(tclosure, fn.impl, tctx, llvmFields(bindings, rawCtx, b), heap)
 	}
 	if len(bindings) != 0 {
 		panic("ssa: closure bindings supplied to a no-env function")
