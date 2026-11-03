@@ -13,9 +13,8 @@ func (p *context) canStackAllocateClosure(closure *ssa.MakeClosure) bool {
 		// Explicit roots trace heap contexts, not pointer fields on the stack.
 		return false
 	}
-	// MakeClosure and the Alloc/FreeVar nodes below always carry Referrers.
-	refs, _ := nonDebugReferrers(closure)
-	if len(refs) == 0 {
+	refs, ok := nonDebugReferrers(closure)
+	if !ok || len(refs) == 0 {
 		return false
 	}
 	for _, ref := range refs {
@@ -37,14 +36,21 @@ func (p *context) canStackAllocateClosure(closure *ssa.MakeClosure) bool {
 // address, passing it to a helper, and capturing it in an escaping closure
 // all retain the conservative heap allocation.
 func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
+	pointer, ok := alloc.Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
 	fn := alloc.Parent()
 	if !alloc.Heap || fn == nil || fn.Recover != nil || alloc.Block() != fn.Blocks[0] || p.prog.GCRootsEnabled() {
 		return false
 	}
-	if elem := alloc.Type().(*types.Pointer).Elem(); p.prog.SizeOf(p.type_(elem, llssa.GoDecl)) == 0 {
+	if p.prog.SizeOf(p.type_(pointer.Elem(), llssa.GoDecl)) == 0 {
 		return false
 	}
-	refs, _ := nonDebugReferrers(alloc)
+	refs, ok := nonDebugReferrers(alloc)
+	if !ok || len(refs) == 0 {
+		return false
+	}
 	captured := false
 	for _, ref := range refs {
 		if captureStorageUse(ref, alloc) {
@@ -54,14 +60,19 @@ func (p *context) canStackAllocateCapture(alloc *ssa.Alloc) bool {
 		if !ok || !p.canStackAllocateClosure(closure) {
 			return false
 		}
-		// MakeClosure.Fn is always a Function in Go SSA.
-		callee := closure.Fn.(*ssa.Function)
+		callee, ok := closure.Fn.(*ssa.Function)
+		if !ok {
+			return false
+		}
 		for i, binding := range closure.Bindings {
 			if binding != alloc {
 				continue
 			}
 			// Go SSA pairs each binding with the free variable at the same index.
-			uses, _ := nonDebugReferrers(callee.FreeVars[i])
+			uses, ok := nonDebugReferrers(callee.FreeVars[i])
+			if !ok {
+				return false
+			}
 			for _, use := range uses {
 				if !captureStorageUse(use, callee.FreeVars[i]) {
 					return false
