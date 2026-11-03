@@ -22,6 +22,7 @@ type v256 struct { _ [0]func() }
 type Float32x4 struct { tag v128; vals [4]float32 }
 type Float32x8 struct { tag v256; vals [8]float32 }
 type Float64x4 struct { tag v256; vals [4]float64 }
+type Int32x4 struct { tag v128; vals [4]int32 }
 type Int32x8 struct { tag v256; vals [8]int32 }
 type Uint32x8 struct { tag v256; vals [8]uint32 }
 type Int64x4 struct { tag v256; vals [4]int64 }
@@ -41,6 +42,44 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llssa.SIMDFMA},
 		{"Int32x8", "MulAdd(Int32x8, Int32x8) Int32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "Ceil() Float32x8", llssa.SIMDUnimplemented},
+
+		// Broadcasting may widen, but must preserve the element type and
+		// match the lane count encoded in the declaration name.
+		{"Float32x4", "broadcast1To8() Float32x8", llssa.SIMDSplatLane0},
+		{"Float32x8", "broadcast1To8() Float32x8", llssa.SIMDSplatLane0},
+		{"Float32x4", "broadcast1To4() Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8()", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() (Float32x8, int)", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() float32", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() Int32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "broadcast1To4() Float32x4", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8(int) Float32x8", llssa.SIMDUnimplemented},
+
+		// Half operations connect a 256-bit vector to a 128-bit vector
+		// of the same element type, with distinct getter/setter signatures.
+		{"Float32x8", "GetLo() Float32x4", llssa.SIMDGetLo},
+		{"Float32x8", "GetHi() Float32x4", llssa.SIMDGetHi},
+		{"Float32x8", "SetLo(Float32x4) Float32x8", llssa.SIMDSetLo},
+		{"Float32x8", "SetHi(Float32x4) Float32x8", llssa.SIMDSetHi},
+		{"Float32x4", "GetLo() Float32x4", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetLo()", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetHi() (Float32x4, int)", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetLo() float32", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetLo() Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetHi() Int32x4", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetHi(int) Float32x4", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetLo() Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Float32x4, Float32x4) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetLo(float32) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetLo(Float32x8) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Int32x4) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Float32x4) Float32x4", llssa.SIMDUnimplemented},
+
+		// Bit reinterpretation preserves total width in either direction.
+		{"Float32x8", "BitsToInt32() Int32x8", llssa.SIMDBitcast},
+		{"Float32x8", "BitsToInt32() Int32x4", llssa.SIMDUnimplemented},
+		{"Float32x4", "BitsToInt32() Int32x8", llssa.SIMDUnimplemented},
 	} {
 		t.Run(tc.receiver+"."+tc.method, func(t *testing.T) {
 			fs := token.NewFileSet()
