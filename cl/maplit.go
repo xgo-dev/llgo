@@ -50,7 +50,7 @@ func collectLargeMapLits(fn *ssa.Function) map[*ssa.MapUpdate]*mapLitPlan {
 	grouped := mapUpdatesInBlockOrder(fn)
 	out := make(map[*ssa.MapUpdate]*mapLitPlan)
 	for makeMap, updates := range grouped {
-		if len(updates) <= maxUnrolledMapUpdates {
+		if len(updates) <= maxUnrolledMapUpdates || !mapUpdatesShareBlock(updates) {
 			continue
 		}
 		ok := true
@@ -82,6 +82,22 @@ func collectLargeMapLits(fn *ssa.Function) map[*ssa.MapUpdate]*mapLitPlan {
 		return nil
 	}
 	return out
+}
+
+// mapUpdatesShareBlock keeps the loop lowering within the original
+// straight-line map-literal block. BasicBlock indices do not express control
+// flow, so updates split by branches retain the normal lowering.
+func mapUpdatesShareBlock(updates []*ssa.MapUpdate) bool {
+	if len(updates) == 0 || updates[0].Block() == nil {
+		return false
+	}
+	block := updates[0].Block()
+	for _, u := range updates[1:] {
+		if u.Block() != block {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *context) applyMapLitPlans(plans map[*ssa.MapUpdate]*mapLitPlan) {
@@ -159,7 +175,7 @@ func instrIsAfter(instr ssa.Instruction, afterBlock *ssa.BasicBlock, afterIndex 
 		return false
 	}
 	if block != afterBlock {
-		return block.Index > afterBlock.Index
+		return false
 	}
 	idx := instrIndex(instr)
 	return idx > afterIndex
@@ -175,7 +191,10 @@ func allConstMapValues(updates []*ssa.MapUpdate) bool {
 }
 
 func classifyStaticComplit(updates []*ssa.MapUpdate, plan *mapLitPlan) bool {
-	var skip []ssa.Instruction
+	var (
+		structTy types.Type
+		skip     []ssa.Instruction
+	)
 	for _, u := range updates {
 		load, alloc, fields, instrs, ok := mapValueComplit(u.Value)
 		if !ok {
@@ -185,10 +204,14 @@ func classifyStaticComplit(updates []*ssa.MapUpdate, plan *mapLitPlan) bool {
 		if !ok || len(lrefs) != 1 || lrefs[0] != u {
 			return false
 		}
-		if plan.structTy == nil {
-			plan.structTy = alloc.Type().(*types.Pointer).Elem()
+		if structTy == nil {
+			ptr, ok := alloc.Type().(*types.Pointer)
+			if !ok {
+				return false
+			}
+			structTy = ptr.Elem()
 		}
-		st, ok := plan.structTy.Underlying().(*types.Struct)
+		st, ok := structTy.Underlying().(*types.Struct)
 		if !ok {
 			return false
 		}
@@ -207,6 +230,7 @@ func classifyStaticComplit(updates []*ssa.MapUpdate, plan *mapLitPlan) bool {
 		}
 		skip = append(skip, instrs...)
 	}
+	plan.structTy = structTy
 	plan.skip = skip
 	return true
 }
@@ -333,7 +357,8 @@ func constantMakeCall(v ssa.Value) (*ssa.Call, bool) {
 			if idx < 0 || idx >= len(call.Call.Args) {
 				return nil, false
 			}
-			if _, ok := call.Call.Args[idx].(*ssa.Const); !ok {
+			c, ok := call.Call.Args[idx].(*ssa.Const)
+			if !ok || c.Value == nil {
 				return nil, false
 			}
 			return call, true
@@ -379,7 +404,11 @@ func (p *context) compileMapLitComplit(b llssa.Builder, v ssa.Value, structTy ty
 		}
 		flds[i] = folded
 	}
-	return b.StructLit(p.type_(structTy, llssa.GoDecl), flds), true
+	bg := llssa.GoDecl
+	if p.inCFunc {
+		bg = llssa.CDecl
+	}
+	return b.StructLit(p.type_(structTy, bg), flds), true
 }
 
 func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {

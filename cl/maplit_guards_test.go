@@ -135,8 +135,8 @@ func F() any { return box(1) }
 		}
 	}
 	call.Call.Args[0] = ssa.NewConst(nil, types.NewPointer(types.Typ[types.Int]))
-	if _, ok := constantMakeCall(call); !ok {
-		t.Fatal("constant nil argument classification changed")
+	if _, ok := constantMakeCall(call); ok {
+		t.Fatal("accepted a nil constant argument that lowering cannot emit")
 	}
 }
 

@@ -53,6 +53,19 @@ func TestCollectLargeMapLits(t *testing.T) {
 	}
 }
 
+func TestCollectLargeMapLitsSplitByBranchSkipped(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package foo\n\nfunc F(cond bool) map[string]int {\n\tm := make(map[string]int)\n")
+	for i := 0; i < maxUnrolledMapUpdates; i++ {
+		fmt.Fprintf(&b, "\tm[%q] = %d\n", fmt.Sprintf("k%d", i), i)
+	}
+	b.WriteString("\tif cond { m[\"conditional\"] = 99 }\n")
+	b.WriteString("\tm[\"last\"] = 100\n\treturn m\n}\n")
+	if plans := collectLargeMapLits(buildTestSSA(t, b.String())); plans != nil {
+		t.Fatalf("branch-split map literal was collected: %d", len(plans))
+	}
+}
+
 func TestCollectSmallMapLitsSkipped(t *testing.T) {
 	src := `package foo
 func F() map[string]int {
