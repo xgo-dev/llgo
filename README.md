@@ -236,7 +236,7 @@ Beyond the standard library, LLGo can import libraries from across the C/C++ eco
 Available bindings include:
 
 * [c/bdwgc](https://pkg.go.dev/github.com/goplus/lib/c/bdwgc)
-* [c/cjson](https://pkg.go.dev/github.com/goplus/lib/c/cjson)
+* [cjson](https://pkg.go.dev/github.com/llarhub/cjson)
 * [c/clang](https://pkg.go.dev/github.com/goplus/lib/c/clang)
 * [c/ffi](https://pkg.go.dev/github.com/goplus/lib/c/ffi)
 * [c/libuv](https://pkg.go.dev/github.com/goplus/lib/c/libuv)
@@ -253,7 +253,7 @@ Available bindings include:
 Examples built on these bindings:
 
 * [llama2-c](_demo/c/llama2-c): inference Llama 2 (the first LLGo AI example)
-* [mkjson](https://github.com/goplus/lib/tree/main/c/cjson/_demo/mkjson): create a JSON object and print it
+* [mkjson](https://github.com/llarhub/cjson/tree/main/demo/mkjson): create a JSON object and print it
 * [sqlitedemo](https://github.com/llarhub/sqlite/tree/main/demo/sqlitedemo): a basic SQLite demo
 * [tetris](https://github.com/llarhub/raylib/tree/main/demo/tetris): a Tetris game based on raylib
 
