@@ -42,6 +42,11 @@ def load(name):
     return yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)
 
 
+def normalized_workflow_argument(value, root, temporary):
+    # A task-owned temporary directory can be nested inside the checkout.
+    return value.replace(str(temporary), "$TMP").replace(str(root), "$ROOT")
+
+
 def workflow_paths():
     return sorted(path for path in WORKFLOWS.iterdir()
                   if path.suffix in {".yml", ".yaml"})
@@ -801,6 +806,17 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 with self.assertRaises(AssertionError):
                     self.assert_wasm_runtime_partitions(job)
 
+    def test_wasm_command_path_aliases_cover_nested_temporary(self):
+        root = "/checkout"
+        for temporary in ("/checkout/_out/owned-tmp/probe", "/separate/owned-tmp/probe"):
+            with self.subTest(temporary=temporary):
+                self.assertEqual(normalized_workflow_argument(temporary + "/bin/llgo", root, temporary),
+                                 "$TMP/bin/llgo")
+                self.assertEqual(normalized_workflow_argument(root + "/test/std/bytes", root, temporary),
+                                 "$ROOT/test/std/bytes")
+                self.assertEqual(normalized_workflow_argument("./internal/wordmap", root, temporary),
+                                 "./internal/wordmap")
+
     def test_wasm_partition_scripts_preserve_exact_command_multisets(self):
         root = WORKFLOWS.parents[1]
         job = load("llgo.yml")["jobs"]["wasm-runtime"]
@@ -853,7 +869,7 @@ elif args[0] == "test" and any(a.endswith("/test/std/bytes") for a in args):
                 return tool, tuple(args), cache, cwd, goos, goarch
 
             def normalized(value):
-                return value.replace(str(root), "$ROOT").replace(str(temporary), "$TMP")
+                return normalized_workflow_argument(value, root, temporary)
 
             def execute(step, values):
                 environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
