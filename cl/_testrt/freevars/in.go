@@ -25,9 +25,11 @@ func main() {
 // CHECK-LABEL: define void @"main.main$1"(
 // CHECK-SAME: { ptr, ptr } %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca { ptr }, align 8
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca { ptr, ptr }, align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 16, i1 false)
 // CHECK-NEXT:   store { ptr, ptr } %[[TMP0]], ptr %[[TMP1]], align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 8, i1 false)
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[TMP2]], i32 0, i32 0
 // CHECK-NEXT:   store ptr %[[TMP1]], ptr %[[TMP3]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %[[TMP2]], 1

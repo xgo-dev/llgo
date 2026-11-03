@@ -93,6 +93,9 @@ func makeWithFree(base int) Fn {
 // CHECK: ret i32 [[CB_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// Immediately called bound methods keep their environments on the stack.
+// CHECK: [[IFACE_METHOD_ENV:%.*]] = alloca { %"{{.*}}iface" }, align 8
+// CHECK: [[METHOD_ENV:%.*]] = alloca { ptr }, align 8
 // A closure without free variables carries a null environment.
 // CHECK: [[NO_FREE:%.*]] = call %main.Fn @main.makeNoFree()
 // CHECK: [[WITH_FREE:%.*]] = call %main.Fn @main.makeWithFree(i64 3)
@@ -112,7 +115,7 @@ func makeWithFree(base int) Fn {
 // CHECK: [[S:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK-NEXT: [[S_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S]], i32 0, i32 0
 // CHECK-NEXT: store i64 5, ptr [[S_FIELD]]
-// CHECK: [[METHOD_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[METHOD_ENV]], i8 0, i64 8, i1 false)
 // CHECK: [[METHOD_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[METHOD_ENV]], i32 0, i32 0
 // CHECK: store ptr [[S]], ptr [[METHOD_ENV_SLOT]]
 // CHECK: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[METHOD_ENV]], 1
@@ -130,7 +133,7 @@ func makeWithFree(base int) Fn {
 // CHECK: [[IFACE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[IFACE]])
 // CHECK: [[IFACE_OK:%.*]] = icmp ne ptr [[IFACE_TYPE]], null
 // CHECK: br i1 [[IFACE_OK]], label %{{.*}}, label %{{.*}}
-// CHECK: [[IFACE_METHOD_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[IFACE_METHOD_ENV]], i8 0, i64 16, i1 false)
 // CHECK: [[IFACE_METHOD_SLOT:%.*]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[IFACE_METHOD_ENV]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" [[IFACE]], ptr [[IFACE_METHOD_SLOT]]
 // CHECK: [[IFACE_METHOD:%.*]] = insertvalue { ptr, ptr } { ptr @"main.interface{Add(int) int}.Add$bound", ptr undef }, ptr [[IFACE_METHOD_ENV]], 1

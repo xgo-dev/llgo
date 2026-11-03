@@ -1455,6 +1455,12 @@ func (b Builder) PtrCast(t Type, x Expr) Expr {
 //	t0 = make closure anon@1.2 [x y z]
 //	t1 = make closure bound$(main.I).add [i]
 func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
+	return b.MakeClosureEx(fn, bindings, true)
+}
+
+// MakeClosureEx permits stack storage only when the caller has proved that
+// the closure is invoked synchronously and never retained.
+func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
 	prog := b.Prog
 	sig := fn.raw.Type.(*types.Signature)
@@ -1470,6 +1476,9 @@ func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
 			// entry. Heap zero-sized allocations use the module-wide non-nil
 			// sentinel.
 			data = b.Alloc(tctx, true).impl
+		} else if !heap {
+			data = b.Alloc(tctx, false).impl
+			b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
 		} else {
 			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
 		}
