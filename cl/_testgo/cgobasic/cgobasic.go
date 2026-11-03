@@ -50,7 +50,9 @@ import "unsafe"
 // CHECK: [[WRAPPED:%[0-9]+]] = call ptr @main._Cfunc_new_wrapped(i32 11)
 // CHECK-NOT: _Cgo_use
 // CHECK: call i32 @main._Cfunc_read_wrapped(ptr [[WRAPPED]])
-// CHECK: call %"{{.*}}Slice" %__llgo_funcval_code
+// CHECK-NOT: call ptr asm
+// ARM64: call %"{{.*}}Slice" @"main.main$2"(ptr swiftself %{{[0-9]+}})
+// AMD64: call %"{{.*}}Slice" @"main.main$2"(ptr nest %{{[0-9]+}})
 
 // CBytes and GoBytes are emitted in compiler-generated expression helpers.
 // CHECK-LABEL: define ptr @"main.main$1"(){{.*}} {

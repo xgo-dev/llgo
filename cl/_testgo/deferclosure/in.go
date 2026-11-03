@@ -4,6 +4,7 @@ package main
 // Cover the distinct deferred function-value forms in this test without
 // pinning the defer-node layout or basic blocks.
 // CHECK-DAG: [[METHOD_FIRST_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null }
+// CHECK-DAG: [[METHOD_SECOND_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.testDeferMethodLiteral$2", ptr null }
 // CHECK-DAG: [[FIELD_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.testDeferFieldAccess$1", ptr null }
 // CHECK-LABEL: define void @"main.(*Handler).SetHandler"(ptr %0, ptr %1){{.*}} {
 // CHECK: [[HANDLER_FIELD:%.*]] = getelementptr inbounds nuw %main.Handler, ptr %0, i32 0, i32 0
@@ -91,22 +92,13 @@ package main
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // The deferred receiver and second literal are recorded independently.
 // CHECK: store ptr [[METHOD_HANDLER]], ptr [[METHOD_RECEIVER_SLOT:%.*]]
-// CHECK: store ptr @"main.testDeferMethodLiteral$2", ptr [[METHOD_CODE_SLOT:%.*]]
+// CHECK: store ptr [[METHOD_SECOND_DESCRIPTOR]], ptr [[METHOD_DESCRIPTOR_SLOT:%.*]]
 // CHECK: [[METHOD_NODE_DATA:%.*]] = load { ptr, i64, ptr, ptr }, ptr [[METHOD_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[METHOD_RECEIVER:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 2
-// CHECK: [[METHOD_CODE:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 3
+// CHECK: [[METHOD_ARGUMENT:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 3
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[METHOD_NODE]])
-// The saved raw entry is converted back to a Go function descriptor.
-// CHECK: [[METHOD_RESULT_SLOT:%[0-9]+]] = alloca ptr
-// CHECK-NEXT: store ptr null, ptr [[METHOD_RESULT_SLOT]]
-// CHECK-NEXT: [[METHOD_NONNULL:%[0-9]+]] = icmp ne ptr [[METHOD_CODE]], null
-// CHECK: [[METHOD_DESCRIPTOR:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT: [[METHOD_ENTRY_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_DESCRIPTOR]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[METHOD_CODE]], ptr [[METHOD_ENTRY_SLOT]]
-// CHECK-NEXT: [[METHOD_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_DESCRIPTOR]], i32 0, i32 1
-// CHECK-NEXT: store ptr null, ptr [[METHOD_ENV_SLOT]]
-// CHECK-NEXT: store ptr [[METHOD_DESCRIPTOR]], ptr [[METHOD_RESULT_SLOT]]
-// CHECK: [[METHOD_ARGUMENT:%[0-9]+]] = load ptr, ptr [[METHOD_RESULT_SLOT]]
+// The original descriptor is passed through the node without reboxing.
+// CHECK-NOT: /runtime/internal/runtime.AllocU
 // CHECK-NEXT: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_RECEIVER]], ptr [[METHOD_ARGUMENT]])
 
 // CHECK-LABEL: define void @"main.testDeferMethodLiteral$2"(i64 %0){{.*}} {

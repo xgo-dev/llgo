@@ -353,6 +353,7 @@ type aFunction struct {
 	params   []Type
 	freeVars Expr
 	env      Type
+	callConv CallConv
 	hasVArg  bool
 
 	fakeUses   []llvm.Value
@@ -455,7 +456,7 @@ func (p Package) newFunc(
 			if cached != nil {
 				return cached
 			}
-			ret := newFunction(fn, t, p, p.Prog, nil)
+			ret := newFunction(fn, t, p, p.Prog, nil, cc)
 			p.fns[name] = ret
 			return ret
 		}
@@ -506,7 +507,7 @@ func (p Package) newFunc(
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, envType)
+	ret := newFunction(fn, t, p, p.Prog, envType, cc)
 	p.fns[name] = ret
 	return ret
 }
@@ -516,7 +517,7 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, cc CallConv) Function {
 	params, hasVArg := newParams(t, prog)
 	return &aFunction{
 		Expr:       Expr{fn, t},
@@ -524,6 +525,7 @@ func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Fun
 		Prog:       prog,
 		params:     params,
 		env:        env,
+		callConv:   cc,
 		hasVArg:    hasVArg,
 		fakeUses:   make([]llvm.Value, 0, 4),
 		fakeUseSet: make(map[llvm.Value]struct{}),

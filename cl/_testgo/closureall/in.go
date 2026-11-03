@@ -138,12 +138,9 @@ func makeWithFree(base int) Fn {
 // CHECK: [[METHOD_CALL_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[METHOD_FN]]
 // CHECK-NEXT: [[METHOD_CALL_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_CALL_ENV_SAFE]], i32 0, i32 1
 // CHECK-NEXT: [[METHOD_CALL_ENV:%.*]] = load ptr, ptr [[METHOD_CALL_ENV_FIELD]]
-// CHECK: [[METHOD_CODE_RAW_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[METHOD_FN]]
-// CHECK-NEXT: [[METHOD_CODE_RAW_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_CODE_RAW_SAFE]], i32 0, i32 0
-// CHECK-NEXT: [[METHOD_CODE_RAW:%.*]] = load ptr, ptr [[METHOD_CODE_RAW_FIELD]]
-// CHECK: [[METHOD_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[METHOD_CODE_RAW]])
-// ARM64: call i64 [[METHOD_CODE]](ptr swiftself [[METHOD_CALL_ENV]], i64 7)
-// AMD64: call i64 [[METHOD_CODE]](ptr nest [[METHOD_CALL_ENV]], i64 7)
+// CHECK-NOT: call ptr asm
+// ARM64: call i64 @"main.(*S).Add$bound"(ptr swiftself [[METHOD_CALL_ENV]], i64 7)
+// AMD64: call i64 @"main.(*S).Add$bound"(ptr nest [[METHOD_CALL_ENV]], i64 7)
 // A method expression uses the receiver as an ordinary first argument.
 // CHECK: call i64 @"main.(*S).Add$thunk"(ptr [[S]], i64 8)
 // The interface method value keeps the same interface payload and checks it is non-nil.
@@ -165,12 +162,9 @@ func makeWithFree(base int) Fn {
 // CHECK: [[IFACE_CALL_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[IFACE_METHOD]]
 // CHECK-NEXT: [[IFACE_CALL_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[IFACE_CALL_ENV_SAFE]], i32 0, i32 1
 // CHECK-NEXT: [[IFACE_CALL_ENV:%.*]] = load ptr, ptr [[IFACE_CALL_ENV_FIELD]]
-// CHECK: [[IFACE_CODE_RAW_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[IFACE_METHOD]]
-// CHECK-NEXT: [[IFACE_CODE_RAW_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[IFACE_CODE_RAW_SAFE]], i32 0, i32 0
-// CHECK-NEXT: [[IFACE_CODE_RAW:%.*]] = load ptr, ptr [[IFACE_CODE_RAW_FIELD]]
-// CHECK: [[IFACE_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[IFACE_CODE_RAW]])
-// ARM64: call i64 [[IFACE_CODE]](ptr swiftself [[IFACE_CALL_ENV]], i64 9)
-// AMD64: call i64 [[IFACE_CODE]](ptr nest [[IFACE_CALL_ENV]], i64 9)
+// CHECK-NOT: call ptr asm
+// ARM64: call i64 @"main.interface{Add(int) int}.Add$bound"(ptr swiftself [[IFACE_CALL_ENV]], i64 9)
+// AMD64: call i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest [[IFACE_CALL_ENV]], i64 9)
 // CHECK: call double @sqrt(double 4.000000e+00)
 // CHECK: call i32 @main.callCInt(ptr [[ABS_DESCRIPTOR]], i32 -3)
 // CHECK: call i32 @main.callCallback(ptr @"main.main$1", i32 7)

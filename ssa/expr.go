@@ -1576,6 +1576,21 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	return
 }
 
+// CallKnownClosure calls a closure whose entry is known from the source SSA.
+// The environment still comes from the actual function value. Dynamic function
+// values must use Call so their native ABI identity barrier remains intact.
+func (b Builder) CallKnownClosure(value Expr, entry Function, args ...Expr) Expr {
+	if value.IsNil() || value.kind != vkClosure || entry == nil || entry.Prog != b.Prog || entry.callConv != GoDecl {
+		panic("ssa: invalid known closure entry")
+	}
+	sig := b.Prog.Field(value.Type, 0).raw.Type.(*types.Signature)
+	if !types.Identical(sig, entry.raw.Type) {
+		panic("ssa: known closure entry has a different signature")
+	}
+	b.AssertNilDeref(value)
+	return b.callClosure(entry.Expr, b.Field(value, 1), sig, args)
+}
+
 func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {
 	prog := b.Prog
 	ret.Type = prog.retType(sig)

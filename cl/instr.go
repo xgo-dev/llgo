@@ -2657,6 +2657,18 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	}
 	args := call.Args
 	dbgGoSSAln(">>> Do", act, cv, args)
+	if closure, ok := cv.(*ssa.MakeClosure); ok && act == llssa.Call && ds == nil {
+		if source, ok := closure.Fn.(*ssa.Function); ok {
+			entry, _, ftype := p.compileFunction(source)
+			if ftype == goFunc {
+				fn := p.compileValue(b, closure)
+				args := p.compileValues(b, args, kind)
+				return p.emitDo(b, act, ds, mayRecover, fn, func(b llssa.Builder, fn llssa.Expr, args ...llssa.Expr) llssa.Expr {
+					return b.CallKnownClosure(fn, entry, args...)
+				}, args...)
+			}
+		}
+	}
 	switch cv := cv.(type) {
 	case *ssa.Builtin:
 		fn := cv.Name()
