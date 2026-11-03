@@ -1044,13 +1044,16 @@ func TestConstantFingerprintKinds(t *testing.T) {
 
 	sg := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 2), "fp.s")
 	sg.SetInitializer(ctx.ConstString("hi", false))
-	if got := constantFingerprint(sg); got != "b:hi" {
-		t.Fatalf("string global fingerprint = %q, want b:hi", got)
+	if got := constantFingerprint(sg); got != "b:2:hi" {
+		t.Fatalf("string global fingerprint = %q, want b:2:hi", got)
 	}
 
 	str := ctx.ConstString("ab", false)
-	if got := constantFingerprint(str); got != "b:ab" {
-		t.Fatalf("constant string fingerprint = %q, want b:ab", got)
+	if got := constantFingerprint(str); got != "b:2:ab" {
+		t.Fatalf("constant string fingerprint = %q, want b:2:ab", got)
+	}
+	if got := constantFingerprint(ctx.ConstString(",)", false)); got != "b:2:,)" {
+		t.Fatalf("delimiter string fingerprint = %q, want b:2:,)", got)
 	}
 
 	undef := llvm.Undef(ctx.Int32Type())

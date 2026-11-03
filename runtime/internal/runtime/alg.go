@@ -257,7 +257,7 @@ func interequal(p, q unsafe.Pointer) bool {
 	if x.tab == y.tab {
 		return ifaceeq(x.tab, x.data, y.data)
 	}
-	// LTO and deadcode-drop T2I still use NewItab while ordinary T2I uses a
+	// Dynamic interface conversions use NewItab while eligible T2I uses a
 	// static itab. Mixed paths compare the (inter, _type) pair.
 	if x.tab == nil || y.tab == nil {
 		return false

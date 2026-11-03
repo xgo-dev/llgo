@@ -239,6 +239,10 @@ func isSafeStaticIfaceConstant(v llvm.Value, seen map[llvm.Value]bool) bool {
 	return true
 }
 
+func constantStringFingerprint(s string) string {
+	return "b:" + strconv.Itoa(len(s)) + ":" + s
+}
+
 func constantFingerprint(v llvm.Value) string {
 	if v.IsNil() {
 		return "-"
@@ -267,7 +271,7 @@ func constantFingerprint(v llvm.Value) string {
 	if !v.IsAGlobalVariable().IsNil() {
 		if init := v.Initializer(); !init.IsNil() {
 			if init.IsConstantString() {
-				return "b:" + init.ConstGetAsString()
+				return constantStringFingerprint(init.ConstGetAsString())
 			}
 			return "g{" + constantFingerprint(init) + "}"
 		}
@@ -276,7 +280,7 @@ func constantFingerprint(v llvm.Value) string {
 	n := v.OperandsCount()
 	if n == 0 {
 		if v.IsConstantString() {
-			return "b:" + v.ConstGetAsString()
+			return constantStringFingerprint(v.ConstGetAsString())
 		}
 		return "?"
 	}
