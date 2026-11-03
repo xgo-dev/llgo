@@ -9,7 +9,8 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
-// TracebackCreator captures raw parent PCs without initializing symbol tables.
+// TracebackCreator captures the parent PCs. Unix uses native stack bounds
+// without symbol tables; Windows retains its platform-specific walker.
 var TracebackCreator func([]uintptr) int
 
 func registerTraceback(gp, parent *g) {
@@ -18,7 +19,7 @@ func registerTraceback(gp, parent *g) {
 	if parent != nil && TracebackCreator != nil {
 		n = TracebackCreator(pcs[:])
 	}
-	gp.tracebackThread = stacktrace.Register(gp.goid, gp.parentGoid, gp.createdPC, &pcs[0], uintptr(n))
+	gp.tracebackThread = stacktrace.Register(gp.goid, gp.parentGoid, &pcs[0], uintptr(n))
 }
 
 func TracebackParentPCs() (uint64, []uintptr) {

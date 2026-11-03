@@ -2,5 +2,6 @@
 
 package runtime
 
-// Windows needs its SEH-aware walker to recover biased frame registers.
+// Windows keeps its platform walker: SEH-aware on amd64/arm64 to recover
+// biased frame registers, and frame-pointer based on 386.
 func fpCreatorCallers(pcs []uintptr) int { return fpCallers(0, pcs) }

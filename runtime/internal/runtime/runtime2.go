@@ -51,7 +51,6 @@ type g struct {
 	atomicstatus    uint32
 	goid            uint64
 	parentGoid      uint64
-	createdPC       uintptr
 	tracebackThread unsafe.Pointer
 
 	startfn  goroutineFunc

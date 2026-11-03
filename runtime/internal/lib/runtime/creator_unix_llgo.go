@@ -21,6 +21,9 @@ func fpCreatorCallers(pcs []uintptr) int {
 		return fpCallers(0, pcs)
 	}
 	word := unsafe.Sizeof(uintptr(0))
+	if high < 2*word || low > high-2*word {
+		return 0
+	}
 	fp := uintptr(c_framepointer())
 	n := 0
 	for fp >= low && fp <= high-2*word && fp&(word-1) == 0 && n < len(pcs) {

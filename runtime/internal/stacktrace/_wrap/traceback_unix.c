@@ -23,6 +23,7 @@ typedef struct thread_node {
     struct thread_node *next, *prev;
     uint64_t id, parent;
     uint64_t debugger_thread_id;
+    /* Legacy zero slot preserves native debugger v1 field offsets. */
     uintptr_t created, low, high;
     pthread_t thread;
     int attached;
@@ -228,13 +229,13 @@ void llgo_traceback_set_unwinder(llgo_traceback_unwinder walk,
     __atomic_store_n(&unwind_context, walk, __ATOMIC_RELEASE);
 }
 
-void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created,
+void *llgo_traceback_register(uint64_t id, uint64_t parent,
                               const uintptr_t *pcs, uintptr_t count)
 {
     thread_node *node = calloc(1, sizeof(*node));
     if (!node)
         return 0;
-    node->id = id; node->parent = parent; node->created = created;
+    node->id = id; node->parent = parent;
 
     if (count > LLGO_TRACEBACK_CREATOR_MAX) count = LLGO_TRACEBACK_CREATOR_MAX;
     node->creator_count = count;
@@ -377,7 +378,7 @@ llgo_traceback_snapshot *llgo_traceback_capture(uint64_t except)
         llgo_traceback_snapshot *s = calloc(1, sizeof(*s) + node->count*sizeof(uintptr_t));
         if (!s)
             break;
-        s->id = node->id; s->parent = node->parent; s->created = node->created;
+        s->id = node->id; s->parent = node->parent;
         s->creator_count = node->creator_count;
         memcpy(s->creator_pcs, node->creator_pcs, s->creator_count * sizeof(uintptr_t));
         s->state = state; s->count = node->count;

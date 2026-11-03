@@ -41,7 +41,7 @@ int main(void)
     llgo_traceback_set_unwinder(bad_unwind, 0);
     uintptr_t creators[LLGO_TRACEBACK_CREATOR_MAX + 1];
     for (unsigned i = 0; i <= LLGO_TRACEBACK_CREATOR_MAX; ++i) creators[i] = 0x1234 + i;
-    void *node = llgo_traceback_register(2, 1, 0, creators, LLGO_TRACEBACK_CREATOR_MAX + 1);
+    void *node = llgo_traceback_register(2, 1, creators, LLGO_TRACEBACK_CREATOR_MAX + 1);
     /* The parent stack can disappear immediately after registration. */
     memset(creators, 0, sizeof(creators));
     uintptr_t creator_count;

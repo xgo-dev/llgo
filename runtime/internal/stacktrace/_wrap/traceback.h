@@ -9,7 +9,6 @@
 typedef struct llgo_traceback_snapshot {
     struct llgo_traceback_snapshot *next;
     uint64_t id, parent;
-    uintptr_t created;
     uintptr_t *pcs;
     uintptr_t count;
     uint32_t state;
@@ -21,7 +20,7 @@ typedef size_t (*llgo_traceback_unwinder)(void *, uintptr_t *, size_t, uintptr_t
 typedef void (*llgo_traceback_thread_init)(void);
 void llgo_traceback_set_unwinder(llgo_traceback_unwinder,
                                 llgo_traceback_thread_init);
-void *llgo_traceback_register(uint64_t, uint64_t, uintptr_t, const uintptr_t *, uintptr_t);
+void *llgo_traceback_register(uint64_t, uint64_t, const uintptr_t *, uintptr_t);
 uintptr_t *llgo_traceback_thread_creator(void *, uintptr_t *);
 uintptr_t *llgo_traceback_creator(llgo_traceback_snapshot *, uintptr_t *);
 void llgo_traceback_attach(void *);
@@ -40,5 +39,5 @@ void llgo_traceback_all_threads_syscall(llgo_allthreads_call *);
 
 llgo_traceback_snapshot *llgo_traceback_next(llgo_traceback_snapshot *);
 uintptr_t *llgo_traceback_info(llgo_traceback_snapshot *, uint64_t *,
-                               uint64_t *, uintptr_t *, uintptr_t *, uint32_t *);
+                               uint64_t *, uintptr_t *, uint32_t *);
 #endif

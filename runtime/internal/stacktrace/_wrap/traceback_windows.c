@@ -33,6 +33,7 @@ typedef struct thread_node {
     struct thread_node *next, *prev;
     uint64_t id, parent;
     uint64_t debugger_thread_id;
+    /* Legacy zero slot preserves native debugger v1 field offsets. */
     uintptr_t created;
     HANDLE thread;
     DWORD thread_id;
@@ -68,12 +69,12 @@ void llgo_traceback_release_fault_buffer(void)
         VirtualFree(fault_buffer, LLGO_TRACEBACK_MAX*sizeof(uintptr_t), 0x4000);
 }
 
-void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created,
+void *llgo_traceback_register(uint64_t id, uint64_t parent,
                               const uintptr_t *pcs, uintptr_t count)
 {
     thread_node *n = calloc(1, sizeof(*n));
     if (!n) return 0;
-    n->id = id; n->parent = parent; n->created = created; n->state = 1;
+    n->id = id; n->parent = parent; n->state = 1;
 
     if (count > LLGO_TRACEBACK_CREATOR_MAX) count = LLGO_TRACEBACK_CREATOR_MAX;
     n->creator_count = count;
@@ -319,7 +320,7 @@ llgo_traceback_snapshot *llgo_traceback_capture(uint64_t except)
         size_t count = n->thread ? capture_thread(n->thread, scratch) : 0;
         llgo_traceback_snapshot *s = calloc(1, sizeof(*s)+count*sizeof(uintptr_t));
         if (!s) break;
-        s->id = n->id; s->parent = n->parent; s->created = n->created;
+        s->id = n->id; s->parent = n->parent;
         s->creator_count = n->creator_count;
         memcpy(s->creator_pcs, n->creator_pcs, s->creator_count * sizeof(uintptr_t));
         s->state = state; s->count = count; s->pcs = (uintptr_t *)(s+1);
