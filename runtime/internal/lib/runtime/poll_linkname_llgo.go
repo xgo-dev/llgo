@@ -233,10 +233,11 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 	}
 	pollOnce.Do(pollInit)
 	w := pollAddWaiter(pd, mode)
-	if w == nil {
-		return pollErrNotPollable
+	nfds := uintptr(1)
+	if w != nil {
+		defer pollRemoveWaiter(pd, w)
+		nfds = 2
 	}
-	defer pollRemoveWaiter(pd, w)
 
 	ev := pollIn
 	if mode == 'w' {
@@ -251,12 +252,19 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 		if derr != pollNoError {
 			return derr
 		}
+		// Under fd pressure a wake pipe may be unavailable. Keep I/O working
+		// and periodically observe Close/deadline changes without that pipe.
+		if w == nil && (timeout < 0 || timeout > 1000) {
+			timeout = 1000
+		}
 
 		var fds [2]pollfd
 		fds[0] = pollfd{fd: pd.fd, events: ev}
-		fds[1] = pollfd{fd: w.r, events: pollIn}
+		if w != nil {
+			fds[1] = pollfd{fd: w.r, events: pollIn}
+		}
 
-		n := c_poll(&fds[0], 2, timeout)
+		n := c_poll(&fds[0], nfds, timeout)
 		if n < 0 {
 			errno := cliteos.Errno()
 			if int(errno) == int(csyscall.EINTR) {
@@ -272,7 +280,7 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 		}
 
 		// Wake pipe readable: drain and re-check state/deadline.
-		if fds[1].revents != 0 {
+		if w != nil && fds[1].revents != 0 {
 			pollDrainWake(w)
 			if latomic.LoadUint32(&pd.closing) != 0 {
 				return pollErrClosing
