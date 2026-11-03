@@ -1,7 +1,9 @@
 /* Armv8 AES instructions, using the generic Go uint32 key schedule layout.
  * Calls are guarded by internal/cpu.ARM64.HasAES (including GODEBUG).
  * Keep the optional instructions in target-specific, non-inlined functions
- * so full LTO cannot move them onto the portable fallback path. */
+ * so full LTO cannot move them onto the portable fallback path.
+ * Preconditions: Go validates key sizes (16/24/32 bytes), so rounds is always
+ * 10/12/14. The CTR wrappers pass exactly 1/2/4/8 blocks with matching buffers. */
 #if defined(__aarch64__)
 #include <arm_neon.h>
 #include <stdint.h>

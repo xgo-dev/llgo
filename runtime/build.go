@@ -104,7 +104,8 @@ var sourcePatchPkgs = map[string]struct{}{
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
-	"internal/runtime/atomic": {"arm": {}},
-	"sync/atomic":             {"*": {}},
-	"syscall":                 {"*": {}},
+	"crypto/internal/fips140/aes": {"arm64": {}},
+	"internal/runtime/atomic":     {"arm": {}},
+	"sync/atomic":                 {"*": {}},
+	"syscall":                     {"*": {}},
 }

@@ -1188,3 +1188,65 @@ func findPatchedPosition(file *ast.File, target string) (token.Pos, bool) {
 	}
 	return token.NoPos, false
 }
+
+func TestARM64AESPatchPreservesCAST(t *testing.T) {
+	const pkg = "crypto/internal/fips140/aes"
+	goroot := runtime.GOROOT()
+	overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+		goos: "linux", goarch: "arm64", goversion: "go1.27.0", buildFlags: []string{"-tags=llgo,purego"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files[pkg]) == 0 {
+		t.Fatal("AES hardware patch was not selected")
+	}
+	castFile := filepath.Join(goroot, "src", filepath.FromSlash(pkg), "cast.go")
+	source, ok := overlay[castFile]
+	if !ok {
+		source, err = os.ReadFile(castFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), castFile, source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "init" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			name, literal := call.Args[0].(*ast.BasicLit)
+			if ok && selector.Sel.Name == "CAST" && literal && name.Value == `"AES-CBC"` {
+				found = true
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("source patch removed the AES-CBC self-test initializer")
+	}
+	if !llruntime.SourcePatchReplacesAsmForGOARCH(pkg, "arm64") || llruntime.SourcePatchReplacesAsmForGOARCH(pkg, "amd64") {
+		t.Fatal("AES assembly replacement must be limited to ARM64")
+	}
+	for _, version := range []string{"go1.26.0", "go1.28.0"} {
+		_, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+			goos: "linux", goarch: "arm64", goversion: version, buildFlags: []string{"-tags=llgo,purego"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files[pkg]) != 0 {
+			t.Fatalf("AES patch selected for unvalidated %s", version)
+		}
+	}
+}

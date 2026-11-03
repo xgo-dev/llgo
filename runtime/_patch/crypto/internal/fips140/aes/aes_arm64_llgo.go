@@ -1,4 +1,4 @@
-//go:build llgo && arm64 && !baremetal && go1.24
+//go:build llgo && arm64 && !baremetal && go1.27 && !go1.28
 
 package aes
 
@@ -8,12 +8,19 @@ import (
 	_ "unsafe"
 )
 
-// Keep the generic big-endian uint32 key schedule representation so the
-// portable implementation remains usable, including implementation tests.
 var supportsAES = cpu.ARM64.HasAES
 
-func init() { impl.Register("aes", "Armv8.0", &supportsAES) }
+// Use a variable initializer: a patch init declaration would replace every
+// upstream init, including cast.go's AES-CBC self-test.
+var llgoAESRegistration = llgoRegisterAES()
 
+func llgoRegisterAES() bool {
+	impl.Register("aes", "Armv8.0", &supportsAES)
+	return true
+}
+
+// Keep the generic big-endian uint32 key schedule so implementation selection
+// can switch between hardware and portable code with the same expanded key.
 func newBlock(c *Block, key []byte) *Block {
 	if !supportsAES {
 		newBlockExpanded(&c.blockExpanded, key)
