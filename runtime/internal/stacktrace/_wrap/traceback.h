@@ -5,6 +5,8 @@
 
 /* Keep this in sync with MaxFrames in stacktrace.go. */
 #define LLGO_TRACEBACK_MAX (1u << 16)
+/* Match the former creator walk bound. Inline storage costs 32 pointer words
+ * per thread and snapshot even for an empty trace, avoiding another allocation. */
 #define LLGO_TRACEBACK_CREATOR_MAX 32
 typedef struct llgo_traceback_snapshot {
     struct llgo_traceback_snapshot *next;

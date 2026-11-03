@@ -23,7 +23,8 @@ typedef struct thread_node {
     struct thread_node *next, *prev;
     uint64_t id, parent;
     uint64_t debugger_thread_id;
-    /* Legacy zero slot preserves native debugger v1 field offsets. */
+    /* Always zero; retained for native debugger v1 field offsets. Created-by
+     * adapters must read the trailing creator_count/creator_pcs instead. */
     uintptr_t created, low, high;
     pthread_t thread;
     int attached;
