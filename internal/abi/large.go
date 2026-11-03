@@ -1,7 +1,10 @@
 // Package abi contains target-independent lowering for LLGo's internal ABI.
 package abi
 
-import "github.com/xgo-dev/llvm"
+import (
+	"github.com/xgo-dev/llgo/internal/llvmattr"
+	"github.com/xgo-dev/llvm"
+)
 
 const (
 	// MaxStackVarSize matches cmd/compile's default limit for explicitly
@@ -677,7 +680,9 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 		if fn.IsNil() {
 			fn = llvm.AddFunction(m, runtimeAllocU, fnType)
 		}
+		llvmattr.ApplyAllocatorFunction(ctx, fn)
 		result = b.CreateCall(fnType, fn, []llvm.Value{size}, "")
+		llvmattr.ApplyAllocatorCall(ctx, result, fn, []llvm.Value{size}, l.roots)
 	}
 	if !synthetic {
 		result.InstructionSetDebugLoc(loc)
