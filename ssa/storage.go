@@ -39,7 +39,7 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 		return false
 	}
 	switch t.kind {
-	case vkPtr, vkFuncPtr, vkMap, vkChan:
+	case vkPtr, vkFuncPtr, vkClosure, vkMap, vkChan:
 		return true
 	default:
 		return false

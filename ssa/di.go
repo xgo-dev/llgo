@@ -258,6 +258,9 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 		tyElem := b.prog.rawType(t.Elem())
 		return b.createSliceType(name, ty, tyElem)
 	case *types.Struct:
+		if ty.kind == vkClosure {
+			return b.createPointerType(name, b.prog.funcvalDescriptorType(ty), pos)
+		}
 		return b.createStructType(name, ty, pos)
 	case *types.Signature:
 		return b.createFuncPtrType(name, ty, pos)

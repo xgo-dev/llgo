@@ -56,15 +56,19 @@ func TestRuntimeEqualityRegularMemoryProducerRetainsTypeContext(t *testing.T) {
 					if test.regular && fields[0].ZExtValue() <= fields[1].ZExtValue() {
 						t.Fatal("fixture must distinguish real Size_ from PtrBytes")
 					}
-					equal := fields[7]
-					if equal.OperandsCount() != 2 {
-						t.Fatal("type equality lost its concrete two-word function value", equal)
+					equal := fields[7].IsAGlobalVariable()
+					if equal.IsNil() || !equal.IsGlobalConstant() {
+						t.Fatal("type equality lost its constant function descriptor", fields[7])
 					}
-					entry := pkg.FuncOf(equal.Operand(0).Name())
+					header := equal.Initializer()
+					if header.IsNil() || header.OperandsCount() != 2 {
+						t.Fatal("equality descriptor lost its entry and type context", equal)
+					}
+					entry := pkg.FuncOf(header.Operand(0).Name())
 					if entry == nil || !entry.NeedsEnv() || !strings.HasSuffix(entry.Name(), test.entry) {
 						t.Fatalf("%s equality entry = %s; want a real env-bearing %s", test.name, equal, test.entry)
 					}
-					if equal.Operand(1) != builder.abiType(test.typ).impl {
+					if header.Operand(1) != builder.abiType(test.typ).impl {
 						t.Fatal("equality producer substituted an invented size/GC closure for its actual Type*", equal)
 					}
 				})

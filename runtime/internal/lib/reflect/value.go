@@ -123,9 +123,6 @@ func (v Value) typ() *abi.Type {
 // v.Kind() must be Pointer, Map, Chan, Func, or UnsafePointer
 // if v.Kind() == Pointer, the base type must not be not-in-heap.
 func (v Value) pointer() unsafe.Pointer {
-	if v.typ_.IsClosure() {
-		return v.ptr
-	}
 	if v.typ().Size() != goarch.PtrSize || !v.typ().Pointers() {
 		panic("can't call pointer on a non-pointer Value")
 	}
@@ -187,9 +184,6 @@ func unpackEface(i any) Value {
 		return Value{}
 	}
 	f := flag(t.Kind())
-	if t.IsClosure() {
-		f = flag(Func)
-	}
 	if t.IfaceIndir() {
 		f |= flagIndir
 	}
@@ -586,11 +580,6 @@ func (v Value) Elem() Value {
 		typ := tt.Elem
 		fl := v.flag&flagRO | flagIndir | flagAddr
 		kind := typ.Kind()
-		if typ.IsClosure() {
-			kind = abi.Func
-		} else if kind == abi.Func {
-			typ = closureOf(typ.FuncType())
-		}
 		fl |= flag(kind)
 		return Value{typ, ptr, fl}
 	}
@@ -737,17 +726,9 @@ func (v Value) Float() float64 {
 
 var uint8Type = rtypeOf(uint8(0))
 
-// funcElem returns the in-memory type and public kind of a function-typed
-// value. Function values occupy LLGo's two-word closure.
+// funcElem returns the storage type and source kind of an element.
 func funcElem(typ *abi.Type) (*abi.Type, abi.Kind) {
-	kind := typ.Kind()
-	if kind == abi.Func {
-		return closureOf(typ.FuncType()), abi.Func
-	}
-	if typ.IsClosure() {
-		return typ, abi.Func
-	}
-	return typ, kind
+	return typ, typ.Kind()
 }
 
 // Index returns v's i'th element.
@@ -1999,9 +1980,6 @@ func New(typ Type) Value {
 		panic("reflect: New(nil)")
 	}
 	t := &typ.(*rtype).t
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
 	pt := ptrTo(t)
 	if ifaceIndir(pt) {
 		// This is a pointer to a not-in-heap type.
@@ -2017,9 +1995,6 @@ func New(typ Type) Value {
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
 	t := typ.(*rtype)
-	if t.Kind() == Func {
-		t = toRType(closureOf(t.t.FuncType()))
-	}
 	return Value{t.ptrTo(), p, fl}
 }
 
@@ -2033,26 +2008,16 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		v = makeMethodValue(context, v)
 	}
 	typ := v.typ()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
-	assignDst := dst
-	if dst.Kind() == abi.Func {
-		// Function values use LLGo's closure struct as their physical
-		// representation. Compare against the same canonical closure type
-		// as the source value, while retaining dst for the returned Value.
-		assignDst = closureOf(dst.FuncType())
-	}
 
 	switch {
-	case directlyAssignable(assignDst, typ):
+	case directlyAssignable(dst, typ):
 		// Overwrite type so that they match.
 		// Same memory layout, so no harm done.
 		fl := v.flag&(flagAddr|flagIndir) | v.flag.ro()
 		fl |= flag(dst.Kind())
 		return Value{dst, v.ptr, fl}
 
-	case implements(assignDst, typ):
+	case implements(dst, typ):
 		if v.Kind() == Interface && v.IsNil() {
 			// A nil ReadWriter passed to nil Reader is OK,
 			// but using ifaceE2I below will panic.
@@ -2359,10 +2324,6 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	panic("reflect.toFFIArg unsupport type " + v.typ().String())
 }
 
-var (
-	ffiTypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)
-)
-
 func toFFIType(typ *abi.Type) *ffi.Type {
 	// Vector storage (including zero-length arrays and enclosing aggregates)
 	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
@@ -2383,7 +2344,7 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
-		return ffiTypeClosure
+		return ffi.TypePointer
 	case abi.Interface:
 		return ffi.TypeInterface
 	case abi.Map:
@@ -2395,9 +2356,6 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.String:
 		return ffi.TypeString
 	case abi.Struct:
-		if typ.IsClosure() {
-			return ffiTypeClosure
-		}
 		return toFFIStructType(typ)
 	case abi.UnsafePointer:
 		return ffi.TypePointer
@@ -2472,7 +2430,7 @@ func toFFIRetType(tout []*abi.Type) *ffi.Type {
 }
 
 func (v Value) closureFunc() *abi.FuncType {
-	return toFuncType(v.typ_.StructType())
+	return v.typ_.FuncType()
 }
 
 func (v Value) call(op string, in []Value) (out []Value) {
@@ -2486,13 +2444,11 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		ioff int
 	)
 	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
-		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
-		c := (*struct {
-			fn  unsafe.Pointer
-			env unsafe.Pointer
-		})(v.ptr)
-		fn = c.fn
-		env = c.env
+		ft = v.typ_.FuncType()
+		if c := (*closure)(v.pointer()); c != nil {
+			fn = c.fn
+			env = c.env
+		}
 		tin = ft.In
 		if env != nil && ffi.ClosureEnvExplicit {
 			tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, tin...)
@@ -2662,10 +2618,6 @@ func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
 }
 
 func toRuntimeType(typ *abi.Type) *abi.Type {
-	switch typ.Kind() {
-	case abi.Func:
-		return closureOf((*abi.FuncType)(unsafe.Pointer(typ)))
-	}
 	return typ
 }
 
@@ -2998,12 +2950,6 @@ func (f flag) panicNotMap() {
 // copyVal returns a Value containing the map key or value at ptr,
 // allocating a new variable as needed.
 func copyVal(typ *abi.Type, fl flag, ptr unsafe.Pointer) Value {
-	if typ.IsClosure() {
-		// Maps retain LLGo's physical two-word closure descriptor so bucket
-		// evacuation copies both the code and environment pointers. Expose the
-		// semantic Go kind on the reflected value, just as unpackEface does.
-		fl = fl&^flagKindMask | flag(Func)
-	}
 	if typ.IfaceIndir() {
 		// Copy result so future changes to the map
 		// won't change the underlying value.
@@ -3132,10 +3078,6 @@ func convertOp(dst, src *abi.Type) func(Value, Type) Value {
 	case Chan:
 		if dst.Kind() == abi.Chan && specialChannelAssignability(dst, src) {
 			return cvtDirect
-		}
-	case Func:
-		if dst.Kind() == abi.Func {
-			return cvtFunc
 		}
 	}
 
@@ -3358,24 +3300,6 @@ func cvtSliceArray(v Value, t Type) Value {
 func cvtDirect(v Value, typ Type) Value {
 	f := v.flag
 	t := typ.common()
-	ptr := v.ptr
-	if f&flagAddr != 0 {
-		// indirect, mutable word - make a copy
-		c := unsafe_New(t)
-		typedmemmove(t, c, ptr)
-		ptr = c
-		f &^= flagAddr
-	}
-	return Value{t, ptr, v.flag.ro() | f} // v.flag.ro()|f == f?
-}
-
-// convertOp: func copy
-func cvtFunc(v Value, typ Type) Value {
-	f := v.flag
-	t := typ.common()
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
 	ptr := v.ptr
 	if f&flagAddr != 0 {
 		// indirect, mutable word - make a copy

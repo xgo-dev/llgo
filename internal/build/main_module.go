@@ -430,7 +430,11 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 }
 
 func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
-	switch sym.Raw.(type) {
+	raw := sym.Raw
+	if closure, ok := raw.(*types.Struct); ok && llssa.IsClosure(closure) {
+		raw = closure.Field(0).Type()
+	}
+	switch raw.(type) {
 	case *types.Array:
 		if abiInit&llssa.ReflectArrayOf != 0 {
 			return true

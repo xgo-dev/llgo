@@ -630,7 +630,12 @@ func assertDynamicMatrixCall(t *testing.T, caller, entry Function, name, attrNam
 		for block := caller.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
 			for instruction := block.FirstInstruction(); !instruction.IsNil(); instruction = llvm.NextInstruction(instruction) {
 				if instruction.InstructionOpcode() == llvm.ICmp {
-					t.Fatalf("%s native call retained an env == nil check", name)
+					// A one-word function needs a descriptor nil check. The
+					// native hidden-env edge must still avoid testing its env.
+					env := envCall.Operand(0)
+					if instruction.Operand(0) == env || instruction.Operand(1) == env {
+						t.Fatalf("%s native call retained an env == nil check", name)
+					}
 				}
 			}
 		}

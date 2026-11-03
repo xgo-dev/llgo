@@ -228,13 +228,9 @@ func MatchesClosure(T, V *abi.Type) bool {
 	} else if T == nil || V == nil {
 		return false
 	}
-	if T.IsClosure() {
-		T = T.StructType().Fields[0].Typ
-	}
-	if V.IsClosure() {
-		V = V.StructType().Fields[0].Typ
-	}
-	return identicalFuncType(T, V)
+	// Native entry pointers and Go descriptors have different call roles,
+	// even when their parameter/result signatures agree.
+	return T.IsClosure() == V.IsClosure() && identicalFuncType(T, V)
 }
 
 func identicalFuncType(T, V *abi.Type) bool {

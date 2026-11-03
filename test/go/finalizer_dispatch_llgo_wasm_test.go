@@ -3,6 +3,7 @@
 package gotest
 
 import (
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -108,11 +109,7 @@ func TestRuntimeWasmFinalizerResultDispatcher(t *testing.T) {
 			if face.Type == nil || !face.Type.IsClosure() || face.Data == nil {
 				t.Fatal("callback has no concrete closure type or data")
 			}
-			closureType := face.Type.StructType()
-			if closureType == nil || len(closureType.Fields) == 0 {
-				t.Fatal("callback closure has no function field")
-			}
-			functionType := closureType.Fields[0].Typ.FuncType()
+			functionType := face.Type.FuncType()
 			if functionType == nil || len(functionType.Out) != 1 {
 				t.Fatal("callback does not have one result")
 			}
@@ -144,6 +141,87 @@ func TestRuntimeWasmFinalizerResultDispatcher(t *testing.T) {
 					t.Fatalf("dispatcher modified its argument: got %d, want %d", *object, want)
 				}
 			}
+		})
+	}
+}
+
+// Exercise registry-owned descriptors after real linear-GC collection, for
+// every ordinary pointer/interface result dispatch. The original dispatcher
+// cases above retain their narrow-result and large SRet coverage.
+func TestRuntimeWasmFinalizerDescriptorScalarResults(t *testing.T) {
+	tests := []struct {
+		name     string
+		callback func(chan<- int) any
+	}{
+		{"pointer/void", func(done chan<- int) any {
+			return func(p *finalizerAssignableValue) { done <- p.value }
+		}},
+		{"pointer/i32", func(done chan<- int) any {
+			return func(p *finalizerAssignableValue) uint32 {
+				done <- p.value
+				return 0xf1234567
+			}
+		}},
+		{"pointer/i64", func(done chan<- int) any {
+			return func(p *finalizerAssignableValue) uint64 {
+				done <- p.value
+				return 0xf123456789abcdef
+			}
+		}},
+		{"pointer/f32", func(done chan<- int) any {
+			return func(p *finalizerAssignableValue) float32 {
+				done <- p.value
+				return 3.25
+			}
+		}},
+		{"pointer/f64", func(done chan<- int) any {
+			return func(p *finalizerAssignableValue) float64 {
+				done <- p.value
+				return 9.75
+			}
+		}},
+		{"interface/void", func(done chan<- int) any {
+			return func(p any) { done <- p.(*finalizerAssignableValue).value }
+		}},
+		{"interface/i32", func(done chan<- int) any {
+			return func(p any) uint32 {
+				done <- p.(*finalizerAssignableValue).value
+				return 0xf1234567
+			}
+		}},
+		{"interface/i64", func(done chan<- int) any {
+			return func(p any) uint64 {
+				done <- p.(*finalizerAssignableValue).value
+				return 0xf123456789abcdef
+			}
+		}},
+		{"interface/f32", func(done chan<- int) any {
+			return func(p any) float32 {
+				done <- p.(*finalizerAssignableValue).value
+				return 3.25
+			}
+		}},
+		{"interface/f64", func(done chan<- int) any {
+			return func(p any) float64 {
+				done <- p.(*finalizerAssignableValue).value
+				return 9.75
+			}
+		}},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const registrations = 8
+			done := make(chan int, registrations)
+			want := 81234 + i
+			registerFinalizerForTest(func() {
+				for n := 0; n < registrations; n++ {
+					object := &finalizerAssignableValue{value: want, keep: new(int)}
+					// The factory erases the static callback type so registration
+					// reaches SetFinalizer's actual metadata classifier.
+					runtime.SetFinalizer(object, test.callback(done))
+				}
+			})
+			waitForFinalizerValue(t, done, want)
 		})
 	}
 }

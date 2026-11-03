@@ -92,6 +92,9 @@ func (pkg Package) ConstSlice(name string, t Type, values []Expr) Expr {
 
 // ConstStruct creates an LLVM constant struct expression.
 func (prog Program) ConstStruct(t Type, values []Expr) Expr {
+	if t.kind == vkClosure {
+		panic("ssa: use Package.ConstFuncval for a constant Go function value")
+	}
 	fields := make([]llvm.Value, len(values))
 	for i, value := range values {
 		fields[i] = value.impl

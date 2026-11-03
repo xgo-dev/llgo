@@ -145,9 +145,6 @@ func unpackEface(i any) Value {
 		return Value{}
 	}
 	f := flag(t.Kind())
-	if t.IsClosure() {
-		f = flag(abi.Func)
-	}
 	if ifaceIndir(t) {
 		f |= flagIndir
 	}
@@ -396,7 +393,7 @@ func (v Value) Type() Type {
 }
 
 func (v Value) closureFunc() *abi.FuncType {
-	return v.typ.StructType().Fields[0].Typ.FuncType()
+	return v.typ.FuncType()
 }
 
 /*

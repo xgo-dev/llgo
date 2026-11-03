@@ -77,7 +77,7 @@ func directIfaceType(t types.Type) bool {
 	case *types.Array:
 		return t.Len() == 1 && directIfaceType(t.Elem())
 	case *types.Struct:
-		return t.NumFields() == 1 && directIfaceType(t.Field(0).Type())
+		return IsClosure(t) || t.NumFields() == 1 && directIfaceType(t.Field(0).Type())
 	}
 	return false
 }
@@ -460,9 +460,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		hasher := b.abiMapHasher(t.Key(), global)
 		fields = []llvm.Value{
 			b.abiType(abi.PublicType(t.Key())).impl,
-			// Map operations use Elem for physical copies during bucket
-			// evacuation. Keep LLGo's two-word closure representation here;
-			// reflect converts it back to the public function type in Elem.
+			// Map copies use the function descriptor's one-word storage type.
 			b.abiType(t.Elem()).impl,
 			b.abiMapBucket(t, bucket).impl,
 			hasher.impl,
@@ -482,6 +480,9 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			fields = append(fields, bridges.call.impl, bridges.make.impl)
 		}
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.abiExtendedFields(t.Field(0).Type(), name, global)
+		}
 		name, _ = prog.abi.TypeName(t)
 		var pkgPath string
 		n := t.NumFields()
@@ -554,6 +555,9 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 		children = appendTupleTypeChildren(children, t.Results())
 		return children
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.structuralTypeChildren(t.Field(0).Type())
+		}
 		children := make([]types.Type, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
 			children = append(children, abi.PublicType(t.Field(i).Type()))

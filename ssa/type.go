@@ -155,10 +155,12 @@ retry:
 		typ = t.Rhs()
 		goto retry
 	case *types.Signature:
-		return ptrSize
+		return 0
 	case *types.Struct:
 		if IsClosure(t) {
-			return
+			// The synthetic signature carries code/env types, but a Go
+			// function value occupies one descriptor pointer in storage.
+			return -ptrSize
 		}
 		n := t.NumFields()
 		for i := 0; i < n; i++ {
@@ -507,14 +509,13 @@ func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Stru
 }
 
 func (p Program) toLLVMStruct(raw *types.Struct) (ret llvm.Type, kind valueKind) {
+	if IsClosure(raw) {
+		return p.tyVoidPtr(), vkClosure
+	}
 	fields, layout := p.toLLVMStructBody(raw, false)
 	ret = p.ctx.StructType(fields, false)
 	p.setStructLayout(raw, layout)
-	if IsClosure(raw) {
-		kind = vkClosure
-	} else {
-		kind = vkStruct
-	}
+	kind = vkStruct
 	return
 }
 
@@ -706,11 +707,12 @@ func (p Program) toNamed(raw *types.Named) Type {
 	}
 	switch t := raw.Underlying().(type) {
 	case *types.Struct:
-		kind := vkStruct
 		if IsClosure(t) {
-			kind = vkClosure
+			typ := &aType{p.tyVoidPtr(), rawType{raw}, vkClosure}
+			p.named[name] = typ
+			return typ
 		}
-		return p.toLLVMNamedStruct(name, raw, t, kind)
+		return p.toLLVMNamedStruct(name, raw, t, vkStruct)
 	default:
 		typ := p.rawType(t)
 		return &aType{typ.ll, rawType{raw}, typ.kind}

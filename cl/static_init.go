@@ -1021,10 +1021,7 @@ func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode,
 		if function == nil || ftype != goFunc || function.NeedsEnv() {
 			return llssa.Expr{}, false
 		}
-		return p.prog.ConstStruct(lltyp, []llssa.Expr{
-			function.Expr,
-			p.prog.Nil(p.prog.VoidPtr()),
-		}), true
+		return p.pkg.ConstFuncval(lltyp, function.Expr), true
 	}
 	if node.slice != nil {
 		return p.buildStaticSliceValue(name, typ, node.slice)

@@ -159,11 +159,7 @@ func (p Program) appendWasmRootShape(shape *strings.Builder, typ Type) {
 		shape.WriteByte('i')
 		shape.WriteString("1r")
 	case vkClosure:
-		// Closures and interfaces are both two-word Wasm values with their
-		// second word rooted, but their first words use different function-table
-		// and linear-memory storage conversions.
-		shape.WriteByte('c')
-		shape.WriteString("1r")
+		shape.WriteByte('r')
 	case vkStruct, vkTuple:
 		shape.WriteByte('{')
 		var count int

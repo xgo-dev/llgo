@@ -31,13 +31,10 @@ func (b *Builder) realStr(t types.Type) string {
 	return b.Str(t)
 }
 
-// PublicType maps LLGo's internal closure representation back to the source
-// function type when emitting reflected type names and type references. It must
-// not be used for physical layout computations such as size, align, or offsets.
+// PublicType preserves the source identity of an ABI-lowered type. Go
+// function descriptors already have Func metadata with the same one-word
+// layout; their synthetic code/env types are not a second public struct type.
 func PublicType(t types.Type) types.Type {
-	if st, ok := types.Unalias(t).(*types.Struct); ok && IsClosure(st) {
-		return st.Field(0).Type()
-	}
 	return t
 }
 
@@ -67,6 +64,9 @@ func (b *Builder) Str(t types.Type) string {
 	case *types.Interface:
 		return b.interfaceStr(t)
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.funcStr(t.Field(0).Type().(*types.Signature))
+		}
 		return b.structStr(t)
 	case *types.Map:
 		return "map[" + b.Str(t.Key()) + "]" + b.realStr(t.Elem())
@@ -245,6 +245,9 @@ func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
 	case *types.Struct:
 		if IsClosure(t) {
 			flag |= abi.TFlagClosure
+			if t.Field(0).Type().(*types.Signature).Variadic() {
+				flag |= abi.TFlagVariadic
+			}
 		}
 	case *types.Pointer:
 		if b.TFlag(t.Elem())&abi.TFlagExtraStar == 0 {
@@ -341,6 +344,9 @@ func (b *Builder) Kind(t types.Type) abi.Kind {
 	case *types.Interface:
 		return abi.Interface
 	case *types.Struct:
+		if IsClosure(t) {
+			return abi.Func
+		}
 		return abi.Struct
 	case *types.Map:
 		return abi.Map
@@ -379,6 +385,9 @@ func (b *Builder) PtrBytes(t types.Type) uintptr {
 	case *types.Interface:
 		return 2 * b.PtrSize
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.PtrSize
+		}
 		var field int = -1
 		var bytes uintptr
 		n := t.NumFields()
@@ -475,6 +484,9 @@ func (b *Builder) RuntimeName(t types.Type) string {
 	case *types.Interface:
 		return "interfacetype"
 	case *types.Struct:
+		if IsClosure(t) {
+			return "functype"
+		}
 		return "structtype"
 	case *types.Map:
 		return "maptype"

@@ -175,11 +175,7 @@ func finalizerFuncType(t *abi.Type) *abi.FuncType {
 	if !t.IsClosure() {
 		return nil
 	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return t.FuncType()
 }
 
 func callFinalizer(entry *finalizerEntry, hasInterfaceArg bool) {

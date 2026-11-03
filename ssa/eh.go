@@ -675,10 +675,9 @@ func (b Builder) callDefer(self *aDefer, typ Type, mayRecover bool, buildCall fu
 		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
 			savedType := fn.Type
 			fn = b.getField(data, 2)
-			// A transient interface invocation has the same physical pair as a
-			// funcval, so aggregate field reconstruction sees vkClosure. Keep
-			// its call semantics: the saved data word is an ordinary receiver,
-			// not a hidden closure environment.
+			// The invocation pair is stored as an ordinary aggregate. Restore
+			// its call role: the data word is an ordinary receiver, not a
+			// hidden closure environment.
 			if savedType.kind == vkIfaceMethod {
 				fn.Type = savedType
 			}
