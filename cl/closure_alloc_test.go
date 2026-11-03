@@ -36,8 +36,15 @@ func argument(x int) { unknown(func() int { return x }) }
 					}
 				}
 				for _, name := range []string{"escape", "address", "deferred", "async", "argument"} {
-					if body := llvmFunction(t, ir, "capturealloc."+name); !strings.Contains(body, "runtime.Alloc") {
-						t.Errorf("%s lost escaping storage:\n%s", name, body)
+					body := llvmFunction(t, ir, "capturealloc."+name)
+					// Captured variables use zeroed storage; fully initialized
+					// environments use AllocU. Check the two lifetimes separately.
+					if !strings.Contains(body, "runtime.AllocZ") {
+						t.Errorf("%s lost heap capture storage:\n%s", name, body)
+					}
+					wantHeapEnv := name != "address"
+					if got := strings.Contains(body, "runtime.AllocU"); got != wantHeapEnv {
+						t.Errorf("%s heap environment = %t, want %t:\n%s", name, got, wantHeapEnv, body)
 					}
 				}
 			}
