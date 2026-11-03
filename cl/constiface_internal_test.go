@@ -33,6 +33,11 @@ func buildConstIfaceSSA(t *testing.T, src string, debug bool) *ssa.Package {
 }
 
 func TestFoldConstantMakeValueGuards(t *testing.T) {
+	ctx, b := newNilCompileContext(t)
+	if _, ok := ctx.foldConstantMakeValue(b, nil, nil); ok {
+		t.Error("foldConstantMakeValue accepted nil inputs")
+	}
+
 	pkg := buildConstIfaceSSA(t, `package constiface
 func box(x int) any { return x }
 func no(x int) any { return x + 1 }
@@ -42,7 +47,7 @@ func no(x int) any { return x + 1 }
 		Value: goFn,
 		Args:  []ssa.Value{ssa.NewConst(nil, types.Typ[types.Int])},
 	}
-	ctx, b := newNilCompileContext(t)
+	ctx, b = newNilCompileContext(t)
 	ctx.goFn = goFn
 	if _, ok := ctx.foldConstantMakeValue(b, pkg.Func("no"), call); ok {
 		t.Error("foldConstantMakeValue accepted a non-box function")
