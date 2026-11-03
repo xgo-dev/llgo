@@ -9,7 +9,17 @@ import "unsafe"
 const LLGoPackage = "link"
 
 //go:linkname Register C.llgo_traceback_register
-func Register(id, parent uint64, created uintptr) unsafe.Pointer
+func Register(id, parent uint64, created uintptr, pcs *uintptr, count uintptr) unsafe.Pointer
+
+// MaxCreatorFrames is the same bound used by the former eager creator lookup.
+// Keep this in sync with LLGO_TRACEBACK_CREATOR_MAX in traceback.h.
+const MaxCreatorFrames = 32
+
+//go:linkname ThreadCreator C.llgo_traceback_thread_creator
+func ThreadCreator(node unsafe.Pointer, count *uintptr) *uintptr
+
+//go:linkname Creator C.llgo_traceback_creator
+func Creator(s *Snapshot, count *uintptr) *uintptr
 
 //go:linkname Attach C.llgo_traceback_attach
 func Attach(node unsafe.Pointer)

@@ -2,7 +2,7 @@
 
 package runtime
 
-var TracebackCreator func() uintptr
+var TracebackCreator func([]uintptr) int
 
 func registerTraceback(gp, parent *g) {}
 func attachTraceback(gp *g)           {}

@@ -16,3 +16,9 @@ uintptr_t *llgo_traceback_info(llgo_traceback_snapshot *s, uint64_t *id,
     *state = s->state;
     return s->pcs;
 }
+
+uintptr_t *llgo_traceback_creator(llgo_traceback_snapshot *s, uintptr_t *count)
+{
+    *count = s->creator_count;
+    return s->creator_pcs;
+}

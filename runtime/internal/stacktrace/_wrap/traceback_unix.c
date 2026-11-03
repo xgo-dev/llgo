@@ -38,6 +38,7 @@ typedef struct thread_node {
     unsigned allcall_state;
     uintptr_t allcall_r1, allcall_r2, allcall_error;
 #endif
+    uintptr_t creator_count, creator_pcs[LLGO_TRACEBACK_CREATOR_MAX];
 } thread_node;
 
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -227,12 +228,17 @@ void llgo_traceback_set_unwinder(llgo_traceback_unwinder walk,
     __atomic_store_n(&unwind_context, walk, __ATOMIC_RELEASE);
 }
 
-void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
+void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created,
+                              const uintptr_t *pcs, uintptr_t count)
 {
     thread_node *node = calloc(1, sizeof(*node));
     if (!node)
         return 0;
     node->id = id; node->parent = parent; node->created = created;
+
+    if (count > LLGO_TRACEBACK_CREATOR_MAX) count = LLGO_TRACEBACK_CREATOR_MAX;
+    node->creator_count = count;
+    if (count) memcpy(node->creator_pcs, pcs, count * sizeof(uintptr_t));
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
     /* NewProc children; init marks main only in standalone executables. */
     node->owned = parent != 0;
@@ -244,6 +250,13 @@ void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
     llgo_debugger_threads_v1 = node;
     pthread_mutex_unlock(&registry_lock);
     return node;
+}
+
+uintptr_t *llgo_traceback_thread_creator(void *raw, uintptr_t *count)
+{
+    thread_node *n = raw;
+    *count = n ? n->creator_count : 0;
+    return n ? n->creator_pcs : 0;
 }
 
 void llgo_traceback_attach(void *raw)
@@ -365,6 +378,8 @@ llgo_traceback_snapshot *llgo_traceback_capture(uint64_t except)
         if (!s)
             break;
         s->id = node->id; s->parent = node->parent; s->created = node->created;
+        s->creator_count = node->creator_count;
+        memcpy(s->creator_pcs, node->creator_pcs, s->creator_count * sizeof(uintptr_t));
         s->state = state; s->count = node->count;
         s->pcs = (uintptr_t *)(s+1);
         memcpy(s->pcs, scratch, node->count*sizeof(uintptr_t));

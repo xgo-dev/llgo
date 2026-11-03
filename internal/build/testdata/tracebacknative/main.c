@@ -39,7 +39,15 @@ int main(void)
     assert(sigaction(SIGSEGV, &action, 0) == 0);
     assert(sigaction(SIGBUS, &action, 0) == 0);
     llgo_traceback_set_unwinder(bad_unwind, 0);
-    void *node = llgo_traceback_register(2, 1, 0);
+    uintptr_t creators[LLGO_TRACEBACK_CREATOR_MAX + 1];
+    for (unsigned i = 0; i <= LLGO_TRACEBACK_CREATOR_MAX; ++i) creators[i] = 0x1234 + i;
+    void *node = llgo_traceback_register(2, 1, 0, creators, LLGO_TRACEBACK_CREATOR_MAX + 1);
+    /* The parent stack can disappear immediately after registration. */
+    memset(creators, 0, sizeof(creators));
+    uintptr_t creator_count;
+    uintptr_t *retained = llgo_traceback_thread_creator(node, &creator_count);
+    assert(creator_count == LLGO_TRACEBACK_CREATOR_MAX);
+    for (unsigned i = 0; i < creator_count; ++i) assert(retained[i] == 0x1234 + i);
     assert(node);
     pthread_t thread;
     assert(pthread_create(&thread, 0, worker, node) == 0);
@@ -47,6 +55,8 @@ int main(void)
     for (unsigned i=0; i<32; ++i) {
         llgo_traceback_snapshot *s = llgo_traceback_capture(1);
         assert(s && s->id == 2 && s->parent == 1 && s->count > 0 && !s->next);
+        assert(s->creator_count == LLGO_TRACEBACK_CREATOR_MAX);
+        for (unsigned j = 0; j < s->creator_count; ++j) assert(s->creator_pcs[j] == 0x1234 + j);
         llgo_traceback_free(s);
     }
     assert(__atomic_load_n(&faults, __ATOMIC_ACQUIRE) == 32);

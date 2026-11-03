@@ -86,3 +86,32 @@ func TestRuntimeStackAllConcurrent(t *testing.T) {
 	}
 	workers.Wait()
 }
+
+//go:noinline
+func tracebackCreateChild(ready chan<- struct{}, stop <-chan struct{}, result chan<- string) {
+	go func() {
+		close(ready)
+		<-stop
+		buf := make([]byte, 64<<10)
+		result <- string(buf[:runtime.Stack(buf, false)])
+	}()
+}
+
+func TestRuntimeCreatorOutlivesParent(t *testing.T) {
+	ready, stop, parentDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	result := make(chan string, 1)
+	go func() {
+		tracebackCreateChild(ready, stop, result)
+		close(parentDone)
+	}()
+	<-ready
+	<-parentDone
+	runtime.GC()
+	buf := make([]byte, 128<<10)
+	all := string(buf[:runtime.Stack(buf, true)])
+	for _, stack := range []string{all, func() string { close(stop); return <-result }()} {
+		if !strings.Contains(stack, "created by ") || !strings.Contains(stack, ".tracebackCreateChild in goroutine ") || !strings.Contains(stack, "runtime_traceback_all_test.go:") {
+			t.Errorf("creator lost after parent returned:\n%s", stack)
+		}
+	}
+}

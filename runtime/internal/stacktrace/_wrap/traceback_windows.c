@@ -37,6 +37,7 @@ typedef struct thread_node {
     HANDLE thread;
     DWORD thread_id;
     uint32_t state;
+    uintptr_t creator_count, creator_pcs[LLGO_TRACEBACK_CREATOR_MAX];
 } thread_node;
 static void *registry_lock;
 /* Read only while all debugger threads are stopped. Owned by registry_lock. */
@@ -67,17 +68,29 @@ void llgo_traceback_release_fault_buffer(void)
         VirtualFree(fault_buffer, LLGO_TRACEBACK_MAX*sizeof(uintptr_t), 0x4000);
 }
 
-void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
+void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created,
+                              const uintptr_t *pcs, uintptr_t count)
 {
     thread_node *n = calloc(1, sizeof(*n));
     if (!n) return 0;
     n->id = id; n->parent = parent; n->created = created; n->state = 1;
+
+    if (count > LLGO_TRACEBACK_CREATOR_MAX) count = LLGO_TRACEBACK_CREATOR_MAX;
+    n->creator_count = count;
+    if (count) memcpy(n->creator_pcs, pcs, count * sizeof(uintptr_t));
     AcquireSRWLockExclusive(&registry_lock);
     n->next = llgo_debugger_threads_v1;
     if (llgo_debugger_threads_v1) llgo_debugger_threads_v1->prev = n;
     llgo_debugger_threads_v1 = n;
     ReleaseSRWLockExclusive(&registry_lock);
     return n;
+}
+
+uintptr_t *llgo_traceback_thread_creator(void *raw, uintptr_t *count)
+{
+    thread_node *n = raw;
+    *count = n ? n->creator_count : 0;
+    return n ? n->creator_pcs : 0;
 }
 
 void llgo_traceback_attach(void *raw)
@@ -307,6 +320,8 @@ llgo_traceback_snapshot *llgo_traceback_capture(uint64_t except)
         llgo_traceback_snapshot *s = calloc(1, sizeof(*s)+count*sizeof(uintptr_t));
         if (!s) break;
         s->id = n->id; s->parent = n->parent; s->created = n->created;
+        s->creator_count = n->creator_count;
+        memcpy(s->creator_pcs, n->creator_pcs, s->creator_count * sizeof(uintptr_t));
         s->state = state; s->count = count; s->pcs = (uintptr_t *)(s+1);
         memcpy(s->pcs, scratch, count*sizeof(uintptr_t));
         *tail = s; tail = &s->next;

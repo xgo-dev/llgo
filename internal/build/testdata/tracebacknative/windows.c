@@ -40,7 +40,15 @@ int main(void)
 {
     assert(AddVectoredExceptionHandler(1, fault_handler));
     for (unsigned i=0; i<32; ++i) assert(guarded_fault());
-    void *node = llgo_traceback_register(2, 1, 42);
+    uintptr_t creators[LLGO_TRACEBACK_CREATOR_MAX + 1];
+    for (unsigned i = 0; i <= LLGO_TRACEBACK_CREATOR_MAX; ++i) creators[i] = 0x1234 + i;
+    void *node = llgo_traceback_register(2, 1, 42, creators, LLGO_TRACEBACK_CREATOR_MAX + 1);
+    /* The parent stack can disappear immediately after registration. */
+    memset(creators, 0, sizeof(creators));
+    uintptr_t creator_count;
+    uintptr_t *retained = llgo_traceback_thread_creator(node, &creator_count);
+    assert(creator_count == LLGO_TRACEBACK_CREATOR_MAX);
+    for (unsigned i = 0; i < creator_count; ++i) assert(retained[i] == 0x1234 + i);
     assert(node);
     HANDLE thread = CreateThread(0, 0, worker, node, 0, 0);
     assert(thread);
@@ -48,6 +56,8 @@ int main(void)
     for (unsigned i=0; i<32; ++i) {
         llgo_traceback_snapshot *s = llgo_traceback_capture(1);
         assert(s && s->id == 2 && s->parent == 1 && s->created == 42 && s->count > 1);
+        assert(s->creator_count == LLGO_TRACEBACK_CREATOR_MAX);
+        for (unsigned j = 0; j < s->creator_count; ++j) assert(s->creator_pcs[j] == 0x1234 + j);
         llgo_traceback_free(s);
     }
     __atomic_store_n(&stop, 1, __ATOMIC_RELEASE);
