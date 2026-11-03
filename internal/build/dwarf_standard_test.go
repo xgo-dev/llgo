@@ -291,7 +291,7 @@ func assertDWARFCoreTypes(t *testing.T, data *dwarf.Data, cu *dwarfNode) {
 		"Fixed":    {(*dwarf.ArrayType)(nil), 6},
 		"Lookup":   {(*dwarf.PtrType)(nil), ptrSize},
 		"Queue":    {(*dwarf.PtrType)(nil), ptrSize},
-		"Callback": {(*dwarf.StructType)(nil), 2 * ptrSize},
+		"Callback": {(*dwarf.PtrType)(nil), ptrSize},
 		"Any":      {(*dwarf.StructType)(nil), 2 * ptrSize},
 		"Iface":    {(*dwarf.StructType)(nil), 2 * ptrSize},
 		"Pointer":  {(*dwarf.PtrType)(nil), ptrSize},
@@ -325,7 +325,11 @@ func assertDWARFCoreTypes(t *testing.T, data *dwarf.Data, cu *dwarfNode) {
 	assertDWARFWordStruct(t, "slice", fields["Values"].Type, ptrSize, "data", "len", "cap")
 	assertDWARFWordStruct(t, "any", fields["Any"].Type, ptrSize, "type", "data")
 	assertDWARFWordStruct(t, "interface", fields["Iface"].Type, ptrSize, "type", "data")
-	callback := assertDWARFWordStruct(t, "function value", fields["Callback"].Type, ptrSize, "$f", "$data")
+	callbackPointer, ok := unwrapDWARFTypedef(fields["Callback"].Type).(*dwarf.PtrType)
+	if !ok || callbackPointer.Size() != ptrSize {
+		t.Fatalf("function value = %T, want one descriptor pointer", unwrapDWARFTypedef(fields["Callback"].Type))
+	}
+	callback := assertDWARFWordStruct(t, "function descriptor", callbackPointer.Type, ptrSize, "code", "env")
 	codeType := unwrapDWARFTypedef(callback.Field[0].Type)
 	codePointer, ok := codeType.(*dwarf.PtrType)
 	if !ok {
@@ -344,7 +348,7 @@ func assertDWARFCoreTypes(t *testing.T, data *dwarf.Data, cu *dwarfNode) {
 	}{
 		{"GlobalMap", (*dwarf.PtrType)(nil)},
 		{"GlobalChan", (*dwarf.PtrType)(nil)},
-		{"GlobalFunc", (*dwarf.StructType)(nil)},
+		{"GlobalFunc", (*dwarf.PtrType)(nil)},
 		{"GlobalInterface", (*dwarf.StructType)(nil)},
 		{"GlobalUnsafe", (*dwarf.PtrType)(nil)},
 	} {
@@ -645,10 +649,9 @@ type dwarfFixturePair struct {
 	Second dwarfFixtureNamedInt
 }
 
-type dwarfFixtureFuncValue struct {
-	code    unsafe.Pointer
-	context unsafe.Pointer
-}
+// Use the independent Go compiler's actual function storage and struct
+// layout, rather than a synthetic two-word approximation of LLGo's old ABI.
+type dwarfFixtureFuncValue func(dwarfFixtureNamedInt) (dwarfFixtureNamedInt, error)
 
 type dwarfFixtureNumber interface {
 	Number() dwarfFixtureNamedInt

@@ -13,8 +13,15 @@ package main
 // CHECK: @[[NESTED_TAIL:[0-9]+]] = private unnamed_addr constant [11 x i8] c"nested-tail"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
 // CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
-// CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
-// CHECK: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RECORD_ENV:%[0-9]+]], 1
+// CHECK: [[RECORD_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK-NEXT: [[RECORD_FN:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[RECORD_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[RECORD_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[RECORD_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[RECORD_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[RECORD_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT]]
+// CHECK: [[RECORD_FN_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RECORD_FN]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.complexOrder$1", ptr [[RECORD_FN_CODE_SLOT]]
+// CHECK-NEXT: [[RECORD_FN_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RECORD_FN]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[RECORD_ENV]], ptr [[RECORD_FN_ENV_SLOT]]
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)
 // CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
 // CHECK: [[DEFER_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
@@ -22,40 +29,40 @@ package main
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[DEFER_FRAME]])
 // CHECK: [[DEFER_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[DEFER_FRAME]], i32 0, i32 5
 // CHECK: [[OUTER_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[EXIT_OUTER]], i64 10 }, i64 [[OUTER_I:%[0-9]+]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[OUTER_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[OUTER_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: [[POST_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[POST_LOOP]], i64 9 }, i64 0)
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[POST_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[POST_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: [[EVEN_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label2(%"{{.*}}String" { ptr @[[BRANCH_EVEN]], i64 11 }, i64 [[OUTER_I]], i64 [[INNER_J:%[0-9]+]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[EVEN_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[EVEN_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: [[ODD_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label2(%"{{.*}}String" { ptr @[[BRANCH_ODD]], i64 10 }, i64 [[OUTER_I]], i64 [[INNER_J]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[ODD_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[ODD_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: [[NESTED_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label3(%"{{.*}}String" { ptr @[[NESTED]], i64 6 }, i64 [[OUTER_I]], i64 [[INNER_J]], i64 [[INNER_K:%[0-9]+]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[NESTED_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[NESTED_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: [[TAIL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label3(%"{{.*}}String" { ptr @[[NESTED_TAIL]], i64 11 }, i64 [[OUTER_I]], i64 [[INNER_J]], i64 [[INNER_K]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[TAIL_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[TAIL_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[PREVIOUS_DEFER]])
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[FINAL_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[FINAL_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
 // CHECK-NEXT: [[BEFORE_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_BEFORE]], i64 19 }, i64 0)
-// CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[BEFORE_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[BEFORE_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
-// CHECK: [[RUN_RECORD:%[0-9]+]] = load { ptr, i64, { ptr, ptr }, %"{{.*}}String" }, ptr [[RUN_NODE:%[0-9]+]]
-// CHECK: [[RUN_FN:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr }, %"{{.*}}String" } [[RUN_RECORD]], 2
-// CHECK-NEXT: [[RUN_LABEL:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr }, %"{{.*}}String" } [[RUN_RECORD]], 3
+// CHECK: [[RUN_RECORD:%[0-9]+]] = load { ptr, i64, ptr, %"{{.*}}String" }, ptr [[RUN_NODE:%[0-9]+]]
+// CHECK: [[RUN_FN:%[0-9]+]] = extractvalue { ptr, i64, ptr, %"{{.*}}String" } [[RUN_RECORD]], 2
+// CHECK-NEXT: [[RUN_LABEL:%[0-9]+]] = extractvalue { ptr, i64, ptr, %"{{.*}}String" } [[RUN_RECORD]], 3
 // CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[RUN_NODE]])
 // ARM64: call void %__llgo_funcval_code(ptr swiftself %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])
 // AMD64: call void %__llgo_funcval_code(ptr nest %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])

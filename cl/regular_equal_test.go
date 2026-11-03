@@ -2,6 +2,7 @@ package cl
 
 import (
 	"fmt"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,24 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 				t.Fatal(err)
 			}
 			optimized := tc.arch == "wasm" && tc.enabled
+			commonType, ok := prog.AbiType().RawType().(*types.Named)
+			if !ok {
+				t.Fatal("runtime Type is not named")
+			}
+			commonName := commonType.Obj().Pkg().Path() + "." + commonType.Obj().Name()
+			commonFields, ok := commonType.Underlying().(*types.Struct)
+			if !ok {
+				t.Fatal("runtime Type is not a struct")
+			}
+			equalIndex := -1
+			for i := 0; i < commonFields.NumFields(); i++ {
+				if commonFields.Field(i).Name() == "Equal" {
+					equalIndex = i
+				}
+			}
+			if equalIndex < 0 {
+				t.Fatal("runtime Type has no equality field")
+			}
 			for _, item := range []struct {
 				name, equal, fallback string
 				regular               bool
@@ -77,8 +96,27 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 					// environment, independently of dead-code elimination.
 					want = "memequal_varlen"
 				}
-				if !strings.Contains(global.Initializer().String(), want) {
-					t.Errorf("%s: missing %s in %s", item.name, want, global)
+				// Named array/struct descriptors can have both an uncommon
+				// wrapper and an extended-kind wrapper around the common Type.
+				common := global.Initializer()
+				for !common.IsNil() && common.Type().TypeKind() == llvm.StructTypeKind &&
+					common.Type().StructName() != commonName && common.OperandsCount() > 0 {
+					common = common.Operand(0)
+				}
+				if common.IsNil() || common.Type().TypeKind() != llvm.StructTypeKind ||
+					common.Type().StructName() != commonName || common.OperandsCount() <= equalIndex {
+					t.Fatalf("%s has no common runtime Type: %s", item.name, global)
+				}
+				equal := common.Operand(equalIndex)
+				code, environment := ownerFuncvalParts(t, equal)
+				if !strings.Contains(code.Name(), want) {
+					t.Errorf("%s: equality code %s, want %s", item.name, code, want)
+				}
+				if optimized && item.regular && !environment.IsNull() {
+					t.Errorf("%s: fixed-size equality retained an environment: %s", item.name, environment)
+				}
+				if want == "memequal_varlen" && environment.IsNull() {
+					t.Errorf("%s: native equality lost its concrete Type environment", item.name)
 				}
 			}
 			helper := mod.NamedFunction("_llgo_memequal.24")
