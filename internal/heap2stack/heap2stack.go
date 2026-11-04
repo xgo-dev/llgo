@@ -4,8 +4,8 @@ package heap2stack
 
 import "github.com/xgo-dev/llvm"
 
-// Run preserves heap storage for repeated allocations whose instances cannot
-// be proven disjoint, then moves newly promoted constant-size slots to entry.
+// Run preserves heap storage for tail-call inputs and repeated allocations
+// whose instances cannot be proven disjoint, then moves new fixed slots to entry.
 // Initialization stays at the original allocation site. No lifetime markers
 // are needed for this placement, and pre-existing allocas are left alone.
 func Run(mod llvm.Module, tm llvm.TargetMachine) error {
@@ -21,6 +21,7 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 		}
 		functions = append(functions, fn)
 		cycles := cyclicBlocks(fn.EntryBasicBlock())
+		tailInputs := tailCallInputs(fn)
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			var order map[llvm.Value]int
 			if cycles[bb] {
@@ -34,15 +35,18 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 					order[i] = len(order)
 				}
 			}
-			if order == nil {
-				continue
-			}
 			for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
 				if !isCall(i) || i.Type().TypeKind() != llvm.PointerTypeKind {
 					continue
 				}
-				if _, known := i.ConstantAllocationSize(); !known || !canReuseAllocation(i, order) {
+				if tailInputs[i] {
 					excluded = append(excluded, i)
+					continue
+				}
+				if order != nil {
+					if _, known := i.ConstantAllocationSize(); !known || !canReuseAllocation(i, order) {
+						excluded = append(excluded, i)
+					}
 				}
 			}
 		}
@@ -81,6 +85,60 @@ func isCall(i llvm.Value) bool {
 	return false
 }
 
+// tailCallInputs finds SSA inputs to tail/musttail calls across all blocks.
+// A tail callee may execute after this frame has been released, even when it
+// does not capture its arguments. Follow operands backwards so GEPs, phis,
+// selects, casts and returned aliases cannot hide a newly promoted stack
+// address. Conservatively include scalar/aggregate dependencies too. Attributor
+// can also forward pointers through local memory, so exclude pointer spills
+// and address conversions whenever a tail call is present. This avoids needing
+// alias analysis here. The visited set bounds cyclic phis and shared chains.
+func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
+	inputs := make(map[llvm.Value]bool)
+	var work, published []llvm.Value
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+			if i.InstructionOpcode() == llvm.Call && i.IsTailCall() {
+				work = append(work, i)
+			}
+			switch i.InstructionOpcode() {
+			case llvm.Store:
+				value := i.Operand(0)
+				switch value.Type().TypeKind() {
+				case llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind,
+					llvm.X86_FP80TypeKind, llvm.FP128TypeKind, llvm.PPC_FP128TypeKind:
+					// Scalar addresses are already covered by PtrToInt below.
+				default:
+					// Includes pointer vectors and unknown aggregate kinds.
+					if !value.IsAInstruction().IsNil() {
+						published = append(published, value)
+					}
+				}
+			case llvm.PtrToInt:
+				published = append(published, i)
+			}
+		}
+	}
+	if len(work) != 0 {
+		work = append(work, published...)
+	}
+	for len(work) != 0 {
+		i := work[len(work)-1]
+		work = work[:len(work)-1]
+		if inputs[i] {
+			continue
+		}
+		inputs[i] = true
+		for n := 0; n < i.OperandsCount(); n++ {
+			operand := i.Operand(n)
+			if !operand.IsAInstruction().IsNil() {
+				work = append(work, operand)
+			}
+		}
+	}
+	return inputs
+}
+
 // canReuseAllocation proves a sufficient condition: all pointer uses finish
 // after the allocation in this block, without a phi, pointer publication, or
 // address observation. Attributor must still validate capture/free behavior
@@ -112,9 +170,6 @@ func canReuseAllocation(call llvm.Value, order map[llvm.Value]int) bool {
 					return false
 				}
 			case llvm.Call, llvm.Invoke, llvm.CallBr:
-				if user.InstructionOpcode() == llvm.Call && user.IsTailCall() {
-					return false
-				}
 				argument := false
 				for arg := 0; arg < user.ArgOperandsCount(); arg++ {
 					if user.OperandUse(arg) == use {
