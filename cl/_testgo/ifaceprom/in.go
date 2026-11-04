@@ -111,6 +111,11 @@ func main() {
 // CHECK: ret %"{{.*}}String" [[IMPL_TWO_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// Immediately called bound methods reserve combined headers and interface captures at entry.
+// CHECK: [[PROMOTED_TWO_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[TWO_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[PROMOTED_ONE_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[ONE_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
 // CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
 // CHECK: store %main.impl zeroinitializer, ptr [[IMPL_DATA]]
 // CHECK: [[IMPL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceprom.iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.impl)
@@ -188,7 +193,7 @@ func main() {
 // CHECK: [[PROMOTED_TWO_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_CLOSURE_S]], 0
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]])
 // The four late closure paths store those same interfaces into their bound environments.
-// CHECK: [[ONE_BOUND_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[ONE_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
 // CHECK-NEXT: [[ONE_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[ONE_BOUND_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[ONE_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[ONE_BOUND_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[ONE_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[ONE_BOUND_CAPTURE]], i32 0, i32 0
@@ -204,7 +209,7 @@ func main() {
 // ARM64: [[ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr swiftself [[ONE_BOUND_CALL_ENV]])
 // AMD64: [[ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr nest [[ONE_BOUND_CALL_ENV]])
 // CHECK: [[ONE_BOUND_BAD:%.*]] = icmp ne i64 [[ONE_BOUND_RESULT]], 1
-// CHECK: [[PROMOTED_ONE_BOUND_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
 // CHECK-NEXT: [[PROMOTED_ONE_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[PROMOTED_ONE_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[PROMOTED_ONE_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[PROMOTED_ONE_BOUND_CAPTURE]], i32 0, i32 0
@@ -220,7 +225,7 @@ func main() {
 // ARM64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr swiftself [[PROMOTED_ONE_BOUND_ENV]])
 // AMD64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr nest [[PROMOTED_ONE_BOUND_ENV]])
 // CHECK: [[PROMOTED_ONE_BOUND_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_BOUND_RESULT]], 1
-// CHECK: [[TWO_BOUND_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[TWO_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
 // CHECK-NEXT: [[TWO_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[TWO_BOUND_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[TWO_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[TWO_BOUND_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[TWO_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[TWO_BOUND_CAPTURE]], i32 0, i32 0
@@ -236,7 +241,7 @@ func main() {
 // ARM64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr swiftself [[TWO_BOUND_ENV]])
 // AMD64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr nest [[TWO_BOUND_ENV]])
 // CHECK: [[TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
-// CHECK: [[PROMOTED_TWO_BOUND_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 32)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
 // CHECK-NEXT: [[PROMOTED_TWO_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[PROMOTED_TWO_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[PROMOTED_TWO_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[PROMOTED_TWO_BOUND_CAPTURE]], i32 0, i32 0
