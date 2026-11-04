@@ -227,6 +227,12 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 		}
 	}
 
+	if dedup != nil && len(dedup.llgoFiles) != 0 {
+		if err := loadLLGoFileImports(initial, &driverCfg, dedup.llgoFiles, sourceOverlay); err != nil {
+			return nil, err
+		}
+	}
+
 	fset := driverCfg.Fset
 	if fset == nil {
 		fset = token.NewFileSet()
@@ -250,6 +256,90 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	}
 
 	return initial, nil
+}
+
+// The metadata driver sees the original files, while LLGo also typechecks
+// selected source patches. Add their imports before the post-order visit so
+// new dependencies are loaded and initialized like ordinary Go imports.
+func loadLLGoFileImports(initial []*Package, cfg *Config, files map[string][]string, overlay map[string][]byte) error {
+	dependencyConfig := *cfg
+	dependencyConfig.Tests = false // imports refer to ordinary packages, not test roots
+	byID := make(map[string]*Package)
+	byPath := make(map[string]*Package)
+	packages.Visit(initial, nil, func(p *Package) {
+		byID[p.ID] = p
+		if p.ID == p.PkgPath {
+			byPath[p.PkgPath] = p
+		}
+	})
+	var intern func(*Package) *Package
+	intern = func(p *Package) *Package {
+		if old := byID[p.ID]; old != nil {
+			return old
+		}
+		byID[p.ID] = p
+		if p.ID == p.PkgPath {
+			byPath[p.PkgPath] = p
+		}
+		for path, dep := range p.Imports {
+			p.Imports[path] = intern(dep)
+		}
+		return p
+	}
+	checked := make(map[string]bool)
+	for {
+		var pending []*Package
+		for id, p := range byID {
+			if !checked[id] {
+				checked[id] = true
+				pending = append(pending, p)
+			}
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		for _, p := range pending {
+			for _, filename := range files[p.PkgPath] {
+				src, ok := overlay[filename]
+				if !ok {
+					var err error
+					src, err = os.ReadFile(filename)
+					if err != nil {
+						return err
+					}
+				}
+				f, err := parser.ParseFile(token.NewFileSet(), filename, src, parser.ImportsOnly)
+				if err != nil {
+					return err
+				}
+				for _, spec := range f.Imports {
+					path, err := strconv.Unquote(spec.Path.Value)
+					if err != nil {
+						return err
+					}
+					// C is a cgo pseudo-package, not a Go metadata dependency.
+					if path == "C" || p.Imports[path] != nil {
+						continue
+					}
+					dep := byPath[path]
+					if dep == nil {
+						loaded, err := LoadMetadata(&dependencyConfig, path)
+						if err != nil {
+							return fmt.Errorf("load source patch import %s: %w", path, err)
+						}
+						if len(loaded) != 1 {
+							return fmt.Errorf("source patch import %s resolved to %d packages", path, len(loaded))
+						}
+						dep = intern(loaded[0])
+					}
+					if p.Imports == nil {
+						p.Imports = make(map[string]*Package)
+					}
+					p.Imports[path] = dep
+				}
+			}
+		}
+	}
 }
 
 type typecheckContext struct {

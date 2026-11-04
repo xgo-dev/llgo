@@ -645,6 +645,8 @@ func (p *context) bitCastIntrinsic(b llssa.Builder, args []llssa.Expr, result ty
 // -----------------------------------------------------------------------------
 
 var llgoInstrs = map[string]int{
+	"aesRound":          llgoAESRound,
+	"aesSubWord":        llgoAESSubWord,
 	"simd":              llgoSIMD,
 	"cstr":              llgoCstr,
 	"advance":           llgoAdvance,
@@ -2722,6 +2724,22 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.emitDo(b, act, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
 		case llgoSIMD:
 			ret = p.simdCall(b, cv, args)
+		case llgoAESRound:
+			if len(args) != 4 {
+				panic("aesRound: expected an operation and three pointers")
+			}
+			op, ok := constInt(args[0])
+			if !ok || op < 0 || op > int(llssa.AESXORBlock) {
+				panic("aesRound: invalid constant operation")
+			}
+			values := p.compileValues(b, args[1:], fnNormal)
+			ret = b.AESRound(llssa.AESOp(op), values[0], values[1], values[2])
+		case llgoAESSubWord:
+			if len(args) != 1 {
+				panic("aesSubWord: expected one uint32")
+			}
+			values := p.compileValues(b, args, fnNormal)
+			ret = b.AESSubWord(values[0])
 		case llgoPyList:
 			args := p.compileValues(b, args, fnHasVArg)
 			ret = b.PyList(args...)
