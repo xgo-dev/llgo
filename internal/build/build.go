@@ -2816,7 +2816,13 @@ func packageCExportDeclarations(pkg llssa.Package) []cExport {
 			continue
 		}
 		var sig *types.Signature
-		if fn := pkg.FuncOf(goName); fn != nil {
+		fn := pkg.FuncOf(goName)
+		if fn == nil {
+			// Runtime-owned/direct exports retain the same compiler export
+			// mapping but register their actual entry under the C name.
+			fn = pkg.FuncOf(cName)
+		}
+		if fn != nil {
 			sig, _ = fn.RawType().(*types.Signature)
 		}
 		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig})

@@ -78,24 +78,40 @@ func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Packag
 		return nil, fmt.Errorf("%s: missing types (needed for asm signatures)", pkg.PkgPath)
 	}
 
+	sources, err := captureSelectedPlan9Asm(ctx, pkg, sfiles)
+	if err != nil {
+		return nil, err
+	}
+	nativePlan, err := planNativeAsmComponents(ctx, pkg, sources)
+	if err != nil {
+		return nil, err
+	}
+	if err := bindNativeAsmExports(ctx, aPkg, pkg, nativePlan); err != nil {
+		return nil, err
+	}
 	skipDarwinDynimportTrampolines := shouldCheckDarwinDynimportTrampolineAsm(ctx, pkg)
 	objFiles := make([]string, 0, len(sfiles))
-	for _, sfile := range sfiles {
+	for _, input := range sources {
+		sfile, src := input.path, input.source
 		opt := plan9asmTranslateOptions(ctx)
-		src, err := llplan9asm.PreprocessFileForPkg(pkg, sfile, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
-		if err != nil {
-			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, sfile, err)
-		}
 		// Native routing, the trampoline filter and typed translation must all
 		// see the same source. Do not expand macro output a second time.
 		opt.SourcePreprocessed = true
 		if shouldSkipDarwinDynimportTrampolineAsm(skipDarwinDynimportTrampolines, sfile, src) {
 			continue
 		}
-		mod, native, err := translateForeignNativeAsm(ctx, aPkg, pkg, src)
+		var mod gllvm.Module
+		nativeOptions, native := nativePlan.files[sfile]
 		if native {
+			mod, err = extplan9asm.TranslateNativeModule(aPkg.LPkg.Module().Context(), src, nativeOptions)
 			if err != nil {
 				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
+			}
+			mod.SetTarget(ctx.prog.Target().Spec().Triple)
+			mod.SetDataLayout(ctx.prog.DataLayout())
+			if err := externalizeNativeCodeAliases(aPkg.LPkg.Module(), mod, nativePlan); err != nil {
+				mod.Dispose()
+				return nil, err
 			}
 		} else {
 			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
@@ -324,17 +340,25 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 	if err != nil {
 		return nil, err
 	}
-	for _, sfile := range sfiles {
+	sources, err := captureSelectedPlan9Asm(ctx, pkg, sfiles)
+	if err != nil {
+		return nil, err
+	}
+	nativePlan, err := planNativeAsmComponents(ctx, pkg, sources)
+	if err != nil {
+		return nil, err
+	}
+	for _, input := range sources {
+		sfile, src := input.path, input.source
 		opt := plan9asmTranslateOptions(ctx)
-		src, err := llplan9asm.PreprocessFileForPkg(pkg, sfile, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
-		if err != nil {
-			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, sfile, err)
-		}
-		if _, native, err := nativeAsmOptions(ctx, pkg, src); native {
-			if err != nil {
-				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
+		if nativeOptions, native := nativePlan.files[sfile]; native {
+			// Role inventory must not invent an external provider before its
+			// selected dependency has compiler-owned export metadata.
+			if len(nativePlan.unresolved[sfile]) == 0 {
+				if _, _, err := extplan9asm.TranslateNativeSource(src, nativeOptions); err != nil {
+					return nil, err
+				}
 			}
-			// Native carriers have physical-register contracts, not Go signatures.
 			continue
 		}
 		opt.SourcePreprocessed = true

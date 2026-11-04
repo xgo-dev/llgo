@@ -1,14 +1,8 @@
 package build
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"go/ast"
-	"go/token"
-	"go/types"
-	"strings"
 
-	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	llvm "github.com/xgo-dev/llvm"
@@ -80,90 +74,34 @@ func nativeAsmOptions(ctx *context, pkg *packages.Package, src []byte) (extplan9
 	return opts, true, err
 }
 
-// nativeAddressEntries recognizes only whole-file DATA address ownership. It
-// consumes the selected, preprocessed source and actual package types, never a
-// directory glob, function-name convention, or guessed missing declaration.
+// nativeAddressEntries is the single-source view used by source-role tests.
+// Compilation and signatures supply the complete selected source component.
 func nativeAddressEntries(pkg *packages.Package, src []byte, arch string) map[string]string {
-	if pkg.Types == nil || !strings.Contains(string(src), "DATA") {
+	ctx := &context{buildConf: &Config{Goos: "linux", Goarch: arch}}
+	plan, err := planNativeAsmComponents(ctx, pkg, []plan9AsmSource{{source: src}})
+	if err != nil || plan == nil {
 		return nil
 	}
-	f, err := extplan9asm.Parse(extplan9asm.Arch(arch), string(src))
-	if err != nil || len(f.Funcs) == 0 || len(f.Globl) == 0 || len(f.Data) != len(f.Globl) {
-		return nil
-	}
-	entries := make(map[string]string, len(f.Funcs))
-	objects := make(map[string]bool, len(f.Funcs))
-	for _, fn := range f.Funcs {
-		if !token.IsIdentifier(fn.Sym) || fn.Sym == "_" || pkg.Types.Scope().Lookup(fn.Sym) != nil {
-			return nil
+	return plan.files[""].CodeEntries
+}
+
+// A source-proven byte alias observes the actual code symbol, not a byte-sized
+// DATA definition. Keep the Go reference but let the native object own storage.
+func externalizeNativeCodeAliases(goMod, nativeMod llvm.Module, plan *nativeAsmPlan) error {
+	for _, object := range plan.aliases {
+		if nativeMod.NamedFunction(object).IsNil() {
+			continue
 		}
-		identity := sha256.Sum256([]byte(pkg.Types.Path() + "\x00" + fn.Sym))
-		object := fmt.Sprintf("__llgo_native_address_%x", identity)
-		entries[fn.Sym], objects[object] = object, true
-	}
-	owners := make(map[string]bool, len(f.Globl))
-	for _, global := range f.Globl {
-		name := strings.TrimPrefix(global.Sym, "·")
-		variable, ok := pkg.Types.Scope().Lookup(name).(*types.Var)
-		if !strings.HasPrefix(global.Sym, "·") || !ok || !token.IsIdentifier(name) || global.Size != 8 || owners[name] {
-			return nil
+		global := goMod.NamedGlobal(object)
+		if global.IsNil() || global.IsDeclaration() {
+			continue
 		}
-		basic, ok := variable.Type().Underlying().(*types.Basic)
-		if !ok || basic.Kind() != types.Uintptr {
-			return nil
+		if global.IsThreadLocal() || global.GlobalValueType().TypeKind() != llvm.IntegerTypeKind || global.GlobalValueType().IntTypeWidth() != 8 || !global.Initializer().IsNull() {
+			return fmt.Errorf("native code alias %s conflicts with Go storage", object)
 		}
-		owners[name] = true
+		global.SetInitializer(llvm.Value{})
+		global.SetLinkage(llvm.ExternalLinkage)
+		global.SetGlobalConstant(false)
 	}
-	uninitialized := make(map[string]bool, len(owners))
-	for _, syntax := range pkg.Syntax {
-		for _, declaration := range syntax.Decls {
-			group, ok := declaration.(*ast.GenDecl)
-			if !ok || group.Tok != token.VAR {
-				continue
-			}
-			for _, spec := range group.Specs {
-				value := spec.(*ast.ValueSpec)
-				if len(value.Values) != 0 {
-					continue
-				}
-				for _, name := range value.Names {
-					variable, ok := pkg.Types.Scope().Lookup(name.Name).(*types.Var)
-					if ok && owners[name.Name] && variable.Pos() == name.Pos() {
-						uninitialized[name.Name] = true
-					}
-				}
-			}
-		}
-		for _, group := range syntax.Comments {
-			for _, item := range directive.ParseGroup(group) {
-				if item.Name != "go:linkname" && item.Name != "llgo:link" && item.Name != "go:cgo_import_dynamic" {
-					continue
-				}
-				fields := strings.Fields(item.Args)
-				if len(fields) > 0 && owners[fields[0]] || len(fields) > 1 && objects[fields[1]] {
-					return nil
-				}
-			}
-		}
-	}
-	if len(uninitialized) != len(owners) {
-		return nil
-	}
-	used := make(map[string]bool, len(entries))
-	for _, data := range f.Data {
-		name := strings.TrimPrefix(data.Sym, "·")
-		entry := strings.TrimSuffix(data.Addr, "(SB)")
-		if !strings.HasPrefix(data.Sym, "·") || !owners[name] || data.Off != 0 || data.Width != 8 {
-			return nil
-		}
-		if data.Addr != entry+"(SB)" || entries[entry] == "" {
-			return nil
-		}
-		delete(owners, name)
-		used[entry] = true
-	}
-	if len(owners) != 0 || len(used) != len(entries) {
-		return nil
-	}
-	return entries
+	return nil
 }

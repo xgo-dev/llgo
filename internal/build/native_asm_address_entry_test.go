@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,11 @@ func nativeAddressFixtureWrite(t *testing.T, files map[string]string) string {
 // file or an assumed Go signature for the bare rawEntry symbol.
 func nativeAddressFixturePackage(t *testing.T, files map[string]string, goos, arch, triple string) (*context, *aPackage) {
 	t.Helper()
+	return nativeAddressFixturePackageAtPath(t, files, nativeAddressFixturePath, goos, arch, triple)
+}
+
+func nativeAddressFixturePackageAtPath(t *testing.T, files map[string]string, packagePath, goos, arch, triple string) (*context, *aPackage) {
+	t.Helper()
 	directory := nativeAddressFixtureWrite(t, files)
 	fset := token.NewFileSet()
 	syntax, err := parser.ParseFile(fset, filepath.Join(directory, "main.go"), nil, parser.ParseComments)
@@ -60,7 +66,7 @@ func nativeAddressFixturePackage(t *testing.T, files map[string]string, goos, ar
 	}
 	sizes := types.SizesFor("gc", arch)
 	config := types.Config{Sizes: sizes, Importer: importer.Default()}
-	typed, err := config.Check(nativeAddressFixturePath, fset, []*ast.File{syntax}, nil)
+	typed, err := config.Check(packagePath, fset, []*ast.File{syntax}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +103,36 @@ func TestPlan9AsmAddressOnlyNativeEntryObjects(t *testing.T) {
 	if err != nil || !strings.Contains(string(version), "clang version 22.") {
 		t.Fatalf("LLVM22 clang is required: %v\n%s", err, version)
 	}
-	for _, target := range []struct{ goos, arch, triple string }{
-		{"linux", "amd64", "x86_64-unknown-linux-gnu"},
-		{"linux", "arm64", "aarch64-unknown-linux-gnu"},
-		{"darwin", "amd64", "x86_64-apple-darwin"},
-		{"darwin", "arm64", "arm64-apple-darwin"},
+	for _, target := range []struct {
+		goos, arch, triple string
+		frame              int
+	}{
+		{"linux", "amd64", "x86_64-unknown-linux-gnu", 0},
+		{"linux", "amd64", "x86_64-unknown-linux-gnu", 16},
+		{"linux", "amd64", "x86_64-unknown-linux-gnu", 224},
+		{"linux", "arm64", "aarch64-unknown-linux-gnu", 0},
+		{"darwin", "amd64", "x86_64-apple-darwin", 0},
+		{"darwin", "amd64", "x86_64-apple-darwin", 16},
+		{"darwin", "amd64", "x86_64-apple-darwin", 224},
+		{"darwin", "arm64", "arm64-apple-darwin", 0},
 	} {
-		t.Run(target.goos+"/"+target.arch, func(t *testing.T) {
-			ctx, apkg := nativeAddressFixturePackage(t, nativeAddressFixtureFiles(t), target.goos, target.arch, target.triple)
+		t.Run(target.goos+"/"+target.arch+"/frame"+strconv.Itoa(target.frame), func(t *testing.T) {
+			files := nativeAddressFixtureFiles(t)
+			if target.frame != 0 {
+				files["entry.s"] = strings.Replace(strings.Replace(files["entry.s"], "NOSPLIT|NOFRAME", "NOSPLIT", 1), "$0-0", "$"+strconv.Itoa(target.frame)+"-0", 1)
+			}
+			ctx, apkg := nativeAddressFixturePackage(t, files, target.goos, target.arch, target.triple)
+			if target.frame != 0 {
+				// These are complete stock-Go cross-build/link controls. The
+				// target executable is not run on a different host ISA.
+				binary := filepath.Join(t.TempDir(), "original-fixed-frame")
+				command := abi0FixtureCommand(t, 2*time.Minute, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-p=1", "-mod=readonly", "-o", binary, ".")
+				command.Dir = apkg.Dir
+				command.Env = withEnv(os.Environ(), "GOROOT="+runtime.GOROOT(), "GOTOOLCHAIN=local", "GOENV=off", "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "GOPROXY=off", "GOOS="+target.goos, "GOARCH="+target.arch)
+				if output, err := command.CombinedOutput(); err != nil {
+					t.Fatalf("complete original Go fixed-frame package/link: %v\n%s", err, output)
+				}
+			}
 			signatures, err := plan9asmSigsForPkg(ctx, apkg.PkgPath)
 			if err != nil || len(signatures) != 0 {
 				t.Fatalf("DATA-only bare entry must not acquire a guessed Go signature: signatures=%v err=%v", signatures, err)
@@ -174,7 +202,6 @@ func TestPlan9AsmAddressOnlyNativeEntryRejectsUnprovedSources(t *testing.T) {
 		{"pointer is not uintptr", strings.Replace(base["main.go"], "var entry uintptr", "var entry *byte", 1), base["entry.s"]},
 		{"no code relocation", base["main.go"], strings.Replace(base["entry.s"], "$rawEntry(SB)", "$7", 1)},
 		{"interior PC", base["main.go"], strings.Replace(base["entry.s"], "$rawEntry(SB)", "$rawEntry+1(SB)", 1)},
-		{"nonzero frame", base["main.go"], strings.Replace(strings.Replace(base["entry.s"], "NOSPLIT|NOFRAME", "NOSPLIT", 1), "$0-0", "$16-0", 1)},
 		{"Go argument frame", base["main.go"], strings.Replace(base["entry.s"], "$0-0", "$0-8", 1)},
 		{"FP access", base["main.go"], strings.Replace(base["entry.s"], "\tRET", "\tMOVQ argument+0(FP), AX\n\tRET", 1)},
 		{"aliased DATA owner", strings.Replace(base["main.go"], "package main\n", "package main\nimport _ \"unsafe\"\n//go:linkname entry example.com/other.entry\n", 1), base["entry.s"]},
