@@ -138,3 +138,22 @@ func TestAESMachineCode(t *testing.T) {
 		})
 	}
 }
+
+func TestAESBuilderRejectsInvalidConstants(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		call       func()
+	}{
+		{"buffer size", "aesAlloca: expected 16 or 128 bytes", func() { var b Builder; b.AESAlloca(32) }},
+		{"round opcode", "aesRound: invalid operation", func() { var b Builder; b.AESRound(AESOp(255), Expr{}, Expr{}, Expr{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if got := fmt.Sprint(recover()); got != tc.want {
+					t.Fatalf("panic = %q, want %q", got, tc.want)
+				}
+			}()
+			tc.call()
+		})
+	}
+}
