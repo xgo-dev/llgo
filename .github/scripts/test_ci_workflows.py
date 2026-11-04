@@ -74,6 +74,49 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def assert_source_sdk_consumers(self, workflow, dockerfile, version):
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        job = workflow["jobs"]["windows-gnu-cross"]
+        setup = [step for step in job["steps"]
+                 if step.get("uses") == "./.github/actions/setup-go"]
+        self.assertEqual(len(setup), 1)
+        self.assertNotIn("go-version", setup[0].get("with", {}),
+                         "source SDK consumers must inherit the project pin")
+        image = re.search(r"^ARG BASE_IMAGE=(\S+)$", dockerfile, re.MULTILINE)
+        self.assertIsNotNone(image)
+        self.assertEqual(image.group(1), f"golang:{version}-bookworm")
+
+    def test_source_sdk_consumers_share_exact_project_pin(self):
+        root = WORKFLOWS.parent.parent
+        self.assert_source_sdk_consumers(load("llgo.yml"), (root / "Dockerfile").read_text(),
+                                         (root / ".go-version").read_text().strip())
+
+    def test_source_sdk_consumers_reject_drift_and_floating_versions(self):
+        version = (WORKFLOWS.parent.parent / ".go-version").read_text().strip()
+        baseline = load("llgo.yml")
+        for step in baseline["jobs"]["windows-gnu-cross"]["steps"]:
+            if step.get("uses") == "./.github/actions/setup-go":
+                step.pop("with", None)
+        for mutation in ("floating project", "old host", "duplicate host pin", "old image", "floating image", "missing image"):
+            with self.subTest(mutation=mutation):
+                workflow = copy.deepcopy(baseline)
+                pin = version
+                dockerfile = f"ARG BASE_IMAGE=golang:{version}-bookworm\n"
+                if mutation == "floating project":
+                    pin = "1.27"
+                elif mutation in ("old host", "duplicate host pin"):
+                    step = next(step for step in workflow["jobs"]["windows-gnu-cross"]["steps"]
+                                if step.get("uses") == "./.github/actions/setup-go")
+                    step["with"] = {"go-version": "1.27.0" if mutation == "old host" else version}
+                elif mutation == "old image":
+                    dockerfile = "ARG BASE_IMAGE=golang:1.27.0-bookworm\n"
+                elif mutation == "floating image":
+                    dockerfile = "ARG BASE_IMAGE=golang:1.27-bookworm\n"
+                else:
+                    dockerfile = "FROM scratch\n"
+                with self.assertRaises(AssertionError):
+                    self.assert_source_sdk_consumers(workflow, dockerfile, pin)
+
     def test_unix_archives_and_system_packages_bundle_pinned_esp(self):
         root = WORKFLOWS.parents[1]
         config = yaml.safe_load((root / '.goreleaser.yaml').read_text())
