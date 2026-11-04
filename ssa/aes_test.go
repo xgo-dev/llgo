@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -32,7 +33,17 @@ func TestAESMachineCode(t *testing.T) {
 		{"riscv64", "linux", "aes64esm", "", ""},
 	} {
 		t.Run(tc.os+"-"+tc.arch+tc.arm+tc.x86, func(t *testing.T) {
-			prog := NewProgram(&Target{GOOS: tc.os, GOARCH: tc.arch, GOARM: tc.arm, GO386: tc.x86})
+			target := &Target{GOOS: tc.os, GOARCH: tc.arch, GOARM: tc.arm, GO386: tc.x86}
+			if _, err := llvm.GetTargetFromTriple(target.Spec().Triple); err != nil {
+				// Match the existing storage/ABI matrix: the official Windows
+				// LLVM SDK omits PPC. The artifact-producing conformance lane
+				// must still provide every target, including both PPC endians.
+				if runtime.GOOS == "windows" && os.Getenv("LLGO_AES_CROSS_DIR") == "" && (tc.arch == "ppc64" || tc.arch == "ppc64le") {
+					t.Skipf("Windows LLVM build lacks %s: %v", tc.arch, err)
+				}
+				t.Fatal(err)
+			}
+			prog := NewProgram(target)
 			defer prog.Dispose()
 			pkg := prog.NewPackage("aesprobe", "aesprobe")
 			ptr := types.NewPointer(types.Typ[types.Uint8])
