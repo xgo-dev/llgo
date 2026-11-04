@@ -12,10 +12,11 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llvm"
 )
 
 // Atomic accesses prevent O2 from scalarizing the loop-local allocation.
-// Without the cycle guard, Attributor creates an alloca on every iteration.
+// Promoted slots must be hoisted without moving per-iteration initialization.
 const loopAllocSource = `package main
 
 import "sync/atomic"
@@ -30,10 +31,40 @@ func work(n uint64) uint64 {
 	}
 	return sum
 }
+//go:noinline
+func workZeroed(n uint64) uint64 {
+ var sum uint64
+ for i := uint64(0); i < n; i++ {
+  p := new(uint64)
+  sum += atomic.LoadUint64(p)
+  atomic.StoreUint64(p, 99)
+ }
+ return sum
+}
+
+//go:noinline
+func workCarried(n uint64) uint64 {
+ previous := new(uint64)
+ var sum uint64
+ for i := uint64(0); i < n; i++ {
+  p := new(uint64)
+  *p = i + 1
+  old := *previous
+  q := new(uint64)
+  atomic.StoreUint64(q, old)
+  sum += atomic.LoadUint64(q)
+  previous = p
+ }
+ return sum
+}
 func main() {
 	const n = 2000000
 	done := make(chan uint64)
-	go func() { done <- work(n) }()
+	go func() {
+  if workZeroed(n) != 0 { panic("zero initialization") }
+  if workCarried(n) != n*(n-1)/2 { panic("overlapping objects") }
+  done <- work(n)
+ }()
 	if <-done != n*(n-1)/2 {
 		panic("checksum")
 	}
@@ -85,5 +116,42 @@ func TestLoopAllocationBoundedStack(t *testing.T) {
 				t.Fatalf("loop allocation exceeded bounded stack or changed results: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+// Check optimization as well as bounded-stack execution: keeping every loop
+// allocation on the heap would pass the runtime check alone.
+func TestLoopAllocationPlacement(t *testing.T) {
+	dir := t.TempDir()
+	for _, file := range []struct{ name, source string }{
+		{"go.mod", "module loopalloc\n\ngo 1.27.0\n"}, {"main.go", loopAllocSource},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file.name), []byte(file.source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conf := NewDefaultConf(ModeGen)
+	conf.OptLevel = optlevel.O2
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := pkgs[0].LPkg
+	defer pkg.Prog.Dispose()
+	mod := pkg.Module()
+	ctx := &context{prog: pkg.Prog, buildConf: conf, passOpt: true}
+	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"work", "workZeroed"} {
+		if body := mod.NamedFunction("main." + name).String(); strings.Contains(body, "runtime.Alloc") {
+			t.Fatalf("%s retains iteration-local heap allocation:\n%s", name, body)
+		}
+	}
+	if body := mod.NamedFunction("main.workCarried").String(); strings.Count(body, "runtime.AllocZ") != 1 {
+		t.Fatalf("expected only the loop-carried object on heap:\n%s", body)
 	}
 }
