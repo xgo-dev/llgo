@@ -806,6 +806,9 @@ const (
 	llgoSIMD                 = llgoInstrBase + 0x4e
 	llgoInterfaceKindUsed    = llgoInstrBase + 0x4f
 	llgoAtomicStoreUnordered = llgoInstrBase + 0x50
+	llgoAESRound             = llgoInstrBase + 0x51
+	llgoAESSubWord           = llgoInstrBase + 0x52
+	llgoAESAlloca            = llgoInstrBase + 0x53
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )
