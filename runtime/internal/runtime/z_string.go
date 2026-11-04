@@ -38,7 +38,7 @@ type String struct {
 // StringCat concatenates two strings.
 func StringCat(a, b String) String {
 	n := a.len + b.len
-	dest := AllocU(uintptr(n))
+	dest := AllocNoScanU(uintptr(n))
 	c.Memcpy(dest, a.data, uintptr(a.len))
 	c.Memcpy(c.Advance(dest, a.len), b.data, uintptr(b.len))
 	return String{dest, n}
@@ -55,7 +55,7 @@ func CStrCopy(dest unsafe.Pointer, s String) *int8 {
 }
 
 func CStrDup(s String) *int8 {
-	dest := AllocU(uintptr(s.len + 1))
+	dest := AllocNoScanU(uintptr(s.len + 1))
 	return CStrCopy(dest, s)
 }
 
@@ -159,7 +159,7 @@ func StringFrom(data unsafe.Pointer, n int) (s String) {
 		return
 	}
 	s.len = n
-	s.data = AllocU(uintptr(n))
+	s.data = AllocNoScanU(uintptr(n))
 	c.Memcpy(s.data, data, uintptr(n))
 	return
 }

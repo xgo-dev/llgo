@@ -40,6 +40,20 @@ func AllocU(size uintptr) unsafe.Pointer {
 	return ret
 }
 
+// AllocNoScanU allocates uninitialized memory that must never contain pointers.
+// It returns a non-nil pointer or panics, sharing AllocU's zero-size sentinel.
+func AllocNoScanU(size uintptr) unsafe.Pointer {
+	if size == 0 {
+		return unsafe.Pointer(&zerobase)
+	}
+	ret := bdwgc.MallocAtomic(size)
+	if ret == nil {
+		panic("out of memory")
+	}
+	recordMemProfileAlloc(size)
+	return ret
+}
+
 func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 	ret := bdwgc.Memalign(alignment, size)
 	if ret == nil {

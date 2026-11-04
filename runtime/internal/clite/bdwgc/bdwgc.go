@@ -57,6 +57,11 @@ func UnregisterMyThread() c.Int
 //go:linkname Malloc C.GC_malloc
 func Malloc(size uintptr) c.Pointer
 
+// MallocAtomic allocates uninitialized storage that must never contain pointers.
+//
+//go:linkname MallocAtomic C.GC_malloc_atomic
+func MallocAtomic(size uintptr) c.Pointer
+
 // Memalign allocates scanned storage; the result may be an interior pointer.
 //
 //go:linkname Memalign C.GC_memalign
