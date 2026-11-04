@@ -48,7 +48,7 @@ static void *work(void *raw)
 
 static pthread_t start(worker *w, unsigned id, unsigned parent)
 {
-    w->node = llgo_traceback_register(id, parent, 0);
+    w->node = llgo_traceback_register(id, parent, 0, 0);
     assert(w->node);
     pthread_t thread;
     assert(!pthread_create(&thread, 0, work, w));
@@ -120,7 +120,7 @@ int main(int argc, char **argv)
 {
     (void)argv;
     (void)argc;
-    void *main_node = llgo_traceback_register(1, 0, 0);
+    void *main_node = llgo_traceback_register(1, 0, 0, 0);
     assert(main_node);
     llgo_traceback_attach(main_node);
     llgo_traceback_mark_owned(main_node);
@@ -187,7 +187,7 @@ int main(int argc, char **argv)
 
     fputs("allthreads: concurrent creation/exit\n", stderr);
     worker creator = {0};
-    creator.node = llgo_traceback_register(10, 1, 0);
+    creator.node = llgo_traceback_register(10, 1, 0, 0);
     assert(!pthread_create(&thread, 0, creation, &creator));
     while (!atomic_load(&creator.ready)) sched_yield();
     unsigned attempts = 0;

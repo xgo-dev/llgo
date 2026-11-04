@@ -37,7 +37,7 @@ var wasmDebuggerRegistry struct {
 }
 
 var wasmDebuggerLock uint32
-var TracebackCreator func() uintptr
+var TracebackCreator func([]uintptr) int
 
 func SetWasmCallerFrameBase(mark int, base uintptr) {
 	update := beginWasmCallerUpdate()
