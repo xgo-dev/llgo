@@ -102,12 +102,13 @@ func box(x, y int) any { return y }
 func TestAnalyzeTrivialIfaceBoxGuards(t *testing.T) {
 	pkg := buildConstIfaceSSA(t, `package constiface
 
-type I interface{ M() }
+type I interface { M(); N() }
+type J interface { M() }
 type T int
 func plain(x int) any { return x }
 func changed(x T) any { return int(x) }
 func iface(x I) any { return x }
-func ifaceChange(x I) any { var y interface{ M() }; y = x; return y }
+func ifaceChange(x I) any { return J(x) }
 func side(x int) any { println(x); return x }
 func dynamic(x int) any { return x + 1 }
 func direct(x int) int { return x }
@@ -134,6 +135,36 @@ func (T) method(x int) any { return x }
 		"recovering":  false,
 		"(T).method":  false,
 	}
+	var change *ssa.ChangeInterface
+	for _, instr := range pkg.Func("ifaceChange").Blocks[0].Instrs {
+		if candidate, ok := instr.(*ssa.ChangeInterface); ok {
+			change = candidate
+			break
+		}
+	}
+	if change == nil {
+		t.Fatal("ifaceChange has no ChangeInterface instruction")
+	}
+	plain := pkg.Func("plain")
+	var mi *ssa.MakeInterface
+	var ret *ssa.Return
+	for _, instr := range plain.Blocks[0].Instrs {
+		switch instr := instr.(type) {
+		case *ssa.MakeInterface:
+			mi = instr
+		case *ssa.Return:
+			ret = instr
+		}
+	}
+	if mi == nil || ret == nil {
+		t.Fatal("plain has no interface return")
+	}
+	mi.X = change
+	plain.Blocks[0].Instrs = []ssa.Instruction{change, mi, ret}
+	if _, _, ok := analyzeTrivialIfaceBox(plain); !ok {
+		t.Fatal("ChangeInterface parameter chain was not accepted")
+	}
+
 	for name, want := range checks {
 		fn := pkg.Func(name)
 		if name == "(T).method" {

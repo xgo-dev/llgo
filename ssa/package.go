@@ -1020,6 +1020,7 @@ type aPackage struct {
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
 	staticItabByType    map[staticItabKey]Expr
+	staticStringBacking map[llvm.Value]struct{}
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }
@@ -1163,6 +1164,10 @@ func (p Package) createGlobalStr(v string) (ret llvm.Value) {
 		global.SetGlobalConstant(true)
 		global.SetUnnamedAddr(true)
 		global.SetAlignment(1)
+		if p.staticStringBacking == nil {
+			p.staticStringBacking = make(map[llvm.Value]struct{})
+		}
+		p.staticStringBacking[global] = struct{}{}
 		ret = llvm.ConstInBoundsGEP(typ, global, []llvm.Value{prog.Val(0).impl})
 	} else {
 		ret = llvm.ConstNull(prog.CStr().ll)

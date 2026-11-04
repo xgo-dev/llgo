@@ -166,7 +166,7 @@ func (p Package) cacheStaticItab(key staticItabKey, itab Expr) {
 // for non-direct interface data. Integers and bools stay IfaceIndir (data is
 // a pointer to the copy), so reflect and equality keep Go's layout.
 func (b Builder) staticIfaceBox(typ Type, x Expr) (llvm.Value, bool) {
-	if x.impl.IsNil() || x.impl.IsAConstant().IsNil() || !isSafeStaticIfaceConstant(x.impl, nil) {
+	if x.impl.IsNil() || x.impl.IsAConstant().IsNil() || !isSafeStaticIfaceConstant(x.impl, nil) || !b.Pkg.hasStaticIfaceIdentity(x.impl) {
 		return llvm.Value{}, false
 	}
 	if box, ok := b.Pkg.ifaceBoxByValue[x.impl]; ok {
@@ -182,7 +182,7 @@ func (b Builder) staticIfaceBox(typ Type, x Expr) (llvm.Value, bool) {
 	// Hash the constant's bits, not LLVM's printed form. Value.String() uses
 	// module-local names like @0, so same-length strings in different
 	// packages collided under Windows COMDAT any and mixed panic payloads.
-	sum := sha256.Sum256([]byte(typeName + "\x00" + constantFingerprint(x.impl)))
+	sum := sha256.Sum256([]byte(typeName + "\x00" + b.Pkg.constantFingerprint(x.impl)))
 	name := "_llgo_ifacebox$" + base64.RawURLEncoding.EncodeToString(sum[:])
 	if g := b.Pkg.VarOf(name); g != nil {
 		b.Pkg.cacheIfaceBox(x.impl, g.impl)
@@ -239,11 +239,43 @@ func isSafeStaticIfaceConstant(v llvm.Value, seen map[llvm.Value]bool) bool {
 	return true
 }
 
+// hasStaticIfaceIdentity excludes values whose identity the fingerprint cannot
+// represent. The safety check must run first to reject cyclic constant graphs.
+func (p Package) hasStaticIfaceIdentity(v llvm.Value) bool {
+	if !v.IsAConstantExpr().IsNil() {
+		// Operands alone omit opcodes and semantic types such as GEP's
+		// source element type. Use runtime boxing for these expressions.
+		return false
+	}
+	if !v.IsAGlobalVariable().IsNil() {
+		return p.isStaticStringBacking(v) ||
+			(v.Name() != "" && v.Linkage() != llvm.PrivateLinkage && v.Linkage() != llvm.InternalLinkage)
+	}
+	for i := 0; i < v.OperandsCount(); i++ {
+		if !p.hasStaticIfaceIdentity(v.Operand(i)) {
+			return false
+		}
+	}
+	return true
+}
+
 func constantStringFingerprint(s string) string {
 	return "b:" + strconv.Itoa(len(s)) + ":" + s
 }
 
-func constantFingerprint(v llvm.Value) string {
+func constantAggregateZeroFingerprint(v llvm.Value) string {
+	if ty := v.Type(); ty.TypeKind() == llvm.ArrayTypeKind {
+		return "z:" + strconv.FormatUint(uint64(ty.ArrayLength()), 10)
+	}
+	return "z"
+}
+
+func (p Package) isStaticStringBacking(v llvm.Value) bool {
+	_, ok := p.staticStringBacking[v]
+	return ok
+}
+
+func (p Package) constantFingerprint(v llvm.Value) string {
 	if v.IsNil() {
 		return "-"
 	}
@@ -263,19 +295,21 @@ func constantFingerprint(v llvm.Value) string {
 		return "n"
 	}
 	if !v.IsAConstantAggregateZero().IsNil() {
-		return "z"
+		return constantAggregateZeroFingerprint(v)
 	}
 	if !v.IsAFunction().IsNil() {
 		return "f:" + v.Name()
 	}
 	if !v.IsAGlobalVariable().IsNil() {
-		if init := v.Initializer(); !init.IsNil() {
-			if init.IsConstantString() {
-				return constantStringFingerprint(init.ConstGetAsString())
+		if init := v.Initializer(); p.isStaticStringBacking(v) && !init.IsNil() && init.IsConstantString() {
+			if !init.IsAConstantAggregateZero().IsNil() {
+				return constantAggregateZeroFingerprint(init)
 			}
-			return "g{" + constantFingerprint(init) + "}"
+			return constantStringFingerprint(init.ConstGetAsString())
 		}
-		return "gn:" + v.Name()
+		// A global pointer retains the identity of its storage even when its
+		// initializer matches another global. Keep its symbol in the box key.
+		return "g:" + v.Name()
 	}
 	n := v.OperandsCount()
 	if n == 0 {
@@ -286,7 +320,7 @@ func constantFingerprint(v llvm.Value) string {
 	}
 	parts := make([]string, n)
 	for i := 0; i < n; i++ {
-		parts[i] = constantFingerprint(v.Operand(i))
+		parts[i] = p.constantFingerprint(v.Operand(i))
 	}
 	return "(" + strings.Join(parts, ",") + ")"
 }

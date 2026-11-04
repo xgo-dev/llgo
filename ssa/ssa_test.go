@@ -945,6 +945,7 @@ func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
 }
 
 func TestConstantFingerprintFloats(t *testing.T) {
+	pkg := &aPackage{}
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
 
@@ -962,7 +963,7 @@ func TestConstantFingerprintFloats(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if x, y := constantFingerprint(test.x), constantFingerprint(test.y); x == y {
+			if x, y := pkg.constantFingerprint(test.x), pkg.constantFingerprint(test.y); x == y {
 				t.Fatalf("fingerprints collide: %q", x)
 			}
 		})
@@ -970,7 +971,7 @@ func TestConstantFingerprintFloats(t *testing.T) {
 
 	c1 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 2)}, false)
 	c2 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 3)}, false)
-	if x, y := constantFingerprint(c1), constantFingerprint(c2); x == y {
+	if x, y := pkg.constantFingerprint(c1), pkg.constantFingerprint(c2); x == y {
 		t.Fatalf("complex fingerprints collide: %q", x)
 	}
 }
@@ -1018,52 +1019,67 @@ func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
 }
 
 func TestConstantFingerprintKinds(t *testing.T) {
+	pkg := &aPackage{}
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
 	mod := ctx.NewModule("fpkinds")
 	defer mod.Dispose()
 
 	var none llvm.Value
-	if got := constantFingerprint(none); got != "-" {
+	if got := pkg.constantFingerprint(none); got != "-" {
 		t.Fatalf("nil fingerprint = %q, want -", got)
 	}
 
 	ptr := llvm.PointerType(ctx.Int8Type(), 0)
-	if got := constantFingerprint(llvm.ConstPointerNull(ptr)); got != "n" {
+	if got := pkg.constantFingerprint(llvm.ConstPointerNull(ptr)); got != "n" {
 		t.Fatalf("null fingerprint = %q, want n", got)
 	}
 
 	fn := llvm.AddFunction(mod, "fp.fn", llvm.FunctionType(ctx.VoidType(), nil, false))
-	if got := constantFingerprint(fn); got != "f:fp.fn" {
+	if got := pkg.constantFingerprint(fn); got != "f:fp.fn" {
 		t.Fatalf("function fingerprint = %q, want f:fp.fn", got)
 	}
 
 	g := llvm.AddGlobal(mod, ctx.Int32Type(), "fp.g")
-	if got := constantFingerprint(g); got != "gn:fp.g" {
-		t.Fatalf("uninitialized global fingerprint = %q, want gn:fp.g", got)
+	if got := pkg.constantFingerprint(g); got != "g:fp.g" {
+		t.Fatalf("uninitialized global fingerprint = %q, want g:fp.g", got)
 	}
 
 	g.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 7, false))
-	if got := constantFingerprint(g); got != "g{i7}" {
-		t.Fatalf("initialized global fingerprint = %q, want g{i7}", got)
+	if got := pkg.constantFingerprint(g); got != "g:fp.g" {
+		t.Fatalf("initialized global fingerprint = %q, want g:fp.g", got)
+	}
+	g2 := llvm.AddGlobal(mod, ctx.Int32Type(), "fp.g2")
+	g2.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 7, false))
+	if pkg.constantFingerprint(g) == pkg.constantFingerprint(g2) {
+		t.Fatal("distinct globals with matching initializers share a fingerprint")
 	}
 
 	sg := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 2), "fp.s")
 	sg.SetInitializer(ctx.ConstString("hi", false))
-	if got := constantFingerprint(sg); got != "b:2:hi" {
-		t.Fatalf("string global fingerprint = %q, want b:2:hi", got)
+	if got := pkg.constantFingerprint(sg); got != "g:fp.s" {
+		t.Fatalf("ordinary byte-array global fingerprint = %q, want g:fp.s", got)
+	}
+	pkg.staticStringBacking = map[llvm.Value]struct{}{sg: {}}
+	if got := pkg.constantFingerprint(sg); got != "b:2:hi" {
+		t.Fatalf("string backing fingerprint = %q, want b:2:hi", got)
 	}
 
 	str := ctx.ConstString("ab", false)
-	if got := constantFingerprint(str); got != "b:2:ab" {
+	if got := pkg.constantFingerprint(str); got != "b:2:ab" {
 		t.Fatalf("constant string fingerprint = %q, want b:2:ab", got)
 	}
-	if got := constantFingerprint(ctx.ConstString(",)", false)); got != "b:2:,)" {
+	if got := pkg.constantFingerprint(ctx.ConstString(",)", false)); got != "b:2:,)" {
 		t.Fatalf("delimiter string fingerprint = %q, want b:2:,)", got)
 	}
 
+	zeroBytes := llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 1))
+	if got := pkg.constantFingerprint(zeroBytes); got != "z:1" {
+		t.Fatalf("zero byte array fingerprint = %q, want z:1", got)
+	}
+
 	undef := llvm.Undef(ctx.Int32Type())
-	if got := constantFingerprint(undef); got != "?" {
+	if got := pkg.constantFingerprint(undef); got != "?" {
 		t.Fatalf("undef fingerprint = %q, want ?", got)
 	}
 	if isSafeStaticIfaceConstant(undef, nil) {
@@ -3897,4 +3913,34 @@ func TestInterfaceBasicTypeUsed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStaticIfaceBoxRejectsAnonymousWritableBacking(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxbytes", "boxbytes")
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	a := pkg.ConstBytes([]byte("a"))
+	c := pkg.ConstBytes([]byte("b"))
+	empty := types.NewInterfaceType(nil, nil).Complete()
+	tany := prog.Type(empty, GoDecl)
+	for _, value := range []Expr{a, c} {
+		if _, ok := b.staticIfaceBox(value.Type, value); ok {
+			t.Fatal("anonymous writable backing received a static interface box")
+		}
+		b.MakeInterface(tany, value)
+	}
+	if strings.Contains(pkg.String(), "_llgo_ifacebox$") {
+		t.Fatal("ConstBytes conversions reused a weak-ODR static interface box")
+	}
+	b.Return()
+	b.EndBuild()
 }
