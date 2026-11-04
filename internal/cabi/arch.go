@@ -94,7 +94,16 @@ func (p *TypeInfoAmd64) SkipEmptyParams() bool {
 }
 
 func (p *TypeInfoAmd64) IsWrapType(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) bool {
-	return elementTypesCount(typ) >= 2
+	if elementTypesCount(typ) >= 2 {
+		return true
+	}
+	// An unaligned zero-sized member can require MEMORY even when the
+	// aggregate contains only one non-empty element.
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind, llvm.ArrayTypeKind:
+		return p.hasUnalignedField(typ, 0)
+	}
+	return false
 }
 
 func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) *TypeInfo {
@@ -107,6 +116,12 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 	}
 	info.Size = p.Sizeof(typ)
 	info.Align = p.Alignof(typ)
+	if p.hasUnalignedField(typ, 0) {
+		// SysV classifies aggregates with unaligned fields as MEMORY, even
+		// below 16 bytes. Flattening them loses the packed member offsets.
+		setSysVMemory(info, index != 0)
+		return info
+	}
 	if n := elementTypesCount(typ); n >= 2 {
 		if info.Size > 16 {
 			info.Kind = AttrPointer
@@ -169,6 +184,41 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 		}
 	}
 	return info
+}
+
+func (p *TypeInfoAmd64) hasUnalignedField(typ llvm.Type, offset uint64) bool {
+	_, unaligned := p.checkFieldAlignment(typ, offset)
+	return unaligned
+}
+
+// checkFieldAlignment detects unaligned members, including empty members.
+// For an aligned layout, it also returns the maximum member alignment.
+func (p *TypeInfoAmd64) checkFieldAlignment(typ llvm.Type, offset uint64) (uint64, bool) {
+	align := uint64(p.Alignof(typ))
+	// Zero-length array members still impose an alignment requirement.
+	if offset%align != 0 {
+		return align, true
+	}
+	if p.td.TypeAllocSize(typ) == 0 {
+		return align, false
+	}
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind:
+		for i, field := range typ.StructElementTypes() {
+			fieldAlign, unaligned := p.checkFieldAlignment(field, offset+p.td.ElementOffset(typ, i))
+			align = max(align, fieldAlign)
+			if unaligned {
+				return align, true
+			}
+		}
+	case llvm.ArrayTypeKind:
+		elem := typ.ElementType()
+		elemAlign, unaligned := p.checkFieldAlignment(elem, offset)
+		// Alignments are powers of two. A stride divisible by the maximum
+		// preserves every member's alignment, so visit the element only once.
+		return max(align, elemAlign), unaligned || typ.ArrayLength() > 1 && p.td.TypeAllocSize(elem)%elemAlign != 0
+	}
+	return align, false
 }
 
 type TypeInfoArm64 struct {

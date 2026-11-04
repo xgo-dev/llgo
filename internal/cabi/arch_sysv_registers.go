@@ -2,6 +2,17 @@ package cabi
 
 import "github.com/xgo-dev/llvm"
 
+func setSysVMemory(info *TypeInfo, isParam bool) {
+	info.Kind = AttrPointer
+	info.Type1 = llvm.PointerType(info.Type, 0)
+	info.Type2 = llvm.Type{}
+	// ByValAlign describes arguments only; results use sret.
+	info.ByValAlign = 0
+	if isParam {
+		info.ByValAlign = max(8, info.Align)
+	}
+}
+
 // SysV allocates an aggregate's integer/SSE classes atomically. When either
 // register bank lacks space, the whole value is passed in memory and neither
 // bank is consumed. Letting LLVM spill independent coercions does not preserve
@@ -31,10 +42,7 @@ func (p *Transformer) allocateSysVAggregateRegisters(info *FuncInfo, getAttr fun
 		}
 		if gp > integer || fp > floating {
 			if kind := param.Type.TypeKind(); kind == llvm.StructTypeKind || kind == llvm.ArrayTypeKind {
-				param.Kind = AttrPointer
-				param.Type1 = llvm.PointerType(param.Type, 0)
-				param.Type2 = llvm.Type{}
-				param.ByValAlign = max(8, param.Align)
+				setSysVMemory(param, true)
 			}
 			continue
 		}
