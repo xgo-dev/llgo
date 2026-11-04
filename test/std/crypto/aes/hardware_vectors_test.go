@@ -32,6 +32,22 @@ func TestFIPS197AllKeySizes(t *testing.T) {
 		if !bytes.Equal(buf[1:], plain) {
 			t.Fatalf("AES-%d Decrypt = %x, want %x", len(key)*8, buf[1:], plain)
 		}
+		// Different unaligned source and destination addresses must work too,
+		// without modifying the source or bytes outside the destination block.
+		src := bytes.Clone(buf)
+		dst := bytes.Repeat([]byte{0xa5}, 20)
+		block.Encrypt(dst[3:19], src[1:])
+		if !bytes.Equal(dst[3:19], want) || !bytes.Equal(src, buf) {
+			t.Fatalf("AES-%d disjoint Encrypt = %x", len(key)*8, dst[3:19])
+		}
+		copy(src[1:], want)
+		block.Decrypt(dst[3:19], src[1:])
+		if !bytes.Equal(dst[3:19], plain) || !bytes.Equal(src[1:], want) {
+			t.Fatalf("AES-%d disjoint Decrypt = %x", len(key)*8, dst[3:19])
+		}
+		if !bytes.Equal(dst[:3], []byte{0xa5, 0xa5, 0xa5}) || dst[19] != 0xa5 {
+			t.Fatalf("AES-%d modified bytes outside destination", len(key)*8)
+		}
 	}
 }
 

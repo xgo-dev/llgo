@@ -20,6 +20,7 @@ func llgoAESCPU() bool {
 
 func llgoAESFeaturesEnabled(hardware bool, env string) bool {
 	enabled := hardware
+	powerAESDisabled := false
 	for env != "" {
 		i := 0
 		for i < len(env) && env[i] != ',' {
@@ -32,12 +33,18 @@ func llgoAESFeaturesEnabled(hardware bool, env string) bool {
 		case "cpu.aes=on", "cpu.all=on":
 			enabled = hardware
 		}
+		// Match upstream's POWER-only knob independently of CPU options.
+		// The last value wins, and only "off" disables the implementation.
+		const powerAES = "ppc64aes="
+		if goarch.IsPpc64|goarch.IsPpc64le == 1 && len(item) >= len(powerAES) && item[:len(powerAES)] == powerAES {
+			powerAESDisabled = item[len(powerAES):] == "off"
+		}
 		if i == len(env) {
 			break
 		}
 		env = env[i+1:]
 	}
-	return enabled
+	return enabled && !powerAESDisabled
 }
 
 // A variable initializer preserves every upstream init, including CAST.
@@ -139,11 +146,18 @@ func decryptBlock(c *Block, dst, src []byte) {
 
 func llgoCryptBlock(key *uint32, rounds int, dst, src *byte, decrypt bool) {
 	state := (*[16]byte)(llgoAESAlloca(16))
-	copy(state[:], unsafe.Slice(src, 16))
+	first := 0
 	if !llgoAESPreKey {
-		llgoAESRound(llgoXORKey, &state[0], &state[0], llgoKey(key, 0))
+		llgoAESRound(llgoXORKey, &state[0], src, llgoKey(key, 0))
+	} else {
+		if decrypt {
+			llgoAESRound(llgoDecryptRound, &state[0], src, llgoKey(key, 0))
+		} else {
+			llgoAESRound(llgoEncryptRound, &state[0], src, llgoKey(key, 0))
+		}
+		first = 1
 	}
-	for r := 0; r < rounds-1; r++ {
+	for r := first; r < rounds-1; r++ {
 		index := r
 		if !llgoAESPreKey {
 			index++
@@ -155,18 +169,19 @@ func llgoCryptBlock(key *uint32, rounds int, dst, src *byte, decrypt bool) {
 		}
 	}
 	last := rounds
+	lastDst := dst
 	if llgoAESPreKey {
 		last--
+		lastDst = &state[0]
 	}
 	if decrypt {
-		llgoAESRound(llgoDecryptLast, &state[0], &state[0], llgoKey(key, last))
+		llgoAESRound(llgoDecryptLast, lastDst, &state[0], llgoKey(key, last))
 	} else {
-		llgoAESRound(llgoEncryptLast, &state[0], &state[0], llgoKey(key, last))
+		llgoAESRound(llgoEncryptLast, lastDst, &state[0], llgoKey(key, last))
 	}
 	if llgoAESPreKey {
-		llgoAESRound(llgoXORKey, &state[0], &state[0], llgoKey(key, rounds))
+		llgoAESRound(llgoXORKey, dst, &state[0], llgoKey(key, rounds))
 	}
-	copy(unsafe.Slice(dst, 16), state[:])
 }
 
 // The public CTR implementation supplies exactly 1, 2, 4 or 8 complete blocks.

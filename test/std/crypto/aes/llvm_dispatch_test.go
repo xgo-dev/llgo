@@ -5,6 +5,7 @@ package aes_test
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"runtime"
 	"testing"
 	_ "unsafe"
 )
@@ -13,6 +14,7 @@ import (
 func aesFeaturesEnabled(bool, string) bool
 
 func TestLLVMFeatureDispatch(t *testing.T) {
+	power := runtime.GOARCH == "ppc64" || runtime.GOARCH == "ppc64le"
 	for _, tc := range []struct {
 		env  string
 		want bool
@@ -25,6 +27,14 @@ func TestLLVMFeatureDispatch(t *testing.T) {
 		{"cpu.aes=off,cpu.all=on", true},
 		{"cpu.aes=invalid,cpu.other=off", true},
 		{",cpu.aes=off,", false},
+		{"ppc64aes=off", !power},
+		{"ppc64aes=off,cpu.aes=on", !power},
+		{"cpu.all=on,ppc64aes=off", !power},
+		{"ppc64aes=off,ppc64aes=on", true},
+		{"ppc64aes=on,ppc64aes=off", !power},
+		{"ppc64aes=off,ppc64aes=invalid", true},
+		{"ppc64aes=off,ppc64aes=", true},
+		{"cpu.aes=off,ppc64aes=on", false},
 	} {
 		if got := aesFeaturesEnabled(true, tc.env); got != tc.want {
 			t.Errorf("hardware enabled, GODEBUG=%q: got %v, want %v", tc.env, got, tc.want)
