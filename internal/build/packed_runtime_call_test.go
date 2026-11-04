@@ -39,6 +39,9 @@ func testPackedRuntimeCalls(t *testing.T, translated bool) {
 		{name: "packed-cgocall", modes: []string{"packed"}},
 		{name: "packed-crosscall2", modes: []string{"same-thread", "nested", "foreign-thread"}},
 	} {
+		if fixture.name == "packed-crosscall2" && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+			fixture.modes = append(fixture.modes, "stack-aligned", "stack-eight-aligned")
+		}
 		t.Run(fixture.name, func(t *testing.T) {
 			directory, err := filepath.Abs(filepath.Join("testdata", fixture.name))
 			if err != nil {

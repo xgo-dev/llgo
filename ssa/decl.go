@@ -743,6 +743,16 @@ func (p Function) DisableTailCalls() {
 	p.impl.AddFunctionAttr(attr)
 }
 
+// AlignNativeStack admits the Go assembler's word-aligned incoming stack at a
+// Linux/Darwin amd64 export, then restores LLVM's alignment for its body.
+// It leaves the function's argument, result and calling conventions unchanged.
+func (p Function) AlignNativeStack() {
+	target := p.Pkg.Prog.Target()
+	if target.effectiveGOARCH() == "amd64" && (target.effectiveGOOS() == "linux" || target.effectiveGOOS() == "darwin") {
+		p.impl.AddFunctionAttr(p.Pkg.mod.Context().CreateStringAttribute("stackrealign", ""))
+	}
+}
+
 // SetWasmImport maps an external function declaration to a WebAssembly host
 // import. LLVM preserves these attributes through the final wasm link.
 func (p Function) SetWasmImport(module, name string) {

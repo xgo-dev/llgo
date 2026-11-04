@@ -5,6 +5,7 @@ package main
 #cgo LDFLAGS: -pthread
 void *callback_entry_address(void);
 void *foreign_entry_address(void);
+void *stack_entry_address(int aligned);
 */
 import "C"
 
@@ -21,6 +22,7 @@ type callbackFrame struct {
 	code                 unsafe.Pointer
 	input, depth, result uint64
 	callbacks            uint64
+	entryMod, callMod    uint64
 }
 
 var callbackEntry unsafe.Pointer
@@ -63,6 +65,10 @@ func main() {
 		depth = 1
 	case "foreign-thread":
 		entry = C.foreign_entry_address()
+	case "stack-aligned":
+		entry = C.stack_entry_address(1)
+	case "stack-eight-aligned":
+		entry = C.stack_entry_address(0)
 	default:
 		panic("unknown callback mode")
 	}
@@ -80,6 +86,15 @@ func main() {
 		}
 		if status != -19 || frame.result != want || frame.callbacks != depth+1 {
 			panic("callback lost frame, captures, nesting, or return")
+		}
+		if mode == "stack-aligned" || mode == "stack-eight-aligned" {
+			wantCall := uint64(0)
+			if mode == "stack-eight-aligned" {
+				wantCall = 8
+			}
+			if frame.entryMod != 8 || frame.callMod != wantCall {
+				panic("native callback stack parity changed")
+			}
 		}
 		runtime.KeepAlive(&frame)
 	}

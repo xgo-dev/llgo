@@ -714,6 +714,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, cc, false, p.needsLinkOnce(f))
 		}
 	}
+	if !p.options.CExportWrappers && (len(f.Blocks) != 0 || simdDecl) {
+		if _, exported := p.pkg.ExportFuncs()[funcName(pkgTypes, f, false)]; exported {
+			fn.AlignNativeStack()
+		}
+	}
 	p.markSIMDFMV(fn, f)
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {

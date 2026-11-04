@@ -411,6 +411,7 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 			wrapperBackground = llssa.CDecl
 		}
 		wrapper := pkg.NewFunc(export.cName, export.sig, wrapperBackground)
+		wrapper.AlignNativeStack()
 		b := wrapper.MakeBody(1)
 		if ensureInit != nil {
 			b.Call(ensureInit.Expr)
