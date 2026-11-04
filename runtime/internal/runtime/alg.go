@@ -14,6 +14,22 @@ import (
 //go:linkname closureEnv llgo.closureEnv
 func closureEnv() unsafe.Pointer
 
+// memequal_varlen consumes the actual *abi.Type supplied by LLGo's equality
+// producer, not a stock Go funcval or a captured-size word. Keep a real body
+// in the compiler runtime instead of depending on another package's linkname
+// declarations having been registered before type metadata is constructed.
+//
+//llgo:env
+func memequal_varlen(p, q unsafe.Pointer) bool {
+	return memequal(p, q, equalityTypeSize(closureEnv()))
+}
+
+// The source-patched SDK package reaches this real typed field access through
+// linkname, without adding an unlisted module import to its cmd/go metadata.
+func equalityTypeSize(context unsafe.Pointer) uintptr {
+	return (*abi.Type)(context).Size_
+}
+
 const (
 	c0 = uintptr((8-goarch.PtrSize)/4*2860486313 + (goarch.PtrSize-4)/4*33054211828000289)
 	c1 = uintptr((8-goarch.PtrSize)/4*3267000013 + (goarch.PtrSize-4)/4*23344194077549503)

@@ -77,7 +77,7 @@ func directIfaceType(t types.Type) bool {
 	case *types.Array:
 		return t.Len() == 1 && directIfaceType(t.Elem())
 	case *types.Struct:
-		return t.NumFields() == 1 && directIfaceType(t.Field(0).Type())
+		return IsClosure(t) || t.NumFields() == 1 && directIfaceType(t.Field(0).Type())
 	}
 	return false
 }
@@ -136,7 +136,14 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 			typ := prog.Type(equal.raw.Type, GoDecl)
 			equal = checkExpr(equal, typ.raw.Type, b)
 		} else {
-			equal = b.Pkg.rtEnvFunc(RuntimeSymbol(name, "structequal", "arrayequal"))
+			// LLGo's native equality bridge consumes this actual Type* through
+			// its own environment ABI, then passes Type.Size_ to memequal. It is
+			// not the gc funcval {entry, captured-size} or an assembly R26/DX ABI.
+			goarch := prog.Target().GOARCH
+			if (goarch == "386" || goarch == "amd64" || goarch == "arm64") && ab.IsRegularMemory(t) {
+				name = "memequal_varlen"
+			}
+			equal = b.Pkg.rtEnvFunc(RuntimeSymbol(name, "structequal", "arrayequal", "memequal_varlen"))
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			env := b.abiType(t)
 			equal = b.aggregateValue(prog.Type(equalFunc, GoDecl), equal.impl, env.impl)
@@ -453,9 +460,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		hasher := b.abiMapHasher(t.Key(), global)
 		fields = []llvm.Value{
 			b.abiType(abi.PublicType(t.Key())).impl,
-			// Map operations use Elem for physical copies during bucket
-			// evacuation. Keep LLGo's two-word closure representation here;
-			// reflect converts it back to the public function type in Elem.
+			// Map copies use the function descriptor's one-word storage type.
 			b.abiType(t.Elem()).impl,
 			b.abiMapBucket(t, bucket).impl,
 			hasher.impl,
@@ -475,6 +480,9 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			fields = append(fields, bridges.call.impl, bridges.make.impl)
 		}
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.abiExtendedFields(t.Field(0).Type(), name, global)
+		}
 		name, _ = prog.abi.TypeName(t)
 		var pkgPath string
 		n := t.NumFields()
@@ -547,6 +555,9 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 		children = appendTupleTypeChildren(children, t.Results())
 		return children
 	case *types.Struct:
+		if IsClosure(t) {
+			return b.structuralTypeChildren(t.Field(0).Type())
+		}
 		children := make([]types.Type, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
 			children = append(children, abi.PublicType(t.Field(i).Type()))
@@ -756,10 +767,14 @@ func (b Builder) abiInterfaceMethods(mset *types.MethodSet) []*types.Selection {
 	return methods
 }
 
-// closure func type
+// Reflection describes the Go callable type. Explicit native C variadics keep
+// their native role; method code entries are retained separately in Ifn/Tfn.
 func funcType(prog Program, typ types.Type) types.Type {
-	ftyp := prog.Type(typ, GoDecl)
-	return ftyp.raw.Type.(*types.Struct).Field(0).Type()
+	value := prog.Type(typ, GoDecl).raw.Type.(*types.Struct)
+	if HasNameValist(typ.Underlying().(*types.Signature)) {
+		return value.Field(0).Type()
+	}
+	return value
 }
 
 func abiMethodName(obj types.Object) string {

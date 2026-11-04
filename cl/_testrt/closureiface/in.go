@@ -18,53 +18,55 @@ func main() {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT:   store i64 200, ptr %[[TMP0]], align 8
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[TMP1]], i32 0, i32 0
-// CHECK-NEXT:   store ptr %[[TMP0]], ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store { ptr, ptr } %[[TMP3]], ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr undef }, ptr %[[TMP4]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP5]], 0
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %[[TMP6]])
-// CHECK-NEXT:   br i1 %[[TMP7]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 5 }, ptr %[[TMP8]], align 8
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr %[[TMP8]], 1
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP9]])
-// CHECK-NEXT:   unreachable
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB2:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP18:[0-9]+]], 1
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP18]], 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %[[TMP11]])
-// ARM64-NEXT:   %[[TMP12:[0-9]+]] = call i64 %__llgo_funcval_code(ptr swiftself %[[TMP10]], i64 100)
-// AMD64-NEXT:   %[[TMP12:[0-9]+]] = call i64 %__llgo_funcval_code(ptr nest %[[TMP10]], i64 100)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP12]])
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP5]], 1
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = load { ptr, ptr }, ptr %[[TMP13]], align 8
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %[[TMP14]], 0
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } %[[TMP15]], i1 true, 1
-// CHECK-NEXT:   br label %_llgo_[[BB5:[0-9]+]]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB4]]:
-// CHECK-NEXT:   br label %_llgo_[[BB5]]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   %[[TMP17:[0-9]+]] = phi { { ptr, ptr }, i1 } [ %[[TMP16]], %_llgo_[[BB3]] ], [ zeroinitializer, %_llgo_[[BB4]] ]
-// CHECK-NEXT:   %[[TMP18]] = extractvalue { { ptr, ptr }, i1 } %[[TMP17]], 0
-// CHECK-NEXT:   %[[TMP19:[0-9]+]] = extractvalue { { ptr, ptr }, i1 } %[[TMP17]], 1
-// CHECK-NEXT:   br i1 %[[TMP19]], label %_llgo_[[BB2]], label %_llgo_[[BB1]]
-// CHECK-NEXT: }
+// CHECK: [[CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK-NEXT: store i64 200, ptr [[CAPTURE]], align 8
+// CHECK: [[IFACE_FN_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK-NEXT: [[IFACE_FN_DESCRIPTOR:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[IFACE_FN_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[IFACE_FN_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[IFACE_FN_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[IFACE_FN_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[IFACE_FN_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[CAPTURE]], ptr [[IFACE_FN_CAPTURE_SLOT]]
+// CHECK-NEXT: [[IFACE_FN_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[IFACE_FN_DESCRIPTOR]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.main$1", ptr [[IFACE_FN_CODE_SLOT]]
+// CHECK-NEXT: [[IFACE_FN_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[IFACE_FN_DESCRIPTOR]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[IFACE_FN_ENV]], ptr [[IFACE_FN_ENV_SLOT]]
+// CHECK-NEXT: [[BOX:%.*]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr undef }, ptr [[IFACE_FN_DESCRIPTOR]], 1
+// CHECK-NEXT: [[BOX_TYPE:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" [[BOX]], 0
+// CHECK-NEXT: [[MATCH:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr [[BOX_TYPE]])
+// CHECK-NEXT: br i1 [[MATCH]], label %[[MATCHED:_llgo_[0-9]+]], label %[[UNMATCHED:_llgo_[0-9]+]]
+// CHECK: [[ERROR_BOX:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK-NEXT: store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB5]], i64 5 }, ptr [[ERROR_BOX]], align 8
+// CHECK-NEXT: [[ERROR_IFACE:%.*]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr undef }, ptr [[ERROR_BOX]], 1
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" [[ERROR_IFACE]])
+// CHECK-NEXT: unreachable
+// CHECK: [[FN_NIL:%.*]] = icmp eq ptr [[FN:%[0-9]+]], null
+// CHECK-NEXT: br i1 [[FN_NIL]], label %[[NIL_BLOCK:_llgo_[0-9]+]], label %[[CALL_BLOCK:_llgo_[0-9]+]]
+// CHECK: [[MATCHED]]:
+// CHECK-NEXT: [[DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" [[BOX]], 1
+// CHECK-NEXT: [[SUCCESS_VALUE:%.*]] = insertvalue { ptr, i1 } undef, ptr [[DATA]], 0
+// CHECK-NEXT: [[SUCCESS:%.*]] = insertvalue { ptr, i1 } [[SUCCESS_VALUE]], i1 true, 1
+// CHECK-NEXT: br label %[[MERGE:_llgo_[0-9]+]]
+// CHECK: [[UNMATCHED]]:
+// CHECK-NEXT: br label %[[MERGE]]
+// CHECK: [[MERGE]]:
+// CHECK-NEXT: [[ASSERT_RESULT:%.*]] = phi { ptr, i1 } [ [[SUCCESS]], %[[MATCHED]] ], [ zeroinitializer, %[[UNMATCHED]] ]
+// CHECK-NEXT: [[FN]] = extractvalue { ptr, i1 } [[ASSERT_RESULT]], 0
+// CHECK-NEXT: [[OK:%.*]] = extractvalue { ptr, i1 } [[ASSERT_RESULT]], 1
+// CHECK-NEXT: br i1 [[OK]], label %{{.*}}, label %{{.*}}
+// CHECK: [[NIL_BLOCK]]:
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[CALL_BLOCK]]:
+// CHECK: [[CALL_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[FN]]
+// CHECK-NEXT: [[CALL_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CALL_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[CALL_ENV:%.*]] = load ptr, ptr [[CALL_ENV_SLOT]]
+// CHECK: [[CALL_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[FN]]
+// CHECK-NEXT: [[CALL_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CALL_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[CALL_CODE:%.*]] = load ptr, ptr [[CALL_CODE_SLOT]]
+// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[CALL_CODE]])
+// ARM64-NEXT: [[RESULT:%.*]] = call i64 %__llgo_funcval_code(ptr swiftself [[CALL_ENV]], i64 100)
+// AMD64-NEXT: [[RESULT:%.*]] = call i64 %__llgo_funcval_code(ptr nest [[CALL_ENV]], i64 100)
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[RESULT]])
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
+// CHECK-NEXT: ret void
 
 // CHECK-LABEL: define i64 @"main.main$1"(
 // ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {

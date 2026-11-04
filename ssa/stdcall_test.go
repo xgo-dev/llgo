@@ -247,6 +247,7 @@ func TestStdcallFuncvalAdapters(t *testing.T) {
 		t.Run(fmt.Sprintf("results-%d", resultCount), func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 			defer prog.Dispose()
+			setTestRuntime(t, prog)
 			params := types.NewTuple(types.NewVar(token.NoPos, nil, "value", types.Typ[types.Int32]))
 			results := make([]*types.Var, resultCount)
 			for i := range results {
@@ -277,9 +278,7 @@ func TestStdcallFuncvalAdapters(t *testing.T) {
 			if converted.kind != vkClosure {
 				t.Fatalf("converted stdcall value kind = %v, want closure", converted.kind)
 			}
-			if converted.impl.Operand(1) != owner.Param(0).impl {
-				t.Fatalf("funcval context does not carry the native function pointer: %s", converted.impl)
-			}
+			assertFuncvalHeaderPart(t, owner, converted, 1, owner.Param(0).impl)
 
 			var nativeCall llvm.Value
 			for block := wrapper.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
@@ -298,9 +297,7 @@ func TestStdcallFuncvalAdapters(t *testing.T) {
 				t.Fatalf("adapter native call convention = %v, want %v:\n%s",
 					nativeCall.InstructionCallConv(), prog.stdcallCallConv(), wrapper.impl.String())
 			}
-			if strings.Contains(pkg.String(), "runtime.AllocU") {
-				t.Fatalf("stdcall funcval conversion unexpectedly allocated:\n%s", pkg.String())
-			}
+			assertFuncvalCollectibleAllocations(t, owner, 1)
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("invalid stdcall funcval adapter module: %v\n%s", err, pkg.String())
 			}
@@ -313,6 +310,7 @@ func TestStdcallFuncvalWithoutAdapter(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
+			setTestRuntime(t, prog)
 			param := types.NewVar(token.NoPos, nil, "value", types.Typ[types.Int32])
 			result := types.NewVar(token.NoPos, nil, "result", types.Typ[types.Int32])
 			sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(param), types.NewTuple(result), false)
@@ -329,14 +327,9 @@ func TestStdcallFuncvalWithoutAdapter(t *testing.T) {
 			if converted.kind != vkClosure {
 				t.Fatalf("converted stdcall value kind = %v, want closure", converted.kind)
 			}
-			code := converted.impl.Operand(0).Operand(1)
-			if code != owner.Param(0).impl {
-				t.Fatalf("funcval code does not contain the native function pointer: %s", converted.impl)
-			}
-			env := converted.impl.Operand(1)
-			if !env.IsNull() {
-				t.Fatalf("funcval environment = %s, want nil", env)
-			}
+			assertFuncvalHeaderPart(t, owner, converted, 0, owner.Param(0).impl)
+			assertFuncvalHeaderPart(t, owner, converted, 1, prog.Nil(prog.VoidPtr()).impl)
+			assertFuncvalCollectibleAllocations(t, owner, 1)
 			wrapperPrefix := pkg.Path() + ".__llgo_stdcall_funcval$"
 			for name := range pkg.fns {
 				if strings.HasPrefix(name, wrapperPrefix) {

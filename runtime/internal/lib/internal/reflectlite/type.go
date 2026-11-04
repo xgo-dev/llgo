@@ -386,9 +386,12 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		return V.ChanDir() == T.ChanDir() && haveIdenticalType(T.Elem(), V.Elem(), cmpTags)
 
 	case abi.Func:
+		if T.IsClosure() != V.IsClosure() {
+			return false
+		}
 		t := (*funcType)(unsafe.Pointer(T))
 		v := (*funcType)(unsafe.Pointer(V))
-		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
+		if t.Variadic() != v.Variadic() || len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
 			return false
 		}
 		for i := 0; i < len(t.In); i++ {

@@ -25,7 +25,7 @@ jobs:
   installer-shells:
     name: Installer shell startup (${{ matrix.image }})
     needs: prepare
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+    runs-on: ${{ matrix.runner || fromJSON(needs.prepare.outputs.linux_large_runner) }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -37,6 +37,11 @@ jobs:
           - archlinux:latest
           - alpine:latest
           - opensuse/tumbleweed:latest
+        include:
+          # On the sandbox host, Fedora fish remained in D state after reaching
+          # its final assertion. Keep the full tests on a standard Docker host.
+          - image: fedora:latest
+            runner: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # Keep distro downloads independent without repeating compiler builds.

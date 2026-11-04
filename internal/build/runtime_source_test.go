@@ -312,11 +312,11 @@ func TestRuntimeSourceToolchains(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				wantGo, wantLLGo, pointer := uint64(48), uint64(72), uint64(8)
+				wantGo, wantLLGo, pointer := uint64(48), uint64(64), uint64(8)
 				if arch == "386" {
-					wantGo, wantLLGo, pointer = 32, 40, 4
+					wantGo, wantLLGo, pointer = 32, 36, 4
 				}
-				if abi.GoType.Size != wantGo || abi.LLGoType.Size != wantLLGo || abi.GoFuncValueBytes != pointer || abi.LLGoFuncValueBytes != 2*pointer || abi.GoRuntimeASMReady {
+				if abi.GoType.Size != wantGo || abi.LLGoType.Size != wantLLGo || abi.GoFuncValueBytes != pointer || abi.LLGoFuncValueBytes != pointer || abi.GoRuntimeASMReady || len(abi.Blockers) == 0 {
 					t.Fatalf("%s: unreviewed runtime ABI: %+v", arch, abi)
 				}
 			}

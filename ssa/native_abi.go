@@ -174,9 +174,8 @@ func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
 
 // nativeFuncval adapts a native function pointer to LLGo's ordinary funcval
 // representation. Its environment holds the native pointer directly, and the
-// Go entry calls that pointer with the native ABI. This avoids an allocation
-// while preserving nil: a nil native pointer produces a
-// funcval with a nil code pointer.
+// Go entry calls that pointer with the native ABI. A nil native pointer maps
+// to a nil Go descriptor; a non-nil pointer is retained in the descriptor.
 func (b Builder) nativeFuncval(dst Type, fn Expr, callConv llvm.CallConv, abi string) Expr {
 	closure, ok := types.Unalias(dst.raw.Type).Underlying().(*types.Struct)
 	if !ok || !IsClosure(closure) {

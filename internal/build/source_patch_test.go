@@ -178,7 +178,9 @@ func logPackageErrors(t *testing.T, pkg *packages.Package, seen map[string]bool)
 }
 
 func TestWasmKeepsStandardLibraryAssembly(t *testing.T) {
-	for _, pkgPath := range []string{"internal/bytealg", "internal/chacha8rand"} {
+	// bytealg has a native-only equality patch; its actual wasm source view
+	// below must still retain every original assembly owner.
+	for _, pkgPath := range []string{"internal/chacha8rand"} {
 		if llruntime.HasSourcePatchPkg(pkgPath) {
 			t.Fatalf("%s should use its standard-library wasm implementation", pkgPath)
 		}

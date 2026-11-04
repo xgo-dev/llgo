@@ -61,12 +61,12 @@ import "C"
 // wrapper call, which is the compiler-owned lifetime edge.
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[MEMORY:%[0-9]+]] = call ptr @malloc(i64 64)
-// CHECK: call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr %{{[0-9]+}}, i32 0, i32 5
 // CHECK: [[C_CALLBACK:%[0-9]+]] = load ptr, ptr @main._Cfpvar_fp_c_callback
 // CHECK-NEXT: [[C_CALLBACK_PTR:%[0-9]+]] = call ptr @main._Cgo_ptr(ptr [[C_CALLBACK]])
 // CHECK-NEXT: call i32 @main._Cfunc_invoke_callback(ptr [[C_CALLBACK_PTR]], i32 39)
 // CHECK: call i32 @main._Cfunc_invoke_export_only(i32 40)
+// CHECK: call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr %{{[0-9]+}}, i32 0, i32 5
 // CHECK: [[GO_CALLBACK:%[0-9]+]] = load ptr, ptr @main._Cfpvar_fp_go_callback
 // CHECK-NEXT: [[GO_CALLBACK_PTR:%[0-9]+]] = call ptr @main._Cgo_ptr(ptr [[GO_CALLBACK]])
 // CHECK-NEXT: call i32 @main._Cfunc_invoke_callback(ptr [[GO_CALLBACK_PTR]], i32 40)
@@ -74,11 +74,23 @@ import "C"
 // the node alive across the C call both leaks it on a non-returning call and
 // lets a nested panic observe stale defer state.
 // CHECK: [[ACTIVE_NODE:%[0-9]+]] = load ptr, ptr [[HEAD]]
-// CHECK-NEXT: [[ACTIVE_DEFER:%[0-9]+]] = load { ptr, i64, { ptr, ptr } }, ptr [[ACTIVE_NODE]]
-// CHECK: [[DEFER_FUNC:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr } } [[ACTIVE_DEFER]], 2
+// CHECK-NEXT: [[ACTIVE_DEFER:%[0-9]+]] = load { ptr, i64, ptr }, ptr [[ACTIVE_NODE]]
+// CHECK: [[DEFER_FUNC:%[0-9]+]] = extractvalue { ptr, i64, ptr } [[ACTIVE_DEFER]], 2
 // CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[ACTIVE_NODE]])
-// CHECK: [[DEFER_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[DEFER_FUNC]], 0
-// CHECK: call void %{{.*}}
+// CHECK: [[DEFER_RECOVER_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[DEFER_FUNC]]
+// CHECK-NEXT: [[DEFER_RECOVER_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[DEFER_RECOVER_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[DEFER_RECOVER_CODE:%[0-9]+]] = load ptr, ptr [[DEFER_RECOVER_SLOT]]
+// CHECK-NEXT: [[DEFER_RECOVER:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr [[DEFER_RECOVER_CODE]])
+// CHECK: [[DEFER_CALL_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[DEFER_FUNC]]
+// CHECK-NEXT: [[DEFER_CALL_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[DEFER_CALL_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[DEFER_CALL_ENV:%[0-9]+]] = load ptr, ptr [[DEFER_CALL_ENV_SLOT]]
+// CHECK: [[DEFER_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[DEFER_FUNC]]
+// CHECK-NEXT: [[DEFER_CODE_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[DEFER_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[DEFER_CODE:%[0-9]+]] = load ptr, ptr [[DEFER_CODE_FIELD]]
+// CHECK: [[DEFER_CALL:%.*]] = call ptr asm "", "=r,0"(ptr [[DEFER_CODE]])
+// ARM64: call void [[DEFER_CALL]](ptr swiftself [[DEFER_CALL_ENV]])
+// AMD64: call void [[DEFER_CALL]](ptr nest [[DEFER_CALL_ENV]])
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}recoverState" [[DEFER_RECOVER]])
 
 // ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {

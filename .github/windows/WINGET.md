@@ -42,3 +42,9 @@ Both installer manifests use the portable `llgo` alias. The shared host compiler
 Do not copy local validation `ProductCode` values ending in `__DefaultSource` into public manifests. A synthetic packaging upgrade using unchanged compiler bytes validates only the local lifecycle. In the local WinGet 1.29.290 test, upgrading a portable package moved it from the custom location to WinGet's default location; do not promise custom-location preservation from that test.
 
 The compact archives address the large local-manifest scan failure reported in [winget-cli#6632](https://github.com/microsoft/winget-cli/issues/6632). Local candidate generation requires the bundled ESP runtime archive and verifies its SHA-256. Local and public ZIPs must fit the repository's 128 MiB package budget; this also rejects older full SDK bundles that use the same unsuffixed filename. Existing published ZIPs are not repacked or replaced. The x86 1.0.9 WinGet entries were temporarily excluded; future ZIPs still require successful x86 WinGet installation validation before publication.
+
+Release host compilers use Go's `-w` linker flag to omit DWARF debug sections.
+Go runtime function names, stack metadata and build info remain available;
+`-s` is not used. The native cgo release test checks debug-section omission
+and executes the resulting program to verify its runtime metadata, including
+with MSVC linking, which need not emit a COFF symbol table.

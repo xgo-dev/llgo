@@ -156,11 +156,7 @@ func wasmFinalizerFuncType(t *abi.Type) *abi.FuncType {
 	if !t.IsClosure() {
 		return nil
 	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return t.FuncType()
 }
 
 // prepareWasmFinalizerArgument follows the same assignability subset used by
@@ -253,15 +249,15 @@ func callWasmFinalizer(entry *wasmFinalizerEntry, ptr unsafe.Pointer) {
 func callWasmPointerFinalizer(fn unsafe.Pointer, ptr unsafe.Pointer, result wasmFinalizerResult, size uintptr) {
 	switch result {
 	case wasmFinalizerVoid:
-		(*(*func(unsafe.Pointer))(fn))(ptr)
+		(*(*func(unsafe.Pointer))(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerI32:
-		_ = (*(*func(unsafe.Pointer) uint32)(fn))(ptr)
+		_ = (*(*func(unsafe.Pointer) uint32)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerI64:
-		_ = (*(*func(unsafe.Pointer) uint64)(fn))(ptr)
+		_ = (*(*func(unsafe.Pointer) uint64)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerF32:
-		_ = (*(*func(unsafe.Pointer) float32)(fn))(ptr)
+		_ = (*(*func(unsafe.Pointer) float32)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerF64:
-		_ = (*(*func(unsafe.Pointer) float64)(fn))(ptr)
+		_ = (*(*func(unsafe.Pointer) float64)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerSRet:
 		ret := llruntime.AllocU(size)
 		closure := (*wasmFinalizerClosure)(fn)
@@ -272,15 +268,15 @@ func callWasmPointerFinalizer(fn unsafe.Pointer, ptr unsafe.Pointer, result wasm
 func callWasmInterfaceFinalizer(fn unsafe.Pointer, arg wasmFinalizerInterfaceArg, result wasmFinalizerResult, size uintptr) {
 	switch result {
 	case wasmFinalizerVoid:
-		(*(*func(wasmFinalizerInterfaceArg))(fn))(arg)
+		(*(*func(wasmFinalizerInterfaceArg))(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerI32:
-		_ = (*(*func(wasmFinalizerInterfaceArg) uint32)(fn))(arg)
+		_ = (*(*func(wasmFinalizerInterfaceArg) uint32)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerI64:
-		_ = (*(*func(wasmFinalizerInterfaceArg) uint64)(fn))(arg)
+		_ = (*(*func(wasmFinalizerInterfaceArg) uint64)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerF32:
-		_ = (*(*func(wasmFinalizerInterfaceArg) float32)(fn))(arg)
+		_ = (*(*func(wasmFinalizerInterfaceArg) float32)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerF64:
-		_ = (*(*func(wasmFinalizerInterfaceArg) float64)(fn))(arg)
+		_ = (*(*func(wasmFinalizerInterfaceArg) float64)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerSRet:
 		ret := llruntime.AllocU(size)
 		closure := (*wasmFinalizerClosure)(fn)

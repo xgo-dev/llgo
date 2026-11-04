@@ -9,8 +9,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 )
 
-var finalizerFFITypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)
-
 // Keep the Go ABI conversion local to the runtime. The low-level ffi package
 // should not depend on runtime/abi.
 func finalizerFFIType(typ *abi.Type) *ffi.Type {
@@ -53,7 +51,7 @@ func finalizerFFIType(typ *abi.Type) *ffi.Type {
 	case abi.Chan, abi.Map, abi.Pointer, abi.UnsafePointer:
 		return ffi.TypePointer
 	case abi.Func:
-		return finalizerFFITypeClosure
+		return ffi.TypePointer
 	case abi.Interface:
 		return ffi.TypeInterface
 	case abi.Slice:
@@ -61,9 +59,6 @@ func finalizerFFIType(typ *abi.Type) *ffi.Type {
 	case abi.String:
 		return ffi.TypeString
 	case abi.Struct:
-		if typ.IsClosure() {
-			return finalizerFFITypeClosure
-		}
 		return finalizerFFIStructType(typ)
 	}
 	panic("runtime.SetFinalizer: unsupported result type " + typ.String())

@@ -10,6 +10,9 @@ import (
 )
 
 func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+	if !ftyp.IsClosure() && ftyp.Variadic() {
+		panic("reflect.MakeFunc: native variadic callback requires a fixed prototype")
+	}
 	sig, err := toFFISig(ftyp.In, ftyp.Out)
 	if err != nil {
 		panic(err)
@@ -32,8 +35,11 @@ func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe
 	keepAlive = append(keepAlive, ffiClosure, sig, userdata)
 	keepMutex.Unlock()
 
+	if !ftyp.IsClosure() {
+		return Value{&ftyp.Type, ffiClosure.Fn, flag(Func)}
+	}
 	fv := &closure{fn: ffiClosure.Fn}
-	return Value{closureOf(ftyp), unsafe.Pointer(fv), flagIndir | flag(Func)}
+	return Value{&ftyp.Type, unsafe.Pointer(fv), flag(Func)}
 }
 
 var (

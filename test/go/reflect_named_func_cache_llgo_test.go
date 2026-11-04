@@ -3,49 +3,52 @@
 package gotest
 
 import (
+	"reflect"
 	"testing"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
-// A public TypeOf already materializes the forward mapping. Exercise the
-// reverse cache's cold construction path directly, without that precondition.
-//
-//go:linkname reflectCacheClosureOf reflect.closureOf
-func reflectCacheClosureOf(*abi.FuncType) *abi.Type
-
-//go:linkname reflectCacheToFuncType reflect.toFuncType
-func reflectCacheToFuncType(*abi.StructType) *abi.FuncType
-
+// Start from *T rather than a function-valued TypeOf. The reverse lookup must
+// preserve the compiler's canonical Func descriptor, even when many workers
+// first request its pointer, allocation, and interface identities together.
 func TestReflectNamedFuncReverseConcurrentPublication(t *testing.T) {
 	for round := 0; round < 20; round++ {
-		ft := &abi.FuncType{Type: abi.Type{
-			Kind_: uint8(abi.Func), TFlag: abi.TFlagNamed,
-			Str_: "gotest.reverseCacheFunc", Size_: 2 * unsafe.Sizeof(uintptr(0)),
-		}}
+		canonical := abi.TypeFor[reflectColdNamedFunc]()
 		const workers = 32
 		start := make(chan struct{})
-		results := make(chan *abi.Type, workers)
+		results := make(chan reflect.Type, workers)
 		for i := 0; i < workers; i++ {
 			go func() {
 				<-start
-				ct := reflectCacheClosureOf(ft)
-				if reflectCacheToFuncType(ct.StructType()) != ft {
+				pointer := reflect.TypeOf((*reflectColdNamedFunc)(nil))
+				function := pointer.Elem()
+				value := reflect.New(function)
+				data := (*[2]unsafe.Pointer)(unsafe.Pointer(&function))[1]
+				if data != unsafe.Pointer(canonical) || function.Kind() != reflect.Func ||
+					function.Size() != unsafe.Sizeof(uintptr(0)) ||
+					value.Type() != pointer || value.Elem().Type() != function ||
+					reflect.PointerTo(function) != pointer ||
+					reflect.TypeOf(value.Elem().Interface()) != function {
 					results <- nil
 					return
 				}
-				results <- ct
+				if _, ok := value.Interface().(interface{ Marker() }); !ok {
+					results <- nil
+					return
+				}
+				results <- function
 			}()
 		}
 		close(start)
 		want := <-results
 		if want == nil {
-			t.Fatal("reverse mapping was published without the canonical forward mapping")
+			t.Fatal("reverse lookup lost the canonical named function descriptor")
 		}
 		for i := 1; i < workers; i++ {
 			if got := <-results; got != want {
-				t.Fatalf("round %d: competing named closure descriptors: %p != %p", round, got, want)
+				t.Fatalf("round %d: competing named function types: %v != %v", round, got, want)
 			}
 		}
 	}

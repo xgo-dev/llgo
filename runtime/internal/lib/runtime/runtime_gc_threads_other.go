@@ -1,4 +1,4 @@
-//go:build !nogc && !baremetal && !windows
+//go:build !nogc && !baremetal && !windows && !darwin && !linux
 
 package runtime
 

@@ -113,22 +113,11 @@ func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 	kind := typ.Kind()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
 	v.typ_ = typ
 	v.flag = flag(kind)
 	if typ.IfaceIndir() {
 		v.flag |= flagIndir
-		if typ.IsClosure() {
-			c := (*closure)(ptr)
-			v.ptr = unsafe.Pointer(&closure{
-				fn:  c.fn,
-				env: c.env,
-			})
-		} else {
-			v.ptr = ptr
-		}
+		v.ptr = ptr
 	} else {
 		v.ptr = *(*unsafe.Pointer)(ptr)
 	}

@@ -134,7 +134,7 @@ func pyVarExpr(mod Expr, name string) Expr {
 
 // Zero returns a zero constant expression.
 func (p Program) Zero(t Type) Expr {
-	if t.kind == vkSIMD {
+	if t.kind == vkSIMD || t.kind == vkClosure {
 		return Expr{llvm.ConstNull(t.ll), t}
 	}
 	var ret llvm.Value
@@ -742,16 +742,13 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 				ret.impl = llvm.CreateNot(b.impl, ret.impl)
 				return ret
 			}
-		case vkClosure, vkIfaceMethod:
+		case vkIfaceMethod:
 			x = b.Field(x, 0)
-			if y.kind == vkClosure || y.kind == vkIfaceMethod {
+			if y.kind == vkIfaceMethod {
 				y = b.Field(y, 0)
 			}
 			fallthrough
-		case vkFuncPtr, vkFuncDecl, vkChan, vkMap:
-			if y.kind == vkClosure || y.kind == vkIfaceMethod {
-				y = b.Field(y, 0)
-			}
+		case vkClosure, vkFuncPtr, vkFuncDecl, vkChan, vkMap:
 			switch op {
 			case token.EQL, token.NEQ:
 				pred := uintPredOpToLLVM[op-predOpBase]
@@ -1029,6 +1026,13 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		return Expr{b.simdFromStorage(x.impl, t), t}
 	}
 	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
+	if t.kind == vkFuncPtr && (x.kind == vkFuncPtr || x.kind == vkFuncDecl) {
+		destination := t.RawType().Underlying().(*types.Signature)
+		source := x.RawType().Underlying().(*types.Signature)
+		if HasNameValist(destination) != HasNameValist(source) {
+			panic("ssa: native function conversion changes variadic ABI")
+		}
+	}
 	if t.kind == vkClosure {
 		if b.needsStdcallFuncval(x) {
 			return b.stdcallFuncval(t, x)
@@ -1060,36 +1064,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		case vkFuncDecl, vkFuncPtr:
 			ret.impl = checkExpr(x, t.raw.Type, b).impl
 		case vkClosure:
-			// TODO(xsw): change type should be a noop instruction
-			convType := func() Expr {
-				r := b.AllocaT(t)
-				b.Store(r, x)
-				return b.Load(r)
-			}
-			convNamedType := func() Expr {
-				agg := llvm.Undef(t.ll)
-				for i := range t.ll.StructElementTypes() {
-					field := b.impl.CreateExtractValue(x.impl, i, "")
-					agg = b.impl.CreateInsertValue(agg, field, i, "")
-				}
-				return Expr{agg, t}
-			}
-			switch t.RawType().(type) {
-			case *types.Named:
-				switch x.RawType().(type) {
-				case *types.Struct:
-					return convType()
-				case *types.Named:
-					if !types.Identical(x.RawType(), t.RawType()) {
-						return convNamedType()
-					}
-				}
-			case *types.Struct:
-				if _, ok := x.RawType().(*types.Named); ok {
-					return convType()
-				}
-			}
-			fallthrough
+			return Expr{x.impl, t}
 		default:
 			ret.impl = x.impl
 		}
@@ -1464,28 +1439,19 @@ func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
 	prog := b.Prog
 	sig := fn.raw.Type.(*types.Signature)
-	data := prog.Nil(prog.VoidPtr()).impl
+	tclosure := prog.Closure(sig)
 	if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
 		tctx := prog.Elem(entry.EnvType())
 		rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
 		if len(bindings) != rawCtx.NumFields() {
 			panic("ssa: closure environment binding count mismatch")
 		}
-		if prog.SizeOf(tctx) == 0 {
-			// A required environment must remain distinguishable from a no-env
-			// entry. Heap zero-sized allocations use the module-wide non-nil
-			// sentinel.
-			data = b.Alloc(tctx, true).impl
-		} else if !heap {
-			data = b.Alloc(tctx, false).impl
-			b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
-		} else {
-			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
-		}
-	} else if len(bindings) != 0 {
+		return b.makeCapturedFuncval(tclosure, fn.impl, tctx, llvmFields(bindings, rawCtx, b), heap)
+	}
+	if len(bindings) != 0 {
 		panic("ssa: closure bindings supplied to a no-env function")
 	}
-	return b.aggregateValue(prog.Closure(sig), fn.impl, data)
+	return b.makeFuncval(tclosure, fn.impl, prog.Nil(prog.VoidPtr()).impl)
 }
 
 // -----------------------------------------------------------------------------
@@ -1546,6 +1512,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	var raw = fn.raw.Type
 	switch kind {
 	case vkClosure:
+		b.AssertNilDeref(fn)
 		data = b.Field(fn, 1)
 		fn = b.Field(fn, 0)
 		sig = fn.raw.Type.(*types.Signature)
@@ -1613,6 +1580,21 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
 	return
+}
+
+// CallKnownClosure calls a closure whose entry is known from the source SSA.
+// The environment still comes from the actual function value. Dynamic function
+// values must use Call so their native ABI identity barrier remains intact.
+func (b Builder) CallKnownClosure(value Expr, entry Function, args ...Expr) Expr {
+	if value.IsNil() || value.kind != vkClosure || entry == nil || entry.Prog != b.Prog || entry.callConv != GoDecl {
+		panic("ssa: invalid known closure entry")
+	}
+	sig := b.Prog.Field(value.Type, 0).raw.Type.(*types.Signature)
+	if !types.Identical(sig, entry.raw.Type) {
+		panic("ssa: known closure entry has a different signature")
+	}
+	b.AssertNilDeref(value)
+	return b.callClosure(entry.Expr, b.Field(value, 1), sig, args)
 }
 
 func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {
@@ -2226,7 +2208,7 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 	if v.kind == vkClosure {
 		if _, ok := t.Underlying().(*types.Signature); ok {
 			// Assignment destinations are already lowered raw types. A raw
-			// signature is a native pointer, not a two-word Go function value.
+			// signature is a native entry pointer, not a Go descriptor pointer.
 			if dst := b.Prog.rawType(t); dst.kind == vkFuncPtr {
 				return b.ChangeType(dst, v)
 			}

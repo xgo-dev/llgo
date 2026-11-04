@@ -64,16 +64,19 @@ func TestWasmReflectBridgeShapeDeduplication(t *testing.T) {
 	emptyInterface := types.NewInterfaceType(nil, nil).Complete()
 	interfaceBridge := pkg.wasmReflectBridge(signature(emptyInterface, emptyInterface))
 	closureBridge := pkg.wasmReflectBridge(signature(NoArgsNoRet, NoArgsNoRet))
-	if interfaceBridge == closureBridge {
-		t.Fatal("interface and closure storage conversions shared a bridge")
+	if closureBridge.call != pointerBridge.call || closureBridge.make != pointerBridge.make {
+		t.Fatal("the one-word rooted Go descriptor did not reuse both pointer bridges")
 	}
-	if got := len(pkg.wasmReflectBridges); got != 4 {
-		t.Fatalf("bridge shapes = %d, want 4", got)
+	if interfaceBridge == pointerBridge || interfaceBridge == closureBridge || intBridge == pointerBridge {
+		t.Fatal("distinct interface, scalar and rooted-pointer conversions shared a bridge")
+	}
+	if got := len(pkg.wasmReflectBridges); got != 3 {
+		t.Fatalf("bridge shapes = %d, want 3", got)
 	}
 	if intBridge.call.Name() != "$ca" || intBridge.make.Name() != "$ma" ||
 		pointerBridge.call.Name() != "$cb" || pointerBridge.make.Name() != "$mb" ||
 		interfaceBridge.call.Name() != "$cc" || interfaceBridge.make.Name() != "$mc" ||
-		closureBridge.call.Name() != "$cd" || closureBridge.make.Name() != "$md" {
+		closureBridge.call.Name() != "$cb" || closureBridge.make.Name() != "$mb" {
 		t.Fatalf("bridge names = %q/%q, %q/%q", intBridge.call.Name(), intBridge.make.Name(), interfaceBridge.call.Name(), interfaceBridge.make.Name())
 	}
 	if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {

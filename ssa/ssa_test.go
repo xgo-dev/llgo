@@ -1184,9 +1184,9 @@ _llgo_example.com/pkg.T:
 
 [MethodInfo]
 *_llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.(*T).M
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 example.com/pkg.(*T).M example.com/pkg.(*T).M
 _llgo_example.com/pkg.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.T.M
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 example.com/pkg.(*T).M example.com/pkg.T.M
 
 `
 	if got := pm.String(); got != want {
@@ -1533,8 +1533,45 @@ func TestClosureCtx(t *testing.T) {
 	f.closureCtx(nil)
 }
 
+func assertStaticFuncvalSlot(t *testing.T, holder Function, slot Expr, entry Function) {
+	t.Helper()
+	if allocated := slot.impl.AllocatedType(); allocated.TypeKind() != llvm.PointerTypeKind ||
+		holder.Prog.td.TypeAllocSize(allocated) != uint64(holder.Prog.PointerSize()) {
+		t.Fatalf("function slot does not store one descriptor pointer: %s", slot.impl)
+	}
+	stores := 0
+	for _, block := range holder.impl.BasicBlocks() {
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if inst.InstructionOpcode() != llvm.Store || inst.Operand(1) != slot.impl {
+				continue
+			}
+			stores++
+			value := inst.Operand(0)
+			global := value.IsAGlobalVariable()
+			if value.Type().TypeKind() != llvm.PointerTypeKind || global.IsNil() || !global.IsGlobalConstant() {
+				t.Fatalf("function store is not a readonly descriptor pointer: %s", inst)
+			}
+			closure := Expr{value, holder.Prog.Elem(slot.Type)}
+			assertFuncvalHeaderPart(t, holder, closure, 0, entry.impl)
+			assertFuncvalHeaderPart(t, holder, closure, 1, llvm.ConstNull(holder.Prog.tyVoidPtr()))
+		}
+	}
+	if stores != 1 {
+		t.Fatalf("function slot stores = %d, want 1", stores)
+	}
+	assertFuncvalCollectibleAllocations(t, holder, 0)
+	ret := entry.impl.FirstBasicBlock().LastInstruction()
+	if ret.InstructionOpcode() != llvm.Ret || ret.Operand(0) != entry.impl.Param(0) {
+		t.Fatalf("stored entry does not retain its original return value: %s", entry.impl)
+	}
+	if err := llvm.VerifyModule(holder.Pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClosureNoCtxValue(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg := prog.NewPackage("bar", "foo/bar")
 	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
 	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
@@ -1551,29 +1588,12 @@ func TestClosureNoCtxValue(t *testing.T) {
 	hb.Store(ptr, fn.Expr)
 	hb.Return()
 
-	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
-source_filename = "foo/bar"
-
-; Function Attrs: null_pointer_is_valid
-define i64 @fn(i64 %0) #0 {
-_llgo_0:
-  ret i64 %0
-}
-
-; Function Attrs: null_pointer_is_valid
-define void @holder() #0 {
-_llgo_0:
-  %0 = alloca { ptr, ptr }, align 8
-  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
-  ret void
-}
-
-attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
-`)
+	assertStaticFuncvalSlot(t, holder, ptr, fn)
 }
 
 func TestClosureFuncPtrValue(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	prog.SetRuntime(func() *types.Package {
 		fset := token.NewFileSet()
 		imp := packages.NewImporter(fset)
@@ -1599,30 +1619,12 @@ func TestClosureFuncPtrValue(t *testing.T) {
 	hb.Store(ptr, fnPtr)
 	hb.Return()
 
-	expected := `; ModuleID = 'foo/bar'
-source_filename = "foo/bar"
-
-; Function Attrs: null_pointer_is_valid
-define i64 @fn(i64 %0) #0 {
-_llgo_0:
-  ret i64 %0
-}
-
-; Function Attrs: null_pointer_is_valid
-define void @holder() #0 {
-_llgo_0:
-  %0 = alloca { ptr, ptr }, align 8
-  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
-  ret void
-}
-
-attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
-`
-	assertPkg(t, pkg, expected)
+	assertStaticFuncvalSlot(t, holder, ptr, fn)
 }
 
 func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg := prog.NewPackage("bar", "foo/bar")
 	tpkg := types.NewPackage("foo/bar", "bar")
 
@@ -1642,17 +1644,20 @@ func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
 	)
 	convertFn := pkg.NewFunc("convertNamedClosure", convertSig, GoDecl)
 	b := convertFn.MakeBody(1)
-	b.Return(b.ChangeType(prog.Type(dstNamed, GoDecl), convertFn.Param(0)))
-
-	ir := convertFn.impl.String()
-	if !strings.Contains(ir, `insertvalue %"foo/bar.DstFn"`) {
-		t.Fatalf("named closure conversion did not rebuild destination type:\n%s", ir)
+	destination := prog.Type(dstNamed, GoDecl)
+	converted := b.ChangeType(destination, convertFn.Param(0))
+	if converted.Type != destination || !types.Identical(converted.RawType(), destination.RawType()) ||
+		types.Identical(converted.RawType(), convertFn.Param(0).RawType()) {
+		t.Fatal("named conversion did not retain the destination Go type identity")
 	}
-	if strings.Contains(ir, `ret %"foo/bar.SrcFn"`) {
-		t.Fatalf("named closure conversion returned source type:\n%s", ir)
+	if converted.impl != convertFn.Param(0).impl {
+		t.Fatal("named conversion changed canonical function-value identity")
 	}
-	if !strings.Contains(ir, `ret %"foo/bar.DstFn"`) {
-		t.Fatalf("named closure conversion did not return destination type:\n%s", ir)
+	b.Return(converted)
+	assertFuncvalCollectibleAllocations(t, convertFn, 0)
+	if ret := convertFn.impl.FirstBasicBlock().LastInstruction(); ret.InstructionOpcode() != llvm.Ret ||
+		ret.Operand(0) != convertFn.impl.Param(0) {
+		t.Fatalf("named closure conversion did not return its original pointer: %s", convertFn.impl)
 	}
 
 	sameSig := types.NewSignatureType(
@@ -1665,12 +1670,16 @@ func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
 	)
 	sameFn := pkg.NewFunc("sameNamedClosure", sameSig, GoDecl)
 	sb := sameFn.MakeBody(1)
-	sb.Return(sb.ChangeType(prog.Type(srcNamed, GoDecl), sameFn.Param(0)))
-
-	sameIR := sameFn.impl.String()
-	if strings.Contains(sameIR, "insertvalue") {
-		t.Fatalf("identical named closure type should not be rebuilt:\n%s", sameIR)
+	same := sb.ChangeType(prog.Type(srcNamed, GoDecl), sameFn.Param(0))
+	if same.Type != sameFn.Param(0).Type || same.impl != sameFn.Param(0).impl {
+		t.Fatal("same named function conversion changed type or identity")
 	}
+	sb.Return(same)
+	assertFuncvalCollectibleAllocations(t, sameFn, 0)
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestConvertNamedStructValue(t *testing.T) {
@@ -1775,21 +1784,64 @@ func TestCallClosureDynamic(t *testing.T) {
 	b := caller.MakeBody(1)
 	b.Return(b.Call(caller.Param(0), caller.Param(1)))
 
-	ir := pkg.String()
-	for _, want := range []string{
-		"icmp ne ptr %2, null",
-		"call i32 %3(ptr ",
-		"call i32 %3(i32 %1)",
-		"phi i32",
-	} {
-		if !strings.Contains(ir, want) {
-			t.Fatalf("dynamic closure call missing %q:\n%s", want, ir)
+	var envCall, plainCall llvm.Value
+	var phi llvm.Value
+	for _, block := range caller.impl.BasicBlocks() {
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if inst.InstructionOpcode() == llvm.PHI {
+				phi = inst
+			}
+			if call := inst.IsACallInst(); !call.IsNil() && call.CalledValue().IsAFunction().IsNil() {
+				switch call.CalledFunctionType().ParamTypesCount() {
+				case 1:
+					if !plainCall.IsNil() {
+						t.Fatal("duplicate no-environment call")
+					}
+					plainCall = call
+				case 2:
+					if !envCall.IsNil() {
+						t.Fatal("duplicate environment call")
+					}
+					envCall = call
+				default:
+					t.Fatalf("wrong dynamic call prototype: %s", call)
+				}
+			}
 		}
 	}
+	if envCall.IsNil() || plainCall.IsNil() || phi.IsNil() ||
+		envCall.CalledValue() != plainCall.CalledValue() ||
+		envCall.Operand(1) != caller.impl.Param(1) || plainCall.Operand(0) != caller.impl.Param(1) {
+		t.Fatalf("dynamic closure lost its two typed edges or argument: %s", caller.impl)
+	}
+	if phi.OperandsCount() != 2 {
+		t.Fatalf("dynamic closure did not merge two call results: %s", phi)
+	}
+	first, second := phi.Operand(0), phi.Operand(1)
+	if !(first == envCall && second == plainCall || first == plainCall && second == envCall) {
+		t.Fatalf("dynamic closure did not merge the two actual call results: %s", phi)
+	}
+	envBranch := false
+	for _, block := range caller.impl.BasicBlocks() {
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if inst.InstructionOpcode() == llvm.ICmp && inst.IntPredicate() == llvm.IntNE &&
+				inst.Operand(0) == envCall.Operand(0) && inst.Operand(1).IsNull() {
+				envBranch = true
+			}
+		}
+	}
+	if !envBranch {
+		t.Fatal("dynamic closure did not distinguish its actual environment from nil")
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestMakeClosureWithCtx(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	prog.SetRuntime(func() *types.Package {
 		fset := token.NewFileSet()
 		imp := packages.NewImporter(fset)
@@ -1822,18 +1874,38 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	if got := inner.Expr.raw.Type.(*types.Signature).Params().Len(); got != 1 {
 		t.Fatalf("semantic closure entry signature has %d params, want 1", got)
 	}
-	ir := pkg.String()
-	for _, want := range []string{
-		"define i64 @inner(ptr ",
-		"i64 %1)",
-		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 8)`,
-		`declare nonnull ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64)`,
-		"insertvalue { ptr, ptr } { ptr @inner, ptr undef }",
-	} {
-		if !strings.Contains(ir, want) {
-			t.Fatalf("closure environment IR missing %q:\n%s", want, ir)
+	assertFuncvalCollectibleAllocations(t, outer, 1)
+	assertFuncvalHeaderPart(t, outer, closure, 0, inner.impl)
+	var environment, captureAddress llvm.Value
+	header := prog.funcvalDescriptorType(closure.Type).ll
+	for _, block := range outer.impl.BasicBlocks() {
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if inst.InstructionOpcode() != llvm.Store {
+				continue
+			}
+			address := inst.Operand(1).IsAGetElementPtrInst()
+			if !address.IsNil() && address.GEPSourceElementType() == header &&
+				address.OperandsCount() == 3 && address.Operand(2).ZExtValue() == 1 {
+				environment = inst.Operand(0)
+			}
+			if inst.Operand(0) == outer.impl.Param(0) {
+				captureAddress = address
+			}
 		}
 	}
+	if environment.IsNil() || environment.IsNull() || captureAddress.IsNil() ||
+		captureAddress.GEPSourceElementType() != prog.Type(ctxStruct, GoDecl).ll ||
+		captureAddress.Operand(0) != environment {
+		t.Fatalf("captured closure lost its actual environment or original argument: %s", outer.impl)
+	}
+	assertFuncvalHeaderPart(t, outer, closure, 1, environment)
+	if inner.impl.ParamsCount() != 2 || inner.impl.Param(0).Type().TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("captured entry lost its separate physical environment: %s", inner.impl)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestCvtClosureDropsRecv(t *testing.T) {

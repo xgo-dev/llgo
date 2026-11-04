@@ -6,11 +6,15 @@ _llgo_main.T:
 
 [OrdinaryEdges]
 *_llgo_main.T:
+    _llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231
     _llgo_main.T
+_llgo_funcval$5cc2aa444c9afe33a78580c48ee0face5a4193944be84057a7e50f2c8d5c7d8e:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+_llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 _llgo_main.T:
     *_llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+    _llgo_funcval$5cc2aa444c9afe33a78580c48ee0face5a4193944be84057a7e50f2c8d5c7d8e
 main.(*T).M:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/xgo-dev/llgo/runtime/internal/runtime.PanicWrapNilPointer
@@ -35,8 +39,8 @@ main.main:
 
 [UseIfaceMethod]
 main.main:
-    github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$bReUJH2_12QVkFcde1SpCUgXqmhRT8DRulK5lXtpIkY MethodByName _llgo_func$aM2cVUtLQbPq1YHtnabQiM7XJ5Cg5RyV6BIDWrqey7E
-    github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$bReUJH2_12QVkFcde1SpCUgXqmhRT8DRulK5lXtpIkY MethodByName _llgo_func$aM2cVUtLQbPq1YHtnabQiM7XJ5Cg5RyV6BIDWrqey7E
+    github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$gqRCE4HvUbSpCFXauLGZ7RcoMi_zCg3qRZatMe42tQY MethodByName _llgo_closure$gqOXQwUCzt1aox1ZIXB12MHA9IKhfmtc89hdGzIDVvU
+    github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$gqRCE4HvUbSpCFXauLGZ7RcoMi_zCg3qRZatMe42tQY MethodByName _llgo_closure$gqOXQwUCzt1aox1ZIXB12MHA9IKhfmtc89hdGzIDVvU
 
 [UseNamedMethod]
 main.main:
@@ -45,53 +49,53 @@ main.main:
 
 [MethodInfo]
 *_llgo_main.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).M main.(*T).M
-    1 main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).m main.(*T).m
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).M main.(*T).M
+    1 main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).m main.(*T).m
 _llgo_main.T:
-    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).M main.T.M
-    1 main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).m main.T.m
+    0 M _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).M main.T.M
+    1 main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).m main.T.m
 
 [InterfaceInfo]
-github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$bReUJH2_12QVkFcde1SpCUgXqmhRT8DRulK5lXtpIkY:
-    Align _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    AssignableTo _llgo_func$Kxk9fspGkjXcoNWf2ucHG1vOQ5VHxVtYionfm-DnvWE
-    Bits _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    CanSeq _llgo_func$YHeRw3AOvQtzv982-ZO3Yn8vh3Fx89RM3VvI8E4iKVk
-    CanSeq2 _llgo_func$YHeRw3AOvQtzv982-ZO3Yn8vh3Fx89RM3VvI8E4iKVk
-    ChanDir _llgo_func$JO3khPIbANSMBmoN6P7ybYAeUBd3Gv6toVUqNeE7qbE
-    Comparable _llgo_func$YHeRw3AOvQtzv982-ZO3Yn8vh3Fx89RM3VvI8E4iKVk
-    ConvertibleTo _llgo_func$Kxk9fspGkjXcoNWf2ucHG1vOQ5VHxVtYionfm-DnvWE
-    Elem _llgo_func$b6KOG2Oj7wt8ogb9H8QPbhEfXhxMMjdxRZgPLK_UOwI
-    Field _llgo_func$Q3NYrysaKgu1MtMuLQwb-k5QcKGHihnt-tV_NlNJQFA
-    FieldAlign _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    FieldByIndex _llgo_func$LPPtiM49dEPl48CC3WRhXm3YPnfUJEZE_k8Tx3rMuSk
-    FieldByName _llgo_func$dEvABJ5r0MMUlf4smWpIDG5dO8AuGklGdNJ1xneL3UM
-    FieldByNameFunc _llgo_func$xySrXVFC_2LK2oP71R2UryKi6UmdEJUo9k6aQuz4TvI
-    Fields _llgo_func$oBV5vpKn4Ua1AX8aLdZdui_u_jYkARX719I2f59QfI0
-    Implements _llgo_func$Kxk9fspGkjXcoNWf2ucHG1vOQ5VHxVtYionfm-DnvWE
-    In _llgo_func$dPYu3A0LoGTV2Hd8PW4KPw2ITiUSo9q-4Bg9ZrPITnY
-    Ins _llgo_func$8_pqxZCIokgbis1m-GfDe9OwwxKW0spiCo-YwkvkWSQ
-    IsVariadic _llgo_func$YHeRw3AOvQtzv982-ZO3Yn8vh3Fx89RM3VvI8E4iKVk
-    Key _llgo_func$b6KOG2Oj7wt8ogb9H8QPbhEfXhxMMjdxRZgPLK_UOwI
-    Kind _llgo_func$w8Mj2LK8G5p7MIiGWR6MYjyXy3L8SVVzYlT1bb6KNXk
-    Len _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    Method _llgo_func$FmJJGomlX5kINJGxQdQDCAkD89ySoMslAYFrziWInVc
-    MethodByName _llgo_func$aM2cVUtLQbPq1YHtnabQiM7XJ5Cg5RyV6BIDWrqey7E
-    Methods _llgo_func$9XHZL9qb1KUOQ6EU9OsN3ciYPpEIDSIJvzJ89Pr58Eo
-    Name _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
-    NumField _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    NumIn _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    NumMethod _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    NumOut _llgo_func$ETeB8WwW04JEq0ztcm-XPTJtuYvtpkjIsAc0-2NT9zA
-    Out _llgo_func$dPYu3A0LoGTV2Hd8PW4KPw2ITiUSo9q-4Bg9ZrPITnY
-    Outs _llgo_func$8_pqxZCIokgbis1m-GfDe9OwwxKW0spiCo-YwkvkWSQ
-    OverflowComplex _llgo_func$cGkbH-2LQOLoq64Rqj3WeO56U8al7FfVkf5K1FFbPpE
-    OverflowFloat _llgo_func$uk7PgUVap9GZdvS8R_mZCDbAbqnAbcNryqybtDogUNI
-    OverflowInt _llgo_func$odFOIClZoEVGbTP_BEfZxVM5ex3r8Fj1afUEeP_awp8
-    OverflowUint _llgo_func$7I97sofX8UqJA96mVIy89KPUfSM_efkrR-mJQ9qaHfk
-    PkgPath _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
-    Size _llgo_func$1kITCsyu7hFLMxHLR7kDlvu4SOra_HtrtdFUQH9P13s
-    String _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
-    reflect.common _llgo_func$_FtQJl7A5s1VI_ob-KR67FLMXbIG5TjcVaEFuqM5Lo4
-    reflect.uncommon _llgo_func$tpkXXN4h9pcUPRsL9rq-8-w7qAx06dW7DgXtepA0U1E
+github.com/xgo-dev/llgo/runtime/internal/lib/reflect.iface$gqRCE4HvUbSpCFXauLGZ7RcoMi_zCg3qRZatMe42tQY:
+    Align _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    AssignableTo _llgo_closure$QdCTSB71UynSxkwM63LWk499QPCMA0z5gs3VqYybVi8
+    Bits _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    CanSeq _llgo_closure$A8DAjBEUiTP8Nvtzk9OXeXqJJ_DIoV5eVpz8W3surRo
+    CanSeq2 _llgo_closure$A8DAjBEUiTP8Nvtzk9OXeXqJJ_DIoV5eVpz8W3surRo
+    ChanDir _llgo_closure$aMAExCvua-uxcBU7PHAoLOwxKXoBTTsRURbrKRfKz4Y
+    Comparable _llgo_closure$A8DAjBEUiTP8Nvtzk9OXeXqJJ_DIoV5eVpz8W3surRo
+    ConvertibleTo _llgo_closure$QdCTSB71UynSxkwM63LWk499QPCMA0z5gs3VqYybVi8
+    Elem _llgo_closure$EUdH3AX-mymxv-k_RnEFtOfh3nSknrbonW2dcasNUxU
+    Field _llgo_closure$-5MzYPuMhHNDrctNTFeCuaGTi3bleo024zGY6FGxcCE
+    FieldAlign _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    FieldByIndex _llgo_closure$r6_RWlLA70bMEsRDGovMIGQmApq_KNhhhNTKk9QY5cI
+    FieldByName _llgo_closure$b71tjxbKMzXj4Sv9j6r7tqI0mE-QXFWYjgdZMWNCQsQ
+    FieldByNameFunc _llgo_closure$chCk7unCvTlpozL8O_dpR451tPqh74nKxQFPGIA42uY
+    Fields _llgo_closure$Fev0BFz5RA0et24aiaeeKkkkdtLsIC_qB-rzVc6qjHA
+    Implements _llgo_closure$QdCTSB71UynSxkwM63LWk499QPCMA0z5gs3VqYybVi8
+    In _llgo_closure$BQSaGZiF86rfQgL_OUJV9-CegPzUX0iwlN3m6_eN4RI
+    Ins _llgo_closure$cfCIEKwy1vZw4rRh3syJYa2y_mzm-d3Qw3pqlyH--MY
+    IsVariadic _llgo_closure$A8DAjBEUiTP8Nvtzk9OXeXqJJ_DIoV5eVpz8W3surRo
+    Key _llgo_closure$EUdH3AX-mymxv-k_RnEFtOfh3nSknrbonW2dcasNUxU
+    Kind _llgo_closure$lJMPpwBv3bS39sVzaRqtXZtvYG03q-HgUQpzZzer2BI
+    Len _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    Method _llgo_closure$KaJnaJDwj8mtTtjljfbpXOUj_rfb3fpIKTyxlRqgj14
+    MethodByName _llgo_closure$gqOXQwUCzt1aox1ZIXB12MHA9IKhfmtc89hdGzIDVvU
+    Methods _llgo_closure$PM25RfYyqldwXdXwgohDXnl8LfNflb7bASBPvSpJa4s
+    Name _llgo_closure$vK4RtX_aj54SK2qRpmq5G1J_JK9BvV_9Ps38HU_Uq6I
+    NumField _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    NumIn _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    NumMethod _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    NumOut _llgo_closure$TWlEC03isGYe2Nyy2HYnOBsOYR1lIx43oIUpIyqvm4s
+    Out _llgo_closure$BQSaGZiF86rfQgL_OUJV9-CegPzUX0iwlN3m6_eN4RI
+    Outs _llgo_closure$cfCIEKwy1vZw4rRh3syJYa2y_mzm-d3Qw3pqlyH--MY
+    OverflowComplex _llgo_closure$PFcfpXpCbDs05OlLIrfeZKPJLk_2lwm8QDNGJyoD-bc
+    OverflowFloat _llgo_closure$F1rd673_M8ouzKQlAUZHQPf34RmxBl1zZkHTYuoOKPc
+    OverflowInt _llgo_closure$DKRo_M2GM5e_XbaaywQrs5uBHebuobTdNmObwydC9Rs
+    OverflowUint _llgo_closure$Jt_vHVZp89hRD-WktOxhNleB8dazv9CmNT48HiYn88k
+    PkgPath _llgo_closure$vK4RtX_aj54SK2qRpmq5G1J_JK9BvV_9Ps38HU_Uq6I
+    Size _llgo_closure$z0ZwNFTA83usL4qGiSe7Xi42N-0rwyS3_qHIYfHFPFI
+    String _llgo_closure$vK4RtX_aj54SK2qRpmq5G1J_JK9BvV_9Ps38HU_Uq6I
+    reflect.common _llgo_closure$PSY8OwxeHaOAkxfkFnOGHPIQmdpLMrCKsf3jRUzsvJg
+    reflect.uncommon _llgo_closure$z6D1ZEQNlnOXXQmY6ADeVlO1874sMpKrZvU8tLUj3AQ
 

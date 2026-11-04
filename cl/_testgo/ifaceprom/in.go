@@ -111,6 +111,11 @@ func main() {
 // CHECK: ret %"{{.*}}String" [[IMPL_TWO_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// Immediately called bound methods reserve combined headers and interface captures at entry.
+// CHECK: [[PROMOTED_TWO_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[TWO_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[PROMOTED_ONE_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
+// CHECK: [[ONE_BOUND_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { %"{{.*}}iface" } }, align 8
 // CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
 // CHECK: store %main.impl zeroinitializer, ptr [[IMPL_DATA]]
 // CHECK: [[IMPL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceprom.iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.impl)
@@ -188,37 +193,69 @@ func main() {
 // CHECK: [[PROMOTED_TWO_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_CLOSURE_S]], 0
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]])
 // The four late closure paths store those same interfaces into their bound environments.
-// CHECK: store %"{{.*}}iface" [[ONE_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr [[ONE_BOUND_ENV:%.*]], 1
-// CHECK: [[ONE_BOUND_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 1
-// CHECK: [[ONE_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 0
-// CHECK: [[ONE_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[ONE_BOUND_CODE_RAW]])
-// ARM64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr swiftself [[ONE_BOUND_CALL_ENV]])
-// AMD64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr nest [[ONE_BOUND_CALL_ENV]])
+// CHECK: call void @llvm.memset.p0.i64(ptr [[ONE_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
+// CHECK-NEXT: [[ONE_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[ONE_BOUND_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[ONE_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[ONE_BOUND_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[ONE_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[ONE_BOUND_CAPTURE]], i32 0, i32 0
+// CHECK-NEXT: store %"{{.*}}iface" [[ONE_CLOSURE_IFACE]], ptr [[ONE_BOUND_CAPTURE_SLOT]]
+// CHECK-NEXT: [[ONE_BOUND_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ONE_BOUND]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.I.one$bound", ptr [[ONE_BOUND_CODE_SLOT]]
+// CHECK-NEXT: [[ONE_BOUND_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ONE_BOUND]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[ONE_BOUND_CAPTURE]], ptr [[ONE_BOUND_ENV_SLOT]]
+// CHECK: [[ONE_BOUND_CALL_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[ONE_BOUND]]
+// CHECK-NEXT: [[ONE_BOUND_CALL_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ONE_BOUND_CALL_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[ONE_BOUND_CALL_ENV:%.*]] = load ptr, ptr [[ONE_BOUND_CALL_ENV_FIELD]]
+// CHECK-NOT: call ptr asm
+// ARM64: [[ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr swiftself [[ONE_BOUND_CALL_ENV]])
+// AMD64: [[ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr nest [[ONE_BOUND_CALL_ENV]])
 // CHECK: [[ONE_BOUND_BAD:%.*]] = icmp ne i64 [[ONE_BOUND_RESULT]], 1
-// CHECK: store %"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[PROMOTED_ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %{{.*}}, 1
-// CHECK: [[PROMOTED_ONE_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 1
-// CHECK: [[PROMOTED_ONE_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 0
-// CHECK: [[PROMOTED_ONE_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_ONE_CODE_RAW]])
-// ARM64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr swiftself [[PROMOTED_ONE_BOUND_ENV]])
-// AMD64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr nest [[PROMOTED_ONE_BOUND_ENV]])
+// CHECK: call void @llvm.memset.p0.i64(ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_ONE_BOUND_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[PROMOTED_ONE_BOUND_CAPTURE]], i32 0, i32 0
+// CHECK-NEXT: store %"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]], ptr [[PROMOTED_ONE_BOUND_CAPTURE_SLOT]]
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_ONE_BOUND]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.I.one$bound", ptr [[PROMOTED_ONE_BOUND_CODE_SLOT]]
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_ONE_BOUND]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[PROMOTED_ONE_BOUND_CAPTURE]], ptr [[PROMOTED_ONE_BOUND_ENV_SLOT]]
+// CHECK: [[PROMOTED_ONE_BOUND_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[PROMOTED_ONE_BOUND]]
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_ONE_BOUND_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[PROMOTED_ONE_BOUND_ENV:%.*]] = load ptr, ptr [[PROMOTED_ONE_BOUND_ENV_FIELD]]
+// CHECK-NOT: call ptr asm
+// ARM64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr swiftself [[PROMOTED_ONE_BOUND_ENV]])
+// AMD64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 @"main.I.one$bound"(ptr nest [[PROMOTED_ONE_BOUND_ENV]])
 // CHECK: [[PROMOTED_ONE_BOUND_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_BOUND_RESULT]], 1
-// CHECK: store %"{{.*}}iface" [[TWO_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
-// CHECK: [[TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[TWO_BOUND]], 1
-// CHECK: [[TWO_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[TWO_BOUND]], 0
-// CHECK: [[TWO_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[TWO_BOUND_CODE_RAW]])
-// ARM64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[TWO_BOUND_CODE]](ptr swiftself [[TWO_BOUND_ENV]])
-// AMD64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[TWO_BOUND_CODE]](ptr nest [[TWO_BOUND_ENV]])
+// CHECK: call void @llvm.memset.p0.i64(ptr [[TWO_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
+// CHECK-NEXT: [[TWO_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[TWO_BOUND_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[TWO_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[TWO_BOUND_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[TWO_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[TWO_BOUND_CAPTURE]], i32 0, i32 0
+// CHECK-NEXT: store %"{{.*}}iface" [[TWO_CLOSURE_IFACE]], ptr [[TWO_BOUND_CAPTURE_SLOT]]
+// CHECK-NEXT: [[TWO_BOUND_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[TWO_BOUND]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.I.two$bound", ptr [[TWO_BOUND_CODE_SLOT]]
+// CHECK-NEXT: [[TWO_BOUND_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[TWO_BOUND]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[TWO_BOUND_CAPTURE]], ptr [[TWO_BOUND_ENV_SLOT]]
+// CHECK: [[TWO_BOUND_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[TWO_BOUND]]
+// CHECK-NEXT: [[TWO_BOUND_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[TWO_BOUND_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[TWO_BOUND_ENV:%.*]] = load ptr, ptr [[TWO_BOUND_ENV_FIELD]]
+// CHECK-NOT: call ptr asm
+// ARM64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr swiftself [[TWO_BOUND_ENV]])
+// AMD64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr nest [[TWO_BOUND_ENV]])
 // CHECK: [[TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
-// CHECK: store %"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[PROMOTED_TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
-// CHECK: [[PROMOTED_TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_BOUND]], 1
-// CHECK: [[PROMOTED_TWO_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_BOUND]], 0
-// CHECK: [[PROMOTED_TWO_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_TWO_BOUND_CODE_RAW]])
-// ARM64: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[PROMOTED_TWO_BOUND_CODE]](ptr swiftself [[PROMOTED_TWO_BOUND_ENV]])
-// AMD64: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[PROMOTED_TWO_BOUND_CODE]](ptr nest [[PROMOTED_TWO_BOUND_ENV]])
+// CHECK: call void @llvm.memset.p0.i64(ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i8 0, i64 32, i1 false)
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_CAPTURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { %"{{.*}}iface" } }, ptr [[PROMOTED_TWO_BOUND_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[PROMOTED_TWO_BOUND_CAPTURE]], i32 0, i32 0
+// CHECK-NEXT: store %"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]], ptr [[PROMOTED_TWO_BOUND_CAPTURE_SLOT]]
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_TWO_BOUND]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.I.two$bound", ptr [[PROMOTED_TWO_BOUND_CODE_SLOT]]
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_TWO_BOUND]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[PROMOTED_TWO_BOUND_CAPTURE]], ptr [[PROMOTED_TWO_BOUND_ENV_SLOT]]
+// CHECK: [[PROMOTED_TWO_BOUND_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[PROMOTED_TWO_BOUND]]
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PROMOTED_TWO_BOUND_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[PROMOTED_TWO_BOUND_ENV:%.*]] = load ptr, ptr [[PROMOTED_TWO_BOUND_ENV_FIELD]]
+// CHECK-NOT: call ptr asm
+// ARM64: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr swiftself [[PROMOTED_TWO_BOUND_ENV]])
+// AMD64: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr nest [[PROMOTED_TWO_BOUND_ENV]])
 // CHECK: [[PROMOTED_TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[PROMOTED_TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
 
 // ARM64-LABEL: define i64 @"main.I.one$bound"(ptr swiftself %0){{.*}} {

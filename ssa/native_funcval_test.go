@@ -16,6 +16,7 @@ func TestNativeIntegerFuncvalAdapters(t *testing.T) {
 			t.Run(test.target.GOOS+"/"+test.target.GOARCH+"/"+test.target.LLVMTarget+"/"+source, func(t *testing.T) {
 				prog := NewProgram(&test.target)
 				defer prog.Dispose()
+				setTestRuntime(t, prog)
 				pkg := prog.NewPackage("p", "example.com/p")
 				rawPkg := types.NewPackage(pkg.Path(), "p")
 				params := types.NewTuple(
@@ -79,8 +80,8 @@ func TestNativeIntegerFuncvalAdapters(t *testing.T) {
 					if !wrapper.NeedsEnv() || wrapper.impl.Linkage() != llvm.InternalLinkage {
 						t.Fatalf("adapter must be an internal Go closure entry:\n%s", wrapper.impl)
 					}
-					if source != "nil" && !prog.usesWideGoStorage() && converted.impl.Operand(1) != value.impl {
-						t.Fatalf("adapter environment did not retain native pointer: %s", converted.impl)
+					if source != "nil" && !prog.usesWideGoStorage() {
+						assertFuncvalHeaderPart(t, owner, converted, 1, value.impl)
 					}
 					var nativeCall llvm.Value
 					for block := wrapper.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
@@ -98,10 +99,12 @@ func TestNativeIntegerFuncvalAdapters(t *testing.T) {
 					if test.target.WasmProfile == "w32" && !strings.Contains(wrapper.impl.String(), "zext i32") {
 						t.Fatalf("adapter did not widen the native uintptr result:\n%s", wrapper.impl)
 					}
-					if strings.Contains(pkg.String(), "runtime.Alloc") {
-						t.Fatalf("native function conversion unexpectedly allocated:\n%s", pkg.String())
-					}
 				}
+				allocations := 0
+				if source == "pointer" || source == "named-Go-function" {
+					allocations = 1
+				}
+				assertFuncvalCollectibleAllocations(t, owner, allocations)
 				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 					t.Fatalf("invalid native function conversion: %v\n%s", err, pkg.String())
 				}

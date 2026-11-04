@@ -10,12 +10,31 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func mapMetadataPointer(v llvm.Value) llvm.Value {
-	// Hosted Memory32 pads Go pointers to a full Go word in type descriptors.
-	if v.Type().TypeKind() == llvm.StructTypeKind {
-		return v.Operand(0)
+func mapMetadataPointer(t *testing.T, value llvm.Value) llvm.Value {
+	t.Helper()
+	if value.IsNil() {
+		t.Fatal("missing map metadata pointer")
 	}
-	return v
+	// Hosted Memory32 pads Go pointers to a full Go word in type descriptors.
+	if value.Type().TypeKind() == llvm.StructTypeKind {
+		fields := value.Type().StructElementTypes()
+		if len(fields) != 2 ||
+			fields[0].TypeKind() != llvm.PointerTypeKind ||
+			fields[1].TypeKind() != llvm.IntegerTypeKind || fields[1].IntTypeWidth() != 32 {
+			t.Fatalf("invalid Memory32 map metadata pointer: %s", value)
+		}
+		if value.IsNull() {
+			return llvm.ConstNull(fields[0])
+		}
+		if value.OperandsCount() != 2 || !value.Operand(1).IsNull() {
+			t.Fatalf("invalid Memory32 map pointer initializer: %s", value)
+		}
+		value = value.Operand(0)
+	}
+	if value.Type().TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("map metadata is not pointer storage: %s", value)
+	}
+	return value
 }
 
 func TestWasmMapMetadata(t *testing.T) {
@@ -82,8 +101,16 @@ func TestWasmMapMetadata(t *testing.T) {
 				mt := types.NewMap(key.typ, types.Typ[types.Int])
 				b.abiType(mt)
 				name, _ := prog.abi.TypeName(mt)
-				global := pkg.VarOf(name).impl
-				hasher := global.Initializer().Operand(4)
+				variable := pkg.VarOf(name)
+				if variable == nil || variable.impl.IsNil() {
+					t.Fatalf("%s has no map type descriptor", mt)
+				}
+				global := variable.impl
+				initial := global.Initializer()
+				if initial.IsNil() || initial.Type().TypeKind() != llvm.StructTypeKind || initial.OperandsCount() <= 4 {
+					t.Fatalf("%s map descriptor has no hasher field: %s", mt, global)
+				}
+				hasher := initial.Operand(4)
 				want := key.hash
 				if tc.name == "legacy32" {
 					switch key.typ.(type) {
@@ -97,10 +124,29 @@ func TestWasmMapMetadata(t *testing.T) {
 				if !specialized {
 					want = ".typehash"
 				}
-				if !strings.HasSuffix(mapMetadataPointer(hasher.Operand(0)).Name(), want) {
-					t.Fatalf("%s hasher = %s, want %s", mt, hasher, want)
+				descriptor := mapMetadataPointer(t, hasher).IsAGlobalVariable()
+				if descriptor.IsNil() || !descriptor.IsGlobalConstant() {
+					t.Fatalf("%s hasher is not a readonly function descriptor: %s", mt, hasher)
 				}
-				if hasher.Operand(1).IsNull() != (want != ".typehash") {
+				header := descriptor.Initializer()
+				if header.IsNil() || header.Type().TypeKind() != llvm.StructTypeKind ||
+					header.OperandsCount() < 2 || header.OperandsCount() > 3 {
+					t.Fatalf("%s hasher descriptor does not have code/environment fields: %s", mt, header)
+				}
+				if header.OperandsCount() == 3 {
+					padding := header.Operand(2)
+					if padding.Type().TypeKind() != llvm.ArrayTypeKind || padding.Type().ArrayLength() != 0 ||
+						padding.Type().ElementType().TypeKind() != llvm.IntegerTypeKind ||
+						padding.Type().ElementType().IntTypeWidth() != 64 || !padding.IsNull() {
+						t.Fatalf("%s hasher descriptor has a nonalignment third field: %s", mt, header)
+					}
+				}
+				code := mapMetadataPointer(t, header.Operand(0))
+				environment := mapMetadataPointer(t, header.Operand(1))
+				if !strings.HasSuffix(code.Name(), want) {
+					t.Fatalf("%s hasher code = %s, want %s", mt, code, want)
+				}
+				if environment.IsNull() != (want != ".typehash") {
 					t.Fatalf("%s has incorrect hasher environment: %s", mt, hasher)
 				}
 				if !containsLLVMValueNameSuffix(pkg.abiTypeFakeUseCache[global], want) {
@@ -108,8 +154,11 @@ func TestWasmMapMetadata(t *testing.T) {
 				}
 				if specialized {
 					bucket := prog.abi.MapBucket(mt)
-					private := mapMetadataPointer(global.Initializer().Operand(3))
+					private := mapMetadataPointer(t, global.Initializer().Operand(3))
 					init := private.Initializer()
+					if init.IsNil() || init.Type().TypeKind() != llvm.StructTypeKind || init.OperandsCount() <= 10 {
+						t.Fatalf("%s has no complete private bucket type: %s", mt, private)
+					}
 					if init.Operand(0).ZExtValue() != uint64(prog.abi.Size(bucket)) ||
 						init.Operand(1).ZExtValue() != uint64(prog.abi.PtrBytes(bucket)) ||
 						init.Operand(4).ZExtValue() != uint64(prog.abi.Align(bucket)) {

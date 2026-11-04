@@ -82,10 +82,10 @@ func demo() {
 // CHECK: [[INT_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr [[INT_TAIL_PTR]], i64 [[INT_TAIL_LEN]], i64 8)
 // append(data, "def"...) uses three one-byte elements.
 // CHECK: [[DATA_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr @{{.*}}, i64 3, i64 1)
-// Appending a function closure uses the two-word function representation.
+// Appending a Go function copies its one-word descriptor pointer.
 // CHECK: [[FN_PTR:%.*]] = extractvalue %"{{.*}}Slice" [[FN_SLICE:%.*]], 0
 // CHECK: [[FN_LEN:%.*]] = extractvalue %"{{.*}}Slice" [[FN_SLICE]], 1
-// CHECK: [[FN_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[FN_PTR]], i64 [[FN_LEN]], i64 16)
+// CHECK: [[FN_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[FN_PTR]], i64 [[FN_LEN]], i64 8)
 // Both copy forms retain destination/source lengths and the byte element size.
 // CHECK: [[COPY_DATA:%.*]] = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}Slice" %{{.*}}, ptr %{{.*}}, i64 %{{.*}}, i64 1)
 // CHECK: store i64 [[COPY_DATA]], ptr [[COPY_N:%.*]]

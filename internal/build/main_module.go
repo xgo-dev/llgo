@@ -190,9 +190,10 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 			initArraySection = ".init_array"
 		}
 		inits := []llssa.Function{godebugInit, pyInit, rtInit, abiInit, runtimeStub}
-		// Windows already enables this during runtime initialization because
-		// callbacks in ordinary executables also enter from foreign threads.
-		// Other platforms enable it at startup when linked C exports exist.
+		// Windows, Linux and Darwin native runtimes enable registration at
+		// runtime initialization for callbacks in ordinary executables.
+		// The library constructor also prepares it before exported package
+		// initializers when linked C exports exist.
 		if len(cfg.cExports) != 0 && ctx.buildConf.Goos != "windows" {
 			inits = append(inits, declareNoArgFunc(
 				mainPkg, llssa.PkgRuntime+".EnableForeignThreadRegistration",
@@ -410,6 +411,7 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 			wrapperBackground = llssa.CDecl
 		}
 		wrapper := pkg.NewFunc(export.cName, export.sig, wrapperBackground)
+		wrapper.AlignNativeStack()
 		b := wrapper.MakeBody(1)
 		if ensureInit != nil {
 			b.Call(ensureInit.Expr)
@@ -430,7 +432,11 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 }
 
 func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
-	switch sym.Raw.(type) {
+	raw := sym.Raw
+	if closure, ok := raw.(*types.Struct); ok && llssa.IsClosure(closure) {
+		raw = closure.Field(0).Type()
+	}
+	switch raw.(type) {
 	case *types.Array:
 		if abiInit&llssa.ReflectArrayOf != 0 {
 			return true

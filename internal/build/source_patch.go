@@ -61,7 +61,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 }
 
 func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath string, ctx sourcePatchBuildContext) (bool, map[string][]byte, []string, error) {
-	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(pkgPath))
+	patchPath := pkgPath
+	if pkgPath == "runtime/internal/atomic" {
+		goarch := ctx.goarch
+		if goarch == "" {
+			goarch = build.Default.GOARCH
+		}
+		if goarch != "arm64" {
+			return false, current, nil, nil
+		}
+		// Go1.23 moved the package. Both selected SDK paths use the same
+		// version-gated ARM64 bodies and complete source-owner validation.
+		patchPath = "internal/runtime/atomic"
+	}
+	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(patchPath))
 	entries, err := os.ReadDir(patchDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -165,6 +178,141 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 				out = make(map[string][]byte)
 			}
 		}
+	}
+
+	// The native equality bridge owns exactly one complete selected source,
+	// never the whole bytealg package and never an instruction-failure fallback.
+	if pkgPath == "internal/bytealg" && (ctx.goarch == "386" || ctx.goarch == "amd64" || ctx.goarch == "arm64") {
+		if skipAll {
+			return false, nil, nil, fmt.Errorf("runtime equality source patch must not replace all bytealg Go declarations")
+		}
+		filename := filepath.Join(srcDir, "equal_"+ctx.goarch+".s")
+		assembly, err := readOverlay(filename)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("read runtime equality assembly owner: %w", err)
+		}
+		if string(assembly) == "// replaced by LLGo source patch\n" {
+			// A reused Config contains our previous generated source view.
+			// Require that complete selection, then read/validate the physical
+			// SDK source afresh instead of reusing an earlier validation result.
+			for name := range patchSrcs {
+				generated := filepath.Join(srcDir, "z_llgo_patch_"+name)
+				if _, ok := base[generated]; !ok {
+					return false, nil, nil, fmt.Errorf("runtime equality replacement marker lacks its generated Go owner")
+				}
+			}
+			assembly, err = os.ReadFile(filename)
+			if err != nil {
+				return false, nil, nil, fmt.Errorf("reread runtime equality assembly owner: %w", err)
+			}
+		}
+		var bodies [][]byte
+		for _, source := range patchSrcs {
+			bodies = append(bodies, source.data)
+		}
+		if err := validateEqualitySourcePatchOwners(assembly, bodies); err != nil {
+			return false, nil, nil, fmt.Errorf("runtime equality source owner %s: %w", filename, err)
+		}
+		ensureOverlay()
+		out[filename] = []byte("// replaced by LLGo source patch\n")
+		changed = true
+	}
+
+	if (pkgPath == "internal/runtime/atomic" || pkgPath == "runtime/internal/atomic") &&
+		(buildCtx.GOARCH == "arm64" || buildCtx.GOARCH == "386") {
+		arch, entries := "ARM64", 42
+		if buildCtx.GOARCH == "386" {
+			arch, entries = "386", 42
+		} else if slices.Contains(buildCtx.ReleaseTags, "go1.24") {
+			entries = 49
+		} else if slices.Contains(buildCtx.ReleaseTags, "go1.22") {
+			entries = 48
+		}
+		if skipAll {
+			return false, nil, nil, fmt.Errorf("%s atomic owner must retain the other package Go declarations", arch)
+		}
+		filename := filepath.Join(srcDir, "atomic_"+buildCtx.GOARCH+".s")
+		assembly, err := readOverlay(filename)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("read %s atomic assembly owner: %w", arch, err)
+		}
+		reused := string(assembly) == "// replaced by LLGo source patch\n"
+		var bodies, declarations [][]byte
+		for name, source := range patchSrcs {
+			if reused && !bytes.Equal(base[filepath.Join(srcDir, "z_llgo_patch_"+name)], source.data) {
+				return false, nil, nil, fmt.Errorf("%s atomic marker lacks its exact generated owner", arch)
+			}
+			bodies = append(bodies, source.data)
+		}
+		if reused {
+			assembly, err = os.ReadFile(filename)
+			if err != nil {
+				return false, nil, nil, err
+			}
+		}
+		for _, name := range []string{"stubs.go", "atomic_" + buildCtx.GOARCH + ".go"} {
+			path := filepath.Join(srcDir, name)
+			source, err := readOverlay(path)
+			if err != nil {
+				return false, nil, nil, err
+			}
+			if reused {
+				original, err := os.ReadFile(path)
+				if err != nil {
+					return false, nil, nil, err
+				}
+				filtered, _, err := filterSourcePatchFile(original, skips)
+				if err != nil || !bytes.Equal(source, filtered) {
+					return false, nil, nil, fmt.Errorf("%s atomic generated declaration view changed: %s", arch, name)
+				}
+				source = original
+			}
+			declarations = append(declarations, source)
+		}
+		if err := validateAtomicSourcePatchOwners(assembly, declarations, bodies, arch, entries); err != nil {
+			return false, nil, nil, fmt.Errorf("%s atomic complete source owner: %w", arch, err)
+		}
+		ensureOverlay()
+		out[filename] = []byte("// replaced by LLGo source patch\n")
+		changed = true
+	}
+
+	if pkgPath == "internal/runtime/syscall/windows" && ctx.goos == "windows" {
+		if skipAll || len(patchSrcs) != 1 {
+			return false, nil, nil, fmt.Errorf("Windows syscall owner must retain the other SDK sources")
+		}
+		patch, ok := patchSrcs["syscall_windows_go127.go"]
+		if !ok {
+			return false, nil, nil, fmt.Errorf("missing complete Go1.27 Windows syscall owner")
+		}
+		view, err := windowsStdCallSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patch.data, skips)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("Windows syscall complete source owner: %w", err)
+		}
+		ensureOverlay()
+		for filename, source := range view {
+			out[filename] = source
+		}
+		changed = true
+	}
+
+	if pkgPath == "internal/runtime/gc/scan" && ctx.goarch == "amd64" {
+		if skipAll || len(patchSrcs) != 1 {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan owner must retain the other SDK Go sources")
+		}
+		patch, ok := patchSrcs["scan_amd64.go"]
+		if !ok {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan owner lacks its complete Go body source")
+		}
+		view, err := gcScanSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patch.data, skips)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("AMD64 gc scan complete source owner: %w", err)
+		}
+		ensureOverlay()
+		for filename, source := range view {
+			out[filename] = source
+		}
+		changed = true
 	}
 
 	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
