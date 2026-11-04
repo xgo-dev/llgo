@@ -429,6 +429,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
+	nfn.SetAlignment(fn.Alignment())
 	nfn.SetLinkage(fn.Linkage())
 	nfn.SetComdat(fn.Comdat())
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
