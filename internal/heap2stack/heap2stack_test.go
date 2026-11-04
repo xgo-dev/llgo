@@ -9,6 +9,58 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestNilModule(t *testing.T) {
+	if err := Run(llvm.Module{}, llvm.TargetMachine{}); err == nil || !strings.Contains(err.Error(), "requires a module") {
+		t.Fatalf("nil module must return a module error, got %v", err)
+	}
+}
+
+func TestLoopAllocationObservablePointers(t *testing.T) {
+	mod := parseModule(t, `
+declare nonnull ptr @alloc(i64) allocsize(0)
+
+; Publishing a pointer can keep it alive after the allocation block finishes.
+define void @published(i1 %again, ptr %out) {
+entry:
+  br label %body
+body:
+  %p = call ptr @alloc(i64 16) allockind("alloc,uninitialized")
+  store ptr %p, ptr %out
+  br i1 %again, label %body, label %exit
+exit:
+  ret void
+}
+
+; An observed address is outside the proof for reusing a single entry slot.
+define i1 @compared(i1 %again, ptr %other) {
+entry:
+  br label %body
+body:
+  %p = call ptr @alloc(i64 16) allockind("alloc,uninitialized")
+  %equal = icmp eq ptr %p, %other
+  br i1 %again, label %body, label %exit
+exit:
+  ret i1 %equal
+}
+`)
+	tm := tailTarget(t, mod)
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(mod, tm); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"published", "compared"} {
+		body := mod.NamedFunction(name).String()
+		if !strings.Contains(body, "call ptr @alloc(") || strings.Contains(body, "alloca ") {
+			t.Fatalf("%s must keep observable storage on the heap:\n%s", name, body)
+		}
+	}
+}
+
 func TestAllocationPlacement(t *testing.T) {
 	llvm.InitializeNativeTarget()
 	target, err := llvm.GetTargetFromTriple(llvm.DefaultTargetTriple())

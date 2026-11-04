@@ -34,6 +34,9 @@ func tailModule(marker, path string) string {
 	case "spill":
 		derive = "%slot = alloca ptr\nstore ptr %p, ptr %slot\n%q = load ptr, ptr %slot\n"
 		use = "%q"
+	case "integer-spill":
+		derive = "%bits = ptrtoint ptr %p to i64\n%slot = alloca i64\nstore i64 %bits, ptr %slot\n%loaded = load i64, ptr %slot\n%q = inttoptr i64 %loaded to ptr\n"
+		use = "%q"
 	}
 	return fmt.Sprintf(`
 declare nonnull ptr @malloc(i64) allocsize(0)
@@ -70,7 +73,7 @@ func tailTarget(t *testing.T, mod llvm.Module) llvm.TargetMachine {
 
 func TestTailAllocationPlacement(t *testing.T) {
 	for _, marker := range []string{"tail", "musttail"} {
-		for _, path := range []string{"direct", "cross-block-gep", "phi", "select", "cyclic-phi", "returned", "spill"} {
+		for _, path := range []string{"direct", "cross-block-gep", "phi", "select", "cyclic-phi", "returned", "spill", "integer-spill"} {
 			t.Run(marker+"/"+path, func(t *testing.T) {
 				mod := parseModule(t, tailModule(marker, path))
 				tm := tailTarget(t, mod)
