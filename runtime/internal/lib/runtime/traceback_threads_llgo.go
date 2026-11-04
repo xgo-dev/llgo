@@ -12,13 +12,19 @@ import (
 
 func init() { rtdebug.TracebackCreator = tracebackCreator }
 
-func tracebackCreator() uintptr {
+// Capture the chain while the parent is alive; native registrations own a copy.
+// On Unix, native stack bounds avoid initializing symbol indexes at capture.
+// Windows keeps its platform walker, which can need symbol information. Choose
+// the visible creator only when a traceback is requested.
+func tracebackCreator(pcs []uintptr) int {
 	if !fpUnwindAvailable() {
 		return 0
 	}
-	var pcs [32]uintptr
-	n := fpCallers(0, pcs[:])
-	for _, pc := range pcs[:n] {
+	return fpCreatorCallers(pcs)
+}
+
+func creatorPC(pcs []uintptr) uintptr {
+	for _, pc := range pcs {
 		name := frameSymbol(pc - 1).function
 		if name != "" && visibleTracebackFrame(name, false) {
 			return pc
@@ -51,8 +57,8 @@ func appendCreatedBy(out []byte, parent uint64, pc uintptr) []byte {
 }
 
 func appendCurrentCreatedBy(out []byte) []byte {
-	parent, pc := rtdebug.TracebackParent()
-	return appendCreatedBy(out, parent, pc)
+	parent, pcs := rtdebug.TracebackParentPCs()
+	return appendCreatedBy(out, parent, creatorPC(pcs))
 }
 
 func appendOtherTracebacks(out []byte, system bool, limit int) []byte {
@@ -63,10 +69,12 @@ func appendOtherTracebacks(out []byte, system bool, limit int) []byte {
 			break
 		}
 		var id, parent uint64
-		var created, count uintptr
+		var pcCount, creatorCount uintptr
 		var state uint32
-		ptr := stacktrace.Info(s, &id, &parent, &created, &count, &state)
-		pcs := unsafe.Slice(ptr, count)
+		ptr := stacktrace.Info(s, &id, &parent, &pcCount, &state)
+		pcs := unsafe.Slice(ptr, pcCount)
+		creator := stacktrace.Creator(s, &creatorCount)
+		created := creatorPC(unsafe.Slice(creator, creatorCount))
 		status := "running"
 		if state == 1 {
 			status = "runnable"
