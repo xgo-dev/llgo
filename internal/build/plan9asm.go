@@ -330,7 +330,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		if err != nil {
 			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, sfile, err)
 		}
-		if _, native, err := foreignNativeImports(ctx, pkg, src); native {
+		if _, native, err := nativeAsmOptions(ctx, pkg, src); native {
 			if err != nil {
 				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
 			}

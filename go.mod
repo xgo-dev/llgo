@@ -32,4 +32,4 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
 
-replace github.com/xgo-dev/plan9asm => github.com/cpunion/plan9asm v0.0.0-20261103223044-14e9b3d7b735
+replace github.com/xgo-dev/plan9asm => github.com/cpunion/plan9asm v0.0.0-20261104012605-cdbbe84125aa
