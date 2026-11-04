@@ -2,13 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-extern void aes_op_0(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_1(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_2(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_3(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_4(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_5(uint8_t *, const uint8_t *, const uint32_t *);
-extern void aes_op_6(uint8_t *, const uint8_t *, const uint32_t *);
+extern void aes_op_0(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_1(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_2(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_3(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_4(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_5(uint8_t *, const uint8_t *, const void *);
+extern void aes_op_6(uint8_t *, const uint8_t *, const void *);
 extern uint32_t aes_subword(uint32_t);
 static void xor_key(uint8_t s[16], const uint32_t *key) {
   aes_op_5(s, s, key);
@@ -75,7 +75,7 @@ int main(void) {
     y[i + 1] = i * 11;
     want_xor[i] = x[i + 1] ^ y[i + 1];
   }
-  aes_op_6(x + 1, x + 1, (const uint32_t *)(y + 1));
+  aes_op_6(x + 1, x + 1, y + 1);
   if (memcmp(x + 1, want_xor, 16)) {
     puts("XORBlock failed");
     return 1;
