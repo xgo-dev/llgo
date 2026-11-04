@@ -1088,8 +1088,25 @@ func TestConstantFingerprintKinds(t *testing.T) {
 	if !isSafeStaticIfaceConstant(llvm.ConstInt(ctx.Int32Type(), 1, false), nil) {
 		t.Fatal("integer constant was rejected as a static interface constant")
 	}
+	if isSafeStaticIfaceConstant(llvm.Value{}, nil) {
+		t.Fatal("nil value was accepted as a static interface constant")
+	}
+	seen := map[llvm.Value]bool{}
+	seenValue := llvm.ConstInt(ctx.Int32Type(), 2, false)
+	seen[seenValue] = true
+	if isSafeStaticIfaceConstant(seenValue, seen) {
+		t.Fatal("visited constant was accepted as a static interface constant")
+	}
+	zeroGlobal := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 4), "fp.zero")
+	zeroGlobal.SetInitializer(llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 4)))
+	if got := pkg.constantFingerprint(zeroGlobal); got != "g:fp.zero" {
+		t.Fatalf("zero global fingerprint = %q, want g:fp.zero", got)
+	}
 	if isSafeStaticIfaceConstant(llvm.ConstFloat(ctx.DoubleType(), math.NaN()), nil) {
 		t.Fatal("NaN constant was accepted as a static interface constant")
+	}
+	if got := pkg.constantFingerprint(llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 4))); got != "z:4" {
+		t.Fatalf("zero aggregate fingerprint = %q, want z:4", got)
 	}
 	badAggregate := ctx.ConstStruct([]llvm.Value{
 		llvm.ConstInt(ctx.Int32Type(), 1, false),
@@ -3912,6 +3929,84 @@ func TestInterfaceBasicTypeUsed(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestStaticIfaceBoxRejectsLocalFunctions(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxfunc", "boxfunc")
+	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])), false)
+	helper := pkg.NewFunc("helper", sig, GoDecl)
+	hb := helper.MakeBody(1)
+	hb.Return(prog.Val(1))
+	hb.EndBuild()
+	helper.impl.SetLinkage(llvm.InternalLinkage)
+	linkOnce := pkg.NewFunc("linkonce", sig, GoDecl)
+	lb := linkOnce.MakeBody(1)
+	lb.Return(prog.Val(2))
+	lb.EndBuild()
+	linkOnce.impl.SetLinkage(llvm.LinkOnceAnyLinkage)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	for _, value := range []Expr{helper.Expr, linkOnce.Expr} {
+		if _, ok := b.staticIfaceBox(value.Type, value); ok {
+			t.Fatal("local or linkonce-any function received a static interface box")
+		}
+	}
+	b.Return()
+	b.EndBuild()
+}
+
+func TestHasStaticIfaceIdentityGuards(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := ctx.NewModule("identity")
+	defer mod.Dispose()
+	pkg := &aPackage{}
+	private := llvm.AddGlobal(mod, ctx.Int32Type(), "private")
+	private.SetLinkage(llvm.PrivateLinkage)
+	if pkg.hasStaticIfaceIdentity(private) {
+		t.Fatal("private global has static identity")
+	}
+	linkOnce := llvm.AddGlobal(mod, ctx.Int32Type(), "linkonce")
+	linkOnce.SetLinkage(llvm.LinkOnceAnyLinkage)
+	if pkg.hasStaticIfaceIdentity(linkOnce) {
+		t.Fatal("linkonce-any global has static identity")
+	}
+	fn := llvm.AddFunction(mod, "local", llvm.FunctionType(ctx.VoidType(), nil, false))
+	fn.SetLinkage(llvm.InternalLinkage)
+	if pkg.hasStaticIfaceIdentity(fn) {
+		t.Fatal("internal function has static identity")
+	}
+	gep := llvm.ConstGEP(ctx.Int32Type(), private, []llvm.Value{llvm.ConstInt(ctx.Int32Type(), 0, false)})
+	if pkg.hasStaticIfaceIdentity(gep) {
+		t.Fatal("constant expression has static identity")
+	}
+	zero := llvm.AddGlobal(mod, ctx.Int32Type(), "zero")
+	zero.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 9, false))
+	if !pkg.hasStaticIfaceIdentity(zero) {
+		t.Fatal("named external global lacks static identity")
+	}
+	aggregate := ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.ConstInt(ctx.Int32Type(), 2, false),
+	}, false)
+	if !pkg.hasStaticIfaceIdentity(aggregate) {
+		t.Fatal("constant aggregate lacks static identity")
+	}
+	if !pkg.hasStaticIfaceIdentity(llvm.ConstArray(llvm.ArrayType(ctx.Int32Type(), 2), []llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.ConstInt(ctx.Int32Type(), 2, false),
+	})) {
+		t.Fatal("constant array lacks static identity")
 	}
 }
 

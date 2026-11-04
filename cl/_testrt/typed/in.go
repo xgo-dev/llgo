@@ -1,4 +1,4 @@
-// LITTEST
+// LITTEST darwin/arm64 linux/amd64 windows/386 windows/amd64 windows/arm64
 // Scope: common
 package main
 
@@ -52,8 +52,18 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[A_OK]])
 // A named slice uses its named descriptor while the asserted payload retains
 // the ordinary three-word slice representation.
-// CHECK: br i1 true, label %{{.*}}, label %{{.*}}
-// CHECK: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
+// CHECK: br i1 {{.*}}, label %{{.*}}, label %{{.*}}
+// CHECK-DARWIN-ARM64: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
+// CHECK-LINUX-AMD64: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
+// CHECK-WINDOWS-386: [[BYTES_BOX:%.*]] = call ptr @"{{.*}}AllocU"(i64 {{[0-9]+}})
+// CHECK-WINDOWS-386-NEXT: store %"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[BYTES_BOX]]
+// CHECK-WINDOWS-386: load %"{{.*}}Slice", ptr [[BYTES_BOX]]
+// CHECK-WINDOWS-AMD64: [[BYTES_BOX:%.*]] = call ptr @"{{.*}}AllocU"(i64 {{[0-9]+}})
+// CHECK-WINDOWS-AMD64-NEXT: store %"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[BYTES_BOX]]
+// CHECK-WINDOWS-AMD64: load %"{{.*}}Slice", ptr [[BYTES_BOX]]
+// CHECK-WINDOWS-ARM64: [[BYTES_BOX:%.*]] = call ptr @"{{.*}}AllocU"(i64 {{[0-9]+}})
+// CHECK-WINDOWS-ARM64-NEXT: store %"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[BYTES_BOX]]
+// CHECK-WINDOWS-ARM64: load %"{{.*}}Slice", ptr [[BYTES_BOX]]
 // CHECK: [[BYTES_RESULT:%.*]] = phi { %"{{.*}}Slice", i1 } [ {{.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
 // CHECK: [[BYTES_OK:%.*]] = extractvalue { %"{{.*}}Slice", i1 } [[BYTES_RESULT]], 1
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[BYTES_OK]])

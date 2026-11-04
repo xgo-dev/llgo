@@ -99,7 +99,7 @@ type eface struct {
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[10]_llgo_int", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"_llgo_closure${{.*}}", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"*_llgo_int", ptr null })
-// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr @"_llgo_ifacebox${{.*}}" })
+// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"{{.*}}/cl/_testrt/eface.struct${{.*}}", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_main.T, ptr @"_llgo_ifacebox${{.*}}" })

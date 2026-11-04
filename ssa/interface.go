@@ -247,9 +247,10 @@ func (p Package) hasStaticIfaceIdentity(v llvm.Value) bool {
 		// source element type. Use runtime boxing for these expressions.
 		return false
 	}
-	if !v.IsAGlobalVariable().IsNil() {
+	if !v.IsAGlobalVariable().IsNil() || !v.IsAFunction().IsNil() {
 		return p.isStaticStringBacking(v) ||
-			(v.Name() != "" && v.Linkage() != llvm.PrivateLinkage && v.Linkage() != llvm.InternalLinkage)
+			(v.Name() != "" && v.Linkage() != llvm.PrivateLinkage &&
+				v.Linkage() != llvm.InternalLinkage && v.Linkage() != llvm.LinkOnceAnyLinkage)
 	}
 	for i := 0; i < v.OperandsCount(); i++ {
 		if !p.hasStaticIfaceIdentity(v.Operand(i)) {
