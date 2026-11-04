@@ -53,6 +53,20 @@ func TestAESMachineCode(t *testing.T) {
 					first = fn
 				}
 			}
+			// An aligned typed stack slot must vanish into the AES round chain.
+			chain := pkg.NewFunc("aes_local_chain", sig, CDecl)
+			cb := chain.MakeBody(1)
+			state := cb.Convert(prog.Pointer(prog.Byte()), cb.AESAlloca(16))
+			cb.AESRound(AESEncryptRound, state, chain.Param(1), chain.Param(2))
+			for range 12 {
+				cb.AESRound(AESEncryptRound, state, state, chain.Param(2))
+			}
+			cb.AESRound(AESEncryptLast, chain.Param(0), state, chain.Param(2))
+			cb.Return()
+			cb.EndBuild()
+			if !strings.Contains(chain.impl.String(), "alloca [1 x <16 x i8>], align 16") {
+				t.Fatalf("AES buffer is not statically typed and aligned:\n%s", chain.impl.String())
+			}
 			u32 := types.Typ[types.Uint32]
 			sub := pkg.NewFunc("aes_subword", types.NewSignatureType(nil, nil, nil,
 				types.NewTuple(types.NewParam(token.NoPos, nil, "x", u32)),
@@ -73,6 +87,21 @@ func TestAESMachineCode(t *testing.T) {
 			defer pbo.Dispose()
 			if err := mod.RunPasses("default<O3>", prog.TargetMachine(), pbo); err != nil {
 				t.Fatal(err)
+			}
+			if body := chain.impl.String(); strings.Contains(body, "alloca ") || strings.Count(body, "store ") != 1 {
+				t.Fatalf("AES state was not promoted to registers:\n%s", body)
+			}
+			for _, attr := range first.impl.GetFunctionAttributes() {
+				if !attr.IsString() || attr.GetStringKind() != "target-features" {
+					continue
+				}
+				features := strings.Split(attr.GetStringValue(), ",")
+				for _, feature := range features {
+					if (tc.arch == "386" && (feature == "-sse" || feature == "-sse2" || feature == "+soft-float")) ||
+						(tc.arch == "arm" && strings.HasPrefix(strings.TrimLeft(feature, "+-"), "armv") && feature != "+armv8-a") {
+						t.Fatalf("AES function retained baseline requirement %q", feature)
+					}
+				}
 			}
 			// Full-module optimization must leave a real dispatch boundary.
 			if !strings.Contains(baseline.impl.String(), "call void @aes_op_0") {

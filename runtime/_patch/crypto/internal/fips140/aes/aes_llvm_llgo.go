@@ -61,7 +61,7 @@ func llgoAESSubWord(uint32) uint32
 
 // Buffers contain no pointers and stay within the containing kernel's frame.
 //
-//go:linkname llgoAESAlloca llgo.alloca
+//go:linkname llgoAESAlloca llgo.aesAlloca
 func llgoAESAlloca(uintptr) unsafe.Pointer
 
 const (
@@ -170,10 +170,10 @@ func llgoCryptBlock(key *uint32, rounds int, dst, src *byte, decrypt bool) {
 }
 
 // The public CTR implementation supplies exactly 1, 2, 4 or 8 complete blocks.
-// Load the source batch before storing any result, preserving in-place use.
+// Public CTR rejects inexact overlap, so reading each source block immediately
+// before its store supports both disjoint buffers and exact in-place use.
 func llgoCTR(key *uint32, rounds int, dst, src *byte, lo, hi uint64, blocks int) {
-	buffer := (*[2][8][16]byte)(llgoAESAlloca(256))
-	states, input := &buffer[0], &buffer[1]
+	states := (*[8][16]byte)(llgoAESAlloca(128))
 	if blocks < 1 || blocks > len(states) {
 		panic("invalid AES block count")
 	}
@@ -187,7 +187,6 @@ func llgoCTR(key *uint32, rounds int, dst, src *byte, lo, hi uint64, blocks int)
 		}
 		counter := (*[2]uint64)(unsafe.Pointer(&states[i]))
 		counter[0], counter[1] = high, low
-		copy(input[i][:], unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(src), i*16)), 16))
 		if !llgoAESPreKey {
 			llgoAESRound(llgoXORKey, &states[i][0], &states[i][0], llgoKey(key, 0))
 		}
@@ -210,7 +209,7 @@ func llgoCTR(key *uint32, rounds int, dst, src *byte, lo, hi uint64, blocks int)
 		if llgoAESPreKey {
 			llgoAESRound(llgoXORKey, &states[i][0], &states[i][0], llgoKey(key, rounds))
 		}
-		llgoAESRound(llgoXORBlock, &states[i][0], &states[i][0], &input[i][0])
+		llgoAESRound(llgoXORBlock, &states[i][0], &states[i][0], (*byte)(unsafe.Add(unsafe.Pointer(src), i*16)))
 		copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(dst), i*16)), 16), states[i][:])
 	}
 }

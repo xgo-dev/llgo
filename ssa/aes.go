@@ -21,11 +21,23 @@ const (
 	AESXORBlock
 )
 
+// AESAlloca reserves fixed-size, pointer-free AES state in the entry block.
+// Explicit vector storage and alignment permit SROA while making counter-word
+// accesses valid on strict-alignment targets as well.
+func (b Builder) AESAlloca(size int) Expr {
+	if size != 16 && size != 128 {
+		panic("aesAlloca: expected 16 or 128 bytes")
+	}
+	ptr := llvm.CreateAlloca(b.Func.entryAllocaBuilder(), llvm.ArrayType(b.aesBytes(), size/16))
+	ptr.SetAlignment(16)
+	return Expr{ptr, b.Prog.VoidPtr()}
+}
+
 func (b Builder) requireAESFeatures() {
 	var required, cpu string
 	switch b.Prog.Target().GOARCH {
 	case "amd64", "386":
-		required = "+aes,+sse2,-soft-float"
+		required = "+aes,+sse,+sse2,-soft-float"
 	case "arm64":
 		required = "+aes,+neon"
 	case "arm":
@@ -46,7 +58,11 @@ func (b Builder) requireAESFeatures() {
 	for _, feature := range strings.Split(required, ",") {
 		var kept []string
 		for _, old := range strings.Split(features, ",") {
-			if old != "" && old[1:] != feature[1:] {
+			name := strings.TrimLeft(old, "+-")
+			if b.Prog.Target().GOARCH == "arm" && strings.HasPrefix(name, "armv") && name != "armv8-a" {
+				continue // the guarded function targets ARMv8, not the baseline ISA
+			}
+			if name != "" && name != strings.TrimLeft(feature, "+-") {
 				kept = append(kept, old)
 			}
 		}
