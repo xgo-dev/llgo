@@ -20,7 +20,11 @@ func plan9asmTranslateOptions(ctx *context) llplan9asm.TranslateOptions {
 	opt := llplan9asm.TranslateOptions{
 		GOROOT: ctx.commands.lookup("GOROOT"), Overlay: conf.Overlay,
 		GO386: conf.GO386, GOARM: conf.GOARM, GOAMD64: conf.GOAMD64, GOARM64: conf.GOARM64,
-		ToolTags: conf.toolTags,
+		ToolTags:    conf.toolTags,
+		Environment: ctx.commands.environ,
+	}
+	if conf.sourceGoVersion != "" {
+		opt.Environment = withEnv(opt.Environment, "GOEXPERIMENT="+conf.sourceGoExperiment)
 	}
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
 		opt.X87Mode = extplan9asm.X87Software
