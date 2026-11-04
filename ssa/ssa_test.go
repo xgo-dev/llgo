@@ -880,6 +880,12 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	if !ok1 || !ok2 || itab1.impl != itab2.impl {
 		t.Fatal("repeated T2I did not reuse the static itab global")
 	}
+	// Exercise the module-global fallback independently of the type cache.
+	pkg.staticItabByType = nil
+	itab3, ok3 := b.staticItab(intf, concrete, tabi, tcon)
+	if !ok3 || itab3.impl != itab1.impl {
+		t.Fatal("named static itab was not reused after cache reset")
+	}
 	if got := len(pkg.staticItabByType); got != 1 {
 		t.Fatalf("static itab cache has %d entries, want 1", got)
 	}
@@ -1065,6 +1071,16 @@ func TestConstantFingerprintKinds(t *testing.T) {
 	}
 	if !isSafeStaticIfaceConstant(llvm.ConstInt(ctx.Int32Type(), 1, false), nil) {
 		t.Fatal("integer constant was rejected as a static interface constant")
+	}
+	if isSafeStaticIfaceConstant(llvm.ConstFloat(ctx.DoubleType(), math.NaN()), nil) {
+		t.Fatal("NaN constant was accepted as a static interface constant")
+	}
+	badAggregate := ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.Undef(ctx.Int32Type()),
+	}, false)
+	if isSafeStaticIfaceConstant(badAggregate, nil) {
+		t.Fatal("aggregate containing undef was accepted as a static interface constant")
 	}
 }
 
