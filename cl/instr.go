@@ -2724,6 +2724,15 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
+			if act == llssa.Call && cv.Pkg != nil && cv.Pkg.Pkg.Path() == "math/bits" {
+				// Match the resolved symbol so explicit linkname overrides keep
+				// their behavior. Other call forms retain the library function.
+				switch aFn.Name() {
+				case "math/bits.RotateLeft", "math/bits.RotateLeft8", "math/bits.RotateLeft16", "math/bits.RotateLeft32", "math/bits.RotateLeft64":
+					ret = b.RotateLeft(args[0], args[1])
+					return
+				}
+			}
 			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
