@@ -114,16 +114,6 @@ func bindAMD64Frame(pkg *packages.Package, source []byte, filename, goos, goarch
 		Target: goos + "/" + goarch, Environment: env,
 	}
 	var owner *extplan9asm.GoAMD64FrameSource
-	relative, relativeErr := filepath.Rel(filepath.Join(root, "src"), directory)
-	if relativeErr == nil && filepath.IsLocal(relative) {
-		owner, err = extplan9asm.CaptureGoAMD64SDKFrameSource(ctx, goPkg, request)
-	} else if pkg.Module != nil && pkg.Module.Version != "" && pkg.Module.Replace == nil {
-		owner, err = extplan9asm.CaptureGoAMD64DownloadedFrameSource(ctx, goPkg, extplan9asm.GoAMD64DownloadedFrameCaptureRequest{
-			Original: request, SourceModule: pkg.Module.Path, SourceVersion: pkg.Module.Version,
-		})
-	} else {
-		owner, err = extplan9asm.CaptureGoAMD64FrameSource(ctx, goPkg, request)
-	}
 	finish := func() error {
 		var result error
 		if owner != nil {
@@ -132,6 +122,20 @@ func bindAMD64Frame(pkg *packages.Package, source []byte, filename, goos, goarch
 		cancel()
 		return errors.Join(result, os.RemoveAll(temporary))
 	}
+	relative, relativeErr := filepath.Rel(filepath.Join(root, "src"), directory)
+	if relativeErr == nil && filepath.IsLocal(relative) {
+		owner, err = extplan9asm.CaptureGoAMD64SDKFrameSource(ctx, goPkg, request)
+	} else if pkg.Module != nil && pkg.Module.Version != "" && pkg.Module.Replace == nil {
+		if err := prepareDownloadedFrameMetadata(ctx, goBinary, temporary, env, pkg.Module.Path, pkg.Module.Version); err != nil {
+			return nil, nil, errors.Join(err, finish())
+		}
+		owner, err = extplan9asm.CaptureGoAMD64DownloadedFrameSource(ctx, goPkg, extplan9asm.GoAMD64DownloadedFrameCaptureRequest{
+			Original: request, SourceModule: pkg.Module.Path, SourceVersion: pkg.Module.Version,
+		})
+	} else {
+		owner, err = extplan9asm.CaptureGoAMD64FrameSource(ctx, goPkg, request)
+	}
+
 	if err != nil {
 		return nil, nil, errors.Join(err, finish())
 	}
