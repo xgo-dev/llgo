@@ -22,7 +22,7 @@ const (
 )
 
 // CHECK-LABEL: define double @main.Float64frombits(i64 %0){{.*}} {
-// CHECK: [[BITS_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[BITS_ADDR:%.*]] = alloca i64, align 8
 // CHECK: store i64 %0, ptr [[BITS_ADDR]]
 // CHECK: [[FLOAT:%.*]] = load double, ptr [[BITS_ADDR]]
 // CHECK: ret double [[FLOAT]]

@@ -52,7 +52,7 @@ func main() {
 // by a descriptor comparison. The pointer value uses an itab and a code/env
 // pair for the interface call.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK: %[[BOX:[0-9]+]] = alloca %"main.T[string,int]", align 8
 // CHECK: store %"main.T[string,int]" %{{[0-9]+}}, ptr %[[BOX]], align 8
 // CHECK: %[[EBOX:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_main.T[string,int]", ptr undef }, ptr %[[BOX]], 1
 // CHECK: %[[ETYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0

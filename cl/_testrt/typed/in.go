@@ -36,8 +36,8 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[STRING_OK]])
 // The named array is boxed, matched by its named type, copied out, and returned
 // together with the comma-ok bit used by the print.
-// CHECK: call ptr @"{{.*}}AllocU"(i{{[0-9]+}} {{[0-9]+}})
-// CHECK: [[A_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.A, ptr undef }, ptr %{{.*}}, 1
+// CHECK: store [2 x {{i[0-9]+}}] {{%.*}}, ptr [[A_BOX:%[0-9]+]]
+// CHECK: [[A_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.A, ptr undef }, ptr [[A_BOX]], 1
 // CHECK: [[A_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[A_EFACE]], 0
 // CHECK-NEXT: [[IS_A:%.*]] = icmp eq ptr [[A_DYN_TYPE]], @_llgo_main.A
 // CHECK: [[A_DYN_DATA:%.*]] = extractvalue %"{{.*}}eface" [[A_EFACE]], 1

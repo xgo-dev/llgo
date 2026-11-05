@@ -1052,6 +1052,17 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = cl.PrepareEscapeAnalysis(ctx.prog, ctx.progSSA, ctx.patches)
+	escapeSpan.done()
+	if report := ctx.commands.lookup("LLGO_ESCAPE"); report != "" && report != "0" {
+		if report == "1" {
+			report = ""
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, report); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
 	allPkgs = append(allPkgs, depPkgs...)
 	var nativeTestRoots []*packages.Package
 	if mode == ModeTest && !inv.compileOnly {

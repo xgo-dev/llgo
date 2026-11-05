@@ -21,15 +21,15 @@ package main
 // The captured 42 is stored in the closure environment before the function pair is deferred.
 // CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
 // CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
-// CHECK: [[VALUE_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_ENV:%[0-9]+]], i8 0, i64 8, i1 false)
 // CHECK: store ptr [[VALUE_CAPTURE]], ptr %{{.*}}
 // CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
 // CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // CHECK: store { ptr, ptr } [[VALUE_FN]], ptr %{{.*}}
-// When unwound, the deferred function pair is removed, freed, and invoked with its environment.
+// When unwound, the deferred function pair is removed and invoked with its environment.
 // CHECK: [[VALUE_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[VALUE_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[VALUE_RUN_FN:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[VALUE_NODE_DATA]], 2
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[VALUE_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[VALUE_RUN_ENV:%.*]] = extractvalue { ptr, ptr } [[VALUE_RUN_FN]], 1
 // CHECK: [[VALUE_RUN_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[VALUE_RUN_FN]], 0
 // CHECK: [[VALUE_RUN_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[VALUE_RUN_CODE_RAW]])
@@ -54,7 +54,7 @@ package main
 // CHECK: store { ptr, ptr } [[FIELD_FN]], ptr %{{.*}}
 // CHECK: [[FIELD_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[FIELD_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[FIELD_RUN_FN:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[FIELD_NODE_DATA]], 2
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[FIELD_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[FIELD_RECOVER_CODE:%.*]] = extractvalue { ptr, ptr } [[FIELD_RUN_FN]], 0
 // CHECK: [[FIELD_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}/runtime/internal/runtime.StartRecoverFrame"(ptr [[FIELD_RECOVER_CODE]])
 // CHECK: [[FIELD_RUN_ENV:%.*]] = extractvalue { ptr, ptr } [[FIELD_RUN_FN]], 1
@@ -77,7 +77,7 @@ package main
 // CHECK: [[METHOD_NODE_DATA:%.*]] = load { ptr, i64, ptr, ptr }, ptr [[METHOD_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[METHOD_RECEIVER:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 2
 // CHECK: [[METHOD_CODE:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[METHOD_NODE_DATA]], 3
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[METHOD_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[METHOD_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[METHOD_CODE]], 0
 // CHECK: [[METHOD_PAIR:%.*]] = insertvalue { ptr, ptr } [[METHOD_PAIR_0]], ptr null, 1
 // CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_RECEIVER]], { ptr, ptr } [[METHOD_PAIR]])
@@ -98,7 +98,7 @@ package main
 // CHECK: [[STRUCT_NODE_DATA:%.*]] = load { ptr, i64, ptr, { ptr, ptr } }, ptr [[STRUCT_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[STRUCT_RUN_PROCESSOR:%.*]] = extractvalue { ptr, i64, ptr, { ptr, ptr } } [[STRUCT_NODE_DATA]], 2
 // CHECK: [[STRUCT_RUN_FN:%.*]] = extractvalue { ptr, i64, ptr, { ptr, ptr } } [[STRUCT_NODE_DATA]], 3
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.FreeDeferNode"(ptr [[STRUCT_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: call void @"main.(*Processor).SetCallback"(ptr [[STRUCT_RUN_PROCESSOR]], { ptr, ptr } [[STRUCT_RUN_FN]])
 
 // ARM64-LABEL: define void @"main.testDeferStructClosure$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {

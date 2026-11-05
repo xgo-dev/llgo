@@ -29,7 +29,8 @@ func Print(p *Foo) {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[MAIN_FOO:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[MAIN_FOO:%[0-9]+]] = alloca { i32, i1 }, align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[MAIN_FOO]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[MAIN_A:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 0
 // CHECK-NEXT: [[MAIN_OK:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 1
 // CHECK-NEXT: store i32 100, ptr [[MAIN_A]]
