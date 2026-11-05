@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,6 +41,9 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 		conf := NewDefaultConf(ModeBuild)
 		conf.BuildParallelism, _ = strconv.Atoi(os.Getenv(prefix + "WORKERS"))
 		conf.OutFile = filepath.Join(t.TempDir(), "probe")
+		if runtime.GOOS == "windows" {
+			conf.OutFile += ".exe"
+		}
 		pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 		if err != nil {
 			t.Fatal(err)
