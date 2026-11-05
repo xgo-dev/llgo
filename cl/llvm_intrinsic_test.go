@@ -40,6 +40,13 @@ func Population(x uint32) uint32 { return population(x) }
 func Leading(x uint64) uint64 { return leading(x, false) }
 func Root(x float64) float64 { return root(x) }
 func Overflow(x, y uint64) (uint64, bool) { return overflow(x, y) }
+func UseOverflow(x, y uint64) (uint64, bool) { return Overflow(x, y) }
+func OverflowFlag(x, y uint64) bool { _, over := overflow(x, y); return over }
+func UseOverflowFlag(x, y uint64) bool { return OverflowFlag(x, y) }
+func Reordered(x, y uint64) (bool, uint64) { n, over := overflow(x, y); return over, n }
+func UseReordered(x, y uint64) (bool, uint64) { return Reordered(x, y) }
+func Mixed(x, y uint64) (uint64, bool) { n, _ := overflow(x, y); return n, false }
+func UseMixed(x, y uint64) (uint64, bool) { return Mixed(x, y) }
 func Word(x uintptr) uintptr { return word(x) }
 func Signed(x, y int32) int32 { return signed(x, y) }
 func Saturate(x float64) int32 { return saturate(x) }
@@ -71,9 +78,10 @@ var OverflowValue = Overflow
 			for fn, intrinsic := range map[string]string{
 				"Rotate": "llvm.fshl.i8", "UseRotate": "llvm.fshl.i8", "Population": "llvm.ctpop.i32",
 				"Leading": "llvm.ctlz.i64", "Root": "llvm.sqrt.f64",
-				"Overflow": "llvm.umul.with.overflow.i64",
-				"Word":     "llvm.ctpop.i" + strconv.Itoa(prog.GoWordSize()*8),
-				"Signed":   "llvm.sadd.sat.i32", "Saturate": "llvm.fptosi.sat.i32.f64",
+				"Overflow":    "llvm.umul.with.overflow.i64",
+				"UseOverflow": "llvm.umul.with.overflow.i64", "UseOverflowFlag": "llvm.umul.with.overflow.i64",
+				"Word":   "llvm.ctpop.i" + strconv.Itoa(prog.GoWordSize()*8),
+				"Signed": "llvm.sadd.sat.i32", "Saturate": "llvm.fptosi.sat.i32.f64",
 			} {
 				ir := mustNamedFunction(t, mod, "intrinsics."+fn).String()
 				if strings.Count(ir, "@"+intrinsic+"(") != 1 {
@@ -82,6 +90,12 @@ var OverflowValue = Overflow
 			}
 			if ir := mustNamedFunction(t, mod, "intrinsics.UseKeepRotate").String(); !strings.Contains(ir, "@intrinsics.KeepRotate(") {
 				t.Fatalf("wrapper expansion ignored go:noinline:\n%s", ir)
+			}
+			for _, name := range []string{"Reordered", "Mixed"} {
+				ir := mustNamedFunction(t, mod, "intrinsics.Use"+name).String()
+				if !strings.Contains(ir, "@intrinsics."+name+"(") {
+					t.Fatalf("non-forwarding tuple wrapper was expanded:\n%s", ir)
+				}
 			}
 			if !mod.NamedFunction("intrinsics.funnel").IsNil() || !mod.NamedFunction("check").IsNil() {
 				t.Fatal("intrinsic binding or validation function escaped into output")

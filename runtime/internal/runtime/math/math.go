@@ -5,9 +5,12 @@ import "github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 const MaxUintptr = ^uintptr(0)
 
 // MulUintptr returns a * b and whether the multiplication overflowed.
-//
-//llgo:link MulUintptr llvm.umul.with.overflow
 func MulUintptr(a, b uintptr) (uintptr, bool) {
+	return mulUintptr(a, b)
+}
+
+//llgo:link mulUintptr llvm.umul.with.overflow
+func mulUintptr(a, b uintptr) (uintptr, bool) {
 	if a|b < 1<<(4*goarch.PtrSize) || a == 0 {
 		return a * b, false
 	}

@@ -173,7 +173,8 @@ equivalence with a Go library function or enable fast-math semantics.
 
 Raw bindings support direct calls only. Use an ordinary Go wrapper for function
 values, `go` and `defer`. For direct calls, LLGo expands small wrappers containing
-one scalar intrinsic call and scalar conversions, including across packages
+one intrinsic call with scalar results, scalar conversions and tuple extraction
+or complete tuple forwarding, including across packages
 without LTO. Argument expressions are evaluated once. `//go:noinline` disables
 this expansion for that wrapper. More complex wrappers use normal calls and
 LLVM optimization; their inlining is not guaranteed.
