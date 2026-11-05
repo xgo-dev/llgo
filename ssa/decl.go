@@ -470,7 +470,7 @@ func (p Package) newFunc(
 	}
 	switch name {
 	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocNoScanU",
+		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU",
 		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",
 		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocRoot":
 		// These runtime allocators return a non-null pointer, even for zero

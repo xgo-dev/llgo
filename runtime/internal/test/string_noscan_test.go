@@ -33,7 +33,7 @@ func TestStringAllocationsNoScan(t *testing.T) {
 		{"StringCat", unsafe.Pointer(unsafe.StringData(joined))},
 		{"CStrDup", unsafe.Pointer(rt.CStrDup(stringRuntimeValue(text)))},
 		{"CStrDupEmpty", unsafe.Pointer(rt.CStrDup(rt.String{}))},
-		{"AllocNoScanU", rt.AllocNoScanU(32)},
+		{"AllocAtomicU", rt.AllocAtomicU(32)},
 	} {
 		base := bdwgc.Base(tc.ptr)
 		if base == nil {
