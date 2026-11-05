@@ -337,6 +337,8 @@ type UncommonType struct {
 
 // Method returns a pointer into t's method table without copying it.
 // Callers must treat the referenced metadata as read-only.
+// The table can be dynamically allocated; callers must keep its backing type
+// metadata alive for as long as they use the returned pointer.
 // It panics if i is out of range.
 func (t *UncommonType) Method(i int) *Method {
 	if uint(i) >= uint(t.Mcount) {

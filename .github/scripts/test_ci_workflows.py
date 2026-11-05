@@ -212,7 +212,7 @@ class WorkflowContractTests(unittest.TestCase):
         # treats its value as a package. Preserve the shell when moving steps.
         self.assertEqual(step["shell"], "bash")
         self.assertEqual(step["working-directory"], "runtime")
-        self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
+        self.assertIn("-coverprofile=../coverage-runtime-helpers.txt", step["run"])
         for package in ("./abi", "./internal/traceback", "./internal/wordmap"):
             self.assertIn(package, step["run"].split())
 
