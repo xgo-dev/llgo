@@ -62,15 +62,20 @@ func TestRotateLeftIntrinsic(t *testing.T) {
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
+		{GOOS: "linux", GOARCH: "arm"},
 		{GOOS: "wasip1", GOARCH: "wasm"},
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
-			ir := compileWithRewritesTarget(t, rotateSource, nil, &target)
-			verifyRotateIR(t, ir)
-			word := 64
-			if target.GOARCH == "386" || target.GOARCH == "wasm" {
-				word = 32
+			ssapkg, _, files := buildGoSSAPkg(t, rotateSource)
+			prog := newLLSSAProgForTarget(t, &target)
+			defer prog.Dispose()
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
 			}
+			ir := pkg.String()
+			verifyRotateIR(t, ir)
+			word := int(prog.SizeOf(prog.Uintptr())) * 8
 			for _, test := range []struct {
 				name  string
 				width int

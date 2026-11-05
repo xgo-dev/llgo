@@ -540,6 +540,12 @@ func isPredOp(op token.Token) bool {
 
 // RotateLeft rotates a scalar integer by count modulo its bit width.
 func (b Builder) RotateLeft(x, count Expr) Expr {
+	for _, operand := range []Expr{x, count} {
+		basic, ok := operand.Type.RawType().Underlying().(*types.Basic)
+		if !ok || basic.Info()&types.IsInteger == 0 {
+			panic("rotateLeft: expected scalar integer arguments")
+		}
+	}
 	distance := count.impl
 	countWidth := distance.Type().IntTypeWidth()
 	if countWidth > x.ll.IntTypeWidth() {
