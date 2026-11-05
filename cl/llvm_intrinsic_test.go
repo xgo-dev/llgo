@@ -8,6 +8,7 @@ import (
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestLLVMIntrinsicLinks(t *testing.T) {
@@ -123,6 +124,27 @@ func Use() uint8 { return rotate(next(), 3) }
 	if strings.Count(ir, "@adapter.next(") != 1 || strings.Contains(ir, "@adapter.rotate(") || !strings.Contains(ir, "@llvm.fshl.i8(") {
 		t.Fatalf("wrapper did not preserve single evaluation:\n%s", ir)
 	}
+}
+
+func TestLLVMIntrinsicWrapperRejectsIncompatiblePatchArity(t *testing.T) {
+	const src = `package adapter
+func Original(x uint8) uint8 { return x }
+func Replacement(x uint8, k int) uint8 { return x }
+`
+	pkg, fset, _ := buildGoSSAPkg(t, src)
+	original, replacement := pkg.Func("Original"), pkg.Func("Replacement")
+	ctx := &context{fset: fset}
+	defer func() {
+		got := fmt.Sprint(recover())
+		if !strings.Contains(got, "replacement requires 2 arguments, call provides 1") || !strings.Contains(got, "foo.go:") {
+			t.Fatalf("diagnostic = %q", got)
+		}
+	}()
+	// A nil builder ensures rejection happens before evaluating caller arguments.
+	ctx.expandLLVMIntrinsicWrapper(nil, replacement, &ssa.CallCommon{
+		Value: original,
+		Args:  []ssa.Value{original.Params[0]},
+	})
 }
 
 func TestLLVMIntrinsicLinkErrors(t *testing.T) {

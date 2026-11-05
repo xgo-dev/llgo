@@ -132,6 +132,8 @@ func (b Builder) CallLLVMIntrinsic(d *LLVMIntrinsic, args ...Expr) (Expr, error)
 	}
 	for _, i := range d.immargs {
 		v := values[i]
+		// LLVM immarg permits integer or floating-point literals. The current
+		// supported math families use integer/boolean immediate flags.
 		if v.IsAConstantInt().IsNil() && v.IsAConstantFP().IsNil() {
 			return Nil, fmt.Errorf("%s: argument %d must be an immediate constant (immarg)", d.name, i+1)
 		}

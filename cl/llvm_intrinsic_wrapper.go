@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"fmt"
 	"go/types"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -13,23 +14,29 @@ import (
 // available for function values, go and defer. No operation-specific rules or
 // arbitrary Go inlining are involved.
 func (p *context) llvmIntrinsicWrapper(fn *ssa.Function) *ssa.Function {
-	if disableInline || hasNoInlineDirective(fn) || p.llvmIntrinsicHasEnv(fn) {
+	if disableInline {
 		return nil
 	}
 	if wrapper, ok := p.llvmWrappers[fn]; ok {
 		return wrapper
 	}
 	original := fn
+	if hasNoInlineDirective(fn) || p.llvmIntrinsicHasEnv(fn) {
+		fn = nil
+	}
 	// Calls in importing packages still refer to the original Go SSA member.
 	// Analyze the replacement body when a package patch supplies that member.
-	if fn.Pkg != nil && fn.Signature.Recv() == nil {
+	if fn != nil && fn.Pkg != nil && fn.Signature.Recv() == nil {
 		if patch, ok := p.patches[llssa.PathOf(fn.Pkg.Pkg)]; ok {
 			if replacement := patch.Alt.Func(fn.Name()); replacement != nil {
 				fn = replacement
 			}
 		}
 	}
-	if hasNoInlineDirective(fn) || p.llvmIntrinsicHasEnv(fn) || !p.isLLVMIntrinsicWrapper(fn) {
+	if fn != nil && fn != original && (hasNoInlineDirective(fn) || p.llvmIntrinsicHasEnv(fn)) {
+		fn = nil
+	}
+	if fn != nil && !p.isLLVMIntrinsicWrapper(fn) {
 		fn = nil
 	}
 	if p.llvmWrappers == nil {
@@ -106,6 +113,9 @@ func (p *context) isLLVMIntrinsicWrapper(fn *ssa.Function) bool {
 }
 
 func (p *context) expandLLVMIntrinsicWrapper(b llssa.Builder, fn *ssa.Function, call *ssa.CallCommon) llssa.Expr {
+	if len(call.Args) != len(fn.Params) {
+		p.llvmIntrinsicError(call.Pos(), fn, fmt.Errorf("intrinsic wrapper parameter count mismatch: replacement requires %d arguments, call provides %d", len(fn.Params), len(call.Args)))
+	}
 	values := make(map[ssa.Value]llssa.Expr)
 	args := p.compileValues(b, call.Args, fnNormal)
 	for i, param := range fn.Params {
