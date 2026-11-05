@@ -13,6 +13,11 @@ _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
     github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods:
     _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+_llgo_itab$dACDlmxu21tSXRxXNpIHvwgX0x95CkEbRwSczvSHkCQ:
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+    _llgo_main.T
+    main.(*T).M
+    main.(*T).N
 _llgo_main.T:
     *_llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
@@ -27,10 +32,8 @@ main.(*T).N:
 main.init:
     main.init$guard
 main.main:
-    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
-    _llgo_main.T
+    _llgo_itab$dACDlmxu21tSXRxXNpIHvwgX0x95CkEbRwSczvSHkCQ
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
     main.use
 main.use:
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData

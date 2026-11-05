@@ -58,9 +58,7 @@ func main() {
 // CHECK: %[[ETYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
 // CHECK: icmp eq ptr %[[ETYPE]], @"_llgo_main.T[string,int]"
 // CHECK: %[[OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK: %[[ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @"*_llgo_main.T[string,int]")
-// CHECK: %[[IFACE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[ITAB]], 0
-// CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE0]], ptr %[[OBJ]], 1
+// CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[OBJ]], 1
 // CHECK: %[[DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]])
 // CHECK: %[[VTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], 0
 // CHECK: %[[SLOT:[0-9]+]] = getelementptr ptr, ptr %[[VTAB]], i64 3
