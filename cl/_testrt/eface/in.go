@@ -1,4 +1,4 @@
-// LITTEST
+// LITTEST darwin/amd64 darwin/arm64 linux/386 linux/amd64 linux/arm64 windows/386 windows/amd64 windows/arm64
 package main
 
 import (
@@ -24,21 +24,21 @@ func dump(v any) {
 // CHECK-LABEL: define void @main.dumpTyp(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
 // CHECK: [[TYPE_NAME:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
-// CHECK: [[TYPE_KIND:%.*]] = call i64 @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
+// CHECK: [[TYPE_KIND:%.*]] = call i{{[0-9]+}} @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
 // CHECK: [[TYPE_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[TYPE_NAME]])
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 [[TYPE_KIND]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 {{%.*}})
 // CHECK: [[TYPE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
 // CHECK: [[HAS_ELEM:%.*]] = icmp ne ptr [[TYPE_ELEM]], null
 // CHECK: br i1 [[HAS_ELEM]], label %{{.*}}, label %{{.*}}
 // CHECK: [[RECURSE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 7 })
 // CHECK: call void @main.dumpTyp(ptr [[RECURSE_ELEM]], %"{{.*}}String" [[ELEM_SEP]])
 // CHECK: [[RECHECK_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
 // CHECK: [[HAS_UNCOMMON:%.*]] = icmp ne ptr [[RECHECK_UNCOMMON]], null
 // CHECK: br i1 [[HAS_UNCOMMON]], label %{{.*}}, label %{{.*}}
 // CHECK: [[DUMP_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i64 9 })
+// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 9 })
 // CHECK: call void @main.dumpUncommon(ptr [[DUMP_UNCOMMON]], %"{{.*}}String" [[UNCOMMON_SEP]])
 func dumpTyp(t *abi.Type, sep string) {
 	print(sep)
@@ -99,7 +99,9 @@ type eface struct {
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[10]_llgo_int", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"_llgo_closure${{.*}}", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"*_llgo_int", ptr null })
-// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })
+// CHECK-DARWIN: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })
+// CHECK-LINUX: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })
+// CHECK-WINDOWS: call void @main.dump(%"{{.*}}eface" %{{.*}})
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"{{.*}}/cl/_testrt/eface.struct${{.*}}", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_main.T, ptr @"_llgo_ifacebox${{.*}}" })
