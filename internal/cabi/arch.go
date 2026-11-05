@@ -119,56 +119,61 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 				info.Type1 = llvm.VectorType(ctx.FloatType(), 2)
 			}
 		} else {
-			types := elementTypes(p.td, typ)
-			if n == 2 {
-				// skip (i64|double,*) (*,i64/double)
-				if p.Sizeof(types[0]) == 8 || p.Sizeof(types[1]) == 8 {
-					info.Kind = AttrWidthType2
-					info.Type1 = types[0]
-					info.Type2 = types[1]
-					return info
-				}
-			}
-			var offset int
-			var index int
-			for i, et := range types {
-				align := p.Alignof(et)
-				offset = (offset + p.Sizeof(et) + align - 1) &^ (align - 1)
-				if offset < 8 {
-					continue
-				} else if offset > 8 {
-					index = i
-				} else {
-					index = i + 1
-				}
-				break
-			}
-			subType := func(subs []llvm.Type, left bool) llvm.Type {
+			parts, ends := p.registerParts(typ)
+			subType := func(subs []llvm.Type, part int) llvm.Type {
 				if len(subs) == 1 {
 					return subs[0]
 				} else if len(subs) == 2 && subs[0] == ctx.FloatType() && subs[1] == ctx.FloatType() {
 					return llvm.VectorType(ctx.FloatType(), 2)
 				}
-				if left {
+				if part == 0 {
 					return ctx.Int64Type()
 				}
-				var n int
-				for _, sub := range subs {
-					align := p.Alignof(sub)
-					n = (n + p.Sizeof(sub) + align - 1) &^ (align - 1)
-				}
+				n := ends[part] - part*8
 				// Each SysV register component occupies at most one
 				// eightbyte, even when the aggregate is over-aligned.
 				align := min(info.Align, 8)
 				n = (n + align - 1) &^ (align - 1)
 				return ctx.IntType(n * 8)
 			}
-			info.Kind = AttrWidthType2
-			info.Type1 = subType(types[0:index], true)
-			info.Type2 = subType(types[index:], false)
+			info.Kind = AttrWidthType
+			info.Type1 = subType(parts[0], 0)
+			if len(parts[1]) != 0 {
+				info.Kind = AttrWidthType2
+				info.Type2 = subType(parts[1], 1)
+			}
 		}
 	}
 	return info
+}
+
+// registerParts groups scalar fields by their actual eightbyte in an aggregate
+// of at most 16 bytes. Repacking flattened field types loses nested padding.
+func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, ends [2]int) {
+	var visit func(llvm.Type, int)
+	visit = func(typ llvm.Type, offset int) {
+		if p.Sizeof(typ) == 0 {
+			return
+		}
+		switch typ.TypeKind() {
+		case llvm.StructTypeKind:
+			for i, field := range typ.StructElementTypes() {
+				visit(field, offset+int(p.td.ElementOffset(typ, i)))
+			}
+		case llvm.ArrayTypeKind:
+			elem := typ.ElementType()
+			stride := p.Sizeof(elem)
+			for i := 0; i < typ.ArrayLength(); i++ {
+				visit(elem, offset+i*stride)
+			}
+		default:
+			part := offset / 8
+			parts[part] = append(parts[part], typ)
+			ends[part] = max(ends[part], offset+p.Sizeof(typ))
+		}
+	}
+	visit(typ, 0)
+	return
 }
 
 type TypeInfoArm64 struct {
