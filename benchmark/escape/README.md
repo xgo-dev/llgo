@@ -29,17 +29,17 @@ both affected and control cases, native binary size, and compiler time/memory.
 ## Reference measurements
 
 Apple M4 Max, macOS/arm64, Go 1.27.3, LLVM 22, `-O3 -lto=full`:
-`d4b248e8` versus `83778ac00`, five alternating process pairs, medians.
+`d4b248e8` versus `9cf504cd1`, five alternating process pairs, medians.
 
 | Case | Before | After |
 | --- | ---: | ---: |
 | Callback box, bytes/100k calls | 3,195,248 | 80 |
 | Borrowed parameter, bytes/100k calls | 12,800,000 | 0 |
-| Borrowed parameter, ns/op | 57.80 | 9.16 |
-| Deferred unlock, bytes/op | 96 | 0 |
-| Deferred unlock, ns/op | 51.86 | 12.03 |
-| Value-call control, ns/op | 5.99 | 6.09 |
-| Explicit-unlock control, ns/op | 7.84 | 7.86 |
+| Borrowed parameter, ns/op | 57.37 | 9.24 |
+| Deferred unlock, bytes/op | 95 | 0 |
+| Deferred unlock, ns/op | 52.55 | 12.12 |
+| Value-call control, ns/op | 6.01 | 6.13 |
+| Explicit-unlock control, ns/op | 7.89 | 7.92 |
 | Boxing executable, bytes | 2,186,048 | 2,168,880 |
 | Borrow executable, bytes | 2,185,312 | 2,168,080 |
 | Defer executable, bytes | 2,487,136 | 2,469,632 |
@@ -47,10 +47,10 @@ Apple M4 Max, macOS/arm64, Go 1.27.3, LLVM 22, `-O3 -lto=full`:
 All control allocation counts were unchanged. The 80-byte measurement floor
 is reported as observed, not rounded to zero.
 
-For the borrow program, five warm build pairs took 9.92 → 9.54 s with
-614 → 632 MiB peak RSS; three cold pairs (`LLGO_BUILD_CACHE=0`) took
-13.37 → 13.09 s with 747 → 747 MiB peak RSS. These are whole-process
-`/usr/bin/time -l` measurements; the new analysis phase was about 0.25 s in
+For the borrow program, five warm build pairs took 9.86 → 9.49 s with
+608 → 609 MiB peak RSS; three cold pairs (`LLGO_BUILD_CACHE=0`) took
+13.46 → 13.10 s with 732 → 767 MiB peak RSS. These are whole-process
+`/usr/bin/time -l` measurements; the new analysis phase was about 0.175 s in
 `-debug-trace` output. Warm cache still loads SSA and runs the analysis.
 The small wall-time difference does not establish a compile-speed gain,
-and the warm peak memory increase is about 2.9%.
+and the cold peak memory increase is about 4.8%.
