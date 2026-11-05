@@ -245,6 +245,83 @@ func Size(s string)int{return dep.Size(s)}
 	}
 }
 
+func TestCrossPackageInlineCostIndependentOfQueryOrder(t *testing.T) {
+	const count = 40
+	src := "package chain\n"
+	for i := 0; i < count-1; i++ {
+		src += fmt.Sprintf("func F%d(x int)int{return F%d(x)}\n", i, i+1)
+	}
+	src += fmt.Sprintf("func F%d(x int)int{return x}\n", count-1)
+	pkg, _, _ := buildGoSSAPkg(t, src)
+	functions := make([]*gossa.Function, count)
+	want := make([]inlineCost, count)
+	for i := range functions {
+		functions[i] = pkg.Func(fmt.Sprintf("F%d", i))
+		want[i] = newInlineFacts().info(functions[i])
+	}
+	if !want[0].limited || want[0].recursive || want[count-1].cost > inlineBodyBudget {
+		t.Fatal("expected a depth-limited root and an eligible leaf")
+	}
+	check := func(t *testing.T, facts *inlineFacts, i int) {
+		t.Helper()
+		got := facts.info(functions[i])
+		if got.cost != want[i].cost || got.recursive != want[i].recursive || got.limited != want[i].limited {
+			t.Errorf("F%d: cost=%+v, independently analyzed=%+v", i, got, want[i])
+		}
+	}
+	t.Run("forward", func(t *testing.T) {
+		facts := newInlineFacts()
+		for i := range functions {
+			check(t, facts, i)
+		}
+	})
+	t.Run("reverse", func(t *testing.T) {
+		facts := newInlineFacts()
+		for i := count - 1; i >= 0; i-- {
+			check(t, facts, i)
+		}
+	})
+	t.Run("parallel", func(t *testing.T) {
+		for range 4 {
+			facts := newInlineFacts()
+			var wg sync.WaitGroup
+			for i := range functions {
+				for range 2 {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						check(t, facts, i)
+					}()
+				}
+			}
+			wg.Wait()
+		}
+	})
+}
+
+func TestCrossPackageInlineRejectsUnownedGlobal(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", "package dep\nvar State int\nfunc F()int{return State}\n",
+		"example.com/root", "package root\nimport \"example.com/dep\"\nfunc Use()int{return dep.F()}\n")
+	global := dep.Members["State"].(*gossa.Global)
+	owner := global.Pkg
+	defer func() { global.Pkg = owner }()
+	missingTypes := *owner
+	missingTypes.Pkg = nil
+	for _, invalid := range []*gossa.Package{nil, &missingTypes} {
+		global.Pkg = invalid
+		prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+		defer prog.Dispose()
+		pkg := prog.NewPackage("root", "example.com/root")
+		defer pkg.Module().Dispose()
+		ctx := &context{prog: prog, pkg: pkg, goPkg: root, goTyps: root.Pkg, goProg: root.Prog,
+			inlineFacts: newInlineFacts(), loaded: map[*types.Package]*pkgInfo{dep.Pkg: {kind: PkgNormal}}}
+		ctx.importInlineBody(dep.Func("F"))
+		if len(ctx.inits) != 0 {
+			t.Fatal("imported a body with an unowned global")
+		}
+	}
+}
+
 func TestCrossPackageInlinePatchGuards(t *testing.T) {
 	for _, noinline := range []bool{false, true} {
 		t.Run(fmt.Sprint(noinline), func(t *testing.T) {

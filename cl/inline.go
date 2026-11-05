@@ -28,18 +28,25 @@ const (
 type inlineCost struct {
 	cost      int
 	recursive bool
+	limited   bool
 	globals   []*ssa.Global
 }
 
+type inlineCostEntry struct {
+	once sync.Once
+	info inlineCost
+}
+
 // Shared for one compilation, including dependencies whose backend archive is
-// cached. Both accepted and rejected bodies are analyzed only once.
+// cached. Each root candidate is analyzed once; nested depth/cycle results stay
+// local to that analysis so they cannot affect another root's decision.
 type inlineFacts struct {
 	mu    sync.RWMutex
-	costs map[*ssa.Function]inlineCost
+	costs map[*ssa.Function]*inlineCostEntry
 }
 
 func newInlineFacts() *inlineFacts {
-	return &inlineFacts{costs: make(map[*ssa.Function]inlineCost)}
+	return &inlineFacts{costs: make(map[*ssa.Function]*inlineCostEntry)}
 }
 
 func (f *inlineFacts) cost(fn *ssa.Function) int {
@@ -48,22 +55,29 @@ func (f *inlineFacts) cost(fn *ssa.Function) int {
 
 func (f *inlineFacts) info(fn *ssa.Function) inlineCost {
 	f.mu.RLock()
-	c, ok := f.costs[fn]
+	entry := f.costs[fn]
 	f.mu.RUnlock()
-	if ok {
-		return c
+	if entry == nil {
+		f.mu.Lock()
+		entry = f.costs[fn]
+		if entry == nil {
+			entry = &inlineCostEntry{}
+			f.costs[fn] = entry
+		}
+		f.mu.Unlock()
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.analyze(fn, make(map[*ssa.Function]bool))
+	entry.once.Do(func() {
+		entry.info = analyzeInlineCost(fn, make(map[*ssa.Function]inlineCost), make(map[*ssa.Function]bool))
+	})
+	return entry.info
 }
 
-func (f *inlineFacts) analyze(fn *ssa.Function, active map[*ssa.Function]bool) inlineCost {
+func analyzeInlineCost(fn *ssa.Function, costs map[*ssa.Function]inlineCost, active map[*ssa.Function]bool) inlineCost {
 	reject := inlineCost{cost: inlineBodyBudget + 1}
 	if fn == nil {
 		return reject
 	}
-	if c, ok := f.costs[fn]; ok {
+	if c, ok := costs[fn]; ok {
 		return c
 	}
 	if active[fn] {
@@ -72,10 +86,14 @@ func (f *inlineFacts) analyze(fn *ssa.Function, active map[*ssa.Function]bool) i
 	if len(active) >= 32 {
 		// Reject the unresolved chain as a whole, including a possible cycle
 		// beyond the analysis limit, rather than treating it as a cheap call.
-		return inlineCost{cost: reject.cost, recursive: true}
+		return inlineCost{cost: reject.cost, limited: true}
 	}
 	result := reject
-	defer func() { f.costs[fn] = result }()
+	defer func() {
+		if !result.limited {
+			costs[fn] = result
+		}
+	}()
 	if fn.Pkg == nil || fn.Parent() != nil || fn.Synthetic != "" ||
 		len(fn.Blocks) == 0 || len(fn.FreeVars) != 0 || len(fn.AnonFuncs) != 0 || fn.Recover != nil ||
 		fn.Signature.Recv() != nil || fn.Signature.Variadic() ||
@@ -107,8 +125,8 @@ func (f *inlineFacts) analyze(fn *ssa.Function, active map[*ssa.Function]bool) i
 						return reject
 					}
 				} else {
-					callee := f.analyze(v.Call.StaticCallee(), active)
-					if callee.recursive {
+					callee := analyzeInlineCost(v.Call.StaticCallee(), costs, active)
+					if callee.recursive || callee.limited {
 						result = callee
 						return result
 					}
@@ -192,6 +210,9 @@ func (p *context) importInlineBody(original *ssa.Function) {
 	// Locality storage is owned by its defining package and deliberately hidden
 	// behind functions. Do not import bodies that expose that internal ABI.
 	for _, global := range facts.globals {
+		if global.Pkg == nil || global.Pkg.Pkg == nil {
+			return
+		}
 		if info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != locality.None {
 			return
 		}

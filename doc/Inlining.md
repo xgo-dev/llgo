@@ -21,8 +21,10 @@ The initial frontend policy uses a budget of 80 SSA cost units per body,
 charging a non-importable call an additional 57 units. A call to another
 candidate includes its body cost. These are frontend costs, not source-line or
 LLVM instruction counts, and are deliberately separate from LLVM's inliner.
-Accepted and rejected analyses are cached once per compilation and shared
-safely by parallel package backends.
+Each candidate's decision is cached once per compilation. Nested depth and
+cycle analysis remains local to that candidate, so cache warmup order does not
+change import decisions. Different candidates can be analyzed concurrently;
+the shared cache lock only covers entry lookup and publication.
 
 Each module imports at most 1024 cost units, with a discovery depth of five.
 The initial policy excludes loops, recursion, methods, generic instances,
