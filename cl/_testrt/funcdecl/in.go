@@ -23,7 +23,8 @@ import (
 // CHECK-NEXT: %[[SAME_PTR:[0-9]+]] = icmp eq ptr %[[DECL_PTR]], %[[ARG_PTR]]
 // CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[SAME_PTR]])
 // CHECK-LABEL: define ptr @main.closurePtr(%"{{.*}}runtime.eface" %0){{.*}} {
-// CHECK: %[[EFACE_BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: %[[EFACE_BOX:[0-9]+]] = alloca %"{{.*}}runtime.eface", align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr %[[EFACE_BOX]], i8 0, i64 16, i1 false)
 // CHECK-NEXT: store %"{{.*}}runtime.eface" %0, ptr %[[EFACE_BOX]]
 // CHECK: %[[CLOSURE_SLOT:[0-9]+]] = getelementptr inbounds nuw %main.rtype, ptr %[[EFACE_BOX]], i32 0, i32 1
 // CHECK-NEXT: %[[CLOSURE:[0-9]+]] = load ptr, ptr %[[CLOSURE_SLOT]]

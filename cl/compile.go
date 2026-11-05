@@ -189,6 +189,7 @@ type context struct {
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
+	borrowedParams       map[*ssa.Parameter]bool
 	recoverFacts         *recoverFacts
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
@@ -1850,7 +1851,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 			hoistToEntry = inLoop
 		}
-		heap := v.Heap && !p.canStackAllocateResult(v) && !p.canStackAllocateAppendArgs(v) && !p.canStackAllocateCapture(v)
+		heap := v.Heap && !p.canStackAllocateResult(v) && !p.canStackAllocateLocal(v) && !p.canStackAllocateAppendArgs(v) && !p.canStackAllocateCapture(v)
 		ret = b.AllocEx(elem, heap, hoistToEntry)
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v)
