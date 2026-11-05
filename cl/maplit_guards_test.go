@@ -79,6 +79,14 @@ func TestMapLitCompositeRejectsAliasedStorage(t *testing.T) {
 	}
 }
 
+func TestMapUpdatesShareBlockRejectsInvalid(t *testing.T) {
+	for _, updates := range [][]*ssa.MapUpdate{nil, []*ssa.MapUpdate{{}}} {
+		if mapUpdatesShareBlock(updates) {
+			t.Fatal("invalid updates share a block")
+		}
+	}
+}
+
 func TestMapLitDynamicKeysRemainUnrolled(t *testing.T) {
 	if got := collectLargeMapLits(nil); got != nil {
 		t.Fatal("nil function produced plans")
