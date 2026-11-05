@@ -2724,9 +2724,10 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
+			// Unlike llgoInstr, this keeps the library function for other call forms.
+			// Check the package first: Name() crosses cgo and copies the LLVM name.
 			if act == llssa.Call && cv.Pkg != nil && cv.Pkg.Pkg.Path() == "math/bits" {
-				// Match the resolved symbol so explicit linkname overrides keep
-				// their behavior. Other call forms retain the library function.
+				// Honor explicit linkname overrides by matching the resolved symbol.
 				switch aFn.Name() {
 				case "math/bits.RotateLeft", "math/bits.RotateLeft8", "math/bits.RotateLeft16", "math/bits.RotateLeft32", "math/bits.RotateLeft64":
 					ret = b.RotateLeft(args[0], args[1])

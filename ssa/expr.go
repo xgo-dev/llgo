@@ -541,11 +541,12 @@ func isPredOp(op token.Token) bool {
 // RotateLeft rotates a scalar integer by count modulo its bit width.
 func (b Builder) RotateLeft(x, count Expr) Expr {
 	distance := count.impl
-	width := distance.Type().IntTypeWidth()
-	if width > x.ll.IntTypeWidth() {
+	countWidth := distance.Type().IntTypeWidth()
+	if countWidth > x.ll.IntTypeWidth() {
 		distance = b.impl.CreateTrunc(distance, x.ll, "")
-	} else if width < x.ll.IntTypeWidth() {
-		// Only the low log2(width) bits matter, also for negative counts.
+	} else if countWidth < x.ll.IntTypeWidth() {
+		// The count is modulo x's bit width, so zero extension also
+		// gives the right rotation for negative counts.
 		distance = b.impl.CreateZExt(distance, x.ll, "")
 	}
 	v := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.fshl"), []llvm.Value{x.impl, x.impl, distance}, "")
