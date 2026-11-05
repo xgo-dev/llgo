@@ -75,20 +75,29 @@ func TestInterfaceAssertMethodTable(t *testing.T) {
 
 type assertMethodPrivate struct{}
 
-func (assertMethodPrivate) private() {}
+func (assertMethodPrivate) private() int { return 23 }
 
 //go:noinline
-func assertLocalPrivate(v any) bool {
-	_, ok := v.(interface{ private() })
-	return ok
+func assertLocalPrivate(v any) (int, bool) {
+	w, ok := v.(interface{ private() int })
+	if !ok {
+		return 0, false
+	}
+	return w.private(), true
 }
 
 func TestInterfaceAssertMethodPackage(t *testing.T) {
 	local, foreign := any(assertMethodPrivate{}), any(assertmethods.Value{})
-	if !assertLocalPrivate(local) || assertLocalPrivate(foreign) {
+	if got, ok := assertLocalPrivate(local); !ok || got != 23 {
+		t.Fatalf("local method call = (%d, %v), want (23, true)", got, ok)
+	}
+	if _, ok := assertLocalPrivate(foreign); ok {
 		t.Fatal("local interface ignored the unexported method's package")
 	}
-	if assertmethods.Implements(local) || !assertmethods.Implements(foreign) {
+	if _, ok := assertmethods.Check(local); ok {
 		t.Fatal("foreign interface ignored the unexported method's package")
+	}
+	if got, ok := assertmethods.Check(foreign); !ok || got != 17 {
+		t.Fatalf("foreign method call = (%d, %v), want (17, true)", got, ok)
 	}
 }

@@ -2,10 +2,13 @@ package assertmethods
 
 type Value struct{}
 
-func (Value) private() {}
+func (Value) private() int { return 17 }
 
 //go:noinline
-func Implements(v any) bool {
-	_, ok := v.(interface{ private() })
-	return ok
+func Check(v any) (int, bool) {
+	w, ok := v.(interface{ private() int })
+	if !ok {
+		return 0, false
+	}
+	return w.private(), true
 }
