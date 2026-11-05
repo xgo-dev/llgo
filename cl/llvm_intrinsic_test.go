@@ -15,21 +15,21 @@ func TestLLVMIntrinsicLinks(t *testing.T) {
 import _ "unsafe"
 type Byte uint8
 //llgo:link funnel llvm.fshl
-func funnel(a, b, k Byte) Byte
+func funnel(a, b, k Byte) Byte { panic("intrinsic body must be ignored") }
 //go:linkname population llvm.ctpop.i32
 func population(x uint32) uint32
 //llgo:link leading llvm.ctlz
-func leading(x uint64, zeroPoison bool) uint64
+func leading(x uint64, zeroPoison bool) uint64 { panic("intrinsic body must be ignored") }
 //llgo:link root llvm.sqrt
-func root(x float64) float64
+func root(x float64) float64 { panic("intrinsic body must be ignored") }
 //llgo:link overflow llvm.umul.with.overflow
-func overflow(a, b uint64) (uint64, bool)
+func overflow(a, b uint64) (uint64, bool) { panic("intrinsic body must be ignored") }
 //llgo:link word llvm.ctpop
-func word(x uintptr) uintptr
+func word(x uintptr) uintptr { panic("intrinsic body must be ignored") }
 //llgo:link signed llvm.sadd.sat
-func signed(x, y int32) int32
+func signed(x, y int32) int32 { panic("intrinsic body must be ignored") }
 //llgo:link saturate llvm.fptosi.sat
-func saturate(x float64) int32
+func saturate(x float64) int32 { panic("intrinsic body must be ignored") }
 func Rotate(x Byte, k int) Byte { return funnel(x, x, Byte(k)) }
 func UseRotate(x Byte, k int) Byte { return Rotate(x, k) }
 //go:noinline
@@ -105,7 +105,7 @@ var OverflowValue = Overflow
 func TestLLVMIntrinsicWrapperEvaluatesArgumentsOnce(t *testing.T) {
 	const src = `package adapter
 //llgo:link fshl llvm.fshl
-func fshl(a, b, k uint8) uint8
+func fshl(a, b, k uint8) uint8 { panic("intrinsic body must be ignored") }
 func rotate(x uint8, k int) uint8 { return fshl(x, x, uint8(k)) }
 var counter uint8
 func next() uint8 { counter++; return counter }
@@ -151,7 +151,11 @@ func TestLLVMIntrinsicLinkErrors(t *testing.T) {
 		{"defer", "llvm.ctpop", "func f(x uint32) uint32", "func use() { defer f(1) }", "use a Go wrapper for go or defer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "package invalid\n//llgo:link f " + tc.target + "\n" + tc.decl + "\n" + tc.use
+			decl := tc.decl
+			if !strings.HasSuffix(decl, "}") {
+				decl += ` { panic("intrinsic body must be ignored") }`
+			}
+			src := "package invalid\n//llgo:link f " + tc.target + "\n" + decl + "\n" + tc.use
 			ssapkg, _, files := buildGoSSAPkg(t, src)
 			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()

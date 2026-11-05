@@ -561,7 +561,6 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 	}
 
 	pkgGoVersion := tc.targetGoVersion(pkg)
-	allowLLVMIntrinsicDeclarations(pkg, fset)
 	normalizeEmbedDriverDiagnostics(pkg.Errors, fset, pkg.Syntax, pkgGoVersion)
 
 	if tc.origMode&NeedTypes == 0 && tc.origMode&NeedTypesInfo == 0 {

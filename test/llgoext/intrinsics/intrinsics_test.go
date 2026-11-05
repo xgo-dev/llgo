@@ -11,13 +11,13 @@ import (
 func population(uint32) uint32
 
 //llgo:link leading llvm.ctlz
-func leading(uint32, bool) uint32
+func leading(uint32, bool) uint32 { panic("intrinsic body must be ignored") }
 
 //llgo:link root llvm.sqrt
-func root(float64) float64
+func root(float64) float64 { panic("intrinsic body must be ignored") }
 
 //llgo:link multiply llvm.umul.with.overflow
-func multiply(uint64, uint64) (uint64, bool)
+func multiply(uint64, uint64) (uint64, bool) { panic("intrinsic body must be ignored") }
 
 //go:linkname legacyMultiply llgo.umulOverflow
 func legacyMultiply(uint64, uint64) (uint64, bool)

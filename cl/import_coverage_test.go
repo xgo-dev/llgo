@@ -31,7 +31,7 @@ func TestLinknameParsersAgree(t *testing.T) {
 				t.Fatalf("legacy parser returned %d", got)
 			}
 			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "p.go", "package p\nimport _ \"unsafe\"\n"+line+"\nfunc F()", parser.ParseComments)
+			file, err := parser.ParseFile(fset, "p.go", "package p\nimport _ \"unsafe\"\n"+line+"\nfunc F() {}", parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
