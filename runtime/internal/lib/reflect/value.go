@@ -172,13 +172,11 @@ func packEfaceData(v Value) unsafe.Pointer {
 	}
 }
 
-/* TODO(xsw): to be removed
 // packIfaceValueIntoEmptyIface is used by Go 1.26's reflect.TypeAssert helpers
 // when reboxing a non-empty interface value into an empty interface.
 func packIfaceValueIntoEmptyIface(v Value) any {
 	return packEface(v)
 }
-*/
 
 // unpackEface converts the empty interface i to a Value.
 func unpackEface(i any) Value {
