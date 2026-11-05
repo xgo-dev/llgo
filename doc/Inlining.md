@@ -7,7 +7,9 @@ declaration. The build driver already constructs dependency Go SSA before
 looking up backend archives, so no additional source loading or export format
 is required.
 
-No new directive is introduced. `//go:noinline` prevents import. Ordinary
+No new directive is introduced. `//go:noinline` prevents import and marks both
+the defining function and importing declarations with LLVM `noinline`, including
+when LTO later makes the definition visible. Ordinary
 functions remain defined in their original package for function values and
 calls that LLVM does not inline. Importing a body does not force inlining;
 LLVM applies its normal optimization-level, target and call-site cost policy.

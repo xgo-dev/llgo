@@ -3,6 +3,8 @@ package cl
 import (
 	"fmt"
 	"go/types"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +31,7 @@ func Branch(x int) int { return dep.Branch(x) }
 func Kept(x uint64) uint64 { return dep.Kept(x) }
 func Recursive(x uint64) uint64 { return dep.Recursive(x) }
 var Value = dep.Sum
+var KeptValue = dep.Kept
 `)
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -66,6 +69,12 @@ var Value = dep.Sum
 					t.Fatalf("ineligible body %s imported", name)
 				}
 			}
+			noinline := llvm.AttributeKindID("noinline")
+			for _, m := range []llvm.Module{owner.Module(), mod} {
+				if mustNamedFunction(t, m, "example.com/dep.Kept").GetEnumFunctionAttribute(noinline).IsNil() {
+					t.Fatal("go:noinline missing on definition or importing declaration")
+				}
+			}
 			if fn := mustNamedFunction(t, owner.Module(), "example.com/dep.Sum"); fn.IsDeclaration() || fn.Linkage() != llvm.ExternalLinkage {
 				t.Fatal("import changed defining package's real entry")
 			}
@@ -89,6 +98,37 @@ var Value = dep.Sum
 				if ir := mustNamedFunction(t, mod, "example.com/root."+name).String(); !strings.Contains(ir, "example.com/dep."+name) {
 					t.Fatalf("ineligible call disappeared:\n%s", ir)
 				}
+			}
+			// Link copies of both package modules, then run the full LTO
+			// optimizer: noinline must hold after the real body becomes visible.
+			owner.Module().SetDataLayout(prog.DataLayout())
+			owner.Module().SetTarget(target.Spec().Triple)
+			clone := func(input llvm.Module) llvm.Module {
+				path := filepath.Join(t.TempDir(), "module.ll")
+				if err := os.WriteFile(path, []byte(input.String()), 0600); err != nil {
+					t.Fatal(err)
+				}
+				buf, err := llvm.NewMemoryBufferFromFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := input.Context()
+				copy, err := ctx.ParseIR(buf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return copy
+			}
+			linked := clone(mod)
+			defer linked.Dispose()
+			if err := llvm.LinkModules(linked, clone(owner.Module())); err != nil {
+				t.Fatal(err)
+			}
+			if err := linked.RunPasses("lto<O2>", prog.TargetMachine(), opts); err != nil {
+				t.Fatal(err)
+			}
+			if ir := mustNamedFunction(t, linked, "example.com/root.Kept").String(); !strings.Contains(ir, "example.com/dep.Kept") {
+				t.Fatalf("LTO inlined go:noinline function:\n%s", ir)
 			}
 			buf, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
 			if err != nil {

@@ -743,8 +743,12 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			// Source env-bearing bodies are created by compileFuncDecl before
 			// lowering. Imported declarations cannot reconstruct //llgo:env.
 			aFn = pkg.NewFuncEx(name, sig, llssa.CallConv(ftype), false, p.needsLinkOnce(fn))
-			if disableInline {
+			noInlineDirective := hasNoInlineDirective(fn)
+			if disableInline || noInlineDirective {
 				aFn.Inline(llssa.NoInline)
+			}
+			if noInlineDirective {
+				aFn.DisableTailCalls()
 			}
 		}
 		if ftype == goFunc {
