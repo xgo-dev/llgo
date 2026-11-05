@@ -29,10 +29,10 @@ int profile_default_siginfo(void) {
     action.sa_flags = SA_SIGINFO;
     return sigaction(SIGPROF, &action, 0);
 }
-int profile_signal_ignored(void) {
+int profile_signal_restored(void) {
     struct sigaction action;
     if (sigaction(SIGPROF, 0, &action) != 0) return -1;
-    return action.sa_handler == SIG_IGN;
+    return action.sa_handler == SIG_IGN && (action.sa_flags & SA_SIGINFO) == 0;
 }
 int profile_raise(void) { return raise(SIGPROF); }
 `)
@@ -41,8 +41,8 @@ import ("bytes"; "runtime/pprof"; _ "unsafe")
 const LLGoFiles = "_wrap/signal.c"
 //go:linkname defaultSiginfo C.profile_default_siginfo
 func defaultSiginfo() int32
-//go:linkname signalIgnored C.profile_signal_ignored
-func signalIgnored() int32
+//go:linkname signalRestored C.profile_signal_restored
+func signalRestored() int32
 //go:linkname raiseProfile C.profile_raise
 func raiseProfile() int32
 func main() {
@@ -51,7 +51,7 @@ func main() {
   var profile bytes.Buffer
   if err:=pprof.StartCPUProfile(&profile);err!=nil { panic(err) }
   pprof.StopCPUProfile()
-  if signalIgnored()!=1 { panic("StopCPUProfile restored SIG_DFL with SA_SIGINFO") }
+  if signalRestored()!=1 { panic("StopCPUProfile did not restore SIG_IGN without SA_SIGINFO") }
   if raiseProfile()!=0 { panic("raise failed") }
  }
  println("profile signal ignored")

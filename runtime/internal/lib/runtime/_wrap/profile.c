@@ -164,7 +164,8 @@ static int llgo_prof_install_signal(void)
      * a final pending timer signal must not terminate the process after Stop. */
     llgo_prof_previous_action = current;
     /* exec can leave SA_SIGINFO set after resetting a caught disposition to
-     * SIG_DFL. Special dispositions retain their meaning regardless of flags. */
+     * SIG_DFL. Test the sentinel in sa_handler even with SA_SIGINFO set: that
+     * flag selects how an actual callback is invoked, not a special disposition. */
     if (current.sa_handler == SIG_DFL) {
         llgo_prof_previous_action.sa_handler = SIG_IGN;
         llgo_prof_previous_action.sa_flags &= ~SA_SIGINFO;
