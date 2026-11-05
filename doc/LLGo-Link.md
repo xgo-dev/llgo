@@ -171,13 +171,17 @@ Passing a runtime variable as `ctlz32`'s second argument is an error. Here,
 choose flags and conversions deliberately; type checking does not establish
 equivalence with a Go library function or enable fast-math semantics.
 
-Raw bindings support direct calls only. Use an ordinary Go wrapper for function
-values, `go` and `defer`. For direct calls, LLGo expands small wrappers containing
-one intrinsic call with scalar results, scalar conversions and tuple extraction
-or complete tuple forwarding, including across packages
-without LTO. Argument expressions are evaluated once. `//go:noinline` disables
-this expansion for that wrapper. More complex wrappers use normal calls and
-LLVM optimization; their inlining is not guaranteed.
+Direct calls emit the LLVM intrinsic. Taking a binding's function value creates
+a shared Go ABI entry that calls the same intrinsic; the retained Go body is
+still ignored. This supports bodyless bindings and scalar tuple results too.
+Bindings with `immarg` parameters cannot be used as function values, because
+forwarding runtime parameters would violate LLVM's constant-operand rule. Use
+an ordinary Go wrapper that supplies constant flags instead.
+
+Direct `go` and `defer` statements require an ordinary Go wrapper. Parameter
+adaptations such as `RotateLeft8` above use normal Go calls and LLVM optimization;
+their inlining is not guaranteed, particularly across packages without LTO.
+This binding mechanism does not scan or expand Go wrapper bodies.
 
 The initial support policy includes bit operations (`fshl`, `fshr`, `ctpop`,
 `ctlz`, `cttz`, `bswap`, `bitreverse`, `abs`), integer min/max, saturating

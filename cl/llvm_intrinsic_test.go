@@ -8,7 +8,6 @@ import (
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestLLVMIntrinsicLinks(t *testing.T) {
@@ -55,6 +54,11 @@ func Signed(x, y int32) int32 { return signed(x, y) }
 func Saturate(x float64) int32 { return saturate(x) }
 var RotateValue = Rotate
 var OverflowValue = Overflow
+var FunnelValue = funnel
+var FunnelValueAgain = funnel
+var PopulationValue = population
+var RootValue = root
+var IntrinsicOverflowValue = overflow
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -78,6 +82,23 @@ var OverflowValue = Overflow
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("%v\n%s", err, mod.String())
 			}
+			for name, intrinsic := range map[string]string{
+				"funnel": "llvm.fshl.i8", "population": "llvm.ctpop.i32",
+				"root": "llvm.sqrt.f64", "overflow": "llvm.umul.with.overflow.i64",
+			} {
+				wrapper := mustNamedFunction(t, mod, "intrinsics."+name+"$llvm")
+				if wrapper.Linkage() != llvm.LinkOnceAnyLinkage || strings.Count(wrapper.String(), "@"+intrinsic+"(") != 1 {
+					t.Fatalf("invalid intrinsic function-value entry:\n%s", wrapper.String())
+				}
+			}
+			mod.SetDataLayout(prog.DataLayout())
+			mod.SetTarget(target.Spec().Triple)
+			opts := llvm.NewPassBuilderOptions()
+			defer opts.Dispose()
+			opts.SetVerifyEach(true)
+			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
+				t.Fatal(err)
+			}
 			for fn, intrinsic := range map[string]string{
 				"Rotate": "llvm.fshl.i8", "UseRotate": "llvm.fshl.i8", "Population": "llvm.ctpop.i32",
 				"CountPopulation": "llvm.ctpop.i32", "UseCountPopulation": "llvm.ctpop.i32",
@@ -93,24 +114,16 @@ var OverflowValue = Overflow
 				}
 			}
 			if ir := mustNamedFunction(t, mod, "intrinsics.UseKeepRotate").String(); !strings.Contains(ir, "@intrinsics.KeepRotate(") {
-				t.Fatalf("wrapper expansion ignored go:noinline:\n%s", ir)
+				t.Fatalf("LLVM inlining ignored go:noinline:\n%s", ir)
 			}
 			for _, name := range []string{"Reordered", "Mixed"} {
 				ir := mustNamedFunction(t, mod, "intrinsics.Use"+name).String()
-				if !strings.Contains(ir, "@intrinsics."+name+"(") {
-					t.Fatalf("non-forwarding tuple wrapper was expanded:\n%s", ir)
+				if strings.Contains(ir, "@intrinsics."+name+"(") {
+					t.Fatalf("LLVM did not inline the ordinary Go wrapper:\n%s", ir)
 				}
 			}
 			if !mod.NamedFunction("intrinsics.funnel").IsNil() || !mod.NamedFunction("check").IsNil() {
 				t.Fatal("intrinsic binding or validation function escaped into output")
-			}
-			mod.SetDataLayout(prog.DataLayout())
-			mod.SetTarget(target.Spec().Triple)
-			opts := llvm.NewPassBuilderOptions()
-			defer opts.Dispose()
-			opts.SetVerifyEach(true)
-			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
 			}
 			buf, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
 			if err != nil {
@@ -127,6 +140,7 @@ func TestLLVMIntrinsicWrapperEvaluatesArgumentsOnce(t *testing.T) {
 func fshl(a, b, k uint8) uint8 { panic("intrinsic body must be ignored") }
 func rotate(x uint8, k int) uint8 { return fshl(x, x, uint8(k)) }
 var counter uint8
+//go:noinline
 func next() uint8 { counter++; return counter }
 func Use() uint8 { return rotate(next(), 3) }
 `
@@ -138,31 +152,15 @@ func Use() uint8 { return rotate(next(), 3) }
 		t.Fatal(err)
 	}
 	defer pkg.Module().Dispose()
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	if err := pkg.Module().RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
+	}
 	ir := mustNamedFunction(t, pkg.Module(), "adapter.Use").String()
 	if strings.Count(ir, "@adapter.next(") != 1 || strings.Contains(ir, "@adapter.rotate(") || !strings.Contains(ir, "@llvm.fshl.i8(") {
 		t.Fatalf("wrapper did not preserve single evaluation:\n%s", ir)
 	}
-}
-
-func TestLLVMIntrinsicWrapperRejectsIncompatiblePatchArity(t *testing.T) {
-	const src = `package adapter
-func Original(x uint8) uint8 { return x }
-func Replacement(x uint8, k int) uint8 { return x }
-`
-	pkg, fset, _ := buildGoSSAPkg(t, src)
-	original, replacement := pkg.Func("Original"), pkg.Func("Replacement")
-	ctx := &context{fset: fset}
-	defer func() {
-		got := fmt.Sprint(recover())
-		if !strings.Contains(got, "replacement requires 2 arguments, call provides 1") || !strings.Contains(got, "foo.go:") {
-			t.Fatalf("diagnostic = %q", got)
-		}
-	}()
-	// A nil builder ensures rejection happens before evaluating caller arguments.
-	ctx.expandLLVMIntrinsicWrapper(nil, replacement, &ssa.CallCommon{
-		Value: original,
-		Args:  []ssa.Value{original.Params[0]},
-	})
 }
 
 func TestLLVMIntrinsicLinkErrors(t *testing.T) {
@@ -186,7 +184,7 @@ func TestLLVMIntrinsicLinkErrors(t *testing.T) {
 		{"environment", "llvm.ctpop", "//llgo:env\nfunc f(x uint32) uint32 { return x }", "", "do not support //llgo:env"},
 		{"target-specific", "llvm.x86.sse2.pause", "func f()", "", "only portable scalar math"},
 		{"memory", "llvm.memcpy", "func f()", "", "only portable scalar math"},
-		{"function-value", "llvm.ctpop", "func f(x uint32) uint32", "var Value = f", "cannot be used as a function value"},
+		{"function-value-immarg", "llvm.ctlz", "func f(x uint32, z bool) uint32", "var Value = f", "cannot use LLVM intrinsic as a function value"},
 		{"go", "llvm.ctpop", "func f(x uint32) uint32", "func use() { go f(1) }", "use a Go wrapper for go or defer"},
 		{"defer", "llvm.ctpop", "func f(x uint32) uint32", "func use() { defer f(1) }", "use a Go wrapper for go or defer"},
 	} {

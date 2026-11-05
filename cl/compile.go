@@ -187,7 +187,7 @@ type context struct {
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
 	llvmIntrinsics       map[*ssa.Function]*llssa.LLVMIntrinsic
-	llvmWrappers         map[*ssa.Function]*ssa.Function
+	llvmIntrinsicValues  map[*ssa.Function]llssa.Function
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -2586,7 +2586,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 	case *ssa.Function:
 		_, _, ftype := p.funcName(v)
 		if ftype == llvmIntrinsic {
-			p.llvmIntrinsicError(v.Pos(), v, fmt.Errorf("LLVM intrinsic cannot be used as a function value; use a Go wrapper"))
+			return p.llvmIntrinsicValue(v).Expr
 		}
 		if ftype == llgoInstr {
 			v = ssawrap.MakeCallWrapper(p.goProg, v)

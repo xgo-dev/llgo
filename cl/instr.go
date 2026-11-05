@@ -2689,9 +2689,6 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
 				return folded
 			}
-			if wrapper := p.llvmIntrinsicWrapper(cv); wrapper != nil {
-				return p.expandLLVMIntrinsicWrapper(b, wrapper, call)
-			}
 		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)

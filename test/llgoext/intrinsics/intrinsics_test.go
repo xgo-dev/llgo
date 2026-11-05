@@ -53,6 +53,23 @@ func TestScalarBindings(t *testing.T) {
 	}
 }
 
+//go:noinline
+func callPopulation(fn func(uint32) uint32, x uint32) uint32 { return fn(x) }
+
+//go:noinline
+func callRoot(fn func(float64) float64, x float64) float64 { return fn(x) }
+
+func TestIntrinsicFunctionValues(t *testing.T) {
+	// population has no Go body; root has a body that must be ignored.
+	if got := callPopulation(population, 0xf010); got != 5 {
+		t.Fatalf("population function value = %d", got)
+	}
+	if got := callRoot(root, 81); got != 9 {
+		t.Fatalf("root function value = %g", got)
+	}
+	checkMultiply(t, multiply)
+}
+
 func TestOverflowAndLegacyCompatibility(t *testing.T) {
 	checkMultiply(t, multiplyWrapper)
 	// Existing instructions continue to provide their function-value wrappers.
