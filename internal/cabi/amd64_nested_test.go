@@ -25,6 +25,8 @@ func TestAMD64NestedAggregateOffsets(t *testing.T) {
 	}
 	inner := structure(ctx.Int8Type(), ctx.Int32Type())
 	outer := structure(ctx.Int8Type(), inner)
+	// A zero-sized vector array adds 16-byte alignment without scalar fields,
+	// leaving the second eightbyte entirely padding in the tail cases below.
 	marker := llvm.ArrayType(llvm.VectorType(ctx.Int32Type(), 4), 0)
 	for _, tc := range []struct {
 		name               string

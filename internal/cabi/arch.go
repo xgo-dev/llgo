@@ -119,17 +119,18 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 				info.Type1 = llvm.VectorType(ctx.FloatType(), 2)
 			}
 		} else {
-			parts, ends := p.registerParts(typ)
+			parts, highEnd := p.registerParts(typ)
 			subType := func(subs []llvm.Type, part int) llvm.Type {
 				if len(subs) == 1 {
 					return subs[0]
 				} else if len(subs) == 2 && subs[0] == ctx.FloatType() && subs[1] == ctx.FloatType() {
 					return llvm.VectorType(ctx.FloatType(), 2)
 				}
+				// Mixed INTEGER/SSE fields merge to INTEGER in SysV.
 				if part == 0 {
 					return ctx.Int64Type()
 				}
-				n := ends[part] - part*8
+				n := highEnd - 8
 				// Each SysV register component occupies at most one
 				// eightbyte, even when the aggregate is over-aligned.
 				align := min(info.Align, 8)
@@ -149,7 +150,9 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 
 // registerParts groups scalar fields by their actual eightbyte in an aggregate
 // of at most 16 bytes. Repacking flattened field types loses nested padding.
-func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, ends [2]int) {
+// Scalar fields must be naturally aligned; unaligned aggregates require MEMORY
+// classification instead of this register split.
+func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, highEnd int) {
 	var visit func(llvm.Type, int)
 	visit = func(typ llvm.Type, offset int) {
 		if p.Sizeof(typ) == 0 {
@@ -169,7 +172,9 @@ func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, ends
 		default:
 			part := offset / 8
 			parts[part] = append(parts[part], typ)
-			ends[part] = max(ends[part], offset+p.Sizeof(typ))
+			if part == 1 {
+				highEnd = max(highEnd, offset+p.Sizeof(typ))
+			}
 		}
 	}
 	visit(typ, 0)
