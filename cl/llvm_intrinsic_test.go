@@ -15,6 +15,7 @@ func TestLLVMIntrinsicLinks(t *testing.T) {
 	const src = `package intrinsics
 import _ "unsafe"
 type Byte uint8
+type Count uint32
 //llgo:link funnel llvm.fshl
 func funnel(a, b, k Byte) Byte { panic("intrinsic body must be ignored") }
 //go:linkname population llvm.ctpop.i32
@@ -37,6 +38,8 @@ func UseRotate(x Byte, k int) Byte { return Rotate(x, k) }
 func KeepRotate(x Byte, k int) Byte { return funnel(x, x, Byte(k)) }
 func UseKeepRotate(x Byte, k int) Byte { return KeepRotate(x, k) }
 func Population(x uint32) uint32 { return population(x) }
+func CountPopulation(x Count) Count { return Count(population(uint32(x))) }
+func UseCountPopulation(x Count) Count { return CountPopulation(x) }
 func Leading(x uint64) uint64 { return leading(x, false) }
 func Root(x float64) float64 { return root(x) }
 func Overflow(x, y uint64) (uint64, bool) { return overflow(x, y) }
@@ -77,6 +80,7 @@ var OverflowValue = Overflow
 			}
 			for fn, intrinsic := range map[string]string{
 				"Rotate": "llvm.fshl.i8", "UseRotate": "llvm.fshl.i8", "Population": "llvm.ctpop.i32",
+				"CountPopulation": "llvm.ctpop.i32", "UseCountPopulation": "llvm.ctpop.i32",
 				"Leading": "llvm.ctlz.i64", "Root": "llvm.sqrt.f64",
 				"Overflow":    "llvm.umul.with.overflow.i64",
 				"UseOverflow": "llvm.umul.with.overflow.i64", "UseOverflowFlag": "llvm.umul.with.overflow.i64",
