@@ -9,6 +9,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/locality"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -155,7 +156,8 @@ func inlineProhibitedDirective(fn *ssa.Function) bool {
 // cross-package call. The defining package remains the owner of the real
 // function entry, including when its address escapes or LLVM declines to inline.
 func (p *context) importInlineBody(original *ssa.Function) {
-	if disableInline || p.inlineFacts == nil || p.options.DebuggerFrames || p.options.ShadowStack ||
+	if disableInline || p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
+		p.options.DebuggerFrames || p.options.ShadowStack ||
 		p.inlineCost >= inlineModuleBudget || original.Pkg == nil || original.Pkg == p.goPkg ||
 		llssa.PathOf(original.Pkg.Pkg) == p.pkg.Path() {
 		return

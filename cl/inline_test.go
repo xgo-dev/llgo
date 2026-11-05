@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	gossa "golang.org/x/tools/go/ssa"
@@ -135,6 +136,30 @@ var KeptValue = dep.Kept
 				t.Fatal(err)
 			}
 			buf.Dispose()
+		})
+	}
+}
+
+func TestCrossPackageInlineOptimizationLevel(t *testing.T) {
+	_, root := buildCallerFrameSSAProgram(t, "example.com/dep", `package dep
+func Sum(x, y uint64) uint64 { return x + y }
+`, "example.com/root", `package root
+import "example.com/dep"
+func Sum(x, y uint64) uint64 { return dep.Sum(x, y) }
+`)
+	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2, optlevel.Os} {
+		t.Run(level.String(), func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: level})
+			defer prog.Dispose()
+			pkg, _, err := NewPackageExWithEmbed(prog, NewCallerTracking(), nil, nil, root, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkg.Module().Dispose()
+			fn := mustNamedFunction(t, pkg.Module(), "example.com/dep.Sum")
+			if fn.IsDeclaration() != (level == optlevel.O0) {
+				t.Fatalf("unexpected dependency body at %s:\n%s", level, fn.String())
+			}
 		})
 	}
 }

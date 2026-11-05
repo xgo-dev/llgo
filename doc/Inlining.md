@@ -30,7 +30,8 @@ closure environments, goroutines, defer/recover, and functions with pragmas
 that depend on retaining their call frame. Functions that need runtime caller
 frames or access package-owned locality storage are also excluded. Missing
 bodies and incompatible source-patch signatures remain ordinary calls.
-Imports are disabled for shadow-stack and debugger-frame instrumented builds.
+Imports are disabled at `-O0` and for shadow-stack and debugger-frame
+instrumented builds.
 
 ## LLVM representation
 
