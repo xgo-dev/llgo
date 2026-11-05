@@ -335,14 +335,15 @@ type UncommonType struct {
 	Moff     uint32 // offset from this uncommontype to [mcount]Method
 }
 
-// Method returns the i-th method without copying the method table.
-// The returned metadata is read-only. It panics if i is out of range.
+// Method returns a pointer into t's method table without copying it.
+// Callers must treat the referenced metadata as read-only.
+// It panics if i is out of range.
 func (t *UncommonType) Method(i int) *Method {
 	if uint(i) >= uint(t.Mcount) {
 		panic("abi: method index out of range")
 	}
-	methods := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "t.mcount > 0")
-	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "i < t.mcount"))
+	methods := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "0 <= i < t.Mcount")
+	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "0 <= i < t.Mcount"))
 }
 
 func (t *UncommonType) Methods() []Method {
