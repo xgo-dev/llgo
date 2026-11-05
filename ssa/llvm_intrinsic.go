@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/types"
 	"strings"
+	"sync"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -24,6 +25,19 @@ var llvmScalarIntrinsics = []string{
 	"minnum", "maxnum", "minimum", "maximum", "fptosi.sat", "fptoui.sat",
 }
 
+// Resolve the policy names through LLVM once. Name recognition belongs to
+// LookupIntrinsicID; LLGo only decides which resolved families it supports.
+var llvmScalarIntrinsicNames = sync.OnceValue(func() map[int]string {
+	names := make(map[int]string, len(llvmScalarIntrinsics))
+	for _, family := range llvmScalarIntrinsics {
+		name := "llvm." + family
+		if id := llvm.LookupIntrinsicID(name); id != 0 {
+			names[id] = name
+		}
+	}
+	return names
+})
+
 // LLVMIntrinsic is a checked scalar intrinsic declaration. It uses LLVM value
 // types, independently of the platform C ABI and the Go aggregate storage ABI.
 type LLVMIntrinsic struct {
@@ -42,15 +56,8 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 	if id == 0 {
 		return nil, fmt.Errorf("unknown LLVM intrinsic %q", name)
 	}
-	base := ""
-	for _, family := range llvmScalarIntrinsics {
-		candidate := "llvm." + family
-		if name == candidate || strings.HasPrefix(name, candidate+".") {
-			base = candidate
-			break
-		}
-	}
-	if base == "" || llvm.LookupIntrinsicID(base) != id {
+	base, supported := llvmScalarIntrinsicNames()[id]
+	if !supported {
 		return nil, fmt.Errorf("LLVM intrinsic %q is not supported: only portable scalar math intrinsics are supported", name)
 	}
 	if sig.Recv() != nil || sig.TypeParams().Len() != 0 || sig.Variadic() {

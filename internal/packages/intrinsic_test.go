@@ -19,7 +19,7 @@ func TestLLVMIntrinsicDeclarationsLoadAcrossPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeLoadTestFile(t, filepath.Join(dir, "bits", "bits.go"), `package bits
-//llgo:link Count llvm.ctpop
+//llgo:link Count	llvm.ctpop
 func Count(x uint32) uint32
 `)
 	writeLoadTestFile(t, filepath.Join(dir, "main.go"), `package main

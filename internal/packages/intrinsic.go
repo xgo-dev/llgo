@@ -22,8 +22,8 @@ func allowLLVMIntrinsicDeclarations(pkg *Package, fset *token.FileSet) {
 				continue
 			}
 			for _, d := range directive.ParseGroup(fn.Doc) {
-				fields := strings.Fields(d.Args)
-				if d.Name == "llgo:link" && len(fields) == 2 && fields[0] == fn.Name.Name && strings.HasPrefix(fields[1], "llvm.") {
+				local, target := directive.ParseLinknameArgs(d.Args)
+				if d.Name == "llgo:link" && local == fn.Name.Name && strings.HasPrefix(target, "llvm.") {
 					positions = append(positions, fset.Position(fn.Name.Pos()))
 				}
 			}
