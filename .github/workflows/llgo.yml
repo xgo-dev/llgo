@@ -1023,6 +1023,17 @@ jobs:
             du -sh "$(llgo_cache_dir)"
           fi
 
+      - name: Test escape lifetimes under WebAssembly GC
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: |
+          for target in wasi emscripten emscripten-memory64; do
+            "$LLGO" test -O2 -target "$target" -emulator ./test/escape
+          done
+
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
         shell: bash
