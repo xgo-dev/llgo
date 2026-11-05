@@ -1281,6 +1281,7 @@ type CallerTracking struct {
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
+	inlines     *inlineFacts
 	precomputed bool
 }
 
@@ -1429,6 +1430,7 @@ func NewCallerTracking() *CallerTracking {
 		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended: make(map[*ssa.Package]callerTrackingFuncSets),
 		recover:  newRecoverFacts(),
+		inlines:  newInlineFacts(),
 	}
 }
 
@@ -2687,6 +2689,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
 				return folded
 			}
+			p.importInlineBody(cv)
 		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)
