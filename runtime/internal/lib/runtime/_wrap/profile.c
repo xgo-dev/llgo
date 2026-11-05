@@ -163,9 +163,12 @@ static int llgo_prof_install_signal(void)
      * A default disposition is normalized to ignore, as the Go runtime does:
      * a final pending timer signal must not terminate the process after Stop. */
     llgo_prof_previous_action = current;
-    if ((current.sa_flags & SA_SIGINFO) == 0 &&
-        current.sa_handler == SIG_DFL)
+    /* exec can leave SA_SIGINFO set after resetting a caught disposition to
+     * SIG_DFL. Special dispositions retain their meaning regardless of flags. */
+    if (current.sa_handler == SIG_DFL) {
         llgo_prof_previous_action.sa_handler = SIG_IGN;
+        llgo_prof_previous_action.sa_flags &= ~SA_SIGINFO;
+    }
     llgo_prof_previous_valid = 1;
 
     memset(&sa, 0, sizeof(sa));
