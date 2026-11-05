@@ -13,12 +13,14 @@ import (
 )
 
 const rotateSource = `package rotates
-import "math/bits"
-func r8(x uint8, k int) uint8 { return bits.RotateLeft8(x, k) }
-func r16(x uint16, k int) uint16 { return bits.RotateLeft16(x, k) }
-func r32(x uint32, k int) uint32 { return bits.RotateLeft32(x, k) }
-func r64(x uint64, k int) uint64 { return bits.RotateLeft64(x, k) }
-func word(x uint, k int) uint { return bits.RotateLeft(x, k) }
+type Integer interface { ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 }
+//llgo:link rotate llgo.rotateLeft
+func rotate[T Integer](x T, k int) T { panic("intrinsic") }
+func r8(x uint8, k int) uint8 { return rotate(x, k) }
+func r16(x uint16, k int) uint16 { return rotate(x, k) }
+func r32(x uint32, k int) uint32 { return rotate(x, k) }
+func r64(x uint64, k int) uint64 { return rotate(x, k) }
+func word(x uint, k int) uint { return rotate(x, k) }
 `
 
 func rotateFunctionIR(t *testing.T, ir, name string) string {
@@ -52,7 +54,7 @@ func verifyRotateIR(t *testing.T, ir string) {
 	}
 }
 
-func TestMathRotateLeftLowerAtCaller(t *testing.T) {
+func TestRotateLeftIntrinsic(t *testing.T) {
 	for _, target := range []llssa.Target{
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -81,7 +83,11 @@ func TestMathRotateLeftLowerAtCaller(t *testing.T) {
 }
 
 func TestMathRotateLeftExplicitRewrite(t *testing.T) {
-	pkg, _, files := buildPackageWithFiles(t, rotateSource)
+	const src = `package rotates
+import "math/bits"
+func r32(x uint32, k int) uint32 { return bits.RotateLeft32(x, k) }
+`
+	pkg, _, files := buildPackageWithFiles(t, src)
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
 	prog.SetLinkname("math/bits.RotateLeft32", "other.rotate")
@@ -97,16 +103,41 @@ func TestMathRotateLeftExplicitRewrite(t *testing.T) {
 	}
 }
 
-func TestMathRotateLeftCallForms(t *testing.T) {
-	const src = `package rotates
-import "math/bits"
-func indirect() func(uint32, int) uint32 { return bits.RotateLeft32 }
-func later(x uint32, k int) { defer bits.RotateLeft32(x, k) }
-func concurrent(x uint32, k int) { go bits.RotateLeft32(x, k) }
+func TestRotateLeftIntrinsicCallForms(t *testing.T) {
+	const src = rotateSource + `
+func indirect() func(uint32, int) uint32 { return rotate[uint32] }
+func later(x uint32, k int) { defer rotate(x, k) }
+func concurrent(x uint32, k int) { go rotate(x, k) }
 `
 	ir := compileWithRewrites(t, src, nil)
 	verifyRotateIR(t, ir)
-	if strings.Contains(ir, "@llvm.fshl") || !strings.Contains(ir, "math/bits.RotateLeft32") {
-		t.Fatalf("non-direct calls must retain the real library symbol:\n%s", ir)
+	if !strings.Contains(ir, "@llvm.fshl.i32") || strings.Contains(ir, "@llgo.rotateLeft") {
+		t.Fatalf("intrinsic call forms must not leave an external llgo symbol:\n%s", ir)
+	}
+}
+
+func TestRotateLeftInvalidDeclarations(t *testing.T) {
+	for _, tc := range []struct{ name, decl, call, want string }{
+		{"arity", "func rotate(uint) uint", "rotate(x)", "invalid arguments or result"},
+		{"result-count", "func rotate(uint, int)", "rotate(x, 1)", "invalid arguments or result"},
+		{"result-type", "func rotate(uint, int) uint64", "rotate(x, 1)", "invalid arguments or result"},
+		{"float-value", "func rotate(float64, int) float64", "rotate(1, 1)", "expected scalar integer arguments"},
+		{"float-count", "func rotate(uint, float64) uint", "rotate(x, 1)", "expected scalar integer arguments"},
+		{"aggregate", "func rotate([1]uint, int) [1]uint", "rotate([1]uint{x}, 1)", "expected scalar integer arguments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package rotates\n//llgo:link rotate llgo.rotateLeft\n" + tc.decl + "\nfunc bad(x uint) { " + tc.call + " }"
+			ssapkg, _, files := buildGoSSAPkg(t, src)
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			defer prog.Dispose()
+			defer func() {
+				if got := fmt.Sprint(recover()); !strings.Contains(got, tc.want) {
+					t.Fatalf("diagnostic = %q, want %q", got, tc.want)
+				}
+			}()
+			if _, err := NewPackage(prog, ssapkg, files); err != nil {
+				panic(err)
+			}
+		})
 	}
 }

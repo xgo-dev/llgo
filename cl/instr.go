@@ -645,6 +645,7 @@ func (p *context) bitCastIntrinsic(b llssa.Builder, args []llssa.Expr, result ty
 // -----------------------------------------------------------------------------
 
 var llgoInstrs = map[string]int{
+	"rotateLeft":        llgoRotateLeft,
 	"aesRound":          llgoAESRound,
 	"aesSubWord":        llgoAESSubWord,
 	"aesAlloca":         llgoAESAlloca,
@@ -2724,16 +2725,6 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			// Unlike llgoInstr, this keeps the library function for other call forms.
-			// Check the package first: Name() crosses cgo and copies the LLVM name.
-			if act == llssa.Call && cv.Pkg != nil && cv.Pkg.Pkg.Path() == "math/bits" {
-				// Honor explicit linkname overrides by matching the resolved symbol.
-				switch aFn.Name() {
-				case "math/bits.RotateLeft", "math/bits.RotateLeft8", "math/bits.RotateLeft16", "math/bits.RotateLeft32", "math/bits.RotateLeft64":
-					ret = b.RotateLeft(args[0], args[1])
-					return
-				}
-			}
 			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
@@ -2864,6 +2855,21 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case llgoFloat64Bits:
 			args := p.compileValues(b, args, kind)
 			ret = p.bitCastIntrinsic(b, args, types.Typ[types.Uint64], "math.Float64bits")
+		case llgoRotateLeft:
+			results := call.Signature().Results()
+			if len(args) != 2 || results.Len() != 1 ||
+				!types.Identical(results.At(0).Type(), args[0].Type()) {
+				panic("rotateLeft(x, count): invalid arguments or result")
+			}
+			for _, arg := range args {
+				if basic, ok := arg.Type().Underlying().(*types.Basic); !ok || basic.Info()&types.IsInteger == 0 {
+					panic("rotateLeft(x, count): expected scalar integer arguments")
+				}
+			}
+			args := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.RotateLeft(args[0], args[1])
+			}, args...)
 		case llgoUMulOverflow:
 			results := call.Signature().Results()
 			if len(args) != 2 || results.Len() != 2 ||
