@@ -204,15 +204,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", job)
         self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
 
-    def test_traceback_coverage_uses_bash_on_every_host(self):
+    def test_runtime_coverage_uses_bash_on_every_host(self):
         steps = load("go.yml")["jobs"]["test"]["steps"]
         step = next(step for step in steps
-                    if step.get("name") == "Test traceback formatter with coverage")
+                    if step.get("name") == "Test runtime ABI and helpers with coverage")
         # PowerShell splits the unquoted -coverprofile=../... argument and Go
         # treats its value as a package. Preserve the shell when moving steps.
         self.assertEqual(step["shell"], "bash")
         self.assertEqual(step["working-directory"], "runtime")
         self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
+        for package in ("./abi", "./internal/traceback", "./internal/wordmap"):
+            self.assertIn(package, step["run"].split())
 
     def test_go_suite_scheduling_preserves_overlays_and_propagates_failures(self):
         step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]

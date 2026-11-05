@@ -292,10 +292,10 @@ jobs:
             libc6-dev-riscv64-cross
           bash dev/test_aes_llvm.sh "$RUNNER_TEMP/llgo-aes-conformance"
 
-      - name: Test traceback formatter with coverage
+      - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings traceback go test -json -coverprofile=../coverage-traceback.txt -covermode=set ./internal/traceback ./internal/wordmap
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings traceback go test -json -coverprofile=../coverage-traceback.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:
