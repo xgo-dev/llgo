@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goescape"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -60,5 +61,40 @@ func TestMissingEscapeFactsAreConservative(t *testing.T) {
 	var result *goescape.Result
 	if decision := result.Decision(&ssa.Alloc{}); !decision.Heap || decision.Reason == "" {
 		t.Fatalf("missing facts accepted: %+v", decision)
+	}
+	ctx := &context{}
+	if !ctx.stackStorage(&ssa.Alloc{}) || ctx.stackStorage(&ssa.Alloc{Heap: true}) || ctx.stackStorage(&ssa.MakeClosure{}) {
+		t.Fatal("missing analysis must preserve only existing SSA-local allocations")
+	}
+}
+
+func TestEscapeTargetStorageConstraints(t *testing.T) {
+	const src = `package placement
+func use(p *[131072]byte) byte { return p[0] }
+func large() byte { return use(new([131072]byte)) }
+func local(p *int) *int { var values [2]*int; values[0] = p; return values[0] }
+func borrow(p **int) *int { return *p }
+func promoted(p *int) *int { return borrow(&p) }
+`
+	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}
+	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, target, true)
+	for _, name := range []string{"large", "promoted"} {
+		if body := llvmFunction(t, ir, "placement."+name); !strings.Contains(body, "runtime.AllocZ") {
+			t.Errorf("%s must retain heap storage:\n%s", name, body)
+		}
+	}
+	if body := llvmFunction(t, ir, "placement.local"); strings.Contains(body, "runtime.AllocZ") {
+		t.Errorf("SSA-local pointer fields should retain their existing root plan:\n%s", body)
+	}
+}
+
+func TestEscapeCABIExistingStackStorage(t *testing.T) {
+	const src = `package C
+var Sink int32
+func Reset_Handler() { values := [3]int32{9,10,11}; Sink = values[1] }
+`
+	ir := compileInterfaceBoxIR(t, src, ssa.GlobalDebug, nil, false)
+	if body := llvmFunction(t, ir, "Reset_Handler"); strings.Contains(body, "runtime.Alloc") {
+		t.Fatalf("C-ABI locals introduced a Go runtime dependency:\n%s", body)
 	}
 }

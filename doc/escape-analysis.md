@@ -55,11 +55,11 @@ The analysis is deliberately field-insensitive. Stores through unresolved aliase
 
 ## Target placement and GC
 
-`cl/escape.go` combines lifetime proofs with LLGo layout. Explicit locals retain the 128 KiB stack-object limit; implicit boxes/environments use 64 KiB. Backend allocation helpers retain alignment, initialization and zero-sized identity rules. Fixed stack reservation is hoisted, while initialization stays at the original statement.
+`cl/escape.go` combines lifetime proofs with LLGo layout. Existing explicit locals retain the 128 KiB stack-object limit; newly promoted allocations and implicit boxes/environments use 64 KiB. Backend allocation helpers retain alignment, initialization and zero-sized identity rules. Fixed stack reservation is hoisted, while initialization stays at the original statement.
 
 Forced heap placement feeds back into the graph **before** summaries are finalized. Otherwise a large or GC-constrained container could retain a pointer to an object incorrectly moved to the stack. The diagnostic records the constraint, and retention propagates to its contents.
 
-Native conservative GC can scan stack fields. Explicit-root targets currently cannot keep managed fields alive merely by rooting their stack address, so pointer-bearing objects remain in scanned heap storage. Pointer-free objects can still use the stack. This guard applies to new promotions and existing stack candidates alike. Extending promotion on those targets requires field roots with correct mutation and safepoint lifetimes.
+Native conservative GC can scan stack fields. Explicit-root targets currently cannot keep managed fields alive merely by rooting their stack address, so newly promoted pointer-bearing objects remain in scanned heap storage. Existing SSA-local allocations retain their root plan: their addresses never leave the function and loads publish individual pointer values. A newly promoted object can instead pass its address to a borrowing callee whose writes are not covered by that plan. Extending promotion on those targets requires field roots with correct mutation and safepoint lifetimes. Pointer-free objects can still use the stack.
 
 `ssa/eh.go` owns compiler-generated defer storage. Native frames live until the invocation unlinks them. Each non-loop argument record up to 64 KiB uses a dedicated entry slot, with arguments captured at registration. Loop/foreign-owner/oversized records and explicit-root frames/records stay on the heap. Pop code uses the same ownership policy: stack nodes never reach `FreeDeferNode`. Mixed lists retain LIFO order, panic/recover behavior and Goexit handling.
 
@@ -67,7 +67,7 @@ Native conservative GC can scan stack fields. Explicit-root targets currently ca
 
 The build coordinator constructs dependency SSA before package-cache lookup (`registerSSAPkgs`, `buildSSAPkgs`). It derives summaries from those exact bodies on every invocation, including archive cache hits, then shares immutable decisions with isolated backend workers. No new serialized summary format is needed. A future loader that skips dependency SSA will need versioned exported effects before reusing these proofs.
 
-Package fingerprints include `GO_ESCAPE_VERSION` as well as existing compiler/source/dependency/target inputs. This also invalidates old archives for compiler API callers that omit a development compiler hash. Missing analysis facts and direct API calls without inspectable dependency bodies retain heap storage.
+Package fingerprints include `GO_ESCAPE_VERSION` as well as existing compiler/source/dependency/target inputs. This also invalidates old archives for compiler API callers that omit a development compiler hash. Missing analysis facts never promote an existing heap object. Compiled bodies excluded from Go summaries (for example, C ABI functions) preserve existing SSA-local allocations, avoiding new runtime dependencies in freestanding code. Direct API calls without inspectable dependency bodies use conservative call effects.
 
 For placement diagnostics, use a function/package-name prefix, or `1` for all functions:
 
@@ -87,3 +87,5 @@ Output includes source position when available, function, allocation kind, place
 - [benchmark/escape](../benchmark/escape/README.md): reproducible issue probes and measured allocation, timing and build-size comparisons. Allocation bytes are reported separately from timing; native `MemStats.Mallocs` is not used because of #2923.
 
 The broad native unwind suite has two full-LTO source-line expectation failures (`TestDeferredCallerClosingLine`, `TestRuntimeDeferredPanicLine`) that reproduce unchanged on the baseline. The new lifetime tests pass under full LTO; the existing line failures must not be represented as a clean full-LTO suite.
+
+The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation was updated to check the actual 16-byte stack storage on native targets and aligned heap storage on Wasm.

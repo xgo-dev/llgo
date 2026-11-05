@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 1
+const Version = 2
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -73,12 +73,20 @@ type Result struct {
 }
 
 func (r *Result) Decision(site ssa.Instruction) Decision {
-	if r != nil {
-		if decision, ok := r.objects[site]; ok {
-			return decision
-		}
+	if decision, ok := r.LookupDecision(site); ok {
+		return decision
 	}
 	return Decision{Heap: true, Reason: "missing analysis"}
+}
+
+// LookupDecision distinguishes analyzed objects from bodies that were excluded
+// because their symbols use another ABI or have a replacement implementation.
+func (r *Result) LookupDecision(site ssa.Instruction) (Decision, bool) {
+	if r != nil {
+		decision, ok := r.objects[site]
+		return decision, ok
+	}
+	return Decision{}, false
 }
 
 func (r *Result) Summary(fn *ssa.Function) (Summary, bool) {

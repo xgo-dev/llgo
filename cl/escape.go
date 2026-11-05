@@ -112,6 +112,11 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 	limit := llabi.MaxImplicitStackVarSize
 	if alloc, ok := site.(*ssa.Alloc); ok {
 		limit = llabi.MaxStackVarSize
+		if alloc.Heap {
+			// Newly promoted objects must fit the implicit allocation limit.
+			// In particular, a 128 KiB new(array) consumes an entire Wasm stack.
+			limit = llabi.MaxImplicitStackVarSize
+		}
 		if alloc.Comment == "makeslice" {
 			return "synthetic slice backing storage"
 		}
@@ -128,11 +133,25 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		return "stack size limit"
 	}
 	if p.prog.GCRootsEnabled() && mayContainGCRoot(typ) {
+		if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
+			// SSA-local addresses never leave the function. Their loads already
+			// publish the individual pointer values through the GC root plan.
+			// New promotions can pass their address to a borrowing callee, whose
+			// writes are not covered by that plan, so keep those on the heap.
+			return ""
+		}
 		return "explicit GC roots do not scan stack fields"
 	}
 	return ""
 }
 
 func (p *context) stackStorage(site ssa.Instruction) bool {
-	return !p.options.EscapeAnalysis.Decision(site).Heap
+	if decision, ok := p.options.EscapeAnalysis.LookupDecision(site); ok {
+		return !decision.Heap
+	}
+	// A compiled C-ABI body can be excluded from Go call summaries. Preserve
+	// the SSA builder's existing local-storage proof in such bodies; missing
+	// facts never justify promoting an object that SSA placed on the heap.
+	alloc, ok := site.(*ssa.Alloc)
+	return ok && !alloc.Heap
 }
