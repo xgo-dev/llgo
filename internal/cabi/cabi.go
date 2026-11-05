@@ -843,7 +843,14 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	case AttrWidthType, AttrWidthType2:
 		ret := llvm.CreateCall(b, nft, nfn, nparams)
 		updateCallAttr(ret)
-		ptr := createAlloca(nft.ReturnType())
+		storageType := nft.ReturnType()
+		if p.Sizeof(info.Return.nativeType()) > p.Sizeof(storageType) {
+			// Register coercions can omit trailing padding; the aggregate
+			// load below still needs storage for the whole native value.
+			storageType = info.Return.nativeType()
+		}
+		ptr := createAlloca(storageType)
+		ptr.SetAlignment(max(info.Return.Align, p.Alignof(nft.ReturnType())))
 		b.CreateStore(ret, ptr)
 		pret := b.CreateBitCast(ptr, llvm.PointerType(info.Return.nativeType(), 0), "")
 		instr = aggregateFromNative(b, info.Return, b.CreateLoad(info.Return.nativeType(), pret, ""))

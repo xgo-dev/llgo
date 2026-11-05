@@ -142,6 +142,16 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 			if len(parts[1]) != 0 {
 				info.Kind = AttrWidthType2
 				info.Type2 = subType(parts[1], 1)
+				// Fill the first eightbyte so the coercion pair keeps the
+				// second register at byte 8. Preserve its INTEGER/SSE class.
+				pair := ctx.StructType([]llvm.Type{info.Type1, info.Type2}, false)
+				if p.td.ElementOffset(pair, 1) < 8 {
+					if info.Type1.TypeKind() == llvm.IntegerTypeKind {
+						info.Type1 = ctx.Int64Type()
+					} else {
+						info.Type1 = ctx.DoubleType()
+					}
+				}
 			}
 		}
 	}
