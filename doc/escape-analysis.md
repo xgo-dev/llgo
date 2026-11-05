@@ -55,7 +55,7 @@ The analysis is deliberately field-insensitive. Stores through unresolved aliase
 
 ## Target placement and GC
 
-`cl/escape.go` combines lifetime proofs with LLGo layout. Existing explicit locals retain the 128 KiB stack-object limit; newly promoted allocations and implicit boxes/environments use 64 KiB. Backend allocation helpers retain alignment, initialization and zero-sized identity rules. Fixed stack reservation is hoisted, while initialization stays at the original statement.
+`cl/escape.go` combines lifetime proofs with LLGo layout. Queries use a disposable backend context so original types cannot pollute the named-type cache before source replacements are lowered (including shared/archive builds). Existing explicit locals retain the 128 KiB stack-object limit; newly promoted allocations and implicit boxes/environments use 64 KiB. Backend allocation helpers retain alignment, initialization and zero-sized identity rules. Fixed stack reservation is hoisted, while initialization stays at the original statement.
 
 Forced heap placement feeds back into the graph **before** summaries are finalized. Otherwise a large or GC-constrained container could retain a pointer to an object incorrectly moved to the stack. The diagnostic records the constraint, and retention propagates to its contents.
 
@@ -89,3 +89,5 @@ Output includes source position when available, function, allocation kind, place
 The broad native unwind suite has two full-LTO source-line expectation failures (`TestDeferredCallerClosingLine`, `TestRuntimeDeferredPanicLine`) that reproduce unchanged on the baseline. The new lifetime tests pass under full LTO; the existing line failures must not be represented as a clean full-LTO suite.
 
 The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation was updated to check the actual 16-byte stack storage on native targets and aligned heap storage on Wasm.
+
+The analysis caches each function's CFG scopes and retains allocation decisions from the converged summary pass. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.

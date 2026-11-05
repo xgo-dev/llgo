@@ -40,11 +40,22 @@ func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patch
 			ctx.goTyps = pkg.Pkg
 		}
 	}
-	prog.SetPatch(ctx.patchType)
 	return ctx.analyzeEscape()
 }
 
 func (p *context) analyzeEscape() *goescape.Result {
+	// Layout queries must not populate code generation's named-type cache
+	// before source replacements are lowered. This applies both to the build
+	// coordinator and to direct NewPackageEx callers.
+	layout := *p
+	layout.prog = p.prog.NewBackendProgram()
+	defer layout.prog.Dispose()
+	layout.loaded = make(map[*types.Package]*pkgInfo, len(p.loaded))
+	for pkg, info := range p.loaded {
+		layout.loaded[pkg] = info
+	}
+	layout.prog.SetPatch(layout.patchType)
+	p = &layout
 	var roots []*ssa.Function
 	for fn := range ssautil.AllFunctions(p.goProg) {
 		roots = append(roots, fn)

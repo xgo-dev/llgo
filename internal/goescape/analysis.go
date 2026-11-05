@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 2
+const Version = 3
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -164,6 +164,7 @@ type analyzer struct {
 	config Config
 	result *Result
 	bodies map[*ssa.Function]bool
+	scopes map[*ssa.Function]*scopes
 }
 
 func (a *analyzer) inspect(fn *ssa.Function) bool {
@@ -187,13 +188,14 @@ func (a *analyzer) summary(fn *ssa.Function) Summary {
 func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
 		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary),
-	}, bodies: make(map[*ssa.Function]bool)}
+	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {
 		if a.bodies[fn] || !a.inspect(fn) {
 			return
 		}
 		a.bodies[fn] = true
+		a.scopes[fn] = functionScopes(fn)
 		a.result.summaries[fn] = emptySummary(fn)
 		for _, callee := range dependencies(fn) {
 			discover(callee)
@@ -206,12 +208,17 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 		for iteration := 0; ; iteration++ {
 			changed := false
 			for _, fn := range group {
-				s, _ := a.analyzeFunction(fn)
+				s, decisions := a.analyzeFunction(fn)
 				previous := a.result.summaries[fn]
 				changed = mergeSummary(&previous, s) || changed
 				a.result.summaries[fn] = previous
+				for site, decision := range decisions {
+					a.result.objects[site] = decision
+				}
 			}
 			if !changed {
+				// No summary changed during this pass, so its storage decisions
+				// already use the converged effects. Do not rebuild once more.
 				break
 			}
 			if iteration >= 63 {
@@ -220,13 +227,15 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 				for _, fn := range group {
 					a.result.summaries[fn] = unknownSummary(fn)
 				}
+				// Only the bounded fallback needs another solve: the final
+				// decisions must observe the newly conservative call effects.
+				for _, fn := range group {
+					_, decisions := a.analyzeFunction(fn)
+					for site, decision := range decisions {
+						a.result.objects[site] = decision
+					}
+				}
 				break
-			}
-		}
-		for _, fn := range group {
-			_, decisions := a.analyzeFunction(fn)
-			for site, decision := range decisions {
-				a.result.objects[site] = decision
 			}
 		}
 	}

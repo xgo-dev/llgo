@@ -26,6 +26,9 @@ import (
 // WriteReport prints deterministic placement diagnostics. A nonempty package
 // prefix limits output to matching functions; it does not affect analysis.
 func (r *Result) WriteReport(w io.Writer, packagePrefix string) error {
+	if r == nil {
+		return nil
+	}
 	var lines []string
 	for site, decision := range r.objects {
 		fn := site.Parent()

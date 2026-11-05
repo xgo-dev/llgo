@@ -24,21 +24,6 @@ func (s *lifetime) contains(other *lifetime) bool {
 	return false
 }
 
-type function struct {
-	parent      *function
-	resultsLost bool
-	results     []*location
-}
-
-func (f *function) contains(other *function) bool {
-	for ; other != nil; other = other.parent {
-		if f == other {
-			return true
-		}
-	}
-	return false
-}
-
 type attributes uint8
 
 const (
@@ -52,19 +37,17 @@ const (
 // This distinction lets an interface box remain local while its payload flows
 // to a caller, or a local pointer variable refer to an escaping object.
 type location struct {
-	name    string
-	fn      *function
-	closure *function // environment for a function value, when statically known
-	scope   *lifetime
-	param   bool
-	result  int // one-based result index; zero for non-results
-	attrs   attributes
-	edges   []edge
-	leaks   leaks
-	queued  bool
-	walk    uint64
-	derefs  int
-	reason  string // first lifetime witness that forced this storage to escape
+	name   string
+	scope  *lifetime
+	param  bool
+	result int // one-based result index; zero for non-results
+	attrs  attributes
+	edges  []edge
+	leaks  leaks
+	queued bool
+	walk   uint64
+	derefs int
+	reason string // first lifetime witness that forced this storage to escape
 }
 
 type edge struct {
@@ -102,8 +85,8 @@ func (l *leaks) addResult(index, depth int) {
 	l.results[index].add(depth)
 }
 
-// graph owns one mutually analyzed group of functions. Summaries connect
-// different groups; unresolved external calls flow into the heap sink.
+// Each graph owns one function. Cross-function and closure flows use call
+// summaries; unresolved external calls flow into the heap sink.
 type graph struct {
 	all                   []*location
 	heap, mutator, callee location
@@ -121,8 +104,8 @@ func newGraph() *graph {
 	}
 }
 
-func (g *graph) location(name string, fn *function, scope *lifetime) *location {
-	l := &location{name: name, fn: fn, scope: scope}
+func (g *graph) location(name string, scope *lifetime) *location {
+	l := &location{name: name, scope: scope}
 	g.all = append(g.all, l)
 	return l
 }
@@ -168,12 +151,6 @@ func (g *graph) solve() bool {
 }
 
 func (g *graph) walk(root *location) {
-	if root.attrs&calls != 0 && root.closure != nil && !root.closure.resultsLost {
-		root.closure.resultsLost = true
-		for _, result := range root.closure.results {
-			g.enqueue(result)
-		}
-	}
 	g.generation++
 	generation := g.generation
 	root.walk, root.derefs = generation, 0
@@ -215,7 +192,7 @@ func (g *graph) walk(root *location) {
 		}
 		if l.param {
 			if g.outlives(root, l) {
-				if root.result > 0 && root.fn == l.fn && root.attrs&escapes == 0 {
+				if root.result > 0 && root.attrs&escapes == 0 {
 					l.leaks.addResult(root.result-1, depth)
 				} else {
 					l.leaks.heap.add(depth)
@@ -257,15 +234,7 @@ func (g *graph) outlives(dst, src *location) bool {
 		return false
 	}
 	if dst.result != 0 {
-		// A statically tracked child closure can return its caller's object
-		// without extending that object's lifetime beyond the caller.
-		if src.fn != nil && dst.fn != nil && src.fn != dst.fn && src.fn.contains(dst.fn) && !dst.fn.resultsLost {
-			return false
-		}
 		return true
 	}
-	if dst.fn == src.fn {
-		return dst.scope != nil && src.scope != nil && dst.scope != src.scope && !src.scope.contains(dst.scope)
-	}
-	return dst.fn != nil && src.fn != nil && dst.fn.contains(src.fn)
+	return dst.scope != nil && src.scope != nil && dst.scope != src.scope && !src.scope.contains(dst.scope)
 }

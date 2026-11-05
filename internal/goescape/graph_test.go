@@ -14,9 +14,9 @@ func TestObjectAndPayloadLifetimes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newGraph()
-			fn, scope := new(function), new(lifetime)
-			box := g.location("box", fn, scope)
-			payload := g.location("payload", fn, scope)
+			scope := new(lifetime)
+			box := g.location("box", scope)
+			payload := g.location("payload", scope)
 			g.flow(box, payload, -1)
 			g.flow(&g.heap, box, tc.depth)
 			g.solve()
@@ -32,10 +32,10 @@ func TestObjectAndPayloadLifetimes(t *testing.T) {
 
 func TestParameterEffectsAndResults(t *testing.T) {
 	g := newGraph()
-	fn, scope := new(function), new(lifetime)
-	p := g.location("p", fn, scope)
+	scope := new(lifetime)
+	p := g.location("p", scope)
 	p.param = true
-	r := g.location("result", fn, scope)
+	r := g.location("result", scope)
 	r.result = 1
 	g.flow(r, p, 0)
 	g.flow(&g.mutator, p, 1)
@@ -52,15 +52,14 @@ func TestParameterEffectsAndResults(t *testing.T) {
 func TestLoopRetentionAndPersistence(t *testing.T) {
 	for _, retained := range []bool{false, true} {
 		g := newGraph()
-		fn := new(function)
 		outer := new(lifetime)
 		inner := &lifetime{parent: outer}
-		object := g.location("iteration object", fn, inner)
+		object := g.location("iteration object", inner)
 		scope := inner
 		if retained {
 			scope = outer
 		}
-		dst := g.location("user", fn, scope)
+		dst := g.location("user", scope)
 		dst.attrs = persists
 		g.flow(dst, object, -1)
 		g.solve()
@@ -75,31 +74,15 @@ func TestLoopRetentionAndPersistence(t *testing.T) {
 
 func TestAddressCyclesConverge(t *testing.T) {
 	g := newGraph()
-	fn, scope := new(function), new(lifetime)
-	a := g.location("a", fn, scope)
-	b := g.location("b", fn, scope)
+	scope := new(lifetime)
+	a := g.location("a", scope)
+	b := g.location("b", scope)
 	g.flow(a, b, -1)
 	g.flow(b, a, -1)
 	g.flow(&g.heap, a, 0)
 	g.solve()
 	if a.attrs&escapes == 0 || b.attrs&escapes == 0 {
 		t.Fatal("cycle lost an escaping address")
-	}
-}
-
-func TestClosureReturnLifetime(t *testing.T) {
-	for _, lost := range []bool{false, true} {
-		g := newGraph()
-		outer := new(function)
-		child := &function{parent: outer, resultsLost: lost}
-		object := g.location("outer object", outer, new(lifetime))
-		result := g.location("closure result", child, new(lifetime))
-		result.result = 1
-		g.flow(result, object, -1)
-		g.solve()
-		if (object.attrs&escapes != 0) != lost {
-			t.Fatalf("lost=%v attrs=%v", lost, object.attrs)
-		}
 	}
 }
 
@@ -116,35 +99,12 @@ func TestLeakDepthSaturatesConservatively(t *testing.T) {
 	}
 }
 
-func TestUnknownClosureCallsRevisitResults(t *testing.T) {
-	g := newGraph()
-	outer := new(function)
-	child := &function{parent: outer}
-	object := g.location("outer object", outer, new(lifetime))
-	result := g.location("closure result", child, new(lifetime))
-	result.result = 1
-	child.results = []*location{result}
-	environment := g.location("closure environment", outer, new(lifetime))
-	environment.closure = child
-	g.flow(result, object, -1)
-	g.solve()
-	if object.attrs&escapes != 0 {
-		t.Fatal("tracked result escaped before an unknown call")
-	}
-	g.flow(&g.callee, environment, -1)
-	g.solve()
-	if !child.resultsLost || object.attrs&escapes == 0 {
-		t.Fatal("unknown closure call did not invalidate the returned alias proof")
-	}
-}
-
 func TestSiblingLoopScopesRetainObjects(t *testing.T) {
 	g := newGraph()
-	fn := new(function)
 	root := new(lifetime)
 	first, second := &lifetime{parent: root}, &lifetime{parent: root}
-	object := g.location("first loop object", fn, first)
-	user := g.location("second loop value", fn, second)
+	object := g.location("first loop object", first)
+	user := g.location("second loop value", second)
 	g.flow(user, object, -1)
 	g.solve()
 	if object.attrs&escapes == 0 {

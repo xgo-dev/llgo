@@ -1,12 +1,17 @@
 package cl
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goescape"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestEscapeResolvedInstructionContracts(t *testing.T) {
@@ -96,5 +101,32 @@ func Reset_Handler() { values := [3]int32{9,10,11}; Sink = values[1] }
 	ir := compileInterfaceBoxIR(t, src, ssa.GlobalDebug, nil, false)
 	if body := llvmFunction(t, ir, "Reset_Handler"); strings.Contains(body, "runtime.Alloc") {
 		t.Fatalf("C-ABI locals introduced a Go runtime dependency:\n%s", body)
+	}
+}
+
+func TestEscapeLayoutDoesNotPopulateBackendTypes(t *testing.T) {
+	// Source patches may replace a named type with the same layout and fewer
+	// methods. Caching the original type in the coordinator before lowering
+	// caused shared/archive builds to emit nonexistent runtime methods.
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "layout.go", `package layout
+type T struct { X int }
+func (T) OriginalOnly() {}
+func f() *T { return new(T) }
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, _, err := ssautil.BuildPackage(&types.Config{}, fset, types.NewPackage("layout", "layout"), []*ast.File{file}, ssa.InstantiateGenerics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := newLLSSAProgForTarget(t, nil)
+	defer prog.Dispose()
+	PrepareEscapeAnalysis(prog, pkg.Prog, nil)
+	original := pkg.Pkg.Scope().Lookup("T").Type().(*types.Named)
+	replacement := types.NewNamed(types.NewTypeName(token.NoPos, pkg.Pkg, "T", nil), original.Underlying(), nil)
+	if got := prog.Type(replacement, llssa.GoDecl).RawType().(*types.Named); got.NumMethods() != 0 {
+		t.Fatal("layout queries cached the original type's methods in the backend")
 	}
 }

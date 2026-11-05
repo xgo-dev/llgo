@@ -33,7 +33,6 @@ type functionAnalysis struct {
 	a       *analyzer
 	g       *graph
 	fn      *ssa.Function
-	model   *function
 	scopes  *scopes
 	values  map[ssa.Value]*location
 	tuples  map[ssa.Value][]*location
@@ -44,8 +43,8 @@ type functionAnalysis struct {
 }
 
 func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instruction]Decision) {
-	f := &functionAnalysis{a: a, g: newGraph(), fn: fn, model: new(function),
-		scopes: functionScopes(fn), values: make(map[ssa.Value]*location),
+	f := &functionAnalysis{a: a, g: newGraph(), fn: fn,
+		scopes: a.scopes[fn], values: make(map[ssa.Value]*location),
 		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object)}
 	for _, param := range fn.Params {
 		l := f.value(param)
@@ -58,7 +57,7 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		f.params = append(f.params, l)
 	}
 	for i := 0; i < fn.Signature.Results().Len(); i++ {
-		l := f.g.location("result", f.model, f.scopes.invocation)
+		l := f.g.location("result", f.scopes.invocation)
 		l.result = i + 1
 		f.results = append(f.results, l)
 	}
@@ -129,7 +128,7 @@ func (f *functionAnalysis) sink(reason string) *location {
 	if l := f.sinks[reason]; l != nil {
 		return l
 	}
-	l := f.g.location(reason, nil, nil)
+	l := f.g.location(reason, nil)
 	l.attrs, l.reason = escapes|persists|mutates|calls, reason
 	f.sinks[reason] = l
 	return l
@@ -142,7 +141,7 @@ func (f *functionAnalysis) value(v ssa.Value) *location {
 	if l := f.values[v]; l != nil {
 		return l
 	}
-	l := f.g.location(v.Name(), f.model, f.scopes.valueScope(v))
+	l := f.g.location(v.Name(), f.scopes.valueScope(v))
 	f.values[v] = l
 	return l
 }
@@ -153,7 +152,7 @@ func (f *functionAnalysis) tuple(v ssa.Value, index int) *location {
 		typ := v.Type().Underlying().(*types.Tuple)
 		parts = make([]*location, typ.Len())
 		for i := range parts {
-			parts[i] = f.g.location(v.Name()+".part", f.model, f.scopes.valueScope(v))
+			parts[i] = f.g.location(v.Name()+".part", f.scopes.valueScope(v))
 		}
 		f.tuples[v] = parts
 	}
@@ -168,7 +167,7 @@ func (f *functionAnalysis) flow(dst *location, src ssa.Value, depth int) {
 
 func (f *functionAnalysis) newObject(site ssa.Instruction, typ types.Type, reason string) {
 	value := site.(ssa.Value)
-	l := f.g.location(value.Name()+".storage", f.model, f.scopes.valueScope(value))
+	l := f.g.location(value.Name()+".storage", f.scopes.valueScope(value))
 	if f.scopes.uncertain[site.Block()] {
 		reason = "irreducible or over-budget control flow"
 	}
@@ -393,7 +392,7 @@ func (f *functionAnalysis) store(addr, value ssa.Value) {
 func (f *functionAnalysis) retainCall(call *ssa.CallCommon, block *ssa.BasicBlock, async bool) {
 	dst := f.sink("deferred or asynchronous use")
 	if !async && f.scopes.blocks[block] == f.scopes.invocation {
-		dst = f.g.location("defer arguments", f.model, f.scopes.invocation)
+		dst = f.g.location("defer arguments", f.scopes.invocation)
 		dst.attrs = persists
 	}
 	f.flow(dst, call.Value, 0)

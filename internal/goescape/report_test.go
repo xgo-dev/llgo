@@ -10,6 +10,10 @@ import (
 )
 
 func TestPlacementReport(t *testing.T) {
+	var missing *Result
+	if err := missing.WriteReport(failedWriter{}, ""); err != nil {
+		t.Fatalf("nil report wrote output: %v", err)
+	}
 	fn := sourceFunction(t, `func borrow(*int){}; func f(x int) *int {borrow(&x); return &x}`)
 	r := Analyze([]*ssa.Function{fn}, Config{})
 	var out bytes.Buffer
@@ -42,8 +46,8 @@ func (failedWriter) Write([]byte) (int, error) { return 0, errReport }
 func TestGraphWorkLimitRejectsPartialProof(t *testing.T) {
 	g := newGraph()
 	g.budget = 2
-	fn, scope := new(function), new(lifetime)
-	a, b := g.location("a", fn, scope), g.location("b", fn, scope)
+	scope := new(lifetime)
+	a, b := g.location("a", scope), g.location("b", scope)
 	g.flow(a, b, -1)
 	g.flow(&g.heap, a, -1)
 	if g.solve() {
