@@ -538,6 +538,27 @@ func isPredOp(op token.Token) bool {
 	return op >= predOpBase && op <= predOpLast
 }
 
+// RotateLeft rotates a scalar integer by count modulo its bit width.
+func (b Builder) RotateLeft(x, count Expr) Expr {
+	for _, operand := range []Expr{x, count} {
+		basic, ok := operand.Type.RawType().Underlying().(*types.Basic)
+		if !ok || basic.Info()&types.IsInteger == 0 {
+			panic("rotateLeft: expected scalar integer arguments")
+		}
+	}
+	distance := count.impl
+	countWidth := distance.Type().IntTypeWidth()
+	if countWidth > x.ll.IntTypeWidth() {
+		distance = b.impl.CreateTrunc(distance, x.ll, "")
+	} else if countWidth < x.ll.IntTypeWidth() {
+		// The count is modulo x's bit width, so zero extension also
+		// gives the right rotation for negative counts.
+		distance = b.impl.CreateZExt(distance, x.ll, "")
+	}
+	v := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.fshl"), []llvm.Value{x.impl, x.impl, distance}, "")
+	return Expr{v, x.Type}
+}
+
 // The BinOp instruction yields the result of binary operation (x op y).
 // op can be:
 // ADD SUB MUL QUO REM          + - * / %
