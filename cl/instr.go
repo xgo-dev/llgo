@@ -719,6 +719,8 @@ var llgoInstrs = map[string]int{
 func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
 	pkgTypes, name, ftype := p.funcName(fn)
 	switch ftype {
+	case llvmIntrinsic:
+		p.resolveLLVMIntrinsic(fn, name)
 	case pyFunc:
 		if kind, mod := pkgKindByScope(pkgTypes.Scope()); kind == PkgPyModule {
 			pkg := p.pkg
@@ -2687,6 +2689,9 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
 				return folded
 			}
+			if wrapper := p.llvmIntrinsicWrapper(cv); wrapper != nil {
+				return p.expandLLVMIntrinsicWrapper(b, wrapper, call)
+			}
 		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)
@@ -2696,6 +2701,8 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
+		case llvmIntrinsic:
+			ret = p.callLLVMIntrinsic(b, act, cv, call)
 		case cFunc, stdcallFunc:
 			p.inCFunc = true
 			args := p.compileValues(b, args, kind)

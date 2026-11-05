@@ -186,6 +186,8 @@ type context struct {
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
+	llvmIntrinsics       map[*ssa.Function]*llssa.LLVMIntrinsic
+	llvmWrappers         map[*ssa.Function]*ssa.Function
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -632,6 +634,10 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 
 func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
 	pkgTypes, name, ftype := p.funcName(f)
+	if ftype == llvmIntrinsic {
+		p.resolveLLVMIntrinsic(f, name)
+		return nil, nil, llvmIntrinsic
+	}
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)
 	simdDecl = simdDecl && f.Pkg == p.goPkg
 	if simdDecl {
@@ -2578,7 +2584,11 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
-		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
+		_, _, ftype := p.funcName(v)
+		if ftype == llvmIntrinsic {
+			p.llvmIntrinsicError(v.Pos(), v, fmt.Errorf("LLVM intrinsic cannot be used as a function value; use a Go wrapper"))
+		}
+		if ftype == llgoInstr {
 			v = ssawrap.MakeCallWrapper(p.goProg, v)
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
@@ -3108,6 +3118,9 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 				continue
 			}
 			if member.TypeParams() != nil || member.TypeArgs() != nil {
+				if _, name, kind := ctx.funcName(member); kind == llvmIntrinsic {
+					ctx.resolveLLVMIntrinsic(member, name)
+				}
 				// TODO(xsw): don't compile generic functions
 				// Do not try to build generic (non-instantiated) functions.
 				continue

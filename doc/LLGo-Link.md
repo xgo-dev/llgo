@@ -1,4 +1,4 @@
-Binding Go Symbols to C/C++/Python Symbols via //go:linkname and //llgo:link
+Binding Go Symbols and LLVM Intrinsics via //go:linkname and //llgo:link
 =====
 
 ## Summary
@@ -6,9 +6,9 @@ Binding Go Symbols to C/C++/Python Symbols via //go:linkname and //llgo:link
 LLGo lets Go code call C, C++ and Python libraries, and lets Go code be called from C, by attaching an external symbol name to a Go declaration. It does this with two directives:
 
 - `//go:linkname`, the standard Go directive, whose *linkname* syntax LLGo extends with a calling-convention prefix.
-- `//llgo:link`, an LLGo-specific directive that does the same job for **methods**, which `//go:linkname` cannot handle.
+- `//llgo:link`, an LLGo-specific directive for functions and methods, including methods which `//go:linkname` cannot handle.
 
-The core idea: **the prefix decides the ABI, and the presence of a body decides whether the declaration defines the symbol or references it.** These are two independent questions. A body never turns prefix interpretation off. `C.name` on a function with a body exports a C entry point, and `C.name` on a prototype references an external C function.
+For external symbols, **the prefix decides the ABI, and the presence of a body decides whether the declaration defines the symbol or references it.** These are two independent questions. A body never turns prefix interpretation off. `C.name` on a function with a body exports a C entry point, and `C.name` on a prototype references an external C function. The `llvm.` prefix instead binds a compiler intrinsic, as described below.
 
 Variables follow the same split, with one wrinkle: for a Go variable, the absence of an initializer does not mean the declaration is only a reference. Without an extension prefix, every such declaration is a (zero-initialized) definition, exactly as in gc. Extension prefixes (`C.`, `stdcall.`) mark *extern storage* instead.
 
@@ -28,7 +28,7 @@ LLGo meets these needs by giving the linkname a `<callconv>.<name>` form instead
 
 For `//go:linkname <GoName> <target>`, read the declaration in two steps.
 
-1. **The prefix picks the ABI.** No prefix or `pkgPath.` means the Go ABI. `C.` means the C ABI (`cdecl`). `stdcall.` means the `stdcall` ABI. `py.` and `llgo.` are special and have their own sections.
+1. **The prefix picks the ABI.** No prefix or `pkgPath.` means the Go ABI. `C.` means the C ABI (`cdecl`). `stdcall.` means the `stdcall` ABI. `py.`, `llgo.` and `llvm.` are special and have their own sections.
 2. **The body (or, for variables, the prefix) picks the role.** A function with a body defines the symbol. A prototype references a symbol defined elsewhere. Variables are covered in their own section.
 
 ### Functions
@@ -114,6 +114,74 @@ func Str(string) *Char
 `c.Str` is **not** a call to a function. It defines a C-style string constant. For example, `c.Str("Hello")` yields a constant `*c.Char` pointing at a 6-byte, `\0`-terminated string.
 
 `llgo.<name>` is allowed on prototypes only. A function with an `llgo.` linkname cannot have a body; it is rejected with a compile error, because an instruction has nothing to export or define. It is also not allowed on variables.
+
+### `llvm.<name>`: checked LLVM intrinsics
+
+Bind a function directly to a supported LLVM intrinsic using either directive:
+
+```go
+//llgo:link fshl8 llvm.fshl
+func fshl8(a, b, k uint8) uint8
+
+func RotateLeft8(x uint8, k int) uint8 {
+	return fshl8(x, x, uint8(k))
+}
+```
+
+The equivalent `//go:linkname fshl8 llvm.fshl` requires an `unsafe` import as
+usual. `//llgo:link` does not require that import. A binding can have an optional
+Go fallback body, which LLGo ignores; it never defines the LLVM intrinsic.
+
+Use an intrinsic base name, such as `llvm.fshl`, to infer the overload from the
+declaration. A complete name, such as `llvm.fshl.i8`, is also accepted, but its
+suffix must agree with the declared types. LLVM validates the parameter count,
+parameter and return types, and relationships between overloaded types. LLGo
+also runs LLVM verification to catch restrictions such as invalid `bswap`
+widths. The LLVM version linked into the compiler determines which intrinsics
+and signatures exist.
+
+Parameters must be scalar booleans, integers, or floating-point values. Named
+types and aliases are accepted. `bool` maps to `i1`; `int`, `uint` and `uintptr`
+use the target's Go word width. Multiple scalar return values map to LLVM's
+native result structure and are converted to the Go tuple layout. Intrinsics
+use LLVM value types directly, without a C calling-convention transformation.
+LLVM integers have no signedness; signed semantics come from the chosen
+intrinsic, not from validation of the Go type's signedness.
+
+Some operands must be immediate constants (`immarg`). Check these at each call:
+
+```go
+//llgo:link ctlz32 llvm.ctlz
+func ctlz32(x uint32, zeroIsPoison bool) uint32
+
+func LeadingZeros32(x uint32) int {
+	return int(ctlz32(x, false))
+}
+```
+
+Passing a runtime variable as `ctlz32`'s second argument is an error. Here,
+`false` also gives the intended result of 32 for a zero input. Wrappers must
+choose flags and conversions deliberately; type checking does not establish
+equivalence with a Go library function or enable fast-math semantics.
+
+Raw bindings support direct calls only. Use an ordinary Go wrapper for function
+values, `go` and `defer`. For direct calls, LLGo expands small wrappers containing
+one scalar intrinsic call and scalar conversions, including across packages
+without LTO. Argument expressions are evaluated once. `//go:noinline` disables
+this expansion for that wrapper. More complex wrappers use normal calls and
+LLVM optimization; their inlining is not guaranteed.
+
+The initial support policy includes bit operations (`fshl`, `fshr`, `ctpop`,
+`ctlz`, `cttz`, `bswap`, `bitreverse`, `abs`), integer min/max, saturating
+arithmetic, signed/unsigned add/subtract/multiply with overflow, floating-point
+math and rounding, floating-point min/max variants, and saturating float-to-int
+conversion. The complete family list is `llvmScalarIntrinsics` in
+[`ssa/llvm_intrinsic.go`](../ssa/llvm_intrinsic.go). This list controls support;
+LLVM supplies the signatures and lowering. Architecture-specific intrinsics,
+vectors, pointer/metadata/token interfaces, methods, generics and variadic
+declarations are currently rejected. `llvm.` is reserved for function bindings
+and cannot be applied to variables. Existing `llgo.` instructions remain
+supported.
 
 ## Linkname on variables
 
@@ -207,7 +275,7 @@ This binds the Go method `TranslationUnit.Cursor` to the C function `clang_getTr
 
 `//llgo:link` only references an external symbol. It has no export mode and no naming-only mode.
 
-**About the fake body.** A method annotated with `//llgo:link` carries a placeholder body (`return Cursor{}` above). This exists only to satisfy the Go compiler, which requires a method to have a body. The body has no runtime meaning: LLGo replaces the method with the external symbol. This is the one place where a body does not mean "define", and it is a property of `//llgo:link`, not of `//go:linkname`.
+**About the fake body.** A method annotated with `//llgo:link` carries a placeholder body (`return Cursor{}` above). This exists only to satisfy the Go compiler, which requires a method to have a body. The body has no runtime meaning: LLGo replaces the method with the external symbol. LLVM intrinsic bindings also ignore an optional Go fallback body, as described above.
 
 ## Summary of rules
 
@@ -220,6 +288,7 @@ This binds the Go method `TranslationUnit.Cursor` to the C function `clang_getTr
 | stdcall function | `//go:linkname` | `stdcall.<manglingName>` | Exports a stdcall entry, same boundary handling (Windows only) | References an external stdcall function (Windows only) |
 | Python function | `//go:linkname` | `py.<name>` | Rejected | References a Python module function; needs `const LLGoPackage = "py.<moduleName>"` |
 | Compiler instruction | `//go:linkname` | `llgo.<name>` | Rejected | Expanded by the compiler (e.g. `llgo.cstr`) |
+| LLVM intrinsic | Either directive | `llvm.<name>` | Go fallback body ignored by LLGo | Checked and expanded into an LLVM intrinsic call |
 | Method | `//llgo:link` | `<callconv>.<name>` | Placeholder body, ignored | (not applicable; a method always needs a placeholder body) |
 
 On non-Windows targets, every `stdcall.` linkname (function or variable, with or without a body) is rejected with a compile error.

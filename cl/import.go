@@ -731,12 +731,13 @@ func cgoIgnored(fnName string) bool {
 }
 
 const (
-	ignoredFunc = iota
-	goFunc      = int(llssa.GoDecl)
-	cFunc       = int(llssa.CDecl)
-	pyFunc      = int(llssa.PyDecl)
-	stdcallFunc = int(llssa.Stdcall)
-	llgoInstr   = -1
+	ignoredFunc   = iota
+	goFunc        = int(llssa.GoDecl)
+	cFunc         = int(llssa.CDecl)
+	pyFunc        = int(llssa.PyDecl)
+	stdcallFunc   = int(llssa.Stdcall)
+	llgoInstr     = -1
+	llvmIntrinsic = -2
 
 	llgoInstrBase   = 0x80
 	llgoUnreachable = llgoInstrBase + 0
@@ -904,6 +905,9 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		if strings.HasPrefix(v, "llgo.") {
 			return nil, v[5:], llgoInstr
 		}
+		if strings.HasPrefix(v, "llvm.") {
+			return nil, v, llvmIntrinsic
+		}
 		return pkg, v, goFunc
 	}
 	if _, ok := p.simdOperation(fn); ok {
@@ -950,6 +954,9 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 			}
 			if strings.HasPrefix(v, "stdcall.") {
 				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
+			}
+			if strings.HasPrefix(v, "llvm.") {
+				panic(fmt.Errorf("llvm linkname namespace applies only to functions: %s", name))
 			}
 			if strings.HasPrefix(v, "go:") {
 				if llssa.PathOf(pkg) == "runtime" {
