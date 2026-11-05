@@ -12,10 +12,13 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-const rotateSource = `package rotates
+const rotateDeclaration = `package rotates
 type Integer interface { ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 }
 //llgo:link rotate llgo.rotateLeft
 func rotate[T Integer](x T, k int) T { panic("intrinsic") }
+`
+
+const rotateSource = rotateDeclaration + `
 func r8(x uint8, k int) uint8 { return rotate(x, k) }
 func r16(x uint16, k int) uint16 { return rotate(x, k) }
 func r32(x uint32, k int) uint32 { return rotate(x, k) }
@@ -104,15 +107,19 @@ func r32(x uint32, k int) uint32 { return bits.RotateLeft32(x, k) }
 }
 
 func TestRotateLeftIntrinsicCallForms(t *testing.T) {
-	const src = rotateSource + `
-func indirect() func(uint32, int) uint32 { return rotate[uint32] }
-func later(x uint32, k int) { defer rotate(x, k) }
-func concurrent(x uint32, k int) { go rotate(x, k) }
-`
-	ir := compileWithRewrites(t, src, nil)
-	verifyRotateIR(t, ir)
-	if !strings.Contains(ir, "@llvm.fshl.i32") || strings.Contains(ir, "@llgo.rotateLeft") {
-		t.Fatalf("intrinsic call forms must not leave an external llgo symbol:\n%s", ir)
+	for _, tc := range []struct{ name, source string }{
+		{"function-value", "func indirect() func(uint32, int) uint32 { return rotate[uint32] }"},
+		{"defer", "func later(x uint32, k int) { defer rotate(x, k) }"},
+		{"go", "func concurrent(x uint32, k int) { go rotate(x, k) }"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Compile each form alone so another call cannot supply its funnel shift.
+			ir := compileWithRewrites(t, rotateDeclaration+tc.source, nil)
+			verifyRotateIR(t, ir)
+			if !strings.Contains(ir, "call i32 @llvm.fshl.i32(") || strings.Contains(ir, "@llgo.rotateLeft") {
+				t.Fatalf("intrinsic call form must emit a funnel shift without an external llgo symbol:\n%s", ir)
+			}
+		})
 	}
 }
 
