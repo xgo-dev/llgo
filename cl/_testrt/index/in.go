@@ -12,19 +12,19 @@ type S []int
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
-// CHECK-NEXT: %[[SLICE_DATA_RAW:[0-9]+]] = alloca [4 x i64], align 8
-// CHECK-NEXT: %[[NAMED_TMP:[0-9]+]] = alloca [2 x i64], align 8
-// CHECK-NEXT: %[[NAMED_ARRAY:[0-9]+]] = alloca [2 x i64], align 8
-// CHECK-NEXT: %[[INTS:[0-9]+]] = alloca [5 x i64], align 8
-// CHECK-NEXT: %[[ROW1_TMP:[0-9]+]] = alloca [2 x i64], align 8
-// CHECK-NEXT: %{{[0-9]+}} = alloca [2 x i64], align 8
-// CHECK-NEXT: %[[MATRIX:[0-9]+]] = alloca [2 x [2 x i64]], align 8
-// CHECK-NEXT: %[[ROW:[0-9]+]] = alloca [2 x i64], align 8
-// CHECK-NEXT: %[[POINT2_TMP:[0-9]+]] = alloca %main.point, align 8
-// CHECK-NEXT: %{{[0-9]+}} = alloca %main.point, align 8
-// CHECK-NEXT: %{{[0-9]+}} = alloca %main.point, align 8
-// CHECK-NEXT: %[[POINTS:[0-9]+]] = alloca [3 x %main.point], align 8
-// CHECK-NEXT: %[[POINT:[0-9]+]] = alloca %main.point, align 8
+// CHECK: %[[SLICE_DATA_RAW:[0-9]+]] = alloca [4 x i64], align 8
+// CHECK: %[[NAMED_TMP:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK: %[[NAMED_ARRAY:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK: %[[INTS:[0-9]+]] = alloca [5 x i64], align 8
+// CHECK: %[[ROW1_TMP:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK: %{{[0-9]+}} = alloca [2 x i64], align 8
+// CHECK: %[[MATRIX:[0-9]+]] = alloca [2 x [2 x i64]], align 8
+// CHECK: %[[ROW:[0-9]+]] = alloca [2 x i64], align 8
+// CHECK: %[[POINT2_TMP:[0-9]+]] = alloca %main.point, align 8
+// CHECK: %{{[0-9]+}} = alloca %main.point, align 8
+// CHECK: %{{[0-9]+}} = alloca %main.point, align 8
+// CHECK: %[[POINTS:[0-9]+]] = alloca [3 x %main.point], align 8
+// CHECK: %[[POINT:[0-9]+]] = alloca %main.point, align 8
 // Array-of-struct selection: index 2 is loaded as a point, then both fields of
 // that selected value are consumed.
 // CHECK: call void @llvm.memset.p0.i64(ptr %[[POINT]], i8 0, i64 16, i1 false)
@@ -76,10 +76,10 @@ type S []int
 // each byte so an unrelated conversion cannot satisfy the check.
 // CHECK: %[[BYTE2:[0-9]+]] = load i8, ptr getelementptr inbounds (i8, ptr @[[TEXT:[0-9]+]], i64 2)
 // CHECK: %[[RUNE2:[0-9]+]] = zext i8 %[[BYTE2]] to i64
-// CHECK: call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 %[[RUNE2]])
+// CHECK: call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64Buffer"(i64 %[[RUNE2]], ptr %{{[0-9]+}})
 // CHECK: %[[BYTE1:[0-9]+]] = load i8, ptr getelementptr inbounds (i8, ptr @[[TEXT]], i64 1)
 // CHECK: %[[RUNE1:[0-9]+]] = zext i8 %[[BYTE1]] to i64
-// CHECK: call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 %[[RUNE1]])
+// CHECK: call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringFromUint64Buffer"(i64 %[[RUNE1]], ptr %{{[0-9]+}})
 
 // Named pointer-to-array indexing and named-slice indexing use different
 // lowering. The slice predicate, length and data pointer must stay associated.

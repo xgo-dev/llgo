@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 3
+const Version = 4
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -64,6 +64,8 @@ type Summary struct {
 type Decision struct {
 	Heap   bool
 	Reason string
+	// ReadOnly permits a proven byte/string conversion to borrow its input.
+	ReadOnly bool
 }
 
 // Result is immutable after Analyze returns and may be read by backend workers.
@@ -246,9 +248,16 @@ func dependencies(fn *ssa.Function) []*ssa.Function {
 	ret := append([]*ssa.Function(nil), fn.AnonFuncs...)
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
+			for _, operand := range instr.Operands(nil) {
+				if operand != nil {
+					if fn, ok := (*operand).(*ssa.Function); ok {
+						ret = append(ret, fn)
+					}
+				}
+			}
 			if call, ok := instr.(ssa.CallInstruction); ok {
-				if callee := call.Common().StaticCallee(); callee != nil {
-					ret = append(ret, callee)
+				for _, target := range callTargets(call.Common()) {
+					ret = append(ret, target.fn)
 				}
 			}
 		}

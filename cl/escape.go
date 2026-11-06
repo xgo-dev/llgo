@@ -118,6 +118,25 @@ func (p *context) inspectEscapeBody(fn *ssa.Function) bool {
 }
 
 func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
+	switch site.(type) {
+	case *ssa.MakeSlice:
+		elem := typ.Underlying().(*types.Slice).Elem()
+		size := p.prog.SizeOf(p.type_(elem, llssa.GoDecl))
+		if size == 0 || size > llabi.SmallStackBufferSize {
+			return "no small slice stack buffer"
+		}
+		typ = types.NewArray(elem, int64(llabi.SmallStackBufferSize/size))
+	case *ssa.Convert, *ssa.BinOp:
+		// These implicit allocations contain scalar characters, not the
+		// pointer-bearing string/slice header used to describe the result.
+		typ = types.NewArray(types.Typ[types.Byte], llabi.SmallStackBufferSize)
+	case *ssa.MakeMap:
+		// The runtime map header contains managed pointers even when its
+		// keys and values do not. Explicit-root targets keep its heap path.
+		if p.prog.GCRootsEnabled() {
+			return "explicit GC roots do not scan map stack fields"
+		}
+	}
 	lowered := p.type_(typ, llssa.GoDecl)
 	size := p.prog.SizeOf(lowered)
 	limit := llabi.MaxImplicitStackVarSize
@@ -127,9 +146,6 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 			// Newly promoted objects must fit the implicit allocation limit.
 			// In particular, a 128 KiB new(array) consumes an entire Wasm stack.
 			limit = llabi.MaxImplicitStackVarSize
-		}
-		if alloc.Comment == "makeslice" {
-			return "synthetic slice backing storage"
 		}
 		if size == 0 && alloc.Heap {
 			return "zero-size heap identity"

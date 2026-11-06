@@ -54,3 +54,7 @@ For the borrow program, five warm build pairs took 9.86 → 9.49 s with
 `-debug-trace` output. Warm cache still loads SSA and runs the analysis.
 The small wall-time difference does not establish a compile-speed gain,
 and the cold peak memory increase is about 4.8%.
+
+## Additional storage and conversion coverage
+
+[`coverage/main.go`](coverage/main.go) compares fixed/dynamic slices, strings and rune conversions, temporary byte/string views, small maps and known interface calls against the Go compiler. See the [Go compiler comparison](../../doc/escape-analysis-comparison.md) for all 14 probes, previous-PR versus follow-up measurements, the heap-fallback regression, and remaining analysis/lowering gaps.

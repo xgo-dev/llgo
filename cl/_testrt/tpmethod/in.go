@@ -62,23 +62,24 @@ func main() {
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP0]], 1
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP0]], 0
 // CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %[[TMP5]])
-// ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP4]], %"main.Tuple[error]" %[[TMP3]])
-// AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP4]], %"main.Tuple[error]" %[[TMP3]])
+// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP4]], %"main.Tuple[error]" %[[TMP3]])
+// LINUX-AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP4]], %"main.Tuple[error]" %[[TMP3]])
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 7 })
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]])
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = getelementptr ptr, ptr %[[TMP2]], i64 3
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = load ptr, ptr %[[TMP3]], align 8
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP4]], 0
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP5]], ptr %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP6]], 1
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP6]], 0
-// CHECK-NEXT:   call void %[[TMP8]](ptr %[[TMP7]], { ptr, ptr } { ptr @"main.main$1", ptr null })
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca ptr, align 8
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 7 })
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], ptr %[[TMP0]])
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr ptr, ptr %[[TMP3]], i64 3
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = load ptr, ptr %[[TMP4]], align 8
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP5]], 0
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP6]], ptr %[[TMP2]], 1
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 1
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 0
+// CHECK-NEXT:   call void %[[TMP9]](ptr %[[TMP8]], { ptr, ptr } { ptr @"main.main$1", ptr null })
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
@@ -94,7 +95,7 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"(
 // CHECK-SAME: { ptr, ptr } %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16) #3
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"main.future[main.Tuple[error]]", ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   store { ptr, ptr } %[[TMP0]], ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$DoRJPuBst8Lp1uEP2e7OnwiP-bLraZwFmeGcjrik3Mw", ptr @"*_llgo_main.future[main.Tuple[error]]")
@@ -122,8 +123,8 @@ func main() {
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP3]], 1
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP3]], 0
 // CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %[[TMP5]])
-// ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP4]], { ptr, ptr } %[[TMP1]])
-// AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP4]], { ptr, ptr } %[[TMP1]])
+// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP4]], { ptr, ptr } %[[TMP1]])
+// LINUX-AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP4]], { ptr, ptr } %[[TMP1]])
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

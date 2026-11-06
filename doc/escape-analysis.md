@@ -1,6 +1,6 @@
 # Go SSA escape analysis
 
-LLGo analyzes Go storage lifetimes before LLVM lowering. One result controls locals, address-taken parameters, named results, interface boxes, closure environments and captured variables. It replaces the separate allocation walkers from #2963, #2970 and #2971, and addresses #2975, #2974 and #2932. Static interface constant pooling remains independent and runs before dynamic box allocation.
+LLGo analyzes Go storage lifetimes before LLVM lowering. One result controls locals, address-taken parameters, named results, interface boxes, closure environments, captured variables, slice/map storage and string conversion/concatenation temporaries. It replaces the separate allocation walkers from #2963, #2970 and #2971, and addresses #2975, #2974 and #2932. Static interface constant pooling remains independent and runs before dynamic box allocation. [Comparison with Go 1.27.3](escape-analysis-comparison.md) separates implemented behavior from remaining precision and target limitations.
 
 ## Relation to the Go compiler and LLVM
 
@@ -8,7 +8,7 @@ LLGo analyzes Go storage lifetimes before LLVM lowering. One result controls loc
 
 The Go compiler reference also includes `call.go` (parameter/result effects and go/defer lifetimes), `expr.go` (interface storage versus payload), and `walk/convert.go` (allocation placement). The issue reproducers' `go build -gcflags=-m=2` output confirms borrowed parameter addresses and nonescaping callback boxes. Matching Go's diagnostic text or every optimization is not a goal.
 
-This operates before inlining and LLVM optimization. PR #2985's allocator contracts and Attributor remain complementary for allocations exposed after lowering/inlining, including #2983's SIMD buffers. This implementation neither depends on nor incorporates #2247's separate LLVM-IR escape-analysis draft.
+This operates before inlining and LLVM optimization. The allocator contracts and Attributor merged in #2985 remain complementary for allocations exposed after lowering/inlining, including #2983's SIMD buffers. This implementation neither depends on nor incorporates #2247's separate LLVM-IR escape-analysis draft.
 
 ```text
 patched sources + resolved declarations
@@ -41,9 +41,10 @@ The solver limits work to one million location/edge visits per function solve. A
 | Local/parameter/result addresses | Taking an address is not itself an escape; follow stores, returned aliases and call effects. |
 | Interfaces | Track indirect boxes separately. Concrete assertions copy the payload; interface-to-interface operations preserve box identity. Use the backend's actual interface representation. |
 | Closures | Model each environment and its captured pointers. Compose free-variable effects for statically known calls; unknown callees conservatively retain reachable captured pointers. |
-| Arrays/slices | Track local backing storage, views and copied elements. Dynamic backing storage retains the existing heap path. |
+| Arrays/slices | Track local backing storage, views and copied elements. Nonescaping constant backing arrays use stack storage. Dynamic capacities try a fixed 32-byte caller buffer and retain the original heap fallback; pointer elements keep heap lifetime because that fallback can be taken. Synthetic constant-capacity makes retain their runtime length checks with a bounded caller array. |
+| String conversions/concatenation | Model copied character storage independently from its source. Nonescaping results use caller buffers (32 bytes or 32 rune slots), with original heap helpers for larger results. Read-only `[]byte(string)` and immediately compared/queried `string([]byte)` can borrow data after a second solve propagates the actual alias lifetime. Mutable or escaping results preserve copies. |
 | append/copy | Borrow source backing storage; copied pointer elements may escape into a destination or newly allocated array. |
-| Maps/channels/select | Retain inserted keys/values and sent values. Container allocation remains conservative. |
+| Maps/channels/select | Retain inserted keys/values and sent values. Native nonescaping maps use a caller-owned header and typed initial bucket; growth, overflow and oversized/over-aligned buckets retain runtime allocation. Channels retain runtime storage. Explicit-root targets retain heap maps. |
 | defer/go | Non-loop defer arguments persist to invocation exit. Loop defers, goroutines and foreign-owner range-function defer stacks require longer lifetimes. Eventual callee retention is modeled separately. |
 | panic/recover | Panic payloads escape. Existing recover-visible SSA storage remains heap allocated; new defer records preserve SJLJ ownership. |
 | unsafe/native/indirect calls | Unknown publication is conservative. Pointer-to-uintptr conversion cannot hide an address from the analysis. Existing backend uintptr liveness handling remains in force. |
@@ -51,13 +52,17 @@ The solver limits work to one million location/edge visits per function solve. A
 
 Bodies replaced by source patches, linknames, native declarations or intrinsics are not trusted as the called implementation. The adapter resolves declarations through the same `funcName`/`llgoInstrs` identifiers as lowering. Atomic instruction contracts borrow their address, return loaded contents at the proper depth, and retain any pointer being published by a store, exchange or compare-and-exchange. `llgo.skip` discards its operands. Bodyless `go:noescape` declarations promise no retention, but can mutate pointees and invoke callbacks, following cmd/compile's treatment. Unknown or malformed contracts publish their arguments.
 
-The analysis is deliberately field-insensitive. Stores through unresolved aliases retain their value; interface dispatch and most native intrinsics remain conservative. Original bodies in patched packages are also conservative unless their actual replacement is analyzed. These are precision limitations, not alternate allocation heuristics.
+Calls through proven interface values and bounded phis of known function values compose the actual targets' summaries. Unknown alternatives keep conservative publication. Invoking a known callback composes its capture effects, including callback results that an unknown invoker could retain. Only invocation effects, rather than fabricated heap publication, are exported for direct calls of function parameters. All candidate callees also participate in call-graph discovery and SCC ordering.
+
+The analysis is deliberately field-insensitive, like cmd/compile. Stores through unresolved aliases retain their value; unresolved interface dispatch and most native intrinsics remain conservative. Original bodies in patched packages are also conservative unless their actual replacement is analyzed. These are precision limitations, not alternate allocation heuristics.
 
 ## Target placement and GC
 
 `cl/escape.go` combines lifetime proofs with LLGo layout. Queries use a disposable backend context so original types cannot pollute the named-type cache before source replacements are lowered (including shared/archive builds). Existing explicit locals retain the 128 KiB stack-object limit; newly promoted allocations and implicit boxes/environments use 64 KiB. Backend allocation helpers retain alignment, initialization and zero-sized identity rules. Fixed stack reservation is hoisted, while initialization stays at the original statement.
 
 Forced heap placement feeds back into the graph **before** summaries are finalized. Otherwise a large or GC-constrained container could retain a pointer to an object incorrectly moved to the stack. The diagnostic records the constraint, and retention propagates to its contents.
+
+Temporary buffers are fixed entry allocations. Runtime helpers initialize only the storage they use after ordinary bounds checks; copies initialize all observable bytes. Large fallbacks avoid clearing an unused stack buffer. The compiler and runtime share their size contract in `runtime/abi/stack.go`. A synchronous native interface invocation also uses a caller-owned receiver word instead of `IfacePtrData`'s per-call allocation; deferred/asynchronous invocations and explicit-root targets keep the longer-lived heap path. Receiver wrappers and nil-interface checks are preserved.
 
 Native conservative GC can scan stack fields. Explicit-root targets currently cannot keep managed fields alive merely by rooting their stack address, so newly promoted pointer-bearing objects remain in scanned heap storage. Existing SSA-local allocations retain their root plan: their addresses never leave the function and loads publish individual pointer values. A newly promoted object can instead pass its address to a borrowing callee whose writes are not covered by that plan. Extending promotion on those targets requires field roots with correct mutation and safepoint lifetimes. Pointer-free objects can still use the stack.
 

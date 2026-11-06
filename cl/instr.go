@@ -2645,7 +2645,9 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
-		if needsRecoverToken {
+		if act == llssa.Call && !p.prog.GCRootsEnabled() {
+			fn = b.ImethodBorrowed(o, mthd, needsRecoverToken)
+		} else if needsRecoverToken {
 			fn = b.ImethodWithRecoverToken(o, mthd)
 		} else {
 			fn = b.Imethod(o, mthd)

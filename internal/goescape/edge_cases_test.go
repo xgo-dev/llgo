@@ -21,7 +21,7 @@ func TestStorageThroughAliasesAndContainers(t *testing.T) {
 		{"named pointer store", `type P *[1]*int;func f(x int)int{var a [1]*int;p:=P(&a);p[0]=&x;return *p[0]}`, false},
 		{"array value result", `func f(x int)*int{a:=[1]*int{&x};return a[0]}`, true},
 		{"channel publication", `func f(x int){c:=make(chan *int,1);c<-&x;close(c)}`, true},
-		{"interface dispatch", `type I interface{M()};type T struct{P *int};func(T)M(){};func f(x int){var v I=T{&x};v.M()}`, true},
+		{"resolved interface dispatch", `type I interface{M()};type T struct{P *int};func(T)M(){};func f(x int){var v I=T{&x};v.M()}`, false},
 		{"clear local slice", `func f(x int)int{var a [1]*int;s:=a[:];s[0]=&x;clear(s);return x}`, false},
 		{"self phi", `func f(x int,n int)int{a,b:=new(*int),new(*int);p:=a;for n>0{if n%2==0{p=b};*p=&x;n--};*p=&x;return **p}`, false},
 	} {

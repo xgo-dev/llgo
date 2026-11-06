@@ -78,8 +78,8 @@ func main() {
 // Direct calls pass the receiver's loaded format pointer. Interface calls use
 // slots 4 (SetFormat) and 3 (Printf) with the same receiver data as environment.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[CFMT:[0-9]+]] = alloca %main.CFmt, align 8
-// CHECK: call void @"main.(*CFmt).SetFormat"(ptr %[[CFMT]], ptr @{{[0-9]+}})
+// CHECK: %{{[0-9]+}} = alloca %main.CFmt, align 8
+// CHECK: call void @"main.(*CFmt).SetFormat"(ptr %[[CFMT:[0-9]+]], ptr @{{[0-9]+}})
 // CHECK: %[[DIRECTFIELD1:[0-9]+]] = getelementptr inbounds nuw %main.CFmt, ptr %[[CFMT]], i32 0, i32 0
 // CHECK: %[[DIRECTFMT1:[0-9]+]] = load ptr, ptr %[[DIRECTFIELD1]], align 8
 // CHECK: call i32 (ptr, ...) @printf(ptr %[[DIRECTFMT1]], ptr @{{[0-9]+}}, i64 100)
@@ -90,7 +90,7 @@ func main() {
 // CHECK: %[[EBOX:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.CFmt", ptr undef }, ptr %{{[0-9]+}}, 1
 // CHECK: %[[TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
 // CHECK: call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.IFmt, ptr %[[TYPE]])
-// CHECK: %[[SETDATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE:[0-9]+]])
+// CHECK: %[[SETDATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE:[0-9]+]], ptr %{{[0-9]+}})
 // CHECK: %[[SETVTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE]], 0
 // CHECK: %[[SETSLOT:[0-9]+]] = getelementptr ptr, ptr %[[SETVTAB]], i64 4
 // CHECK: %[[SETCODE:[0-9]+]] = load ptr, ptr %[[SETSLOT]], align 8
@@ -99,7 +99,7 @@ func main() {
 // CHECK: %[[SETENV:[0-9]+]] = extractvalue { ptr, ptr } %[[SETPAIR]], 1
 // CHECK: %[[SETCALL:[0-9]+]] = extractvalue { ptr, ptr } %[[SETPAIR]], 0
 // CHECK: call void %[[SETCALL]](ptr %[[SETENV]], ptr @{{[0-9]+}})
-// CHECK: %[[PRINTDATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE]])
+// CHECK: %[[PRINTDATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE]], ptr %{{[0-9]+}})
 // CHECK: %[[PRINTVTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE]], 0
 // CHECK: %[[PRINTSLOT:[0-9]+]] = getelementptr ptr, ptr %[[PRINTVTAB]], i64 3
 // CHECK: %[[PRINTCODE:[0-9]+]] = load ptr, ptr %[[PRINTSLOT]], align 8

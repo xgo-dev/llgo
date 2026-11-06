@@ -25,6 +25,7 @@ import (
 	"log"
 	"math"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
@@ -542,6 +543,10 @@ func isPredOp(op token.Token) bool {
 // AND OR XOR SHL SHR AND_NOT   & | ^ << >> &^
 // EQL NEQ LSS LEQ GTR GEQ      == != < <= > >=
 func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
+	return b.BinOpEx(op, x, y, true)
+}
+
+func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 	dbgInstrf("BinOp %d, %v, %v\n", op, x.impl, y.impl)
 	switch {
 	case isMathOp(op): // op: + - * / %
@@ -549,6 +554,9 @@ func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
 		switch kind {
 		case vkString:
 			if op == token.ADD {
+				if !heap {
+					return Expr{b.InlineCall(b.Pkg.rtFunc("StringCatBuffer"), x, y, b.stringStackBuffer()).impl, x.Type}
+				}
 				return Expr{b.InlineCall(b.Pkg.rtFunc("StringCat"), x, y).impl, x.Type}
 			}
 		case vkComplex:
@@ -1138,6 +1146,10 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 //
 //	t1 = convert []byte <- string (t0)
 func (b Builder) Convert(t Type, x Expr) (ret Expr) {
+	return b.ConvertEx(t, x, true)
+}
+
+func (b Builder) ConvertEx(t Type, x Expr, heap bool) (ret Expr) {
 	dbgInstrf("Convert %v <- %v\n", t.RawType(), x.RawType())
 	dst := t.raw.Type
 	ret.Type = b.Prog.rawType(dst)
@@ -1156,9 +1168,17 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 				if etyp, ok := xtyp.Elem().Underlying().(*types.Basic); ok {
 					switch etyp.Kind() {
 					case types.Byte:
+						if !heap {
+							ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromBytesBuffer"), x, b.stringStackBuffer()).impl
+							return
+						}
 						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromBytes"), x).impl
 						return
 					case types.Rune:
+						if !heap {
+							ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromRunesBuffer"), x, b.stringStackBuffer()).impl
+							return
+						}
 						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromRunes"), x).impl
 						return
 					}
@@ -1181,7 +1201,12 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 				if arg.impl.Type() != arg.Type.ll {
 					arg.impl = castInt(b, x.impl, srcType, arg.Type)
 				}
-				ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64", "StringFromUint64")), arg).impl
+				if !heap {
+					fn += "Buffer"
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64Buffer", "StringFromUint64Buffer")), arg, b.stringStackBuffer()).impl
+				} else {
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64", "StringFromUint64")), arg).impl
+				}
 				return
 			}
 		case types.Complex128:
@@ -1241,9 +1266,18 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 			if etyp, ok := typ.Elem().Underlying().(*types.Basic); ok {
 				switch etyp.Kind() {
 				case types.Byte:
+					if !heap {
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToBytesBuffer"), x, b.stringStackBuffer()).impl
+						return
+					}
 					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToBytes"), x).impl
 					return
 				case types.Rune:
+					if !heap {
+						buffer := b.uninitializedStackSlot(b.Prog.Type(types.NewArray(types.Typ[types.Rune], llabi.SmallStackBufferSize), GoDecl))
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToRunesBuffer"), x, buffer).impl
+						return
+					}
 					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToRunes"), x).impl
 					return
 				}

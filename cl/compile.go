@@ -1522,6 +1522,11 @@ func (p *context) compileSyntheticMakeSlice(b llssa.Builder, v *ssa.Slice) (llss
 	}
 	t := p.type_(v.Type(), llssa.GoDecl)
 	length := p.compileValue(b, v.High)
+	alloc := v.X.(*ssa.Alloc)
+	if p.stackStorage(alloc) {
+		array := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+		return b.MakeSliceStackCapacity(t, length, capacity, array.Len()), true
+	}
 	return b.MakeSlice(t, length, capacity), true
 }
 
@@ -1736,7 +1741,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			x := p.compileValueAs(b, v.X, v.Y.Type())
 			y := p.compileValueAs(b, v.Y, v.X.Type())
-			ret = b.BinOp(v.Op, x, y)
+			ret = b.BinOpEx(v.Op, x, y, !p.stackStorage(v))
 		}
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
@@ -1840,7 +1845,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			break
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.Convert(p.type_(t, llssa.GoDecl), x)
+		if decision, ok := p.options.EscapeAnalysis.LookupDecision(v); ok && decision.ReadOnly {
+			if _, stringResult := t.Underlying().(*types.Basic); stringResult {
+				ret = b.ReadOnlyBytesString(p.type_(t, llssa.GoDecl), x)
+			} else {
+				ret = b.ReadOnlyStringBytes(p.type_(t, llssa.GoDecl), x)
+			}
+		} else {
+			ret = b.ConvertEx(p.type_(t, llssa.GoDecl), x, !p.stackStorage(v))
+		}
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
 		p.recordPanicSite(b, v.Pos())
@@ -1969,14 +1982,14 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
 		nCap := p.compileValue(b, v.Cap)
-		ret = b.MakeSlice(t, nLen, nCap)
+		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:
 		var nReserve llssa.Expr
 		t := p.type_(v.Type(), llssa.GoDecl)
 		if v.Reserve != nil {
 			nReserve = p.compileValue(b, v.Reserve)
 		}
-		ret = b.MakeMap(t, nReserve)
+		ret = b.MakeMapEx(t, nReserve, !p.stackStorage(v))
 	case *ssa.MakeClosure:
 		p.checkBoundMethodReceiver(b, v)
 		fn := p.compileValue(b, v.Fn)

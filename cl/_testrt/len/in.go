@@ -34,7 +34,7 @@ type data struct {
 // Then construct and query the populated value, preserving channel/map/slice identities.
 // CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_DATA]], i8 0, i64 56, i1 false)
 // CHECK: [[VALUE_CHAN:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 2)
-// CHECK: [[VALUE_MAP:%.*]] = call ptr @"{{.*}}MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 1)
+// CHECK: [[VALUE_MAP:%.*]] = call ptr @"{{.*}}MakeMapBuffer"(ptr @"map[_llgo_int]_llgo_string", i64 1, ptr %{{[0-9]+}}, ptr %{{[0-9]+}})
 // CHECK: [[VALUE_SLICE0:%.*]] = insertvalue %"{{.*}}Slice" undef, ptr {{%.*}}, 0
 // CHECK-NEXT: [[VALUE_SLICE1:%.*]] = insertvalue %"{{.*}}Slice" [[VALUE_SLICE0]], i64 3, 1
 // CHECK-NEXT: [[VALUE_SLICE:%.*]] = insertvalue %"{{.*}}Slice" [[VALUE_SLICE1]], i64 3, 2

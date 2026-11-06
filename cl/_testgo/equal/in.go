@@ -85,7 +85,7 @@ package main
 // CHECK: call void @main.assert(i1 %[[CHAN_NE]])
 
 // CHECK-LABEL: define void @"main.init#7"(){{.*}} {
-// CHECK: %[[MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 0)
+// CHECK: %[[MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMapBuffer"(ptr @"map[_llgo_int]_llgo_string", i64 0, ptr %{{[0-9]+}}, ptr %{{[0-9]+}})
 // CHECK: %[[MAP_NONNULL:[0-9]+]] = icmp ne ptr %[[MAP]], null
 // CHECK: call void @main.assert(i1 %[[MAP_NONNULL]])
 

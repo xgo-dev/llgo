@@ -104,6 +104,75 @@ func Reset_Handler() { values := [3]int32{9,10,11}; Sink = values[1] }
 	}
 }
 
+func TestEscapeTransientStorageTargets(t *testing.T) {
+	const src = `package transient
+func bytesUse(b []byte)int{return int(b[0])+len(b)}
+func stringUse(s string)int{return int(s[0])+len(s)}
+func fixed(x byte)int{b:=make([]byte,16);b[0]=x;return bytesUse(b)}
+func dynamic(n int)int{b:=make([]byte,n);return bytesUse(b)}
+func wide(n int64)int{b:=make([]byte,n);return bytesUse(b)}
+func returning(n int)[]byte{return make([]byte,n)}
+func fromBytes(b []byte)int{return stringUse(string(b))}
+func toBytes(s string)int{b:=[]byte(s);b[0]++;return bytesUse(b)}
+func readOnly(s string)int{return bytesUse([]byte(s))}
+func compare(b []byte,s string)bool{return string(b)==s}
+func lookup(m map[string]int,b []byte)int{return m[string(b)]}
+func fromRunes(r []rune)int{return stringUse(string(r))}
+func toRunes(s string)int{return len([]rune(s))}
+func concat(a,b string)int{return stringUse(a+b)}
+func localMap(n int)int{m:=make(map[int]int);m[0]=n;return m[0]}
+func returnedMap()map[int]int{return make(map[int]int)}
+func pointers(n int)int{s:=make([]*int,n);return len(s)}
+`
+	for _, tc := range []struct {
+		os, arch string
+		roots    bool
+	}{
+		{"darwin", "arm64", false}, {"linux", "amd64", false}, {"windows", "386", false}, {"wasip1", "wasm", true},
+	} {
+		t.Run(tc.os+"/"+tc.arch, func(t *testing.T) {
+			t.Setenv("GOOS", tc.os)
+			t.Setenv("GOARCH", tc.arch)
+			source := src
+			// This harness's source runtime importer uses the host build
+			// context. Wide helper declarations are checked by the target-aware
+			// SSA make test and by actual Wasm execution instead.
+			if tc.arch == "386" || tc.arch == "wasm" {
+				source = strings.ReplaceAll(source, "func wide(n int64)int{b:=make([]byte,n);return bytesUse(b)}", "")
+			}
+			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &llssa.Target{GOOS: tc.os, GOARCH: tc.arch}, tc.roots)
+			for name, helper := range map[string]string{
+				"dynamic": "MakeSliceBuffer", "fromBytes": "StringFromBytesBuffer", "toBytes": "StringToBytesBuffer",
+				"fromRunes": "StringFromRunesBuffer", "toRunes": "StringToRunesBuffer", "concat": "StringCatBuffer", "readOnly": "StringToBytesReadOnly", "compare": "StringFromBytesReadOnly", "lookup": "StringFromBytesReadOnly",
+			} {
+				if body := llvmFunction(t, ir, "transient."+name); !strings.Contains(body, "runtime."+helper) {
+					t.Errorf("%s lost buffer helper:\n%s", name, body)
+				}
+			}
+			if body := llvmFunction(t, ir, "transient.fixed"); strings.Contains(body, "runtime.Alloc") {
+				t.Errorf("fixed make stayed on heap:\n%s", body)
+			}
+			if body := llvmFunction(t, ir, "transient.returning"); strings.Contains(body, "MakeSliceBuffer") {
+				t.Errorf("returned slice uses local buffer:\n%s", body)
+			}
+			if body := llvmFunction(t, ir, "transient.returnedMap"); strings.Contains(body, "MakeMapBuffer") {
+				t.Errorf("returned map uses local header:\n%s", body)
+			}
+			if body := llvmFunction(t, ir, "transient.localMap"); strings.Contains(body, "MakeMapBuffer") == tc.roots {
+				t.Errorf("wrong map storage with roots=%v:\n%s", tc.roots, body)
+			}
+			if body := llvmFunction(t, ir, "transient.pointers"); strings.Contains(body, "MakeSliceBuffer") == tc.roots {
+				t.Errorf("wrong pointer slice storage with roots=%v:\n%s", tc.roots, body)
+			}
+			if tc.arch != "386" && tc.arch != "wasm" {
+				if body := llvmFunction(t, ir, "transient.wide"); !strings.Contains(body, "MakeSliceBuffer") {
+					t.Errorf("wide make lost checked helper:\n%s", body)
+				}
+			}
+		})
+	}
+}
+
 func TestEscapeLayoutDoesNotPopulateBackendTypes(t *testing.T) {
 	// Source patches may replace a named type with the same layout and fewer
 	// methods. Caching the original type in the coordinator before lowering

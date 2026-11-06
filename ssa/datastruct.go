@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"go/types"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -546,6 +547,20 @@ func (b Builder) SliceLit(t Type, elts ...Expr) Expr {
 //	t1 = make []string 1:int t0
 //	t1 = make StringSlice 1:int t0
 func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
+	return b.MakeSliceEx(t, len, cap, true)
+}
+
+func (b Builder) MakeSliceEx(t Type, len, cap Expr, heap bool) (ret Expr) {
+	return b.makeSlice(t, len, cap, heap, -1)
+}
+
+// MakeSliceStackCapacity preserves runtime length checks while using a
+// statically bounded backing array whose lifetime was proved by the frontend.
+func (b Builder) MakeSliceStackCapacity(t Type, len, cap Expr, capacity int64) Expr {
+	return b.makeSlice(t, len, cap, false, capacity)
+}
+
+func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (ret Expr) {
 	dbgInstrf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
 	prog := b.Prog
 	telem := prog.Index(t)
@@ -559,6 +574,19 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 		cap = b.FitIntSize(cap)
 	}
 	args := []Expr{len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int())}
+	if !heap && prog.SizeOf(telem) != 0 {
+		if capacity < 0 {
+			capacity = int64(llabi.SmallStackBufferSize / prog.SizeOf(telem))
+		}
+	}
+	if !heap && capacity > 0 && prog.SizeOf(telem) <= llabi.MaxImplicitStackVarSize/uint64(capacity) {
+		buffer := b.uninitializedStackSlot(prog.Type(types.NewArray(telem.RawType(), capacity), GoDecl))
+		args = append(args, prog.IntVal(prog.AlignOf(telem), prog.Int()), b.Convert(prog.VoidPtr(), buffer), prog.IntVal(uint64(capacity), prog.Int()))
+		fn += "Buffer"
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "MakeSliceBuffer", "MakeSlice64Buffer")), args...)
+		ret.Type = t
+		return
+	}
 	if alignment := prog.AlignOf(telem); alignment > uint64(prog.GoWordSize()) {
 		fn += "Aligned"
 		args = append(args, prog.IntVal(alignment, prog.Int()))
@@ -604,12 +632,32 @@ func (b Builder) fitInt64(n Expr) Expr {
 //	t1 = make map[string]int t0
 //	t1 = make StringIntMap t0
 func (b Builder) MakeMap(t Type, nReserve Expr) (ret Expr) {
+	return b.MakeMapEx(t, nReserve, true)
+}
+
+func (b Builder) MakeMapEx(t Type, nReserve Expr, heap bool) (ret Expr) {
 	dbgInstrf("MakeMap %v, %v\n", t.RawType(), nReserve.impl)
 	if nReserve.IsNil() {
 		nReserve = b.Prog.Val(0)
 	}
 	nReserve = b.FitIntSize(nReserve)
 	typ := b.abiType(t.raw.Type)
+	if !heap {
+		header := b.uninitializedStackSlot(b.Prog.rtType("Map"))
+		bucket := b.Prog.Zero(b.Prog.VoidPtr())
+		mt := t.RawType().Underlying().(*types.Map)
+		// Use the same layout as runtime map metadata. Over-aligned vector
+		// elements retain runtime bucket allocation and its alignment policy.
+		if b.Prog.AlignOf(b.Prog.rawType(mt.Key())) <= uint64(b.Prog.GoWordSize()) && b.Prog.AlignOf(b.Prog.rawType(mt.Elem())) <= uint64(b.Prog.GoWordSize()) {
+			bt := b.Prog.Type(abi.MapBucketType(mt, b.Prog.sizes), GoDecl)
+			if b.Prog.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
+				bucket = b.Convert(b.Prog.VoidPtr(), b.uninitializedStackSlot(bt))
+			}
+		}
+		ret = b.InlineCall(b.Pkg.rtFunc("MakeMapBuffer"), typ, nReserve, header, bucket)
+		ret.Type = t
+		return
+	}
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeMap"), typ, nReserve)
 	ret.Type = t
 	return

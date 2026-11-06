@@ -79,11 +79,23 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 				}
 				f.newObject(v, types.NewStruct(fields, nil), "")
 			case *ssa.MakeSlice:
-				f.newObject(v, v.Type(), "dynamic backing storage")
+				f.newObject(v, v.Type(), "")
+				// A small local slice can use a fixed stack buffer, but larger
+				// dynamic capacities still allocate. Its pointer elements must
+				// therefore never refer to newly promoted stack objects.
+				f.g.flow(&f.g.heap, f.objects[v].location, 0)
 			case *ssa.MakeMap:
-				f.newObject(v, v.Type(), "map storage")
+				f.newObject(v, v.Type(), "")
 			case *ssa.MakeChan:
 				f.newObject(v, v.Type(), "channel storage")
+			case *ssa.Convert:
+				if copiedStringStorage(v.Type(), v.X.Type()) {
+					f.newObject(v, v.Type(), "")
+				}
+			case *ssa.BinOp:
+				if v.Op == token.ADD && stringType(v.Type()) {
+					f.newObject(v, v.Type(), "")
+				}
 			}
 		}
 	}
@@ -93,6 +105,22 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		}
 	}
 	complete := f.g.solve()
+	// First prove that a byte conversion is neither retained nor mutated.
+	// Then add its borrowed-data edge and solve again, so source lifetimes
+	// and exported effects also describe the no-copy lowering. A failed or
+	// revoked proof retains the ordinary copying/heap fallback.
+	borrowed := false
+	if complete {
+		for site, obj := range f.objects {
+			if conversion, ok := site.(*ssa.Convert); ok && borrowableConversion(conversion) && obj.location.attrs&(escapes|mutates) == 0 {
+				f.flow(f.value(conversion), conversion.X, 0)
+				borrowed = true
+			}
+		}
+		if borrowed {
+			complete = f.g.solve()
+		}
+	}
 	summary := emptySummary(fn)
 	for i, param := range f.params {
 		p := &summary.Parameters[i]
@@ -111,7 +139,11 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		if !complete {
 			heap, reason = true, "analysis work limit"
 		}
-		decisions[site] = Decision{Heap: heap, Reason: reason}
+		readOnly := false
+		if conversion, ok := site.(*ssa.Convert); ok {
+			readOnly = complete && !heap && obj.location.attrs&mutates == 0 && borrowableConversion(conversion)
+		}
+		decisions[site] = Decision{Heap: heap, Reason: reason, ReadOnly: readOnly}
 	}
 	if !complete {
 		// Partial proofs cannot be exported: callers must also retain anything
@@ -330,6 +362,11 @@ func (f *functionAnalysis) instruction(instr ssa.Instruction) {
 }
 
 func (f *functionAnalysis) convert(dst ssa.Value, src ssa.Value) {
+	if site, ok := dst.(ssa.Instruction); ok && f.objects[site] != nil {
+		// String/slice conversions copy scalar contents into fresh storage;
+		// retaining the copy does not retain the source backing array.
+		return
+	}
 	if containsPointers(src.Type()) && !containsPointers(dst.Type()) {
 		// In particular unsafe.Pointer -> uintptr must not hide an address
 		// from later calls, arithmetic, assembly or native code.
@@ -337,6 +374,89 @@ func (f *functionAnalysis) convert(dst ssa.Value, src ssa.Value) {
 		return
 	}
 	f.flow(f.value(dst), src, 0)
+}
+
+func stringType(t types.Type) bool {
+	b, ok := t.Underlying().(*types.Basic)
+	return ok && b.Kind() == types.String
+}
+
+func byteStringView(dst, src types.Type) bool {
+	s, ok := dst.Underlying().(*types.Slice)
+	if !ok || !stringType(src) {
+		return false
+	}
+	b, ok := s.Elem().Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Byte
+}
+
+func borrowableConversion(v *ssa.Convert) bool {
+	if byteStringView(v.Type(), v.X.Type()) {
+		return true
+	}
+	if !byteStringView(v.X.Type(), v.Type()) {
+		return false
+	}
+	// A temporary string can alias mutable bytes only for one immediately
+	// following comparison, length query or map lookup. In particular, a
+	// source write or callback between conversion and use requires a copy.
+	var use ssa.Instruction
+	if v.Referrers() == nil {
+		return false
+	}
+	for _, ref := range *v.Referrers() {
+		if _, debug := ref.(*ssa.DebugRef); debug {
+			continue
+		}
+		if use != nil {
+			return false
+		}
+		use = ref
+	}
+	if use == nil || use.Block() != v.Block() {
+		return false
+	}
+	valid := false
+	switch u := use.(type) {
+	case *ssa.BinOp:
+		valid = u.Op == token.EQL || u.Op == token.NEQ || u.Op == token.LSS || u.Op == token.LEQ || u.Op == token.GTR || u.Op == token.GEQ
+	case *ssa.Lookup:
+		valid = u.Index == v
+	case *ssa.Call:
+		if builtin, ok := u.Call.Value.(*ssa.Builtin); ok {
+			valid = builtin.Name() == "len"
+		}
+	}
+	if !valid {
+		return false
+	}
+	seen := false
+	for _, instr := range v.Block().Instrs {
+		if instr == v {
+			seen = true
+			continue
+		}
+		if !seen {
+			continue
+		}
+		if _, debug := instr.(*ssa.DebugRef); debug {
+			continue
+		}
+		return instr == use
+	}
+	return false
+}
+
+func copiedStringStorage(dst, src types.Type) bool {
+	if stringType(dst) {
+		if b, ok := src.Underlying().(*types.Basic); ok {
+			return b.Info()&types.IsInteger != 0
+		}
+		_, ok := src.Underlying().(*types.Slice)
+		return ok
+	}
+	_, slice := dst.Underlying().(*types.Slice)
+	return slice && stringType(src)
 }
 
 // localStorage resolves stores only through syntactically known local bases.
@@ -416,12 +536,22 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 			results = append(results, f.value(value))
 		}
 	}
-	callee := call.StaticCallee()
-	if callee == nil {
+	targets := callTargets(call)
+	if len(targets) == 0 {
 		// Calling a function value does not retain its environment object,
 		// but an unknown body may publish any of its captured pointers.
 		f.flow(&f.g.callee, call.Value, 0)
-		f.flow(f.sink("unknown call"), call.Value, 1)
+		// A directly called function parameter exports the invocation effect;
+		// its caller can compose the actual callback's capture summary. Other
+		// unresolved values still need conservative capture publication here.
+		switch call.Value.(type) {
+		case *ssa.Parameter, *ssa.FreeVar:
+			if call.IsInvoke() {
+				f.flow(f.sink("unknown call"), call.Value, 1)
+			}
+		default:
+			f.flow(f.sink("unknown call"), call.Value, 1)
+		}
 		if call.IsInvoke() {
 			f.flow(f.sink("interface call"), call.Value, 0)
 		}
@@ -430,10 +560,13 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 		}
 		return
 	}
-	args := append([]ssa.Value(nil), call.Args...)
-	if closure, ok := call.Value.(*ssa.MakeClosure); ok {
-		args = append(args, closure.Bindings...)
+	for _, target := range targets {
+		f.callTarget(target, results)
 	}
+}
+
+func (f *functionAnalysis) callTarget(target callTarget, results []*location) {
+	callee, args := target.fn, target.args
 	summary := f.a.summary(callee)
 	if len(args) != len(summary.Parameters) {
 		for _, arg := range args {
@@ -448,7 +581,7 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 		}
 		f.effect(&f.g.mutator, arg, p.Mutator)
 		f.effect(&f.g.callee, arg, p.Callee)
-		if p.Callee != 0 {
+		if p.Callee != 0 && (p.Callee != 1 || !f.callback(arg)) {
 			f.flow(&f.g.heap, arg, int(p.Callee))
 		}
 		for j, effect := range p.Results {

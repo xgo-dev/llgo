@@ -364,16 +364,22 @@ func iMethodOf(rawIntf *types.Interface, method *types.Func) int {
 
 // Imethod returns closure of an interface method.
 func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
-	return b.imethod(intf, method, false)
+	return b.imethod(intf, method, false, false)
 }
 
 // ImethodWithRecoverToken returns an interface method invocation whose code
 // pointer may also be used as recover-frame bookkeeping data.
 func (b Builder) ImethodWithRecoverToken(intf Expr, method *types.Func) Expr {
-	return b.imethod(intf, method, true)
+	return b.imethod(intf, method, true, false)
 }
 
-func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr {
+// ImethodBorrowed reserves a caller-owned receiver word for a synchronous
+// invocation. go/defer registrations must retain their longer-lived storage.
+func (b Builder) ImethodBorrowed(intf Expr, method *types.Func, recoverToken bool) Expr {
+	return b.imethod(intf, method, recoverToken, true)
+}
+
+func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed bool) Expr {
 	prog := b.Prog
 	intfType := types.Unalias(intf.raw.Type)
 	patchedIntfType := prog.patch(intfType)
@@ -393,7 +399,13 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr 
 	tclosure := prog.Type(sig, GoDecl)
 	i := iMethodOf(rawIntf, method)
 	b.recordUseIfaceMethod(rawIntf, i)
-	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
+	var data Expr
+	if borrowed {
+		buffer := b.uninitializedStackSlot(prog.VoidPtr())
+		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrDataBuffer"), intf, buffer)
+	} else {
+		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
+	}
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
 	pfn := b.Advance(itab, prog.IntVal(uint64(i+3), prog.Int()))
