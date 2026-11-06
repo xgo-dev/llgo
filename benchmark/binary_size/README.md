@@ -170,3 +170,35 @@ python3 dev/audit_deadcode_live_slots.py \
 
 This exports the full type-to-live-slot maps and compares their contents. The
 instrumented compilers are not used for timing or final-size measurements.
+
+### Recorded macOS comparison, 2026-11-07
+
+All three compilers use upstream `0c9212756`; the Thin control reapplies the two
+commits from PR #3008 to that base. These are three-round medians from a serial
+matrix, not the older PR's measurements. Raw sample metrics, compiler hashes,
+analysis-map hashes and reproduction details are in
+[`dev/deadcode_strong_results.json`](../../dev/deadcode_strong_results.json).
+
+| Case | Mode | Bytes | Function entries | Wall seconds |
+|---|---|---:|---:|---:|
+| reflectcallbacks | main Drop | 1,687,600 | 3,099 | 7.16 |
+| reflectcallbacks | IR-refined Drop + strong overrides | 1,027,616 | 1,330 | 7.11 |
+| reflectcallbacks | IR-refined Drop + ThinLTO | 862,624 | 814 | 6.62 |
+| gormschema | main Drop | 4,585,440 | 7,647 | 11.06 |
+| gormschema | IR-refined Drop + strong overrides | 3,512,784 | 4,651 | 10.83 |
+| gormschema | IR-refined Drop + ThinLTO | 3,314,240 | 3,632 | 15.11 |
+
+The full LiveSlots maps match between strong overrides and ThinLTO: 79 types /
+112 slots for reflectcallbacks, and 285 types / 649 slots for Gorm. Both remove
+UnrelatedJSON. Final function counts differ even with identical method-slot
+decisions. On Gorm, strong overrides are 23.39% smaller than ordinary main Drop,
+5.99% larger than ThinLTO, and use 28.30% less wall time than ThinLTO.
+
+All 18 matrix binaries execute successfully. All nine Gorm binaries pass the
+62 top-level schema tests. Positive and conservative reflection regressions,
+including an asserted dependency cache hit, also pass.
+
+This remains an experiment: a separate workqueue v0.36.2 check builds in both
+modes, but the strong-override branch reproduces `unreachable method called`
+while main Drop passes. This is an explicit Draft PR blocker; it is not hidden
+by the successful Gorm measurements and has not been fixed in this change.
