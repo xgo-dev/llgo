@@ -3552,8 +3552,6 @@ func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) err
 	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
 		return nil
 	}
-	mod.SetDataLayout(ctx.prog.DataLayout())
-	mod.SetTarget(ctx.prog.Target().Spec().Triple)
 	if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
 		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
 	}
