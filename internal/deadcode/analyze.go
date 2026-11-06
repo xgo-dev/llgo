@@ -34,9 +34,10 @@ type pass struct {
 	processedIfaceTy  map[meta.Symbol]struct{}
 	workQueue         []meta.Symbol
 
-	ifaceMethod        map[ifaceMethodKey]struct{}
-	genericIfaceMethod map[meta.Name]struct{}
-	reflectSeen        bool
+	ifaceMethod         map[ifaceMethodKey]struct{}
+	genericIfaceMethod  map[meta.Name]struct{}
+	reflectSeen         bool
+	reflectMetadataSeen bool
 
 	markableMethods []methodRef
 	liveSlots       map[meta.Symbol][]int
@@ -221,6 +222,8 @@ func (d *pass) flood() {
 			switch demand.Kind {
 			case meta.DemandReflectMethod:
 				d.reflectSeen = true
+			case meta.DemandReflectMethodMetadata:
+				d.reflectMetadataSeen = true
 			case meta.DemandUseIface:
 				d.markUsedInIface(demand.Target)
 			case meta.DemandIfaceMethod:
@@ -257,6 +260,12 @@ func (d *pass) methodMarkingLoop() bool {
 	rem := d.markableMethods[:0]
 
 	for _, method := range d.markableMethods {
+		// Type.Method(i).Type may expose new concrete types even when Func
+		// is unused. Keep their reflection visibility in the same fixed point
+		// as callable method demands, without retaining IFn/TFn themselves.
+		if d.reflectMetadataSeen && token.IsExported(d.info.Name(method.slotInfo.Name)) {
+			d.markMethodType(method)
+		}
 		if d.shouldKeep(method) {
 			d.markMethod(method)
 			changed = true
@@ -306,7 +315,12 @@ func (d *pass) shouldKeep(method methodRef) bool {
 
 func (d *pass) markMethod(method methodRef) {
 	d.liveSlots[method.owner] = append(d.liveSlots[method.owner], method.slot)
+	d.markMethodType(method)
+	d.markReachable(method.slotInfo.IFn)
+	d.markReachable(method.slotInfo.TFn)
+}
 
+func (d *pass) markMethodType(method methodRef) {
 	// The method descriptor is itself a type descriptor, and reflection can
 	// reach its parameter and result types through operations such as
 	// reflect.Type.Method(i).Type.Out(j). Traverse those child types with
@@ -314,8 +328,6 @@ func (d *pass) markMethod(method methodRef) {
 	// be reachable without U's methods participating in a later MethodByName.
 	d.markUsedInIface(method.slotInfo.MType)
 	d.markReachable(method.slotInfo.MType)
-	d.markReachable(method.slotInfo.IFn)
-	d.markReachable(method.slotInfo.TFn)
 }
 
 func (d *pass) markReachable(sym meta.Symbol) {
@@ -345,8 +357,11 @@ func (d *pass) markUsedInIface(typ meta.Symbol) {
 }
 
 func (d *pass) popWork() meta.Symbol {
-	sym := d.workQueue[0]
-	copy(d.workQueue, d.workQueue[1:])
-	d.workQueue = d.workQueue[:len(d.workQueue)-1]
+	// Reachability is a monotone fixed point; processing order is immaterial.
+	// Pop the tail so a broad reflection flood does not repeatedly copy the
+	// entire pending queue.
+	last := len(d.workQueue) - 1
+	sym := d.workQueue[last]
+	d.workQueue = d.workQueue[:last]
 	return sym
 }

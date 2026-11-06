@@ -20,6 +20,13 @@ const (
 	DemandIfaceMethod   DemandKind = 2
 	DemandNamedMethod   DemandKind = 3
 	DemandReflectMethod DemandKind = 4
+	// DemandReflectMethodMetadata observes method names and signatures, but
+	// cannot call the function stored in reflect.Method.Func.
+	DemandReflectMethodMetadata DemandKind = 5
+	// DemandReflectMethodSite records a dynamic MethodByName call whose name
+	// may be refined from optimized IR. It is a package-local wire kind;
+	// GlobalSummary translates it to named demands or conservative reflection.
+	DemandReflectMethodSite DemandKind = 6
 )
 
 // MethodSlot is a method slot in the global namespace.
@@ -43,6 +50,7 @@ type MethodSig struct {
 //   - DemandIfaceMethod: Target is the interface and Sig is the demanded method.
 //   - DemandNamedMethod: MethodName is the constant MethodByName argument.
 //   - DemandReflectMethod: no additional fields are set.
+//   - DemandReflectMethodMetadata: no additional fields are set.
 type FuncDemand struct {
 	Kind       DemandKind
 	Target     Symbol
