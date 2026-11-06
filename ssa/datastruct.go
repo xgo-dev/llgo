@@ -725,12 +725,15 @@ func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
 		}
 	}
 	if ok {
-		nameInput := elems[0].raw.Type.String() + "\x00" + suffix
+		h := sha256.New()
+		h.Write([]byte(elems[0].raw.Type.String()))
+		h.Write([]byte{0})
+		h.Write([]byte(suffix))
 		for _, e := range elems {
-			nameInput += "\x00" + e.impl.String()
+			h.Write([]byte{0})
+			h.Write([]byte(e.impl.String()))
 		}
-		sum := sha256.Sum256([]byte(nameInput))
-		name := "_llgo_maplit$" + base64.RawURLEncoding.EncodeToString(sum[:])
+		name := "_llgo_maplit$" + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 		g := b.Pkg.NewVarEx(name, prog.Pointer(arrTy))
 		g.Init(prog.ConstArray(arrTy, elems))
 		if !g.impl.IsNil() {

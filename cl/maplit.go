@@ -144,7 +144,7 @@ func mapLitSafeToDelay(makeMap *ssa.MakeMap, updates []*ssa.MapUpdate) bool {
 				return false
 			}
 		case *ssa.Store:
-			if r.Val != makeMap {
+			if r.Val != makeMap || !instrIsAfter(r, lastBlk, lastIdx) {
 				return false
 			}
 		default:
@@ -240,6 +240,10 @@ func mapValueComplit(v ssa.Value) (*ssa.UnOp, *ssa.Alloc, map[int]ssa.Value, []s
 	if !ok || load.Op != token.MUL {
 		return nil, nil, nil, nil, false
 	}
+	loadBlock, loadIdx := load.Block(), instrIndex(load)
+	if loadBlock == nil || loadIdx < 0 {
+		return nil, nil, nil, nil, false
+	}
 	alloc, ok := load.X.(*ssa.Alloc)
 	if !ok {
 		return nil, nil, nil, nil, false
@@ -260,7 +264,14 @@ func mapValueComplit(v ssa.Value) (*ssa.UnOp, *ssa.Alloc, map[int]ssa.Value, []s
 				return nil, nil, nil, nil, false
 			}
 			st, ok := srefs[0].(*ssa.Store)
-			if !ok {
+			if !ok || st.Addr != r || st.Block() != loadBlock {
+				return nil, nil, nil, nil, false
+			}
+			storeIdx := instrIndex(st)
+			if storeIdx < 0 || storeIdx >= loadIdx {
+				return nil, nil, nil, nil, false
+			}
+			if _, exists := fields[r.Field]; exists {
 				return nil, nil, nil, nil, false
 			}
 			instrs = append(instrs, st)
@@ -402,13 +413,31 @@ func (p *context) compileMapLitComplit(b llssa.Builder, v ssa.Value, structTy ty
 		if !ok {
 			return llssa.Expr{}, false
 		}
-		flds[i] = folded
+		flds[i] = p.mapLitConvertedValue(b, fv, call, folded)
 	}
 	bg := llssa.GoDecl
 	if p.inCFunc {
 		bg = llssa.CDecl
 	}
 	return b.StructLit(p.type_(structTy, bg), flds), true
+}
+
+// Replay the wrappers removed by constantMakeCall so the field retains its
+// destination interface's type pointer and method ordering.
+func (p *context) mapLitConvertedValue(b llssa.Builder, v ssa.Value, call *ssa.Call, folded llssa.Expr) llssa.Expr {
+	if v == call {
+		return folded
+	}
+	switch x := v.(type) {
+	case *ssa.ChangeInterface:
+		return b.ChangeInterface(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+	case *ssa.ChangeType:
+		return b.ChangeType(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+	case *ssa.MakeInterface:
+		return b.MakeInterface(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+	default:
+		panic("map literal constant conversion chain became invalid")
+	}
 }
 
 func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {
