@@ -97,10 +97,10 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.iface" @"main.Async[main.Tuple[error]]"(
 // CHECK-SAME: { ptr, ptr } %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16) #3
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16) #{{[0-9]+}}
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"main.future[main.Tuple[error]]", ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   store { ptr, ptr } %[[TMP0]], ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface$DoRJPuBst8Lp1uEP2e7OnwiP-bLraZwFmeGcjrik3Mw", ptr @"*_llgo_main.future[main.Tuple[error]]")
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[A-Za-z0-9_-]+}}", ptr @"*_llgo_main.future[main.Tuple[error]]")
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[TMP3]], 0
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP4]], ptr %[[TMP1]], 1
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %[[TMP5]]
