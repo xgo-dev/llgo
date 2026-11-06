@@ -57,4 +57,4 @@ and the cold peak memory increase is about 4.8%.
 
 ## Additional storage and conversion coverage
 
-[`coverage/main.go`](coverage/main.go) compares fixed/dynamic slices, strings and rune conversions, temporary byte/string views, small maps and known interface calls against the Go compiler. See the [Go compiler comparison](../../doc/escape-analysis-comparison.md) for all 14 probes, previous-PR versus follow-up measurements, the heap-fallback regression, and remaining analysis/lowering gaps.
+[`coverage/main.go`](coverage/main.go) compares fixed/dynamic slices, strings and rune conversions, temporary byte/string views, small maps and known interface calls against the Go compiler. See the [Go compiler comparison](../../doc/escape-analysis-comparison.md) for all 14 probes, previous-PR versus follow-up measurements, the heap-fallback control, and remaining analysis/lowering gaps.
