@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -468,16 +469,7 @@ func (p Package) newFunc(
 	if isNativeCallConv(cc) {
 		p.Prog.nativeIntegerAttrs(entrySig, t.ll, fn.AddAttributeAtIndex)
 	}
-	switch name {
-	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocRoot":
-		// These runtime allocators return a non-null pointer, even for zero
-		// bytes, or panic. Attach the contract to declarations as well as
-		// definitions so every module can use it without LTO or inlining.
-		fn.AddAttributeAtIndex(0, p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
-	}
+	llvmattr.ApplyAllocatorFunction(p.Prog.ctx, fn)
 	if cc == Stdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}

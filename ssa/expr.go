@@ -25,6 +25,7 @@ import (
 	"log"
 	"math"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -1599,6 +1600,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 	}
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
+	llvmattr.ApplyAllocatorCall(b.Prog.ctx, ret.impl, fn.impl, params, b.Prog.GCRootsEnabled())
 	b.setNativeIntegerCallAttrs(ret.impl, fn, sig, params)
 	if ret.Type != b.Prog.Void() {
 		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
