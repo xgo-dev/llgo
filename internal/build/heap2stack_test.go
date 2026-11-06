@@ -63,3 +63,30 @@ func TestHeapToStackAggregateSpills(t *testing.T) {
 		})
 	}
 }
+
+// Windows passes strings by reference. SROA leaves the aggregate loads and
+// stores through those argument pointers intact, and Attributor can overflow
+// the native Windows stack while analyzing ContainsAny and IndexAny.
+func TestHeapToStackWindowsStrings(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch = "windows", arch
+			conf.OptLevel = optlevel.Os
+			pkgs, err := Build(Invocation{Args: []string{"strings"}, Config: conf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg := pkgs[0].LPkg
+			defer pkg.Prog.Dispose()
+			mod := pkg.Module()
+			ctx := &context{prog: pkg.Prog, buildConf: conf, passOpt: true}
+			if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
