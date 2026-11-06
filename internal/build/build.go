@@ -3554,9 +3554,6 @@ func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) err
 	}
 	mod.SetDataLayout(ctx.prog.DataLayout())
 	mod.SetTarget(ctx.prog.Target().Spec().Triple)
-	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
-		return fmt.Errorf("verify LLVM module for %v before heap-to-stack failed: %w", pkgPath, err)
-	}
 	if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
 		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
 	}
