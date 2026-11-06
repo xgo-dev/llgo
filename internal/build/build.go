@@ -3521,11 +3521,6 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
 		return false, nil
 	}
-	if ctx.buildConf.Goarch == "wasm" {
-		if err := optimizeHeapAllocations(ctx, pkg.Path(), mod); err != nil {
-			return true, err
-		}
-	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
 	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
@@ -3550,8 +3545,9 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 // optimizeHeapAllocations runs while aggregate arguments and results are still
 // SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
 // that can make Attributor's pointer and reachability analyses prohibitively
-// expensive (notably in ixgo). Run after large-aggregate lowering so its
-// allocations are present, before the ordinary pipeline can inline wrappers.
+// expensive (notably in ixgo). Run after large-aggregate lowering has rewritten
+// oversized returns so inferred memory effects include its result stores, and
+// before the ordinary pipeline can inline allocator wrappers.
 func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
 		return nil
