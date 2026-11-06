@@ -117,7 +117,7 @@ func loadItabTable() *itabTableType {
 func newItabTable(size uintptr) *itabTableType {
 	// Keep the table header and its pointer slots in one allocation.
 	// The unsafe.Pointer slots use target-specific pointer loads and stores.
-	bytes := unsafe.Sizeof(itabTableType{}) + size*pointerSize
+	bytes := unsafe.Sizeof(itabTableType{}) + size*unsafe.Sizeof(unsafe.Pointer(nil))
 	// Empty slots and count must start at zero, including with the nogc allocator.
 	ptr := AllocZ(bytes)
 	t := (*itabTableType)(ptr)
@@ -190,10 +190,9 @@ func addItab(i *Itab) *Itab {
 	}
 	if t.count >= 3*(t.size/4) {
 		grown := newItabTable(t.size * 2)
-		// All writers hold this mutex. Concurrent find calls only read slots,
-		// so plain loads are sufficient while copying.
-		for _, p := range t.entries {
-			if old := (*Itab)(p); old != nil {
+		// Use the same pointer access helpers as concurrent lookups.
+		for index := range t.entries {
+			if old := (*Itab)(loadItabPointer(&t.entries[index])); old != nil {
 				grown.add(old)
 			}
 		}
