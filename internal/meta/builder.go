@@ -200,6 +200,18 @@ func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
 	})
 }
 
+// AddReflectMethodSite records a dynamic MethodByName call at site. The site's
+// symbol name must identify that source call uniquely across packages; cloned
+// IR calls retain the same identity. It is an analysis key, not an ordinary
+// reference to an executable symbol. Without a proven finite name set, the
+// whole-program view treats this demand as conservative reflection.
+func (b *Builder) AddReflectMethodSite(src, site Symbol) {
+	b.funcDemands[src] = append(b.funcDemands[src], bFuncDemand{
+		kind:   DemandReflectMethodSite,
+		target: uint32(site),
+	})
+}
+
 // Build serializes all accumulated facts into a PackageMeta.
 //
 // The process is:

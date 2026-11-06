@@ -1123,7 +1123,7 @@ entry:
   ret void
 }
 
-attributes #0 = { "llgo.reflect.methodbyname"="value" }
+attributes #0 = { "llgo.reflect.methodbyname"="value" "llgo.deadcode.reflectsite"="caller$reflectsite$1" }
 `
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -1154,6 +1154,17 @@ attributes #0 = { "llgo.reflect.methodbyname"="value" }
 	ir := caller.String()
 	if !strings.Contains(mod.String(), `"llgo.reflect.methodbyname"="value"`) {
 		t.Fatalf("reflect MethodByName call marker was not preserved:\n%s", mod.String())
+	}
+	for bb := mod.NamedFunction("caller").FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for call := bb.FirstInstruction(); !call.IsNil(); call = llvm.NextInstruction(call) {
+			if call.IsACallInst().IsNil() || call.CalledValue().Name() != "callee" {
+				continue
+			}
+			attr := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
+			if attr.IsNil() || attr.GetStringValue() != "caller$reflectsite$1" {
+				t.Fatalf("reflection site identity was not preserved: %s", call.String())
+			}
+		}
 	}
 	if !strings.Contains(ir, `ptr "llgo.reflect.methodbyname.name"="1"`) {
 		t.Fatalf("reflect MethodByName name marker was not remapped to string data pointer:\n%s", ir)

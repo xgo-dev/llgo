@@ -17,7 +17,7 @@ type nameRef struct {
 // version is the compatibility boundary for the on-disk layout.
 const (
 	magic   = "LLPM"
-	version = 2
+	version = 3
 )
 
 // Section IDs are also indexes into the header's section-offset array.
@@ -41,15 +41,16 @@ const headerSize = 4 + 4 + numSections*4
 // read-only mapping created by Open. Package-local lookup helpers return
 // strings and slices that alias those bytes.
 //
-// The version-2 wire format is below. Version 2 adds metadata-only reflection
-// demands; older readers must not silently ignore their type visibility.
+// The version-3 wire format is below. Version 2 added metadata-only reflection
+// demands; version 3 adds refinable MethodByName callsite demands. Older
+// readers must not silently ignore these reflection visibility requirements.
 // All integers are little-endian uint32
 // values. Header offsets are absolute byte offsets from the beginning of the
 // file. Symbol values are indexes in this package's Symbols section.
 //
 //	Header (36 bytes)
 //	  [0:4]   magic: "LLPM"
-//	  [4:8]   version: 2
+//	  [4:8]   version: 3
 //	  [8:36]  section offsets, in this exact order:
 //	            StringTable, Symbols, OrdinaryEdges, FuncDemand,
 //	            TypeChildren, MethodInfo, InterfaceInfo
@@ -114,8 +115,9 @@ type PackageMeta struct {
 // format so funcDemands can return a zero-copy view of the backing bytes.
 type localFuncDemand struct {
 	Kind DemandKind
-	// Target is a Symbol for DemandUseIface and DemandIfaceMethod, a string-table
-	// offset for DemandNamedMethod, and zero for reflection demands.
+	// Target is a Symbol for DemandUseIface, DemandIfaceMethod and
+	// DemandReflectMethodSite, a string-table offset for DemandNamedMethod,
+	// and zero for the other reflection demands.
 	Target uint32
 	// Extra is an interface-method index for DemandIfaceMethod, a string length
 	// for DemandNamedMethod, and zero for the other kinds.
@@ -467,7 +469,7 @@ func (pm *PackageMeta) validateFuncDemands(layout csrLayout, strSize uint32) err
 		base := layout.dataOff + i*12
 		kind := DemandKind(binary.LittleEndian.Uint32(pm.raw[base:]))
 		switch kind {
-		case DemandUseIface, DemandIfaceMethod:
+		case DemandUseIface, DemandIfaceMethod, DemandReflectMethodSite:
 			target := binary.LittleEndian.Uint32(pm.raw[base+4:])
 			if target >= pm.nsyms {
 				return fmt.Errorf("meta: FuncDemand record %d has invalid target symbol %d (symbol count %d)", i, target, pm.nsyms)

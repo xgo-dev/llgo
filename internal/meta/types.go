@@ -23,6 +23,10 @@ const (
 	// DemandReflectMethodMetadata observes method names and signatures, but
 	// cannot call the function stored in reflect.Method.Func.
 	DemandReflectMethodMetadata DemandKind = 5
+	// DemandReflectMethodSite records a dynamic MethodByName call whose name
+	// may be refined from optimized IR. It is a package-local wire kind;
+	// GlobalSummary translates it to named demands or conservative reflection.
+	DemandReflectMethodSite DemandKind = 6
 )
 
 // MethodSlot is a method slot in the global namespace.

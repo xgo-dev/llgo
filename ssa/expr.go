@@ -1600,6 +1600,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 	}
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
+	reflectCall := ret.impl
 	llvmattr.ApplyAllocatorCall(b.Prog.ctx, ret.impl, fn.impl, params, b.Prog.GCRootsEnabled())
 	b.setNativeIntegerCallAttrs(ret.impl, fn, sig, params)
 	if ret.Type != b.Prog.Void() {
@@ -1611,7 +1612,10 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		if !data.IsNil() {
 			nameArgIndex++
 		}
-		b.MarkReflectValueMethodByNameCall(ret.impl, nameArgIndex)
+		b.MarkReflectValueMethodByNameCall(reflectCall, nameArgIndex)
+		if reflectCheck.Site != "" {
+			reflectCall.AddCallSiteAttribute(-1, b.Prog.ctx.CreateStringAttribute("llgo.deadcode.reflectsite", reflectCheck.Site))
+		}
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
 	return
@@ -1780,7 +1784,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 				break
 			}
 			reflectKind = ReflectMethodDynamic | ReflectMethodByName
-			pkg.MarkReflectMethod(b.Func.Name())
+			check.Site = pkg.recordReflectMethodSite(b.Func.Name())
 		}
 	}
 	pkg.NeedAbiInit |= reflectKind

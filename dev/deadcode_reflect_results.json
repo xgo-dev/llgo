@@ -1,0 +1,221 @@
+{
+  "base_commit": "66c3cb1f1452431bec67a82a202f71a70335a6a7",
+  "date": "2026-11-06",
+  "source_state": "LLVM reflection-name refinement added to the base commit; compiler binary identified by SHA-256",
+  "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "go": "go version go1.27.0 darwin/arm64",
+  "llvm_compiler": "22.1.8",
+  "linker": "Homebrew LLD 23.1.3",
+  "compiler_sha256": "0cac4046ec611244ae0565978b467b7a032b2041754d6dc383fe93c24fc2f977",
+  "plugin_sha256": "284b6a34a798301033e0bd3fce243ab8f761b0cb8589435a38b4e02372060bee",
+  "configuration": "-a -Os -debug-artifact=none; embedded PCLN; hidden exports; common post-PCLN strip -x and ad-hoc codesign; sequential 3 repetitions with rotating mode order; warm OS/tool caches",
+  "gorm_module": {
+    "Path": "gorm.io/gorm",
+    "Version": "v1.31.2",
+    "Sum": "h1:3o8FXNo9v9S858gil+3LlZA1LkCOzgb4g5BL64FgaCo="
+  },
+  "cases": [
+    {
+      "case": "reflectcallbacks",
+      "variants": {
+        "drop": {
+          "bytes": [
+            1704080
+          ],
+          "text_bytes": [
+            753936
+          ],
+          "wall_median_seconds": 7.0948275830596685,
+          "cpu_median_seconds": 19.301743000000005,
+          "wall_samples_seconds": [
+            7.742619999684393,
+            7.0948275830596685,
+            7.073454457800835
+          ],
+          "cpu_samples_seconds": [
+            18.916040999999996,
+            19.301743000000005,
+            19.366252999999997
+          ],
+          "unrelated_json_method_present": true
+        },
+        "thin": {
+          "bytes": [
+            862640
+          ],
+          "text_bytes": [
+            233940
+          ],
+          "wall_median_seconds": 6.4840394160710275,
+          "cpu_median_seconds": 22.607607000000005,
+          "wall_samples_seconds": [
+            6.401178624946624,
+            6.4840394160710275,
+            6.490017167292535
+          ],
+          "cpu_samples_seconds": [
+            22.482474,
+            22.607607000000005,
+            22.672700000000006
+          ],
+          "unrelated_json_method_present": false
+        },
+        "fullp": {
+          "bytes": [
+            928448
+          ],
+          "text_bytes": [
+            277760
+          ],
+          "wall_median_seconds": 7.51662224996835,
+          "cpu_median_seconds": 14.530303000000005,
+          "wall_samples_seconds": [
+            7.285576874855906,
+            7.51662224996835,
+            7.580360542051494
+          ],
+          "cpu_samples_seconds": [
+            14.505883999999998,
+            14.530303000000005,
+            14.580046000000035
+          ],
+          "unrelated_json_method_present": false
+        }
+      },
+      "thin_vs_fullp_size_reduction_percent": 7.087957537740397,
+      "thin_vs_fullp_wall_reduction_percent": 13.737325085102825
+    },
+    {
+      "case": "gormschema",
+      "variants": {
+        "drop": {
+          "bytes": [
+            4585584
+          ],
+          "text_bytes": [
+            2058476
+          ],
+          "wall_median_seconds": 10.774642458185554,
+          "cpu_median_seconds": 44.86432100000002,
+          "wall_samples_seconds": [
+            10.72862158389762,
+            10.774642458185554,
+            10.784480542410165
+          ],
+          "cpu_samples_seconds": [
+            44.790589999999995,
+            44.86432100000002,
+            44.96684300000008
+          ]
+        },
+        "thin": {
+          "bytes": [
+            3314240
+          ],
+          "text_bytes": [
+            1357560
+          ],
+          "wall_median_seconds": 14.842283374629915,
+          "cpu_median_seconds": 79.97778,
+          "wall_samples_seconds": [
+            14.5409020842053,
+            14.842283374629915,
+            14.906918916851282
+          ],
+          "cpu_samples_seconds": [
+            79.60945300000002,
+            80.01221399999997,
+            79.97778
+          ]
+        },
+        "fullp": {
+          "bytes": [
+            3462624
+          ],
+          "text_bytes": [
+            1448908
+          ],
+          "wall_median_seconds": 21.089277292136103,
+          "cpu_median_seconds": 41.553645000000024,
+          "wall_samples_seconds": [
+            20.95168533315882,
+            21.089277292136103,
+            21.144749500323087
+          ],
+          "cpu_samples_seconds": [
+            41.553645000000024,
+            40.975238999999995,
+            41.68167000000004
+          ]
+        }
+      },
+      "thin_vs_fullp_size_reduction_percent": 4.285305017235485,
+      "thin_vs_fullp_wall_reduction_percent": 29.62165953328142
+    }
+  ],
+  "validation": {
+    "build_sign_output_checks": 18,
+    "gorm_full_suite_runs": 9,
+    "gorm_top_level_tests_per_run": 62,
+    "fresh_and_cached_reflection_fixtures": 10,
+    "additional_small_regression_builds": 8
+  },
+  "notes": [
+    "Wall and total child CPU time include forced package rebuilds, linking and PCLN finalization; exclude common strip/sign and execution.",
+    "Thin has lower wall time but higher total CPU time than Full+DCE+P. No runtime performance improvement is claimed.",
+    "The hook-name lookup is refined from optimized LLVM IR only after readonly storage and program visibility are established. Unknown or partially resolved calls retain generic reflection.",
+    "This is a development-mode native macOS single-root executable experiment with DWARF disabled.",
+    "The earlier measurements in deadcode_thinlto_results.json describe the previous implementation, whose gorm Thin+Drop size was 4387184 bytes.",
+    "The four earlier small cases were rerun once per Thin/FullP mode: sizes unchanged, all outputs pass; fmt remains 144 bytes larger with Thin."
+  ],
+  "regressions": [
+    {
+      "case": "reflectmetadata",
+      "mode": "thin",
+      "bytes": 878896,
+      "output_ok": true
+    },
+    {
+      "case": "reflectmetadata",
+      "mode": "fullp",
+      "bytes": 928448,
+      "output_ok": true
+    },
+    {
+      "case": "reflectcall",
+      "mode": "thin",
+      "bytes": 1588416,
+      "output_ok": true
+    },
+    {
+      "case": "reflectcall",
+      "mode": "fullp",
+      "bytes": 1670992,
+      "output_ok": true
+    },
+    {
+      "case": "fmtprintf",
+      "mode": "thin",
+      "bytes": 451648,
+      "output_ok": true
+    },
+    {
+      "case": "fmtprintf",
+      "mode": "fullp",
+      "bytes": 451504,
+      "output_ok": true
+    },
+    {
+      "case": "texttemplate",
+      "mode": "thin",
+      "bytes": 1325360,
+      "output_ok": true
+    },
+    {
+      "case": "texttemplate",
+      "mode": "fullp",
+      "bytes": 1391264,
+      "output_ok": true
+    }
+  ]
+}

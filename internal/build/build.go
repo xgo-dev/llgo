@@ -2655,7 +2655,11 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
 		trimMethods := canPruneWasmTypeMetadata(ctx)
-		analysis, err := analyzeDeadcodeDrop(preparation.linkedOrder, preparation.gen.rtInit)
+		reflectNames, err := refineDeadcodeReflectNames(ctx, preparation.linkedOrder, verbose)
+		if err != nil {
+			return nil, err
+		}
+		analysis, err := analyzeDeadcodeDropWithReflectNames(preparation.linkedOrder, preparation.gen.rtInit, reflectNames)
 		if err != nil {
 			return nil, err
 		}
@@ -2779,11 +2783,15 @@ func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, t
 }
 
 func analyzeDeadcodeDrop(pkgs []Package, needRuntime bool) (deadcode.Analysis, error) {
+	return analyzeDeadcodeDropWithReflectNames(pkgs, needRuntime, nil)
+}
+
+func analyzeDeadcodeDropWithReflectNames(pkgs []Package, needRuntime bool, names map[string][]string) (deadcode.Analysis, error) {
 	metas, err := linkedPackageMetas(pkgs)
 	if err != nil {
 		return deadcode.Analysis{}, err
 	}
-	summary, err := meta.NewGlobalSummary(metas)
+	summary, err := meta.NewGlobalSummaryWithReflectNames(metas, names)
 	if err != nil {
 		return deadcode.Analysis{}, err
 	}

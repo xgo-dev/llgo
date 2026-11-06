@@ -21,10 +21,12 @@ import time
 
 
 CASES = {
+    "reflectcallbacks": "before-create\nafter-find\n",
     "reflectmetadata": "Decode 1 1\n",
     "reflectcall": '{"answer":42}\n',
     "fmtprintf": "Hello, world\n",
     "texttemplate": "Names: Gamora, Groot, Nebula, Rocket, Star-Lord\n",
+    "gormschema": None,
 }
 
 
@@ -38,13 +40,18 @@ def main():
     parser.add_argument("--plugin", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--linker", type=Path, help="explicit ld64.lld (plugin must match its LLVM version)")
-    parser.add_argument("--cases", nargs="+", choices=CASES, default=list(CASES))
+    parser.add_argument("--cases", nargs="+", choices=CASES,
+                        default=[case for case in CASES if case != "gormschema"])
+    parser.add_argument("--gorm-module", type=Path,
+                        help="prepared Go module containing a pinned gorm.io/gorm dependency")
     parser.add_argument("--modes", nargs="+", choices=["drop", "thin", "full", "fullp"],
                         default=["drop", "thin", "full", "fullp"])
     parser.add_argument("--repeat", type=int, default=3)
     args = parser.parse_args()
     if platform.system() != "Darwin" or args.repeat < 1:
         parser.error("requires macOS and a positive repetition count")
+    if "gormschema" in args.cases and not args.gorm_module:
+        parser.error("gormschema requires --gorm-module with a pinned dependency")
     root = Path(__file__).resolve().parent.parent
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -65,6 +72,9 @@ def main():
                "llvm": capture(["llvm-config", "--version"]).strip(),
                "linker": capture([str(args.linker.absolute()) if args.linker else "ld64.lld", "--version"]).strip(),
                "ldflags": linkflags, "runs": []}
+    if "gormschema" in args.cases:
+        results["gorm_module"] = json.loads(capture(
+            ["go", "list", "-m", "-json", "gorm.io/gorm"], cwd=args.gorm_module))
     (output / "worktree.diff").write_text(capture(["git", "diff"], cwd=root))
     (output / "worktree.status").write_text(capture(["git", "status", "--short"], cwd=root))
     for repeat in range(args.repeat):
@@ -74,13 +84,16 @@ def main():
             for mode in modes:
                 name = f"{case}-{mode}-{repeat}"
                 exe = output / "probe"
-                command = [str(compiler), "build", "-a", "-Os", "-debug-artifact=none",
-                           *flags[mode], "-o", str(exe), "./benchmark/binary_size/" + case]
+                gorm = case == "gormschema"
+                cwd = args.gorm_module.resolve() if gorm else root
+                command = [str(compiler), *(["test", "-c"] if gorm else ["build"]),
+                           "-a", "-Os", "-debug-artifact=none", *flags[mode], "-o", str(exe),
+                           "gorm.io/gorm/schema" if gorm else "./benchmark/binary_size/" + case]
                 row = {"case": case, "mode": mode, "repeat": repeat, "command": command}
                 cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
                 start = time.monotonic()
                 with (output / (name + ".log")).open("w") as log:
-                    build = subprocess.run(command, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+                    build = subprocess.run(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT)
                 row.update(seconds=time.monotonic() - start, returncode=build.returncode)
                 cpu_after = resource.getrusage(resource.RUSAGE_CHILDREN)
                 row["cpu_seconds"] = cpu_after.ru_utime + cpu_after.ru_stime - cpu_before.ru_utime - cpu_before.ru_stime
@@ -106,7 +119,8 @@ def main():
                     capture(["codesign", "-f", "-s", "-", str(exe)])
                     capture(["codesign", "--verify", str(exe)])
                     row["bytes"] = exe.stat().st_size
-                    run = subprocess.run([str(exe)], text=True, capture_output=True, timeout=30)
+                    run_args = [str(exe), "-test.v", "-test.timeout=120s"] if gorm else [str(exe)]
+                    run = subprocess.run(run_args, text=True, capture_output=True, timeout=140 if gorm else 30)
                     row.update(run_returncode=run.returncode, stdout=run.stdout, stderr=run.stderr)
                     row["output_ok"] = run.returncode == 0 and (CASES[case] is None or run.stdout + run.stderr == CASES[case])
                     shutil.copy2(exe, output / name)

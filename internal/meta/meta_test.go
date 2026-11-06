@@ -391,7 +391,7 @@ func TestOpenErrors(t *testing.T) {
 				binary.LittleEndian.PutUint32(raw[4:8], version+1)
 				return raw
 			},
-			want: "meta: unsupported version 3",
+			want: "meta: unsupported version 4",
 		},
 		{
 			name: "section offset past end",

@@ -336,6 +336,7 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	params := make([]llvm.Value, 1, oldType.ParamTypesCount()+1)
 	params[0] = result
 	reflectMethodByName := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
+	reflectSite := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
 	reflectNameParam := -1
 	for i := 0; i < oldType.ParamTypesCount(); i++ {
 		params = append(params, call.Operand(i))
@@ -348,6 +349,9 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	copyClosureEnvCallAttrs(call, newCall, 1)
 	if !reflectMethodByName.IsNil() {
 		newCall.AddCallSiteAttribute(-1, reflectMethodByName)
+	}
+	if !reflectSite.IsNil() {
+		newCall.AddCallSiteAttribute(-1, reflectSite)
 	}
 	if reflectNameParam >= 0 {
 		newCall.AddCallSiteAttribute(reflectNameParam, ctx.CreateStringAttribute(
