@@ -172,8 +172,12 @@ choose flags and conversions deliberately; type checking does not establish
 equivalence with a Go library function or enable fast-math semantics.
 
 Direct calls emit the LLVM intrinsic. Taking a binding's function value creates
-a shared Go ABI entry that calls the same intrinsic; the retained Go body is
-still ignored. This supports bodyless bindings and scalar tuple results too.
+a shared Go ABI definition under its original Go name (for example,
+`demo.fshl8`) that calls the same intrinsic; the retained Go body is still
+ignored. LLVM bindings and existing `llgo.*` instructions share the forwarding
+wrapper generator and normal call lowering. The entry has linkonce linkage
+(and COMDAT on COFF targets), so importing modules use the same symbol.
+This supports bodyless bindings and scalar tuple results too.
 Bindings with `immarg` parameters cannot be used as function values, because
 forwarding runtime parameters would violate LLVM's constant-operand rule. Use
 an ordinary Go wrapper that supplies constant flags instead.

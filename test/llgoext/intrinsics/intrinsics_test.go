@@ -67,11 +67,17 @@ func TestIntrinsicFunctionValues(t *testing.T) {
 	if got := callRoot(root, 81); got != 9 {
 		t.Fatalf("root function value = %g", got)
 	}
-	checkMultiply(t, multiply)
 }
 
-func TestOverflowAndLegacyCompatibility(t *testing.T) {
-	checkMultiply(t, multiplyWrapper)
-	// Existing instructions continue to provide their function-value wrappers.
-	checkMultiply(t, legacyMultiply)
+func TestMultiplyFunctionValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mul  func(uint64, uint64) (uint64, bool)
+	}{
+		{"llvm", multiply},
+		{"llgo", legacyMultiply},
+		{"ordinary-wrapper", multiplyWrapper},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkMultiply(t, tc.mul) })
+	}
 }

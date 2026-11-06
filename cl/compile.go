@@ -187,7 +187,6 @@ type context struct {
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
 	llvmIntrinsics       map[*ssa.Function]*llssa.LLVMIntrinsic
-	llvmIntrinsicValues  map[*ssa.Function]llssa.Function
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
@@ -540,6 +539,9 @@ func (p *context) elidedZeroSizedFreeVar(b llssa.Builder, freeVar *ssa.FreeVar) 
 }
 
 func isCgoExternSymbol(f *ssa.Function) bool {
+	if f.Synthetic == ssawrap.CallWrapper {
+		return false
+	}
 	name := f.Name()
 	return isCgoCfunc(name) || isCgoCmacro(name) || isCgoC2func(name)
 }
@@ -2561,7 +2563,7 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 
 func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
-	if v.Pkg == p.goPkg || v.Pkg == nil {
+	if v.Pkg == p.goPkg || v.Pkg == nil || v.Synthetic == ssawrap.CallWrapper {
 		// function in this package
 		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
 		if kind != ignoredFunc {
@@ -2585,14 +2587,19 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 		}
 	case *ssa.Function:
 		_, _, ftype := p.funcName(v)
-		if ftype == llvmIntrinsic {
-			return p.llvmIntrinsicValue(v).Expr
-		}
-		if ftype == llgoInstr {
+		original := v
+		if ftype == llvmIntrinsic || ftype == llgoInstr {
+			if fn := p.funcs[v]; fn != nil {
+				return fn.Expr
+			}
 			v = ssawrap.MakeCallWrapper(p.goProg, v)
+			p.markLinkOnce(v)
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
 		if aFn != nil {
+			if v != original {
+				p.funcs[original] = aFn
+			}
 			return aFn.Expr
 		}
 		return pyFn.Expr

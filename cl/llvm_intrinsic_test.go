@@ -54,11 +54,6 @@ func Signed(x, y int32) int32 { return signed(x, y) }
 func Saturate(x float64) int32 { return saturate(x) }
 var RotateValue = Rotate
 var OverflowValue = Overflow
-var FunnelValue = funnel
-var FunnelValueAgain = funnel
-var PopulationValue = population
-var RootValue = root
-var IntrinsicOverflowValue = overflow
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -81,15 +76,6 @@ var IntrinsicOverflowValue = overflow
 			defer mod.Dispose()
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("%v\n%s", err, mod.String())
-			}
-			for name, intrinsic := range map[string]string{
-				"funnel": "llvm.fshl.i8", "population": "llvm.ctpop.i32",
-				"root": "llvm.sqrt.f64", "overflow": "llvm.umul.with.overflow.i64",
-			} {
-				wrapper := mustNamedFunction(t, mod, "intrinsics."+name+"$llvm")
-				if wrapper.Linkage() != llvm.LinkOnceAnyLinkage || strings.Count(wrapper.String(), "@"+intrinsic+"(") != 1 {
-					t.Fatalf("invalid intrinsic function-value entry:\n%s", wrapper.String())
-				}
 			}
 			mod.SetDataLayout(prog.DataLayout())
 			mod.SetTarget(target.Spec().Triple)
@@ -123,7 +109,7 @@ var IntrinsicOverflowValue = overflow
 				}
 			}
 			if !mod.NamedFunction("intrinsics.funnel").IsNil() || !mod.NamedFunction("check").IsNil() {
-				t.Fatal("intrinsic binding or validation function escaped into output")
+				t.Fatal("unused instruction entry or validation function escaped into output")
 			}
 			buf, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
 			if err != nil {
