@@ -3,6 +3,7 @@
 package test
 
 import (
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -24,11 +25,13 @@ type itabPrefix struct {
 	inter *abi.InterfaceType
 	typ   *abi.Type
 	hash  uint32
-	_     uint32
 	fun   [1]uintptr
 }
 
 func TestItabTableCollisionAndGrowth(t *testing.T) {
+	if got, want := unsafe.Sizeof(itabPrefix{}), unsafe.Sizeof(rt.Itab{}); got != want {
+		t.Fatalf("itab mirror size = %d, want %d", got, want)
+	}
 	typ := abi.TypeFor[itabCacheValue]()
 	base := abi.TypeFor[itabCacheInterface]().InterfaceType()
 	// Distinct descriptors with the same hash exercise open-addressing
@@ -77,5 +80,82 @@ func TestItabTableCollisionAndGrowth(t *testing.T) {
 		if got := rt.NewItab(inter, typ); got != first[i] {
 			t.Fatalf("interface %d: NewItab did not return canonical itab", i)
 		}
+	}
+	if got := rt.NewItab(a, typ); got != firstA {
+		t.Fatal("growth lost the original a itab")
+	}
+	if got := rt.NewItab(b, typ); got != firstB {
+		t.Fatal("growth lost the original b itab")
+	}
+}
+
+func TestItabTableConcurrentGrowth(t *testing.T) {
+	typ := abi.TypeFor[itabCacheValue]()
+	base := abi.TypeFor[itabCacheInterface]().InterfaceType()
+	stable := new(abi.InterfaceType)
+	*stable = *base
+	stableItab := rt.NewItab(stable, typ)
+	if stableItab == nil {
+		t.Fatal("NewItab returned nil for the stable pair")
+	}
+
+	// Read an existing pair while workers insert the same fresh pairs. The
+	// shared hash exercises collision chains across growth, while concurrent
+	// conversions must all return the same canonical itab for each pair.
+	const n, workers = 1024, 4
+	interfaces := make([]*abi.InterfaceType, n)
+	for i := range interfaces {
+		interfaces[i] = new(abi.InterfaceType)
+		*interfaces[i] = *base
+	}
+	results := make([][]*rt.Itab, workers)
+	for i := range results {
+		results[i] = make([]*rt.Itab, n)
+	}
+	start := make(chan struct{})
+	done := make(chan struct{}, workers)
+	for worker := 0; worker < workers; worker++ {
+		go func(worker int) {
+			defer func() { done <- struct{}{} }()
+			<-start
+			for i, inter := range interfaces {
+				if got := rt.NewItab(stable, typ); got != stableItab {
+					t.Errorf("worker %d, interface %d: stable itab changed during growth", worker, i)
+					return
+				}
+				got := rt.NewItab(inter, typ)
+				results[worker][i] = got
+				if got == nil {
+					t.Errorf("worker %d, interface %d: NewItab returned nil", worker, i)
+					return
+				}
+				view := (*itabPrefix)(unsafe.Pointer(got))
+				if view.inter != inter || view.typ != typ || view.hash != typ.Hash || view.fun[0] == 0 {
+					t.Errorf("worker %d, interface %d: observed an incomplete or incorrect itab", worker, i)
+					return
+				}
+				if i%16 == 0 {
+					runtime.Gosched()
+				}
+			}
+		}(worker)
+	}
+	close(start)
+	for worker := 0; worker < workers; worker++ {
+		<-done
+	}
+	if t.Failed() {
+		return
+	}
+	for i, inter := range interfaces {
+		want := rt.NewItab(inter, typ)
+		for worker := 0; worker < workers; worker++ {
+			if got := results[worker][i]; got != want {
+				t.Fatalf("worker %d, interface %d: NewItab returned a noncanonical itab", worker, i)
+			}
+		}
+	}
+	if got := rt.NewItab(stable, typ); got != stableItab {
+		t.Fatal("growth lost the stable itab")
 	}
 }

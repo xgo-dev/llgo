@@ -69,16 +69,17 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 // memoryInstruction returns the underlying load or atomic instruction when a
 // storage-width conversion represents its logical Go value to callers.
 func (v Expr) memoryInstruction() llvm.Value {
-	if cast := v.impl.IsAIntToPtrInst(); !cast.IsNil() {
-		return cast.Operand(0)
+	instr := v.impl
+	for {
+		switch {
+		case !instr.IsAIntToPtrInst().IsNil(), !instr.IsATruncInst().IsNil(),
+			!instr.IsAZExtInst().IsNil(), !instr.IsASExtInst().IsNil():
+			// A J32 pointer load has both trunc and inttoptr conversions.
+			instr = instr.Operand(0)
+		default:
+			return instr
+		}
 	}
-	if cast := v.impl.IsAZExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	if cast := v.impl.IsASExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	return v.impl
 }
 
 func (v Expr) SetName(alias string) Expr {

@@ -1,7 +1,12 @@
 package cl
 
 import (
+	"bytes"
+	"debug/elf"
 	"fmt"
+	gobuild "go/build"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,5 +88,97 @@ func TestAtomicStoreUnorderedInvalidArity(t *testing.T) {
 			var ctx context
 			ctx.atomicStoreUnordered(nil, make([]llssa.Expr, count))
 		})
+	}
+}
+
+func TestBaremetalItabPointersDoNotRequireLibatomic(t *testing.T) {
+	runtimeDir := filepath.Join("..", "runtime", "internal", "runtime")
+	ctx := gobuild.Default
+	ctx.GOOS, ctx.GOARCH = "linux", "arm"
+	ctx.BuildTags = []string{"llgo", "baremetal", "esp32c3", "tinygo.riscv32"}
+	for name, want := range map[string]bool{
+		"itab_pointer_baremetal.go": true,
+		"itab_pointer.go":           false,
+	} {
+		selected, err := ctx.MatchFile(runtimeDir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selected != want {
+			t.Fatalf("baremetal selected %s = %v, want %v", name, selected, want)
+		}
+	}
+	source, err := os.ReadFile(filepath.Join(runtimeDir, "itab_pointer_baremetal.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssaPkg, _, files := buildGoSSAPkg(t, string(source))
+	prog := newLLSSAProgForTarget(t, &llssa.Target{
+		GOOS:       "linux",
+		GOARCH:     "arm",
+		Target:     "esp32c3-basic",
+		LLVMTarget: "riscv32-esp-elf",
+	})
+	defer prog.Dispose()
+	pkg, err := NewPackage(prog, ssaPkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := pkg.Module()
+	defer mod.Dispose()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid baremetal itab-pointer IR: %v\n%s", err, pkg.String())
+	}
+	for _, name := range []string{"loadItabPointer", "storeItabPointer"} {
+		body := mustNamedFunction(t, mod, "runtime."+name).String()
+		if strings.Contains(body, "load atomic ") || strings.Contains(body, "store atomic ") {
+			t.Fatalf("baremetal %s retained an atomic operation:\n%s", name, body)
+		}
+	}
+
+	// Named embedded targets use an ARM-compatible Go frontend, then emit
+	// through their physical target's backend. RV32IMC lacks the A extension:
+	// even pointer-sized atomics can become unavailable __atomic_* libcalls.
+	const triple = "riscv32-esp-elf"
+	target, err := llvm.GetTargetFromTriple(triple)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine := target.CreateTargetMachine(triple, "generic-rv32", "+m,+c,-a",
+		llvm.CodeGenLevelDefault, llvm.RelocDefault, llvm.CodeModelDefault)
+	defer machine.Dispose()
+	data := machine.CreateTargetData()
+	defer data.Dispose()
+	mod.SetTarget(triple)
+	mod.SetDataLayout(data.String())
+	assembly, err := machine.EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer assembly.Dispose()
+	if strings.Contains(string(assembly.Bytes()), "__atomic_") {
+		t.Fatalf("baremetal itab-pointer helpers require libatomic:\n%s", assembly.Bytes())
+	}
+	object, err := machine.EmitToMemoryBuffer(mod, llvm.ObjectFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer object.Dispose()
+	file, err := elf.NewFile(bytes.NewReader(object.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if file.Machine != elf.EM_RISCV {
+		t.Fatalf("object architecture = %v, want RISC-V", file.Machine)
+	}
+	symbols, err := file.Symbols()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, symbol := range symbols {
+		if symbol.Section == elf.SHN_UNDEF && strings.HasPrefix(symbol.Name, "__atomic_") {
+			t.Fatalf("baremetal itab-pointer object imports %s", symbol.Name)
+		}
 	}
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
-	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
 type eface struct {
@@ -71,14 +70,15 @@ func ToEface(i Iface) Eface {
 const (
 	pointerSize = unsafe.Sizeof(uintptr(0))
 	itabHdrSize = unsafe.Sizeof(itab{}) - pointerSize
-	// The table size stays a power of two so probing can use a mask.
+	// Match Go's runtime itabInitSize. Capacities stay powers of two so probing
+	// can use a mask.
 	itabInitSize = 512
 )
 
 // itabTableType is an open-addressed table whose slots are only filled, never
-// removed. Entries are installed with atomic stores while the table is
-// protected by itabTable.mutex. A grown table is fully rehashed before it is
-// published, so readers never observe a partially rehashed table.
+// removed. Writers hold itabTable.mutex. Hosted targets publish pointers
+// atomically; baremetal uses its single-context task backend. A grown table is
+// fully rehashed before publication, so readers never see a partial rehash.
 type itabTableType struct {
 	size    uintptr
 	count   uintptr
@@ -87,8 +87,8 @@ type itabTableType struct {
 
 var itabTable struct {
 	mutex
-	// table points to the current table. It is published atomically because
-	// interface conversions read it without taking the lock.
+	// table points to the current table. Use storeItabPointer to publish it
+	// because interface conversions read it without taking the lock.
 	table unsafe.Pointer
 }
 
@@ -111,13 +111,12 @@ func itabHash(inter *InterfaceType, typ *Type) uintptr {
 }
 
 func loadItabTable() *itabTableType {
-	return (*itabTableType)(atomic.Load(&itabTable.table))
+	return (*itabTableType)(loadItabPointer(&itabTable.table))
 }
 
 func newItabTable(size uintptr) *itabTableType {
-	// Keep the table header and its pointer slots in one GC-managed allocation.
-	// The slots are unsafe.Pointer so atomic.Load/Store can publish complete
-	// itab pointers without depending on the compiler's pointer type lowering.
+	// Keep the table header and its pointer slots in one allocation.
+	// The unsafe.Pointer slots use target-specific pointer loads and stores.
 	bytes := unsafe.Sizeof(itabTableType{}) + size*pointerSize
 	// Empty slots and count must start at zero, including with the nogc allocator.
 	ptr := AllocZ(bytes)
@@ -133,8 +132,10 @@ func (t *itabTableType) find(inter *InterfaceType, typ *Type) *Itab {
 	}
 	mask := t.size - 1
 	h := itabHash(inter, typ) & mask
-	for step := uintptr(1); ; step++ {
-		m := (*Itab)(atomic.Load(&t.entries[h]))
+	// Triangular probing visits every slot in a power-of-two table. The 75%
+	// load limit guarantees an empty slot; bound probes if that invariant breaks.
+	for step := uintptr(1); step <= t.size; step++ {
+		m := (*Itab)(loadItabPointer(&t.entries[h]))
 		if m == nil {
 			return nil
 		}
@@ -143,16 +144,19 @@ func (t *itabTableType) find(inter *InterfaceType, typ *Type) *Itab {
 		}
 		h = (h + step) & mask
 	}
+	throw("itab table is full")
+	return nil
 }
 
-// add inserts an itab into a table. The caller must hold itabTable.mutex.
+// add inserts an itab into a table. The caller must hold itabTable.mutex;
+// t.size must be a nonzero power of two and the table must have an empty slot.
 func (t *itabTableType) add(i *Itab) {
 	mask := t.size - 1
 	h := itabHash(i.inter, i._type) & mask
-	for step := uintptr(1); ; step++ {
-		m := (*Itab)(atomic.Load(&t.entries[h]))
+	for step := uintptr(1); step <= t.size; step++ {
+		m := (*Itab)(loadItabPointer(&t.entries[h]))
 		if m == nil {
-			atomic.Store(&t.entries[h], unsafe.Pointer(i))
+			storeItabPointer(&t.entries[h], unsafe.Pointer(i))
 			t.count++
 			return
 		}
@@ -161,6 +165,7 @@ func (t *itabTableType) add(i *Itab) {
 		}
 		h = (h + step) & mask
 	}
+	throw("itab table is full")
 }
 
 func findItab(inter *InterfaceType, typ *Type) *Itab {
@@ -173,7 +178,7 @@ func addItab(i *Itab) *Itab {
 	if t == nil {
 		t = newItabTable(itabInitSize)
 		t.add(i)
-		atomic.Store(&itabTable.table, unsafe.Pointer(t))
+		storeItabPointer(&itabTable.table, unsafe.Pointer(t))
 		itabTable.Unlock()
 		return i
 	}
@@ -185,14 +190,15 @@ func addItab(i *Itab) *Itab {
 	}
 	if t.count >= 3*(t.size/4) {
 		grown := newItabTable(t.size * 2)
-		// Writers hold this mutex, so plain loads are sufficient while copying.
+		// All writers hold this mutex. Concurrent find calls only read slots,
+		// so plain loads are sufficient while copying.
 		for _, p := range t.entries {
 			if old := (*Itab)(p); old != nil {
 				grown.add(old)
 			}
 		}
 		grown.add(i)
-		atomic.Store(&itabTable.table, unsafe.Pointer(grown))
+		storeItabPointer(&itabTable.table, unsafe.Pointer(grown))
 		itabTable.Unlock()
 		return i
 	}
