@@ -70,16 +70,12 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 // storage-width conversion represents its logical Go value to callers.
 func (v Expr) memoryInstruction() llvm.Value {
 	instr := v.impl
-	for {
-		switch {
-		case !instr.IsAIntToPtrInst().IsNil(), !instr.IsATruncInst().IsNil(),
-			!instr.IsAZExtInst().IsNil(), !instr.IsASExtInst().IsNil():
-			// A J32 pointer load has both trunc and inttoptr conversions.
-			instr = instr.Operand(0)
-		default:
-			return instr
-		}
+	// A J32 pointer load has both trunc and inttoptr conversions.
+	for !instr.IsAIntToPtrInst().IsNil() || !instr.IsATruncInst().IsNil() ||
+		!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil() {
+		instr = instr.Operand(0)
 	}
+	return instr
 }
 
 func (v Expr) SetName(alias string) Expr {
