@@ -743,8 +743,12 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			// Source env-bearing bodies are created by compileFuncDecl before
 			// lowering. Imported declarations cannot reconstruct //llgo:env.
 			aFn = pkg.NewFuncEx(name, sig, llssa.CallConv(ftype), false, p.needsLinkOnce(fn))
-			if disableInline {
+			noInlineDirective := hasNoInlineDirective(fn)
+			if disableInline || noInlineDirective {
 				aFn.Inline(llssa.NoInline)
+			}
+			if noInlineDirective {
+				aFn.DisableTailCalls()
 			}
 		}
 		if ftype == goFunc {
@@ -1281,6 +1285,7 @@ type CallerTracking struct {
 	base        map[*ssa.Package]map[*ssa.Function]bool
 	extended    map[*ssa.Package]callerTrackingFuncSets
 	recover     *recoverFacts
+	inlines     *inlineFacts
 	precomputed bool
 }
 
@@ -1429,6 +1434,7 @@ func NewCallerTracking() *CallerTracking {
 		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended: make(map[*ssa.Package]callerTrackingFuncSets),
 		recover:  newRecoverFacts(),
+		inlines:  newInlineFacts(),
 	}
 }
 
@@ -2687,6 +2693,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
 				return folded
 			}
+			p.importInlineBody(cv)
 		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)

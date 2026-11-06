@@ -190,6 +190,11 @@ type context struct {
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
 	recoverFacts         *recoverFacts
+	callerTracking       *CallerTracking
+	inlineFacts          *inlineFacts
+	inlineChecked        map[*ssa.Function]bool
+	inlineImports        map[*ssa.Function]int
+	inlineCost           int
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
 	debugAllocObjects    map[*types.Var]bool
@@ -738,7 +743,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	}
 	p.funcs[f] = fn
 	isCgo := isCgoExternSymbol(f)
-	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() {
+	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() && p.inlineImports[f] == 0 {
 		goName := fn.Name()
 		if pkgTypes != nil {
 			goName = funcName(pkgTypes, f, false)
@@ -2985,6 +2990,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if ct == nil {
 		ct = NewCallerTracking()
 	}
+	if ct.inlines == nil {
+		ct.inlines = newInlineFacts()
+	}
 	ctx := &context{
 		prog:             prog,
 		pkg:              ret,
@@ -2999,6 +3007,8 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		funcs:            make(map[*ssa.Function]llssa.Function),
 		linkOnceFns:      make(map[*ssa.Function]none),
 		recoverFacts:     ct.recoverAnalysis(),
+		callerTracking:   ct,
+		inlineFacts:      ct.inlines,
 		addrOfFieldAddrs: collectAddrOfFieldSelectors(files),
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
