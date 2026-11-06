@@ -56,6 +56,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
+	"github.com/xgo-dev/llgo/internal/heap2stack"
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -3551,6 +3552,13 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	defer pbo.Dispose()
 	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
 		return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
+	}
+	// Preserve the allocation calls for Attributor before the ordinary
+	// pipeline can inline their runtime wrappers. O0 retains source storage.
+	if ctx.buildConf.OptLevel != optlevel.O0 {
+		if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
+			return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+		}
 	}
 	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)

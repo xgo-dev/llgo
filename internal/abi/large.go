@@ -1,7 +1,11 @@
 // Package abi contains target-independent lowering for LLGo's internal ABI.
 package abi
 
-import "github.com/xgo-dev/llvm"
+import (
+	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/llvmattr"
+	"github.com/xgo-dev/llvm"
+)
 
 const (
 	// MaxStackVarSize matches cmd/compile's default limit for explicitly
@@ -19,8 +23,8 @@ const (
 	// at most this many pointer-sized words and still be SSAable.
 	MaxSSAValueWords = 4
 
-	runtimeAllocU        = "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"
-	runtimeAllocUAligned = "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocUAligned"
+	runtimeAllocU        = env.LLGoRuntimePkg + "/internal/runtime.AllocU"
+	runtimeAllocUAligned = env.LLGoRuntimePkg + "/internal/runtime.AllocUAligned"
 )
 
 // MaxSSAValueSize is cmd/compile's CanSSA size limit (MaxStruct * PtrSize).
@@ -665,6 +669,8 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 	align := uint64(l.td.ABITypeAlignment(typ))
 	var result llvm.Value
 	if align > uint64(l.goWordSize) {
+		// The aligned fallback may return an interior pointer; do not attach
+		// allocation-base contracts used by heap-to-stack analysis.
 		fnType := llvm.FunctionType(ptrType, []llvm.Type{intType, intType}, false)
 		fn := m.NamedFunction(runtimeAllocUAligned)
 		if fn.IsNil() {
@@ -677,7 +683,9 @@ func (l *largeAggregateLowerer) allocResult(m llvm.Module, ctx llvm.Context, b l
 		if fn.IsNil() {
 			fn = llvm.AddFunction(m, runtimeAllocU, fnType)
 		}
+		llvmattr.ApplyAllocatorFunction(ctx, fn)
 		result = b.CreateCall(fnType, fn, []llvm.Value{size}, "")
+		llvmattr.ApplyAllocatorCall(ctx, result, fn, []llvm.Value{size}, l.roots)
 	}
 	if !synthetic {
 		result.InstructionSetDebugLoc(loc)
