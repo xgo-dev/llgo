@@ -3027,32 +3027,33 @@ func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Fun
 	if pkg := method.Pkg(); pkg == nil || pkg.Path() != "reflect" {
 		return
 	}
+	index := 0
 	switch method.Name() {
 	case "Method":
 		if len(call.Args) != 1 {
 			return
 		}
-		if index, ok := constInt(call.Args[0]); ok {
-			p.pkg.RecordReflectMethodByIndex(p.fn.Name(), index)
+		if n, ok := constInt(call.Args[0]); ok {
+			index = n
 			check.Kind = llssa.ReflectTypeMethodByIndex
 			break
 		}
-		p.pkg.MarkReflectMethod(p.fn.Name())
 		check.Kind = llssa.ReflectTypeMethodDynamic
 	case "MethodByName":
 		if len(call.Args) != 1 {
 			return
 		}
 		if name, ok := constStr(call.Args[0]); ok {
-			p.pkg.RecordReflectMethodByName(p.fn.Name(), name)
 			check.Kind = llssa.ReflectTypeMethodByName
 			check.Name = name
 			break
 		}
-		p.pkg.MarkReflectMethod(p.fn.Name())
 		check.Kind = llssa.ReflectTypeMethodDynamic | llssa.ReflectTypeMethodByName
+	default:
+		return
 	}
-	p.pkg.NeedAbiInit |= check.Kind
+	metadataOnly := p.pkg.Prog.DeadcodeDropEnabled() && reflectMethodFuncUnobserved(p.goFn, call)
+	p.pkg.RecordReflectTypeMethodUse(p.fn.Name(), check, index, metadataOnly)
 	return
 }
 

@@ -192,6 +192,14 @@ func (b *Builder) MarkReflect(sym Symbol) {
 	})
 }
 
+// MarkReflectMethodMetadata retains reflected method signatures and their
+// child types without requiring callable method slots.
+func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
+	b.funcDemands[sym] = append(b.funcDemands[sym], bFuncDemand{
+		kind: DemandReflectMethodMetadata,
+	})
+}
+
 // Build serializes all accumulated facts into a PackageMeta.
 //
 // The process is:

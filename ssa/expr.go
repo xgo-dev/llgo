@@ -1812,6 +1812,39 @@ func (p Package) MarkReflectMethod(funcName string) {
 	}
 }
 
+// RecordReflectTypeMethodUse separates reading a Method's metadata from
+// observing its Func value. Lookup hints and ABI initialization are needed
+// in both cases; only the callable-method demand differs.
+func (p Package) RecordReflectTypeMethodUse(funcName string, check ReflectMethodCheck, index int, metadataOnly bool) {
+	if check.Kind == 0 {
+		return
+	}
+	p.NeedAbiInit |= check.Kind
+	if check.Kind == ReflectTypeMethodByIndex {
+		if p.MethodByIndex == nil {
+			p.MethodByIndex = make(map[int]none)
+		}
+		p.MethodByIndex[index] = none{}
+	}
+	if check.Kind == ReflectTypeMethodByName {
+		if p.MethodByName == nil {
+			p.MethodByName = make(map[string]none)
+		}
+		p.MethodByName[check.Name] = none{}
+	}
+	if mb := p.metaBuilder; mb != nil {
+		sym := mb.Sym(funcName)
+		switch {
+		case metadataOnly:
+			mb.MarkReflectMethodMetadata(sym)
+		case check.Kind == ReflectTypeMethodByName:
+			mb.AddNamedMethodUse(sym, check.Name)
+		default:
+			mb.MarkReflect(sym)
+		}
+	}
+}
+
 func extractConstInt(v llvm.Value) (r int, ok bool) {
 	if rv := v.IsAConstantInt(); !rv.IsNil() {
 		return int(rv.SExtValue()), true

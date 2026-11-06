@@ -287,6 +287,7 @@ var testdropSymbolChecks = []string{
 	"reflect_field_addr_iface",
 	"reflect_method_result",
 	"reflect_named_method",
+	"reflect_type_metadata",
 	"source64_crosspkg",
 	"unexported_method_identity",
 }

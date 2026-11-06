@@ -51,6 +51,57 @@ const (
 	unreachableMethodName = "github.com/xgo-dev/llgo/runtime/internal/runtime.unreachableMethod"
 )
 
+// RewriteMethodSlots applies the whole-program method decision to a package
+// module before generating its ThinLTO summary. Unlike strong entry overrides,
+// it preserves the descriptor's linkage, storage, and metadata. This prevents
+// the original weak initializer from contributing obsolete method edges to
+// ThinLTO's combined index.
+func RewriteMethodSlots(mod llvm.Module, liveSlots map[string][]int) int {
+	var unreachable llvm.Value
+	changed := 0
+	for g := mod.FirstGlobal(); !g.IsNil(); g = llvm.NextGlobal(g) {
+		if !g.IsGlobalConstant() {
+			continue
+		}
+		methods, elem, ok := methodArray(g.Initializer())
+		if !ok {
+			continue
+		}
+		keep := liveSlotSet(liveSlots[g.Name()])
+		fields := elem.StructElementTypes()
+		rewritten := make([]llvm.Value, methods.OperandsCount())
+		modified := false
+		for i := range rewritten {
+			original := methods.Operand(i)
+			rewritten[i] = original
+			if keep[i] || methodPointerName(original.Operand(2)) == unreachableMethodName &&
+				methodPointerName(original.Operand(3)) == unreachableMethodName {
+				continue
+			}
+			if unreachable.IsNil() {
+				unreachable = newOverrideEmitter(mod).unreachableMethod()
+			}
+			rewritten[i] = llvm.ConstNamedStruct(elem, []llvm.Value{
+				original.Operand(0), original.Operand(1),
+				methodPointerConstant(fields[2], unreachable),
+				methodPointerConstant(fields[3], unreachable),
+			})
+			changed++
+			modified = true
+		}
+		if modified {
+			init := g.Initializer()
+			values := make([]llvm.Value, init.OperandsCount())
+			for i := range values {
+				values[i] = init.Operand(i)
+			}
+			values[len(values)-1] = llvm.ConstArray(elem, rewritten)
+			g.SetInitializer(constStructOfType(init.Type(), values))
+		}
+	}
+	return changed
+}
+
 // EmitRegularTypeFieldOverrides removes inaccessible field tables after method
 // overrides. Regular-memory types use byte-wise equality and hashing, so neither
 // needs the table. Keep descriptor prefixes and any earlier method compaction.

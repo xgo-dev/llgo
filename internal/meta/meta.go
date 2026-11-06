@@ -17,7 +17,7 @@ type nameRef struct {
 // version is the compatibility boundary for the on-disk layout.
 const (
 	magic   = "LLPM"
-	version = 1
+	version = 2
 )
 
 // Section IDs are also indexes into the header's section-offset array.
@@ -41,13 +41,15 @@ const headerSize = 4 + 4 + numSections*4
 // read-only mapping created by Open. Package-local lookup helpers return
 // strings and slices that alias those bytes.
 //
-// The version-1 wire format is below. All integers are little-endian uint32
+// The version-2 wire format is below. Version 2 adds metadata-only reflection
+// demands; older readers must not silently ignore their type visibility.
+// All integers are little-endian uint32
 // values. Header offsets are absolute byte offsets from the beginning of the
 // file. Symbol values are indexes in this package's Symbols section.
 //
 //	Header (36 bytes)
 //	  [0:4]   magic: "LLPM"
-//	  [4:8]   version: 1
+//	  [4:8]   version: 2
 //	  [8:36]  section offsets, in this exact order:
 //	            StringTable, Symbols, OrdinaryEdges, FuncDemand,
 //	            TypeChildren, MethodInfo, InterfaceInfo
@@ -113,7 +115,7 @@ type PackageMeta struct {
 type localFuncDemand struct {
 	Kind DemandKind
 	// Target is a Symbol for DemandUseIface and DemandIfaceMethod, a string-table
-	// offset for DemandNamedMethod, and zero for DemandReflectMethod.
+	// offset for DemandNamedMethod, and zero for reflection demands.
 	Target uint32
 	// Extra is an interface-method index for DemandIfaceMethod, a string length
 	// for DemandNamedMethod, and zero for the other kinds.

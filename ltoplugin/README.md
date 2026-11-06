@@ -3,7 +3,8 @@
 This directory contains the optional LLVM new pass manager plugin used by LLGo
 full LTO builds. It is not required to build or use LLGo.
 
-Build with the same LLVM 22 toolchain used by LLGo:
+Build with the LLVM 22 or 23 toolchain used by the linker (LLGo itself uses
+LLVM 22):
 
 ```sh
 cmake -S ltoplugin -B ltoplugin/build \
@@ -25,7 +26,15 @@ llgo build -lto=full -lto-pass-plugin=/path/to/LLGOLTOPlugin.dylib ./...
 ```
 
 The plugin must match the host architecture and the LLVM toolchain used by the
-linker.
+linker. For an explicit LLVM 23 Mach-O linker, build the plugin against LLVM
+23 and select that linker for the build, for example:
+
+```sh
+LDFLAGS="--ld-path=/opt/homebrew/opt/lld@23/bin/ld64.lld" \
+  llgo build -lto=full -lto-pass-plugin=/path/to/llvm23/LLGOLTOPlugin.dylib ./...
+```
+
+LLVM 22 and LLVM 23 plugin binaries are not interchangeable.
 
 The plugin registers `llgo-lto-pre-globaldce` and also inserts that pass through
 LLVM's full LTO early extension point, so loading the plugin is enough for the
