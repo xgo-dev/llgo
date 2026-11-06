@@ -53,14 +53,16 @@ var Load = archsimd.LoadFloat32x4Array
 			// both definitions need COMDAT on COFF to coalesce at native link.
 			for i, pkg := range []llssa.Package{owner, consumer} {
 				entries := names
+				linkage := llvm.ExternalLinkage
 				if i == 1 {
 					// Method expressions have their own SSA thunk; the package
 					// function value materializes the shared entry directly.
 					entries = names[1:]
+					linkage = llvm.LinkOnceAnyLinkage
 				}
 				for _, name := range entries {
 					entry := mustNamedFunction(t, pkg.Module(), name)
-					if entry.IsDeclaration() || entry.Linkage() != llvm.LinkOnceAnyLinkage {
+					if entry.IsDeclaration() || entry.Linkage() != linkage {
 						t.Fatalf("SIMD entry must share its original name and linkage:\n%s", entry.String())
 					}
 					if target.GOOS == "windows" && !strings.Contains(entry.String(), "comdat") {
@@ -69,6 +71,18 @@ var Load = archsimd.LoadFloat32x4Array
 				}
 				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
+				}
+			}
+			// External aliases may be the only callers of the defining entry.
+			// Keep its original symbol through independent package optimization.
+			opts := llvm.NewPassBuilderOptions()
+			defer opts.Dispose()
+			if err := owner.Module().RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range names {
+				if entry := mustNamedFunction(t, owner.Module(), name); entry.IsDeclaration() || entry.Linkage() != llvm.ExternalLinkage {
+					t.Fatal("optimized SIMD entry did not retain its original definition")
 				}
 			}
 			if err := llvm.LinkModules(owner.Module(), consumer.Module()); err != nil {

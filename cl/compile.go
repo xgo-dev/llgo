@@ -649,9 +649,6 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		pkgTypes = obj.Pkg()
 		name = llssa.FuncName(pkgTypes, obj.Name(), f.Signature.Recv(), false)
 		ftype = goFunc
-		// Importers may synthesize a function-value entry under this same
-		// symbol. The defining entry must join its linkonce/COMDAT group too.
-		p.markLinkOnce(f)
 	}
 	if ftype != goFunc {
 		return nil, nil, ignoredFunc
@@ -762,6 +759,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 	}
 	if simdDecl {
+		// Keep the defining entry visible to external linkname aliases, while
+		// allowing it to share a COFF group with imported function-value entries.
+		fn.Coalesce()
 		b := fn.MakeBody(1)
 		if simd.op == llssa.SIMDUnimplemented {
 			b.SIMD(simd.op, p.prog.Void(), b.Str(name))

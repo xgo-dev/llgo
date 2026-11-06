@@ -560,6 +560,13 @@ func (p Function) Name() string {
 	return p.impl.Name()
 }
 
+// Coalesce lets this definition share a COFF section group with equivalent
+// linkonce entries. Preserve its linkage so externally visible entries remain
+// available even when no function in this module references them.
+func (p Function) Coalesce() {
+	p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+}
+
 // Params returns the function's ith parameter.
 func (p Function) Param(i int) Expr {
 	physical := i
