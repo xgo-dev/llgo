@@ -22,6 +22,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
+	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
 type eface struct {
@@ -70,11 +71,17 @@ func ToEface(i Iface) Eface {
 const (
 	pointerSize = unsafe.Sizeof(uintptr(0))
 	itabHdrSize = unsafe.Sizeof(itab{}) - pointerSize
+	// itabCacheSize must remain a power of two because the cache uses a mask
+	// instead of a modulo operation on the interface/type hash pair.
+	itabCacheSize = 1024
 )
 
 var itabTable struct {
 	mutex
 	entries []*Itab
+	// Entries are immutable after publication. A small direct-mapped cache
+	// avoids locking and walking the table for repeated interface conversions.
+	cache [itabCacheSize]unsafe.Pointer
 }
 
 func init() {
@@ -92,10 +99,15 @@ func (m *mutex) Unlock() {
 }
 
 func findItab(inter *InterfaceType, typ *Type) *Itab {
+	slot := &itabTable.cache[(inter.Hash^typ.Hash)&(itabCacheSize-1)]
+	if i := (*Itab)(atomic.Load(slot)); i != nil && i.inter == inter && i._type == typ {
+		return i
+	}
 	itabTable.Lock()
 	for _, i := range itabTable.entries {
 		if i.inter == inter && i._type == typ {
 			itabTable.Unlock()
+			atomic.Store(slot, unsafe.Pointer(i))
 			return i
 		}
 	}
@@ -107,6 +119,7 @@ func addItab(i *Itab) {
 	itabTable.Lock()
 	itabTable.entries = append(itabTable.entries, i)
 	itabTable.Unlock()
+	atomic.Store(&itabTable.cache[(i.inter.Hash^i._type.Hash)&(itabCacheSize-1)], unsafe.Pointer(i))
 }
 
 // NewItab returns a new itab.
@@ -205,19 +218,10 @@ func IfacePtrData(i iface) unsafe.Pointer {
 }
 
 func DirectIfaceData(typ *abi.Type) bool {
-	switch typ.Kind() {
-	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
-		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
-		abi.Float32, abi.Float64, abi.Array, abi.Struct,
-		// These are single-word values stored directly in iface.data.
-		// For interface method calls, non-pointer receivers still require a
-		// pointer to the stored word.
-		abi.Chan, abi.Func, abi.Map, abi.UnsafePointer:
-		if isDirectIface(typ) {
-			return true
-		}
-	}
-	return false
+	// Pointer receivers already carry their address. Other direct-interface
+	// values need an addressable copy of the stored word. The descriptor flag
+	// includes the single-element array and struct cases as well.
+	return isDirectIface(typ) && typ.Kind() != abi.Pointer
 }
 
 // MatchesClosure reports whether the type V matches the closure type T for
