@@ -21,10 +21,10 @@ func TestAllocatorContracts(t *testing.T) {
 				intType := ctx.IntType(bits)
 				ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 				fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)
-				for _, name := range []string{"AllocU", "AllocZ", "AllocRoot", "AllocUAligned", "unknown"} {
+				for _, name := range []string{"AllocU", "AllocZ", "AllocNoScanU", "AllocNoScanZ", "AllocRoot", "AllocUAligned", "unknown"} {
 					fn := llvm.AddFunction(mod, runtimePrefix+name, fnType)
 					ApplyAllocatorFunction(ctx, fn)
-					wantNonNull := name == "AllocU" || name == "AllocZ" || name == "AllocRoot"
+					wantNonNull := name == "AllocU" || name == "AllocZ" || name == "AllocNoScanU" || name == "AllocNoScanZ" || name == "AllocRoot"
 					if got := !fn.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("nonnull")).IsNil(); got != wantNonNull {
 						t.Fatalf("%s: nonnull = %v", name, got)
 					}

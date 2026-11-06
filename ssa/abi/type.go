@@ -362,6 +362,29 @@ func (b *Builder) FieldAlign(t types.Type) uintptr {
 	return b.Align(t)
 }
 
+// HasPointers is equivalent to PtrBytes(t) != 0, without computing field offsets
+// or array sizes. Allocation selection only needs pointer presence.
+func (b *Builder) HasPointers(t types.Type) bool {
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		return t.Kind() == types.String || t.Kind() == types.UnsafePointer
+	case *types.Pointer, *types.Slice, *types.Signature, *types.Interface, *types.Map, *types.Chan:
+		return true
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if b.HasPointers(t.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	case *types.Array:
+		return t.Len() != 0 && b.HasPointers(t.Elem())
+	case *types.Named:
+		return b.HasPointers(t.Underlying())
+	}
+	panic("unsupported pointer layout: " + t.String())
+}
+
 func (b *Builder) PtrBytes(t types.Type) uintptr {
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:

@@ -203,11 +203,24 @@ func (b Builder) AllocU(elem Type, n ...int64) (ret Expr) {
 }
 
 func (b Builder) allocTyped(helper string, elem Type, size Expr) Expr {
+	zero := false
+	if !b.Prog.abi.HasPointers(elem.raw.Type) {
+		zero = helper == "AllocZ"
+		helper = "AllocNoScanU"
+	}
+	var ret Expr
 	alignment := b.Prog.AlignOf(elem)
 	if alignment > uint64(b.Prog.GoWordSize()) {
-		return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper+"Aligned", "AllocUAligned", "AllocZAligned")), size, b.Prog.IntVal(alignment, b.Prog.Uintptr()))
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper+"Aligned", "AllocUAligned", "AllocZAligned", "AllocNoScanUAligned")), size, b.Prog.IntVal(alignment, b.Prog.Uintptr()))
+	} else {
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocU", "AllocZ", "AllocNoScanU")), size)
 	}
-	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocU", "AllocZ")), size)
+	if zero {
+		// Keep initialization at the call site. LLVM can specialize a constant
+		// size and eliminate stores overwritten by the object's initializer.
+		ret = b.zeroinit(ret, size)
+	}
+	return ret
 }
 
 func (b Builder) allocUninited(size Expr) (ret Expr) {

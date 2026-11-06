@@ -274,12 +274,12 @@ func stringTracef(fp c.FilePtr, format *c.Char, s String) {
 
 // New allocates memory and initializes it to zero.
 func New(t *Type) unsafe.Pointer {
-	return AllocZAligned(t.Size_, uintptr(t.Align_))
+	return allocZTyped(t.Size_, uintptr(t.Align_), t.PtrBytes != 0)
 }
 
 // NewArray allocates memory for an array and initializes it to zero.
 func NewArray(t *Type, n int) unsafe.Pointer {
-	return AllocZAligned(uintptr(n)*t.Size_, uintptr(t.Align_))
+	return newarray(t, n)
 }
 
 // -----------------------------------------------------------------------------
