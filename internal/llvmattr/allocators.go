@@ -20,11 +20,11 @@ const runtimePrefix = env.LLGoRuntimePkg + "/internal/runtime."
 // A zero kind preserves AllocRoot's nonnull contract without authorizing
 // removal of its uncollectable storage / explicit lifetime registration.
 var allocatorKinds = map[string]uint64{
-	runtimePrefix + "AllocU":    allocKindAlloc | allocKindUninitialized,
-	runtimePrefix + "AllocZ":    allocKindAlloc | allocKindZeroed,
-	runtimePrefix + "AllocRoot": 0,
-	// Preserve the existing nonnull contract without extending placement policy.
-	runtimePrefix + "AllocAtomicU": 0,
+	runtimePrefix + "AllocU":       allocKindAlloc | allocKindUninitialized,
+	runtimePrefix + "AllocZ":       allocKindAlloc | allocKindZeroed,
+	runtimePrefix + "AllocAtomicU": allocKindAlloc | allocKindUninitialized,
+	runtimePrefix + "AllocAtomicZ": allocKindAlloc | allocKindZeroed,
+	runtimePrefix + "AllocRoot":    0,
 }
 
 // ApplyAllocatorFunction is shared by SSA declarations and late ABI lowering.
@@ -42,7 +42,7 @@ func ApplyAllocatorFunction(ctx llvm.Context, fn llvm.Value) {
 }
 
 // ApplyAllocatorCall enables allocation elision and Attributor heap-to-stack
-// for positive constant-size AllocU/AllocZ calls. Unknown sizes and zero-sized
+// for positive constant-size scanned and atomic allocations. Unknown sizes and zero-sized
 // sentinel identities retain their original behavior. Sizes above the signed
 // maximum of the argument type are not treated as proven positive.
 // Explicit-root collectors cannot scan pointer fields in newly introduced

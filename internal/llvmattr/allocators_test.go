@@ -21,14 +21,14 @@ func TestAllocatorContracts(t *testing.T) {
 				intType := ctx.IntType(bits)
 				ptrType := llvm.PointerType(ctx.Int8Type(), 0)
 				fnType := llvm.FunctionType(ptrType, []llvm.Type{intType}, false)
-				for _, name := range []string{"AllocU", "AllocZ", "AllocRoot", "AllocUAligned", "unknown"} {
+				for _, name := range []string{"AllocU", "AllocZ", "AllocAtomicU", "AllocAtomicZ", "AllocRoot", "AllocUAligned", "unknown"} {
 					fn := llvm.AddFunction(mod, runtimePrefix+name, fnType)
 					ApplyAllocatorFunction(ctx, fn)
-					wantNonNull := name == "AllocU" || name == "AllocZ" || name == "AllocRoot"
+					wantNonNull := name == "AllocU" || name == "AllocZ" || name == "AllocAtomicU" || name == "AllocAtomicZ" || name == "AllocRoot"
 					if got := !fn.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("nonnull")).IsNil(); got != wantNonNull {
 						t.Fatalf("%s: nonnull = %v", name, got)
 					}
-					wantSize := name == "AllocU" || name == "AllocZ"
+					wantSize := name == "AllocU" || name == "AllocZ" || name == "AllocAtomicU" || name == "AllocAtomicZ"
 					if got := strings.Contains(fn.String(), "allocsize(0)"); got != wantSize {
 						t.Fatalf("wrong size contract: %s", fn.String())
 					}
@@ -53,7 +53,7 @@ func TestAllocatorContracts(t *testing.T) {
 						}
 						if wantKind {
 							want := `allockind("alloc,uninitialized")`
-							if name == "AllocZ" {
+							if name == "AllocZ" || name == "AllocAtomicZ" {
 								want = `allockind("alloc,zeroed")`
 							}
 							// Check LLVM's spelling, not a duplicate of our bit encoding.

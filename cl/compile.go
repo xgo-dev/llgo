@@ -1888,7 +1888,14 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			hoistToEntry = inLoop
 		}
 		heap := !p.stackStorage(v)
-		ret = b.AllocEx(elem, heap, hoistToEntry)
+		if heap && uintptrEscapesBackingArray(v) {
+			// The pragma gives uintptr arguments pointer lifetime semantics.
+			// Pending go/defer calls retain their pointees through this array.
+			ret = b.AllocZ(p.prog.IntVal(p.prog.SizeOf(elem), p.prog.Uintptr()))
+			ret.Type = p.prog.Pointer(elem)
+		} else {
+			ret = b.AllocEx(elem, heap, hoistToEntry)
+		}
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v, heap)
 		if p.isRecoverSlotAddr(v) {
