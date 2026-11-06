@@ -1,7 +1,5 @@
 package main
 
-import "runtime"
-
 type box struct {
 	p *[64]byte
 	n int
@@ -12,7 +10,7 @@ func visit(b *box, n int) {
 	if n > 0 {
 		visit(b, n-1)
 	}
-	runtime.GC()
+	collectLocalAlloc()
 	b.n += int(b.p[0])
 }
 
@@ -76,7 +74,7 @@ func main() {
 		escaping(i)
 		retained = append(retained, saved)
 	}
-	runtime.GC()
+	collectLocalAlloc()
 	sum := 0
 	for _, p := range retained {
 		sum += *p
@@ -84,10 +82,10 @@ func main() {
 	println(sum)
 	println(deferred())
 	f := closure()
-	runtime.GC()
+	collectLocalAlloc()
 	println(f(), f())
 	boxedValue := boxed()
-	runtime.GC()
+	collectLocalAlloc()
 	println(*boxedValue.(*int))
 	// A declaration in the loop denotes a distinct object each iteration.
 	var previous *int

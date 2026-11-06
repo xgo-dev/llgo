@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -83,6 +84,44 @@ func mixed(p, q *uint64) { *p = 1; saved = q }
 					t.Fatalf("local must retain heap storage:\n%s", body)
 				}
 			})
+		}
+	}
+}
+
+func TestCompileBorrowedLocalSizeLimit(t *testing.T) {
+	for _, target := range []llssa.Target{
+		{GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "wasip1", GOARCH: "wasm"},
+	} {
+		for _, tc := range []struct {
+			size     uint64
+			wantHeap bool
+		}{
+			{llabi.MaxImplicitStackVarSize - 1, false},
+			{llabi.MaxImplicitStackVarSize, false},
+			{llabi.MaxImplicitStackVarSize + 1, true},
+			{llabi.MaxStackVarSize, true},
+		} {
+			for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
+				t.Run(fmt.Sprintf("%s/%s/%d/%v", target.GOOS, target.GOARCH, tc.size, mode), func(t *testing.T) {
+					src := fmt.Sprintf(`package localsize
+type Buffer [%d]byte
+func borrow(p *Buffer) { p[0] = 1 }
+func ordinary() byte { var p Buffer; borrow(&p); return p[0] }
+func newBuffer() byte { p := new(Buffer); borrow(p); return p[0] }
+func literal() byte { p := &Buffer{}; borrow(p); return p[0] }
+`, tc.size)
+					ir := compileWithRewritesModeTarget(t, src, nil, mode, &target)
+					for _, name := range []string{"ordinary", "newBuffer", "literal"} {
+						body := llvmFunction(t, ir, "localsize."+name)
+						if got := strings.Contains(body, "runtime.AllocZ"); got != tc.wantHeap {
+							t.Errorf("%s heap=%t, want %t for %d bytes:\n%s", name, got, tc.wantHeap, tc.size, body)
+						}
+						if !tc.wantHeap && !strings.Contains(body, "alloca ") {
+							t.Errorf("%s should retain the small-local stack optimization:\n%s", name, body)
+						}
+					}
+				})
+			}
 		}
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"go/types"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -43,8 +44,14 @@ func (p *context) canStackAllocateLocal(alloc *ssa.Alloc) bool {
 		return false
 	}
 	elem := pointer.Elem()
-	if p.prog.SizeOf(p.type_(elem, llssa.GoDecl)) == 0 {
+	size := p.prog.SizeOf(p.type_(elem, llssa.GoDecl))
+	if size == 0 {
 		// Preserve the existing shared sentinel for zero-sized heap objects.
+		return false
+	}
+	if size > llabi.MaxImplicitStackVarSize {
+		// Keep large heap objects off the fixed stack, including new(T) and
+		// composite literals that fit the larger explicit-local limit.
 		return false
 	}
 	if p.prog.GCRootsEnabled() && mayContainGCRoot(elem) {
