@@ -413,6 +413,11 @@ func (p Package) newFunc(
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
+			// An ordinary import or linkname alias may have declared the
+			// symbol before an on-demand shared definition is requested.
+			if instantiated && v.impl.IsDeclaration() {
+				p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+			}
 			return v
 		}
 		cached = v

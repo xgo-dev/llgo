@@ -93,6 +93,8 @@ var Again = operation
 func TestInstructionFunctionValuesAcrossPackages(t *testing.T) {
 	for _, targetName := range []string{"llgo.umulOverflow", "llvm.umul.with.overflow"} {
 		t.Run(targetName, func(t *testing.T) {
+			// Alias predeclares the original symbol before taking its function
+			// value, as happens when SIMD method expressions and aliases mix.
 			dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", `package dep
 import _ "unsafe"
 //go:linkname Multiply `+targetName+`
@@ -100,11 +102,15 @@ func Multiply(a,b uint64)(uint64,bool)
 var Value = Multiply
 `, "example.com/root", `package root
 import "example.com/dep"
+import _ "unsafe"
+//go:linkname Alias example.com/dep.Multiply
+func Alias(a,b uint64)(uint64,bool)
 var Value = dep.Multiply
 var Again = dep.Multiply
 func Direct(a,b uint64)(uint64,bool){return dep.Multiply(a,b)}
 `)
 			files := []*ast.File{{Name: ast.NewIdent("dep"), Decls: []ast.Decl{dep.Func("Multiply").Syntax().(*ast.FuncDecl)}}}
+			rootFiles := []*ast.File{{Name: ast.NewIdent("root"), Decls: []ast.Decl{root.Func("Alias").Syntax().(*ast.FuncDecl)}}}
 			originalName := funcName(dep.Pkg, dep.Func("Multiply"), false)
 			for _, target := range []llssa.Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "windows", GOARCH: "386"}} {
 				t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
@@ -114,7 +120,7 @@ func Direct(a,b uint64)(uint64,bool){return dep.Multiply(a,b)}
 					if err != nil {
 						t.Fatal(err)
 					}
-					consumer, err := NewPackage(prog, root, nil)
+					consumer, err := NewPackage(prog, root, rootFiles)
 					if err != nil {
 						t.Fatal(err)
 					}

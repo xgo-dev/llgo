@@ -701,7 +701,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			return fn, nil, goFunc
 		}
 	}
-	if fn == nil {
+	if fn == nil || p.needsLinkOnce(f) {
 		cc := llssa.CallConv(ftype)
 		if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
 			// Executable-mode //export functions keep their final C symbol in
