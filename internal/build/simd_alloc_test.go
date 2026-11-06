@@ -46,7 +46,7 @@ func published(a uint64) { saved = escaped(a) }
 func main() {}
 `
 
-// Exercise the actual post-ABI module and the production pipeline: merely
+// Exercise heap-to-stack before ABI lowering and the ordinary pipeline: merely
 // tagging the source declarations, or running O2 without Attributor, leaves
 // the local buffers on the heap (issue #2983).
 func TestSIMDArrayAllocationsO2(t *testing.T) {
@@ -69,6 +69,11 @@ func TestSIMDArrayAllocationsO2(t *testing.T) {
 				if target.arch == "amd64" {
 					conf.GOAMD64 = "v1"
 				}
+				optimizeTestAllocationsBeforeABI(t, conf, func(mod llvm.Module) {
+					if body := mod.NamedFunction("main.arrayAdd").String(); strings.Count(body, "runtime.AllocZ") != 3 {
+						t.Fatalf("fixture does not exercise three local buffers:\n%s", body)
+					}
+				})
 				pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 				if err != nil {
 					t.Fatal(err)
@@ -76,9 +81,6 @@ func TestSIMDArrayAllocationsO2(t *testing.T) {
 				pkg := pkgs[0].LPkg
 				defer pkg.Prog.Dispose()
 				mod := pkg.Module()
-				if body := mod.NamedFunction("main.arrayAdd").String(); strings.Count(body, "runtime.AllocZ") != 3 {
-					t.Fatalf("fixture does not exercise three local buffers:\n%s", body)
-				}
 				ctx := &context{prog: pkg.Prog, buildConf: conf, passOpt: true}
 				if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
 					t.Fatal(err)

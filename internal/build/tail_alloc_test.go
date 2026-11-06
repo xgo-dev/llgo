@@ -60,6 +60,9 @@ func TestTailAllocationGo(t *testing.T) {
 	}
 	conf := NewDefaultConf(ModeGen)
 	conf.OptLevel = optlevel.O2
+	optimizeTestAllocationsBeforeABI(t, conf, func(mod llvm.Module) {
+		t.Logf("caller before heap-to-stack:\n%s", mod.NamedFunction("main.caller").String())
+	})
 	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +70,6 @@ func TestTailAllocationGo(t *testing.T) {
 	pkg := pkgs[0].LPkg
 	defer pkg.Prog.Dispose()
 	mod := pkg.Module()
-	t.Logf("caller before heap-to-stack:\n%s", mod.NamedFunction("main.caller").String())
 	ctx := &context{prog: pkg.Prog, buildConf: conf, passOpt: true}
 	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
 		t.Fatal(err)

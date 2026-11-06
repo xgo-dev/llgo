@@ -3521,6 +3521,11 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
 		return false, nil
 	}
+	if ctx.buildConf.Goarch == "wasm" {
+		if err := optimizeHeapAllocations(ctx, pkg.Path(), mod); err != nil {
+			return true, err
+		}
+	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
 	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
@@ -3542,6 +3547,26 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	return true, nil
 }
 
+// optimizeHeapAllocations runs while aggregate arguments and results are still
+// SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
+// that can make Attributor's pointer and reachability analyses prohibitively
+// expensive (notably in ixgo). Run after large-aggregate lowering so its
+// allocations are present, before the ordinary pipeline can inline wrappers.
+func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
+		return nil
+	}
+	mod.SetDataLayout(ctx.prog.DataLayout())
+	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+		return fmt.Errorf("verify LLVM module for %v before heap-to-stack failed: %w", pkgPath, err)
+	}
+	if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
+}
+
 func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if !ctx.passOpt {
 		return nil
@@ -3552,13 +3577,6 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	defer pbo.Dispose()
 	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
 		return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
-	}
-	// Preserve the allocation calls for Attributor before the ordinary
-	// pipeline can inline their runtime wrappers. O0 retains source storage.
-	if ctx.buildConf.OptLevel != optlevel.O0 {
-		if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
-			return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
-		}
 	}
 	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
@@ -3577,6 +3595,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	// They must forward the caller's ABI storage, not materialize aggregates
 	// in a forwarding frame that a tail transfer immediately releases.
 	lowerLargeAggregates(ctx.prog, ret.Module())
+	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
