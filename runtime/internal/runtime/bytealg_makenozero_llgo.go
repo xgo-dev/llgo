@@ -12,7 +12,7 @@ func bytealg_MakeNoZero(n int) []byte {
 		panicmakeslicelen()
 	}
 	capacity := roundupsize(uintptr(n))
-	p := AllocU(capacity)
+	p := AllocNoScanU(capacity)
 	b := unsafe.Slice((*byte)(p), int(capacity))
 	return b[:n]
 }

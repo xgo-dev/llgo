@@ -185,6 +185,8 @@ func isKnownNonNilArrayBase(v llvm.Value) bool {
 		if fn := call.CalledValue().IsAFunction(); !fn.IsNil() {
 			switch fn.Name() {
 			case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocNoScanU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocNoScanZ",
 				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ":
 				return true
 			}
@@ -563,6 +565,7 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 		fn += "Aligned"
 		args = append(args, prog.IntVal(alignment, prog.Int()))
 	}
+	args = append(args, prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
 	ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
 		"MakeSlice", "MakeSlice64", "MakeSliceAligned", "MakeSlice64Aligned")), args...)
 	ret.Type = t
@@ -1154,5 +1157,6 @@ func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 		fn += "Aligned"
 		args = append(args, b.Prog.IntVal(alignment, b.Prog.Int()))
 	}
+	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(b.Prog.Elem(src.Type).raw.Type)))
 	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
 }

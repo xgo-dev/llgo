@@ -1994,7 +1994,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 					etSize := b.Prog.SizeOf(b.Prog.Byte())
 					ret.Type = src.Type
 					ret.impl = b.InlineCall(b.Pkg.rtFunc("SliceAppend"),
-						src, b.StringData(elem), b.StringLen(elem), b.Prog.Val(int(etSize))).impl
+						src, b.StringData(elem), b.StringLen(elem), b.Prog.Val(int(etSize)), b.Prog.BoolVal(false)).impl
 					return
 				default:
 					etSize := b.Prog.SizeOf(elem.Type)

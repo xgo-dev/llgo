@@ -9,3 +9,10 @@ import "unsafe"
 func AllocNoScanU(size uintptr) unsafe.Pointer {
 	return AllocU(size)
 }
+
+// AllocNoScanZ allocates zero-initialized memory that must never contain pointers.
+// Use the backend's zeroing allocator so collectors that already clear storage
+// do not clear it a second time.
+func AllocNoScanZ(size uintptr) unsafe.Pointer {
+	return AllocZ(size)
+}

@@ -25,6 +25,7 @@ var allocatorKinds = map[string]uint64{
 	runtimePrefix + "AllocRoot": 0,
 	// Preserve the existing nonnull contract without extending placement policy.
 	runtimePrefix + "AllocNoScanU": 0,
+	runtimePrefix + "AllocNoScanZ": 0,
 }
 
 // ApplyAllocatorFunction is shared by SSA declarations and late ABI lowering.

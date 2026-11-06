@@ -21,6 +21,7 @@ package runtime
 import (
 	"unsafe"
 
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
@@ -52,6 +53,14 @@ func AllocNoScanU(size uintptr) unsafe.Pointer {
 	}
 	recordMemProfileAlloc(size)
 	return ret
+}
+
+// AllocNoScanZ allocates zero-initialized memory that must never contain pointers.
+func AllocNoScanZ(size uintptr) unsafe.Pointer {
+	p := AllocNoScanU(size)
+	// Atomic allocations are not guaranteed to be cleared by the collector.
+	c.Memset(p, 0, size)
+	return p
 }
 
 func allocUAligned(size, alignment uintptr) unsafe.Pointer {
