@@ -307,10 +307,9 @@ func interfaceImplementation(T, V *abi.Type) (missing *abi.Imethod, ok bool) {
 		return &t.Methods[0], false
 	}
 	i := 0
-	vmethods := v.Methods()
 	for j := 0; j < int(v.Mcount); j++ {
 		tm := &t.Methods[i]
-		vm := vmethods[j]
+		vm := v.Method(j)
 		if vm.Name_ == tm.Name_ && vm.Mtyp_ == tm.Typ_ {
 			if i++; i >= len(t.Methods) {
 				return nil, true
