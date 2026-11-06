@@ -215,13 +215,13 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	// cl/ssawrap.MakeCallWrapper uses this suffix when an intrinsic is used as
-	// a function value. It is a physical function, not a separate PCLN class.
-	src.EmitFuncInfo("example.com/p.intrinsic$wrapper", "example.com/p.Live", "live.go", 17, 3)
+	// Instruction function values use their original Go symbol for the
+	// synthesized physical entry, without a separate PCLN class.
+	src.EmitFuncInfo("example.com/p.intrinsic", "example.com/p.Live", "live.go", 17, 3)
 	src.EmitFuncInfo("example.com/p.missing", "example.com/p.Missing", "missing.go", 19, 1)
 	liveFn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.CDecl)
 	liveFn.MakeBody(1).Return()
-	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic$wrapper", llssa.NoArgsNoRet, llssa.CDecl)
+	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic", llssa.NoArgsNoRet, llssa.CDecl)
 	intrinsicWrapper.MakeBody(1).Return()
 	otherFn := src.NewFunc("example.com/p.other", llssa.NoArgsNoRet, llssa.CDecl)
 	otherFn.MakeBody(1).Return()
@@ -250,7 +250,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	}
 	for _, bad := range []string{
 		`.quad \22example.com/p.live\22`,
-		`.quad \22example.com/p.intrinsic$wrapper\22`,
+		`.quad \22example.com/p.intrinsic\22`,
 		`.quad \22example.com/p.other\22`,
 		`.quad \22example.com/p.missing\22`,
 	} {
@@ -261,7 +261,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	if got := strings.Count(srcIR, ".pushsection llgo_funcinfo_entry"); got != 2 {
 		t.Fatalf("entry site count = %d, want one per physical function with funcinfo:\n%s", got, srcIR)
 	}
-	for _, symbol := range []string{"example.com/p.live", "example.com/p.intrinsic$wrapper"} {
+	for _, symbol := range []string{"example.com/p.live", "example.com/p.intrinsic"} {
 		if id := uint64Hex(funcInfoSymbolID(symbol)); !strings.Contains(srcIR, ".quad "+id) {
 			t.Fatalf("entry site IR missing physical function %q (id %s):\n%s", symbol, id, srcIR)
 		}

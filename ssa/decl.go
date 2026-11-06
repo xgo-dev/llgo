@@ -414,6 +414,11 @@ func (p Package) newFunc(
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
+			// An ordinary import or linkname alias may have declared the
+			// symbol before an on-demand shared definition is requested.
+			if instantiated && v.impl.IsDeclaration() {
+				p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+			}
 			return v
 		}
 		cached = v
@@ -545,6 +550,13 @@ func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
 // Name returns the function's name.
 func (p Function) Name() string {
 	return p.impl.Name()
+}
+
+// Coalesce lets this definition share a COFF section group with equivalent
+// linkonce entries. Preserve its linkage so externally visible entries remain
+// available even when no function in this module references them.
+func (p Function) Coalesce() {
+	p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
 }
 
 // Params returns the function's ith parameter.
