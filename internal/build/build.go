@@ -3558,8 +3558,8 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if ctx.buildConf.OptLevel != optlevel.O0 {
 		// ABI lowering introduces temporary aggregate stack slots. Scalarize
 		// them before Attributor so its capture/liveness analyses do not walk
-		// large graphs of redundant memory accesses. SROA preserves allocator
-		// calls, unlike the ordinary optimization pipeline below.
+		// large graphs of redundant memory accesses. SROA does not inline
+		// allocator wrappers, so Attributor can still analyze their calls.
 		if err := mod.RunPasses("function(sroa)", ctx.prog.TargetMachine(), pbo); err != nil {
 			return fmt.Errorf("scalarize ABI storage for %v failed: %w", pkgPath, err)
 		}

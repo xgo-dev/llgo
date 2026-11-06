@@ -16,6 +16,7 @@ import (
 // ABI coercions spill aggregates and reload their fields. Stress a long chain
 // of these copies: asking Attributor to follow the memory uses before SROA can
 // exhaust its analysis stack. The returned allocation must still escape.
+// This also guards analysis cost; go test's timeout bounds a stalled pass.
 func TestHeapToStackAggregateSpills(t *testing.T) {
 	const copies = 1024
 	var source strings.Builder
@@ -56,8 +57,8 @@ func TestHeapToStackAggregateSpills(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := mod.NamedFunction("chain").String()
-			if strings.Contains(body, "alloca ") || !strings.Contains(body, "@alloc(") {
-				t.Fatalf("aggregate spills must disappear while the escaping allocation stays on the heap:\n%s", body)
+			if strings.Contains(body, "alloca ") || strings.Count(body, "@alloc(") != 1 {
+				t.Fatalf("aggregate spills must disappear while exactly one escaping heap allocation remains:\n%s", body)
 			}
 		})
 	}
