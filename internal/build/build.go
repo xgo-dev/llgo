@@ -3542,6 +3542,8 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	return true, nil
 }
 
+var runHeapToStack = heap2stack.Run
+
 // optimizeHeapAllocations runs while aggregate arguments and results are still
 // SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
 // that can make Attributor's pointer and reachability analyses prohibitively
@@ -3552,7 +3554,7 @@ func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) err
 	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
 		return nil
 	}
-	if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
 		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
 	}
 	return nil
