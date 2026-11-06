@@ -2,9 +2,14 @@
 
 package abi
 
-// FuncType represents a function type on targets that use libffi.
+import "unsafe"
+
+// FuncType includes optional compiler-generated call entries for layouts that
+// libffi cannot represent, such as packed aggregate parameters and results.
 type FuncType struct {
 	Type
-	In  []*Type
-	Out []*Type
+	In    []*Type
+	Out   []*Type
+	Call_ unsafe.Pointer
+	Make_ unsafe.Pointer
 }

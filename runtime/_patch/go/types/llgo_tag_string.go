@@ -1,0 +1,19 @@
+// Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+// Use of this source code is governed by the Apache License, Version 2.0.
+
+package types
+
+import "strings"
+
+// The reserved tag is inserted before checking. Standard go/types identity,
+// generic instantiation and export data therefore retain layout distinctions.
+// Reflection retains it internally and removes it from the public field tag.
+const llgoLayoutTagPrefix = ` llgo.layout:"v1;`
+
+// LLGoFieldTag removes compiler layout metadata, preserving the user's tag.
+func LLGoFieldTag(tag string) string {
+	if i := strings.LastIndex(tag, llgoLayoutTagPrefix); i >= 0 && strings.HasSuffix(tag, `"`) {
+		return tag[:i]
+	}
+	return tag
+}

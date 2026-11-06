@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/ast"
 	"go/token"
 	"go/types"
 	"unsafe"
@@ -89,87 +90,28 @@ retry:
 
 type goProgram aProgram
 
-// Alignof returns the alignment of a variable of type T.
-// Alignof must implement the alignment guarantees required by the spec.
-// The result must be >= 1.
-func (p *goProgram) Alignof(T types.Type) int64 {
-	if layout, ok := p.vectorLayout(T, false); ok {
-		return layout.align
-	}
-	return p.sizes.Alignof(T)
+// Alignof, Sizeof and Offsetsof use the same model as the go/types source patch.
+func (p *goProgram) Alignof(t types.Type) int64 { return p.sourceSizes.Alignof(t) }
+func (p *goProgram) Sizeof(t types.Type) int64  { return p.sourceSizes.Sizeof(t) }
+func (p *goProgram) Offsetsof(fields []*types.Var) []int64 {
+	return p.sourceSizes.Offsetsof(fields)
 }
 
-// Offsetsof returns the offsets of the given struct fields, in bytes.
-// Offsetsof must implement the offset guarantees required by the spec.
-// A negative entry in the result indicates that the struct is too large.
-func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
-	prog := Program(unsafe.Pointer(p))
-	ptrSize := int64(prog.GoWordSize())
-	if abi.IsClosureFields(fields) {
-		return []int64{0, ptrSize}
-	}
-	if _, offsets, ok := p.vectorStructLayout(fields, prog.nativeFields(fields)); ok {
-		return offsets
-	}
-	extra := int64(0)
-	ret = p.sizes.Offsetsof(fields)
-	for i, f := range fields {
-		ret[i] += extra
-		extra += p.extraSize(f.Type(), ptrSize)
-	}
-	return
+func (p *goProgram) RecordLayoutPackage(pkg *types.Package) { p.sourceSizes.Layout.RecordPackage(pkg) }
+
+func (p *goProgram) ValidateLayoutPackage(pkg *types.Package) error {
+	return p.sourceSizes.ValidatePackage(pkg)
 }
 
-// Sizeof returns the size of a variable of type T.
-// Sizeof must implement the size guarantees required by the spec.
-// A negative result indicates that T is too large.
-func (p *goProgram) Sizeof(T types.Type) int64 {
-	if layout, ok := p.vectorLayout(T, false); ok {
-		return layout.size
+func (p *goProgram) ValidateLayoutConversions(fset *token.FileSet, files []*ast.File, info *types.Info) error {
+	if err := p.sourceSizes.ValidateInstances(fset, info); err != nil {
+		return err
 	}
-	prog := Program(unsafe.Pointer(p))
-	ptrSize := int64(prog.GoWordSize())
-	baseSize := prog.sizes.Sizeof(T) + p.extraSize(T, ptrSize)
-	switch T.Underlying().(type) {
-	case *types.Struct, *types.Array:
-		return align(baseSize, prog.sizes.Alignof(T))
-	}
-	return baseSize
+	return p.sourceSizes.ValidateConversions(fset, files, info)
 }
 
-func (p *goProgram) extraSize(typ types.Type, ptrSize int64) (ret int64) {
-retry:
-	switch t := typ.(type) {
-	case *types.Named:
-		prog := Program(unsafe.Pointer(p))
-		if background, ok := prog.packageTypeCallConv(namedLinkname(t)); ok && isNativeCallConv(background) {
-			return 0
-		}
-		typ = t.Underlying()
-		goto retry
-	case *types.Alias:
-		prog := Program(unsafe.Pointer(p))
-		if background, ok := prog.packageTypeCallConv(typeNameLinkname(t.Obj())); ok && isNativeCallConv(background) {
-			return 0
-		}
-		typ = t.Rhs()
-		goto retry
-	case *types.Signature:
-		return ptrSize
-	case *types.Struct:
-		if IsClosure(t) {
-			return
-		}
-		n := t.NumFields()
-		for i := 0; i < n; i++ {
-			f := t.Field(i)
-			ret += p.extraSize(f.Type(), ptrSize)
-		}
-		return
-	case *types.Array:
-		return p.extraSize(t.Elem(), ptrSize) * t.Len()
-	}
-	return 0
+func (p *goProgram) IsNativeType(t types.Type) bool {
+	return Program(unsafe.Pointer(p)).hasNativeTypeLayout(t)
 }
 
 func align(x, a int64) int64 {
@@ -211,8 +153,18 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 	return size
 }
 
-// AlignOf returns the ABI alignment of typ for the current target.
+// AlignOf returns the language storage alignment. LLVM may over-align scalar
+// values (notably i64 on Windows/386); that must not change generic Alignof or
+// array alignment relative to the type checker's result.
 func (p Program) AlignOf(typ Type) uint64 {
+	if !p.isNativeStorage(typ) && !p.hasNativeTypeLayout(typ.raw.Type) {
+		switch types.Unalias(typ.raw.Type).Underlying().(type) {
+		case *types.Basic:
+			return uint64(p.sourceSizes.Alignof(typ.raw.Type))
+		case *types.Array:
+			return p.AlignOf(p.Index(typ))
+		}
+	}
 	if p.needsWidePointerStorage(typ) {
 		return uint64(p.GoWordSize())
 	}
@@ -484,6 +436,9 @@ func (p Program) toType(raw types.Type) Type {
 		return &aType{p.toLLVMTuple(t), typ, vkTuple}
 	case *types.Array:
 		elem := p.rawType(t.Elem())
+		if p.hasNativeTypeLayout(t.Elem()) {
+			elem = p.withNativeStorage(elem)
+		}
 		return &aType{llvm.ArrayType(p.storageType(elem), int(t.Len())), typ, vkArray}
 	case *types.Chan:
 		return &aType{llvm.PointerType(p.rtChan(), 0), typ, vkChan}
@@ -529,7 +484,7 @@ func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Typ
 		for i := 0; i < n; i++ {
 			fieldRaw := p.patch(raw.Field(i).Type())
 			field := p.rawType(fieldRaw)
-			if native {
+			if p.fieldNativeStorage(fieldRaw, native) {
 				fields[i] = p.withNativeStorage(field).ll
 			} else {
 				fields[i] = p.storageType(field)
@@ -667,7 +622,7 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 }
 
 func (p Program) toNamed(raw *types.Named) Type {
-	if background, ok := p.packageTypeCallConv(namedLinkname(raw)); ok && background == Stdcall {
+	if p.isStdcallType(raw) {
 		p.validateStdcallType(raw)
 	}
 	name := p.llvmNameOf(raw)

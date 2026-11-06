@@ -186,4 +186,9 @@ func TestConstStructValueAsUsesDestinationLLVMType(t *testing.T) {
 	if value.Type() != destination {
 		t.Fatalf("constant type = %s, want exact destination type %s", value.Type(), destination)
 	}
+	for i, want := range destination.StructElementTypes() {
+		if got := value.Operand(i).Type(); got != want {
+			t.Errorf("field %d constant type = %s, want %s", i, got, want)
+		}
+	}
 }

@@ -179,6 +179,9 @@ const (
 	// TFflagClosure means the structType is a closure
 	TFlagClosure TFlag = 1 << 5
 
+	// TFlagNative identifies native storage, including one-pointer callbacks.
+	TFlagNative TFlag = 1 << 6
+
 	// TFlagGCMaskOnDemand means that the GC pointer bitmask will be
 	// computed on demand at runtime instead of being precomputed at
 	// compile time. If this flag is set, the GCData field effectively

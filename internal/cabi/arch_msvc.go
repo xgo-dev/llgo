@@ -1,6 +1,11 @@
 package cabi
 
-import "github.com/xgo-dev/llvm"
+import (
+	"strings"
+
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
+)
 
 // TypeInfoWindowsAmd64 implements the Microsoft x64 ABI aggregate rules.
 // Unlike the SysV ABI, ordinary aggregates are never split across multiple
@@ -156,9 +161,9 @@ func (p *TypeInfoWindows386) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ l
 // have eight-byte alignment).
 //
 // The wrappers are packed anonymous structs containing the real field and,
-// when necessary, byte padding. Go has no packed-struct source type, so this
-// representation is private to the Go/386 layout lowering and can be decoded
-// here without changing native C types.
+// when necessary, byte padding. SSA gives wrappers implementing declared
+// padding/packing a reserved name so they cannot be mistaken for these legacy
+// alignment adjustments.
 func windows386NativeAggregateType(ctx llvm.Context, typ llvm.Type) (llvm.Type, bool) {
 	switch typ.TypeKind() {
 	case llvm.ArrayTypeKind:
@@ -168,6 +173,9 @@ func windows386NativeAggregateType(ctx llvm.Context, typ llvm.Type) (llvm.Type, 
 		}
 		return llvm.ArrayType(elem, typ.ArrayLength()), true
 	case llvm.StructTypeKind:
+		if strings.HasPrefix(typ.StructName(), llssa.LayoutStorageWrapperPrefix) {
+			return typ, false
+		}
 		sourceFields := typ.StructElementTypes()
 		nativeFields := make([]llvm.Type, 0, len(sourceFields))
 		changed := false
@@ -198,7 +206,8 @@ func windows386NativeAggregateType(ctx llvm.Context, typ llvm.Type) (llvm.Type, 
 }
 
 func windows386GoFieldWrapper(typ llvm.Type) (llvm.Type, bool) {
-	if typ.TypeKind() != llvm.StructTypeKind || !typ.IsStructPacked() {
+	if typ.TypeKind() != llvm.StructTypeKind || !typ.IsStructPacked() ||
+		strings.HasPrefix(typ.StructName(), llssa.LayoutStorageWrapperPrefix) {
 		return llvm.Type{}, false
 	}
 	fields := typ.StructElementTypes()

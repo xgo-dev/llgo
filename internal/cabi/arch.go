@@ -107,6 +107,14 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 	}
 	info.Size = p.Sizeof(typ)
 	info.Align = p.Alignof(typ)
+	if p.hasUnalignedField(typ, 0) {
+		// SysV classifies aggregates with unaligned fields as MEMORY, even
+		// below 16 bytes. Flattening them loses the packed member offsets.
+		info.Kind = AttrPointer
+		info.Type1 = llvm.PointerType(typ, 0)
+		info.ByValAlign = max(8, info.Align)
+		return info
+	}
 	if n := elementTypesCount(typ); n >= 2 {
 		if info.Size > 16 {
 			info.Kind = AttrPointer
@@ -169,6 +177,32 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 		}
 	}
 	return info
+}
+
+func (p *TypeInfoAmd64) hasUnalignedField(typ llvm.Type, offset uint64) bool {
+	if p.td.TypeAllocSize(typ) == 0 {
+		return false
+	}
+	if offset%uint64(p.Alignof(typ)) != 0 {
+		return true
+	}
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind:
+		for i, field := range typ.StructElementTypes() {
+			if p.hasUnalignedField(field, offset+p.td.ElementOffset(typ, i)) {
+				return true
+			}
+		}
+	case llvm.ArrayTypeKind:
+		elem := typ.ElementType()
+		if p.hasUnalignedField(elem, offset) {
+			return true
+		}
+		// A packed element can start with an aligned field but have a stride
+		// that misaligns that same field in subsequent elements.
+		return typ.ArrayLength() > 1 && p.hasUnalignedField(elem, offset+p.td.TypeAllocSize(elem))
+	}
+	return false
 }
 
 type TypeInfoArm64 struct {

@@ -57,7 +57,32 @@ func (v Expr) IsNil() bool {
 
 // SetOrdering sets the ordering of the atomic operation.
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
-	v.memoryInstruction().SetOrdering(ordering)
+	inst := v.memoryInstruction()
+	if ordering == OrderingNotAtomic || (inst.IsALoadInst().IsNil() && inst.IsAStoreInst().IsNil()) {
+		return v.setOrdering(ordering, llvm.TargetData{})
+	}
+	td := llvm.NewTargetData(inst.InstructionParent().Parent().GlobalParent().DataLayout())
+	defer td.Dispose()
+	return v.setOrdering(ordering, td)
+}
+
+// SetOrdering sets an operation's ordering using the program's target data.
+func (b Builder) SetOrdering(v Expr, ordering AtomicOrdering) Expr {
+	return v.setOrdering(ordering, b.Prog.td)
+}
+
+func (v Expr) setOrdering(ordering AtomicOrdering, td llvm.TargetData) Expr {
+	inst := v.memoryInstruction()
+	inst.SetOrdering(ordering)
+	if ordering != OrderingNotAtomic && (!inst.IsALoadInst().IsNil() || !inst.IsAStoreInst().IsNil()) {
+		// Atomic accesses require natural alignment even in a graph containing
+		// packed storage. In particular, i64 atomics still require 8 on 386.
+		typ := inst.Type()
+		if !inst.IsAStoreInst().IsNil() {
+			typ = inst.Operand(0).Type()
+		}
+		inst.SetAlignment(int(td.TypeStoreSize(typ)))
+	}
 	return v
 }
 
@@ -70,16 +95,11 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 // memoryInstruction returns the underlying load or atomic instruction when a
 // storage-width conversion represents its logical Go value to callers.
 func (v Expr) memoryInstruction() llvm.Value {
-	if cast := v.impl.IsAIntToPtrInst(); !cast.IsNil() {
-		return cast.Operand(0)
+	inst := v.impl
+	for !inst.IsAIntToPtrInst().IsNil() || !inst.IsATruncInst().IsNil() || !inst.IsAZExtInst().IsNil() || !inst.IsASExtInst().IsNil() {
+		inst = inst.Operand(0)
 	}
-	if cast := v.impl.IsAZExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	if cast := v.impl.IsASExtInst(); !cast.IsNil() {
-		return cast.Operand(0)
-	}
-	return v.impl
+	return inst
 }
 
 func (v Expr) SetName(alias string) Expr {
@@ -1022,7 +1042,13 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 // Example printed form:
 //
 //	t1 = changetype *int <- IntPtr (t0)
-func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
+func (b Builder) ChangeType(t Type, x Expr) Expr {
+	return b.ChangeTypeAt(t, x, token.Position{})
+}
+
+// ChangeTypeAt is ChangeType with a source position for layout diagnostics.
+func (b Builder) ChangeTypeAt(t Type, x Expr, pos token.Position) (ret Expr) {
+	b.checkPointerLayoutConversion(t, x.Type, pos)
 	if t.kind == vkSIMD {
 		if x.kind == vkSIMD {
 			return Expr{x.impl, t}
@@ -1098,9 +1124,23 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		xt := types.Unalias(x.RawType()).Underlying().(*types.Struct)
 		fields := make([]llvm.Value, xt.NumFields())
 		for i := 0; i < xt.NumFields(); i++ {
-			fields[i] = b.getField(x, i).impl
+			field := b.getField(x, i)
+			want := b.Prog.Field(t, i)
+			if field.Type != want {
+				field = b.ChangeType(want, field)
+			}
+			fields[i] = field.impl
 		}
 		ret.impl = b.aggregateValue(t, fields...).impl
+	} else if t.kind == vkArray && x.kind == vkArray && t.ll != x.ll {
+		value := llvm.Undef(t.ll)
+		from, to := b.Prog.Index(x.Type), b.Prog.Index(t)
+		for i := 0; i < int(t.RawType().Underlying().(*types.Array).Len()); i++ {
+			field := Expr{b.fromStorageValue(from, b.impl.CreateExtractValue(x.impl, i, "")), from}
+			field = b.ChangeType(to, field)
+			value = b.impl.CreateInsertValue(value, b.toStorageValue(to, field.impl), i, "")
+		}
+		ret.impl = value
 	} else {
 		if x.impl.Type().String() == t.ll.String() {
 			ret.impl = x.impl
@@ -1140,7 +1180,14 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 // Example printed form:
 //
 //	t1 = convert []byte <- string (t0)
-func (b Builder) Convert(t Type, x Expr) (ret Expr) {
+func (b Builder) Convert(t Type, x Expr) Expr {
+	return b.ConvertAt(t, x, token.Position{})
+}
+
+// ConvertAt is Convert with a source position for diagnostics that require
+// instantiated types, such as layout checks inside generic functions.
+func (b Builder) ConvertAt(t Type, x Expr, pos token.Position) (ret Expr) {
+	b.checkPointerLayoutConversion(t, x.Type, pos)
 	dbgInstrf("Convert %v <- %v\n", t.RawType(), x.RawType())
 	dst := t.raw.Type
 	ret.Type = b.Prog.rawType(dst)
@@ -1253,7 +1300,7 @@ func (b Builder) Convert(t Type, x Expr) (ret Expr) {
 			}
 		}
 	}
-	if types.Identical(dst.Underlying(), x.RawType().Underlying()) {
+	if types.IdenticalIgnoreTags(dst.Underlying(), x.RawType().Underlying()) {
 		return b.ChangeType(t, x)
 	}
 	panic("todo")

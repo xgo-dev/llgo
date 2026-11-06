@@ -35,7 +35,7 @@ func (p Program) usesWideGoStorage() bool {
 }
 
 func (p Program) needsWidePointerStorage(t Type) bool {
-	if p.GoWordSize() <= p.PointerSize() || p.isNativeStorage(t) {
+	if p.GoWordSize() <= p.PointerSize() || p.isNativeStorage(t) || p.hasNativeTypeLayout(t.raw.Type) {
 		return false
 	}
 	switch t.kind {
@@ -52,7 +52,7 @@ func (p Program) isNativeStorage(t Type) bool {
 }
 
 func (p Program) withNativeStorage(t Type) Type {
-	if t == nil || !p.usesWideGoStorage() {
+	if t == nil || (!p.usesWideGoStorage() && p.sourceSizes.MaxAlign == p.sourceSizes.NativeAlign64) {
 		return t
 	}
 	if native, ok := p.nativeStorage[t]; ok {
@@ -61,6 +61,9 @@ func (p Program) withNativeStorage(t Type) Type {
 	clone := *t
 	clone.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
 	ret := &clone
+	if p.nativeStorage == nil {
+		p.nativeStorage = make(map[Type]Type)
+	}
 	p.nativeStorage[t] = ret
 	p.nativeStorage[ret] = ret
 	return ret
@@ -144,10 +147,7 @@ func (p Program) withoutNativeStorage(t Type) Type {
 
 func (p Program) childStorageType(parent Type, child types.Type) Type {
 	t := p.rawType(child)
-	if !p.usesWideGoStorage() {
-		return t
-	}
-	if p.isNativeStorage(parent) || p.hasNativeTypeLayout(parent.raw.Type) || p.hasNativeTypeLayout(child) {
+	if p.fieldNativeStorage(child, p.isNativeStorage(parent) || p.hasNativeTypeLayout(parent.raw.Type)) {
 		return p.withNativeStorage(t)
 	}
 	return t

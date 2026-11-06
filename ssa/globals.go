@@ -143,6 +143,9 @@ func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int
 	if len(parts) == 2 {
 		values = append(values, llvm.ConstNull(parts[1]))
 	}
+	if elem.StructName() != "" {
+		return llvm.ConstNamedStruct(elem, values)
+	}
 	return prog.ctx.ConstStruct(values, true)
 }
 

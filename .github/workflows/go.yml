@@ -42,7 +42,9 @@ jobs:
     # Windows MSVC has reached 89 minutes after successful tests and coverage
     # upload, then hit the 90-minute limit while saving the LLVM archive cache.
     # Give that lane room for cold dependency setup and post-job cache saves.
-    timeout-minutes: ${{ matrix.windows_abi == 'msvc' && 120 || 90 }}
+    # A cold macOS run spent 35 minutes in main tests and 43 in build tests,
+    # reaching the old limit before compiler fixtures could finish.
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.windows_abi == 'msvc') && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix:
