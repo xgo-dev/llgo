@@ -9,9 +9,80 @@ import (
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestSIMDOriginalEntriesAcrossPackages(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t, "simd/archsimd", `package archsimd
+type v128 struct { _ [0]func() }
+type Float32x4 struct { tag v128; vals [4]float32 }
+func (x Float32x4) Add(y Float32x4) Float32x4
+func LoadFloat32x4Array(x *[4]float32) Float32x4
+`, "example.com/root", `package root
+import "simd/archsimd"
+var Add = archsimd.Float32x4.Add
+var Load = archsimd.LoadFloat32x4Array
+`)
+	vector := dep.Pkg.Scope().Lookup("Float32x4").Type().(*types.Named)
+	method := dep.Prog.FuncValue(vector.Method(0))
+	names := []string{
+		funcName(dep.Pkg, method, false),
+		funcName(dep.Pkg, dep.Func("LoadFloat32x4Array"), false),
+	}
+	for _, target := range []llssa.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "windows", GOARCH: "amd64"},
+		{GOOS: "windows", GOARCH: "arm64"},
+		{GOOS: "wasip1", GOARCH: "wasm"},
+	} {
+		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, &target)
+			defer prog.Dispose()
+			owner, err := NewPackage(prog, dep, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			consumer, err := NewPackage(prog, root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// SIMD emits entries in its defining package even without taking
+			// their values there. Importers synthesize the same original names;
+			// both definitions need COMDAT on COFF to coalesce at native link.
+			for i, pkg := range []llssa.Package{owner, consumer} {
+				entries := names
+				if i == 1 {
+					// Method expressions have their own SSA thunk; the package
+					// function value materializes the shared entry directly.
+					entries = names[1:]
+				}
+				for _, name := range entries {
+					entry := mustNamedFunction(t, pkg.Module(), name)
+					if entry.IsDeclaration() || entry.Linkage() != llvm.LinkOnceAnyLinkage {
+						t.Fatalf("SIMD entry must share its original name and linkage:\n%s", entry.String())
+					}
+					if target.GOOS == "windows" && !strings.Contains(entry.String(), "comdat") {
+						t.Fatalf("SIMD entry lacks COFF COMDAT:\n%s", entry.String())
+					}
+				}
+				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := llvm.LinkModules(owner.Module(), consumer.Module()); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range names {
+				mustNamedFunction(t, owner.Module(), name)
+			}
+			if err := llvm.VerifyModule(owner.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestSIMDFMVQueryIdentity(t *testing.T) {
 	for _, tc := range []struct {

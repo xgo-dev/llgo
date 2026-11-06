@@ -649,6 +649,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		pkgTypes = obj.Pkg()
 		name = llssa.FuncName(pkgTypes, obj.Name(), f.Signature.Recv(), false)
 		ftype = goFunc
+		// Importers may synthesize a function-value entry under this same
+		// symbol. The defining entry must join its linkonce/COMDAT group too.
+		p.markLinkOnce(f)
 	}
 	if ftype != goFunc {
 		return nil, nil, ignoredFunc
