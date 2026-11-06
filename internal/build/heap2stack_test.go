@@ -29,6 +29,8 @@ func optimizeTestAllocationsBeforeABI(t *testing.T, conf *Config, before func(ll
 			before(mod)
 		}
 		ctx := &context{prog: pkg.LPkg.Prog, buildConf: conf, passOpt: true}
+		// Build repeats this lowering after ModuleHook. These fixtures have no
+		// oversized aggregates, so the repeated pass does not change their IR.
 		lowerLargeAggregates(ctx.prog, mod)
 		if err := optimizeHeapAllocations(ctx, pkg.PkgPath, mod); err != nil {
 			t.Fatal(err)

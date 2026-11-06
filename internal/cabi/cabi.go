@@ -240,6 +240,8 @@ func (p *FuncInfo) HasWrap() bool {
 	return false
 }
 
+// introducesIndirectStorage reports whether lowering adds sret or indirect
+// parameter storage. Register coercions do not add caller-owned memory accesses.
 func (p *FuncInfo) introducesIndirectStorage() bool {
 	if p.Return.Kind == AttrPointer {
 		return true
