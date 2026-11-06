@@ -3556,6 +3556,13 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	// Preserve the allocation calls for Attributor before the ordinary
 	// pipeline can inline their runtime wrappers. O0 retains source storage.
 	if ctx.buildConf.OptLevel != optlevel.O0 {
+		// ABI lowering introduces temporary aggregate stack slots. Scalarize
+		// them before Attributor so its capture/liveness analyses do not walk
+		// large graphs of redundant memory accesses. SROA preserves allocator
+		// calls, unlike the ordinary optimization pipeline below.
+		if err := mod.RunPasses("function(sroa)", ctx.prog.TargetMachine(), pbo); err != nil {
+			return fmt.Errorf("scalarize ABI storage for %v failed: %w", pkgPath, err)
+		}
 		if err := heap2stack.Run(mod, ctx.prog.TargetMachine()); err != nil {
 			return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
 		}
