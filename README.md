@@ -206,9 +206,15 @@ function type for a native callback. Nested struct fields keep their own layout,
 and containing structs do not inherit the marker. Ordinary Go fields retain
 their storage representation, including when their address is passed to another
 function. On profiled wasm32 targets, Go pointers and `uintptr` still occupy
-eight bytes. Host records requiring four-byte address slots must use explicit
-fixed-width storage and convert at the interface boundary. A nonempty marked
-struct ending in a zero-sized field retains Go's protective trailing padding.
+eight bytes. Explicitly annotated native function types use one physical code
+pointer consistently in variables, arrays, and struct fields (four bytes on
+wasm32); they do not carry a Go closure environment. Host records requiring
+four-byte data-address slots must use explicit fixed-width storage and convert
+at the interface boundary. A nonempty marked struct ending in a zero-sized
+field retains Go's protective trailing padding.
+
+Reflection preserves native callback storage and supports calling existing
+callbacks. `reflect.MakeFunc` cannot construct native callback types.
 
 The older struct-level `//llgo:cdecl` and `//llgo:type C` declarations remain
 accepted for compatibility. When migrating them, give any native callback fields

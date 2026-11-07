@@ -517,7 +517,7 @@ func toPublicType(typ *abi.Type) Type {
 // physicalType is the in-memory layout of t. Function values occupy LLGo's
 // two-word closure; the public Kind remains Func via toPublicType.
 func physicalType(t *abi.Type) *abi.Type {
-	if t != nil && t.Kind() == abi.Func {
+	if t != nil && isGoFunc(t) {
 		return closureOf(t.FuncType())
 	}
 	return t
@@ -969,7 +969,7 @@ func toClosureType(typ *abi.FuncType) *abi.StructType {
 	ftyp := typ
 	fnstr := funcStr(ftyp)
 	for _, t := range typelist {
-		if t.Kind() == abi.Func && t.String() == fnstr {
+		if isGoFunc(t) && t.String() == fnstr {
 			ftyp = t.FuncType()
 			break
 		}
@@ -1066,7 +1066,7 @@ func (t *rtype) ptrTo() *abi.Type {
 	// and its pointer method set. Unnamed closures use the public signature.
 	// Normalize before either static lookup or caching so Addr, New, and
 	// PointerTo cannot synthesize competing descriptors for the same *T.
-	if at.Kind() == abi.Func && at.HasName() {
+	if isGoFunc(at) && at.HasName() {
 		at = closureOf(at.FuncType())
 	} else if at.IsClosure() && !at.HasName() {
 		at = &toFuncType(at.StructType()).Type
@@ -1238,6 +1238,9 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		return V.ChanDir() == T.ChanDir() && haveIdenticalType(T.Elem(), V.Elem(), cmpTags)
 
 	case Func:
+		if T.IsNativeFunc() != V.IsNativeFunc() {
+			return false
+		}
 		t := (*funcType)(unsafe.Pointer(T))
 		v := (*funcType)(unsafe.Pointer(V))
 		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
@@ -1575,7 +1578,7 @@ func MapOf(key, elem Type) Type {
 	ktyp := key.common()
 	publicElem := elem.common()
 	etyp := publicElem
-	if etyp.Kind() == abi.Func {
+	if isGoFunc(etyp) {
 		// Map bucket operations copy elements using the element descriptor.
 		// Use LLGo's physical two-word closure there; Elem converts it back
 		// to the public function type returned by this API.
@@ -2369,6 +2372,9 @@ var closureLookupCache struct {
 
 // Struct returns a struct type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
+	if ftyp.IsNativeFunc() {
+		panic("reflect: native callback has no closure representation")
+	}
 	if ftyp.HasName() {
 		namedFuncTypes.Lock()
 		cached := namedFuncTypes.closures[ftyp]
@@ -2591,7 +2597,7 @@ func runtimeStructField(field StructField) (structField, string) {
 
 	//	resolveReflectType(field.Type.common()) // install in runtime
 	typ := field.Type.common()
-	if typ.Kind() == abi.Func {
+	if isGoFunc(typ) {
 		typ = closureOf(typ.FuncType())
 	}
 	f := structField{
@@ -2730,7 +2736,7 @@ func eqTypes(s1, s2 []*abi.Type) bool {
 
 func findFunc(in, out []*abi.Type, variadic bool) *abi.FuncType {
 	for _, typ := range typelist {
-		if typ.Kind() == abi.Func {
+		if isGoFunc(typ) {
 			if ft := typ.FuncType(); ft.Variadic() == variadic && eqTypes(ft.In, in) && eqTypes(ft.Out, out) {
 				return ft
 			}
@@ -2748,4 +2754,9 @@ func findClosure(fields []abi.StructField) *abi.Type {
 		}
 	}
 	return nil
+}
+
+// isGoFunc separates public Go function signatures from native code pointers.
+func isGoFunc(t *abi.Type) bool {
+	return t.Kind() == abi.Func && !t.IsNativeFunc()
 }

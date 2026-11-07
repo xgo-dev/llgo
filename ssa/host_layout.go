@@ -110,26 +110,16 @@ func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	case *types.Signature:
 		// A layout marker never changes a Go closure into a C callback.
 		if native {
-			return sourceLayout{int64(prog.ptrSize), int64(prog.ptrSize)}
+			// Explicit native function types use one physical code pointer in
+			// every container, including ordinary Go variables and arrays.
+			width := int64(prog.PointerSize())
+			return sourceLayout{width, width}
 		}
 	case *types.Array:
 		return arraySourceLayout(p.hostFieldLayout(u.Elem(), native), u.Len())
 	}
 	// A nested struct, including a closure's representation, owns its layout.
 	return p.hostNestedLayout(t)
-}
-
-// hostNativeCallbackStorage operates on lowered types: ordinary Go functions
-// have already become closure structs. Only explicitly native callbacks (and
-// arrays of them) retain signatures and their existing native representation.
-func hostNativeCallbackStorage(t types.Type) bool {
-	switch t := t.Underlying().(type) {
-	case *types.Array:
-		return hostNativeCallbackStorage(t.Elem())
-	case *types.Signature:
-		return true
-	}
-	return false
 }
 
 // hasNativeTypeDirective preserves declarations on aliases before unaliasing.

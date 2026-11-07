@@ -39,7 +39,9 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 		return false
 	}
 	switch t.kind {
-	case vkPtr, vkFuncPtr, vkMap, vkChan:
+	case vkFuncPtr:
+		return !p.isNativeCallbackType(t.raw.Type)
+	case vkPtr, vkMap, vkChan:
 		return true
 	default:
 		return false
@@ -148,9 +150,6 @@ func (p Program) childStorageType(parent Type, child types.Type) Type {
 		return t
 	}
 	if hasHostLayout(parent.raw.Type) {
-		if hostNativeCallbackStorage(child) {
-			return p.withNativeStorage(t)
-		}
 		return t
 	}
 	if p.isNativeStorage(parent) || p.hasLegacyNativeTypeLayout(parent.raw.Type) || p.hasLegacyNativeTypeLayout(child) {

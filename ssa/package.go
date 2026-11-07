@@ -142,6 +142,8 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
+	// Native callback aliases retain the directive on the alias declaration.
+	nativeCallbackAliases map[*types.Alias]Type
 	// nativeStorage caches transient Type views whose addressable storage is
 	// owned by a C/host ABI rather than by the Go data model. Canonical types
 	// map to their native view, while native views map to themselves.
@@ -374,6 +376,8 @@ func NewProgram(target *Target) Program {
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
+	prog.abi.NativeFunc = prog.isNativeCallbackType
+	prog.abi.NativePtrSize = uintptr(prog.PointerSize())
 	return prog
 }
 

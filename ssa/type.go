@@ -99,6 +99,9 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 	if layout, ok := p.vectorLayout(T, false); ok {
 		return layout.align
 	}
+	if layout, ok := p.nativeCallbackLayout(T); ok {
+		return layout.align
+	}
 	return p.sizes.Alignof(T)
 }
 
@@ -120,6 +123,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	if _, offsets, ok := p.vectorStructLayout(fields, prog.nativeFields(fields)); ok {
 		return offsets
 	}
+	if _, offsets, ok := p.nativeCallbackFieldsLayout(fields); ok {
+		return offsets
+	}
 	extra := int64(0)
 	ret = p.sizes.Offsetsof(fields)
 	for i, f := range fields {
@@ -137,6 +143,9 @@ func (p *goProgram) Sizeof(T types.Type) int64 {
 		return layout.size
 	}
 	if layout, ok := p.vectorLayout(T, false); ok {
+		return layout.size
+	}
+	if layout, ok := p.nativeCallbackLayout(T); ok {
 		return layout.size
 	}
 	prog := Program(unsafe.Pointer(p))
@@ -350,6 +359,20 @@ func typeStringWithPkg(t types.Type) string {
 }
 
 func (p Program) rawType(raw types.Type) Type {
+	// typeutil.Map equates aliases with their RHS. An explicit native
+	// function alias must retain its calling-convention identity instead of
+	// reusing the ordinary Go signature's storage and reflection descriptor.
+	if alias, ok := raw.(*types.Alias); ok && p.isNativeCallbackType(alias) {
+		if p.nativeCallbackAliases == nil {
+			p.nativeCallbackAliases = make(map[*types.Alias]Type)
+		}
+		if typ := p.nativeCallbackAliases[alias]; typ != nil {
+			return typ
+		}
+		typ := &aType{p.toLLVMFuncPtr(alias.Underlying().(*types.Signature)), rawType{alias}, vkFuncPtr}
+		p.nativeCallbackAliases[alias] = typ
+		return typ
+	}
 	if v := p.typs.At(raw); v != nil {
 		return v.(Type)
 	}
@@ -536,13 +559,12 @@ func IsClosure(raw *types.Struct) bool {
 
 func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Type) {
 	n := raw.NumFields()
-	host := hasHostLayout(raw)
 	if n > 0 {
 		fields = make([]llvm.Type, n)
 		for i := 0; i < n; i++ {
 			fieldRaw := p.patch(raw.Field(i).Type())
 			field := p.rawType(fieldRaw)
-			if native || (host && hostNativeCallbackStorage(fieldRaw)) {
+			if native {
 				fields[i] = p.withNativeStorage(field).ll
 			} else {
 				fields[i] = p.storageType(field)

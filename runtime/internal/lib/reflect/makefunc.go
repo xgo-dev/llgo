@@ -51,6 +51,9 @@ func makeFunc(typ Type, fn func(args []Value) (results []Value), recoverTo unsaf
 	}
 
 	t := typ.common()
+	if t.IsNativeFunc() {
+		panic("reflect.MakeFunc: native callback types are not supported")
+	}
 	ftyp := (*funcType)(unsafe.Pointer(t))
 	return makeProviderFunc(ftyp, fn, recoverTo)
 }
@@ -113,7 +116,7 @@ func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 	kind := typ.Kind()
-	if typ.Kind() == abi.Func {
+	if isGoFunc(typ) {
 		typ = closureOf(typ.FuncType())
 	}
 	v.typ_ = typ
@@ -130,7 +133,7 @@ func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 			v.ptr = ptr
 		}
 	} else {
-		v.ptr = *(*unsafe.Pointer)(ptr)
+		v.ptr = loadDirectValue(typ, ptr)
 	}
 	return
 }

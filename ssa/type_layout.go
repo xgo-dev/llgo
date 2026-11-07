@@ -95,7 +95,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	for i, field := range fields {
 		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
 		if host {
-			fieldAlign = (*goProgram)(p).hostFieldLayout(raw.Field(i).Type(), hostNativeCallbackStorage(raw.Field(i).Type())).align
+			fieldAlign = (*goProgram)(p).hostFieldLayout(raw.Field(i).Type(), false).align
 		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
 			fieldAlign = int64(p.td.ABITypeAlignment(field))
 		}

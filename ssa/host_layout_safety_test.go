@@ -32,25 +32,35 @@ type Chan struct { _ structs.HostLayout; Value chan int; Tail uint32 }
 type Words struct { _ structs.HostLayout; Value [2]uintptr; Tail uint32 }
 type Pointers struct { _ structs.HostLayout; Value [2]*byte; Tail uint32 }
 type Matrix struct { _ structs.HostLayout; Value [2][2]uintptr; Tail uint32 }
+type Callback func()
+type CallbackAlias = func()
+type Native struct { _ structs.HostLayout; Value Callback; Tail uint32 }
+type NativeAlias struct { _ structs.HostLayout; Value CallbackAlias; Tail uint32 }
+type NativeArray struct { _ structs.HostLayout; Value [2]Callback; Tail uint32 }
+type Legacy struct { Value Callback; Tail uint32 }
 type Wire struct { _ structs.HostLayout; Addr uint32; Len uint32 }
 `, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
+			prog.SetTypeCallConv("storage.Callback", CDecl)
+			prog.SetTypeCallConv("storage.CallbackAlias", CDecl)
+			prog.SetTypeCallConv("storage.Legacy", CDecl)
 			pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("storage", fs, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, tc := range []struct {
-				name  string
-				width int64
+				name             string
+				width, alignment int64
 			}{
-				{"Word", 8}, {"Pointer", 8}, {"Unsafe", 8}, {"Map", 8}, {"Chan", 8},
-				{"Words", 16}, {"Pointers", 16}, {"Matrix", 32},
+				{"Word", 8, 8}, {"Pointer", 8, 8}, {"Unsafe", 8, 8}, {"Map", 8, 8}, {"Chan", 8, 8},
+				{"Words", 16, 8}, {"Pointers", 16, 8}, {"Matrix", 32, 8},
+				{"Native", 4, 4}, {"NativeAlias", 4, 4}, {"NativeArray", 8, 4},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					raw := pkg.Scope().Lookup(tc.name).Type()
-					checkHostLayout(t, prog, sizes, raw, tc.width+8, 8, []int64{0, 0, tc.width})
+					checkHostLayout(t, prog, sizes, raw, tc.width+tc.alignment, tc.alignment, []int64{0, 0, tc.width})
 					lowered := prog.Type(raw, GoDecl)
 					field := prog.Field(lowered, 1)
 					if got := prog.SizeOf(field); got != uint64(tc.width) {
@@ -59,9 +69,29 @@ type Wire struct { _ structs.HostLayout; Addr uint32; Len uint32 }
 					if prog.isNativeStorage(field) {
 						t.Fatal("ordinary Go field acquired native storage")
 					}
+					address := prog.Pointer(field)
+					if got := prog.SizeOf(prog.Elem(address)); got != uint64(tc.width) {
+						t.Fatalf("escaped field storage size = %d, want %d", got, tc.width)
+					}
+					if array, ok := field.RawType().Underlying().(*types.Array); ok {
+						if got := prog.SizeOf(prog.Index(address)); got != uint64(tc.width/array.Len()) {
+							t.Fatalf("array element stride = %d, want %d", got, tc.width/array.Len())
+						}
+					}
 				})
 			}
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Wire").Type(), 8, 4, []int64{0, 0, 4})
+			// An explicit C boundary or legacy native struct still uses the
+			// physical callback width, matching addressable Go callback
+			// variables and arrays.
+			callback := pkg.Scope().Lookup("Callback").Type()
+			if got := prog.SizeOf(prog.Type(callback, CDecl)); got != 4 {
+				t.Fatalf("C callback storage size = %d, want 4", got)
+			}
+			legacy := prog.Type(pkg.Scope().Lookup("Legacy").Type(), GoDecl)
+			if prog.SizeOf(legacy) != 8 || prog.OffsetOf(legacy, 1) != 4 || prog.SizeOf(prog.Field(legacy, 0)) != 4 {
+				t.Fatal("legacy native callback layout changed")
+			}
 		})
 	}
 }
