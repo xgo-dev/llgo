@@ -30,8 +30,13 @@ var (
 func wrapType(raw unsafe.Pointer) llvm.Type   { return *(*llvm.Type)(unsafe.Pointer(&raw)) }
 func wrapValue(raw unsafe.Pointer) llvm.Value { return *(*llvm.Value)(unsafe.Pointer(&raw)) }
 
-func resolveNative(id int, signature llvm.Type, mod llvm.Module) (typ llvm.Type, decl llvm.Value, name string, immargs []int, err error) {
-	r := C.llgo_intrinsic_resolve(C.uint(id), unsafe.Pointer(signature.C), unsafe.Pointer(mod.C))
+func resolveNative(id int, signature llvm.Type, mod llvm.Module, requiredName string) (typ llvm.Type, decl llvm.Value, name string, immargs []int, err error) {
+	var required *C.char
+	if requiredName != "" {
+		required = C.CString(requiredName)
+		defer C.free(unsafe.Pointer(required))
+	}
+	r := C.llgo_intrinsic_resolve(C.uint(id), unsafe.Pointer(signature.C), unsafe.Pointer(mod.C), required)
 	defer C.llgo_intrinsic_dispose(r)
 	if r.error != nil {
 		err = fmt.Errorf("%s", C.GoString(r.error))

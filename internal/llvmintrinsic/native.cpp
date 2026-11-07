@@ -23,7 +23,8 @@ static char *copyString(StringRef text) {
 }
 
 LLGOIntrinsicResult llgo_intrinsic_resolve(unsigned id, void *type,
-                                           void *module) {
+                                           void *module,
+                                           const char *required_name) {
   LLGOIntrinsicResult result{};
   auto fail = [&](StringRef message) {
     result.error = copyString(message);
@@ -44,6 +45,8 @@ LLGOIntrinsicResult llgo_intrinsic_resolve(unsigned id, void *type,
   Module scratch("intrinsic.types", context);
   auto *mod = module ? static_cast<Module *>(module) : &scratch;
   result.name = copyString(Intrinsic::getName(id, overloads, mod, canonical));
+  if (required_name && StringRef(result.name) != required_name)
+    return fail("explicit intrinsic name does not match destination module");
   auto attrs = Intrinsic::getAttributes(context, id, canonical);
   SmallVector<unsigned, 4> immargs;
   for (unsigned i = 0; i < ft->getNumParams(); ++i)

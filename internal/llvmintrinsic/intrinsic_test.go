@@ -342,3 +342,71 @@ func TestDeclarationConflictsAndRejectedCall(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUnnamedStructNamesAreModuleLocal(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	a, b := ctx.StructCreateNamed(""), ctx.StructCreateNamed("")
+	a.StructSetBody([]llvm.Type{ctx.Int32Type()}, false)
+	b.StructSetBody([]llvm.Type{ctx.Int64Type()}, false)
+	resolve := func(typ llvm.Type) *Binding {
+		t.Helper()
+		binding, err := (Intrinsic{Name: "llvm.ssa.copy"}).Resolve(llvm.FunctionType(typ, []llvm.Type{typ}, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return binding
+	}
+	first, second := resolve(a), resolve(b)
+	mod := ctx.NewModule("names")
+	defer mod.Dispose()
+	other, err := second.Declare(mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := first.Declare(mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Name() == other.Name() || actual.GlobalValueType() != first.Signature() {
+		t.Fatal("module-local names conflated distinct identified structs")
+	}
+	caller := llvm.AddFunction(mod, "caller", first.Signature())
+	builder := ctx.NewBuilder()
+	defer builder.Dispose()
+	builder.SetInsertPointAtEnd(ctx.AddBasicBlock(caller, "entry"))
+	value, err := first.Call(builder, mod, caller.Param(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder.CreateRet(value)
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit overloaded names must be checked in the destination module
+	// before a declaration is inserted, even when LLVM chooses another suffix.
+	explicit, err := (Intrinsic{Name: first.Name()}).Resolve(first.Signature())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMod := ctx.NewModule("explicit")
+	defer otherMod.Dispose()
+	if _, err := second.Declare(otherMod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := explicit.Declare(otherMod); err == nil {
+		t.Fatal("explicit name changed silently")
+	}
+	if !otherMod.NamedFunction(actual.Name()).IsNil() {
+		t.Fatal("rejected explicit name inserted a declaration")
+	}
+
+	ordinary, err := (Intrinsic{Name: "llvm.ctpop.i32"}).Resolve(llvm.FunctionType(ctx.Int32Type(), []llvm.Type{ctx.Int32Type()}, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ordinary.Declare(otherMod); err != nil {
+		t.Fatal(err)
+	}
+}

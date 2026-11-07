@@ -18,7 +18,8 @@ typedef struct {
 } LLGOIntrinsicResult;
 
 LLGOIntrinsicResult llgo_intrinsic_resolve(unsigned id, void *type,
-                                           void *module);
+                                           void *module,
+                                           const char *required_name);
 void llgo_intrinsic_dispose(LLGOIntrinsicResult result);
 uint64_t llgo_intrinsic_array_length(void *type);
 unsigned llgo_intrinsic_scalar_bits(void *type);

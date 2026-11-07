@@ -17,11 +17,15 @@ type Intrinsic struct {
 type Binding struct {
 	id        int
 	name      string
+	requested string
 	signature llvm.Type
 	plan      *Plan
 }
 
-func (b *Binding) ID() int              { return b.id }
+func (b *Binding) ID() int { return b.id }
+
+// Name is resolved in isolation. An unnamed identified struct may receive a
+// different module-local suffix; Declare returns the actual declaration.
 func (b *Binding) Name() string         { return b.name }
 func (b *Binding) Signature() llvm.Type { return b.signature }
 
@@ -39,7 +43,7 @@ func (i Intrinsic) Resolve(signature llvm.Type, options ...Option) (*Binding, er
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i.Name, err)
 	}
-	canonical, _, name, immargs, err := resolveNative(id, signature, llvm.Module{})
+	canonical, _, name, immargs, err := resolveNative(id, signature, llvm.Module{}, "")
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i.Name, err)
 	}
@@ -49,7 +53,7 @@ func (i Intrinsic) Resolve(signature llvm.Type, options ...Option) (*Binding, er
 	for _, index := range immargs {
 		plan.rule(index).constant = true
 	}
-	return &Binding{id, name, canonical, plan}, nil
+	return &Binding{id: id, name: name, requested: i.Name, signature: canonical, plan: plan}, nil
 }
 
 func (b *Binding) CheckArguments(args ...llvm.Value) error {
@@ -65,12 +69,13 @@ func (b *Binding) Declare(mod llvm.Module) (llvm.Value, error) {
 	if mod.IsNil() || mod.Context() != b.signature.Context() {
 		return llvm.Value{}, fmt.Errorf("%s: module has a different LLVM context", b.name)
 	}
-	_, decl, name, _, err := resolveNative(b.id, b.signature, mod)
+	required := ""
+	if b.requested != baseName(b.id) {
+		required = b.requested
+	}
+	_, decl, _, _, err := resolveNative(b.id, b.signature, mod, required)
 	if err != nil {
 		return llvm.Value{}, fmt.Errorf("%s: %w", b.name, err)
-	}
-	if name != b.name {
-		return llvm.Value{}, fmt.Errorf("%s: intrinsic name changed in destination module to %q", b.name, name)
 	}
 	return decl, nil
 }
