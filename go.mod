@@ -32,4 +32,4 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
 
 // Intrinsic bindings from xgo-dev/llvm#60; remove this pin once available upstream.
-replace github.com/xgo-dev/llvm => github.com/cpunion/llvm v0.9.4-0.20261107152036-d6da0b2d4c50
+replace github.com/xgo-dev/llvm => github.com/cpunion/llvm v0.9.4-0.20261107154507-3bd4a8b983df
