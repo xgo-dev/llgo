@@ -148,7 +148,8 @@ type aProgram struct {
 	nativeStorage map[Type]Type
 	goWordSize    int
 	// Immutable target ABI alignments, safe to read during concurrent type checking.
-	simdAlignments [3]int64
+	simdAlignments   [3]int64
+	hostBasicLayouts [types.UnsafePointer + 1]sourceLayout
 	// Resolve the physical C ABI once, outside declaration/call lowering.
 	nativeIntegerExt nativeIntegerExtension
 
@@ -361,6 +362,15 @@ func NewProgram(target *Target) Program {
 	}
 	if goWordSize > prog.ptrSize {
 		prog.nativeStorage = make(map[Type]Type)
+	}
+	// Freeze scalar host layouts before concurrent source type checking.
+	for kind := types.Bool; kind <= types.UnsafePointer; kind++ {
+		if kind == types.String {
+			continue
+		}
+		raw := types.Typ[kind]
+		ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
+		prog.hostBasicLayouts[kind] = sourceLayout{int64(td.TypeAllocSize(ll)), int64(td.ABITypeAlignment(ll))}
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
