@@ -147,7 +147,13 @@ func (p Program) childStorageType(parent Type, child types.Type) Type {
 	if !p.usesWideGoStorage() {
 		return t
 	}
-	if p.isNativeStorage(parent) || p.hasNativeTypeLayout(parent.raw.Type) || p.hasNativeTypeLayout(child) {
+	if hasHostLayout(parent.raw.Type) {
+		if hostNativeCallbackStorage(child) {
+			return p.withNativeStorage(t)
+		}
+		return t
+	}
+	if p.isNativeStorage(parent) || p.hasLegacyNativeTypeLayout(parent.raw.Type) || p.hasLegacyNativeTypeLayout(child) {
 		return p.withNativeStorage(t)
 	}
 	return t
