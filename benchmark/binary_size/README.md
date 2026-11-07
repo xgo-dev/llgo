@@ -10,6 +10,61 @@ smallest workloads for the per-commit lightweight size and timing gate.
 - `fmtprintf`: a hello world using `fmt.Printf`.
 - `texttemplate`: a heavier standard-library program using `text/template`.
 - `nilfault`: an import-free abnormal path that dereferences a nil pointer.
+- `reflectmetadata`: enumerates method names/signatures without observing
+  `reflect.Method.Func`; its unused method references the JSON encoder.
+- `reflectcall`: calls that JSON method through `reflect.Method.Func`, checking
+  that method pruning preserves observable function values.
+- `reflectcallbacks`: models Gorm's loop over nine hook names and calls the
+  two hooks implemented by a model. An unrelated JSON method exposes the cost
+  of treating the loop variable as an arbitrary method name.
+
+For the native macOS Deadcode Drop/ThinLTO experiment, build a development
+compiler and a plugin matching the selected linker, then run:
+
+```sh
+go build -tags dev -o /tmp/llgo-size ./cmd/llgo
+python3 dev/measure_deadcode_thinlto.py \
+  --compiler /tmp/llgo-size --plugin /path/to/LLGOLTOPlugin.dylib \
+  --output /tmp/llgo-size-results --repeat 4
+```
+
+Use `--linker /path/to/ld64.lld` to select an explicit linker for every row.
+The probe checks program output, records section sizes and symbols, and
+normalizes all artifacts with hidden exports and post-PCLN local-symbol
+stripping/signing. Builds use `-a -Os -debug-artifact=none`, retain embedded
+runtime PCLN, and rotate the order of Drop, Thin+Drop, Full+DCE and Full+DCE+P.
+Timing covers forced package rebuilds and linking, excluding the common final
+strip/sign step; OS and tool caches may be warm. Run without competing builds
+for timing comparisons. It is a size/build-time probe, not a runtime benchmark.
+
+To include the complete Gorm schema test executable, prepare a separate Go
+module with `gorm.io/gorm@v1.31.2` and its test dependencies, then run:
+
+```sh
+python3 dev/measure_deadcode_thinlto.py \
+  --compiler /tmp/llgo-size --plugin /path/to/LLGOLTOPlugin.dylib \
+  --linker /path/to/ld64.lld --gorm-module /path/to/gorm-probe-module \
+  --cases reflectcallbacks gormschema --modes drop thin fullp \
+  --output /tmp/llgo-gorm-size-results --repeat 3
+```
+
+The `gormschema` case uses `llgo test -c` and runs the complete schema suite for
+every artifact. The module version is recorded with the result. See
+`dev/deadcode_reflect_results.json` for this experiment; the earlier four-case
+measurements remain in `dev/deadcode_thinlto_results.json`.
+
+Thin+Drop associates unresolved `reflect.Value.MethodByName` calls with stable
+source identities. After package optimization, a bounded LLVM analysis recovers
+finite name sets from string constants, selects/phis, and readonly array/slice
+loads. Each site's result refines only that source demand before Drop decides
+method slots and regenerates ThinLTO summaries. It does not require a merged
+FullLTO module or a linker plugin. Cached builds read the same optimized bitcode
+from archives. Unknown calls, missing calls, writable or escaped storage, and
+incomplete clone results retain generic reflection. Package-private source
+ownership, linkname/assembly references and opaque native inputs are checked
+before reading a global initializer as immutable. This refinement currently
+shares the native macOS development-mode, single-root, no-DWARF restriction of
+the Thin archive rewrite.
 
 The first four programs must exit successfully with their expected output.
 `nilfault` must exit unsuccessfully with a nil-pointer diagnostic in every

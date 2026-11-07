@@ -1,5 +1,7 @@
 package meta
 
+import "slices"
+
 // GlobalSummary is a whole-program metadata view over multiple PackageMetas,
 // in one unified symbol/name space.
 //
@@ -30,6 +32,11 @@ type GlobalSummary struct {
 	nameStrings []string // Name → text
 
 	interfaces []Symbol
+
+	// Only nonempty, complete sets proven for every surviving IR copy of a
+	// source lookup may refine a callsite. Owned copies prevent later caller
+	// mutations from changing this summary's lazy query results.
+	reflectNames map[string][]string
 }
 
 // symLoc identifies a (package, local symbol) pair. pkg < 0 means "no owner".
@@ -62,11 +69,35 @@ type ownerState struct {
 // MethodSlots / IfaceMethods / FuncDemands are translated lazily on each
 // query. This avoids translating metadata that DCE never reaches.
 func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
+	return NewGlobalSummaryWithReflectNames(pkgs, nil)
+}
+
+// NewGlobalSummaryWithReflectNames merges package metadata and refines dynamic
+// MethodByName demands using proven finite name sets keyed by callsite symbol
+// name. Each set must cover every possible name at every IR copy of that site;
+// the caller must union names from clones and omit a site if any copy remains
+// unresolved. Missing and empty sets both retain conservative reflection.
+// In particular, a missing optimized call is not proof that its source demand
+// is dead. Other sites and ordinary generic demands remain independent.
+//
+// names and its slices are copied; pkgs remain borrowed as in NewGlobalSummary.
+func NewGlobalSummaryWithReflectNames(pkgs []*PackageMeta, names map[string][]string) (*GlobalSummary, error) {
 	g := &GlobalSummary{
 		pkgs:       pkgs,
 		symIntern:  make(map[string]Symbol),
 		nameIntern: make(map[string]Name),
 		locToGlb:   make([][]Symbol, len(pkgs)),
+	}
+	if len(names) != 0 {
+		g.reflectNames = make(map[string][]string, len(names))
+		for site, methods := range names {
+			if len(methods) == 0 {
+				continue
+			}
+			owned := slices.Clone(methods)
+			slices.Sort(owned)
+			g.reflectNames[site] = slices.Compact(owned)
+		}
 	}
 	var ownerStates []ownerState
 	var interfaceSeen []bool
@@ -206,8 +237,18 @@ func (g *GlobalSummary) translateFuncDemands(tab []Symbol, pm *PackageMeta, li S
 		case DemandNamedMethod:
 			name := pm.nameString(nameRef{Off: d.Target, Len: d.Extra})
 			out = append(out, FuncDemand{Kind: d.Kind, MethodName: g.internName(name)})
-		case DemandReflectMethod:
+		case DemandReflectMethod, DemandReflectMethodMetadata:
 			out = append(out, FuncDemand{Kind: d.Kind})
+		case DemandReflectMethodSite:
+			site := pm.symbolName(Symbol(d.Target))
+			names := g.reflectNames[site]
+			if len(names) == 0 {
+				out = append(out, FuncDemand{Kind: DemandReflectMethod})
+				continue
+			}
+			for _, name := range names {
+				out = append(out, FuncDemand{Kind: DemandNamedMethod, MethodName: g.internName(name)})
+			}
 		}
 	}
 	return out

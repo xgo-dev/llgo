@@ -546,6 +546,19 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 		children = appendTupleTypeChildren(children, t.Params())
 		children = appendTupleTypeChildren(children, t.Results())
 		return children
+	case *types.Interface:
+		if !b.Prog.DeadcodeDropEnabled() {
+			return nil
+		}
+		// An interface descriptor exposes every method signature through
+		// reflect.Type.Method, including unexported methods and interfaces
+		// without any concrete implementation. Its parameter/result types
+		// therefore belong to the reflection domain as well.
+		children := make([]types.Type, t.NumMethods())
+		for i := range children {
+			children[i] = funcType(b.Prog, t.Method(i).Type())
+		}
+		return children
 	case *types.Struct:
 		children := make([]types.Type, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {

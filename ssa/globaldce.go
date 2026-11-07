@@ -41,6 +41,7 @@ const (
 type ReflectMethodCheck struct {
 	Kind int
 	Name string
+	Site string // unresolved Drop lookup; identity survives ABI lowering/inlining
 }
 
 func methodCapabilitySig(sig *types.Signature) string {
@@ -253,7 +254,7 @@ func (b Builder) MarkReflectMethodByNameCall(call llvm.Value, kind string, nameA
 	if call.IsNil() {
 		return
 	}
-	if !b.Prog.enableLTOPluginMarker {
+	if !b.Prog.enableLTOPluginMarker && !b.Prog.enableDeadcodeDrop {
 		return
 	}
 	if call.IsACallInst().IsNil() && call.IsAInvokeInst().IsNil() {

@@ -192,7 +192,10 @@ func compileEmbeddedEntry(ctx *context, plan *mainLinkPlan, ir, object string) e
 	case lto.Full:
 		buffer = llvm.WriteFullLTOBitcodeToMemoryBuffer(mod, ctx.buildConf.Goos != "darwin")
 	case lto.Thin:
-		buffer = llvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
+		buffer, err = emitThinLTOBitcode(mod, prog.TargetMachine())
+		if err != nil {
+			return err
+		}
 	default:
 		buffer, err = prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.ObjectFile)
 		if err != nil {
