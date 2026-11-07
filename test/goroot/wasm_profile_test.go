@@ -61,10 +61,33 @@ func gorootTargetEnv(env []string) []string {
 
 func gorootRuntimeEnv(env []string) []string {
 	out := gorootTargetEnv(env)
-	if _, ok := activeGOROOTWasmProfile(); ok {
+	if p, ok := activeGOROOTWasmProfile(); ok {
+		if p.goos == "js" {
+			out = gorootJSRuntimeEnv(out)
+		}
 		// Keep the official Go baseline deterministic. The LLGo pthread backend
 		// uses Wasmer and can still create Ms.
 		out = upsertEnv(out, "GOMAXPROCS=1")
+	}
+	return out
+}
+
+// Go's JS runner copies the host environment into a fixed-size Wasm startup
+// area. CI metadata can exhaust that area before main runs. Give both Go and
+// LLGo the same runtime environment, retaining test controls and the variables
+// needed to launch Node. Compilation still receives the full environment.
+func gorootJSRuntimeEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		switch strings.ToUpper(key) {
+		case "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR",
+			"TMPDIR", "TMP", "TEMP", "TZ",
+			"NODE_OPTIONS", "NODE_PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
+			"GOROOT", "GOPATH", "GOOS", "GOARCH", "CGO_ENABLED", "GO111MODULE",
+			"GOEXPERIMENT", "GODEBUG", "GOGC", "GOMEMLIMIT", "GOTRACEBACK", "GOSSAINTERP":
+			out = append(out, item)
+		}
 	}
 	return out
 }
