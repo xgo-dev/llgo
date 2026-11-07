@@ -92,4 +92,12 @@ func TestAMD64NestedAggregateOffsets(t *testing.T) {
 			}
 		})
 	}
+	t.Run("out-of-range-register", func(t *testing.T) {
+		defer func() {
+			if got := recover(); got != "cabi: SysV register split exceeds two eightbytes" {
+				t.Fatalf("panic = %v, want an out-of-range SysV register diagnostic", got)
+			}
+		}()
+		tr.sys.(*TypeInfoAmd64).registerParts(llvm.ArrayType(ctx.Int64Type(), 3))
+	})
 }

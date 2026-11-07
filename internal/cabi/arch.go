@@ -144,6 +144,8 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 				info.Type2 = subType(parts[1], 1)
 				// Fill the first eightbyte so the coercion pair keeps the
 				// second register at byte 8. Preserve its INTEGER/SSE class.
+				// Only narrow integers or a float need widening; pointers,
+				// i64, double and <2 x float> already fill the eightbyte.
 				pair := ctx.StructType([]llvm.Type{info.Type1, info.Type2}, false)
 				if p.td.ElementOffset(pair, 1) < 8 {
 					if info.Type1.TypeKind() == llvm.IntegerTypeKind {
@@ -181,6 +183,9 @@ func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, high
 			}
 		default:
 			part := offset / 8
+			if part >= len(parts) {
+				panic("cabi: SysV register split exceeds two eightbytes")
+			}
 			parts[part] = append(parts[part], typ)
 			if part == 1 {
 				highEnd = max(highEnd, offset+p.Sizeof(typ))
