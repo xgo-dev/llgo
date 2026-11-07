@@ -145,6 +145,8 @@ func TestRuntimeAuditRejectsDuplicateOwners(t *testing.T) {
 	for _, test := range []struct{ name, first, second, want string }{
 		{"declaration", "func hook() {}", "func hook() {}", "duplicate runtime declaration"},
 		{"alias", "//go:linkname one runtime.Hook\nfunc one() {}", "//go:linkname two runtime.Hook\nfunc two() {}", "duplicate runtime implementation"},
+		{"native alias", "//go:linkname one C.hook\nfunc one() {}", "//go:linkname two C.hook\nfunc two() {}", "duplicate runtime implementation"},
+		{"intrinsic declaration", "//go:linkname hook llgo.noescape\nfunc hook() {}", "//go:linkname hook llgo.noescape\nfunc hook() {}", "duplicate runtime declaration"},
 		{"conflict", "//go:linkname hook runtime.One\nfunc hook()", "//go:linkname hook runtime.Two", "conflicting linkname"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -155,6 +157,29 @@ func TestRuntimeAuditRejectsDuplicateOwners(t *testing.T) {
 				t.Fatalf("error = %v, want %s", err, test.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeAuditSharedIntrinsicFallbacks(t *testing.T) {
+	a := runtimeAuditFixture(t)
+	var report RuntimeOwnership
+	for _, pkg := range []string{"runtime", "internal/abi"} {
+		file := auditFile(t, a, pkg+".go", `package p
+import "unsafe"
+//go:linkname NoEscape llgo.noescape
+func NoEscape(p unsafe.Pointer) unsafe.Pointer { return p }
+`)
+		if err := a.inventory(&report, pkg, "standard-runtime", []runtimeAuditFile{file}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(report.Symbols) != 2 {
+		t.Fatalf("inventoried %d symbols, want two intrinsic aliases", len(report.Symbols))
+	}
+	for _, symbol := range report.Symbols {
+		if symbol.Owner != "compiler-intrinsic" || !symbol.Body || symbol.Linkname != "llgo.noescape" {
+			t.Fatalf("lost intrinsic ownership or fallback provenance: %+v", symbol)
+		}
 	}
 }
 
