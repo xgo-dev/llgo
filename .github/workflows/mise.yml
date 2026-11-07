@@ -30,7 +30,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     name: Mise (${{ matrix.os }})
     needs: prepare
-    runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os == 'windows-2025' && fromJSON(needs.prepare.outputs.windows_2025_runner) || matrix.os }}
     timeout-minutes: 30
     defaults:
       run:
@@ -45,6 +45,20 @@ jobs:
           - macos-15-intel
           - windows-2025
     steps:
+      - name: Install Windows build tools on Qiniu
+        if: github.repository_owner == 'xgo-dev' && matrix.os == 'windows-2025'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sevenZip = Join-Path $env:RUNNER_TEMP '7zip.msi'
+          Invoke-WebRequest -Uri 'https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.msi' -OutFile $sevenZip
+          $process = Start-Process msiexec.exe -ArgumentList @('/i', "`"$sevenZip`"", '/qn', '/norestart') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "7-Zip installer failed: $($process.ExitCode)" }
+          $installer = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Visual Studio installer failed or requires restart: $($process.ExitCode)" }
       - uses: actions/checkout@v7
         with:
           # Exercise activation and builds from a checkout path containing spaces.

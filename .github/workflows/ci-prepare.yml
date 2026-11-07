@@ -21,6 +21,12 @@ on:
       linux_large_runner:
         description: JSON runner labels for heavy Linux jobs
         value: ${{ jobs.prepare.outputs.linux_large_runner }}
+      windows_2022_runner:
+        description: JSON runner labels for Windows 2022 jobs
+        value: ${{ jobs.prepare.outputs.windows_2022_runner }}
+      windows_2025_runner:
+        description: JSON runner labels for Windows 2025 jobs
+        value: ${{ jobs.prepare.outputs.windows_2025_runner }}
 
 permissions:
   contents: read
@@ -38,6 +44,8 @@ jobs:
       pr_merge_base: ${{ steps.policy.outputs.pr_merge_base }}
       linux_runner: ${{ steps.policy.outputs.linux_runner }}
       linux_large_runner: ${{ steps.policy.outputs.linux_large_runner }}
+      windows_2022_runner: ${{ steps.policy.outputs.windows_2022_runner }}
+      windows_2025_runner: ${{ steps.policy.outputs.windows_2025_runner }}
     steps:
       - uses: actions/checkout@v7
         env:
@@ -56,6 +64,14 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # PR policy runs from the base, which may not yet expose Windows runners.
+          if [[ "$GITHUB_REPOSITORY_OWNER" == "xgo-dev" ]]; then
+            echo 'windows_2022_runner=["qiniu", "windows-11"]' >> "$GITHUB_OUTPUT"
+            echo 'windows_2025_runner=["qiniu", "windows-11"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'windows_2022_runner=["windows-2022"]' >> "$GITHUB_OUTPUT"
+            echo 'windows_2025_runner=["windows-2025"]' >> "$GITHUB_OUTPUT"
+          fi
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             # Main, tags and manual runs execute the checked-out trusted code.
             python3 .github/scripts/ci_policy.py

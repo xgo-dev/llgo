@@ -86,13 +86,27 @@ jobs:
             windows_arch: "386"
             host_go_arch: x64
             timeout: 90
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os == 'windows-2022' && matrix.id != 'windows-msvc-386' && fromJSON(needs.prepare.outputs.windows_2022_runner) || matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
       GOFLAGS: -tags=llvm22
     steps:
+      - name: Install Windows build tools on Qiniu
+        if: github.repository_owner == 'xgo-dev' && matrix.os == 'windows-2022' && matrix.id != 'windows-msvc-386'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sevenZip = Join-Path $env:RUNNER_TEMP '7zip.msi'
+          Invoke-WebRequest -Uri 'https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.msi' -OutFile $sevenZip
+          $process = Start-Process msiexec.exe -ArgumentList @('/i', "`"$sevenZip`"", '/qn', '/norestart') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "7-Zip installer failed: $($process.ExitCode)" }
+          $installer = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Visual Studio installer failed or requires restart: $($process.ExitCode)" }
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -126,6 +140,12 @@ jobs:
           path: .benchmark/head-source
           persist-credentials: false
 
+      - name: Set up Python for Windows MinGW 386 dependencies
+        if: github.repository_owner == 'xgo-dev' && matrix.os == 'windows-2022' && matrix.windows_abi == 'mingw' && matrix.windows_arch == '386'
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
