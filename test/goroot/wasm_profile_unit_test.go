@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,61 @@ func TestGOROOTGoJSRunCommandModelsBrowser(t *testing.T) {
 	want := []string{"--stack-size=8192", filepath.Join("/llgo", "targets", "emscripten-runner.mjs"), "--browser-only", "out.mjs", "arg"}
 	if err != nil || app != "node" || !reflect.DeepEqual(args, want) {
 		t.Fatalf("GoJS command: %q %v %v", app, args, err)
+	}
+}
+
+func TestGOROOTJSRuntimeEnvironment(t *testing.T) {
+	env := []string{
+		"GOROOT=/go", "LLGO_ROOT=/llgo", "PATH=/bin", "HOME=/home/test",
+		"TMPDIR=/tmp", "GODEBUG=panicnil=1", "GOGC=50", "GOMEMLIMIT=1GiB",
+		"GOTRACEBACK=system", "GOEXPERIMENT=rangefunc", "NODE_OPTIONS=--no-warnings",
+		"SystemRoot=C:\\Windows", "GITHUB_METADATA=" + strings.Repeat("x", 16384),
+		"UNRELATED_HOST_DATA=" + strings.Repeat("y", 16384),
+	}
+	original := append([]string(nil), env...)
+	for _, profile := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten"} {
+		t.Run(profile, func(t *testing.T) {
+			withGOROOTWasmProfile(t, profile)
+			var baseline []string
+			for _, llgo := range []bool{false, true} {
+				_, _, got, err := gorootArtifactCommand("/work", "out", llgo, env)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range []string{"GITHUB_METADATA", "UNRELATED_HOST_DATA", "LLGO_ROOT"} {
+					if envEntry(got, key) != "" {
+						t.Fatalf("runtime retained host variable %s", key)
+					}
+				}
+				for _, key := range []string{"GOROOT", "PATH", "HOME", "TMPDIR", "GODEBUG", "GOGC", "GOMEMLIMIT", "GOTRACEBACK", "GOEXPERIMENT", "NODE_OPTIONS", "SystemRoot"} {
+					if envEntry(got, key) != envEntry(env, key) {
+						t.Fatalf("runtime changed %s", key)
+					}
+				}
+				if envEntry(got, "GOMAXPROCS") != "1" {
+					t.Fatal("missing runtime concurrency limit")
+				}
+				if !llgo {
+					baseline = got
+				} else if !reflect.DeepEqual(got, baseline) {
+					t.Fatal("Go and LLGo runtime environments differ")
+				}
+			}
+			if got := gorootTargetEnv(env); envEntry(got, "GITHUB_METADATA") != envEntry(env, "GITHUB_METADATA") {
+				t.Fatal("compiler environment was filtered")
+			}
+		})
+	}
+	for _, profile := range []string{"", "W32-WASI"} {
+		t.Run(profile, func(t *testing.T) {
+			withGOROOTWasmProfile(t, profile)
+			if got := gorootRuntimeEnv(env); envEntry(got, "GITHUB_METADATA") != envEntry(env, "GITHUB_METADATA") {
+				t.Fatal("non-JS runtime environment was filtered")
+			}
+		})
+	}
+	if !reflect.DeepEqual(env, original) {
+		t.Fatal("input environment was mutated")
 	}
 }
 
