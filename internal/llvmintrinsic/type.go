@@ -91,7 +91,7 @@ func (d domain) match(_ *state, t llvm.Type, l location) error {
 
 func isFloat(t llvm.Type) bool {
 	switch t.TypeKind() {
-	case halfKind, bfloatKind, llvm.FloatTypeKind, llvm.DoubleTypeKind,
+	case llvm.HalfTypeKind, llvm.BFloatTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind,
 		llvm.X86_FP80TypeKind, llvm.FP128TypeKind, llvm.PPC_FP128TypeKind:
 		return true
 	}
@@ -161,7 +161,7 @@ type arrayType struct {
 func Array(n uint64, elem Type) Type { return arrayType{n, elem} }
 func (a arrayType) String() string   { return fmt.Sprintf("[%d x %v]", a.n, a.elem) }
 func (a arrayType) match(s *state, t llvm.Type, l location) error {
-	if t.TypeKind() != llvm.ArrayTypeKind || arrayLength(t) != a.n {
+	if t.TypeKind() != llvm.ArrayTypeKind || t.ArrayLength64() != a.n {
 		return mismatch(l, a, t)
 	}
 	return match(a.elem, s, t.ElementType(), l.child(" element"))
@@ -436,5 +436,5 @@ func Bits(t llvm.Type) (uint64, error) {
 	if scalar.TypeKind() != llvm.IntegerTypeKind && !isFloat(scalar) {
 		return 0, fmt.Errorf("%s has no integer/floating bit width", t)
 	}
-	return scalarBits(t), nil
+	return uint64(t.ScalarSizeInBits()), nil
 }

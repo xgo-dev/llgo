@@ -30,3 +30,6 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
+
+// Intrinsic bindings from xgo-dev/llvm#60; remove this pin once available upstream.
+replace github.com/xgo-dev/llvm => github.com/cpunion/llvm v0.9.4-0.20261107152036-d6da0b2d4c50

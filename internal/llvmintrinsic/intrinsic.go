@@ -16,9 +16,11 @@ type Intrinsic struct {
 
 type Binding struct {
 	id        int
+	base      string
 	name      string
 	requested string
 	signature llvm.Type
+	overloads []llvm.Type
 	plan      *Plan
 }
 
@@ -43,17 +45,21 @@ func (i Intrinsic) Resolve(signature llvm.Type, options ...Option) (*Binding, er
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i.Name, err)
 	}
-	canonical, _, name, immargs, err := resolveNative(id, signature, llvm.Module{}, "")
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i.Name, err)
+	overloads, ok := llvm.MatchIntrinsicSignature(id, signature)
+	if !ok {
+		return nil, fmt.Errorf("%s: signature does not match LLVM's intrinsic signature", i.Name)
 	}
-	if i.Name != baseName(id) && i.Name != name {
+	base := llvm.IntrinsicName(id)
+	mod := signature.Context().NewModule("intrinsic.types")
+	name := mod.IntrinsicName(id, overloads)
+	mod.Dispose()
+	if i.Name != base && i.Name != name {
 		return nil, fmt.Errorf("%s: name does not match declaration; expected %q", i.Name, name)
 	}
-	for _, index := range immargs {
+	for _, index := range llvm.IntrinsicImmediateArguments(id, signature) {
 		plan.rule(index).constant = true
 	}
-	return &Binding{id: id, name: name, requested: i.Name, signature: canonical, plan: plan}, nil
+	return &Binding{id: id, base: base, name: name, requested: i.Name, signature: signature, overloads: overloads, plan: plan}, nil
 }
 
 func (b *Binding) CheckArguments(args ...llvm.Value) error {
@@ -69,15 +75,17 @@ func (b *Binding) Declare(mod llvm.Module) (llvm.Value, error) {
 	if mod.IsNil() || mod.Context() != b.signature.Context() {
 		return llvm.Value{}, fmt.Errorf("%s: module has a different LLVM context", b.name)
 	}
-	required := ""
-	if b.requested != baseName(b.id) {
-		required = b.requested
+	name := mod.IntrinsicName(b.id, b.overloads)
+	if b.requested != b.base && b.requested != name {
+		return llvm.Value{}, fmt.Errorf("%s: explicit intrinsic name does not match destination module", b.name)
 	}
-	_, decl, _, _, err := resolveNative(b.id, b.signature, mod, required)
-	if err != nil {
-		return llvm.Value{}, fmt.Errorf("%s: %w", b.name, err)
+	if existing := mod.NamedValue(name); !existing.IsNil() {
+		if existing.IsAFunction().IsNil() || existing.GlobalValueType() != b.signature ||
+			!existing.IsDeclaration() || existing.FunctionCallConv() != llvm.CCallConv {
+			return llvm.Value{}, fmt.Errorf("%s: conflicting LLVM intrinsic declaration", b.name)
+		}
 	}
-	return decl, nil
+	return mod.IntrinsicDeclaration(b.id, b.overloads), nil
 }
 
 // Call preserves the canonical function type, including LLVM varargs. Operand

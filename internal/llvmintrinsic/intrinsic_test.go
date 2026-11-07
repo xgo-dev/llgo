@@ -45,7 +45,7 @@ func TestResolveWithoutSyntheticCall(t *testing.T) {
 	if id == 0 {
 		t.Fatal("missing linked NVVM intrinsic")
 	}
-	if _, err := (Intrinsic{Name: baseName(id)}).Resolve(sampleSignature(ctx, id, 0)); err != nil {
+	if _, err := (Intrinsic{Name: llvm.IntrinsicName(id)}).Resolve(sampleSignature(t, ctx, id, 0)); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -116,7 +116,13 @@ func (r *operandRule) check(index int, value llvm.Value) error {
 		return fmt.Errorf("argument %d must be an immediate constant", index+1)
 	}
 	for _, interval := range r.ranges {
-		if !integerInRange(value, interval.low, interval.high, interval.unsigned) {
+		var within bool
+		if interval.unsigned {
+			within = value.ConstUintInRange(interval.low, interval.high)
+		} else {
+			within = value.ConstIntInRange(int64(interval.low), int64(interval.high))
+		}
+		if !within {
 			return fmt.Errorf("argument %d must be a constant integer in %s", index+1, interval)
 		}
 	}
