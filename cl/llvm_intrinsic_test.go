@@ -169,7 +169,7 @@ func TestLLVMIntrinsicLinkErrors(t *testing.T) {
 		{"generic", "llvm.ctpop", "func f[T ~uint32](x T) T { return x }", "", "non-generic"},
 		{"environment", "llvm.ctpop", "//llgo:env\nfunc f(x uint32) uint32 { return x }", "", "do not support //llgo:env"},
 		{"target-specific", "llvm.x86.sse2.pause", "func f()", "", "only portable scalar math"},
-		{"memory", "llvm.memcpy", "func f()", "", "only portable scalar math"},
+		{"atomic-memory", "llvm.memcpy.element.unordered.atomic", "func f()", "", "only portable scalar math"},
 		{"function-value-immarg", "llvm.ctlz", "func f(x uint32, z bool) uint32", "var Value = f", "cannot use LLVM intrinsic as a function value"},
 		{"go", "llvm.ctpop", "func f(x uint32) uint32", "func use() { go f(1) }", "use a Go wrapper for go or defer"},
 		{"defer", "llvm.ctpop", "func f(x uint32) uint32", "func use() { defer f(1) }", "use a Go wrapper for go or defer"},

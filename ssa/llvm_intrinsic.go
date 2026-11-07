@@ -9,11 +9,10 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// llvmScalarIntrinsics is a support policy, not a signature table. LLVM owns
+// llvmSupportedIntrinsics is a support policy, not a signature table. LLVM owns
 // the signatures, overloads, attributes and additional verifier constraints.
-// Keep this surface limited to portable scalar math: other intrinsic families
-// can require target features, special calling conventions or memory semantics.
-var llvmScalarIntrinsics = []string{
+// Other families can require target features or special calling conventions.
+var llvmSupportedIntrinsics = []string{
 	"abs", "bitreverse", "bswap", "ctlz", "cttz", "ctpop", "fshl", "fshr",
 	"smax", "smin", "umax", "umin",
 	"sadd.sat", "uadd.sat", "ssub.sat", "usub.sat", "sshl.sat", "ushl.sat",
@@ -23,13 +22,14 @@ var llvmScalarIntrinsics = []string{
 	"pow", "powi", "fma", "fmuladd", "floor", "ceil", "trunc", "rint",
 	"nearbyint", "round", "roundeven", "copysign",
 	"minnum", "maxnum", "minimum", "maximum", "fptosi.sat", "fptoui.sat",
+	"memcpy", "memcpy.inline", "memmove", "memset", "memset.inline",
 }
 
 // Resolve the policy names through LLVM once. Name recognition belongs to
 // LookupIntrinsicID; LLGo only decides which resolved families it supports.
-var llvmScalarIntrinsicNames = sync.OnceValue(func() map[int]string {
-	names := make(map[int]string, len(llvmScalarIntrinsics))
-	for _, family := range llvmScalarIntrinsics {
+var llvmIntrinsicNames = sync.OnceValue(func() map[int]string {
+	names := make(map[int]string, len(llvmSupportedIntrinsics))
+	for _, family := range llvmSupportedIntrinsics {
 		name := "llvm." + family
 		if id := llvm.LookupIntrinsicID(name); id != 0 {
 			names[id] = name
@@ -38,7 +38,7 @@ var llvmScalarIntrinsicNames = sync.OnceValue(func() map[int]string {
 	return names
 })
 
-// LLVMIntrinsic is a checked scalar intrinsic declaration. It uses LLVM value
+// LLVMIntrinsic is a checked intrinsic declaration. It uses LLVM value
 // types, independently of the platform C ABI and the Go aggregate storage ABI.
 type LLVMIntrinsic struct {
 	id      int
@@ -56,9 +56,9 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 	if id == 0 {
 		return nil, fmt.Errorf("unknown LLVM intrinsic %q", name)
 	}
-	base, supported := llvmScalarIntrinsicNames()[id]
+	base, supported := llvmIntrinsicNames()[id]
 	if !supported {
-		return nil, fmt.Errorf("LLVM intrinsic %q is not supported: only portable scalar math intrinsics are supported", name)
+		return nil, fmt.Errorf("LLVM intrinsic %q is not supported: only portable scalar math and memory operations are supported", name)
 	}
 	if sig.Recv() != nil || sig.TypeParams().Len() != 0 || sig.Variadic() {
 		return nil, fmt.Errorf("LLVM intrinsic %q requires a non-generic, non-variadic function without a receiver", name)
@@ -66,6 +66,14 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 	for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 		for i := 0; i < tuple.Len(); i++ {
 			t := tuple.At(i).Type()
+			if strings.HasPrefix(base, "llvm.mem") {
+				if _, ok := t.Underlying().(*types.Pointer); ok {
+					continue
+				}
+				if basic, ok := t.Underlying().(*types.Basic); ok && basic.Kind() == types.UnsafePointer {
+					continue
+				}
+			}
 			basic, ok := t.Underlying().(*types.Basic)
 			if !ok || basic.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 {
 				return nil, fmt.Errorf("LLVM intrinsic %q: unsupported type %s; expected a scalar boolean, integer or floating-point type", name, t)
@@ -85,7 +93,7 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 	// overloads before building a call. Use a short-lived module to query that
 	// machinery without polluting the output module, then run the verifier to
 	// catch constraints beyond the IIT signature (such as bswap's bit width).
-	// Zero scalar constants also satisfy the supported families' immarg flags.
+	// Zero constants also satisfy the supported families' immediate operands.
 	mod := p.ctx.NewModule("intrinsic.validation")
 	defer mod.Dispose()
 	fn := llvm.AddFunction(mod, "check", llvm.FunctionType(p.tyVoid(), nil, false))
@@ -110,6 +118,11 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 		return nil, fmt.Errorf("invalid LLVM intrinsic %q: %s", name, strings.TrimSpace(err.Error()))
 	}
 	immarg := llvm.AttributeKindID("immarg")
+	if base == "llvm.memcpy.inline" || base == "llvm.memset.inline" {
+		// LLVM's verifier also requires a constant length, although its IIT
+		// declaration does not attach an immarg attribute to this operand.
+		d.immargs = append(d.immargs, 2)
+	}
 	for i := range d.params {
 		if !decl.GetEnumAttributeAtIndex(i+1, immarg).IsNil() {
 			d.immargs = append(d.immargs, i)
@@ -135,7 +148,7 @@ func (b Builder) CallLLVMIntrinsic(d *LLVMIntrinsic, args ...Expr) (Expr, error)
 		// LLVM immarg permits integer or floating-point literals. The current
 		// supported math families use integer/boolean immediate flags.
 		if v.IsAConstantInt().IsNil() && v.IsAConstantFP().IsNil() {
-			return Nil, fmt.Errorf("%s: argument %d must be an immediate constant (immarg)", d.name, i+1)
+			return Nil, fmt.Errorf("%s: argument %d must be an immediate constant", d.name, i+1)
 		}
 	}
 	if existing := b.Pkg.mod.NamedFunction(d.name); !existing.IsNil() {
