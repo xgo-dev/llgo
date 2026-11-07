@@ -303,7 +303,9 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 			f := t.Field(i)
 			var values []llvm.Value
 			values = append(values, b.Str(f.Name()).impl)
-			values = append(values, b.abiType(abi.PublicType(f.Type())).impl)
+			// Keep the stored representation: Go closures have two words, while
+			// native callbacks have one. reflect.Field exposes the public type.
+			values = append(values, b.abiType(f.Type()).impl)
 			values = append(values, prog.IntVal(uint64(offsets[i]), prog.Uintptr()).impl)
 			values = append(values, b.Str(t.Tag(i)).impl)
 			values = append(values, prog.BoolVal(f.Embedded()).impl)
@@ -549,7 +551,7 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 	case *types.Struct:
 		children := make([]types.Type, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
-			children = append(children, abi.PublicType(t.Field(i).Type()))
+			children = append(children, t.Field(i).Type())
 		}
 		return children
 	case *types.Named:
