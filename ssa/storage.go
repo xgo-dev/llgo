@@ -39,9 +39,7 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 		return false
 	}
 	switch t.kind {
-	case vkFuncPtr:
-		return !p.isNativeCallbackType(t.raw.Type)
-	case vkPtr, vkMap, vkChan:
+	case vkPtr, vkFuncPtr, vkMap, vkChan:
 		return true
 	default:
 		return false

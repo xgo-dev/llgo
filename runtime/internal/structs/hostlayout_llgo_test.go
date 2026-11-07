@@ -24,14 +24,17 @@ type aliasProbe struct {
 
 func TestHostLayoutCompatibility(t *testing.T) {
 	const size = unsafe.Sizeof(layoutProbe{})
-	if size != 8 {
-		t.Fatalf("source size=%d, want 8", size)
+	// Keep the trailing zero-sized field inside the object.
+	const alignment = unsafe.Alignof(layoutProbe{})
+	const want = (8 + 1 + alignment - 1) &^ (alignment - 1)
+	if size != want {
+		t.Fatalf("source size=%d, want %d", size, want)
 	}
 	if got := reflect.TypeOf(layoutProbe{}).Size(); got != size {
 		t.Fatalf("reflected size=%d, source=%d", got, size)
 	}
-	if got := unsafe.Sizeof([2]layoutProbe{}); got != 16 {
-		t.Fatalf("array size=%d, want 16", got)
+	if got := unsafe.Sizeof([2]layoutProbe{}); got != 2*size {
+		t.Fatalf("array size=%d, want %d", got, 2*size)
 	}
 	if got := unsafe.Offsetof(layoutProbe{}.Tail); got != 8 {
 		t.Fatalf("tail offset=%d, want 8", got)

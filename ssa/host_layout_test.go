@@ -103,11 +103,11 @@ const Offset = unsafe.Offsetof(Record{}.U)
 			fnOffset := align(innerSize, word)
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Nested").Type(), align(fnOffset+2*word, max(innerAlign, word)), max(innerAlign, word), []int64{0, 0, fnOffset})
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("HostTail").Type(), align(9, tc.alignment), tc.alignment, []int64{0, 0, 8})
-			fnOffset = align(int64(prog.PointerSize()), word)
+			fnOffset = word
 			for _, name := range []string{"Callbacks", "AliasCallbacks"} {
 				checkHostLayout(t, prog, sizes, pkg.Scope().Lookup(name).Type(), fnOffset+2*word, word, []int64{0, 0, fnOffset})
 			}
-			fnOffset = align(2*int64(prog.PointerSize()), word)
+			fnOffset = 2 * word
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("CallbackArrays").Type(), fnOffset+4*word, word, []int64{0, 0, fnOffset})
 		})
 	}

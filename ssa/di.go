@@ -250,11 +250,6 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 		return b.createPointerType(name, b.prog.rawType(t.Elem()), pos)
 	case *types.Named:
 		return b.createTypedefType(name, ty, b.typeDeclarationPosition(t, pos))
-	case *types.Alias:
-		if b.prog.isNativeCallbackType(t) {
-			return b.createFuncPtrType(name, ty, pos)
-		}
-		return b.diType(b.prog.rawType(types.Unalias(t)), pos)
 	case *types.Interface:
 		ty := b.prog.rtType("Iface")
 		return b.createInterfaceType(name, ty)
@@ -781,7 +776,7 @@ func (b diBuilder) createTupleType(name string, ty Type, pos token.Position) DIT
 }
 
 func (b diBuilder) createFuncPtrType(name string, ty Type, pos token.Position) DIType {
-	sig := ty.RawType().Underlying().(*types.Signature)
+	sig := ty.RawType().(*types.Signature)
 	params := make([]llvm.Metadata, sig.Params().Len()+1)
 	if results := sig.Results(); results.Len() != 0 {
 		params[0] = b.diType(b.prog.rawType(results), pos).ll

@@ -132,11 +132,9 @@ func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, i
 
 // Builder is a helper for constructing ABI types.
 type Builder struct {
-	buf           []byte
-	PtrSize       uintptr
-	Sizes         types.Sizes
-	NativeFunc    func(types.Type) bool
-	NativePtrSize uintptr
+	buf     []byte
+	PtrSize uintptr
+	Sizes   types.Sizes
 }
 
 // New creates a new ABI type Builder.
@@ -154,13 +152,6 @@ func (b *Builder) Init(ptrSize uintptr, sizes types.Sizes) {
 
 // TypeName returns the ABI type name for the specified type.
 func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
-	// An explicitly native alias of an unnamed signature must not share a
-	// runtime descriptor with the ordinary Go closure signature.
-	if _, alias := t.(*types.Alias); alias && b.isNativeFunc(t) {
-		if sig, unnamed := types.Unalias(t).(*types.Signature); unnamed {
-			return "_native_" + b.FuncName(sig), true
-		}
-	}
 	switch t := t.(type) {
 	case *types.Basic:
 		return BasicName(t), true
@@ -475,7 +466,3 @@ func scopeIndices(obj types.Object) string {
 }
 
 // -----------------------------------------------------------------------------
-
-func (b *Builder) isNativeFunc(t types.Type) bool {
-	return b.NativeFunc != nil && b.NativeFunc(t)
-}

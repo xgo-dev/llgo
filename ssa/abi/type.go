@@ -237,14 +237,11 @@ func (b *Builder) funcStr(t *types.Signature) string {
 }
 
 func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
-	if b.isNativeFunc(t) {
-		flag |= abi.TFlagNativeFunc
-	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		flag |= abi.TFlagNamed
 	case *types.Named:
-		return flag | (b.TFlag(t.Underlying()) & ^abi.TFlagExtraStar) | abi.TFlagNamed
+		return (b.TFlag(t.Underlying()) & ^abi.TFlagExtraStar) | abi.TFlagNamed
 	case *types.Struct:
 		if IsClosure(t) {
 			flag |= abi.TFlagClosure
@@ -358,9 +355,6 @@ func (b *Builder) Kind(t types.Type) abi.Kind {
 }
 
 func (b *Builder) Align(t types.Type) uintptr {
-	if b.isNativeFunc(t) {
-		return b.NativePtrSize
-	}
 	return uintptr(b.Sizes.Alignof(t))
 }
 
@@ -369,10 +363,6 @@ func (b *Builder) FieldAlign(t types.Type) uintptr {
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
-	if b.isNativeFunc(t) {
-		// A native code pointer cannot retain a Go closure environment.
-		return 0
-	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -424,9 +414,6 @@ func (b *Builder) PtrBytes(t types.Type) uintptr {
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
-	if b.isNativeFunc(t) {
-		return b.NativePtrSize
-	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {

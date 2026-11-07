@@ -126,11 +126,11 @@ func (v Value) pointer() unsafe.Pointer {
 	if v.typ_.IsClosure() {
 		return v.ptr
 	}
-	if !v.typ().IsNativeFunc() && (v.typ().Size() != goarch.PtrSize || !v.typ().Pointers()) {
+	if v.typ().Size() != goarch.PtrSize || !v.typ().Pointers() {
 		panic("can't call pointer on a non-pointer Value")
 	}
 	if v.flag&flagIndir != 0 {
-		return loadDirectValue(v.typ(), v.ptr)
+		return *(*unsafe.Pointer)(v.ptr)
 	}
 	return v.ptr
 }
@@ -166,7 +166,7 @@ func packEfaceData(v Value) unsafe.Pointer {
 		}
 		return ptr
 	case v.flag&flagIndir != 0:
-		return loadDirectValue(t, v.ptr)
+		return *(*unsafe.Pointer)(v.ptr)
 	default:
 		return v.ptr
 	}
@@ -588,7 +588,7 @@ func (v Value) Elem() Value {
 		kind := typ.Kind()
 		if typ.IsClosure() {
 			kind = abi.Func
-		} else if kind == abi.Func && !typ.IsNativeFunc() {
+		} else if kind == abi.Func {
 			typ = closureOf(typ.FuncType())
 		}
 		fl |= flag(kind)
@@ -741,7 +741,7 @@ var uint8Type = rtypeOf(uint8(0))
 // value. Function values occupy LLGo's two-word closure.
 func funcElem(typ *abi.Type) (*abi.Type, abi.Kind) {
 	kind := typ.Kind()
-	if kind == abi.Func && !typ.IsNativeFunc() {
+	if kind == abi.Func {
 		return closureOf(typ.FuncType()), abi.Func
 	}
 	if typ.IsClosure() {
@@ -926,11 +926,7 @@ func (v Value) IsNil() bool {
 		}
 		ptr := v.ptr
 		if v.flag&flagIndir != 0 {
-			if v.typ().IsClosure() {
-				ptr = *(*unsafe.Pointer)(ptr)
-			} else {
-				ptr = loadDirectValue(v.typ(), ptr)
-			}
+			ptr = *(*unsafe.Pointer)(ptr)
 		}
 		return ptr == nil
 	case Interface, Slice:
@@ -1055,11 +1051,7 @@ func (v Value) SetZero() {
 		*(*unsafeheaderSlice)(v.ptr) = unsafeheaderSlice{}
 	case Interface:
 		*(*[2]unsafe.Pointer)(v.ptr) = [2]unsafe.Pointer{}
-	case Func:
-		// Native callbacks may be narrower than Go pointers. Go closures
-		// also need their environment cleared, not only their entry word.
-		typedmemclr(v.typ(), v.ptr)
-	case Chan, Map, Pointer, UnsafePointer:
+	case Chan, Func, Map, Pointer, UnsafePointer:
 		*(*unsafe.Pointer)(v.ptr) = nil
 	case Array, Struct:
 		typedmemclr(v.typ(), v.ptr)
@@ -1273,9 +1265,7 @@ func (v Value) Set(x Value) {
 			typedmemmove(v.typ(), v.ptr, x.ptr)
 		}
 	} else {
-		// A direct interface word can contain a narrower native callback
-		// (or a one-field aggregate of it). Copy only the destination size.
-		typedmemmove(v.typ(), v.ptr, unsafe.Pointer(&x.ptr))
+		*(*unsafe.Pointer)(v.ptr) = x.ptr
 	}
 }
 
@@ -2009,7 +1999,7 @@ func New(typ Type) Value {
 		panic("reflect: New(nil)")
 	}
 	t := &typ.(*rtype).t
-	if isGoFunc(t) {
+	if t.Kind() == abi.Func {
 		t = closureOf(t.FuncType())
 	}
 	pt := ptrTo(t)
@@ -2027,7 +2017,7 @@ func New(typ Type) Value {
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
 	t := typ.(*rtype)
-	if t.Kind() == Func && !t.t.IsNativeFunc() {
+	if t.Kind() == Func {
 		t = toRType(closureOf(t.t.FuncType()))
 	}
 	return Value{t.ptrTo(), p, fl}
@@ -2043,11 +2033,11 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		v = makeMethodValue(context, v)
 	}
 	typ := v.typ()
-	if isGoFunc(typ) {
+	if typ.Kind() == abi.Func {
 		typ = closureOf(typ.FuncType())
 	}
 	assignDst := dst
-	if isGoFunc(dst) {
+	if dst.Kind() == abi.Func {
 		// Function values use LLGo's closure struct as their physical
 		// representation. Compare against the same canonical closure type
 		// as the source value, while retaining dst for the returned Value.
@@ -2374,9 +2364,6 @@ var (
 )
 
 func toFFIType(typ *abi.Type) *ffi.Type {
-	if typ.IsNativeFunc() {
-		return ffi.TypePointer
-	}
 	// Vector storage (including zero-length arrays and enclosing aggregates)
 	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
 	// descriptions cannot represent its vector calling convention. Check before
@@ -2525,7 +2512,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 			args = append(args, unsafe.Pointer(&ptr))
 		} else {
 			if v.flag&flagIndir != 0 {
-				fn = loadDirectValue(v.typ(), v.ptr)
+				fn = *(*unsafe.Pointer)(v.ptr)
 			} else {
 				fn = v.ptr
 			}
@@ -2675,7 +2662,11 @@ func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
 }
 
 func toRuntimeType(typ *abi.Type) *abi.Type {
-	return physicalType(typ)
+	switch typ.Kind() {
+	case abi.Func:
+		return closureOf((*abi.FuncType)(unsafe.Pointer(typ)))
+	}
+	return typ
 }
 
 // resolveIndirectValue converts Value's indirect reference to direct based on abi.Type, clears flagIndir
@@ -3020,7 +3011,7 @@ func copyVal(typ *abi.Type, fl flag, ptr unsafe.Pointer) Value {
 		typedmemmove(typ, c, ptr)
 		return Value{typ, c, fl | flagIndir}
 	}
-	return Value{typ, loadDirectValue(typ, ptr), fl}
+	return Value{typ, *(*unsafe.Pointer)(ptr), fl}
 }
 
 // methodReceiver returns information about the receiver
@@ -3143,7 +3134,7 @@ func convertOp(dst, src *abi.Type) func(Value, Type) Value {
 			return cvtDirect
 		}
 	case Func:
-		if dst.Kind() == abi.Func && src.IsNativeFunc() == dst.IsNativeFunc() {
+		if dst.Kind() == abi.Func {
 			return cvtFunc
 		}
 	}
@@ -3382,7 +3373,7 @@ func cvtDirect(v Value, typ Type) Value {
 func cvtFunc(v Value, typ Type) Value {
 	f := v.flag
 	t := typ.common()
-	if isGoFunc(t) {
+	if t.Kind() == abi.Func {
 		t = closureOf(t.FuncType())
 	}
 	ptr := v.ptr
@@ -3600,11 +3591,3 @@ func sliceclear(t *abi.Type, s unsafeheaderSlice)
 
 //go:linkname ifaceE2I github.com/xgo-dev/llgo/runtime/internal/runtime.IfaceE2I
 func ifaceE2I(t *abi.Type, src any, dst unsafe.Pointer)
-
-// loadDirectValue reads a direct interface value without reading past a narrow
-// native callback slot. The rest of the Go interface word stays zero.
-func loadDirectValue(typ *abi.Type, ptr unsafe.Pointer) unsafe.Pointer {
-	var word unsafe.Pointer
-	typedmemmove(typ, unsafe.Pointer(&word), ptr)
-	return word
-}

@@ -179,10 +179,6 @@ const (
 	// TFflagClosure means the structType is a closure
 	TFlagClosure TFlag = 1 << 5
 
-	// TFlagNativeFunc identifies an explicit C/Windows code pointer, not a
-	// Go function value with a closure environment.
-	TFlagNativeFunc TFlag = 1 << 6
-
 	// TFlagGCMaskOnDemand means that the GC pointer bitmask will be
 	// computed on demand at runtime instead of being precomputed at
 	// compile time. If this flag is set, the GCData field effectively
@@ -658,8 +654,3 @@ func lastDot(s string) int {
 const MaxPtrmaskBytes = 2048
 
 // -----------------------------------------------------------------------------
-
-// IsNativeFunc reports whether this function type stores a native code pointer.
-func (t *Type) IsNativeFunc() bool {
-	return t.Kind() == Func && t.TFlag&TFlagNativeFunc != 0
-}

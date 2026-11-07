@@ -110,10 +110,10 @@ func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	case *types.Signature:
 		// A layout marker never changes a Go closure into a C callback.
 		if native {
-			// Explicit native function types use one physical code pointer in
-			// every container, including ordinary Go variables and arrays.
-			width := int64(prog.PointerSize())
-			return sourceLayout{width, width}
+			// Keep the existing Go storage width, including for address-taking.
+			// Native-width callback slots on wasm32 need a separate representation.
+			word := int64(prog.GoWordSize())
+			return sourceLayout{word, word}
 		}
 	case *types.Array:
 		return arraySourceLayout(p.hostFieldLayout(u.Elem(), native), u.Len())
