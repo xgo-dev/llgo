@@ -37,9 +37,9 @@ Field-insensitivity, unknown indirect calls, and heap retention for map/channel 
 
 ## Follow-up measurements
 
-Previous #2997 implementation `2508246b0`, rebased to `9ee3ba5e2`, versus current implementation `ccda44f8f`, both on main `be65dbdeb` (including #3010). The preceding implementation is `05b4ab0d3`, on that same main.
+Previous #2997 implementation `2508246b0`, rebased to `9ee3ba5e2`, versus measured implementation `ccda44f8f`, both on main `be65dbdeb` (including #3010). The preceding implementation is `05b4ab0d3`, on that same main.
 
-M4 Max, macOS/arm64, LLVM 22.1.8, Go 1.27.3. LLGo: `-O3 -lto=full`; Go: default optimization. Same source and matching checksums; medians of five sequential rounds (baseline, preceding implementation, current implementation, Go). Allocation bytes are totals for 100,000 calls; time is ns/call.
+M4 Max, macOS/arm64, LLVM 22.1.8, Go 1.27.3. LLGo: `-O3 -lto=full`; Go: default optimization. Same source and matching checksums; medians of five sequential rounds (baseline, preceding implementation, measured implementation, Go). Allocation bytes are totals for 100,000 calls; time is ns/call.
 
 | Probe | LLGo before bytes | LLGo after bytes | Go bytes | LLGo before ns/call | LLGo after ns/call | Go ns/call |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
