@@ -37,30 +37,30 @@ Field-insensitivity, unknown indirect calls, and heap retention for map/channel 
 
 ## Follow-up measurements
 
-Apple M4 Max, macOS/arm64, Go 1.27.3, LLVM 22.1.8. Compare the previous PR implementation (`2508246b0`, rebased to `4f39b7d5b`) with this follow-up (`9ee0d75aa`), both on upstream `92a62c9e9`, including merged #3003. Both use `-O3 -lto=full` and matching runtime source roots. Five sequential alternating process pairs, 100,000 calls/probe; medians below. Go builds the same source with its default optimizations.
+Apple M4 Max, macOS/arm64, Go 1.27.3, LLVM 22.1.8. Compare the previous PR implementation (`2508246b0`, rebased to `ccfc1061d`) with this follow-up (`4d0e32f9b`), both on upstream `9a9cf779b`, including merged #3003. Both use `-O3 -lto=full` and matching runtime source roots. Five sequential alternating process pairs, 100,000 calls/probe; medians below. Go builds the same source with its default optimizations.
 
 | Probe | LLGo before bytes | LLGo after bytes | Go bytes | LLGo before ns/call | LLGo after ns/call | Go ns/call |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| fixed-slice | 3,197,616 | 80 | 0 | 18.48 | 1.31 | 1.73 |
-| dynamic-slice-small | 3,200,784 | 80 | 0 | 16.95 | 5.62 | 2.12 |
-| dynamic-slice-large | 14,400,080 | 14,395,904 | 12,838,032 | 60.34 | 59.35 | 26.79 |
-| fixed-capacity | 3,200,656 | 80 | 0 | 17.19 | 1.54 | 2.04 |
-| string-to-bytes | 1,600,896 | 80 | 0 | 11.26 | 3.35 | 3.76 |
-| readonly-string-bytes | 14,399,568 | 80 | 0 | 66.61 | 2.06 | 1.94 |
-| temporary-string-compare | 14,398,848 | 80 | 0 | 101.52 | 38.54 | 3.72 |
-| temporary-map-lookup | 17,599,152 | 3,198,400 | 0 | 82.02 | 21.13 | 7.65 |
-| bytes-to-string | 1,602,944 | 0 | 0 | 12.57 | 3.00 | 3.57 |
-| string-to-runes | 4,799,600 | 0 | 0 | 26.52 | 4.81 | 9.79 |
-| runes-to-string | 3,198,336 | 0 | 0 | 20.09 | 7.62 | 19.92 |
-| string-concat | 3,202,560 | 0 | 0 | 19.66 | 4.76 | 8.78 |
-| small-map | 22,400,416 | 0 | 0 | 113.73 | 9.38 | 9.22 |
-| known-interface | 3,200,160 | 0 | 0 | 21.82 | 0.78 | 0.90 |
+| fixed-slice | 3,197,616 | 80 | 0 | 17.00 | 1.29 | 1.72 |
+| dynamic-slice-small | 3,201,264 | 80 | 0 | 15.80 | 5.57 | 2.08 |
+| dynamic-slice-large | 14,400,080 | 14,395,760 | 12,838,032 | 56.17 | 60.03 | 25.80 |
+| fixed-capacity | 3,198,288 | 80 | 0 | 15.74 | 1.43 | 1.98 |
+| string-to-bytes | 1,600,576 | 80 | 0 | 12.73 | 2.98 | 3.65 |
+| readonly-string-bytes | 14,400,000 | 80 | 0 | 59.37 | 1.87 | 1.95 |
+| temporary-string-compare | 14,398,848 | 80 | 0 | 95.56 | 37.00 | 3.74 |
+| temporary-map-lookup | 17,599,488 | 3,198,400 | 0 | 75.94 | 22.96 | 7.62 |
+| bytes-to-string | 1,602,752 | 0 | 0 | 11.92 | 2.94 | 3.55 |
+| string-to-runes | 4,799,600 | 0 | 0 | 26.43 | 5.21 | 10.20 |
+| runes-to-string | 3,197,568 | 0 | 0 | 19.12 | 6.78 | 19.43 |
+| string-concat | 3,203,808 | 0 | 0 | 18.03 | 4.61 | 8.58 |
+| small-map | 22,402,432 | 0 | 0 | 102.94 | 8.76 | 9.14 |
+| known-interface | 3,200,480 | 0 | 0 | 19.69 | 0.76 | 0.81 |
 
-All 14 checksums agree across all runs. Allocated bytes are totals for 100,000 calls, not per-call counts; the observed 80-byte floor is retained. The 128-byte dynamic-slice heap control keeps its allocations: 60.34 → 59.35 ns/call in this run. An earlier sample on the previous main showed a **9.9% slowdown** (55.62 → 61.10 ns/call). The extra buffer/fallback path remains a cost to monitor; the timing variation does not establish a heap-path speedup or a universal slowdown estimate. Temporary map lookup still has the runtime allocation described above. String equality also remains slower than cmd/compile despite eliminating the copied storage.
+All 14 checksums agree across all runs. Allocated bytes are totals for 100,000 calls, not per-call counts; the observed 80-byte floor is retained. The 128-byte dynamic-slice heap control retains its allocations and slows from 56.17 to 60.03 ns/call (**6.9%**). An earlier sample on a previous main showed a 9.9% slowdown, while another showed a small improvement. The buffer/fallback path has a cost; these samples do not establish a universal slowdown estimate. Temporary map lookup still has the runtime allocation described above. String equality remains slower than cmd/compile despite eliminating copied storage.
 
-The probe executable grows from 1,368,032 to 1,368,480 bytes (+448 bytes, 0.033%). These are isolated probes, not application throughput or compilation-speed claims. Earlier issue-specific and build-cost measurements remain labeled with their original revisions in [`benchmark/escape/README.md`](../benchmark/escape/README.md).
+The probe executable grows from 1,368,032 to 1,384,992 bytes (+16,960 bytes, 1.24%). The previous-main follow-up measured +448 bytes (0.033%); the current measurements supersede those size figures. These are isolated probes, not application throughput or compilation-speed claims. Earlier issue-specific measurements remain labeled with their original revisions in [`benchmark/escape/README.md`](../benchmark/escape/README.md).
 
-Validation includes race-tested engine proofs (94.4% statement coverage), compiler/runtime IR and metadata suites, recursive/cross-package cold/warm cache tests with 1/8 build workers, native public language tests, native default/full-LTO escape tests, and actual WASI/Emscripten memory32/memory64 runs. The same new semantic cases also pass cmd/compile. Pointer-bearing explicit-root storage deliberately keeps its conservative placement.
+Validation includes race-tested engine proofs (94.5% statement coverage), compiler/runtime IR and metadata suites, recursive/cross-package cold/warm cache tests with 1/8 build workers, native public language tests, native default/full-LTO escape tests, and actual WASI/Emscripten memory32/memory64 runs. The same new semantic cases also pass cmd/compile. Pointer-bearing explicit-root storage deliberately keeps its conservative placement.
 
 ## Reproduce
 
