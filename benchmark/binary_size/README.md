@@ -10,6 +10,10 @@ smallest workloads for the per-commit lightweight size and timing gate.
 - `fmtprintf`: a hello world using `fmt.Printf`.
 - `texttemplate`: a heavier standard-library program using `text/template`.
 - `nilfault`: an import-free abnormal path that dereferences a nil pointer.
+- `reflectmetadata`: observes a method's name and signature without its Func.
+- `reflectcall`: invokes the reflected method, so its body must survive.
+- `reflectcallbacks`: looks up a fixed list of Gorm-style callback names and
+  invokes two hooks; the unused `UnrelatedJSON` method pulls in encoding/json.
 
 The first four programs must exit successfully with their expected output.
 `nilfault` must exit unsuccessfully with a nil-pointer diagnostic in every
@@ -104,3 +108,97 @@ For size comparisons, report linked bytes and final optimized bytes separately,
 with the same Binaryen version and flags for each compiler. Include JavaScript,
 manifest and symbol sidecars in deployment totals where present; a minimal WASI
 result does not establish parity for fmt, browser or embedded workloads.
+
+## IR-refined Drop with strong overrides
+
+The native macOS development experiment refines unresolved MethodByName sites
+from optimized package IR before running Drop. It uses the existing strong
+type overrides and native object archives; it does not rewrite package method
+tables or enable LTO. Only packages with unresolved reflection sites save an
+analysis-only `.reflect.bc` cache sidecar. The snapshot is captured before
+native codegen, is never linked, and contains no program-specific pruning.
+Missing required snapshots cause cache misses. Global visibility is checked
+again for every final program.
+
+The regression suite checks positive name recovery, mutable/escaping names,
+independent unknown lookups, cross-package mutation, and a cached dependency
+containing the actual reflection loop. Both symbols and runtime output are
+checked. The cache fixture asserts an actual cache hit on its second build:
+
+```sh
+go test -tags dev ./cl -run '^TestBuildAndCheckSymbolsFromTestdropIRReflection$' -count=1
+go test -tags dev ./internal/build -run '^TestReflectIR' -count=1
+```
+
+For a controlled comparison, build ordinary-main, IR-refined-strong, and
+IR-refined-Thin compilers against the same upstream revision, then run:
+
+```sh
+python3 dev/measure_deadcode_strong.py \
+  --baseline /path/to/llgo-main \
+  --strong /path/to/llgo-strong \
+  --thin /path/to/llgo-thin \
+  --gorm-module /path/to/prepared-gorm-module \
+  --linker /path/to/ld64.lld \
+  --output /tmp/llgo-strong-comparison --repeat 3
+```
+
+The prepared module must pin Gorm (the recorded experiment uses v1.31.2).
+All variants use the same runtime/source root, output path, `-a -Os -p=10`,
+embedded PCLN, omitted DWARF and final strip/sign steps. Run the matrix without
+other compiler/test jobs. Downloads are prepared before timing. Every Gorm
+binary runs the full schema test suite. The runner saves per-run commands,
+compiler hashes, section sizes, function symbols and execution logs.
+
+Compare method-slot decisions separately from final machine-code entries.
+Equal LiveSlots do not imply equal function counts: ThinLTO also imports,
+inlines, specializes, and removes code. The runner counts unique addresses in
+`__TEXT,__text` and checks them against Mach-O `LC_FUNCTION_STARTS`; a missing
+symbol alone is not proof of source-function DCE.
+
+To compare Drop's actual decisions, use diagnostic compiler overlays without
+changing either checkout:
+
+```sh
+python3 dev/audit_deadcode_live_slots.py \
+  --strong-root /path/to/strong-checkout \
+  --thin-root /path/to/thin-checkout \
+  --gorm-module /path/to/prepared-gorm-module \
+  --linker /path/to/ld64.lld \
+  --output /tmp/llgo-live-slots
+```
+
+This exports the full type-to-live-slot maps and compares their contents. The
+instrumented compilers are not used for timing or final-size measurements.
+
+### Recorded macOS comparison, 2026-11-07
+
+All three compilers use upstream `0c9212756`; the Thin control reapplies the two
+commits from PR #3008 to that base. These are three-round medians from a serial
+matrix, not the older PR's measurements. Raw sample metrics, compiler hashes,
+analysis-map hashes and reproduction details are in
+[`dev/deadcode_strong_results.json`](../../dev/deadcode_strong_results.json).
+
+| Case | Mode | Bytes | Function entries | Wall seconds |
+|---|---|---:|---:|---:|
+| reflectcallbacks | main Drop | 1,687,600 | 3,099 | 7.16 |
+| reflectcallbacks | IR-refined Drop + strong overrides | 1,027,616 | 1,330 | 7.11 |
+| reflectcallbacks | IR-refined Drop + ThinLTO | 862,624 | 814 | 6.62 |
+| gormschema | main Drop | 4,585,440 | 7,647 | 11.06 |
+| gormschema | IR-refined Drop + strong overrides | 3,512,784 | 4,651 | 10.83 |
+| gormschema | IR-refined Drop + ThinLTO | 3,314,240 | 3,632 | 15.11 |
+
+The full LiveSlots maps match between strong overrides and ThinLTO: 79 types /
+112 slots for reflectcallbacks, and 285 types / 649 slots for Gorm. Both remove
+UnrelatedJSON. Final function counts differ even with identical method-slot
+decisions. On Gorm, strong overrides are 23.39% smaller than ordinary main Drop,
+5.99% larger than ThinLTO, and use 28.30% less wall time than ThinLTO.
+
+All 18 matrix binaries execute successfully. All nine Gorm binaries pass the
+62 top-level schema tests. Positive and conservative reflection regressions,
+including an asserted dependency cache hit, also pass.
+
+This remains an experiment: a separate workqueue v0.36.2 check builds in both
+modes, but the strong-override branch reproduces `unreachable method called`
+while main Drop passes. This is an explicit Draft PR blocker; it is not hidden
+by the successful Gorm measurements and has not been fixed in this change.

@@ -755,6 +755,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
 	preloweredSRet := call.GetCallSiteEnumAttribute(1, llvm.AttributeKindID("sret"))
 	reflectMethodByNameAttr := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
+	reflectSiteAttr := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
 	b := ctx.NewBuilder()
 	b.SetInsertPointBefore(call)
 
@@ -836,6 +837,9 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		}
 		if !reflectMethodByNameAttr.IsNil() {
 			replacement.AddCallSiteAttribute(-1, reflectMethodByNameAttr)
+		}
+		if !reflectSiteAttr.IsNil() {
+			replacement.AddCallSiteAttribute(-1, reflectSiteAttr)
 		}
 		if remappedReflectMethodByNameArgAttrIndex >= 0 {
 			replacement.AddCallSiteAttribute(remappedReflectMethodByNameArgAttrIndex, ctx.CreateStringAttribute(

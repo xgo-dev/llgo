@@ -1913,6 +1913,10 @@ func (c *context) disposeBackendPrograms() {
 // remains available to hooks and whole-program consumers until Do returns.
 func (c *context) closePackageMetas() {
 	for _, pkg := range c.pkgs {
+		if pkg.reflectIRTemp != "" {
+			_ = os.Remove(pkg.reflectIRTemp)
+			pkg.reflectIRTemp = ""
+		}
 		if pkg.Meta == nil {
 			continue
 		}
@@ -2647,7 +2651,11 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
 		trimMethods := canPruneWasmTypeMetadata(ctx)
-		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose); err != nil {
+		names, err := refineDeadcodeReflectNames(ctx, preparation.linkedOrder, verbose)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyDeadcodeDropOverridesWithReflectNames(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, names); err != nil {
 			return nil, err
 		}
 	}
@@ -2749,11 +2757,15 @@ func linkedPackageMetas(pkgs []Package) ([]*meta.PackageMeta, error) {
 }
 
 func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool) error {
+	return applyDeadcodeDropOverridesWithReflectNames(pkgs, entryPkg, needRuntime, trimMethods, verbose, nil)
+}
+
+func applyDeadcodeDropOverridesWithReflectNames(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool, names map[string][]string) error {
 	metas, err := linkedPackageMetas(pkgs)
 	if err != nil {
 		return err
 	}
-	summary, err := meta.NewGlobalSummary(metas)
+	summary, err := meta.NewGlobalSummaryWithReflectNames(metas, names)
 	if err != nil {
 		return err
 	}
@@ -3634,6 +3646,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	if err := captureDeadcodeReflectIR(ctx, aPkg); err != nil {
+		return fmt.Errorf("capture reflection IR for %s: %w", pkgPath, err)
+	}
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
@@ -4102,6 +4117,8 @@ type aPackage struct {
 	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
 	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
 	Meta             *meta.PackageMeta
+	reflectIRFile    string // optimized analysis-only bitcode; never a link input
+	reflectIRTemp    string // owned by this build, including cache-disabled builds
 	rewriteVars      map[string]string
 	staticByteArrays map[string][]byte
 	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile

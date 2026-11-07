@@ -492,7 +492,19 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	// Parse metadata from manifest [Package] section (INI format)
 	meta, err := parseManifestMetadata(content)
 	if err != nil {
+		if pkgMeta != nil {
+			_ = pkgMeta.Close()
+		}
 		return false
+	}
+	// A native archive cannot recover optimized IR. Missing analysis data is
+	// a cache miss, so a cached build makes the same decisions as a rebuild.
+	if needsDeadcodeReflectIR(c, pkgMeta) {
+		if _, err := os.Stat(paths.ReflectIR); err != nil {
+			_ = pkgMeta.Close()
+			return false
+		}
+		pkg.reflectIRFile = paths.ReflectIR
 	}
 
 	// Use the .a archive directly for linking (no extraction needed)
@@ -616,6 +628,11 @@ func (c *context) saveToCache(pkg *aPackage) error {
 			return err
 		}
 	}
+	if pkg.reflectIRFile != "" {
+		if err := copyFileAtomic(pkg.reflectIRFile, paths.ReflectIR); err != nil {
+			return err
+		}
+	}
 
 	// Append metadata to existing manifest (pkg.Manifest was built in collectFingerprint).
 	manifestContent := pkg.Manifest
@@ -652,6 +669,9 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	// Link a cache miss from the same stable archive path used by a cache hit.
 	// Darwin records this path in its N_OSO debug map.
 	pkg.ArchiveFile = paths.Archive
+	if pkg.reflectIRFile != "" {
+		pkg.reflectIRFile = paths.ReflectIR
+	}
 	return nil
 }
 

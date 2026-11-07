@@ -287,6 +287,7 @@ var testdropSymbolChecks = []string{
 	"reflect_field_addr_iface",
 	"reflect_method_result",
 	"reflect_named_method",
+	"reflect_type_metadata",
 	"source64_crosspkg",
 	"unexported_method_identity",
 }
@@ -304,6 +305,37 @@ func TestBuildAndCheckSymbolsFromTestdrop(t *testing.T) {
 		cltest.WithRunConfig(conf),
 		cltest.WithOutputCheck(true),
 	)
+}
+
+func TestBuildAndCheckSymbolsFromTestdropIRReflection(t *testing.T) {
+	if !buildenv.Dev || runtime.GOOS != "darwin" {
+		t.Skip("IR reflection refinement requires a development macOS build")
+	}
+	conf := build.NewDefaultConf(build.ModeBuild)
+	conf.DeadcodeDrop = true
+	conf.LTO = lto.Off
+	conf.DebugArtifactMode = build.DebugArtifactNone
+	names := []string{"reflect_callback_names", "reflect_callback_cached", "reflect_callback_mutable", "reflect_callback_escape", "reflect_callback_mixed", "reflect_callback_foreign"}
+	// The second build must recover optimized IR from the analysis sidecar.
+	for _, mode := range []string{"build", "cached"} {
+		t.Run(mode, func(t *testing.T) {
+			conf.ForceRebuild = mode == "build"
+			cachedLookupSeen := false
+			conf.ModuleHook = func(pkg build.Package) {
+				if strings.HasSuffix(pkg.PkgPath, "/reflect_callback_cached/hooks") {
+					cachedLookupSeen = true
+					if pkg.CacheHit != (mode == "cached") {
+						t.Errorf("lookup package cache hit = %v in %s build", pkg.CacheHit, mode)
+					}
+				}
+			}
+			cltest.BuildAndCheckSymbolsFromDir(t, "", "./_testdrop", names,
+				cltest.WithRunConfig(conf), cltest.WithOutputCheck(true))
+			if !cachedLookupSeen {
+				t.Fatal("cached lookup fixture was not built")
+			}
+		})
+	}
 }
 
 func testltoLTOPluginConf(t *testing.T, mode build.Mode) *build.Config {
