@@ -78,7 +78,8 @@ func main() {
 // Direct calls pass the receiver's loaded format pointer. Interface calls use
 // slots 4 (SetFormat) and 3 (Printf) with the same receiver data as environment.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[CFMT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: %[[CFMT:[0-9]+]] = alloca %main.CFmt, align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr %[[CFMT]], i8 0, i64 8, i1 false)
 // CHECK: call void @"main.(*CFmt).SetFormat"(ptr %[[CFMT]], ptr @{{[0-9]+}})
 // CHECK: %[[DIRECTFIELD1:[0-9]+]] = getelementptr inbounds nuw %main.CFmt, ptr %[[CFMT]], i32 0, i32 0
 // CHECK: %[[DIRECTFMT1:[0-9]+]] = load ptr, ptr %[[DIRECTFIELD1]], align 8
