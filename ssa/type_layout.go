@@ -28,11 +28,7 @@ type structLayout struct {
 }
 
 func (p Program) hasNativeStructLayout(raw *types.Named) bool {
-	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
-		return false
-	}
-	background, ok := p.packageTypeCallConv(namedLinkname(raw))
-	return ok && isNativeCallConv(background)
+	return p.RepresentationOf(raw).Storage == NativeRepresentation
 }
 
 func (p Program) setStructLayout(typ types.Type, layout *structLayout) {
