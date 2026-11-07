@@ -132,7 +132,10 @@ func (p *Plan) CheckArguments(args ...llvm.Value) error {
 	params := p.signature.ParamTypes()
 	variadic := p.signature.IsFunctionVarArg()
 	if len(args) < len(params) || !variadic && len(args) != len(params) {
-		return fmt.Errorf("expected %d arguments (variadic=%v), got %d", len(params), variadic, len(args))
+		if variadic {
+			return fmt.Errorf("expected at least %d arguments, got %d", len(params), len(args))
+		}
+		return fmt.Errorf("expected %d arguments, got %d", len(params), len(args))
 	}
 	for i, value := range args {
 		if value.IsNil() {

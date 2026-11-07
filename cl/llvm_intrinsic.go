@@ -54,7 +54,23 @@ func (p *context) callLLVMIntrinsic(b llssa.Builder, act llssa.DoAction, fn *ssa
 	}
 	_, name, _ := p.funcName(fn)
 	d := p.resolveLLVMIntrinsic(fn, name)
-	ret, err := b.CallLLVMIntrinsic(d, p.compileValues(b, call.Args, fnNormal)...)
+	kind := fnNormal
+	if llssa.HasNameValist(fn.Signature) {
+		kind = fnHasVArg
+		// An intrinsic has no C entry to which an unknown raw ellipsis can
+		// be forwarded. Every LLVM call operand must be known at this point.
+		known := false
+		switch tail := call.Args[len(call.Args)-1].(type) {
+		case *ssa.Const:
+			known = tail.Value == nil
+		case *ssa.Slice:
+			_, known = p.isVArgs(tail.X)
+		}
+		if !known {
+			p.llvmIntrinsicError(call.Pos(), fn, fmt.Errorf("LLVM intrinsic variadic arguments must be statically known"))
+		}
+	}
+	ret, err := b.CallLLVMIntrinsic(d, p.compileValues(b, call.Args, kind)...)
 	if err != nil {
 		if p.goFn != nil && p.goFn.Synthetic == ssawrap.CallWrapper {
 			err = fmt.Errorf("cannot use LLVM intrinsic as a function value: %w", err)

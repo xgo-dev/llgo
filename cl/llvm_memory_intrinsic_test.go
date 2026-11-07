@@ -91,10 +91,10 @@ func FillInline(dst unsafe.Pointer, value byte) { fillInline(dst, value, 8, fals
 
 func TestLLVMMemoryIntrinsicLinkErrors(t *testing.T) {
 	for _, tc := range []struct{ name, target, declaration, use, want string }{
-		{"integer-pointer", "llvm.memcpy", "func f(dst, src uintptr, n uintptr, v bool)", "", "does not match"},
-		{"result", "llvm.memcpy", "func f(dst, src unsafe.Pointer, n uintptr, v bool) unsafe.Pointer", "", "does not match"},
-		{"fill-value", "llvm.memset", "func f(dst unsafe.Pointer, value int, n uintptr, v bool)", "", "does not match"},
-		{"slice", "llvm.memcpy", "func f(dst, src []byte, n uintptr, v bool)", "", "unsupported type"},
+		{"integer-pointer", "llvm.memcpy", "func f(dst, src uintptr, n uintptr, v bool)", "", "expected pointer"},
+		{"result", "llvm.memcpy", "func f(dst, src unsafe.Pointer, n uintptr, v bool) unsafe.Pointer", "", "result:"},
+		{"fill-value", "llvm.memset", "func f(dst unsafe.Pointer, value int, n uintptr, v bool)", "", "expected i8"},
+		{"slice", "llvm.memcpy", "func f(dst, src []byte, n uintptr, v bool)", "", "expected pointer"},
 		{"copy-length", "llvm.memcpy.inline", "func f(dst, src unsafe.Pointer, n uintptr, v bool)", "func use(p unsafe.Pointer, n uintptr) { f(p, p, n, false) }", "argument 3 must be an immediate constant"},
 		{"fill-length", "llvm.memset.inline", "func f(dst unsafe.Pointer, value byte, n uintptr, v bool)", "func use(p unsafe.Pointer, n uintptr) { f(p, 0, n, false) }", "argument 3 must be an immediate constant"},
 		{"copy-volatile", "llvm.memcpy", "func f(dst, src unsafe.Pointer, n uintptr, v bool)", "func use(p unsafe.Pointer, v bool) { f(p, p, 0, v) }", "argument 4 must be an immediate constant"},
