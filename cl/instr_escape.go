@@ -44,6 +44,17 @@ func instructionEscapeContract(kind int, sig *types.Signature) (goescape.Summary
 	switch kind {
 	case llgoSkip:
 		return s, true // lowering discards operands and returns zero values
+	case llgoNoEscape:
+		if noEscapeSignature(sig) {
+			// Trusted runtime callers promise the identity result is borrowed
+			// only for the lifetime of the original object. Hide the flow as
+			// runtime.noescape/internal/abi.NoEscape do in cmd/compile.
+			// The result may still be used to mutate data or invoke callbacks;
+			// hiding retention must not establish a read-only/purity proof.
+			s.Parameters[0].Mutator = 1
+			s.Parameters[0].Callee = 1
+			return s, true
+		}
 	case llgoAtomicLoad:
 		if n == 1 && results == 1 {
 			s.Parameters[0].Results[0] = 2
@@ -79,4 +90,10 @@ func instructionEscapeContract(kind int, sig *types.Signature) (goescape.Summary
 		}
 	}
 	return goescape.Summary{}, false
+}
+
+func noEscapeSignature(sig *types.Signature) bool {
+	return sig.Recv() == nil && sig.Params().Len() == 1 && sig.Results().Len() == 1 &&
+		types.Identical(sig.Params().At(0).Type(), types.Typ[types.UnsafePointer]) &&
+		types.Identical(sig.Results().At(0).Type(), types.Typ[types.UnsafePointer])
 }

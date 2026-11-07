@@ -34,6 +34,8 @@ func compareOK(p *unsafe.Pointer, old, new unsafe.Pointer) bool {return false}
 func add(p *int64, n int64) int64 {return 0}
 //go:linkname ignore llgo.skip
 func ignore(any) {panic("not the called body")}
+//go:linkname hide llgo.noescape
+func hide(p unsafe.Pointer) unsafe.Pointer {panic("not the called body")}
 //go:noescape
 func borrow(*int)
 //go:noescape
@@ -46,19 +48,25 @@ func compareWriter() {x:=1;compare(&sink,nil,unsafe.Pointer(&x))}
 func compareOKWriter() {x:=1;compareOK(&sink,nil,unsafe.Pointer(&x))}
 func adder(x int64)int64 {return add(&x,1)}
 func discarded(x int) {ignore(&x)}
+func hidden(x int) int {return *(*int)(hide(unsafe.Pointer(&x)))}
+func hiddenMutation(s string) byte {b:=[]byte(s);q:=hide(unsafe.Pointer(&b[0]));*(*byte)(q)++;return b[0]}
+func ordinaryPointerInteger(x int) uintptr {return uintptr(unsafe.Pointer(&x))}
 func borrowed(x int) {borrow(&x)}
 func called(x int) {callback(func(){sink=unsafe.Pointer(&x)})}
 `
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, nil, false)
-	for _, name := range []string{"reader", "discarded", "borrowed", "adder"} {
+	for _, name := range []string{"reader", "discarded", "borrowed", "adder", "hidden"} {
 		if body := llvmFunction(t, ir, "effects."+name); strings.Contains(body, "runtime.Alloc") {
 			t.Errorf("%s retains borrowed storage:\n%s", name, body)
 		}
 	}
-	for _, name := range []string{"writer", "unorderedWriter", "exchangeWriter", "compareWriter", "compareOKWriter", "called"} {
+	for _, name := range []string{"writer", "unorderedWriter", "exchangeWriter", "compareWriter", "compareOKWriter", "called", "ordinaryPointerInteger"} {
 		if body := llvmFunction(t, ir, "effects."+name); !strings.Contains(body, "runtime.AllocZ") {
 			t.Errorf("%s lost published pointer:\n%s", name, body)
 		}
+	}
+	if body := llvmFunction(t, ir, "effects.hiddenMutation"); strings.Contains(body, "StringToBytesReadOnly") || !strings.Contains(body, "StringToBytesBuffer") {
+		t.Fatalf("NoEscape hid mutation and borrowed immutable string storage:\n%s", body)
 	}
 }
 

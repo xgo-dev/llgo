@@ -121,6 +121,7 @@ func atomicOr8(ptr *uint8, v uint8) uint8 {
 	return (uint8)(atomic.Or((*uint)(unsafe.Pointer(ptr)), uint(v)))
 }
 
+//go:linkname noescape llgo.noescape
 func noescape(p unsafe.Pointer) unsafe.Pointer {
 	x := uintptr(p)
 	return unsafe.Pointer(x ^ 0)
