@@ -32,6 +32,17 @@ import (
 
 // -----------------------------------------------------------------------------
 
+// InterfaceIndirect reports whether an interface data word points at a copy
+// of t. Frontend lifetime analysis must use the same representation as lowering,
+// including LLGo's two-word Go closures and one-word native callbacks.
+func (p Program) InterfaceIndirect(t Type) bool {
+	if !directIfaceType(t.raw.Type) {
+		return true
+	}
+	kind, _, _ := abi.DataKindOf(t.raw.Type, 0, p.is32Bits)
+	return kind == abi.Indirect
+}
+
 // unsafeEface(t *abi.Type, data unsafe.Pointer) Eface
 func (b Builder) unsafeEface(t, data llvm.Value) llvm.Value {
 	return b.aggregateValue(b.Prog.rtType("Eface"), t, data).impl
@@ -353,16 +364,22 @@ func iMethodOf(rawIntf *types.Interface, method *types.Func) int {
 
 // Imethod returns closure of an interface method.
 func (b Builder) Imethod(intf Expr, method *types.Func) Expr {
-	return b.imethod(intf, method, false)
+	return b.imethod(intf, method, false, false)
 }
 
 // ImethodWithRecoverToken returns an interface method invocation whose code
 // pointer may also be used as recover-frame bookkeeping data.
 func (b Builder) ImethodWithRecoverToken(intf Expr, method *types.Func) Expr {
-	return b.imethod(intf, method, true)
+	return b.imethod(intf, method, true, false)
 }
 
-func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr {
+// ImethodBorrowed reserves a caller-owned receiver word for a synchronous
+// invocation. go/defer registrations must retain their longer-lived storage.
+func (b Builder) ImethodBorrowed(intf Expr, method *types.Func, recoverToken bool) Expr {
+	return b.imethod(intf, method, recoverToken, true)
+}
+
+func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed bool) Expr {
 	prog := b.Prog
 	intfType := types.Unalias(intf.raw.Type)
 	patchedIntfType := prog.patch(intfType)
@@ -382,7 +399,13 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr 
 	tclosure := prog.Type(sig, GoDecl)
 	i := iMethodOf(rawIntf, method)
 	b.recordUseIfaceMethod(rawIntf, i)
-	data := b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
+	var data Expr
+	if borrowed && b.Func.reserveEscapeStack(prog.VoidPtr()) {
+		buffer := b.uninitializedStackSlot(prog.VoidPtr())
+		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrDataBuffer"), intf, buffer)
+	} else {
+		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
+	}
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
 	pfn := b.Advance(itab, prog.IntVal(uint64(i+3), prog.Int()))
@@ -427,7 +450,13 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr 
 //	t1 = make interface{} <- int (42:int)
 //	t2 = make Stringer <- t0
 func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
-	return b.makeInterface(tinter, x, true)
+	return b.MakeInterfaceEx(tinter, x, true)
+}
+
+// MakeInterfaceEx constructs an interface with a heap or stack box. A stack
+// box requires the caller to prove that its address cannot outlive this call.
+func (b Builder) MakeInterfaceEx(tinter Type, x Expr, heap bool) Expr {
+	return b.makeInterface(tinter, x, true, heap)
 }
 
 // MakeInterfaceDataOnly boxes an argument for a statically checked runtime
@@ -437,10 +466,10 @@ func (b Builder) MakeInterfaceDataOnly(tinter Type, x Expr) Expr {
 	if tinter.raw.Type.Underlying().(*types.Interface).NumMethods() != 0 {
 		panic("data-only interface must be empty")
 	}
-	return b.makeInterface(tinter, x, false)
+	return b.makeInterface(tinter, x, false, true)
 }
 
-func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) {
+func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
@@ -458,7 +487,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.AllocU(typ)
+		vptr := b.allocInterfaceBox(typ, heap)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
@@ -468,7 +497,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.AllocU(typ)
+		vptr := b.allocInterfaceBox(typ, heap)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
@@ -507,6 +536,13 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 	}
 	data := llvm.CreateIntToPtr(b.impl, u, prog.tyVoidPtr())
 	return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, data), tinter}
+}
+
+func (b Builder) allocInterfaceBox(typ Type, heap bool) Expr {
+	if heap {
+		return b.AllocU(typ)
+	}
+	return b.Alloc(typ, false)
 }
 
 func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {

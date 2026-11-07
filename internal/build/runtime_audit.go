@@ -520,7 +520,9 @@ func (a *runtimeAuditor) inventory(report *RuntimeOwnership, pkg, owner string, 
 					return fmt.Errorf("duplicate runtime declaration %s: %s and %s", symbol.Name, previous, symbol.Source)
 				}
 				a.definitions[symbol.Name] = symbol.Source
-				if body || (kind == "var" && symbol.Linkname == "") {
+				// Intrinsic aliases may keep Go fallback bodies, but LLGo emits
+				// the shared compiler instruction rather than those definitions.
+				if (body && symbol.Owner != "compiler-intrinsic") || (kind == "var" && symbol.Linkname == "") {
 					name := symbol.Name
 					if symbol.Linkname != "" {
 						name = symbol.Linkname

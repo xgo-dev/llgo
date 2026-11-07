@@ -52,14 +52,13 @@ func main() {
 // by a descriptor comparison. The pointer value uses an itab and a code/env
 // pair for the interface call.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[BOX:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK: store %"main.T[string,int]" %{{[0-9]+}}, ptr %[[BOX]], align 8
+// CHECK: %{{[0-9]+}} = alloca %"main.T[string,int]", align 8
+// CHECK: store %"main.T[string,int]" %{{[0-9]+}}, ptr %[[BOX:[0-9]+]], align 8
 // CHECK: %[[EBOX:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"_llgo_main.T[string,int]", ptr undef }, ptr %[[BOX]], 1
 // CHECK: %[[ETYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
 // CHECK: icmp eq ptr %[[ETYPE]], @"_llgo_main.T[string,int]"
-// CHECK: %[[OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[OBJ]], 1
-// CHECK: %[[DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]])
+// CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[OBJ:[0-9]+]], 1
+// CHECK: %[[DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], ptr %{{[0-9]+}})
 // CHECK: %[[VTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], 0
 // CHECK: %[[SLOT:[0-9]+]] = getelementptr ptr, ptr %[[VTAB]], i64 3
 // CHECK: %[[METHOD:[0-9]+]] = load ptr, ptr %[[SLOT]], align 8

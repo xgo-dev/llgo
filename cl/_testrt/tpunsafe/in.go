@@ -56,9 +56,9 @@ func (m *M[T]) check(align, offset1, offset2 uintptr) {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[BOOL:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 12)
+// CHECK: %[[INT64:[0-9]+]] = alloca %"main.M[int64]", align 8
+// CHECK-NEXT: %[[BOOL:[0-9]+]] = alloca %"main.M[bool]", align 8
 // CHECK: call void @"main.(*M[bool]).check"(ptr %[[BOOL]], i64 1, i64 8, i64 1)
-// CHECK: %[[INT64:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
 // CHECK: call void @"main.(*M[int64]).check"(ptr %[[INT64]], i64 8, i64 16, i64 8)
 
 // CHECK-LABEL: define linkonce void @"main.(*M[bool]).check"(

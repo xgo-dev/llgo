@@ -40,7 +40,7 @@ func NewBase(name string) *Base {
 
 // Use calls the unexported method through interface
 // CHECK-LABEL: define void @"{{.*}}.Use"(%"{{.*}}.iface" %0){{.*}} {
-// CHECK: %[[OBJ_DATA:[0-9]+]] = call ptr @"{{.*}}.IfacePtrData"(%"{{.*}}.iface" %0)
+// CHECK: %[[OBJ_DATA:[0-9]+]] = call ptr @"{{.*}}.IfacePtrDataBuffer"(%"{{.*}}.iface" %0, ptr %{{[0-9]+}})
 // CHECK: insertvalue { ptr, ptr } %{{[0-9]+}}, ptr %[[OBJ_DATA]], 1
 func Use(obj Object) {
 	obj.setName("modified")

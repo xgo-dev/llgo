@@ -374,7 +374,8 @@ type aFunction struct {
 	// function. If a build path panics before EndBuild the builder is leaked,
 	// but codegen panics abort the process, so the leak is bounded. Do not
 	// rely on this field surviving past EndBuild.
-	allocaBuilder llvm.Builder
+	allocaBuilder    llvm.Builder
+	escapeStackBytes uint64
 }
 
 // Function represents a function or method.

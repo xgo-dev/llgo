@@ -191,10 +191,17 @@ type Config struct {
 	CompilerHash       string // metadata hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+
+	EscapeDiagnostics           int // -m count for explicitly selected packages
+	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
 	// GoBuildFlags contains normalized raw Go build flags forwarded to
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
 	GoBuildFlags []string
+	// LoaderBuildFlags preserves package selection while removing diagnostics
+	// consumed by LLGo, so go/packages cannot emit host-compiler escape results.
+	// Nil uses GoBuildFlags for direct compiler API callers.
+	LoaderBuildFlags []string
 	// GoFlagsParsed means the command layer has consumed GOFLAGS into native
 	// configuration. Package probes must not parse those command defaults again.
 	GoFlagsParsed bool
@@ -298,6 +305,7 @@ func (c *Config) clone() *Config {
 	cloned.RunArgs = slices.Clone(c.RunArgs)
 	cloned.Exec = slices.Clone(c.Exec)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.LoaderBuildFlags = slices.Clone(c.LoaderBuildFlags)
 	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
 	cloned.SourceOverlay = cloneSourceOverlay(c.SourceOverlay)
@@ -685,7 +693,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
 	goBuildFlags := []string{"-tags=" + tags}
-	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
+	loaderFlags := conf.LoaderBuildFlags
+	if loaderFlags == nil {
+		loaderFlags = conf.GoBuildFlags
+	}
+	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
@@ -1052,6 +1064,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = cl.PrepareEscapeAnalysis(ctx.prog, ctx.progSSA, ctx.patches)
+	escapeSpan.done()
+	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
+		selected := make(map[string]bool, len(initial))
+		for _, pkg := range initial {
+			selected[pkg.PkgPath] = true
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, func(fn *ssa.Function) int {
+			pkg := fn.Pkg
+			for parent := fn.Parent(); pkg == nil && parent != nil; parent = parent.Parent() {
+				pkg = parent.Pkg
+			}
+			if pkg != nil && selected[pkg.Pkg.Path()] {
+				return conf.EscapeDiagnostics
+			}
+			return conf.DependencyEscapeDiagnostics
+		}); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
 	allPkgs = append(allPkgs, depPkgs...)
 	var nativeTestRoots []*packages.Package
 	if mode == ModeTest && !inv.compileOnly {

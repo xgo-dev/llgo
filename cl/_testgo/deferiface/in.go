@@ -44,7 +44,7 @@ func main() {
 // CHECK-NEXT: [[RESET_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[RESET_METHOD]], 0
 // CHECK-NEXT: [[RESET_CALL:%.*]] = insertvalue { ptr, ptr } [[RESET_CALL0]], ptr [[RESET_RECEIVER]], 1
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
@@ -52,8 +52,7 @@ func main() {
 // CHECK-NEXT: icmp ne ptr [[HEAD_CANDIDATE]], null
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[PREV_DEFER]])
 // CHECK: [[OLD_HEAD:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
-// CHECK: [[NODE_PREV:%.*]] = getelementptr inbounds nuw { ptr, i64, { ptr, ptr } }, ptr [[NODE]], i32 0, i32 0
+// CHECK: [[NODE_PREV:%.*]] = getelementptr inbounds nuw { ptr, i64, { ptr, ptr } }, ptr [[NODE:%[0-9]+]], i32 0, i32 0
 // CHECK-NEXT: store ptr [[OLD_HEAD]], ptr [[NODE_PREV]]
 // CHECK: [[NODE_CALL:%.*]] = getelementptr inbounds nuw { ptr, i64, { ptr, ptr } }, ptr [[NODE]], i32 0, i32 2
 // CHECK-NEXT: store { ptr, ptr } [[RESET_CALL]], ptr [[NODE_CALL]]
@@ -64,7 +63,7 @@ func main() {
 // CHECK: [[NEXT_NODE:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[NODE_VALUE]], 0
 // CHECK-NEXT: store ptr [[NEXT_NODE]], ptr [[HEAD]]
 // CHECK-NEXT: [[DEFERRED_RESET:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[NODE_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[ACTIVE_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: [[DEFERRED_RESET_FN:%.*]] = extractvalue { ptr, ptr } [[DEFERRED_RESET]], 0
 // CHECK-NEXT: [[RESET_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr [[DEFERRED_RESET_FN]])
 // CHECK-NEXT: [[DEFERRED_RESET_RECEIVER:%.*]] = extractvalue { ptr, ptr } [[DEFERRED_RESET]], 1

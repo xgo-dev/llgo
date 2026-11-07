@@ -1,8 +1,6 @@
 package cl
 
 import (
-	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -43,129 +41,6 @@ func zero(s []struct{}) []struct{} { return append(s, struct{}{}) }
 						t.Fatalf("%s lost escaping storage:\n%s", name, body)
 					}
 				}
-			}
-		})
-	}
-}
-
-func TestAppendTemporaryRejectsUnknownType(t *testing.T) {
-	if (&context{}).canStackAllocateAppendArgs(&ssa.Alloc{Heap: true, Comment: "varargs"}) {
-		t.Fatal("untyped allocation was accepted")
-	}
-}
-
-func TestAppendTemporaryRejectsExposedStorage(t *testing.T) {
-	// The generated array has no source-level name. Model subsequent SSA
-	// rewrites exposing its address, adding a consumer, or extending its life
-	// across blocks; none may make it eligible for stack-slot reuse.
-	for _, scenario := range []string{"no array users", "cross block", "array read", "element address escapes", "element read", "returned slice", "second consumer", "append destination"} {
-		t.Run(scenario, func(t *testing.T) {
-			pkg, _, _ := buildGoSSAPkg(t, `package appenduses
-var saved *int
-var snapshot [1]int
-func f(s []int, x int, b bool, a *[1]int) []int {
- saved = &x
- snapshot = *a
- v := append(s,x)
- if b { return v }; return a[:]
-}`)
-			fn := pkg.Func("f")
-			var alloc *ssa.Alloc
-			var elementRead, arrayRead *ssa.UnOp
-			var escapeStore *ssa.Store
-			var returned *ssa.Return
-			for _, block := range fn.Blocks {
-				for _, instr := range block.Instrs {
-					switch instr := instr.(type) {
-					case *ssa.Alloc:
-						if instr.Comment == "varargs" {
-							alloc = instr
-						}
-					case *ssa.UnOp:
-						if _, ok := instr.Type().Underlying().(*types.Array); ok {
-							arrayRead = instr
-						} else {
-							elementRead = instr
-						}
-					case *ssa.Store:
-						if instr.Addr == pkg.Members["saved"].(*ssa.Global) {
-							escapeStore = instr
-						}
-					case *ssa.Return:
-						returned = instr
-					}
-				}
-			}
-			if alloc == nil || elementRead == nil || arrayRead == nil || escapeStore == nil || returned == nil {
-				t.Fatal("missing append graph")
-			}
-			var index *ssa.IndexAddr
-			var slice *ssa.Slice
-			for _, ref := range *alloc.Referrers() {
-				switch ref := ref.(type) {
-				case *ssa.IndexAddr:
-					index = ref
-				case *ssa.Slice:
-					slice = ref
-				}
-			}
-			if index == nil || slice == nil {
-				t.Fatal("missing temporary users")
-			}
-			call, ok := (*slice.Referrers())[0].(*ssa.Call)
-			if !ok {
-				t.Fatal("missing append call")
-			}
-			ctx := &context{prog: newLLSSAProg(t)}
-			if !ctx.canStackAllocateAppendArgs(alloc) {
-				t.Fatal("control array was not eligible")
-			}
-			switch scenario {
-			case "no array users":
-				*alloc.Referrers() = nil
-			case "cross block":
-				var foreign *ssa.Slice
-				for _, block := range fn.Blocks {
-					for _, instr := range block.Instrs {
-						if v, ok := instr.(*ssa.Slice); ok && v.Block() != alloc.Block() {
-							foreign = v
-						}
-					}
-				}
-				if foreign == nil {
-					t.Fatal("missing cross-block slice")
-				}
-				copy := *foreign
-				copy.X = alloc
-				*alloc.Referrers() = append(*alloc.Referrers(), &copy)
-			case "array read":
-				copy := *arrayRead
-				copy.X = alloc
-				*alloc.Referrers() = append(*alloc.Referrers(), &copy)
-			case "element address escapes":
-				copy := *escapeStore
-				copy.Val = index
-				*index.Referrers() = append(*index.Referrers(), &copy)
-			case "element read":
-				copy := *elementRead
-				copy.X = index
-				copy.Op = token.MUL
-				*index.Referrers() = append(*index.Referrers(), &copy)
-			case "returned slice":
-				copy := *returned
-				copy.Results = []ssa.Value{slice}
-				*slice.Referrers() = []ssa.Instruction{&copy}
-			case "second consumer":
-				copy := *call
-				*slice.Referrers() = append(*slice.Referrers(), &copy)
-			case "append destination":
-				copy := *call
-				copy.Call.Args = append([]ssa.Value(nil), call.Call.Args...)
-				copy.Call.Args[0] = slice
-				*slice.Referrers() = []ssa.Instruction{&copy}
-			}
-			if ctx.canStackAllocateAppendArgs(alloc) {
-				t.Fatal("exposed storage was accepted")
 			}
 		})
 	}

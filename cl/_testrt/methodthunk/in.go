@@ -47,7 +47,7 @@ func (m *outer) M() {}
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M", ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M")
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$[[HASH_CLOSURE0:[A-Za-z0-9_-]+]]", ptr @"_llgo_closure$[[HASH_CLOSURE0]]")
 // CHECK-NEXT:   br i1 %[[TMP0]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
@@ -75,7 +75,7 @@ func (m *outer) M() {}
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP6]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M", ptr @"_llgo_closure$WmZDdXg-2mo-o0lqY2QOZoNsd6Ks2TbzdX4upfVJ3j8")
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$[[HASH_CLOSURE0]]", ptr @"_llgo_closure${{[A-Za-z0-9_-]+}}")
 // CHECK-NEXT:   br i1 %[[TMP8]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB6]]:

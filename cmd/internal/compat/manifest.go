@@ -98,6 +98,9 @@ func Flag(command, name string) Record {
 	}
 	rejected := Record{"rejected", c.Owner, "Not implemented by this native LLGo command"}
 	if command == "tool compile" {
+		if name == "m" {
+			return Record{"partial", c.Owner, "Go count flag; LLGo allocation placements and reasons, without gc inlining diagnostics"}
+		}
 		if in(name, "B C N V c complete l lang") {
 			return Record{"native", c.Owner, "LLGo frontend, optimization, concurrency or identity; -l accepts only 0/1"}
 		}

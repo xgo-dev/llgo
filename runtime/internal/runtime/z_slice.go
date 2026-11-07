@@ -194,6 +194,20 @@ func MakeSliceAligned(len, cap, etSize, etAlign int) Slice {
 	return Slice{AllocZAligned(mem, uintptr(etAlign)), len, cap}
 }
 
+// MakeSliceBuffer uses caller-owned aligned storage for a valid small make.
+// Fallbacks enter the original helper, preserving both its checks and the
+// existing heap allocation path for callers without an escape proof.
+func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int) Slice {
+	if buffer != nil && len >= 0 && len <= cap && cap <= bufferCap {
+		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
+		if !overflow && mem <= maxAlloc {
+			c.Memset(buffer, 0, mem)
+			return Slice{buffer, len, cap}
+		}
+	}
+	return MakeSliceAligned(len, cap, etSize, etAlign)
+}
+
 func panicmakeslicelen() {
 	panic(errorString("makeslice: len out of range"))
 }

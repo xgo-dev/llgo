@@ -301,6 +301,17 @@ func IfacePtrData(i iface) unsafe.Pointer {
 	return i.data
 }
 
+func IfacePtrDataBuffer(i iface, buffer *unsafe.Pointer) unsafe.Pointer {
+	if i.tab == nil {
+		panic(errorString("invalid memory address or nil pointer dereference"))
+	}
+	if DirectIfaceData(i.tab._type) {
+		*buffer = i.data
+		return unsafe.Pointer(buffer)
+	}
+	return i.data
+}
+
 func DirectIfaceData(typ *abi.Type) bool {
 	// Pointer receivers already carry their address. Other direct-interface
 	// values need an addressable copy of the stored word. The descriptor flag

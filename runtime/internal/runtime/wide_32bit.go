@@ -18,6 +18,8 @@
 
 package runtime
 
+import "unsafe"
+
 // NewChan64 follows runtime.makechan64. It preserves the range check for a
 // wide make operand on 32-bit targets before calling the native-int fast path.
 func NewChan64(eltSize int, cap64 int64) *Chan {
@@ -60,4 +62,16 @@ func MakeSlice64Aligned(len64, cap64 int64, etSize, etAlign int) Slice {
 		panicmakeslicecap()
 	}
 	return MakeSliceAligned(len, cap, etSize, etAlign)
+}
+
+func MakeSlice64Buffer(len64, cap64 int64, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int) Slice {
+	len := int(len64)
+	if int64(len) != len64 {
+		panicmakeslicelen()
+	}
+	cap := int(cap64)
+	if int64(cap) != cap64 {
+		panicmakeslicecap()
+	}
+	return MakeSliceBuffer(len, cap, etSize, etAlign, buffer, bufferCap)
 }

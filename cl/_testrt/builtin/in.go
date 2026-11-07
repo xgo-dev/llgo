@@ -22,7 +22,7 @@ const (
 )
 
 // CHECK-LABEL: define double @main.Float64frombits(i64 %0){{.*}} {
-// CHECK: [[BITS_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[BITS_ADDR:%.*]] = alloca i64, align 8
 // CHECK: store i64 %0, ptr [[BITS_ADDR]]
 // CHECK: [[FLOAT:%.*]] = load double, ptr [[BITS_ADDR]]
 // CHECK: ret double [[FLOAT]]
@@ -67,9 +67,9 @@ func demo() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // The append argument array is borrowed storage in the caller's frame.
-// CHECK: [[INT_TAIL:%.*]] = alloca [4 x i64], align 8
+// CHECK-DAG: [[INT_TAIL:%.*]] = alloca [4 x i64], align 8
 // make([]byte, 4, 10) must preserve both the requested length and capacity.
-// CHECK: [[D_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
+// CHECK-DAG: [[D_STORAGE:%.*]] = alloca [10 x i8], align 1
 // CHECK: [[D:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[D_STORAGE]], i64 1, i64 10, i64 0, i64 4, i1 true, i1 true, i1 true)
 // len("hello"[5:]) keeps the empty string slice's bounds.
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}String" { ptr @{{.*}}, i64 5 }, i64 5, i64 5)
@@ -104,16 +104,16 @@ func demo() {
 // CHECK: [[NAN_TRUE:%.*]] = call i1 @main.IsNaN(double [[NAN_INPUT]])
 // CHECK: [[NAN_FALSE:%.*]] = call i1 @main.IsNaN(double 1.000000e+00)
 // Byte/rune conversions are round-tripped through their originating slices.
-// CHECK: [[BYTES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToBytes"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
-// CHECK: [[RUNES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToRunes"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromBytes"(%"{{.*}}Slice" [[BYTES]])
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromRunes"(%"{{.*}}Slice" [[RUNES]])
+// CHECK: [[BYTES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToBytesReadOnly"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: [[RUNES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToRunesBuffer"(%"{{.*}}String" { ptr @{{.*}}, i64 7 }, ptr %{{[0-9]+}})
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromBytesBuffer"(%"{{.*}}Slice" [[BYTES]], ptr %{{[0-9]+}})
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromRunesBuffer"(%"{{.*}}Slice" [[RUNES]], ptr %{{[0-9]+}})
 // CHECK: [[BYTE_VALUE:%.*]] = load i8, ptr %{{.*}}
 // CHECK: [[BYTE64:%.*]] = zext i8 [[BYTE_VALUE]] to i64
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 [[BYTE64]])
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromUint64Buffer"(i64 [[BYTE64]], ptr %{{[0-9]+}})
 // CHECK: [[RUNE_VALUE:%.*]] = load i32, ptr %{{.*}}
 // CHECK: [[RUNE64:%.*]] = sext i32 [[RUNE_VALUE]] to i64
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromInt64"(i64 [[RUNE64]])
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromInt64Buffer"(i64 [[RUNE64]], ptr %{{[0-9]+}})
 
 func main() {
 	var s = []int{1, 2, 3, 4}

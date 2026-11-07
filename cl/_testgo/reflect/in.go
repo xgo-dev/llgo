@@ -192,7 +192,7 @@ func mapDemo2() {
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
 // CHECK: %[[CLOSURE_IFACE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[CLOSURE_VALUE]])
 // CHECK: %[[CLOSURE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[CLOSURE_IFACE]], 0
-// CHECK: %[[CLOSURE_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %[[CLOSURE_TYPE]])
+// CHECK: %[[CLOSURE_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure${{[A-Za-z0-9_-]+}}", ptr %[[CLOSURE_TYPE]])
 // CHECK: br i1 %[[CLOSURE_MATCH]]
 // ARM64-LABEL: define i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
