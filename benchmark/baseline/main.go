@@ -64,7 +64,7 @@ var workloads = []workload{
 	{name: "fmtprintf-lto", source: "benchmark/binary_size/fmtprintf/main.go", output: "Hello, world\n", flags: []string{"-lto=full"}},
 }
 
-var expectedGoBenchmarks = []string{
+var expectedGoBenchmarks = append([]string{
 	"BenchmarkChannelBuffered",
 	"BenchmarkChannelHandoff",
 	"BenchmarkDefer",
@@ -87,6 +87,19 @@ var expectedGoBenchmarks = []string{
 	"BenchmarkTimerResetActive/LLGo",
 	"BenchmarkTimerResetHeap1024/Go",
 	"BenchmarkTimerResetHeap1024/LLGo",
+}, stringEqualityBenchmarks()...)
+
+func stringEqualityBenchmarks() (names []string) {
+	for _, implementation := range []string{"Go", "LLGo"} {
+		for _, size := range []int{8, 128, 1024} {
+			for _, kind := range []string{"equal", "first", "last"} {
+				for _, input := range []string{"strings", "bytes"} {
+					names = append(names, fmt.Sprintf("BenchmarkStringEquality/%s/%s/%d/%s", input, kind, size, implementation))
+				}
+			}
+		}
+	}
+	return
 }
 
 const goBenchmarkSamples = 5

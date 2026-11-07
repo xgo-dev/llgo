@@ -9,6 +9,7 @@ include:
   - "^Benchmark(DirectCall|InterfaceCall|Defer|Goroutine)$"
   - "^BenchmarkChannel(Buffered|Handoff)$"
   - "^BenchmarkTimer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
+  - "^BenchmarkStringEquality/"
 groups:
   programs: "^Program/"
   compiler: "^(MergeCompilerFlags|MergeLinkerFlags|LookupPCRandom)$"
@@ -18,7 +19,19 @@ groups:
       - "^(DirectCall|InterfaceCall|Defer|Goroutine)$"
       - "^Channel(Buffered|Handoff)$"
   timers: "^Timer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
+  strings: "^StringEquality/"
 views:
+  strings:
+    title: String equality benchmarks
+    select:
+      groups: "^strings$"
+      metrics: "^ns/op$"
+    table:
+      rows: [platform, benchmark]
+      columns: [metric]
+      collapsed: true
+      missing: error
+      empty: error
   programs:
     title: Program measurements
     select:
