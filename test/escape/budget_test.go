@@ -11,6 +11,8 @@ func saveBudgetDefer(out *[]int, data [30000]byte, id int) {
 	*out = append(*out, 100*id+int(data[0]))
 }
 
+// The by-value arguments also need ABI copy slots, beyond the incremental
+// escape-storage budget. Run Wasm with -goroutine-stack-size=1MB.
 func TestDeferStackBudgetPreservesOwnership(t *testing.T) {
 	var got []int
 	func() {

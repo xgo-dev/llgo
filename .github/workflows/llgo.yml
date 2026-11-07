@@ -1031,7 +1031,9 @@ jobs:
           LLGO_BUILD_CACHE: "1"
         run: |
           for target in wasi emscripten emscripten-memory64; do
-            "$LLGO" test -O2 -target "$target" -emulator ./test/escape
+            # The budget stress test also needs large by-value ABI copies,
+            # which are outside the incremental escape-storage budget.
+            "$LLGO" test -O2 -goroutine-stack-size=1MB -target "$target" -emulator ./test/escape
           done
 
       - name: Test reflected method calls and large initializers
