@@ -22,7 +22,6 @@ import (
 	"strings"
 	"unsafe"
 
-	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -285,11 +284,18 @@ type deferTarget struct {
 // typ is the node struct type needed to decode the linked-list node.
 type loopDeferCase struct {
 	id         Expr
-	typ        Type
+	typ        *deferArgsStorage
 	mayRecover bool
 	fn         Expr
 	args       []Expr
 	buildCall  func(Builder, Expr, ...Expr) Expr
+}
+
+// Keep the registration's ownership decision with its record. The shared
+// function budget must not be queried again when generating the pop path.
+type deferArgsStorage struct {
+	typ  Type
+	heap bool
 }
 
 const (
@@ -392,7 +398,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	initialReth := deferTarget{index: 0, block: procBlk}
 	fields := []llvm.Value{jb.impl, zero.impl, link.impl, b.deferTargetValue(initialReth).impl}
 	var ptr llvm.Value
-	if prog.GCRootsEnabled() {
+	if prog.GCRootsEnabled() || !self.reserveEscapeStack(prog.Defer()) {
 		ptr = b.aggregateAllocU(prog.Defer(), fields...)
 	} else {
 		// The thread chain borrows this frame until endDefer unlinks it.
@@ -533,7 +539,7 @@ func (b Builder) DeferToRecover(owner Function, stack Expr, mayRecover bool, fn 
 	self.loopCases = append(self.loopCases, loopCase)
 }
 
-func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
+func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
 	self.stmts = append(self.stmts, func(bits Expr, resume deferTarget) {
 		switch kind {
 		case DeferInCond:
@@ -629,11 +635,11 @@ defer.Args = node.prev
 free(node)
 */
 
-func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, args []Expr) Type {
+func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
 	return b.saveDeferArgsTo(self.argsPtr, kind, id, fn, args)
 }
 
-func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) Type {
+func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
 	saveFn := fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod)
 	if kind != DeferInLoop && fn != Nil && !saveFn && len(args) == 0 {
 		return nil
@@ -659,7 +665,8 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 	}
 	typ := prog.Struct(typs...)
 	var storage llvm.Value
-	if b.stackDeferArgs(kind, typ) {
+	heap := kind == DeferInLoop || prog.GCRootsEnabled() || !b.Func.reserveEscapeStack(typ)
+	if !heap {
 		// Each non-loop site runs at most once per invocation. Keep its slot
 		// in entry but capture arguments at the original defer statement.
 		storage = llvm.CreateAlloca(b.Func.entryAllocaBuilder(), prog.storageType(typ))
@@ -670,14 +677,10 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 	}
 	ptr := Expr{storage, prog.VoidPtr()}
 	b.Store(argsPtr, ptr)
-	return typ
+	return &deferArgsStorage{typ: typ, heap: heap}
 }
 
-func (b Builder) stackDeferArgs(kind DoAction, typ Type) bool {
-	return kind != DeferInLoop && !b.Prog.GCRootsEnabled() && b.Prog.SizeOf(typ) <= llabi.MaxImplicitStackVarSize
-}
-
-func (b Builder) callDefer(self *aDefer, kind DoAction, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
+func (b Builder) callDefer(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
 	if typ == nil {
 		b.callRecoverScopedDefer(fn, mayRecover, func() {
 			buildCall(b, fn, args...)
@@ -693,7 +696,7 @@ func (b Builder) callDefer(self *aDefer, kind DoAction, typ Type, mayRecover boo
 	// pointer when no loop defers were recorded.
 	b.IfThen(has, func() {
 		ptr := b.Load(self.argsPtr)
-		data := b.Load(Expr{ptr.impl, prog.Pointer(typ)})
+		data := b.Load(Expr{ptr.impl, prog.Pointer(typ.typ)})
 		offset := 2 // prev + id
 		b.Store(self.argsPtr, Expr{b.getField(data, 0).impl, prog.VoidPtr()})
 		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
@@ -711,7 +714,7 @@ func (b Builder) callDefer(self *aDefer, kind DoAction, typ Type, mayRecover boo
 		for i := 0; i < len(args); i++ {
 			args[i] = b.getField(data, i+offset)
 		}
-		if !b.stackDeferArgs(kind, typ) {
+		if typ.heap {
 			b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
 		}
 		b.callRecoverScopedDefer(fn, mayRecover, func() {

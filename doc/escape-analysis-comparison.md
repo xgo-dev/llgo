@@ -2,6 +2,8 @@
 
 Reference: Go **1.27.3**, the installed toolchain used for the comparison. This is a comparison of source-level storage decisions and emitted/runtime allocations, not a claim that LLGo implements every cmd/compile optimization. LLVM heap-to-stack is a subsequent, independent optimization.
 
+The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) describes the complete design and status.
+
 ## Implemented coverage
 
 | Area | Go 1.27.3 | LLGo |
@@ -29,6 +31,7 @@ Reference: Go **1.27.3**, the installed toolchain used for the comparison. This 
 4. **Receiver-word and defer lowering.** Native synchronous interface receiver words use caller storage. Deferred/asynchronous invocations and explicit-root targets retain the original allocation path. Extending those cases requires storage owned by the defer/goroutine or a collector-aware frame.
 5. **Runtime ABI temporaries.** Eliminating a source conversion does not eliminate every allocation inside a runtime helper. The string-map lookup probe still allocates approximately 32 bytes/call after removing its 128-byte string copy; cmd/compile allocates no bytes for this probe. This needs separate runtime/lowering lifetime work.
 6. **Target heuristics and build cost.** Stack size/alignment limits, native fixed stacks, vector layouts and conservative versus explicit GC roots differ. Cross-package effects are recomputed from available SSA instead of using Go's serialized escape tags. This affects optimization opportunities and build cost, independently of correctness.
+7. **By-value lexical closure capture.** Go's escape pass can copy a small, unmodified variable with no observable address use directly into a closure environment. LLGo currently retains the Go SSA lexical binding representation, which uses pointers to captured variables, except for its existing zero-sized environment elimination. An escaping closure can therefore retain separate captured-variable storage that Go avoids. General by-value capture requires coordinated capture proofs and environment layout changes; LLVM may still remove some resulting storage later.
 
 Field-insensitivity, unknown indirect calls, and heap retention for map/channel contents also occur in Go's analyzer. They are conservative design boundaries, not evidence that an entire Go feature is unsupported. Future precision work should be justified by a reproducer that cmd/compile improves and LLGo does not, rather than treating every remaining allocation as an analysis bug.
 
@@ -68,7 +71,7 @@ go build -gcflags=-m=2 -o /tmp/go-escape ./benchmark/escape/coverage
 llgo build -O3 -lto=full -o /tmp/llgo-escape ./benchmark/escape/coverage
 /tmp/go-escape -n=100000
 /tmp/llgo-escape -n=100000
-LLGO_ESCAPE=github.com/xgo-dev/llgo/benchmark/escape/coverage llgo build ./benchmark/escape/coverage
+llgo build -gcflags=-m=2 ./benchmark/escape/coverage
 ```
 
 Measure `MemStats.TotalAlloc` separately from elapsed time: LLGo's native `Mallocs` accounting remains tracked by #2923. Compare allocation bytes within each compiler; BDWGC rounding and Go allocation classes differ. Use the shared probe source from this PR for both worktrees. Existing baseline/follow-up LLGo binaries must use their matching runtime source roots, so runtime helper changes do not contaminate the baseline.

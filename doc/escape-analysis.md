@@ -2,6 +2,8 @@
 
 LLGo analyzes Go storage lifetimes before LLVM lowering. One result controls locals, address-taken parameters, named results, interface boxes, closure environments, captured variables, slice/map storage and string conversion/concatenation temporaries. It replaces the separate allocation walkers from #2963, #2970 and #2971, and addresses #2975, #2974 and #2932. Static interface constant pooling remains independent and runs before dynamic box allocation. [Comparison with Go 1.27.3](escape-analysis-comparison.md) separates implemented behavior from remaining precision and target limitations.
 
+The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) records the complete design, implementation status, and remaining work.
+
 ## Relation to the Go compiler and LLVM
 
 `internal/goescape/graph.go` adapts the weighted location graph, worklist solver and leak encoding from Go 1.27.3's `cmd/compile/internal/escape/{graph,solve,leaks}.go`, with Go's BSD attribution. The SSA adapter, target policy and call-graph integration are LLGo-specific. Importing cmd/compile's implementation directly would require its internal IR, types and export format; LLGo uses go/types and x/tools/go/ssa instead.
@@ -62,6 +64,8 @@ The analysis is deliberately field-insensitive, like cmd/compile. Stores through
 
 Forced heap placement feeds back into the graph **before** summaries are finalized. Otherwise a large or GC-constrained container could retain a pointer to an object incorrectly moved to the stack. The diagnostic records the constraint, and retention propagates to its contents.
 
+Newly promoted objects and temporary buffers share a 64 KiB budget per function. Target layouts account for slice capacity, rune buffers, map headers/buckets, and alignment; borrowed views consume no storage. Selection follows SSA order and over-budget heap constraints are solved before final parameter effects. Receiver adapters and defer frames/records reserve remaining capacity during lowering. Defer registration records ownership for cleanup. Existing SSA locals, later LLVM promotion, ABI spills, and call-chain depth are outside this incremental budget.
+
 Temporary buffers are fixed entry allocations. Runtime helpers initialize only the storage they use after ordinary bounds checks; copies initialize all observable bytes. Large fallbacks avoid clearing an unused stack buffer. The compiler and runtime share their size contract in `runtime/abi/stack.go`. A synchronous native interface invocation also uses a caller-owned receiver word instead of `IfacePtrData`'s per-call allocation; deferred/asynchronous invocations and explicit-root targets keep the longer-lived heap path. Receiver wrappers and nil-interface checks are preserved.
 
 Native conservative GC can scan stack fields. Explicit-root targets currently cannot keep managed fields alive merely by rooting their stack address, so newly promoted pointer-bearing objects remain in scanned heap storage. Existing SSA-local allocations retain their root plan: their addresses never leave the function and loads publish individual pointer values. A newly promoted object can instead pass its address to a borrowing callee whose writes are not covered by that plan. Extending promotion on those targets requires field roots with correct mutation and safepoint lifetimes. Pointer-free objects can still use the stack.
@@ -74,14 +78,16 @@ The build coordinator constructs dependency SSA before package-cache lookup (`re
 
 Package fingerprints include `GO_ESCAPE_VERSION` as well as existing compiler/source/dependency/target inputs. This also invalidates old archives for compiler API callers that omit a development compiler hash. Missing analysis facts never promote an existing heap object. Compiled bodies excluded from Go summaries (for example, C ABI functions) preserve existing SSA-local allocations, avoiding new runtime dependencies in freestanding code. Direct API calls without inspectable dependency bodies use conservative call effects.
 
-For placement diagnostics, use a function/package-name prefix, or `1` for all functions:
+Use Go-compatible compiler flags for allocation diagnostics:
 
 ```sh
-LLGO_ESCAPE=example.com/app llgo build .
-LLGO_ESCAPE=1 llgo build .
+llgo build -gcflags=-m .
+llgo build -gcflags=-m=2 .
+llgo build -gcflags=all=-m=2 .
+llgo tool compile -m=2 file.go
 ```
 
-Output includes source position when available, function, allocation kind, placement and a reason such as returned address, call retention, cross-iteration lifetime, work limit or GC restriction. Reports are sorted and generated even on cache hits. They do not affect code or cache identity.
+`-m` reports frontend storage plans; `-m=2` adds reasons such as retention, iteration lifetime, analysis limits, stack budget, or GC restrictions. Output distinguishes `stack`, `stack-buffer` with heap fallback, `borrowed` views, and `heap`; it does not claim final machine allocation counts. Unpatterned flags select command-line packages, while `all=` includes dependencies, using Go's count and last-matching-list rules. Other package patterns retain the CLI's existing rejection. LLGo consumes diagnostic flags before host metadata loading. Reports remain sorted and available on cache hits, without changing generated code or LLGo cache identity. Go's full inlining diagnostics and exact message wording are not implemented.
 
 ## Validation and measurements
 

@@ -18,29 +18,52 @@ package goescape
 
 import (
 	"fmt"
+	"go/types"
 	"io"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/ssa"
 )
 
-// WriteReport prints deterministic placement diagnostics. A nonempty package
-// prefix limits output to matching functions; it does not affect analysis.
-func (r *Result) WriteReport(w io.Writer, packagePrefix string) error {
+// WriteReport prints deterministic frontend storage decisions. level selects
+// functions and verbosity: zero disables output, one prints placements, and
+// higher values include reasons. LLVM may subsequently remove more storage.
+func (r *Result) WriteReport(w io.Writer, level func(*ssa.Function) int) error {
 	if r == nil {
 		return nil
 	}
 	var lines []string
 	for site, decision := range r.objects {
 		fn := site.Parent()
-		if !strings.HasPrefix(strings.TrimLeft(fn.String(), "(*"), packagePrefix) {
+		verbosity := level(fn)
+		if verbosity <= 0 {
 			continue
 		}
 		placement, reason := "stack", "does not escape"
 		if decision.Heap {
 			placement, reason = "heap", decision.Reason
+		} else if decision.ReadOnly {
+			placement, reason = "borrowed", "read-only view"
+		} else {
+			switch site.(type) {
+			case *ssa.MakeSlice, *ssa.Convert, *ssa.BinOp:
+				placement, reason = "stack-buffer", "heap fallback remains available"
+				if c, ok := site.(*ssa.Convert); ok && stringType(c.Type()) {
+					if src, ok := c.X.Type().Underlying().(*types.Basic); ok && src.Info()&types.IsInteger != 0 {
+						reason = "caller-owned rune encoding buffer"
+					}
+				}
+			case *ssa.MakeMap:
+				reason = "caller-owned map header; buckets may allocate"
+			}
 		}
 		kind := strings.TrimPrefix(fmt.Sprintf("%T", site), "*ssa.")
-		lines = append(lines, fmt.Sprintf("%s: %s: %s %s (%s)", fn.Prog.Fset.Position(site.Pos()), fn, kind, placement, reason))
+		line := fmt.Sprintf("%s: %s: %s %s", fn.Prog.Fset.Position(site.Pos()), fn, kind, placement)
+		if verbosity > 1 {
+			line += " (" + reason + ")"
+		}
+		lines = append(lines, line)
 	}
 	sort.Strings(lines)
 	for _, line := range lines {

@@ -66,8 +66,46 @@ func (p *context) analyzeEscape() *goescape.Result {
 		IndirectInterface: func(typ types.Type) bool {
 			return p.prog.InterfaceIndirect(p.type_(typ, llssa.GoDecl))
 		},
-		ForceHeap: p.forceEscapeHeap,
+		ForceHeap:     p.forceEscapeHeap,
+		StackLayout:   p.escapeStackLayout,
+		MaxStackBytes: llabi.MaxEscapeStackBytes,
 	})
+}
+
+func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size, alignment uint64) {
+	switch v := site.(type) {
+	case *ssa.MakeSlice:
+		elem := typ.Underlying().(*types.Slice).Elem()
+		n := p.prog.SizeOf(p.type_(elem, llssa.GoDecl))
+		if n == 0 || n > llabi.SmallStackBufferSize {
+			return 0, 1
+		}
+		typ = types.NewArray(elem, int64(llabi.SmallStackBufferSize/n))
+	case *ssa.Convert, *ssa.BinOp:
+		elem := types.Typ[types.Byte]
+		if _, conversion := site.(*ssa.Convert); conversion {
+			if dst, ok := typ.Underlying().(*types.Slice); ok {
+				if basic, ok := dst.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.Int32 {
+					elem = types.Typ[types.Rune]
+				}
+			}
+		}
+		typ = types.NewArray(elem, llabi.SmallStackBufferSize)
+	case *ssa.MakeMap:
+		header, bucket := p.prog.MapStackStorage(p.type_(v.Type(), llssa.GoDecl))
+		size, alignment = p.prog.SizeOf(header), p.prog.AlignOf(header)
+		if bucket != nil {
+			a := p.prog.AlignOf(bucket)
+			size += -size & (a - 1)
+			size += p.prog.SizeOf(bucket)
+			if a > alignment {
+				alignment = a
+			}
+		}
+		return size, alignment
+	}
+	lowered := p.type_(typ, llssa.GoDecl)
+	return p.prog.SizeOf(lowered), p.prog.AlignOf(lowered)
 }
 
 func (p *context) escapeCallContract(fn *ssa.Function) (goescape.Summary, bool) {

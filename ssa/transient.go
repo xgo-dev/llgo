@@ -7,6 +7,25 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+// SetEscapeStackBytes reserves the Go-level plan before helper lowering starts.
+func (f Function) SetEscapeStackBytes(size uint64) {
+	f.escapeStackBytes = size
+}
+
+func (f Function) reserveEscapeStack(typ Type) bool {
+	size, alignment := f.Prog.SizeOf(typ), f.Prog.AlignOf(typ)
+	if alignment == 0 || alignment&(alignment-1) != 0 || f.escapeStackBytes > llabi.MaxEscapeStackBytes {
+		return false
+	}
+	padding := -f.escapeStackBytes & (alignment - 1)
+	remaining := llabi.MaxEscapeStackBytes - f.escapeStackBytes
+	if padding > remaining || size > remaining-padding {
+		return false
+	}
+	f.escapeStackBytes += padding + size
+	return true
+}
+
 func (b Builder) stringStackBuffer() Expr {
 	return b.uninitializedStackSlot(b.Prog.Type(types.NewArray(types.Typ[types.Byte], llabi.SmallStackBufferSize), GoDecl))
 }

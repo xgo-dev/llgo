@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 4
+const Version = 5
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -43,6 +43,12 @@ type Config struct {
 	// ForceHeap runs before solving, so pointers inside forced-heap storage
 	// also escape. An empty reason permits ordinary lifetime analysis.
 	ForceHeap func(ssa.Instruction, types.Type) string
+	// StackLayout describes newly introduced stack storage. Zero size needs
+	// no reservation; alignment must be a positive power of two.
+	StackLayout func(ssa.Instruction, types.Type) (size, alignment uint64)
+	// MaxStackBytes bounds new storage per function, before final call effects.
+	// Zero leaves the target's existing per-object policy unchanged.
+	MaxStackBytes uint64
 }
 
 // Effect describes a minimum indirection depth. Zero means absent; a positive
@@ -70,8 +76,18 @@ type Decision struct {
 
 // Result is immutable after Analyze returns and may be read by backend workers.
 type Result struct {
-	objects   map[ssa.Instruction]Decision
-	summaries map[*ssa.Function]Summary
+	objects    map[ssa.Instruction]Decision
+	summaries  map[*ssa.Function]Summary
+	stackBytes map[*ssa.Function]uint64
+}
+
+// StackBytes is a conservative reservation for the function's promoted Go
+// objects. Lowering helpers can reserve additional storage from the same budget.
+func (r *Result) StackBytes(fn *ssa.Function) uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.stackBytes[fn]
 }
 
 func (r *Result) Decision(site ssa.Instruction) Decision {
@@ -189,7 +205,7 @@ func (a *analyzer) summary(fn *ssa.Function) Summary {
 // Each call SCC reaches a monotone summary fixed point before its callers.
 func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
-		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary),
+		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64),
 	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {

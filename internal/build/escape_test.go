@@ -37,8 +37,8 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("LLGO_ROOT", root)
-		t.Setenv("LLGO_ESCAPE", "example.com/escape")
 		conf := NewDefaultConf(ModeBuild)
+		conf.EscapeDiagnostics = 2
 		conf.BuildParallelism, _ = strconv.Atoi(os.Getenv(prefix + "WORKERS"))
 		conf.OutFile = filepath.Join(t.TempDir(), "probe")
 		if runtime.GOOS == "windows" {

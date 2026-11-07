@@ -400,7 +400,7 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed b
 	i := iMethodOf(rawIntf, method)
 	b.recordUseIfaceMethod(rawIntf, i)
 	var data Expr
-	if borrowed {
+	if borrowed && b.Func.reserveEscapeStack(prog.VoidPtr()) {
 		buffer := b.uninitializedStackSlot(prog.VoidPtr())
 		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrDataBuffer"), intf, buffer)
 	} else {

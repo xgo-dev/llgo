@@ -643,16 +643,11 @@ func (b Builder) MakeMapEx(t Type, nReserve Expr, heap bool) (ret Expr) {
 	nReserve = b.FitIntSize(nReserve)
 	typ := b.abiType(t.raw.Type)
 	if !heap {
-		header := b.uninitializedStackSlot(b.Prog.rtType("Map"))
+		ht, bt := b.Prog.MapStackStorage(t)
+		header := b.uninitializedStackSlot(ht)
 		bucket := b.Prog.Zero(b.Prog.VoidPtr())
-		mt := t.RawType().Underlying().(*types.Map)
-		// Use the same layout as runtime map metadata. Over-aligned vector
-		// elements retain runtime bucket allocation and its alignment policy.
-		if b.Prog.AlignOf(b.Prog.rawType(mt.Key())) <= uint64(b.Prog.GoWordSize()) && b.Prog.AlignOf(b.Prog.rawType(mt.Elem())) <= uint64(b.Prog.GoWordSize()) {
-			bt := b.Prog.Type(abi.MapBucketType(mt, b.Prog.sizes), GoDecl)
-			if b.Prog.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
-				bucket = b.Convert(b.Prog.VoidPtr(), b.uninitializedStackSlot(bt))
-			}
+		if bt != nil {
+			bucket = b.Convert(b.Prog.VoidPtr(), b.uninitializedStackSlot(bt))
 		}
 		ret = b.InlineCall(b.Pkg.rtFunc("MakeMapBuffer"), typ, nReserve, header, bucket)
 		ret.Type = t
@@ -660,6 +655,20 @@ func (b Builder) MakeMapEx(t Type, nReserve Expr, heap bool) (ret Expr) {
 	}
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeMap"), typ, nReserve)
 	ret.Type = t
+	return
+}
+
+// MapStackStorage shares the exact header/bucket layout and eligibility policy
+// between escape-analysis reservation and allocation lowering.
+func (p Program) MapStackStorage(t Type) (header, bucket Type) {
+	header = p.rtType("Map")
+	mt := t.RawType().Underlying().(*types.Map)
+	if p.AlignOf(p.rawType(mt.Key())) <= uint64(p.GoWordSize()) && p.AlignOf(p.rawType(mt.Elem())) <= uint64(p.GoWordSize()) {
+		bt := p.Type(abi.MapBucketType(mt, p.sizes), GoDecl)
+		if p.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
+			bucket = bt
+		}
+	}
 	return
 }
 

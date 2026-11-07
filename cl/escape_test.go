@@ -199,3 +199,33 @@ func f() *T { return new(T) }
 		t.Fatal("layout queries cached the original type's methods in the backend")
 	}
 }
+
+func TestEscapeFunctionStackBudget(t *testing.T) {
+	const src = `package stackbudget
+func use(p *[32768]byte) byte { return p[0] }
+func objects(x byte)byte{a:=new([32768]byte);b:=new([32768]byte);c:=new([32768]byte);a[0]=x;b[0]=x;c[0]=x;return use(a)+use(b)+use(c)}
+func reserve(p *[65500]byte) byte{return p[0]}
+func runes(s string)rune{a:=new([65500]byte);x:=reserve(a);return []rune(s)[0]+rune(x)}
+func bytes(s string)byte{a:=new([65500]byte);x:=reserve(a);b:=[]byte(s);b[0]++;return b[0]+x}
+func maps(x int)int{a:=new([65500]byte);n:=reserve(a);m:=make(map[int]int);m[x]=x;return m[x]+int(n)}
+type I interface{M()}
+func full(p *[65536]byte)byte{return p[0]}
+func receiver(v I)byte{a:=new([65536]byte);x:=full(a);v.M();return x}
+`
+	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, nil, false)
+	if body := llvmFunction(t, ir, "stackbudget.objects"); strings.Count(body, "runtime.AllocZ") != 1 {
+		t.Fatalf("function budget did not retain one large object on heap:\n%s", body)
+	}
+	if body := llvmFunction(t, ir, "stackbudget.runes"); strings.Contains(body, "StringToRunesBuffer") || !strings.Contains(body, "StringToRunes") {
+		t.Fatalf("rune buffer charged as bytes:\n%s", body)
+	}
+	if body := llvmFunction(t, ir, "stackbudget.bytes"); !strings.Contains(body, "StringToBytesBuffer") {
+		t.Fatalf("small byte buffer lost remaining budget:\n%s", body)
+	}
+	if body := llvmFunction(t, ir, "stackbudget.maps"); strings.Contains(body, "MakeMapBuffer") {
+		t.Fatalf("map header/bucket ignored the budget:\n%s", body)
+	}
+	if body := llvmFunction(t, ir, "stackbudget.receiver"); strings.Contains(body, "IfacePtrDataBuffer") || !strings.Contains(body, "IfacePtrData") {
+		t.Fatalf("receiver adapter ignored the shared budget:\n%s", body)
+	}
+}

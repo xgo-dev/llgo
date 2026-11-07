@@ -27,6 +27,7 @@ import (
 type object struct {
 	location *location
 	reason   string
+	typ      types.Type
 }
 
 type functionAnalysis struct {
@@ -121,6 +122,9 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 			complete = f.g.solve()
 		}
 	}
+	if complete {
+		complete = f.applyStackBudget()
+	}
 	summary := emptySummary(fn)
 	for i, param := range f.params {
 		p := &summary.Parameters[i]
@@ -149,8 +153,51 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		// Partial proofs cannot be exported: callers must also retain anything
 		// reachable through arguments when this function exceeded the budget.
 		summary = unknownSummary(fn)
+		a.result.stackBytes[fn] = 0
 	}
 	return summary, decisions
+}
+
+func (f *functionAnalysis) applyStackBudget() bool {
+	config := f.a.config
+	if config.MaxStackBytes == 0 || config.StackLayout == nil {
+		return true
+	}
+	var used uint64
+	forced := false
+	// SSA order makes selection independent of map iteration and worker count.
+	for _, block := range f.fn.Blocks {
+		for _, site := range block.Instrs {
+			obj := f.objects[site]
+			if obj == nil || obj.location.attrs&escapes != 0 {
+				continue
+			}
+			if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
+				continue // Existing SSA-local storage is not a new promotion.
+			}
+			if conversion, ok := site.(*ssa.Convert); ok && borrowableConversion(conversion) && obj.location.attrs&mutates == 0 {
+				continue // A borrowed view reserves no character buffer.
+			}
+			size, alignment := config.StackLayout(site, obj.typ)
+			if size == 0 {
+				continue
+			}
+			reason := "function stack budget"
+			if alignment == 0 || alignment&(alignment-1) != 0 {
+				reason = "unknown stack alignment"
+			} else if padding := -used & (alignment - 1); padding <= config.MaxStackBytes-used && size <= config.MaxStackBytes-used-padding {
+				used += padding + size
+				continue
+			}
+			obj.reason, obj.location.reason = reason, reason
+			f.g.flow(&f.g.heap, obj.location, -1)
+			forced = true
+		}
+	}
+	f.a.result.stackBytes[f.fn] = used
+	// A rejected container can retain other objects and caller parameters.
+	// Propagate that fact before exporting summaries or placement decisions.
+	return !forced || f.g.solve()
 }
 
 func (f *functionAnalysis) sink(reason string) *location {
@@ -208,7 +255,7 @@ func (f *functionAnalysis) newObject(site ssa.Instruction, typ types.Type, reaso
 			reason = forced
 		}
 	}
-	f.objects[site] = &object{location: l, reason: reason}
+	f.objects[site] = &object{location: l, reason: reason, typ: typ}
 	l.reason = reason
 	f.g.flow(f.value(value), l, -1)
 	if reason != "" {
