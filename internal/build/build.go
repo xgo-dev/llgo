@@ -3522,6 +3522,7 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 		return false, nil
 	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
+	ctx.cTransformer.LowerWideVectorCalls(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
 	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
 	// wrappers. Apply the same post-C-ABI copy pass as package modules.
@@ -3591,6 +3592,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
