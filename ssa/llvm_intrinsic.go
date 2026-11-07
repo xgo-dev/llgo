@@ -3,16 +3,22 @@ package ssa
 import (
 	"fmt"
 	"go/types"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/xgo-dev/llvm"
 )
 
+type llvmIntrinsicFamilyGroup struct {
+	names            []string
+	constantOperands []int
+}
+
 // llvmSupportedIntrinsics is a support policy, not a signature table. LLVM owns
-// the signatures, overloads, attributes and additional verifier constraints.
-// Other families can require target features or special calling conventions.
-var llvmSupportedIntrinsics = []string{
+// signatures, overloads and attributes. Additional operand rules fill gaps in
+// LLVM's metadata and are enforced by the same call-site checker as immarg.
+var llvmSupportedIntrinsics = []llvmIntrinsicFamilyGroup{{names: []string{
 	"abs", "bitreverse", "bswap", "ctlz", "cttz", "ctpop", "fshl", "fshr",
 	"smax", "smin", "umax", "umin",
 	"sadd.sat", "uadd.sat", "ssub.sat", "usub.sat", "sshl.sat", "ushl.sat",
@@ -22,17 +28,29 @@ var llvmSupportedIntrinsics = []string{
 	"pow", "powi", "fma", "fmuladd", "floor", "ceil", "trunc", "rint",
 	"nearbyint", "round", "roundeven", "copysign",
 	"minnum", "maxnum", "minimum", "maximum", "fptosi.sat", "fptoui.sat",
-	"memcpy", "memcpy.inline", "memmove", "memset", "memset.inline",
+	"memcpy", "memmove", "memset",
+}}, {
+	// LLVM 22 does not mark inline memory lengths as immarg or reject dynamic
+	// lengths in the IR verifier; code generation requires them to be constants.
+	names:            []string{"memcpy.inline", "memset.inline"},
+	constantOperands: []int{2},
+}}
+
+type llvmIntrinsicPolicy struct {
+	name             string
+	constantOperands []int
 }
 
 // Resolve the policy names through LLVM once. Name recognition belongs to
 // LookupIntrinsicID; LLGo only decides which resolved families it supports.
-var llvmIntrinsicNames = sync.OnceValue(func() map[int]string {
-	names := make(map[int]string, len(llvmSupportedIntrinsics))
-	for _, family := range llvmSupportedIntrinsics {
-		name := "llvm." + family
-		if id := llvm.LookupIntrinsicID(name); id != 0 {
-			names[id] = name
+var llvmIntrinsicNames = sync.OnceValue(func() map[int]llvmIntrinsicPolicy {
+	names := make(map[int]llvmIntrinsicPolicy)
+	for _, group := range llvmSupportedIntrinsics {
+		for _, family := range group.names {
+			name := "llvm." + family
+			if id := llvm.LookupIntrinsicID(name); id != 0 {
+				names[id] = llvmIntrinsicPolicy{name, group.constantOperands}
+			}
 		}
 	}
 	return names
@@ -56,27 +74,23 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 	if id == 0 {
 		return nil, fmt.Errorf("unknown LLVM intrinsic %q", name)
 	}
-	base, supported := llvmIntrinsicNames()[id]
+	policy, supported := llvmIntrinsicNames()[id]
 	if !supported {
 		return nil, fmt.Errorf("LLVM intrinsic %q is not supported: only portable scalar math and memory operations are supported", name)
 	}
+	base := policy.name
 	if sig.Recv() != nil || sig.TypeParams().Len() != 0 || sig.Variadic() {
 		return nil, fmt.Errorf("LLVM intrinsic %q requires a non-generic, non-variadic function without a receiver", name)
 	}
 	for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 		for i := 0; i < tuple.Len(); i++ {
 			t := tuple.At(i).Type()
-			if strings.HasPrefix(base, "llvm.mem") {
-				if _, ok := t.Underlying().(*types.Pointer); ok {
-					continue
-				}
-				if basic, ok := t.Underlying().(*types.Basic); ok && basic.Kind() == types.UnsafePointer {
-					continue
-				}
+			if _, ok := t.Underlying().(*types.Pointer); ok {
+				continue
 			}
 			basic, ok := t.Underlying().(*types.Basic)
-			if !ok || basic.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 {
-				return nil, fmt.Errorf("LLVM intrinsic %q: unsupported type %s; expected a scalar boolean, integer or floating-point type", name, t)
+			if !ok || (basic.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 && basic.Kind() != types.UnsafePointer) {
+				return nil, fmt.Errorf("LLVM intrinsic %q: unsupported type %s; expected a scalar boolean, integer, floating-point or pointer type", name, t)
 			}
 		}
 	}
@@ -118,13 +132,8 @@ func (p Program) ResolveLLVMIntrinsic(name string, sig *types.Signature) (*LLVMI
 		return nil, fmt.Errorf("invalid LLVM intrinsic %q: %s", name, strings.TrimSpace(err.Error()))
 	}
 	immarg := llvm.AttributeKindID("immarg")
-	if base == "llvm.memcpy.inline" || base == "llvm.memset.inline" {
-		// LLVM's verifier also requires a constant length, although its IIT
-		// declaration does not attach an immarg attribute to this operand.
-		d.immargs = append(d.immargs, 2)
-	}
 	for i := range d.params {
-		if !decl.GetEnumAttributeAtIndex(i+1, immarg).IsNil() {
+		if !decl.GetEnumAttributeAtIndex(i+1, immarg).IsNil() || slices.Contains(policy.constantOperands, i) {
 			d.immargs = append(d.immargs, i)
 		}
 	}

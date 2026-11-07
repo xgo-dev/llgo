@@ -2,11 +2,42 @@ package ssa
 
 import (
 	"go/types"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
 )
+
+func TestLLVMIntrinsicConstantOperands(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params []types.Type
+		want   []int
+	}{
+		{"llvm.memcpy", []types.Type{types.Typ[types.UnsafePointer], types.Typ[types.UnsafePointer], types.Typ[types.Uintptr], types.Typ[types.Bool]}, []int{3}},
+		{"llvm.memcpy.inline", []types.Type{types.Typ[types.UnsafePointer], types.Typ[types.UnsafePointer], types.Typ[types.Uintptr], types.Typ[types.Bool]}, []int{2, 3}},
+		{"llvm.memmove", []types.Type{types.Typ[types.UnsafePointer], types.Typ[types.UnsafePointer], types.Typ[types.Uintptr], types.Typ[types.Bool]}, []int{3}},
+		{"llvm.memset", []types.Type{types.Typ[types.UnsafePointer], types.Typ[types.Byte], types.Typ[types.Uintptr], types.Typ[types.Bool]}, []int{3}},
+		{"llvm.memset.inline", []types.Type{types.Typ[types.UnsafePointer], types.Typ[types.Byte], types.Typ[types.Uintptr], types.Typ[types.Bool]}, []int{2, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := intrinsicDeclarationPackage(t, nil)
+			params := make([]*types.Var, len(tc.params))
+			for i, typ := range tc.params {
+				params[i] = types.NewParam(0, nil, "", typ)
+			}
+			sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), nil, false)
+			d, err := pkg.Prog.ResolveLLVMIntrinsic(tc.name, sig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(d.immargs, tc.want) {
+				t.Fatalf("constant operands %v, want %v", d.immargs, tc.want)
+			}
+		})
+	}
+}
 
 func TestLLVMIntrinsicCallRejectsInvalidOperandsAndDeclarations(t *testing.T) {
 	for _, tc := range []struct{ name, want string }{

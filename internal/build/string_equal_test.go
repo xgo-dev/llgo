@@ -22,7 +22,7 @@ func TestStringEqualWordUsesStackMemory(t *testing.T) {
 		t.Fatal("missing runtime package")
 	}
 	defer pkgs[0].LPkg.Prog.Dispose()
-	fn := pkgs[0].LPkg.Module().NamedFunction(llssa.PkgRuntime + ".stringEqualWord")
+	fn := pkgs[0].LPkg.Module().NamedFunction(llssa.PkgRuntime + ".loadStringWord64")
 	if fn.IsNil() || fn.FirstBasicBlock().IsNil() {
 		t.Fatal("missing string equality word reader")
 	}

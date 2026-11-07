@@ -216,17 +216,18 @@ func StringEqual(x, y String) bool {
 	}
 	p, q, n := x.data, y.data, x.len
 	for n >= 32 {
-		diff := stringEqualWord(p) ^ stringEqualWord(q)
-		diff |= stringEqualWord(c.Advance(p, 8)) ^ stringEqualWord(c.Advance(q, 8))
-		diff |= stringEqualWord(c.Advance(p, 16)) ^ stringEqualWord(c.Advance(q, 16))
-		diff |= stringEqualWord(c.Advance(p, 24)) ^ stringEqualWord(c.Advance(q, 24))
+		// Accumulate word differences so one branch covers the 32-byte block.
+		diff := loadStringWord64(p) ^ loadStringWord64(q)
+		diff |= loadStringWord64(c.Advance(p, 8)) ^ loadStringWord64(c.Advance(q, 8))
+		diff |= loadStringWord64(c.Advance(p, 16)) ^ loadStringWord64(c.Advance(q, 16))
+		diff |= loadStringWord64(c.Advance(p, 24)) ^ loadStringWord64(c.Advance(q, 24))
 		if diff != 0 {
 			return false
 		}
 		p, q, n = c.Advance(p, 32), c.Advance(q, 32), n-32
 	}
 	for n >= 8 {
-		if stringEqualWord(p) != stringEqualWord(q) {
+		if loadStringWord64(p) != loadStringWord64(q) {
 			return false
 		}
 		p, q, n = c.Advance(p, 8), c.Advance(q, 8), n-8
@@ -239,7 +240,7 @@ func StringEqual(x, y String) bool {
 	return true
 }
 
-func stringEqualWord(p unsafe.Pointer) uint64 {
+func loadStringWord64(p unsafe.Pointer) uint64 {
 	// Use the existing stack-allocation intrinsic even at O0. An addressed Go
 	// local would require an escape proof before it could avoid the heap.
 	word := c.Alloca(8)

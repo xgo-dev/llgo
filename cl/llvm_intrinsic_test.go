@@ -163,7 +163,7 @@ func TestLLVMIntrinsicLinkErrors(t *testing.T) {
 		{"bad-bswap-width", "llvm.bswap", "func f(x uint8) uint8", "", "bswap must be an even number of bytes"},
 		{"non-immediate", "llvm.ctlz", "func f(x uint32, z bool) uint32", "func use(x uint32, z bool) uint32 { return f(x, z) }", "argument 2 must be an immediate constant"},
 		{"variadic", "llvm.ctpop", "func f(x ...uint32) uint32", "", "non-variadic"},
-		{"pointer", "llvm.ctpop", "func f(x *uint32) uint32", "", "unsupported type"},
+		{"pointer", "llvm.ctpop", "func f(x *uint32) uint32", "", "does not match"},
 		{"struct", "llvm.ctpop", "func f(x struct{ N int }) int", "", "unsupported type"},
 		{"complex", "llvm.sqrt", "func f(x complex128) complex128", "", "unsupported type"},
 		{"generic", "llvm.ctpop", "func f[T ~uint32](x T) T { return x }", "", "non-generic"},
