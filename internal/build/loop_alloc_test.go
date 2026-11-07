@@ -132,6 +132,7 @@ func TestLoopAllocationPlacement(t *testing.T) {
 	}
 	conf := NewDefaultConf(ModeGen)
 	conf.OptLevel = optlevel.O2
+	optimizeTestAllocationsBeforeABI(t, conf, nil)
 	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 	if err != nil {
 		t.Fatal(err)

@@ -240,6 +240,20 @@ func (p *FuncInfo) HasWrap() bool {
 	return false
 }
 
+// introducesIndirectStorage reports whether lowering adds sret or indirect
+// parameter storage. Register coercions do not add caller-owned memory accesses.
+func (p *FuncInfo) introducesIndirectStorage() bool {
+	if p.Return.Kind == AttrPointer {
+		return true
+	}
+	for _, param := range p.Params {
+		if param.Kind == AttrPointer {
+			return true
+		}
+	}
+	return false
+}
+
 type TypeInfo struct {
 	Type       llvm.Type
 	NativeType llvm.Type // native aggregate layout when it differs from Type
@@ -434,6 +448,13 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	nfn.SetComdat(fn.Comdat())
 	nfn.SetFunctionCallConv(fn.FunctionCallConv())
 	for _, attr := range fn.GetFunctionAttributes() {
+		// Pre-ABI optimization can infer memory(none) or memory(read) for
+		// direct aggregate values. Indirect parameters add reads and sret
+		// adds writes through caller-owned storage. Let LLVM infer effects
+		// again for the lowered body rather than retaining stale promises.
+		if info.introducesIndirectStorage() && attr.IsEnum() && attr.GetEnumKind() == int(llvm.AttributeKindID("memory")) {
+			continue
+		}
 		nfn.AddAttributeAtIndex(-1, attr)
 	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
