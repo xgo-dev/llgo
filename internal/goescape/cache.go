@@ -159,6 +159,21 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 						hashType(h, (*operand).Type(), seenTypes)
 					}
 				}
+
+				switch value := site.(type) {
+				case *ssa.MakeInterface:
+					indirect := !directInterface(value.X.Type())
+					if a.config.IndirectInterface != nil {
+						indirect = a.config.IndirectInterface(value.X.Type())
+					}
+					fmt.Fprintln(h, "interface", indirect)
+				case *ssa.TypeAssert:
+					indirect := !directInterface(value.AssertedType)
+					if a.config.IndirectInterface != nil {
+						indirect = a.config.IndirectInterface(value.AssertedType)
+					}
+					fmt.Fprintf(h, "assert %T %v\n", value.AssertedType.Underlying(), indirect)
+				}
 				typ := a.objectType(site)
 				if typ == nil {
 					continue
@@ -184,51 +199,29 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 
 func qualifier(pkg *types.Package) string { return pkg.Path() }
 
+// Fingerprint the type properties queried by this field-insensitive analysis.
+// Following pointees or interface method signatures recursively is unnecessary:
+// dereferenced values have their own SSA types, and resolved method bodies are
+// covered by component dependency keys. Backend storage constraints are hashed
+// separately. New type queries in the analyzer must update this schema/version.
 func hashType(h hash.Hash, t types.Type, seen map[types.Type]bool) {
 	if t == nil || seen[t] {
 		return
 	}
 	seen[t] = true
-	fmt.Fprintf(h, "type %q\n", types.TypeString(t, qualifier))
-	switch v := t.(type) {
-	case *types.Named:
-		for i := 0; i < v.TypeArgs().Len(); i++ {
-			hashType(h, v.TypeArgs().At(i), seen)
-		}
-		hashType(h, v.Underlying(), seen)
-	case *types.Alias:
-		hashType(h, v.Rhs(), seen)
-	case *types.Pointer:
-		hashType(h, v.Elem(), seen)
+	fmt.Fprintf(h, "type %q %T pointers=%v direct=%v\n", types.TypeString(t, qualifier), t.Underlying(), containsPointers(t), directInterface(t))
+	switch typ := t.Underlying().(type) {
+	case *types.Basic:
+		fmt.Fprintln(h, "basic", typ.Kind())
 	case *types.Array:
-		hashType(h, v.Elem(), seen)
-	case *types.Slice:
-		hashType(h, v.Elem(), seen)
-	case *types.Map:
-		hashType(h, v.Key(), seen)
-		hashType(h, v.Elem(), seen)
-	case *types.Chan:
-		hashType(h, v.Elem(), seen)
+		fmt.Fprintln(h, "array", typ.Len())
 	case *types.Struct:
-		for i := 0; i < v.NumFields(); i++ {
-			hashType(h, v.Field(i).Type(), seen)
-		}
-	case *types.Signature:
-		if v.Recv() != nil {
-			hashType(h, v.Recv().Type(), seen)
-		}
-		hashType(h, v.Params(), seen)
-		hashType(h, v.Results(), seen)
+		fmt.Fprintln(h, "fields", typ.NumFields())
 	case *types.Tuple:
-		for i := 0; i < v.Len(); i++ {
-			hashType(h, v.At(i).Type(), seen)
-		}
-	case *types.Interface:
-		for i := 0; i < v.NumMethods(); i++ {
-			hashType(h, v.Method(i).Type(), seen)
-		}
-	case *types.TypeParam:
-		hashType(h, v.Constraint(), seen)
+		fmt.Fprintln(h, "tuple", typ.Len())
+	case *types.Slice:
+		b, ok := typ.Elem().Underlying().(*types.Basic)
+		fmt.Fprintln(h, "byte-slice", ok && b.Kind() == types.Byte)
 	}
 }
 
