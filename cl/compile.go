@@ -509,7 +509,11 @@ func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*s
 		if name == "" {
 			name = "_"
 		}
-		flds[i] = types.NewField(token.NoPos, pkg, name, p.patchType(v.Type()), false)
+		typ := v.Type()
+		if p.options.EscapeAnalysis.CaptureByValue(v) {
+			typ = typ.Underlying().(*types.Pointer).Elem()
+		}
+		flds[i] = types.NewField(token.NoPos, pkg, name, p.patchType(typ), false)
 	}
 	t := types.NewPointer(types.NewStruct(flds, nil))
 	return types.NewParam(token.NoPos, pkg, "$env", t)
@@ -2012,6 +2016,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		goFn, _ := v.Fn.(*ssa.Function)
 		if !p.canElideZeroSizedClosureEnv(goFn) {
 			bindings = p.compileValues(b, v.Bindings, 0)
+			if goFn != nil {
+				for i, freeVar := range goFn.FreeVars {
+					if p.options.EscapeAnalysis.CaptureByValue(freeVar) {
+						bindings[i] = b.Load(bindings[i])
+					}
+				}
+			}
 		}
 		ret = b.MakeClosureEx(fn, bindings, !p.stackStorage(v))
 	case *ssa.TypeAssert:
@@ -2670,6 +2681,9 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			if freeVar == v {
 				if p.canElideZeroSizedClosureEnv(fn) {
 					return p.elidedZeroSizedFreeVar(b, v)
+				}
+				if p.options.EscapeAnalysis.CaptureByValue(v) {
+					return b.FieldAddr(p.fn.Env(), idx)
 				}
 				return p.fn.FreeVar(b, idx)
 			}

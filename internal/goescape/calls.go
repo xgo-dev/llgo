@@ -9,6 +9,9 @@ import (
 type callTarget struct {
 	fn   *ssa.Function
 	args []ssa.Value
+	// A contextual interface receiver is represented by the original formal
+	// interface. Its indirect payload adds one dereference to receiver effects.
+	receiverDepth int
 }
 
 // Resolve a bounded set of syntactically proven function/interface values.
@@ -54,7 +57,7 @@ func callTargets(call *ssa.CallCommon) []callTarget {
 			if call.IsInvoke() {
 				return false
 			}
-			targets = append(targets, callTarget{v, append([]ssa.Value(nil), call.Args...)})
+			targets = append(targets, callTarget{fn: v, args: append([]ssa.Value(nil), call.Args...)})
 			return true
 		case *ssa.MakeClosure:
 			if call.IsInvoke() {
@@ -66,7 +69,7 @@ func callTargets(call *ssa.CallCommon) []callTarget {
 			}
 			args := append([]ssa.Value(nil), call.Args...)
 			args = append(args, v.Bindings...)
-			targets = append(targets, callTarget{fn, args})
+			targets = append(targets, callTarget{fn: fn, args: args})
 			return true
 		case *ssa.MakeInterface:
 			if !call.IsInvoke() {
@@ -84,7 +87,7 @@ func callTargets(call *ssa.CallCommon) []callTarget {
 				return false
 			}
 			args := append([]ssa.Value{v.X}, call.Args...)
-			targets = append(targets, callTarget{fn, args})
+			targets = append(targets, callTarget{fn: fn, args: args})
 			return true
 		}
 		return false

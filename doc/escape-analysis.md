@@ -105,3 +105,11 @@ The broad native unwind suite has two full-LTO source-line expectation failures 
 The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation was updated to check the actual 16-byte stack storage on native targets and aligned heap storage on Wasm.
 
 The analysis caches each function's CFG scopes and retains allocation decisions from the converged summary pass. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
+
+## Bounded precision
+
+Known function and concrete interface arguments can specialize a completed callee's effects at a call site. The generic summary and emitted callee storage remain authoritative: a specialized caller cannot turn storage in that body from heap into stack. Recursive or unknown contexts and work limits fall back conservatively. No shared Go SSA is rewritten.
+
+An immutable lexical capture may be stored by value in its environment when its small variable has one dominating initialization and no observable address or later assignment. The analysis publishes the same capture plan that environment construction and free-variable lowering use.
+
+Temporary `string([]byte)` views may span multiple consumers and branches. All paths to the final consumer are checked for writes or unknown effects. Inspectable helpers must be read-only throughout their bodies, including global accesses; a parameter-only mutation summary cannot rule out a global alias of the source. Cyclic or over-budget regions preserve the copy.

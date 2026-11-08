@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 7
+const Version = 8
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -79,6 +79,13 @@ type Result struct {
 	objects    map[ssa.Instruction]Decision
 	summaries  map[*ssa.Function]Summary
 	stackBytes map[*ssa.Function]uint64
+	captures   map[*ssa.FreeVar]bool
+}
+
+// CaptureByValue reports whether lowering must store the captured value rather
+// than its variable's address. The shared SSA itself is never rewritten.
+func (r *Result) CaptureByValue(v *ssa.FreeVar) bool {
+	return r != nil && r.captures[v]
 }
 
 // StackBytes is a conservative reservation for the function's promoted Go
@@ -183,6 +190,10 @@ type analyzer struct {
 	result *Result
 	bodies map[*ssa.Function]bool
 	scopes map[*ssa.Function]*scopes
+	// Only completed SCCs may supply contextual proofs. Generic placement
+	// remains authoritative even when a particular caller has purer arguments.
+	solved   map[*ssa.Function]bool
+	contexts int
 }
 
 func (a *analyzer) inspect(fn *ssa.Function) bool {
@@ -205,14 +216,17 @@ func (a *analyzer) summary(fn *ssa.Function) Summary {
 // Each call SCC reaches a monotone summary fixed point before its callers.
 func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
-		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64),
-	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes)}
+		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64), captures: make(map[*ssa.FreeVar]bool),
+	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes), solved: make(map[*ssa.Function]bool)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {
 		if a.bodies[fn] || !a.inspect(fn) {
 			return
 		}
 		a.bodies[fn] = true
+		for i, v := range fn.FreeVars {
+			a.result.captures[v] = immutableCapture(fn, i)
+		}
 		a.scopes[fn] = functionScopes(fn)
 		a.result.summaries[fn] = emptySummary(fn)
 		for _, callee := range dependencies(fn) {
@@ -256,6 +270,9 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 				break
 			}
 		}
+		for _, fn := range group {
+			a.solved[fn] = true
+		}
 	}
 	return a.result
 }
@@ -264,6 +281,14 @@ func dependencies(fn *ssa.Function) []*ssa.Function {
 	ret := append([]*ssa.Function(nil), fn.AnonFuncs...)
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
+			if value, ok := instr.(*ssa.MakeInterface); ok {
+				methods := types.NewMethodSet(value.X.Type())
+				for i := 0; i < methods.Len(); i++ {
+					if method := fn.Prog.MethodValue(methods.At(i)); method != nil {
+						ret = append(ret, method)
+					}
+				}
+			}
 			for _, operand := range instr.Operands(nil) {
 				if operand != nil {
 					if fn, ok := (*operand).(*ssa.Function); ok {
