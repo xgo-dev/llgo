@@ -44,6 +44,7 @@ type functionAnalysis struct {
 	bindings      map[ssa.Value]ssa.Value
 	contextDepth  int
 	contextBudget *int
+	borrowProofs  map[*ssa.Convert]bool
 }
 
 func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instruction]Decision) {

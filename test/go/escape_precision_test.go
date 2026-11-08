@@ -46,6 +46,14 @@ func TestEscapeCallSiteAndCapture(t *testing.T) {
 
 func TestEscapeStringSnapshot(t *testing.T) {
 	b := []byte("before")
+	empty := []byte(string(b[:0]))
+	if empty == nil || len(empty) != 0 {
+		t.Fatal("empty conversion must be non-nil")
+	}
+	empty = append(empty, 7)
+	if empty[0] != 7 {
+		t.Fatal(empty)
+	}
 	s := string(b)
 	b[0] = 'B'
 	if !escapeEqual(s, "before") || escapeEqual(s, string(b)) {

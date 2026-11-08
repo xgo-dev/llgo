@@ -36,6 +36,9 @@ func StringFromBytesBuffer(b Slice, buffer *[abi.SmallStackBufferSize]byte) Stri
 }
 
 func StringToBytesBuffer(s String, buffer *[abi.SmallStackBufferSize]byte) []byte {
+	if s.len == 0 {
+		return []byte{}
+	}
 	if s.len > len(buffer) {
 		return StringToBytes(s)
 	}

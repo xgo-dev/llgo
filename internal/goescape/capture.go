@@ -16,7 +16,7 @@ func immutableCapture(fn *ssa.Function, index int) bool {
 	}
 	v := fn.FreeVars[index]
 	ptr, ok := v.Type().Underlying().(*types.Pointer)
-	if !ok || captureWords(ptr.Elem(), 0) > 8 || v.Referrers() == nil {
+	if !ok || captureUnits(ptr.Elem(), 0) > 8 || v.Referrers() == nil {
 		return false
 	}
 	for _, ref := range *v.Referrers() {
@@ -89,9 +89,10 @@ func immutableCapture(fn *ssa.Function, index int) bool {
 	return found
 }
 
-// An upper bound in sixteen-byte units avoids depending on go/types sizes or
-// introducing backend type caches into this representation-independent pass.
-func captureWords(t types.Type, depth int) int {
+// A unit bounds sixteen bytes: a 64-bit slice needs two units (24 bytes),
+// while an interface or function value fits one (16 bytes). Smaller scalars
+// deliberately round up. No go/types size or backend type cache is required.
+func captureUnits(t types.Type, depth int) int {
 	if depth > 8 {
 		return 9
 	}
@@ -106,11 +107,11 @@ func captureWords(t types.Type, depth int) int {
 		if t.Len() > 8 {
 			return 9
 		}
-		return int(t.Len()) * captureWords(t.Elem(), depth+1)
+		return int(t.Len()) * captureUnits(t.Elem(), depth+1)
 	case *types.Struct:
 		n := 1 // Include possible trailing zero-field padding.
 		for i := 0; i < t.NumFields() && n <= 8; i++ {
-			n += captureWords(t.Field(i).Type(), depth+1)
+			n += captureUnits(t.Field(i).Type(), depth+1)
 		}
 		return n
 	}

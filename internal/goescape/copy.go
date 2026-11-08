@@ -7,6 +7,18 @@ import (
 )
 
 func (f *functionAnalysis) borrowableConversion(v *ssa.Convert) bool {
+	if f.borrowProofs == nil {
+		f.borrowProofs = make(map[*ssa.Convert]bool)
+	}
+	if proof, ok := f.borrowProofs[v]; ok {
+		return proof
+	}
+	proof := f.proveBorrowableConversion(v)
+	f.borrowProofs[v] = proof
+	return proof
+}
+
+func (f *functionAnalysis) proveBorrowableConversion(v *ssa.Convert) bool {
 	if byteStringView(v.Type(), v.X.Type()) {
 		return true // Mutation and retention are checked by the flow graph.
 	}
@@ -94,7 +106,8 @@ func (f *functionAnalysis) stringConsumer(instr ssa.Instruction, v *ssa.Convert)
 		if builtin, ok := use.Call.Value.(*ssa.Builtin); ok {
 			return builtin.Name() == "len"
 		}
-		for _, target := range callTargets(&use.Call) {
+		targets := callTargets(&use.Call)
+		for _, target := range targets {
 			summary := f.a.summary(target.fn)
 			if len(summary.Parameters) != len(target.args) {
 				return false
@@ -114,7 +127,7 @@ func (f *functionAnalysis) stringConsumer(instr ssa.Instruction, v *ssa.Convert)
 				}
 			}
 		}
-		return len(callTargets(&use.Call)) != 0
+		return len(targets) != 0
 	}
 	return false
 }

@@ -78,7 +78,7 @@ func callTargets(call *ssa.CallCommon) []callTarget {
 			if _, open := v.X.Type().Underlying().(*types.Interface); open {
 				return false
 			}
-			selection := types.NewMethodSet(v.X.Type()).Lookup(call.Method.Pkg(), call.Method.Name())
+			selection := v.Parent().Prog.MethodSets.MethodSet(v.X.Type()).Lookup(call.Method.Pkg(), call.Method.Name())
 			if selection == nil {
 				return false
 			}
