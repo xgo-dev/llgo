@@ -14,8 +14,11 @@ func TestAppendTemporaryExplicitRoots(t *testing.T) {
 			prog.EnableGCRoots(true)
 			prog.Target().GOARCH = "wasm"
 		})
-		if got := strings.Contains(ir, "runtime.AllocZ"); got != (elem == "*int") {
+		if got := strings.Contains(ir, "runtime.AllocZ"); got {
 			t.Fatalf("%s: temporary heap allocation = %v:\n%s", elem, got, ir)
+		}
+		if elem == "*int" && !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+			t.Fatal("pointer append temporary lost field roots")
 		}
 	}
 }

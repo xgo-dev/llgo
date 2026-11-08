@@ -64,8 +64,8 @@ func gcMarkReachable() {
 	gcroot.Visit(markWasmGCRoot)
 }
 
-func markWasmGCRoot(root *unsafe.Pointer, _ unsafe.Pointer) {
-	markRoot(uintptr(unsafe.Pointer(root)), uintptr(*root))
+func markWasmGCRoot(root *unsafe.Pointer, metadata unsafe.Pointer) {
+	markRoot(uintptr(unsafe.Pointer(root)), gcroot.RootValue(root, metadata))
 }
 
 func gcStackStats() (inuse, sys uintptr) {

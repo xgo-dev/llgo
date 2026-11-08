@@ -14,6 +14,9 @@ func (f Function) SetEscapeStackBytes(size uint64) {
 
 func (f Function) reserveEscapeStack(typ Type) bool {
 	size, alignment := f.Prog.SizeOf(typ), f.Prog.AlignOf(typ)
+	if f.Prog.GCRootsEnabled() {
+		size += f.Prog.StackRootBytes(typ)
+	}
 	if alignment == 0 || alignment&(alignment-1) != 0 || f.escapeStackBytes > llabi.MaxEscapeStackBytes {
 		return false
 	}
@@ -36,6 +39,7 @@ func (b Builder) uninitializedStackSlot(elem Type) Expr {
 	entry := b.Func.entryAllocaBuilder()
 	value := llvm.CreateAlloca(entry, b.Prog.storageType(elem))
 	b.Prog.requireStorageAlignment(value, elem)
+	b.registerStackRoots(value, elem)
 	return Expr{value, b.Prog.Pointer(elem)}
 }
 

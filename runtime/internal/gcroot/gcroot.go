@@ -239,6 +239,24 @@ func registeredLocked(want *Context) bool {
 	return false
 }
 
+// RootValue decodes a compiler root. Nil metadata means a direct pointer;
+// otherwise the root holds a stack-field address and metadata specifies the
+// physical pointer width. Go words in Wasm32 can be wider than C pointers.
+func RootValue(root *unsafe.Pointer, metadata unsafe.Pointer) uintptr {
+	if metadata == nil {
+		return uintptr(*root)
+	}
+	address := *root
+	switch *(*uint8)(metadata) {
+	case 4:
+		return uintptr(*(*uint32)(address))
+	case 8:
+		return uintptr(*(*uint64)(address))
+	default:
+		panic("gcroot: invalid stack pointer width")
+	}
+}
+
 func visitChain(chain unsafe.Pointer, visitor func(*unsafe.Pointer, unsafe.Pointer)) {
 	const pointerSize = unsafe.Sizeof(uintptr(0))
 	for entry := (*stackEntry)(chain); entry != nil; entry = entry.next {

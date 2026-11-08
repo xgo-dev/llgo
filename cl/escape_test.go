@@ -96,10 +96,13 @@ func promoted(p *int) *int { return borrow(&p) }
 `
 	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, target, true)
-	for _, name := range []string{"large", "promoted"} {
+	for _, name := range []string{"large"} {
 		if body := llvmFunction(t, ir, "placement."+name); !strings.Contains(body, "runtime.Alloc") {
 			t.Errorf("%s must retain heap storage:\n%s", name, body)
 		}
+	}
+	if body := llvmFunction(t, ir, "placement.promoted"); strings.Contains(body, "runtime.Alloc") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+		t.Errorf("promoted stack fields lost typed roots:\n%s", body)
 	}
 	if body := llvmFunction(t, ir, "placement.local"); strings.Contains(body, "runtime.Alloc") {
 		t.Errorf("SSA-local pointer fields should retain their existing root plan:\n%s", body)
@@ -171,10 +174,10 @@ func pointers(n int)int{s:=make([]*int,n);return len(s)}
 			if body := llvmFunction(t, ir, "transient.returnedMap"); strings.Contains(body, "MakeMapBuffer") {
 				t.Errorf("returned map uses local header:\n%s", body)
 			}
-			if body := llvmFunction(t, ir, "transient.localMap"); strings.Contains(body, "MakeMapBuffer") == tc.roots {
+			if body := llvmFunction(t, ir, "transient.localMap"); !strings.Contains(body, "MakeMapBuffer") {
 				t.Errorf("wrong map storage with roots=%v:\n%s", tc.roots, body)
 			}
-			if body := llvmFunction(t, ir, "transient.pointers"); strings.Contains(body, "MakeSliceBuffer") == tc.roots {
+			if body := llvmFunction(t, ir, "transient.pointers"); !strings.Contains(body, "MakeSliceBuffer") {
 				t.Errorf("wrong pointer slice storage with roots=%v:\n%s", tc.roots, body)
 			}
 			if tc.arch != "386" && tc.arch != "wasm" {

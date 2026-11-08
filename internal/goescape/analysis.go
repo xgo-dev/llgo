@@ -46,6 +46,9 @@ type Config struct {
 	// StackLayout describes newly introduced stack storage. Zero size needs
 	// no reservation; alignment must be a positive power of two.
 	StackLayout func(ssa.Instruction, types.Type) (size, alignment uint64)
+	// LocalStackLayout accounts for newly required root slots of storage
+	// already local in Go SSA. The original object bytes are not new storage.
+	LocalStackLayout func(ssa.Instruction, types.Type) (size, alignment uint64)
 	// MaxStackBytes bounds new storage per function, before final call effects.
 	// Zero leaves the target's existing per-object policy unchanged.
 	MaxStackBytes uint64

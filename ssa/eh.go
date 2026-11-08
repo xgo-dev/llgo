@@ -398,11 +398,11 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	initialReth := deferTarget{index: 0, block: procBlk}
 	fields := []llvm.Value{jb.impl, zero.impl, link.impl, b.deferTargetValue(initialReth).impl}
 	var ptr llvm.Value
-	if prog.GCRootsEnabled() || !self.reserveEscapeStack(prog.Defer()) {
+	if !self.reserveEscapeStack(prog.Defer()) {
 		ptr = b.aggregateAllocU(prog.Defer(), fields...)
 	} else {
 		// The thread chain borrows this frame until endDefer unlinks it.
-		// Explicit roots still require scanned heap storage.
+		// Managed fields are registered in the caller's typed root frame.
 		ptr = b.AllocaT(prog.Defer()).impl
 		b.aggregateInit(ptr, prog.Defer(), fields...)
 	}
@@ -665,12 +665,11 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 	}
 	typ := prog.Struct(typs...)
 	var storage llvm.Value
-	heap := kind == DeferInLoop || prog.GCRootsEnabled() || !b.Func.reserveEscapeStack(typ)
+	heap := kind == DeferInLoop || !b.Func.reserveEscapeStack(typ)
 	if !heap {
 		// Each non-loop site runs at most once per invocation. Keep its slot
 		// in entry but capture arguments at the original defer statement.
-		storage = llvm.CreateAlloca(b.Func.entryAllocaBuilder(), prog.storageType(typ))
-		prog.requireStorageAlignment(storage, typ)
+		storage = b.uninitializedStackSlot(typ).impl
 		b.aggregateInit(storage, typ, flds...)
 	} else {
 		storage = b.aggregateAllocU(typ, flds...)
