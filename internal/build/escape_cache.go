@@ -179,9 +179,15 @@ func (files *escapeCacheFiles) flush() {
 				}
 			}
 			data, err = json.Marshal(shard.values)
+			if err != nil {
+				continue
+			}
 		}
-		if err == nil && len(data) <= goescape.MaxCacheBytes {
-			writeManifest(filepath.Join(files.dir, bucket+".json"), string(data))
+		if len(data) > goescape.MaxCacheBytes {
+			// Even the entries used by this build exceed the shard limit.
+			// Leave the previous file intact; new facts will miss next time.
+			continue
 		}
+		writeManifest(filepath.Join(files.dir, bucket+".json"), string(data))
 	}
 }

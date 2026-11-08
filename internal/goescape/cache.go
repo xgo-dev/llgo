@@ -303,14 +303,11 @@ func (a *analyzer) loadCache(key string, functions []cacheFunction) *Result {
 		return nil
 	}
 	loaded := &Result{objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64), captures: a.result.captures}
-	index := 0
-	for _, item := range functions {
+	// Component records contain inspected bodies only; opaque contracts are
+	// represented in dependency keys, never in this positional inventory.
+	for index, item := range functions {
 		fn := item.fn
-		if !a.bodies[fn] {
-			continue
-		}
 		facts := payload.Functions[index]
-		index++
 		if facts.ID != item.id || !validSummary(fn, facts.Summary) || len(facts.Objects) != len(item.objects) || len(facts.Captures) != len(fn.FreeVars) {
 			return nil
 		}
@@ -346,9 +343,6 @@ func (a *analyzer) storeCache(key string, functions []cacheFunction) {
 	payload := cachePayload{Schema: cacheSchema, Version: Version, Key: key}
 	for _, item := range functions {
 		fn := item.fn
-		if !a.bodies[fn] {
-			continue
-		}
 		facts := cachedFunction{ID: item.id, Summary: a.result.summaries[fn], StackBytes: a.result.StackBytes(fn)}
 		for _, v := range fn.FreeVars {
 			facts.Captures = append(facts.Captures, a.result.CaptureByValue(v))

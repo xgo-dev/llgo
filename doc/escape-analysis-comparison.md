@@ -2,7 +2,7 @@
 
 Reference: Go **1.27.3**, the installed toolchain used for the comparison. This is a comparison of source-level storage decisions and emitted/runtime allocations, not a claim that LLGo implements every cmd/compile optimization. LLVM heap-to-stack is a subsequent, independent optimization.
 
-The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) describes the complete design and status. [#2997](https://github.com/xgo-dev/llgo/pull/2997) includes the KeepAlive work formerly reviewed in [#3016](https://github.com/xgo-dev/llgo/pull/3016). #3016 was closed after consolidation on 2026-11-08; #2997 is the sole active delivery PR and remains pending merge.
+The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) describes the complete design and implementation status.
 
 ## Implemented coverage
 
