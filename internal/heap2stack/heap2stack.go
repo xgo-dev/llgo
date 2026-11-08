@@ -4,8 +4,54 @@ package heap2stack
 
 import "github.com/xgo-dev/llvm"
 
-// Run preserves heap storage for tail-call inputs and repeated allocations
-// whose instances cannot be proven disjoint, then moves new fixed slots to entry.
+// Bound recursive attribute analysis on native stacks, especially Windows'
+// 1 MiB threads. This is a conservative stack-safety cutoff, not a correctness
+// limit of the analysis. Larger functions retain heap storage; later LLVM
+// passes still optimize them normally.
+const maxFunctionInstructions = 1024
+
+type skippedFunction struct {
+	fn              llvm.Value
+	hadNoinline     bool
+	savedAttributes []llvm.Attribute
+}
+
+func saveSkippedFunction(fn llvm.Value) skippedFunction {
+	entry := skippedFunction{
+		fn:          fn,
+		hadNoinline: !fn.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil(),
+	}
+	for _, name := range []string{"alwaysinline", "optsize", "minsize"} {
+		if attr := fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)); !attr.IsNil() {
+			entry.savedAttributes = append(entry.savedAttributes, attr)
+		}
+	}
+	return entry
+}
+
+func (entry skippedFunction) skipAnalysis(ctx llvm.Context) {
+	// optnone also stops dependencies requested from other functions. Remove
+	// incompatible attributes so the temporary state stays verifier-valid.
+	for _, attr := range entry.savedAttributes {
+		entry.fn.RemoveEnumFunctionAttribute(uint(attr.GetEnumKind()))
+	}
+	entry.fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+	entry.fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("optnone"), 0))
+}
+
+func (entry skippedFunction) restore() {
+	entry.fn.RemoveEnumFunctionAttribute(llvm.AttributeKindID("optnone"))
+	if !entry.hadNoinline {
+		entry.fn.RemoveEnumFunctionAttribute(llvm.AttributeKindID("noinline"))
+	}
+	for _, attr := range entry.savedAttributes {
+		entry.fn.AddFunctionAttr(attr)
+	}
+}
+
+// Run preserves heap storage in oversized functions, for tail-call inputs,
+// and for repeated allocations whose instances cannot be proven disjoint,
+// then moves new fixed slots to entry.
 // Initialization stays at the original allocation site. No lifetime markers
 // are needed for this placement, and pre-existing allocas are left alone.
 func Run(mod llvm.Module, tm llvm.TargetMachine) error {
@@ -15,8 +61,20 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 	var functions, excluded []llvm.Value
 	existing := make(map[llvm.Value]bool)
 	optnone := llvm.AttributeKindID("optnone")
+	var skipped []skippedFunction
+	defer func() {
+		for _, entry := range skipped {
+			entry.restore()
+		}
+	}()
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if fn.FirstBasicBlock().IsNil() || !fn.GetEnumFunctionAttribute(optnone).IsNil() {
+			continue
+		}
+		if exceedsAnalysisBudget(fn) {
+			entry := saveSkippedFunction(fn)
+			skipped = append(skipped, entry)
+			entry.skipAnalysis(mod.Context())
 			continue
 		}
 		functions = append(functions, fn)
@@ -75,6 +133,19 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 		}
 	}
 	return nil
+}
+
+func exceedsAnalysisBudget(fn llvm.Value) bool {
+	n := 0
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+			n++
+			if n > maxFunctionInstructions {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isCall(i llvm.Value) bool {
