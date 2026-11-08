@@ -32,13 +32,13 @@ func dump(v any) {
 // CHECK: [[HAS_ELEM:%.*]] = icmp ne ptr [[TYPE_ELEM]], null
 // CHECK: br i1 [[HAS_ELEM]], label %{{.*}}, label %{{.*}}
 // CHECK: [[RECURSE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
-// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 7 })
+// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 7 }, ptr %{{[0-9]+}})
 // CHECK: call void @main.dumpTyp(ptr [[RECURSE_ELEM]], %"{{.*}}String" [[ELEM_SEP]])
 // CHECK: [[RECHECK_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
 // CHECK: [[HAS_UNCOMMON:%.*]] = icmp ne ptr [[RECHECK_UNCOMMON]], null
 // CHECK: br i1 [[HAS_UNCOMMON]], label %{{.*}}, label %{{.*}}
 // CHECK: [[DUMP_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
-// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 9 })
+// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 9 }, ptr %{{[0-9]+}})
 // CHECK: call void @main.dumpUncommon(ptr [[DUMP_UNCOMMON]], %"{{.*}}String" [[UNCOMMON_SEP]])
 func dumpTyp(t *abi.Type, sep string) {
 	print(sep)

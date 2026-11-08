@@ -61,14 +61,16 @@ func main() {
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.info(
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.String" %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" zeroinitializer, %"{{.*}}/runtime/internal/runtime.String" %[[TMP0]])
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 3 })
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %[[TMP2]]
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca [32 x i8], align 1
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}/runtime/internal/runtime.String" zeroinitializer, %"{{.*}}/runtime/internal/runtime.String" %[[TMP0]], ptr %[[TMP1]])
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP2]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 3 })
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %[[TMP3]]
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 48)
+// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca [3 x %"{{.*}}/runtime/internal/runtime.String"], align 8
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP0]], i8 0, i64 48, i1 false)
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP0]], i64 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB1]], i64 5 }, ptr %[[TMP1]], align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP0]], i64 1

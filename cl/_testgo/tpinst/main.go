@@ -40,9 +40,8 @@ func (pt *M[T]) value() T {
 }
 
 // CHECK-LABEL: define void @main.demo(){{.*}} {
-// CHECK: %[[INT_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK: %[[INT_IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[INT_OBJ]], 1
-// CHECK: %[[INT_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[INT_IFACE]])
+// CHECK: %[[INT_IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[INT_OBJ:[0-9]+]], 1
+// CHECK: %[[INT_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[INT_IFACE]], ptr %{{[0-9]+}})
 // CHECK: %[[INT_IFACE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[INT_IFACE]], 0
 // CHECK: %[[INT_METHOD_SLOT:[0-9]+]] = getelementptr ptr, ptr %[[INT_IFACE_TYPE]], i64 3
 // CHECK: %[[INT_METHOD:[0-9]+]] = load ptr, ptr %[[INT_METHOD_SLOT]]
@@ -53,9 +52,8 @@ func (pt *M[T]) value() T {
 // CHECK: %[[INT_RESULT:[0-9]+]] = call i64 %[[INT_CALL_CODE]](ptr %[[INT_CALL_DATA]])
 // CHECK: %[[INT_BAD:[0-9]+]] = icmp ne i64 %[[INT_RESULT]], 100
 // CHECK: br i1 %[[INT_BAD]]
-// CHECK: %[[FLOAT_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK: %[[FLOAT_IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[FLOAT_OBJ]], 1
-// CHECK: %[[FLOAT_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[FLOAT_IFACE]])
+// CHECK: %[[FLOAT_IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[FLOAT_OBJ:[0-9]+]], 1
+// CHECK: %[[FLOAT_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[FLOAT_IFACE]], ptr %{{[0-9]+}})
 // CHECK: %[[FLOAT_IFACE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[FLOAT_IFACE]], 0
 // CHECK: getelementptr ptr, ptr %[[FLOAT_IFACE_TYPE]], i64 3
 // CHECK: insertvalue { ptr, ptr } %{{[0-9]+}}, ptr %[[FLOAT_DATA]], 1

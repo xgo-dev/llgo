@@ -660,7 +660,9 @@ var llgoInstrs = map[string]int{
 	"stringData":        llgoStringData,
 	"funcAddr":          llgoFuncAddr,
 	"funcPCABI0":        llgoFuncPCABI0,
+	"keepAlive":         llgoKeepAlive,
 	"skip":              llgoSkip,
+	"noescape":          llgoNoEscape,
 	"syscall":           llgoSyscall,
 	"boolToUint8":       llgoBoolToUint8,
 	"interfaceKindUsed": llgoInterfaceKindUsed,
@@ -2645,7 +2647,12 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
-		if needsRecoverToken {
+		if act == llssa.Call && !p.prog.GCRootsEnabled() {
+			// Value-receiver adapters copy this borrowed word into the
+			// callee's parameter before it can be retained. A by-reference
+			// receiver ABI would require a separate lifetime proof here.
+			fn = b.ImethodBorrowed(o, mthd, needsRecoverToken)
+		} else if needsRecoverToken {
 			fn = b.ImethodWithRecoverToken(o, mthd)
 		} else {
 			fn = b.Imethod(o, mthd)
@@ -2828,10 +2835,26 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.funcAddr(b, args)
 		case llgoFuncPCABI0:
 			ret = p.funcPCABI0(b, args)
+		case llgoKeepAlive:
+			if len(args) != 1 || call.Signature().Results().Len() != 0 {
+				panic("keepAlive(any): invalid arguments")
+			}
+			values := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.KeepAlive(args[0])
+			}, values...)
 		case llgoSkip:
 			if results := call.Signature().Results(); results.Len() != 0 {
 				ret = p.zeroResult(results)
 			}
+		case llgoNoEscape:
+			if !noEscapeSignature(call.Signature()) {
+				panic("noescape(p unsafe.Pointer) unsafe.Pointer: invalid signature")
+			}
+			args := p.compileValues(b, args, kind)
+			ret = b.Do(act, llssa.Nil, func(_ llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return args[0]
+			}, args...)
 		case llgoSyscall:
 			ret = p.syscallIntrinsic(b, args, call.Signature().Results())
 		case llgoBoolToUint8:

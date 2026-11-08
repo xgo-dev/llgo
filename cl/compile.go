@@ -35,6 +35,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
+	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -60,10 +61,13 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
-	Debug        bool
-	DebugSymbols bool
-	Trace        bool
-	ExportRename bool
+	// EscapeAnalysis contains immutable storage decisions prepared before
+	// backend workers. Direct API callers may omit it to analyze their input.
+	EscapeAnalysis *goescape.Result
+	Debug          bool
+	DebugSymbols   bool
+	Trace          bool
+	ExportRename   bool
 	// AllowInternalDirectives permits directives reserved for LLGo's runtime.
 	// Package loaders set it only for verified Go standard-library sources.
 	AllowInternalDirectives bool
@@ -825,6 +829,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
 			p.goFn = f
+			fn.SetEscapeStackBytes(p.options.EscapeAnalysis.StackBytes(f))
 			p.callerFrameMark = llssa.Nil
 			p.locality.function = localityFunction{}
 			p.state = state // restore pkgState when compiling funcBody
@@ -1521,6 +1526,11 @@ func (p *context) compileSyntheticMakeSlice(b llssa.Builder, v *ssa.Slice) (llss
 	}
 	t := p.type_(v.Type(), llssa.GoDecl)
 	length := p.compileValue(b, v.High)
+	alloc := v.X.(*ssa.Alloc)
+	if p.stackStorage(alloc) {
+		array := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+		return b.MakeSliceStackCapacity(t, length, capacity, array.Len()), true
+	}
 	return b.MakeSlice(t, length, capacity), true
 }
 
@@ -1545,8 +1555,8 @@ func (p *context) syntheticMakeSliceCap(v *ssa.Slice) (llssa.Expr, bool) {
 	return p.prog.IntVal(uint64(arr.Len()), p.prog.Int()), true
 }
 
-func (p *context) markRecoverSlot(v *ssa.Alloc) {
-	if p.recoverSlots == nil || v.Heap {
+func (p *context) markRecoverSlot(v *ssa.Alloc, heap bool) {
+	if p.recoverSlots == nil || heap {
 		return
 	}
 	p.recoverSlots[v] = none{}
@@ -1735,7 +1745,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			x := p.compileValueAs(b, v.X, v.Y.Type())
 			y := p.compileValueAs(b, v.Y, v.X.Type())
-			ret = b.BinOp(v.Op, x, y)
+			ret = b.BinOpEx(v.Op, x, y, !p.stackStorage(v))
 		}
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
@@ -1839,7 +1849,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			break
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.Convert(p.type_(t, llssa.GoDecl), x)
+		if decision, ok := p.options.EscapeAnalysis.LookupDecision(v); ok && decision.ReadOnly {
+			if _, stringResult := t.Underlying().(*types.Basic); stringResult {
+				ret = b.ReadOnlyBytesString(p.type_(t, llssa.GoDecl), x)
+			} else {
+				ret = b.ReadOnlyStringBytes(p.type_(t, llssa.GoDecl), x)
+			}
+		} else {
+			ret = b.ConvertEx(p.type_(t, llssa.GoDecl), x, !p.stackStorage(v))
+		}
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
 		p.recordPanicSite(b, v.Pos())
@@ -1869,10 +1887,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 			hoistToEntry = inLoop
 		}
-		heap := v.Heap && !p.canStackAllocateResult(v) && !p.canStackAllocateAppendArgs(v) && !p.canStackAllocateCapture(v)
+		heap := !p.stackStorage(v)
 		ret = b.AllocEx(elem, heap, hoistToEntry)
 		p.debugAlloc(b, v, ret)
-		p.markRecoverSlot(v)
+		p.markRecoverSlot(v, heap)
 		if p.isRecoverSlotAddr(v) {
 			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
 		}
@@ -1926,6 +1944,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.GoDecl)
 	case *ssa.MakeInterface:
+		if p.keepAliveDataOnly(v) {
+			ret = b.MakeInterfaceDataOnlyEx(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X), !p.stackStorage(v))
+			break
+		}
 		if p.finalizerDataOnly(v) {
 			ret = b.MakeInterfaceDataOnly(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X))
 			break
@@ -1963,19 +1985,19 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.MakeInterface(t, x)
+		ret = b.MakeInterfaceEx(t, x, !p.stackStorage(v))
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
 		nCap := p.compileValue(b, v.Cap)
-		ret = b.MakeSlice(t, nLen, nCap)
+		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:
 		var nReserve llssa.Expr
 		t := p.type_(v.Type(), llssa.GoDecl)
 		if v.Reserve != nil {
 			nReserve = p.compileValue(b, v.Reserve)
 		}
-		ret = b.MakeMap(t, nReserve)
+		ret = b.MakeMapEx(t, nReserve, !p.stackStorage(v))
 	case *ssa.MakeClosure:
 		p.checkBoundMethodReceiver(b, v)
 		fn := p.compileValue(b, v.Fn)
@@ -1984,7 +2006,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if !p.canElideZeroSizedClosureEnv(goFn) {
 			bindings = p.compileValues(b, v.Bindings, 0)
 		}
-		ret = b.MakeClosureEx(fn, bindings, !p.canStackAllocateClosure(v))
+		ret = b.MakeClosureEx(fn, bindings, !p.stackStorage(v))
 	case *ssa.TypeAssert:
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.GoDecl)
@@ -3060,6 +3082,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)
+	if ctx.options.EscapeAnalysis == nil {
+		ctx.options.EscapeAnalysis = ctx.analyzeEscape()
+	}
 
 	if hasPatch {
 		skips := ctx.skips

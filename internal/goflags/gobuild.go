@@ -51,6 +51,7 @@ func ApplyBuildFlags(conf *build.Config, args []string) error {
 	}
 	next := *conf
 	next.GoBuildFlags = all
+	next.LoaderBuildFlags = loaderBuildFlags(all)
 	if err := applyOverlay(&next, all); err != nil {
 		return err
 	}

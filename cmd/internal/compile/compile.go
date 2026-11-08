@@ -68,6 +68,7 @@ type options struct {
 	noOpt     countFlag
 	noInline  countFlag
 	allErrors countFlag
+	printOpt  countFlag
 
 	complete bool
 	standard bool
@@ -90,10 +91,11 @@ func newFlagSet(opts *options) *flag.FlagSet {
 	fs.Func("importcfg", "Unsupported: gc object import configuration", func(string) error { return fmt.Errorf("-importcfg is unsupported by LLGo") })
 	fs.StringVar(&opts.lang, "lang", "", "Go language version source code expects")
 	fs.Var(&opts.noInline, "l", "disable inlining")
+	fs.Var(&opts.printOpt, "m", "print allocation decisions; repeat for reasons")
 	fs.Func("o", "Unsupported: gc object output", func(string) error { return fmt.Errorf("-o is unsupported by LLGo") })
 	fs.Func("p", "Unsupported: gc package import identity", func(string) error { return fmt.Errorf("-p is unsupported by LLGo") })
 	fs.BoolVar(&opts.standard, "std", false, "compiling standard library")
-	for _, name := range []string{"+", "dynlink", "h", "live", "m", "race", "smallframes", "wb"} {
+	for _, name := range []string{"+", "dynlink", "h", "live", "race", "smallframes", "wb"} {
 		fs.BoolFunc(name, "Unsupported: gc backend or diagnostics", func(string) error {
 			return fmt.Errorf("-%s is recognized but unsupported by LLGo", name)
 		})
@@ -149,6 +151,7 @@ func runCmd(_ *base.Command, args []string) {
 	conf.NoErrorColumn = opts.noColumns.value != 0
 	conf.AllowNoBody = !opts.complete
 	conf.DisableBoundsChecks = opts.noBounds.value != 0
+	conf.EscapeDiagnostics = opts.printOpt.value
 	var loaderCompilerFlags []string
 	if opts.allErrors.value != 0 {
 		loaderCompilerFlags = append(loaderCompilerFlags, "-e")

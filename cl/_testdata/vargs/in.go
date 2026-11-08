@@ -23,7 +23,7 @@ func test(a ...any) {
 // Keep this check focused on the variadic slice, interface boxing, and
 // assertion-to-C-varargs data flow. Bounds-loop details are owned elsewhere.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[ARGS:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 48)
+// CHECK: [[ARGS:%[0-9]+]] = alloca [3 x %"{{.*}}eface"], align 8
 // CHECK: store %"{{.*}}eface" { ptr @_llgo_int, ptr @"_llgo_ifacebox${{.*}}" }, ptr {{%[0-9]+}}
 // CHECK: [[SLICE_LEN:%[0-9]+]] = insertvalue %"{{.*}}Slice" {{.*}}, i64 3, 1
 // CHECK-NEXT: [[SLICE:%[0-9]+]] = insertvalue %"{{.*}}Slice" [[SLICE_LEN]], i64 3, 2

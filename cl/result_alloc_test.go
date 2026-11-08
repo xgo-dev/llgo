@@ -84,7 +84,7 @@ func zero() (r struct{}) { borrowZero(&r); return }
 	}
 }
 
-func TestCompileEscapingNamedResults(t *testing.T) {
+func TestCompileNamedResultPlacement(t *testing.T) {
 	const prefix = `package resultalloc
 import "unsafe"
 var _ unsafe.Pointer
@@ -125,29 +125,12 @@ func result() (r uint64) { _ = intrinsic(&r); return }`},
 		for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
 			t.Run(fmt.Sprintf("%s/%v", tc.name, mode), func(t *testing.T) {
 				ir := compileWithRewritesMode(t, prefix+tc.decl, nil, mode)
-				if body := llvmFunction(t, ir, "resultalloc.result"); !strings.Contains(body, "runtime.Alloc") {
-					t.Fatalf("result must retain heap storage:\n%s", body)
+				stack := tc.name == "returned alias" || tc.name == "recursive" || tc.name == "analysis limit" || tc.name == "intrinsic body"
+				body := llvmFunction(t, ir, "resultalloc.result")
+				if heap := strings.Contains(body, "runtime.Alloc"); heap == stack {
+					t.Fatalf("result heap=%v, want %v:\n%s", heap, !stack, body)
 				}
 			})
-		}
-	}
-}
-
-func TestResultEscapeAnalysisRejectsUnsupportedUses(t *testing.T) {
-	pkg, _, _ := buildGoSSAPkg(t, `package resultalloc
-func receive(c <-chan int) { <-c }
-func add(n int) int { return n + 1 }
-`)
-	// Missing referrers and operations outside the supported pointer-use
-	// subset must never be taken as proof that a value is only borrowed.
-	for _, value := range []ssa.Value{
-		ssa.NewConst(nil, pkg.Func("receive").Params[0].Type()),
-		pkg.Func("receive").Params[0],
-		pkg.Func("add").Params[0],
-	} {
-		analysis := resultEscapeAnalysis{budget: 1024}
-		if analysis.borrowed(value, make(map[ssa.Value]bool)) {
-			t.Errorf("unsupported use of %s was classified as borrowed", value)
 		}
 	}
 }

@@ -148,6 +148,9 @@ func Gcollect()
 //go:linkname GetGCNo C.GC_get_gc_no
 func GetGCNo() uintptr
 
+// GetHeapUsageSafe synchronously writes the output words without retaining them.
+//
+//go:noescape
 //go:linkname GetHeapUsageSafe C.GC_get_heap_usage_safe
 func GetHeapUsageSafe(heapSize, freeBytes, unmappedBytes, bytesSinceGC, totalBytes *uintptr)
 
