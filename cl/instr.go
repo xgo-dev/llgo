@@ -2830,7 +2830,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		case llgoFuncPCABI0:
 			ret = p.funcPCABI0(b, args)
 		case llgoKeepAlive:
-			if len(args) != 1 {
+			if len(args) != 1 || call.Signature().Results().Len() != 0 {
 				panic("keepAlive(any): invalid arguments")
 			}
 			ret = b.KeepAlive(p.compileValue(b, args[0]))
