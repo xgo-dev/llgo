@@ -10,14 +10,22 @@ import (
 // A defined marker type retains HostLayout's private field identity. A struct
 // containing a marked record, or an array of markers, does not inherit it.
 func isHostLayoutMarker(t Type) bool {
-	if t.Kind() != Struct || t.NumField() != 1 {
+	st := t.common().StructType()
+	if st == nil || len(st.Fields) != 1 {
 		return false
 	}
-	f := t.Field(0)
-	if f.Name != "_" || f.Type.Kind() != Struct || f.Type.NumField() != 0 || f.Type.Name() != "hostLayout" {
+	// The public Field method allocates its Index slice. Inspect the immutable
+	// descriptor directly so the StructOf pre-scan does not allocate.
+	f := &st.Fields[0]
+	body := f.Typ.StructType()
+	if f.Name_ != "_" || body == nil || len(body.Fields) != 0 {
 		return false
 	}
-	pkg := f.Type.PkgPath()
+	marker := toRType(f.Typ)
+	if marker.Name() != "hostLayout" {
+		return false
+	}
+	pkg := marker.PkgPath()
 	return pkg == "structs" || pkg == "github.com/xgo-dev/llgo/runtime/internal/structs"
 }
 
@@ -70,5 +78,8 @@ func hostLayoutFieldAlign(t *abi.Type) uint8 {
 	}
 	// Nested structs own their layout. Pointers, uintptrs, callbacks and other
 	// Go values retain their existing storage width and alignment.
+	// In particular, do not reconstruct a nested struct from its fields here:
+	// fixing ordinary ARM aggregate metadata belongs to #2810, not to applying
+	// a parent's marker to a different Go type.
 	return t.Align_
 }
