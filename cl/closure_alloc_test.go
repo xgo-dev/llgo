@@ -37,10 +37,11 @@ func argument(x int) { unknown(func() int { return x }) }
 				}
 				for _, name := range []string{"escape", "address", "deferred", "async", "argument"} {
 					body := llvmFunction(t, ir, "capturealloc."+name)
-					// Pointer-free captured variables use zeroed atomic storage;
-					// pointer-containing environments use AllocU. Check both lifetimes.
-					if !strings.Contains(body, "runtime.AllocAtomicU") {
-						t.Errorf("%s lost heap capture storage:\n%s", name, body)
+					// Immutable scalar captures are copied into the environment;
+					// address-observed and recover-visible slots retain heap storage.
+					wantHeapVariable := name == "address" || name == "deferred"
+					if got := strings.Contains(body, "runtime.AllocZ"); got != wantHeapVariable {
+						t.Errorf("%s heap captured variable = %v, want %v:\n%s", name, got, wantHeapVariable, body)
 					}
 					// A non-loop defer consumes its environment before this
 					// invocation exits, even when captured result slots retain
