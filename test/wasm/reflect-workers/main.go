@@ -14,8 +14,8 @@ var startupCallback = reflect.MakeFunc(reflect.TypeOf((func(*int))(nil)), func(a
 	return nil
 }).Interface().(func(*int))
 
-// Exercise reflection and collection on the bootstrap stack before RunWasmMain
-// installs the scheduler's Fibers, while the other workers are starting.
+// Exercise reflection and collection during package initialization, when peer
+// workers may still be initializing their scheduler Fibers.
 func init() {
 	runtime.GC()
 	startupCallback(nil)
