@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/goescape"
 )
 
 func TestEscapeCacheBatchesAndRepairsShards(t *testing.T) {
@@ -51,4 +53,46 @@ func TestEscapeCacheBatchesAndRepairsShards(t *testing.T) {
 	if _, err := fresh.load("../../other"); err == nil {
 		t.Fatal("invalid key accepted")
 	}
+}
+
+func TestEscapeCacheShardLimitPreservesPublishedFacts(t *testing.T) {
+	dir := t.TempDir()
+	newFiles := func() *escapeCacheFiles {
+		return &escapeCacheFiles{dir: dir, shards: make(map[string]*escapeCacheShard)}
+	}
+	bucket := strings.Repeat("a", 64)
+	oldKey, newKey := bucket+"."+strings.Repeat("b", 64), bucket+"."+strings.Repeat("c", 64)
+	// Either record fits, but their combined JSON exceeds the shard limit.
+	data := bytes.Repeat([]byte{'x'}, goescape.MaxCacheBytes/2+2)
+	data[0], data[len(data)-1] = '"', '"'
+	old := newFiles()
+	if err := old.store(oldKey, data); err != nil {
+		t.Fatal(err)
+	}
+	old.flush()
+
+	current := newFiles()
+	if err := current.store(newKey, data); err != nil {
+		t.Fatal(err)
+	}
+	current.flush() // Evict the previous build's unused record.
+	checkPublished := func() {
+		t.Helper()
+		fresh := newFiles()
+		if got, err := fresh.load(newKey); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("current facts were not preserved: %v", err)
+		}
+		if _, err := fresh.load(oldKey); !os.IsNotExist(err) {
+			t.Fatalf("unused or unpublished facts were retained: %v", err)
+		}
+	}
+	checkPublished()
+
+	// Both records are now used by this build. An oversized active set must
+	// leave the last published shard intact, so a later build can still use it.
+	if err := current.store(oldKey, data); err != nil {
+		t.Fatal(err)
+	}
+	current.flush()
+	checkPublished()
 }
