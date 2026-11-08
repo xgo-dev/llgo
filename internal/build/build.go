@@ -3018,6 +3018,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	defer cleanupHiddenGlobals()
 	buildArgs = append(buildArgs, hiddenGlobalArgs...)
 	buildArgs = append(buildArgs, debugInfoLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
+	buildArgs = append(buildArgs, emscriptenLTOLibcallArgs(ctx)...)
 	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
 	if err != nil {
 		return err
