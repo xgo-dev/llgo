@@ -2,17 +2,13 @@
 
 package runtime
 
-import (
-	stdatomic "sync/atomic"
+import "github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 
-	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
-)
-
-// Uint64 supplies 8-byte alignment even on 32-bit targets. Keep the actual
-// value in our own field so allocator accounting can use runtime intrinsics:
+// The marker supplies 8-byte alignment where uint64 has weaker Go alignment.
+// Keep the value in our own field so allocator accounting uses runtime intrinsics:
 // stdlib method calls may allocate instrumented Wasm caller-location frames.
 type memProfileCounter struct {
-	_     [0]stdatomic.Uint64
+	_     memProfileAlignment
 	value uint64
 }
 
