@@ -1923,7 +1923,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.GoDecl)
 	case *ssa.MakeInterface:
-		if p.finalizerDataOnly(v) {
+		if p.keepAliveDataOnly(v) || p.finalizerDataOnly(v) {
 			ret = b.MakeInterfaceDataOnly(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X))
 			break
 		}

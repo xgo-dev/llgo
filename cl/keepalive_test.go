@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -88,5 +89,63 @@ func indirect(x any) { Saved(x) }
 	launched := mustNamedFunction(t, mod, "foo.launched").String()
 	if strings.Contains(launched, barrier) || !strings.Contains(launched, ".NewProc") {
 		t.Fatalf("go KeepAlive must execute in the new goroutine:\n%s", launched)
+	}
+}
+
+func TestCompileKeepAliveTypeMetadata(t *testing.T) {
+	const src = `package foo
+import "unsafe"
+//go:linkname KeepAlive llgo.keepAlive
+func KeepAlive(any)
+type Item struct { P *int; N int }
+func (*Item) Method() {}
+var Saved = KeepAlive
+func pointer(p *Item) { KeepAlive(p) }
+func raw(p unsafe.Pointer) { KeepAlive(p) }
+func aggregate(p Item) { KeepAlive(p) }
+func repeated(p *Item) { v := any(p); KeepAlive(v); KeepAlive(v) }
+func deferred(p *Item) { defer KeepAlive(p) }
+func launched(p *Item) { go KeepAlive(p) }
+func shared(p *Item) any { v := any(p); KeepAlive(v); return v }
+func indirect(p *Item) { Saved(p) }
+func dynamic(p any) { KeepAlive(p) }
+`
+	for _, target := range []*llssa.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "windows", GOARCH: "386"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64"},
+		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
+	} {
+		t.Run(target.GOOS+"/"+target.GOARCH+"/"+target.WasmProfile, func(t *testing.T) {
+			ssapkg, _, files := buildGoSSAPkg(t, src)
+			prog := newLLSSAProgForTarget(t, target)
+			defer prog.Dispose()
+			prog.EnableGCRoots(target.GOARCH == "wasm")
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mod := pkg.Module()
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"pointer", "raw", "aggregate", "repeated", "deferred", "launched"} {
+				ir := mustNamedFunction(t, mod, "foo."+name).String()
+				if strings.Contains(ir, "_llgo_foo.Item") || strings.Contains(ir, "_llgo_itab$") {
+					t.Errorf("%s unnecessarily retains static type metadata:\n%s", name, ir)
+				}
+			}
+			for _, name := range []string{"shared", "indirect"} {
+				ir := mustNamedFunction(t, mod, "foo."+name).String()
+				if !strings.Contains(ir, "_llgo_foo.Item") {
+					t.Errorf("%s lost observable type metadata:\n%s", name, ir)
+				}
+			}
+			dynamic := mustNamedFunction(t, mod, "foo.dynamic").String()
+			if !strings.Contains(dynamic, `asm sideeffect "", "X,X,~{memory}"`) {
+				t.Fatalf("dynamic interface lost its two-word barrier:\n%s", dynamic)
+			}
+		})
 	}
 }
