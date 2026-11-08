@@ -2,6 +2,7 @@ package build
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -146,6 +147,11 @@ func main() {
 			}
 		}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestEscapeCrossPackageCacheAndWorkers$", "-test.count=1")
+		// The Go test driver merges counters from this directory. A re-exec
+		// otherwise creates a private directory and discards its coverage.
+		if coverDir := flag.Lookup("test.gocoverdir"); coverDir != nil && coverDir.Value.String() != "" {
+			cmd.Args = append(cmd.Args, "-test.gocoverdir="+coverDir.Value.String())
+		}
 		cmd.Env = append(os.Environ(), prefix+"DIR="+dir, prefix+"CACHE="+cache, prefix+"PHASE="+phase, fmt.Sprintf("%sWORKERS=%d", prefix, workers))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
