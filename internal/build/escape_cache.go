@@ -4,12 +4,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/types"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/goescape"
+	"golang.org/x/tools/go/ssa"
 )
 
 func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result {
@@ -28,6 +31,7 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 		files = &escapeCacheFiles{dir: dir, shards: make(map[string]*escapeCacheShard)}
 		cache = &goescape.Cache{
 			Namespace: namespace,
+			BodyKey:   ctx.escapeBodyKeys(),
 			Load:      files.load,
 			Store:     files.store,
 			Event: func(hit bool) {
@@ -50,6 +54,49 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 		fmt.Fprintf(os.Stderr, "ESCAPE CACHE hits=%d misses=%d\n", hits, misses)
 	}
 	return result
+}
+
+// Reuse the archive input fingerprints, including overlays, alternate runtime
+// sources and transforms. They are memoized for the later archive lookup, so
+// this moves existing work rather than digesting files a second time. Bodies
+// without an unambiguous package identity retain the full SSA fingerprint.
+func (ctx *context) escapeBodyKeys() func(*ssa.Function) string {
+	keys := make(map[*types.Package]string)
+	add := func(pkg *types.Package, key string) {
+		if previous, found := keys[pkg]; found && previous != key {
+			key = "" // Conflicting package identities require exact SSA.
+		}
+		keys[pkg] = key
+	}
+	ids := make([]string, 0, len(ctx.pkgByID))
+	for id := range ctx.pkgByID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		pkg := ctx.pkgByID[id]
+		if ctx.collectFingerprint(pkg) != nil || ctx.packageCacheDisabled(id) {
+			continue
+		}
+		add(pkg.Types, pkg.Fingerprint)
+		if pkg.AltPkg != nil {
+			add(pkg.AltPkg.Types, pkg.Fingerprint)
+		}
+	}
+	return func(fn *ssa.Function) string {
+		// Instantiations can fold constants using type arguments defined by
+		// callers outside the generic package's dependency graph.
+		if fn.Origin() != nil {
+			return ""
+		}
+		for fn != nil {
+			if fn.Pkg != nil {
+				return keys[fn.Pkg.Pkg]
+			}
+			fn = fn.Parent()
+		}
+		return ""
+	}
 }
 
 type escapeCacheShard struct {

@@ -78,7 +78,11 @@ One root frame is finalized after storage lowering, before returns are completed
 
 ## Packages, caches and diagnostics
 
-The build coordinator constructs dependency SSA before package-cache lookup (`registerSSAPkgs`, `buildSSAPkgs`). It derives summaries from those exact bodies on every invocation, including archive cache hits, then shares immutable decisions with isolated backend workers. No new serialized summary format is needed. A future loader that skips dependency SSA will need versioned exported effects before reusing these proofs.
+The build coordinator constructs dependency SSA before package-cache lookup (`registerSSAPkgs`, `buildSSAPkgs`), then shares immutable decisions with isolated backend workers. With the build cache enabled, it persists complete facts per call-graph SCC: generic parameter effects, every object's placement, stack reservations and the capture representation. A hit restores those facts onto the current SSA and skips CFG-scope construction and solving for that component. Reusing optimistic parameter effects without the corresponding callee placements would be unsafe.
+
+Keys include the analysis/schema versions, target/toolchain/feature namespace, source/transform identity, queried type properties, backend representation/layout policies and actual dependency keys. The build driver reuses memoized archive-input fingerprints for ordinary source bodies. Generic instantiations and bodies without a package identity retain exact SSA fingerprints. Ambiguous same-name dependency wrappers disable reuse for their caller and dependents. One atomic JSON shard per package batches I/O; checksums and complete inventory/dimension validation reject corrupt or incompatible facts. Missing, unreadable or invalid entries rerun analysis. Cache hits regenerate diagnostics from the current SSA.
+
+This skips repeated analysis, not dependency SSA loading: RTA, caller tracking and cross-package LLVM body import still consume those bodies. Skipping dependency SSA needs separate exported feature/body-import contracts. Cache lookup/validation also has a cost; hit counts alone do not establish a build-time improvement.
 
 Package fingerprints include `GO_ESCAPE_VERSION` as well as existing compiler/source/dependency/target inputs. This also invalidates old archives for compiler API callers that omit a development compiler hash. Missing analysis facts never promote an existing heap object. Compiled bodies excluded from Go summaries (for example, C ABI functions) preserve existing SSA-local allocations, avoiding new runtime dependencies in freestanding code. Direct API calls without inspectable dependency bodies use conservative call effects.
 
@@ -96,7 +100,7 @@ llgo tool compile -m=2 file.go
 ## Validation and measurements
 
 - `internal/goescape`: LLVM-independent graph, scope and SSA tests; recursive/result effects, box/payload separation, aliases, forced storage, malformed contracts and work-limit fallback. Run with `go test -race ./internal/goescape`.
-- `cl`: existing named-result, append and closure regressions now use the unified analysis. Interface tests cover native 64-bit, Windows 386 and Wasm layouts; ordinary explicit-root cases retain heap storage. KeepAlive tests cover its borrowing contract, immutable-box exception, and shared object/helper budgets. Atomic tests verify actual lowered instructions with deliberately misleading Go stub bodies.
+- `cl`: existing named-result, append and closure regressions now use the unified analysis. Interface tests cover native 64-bit, Windows 386 and Wasm layouts, including typed stack roots. KeepAlive tests cover its borrowing contract and shared object/helper budgets. Atomic tests verify actual lowered instructions with deliberately misleading Go stub bodies.
 - `test/go/keep_alive_stack_test.go`: common Go/LLGo tests cover reachable stack fields, boxing before GC, deferred iteration snapshots, panic-unwind GC and callable function values. Focused tests pass natively and on actual Wasm J32/J64/W32 runtimes. The aggregate benchmark covers the allocation-free path; its measurements are separate from the earlier full escape benchmark batch.
 - `internal/build/escape_test.go`: cold/warm archives and 1/8 workers in fresh processes, with allocation checks and diagnostic proofs for cross-package borrows and callback boxes. A caller rebuild reuses the analyzed dependency's archive.
 - `test/escape`: forced GC and finalizers, stack-held fields, boxed closures, escaped aliases, loop identity, atomic publication, goroutines, recovery and mixed defer/range-function ownership. Run natively, with `-O3 -lto=full`, and with `-target wasi|emscripten|emscripten-memory64 -emulator`. Multiworker Emscripten uses `LLGO_WASM_WORKERS=2`.
@@ -106,7 +110,7 @@ The broad native unwind suite has two full-LTO source-line expectation failures 
 
 The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation checks the actual 16-byte stack storage on native and Wasm targets.
 
-The analysis caches each function's CFG scopes and retains allocation decisions from the converged summary pass. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
+Within a solve, the analysis memoizes each function's CFG scopes and retains allocation decisions from the converged summary pass. Persistent hits do not construct those scopes unless a later contextual solve needs them. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
 
 ## Bounded precision
 

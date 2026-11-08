@@ -18,9 +18,13 @@ import (
 // fall back to analysis. Callbacks run on the coordinator, never backend workers.
 type Cache struct {
 	Namespace string
-	Load      func(key string) ([]byte, error)
-	Store     func(key string, data []byte) error
-	Event     func(hit bool)
+	// BodyKey optionally identifies the exact source/transforms of fn. It must
+	// change whenever its SSA operations or operands change. Empty keys use the
+	// complete SSA dump. Types, layout policies and dependencies remain hashed.
+	BodyKey func(fn *ssa.Function) string
+	Load    func(key string) ([]byte, error)
+	Store   func(key string, data []byte) error
+	Event   func(hit bool)
 }
 
 const cacheSchema = 1
@@ -28,6 +32,7 @@ const MaxCacheBytes = 64 << 20
 
 type cacheFunction struct {
 	fn      *ssa.Function
+	name    string
 	id      string
 	key     string
 	objects []ssa.Instruction
@@ -54,15 +59,26 @@ func (a *analyzer) componentCache(base string, functions map[*ssa.Function]cache
 	deps := make(map[string]bool)
 	for _, record := range records {
 		fmt.Fprintf(h, "body %s %s\n", record.id, record.key)
-		for _, dep := range dependencies(record.fn) {
+		named := make(map[string]string)
+		for _, dep := range a.dependencies(record.fn) {
+			depKey := keys[dep]
 			if members[dep] {
-				deps[record.id+" -> "+functions[dep].id+" "+functions[dep].key] = true
-				continue
+				depKey = functions[dep].key
 			}
-			if keys[dep] == "" {
+			if depKey == "" {
 				return "", nil
 			}
-			deps[record.id+" -> "+functions[dep].id+" "+keys[dep]] = true
+			id := functions[dep].id
+			// Printed SSA names cannot distinguish replacement wrappers with
+			// identical identities. A dependency set loses which operand uses
+			// which wrapper, so do not cache an ambiguous caller or its users.
+			name := functions[dep].name
+			identity := id + " " + depKey
+			if previous, ok := named[name]; ok && previous != identity {
+				return "", nil
+			}
+			named[name] = identity
+			deps[record.id+" -> "+id+" "+depKey] = true
 		}
 	}
 	var sorted []string
@@ -115,20 +131,22 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 	}
 	var functions []cacheFunction
 	for fn := range a.functions {
-		id := fmt.Sprintf("%s|%s|%s", fn.String(), types.TypeString(fn.Signature, qualifier), fn.Prog.Fset.Position(fn.Pos()))
-		functions = append(functions, cacheFunction{fn: fn, id: id})
+		name := fn.String()
+		id := fmt.Sprintf("%s|%s|%s", name, types.TypeString(fn.Signature, qualifier), fn.Prog.Fset.Position(fn.Pos()))
+		functions = append(functions, cacheFunction{fn: fn, name: name, id: id})
 	}
 	sort.Slice(functions, func(i, j int) bool { return functions[i].id < functions[j].id })
 	h := sha256.New()
 	fmt.Fprintf(h, "%d|%d|%q|%d\n", cacheSchema, Version, a.config.Cache.Namespace, a.config.MaxStackBytes)
 	base := hex.EncodeToString(h.Sum(nil))
+	var body bytes.Buffer
+	typeKeys := make(map[types.Type][]byte)
 	for i := range functions {
 		h = sha256.New()
-		seenTypes := make(map[types.Type]bool)
 		item := &functions[i]
 		fn := item.fn
 		fmt.Fprintf(h, "%q %v\n", item.id, a.bodies[fn])
-		hashType(h, fn.Signature, seenTypes)
+		hashType(h, fn.Signature, typeKeys)
 		if !a.bodies[fn] {
 			// Include replacement/intrinsic contracts, even with visible stubs.
 			s, valid := Summary{}, false
@@ -141,22 +159,32 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 			item.key = hex.EncodeToString(h.Sum(nil))
 			continue
 		}
-		fn.WriteTo(h)
+		bodyKey := ""
+		if a.config.Cache.BodyKey != nil {
+			bodyKey = a.config.Cache.BodyKey(fn)
+		}
+		if bodyKey != "" {
+			fmt.Fprintf(h, "source %q\n", bodyKey)
+		} else {
+			body.Reset()
+			ssa.WriteFunction(&body, fn)
+			h.Write(body.Bytes())
+		}
 		for _, param := range fn.Params {
-			hashType(h, param.Type(), seenTypes)
+			hashType(h, param.Type(), typeKeys)
 		}
 		for _, v := range fn.FreeVars {
-			hashType(h, v.Type(), seenTypes)
+			hashType(h, v.Type(), typeKeys)
 			fmt.Fprintf(h, "capture %v\n", a.result.CaptureByValue(v))
 		}
 		for _, block := range fn.Blocks {
 			for _, site := range block.Instrs {
 				if value, ok := site.(ssa.Value); ok {
-					hashType(h, value.Type(), seenTypes)
+					hashType(h, value.Type(), typeKeys)
 				}
 				for _, operand := range site.Operands(nil) {
 					if operand != nil && *operand != nil {
-						hashType(h, (*operand).Type(), seenTypes)
+						hashType(h, (*operand).Type(), typeKeys)
 					}
 				}
 
@@ -204,25 +232,36 @@ func qualifier(pkg *types.Package) string { return pkg.Path() }
 // dereferenced values have their own SSA types, and resolved method bodies are
 // covered by component dependency keys. Backend storage constraints are hashed
 // separately. New type queries in the analyzer must update this schema/version.
-func hashType(h hash.Hash, t types.Type, seen map[types.Type]bool) {
-	if t == nil || seen[t] {
+func hashType(h hash.Hash, t types.Type, keys map[types.Type][]byte) {
+	if t == nil {
 		return
 	}
-	seen[t] = true
-	fmt.Fprintf(h, "type %q %T pointers=%v direct=%v\n", types.TypeString(t, qualifier), t.Underlying(), containsPointers(t), directInterface(t))
+	if key, ok := keys[t]; ok {
+		h.Write(key)
+		return
+	}
+	var key bytes.Buffer
+	fmt.Fprintf(&key, "type %T pointers=%v direct=%v\n", t.Underlying(), containsPointers(t), directInterface(t))
 	switch typ := t.Underlying().(type) {
 	case *types.Basic:
-		fmt.Fprintln(h, "basic", typ.Kind())
+		fmt.Fprintln(&key, "basic", typ.Kind())
 	case *types.Array:
-		fmt.Fprintln(h, "array", typ.Len())
+		fmt.Fprintln(&key, "array", typ.Len())
 	case *types.Struct:
-		fmt.Fprintln(h, "fields", typ.NumFields())
+		fmt.Fprintln(&key, "fields", typ.NumFields())
 	case *types.Tuple:
-		fmt.Fprintln(h, "tuple", typ.Len())
+		fmt.Fprintln(&key, "tuple", typ.Len())
+	case *types.Interface:
+		for i := 0; i < typ.NumMethods(); i++ {
+			m := typ.Method(i)
+			fmt.Fprintln(&key, "method", m.Id())
+		}
 	case *types.Slice:
 		b, ok := typ.Elem().Underlying().(*types.Basic)
-		fmt.Fprintln(h, "byte-slice", ok && b.Kind() == types.Byte)
+		fmt.Fprintln(&key, "byte-slice", ok && b.Kind() == types.Byte)
 	}
+	keys[t] = key.Bytes()
+	h.Write(key.Bytes())
 }
 
 func decodeCache(data []byte, dst any) error {

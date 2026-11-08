@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/types"
 	"reflect"
 	"testing"
@@ -113,6 +114,9 @@ func TestCacheReusesUnchangedComponents(t *testing.T) {
 
 func TestCacheNamedTypeAndTargetInvalidation(t *testing.T) {
 	m := newMemoryCache()
+	// Even with an authoritative source-body key, imported named type
+	// properties remain part of the analysis identity.
+	m.cache.BodyKey = func(*ssa.Function) string { return "unchanged-function-source" }
 	first := sourceFunction(t, `type T struct{V *int};func f(v T)T{return v}`)
 	r := Analyze([]*ssa.Function{first}, Config{Cache: &m.cache})
 	if s, _ := r.Summary(first); s.Parameters[0].Results[0] != 1 {
@@ -132,6 +136,37 @@ func TestCacheNamedTypeAndTargetInvalidation(t *testing.T) {
 	Analyze([]*ssa.Function{second}, Config{Cache: &m.cache})
 	if m.hits != 0 || m.misses != 1 {
 		t.Fatal("target identity did not invalidate cache")
+	}
+}
+
+func TestCacheSourceBodyInvalidation(t *testing.T) {
+	m := newMemoryCache()
+	source := `var sink *int;func f(p *int){}`
+	m.cache.BodyKey = func(*ssa.Function) string { return digest([]byte(source)) }
+	Analyze([]*ssa.Function{sourceFunction(t, source)}, Config{Cache: &m.cache})
+	m.hits, m.misses = 0, 0
+	Analyze([]*ssa.Function{sourceFunction(t, source)}, Config{Cache: &m.cache})
+	if m.hits != 1 || m.misses != 0 {
+		t.Fatal("source identity did not reuse facts")
+	}
+	source = `var sink *int;func f(p *int){sink=p}`
+	m.hits, m.misses = 0, 0
+	fn := sourceFunction(t, source)
+	r := Analyze([]*ssa.Function{fn}, Config{Cache: &m.cache})
+	s, _ := r.Summary(fn)
+	if m.hits != 0 || m.misses != 1 || s.Parameters[0].Heap != 1 {
+		t.Fatal("changed source reused stale effects")
+	}
+}
+
+func TestCacheImportedInterfaceMethodSet(t *testing.T) {
+	m := newMemoryCache()
+	m.cache.BodyKey = func(*ssa.Function) string { return "same-function-source" }
+	Analyze([]*ssa.Function{sourceFunction(t, `func f(x I)I{return x};type I interface{a()}`)}, Config{Cache: &m.cache})
+	m.hits, m.misses = 0, 0
+	Analyze([]*ssa.Function{sourceFunction(t, `func f(x I)I{return x};type I interface{a();b()}`)}, Config{Cache: &m.cache})
+	if m.hits != 0 || m.misses != 1 {
+		t.Fatal("a changed contextual interface contract reused facts")
 	}
 }
 
@@ -209,6 +244,45 @@ func TestCacheSeparatesEqualNamesWithDifferentCallees(t *testing.T) {
 	}
 }
 
+func TestCacheDoesNotMergeAmbiguousCallOperands(t *testing.T) {
+	for _, recursive := range []bool{false, true} {
+		t.Run(fmt.Sprint(recursive), func(t *testing.T) { testCacheAmbiguousCallOperands(t, recursive) })
+	}
+}
+
+func testCacheAmbiguousCallOperands(t *testing.T, recursive bool) {
+	borrow := sourceFunction(t, `func f(p *int){}`)
+	retain := sourceFunction(t, `var sink *int;func f(p *int){sink=p}`)
+	if recursive {
+		// Distinct functions in one dependency SCC share the SCC key, but
+		// their parameter effects must still follow the actual call operand.
+		borrow = sourceFunction(t, `func other(*int){};func f(p *int){if p!=nil{other(nil)}}`)
+		retain = sourceFunction(t, `var sink *int;func other(*int){};func f(p *int){sink=p;if p!=nil{other(nil)}}`)
+		sitesOf[*ssa.Call](borrow)[0].Call.Value = retain
+		sitesOf[*ssa.Call](retain)[0].Call.Value = borrow
+	}
+	m := newMemoryCache()
+	for _, swap := range []bool{false, true} {
+		fn := sourceFunction(t, `func use(*int){};func f(a,b int){use(&a);use(&b)}`)
+		calls := sitesOf[*ssa.Call](fn)
+		calls[0].Call.Value, calls[1].Call.Value = borrow, retain
+		if swap {
+			calls[0].Call.Value, calls[1].Call.Value = retain, borrow
+		}
+		got := Analyze([]*ssa.Function{fn}, Config{Cache: &m.cache})
+		want := Analyze([]*ssa.Function{fn}, Config{})
+		allocs := sitesOf[*ssa.Alloc](fn)
+		for _, alloc := range allocs {
+			if got.Decision(alloc) != want.Decision(alloc) {
+				t.Fatal("cache changed the actual call operand's placement")
+			}
+		}
+		if got.Decision(allocs[0]).Heap != swap || got.Decision(allocs[1]).Heap == swap {
+			t.Fatal("dependency set lost call operand ownership")
+		}
+	}
+}
+
 func TestCachePolicyInvalidation(t *testing.T) {
 	for _, policy := range []string{"heap", "layout", "external"} {
 		t.Run(policy, func(t *testing.T) {
@@ -218,6 +292,7 @@ func TestCachePolicyInvalidation(t *testing.T) {
 			}
 			fn := sourceFunction(t, source)
 			m := newMemoryCache()
+			m.cache.BodyKey = func(*ssa.Function) string { return "same-source" }
 			changed := false
 			config := Config{Cache: &m.cache, MaxStackBytes: 8, StackLayout: func(ssa.Instruction, types.Type) (uint64, uint64) {
 				if policy == "layout" && changed {

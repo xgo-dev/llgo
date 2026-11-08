@@ -70,7 +70,7 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 			if misses <= 0 {
 				t.Fatalf("cold analysis cache hits/misses=%d/%d", hits, misses)
 			}
-		} else if hits <= 0 || misses != 0 {
+		} else if hits <= 0 || (phase == "hot" && misses != 0) || (phase == "rebuild" && misses <= 0) {
 			t.Fatalf("warm analysis cache hits/misses=%d/%d", hits, misses)
 		}
 		depHit, rootHit := false, false
