@@ -198,6 +198,13 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		return "stack size limit"
 	}
 	if p.prog.GCRootsEnabled() && mayContainGCRoot(typ) {
+		if box, ok := site.(*ssa.MakeInterface); ok && p.keepAliveDataOnly(box) {
+			// KeepAlive cannot mutate a box. Its original SSA value publishes
+			// the pointer fields before MakeInterface, and roots remain live
+			// through return. Ordinary lifetime and stack-budget decisions
+			// still apply, including go/defer ownership.
+			return ""
+		}
 		if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
 			// SSA-local addresses never leave the function. Their loads already
 			// publish the individual pointer values through the GC root plan.

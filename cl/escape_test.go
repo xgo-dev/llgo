@@ -49,13 +49,18 @@ func compareOKWriter() {x:=1;compareOK(&sink,nil,unsafe.Pointer(&x))}
 func adder(x int64)int64 {return add(&x,1)}
 func discarded(x int) {ignore(&x)}
 func hidden(x int) int {return *(*int)(hide(unsafe.Pointer(&x)))}
+//go:linkname alive llgo.keepAlive
+func alive(any) { panic("not the called body") }
+func kept(x int) {alive(&x)}
+func keptValue(x int) {alive(struct{ P *int; N int }{&x, 0})}
+func keptCallback(x int) {alive(func(){sink=unsafe.Pointer(&x)})}
 func hiddenMutation(s string) byte {b:=[]byte(s);q:=hide(unsafe.Pointer(&b[0]));*(*byte)(q)++;return b[0]}
 func ordinaryPointerInteger(x int) uintptr {return uintptr(unsafe.Pointer(&x))}
 func borrowed(x int) {borrow(&x)}
 func called(x int) {callback(func(){sink=unsafe.Pointer(&x)})}
 `
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, nil, false)
-	for _, name := range []string{"reader", "discarded", "borrowed", "adder", "hidden"} {
+	for _, name := range []string{"reader", "discarded", "borrowed", "adder", "hidden", "kept", "keptValue", "keptCallback"} {
 		if body := llvmFunction(t, ir, "effects."+name); strings.Contains(body, "runtime.Alloc") {
 			t.Errorf("%s retains borrowed storage:\n%s", name, body)
 		}
@@ -210,6 +215,11 @@ func f() *T { return new(T) }
 
 func TestEscapeFunctionStackBudget(t *testing.T) {
 	const src = `package stackbudget
+import _ "unsafe"
+//go:linkname KeepAlive llgo.keepAlive
+func KeepAlive(any)
+func boxes(p [32768]byte) { KeepAlive(p); KeepAlive(p); KeepAlive(p) }
+func keepWithHelpers(p [65520]byte, s string) byte { KeepAlive(p); b:=[]byte(s); b[0]++; return b[0] }
 func use(p *[32768]byte) byte { return p[0] }
 func objects(x byte)byte{a:=new([32768]byte);b:=new([32768]byte);c:=new([32768]byte);a[0]=x;b[0]=x;c[0]=x;return use(a)+use(b)+use(c)}
 func reserve(p *[65500]byte) byte{return p[0]}
@@ -221,6 +231,12 @@ func full(p *[65536]byte)byte{return p[0]}
 func receiver(v I)byte{a:=new([65536]byte);x:=full(a);v.M();return x}
 `
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, nil, false)
+	if body := llvmFunction(t, ir, "stackbudget.boxes"); strings.Count(body, "alloca [32768 x i8]") != 2 || !strings.Contains(body, "runtime.AllocU") {
+		t.Fatalf("KeepAlive boxes bypassed the shared 64 KiB budget:\n%s", body)
+	}
+	if body := llvmFunction(t, ir, "stackbudget.keepWithHelpers"); strings.Contains(body, "StringToBytesBuffer") {
+		t.Fatalf("conversion buffer ignored the KeepAlive box reservation:\n%s", body)
+	}
 	if body := llvmFunction(t, ir, "stackbudget.objects"); strings.Count(body, "runtime.AllocZ") != 1 {
 		t.Fatalf("function budget did not retain one large object on heap:\n%s", body)
 	}

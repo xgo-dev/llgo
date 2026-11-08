@@ -660,6 +660,7 @@ var llgoInstrs = map[string]int{
 	"stringData":        llgoStringData,
 	"funcAddr":          llgoFuncAddr,
 	"funcPCABI0":        llgoFuncPCABI0,
+	"keepAlive":         llgoKeepAlive,
 	"skip":              llgoSkip,
 	"noescape":          llgoNoEscape,
 	"syscall":           llgoSyscall,
@@ -2834,6 +2835,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.funcAddr(b, args)
 		case llgoFuncPCABI0:
 			ret = p.funcPCABI0(b, args)
+		case llgoKeepAlive:
+			if len(args) != 1 || call.Signature().Results().Len() != 0 {
+				panic("keepAlive(any): invalid arguments")
+			}
+			values := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.KeepAlive(args[0])
+			}, values...)
 		case llgoSkip:
 			if results := call.Signature().Results(); results.Len() != 0 {
 				ret = p.zeroResult(results)

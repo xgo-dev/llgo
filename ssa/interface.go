@@ -463,10 +463,17 @@ func (b Builder) MakeInterfaceEx(tinter Type, x Expr, heap bool) Expr {
 // call. Its type word is unobservable and remains nil; the ordinary interface
 // data word and GC-root layout retain the argument across allocating calls.
 func (b Builder) MakeInterfaceDataOnly(tinter Type, x Expr) Expr {
+	return b.MakeInterfaceDataOnlyEx(tinter, x, true)
+}
+
+// MakeInterfaceDataOnlyEx omits unobservable type metadata and uses the heap
+// decision supplied by escape analysis. Stack boxes obey the same ownership,
+// target GC policy and per-function budget as ordinary interface boxes.
+func (b Builder) MakeInterfaceDataOnlyEx(tinter Type, x Expr, heap bool) Expr {
 	if tinter.raw.Type.Underlying().(*types.Interface).NumMethods() != 0 {
 		panic("data-only interface must be empty")
 	}
-	return b.makeInterface(tinter, x, false, true)
+	return b.makeInterface(tinter, x, false, heap)
 }
 
 func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret Expr) {

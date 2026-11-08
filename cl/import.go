@@ -801,7 +801,8 @@ const (
 	llgoAESRound             = llgoInstrBase + 0x51
 	llgoAESSubWord           = llgoInstrBase + 0x52
 	llgoAESAlloca            = llgoInstrBase + 0x53
-	llgoNoEscape             = llgoInstrBase + 0x54
+	llgoKeepAlive            = llgoInstrBase + 0x54
+	llgoNoEscape             = llgoInstrBase + 0x55
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )

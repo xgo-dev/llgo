@@ -42,6 +42,12 @@ func instructionEscapeContract(kind int, sig *types.Signature) (goescape.Summary
 	s := signatureEscapeSummary(sig)
 	n, results := len(s.Parameters), sig.Results().Len()
 	switch kind {
+	case llgoKeepAlive:
+		if n == 1 && results == 0 && sig.Recv() == nil && isAny(sig.Params().At(0).Type()) {
+			// Liveness alone neither retains the interface box nor mutates
+			// its contents or invokes a function-valued argument.
+			return s, true
+		}
 	case llgoSkip:
 		return s, true // lowering discards operands and returns zero values
 	case llgoNoEscape:
