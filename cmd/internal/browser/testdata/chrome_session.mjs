@@ -259,11 +259,13 @@ try {
       }
       assert.match(views.Function.description, /^func\[\d+\] main.debugAnswer$/);
       assert.match(views.Closure.description, /^func\[\d+\] main.prepareDebugViews\$1 data=0x[1-9a-f][0-9a-f]*$/);
-      node(views.Closure.properties.captures.properties.node.properties['*'].properties['*'],
+      // Immutable lexical captures live in the environment by value. The
+      // copied node is itself a pointer; mutable counters still use cells.
+      node(views.Closure.properties.captures.properties.node.properties['*'],
         'runtime 世界', [first, 5, 8]);
       const captured = value => value.properties.captures.properties;
       node(captured(views.Bound).recv.properties['*'], 'runtime 世界', [first, 5, 8]);
-      assert.equal(captured(views.Nested).value.properties['*'].value, 29);
+      assert.equal(captured(views.Nested).value.value, 29);
       assert.equal(captured(views.Counter).value.properties['*'].value, afterResume ? 12 : 11);
       assert.equal(captured(views.OtherCounter).value.properties['*'].value, afterResume ? 22 : 21);
       const count = afterResume ? 48 : 49;
