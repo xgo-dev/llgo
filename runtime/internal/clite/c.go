@@ -112,6 +112,13 @@ func Realloc(ptr Pointer, size uintptr) Pointer
 //go:linkname Memcpy C.memcpy
 func Memcpy(dst, src Pointer, n uintptr) Pointer
 
+// MemcpyInline copies a constant number of non-overlapping bytes without an
+// external call. Both size and volatile must be compile-time constants.
+//
+//go:noescape
+//go:linkname MemcpyInline llvm.memcpy.inline
+func MemcpyInline(dst, src Pointer, size uintptr, volatile bool)
+
 //go:linkname Memmove C.memmove
 func Memmove(dst, src Pointer, n uintptr) Pointer
 

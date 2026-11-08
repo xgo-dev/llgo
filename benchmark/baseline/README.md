@@ -33,6 +33,13 @@ when the same harness runs against the former libuv implementation. Each timer
 path warms its native runtime before recording samples so initialization is
 excluded consistently.
 
+The same `benchmark/stringequal` source also runs with Go and each LLGo revision.
+It compares distinct 8-, 128- and 1,024-byte strings, using ordinary string
+equality and temporary byte-to-string conversion. Equal inputs and first/last
+byte mismatches use fixed one-million-call samples with checked results. LLGo
+uses `-O3 -lto=full`; Go uses its defaults. The remaining conversion cost is
+included when measuring a compiler that has not eliminated that conversion.
+
 Once the timer selectors are present on the target branch, a paired pull-request
 result compiles `/LLGo` once from the merge base and once from the head, while
 `/Go` is repeated as a same-runner control. A timer-runtime pull request whose
@@ -107,6 +114,14 @@ run_llgo_timer_samples() {
 }
 run_llgo_timer_samples '^BenchmarkTimerCreateStop$' 10000x | tee -a "$results"
 run_llgo_timer_samples '^BenchmarkTimerAfterFuncZeroDelivery$' 10000x | tee -a "$results"
+GOMAXPROCS=1 go test \
+  -run '^$' -bench '^BenchmarkStringEquality$' \
+  -benchtime=1000000x -count=5 -cpu=1 \
+  ./benchmark/stringequal | tee -a "$results"
+GOMAXPROCS=1 LLGO_ROOT="$PWD" .benchmark/llgo test -O3 -lto=full \
+  -run '^$' -bench '^BenchmarkStringEquality$' \
+  -benchtime=1000000x -count=5 \
+  ./benchmark/stringequal | tee -a "$results"
 run_llgo_timer_samples \
   '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$' 20000x \
   | tee -a "$results"

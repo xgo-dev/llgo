@@ -147,7 +147,7 @@ also runs LLVM verification to catch restrictions such as invalid `bswap`
 widths. The LLVM version linked into the compiler determines which intrinsics
 and signatures exist.
 
-Parameters must be scalar booleans, integers, or floating-point values. Named
+Scalar math parameters must be booleans, integers, or floating-point values. Named
 types and aliases are accepted. `bool` maps to `i1`; `int`, `uint` and `uintptr`
 use the target's Go word width. Multiple scalar return values map to LLVM's
 native result structure and are converted to the Go tuple layout. Intrinsics
@@ -191,13 +191,38 @@ The initial support policy includes bit operations (`fshl`, `fshr`, `ctpop`,
 `ctlz`, `cttz`, `bswap`, `bitreverse`, `abs`), integer min/max, saturating
 arithmetic, signed/unsigned add/subtract/multiply with overflow, floating-point
 math and rounding, floating-point min/max variants, and saturating float-to-int
-conversion. The complete family list is `llvmScalarIntrinsics` in
+conversion. Standard memory families `memcpy`, `memcpy.inline`, `memmove`,
+`memset` and `memset.inline` also accept pointer operands. The complete family
+list is `llvmSupportedIntrinsics` in
 [`ssa/llvm_intrinsic.go`](../ssa/llvm_intrinsic.go). This list controls support;
 LLVM supplies the signatures and lowering. Architecture-specific intrinsics,
-vectors, pointer/metadata/token interfaces, methods, generics and variadic
+vectors, other pointer/metadata/token interfaces, methods, generics and variadic
 declarations are currently rejected. `llvm.` is reserved for function bindings
 and cannot be applied to variables. Existing `llgo.` instructions remain
 supported.
+
+Memory bindings use the LLVM signature: copy/move take destination, source,
+length and a constant volatile flag; fills take destination, byte value, length
+and the flag. They return no value. Pointer operands can use `unsafe.Pointer`
+or typed pointers; lengths use an integer type, including `uintptr` for the
+target's Go word width. LLVM checks the complete signature. The `.inline`
+variants additionally require a constant length and guarantee no external call.
+No alignment stronger than the pointer operands provide is implied.
+
+```go
+import "unsafe"
+
+//go:noescape
+//go:linkname copyInline llvm.memcpy.inline
+func copyInline(dst, src unsafe.Pointer, size uintptr, volatile bool)
+
+func copyWord(dst, src *uint64) {
+    copyInline(unsafe.Pointer(dst), unsafe.Pointer(src), 8, false)
+}
+```
+
+The copy ranges must not overlap; use `llvm.memmove` when they can. Memory
+intrinsics preserve their LLVM memory effects and do not add Go write barriers.
 
 ## Linkname on variables
 
