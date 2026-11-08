@@ -72,6 +72,8 @@ func TestEscapeTypedStackPanicAndDefer(t *testing.T) {
 			var holder escapeRootHolder
 			escapeRootReplace(&holder, byte(i+1))
 			defer func() {
+				// Collection before recover must trace the panic payload even
+				// after the panicking activation has been unwound.
 				runtime.GC()
 				if got := recover(); got != i {
 					t.Errorf("panic=%v want %d", got, i)
