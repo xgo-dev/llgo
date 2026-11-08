@@ -29,6 +29,12 @@ import (
 // PrepareEscapeAnalysis runs after all source metadata and SSA bodies are ready,
 // and before isolated backend Programs are created. Its result is immutable.
 func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patches) *goescape.Result {
+	return PrepareEscapeAnalysisCached(prog, input, patches, nil)
+}
+
+// PrepareEscapeAnalysisCached optionally reuses complete validated facts. SSA
+// bodies remain available for feature analysis and cross-package body import.
+func PrepareEscapeAnalysisCached(prog llssa.Program, input *ssa.Program, patches Patches, cache *goescape.Cache) *goescape.Result {
 	ctx := &context{
 		prog: prog, goProg: input, fset: input.Fset, patches: patches,
 		options: Options{PreloadedSyntax: true},
@@ -40,10 +46,14 @@ func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patch
 			ctx.goTyps = pkg.Pkg
 		}
 	}
-	return ctx.analyzeEscape()
+	return ctx.analyzeEscapeCached(cache)
 }
 
 func (p *context) analyzeEscape() *goescape.Result {
+	return p.analyzeEscapeCached(nil)
+}
+
+func (p *context) analyzeEscapeCached(cache *goescape.Cache) *goescape.Result {
 	// Layout queries must not populate code generation's named-type cache
 	// before source replacements are lowered. This applies both to the build
 	// coordinator and to direct NewPackageEx callers.
@@ -61,6 +71,7 @@ func (p *context) analyzeEscape() *goescape.Result {
 		roots = append(roots, fn)
 	}
 	return goescape.Analyze(roots, goescape.Config{
+		Cache:    cache,
 		Inspect:  p.inspectEscapeBody,
 		External: p.escapeCallContract,
 		IndirectInterface: func(typ types.Type) bool {

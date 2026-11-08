@@ -31,6 +31,9 @@ const Version = 13
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
 type Config struct {
+	// Cache optionally persists complete, validated facts for this program.
+	Cache *Cache
+
 	// Inspect must reject bodies replaced by linkname, source patches, native
 	// declarations or intrinsics unless the replacement itself is being analyzed.
 	Inspect func(*ssa.Function) bool
@@ -189,11 +192,12 @@ func mergeSummary(dst *Summary, src Summary) (changed bool) {
 }
 
 type analyzer struct {
-	config Config
-	result *Result
-	bodies map[*ssa.Function]bool
-	scopes map[*ssa.Function]*scopes
-	deps   map[*ssa.Function][]*ssa.Function
+	config    Config
+	result    *Result
+	bodies    map[*ssa.Function]bool
+	functions map[*ssa.Function]bool
+	scopes    map[*ssa.Function]*scopes
+	deps      map[*ssa.Function][]*ssa.Function
 	// Only completed SCCs may supply contextual proofs. Generic placement
 	// remains authoritative even when a particular caller has purer arguments.
 	solved map[*ssa.Function]bool
@@ -220,17 +224,20 @@ func (a *analyzer) summary(fn *ssa.Function) Summary {
 func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
 		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64), captures: make(map[*ssa.FreeVar]bool),
-	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes), deps: make(map[*ssa.Function][]*ssa.Function), solved: make(map[*ssa.Function]bool)}
+	}, bodies: make(map[*ssa.Function]bool), functions: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes), deps: make(map[*ssa.Function][]*ssa.Function), solved: make(map[*ssa.Function]bool)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {
-		if a.bodies[fn] || !a.inspect(fn) {
+		if fn == nil || a.functions[fn] {
+			return
+		}
+		a.functions[fn] = true
+		if !a.inspect(fn) {
 			return
 		}
 		a.bodies[fn] = true
 		for i, v := range fn.FreeVars {
 			a.result.captures[v] = immutableCapture(fn, i)
 		}
-		a.scopes[fn] = functionScopes(fn)
 		a.result.summaries[fn] = emptySummary(fn)
 		for _, callee := range a.dependencies(fn) {
 			discover(callee)
@@ -239,7 +246,29 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 	for _, root := range roots {
 		discover(root)
 	}
+	cacheBase, cacheFunctions := a.cacheIdentity()
+	cacheKeys := make(map[*ssa.Function]string)
+	cacheRecords := make(map[*ssa.Function]cacheFunction)
+	for _, item := range cacheFunctions {
+		cacheRecords[item.fn] = item
+		if !a.bodies[item.fn] {
+			cacheKeys[item.fn] = item.key
+		}
+	}
 	for _, group := range a.functionComponents() {
+		cacheKey, records := a.componentCache(cacheBase, cacheRecords, cacheKeys, group)
+		if cached := a.loadCache(cacheKey, records); cached != nil {
+			for fn, summary := range cached.summaries {
+				a.result.summaries[fn] = summary
+				a.result.stackBytes[fn] = cached.StackBytes(fn)
+				a.solved[fn] = true
+				cacheKeys[fn] = cacheKey
+			}
+			for site, decision := range cached.objects {
+				a.result.objects[site] = decision
+			}
+			continue
+		}
 		for iteration := 0; ; iteration++ {
 			changed := false
 			for _, fn := range group {
@@ -275,7 +304,9 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 		}
 		for _, fn := range group {
 			a.solved[fn] = true
+			cacheKeys[fn] = cacheKey
 		}
+		a.storeCache(cacheKey, records)
 	}
 	return a.result
 }

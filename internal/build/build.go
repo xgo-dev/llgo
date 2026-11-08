@@ -1065,7 +1065,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
 	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
-	ctx.frontendOptions.EscapeAnalysis = cl.PrepareEscapeAnalysis(ctx.prog, ctx.progSSA, ctx.patches)
+	ctx.frontendOptions.EscapeAnalysis = ctx.prepareEscapeAnalysis(func(hits, misses int) {
+		escapeSpan.setArg("cache_hits", hits)
+		escapeSpan.setArg("cache_misses", misses)
+	})
 	escapeSpan.done()
 	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
 		selected := make(map[string]bool, len(initial))

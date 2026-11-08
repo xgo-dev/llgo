@@ -1,6 +1,7 @@
 package build
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,6 +40,7 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 		t.Setenv("LLGO_ROOT", root)
 		conf := NewDefaultConf(ModeBuild)
 		conf.EscapeDiagnostics = 2
+		conf.BuildTrace = filepath.Join(t.TempDir(), "trace.json")
 		conf.BuildParallelism, _ = strconv.Atoi(os.Getenv(prefix + "WORKERS"))
 		conf.OutFile = filepath.Join(t.TempDir(), "probe")
 		if runtime.GOOS == "windows" {
@@ -49,6 +51,28 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		phase := os.Getenv(prefix + "PHASE")
+		trace, err := os.ReadFile(conf.BuildTrace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var recorded []buildTraceEvent
+		if err := json.Unmarshal(trace, &recorded); err != nil {
+			t.Fatal(err)
+		}
+		hits, misses := -1, -1
+		for _, event := range recorded {
+			if event.Name == "Go escape analysis" {
+				hits = int(event.Args["cache_hits"].(float64))
+				misses = int(event.Args["cache_misses"].(float64))
+			}
+		}
+		if phase == "cold" {
+			if misses <= 0 {
+				t.Fatalf("cold analysis cache hits/misses=%d/%d", hits, misses)
+			}
+		} else if hits <= 0 || misses != 0 {
+			t.Fatalf("warm analysis cache hits/misses=%d/%d", hits, misses)
+		}
 		depHit, rootHit := false, false
 		for _, pkg := range pkgs {
 			if pkg.PkgPath == "example.com/escape/dep" {
