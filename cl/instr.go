@@ -2833,7 +2833,10 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			if len(args) != 1 || call.Signature().Results().Len() != 0 {
 				panic("keepAlive(any): invalid arguments")
 			}
-			ret = b.KeepAlive(p.compileValue(b, args[0]))
+			values := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.KeepAlive(args[0])
+			}, values...)
 		case llgoSkip:
 			if results := call.Signature().Results(); results.Len() != 0 {
 				ret = p.zeroResult(results)

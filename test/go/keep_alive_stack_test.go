@@ -1,6 +1,7 @@
 package gotest
 
 import (
+	"reflect"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -37,4 +38,20 @@ func TestRuntimeKeepAliveNilAndScalars(t *testing.T) {
 	for _, value := range []any{nil, (*int)(nil), 42, "alive", [2]int{1, 2}} {
 		runtime.KeepAlive(value)
 	}
+}
+
+//go:noinline
+func callKeepAliveValue(keep func(any), value any) {
+	keep(value)
+}
+
+func TestRuntimeKeepAliveFunctionValue(t *testing.T) {
+	keep := runtime.KeepAlive
+	value := new([10]int)
+	callKeepAliveValue(keep, value)
+	function := reflect.ValueOf(keep)
+	if function.Pointer() == 0 {
+		t.Fatal("KeepAlive function value has no code address")
+	}
+	function.Call([]reflect.Value{reflect.ValueOf(value)})
 }

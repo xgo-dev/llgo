@@ -51,3 +51,42 @@ func TestCompileKeepAliveDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileKeepAliveCallForms(t *testing.T) {
+	_, mod := mustCompileLLPkgFromSrc(t, `package foo
+import _ "unsafe"
+//go:linkname KeepAlive llgo.keepAlive
+func KeepAlive(any)
+var Saved = KeepAlive
+func direct(x any) { KeepAlive(x) }
+//go:noinline
+func after() {}
+func deferred(x any) { defer KeepAlive(x); after() }
+func launched(x any) { go KeepAlive(x) }
+func indirect(x any) { Saved(x) }
+`)
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	const barrier = `asm sideeffect "", "X,X,~{memory}"`
+	direct := mustNamedFunction(t, mod, "foo.direct").String()
+	if !strings.Contains(direct, barrier) || strings.Contains(direct, "@foo.KeepAlive(") {
+		t.Fatalf("direct KeepAlive must lower without a forwarding call:\n%s", direct)
+	}
+	wrapper := mustNamedFunction(t, mod, "foo.KeepAlive").String()
+	if !strings.Contains(wrapper, barrier) {
+		t.Fatal("function value lost its callable intrinsic wrapper")
+	}
+	deferred := mustNamedFunction(t, mod, "foo.deferred").String()
+	after := strings.Index(deferred, "@foo.after(")
+	if after < 0 {
+		t.Fatalf("missing call after defer registration:\n%s", deferred)
+	}
+	if use := strings.Index(deferred, barrier); use >= 0 && use < after {
+		t.Fatalf("deferred KeepAlive executed at registration:\n%s", deferred)
+	}
+	launched := mustNamedFunction(t, mod, "foo.launched").String()
+	if strings.Contains(launched, barrier) || !strings.Contains(launched, ".NewProc") {
+		t.Fatalf("go KeepAlive must execute in the new goroutine:\n%s", launched)
+	}
+}
