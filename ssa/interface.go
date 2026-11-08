@@ -427,21 +427,28 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken bool) Expr 
 //	t1 = make interface{} <- int (42:int)
 //	t2 = make Stringer <- t0
 func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
-	return b.makeInterface(tinter, x, true)
+	return b.makeInterface(tinter, x, true, false)
 }
 
 // MakeInterfaceDataOnly boxes an argument for a statically checked runtime
 // call. Its type word is unobservable and remains nil; the ordinary interface
 // data word and GC-root layout retain the argument across allocating calls.
 func (b Builder) MakeInterfaceDataOnly(tinter Type, x Expr) Expr {
-	if tinter.raw.Type.Underlying().(*types.Interface).NumMethods() != 0 {
-		panic("data-only interface must be empty")
-	}
-	return b.makeInterface(tinter, x, false)
+	return b.makeInterface(tinter, x, false, false)
 }
 
-func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) {
+// MakeInterfaceDataOnlyOnStack is MakeInterfaceDataOnly with a frame-local box.
+// The caller must ensure that every use finishes before the box is overwritten
+// or the frame returns. In particular, defer/go arguments need independent boxes.
+func (b Builder) MakeInterfaceDataOnlyOnStack(tinter Type, x Expr) Expr {
+	return b.makeInterface(tinter, x, false, true)
+}
+
+func (b Builder) makeInterface(tinter Type, x Expr, observable, stack bool) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
+	if !observable && rawIntf.NumMethods() != 0 {
+		panic("data-only interface must be empty")
+	}
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
 		typ := b.Prog.Type(x.raw.Type, GoDecl)
@@ -458,8 +465,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.AllocU(typ)
-		b.Store(vptr, x)
+		vptr := b.interfaceBox(x, stack)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
 	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
@@ -468,8 +474,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.AllocU(typ)
-		b.Store(vptr, x)
+		vptr := b.interfaceBox(x, stack)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
 	value := x
@@ -507,6 +512,17 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable bool) (ret Expr) 
 	}
 	data := llvm.CreateIntToPtr(b.impl, u, prog.tyVoidPtr())
 	return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, data), tinter}
+}
+
+func (b Builder) interfaceBox(x Expr, stack bool) Expr {
+	var ptr Expr
+	if stack {
+		ptr = b.Alloc(x.Type, false)
+	} else {
+		ptr = b.AllocU(x.Type)
+	}
+	b.Store(ptr, x)
+	return ptr
 }
 
 func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {

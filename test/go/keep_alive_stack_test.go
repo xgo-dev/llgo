@@ -40,6 +40,57 @@ func TestRuntimeKeepAliveNilAndScalars(t *testing.T) {
 	}
 }
 
+func TestRuntimeKeepAliveAggregate(t *testing.T) {
+	var finalized atomic.Bool
+	x := new([10]int)
+	runtime.SetFinalizer(x, func(*[10]int) { finalized.Store(true) })
+	// Materialize the interface before GC so a stack box must preserve its
+	// pointer fields across collection, including with explicit Wasm roots.
+	holder := any(keepAliveStackHolder{x, 0})
+	runtime.GC()
+	runtime.GC()
+	runtime.GC()
+	if finalized.Load() {
+		t.Fatal("finalizer ran while reachable through a live aggregate value")
+	}
+	runtime.KeepAlive(holder)
+}
+
+func TestRuntimeKeepAliveDeferredAggregates(t *testing.T) {
+	var finalized [8]atomic.Bool
+	for i := range finalized {
+		x := new([10]int)
+		runtime.SetFinalizer(x, func(*[10]int) { finalized[i].Store(true) })
+		defer runtime.KeepAlive(keepAliveStackHolder{x, i})
+	}
+	runtime.GC()
+	runtime.GC()
+	runtime.GC()
+	for i := range finalized {
+		if finalized[i].Load() {
+			t.Fatalf("deferred argument %d was overwritten or collected", i)
+		}
+	}
+}
+
+var keepAliveAggregateSink int
+
+//go:noinline
+func keepAliveAggregateValue(holder keepAliveStackHolder) int {
+	runtime.KeepAlive(holder)
+	return holder.unused
+}
+
+func BenchmarkRuntimeKeepAliveAggregate(b *testing.B) {
+	holder := keepAliveStackHolder{new([10]int), 7}
+	var sum int
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sum += keepAliveAggregateValue(holder)
+	}
+	keepAliveAggregateSink = sum
+}
+
 //go:noinline
 func callKeepAliveValue(keep func(any), value any) {
 	keep(value)

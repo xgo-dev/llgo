@@ -103,9 +103,19 @@ var Saved = KeepAlive
 func pointer(p *Item) { KeepAlive(p) }
 func raw(p unsafe.Pointer) { KeepAlive(p) }
 func aggregate(p Item) { KeepAlive(p) }
+func array(p [2]*Item) { KeepAlive(p) }
+func slice(p []*Item) { KeepAlive(p) }
+func text(p string) { KeepAlive(p) }
+func scalar(p float64) { KeepAlive(p) }
+func loop(p Item, n int) { for i := 0; i < n; i++ { KeepAlive(p) } }
 func repeated(p *Item) { v := any(p); KeepAlive(v); KeepAlive(v) }
 func deferred(p *Item) { defer KeepAlive(p) }
 func launched(p *Item) { go KeepAlive(p) }
+func deferredValue(p Item) { defer KeepAlive(p) }
+func deferredLoop(p Item, n int) { for i := 0; i < n; i++ { defer KeepAlive(p) } }
+func launchedValue(p Item) { go KeepAlive(p) }
+func mixed(p Item) { v := any(p); KeepAlive(v); go KeepAlive(v) }
+func sharedValue(p Item) any { v := any(p); KeepAlive(v); return v }
 func shared(p *Item) any { v := any(p); KeepAlive(v); return v }
 func indirect(p *Item) { Saved(p) }
 func dynamic(p any) { KeepAlive(p) }
@@ -136,6 +146,29 @@ func dynamic(p any) { KeepAlive(p) }
 					t.Errorf("%s unnecessarily retains static type metadata:\n%s", name, ir)
 				}
 			}
+			checkBoxes := func() {
+				for _, name := range []string{"aggregate", "array", "slice", "text", "scalar", "loop"} {
+					fn := mustNamedFunction(t, mod, "foo."+name)
+					ir := fn.String()
+					if strings.Contains(ir, "runtime.Alloc") || !strings.Contains(ir, `asm sideeffect "", "X,X,~{memory}"`) {
+						t.Errorf("%s must retain its value without heap boxing:\n%s", name, ir)
+					}
+					for block := llvm.NextBasicBlock(fn.FirstBasicBlock()); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+						for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+							if inst.InstructionOpcode() == llvm.Alloca {
+								t.Errorf("%s reserves a stack slot outside the entry block:\n%s", name, ir)
+							}
+						}
+					}
+				}
+			}
+			checkBoxes()
+			for _, name := range []string{"deferredValue", "deferredLoop", "launchedValue", "mixed", "sharedValue"} {
+				ir := mustNamedFunction(t, mod, "foo."+name).String()
+				if !strings.Contains(ir, "runtime.AllocU") {
+					t.Errorf("%s lost its independently owned argument box:\n%s", name, ir)
+				}
+			}
 			for _, name := range []string{"shared", "indirect"} {
 				ir := mustNamedFunction(t, mod, "foo."+name).String()
 				if !strings.Contains(ir, "_llgo_foo.Item") {
@@ -146,6 +179,15 @@ func dynamic(p any) { KeepAlive(p) }
 			if !strings.Contains(dynamic, `asm sideeffect "", "X,X,~{memory}"`) {
 				t.Fatalf("dynamic interface lost its two-word barrier:\n%s", dynamic)
 			}
+			options := llvm.NewPassBuilderOptions()
+			defer options.Dispose()
+			if err := mod.RunPasses("default<O2>", llvm.TargetMachine{}, options); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			checkBoxes()
 		})
 	}
 }

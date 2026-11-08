@@ -3,6 +3,7 @@ package ssa
 import (
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -48,4 +49,44 @@ func TestKeepAliveRequiresInterface(t *testing.T) {
 		}
 	}()
 	b.KeepAlive(prog.IntVal(1, prog.Int()))
+}
+
+func TestKeepAliveStackBox(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/keepalive")
+	holder := types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, nil, "child", types.NewPointer(types.Typ[types.Int])),
+		types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int]),
+	}, nil)
+	params := types.NewTuple(types.NewVar(token.NoPos, nil, "x", holder))
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	fn := pkg.NewFunc("keep", sig, GoDecl)
+	b := fn.MakeBody(1)
+	anyType := prog.Type(types.NewInterfaceType(nil, nil).Complete(), GoDecl)
+	b.KeepAlive(b.MakeInterfaceDataOnlyOnStack(anyType, fn.Param(0)))
+	b.Return()
+	b.EndBuild()
+	heapFn := pkg.NewFunc("keepHeap", sig, GoDecl)
+	heapBuilder := heapFn.MakeBody(1)
+	heapBuilder.KeepAlive(heapBuilder.MakeInterfaceDataOnly(anyType, heapFn.Param(0)))
+	heapBuilder.Return()
+	heapBuilder.EndBuild()
+	options := llvm.NewPassBuilderOptions()
+	defer options.Dispose()
+	if err := pkg.Module().RunPasses("default<O2>", llvm.TargetMachine{}, options); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	ir := fn.impl.String()
+	if strings.Contains(ir, "runtime.Alloc") || !strings.Contains(ir, "alloca ") || !strings.Contains(ir, "store ") ||
+		!strings.Contains(ir, `asm sideeffect "", "X,X,~{memory}"`) {
+		t.Fatalf("optimized KeepAlive lost its materialized stack box or allocated on the heap:\n%s", ir)
+	}
+	if ir := heapFn.impl.String(); !strings.Contains(ir, "runtime.AllocU") {
+		t.Fatalf("independently owned interface box became stack-local:\n%s", ir)
+	}
 }
