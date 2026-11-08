@@ -44,7 +44,11 @@ func Goexit() {
 }
 
 func KeepAlive(x any) {
+	keepAlive(x)
 }
+
+//go:linkname keepAlive llgo.keepAlive
+func keepAlive(x any)
 
 //go:linkname c_write C.write
 func c_write(fd c.Int, p unsafe.Pointer, n c.SizeT) c.SsizeT

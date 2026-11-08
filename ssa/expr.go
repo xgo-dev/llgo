@@ -337,6 +337,22 @@ func (b Builder) InlineAsmFull(instruction, constraints string, retType Type, ex
 	return Expr{b.impl.CreateCall(ftype, asm, vals, ""), retType}
 }
 
+// KeepAlive retains both words of an interface and the memory reachable from
+// them through this point. A memory clobber also keeps pointer fields of a
+// stack object from being discarded when only its address remains live.
+func (b Builder) KeepAlive(x Expr) Expr {
+	if x.kind != vkEface {
+		panic("keepAlive(any): invalid argument type")
+	}
+	values := []llvm.Value{
+		b.impl.CreateExtractValue(x.impl, 0, ""),
+		b.impl.CreateExtractValue(x.impl, 1, ""),
+	}
+	typ := llvm.FunctionType(b.Prog.tyVoid(), []llvm.Type{values[0].Type(), values[1].Type()}, false)
+	asm := llvm.InlineAsm(typ, "", "X,X,~{memory}", true, false, llvm.InlineAsmDialectATT, false)
+	return Expr{b.impl.CreateCall(typ, asm, values, ""), b.Prog.Void()}
+}
+
 // GoString returns a Go string
 func (b Builder) GoString(v Expr) Expr {
 	fn := b.Pkg.rtFunc("GoString")
