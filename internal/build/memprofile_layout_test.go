@@ -15,10 +15,12 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_ROOT", root)
-	for _, goos := range []string{"windows", "linux"} {
-		t.Run(goos+"/386", func(t *testing.T) {
+	for _, target := range []string{
+		"windows/386", "linux/386", "linux/arm", "linux/mips",
+	} {
+		t.Run(target, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
-			conf.Goos, conf.Goarch = goos, "386"
+			conf.Goos, conf.Goarch, _ = strings.Cut(target, "/")
 			pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
 			if err != nil {
 				t.Fatal(err)
