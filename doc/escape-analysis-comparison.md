@@ -2,7 +2,7 @@
 
 Reference: Go **1.27.3**, the installed toolchain used for the comparison. This is a comparison of source-level storage decisions and emitted/runtime allocations, not a claim that LLGo implements every cmd/compile optimization. LLVM heap-to-stack is a subsequent, independent optimization.
 
-The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) describes the complete design and status.
+The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) describes the complete design and status. [#2997](https://github.com/xgo-dev/llgo/pull/2997) includes the KeepAlive work formerly reviewed in [#3016](https://github.com/xgo-dev/llgo/pull/3016). #3016 was closed after consolidation on 2026-11-08; #2997 is the sole active delivery PR and remains pending merge.
 
 ## Implemented coverage
 
@@ -22,14 +22,15 @@ The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/30
 | Channels | Runtime allocation | Runtime allocation; this is not an outstanding heap-to-stack optimization in cmd/compile |
 | defer/go | Invocation and asynchronous lifetimes differ | Non-loop native defer storage is invocation-local; loop/foreign/asynchronous ownership is retained |
 | Trusted runtime/foreign contracts | Runtime pointer-hiding helpers and assembly noescape annotations | Shared `llgo.noescape` for runtime/ABI helpers, bodyless `//go:noescape` contracts; ordinary pointer-to-uintptr conversion remains conservative |
+| KeepAlive | Dedicated SSA liveness operation with GC stack maps | An intrinsic borrowing/no-mutation/no-callback contract feeds the unified graph; box placement shares invocation/iteration lifetimes and the 64 KiB budget. Type-metadata omission is independent of placement. |
 | Safety fallbacks | Unknown calls and unsupported proofs are conservative | Unknown calls/SSA, irreducible CFG and solver-budget fallback retain heap storage |
 
 ## Remaining differences
 
 1. **Using inlined call-site context in escape analysis.** Merged PR [#3003](https://github.com/xgo-dev/llgo/pull/3003) implements frontend cross-package Go SSA body import and LLVM inlining; that capability is covered there. At its merged revision `d510ec8b5`, imported functions are lowered as `available_externally` LLVM definitions without cloning/inlining their Go SSA into the caller or rerunning this analysis on an inlined Go graph. For example, `apply(fn func(*int), p *int) { fn(p) }` still exports conservative publication for `p`, even when a caller supplies a known borrowing function. Go can inline the helper before escape analysis and connect those particular arguments. The remaining gap is this context-sensitive proof, not cross-package inlining itself. LLVM inlining and heap-to-stack may still remove the resulting allocation later, so this is not evidence of an unavoidable runtime allocation.
-2. **Explicit GC-root targets.** Newly promoted pointer-bearing objects and map storage stay in scanned heap memory until the collector can scan typed stack fields for the full lifetime, including writes by borrowing callees. Pointer-free character/slice buffers can use the stack. Removing this restriction requires root-registration/lifetime work, not a weaker escape predicate.
+2. **Explicit GC-root targets.** Ordinary newly promoted pointer-bearing objects and map storage stay in scanned heap memory until the collector can scan typed stack fields for the full lifetime, including writes by borrowing callees. Immutable interface boxes used only by KeepAlive are a limited exception: their original SSA values already publish pointer fields, and the intrinsic cannot mutate the box. They still obey the unified lifetime and stack-budget decisions. Pointer-free character/slice buffers can use the stack. General promotion requires root-registration/lifetime work, not a weaker escape predicate.
 3. **Additional copy elision.** Read-only `[]byte(string)` and immediately consumed temporary `string([]byte)` are covered. LLGo's temporary-string proof requires one use in the same block, with no intervening instruction other than debug information. More general use patterns, or cases exposed only after inlining (for example a string comparison hidden inside a helper), can retain a copy. Source mutation between conversion and use must preserve the original copied string.
-4. **Receiver-word and defer lowering.** Native synchronous interface receiver words use caller storage. Deferred/asynchronous invocations and explicit-root targets retain the original allocation path. Extending those cases requires storage owned by the defer/goroutine or a collector-aware frame.
+4. **Receiver-word and defer-record lowering.** Native synchronous interface receiver words use caller storage; deferred/asynchronous receiver adapters and explicit-root receiver words retain heap storage. Native non-loop defer records are invocation-local, while loop/foreign-owner and explicit-root records retain heap ownership. Argument boxes are placed separately, including the KeepAlive-only GC exception above. Extending general receiver/record promotion requires an owner with the right lifetime or a collector-aware frame.
 5. **Target heuristics and build cost.** Stack size/alignment limits, native fixed stacks, vector layouts and conservative versus explicit GC roots differ. Cross-package effects are recomputed from available SSA instead of using Go's serialized escape tags. This affects optimization opportunities and build cost, independently of correctness.
 6. **By-value lexical closure capture.** Go's escape pass can copy a small, unmodified variable with no observable address use directly into a closure environment. LLGo currently retains the Go SSA lexical binding representation, which uses pointers to captured variables, except for its existing zero-sized environment elimination. An escaping closure can therefore retain separate captured-variable storage that Go avoids. General by-value capture requires coordinated capture proofs and environment layout changes; LLVM may still remove some resulting storage later.
 
@@ -58,7 +59,7 @@ M4 Max, macOS/arm64, LLVM 22.1.8, Go 1.27.3. LLGo: `-O3 -lto=full`; Go: default 
 | small-map | 22,400,416 | 0 | 0 | 104.78 | 9.70 | 9.88 |
 | known-interface | 3,200,032 | 0 | 0 | 21.71 | 0.77 | 0.89 |
 
-The latest contracts remove the former 80 B measurement overhead (five heap output words in native `ReadMemStats`) and the string-map key-header allocation: in the same batch, lookup changes from 3,198,400 to 0 B and 21.97 to 7.19 ns/call. Mutation through `NoEscape` still requires an owned byte copy.
+The measured contracts remove the former 80 B measurement overhead (five heap output words in native `ReadMemStats`) and the string-map key-header allocation: in the same batch, lookup changes from 3,198,400 to 0 B and 21.97 to 7.19 ns/call. Mutation through `NoEscape` still requires an owned byte copy.
 
 Both compilers heap-allocate the 128 B dynamic slice. This host's BDWGC allocation class is 144 B versus Go's 128 B, explaining the byte difference. Its time is 2.1% faster than baseline in this batch; the previous batch was 6.9% slower, so no stable heap-path speedup is established. Some short controls vary (read-only bytes: 1.93 → 2.14 ns/call versus the preceding implementation); temporary string comparison remains much slower than Go.
 
@@ -66,7 +67,15 @@ Executable: 1,368,032 → 1,384,944 B (+16,912 B, +1.24%). These are isolated pr
 
 The executable size and timing series above supersede the previous-main comparison; earlier issue-specific figures retain their original revision labels in [`benchmark/escape/README.md`](../benchmark/escape/README.md).
 
-Validation includes race-tested engine proofs (94.5% statement coverage), compiler/runtime IR and metadata suites, recursive/cross-package cold/warm cache tests with 1/8 build workers, native public language tests, native default/full-LTO escape tests, and actual WASI/Emscripten memory32/memory64 runs. The same new semantic cases also pass cmd/compile. Pointer-bearing explicit-root storage deliberately keeps its conservative placement.
+Validation at the measured revision includes race-tested engine proofs (94.5% statement coverage), compiler/runtime IR and metadata suites, recursive/cross-package cold/warm cache tests with 1/8 build workers, native public language tests, native default/full-LTO escape tests, and actual WASI/Emscripten memory32/memory64 runs. The same new semantic cases also pass cmd/compile. Ordinary pointer-bearing explicit-root storage deliberately keeps its conservative placement; the KeepAlive-only immutable-box exception is validated separately below.
+
+## KeepAlive integration validation (2026-11-08)
+
+Implementation snapshot: `2f17a50cb` (#2997), including foundation `d5eca1d9e` (#3016). The numbered escape benchmark table above still refers to `ccda44f8f` and has not been rerun as a complete batch for this integration.
+
+Focused KeepAlive tests pass with Go on macOS/arm64, native LLGo on macOS/arm64 and Linux/amd64, and LLGo on actual Wasm J32/J64/W32 runtimes. Cases include boxing before GC, separate loop-defer snapshots, panic-unwind GC before a deferred KeepAlive, and indirect/reflected function calls. IR tests verify the borrowing contract and shared budget: three 32 KiB boxes permit only two stack slots, and later helper buffers respect the remaining capacity. Full compiler/escape/C ABI suites and focused cache/runtime-contract checks pass.
+
+The aggregate microprobe remains **0 B/op** and has the same allocation-free assembly as standalone #3016. This focused result does not update the historical timings or executable-size comparison above and does not establish application-wide performance.
 
 ## Reproduce
 
