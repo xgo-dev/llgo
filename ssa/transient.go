@@ -45,8 +45,8 @@ func (b Builder) ReadOnlyStringBytes(t Type, x Expr) Expr {
 	return Expr{b.InlineCall(b.Pkg.rtFunc("StringToBytesReadOnly"), x).impl, t}
 }
 
-// ReadOnlyBytesString requires an immediately consumed string temporary with
-// no source mutation between conversion and its sole comparison/lookup use.
+// ReadOnlyBytesString requires a temporary string with no source mutation on
+// any path from the conversion to its final consumer.
 func (b Builder) ReadOnlyBytesString(t Type, x Expr) Expr {
 	return Expr{b.InlineCall(b.Pkg.rtFunc("StringFromBytesReadOnly"), x).impl, t}
 }
