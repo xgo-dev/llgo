@@ -2,6 +2,7 @@ package build
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -33,11 +34,21 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			}
 			td := llvm.NewTargetData(mod.DataLayout())
 			defer td.Dispose()
-			bucket := buckets.GlobalValueType().ElementType()
+			array := buckets.GlobalValueType()
+			if array.TypeKind() != llvm.ArrayTypeKind {
+				t.Fatalf("memory profile buckets are not an array: %s", array.String())
+			}
+			bucket := array.ElementType()
 			offset := td.ElementOffset(bucket, 1)
 			stride := td.TypeAllocSize(bucket)
 			if buckets.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
 				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", buckets.Alignment(), offset, stride)
+			}
+			// Allocator accounting must remain an intrinsic at O0 too: an
+			// instrumented stdlib method can allocate and re-enter profiling.
+			add := mod.NamedFunction(llssa.PkgRuntime + ".memProfileAddObject")
+			if add.IsNil() || !strings.Contains(add.String(), "atomicrmw add") {
+				t.Fatal("memory profile updates must use the allocation-free runtime intrinsic")
 			}
 		})
 	}

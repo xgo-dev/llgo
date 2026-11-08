@@ -2,16 +2,24 @@
 
 package runtime
 
-import "sync/atomic"
+import (
+	stdatomic "sync/atomic"
 
-// Uint64 carries the alignment required for atomic access on 32-bit targets,
-// including when the counter follows a uintptr in a bucket or array element.
-type memProfileCounter = atomic.Uint64
+	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
+)
+
+// Uint64 supplies 8-byte alignment even on 32-bit targets. Keep the actual
+// value in our own field so allocator accounting can use runtime intrinsics:
+// stdlib method calls may allocate instrumented Wasm caller-location frames.
+type memProfileCounter struct {
+	_     [0]stdatomic.Uint64
+	value uint64
+}
 
 func memProfileAddObject(p *memProfileCounter) {
-	p.Add(1)
+	atomic.Add(&p.value, uint64(1))
 }
 
 func memProfileLoadObjects(p *memProfileCounter) uint64 {
-	return p.Load()
+	return atomic.Load(&p.value)
 }

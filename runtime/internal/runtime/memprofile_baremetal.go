@@ -2,6 +2,7 @@
 
 package runtime
 
+// Baremetal accounting uses a non-atomic native-word counter.
 type memProfileCounter = uintptr
 
 func memProfileAddObject(p *memProfileCounter) {
