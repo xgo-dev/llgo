@@ -2,6 +2,7 @@ package build
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 )
 
 func TestMemProfileCounterAlignment(t *testing.T) {
+	llssa.Initialize(llssa.InitAll)
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -21,6 +23,15 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, _ = strings.Cut(target, "/")
+			targetInfo := &llssa.Target{GOOS: conf.Goos, GOARCH: conf.Goarch}
+			if _, err := llvm.GetTargetFromTriple(targetInfo.Spec().Triple); err != nil {
+				// The official Windows LLVM SDK omits the MIPS backend.
+				// Keep the core 386/ARM targets mandatory on every host.
+				if runtime.GOOS == "windows" && conf.Goarch == "mips" {
+					t.Skipf("Windows LLVM build lacks MIPS: %v", err)
+				}
+				t.Fatal(err)
+			}
 			pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
 			if err != nil {
 				t.Fatal(err)
