@@ -14,6 +14,8 @@ type keepAliveStackHolder struct {
 //go:noinline
 func useKeepAliveStackHolder(*keepAliveStackHolder) {}
 
+// This is a behavioral smoke test: conservative GC may also retain stale
+// pointers. cl/keepalive_test.go checks the optimized barrier deterministically.
 func TestRuntimeKeepAliveStackObjectGraph(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		var finalized atomic.Bool

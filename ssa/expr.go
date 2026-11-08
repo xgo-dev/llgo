@@ -337,9 +337,10 @@ func (b Builder) InlineAsmFull(instruction, constraints string, retType Type, ex
 	return Expr{b.impl.CreateCall(ftype, asm, vals, ""), retType}
 }
 
-// KeepAlive retains both words of an interface and the memory reachable from
-// them through this point. A memory clobber also keeps pointer fields of a
-// stack object from being discarded when only its address remains live.
+// KeepAlive keeps both interface words live for conservative GC scanning.
+// The data word may point to a stack object containing further pointers;
+// declare memory access explicitly so its fields must remain materialized.
+// This compiler barrier does not emit a hardware memory fence.
 func (b Builder) KeepAlive(x Expr) Expr {
 	if x.kind != vkEface {
 		panic("keepAlive(any): invalid argument type")
