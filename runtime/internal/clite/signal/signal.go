@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/structs"
 )
 
 const (
@@ -15,8 +16,8 @@ const (
 //llgo:cdecl
 type SignalHandler func(c.Int)
 
-//llgo:cdecl
 type sigactiont struct {
+	_       structs.HostLayout
 	handler SignalHandler
 	tramp   unsafe.Pointer
 	mask    c.Int

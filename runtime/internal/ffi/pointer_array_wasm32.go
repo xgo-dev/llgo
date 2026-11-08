@@ -2,7 +2,10 @@
 
 package ffi
 
-import "unsafe"
+import (
+	native "github.com/xgo-dev/llgo/runtime/internal/clite/ffi"
+	"unsafe"
+)
 
 type signatureStorage struct {
 	cif   Signature
@@ -43,7 +46,7 @@ func newAggregateType(size uintptr, alignment, kind uint16, values []*Type) *Typ
 			storage.slots[i] = uint32(uintptr(unsafe.Pointer(value)))
 		}
 	}
-	storage.typ = Type{size, alignment, kind, typePointerArrayFromSlots(storage.slots)}
+	storage.typ = native.NewType(size, alignment, kind, typePointerArrayFromSlots(storage.slots))
 	return &storage.typ
 }
 

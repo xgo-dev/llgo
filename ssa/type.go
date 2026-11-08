@@ -93,6 +93,9 @@ type goProgram aProgram
 // Alignof must implement the alignment guarantees required by the spec.
 // The result must be >= 1.
 func (p *goProgram) Alignof(T types.Type) int64 {
+	if layout, ok := p.hostLayout(T); ok {
+		return layout.align
+	}
 	if layout, ok := p.vectorLayout(T, false); ok {
 		return layout.align
 	}
@@ -104,6 +107,14 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	prog := Program(unsafe.Pointer(p))
+	if !prog.nativeFields(fields) {
+		for _, f := range fields {
+			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
+				_, offsets := p.hostFieldsLayout(fields)
+				return offsets
+			}
+		}
+	}
 	ptrSize := int64(prog.GoWordSize())
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
@@ -124,6 +135,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // Sizeof must implement the size guarantees required by the spec.
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
+	if layout, ok := p.hostLayout(T); ok {
+		return layout.size
+	}
 	if layout, ok := p.vectorLayout(T, false); ok {
 		return layout.size
 	}
@@ -260,7 +274,7 @@ func (p Program) Pointer(typ Type) Type {
 	if !p.usesWideGoStorage() {
 		return ret
 	}
-	if p.isNativeStorage(typ) || p.hasNativeTypeLayout(typ.raw.Type) {
+	if p.isNativeStorage(typ) || p.hasLegacyNativeTypeLayout(typ.raw.Type) {
 		return p.withNativeStorage(ret)
 	}
 	return ret
@@ -500,7 +514,7 @@ func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Stru
 	typ := &aType{t, rawType{raw}, kind}
 	p.named[name] = typ
 	p.typs.Set(raw, typ)
-	fields, layout := p.toLLVMStructBody(st, p.hasNativeStructLayout(raw))
+	fields, layout := p.toLLVMStructBody(st, p.hasLegacyNativeTypeLayout(raw))
 	t.StructSetBody(fields, false)
 	p.setStructLayout(raw, layout)
 	return typ

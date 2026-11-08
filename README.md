@@ -181,6 +181,50 @@ type WinProc func(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr
 
 The older `//llgo:type C` and `//llgo:type stdcall` spellings remain supported for backward compatibility but are **deprecated**: the compiler accepts them and prints a warning naming the replacement (`//llgo:type C` → `//llgo:cdecl`, `//llgo:type stdcall` → `//llgo:stdcall`). Prefer the new directives in new code. A type may carry only one calling-convention directive; combining them (for example `//llgo:cdecl` together with `//llgo:stdcall` or `//llgo:type stdcall`) is reported as an error.
 
+#### Host-layout structs
+
+Use a leading blank `structs.HostLayout` field for a struct exchanged with native
+code. LLGo recognizes the marker from type information, including aliases,
+defined marker types, and generic instantiations.
+
+```go
+import "structs"
+
+//llgo:cdecl
+type Callback func(int32) int32
+
+type Record struct {
+    _        structs.HostLayout
+    Callback Callback
+    Data     *byte
+}
+```
+
+The marker selects native field layout, not a calling convention. A plain Go
+`func` field still carries its closure environment; use an explicitly annotated
+function type for a native callback. Nested struct fields keep their own layout,
+and containing structs do not inherit the marker. Ordinary Go fields retain
+their storage representation, including when their address is passed to another
+function. On profiled wasm32 targets, Go pointers and `uintptr` still occupy
+eight bytes; explicitly annotated callback fields also retain their existing
+Go storage width. HostLayout does not change callback reflection or conversion
+semantics. Host records requiring four-byte address slots must use explicit
+fixed-width storage and convert at the interface boundary. A nonempty marked
+struct ending in a zero-sized field retains Go's protective trailing padding.
+
+The older struct-level `//llgo:cdecl` and `//llgo:type C` declarations remain
+accepted for compatibility. A struct that still carries a legacy type directive
+keeps its legacy source-layout behavior, including when a HostLayout marker is
+added directly or through a field. Remove the struct directive when adopting
+HostLayout. When migrating, give any native callback fields
+explicit callback types rather than relying on the outer struct's directive.
+If Go and native pointer widths differ, use target-specific address/size slots
+and boundary accessors, retaining Go references for any addresses the host saves.
+The marker is a real zero-sized field: reflection field indices and positional
+struct literals must be adjusted when adding it.
+The runtime uses an internal compatibility marker on Go 1.20–1.22 and an alias
+to the standard `structs.HostLayout` on Go 1.23 and later.
+
 ### C/C++ standard libraries
 
 LLGo provides Go bindings for the C/C++ standard library:
