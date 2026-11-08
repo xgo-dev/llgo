@@ -107,10 +107,12 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	prog := Program(unsafe.Pointer(p))
-	for _, f := range fields {
-		if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
-			_, offsets := p.hostFieldsLayout(fields)
-			return offsets
+	if !prog.nativeFields(fields) {
+		for _, f := range fields {
+			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
+				_, offsets := p.hostFieldsLayout(fields)
+				return offsets
+			}
 		}
 	}
 	ptrSize := int64(prog.GoWordSize())

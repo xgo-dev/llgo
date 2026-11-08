@@ -48,3 +48,39 @@ func GoPointer(p *Record, q *byte) *byte { p.Inner.P = q; return p.Inner.P }
 		}
 	}
 }
+
+func TestHostLayoutLegacySizeConstants(t *testing.T) {
+	const src = `package legacysize
+import "structs"
+import "unsafe"
+type H struct { _ structs.HostLayout; B byte }
+//DIRECTIVE
+type Control struct { B byte; Fn func(); Tail byte }
+//DIRECTIVE
+type Nested struct { H H; Fn func(); Tail byte }
+//DIRECTIVE
+type Direct struct { _ structs.HostLayout; B byte; Fn func(); Tail byte }
+//DIRECTIVE
+type Alias = struct { _ structs.HostLayout; B byte; Fn func(); Tail byte }
+const control = int(unsafe.Sizeof(Control{}))
+var _ [control - int(unsafe.Sizeof(Nested{}))]byte
+var _ [int(unsafe.Sizeof(Nested{})) - control]byte
+var _ [control - int(unsafe.Sizeof(Direct{}))]byte
+var _ [int(unsafe.Sizeof(Direct{})) - control]byte
+var _ [control - int(unsafe.Sizeof(Alias{}))]byte
+var _ [int(unsafe.Sizeof(Alias{})) - control]byte
+var _ [2*control - int(unsafe.Sizeof([2]Nested{}))]byte
+var _ [int(unsafe.Sizeof([2]Nested{})) - 2*control]byte
+func Size() uintptr { return unsafe.Sizeof(Nested{}) }
+`
+	for _, directive := range []string{"//llgo:cdecl", "//llgo:type C"} {
+		for _, target := range []*llssa.Target{
+			{GOOS: "linux", GOARCH: "amd64"},
+			{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
+		} {
+			t.Run(directive+"/"+target.GOARCH, func(t *testing.T) {
+				compileWithRewritesTarget(t, strings.ReplaceAll(src, "//DIRECTIVE", directive), nil, target)
+			})
+		}
+	}
+}

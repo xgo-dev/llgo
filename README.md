@@ -213,7 +213,10 @@ fixed-width storage and convert at the interface boundary. A nonempty marked
 struct ending in a zero-sized field retains Go's protective trailing padding.
 
 The older struct-level `//llgo:cdecl` and `//llgo:type C` declarations remain
-accepted for compatibility. When migrating them, give any native callback fields
+accepted for compatibility. A struct that still carries a legacy type directive
+keeps its legacy source-layout behavior, including when a HostLayout marker is
+added directly or through a field. Remove the struct directive when adopting
+HostLayout. When migrating, give any native callback fields
 explicit callback types rather than relying on the outer struct's directive.
 If Go and native pointer widths differ, use target-specific address/size slots
 and boundary accessors, retaining Go references for any addresses the host saves.

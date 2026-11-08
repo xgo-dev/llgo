@@ -58,19 +58,35 @@ func containsHostLayout(t types.Type) bool {
 // The checker can call this while other named types are still incomplete.
 // Enclosing Go aggregates inherit field sizes/alignment, not the host policy.
 func (p *goProgram) hostLayout(t types.Type) (sourceLayout, bool) {
+	prog := Program(p)
+	raw := t
 	switch t := t.Underlying().(type) {
 	case *types.Struct:
 		if !containsHostLayout(t) {
+			return sourceLayout{}, false
+		}
+		// Legacy directives keep their existing source-layout policy. Check
+		// only after finding a marker: native name lookup allocates, whereas
+		// ordinary size queries must remain allocation-free.
+		if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.hasNativeTypeDirective(raw) {
 			return sourceLayout{}, false
 		}
 		fields := make([]*types.Var, t.NumFields())
 		for i := range fields {
 			fields[i] = t.Field(i)
 		}
+		// Offsetsof and queries on an underlying struct have no named type.
+		// Use the same declaration context for those views of a legacy record.
+		if prog.nativeFields(fields) {
+			return sourceLayout{}, false
+		}
 		layout, _ := p.hostFieldsLayout(fields)
 		return layout, true
 	case *types.Array:
 		if elem, ok := p.hostLayout(t.Elem()); ok {
+			if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.hasNativeTypeDirective(raw) {
+				return sourceLayout{}, false
+			}
 			return arraySourceLayout(elem, t.Len()), true
 		}
 	}
