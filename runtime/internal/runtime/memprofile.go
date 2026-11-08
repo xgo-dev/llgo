@@ -84,7 +84,8 @@ func memProfileSizeClass(size uintptr) uintptr {
 	if size <= 16 {
 		return 16
 	}
-	for _, b := range memProfileBuckets {
+	for i := range memProfileBuckets {
+		b := &memProfileBuckets[i]
 		if size <= b.size {
 			return b.size
 		}

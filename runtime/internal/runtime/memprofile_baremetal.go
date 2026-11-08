@@ -8,6 +8,6 @@ func memProfileAddObject(p *memProfileCounter) {
 	*p = *p + 1
 }
 
-func memProfileLoadObjects(p *memProfileCounter) memProfileCounter {
-	return *p
+func memProfileLoadObjects(p *memProfileCounter) uint64 {
+	return uint64(*p)
 }
