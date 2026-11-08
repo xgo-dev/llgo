@@ -29,6 +29,8 @@ views:
     table:
       rows: [platform, benchmark]
       columns: [metric]
+      # Eight native platforms and 36 cases produce 288 rows.
+      max-rows: 400
       collapsed: true
       missing: error
       empty: error

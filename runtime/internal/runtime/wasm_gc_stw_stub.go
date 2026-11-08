@@ -6,6 +6,8 @@ import "unsafe"
 
 type wasmWorkerGCState struct{}
 
+func readyWasmWorkerGC(*wasmWorker) {}
+
 func initWasmWorkerGCSystem(*wasmWorker) {}
 
 func suspendWasmWorkerGCSystem(*wasmWorker) {}

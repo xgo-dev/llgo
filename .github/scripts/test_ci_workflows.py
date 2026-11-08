@@ -123,7 +123,7 @@ class WorkflowContractTests(unittest.TestCase):
         checkout, cancel = job["steps"]
         self.assertEqual(checkout["uses"], "actions/checkout@v7")
         self.assertEqual(checkout["with"], {
-            "ref": "${{ github.sha }}", "persist-credentials": "false",
+            "persist-credentials": "false",
             "sparse-checkout": ".github/scripts", "sparse-checkout-cone-mode": "false"})
         self.assertEqual(cancel["env"], {"GH_TOKEN": "${{ github.token }}"})
         self.assertEqual(cancel["run"], "python3 .github/scripts/pr_ci.py")
