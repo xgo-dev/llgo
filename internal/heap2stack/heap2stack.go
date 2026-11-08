@@ -4,6 +4,11 @@ package heap2stack
 
 import "github.com/xgo-dev/llvm"
 
+// Bound recursive attribute analysis on native stacks, especially Windows'
+// 1 MiB threads. Larger functions retain heap storage; later LLVM passes still
+// optimize them normally.
+const maxFunctionInstructions = 1024
+
 // Run preserves heap storage for tail-call inputs and repeated allocations
 // whose instances cannot be proven disjoint, then moves new fixed slots to entry.
 // Initialization stays at the original allocation site. No lifetime markers
@@ -15,8 +20,38 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 	var functions, excluded []llvm.Value
 	existing := make(map[llvm.Value]bool)
 	optnone := llvm.AttributeKindID("optnone")
+	noinline := llvm.AttributeKindID("noinline")
+	alwaysinline := llvm.AttributeKindID("alwaysinline")
+	type skippedFunction struct {
+		fn         llvm.Value
+		noinline   bool
+		inlineAttr llvm.Attribute
+	}
+	var skipped []skippedFunction
+	defer func() {
+		for _, entry := range skipped {
+			entry.fn.RemoveEnumFunctionAttribute(optnone)
+			if !entry.noinline {
+				entry.fn.RemoveEnumFunctionAttribute(noinline)
+			}
+			if !entry.inlineAttr.IsNil() {
+				entry.fn.AddFunctionAttr(entry.inlineAttr)
+			}
+		}
+	}()
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if fn.FirstBasicBlock().IsNil() || !fn.GetEnumFunctionAttribute(optnone).IsNil() {
+			continue
+		}
+		if exceedsAnalysisBudget(fn) {
+			entry := skippedFunction{fn, !fn.GetEnumFunctionAttribute(noinline).IsNil(), fn.GetEnumFunctionAttribute(alwaysinline)}
+			skipped = append(skipped, entry)
+			// optnone also stops dependencies requested from other functions.
+			// Keep the temporary attributes verifier-valid, then restore them
+			// before the ordinary optimization pipeline sees this module.
+			fn.RemoveEnumFunctionAttribute(alwaysinline)
+			fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(noinline, 0))
+			fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(optnone, 0))
 			continue
 		}
 		functions = append(functions, fn)
@@ -75,6 +110,19 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 		}
 	}
 	return nil
+}
+
+func exceedsAnalysisBudget(fn llvm.Value) bool {
+	n := 0
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+			n++
+			if n > maxFunctionInstructions {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isCall(i llvm.Value) bool {
