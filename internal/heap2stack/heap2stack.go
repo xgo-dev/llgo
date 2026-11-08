@@ -5,9 +5,49 @@ package heap2stack
 import "github.com/xgo-dev/llvm"
 
 // Bound recursive attribute analysis on native stacks, especially Windows'
-// 1 MiB threads. Larger functions retain heap storage; later LLVM passes still
-// optimize them normally.
+// 1 MiB threads. This is a conservative stack-safety cutoff, not a correctness
+// limit of the analysis. Larger functions retain heap storage; later LLVM
+// passes still optimize them normally.
 const maxFunctionInstructions = 1024
+
+type skippedFunction struct {
+	fn              llvm.Value
+	hadNoinline     bool
+	savedAttributes []llvm.Attribute
+}
+
+func saveSkippedFunction(fn llvm.Value) skippedFunction {
+	entry := skippedFunction{
+		fn:          fn,
+		hadNoinline: !fn.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil(),
+	}
+	for _, name := range []string{"alwaysinline", "optsize", "minsize"} {
+		if attr := fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)); !attr.IsNil() {
+			entry.savedAttributes = append(entry.savedAttributes, attr)
+		}
+	}
+	return entry
+}
+
+func (entry skippedFunction) skipAnalysis(ctx llvm.Context) {
+	// optnone also stops dependencies requested from other functions. Remove
+	// incompatible attributes so the temporary state stays verifier-valid.
+	for _, attr := range entry.savedAttributes {
+		entry.fn.RemoveEnumFunctionAttribute(uint(attr.GetEnumKind()))
+	}
+	entry.fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+	entry.fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("optnone"), 0))
+}
+
+func (entry skippedFunction) restore() {
+	entry.fn.RemoveEnumFunctionAttribute(llvm.AttributeKindID("optnone"))
+	if !entry.hadNoinline {
+		entry.fn.RemoveEnumFunctionAttribute(llvm.AttributeKindID("noinline"))
+	}
+	for _, attr := range entry.savedAttributes {
+		entry.fn.AddFunctionAttr(attr)
+	}
+}
 
 // Run preserves heap storage in oversized functions, for tail-call inputs,
 // and for repeated allocations whose instances cannot be proven disjoint,
@@ -21,23 +61,10 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 	var functions, excluded []llvm.Value
 	existing := make(map[llvm.Value]bool)
 	optnone := llvm.AttributeKindID("optnone")
-	noinline := llvm.AttributeKindID("noinline")
-	alwaysinline := llvm.AttributeKindID("alwaysinline")
-	type skippedFunction struct {
-		fn                llvm.Value
-		hadNoinline       bool
-		savedAlwaysInline llvm.Attribute
-	}
 	var skipped []skippedFunction
 	defer func() {
 		for _, entry := range skipped {
-			entry.fn.RemoveEnumFunctionAttribute(optnone)
-			if !entry.hadNoinline {
-				entry.fn.RemoveEnumFunctionAttribute(noinline)
-			}
-			if !entry.savedAlwaysInline.IsNil() {
-				entry.fn.AddFunctionAttr(entry.savedAlwaysInline)
-			}
+			entry.restore()
 		}
 	}()
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
@@ -45,18 +72,9 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 			continue
 		}
 		if exceedsAnalysisBudget(fn) {
-			entry := skippedFunction{
-				fn:                fn,
-				hadNoinline:       !fn.GetEnumFunctionAttribute(noinline).IsNil(),
-				savedAlwaysInline: fn.GetEnumFunctionAttribute(alwaysinline),
-			}
+			entry := saveSkippedFunction(fn)
 			skipped = append(skipped, entry)
-			// optnone also stops dependencies requested from other functions.
-			// Keep the temporary attributes verifier-valid, then restore them
-			// before the ordinary optimization pipeline sees this module.
-			fn.RemoveEnumFunctionAttribute(alwaysinline)
-			fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(noinline, 0))
-			fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(optnone, 0))
+			entry.skipAnalysis(mod.Context())
 			continue
 		}
 		functions = append(functions, fn)

@@ -53,17 +53,38 @@ define i64 @local() {
   ret i64 %v
 }
 `)
-	for _, attr := range []string{"none", "noinline", "alwaysinline"} {
-		t.Run(attr, func(t *testing.T) {
+	for _, attrs := range [][]string{
+		nil, {"noinline"}, {"alwaysinline"}, {"optsize"}, {"minsize"},
+		{"optsize", "minsize"}, {"noinline", "optsize", "minsize"},
+		{"alwaysinline", "optsize", "minsize"},
+	} {
+		name := strings.Join(attrs, "+")
+		if name == "" {
+			name = "none"
+		}
+		t.Run(name, func(t *testing.T) {
 			mod := parseModule(t, source.String())
 			tm := tailTarget(t, mod)
 			fn := mod.NamedFunction("phi_chain")
 			if !exceedsAnalysisBudget(fn) || exceedsAnalysisBudget(mod.NamedFunction("local")) {
 				t.Fatal("fixture must cover both sides of the analysis budget")
 			}
-			if attr != "none" {
+			wantAttributes := make(map[string]bool)
+			for _, attr := range attrs {
 				fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID(attr), 0))
+				wantAttributes[attr] = true
 			}
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			// Verify the exact temporary state used during Attributor, when
+			// optnone must not coexist with alwaysinline/optsize/minsize.
+			entry := saveSkippedFunction(fn)
+			entry.skipAnalysis(mod.Context())
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			entry.restore()
 			if err := Run(mod, tm); err != nil {
 				t.Fatal(err)
 			}
@@ -76,8 +97,8 @@ define i64 @local() {
 			if !fn.GetEnumFunctionAttribute(llvm.AttributeKindID("optnone")).IsNil() {
 				t.Fatal("analysis exclusion leaked into the ordinary optimization pipeline")
 			}
-			for _, name := range []string{"noinline", "alwaysinline"} {
-				if got := !fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil(); got != (name == attr) {
+			for _, name := range []string{"noinline", "alwaysinline", "optsize", "minsize"} {
+				if got := !fn.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil(); got != wantAttributes[name] {
 					t.Fatalf("%s was not restored", name)
 				}
 			}
