@@ -516,6 +516,7 @@ func (b Builder) Load(ptr Expr) Expr {
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
 	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
+	b.setGoScalarAccessAlignment(stored, storageType)
 	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
@@ -542,7 +543,25 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	if b.Prog.needsWidePointerStorage(storageType) {
 		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
 	}
-	return Expr{b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+	stored := b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl)
+	b.setGoScalarAccessAlignment(stored, storageType)
+	return Expr{stored, b.Prog.Void()}
+}
+
+// A 32-bit Go scalar pointer may refer to a four-byte-aligned struct field,
+// even when LLVM gives its scalar type eight-byte ABI alignment. FieldAddr can
+// escape, so accesses must honor the Go pointer guarantee rather than relying
+// on the alignment of the original allocation. Native pointers may be more
+// aligned; the weaker alignment is still valid for those accesses.
+func (b Builder) setGoScalarAccessAlignment(inst llvm.Value, typ Type) {
+	if b.Prog.GoWordSize() != 4 {
+		return
+	}
+	if _, ok := typ.RawType().Underlying().(*types.Basic); ok {
+		if b.Prog.AlignOf(typ) > uint64(b.Prog.GoWordSize()) {
+			inst.SetAlignment(int(b.Prog.GoWordSize()))
+		}
+	}
 }
 
 // Advance returns the pointer ptr advanced by offset.
