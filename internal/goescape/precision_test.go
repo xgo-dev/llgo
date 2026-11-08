@@ -1,10 +1,31 @@
 package goescape
 
 import (
+	"fmt"
 	"testing"
 
 	"golang.org/x/tools/go/ssa"
 )
+
+func TestContextBudgetIndependentOfProgramRoots(t *testing.T) {
+	source := `func read(*int){};func apply(fn func(*int),p *int){fn(p)};func f(x int){apply(read,&x)};`
+	for i := 0; i < 300; i++ {
+		source += fmt.Sprintf("func a%03d(x int){apply(read,&x)};", i)
+	}
+	fn := sourceFunction(t, source)
+	roots := []*ssa.Function{fn}
+	for _, member := range fn.Pkg.Members {
+		if other, ok := member.(*ssa.Function); ok {
+			roots = append(roots, other)
+		}
+	}
+	for _, input := range [][]*ssa.Function{{fn}, roots} {
+		r := Analyze(input, Config{})
+		if d := r.Decision(sitesOf[*ssa.Alloc](fn)[0]); d.Heap {
+			t.Fatalf("unrelated roots changed emitted placement: %+v", d)
+		}
+	}
+}
 
 func TestCallSiteCallbackArguments(t *testing.T) {
 	for _, tc := range []struct {

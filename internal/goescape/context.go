@@ -14,10 +14,11 @@ func (f *functionAnalysis) boundValue(v ssa.Value) ssa.Value {
 }
 
 // Specialization describes effects at a call site, never a new emitted body.
-// Bounds apply across the entire analysis, including recursive forwarding.
+// A per-body budget includes recursive forwarding and is independent of
+// unrelated program roots and archive-cache history.
 func (f *functionAnalysis) contextSummary(fn *ssa.Function, args []ssa.Value) Summary {
 	fallback := f.a.summary(fn)
-	if !f.a.solved[fn] || f.contextDepth >= 4 || f.a.contexts >= 512 || len(args) < len(fn.Params) {
+	if !f.a.solved[fn] || f.contextDepth >= 4 || *f.contextBudget <= 0 || len(args) < len(fn.Params) {
 		return fallback
 	}
 	var bindings map[ssa.Value]ssa.Value
@@ -62,7 +63,7 @@ func (f *functionAnalysis) contextSummary(fn *ssa.Function, args []ssa.Value) Su
 	if work > 512 {
 		return fallback
 	}
-	f.a.contexts++
-	summary, _ := f.a.analyzeBoundFunction(fn, bindings, f.contextDepth+1)
+	*f.contextBudget--
+	summary, _ := f.a.analyzeBoundFunction(fn, bindings, f.contextDepth+1, f.contextBudget)
 	return summary
 }

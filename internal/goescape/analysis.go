@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 8
+const Version = 9
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -192,8 +192,7 @@ type analyzer struct {
 	scopes map[*ssa.Function]*scopes
 	// Only completed SCCs may supply contextual proofs. Generic placement
 	// remains authoritative even when a particular caller has purer arguments.
-	solved   map[*ssa.Function]bool
-	contexts int
+	solved map[*ssa.Function]bool
 }
 
 func (a *analyzer) inspect(fn *ssa.Function) bool {

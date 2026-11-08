@@ -31,28 +31,30 @@ type object struct {
 }
 
 type functionAnalysis struct {
-	a            *analyzer
-	g            *graph
-	fn           *ssa.Function
-	scopes       *scopes
-	values       map[ssa.Value]*location
-	tuples       map[ssa.Value][]*location
-	objects      map[ssa.Instruction]*object
-	params       []*location
-	results      []*location
-	sinks        map[string]*location
-	bindings     map[ssa.Value]ssa.Value
-	contextDepth int
+	a             *analyzer
+	g             *graph
+	fn            *ssa.Function
+	scopes        *scopes
+	values        map[ssa.Value]*location
+	tuples        map[ssa.Value][]*location
+	objects       map[ssa.Instruction]*object
+	params        []*location
+	results       []*location
+	sinks         map[string]*location
+	bindings      map[ssa.Value]ssa.Value
+	contextDepth  int
+	contextBudget *int
 }
 
 func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instruction]Decision) {
-	return a.analyzeBoundFunction(fn, nil, 0)
+	budget := 64
+	return a.analyzeBoundFunction(fn, nil, 0, &budget)
 }
 
-func (a *analyzer) analyzeBoundFunction(fn *ssa.Function, bindings map[ssa.Value]ssa.Value, depth int) (Summary, map[ssa.Instruction]Decision) {
+func (a *analyzer) analyzeBoundFunction(fn *ssa.Function, bindings map[ssa.Value]ssa.Value, depth int, budget *int) (Summary, map[ssa.Instruction]Decision) {
 	f := &functionAnalysis{a: a, g: newGraph(), fn: fn,
 		scopes: a.scopes[fn], values: make(map[ssa.Value]*location),
-		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object), bindings: bindings, contextDepth: depth}
+		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object), bindings: bindings, contextDepth: depth, contextBudget: budget}
 	for _, param := range fn.Params {
 		l := f.value(param)
 		l.param = true
