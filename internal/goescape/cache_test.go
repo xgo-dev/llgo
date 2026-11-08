@@ -249,3 +249,36 @@ func TestCachePolicyInvalidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheInterfaceRepresentationAtEachSite(t *testing.T) {
+	fn := sourceFunction(t, `type A int;type B int;var out any;func use(any){};func f(a A,b B){out=a;use(b)}`)
+	m := newMemoryCache()
+	changed := false
+	config := Config{Cache: &m.cache, IndirectInterface: func(typ types.Type) bool {
+		named, ok := typ.(*types.Named)
+		return ok && ((named.Obj().Name() == "A") == changed)
+	}}
+	Analyze([]*ssa.Function{fn}, config)
+	changed = true
+	r := Analyze([]*ssa.Function{fn}, config)
+	boxes := sitesOf[*ssa.MakeInterface](fn)
+	if !r.Decision(boxes[0]).Heap {
+		t.Fatal("representation change reused a stack box for a global")
+	}
+	if _, ok := r.LookupDecision(boxes[1]); ok {
+		t.Fatal("obsolete indirect box survived cache rebinding")
+	}
+
+	assertion := sourceFunction(t, `type T struct{P *int};func f(x any)T{return x.(T)}`)
+	m = newMemoryCache()
+	changed = false
+	config = Config{Cache: &m.cache, IndirectInterface: func(types.Type) bool { return changed }}
+	before := Analyze([]*ssa.Function{assertion}, config)
+	first, _ := before.Summary(assertion)
+	changed = true
+	after := Analyze([]*ssa.Function{assertion}, config)
+	second, _ := after.Summary(assertion)
+	if first.Parameters[0].Results[0] != 1 || second.Parameters[0].Results[0] != 2 {
+		t.Fatalf("stale assertion indirection: %+v / %+v", first, second)
+	}
+}
