@@ -9,8 +9,9 @@ import "github.com/xgo-dev/llvm"
 // optimize them normally.
 const maxFunctionInstructions = 1024
 
-// Run preserves heap storage for tail-call inputs and repeated allocations
-// whose instances cannot be proven disjoint, then moves new fixed slots to entry.
+// Run preserves heap storage in oversized functions, for tail-call inputs,
+// and for repeated allocations whose instances cannot be proven disjoint,
+// then moves new fixed slots to entry.
 // Initialization stays at the original allocation site. No lifetime markers
 // are needed for this placement, and pre-existing allocas are left alone.
 func Run(mod llvm.Module, tm llvm.TargetMachine) error {
@@ -23,19 +24,19 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 	noinline := llvm.AttributeKindID("noinline")
 	alwaysinline := llvm.AttributeKindID("alwaysinline")
 	type skippedFunction struct {
-		fn         llvm.Value
-		noinline   bool
-		inlineAttr llvm.Attribute
+		fn                llvm.Value
+		hadNoinline       bool
+		savedAlwaysInline llvm.Attribute
 	}
 	var skipped []skippedFunction
 	defer func() {
 		for _, entry := range skipped {
 			entry.fn.RemoveEnumFunctionAttribute(optnone)
-			if !entry.noinline {
+			if !entry.hadNoinline {
 				entry.fn.RemoveEnumFunctionAttribute(noinline)
 			}
-			if !entry.inlineAttr.IsNil() {
-				entry.fn.AddFunctionAttr(entry.inlineAttr)
+			if !entry.savedAlwaysInline.IsNil() {
+				entry.fn.AddFunctionAttr(entry.savedAlwaysInline)
 			}
 		}
 	}()
@@ -44,7 +45,11 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 			continue
 		}
 		if exceedsAnalysisBudget(fn) {
-			entry := skippedFunction{fn, !fn.GetEnumFunctionAttribute(noinline).IsNil(), fn.GetEnumFunctionAttribute(alwaysinline)}
+			entry := skippedFunction{
+				fn:                fn,
+				hadNoinline:       !fn.GetEnumFunctionAttribute(noinline).IsNil(),
+				savedAlwaysInline: fn.GetEnumFunctionAttribute(alwaysinline),
+			}
 			skipped = append(skipped, entry)
 			// optnone also stops dependencies requested from other functions.
 			// Keep the temporary attributes verifier-valid, then restore them

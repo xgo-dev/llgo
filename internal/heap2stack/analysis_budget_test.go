@@ -8,7 +8,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// convinline.go creates a long boolean PHI chain. Attributor's recursive
+// $GOROOT/test/convinline.go creates a long boolean PHI chain. Attributor's recursive
 // potential-value updates can exhaust a Windows thread's native stack while
 // checking the liveness of an allocation used at the end of that chain.
 func TestLongBooleanPHIChain(t *testing.T) {
@@ -58,6 +58,9 @@ define i64 @local() {
 			mod := parseModule(t, source.String())
 			tm := tailTarget(t, mod)
 			fn := mod.NamedFunction("phi_chain")
+			if !exceedsAnalysisBudget(fn) || exceedsAnalysisBudget(mod.NamedFunction("local")) {
+				t.Fatal("fixture must cover both sides of the analysis budget")
+			}
 			if attr != "none" {
 				fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID(attr), 0))
 			}
