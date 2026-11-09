@@ -16,7 +16,7 @@ type Rectangle struct {
 // CHECK-LABEL: define ptr @"{{.*}}/cl/_testdata/geometry1370.NewRectangle"(
 // CHECK-SAME: double %[[TMP0:[0-9]+]], double %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24) #2
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %[[TMP2]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/cl/_testdata/geometry1370.Rectangle", ptr %[[TMP2]], i32 0, i32 1
 // CHECK-NEXT:   store double %[[TMP0]], ptr %[[TMP3]], align 8
@@ -85,15 +85,16 @@ func (r *Rectangle) validate() bool { return r.Width > 0 && r.Height > 0 }
 // CHECK-LABEL: define void @"{{.*}}/cl/_testdata/geometry1370.RegisterShape"(
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]])
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 0
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr ptr, ptr %[[TMP3]], i64 4
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = load ptr, ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP5]], 0
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP6]], ptr %[[TMP2]], 1
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 1
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 0
-// CHECK-NEXT:   call void %[[TMP9]](ptr %[[TMP8]], i64 %[[TMP1]])
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca ptr, align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], ptr %[[TMP2]])
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 0
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr ptr, ptr %[[TMP4]], i64 4
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load ptr, ptr %[[TMP5]], align 8
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP6]], 0
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP7]], ptr %[[TMP3]], 1
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP8]], 1
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP8]], 0
+// CHECK-NEXT:   call void %[[TMP10]](ptr %[[TMP9]], i64 %[[TMP1]])
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

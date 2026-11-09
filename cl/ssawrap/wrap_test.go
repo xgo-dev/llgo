@@ -29,6 +29,15 @@ func Greet(name string) string {
 func NoReturn(a int) {
 	_ = a
 }
+
+func Pair(a, b uint64) (uint64, bool) {
+	return a * b, a != 0
+}
+
+func External(a, b uint64) (uint64, bool)
+
+type Box struct{}
+func (Box) Method(x int) int { return x }
 `
 
 // buildTestProgram builds an SSA program for testing
@@ -128,11 +137,16 @@ func TestMakeCallWrapper_Basic(t *testing.T) {
 	t.Logf("Generated SSA:\n%s", ssastr)
 
 	// Verify SSA text contains expected content
-	if !strings.Contains(ssastr, "Add$wrapper") {
-		t.Error("SSA output missing wrapper function name")
+	if wrapper.Name() != origFn.Name() || wrapper.Pkg != origFn.Pkg || wrapper.Synthetic != CallWrapper {
+		t.Error("wrapper did not retain its source symbol and package")
 	}
 	if !strings.Contains(ssastr, "demo.Add") {
 		t.Error("SSA output missing original function call")
+	}
+	for i, param := range wrapper.Params {
+		if param == origFn.Params[i] || param.Parent() != wrapper {
+			t.Error("wrapper reused the original function's parameter graph")
+		}
 	}
 	if !strings.Contains(ssastr, "return") {
 		t.Error("SSA output missing return statement")
@@ -252,5 +266,55 @@ func TestMakeCallWrapper_Referrers(t *testing.T) {
 	}
 	if !foundReturn {
 		t.Error("Return instruction not found in Call's referrers")
+	}
+}
+
+func TestMakeCallWrapperTupleAndBodyless(t *testing.T) {
+	prog, pkg := buildTestProgram(t)
+	for _, name := range []string{"Pair", "External"} {
+		t.Run(name, func(t *testing.T) {
+			original := pkg.Func(name)
+			wrapper := MakeCallWrapper(prog, original)
+			if wrapper.Name() != original.Name() || wrapper.Pos() != original.Pos() || wrapper.Pkg != original.Pkg {
+				t.Fatal("wrapper lost declaration identity or source position")
+			}
+			if len(wrapper.Params) != 2 {
+				t.Fatal("wrapper did not derive parameters from the signature")
+			}
+			block := wrapper.Blocks[0]
+			call := block.Instrs[0].(*ssa.Call)
+			if !types.Identical(call.Type(), original.Signature.Results()) {
+				t.Fatal("forwarded call lost its tuple type")
+			}
+			ret := block.Instrs[len(block.Instrs)-1].(*ssa.Return)
+			if len(ret.Results) != 2 {
+				t.Fatal("tuple results were not extracted")
+			}
+			for i, result := range ret.Results {
+				extract := result.(*ssa.Extract)
+				if extract.Tuple != call || extract.Index != i || extract.Parent() != wrapper ||
+					!types.Identical(extract.Type(), original.Signature.Results().At(i).Type()) {
+					t.Fatal("invalid typed tuple extraction")
+				}
+			}
+			for i, param := range wrapper.Params {
+				if param.Parent() != wrapper || call.Call.Args[i] != param || len(*param.Referrers()) != 1 {
+					t.Fatal("wrapper parameter graph is not self-contained")
+				}
+			}
+		})
+	}
+}
+
+func TestMakeCallWrapperReceiver(t *testing.T) {
+	prog, pkg := buildTestProgram(t)
+	method := pkg.Type("Box").Type().(*types.Named).Method(0)
+	original := prog.FuncValue(method)
+	wrapper := MakeCallWrapper(prog, original)
+	if len(wrapper.Params) != 2 || wrapper.Signature.Recv() != original.Signature.Recv() {
+		t.Fatal("wrapper lost the receiver")
+	}
+	if !types.Identical(wrapper.Params[0].Type(), original.Signature.Recv().Type()) || wrapper.Params[0].Parent() != wrapper {
+		t.Fatal("wrapper receiver is not its own parameter")
 	}
 }

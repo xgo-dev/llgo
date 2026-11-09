@@ -34,6 +34,7 @@ func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
 	return ptr
 }
 
+/* TODO(xsw): to be removed
 func (b Builder) aggregateAlloca(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
@@ -49,6 +50,7 @@ func (b Builder) aggregateMalloc(t Type, flds ...llvm.Value) llvm.Value {
 	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
+*/
 
 // Aggregate constructs an aggregate value from Expr fields.
 func (b Builder) Aggregate(t Type, flds ...Expr) Expr {

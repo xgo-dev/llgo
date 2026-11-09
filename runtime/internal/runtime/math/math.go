@@ -6,7 +6,7 @@ const MaxUintptr = ^uintptr(0)
 
 // MulUintptr returns a * b and whether the multiplication overflowed.
 //
-//llgo:link MulUintptr llgo.umulOverflow
+//llgo:link MulUintptr llvm.umul.with.overflow
 func MulUintptr(a, b uintptr) (uintptr, bool) {
 	if a|b < 1<<(4*goarch.PtrSize) || a == 0 {
 		return a * b, false

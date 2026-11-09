@@ -126,7 +126,7 @@ func TestCountAndListFlags(t *testing.T) {
 }
 
 func TestUnsupportedCompilerFlags(t *testing.T) {
-	for _, name := range []string{"+", "dynlink", "h", "live", "m", "race", "smallframes", "wb", "D", "I", "importcfg", "o", "p"} {
+	for _, name := range []string{"+", "dynlink", "h", "live", "race", "smallframes", "wb", "D", "I", "importcfg", "o", "p"} {
 		for _, value := range []string{"true", "false", "1"} {
 			fs := newFlagSet(new(options))
 			fs.SetOutput(new(bytes.Buffer))
@@ -166,6 +166,22 @@ func TestRunCmdValidationAndVersion(t *testing.T) {
 				t.Fatalf("output %q does not contain %q", output, tt.wantOutput)
 			}
 		})
+	}
+}
+
+func TestCompileEscapeDiagnostics(t *testing.T) {
+	file := t.TempDir() + "/escape.go"
+	if err := os.WriteFile(file, []byte("package escape\nfunc F(x int)*int{return &x}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		flag    string
+		details bool
+	}{{"-m", false}, {"-m=2", true}} {
+		_, stderr, code := runCompileCommand(t, []string{tc.flag, file})
+		if code != 0 || !strings.Contains(stderr, "command-line-arguments.F: Alloc heap") || strings.Contains(stderr, "returned address") != tc.details {
+			t.Fatalf("%s: exit=%d stderr=%s", tc.flag, code, stderr)
+		}
 	}
 }
 

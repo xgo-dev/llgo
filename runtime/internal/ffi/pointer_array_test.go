@@ -30,7 +30,7 @@ func TestNewSignatureStorageOwnsTypes(t *testing.T) {
 	cif, atype := newSignatureStorage(ret, args)
 	args[0] = second
 
-	if got := *atype; got != first {
+	if got := (*ffi.Type)(ffi.Index((*unsafe.Pointer)(unsafe.Pointer(atype)), 0)); got != first {
 		t.Fatalf("libffi argument type = %p, want %p", got, first)
 	}
 	if got := (*signatureStorage)(unsafe.Pointer(cif)).ret; got != ret {
@@ -46,7 +46,7 @@ func TestNewAggregateTypeOwnsElementArray(t *testing.T) {
 	typ := ffi.StructOf(elements...)
 	elements[0] = second
 
-	if got := *typ.Elements; got != first {
+	if got := ffi.TypeElement(typ, 0); got != first {
 		t.Fatalf("aggregate element type = %p, want %p", got, first)
 	}
 	runtime.KeepAlive(typ)
@@ -61,5 +61,12 @@ func TestTypeElement(t *testing.T) {
 	}
 	if ffi.TypeElement(nil, 0) != nil || ffi.TypeElement(new(ffi.Type), 0) != nil {
 		t.Fatal("TypeElement accepted an absent element array")
+	}
+}
+
+func TestEmptyAggregateElementStorage(t *testing.T) {
+	typ := ffi.ArrayOf(ffi.TypeInt32, 0)
+	if typ.ByteSize() != 0 || ffi.TypeElement(typ, 0) != ffi.TypeInt8 || ffi.TypeElement(typ, 1) != nil {
+		t.Fatal("empty aggregate does not have a native-width terminated element array")
 	}
 }

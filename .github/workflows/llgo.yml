@@ -1023,6 +1023,19 @@ jobs:
             du -sh "$(llgo_cache_dir)"
           fi
 
+      - name: Test escape lifetimes under WebAssembly GC
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: |
+          for target in wasi emscripten emscripten-memory64; do
+            # The budget stress test also needs large by-value ABI copies,
+            # which are outside the incremental escape-storage budget.
+            "$LLGO" test -O2 -goroutine-stack-size=1MB -target "$target" -emulator ./test/escape
+          done
+
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
         shell: bash
@@ -1034,6 +1047,16 @@ jobs:
             for target in wasi emscripten emscripten-memory64; do
               "$LLGO" run -O2 -target "$target" -emulator "./test/wasm/$fixture"
             done
+          done
+          for target in wasi emscripten emscripten-memory64; do
+            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              -run '^TestHostLayoutCallbackStorage$' ./test/std/reflect
+            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              ./internal/structs ./internal/ffi)
+            if [[ "$target" != wasi ]]; then
+              (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+                ./internal/clite/emscripten)
+            fi
           done
           for profile in J32-GoJS J32-Emscripten J64-Emscripten W32-WASI; do
             go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=4m -v -args \

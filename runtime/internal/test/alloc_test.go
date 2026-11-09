@@ -17,6 +17,7 @@ func TestAllocatorNonNull(t *testing.T) {
 			fn   func(uintptr) unsafe.Pointer
 		}{
 			{"AllocU", rt.AllocU},
+			{"AllocAtomicU", rt.AllocAtomicU},
 			{"AllocZ", rt.AllocZ},
 			{"AllocRoot", rt.AllocRoot},
 		} {
@@ -56,6 +57,7 @@ func TestZeroSizeAllocatorsShareBase(t *testing.T) {
 			fn   func(uintptr) unsafe.Pointer
 		}{
 			{"AllocU", rt.AllocU},
+			{"AllocAtomicU", rt.AllocAtomicU},
 			{"AllocZ", rt.AllocZ},
 			{"AllocRoot", rt.AllocRoot},
 		} {

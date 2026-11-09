@@ -28,11 +28,24 @@ type structLayout struct {
 }
 
 func (p Program) hasNativeStructLayout(raw *types.Named) bool {
+	return hasHostLayout(raw) || p.hasLegacyNativeTypeLayout(raw)
+}
+
+// Legacy C type directives also select native storage views for surrounding
+// pointers. HostLayout only describes the struct itself; a Go pointer or slice
+// referring to it retains its ordinary representation.
+func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
 	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
 		return false
 	}
-	background, ok := p.packageTypeCallConv(namedLinkname(raw))
-	return ok && isNativeCallConv(background)
+	switch t := types.Unalias(raw).(type) {
+	case *types.Named:
+		cc, ok := p.packageTypeCallConv(namedLinkname(t))
+		return ok && isNativeCallConv(cc)
+	case *types.Array:
+		return p.hasLegacyNativeTypeLayout(t.Elem())
+	}
+	return false
 }
 
 func (p Program) setStructLayout(typ types.Type, layout *structLayout) {
@@ -53,11 +66,12 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 	return layout.(structLayout), true
 }
 
-// toLLVMStructBody preserves the native target layout for C types. When Go's
-// language layout differs from LLVM's physical target layout (currently 386
-// and profiled wasm32), it wraps only affected fields and keeps the Go field
-// index as the outer LLVM element index.
+// toLLVMStructBody preserves the native target layout for legacy C types.
+// HostLayout selects field alignment without narrowing ordinary Go storage or
+// removing zero-sized tail protection. When the desired layout differs from
+// LLVM's natural layout, wrap only affected fields and preserve Go field indices.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
+	host := hasHostLayout(raw)
 	fields := p.toLLVMFields(raw, native)
 	goarch := p.target.effectiveGOARCH()
 	if native || len(fields) == 0 {
@@ -65,7 +79,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) {
+	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
 		return fields, nil
 	}
 
@@ -80,7 +94,9 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	goSize := int64(0)
 	for i, field := range fields {
 		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
-		if p.hasNativeTypeLayout(raw.Field(i).Type()) {
+		if host {
+			fieldAlign = (*goProgram)(p).hostFieldLayout(raw.Field(i).Type(), false).align
+		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
 			fieldAlign = int64(p.td.ABITypeAlignment(field))
 		}
 		alignments[i] = fieldAlign
@@ -165,6 +181,8 @@ func (p Program) hasNativeTypeLayout(raw types.Type) bool {
 	switch t := types.Unalias(raw).(type) {
 	case *types.Named:
 		return p.hasNativeStructLayout(t)
+	case *types.Struct:
+		return hasHostLayout(t)
 	case *types.Array:
 		return p.hasNativeTypeLayout(t.Elem())
 	}

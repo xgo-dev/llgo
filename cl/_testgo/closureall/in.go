@@ -127,9 +127,7 @@ func makeWithFree(base int) Fn {
 // A method expression uses the receiver as an ordinary first argument.
 // CHECK: call i64 @"main.(*S).Add$thunk"(ptr [[S]], i64 8)
 // The interface method value keeps the same interface payload and checks it is non-nil.
-// CHECK: [[ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @"*_llgo_main.S")
-// CHECK: [[IFACE_ITAB:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[ITAB]], 0
-// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" [[IFACE_ITAB]], ptr [[S]], 1
+// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[S]], 1
 // CHECK: [[IFACE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[IFACE]])
 // CHECK: [[IFACE_OK:%.*]] = icmp ne ptr [[IFACE_TYPE]], null
 // CHECK: br i1 [[IFACE_OK]], label %{{.*}}, label %{{.*}}
@@ -192,7 +190,7 @@ func makeWithFree(base int) Fn {
 // AMD64-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[BOUND_IFACE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}iface" } [[BOUND_IFACE_ENV]], 0
-// CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_IFACE]])
+// CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_IFACE]], ptr %{{[0-9]+}})
 // CHECK: [[BOUND_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_IFACE]], 0
 // CHECK: [[BOUND_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ITAB]], i64 3
 // CHECK: [[BOUND_CODE:%.*]] = load ptr, ptr [[BOUND_SLOT]]

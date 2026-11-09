@@ -76,7 +76,7 @@ import "C"
 // CHECK: [[ACTIVE_NODE:%[0-9]+]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: [[ACTIVE_DEFER:%[0-9]+]] = load { ptr, i64, { ptr, ptr } }, ptr [[ACTIVE_NODE]]
 // CHECK: [[DEFER_FUNC:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr } } [[ACTIVE_DEFER]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[ACTIVE_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[DEFER_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[DEFER_FUNC]], 0
 // CHECK: call void %{{.*}}
 

@@ -22,7 +22,7 @@ func TestAllocatorNonNullAcrossModules(t *testing.T) {
 			kind := llvm.AttributeKindID("nonnull")
 			for _, module := range []string{PkgRuntime, "example.com/caller"} {
 				pkg := prog.NewPackage("p", module)
-				for _, name := range []string{"AllocU", "AllocZ", "AllocRoot", "Nullable"} {
+				for _, name := range []string{"AllocU", "AllocAtomicU", "AllocZ", "AllocRoot", "Nullable"} {
 					fn := pkg.NewFunc(PkgRuntime+"."+name, prog.tyMalloc(), GoDecl)
 					want := name != "Nullable"
 					if got := !fn.impl.GetEnumAttributeAtIndex(0, kind).IsNil(); got != want {
@@ -59,7 +59,7 @@ func TestAllocatorNonNullAcrossModules(t *testing.T) {
 				if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), pbo); err != nil {
 					t.Fatal(err)
 				}
-				for _, name := range []string{"AllocU", "AllocZ", "AllocRoot", "Nullable"} {
+				for _, name := range []string{"AllocU", "AllocAtomicU", "AllocZ", "AllocRoot", "Nullable"} {
 					ir := mod.NamedFunction("check" + name).String()
 					if got := strings.Contains(ir, "icmp eq ptr"); got != (name == "Nullable") {
 						t.Fatalf("unexpected null check after instcombine:\n%s", ir)

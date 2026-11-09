@@ -56,6 +56,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
+	"github.com/xgo-dev/llgo/internal/heap2stack"
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -190,10 +191,17 @@ type Config struct {
 	CompilerHash       string // metadata hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+
+	EscapeDiagnostics           int // -m count for explicitly selected packages
+	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
 	// GoBuildFlags contains normalized raw Go build flags forwarded to
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
 	GoBuildFlags []string
+	// LoaderBuildFlags preserves package selection while removing diagnostics
+	// consumed by LLGo, so go/packages cannot emit host-compiler escape results.
+	// Nil uses GoBuildFlags for direct compiler API callers.
+	LoaderBuildFlags []string
 	// GoFlagsParsed means the command layer has consumed GOFLAGS into native
 	// configuration. Package probes must not parse those command defaults again.
 	GoFlagsParsed bool
@@ -297,6 +305,7 @@ func (c *Config) clone() *Config {
 	cloned.RunArgs = slices.Clone(c.RunArgs)
 	cloned.Exec = slices.Clone(c.Exec)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.LoaderBuildFlags = slices.Clone(c.LoaderBuildFlags)
 	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
 	cloned.SourceOverlay = cloneSourceOverlay(c.SourceOverlay)
@@ -684,7 +693,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
 	goBuildFlags := []string{"-tags=" + tags}
-	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
+	loaderFlags := conf.LoaderBuildFlags
+	if loaderFlags == nil {
+		loaderFlags = conf.GoBuildFlags
+	}
+	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
@@ -1051,6 +1064,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = cl.PrepareEscapeAnalysis(ctx.prog, ctx.progSSA, ctx.patches)
+	escapeSpan.done()
+	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
+		selected := make(map[string]bool, len(initial))
+		for _, pkg := range initial {
+			selected[pkg.PkgPath] = true
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, func(fn *ssa.Function) int {
+			pkg := fn.Pkg
+			for parent := fn.Parent(); pkg == nil && parent != nil; parent = parent.Parent() {
+				pkg = parent.Pkg
+			}
+			if pkg != nil && selected[pkg.Pkg.Path()] {
+				return conf.EscapeDiagnostics
+			}
+			return conf.DependencyEscapeDiagnostics
+		}); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
 	allPkgs = append(allPkgs, depPkgs...)
 	var nativeTestRoots []*packages.Package
 	if mode == ModeTest && !inv.compileOnly {
@@ -3521,6 +3555,7 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 		return false, nil
 	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
+	ctx.cTransformer.LowerWideVectorCalls(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
 	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
 	// wrappers. Apply the same post-C-ABI copy pass as package modules.
@@ -3539,6 +3574,24 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	lowerEmscriptenSIMDCalls(ctx, mod)
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
 	return true, nil
+}
+
+var runHeapToStack = heap2stack.Run
+
+// optimizeHeapAllocations runs while aggregate arguments and results are still
+// SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
+// that can make Attributor's pointer and reachability analyses prohibitively
+// expensive. Run after large-aggregate lowering has rewritten oversized returns
+// so inferred memory effects include its result stores, and before the ordinary
+// pipeline can inline allocator wrappers.
+func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
+		return nil
+	}
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
 }
 
 func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
@@ -3569,6 +3622,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	// They must forward the caller's ABI storage, not materialize aggregates
 	// in a forwarding frame that a tail transfer immediately releases.
 	lowerLargeAggregates(ctx.prog, ret.Module())
+	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)

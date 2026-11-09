@@ -29,10 +29,12 @@ import (
 )
 
 type frontendGCFlags struct {
-	goVersion string
-	nCount    int
-	lCount    int
-	debug     compilerDebugFlags
+	goVersion        string
+	nCount           int
+	lCount           int
+	mCount           int
+	dependencyMCount int
+	debug            compilerDebugFlags
 }
 
 // parseFrontendGCFlags validates and captures the supported compiler options
@@ -53,6 +55,9 @@ func parseFrontendGCFlags(fields []string) (*frontendGCFlags, error) {
 	})
 	fs.BoolFunc("l", "Disable inlining", func(v string) error {
 		return applyCompilerCount(v, &parsed.lCount)
+	})
+	fs.BoolFunc("m", "Print allocation decisions; repeat for reasons", func(v string) error {
+		return applyCompilerCount(v, &parsed.mCount)
 	})
 	fs.Func("d", "Global float-to-integer conversion behavior", func(v string) error {
 		for _, setting := range strings.Split(v, ",") {
@@ -89,6 +94,8 @@ func (f *frontendGCFlags) apply(conf *build.Config) {
 		conf.OptLevel = optlevel.O0
 	}
 	conf.SaturatingFloatToInt = bisectPatternAlwaysEnabled(f.debug["converthash"])
+	conf.EscapeDiagnostics = f.mCount
+	conf.DependencyEscapeDiagnostics = f.dependencyMCount
 }
 
 // compilerDebugFlags stores the last value of each comma-separated -d setting.
