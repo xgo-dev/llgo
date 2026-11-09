@@ -325,8 +325,8 @@ printf '%s\n' '{"kind":"TranslationUnitDecl","inner":[{"kind":"FunctionDecl","na
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"typeof(request_func)* cgo_func;",
-		"typeof(request_macro) cgo_macro;",
+		"__typeof__(request_func)* cgo_func;",
+		"__typeof__(request_macro) cgo_macro;",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("generated declarations missing %q:\n%s", want, got)
