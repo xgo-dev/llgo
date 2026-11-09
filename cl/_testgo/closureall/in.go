@@ -157,12 +157,12 @@ func makeWithFree(base int) Fn {
 // CHECK: ret i64 [[NO_FREE_RESULT]]
 
 // CHECK-LABEL: define %main.Fn @main.makeWithFree(i64 %0){{.*}} {
-// CHECK: [[BASE_ADDR:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
-// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[BASE_ADDR]], i8 0, i64 8, i1 false)
-// CHECK-NEXT: store i64 %0, ptr [[BASE_ADDR]]
-// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[BASE_ADDR]], ptr [[WITH_FREE_ENV_SLOT]]
+// CHECK: [[BASE_ADDR:%[0-9]+]] = alloca i64
+// CHECK: store i64 %0, ptr [[BASE_ADDR]]
+// CHECK-NEXT: [[BASE_VALUE:%[0-9]+]] = load i64, ptr [[BASE_ADDR]]
+// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[BASE_VALUE]], ptr [[WITH_FREE_ENV_SLOT]]
 // CHECK-NEXT: [[WITH_FREE_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.makeWithFree$1", ptr undef }, ptr [[WITH_FREE_ENV_OUT]], 1
 // CHECK-NEXT: [[WITH_FREE_OUT:%[0-9]+]] = alloca %main.Fn
 // CHECK-NEXT: store { ptr, ptr } [[WITH_FREE_FN]], ptr [[WITH_FREE_OUT]]
@@ -171,8 +171,7 @@ func makeWithFree(base int) Fn {
 
 // ARM64-LABEL: define i64 @"main.makeWithFree$1"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.makeWithFree$1"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[FREE_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[FREE_ADDR:%[0-9]+]] = extractvalue { ptr } [[FREE_ENV]], 0
+// CHECK: [[FREE_ADDR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[FREE_VALUE:%[0-9]+]] = load i64, ptr [[FREE_ADDR]]
 // CHECK-NEXT: [[FREE_RESULT:%[0-9]+]] = add i64 %1, [[FREE_VALUE]]
 // CHECK: ret i64 [[FREE_RESULT]]

@@ -44,7 +44,7 @@ The solver limits work to one million location/edge visits per function solve. A
 | Interfaces | Track indirect boxes separately. Concrete assertions copy the payload; interface-to-interface operations preserve box identity. Use the backend's actual interface representation. |
 | Closures | Model each environment and its captured pointers. Compose free-variable effects for statically known calls; unknown callees conservatively retain reachable captured pointers. |
 | Arrays/slices | Track local backing storage, views and copied elements. Nonescaping constant backing arrays use stack storage. Dynamic capacities try a fixed 32-byte caller buffer and retain the original heap fallback; pointer elements keep heap lifetime because that fallback can be taken. Synthetic constant-capacity makes retain their runtime length checks with a bounded caller array. |
-| String conversions/concatenation | Model copied character storage independently from its source. Nonescaping results use caller buffers (32 bytes or 32 rune slots), with original heap helpers for larger results. Read-only `[]byte(string)` and immediately compared/queried `string([]byte)` can borrow data after a second solve propagates the actual alias lifetime. Mutable or escaping results preserve copies. |
+| String conversions/concatenation | Model copied character storage independently from its source. Nonescaping results use caller buffers (32 bytes or 32 rune slots), with original heap helpers for larger results. Read-only `[]byte(string)` and proven temporary `string([]byte)` read regions can borrow data after a second solve propagates the actual alias lifetime. Mutable or escaping results preserve copies. |
 | append/copy | Borrow source backing storage; copied pointer elements may escape into a destination or newly allocated array. |
 | Maps/channels/select | Retain inserted keys/values and sent values. Native nonescaping maps use a caller-owned header and typed initial bucket; growth, overflow and oversized/over-aligned buckets retain runtime allocation. Channels retain runtime storage. Explicit-root targets retain heap maps. |
 | defer/go | Non-loop defer arguments persist to invocation exit. Loop defers, goroutines and foreign-owner range-function defer stacks require longer lifetimes. Eventual callee retention is modeled separately. |
@@ -105,3 +105,11 @@ The broad native unwind suite has two full-LTO source-line expectation failures 
 The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation was updated to check the actual 16-byte stack storage on native targets and aligned heap storage on Wasm.
 
 The analysis caches each function's CFG scopes and retains allocation decisions from the converged summary pass. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
+
+## Bounded precision
+
+Known function and concrete interface arguments can specialize a completed callee's effects at a call site. The generic summary and emitted callee storage remain authoritative: a specialized caller cannot turn storage in that body from heap into stack. Recursive or unknown contexts and work limits fall back conservatively. No shared Go SSA is rewritten.
+
+An immutable lexical capture may be stored by value in its environment when its small variable has one dominating initialization and no observable address or later assignment. The analysis publishes the same capture plan that environment construction and free-variable lowering use.
+
+Temporary `string([]byte)` views may span multiple consumers and branches. All paths to the final consumer are checked for writes or unknown effects. Inspectable helpers must be read-only throughout their bodies, including global accesses; a parameter-only mutation summary cannot rule out a global alias of the source. Cyclic or over-budget regions preserve the copy.

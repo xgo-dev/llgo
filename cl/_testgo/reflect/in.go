@@ -196,8 +196,7 @@ func mapDemo2() {
 // CHECK: br i1 %[[CLOSURE_MATCH]]
 // ARM64-LABEL: define i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[CC_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[CC_BASE_PTR:%[0-9]+]] = extractvalue { ptr } [[CC_ENV]], 0
+// CHECK: [[CC_BASE_PTR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CC_BASE:%[0-9]+]] = load i64, ptr [[CC_BASE_PTR]]
 // CHECK-NEXT: [[CC_SUM:%[0-9]+]] = add i64 [[CC_BASE]], %1
 // CHECK-NEXT: [[CC_RESULT:%[0-9]+]] = add i64 [[CC_SUM]], 1

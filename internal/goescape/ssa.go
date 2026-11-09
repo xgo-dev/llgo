@@ -31,22 +31,31 @@ type object struct {
 }
 
 type functionAnalysis struct {
-	a       *analyzer
-	g       *graph
-	fn      *ssa.Function
-	scopes  *scopes
-	values  map[ssa.Value]*location
-	tuples  map[ssa.Value][]*location
-	objects map[ssa.Instruction]*object
-	params  []*location
-	results []*location
-	sinks   map[string]*location
+	a             *analyzer
+	g             *graph
+	fn            *ssa.Function
+	scopes        *scopes
+	values        map[ssa.Value]*location
+	tuples        map[ssa.Value][]*location
+	objects       map[ssa.Instruction]*object
+	params        []*location
+	results       []*location
+	sinks         map[string]*location
+	bindings      map[ssa.Value]ssa.Value
+	contextDepth  int
+	contextBudget *int
+	borrowProofs  map[*ssa.Convert]bool
 }
 
 func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instruction]Decision) {
+	budget := 64
+	return a.analyzeBoundFunction(fn, nil, 0, &budget)
+}
+
+func (a *analyzer) analyzeBoundFunction(fn *ssa.Function, bindings map[ssa.Value]ssa.Value, depth int, budget *int) (Summary, map[ssa.Instruction]Decision) {
 	f := &functionAnalysis{a: a, g: newGraph(), fn: fn,
 		scopes: a.scopes[fn], values: make(map[ssa.Value]*location),
-		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object)}
+		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object), bindings: bindings, contextDepth: depth, contextBudget: budget}
 	for _, param := range fn.Params {
 		l := f.value(param)
 		l.param = true
@@ -75,8 +84,13 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 				}
 			case *ssa.MakeClosure:
 				fields := make([]*types.Var, len(v.Bindings))
+				fn, _ := v.Fn.(*ssa.Function)
 				for i, binding := range v.Bindings {
-					fields[i] = types.NewVar(token.NoPos, nil, "capture"+strconv.Itoa(i), binding.Type())
+					typ := binding.Type()
+					if fn != nil && a.result.CaptureByValue(fn.FreeVars[i]) {
+						typ = typ.Underlying().(*types.Pointer).Elem()
+					}
+					fields[i] = types.NewVar(token.NoPos, nil, "capture"+strconv.Itoa(i), typ)
 				}
 				f.newObject(v, types.NewStruct(fields, nil), "")
 			case *ssa.MakeSlice:
@@ -113,7 +127,7 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 	borrowed := false
 	if complete {
 		for site, obj := range f.objects {
-			if conversion, ok := site.(*ssa.Convert); ok && borrowableConversion(conversion) && obj.location.attrs&(escapes|mutates) == 0 {
+			if conversion, ok := site.(*ssa.Convert); ok && f.borrowableConversion(conversion) && obj.location.attrs&(escapes|mutates) == 0 {
 				f.flow(f.value(conversion), conversion.X, 0)
 				borrowed = true
 			}
@@ -122,7 +136,7 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 			complete = f.g.solve()
 		}
 	}
-	if complete {
+	if complete && bindings == nil {
 		complete = f.applyStackBudget()
 	}
 	summary := emptySummary(fn)
@@ -145,7 +159,7 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		}
 		readOnly := false
 		if conversion, ok := site.(*ssa.Convert); ok {
-			readOnly = complete && !heap && obj.location.attrs&mutates == 0 && borrowableConversion(conversion)
+			readOnly = complete && !heap && obj.location.attrs&mutates == 0 && f.borrowableConversion(conversion)
 		}
 		decisions[site] = Decision{Heap: heap, Reason: reason, ReadOnly: readOnly}
 	}
@@ -153,7 +167,9 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 		// Partial proofs cannot be exported: callers must also retain anything
 		// reachable through arguments when this function exceeded the budget.
 		summary = unknownSummary(fn)
-		a.result.stackBytes[fn] = 0
+		if bindings == nil {
+			a.result.stackBytes[fn] = 0
+		}
 	}
 	return summary, decisions
 }
@@ -175,7 +191,7 @@ func (f *functionAnalysis) applyStackBudget() bool {
 			if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
 				continue // Existing SSA-local storage is not a new promotion.
 			}
-			if conversion, ok := site.(*ssa.Convert); ok && borrowableConversion(conversion) && obj.location.attrs&mutates == 0 {
+			if conversion, ok := site.(*ssa.Convert); ok && f.borrowableConversion(conversion) && obj.location.attrs&mutates == 0 {
 				continue // A borrowed view reserves no character buffer.
 			}
 			size, alignment := config.StackLayout(site, obj.typ)
@@ -254,6 +270,11 @@ func (f *functionAnalysis) newObject(site ssa.Instruction, typ types.Type, reaso
 		if forced := f.a.config.ForceHeap(site, typ); forced != "" {
 			reason = forced
 		}
+	}
+	if f.bindings != nil && f.a.result.Decision(site).Heap {
+		// The generic body is emitted once. A specialized summary must never
+		// promise that a pointer stored in its actual heap objects stays local.
+		reason = "generic callee heap storage"
 	}
 	f.objects[site] = &object{location: l, reason: reason, typ: typ}
 	l.reason = reason
@@ -364,8 +385,13 @@ func (f *functionAnalysis) instruction(instr ssa.Instruction) {
 	case *ssa.Extract:
 		f.g.flow(f.value(v), f.tuple(v.Tuple, v.Index), 0)
 	case *ssa.MakeClosure:
-		for _, binding := range v.Bindings {
-			f.flow(f.objects[v].location, binding, 0)
+		fn, _ := v.Fn.(*ssa.Function)
+		for i, binding := range v.Bindings {
+			depth := 0
+			if fn != nil && f.a.result.CaptureByValue(fn.FreeVars[i]) {
+				depth = 1
+			}
+			f.flow(f.objects[v].location, binding, depth)
 		}
 	case *ssa.Call:
 		f.call(v, &v.Call)
@@ -435,63 +461,6 @@ func byteStringView(dst, src types.Type) bool {
 	}
 	b, ok := s.Elem().Underlying().(*types.Basic)
 	return ok && b.Kind() == types.Byte
-}
-
-func borrowableConversion(v *ssa.Convert) bool {
-	if byteStringView(v.Type(), v.X.Type()) {
-		return true
-	}
-	if !byteStringView(v.X.Type(), v.Type()) {
-		return false
-	}
-	// A temporary string can alias mutable bytes only for one immediately
-	// following comparison, length query or map lookup. In particular, a
-	// source write or callback between conversion and use requires a copy.
-	var use ssa.Instruction
-	if v.Referrers() == nil {
-		return false
-	}
-	for _, ref := range *v.Referrers() {
-		if _, debug := ref.(*ssa.DebugRef); debug {
-			continue
-		}
-		if use != nil {
-			return false
-		}
-		use = ref
-	}
-	if use == nil || use.Block() != v.Block() {
-		return false
-	}
-	valid := false
-	switch u := use.(type) {
-	case *ssa.BinOp:
-		valid = u.Op == token.EQL || u.Op == token.NEQ || u.Op == token.LSS || u.Op == token.LEQ || u.Op == token.GTR || u.Op == token.GEQ
-	case *ssa.Lookup:
-		valid = u.Index == v
-	case *ssa.Call:
-		if builtin, ok := u.Call.Value.(*ssa.Builtin); ok {
-			valid = builtin.Name() == "len"
-		}
-	}
-	if !valid {
-		return false
-	}
-	seen := false
-	for _, instr := range v.Block().Instrs {
-		if instr == v {
-			seen = true
-			continue
-		}
-		if !seen {
-			continue
-		}
-		if _, debug := instr.(*ssa.DebugRef); debug {
-			continue
-		}
-		return instr == use
-	}
-	return false
 }
 
 func copiedStringStorage(dst, src types.Type) bool {
@@ -583,7 +552,16 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 			results = append(results, f.value(value))
 		}
 	}
-	targets := callTargets(call)
+	resolved := *call
+	if value := f.boundValue(call.Value); value != call.Value {
+		resolved.Value = value
+		// Keep capture effects attached to the formal callback as well. Its
+		// caller composes these with the actual environment's generic summary.
+		if !call.IsInvoke() {
+			f.flow(&f.g.callee, call.Value, 0)
+		}
+	}
+	targets := callTargets(&resolved)
 	if len(targets) == 0 {
 		// Calling a function value does not retain its environment object,
 		// but an unknown body may publish any of its captured pointers.
@@ -608,13 +586,19 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 		return
 	}
 	for _, target := range targets {
+		if call.IsInvoke() && resolved.Value != call.Value {
+			if f.indirectInterface(target.args[0].Type()) {
+				target.receiverDepth = 1
+			}
+			target.args[0] = call.Value
+		}
 		f.callTarget(target, results)
 	}
 }
 
 func (f *functionAnalysis) callTarget(target callTarget, results []*location) {
 	callee, args := target.fn, target.args
-	summary := f.a.summary(callee)
+	summary := f.contextSummary(callee, args)
 	if len(args) != len(summary.Parameters) {
 		for _, arg := range args {
 			f.flow(&f.g.heap, arg, 0)
@@ -623,6 +607,19 @@ func (f *functionAnalysis) callTarget(target callTarget, results []*location) {
 	}
 	for i, arg := range args {
 		p := summary.Parameters[i]
+		if i == 0 && target.receiverDepth != 0 {
+			add := func(effect Effect) Effect {
+				if effect != 0 && effect < 65535 {
+					effect++
+				}
+				return effect
+			}
+			p.Heap, p.Mutator, p.Callee = add(p.Heap), add(p.Mutator), add(p.Callee)
+			p.Results = append([]Effect(nil), p.Results...)
+			for j := range p.Results {
+				p.Results[j] = add(p.Results[j])
+			}
+		}
 		if p.Heap != 0 {
 			f.effect(f.sink("retained by call to "+callee.String()), arg, p.Heap)
 		}

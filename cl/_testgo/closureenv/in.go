@@ -17,16 +17,16 @@ package main
 // CHECK: ret i64 0
 // CHECK: ret i64 42
 // CHECK-LABEL: define { ptr, ptr } @main.zeroSizedPointerCapture(ptr %0){{.*}} {
-// CHECK: [[ZSP_VALUE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store ptr %0, ptr [[ZSP_VALUE]]
+// CHECK: [[ZSP_VALUE:%[0-9]+]] = alloca ptr
+// CHECK: store ptr %0, ptr [[ZSP_VALUE]]
+// CHECK-NEXT: [[ZSP_COPY:%[0-9]+]] = load ptr, ptr [[ZSP_VALUE]]
 // CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: store ptr [[ZSP_VALUE]], ptr %{{[0-9]+}}
+// CHECK: store ptr [[ZSP_COPY]], ptr %{{[0-9]+}}
 // CHECK: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
 // CHECK-NEXT: ret { ptr, ptr } [[ZSP_CLOSURE]]
 // ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
 // AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest
-// CHECK: [[ZSP_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[ZSP_SLOT:%[0-9]+]] = extractvalue { ptr } [[ZSP_ENV_VALUE]], 0
+// CHECK: [[ZSP_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[ZSP_POINTER:%[0-9]+]] = load ptr, ptr [[ZSP_SLOT]]
 // CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_POINTER]], null
 // CHECK-NEXT: ret i1 [[ZSP_IS_NIL]]

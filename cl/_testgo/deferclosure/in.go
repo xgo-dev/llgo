@@ -22,8 +22,9 @@ package main
 // CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 false)
 // CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
+// CHECK: [[VALUE_COPY:%.*]] = load i64, ptr [[VALUE_CAPTURE]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_ENV:%[0-9]+]], i8 0, i64 8, i1 false)
-// CHECK: store ptr [[VALUE_CAPTURE]], ptr %{{.*}}
+// CHECK: store i64 [[VALUE_COPY]], ptr %{{.*}}
 // CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
 // CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // CHECK: store { ptr, ptr } [[VALUE_FN]], ptr %{{.*}}
@@ -39,8 +40,7 @@ package main
 
 // ARM64-LABEL: define void @"main.testDeferClosureValue$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.testDeferClosureValue$1"(ptr nest %0){{.*}} {
-// CHECK: [[VALUE_BODY_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[VALUE_BODY_ADDR:%.*]] = extractvalue { ptr } [[VALUE_BODY_ENV]], 0
+// CHECK: [[VALUE_BODY_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK: [[VALUE_BODY_X:%.*]] = load i64, ptr [[VALUE_BODY_ADDR]]
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[VALUE_BODY_X]])
 
@@ -90,8 +90,9 @@ package main
 // CHECK: [[STRUCT_PROCESSOR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[STRUCT_MSG:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: store %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
-// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: store ptr [[STRUCT_MSG]], ptr %{{.*}}
+// CHECK: [[STRUCT_COPY:%.*]] = load %"{{.*}}String", ptr [[STRUCT_MSG]]
+// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: store %"{{.*}}String" [[STRUCT_COPY]], ptr %{{.*}}
 // CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // CHECK: store ptr [[STRUCT_PROCESSOR]], ptr %{{.*}}
@@ -104,8 +105,7 @@ package main
 
 // ARM64-LABEL: define void @"main.testDeferStructClosure$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
 // AMD64-LABEL: define void @"main.testDeferStructClosure$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
-// CHECK: [[STRUCT_BODY_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[STRUCT_BODY_MSG_ADDR:%.*]] = extractvalue { ptr } [[STRUCT_BODY_ENV]], 0
+// CHECK: [[STRUCT_BODY_MSG_ADDR:%.*]] = getelementptr inbounds nuw { %"{{.*}}String" }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK: [[STRUCT_BODY_MSG:%.*]] = load %"{{.*}}String", ptr [[STRUCT_BODY_MSG_ADDR]]
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[STRUCT_BODY_MSG]])

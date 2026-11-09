@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 7
+const Version = 13
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -79,6 +79,13 @@ type Result struct {
 	objects    map[ssa.Instruction]Decision
 	summaries  map[*ssa.Function]Summary
 	stackBytes map[*ssa.Function]uint64
+	captures   map[*ssa.FreeVar]bool
+}
+
+// CaptureByValue reports whether lowering must store the captured value rather
+// than its variable's address. The shared SSA itself is never rewritten.
+func (r *Result) CaptureByValue(v *ssa.FreeVar) bool {
+	return r != nil && r.captures[v]
 }
 
 // StackBytes is a conservative reservation for the function's promoted Go
@@ -183,6 +190,10 @@ type analyzer struct {
 	result *Result
 	bodies map[*ssa.Function]bool
 	scopes map[*ssa.Function]*scopes
+	deps   map[*ssa.Function][]*ssa.Function
+	// Only completed SCCs may supply contextual proofs. Generic placement
+	// remains authoritative even when a particular caller has purer arguments.
+	solved map[*ssa.Function]bool
 }
 
 func (a *analyzer) inspect(fn *ssa.Function) bool {
@@ -205,24 +216,27 @@ func (a *analyzer) summary(fn *ssa.Function) Summary {
 // Each call SCC reaches a monotone summary fixed point before its callers.
 func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
-		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64),
-	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes)}
+		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64), captures: make(map[*ssa.FreeVar]bool),
+	}, bodies: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes), deps: make(map[*ssa.Function][]*ssa.Function), solved: make(map[*ssa.Function]bool)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {
 		if a.bodies[fn] || !a.inspect(fn) {
 			return
 		}
 		a.bodies[fn] = true
+		for i, v := range fn.FreeVars {
+			a.result.captures[v] = immutableCapture(fn, i)
+		}
 		a.scopes[fn] = functionScopes(fn)
 		a.result.summaries[fn] = emptySummary(fn)
-		for _, callee := range dependencies(fn) {
+		for _, callee := range a.dependencies(fn) {
 			discover(callee)
 		}
 	}
 	for _, root := range roots {
 		discover(root)
 	}
-	for _, group := range functionComponents(a.bodies) {
+	for _, group := range a.functionComponents() {
 		for iteration := 0; ; iteration++ {
 			changed := false
 			for _, fn := range group {
@@ -256,14 +270,28 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 				break
 			}
 		}
+		for _, fn := range group {
+			a.solved[fn] = true
+		}
 	}
 	return a.result
 }
 
-func dependencies(fn *ssa.Function) []*ssa.Function {
+func (a *analyzer) dependencies(fn *ssa.Function) []*ssa.Function {
+	if deps, ok := a.deps[fn]; ok {
+		return deps
+	}
 	ret := append([]*ssa.Function(nil), fn.AnonFuncs...)
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
+			if value, ok := instr.(*ssa.MakeInterface); ok {
+				methods := fn.Prog.MethodSets.MethodSet(value.X.Type())
+				for i := 0; i < methods.Len(); i++ {
+					if method := fn.Prog.MethodValue(methods.At(i)); method != nil {
+						ret = append(ret, method)
+					}
+				}
+			}
 			for _, operand := range instr.Operands(nil) {
 				if operand != nil {
 					if fn, ok := (*operand).(*ssa.Function); ok {
@@ -278,10 +306,11 @@ func dependencies(fn *ssa.Function) []*ssa.Function {
 			}
 		}
 	}
+	a.deps[fn] = ret
 	return ret
 }
 
-func functionComponents(bodies map[*ssa.Function]bool) [][]*ssa.Function {
+func (a *analyzer) functionComponents() [][]*ssa.Function {
 	index, low := make(map[*ssa.Function]int), make(map[*ssa.Function]int)
 	active := make(map[*ssa.Function]bool)
 	var stack []*ssa.Function
@@ -293,8 +322,8 @@ func functionComponents(bodies map[*ssa.Function]bool) [][]*ssa.Function {
 		next++
 		stack = append(stack, fn)
 		active[fn] = true
-		for _, callee := range dependencies(fn) {
-			if !bodies[callee] {
+		for _, callee := range a.dependencies(fn) {
+			if !a.bodies[callee] {
 				continue
 			}
 			if index[callee] == 0 {
@@ -322,7 +351,7 @@ func functionComponents(bodies map[*ssa.Function]bool) [][]*ssa.Function {
 		}
 	}
 	var roots []*ssa.Function
-	for fn := range bodies {
+	for fn := range a.bodies {
 		roots = append(roots, fn)
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i].String() < roots[j].String() })

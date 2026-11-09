@@ -56,21 +56,21 @@ package main
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @[[EXIT_TEXT]], i64 4 })
 // ARM64-LABEL: define void @"main.recv$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.recv$1"(ptr nest %0){{.*}} {
-// CHECK: [[RECV1_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[RECV1_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECV1_ENV]], 0
+// CHECK: [[RECV1_CH_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT: [[RECV1_CH:%[0-9]+]] = load ptr, ptr [[RECV1_CH_SLOT]]
 // CHECK: store %"{{.*}}String" { ptr @[[CH1_TEXT]], i64 3 }, ptr [[RECV1_VALUE:%[0-9]+]]
 // CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV1_CH]], ptr [[RECV1_VALUE]], i64 16)
 // ARM64-LABEL: define void @"main.recv$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.recv$2"(ptr nest %0){{.*}} {
-// CHECK: [[RECV2_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[RECV2_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECV2_ENV]], 0
+// CHECK: [[RECV2_CH_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT: [[RECV2_CH:%[0-9]+]] = load ptr, ptr [[RECV2_CH_SLOT]]
 // CHECK: store %"{{.*}}String" { ptr @[[CH2_TEXT]], i64 3 }, ptr [[RECV2_VALUE:%[0-9]+]]
 // CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV2_CH]], ptr [[RECV2_VALUE]], i64 16)
 // CHECK-LABEL: define void @main.send(){{.*}} {
 // CHECK: [[SEND_CH1_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
 // CHECK: [[SEND_CH2_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
+// CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$3", ptr %{{.*}})
+// CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$4", ptr %{{.*}})
 // CHECK: [[SEND_CH1:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[SEND_CH2:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: store i64 100, ptr [[SEND_BUF1:%[0-9]+]]
@@ -93,16 +93,14 @@ package main
 // CHECK: [[SEND_IS_CASE1:%[0-9]+]] = icmp eq i64 [[SEND_DISPATCH]], 1
 // ARM64-LABEL: define void @"main.send$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.send$1"(ptr nest %0){{.*}} {
-// CHECK: [[SEND1_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[SEND1_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[SEND1_ENV]], 0
+// CHECK: [[SEND1_CH_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[SEND1_CH:%[0-9]+]] = load ptr, ptr [[SEND1_CH_SLOT]]
 // CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND1_CH]], ptr [[SEND1_BUF:%[0-9]+]], i64 8)
 // CHECK-NEXT: [[SEND1_VALUE:%[0-9]+]] = load volatile i64, ptr [[SEND1_BUF]]
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[SEND1_VALUE]])
 // ARM64-LABEL: define void @"main.send$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.send$2"(ptr nest %0){{.*}} {
-// CHECK: [[SEND2_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[SEND2_CH_SLOT:%[0-9]+]] = extractvalue { ptr } [[SEND2_ENV]], 0
+// CHECK: [[SEND2_CH_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[SEND2_CH:%[0-9]+]] = load ptr, ptr [[SEND2_CH_SLOT]]
 // CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND2_CH]], ptr [[SEND2_BUF:%[0-9]+]], i64 8)
 // CHECK-NEXT: [[SEND2_VALUE:%[0-9]+]] = load volatile i64, ptr [[SEND2_BUF]]

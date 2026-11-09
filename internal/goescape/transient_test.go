@@ -137,7 +137,7 @@ func TestTemporaryByteStringProof(t *testing.T) {
 		{"return", `func f(b []byte)string{return string(b)}`, false},
 		{"source write", `func f(b []byte,s string)bool{x:=string(b);b[0]++;return x==s}`, false},
 		{"intervening call", `func change([]byte);func f(b []byte,s string)bool{x:=string(b);change(b);return x==s}`, false},
-		{"multiple uses", `func f(b []byte,a,c string)bool{x:=string(b);return x==a||x==c}`, false},
+		{"multiple uses", `func f(b []byte,a,c string)bool{x:=string(b);return x==a||x==c}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fn := sourceFunction(t, tc.src)

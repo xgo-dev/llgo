@@ -123,7 +123,7 @@ func TestBorrowedAndEscapingStorage(t *testing.T) {
 		{"mutual recursive publish", `var sink *int;func a(p *int,n int){if n==0{sink=p;return};b(p,n-1)};func b(p *int,n int){a(p,n)};func f(x int){b(&x,4)}`, true},
 		{"closure returns address locally", `func f(x int)int{return *func()*int{return &x}()}`, false},
 		{"closure returns address externally", `func f(x int)*int{return func()*int{return &x}()}`, true},
-		{"escaping closure", `func f(x int)func()int{return func()int{return x}}`, true},
+		{"escaping closure", `func f(x int)func()int{return func()int{return x}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fn := sourceFunction(t, tc.source)

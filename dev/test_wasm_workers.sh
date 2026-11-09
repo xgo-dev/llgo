@@ -63,6 +63,22 @@ run_emscripten() {
 	grep -Fxq "${expected}" "${output}"
 }
 
+run_reflect_worker_startups() {
+	local workers="$1" target="$2" name="$3"
+	local runner="${target}-runner.mjs"
+	local attempt
+	run_emscripten "${workers}" "${target}" "${runner}" \
+		"${reflect_worker_fixture}" "wasm reflect workers ok" "${name}"
+	# Remote worker initialization can request GC before the first Go fiber
+	# starts. Repeat fresh processes to exercise that startup race, reusing
+	# the compiled reflection fixture rather than recompiling it each time.
+	for ((attempt = 2; attempt <= 20; attempt++)); do
+		run_with_timeout "${node_cmd}" "${repo_root}/targets/${runner}" \
+			"${work_dir}/${name}.mjs" "${name}" 2>&1 | tee "${work_dir}/${name}.out"
+		grep -Fxq "wasm reflect workers ok" "${work_dir}/${name}.out"
+	done
+}
+
 run_single_hardening() {
 	local target="$1"
 	local runner="$2"
@@ -267,10 +283,8 @@ for workers in 2 4; do
 		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-emscripten"
 	run_emscripten "${workers}" emscripten-memory64 emscripten-memory64-runner.mjs \
 		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-memory64"
-	run_emscripten "${workers}" emscripten emscripten-runner.mjs \
-		"${reflect_worker_fixture}" "wasm reflect workers ok" "reflect-workers-${workers}-emscripten"
-	run_emscripten "${workers}" emscripten-memory64 emscripten-memory64-runner.mjs \
-		"${reflect_worker_fixture}" "wasm reflect workers ok" "reflect-workers-${workers}-memory64"
+	run_reflect_worker_startups "${workers}" emscripten "reflect-workers-${workers}-emscripten"
+	run_reflect_worker_startups "${workers}" emscripten-memory64 "reflect-workers-${workers}-memory64"
 done
 run_emscripten 2 emscripten emscripten-runner.mjs \
 	"${hardening_fixture}" "wasm hardening ok" hardening-workers-emscripten \
