@@ -12,7 +12,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestGoScalarAccessAlignment(t *testing.T) {
+func TestGoBasicAccessAlignment(t *testing.T) {
 	Initialize(InitAll)
 	for _, target := range []Target{
 		{GOOS: "windows", GOARCH: "386"},

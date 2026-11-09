@@ -516,7 +516,7 @@ func (b Builder) Load(ptr Expr) Expr {
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
 	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
-	b.setGoScalarAccessAlignment(stored, storageType)
+	b.setGoBasicAccessAlignment(stored, storageType)
 	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
@@ -544,16 +544,17 @@ func (b Builder) Store(ptr, val Expr) Expr {
 		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
 	}
 	stored := b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl)
-	b.setGoScalarAccessAlignment(stored, storageType)
+	b.setGoBasicAccessAlignment(stored, storageType)
 	return Expr{stored, b.Prog.Void()}
 }
 
-// A 32-bit Go scalar pointer may refer to a four-byte-aligned struct field,
-// even when LLVM gives its scalar type eight-byte ABI alignment. FieldAddr can
-// escape, so accesses must honor the Go pointer guarantee rather than relying
-// on the alignment of the original allocation. Native pointers may be more
-// aligned; the weaker alignment is still valid for those accesses.
-func (b Builder) setGoScalarAccessAlignment(inst llvm.Value, typ Type) {
+// On 32-bit Go targets, a pointer to a basic value may refer to a four-byte-
+// aligned struct field even when LLVM gives its storage type eight-byte ABI
+// alignment. This includes complex values, whose LLVM storage is an aggregate.
+// FieldAddr can escape, so accesses must honor the Go pointer guarantee rather
+// than the original allocation's alignment. An address that is more strongly
+// aligned at runtime still satisfies this weaker alignment requirement.
+func (b Builder) setGoBasicAccessAlignment(inst llvm.Value, typ Type) {
 	if b.Prog.GoWordSize() != 4 {
 		return
 	}
