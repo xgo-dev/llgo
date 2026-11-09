@@ -1,4 +1,4 @@
-//go:build llgo && !wasm
+//go:build cgo && !wasm
 
 package c11
 
