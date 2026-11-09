@@ -1,6 +1,7 @@
 package build
 
 import (
+	"go/types"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -40,6 +41,14 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 				t.Fatal("missing compiled runtime package")
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
+			marker := pkgs[0].Types.Scope().Lookup("memProfileAlignment")
+			if marker == nil {
+				t.Fatal("missing memory profile alignment marker")
+			}
+			named, ok := types.Unalias(marker.Type()).(*types.Named)
+			if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "structs" || named.Obj().Name() != "Align8" {
+				t.Fatalf("memory profile counters must use structs.Align8, got %s", marker.Type())
+			}
 			mod := pkgs[0].LPkg.Module()
 			buckets := mod.NamedGlobal(llssa.PkgRuntime + ".memProfileBuckets")
 			if buckets.IsNil() {

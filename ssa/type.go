@@ -596,6 +596,8 @@ func (p Program) toLLVMFunc(sig *types.Signature) llvm.Type {
 
 func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Type {
 	if isNativeCallConv(cc) {
+		// Frontends diagnose alignment before lowering. Keep this guard for
+		// standalone SSA API callers that bypass source validation.
 		for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 			for i := 0; i < tuple.Len(); i++ {
 				if requiredExplicitAlignment(tuple.At(i).Type()) != 0 {

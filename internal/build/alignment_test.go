@@ -22,9 +22,21 @@ func TestExplicitAlignmentDiagnostics(t *testing.T) {
 		{"pointer-map", "type Unused map[int]*Block", "m := make(Unused); m[1] = new(Block)", ""},
 		{"native-argument", "//go:linkname consume C.consume\nfunc consume(Block)", "consume(Block{})", "explicitly aligned values at native C call boundaries"},
 		{"native-result", "//go:linkname produce C.produce\nfunc produce() Block", "_ = produce()", "explicitly aligned values at native C call boundaries"},
+		{"native-callback", "//llgo:cdecl\ntype Callback func(Block)", "var cb Callback; cb(Block{})", "explicitly aligned values at native C call boundaries"},
+		{"native-callback-alias", "//llgo:cdecl\ntype Callback = func(Block)", "var cb Callback; cb(Block{})", "explicitly aligned values at native C call boundaries"},
+		{"native-callback-parameter", "//go:linkname consume C.consume\nfunc consume(func(Block))", "consume(func(Block){})", "explicitly aligned values at native C call boundaries"},
+		{"native-result-callback", "//go:linkname produce C.produce\nfunc produce() func(Block)", "_ = produce()", "explicitly aligned values at native C call boundaries"},
+		{"native-receiver", "//llgo:link (Block).Consume C.consume\nfunc (b Block) Consume() {}", "Block{}.Consume()", "explicitly aligned values at native C call boundaries"},
+		{"native-export", "//export Consume\nfunc Consume(Block) {}", "", "explicitly aligned values at native C call boundaries"},
 		{"native-vararg", "//go:linkname consume C.consume\nfunc consume(n int32, __llgo_va_list ...any)", "consume(1, Block{})", "explicitly aligned values at native C call boundaries"},
+		{"generic-native-vararg", "//go:linkname consume C.consume\nfunc consume(n int32, __llgo_va_list ...any)\nfunc forward[T any](v T){ consume(1,v) }", "forward(Block{})", "explicitly aligned values at native C call boundaries"},
+		{"defer-native-vararg", "//go:linkname consume C.consume\nfunc consume(n int32, __llgo_va_list ...any)", "defer consume(1, Block{})", "explicitly aligned values at native C call boundaries"},
+		{"go-native-vararg", "//go:linkname consume C.consume\nfunc consume(n int32, __llgo_va_list ...any)", "go consume(1, Block{})", "explicitly aligned values at native C call boundaries"},
 		{"native-pointer-vararg", "//go:linkname consume C.consume\nfunc consume(n int32, __llgo_va_list ...any)", "consume(1, new(Block))", ""},
 		{"native-pointer", "//go:linkname consume C.consume\nfunc consume(*Block)", "consume(new(Block))", ""},
+		{"native-pointer-callback", "//llgo:cdecl\ntype Callback func(*Block)", "var cb Callback; cb(new(Block))", ""},
+		{"go-function", "type Callback func(Block) Block\nfunc identity(b Block) Block { return b }", "var cb Callback = identity; _ = cb(Block{})", ""},
+		{"pointer-to-go-callback-record", "type Record struct { _ structs.Align64; Fn func(Block) Block }\n//go:linkname consume C.consume\nfunc consume(*Record)", "consume(new(Record))", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -44,6 +56,8 @@ func TestExplicitAlignmentDiagnostics(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
 				t.Fatalf("expected %q, got %v", tc.diagnostic, err)
+			} else if !strings.Contains(err.Error(), "main.go:") {
+				t.Fatalf("diagnostic has no source position: %v", err)
 			}
 		})
 	}
