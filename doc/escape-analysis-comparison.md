@@ -18,7 +18,9 @@ The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/30
 | Dynamic slice capacity | Small fixed caller buffer with heap fallback | 32-byte caller buffer with heap fallback; pointer elements retain heap lifetime |
 | String/byte/rune conversion and concatenation | Small caller buffers, heap fallback, copy-elision rules | Explicit implicit-storage nodes, small caller buffers and original large-result helpers |
 | Temporary byte/string views | No-copy conversion for supported read-only/temporary uses | Read-only `[]byte(string)` and bounded mutation-free `string([]byte)` regions spanning multiple consumers, branches and inspectable read-only helpers; solve again with the actual source alias |
-| Local maps | Caller-owned header and small initial backing storage | Native caller-owned header and typed initial bucket; existing growth/overflow allocator |
+| Local maps | Caller-owned header and small initial backing storage | Caller-owned header and typed initial bucket, including explicit-root targets; existing growth/overflow allocator |
+| Map key arguments | Caller-owned synchronous temporary | Entry-frame key copies, typed field roots and shared stack budget; runtime-owned copies for inserted keys |
+| Map/string range iterators | Caller-owned iteration state | Invocation-owned entry slots with typed field roots and shared budget; heap fallback for oversized frames |
 | Channels | Runtime allocation | Runtime allocation; this is not an outstanding heap-to-stack optimization in cmd/compile |
 | defer/go | Invocation and asynchronous lifetimes differ | Non-loop native defer storage is invocation-local; loop/foreign/asynchronous ownership is retained |
 | Trusted runtime/foreign contracts | Runtime pointer-hiding helpers and assembly noescape annotations | Shared `llgo.noescape` for runtime/ABI helpers, bodyless `//go:noescape` contracts; ordinary pointer-to-uintptr conversion remains conservative |

@@ -98,7 +98,14 @@ type StringIter struct {
 }
 
 func NewStringIter(s string) *StringIter {
-	return &StringIter{s, 0}
+	return NewStringIterBuffer(s, new(StringIter))
+}
+
+// NewStringIterBuffer initializes caller-owned iteration storage. The caller
+// must retain both the buffer and its string fields until iteration stops.
+func NewStringIterBuffer(s string, it *StringIter) *StringIter {
+	*it = StringIter{s, 0}
+	return it
 }
 
 func StringIterNext(it *StringIter) (ok bool, k int, v rune) {

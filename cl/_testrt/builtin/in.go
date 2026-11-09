@@ -92,7 +92,7 @@ func demo() {
 // CHECK: [[COPY_LITERAL:%.*]] = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}Slice" %{{.*}}, ptr @{{.*}}, i64 4, i64 1)
 // CHECK: store i64 [[COPY_LITERAL]], ptr [[COPY_N]]
 // String range is lowered to one iterator whose yielded index/rune are consumed.
-// CHECK: [[ITER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewStringIter"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: [[ITER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewStringIterBuffer"(%"{{.*}}String" { ptr @{{.*}}, i64 7 }, ptr %{{[0-9]+}})
 // CHECK: [[NEXT:%.*]] = call { i1, i64, i32 } @"{{.*}}/runtime/internal/runtime.StringIterNext"(ptr [[ITER]])
 // CHECK: [[HAS_NEXT:%.*]] = extractvalue { i1, i64, i32 } [[NEXT]], 0
 // CHECK: br i1 [[HAS_NEXT]], label %{{.*}}, label %{{.*}}

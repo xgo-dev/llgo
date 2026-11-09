@@ -2048,7 +2048,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Extract(x, v.Index)
 	case *ssa.Range:
 		x := p.compileValue(b, v.X)
-		ret = b.Range(x)
+		// Go's opaque iterator is consumed by Next in this invocation; source
+		// code cannot publish it or capture it in an asynchronous operation.
+		ret = b.RangeBorrowed(x)
 	case *ssa.Next:
 		var typ llssa.Type
 		if !v.IsString {

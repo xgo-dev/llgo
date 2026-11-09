@@ -5,6 +5,19 @@ These programs reproduce the allocation patterns in #2975 (boxing), #2974
 control cases and verify the results, so deleting the measured work is not a
 valid optimization.
 
+`mapkeys` covers #3012's synchronous map-key temporaries: struct lookup,
+update, missing-key deletion, indirect-key lookup, map/string range and a scalar-key control.
+It reports collector bytes over 100,000 calls, ns/call and checked results.
+Build the same source with Go and both LLGo compilers:
+
+```sh
+go build -o mapkeys-go ./benchmark/escape/mapkeys
+llgo build -O3 -lto=full -o mapkeys-llgo ./benchmark/escape/mapkeys
+```
+
+Use five alternating baseline/candidate runs and report median timings.
+LLGo's native bytes use BDWGC accounting; Go reports managed allocation bytes.
+
 Build the same source with baseline and candidate compilers, then run the two
 binaries in alternating order on an otherwise idle machine:
 
