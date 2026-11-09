@@ -152,7 +152,9 @@ type llgoMapIter struct {
 	ready bool
 }
 
-// MapIterInit initializes zeroed, caller-owned range iterator storage.
+// MapIterInit initializes caller-owned range iterator storage.
+// The caller must zero *it before every call: mapiterinit leaves fields from
+// the previous iteration unchanged when h is nil or empty.
 func MapIterInit(t *maptype, h *hmap, it *llgoMapIter) {
 	mapiterinit(t, h, &it.hiter)
 	it.ready = true

@@ -1028,9 +1028,10 @@ func (b Builder) Range(x Expr) Expr {
 	case vkMap:
 		typ := b.abiType(x.raw.Type)
 		init := b.Pkg.rtFunc("MapIterInit")
-		// A range iterator is only used by Next in this invocation. Reuse
-		// one entry-block slot and clear it each time the range is entered;
-		// Alloc also registers its pointer fields on explicit-root targets.
+		// Only Next in this invocation uses this iterator. MapIterInit's last
+		// parameter is *llgoMapIter. Alloc reserves an entry-block slot with
+		// typed roots, but emits zeroing here on every range entry, clearing
+		// the previous hiter before MapIterInit, even for nil or empty maps.
 		iter := b.Alloc(b.Prog.Elem(lastParamType(b.Prog, init)), false)
 		b.InlineCall(init, typ, x, iter)
 		return iter
