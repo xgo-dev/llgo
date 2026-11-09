@@ -70,7 +70,7 @@ func TestSIMDArrayAllocationsO2(t *testing.T) {
 					conf.GOAMD64 = "v1"
 				}
 				optimizeTestAllocationsBeforeABI(t, conf, func(mod llvm.Module) {
-					if body := mod.NamedFunction("main.arrayAdd").String(); strings.Count(body, "runtime.AllocZ") != 3 {
+					if body := mod.NamedFunction("main.arrayAdd").String(); strings.Count(body, "runtime.AllocAtomicU") != 3 {
 						t.Fatalf("fixture does not exercise three local buffers:\n%s", body)
 					}
 				})
@@ -99,7 +99,7 @@ func TestSIMDArrayAllocationsO2(t *testing.T) {
 				}
 				for _, name := range []string{"escaped", "published"} {
 					body := mod.NamedFunction("main." + name).String()
-					if !strings.Contains(body, "runtime.AllocZ") {
+					if !strings.Contains(body, "runtime.AllocAtomicU") {
 						t.Fatalf("%s lost its escaping allocation:\n%s", name, body)
 					}
 				}

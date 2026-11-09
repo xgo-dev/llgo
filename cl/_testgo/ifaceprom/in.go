@@ -111,8 +111,8 @@ func main() {
 // CHECK: ret %"{{.*}}String" [[IMPL_TWO_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// Zero-sized constants stay AllocU: boxing them would mutate the shared sentinel.
-// CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
+// Zero-sized constants keep a runtime allocation: boxing them would mutate the shared sentinel.
+// CHECK: [[IMPL_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
 // CHECK: store %main.impl zeroinitializer, ptr [[IMPL_DATA]]
 // CHECK: [[MAIN_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[IMPL_DATA]], 1
 // CHECK: store %"{{.*}}iface" [[MAIN_IFACE]], ptr [[S_IFACE_FIELD:%.*]]

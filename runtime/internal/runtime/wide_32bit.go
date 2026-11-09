@@ -48,11 +48,11 @@ func PanicExtendIndexU(hi uint, lo uint, y int) {
 // MakeSlice64 follows runtime.makeslice64. The compiler uses it on 32-bit
 // targets when either source operand is wider than int, so an out-of-range
 // value is rejected before it can be truncated into an apparently valid size.
-func MakeSlice64(len64, cap64 int64, etSize int) Slice {
-	return MakeSlice64Aligned(len64, cap64, etSize, 1)
+func MakeSlice64(len64, cap64 int64, etSize int, hasPointers bool) Slice {
+	return MakeSlice64Aligned(len64, cap64, etSize, 1, hasPointers)
 }
 
-func MakeSlice64Aligned(len64, cap64 int64, etSize, etAlign int) Slice {
+func MakeSlice64Aligned(len64, cap64 int64, etSize, etAlign int, hasPointers bool) Slice {
 	len := int(len64)
 	if int64(len) != len64 {
 		panicmakeslicelen()
@@ -61,10 +61,10 @@ func MakeSlice64Aligned(len64, cap64 int64, etSize, etAlign int) Slice {
 	if int64(cap) != cap64 {
 		panicmakeslicecap()
 	}
-	return MakeSliceAligned(len, cap, etSize, etAlign)
+	return MakeSliceAligned(len, cap, etSize, etAlign, hasPointers)
 }
 
-func MakeSlice64Buffer(len64, cap64 int64, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int) Slice {
+func MakeSlice64Buffer(len64, cap64 int64, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int, hasPointers bool) Slice {
 	len := int(len64)
 	if int64(len) != len64 {
 		panicmakeslicelen()
@@ -73,5 +73,5 @@ func MakeSlice64Buffer(len64, cap64 int64, etSize, etAlign int, buffer unsafe.Po
 	if int64(cap) != cap64 {
 		panicmakeslicecap()
 	}
-	return MakeSliceBuffer(len, cap, etSize, etAlign, buffer, bufferCap)
+	return MakeSliceBuffer(len, cap, etSize, etAlign, buffer, bufferCap, hasPointers)
 }

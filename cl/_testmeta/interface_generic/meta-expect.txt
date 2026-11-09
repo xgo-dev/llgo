@@ -36,7 +36,8 @@ main.init:
     main.init$guard
 main.main:
     _llgo_itab$NaWLg_FrV5MHzdWJlwBZcXuNDhDi5hcF1S0TD-W3lj8
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
+    llvm.memset.p0.i64
     main.useInt
 main.useInt:
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer

@@ -15,7 +15,8 @@ import (
 // CHECK-LABEL: define i64 @"{{.*}}.UseCTrampoline"(){{.*}} {
 // CHECK: ret i64 ptrtoint (ptr @write to i64)
 // CHECK-LABEL: define i64 @"{{.*}}.UseClosure"(){{.*}} {
-// CHECK: [[UC_X:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[UC_X:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[UC_X]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[UC_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK-NEXT: [[UC_X_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[UC_ENV]], i32 0, i32 0
 // CHECK-NEXT: store ptr [[UC_X]], ptr [[UC_X_SLOT]]

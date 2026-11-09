@@ -46,8 +46,8 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 	}
 	// The closure context must remain visible to the runtime GC until the
 	// uncollectable startup record is initialized.
-	if got := strings.Count(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"`); got < 1 {
-		t.Fatalf("expected closure ctx to use AllocU, got %d:\n%s", got, ir)
+	if got := strings.Count(ir, `"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"`); got < 1 {
+		t.Fatalf("expected closure ctx to use AllocAtomicU, got %d:\n%s", got, ir)
 	}
 	if strings.Contains(ir, "EnterLocalContext") {
 		t.Fatalf("program without context-backed locals paid locality entry cost:\n%s", ir)

@@ -152,7 +152,7 @@ func TestLoopAllocationPlacement(t *testing.T) {
 			t.Fatalf("%s retains iteration-local heap allocation:\n%s", name, body)
 		}
 	}
-	if body := mod.NamedFunction("main.workCarried").String(); strings.Count(body, "runtime.AllocZ") != 1 {
+	if body := mod.NamedFunction("main.workCarried").String(); strings.Count(body, "runtime.AllocAtomicU") != 1 {
 		t.Fatalf("expected only the loop-carried object on heap:\n%s", body)
 	}
 }

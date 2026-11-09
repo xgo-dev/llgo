@@ -67,7 +67,8 @@ func main() {
 // CHECK: %[[METHODENV:[0-9]+]] = extractvalue { ptr, ptr } %[[METHODPAIR]], 1
 // CHECK: %[[METHODCODE:[0-9]+]] = extractvalue { ptr, ptr } %[[METHODPAIR]], 0
 // CHECK: call void %[[METHODCODE]](ptr %[[METHODENV]])
-// CHECK: %[[ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: %[[ARRAY:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 32)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr %[[ARRAY]], i8 0, i64 32, i1 false)
 // CHECK: getelementptr [4 x i64], ptr %[[ARRAY]], i64 1
 // CHECK: getelementptr [4 x i64], ptr %[[ARRAY]], i64 1
 

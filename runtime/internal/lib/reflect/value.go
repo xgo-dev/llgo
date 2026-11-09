@@ -1850,7 +1850,7 @@ func (v Value) grow(n int) {
 		// plain 3-word struct may use a different calling convention.
 		// Reinterpret the header as a builtin slice so the call ABI matches.
 		sh := *(*[]byte)(unsafe.Pointer(p))
-		sh = growslice(sh, n, int(t.Size_), int(t.Align_))
+		sh = growslice(sh, n, int(t.Size_), int(t.Align_), t.Pointers())
 		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&sh))
 		p.Len = oldLen // set oldLen back
 	}
@@ -2162,9 +2162,9 @@ func verifyNotInHeapPtr(p uintptr) bool {
 	return true
 }
 
-func growslice(src []byte, num, etSize, etAlign int) []byte {
+func growslice(src []byte, num, etSize, etAlign int, hasPointers bool) []byte {
 	rs := *(*runtime.Slice)(unsafe.Pointer(&src))
-	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign)
+	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign, hasPointers)
 	return *(*[]byte)(unsafe.Pointer(&rs))
 }
 

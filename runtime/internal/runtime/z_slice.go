@@ -89,13 +89,13 @@ func newSliceUnchecked(base unsafe.Pointer, eltSize, i, j, k int) (s Slice) {
 }
 
 // SliceAppend append elem data and returns a slice.
-func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int) Slice {
-	return SliceAppendAligned(src, data, num, etSize, 1)
+func SliceAppend(src Slice, data unsafe.Pointer, num, etSize int, hasPointers bool) Slice {
+	return SliceAppendAligned(src, data, num, etSize, 1, hasPointers)
 }
 
-func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int) Slice {
+func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int, hasPointers bool) Slice {
 	oldLen := src.len
-	src = GrowSliceAligned(src, num, etSize, etAlign)
+	src = GrowSliceAligned(src, num, etSize, etAlign, hasPointers)
 	if etSize == 0 {
 		return src
 	}
@@ -104,11 +104,11 @@ func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int
 }
 
 // GrowSlice grows slice and returns the grown slice.
-func GrowSlice(src Slice, num, etSize int) Slice {
-	return GrowSliceAligned(src, num, etSize, 1)
+func GrowSlice(src Slice, num, etSize int, hasPointers bool) Slice {
+	return GrowSliceAligned(src, num, etSize, 1, hasPointers)
 }
 
-func GrowSliceAligned(src Slice, num, etSize, etAlign int) Slice {
+func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Slice {
 	oldLen := src.len
 	newLen := oldLen + num
 	if newLen < 0 {
@@ -120,7 +120,17 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int) Slice {
 		if overflow || mem > maxAlloc {
 			panicgrowslicelen()
 		}
-		p := AllocZAligned(mem, uintptr(etAlign))
+		var p unsafe.Pointer
+		if hasPointers {
+			p = AllocZAligned(mem, uintptr(etAlign))
+		} else {
+			p = AllocAtomicUAligned(mem, uintptr(etAlign))
+			// The old prefix is overwritten by the copy below. Clear the
+			// remaining capacity, including newly exposed elements: reflect.Grow
+			// uses this helper without subsequently writing append arguments.
+			copied := uintptr(oldLen) * uintptr(etSize)
+			c.Memset(unsafe.Add(p, copied), 0, mem-copied)
+		}
 		if oldLen != 0 {
 			c.Memcpy(p, src.data, uintptr(oldLen*etSize))
 		}
@@ -178,11 +188,11 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 	return n
 }
 
-func MakeSlice(len, cap int, etSize int) Slice {
-	return MakeSliceAligned(len, cap, etSize, 1)
+func MakeSlice(len, cap int, etSize int, hasPointers bool) Slice {
+	return MakeSliceAligned(len, cap, etSize, 1, hasPointers)
 }
 
-func MakeSliceAligned(len, cap, etSize, etAlign int) Slice {
+func MakeSliceAligned(len, cap, etSize, etAlign int, hasPointers bool) Slice {
 	mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(len))
@@ -191,13 +201,13 @@ func MakeSliceAligned(len, cap, etSize, etAlign int) Slice {
 		}
 		panicmakeslicecap()
 	}
-	return Slice{AllocZAligned(mem, uintptr(etAlign)), len, cap}
+	return Slice{allocZTyped(mem, uintptr(etAlign), hasPointers), len, cap}
 }
 
 // MakeSliceBuffer uses caller-owned aligned storage for a valid small make.
 // Fallbacks enter the original helper, preserving both its checks and the
 // existing heap allocation path for callers without an escape proof.
-func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int) Slice {
+func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, bufferCap int, hasPointers bool) Slice {
 	if buffer != nil && len >= 0 && len <= cap && cap <= bufferCap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 		if !overflow && mem <= maxAlloc {
@@ -205,7 +215,7 @@ func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, buffe
 			return Slice{buffer, len, cap}
 		}
 	}
-	return MakeSliceAligned(len, cap, etSize, etAlign)
+	return MakeSliceAligned(len, cap, etSize, etAlign, hasPointers)
 }
 
 func panicmakeslicelen() {

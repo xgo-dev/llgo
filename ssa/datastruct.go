@@ -198,6 +198,8 @@ func isKnownNonNilArrayBase(v llvm.Value) bool {
 		if fn := call.CalledValue().IsAFunction(); !fn.IsNil() {
 			switch fn.Name() {
 			case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicZ",
 				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ":
 				return true
 			}
@@ -593,7 +595,7 @@ func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (re
 	}
 	if !heap && capacity > 0 && prog.SizeOf(telem) <= llabi.MaxImplicitStackVarSize/uint64(capacity) {
 		buffer := b.uninitializedStackSlot(prog.Type(types.NewArray(telem.RawType(), capacity), GoDecl))
-		args = append(args, prog.IntVal(prog.AlignOf(telem), prog.Int()), b.Convert(prog.VoidPtr(), buffer), prog.IntVal(uint64(capacity), prog.Int()))
+		args = append(args, prog.IntVal(prog.AlignOf(telem), prog.Int()), b.Convert(prog.VoidPtr(), buffer), prog.IntVal(uint64(capacity), prog.Int()), prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
 		fn += "Buffer"
 		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "MakeSliceBuffer", "MakeSlice64Buffer")), args...)
 		ret.Type = t
@@ -603,6 +605,7 @@ func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (re
 		fn += "Aligned"
 		args = append(args, prog.IntVal(alignment, prog.Int()))
 	}
+	args = append(args, prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
 	ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
 		"MakeSlice", "MakeSlice64", "MakeSliceAligned", "MakeSlice64Aligned")), args...)
 	ret.Type = t
@@ -1304,5 +1307,6 @@ func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 		fn += "Aligned"
 		args = append(args, b.Prog.IntVal(alignment, b.Prog.Int()))
 	}
+	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(b.Prog.Elem(src.Type).raw.Type)))
 	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
 }

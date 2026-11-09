@@ -127,8 +127,8 @@ func main() {
 // CHECK: [[NIL_DYNAMIC_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
 // CHECK: [[NIL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceconv.iface${{[-A-Za-z0-9_]+}}", ptr [[NIL_DYNAMIC_TYPE]])
 // C1 implements I0 and I1, but its dynamic type is tested against I2.
-// Zero-sized constants stay AllocU: boxing them would mutate the shared sentinel.
-// CHECK: [[C1_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
+// Zero-sized constants keep a runtime allocation: boxing them would mutate the shared sentinel.
+// CHECK: [[C1_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
 // CHECK: store %main.C1 zeroinitializer, ptr [[C1_DATA]]
 // CHECK: [[C1_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C1_DATA]], 1
 // CHECK: [[C1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
@@ -141,7 +141,7 @@ func main() {
 // CHECK: [[C1_IS_I2:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I2, ptr [[C1_I2_TYPE]])
 // CHECK: br i1 [[C1_IS_I2]], label %{{.*}}, label %{{.*}}
 // C2 follows the same assertion pipeline, including its positive I2 test.
-// CHECK: [[C2_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 0)
+// CHECK: [[C2_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
 // CHECK: store %main.C2 zeroinitializer, ptr [[C2_DATA]]
 // CHECK: [[C2_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C2_DATA]], 1
 // CHECK: [[C2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])

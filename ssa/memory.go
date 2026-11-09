@@ -29,7 +29,7 @@ import (
 func (b Builder) aggregateAllocU(t Type, flds ...llvm.Value) llvm.Value {
 	prog := b.Prog
 	size := prog.SizeOf(t)
-	ptr := b.allocTyped("AllocU", t, prog.IntVal(size, prog.Uintptr())).impl
+	ptr := b.allocTyped(t, prog.IntVal(size, prog.Uintptr()), false).impl
 	b.aggregateInit(ptr, t, flds...)
 	return ptr
 }
@@ -166,7 +166,7 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 		if prog.SizeOf(elem) == 0 {
 			return pkg.moduleZeroSizedAlloc(elem)
 		}
-		ret = b.allocTyped("AllocZ", elem, size)
+		ret = b.allocTyped(elem, size, true)
 	} else {
 		// Stack-local zero-sized variables keep a distinct alloca. Only heap
 		// allocations and package globals use the shared module sentinel.
@@ -201,15 +201,31 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 func (b Builder) AllocU(elem Type, n ...int64) (ret Expr) {
 	prog := b.Prog
 	size := SizeOf(prog, elem, n...)
-	return Expr{b.allocTyped("AllocU", elem, size).impl, prog.Pointer(elem)}
+	return Expr{b.allocTyped(elem, size, false).impl, prog.Pointer(elem)}
 }
 
-func (b Builder) allocTyped(helper string, elem Type, size Expr) Expr {
+func (b Builder) allocTyped(elem Type, size Expr, zero bool) Expr {
+	hasPointers := b.Prog.abi.HasPointers(elem.raw.Type)
+	helper := "AllocAtomicU"
+	if hasPointers {
+		helper = "AllocU"
+		if zero {
+			helper = "AllocZ"
+		}
+	}
+	var ret Expr
 	alignment := b.Prog.AlignOf(elem)
 	if alignment > uint64(b.Prog.GoWordSize()) {
-		return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper+"Aligned", "AllocUAligned", "AllocZAligned")), size, b.Prog.IntVal(alignment, b.Prog.Uintptr()))
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper+"Aligned", "AllocUAligned", "AllocZAligned", "AllocAtomicUAligned")), size, b.Prog.IntVal(alignment, b.Prog.Uintptr()))
+	} else {
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocU", "AllocZ", "AllocAtomicU")), size)
 	}
-	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocU", "AllocZ")), size)
+	if zero && !hasPointers {
+		// Keep initialization at the call site. LLVM can specialize a constant
+		// size and eliminate stores overwritten by the object's initializer.
+		ret = b.zeroinit(ret, size)
+	}
+	return ret
 }
 
 func (b Builder) allocUninited(size Expr) (ret Expr) {

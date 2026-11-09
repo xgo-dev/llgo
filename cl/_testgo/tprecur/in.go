@@ -85,7 +85,7 @@ func recur2[T Integer](n T) T {
 // CHECK-SAME: i64 %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca [4 x i64], align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSliceBuffer"(i64 %[[TMP0]], i64 %[[TMP0]], i64 8, i64 8, ptr %[[TMP1]], i64 4)
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.MakeSliceBuffer"(i64 %[[TMP0]], i64 %[[TMP0]], i64 8, i64 8, ptr %[[TMP1]], i64 4, i1 false)
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP2]], 1
 // CHECK-NEXT:   br label %_llgo_[[BB1:[0-9]+]]
 // CHECK-EMPTY:

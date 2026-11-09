@@ -230,7 +230,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8)
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8, i1 false)
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
@@ -245,7 +245,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 16)
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 16, i1 true)
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
@@ -260,7 +260,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8)
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8, i1 false)
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0

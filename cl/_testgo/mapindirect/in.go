@@ -51,7 +51,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds i8, ptr %[[TMP2]], i64 0
 // CHECK-NEXT:   store i8 %[[TMP8]], ptr %[[TMP9]], align 1
 // CHECK-NEXT:   %[[TMP10:[0-9]+]] = load [256 x i8], ptr %[[TMP2]], align 1
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 256) #{{[0-9]+}}
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 256) #{{[0-9]+}}
 // CHECK-NEXT:   store [256 x i8] %[[TMP10]], ptr %[[TMP11]], align 1
 // CHECK-NEXT:   %[[TMP12:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP5]], ptr %[[TMP11]])
 // CHECK-NEXT:   store i64 %[[TMP6]], ptr %[[TMP12]], align 8
@@ -120,7 +120,7 @@ func main() {
 // CHECK-LABEL: define linkonce { i64, i1 } @"main.lookup[main.LargeKey]"(
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]], [256 x i8] %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 256) #{{[0-9]+}}
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 256) #{{[0-9]+}}
 // CHECK-NEXT:   store [256 x i8] %[[TMP1]], ptr %[[TMP2]], align 1
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.MapAccess2"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP0]], ptr %[[TMP2]])
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP3]], 0
