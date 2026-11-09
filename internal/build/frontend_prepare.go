@@ -380,10 +380,6 @@ func (f *frontendCache) capture(result *goescape.Result) {
 			if summary, ok := result.Summary(fn); ok && goescape.ValidSummary(fn, summary) {
 				item.Escape = &summary
 			}
-			graph.Add(fn.Signature)
-			if fn.Signature.Recv() != nil {
-				graph.Add(fn.Signature.Recv().Type())
-			}
 			record.Functions = append(record.Functions, item)
 		}
 		sort.Slice(record.Functions, func(i, j int) bool { return record.Functions[i].ID < record.Functions[j].ID })
