@@ -33,45 +33,47 @@ func main() {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca [256 x i8], align 1
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca [256 x i8], align 1
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca %"{{.*}}/runtime/internal/runtime.llgoMapIter", align 8
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca [256 x i8], align 1
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = alloca { [8 x i8], [8 x ptr], [8 x i64], ptr }, align 8
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = alloca %"{{.*}}/runtime/internal/runtime.hmap", align 8
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMapBuffer"(ptr @"map[_llgo_main.LargeKey]_llgo_int", i64 0, ptr %[[TMP4]], ptr %[[TMP3]])
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = alloca [256 x i8], align 1
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = alloca { [8 x i8], [8 x ptr], [8 x i64], ptr }, align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = alloca %"{{.*}}/runtime/internal/runtime.hmap", align 8
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMapBuffer"(ptr @"map[_llgo_main.LargeKey]_llgo_int", i64 0, ptr %[[TMP5]], ptr %[[TMP4]])
 // CHECK-NEXT:   br label %_llgo_[[BB1:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = phi i64 [ 0, %_llgo_[[BB0]] ], [ %[[TMP13:[0-9]+]], %_llgo_[[BB2:[0-9]+]] ]
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = icmp slt i64 %[[TMP6]], 32
-// CHECK-NEXT:   br i1 %[[TMP7]], label %_llgo_[[BB2]], label %_llgo_[[BB3:[0-9]+]]
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = phi i64 [ 0, %_llgo_[[BB0]] ], [ %[[TMP14:[0-9]+]], %_llgo_[[BB2:[0-9]+]] ]
+// CHECK-NEXT:   %[[TMP8:[0-9]+]] = icmp slt i64 %[[TMP7]], 32
+// CHECK-NEXT:   br i1 %[[TMP8]], label %_llgo_[[BB2]], label %_llgo_[[BB3:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB2]]:
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 256, i1 false)
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = trunc i64 %[[TMP6]] to i8
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds i8, ptr %[[TMP2]], i64 0
-// CHECK-NEXT:   store i8 %[[TMP8]], ptr %[[TMP9]], align 1
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load [256 x i8], ptr %[[TMP2]], align 1
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 256) #{{[0-9]+}}
-// CHECK-NEXT:   store [256 x i8] %[[TMP10]], ptr %[[TMP11]], align 1
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP5]], ptr %[[TMP11]])
-// CHECK-NEXT:   store i64 %[[TMP6]], ptr %[[TMP12]], align 8
-// CHECK-NEXT:   %[[TMP13]] = add i64 %[[TMP6]], 1
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP3]], i8 0, i64 256, i1 false)
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = trunc i64 %[[TMP7]] to i8
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = getelementptr inbounds i8, ptr %[[TMP3]], i64 0
+// CHECK-NEXT:   store i8 %[[TMP9]], ptr %[[TMP10]], align 1
+// CHECK-NEXT:   %[[TMP11:[0-9]+]] = load [256 x i8], ptr %[[TMP3]], align 1
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 256) #{{[0-9]+}}
+// CHECK-NEXT:   store [256 x i8] %[[TMP11]], ptr %[[TMP12]], align 1
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssign"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP6]], ptr %[[TMP12]])
+// CHECK-NEXT:   store i64 %[[TMP7]], ptr %[[TMP13]], align 8
+// CHECK-NEXT:   %[[TMP14]] = add i64 %[[TMP7]], 1
 // CHECK-NEXT:   br label %_llgo_[[BB1]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 256, i1 false)
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = getelementptr inbounds i8, ptr %[[TMP1]], i64 0
-// CHECK-NEXT:   store i8 17, ptr %[[TMP14]], align 1
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = load [256 x i8], ptr %[[TMP1]], align 1
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = call { i64, i1 } @"main.lookup[main.LargeKey]"(ptr %[[TMP5]], [256 x i8] %[[TMP15]])
-// CHECK-NEXT:   %[[TMP17:[0-9]+]] = extractvalue { i64, i1 } %[[TMP16]], 0
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = extractvalue { i64, i1 } %[[TMP16]], 1
-// CHECK-NEXT:   %[[TMP19:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewMapIter"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP5]])
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 256, i1 false)
+// CHECK-NEXT:   %[[TMP15:[0-9]+]] = getelementptr inbounds i8, ptr %[[TMP2]], i64 0
+// CHECK-NEXT:   store i8 17, ptr %[[TMP15]], align 1
+// CHECK-NEXT:   %[[TMP16:[0-9]+]] = load [256 x i8], ptr %[[TMP2]], align 1
+// CHECK-NEXT:   %[[TMP17:[0-9]+]] = call { i64, i1 } @"main.lookup[main.LargeKey]"(ptr %[[TMP6]], [256 x i8] %[[TMP16]])
+// CHECK-NEXT:   %[[TMP18:[0-9]+]] = extractvalue { i64, i1 } %[[TMP17]], 0
+// CHECK-NEXT:   %[[TMP19:[0-9]+]] = extractvalue { i64, i1 } %[[TMP17]], 1
+// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 104, i1 false)
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.MapIterInit"(ptr @"map[_llgo_main.LargeKey]_llgo_int", ptr %[[TMP6]], ptr %[[TMP1]])
 // CHECK-NEXT:   br label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB4]]:
 // CHECK-NEXT:   %[[TMP20:[0-9]+]] = phi i64 [ 0, %_llgo_[[BB3]] ], [ %[[TMP29:[0-9]+]], %_llgo_[[BB5:[0-9]+]] ]
-// CHECK-NEXT:   %[[TMP21:[0-9]+]] = call { i1, ptr, ptr } @"{{.*}}/runtime/internal/runtime.MapIterNext"(ptr %[[TMP19]])
+// CHECK-NEXT:   %[[TMP21:[0-9]+]] = call { i1, ptr, ptr } @"{{.*}}/runtime/internal/runtime.MapIterNext"(ptr %[[TMP1]])
 // CHECK-NEXT:   %[[TMP22:[0-9]+]] = extractvalue { i1, ptr, ptr } %[[TMP21]], 0
 // CHECK-NEXT:   br i1 %[[TMP22]], label %_llgo_[[BB7:[0-9]+]], label %_llgo_[[BB8:[0-9]+]]
 // CHECK-EMPTY:
@@ -88,10 +90,10 @@ func main() {
 // CHECK-NEXT:   br label %_llgo_[[BB4]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB6:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP30:[0-9]+]] = call i64 @"{{.*}}/runtime/internal/runtime.MapLen"(ptr %[[TMP5]])
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP17]])
+// CHECK-NEXT:   %[[TMP30:[0-9]+]] = call i64 @"{{.*}}/runtime/internal/runtime.MapLen"(ptr %[[TMP6]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP18]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP18]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP19]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP30]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)

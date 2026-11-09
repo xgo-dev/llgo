@@ -1027,7 +1027,13 @@ func (b Builder) Range(x Expr) Expr {
 		return b.InlineCall(b.Pkg.rtFunc("NewStringIter"), x)
 	case vkMap:
 		typ := b.abiType(x.raw.Type)
-		return b.InlineCall(b.Pkg.rtFunc("NewMapIter"), typ, x)
+		init := b.Pkg.rtFunc("MapIterInit")
+		// A range iterator is only used by Next in this invocation. Reuse
+		// one entry-block slot and clear it each time the range is entered;
+		// Alloc also registers its pointer fields on explicit-root targets.
+		iter := b.Alloc(b.Prog.Elem(lastParamType(b.Prog, init)), false)
+		b.InlineCall(init, typ, x, iter)
+		return iter
 	}
 	panic("unsupport range for " + x.raw.Type.String())
 }

@@ -152,11 +152,10 @@ type llgoMapIter struct {
 	ready bool
 }
 
-func NewMapIter(t *maptype, h *hmap) *llgoMapIter {
-	var it llgoMapIter
+// MapIterInit initializes zeroed, caller-owned range iterator storage.
+func MapIterInit(t *maptype, h *hmap, it *llgoMapIter) {
 	mapiterinit(t, h, &it.hiter)
 	it.ready = true
-	return &it
 }
 
 func MapIterNext(it *llgoMapIter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) {
