@@ -188,13 +188,17 @@ func (f *functionAnalysis) applyStackBudget() bool {
 			if obj == nil || obj.location.attrs&escapes != 0 {
 				continue
 			}
+			layout := config.StackLayout
 			if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
-				continue // Existing SSA-local storage is not a new promotion.
+				layout = config.LocalStackLayout
+				if layout == nil {
+					continue
+				}
 			}
 			if conversion, ok := site.(*ssa.Convert); ok && f.borrowableConversion(conversion) && obj.location.attrs&mutates == 0 {
 				continue // A borrowed view reserves no character buffer.
 			}
-			size, alignment := config.StackLayout(site, obj.typ)
+			size, alignment := layout(site, obj.typ)
 			if size == 0 {
 				continue
 			}

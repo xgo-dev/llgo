@@ -192,6 +192,7 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 		prog.requireStorageAlignment(alloca, elem)
 		ret = Expr{alloca, prog.VoidPtr()}
 		ret.impl = b.zeroinit(ret, size).impl
+		b.registerStackRoots(alloca, elem)
 	}
 	ret.Type = prog.Pointer(elem)
 	return
@@ -253,6 +254,7 @@ func (b Builder) AllocaT(t Type) (ret Expr) {
 	ret.impl = llvm.CreateAlloca(b.impl, prog.storageType(t))
 	prog.requireStorageAlignment(ret.impl, t)
 	ret.Type = prog.Pointer(t)
+	b.registerStackRoots(ret.impl, t)
 	return
 }
 

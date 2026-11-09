@@ -128,26 +128,22 @@ func TestSIMD128LLVM(t *testing.T) {
 				t.Fatalf("valid constant lane retained a bounds branch:\n%s", fixed)
 			}
 			invoke := mod.NamedFunction("main.invoke")
-			if target.arch == "wasm" {
-				if !strings.Contains(invoke.String(), "AllocUAligned") {
-					t.Fatalf("heap SIMD defer storage lacks explicit alignment:\n%s", invoke.String())
-				}
-			} else {
-				found := false
-				for bb := invoke.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-					for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-						if inst.IsAAllocaInst().IsNil() || !strings.Contains(inst.AllocatedType().String(), "archsimd.v128") {
-							continue
-						}
-						found = true
-						if inst.Alignment() < 16 {
-							t.Fatalf("stack SIMD defer storage lacks 16-byte alignment:\n%s", inst.String())
-						}
+			// Invocation-owned defer records use aligned stack storage on
+			// native and explicit-root targets alike.
+			found := false
+			for bb := invoke.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+				for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.IsAAllocaInst().IsNil() || !strings.Contains(inst.AllocatedType().String(), "archsimd.v128") {
+						continue
+					}
+					found = true
+					if inst.Alignment() < 16 {
+						t.Fatalf("stack SIMD defer storage lacks 16-byte alignment:\n%s", inst.String())
 					}
 				}
-				if !found {
-					t.Fatalf("missing stack SIMD defer storage:\n%s", invoke.String())
-				}
+			}
+			if !found {
+				t.Fatalf("missing stack SIMD defer storage:\n%s", invoke.String())
 			}
 			for _, name := range []string{"load", "store"} {
 				ir := mod.NamedFunction("main." + name).String()

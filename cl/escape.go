@@ -66,8 +66,11 @@ func (p *context) analyzeEscape() *goescape.Result {
 		IndirectInterface: func(typ types.Type) bool {
 			return p.prog.InterfaceIndirect(p.type_(typ, llssa.GoDecl))
 		},
-		ForceHeap:     p.forceEscapeHeap,
-		StackLayout:   p.escapeStackLayout,
+		ForceHeap:   p.forceEscapeHeap,
+		StackLayout: p.escapeStackLayout,
+		LocalStackLayout: func(_ ssa.Instruction, typ types.Type) (uint64, uint64) {
+			return p.prog.StackRootBytes(p.type_(typ, llssa.GoDecl)), uint64(p.prog.GoWordSize())
+		},
 		MaxStackBytes: llabi.MaxEscapeStackBytes,
 	})
 }
@@ -102,10 +105,16 @@ func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size,
 				alignment = a
 			}
 		}
+		if p.prog.GCRootsEnabled() {
+			size += p.prog.StackRootBytes(header)
+			if bucket != nil {
+				size += p.prog.StackRootBytes(bucket)
+			}
+		}
 		return size, alignment
 	}
 	lowered := p.type_(typ, llssa.GoDecl)
-	return p.prog.SizeOf(lowered), p.prog.AlignOf(lowered)
+	return p.escapeRootedStackSize(lowered), p.prog.AlignOf(lowered)
 }
 
 func (p *context) escapeCallContract(fn *ssa.Function) (goescape.Summary, bool) {
@@ -168,12 +177,6 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		// These implicit allocations contain scalar characters, not the
 		// pointer-bearing string/slice header used to describe the result.
 		typ = types.NewArray(types.Typ[types.Byte], llabi.SmallStackBufferSize)
-	case *ssa.MakeMap:
-		// The runtime map header contains managed pointers even when its
-		// keys and values do not. Explicit-root targets keep its heap path.
-		if p.prog.GCRootsEnabled() {
-			return "explicit GC roots do not scan map stack fields"
-		}
 	}
 	lowered := p.type_(typ, llssa.GoDecl)
 	size := p.prog.SizeOf(lowered)
@@ -197,23 +200,6 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 	if size > limit {
 		return "stack size limit"
 	}
-	if p.prog.GCRootsEnabled() && mayContainGCRoot(typ) {
-		if box, ok := site.(*ssa.MakeInterface); ok && p.keepAliveDataOnly(box) {
-			// KeepAlive cannot mutate a box. Its original SSA value publishes
-			// the pointer fields before MakeInterface, and roots remain live
-			// through return. Ordinary lifetime and stack-budget decisions
-			// still apply, including go/defer ownership.
-			return ""
-		}
-		if alloc, ok := site.(*ssa.Alloc); ok && !alloc.Heap {
-			// SSA-local addresses never leave the function. Their loads already
-			// publish the individual pointer values through the GC root plan.
-			// New promotions can pass their address to a borrowing callee, whose
-			// writes are not covered by that plan, so keep those on the heap.
-			return ""
-		}
-		return "explicit GC roots do not scan stack fields"
-	}
 	return ""
 }
 
@@ -226,4 +212,13 @@ func (p *context) stackStorage(site ssa.Instruction) bool {
 	// facts never justify promoting an object that SSA placed on the heap.
 	alloc, ok := site.(*ssa.Alloc)
 	return ok && !alloc.Heap
+}
+
+// Promoted storage and its field-address root slots share one stack budget.
+func (p *context) escapeRootedStackSize(typ llssa.Type) uint64 {
+	size := p.prog.SizeOf(typ)
+	if p.prog.GCRootsEnabled() {
+		size += p.prog.StackRootBytes(typ)
+	}
+	return size
 }

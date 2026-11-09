@@ -2647,7 +2647,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
-		if act == llssa.Call && !p.prog.GCRootsEnabled() {
+		if act == llssa.Call {
 			// Value-receiver adapters copy this borrowed word into the
 			// callee's parameter before it can be retained. A by-reference
 			// receiver ABI would require a separate lifetime proof here.
