@@ -92,6 +92,34 @@ func TestWasmReflectBridgeShapeDeduplication(t *testing.T) {
 	}
 }
 
+func TestWasmReflectBridgeExplicitAlignment(t *testing.T) {
+	Initialize(InitAll)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi", WasmReflectBridges: true})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	typesPkg, _ := alignmentPackage(t, prog.TypeSizes(types.SizesFor("gc", "amd64")), `
+type Small struct { _ structs.Align8; Value uint64 }
+type Large struct { _ structs.Align64; Value uint64; Pointer *int }
+`)
+	for _, name := range []string{"Small", "Large"} {
+		typ := typesPkg.Scope().Lookup(name).Type()
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewParam(token.NoPos, nil, "x", typ)),
+			types.NewTuple(types.NewParam(token.NoPos, nil, "", typ)), false)
+		bridges := pkg.wasmReflectBridge(sig)
+		if bridges.call == nil || bridges.make == nil {
+			t.Fatal("missing aligned Go reflection bridges")
+		}
+		if err := prog.NativeAlignmentValidator()(sig, CDecl); err == nil {
+			t.Fatal("user native signature must still be rejected")
+		}
+	}
+	if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompactWasmBridgeID(t *testing.T) {
 	tests := map[int]string{0: "a", 25: "z", 26: "A", 61: "9", 62: "aa", 63: "ab", 123: "a9", 124: "ba"}
 	for value, expected := range tests {

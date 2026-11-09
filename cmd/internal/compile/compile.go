@@ -141,6 +141,11 @@ func runCmd(_ *base.Command, args []string) {
 		mockable.Exit(2)
 		return
 	}
+	if err := validateCompilerSources(files, opts); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		mockable.Exit(1)
+		return
+	}
 
 	if opts.concurrency > 0 {
 		previous := runtime.GOMAXPROCS(opts.concurrency)

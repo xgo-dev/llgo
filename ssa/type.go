@@ -609,6 +609,13 @@ func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Ty
 			}
 		}
 	}
+	return p.lowerLLVMFunc(sig, cc)
+}
+
+// lowerLLVMFunc accepts a validated signature or an already-lowered internal
+// signature. Internal Go reflection bridges use native storage without exposing
+// a source-level C call boundary.
+func (p Program) lowerLLVMFunc(sig *types.Signature, cc CallConv) llvm.Type {
 	valueBackground := cc
 	if cc == Stdcall {
 		// Stdcall validation applies to the function type as a whole; its scalar

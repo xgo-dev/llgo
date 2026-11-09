@@ -74,7 +74,7 @@ func compactWasmBridgeUint64(value uint64) string {
 
 func (p Program) wasmReflectBridgeShape(sig *types.Signature) string {
 	var shape strings.Builder
-	appendWasmLLVMTypeShape(&shape, p.toLLVMFuncBackground(sig, CDecl))
+	appendWasmLLVMTypeShape(&shape, p.lowerLLVMFunc(sig, CDecl))
 	shape.WriteByte('/')
 	for i := 0; i < sig.Params().Len(); i++ {
 		p.appendWasmRootShape(&shape, p.Type(sig.Params().At(i).Type(), CDecl))
@@ -222,7 +222,10 @@ func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) 
 			block = 1
 		}
 		b.SetBlock(fn.Block(block))
-		entry := Expr{fn.Param(0).impl, prog.FuncDecl(entrySig, CDecl)}
+		// entrySig already describes the lowered Go entry. CDecl selects its
+		// physical storage here; this is not a user-declared native interface.
+		entryType := prog.withNativeStorage(&aType{prog.lowerLLVMFunc(entrySig, CDecl), rawType{entrySig}, vkFuncDecl})
+		entry := Expr{fn.Param(0).impl, entryType}
 		ret := b.Call(entry, callArgs...)
 		for i := 0; i < rawSig.Results().Len(); i++ {
 			value := ret

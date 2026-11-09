@@ -177,7 +177,6 @@ func TestExplicitAlignmentReflection(t *testing.T) {
 	}{
 		{"map-value", func() { reflect.MapOf(reflect.TypeFor[int](), reflect.TypeFor[aligned64]()) }, "alignment above 8 bytes"},
 		{"map-key", func() { reflect.MapOf(reflect.TypeFor[aligned64](), reflect.TypeFor[int]()) }, "alignment above 8 bytes"},
-		{"call", func() { reflect.ValueOf(explicitAlignedIdentity).Call([]reflect.Value{reflect.ValueOf(aligned64{})}) }, "alignment above 8 bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

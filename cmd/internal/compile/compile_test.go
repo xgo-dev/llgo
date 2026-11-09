@@ -201,6 +201,14 @@ func TestRunCmdBuildsAndReportsErrors(t *testing.T) {
 	if got := runtime.GOMAXPROCS(0); got != previousProcs {
 		t.Fatalf("GOMAXPROCS = %d after compile, want restored value %d", got, previousProcs)
 	}
+	aligned := dir + "/aligned.go"
+	if err := os.WriteFile(aligned, []byte("package compilecase\nimport \"structs\"\ntype Block struct { _ structs.Align16; Value uint64 }\nfunc F(b Block) Block { return b }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code = runCompileCommand(t, []string{"-complete", aligned})
+	if code != 0 {
+		t.Fatalf("-complete with LLGo extensions: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
 
 	zeroArray := dir + "/zero_array.go"
 	if err := os.WriteFile(zeroArray, []byte("package compilecase\ntype A [0]byte\nfunc Get(a *A, i int) byte { return a[i] }\n"), 0o644); err != nil {
