@@ -20,6 +20,12 @@ import (
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
 func configureWasmRuntimeFree(ctx *context) {
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if ctx.frontend.program.RuntimeFree {
+			enableWasmRuntimeFree(ctx)
+		}
+		return
+	}
 	conf := ctx.buildConf
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
 		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
@@ -115,6 +121,11 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
+	enableWasmRuntimeFree(ctx)
+}
+
+func enableWasmRuntimeFree(ctx *context) {
+	conf := ctx.buildConf
 	ctx.wasmRuntimeFree = true
 	ctx.frontendOptions.ShadowStack = false
 	ctx.prog.EnableGCRoots(false)

@@ -29,9 +29,22 @@ import (
 // PrepareEscapeAnalysis runs after all source metadata and SSA bodies are ready,
 // and before isolated backend Programs are created. Its result is immutable.
 func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patches) *goescape.Result {
+	return PrepareEscapeAnalysisCached(prog, input, patches, nil)
+}
+
+// PrepareEscapeAnalysisCached optionally reuses complete validated facts. SSA
+// bodies remain available for feature analysis and cross-package body import.
+func PrepareEscapeAnalysisCached(prog llssa.Program, input *ssa.Program, patches Patches, cache *goescape.Cache) *goescape.Result {
+	return PrepareEscapeAnalysisImported(prog, input, patches, cache, nil, nil, nil)
+}
+
+// PrepareEscapeAnalysisImported joins cached archive contracts with source
+// bodies that are being rebuilt or imported. The coordinator validates imports
+// and materializes required bodies before publishing the resulting decisions.
+func PrepareEscapeAnalysisImported(prog llssa.Program, input *ssa.Program, patches Patches, cache *goescape.Cache, imports map[*ssa.Function]goescape.Summary, keys map[*ssa.Function]string, extraRoots []*ssa.Function) *goescape.Result {
 	ctx := &context{
 		prog: prog, goProg: input, fset: input.Fset, patches: patches,
-		options: Options{PreloadedSyntax: true},
+		options: Options{PreloadedSyntax: true, EscapeImports: imports, EscapeImportKeys: keys, EscapeRoots: extraRoots},
 		loaded:  make(map[*types.Package]*pkgInfo),
 	}
 	for _, pkg := range input.AllPackages() {
@@ -40,10 +53,14 @@ func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patch
 			ctx.goTyps = pkg.Pkg
 		}
 	}
-	return ctx.analyzeEscape()
+	return ctx.analyzeEscapeCached(cache)
 }
 
 func (p *context) analyzeEscape() *goescape.Result {
+	return p.analyzeEscapeCached(nil)
+}
+
+func (p *context) analyzeEscapeCached(cache *goescape.Cache) *goescape.Result {
 	// Layout queries must not populate code generation's named-type cache
 	// before source replacements are lowered. This applies both to the build
 	// coordinator and to direct NewPackageEx callers.
@@ -60,9 +77,21 @@ func (p *context) analyzeEscape() *goescape.Result {
 	for fn := range ssautil.AllFunctions(p.goProg) {
 		roots = append(roots, fn)
 	}
+	roots = append(roots, p.options.EscapeRoots...)
+	for fn := range p.options.EscapeImports {
+		roots = append(roots, fn)
+	}
+	external := func(fn *ssa.Function) (goescape.Summary, bool) {
+		if summary, ok := p.options.EscapeImports[fn]; ok && goescape.ValidSummary(fn, summary) {
+			return summary, true
+		}
+		return p.escapeCallContract(fn)
+	}
 	return goescape.Analyze(roots, goescape.Config{
-		Inspect:  p.inspectEscapeBody,
-		External: p.escapeCallContract,
+		Cache:       cache,
+		Inspect:     p.inspectEscapeBody,
+		External:    external,
+		ExternalKey: func(fn *ssa.Function) string { return p.options.EscapeImportKeys[fn] },
 		IndirectInterface: func(typ types.Type) bool {
 			return p.prog.InterfaceIndirect(p.type_(typ, llssa.GoDecl))
 		},

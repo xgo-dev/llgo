@@ -183,6 +183,7 @@ type Config struct {
 	CheckLLFiles       bool // check .ll files valid
 	CheckLinkArgs      bool // check linkargs valid
 	ForceEspClang      bool // force to use esp-clang
+	frontendSourceOnly bool
 	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
 	Tags               string
 	SizeReport         bool   // print size report after successful build
@@ -541,6 +542,29 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 	}()
 	result, err := buildInvocation(inv, &plan)
+	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+		if plan.sourceOverlayFile != "" {
+			os.Remove(plan.sourceOverlayFile)
+			plan.sourceOverlayFile = ""
+		}
+		if inv.Config == nil {
+			inv.Config = NewDefaultConf(ModeBuild)
+		} else {
+			inv.Config = inv.Config.clone()
+		}
+		inv.Config.frontendSourceOnly = true
+		if filename := inv.Config.BuildTrace; filename != "" {
+			if !filepath.IsAbs(filename) {
+				base := inv.Dir
+				if base == "" {
+					base, _ = os.Getwd()
+				}
+				filename = filepath.Join(base, filename)
+			}
+			_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+		}
+		result, err = buildInvocation(inv, &plan)
+	}
 	if len(plan.invocations) == 0 {
 		return result, err
 	}
@@ -554,7 +578,7 @@ func Build(inv Invocation) ([]Package, error) {
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
 	var fallback *multiBuildFallback
 	defer func() {
-		if resultErr == nil || fallback == nil || inv.disableMultiFallback {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
 			return
 		}
 		result, resultErr = fallback.run()
@@ -857,6 +881,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	if typeLoader != nil {
+		dedup.SetImportTypes(typeLoader.load)
+	}
 	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
 		"patterns": slices.Clone(patterns),
 	})
@@ -1026,13 +1054,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
-	if err := recordPackageSSAInstructions(ctx); err != nil {
-		return nil, err
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	ctx.frontend = ctx.newFrontendCache(ssaEntries, buildMode)
+	if ctx.frontend != nil && typeLoader != nil {
+		ctx.frontend.loader = typeLoader
+		typeLoader.ctx = ctx
 	}
-	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
-	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
-	callerSpan.done()
+	if ctx.frontend != nil {
+		if err := ctx.frontend.prepare(); err != nil {
+			return nil, err
+		}
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+	}
+	if ctx.frontend == nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {
 		if target.GOARCH == "wasm" {
@@ -1064,9 +1106,28 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	if ctx.frontend != nil {
+		if err := ctx.frontend.certify(); err != nil {
+			return nil, err
+		}
+	}
+	if ctx.frontend != nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
 	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
-	ctx.frontendOptions.EscapeAnalysis = cl.PrepareEscapeAnalysis(ctx.prog, ctx.progSSA, ctx.patches)
+	ctx.frontendOptions.EscapeAnalysis = ctx.prepareEscapeAnalysis(func(hits, misses int) {
+		escapeSpan.setArg("cache_hits", hits)
+		escapeSpan.setArg("cache_misses", misses)
+	})
 	escapeSpan.done()
+	if ctx.frontend != nil {
+		ctx.frontend.capture(ctx.frontendOptions.EscapeAnalysis)
+	}
 	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
 		selected := make(map[string]bool, len(initial))
 		for _, pkg := range initial {
@@ -1816,6 +1877,7 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
+	frontend       *frontendCache
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -2256,7 +2318,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil && aPkg.frontendOpaque == nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -3505,6 +3567,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 	options := ctx.frontendOptions
+	options.DeclarationsOnly = aPkg.frontendOpaque != nil
 	// Hosted //export entries use final-link wrappers to register foreign caller threads
 	// with the collector; Windows shared libraries also initialize lazily.
 	// Dependency implementations retain Go symbols too; their public entry
@@ -4143,9 +4206,10 @@ type aPackage struct {
 	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	// Cache related fields
-	Fingerprint string // fingerprint digest
-	Manifest    string // manifest text content
-	CacheHit    bool   // whether cache was hit
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {
@@ -4516,7 +4580,25 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 			log.Println("==> BuildSSA", p.ID)
 		}
 		applyPatches(ctx, p, verbose)
-		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		if ctx.dedup.IsExported(p.ID) {
+			pkgSSA = prog.CreatePackage(p.Types, nil, nil, true)
+			for _, member := range pkgSSA.Members {
+				if fn, ok := member.(*ssa.Function); ok && fn.Name() != "init" {
+					fn.Synthetic = ""
+				}
+			}
+			for _, name := range p.Types.Scope().Names() {
+				if named, ok := p.Types.Scope().Lookup(name).Type().(*types.Named); ok {
+					for i := 0; i < named.NumMethods(); i++ {
+						if fn := prog.FuncValue(named.Method(i)); fn != nil {
+							fn.Synthetic = ""
+						}
+					}
+				}
+			}
+		} else {
+			pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		}
 		return pkgSSA, true
 	}
 	return pkgSSA, false

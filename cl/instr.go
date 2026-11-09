@@ -1286,11 +1286,13 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
-	base        map[*ssa.Package]map[*ssa.Function]bool
-	extended    map[*ssa.Package]callerTrackingFuncSets
-	recover     *recoverFacts
-	inlines     *inlineFacts
-	precomputed bool
+	base                 map[*ssa.Package]map[*ssa.Function]bool
+	extended             map[*ssa.Package]callerTrackingFuncSets
+	recover              *recoverFacts
+	inlines              *inlineFacts
+	precomputed          bool
+	imported             map[*ssa.Package]bool // validated archive-owned frontend facts
+	exportedRuntimeTypes []types.Type
 }
 
 // Precompute resolves caller-tracking and recover data before package backends
@@ -1327,7 +1329,7 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 	// serial: interface target resolution may still consult MethodValue, and
 	// scheduling those calls concurrently makes later module layout depend on
 	// worker completion order.
-	runtimeTypes := callerTrackingRuntimeTypes(pkgs)
+	runtimeTypes := callerTrackingRuntimeTypes(pkgs, c.exportedRuntimeTypes...)
 	methods := callerTrackingMethods(pkgs, runtimeTypes)
 	analyses := make([]callerTrackingPackageAnalysis, len(pkgs))
 	base := make([]map[*ssa.Function]bool, len(pkgs))
@@ -1338,10 +1340,18 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 	}
 
 	for i := range pkgs {
+		if c.imported[pkgs[i]] {
+			base[i] = c.base[pkgs[i]]
+			extended[i] = c.extended[pkgs[i]]
+			continue
+		}
 		analyses[i] = analyzeCallerTrackingPackage(pkgs[i], methods[pkgs[i]])
 		base[i] = analyses[i].base
 	}
 	for i := range pkgs {
+		if c.imported[pkgs[i]] {
+			continue
+		}
 		extended[i] = computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 			j, ok := index[dep]
 			if !ok {
@@ -1398,7 +1408,7 @@ func callerTrackingMethods(pkgs []*ssa.Package, runtimeTypes map[*ssa.Package][]
 // computes derived types under Program and method-set locks; calling it from
 // every package worker would serialize the supposedly parallel phase and would
 // repeatedly scan the same whole-program data.
-func callerTrackingRuntimeTypes(pkgs []*ssa.Package) map[*ssa.Package][]types.Type {
+func callerTrackingRuntimeTypes(pkgs []*ssa.Package, extra ...types.Type) map[*ssa.Package][]types.Type {
 	byProgram := make(map[*ssa.Program]map[*types.Package][]types.Type)
 	result := make(map[*ssa.Package][]types.Type, len(pkgs))
 	for _, pkg := range pkgs {
@@ -1409,6 +1419,11 @@ func callerTrackingRuntimeTypes(pkgs []*ssa.Package) map[*ssa.Package][]types.Ty
 		if !ok {
 			byPackage = make(map[*types.Package][]types.Type)
 			for _, typ := range pkg.Prog.RuntimeTypes() {
+				if owner := typeOwnerPackage(typ); owner != nil {
+					byPackage[owner] = append(byPackage[owner], typ)
+				}
+			}
+			for _, typ := range extra {
 				if owner := typeOwnerPackage(typ); owner != nil {
 					byPackage[owner] = append(byPackage[owner], typ)
 				}

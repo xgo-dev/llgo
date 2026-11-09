@@ -19,7 +19,6 @@ package goescape
 import (
 	"go/token"
 	"go/types"
-	"strconv"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -53,6 +52,9 @@ func (a *analyzer) analyzeFunction(fn *ssa.Function) (Summary, map[ssa.Instructi
 }
 
 func (a *analyzer) analyzeBoundFunction(fn *ssa.Function, bindings map[ssa.Value]ssa.Value, depth int, budget *int) (Summary, map[ssa.Instruction]Decision) {
+	if a.scopes[fn] == nil {
+		a.scopes[fn] = functionScopes(fn)
+	}
 	f := &functionAnalysis{a: a, g: newGraph(), fn: fn,
 		scopes: a.scopes[fn], values: make(map[ssa.Value]*location),
 		tuples: make(map[ssa.Value][]*location), objects: make(map[ssa.Instruction]*object), bindings: bindings, contextDepth: depth, contextBudget: budget}
@@ -75,42 +77,18 @@ func (a *analyzer) analyzeBoundFunction(fn *ssa.Function, bindings map[ssa.Value
 	// must not change whether a store resolves to a known local object.
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
-			switch v := instr.(type) {
-			case *ssa.Alloc:
-				f.newObject(v, v.Type().Underlying().(*types.Pointer).Elem(), "")
-			case *ssa.MakeInterface:
-				if f.indirectInterface(v.X.Type()) {
-					f.newObject(v, v.X.Type(), "")
-				}
-			case *ssa.MakeClosure:
-				fields := make([]*types.Var, len(v.Bindings))
-				fn, _ := v.Fn.(*ssa.Function)
-				for i, binding := range v.Bindings {
-					typ := binding.Type()
-					if fn != nil && a.result.CaptureByValue(fn.FreeVars[i]) {
-						typ = typ.Underlying().(*types.Pointer).Elem()
-					}
-					fields[i] = types.NewVar(token.NoPos, nil, "capture"+strconv.Itoa(i), typ)
-				}
-				f.newObject(v, types.NewStruct(fields, nil), "")
-			case *ssa.MakeSlice:
-				f.newObject(v, v.Type(), "")
-				// A small local slice can use a fixed stack buffer, but larger
-				// dynamic capacities still allocate. Its pointer elements must
-				// therefore never refer to newly promoted stack objects.
-				f.g.flow(&f.g.heap, f.objects[v].location, 0)
-			case *ssa.MakeMap:
-				f.newObject(v, v.Type(), "")
-			case *ssa.MakeChan:
-				f.newObject(v, v.Type(), "channel storage")
-			case *ssa.Convert:
-				if copiedStringStorage(v.Type(), v.X.Type()) {
-					f.newObject(v, v.Type(), "")
-				}
-			case *ssa.BinOp:
-				if v.Op == token.ADD && stringType(v.Type()) {
-					f.newObject(v, v.Type(), "")
-				}
+			typ := a.objectType(instr)
+			if typ == nil {
+				continue
+			}
+			reason := ""
+			if _, channel := instr.(*ssa.MakeChan); channel {
+				reason = "channel storage"
+			}
+			f.newObject(instr, typ, reason)
+			if _, slice := instr.(*ssa.MakeSlice); slice {
+				// Dynamic heap fallbacks may retain pointer elements.
+				f.g.flow(&f.g.heap, f.objects[instr].location, 0)
 			}
 		}
 	}

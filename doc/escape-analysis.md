@@ -2,7 +2,7 @@
 
 LLGo analyzes Go storage lifetimes before LLVM lowering. One result controls locals, address-taken parameters, named results, interface boxes, closure environments, captured variables, slice/map storage and string conversion/concatenation temporaries. It replaces the separate allocation walkers from #2963, #2970 and #2971, and addresses #2975, #2974 and #2932. Static interface constant pooling remains independent and runs before dynamic box allocation. [Comparison with Go 1.27.3](escape-analysis-comparison.md) separates implemented behavior from remaining precision and target limitations.
 
-The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) records the complete design, implementation status, and remaining work. The KeepAlive work originally reviewed in [#3016](https://github.com/xgo-dev/llgo/pull/3016) is consolidated into [#2997](https://github.com/xgo-dev/llgo/pull/2997), which replaces the dedicated allocation decision with this shared analysis. #3016 was closed after consolidation on 2026-11-08; #2997 is the sole active delivery PR and remains pending merge.
+The [unified escape-analysis proposal](https://github.com/xgo-dev/llgo/issues/3012) records the complete design, implementation status and remaining work.
 
 ## Relation to the Go compiler and LLVM
 
@@ -78,7 +78,15 @@ One root frame is finalized after storage lowering, before returns are completed
 
 ## Packages, caches and diagnostics
 
-The build coordinator constructs dependency SSA before package-cache lookup (`registerSSAPkgs`, `buildSSAPkgs`). It derives summaries from those exact bodies on every invocation, including archive cache hits, then shares immutable decisions with isolated backend workers. No new serialized summary format is needed. A future loader that skips dependency SSA will need versioned exported effects before reusing these proofs.
+With `LLGO_ESCAPE_CACHE=1` and the ordinary build cache enabled, the coordinator first loads checked type exports and frontend contracts for eligible dependencies. A contract is usable only with its exact validated archive. Opaque dependencies register declarations and link snapshots without rebuilding or lowering their bodies. Initial packages, cache misses, ambiguous inventories and required optimization bodies use source SSA. Functions with inline candidates and generic declarations keep their source type information; the coordinator imports eligible inline bodies before backend workers start. Current-invocation generic instances remain source facts rather than being certified by the defining library's source key.
+
+The persistent call-graph SCC records contain generic parameter effects, every object's placement, stack reservations and capture representations. An SCC (strongly connected component) is a mutually reachable group of functions; recursive groups are validated together. A hit restores complete facts onto source-built SSA and skips scope construction/solving for that component. An opaque dependency instead supplies generic effects owned by its matching archive; stable component keys preserve its callers' cache identities. Caller/recover facts and LLVM-free ABI, export and PC-line snapshots retain the behavior previously obtained by lowering dependencies again.
+
+Keys cover analysis/schema versions, compiler and source toolchain, language version, target/layout/feature policies, source transforms and overlays, and complete dependency source closures, including versioned modules. Sorted closure identities handle cycles introduced by runtime replacements. Full SCC records additionally validate queried type properties, object inventories and dependency keys; ambiguous same-name wrappers disable affected reuse. Checksummed size-bounded files are published atomically. Missing, corrupt, incompatible or incomplete records fall back to source/checking/analysis. If an export-only package later needs a body, loading restarts from source before publishing backend work so existing Go type identities are never replaced in place.
+
+Wasm reflection bridges, function-entry metadata, runtime-free startup and global-initializer removal are **whole-program** decisions. Their separate export is keyed by all package inputs, roots and the actual SSA builder mode. Initializer removals rebind and validate exact instruction positions/text in source-built packages; opaque packages use the plan already included in their archives. A changed program context recomputes the ordinary complete-source analyses. These decisions are never treated as generic package effects.
+
+Persistence remains opt-in. Type exports currently cover ordinary dependency packages without generic or inline-body requirements; syntax is still parsed for compiler directives. Runtime patches and test variants keep independently checked scopes. Libraries, generation, deadcode-drop, module-inspection hooks and dependency-wide diagnostic paths retain source loading. Cache validation can exceed solving costs for small programs, so hit counts alone do not establish a speedup. `certify frontend exports` trace events report actual `skipped_ssa` and `type_exports` counts.
 
 Package fingerprints include `GO_ESCAPE_VERSION` as well as existing compiler/source/dependency/target inputs. This also invalidates old archives for compiler API callers that omit a development compiler hash. Missing analysis facts never promote an existing heap object. Compiled bodies excluded from Go summaries (for example, C ABI functions) preserve existing SSA-local allocations, avoiding new runtime dependencies in freestanding code. Direct API calls without inspectable dependency bodies use conservative call effects.
 
@@ -96,7 +104,7 @@ llgo tool compile -m=2 file.go
 ## Validation and measurements
 
 - `internal/goescape`: LLVM-independent graph, scope and SSA tests; recursive/result effects, box/payload separation, aliases, forced storage, malformed contracts and work-limit fallback. Run with `go test -race ./internal/goescape`.
-- `cl`: existing named-result, append and closure regressions now use the unified analysis. Interface tests cover native 64-bit, Windows 386 and Wasm layouts; ordinary explicit-root cases retain heap storage. KeepAlive tests cover its borrowing contract, immutable-box exception, and shared object/helper budgets. Atomic tests verify actual lowered instructions with deliberately misleading Go stub bodies.
+- `cl`: existing named-result, append and closure regressions now use the unified analysis. Interface tests cover native 64-bit, Windows 386 and Wasm layouts, including typed stack roots. KeepAlive tests cover its borrowing contract and shared object/helper budgets. Atomic tests verify actual lowered instructions with deliberately misleading Go stub bodies.
 - `test/go/keep_alive_stack_test.go`: common Go/LLGo tests cover reachable stack fields, boxing before GC, deferred iteration snapshots, panic-unwind GC and callable function values. Focused tests pass natively and on actual Wasm J32/J64/W32 runtimes. The aggregate benchmark covers the allocation-free path; its measurements are separate from the earlier full escape benchmark batch.
 - `internal/build/escape_test.go`: cold/warm archives and 1/8 workers in fresh processes, with allocation checks and diagnostic proofs for cross-package borrows and callback boxes. A caller rebuild reuses the analyzed dependency's archive.
 - `test/escape`: forced GC and finalizers, stack-held fields, boxed closures, escaped aliases, loop identity, atomic publication, goroutines, recovery and mixed defer/range-function ownership. Run natively, with `-O3 -lto=full`, and with `-target wasi|emscripten|emscripten-memory64 -emulator`. Multiworker Emscripten uses `LLGO_WASM_WORKERS=2`.
@@ -106,7 +114,7 @@ The broad native unwind suite has two full-LTO source-line expectation failures 
 
 The broad local build-system suite also reproduces two baseline environment failures on macOS: external archive member naming, and the Go 1.21-to-1.27 toolchain fixture with `GOSUMDB=off`. The SIMD alignment expectation checks the actual 16-byte stack storage on native and Wasm targets.
 
-The analysis caches each function's CFG scopes and retains allocation decisions from the converged summary pass. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
+Within a solve, the analysis memoizes each function's CFG scopes and retains allocation decisions from the converged summary pass. Persistent hits do not construct those scopes unless a later contextual solve needs them. Only the bounded non-convergence fallback solves again after replacing summaries with conservative effects. Closure lifetimes use call/free-variable summaries; the graph contains one function and no unused cross-function shortcuts.
 
 ## Bounded precision
 
@@ -115,3 +123,15 @@ Known function and concrete interface arguments can specialize a completed calle
 An immutable lexical capture may be stored by value in its environment when its small variable has one dominating initialization and no observable address or later assignment. The analysis publishes the same capture plan that environment construction and free-variable lowering use.
 
 Temporary `string([]byte)` views may span multiple consumers and branches. All paths to the final consumer are checked for writes or unknown effects. Inspectable helpers must be read-only throughout their bodies, including global accesses; a parameter-only mutation summary cannot rule out a global alias of the source. Cyclic or over-budget regions preserve the copy.
+
+## Frontend cache regression probes
+
+`TestEscapeCrossPackageCacheAndWorkers` uses fresh processes and 1/8 workers to check cold/hot builds, caller changes, corrupt frontend/type records, missing archives, repair, stack-placement diagnostics and runtime results. `TestFrontendExportsMethodsCallerRecoverAndGenericBodies` also runs the fixture with Go, checks imported private/recursive/alias types and constants, and preserves methods, reflection, caller tracking, recover, generic bodies and cross-package inlining. Type-graph and initializer-plan tests reject incompatible records.
+
+Actual hosted Wasm probes use the same fixture:
+
+```sh
+LLGO_ESCAPE_CACHE=1 python3 test/wasm/frontendcache/test.py --llgo /path/to/llgo --output /tmp/frontend-cache-results
+```
+
+The probe executes J32/J64 under Node and W32 under Wasmer, verifies dependency SSA omission and required inline-body reconstruction, and retains traces and logs. Its seed/reuse worker counts differ to test cache portability across worker counts; those timings are not a controlled speed comparison.

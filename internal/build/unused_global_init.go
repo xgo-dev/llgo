@@ -37,6 +37,14 @@ import (
 )
 
 func configureUnusedGlobalInits(ctx *context) {
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if err := ctx.frontend.restoreInitializers(); err == nil {
+			return
+		}
+		// An invalid positional plan must be recomputed from complete source SSA.
+		ctx.frontend.program = nil
+		ctx.frontend.buildAll()
+	}
 	ctx.wasmClosedProgram = false
 	ctx.frontendOptions.UnusedGlobalInits = nil
 	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.buildConf.Goarch != "wasm" {
