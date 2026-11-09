@@ -7,6 +7,11 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/structs"
 )
 
+// Aliases and defined marker types retain this exact private field type.
+// Cache its canonical descriptor once instead of decoding names for each
+// StructOf candidate. The private identity cannot be recreated by user types.
+var hostLayoutPrivateMarker = abi.TypeFor[structs.HostLayout]().StructType().Fields[0].Typ
+
 // A defined marker type retains HostLayout's private field identity. A struct
 // containing a marked record, or an array of markers, does not inherit it.
 func isHostLayoutMarker(t Type) bool {
@@ -17,16 +22,7 @@ func isHostLayoutMarker(t Type) bool {
 	// The public Field method allocates its Index slice. Inspect the immutable
 	// descriptor directly so the StructOf pre-scan does not allocate.
 	f := &st.Fields[0]
-	body := f.Typ.StructType()
-	if f.Name_ != "_" || body == nil || len(body.Fields) != 0 {
-		return false
-	}
-	marker := toRType(f.Typ)
-	if marker.Name() != "hostLayout" {
-		return false
-	}
-	pkg := marker.PkgPath()
-	return pkg == "structs" || pkg == "github.com/xgo-dev/llgo/runtime/internal/structs"
+	return f.Name_ == "_" && f.Typ == hostLayoutPrivateMarker
 }
 
 // Ask the compiler for native scalar field alignment without changing the Go

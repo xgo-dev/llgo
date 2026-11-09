@@ -236,3 +236,24 @@ func TestHostLayoutStructOfScalarAlignment(t *testing.T) {
 		}
 	}
 }
+
+var hostLayoutMarkerBenchmarkResult bool
+
+func BenchmarkHostLayoutMarker(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{"marker", reflect.TypeOf(structs.HostLayout{})},
+		{"defined", reflect.TypeOf(structOfHostMarker{})},
+		{"shadow", reflect.TypeOf(structOfFakeHostMarker{})},
+		{"scalar", reflect.TypeOf(int64(0))},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				hostLayoutMarkerBenchmarkResult = structOfIsHostLayoutMarker(tc.typ)
+			}
+		})
+	}
+}
