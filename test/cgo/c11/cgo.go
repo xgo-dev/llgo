@@ -1,3 +1,5 @@
+//go:build llgo && !wasm
+
 package c11
 
 /*
