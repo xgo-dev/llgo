@@ -2,7 +2,10 @@ package build
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/frontcache"
 	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestFrontendExportValidation(t *testing.T) {
@@ -133,6 +137,92 @@ func TestFrontendInvalidRuntimeTypeBuildsSource(t *testing.T) {
 	}
 	if !f.built[pkg.SSA] || pkg.frontendOpaque != nil || len(pkg.SSA.Func("main").Blocks) == 0 {
 		t.Fatal("invalid runtime type retained an opaque package")
+	}
+}
+
+func TestFrontendMissingDependencySourcePreventsReuse(t *testing.T) {
+	f := frontendProgramFixture(t)
+	root := f.owners[f.entries[0].pkg]
+	filename := filepath.Join(t.TempDir(), "dep.go")
+	dep := &packages.Package{ID: "dep", PkgPath: "dep", Name: "dep", GoFiles: []string{filename}, CompiledGoFiles: []string{filename}}
+	root.Imports = map[string]*packages.Package{"dep": dep}
+	f.keys, f.locals = make(map[string]string), make(map[string]string)
+	l := &frontendTypeLoader{ctx: f.ctx, keys: make(map[string]string)}
+	if _, err := f.inputKey(root); err == nil || l.key(root.Package, make(map[string]bool)) != "" {
+		t.Fatal("missing dependency source acquired a reusable certificate")
+	}
+	if f.load(root) != nil || f.programKey(0) != "" {
+		t.Fatal("missing dependency source retained package or program exports")
+	}
+	// The same missing disk file is valid when supplied by a source overlay.
+	f.ctx.buildConf.Overlay[filename] = []byte("package dep")
+	first, err := f.inputKey(root)
+	before := l.key(root.Package, make(map[string]bool))
+	if err != nil || first == "" || before == "" {
+		t.Fatal("overlay source did not repair the dependency", err)
+	}
+	f.ctx.buildConf.Overlay[filename] = []byte("package dep;type Changed int")
+	f.keys, f.locals, l.keys = make(map[string]string), make(map[string]string), make(map[string]string)
+	second, err := f.inputKey(root)
+	if err != nil || first == second || before == l.key(root.Package, make(map[string]bool)) {
+		t.Fatal("dependency overlay did not invalidate its importers", err)
+	}
+	dep.Imports = map[string]*packages.Package{"root": root.Package}
+	l.keys = make(map[string]string)
+	if l.key(root.Package, make(map[string]bool)) != "" {
+		t.Fatal("cyclic unchecked imports acquired a type certificate")
+	}
+}
+
+func TestFrontendCacheLoadsWasmProgramCertificate(t *testing.T) {
+	f := frontendProgramFixture(t)
+	f.ctx.mode = ModeBuild
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv(llgoEscapeCache, "1")
+	cache := f.ctx.newFrontendCache(f.entries, ssa.InstantiateGenerics)
+	if cache == nil || cache.programInput == "" || cache.program != nil {
+		t.Fatal("new Wasm context acquired a program certificate")
+	}
+	cache.captureProgram()
+	fresh := f.ctx.newFrontendCache(f.entries, ssa.InstantiateGenerics)
+	if fresh == nil || fresh.program == nil || fresh.programInput != cache.programInput {
+		t.Fatal("unchanged Wasm context did not load its certificate")
+	}
+}
+
+func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
+	f := frontendProgramFixture(t)
+	for _, tc := range []struct {
+		name, source string
+		want         bool
+	}{
+		{"plain", "var X int", true},
+		{"generic function", "func F[T any](x T) T{return x}", false},
+		{"generic type", "type T[P any] struct{X P}", false},
+		{"generic alias", "type T[P any] = []P", false},
+		{"environment rewrite", "//llgo:env LLGO_TEST\nvar X int", false},
+		{"missing source", "var X int", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(f.ctx.progSSA.Fset, "decl.go", "package dep\n"+tc.source, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checked, err := new(types.Config).Check("example/dep", f.ctx.progSSA.Fset, []*ast.File{file}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg := &aPackage{Package: &packages.Package{ID: checked.Path(), PkgPath: checked.Path(), Name: checked.Name(), Types: checked, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
+			l := &frontendTypeLoader{ctx: f.ctx, keys: map[string]string{pkg.ID: "source"}, exports: make(map[string]*frontendTypeExport)}
+			if tc.name == "missing source" {
+				delete(l.keys, pkg.ID)
+				pkg.CompiledGoFiles = []string{filepath.Join(t.TempDir(), "missing.go")}
+			}
+			l.capture(pkg, &frontendExport{}, frontcache.NewTypes(nil))
+			if (l.exports[pkg.ID] != nil) != tc.want {
+				t.Fatal("source-dependent declaration eligibility changed")
+			}
+		})
 	}
 }
 

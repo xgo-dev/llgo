@@ -141,6 +141,44 @@ func F(x int) (n N, err error) { return 0, nil }
 	}
 }
 
+func TestTypeIdentityRejectsAmbiguousPackages(t *testing.T) {
+	index := NewTypes(nil)
+	var key string
+	for range 2 {
+		pkg := types.NewPackage("example/p", "p")
+		named := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.Typ[types.Int], nil)
+		key = index.Key(named)
+		index.Add(named)
+	}
+	if _, ok := index.Lookup(key); ok || index.Bind(key, types.Typ[types.Int]) {
+		t.Fatal("ambiguous named identity was reused")
+	}
+	if index.Key(nil) != "" || FunctionID(nil, index) != "" || Owner(nil) != nil {
+		t.Fatal("missing identity was persisted")
+	}
+	prog := ssa.NewProgram(token.NewFileSet(), 0)
+	synthetic := prog.NewFunction("wrapper", types.NewSignatureType(nil, nil, nil, nil, nil, false), "test")
+	if Owner(synthetic) != nil || FunctionID(synthetic, index) == "" {
+		t.Fatal("unowned synthetic function identity changed")
+	}
+	if Position(prog.Fset, token.Pos(1000)) != "" {
+		t.Fatal("position outside the source file set was accepted")
+	}
+}
+
+func TestTypeGraphRejectsConflictingSignatureIdentity(t *testing.T) {
+	index := NewTypes(nil)
+	index.Add(types.Typ[types.Int])
+	graph := &TypeGraph{Nodes: []TypeNode{{Kind: "func", Key: index.Key(types.Typ[types.Int])}}}
+	importer := &TypeImporter{Graph: graph, Existing: index}
+	if _, err := importer.Import(0); err == nil {
+		t.Fatal("signature replaced an existing basic type identity")
+	}
+	if got, ok := index.Lookup(index.Key(types.Typ[types.Int])); !ok || got != types.Typ[types.Int] {
+		t.Fatal("rejected signature corrupted existing type bindings")
+	}
+}
+
 func fixture(t *testing.T, source string, build bool) (*ssa.Program, *ssa.Package, *Types) {
 	t.Helper()
 	fset := token.NewFileSet()
