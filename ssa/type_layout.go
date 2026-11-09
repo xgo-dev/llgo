@@ -72,14 +72,15 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 // LLVM's natural layout, wrap only affected fields and preserve Go field indices.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
 	host := hasHostLayout(raw)
+	explicit := requiredExplicitAlignment(raw) != 0
 	fields := p.toLLVMFields(raw, native)
 	goarch := p.target.effectiveGOARCH()
-	if native || len(fields) == 0 {
+	if (native && !explicit) || len(fields) == 0 {
 		return fields, nil
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
+	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsAlignedStorage(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
 		return fields, nil
 	}
 
@@ -94,10 +95,15 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	goSize := int64(0)
 	for i, field := range fields {
 		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
-		if host {
+		if native {
+			fieldAlign = max(int64(p.td.ABITypeAlignment(field)), requiredExplicitAlignment(raw.Field(i).Type()))
+		} else if host {
 			fieldAlign = (*goProgram)(p).hostFieldLayout(raw.Field(i).Type(), false).align
 		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
-			fieldAlign = int64(p.td.ABITypeAlignment(field))
+			fieldAlign = max(int64(p.td.ABITypeAlignment(field)), requiredExplicitAlignment(raw.Field(i).Type()))
+		}
+		if explicit && !native && !host && !p.containsAlignedStorage(raw.Field(i).Type()) {
+			fieldAlign = (*goProgram)(p).unmarkedAlignedFieldLayout(raw.Field(i).Type(), false, true).align
 		}
 		alignments[i] = fieldAlign
 		if fieldAlign > goAlign {
@@ -106,7 +112,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 		goSize = align(goSize, fieldAlign)
 		offsets[i] = goSize
 		fieldSize := int64(p.td.TypeAllocSize(field))
-		if i == len(fields)-1 && goSize > 0 && fieldSize == 0 {
+		if !native && i == len(fields)-1 && goSize > 0 && fieldSize == 0 {
 			// Match cmd/compile: a final zero-sized field must have an
 			// address inside the enclosing non-zero-sized object.
 			fieldSize = 1

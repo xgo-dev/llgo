@@ -96,7 +96,7 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.align
 	}
-	if layout, ok := p.vectorLayout(T, false); ok {
+	if layout, ok := p.alignedLayout(T, false); ok {
 		return layout.align
 	}
 	return p.sizes.Alignof(T)
@@ -119,7 +119,7 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
 	}
-	if _, offsets, ok := p.vectorStructLayout(fields, prog.nativeFields(fields)); ok {
+	if _, offsets, ok := p.alignedStructLayout(fields, prog.nativeFields(fields)); ok {
 		return offsets
 	}
 	extra := int64(0)
@@ -138,7 +138,7 @@ func (p *goProgram) Sizeof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.size
 	}
-	if layout, ok := p.vectorLayout(T, false); ok {
+	if layout, ok := p.alignedLayout(T, false); ok {
 		return layout.size
 	}
 	prog := Program(unsafe.Pointer(p))
@@ -225,7 +225,8 @@ func (p Program) SizeOf(typ Type, n ...int64) uint64 {
 	return size
 }
 
-// AlignOf returns the ABI alignment of typ for the current target.
+// AlignOf returns the required storage alignment of typ for the current target.
+// Explicit alignment may exceed the natural LLVM ABI alignment.
 func (p Program) AlignOf(typ Type) uint64 {
 	if p.needsWidePointerStorage(typ) {
 		return uint64(p.GoWordSize())
@@ -235,7 +236,7 @@ func (p Program) AlignOf(typ Type) uint64 {
 			return p.AlignOf(p.Index(typ))
 		}
 	}
-	return uint64(p.td.ABITypeAlignment(p.storageType(typ)))
+	return max(uint64(p.td.ABITypeAlignment(p.storageType(typ))), uint64(requiredExplicitAlignment(typ.raw.Type)))
 }
 
 // OffsetOf returns the offset of a field in a struct.
@@ -561,7 +562,7 @@ func (p Program) toLLVMTuple(t *types.Tuple) llvm.Type {
 			return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
 		}
 	}
-	if p.target.effectiveGOARCH() != "386" && !(p.target.effectiveGOARCH() == "wasm" && p.target.WasmProfile != "") {
+	if requiredExplicitAlignment(t) == 0 && p.target.effectiveGOARCH() != "386" && !(p.target.effectiveGOARCH() == "wasm" && p.target.WasmProfile != "") {
 		return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
 	}
 	fields := make([]*types.Var, t.Len())
@@ -597,6 +598,9 @@ func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Ty
 	if isNativeCallConv(cc) {
 		for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 			for i := 0; i < tuple.Len(); i++ {
+				if requiredExplicitAlignment(tuple.At(i).Type()) != 0 {
+					panic(&AlignmentError{Pos: tuple.At(i).Pos(), Type: tuple.At(i).Type()})
+				}
 				if containsWideSIMD(tuple.At(i).Type()) {
 					panic("256-bit SIMD values at native C call boundaries are not supported; use an explicit memory interface")
 				}
@@ -712,6 +716,19 @@ func (p Program) toNamed(raw *types.Named) Type {
 			}
 			break
 		}
+	}
+	if alignment := explicitAlignment(raw); alignment != 0 {
+		// A zero-length carrier changes alignment without adding payload or
+		// giving an ordinary aggregate a vector value representation.
+		carrier := llvm.ArrayType(llvm.VectorType(p.tyInt8(), int(alignment)), 0)
+		// Some targets (notably ARM32) give vectors less alignment than
+		// requested. AlignOf and allocation sites carry the stronger contract;
+		// enclosing structs materialize their offsets and trailing padding.
+		ll := p.ctx.StructCreateNamed(name)
+		ll.StructSetBody([]llvm.Type{carrier}, false)
+		typ := &aType{ll, rawType{raw}, vkStruct}
+		p.named[name] = typ
+		return typ
 	}
 	if index, ok := simdTagIndex(raw); ok {
 		// Preserve the one-field, zero-size shape while making LLVM carry the

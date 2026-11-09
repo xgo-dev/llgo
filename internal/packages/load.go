@@ -200,11 +200,12 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	driverCfg.Mode = (origMode &^ (NeedTypes | NeedTypesSizes | NeedTypesInfo | NeedSyntax)) | NeedCompiledGoFiles | NeedImports | NeedName | NeedFiles
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
-		// A typed source transform owns compilation of the original source.
+		// A typed source transform or source patch owns compilation of the source.
 		// Do not ask cmd/go to compile it into unused export data first: that
-		// would apply the other compiler's Midway before our initial check.
+		// would apply the other compiler's Midway or reject added declarations
+		// before our initial check.
 		// Explicit export-data requests and ordinary loads keep their contract.
-		if dedup == nil || dedup.rewrite == nil {
+		if dedup == nil || dedup.rewrite == nil && len(dedup.llgoFiles) == 0 {
 			driverCfg.Mode |= NeedExportFile
 		}
 	}

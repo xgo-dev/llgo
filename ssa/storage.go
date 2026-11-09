@@ -174,7 +174,7 @@ func (p Program) storageType(t Type) llvm.Type {
 }
 
 func (p Program) requireStorageAlignment(value llvm.Value, t Type) {
-	if !p.usesWideGoStorage() {
+	if !p.usesWideGoStorage() && requiredExplicitAlignment(t.raw.Type) == 0 {
 		return
 	}
 	storage := p.storageType(t)

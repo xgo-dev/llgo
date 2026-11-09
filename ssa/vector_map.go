@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-// ValidateVectorMaps rejects map storage requiring native vector alignment.
+// ValidateVectorMaps rejects vector and explicitly over-aligned map storage.
 // Follow containers to find maps, but check each key/value's by-value layout:
 // a pointer to a vector is allowed, while arrays and structs containing one
 // are not. Keep the runtime's bucket layout and indirection policy unchanged.
@@ -72,6 +72,9 @@ func (p Program) validateVectorMap(t *types.Map) error {
 		name string
 		typ  types.Type
 	}{{"key", t.Key()}, {"value", t.Elem()}} {
+		if requiredExplicitAlignment(part.typ) > 8 {
+			return fmt.Errorf("explicit alignment above 8 bytes is not supported in map %s type %s; use a pointer", part.name, part.typ)
+		}
 		if p.containsVectorStorage(part.typ) {
 			return fmt.Errorf("vector storage is not supported in map %s type %s; use an array of scalars or a pointer", part.name, part.typ)
 		}

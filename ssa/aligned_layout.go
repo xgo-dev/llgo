@@ -18,12 +18,15 @@ package ssa
 
 import "go/types"
 
-// vectorLayout is the source-checker's counterpart of native vector storage.
+// alignedLayout is the source-checker's counterpart of explicitly aligned and vector storage.
 // It uses Go metadata only: types may still be under construction, and LLVM
 // types must not be cached before the checker completes them. Unaffected Go
 // types continue to use the existing sizes implementation.
-func (p *goProgram) vectorLayout(t types.Type, native bool) (sourceLayout, bool) {
+func (p *goProgram) alignedLayout(t types.Type, native bool) (sourceLayout, bool) {
 	prog := Program(p)
+	if a := explicitAlignment(t); a != 0 {
+		return sourceLayout{0, a}, true
+	}
 	if index, ok := simdTagIndex(t); ok {
 		return sourceLayout{0, p.simdAlignments[index]}, true
 	}
@@ -32,39 +35,39 @@ func (p *goProgram) vectorLayout(t types.Type, native bool) (sourceLayout, bool)
 		// Ordinary named types need neither a linkname nor native metadata.
 		// Keep this check type-only: callers may query types before imports or
 		// calling conventions have been registered.
-		if !prog.containsVectorStorage(t) {
+		if !prog.containsAlignedStorage(t) {
 			return sourceLayout{}, false
 		}
-		return p.vectorLayout(t.Underlying(), prog.hasNativeStructLayout(t))
+		return p.alignedLayout(t.Underlying(), prog.hasNativeStructLayout(t))
 	case *types.Array:
-		// Element layout propagates SIMD alignment through arrays, including
+		// Element layout propagates alignment through arrays, including
 		// zero-length arrays and defined types.
-		elem, changed := p.vectorLayout(t.Elem(), false)
+		elem, changed := p.alignedLayout(t.Elem(), false)
 		if !changed {
 			return sourceLayout{}, false
 		}
 		return arraySourceLayout(elem, t.Len()), true
 	case *types.Struct:
-		if !prog.containsVectorStorage(t) {
+		if !prog.containsAlignedStorage(t) {
 			return sourceLayout{}, false
 		}
 		fields := make([]*types.Var, t.NumFields())
 		for i := range fields {
 			fields[i] = t.Field(i)
 		}
-		layout, _ := p.vectorFieldsLayout(fields, native)
+		layout, _ := p.alignedFieldsLayout(fields, native)
 		return layout, true
 	}
 	return sourceLayout{}, false
 }
 
-func (p *goProgram) vectorStructLayout(fields []*types.Var, native bool) (sourceLayout, []int64, bool) {
-	// Inspect types before allocating layout scratch space. SIMD layout must
+func (p *goProgram) alignedStructLayout(fields []*types.Var, native bool) (sourceLayout, []int64, bool) {
+	// Inspect types before allocating layout scratch space. Aligned layout must
 	// not depend on import order or prior LLVM type construction.
 	prog := Program(p)
 	changed := false
 	for _, field := range fields {
-		if prog.containsVectorStorage(field.Type()) {
+		if prog.containsAlignedStorage(field.Type()) {
 			changed = true
 			break
 		}
@@ -72,23 +75,27 @@ func (p *goProgram) vectorStructLayout(fields []*types.Var, native bool) (source
 	if !changed {
 		return sourceLayout{}, nil, false
 	}
-	layout, offsets := p.vectorFieldsLayout(fields, native)
+	layout, offsets := p.alignedFieldsLayout(fields, native)
 	return layout, offsets, true
 }
 
-// vectorFieldsLayout computes a layout after the caller has found vector
+// alignedFieldsLayout computes a layout after the caller has found aligned
 // storage. Keep the presence check outside to avoid scratch allocations for
-// ordinary fields and a repeated scan when vectorLayout already checked them.
-func (p *goProgram) vectorFieldsLayout(fields []*types.Var, native bool) (sourceLayout, []int64) {
+// ordinary fields and a repeated scan when alignedLayout already checked them.
+func (p *goProgram) alignedFieldsLayout(fields []*types.Var, native bool) (sourceLayout, []int64) {
+	explicit := false
+	for _, field := range fields {
+		explicit = explicit || requiredExplicitAlignment(field.Type()) != 0
+	}
 	layouts := make([]sourceLayout, len(fields))
 	changedFields := make([]bool, len(fields))
 	for i, field := range fields {
-		layout, ok := p.vectorLayout(field.Type(), native)
+		layout, ok := p.alignedLayout(field.Type(), native)
 		layouts[i], changedFields[i] = layout, ok
 	}
 	for i, field := range fields {
 		if !changedFields[i] {
-			layout := sourceLayout{p.Sizeof(field.Type()), p.Alignof(field.Type())}
+			layout := p.unmarkedAlignedFieldLayout(field.Type(), native, explicit)
 			if native {
 				// A native function field is a code pointer, not a Go closure.
 				if _, ok := field.Type().Underlying().(*types.Signature); ok {
@@ -99,4 +106,23 @@ func (p *goProgram) vectorFieldsLayout(fields []*types.Var, native bool) (source
 		}
 	}
 	return aggregateSourceLayout(len(layouts), func(i int) sourceLayout { return layouts[i] }, !native)
+}
+
+// Inside an explicitly aligned aggregate, preserve the existing physical
+// layout of nested ordinary records on targets such as ARM32. Those records
+// can still differ from the baseline Go source sizes; do not shift a following
+// field into their storage. Direct scalar fields retain their Go alignment.
+func (p *goProgram) unmarkedAlignedFieldLayout(t types.Type, native, explicit bool) sourceLayout {
+	if explicit {
+		if native {
+			return p.hostFieldLayout(t, true)
+		}
+		if Program(p).hostUsesNativeGoLayout() {
+			switch t.Underlying().(type) {
+			case *types.Struct, *types.Array:
+				return p.hostNativeLayout(t, false)
+			}
+		}
+	}
+	return sourceLayout{p.Sizeof(t), p.Alignof(t)}
 }

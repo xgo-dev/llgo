@@ -842,6 +842,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	dedup.SetLLGoFiles(llgoFiles)
+	if len(llgoFiles) != 0 {
+		// Source patches may add public declarations (for example structs.Align64)
+		// that cmd/go cannot type-check in its unpatched metadata view.
+		cfg.Mode &^= packages.NeedExportFile
+	}
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
 		if data, ok := conf.Overlay[filename]; ok {
 			src = data
@@ -3514,7 +3519,9 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
-	check(err)
+	if err != nil {
+		return nil, err
+	}
 
 	aPkg.LPkg = ret
 	if !aPkg.CacheHit {

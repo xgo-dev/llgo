@@ -184,7 +184,7 @@ func (p *goProgram) hostNativeLayout(t types.Type, native bool) sourceLayout {
 	if l, ok := p.hostLayout(t); ok {
 		return l
 	}
-	if l, ok := p.vectorLayout(t, native); ok {
+	if l, ok := p.alignedLayout(t, native); ok {
 		return l
 	}
 	word := int64(prog.GoWordSize())

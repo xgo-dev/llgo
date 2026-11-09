@@ -2998,6 +2998,15 @@ func NewPackageExWithEmbedMetaOptions(prog llssa.Program, ct *CallerTracking, pa
 }
 
 func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaCollect bool, options Options) (ret llssa.Package, externs []string, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			if diagnostic, ok := v.(*llssa.AlignmentError); ok {
+				err = fmt.Errorf("%s: %w", pkg.Prog.Fset.Position(diagnostic.Pos), diagnostic)
+				return
+			}
+			panic(v)
+		}
+	}()
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
 	oldTypes := pkgTypes

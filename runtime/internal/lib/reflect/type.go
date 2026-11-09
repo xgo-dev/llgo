@@ -1568,9 +1568,9 @@ func funcStr(ft *funcType) string {
 // not implement Go's == operator), MapOf panics.
 func MapOf(key, elem Type) Type {
 	// Map buckets support at most 8-byte alignment, independently of pointer
-	// width. SIMD storage needs more; pointers to it remain valid map entries.
+	// width. Over-aligned storage needs more; pointers to it remain valid map entries.
 	if key.Align() > 8 || elem.Align() > 8 {
-		panic("reflect.MapOf: vector storage is not supported in map key/value; use an array of scalars or a pointer")
+		panic("reflect.MapOf: alignment above 8 bytes is not supported in map key/value; use a pointer")
 	}
 	ktyp := key.common()
 	publicElem := elem.common()

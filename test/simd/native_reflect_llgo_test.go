@@ -35,7 +35,7 @@ func TestSIMDNativeReflectBoundary(t *testing.T) {
 			assertRejected := func(f func()) {
 				t.Helper()
 				defer func() {
-					if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "reflect: libffi calls with vector storage are not supported") {
+					if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "reflect: libffi calls with alignment above 8 bytes are not supported") {
 						t.Errorf("unsupported vector ABI diagnostic: %v", r)
 					}
 				}()

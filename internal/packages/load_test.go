@@ -549,7 +549,7 @@ func TestLLGoFilesAddImportGraph(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport (\""+module+"/base\"; \""+module+"/leaf\")\nvar V = base.V + leaf.V\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport (\""+module+"/base\"; \""+module+"/leaf\")\nvar V = base.Patched + leaf.V\n")
 	writeLoadTestFile(t, filepath.Join(dir, "base", "base.go"), "package base\nvar V = 1\n")
 	writeLoadTestFile(t, filepath.Join(dir, "extra", "extra.go"), "package extra\nvar V = 1\n")
 	writeLoadTestFile(t, filepath.Join(dir, "leaf", "leaf.go"), "package leaf\nconst V = 42\n")

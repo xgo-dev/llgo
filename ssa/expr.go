@@ -1625,6 +1625,15 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	default:
 		log.Panicf("unreachable: %d(%T), %v\n", kind, raw, fn.RawType())
 	}
+	// Ellipsis values have no declaration slots, so signature validation cannot
+	// enforce the explicit-alignment restriction for them.
+	if ll.IsFunctionVarArg() {
+		for _, arg := range args {
+			if requiredExplicitAlignment(arg.raw.Type) != 0 {
+				panic(&AlignmentError{Pos: sig.Params().At(sig.Params().Len() - 1).Pos(), Type: arg.raw.Type})
+			}
+		}
+	}
 	var reflectCheck ReflectMethodCheck
 	if b.Pkg.Path() != "reflect" {
 		reflectCheck = b.checkReflect(fn, args)
