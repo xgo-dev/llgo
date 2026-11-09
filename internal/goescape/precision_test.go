@@ -107,6 +107,12 @@ func TestImmutableCapture(t *testing.T) {
 		{"after creation", `func f(x int)func()int{fn:=func()int{return x};x++;return fn}`, false},
 		{"address", `func f(x int)func()*int{return func()*int{return &x}}`, false},
 		{"shared", `func f(x int)(func()int,func()){return func()int{return x},func(){x++}}`, false},
+		{"repeated store", `func f()[]func()int{var x int;var fs []func()int;for i:=0;i<3;i++{x=i;fs=append(fs,func()int{return x})};return fs}`, false},
+		{"backward goto", `func f()[]func()int{var x int;var fs []func()int;i:=0;again:x=i;fs=append(fs,func()int{return x});i++;if i<3{goto again};return fs}`, false},
+		{"nested repeated store", `func f()[]func()int{var fs []func()int;for i:=0;i<3;i++{var x int;for j:=0;j<3;j++{x=j;fs=append(fs,func()int{return x})}};return fs}`, false},
+		{"loop local", `func f()[]func()int{var fs []func()int;for i:=0;i<3;i++{x:=i;fs=append(fs,func()int{return x})};return fs}`, true},
+		{"conditional loop local", `func f()[]func()int{var fs []func()int;for i:=0;i<3;i++{var x int;if i%2==0{x=i;fs=append(fs,func()int{return x})}};return fs}`, true},
+		{"loop invariant", `func f(x int)[]func()int{var fs []func()int;for i:=0;i<3;i++{fs=append(fs,func()int{return x})};return fs}`, true},
 		{"large", `func f(x [1024]int)func()int{return func()int{return x[0]}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

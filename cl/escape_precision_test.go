@@ -15,6 +15,7 @@ func apply(fn func(*int)int, p *int) int {return fn(p)}
 func borrow(x int)int{return apply(read,&x)}
 func immutable(x int)func()int{return func()int{return x}}
 func mutable(x int)func()int{return func()int{x++;return x}}
+func repeated()[]func()int{var x int;var fs []func()int;for i:=0;i<3;i++{x=i;fs=append(fs,func()int{return x})};return fs}
 func equal(a,b string)bool{return a==b}
 func compare(b []byte,a,c string)bool{s:=string(b);return equal(s,a)||s==c}
 func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
@@ -30,11 +31,13 @@ func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
 			if body := llvmFunction(t, ir, "precision.borrow"); strings.Contains(body, "runtime.Alloc") {
 				t.Errorf("callback argument still allocates:\n%s", body)
 			}
-			if body := llvmFunction(t, ir, "precision.immutable"); strings.Contains(body, "runtime.AllocZ") || strings.Count(body, "call ptr @\"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU\"") > 1 {
+			if body := llvmFunction(t, ir, "precision.immutable"); strings.Contains(body, "runtime.AllocZ") || strings.Count(body, "runtime.AllocAtomicU\"(") != 1 {
 				t.Errorf("immutable variable has separate heap storage:\n%s", body)
 			}
-			if body := llvmFunction(t, ir, "precision.mutable"); !strings.Contains(body, "runtime.AllocZ") {
-				t.Errorf("mutable capture lost shared storage:\n%s", body)
+			for _, name := range []string{"mutable", "repeated"} {
+				if body := llvmFunction(t, ir, "precision."+name); !strings.Contains(body, "runtime.AllocAtomicU\"(") || !strings.Contains(body, "runtime.AllocU\"(") {
+					t.Errorf("%s capture lost shared storage:\n%s", name, body)
+				}
 			}
 			if body := llvmFunction(t, ir, "precision.compare"); !strings.Contains(body, "StringFromBytesReadOnly") {
 				t.Errorf("read region still copies:\n%s", body)

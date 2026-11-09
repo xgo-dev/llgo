@@ -160,7 +160,7 @@ func makeWithFree(base int) Fn {
 // CHECK: [[BASE_ADDR:%[0-9]+]] = alloca i64
 // CHECK: store i64 %0, ptr [[BASE_ADDR]]
 // CHECK-NEXT: [[BASE_VALUE:%[0-9]+]] = load i64, ptr [[BASE_ADDR]]
-// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
 // CHECK-NEXT: store i64 [[BASE_VALUE]], ptr [[WITH_FREE_ENV_SLOT]]
 // CHECK-NEXT: [[WITH_FREE_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.makeWithFree$1", ptr undef }, ptr [[WITH_FREE_ENV_OUT]], 1

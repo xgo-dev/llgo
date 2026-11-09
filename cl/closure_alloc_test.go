@@ -37,18 +37,18 @@ func argument(x int) { unknown(func() int { return x }) }
 				}
 				for _, name := range []string{"escape", "address", "deferred", "async", "argument"} {
 					body := llvmFunction(t, ir, "capturealloc."+name)
-					// Immutable scalar captures are copied into the environment;
-					// address-observed and recover-visible slots retain heap storage.
-					wantHeapVariable := name == "address" || name == "deferred"
-					if got := strings.Contains(body, "runtime.AllocZ"); got != wantHeapVariable {
-						t.Errorf("%s heap captured variable = %v, want %v:\n%s", name, got, wantHeapVariable, body)
+					// Copied scalar environments and address-observed scalar
+					// variables use atomic storage. Defer retains two recover-visible
+					// variables, but its environment stays within this invocation.
+					want := 1
+					if name == "deferred" {
+						want = 2
 					}
-					// A non-loop defer consumes its environment before this
-					// invocation exits, even when captured result slots retain
-					// the conservative recover-visible storage policy.
-					wantHeapEnv := name != "address" && name != "deferred"
-					if got := strings.Contains(body, "runtime.AllocU"); got != wantHeapEnv {
-						t.Errorf("%s heap environment = %t, want %t:\n%s", name, got, wantHeapEnv, body)
+					if got := strings.Count(body, "runtime.AllocAtomicU\"("); got != want {
+						t.Errorf("%s atomic allocations = %d, want %d:\n%s", name, got, want, body)
+					}
+					if strings.Contains(body, "runtime.AllocU\"(") || strings.Contains(body, "runtime.AllocZ\"(") {
+						t.Errorf("%s retains scanned capture storage:\n%s", name, body)
 					}
 				}
 			}

@@ -70,7 +70,7 @@ func immutableCapture(fn *ssa.Function, index int) bool {
 					return false
 				}
 			}
-			if init == nil || !init.Block().Dominates(closure.Block()) {
+			if init == nil || !init.Block().Dominates(closure.Block()) || !captureInitializedOnce(alloc, init) {
 				return false
 			}
 			if init.Block() == closure.Block() {
@@ -87,6 +87,31 @@ func immutableCapture(fn *ssa.Function, index int) bool {
 		}
 	}
 	return found
+}
+
+// One SSA store can execute repeatedly. A capture is immutable only if every
+// path back to its initializer creates a new instance of the variable first.
+// Stop at the allocation, which precedes the store when both share a block.
+func captureInitializedOnce(alloc *ssa.Alloc, init *ssa.Store) bool {
+	allocation, initialization := alloc.Block(), init.Block()
+	if allocation == initialization {
+		return true
+	}
+	seen := make(map[*ssa.BasicBlock]bool)
+	pending := append([]*ssa.BasicBlock(nil), initialization.Succs...)
+	for len(pending) > 0 {
+		block := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if block == allocation || seen[block] {
+			continue
+		}
+		if block == initialization {
+			return false
+		}
+		seen[block] = true
+		pending = append(pending, block.Succs...)
+	}
+	return true
 }
 
 // A unit bounds sixteen bytes: a 64-bit slice needs two units (24 bytes),

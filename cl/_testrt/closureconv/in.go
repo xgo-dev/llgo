@@ -85,7 +85,7 @@ func demo4() Func {
 // CHECK: [[DEMO5_CAPTURE:%.*]] = alloca i64
 // CHECK: store i64 %0, ptr [[DEMO5_CAPTURE]]
 // CHECK: [[DEMO5_COPY:%.*]] = load i64, ptr [[DEMO5_CAPTURE]]
-// CHECK: [[DEMO5_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: [[DEMO5_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK: [[DEMO5_ENV_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[DEMO5_ENV]], i32 0, i32 0
 // CHECK: store i64 [[DEMO5_COPY]], ptr [[DEMO5_ENV_SLOT]]
 // CHECK: [[DEMO5_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.demo5$1", ptr undef }, ptr [[DEMO5_ENV]], 1
