@@ -28,7 +28,8 @@ func main() {
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[RESET_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[ITEM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+// CHECK: [[ITEM:%.*]] = call ptr @"{{.*}}AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[ITEM]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[ITEM_VALUE:%.*]] = getelementptr inbounds nuw %main.item, ptr [[ITEM]], i32 0, i32 0
 // CHECK-NEXT: store i64 42, ptr [[ITEM_VALUE]]
 // CHECK: [[ITEM_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[ITEM]], 1

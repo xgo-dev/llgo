@@ -38,11 +38,16 @@ var checkErrno = func(error) {}
 // Five sizes retain the local-header/local-C-file aggregate surface while the
 // checks stay on allocations and the two genuinely different wrapper calls.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[S4:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 4)
-// CHECK: [[S8:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 8)
-// CHECK: [[S12:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 12)
-// CHECK: [[S16:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 16)
-// CHECK: [[S20:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 20)
+// CHECK: [[S4:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 4)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S4]], i8 0, i64 4, i1 false)
+// CHECK: [[S8:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S8]], i8 0, i64 8, i1 false)
+// CHECK: [[S12:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 12)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S12]], i8 0, i64 12, i1 false)
+// CHECK: [[S16:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 16)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S16]], i8 0, i64 16, i1 false)
+// CHECK: [[S20:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 20)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S20]], i8 0, i64 20, i1 false)
 // CHECK: [[PLAIN:%[0-9]+]] = call i32 @main._Cfunc_test_structs(ptr [[S4]], ptr [[S8]], ptr [[S12]], ptr [[S16]], ptr [[S20]])
 // CHECK: [[PAIR:%[0-9]+]] = call { i32, %"{{.*}}iface" } @main._C2func_test_structs(ptr [[S4]], ptr [[S8]], ptr [[S12]], ptr [[S16]], ptr [[S20]])
 // CHECK: extractvalue { i32, %"{{.*}}iface" } [[PAIR]], 0

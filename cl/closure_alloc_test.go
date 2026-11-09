@@ -37,9 +37,9 @@ func argument(x int) { unknown(func() int { return x }) }
 				}
 				for _, name := range []string{"escape", "address", "deferred", "async", "argument"} {
 					body := llvmFunction(t, ir, "capturealloc."+name)
-					// Captured variables use zeroed storage; fully initialized
-					// environments use AllocU. Check the two lifetimes separately.
-					if !strings.Contains(body, "runtime.AllocZ") {
+					// Pointer-free captured variables use zeroed atomic storage;
+					// pointer-containing environments use AllocU. Check both lifetimes.
+					if !strings.Contains(body, "runtime.AllocAtomicU") {
 						t.Errorf("%s lost heap capture storage:\n%s", name, body)
 					}
 					// A non-loop defer consumes its environment before this

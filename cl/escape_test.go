@@ -66,7 +66,7 @@ func called(x int) {callback(func(){sink=unsafe.Pointer(&x)})}
 		}
 	}
 	for _, name := range []string{"writer", "unorderedWriter", "exchangeWriter", "compareWriter", "compareOKWriter", "called", "ordinaryPointerInteger"} {
-		if body := llvmFunction(t, ir, "effects."+name); !strings.Contains(body, "runtime.AllocZ") {
+		if body := llvmFunction(t, ir, "effects."+name); !strings.Contains(body, "runtime.Alloc") {
 			t.Errorf("%s lost published pointer:\n%s", name, body)
 		}
 	}
@@ -97,11 +97,11 @@ func promoted(p *int) *int { return borrow(&p) }
 	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, target, true)
 	for _, name := range []string{"large", "promoted"} {
-		if body := llvmFunction(t, ir, "placement."+name); !strings.Contains(body, "runtime.AllocZ") {
+		if body := llvmFunction(t, ir, "placement."+name); !strings.Contains(body, "runtime.Alloc") {
 			t.Errorf("%s must retain heap storage:\n%s", name, body)
 		}
 	}
-	if body := llvmFunction(t, ir, "placement.local"); strings.Contains(body, "runtime.AllocZ") {
+	if body := llvmFunction(t, ir, "placement.local"); strings.Contains(body, "runtime.Alloc") {
 		t.Errorf("SSA-local pointer fields should retain their existing root plan:\n%s", body)
 	}
 }
@@ -231,13 +231,13 @@ func full(p *[65536]byte)byte{return p[0]}
 func receiver(v I)byte{a:=new([65536]byte);x:=full(a);v.M();return x}
 `
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, nil, false)
-	if body := llvmFunction(t, ir, "stackbudget.boxes"); strings.Count(body, "alloca [32768 x i8]") != 2 || !strings.Contains(body, "runtime.AllocU") {
+	if body := llvmFunction(t, ir, "stackbudget.boxes"); strings.Count(body, "alloca [32768 x i8]") != 2 || !strings.Contains(body, "runtime.AllocAtomicU") {
 		t.Fatalf("KeepAlive boxes bypassed the shared 64 KiB budget:\n%s", body)
 	}
 	if body := llvmFunction(t, ir, "stackbudget.keepWithHelpers"); strings.Contains(body, "StringToBytesBuffer") {
 		t.Fatalf("conversion buffer ignored the KeepAlive box reservation:\n%s", body)
 	}
-	if body := llvmFunction(t, ir, "stackbudget.objects"); strings.Count(body, "runtime.AllocZ") != 1 {
+	if body := llvmFunction(t, ir, "stackbudget.objects"); strings.Count(body, "runtime.AllocAtomicU") != 1 {
 		t.Fatalf("function budget did not retain one large object on heap:\n%s", body)
 	}
 	if body := llvmFunction(t, ir, "stackbudget.runes"); strings.Contains(body, "StringToRunesBuffer") || !strings.Contains(body, "StringToRunes") {

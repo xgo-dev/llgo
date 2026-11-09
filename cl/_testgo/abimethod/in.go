@@ -438,7 +438,8 @@ type I2 interface {
 
 // Named T and *T select the proper descriptor and dispatch through the requested interface method.
 // CHECK-LABEL: define void @main.testNamed1(){{.*}} {
-// CHECK: [[N1_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[N1_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[N1_OBJECT]], i8 0, i64 8, i1 false)
 // CHECK: [[N1_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[N1_OBJECT]], i32 0, i32 0
 // CHECK-NEXT: store i64 100, ptr [[N1_FIELD]]
 // CHECK-NEXT: [[N1_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[N1_OBJECT]], 1
