@@ -6,7 +6,9 @@ import (
 	"testing"
 )
 
-func TestChannelWaiterReuseAcrossChannels(t *testing.T) {
+// Exercise pointer-bearing transfers, close and repeated waits under GC.
+// The separate allocation test checks that ordinary waiters are reused.
+func TestChannelWaiterCorrectnessUnderGC(t *testing.T) {
 	type message struct {
 		value int
 		data  []byte

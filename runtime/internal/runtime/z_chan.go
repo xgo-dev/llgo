@@ -282,10 +282,12 @@ func (w *chanWaiter) wait() waitStatus {
 	w.signal.unlock()
 	w.signal.destroy()
 	status := w.status
-	// finish holds the signal lock through notification, so no notifier can
-	// still access this waiter after wait reacquires that lock and completes.
+	// finish holds the signal lock through notification. After reacquiring it,
+	// no further users remain: mutex destruction/reuse is permitted after
+	// release even if the previous unlock call has not returned yet.
 	// Clear channel/element pointers before caching, including on panic wakes.
 	*w = chanWaiter{}
+	// A nested operation may already have filled this one-entry cache.
 	if gp := getg(); gp != nil && gp.chanWaiter == nil {
 		gp.chanWaiter = w
 	}

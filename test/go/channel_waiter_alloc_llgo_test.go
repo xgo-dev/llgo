@@ -38,6 +38,8 @@ func TestChannelWaiterSteadyStateAllocations(t *testing.T) {
 		t.Logf("capacity %d: %d collector bytes / 10000 exchanges", capacity, allocated)
 		// TotalAlloc is collector accounting, not Go's allocation counter.
 		// Allow incidental runtime work but reject per-exchange waiter heaps.
+		// Each capacity has its own measured delta and bound. LLGo does not
+		// populate MemStats.Mallocs, so it cannot provide an allocation gate.
 		if allocated > 64<<10 {
 			t.Errorf("capacity %d: steady-state channel exchanges allocated %d bytes", capacity, allocated)
 		}
