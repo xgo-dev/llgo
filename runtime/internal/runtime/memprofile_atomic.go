@@ -8,7 +8,7 @@ import "github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 // Keep the value in our own field so allocator accounting uses runtime intrinsics:
 // stdlib method calls may allocate instrumented Wasm caller-location frames.
 type memProfileCounter struct {
-	_     memProfileAlignment
+	_     atomic64Alignment
 	value uint64
 }
 

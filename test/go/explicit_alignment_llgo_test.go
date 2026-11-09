@@ -138,6 +138,10 @@ func TestExplicitAlignmentStorage(t *testing.T) {
 	if m[key] != key {
 		t.Fatal("eight-byte aligned map storage")
 	}
+}
+
+// Run with -goroutine-stack-size=1MB on fixed-stack Wasm targets.
+func TestExplicitAlignmentLargeCopies(t *testing.T) {
 	// Exercise late aggregate-copy and large-result lowering, plus a deferred
 	// by-value capture. These compiler-created copies must preserve the value.
 	flag, large := explicitLargeResult(83)

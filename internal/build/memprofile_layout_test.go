@@ -11,7 +11,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestMemProfileCounterAlignment(t *testing.T) {
+func TestRuntimeAtomic64Alignment(t *testing.T) {
 	llssa.Initialize(llssa.InitAll)
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -41,13 +41,13 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 				t.Fatal("missing compiled runtime package")
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
-			marker := pkgs[0].Types.Scope().Lookup("memProfileAlignment")
+			marker := pkgs[0].Types.Scope().Lookup("atomic64Alignment")
 			if marker == nil {
-				t.Fatal("missing memory profile alignment marker")
+				t.Fatal("missing atomic alignment marker")
 			}
 			named, ok := types.Unalias(marker.Type()).(*types.Named)
 			if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "structs" || named.Obj().Name() != "Align8" {
-				t.Fatalf("memory profile counters must use structs.Align8, got %s", marker.Type())
+				t.Fatalf("64-bit atomic counters must use structs.Align8, got %s", marker.Type())
 			}
 			mod := pkgs[0].LPkg.Module()
 			buckets := mod.NamedGlobal(llssa.PkgRuntime + ".memProfileBuckets")
@@ -65,6 +65,20 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			stride := td.TypeAllocSize(bucket)
 			if buckets.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
 				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", buckets.Alignment(), offset, stride)
+			}
+			// Check the actual LLVM storage as well as the source marker: a
+			// marker alone cannot repair a 64-bit field at a four-byte offset.
+			for _, name := range []string{"sched", "tracebackSetting"} {
+				global := mod.NamedGlobal(llssa.PkgRuntime + "." + name)
+				if global.IsNil() || global.Alignment() < 8 {
+					t.Fatalf("%s does not guarantee 8-byte alignment", name)
+				}
+				record := global.GlobalValueType()
+				for i, field := range record.StructElementTypes() {
+					if field.TypeKind() == llvm.IntegerTypeKind && field.IntTypeWidth() == 64 && td.ElementOffset(record, i)%8 != 0 {
+						t.Fatalf("%s field %d has unaligned offset %d", name, i, td.ElementOffset(record, i))
+					}
+				}
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.

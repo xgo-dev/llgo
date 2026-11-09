@@ -42,14 +42,17 @@ type runtimeContext struct {
 }
 
 var sched struct {
+	_       atomic64Alignment
 	goidgen uint64
 	midgen  int64
-	pidgen  int32
 
 	// gstate packs the live/registered goroutine count with the main-exited
 	// bit. The goroutine whose release observes count zero can therefore make
 	// the deadlock decision from one atomic result.
 	gstate uint64
+
+	// Keep all 64-bit atomics before the 32-bit counter on 32-bit targets.
+	pidgen int32
 }
 
 // goroutineStackSize is initialized by the compiler as a read-only constant in

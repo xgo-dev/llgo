@@ -1035,6 +1035,8 @@ jobs:
             # The budget stress test also needs large by-value ABI copies,
             # which are outside the incremental escape-storage budget.
             "$LLGO" test -O2 -goroutine-stack-size=1MB -target "$target" -emulator ./test/escape
+            "$LLGO" test -goroutine-stack-size=1MB -target "$target" -emulator \
+              -run '^TestExplicitAlignment' -v ./test/go
           done
 
       - name: Test reflected method calls and large initializers

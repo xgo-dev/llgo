@@ -77,6 +77,14 @@ including callbacks. Native callers supplying pointers must provide storage
 with the declared layout and alignment. The marker does not select a device
 memory allocator or guarantee a particular cache-line size.
 
+## Runtime uses
+
+LLGo uses `Align8` for memory-profile counters, scheduler counters, and traceback
+settings on 32-bit targets that naturally align `uint64` to four bytes. Scheduler
+fields also place all 64-bit counters before the 32-bit counter so each atomic
+address is aligned. Windows amd64/arm64 unwinding uses an `Align16` storage
+wrapper around `CONTEXT`, preserving the platform record's field offsets.
+
 ## Current limits
 
 - Map keys and values with explicit alignment above eight bytes are rejected,

@@ -21,7 +21,10 @@ func tracebackPlatformConfig(initialize, wer bool)
 
 const tracebackLLGoFiles = "; _wrap/traceback_crash.c"
 
-var tracebackSetting uint64 = 1 << traceback.Shift
+var tracebackSetting = struct {
+	_     atomic64Alignment
+	value uint64
+}{value: 1 << traceback.Shift}
 var tracebackEnvironment uint64
 
 func init() {
@@ -31,17 +34,17 @@ func init() {
 	}
 	tracebackEnvironment = traceback.Parse(level, tracebackWindows)
 	tracebackPlatformConfig(true, tracebackEnvironment&traceback.WER != 0)
-	atomic.Store(&tracebackSetting, tracebackEnvironment)
+	atomic.Store(&tracebackSetting.value, tracebackEnvironment)
 }
 
-func TracebackSetting() uint64 { return atomic.Load(&tracebackSetting) }
+func TracebackSetting() uint64 { return atomic.Load(&tracebackSetting.value) }
 
 func SetTraceback(level string) {
 	// Like Go, a program may increase the environment-selected detail but
 	// cannot reduce it. Changes to the environment after startup do not count.
 	setting := traceback.Parse(level, tracebackWindows)
 	tracebackPlatformConfig(false, setting&traceback.WER != 0)
-	atomic.Store(&tracebackSetting, traceback.Combine(tracebackEnvironment, setting))
+	atomic.Store(&tracebackSetting.value, traceback.Combine(tracebackEnvironment, setting))
 }
 
 func crashAfterPanic() {

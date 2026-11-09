@@ -22,19 +22,6 @@ func c_windowsLookupFunctionEntry(pc uintptr, imageBase *uintptr) unsafe.Pointer
 //go:linkname c_windowsVirtualUnwind C.llgo_windows_virtual_unwind
 func c_windowsVirtualUnwind(imageBase, pc uintptr, functionEntry unsafe.Pointer, context *windowsFaultContext, establisherFrame *uintptr) unsafe.Pointer
 
-const windowsFaultContextAlignment = 16
-
-// Go only guarantees 8-byte alignment for the fields in windowsFaultContext,
-// while Windows declares CONTEXT with 16-byte alignment. Reserve enough space
-// to select a suitably aligned address before calling the platform unwinder.
-type windowsFaultContextStorage [windowsFaultContextSize + windowsFaultContextAlignment - 1]byte
-
-func (storage *windowsFaultContextStorage) context() *windowsFaultContext {
-	base := unsafe.Pointer(&storage[0])
-	offset := (-uintptr(base)) & (windowsFaultContextAlignment - 1)
-	return (*windowsFaultContext)(unsafe.Add(base, offset))
-}
-
 func windowsUnwindOne(context *windowsFaultContext) bool {
 	pc := context.pc()
 	sp := context.sp()

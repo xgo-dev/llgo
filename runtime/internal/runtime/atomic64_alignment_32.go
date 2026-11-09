@@ -6,4 +6,4 @@ import "sync/atomic"
 
 // Compatibility for other Go compilers and toolchains predating structs.
 // LLGo uses its explicit alignment marker when the structs package is available.
-type memProfileAlignment = [0]atomic.Uint64
+type atomic64Alignment = [0]atomic.Uint64

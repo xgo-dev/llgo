@@ -6,4 +6,4 @@ import "structs"
 
 // Counter storage needs eight-byte alignment, independent of the target's
 // natural uint64 alignment. The value and atomic operations remain our own.
-type memProfileAlignment = structs.Align8
+type atomic64Alignment = structs.Align8
