@@ -171,6 +171,10 @@ func TestFrontendProgramInvalidInitializerFallsBack(t *testing.T) {
 	f := frontendProgramFixture(t)
 	f.captureProgram()
 	f.program = f.loadProgram()
+	configureUnusedGlobalInits(f.ctx)
+	if f.program == nil {
+		t.Fatal("valid initializer plan was discarded")
+	}
 	plan := f.program.Inits[f.entries[0].id]
 	if len(plan.Instructions) == 0 {
 		t.Fatal("fixture has no removals")
@@ -181,4 +185,46 @@ func TestFrontendProgramInvalidInitializerFallsBack(t *testing.T) {
 		t.Fatal("changed initializer accepted")
 	}
 	// Opaque link metadata cannot authorize source instruction changes.
+	configureUnusedGlobalInits(f.ctx)
+	if f.program != nil || f.ctx.frontendOptions.UnusedGlobalInits != nil {
+		t.Fatal("invalid initializer context survived fallback")
+	}
+	for _, entry := range f.entries {
+		if !f.built[entry.pkg] {
+			t.Fatal("fallback left a package without source SSA")
+		}
+	}
+}
+
+func TestFrontendProgramRestoresWasmFeatureDecisions(t *testing.T) {
+	f := frontendProgramFixture(t)
+	target := f.ctx.prog.Target()
+	target.WasmReflectBridges, target.WasmFuncInfoEntries = true, true
+	f.ctx.wasmRuntimeFree = true
+	f.captureProgram()
+	f.program = f.loadProgram()
+	if f.program == nil {
+		t.Fatal("missing program export")
+	}
+	// Start with the opposite defaults to check that the deserialized program
+	// contract controls Wasm features even when dependency bodies are absent.
+	target.WasmReflectBridges, target.WasmFuncInfoEntries = false, false
+	f.ctx.wasmRuntimeFree = false
+	f.ctx.frontendOptions.ShadowStack = true
+	configureWasmReflectBridges(f.ctx)
+	configureWasmFuncInfoEntries(f.ctx)
+	configureWasmRuntimeFree(f.ctx)
+	if !target.WasmReflectBridges || !target.WasmFuncInfoEntries || !f.ctx.wasmRuntimeFree || f.ctx.frontendOptions.ShadowStack {
+		t.Fatal("cached Wasm features changed")
+	}
+	// Multiple roots retain their separate feature contracts when grouped.
+	f.ctx.mode = ModeBuild
+	extra := &packages.Package{ID: f.entries[1].id, Types: f.entries[1].pkg.Pkg}
+	f.ctx.initial = append(f.ctx.initial, extra)
+	f.program.Initials[f.ctx.initial[0].ID] = frontendProgramFeatures{ReflectBridges: true}
+	f.program.Initials[extra.ID] = frontendProgramFeatures{FuncInfoEntries: true}
+	groups := groupInitialBuilds(f.ctx, nil)
+	if len(groups) != 2 || !groups[0].features.reflectBridges || groups[0].features.funcInfoEntries || groups[1].features.reflectBridges || !groups[1].features.funcInfoEntries {
+		t.Fatal("per-root Wasm contracts were merged")
+	}
 }

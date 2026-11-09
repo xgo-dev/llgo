@@ -22,8 +22,10 @@ type Alias[T any] = Box[T]
 var A *private
 var B Box[int]
 var C Alias[string]
+var D map[string][2]chan<- *private
 type I interface { hiddenMethod(int) string }
 func F(a I, b ...string)(int,error){return 0,nil}
+func G[T interface{~int | ~float64}](x T) T{return x}
 `
 	prog, pkg, index := fixture(t, source, true)
 	graph := NewTypeGraph(index, prog.Fset)
@@ -91,6 +93,14 @@ func TestTypeGraphRejectsCorruptReferences(t *testing.T) {
 		{Nodes: []TypeNode{{Kind: "pointer", Elem: 0}}},
 		{Nodes: []TypeNode{{Kind: "pointer", Elem: 100}}},
 		{Nodes: []TypeNode{{Kind: "basic", Basic: -1}}},
+		{Nodes: []TypeNode{{Kind: "unknown"}}},
+		{Nodes: []TypeNode{{Kind: "array", Length: -1}}},
+		{Nodes: []TypeNode{{Kind: "chan", Direction: -1}}},
+		{Nodes: []TypeNode{{Kind: "named", Universe: true, Object: Object{Name: "missing"}}}},
+		{Nodes: []TypeNode{{Kind: "union", Types: []int{1}}}},
+		{Nodes: []TypeNode{{Kind: "struct", Fields: []Object{{Package: "missing"}}}}},
+		{Nodes: []TypeNode{{Kind: "func", Params: []int{1}, Parameters: []Object{{Type: 1}, {Type: 1}}}}},
+		{Nodes: []TypeNode{{Kind: "func", Params: []int{1}, Parameters: []Object{{Type: 0}}}}},
 	} {
 		p := &TypeImporter{Graph: graph}
 		if _, err := p.Import(0); err == nil {
@@ -99,6 +109,35 @@ func TestTypeGraphRejectsCorruptReferences(t *testing.T) {
 		if _, err := p.Import(0); err == nil {
 			t.Fatal("partially imported type escaped failed transaction")
 		}
+	}
+}
+
+func TestTypeGraphTupleAndDependencyIdentity(t *testing.T) {
+	prog, pkg, index := fixture(t, `package p
+type N int
+func F(x int) (n N, err error) { return 0, nil }
+`, false)
+	graph := NewTypeGraph(index, prog.Fset)
+	if graph.Add(nil) != -1 {
+		t.Fatal("nil type acquired a graph identity")
+	}
+	sig := pkg.Pkg.Scope().Lookup("F").Type().(*types.Signature)
+	id := graph.Add(sig.Results())
+	// A dependency's named types must reuse its checked package, rather than
+	// inventing another N with the same printed name.
+	importer := &TypeImporter{Graph: graph, Existing: index, Packages: map[string]*types.Package{pkg.Pkg.Path(): pkg.Pkg}}
+	typ, err := importer.Import(id)
+	if err != nil || !types.Identical(typ, sig.Results()) {
+		t.Fatalf("dependency result types changed: %v, %v", typ, err)
+	}
+	if typ.(*types.Tuple).At(0).Name() != "n" {
+		t.Fatal("tuple field name changed")
+	}
+	// Older anonymous signature records contain no parameter-name metadata.
+	graph.Nodes[id].Elements = nil
+	importer = &TypeImporter{Graph: graph, Existing: index}
+	if typ, err := importer.Import(id); err != nil || !types.Identical(typ, sig.Results()) {
+		t.Fatalf("anonymous tuple changed: %v, %v", typ, err)
 	}
 }
 

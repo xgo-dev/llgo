@@ -78,3 +78,46 @@ func TestPackageExportPreservesPrivateTypesConstantsAndNames(t *testing.T) {
 		t.Fatal("recursive identity changed")
 	}
 }
+
+func TestPackageImportRejectsCorruptDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		typ   types.Type
+		items []PackageObject
+	}{
+		{"function-type", types.Typ[types.Int], []PackageObject{{Kind: "func"}}},
+		{"unknown-kind", types.Typ[types.Int], []PackageObject{{Kind: "unknown"}}},
+		{"constant-type", types.NewPointer(types.Typ[types.Int]), []PackageObject{{Kind: "const"}}},
+		{"bool", types.Typ[types.Bool], []PackageObject{{Kind: "const", Value: "True"}}},
+		{"string", types.Typ[types.String], []PackageObject{{Kind: "const", Value: "unquoted"}}},
+		{"integer", types.Typ[types.Int], []PackageObject{{Kind: "const", Value: "1.5"}}},
+		{"real", types.Typ[types.Complex128], []PackageObject{{Kind: "const", Value: "bad", Imaginary: "1"}}},
+		{"imaginary", types.Typ[types.Complex128], []PackageObject{{Kind: "const", Value: "1", Imaginary: "bad"}}},
+		{"float", types.Typ[types.Float64], []PackageObject{{Kind: "const", Value: "bad"}}},
+		{"constant-kind", types.Typ[types.UnsafePointer], []PackageObject{{Kind: "const", Value: "0"}}},
+		{"duplicate", types.Typ[types.Int], []PackageObject{{Kind: "var"}, {Kind: "var"}}},
+		{"duplicate-type", types.Typ[types.Int], []PackageObject{{Kind: "type"}, {Kind: "type"}}},
+		{"bad-type-reference", types.Typ[types.Int], []PackageObject{{Kind: "type", Object: Object{Type: 100}}}},
+		{"bad-value-reference", types.Typ[types.Int], []PackageObject{{Kind: "var", Object: Object{Type: 100}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := types.NewPackage("example/p", "p")
+			index := NewTypes(nil)
+			graph := NewTypeGraph(index, nil)
+			graph.Add(tc.typ)
+			for i := range tc.items {
+				tc.items[i].Name = "X"
+			}
+			data := &PackageExport{ID: "p", Path: pkg.Path(), Name: pkg.Name(), Types: *graph, Objects: tc.items}
+			importer := &TypeImporter{Packages: map[string]*types.Package{"p": pkg}, Position: func(string) token.Pos { return token.NoPos }}
+			if _, err := ImportPackage(data, importer); err == nil || pkg.Complete() {
+				t.Fatal("corrupt package was published")
+			}
+		})
+	}
+	for _, data := range []*PackageExport{nil, {ID: "missing"}, {ID: "p", Path: "wrong", Name: "p"}} {
+		if _, err := ImportPackage(data, &TypeImporter{Packages: map[string]*types.Package{"p": types.NewPackage("p", "p")}}); err == nil {
+			t.Fatal("invalid package identity accepted")
+		}
+	}
+}
