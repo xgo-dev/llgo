@@ -239,6 +239,13 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 	m.pkg.PkgPath = p.PkgPath
 	m.pkg.PkgID = p.ID
+	m.pkg.GoVersion = c.buildConf.GoVersion
+	if m.pkg.GoVersion == "" && p.Module != nil {
+		m.pkg.GoVersion = p.Module.GoVersion
+	}
+	if c.frontend != nil {
+		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
+	}
 	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
 	if pkg.AltPkg != nil && c.progSSA != nil {
 		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)
@@ -346,6 +353,26 @@ func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) err
 
 func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error) {
 	entry := depEntry{ID: dep.ID}
+	if c.frontend != nil {
+		loaded := c.pkgByID[dep.ID]
+		if loaded == nil {
+			loaded = &aPackage{Package: dep}
+		}
+		key, err := c.frontend.inputKey(loaded)
+		if err != nil {
+			return entry, err
+		}
+		// Source closure + this dependency's context-specific initializer plan is
+		// complete without recursively hashing archive keys through replacement
+		// cycles. The common target/feature policy is in every parent manifest.
+		plans := append([]string{}, c.frontendOptions.UnusedGlobalInits.CacheKeys(loaded.SSA)...)
+		if loaded.AltPkg != nil {
+			plans = append(plans, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(loaded.AltPkg.Types))...)
+		}
+		slices.Sort(plans)
+		entry.Fingerprint = frontendDigest([]byte(key + fmt.Sprint(plans)))
+		return entry, nil
+	}
 	if v := moduleVersion(dep.Module); v != "" {
 		entry.Version = v
 		return entry, nil
@@ -447,6 +474,9 @@ func (c *context) ensureCacheManager() *cacheManager {
 // tryLoadFromCache attempts to load a package from cache.
 // Returns true if cache hit, false otherwise.
 func (c *context) tryLoadFromCache(pkg *aPackage) bool {
+	if pkg.CacheHit {
+		return true
+	}
 	if !cacheEnabled() {
 		return false
 	}

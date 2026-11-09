@@ -144,3 +144,24 @@ var C = B
 		}
 	}
 }
+
+func TestUnusedGlobalInitializerExportRoundTrip(t *testing.T) {
+	const src = `package foo;var Dead=map[int]int{1:2};var Kept=3;func main(){println(Kept)}`
+	original := buildSSAPackage(t, src)
+	plan := FindUnusedGlobalInits(original.Prog, func(*ssa.Global) bool { return false })
+	data := plan.Export(original)
+	if len(data.Instructions) == 0 {
+		t.Fatal("fixture has no removals")
+	}
+	fresh := buildSSAPackage(t, src)
+	restored, err := RestoreUnusedGlobalInits(map[*ssa.Package]GlobalInitExport{fresh: data})
+	if err != nil || !slices.Equal(restored.Names(fresh), plan.Names(original)) || !slices.Equal(restored.CacheKeys(fresh), plan.CacheKeys(original)) || len(restored.instrs[fresh]) != len(plan.instrs[original]) {
+		t.Fatalf("initializer plan changed: %v", err)
+	}
+	bad := data
+	bad.Instructions = append([]GlobalInitInstruction{}, data.Instructions...)
+	bad.Instructions[0].Text = "changed"
+	if _, err := RestoreUnusedGlobalInits(map[*ssa.Package]GlobalInitExport{fresh: bad}); err == nil {
+		t.Fatal("changed instruction accepted")
+	}
+}

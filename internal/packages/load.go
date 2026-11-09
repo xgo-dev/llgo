@@ -87,19 +87,32 @@ type Cached struct {
 }
 
 type aDeduper struct {
-	cache     sync.Map
-	checked   sync.Map
-	setpath   func(path string, name string) string
-	preload   func(pkg *packages.Package)
-	prepare   func([]*Package, *Config) error
-	rewrite   func(*Package) (bool, error)
-	llgoFiles map[string][]string
+	cache       sync.Map
+	checked     sync.Map
+	setpath     func(path string, name string) string
+	preload     func(pkg *packages.Package)
+	prepare     func([]*Package, *Config) error
+	rewrite     func(*Package) (bool, error)
+	llgoFiles   map[string][]string
+	importTypes func(*Package, *token.FileSet) bool
+	exported    sync.Map
 }
 
 type Deduper = *aDeduper
 
 func NewDeduper() Deduper {
 	return &aDeduper{}
+}
+
+// SetImportTypes installs a validated dependency type-export reader. Syntax is
+// still parsed for compiler directives; a true result replaces type checking.
+func (p Deduper) SetImportTypes(fn func(*Package, *token.FileSet) bool) { p.importTypes = fn }
+func (p Deduper) IsExported(id string) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.exported.Load(id)
+	return ok
 }
 
 func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
@@ -567,6 +580,13 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		return
 	}
 
+	if tc.dedup != nil && tc.dedup.importTypes != nil && tc.dedup.importTypes(pkg, fset) {
+		tc.dedup.exported.Store(pkg.ID, true)
+		if tc.dedup.preload != nil {
+			tc.dedup.preload(pkg)
+		}
+		return
+	}
 	pkg.Types = types.NewPackage(pkg.PkgPath, pkg.Name)
 
 	pkg.TypesInfo = newTypesInfo()

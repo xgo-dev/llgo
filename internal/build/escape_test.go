@@ -62,7 +62,17 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		hits, misses := -1, -1
+		depBuilt := false
+		importedTypes := 0
 		for _, event := range recorded {
+			if event.Name == "certify frontend exports" {
+				if v, ok := event.Args["type_exports"].(float64); ok {
+					importedTypes = int(v)
+				}
+			}
+			if event.Args["stage"] == "ssa" && event.Args["package_id"] == "example.com/escape/dep" {
+				depBuilt = true
+			}
 			if event.Name == "Go escape analysis" {
 				hits = int(event.Args["cache_hits"].(float64))
 				misses = int(event.Args["cache_misses"].(float64))
@@ -85,7 +95,13 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 			}
 		}
 		// Executable main packages are deliberately never archive-cache hits.
-		if depHit != (phase != "cold") || rootHit {
+		if phase != "cold" && phase != "repair" && phase != "typefallback" && phase != "archive" && importedTypes == 0 {
+			t.Fatal("warm build did not load dependency type exports")
+		}
+		if depBuilt != (phase == "cold" || phase == "repair" || phase == "archive") {
+			t.Fatalf("phase=%s dependency SSA built=%v", phase, depBuilt)
+		}
+		if depHit != (phase != "cold" && phase != "archive") || rootHit {
 			t.Fatalf("phase=%s dependency hit=%v root hit=%v", phase, depHit, rootHit)
 		}
 		out, err := exec.Command(conf.OutFile).CombinedOutput()
@@ -134,7 +150,7 @@ func main() {
 			t.Fatal(err)
 		}
 	}
-	for i, phase := range []string{"cold", "hot", "rebuild", "hot"} {
+	for i, phase := range []string{"cold", "hot", "rebuild", "hot", "repair", "hot", "typefallback", "hot", "archive", "hot"} {
 		workers := 1
 		if i >= 2 {
 			workers = 8
@@ -144,6 +160,58 @@ func main() {
 			// from its archive. A changed optimization proof must not be lost.
 			if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(files["main.go"]+"\n// caller changed\n"), 0o644); err != nil {
 				t.Fatal(err)
+			}
+		}
+
+		if phase == "repair" || phase == "typefallback" || phase == "archive" {
+			changed := false
+			err := filepath.WalkDir(cache, func(filename string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				data, err := os.ReadFile(filename)
+				if err != nil {
+					return err
+				}
+				if phase == "archive" && strings.HasSuffix(filename, ".manifest") {
+					manifest, err := decodeManifest(string(data))
+					if err == nil && manifest.Package != nil && manifest.Package.PkgPath == "example.com/escape/dep" {
+						changed = true
+						return os.Remove(strings.TrimSuffix(filename, ".manifest") + ".a")
+					}
+				}
+				if !strings.HasSuffix(filename, ".json") {
+					return nil
+				}
+				var envelope frontendEnvelope
+				if json.Unmarshal(data, &envelope) != nil {
+					return nil
+				}
+				if phase == "repair" {
+					var record frontendExport
+					if json.Unmarshal(envelope.Payload, &record) != nil {
+						return nil
+					}
+					for _, fn := range record.Functions {
+						if strings.Contains(fn.ID, `"example.com/escape/dep"`) {
+							changed = true
+							return os.WriteFile(filename, []byte("{"), 0600)
+						}
+					}
+				} else if phase == "typefallback" {
+					var record frontendTypeExport
+					if json.Unmarshal(envelope.Payload, &record) == nil && record.Package != nil && record.Package.ID == "example.com/escape/dep" {
+						changed = true
+						return os.WriteFile(filename, []byte("{"), 0600)
+					}
+				}
+				return nil
+			})
+			if err != nil || !changed {
+				t.Fatalf("%s failed to invalidate dependency cache: %v", phase, err)
 			}
 		}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestEscapeCrossPackageCacheAndWorkers$", "-test.count=1")

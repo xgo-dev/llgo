@@ -38,6 +38,78 @@ type UnusedGlobalInits struct {
 	keys   map[*ssa.Package][]string
 }
 
+// GlobalInitExport is a program-context plan, not a generic package property.
+// The coordinator keys it by all source inputs and executable roots.
+type GlobalInitExport struct {
+	Names, Keys  []string
+	Instructions []GlobalInitInstruction
+}
+
+type GlobalInitInstruction struct {
+	Block, Index int
+	Text         string
+}
+
+func (p *UnusedGlobalInits) Export(pkg *ssa.Package) GlobalInitExport {
+	if p == nil {
+		return GlobalInitExport{}
+	}
+	result := GlobalInitExport{Names: p.names[pkg], Keys: p.keys[pkg]}
+	remove := make(map[ssa.Instruction]bool)
+	for _, instr := range p.instrs[pkg] {
+		remove[instr] = true
+	}
+	if init := pkg.Func("init"); init != nil {
+		for b, block := range init.Blocks {
+			for i, instr := range block.Instrs {
+				if remove[instr] {
+					result.Instructions = append(result.Instructions, GlobalInitInstruction{b, i, instr.String()})
+				}
+			}
+		}
+	}
+	return result
+}
+
+// RestoreUnusedGlobalInits binds removals only in source-built initializers.
+// Opaque packages already contain this plan in their validated archive.
+func RestoreUnusedGlobalInits(exports map[*ssa.Package]GlobalInitExport) (*UnusedGlobalInits, error) {
+	plan := &UnusedGlobalInits{names: make(map[*ssa.Package][]string), keys: make(map[*ssa.Package][]string), instrs: make(map[*ssa.Package][]ssa.Instruction)}
+	for pkg, data := range exports {
+		if len(data.Instructions) == 0 && len(data.Keys) != 0 || len(data.Instructions) != 0 && len(data.Keys) != 1 {
+			return nil, fmt.Errorf("incomplete cached initializer plan in %s", pkg.Pkg.Path())
+		}
+		plan.names[pkg], plan.keys[pkg] = data.Names, data.Keys
+		init := pkg.Func("init")
+		if init == nil || len(init.Blocks) == 0 {
+			continue
+		}
+		hash := sha256.New()
+		previousBlock, previousIndex := -1, -1
+		for _, item := range data.Instructions {
+			if item.Block < previousBlock || item.Block == previousBlock && item.Index <= previousIndex {
+				return nil, fmt.Errorf("unordered cached initializer plan in %s", pkg.Pkg.Path())
+			}
+			previousBlock, previousIndex = item.Block, item.Index
+			if item.Block < 0 || item.Block >= len(init.Blocks) || item.Index < 0 || item.Index >= len(init.Blocks[item.Block].Instrs) {
+				return nil, fmt.Errorf("invalid cached initializer index in %s", pkg.Pkg.Path())
+			}
+			instr := init.Blocks[item.Block].Instrs[item.Index]
+			if instr.String() != item.Text {
+				return nil, fmt.Errorf("cached initializer changed in %s", pkg.Pkg.Path())
+			}
+			plan.instrs[pkg] = append(plan.instrs[pkg], instr)
+			if _, debug := instr.(*ssa.DebugRef); !debug {
+				fmt.Fprintf(hash, "%d:%d;", item.Block, item.Index)
+			}
+		}
+		if len(data.Keys) != 0 && data.Keys[0] != fmt.Sprintf("%s:%x", pkg.Pkg.Path(), hash.Sum(nil)) {
+			return nil, fmt.Errorf("cached initializer key changed in %s", pkg.Pkg.Path())
+		}
+	}
+	return plan, nil
+}
+
 // CacheKeys identifies the exact instruction plan, including discarded blank
 // initializers that have no named destination. Alternate packages have separate
 // SSA identities, so their keys must also be included in the compiled module.

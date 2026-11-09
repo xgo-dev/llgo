@@ -148,6 +148,12 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 		fmt.Fprintf(h, "%q %v\n", item.id, a.bodies[fn])
 		hashType(h, fn.Signature, typeKeys)
 		if !a.bodies[fn] {
+			if a.config.ExternalKey != nil {
+				if key := a.config.ExternalKey(fn); key != "" {
+					item.key = key
+					continue
+				}
+			}
 			// Include replacement/intrinsic contracts, even with visible stubs.
 			s, valid := Summary{}, false
 			if a.config.External != nil {

@@ -47,7 +47,13 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 			},
 		}
 	}
-	result := cl.PrepareEscapeAnalysisCached(ctx.prog, ctx.progSSA, ctx.patches, cache)
+	var imports map[*ssa.Function]goescape.Summary
+	var keys map[*ssa.Function]string
+	var roots []*ssa.Function
+	if ctx.frontend != nil {
+		imports, keys, roots = ctx.frontend.imports, ctx.frontend.importKeys, ctx.frontend.methods
+	}
+	result := cl.PrepareEscapeAnalysisImported(ctx.prog, ctx.progSSA, ctx.patches, cache, imports, keys, roots)
 	if files != nil {
 		files.flush()
 	}
