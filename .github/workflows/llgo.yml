@@ -1050,7 +1050,7 @@ jobs:
           done
           for target in wasi emscripten emscripten-memory64; do
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
-              -run '^TestHostLayoutCallbackStorage$' ./test/std/reflect
+              -run '^TestHostLayout(CallbackStorage|StructOf.*)$' ./test/std/reflect
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
               ./internal/structs ./internal/ffi)
             if [[ "$target" != wasi ]]; then

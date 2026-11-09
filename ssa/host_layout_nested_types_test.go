@@ -103,10 +103,10 @@ const Offset = unsafe.Offsetof(HostOuter{}.Tail)
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					raw := pkg.Scope().Lookup(tc.name).Type()
-					host := wrap(raw)
-					checkHostLayout(t, prog, sizes, host, tc.size, tc.align, []int64{0, 0})
-					// Inspect actual nested storage without changing ordinary
-					// source size/offset queries on these targets.
+					// Lower the standalone type before its HostLayout container:
+					// this is its existing storage, not a layout inherited from the
+					// parent's marker. Ordinary source/metadata discrepancies such
+					// as Inner's 16/4 versus storage 24/8 are tracked by #2810.
 					lowered := prog.Type(raw, GoDecl)
 					if prog.SizeOf(lowered) != uint64(tc.size) || prog.AlignOf(lowered) != uint64(tc.align) {
 						t.Fatalf("%s: unexpected nested storage size/alignment", tc.name)
@@ -116,6 +116,8 @@ const Offset = unsafe.Offsetof(HostOuter{}.Tail)
 							t.Fatalf("nested storage field %d offset = %d, want %d", i, got, want)
 						}
 					}
+					host := wrap(raw)
+					checkHostLayout(t, prog, sizes, host, tc.size, tc.align, []int64{0, 0})
 					reflected := (&aBuilder{Prog: prog}).abiStructFieldOffsets(host.Underlying().(*types.Struct))
 					if !reflect.DeepEqual(reflected, []int64{0, 0}) {
 						t.Fatalf("HostLayout reflected offsets = %v, want [0 0]", reflected)
