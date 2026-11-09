@@ -144,18 +144,23 @@ func TestExplicitAlignmentStorage(t *testing.T) {
 func TestExplicitAlignmentLargeCopies(t *testing.T) {
 	// Exercise late aggregate-copy and large-result lowering, plus a deferred
 	// by-value capture. These compiler-created copies must preserve the value.
+	t.Log("returning a large aligned value")
 	flag, large := explicitLargeResult(83)
 	if flag != 7 || large.Values[0] != 83 || large.Values[8192] != 84 || uintptr(unsafe.Pointer(&large))&63 != 0 {
 		t.Fatal("large aligned return")
 	}
+	t.Log("copying the large aligned value")
 	copy := large
 	large.Values[0] = 99
+	t.Log("registering the aligned defer capture")
 	defer func(v explicitLarge) {
+		t.Log("checking the aligned defer capture")
 		if v.Values[0] != 83 || v.Values[8192] != 84 || uintptr(unsafe.Pointer(&v))&63 != 0 {
 			t.Fatal("aligned defer capture")
 		}
 	}(copy)
 	copy.Values[8192] = 101
+	t.Log("running the aligned defer capture")
 }
 
 func TestExplicitAlignmentReflection(t *testing.T) {

@@ -101,7 +101,8 @@ run_worker_go_test() {
 	# Typed mutation consumed 377s in CI, leaving too little of the 480s
 	# package deadline for MakeFunc's continuous-GC race. Run that stress test
 	# separately below, reusing the module and preserving all its iterations.
-	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
+	# Large by-value alignment tests exceed the default 128 KiB fiber stack.
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test -goroutine-stack-size=1MB \
 		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
 		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation)$' \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
@@ -133,7 +134,7 @@ run_libffi_go_test() {
 	else
 		env_args+=(GOOS=js GOARCH=wasm)
 	fi
-	run_with_timeout env "${env_args[@]}" "${llgo_cmd}" test "${target_args[@]}" \
+	run_with_timeout env "${env_args[@]}" "${llgo_cmd}" test -goroutine-stack-size=1MB "${target_args[@]}" \
 		-tags=llgo.wasm.reflect.libffi -v -count=1 -timeout=180s \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
