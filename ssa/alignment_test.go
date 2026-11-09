@@ -252,3 +252,81 @@ func TestExplicitAlignmentDebugMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestExplicitAlignmentNestedNativeCallbacks(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	sizes := prog.TypeSizes(types.SizesFor("gc", "amd64"))
+	pkg, _ := alignmentPackage(t, sizes, `
+type Block struct { _ structs.Align64; Value byte }
+type Native func(Block)
+type NativeAlias = func(Block)
+type Record struct { Callback Native }
+type Recursive struct { Next *Recursive; Callback NativeAlias }
+type Interface interface { Use(Native) }
+type MapKey map[Interface]int
+type MapValue map[int]Native
+type GoRecord struct { Next *GoRecord; Callback func(Block) }
+`)
+	prog.SetTypeCallConv("alignment.Native", CDecl)
+	prog.SetTypeCallConv("alignment.NativeAlias", CDecl)
+	for _, name := range []string{"Record", "Recursive", "Interface", "MapKey", "MapValue"} {
+		t.Run(name, func(t *testing.T) {
+			err := prog.NativeAlignmentValidator()(pkg.Scope().Lookup(name).Type(), GoDecl)
+			alignment, ok := err.(*AlignmentError)
+			if !ok || alignment.Type != pkg.Scope().Lookup("Block").Type() || alignment.Pos == token.NoPos {
+				t.Fatalf("nested native callback lost its positioned alignment diagnostic: %v", err)
+			}
+		})
+	}
+	// A tuple can carry a callback in a later result. Validation must not stop
+	// after a harmless scalar result.
+	tuple := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Int]),
+		types.NewParam(token.NoPos, nil, "", pkg.Scope().Lookup("Native").Type()))
+	if err := prog.NativeAlignmentValidator()(tuple, GoDecl); err == nil {
+		t.Fatal("native callback in a tuple was accepted")
+	}
+	// Reusing a validator must retain the distinction between Go closure
+	// fields and native function-pointer fields of the same record.
+	raw := pkg.Scope().Lookup("GoRecord").Type()
+	validate := prog.NativeAlignmentValidator()
+	if err := validate(raw, GoDecl); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(types.NewPointer(raw), CDecl); err != nil {
+		t.Fatal("pointer exposed Go callback as a native signature:", err)
+	}
+	if err := validate(raw, CDecl); err == nil {
+		t.Fatal("cached Go validation bypassed the native boundary")
+	}
+}
+
+func TestExplicitAlignmentNativeRecordFields(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm"} {
+		t.Run(arch, func(t *testing.T) {
+			prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
+			defer prog.Dispose()
+			sizes := prog.TypeSizes(types.SizesFor("gc", arch))
+			prog.SetTypeCallConv("alignment.Native", CDecl)
+			pkg, _ := alignmentPackage(t, sizes, `
+type Native struct { _ structs.Align16; B byte; Fn func(); N uint64 }
+type Outer struct { B byte; Value Native; Tail byte }
+`)
+			raw := pkg.Scope().Lookup("Native").Type()
+			var positions []token.Pos
+			for _, field := range structFields(raw) {
+				positions = append(positions, field.Pos())
+			}
+			prog.SetNativeStructFields(positions)
+			// The callback occupies one native pointer, while the marker raises
+			// storage alignment without changing the native uint64 boundary.
+			ptr := int64(prog.PointerSize())
+			wantSize := int64(16)
+			if ptr == 8 {
+				wantSize = 32
+			}
+			checkHostLayout(t, prog, sizes, raw, wantSize, 16, []int64{0, 0, ptr, 2 * ptr})
+			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Outer").Type(), wantSize+32, 16, []int64{0, 16, 16 + wantSize})
+		})
+	}
+}
