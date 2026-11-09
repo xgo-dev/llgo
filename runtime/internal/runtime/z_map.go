@@ -156,9 +156,9 @@ func NewMapIter(t *maptype, h *hmap) *llgoMapIter {
 	return NewMapIterBuffer(t, h, new(llgoMapIter))
 }
 
-// NewMapIterBuffer initializes caller-owned iteration storage. Neither the
-// map nor its buckets retain it; its managed fields stay live until iteration
-// stops. Reset every field when a source range executes again, even for nil maps.
+// NewMapIterBuffer initializes caller-owned iteration storage, resetting every
+// field even for nil or empty maps. The caller must retain the buffer and its
+// managed fields until iteration stops; neither the map nor its buckets retain it.
 func NewMapIterBuffer(t *maptype, h *hmap, it *llgoMapIter) *llgoMapIter {
 	*it = llgoMapIter{}
 	mapiterinit(t, h, &it.hiter)

@@ -13,6 +13,7 @@ func (f Function) SetEscapeStackBytes(size uint64) {
 }
 
 func (f Function) reserveEscapeStack(typ Type) bool {
+	// Helpers reserve greedily in lowering order, without hotness weighting.
 	size, alignment := f.Prog.SizeOf(typ), f.Prog.AlignOf(typ)
 	if f.Prog.GCRootsEnabled() {
 		size += f.Prog.StackRootBytes(typ)
