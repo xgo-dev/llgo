@@ -85,8 +85,9 @@ func allocAligned(size, alignment uintptr, zero, noscan bool) unsafe.Pointer {
 	}
 	var p unsafe.Pointer
 	if noscan {
-		// GC_memalign only supplies scanned storage. Align an atomic allocation
-		// ourselves; interior pointers keep its base reachable in both collectors.
+		// Not every backend supports aligned pointer-free allocations. Align
+		// atomic storage ourselves; the supported GC backends retain its base
+		// through the interior pointer.
 		p = AllocAtomicU(allocSize + padding)
 		p = unsafe.Add(p, -uintptr(p)&padding)
 	} else {

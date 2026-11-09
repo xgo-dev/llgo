@@ -67,7 +67,7 @@ func add(p unsafe.Pointer, x uintptr) unsafe.Pointer {
 // compiler (both frontend and SSA backend) knows the signature
 // of this function.
 func newobject(typ *_type) unsafe.Pointer {
-	return allocZTyped(typ.Size_, uintptr(typ.Align_), typ.PtrBytes != 0)
+	return allocZTyped(typ.Size_, uintptr(typ.Align_), typ.Pointers())
 }
 
 // TODO
@@ -95,7 +95,7 @@ func newarray(typ *_type, n int) unsafe.Pointer {
 	if overflow || mem > maxAlloc || n < 0 {
 		panic(plainError("runtime: allocation size out of range"))
 	}
-	return allocZTyped(mem, uintptr(typ.Align_), typ.PtrBytes != 0)
+	return allocZTyped(mem, uintptr(typ.Align_), typ.Pointers())
 }
 
 const (

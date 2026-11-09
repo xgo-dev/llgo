@@ -1850,7 +1850,7 @@ func (v Value) grow(n int) {
 		// plain 3-word struct may use a different calling convention.
 		// Reinterpret the header as a builtin slice so the call ABI matches.
 		sh := *(*[]byte)(unsafe.Pointer(p))
-		sh = growslice(sh, n, int(t.Size_), int(t.Align_), t.PtrBytes != 0)
+		sh = growslice(sh, n, int(t.Size_), int(t.Align_), t.Pointers())
 		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&sh))
 		p.Len = oldLen // set oldLen back
 	}
