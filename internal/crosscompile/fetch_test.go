@@ -3,6 +3,7 @@ package crosscompile
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -1198,6 +1199,76 @@ func TestExtractZip(t *testing.T) {
 			t.Error("Expected error for non-directory destination, got nil")
 		}
 	})
+}
+
+func TestExtractZipRejectsEscapingPaths(t *testing.T) {
+	// Exercise our validation even when archive/zip accepts insecure names.
+	t.Setenv("GODEBUG", "zipinsecurepath=1")
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"../outside.txt", "child/../../outside.txt", filepath.ToSlash(outside), "../outside-dir/"}
+	if runtime.GOOS == "windows" {
+		names = append(names, `..\outside.txt`, `C:\outside.txt`, `C:outside.txt`, `\\server\share\outside.txt`)
+	}
+	for i, name := range names {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			var data bytes.Buffer
+			writer := zip.NewWriter(&data)
+			entry, err := writer.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(name, "/") {
+				if _, err := io.WriteString(entry, "replaced"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(root, "input.zip")
+			if err := os.WriteFile(archive, data.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(root, "extracted")
+			if err := os.MkdirAll(dest, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractZip(archive, dest); err == nil || !strings.Contains(err.Error(), "escapes extraction directory") {
+				t.Fatalf("entry %q: error = %v", name, err)
+			}
+			content, err := os.ReadFile(outside)
+			if err != nil || string(content) != "original" {
+				t.Fatalf("outside file changed: %q, %v", content, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "outside-dir")); !os.IsNotExist(err) {
+				t.Fatalf("outside directory created: %v", err)
+			}
+			// archive/zip can return both a reader and ErrInsecurePath.
+			// Closing that reader permits archive cleanup on Windows too.
+			t.Setenv("GODEBUG", "zipinsecurepath=0")
+			if err := extractZip(archive, dest); err == nil {
+				t.Fatal("archive/zip rejection was ignored")
+			}
+			if err := os.Remove(archive); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestExtractZipRelativeDestination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := createTestZip("input.zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractZip("input.zip", "output"); err != nil {
+		t.Fatal(err)
+	}
+	verifyExtraction(t, "output")
 }
 
 // Create test ZIP file

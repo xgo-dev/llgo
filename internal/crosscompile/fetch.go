@@ -455,10 +455,16 @@ func fileExists(name string) bool {
 func extractZip(zipFile, dest string) error {
 	r, err := zip.OpenReader(zipFile)
 	if err != nil {
+		if r != nil {
+			r.Close()
+		}
 		return err
 	}
 	defer r.Close()
 	decompress := func(file *zip.File) error {
+		if !filepath.IsLocal(file.Name) {
+			return fmt.Errorf("zip entry %q escapes extraction directory", file.Name)
+		}
 		path := filepath.Join(dest, file.Name)
 
 		if file.FileInfo().IsDir() {
