@@ -1,6 +1,7 @@
 package plan9asm
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -72,14 +73,45 @@ func TestNativeTailTransferBDWGC(t *testing.T) {
 	}
 }
 
+func TestNativeTailTransferBDWGCArgumentAttributes(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target *byte)\n")
+	source := "TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-8\nMOVD target+0(FP), R27\nJMP (R27)\n"
+	tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Module.Dispose()
+	native := tr.Module.NamedFunction("example.com/tail.Enter")
+	kind := llvm.AttributeKindID("nonnull")
+	native.AddAttributeAtIndex(1, tr.Module.Context().CreateEnumAttribute(kind, 0))
+	wrapNativeTailBDWGC(tr.Module, native)
+	entry := tr.Module.NamedFunction("example.com/tail.Enter")
+	if entry.GetEnumAttributeAtIndex(1, kind).IsNil() {
+		t.Fatal("public collector wrapper dropped its argument guarantee")
+	}
+	callback := tr.Module.NamedFunction("example.com/tail.Enter$blocked")
+	if ir := callback.String(); !strings.Contains(ir, `(ptr nonnull `) {
+		t.Fatalf("native forwarding call dropped its argument guarantee:\n%s", ir)
+	}
+	if !entry.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() || native.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
+		t.Fatal("physical noinline policy was not kept at the native boundary")
+	}
+	if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	emitNativeTailObject(t, tr.Module)
+}
+
 func TestNativeTailTransferRejectsUnsupportedABI(t *testing.T) {
 	for _, tc := range []struct{ name, decl, source string }{
 		{"result", "func Enter(target uintptr) uintptr", "TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-16\nMOVD target+0(FP), R27\nJMP (R27)\n"},
 		{"frame", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "$0-16", "$16-16", 1)},
 		{"narrow", "func Enter(target uintptr, context uint32)", nativeTailFixture},
 		{"flags", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "NOSPLIT|NOFRAME", "NOSPLIT", 1)},
+		{"implicit flags", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "NOSPLIT|NOFRAME, ", "", 1)},
 		{"unknown flag", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "NOSPLIT|NOFRAME", "NOSPLIT|NOFRAME|DUPOK", 1)},
 		{"pseudo SP", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "RSP", "SP", 1)},
+		{"reserved body register", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tMOVD R18, R5\n\tMOVD R29,", 1)},
 		{"late frame load", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tMOVD RSP, R19\n\tMOVD context+8(FP), R0\n\tMOVD R29,", 1)},
 		{"nonterminal transfer", "func Enter(target, context uintptr)", nativeTailFixture + "\tRET\n"},
 		{"multiple transfers", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tJMP (R27)\n\tMOVD R29,", 1)},
@@ -92,6 +124,55 @@ func TestNativeTailTransferRejectsUnsupportedABI(t *testing.T) {
 				t.Fatal("unsupported native tail ABI accepted")
 			}
 		})
+	}
+}
+
+func TestNativeTailTransferArgumentLimits(t *testing.T) {
+	for _, argc := range []int{0, 1, 8, 9} {
+		t.Run(fmt.Sprint(argc), func(t *testing.T) {
+			var names []string
+			for i := 0; i < argc; i++ {
+				names = append(names, fmt.Sprintf("arg%d", i))
+			}
+			params := ""
+			load := "MOVD $4096, R27"
+			if argc != 0 {
+				params = strings.Join(names, ", ") + " uintptr"
+				load = "MOVD arg0+0(FP), R27"
+			}
+			pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter("+params+")\n")
+			source := fmt.Sprintf("TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-%d\n%s\nJMP (R27)\n", argc*8, load)
+			tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+			if argc > 8 {
+				if err == nil {
+					tr.Module.Dispose()
+					t.Fatal("stack-passed arguments accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			emitNativeTailObject(t, tr.Module)
+		})
+	}
+}
+
+func TestNativeTailTransferHonorsGoBinderFilter(t *testing.T) {
+	pkg := mustTestPackage(t, "syscall", "package syscall\nfunc rawVforkSyscall(target, context uintptr)\nfunc Kept()\n")
+	source := strings.Replace(nativeTailFixture, "·Enter", "·rawVforkSyscall", 1)
+	source += "TEXT ·Kept(SB), NOSPLIT, $0-0\nRET\n"
+	tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Module.Dispose()
+	if fn := tr.Module.NamedFunction("syscall.rawVforkSyscall"); !fn.IsNil() && !fn.IsDeclaration() {
+		t.Fatal("runtime-provided entry acquired a second assembly body")
 	}
 }
 

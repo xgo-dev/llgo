@@ -34,6 +34,12 @@ func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.F
 			continue
 		}
 		name := resolve(fn.Sym)
+		// The Go binder can deliberately filter TEXT bodies (for example a
+		// syscall entry supplied by the runtime). Do not lower those again.
+		entry := mod.NamedFunction(name)
+		if entry.IsNil() || entry.IsDeclaration() {
+			continue
+		}
 		sig, ok := sigs[name]
 		if !ok {
 			return fmt.Errorf("native tail transfer %s: missing Go declaration", name)
@@ -81,7 +87,16 @@ func wrapNativeTailBDWGC(mod llvm.Module, native llvm.Value) {
 		field := b.CreateStructGEP(dataType, callback.Param(0), i, "")
 		args = append(args, b.CreateLoad(typ, field, ""))
 	}
-	b.CreateCall(native.GlobalValueType(), native, args, "")
+	call := b.CreateCall(native.GlobalValueType(), native, args, "")
+	call.SetInstructionCallConv(native.FunctionCallConv())
+	// The GC transition changes function effects; forward only the return
+	// and parameter contracts to the public entry and the native call.
+	for i := 0; i <= len(params); i++ {
+		for _, attr := range native.GetAttributesAtIndex(i) {
+			entry.AddAttributeAtIndex(i, attr)
+			call.AddCallSiteAttribute(i, attr)
+		}
+	}
 	b.CreateRet(llvm.ConstNull(ptr))
 
 	b.SetInsertPointAtEnd(ctx.AddBasicBlock(entry, "entry"))
