@@ -115,8 +115,18 @@ func AuditRuntimeSources(conf RuntimeAuditConfig) (*RuntimeOwnership, error) {
 		return nil, err
 	}
 	target := &llssa.Target{GOOS: conf.GOOS, GOARCH: conf.GOARCH}
-	if conf.GOOS == "js" && conf.GOARCH == "wasm" && slices.Contains(tags, "llgo.wasm.emscripten.memory64") {
-		target.LLVMTarget = "wasm64-unknown-emscripten"
+	if conf.GOARCH == "wasm" {
+		switch conf.GOOS {
+		case "js":
+			target.WasmProfile = "j32"
+			target.LLVMTarget = "wasm32-unknown-emscripten"
+			if slices.Contains(tags, "llgo.wasm.emscripten.memory64") {
+				target.WasmProfile = "j64"
+				target.LLVMTarget = "wasm64-unknown-emscripten"
+			}
+		case "wasip1":
+			target.WasmProfile = "w32"
+		}
 	}
 	tags = append(tags, target.ClosureEnvBuildTag())
 	slices.Sort(tags)

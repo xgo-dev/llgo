@@ -93,6 +93,9 @@ type goProgram aProgram
 // Alignof must implement the alignment guarantees required by the spec.
 // The result must be >= 1.
 func (p *goProgram) Alignof(T types.Type) int64 {
+	if layout, ok := p.wasmNativeLayout(T); ok {
+		return layout.align
+	}
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.align
 	}
@@ -107,6 +110,20 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	prog := Program(unsafe.Pointer(p))
+	if prog.usesWideGoStorage() {
+		native := prog.nativeFields(fields)
+		changed := native
+		for _, f := range fields {
+			if changed {
+				break
+			}
+			_, changed = p.wasmNativeLayout(f.Type())
+		}
+		if changed {
+			_, offsets := p.wasmNativeFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] }, native)
+			return offsets
+		}
+	}
 	if !prog.nativeFields(fields) {
 		for _, f := range fields {
 			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
@@ -135,6 +152,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // Sizeof must implement the size guarantees required by the spec.
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
+	if layout, ok := p.wasmNativeLayout(T); ok {
+		return layout.size
+	}
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.size
 	}

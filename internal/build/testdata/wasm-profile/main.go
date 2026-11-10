@@ -1,3 +1,5 @@
+//go:build llgo
+
 package main
 
 import (
@@ -96,6 +98,7 @@ func checkNativeNarrowing() {
 }
 
 func main() {
+	checkGoLayout()
 	if got := unsafe.Sizeof(uintptr(0)); got != expectedGoWordSize {
 		panic("unexpected Go word size")
 	}
@@ -122,5 +125,6 @@ func main() {
 	checkClosureABI()
 	checkNativeNarrowing()
 	checkFunctionValueSymbolization()
+	checkNativeRecord()
 	println("wasm ABI profile ok")
 }
