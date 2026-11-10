@@ -17,14 +17,15 @@ import (
 )
 
 // Rewrite replaces portable operations in dependent declarations with the
-// official bridge's emulated and SIMD128 representations. Original types and
-// signatures remain available to the initial check of importing packages.
+// official bridge's emulated and target-supported vector representations.
+// Original types and signatures remain available to the initial check of
+// importing packages.
 // Imports reports additional dependencies that the loader must make available
 // to the second type check; their packages already occur below simd in the graph.
 // Rewriting mutates files in place. On error, callers must treat both syntax
 // and type information as invalid; the loader marks the package IllTyped and
 // excludes it from its cache before any downstream compilation.
-func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []*ast.File) (changed bool, imports []string, err error) {
+func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []*ast.File, arch string) (changed bool, imports []string, err error) {
 	if !importsSIMD(pkg, make(map[*types.Package]bool)) || pkg.Path() == bridgePath || pkg.Path() == "simd/archsimd" {
 		return false, nil, nil
 	}
@@ -57,7 +58,7 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 	if err := a.validateGlobalBindings(fset, files); err != nil {
 		return false, nil, err
 	}
-	r := &rewriter{fset: fset, a: a, imports: make(map[string]bool), dependencies: make(map[ast.Node][]*types.Var)}
+	r := &rewriter{widths: targetWidths(arch), fset: fset, a: a, imports: make(map[string]bool), dependencies: make(map[ast.Node][]*types.Var)}
 	// Record initialization edges before any original body is replaced.
 	for _, file := range files {
 		for _, decl := range file.Decls {
@@ -94,7 +95,7 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 					// Base methods are supplied by bridge. Only the public
 					// FromArch/ToArch generic functions need specialized Go bodies.
 					if d.Recv == nil && strings.HasPrefix(filepath.Base(fset.Position(d.Pos()).Filename), "tofrom_") {
-						for _, width := range widths {
+						for _, width := range r.widths {
 							decls = append(decls, fr.specialize(d, width).(*ast.FuncDecl))
 						}
 					}
@@ -107,7 +108,7 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 				if d.Body == nil {
 					return false, nil, fmt.Errorf("%s: cannot specialize bodyless SIMD-dependent function %s", fset.Position(d.Pos()), d.Name.Name)
 				}
-				for _, width := range widths {
+				for _, width := range r.widths {
 					decls = append(decls, fr.specialize(d, width).(*ast.FuncDecl))
 				}
 				if a.types[obj.Type()] {
@@ -135,7 +136,7 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 					continue
 				}
 				if d.Tok == token.CONST && a.bodyDependent(d) {
-					for _, width := range widths {
+					for _, width := range r.widths {
 						decls = append(decls, fr.specialize(d, width).(*ast.GenDecl))
 					}
 					changed, fileChanged = true, true
@@ -147,7 +148,7 @@ func Rewrite(fset *token.FileSet, pkg *types.Package, info *types.Info, files []
 						if !a.dependent(info.Defs[s.Name]) {
 							continue
 						}
-						for _, width := range widths {
+						for _, width := range r.widths {
 							copy := fr.specialize(s, width).(*ast.TypeSpec)
 							decls = append(decls, &ast.GenDecl{TokPos: d.TokPos, Tok: token.TYPE, Specs: []ast.Spec{copy}, Doc: d.Doc})
 						}
@@ -198,6 +199,7 @@ func importsSIMD(pkg *types.Package, seen map[*types.Package]bool) bool {
 }
 
 type rewriter struct {
+	widths       []int
 	fset         *token.FileSet
 	a            *analysis
 	imports      map[string]bool
@@ -473,8 +475,20 @@ func (f *fileRewriter) dispatch(decl *ast.FuncDecl) *ast.BlockStmt {
 		}
 		return []ast.Stmt{&ast.ExprStmt{X: call}, &ast.ReturnStmt{Return: pos}}
 	}
-	return &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: []ast.Stmt{
-		&ast.IfStmt{If: pos, Cond: &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos}, Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(0)}},
-		invoke(128)[0],
-	}}
+	return &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: f.dispatchWidth(pos, invoke)}
+}
+
+// Use the same selection for scalar entry points and global initialization.
+// Emulation has a logical width of 128, so it must be tested before width.
+func (f *fileRewriter) dispatchWidth(pos token.Pos, invoke func(int) []ast.Stmt) []ast.Stmt {
+	stmts := []ast.Stmt{&ast.IfStmt{If: pos,
+		Cond: &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos},
+		Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(0)}}}
+	for _, width := range f.widths[2:] {
+		stmts = append(stmts, &ast.IfStmt{If: pos, Cond: &ast.BinaryExpr{
+			X:     &ast.CallExpr{Fun: f.qualify(simdPath, "VectorBitSize", pos), Lparen: pos, Rparen: pos},
+			OpPos: pos, Op: token.EQL, Y: &ast.BasicLit{ValuePos: pos, Kind: token.INT, Value: strconv.Itoa(width)}},
+			Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(width)}})
+	}
+	return append(stmts, invoke(128)...)
 }

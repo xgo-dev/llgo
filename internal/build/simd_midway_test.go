@@ -63,6 +63,16 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 						t.Fatalf("missing variant %s", name)
 					}
 				}
+				for _, name := range []string{"main.sum@simd256", "main.makeBlock@simd256"} {
+					fn := mod.NamedFunction(name)
+					if target.arch == "amd64" {
+						if fn.IsNil() || fn.BasicBlocksCount() == 0 {
+							t.Fatalf("missing variant %s", name)
+						}
+					} else if !fn.IsNil() {
+						t.Fatalf("unexpected wide variant %s on %s", name, target.arch)
+					}
+				}
 				if !strings.Contains(mod.NamedFunction("main.sum").String(), "simd.Emulated") {
 					t.Fatal("scalar boundary lost runtime selection")
 				}

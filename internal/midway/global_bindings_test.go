@@ -42,7 +42,7 @@ var (
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = Rewrite(fset, pkg, info, []*ast.File{file}); err != nil {
+	if _, _, err = Rewrite(fset, pkg, info, []*ast.File{file}, "amd64"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = cfg.Check("client", fset, []*ast.File{file}, testInfo()); err != nil {
@@ -53,7 +53,7 @@ var (
 		t.Fatal(err)
 	}
 	for _, name := range []string{"text", "bytes"} {
-		for _, suffix := range []string{"", suffix(0), suffix(128)} {
+		for _, suffix := range []string{"", suffix(0), suffix(128), suffix(256)} {
 			data, ok := embedded[name+suffix]
 			if !ok || len(data.Files) != 1 || string(data.Files[0].Data) != "embedded data" {
 				t.Errorf("missing embedded contents for %s: %+v", name+suffix, data)
@@ -99,7 +99,7 @@ func TestRewriteRejectsGlobalBindings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = Rewrite(fset, pkg, info, files)
+			_, _, err = Rewrite(fset, pkg, info, files, "amd64")
 			if tc.reject {
 				if err == nil || !strings.Contains(err.Error(), "binding for SIMD-dependent global Value") || !strings.Contains(err.Error(), position) {
 					t.Fatalf("unexpected diagnostic: %v", err)
@@ -134,7 +134,7 @@ var Alias int
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Rewrite(fset, pkg, info, []*ast.File{file})
+	_, _, err = Rewrite(fset, pkg, info, []*ast.File{file}, "amd64")
 	if err == nil || !strings.Contains(err.Error(), "target SIMD-dependent global foreign.Value") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}

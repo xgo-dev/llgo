@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strconv"
 )
 
 const (
@@ -16,13 +17,19 @@ const (
 	bridgePath = "simd/internal/bridge"
 )
 
-var widths = [...]int{0, 128}
+// Widths are a target property, not the build host's CPU capabilities.
+func targetWidths(arch string) []int {
+	if arch == "amd64" {
+		return []int{0, 128, 256}
+	}
+	return []int{0, 128}
+}
 
 func suffix(width int) string {
 	if width == 0 {
 		return "@simd0"
 	}
-	return "@simd128"
+	return "@simd" + strconv.Itoa(width)
 }
 
 func elementBits(name string) int {

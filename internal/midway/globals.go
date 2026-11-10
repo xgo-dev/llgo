@@ -173,7 +173,7 @@ func (f *fileRewriter) global(decl *ast.GenDecl, spec *ast.ValueSpec) (extra []a
 		if !f.a.types[obj.Type()] || id.Name == "_" {
 			continue
 		}
-		for _, width := range widths {
+		for _, width := range f.widths {
 			extra = append(extra, &ast.GenDecl{Doc: embedDoc(decl.Doc, spec.Doc), TokPos: pos, Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{
 				Names: []*ast.Ident{ident(id.Name+suffix(width), pos)}, Type: f.typeExpr(obj.Type(), width, pos),
 			}}})
@@ -223,11 +223,7 @@ func (f *fileRewriter) global(decl *ast.GenDecl, spec *ast.ValueSpec) (extra []a
 		return append(stmts, &ast.ReturnStmt{Return: pos, Results: returns})
 	}
 	reads := dependencyReads(f.dependencies[spec], pos)
-	body := &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: append(reads,
-		&ast.IfStmt{If: pos, Cond: &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos},
-			Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: branch(0)}},
-	)}
-	body.List = append(body.List, branch(128)...)
+	body := &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: append(reads, f.dispatchWidth(pos, branch)...)}
 	spec.Values = []ast.Expr{&ast.CallExpr{Lparen: pos, Rparen: pos, Fun: &ast.FuncLit{
 		Type: &ast.FuncType{Func: pos, Params: &ast.FieldList{Opening: pos, Closing: pos}, Results: results}, Body: body,
 	}}}

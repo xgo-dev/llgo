@@ -35,7 +35,7 @@ func makeAggregate() struct {
 } { panic("fixture") }
 var Value = makeAggregate()
 `, true)
-	for _, width := range widths {
+	for _, width := range targetWidths("amd64") {
 		value := pkg.Scope().Lookup("Value" + suffix(width))
 		if value == nil {
 			t.Fatalf("missing aggregate variant %d", width)
@@ -77,7 +77,7 @@ func Later() { _ = foreign.Make() }
 			}
 			later := file.Decls[2].(*ast.FuncDecl)
 			body := later.Body
-			changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file})
+			changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file}, "amd64")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want first unnameable %s", err, tc.want)
 			}
@@ -109,7 +109,7 @@ func TestRewriteImportShadowingAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Rewrite(fset, pkg, info, files); err != nil {
+	if _, _, err := Rewrite(fset, pkg, info, files, "amd64"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cfg.Check("client", fset, files, testInfo()); err != nil {
@@ -158,7 +158,7 @@ func Shadow(simd int) int { var v Alias; return v.Len()+simd }
 func Dot() Box[simd.Uint32s] { return Box[simd.Uint32s]{} }
 `, true)
 	for _, name := range []string{"Node", "Peer", "Embedded", "Alias", "Bytes", "New", "Use", "Generic", "Recursive", "Scalar", "Shadow", "Dot"} {
-		for _, width := range widths {
+		for _, width := range targetWidths("amd64") {
 			if pkg.Scope().Lookup(name+suffix(width)) == nil {
 				t.Errorf("missing %s%s", name, suffix(width))
 			}
@@ -167,7 +167,7 @@ func Dot() Box[simd.Uint32s] { return Box[simd.Uint32s]{} }
 	for _, tc := range []struct {
 		name  string
 		value int64
-	}{{"Size@simd0", 32}, {"Size@simd128", 16}, {"Next@simd0", 33}, {"Next@simd128", 17}} {
+	}{{"Size@simd0", 32}, {"Size@simd128", 16}, {"Size@simd256", 32}, {"Next@simd0", 33}, {"Next@simd128", 17}, {"Next@simd256", 33}} {
 		obj := pkg.Scope().Lookup(tc.name).(*types.Const)
 		if got, _ := constant.Int64Val(obj.Val()); got != tc.value {
 			t.Errorf("%s = %d, want %d", tc.name, got, tc.value)

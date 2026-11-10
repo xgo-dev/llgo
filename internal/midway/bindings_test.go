@@ -17,7 +17,7 @@ func TestRewriteGenericReceiverInstances(t *testing.T) {
  func Use() int {x:=Identity(Box[int]{});return x.Width()+Global.Width()}
  `, true)
 			for _, name := range []string{"Box", "Global", "Identity", "Use"} {
-				for _, width := range widths {
+				for _, width := range targetWidths("amd64") {
 					if pkg.Scope().Lookup(name+suffix(width)) == nil {
 						t.Fatalf("missing %s variant %d", name, width)
 					}
@@ -120,7 +120,7 @@ func (Number) _() int {var v simd.Uint32s;return v.Len()}
 func (Number) _() int {var v simd.Uint32s;return v.Len()}
 func Width() int {var v simd.Uint32s;return v.Len()}
 `, true)
-	for _, width := range widths {
+	for _, width := range targetWidths("amd64") {
 		if pkg.Scope().Lookup("Number"+suffix(width)) != nil {
 			t.Fatal("blank method created unnecessary receiver variants")
 		}

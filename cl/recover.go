@@ -214,7 +214,7 @@ func isRecoverTransparentWrapper(fn *ssa.Function) bool {
 }
 
 // Midway retains the source entry as a dispatcher, so it is not an SSA
-// synthetic wrapper. Its two sibling names contain compiler-only identifiers;
+// synthetic wrapper. Its sibling names contain compiler-only identifiers;
 // ordinary Go source cannot declare or call them. Check the forwarding calls
 // as well, excluding the retained trapping entries with dependent signatures.
 func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
@@ -230,7 +230,8 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 	if software == nil || hardware == nil {
 		return false
 	}
-	var seenSoftware, seenHardware bool
+	wide := origin.Pkg.Func(origin.Name() + "@simd256")
+	var seenSoftware, seenHardware, seenWide bool
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
 			call, ok := instr.(*ssa.Call)
@@ -246,7 +247,8 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 			}
 			seenSoftware = seenSoftware || callee == software
 			seenHardware = seenHardware || callee == hardware
+			seenWide = seenWide || callee == wide
 		}
 	}
-	return seenSoftware && seenHardware
+	return seenSoftware && seenHardware && (wide == nil || seenWide)
 }
