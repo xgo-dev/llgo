@@ -265,30 +265,29 @@ type context struct {
 	locality             localityLowering
 }
 
-func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llssa.Global) bool {
+func (p *context) staticByteArrayGlobalInit(define bool, gbl *ssa.Global) llssa.Expr {
 	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
-		return false
+		return llssa.Expr{}
 	}
 	data, ok := p.staticByteArrays[staticByteArrayDeclKey(gbl)]
 	if !ok {
-		return false
+		return llssa.Expr{}
 	}
 	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
 	if !ok {
-		return false
+		return llssa.Expr{}
 	}
 	arr, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array)
 	if !ok || arr.Len() != int64(len(data)) {
-		return false
+		return llssa.Expr{}
 	}
 	// Length is the restore-time check. Byte contents are trusted because
 	// StripLargeStaticByteArrays only accepts INT/CHAR literals.
 	basic, ok := arr.Elem().Underlying().(*types.Basic)
 	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
-		return false
+		return llssa.Expr{}
 	}
-	g.Init(p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data))
-	return true
+	return p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data)
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -484,11 +483,11 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) error {
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
 		return nil
 	}
-	if p.initStaticByteArrayGlobal(define, gbl, g) {
-		return nil
+	init := p.staticGlobalInits[gbl]
+	if restored := p.staticByteArrayGlobalInit(define, gbl); !restored.IsNil() {
+		init = restored
 	}
 	if define && vtype == goVar && info.Locality == llssa.LocalityNone {
-		init := p.staticGlobalInits[gbl]
 		if value, ok := p.rewriteValue(name); ok {
 			if p.isStringPtrType(gbl.Type()) {
 				init = pkg.ConstString(value)
@@ -510,7 +509,7 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) error {
 				g.InitNil()
 			}
 		}
-	} else if init, ok := p.staticGlobalInits[gbl]; ok {
+	} else if !init.IsNil() {
 		g.Init(init)
 	} else if define {
 		g.InitNil()
