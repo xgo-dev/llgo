@@ -18,11 +18,6 @@ const nativeTailFixture = `TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-16
 `
 
 func TestNativeTailTransfer(t *testing.T) {
-	llvm.InitializeAllTargetInfos()
-	llvm.InitializeAllTargets()
-	llvm.InitializeAllTargetMCs()
-	llvm.InitializeAllAsmPrinters()
-	llvm.InitializeAllAsmParsers()
 	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target, context uintptr)\n")
 	for _, goos := range []string{"darwin", "linux"} {
 		t.Run(goos, func(t *testing.T) {
@@ -35,22 +30,15 @@ func TestNativeTailTransfer(t *testing.T) {
 				t.Fatal(err)
 			}
 			ir := tr.Module.String()
+			if got := strings.Contains(ir, "~{x18}"); got != (goos == "linux") {
+				t.Fatalf("x18 clobber = %t on %s", got, goos)
+			}
 			for _, want := range []string{"native.tail:", "ldr x27, [sp, #8]", "ldr x0, [sp, #16]", "str x29, [x0, #16]", "str x30, [x0, #32]", "br x27", "bl Lnative_func_0${:uid}", "~{x19}", "~{v8}", "~{lr}", "ret void", "noinline"} {
 				if !strings.Contains(ir, want) {
 					t.Fatalf("missing %q:\n%s", want, ir)
 				}
 			}
-			target, err := llvm.GetTargetFromTriple(tr.Module.Target())
-			if err != nil {
-				t.Fatal(err)
-			}
-			machine := target.CreateTargetMachine(tr.Module.Target(), "generic", "", llvm.CodeGenLevelDefault, llvm.RelocPIC, llvm.CodeModelDefault)
-			defer machine.Dispose()
-			object, err := machine.EmitToMemoryBuffer(tr.Module, llvm.ObjectFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			object.Dispose()
+			emitNativeTailObject(t, tr.Module)
 		})
 	}
 }
@@ -65,6 +53,7 @@ func TestNativeTailTransferRejectsUnsupportedABI(t *testing.T) {
 		{"pseudo SP", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "RSP", "SP", 1)},
 		{"late frame load", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tMOVD RSP, R19\n\tMOVD context+8(FP), R0\n\tMOVD R29,", 1)},
 		{"nonterminal transfer", "func Enter(target, context uintptr)", nativeTailFixture + "\tRET\n"},
+		{"multiple transfers", "func Enter(target, context uintptr)", strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tJMP (R27)\n\tMOVD R29,", 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pkg := mustTestPackage(t, "example.com/tail", "package tail\n"+tc.decl+"\n")
@@ -79,14 +68,59 @@ func TestNativeTailTransferRejectsUnsupportedABI(t *testing.T) {
 
 func TestNativeTailTransferControlFlow(t *testing.T) {
 	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target, context uintptr)\n")
-	source := strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tCBZ R0, transfer\n\tMOVD R29,", 1)
-	source = strings.Replace(source, "\tJMP (R27)", "transfer:\n\tJMP (R27)", 1)
-	tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+	for _, label := range []string{"transfer___tail_uid__", "Lnative_func_0", "Ltail_done"} {
+		t.Run(label, func(t *testing.T) {
+			source := strings.Replace(nativeTailFixture, "\tMOVD R29,", "\tCBZ R0, "+label+"\n\tMOVD R29,", 1)
+			source = strings.Replace(source, "\tJMP (R27)", label+":\n\tJMP (R27)", 1)
+			tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			if ir := tr.Module.String(); strings.Contains(ir, "___tail_uid__") || !strings.Contains(ir, "Lnative_0_label_0${:uid}") {
+				t.Fatalf("source label was not normalized and uniquified:\n%s", ir)
+			}
+			emitNativeTailObject(t, tr.Module)
+		})
+	}
+}
+
+func emitNativeTailObject(t *testing.T, mod llvm.Module) {
+	t.Helper()
+	llvm.InitializeAllTargetInfos()
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllAsmPrinters()
+	llvm.InitializeAllAsmParsers()
+	target, err := llvm.GetTargetFromTriple(mod.Target())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tr.Module.Dispose()
-	if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+	machine := target.CreateTargetMachine(mod.Target(), "generic", "", llvm.CodeGenLevelDefault, llvm.RelocPIC, llvm.CodeModelDefault)
+	defer machine.Dispose()
+	object, err := machine.EmitToMemoryBuffer(mod, llvm.ObjectFile)
+	if err != nil {
 		t.Fatal(err)
+	}
+	object.Dispose()
+}
+
+func TestNativeTailTransferRejectsSpecialTargetRegisters(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target, context uintptr)\n")
+	for _, reg := range []string{"R18", "R29", "R30"} {
+		t.Run(reg, func(t *testing.T) {
+			source := strings.Replace(nativeTailFixture, "JMP (R27)", "JMP ("+reg+")", 1)
+			tr, err := TranslateSourceModuleForPkg(pkg, "tail_arm64.s", []byte(source), "linux", "arm64")
+			if err == nil {
+				tr.Module.Dispose()
+				t.Fatal("special target register accepted")
+			}
+			if !strings.Contains(err.Error(), "unsupported tail register") {
+				t.Fatal(err)
+			}
+		})
 	}
 }

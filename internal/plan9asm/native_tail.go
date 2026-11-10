@@ -18,16 +18,19 @@ var nativeTailPseudoSP = regexp.MustCompile(`\bSP\b`)
 // cannot describe code that changes SP and returns through a saved native LR.
 // Keep a normal LLVM entry/epilogue around one indivisible native asm region:
 // LLVM saves its callee-saved registers, and the region supplies the ABI0 frame.
+// Guest code must restore the entry FP/SP before returning through the saved LR.
 func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.FuncSig, resolve func(string) string, goos, goarch string) error {
 	if goarch != "arm64" || !asm.SupportsNativeTarget(goos, goarch) {
 		return nil
 	}
+	// GoModuleTranslation exposes names and signatures, but no parsed File.
+	// Reparse the small assembly input for its physical instruction body.
 	file, err := asm.Parse(asm.ArchARM64, string(src))
 	if err != nil {
 		return err
 	}
 	for _, fn := range file.Funcs {
-		if !hasIndirectTailTransfer(fn) {
+		if !hasIndirectTailTransfer(fn.Instrs) {
 			continue
 		}
 		name := resolve(fn.Sym)
@@ -42,8 +45,8 @@ func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.F
 	return nil
 }
 
-func hasIndirectTailTransfer(fn asm.Func) bool {
-	for _, ins := range fn.Instrs {
+func hasIndirectTailTransfer(instrs []asm.Instr) bool {
+	for _, ins := range instrs {
 		if (ins.Op == "JMP" || ins.Op == "B" || ins.Op == "BR") && len(ins.Args) == 1 {
 			arg := ins.Args[0]
 			if arg.Kind == asm.OpReg || (arg.Kind == asm.OpMem && arg.Mem.Base != "" && arg.Mem.Base != "PC") {
@@ -59,12 +62,15 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	if (last.Op != "JMP" && last.Op != "B" && last.Op != "BR") || len(last.Args) != 1 {
 		return fmt.Errorf("requires a terminal indirect branch")
 	}
+	if hasIndirectTailTransfer(fn.Instrs[:len(fn.Instrs)-1]) {
+		return fmt.Errorf("requires a single terminal indirect branch")
+	}
 	target := last.Args[0].Reg
 	if last.Args[0].Kind == asm.OpMem && last.Args[0].Mem.Off == 0 && last.Args[0].Mem.Index == "" {
 		target = last.Args[0].Mem.Base
 	}
 	reg, err := strconv.Atoi(strings.TrimPrefix(string(target), "R"))
-	if err != nil || reg < 0 || reg > 30 || reg == 18 {
+	if err != nil || reg < 0 || reg > 28 || reg == 18 {
 		return fmt.Errorf("unsupported tail register %s", target)
 	}
 	argc := len(sig.Args)
@@ -73,7 +79,7 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	}
 	flags := strings.Split(fn.Instrs[0].Raw, ",")
 	if len(flags) != 3 {
-		return fmt.Errorf("requires NOSPLIT|NOFRAME")
+		return fmt.Errorf("malformed TEXT directive: %s", fn.Instrs[0].Raw)
 	}
 	seenFlags := map[string]bool{}
 	for _, flag := range strings.Split(flags[1], "|") {
@@ -145,8 +151,9 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	assembly := strings.ReplaceAll(body.String(), "$", "$$")
 	// NativeSource uses only these two generated label families for a single
 	// function (entry plus ordinary source labels).
-	assembly = nativeTailLabels.ReplaceAllString(assembly, "${0}___tail_uid__")
-	assembly = strings.ReplaceAll(assembly, "___tail_uid__", "${:uid}")
+	assembly = nativeTailLabels.ReplaceAllStringFunc(assembly, func(label string) string {
+		return label + "${:uid}"
+	})
 
 	entry := mod.NamedFunction(sig.Name)
 	if entry.IsNil() || entry.ParamsCount() != argc {
@@ -190,10 +197,10 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	for i := 0; i < argc; i++ {
 		constraints = append(constraints, fmt.Sprint(i))
 	}
-	// Inputs are also outputs: the guest may overwrite them. Exclude Darwin's
-	// reserved x18 and FP/SP, which the guest must restore before returning.
+	// Inputs are also outputs: the guest may overwrite them. Darwin reserves
+	// x18; Linux permits guest clobbers. FP/SP must be restored by the guest.
 	for i := argc; i <= 28; i++ {
-		if i != 18 {
+		if i != 18 || goos != "darwin" {
 			constraints = append(constraints, fmt.Sprintf("~{x%d}", i))
 		}
 	}
