@@ -333,10 +333,10 @@ func extractTarGz(tarGzFile, dest string) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dest, header.Name)
-		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("%s: illegal file path", target)
+		if !filepath.IsLocal(header.Name) {
+			return fmt.Errorf("%s: illegal file path", header.Name)
 		}
+		target := filepath.Join(dest, header.Name)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {
@@ -463,7 +463,7 @@ func extractZip(zipFile, dest string) error {
 	defer r.Close()
 	decompress := func(file *zip.File) error {
 		if !filepath.IsLocal(file.Name) {
-			return fmt.Errorf("zip entry %q escapes extraction directory", file.Name)
+			return fmt.Errorf("unsafe ZIP entry path %q", file.Name)
 		}
 		path := filepath.Join(dest, file.Name)
 
@@ -477,6 +477,9 @@ func extractZip(zipFile, dest string) error {
 		}
 		defer fs.Close()
 
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
 		w, err := os.Create(path)
 		if err != nil {
 			return err

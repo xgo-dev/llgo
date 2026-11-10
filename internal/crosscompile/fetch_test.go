@@ -571,6 +571,33 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractTarGzRelativeDestination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	archive := createTestTarGz(t, map[string]string{"nested/file.txt": "content"})
+	t.Cleanup(func() { os.Remove(archive) })
+	if err := extractTarGz(archive, "output"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join("output", "nested/file.txt"))
+	if err != nil || string(content) != "content" {
+		t.Fatalf("nested file = %q, %v", content, err)
+	}
+}
+
+func TestExtractTarGzRejectsAbsoluteMember(t *testing.T) {
+	t.Setenv("GODEBUG", "tarinsecurepath=1")
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	archive := createTestTarGz(t, map[string]string{filepath.ToSlash(outside): "content"})
+	t.Cleanup(func() { os.Remove(archive) })
+	if err := extractTarGz(archive, filepath.Join(root, "output")); err == nil || !strings.Contains(err.Error(), "illegal file path") {
+		t.Fatalf("absolute member error = %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside file created: %v", err)
+	}
+}
+
 func TestDownloadAndExtractArchive(t *testing.T) {
 	// Create test archive
 	files := map[string]string{
@@ -1237,7 +1264,7 @@ func TestExtractZipRejectsEscapingPaths(t *testing.T) {
 			if err := os.MkdirAll(dest, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := extractZip(archive, dest); err == nil || !strings.Contains(err.Error(), "escapes extraction directory") {
+			if err := extractZip(archive, dest); err == nil || !strings.Contains(err.Error(), "unsafe ZIP entry path") {
 				t.Fatalf("entry %q: error = %v", name, err)
 			}
 			content, err := os.ReadFile(outside)
@@ -1255,6 +1282,46 @@ func TestExtractZipRejectsEscapingPaths(t *testing.T) {
 			}
 			if err := os.Remove(archive); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestExtractZipCreatesFileParents(t *testing.T) {
+	for _, directoryRecords := range []bool{false, true} {
+		t.Run(fmt.Sprint(directoryRecords), func(t *testing.T) {
+			var data bytes.Buffer
+			writer := zip.NewWriter(&data)
+			entry, err := writer.Create("nested/deep/file.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(entry, "content"); err != nil {
+				t.Fatal(err)
+			}
+			if directoryRecords {
+				// Directory records may follow the files they contain.
+				for _, name := range []string{"nested/", "nested/deep/"} {
+					if _, err := writer.Create(name); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			archive := filepath.Join(root, "input.zip")
+			if err := os.WriteFile(archive, data.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(root, "output")
+			if err := extractZip(archive, dest); err != nil {
+				t.Fatal(err)
+			}
+			content, err := os.ReadFile(filepath.Join(dest, "nested/deep/file.txt"))
+			if err != nil || string(content) != "content" {
+				t.Fatalf("nested file = %q, %v", content, err)
 			}
 		})
 	}
