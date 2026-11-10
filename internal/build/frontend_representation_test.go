@@ -38,7 +38,7 @@ func TestFrontendRepresentationPolicyValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, variant := range []string{"valid", "missing policy", "unknown ABI", "invalid origin", "unknown layout"} {
+	for _, variant := range []string{"valid", "missing policy", "unknown ABI", "invalid origin", "origin ABI mismatch", "unknown layout"} {
 		t.Run(variant, func(t *testing.T) {
 			var record frontcache.PackageExport
 			if err := json.Unmarshal(data, &record); err != nil {
@@ -56,6 +56,8 @@ func TestFrontendRepresentationPolicyValidation(t *testing.T) {
 					node.Representation.ABI = 999
 				case "invalid origin":
 					node.Representation.Origin = len(record.Types.Nodes)
+				case "origin ABI mismatch":
+					node.Representation.ABI = int(llssa.Stdcall)
 				case "unknown layout":
 					node.Layout = "unknown"
 				}

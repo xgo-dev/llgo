@@ -90,8 +90,10 @@ origins. Explicit Go facts are persisted as well: an opaque package has no live
 RHS bindings from which to reconstruct them. Source RHS objects are deliberately
 not compared with backend closure-converted bodies. Anonymous native layout
 attributes are serialized and validated independently of source positions.
-Unknown ABIs, unsupported attributes, and invalid origin references select the
-source-checking fallback before metadata is published. The existing archive
+Unknown ABIs, unsupported attributes, and invalid or inconsistent origin
+policies select the source-checking fallback before metadata is published. Each
+native origin must select itself and the same ABI as its derived declarations.
+The existing archive
 fingerprints also include compiler, target, source, and feature identities.
 
 ## Remaining limitations

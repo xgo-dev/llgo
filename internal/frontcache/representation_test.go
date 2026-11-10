@@ -10,7 +10,7 @@ func TestRepresentationGraphRoundTripAndValidation(t *testing.T) {
 	prog, pkg, index := fixture(t, `package p
 type root struct { Fn func(); Tail uint64 }
 type Copy root
-type Alias = root
+type Alias = Copy
 type Plain struct { Fn func(); Tail uint64 }
 type Anonymous = struct { Value uintptr }
 type Ordinary = struct { Value uintptr }
@@ -48,7 +48,7 @@ var Instance Generic[int]
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, variant := range []string{"valid", "missing policy", "basic policy", "instance policy", "invalid owner reference", "owner key mismatch", "invalid origin reference", "nondeclaration origin", "Go origin", "unknown layout", "layout on declaration", "invalid layout field", "layout key mismatch"} {
+	for _, variant := range []string{"valid", "missing policy", "basic policy", "instance policy", "invalid owner reference", "owner key mismatch", "invalid origin reference", "nondeclaration origin", "Go origin", "ordinary origin", "origin ABI mismatch", "origin cycle", "unknown layout", "layout on declaration", "invalid layout field", "layout key mismatch"} {
 		t.Run(variant, func(t *testing.T) {
 			var decoded TypeGraph
 			if err := json.Unmarshal(data, &decoded); err != nil {
@@ -74,6 +74,12 @@ var Instance Generic[int]
 				copyNode.Representation.Origin = integer
 			case "Go origin":
 				copyNode.Representation.ABI = 0
+			case "ordinary origin":
+				copyNode.Representation.Origin = ids["Plain"]
+			case "origin ABI mismatch":
+				copyNode.Representation.ABI = 4
+			case "origin cycle":
+				decoded.Nodes[copyNode.Representation.Origin].Representation.Origin = ids["Copy"]
 			case "unknown layout":
 				layoutNode.Layout = "future-layout"
 			case "layout on declaration":

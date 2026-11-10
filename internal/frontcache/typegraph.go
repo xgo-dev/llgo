@@ -250,6 +250,14 @@ func (p *TypeImporter) ImportRepresentations() (map[*types.TypeName]ImportedRepr
 		}
 		result[obj] = entry
 	}
+	for obj, policy := range result {
+		if policy.ABI != 0 {
+			origin, ok := result[policy.Origin]
+			if !ok || origin.ABI != policy.ABI || origin.Origin != policy.Origin {
+				return nil, fmt.Errorf("inconsistent native representation origin for %s", obj)
+			}
+		}
+	}
 	return result, nil
 }
 
