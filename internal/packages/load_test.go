@@ -580,3 +580,41 @@ func TestLLGoFilesAddImportGraph(t *testing.T) {
 		t.Fatal("patch import duplicated an existing package identity")
 	}
 }
+
+func TestCheckedValidationBeforeRewrite(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/validation\ngo 1.24\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nvar X = 1\n")
+	for _, reject := range []bool{true, false} {
+		t.Run(strconv.FormatBool(reject), func(t *testing.T) {
+			dedup := NewDeduper()
+			checks, rewrites := 0, 0
+			dedup.SetValidate(func(pkg *Package) error {
+				checks++
+				if pkg.TypesInfo == nil || pkg.Types.Scope().Lookup("X") == nil {
+					t.Fatal("validation ran before type checking")
+				}
+				if reject {
+					return errors.New("invalid compiler variable use")
+				}
+				return nil
+			})
+			dedup.SetRewrite(func(pkg *Package) (bool, error) {
+				rewrites++
+				pkg.Syntax[0].Decls[0].(*ast.GenDecl).Specs[0].(*ast.ValueSpec).Values[0].(*ast.BasicLit).Value = "2"
+				return true, nil
+			})
+			pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reject {
+				if checks != 1 || rewrites != 0 || !packageErrorsContain(pkgs[0], "invalid compiler variable use") {
+					t.Fatalf("checks=%d rewrites=%d errors=%v", checks, rewrites, pkgs[0].Errors)
+				}
+			} else if checks != 2 || rewrites != 1 || pkgs[0].IllTyped {
+				t.Fatalf("checks=%d rewrites=%d errors=%v", checks, rewrites, pkgs[0].Errors)
+			}
+		})
+	}
+}
