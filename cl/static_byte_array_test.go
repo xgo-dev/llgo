@@ -662,7 +662,7 @@ func TestInitStaticByteArrayGlobalKeepsPatchSkipStores(t *testing.T) {
 		t.Fatal(err)
 	}
 	ir := ret.String()
-	if !strings.Contains(ir, fmt.Sprintf("@p.Table = global [%d x i8]", n)) {
+	if !strings.Contains(ir, "@p.Table = ") || !strings.Contains(ir, fmt.Sprintf("global [%d x i8] zeroinitializer", n)) {
 		t.Fatalf("missing replacement table:\n%s", ir)
 	}
 	if strings.Count(ir, "store i8") < n {
@@ -713,24 +713,23 @@ func TestInitStaticByteArrayGlobalUsesObjectPackage(t *testing.T) {
 }
 
 func TestInitStaticByteArrayGlobalRejects(t *testing.T) {
-	var g llssa.Global
 	p := &context{staticByteArrays: map[string][]byte{StaticByteArrayKey("p", "T"): {1, 2, 3}}}
-	if p.initStaticByteArrayGlobal(false, &ssa.Global{}, g) {
+	if !p.staticByteArrayGlobalInit(false, &ssa.Global{}).IsNil() {
 		t.Fatal("define=false accepted")
 	}
 	empty := &context{}
-	if empty.initStaticByteArrayGlobal(true, &ssa.Global{}, g) {
+	if !empty.staticByteArrayGlobalInit(true, &ssa.Global{}).IsNil() {
 		t.Fatal("empty payloads accepted")
 	}
-	if p.initStaticByteArrayGlobal(true, &ssa.Global{}, g) {
+	if !p.staticByteArrayGlobalInit(true, &ssa.Global{}).IsNil() {
 		t.Fatal("nil pkg accepted")
 	}
 }
 
-func compileWithPayload(t *testing.T, src string, payloads map[string][]byte) {
+func compileWithPayload(t *testing.T, src string, payloads map[string][]byte) string {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,13 +739,61 @@ func compileWithPayload(t *testing.T, src string, payloads map[string][]byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if payloads == nil {
+		payloads = StripLargeStaticByteArrays(pkg, []*ast.File{file}, info)
+		if len(payloads) == 0 {
+			t.Fatal("missing stripped byte array")
+		}
+	}
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+	for _, imported := range pkg.Imports() {
+		prog.CreatePackage(imported, nil, nil, true)
+	}
 	ssaPkg := prog.CreatePackage(pkg, []*ast.File{file}, info, true)
 	ssaPkg.Build()
 	llprog := ssatest.NewProgramEx(t, nil, conf.Importer)
 	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
-	if _, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{StaticByteArrays: payloads}); err != nil {
+	ret, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{StaticByteArrays: payloads})
+	if err != nil {
 		t.Fatal(err)
+	}
+	return ret.String()
+}
+
+func TestStaticByteArraySharedStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		imported bool
+		value    byte
+	}{
+		{"zero", false, 0},
+		{"static", false, 1},
+		{"imported zero", true, 0},
+		{"imported static", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "package p\nimport _ \"unsafe\"\n"
+			if tc.imported {
+				source += "//go:cgo_import_static p.Table\n"
+			}
+			source += fmt.Sprintf("var Table = [%d]byte{%s}\n", minStripStaticByteArray,
+				strings.Repeat(fmt.Sprintf("%d,", tc.value), minStripStaticByteArray))
+			ir := compileWithPayload(t, source, nil)
+			want := "@p.Table = global "
+			if tc.value == 0 {
+				if tc.imported {
+					want = "@p.Table = external global "
+				} else {
+					want = "@p.Table = common global "
+					if strings.Contains(ir, "@p.Table = weak global ") {
+						want = "@p.Table = weak global "
+					}
+				}
+			}
+			if !strings.Contains(ir, want) {
+				t.Fatalf("missing %q:\n%s", want, ir)
+			}
+		})
 	}
 }
 

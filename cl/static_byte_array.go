@@ -63,7 +63,7 @@ func MergeStaticByteArrays(dst, src map[string][]byte) map[string][]byte {
 // Clearing only CompositeLit.Elts leaves `= [N]byte{}`, and go/ssa then
 // memclr's large arrays in init, wiping the restored LLVM initializer.
 // The returned map is keyed by StaticByteArrayKey of pkg.Path() and the
-// variable name, matching initStaticByteArrayGlobal lookup. Call this after
+// variable name, matching staticByteArrayGlobalInit lookup. Call this after
 // type checking and before ssa.Package.Build. Already-stripped specs (no
 // values) are skipped so a second call does not replace a previous payload
 // with zeros. info.InitOrder entries for stripped variables are removed so

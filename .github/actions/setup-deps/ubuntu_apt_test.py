@@ -10,8 +10,8 @@ from ubuntu_apt import configure
 class UbuntuAPTTest(unittest.TestCase):
     def test_runner_mirror_lists(self):
         for arch, archive, security in (
-            ("amd64", "https://archive.ubuntu.com/ubuntu/",
-             "https://security.ubuntu.com/ubuntu/"),
+            ("amd64", "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2",
+             "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://security.ubuntu.com/ubuntu/\tpriority:2"),
             ("arm64", "https://ports.ubuntu.com/ubuntu-ports/",
              "https://ports.ubuntu.com/ubuntu-ports/"),
         ):
