@@ -34,31 +34,39 @@ type Slice struct {
 }
 
 func NewSlice2(base unsafe.Pointer, eltSize, cap int, i, j int64, iSigned, jSigned, upperIsLen bool) (s Slice) {
-	upperCode := boundsSliceAcap
-	if upperIsLen {
-		upperCode = boundsSliceAlen
-	}
-	if boundsOutOfRange(j, jSigned, cap, true) {
+	// cap is non-negative. Converting both indexes to uint64 makes the
+	// successful-path checks independent of the source index signedness: a
+	// negative signed index, and an unsigned index whose high bit is set, both
+	// compare above the non-negative bound. Keep the signed flags only for the
+	// panic text on the cold path.
+	if uint64(j) > uint64(cap) {
+		upperCode := boundsSliceAcap
+		if upperIsLen {
+			upperCode = boundsSliceAlen
+		}
 		panicBounds(j, jSigned, cap, upperCode)
 	}
-	if boundsAbove(i, iSigned, j) {
+	if uint64(i) > uint64(j) {
 		panicBounds(i, iSigned, int(j), boundsSliceB)
 	}
 	return newSliceUnchecked(base, eltSize, int(i), int(j), cap)
 }
 
 func NewSlice3Bounds(base unsafe.Pointer, eltSize, cap int, i, j, k int64, iSigned, jSigned, kSigned, upperIsLen bool) (s Slice) {
-	upperCode := boundsSlice3Acap
-	if upperIsLen {
-		upperCode = boundsSlice3Alen
-	}
-	if boundsOutOfRange(k, kSigned, cap, true) {
+	// As in NewSlice2, check from the upper bound down so each successful
+	// uint64 comparison establishes 0 <= index <= bound. Since cap fits int,
+	// k and then j also fit int before the subsequent checks and conversions.
+	if uint64(k) > uint64(cap) {
+		upperCode := boundsSlice3Acap
+		if upperIsLen {
+			upperCode = boundsSlice3Alen
+		}
 		panicBounds(k, kSigned, cap, upperCode)
 	}
-	if boundsAbove(j, jSigned, k) {
+	if uint64(j) > uint64(k) {
 		panicBounds(j, jSigned, int(k), boundsSlice3B)
 	}
-	if boundsAbove(i, iSigned, j) {
+	if uint64(i) > uint64(j) {
 		panicBounds(i, iSigned, int(j), boundsSlice3C)
 	}
 	return newSliceUnchecked(base, eltSize, int(i), int(j), int(k))
