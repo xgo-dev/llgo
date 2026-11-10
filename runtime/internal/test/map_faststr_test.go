@@ -133,8 +133,7 @@ func mapFastStringAllocationCount() int64 {
 }
 
 //go:noinline
-func exerciseMapFastStringOperations(mt *abi.MapType, h *rt.Map, n int) bool {
-	const key = "existing key"
+func exerciseMapFastStringOperations(mt *abi.MapType, h *rt.Map, key, updateKey, absentKey string, n int) bool {
 	for i := 0; i < n; i++ {
 		if *(*int)(rt.MapAccess1FastStr(mt, h, key)) != 42 {
 			return false
@@ -142,43 +141,62 @@ func exerciseMapFastStringOperations(mt *abi.MapType, h *rt.Map, n int) bool {
 		if p, ok := rt.MapAccess2FastStr(mt, h, key); !ok || *(*int)(p) != 42 {
 			return false
 		}
+		if *(*int)(rt.MapAccess1FastStr(mt, h, absentKey)) != 0 {
+			return false
+		}
+		if p, ok := rt.MapAccess2FastStr(mt, h, absentKey); ok || *(*int)(p) != 0 {
+			return false
+		}
 		// Updating an existing entry and deleting an absent key need no
 		// bucket allocation, so all four paths can be measured together.
-		*(*int)(rt.MapAssignFastStr(mt, h, key)) = 42
-		rt.MapDeleteFastStr(mt, h, "absent key")
+		*(*int)(rt.MapAssignFastStr(mt, h, updateKey)) = 42
+		rt.MapDeleteFastStr(mt, h, absentKey)
 	}
 	return true
 }
 
 func TestMapFastStringOperationsDoNotAllocateKeyHeaders(t *testing.T) {
 	mt := abi.TypeFor[map[string]int]().MapType()
-	for _, hint := range []int{0, 64} {
-		h := rt.MakeMap(mt, hint)
-		*(*int)(rt.MapAssignFastStr(mt, h, "existing key")) = 42
-		if !exerciseMapFastStringOperations(mt, h, 1) {
-			t.Fatal("string map warmup returned an incorrect value")
-		}
-		for _, n := range []int{512, 1024} {
-			// These counters are process-wide: test timers or another runtime
-			// thread may allocate during a measurement. Require a zero-allocation
-			// run, allowing a few attempts to exclude that unrelated activity.
-			best := int64(1<<63 - 1)
-			for attempt := 0; attempt < 4; attempt++ {
-				before := mapFastStringAllocationCount()
-				ok := exerciseMapFastStringOperations(mt, h, n)
-				after := mapFastStringAllocationCount()
-				if !ok {
-					t.Fatal("string map operations returned an incorrect value")
-				}
-				if before < 0 || after < 0 {
-					t.Fatal("allocation profile buffer is too small")
-				}
-				if delta := after - before; delta < best {
-					best = delta
-				}
+	for _, tc := range []struct {
+		name, key, otherKey, absentKey string
+	}{
+		{"short", "existing key", "other key", "absent key"},
+		// Equal lengths and matching first/last four bytes force one-bucket
+		// long-key lookups into the hashed path, for both hits and misses.
+		{"long", "head" + strings.Repeat("a", 24) + "tail", "head" + strings.Repeat("b", 24) + "tail", "head" + strings.Repeat("c", 24) + "tail"},
+	} {
+		// Keep lookup storage distinct from the key installed by updates so
+		// later rounds cannot bypass hashing through pointer equality.
+		key, updateKey := strings.Clone(tc.key), strings.Clone(tc.key)
+		for _, hint := range []int{0, 64} {
+			h := rt.MakeMap(mt, hint)
+			*(*int)(rt.MapAssignFastStr(mt, h, strings.Clone(tc.key))) = 42
+			*(*int)(rt.MapAssignFastStr(mt, h, tc.otherKey)) = 43
+			if !exerciseMapFastStringOperations(mt, h, key, updateKey, tc.absentKey, 1) {
+				t.Fatal("string map warmup returned an incorrect value")
 			}
-			if best != 0 {
-				t.Fatalf("hint %d: %d rounds of string map operations allocated at least %d objects", hint, n, best)
+			for _, n := range []int{512, 1024} {
+				// These counters are process-wide: test timers or another runtime
+				// thread may allocate during a measurement. Require a zero-allocation
+				// run, allowing a few attempts to exclude that unrelated activity.
+				best := int64(1<<63 - 1)
+				for attempt := 0; attempt < 4; attempt++ {
+					before := mapFastStringAllocationCount()
+					ok := exerciseMapFastStringOperations(mt, h, key, updateKey, tc.absentKey, n)
+					after := mapFastStringAllocationCount()
+					if !ok {
+						t.Fatal("string map operations returned an incorrect value")
+					}
+					if before < 0 || after < 0 {
+						t.Fatal("allocation profile buffer is too small")
+					}
+					if delta := after - before; delta < best {
+						best = delta
+					}
+				}
+				if best != 0 {
+					t.Fatalf("%s key, hint %d: %d rounds of string map operations allocated at least %d objects", tc.name, hint, n, best)
+				}
 			}
 		}
 	}

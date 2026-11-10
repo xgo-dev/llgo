@@ -53,6 +53,9 @@ func NewSlice2(base unsafe.Pointer, eltSize, cap int, i, j int64, iSigned, jSign
 }
 
 func NewSlice3Bounds(base unsafe.Pointer, eltSize, cap int, i, j, k int64, iSigned, jSigned, kSigned, upperIsLen bool) (s Slice) {
+	// As in NewSlice2, check from the upper bound down so each successful
+	// uint64 comparison establishes 0 <= index <= bound. Since cap fits int,
+	// k and then j also fit int before the subsequent checks and conversions.
 	if uint64(k) > uint64(cap) {
 		upperCode := boundsSlice3Acap
 		if upperIsLen {
