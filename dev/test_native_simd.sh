@@ -63,10 +63,16 @@ for profile in O0-off O2-off O2-thin O2-full; do
         # The forced width bypasses Go's VPCLMULQDQ eligibility reduction;
         # LLGo still lowers carryless multiplication safely at the baseline.
         settings+=(simd=+256 simd=+256,cpu.fma=off simd=+256,cpu.vpclmulqdq=off)
+        rejected_settings=(simd=256,cpu.avx2=off simd=+256,cpu.avx2=off simd=+512)
         if [[ "$selection" == *"width=256 emulated=false"* ]]; then
           settings+=(simd=256)
+        else
+          rejected_settings+=(simd=256)
         fi
-        for debug in simd=256,cpu.vpclmulqdq=off simd=+256,cpu.avx2=off simd=+512; do
+        # Go 1.27's cpu.vpclmulqdq option changes HasAVX512VPCLMULQDQ,
+        # not the HasVPCLMULQDQ flag used for portable256 eligibility.
+        # Disabling AVX2 reliably reduces the supported maximum to 128.
+        for debug in "${rejected_settings[@]}"; do
           echo "SIMD portable: $profile rejects GODEBUG=$debug"
           rejection="$output/rejected-width.log"
           if GODEBUG="$debug" "$binary" -test.run='^TestPortableRequestedWidth$' >"$rejection" 2>&1; then
