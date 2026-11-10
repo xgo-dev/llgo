@@ -156,6 +156,8 @@ func TestVariableLinkPrecedence(t *testing.T) {
 		{name: "package Go wins", source: "//llgo:link V C.old\nvar V int32\n//go:linkname V C.new", link: "C.new"},
 		{name: "last Go wins", source: "//go:linkname V C.old\n//go:linkname V C.new\nvar V int32", link: "C.new"},
 		{name: "export", source: "//export V\nvar V int32", link: "V", export: "V"},
+		{name: "empty export", source: "//export\nvar V int32"},
+		{name: "link overrides export", source: "//export V\n//llgo:link V C.value\nvar V int32", link: "C.value"},
 		{name: "export rename", source: "//export renamed\nvar V int32", link: "renamed", export: "renamed", rename: true},
 		{name: "export mismatch", source: "//export other\nvar V int32", want: "export comment has wrong name"},
 		{name: "LLGo mismatch", source: "//llgo:link other C.value\nvar V int32", want: "does not match declaration"},
@@ -181,5 +183,41 @@ func TestVariableLinkPrecedence(t *testing.T) {
 				t.Fatalf("record=%+v, want link=%s export=%s", rec, test.link, test.export)
 			}
 		})
+	}
+}
+
+type variableTestImporter struct{ pkg *types.Package }
+
+func (i variableTestImporter) Import(string) (*types.Package, error) { return i.pkg, nil }
+
+func TestCompilerVariableImportedUses(t *testing.T) {
+	imported := types.NewPackage("example/location", "location")
+	line := types.NewVar(token.NoPos, imported, "Line", types.Typ[types.Int32])
+	imported.Scope().Insert(line)
+	imported.MarkComplete()
+	for _, body := range []string{"_ = &location.Line", "location.Line = 1"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "use.go", "package p\nimport \"example/location\"\nfunc f() { "+body+" }", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+		files := []*ast.File{file}
+		pkg, err := (&types.Config{Importer: variableTestImporter{imported}}).Check("example/p", fset, files, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lookup := func(v *types.Var) Variable {
+			if v != line {
+				t.Fatalf("resolved %v, want imported declaration %v", v, line)
+			}
+			return Variable{Name: "Line", Kind: LineVariable}
+		}
+		for _, bindings := range []*types.Info{info, nil} {
+			err := ValidateVariableUses(fset, pkg, bindings, files, lookup)
+			if err == nil || !strings.Contains(err.Error(), "compiler variable Line") {
+				t.Fatalf("%s: info=%v error=%v, want rejection of imported compiler variable use", body, bindings != nil, err)
+			}
+		}
 	}
 }
