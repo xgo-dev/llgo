@@ -124,6 +124,12 @@ func mexit(mp *m) {
 	mp.curg = nil
 	gp.m = nil
 
+	if !ownedByLifecycle {
+		if w := gp.chanWaiter; w != nil {
+			w.signal.destroy()
+			gp.chanWaiter = nil
+		}
+	}
 	setg(nil)
 	if !ownedByLifecycle {
 		freeRuntimeContext(ctx)
