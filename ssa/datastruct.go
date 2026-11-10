@@ -1326,6 +1326,19 @@ func (b Builder) chanOp(s *SelectState) Expr {
 
 // -----------------------------------------------------------------------------
 
+// AppendFreshSliceToNil forwards a fresh, exclusively used slice whose length
+// equals its capacity. The caller must give its backing array result lifetime.
+// An empty append preserves nil, unlike make of a zero-length slice.
+func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
+	length := b.SliceLen(fresh)
+	data := b.SliceData(fresh)
+	empty := llvm.CreateICmp(b.impl, llvm.IntEQ, length.impl, b.Prog.Zero(length.Type).impl)
+	data.impl = llvm.CreateSelect(b.impl, empty, b.Prog.Nil(data.Type).impl, data.impl)
+	ret := b.unsafeSlice(data, length.impl, length.impl)
+	ret.Type = t
+	return ret
+}
+
 // appendSlice selects aligned storage only for element types that need it.
 func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 	args := []Expr{src, data, count, b.Prog.Val(int(size))}
