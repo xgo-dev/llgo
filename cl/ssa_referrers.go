@@ -16,3 +16,23 @@ func nonDebugReferrers(v ssa.Value) (refs []ssa.Instruction, available bool) {
 	}
 	return refs, true
 }
+
+// singleNonDebugReferrer returns the sole executable user without allocating.
+// Missing referrer information and any other use count return nil.
+func singleNonDebugReferrer(v ssa.Value) ssa.Instruction {
+	all := v.Referrers()
+	if all == nil {
+		return nil
+	}
+	var sole ssa.Instruction
+	for _, ref := range *all {
+		if _, debug := ref.(*ssa.DebugRef); debug {
+			continue
+		}
+		if sole != nil {
+			return nil
+		}
+		sole = ref
+	}
+	return sole
+}

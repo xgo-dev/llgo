@@ -24,7 +24,8 @@ import (
 )
 
 // freshNilAppendSource identifies backing storage that can become the append
-// result itself. Keep its make at the original position for checks and effects.
+// result itself. The destination must be nil and the source exclusively used
+// by this append. Keep its make in place for checks and evaluation effects.
 func freshNilAppendSource(call *ssa.Call) ssa.Value {
 	builtin, ok := call.Call.Value.(*ssa.Builtin)
 	if !ok || builtin.Name() != "append" || len(call.Call.Args) != 2 {
@@ -45,8 +46,7 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 	source := call.Call.Args[1]
 	current, parent := source, ssa.Instruction(call)
 	for {
-		refs, ok := nonDebugReferrers(current)
-		if !ok || len(refs) != 1 || refs[0] != parent {
+		if singleNonDebugReferrer(current) != parent {
 			return nil
 		}
 		change, ok := current.(*ssa.ChangeType)
@@ -57,6 +57,8 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 	}
 	switch src := current.(type) {
 	case *ssa.MakeSlice:
+		// Require SSA value identity: forward a full-capacity backing array,
+		// rather than retaining capacity the copying append would discard.
 		if src.Len == src.Cap {
 			return source
 		}
@@ -65,7 +67,11 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 		if !ok || alloc.Comment != "makeslice" || src.Low != nil || src.Max != nil {
 			return nil
 		}
-		array, ok := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+		pointer, ok := alloc.Type().(*types.Pointer)
+		if !ok {
+			return nil
+		}
+		array, ok := pointer.Elem().Underlying().(*types.Array)
 		if !ok {
 			return nil
 		}
@@ -78,7 +84,7 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 				return nil
 			}
 		}
-		if refs, ok := nonDebugReferrers(alloc); ok && len(refs) == 1 && refs[0] == src {
+		if singleNonDebugReferrer(alloc) == src {
 			return source
 		}
 	}
@@ -89,12 +95,22 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 // backing array to survive the append result; do not use a temporary stack
 // buffer even when escape analysis sees only the original borrowing append.
 func freshNilAppendAllocation(value ssa.Value) bool {
-	for {
-		refs, ok := nonDebugReferrers(value)
-		if !ok || len(refs) != 1 {
+	// Most placement sites cannot be a fresh slice's backing allocation.
+	// Reject them before inspecting referrers, including ordinary locals.
+	switch allocation := value.(type) {
+	case *ssa.MakeSlice:
+		if allocation.Len != allocation.Cap {
 			return false
 		}
-		switch use := refs[0].(type) {
+	case *ssa.Alloc:
+		if allocation.Comment != "makeslice" {
+			return false
+		}
+	default:
+		return false
+	}
+	for {
+		switch use := singleNonDebugReferrer(value).(type) {
 		case *ssa.Slice:
 			value = use
 		case *ssa.ChangeType:

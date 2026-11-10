@@ -35,7 +35,8 @@ func TestFreshZeroAppendAllocations(t *testing.T) {
 	t.Logf("1024 calls: direct=%d append=%d collector bytes", direct, appended)
 	// LLGo's collector counters include size-class overhead and incidental
 	// runtime work. Reject a second full backing array without assuming Go's
-	// exact byte accounting or its supported Mallocs counter.
+	// exact byte accounting or its supported Mallocs counter. The tolerance is
+	// over all 1024 calls; a redundant 4096-byte array per call adds over 4 MiB.
 	if appended > direct+(128<<10) {
 		t.Fatalf("fresh append retained a redundant temporary: direct=%d append=%d", direct, appended)
 	}

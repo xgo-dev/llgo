@@ -48,3 +48,41 @@ func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
 		})
 	}
 }
+
+func TestFreshNilAppendEscapePlacement(t *testing.T) {
+	pkg, _ := buildCallerFrameSSAPackage(t, "fresh", `package fresh
+func dynamic(n int) []byte { return append([]byte(nil), make([]byte,n)...) }
+func constant() []byte { return append([]byte(nil), make([]byte,4)...) }
+func borrowed(n int) int { return len(make([]byte,n)) }
+`)
+	prog := newLLSSAProgForTarget(t, nil)
+	defer prog.Dispose()
+	facts := PrepareEscapeAnalysis(prog, pkg.Prog, nil)
+	for _, name := range []string{"dynamic", "constant", "borrowed"} {
+		found := false
+		for _, block := range pkg.Func(name).Blocks {
+			for _, instruction := range block.Instrs {
+				switch instruction.(type) {
+				case *ssa.MakeSlice, *ssa.Alloc:
+				default:
+					continue
+				}
+				decision, ok := facts.LookupDecision(instruction)
+				if !ok {
+					t.Fatalf("%s has no placement decision", name)
+				}
+				if name == "borrowed" {
+					if decision.Heap {
+						t.Fatalf("ordinary make lost stack eligibility: %+v", decision)
+					}
+				} else if !decision.Heap || decision.Reason != "fresh append result storage" {
+					t.Fatalf("%s did not give the forwarded source result lifetime: %+v", name, decision)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s no longer exercises slice allocation", name)
+		}
+	}
+}
