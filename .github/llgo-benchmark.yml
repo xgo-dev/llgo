@@ -10,6 +10,7 @@ include:
   - "^BenchmarkChannel(Buffered|Handoff)$"
   - "^BenchmarkTimer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
   - "^BenchmarkStringEquality/"
+  - "^BenchmarkGoroutineLifecycle/"
 groups:
   programs: "^Program/"
   compiler: "^(MergeCompilerFlags|MergeLinkerFlags|LookupPCRandom)$"
@@ -18,6 +19,7 @@ groups:
       - "^(RuntimeGetG|Global(Read|Write))$"
       - "^(DirectCall|InterfaceCall|Defer|Goroutine)$"
       - "^Channel(Buffered|Handoff)$"
+  goroutines: "^GoroutineLifecycle/"
   timers: "^Timer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
   strings: "^StringEquality/"
 views:
@@ -87,3 +89,14 @@ views:
         benchmark:
           title: Operation and runtime
           trim-prefix: BenchmarkTimer
+  goroutines:
+    title: Goroutine lifecycle benchmarks
+    select:
+      groups: "^goroutines$"
+      metrics: "^ns/op$"
+    table:
+      rows: [platform, benchmark]
+      columns: [metric]
+      collapsed: true
+      missing: error
+      empty: error
