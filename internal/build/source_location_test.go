@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,6 +37,9 @@ func sourceLocationFixture(t *testing.T, source string) string {
 			t.Fatal(err)
 		}
 		contents = strings.ReplaceAll(contents, "DEFAULT_FILE", strconv.Quote(filepath.Join(dir, "main.go")))
+		contents = strings.ReplaceAll(contents, "HELPER_FILE", strconv.Quote(filepath.Join(dir, "generated", "helper.xgo")))
+		contents = strings.ReplaceAll(contents, "OTHER_FILE", strconv.Quote(filepath.Join(dir, "generated", "file.xgo")))
+		contents = strings.ReplaceAll(contents, "//line /generated/", "//line "+filepath.ToSlash(filepath.Join(dir, "generated"))+"/")
 		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -76,14 +80,14 @@ func main() {
 //line /generated/main.xgo:200
  a,b:=location.Line,location.Line
  if a!=200 || b!=200 || initial!=100 || generic(1)!=300 || generic("")!=300 {panic("line mismatch")}
- f,line:=helper(); checkFile(f,"/generated/helper.xgo"); if line!=400 {panic("wrapper location")}
+ f,line:=helper(); checkFile(f,HELPER_FILE); if line!=400 {panic("wrapper location")}
 //line /generated/closure.xgo:500
  closure:=func() int32 {return location.Line}
  if closure()!=500 {panic("closure location")}
  checkFile(defaultFile,DEFAULT_FILE)
 //line /generated/file.xgo:600
  p,q:=location.File,location.File
- if p!=q {panic("file not deduplicated")}; checkFile(p,"/generated/file.xgo")
+ if p!=q {panic("file not deduplicated")}; checkFile(p,OTHER_FILE)
  println("ok")
 }
 `)
@@ -93,6 +97,9 @@ func main() {
 			conf.OptLevel = level
 			conf.LTO = lto.Off
 			conf.OutFile = filepath.Join(dir, "probe-"+level.String())
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
 			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
 				t.Fatal(err)
 			}
@@ -124,6 +131,20 @@ func TestSourceLocationImportedDiagnostics(t *testing.T) {
 				t.Fatalf("error = %v (%s), want %q", err, diagnostic, test.want)
 			}
 		})
+	}
+}
+
+func TestSourceLocationImportedDeclarationType(t *testing.T) {
+	dir := sourceLocationFixture(t, "package main\nimport _ \"example.com/sourcelocation/location\"\nfunc main() {}")
+	bindings := strings.ReplaceAll(locationBindings, "Line int32", "Line int64")
+	if err := os.WriteFile(filepath.Join(dir, "location", "location.go"), []byte(bindings), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStderr(t)
+	_, err := Build(Invocation{Args: []string{"."}, Config: NewDefaultConf(ModeGen), Dir: dir})
+	diagnostic := output()
+	if err == nil || !strings.Contains(diagnostic, "compiler variable Line (llgo.line) must have type int32") {
+		t.Fatalf("error = %v (%s), want invalid imported compiler variable type", err, diagnostic)
 	}
 }
 

@@ -19,7 +19,7 @@ import _ "unsafe"
 var FILE *int8
 //go:linkname LINE llgo.line
 var LINE int32
-//line /generated/input.xgo:100
+//line input.xgo:100
 var Initial = LINE
 func Line() int32 { return LINE }
 func Pair() (int32,int32) { return LINE, LINE }
@@ -51,7 +51,7 @@ func TestSourceLocationLLVM(t *testing.T) {
 					t.Errorf("emitted compiler variable storage %s\n%s", bad, ir)
 				}
 			}
-			if strings.Count(ir, `c"/generated/input.xgo\00"`) != 1 {
+			if strings.Count(ir, `c"input.xgo\00"`) != 1 {
 				t.Fatalf("file constant not deduplicated/NUL terminated:\n%s", ir)
 			}
 			for _, test := range []struct{ name, want string }{{"Line", "ret i32 101"}, {"Shadow", "ret i32 8"}} {
@@ -80,6 +80,18 @@ func TestSourceLocationRejectErasedAddress(t *testing.T) {
 		prog.Dispose()
 		if err == nil || !strings.Contains(err.Error(), "compiler variable LINE") {
 			t.Fatalf("error = %v", err)
+		}
+	}
+}
+
+func TestSourceLocationRejectInvalidType(t *testing.T) {
+	for _, decl := range []string{"//go:linkname LINE llgo.line\nvar LINE int64", "//go:linkname FILE llgo.file\nvar FILE *uint8"} {
+		ssapkg, _, files := buildGoSSAPkg(t, "package p\nimport _ \"unsafe\"\n"+decl)
+		prog := newLLSSAProg(t)
+		_, err := NewPackage(prog, ssapkg, files)
+		prog.Dispose()
+		if err == nil || !strings.Contains(err.Error(), "must have type") {
+			t.Fatalf("error = %v, want invalid compiler variable type", err)
 		}
 	}
 }
