@@ -22,6 +22,8 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 	index.Add(sig)
 	f := &frontendCache{ctx: &context{progSSA: ssa.NewProgram(fset, 0)}, ids: ids, packages: map[string]*types.Package{pkg.Path(): pkg}, types: index}
 	original := &packageLinkSnapshot{needAbiInit: 2, methodByIndex: map[int]none{3: {}}, methodByName: map[string]none{"Private": {}}, abiSymbols: map[string]none{"type.p": {}}, abiTypes: []llssa.AbiTypeInfo{{Name: "type.p", Raw: types.Typ[types.Int]}, {Name: "not-owned", Raw: types.Typ[types.String]}}, funcInfo: []funcInfoRecord{{symbol: "p.F", name: "F", file: "pkg.go", line: 12}}, pcLineInfo: []pcLineRecord{{id: 1, symbol: "p.F", file: "pkg.go", line: 12}}, hasLocalExports: true, cExports: []cExport{{goName: "p.F", cName: "external", sig: sig}, {goName: "p.Raw", cName: "raw"}}}
+	original.cExports[0].callConv = llssa.CDecl
+	original.cExports = append(original.cExports, cExport{goName: "p.Win", cName: "win", sig: sig, callConv: llssa.Stdcall})
 	data, err := f.exportLink(original)
 	if err != nil {
 		t.Fatal(err)
@@ -38,8 +40,13 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(restored.abiTypes) != 1 || restored.abiTypes[0].Name != "type.p" || len(restored.cExports) != 2 || restored.cExports[1].sig != nil {
+	if len(restored.abiTypes) != 1 || restored.abiTypes[0].Name != "type.p" || len(restored.cExports) != 3 || restored.cExports[1].sig != nil {
 		t.Fatal("ABI ownership or raw export changed")
+	}
+	for i, export := range original.cExports {
+		if restored.cExports[i].callConv != export.callConv {
+			t.Fatalf("export %s lost its calling convention", export.cName)
+		}
 	}
 	if !types.Identical(restored.cExports[0].sig, sig) || restored.cExports[0].sig.Params().At(0).Name() != "input" || !reflect.DeepEqual(original.funcInfo, restored.funcInfo) || !reflect.DeepEqual(original.pcLineInfo, restored.pcLineInfo) || !reflect.DeepEqual(original.methodByIndex, restored.methodByIndex) {
 		t.Fatal("link contract changed")
@@ -66,6 +73,7 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 			d.Types.Nodes[0].Kind = "invalid"
 		}},
 		{"C identity", func(d *frontendLinkExport) { d.CExports = []frontendCExport{{GoName: "", CName: "bad", Signature: -1}} }},
+		{"C calling convention", func(d *frontendLinkExport) { d.CExports[0].CallConv = llssa.PyDecl }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var bad frontendLinkExport

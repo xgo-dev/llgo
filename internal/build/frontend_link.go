@@ -23,6 +23,7 @@ type frontendABIType struct {
 type frontendCExport struct {
 	GoName, CName string
 	Signature     int
+	CallConv      llssa.CallConv
 }
 
 type frontendFuncInfo struct {
@@ -83,7 +84,7 @@ func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLink
 		if export.sig != nil {
 			ref = graph.Add(export.sig)
 		}
-		result.CExports = append(result.CExports, frontendCExport{export.goName, export.cName, ref})
+		result.CExports = append(result.CExports, frontendCExport{GoName: export.goName, CName: export.cName, Signature: ref, CallConv: export.callConv})
 	}
 	result.Types = *graph
 	return result, nil
@@ -148,8 +149,11 @@ func (f *frontendCache) importLink(data *frontendLinkExport) (*packageLinkSnapsh
 		result.pcLineInfo = append(result.pcLineInfo, pcLineRecord{line.ID, line.Symbol, line.File, line.Line, line.Column})
 	}
 	for _, export := range data.CExports {
+		if export.CallConv != 0 && export.CallConv != llssa.CDecl && export.CallConv != llssa.Stdcall {
+			return nil, fmt.Errorf("invalid cached export calling convention %d", export.CallConv)
+		}
 		if export.Signature == -1 && export.GoName != "" && export.CName != "" {
-			result.cExports = append(result.cExports, cExport{goName: export.GoName, cName: export.CName})
+			result.cExports = append(result.cExports, cExport{goName: export.GoName, cName: export.CName, callConv: export.CallConv})
 			continue
 		}
 		typ, err := importer.Import(export.Signature)
@@ -157,7 +161,7 @@ func (f *frontendCache) importLink(data *frontendLinkExport) (*packageLinkSnapsh
 		if err != nil || !ok || export.GoName == "" || export.CName == "" {
 			return nil, fmt.Errorf("invalid cached C export %s: %v", export.GoName, err)
 		}
-		result.cExports = append(result.cExports, cExport{export.GoName, export.CName, sig})
+		result.cExports = append(result.cExports, cExport{goName: export.GoName, cName: export.CName, sig: sig, callConv: export.CallConv})
 	}
 	return result, nil
 }

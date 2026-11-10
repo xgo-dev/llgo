@@ -680,7 +680,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if origin := f.Origin(); origin != nil {
 		declaration = origin
 	}
-	if declaration.Pkg != nil && p.prog.LinknameDirective(funcName(declaration.Pkg.Pkg, declaration, declaration != f)) == "llgo:link" {
+	if f.Synthetic != ssawrap.CallWrapper && declaration.Pkg != nil && p.prog.LinknameDirective(funcName(declaration.Pkg.Pkg, declaration, declaration != f)) == "llgo:link" {
 		// A llgo:link body exists only for Go type checking. It must never
 		// become a definition, including when its target uses the Go ABI.
 		return nil, nil, ignoredFunc
