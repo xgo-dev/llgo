@@ -999,7 +999,16 @@ func (b Builder) mapKeyPtr(m, x Expr) Expr {
 		typ = x.Type
 	}
 	vtyp := b.Prog.VoidPtr()
-	vptr := b.AllocU(typ)
+	// Map helpers borrow the key address only for this call. Even indirect
+	// keys are copied into map-owned storage before MapAssign returns.
+	// Reserve one entry slot per operation, including in loops, and charge
+	// typed field roots against the same budget as other lowering helpers.
+	var vptr Expr
+	if b.Func.reserveEscapeStack(typ) {
+		vptr = b.uninitializedStackSlot(typ)
+	} else {
+		vptr = b.AllocU(typ)
+	}
 	if !types.Identical(typ.RawType(), x.RawType()) {
 		x = b.ChangeType(typ, x)
 	}
@@ -1030,6 +1039,24 @@ func (b Builder) Range(x Expr) Expr {
 		return b.InlineCall(b.Pkg.rtFunc("NewMapIter"), typ, x)
 	}
 	panic("unsupport range for " + x.raw.Type.String())
+}
+
+// RangeBorrowed keeps its iterator in this invocation when the shared stack
+// budget permits. The iterator must not outlive the function's frame.
+func (b Builder) RangeBorrowed(x Expr) Expr {
+	switch x.kind {
+	case vkString:
+		typ := b.Prog.rtType("StringIter")
+		if b.Func.reserveEscapeStack(typ) {
+			return b.InlineCall(b.Pkg.rtFunc("NewStringIterBuffer"), x, b.uninitializedStackSlot(typ))
+		}
+	case vkMap:
+		typ := b.Prog.rtType("llgoMapIter")
+		if b.Func.reserveEscapeStack(typ) {
+			return b.InlineCall(b.Pkg.rtFunc("NewMapIterBuffer"), b.abiType(x.raw.Type), x, b.uninitializedStackSlot(typ))
+		}
+	}
+	return b.Range(x)
 }
 
 // The Next instruction reads and advances the (map or string)
