@@ -467,6 +467,9 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 
 // Global variable.
 func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
+	if p.compilerVariable(gbl).Kind != directive.OrdinaryVariable {
+		return
+	}
 	typ := p.patchType(gbl.Type())
 	name, vtype, define := p.varName(gbl.Pkg.Pkg, gbl)
 	if vtype == pyVar {
@@ -1766,6 +1769,12 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
+			if global, ok := v.X.(*ssa.Global); ok {
+				if rec := p.compilerVariable(global); rec.Kind != directive.OrdinaryVariable {
+					ret = b.SourceLocation(rec.Kind, p.fset.Position(v.Pos()), p.type_(v.Type(), llssa.GoDecl))
+					break
+				}
+			}
 			if pos, ok := p.recvNilDerefChecks[v]; ok {
 				p.recordPanicSite(b, pos)
 				return p.compileCheckedDeref(b, v)
@@ -3055,6 +3064,15 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
 			return nil, nil, err
 		}
+		// Direct compiler clients have already built SSA. Validate the retained
+		// source too, since SSA may have erased address-taking or dead writes.
+		// The build driver performs this check before rewriting, with types.Info.
+		if err = directive.ValidateVariableUses(pkgProg.Fset, pkgTypes, nil, files, prog.VariableDirective); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err = prog.PackageVariables(pkgTypes).Validate(pkgProg.Fset, pkgTypes); err != nil {
+		return nil, nil, err
 	}
 	if err = prog.ValidateLocalitiesFor(pkgTypes); err != nil {
 		return nil, nil, err

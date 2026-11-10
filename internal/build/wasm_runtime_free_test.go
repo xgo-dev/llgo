@@ -52,7 +52,7 @@ func TestWasmRuntimeFreeFunctions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, "package main; "+test.source)
 			roots := []*ssa.Function{pkg.Func("init"), pkg.Func("main")}
-			if got := wasmRuntimeFreeFunctions(roots, func(*ssa.Function) string { return "" }, func(*ssa.Global) bool { return true }); got != test.want {
+			if got := wasmRuntimeFreeFunctions(roots, func(*ssa.Function) string { return "" }, func(*ssa.Global) bool { return true }, nil); got != test.want {
 				t.Fatalf("runtime-free = %v, want %v", got, test.want)
 			}
 		})
@@ -83,17 +83,17 @@ func TestWasmRuntimeFreeNativeBoundaries(t *testing.T) {
 				}
 				return ""
 			}
-			got := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, linkname, func(*ssa.Global) bool { return true })
+			got := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, linkname, func(*ssa.Global) bool { return true }, nil)
 			if got != test.want {
 				t.Fatalf("runtime-free = %v, want %v", got, test.want)
 			}
 		})
 	}
-	if wasmRuntimeFreeFunctions(nil, nil, nil) {
+	if wasmRuntimeFreeFunctions(nil, nil, nil, nil) {
 		t.Fatal("missing roots accepted")
 	}
 	pkg := buildWasmReflectTestProgram(t, `package main; var n int; func main(){ println(n) }`)
-	if wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, nil, func(*ssa.Global) bool { return false }) {
+	if wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, nil, func(*ssa.Global) bool { return false }, nil) {
 		t.Fatal("foreign or owner-local global accepted")
 	}
 }
@@ -216,5 +216,27 @@ func TestWasmRuntimeFreeFingerprint(t *testing.T) {
 	}
 	if (&commonSection{WasmRuntimeFree: true}).empty() {
 		t.Fatal("runtime-free cache field omitted")
+	}
+}
+
+func TestWasmRuntimeFreeSourceLocations(t *testing.T) {
+	for _, test := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"line", "func main() { println(Line) }", true},
+		{"file", "func printf(*int8, ...any) int32; func main() { printf(File) }", true},
+		{"ordinary pointer", "var Pointer *int8; func main() { _ = Pointer == nil }", false},
+		{"write", "func main() { Line = 1 }", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, "package main; var Line int32; var File *int8; "+test.body)
+			known := func(g *ssa.Global) bool { return g.Name() == "Line" || g.Name() == "File" }
+			safe := func(g *ssa.Global) bool { return !known(g) }
+			got := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, func(*ssa.Function) string { return "C.printf" }, safe, known)
+			if got != test.want {
+				t.Fatalf("runtime-free=%v, want %v", got, test.want)
+			}
+		})
 	}
 }

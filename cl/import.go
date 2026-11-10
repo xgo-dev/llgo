@@ -945,10 +945,17 @@ const (
 )
 
 func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtype int, define bool) {
+	pkg = p.variablePackage(pkg)
 	name := llssa.FullName(pkg, v.Name())
+	if p.prog.PackageVariables(pkg)[v.Name()].Kind != directive.OrdinaryVariable {
+		return name, ignoredVar, false
+	}
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
-		if v, ok := p.prog.Linkname(name); ok {
+		if v, ok := p.prog.VariableLinkname(pkg, v.Name()); ok {
+			if strings.HasPrefix(v, "llgo.") {
+				panic(fmt.Errorf("compiler variable %s requires prepared source metadata", name))
+			}
 			if strings.HasPrefix(v, "C.") {
 				return v[2:], cVar, false
 			}
@@ -976,7 +983,22 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 	return name, goVar, true
 }
 
+func (p *context) variablePackage(pkg *types.Package) *types.Package {
+	if patch, ok := p.patches[llssa.PathOf(pkg)]; ok {
+		return patch.Types
+	}
+	return pkg
+}
+
+func (p *context) compilerVariable(v *ssa.Global) directive.Variable {
+	return p.prog.PackageVariables(p.variablePackage(v.Pkg.Pkg))[v.Name()]
+}
+
 func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
+	if rec := p.compilerVariable(v); rec.Kind != directive.OrdinaryVariable {
+		panic(fmt.Errorf("%s: cannot take address of compiler variable %s", p.fset.Position(v.Pos()), rec.Name))
+	}
+
 	pkgTypes := p.ensureLoaded(v.Pkg.Pkg)
 	pkg := p.pkg
 	name, vtype, _ := p.varName(pkgTypes, v)
@@ -1039,6 +1061,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
 		return err
 	}
+	vars, err := directive.CollectVariables(fset, files, options.ExportRename)
+	if err != nil {
+		return err
+	}
 	ctx := &context{prog: prog, options: options}
 	pkgPath := llssa.PathOf(pkg)
 	cPkg := IsCPackage(pkg.Name())
@@ -1085,12 +1111,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 					}
 					if len(decl.Specs) == 1 {
 						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
 							if decl.Doc != nil {
 								linkDocs[decl.Doc] = true
-							}
-							if _, err := collectDeclarationDirectivesWithOptions(prog, fset, decl.Doc, pkgPath+"."+inPkgName, inPkgName, token.NoPos, options); err != nil {
-								return err
 							}
 						}
 					}
@@ -1114,9 +1136,18 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 			}
 		}
 	}
+	for name, rec := range vars {
+		if rec.Linkname != "" {
+			prog.SetLinkname(pkgPath+"."+name, rec.Linkname)
+		}
+		if rec.ExportName != "" {
+			prog.SetPackageExport(pkgPath+"."+name, rec.ExportName)
+		}
+	}
 	if err := collectPackageLinknames(prog, fset, files, syms, linkDocs); err != nil {
 		return err
 	}
+	prog.SetPackageVariables(pkg, vars)
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil
 }

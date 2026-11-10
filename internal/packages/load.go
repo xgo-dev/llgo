@@ -93,6 +93,7 @@ type aDeduper struct {
 	preload     func(pkg *packages.Package)
 	prepare     func([]*Package, *Config) error
 	rewrite     func(*Package) (bool, error)
+	validate    func(*Package) error
 	llgoFiles   map[string][]string
 	importTypes func(*Package, *token.FileSet) bool
 	exported    sync.Map
@@ -124,6 +125,9 @@ func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
 func (p Deduper) SetPrepare(fn func([]*Package, *Config) error) {
 	p.prepare = fn
 }
+
+// SetValidate installs checked-source validation before any typed rewriting.
+func (p Deduper) SetValidate(fn func(*Package) error) { p.validate = fn }
 
 // SetRewrite installs a typed source transformation. It runs after the initial
 // check, before importing packages are checked. A changed package is checked
@@ -621,7 +625,14 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		GoVersion: pkgGoVersion,
 	}
 
-	typErr := types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+	check := func() error {
+		err := types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+		if err == nil && tc.dedup != nil && tc.dedup.validate != nil {
+			err = tc.dedup.validate(pkg)
+		}
+		return err
+	}
+	typErr := check()
 	if typErr == nil && len(pkg.Errors) == 0 && tc.dedup != nil && tc.dedup.rewrite != nil {
 		changed, err := tc.dedup.rewrite(pkg)
 		if err != nil {
@@ -632,7 +643,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 			if tc.dedup.preload != nil {
 				tc.dedup.preload(pkg)
 			}
-			typErr = types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+			typErr = check()
 		}
 	}
 	if typErr != nil && len(pkg.Errors) == 0 && len(pkg.Syntax) > 0 {
