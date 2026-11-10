@@ -58,6 +58,9 @@ type g struct {
 
 	context *runtimeContext
 
+	// One idle ordinary channel waiter; active/select waiters are never cached.
+	chanWaiter *chanWaiter
+
 	goexit       bool
 	isMain       bool
 	paniconfault bool

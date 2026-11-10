@@ -215,7 +215,14 @@ func chanBuf(p *Chan, i int) unsafe.Pointer {
 }
 
 func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanWaiter {
-	w := new(chanWaiter)
+	var w *chanWaiter
+	if gp := getg(); gp != nil {
+		w = gp.chanWaiter
+		gp.chanWaiter = nil
+	}
+	if w == nil {
+		w = new(chanWaiter)
+	}
 	if ch.bubble != nil {
 		w.synctest = NewSynctestWaiter()
 	}
@@ -267,13 +274,24 @@ func freeSelectWaiters(w *chanWaiter) {
 	}
 }
 
-func (w *chanWaiter) wait() {
+func (w *chanWaiter) wait() waitStatus {
 	for !w.status.done() {
 		w.synctest.Block()
 		w.signal.park()
 	}
 	w.signal.unlock()
 	w.signal.destroy()
+	status := w.status
+	// finish holds the signal lock through notification. After reacquiring it,
+	// no further users remain: mutex destruction/reuse is permitted after
+	// release even if the previous unlock call has not returned yet.
+	// Clear channel/element pointers before caching, including on panic wakes.
+	*w = chanWaiter{}
+	// A nested operation may already have filled this one-entry cache.
+	if gp := getg(); gp != nil && gp.chanWaiter == nil {
+		gp.chanWaiter = w
+	}
+	return status
 }
 
 // finish keeps the signal locked through ready. An ordinary waiter can otherwise
@@ -420,8 +438,7 @@ func ChanSend(p *Chan, v unsafe.Pointer, eltSize int) bool {
 	p.sendq.enqueue(w)
 	p.unlock()
 
-	w.wait()
-	if w.status.panicOnWake() {
+	if w.wait().panicOnWake() {
 		panicSendOnClosedChan()
 	}
 	return true
@@ -493,8 +510,7 @@ func ChanRecv(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool) {
 	p.recvq.enqueue(w)
 	p.unlock()
 
-	w.wait()
-	return w.status.recvOK()
+	return w.wait().recvOK()
 }
 
 func ChanClose(p *Chan) {
