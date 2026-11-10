@@ -1,6 +1,8 @@
 package cl
 
 import (
+	"go/constant"
+	"go/types"
 	"strings"
 	"testing"
 
@@ -18,6 +20,7 @@ func pointers(n int) []*int { return append([]*int(nil), make([]*int, n)...) }
 func zero(n int) []struct{} { return append([]struct{}(nil), make([]struct{}, n)...) }
 func nonnil(dst []byte, n int) []byte { return append(dst, make([]byte,n)...) }
 func capacity(n,c int) []byte { return append([]byte(nil),make([]byte,n,c)...) }
+func constantCapacity() []byte { return append([]byte(nil),make([]byte,2,4)...) }
 func shared(n int) []byte { s:=make([]byte,n);r:=append([]byte(nil),s...);s[0]=1;return r }
 func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
 `
@@ -40,10 +43,72 @@ func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
 			if body := llvmFunction(t, ir, "fresh.constant"); strings.Count(body, "runtime.AllocAtomicU\"") != 1 {
 				t.Errorf("constant append must retain one escaping backing array:\n%s", body)
 			}
-			for _, name := range []string{"nonnil", "capacity", "shared", "literal"} {
+			for _, name := range []string{"nonnil", "capacity", "constantCapacity", "shared", "literal"} {
 				if body := llvmFunction(t, ir, "fresh."+name); !strings.Contains(body, "SliceAppend") {
 					t.Errorf("%s incorrectly forwarded its source backing array:\n%s", name, body)
 				}
+			}
+		})
+	}
+}
+
+func TestFreshNilAppendSourceGuards(t *testing.T) {
+	for _, name := range []string{"destination conversion", "missing allocation type", "non-array allocation", "dynamic extent", "missing extent", "partial extent"} {
+		t.Run(name, func(t *testing.T) {
+			pkg, _ := buildCallerFrameSSAPackage(t, "fresh", `package fresh
+func constant(n int) []byte { return append([]byte(nil),make([]byte,4)...) }
+func scalar() *int { return new(int) }
+`)
+			fn := pkg.Func("constant")
+			var call *ssa.Call
+			for _, block := range fn.Blocks {
+				for _, instruction := range block.Instrs {
+					if candidate, ok := instruction.(*ssa.Call); ok {
+						call = candidate
+					}
+				}
+			}
+			if call == nil || freshNilAppendSource(call) == nil {
+				t.Fatal("constant make is no longer a forwarding candidate")
+			}
+			slice, ok := call.Call.Args[1].(*ssa.Slice)
+			if !ok {
+				t.Fatal("constant make no longer uses array-backed SSA")
+			}
+			switch name {
+			case "destination conversion":
+				// Canonical SSA normally folds this nil conversion. The matcher
+				// also accepts a frontend retaining the value-preserving node.
+				call.Call.Args[0] = &ssa.ChangeType{X: call.Call.Args[0]}
+				if freshNilAppendSource(call) != slice {
+					t.Fatal("nil destination conversion hid the fresh source")
+				}
+				return
+			case "missing allocation type":
+				// Incomplete SSA must fail closed instead of panicking while
+				// inspecting the allocation's backing-array type.
+				slice.X = &ssa.Alloc{Comment: "makeslice"}
+			case "non-array allocation":
+				for _, block := range pkg.Func("scalar").Blocks {
+					for _, instruction := range block.Instrs {
+						if allocation, ok := instruction.(*ssa.Alloc); ok {
+							allocation.Comment = "makeslice"
+							slice.X = allocation
+						}
+					}
+				}
+			case "dynamic extent":
+				slice.High = fn.Params[0]
+			case "missing extent":
+				slice.High = ssa.NewConst(nil, types.Typ[types.Int])
+			case "partial extent":
+				slice.High = ssa.NewConst(constant.MakeInt64(2), types.Typ[types.Int])
+			}
+			if freshNilAppendSource(call) != nil {
+				t.Fatal("unsupported storage was forwarded")
+			}
+			if freshNilAppendAllocation(fn.Params[0]) {
+				t.Fatal("ordinary parameter was treated as append storage")
 			}
 		})
 	}
