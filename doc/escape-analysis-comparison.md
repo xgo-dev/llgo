@@ -91,7 +91,7 @@ llgo build -O3 -lto=full -o /tmp/llgo-escape ./benchmark/escape/coverage
 llgo build -gcflags=-m=2 ./benchmark/escape/coverage
 ```
 
-Measure `MemStats.TotalAlloc` separately from elapsed time: LLGo's native `Mallocs` accounting remains tracked by #2923. Compare allocation bytes within each compiler; BDWGC rounding and Go allocation classes differ. Use the shared probe source from this PR for both worktrees. Existing baseline/follow-up LLGo binaries must use their matching runtime source roots, so runtime helper changes do not contaminate the baseline.
+Measure `MemStats.TotalAlloc` separately from elapsed time. Native BDWGC `Mallocs` now reports recorded allocation events; historical runs before the #2923 fix did not use it. Compare allocation bytes within each compiler; BDWGC rounding and Go allocation classes differ. Use the shared probe source from this PR for both worktrees. Existing baseline/follow-up LLGo binaries must use their matching runtime source roots, so runtime helper changes do not contaminate the baseline.
 
 Go references: [graph and solver](https://github.com/golang/go/tree/go1.27.3/src/cmd/compile/internal/escape), [frontend pass order](https://github.com/golang/go/blob/go1.27.3/src/cmd/compile/internal/gc/main.go), [make lowering](https://github.com/golang/go/blob/go1.27.3/src/cmd/compile/internal/walk/builtin.go), [conversion lowering](https://github.com/golang/go/blob/go1.27.3/src/cmd/compile/internal/walk/convert.go), [string concatenation](https://github.com/golang/go/blob/go1.27.3/src/cmd/compile/internal/walk/expr.go). Semantic regressions are exercised by [`test/escape`](../test/escape), engine proofs by `internal/goescape`, and target IR by `cl/escape_test.go` and `ssa/make_32bit_test.go`.
 

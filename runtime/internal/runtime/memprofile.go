@@ -93,6 +93,17 @@ func memProfileSizeClass(size uintptr) uintptr {
 	return memProfileBuckets[len(memProfileBuckets)-1].size
 }
 
+// MemProfileMallocs returns recorded managed-allocation events across all
+// size classes. Reuse the allocator's existing counters without allocating
+// a profile snapshot or adding work to allocation call sites.
+func MemProfileMallocs() uint64 {
+	var total uint64
+	for i := range memProfileBuckets {
+		total += memProfileLoadObjects(&memProfileBuckets[i].objects)
+	}
+	return total
+}
+
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	for i := range memProfileBuckets {
 		if memProfileLoadObjects(&memProfileBuckets[i].objects) != 0 {
