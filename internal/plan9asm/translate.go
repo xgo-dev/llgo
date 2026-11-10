@@ -138,6 +138,11 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		return nil, err
 	}
 
+	if err := lowerNativeTailTransfers(tr.Module, src, tr.Signatures, resolve, goos, goarch); err != nil {
+		tr.Module.Dispose()
+		return nil, err
+	}
+
 	funcs := make([]FunctionInfo, 0, len(tr.Functions))
 	for _, fn := range tr.Functions {
 		funcs = append(funcs, FunctionInfo{TextSymbol: fn.TextSymbol, ResolvedSymbol: fn.ResolvedSymbol})
