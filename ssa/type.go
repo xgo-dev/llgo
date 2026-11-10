@@ -96,6 +96,10 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 	if layout, ok := p.wasmNativeLayout(T); ok {
 		return layout.align
 	}
+	return p.goAlignof(T)
+}
+
+func (p *goProgram) goAlignof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.align
 	}
@@ -109,22 +113,26 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // Offsetsof must implement the offset guarantees required by the spec.
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
-	prog := Program(unsafe.Pointer(p))
+	prog := Program(p)
+	native := prog.nativeFields(fields)
 	if prog.usesWideGoStorage() {
-		native := prog.nativeFields(fields)
-		changed := native
-		for _, f := range fields {
-			if changed {
-				break
-			}
-			_, changed = p.wasmNativeLayout(f.Type())
-		}
-		if changed {
-			_, offsets := p.wasmNativeFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] }, native)
+		if native {
+			_, offsets := p.wasmNativeFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] })
 			return offsets
 		}
+		for i, f := range fields {
+			if known, ok := p.wasmNativeLayout(f.Type()); ok {
+				_, offsets := aggregateSourceLayout(len(fields), func(j int) sourceLayout {
+					if j == i {
+						return known
+					}
+					return p.wasmGoFieldLayout(fields[j].Type())
+				}, true)
+				return offsets
+			}
+		}
 	}
-	if !prog.nativeFields(fields) {
+	if !native {
 		for _, f := range fields {
 			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
 				_, offsets := p.hostFieldsLayout(fields)
@@ -136,7 +144,7 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
 	}
-	if _, offsets, ok := p.vectorStructLayout(fields, prog.nativeFields(fields)); ok {
+	if _, offsets, ok := p.vectorStructLayout(fields, native); ok {
 		return offsets
 	}
 	extra := int64(0)
@@ -155,6 +163,10 @@ func (p *goProgram) Sizeof(T types.Type) int64 {
 	if layout, ok := p.wasmNativeLayout(T); ok {
 		return layout.size
 	}
+	return p.goSizeof(T)
+}
+
+func (p *goProgram) goSizeof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.size
 	}
@@ -756,6 +768,9 @@ func (p Program) toNamed(raw *types.Named) Type {
 		return p.toLLVMNamedStruct(name, raw, t, kind)
 	default:
 		typ := p.rawType(t)
+		if _, array := t.(*types.Array); array && p.hasLegacyNativeTypeLayout(raw) {
+			typ = p.withNativeStorage(typ)
+		}
 		return &aType{typ.ll, rawType{raw}, typ.kind}
 	}
 }

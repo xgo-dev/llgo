@@ -21,11 +21,15 @@ func TestWasmNativeSourceLayoutMatchesStorage(t *testing.T) {
 type Inner struct { P *byte; W uintptr }
 type Record struct { P *byte; W uintptr; Fn func(); Map map[int]int; Chan chan int; Words [2]uintptr; Inner Inner }
 type Wrapper struct { B byte; Record Record; Tail struct{} }
+type Words [2]uintptr
+type Pointers [2]*byte
 `, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 			prog.SetTypeCallConv("native.Record", CDecl)
+			prog.SetTypeCallConv("native.Words", CDecl)
+			prog.SetTypeCallConv("native.Pointers", CDecl)
 			for _, decl := range file.Decls {
 				spec := decl.(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
 				if spec.Name.Name == "Record" {
@@ -52,6 +56,14 @@ type Wrapper struct { B byte; Record Record; Tail struct{} }
 				raw := pkg.Scope().Lookup(tc.name).Type()
 				checkHostLayout(t, prog, sizes, raw, tc.size, 8, tc.offsets)
 				checkHostLayout(t, prog, sizes, types.NewArray(raw, 2), 2*tc.size, 8, nil)
+			}
+			for _, name := range []string{"Words", "Pointers"} {
+				raw := pkg.Scope().Lookup(name).Type()
+				checkHostLayout(t, prog, sizes, raw, 8, 4, nil)
+				checkHostLayout(t, prog, sizes, types.NewArray(raw, 2), 16, 4, nil)
+				if size := prog.SizeOf(prog.Type(raw, CDecl)); size != 8 {
+					t.Fatalf("%s C storage size = %d, want 8", name, size)
+				}
 			}
 		})
 	}

@@ -22,6 +22,8 @@ import "unsafe"
 type Record struct { Data unsafe.Pointer; Size uintptr; Tag int32 }
 //DIRECTIVE
 type Outer struct { R Record; Pointers [2]*byte; Words [2]uintptr; Tail [0]uint64 }
+//DIRECTIVE
+type Words [2]uintptr
 type GoRecord struct { Data unsafe.Pointer; Size uintptr; Tag int32 }
 type Wrapper struct { B byte; R Record; P *byte }
 var _ [12-int(unsafe.Sizeof(Record{}))]byte
@@ -32,6 +34,8 @@ var _ [4-int(unsafe.Offsetof(Record{}.Size))]byte
 var _ [int(unsafe.Offsetof(Record{}.Size))-4]byte
 var _ [24-int(unsafe.Sizeof([2]Record{}))]byte
 var _ [int(unsafe.Sizeof([2]Record{}))-24]byte
+var _ [8-int(unsafe.Sizeof(Words{}))]byte
+var _ [int(unsafe.Sizeof(Words{}))-8]byte
 var _ [32-int(unsafe.Sizeof(Outer{}))]byte
 var _ [int(unsafe.Sizeof(Outer{}))-32]byte
 var _ [24-int(unsafe.Sizeof(GoRecord{}))]byte
@@ -43,6 +47,7 @@ var _ [int(unsafe.Offsetof(Wrapper{}.P))-16]byte
 func Size() uintptr { return unsafe.Sizeof(Record{}) }
 func Next(records *[2]Record) *Record { return &records[1] }
 func SetSize(r *Record, n uintptr) { r.Size = n }
+func SetWord(w *Words, n uintptr) { w[1] = n }
 `
 	for _, directive := range []string{"//llgo:cdecl", "//llgo:type C"} {
 		for _, target := range []*llssa.Target{

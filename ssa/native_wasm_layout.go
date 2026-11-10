@@ -12,6 +12,11 @@ func (p *goProgram) wasmNativeLayout(t types.Type) (sourceLayout, bool) {
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Array:
+		// An array's own directive selects C slots. An ordinary Go array of
+		// native callbacks must retain the callbacks' Go storage width.
+		if _, named := types.Unalias(t).(*types.Named); named && prog.hasLegacyNativeTypeLayout(t) {
+			return arraySourceLayout(p.wasmNativeFieldLayout(u.Elem()), u.Len()), true
+		}
 		if elem, ok := p.wasmNativeLayout(u.Elem()); ok {
 			return arraySourceLayout(elem, u.Len()), true
 		}
@@ -20,26 +25,38 @@ func (p *goProgram) wasmNativeLayout(t types.Type) (sourceLayout, bool) {
 		if !native && u.NumFields() > 0 {
 			native = prog.nativeFields([]*types.Var{u.Field(0)})
 		}
-		changed := native
-		for i := 0; i < u.NumFields() && !changed; i++ {
-			_, changed = p.wasmNativeLayout(u.Field(i).Type())
-		}
-		if changed {
-			layout, _ := p.wasmNativeFieldsLayout(u.NumFields(), u.Field, native)
+		if native {
+			layout, _ := p.wasmNativeFieldsLayout(u.NumFields(), u.Field)
 			return layout, true
+		}
+		for i := 0; i < u.NumFields(); i++ {
+			if known, ok := p.wasmNativeLayout(u.Field(i).Type()); ok {
+				layout, _ := aggregateSourceLayout(u.NumFields(), func(j int) sourceLayout {
+					if j == i {
+						return known
+					}
+					return p.wasmGoFieldLayout(u.Field(j).Type())
+				}, true)
+				return layout, true
+			}
 		}
 	}
 	return sourceLayout{}, false
 }
 
-func (p *goProgram) wasmNativeFieldsLayout(n int, field func(int) *types.Var, native bool) (sourceLayout, []int64) {
+func (p *goProgram) wasmNativeFieldsLayout(n int, field func(int) *types.Var) (sourceLayout, []int64) {
 	return aggregateSourceLayout(n, func(i int) sourceLayout {
-		t := field(i).Type()
-		if native {
-			return p.wasmNativeFieldLayout(t)
-		}
-		return sourceLayout{p.Sizeof(t), p.Alignof(t)}
-	}, !native)
+		return p.wasmNativeFieldLayout(field(i).Type())
+	}, false)
+}
+
+// Query a subtree once and retain the size/alignment pair. Do not memoize
+// across checker calls, since a named type can still be incomplete.
+func (p *goProgram) wasmGoFieldLayout(t types.Type) sourceLayout {
+	if layout, ok := p.wasmNativeLayout(t); ok {
+		return layout
+	}
+	return sourceLayout{p.goSizeof(t), p.goAlignof(t)}
 }
 
 func (p *goProgram) wasmNativeFieldLayout(t types.Type) sourceLayout {
@@ -56,5 +73,5 @@ func (p *goProgram) wasmNativeFieldLayout(t types.Type) sourceLayout {
 	}
 	// A nested record owns its storage policy; an outer C directive does not
 	// recursively turn an ordinary Go record into a C record.
-	return sourceLayout{p.Sizeof(t), p.Alignof(t)}
+	return p.wasmGoFieldLayout(t)
 }

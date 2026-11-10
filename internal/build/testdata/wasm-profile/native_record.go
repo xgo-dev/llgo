@@ -14,6 +14,12 @@ type nativeRecord struct {
 //llgo:cdecl
 type recordCallback func(nativeRecord) nativeRecord
 
+//llgo:cdecl
+type nativeWords [2]uintptr
+
+//go:linkname cWords C.llgo_wasm_profile_words
+func cWords(*nativeWords) int32
+
 //go:linkname cRecordSize C.llgo_wasm_profile_record_size
 func cRecordSize() uintptr
 
@@ -37,6 +43,10 @@ func updateNativeRecord(r nativeRecord) nativeRecord {
 }
 
 func checkNativeRecord() {
+	words := nativeWords{7, 9}
+	if unsafe.Sizeof(words) != 2*expectedCPointerSize || cWords(&words) != 1 || words[1] != 11 {
+		panic("native array layout disagrees with C")
+	}
 	if cRecordSize() != unsafe.Sizeof(nativeRecord{}) || cRecordOffset() != unsafe.Offsetof(nativeRecord{}.Size) {
 		println("native layout", cRecordSize(), unsafe.Sizeof(nativeRecord{}), cRecordOffset(), unsafe.Offsetof(nativeRecord{}.Size))
 		panic("native aggregate layout disagrees with C")
