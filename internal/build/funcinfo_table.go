@@ -891,17 +891,18 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	// findfunc bucket index, because LLVM IR generation does not know final
 	// linked text order.
 	//
-	// Known limitation: because the record is emitted inside the function
-	// body, LTO inlining duplicates it into every inline site, bloating the
-	// section (~4x on multipkg) and registering host-function PCs under the
-	// inlinee's symbol ID; the runtime only consults this table when native
-	// symbolization fails, which bounds the impact. Data-global alternatives
-	// were tried and do not work with the current LLVM semantics: !associated
+	// Known limitation on native targets: LTO inlining duplicates these
+	// body-local records into every inline site, bloating the section (~4x on
+	// multipkg). Anchor records can attribute host PCs to the inlinee; exact
+	// entry records repeat the original function's PC. The post-link analyzer
+	// normalizes and deduplicates both forms when constructing the final ftab.
+	// Without that rewrite, the runtime uses these raw records as fallback.
+	// Data-global alternatives do not work with the current LLVM semantics:
+	// !associated
 	// affects only linker GC, so IR-level GlobalDCE deletes every record;
 	// keeping records via llvm.compiler.used makes their function-address
 	// initializers pin dead functions alive; and noduplicate on the asm call
-	// blocks inlining outright. Deduplicating the section is therefore
-	// link-phase work and lands together with the final ftab generation.
+	// blocks inlining outright.
 	siteFormat := runtimeSiteObjectFormat(ctx)
 	entrySiteInfo := runtimeEntrySiteSectionInfo(ctx)
 	llvmCtx := mod.Context()
@@ -948,13 +949,9 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 		if functionAddressTaken(fn) {
 			// Function values need the true entry even when the link-phase table
 			// rewrite is disabled. An inline-asm anchor follows the prologue and
-			// can make an entry PC resolve to the preceding function on amd64.
-			// Address-taken functions are already kept live by the program, so
-			// their associative record may safely carry
-			// the true entry instead of the post-prologue inline-asm anchor. This
-			// lets FuncForPC distinguish a function value from an ordinary PC in
-			// the tail of the preceding function without retaining any otherwise
-			// dead function.
+			// can misattribute an entry PC, notably on byte-aligned amd64.
+			// Address-taken functions already have address uses, so their body-local
+			// record can carry the true entry without keeping a dead function live.
 			entryPC = "${0:c}"
 			asmType = llvm.FunctionType(llvmCtx.VoidType(), []llvm.Type{fn.Type()}, false)
 			constraints = "X"
