@@ -411,3 +411,26 @@ func TestStdcallRejectsNonDirectCallback(t *testing.T) {
 		body.ChangeType(prog.Type(callback, GoDecl), closure)
 	})
 }
+
+func TestStdcallNativePointerAssignment(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
+	defer prog.Dispose()
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	source := newStdcallType(prog, "p", "Source", sig)
+	destination := newStdcallType(prog, "p", "Destination", sig)
+	pkg := prog.NewPackage("p", "p")
+	caller := pkg.NewFunc("p.assign", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "callback", source)), nil, false), GoDecl)
+	body := caller.MakeBody(1)
+	global := pkg.NewVar("callback", types.NewPointer(destination), GoDecl)
+	body.Store(global.Expr, caller.Param(0))
+	body.Store(global.Expr, prog.Nil(prog.Type(sig, GoDecl)))
+	body.Return()
+	ir := caller.impl.String()
+	if !strings.Contains(ir, "store ptr null, ptr @callback") || strings.Contains(ir, "__llgo_stdcall$") {
+		t.Fatalf("native pointer assignment emitted an adapter or lost nil:\n%s", ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}

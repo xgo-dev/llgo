@@ -19,7 +19,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-const frontendExportVersion = 3
+const frontendExportVersion = 4
 
 type frontendFunction struct {
 	ID       string

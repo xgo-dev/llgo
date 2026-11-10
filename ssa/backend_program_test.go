@@ -41,6 +41,9 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	pkg := types.NewPackage("example.com/p", "p")
 	fset := token.NewFileSet()
 	coordinator.SetLinkname("example.com/p.Entry", "entry")
+	coordinator.SetExternalImport("external")
+	coordinator.SetLinknameDirective("example.com/p.Native", "C.native", "go:linkname")
+	coordinator.SetNativeExport("example.com/p.Native", NativeExportInfo{CallConv: CDecl})
 	coordinator.SetPackageExport("example.com/p.Entry", "entry")
 	coordinator.SetNoInterfaceMethod("example.com/p.T.Hidden")
 	coordinator.SetTypeCallConv("example.com/p.CType", CDecl)
@@ -68,6 +71,15 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	}
 	if !backend.HasLinknameTarget("entry") || backend.HasLinknameTarget("missing") {
 		t.Fatal("backend Program did not preserve linkname target lookup")
+	}
+	if !backend.IsExternalImport("external") || backend.IsExternalImport("missing") {
+		t.Fatal("backend lost the build-wide import symbol set")
+	}
+	if backend.LinknameDirective("example.com/p.Native") != "go:linkname" || !backend.HasLinknameTarget("C.native") {
+		t.Fatal("backend lost directive metadata")
+	}
+	if info, ok := backend.NativeExport("example.com/p.Native"); !ok || info.CallConv != CDecl {
+		t.Fatal("backend lost native export metadata")
 	}
 	if export, ok := backend.PackageExport("example.com/p.Entry"); !ok || export != "entry" {
 		t.Fatalf("PackageExport = (%q, %v), want (entry, true)", export, ok)

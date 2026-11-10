@@ -265,30 +265,29 @@ type context struct {
 	locality             localityLowering
 }
 
-func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llssa.Global) bool {
+func (p *context) staticByteArrayGlobalInit(define bool, gbl *ssa.Global) llssa.Expr {
 	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
-		return false
+		return llssa.Expr{}
 	}
 	data, ok := p.staticByteArrays[staticByteArrayDeclKey(gbl)]
 	if !ok {
-		return false
+		return llssa.Expr{}
 	}
 	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
 	if !ok {
-		return false
+		return llssa.Expr{}
 	}
 	arr, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array)
 	if !ok || arr.Len() != int64(len(data)) {
-		return false
+		return llssa.Expr{}
 	}
 	// Length is the restore-time check. Byte contents are trusted because
 	// StripLargeStaticByteArrays only accepts INT/CHAR literals.
 	basic, ok := arr.Elem().Underlying().(*types.Basic)
 	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
-		return false
+		return llssa.Expr{}
 	}
-	g.Init(p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data))
-	return true
+	return p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data)
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -466,26 +465,40 @@ func (p *context) compileMethodsIf(pkg llssa.Package, typ types.Type, keep func(
 }
 
 // Global variable.
-func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
-	typ := p.patchType(gbl.Type())
+func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) error {
+	typ := p.nativeVariableType(gbl)
 	name, vtype, define := p.varName(gbl.Pkg.Pkg, gbl)
 	if vtype == pyVar {
-		return
+		return nil
 	}
 	dbgInstrln("==> NewVar", name, typ)
-	g, skip := p.localityGlobalStorage(pkg, gbl, name, typ, llssa.CallConv(vtype))
+	g, skip, info := p.localityGlobalStorage(pkg, gbl, name, typ, llssa.CallConv(vtype))
 	if skip {
-		return
+		return nil
 	}
 	if define && name == llssa.RuntimeGoroutineStackSizeVar {
 		p.prog.InitPthreadStackSize(g)
-		return
+		return nil
 	}
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
-		return
+		return nil
 	}
-	if p.initStaticByteArrayGlobal(define, gbl, g) {
-		return
+	init := p.staticGlobalInits[gbl]
+	if restored := p.staticByteArrayGlobalInit(define, gbl); !restored.IsNil() {
+		init = restored
+	}
+	if define && vtype == goVar && info.Locality == llssa.LocalityNone {
+		if value, ok := p.rewriteValue(name); ok {
+			if p.isStringPtrType(gbl.Type()) {
+				init = pkg.ConstString(value)
+			} else {
+				log.Printf("warning: ignoring rewrite for non-string variable %s (type: %v)", name, gbl.Type())
+			}
+		}
+		if err := g.InitSharedGo(init, p.prog.IsExternalImport(name)); err != nil {
+			return fmt.Errorf("%s: %s: %w", p.fset.Position(gbl.Pos()), gbl.Name(), err)
+		}
+		return nil
 	}
 	if value, ok := p.rewriteValue(name); ok {
 		if p.isStringPtrType(gbl.Type()) {
@@ -496,11 +509,12 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 				g.InitNil()
 			}
 		}
-	} else if init, ok := p.staticGlobalInits[gbl]; ok {
+	} else if !init.IsNil() {
 		g.Init(init)
 	} else if define {
 		g.InitNil()
 	}
+	return nil
 }
 
 func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*ssa.FreeVar) *types.Var {
@@ -662,6 +676,15 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		p.resolveLLVMIntrinsic(f, name)
 		return nil, nil, llvmIntrinsic
 	}
+	declaration := f
+	if origin := f.Origin(); origin != nil {
+		declaration = origin
+	}
+	if f.Synthetic != ssawrap.CallWrapper && declaration.Pkg != nil && p.prog.LinknameDirective(funcName(declaration.Pkg.Pkg, declaration, declaration != f)) == "llgo:link" {
+		// A llgo:link body exists only for Go type checking. It must never
+		// become a definition, including when its target uses the Go ABI.
+		return nil, nil, ignoredFunc
+	}
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)
 	simdDecl = simdDecl && f.Pkg == p.goPkg
 	if simdDecl {
@@ -683,6 +706,12 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}()
 		return p.patchType(f.Signature).(*types.Signature)
 	}()
+	if _, native := p.prog.NativeExport(name); native {
+		if sig.Variadic() || sig.Results().Len() > 1 {
+			panic(fmt.Errorf("native export %s has an unsupported signature", name))
+		}
+		pkg.SetNativeExportSignature(name, sig)
+	}
 	state := p.state
 	isInit := (f.Name() == "init" && sig.Recv() == nil)
 	if isInit && state == pkgHasPatch {
@@ -3130,12 +3159,16 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		if _, ok := skips["init"]; ok || ctx.skipall {
 			ctx.state |= pkgFNoOldInit
 		}
-		processPkg(ctx, ret, patch.Alt)
+		if err = processPkg(ctx, ret, patch.Alt); err != nil {
+			return nil, nil, err
+		}
 		ctx.state = pkgHasPatch
 		ctx.skips = skips
 	}
 	if !ctx.skipall {
-		processPkg(ctx, ret, pkg)
+		if err = processPkg(ctx, ret, pkg); err != nil {
+			return nil, nil, err
+		}
 	}
 	for len(ctx.inits) > 0 {
 		inits := ctx.inits
@@ -3151,6 +3184,16 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if err = ctx.validateCVariadicWrapperUses(); err != nil {
 		return nil, nil, err
 	}
+	if !options.CExportWrappers {
+		for goName, nativeName := range ret.ExportFuncs() {
+			if export, ok := prog.NativeExport(goName); ok {
+				implementation := ret.FuncOf(goName)
+				if implementation != nil && implementation.HasBody() {
+					ret.DefineNativeExport(goName, nativeName, ret.NativeExportSignature(goName), export.CallConv, nil)
+				}
+			}
+		}
+	}
 	ret.MaterializePreserveSyms()
 	if metaCollect {
 		if err := ret.FinishMetaCollection(); err != nil {
@@ -3165,7 +3208,7 @@ func initFnNameOfHasPatch(name string) string {
 	return name + "$hasPatch"
 }
 
-func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
+func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) error {
 	type namedMember struct {
 		name string
 		val  ssa.Member
@@ -3219,10 +3262,13 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 			ctx.compileType(ret, member)
 		case *ssa.Global:
 			if !isCgoFuncPtrVar(member.Name()) {
-				ctx.compileGlobal(ret, member)
+				if err := ctx.compileGlobal(ret, member); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	return nil
 }
 
 func (p *context) type_(typ types.Type, cc llssa.CallConv) llssa.Type {

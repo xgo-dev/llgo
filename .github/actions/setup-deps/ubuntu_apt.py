@@ -7,9 +7,11 @@ import sys
 
 
 def configure(apt_dir, architecture):
+    preferred = None
     if architecture in ("amd64", "i386"):
         archive = "https://archive.ubuntu.com/ubuntu/"
         security = "https://security.ubuntu.com/ubuntu/"
+        preferred = "https://azure.archive.ubuntu.com/ubuntu/"
     else:
         archive = security = "https://ports.ubuntu.com/ubuntu-ports/"
 
@@ -21,7 +23,11 @@ def configure(apt_dir, architecture):
                       ("apt-mirrors-security.txt", security)):
         path = apt_dir / name
         if path.exists():
-            path.write_text(url + "\n")
+            mirrors = url + "\n"
+            if preferred:
+                # Avoid retrying a broken canonical endpoint for every file.
+                mirrors = preferred + "\tpriority:1\n" + url + "\tpriority:2\n"
+            path.write_text(mirrors)
 
     (apt_dir / "apt.conf.d" / "80-llgo-downloads").write_text('''\
 Acquire::ForceIPv4 "true";
