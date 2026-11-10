@@ -59,7 +59,7 @@ func TestReadMemStatsAllocationEvents(t *testing.T) {
 	}
 	runtime.ReadMemStats(&after)
 	if count := after.Mallocs - before.Mallocs; count < 1000 {
-		t.Fatalf("1000 escaping allocations report %d events", count)
+		t.Fatalf("1000 escaping allocations report %d events, want >= 1000", count)
 	}
 	if after.TotalAlloc <= before.TotalAlloc {
 		t.Fatal("escaping allocations did not increase TotalAlloc")

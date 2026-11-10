@@ -26,7 +26,8 @@ func ReadMemStats(m *runtime.MemStats) {
 	heapInuse := saturatingSub(heapSys, heapIdle)
 	heapAlloc := heapInuse
 	// Byte totals use BDWGC accounting; object events use the Go allocator's
-	// existing counters. BDWGC does not expose collected-object event counts.
+	// existing counters. BDWGC does not expose collected/live object counts,
+	// so Frees and HeapObjects remain zero, including in runtime/metrics.
 	*m = runtime.MemStats{
 		Alloc:      uint64(heapAlloc),
 		TotalAlloc: uint64(totalBytes),
