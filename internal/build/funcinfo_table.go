@@ -945,10 +945,12 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 		asmType := noArgsAsmType
 		constraints := ""
 		var args []llvm.Value
-		if siteFormat == siteObjectCOFF && ctx.prog.PointerSize() == 4 && functionAddressTaken(fn) {
-			// Win32 has no PE unwind table from which the runtime can recover an
-			// exact function boundary. Address-taken functions are already kept
-			// live by the program, so their associative record may safely carry
+		if functionAddressTaken(fn) {
+			// Function values need the true entry even when the link-phase table
+			// rewrite is disabled. An inline-asm anchor follows the prologue and
+			// can make an entry PC resolve to the preceding function on amd64.
+			// Address-taken functions are already kept live by the program, so
+			// their associative record may safely carry
 			// the true entry instead of the post-prologue inline-asm anchor. This
 			// lets FuncForPC distinguish a function value from an ordinary PC in
 			// the tail of the preceding function without retaining any otherwise

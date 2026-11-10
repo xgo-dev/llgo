@@ -308,44 +308,57 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	}
 }
 
-func TestWin32FuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
-	defer prog.Dispose()
-	prog.EnableFuncInfoMetadata(true)
-	prog.EnableFuncInfoSites(true)
-	ctx := &context{
-		prog: prog,
-		buildConf: &Config{
-			BuildMode: BuildModeExe,
-			Goos:      "windows",
-			Goarch:    "386",
-		},
-	}
-	pkg := prog.NewPackage("example.com/p", "example.com/p")
-	for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
-		pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
-		pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
-	}
-	addressed := pkg.Module().NamedFunction("example.com/p.addressed")
-	keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
-	keep.SetInitializer(addressed)
+func TestFuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
+	for _, target := range []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"linux", "arm64"}, {"linux", "386"},
+		{"darwin", "amd64"}, {"darwin", "arm64"},
+		{"windows", "386"}, {"windows", "amd64"}, {"windows", "arm64"},
+	} {
+		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
+			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
+			defer prog.Dispose()
+			prog.EnableFuncInfoMetadata(true)
+			prog.EnableFuncInfoSites(true)
+			ctx := &context{
+				prog: prog,
+				buildConf: &Config{
+					BuildMode:   BuildModeExe,
+					Goos:        target.goos,
+					Goarch:      target.goarch,
+					LinkOptions: LinkOptions{DWARF: DWARFOmit},
+				},
+			}
+			pkg := prog.NewPackage("example.com/p", "example.com/p")
+			for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
+				pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
+				pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
+			}
+			addressed := pkg.Module().NamedFunction("example.com/p.addressed")
+			keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
+			keep.SetInitializer(addressed)
 
-	emitFuncInfoEntrySites(ctx, pkg)
-	ir := pkg.String()
-	if got := strings.Count(ir, `.long ${0:c}`); got != 1 {
-		t.Fatalf("Win32 exact-entry record count = %d, want 1:\n%s", got, ir)
+			emitFuncInfoEntrySites(ctx, pkg)
+			ir := pkg.String()
+			directive := ".quad"
+			if prog.PointerSize() == 4 {
+				directive = ".long"
+			}
+			if got := strings.Count(ir, directive+" ${0:c}"); got != 1 {
+				t.Fatalf("exact-entry record count = %d, want 1:\n%s", got, ir)
+			}
+			if !strings.Contains(ir, `"X"(ptr @"example.com/p.addressed")`) {
+				t.Fatalf("address-taken function is not the exact-entry operand:\n%s", ir)
+			}
+			if got := strings.Count(ir, directive+" "+siteAnchorLabel(runtimeSiteObjectFormat(ctx), "funcinfo_entry")); got != 1 {
+				t.Fatalf("anchor entry record count = %d, want 1:\n%s", got, ir)
+			}
+			buf, err := prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), llvm.ObjectFile)
+			if err != nil {
+				t.Fatalf("emit exact-entry object: %v\n%s", err, ir)
+			}
+			buf.Dispose()
+		})
 	}
-	if !strings.Contains(ir, `"X"(ptr @"example.com/p.addressed")`) {
-		t.Fatalf("Win32 address-taken function is not the exact-entry operand:\n%s", ir)
-	}
-	if got := strings.Count(ir, ".long .Lllgo_funcinfo_entry_anchor_"); got != 1 {
-		t.Fatalf("Win32 anchor entry record count = %d, want 1:\n%s", got, ir)
-	}
-	buf, err := prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), llvm.ObjectFile)
-	if err != nil {
-		t.Fatalf("emit Win32 exact-entry COFF object: %v\n%s", err, ir)
-	}
-	buf.Dispose()
 }
 
 func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
