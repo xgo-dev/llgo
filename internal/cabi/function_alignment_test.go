@@ -55,15 +55,20 @@ define %Large @caller() {
 			if m.NamedFunction("aligned").GlobalValueType().String() == before {
 				t.Fatal("test did not exercise replacement")
 			}
-			for name, want := range map[string]int{
-				"external":          64,
-				"ordinary_external": 0,
-				"aligned":           128,
-				"ordinary":          0,
-				"scalar":            64,
+			for _, test := range []struct {
+				name string
+				want int
+			}{
+				{"external", 64},
+				{"ordinary_external", 0},
+				{"aligned", 128},
+				{"ordinary", 0},
+				// The scalar control keeps its original function. Aggregate
+				// entries above exercise alignment on replacement functions.
+				{"scalar", 64},
 			} {
-				if got := m.NamedFunction(name).Alignment(); got != want {
-					t.Errorf("%s alignment = %d, want %d", name, got, want)
+				if got := m.NamedFunction(test.name).Alignment(); got != test.want {
+					t.Errorf("%s alignment = %d, want %d", test.name, got, test.want)
 				}
 			}
 			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
