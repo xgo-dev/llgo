@@ -305,6 +305,11 @@ func (p Program) Elem(typ Type) Type {
 }
 
 func (p Program) Index(typ Type) Type {
+	if _, pointer := typ.raw.Type.Underlying().(*types.Pointer); pointer {
+		// An array pointer carries the array's storage policy through its
+		// pointee. Keep that owner when selecting an indexed element view.
+		typ = p.Elem(typ)
+	}
 	return p.childStorageType(typ, indexType(typ.raw.Type))
 }
 
@@ -757,6 +762,12 @@ func (p Program) toNamed(raw *types.Named) Type {
 		return p.toLLVMNamedStruct(name, raw, t, kind)
 	default:
 		typ := p.rawType(t)
+		if _, array := t.(*types.Array); array && p.hasLegacyNativeTypeLayout(raw) {
+			// Native array indexing selects native element views. Its backing
+			// storage must use the same slots, including pointers/uintptr on
+			// memory32, instead of the cached ordinary Go array storage.
+			return &aType{p.nativeStorageLLVMType(t, typ.ll), rawType{raw}, typ.kind}
+		}
 		return &aType{typ.ll, rawType{raw}, typ.kind}
 	}
 }

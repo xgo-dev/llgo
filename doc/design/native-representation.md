@@ -65,6 +65,13 @@ do not identify an enclosing struct from its fields.
 - Typed pointer conversions reject incompatible size, alignment, field offsets,
   nested storage, or callback ABI. Compatible inherited views retain aliasing.
   An explicit unsafe.Pointer conversion remains the caller's responsibility.
+- Native callback value conversions also retain the inherited invocation ABI:
+  cdecl/stdcall conversions are rejected on Windows/386, while Windows targets
+  with one unified callback ABI permit them.
+- Native arrays use the same element slots for backing storage and indexing,
+  including indexing through a pointer to an inherited array. Native pointer,
+  callback, and uintptr slots use the Core address width on memory32; ordinary
+  Go array slots retain the Go word width.
 - Source tests cover transitive and cross-package definitions, aliases,
   parenthesized RHS types, generic templates/instances, recursion, local scopes,
   method-set independence, and concurrent backend queries.
@@ -97,6 +104,8 @@ fingerprints also include compiler, target, source, and feature identities.
 2. Native function-field address escapes and all implicit shared-storage views
    need representation-aware checking. The implemented typed-pointer diagnostic
    does not establish compatibility for every assignment, slice, or map view.
+   Array conversions between different storage layouts are diagnosed and
+   require copying elements explicitly; automatic array repacking is pending.
 3. Callback reflection and FFI descriptions (#2872) still need to distinguish a
    code pointer from a Go closure. Native anonymous function fields have a
    storage context not represented by their source `types.Signature` alone.

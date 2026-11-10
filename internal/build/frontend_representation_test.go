@@ -22,10 +22,16 @@ func TestFrontendRepresentationPolicyValidation(t *testing.T) {
 	}
 	native, copyType := named("Native"), named("Copy")
 	named("Go")
+	anonymous := types.NewStruct([]*types.Var{types.NewField(0, pkg, "Fn", llssa.NoArgsNoRet, false)}, nil)
+	alias := types.NewAlias(types.NewTypeName(0, pkg, "Anonymous", nil), anonymous)
+	pkg.Scope().Insert(alias.Obj())
 	pkg.MarkComplete()
 	source.SetTypeCallConv(pkg.Path()+".Native", llssa.CDecl)
+	source.SetTypeCallConv(pkg.Path()+".Anonymous", llssa.CDecl)
+	source.SetNativeAnonymousLayout(anonymous)
 	source.SetTypeDefinition(copyType.Obj(), native)
 	index := frontcache.NewTypes(map[*types.Package]string{pkg: pkg.Path()})
+	index.LayoutIdentity = source.LayoutIdentity
 	exported := frontcache.ExportPackage(pkg, index, token.NewFileSet())
 	exportFrontendRepresentation(source, &exported.Types)
 	data, err := json.Marshal(exported)
@@ -69,6 +75,9 @@ func TestFrontendRepresentationPolicyValidation(t *testing.T) {
 				if backend.RepresentationOf(loaded.Scope().Lookup("Copy").Type()).Storage != llssa.GoRepresentation {
 					t.Fatal("invalid metadata partially published")
 				}
+				if backend.LayoutIdentity(types.Unalias(loaded.Scope().Lookup("Anonymous").Type())) != "" {
+					t.Fatal("invalid metadata partially published anonymous layout")
+				}
 				return
 			}
 			if err != nil {
@@ -82,6 +91,9 @@ func TestFrontendRepresentationPolicyValidation(t *testing.T) {
 			}
 			if rep := backend.RepresentationOf(loaded.Scope().Lookup("Copy").Type()); rep.Storage != llssa.NativeRepresentation || rep.Origin.Name() != "Native" {
 				t.Fatalf("inherited native policy = %+v", rep)
+			}
+			if got := backend.LayoutIdentity(types.Unalias(loaded.Scope().Lookup("Anonymous").Type())); got != "native" {
+				t.Fatalf("restored anonymous layout = %q", got)
 			}
 		})
 	}

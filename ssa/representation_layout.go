@@ -53,26 +53,9 @@ func (p *goProgram) representationLayout(t types.Type) (sourceLayout, bool) {
 		layout, _ := p.representationStructLayout(u, prog.hasLegacyNativeTypeLayout(t))
 		return layout, true
 	case *types.Array:
-		if prog.RepresentationOf(t).Storage == NativeRepresentation {
-			return arraySourceLayout(p.representationRawArrayElement(u.Elem()), u.Len()), true
-		}
-		return arraySourceLayout(p.representationFieldLayout(u.Elem(), false), u.Len()), true
+		return arraySourceLayout(p.representationFieldLayout(u.Elem(), prog.RepresentationOf(t).Storage == NativeRepresentation), u.Len()), true
 	}
 	return sourceLayout{}, false
-}
-
-// A native array suppresses closure conversion, but an addressable Go variable
-// still uses Go-width pointer slots on memory32. Its fields in native records
-// are narrowed separately by representationFieldLayout.
-func (p *goProgram) representationRawArrayElement(t types.Type) sourceLayout {
-	switch u := t.Underlying().(type) {
-	case *types.Signature:
-		word := int64(Program(p).GoWordSize())
-		return sourceLayout{word, word}
-	case *types.Array:
-		return arraySourceLayout(p.representationRawArrayElement(u.Elem()), u.Len())
-	}
-	return p.representationFieldLayout(t, false)
 }
 
 func (p *goProgram) representationStructLayout(st *types.Struct, native bool) (sourceLayout, []int64) {

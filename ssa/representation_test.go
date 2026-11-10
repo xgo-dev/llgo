@@ -212,7 +212,7 @@ func TestNativeVectorPointerStorageInheritance(t *testing.T) {
 		t.Fatal("fixture no longer exercises different register representations")
 	}
 	for _, pair := range [][2]types.Type{{copyType, vector}, {vector, copyType}} {
-		if err := prog.CheckNativePointerConversion(types.NewPointer(pair[0]), types.NewPointer(pair[1])); err != nil {
+		if err := prog.CheckNativeConversion(types.NewPointer(pair[0]), types.NewPointer(pair[1])); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -226,9 +226,12 @@ func TestNativePointerViewsUseTargetCallbackABI(t *testing.T) {
 			cdecl := newStdcallType(prog, "p", "Cdecl", NoArgsNoRet)
 			prog.SetTypeCallConv("p.Cdecl", CDecl)
 			stdcall := newStdcallType(prog, "p", "Stdcall", NoArgsNoRet)
-			err := prog.CheckNativePointerConversion(types.NewPointer(cdecl), types.NewPointer(stdcall))
+			err := prog.CheckNativeConversion(types.NewPointer(cdecl), types.NewPointer(stdcall))
 			if (err != nil) != (arch == "386") {
 				t.Fatalf("callback pointer conversion error = %v", err)
+			}
+			if err := prog.CheckNativeConversion(cdecl, stdcall); (err != nil) != (arch == "386") {
+				t.Fatalf("callback value conversion error = %v", err)
 			}
 		})
 	}
@@ -246,10 +249,10 @@ func TestNativePointerTypedefKeepsPointeeStorage(t *testing.T) {
 			copyType := types.NewNamed(types.NewTypeName(0, pkg, "Copy", nil), pointer, nil)
 			prog.SetTypeCallConv("p.NativePointer", CDecl)
 			prog.SetTypeDefinition(copyType.Obj(), native)
-			if err := prog.CheckNativePointerConversion(copyType, native); err != nil {
+			if err := prog.CheckNativeConversion(copyType, native); err != nil {
 				t.Fatal(err)
 			}
-			err := prog.CheckNativePointerConversion(native, pointer)
+			err := prog.CheckNativeConversion(native, pointer)
 			if (err != nil) != prog.usesWideGoStorage() {
 				t.Fatalf("native pointee view conversion error = %v", err)
 			}

@@ -1858,7 +1858,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			ret = p.nilOf(t)
 			break
 		}
-		if err := p.prog.CheckNativePointerConversion(p.patchType(t), p.patchType(v.X.Type())); err != nil {
+		if err := p.prog.CheckNativeConversion(p.patchType(t), p.patchType(v.X.Type())); err != nil {
 			if p.nativeStorageError == nil {
 				p.nativeStorageError = fmt.Errorf("%s: %w", p.fset.Position(v.Pos()), err)
 			}
