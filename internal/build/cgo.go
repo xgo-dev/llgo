@@ -234,14 +234,14 @@ func genExternDeclsByClang(compiler *llclang.Cmd, pkg *aPackage, src string, cfl
 				continue
 			}
 			/* template:
-			typeof(fputs)* _cgo_1574167f3838_Cfunc_fputs;
+			__typeof__(fputs)* _cgo_1574167f3838_Cfunc_fputs;
 
 			__attribute__((constructor))
 			static void _init__cgo_1574167f3838_Cfunc_fputs() {
 				_cgo_1574167f3838_Cfunc_fputs = fputs;
 			}*/
 			b.WriteString(fmt.Sprintf(`
-typeof(%s)%s %s;
+__typeof__(%s)%s %s;
 
 __attribute__((constructor))
 static void _init_%s() {
