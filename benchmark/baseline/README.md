@@ -40,6 +40,11 @@ byte mismatches use fixed one-million-call samples with checked results. LLGo
 uses `-O3 -lto=full`; Go uses its defaults. The remaining conversion cost is
 included when measuring a compiler that has not eliminated that conversion.
 
+The goroutine lifecycle suite runs the same fixed workload with native Go and
+LLGo. It measures creating and joining 1, 16, 128, and 1,024 goroutines, plus
+dispatching the same work through one reusable worker. Each case uses ten fixed
+iterations per sample to keep native thread creation bounded on CI runners.
+
 Once the timer selectors are present on the target branch, a paired pull-request
 result compiles `/LLGo` once from the merge base and once from the head, while
 `/Go` is repeated as a same-runner control. A timer-runtime pull request whose

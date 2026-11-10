@@ -148,6 +148,23 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
 
 (
   cd "$harness_root"
+  GOMAXPROCS=1 go test \
+    -run '^$' \
+    -bench '^BenchmarkGoroutineLifecycle$' \
+    -benchtime=10x \
+    -count=5 \
+    -cpu=1 \
+    ./benchmark/goroutine
+  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+    -run '^$' \
+    -bench '^BenchmarkGoroutineLifecycle$' \
+    -benchtime=10x \
+    -count=5 \
+    ./benchmark/goroutine
+) | tee -a "$go_results"
+
+(
+  cd "$harness_root"
   go run ./benchmark/baseline \
     -mode export \
     -out "$result_directory" \
