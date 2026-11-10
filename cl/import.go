@@ -1176,7 +1176,7 @@ func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 				positions = append(positions, name.Pos())
 			}
 		}
-		prog.SetNativeStructFields(positions)
+		prog.SetNativeStructFields(positions, spec.Assign.IsValid())
 	}
 	return nil
 }

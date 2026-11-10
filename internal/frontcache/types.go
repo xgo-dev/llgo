@@ -16,10 +16,13 @@ import (
 // Package IDs, rather than import paths, distinguish test and alternate
 // packages. Ambiguous identities fail closed instead of selecting a type.
 type Types struct {
-	packages map[*types.Package]string
-	keys     map[types.Type]string
-	values   map[string]types.Type
-	fset     *token.FileSet
+	// LayoutIdentity must be set before indexing types. It distinguishes
+	// compiler layout attributes that gc's structural identity does not retain.
+	LayoutIdentity func(types.Type) string
+	packages       map[*types.Package]string
+	keys           map[types.Type]string
+	values         map[string]types.Type
+	fset           *token.FileSet
 }
 
 func NewTypes(packages map[*types.Package]string, sets ...*token.FileSet) *Types {
@@ -94,6 +97,11 @@ func (t *Types) Key(typ types.Type) string {
 		list(v)
 	case *types.Struct:
 		b.WriteString("struct:")
+		if t.LayoutIdentity != nil {
+			if identity := t.LayoutIdentity(v); identity != "" {
+				fmt.Fprintf(&b, "layout:%q;", identity)
+			}
+		}
 		for i := 0; i < v.NumFields(); i++ {
 			f := v.Field(i)
 			owner := ""

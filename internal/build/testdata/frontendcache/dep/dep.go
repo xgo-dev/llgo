@@ -33,3 +33,20 @@ func Catch(p *int) {
 }
 
 var dead = map[string]int{"unused": 2}
+
+//llgo:cdecl
+type nativeRecord struct {
+	Fn   func()
+	Tail uint64
+}
+
+type Native nativeRecord
+type DerivedNative Native
+
+//llgo:cdecl
+type NativeAlias = struct {
+	Fn   func()
+	Tail uint64
+}
+
+type DerivedAlias NativeAlias

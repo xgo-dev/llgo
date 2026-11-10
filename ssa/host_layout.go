@@ -68,7 +68,7 @@ func (p *goProgram) hostLayout(t types.Type) (sourceLayout, bool) {
 		// Legacy directives keep their existing source-layout policy. Check
 		// only after finding a marker: native name lookup allocates, whereas
 		// ordinary size queries must remain allocation-free.
-		if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.hasNativeTypeDirective(raw) {
+		if prog.hasLegacyNativeTypeLayout(raw) {
 			return sourceLayout{}, false
 		}
 		fields := make([]*types.Var, t.NumFields())
@@ -84,7 +84,7 @@ func (p *goProgram) hostLayout(t types.Type) (sourceLayout, bool) {
 		return layout, true
 	case *types.Array:
 		if elem, ok := p.hostLayout(t.Elem()); ok {
-			if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.hasNativeTypeDirective(raw) {
+			if prog.hasLegacyNativeTypeLayout(raw) {
 				return sourceLayout{}, false
 			}
 			return arraySourceLayout(elem, t.Len()), true
@@ -107,7 +107,7 @@ func (p *goProgram) hostFieldsLayout(fields []*types.Var) (sourceLayout, []int64
 
 func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	prog := Program(p)
-	native = native || prog.hasNativeTypeDirective(t)
+	native = native || prog.RepresentationOf(t).Storage == NativeRepresentation
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		// Strings retain their Go aggregate representation. Numeric types
@@ -138,29 +138,6 @@ func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	return p.hostNestedLayout(t)
 }
 
-// hasNativeTypeDirective preserves declarations on aliases before unaliasing.
-func (p Program) hasNativeTypeDirective(t types.Type) bool {
-	for {
-		var obj *types.TypeName
-		switch n := t.(type) {
-		case *types.Named:
-			obj = n.Obj()
-		case *types.Alias:
-			obj = n.Obj()
-		}
-		if obj != nil {
-			if cc, ok := p.packageTypeCallConv(typeNameLinkname(obj)); ok && isNativeCallConv(cc) {
-				return true
-			}
-		}
-		alias, ok := t.(*types.Alias)
-		if !ok {
-			return false
-		}
-		t = alias.Rhs()
-	}
-}
-
 // These targets already use LLVM's native layout for ordinary aggregates.
 // Consult that storage policy only inside HostLayout aggregates and their
 // containers. Ordinary Go source sizes and storage stay unchanged by this feature.
@@ -180,7 +157,7 @@ func (p *goProgram) hostNestedLayout(t types.Type) sourceLayout {
 // types during source checking. It is reachable only through HostLayout sizing.
 func (p *goProgram) hostNativeLayout(t types.Type, native bool) sourceLayout {
 	prog := Program(p)
-	native = native || prog.hasNativeTypeDirective(t)
+	native = native || prog.RepresentationOf(t).Storage == NativeRepresentation
 	if l, ok := p.hostLayout(t); ok {
 		return l
 	}

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-const frontendExportVersion = 3
+const frontendExportVersion = 4
 
 type frontendFunction struct {
 	ID       string
@@ -90,6 +90,7 @@ func (c *context) newFrontendCache(entries []ssaBuildEntry, mode ssa.BuilderMode
 		}
 	}
 	f.types = frontcache.NewTypes(f.ids, c.progSSA.Fset)
+	f.types.LayoutIdentity = c.prog.LayoutIdentity
 	if c.buildConf.Goarch == "wasm" {
 		f.programInput = f.programKey(mode)
 		f.program = f.loadProgram()

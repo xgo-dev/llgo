@@ -96,6 +96,9 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
 		return layout.align
 	}
+	if layout, ok := p.representationLayout(T); ok {
+		return layout.align
+	}
 	if layout, ok := p.vectorLayout(T, false); ok {
 		return layout.align
 	}
@@ -107,13 +110,24 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 	prog := Program(unsafe.Pointer(p))
-	if !prog.nativeFields(fields) {
+	native := prog.nativeFields(fields)
+	if !native {
 		for _, f := range fields {
 			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
 				_, offsets := p.hostFieldsLayout(fields)
 				return offsets
 			}
 		}
+	}
+	changed := native
+	for _, field := range fields {
+		changed = changed || prog.containsNativeAggregate(field.Type())
+	}
+	if changed {
+		_, offsets := aggregateSourceLayout(len(fields), func(i int) sourceLayout {
+			return p.representationFieldLayout(fields[i].Type(), native)
+		}, !native)
+		return offsets
 	}
 	ptrSize := int64(prog.GoWordSize())
 	if abi.IsClosureFields(fields) {
@@ -136,6 +150,9 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
 	if layout, ok := p.hostLayout(T); ok {
+		return layout.size
+	}
+	if layout, ok := p.representationLayout(T); ok {
 		return layout.size
 	}
 	if layout, ok := p.vectorLayout(T, false); ok {
@@ -352,11 +369,15 @@ func typeStringWithPkg(t types.Type) string {
 }
 
 func (p Program) rawType(raw types.Type) Type {
-	if v := p.typs.At(raw); v != nil {
+	typs := &p.typs
+	if p.containsNativeAnonymous(raw) {
+		typs = &p.nativeAnonymousTypes
+	}
+	if v := typs.At(raw); v != nil {
 		return v.(Type)
 	}
 	ret := p.toType(raw)
-	p.typs.Set(raw, ret)
+	typs.Set(raw, ret)
 	return ret
 }
 

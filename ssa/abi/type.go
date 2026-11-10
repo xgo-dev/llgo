@@ -386,6 +386,13 @@ func (b *Builder) HasPointers(t types.Type) bool {
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
+	if layouts, ok := b.Sizes.(interface {
+		StoragePointerBytes(types.Type) (uintptr, bool)
+	}); ok {
+		if bytes, changed := layouts.StoragePointerBytes(t); changed {
+			return bytes
+		}
+	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -480,6 +487,12 @@ func (b *Builder) Size(t types.Type) uintptr {
 	case *types.Chan:
 		return b.PtrSize
 	case *types.Named:
+		// Keep the owning type: its native representation may differ from an
+		// independent Go type sharing the same underlying struct.
+		switch t.Underlying().(type) {
+		case *types.Struct, *types.Array:
+			return uintptr(b.Sizes.Sizeof(t))
+		}
 		return b.Size(t.Underlying())
 	}
 	panic("unsupported size: " + t.String())

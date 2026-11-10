@@ -23,6 +23,7 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/env"
@@ -117,10 +118,12 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	ctx                    llvm.Context
+	typs                   typeutil.Map // rawType -> Type
+	nativeAnonymousTypes   typeutil.Map
+	nativeAnonymousLayouts typeutil.Map
+	sizes                  types.Sizes // provided by Go compiler
+	gocvt                  goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -537,6 +540,16 @@ func (p Program) SetRuntime(runtime any) {
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeCallConvs[typFullName] = cc
+	pkgPath, name := "", typFullName
+	if i := strings.LastIndexByte(typFullName, '.'); i >= 0 {
+		pkgPath, name = typFullName[:i], typFullName[i+1:]
+	}
+	names := p.packageSyntax.typeCallConvNames[pkgPath]
+	if names == nil {
+		names = make(map[string]CallConv)
+		p.packageSyntax.typeCallConvNames[pkgPath] = names
+	}
+	names[name] = cc
 	if isNativeCallConv(cc) {
 		if len(fields) != 0 {
 			p.packageSyntax.nativeStructVars[fields[0]] = true

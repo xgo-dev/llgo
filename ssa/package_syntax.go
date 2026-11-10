@@ -37,9 +37,13 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
+	typeCallConvNames     map[string]map[string]CallConv
 	typeDefinitions       map[*types.TypeName]types.Type
+	importedTypeReprs     map[*types.TypeName]TypeRepresentation
 	typeDefinitionSources map[*types.Package]TypeDefinitionSource
 	nativeStructFields    map[token.Pos]bool
+	nativeAnonymousFields map[token.Pos]bool
+	nativeAnonTypes       map[*types.Struct]bool
 	nativeStructVars      map[*types.Var]bool
 }
 
@@ -52,9 +56,13 @@ func newPackageSyntaxData() *packageSyntaxData {
 		parsedPackages:        make(map[*types.Package]struct{}),
 		noInterface:           make(map[string]none),
 		typeCallConvs:         make(map[string]CallConv),
+		typeCallConvNames:     make(map[string]map[string]CallConv),
 		typeDefinitions:       make(map[*types.TypeName]types.Type),
+		importedTypeReprs:     make(map[*types.TypeName]TypeRepresentation),
 		typeDefinitionSources: make(map[*types.Package]TypeDefinitionSource),
 		nativeStructFields:    make(map[token.Pos]bool),
+		nativeAnonymousFields: make(map[token.Pos]bool),
+		nativeAnonTypes:       make(map[*types.Struct]bool),
 		nativeStructVars:      make(map[*types.Var]bool),
 	}
 }

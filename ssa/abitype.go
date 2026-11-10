@@ -288,7 +288,7 @@ type StructField struct {
 }
 */
 
-func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
+func (b Builder) abiStructFields(t *types.Struct, name string, owner types.Type) llvm.Value {
 	prog := b.Prog
 	n := t.NumFields()
 	if n == 0 {
@@ -297,14 +297,14 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 	g := b.Pkg.VarOf(name)
 	if g == nil {
 		ft := prog.rtType("structfield")
-		offsets := b.abiStructFieldOffsets(t)
+		physical := prog.rawType(owner)
 		fields := make([]llvm.Value, n)
 		for i := 0; i < n; i++ {
 			f := t.Field(i)
 			var values []llvm.Value
 			values = append(values, b.Str(f.Name()).impl)
 			values = append(values, b.abiType(abi.PublicType(f.Type())).impl)
-			values = append(values, prog.IntVal(uint64(offsets[i]), prog.Uintptr()).impl)
+			values = append(values, prog.IntVal(prog.OffsetOf(physical, i), prog.Uintptr()).impl)
 			values = append(values, b.Str(t.Tag(i)).impl)
 			values = append(values, prog.BoolVal(f.Embedded()).impl)
 			fields[i] = prog.constStructValue(ft, values)
@@ -414,6 +414,10 @@ func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
 }
 
 func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value) (fields []llvm.Value) {
+	return b.abiExtendedFieldsOf(t, t, name, global)
+}
+
+func (b Builder) abiExtendedFieldsOf(owner, t types.Type, name string, global llvm.Value) (fields []llvm.Value) {
 	prog := b.Prog
 	pkg := b.Pkg
 	switch t := types.Unalias(t).(type) {
@@ -475,7 +479,13 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			fields = append(fields, bridges.call.impl, bridges.make.impl)
 		}
 	case *types.Struct:
-		name, _ = prog.abi.TypeName(t)
+		// Field offsets belong to the owning type, not a shared underlying
+		// struct. Keep separate tables for native and ordinary Go owners.
+		fieldOwner := types.Type(t)
+		if prog.hasLegacyNativeTypeLayout(owner) {
+			fieldOwner = owner
+		}
+		name, _ = prog.abi.TypeName(fieldOwner)
 		var pkgPath string
 		n := t.NumFields()
 		for i := 0; i < n; i++ {
@@ -488,7 +498,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 		}
 		fields = []llvm.Value{
 			b.Str(pkgPath).impl,
-			b.abiStructFields(t, name+"$fields"),
+			b.abiStructFields(t, name+"$fields", fieldOwner),
 		}
 	case *types.Interface:
 		name, _ = prog.abi.TypeName(t)
@@ -497,7 +507,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiInterfaceImethods(t, name+"$imethods"),
 		}
 	case *types.Named:
-		return b.abiExtendedFields(t.Underlying(), name, global)
+		return b.abiExtendedFieldsOf(owner, t.Underlying(), name, global)
 	}
 	return
 }

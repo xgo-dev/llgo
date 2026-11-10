@@ -126,7 +126,7 @@ func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
 			return types.NewMap(key, elem), true
 		}
 	case *types.Struct:
-		if IsClosure(t) {
+		if IsClosure(t) || p.packageSyntax.nativeAnonymousStruct(t) {
 			return typ, false
 		}
 		return p.cvtStruct(t)
@@ -278,7 +278,7 @@ func (p goTypes) needsTypeConversion(typ types.Type, query conversionNeedQuery) 
 	case *types.Map:
 		return p.needsTypeConversion(t.Key(), query) || p.needsTypeConversion(t.Elem(), query)
 	case *types.Struct:
-		if IsClosure(t) {
+		if IsClosure(t) || p.packageSyntax.nativeAnonymousStruct(t) {
 			return false
 		}
 		for i := 0; i < t.NumFields(); i++ {

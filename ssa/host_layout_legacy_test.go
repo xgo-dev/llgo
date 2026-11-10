@@ -55,7 +55,7 @@ const AliasSize = unsafe.Sizeof(Alias{})
 						positions = append(positions, name.Pos())
 					}
 				}
-				prog.SetNativeStructFields(positions)
+				prog.SetNativeStructFields(positions, decl.Assign.IsValid())
 				return true
 			})
 			pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("legacy", fs, []*ast.File{file}, nil)

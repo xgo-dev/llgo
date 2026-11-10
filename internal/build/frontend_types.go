@@ -136,6 +136,7 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 		}
 	})
 	index := frontcache.NewTypes(ids, fset)
+	index.LayoutIdentity = l.ctx.prog.LayoutIdentity
 	for _, dep := range packagesByID {
 		index.AddPackage(dep, nil)
 	}
@@ -144,6 +145,9 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 	importer := &frontcache.TypeImporter{Packages: packagesByID, Existing: index, Position: position}
 	checked, err := frontcache.ImportPackage(record.Package, importer)
 	if err != nil {
+		return false
+	}
+	if err := importFrontendRepresentation(l.ctx.prog, importer); err != nil {
 		return false
 	}
 	pkg.Types = checked
@@ -216,7 +220,9 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 	if key == "" {
 		return
 	}
-	l.exports[pkg.ID] = &frontendTypeExport{Version: frontendExportVersion, Input: key, Frontend: record.Input, Package: frontcache.ExportPackage(pkg.Types, index, l.ctx.progSSA.Fset)}
+	exported := frontcache.ExportPackage(pkg.Types, index, l.ctx.progSSA.Fset)
+	exportFrontendRepresentation(l.ctx.prog, &exported.Types)
+	l.exports[pkg.ID] = &frontendTypeExport{Version: frontendExportVersion, Input: key, Frontend: record.Input, Package: exported}
 }
 
 func (l *frontendTypeLoader) store(pkg Package) error {

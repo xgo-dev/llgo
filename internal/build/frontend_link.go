@@ -53,6 +53,7 @@ type frontendLinkExport struct {
 
 func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLinkExport, error) {
 	index := frontcache.NewTypes(f.ids, f.ctx.progSSA.Fset)
+	index.LayoutIdentity = f.ctx.prog.LayoutIdentity
 	graph := frontcache.NewTypeGraph(index, f.ctx.progSSA.Fset)
 	result := &frontendLinkExport{NeedABI: snapshot.needAbiInit, LocalExports: snapshot.hasLocalExports}
 	for key := range snapshot.methodByIndex {
@@ -85,6 +86,7 @@ func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLink
 		}
 		result.CExports = append(result.CExports, frontendCExport{export.goName, export.cName, ref})
 	}
+	exportFrontendRepresentation(f.ctx.prog, graph)
 	result.Types = *graph
 	return result, nil
 }
@@ -158,6 +160,9 @@ func (f *frontendCache) importLink(data *frontendLinkExport) (*packageLinkSnapsh
 			return nil, fmt.Errorf("invalid cached C export %s: %v", export.GoName, err)
 		}
 		result.cExports = append(result.cExports, cExport{export.GoName, export.CName, sig})
+	}
+	if err := importFrontendRepresentation(f.ctx.prog, importer); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

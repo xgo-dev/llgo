@@ -115,6 +115,9 @@ func (f *frontendCache) materialize() error {
 			}
 			runtimeTypes = append(runtimeTypes, typ)
 		}
+		if valid {
+			valid = importFrontendRepresentation(f.ctx.prog, importer) == nil
+		}
 		if !valid {
 			selected := make(map[*ssa.Package]bool)
 			f.source(pkg, selected)
@@ -394,6 +397,7 @@ func (f *frontendCache) capture(result *goescape.Result) {
 				}
 			}
 		}
+		exportFrontendRepresentation(f.ctx.prog, graph)
 		record.Types = *graph
 		f.records[pkg.ID] = record
 		if f.loader != nil {

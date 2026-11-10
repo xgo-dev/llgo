@@ -198,6 +198,7 @@ type context struct {
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
+	nativeStorageError   error
 	llvmIntrinsics       map[*ssa.Function]*llssa.LLVMIntrinsic
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
@@ -1857,6 +1858,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			ret = p.nilOf(t)
 			break
 		}
+		if err := p.prog.CheckNativePointerConversion(p.patchType(t), p.patchType(v.X.Type())); err != nil {
+			if p.nativeStorageError == nil {
+				p.nativeStorageError = fmt.Errorf("%s: %w", p.fset.Position(v.Pos()), err)
+			}
+			ret = p.nilOf(t)
+			break
+		}
 		x := p.compileValue(b, v.X)
 		ret = b.ChangeType(p.type_(t, llssa.GoDecl), x)
 	case *ssa.Convert:
@@ -3150,6 +3158,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	}
 	if err = ctx.validateCVariadicWrapperUses(); err != nil {
 		return nil, nil, err
+	}
+	if ctx.nativeStorageError != nil {
+		return nil, nil, ctx.nativeStorageError
 	}
 	ret.MaterializePreserveSyms()
 	if metaCollect {

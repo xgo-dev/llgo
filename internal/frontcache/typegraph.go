@@ -21,8 +21,10 @@ type Object struct {
 type TypeNode struct {
 	Kind                          string
 	Key                           string
+	Layout                        string `json:",omitempty"`
 	Object                        Object
 	Elem, Base                    int
+	Representation                *DeclarationRepresentation `json:",omitempty"`
 	Basic, Direction              int
 	Length                        int64
 	Variadic                      bool
@@ -44,10 +46,11 @@ type TypeGraph struct {
 	ids   map[types.Type]int
 	types *Types
 	fset  *token.FileSet
+	decls map[int]*types.TypeName
 }
 
 func NewTypeGraph(typs *Types, fset *token.FileSet) *TypeGraph {
-	return &TypeGraph{ids: make(map[types.Type]int), types: typs, fset: fset}
+	return &TypeGraph{ids: make(map[types.Type]int), types: typs, fset: fset, decls: make(map[int]*types.TypeName)}
 }
 
 func (g *TypeGraph) object(obj types.Object) Object {
@@ -65,6 +68,9 @@ func (g *TypeGraph) Add(typ types.Type) int {
 	g.ids[typ] = id
 	g.Nodes = append(g.Nodes, TypeNode{})
 	n := TypeNode{Key: g.types.Key(typ), Elem: -1, Base: -1}
+	if g.types.LayoutIdentity != nil {
+		n.Layout = g.types.LayoutIdentity(typ)
+	}
 	addParams := func(list *types.TypeParamList) []int {
 		var result []int
 		for i := 0; i < list.Len(); i++ {
@@ -102,6 +108,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 				n.Types = append(n.Types, g.Add(v.TypeArgs().At(i)))
 			}
 		} else {
+			g.decls[id] = v.Obj()
 			n.TypeParams, n.Elem = addParams(v.TypeParams()), g.Add(v.Underlying())
 			for i := 0; i < v.NumMethods(); i++ {
 				n.Methods = append(n.Methods, g.object(v.Method(i)))
@@ -119,6 +126,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 				n.Types = append(n.Types, g.Add(v.TypeArgs().At(i)))
 			}
 		} else {
+			g.decls[id] = v.Obj()
 			n.TypeParams, n.Elem = addParams(v.TypeParams()), g.Add(v.Rhs())
 		}
 	case *types.TypeParam:
@@ -169,6 +177,104 @@ func (g *TypeGraph) Add(typ types.Type) int {
 	}
 	g.Nodes[id] = n
 	return id
+}
+
+type DeclarationRepresentation struct {
+	ABI    int
+	Origin int
+}
+
+type ImportedRepresentation struct {
+	ABI    int
+	Origin *types.TypeName
+}
+
+// ExportRepresentations retains checked storage policy, including explicit Go
+// facts. Source RHS bodies cannot be compared with lowered closure bodies.
+func (g *TypeGraph) ExportRepresentations(resolve func(*types.TypeName) (int, types.Type)) {
+	for id := 0; id < len(g.Nodes); id++ {
+		if obj := g.decls[id]; obj != nil {
+			abi, origin := resolve(obj)
+			r := &DeclarationRepresentation{ABI: abi, Origin: -1}
+			if origin != nil {
+				r.Origin = g.Add(origin)
+			}
+			g.Nodes[id].Representation = r
+		}
+	}
+}
+
+// ImportRepresentations validates the full metadata set before publishing it.
+func (p *TypeImporter) ImportRepresentations() (map[*types.TypeName]ImportedRepresentation, error) {
+	result := make(map[*types.TypeName]ImportedRepresentation)
+	object := func(t types.Type) *types.TypeName {
+		switch t := t.(type) {
+		case *types.Named:
+			return t.Origin().Obj()
+		case *types.Alias:
+			return t.Origin().Obj()
+		}
+		return nil
+	}
+	for id, node := range p.Graph.Nodes {
+		if node.Representation == nil {
+			if (node.Kind == "named" || node.Kind == "alias") && node.Base == -1 && !node.Universe {
+				return nil, fmt.Errorf("missing declaration representation %d", id)
+			}
+			continue
+		}
+		if node.Kind != "named" && node.Kind != "alias" || node.Base != -1 {
+			return nil, fmt.Errorf("invalid representation owner %d", id)
+		}
+		owner, err := p.Import(id)
+		if err != nil {
+			return nil, err
+		}
+		obj := object(owner)
+		if obj == nil {
+			return nil, fmt.Errorf("invalid representation type %T", owner)
+		}
+		r := node.Representation
+		entry := ImportedRepresentation{ABI: r.ABI}
+		if r.ABI != 0 {
+			origin, err := p.Import(r.Origin)
+			if err != nil {
+				return nil, err
+			}
+			entry.Origin = object(origin)
+			if entry.Origin == nil {
+				return nil, fmt.Errorf("invalid native representation origin %T", origin)
+			}
+		} else if r.Origin != -1 {
+			return nil, fmt.Errorf("Go representation has a native origin")
+		}
+		result[obj] = entry
+	}
+	return result, nil
+}
+
+// ImportLayouts validates attributes before callers install them. Unknown
+// layout protocols require source checking rather than silently using gc layout.
+func (p *TypeImporter) ImportLayouts() (map[*types.Struct]string, error) {
+	layouts := make(map[*types.Struct]string)
+	for id, node := range p.Graph.Nodes {
+		if node.Layout == "" {
+			continue
+		}
+		if node.Layout != "native" || node.Kind != "struct" {
+			return nil, fmt.Errorf("unsupported cached type layout %q", node.Layout)
+		}
+		typ, err := p.Import(id)
+		if err != nil {
+			return nil, err
+		}
+		st, ok := typ.(*types.Struct)
+		if !ok {
+			return nil, fmt.Errorf("invalid cached layout owner %T", typ)
+		}
+		layouts[st] = node.Layout
+	}
+	return layouts, nil
 }
 
 type TypeImporter struct {

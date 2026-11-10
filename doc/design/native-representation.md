@@ -1,9 +1,10 @@
 # Native representation and defined types
 
 This migration addresses [#2927](https://github.com/xgo-dev/llgo/issues/2927).
-The first stage implements definition provenance and inherited native storage.
-It is not a complete resolution of native layout, conversion, or reflection
-consistency. The remaining stages below are required before closing the issue.
+Definition provenance and inherited native storage are implemented together
+with aggregate source layout, owning-type metadata, and versioned package
+representation facts. The remaining limitations below still prevent treating
+this as a complete migration of every native layout operation.
 
 ## Separate identity, representation, and invocation
 
@@ -46,13 +47,24 @@ edge. An independently declared type stays independent even if its structure is
 identical. Declaration positions in this implementation locate an AST RHS; they
 do not identify an enclosing struct from its fields.
 
-## First-stage coverage
+## Implemented coverage
 
 - Closure conversion and native LLVM struct classification use inherited
   representation. Native callback aliases/definitions preserve their invocation
   ABI, including stdcall.
-- The source-size closure adjustment uses the same representation query. This
-  does not replace the source layout algorithm or correct all size/offset cases.
+- Source checking computes native aggregate layouts without constructing LLVM
+  named types while declarations are incomplete. Containing arrays and Go
+  structs use the resulting element/field sizes and alignment. Native records
+  omit Go trailing-zero-field protection; containing Go records retain it.
+- Runtime aggregate sizes retain the owning named type. Reflected field tables
+  use that owner's physical LLVM offsets; native pointer-prefix metadata follows
+  physical child storage, including four-byte native fields in memory32.
+- Explicit anonymous native RHS layouts have separate backend type/layout
+  caches and descriptor identities. Their layout attribute participates in
+  persistent structural type keys too.
+- Typed pointer conversions reject incompatible size, alignment, field offsets,
+  nested storage, or callback ABI. Compatible inherited views retain aliasing.
+  An explicit unsafe.Pointer conversion remains the caller's responsibility.
 - Source tests cover transitive and cross-package definitions, aliases,
   parenthesized RHS types, generic templates/instances, recursion, local scopes,
   method-set independence, and concurrent backend queries.
@@ -63,33 +75,35 @@ do not identify an enclosing struct from its fields.
 - Target-layout tests compare inherited storage on amd64, arm64, Windows/386,
   and profiled wasm32. These are LLVM layout tests, not execution on all targets.
 
-## Remaining migration stages
+## Package persistence
 
-1. Add context-preserving layout queries for the full owning type and selection
-   path. Standard `types.Sizes.Offsetsof` receives fields only. The current field
-   registry is not an adequate substitute; reverse native derivation and shared
-   underlying objects can still make its answer ambiguous. Source constants
-   must be correct while checking dependent declarations, not patched after
-   type checking.
-2. Introduce representation-aware shared-storage checks. Independent same-shape
-   types, anonymous structs, and native function-field addresses must not be
-   reinterpreted through incompatible Go views. Reject incompatible pointer
-   operations; copying to a temporary would lose aliasing. A conflict on an
-   alias must not create a second representation for the same identity.
-3. Make source layout, LLVM storage, reflection metadata, pointer scanning,
-   regular-memory classification, and map bucket/fast-path choices consume one
-   layout description. This includes containing arrays/structs, trailing empty
-   fields, and the map 128-byte storage boundary tracked in #2873.
-4. Preserve callback representation in reflection and FFI descriptions (#2872).
-   `abi.Func` alone cannot distinguish a code pointer from a Go closure. Keep
-   unsupported native vector reflection calls explicitly rejected.
-5. Define versioned package representation metadata and cache fingerprints.
-   The current source loader can reconstruct declaration edges from source;
-   standard Go export data does not carry this LLGo protocol. Do not infer it
-   from export-data object sharing or silently assume Go representation when
-   required native metadata is missing. Include generic origins and reachable
-   private declarations, and separate target-independent policy from computed
-   target layouts.
+Frontend export protocol version 4 retains each declaration's checked storage
+policy, native ABI, and origin type, including private declarations and generic
+origins. Explicit Go facts are persisted as well: an opaque package has no live
+RHS bindings from which to reconstruct them. Source RHS objects are deliberately
+not compared with backend closure-converted bodies. Anonymous native layout
+attributes are serialized and validated independently of source positions.
+Unknown ABIs, unsupported attributes, and invalid origin references select the
+source-checking fallback before metadata is published. The existing archive
+fingerprints also include compiler, target, source, and feature identities.
+
+## Remaining limitations
+
+1. Standard `types.Sizes.Offsetsof` receives fields rather than their owning
+   type. The legacy source field registry still cannot distinguish a Go type
+   and a new native override sharing its exact underlying fields, such as
+   `type Plain struct { Fn func(); Tail uint64 }` followed by an annotated
+   `type Native Plain`. A complete solution needs owner-aware checker queries.
+2. Native function-field address escapes and all implicit shared-storage views
+   need representation-aware checking. The implemented typed-pointer diagnostic
+   does not establish compatibility for every assignment, slice, or map view.
+3. Callback reflection and FFI descriptions (#2872) still need to distinguish a
+   code pointer from a Go closure. Native anonymous function fields have a
+   storage context not represented by their source `types.Signature` alone.
+   Unsupported native vector reflection calls remain rejected.
+4. The aggregate metadata fixes cover the tested inheritance paths; they do not
+   close every native metadata case from #2873, especially nested ordinary Go
+   types whose callback representation is changed by an outer native aggregate.
 
 ## Focused validation
 
@@ -103,6 +117,5 @@ llgo test -O0 ./test/llgoext/nativerepr
 llgo test -O2 ./test/llgoext/nativerepr
 ```
 
-The main-line baseline fails the executable sentinel cases. Passing these cases
-establishes definition inheritance only; it does not establish the remaining
-layout and reflection properties above.
+The main-line baseline fails the executable sentinel cases. These cases
+establish the covered inheritance, aggregate layout, and cache contracts; they do not establish the remaining limitations above.

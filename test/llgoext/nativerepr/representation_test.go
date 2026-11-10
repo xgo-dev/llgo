@@ -63,3 +63,40 @@ func TestGoClosureAcceptsNativeDerivedValue(t *testing.T) {
 		t.Fatalf("ordinary Go closure call = %d, want 37", got)
 	}
 }
+
+//llgo:link nativeAbs C.abs
+func nativeAbs(x int32) int32 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+//llgo:cdecl
+type nativeAbsCallback func(int32) int32
+
+type derivedAbsCallback nativeAbsCallback
+
+//llgo:cdecl
+type callbackRecord struct {
+	Fn   nativeAbsCallback
+	Tail uint64
+}
+
+type callbackCopy callbackRecord
+
+func TestInheritedNativeCallbackInvocation(t *testing.T) {
+	fn := derivedAbsCallback(nativeAbs)
+	if got := fn(-19); got != 19 {
+		t.Fatalf("derived native callback = %d; want 19", got)
+	}
+	r := callbackRecord{Fn: nativeAbsCallback(nativeAbs), Tail: 7}
+	p := (*callbackCopy)(&r)
+	if got := p.Fn(-23); got != 23 {
+		t.Fatalf("inherited callback field = %d; want 23", got)
+	}
+	p.Tail = 99
+	if r.Tail != 99 {
+		t.Fatal("callback invocation changed inherited field storage")
+	}
+}

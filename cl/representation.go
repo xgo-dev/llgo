@@ -58,7 +58,9 @@ func registerTypeDefinitions(prog llssa.Program, fset *token.FileSet, pkg *types
 			return nil
 		}
 		if info != nil {
-			return info.TypeOf(expr)
+			if t := info.TypeOf(expr); t != nil {
+				return t
+			}
 		}
 		if !pkg.Complete() {
 			return nil

@@ -409,6 +409,9 @@ func (b *Builder) structHash(t *types.Struct) (ret []byte, pkg string) {
 	h := sha256.New()
 	n := t.NumFields()
 	fmt.Fprintln(h, "struct", n)
+	if layouts, ok := b.Sizes.(interface{ NativeStruct(*types.Struct) bool }); ok && layouts.NativeStruct(t) {
+		fmt.Fprintln(h, "native")
+	}
 	for i := 0; i < n; i++ {
 		f := t.Field(i)
 		if pkg == "" && !f.Exported() && f.Pkg() != nil {

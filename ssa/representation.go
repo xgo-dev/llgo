@@ -16,7 +16,10 @@
 
 package ssa
 
-import "go/types"
+import (
+	"go/types"
+	"strings"
+)
 
 // StorageRepresentation describes how a source type stores values. It is
 // independent of the calling convention of a function accepting those values.
@@ -52,6 +55,24 @@ func (p Program) SetTypeDefinition(obj *types.TypeName, rhs types.Type) {
 	}
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeDefinitions[obj] = rhs
+	delete(p.packageSyntax.importedTypeReprs, obj)
+	p.packageSyntax.mu.Unlock()
+}
+
+// SetImportedRepresentation installs checked, target-independent package
+// metadata. Explicit Go facts distinguish an opaque import from an unresolved
+// source definition whose native representation is not yet known.
+func (p Program) SetImportedRepresentation(obj *types.TypeName, representation TypeRepresentation) {
+	if obj == nil || representation.Storage != GoRepresentation && representation.Storage != NativeRepresentation ||
+		representation.Storage == NativeRepresentation && (representation.Origin == nil || !isNativeCallConv(representation.NativeABI)) ||
+		representation.Storage == GoRepresentation && (representation.Origin != nil || representation.NativeABI != ccUnknown) {
+		panic("ssa: invalid imported type representation")
+	}
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.importedTypeReprs[obj] = representation
+	if representation.Storage == NativeRepresentation {
+		p.packageSyntax.hasNativeTypeMetadata.Store(true)
+	}
 	p.packageSyntax.mu.Unlock()
 }
 
@@ -98,13 +119,29 @@ func (p *packageSyntaxData) representationOf(t types.Type) TypeRepresentation {
 		seen = append(seen, obj)
 
 		p.mu.RLock()
+		if imported, ok := p.importedTypeReprs[obj]; ok {
+			p.mu.RUnlock()
+			// Imported local objects may lack lexical Parent scopes. Their
+			// checked policy outranks the package-only legacy name table.
+			return imported
+		}
 		rhs := p.typeDefinitions[obj]
 		source := p.typeDefinitionSources[obj.Pkg()]
 		var cc CallConv
 		// The legacy string API identifies package-level declarations only.
 		// A local type with the same spelling must not inherit that directive.
 		if obj.Parent() == nil || obj.Pkg() == nil || obj.Parent() == obj.Pkg().Scope() {
-			cc = p.typeCallConvs[typeNameLinkname(obj)]
+			path := ""
+			if obj.Pkg() != nil {
+				path = obj.Pkg().Path()
+			}
+			cc = p.typeCallConvNames[path][obj.Name()]
+			// Programmatic SSA clients can use synthetic names containing
+			// dots. Keep that legacy API without allocating linknames for
+			// ordinary source declarations.
+			if cc == ccUnknown && strings.ContainsRune(obj.Name(), '.') {
+				cc = p.typeCallConvs[typeNameLinkname(obj)]
+			}
 		}
 		p.mu.RUnlock()
 		if isNativeCallConv(cc) {

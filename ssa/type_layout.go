@@ -41,6 +41,8 @@ func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
 	switch t := types.Unalias(raw).(type) {
 	case *types.Named:
 		return p.RepresentationOf(t).Storage == NativeRepresentation
+	case *types.Struct:
+		return p.packageSyntax.nativeAnonymousStruct(t)
 	case *types.Array:
 		return p.hasLegacyNativeTypeLayout(t.Elem())
 	}
@@ -49,7 +51,11 @@ func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
 
 func (p Program) setStructLayout(typ types.Type, layout *structLayout) {
 	if layout != nil {
-		p.structLayouts.Set(typ, *layout)
+		layouts := &p.structLayouts
+		if p.containsNativeAnonymous(typ) {
+			layouts = &p.nativeAnonymousLayouts
+		}
+		layouts.Set(typ, *layout)
 		p.hasStructLayouts = true
 	}
 }
@@ -58,7 +64,11 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 	if !p.hasStructLayouts {
 		return structLayout{}, false
 	}
-	layout := p.structLayouts.At(typ.raw.Type)
+	layouts := &p.structLayouts
+	if p.containsNativeAnonymous(typ.raw.Type) {
+		layouts = &p.nativeAnonymousLayouts
+	}
+	layout := layouts.At(typ.raw.Type)
 	if layout == nil {
 		return structLayout{}, false
 	}
@@ -70,6 +80,7 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 // removing zero-sized tail protection. When the desired layout differs from
 // LLVM's natural layout, wrap only affected fields and preserve Go field indices.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
+	native = native || p.packageSyntax.nativeAnonymousStruct(raw)
 	host := hasHostLayout(raw)
 	fields := p.toLLVMFields(raw, native)
 	goarch := p.target.effectiveGOARCH()
@@ -78,7 +89,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
+	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) && !p.containsNativeAggregate(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
 		return fields, nil
 	}
 

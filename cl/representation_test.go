@@ -82,6 +82,7 @@ type RecursiveCopy Recursive
 type Callback func()
 type CallbackCopy Callback
 const CopySize = unsafe.Sizeof(Copy{})
+const CopyTail = unsafe.Offsetof(Copy{}.Tail)
 func local() {
  type Native struct { Fn func(); Tail uint64 }
  type LocalCopy Copy
@@ -111,6 +112,10 @@ func local() {
 				size, _ := constant.Int64Val(pkg.Scope().Lookup("CopySize").(*types.Const).Val())
 				if size != 16 {
 					t.Fatalf("source CopySize = %d, want 16", size)
+				}
+				offset, _ := constant.Int64Val(pkg.Scope().Lookup("CopyTail").(*types.Const).Val())
+				if offset != 8 {
+					t.Fatalf("source CopyTail = %d, want 8", offset)
 				}
 			}
 			for id, obj := range info.Defs {
