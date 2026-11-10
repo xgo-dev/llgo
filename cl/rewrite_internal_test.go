@@ -246,16 +246,6 @@ func use() Value { return value }
 			want: "stdcall requires a function type",
 		},
 		{
-			name: "variable linkname", goos: "windows", goarch: "386",
-			src: `package p
-import _ "unsafe"
-//go:linkname value stdcall.value
-var value int
-func use() int { return value }
-`,
-			want: "stdcall linkname namespace applies only to functions",
-		},
-		{
 			name: "non-direct callback", goos: "windows", goarch: "386",
 			src: `package p
 import _ "unsafe"
@@ -1137,7 +1127,7 @@ func TestStaticGlobalInitSkipsExternalGlobal(t *testing.T) {
 import _ "unsafe"
 
 //go:linkname External C.external
-var External = 7
+var External int
 
 func Use() int { return External }
 `
@@ -1145,7 +1135,7 @@ func Use() int { return External }
 	if !strings.Contains(ir, "@external = external global i64") {
 		t.Fatalf("linknamed global should remain an external declaration:\n%s", ir)
 	}
-	assertStoreToGlobal(t, ir, "@external")
+	assertNoStoreToGlobal(t, ir, "@external")
 }
 
 func TestStaticGlobalInitDeterministicOrder(t *testing.T) {

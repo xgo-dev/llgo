@@ -16,14 +16,14 @@
  * limitations under the License.
  */
 
-package gotest
+package llgoext
 
 import _ "unsafe"
 
 // This file is a spelling fixture for //llgo:skipall. It is intentionally behind
 // an explicit build tag because enabling it in the normal test package skips
 // package codegen, including the package init symbol expected by the test main.
-// Manual exercise: go run ./cmd/llgo test -tags directive_skipall_fixture ./test/go.
+// Manual exercise: go run ./cmd/llgo test -tags directive_skipall_fixture ./test/llgoext.
 // The command is expected to fail during link if included in the ordinary test
 // package; source-patch skipall behavior is covered by internal/build tests.
 //

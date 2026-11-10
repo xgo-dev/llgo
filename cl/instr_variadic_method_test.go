@@ -112,8 +112,9 @@ func TestCVariadicMethodExternalDeclaration(t *testing.T) {
 	// The forwarding thunk must still tail-call it without a post-call alias
 	// cleanup, and preserve its extra fixed arguments and void result.
 	const source = `package foo
+import _ "unsafe"
 type T int8
-//llgo:link (*T).Check C.check
+//go:linkname (*T).Check C.check
 func (*T) Check(tag int32, number float64, data *int8, __llgo_va_list ...any)
 type Wrapper struct { *T }
 func use(w *Wrapper) { w.Check(7, 1.5, new(int8), int32(42)) }

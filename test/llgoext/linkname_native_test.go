@@ -1,0 +1,79 @@
+//go:build llgo && !wasm
+
+package llgoext
+
+import (
+	"testing"
+	"unsafe"
+)
+
+func TestLinknameNativeVariables(t *testing.T) {
+	if nativeAddresses(unsafe.Pointer(&nativeCounter), unsafe.Pointer(&nativeArray), unsafe.Pointer(&nativePointer), unsafe.Pointer(&nativeCallback)) != 1 {
+		t.Fatal("Go bindings do not reference native storage")
+	}
+	if &nativeCounterAlias != &nativeCounter || nativeCounter != 41 || nativeArray != [3]int32{2, 3, 5} || nativePointer != &nativeCounter {
+		t.Fatal("native initializers or alias identity lost")
+	}
+	oldCounter, oldCallback := nativeCounter, nativeCallback
+	t.Cleanup(func() { nativeCounter = oldCounter; nativeCallback = oldCallback })
+	nativeCounterAlias = 17
+	if *nativePointer != 17 {
+		t.Fatal("native write not visible through pointer")
+	}
+	if got := nativeCallback(21); got != 42 {
+		t.Fatalf("native callback = %d", got)
+	}
+	nativeCallback = nil
+	if nativeCallback != nil {
+		t.Fatal("nil native function pointer not preserved")
+	}
+}
+
+func TestLinknameNativeFunctionDefinitions(t *testing.T) {
+	if got := nativeGoPlaceholder(33); got != 42 {
+		t.Fatalf("Go ABI placeholder binding = %d", got)
+	}
+	for name, call := range map[string]func(int32) int32{
+		"Go body": nativeEntry, "C entry": invokeNativeEntry,
+		"foreign thread": invokeNativeThread, "llgo placeholder": nativePlaceholder,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := call(35); got != 42 {
+				t.Fatalf("entry result = %d", got)
+			}
+		})
+	}
+	if got := invokeNativeCallbackEntry(20); got != 41 {
+		t.Fatalf("native-to-Go callback argument = %d", got)
+	}
+}
+
+func TestLinknameNativeCallbackStore(t *testing.T) {
+	// A captured Go funcval is two words; each C array element is one.
+	// Keeping the slots adjacent makes an oversized store fail on every host.
+	saved := nativeCallbackSlots[0]
+	restore := func() { nativeCallbackSlots[0] = saved }
+	nativeCallbackSlots[0] = nil
+	restore()
+	for i, fn := range nativeCallbackSlots {
+		if fn == nil {
+			t.Fatalf("callback slot %d was overwritten", i)
+		}
+		if got := fn(21); got != 42 {
+			t.Fatalf("callback slot %d returned %d", i, got)
+		}
+	}
+}
+
+func TestLinknameNativeCallbackRejectsClosure(t *testing.T) {
+	value := int32(7)
+	defer func() {
+		if recover() == nil {
+			t.Error("capturing Go closure accepted in a native callback slot")
+		}
+		if got := nativeCallbackSlots[0](21); got != 42 {
+			t.Errorf("rejected assignment changed the native callback: %d", got)
+		}
+	}()
+	nativeCallbackSlots[0] = func(v int32) int32 { return v + value }
+}
