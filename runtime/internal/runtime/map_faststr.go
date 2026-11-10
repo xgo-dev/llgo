@@ -17,9 +17,9 @@ type stringStruct struct {
 	len int
 }
 
-// As in hashMapKey32 and hashMapKey64, the hasher only borrows its input.
-// Keep the temporary string header on the stack: taking the address of the
-// string parameter otherwise makes LLGo allocate a header for each operation.
+// The hasher only borrows its input. On targets where LLGo's escape analysis
+// heap-promotes an address-taken string parameter, keep the temporary header
+// in explicit stack storage to avoid allocating it for each operation.
 func hashMapKeyString(t *maptype, key string, seed uintptr) uintptr {
 	p := c.Alloca(unsafe.Sizeof(key))
 	*(*string)(p) = key
