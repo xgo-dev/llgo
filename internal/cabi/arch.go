@@ -83,6 +83,28 @@ func hasTypesKind(typs []llvm.Type, kind llvm.TypeKind) bool {
 
 type TypeInfoAmd64 struct {
 	*Transformer
+	classifications map[llvm.Type]amd64AggregateClassification
+}
+
+type amd64AggregateClassification struct {
+	elements  int
+	unaligned bool
+}
+
+// A lowering pass shares aggregate classifications between wrap decisions and
+// lowering. Standalone queries compute directly, without retaining LLVM types.
+func (p *TypeInfoAmd64) classifyAggregate(typ llvm.Type) amd64AggregateClassification {
+	if classification, ok := p.classifications[typ]; ok {
+		return classification
+	}
+	classification := amd64AggregateClassification{
+		elements:  elementTypesCount(typ),
+		unaligned: p.hasUnalignedField(typ, 0),
+	}
+	if p.classifications != nil {
+		p.classifications[typ] = classification
+	}
+	return classification
 }
 
 func (p *TypeInfoAmd64) SupportByVal() bool {
@@ -94,14 +116,12 @@ func (p *TypeInfoAmd64) SkipEmptyParams() bool {
 }
 
 func (p *TypeInfoAmd64) IsWrapType(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) bool {
-	if elementTypesCount(typ) >= 2 {
-		return true
-	}
-	// An unaligned zero-sized member can require MEMORY even when the
-	// aggregate contains only one non-empty element.
 	switch typ.TypeKind() {
 	case llvm.StructTypeKind, llvm.ArrayTypeKind:
-		return p.hasUnalignedField(typ, 0)
+		classification := p.classifyAggregate(typ)
+		// An unaligned zero-sized member can require MEMORY even when the
+		// aggregate contains only one non-empty element.
+		return classification.elements >= 2 || classification.unaligned
 	}
 	return false
 }
@@ -110,19 +130,26 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 	info := &TypeInfo{}
 	info.Type = typ
 	info.Type1 = typ
-	if typ.TypeKind() == llvm.VoidTypeKind {
+	kind := typ.TypeKind()
+	if kind == llvm.VoidTypeKind {
 		info.Kind = AttrVoid
 		return info
 	}
 	info.Size = p.Sizeof(typ)
 	info.Align = p.Alignof(typ)
-	if p.hasUnalignedField(typ, 0) {
+	switch kind {
+	case llvm.StructTypeKind, llvm.ArrayTypeKind:
+	default:
+		return info
+	}
+	classification := p.classifyAggregate(typ)
+	if classification.unaligned {
 		// SysV classifies aggregates with unaligned fields as MEMORY, even
 		// below 16 bytes. Flattening them loses the packed member offsets.
 		setSysVMemory(info, index != 0)
 		return info
 	}
-	if n := elementTypesCount(typ); n >= 2 {
+	if classification.elements >= 2 {
 		if info.Size > 16 {
 			info.Kind = AttrPointer
 			info.Type1 = llvm.PointerType(typ, 0)
@@ -217,7 +244,8 @@ func (p *TypeInfoAmd64) hasUnalignedField(typ llvm.Type, offset uint64) bool {
 }
 
 // checkFieldAlignment detects unaligned members, including empty members.
-// For an aligned layout, it also returns the maximum member alignment.
+// The maximum member alignment is meaningful only when unaligned is false,
+// since an unaligned member stops the traversal before all members are visited.
 func (p *TypeInfoAmd64) checkFieldAlignment(typ llvm.Type, offset uint64) (uint64, bool) {
 	align := uint64(p.Alignof(typ))
 	// Zero-length array members still impose an alignment requirement.
@@ -241,7 +269,8 @@ func (p *TypeInfoAmd64) checkFieldAlignment(typ llvm.Type, offset uint64) (uint6
 		elemAlign, unaligned := p.checkFieldAlignment(elem, offset)
 		// Alignments are powers of two. A stride divisible by the maximum
 		// preserves every member's alignment, so visit the element only once.
-		return max(align, elemAlign), unaligned || typ.ArrayLength() > 1 && p.td.TypeAllocSize(elem)%elemAlign != 0
+		strideMisaligned := typ.ArrayLength() > 1 && p.td.TypeAllocSize(elem)%elemAlign != 0
+		return max(align, elemAlign), unaligned || strideMisaligned
 	}
 	return align, false
 }
