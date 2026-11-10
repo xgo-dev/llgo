@@ -288,6 +288,10 @@ var testdropSymbolChecks = []string{
 	"reflect_method_result",
 	"reflect_named_method",
 	"reflect_type_metadata",
+	"reflect_method_unsafe_whole",
+	"reflect_method_unsafe_offset",
+	"reflect_method_unsafe_field",
+	"reflect_method_unsafe_uintptr",
 	"source64_crosspkg",
 	"unexported_method_identity",
 }

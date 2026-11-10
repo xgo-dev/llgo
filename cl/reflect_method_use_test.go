@@ -11,7 +11,10 @@ import (
 
 func TestReflectMethodMetadataUse(t *testing.T) {
 	const source = `package constiface
-import "reflect"
+import (
+    "reflect"
+    "unsafe"
+)
 var saved reflect.Method
 var savedPtr *reflect.Method
 func consume(reflect.Method) {}
@@ -36,6 +39,11 @@ func mixed(t reflect.Type, i int) any { m := t.Method(i); if i == 0 { return m.F
 func metadataAddr(t reflect.Type, i int) any { m := t.Method(i); p := &m.Name; return *p }
 func metadataAddrEscape(t reflect.Type, i int) any { m := t.Method(i); return &m.Name }
 func funcAddr(t reflect.Type, i int) any { m := t.Method(i); p := &m.Func; return p.IsValid() }
+func unsafeWhole(t reflect.Type, i int) any { m := t.Method(i); p := (*reflect.Method)(unsafe.Pointer(&m)); return p.Func.IsValid() }
+func unsafeFuncOffset(t reflect.Type, i int) any { m := t.Method(i); p := (*reflect.Value)(unsafe.Add(unsafe.Pointer(&m), unsafe.Offsetof(m.Func))); return p.IsValid() }
+func unsafeFieldOffset(t reflect.Type, i int) any { m := t.Method(i); p := (*reflect.Value)(unsafe.Add(unsafe.Pointer(&m.Name), unsafe.Offsetof(m.Func)-unsafe.Offsetof(m.Name))); return p.IsValid() }
+func unsafeUintptr(t reflect.Type, i int) any { m := t.Method(i); p := (*reflect.Value)(unsafe.Pointer(uintptr(unsafe.Pointer(&m)) + unsafe.Offsetof(m.Func))); return p.IsValid() }
+func unsafeLayoutOnly(t reflect.Type, i int) any { m := t.Method(i); return unsafe.Sizeof(m) + unsafe.Offsetof(m.Func) }
 `
 	wants := map[string]bool{
 		"name": true, "fields": true, "named": true, "dynamic": true,
@@ -44,6 +52,8 @@ func funcAddr(t reflect.Type, i int) any { m := t.Method(i); p := &m.Func; retur
 		"aggregate": false, "argument": false, "global": false, "ptrEscape": false,
 		"ptrGlobal": false, "mixed": false, "metadataAddr": true,
 		"metadataAddrEscape": false, "funcAddr": false,
+		"unsafeWhole": false, "unsafeFuncOffset": false, "unsafeFieldOffset": false,
+		"unsafeUintptr": false, "unsafeLayoutOnly": true,
 	}
 	for _, debug := range []bool{false, true} {
 		ssapkg := buildConstIfaceSSA(t, source, debug)
@@ -89,6 +99,9 @@ func funcAddr(t reflect.Type, i int) any { m := t.Method(i); p := &m.Func; retur
 					}
 					if drop && want && (strings.Contains(meta, "[Reflect]") || strings.Contains(meta, "[UseNamedMethod]")) {
 						t.Fatalf("metadata lookup retains callable demand:\n%s", meta)
+					}
+					if drop && !want && !strings.Contains(meta, "[Reflect]") && !strings.Contains(meta, "[UseNamedMethod]") {
+						t.Fatalf("observable Func lost its callable demand:\n%s", meta)
 					}
 				}
 			})
