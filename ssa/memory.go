@@ -534,6 +534,7 @@ func (b Builder) Load(ptr Expr) Expr {
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
 	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
+	b.setGoAccessAlignment(stored, storageType)
 	return Expr{b.fromStorageValue(storageType, stored), telem}
 }
 
@@ -560,7 +561,37 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	if b.Prog.needsWidePointerStorage(storageType) {
 		return Expr{b.impl.CreateStore(b.toAtomicStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
 	}
-	return Expr{b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl), b.Prog.Void()}
+	stored := b.impl.CreateStore(b.toStorageValue(storageType, val.impl), ptr.impl)
+	b.setGoAccessAlignment(stored, storageType)
+	return Expr{stored, b.Prog.Void()}
+}
+
+// On 32-bit Go targets, a pointer to a basic value or an array of basic values
+// may refer to a four-byte-aligned struct field even when LLVM gives its storage
+// type eight-byte ABI alignment. This includes complex values and nested arrays.
+// FieldAddr can escape, so accesses must honor the Go pointer guarantee rather
+// than the original allocation's alignment. An address that is more strongly
+// aligned at runtime still satisfies this weaker alignment requirement.
+func (b Builder) setGoAccessAlignment(inst llvm.Value, typ Type) {
+	if b.Prog.GoWordSize() != 4 {
+		return
+	}
+	// Arrays inherit their element's alignment. Unwrap named and nested arrays,
+	// but leave other element types (including native, HostLayout, and SIMD
+	// structs) with their own storage alignment.
+	raw := typ.RawType()
+	for {
+		array, ok := raw.Underlying().(*types.Array)
+		if !ok {
+			break
+		}
+		raw = array.Elem()
+	}
+	if _, ok := raw.Underlying().(*types.Basic); ok {
+		if b.Prog.AlignOf(typ) > uint64(b.Prog.GoWordSize()) {
+			inst.SetAlignment(int(b.Prog.GoWordSize()))
+		}
+	}
 }
 
 // Advance returns the pointer ptr advanced by offset.

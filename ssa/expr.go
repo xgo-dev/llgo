@@ -56,9 +56,25 @@ func (v Expr) IsNil() bool {
 	return v.Type == nil
 }
 
-// SetOrdering sets the ordering of the atomic operation.
+// SetOrdering sets the ordering of the atomic operation. The caller must
+// provide eight-byte alignment for 64-bit atomic loads and stores.
 func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
-	v.memoryInstruction().SetOrdering(ordering)
+	inst := v.memoryInstruction()
+	inst.SetOrdering(ordering)
+	if ordering != OrderingNotAtomic {
+		// Load and Store start with the ordinary Go pointer guarantee, which
+		// can be only four bytes on 32-bit targets. Atomic i64 accesses have
+		// a stronger alignment contract, independent of that ordinary layout.
+		var typ llvm.Type
+		if !inst.IsALoadInst().IsNil() {
+			typ = inst.Type()
+		} else if !inst.IsAStoreInst().IsNil() {
+			typ = inst.Operand(0).Type()
+		}
+		if !typ.IsNil() && typ.TypeKind() == llvm.IntegerTypeKind && typ.IntTypeWidth() == 64 && inst.Alignment() < 8 {
+			inst.SetAlignment(8)
+		}
+	}
 	return v
 }
 
