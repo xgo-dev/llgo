@@ -662,7 +662,7 @@ func TestInitStaticByteArrayGlobalKeepsPatchSkipStores(t *testing.T) {
 		t.Fatal(err)
 	}
 	ir := ret.String()
-	if !strings.Contains(ir, fmt.Sprintf("@p.Table = global [%d x i8]", n)) {
+	if !strings.Contains(ir, "@p.Table = ") || !strings.Contains(ir, fmt.Sprintf("global [%d x i8] zeroinitializer", n)) {
 		t.Fatalf("missing replacement table:\n%s", ir)
 	}
 	if strings.Count(ir, "store i8") < n {
