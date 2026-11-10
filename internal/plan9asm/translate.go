@@ -34,8 +34,11 @@ type ModuleTranslation struct {
 
 type TranslateOptions struct {
 	AnnotateSource bool
-	GOARM          string
-	GOAMD64        string
+	// NativeBDWGC keeps foreign stack switches outside BDWGC's active stack
+	// scan. Foreign code must return before calling managed Go code.
+	NativeBDWGC bool
+	GOARM       string
+	GOAMD64     string
 	// X87Mode controls explicit 386 x87 assembly lowering. The zero value uses
 	// the Go-compatible hardware lowering.
 	X87Mode extplan9asm.X87Mode
@@ -138,7 +141,7 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		return nil, err
 	}
 
-	if err := lowerNativeTailTransfers(tr.Module, src, tr.Signatures, resolve, goos, goarch); err != nil {
+	if err := lowerNativeTailTransfers(tr.Module, src, tr.Signatures, resolve, goos, goarch, opt.NativeBDWGC); err != nil {
 		tr.Module.Dispose()
 		return nil, err
 	}

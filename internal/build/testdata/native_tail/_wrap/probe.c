@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdatomic.h>
 
 #define GUEST_BODY \
  "sub sp, sp, #32\n" \
@@ -46,6 +47,30 @@ __attribute__((naked)) static void resume_guest(void) {
 
 uintptr_t native_tail_guest_addr(void) { return (uintptr_t)&guest; }
 uintptr_t native_tail_resume_addr(void) { return (uintptr_t)&resume_guest; }
+
+__attribute__((naked)) static void gc_guest(void) {
+ __asm__ volatile(
+ "str x29, [x0, #16]\n"
+ "mov x9, sp\n"
+ "str x9, [x0, #24]\n"
+ "str x30, [x0, #32]\n"
+ "mov sp, x26\n"
+ "add x10, x0, #40\n"
+ "mov x9, #1\n"
+ "stlr x9, [x10]\n"
+ "add x10, x0, #48\n"
+ "1: ldar x9, [x10]\n"
+ "cbz x9, 1b\n"
+ GUEST_BODY);
+}
+
+uintptr_t native_tail_gc_guest_addr(void) { return (uintptr_t)&gc_guest; }
+void native_tail_wait_entered(uintptr_t *flag) {
+ while (!atomic_load_explicit((_Atomic uintptr_t *)flag, memory_order_acquire)) {}
+}
+void native_tail_release_guest(uintptr_t *flag) {
+ atomic_store_explicit((_Atomic uintptr_t *)flag, 1, memory_order_release);
+}
 
 int native_tail_check(uintptr_t entry, uintptr_t code, uintptr_t context, uintptr_t stack) {
  register uint64_t r19 __asm__("x19") = 1019;

@@ -21,8 +21,17 @@ func resumeGuest() uintptr
 //go:linkname check C.native_tail_check
 func check(entry, code, context, stack uintptr) int
 
+//go:linkname gcGuest C.native_tail_gc_guest_addr
+func gcGuest() uintptr
+
+//go:linkname waitEntered C.native_tail_wait_entered
+func waitEntered(flag *uintptr)
+
+//go:linkname releaseGuest C.native_tail_release_guest
+func releaseGuest(flag *uintptr)
+
 func main() {
-	var context [5]uintptr
+	var context [7]uintptr
 	stack := make([]byte, 65536)
 	top := (uintptr(unsafe.Pointer(&stack[len(stack)-1])) + 1) &^ 15
 	for i := uintptr(0); i < 1000; i++ {
@@ -47,6 +56,21 @@ func main() {
 			panic("direct resume corrupted physical state")
 		}
 	}
+	// Force a collection while the native thread is executing on its guest
+	// stack. The handshake prevents GC from completing before entry.
+	done := make(chan struct{})
+	go func() {
+		waitEntered(&context[5])
+		runtime.GC()
+		releaseGuest(&context[6])
+		close(done)
+	}()
+	context[0] = 700
+	Enter(gcGuest(), uintptr(unsafe.Pointer(&context[0])), top)
+	<-done
+	if context[1] != 742 {
+		panic("collection during guest execution corrupted state")
+	}
 	runtime.KeepAlive(stack)
-	fmt.Println("entry/resume/stack/registers: OK")
+	fmt.Println("entry/resume/stack/registers/gc: OK")
 }

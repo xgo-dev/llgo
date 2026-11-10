@@ -19,7 +19,7 @@ var nativeTailPseudoSP = regexp.MustCompile(`\bSP\b`)
 // Keep a normal LLVM entry/epilogue around one indivisible native asm region:
 // LLVM saves its callee-saved registers, and the region supplies the ABI0 frame.
 // Guest code must restore the entry FP/SP before returning through the saved LR.
-func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.FuncSig, resolve func(string) string, goos, goarch string) error {
+func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.FuncSig, resolve func(string) string, goos, goarch string, bdwgc bool) error {
 	if goarch != "arm64" || !asm.SupportsNativeTarget(goos, goarch) {
 		return nil
 	}
@@ -41,8 +41,62 @@ func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.F
 		if err := lowerNativeTailTransfer(mod, fn, sig, goos); err != nil {
 			return fmt.Errorf("native tail transfer %s: %w", name, err)
 		}
+		if bdwgc {
+			wrapNativeTailBDWGC(mod, mod.NamedFunction(sig.Name))
+		}
 	}
 	return nil
+}
+
+// wrapNativeTailBDWGC snapshots the native stack before foreign code can switch
+// SP. BDWGC must scan that saved stack, rather than the interval from a guest
+// heap stack to the pthread stack top. All arguments stay rooted in the active
+// caller frame; the foreign region performs no managed Go calls/allocations.
+func wrapNativeTailBDWGC(mod llvm.Module, native llvm.Value) {
+	ctx := mod.Context()
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	name := native.Name()
+	native.SetName(name + "$native")
+	visibility, linkage := native.Visibility(), native.Linkage()
+	native.SetVisibility(llvm.DefaultVisibility)
+	native.SetLinkage(llvm.InternalLinkage)
+	entry := llvm.AddFunction(mod, name, native.GlobalValueType())
+	entry.SetVisibility(visibility)
+	entry.SetLinkage(linkage)
+	entry.SetFunctionCallConv(native.FunctionCallConv())
+	native.ReplaceAllUsesWith(entry)
+	var params []llvm.Type
+	for i := 0; i < native.ParamsCount(); i++ {
+		params = append(params, native.Param(i).Type())
+	}
+	dataType := ctx.StructType(params, false)
+	callbackType := llvm.FunctionType(ptr, []llvm.Type{ptr}, false)
+	callback := llvm.AddFunction(mod, name+"$blocked", callbackType)
+	callback.SetLinkage(llvm.InternalLinkage)
+	b := ctx.NewBuilder()
+	defer b.Dispose()
+	b.SetInsertPointAtEnd(ctx.AddBasicBlock(callback, "entry"))
+	var args []llvm.Value
+	for i, typ := range params {
+		field := b.CreateStructGEP(dataType, callback.Param(0), i, "")
+		args = append(args, b.CreateLoad(typ, field, ""))
+	}
+	b.CreateCall(native.GlobalValueType(), native, args, "")
+	b.CreateRet(llvm.ConstNull(ptr))
+
+	b.SetInsertPointAtEnd(ctx.AddBasicBlock(entry, "entry"))
+	data := b.CreateAlloca(dataType, "native.args")
+	for i := range params {
+		field := b.CreateStructGEP(dataType, data, i, "")
+		b.CreateStore(entry.Param(i), field)
+	}
+	blockingType := llvm.FunctionType(ptr, []llvm.Type{ptr, ptr}, false)
+	blocking := mod.NamedFunction("GC_do_blocking")
+	if blocking.IsNil() {
+		blocking = llvm.AddFunction(mod, "GC_do_blocking", blockingType)
+	}
+	b.CreateCall(blockingType, blocking, []llvm.Value{callback, data}, "")
+	b.CreateRetVoid()
 }
 
 func hasIndirectTailTransfer(instrs []asm.Instr) bool {

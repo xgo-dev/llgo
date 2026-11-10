@@ -30,6 +30,9 @@ func TestNativeTailTransfer(t *testing.T) {
 				t.Fatal(err)
 			}
 			ir := tr.Module.String()
+			if strings.Contains(ir, "@GC_do_blocking") {
+				t.Fatal("collector-free translation acquired a BDWGC dependency")
+			}
 			if got := strings.Contains(ir, "~{x18}"); got != (goos == "linux") {
 				t.Fatalf("x18 clobber = %t on %s", got, goos)
 			}
@@ -37,6 +40,32 @@ func TestNativeTailTransfer(t *testing.T) {
 				if !strings.Contains(ir, want) {
 					t.Fatalf("missing %q:\n%s", want, ir)
 				}
+			}
+			emitNativeTailObject(t, tr.Module)
+		})
+	}
+}
+
+func TestNativeTailTransferBDWGC(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target *byte, context uintptr)\nvar entryAddr uintptr\n")
+	source := nativeTailFixture + "DATA ·entryAddr(SB)/8, $·Enter(SB)\nGLOBL ·entryAddr(SB), NOPTR, $8\n"
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "tail_arm64.s", []byte(source), goos, "arm64", TranslateOptions{NativeBDWGC: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			entry := tr.Module.NamedFunction("example.com/tail.Enter")
+			if ir := entry.String(); !strings.Contains(ir, "@GC_do_blocking") || strings.Contains(ir, "asm sideeffect") {
+				t.Fatalf("public entry bypasses collector transition:\n%s", ir)
+			}
+			global := tr.Module.NamedGlobal("example.com/tail.entryAddr")
+			if global.IsNil() || global.Initializer().IsNil() || strings.Contains(global.Initializer().String(), "$native") {
+				t.Fatalf("assembly DATA bypasses public collector transition:\n%s", tr.Module.String())
 			}
 			emitNativeTailObject(t, tr.Module)
 		})

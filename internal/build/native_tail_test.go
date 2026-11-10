@@ -25,10 +25,13 @@ func TestNativeTailTransferIntegration(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	dir := filepath.Join(root, "internal/build/testdata/native_tail")
-	for _, mode := range []lto.Mode{lto.Off, lto.Full} {
-		t.Run(mode.String(), func(t *testing.T) {
+	for _, tc := range []struct {
+		mode lto.Mode
+		tags string
+	}{{lto.Off, ""}, {lto.Full, ""}, {lto.Off, "nogc"}} {
+		t.Run(tc.mode.String()+"/"+tc.tags, func(t *testing.T) {
 			conf := NewDefaultConf(ModeBuild)
-			conf.LTO = mode
+			conf.LTO, conf.Tags = tc.mode, tc.tags
 			conf.OutFile = filepath.Join(t.TempDir(), "native-tail")
 			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
 				t.Fatal(err)
@@ -36,7 +39,7 @@ func TestNativeTailTransferIntegration(t *testing.T) {
 			ctx, cancel := stdcontext.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			out, err := exec.CommandContext(ctx, conf.OutFile).CombinedOutput()
-			if err != nil || strings.TrimSpace(string(out)) != "entry/resume/stack/registers: OK" {
+			if err != nil || strings.TrimSpace(string(out)) != "entry/resume/stack/registers/gc: OK" {
 				t.Fatalf("native transfer: %v\n%s", err, out)
 			}
 		})
