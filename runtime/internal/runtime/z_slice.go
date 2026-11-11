@@ -197,10 +197,23 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 }
 
 func MakeSlice(len, cap int, etSize int, hasPointers bool) Slice {
-	return MakeSliceAligned(len, cap, etSize, 1, hasPointers)
+	mem := makeSliceMemory(len, cap, etSize)
+	// Ordinary Go slices need only natural alignment. Keep their allocation
+	// independent of the dynamic over-alignment and validation paths.
+	var data unsafe.Pointer
+	if hasPointers {
+		data = AllocZ(mem)
+	} else {
+		data = AllocAtomicZ(mem)
+	}
+	return Slice{data, len, cap}
 }
 
 func MakeSliceAligned(len, cap, etSize, etAlign int, hasPointers bool) Slice {
+	return Slice{allocZTyped(makeSliceMemory(len, cap, etSize), uintptr(etAlign), hasPointers), len, cap}
+}
+
+func makeSliceMemory(len, cap, etSize int) uintptr {
 	mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(len))
@@ -209,7 +222,7 @@ func MakeSliceAligned(len, cap, etSize, etAlign int, hasPointers bool) Slice {
 		}
 		panicmakeslicecap()
 	}
-	return Slice{allocZTyped(mem, uintptr(etAlign), hasPointers), len, cap}
+	return mem
 }
 
 // MakeSliceBuffer uses caller-owned aligned storage for a valid small make.
