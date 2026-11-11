@@ -23,6 +23,9 @@ func capacity(n,c int) []byte { return append([]byte(nil),make([]byte,n,c)...) }
 func constantCapacity() []byte { return append([]byte(nil),make([]byte,2,4)...) }
 func shared(n int) []byte { s:=make([]byte,n);r:=append([]byte(nil),s...);s[0]=1;return r }
 func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
+func reusedLoop(n int) [][]byte { s:=make([]byte,n);var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),s...))};return out }
+func reusedConstantLoop() [][]byte { s:=make([]byte,8);var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),s...))};return out }
+func freshLoop(n int) [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),make([]byte,n)...))};return out }
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -43,10 +46,15 @@ func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
 			if body := llvmFunction(t, ir, "fresh.constant"); strings.Count(body, "runtime.AllocAtomicU\"") != 1 {
 				t.Errorf("constant append must retain one escaping backing array:\n%s", body)
 			}
-			for _, name := range []string{"nonnil", "capacity", "constantCapacity", "shared", "literal"} {
+			for _, name := range []string{"nonnil", "capacity", "constantCapacity", "shared", "literal", "reusedLoop", "reusedConstantLoop"} {
 				if body := llvmFunction(t, ir, "fresh."+name); !strings.Contains(body, "SliceAppend") {
 					t.Errorf("%s incorrectly forwarded its source backing array:\n%s", name, body)
 				}
+			}
+			// The outer append still copies slice headers. Only the inner
+			// append can forward its allocation on each loop iteration.
+			if body := llvmFunction(t, ir, "fresh.freshLoop"); strings.Count(body, "SliceAppend") != 1 {
+				t.Errorf("per-iteration source lost forwarding eligibility:\n%s", body)
 			}
 		})
 	}

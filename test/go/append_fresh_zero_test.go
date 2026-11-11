@@ -25,6 +25,36 @@ func appendFreshZeroOverflow(n int) [][16]byte {
 func appendFreshZeroGeneric[T any](n int) []T { return append([]T(nil), make([]T, n)...) }
 
 //go:noinline
+func appendFreshZeroLoopCopies(n int) [][]byte {
+	source := make([]byte, n)
+	var out [][]byte
+	for i := 0; i < 3; i++ {
+		out = append(out, append([]byte(nil), source...))
+	}
+	return out
+}
+
+//go:noinline
+func appendFreshZeroConstantLoopCopies() [][]byte {
+	source := make([]byte, 8)
+	var out [][]byte
+	for i := 0; i < 3; i++ {
+		out = append(out, append([]byte(nil), source...))
+	}
+	return out
+}
+
+func TestAppendFreshZeroLoopCopies(t *testing.T) {
+	for _, copies := range [][][]byte{appendFreshZeroLoopCopies(8), appendFreshZeroConstantLoopCopies()} {
+		copies[0][0] = 7
+		runtime.GC()
+		if copies[0][0] != 7 || copies[1][0] != 0 || copies[2][0] != 0 {
+			t.Fatalf("loop copies share storage: %d %d %d", copies[0][0], copies[1][0], copies[2][0])
+		}
+	}
+}
+
+//go:noinline
 func appendFreshZeroNext(calls *int) int {
 	*calls++
 	return 4

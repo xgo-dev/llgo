@@ -57,6 +57,12 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 	}
 	switch src := current.(type) {
 	case *ssa.MakeSlice:
+		// A static single use can execute repeatedly without recreating its
+		// source. Sharing a block proves that every append execution is
+		// preceded by a new allocation, including when that block is a loop.
+		if src.Block() != call.Block() {
+			return nil
+		}
 		// Require SSA value identity: forward a full-capacity backing array,
 		// rather than retaining capacity the copying append would discard.
 		if src.Len == src.Cap {
@@ -65,6 +71,9 @@ func freshNilAppendSource(call *ssa.Call) ssa.Value {
 	case *ssa.Slice:
 		alloc, ok := src.X.(*ssa.Alloc)
 		if !ok || alloc.Comment != "makeslice" || src.Low != nil || src.Max != nil {
+			return nil
+		}
+		if alloc.Block() != call.Block() {
 			return nil
 		}
 		pointer, ok := alloc.Type().(*types.Pointer)
