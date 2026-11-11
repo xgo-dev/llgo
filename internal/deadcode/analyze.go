@@ -34,10 +34,9 @@ type pass struct {
 	processedIfaceTy  map[meta.Symbol]struct{}
 	workQueue         []meta.Symbol
 
-	ifaceMethod         map[ifaceMethodKey]struct{}
-	genericIfaceMethod  map[meta.Name]struct{}
-	reflectSeen         bool
-	reflectMetadataSeen bool
+	ifaceMethod        map[ifaceMethodKey]struct{}
+	genericIfaceMethod map[meta.Name]struct{}
+	reflectSeen        bool
 
 	markableMethods []methodRef
 	liveSlots       map[meta.Symbol][]int
@@ -220,10 +219,10 @@ func (d *pass) flood() {
 
 		for _, demand := range d.info.FuncDemands(sym) {
 			switch demand.Kind {
-			case meta.DemandReflectMethod:
+			case meta.DemandReflectMethod, meta.DemandReflectMethodMetadata:
+				// Old experimental package caches can still carry the retired
+				// metadata-only marker. Treat it as callable reflection too.
 				d.reflectSeen = true
-			case meta.DemandReflectMethodMetadata:
-				d.reflectMetadataSeen = true
 			case meta.DemandUseIface:
 				d.markUsedInIface(demand.Target)
 			case meta.DemandIfaceMethod:
@@ -260,12 +259,6 @@ func (d *pass) methodMarkingLoop() bool {
 	rem := d.markableMethods[:0]
 
 	for _, method := range d.markableMethods {
-		// Type.Method(i).Type may expose new concrete types even when Func
-		// is unused. Keep their reflection visibility in the same fixed point
-		// as callable method demands, without retaining IFn/TFn themselves.
-		if d.reflectMetadataSeen && token.IsExported(d.info.Name(method.slotInfo.Name)) {
-			d.markMethodType(method)
-		}
 		if d.shouldKeep(method) {
 			d.markMethod(method)
 			changed = true

@@ -1,0 +1,161 @@
+{
+  "description": "Post-removal validation of the two existing PR branches. This is not a timing comparison. Thin PR is based on its original parent, unlike the rebased Thin control in the frozen 110-artifact matrix.",
+  "local_tests": {
+    "strong-unit": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/meta\t3.085s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/deadcode\t3.589s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/reflectnames\t5.902s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/abi\t4.846s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/cabi\t90.029s",
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t1.061s"
+    ],
+    "thin-unit": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/meta\t5.810s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/deadcode\t4.083s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/reflectnames\t6.787s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/abi\t4.576s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/cabi\t93.790s",
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t0.745s"
+    ],
+    "strong-build-tests": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/build\t0.610s"
+    ],
+    "thin-build-tests": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/build\t0.624s"
+    ],
+    "strong-fixtures": [
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t23.809s"
+    ],
+    "thin-fixtures": [
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t19.475s"
+    ],
+    "strong-cache-fixtures": [
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t93.828s"
+    ],
+    "thin-cache-fixtures": [
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t47.884s"
+    ]
+  },
+  "runtime_smoke": [
+    {
+      "case": "dustin_humanize",
+      "mode": "strong",
+      "status": "runtime_failed",
+      "valid": false,
+      "bytes": 2229840,
+      "text_bytes": 894604,
+      "function_bodies": 3196,
+      "binary_sha256": "d069db60fac21e00521d94086c99f76996baef129c4bc30ce855c9cb276a93ce",
+      "runtime_diagnostics": [
+        "fatal error:"
+      ],
+      "execution_exit_code": 0
+    },
+    {
+      "case": "k8s_workqueue",
+      "mode": "strong",
+      "status": "pass",
+      "valid": true,
+      "bytes": 6941280,
+      "text_bytes": 3222320,
+      "function_bodies": 11589,
+      "binary_sha256": "fc4c282a0d8076d83b0382188d03b2cedec87e5a84647ce7b81dfe3d494ce2f2",
+      "runtime_diagnostics": [],
+      "execution_exit_code": 0
+    },
+    {
+      "case": "gorm_schema",
+      "mode": "strong",
+      "status": "pass",
+      "valid": true,
+      "bytes": 3512784,
+      "text_bytes": 1428596,
+      "function_bodies": 4651,
+      "binary_sha256": "e833aaa55558f77842ab623d6cb7d240f9b4a01e8a5a8f5cf55ddaeaef731a21",
+      "runtime_diagnostics": [],
+      "execution_exit_code": 0,
+      "schema_tests": {
+        "returncode": 0,
+        "passed": 62,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "case": "dustin_humanize",
+      "mode": "thin00",
+      "status": "runtime_failed",
+      "valid": false,
+      "bytes": 2048048,
+      "text_bytes": 823360,
+      "function_bodies": 2435,
+      "binary_sha256": "b55f23094dcfba0c230116e194e3d54effd3a9faf87ffa77f9103ad8947d69f1",
+      "runtime_diagnostics": [
+        "fatal error:",
+        "(?m)^panic:"
+      ],
+      "execution_exit_code": 2
+    },
+    {
+      "case": "k8s_workqueue",
+      "mode": "thin00",
+      "status": "pass",
+      "valid": true,
+      "bytes": 6643712,
+      "text_bytes": 3112908,
+      "function_bodies": 10095,
+      "binary_sha256": "e5eb03fa5133c4e030a9e5f58a7d787d35df55f91528a600fe08a681ec9254db",
+      "runtime_diagnostics": [],
+      "execution_exit_code": 0
+    },
+    {
+      "case": "gorm_schema",
+      "mode": "thin00",
+      "status": "pass",
+      "valid": true,
+      "bytes": 3314240,
+      "text_bytes": 1357588,
+      "function_bodies": 3637,
+      "binary_sha256": "49c4809b478b5ad35273d917f870ea7f141ba7a375815f1dd572f8e061933a57",
+      "runtime_diagnostics": [],
+      "execution_exit_code": 0,
+      "schema_tests": {
+        "returncode": 0,
+        "passed": 62,
+        "failed": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "live_slots_comparison": [
+    {
+      "case": "reflectcallbacks",
+      "equal": true,
+      "types": 79,
+      "slots": 112,
+      "sha256": "3c30230beff7b430bec136f544985938711469b16c4822a7f7442292147961a4",
+      "different_types": []
+    },
+    {
+      "case": "gormschema",
+      "equal": true,
+      "types": 285,
+      "slots": 649,
+      "sha256": "bffa6ceeeced60ef3f12e965993d5c8868e4e5c0724cec9034b6897d1ae18734",
+      "different_types": []
+    }
+  ],
+  "correctness_blocker": "dustin_humanize reports fatal errors in both Drop backends; remains unresolved.",
+  "source_sha256": {
+    "strong": {
+      "cl/instr.go": "8ece708795a6fd6902114c30229c3d60c870088cf38c7f2271ccf52b82648a46",
+      "ssa/expr.go": "5f4465cb799c586fe555d7791560c2a0dc433b1b1838525e99f21aaa324f3505",
+      "internal/deadcode/analyze.go": "8b2dd015eae85fd1b6d2170e63b9976d570842ca72c55c775e150d1e8e0e1792"
+    },
+    "thin": {
+      "cl/instr.go": "49365c05fef4f20bf55baae0792577e8bc63ba9304749ae569169261f33fc891",
+      "ssa/expr.go": "5f4465cb799c586fe555d7791560c2a0dc433b1b1838525e99f21aaa324f3505",
+      "internal/deadcode/analyze.go": "8b2dd015eae85fd1b6d2170e63b9976d570842ca72c55c775e150d1e8e0e1792"
+    }
+  }
+}

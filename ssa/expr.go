@@ -1816,10 +1816,10 @@ func (p Package) MarkReflectMethod(funcName string) {
 	}
 }
 
-// RecordReflectTypeMethodUse separates reading a Method's metadata from
-// observing its Func value. Lookup hints and ABI initialization are needed
-// in both cases; only the callable-method demand differs.
-func (p Package) RecordReflectTypeMethodUse(funcName string, check ReflectMethodCheck, index int, metadataOnly bool) {
+// RecordReflectTypeMethodUse retains callable method demands even when only
+// method metadata is observed. Constant names still use the existing named
+// demand; unknown names and indexed lookups remain conservative.
+func (p Package) RecordReflectTypeMethodUse(funcName string, check ReflectMethodCheck, index int) {
 	if check.Kind == 0 {
 		return
 	}
@@ -1839,8 +1839,6 @@ func (p Package) RecordReflectTypeMethodUse(funcName string, check ReflectMethod
 	if mb := p.metaBuilder; mb != nil {
 		sym := mb.Sym(funcName)
 		switch {
-		case metadataOnly:
-			mb.MarkReflectMethodMetadata(sym)
 		case check.Kind == ReflectTypeMethodByName:
 			mb.AddNamedMethodUse(sym, check.Name)
 		default:
