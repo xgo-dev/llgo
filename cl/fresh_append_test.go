@@ -26,6 +26,7 @@ func literal() []byte { return append([]byte(nil), []byte{0,0,0,0}...) }
 func reusedLoop(n int) [][]byte { s:=make([]byte,n);var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),s...))};return out }
 func reusedConstantLoop() [][]byte { s:=make([]byte,8);var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),s...))};return out }
 func freshLoop(n int) [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),make([]byte,n)...))};return out }
+func freshConstantLoop() [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),make([]byte,8)...))};return out }
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -46,15 +47,24 @@ func freshLoop(n int) [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(o
 			if body := llvmFunction(t, ir, "fresh.constant"); strings.Count(body, "runtime.AllocAtomicU\"") != 1 {
 				t.Errorf("constant append must retain one escaping backing array:\n%s", body)
 			}
-			for _, name := range []string{"nonnil", "capacity", "constantCapacity", "shared", "literal", "reusedLoop", "reusedConstantLoop"} {
+			for _, name := range []string{"nonnil", "capacity", "constantCapacity", "shared", "literal"} {
 				if body := llvmFunction(t, ir, "fresh."+name); !strings.Contains(body, "SliceAppend") {
 					t.Errorf("%s incorrectly forwarded its source backing array:\n%s", name, body)
 				}
 			}
+			// Reused sources need both copies: slice headers in the outer
+			// append and independent byte storage in the inner append.
+			for _, name := range []string{"reusedLoop", "reusedConstantLoop"} {
+				if body := llvmFunction(t, ir, "fresh."+name); strings.Count(body, "SliceAppend") != 2 {
+					t.Errorf("%s lost copying for its reused source:\n%s", name, body)
+				}
+			}
 			// The outer append still copies slice headers. Only the inner
 			// append can forward its allocation on each loop iteration.
-			if body := llvmFunction(t, ir, "fresh.freshLoop"); strings.Count(body, "SliceAppend") != 1 {
-				t.Errorf("per-iteration source lost forwarding eligibility:\n%s", body)
+			for _, name := range []string{"freshLoop", "freshConstantLoop"} {
+				if body := llvmFunction(t, ir, "fresh."+name); strings.Count(body, "SliceAppend") != 1 {
+					t.Errorf("%s lost per-iteration forwarding eligibility:\n%s", name, body)
+				}
 			}
 		})
 	}

@@ -44,8 +44,31 @@ func appendFreshZeroConstantLoopCopies() [][]byte {
 	return out
 }
 
+//go:noinline
+func appendFreshZeroPerIterationCopies(n int) [][]byte {
+	var out [][]byte
+	for i := 0; i < 3; i++ {
+		out = append(out, append([]byte(nil), make([]byte, n)...))
+	}
+	return out
+}
+
+//go:noinline
+func appendFreshZeroConstantPerIterationCopies() [][]byte {
+	var out [][]byte
+	for i := 0; i < 3; i++ {
+		out = append(out, append([]byte(nil), make([]byte, 8)...))
+	}
+	return out
+}
+
 func TestAppendFreshZeroLoopCopies(t *testing.T) {
-	for _, copies := range [][][]byte{appendFreshZeroLoopCopies(8), appendFreshZeroConstantLoopCopies()} {
+	for _, copies := range [][][]byte{
+		appendFreshZeroLoopCopies(8),
+		appendFreshZeroConstantLoopCopies(),
+		appendFreshZeroPerIterationCopies(8),
+		appendFreshZeroConstantPerIterationCopies(),
+	} {
 		copies[0][0] = 7
 		runtime.GC()
 		if copies[0][0] != 7 || copies[1][0] != 0 || copies[2][0] != 0 {
