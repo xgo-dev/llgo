@@ -17,13 +17,13 @@ func midwayIdentity(x midwayBox[int]) midwayBox[int] { return x }
 func midwayBlankWidth[_, _ any]() int                { var v simd.Uint32s; return v.Len() }
 
 func TestPortableGenericReceiver(t *testing.T) {
-	if got := midwayGlobal.Width(); got != 4 {
+	if got := midwayGlobal.Width(); got != simd.VectorBitSize()/32 {
 		t.Fatalf("global receiver width=%d", got)
 	}
-	if got := midwayIdentity(midwayBox[int]{}).Width(); got != 4 {
+	if got := midwayIdentity(midwayBox[int]{}).Width(); got != simd.VectorBitSize()/32 {
 		t.Fatalf("instance width=%d", got)
 	}
-	if got := midwayBlankWidth[int, string](); got != 4 {
+	if got := midwayBlankWidth[int, string](); got != simd.VectorBitSize()/32 {
 		t.Fatalf("blank type parameter width=%d", got)
 	}
 }
@@ -60,7 +60,7 @@ var midwayRecovered any
 //go:noinline
 func midwayCatch() {
 	var v simd.Uint32s
-	if v.Len() != 4 {
+	if v.Len() != simd.VectorBitSize()/32 {
 		panic("width")
 	}
 	midwayRecovered = recover()
@@ -69,7 +69,7 @@ func midwayCatch() {
 //go:noinline
 func midwayCatchGeneric[_ any]() {
 	var v simd.Uint32s
-	if v.Len() != 4 {
+	if v.Len() != simd.VectorBitSize()/32 {
 		panic("width")
 	}
 	midwayRecovered = recover()

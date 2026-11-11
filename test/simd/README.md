@@ -129,19 +129,21 @@ GOEXPERIMENT=simd go run ./test/simd/testdata/upstream-simd256-recover
 GOEXPERIMENT=simd llgo run ./test/simd/testdata/upstream-simd256-recover
 ```
 
-Portable `simd` still selects only emulation/128 bits. SIMD256 is currently an
-`archsimd` facility. By-value native C bindings using these wide `archsimd`
-types receive a diagnostic; explicit memory interfaces remain available. Native C vector ABI,
-portable256 selection, and SIMD512 need separate qualification.
+Portable `simd` also generates and selects a 256-bit variant on amd64, using
+these bridge operations. By-value native C bindings using these wide `archsimd`
+types receive a diagnostic; explicit memory interfaces remain available.
+Native C vector ABI and SIMD512 need separate qualification.
 
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,
 arm64, and wasm. The first type check identifies dependent declarations;
-Midway generates emulated and 128-bit variants, rewrites their references to
-the official `simd/internal/bridge`, and type-checks the result before Go SSA.
+Midway generates emulated and 128-bit variants, plus a 256-bit variant on
+amd64, rewrites their references to the official `simd/internal/bridge`, and
+type-checks the result before Go SSA.
 Importers see both the original declarations and the specialized exports.
-Ordinary scalar entry points select their variant through `simd.Emulated()`.
+Ordinary scalar entry points select their variant through `simd.Emulated()`
+and, on amd64, `simd.VectorBitSize()`.
 The retained unspecialized vector signatures are metadata and trap if called.
 
 The implementation handles recursive aggregates, aliases, embedded fields,
@@ -152,12 +154,21 @@ dependency order, and execute side effects once; multiple `init` functions
 retain their order. The loader avoids requesting unused gc export data, which
 would otherwise run the official compiler's own Midway before LLGo's checks.
 
-This stage emits only emulation and SIMD128. On amd64 the official effective
-AVX eligibility rule remains in force, with the maximum compiled width capped
-at 128. `GODEBUG=simd=0` selects emulation; explicit unsupported widths fail
-instead of selecting an absent variant. ARM64 and wasm retain their official
-feature policy. CPU queries and LLVM's instruction-level FMV remain separate
-from this representation choice.
+On amd64, selection follows Go's effective AVX/AVX2 and VPCLMULQDQ policy,
+with the maximum compiled width capped at 256. AVX2 without VPCLMULQDQ defaults
+to 128 bits; `GODEBUG=simd=+256` overrides that feature reduction. The implemented
+256-bit bridge operations remain baseline-safe, including carryless multiply.
+`GODEBUG=simd=0` selects emulation. When hardware is eligible, explicit widths
+above its supported maximum fail; with no eligible hardware, Go's initialization
+selects emulation before processing width requests. ARM64 and wasm retain their
+128-bit feature policy. CPU queries and LLVM's instruction-level FMV remain
+separate from this representation choice.
+
+The native amd64 matrix exercises default, emulated, 128-bit and eligible
+256-bit selection at O0/O2 and Thin/Full LTO, including disabled CPU features
+and rejected width requests. Cross-package calls, indirect calls, global
+initialization and deferred recovery use the same selected representation.
+LLVM tests verify that ARM64 and Wasm do not acquire 256-bit variants.
 
 `portable/` tests compare shared portable operations with the official Go
 toolchain and exercise LLGo's initialization and embedded-field contracts in
@@ -174,9 +185,10 @@ bodyless user functions depending on portable types, and inferred global types
 requiring another package's unexported type, field, or method names.
 The latter two cases produce source diagnostics. Midway also diagnoses
 `go:linkname`, `llgo:link`, and `export` bindings on SIMD-dependent globals,
-or link directives targeting a known SIMD-dependent global: an external storage binding needs an ABI shared by both concrete
-representations. Embedded named strings and byte slices retain their contents
-in both variants. Wider variants and general FMV are follow-up work.
+or link directives targeting a known SIMD-dependent global: an external storage
+binding needs an ABI shared by all concrete representations. Embedded named
+strings and byte slices retain their contents in every generated variant.
+512-bit variants and general FMV are follow-up work.
 
 For the WASI portable matrix, including explicit guest emulation, run
 `LLGO=/path/to/llgo bash dev/test_portable_simd_wasi.sh`. It passes `GODEBUG`

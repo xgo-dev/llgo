@@ -9,20 +9,30 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strconv"
 )
 
 const (
 	simdPath   = "simd"
 	bridgePath = "simd/internal/bridge"
+	// Every target has this hardware variant as dispatchWidth's final fallback.
+	fallbackWidth = 128
 )
 
-var widths = [...]int{0, 128}
+// Widths are a target property, not the build host's CPU capabilities.
+// Keep selectable widths in sync with runtime/_patch/simd/selection_llgo.go.
+func targetWidths(arch string) []int {
+	if arch == "amd64" {
+		return []int{0, fallbackWidth, 256}
+	}
+	return []int{0, fallbackWidth}
+}
 
 func suffix(width int) string {
 	if width == 0 {
 		return "@simd0"
 	}
-	return "@simd128"
+	return "@simd" + strconv.Itoa(width)
 }
 
 func elementBits(name string) int {
