@@ -125,11 +125,25 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 			return nil, err
 		}
 	}
-	// Use the same ownership rule as publication. Raw GoJS and native outputs
-	// must not pick up another build's wasm_fs.js from the output directory.
+	// Use the same ownership rule as publication. needsGoJSLoader infers the
+	// GoJS provider for untargeted GOOS=js GOARCH=wasm builds.
 	if driverOut := emscriptenDriverOutput(conf, out.Out); needsEmscriptenBrowserHost(conf, driverOut) {
 		if err := add(ArtifactRoleDeployment, "javascript", emscriptenBrowserHostSidecar(driverOut)); err != nil {
 			return nil, err
+		}
+	}
+	if driverOut := emscriptenDriverOutput(conf, out.Out); needsGoJSLoader(conf, nil, driverOut) {
+		if err := add(ArtifactRoleDeployment, "javascript", goJSLoaderSidecar(driverOut)); err != nil {
+			return nil, err
+		}
+		if unique := goJSUniqueLoaderSidecar(driverOut); unique != goJSLoaderSidecar(driverOut) {
+			if _, err := os.Stat(unique); err == nil {
+				if err := add(ArtifactRoleDeployment, "javascript", unique); err != nil {
+					return nil, err
+				}
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			}
 		}
 	}
 	if err := add(ArtifactRoleDebug, "wasm-dwarf", out.DWARF); err != nil {

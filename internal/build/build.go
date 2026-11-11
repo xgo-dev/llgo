@@ -686,6 +686,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
+	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
 	verbose := conf.Verbose
 	patterns := slices.Clone(inv.Args)
 	target := &llssa.Target{
@@ -2803,6 +2804,9 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return err
 	}
 	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
+		return err
+	}
+	if err := publishGoJSLoader(ctx, driverOut, verbose); err != nil {
 		return err
 	}
 	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)

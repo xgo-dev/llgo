@@ -202,7 +202,12 @@ EM_JS(void, llgo_js_host, (int32_t op, uint64_t *frame), {
         view.setUint32(ptr, id, true);
         view.setUint32(ptr + 4, nanHead | flag, true);
     };
-    const text = () => state.decoder.decode(HEAPU8.subarray(integer(2), integer(2) + integer(3)));
+    const text = () => {
+        let bytes = HEAPU8.subarray(integer(2), integer(2) + integer(3));
+        // Chrome's decoder requires a fixed-length copy of growable memory.
+        if (bytes.buffer.resizable || bytes.buffer.growable) bytes = bytes.slice();
+        return state.decoder.decode(bytes);
+    };
     const bytes = () => HEAPU8.subarray(integer(2), integer(2) + integer(3));
     const args = () => {
         const values = new Array(integer(5));
