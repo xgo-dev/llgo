@@ -355,7 +355,8 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 			module := filepath.Join(dir, "app.wasm")
 			driver := filepath.Join(dir, "app.mjs")
 			loader := goJSLoaderSidecar(driver)
-			for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", emscriptenBrowserHostSidecar(driver): "unrelated"} {
+			unique := goJSUniqueLoaderSidecar(driver)
+			for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", unique: "unique-host", emscriptenBrowserHostSidecar(driver): "unrelated"} {
 				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -367,7 +368,8 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 				want = []Artifact{glue, primary}
 			}
 			want = append(want,
-				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: loader, Size: 6})
+				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: loader, Size: 6},
+				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: unique, Size: 11})
 			got, err := CollectArtifacts(conf, out)
 			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("artifacts = %+v, %v; want %+v", got, err, want)
@@ -410,37 +412,6 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 	}
 }
 
-func TestCollectArtifactsGoJSUniqueLoader(t *testing.T) {
-	dir := t.TempDir()
-	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", DebugArtifactMode: DebugArtifactEmbedded, DebugArtifactModeSet: true}
-	out := &OutFmtDetails{Out: filepath.Join(dir, "app.wasm")}
-	module := filepath.Join(dir, "app.wasm")
-	driver := filepath.Join(dir, "app.mjs")
-	loader := goJSLoaderSidecar(driver)
-	unique := goJSUniqueLoaderSidecar(driver)
-	for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", unique: "unique-host"} {
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := CollectArtifacts(conf, out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundUnique := false
-	for _, artifact := range got {
-		if artifact.Path == unique {
-			foundUnique = true
-			if artifact.Size != 11 {
-				t.Fatalf("unique size = %d", artifact.Size)
-			}
-		}
-	}
-	if !foundUnique {
-		t.Fatalf("unique loader missing: %+v", got)
-	}
-}
-
 func TestCollectArtifactsGoJSSidecarOwnership(t *testing.T) {
 	for _, name := range []string{"run", "test", "install", "archive", "native", "wasi", "named emscripten", "custom target", "explicit module"} {
 		t.Run(name, func(t *testing.T) {
@@ -477,7 +448,7 @@ func TestCollectArtifactsGoJSSidecarOwnership(t *testing.T) {
 			}
 			for _, artifact := range got {
 				if base := filepath.Base(artifact.Path); base == goJSLoaderScriptName || strings.HasSuffix(base, "_wasm_exec.js") {
-					t.Fatalf("unowned GoJS sidecar reported: %+v", artifact)
+					t.Fatalf("unowned GoJS host reported: %+v", artifact)
 				}
 			}
 		})

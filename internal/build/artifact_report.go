@@ -136,14 +136,13 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 		if err := add(ArtifactRoleDeployment, "javascript", goJSLoaderSidecar(driverOut)); err != nil {
 			return nil, err
 		}
-		if unique := goJSUniqueLoaderSidecar(driverOut); unique != goJSLoaderSidecar(driverOut) {
-			if _, err := os.Stat(unique); err == nil {
-				if err := add(ArtifactRoleDeployment, "javascript", unique); err != nil {
-					return nil, err
-				}
-			} else if !os.IsNotExist(err) {
+		unique := goJSUniqueLoaderSidecar(driverOut)
+		if _, err := os.Stat(unique); err == nil {
+			if err := add(ArtifactRoleDeployment, "javascript", unique); err != nil {
 				return nil, err
 			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
 		}
 	}
 	if err := add(ArtifactRoleDebug, "wasm-dwarf", out.DWARF); err != nil {

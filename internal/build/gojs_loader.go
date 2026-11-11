@@ -18,6 +18,7 @@ package build
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +36,7 @@ const (
 	goJSLoaderDriverSentinel = "app.mjs"
 )
 
-// Keep run/test glue as an ES module for emscripten-runner.mjs. Only a
+// Keep run/test output as an ES module for emscripten-runner.mjs. Only a
 // standalone GoJS build uses the synchronous factory consumed by wasm_exec.js.
 func goJSLoaderLinkFlags(conf *Config, target *crosscompile.Export) []string {
 	if !needsGoJSLoader(conf, target, goJSLoaderDriverSentinel) {
@@ -91,6 +92,9 @@ func publishGoJSLoader(ctx *context, driverOutput string, verbose bool) error {
 	return publishGoJSLoaderFrom(ctx, driverOutput, verbose, env.LLGoROOT())
 }
 
+// publishGoJSLoaderFrom writes wasm_exec.js (factory + host) marked with the
+// wasm file name. The first program uses wasm_exec.js; a later program in the
+// same directory uses stem_wasm_exec.js.
 func publishGoJSLoaderFrom(ctx *context, driverOutput string, verbose bool, root string) error {
 	if ctx == nil || !needsGoJSLoader(ctx.buildConf, &ctx.crossCompile, driverOutput) {
 		return nil
@@ -145,7 +149,7 @@ func publishGoJSLoaderFrom(ctx *context, driverOutput string, verbose bool, root
 		return fmt.Errorf("copy %s: %w", filepath.Base(dest), err)
 	}
 	if err := os.Remove(driverOutput); err != nil {
-		return fmt.Errorf("remove intermediate GoJS glue %s: %w", driverOutput, err)
+		return fmt.Errorf("remove intermediate GoJS factory %s: %w", driverOutput, err)
 	}
 	if ctx.shouldPrintCommands(verbose) {
 		fmt.Fprintf(os.Stderr, "copy %s + %s -> %s\n", driverOutput, src, dest)
@@ -162,6 +166,7 @@ func goJSWasmModuleName(ctx *context, driverOutput string) string {
 	return strings.TrimSuffix(filepath.Base(driverOutput), filepath.Ext(driverOutput)) + ".wasm"
 }
 
+// combineGoJSExec writes the wasm marker, factory, factory registration, and host.
 func combineGoJSExec(wasmName string, factory, loader []byte) []byte {
 	var buf bytes.Buffer
 	if len(factory) > 0 {
@@ -170,11 +175,17 @@ func combineGoJSExec(wasmName string, factory, loader []byte) []byte {
 			buf.WriteByte('\n')
 		}
 	}
+	buf.Write(goJSRegisterFactory(wasmName))
 	buf.Write(loader)
 	if len(loader) > 0 && loader[len(loader)-1] != '\n' {
 		buf.WriteByte('\n')
 	}
 	return withGoJSWasmMarker(wasmName, buf.Bytes())
+}
+
+func goJSRegisterFactory(wasmName string) []byte {
+	name, _ := json.Marshal(wasmName)
+	return []byte("globalThis.__llgoFactories = globalThis.__llgoFactories || {};\nif (typeof globalThis.LLGoModule === \"function\") globalThis.__llgoFactories[" + string(name) + "] = globalThis.LLGoModule;\n")
 }
 
 func withGoJSWasmMarker(wasmName string, data []byte) []byte {
@@ -216,6 +227,8 @@ func writeFileAtomic(dst string, data []byte) error {
 	return os.Rename(tmpName, dst)
 }
 
+// chooseGoJSLoaderDest overwrites wasm_exec.js when it is unmarked or owned by
+// this wasm, and otherwise writes stem_wasm_exec.js.
 func chooseGoJSLoaderDest(ctx *context, driverOutput, unique, shared string) (string, error) {
 	existing, err := os.ReadFile(shared)
 	if os.IsNotExist(err) {
@@ -234,10 +247,10 @@ func chooseGoJSLoaderDest(ctx *context, driverOutput, unique, shared string) (st
 func checkGoJSCollision(output, sidecar string) error {
 	same, err := sameFilePath(output, sidecar)
 	if err != nil {
-		return fmt.Errorf("publish GoJS sidecars: %w", err)
+		return fmt.Errorf("publish GoJS host: %w", err)
 	}
 	if same {
-		return fmt.Errorf("publish GoJS sidecars: output %s collides with sidecar %s", output, sidecar)
+		return fmt.Errorf("publish GoJS host: output %s collides with %s", output, sidecar)
 	}
 	return nil
 }

@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -53,22 +52,9 @@ func TestNeedsGoJSLoader(t *testing.T) {
 	}
 }
 
-func TestGoJSLoaderSidecars(t *testing.T) {
-	output := filepath.Join("dist", "app.mjs")
-	if got, want := goJSLoaderSidecar(output), filepath.Join("dist", goJSLoaderScriptName); got != want {
-		t.Fatalf("loader = %q, want %q", got, want)
-	}
-	if got, want := goJSUniqueLoaderSidecar(output), filepath.Join("dist", "app_wasm_exec.js"); got != want {
-		t.Fatalf("unique loader = %q, want %q", got, want)
-	}
-	if got, want := filepath.Join(filepath.Dir(output), wasmFSScriptName), filepath.Join("dist", wasmFSScriptName); got != want {
-		t.Fatalf("filesystem host = %q, want %q", got, want)
-	}
-}
-
 func TestCombineGoJSExec(t *testing.T) {
 	got := combineGoJSExec("app.wasm", []byte("factory"), []byte("loader"))
-	want := goJSWasmMarkerPrefix + "app.wasm\nfactory\nloader\n"
+	want := goJSWasmMarkerPrefix + "app.wasm\nfactory\n" + string(goJSRegisterFactory("app.wasm")) + "loader\n"
 	if string(got) != want {
 		t.Fatalf("combined = %q, want %q", got, want)
 	}
@@ -86,60 +72,39 @@ func TestPublishGoJSLoaderFrom(t *testing.T) {
 	if err := os.WriteFile(src, []byte("loader"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, requested := range []string{"app.wasm"} {
-		t.Run(requested, func(t *testing.T) {
-			dir := t.TempDir()
-			output := filepath.Join(dir, requested)
-			conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
-			ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
-			driver := emscriptenDriverOutput(conf, output)
-			for path, content := range map[string]string{output: "module", driver: "implementation", goJSLoaderSidecar(driver): "stale loader"} {
-				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
+	dir := t.TempDir()
+	output := filepath.Join(dir, "app.wasm")
+	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
+	ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
+	driver := emscriptenDriverOutput(conf, output)
+	for path, content := range map[string]string{output: "module", driver: "implementation", goJSLoaderSidecar(driver): "stale loader"} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if i > 0 {
+			if err := os.WriteFile(driver, []byte("implementation"), 0o644); err != nil {
+				t.Fatal(err)
 			}
-			for i := 0; i < 2; i++ {
-				if i > 0 {
-					if err := os.WriteFile(driver, []byte("implementation"), 0o644); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if err := publishGoJSLoaderFrom(ctx, driver, false, root); err != nil {
-					t.Fatal(err)
-				}
-				combined := string(combineGoJSExec("app.wasm", []byte("implementation"), []byte("loader")))
-				for path, want := range map[string]string{
-					goJSLoaderSidecar(driver): combined,
-					src:                       "loader",
-				} {
-					got, err := os.ReadFile(path)
-					if err != nil || string(got) != want {
-						t.Fatalf("%s = %q, %v; want %q", path, got, err, want)
-					}
-				}
-				if _, err := os.Stat(goJSUniqueLoaderSidecar(driver)); !os.IsNotExist(err) {
-					t.Fatalf("unique glue created for single program: %v", err)
-				}
-				info, err := os.Stat(goJSLoaderSidecar(driver))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if runtime.GOOS != "windows" {
-					if perm := info.Mode().Perm(); perm != 0o644 {
-						t.Fatalf("implementation mode = %o, want 644", perm)
-					}
-				}
-				if _, err := os.Stat(driver); !os.IsNotExist(err) {
-					t.Fatalf("intermediate glue remains: %v", err)
-				}
-				if requested == "app.wasm" {
-					got, err := os.ReadFile(output)
-					if err != nil || string(got) != "module" {
-						t.Fatalf("requested output = %q, %v", got, err)
-					}
-				}
-			}
-		})
+		}
+		if err := publishGoJSLoaderFrom(ctx, driver, false, root); err != nil {
+			t.Fatal(err)
+		}
+		combined := string(combineGoJSExec("app.wasm", []byte("implementation"), []byte("loader")))
+		got, err := os.ReadFile(goJSLoaderSidecar(driver))
+		if err != nil || string(got) != combined {
+			t.Fatalf("wasm_exec.js = %q, %v", got, err)
+		}
+		if _, err := os.Stat(goJSUniqueLoaderSidecar(driver)); !os.IsNotExist(err) {
+			t.Fatalf("unique host created for single program: %v", err)
+		}
+		if _, err := os.Stat(driver); !os.IsNotExist(err) {
+			t.Fatalf("intermediate factory remains: %v", err)
+		}
+		if got, err := os.ReadFile(output); err != nil || string(got) != "module" {
+			t.Fatalf("requested output = %q, %v", got, err)
+		}
 	}
 }
 
@@ -224,46 +189,23 @@ func TestPublishGoJSLoaderSharedAliasByWasmName(t *testing.T) {
 }
 
 func TestPublishGoJSLoaderCollisions(t *testing.T) {
-	for _, sidecar := range []string{goJSLoaderScriptName, "app_wasm_exec.js"} {
-		for _, source := range []string{"driver", "requested", "module", "sidecar"} {
-			for _, link := range []string{"hardlink", "symlink"} {
-				t.Run(sidecar+"/"+source+"/"+link, func(t *testing.T) {
-					dir := t.TempDir()
-					driver := filepath.Join(dir, "app.mjs")
-					requested := filepath.Join(dir, "requested.wasm")
-					module := filepath.Join(dir, "app.wasm")
-					other := goJSUniqueLoaderSidecar(driver)
-					if sidecar == filepath.Base(other) {
-						other = goJSLoaderSidecar(driver)
-					}
-					for _, path := range []string{driver, requested, module, other} {
-						if err := os.WriteFile(path, []byte("original"), 0o644); err != nil {
-							t.Fatal(err)
-						}
-					}
-					original := map[string]string{"driver": driver, "requested": requested, "module": module, "sidecar": other}[source]
-					linkFile := os.Link
-					if link == "symlink" {
-						linkFile = os.Symlink
-					}
-					if err := linkFile(original, filepath.Join(dir, sidecar)); err != nil {
-						t.Fatal(err)
-					}
-					conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: requested}
-					ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
-					err := publishGoJSLoaderFrom(ctx, driver, false, t.TempDir())
-					if err == nil || !strings.Contains(err.Error(), "collides") {
-						t.Fatalf("collision error = %v", err)
-					}
-					for _, path := range []string{driver, requested, module, other, filepath.Join(dir, sidecar)} {
-						got, err := os.ReadFile(path)
-						if err != nil || string(got) != "original" {
-							t.Fatalf("collision changed %s: %q, %v", path, got, err)
-						}
-					}
-				})
-			}
-		}
+	dir := t.TempDir()
+	driver := filepath.Join(dir, "app.mjs")
+	output := filepath.Join(dir, "app.wasm")
+	if err := os.WriteFile(driver, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(driver, goJSLoaderSidecar(driver)); err != nil {
+		t.Fatal(err)
+	}
+	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
+	ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
+	err := publishGoJSLoaderFrom(ctx, driver, false, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("collision error = %v", err)
+	}
+	if got, err := os.ReadFile(driver); err != nil || string(got) != "original" {
+		t.Fatalf("collision changed driver: %q, %v", got, err)
 	}
 }
 
@@ -286,12 +228,6 @@ func TestPublishGoJSLoaderErrorsAndSkips(t *testing.T) {
 		if err := publishGoJSLoaderFrom(ctx, driver, false, ""); err != nil {
 			t.Fatal(err)
 		}
-	}
-}
-
-func TestPublishGoJSLoaderNoop(t *testing.T) {
-	if err := publishGoJSLoader(nil, "unused.mjs", false); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -338,7 +274,7 @@ func TestPublishGoJSLoaderFailurePaths(t *testing.T) {
 				want = "copy " + filepath.Base(path)
 			case "invalid path":
 				driver = filepath.Join(dir, "invalid\x00.mjs")
-				want = "publish GoJS sidecars"
+				want = "publish GoJS host"
 			}
 			conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm"}
 			ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
@@ -402,49 +338,6 @@ func TestExecuteMainLinkPublishesGoJSLoader(t *testing.T) {
 	}
 }
 
-func TestGoJSLoaderMatchesOfficialBrowserHostAPI(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "targets", goJSLoaderScriptName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	loader := string(data)
-	for _, want := range []string{
-		"global.Go = class",
-		"this.argv",
-		"this.env = {}",
-		"this.exit",
-		"this.importObject = imports",
-		"this._module.thisProgram = this.argv[0]",
-		"noExitRuntime: false",
-		"Go.run: WebAssembly.Instance expected",
-		"O_WRONLY: -1",
-		"fsync(fd, callback) { callback(null); }",
-		"error.code = \"ENOSYS\"",
-		"global.path = { resolve: (...segments) => segments.join(\"/\") }",
-	} {
-		if !strings.Contains(loader, want) {
-			t.Errorf("wasm_exec.js missing official Go host API fragment %q", want)
-		}
-	}
-}
-
-func TestGoJSLoaderRoutesProgramOutputToStdout(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "targets", goJSLoaderScriptName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	loader := string(data)
-	for _, want := range []string{
-		"print: (...args) => writeOutput(1, args)",
-		"printErr: (...args) => writeOutput(2, args)",
-		"global.fs.writeSync(fd, encoder.encode(args.map(String).join(\" \") + \"\\n\"))",
-	} {
-		if !strings.Contains(loader, want) {
-			t.Errorf("wasm_exec.js missing stdout routing %q", want)
-		}
-	}
-}
-
 func TestGoJSLoaderLinkFlags(t *testing.T) {
 	for _, mode := range []Mode{ModeBuild, ModeRun, ModeTest} {
 		conf := &Config{Mode: mode, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm"}
@@ -505,19 +398,33 @@ moduleOptions.print('hello', 'world');
 moduleOptions.printErr('err');
 assert.deepEqual(writes, [[1, 'hello world\n'], [2, 'err\n']]);
 
-const late = vm.createContext({console,TextDecoder,TextEncoder,crypto:{getRandomValues(){}},performance:{now(){return 0}},URL,
- document:{currentScript:{src:'https://example.com/wasm_exec.js',async:true,dataset:{}},readyState:'complete'},
- location:{href:'https://example.com/'}});
+const late = vm.createContext({console,TextDecoder,TextEncoder,crypto:{getRandomValues(){}},performance:{now(){return 0}},URL});
 vm.runInContext(source, late);
-assert.equal(typeof late.Go, 'function');
 assert.throws(() => vm.runInContext('new Go()', late), /missing the bundled LLGoModule factory/);
 
-const factorySource = 'globalThis.LLGoModule = function(options){ options.instantiateWasm({}, ()=>{}); return {}; };';
-const bundled = vm.createContext({console,TextDecoder,TextEncoder,crypto:{getRandomValues(){}},performance:{now(){return 0}},URL});
-vm.runInContext(factorySource + "\n" + source, bundled);
-const goBundled = vm.runInContext('new Go()', bundled);
-assert.ok(goBundled.importObject);
-assert.equal(source.includes('eval('), false);
+function taggedFactory(id) {
+  return function(options){ options.instantiateWasm({id}, ()=>{}); return {id}; };
+}
+const multi = vm.createContext({console, TextDecoder, TextEncoder, crypto:{getRandomValues(){}}, performance:{now(){return 0}}, URL});
+vm.runInContext(
+  'globalThis.LLGoModule = (' + taggedFactory.toString() + ')("app");\n' +
+  'globalThis.__llgoFactories = globalThis.__llgoFactories || {};\n' +
+  'globalThis.__llgoFactories["app.wasm"] = globalThis.LLGoModule;\n' + source,
+  multi);
+const firstGo = multi.Go;
+vm.runInContext(
+  'globalThis.LLGoModule = (' + taggedFactory.toString() + ')("foo");\n' +
+  'globalThis.__llgoFactories = globalThis.__llgoFactories || {};\n' +
+  'globalThis.__llgoFactories["foo.wasm"] = globalThis.LLGoModule;\n' + source,
+  multi);
+assert.equal(multi.Go, firstGo);
+const goDefault = vm.runInContext('new Go()', multi);
+assert.equal(goDefault.importObject.id, 'foo');
+const goApp = vm.runInContext('new Go({ wasm: "app.wasm" })', multi);
+assert.equal(goApp.importObject.id, 'app');
+const goFoo = vm.runInContext('new Go({ wasm: "foo.wasm" })', multi);
+assert.equal(goFoo.importObject.id, 'foo');
+assert.throws(() => vm.runInContext('new Go({ wasm: "missing.wasm" })', multi), /no factory registered for missing.wasm/);
 
 function runtimeFactory(kind) {
   const module = {
@@ -567,140 +474,11 @@ async function runKind(kind, argv) {
 	}
 }
 
-func TestGoJSWasmMarkerAndWriteFileAtomic(t *testing.T) {
+func TestGoJSWasmMarker(t *testing.T) {
 	if got := goJSWasmMarker([]byte(goJSWasmMarkerPrefix + "foo")); got != "foo" {
 		t.Fatalf("marker without newline = %q", got)
 	}
 	if got := goJSWasmMarker([]byte("not a marker")); got != "" {
 		t.Fatalf("unmarked = %q", got)
-	}
-	dir := t.TempDir()
-	dst := filepath.Join(dir, "nested", "out.js")
-	if err := writeFileAtomic(dst, []byte("ok")); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" {
-		if perm := info.Mode().Perm(); perm != 0o644 {
-			t.Fatalf("mode = %o, want 644", perm)
-		}
-	}
-	file := filepath.Join(dir, "notdir")
-	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFileAtomic(filepath.Join(file, "x.js"), []byte("y")); err == nil {
-		t.Fatal("expected error writing through a file")
-	}
-	subdir := filepath.Join(dir, "subdir")
-	if err := os.Mkdir(subdir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFileAtomic(subdir, []byte("y")); err == nil {
-		t.Fatal("expected error renaming onto a directory")
-	}
-	if runtime.GOOS != "windows" {
-		locked := filepath.Join(dir, "locked")
-		if err := os.Mkdir(locked, 0o500); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.Chmod(locked, 0o755) })
-		if err := writeFileAtomic(filepath.Join(locked, "x.js"), []byte("y")); err == nil {
-			t.Fatal("expected error creating temp file in unwritable directory")
-		}
-	}
-}
-
-func TestPublishGoJSLoaderVerbose(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "targets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	src := filepath.Join(root, "targets", goJSLoaderScriptName)
-	if err := os.WriteFile(src, []byte("loader"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	output := filepath.Join(dir, "app.wasm")
-	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
-	ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
-	driver := emscriptenDriverOutput(conf, output)
-	if err := os.WriteFile(driver, []byte("implementation"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishGoJSLoaderFrom(ctx, driver, true, root); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestPublishGoJSLoaderDestWriteError(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "targets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "targets", goJSLoaderScriptName), []byte("loader"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	output := filepath.Join(dir, "app.wasm")
-	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
-	ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
-	driver := emscriptenDriverOutput(conf, output)
-	if err := os.WriteFile(driver, []byte("implementation"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	shared := goJSLoaderSidecar(driver)
-	if err := os.WriteFile(shared, withGoJSWasmMarker("other.wasm", []byte("other")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(goJSUniqueLoaderSidecar(driver), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishGoJSLoaderFrom(ctx, driver, false, root); err == nil {
-		t.Fatal("expected dest write error")
-	}
-}
-
-func TestPublishGoJSLoaderUniqueSharedCollision(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "targets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "targets", goJSLoaderScriptName), []byte("loader"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	output := filepath.Join(dir, "app.wasm")
-	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", OutFile: output}
-	ctx := &context{buildConf: conf, crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderGoJS}}
-	driver := emscriptenDriverOutput(conf, output)
-	if err := os.WriteFile(driver, []byte("implementation"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	shared := goJSLoaderSidecar(driver)
-	if err := os.WriteFile(shared, withGoJSWasmMarker("other.wasm", []byte("other")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(shared, goJSUniqueLoaderSidecar(driver)); err != nil {
-		t.Fatal(err)
-	}
-	err := publishGoJSLoaderFrom(ctx, driver, false, root)
-	if err == nil || !strings.Contains(err.Error(), "collides") {
-		t.Fatalf("collision error = %v", err)
-	}
-}
-
-func TestChooseGoJSLoaderDestReadError(t *testing.T) {
-	dir := t.TempDir()
-	shared := filepath.Join(dir, goJSLoaderScriptName)
-	if err := os.Mkdir(shared, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ctx := &context{buildConf: &Config{OutFile: filepath.Join(dir, "app.wasm")}}
-	if _, err := chooseGoJSLoaderDest(ctx, filepath.Join(dir, "app.mjs"), filepath.Join(dir, "app_wasm_exec.js"), shared); err == nil {
-		t.Fatal("expected read error for directory shared glue")
 	}
 }

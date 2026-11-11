@@ -2,9 +2,11 @@
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  * Licensed under the Apache License, Version 2.0.
  *
- * LLGo's GOOS=js GOARCH=wasm host. It preserves the public API of Go's
- * wasm_exec.js. llgo build concatenates the Emscripten factory ahead of this
- * file so LLGoModule is already defined when the script finishes loading.
+ * LLGo's GOOS=js GOARCH=wasm host. It preserves Go's wasm_exec.js API:
+ * new Go(), go.importObject, and go.run(instance). llgo build concatenates
+ * the Emscripten factory ahead of this file. new Go() uses the last loaded
+ * factory; new Go({ wasm: "app.wasm" }) selects a registered program.
+ * A later host script only registers its factory and does not redefine Go.
  */
 
 (() => {
@@ -56,11 +58,6 @@
 	if (!global.TextEncoder) throw new Error("globalThis.TextEncoder is not available, polyfill required");
 	if (!global.TextDecoder) throw new Error("globalThis.TextDecoder is not available, polyfill required");
 
-	const encoder = new TextEncoder();
-	function writeOutput(fd, args) {
-		global.fs.writeSync(fd, encoder.encode(args.map(String).join(" ") + "\n"));
-	}
-
 	// Chrome rejects TextDecoder.decode on a view of growable Wasm memory.
 	// Emscripten's HEAPU8 is such a view when ALLOW_MEMORY_GROWTH is enabled.
 	function resizableBuffer(value) {
@@ -87,7 +84,24 @@
 		} catch (_) {}
 	}
 
-	function implementationFactory() {
+	if (typeof global.Go === "function") {
+		return;
+	}
+
+	const encoder = new TextEncoder();
+	function writeOutput(fd, args) {
+		global.fs.writeSync(fd, encoder.encode(args.map(String).join(" ") + "\n"));
+	}
+
+	function implementationFactory(options) {
+		const name = options && options.wasm;
+		if (name) {
+			const factory = global.__llgoFactories && global.__llgoFactories[name];
+			if (typeof factory !== "function") {
+				throw new Error("LLGo: no factory registered for " + name);
+			}
+			return factory;
+		}
 		if (typeof global.LLGoModule !== "function") {
 			throw new Error("LLGo: wasm_exec.js is missing the bundled LLGoModule factory");
 		}
@@ -95,7 +109,7 @@
 	}
 
 	global.Go = class {
-		constructor() {
+		constructor(options) {
 			const nodeArgs = global.process?.versions?.node ? global.process.argv.slice(2) : [];
 			this.argv = ["js"].concat(nodeArgs);
 			this.env = {};
@@ -108,14 +122,11 @@
 			this._module = null;
 			this._instance = null;
 			this._receiveInstance = null;
-			this._importsReady = new Promise(resolve => {
-				this._resolveImports = resolve;
-			});
 			this._exitPromise = new Promise(resolve => {
 				this._resolveExit = resolve;
 			});
 
-			const factory = implementationFactory();
+			const factory = implementationFactory(options);
 			this._factoryPromise = Promise.resolve(factory({
 				// Match Go's wasm_exec.js: program output goes through fs.writeSync.
 				// Emscripten print/printErr already strip the trailing newline.
@@ -127,7 +138,6 @@
 				instantiateWasm: (imports, receiveInstance) => {
 					this.importObject = imports;
 					this._receiveInstance = receiveInstance;
-					this._resolveImports();
 				},
 				preRun: [module => {
 					if (module.ENV != null) {
