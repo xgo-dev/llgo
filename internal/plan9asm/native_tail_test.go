@@ -6,7 +6,39 @@ import (
 	"testing"
 
 	llvm "github.com/xgo-dev/llvm"
+	asm "github.com/xgo-dev/plan9asm"
 )
+
+func TestNativeTailEmitterContract(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			code, _, err := asm.TranslateNativeSource([]byte("TEXT bridge<>(SB), NOSPLIT|NOFRAME, $0-0\nstart:\n MOVD $7, R0\n B start\n"), asm.NativeOptions{GOOS: goos, GOARCH: "arm64"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := adaptNativeTailAssembly(code)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{".p2align 2", "Lnative_func_0${:uid}:", "Lnative_0_label_0${:uid}:", "b Lnative_0_label_0${:uid}"} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("missing %q in adapted emitter output:\n%s", want, body)
+				}
+			}
+			if strings.Contains(body, ".text") || strings.Contains(body, ".section") || strings.Contains(body, ".type") || strings.Contains(body, ".size") {
+				t.Fatalf("object directives leaked into inline assembly:\n%s", body)
+			}
+		})
+	}
+	for _, code := range []string{"ret\n", "Lnative_func_0:\nLnative_func_0:\n", "Lnative_func_1:\n", "Lnative_func_0:\nunknown:\n", "Lnative_func_0:\n:\n", "Lnative_func_0:\n.section .data\n", "Lnative_func_0:\n.globl changed\n"} {
+		if _, err := adaptNativeTailAssembly(code); err == nil {
+			t.Errorf("accepted unexpected emitter format %q", code)
+		}
+	}
+	if body, err := adaptNativeTailAssembly("Lnative_func_0:\nmov x0, $7\n"); err != nil || !strings.Contains(body, "$$7") {
+		t.Fatalf("LLVM dollar escaping: %q, %v", body, err)
+	}
+}
 
 const nativeTailFixture = `TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-16
 	MOVD target+0(FP), R27

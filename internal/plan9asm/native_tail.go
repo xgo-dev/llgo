@@ -127,12 +127,27 @@ func hasIndirectTailTransfer(instrs []asm.Instr) bool {
 }
 
 func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos string) error {
+	reg, err := validateNativeTailTransfer(fn, sig)
+	if err != nil {
+		return err
+	}
+	assembly, err := emitNativeTailAssembly(fn, reg, goos)
+	if err != nil {
+		return err
+	}
+	return replaceNativeTailEntry(mod, sig, goos, assembly)
+}
+
+func validateNativeTailTransfer(fn asm.Func, sig asm.FuncSig) (int, error) {
+	if len(fn.Instrs) < 2 {
+		return 0, fmt.Errorf("requires a terminal indirect branch")
+	}
 	last := fn.Instrs[len(fn.Instrs)-1]
 	if (last.Op != "JMP" && last.Op != "B" && last.Op != "BR") || len(last.Args) != 1 {
-		return fmt.Errorf("requires a terminal indirect branch")
+		return 0, fmt.Errorf("requires a terminal indirect branch")
 	}
 	if hasIndirectTailTransfer(fn.Instrs[:len(fn.Instrs)-1]) {
-		return fmt.Errorf("requires a single terminal indirect branch")
+		return 0, fmt.Errorf("requires a single terminal indirect branch")
 	}
 	target := last.Args[0].Reg
 	if last.Args[0].Kind == asm.OpMem && last.Args[0].Mem.Off == 0 && last.Args[0].Mem.Index == "" {
@@ -140,40 +155,54 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	}
 	reg, err := strconv.Atoi(strings.TrimPrefix(string(target), "R"))
 	if err != nil || reg < 0 || reg > 28 || reg == 18 {
-		return fmt.Errorf("unsupported tail register %s", target)
+		return 0, fmt.Errorf("unsupported tail register %s", target)
 	}
 	argc := len(sig.Args)
 	if fn.FrameSize != 0 || fn.ArgSize != int64(argc*8) || argc > 8 || sig.Ret != asm.Void || len(sig.Frame.Results) != 0 || len(sig.Frame.Params) != argc || len(sig.ArgRegs) != 0 {
-		return fmt.Errorf("requires a zero-frame declaration with up to eight word arguments and no results")
+		return 0, fmt.Errorf("requires a zero-frame declaration with up to eight word arguments and no results")
 	}
 	flags := strings.Split(fn.Instrs[0].Raw, ",")
 	if len(flags) != 3 {
-		return fmt.Errorf("malformed TEXT directive: %s", fn.Instrs[0].Raw)
+		return 0, fmt.Errorf("malformed TEXT directive: %s", fn.Instrs[0].Raw)
 	}
 	seenFlags := map[string]bool{}
 	for _, flag := range strings.Split(flags[1], "|") {
 		flag = strings.TrimSpace(flag)
 		if flag != "NOSPLIT" && flag != "NOFRAME" {
-			return fmt.Errorf("unsupported TEXT flag %q", flag)
+			return 0, fmt.Errorf("unsupported TEXT flag %q", flag)
 		}
 		seenFlags[flag] = true
 	}
 	if !seenFlags["NOSPLIT"] || !seenFlags["NOFRAME"] {
-		return fmt.Errorf("requires NOSPLIT|NOFRAME")
+		return 0, fmt.Errorf("requires NOSPLIT|NOFRAME")
 	}
 	for i, param := range sig.Frame.Params {
 		if (sig.Args[i] != asm.I64 && sig.Args[i] != asm.Ptr) || param.Offset != int64(i*8) || param.Index != i || param.Field >= 0 || param.Type != sig.Args[i] {
-			return fmt.Errorf("argument %d requires a scalar word or pointer slot", i)
+			return 0, fmt.Errorf("argument %d requires a scalar word or pointer slot", i)
 		}
 	}
 
-	var source strings.Builder
-	source.WriteString("TEXT bridge<>(SB), NOSPLIT|NOFRAME, $0-0\n")
 	stackTouched := false
 	for _, ins := range fn.Instrs[1 : len(fn.Instrs)-1] {
 		if nativeTailPseudoSP.MatchString(ins.Raw) {
-			return fmt.Errorf("unsupported pseudo SP operand: %s", ins.Raw)
+			return 0, fmt.Errorf("unsupported pseudo SP operand: %s", ins.Raw)
 		}
+		for i, arg := range ins.Args {
+			if arg.Kind == asm.OpFP && (ins.Op != "MOVD" || i != 0 || stackTouched || arg.FPOffset < 0 || arg.FPOffset%8 != 0 || arg.FPOffset >= int64(argc*8)) {
+				return 0, fmt.Errorf("unsupported ABI0 frame access: %s", ins.Raw)
+			}
+			if arg.Kind == asm.OpReg && arg.Reg == "SP" || arg.Kind == asm.OpMem && arg.Mem.Base == "SP" {
+				stackTouched = true
+			}
+		}
+	}
+	return reg, nil
+}
+
+func emitNativeTailAssembly(fn asm.Func, reg int, goos string) (string, error) {
+	var source strings.Builder
+	source.WriteString("TEXT bridge<>(SB), NOSPLIT|NOFRAME, $0-0\n")
+	for _, ins := range fn.Instrs[1 : len(fn.Instrs)-1] {
 		if ins.Op == asm.OpLABEL {
 			fmt.Fprintf(&source, "%s:\n", ins.Args[0].Sym)
 			continue
@@ -183,9 +212,6 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 			if arg.Kind == asm.OpFP {
 				// ABI0 reserves the first word for LR. Only input loads before
 				// physical stack use are supported by this bounded bridge.
-				if ins.Op != "MOVD" || i != 0 || stackTouched || arg.FPOffset < 0 || arg.FPOffset%8 != 0 || arg.FPOffset >= int64(argc*8) {
-					return fmt.Errorf("unsupported ABI0 frame access: %s", ins.Raw)
-				}
 				args[i] = fmt.Sprintf("%d(RSP)", arg.FPOffset+8)
 			} else {
 				args[i] = arg.String()
@@ -194,36 +220,23 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 				}
 				args[i] = strings.ReplaceAll(args[i], "(SP)", "(RSP)")
 			}
-			if arg.Kind == asm.OpReg && arg.Reg == "SP" || arg.Kind == asm.OpMem && arg.Mem.Base == "SP" {
-				stackTouched = true
-			}
 		}
 		fmt.Fprintf(&source, "%s %s\n", ins.Op, strings.Join(args, ", "))
 	}
 	code, _, err := asm.TranslateNativeSource([]byte(source.String()), asm.NativeOptions{GOOS: goos, GOARCH: "arm64"})
 	if err != nil {
-		return err
+		return "", err
 	}
-	// This region is embedded in a function's current text section. Give its
-	// local labels an LLVM instance ID so cloning/inlining cannot duplicate them.
-	var body strings.Builder
-	for _, line := range strings.Split(code, "\n") {
-		if line == ".text" || strings.HasPrefix(line, ".section .note.GNU-stack") || strings.HasPrefix(line, ".type ") || strings.HasPrefix(line, ".size ") {
-			continue
-		}
-		body.WriteString(line)
-		body.WriteByte('\n')
+	assembly, err := adaptNativeTailAssembly(code)
+	if err != nil {
+		return "", err
 	}
-	// The native emitter handles the checked instruction body. The terminal
-	// transfer is the bridge boundary itself and deliberately remains physical.
-	fmt.Fprintf(&body, "br x%d\n", reg)
-	assembly := strings.ReplaceAll(body.String(), "$", "$$")
-	// NativeSource uses only these two generated label families for a single
-	// function (entry plus ordinary source labels).
-	assembly = nativeTailLabels.ReplaceAllStringFunc(assembly, func(label string) string {
-		return label + "${:uid}"
-	})
+	// The terminal transfer is the physical bridge boundary itself.
+	return fmt.Sprintf("%sbr x%d\n", assembly, reg), nil
+}
 
+func replaceNativeTailEntry(mod llvm.Module, sig asm.FuncSig, goos, assembly string) error {
+	argc := len(sig.Args)
 	entry := mod.NamedFunction(sig.Name)
 	if entry.IsNil() || entry.ParamsCount() != argc {
 		return fmt.Errorf("missing typed LLVM entry")
@@ -300,4 +313,36 @@ func lowerNativeTailTransfer(mod llvm.Module, fn asm.Func, sig asm.FuncSig, goos
 	b.CreateCall(ty, inline, inputs, "")
 	b.CreateRetVoid()
 	return nil
+}
+
+// adaptNativeTailAssembly embeds one native-emitter function in LLVM inline
+// assembly. Reject emitter-format changes outside the supported text contract.
+func adaptNativeTailAssembly(code string) (string, error) {
+	var body strings.Builder
+	entries := 0
+	for _, line := range strings.Split(code, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == ".text", strings.HasPrefix(line, ".section .note.GNU-stack"), strings.HasPrefix(line, ".type Lnative_func_0,"), strings.HasPrefix(line, ".size Lnative_func_0,"):
+			continue
+		case line == ".p2align 2", line == "":
+		case strings.HasPrefix(line, "."):
+			return "", fmt.Errorf("unsupported native emitter directive %q", line)
+		case strings.HasSuffix(line, ":"):
+			label := strings.TrimSuffix(line, ":")
+			if label == "" || nativeTailLabels.FindString(label) != label {
+				return "", fmt.Errorf("unsupported native emitter label %q", label)
+			}
+			if label == "Lnative_func_0" {
+				entries++
+			}
+		}
+		body.WriteString(line)
+		body.WriteByte('\n')
+	}
+	if entries != 1 {
+		return "", fmt.Errorf("native emitter produced %d entry labels, want one", entries)
+	}
+	assembly := strings.ReplaceAll(body.String(), "$", "$$")
+	return nativeTailLabels.ReplaceAllStringFunc(assembly, func(label string) string { return label + "${:uid}" }), nil
 }
