@@ -38,11 +38,11 @@ func argument(x int) { unknown(func() int { return x }) }
 				for _, name := range []string{"escape", "address", "deferred", "async", "argument"} {
 					body := llvmFunction(t, ir, "capturealloc."+name)
 					// Copied scalar environments and address-observed scalar
-					// variables use atomic storage. Defer retains two recover-visible
-					// variables, but its environment stays within this invocation.
+					// variables use atomic storage. A nonescaping defer and its
+					// invocation-owned capture cells can remain on the stack.
 					want := 1
 					if name == "deferred" {
-						want = 2
+						want = 0
 					}
 					if got := strings.Count(body, "runtime.AllocAtomicU\"("); got != want {
 						t.Errorf("%s atomic allocations = %d, want %d:\n%s", name, got, want, body)

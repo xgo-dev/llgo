@@ -223,7 +223,12 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		if size == 0 && alloc.Heap {
 			return "zero-size heap identity"
 		}
-		if alloc.Heap && alloc.Parent().Recover != nil {
+		if alloc.Heap && alloc.Parent().Recover != nil && alloc.Block() != alloc.Parent().Blocks[0] {
+			// Entry allocations have one identity for the entire invocation.
+			// Escape analysis proves their aliases stay within that lifetime;
+			// markRecoverSlot keeps their owner accesses volatile across SJLJ,
+			// and ordinary stack-root lowering preserves captured pointers.
+			// Keep the conservative policy for allocations created later.
 			return "recover-visible storage"
 		}
 	} else if size == 0 {
