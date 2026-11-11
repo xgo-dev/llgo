@@ -108,6 +108,7 @@ func TestRecoverThenDeferredPanic(t *testing.T) {
 	}
 }
 
+// The byte field preserves the padded argument/result layout from #3059.
 type nestedDeferValue struct {
 	Type uint8
 	Bits uint64
@@ -118,6 +119,7 @@ func nestedLoopDeferredReceiver() *sync.Mutex {
 	s := new(sync.Mutex)
 	s.Lock()
 	defer s.Unlock()
+	// Preserve the mixed arguments, variadic tail and struct result from #3059.
 	output := func(name string, initial nestedDeferValue, status int32, args ...nestedDeferValue) nestedDeferValue {
 		slot := new(sync.Mutex)
 		slot.Lock()

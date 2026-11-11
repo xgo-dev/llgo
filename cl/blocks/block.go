@@ -83,6 +83,7 @@ func findLoop(states []*blockState, path []int, seen []bool, iblk int) []int {
 			// Complete this SCC before scheduling its successors. A selected
 			// outer cycle can omit an inner body whose defer must be compiled
 			// before ordinary defers after the enclosing loop.
+			// Closing the cycle puts self and path[0] in the same SCC.
 			for i, s := range states {
 				if !s.fdel && s.scc == self.scc {
 					s.loop, s.fdel = true, true
