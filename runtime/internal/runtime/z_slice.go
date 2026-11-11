@@ -198,8 +198,8 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 
 func MakeSlice(len, cap int, etSize int, hasPointers bool) Slice {
 	mem := makeSliceMemory(len, cap, etSize)
-	// Ordinary Go slices need only natural alignment. Keep their allocation
-	// independent of the dynamic over-alignment and validation paths.
+	// This entry point requires only natural alignment. Call the raw allocator
+	// directly so LLVM can inline it without the dynamic alignment dispatcher.
 	var data unsafe.Pointer
 	if hasPointers {
 		data = AllocZ(mem)
