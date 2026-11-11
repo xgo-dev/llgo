@@ -20,8 +20,8 @@ const (
 	DemandIfaceMethod   DemandKind = 2
 	DemandNamedMethod   DemandKind = 3
 	DemandReflectMethod DemandKind = 4
-	// DemandReflectMethodMetadata observes method names and signatures, but
-	// cannot call the function stored in reflect.Method.Func.
+	// DemandReflectMethodMetadata is a retired experimental wire kind. Keep
+	// its number for old caches; analysis handles it as DemandReflectMethod.
 	DemandReflectMethodMetadata DemandKind = 5
 	// DemandReflectMethodSite records a dynamic MethodByName call whose name
 	// may be refined from optimized IR. It is a package-local wire kind;

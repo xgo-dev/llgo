@@ -3,15 +3,12 @@ package main
 
 import "reflect"
 
-// SYMBOL-NOT: main{{.*}}T{{.*}}Make
-// SYMBOL-NOT: main{{.*}}T{{.*}}ZDrop
-// SYMBOL-NOT: main{{.*}}U{{.*}}Drop
+// SYMBOL-DAG: main{{.*}}T{{.*}}Make
+// SYMBOL-DAG: main{{.*}}T{{.*}}ZDrop
+// SYMBOL-DAG: main{{.*}}U{{.*}}Drop
 // SYMBOL-DAG: main{{.*}}U{{.*}}Keep
 // SYMBOL-DAG: main{{.*}}V{{.*}}KeepFunc
 // SYMBOL-DAG: main{{.*}}W{{.*}}KeepInterface
-// SYMBOL-NOT: main{{.*}}T{{.*}}Make
-// SYMBOL-NOT: main{{.*}}T{{.*}}ZDrop
-// SYMBOL-NOT: main{{.*}}U{{.*}}Drop
 
 type T struct{}
 type U struct{}
@@ -43,8 +40,8 @@ func main() {
 	println(m.Name)
 	byName, ok := t.MethodByName("Make")
 	println(ok, byName.Name)
-	// The child is only obtained from Method.Type. Its callable method must
-	// survive even though the parent's callable method slot is removed.
+	// The child is only obtained from Method.Type. Its callable method and
+	// the parent's callable method slot must both survive.
 	u := reflect.New(m.Type.Out(0)).Elem()
 	println(u.MethodByName("Keep").Call(nil)[0].Int())
 	callable, ok := reflect.TypeOf(V{}).MethodByName("KeepFunc")

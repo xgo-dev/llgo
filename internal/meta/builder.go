@@ -192,8 +192,8 @@ func (b *Builder) MarkReflect(sym Symbol) {
 	})
 }
 
-// MarkReflectMethodMetadata retains reflected method signatures and their
-// child types without requiring callable method slots.
+// MarkReflectMethodMetadata encodes the retired experimental wire kind for
+// compatibility tests. New compiler output must use callable demands instead.
 func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
 	b.funcDemands[sym] = append(b.funcDemands[sym], bFuncDemand{
 		kind: DemandReflectMethodMetadata,

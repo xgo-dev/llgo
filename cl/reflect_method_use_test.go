@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestReflectMethodMetadataUse(t *testing.T) {
+func TestReflectTypeMethodRetainsCallableDemand(t *testing.T) {
 	const source = `package constiface
 import (
     "reflect"
@@ -45,19 +45,36 @@ func unsafeFieldOffset(t reflect.Type, i int) any { m := t.Method(i); p := (*ref
 func unsafeUintptr(t reflect.Type, i int) any { m := t.Method(i); p := (*reflect.Value)(unsafe.Pointer(uintptr(unsafe.Pointer(&m)) + unsafe.Offsetof(m.Func))); return p.IsValid() }
 func unsafeLayoutOnly(t reflect.Type, i int) any { m := t.Method(i); return unsafe.Sizeof(m) + unsafe.Offsetof(m.Func) }
 `
-	wants := map[string]bool{
-		"name": true, "fields": true, "named": true, "dynamic": true,
-		"exists": true, "discarded": true, "copied": true, "merged": true,
-		"funcValid": false, "funcInterface": false, "funcCall": false,
-		"aggregate": false, "argument": false, "global": false, "ptrEscape": false,
-		"ptrGlobal": false, "mixed": false, "metadataAddr": true,
-		"metadataAddrEscape": false, "funcAddr": false,
-		"unsafeWhole": false, "unsafeFuncOffset": false, "unsafeFieldOffset": false,
-		"unsafeUintptr": false, "unsafeLayoutOnly": true,
+	cases := []string{
+		"name",
+		"fields",
+		"named",
+		"dynamic",
+		"exists",
+		"discarded",
+		"copied",
+		"merged",
+		"funcValid",
+		"funcInterface",
+		"funcCall",
+		"aggregate",
+		"argument",
+		"global",
+		"ptrEscape",
+		"ptrGlobal",
+		"mixed",
+		"metadataAddr",
+		"metadataAddrEscape",
+		"funcAddr",
+		"unsafeWhole",
+		"unsafeFuncOffset",
+		"unsafeFieldOffset",
+		"unsafeUintptr",
+		"unsafeLayoutOnly",
 	}
 	for _, debug := range []bool{false, true} {
 		ssapkg := buildConstIfaceSSA(t, source, debug)
-		for name, want := range wants {
+		for _, name := range cases {
 			t.Run(name+map[bool]string{false: "", true: "/debug"}[debug], func(t *testing.T) {
 				fn := ssapkg.Func(name)
 				var call *ssa.Call
@@ -72,11 +89,6 @@ func unsafeLayoutOnly(t reflect.Type, i int) any { m := t.Method(i); return unsa
 				}
 				if call == nil {
 					t.Fatal("missing reflect method lookup")
-				}
-				if got := reflectMethodFuncUnobserved(fn, &call.Call); got != want {
-					var ir strings.Builder
-					fn.WriteTo(&ir)
-					t.Fatalf("Func unobserved = %v, want %v\n%s", got, want, ir.String())
 				}
 				for _, drop := range []bool{false, true} {
 					prog := llssa.NewProgram(nil)
@@ -94,14 +106,17 @@ func unsafeLayoutOnly(t reflect.Type, i int) any { m := t.Method(i); return unsa
 					meta := pkg.Meta.String()
 					pkg.Meta.Close()
 					prog.Dispose()
-					if got := strings.Contains(meta, "[ReflectMethodMetadata]"); got != (drop && want) {
-						t.Fatalf("metadata-only demand = %v, want %v (drop=%v):\n%s", got, drop && want, drop, meta)
+					if strings.Contains(meta, "[ReflectMethodMetadata]") {
+						t.Fatalf("retired metadata-only demand was emitted:\n%s", meta)
 					}
-					if drop && want && (strings.Contains(meta, "[Reflect]") || strings.Contains(meta, "[UseNamedMethod]")) {
-						t.Fatalf("metadata lookup retains callable demand:\n%s", meta)
-					}
-					if drop && !want && !strings.Contains(meta, "[Reflect]") && !strings.Contains(meta, "[UseNamedMethod]") {
-						t.Fatalf("observable Func lost its callable demand:\n%s", meta)
+					if drop {
+						want := "[Reflect]"
+						if check.Kind == llssa.ReflectTypeMethodByName {
+							want = "[UseNamedMethod]"
+						}
+						if !strings.Contains(meta, want) {
+							t.Fatalf("lookup lost callable demand %s:\n%s", want, meta)
+						}
 					}
 				}
 			})

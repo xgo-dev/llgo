@@ -7,7 +7,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/meta"
 )
 
-func TestReflectMethodMetadataPreservesChildVisibility(t *testing.T) {
+func TestLegacyReflectMethodMetadataRetainsCallableSlots(t *testing.T) {
 	for _, reachable := range []bool{false, true} {
 		b := meta.NewBuilder()
 		main, lookup := b.Sym("main.main"), b.Sym("pkg.lookup")
@@ -19,8 +19,8 @@ func TestReflectMethodMetadataPreservesChildVisibility(t *testing.T) {
 			b.AddOrdinaryEdge(main, lookup)
 		}
 		b.MarkReflectMethodMetadata(lookup)
-		// TypeOf(T{}).Method(0).Type.Out(0) exposes U, then U.Next's
-		// parameter/result exposes V. Neither Make nor Next must be callable.
+		// A reachable legacy marker must retain callable slots and propagate
+		// signature child visibility; an unreachable marker remains inert.
 		b.AddMethodSlot(owner, "Make", makeSig, b.Sym("T.Make$ifn"), b.Sym("T.Make"))
 		b.AddTypeChild(makeSig, child)
 		b.AddOrdinaryEdge(makeSig, child)
@@ -37,6 +37,8 @@ func TestReflectMethodMetadataPreservesChildVisibility(t *testing.T) {
 		analysis := AnalyzeProgram(summary, []string{"main.main"})
 		want := map[string][]int{}
 		if reachable {
+			want["_llgo_T"] = []int{0}
+			want["_llgo_U"] = []int{0}
 			want["_llgo_V"] = []int{0}
 		}
 		if !reflect.DeepEqual(analysis.LiveSlots, want) {

@@ -3059,8 +3059,7 @@ func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Fun
 	default:
 		return
 	}
-	metadataOnly := p.pkg.Prog.DeadcodeDropEnabled() && reflectMethodFuncUnobserved(p.goFn, call)
-	p.pkg.RecordReflectTypeMethodUse(p.fn.Name(), check, index, metadataOnly)
+	p.pkg.RecordReflectTypeMethodUse(p.fn.Name(), check, index)
 	return
 }
 

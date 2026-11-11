@@ -45,6 +45,7 @@ def main():
     p.add_argument("--gorm-module", type=Path, required=True)
     p.add_argument("--linker", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--jobs", type=int, default=3)
     args = p.parse_args()
     destination = args.output.resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -63,7 +64,7 @@ def main():
                        LLGO_EXPERIMENT_LIVE_SLOTS=str(snapshot))
             gorm = case == "gormschema"
             command = [str(compiler), *(["test", "-c"] if gorm else ["build"]),
-                       "-a", "-Os", "-p=10", "-deadcodedrop", "-debug-artifact=none", "-compiler-verbose"]
+                       "-a", "-Os", "-p=" + str(args.jobs), "-deadcodedrop", "-debug-artifact=none", "-compiler-verbose"]
             if mode == "thin":
                 command += ["-lto=thin"]
             command += ["-o", str(destination / "probe"), "gorm.io/gorm/schema" if gorm else "./benchmark/binary_size/reflectcallbacks"]
@@ -78,6 +79,8 @@ def main():
                             "different_types": sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))})
         (destination / "comparison.json").write_text(json.dumps(comparisons, indent=2) + "\n")
         print(json.dumps(comparisons[-1]), flush=True)
+    if not all(row["equal"] for row in comparisons):
+        raise SystemExit("Strong and Thin LiveSlots differ; see comparison.json")
 
 
 if __name__ == "__main__":

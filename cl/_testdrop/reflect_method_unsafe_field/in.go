@@ -6,9 +6,8 @@ import (
 	"unsafe"
 )
 
-// SYMBOL-NOT: main{{.*}}Model{{.*}}Drop
+// SYMBOL-DAG: main{{.*}}Model{{.*}}Drop
 // SYMBOL-DAG: main{{.*}}Model{{.*}}Keep
-// SYMBOL-NOT: main{{.*}}Model{{.*}}Drop
 
 type Model struct{ Value int }
 
@@ -29,8 +28,8 @@ func main() {
 	fn := *(*reflect.Value)(unsafe.Add(unsafe.Pointer(&m.Name), unsafe.Offsetof(m.Func)-unsafe.Offsetof(m.Name)))
 	println(fn.Call([]reflect.Value{reflect.ValueOf(Model{Value: 35})})[0].Int())
 
-	// Keep remains callable, while merely observing Drop's metadata must not
-	// retain Drop's body. No ordinary call references either method.
+	// Both lookups conservatively retain callable slots, including the lookup
+	// that only observes metadata. No ordinary call references either method.
 	metadata, ok := typ.MethodByName("Drop")
 	if !ok {
 		panic("missing method metadata")
