@@ -9,8 +9,10 @@ import "runtime"
 // Upstream midway_common.go maps both absent hardware (archMaxVectorSize == 0)
 // and GODEBUG=simd=0 to maxVectorSize=128, emulated=true. Width describes the
 // logical vector even in emulation; zero is only the hardware eligibility result.
+// These widths must have variants in internal/midway.targetWidths.
 func checkMidwayWidth() {
-	if maxVectorSize != 128 && (runtime.GOARCH != "amd64" || maxVectorSize != 256) {
+	supported := maxVectorSize == 128 || (runtime.GOARCH == "amd64" && maxVectorSize == 256)
+	if !supported {
 		panic("LLGo portable SIMD selected an unsupported vector width")
 	}
 }

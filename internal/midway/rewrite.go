@@ -487,7 +487,7 @@ func (f *fileRewriter) dispatchWidth(pos token.Pos, invoke func(int) []ast.Stmt)
 		switch width {
 		case 0:
 			cond = &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos}
-		case 128:
+		case fallbackWidth:
 			continue // The common hardware representation is the final fallback.
 		default:
 			cond = &ast.BinaryExpr{
@@ -497,5 +497,5 @@ func (f *fileRewriter) dispatchWidth(pos token.Pos, invoke func(int) []ast.Stmt)
 		stmts = append(stmts, &ast.IfStmt{If: pos, Cond: cond,
 			Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(width)}})
 	}
-	return append(stmts, invoke(128)...)
+	return append(stmts, invoke(fallbackWidth)...)
 }

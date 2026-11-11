@@ -16,6 +16,8 @@ func archMaxVectorSize() (size, allFeatureSize int) {
 	}
 	if archsimd.X86.AVX2() {
 		size = 256
+		// Otherwise retain allFeatureSize from the AVX check above. GODEBUG
+		// can disable AVX independently, so that value need not be 128.
 		if cpu.X86.HasVPCLMULQDQ {
 			allFeatureSize = 256
 		}

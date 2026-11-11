@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,6 +12,42 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestMidwayRecoverDispatcherRequiresEveryVariant(t *testing.T) {
+	for _, widths := range [][]int{{0, 128}, {0, 128, 256}, {0, 256}, {128, 256}, {256}} {
+		for _, missing := range append([]int{-1}, widths...) {
+			t.Run(fmt.Sprintf("widths=%v/missing=%d", widths, missing), func(t *testing.T) {
+				var declarations, calls strings.Builder
+				for _, width := range widths {
+					fmt.Fprintf(&declarations, "func variant%d() {}\n", width)
+					if width != missing {
+						// Duplicate calls must not stand in for a missing variant.
+						fmt.Fprintf(&calls, "variant%d(); variant%d();", width, width)
+					}
+				}
+				fs := token.NewFileSet()
+				file, err := parser.ParseFile(fs, "dispatch.go", "package fixture\n"+declarations.String()+"func entry(){"+calls.String()+"}", 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ast.Inspect(file, func(n ast.Node) bool {
+					if id, ok := n.(*ast.Ident); ok && strings.HasPrefix(id.Name, "variant") {
+						id.Name = "entry@simd" + strings.TrimPrefix(id.Name, "variant")
+					}
+					return true
+				})
+				pkg, _, err := ssautil.BuildPackage(&types.Config{}, fs, types.NewPackage("fixture", "fixture"), []*ast.File{file}, ssa.InstantiateGenerics)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := missing == -1 && pkg.Func("entry@simd0") != nil && pkg.Func("entry@simd128") != nil
+				if got := isMidwayRecoverDispatcher(pkg.Func("entry")); got != want {
+					t.Fatalf("dispatcher = %v, want %v", got, want)
+				}
+			})
+		}
+	}
+}
 
 func TestMidwayRecoverDispatcherIdentity(t *testing.T) {
 	fs := token.NewFileSet()

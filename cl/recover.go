@@ -225,13 +225,22 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 	if origin.Pkg == nil {
 		return false
 	}
-	software := origin.Pkg.Func(origin.Name() + "@simd0")
-	hardware := origin.Pkg.Func(origin.Name() + "@simd128")
-	if software == nil || hardware == nil {
-		return false
+	// The baseline variants are mandatory. Every additional variant present
+	// in this package must be forwarded to as well.
+	pending := make(map[*ssa.Function]bool)
+	for _, variant := range []struct {
+		suffix   string
+		required bool
+	}{{"@simd0", true}, {"@simd128", true}, {"@simd256", false}} {
+		callee := origin.Pkg.Func(origin.Name() + variant.suffix)
+		if callee == nil {
+			if variant.required {
+				return false
+			}
+			continue
+		}
+		pending[callee] = true
 	}
-	wide := origin.Pkg.Func(origin.Name() + "@simd256")
-	var seenSoftware, seenHardware, seenWide bool
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
 			call, ok := instr.(*ssa.Call)
@@ -245,10 +254,8 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 			if base := callee.Origin(); base != nil {
 				callee = base
 			}
-			seenSoftware = seenSoftware || callee == software
-			seenHardware = seenHardware || callee == hardware
-			seenWide = seenWide || callee == wide
+			delete(pending, callee)
 		}
 	}
-	return seenSoftware && seenHardware && (wide == nil || seenWide)
+	return len(pending) == 0
 }
