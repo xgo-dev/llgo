@@ -95,17 +95,33 @@
 
 	function implementationFactory(options) {
 		const name = options && options.wasm;
-		if (name) {
-			const factory = global.__llgoFactories && global.__llgoFactories[name];
-			if (typeof factory !== "function") {
-				throw new Error("LLGo: no factory registered for " + name);
+		if (!name) {
+			if (typeof global.LLGoModule !== "function") {
+				throw new Error("LLGo: wasm_exec.js is missing the bundled LLGoModule factory");
 			}
-			return factory;
+			return global.LLGoModule;
 		}
-		if (typeof global.LLGoModule !== "function") {
-			throw new Error("LLGo: wasm_exec.js is missing the bundled LLGoModule factory");
+		const factories = global.__llgoFactories || {};
+		if (typeof factories[name] === "function") {
+			return factories[name];
 		}
-		return global.LLGoModule;
+		try {
+			const base = (typeof location !== "undefined" && location.href) ||
+				(typeof document !== "undefined" && document.currentScript && document.currentScript.src) ||
+				(typeof __filename === "string" ? "file://" + String(__filename).replace(/\\/g, "/") : "") || "";
+			if (base) {
+				const url = new URL(name, base).href;
+				if (typeof factories[url] === "function") {
+					return factories[url];
+				}
+			}
+		} catch (_) {}
+		const suffix = "/" + String(name).replace(/^\/+/, "");
+		const matches = Object.keys(factories).filter(key => key === name || key.endsWith(suffix));
+		if (matches.length === 1 && typeof factories[matches[0]] === "function") {
+			return factories[matches[0]];
+		}
+		throw new Error("LLGo: no factory registered for " + name);
 	}
 
 	global.Go = class {

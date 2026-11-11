@@ -405,26 +405,52 @@ assert.throws(() => vm.runInContext('new Go()', late), /missing the bundled LLGo
 function taggedFactory(id) {
   return function(options){ options.instantiateWasm({id}, ()=>{}); return {id}; };
 }
+function bundled(wasmName, id) {
+  const name = JSON.stringify(wasmName);
+  return 'var LLGoModule = (' + taggedFactory.toString() + ')(' + JSON.stringify(id) + ');\n' +
+    'if (typeof exports === "object" && typeof module === "object") module.exports = LLGoModule;\n' +
+    '(function(factory) {\n' +
+    'globalThis.__llgoFactories = globalThis.__llgoFactories || {};\n' +
+    'if (typeof factory !== "function") return;\n' +
+    'globalThis.LLGoModule = factory;\n' +
+    'globalThis.__llgoFactories[' + name + '] = factory;\n' +
+    'try {\n' +
+    '  var base = (typeof document !== "undefined" && document.currentScript && document.currentScript.src) ||\n' +
+    '    (typeof __filename === "string" ? "file://" + String(__filename).replace(/\\\\/g, "/") : "") ||\n' +
+    '    (typeof location !== "undefined" && location.href) || "";\n' +
+    '  if (base) globalThis.__llgoFactories[new URL(' + name + ', base).href] = factory;\n' +
+    '} catch (e) {}\n' +
+    '})(typeof LLGoModule === "function" ? LLGoModule : globalThis.LLGoModule);\n' + source;
+}
 const multi = vm.createContext({console, TextDecoder, TextEncoder, crypto:{getRandomValues(){}}, performance:{now(){return 0}}, URL});
-vm.runInContext(
-  'globalThis.LLGoModule = (' + taggedFactory.toString() + ')("app");\n' +
-  'globalThis.__llgoFactories = globalThis.__llgoFactories || {};\n' +
-  'globalThis.__llgoFactories["app.wasm"] = globalThis.LLGoModule;\n' + source,
-  multi);
+vm.runInContext(bundled('app.wasm', 'app'), multi);
 const firstGo = multi.Go;
-vm.runInContext(
-  'globalThis.LLGoModule = (' + taggedFactory.toString() + ')("foo");\n' +
-  'globalThis.__llgoFactories = globalThis.__llgoFactories || {};\n' +
-  'globalThis.__llgoFactories["foo.wasm"] = globalThis.LLGoModule;\n' + source,
-  multi);
+vm.runInContext(bundled('foo.wasm', 'foo'), multi);
 assert.equal(multi.Go, firstGo);
-const goDefault = vm.runInContext('new Go()', multi);
-assert.equal(goDefault.importObject.id, 'foo');
-const goApp = vm.runInContext('new Go({ wasm: "app.wasm" })', multi);
-assert.equal(goApp.importObject.id, 'app');
-const goFoo = vm.runInContext('new Go({ wasm: "foo.wasm" })', multi);
-assert.equal(goFoo.importObject.id, 'foo');
+assert.equal(vm.runInContext('new Go()', multi).importObject.id, 'foo');
+assert.equal(vm.runInContext('new Go({ wasm: "app.wasm" })', multi).importObject.id, 'app');
+assert.equal(vm.runInContext('new Go({ wasm: "foo.wasm" })', multi).importObject.id, 'foo');
 assert.throws(() => vm.runInContext('new Go({ wasm: "missing.wasm" })', multi), /no factory registered for missing.wasm/);
+
+const dirDoc = { currentScript: { src: 'https://example.com/a/wasm_exec.js' } };
+const dirs = vm.createContext({console, TextDecoder, TextEncoder, crypto:{getRandomValues(){}}, performance:{now(){return 0}}, URL,
+  document: dirDoc, location: { href: 'https://example.com/' }});
+vm.runInContext(bundled('app.wasm', 'a'), dirs);
+dirDoc.currentScript.src = 'https://example.com/b/wasm_exec.js';
+vm.runInContext(bundled('app.wasm', 'b'), dirs);
+assert.equal(vm.runInContext('new Go()', dirs).importObject.id, 'b');
+assert.equal(vm.runInContext('new Go({ wasm: "app.wasm" })', dirs).importObject.id, 'b');
+assert.equal(vm.runInContext('new Go({ wasm: "https://example.com/a/app.wasm" })', dirs).importObject.id, 'a');
+assert.equal(vm.runInContext('new Go({ wasm: "a/app.wasm" })', dirs).importObject.id, 'a');
+
+const os = require('node:os');
+const path = require('node:path');
+const cjsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llgo-cjs-'));
+fs.writeFileSync(path.join(cjsDir, 'wasm_exec.js'), bundled('cjs.wasm', 'cjs'));
+const cjsModule = require(path.join(cjsDir, 'wasm_exec.js'));
+assert.equal(typeof cjsModule, 'function');
+assert.equal(new Go().importObject.id, 'cjs');
+assert.equal(new Go({ wasm: 'cjs.wasm' }).importObject.id, 'cjs');
 
 function runtimeFactory(kind) {
   const module = {

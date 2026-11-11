@@ -133,15 +133,11 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 		}
 	}
 	if driverOut := emscriptenDriverOutput(conf, out.Out); needsGoJSLoader(conf, nil, driverOut) {
-		if err := add(ArtifactRoleDeployment, "javascript", goJSLoaderSidecar(driverOut)); err != nil {
+		host, err := goJSOwnedLoader(conf, out.Out)
+		if err != nil {
 			return nil, err
 		}
-		unique := goJSUniqueLoaderSidecar(driverOut)
-		if _, err := os.Stat(unique); err == nil {
-			if err := add(ArtifactRoleDeployment, "javascript", unique); err != nil {
-				return nil, err
-			}
-		} else if !os.IsNotExist(err) {
+		if err := add(ArtifactRoleDeployment, "javascript", host); err != nil {
 			return nil, err
 		}
 	}

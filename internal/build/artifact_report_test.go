@@ -355,8 +355,7 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 			module := filepath.Join(dir, "app.wasm")
 			driver := filepath.Join(dir, "app.mjs")
 			loader := goJSLoaderSidecar(driver)
-			unique := goJSUniqueLoaderSidecar(driver)
-			for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", unique: "unique-host", emscriptenBrowserHostSidecar(driver): "unrelated"} {
+			for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", emscriptenBrowserHostSidecar(driver): "unrelated"} {
 				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -368,8 +367,7 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 				want = []Artifact{glue, primary}
 			}
 			want = append(want,
-				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: loader, Size: 6},
-				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: unique, Size: 11})
+				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: loader, Size: 6})
 			got, err := CollectArtifacts(conf, out)
 			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("artifacts = %+v, %v; want %+v", got, err, want)
@@ -384,31 +382,77 @@ func TestCollectArtifactsGoJSSidecars(t *testing.T) {
 					t.Fatalf("missing %s in report: %s", line, listing.String())
 				}
 			}
-			for _, path := range []string{loader} {
-				content, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-				if got, err := CollectArtifacts(conf, out); got != nil || err == nil || !strings.Contains(err.Error(), path) {
-					t.Fatalf("missing sidecar: artifacts = %+v, error = %v", got, err)
-				}
-				if err := os.Mkdir(path, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if got, err := CollectArtifacts(conf, out); got != nil || err == nil || !strings.Contains(err.Error(), "not a regular file") {
-					t.Fatalf("directory sidecar: artifacts = %+v, error = %v", got, err)
-				}
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, content, 0o644); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.Remove(loader); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := CollectArtifacts(conf, out); got != nil || err == nil {
+				t.Fatalf("missing host: artifacts = %+v, error = %v", got, err)
+			}
+			if err := os.Mkdir(loader, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := CollectArtifacts(conf, out); got != nil || err == nil {
+				t.Fatalf("directory host: artifacts = %+v, error = %v", got, err)
 			}
 		})
+	}
+}
+
+func TestCollectArtifactsGoJSSecondProgram(t *testing.T) {
+	dir := t.TempDir()
+	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", DebugArtifactMode: DebugArtifactEmbedded, DebugArtifactModeSet: true, OutFile: filepath.Join(dir, "second.wasm")}
+	out := &OutFmtDetails{Out: filepath.Join(dir, "second.wasm")}
+	module := filepath.Join(dir, "second.wasm")
+	driver := filepath.Join(dir, "second.mjs")
+	shared := goJSLoaderSidecar(driver)
+	unique := goJSUniqueLoaderSidecar(driver)
+	for path, content := range map[string]string{
+		module: "wasm",
+		driver: "driver",
+		shared: string(withGoJSWasmMarker("first.wasm", []byte("first-host"))),
+		unique: "second-host",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := CollectArtifacts(conf, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawShared, sawUnique bool
+	for _, artifact := range got {
+		if artifact.Path == shared {
+			sawShared = true
+		}
+		if artifact.Path == unique {
+			sawUnique = true
+			if artifact.Size != 11 {
+				t.Fatalf("unique size = %d", artifact.Size)
+			}
+		}
+	}
+	if sawShared || !sawUnique {
+		t.Fatalf("second program artifacts = %+v", got)
+	}
+	if err := os.Remove(shared); err != nil {
+		t.Fatal(err)
+	}
+	got, err = CollectArtifacts(conf, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawUnique = false
+	for _, artifact := range got {
+		if artifact.Path == unique {
+			sawUnique = true
+		}
+		if artifact.Path == shared {
+			t.Fatalf("missing shared still reported: %+v", got)
+		}
+	}
+	if !sawUnique {
+		t.Fatalf("standalone unique missing: %+v", got)
 	}
 }
 

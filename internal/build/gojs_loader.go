@@ -158,12 +158,39 @@ func publishGoJSLoaderFrom(ctx *context, driverOutput string, verbose bool, root
 }
 
 func goJSWasmModuleName(ctx *context, driverOutput string) string {
-	if ctx != nil && ctx.buildConf != nil {
-		if out := ctx.buildConf.OutFile; strings.HasSuffix(out, ".wasm") {
+	if ctx != nil {
+		return goJSWasmModuleNameFromConf(ctx.buildConf, driverOutput)
+	}
+	return goJSWasmModuleNameFromConf(nil, driverOutput)
+}
+
+func goJSWasmModuleNameFromConf(conf *Config, driverOutput string) string {
+	if conf != nil {
+		if out := conf.OutFile; strings.HasSuffix(out, ".wasm") {
 			return filepath.Base(out)
 		}
 	}
 	return strings.TrimSuffix(filepath.Base(driverOutput), filepath.Ext(driverOutput)) + ".wasm"
+}
+
+// goJSOwnedLoader is the host file this program actually publishes: wasm_exec.js
+// when unmarked or owned by this wasm, otherwise stem_wasm_exec.js.
+func goJSOwnedLoader(conf *Config, outPath string) (string, error) {
+	driverOut := emscriptenDriverOutput(conf, outPath)
+	shared := goJSLoaderSidecar(driverOut)
+	unique := goJSUniqueLoaderSidecar(driverOut)
+	existing, err := os.ReadFile(shared)
+	if os.IsNotExist(err) {
+		return unique, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	owner := goJSWasmMarker(existing)
+	if owner == "" || owner == goJSWasmModuleNameFromConf(conf, driverOut) {
+		return shared, nil
+	}
+	return unique, nil
 }
 
 // combineGoJSExec writes the wasm marker, factory, factory registration, and host.
@@ -185,7 +212,19 @@ func combineGoJSExec(wasmName string, factory, loader []byte) []byte {
 
 func goJSRegisterFactory(wasmName string) []byte {
 	name, _ := json.Marshal(wasmName)
-	return []byte("globalThis.__llgoFactories = globalThis.__llgoFactories || {};\nif (typeof globalThis.LLGoModule === \"function\") globalThis.__llgoFactories[" + string(name) + "] = globalThis.LLGoModule;\n")
+	return []byte(`(function(factory) {
+globalThis.__llgoFactories = globalThis.__llgoFactories || {};
+if (typeof factory !== "function") return;
+globalThis.LLGoModule = factory;
+globalThis.__llgoFactories[` + string(name) + `] = factory;
+try {
+  var base = (typeof document !== "undefined" && document.currentScript && document.currentScript.src) ||
+    (typeof __filename === "string" ? "file://" + String(__filename).replace(/\\/g, "/") : "") ||
+    (typeof location !== "undefined" && location.href) || "";
+  if (base) globalThis.__llgoFactories[new URL(` + string(name) + `, base).href] = factory;
+} catch (e) {}
+})(typeof LLGoModule === "function" ? LLGoModule : globalThis.LLGoModule);
+`)
 }
 
 func withGoJSWasmMarker(wasmName string, data []byte) []byte {
