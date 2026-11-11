@@ -51,6 +51,8 @@ type chanWaitq struct {
 	last  *chanWaiter
 }
 
+// When adding fields, update the reset in (*chanWaiter).wait. It preserves
+// signal in place because initialized native mutexes and conditions cannot be copied.
 type chanWaiter struct {
 	synctest *SynctestWaiter
 	prev     *chanWaiter

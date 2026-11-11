@@ -124,6 +124,8 @@ func mexit(mp *m) {
 	mp.curg = nil
 	gp.m = nil
 
+	// Lifecycle-owned contexts release their cached signal in destroyG,
+	// including when setg(nil) clears the TLS sidecar below.
 	if !ownedByLifecycle {
 		if w := gp.chanWaiter; w != nil {
 			w.signal.destroy()
