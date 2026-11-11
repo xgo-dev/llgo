@@ -83,7 +83,7 @@ These four entries are acceptance paths for three profiles. Memory ABI, host/pro
 ## Compatibility contract
 
 - All supported profiles, including J64 (wasm64 with JavaScript), follow the shared Go sizes, alignment, and source-reuse rules above, standard build constraints, and the applicable Go runtime behavior and standard-library surface for their selected host.
-- The J32 Go provider reuses the selected GOROOT's `syscall/js` source and does not expose emval as its Go-facing API. Its initial host adapter may reuse Emscripten glue, filesystem services, and the WebAssembly libffi backend; this is source/API compatibility, not stock `wasm_exec.js` binary compatibility.
+- The J32 Go provider reuses the selected GOROOT's `syscall/js` source and does not expose emval as its Go-facing API. Its initial host adapter may reuse Emscripten glue, filesystem services, and the WebAssembly libffi backend. The published `wasm_exec.js` matches Go's browser API (`new Go()`, `importObject`, `run`); Wasm imports remain Emscripten-generated, so this is not stock `wasm_exec.js` binary compatibility.
 - J32 and J64 expose `syscall/js` through their selected JavaScript provider. C code remains available through the explicit C ABI; arbitrary Emscripten-dependent libraries require the Emscripten provider.
 - W32 uses the Go WASI Preview 1 host contract and can use wasi-libc without becoming a separate C profile.
 - Host adapters own imports, startup, filesystems, callbacks, timers, process exit, and artifact sidecars. Runtime scheduling, GC, panic/defer/recover, reflection semantics, and caller metadata remain provider-independent where possible.
@@ -204,7 +204,7 @@ Hosted profile 是 Memory ABI 与 Host ABI 的组合。源码兼容、C 互操�
 ## 兼容约定
 
 - 包括 J64（wasm64 + JavaScript）在内的所有受支持 profile，都遵循上述共同 Go 尺寸、对齐及源码复用规则、标准 build constraints，以及所选 host 下适用的 Go runtime 行为和标准库。
-- J32 Go provider 复用所选 GOROOT 的 `syscall/js` 源码，并且不把 emval 暴露为 Go 侧 API。初始 host adapter 可以复用 Emscripten glue、文件系统服务和 WebAssembly libffi 后端；这里保证的是源码/API 兼容，而不是 stock `wasm_exec.js` 二进制兼容。
+- J32 Go provider 复用所选 GOROOT 的 `syscall/js` 源码，并且不把 emval 暴露为 Go 侧 API。初始 host adapter 可以复用 Emscripten glue、文件系统服务和 WebAssembly libffi 后端。发布的 `wasm_exec.js` 对齐 Go 的浏览器 API（`new Go()`、`importObject`、`run`）；Wasm import 仍由 Emscripten 生成，因此不是 stock `wasm_exec.js` 二进制兼容。
 - J32 和 J64 通过所选 JavaScript provider 提供 `syscall/js`。C 代码通过显式 C ABI 使用；依赖 Emscripten runtime 的任意 C 库仍要求 Emscripten provider。
 - W32 使用 Go WASI Preview 1 host contract，并可使用 wasi-libc，不再因此拆出单独 C profile。
 - Host adapter 负责 imports、启动、文件系统、回调、定时器、进程退出和产物 sidecar。调度、GC、panic/defer/recover、反射语义和 caller metadata 在可行范围内保持 provider 无关。
