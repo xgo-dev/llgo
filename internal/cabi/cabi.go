@@ -81,7 +81,7 @@ func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optim
 	case "riscv32":
 		tr.sys = &TypeInfoRiscv32{tr, targetAbi}
 	case "amd64":
-		tr.sys = &TypeInfoAmd64{tr}
+		tr.sys = &TypeInfoAmd64{Transformer: tr}
 	case "arm64":
 		triple := llvmTarget
 		if triple == "" || !strings.Contains(triple, "-") {
@@ -157,6 +157,16 @@ func (p *Transformer) TransformModule(path string, m llvm.Module) {
 }
 
 func (p *Transformer) transformModule(m llvm.Module, acceptCallConv func(llvm.CallConv) bool) {
+	if _, sysv := p.sys.(*TypeInfoAmd64); sysv {
+		// Keep the cache within this pass, where LLVM aggregate bodies are
+		// complete, so subsequent modules and contexts are classified afresh.
+		pass := *p
+		pass.sys = &TypeInfoAmd64{
+			Transformer:     &pass,
+			classifications: make(map[llvm.Type]amd64AggregateClassification),
+		}
+		p = &pass
+	}
 	ctx := m.Context()
 	var fns []llvm.Value
 	var callInstrs []CallInstr
