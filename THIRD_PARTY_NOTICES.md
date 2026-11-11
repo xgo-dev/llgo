@@ -71,11 +71,6 @@ executables; development- and test-only modules are not included.
 | `go.yaml.in/yaml/v3` | [MIT and Apache-2.0](LICENSES/Go-YAML-LICENSE.txt), [NOTICE](LICENSES/Go-YAML-NOTICE.txt) |
 | `golang.org/x/mod`, `x/sync`, `x/sys`, and `x/tools` | [BSD-3-Clause](LICENSES/Go-BSD-3-Clause.txt) |
 
-The LLVM binding temporarily uses [cpunion/llvm at 48830981af7b](https://github.com/cpunion/llvm/commit/48830981af7b)
-for the pending [xgo-dev/llvm#61](https://github.com/xgo-dev/llvm/pull/61).
-This revision contains v0.10.3 plus the function-property copy binding and uses
-the same Apache-2.0 WITH LLVM-exception license.
-
 ## LLVM/Clang
 
 LLGo can download the Espressif-maintained ESP LLVM/Clang 22 toolchain
