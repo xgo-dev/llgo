@@ -93,6 +93,15 @@
 		global.fs.writeSync(fd, encoder.encode(args.map(String).join(" ") + "\n"));
 	}
 
+	function nodeDirURL() {
+		if (typeof process !== "object" || process == null || !process.versions || !process.versions.node) return "";
+		if (typeof process.cwd !== "function") return "";
+		let dir = String(process.cwd()).replace(/\\/g, "/");
+		if (!dir.startsWith("/")) dir = "/" + dir;
+		if (!dir.endsWith("/")) dir += "/";
+		return "file://" + dir;
+	}
+
 	function implementationFactory(options) {
 		const name = options && options.wasm;
 		if (!name) {
@@ -102,24 +111,29 @@
 			return global.LLGoModule;
 		}
 		const factories = global.__llgoFactories || {};
-		if (typeof factories[name] === "function") {
+		if (String(name).indexOf("://") >= 0 && typeof factories[name] === "function") {
 			return factories[name];
 		}
-		try {
-			const base = (typeof location !== "undefined" && location.href) ||
-				(typeof document !== "undefined" && document.currentScript && document.currentScript.src) ||
-				(typeof __filename === "string" ? "file://" + String(__filename).replace(/\\/g, "/") : "") || "";
-			if (base) {
-				const url = new URL(name, base).href;
+		const bases = [];
+		if (typeof location !== "undefined" && location.href) bases.push(location.href);
+		const nodeBase = nodeDirURL();
+		if (nodeBase) bases.push(nodeBase);
+		for (let i = 0; i < bases.length; i++) {
+			try {
+				const url = new URL(name, bases[i]).href;
 				if (typeof factories[url] === "function") {
 					return factories[url];
 				}
-			}
-		} catch (_) {}
-		const suffix = "/" + String(name).replace(/^\/+/, "");
-		const matches = Object.keys(factories).filter(key => key === name || key.endsWith(suffix));
-		if (matches.length === 1 && typeof factories[matches[0]] === "function") {
-			return factories[matches[0]];
+			} catch (_) {}
+		}
+		const trimmed = String(name).replace(/^\.\//, "").replace(/^\/+/, "");
+		const urlKeys = Object.keys(factories).filter(key => key.indexOf("://") >= 0);
+		const suffixMatches = urlKeys.filter(key => key.endsWith("/" + trimmed));
+		if (suffixMatches.length === 1 && typeof factories[suffixMatches[0]] === "function") {
+			return factories[suffixMatches[0]];
+		}
+		if (suffixMatches.length === 0 && typeof factories[name] === "function") {
+			return factories[name];
 		}
 		throw new Error("LLGo: no factory registered for " + name);
 	}

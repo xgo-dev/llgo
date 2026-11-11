@@ -439,9 +439,20 @@ vm.runInContext(bundled('app.wasm', 'a'), dirs);
 dirDoc.currentScript.src = 'https://example.com/b/wasm_exec.js';
 vm.runInContext(bundled('app.wasm', 'b'), dirs);
 assert.equal(vm.runInContext('new Go()', dirs).importObject.id, 'b');
-assert.equal(vm.runInContext('new Go({ wasm: "app.wasm" })', dirs).importObject.id, 'b');
+assert.throws(() => vm.runInContext('new Go({ wasm: "app.wasm" })', dirs), /no factory registered for app.wasm/);
 assert.equal(vm.runInContext('new Go({ wasm: "https://example.com/a/app.wasm" })', dirs).importObject.id, 'a');
 assert.equal(vm.runInContext('new Go({ wasm: "a/app.wasm" })', dirs).importObject.id, 'a');
+assert.equal(vm.runInContext('new Go({ wasm: "b/app.wasm" })', dirs).importObject.id, 'b');
+
+const pageDoc = { currentScript: { src: 'https://example.com/a/wasm_exec.js' } };
+const page = vm.createContext({console, TextDecoder, TextEncoder, crypto:{getRandomValues(){}}, performance:{now(){return 0}}, URL,
+  document: pageDoc, location: { href: 'https://example.com/a/index.html' }});
+vm.runInContext(bundled('app.wasm', 'a'), page);
+pageDoc.currentScript.src = 'https://example.com/b/wasm_exec.js';
+vm.runInContext(bundled('app.wasm', 'b'), page);
+assert.equal(vm.runInContext('new Go()', page).importObject.id, 'b');
+assert.equal(vm.runInContext('new Go({ wasm: "app.wasm" })', page).importObject.id, 'a');
+assert.equal(vm.runInContext('new Go({ wasm: "./app.wasm" })', page).importObject.id, 'a');
 
 const os = require('node:os');
 const path = require('node:path');
@@ -451,6 +462,24 @@ const cjsModule = require(path.join(cjsDir, 'wasm_exec.js'));
 assert.equal(typeof cjsModule, 'function');
 assert.equal(new Go().importObject.id, 'cjs');
 assert.equal(new Go({ wasm: 'cjs.wasm' }).importObject.id, 'cjs');
+
+const prevCwd = process.cwd();
+const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'llgo-tree-'));
+fs.mkdirSync(path.join(tree, 'a'));
+fs.mkdirSync(path.join(tree, 'b'));
+fs.writeFileSync(path.join(tree, 'a', 'wasm_exec.js'), bundled('app.wasm', 'na'));
+fs.writeFileSync(path.join(tree, 'b', 'wasm_exec.js'), bundled('app.wasm', 'nb'));
+try {
+  process.chdir(tree);
+  require(path.join(tree, 'a', 'wasm_exec.js'));
+  require(path.join(tree, 'b', 'wasm_exec.js'));
+  assert.equal(new Go({ wasm: 'a/app.wasm' }).importObject.id, 'na');
+  assert.equal(new Go({ wasm: './a/app.wasm' }).importObject.id, 'na');
+  assert.equal(new Go({ wasm: 'b/app.wasm' }).importObject.id, 'nb');
+  assert.equal(new Go({ wasm: './b/app.wasm' }).importObject.id, 'nb');
+} finally {
+  process.chdir(prevCwd);
+}
 
 function runtimeFactory(kind) {
   const module = {
