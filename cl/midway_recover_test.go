@@ -28,14 +28,24 @@ func TestMidwayRecoverDispatcherIdentity(t *testing.T) {
  func partialSoftware() {}
  func partialHardware() {}
  func partial(fn func()) {fn();partialSoftware()}
+ func partialWideSoftware() {recover()}
+ func partialWideHardware() {recover()}
+ func partialWideWider() {recover()}
+ func partialWide(emulated bool) {if emulated {partialWideSoftware();return};partialWideHardware()}
  func ordinary() {entry[int](false)}
- func use() {entry[int](true);wideEntry[int](256);ordinary();trap();partial(nil)}
+ func use() {entry[int](true);wideEntry[int](256);ordinary();trap();partial(nil);partialWide(false)}
  `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Mirror the compiler-only names which cannot be written in Go source.
-	names := map[string]string{"wider": "wideEntry@simd256", "wideSoftware": "wideEntry@simd0", "wideHardware": "wideEntry@simd128", "software": "entry@simd0", "hardware": "entry@simd128", "trapSoftware": "trap@simd0", "trapHardware": "trap@simd128", "partialSoftware": "partial@simd0", "partialHardware": "partial@simd128"}
+	names := map[string]string{
+		"software": "entry@simd0", "hardware": "entry@simd128",
+		"wideSoftware": "wideEntry@simd0", "wideHardware": "wideEntry@simd128", "wider": "wideEntry@simd256",
+		"trapSoftware": "trap@simd0", "trapHardware": "trap@simd128",
+		"partialSoftware": "partial@simd0", "partialHardware": "partial@simd128",
+		"partialWideSoftware": "partialWide@simd0", "partialWideHardware": "partialWide@simd128", "partialWideWider": "partialWide@simd256",
+	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok {
 			if name := names[id.Name]; name != "" {
@@ -60,7 +70,7 @@ func TestMidwayRecoverDispatcherIdentity(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("found %d instantiated dispatchers, want 2", count)
 	}
-	for _, name := range []string{"ordinary", "trap", "partial"} {
+	for _, name := range []string{"ordinary", "trap", "partial", "partialWide"} {
 		if isRecoverTransparentWrapper(pkg.Func(name)) {
 			t.Fatalf("%s must keep its own recovery frame", name)
 		}

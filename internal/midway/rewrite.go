@@ -481,13 +481,20 @@ func (f *fileRewriter) dispatch(decl *ast.FuncDecl) *ast.BlockStmt {
 // Use the same selection for scalar entry points and global initialization.
 // Emulation has a logical width of 128, so it must be tested before width.
 func (f *fileRewriter) dispatchWidth(pos token.Pos, invoke func(int) []ast.Stmt) []ast.Stmt {
-	stmts := []ast.Stmt{&ast.IfStmt{If: pos,
-		Cond: &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos},
-		Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(0)}}}
-	for _, width := range f.widths[2:] {
-		stmts = append(stmts, &ast.IfStmt{If: pos, Cond: &ast.BinaryExpr{
-			X:     &ast.CallExpr{Fun: f.qualify(simdPath, "VectorBitSize", pos), Lparen: pos, Rparen: pos},
-			OpPos: pos, Op: token.EQL, Y: &ast.BasicLit{ValuePos: pos, Kind: token.INT, Value: strconv.Itoa(width)}},
+	var stmts []ast.Stmt
+	for _, width := range f.widths {
+		var cond ast.Expr
+		switch width {
+		case 0:
+			cond = &ast.CallExpr{Fun: f.qualify(simdPath, "Emulated", pos), Lparen: pos, Rparen: pos}
+		case 128:
+			continue // The common hardware representation is the final fallback.
+		default:
+			cond = &ast.BinaryExpr{
+				X:     &ast.CallExpr{Fun: f.qualify(simdPath, "VectorBitSize", pos), Lparen: pos, Rparen: pos},
+				OpPos: pos, Op: token.EQL, Y: &ast.BasicLit{ValuePos: pos, Kind: token.INT, Value: strconv.Itoa(width)}}
+		}
+		stmts = append(stmts, &ast.IfStmt{If: pos, Cond: cond,
 			Body: &ast.BlockStmt{Lbrace: pos, Rbrace: pos, List: invoke(width)}})
 	}
 	return append(stmts, invoke(128)...)
