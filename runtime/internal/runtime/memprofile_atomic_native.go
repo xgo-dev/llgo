@@ -7,8 +7,9 @@ import "github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 const memProfileShards = 32
 
 type memProfileCounterShard struct {
-	_       memProfileAlignment
-	value   uint64
+	_     memProfileAlignment
+	value uint64
+	// Separate counters on hosts with 128-byte cache lines.
 	padding [15]uint64
 }
 
@@ -16,7 +17,8 @@ type memProfileCounter struct {
 	shards [memProfileShards]memProfileCounterShard
 }
 
-// Hash the physical-thread slot without initializing or dereferencing a G.
+// Hash the numeric current-G TLS value without initializing or dereferencing G.
+// Goroutine switches may select different shards.
 // Bootstrap/foreign contexts and hash collisions retain exact atomic counting.
 func memProfileAddObject(p *memProfileCounter) {
 	id := uint64(currentG)

@@ -62,7 +62,8 @@ var memProfileBuckets = [...]memProfileBucket{
 	{size: memProfileMaxSizeClass},
 }
 
-// Centralize class selection and counter updates across allocator entry points.
+// Keep class selection and atomic updates out of allocator wrappers to limit
+// duplicated code and native binary-size variation.
 //
 //go:noinline
 func recordMemProfileAlloc(size uintptr) {
@@ -102,6 +103,7 @@ func memProfileBucketIndex(size uintptr) int {
 	return index
 }
 
+// memProfileSizeClass exposes the bucket mapping to the native profile tests.
 func memProfileSizeClass(size uintptr) uintptr {
 	return memProfileBuckets[memProfileBucketIndex(size)].size
 }
