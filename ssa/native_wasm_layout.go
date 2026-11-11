@@ -29,17 +29,8 @@ func (p *goProgram) wasmNativeLayout(t types.Type) (sourceLayout, bool) {
 			layout, _ := p.wasmNativeFieldsLayout(u.NumFields(), u.Field)
 			return layout, true
 		}
-		for i := 0; i < u.NumFields(); i++ {
-			if known, ok := p.wasmNativeLayout(u.Field(i).Type()); ok {
-				layout, _ := aggregateSourceLayout(u.NumFields(), func(j int) sourceLayout {
-					if j == i {
-						return known
-					}
-					return p.wasmGoFieldLayout(u.Field(j).Type())
-				}, true)
-				return layout, true
-			}
-		}
+		layout, _, ok := p.wasmGoFieldsLayout(u.NumFields(), u.Field)
+		return layout, ok
 	}
 	return sourceLayout{}, false
 }
@@ -74,4 +65,21 @@ func (p *goProgram) wasmNativeFieldLayout(t types.Type) sourceLayout {
 	// A nested record owns its storage policy; an outer C directive does not
 	// recursively turn an ordinary Go record into a C record.
 	return p.wasmGoFieldLayout(t)
+}
+
+// wasmGoFieldsLayout handles ordinary Go records containing native storage.
+// Retain the first native subtree's query result while laying out its siblings.
+func (p *goProgram) wasmGoFieldsLayout(n int, field func(int) *types.Var) (sourceLayout, []int64, bool) {
+	for i := 0; i < n; i++ {
+		if known, ok := p.wasmNativeLayout(field(i).Type()); ok {
+			layout, offsets := aggregateSourceLayout(n, func(j int) sourceLayout {
+				if j == i {
+					return known
+				}
+				return p.wasmGoFieldLayout(field(j).Type())
+			}, true)
+			return layout, offsets, true
+		}
+	}
+	return sourceLayout{}, nil, false
 }

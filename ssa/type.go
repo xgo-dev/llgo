@@ -120,16 +120,8 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 			_, offsets := p.wasmNativeFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] })
 			return offsets
 		}
-		for i, f := range fields {
-			if known, ok := p.wasmNativeLayout(f.Type()); ok {
-				_, offsets := aggregateSourceLayout(len(fields), func(j int) sourceLayout {
-					if j == i {
-						return known
-					}
-					return p.wasmGoFieldLayout(fields[j].Type())
-				}, true)
-				return offsets
-			}
+		if _, offsets, ok := p.wasmGoFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] }); ok {
+			return offsets
 		}
 	}
 	if !native {

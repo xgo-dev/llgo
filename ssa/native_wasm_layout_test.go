@@ -68,3 +68,44 @@ type Pointers [2]*byte
 		})
 	}
 }
+
+func TestWasmNativeSourceLayoutDuringTypeCompletion(t *testing.T) {
+	for _, profile := range []string{"j32", "w32"} {
+		t.Run(profile, func(t *testing.T) {
+			goos := "js"
+			if profile == "w32" {
+				goos = "wasip1"
+			}
+			prog := NewProgram(&Target{GOOS: goos, GOARCH: "wasm", WasmProfile: profile})
+			defer prog.Dispose()
+			sizes := prog.TypeSizes(types.SizesFor("gc", "wasm"))
+			pkg := types.NewPackage("native", "native")
+			record := types.NewNamed(types.NewTypeName(0, pkg, "Record", nil), types.NewStruct(nil, nil), nil)
+			prog.SetTypeCallConv("native.Record", CDecl)
+			fields := []*types.Var{
+				types.NewField(0, pkg, "B", types.Typ[types.Byte], false),
+				types.NewField(0, pkg, "Record", record, false),
+				types.NewField(0, pkg, "Tail", types.Typ[types.Byte], false),
+			}
+			wrapper := types.NewStruct(fields, nil)
+			if got := sizes.Sizeof(wrapper); got != 2 {
+				t.Fatalf("incomplete wrapper size = %d, want 2", got)
+			}
+			record.SetUnderlying(types.NewStruct([]*types.Var{
+				types.NewField(0, pkg, "P", types.NewPointer(types.Typ[types.Byte]), false),
+				types.NewField(0, pkg, "W", types.Typ[types.Uintptr], false),
+			}, nil))
+			if got := sizes.Sizeof(wrapper); got != 16 {
+				t.Fatalf("completed wrapper size = %d, want 16", got)
+			}
+			if got := sizes.Alignof(wrapper); got != 4 {
+				t.Fatalf("completed wrapper alignment = %d, want 4", got)
+			}
+			for i, got := range sizes.Offsetsof(fields) {
+				if want := []int64{0, 4, 12}[i]; got != want {
+					t.Fatalf("completed field %d offset = %d, want %d", i, got, want)
+				}
+			}
+		})
+	}
+}
