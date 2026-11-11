@@ -37,7 +37,7 @@ type Variable struct {
 type Variables map[string]Variable
 
 // CollectVariables records variable links using the same precedence as the
-// declaration collector: attached directives, then package-wide go:linkname.
+// declaration collector: package-wide go:linkname overrides attached directives.
 func CollectVariables(fset *token.FileSet, files []*ast.File, exportRename bool) (Variables, error) {
 	vars := make(Variables)
 	var order []string

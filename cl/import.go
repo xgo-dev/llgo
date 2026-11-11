@@ -188,6 +188,9 @@ start:
 				}
 			}
 		case *types.Var:
+			if p.variableDirectives(pkg) != nil {
+				continue
+			}
 			if pos := obj.Pos(); pos != token.NoPos {
 				syms.addSym(fset, pos, pkgPath+"."+name, name, true)
 			}
@@ -198,6 +201,7 @@ start:
 
 func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 	preloaded := p.options.PreloadedSyntax
+	variables := p.variableDirectives(p.goTyps)
 	aliases := receiverAliases(files)
 	for _, file := range files {
 		for _, decl := range file.Decls {
@@ -225,16 +229,13 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 			case *ast.GenDecl:
 				switch decl.Tok {
 				case token.VAR:
-					if len(decl.Specs) == 1 {
-						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
-							inPkgName := names[0].Name
-							fullName := pkgPath + "." + inPkgName
-							if preloaded {
-								if exportName, ok := p.prog.PackageExport(fullName); ok {
-									p.pkg.SetExport(fullName, exportName)
-								}
-							} else {
-								p.processLinknameByDoc(decl.Doc, fullName, inPkgName, true, true)
+					// Both build-driver and direct clients have prepared records.
+					// Apply exports only for declarations in this source view;
+					// do not parse comments or republish links during lowering.
+					for _, spec := range decl.Specs {
+						for _, id := range spec.(*ast.ValueSpec).Names {
+							if rec := variables[id.Name]; rec.Kind == directive.OrdinaryVariable && rec.ExportName != "" {
+								p.pkg.SetExport(pkgPath+"."+id.Name, rec.ExportName)
 							}
 						}
 					}
@@ -947,12 +948,20 @@ const (
 func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtype int, define bool) {
 	pkg = p.variablePackage(pkg)
 	name := llssa.FullName(pkg, v.Name())
-	if p.prog.PackageVariables(pkg)[v.Name()].Kind != directive.OrdinaryVariable {
+	vars := p.variableDirectives(pkg)
+	rec := vars[v.Name()]
+	if rec.Kind != directive.OrdinaryVariable {
 		return name, ignoredVar, false
 	}
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
-		if v, ok := p.prog.VariableLinkname(pkg, v.Name()); ok {
+		link := rec.Linkname
+		// An explicitly absent link in this source view is authoritative.
+		// Only clients without prepared records use the compatibility index.
+		if vars == nil {
+			link, _ = p.prog.Linkname(name)
+		}
+		if v := link; v != "" {
 			if strings.HasPrefix(v, "llgo.") {
 				panic(fmt.Errorf("compiler variable %s requires prepared source metadata", name))
 			}
@@ -984,14 +993,39 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 }
 
 func (p *context) variablePackage(pkg *types.Package) *types.Package {
+	if pkg == nil {
+		return nil
+	}
 	if patch, ok := p.patches[llssa.PathOf(pkg)]; ok {
 		return patch.Types
 	}
 	return pkg
 }
 
+// Records are published before lowering starts. Cache each effective package
+// view, including missing records, in this worker's context rather than taking
+// the shared syntax lock on every global load.
+func (p *context) variableDirectives(pkg *types.Package) directive.Variables {
+	pkg = p.variablePackage(pkg)
+	if pkg == nil {
+		return nil
+	}
+	if vars, ok := p.variableRecords[pkg]; ok {
+		return vars
+	}
+	vars := p.prog.PackageVariables(pkg)
+	if p.variableRecords == nil {
+		p.variableRecords = make(map[*types.Package]directive.Variables)
+	}
+	p.variableRecords[pkg] = vars
+	return vars
+}
+
 func (p *context) compilerVariable(v *ssa.Global) directive.Variable {
-	return p.prog.PackageVariables(p.variablePackage(v.Pkg.Pkg))[v.Name()]
+	if v == nil || v.Pkg == nil {
+		return directive.Variable{}
+	}
+	return p.variableDirectives(v.Pkg.Pkg)[v.Name()]
 }
 
 func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
@@ -1104,11 +1138,8 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				ctx.processNoInterfaceByDoc(decl.Doc, fullName)
 			case *ast.GenDecl:
 				if decl.Tok == token.VAR {
-					for _, spec := range decl.Specs {
-						for _, name := range spec.(*ast.ValueSpec).Names {
-							syms[name.Name] = pkgPath + "." + name.Name
-						}
-					}
+					// Variable links, including package-wide directives, were
+					// resolved by CollectVariables. syms is only for functions.
 					if len(decl.Specs) == 1 {
 						if names := decl.Specs[0].(*ast.ValueSpec).Names; len(names) == 1 {
 							if decl.Doc != nil {
@@ -1137,6 +1168,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 		}
 	}
 	for name, rec := range vars {
+		if rec.Kind != directive.OrdinaryVariable {
+			continue
+		}
 		if rec.Linkname != "" {
 			prog.SetLinkname(pkgPath+"."+name, rec.Linkname)
 		}

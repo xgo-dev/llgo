@@ -47,8 +47,10 @@ still rejects `-trimpath`; this feature does not add artifact-wide path trimming
 `internal/directive` collects plain variable declaration records and validates
 checked uses before typed rewriting can erase illegal address-taking. Records
 are scoped to a `types.Package` instance; an unannotated declaration in another
-source view does not inherit a compatibility link. Effective patch records
-combine the original and replacement declarations.
+source view does not inherit a compatibility link. Effective patch records keep
+unreplaced original declarations; each replacement supplies its own record,
+including the absence of a link. Checked-use validation runs only for packages
+that declare compiler variables or directly import a package that does.
 
 `cl` queries the prepared kind and passes the read instruction's adjusted
 `token.Position` to `ssa`. `ssa` produces the typed constant and reuses its

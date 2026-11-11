@@ -192,7 +192,8 @@ type context struct {
 	pyMod                string
 	skips                map[string]none
 	loaded               map[*types.Package]*pkgInfo // loaded packages
-	bvals                map[ssa.Value]llssa.Expr    // block values
+	variableRecords      map[*types.Package]directive.Variables
+	bvals                map[ssa.Value]llssa.Expr // block values
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
@@ -3067,8 +3068,10 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		// Direct compiler clients have already built SSA. Validate the retained
 		// source too, since SSA may have erased address-taking or dead writes.
 		// The build driver performs this check before rewriting, with types.Info.
-		if err = directive.ValidateVariableUses(pkgProg.Fset, pkgTypes, nil, files, prog.VariableDirective); err != nil {
-			return nil, nil, err
+		if prog.MayUseCompilerVariables(pkgTypes) {
+			if err = directive.ValidateVariableUses(pkgProg.Fset, pkgTypes, nil, files, prog.VariableDirective); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	if err = prog.PackageVariables(pkgTypes).Validate(pkgProg.Fset, pkgTypes); err != nil {

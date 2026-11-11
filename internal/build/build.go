@@ -827,6 +827,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	})
 
 	dedup.SetValidate(func(pkg *packages.Package) error {
+		if !prog.MayUseCompilerVariables(pkg.Types) {
+			return nil
+		}
 		if err := prog.PackageVariables(pkg.Types).Validate(cfg.Fset, pkg.Types); err != nil {
 			return err
 		}

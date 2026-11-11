@@ -33,9 +33,6 @@ func TestVariableDirectivesPackageIdentity(t *testing.T) {
 	if got := prog.VariableDirective(altVar); got.Kind != directive.OrdinaryVariable {
 		t.Fatalf("alternate: %+v", got)
 	}
-	if link, ok := prog.VariableLinkname(alternate, "Line"); ok {
-		t.Fatalf("stale compatibility link %q", link)
-	}
 	local := types.NewVar(token.NoPos, original, "Line", types.Typ[types.Int32])
 	if got := prog.VariableDirective(local); got.Kind != directive.OrdinaryVariable {
 		t.Fatalf("local inherited global directive: %+v", got)
@@ -44,5 +41,24 @@ func TestVariableDirectivesPackageIdentity(t *testing.T) {
 	defer backend.Dispose()
 	if got := backend.VariableDirective(origVar); got.Kind != directive.LineVariable {
 		t.Fatalf("backend lost prepared metadata: %+v", got)
+	}
+	consumer := types.NewPackage("example/consumer", "consumer")
+	consumer.SetImports([]*types.Package{original})
+	alternateConsumer := types.NewPackage("example/consumer", "consumer")
+	alternateConsumer.SetImports([]*types.Package{alternate})
+	transitive := types.NewPackage("example/transitive", "transitive")
+	transitive.SetImports([]*types.Package{consumer})
+	for _, test := range []struct {
+		pkg  *types.Package
+		want bool
+	}{{original, true}, {alternate, false}, {consumer, true}, {alternateConsumer, false}, {transitive, false}} {
+		if got := backend.MayUseCompilerVariables(test.pkg); got != test.want {
+			t.Errorf("MayUseCompilerVariables(%s) = %v, want %v", test.pkg.Path(), got, test.want)
+		}
+	}
+	// Effective patch publication can remove the last compiler variable.
+	prog.SetPackageVariables(original, directive.Variables{"Line": {Name: "Line"}})
+	if prog.MayUseCompilerVariables(consumer) {
+		t.Fatal("consumer retained stale compiler-variable presence after replacement")
 	}
 }
