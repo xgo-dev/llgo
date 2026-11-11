@@ -37,6 +37,12 @@ func asynchronous(callback func()) {
 func loop(n int) {
  for i:=0; i<n; i++ { value := i; defer func(){ Sink += value }() }
 }
+func aggregate(callback func()) {
+ var values [5]uintptr
+ defer func(){ Sink += int(values[0]) }()
+ callback()
+ values[0] = 5
+}
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -55,7 +61,7 @@ func loop(n int) {
 					t.Errorf("%s lost recover-visible accesses:\n%s", name, body)
 				}
 			}
-			for _, name := range []string{"escaping", "asynchronous", "loop"} {
+			for _, name := range []string{"escaping", "asynchronous", "loop", "aggregate"} {
 				if body := llvmFunction(t, ir, "recoverstorage."+name); !strings.Contains(body, "runtime.Alloc") {
 					t.Errorf("%s lost retained storage:\n%s", name, body)
 				}
