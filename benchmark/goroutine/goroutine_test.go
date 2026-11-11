@@ -29,20 +29,29 @@ func benchmarkTask() {
 	benchmarkSink.Add(1)
 }
 
-type workerBatch struct {
-	count int
-	done  chan struct{}
+func runGoroutineBatch(count int) {
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for range count {
+		go func() {
+			benchmarkTask()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 type reusableWorker struct {
-	batches chan workerBatch
+	batches chan int
+	done    chan struct{}
 	stop    chan struct{}
 	stopped chan struct{}
 }
 
 func newReusableWorker() *reusableWorker {
 	w := &reusableWorker{
-		batches: make(chan workerBatch),
+		batches: make(chan int),
+		done:    make(chan struct{}),
 		stop:    make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
@@ -50,11 +59,11 @@ func newReusableWorker() *reusableWorker {
 		defer close(w.stopped)
 		for {
 			select {
-			case batch := <-w.batches:
-				for range batch.count {
+			case count := <-w.batches:
+				for range count {
 					benchmarkTask()
 				}
-				close(batch.done)
+				w.done <- struct{}{}
 			case <-w.stop:
 				return
 			}
@@ -64,9 +73,8 @@ func newReusableWorker() *reusableWorker {
 }
 
 func (w *reusableWorker) run(count int) {
-	done := make(chan struct{})
-	w.batches <- workerBatch{count: count, done: done}
-	<-done
+	w.batches <- count
+	<-w.done
 }
 
 func (w *reusableWorker) close() {
@@ -74,28 +82,33 @@ func (w *reusableWorker) close() {
 	<-w.stopped
 }
 
+func TestReusableWorkerBatches(t *testing.T) {
+	worker := newReusableWorker()
+	t.Cleanup(worker.close)
+	for _, count := range []int{0, 1, 16, 128, 1024, 1, 0} {
+		before := benchmarkSink.Load()
+		worker.run(count)
+		if got := benchmarkSink.Load() - before; got != int64(count) {
+			t.Fatalf("batch of %d tasks completed %d tasks", count, got)
+		}
+	}
+}
+
 func BenchmarkGoroutineLifecycle(b *testing.B) {
 	for _, count := range []int{1, 16, 128, 1024} {
-		count := count
-		b.Run("current/newproc/"+strconv.Itoa(count)+"/"+goroutineImplementation, func(b *testing.B) {
+		b.Run("create-and-wait/goroutines="+strconv.Itoa(count)+"/"+goroutineImplementation, func(b *testing.B) {
+			runGoroutineBatch(count)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				var wg sync.WaitGroup
-				wg.Add(count)
-				for range count {
-					go func() {
-						benchmarkTask()
-						wg.Done()
-					}()
-				}
-				wg.Wait()
+				runGoroutineBatch(count)
 			}
 		})
 
-		b.Run("reused-worker/dispatch/"+strconv.Itoa(count)+"/"+goroutineImplementation, func(b *testing.B) {
+		b.Run("serial-dispatch/tasks="+strconv.Itoa(count)+"/"+goroutineImplementation, func(b *testing.B) {
 			worker := newReusableWorker()
 			b.Cleanup(worker.close)
+			worker.run(count)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
