@@ -62,7 +62,9 @@ var memProfileBuckets = [...]memProfileBucket{
 	{size: memProfileMaxSizeClass},
 }
 
-// Per-allocation accounting touches only its selected cache line.
+// Centralize class selection and counter updates across allocator entry points.
+//
+//go:noinline
 func recordMemProfileAlloc(size uintptr) {
 	if size != 0 {
 		memProfileAddObject(&memProfileBuckets[memProfileBucketIndex(size)].objects)
