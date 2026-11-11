@@ -42,6 +42,24 @@ Unknown `llgo.*` variable links are rejected. The proposed Phase 2 bindings
 `llgo.func`, `llgo.date`, and `llgo.time` are not implemented. LLGo's command line
 still rejects `-trimpath`; this feature does not add artifact-wide path trimming.
 
+## Runnable examples
+
+The [C logging example](../_demo/c/sourcelocation/main.go) declares bindings using
+`*c.Char` and `c.Int`, passes them to a logging helper at the call site, and checks
+both ordinary and `//line`-adjusted locations. Run it from the repository root:
+
+```sh
+(cd _demo/c && llgo run ./sourcelocation)
+llgo test -v ./test/llgoext/sourcelocation
+llgo test -O0 -v ./test/llgoext/sourcelocation
+```
+
+The [runtime tests](../test/llgoext/sourcelocation/location_test.go) import reusable
+bindings from another package and assert individual read positions, filename
+pooling, C string compatibility, initializers, wrapper bodies, generic bodies,
+and closures. They run in the existing native `llgo test ./test/...` CI suite;
+the logging example runs in the regular demo suite.
+
 ## Compiler boundary
 
 `internal/directive` collects plain variable declaration records and validates
