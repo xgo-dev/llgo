@@ -14,10 +14,14 @@ export GOEXPERIMENT=simd
 # against the host Go and high-precision references through LLGo as well.
 (cd runtime && "$LLGO" test -O2 -count=1 -timeout=2m ./internal/runtime/math)
 
+# Keep the generated upstream instruction corpus in GOROOT, with explicit
+# per-architecture lists of the cases qualified for LLGo.
+LLGO="$LLGO" bash dev/test_upstream_archsimd.sh
+
 if [[ "$(go env GOARCH)" != amd64 ]]; then
-  "$LLGO" test -O0 -count=1 -timeout=2m ./test/simd/...
-  "$LLGO" test -O2 -count=1 -timeout=2m ./test/simd/...
-  GODEBUG=simd=0 "$LLGO" test -O2 -count=1 -timeout=2m ./test/simd/portable
+  "$LLGO" test -O0 -count=1 -timeout=2m ./test/simd/... ./test/std/simd
+  "$LLGO" test -O2 -count=1 -timeout=2m ./test/simd/... ./test/std/simd
+  GODEBUG=simd=0 "$LLGO" test -O2 -count=1 -timeout=2m ./test/simd/portable ./test/std/simd
   exit
 fi
 
@@ -58,6 +62,9 @@ for profile in O0-off O2-off O2-thin O2-full; do
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"
     "$binary" -test.v -test.count=1 -test.timeout=2m
     if [[ "$suite" == portable ]]; then
+      upstream_binary="$output/simd-std-$profile.exe"
+      "$LLGO" test "${flags[@]}" -c -o "$upstream_binary" ./test/std/simd
+      "$upstream_binary" -test.v -test.count=1 -test.timeout=2m
       selection=$("$binary" -test.v -test.run='^TestPortableFMVSelection$')
       if [[ "$selection" == *"AVX2=true"* ]]; then
         # The forced width bypasses Go's VPCLMULQDQ eligibility reduction;
@@ -89,6 +96,9 @@ for profile in O0-off O2-off O2-thin O2-full; do
     for debug in "${settings[@]}"; do
       echo "SIMD $suite: $profile GODEBUG=$debug"
       GODEBUG="$debug" "$binary" -test.v -test.count=1 -test.timeout=2m -test.run="$filter"
+      if [[ "$suite" == portable ]]; then
+        GODEBUG="$debug" "$upstream_binary" -test.v -test.count=1 -test.timeout=2m
+      fi
     done
   done
 done
