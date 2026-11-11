@@ -11,6 +11,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/directive"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
+	gossa "golang.org/x/tools/go/ssa"
 )
 
 const sourceLocationProgram = `package location
@@ -46,6 +47,11 @@ func TestSourceLocationLLVM(t *testing.T) {
 				t.Fatal(err)
 			}
 			ir := pkg.String()
+			for _, target := range []string{"llgo.file", "llgo.line"} {
+				if prog.HasLinknameTarget(target) {
+					t.Errorf("compiler value registered as linker target: %s", target)
+				}
+			}
 			for _, bad := range []string{"@llgo.file", "@llgo.line", "@location.FILE", "@location.LINE"} {
 				if strings.Contains(ir, bad) {
 					t.Errorf("emitted compiler variable storage %s\n%s", bad, ir)
@@ -69,6 +75,49 @@ func TestSourceLocationLLVM(t *testing.T) {
 				t.Errorf("generic body location lost:\n%s", ir)
 			}
 		})
+	}
+}
+
+func TestCompilerVariableWithoutPackage(t *testing.T) {
+	ctx := &context{}
+	for _, global := range []*gossa.Global{nil, {}, {Pkg: &gossa.Package{}}} {
+		if rec := ctx.compilerVariable(global); rec.Kind != directive.OrdinaryVariable {
+			t.Fatalf("global without declaration package: %+v", rec)
+		}
+	}
+}
+
+func TestPreparedVariableLinksAndExports(t *testing.T) {
+	const source = `package location
+import _ "unsafe"
+//llgo:link Value C.old
+var Value int32
+//go:linkname Value C.current
+//export Exported
+var Exported int32
+//export Line
+var Line int32
+//go:linkname Line llgo.line
+`
+	ssapkg, _, files := buildGoSSAPkg(t, source)
+	prog := newLLSSAProg(t)
+	defer prog.Dispose()
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkg.Module().Dispose()
+	if got, _ := prog.Linkname("location.Value"); got != "C.current" {
+		t.Fatalf("backend reparsed attached link over package directive: %q", got)
+	}
+	if prog.HasLinknameTarget("llgo.line") {
+		t.Fatal("compiler value registered as a linker target")
+	}
+	if _, ok := prog.PackageExport("location.Line"); ok {
+		t.Fatal("compiler value registered as a package export")
+	}
+	if got := pkg.ExportFuncs(); len(got) != 1 || got["location.Exported"] != "Exported" {
+		t.Fatalf("variable exports = %v", got)
 	}
 }
 
@@ -116,6 +165,9 @@ func TestSourceLocationEffectivePatch(t *testing.T) {
 			if err := ParsePkgSyntax(prog, afset, alternate.Pkg, afiles); err != nil {
 				t.Fatal(err)
 			}
+			// A legacy string entry for another source view must not override
+			// prepared records, even when the replacement's link is absent.
+			prog.SetLinkname("location.Line", "llgo.line")
 			ctx := &context{prog: prog, patches: Patches{"location": {Types: alternate.Pkg}}}
 			global := original.Var("Line")
 			kind := ctx.compilerVariable(global).Kind
