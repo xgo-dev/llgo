@@ -185,9 +185,10 @@ bodyless user functions depending on portable types, and inferred global types
 requiring another package's unexported type, field, or method names.
 The latter two cases produce source diagnostics. Midway also diagnoses
 `go:linkname`, `llgo:link`, and `export` bindings on SIMD-dependent globals,
-or link directives targeting a known SIMD-dependent global: an external storage binding needs an ABI shared by both concrete
-representations. Embedded named strings and byte slices retain their contents
-in both variants. Wider variants and general FMV are follow-up work.
+or link directives targeting a known SIMD-dependent global: an external storage
+binding needs an ABI shared by all concrete representations. Embedded named
+strings and byte slices retain their contents in every generated variant.
+512-bit variants and general FMV are follow-up work.
 
 For the WASI portable matrix, including explicit guest emulation, run
 `LLGO=/path/to/llgo bash dev/test_portable_simd_wasi.sh`. It passes `GODEBUG`
