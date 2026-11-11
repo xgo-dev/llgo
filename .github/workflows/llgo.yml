@@ -1140,7 +1140,10 @@ jobs:
           GOEXPERIMENT: simd
           LLGO_BUILD_CACHE: "off"
         run: |
-          GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/... ./test/std/simd
+          # Go's WASI example runner captures stdout in temporary files.
+          wasi_tmp="$RUNNER_TEMP/go-wasi-example-tmp"
+          mkdir -p "$wasi_tmp"
+          GOOS=wasip1 GOARCH=wasm go test -exec="wasmtime --dir=$wasi_tmp::/tmp" -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           for opt in 0 2; do
             "$RUNNER_TEMP/llgo-bin/llgo" test "-O${opt}" -target wasi -emulator \
               -v -count=1 -timeout=2m ./test/simd/... ./test/std/simd
