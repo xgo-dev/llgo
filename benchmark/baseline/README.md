@@ -40,10 +40,21 @@ byte mismatches use fixed one-million-call samples with checked results. LLGo
 uses `-O3 -lto=full`; Go uses its defaults. The remaining conversion cost is
 included when measuring a compiler that has not eliminated that conversion.
 
-The goroutine lifecycle suite runs the same fixed workload with native Go and
-LLGo. It measures creating and joining 1, 16, 128, and 1,024 goroutines, plus
-dispatching the same work through one reusable worker. Each case uses ten fixed
-iterations per sample to keep native thread creation bounded on CI runners.
+The `benchmark/goroutine` suite measures two workloads with native Go and LLGo.
+In `create-and-wait/goroutines=N`, each timed iteration creates N goroutines,
+each performing one atomic increment, and waits for the whole batch to finish.
+In `serial-dispatch/tasks=N`, each iteration sends one batch to a single
+pre-existing goroutine, which performs N atomic increments serially and sends a
+completion notification. The worker reuses its request and completion channels.
+The sizes are 1, 16, 128, and 1,024. The reported `ns/op` covers one complete batch
+in each workload. Compare each case against the same case in the PR base to
+measure compiler and runtime changes.
+
+Each case completes one warmup batch before resetting the timer. Creation uses
+ten fixed iterations per sample to bound native thread creation. Serial dispatch
+uses calibrated 250 ms samples. Both workloads collect five samples. Native Go
+uses one P. LLGo retains its native execution model, which currently does not
+limit goroutine execution through `GOMAXPROCS`.
 
 Once the timer selectors are present on the target branch, a paired pull-request
 result compiles `/LLGo` once from the merge base and once from the head, while

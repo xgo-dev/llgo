@@ -146,20 +146,29 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
     ./test/llgoext
 ) | tee -a "$go_results"
 
+# Bound native thread creation while calibrating the persistent-worker cases.
+# Both compilers use the same warmed benchmark source and sampling budgets.
 (
   cd "$harness_root"
   GOMAXPROCS=1 go test \
     -run '^$' \
-    -bench '^BenchmarkGoroutineLifecycle$' \
-    -benchtime=10x \
-    -count=5 \
-    -cpu=1 \
+    -bench '^BenchmarkGoroutineLifecycle/create-and-wait$' \
+    -benchtime=10x -count=5 -cpu=1 \
+    ./benchmark/goroutine
+  GOMAXPROCS=1 go test \
+    -run '^$' \
+    -bench '^BenchmarkGoroutineLifecycle/serial-dispatch$' \
+    -benchtime=250ms -count=5 -cpu=1 \
     ./benchmark/goroutine
   GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
     -run '^$' \
-    -bench '^BenchmarkGoroutineLifecycle$' \
-    -benchtime=10x \
-    -count=5 \
+    -bench '^BenchmarkGoroutineLifecycle/create-and-wait$' \
+    -benchtime=10x -count=5 \
+    ./benchmark/goroutine
+  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+    -run '^$' \
+    -bench '^BenchmarkGoroutineLifecycle/serial-dispatch$' \
+    -benchtime=250ms -count=5 \
     ./benchmark/goroutine
 ) | tee -a "$go_results"
 
