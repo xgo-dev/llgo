@@ -31,6 +31,8 @@ expected="$output/upstream-archsimd-$arch-expected.txt"
 filter='^('
 separator=''
 while IFS= read -r name; do
+  # Git may check out the case lists with CRLF on Windows.
+  name=${name%$'\r'}
   case "$name" in ''|'#'*) continue ;; esac
   [[ "$name" =~ ^Test[A-Za-z0-9_]+$ ]] || { echo "Invalid upstream case: $name" >&2; exit 1; }
   printf '%s\n' "$name" >> "$expected"
@@ -46,7 +48,10 @@ go test -v -count=1 -timeout=5m -run="$filter" "$package"
 binary="$output/upstream-archsimd-$arch.exe"
 "$LLGO" test -O2 -c -o "$binary" "$package"
 actual="$output/upstream-archsimd-$arch-actual.txt"
-"$binary" -test.list="$filter" > "$actual" 2>&1
+"$binary" -test.list="$filter" > "$actual.raw" 2>&1
+# Native Windows executables may also emit CRLF. Normalize only the line ending
+# before checking the exact set of test names; retain the raw output for diagnosis.
+sed $'s/\r$//' "$actual.raw" > "$actual"
 if grep -q '^Skipping tests: AVX is not available$' "$actual"; then
   cat "$actual"
   exit 0
