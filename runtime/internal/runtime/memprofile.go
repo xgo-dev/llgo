@@ -26,10 +26,11 @@ func (r *MemProfileRecord) Stack() []uintptr {
 }
 
 type memProfileBucket struct {
-	size uintptr
-
+	size    uintptr
 	objects memProfileCounter
 }
+
+const memProfileMaxSizeClass = uintptr(1) << 30
 
 var memProfileBuckets = [...]memProfileBucket{
 	{size: 16},
@@ -58,39 +59,49 @@ var memProfileBuckets = [...]memProfileBucket{
 	{size: 134217728},
 	{size: 268435456},
 	{size: 536870912},
-	{size: 1073741824},
+	{size: memProfileMaxSizeClass},
 }
 
-// Keep the bucket scan out of allocation call sites. Inlining it duplicates
-// the scan and atomic update in every small allocator wrapper, which makes
-// otherwise unrelated runtime backend changes perturb native binary size.
-//
-//go:noinline
+// Per-allocation accounting touches only its selected cache line.
 func recordMemProfileAlloc(size uintptr) {
-	if size == 0 {
-		return
+	if size != 0 {
+		memProfileAddObject(&memProfileBuckets[memProfileBucketIndex(size)].objects)
 	}
-	size = memProfileSizeClass(size)
-	for i := range memProfileBuckets {
-		b := &memProfileBuckets[i]
-		if b.size == size {
-			memProfileAddObject(&b.objects)
-			return
-		}
+}
+
+func memProfileBucketIndex(size uintptr) int {
+	if size <= 16 {
+		return 0
 	}
+	if size > memProfileMaxSizeClass {
+		return len(memProfileBuckets) - 1
+	}
+	x := uint64(size-1) >> 4
+	index := 1
+	if x>>16 != 0 {
+		x >>= 16
+		index += 16
+	}
+	if x>>8 != 0 {
+		x >>= 8
+		index += 8
+	}
+	if x>>4 != 0 {
+		x >>= 4
+		index += 4
+	}
+	if x>>2 != 0 {
+		x >>= 2
+		index += 2
+	}
+	if x>>1 != 0 {
+		index++
+	}
+	return index
 }
 
 func memProfileSizeClass(size uintptr) uintptr {
-	if size <= 16 {
-		return 16
-	}
-	for i := range memProfileBuckets {
-		b := &memProfileBuckets[i]
-		if size <= b.size {
-			return b.size
-		}
-	}
-	return memProfileBuckets[len(memProfileBuckets)-1].size
+	return memProfileBuckets[memProfileBucketIndex(size)].size
 }
 
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
