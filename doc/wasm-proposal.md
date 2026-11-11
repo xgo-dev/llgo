@@ -17,7 +17,6 @@ collection, arena ownership, and the reclamation limits of blocking C calls.
 
   - J32 (wasm32 with JavaScript) and W32 (wasm32 with WASI Preview 1): Core Wasm Memory32, `i32` addresses, and the ILP32 C ABI.
   - J64 (wasm64 with JavaScript): Memory64, `i64` addresses, and the LP64 C ABI, extending the same Go data model to a wider address space.
-
   - Differences belong in address lowering, Go/C boundaries, libffi, memory accesses, and host glue; ordinary Go source does not require separate forks for these differences.
   - C types use `github.com/goplus/lib/c`; Go and C `int` need not have the same width. The compiler and boundary adapters perform the required checked width conversions.
 
@@ -57,6 +56,7 @@ with gc and LLGo on JS/WASI, plus C aggregate arguments/results and callbacks
 on all hosted profiles. Function values intentionally differ from gc: LLGo's
 Go value is a 16-byte code/environment pair, whereas gc's value is an eight-byte
 pointer. Native C callbacks use the target's physical function pointer.
+
 Assembly/runtime boundary: reuse applicable host-independent Go wasm assembly through Plan 9 translation to LLVM IR and target lowering. Code tied to the gc compiler's calling convention, stack layout, GC, scheduler, or runtime entry points requires LLGo adaptation. Source/API compatibility does not require identical generated function signatures or binary compatibility with gc compiler objects or artifacts for other targets.
 
 ## Delivered milestones: R1-R3 (merged)

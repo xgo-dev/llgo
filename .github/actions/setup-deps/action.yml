@@ -868,7 +868,9 @@ runs:
           echo "deb https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{inputs.llvm-version}} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           # Some Linux runners resolve IPv6 addresses without an IPv6 route.
           # Retry transient DNS errors, but keep HTTPS and bounded failures.
-          wget -4 --retry-on-host-error --tries=3 --timeout=15 --waitretry=2 -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          llvm_key="$RUNNER_TEMP/llvm-snapshot.gpg.key"
+          curl -4 --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 --retry-max-time 180 --output "$llvm_key" https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo apt-key add "$llvm_key"
           apt_get update
           apt_get install -y llvm-${{inputs.llvm-version}}-dev clang-${{inputs.llvm-version}} libclang-${{inputs.llvm-version}}-dev lld-${{inputs.llvm-version}} libunwind-${{inputs.llvm-version}}-dev libc++-${{inputs.llvm-version}}-dev
           echo "PATH=/usr/lib/llvm-${{inputs.llvm-version}}/bin:$PATH" >> $GITHUB_ENV

@@ -35,7 +35,7 @@ runs:
           exit 1
         fi
         cd "$RUNNER_TEMP"
-        curl --retry 3 --retry-all-errors -fsSLO "${base_url}/${archive}"
+        curl --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 --retry-max-time 600 -fsSLO "${base_url}/${archive}"
         if command -v sha256sum >/dev/null; then
           printf '%s  %s\n' "$expected" "$archive" | sha256sum --check -
         else
@@ -71,7 +71,7 @@ runs:
         if ($checksumRows.Count -ne 1) { throw "Missing pinned Binaryen checksum for $platform" }
         $expected = ($checksumRows[0] -split '\s+')[1]
         if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw "Invalid pinned Binaryen checksum for $platform" }
-        & curl.exe --fail --location --retry 3 --retry-all-errors --output $archivePath "$baseUrl/$archive"
+        & curl.exe --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 --retry-max-time 600 --output $archivePath "$baseUrl/$archive"
         if ($LASTEXITCODE -ne 0) { throw "Downloading Binaryen failed with exit code $LASTEXITCODE" }
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash
         if (-not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
