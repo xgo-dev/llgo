@@ -319,20 +319,7 @@ runs:
         fi
         git -C "$source_root" checkout --detach "$VCPKG_BASELINE"
         if [[ ! -x "$source_root/vcpkg" ]]; then
-          bootstrap=("$source_root/bootstrap-vcpkg.sh" -disableMetrics)
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            bootstrap=(timeout --kill-after=30s 3m "${bootstrap[@]}")
-          fi
-          for attempt in 1 2 3; do
-            if "${bootstrap[@]}"; then
-              break
-            fi
-            if [[ "$attempt" == 3 ]]; then
-              echo "vcpkg bootstrap failed after $attempt attempts" >&2
-              exit 1
-            fi
-            sleep "$((attempt * 2))"
-          done
+          "$source_root/bootstrap-vcpkg.sh" -disableMetrics
         fi
         overlay_root="$RUNNER_TEMP/llgo-mingw-port-overlay"
         python .github/windows/prepare-bdwgc-port.py "$source_root" "$overlay_root"
