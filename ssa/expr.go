@@ -88,12 +88,24 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 // storage-width conversion represents its logical Go value to callers.
 func (v Expr) memoryInstruction() llvm.Value {
 	instr := v.impl
-	// A J32 pointer load has both trunc and inttoptr conversions.
-	for !instr.IsAIntToPtrInst().IsNil() || !instr.IsATruncInst().IsNil() ||
-		!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil() {
-		instr = instr.Operand(0)
+	// Follow scalar conversions and aggregate repacking back to the load.
+	// Repacked pointer slots also insert a constant zero high word.
+	for {
+		switch {
+		case !instr.IsAInsertValueInst().IsNil() || !instr.IsAInsertElementInst().IsNil():
+			if part := instr.Operand(1); !part.IsConstant() {
+				instr = part
+			} else {
+				instr = instr.Operand(0)
+			}
+		case !instr.IsAExtractValueInst().IsNil() || !instr.IsAExtractElementInst().IsNil(),
+			!instr.IsAIntToPtrInst().IsNil() || !instr.IsATruncInst().IsNil(),
+			!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil():
+			instr = instr.Operand(0)
+		default:
+			return instr
+		}
 	}
-	return instr
 }
 
 func (v Expr) SetName(alias string) Expr {
@@ -1051,7 +1063,8 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 //     σ is the type substitution of Parent().TypeParams by
 //     Parent().TypeArgs.
 //
-// This operation cannot fail dynamically.
+// Type changes preserve values, with range checks when explicit native storage
+// narrows an element at its ABI boundary.
 //
 // Type changes may to be to or from a type parameter (or both). All
 // types in the type set of X.Type() have a value-preserving type
@@ -1131,6 +1144,19 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 			fallthrough
 		default:
 			ret.impl = x.impl
+		}
+	} else if t.kind == vkArray && x.kind == vkArray && x.impl.Type() != t.ll {
+		// Go type identity does not imply identical native storage on Memory32.
+		// Convert logical elements before fitting each destination storage slot.
+		sourceElem := b.Prog.Index(x.Type)
+		targetElem := b.Prog.withoutNativeStorage(b.Prog.Index(t))
+		ret.impl = llvm.Undef(t.ll)
+		for i := 0; i < t.ll.ArrayLength(); i++ {
+			part := b.impl.CreateExtractValue(x.impl, i, "")
+			value := Expr{b.fromStorageValue(sourceElem, part), b.Prog.withoutNativeStorage(sourceElem)}
+			value = b.ChangeType(targetElem, value)
+			part = b.fitLLVMValue(value.impl, targetElem, t.ll.ElementType())
+			ret.impl = b.impl.CreateInsertValue(ret.impl, part, i, "")
 		}
 	} else if t.kind == vkStruct {
 		xt := types.Unalias(x.RawType()).Underlying().(*types.Struct)

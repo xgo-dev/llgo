@@ -24,6 +24,18 @@ type Record struct { Data unsafe.Pointer; Size uintptr; Tag int32 }
 type Outer struct { R Record; Pointers [2]*byte; Words [2]uintptr; Tail [0]uint64 }
 //DIRECTIVE
 type Words [2]uintptr
+//DIRECTIVE
+type Nested [2][2]uintptr
+//DIRECTIVE
+type Pointers [2]*byte
+//DIRECTIVE
+type Callbacks [2]func(int32) int32
+//DIRECTIVE
+type Callback func(int32) int32
+//DIRECTIVE
+type NamedCallbacks [2]Callback
+//DIRECTIVE
+type Empty [0]uintptr
 type GoRecord struct { Data unsafe.Pointer; Size uintptr; Tag int32 }
 type Wrapper struct { B byte; R Record; P *byte }
 var _ [12-int(unsafe.Sizeof(Record{}))]byte
@@ -48,6 +60,20 @@ func Size() uintptr { return unsafe.Sizeof(Record{}) }
 func Next(records *[2]Record) *Record { return &records[1] }
 func SetSize(r *Record, n uintptr) { r.Size = n }
 func SetWord(w *Words, n uintptr) { w[1] = n }
+func FromGo(a [2]uintptr) Words { return Words(a) }
+func ToGo(a Words) [2]uintptr { return [2]uintptr(a) }
+func AssignGo(a [2]uintptr) Words { var out Words; out = a; return out }
+func AssignNative(a Words) [2]uintptr { var out [2]uintptr; out = a; return out }
+func FromNested(a [2][2]uintptr) Nested { return Nested(a) }
+func ToNested(a Nested) [2][2]uintptr { return [2][2]uintptr(a) }
+func FromPointers(a [2]*byte) Pointers { return Pointers(a) }
+func ToPointers(a Pointers) [2]*byte { return [2]*byte(a) }
+func FromCallbacks(a [2]func(int32) int32) Callbacks { return Callbacks(a) }
+func ToCallbacks(a Callbacks) [2]func(int32) int32 { return [2]func(int32) int32(a) }
+func FromNamedCallbacks(a [2]Callback) NamedCallbacks { return NamedCallbacks(a) }
+func ToNamedCallbacks(a NamedCallbacks) [2]Callback { return [2]Callback(a) }
+func FromEmpty(a [0]uintptr) Empty { return Empty(a) }
+func ToEmpty(a Empty) [0]uintptr { return [0]uintptr(a) }
 `
 	for _, directive := range []string{"//llgo:cdecl", "//llgo:type C"} {
 		for _, target := range []*llssa.Target{
@@ -79,6 +105,17 @@ func SetWord(w *Words, n uintptr) { w[1] = n }
 				ir := compiled.String()
 				if !strings.Contains(ir, "ret i64 12") {
 					t.Fatalf("native size constant disagrees with storage:\n%s", ir)
+				}
+				for _, name := range []string{"FromGo", "AssignGo", "FromNested"} {
+					body := llvmFunction(t, ir, "native_layout."+name)
+					if !strings.Contains(body, "trunc i64") || !strings.Contains(body, "AssertRuntimeError") {
+						t.Fatalf("%s lacks checked word narrowing:\n%s", name, body)
+					}
+				}
+				for _, name := range []string{"ToGo", "AssignNative", "ToNested"} {
+					if body := llvmFunction(t, ir, "native_layout."+name); !strings.Contains(body, "zext i32") {
+						t.Fatalf("%s lacks unsigned word extension:\n%s", name, body)
+					}
 				}
 			})
 		}

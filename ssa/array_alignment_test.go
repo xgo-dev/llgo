@@ -79,9 +79,16 @@ func TestGoArrayAccessAlignment(t *testing.T) {
 						typ := prog.Elem(ptr.Type)
 						stored := b.Store(ptr, prog.Zero(typ))
 						loaded := b.Load(ptr)
+						loaded.SetVolatile(true)
 						b.Return(loaded)
 						b.EndBuild()
-						for name, inst := range map[string]llvm.Value{"load": loaded.impl, "store": stored.impl} {
+						// Array loads may repack native elements into Go storage.
+						// Inspect the memory instruction rather than the final value.
+						load := loaded.memoryInstruction()
+						if load.IsALoadInst().IsNil() || !load.IsVolatile() {
+							t.Fatal("array memory load lost volatile access")
+						}
+						for name, inst := range map[string]llvm.Value{"load": load, "store": stored.impl} {
 							if got := inst.Alignment(); got != tc.want {
 								t.Errorf("%s alignment = %d, want %d", name, got, tc.want)
 							}

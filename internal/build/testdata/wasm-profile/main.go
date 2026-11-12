@@ -99,6 +99,7 @@ func checkNativeNarrowing() {
 
 func main() {
 	checkGoLayout()
+	checkArrayConversions()
 	if got := unsafe.Sizeof(uintptr(0)); got != expectedGoWordSize {
 		panic("unexpected Go word size")
 	}
