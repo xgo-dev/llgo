@@ -26,29 +26,69 @@ func reflectCacheContext(t *testing.T) *context {
 
 func TestReflectIRPolicy(t *testing.T) {
 	ctx := reflectCacheContext(t)
-	if !useDeadcodeReflectNames(ctx) {
-		t.Fatal("ordinary Drop excluded")
-	}
-	for name, mutate := range map[string]func(*Config){
-		"no Drop":   func(c *Config) { c.DeadcodeDrop = false },
-		"ThinLTO":   func(c *Config) { c.LTO = lto.Thin },
-		"FullLTO":   func(c *Config) { c.LTO = lto.Full },
-		"shared":    func(c *Config) { c.BuildMode = BuildModeCShared },
-		"target":    func(c *Config) { c.Target = "wasi" },
-		"IR output": func(c *Config) { c.GenLL = true },
+	for _, backend := range []struct {
+		name string
+		lto  lto.Mode
+	}{
+		{"strong", lto.Off},
+		{"thin", lto.Thin},
 	} {
-		conf := *ctx.buildConf
-		mutate(&conf)
-		other := *ctx
-		other.buildConf = &conf
-		if useDeadcodeReflectNames(&other) {
-			t.Errorf("accepted %s", name)
-		}
+		t.Run(backend.name, func(t *testing.T) {
+			for _, debug := range []DebugArtifactMode{DebugArtifactDefault, DebugArtifactNone, DebugArtifactEmbedded, DebugArtifactExternal, DebugArtifactHost} {
+				t.Run(debug.String(), func(t *testing.T) {
+					conf := *ctx.buildConf
+					conf.LTO, conf.DebugArtifactMode = backend.lto, debug
+					other := *ctx
+					other.buildConf = &conf
+					want := backend.lto == lto.Off || debug == DebugArtifactNone
+					if got := useDeadcodeReflectNames(&other); got != want {
+						t.Errorf("reflection refinement = %v, want %v", got, want)
+					}
+				})
+			}
+			for name, mutate := range map[string]func(*Config){
+				"no Drop": func(c *Config) { c.DeadcodeDrop = false },
+				"FullLTO": func(c *Config) { c.LTO = lto.Full },
+				"FullLTO Drop": func(c *Config) {
+					c.LTO, c.DisableGoGlobalDCE = lto.Full, true
+				},
+				"shared":    func(c *Config) { c.BuildMode = BuildModeCShared },
+				"target":    func(c *Config) { c.Target = "wasi" },
+				"IR output": func(c *Config) { c.GenLL = true },
+			} {
+				t.Run(name, func(t *testing.T) {
+					conf := *ctx.buildConf
+					conf.LTO, conf.DebugArtifactMode = backend.lto, DebugArtifactNone
+					mutate(&conf)
+					other := *ctx
+					other.buildConf = &conf
+					if useDeadcodeReflectNames(&other) {
+						t.Fatal("accepted unsupported reflection analysis configuration")
+					}
+				})
+			}
+		})
 	}
 }
 
 func TestReflectIRCacheRoundTrip(t *testing.T) {
+	for _, backend := range []struct {
+		name string
+		lto  lto.Mode
+	}{
+		{"strong", lto.Off},
+		{"thin", lto.Thin},
+	} {
+		t.Run(backend.name, func(t *testing.T) {
+			testReflectIRCacheRoundTrip(t, backend.lto)
+		})
+	}
+}
+
+func testReflectIRCacheRoundTrip(t *testing.T, backend lto.Mode) {
+	t.Helper()
 	ctx := reflectCacheContext(t)
+	ctx.buildConf.LTO, ctx.buildConf.DebugArtifactMode = backend, DebugArtifactNone
 	t.Setenv(llgoBuildCache, "on")
 	dir := t.TempDir()
 	oldRoot := cacheRootFunc
@@ -75,6 +115,9 @@ func TestReflectIRCacheRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	temporary := pkg.reflectIRTemp
+	if pkg.reflectIRFile == "" || temporary == "" {
+		t.Fatal("optimized analysis snapshot was not captured")
+	}
 	// Simulate codegen changing the live module after the snapshot.
 	g.SetInitializer(llvm.ConstInt(g.GlobalValueType(), 2, false))
 	checkSnapshot := func(path string) {
@@ -89,8 +132,8 @@ func TestReflectIRCacheRoundTrip(t *testing.T) {
 		}
 	}
 	checkSnapshot(pkg.reflectIRFile)
-	pkg.ArchiveFile = filepath.Join(dir, "native.a")
-	if err := os.WriteFile(pkg.ArchiveFile, []byte("native archive"), 0644); err != nil {
+	pkg.ArchiveFile = filepath.Join(dir, "package.a")
+	if err := os.WriteFile(pkg.ArchiveFile, []byte("unchanged package archive"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	manifest := newManifestBuilder()
@@ -106,8 +149,8 @@ func TestReflectIRCacheRoundTrip(t *testing.T) {
 	defer cached.Meta.Close()
 	checkSnapshot(cached.reflectIRFile)
 	data, err := os.ReadFile(cached.ArchiveFile)
-	if err != nil || string(data) != "native archive" {
-		t.Fatal("native archive changed", err)
+	if err != nil || string(data) != "unchanged package archive" {
+		t.Fatal("package archive changed", err)
 	}
 	ctx.closePackageMetas()
 	if _, err := os.Stat(temporary); !os.IsNotExist(err) {
@@ -118,6 +161,6 @@ func TestReflectIRCacheRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ctx.tryLoadFromCache(&aPackage{Package: pkg.Package, Fingerprint: pkg.Fingerprint}) {
-		t.Fatal("accepted native cache entry without its required analysis sidecar")
+		t.Fatal("accepted cache entry without its required analysis sidecar")
 	}
 }

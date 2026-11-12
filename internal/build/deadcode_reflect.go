@@ -18,15 +18,17 @@ import (
 
 const reflectSiteAttribute = "llgo.deadcode.reflectsite"
 
-// Keep the initial experiment on native macOS executables using ordinary Drop.
-// This changes only analysis inputs: the backend remains strong overrides and
-// native archives, with no LTO or package-method-table rewriting.
+// Both Drop backends use the same optimized snapshots and name analysis. Keep
+// the experiment on native macOS executables; Thin's temporary link archives
+// cannot currently supply the persistent paths required by a DWARF debug map.
 func useDeadcodeReflectNames(ctx *context) bool {
 	if ctx == nil || ctx.buildConf == nil || runtime.GOOS != "darwin" {
 		return false
 	}
 	c := ctx.buildConf
-	return c.deadcodeDropEnabled() && c.ltoMode() == lto.Off &&
+	backendSupported := c.ltoMode() == lto.Off ||
+		c.ltoMode() == lto.Thin && c.DebugArtifactMode == DebugArtifactNone
+	return c.deadcodeDropEnabled() && backendSupported &&
 		c.BuildMode == BuildModeExe && c.Target == "" && !c.GenLL &&
 		c.Goos == runtime.GOOS && c.Goarch == runtime.GOARCH && len(ctx.initial) == 1 &&
 		(ctx.mode == ModeBuild || ctx.mode == ModeTest)

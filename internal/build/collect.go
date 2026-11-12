@@ -497,8 +497,9 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 		}
 		return false
 	}
-	// A native archive cannot recover optimized IR. Missing analysis data is
-	// a cache miss, so a cached build makes the same decisions as a rebuild.
+	// Both Drop backends analyze the pre-codegen snapshot, not the link archive.
+	// Missing analysis data is a cache miss so rebuilds and cache hits use the
+	// same input stage, even when the archive also contains ThinLTO bitcode.
 	if needsDeadcodeReflectIR(c, pkgMeta) {
 		if _, err := os.Stat(paths.ReflectIR); err != nil {
 			_ = pkgMeta.Close()

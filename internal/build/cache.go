@@ -59,7 +59,7 @@ type cachePaths struct {
 	Archive   string // Path to .a file
 	Manifest  string // Path to .manifest file
 	Meta      string // Path to .meta file
-	ReflectIR string // Optimized reflection-analysis bitcode, separate from native archive
+	ReflectIR string // Optimized reflection-analysis snapshot, separate from link archive
 }
 
 // PackagePaths returns the cache paths for a package

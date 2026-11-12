@@ -315,28 +315,39 @@ func TestBuildAndCheckSymbolsFromTestdropIRReflection(t *testing.T) {
 	if !buildenv.Dev || runtime.GOOS != "darwin" {
 		t.Skip("IR reflection refinement requires a development macOS build")
 	}
-	conf := build.NewDefaultConf(build.ModeBuild)
-	conf.DeadcodeDrop = true
-	conf.LTO = lto.Off
-	conf.DebugArtifactMode = build.DebugArtifactNone
 	names := []string{"reflect_callback_names", "reflect_callback_cached", "reflect_callback_mutable", "reflect_callback_escape", "reflect_callback_mixed", "reflect_callback_foreign"}
-	// The second build must recover optimized IR from the analysis sidecar.
-	for _, mode := range []string{"build", "cached"} {
-		t.Run(mode, func(t *testing.T) {
-			conf.ForceRebuild = mode == "build"
-			cachedLookupSeen := false
-			conf.ModuleHook = func(pkg build.Package) {
-				if strings.HasSuffix(pkg.PkgPath, "/reflect_callback_cached/hooks") {
-					cachedLookupSeen = true
-					if pkg.CacheHit != (mode == "cached") {
-						t.Errorf("lookup package cache hit = %v in %s build", pkg.CacheHit, mode)
+	for _, backend := range []struct {
+		name string
+		lto  lto.Mode
+	}{
+		{"strong", lto.Off},
+		{"thin", lto.Thin},
+	} {
+		t.Run(backend.name, func(t *testing.T) {
+			conf := build.NewDefaultConf(build.ModeBuild)
+			conf.DeadcodeDrop = true
+			conf.LTO = backend.lto
+			conf.DebugArtifactMode = build.DebugArtifactNone
+			// Both backends must recover the optimized analysis snapshot on a
+			// cache hit, with the same callable behavior and symbol expectations.
+			for _, mode := range []string{"build", "cached"} {
+				t.Run(mode, func(t *testing.T) {
+					conf.ForceRebuild = mode == "build"
+					cachedLookupSeen := false
+					conf.ModuleHook = func(pkg build.Package) {
+						if strings.HasSuffix(pkg.PkgPath, "/reflect_callback_cached/hooks") {
+							cachedLookupSeen = true
+							if pkg.CacheHit != (mode == "cached") {
+								t.Errorf("lookup package cache hit = %v in %s build", pkg.CacheHit, mode)
+							}
+						}
 					}
-				}
-			}
-			cltest.BuildAndCheckSymbolsFromDir(t, "", "./_testdrop", names,
-				cltest.WithRunConfig(conf), cltest.WithOutputCheck(true))
-			if !cachedLookupSeen {
-				t.Fatal("cached lookup fixture was not built")
+					cltest.BuildAndCheckSymbolsFromDir(t, "", "./_testdrop", names,
+						cltest.WithRunConfig(conf), cltest.WithOutputCheck(true))
+					if !cachedLookupSeen {
+						t.Fatal("cached lookup fixture was not built")
+					}
+				})
 			}
 		})
 	}

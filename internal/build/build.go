@@ -2461,6 +2461,7 @@ func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
 }
 
 type mainLinkPlan struct {
+	deadcodeThinDir      string
 	runtimeSites         bool
 	outputPath           string
 	linkInputs           []string
@@ -2639,6 +2640,13 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if preparation == nil {
 		return nil, errors.New("missing main link preparation")
 	}
+	var deadcodeThinDir string
+	keepThinInputs := false
+	defer func() {
+		if !keepThinInputs && deadcodeThinDir != "" {
+			_ = os.RemoveAll(deadcodeThinDir)
+		}
+	}()
 	ctx.pclnExternal = nil
 	ctx.pclnEmbedded = nil
 	ctx.stripDarwinLTOLocals = false
@@ -2651,12 +2659,20 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
 		trimMethods := canPruneWasmTypeMetadata(ctx)
-		names, err := refineDeadcodeReflectNames(ctx, preparation.linkedOrder, verbose)
+		reflectNames, err := refineDeadcodeReflectNames(ctx, preparation.linkedOrder, verbose)
 		if err != nil {
 			return nil, err
 		}
-		if err := applyDeadcodeDropOverridesWithReflectNames(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, names); err != nil {
+		analysis, err := analyzeDeadcodeDropWithReflectNames(preparation.linkedOrder, preparation.gen.rtInit, reflectNames)
+		if err != nil {
 			return nil, err
+		}
+		emitDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, analysis, trimMethods, verbose)
+		if useDeadcodeThinArchives(ctx) {
+			preparation.archiveInputs, deadcodeThinDir, err = rewriteDeadcodeThinArchives(ctx, preparation.archiveInputs, analysis.LiveSlots, verbose)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	var entryIR string
@@ -2682,7 +2698,9 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
 	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
 
+	keepThinInputs = true
 	return &mainLinkPlan{
+		deadcodeThinDir:      deadcodeThinDir,
 		runtimeSites:         shouldEmitRuntimeSites(ctx),
 		outputPath:           outputPath,
 		linkInputs:           linkInputs,
@@ -2699,6 +2717,9 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 	if plan == nil {
 		return errors.New("missing main link plan")
+	}
+	if plan.deadcodeThinDir != "" {
+		defer os.RemoveAll(plan.deadcodeThinDir)
 	}
 	driverOut := emscriptenDriverOutput(ctx.buildConf, plan.outputPath)
 	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, driverOut)
@@ -2757,21 +2778,33 @@ func linkedPackageMetas(pkgs []Package) ([]*meta.PackageMeta, error) {
 }
 
 func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool) error {
-	return applyDeadcodeDropOverridesWithReflectNames(pkgs, entryPkg, needRuntime, trimMethods, verbose, nil)
-}
-
-func applyDeadcodeDropOverridesWithReflectNames(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool, names map[string][]string) error {
-	metas, err := linkedPackageMetas(pkgs)
+	analysis, err := analyzeDeadcodeDrop(pkgs, needRuntime)
 	if err != nil {
 		return err
+	}
+	emitDeadcodeDropOverrides(pkgs, entryPkg, analysis, trimMethods, verbose)
+	return nil
+}
+
+func analyzeDeadcodeDrop(pkgs []Package, needRuntime bool) (deadcode.Analysis, error) {
+	return analyzeDeadcodeDropWithReflectNames(pkgs, needRuntime, nil)
+}
+
+func analyzeDeadcodeDropWithReflectNames(pkgs []Package, needRuntime bool, names map[string][]string) (deadcode.Analysis, error) {
+	metas, err := linkedPackageMetas(pkgs)
+	if err != nil {
+		return deadcode.Analysis{}, err
 	}
 	summary, err := meta.NewGlobalSummaryWithReflectNames(metas, names)
 	if err != nil {
-		return err
+		return deadcode.Analysis{}, err
 	}
 
 	roots := dceEntryRootCandidates(pkgs, needRuntime)
-	analysis := deadcode.AnalyzeProgram(summary, roots)
+	return deadcode.AnalyzeProgram(summary, roots), nil
+}
+
+func emitDeadcodeDropOverrides(pkgs []Package, entryPkg Package, analysis deadcode.Analysis, trimMethods, verbose bool) {
 	var dropMetadata func(string) bool
 	var rejectInterfaceType func(string) bool
 	if trimMethods {
@@ -2784,7 +2817,6 @@ func applyDeadcodeDropOverridesWithReflectNames(pkgs []Package, entryPkg Package
 	if trimMethods {
 		dcepass.EmitRegularTypeFieldOverrides(entryPkg.LPkg.Module(), mods, analysis.CanDropTypeFields)
 	}
-	return nil
 }
 
 func dceSourceModules(pkgs []Package) []gllvm.Module {
@@ -3887,7 +3919,10 @@ func emitObjectToMemoryBuffer(ctx *context, pkg llssa.Package) (gllvm.MemoryBuff
 		buf = gllvm.WriteFullLTOBitcodeToMemoryBuffer(pkg.Module(), ctx.buildConf.Goos != "darwin")
 		kind = "in-memory LLVM full LTO bitcode emission"
 	case lto.Thin:
-		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(pkg.Module())
+		buf, err = emitThinLTOBitcode(pkg.Module(), ctx.prog.TargetMachine())
+		if err != nil {
+			return gllvm.MemoryBuffer{}, "", err
+		}
 		kind = "in-memory LLVM ThinLTO bitcode emission"
 	default:
 		buf, err = ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
@@ -3896,6 +3931,19 @@ func emitObjectToMemoryBuffer(ctx *context, pkg llssa.Package) (gllvm.MemoryBuff
 		}
 	}
 	return buf, kind, nil
+}
+
+func emitThinLTOBitcode(mod gllvm.Module, machine gllvm.TargetMachine) (gllvm.MemoryBuffer, error) {
+	// Late entry-module generation (including dead-code overrides and PCLN
+	// relinking) can add anonymous private globals after the pre-link pipeline.
+	// ThinLTO needs named globals to give promotable definitions summary GUIDs.
+	options := gllvm.NewPassBuilderOptions()
+	err := mod.RunPasses("name-anon-globals", machine, options)
+	options.Dispose()
+	if err != nil {
+		return gllvm.MemoryBuffer{}, fmt.Errorf("name ThinLTO globals: %w", err)
+	}
+	return gllvm.WriteThinLTOBitcodeToMemoryBuffer(mod), nil
 }
 
 func writeObjectBufferToFile(ctx *context, pkgPath, exportFile string, buf gllvm.MemoryBuffer, kind string) (string, error) {
