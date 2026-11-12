@@ -1240,8 +1240,8 @@ func TestExtractZipRejectsEscapingPaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		names = append(names, `..\outside.txt`, `C:\outside.txt`, `C:outside.txt`, `\\server\share\outside.txt`)
 	}
-	for i, name := range names {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
 			var data bytes.Buffer
 			writer := zip.NewWriter(&data)
 			entry, err := writer.Create(name)
