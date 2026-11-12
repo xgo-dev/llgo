@@ -34,9 +34,10 @@ llgo build -O3 -lto=full -o defer ./benchmark/escape/defer
 
 `boxing` reports bytes for 100,000 calls; `borrow` reports seven timed samples
 of 100,000 calls; `defer` uses testing.Benchmark with a 500 ms target. Warm-up
-calls precede allocation snapshots. The reported `reportedMallocsPerOp` field in `defer`
-is informational only: #2923 affects this counter on native BDWGC. Use
-`TotalAlloc`/allocated bytes for allocation comparisons.
+calls precede allocation snapshots. Native BDWGC `MemStats.Mallocs` now reuses the
+allocator's recorded event counts. Historical `reportedMallocsPerOp` values
+from before the #2923 fix are informational only. Report event counts and
+`TotalAlloc` bytes separately; allocator size classes differ.
 
 Timings are isolated kernels, not a VM/application throughput claim. Compare
 both affected and control cases, native binary size, and compiler time/memory.

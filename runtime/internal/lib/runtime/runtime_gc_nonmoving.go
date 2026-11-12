@@ -17,6 +17,7 @@ func ReadMemStats(m *runtime.MemStats) {
 	m.Sys = stats.Sys
 	m.Mallocs = stats.Mallocs
 	m.Frees = stats.Frees
+	m.HeapObjects = stats.Mallocs - stats.Frees
 	m.HeapAlloc = stats.HeapAlloc
 	m.HeapSys = stats.HeapSys
 	m.HeapIdle = stats.HeapIdle
