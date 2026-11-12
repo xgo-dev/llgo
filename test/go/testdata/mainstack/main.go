@@ -33,7 +33,9 @@ func walk(previous *node, depth uint64) uint64 {
 
 func main() {
 	const depth = 4096
-	const want = 65*depth*(depth+1)/2 + depth*63*64/2
+	const valueCount = uint64(len(node{}.values))
+	// Each frame at depth d contributes (valueCount+1)*d + sum(0..valueCount-1).
+	const want = (valueCount+1)*depth*(depth+1)/2 + depth*valueCount*(valueCount-1)/2
 	if got := walk(nil, depth); got != want {
 		panic("stack chain or heap payload lost across GC")
 	}

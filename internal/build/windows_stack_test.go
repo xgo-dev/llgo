@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
@@ -21,6 +22,7 @@ func TestWindowsAMD64StackReserveScope(t *testing.T) {
 	}{
 		{"windows", "amd64", BuildModeExe, crosscompile.PlatformABIMsvc, "-Wl,/stack:8388608"},
 		{"windows", "amd64", BuildModeExe, crosscompile.PlatformABIGNU, "-Wl,--stack,8388608"},
+		{"windows", "amd64", BuildModeExe, crosscompile.PlatformABIUnknown, ""},
 		{"windows", "386", BuildModeExe, crosscompile.PlatformABIMsvc, ""},
 		{"windows", "arm64", BuildModeExe, crosscompile.PlatformABIMsvc, ""},
 		{"windows", "amd64", BuildModeCShared, crosscompile.PlatformABIMsvc, ""},
@@ -53,7 +55,8 @@ func TestWindowsAMD64StackReservePEHeader(t *testing.T) {
 		{"mingw", "x86_64-w64-windows-gnu", "-Wl,-e,entry,--subsystem,console", "-Wl,--stack,2097152", crosscompile.PlatformABIGNU},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, override := range []bool{false, true} {
+			var defaultCommit uint64
+			for _, variant := range []string{"baseline", "default", "override"} {
 				dir := t.TempDir()
 				source, binary := filepath.Join(dir, "entry.c"), filepath.Join(dir, "entry.exe")
 				if err := os.WriteFile(source, []byte("int entry(void) { return 0; }\n"), 0600); err != nil {
@@ -61,11 +64,13 @@ func TestWindowsAMD64StackReservePEHeader(t *testing.T) {
 				}
 				export := crosscompile.Export{Toolchain: crosscompile.NativeToolchain{ABI: tc.abi, ObjectFormat: crosscompile.ObjectFormatCOFF}, LDFLAGS: []string{tc.entry}}
 				want := uint64(windowsAMD64StackReserve)
-				if override {
+				if variant == "override" {
 					export.LDFLAGS = append(export.LDFLAGS, tc.override)
 					want = 2 << 20
 				}
-				applyWindowsAMD64StackReserve(&Config{Goos: "windows", Goarch: "amd64", BuildMode: BuildModeExe}, &export)
+				if variant != "baseline" {
+					applyWindowsAMD64StackReserve(&Config{Goos: "windows", Goarch: "amd64", BuildMode: BuildModeExe}, &export)
+				}
 				args := []string{"--target=" + tc.triple, "-fuse-ld=lld", "-nostdlib", source, "-o", binary}
 				if out, err := exec.Command(clang, append(args, export.LDFLAGS...)...).CombinedOutput(); err != nil {
 					t.Fatalf("link PE: %v\n%s", err, out)
@@ -81,17 +86,21 @@ func TestWindowsAMD64StackReservePEHeader(t *testing.T) {
 				}
 				reserve, commit := header.SizeOfStackReserve, header.SizeOfStackCommit
 				file.Close()
-				if reserve != want || commit != 4096 {
-					t.Fatalf("override=%v: stack reserve/commit=%d/%d, want %d/4096", override, reserve, commit, want)
+				if variant == "baseline" {
+					defaultCommit = commit
+					continue
+				}
+				if reserve != want || commit != defaultCommit {
+					t.Fatalf("%s: stack reserve/commit=%d/%d, want %d/%d", variant, reserve, commit, want, defaultCommit)
 				}
 			}
 		})
 	}
 }
 
-func TestWindowsAMD64MainStack(t *testing.T) {
-	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
-		t.Skip("Windows amd64 main-thread regression")
+func TestMainThreadStack(t *testing.T) {
+	if runtime.GOOS == "windows" && runtime.GOARCH != "amd64" {
+		t.Skip("the Windows stack-reserve change is limited to amd64")
 	}
 	if testing.Short() {
 		t.Skip("builds and runs the standalone stack/GC regression")
@@ -102,11 +111,11 @@ func TestWindowsAMD64MainStack(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	conf := NewDefaultConf(ModeBuild)
-	conf.OutFile = filepath.Join(t.TempDir(), "mainstack.exe")
+	conf.OutFile = filepath.Join(t.TempDir(), "mainstack"+defaultAppExt(conf))
 	if _, err := Do([]string{"../../test/go/testdata/mainstack"}, conf); err != nil {
 		t.Fatal(err)
 	}
-	if got := runBinary(t, conf.OutFile); got != "main-stack-ok" {
+	if got := strings.ReplaceAll(runBinary(t, conf.OutFile), "\r\n", "\n"); got != "main-stack-ok\n" {
 		t.Fatalf("stack/GC regression: %q", got)
 	}
 }
