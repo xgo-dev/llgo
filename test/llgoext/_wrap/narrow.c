@@ -1,4 +1,11 @@
 #include <stdarg.h>
+#include <stdint.h>
+
+uintptr_t llgo_call_uintptr_callback(uintptr_t (*callback)(uintptr_t), uintptr_t n) {
+    return callback(n);
+}
+
+uintptr_t llgo_native_uintptr_max(void) { return UINTPTR_MAX; }
 
 __attribute__((noinline)) int narrow_promote_s8(signed char x) { return x; }
 typedef int (*narrow_promote_s8_function)(signed char);

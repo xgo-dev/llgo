@@ -1096,6 +1096,18 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		return b.stdcallCallback(t.raw.Type, x)
 	}
 	if t.kind == vkFuncPtr && x.kind == vkClosure {
+		sig := t.raw.Type.Underlying().(*types.Signature)
+		goSig := x.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
+		if b.Prog.toLLVMFunc(goSig) != b.Prog.FuncDecl(sig, CDecl).ll {
+			code, data := b.Field(x, 0), b.Field(x, 1)
+			if code.impl.IsNull() && data.impl.IsNull() {
+				return Expr{llvm.ConstNull(t.ll), t}
+			}
+			if code.impl.IsAFunction().IsNil() || !data.impl.IsNull() {
+				panic("C callback with a different ABI must be a direct function reference")
+			}
+			return b.nativeCallback(t, Expr{code.impl, b.Prog.FuncDecl(goSig, GoDecl)}, CDecl, "c_callback")
+		}
 		if direct := x.impl.IsAFunction(); !direct.IsNil() {
 			return Expr{direct, t}
 		}
@@ -1106,6 +1118,13 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 			"C callback must not capture variables",
 		)
 		return Expr{code.impl, t}
+	}
+	if t.kind == vkFuncPtr && x.kind == vkFuncDecl &&
+		(b.Prog.isNativeStorage(t) || b.Prog.hasLegacyNativeTypeLayout(t.raw.Type)) {
+		sig := t.raw.Type.Underlying().(*types.Signature)
+		if b.Prog.FuncDecl(sig, CDecl).ll != x.ll {
+			return b.nativeCallback(t, x, CDecl, "c_callback")
+		}
 	}
 	if t.kind == vkClosure {
 		switch x.kind {

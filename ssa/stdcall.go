@@ -138,32 +138,7 @@ func (b Builder) stdcallCallback(typ types.Type, fn Expr) Expr {
 		return Expr{fn.impl, dst}
 	}
 
-	sig := types.Unalias(typ).Underlying().(*types.Signature)
-	name := b.Pkg.Path() + ".__llgo_stdcall$" + direct.Name() + "$" + b.Prog.abi.FuncName(sig)
-	wrapper := b.Pkg.FuncOf(name)
-	if wrapper == nil {
-		wrapper = b.Pkg.NewFunc(name, sig, Stdcall)
-		wrapper.impl.SetLinkage(llvm.InternalLinkage)
-		body := wrapper.MakeBody(1)
-		args := make([]Expr, sig.Params().Len())
-		for i := range args {
-			args[i] = wrapper.Param(i)
-		}
-		result := body.Call(fn, args...)
-		switch n := sig.Results().Len(); n {
-		case 0:
-			body.Return()
-		case 1:
-			body.Return(result)
-		default:
-			results := make([]Expr, n)
-			for i := range results {
-				results[i] = body.Extract(result, i)
-			}
-			body.Return(results...)
-		}
-	}
-	return Expr{wrapper.impl, dst}
+	return b.nativeCallback(dst, fn, Stdcall, "stdcall")
 }
 
 // needsStdcallFuncval reports whether fn needs an ABI adapter before it can be
