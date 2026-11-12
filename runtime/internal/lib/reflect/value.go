@@ -2325,6 +2325,10 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 }
 
 func toFFIType(typ *abi.Type) *ffi.Type {
+	return toFFITypeForCall(typ, false)
+}
+
+func toFFITypeForCall(typ *abi.Type, native bool) *ffi.Type {
 	// Vector storage (including zero-length arrays and enclosing aggregates)
 	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
 	// descriptions cannot represent its vector calling convention. Check before
@@ -2333,6 +2337,9 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		panic("reflect: libffi calls with vector storage are not supported")
 	}
 	kind := typ.Kind()
+	if native && kind == abi.Uintptr && ffiNativeUintptrSize == 4 {
+		return ffi.TypeUint32
+	}
 	switch kind {
 	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
 		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
@@ -2340,7 +2347,7 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		return ffi.Typ[kind]
 	case abi.Array:
 		st := typ.ArrayType()
-		return ffi.ArrayOf(toFFIType(st.Elem), int(st.Len))
+		return ffi.ArrayOf(toFFITypeForCall(st.Elem, native), int(st.Len))
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
@@ -2406,24 +2413,24 @@ func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintp
 	return fields, off
 }
 
-func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
+func toFFISig(tin, tout []*abi.Type, native bool) (*ffi.Signature, error) {
 	args := make([]*ffi.Type, len(tin))
 	for i, in := range tin {
-		args[i] = toFFIType(in)
+		args[i] = toFFITypeForCall(in, native)
 	}
-	return ffi.NewSignature(toFFIRetType(tout), args...)
+	return ffi.NewSignature(toFFIRetType(tout, native), args...)
 }
 
-func toFFIRetType(tout []*abi.Type) *ffi.Type {
+func toFFIRetType(tout []*abi.Type, native bool) *ffi.Type {
 	switch n := len(tout); n {
 	case 0:
 		return ffi.TypeVoid
 	case 1:
-		return toFFIType(tout[0])
+		return toFFITypeForCall(tout[0], native)
 	default:
 		fields := make([]*ffi.Type, n)
 		for i, out := range tout {
-			fields[i] = toFFIType(out)
+			fields[i] = toFFITypeForCall(out, native)
 		}
 		return ffi.StructOf(fields...)
 	}
@@ -2541,6 +2548,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		return callWasmBridge(ft, fn, env, v.flag&flagMethod != 0, args, in)
 	}
 
+	native := !ft.IsClosure() && v.flag&flagMethod == 0
 	ffiArgs := make([]*ffi.Type, 0, len(tin)+4)
 	for i := 0; i < ioff; i++ {
 		ffiArgs = append(ffiArgs, toFFIType(tin[i]))
@@ -2553,11 +2561,17 @@ func (v Value) call(op string, in []Value) (out []Value) {
 			args = append(args, unsafe.Pointer(&h.Data), unsafe.Pointer(&h.Len), unsafe.Pointer(&h.Cap))
 			continue
 		}
-		ffiArgs = append(ffiArgs, toFFIType(typ))
-		args = append(args, toFFIArg(arg, typ))
+		ffiArgs = append(ffiArgs, toFFITypeForCall(typ, native))
+		ptr := toFFIArg(arg, typ)
+		if native && nativeFFIStorageDiffers(typ) {
+			storage := runtime.AllocZAligned(nativeFFIStorageSize(typ), ffiNativeUintptrSize)
+			copyNativeFFIValue(storage, ptr, typ, true)
+			ptr = storage
+		}
+		args = append(args, ptr)
 	}
 
-	sig, err := ffi.NewSignature(toFFIRetType(ft.Out), ffiArgs...)
+	sig, err := ffi.NewSignature(toFFIRetType(ft.Out, native), ffiArgs...)
 	if err != nil {
 		panic(err)
 	}
@@ -2572,21 +2586,25 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	switch n := len(tout); n {
 	case 0:
 	case 1:
-		return []Value{valueFromFFIResult(ret, tout[0], sig.ReturnType())}
+		return []Value{valueFromFFIResult(ret, tout[0], sig.ReturnType(), native)}
 	default:
 		out = make([]Value, n)
 		var off uintptr
 		for i, tout := range tout {
 			field, fieldOffset, next := ffiResultField(sig.ReturnType(), i, off)
-			out[i] = valueFromFFIResult(add(ret, fieldOffset, ""), tout, field)
+			out[i] = valueFromFFIResult(add(ret, fieldOffset, ""), tout, field, native)
 			off = next
 		}
 	}
 	return
 }
 
-func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Value {
-	if ffiType.ByteSize() != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
+func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type, native bool) Value {
+	if native && nativeFFIStorageDiffers(typ) {
+		storage := unsafe_New(typ)
+		copyNativeFFIValue(storage, ptr, typ, false)
+		ptr = storage
+	} else if ffiType.ByteSize() != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
 		storage := runtime.AllocZAligned(typ.Size_, uintptr(typ.Align_))
 		size := ffiType.ByteSize()
 		if typ.Size_ < size {

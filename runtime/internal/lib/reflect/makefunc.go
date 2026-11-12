@@ -89,7 +89,11 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 	c.Memmove(ret, toFFIArg(v, typ), typ.Size_)
 }
 
-func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type) {
+func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type, native bool) {
+	if native && nativeFFIStorageDiffers(typ) {
+		copyNativeFFIValue(ret, toFFIArg(v, typ), typ, true)
+		return
+	}
 	size := typ.Size_
 	if ffiType.ByteSize() < size {
 		size = ffiType.ByteSize()

@@ -37,6 +37,7 @@ const (
 	wasmFinalizerI64
 	wasmFinalizerF32
 	wasmFinalizerF64
+	wasmFinalizerPointer
 	wasmFinalizerSRet
 )
 
@@ -210,11 +211,10 @@ func classifyWasmFinalizerResult(results []*abi.Type) (wasmFinalizerResult, uint
 		return wasmFinalizerF32, 0
 	case abi.Float64:
 		return wasmFinalizerF64, 0
-	case abi.Chan, abi.Map, abi.Pointer, abi.UnsafePointer:
-		if t.Size_ <= 4 {
-			return wasmFinalizerI32, 0
-		}
-		return wasmFinalizerI64, 0
+	case abi.Chan, abi.Map, abi.Pointer, abi.UnsafePointer, abi.Func:
+		// These expressions return a physical LLVM pointer. Their Go storage
+		// remains eight bytes on Memory32, so Size_ cannot select i32/i64.
+		return wasmFinalizerPointer, 0
 	default:
 		return wasmFinalizerSRet, t.Size_
 	}
@@ -258,6 +258,8 @@ func callWasmPointerFinalizer(fn unsafe.Pointer, ptr unsafe.Pointer, result wasm
 		_ = (*(*func(unsafe.Pointer) float32)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerF64:
 		_ = (*(*func(unsafe.Pointer) float64)(unsafe.Pointer(&fn)))(ptr)
+	case wasmFinalizerPointer:
+		_ = (*(*func(unsafe.Pointer) unsafe.Pointer)(unsafe.Pointer(&fn)))(ptr)
 	case wasmFinalizerSRet:
 		ret := llruntime.AllocU(size)
 		closure := (*wasmFinalizerClosure)(fn)
@@ -277,6 +279,8 @@ func callWasmInterfaceFinalizer(fn unsafe.Pointer, arg wasmFinalizerInterfaceArg
 		_ = (*(*func(wasmFinalizerInterfaceArg) float32)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerF64:
 		_ = (*(*func(wasmFinalizerInterfaceArg) float64)(unsafe.Pointer(&fn)))(arg)
+	case wasmFinalizerPointer:
+		_ = (*(*func(wasmFinalizerInterfaceArg) unsafe.Pointer)(unsafe.Pointer(&fn)))(arg)
 	case wasmFinalizerSRet:
 		ret := llruntime.AllocU(size)
 		closure := (*wasmFinalizerClosure)(fn)

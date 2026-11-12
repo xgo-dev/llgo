@@ -115,17 +115,18 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 		"go.mod": "module example.com/escape\n\ngo 1.24\n",
 		"dep/dep.go": `package dep
 type Payload [16]uint64
+type Callback struct { Fn func() uint64; Tag uint64 }
 //go:noinline
 func Read(p *Payload) uint64 { return p[0] + p[15] }
 //go:noinline
-func Call(v any) uint64 { return v.(func() uint64)() }
+func Call(v any) uint64 { return v.(Callback).Fn() }
 `,
 		"main.go": `package main
 import ("runtime"; "example.com/escape/dep")
 //go:noinline
 func borrow(p dep.Payload) uint64 {return dep.Read(&p)}
 //go:noinline
-func box(f func()uint64)uint64{return dep.Call(f)}
+func box(f func()uint64)uint64{return dep.Call(dep.Callback{Fn:f})}
 func main() {
  var p dep.Payload; p[0]=3;p[15]=7
  f:=func()uint64{return 11}

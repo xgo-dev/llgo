@@ -33,3 +33,26 @@ func TestReflectNativeMakeFuncInterface(t *testing.T) {
 		t.Fatalf("native MakeFunc.Interface call = %d, want 42", got)
 	}
 }
+
+//llgo:cdecl
+type reflectNativeMakeFuncArray func([2]uintptr) ([2]uintptr, uintptr)
+
+func TestReflectNativeMakeFuncArray(t *testing.T) {
+	input := [2]uintptr{1<<31 + 3, 41}
+	want := [2]uintptr{1<<31 + 4, 42}
+	value := reflect.MakeFunc(reflect.TypeOf(reflectNativeMakeFuncArray(nil)), func(args []reflect.Value) []reflect.Value {
+		got := args[0].Interface().([2]uintptr)
+		if got != input {
+			t.Fatalf("native array argument = %v, want %v", got, input)
+		}
+		return []reflect.Value{reflect.ValueOf(want), reflect.ValueOf(want[0])}
+	})
+	fn := value.Interface().(reflectNativeMakeFuncArray)
+	if array, word := fn(input); array != want || word != want[0] {
+		t.Fatalf("native array results = (%v, %d), want (%v, %d)", array, word, want, want[0])
+	}
+	out := value.Call([]reflect.Value{reflect.ValueOf(input)})
+	if array, word := out[0].Interface().([2]uintptr), out[1].Uint(); array != want || word != uint64(want[0]) {
+		t.Fatalf("reflected native array results = (%v, %d), want (%v, %d)", array, word, want, want[0])
+	}
+}
