@@ -90,12 +90,12 @@ func (p Function) initializeStackRoots(b Builder, roots []Expr) {
 }
 
 // Offsets use backend storage layouts, including native C fields, logical
-// 64-bit Go words in Wasm32, interface data and closure environment words.
+// 64-bit Go words in Wasm32, interface data and Go funcval descriptor pointers.
 func (p Function) stackRootOffsets(typ Type, offset uint64, emit func(uint64)) {
 	switch typ.kind {
-	case vkPtr, vkMap, vkChan, vkString, vkSlice:
+	case vkPtr, vkMap, vkChan, vkString, vkSlice, vkClosure:
 		emit(offset)
-	case vkEface, vkIface, vkClosure:
+	case vkEface, vkIface:
 		emit(offset + p.Prog.td.ElementOffset(p.Prog.storageType(typ), 1))
 	case vkStruct, vkTuple:
 		count := 0

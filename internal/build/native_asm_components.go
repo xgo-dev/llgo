@@ -41,6 +41,9 @@ func captureSelectedPlan9Asm(ctx *context, pkg *packages.Package, files []string
 		if err != nil {
 			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, path, err)
 		}
+		if darwinStdlibImportTrampolines(ctx, pkg, path, source) {
+			continue
+		}
 		sources = append(sources, plan9AsmSource{path, source})
 	}
 	return sources, nil

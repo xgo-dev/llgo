@@ -708,7 +708,7 @@ func (b Builder) abiUncommonMethods(t types.Type, methods []*types.Selection) ll
 			// Type.Method constructs a method-expression signature at runtime.
 			// Retain that descriptor with the method wrapper only when reflection
 			// can expose it.
-			expression := methodExprSignature(m.Type().(*types.Signature))
+			expression := funcType(prog, methodExprSignature(m.Type().(*types.Signature)))
 			b.abiType(expression)
 			if mb := b.Pkg.metaBuilder; mb != nil {
 				expressionName, _ := prog.abi.TypeName(expression)

@@ -219,6 +219,14 @@ func TestWasmReflectTypeDescriptorsCarryBridges(t *testing.T) {
 	if len(pkg.wasmReflectBridges) < 2 {
 		t.Fatalf("reflection descriptors generated %d bridge shapes, want at least 2", len(pkg.wasmReflectBridges))
 	}
+	// reflect.Type.Method builds a Go function signature including the
+	// receiver. FuncOf must find a descriptor with that same callable role,
+	// rather than a native function-pointer descriptor with identical text.
+	expression := methodExprSignature(named.Method(0).Type().(*types.Signature))
+	expressionName, _ := prog.abi.TypeName(prog.Type(expression, GoDecl).raw.Type)
+	if descriptor := pkg.mod.NamedGlobal(expressionName); descriptor.IsNil() || descriptor.IsDeclaration() {
+		t.Fatalf("missing Go method-expression bridge descriptor %s", expressionName)
+	}
 	metadata, err := pkg.metaBuilder.Build()
 	if err != nil {
 		t.Fatal(err)

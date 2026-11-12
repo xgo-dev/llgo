@@ -376,7 +376,7 @@ class BuildPartsTests(unittest.TestCase):
         for owner in ("run_main_suite", "run_compiler_suites"):
             self.assertIn(owner, core)
         later = [step.get("name") for step in jobs["test"]["steps"]]
-        self.assertIn("Test traceback formatter with coverage", later)
+        self.assertIn("Test runtime ABI and helpers with coverage", later)
         self.assertIn("Test with embedded emulator env", later)
 
 
