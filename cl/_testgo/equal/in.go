@@ -7,20 +7,25 @@ package main
 // CHECK-LABEL: define void @main.assert(i1 %0){{.*}} {
 // CHECK: br i1 %0, label %{{.*}}, label %{{.*}}
 
-// Function values: the generated closure code pointer is non-nil and that
+// Function values: the generated function descriptor pointer is non-nil and that
 // predicate is what reaches assert.
 // CHECK-LABEL: define void @"main.init#1"(){{.*}} {
-// CHECK: %[[CLOSURE:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.init#1$2", ptr undef }, ptr %{{[0-9]+}}, 1
-// CHECK: %[[CODE:[0-9]+]] = extractvalue { ptr, ptr } %[[CLOSURE]], 0
-// CHECK: %[[FUNC_NONNULL:[0-9]+]] = icmp ne ptr %[[CODE]], null
+// CHECK: [[EQUAL_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { ptr } }
+// CHECK: [[EQUAL_CAPTURE:%[0-9]+]] = alloca i64
+// CHECK: %[[CLOSURE:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[EQUAL_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[EQUAL_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[EQUAL_ALLOCATION]], i32 0, i32 1
+// CHECK: store ptr [[EQUAL_CAPTURE]], ptr %{{[0-9]+}}
+// CHECK: [[EQUAL_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr %[[CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.init#1$2", ptr [[EQUAL_CODE_SLOT]]
+// CHECK: %[[FUNC_NONNULL:[0-9]+]] = icmp ne ptr %[[CLOSURE]], null
 // CHECK: call void @main.assert(i1 %[[FUNC_NONNULL]])
 
 // CHECK-LABEL: define i64 @"main.init#1$1"(i64 %0, i64 %1){{.*}} {
 // CHECK: [[FUNC_SUM:%[0-9]+]] = add i64 %0, %1
 // CHECK-NEXT: ret i64 [[FUNC_SUM]]
 
-// ARM64-LABEL: define void @"main.init#1$2"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.init#1$2"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.init#1$2"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.init#1$2"(ptr nest %0){{.*}} {
 // CHECK: load { ptr }, ptr %0
 
 // Arrays: all three elements participate in equality, and inequality negates

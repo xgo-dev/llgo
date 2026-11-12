@@ -104,6 +104,9 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 	m.env.LlvmTriple = c.crossCompile.LLVMTarget
 	m.env.LlgoVersion = env.Version()
 	m.env.LlgoCompilerHash = c.buildConf.CompilerHash
+	// Library callers may omit CompilerHash. They must still reject archives
+	// compiled with the old two-word Go function-value representation.
+	m.env.GoFuncvalABI = "descriptor-v1"
 	m.env.GoVersion = c.sourceGoVersion()
 	m.env.LlvmVersion = c.getLLVMVersion()
 
@@ -298,6 +301,13 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 			return fmt.Errorf("digest other files: %w", err)
 		}
 		m.pkg.OtherFiles = otherList
+	}
+	if c.mode != ModeGen {
+		asmInputs, err := digestPackagePlan9Asm(c, pkg, sfiles)
+		if err != nil {
+			return fmt.Errorf("digest Plan 9 assembly: %w", err)
+		}
+		m.pkg.Plan9AsmFiles = asmInputs
 	}
 
 	// ModeGen returns the in-memory Go LLVM module before C/C++/assembly

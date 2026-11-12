@@ -14,25 +14,23 @@ type Tree TreeG[int]
 
 type Iterator IteratorG[int]
 
-// CHECK-LABEL: define void @"main.(*Tree).Ascend"(ptr %0, %main.Iterator %1){{.*}} {
-// CHECK: [[TREE_CODE:%[0-9]+]] = extractvalue %main.Iterator %1, 0
-// CHECK-NEXT: [[TREE_GENERIC0:%[0-9]+]] = insertvalue %"main.IteratorG[int]" undef, ptr [[TREE_CODE]], 0
-// CHECK-NEXT: [[TREE_ENV:%[0-9]+]] = extractvalue %main.Iterator %1, 1
-// CHECK-NEXT: [[TREE_GENERIC:%[0-9]+]] = insertvalue %"main.IteratorG[int]" [[TREE_GENERIC0]], ptr [[TREE_ENV]], 1
-// CHECK-NEXT: call void @"main.(*TreeG[int]).Ascend"(ptr %0, %"main.IteratorG[int]" [[TREE_GENERIC]])
+// CHECK-LABEL: define void @"main.(*Tree).Ascend"(ptr %0, ptr %1){{.*}} {
+// The named conversion preserves the descriptor and its captured identity.
+// CHECK-NOT: AllocU
+// CHECK: call void @"main.(*TreeG[int]).Ascend"(ptr %0, ptr %1)
 
 func (t *Tree) Ascend(iterator Iterator) {
 	(*TreeG[int])(t).Ascend((IteratorG[int])(iterator))
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK:   call void @"main.(*Tree).Ascend"(ptr @"__llgo.moduleZeroSizedAlloc$", %main.Iterator %{{[0-9]+}})
+// CHECK:   call void @"main.(*Tree).Ascend"(ptr @"__llgo.moduleZeroSizedAlloc$", ptr %{{[0-9]+}})
 
 func main() {
 	var got int
 	tree := (*Tree)(new(TreeG[int]))
-	// ARM64-LABEL: define i1 @"main.main$1"(ptr swiftself %0, i64 %1){{.*}} {
-	// AMD64-LABEL: define i1 @"main.main$1"(ptr nest %0, i64 %1){{.*}} {
+	// ARM64-LABEL: define hidden i1 @"main.main$1"(ptr swiftself %0, i64 %1){{.*}} {
+	// AMD64-LABEL: define hidden i1 @"main.main$1"(ptr nest %0, i64 %1){{.*}} {
 	// CHECK: [[ITER_VALUE:%[0-9]+]] = add i64 %1, 1
 	// CHECK: [[ITER_ENV:%[0-9]+]] = load { ptr }, ptr %0
 	// CHECK-NEXT: [[ITER_GOT:%[0-9]+]] = extractvalue { ptr } [[ITER_ENV]], 0
@@ -49,8 +47,12 @@ func main() {
 	println("ok")
 }
 
-// CHECK-LABEL: define linkonce void @"main.(*TreeG[int]).Ascend"(ptr %0, %"main.IteratorG[int]" %1){{.*}} {
-// CHECK: [[GENERIC_ENV:%[0-9]+]] = extractvalue %"main.IteratorG[int]" %1, 1
-// CHECK-NEXT: [[GENERIC_CODE:%[0-9]+]] = extractvalue %"main.IteratorG[int]" %1, 0
+// CHECK-LABEL: define linkonce void @"main.(*TreeG[int]).Ascend"(ptr %0, ptr %1){{.*}} {
+// CHECK: [[GENERIC_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %1
+// CHECK-NEXT: [[GENERIC_ENV_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[GENERIC_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[GENERIC_ENV:%[0-9]+]] = load ptr, ptr [[GENERIC_ENV_FIELD]]
+// CHECK: [[GENERIC_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %1
+// CHECK-NEXT: [[GENERIC_CODE_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[GENERIC_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[GENERIC_CODE:%[0-9]+]] = load ptr, ptr [[GENERIC_CODE_FIELD]]
 // ARM64: call i1 %__llgo_funcval_code(ptr swiftself [[GENERIC_ENV]], i64 0)
 // AMD64: call i1 %__llgo_funcval_code(ptr nest [[GENERIC_ENV]], i64 0)

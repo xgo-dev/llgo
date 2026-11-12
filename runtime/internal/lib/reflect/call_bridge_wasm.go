@@ -33,7 +33,7 @@ func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefi
 		if code == nil {
 			panic("reflect: missing WebAssembly call bridge for " + stringFor(&ft.Type))
 		}
-		entry := closure{fn: code}
+		entry := &closure{fn: code}
 		call := *(*func(unsafe.Pointer, unsafe.Pointer, bool, *unsafe.Pointer, *unsafe.Pointer))(unsafe.Pointer(&entry))
 		call(fn, env, method || env != nil, unsafe.SliceData(args), unsafe.SliceData(results))
 	}
@@ -63,6 +63,9 @@ type wasmMakeFuncData struct {
 }
 
 func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+	if !ft.IsClosure() {
+		panic("reflect.MakeFunc: native function requires an FFI provider")
+	}
 	code := ft.Make_
 	if code == nil {
 		// A FuncOf signature with dynamically created parameter types cannot
@@ -77,7 +80,7 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 		},
 	}
 	fv := &closure{fn: code, env: unsafe.Pointer(data)}
-	return Value{closureOf(ft), unsafe.Pointer(fv), flagIndir | flag(Func)}
+	return Value{&ft.Type, unsafe.Pointer(fv), flag(Func)}
 }
 
 func wasmReflectOnly() {

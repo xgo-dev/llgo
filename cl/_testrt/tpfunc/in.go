@@ -13,9 +13,10 @@ type CFunc func(*int)
 //llgo:cdecl
 type Callback[T any] func(*T)
 
-// The Go function value is two words, while both llgo:type C forms are one word.
+// All three values occupy one word; the Go value points to its descriptor,
+// while the native C values store their entry pointers directly.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 16)
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 8)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 8)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 8)
 

@@ -124,13 +124,10 @@ func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 		word := int64(prog.GoWordSize())
 		return sourceLayout{word, word}
 	case *types.Signature:
-		// A layout marker never changes a Go closure into a C callback.
-		if native {
-			// Keep the existing Go storage width, including for address-taking.
-			// Native-width callback slots on wasm32 need a separate representation.
-			word := int64(prog.GoWordSize())
-			return sourceLayout{word, word}
-		}
+		// Both callbacks and packed Go funcvals occupy one Go storage word;
+		// the marker does not convert their distinct callable representations.
+		word := int64(prog.GoWordSize())
+		return sourceLayout{word, word}
 	case *types.Array:
 		return arraySourceLayout(p.hostFieldLayout(u.Elem(), native), u.Len())
 	}
@@ -203,14 +200,13 @@ func (p *goProgram) hostNativeLayout(t types.Type, native bool) sourceLayout {
 	case *types.Slice:
 		return sourceLayout{3 * word, word}
 	case *types.Signature:
-		if native {
-			return sourceLayout{word, word}
-		}
-		return sourceLayout{2 * word, word}
+		return sourceLayout{word, word}
 	case *types.Array:
 		return arraySourceLayout(p.hostNativeLayout(u.Elem(), native), u.Len())
 	case *types.Struct:
-		native = native || IsClosure(u)
+		if IsClosure(u) {
+			return sourceLayout{word, word}
+		}
 		fields := make([]*types.Var, u.NumFields())
 		for i := range fields {
 			fields[i] = u.Field(i)

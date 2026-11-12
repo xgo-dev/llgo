@@ -29,7 +29,6 @@ import (
 
 	"github.com/xgo-dev/llgo/runtime/abi"
 	clite "github.com/xgo-dev/llgo/runtime/internal/clite"
-	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
@@ -311,11 +310,8 @@ func (t *rtype) Method(i int) (m Method) {
 }
 
 func methodFuncValue(ft *abi.Type, fn unsafe.Pointer, fl flag) Value {
-	ct := closureOf((*funcType)(unsafe.Pointer(ft)))
-	c := unsafe_New(ct)
-	*(*unsafe.Pointer)(c) = fn
-	*(*unsafe.Pointer)(add(c, goarch.PtrSize, "closure data field")) = nil
-	return Value{ct, c, fl | flagIndir}
+	c := &closure{fn: fn}
+	return Value{ft, unsafe.Pointer(c), fl}
 }
 
 func (t *rtype) MethodByName(name string) (m Method, ok bool) {
@@ -406,10 +402,6 @@ func toRType(t *abi.Type) *rtype {
 func elem(t *abi.Type) *abi.Type {
 	et := t.Elem()
 	if et != nil {
-		if et.IsClosure() {
-			ft := toFuncType(et.StructType())
-			return &ft.Type
-		}
 		return et
 	}
 	panic("reflect: Elem of invalid type " + stringFor(t))
@@ -508,18 +500,11 @@ func (t *rtype) Out(i int) Type {
 }
 
 func toPublicType(typ *abi.Type) Type {
-	if typ.IsClosure() {
-		typ = &toFuncType((*abi.StructType)(unsafe.Pointer(typ))).Type
-	}
 	return toType(typ)
 }
 
-// physicalType is the in-memory layout of t. Function values occupy LLGo's
-// two-word closure; the public Kind remains Func via toPublicType.
+// Source and reflected function types share the same one-word storage.
 func physicalType(t *abi.Type) *abi.Type {
-	if t != nil && t.Kind() == abi.Func {
-		return closureOf(t.FuncType())
-	}
 	return t
 }
 
@@ -861,11 +846,6 @@ func TypeOf(i any) Type {
 	if eface.typ == nil {
 		return nil
 	}
-	// check closure type
-	if eface.typ.IsClosure() {
-		ft := toFuncType(eface.typ.StructType())
-		return toType(&ft.Type)
-	}
 	// Noescape so this doesn't make i to escape. See the comment
 	// at Value.typ for why this is safe.
 	return toType((*abi.Type)(unsafe.Pointer(eface.typ)))
@@ -873,150 +853,7 @@ func TypeOf(i any) Type {
 
 // TypeFor returns the [Type] that represents the type argument T.
 func TypeFor[T any]() Type {
-	// abi.TypeFor keeps LLGo's closure struct for function types.
-	// Publish the same Func kind TypeOf reports.
 	return toPublicType(abi.TypeFor[T]())
-}
-
-// Use typed maps: LLGo's sync.Map compatibility implementation performs linear
-// searches. Both directions must identify the same canonical descriptor pair.
-var namedFuncTypes struct {
-	sync.Mutex
-	funcs    map[*abi.StructType]*abi.FuncType
-	closures map[*abi.FuncType]*abi.StructType
-}
-
-// publishNamedFunc rechecks both directions after constructing a candidate
-// outside the lock. Losing candidates must never enter either index.
-func publishNamedFunc(ct *abi.StructType, ft *abi.FuncType) (*abi.StructType, *abi.FuncType) {
-	namedFuncTypes.Lock()
-	defer namedFuncTypes.Unlock()
-	if existing := namedFuncTypes.funcs[ct]; existing != nil {
-		return ct, existing
-	}
-	if existing := namedFuncTypes.closures[ft]; existing != nil {
-		return existing, ft
-	}
-	if namedFuncTypes.funcs == nil {
-		namedFuncTypes.funcs = make(map[*abi.StructType]*abi.FuncType)
-		namedFuncTypes.closures = make(map[*abi.FuncType]*abi.StructType)
-	}
-	namedFuncTypes.funcs[ct] = ft
-	namedFuncTypes.closures[ft] = ct
-	return ct, ft
-}
-
-func toFuncType(typ *abi.StructType) *abi.FuncType {
-	if !typ.HasName() {
-		return typ.Fields[0].Typ.FuncType()
-	}
-	namedFuncTypes.Lock()
-	cached := namedFuncTypes.funcs[typ]
-	namedFuncTypes.Unlock()
-	if cached != nil {
-		return cached
-	}
-	size := unsafe.Sizeof(abi.FuncType{})
-	u := typ.Uncommon()
-	if u != nil {
-		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
-	}
-	ftyp := typ.Fields[0].Typ.FuncType()
-	ptr := runtime.AllocU(size)
-	t := (*abi.FuncType)(ptr)
-	t.Size_ = ftyp.Size_
-	t.PtrBytes = ftyp.PtrBytes
-	t.Hash = fnv1(typ.Hash, []byte("-funcType")...)
-	t.TFlag = ftyp.TFlag | abi.TFlagNamed
-	t.Align_ = ftyp.Align_
-	t.FieldAlign_ = ftyp.FieldAlign_
-	t.Kind_ = ftyp.Kind_
-	t.Equal = ftyp.Equal
-	t.GCData = ftyp.GCData
-	t.Str_ = typ.Str_
-	t.In = ftyp.In
-	t.Out = ftyp.Out
-	copyWasmFuncBridge(t, ftyp)
-	if typ.TFlag&abi.TFlagExtraStar != 0 {
-		t.TFlag |= abi.TFlagExtraStar
-	}
-	if u != nil {
-		t.TFlag |= abi.TFlagUncommon
-		tu := t.Uncommon()
-		tu.PkgPath_ = u.PkgPath_
-		tu.Mcount = u.Mcount
-		tu.Xcount = u.Xcount
-		tu.Moff = u.Moff
-		uptr := add(unsafe.Pointer(u), uintptr(u.Moff), "t.mcount > 0")
-		tptr := add(unsafe.Pointer(tu), uintptr(tu.Moff), "t.mcount > 0")
-
-		for i := 0; i < int(u.Mcount); i++ {
-			uelemPtr := add(uptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			telemPtr := add(tptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			*(*abi.Method)(telemPtr) = *(*abi.Method)(uelemPtr)
-		}
-	}
-	_, canonical := publishNamedFunc(typ, t)
-	return canonical
-}
-
-func toClosureType(typ *abi.FuncType) *abi.StructType {
-	size := unsafe.Sizeof(abi.StructType{})
-	u := typ.Uncommon()
-	if u != nil {
-		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
-	}
-	ftyp := typ
-	fnstr := funcStr(ftyp)
-	for _, t := range typelist {
-		if t.Kind() == abi.Func && t.String() == fnstr {
-			ftyp = t.FuncType()
-			break
-		}
-	}
-	ptr := runtime.AllocU(size)
-	t := (*abi.StructType)(ptr)
-	t.Size_ = ftyp.Size_
-	t.PtrBytes = ftyp.PtrBytes
-	t.Hash = fnv1(typ.Hash, []byte("-structType")...)
-	t.TFlag = ftyp.TFlag | abi.TFlagNamed | abi.TFlagClosure
-	t.Align_ = ftyp.Align_
-	t.FieldAlign_ = ftyp.FieldAlign_
-	t.Kind_ = uint8(abi.Struct)
-	t.Equal = ftyp.Equal
-	t.GCData = ftyp.GCData
-	t.Str_ = typ.Str_
-	t.Fields = []abi.StructField{
-		abi.StructField{
-			Name_: "$f",
-			Typ:   &ftyp.Type,
-		}, abi.StructField{
-			Name_:  "$data",
-			Typ:    unsafePointerType,
-			Offset: pointerSize,
-		},
-	}
-	t.PkgPath_ = ""
-	if typ.TFlag&abi.TFlagExtraStar != 0 {
-		t.TFlag |= abi.TFlagExtraStar
-	}
-	if u != nil {
-		t.TFlag |= abi.TFlagUncommon
-		tu := t.Uncommon()
-		tu.PkgPath_ = u.PkgPath_
-		tu.Mcount = u.Mcount
-		tu.Xcount = u.Xcount
-		tu.Moff = u.Moff
-		uptr := add(unsafe.Pointer(u), uintptr(u.Moff), "t.mcount > 0")
-		tptr := add(unsafe.Pointer(tu), uintptr(tu.Moff), "t.mcount > 0")
-
-		for i := 0; i < int(u.Mcount); i++ {
-			uelemPtr := add(uptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			telemPtr := add(tptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			*(*abi.Method)(telemPtr) = *(*abi.Method)(uelemPtr)
-		}
-	}
-	return t
 }
 
 // rtypeOf directly extracts the *rtype of the provided value.
@@ -1061,17 +898,7 @@ func PointerTo(t Type) Type {
 
 func (t *rtype) ptrTo() *abi.Type {
 	at := &t.t
-	// Match the element identity used by the compiler's abi.PublicType.
-	// Named functions keep their closure descriptor, which owns PtrToThis_
-	// and its pointer method set. Unnamed closures use the public signature.
-	// Normalize before either static lookup or caching so Addr, New, and
-	// PointerTo cannot synthesize competing descriptors for the same *T.
-	if at.Kind() == abi.Func && at.HasName() {
-		at = closureOf(at.FuncType())
-	} else if at.IsClosure() && !at.HasName() {
-		at = &toFuncType(at.StructType()).Type
-	}
-	t = toRType(at)
+
 	if at.PtrToThis_ != nil {
 		return at.PtrToThis_
 	}
@@ -1238,9 +1065,12 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		return V.ChanDir() == T.ChanDir() && haveIdenticalType(T.Elem(), V.Elem(), cmpTags)
 
 	case Func:
+		if T.IsClosure() != V.IsClosure() {
+			return false
+		}
 		t := (*funcType)(unsafe.Pointer(T))
 		v := (*funcType)(unsafe.Pointer(V))
-		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
+		if t.Variadic() != v.Variadic() || len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
 			return false
 		}
 		for i := 0; i < len(t.In); i++ {
@@ -1452,12 +1282,8 @@ func FuncOf(in, out []Type, variadic bool) Type {
 		panic("reflect.FuncOf: last arg of variadic func must be slice")
 	}
 
-	// Make a func type.
-	var ifunc any = (func())(nil)
-	// Closures are always struct{fn *funcType, data unsafe.Pointer}
-	// This is guaranteed by closureOf() construction
-	closureType := *(**abi.StructType)(unsafe.Pointer(&ifunc))
-	prototype := closureType.Fields[0].Typ.FuncType()
+	// Function metadata already describes the one-word Go descriptor value.
+	prototype := rtypeOf((func())(nil)).FuncType()
 	ft := &funcType{}
 	*ft = *prototype
 	resetWasmFuncBridge(ft)
@@ -1481,7 +1307,7 @@ func FuncOf(in, out []Type, variadic bool) Type {
 		hash = fnv1(hash, byte(t.t.Hash>>24), byte(t.t.Hash>>16), byte(t.t.Hash>>8), byte(t.t.Hash))
 	}
 
-	ft.TFlag = 0
+	ft.TFlag = abi.TFlagClosure
 	ft.Hash = hash
 	ft.Kind_ = uint8(abi.Func) | abi.KindDirectIface
 	if variadic {
@@ -1575,12 +1401,6 @@ func MapOf(key, elem Type) Type {
 	ktyp := key.common()
 	publicElem := elem.common()
 	etyp := publicElem
-	if etyp.Kind() == abi.Func {
-		// Map bucket operations copy elements using the element descriptor.
-		// Use LLGo's physical two-word closure there; Elem converts it back
-		// to the public function type returned by this API.
-		etyp = closureOf(etyp.FuncType())
-	}
 
 	if ktyp.Equal == nil {
 		panic("reflect.MapOf: invalid key type " + stringFor(ktyp))
@@ -2370,104 +2190,6 @@ const (
 	pointerAlign = uint8(unsafe.Alignof(uintptr(0)))
 )
 
-var closureLookupCache struct {
-	sync.Mutex // Guards stores (but not loads) on m.
-
-	// m is a map[uint32][]*rtype keyed by the hash calculated in FuncOf.
-	// Elements of m are append-only and thus safe for concurrent reading.
-	m sync.Map
-}
-
-// Struct returns a struct type.
-func closureOf(ftyp *abi.FuncType) *abi.Type {
-	if ftyp.HasName() {
-		namedFuncTypes.Lock()
-		cached := namedFuncTypes.closures[ftyp]
-		namedFuncTypes.Unlock()
-		if cached != nil {
-			return &cached.Type
-		}
-		t := toClosureType(ftyp)
-		canonical, _ := publishNamedFunc(t, ftyp)
-		return &canonical.Type
-	}
-
-	fields := []abi.StructField{
-		abi.StructField{
-			Name_: "$f",
-			Typ:   &ftyp.Type,
-		}, abi.StructField{
-			Name_:  "$data",
-			Typ:    unsafePointerType,
-			Offset: pointerSize,
-		},
-	}
-	size := 2 * pointerSize
-
-	repr := make([]byte, 0, 64)
-	hash := fnv1(0, []byte("struct {")...)
-	repr = append(repr, "struct {"...)
-	for i, f := range fields {
-		if i > 0 {
-			repr = append(repr, ';')
-		}
-		ft := f.Typ
-		repr = append(repr, ' ')
-		repr = append(repr, f.Name_...)
-		repr = append(repr, ' ')
-		repr = append(repr, ft.String()...)
-		hash = fnv1(hash, []byte(f.Name_)...)
-		hash = fnv1(hash, byte(ft.Hash>>24), byte(ft.Hash>>16), byte(ft.Hash>>8), byte(ft.Hash))
-	}
-	repr = append(repr, ' ')
-	repr = append(repr, '}')
-	hash = fnv1(hash, '}')
-	str := string(repr)
-
-	st := &abi.StructType{
-		Type: abi.Type{
-			Size_:       size,
-			Kind_:       uint8(abi.Struct),
-			Str_:        str,
-			TFlag:       abi.TFlagClosure,
-			PtrBytes:    2 * pointerSize,
-			Align_:      pointerAlign,
-			FieldAlign_: pointerAlign,
-			Hash:        hash,
-		},
-		PkgPath_: "",
-		Fields:   fields,
-	}
-
-	closureLookupCache.Lock()
-	defer closureLookupCache.Unlock()
-
-	// Look in cache.
-	if ts, ok := closureLookupCache.m.Load(hash); ok {
-		for _, t := range ts.([]*abi.Type) {
-			if haveIdenticalUnderlyingType(&st.Type, t, true) {
-				return t
-			}
-		}
-	}
-
-	addToCache := func(tt *abi.Type) *abi.Type {
-		var rts []*abi.Type
-		if rti, ok := closureLookupCache.m.Load(hash); ok {
-			rts = rti.([]*abi.Type)
-		}
-		closureLookupCache.m.Store(hash, append(rts, tt))
-		return tt
-	}
-
-	for _, tt := range typesByString(str) {
-		if haveIdenticalUnderlyingType(&st.Type, tt, true) {
-			return addToCache(tt)
-		}
-	}
-	return addToCache(&st.Type)
-}
-
 func structStr(fields []abi.StructField) string {
 	repr := make([]byte, 0, 64)
 	repr = append(repr, "struct {"...)
@@ -2602,9 +2324,6 @@ func runtimeStructField(field StructField) (structField, string) {
 
 	//	resolveReflectType(field.Type.common()) // install in runtime
 	typ := field.Type.common()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
 	f := structField{
 		Name_:     field.Name,
 		Typ:       typ,
@@ -2744,17 +2463,6 @@ func findFunc(in, out []*abi.Type, variadic bool) *abi.FuncType {
 		if typ.Kind() == abi.Func {
 			if ft := typ.FuncType(); ft.Variadic() == variadic && eqTypes(ft.In, in) && eqTypes(ft.Out, out) {
 				return ft
-			}
-		}
-	}
-	return nil
-}
-
-func findClosure(fields []abi.StructField) *abi.Type {
-	for _, typ := range typelist {
-		if typ.Kind() == abi.Struct && typ.Size() == pointerSize {
-			if st := typ.StructType(); st.IsClosure() && eqFields(st.Fields, fields) {
-				return typ
 			}
 		}
 	}

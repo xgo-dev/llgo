@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/xgo-dev/llgo/internal/env"
 )
@@ -295,13 +297,20 @@ func fileSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func downloadFile(url, filepath string) error {
-	out, err := os.Create(filepath)
+const toolchainDownloadTimeout = 5 * time.Minute
+
+func downloadFile(url, destination string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), toolchainDownloadTimeout)
+	defer cancel()
+	return downloadFileContext(ctx, http.DefaultClient, url, destination)
+}
+
+func downloadFileContext(ctx context.Context, client *http.Client, url, destination string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	resp, err := http.Get(url)
+	resp, err := client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -309,8 +318,25 @@ func downloadFile(url, filepath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
-	_, err = io.Copy(out, resp.Body)
-	return err
+
+	// Commit only a complete response; a failed download must not destroy a
+	// previous file or publish the partial archive consumed by an installer.
+	out, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".download-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(out.Name())
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return os.Rename(out.Name(), destination)
 }
 
 func extractTarGz(tarGzFile, dest string) error {

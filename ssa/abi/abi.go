@@ -114,6 +114,9 @@ func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, i
 	case *types.Pointer, *types.Signature, *types.Map, *types.Chan:
 		return Pointer, raw, lvl
 	case *types.Struct:
+		if IsClosure(t) {
+			return Pointer, raw, lvl
+		}
 		if t.NumFields() == 1 {
 			return DataKindOf(t.Field(0).Type(), lvl+1, is32Bits)
 		}

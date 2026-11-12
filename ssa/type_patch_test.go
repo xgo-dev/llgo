@@ -169,7 +169,9 @@ type T19 T18
 
 func TestGoProgramSizesUnaliasFunctionFieldStruct(t *testing.T) {
 	prog := NewProgram(nil)
-	sizes := prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	defer prog.Dispose()
+	stock := types.SizesFor("gc", runtime.GOARCH)
+	sizes := prog.TypeSizes(stock)
 
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	fnStruct := types.NewStruct([]*types.Var{
@@ -181,12 +183,16 @@ func TestGoProgramSizesUnaliasFunctionFieldStruct(t *testing.T) {
 		types.NewField(token.NoPos, nil, "B", types.Typ[types.Int], false),
 	}
 
-	want := int64(prog.PointerSize() * 2)
-	if got := sizes.Sizeof(alias); got != want {
-		t.Fatalf("Sizeof(alias to func-field struct) = %d, want %d", got, want)
+	wantSize := stock.Sizeof(alias)
+	if wantSize != stock.Sizeof(sig) {
+		t.Fatal("the independent Go function field oracle is not one word")
 	}
-	if got := sizes.Offsetsof(fields)[1]; got != want {
-		t.Fatalf("Offsetsof(field after alias to func-field struct) = %d, want %d", got, want)
+	if got := sizes.Sizeof(alias); got != wantSize {
+		t.Fatalf("Sizeof(alias to func-field struct) = %d, want stock Go %d", got, wantSize)
+	}
+	wantOffset := stock.Offsetsof(fields)[1]
+	if got := sizes.Offsetsof(fields)[1]; got != wantOffset {
+		t.Fatalf("Offsetsof(field after alias to func-field struct) = %d, want stock Go %d", got, wantOffset)
 	}
 }
 

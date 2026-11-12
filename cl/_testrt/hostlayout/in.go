@@ -25,7 +25,7 @@ func increment(x int32) int32 { return x + 1 }
 func main() {
 	value := int32(40)
 	r := &Record{Native: increment, Go: func(x int32) int32 { return x + value }, Value: &value}
-	if unsafe.Sizeof(*r) != 4*unsafe.Sizeof(uintptr(0)) || unsafe.Offsetof(r.Value) != 3*unsafe.Sizeof(uintptr(0)) {
+	if unsafe.Sizeof(*r) != 3*unsafe.Sizeof(uintptr(0)) || unsafe.Offsetof(r.Value) != 2*unsafe.Sizeof(uintptr(0)) {
 		panic("host record layout")
 	}
 	items := []Record{*r}

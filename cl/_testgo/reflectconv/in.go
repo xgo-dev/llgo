@@ -18,6 +18,7 @@ type namedFunc func(int) int
 //
 // FileCheck follows LLGo's deterministic lexical function order. Each block
 // checks only the conversion bridge and the value consumed from it.
+// CHECK: [[DECLARED_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @main.numericConversions, ptr null }
 // CHECK-LABEL: define void @main.functionConversion(){{.*}} {
 // CHECK: [[FUNC_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(
 // CHECK: [[FUNC_TYPE:%[0-9]+]] = call %{{.*}} @reflect.TypeOf(
@@ -25,14 +26,22 @@ type namedFunc func(int) int
 // CHECK: call %{{.*}} @reflect.Value.Interface(%reflect.Value [[FUNC_RESULT]])
 
 // CHECK-LABEL: define void @main.functionPointers(){{.*}} {
-// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 8)
-// CHECK: [[CAPTURED_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.functionPointers$1", ptr undef }, ptr [[CAPTURED_ENV]], 1
-// CHECK-NEXT: [[CAPTURED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
-// CHECK-NEXT: store { ptr, ptr } [[CAPTURED_PAIR]], ptr [[CAPTURED_BOX]]
-// CHECK-NEXT: [[CAPTURED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[CAPTURED_BOX]], 1
+// CHECK: [[CAPTURED_CELL:%[0-9]+]] = alloca i64
+// CHECK: store i64 1, ptr [[CAPTURED_CELL]]
+// CHECK-NEXT: [[CAPTURED_COPY:%[0-9]+]] = load i64, ptr [[CAPTURED_CELL]]
+// CHECK-NEXT: [[CAPTURED_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[CAPTURED_DESCRIPTOR:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[CAPTURED_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[CAPTURED_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[CAPTURED_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[CAPTURED_CELL_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[CAPTURED_ENV]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[CAPTURED_COPY]], ptr [[CAPTURED_CELL_SLOT]]
+// CHECK-NEXT: [[CAPTURED_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CAPTURED_DESCRIPTOR]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.functionPointers$1", ptr [[CAPTURED_CODE_SLOT]]
+// CHECK-NEXT: [[CAPTURED_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CAPTURED_DESCRIPTOR]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[CAPTURED_ENV]], ptr [[CAPTURED_ENV_SLOT]]
+// CHECK-NEXT: [[CAPTURED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[CAPTURED_DESCRIPTOR]], 1
 // CHECK-NEXT: [[CAPTURED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[CAPTURED_EFACE]])
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[CAPTURED_VALUE]])
-// CHECK: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" { ptr @{{.*}}, ptr @"_llgo_ifacebox${{.*}}" })
+// CHECK: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" { ptr @{{.*}}, ptr [[DECLARED_DESCRIPTOR]] })
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[DECLARED_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {

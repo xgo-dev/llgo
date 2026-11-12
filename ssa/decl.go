@@ -354,6 +354,7 @@ type aFunction struct {
 	params   []Type
 	freeVars Expr
 	env      Type
+	callConv CallConv
 	hasVArg  bool
 
 	fakeUses   []llvm.Value
@@ -464,7 +465,7 @@ func (p Package) newFunc(
 			if cached != nil {
 				return cached
 			}
-			ret := newFunction(fn, t, p, p.Prog, nil)
+			ret := newFunction(fn, t, p, p.Prog, nil, cc)
 			p.fns[name] = ret
 			return ret
 		}
@@ -483,6 +484,11 @@ func (p Package) newFunc(
 	}
 	if envType != nil {
 		p.Prog.markClosureEnvFunction(fn, 0)
+		// Closure entries use compiler-owned context registers. ELF's lazy
+		// PLT resolver may clobber them (notably nest/R10 on amd64), so these
+		// implementation symbols must bind within the linked image. Funcvals
+		// can still carry their addresses across a shared-library boundary.
+		fn.SetVisibility(llvm.HiddenVisibility)
 	}
 	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
 		// Hardware faults and other-thread snapshots can interrupt any
@@ -507,7 +513,7 @@ func (p Package) newFunc(
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, envType)
+	ret := newFunction(fn, t, p, p.Prog, envType, cc)
 	p.fns[name] = ret
 	return ret
 }
@@ -517,7 +523,7 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, cc CallConv) Function {
 	params, hasVArg := newParams(t, prog)
 	return &aFunction{
 		Expr:       Expr{fn, t},
@@ -525,6 +531,7 @@ func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Fun
 		Prog:       prog,
 		params:     params,
 		env:        env,
+		callConv:   cc,
 		hasVArg:    hasVArg,
 		fakeUses:   make([]llvm.Value, 0, 4),
 		fakeUseSet: make(map[llvm.Value]struct{}),
@@ -747,6 +754,16 @@ func (p Function) Inline(inline inlineAttr) {
 func (p Function) DisableTailCalls() {
 	attr := p.Pkg.mod.Context().CreateStringAttribute("disable-tail-calls", "true")
 	p.impl.AddFunctionAttr(attr)
+}
+
+// AlignNativeStack admits the Go assembler's word-aligned incoming stack at a
+// Linux/Darwin amd64 export, then restores LLVM's alignment for its body.
+// It leaves the function's argument, result and calling conventions unchanged.
+func (p Function) AlignNativeStack() {
+	target := p.Pkg.Prog.Target()
+	if target.effectiveGOARCH() == "amd64" && (target.effectiveGOOS() == "linux" || target.effectiveGOOS() == "darwin") {
+		p.impl.AddFunctionAttr(p.Pkg.mod.Context().CreateStringAttribute("stackrealign", ""))
+	}
 }
 
 // SetWasmImport maps an external function declaration to a WebAssembly host

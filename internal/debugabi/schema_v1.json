@@ -107,6 +107,9 @@
         "type_pattern": "^struct\\{\\$f func.*; \\$data unsafe\\.Pointer\\}$",
         "code": "$f",
         "data": "$data",
+        "descriptor_type_pattern": "^struct\\{\\$code func.*; \\$env unsafe\\.Pointer\\}$",
+        "descriptor_code": "$code",
+        "descriptor_data": "$env",
         "closure_symbol_pattern": "\\$[0-9]+(?:\\$[0-9]+)*$",
         "bound_symbol_suffix": "$bound"
       },

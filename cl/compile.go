@@ -746,6 +746,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			fn = pkg.NewFuncEx(name, sig, cc, false, p.needsLinkOnce(f))
 		}
 	}
+	if !p.options.CExportWrappers && (len(f.Blocks) != 0 || simdDecl) {
+		if _, exported := p.pkg.ExportFuncs()[funcName(pkgTypes, f, false)]; exported {
+			fn.AlignNativeStack()
+		}
+	}
 	p.markSIMDFMV(fn, f)
 	if p.prog.Target().GOARCH == "wasm" {
 		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
@@ -879,6 +884,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			dbgGoSSADump(f)
 			dbgInstrln("==> FuncBody", name)
 			b := fn.NewBuilder()
+			defer b.Dispose()
 			if dbgEnabled {
 				pos := p.goProg.Fset.Position(f.Pos())
 				bodyPos := p.getFuncBodyPos(f)
@@ -1263,7 +1269,13 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		} else if p.state != pkgHasPatch {
 			// TODO(xsw): confirm pyMod don't need to call AfterInit
 			p.initAfter = func() {
-				pkg.AfterInit(b, ret)
+				// Symbol discovery finishes after ordinary function builders
+				// have been released. Own a fresh builder for this late insertion;
+				// do not rerun EndBuild's whole-function finalization.
+				after := fn.NewBuilder()
+				defer after.Dispose()
+				after.SetBlock(ret)
+				pkg.AfterInit(after, ret)
 			}
 		}
 	}

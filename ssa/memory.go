@@ -63,6 +63,12 @@ func (b Builder) Aggregate(t Type, flds ...Expr) Expr {
 
 // aggregateValue yields the value of the aggregate X with the fields
 func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
+	if t.kind == vkClosure {
+		if len(flds) != 2 {
+			panic("ssa: function descriptor requires code and environment")
+		}
+		return b.makeFuncval(t, flds[0], flds[1])
+	}
 	if t.kind == vkSIMD {
 		stored := b.aggregateValue(b.Prog.rawType(t.RawType().Underlying()), flds...)
 		return Expr{b.simdFromStorage(stored.impl, t), t}
@@ -544,10 +550,8 @@ func (b Builder) Store(ptr, val Expr) Expr {
 	dbgInstrf("Store %v, %v, %v\n", raw, ptr.impl, val.impl)
 	storageType := b.Prog.Elem(ptr.Type)
 	if storageType.kind == vkFuncPtr && val.kind == vkClosure {
-		// The raw signature alone does not distinguish a C pointer slot from
-		// a Go funcval. Use the actual storage representation so a two-word
-		// Go value cannot overwrite the next native variable. ChangeType also
-		// rejects closure environments that a native callback cannot carry.
+		// Native slots store an entry pointer, not a Go descriptor pointer.
+		// ChangeType extracts the entry and rejects captured environments.
 		val = b.ChangeType(storageType, val)
 	} else {
 		val = checkExpr(val, raw.(*types.Pointer).Elem(), b)

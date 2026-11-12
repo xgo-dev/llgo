@@ -105,6 +105,29 @@ func TestNativeTailTransferBDWGC(t *testing.T) {
 	}
 }
 
+func TestNativeTailTransferPreprocessedFlags(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target, context uintptr)\n")
+	for _, goos := range []string{"darwin", "linux"} {
+		for _, flags := range []string{"4|512", "516", "0x204"} {
+			t.Run(goos+"/"+flags, func(t *testing.T) {
+				source := strings.Replace(nativeTailFixture, "NOSPLIT|NOFRAME", flags, 1)
+				tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "tail_arm64.s", []byte(source), goos, "arm64", TranslateOptions{SourcePreprocessed: true, NativeBDWGC: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tr.Module.Dispose()
+				if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(tr.Module.NamedFunction("example.com/tail.Enter").String(), "@GC_do_blocking") {
+					t.Fatal("preprocessed native entry bypasses the collector transition")
+				}
+				emitNativeTailObject(t, tr.Module)
+			})
+		}
+	}
+}
+
 func TestNativeTailTransferBDWGCArgumentAttributes(t *testing.T) {
 	pkg := mustTestPackage(t, "example.com/tail", "package tail\nfunc Enter(target *byte)\n")
 	source := "TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-8\nMOVD target+0(FP), R27\nJMP (R27)\n"

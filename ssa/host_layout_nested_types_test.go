@@ -97,7 +97,7 @@ const Offset = unsafe.Offsetof(HostOuter{}.Tail)
 				{"ArrayBox", 56, 8, []int64{0, 48}},
 				{"ZeroTail", 8, 8, []int64{0, 8}},
 				{"FuncFirst", 16, 8, []int64{0, 8}},
-				{"Callbacks", 20, 4, []int64{0, 4, 8, 16}},
+				{"Callbacks", 16, 4, []int64{0, 4, 8, 12}},
 				{"Legacy", 8, 4, []int64{0, 4}},
 				{"LegacyAlias", 8, 4, []int64{0, 4}},
 			} {
@@ -127,7 +127,7 @@ const Offset = unsafe.Offsetof(HostOuter{}.Tail)
 			}
 			checkHostLayout(t, prog, sizes, wrap(pkg.Scope().Lookup("LegacyArray").Type()), 8, 4, []int64{0, 0})
 			closure := prog.Closure(NoArgsNoRet)
-			checkHostLayout(t, prog, sizes, wrap(closure.RawType()), 8, 4, []int64{0, 0})
+			checkHostLayout(t, prog, sizes, wrap(closure.RawType()), 4, 4, []int64{0, 0})
 		})
 	}
 }

@@ -5,7 +5,8 @@ type Type interface {
 	String() string
 }
 
-// CHECK: @"main.list$data" = global [1 x { ptr, ptr }] [{ ptr, ptr } { ptr @main.demo, ptr null }]
+// CHECK-DAG: [[DEMO_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @main.demo, ptr null }
+// CHECK-DAG: @"main.list$data" = global [1 x ptr] [ptr [[DEMO_DESCRIPTOR]]]
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
 // CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %0, ptr %{{[0-9]+}})
 // CHECK: [[DEMO_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
@@ -31,26 +32,34 @@ var (
 // CHECK-LABEL: define void @main.init(){{.*}} {
 // CHECK: [[OP_MAP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", i64 1)
 // CHECK: [[OP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAssignFastStr"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[OP_MAP]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
-// CHECK-NEXT: store { ptr, ptr } { ptr @main.demo, ptr null }, ptr [[OP_SLOT]]
+// CHECK-NEXT: store ptr [[DEMO_DESCRIPTOR]], ptr [[OP_SLOT]]
 // CHECK-NEXT: store ptr [[OP_MAP]], ptr @main.op
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[TYP:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK: [[LOADED_MAP:%[0-9]+]] = load ptr, ptr @main.op
 // CHECK: [[MAP_SLOT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MapAccess1FastStr"(ptr @"map[_llgo_string]_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[LOADED_MAP]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
-// CHECK-NEXT: [[MAP_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[MAP_SLOT]]
+// CHECK-NEXT: [[MAP_FN:%[0-9]+]] = load ptr, ptr [[MAP_SLOT]]
 // CHECK-NEXT: [[LOADED_LIST:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr @main.list
 // CHECK-NEXT: [[LIST_DATA:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 0
 // CHECK-NEXT: [[LIST_LEN:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 1
-// CHECK: [[LIST_SLOT:%[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr [[LIST_DATA]], i64 0
-// CHECK-NEXT: [[LIST_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[LIST_SLOT]]
-// CHECK-NEXT: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
-// CHECK: [[MAP_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 1
-// CHECK-NEXT: [[MAP_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 0
+// CHECK: [[LIST_SLOT:%[0-9]+]] = getelementptr inbounds ptr, ptr [[LIST_DATA]], i64 0
+// CHECK-NEXT: [[LIST_FN:%[0-9]+]] = load ptr, ptr [[LIST_SLOT]]
+// CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
+// CHECK: [[MAP_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[MAP_FN]]
+// CHECK-NEXT: [[MAP_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[MAP_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[MAP_ENV:%.*]] = load ptr, ptr [[MAP_ENV_SLOT]]
+// CHECK: [[MAP_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[MAP_FN]]
+// CHECK-NEXT: [[MAP_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[MAP_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[MAP_CODE:%.*]] = load ptr, ptr [[MAP_CODE_SLOT]]
 // ARM64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr swiftself [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
 // AMD64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr nest [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
 // CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
-// CHECK: [[LIST_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 1
-// CHECK-NEXT: [[LIST_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 0
+// CHECK: [[LIST_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[LIST_FN]]
+// CHECK-NEXT: [[LIST_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[LIST_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[LIST_ENV:%.*]] = load ptr, ptr [[LIST_ENV_SLOT]]
+// CHECK: [[LIST_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[LIST_FN]]
+// CHECK-NEXT: [[LIST_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[LIST_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[LIST_CODE:%.*]] = load ptr, ptr [[LIST_CODE_SLOT]]
 // ARM64: [[LIST_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr swiftself [[LIST_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[LIST_ARG:%[0-9]+]])
 // AMD64: [[LIST_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr nest [[LIST_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[LIST_ARG:%[0-9]+]])
 // CHECK-NEXT: [[SAME_RESULT:%[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" [[MAP_RESULT]], %"{{.*}}/runtime/internal/runtime.String" [[LIST_RESULT]])

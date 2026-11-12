@@ -5,7 +5,9 @@ package main
 // Method expressions use signature-specific thunks. In particular, the two
 // M methods below must not become interchangeable closure types.
 
-// CHECK: {{^}}@[[GLOB17:[0-9]+]] = private unnamed_addr constant [47 x i8] c"type assertion should have failed but succeeded", align 1{{$}}
+// CHECK-DAG: [[OUTER_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.(*outer).M$thunk", ptr null }
+// CHECK-DAG: [[INNER_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.(*InnerInt).M$thunk", ptr null }
+// CHECK-DAG: {{^}}@[[GLOB17:[0-9]+]] = private unnamed_addr constant [47 x i8] c"type assertion should have failed but succeeded", align 1{{$}}
 
 type inner struct {
 	x int
@@ -47,8 +49,8 @@ func (m *outer) M() {}
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$[[HASH_CLOSURE0:[A-Za-z0-9_-]+]]", ptr @"_llgo_closure$[[HASH_CLOSURE0]]")
-// CHECK-NEXT:   br i1 %[[TMP0]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M", ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M")
+// CHECK-NEXT:   br i1 %[[TMP5]], label %_llgo_[[BB3:[0-9]+]], label %_llgo_[[BB4:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1:[0-9]+]]:
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.Panic"(%"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
@@ -58,45 +60,43 @@ func (m *outer) M() {}
 // CHECK-NEXT:   ret void
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = load { ptr, ptr }, ptr @"_llgo_ifacebox${{.*}}", align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } %[[TMP2]], i1 true, 1
 // CHECK-NEXT:   br label %_llgo_[[BB5:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB4]]:
 // CHECK-NEXT:   br label %_llgo_[[BB5]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = phi { { ptr, ptr }, i1 } [ %[[TMP3]], %_llgo_[[BB3]] ], [ zeroinitializer, %_llgo_[[BB4]] ]
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue { { ptr, ptr }, i1 } %[[TMP4]], 0
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue { { ptr, ptr }, i1 } %[[TMP4]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP5]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP7]])
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = phi { ptr, i1 } [ { ptr [[OUTER_DESCRIPTOR]], i1 true }, %_llgo_[[BB3]] ], [ zeroinitializer, %_llgo_[[BB4]] ]
+// CHECK-NEXT:   %[[TMP13:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP12]], 0
+// CHECK-NEXT:   %[[TMP14:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP12]], 1
+// CHECK: [[PRINT_15_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %[[TMP13]]
+// CHECK-NEXT: [[PRINT_15_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PRINT_15_SAFE]], i32 0, i32 0
+// CHECK-NEXT: %[[TMP15:[0-9]+]] = load ptr, ptr [[PRINT_15_SLOT]]
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP15]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP6]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP14]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$[[HASH_CLOSURE0]]", ptr @"_llgo_closure${{[A-Za-z0-9_-]+}}")
-// CHECK-NEXT:   br i1 %[[TMP8]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7:[0-9]+]]
+// CHECK-NEXT:   %[[TMP17:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$p06T23YeLPAu3v8p2hFtiY7Rlq6V9sr5dXePfqXtx6M", ptr @"_llgo_closure$WmZDdXg-2mo-o0lqY2QOZoNsd6Ks2TbzdX4upfVJ3j8")
+// CHECK-NEXT:   br i1 %[[TMP17]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB6]]:
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = load { ptr, ptr }, ptr @"_llgo_ifacebox${{.*}}", align 8
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } undef, { ptr, ptr } %[[TMP9]], 0
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = insertvalue { { ptr, ptr }, i1 } %[[TMP10]], i1 true, 1
 // CHECK-NEXT:   br label %_llgo_[[BB8:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB7]]:
 // CHECK-NEXT:   br label %_llgo_[[BB8]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB8]]:
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = phi { { ptr, ptr }, i1 } [ %[[TMP11]], %_llgo_[[BB6]] ], [ zeroinitializer, %_llgo_[[BB7]] ]
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = extractvalue { { ptr, ptr }, i1 } %[[TMP12]], 0
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = extractvalue { { ptr, ptr }, i1 } %[[TMP12]], 1
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP13]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP15]])
+// CHECK-NEXT:   %[[TMP22:[0-9]+]] = phi { ptr, i1 } [ { ptr [[INNER_DESCRIPTOR]], i1 true }, %_llgo_[[BB6]] ], [ zeroinitializer, %_llgo_[[BB7]] ]
+// CHECK-NEXT:   %[[TMP23:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP22]], 0
+// CHECK-NEXT:   %[[TMP24:[0-9]+]] = extractvalue { ptr, i1 } %[[TMP22]], 1
+// CHECK: [[PRINT_25_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %[[TMP23]]
+// CHECK-NEXT: [[PRINT_25_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[PRINT_25_SAFE]], i32 0, i32 0
+// CHECK-NEXT: %[[TMP25:[0-9]+]] = load ptr, ptr [[PRINT_25_SLOT]]
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintPointer"(ptr %[[TMP25]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP14]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintBool"(i1 %[[TMP24]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   br i1 %[[TMP14]], label %_llgo_[[BB1]], label %_llgo_[[BB2]]
+// CHECK-NEXT:   br i1 %[[TMP24]], label %_llgo_[[BB1]], label %_llgo_[[BB2]]
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define void @"main.(*outer).M$thunk"(

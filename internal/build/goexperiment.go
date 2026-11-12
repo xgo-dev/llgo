@@ -19,7 +19,12 @@ type sourceGoConfig struct {
 	GOEXPERIMENT string
 	GOFLAGS      string
 	CGO_ENABLED  string
-	toolTags     []string
+	GOPATH       string
+	GOMODCACHE   string
+	GOCACHE      string
+	// Preserve the actual SDK setting separately from its canonical cache key.
+	originalExperiment string
+	toolTags           []string
 }
 
 func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ...string) (sourceGoConfig, error) {
@@ -27,7 +32,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 		commands.environ = withEnv(commands.environ, "GOEXPERIMENT="+experiment)
 	}
 	var cfg sourceGoConfig
-	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED"))
+	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED", "GOPATH", "GOMODCACHE", "GOCACHE"))
 	output, err := cmd.Output()
 	if err != nil {
 		return cfg, sourceGoConfigError("resolve Go source configuration", err)
@@ -38,6 +43,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	if cfg.GOROOT == "" || cfg.GOVERSION == "" {
 		return cfg, fmt.Errorf("Go source configuration is missing GOROOT or GOVERSION")
 	}
+	cfg.originalExperiment = cfg.GOEXPERIMENT
 	// An empty environment value makes cmd/go consult GOENV again. A comma
 	// means the same default experiment set but pins that choice even if GOENV
 	// changes before the next subprocess starts.
@@ -87,6 +93,14 @@ func sourceGoConfigError(action string, err error) error {
 }
 
 func (cfg sourceGoConfig) apply(environ []string) []string {
-	return withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),
+	environ = withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),
 		"GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+cfg.GOEXPERIMENT, "CGO_ENABLED="+cfg.CGO_ENABLED)
+	for _, setting := range []struct{ key, value string }{
+		{"GOPATH", cfg.GOPATH}, {"GOMODCACHE", cfg.GOMODCACHE}, {"GOCACHE", cfg.GOCACHE},
+	} {
+		if setting.value != "" {
+			environ = withEnv(environ, setting.key+"="+setting.value)
+		}
+	}
+	return environ
 }

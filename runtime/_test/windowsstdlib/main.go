@@ -15,7 +15,7 @@ import (
 	_ "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
-const LLGoFiles = "_wrap/syscall.c"
+const LLGoFiles = "_wrap/syscall.c; _wrap/syscall_dynamic.c; _wrap/syscall_registers.S"
 
 //go:linkname cSum12 C.llgo_windows_sum12
 func cSum12(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 uintptr) uintptr
@@ -294,6 +294,7 @@ func main() {
 		panic("sync.Once ran incorrectly")
 	}
 	testWindowsSyscalls()
+	testDynamicWindowsSyscalls()
 	testWindowsOS()
 
 	start := time.Now()

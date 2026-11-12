@@ -162,7 +162,13 @@ GLOBL ·entry(SB), RODATA, $%d
 DATA ·entry(SB)/8, $callback<>(SB)
 `, size)
 					sfile := filepath.Join(dir, "callback.s")
-					if err := os.WriteFile(sfile, []byte(src), 0600); err != nil {
+					if err := os.WriteFile(sfile, []byte("#include \"implementation.h\"\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "implementation.h"), []byte(src), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "textflag.h"), []byte("#define NOSPLIT 4\n#define RODATA 8\n"), 0600); err != nil {
 						t.Fatal(err)
 					}
 					file, err := parser.ParseFile(token.NewFileSet(), "imports.go", "package p\n//go:cgo_import_dynamic imported strlen\n", parser.ParseComments)
@@ -178,8 +184,20 @@ DATA ·entry(SB)/8, $callback<>(SB)
 					global := llvm.AddGlobal(mod, mod.Context().Int64Type(), "probe.entry")
 					global.SetInitializer(llvm.ConstNull(global.GlobalValueType()))
 					ctx := &context{prog: prog, buildConf: &Config{Goos: target.goos, Goarch: target.goarch, GenLL: true}, commands: commandEnv{environ: os.Environ()}, crossCompile: crosscompile.Export{CC: "clang", CCFLAGS: []string{"--target=" + target.triple}}, plan9asmReady: true, plan9asmMode: plan9asmEnvAll}
-					// No Go assembler or Go object reader is needed.
-					ctx.commands.environ = withEnv(ctx.commands.environ, "GOROOT="+filepath.Join(dir, "missing-goroot"))
+					// No Go assembler or Go object reader is needed. The selected
+					// source SDK needs only its version here: headers are local.
+					goroot := filepath.Join(dir, "source-sdk")
+					if err := os.Mkdir(goroot, 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(goroot, "VERSION"), []byte("go1.27.2\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					ctx.commands.environ = withEnv(ctx.commands.environ, "GOROOT="+goroot)
+					ctx.pkgs = map[*packages.Package]Package{pkg: {Package: pkg}}
+					if sigs, err := plan9asmSigsForPkg(ctx, pkg.PkgPath); err != nil || len(sigs) != 0 {
+						t.Fatalf("native entries acquired Go signatures: %v, %v", sigs, err)
+					}
 					objects, err := compilePkgSFiles(ctx, apkg, pkg, false)
 					for _, object := range objects {
 						defer os.Remove(object)

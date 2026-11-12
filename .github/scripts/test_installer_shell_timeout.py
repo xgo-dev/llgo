@@ -8,15 +8,26 @@ import signal
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class InstallerShellTimeoutTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("timeout") or shutil.which("gtimeout"),
-                         "GNU timeout is required")
+    def test_missing_timeout_is_a_failure_not_a_skip(self):
+        case = InstallerShellTimeoutTests("test_stuck_shell_is_killed_and_reports_its_output")
+        result = unittest.TestResult()
+        with mock.patch("shutil.which", return_value=None):
+            case.run(result)
+        self.assertEqual(len(result.failures), 1)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.skipped, [])
+        self.assertIn("GNU timeout is required", result.failures[0][1])
+
     def test_stuck_shell_is_killed_and_reports_its_output(self):
+        self.assertTrue(shutil.which("timeout") or shutil.which("gtimeout"),
+                        "GNU timeout is required")
         with tempfile.TemporaryDirectory(prefix="llgo shell timeout ") as directory:
             temporary = Path(directory)
             pidfile = temporary / "shell.pid"
@@ -42,6 +53,8 @@ class InstallerShellTimeoutTests(unittest.TestCase):
                 self.assertIn("STUCK_SHELL_DIAGNOSTIC", stderr)
                 self.assertIn("timeout:", stderr)
                 self.assertIn("fish -ic (default)", stderr)
+                self.assertIn("startup or validation failed", stderr)
+                self.assertNotIn("did not find exactly one installed PATH entry", stderr)
                 with self.assertRaises(ProcessLookupError):
                     os.kill(int(pidfile.read_text()), 0)
             finally:

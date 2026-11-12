@@ -25,6 +25,8 @@ func main() {
 	}
 }
 
+// CHECK: [[GLOBAL_METHOD_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.demo2.encode$bound", ptr @"__llgo.moduleZeroSizedAlloc$" }
+
 // Pointer receiver wrappers must guard nil before calling the value receiver.
 // CHECK-LABEL: define i64 @"main.(*demo1).encode"(ptr %0){{.*}} {
 // CHECK: %[[D1_NIL:[0-9]+]] = icmp eq ptr %0, null
@@ -37,9 +39,9 @@ func main() {
 // CHECK: call i64 @main.demo2.encode(%main.demo2 zeroinitializer)
 
 // The package-global method value stores both the selected bound wrapper and
-// the zero-sized receiver in init.
+// the zero-sized receiver through one descriptor pointer in init.
 // CHECK-LABEL: define void @main.init(){{.*}} {
-// CHECK: store { ptr, ptr } { ptr @"main.demo2.encode$bound", ptr @"__llgo.moduleZeroSizedAlloc$" }, ptr @main.my
+// CHECK: store ptr [[GLOBAL_METHOD_DESCRIPTOR]], ptr @main.my
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // ARM64: %[[RESULT:[0-9]+]] = call i64 @"main.demo1.encode$bound"(ptr swiftself @"__llgo.moduleZeroSizedAlloc$")
@@ -47,15 +49,15 @@ func main() {
 // CHECK: %[[BAD:[0-9]+]] = icmp ne i64 %[[RESULT]], 1
 // CHECK: br i1 %[[BAD]]
 
-// ARM64-LABEL: define i64 @"main.demo2.encode$bound"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define i64 @"main.demo2.encode$bound"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.demo2.encode$bound"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.demo2.encode$bound"(ptr nest %0){{.*}} {
 // CHECK: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
 // CHECK: %[[D2_RESULT:[0-9]+]] = call i64 @main.demo2.encode(%main.demo2 zeroinitializer)
 // CHECK: ret i64 %[[D2_RESULT]]
 
-// ARM64-LABEL: define i64 @"main.demo1.encode$bound"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define i64 @"main.demo1.encode$bound"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.demo1.encode$bound"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.demo1.encode$bound"(ptr nest %0){{.*}} {
 // CHECK: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
 // CHECK: %[[D1_RESULT:[0-9]+]] = call i64 @main.demo1.encode(%main.demo1 zeroinitializer)

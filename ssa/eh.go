@@ -659,7 +659,25 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 		typs[2] = fn.Type
 		flds[2] = fn.impl
 	}
+	var signature *types.Signature
+	if fn != Nil {
+		switch fn.kind {
+		case vkClosure, vkIfaceMethod:
+			signature = prog.Field(fn.Type, 0).raw.Type.(*types.Signature)
+		case vkFuncDecl, vkFuncPtr:
+			signature, _ = fn.raw.Type.Underlying().(*types.Signature)
+		}
+	}
 	for i, arg := range args {
+		if signature != nil && i < signature.Params().Len() {
+			expected := signature.Params().At(i).Type()
+			if fields, ok := expected.Underlying().(*types.Struct); ok && IsClosure(fields) {
+				// Save Go function arguments in their parameter representation.
+				// Delaying this conversion until unwind loses constant entry
+				// identity and needlessly allocates another descriptor.
+				arg = checkExpr(arg, expected, b)
+			}
+		}
 		typs[i+offset] = arg.Type
 		flds[i+offset] = arg.impl
 	}
@@ -701,10 +719,9 @@ func (b Builder) callDefer(self *aDefer, kind DoAction, typ *deferArgsStorage, m
 		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
 			savedType := fn.Type
 			fn = b.getField(data, 2)
-			// A transient interface invocation has the same physical pair as a
-			// funcval, so aggregate field reconstruction sees vkClosure. Keep
-			// its call semantics: the saved data word is an ordinary receiver,
-			// not a hidden closure environment.
+			// The invocation pair is stored as an ordinary aggregate. Restore
+			// its call role: the data word is an ordinary receiver, not a
+			// hidden closure environment.
 			if savedType.kind == vkIfaceMethod {
 				fn.Type = savedType
 			}

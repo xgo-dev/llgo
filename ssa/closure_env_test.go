@@ -145,6 +145,37 @@ func TestEnvFunctionKeepsSemanticSignatureAndZeroEnvNonNil(t *testing.T) {
 	}
 }
 
+func TestClosureEntriesBindWithinLinkedImage(t *testing.T) {
+	for _, triple := range []string{"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "arm64-apple-macosx", "x86_64-pc-windows-msvc", "wasm32-unknown-unknown"} {
+		t.Run(triple, func(t *testing.T) {
+			prog := NewProgram(&Target{LLVMTarget: triple})
+			defer prog.Dispose()
+			pkg := prog.NewPackage("p", "example.com/p")
+			env := types.NewParam(token.NoPos, nil, "$env", types.NewPointer(types.Typ[types.Int]))
+			for _, instantiated := range []bool{false, true} {
+				name := "closure"
+				if instantiated {
+					name = "genericClosure"
+				}
+				entry := pkg.NewEnvFunc(name, NoArgsNoRet, GoDecl, env, instantiated)
+				if entry.impl.Visibility() != llvm.HiddenVisibility {
+					t.Fatal("closure context must not cross an ELF lazy resolver")
+				}
+				b := entry.MakeBody(1)
+				b.Return()
+				b.EndBuild()
+			}
+			plain := pkg.NewFunc("public", NoArgsNoRet, GoDecl)
+			if plain.impl.Visibility() != llvm.DefaultVisibility {
+				t.Fatal("ordinary exported entry lost its visibility")
+			}
+			if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestClosureEnvMetadataRejectsInvalidUses(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
@@ -630,7 +661,12 @@ func assertDynamicMatrixCall(t *testing.T, caller, entry Function, name, attrNam
 		for block := caller.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
 			for instruction := block.FirstInstruction(); !instruction.IsNil(); instruction = llvm.NextInstruction(instruction) {
 				if instruction.InstructionOpcode() == llvm.ICmp {
-					t.Fatalf("%s native call retained an env == nil check", name)
+					// A one-word function needs a descriptor nil check. The
+					// native hidden-env edge must still avoid testing its env.
+					env := envCall.Operand(0)
+					if instruction.Operand(0) == env || instruction.Operand(1) == env {
+						t.Fatalf("%s native call retained an env == nil check", name)
+					}
 				}
 			}
 		}

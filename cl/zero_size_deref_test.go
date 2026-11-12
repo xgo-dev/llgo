@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestZeroSizedFieldDerefEmitsBaseNilGuard(t *testing.T) {
@@ -61,9 +62,72 @@ func keepPointer(pointer *struct{}) func() bool {
 					t.Fatalf("zero-sized source closure did not elide its environment; missing %q:\n%s", want, ir)
 				}
 			}
-			if !strings.Contains(ir, `define i1 @"zeroclosure.keepPointer$1"(ptr `) ||
-				!strings.Contains(ir, `@"zeroclosure.keepPointer$1", ptr undef`) {
-				t.Fatalf("captured pointer value incorrectly lost its environment:\n%s", ir)
+			module := ownerIRModule(t, ir)
+			for _, name := range []string{"zeroclosure.makeValue", "zeroclosure.compareLocal"} {
+				function := mustNamedFunction(t, module, name)
+				for _, block := range function.BasicBlocks() {
+					for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+						if call := inst.IsACallInst(); !call.IsNil() &&
+							strings.Contains(call.CalledValue().Name(), ".Alloc") {
+							t.Fatalf("zero-sized source closure allocated storage:\n%s", function)
+						}
+					}
+				}
+			}
+
+			// A captured pointer value still needs an environment. Its closure
+			// header and payload share one scanned allocation. The immutable
+			// pointer capture is copied by value from its invocation-local slot.
+			function := mustNamedFunction(t, module, "zeroclosure.keepPointer")
+			entry := mustNamedFunction(t, module, "zeroclosure.keepPointer$1")
+			if entry.ParamsCount() != 1 {
+				t.Fatalf("captured pointer entry lost its environment parameter: %s", entry)
+			}
+			root := func(value llvm.Value) llvm.Value {
+				for !value.IsAGetElementPtrInst().IsNil() {
+					value = value.Operand(0)
+				}
+				return value
+			}
+			var allocation, source llvm.Value
+			allocations := 0
+			for _, block := range function.BasicBlocks() {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if call := inst.IsACallInst(); !call.IsNil() {
+						switch {
+						case strings.HasSuffix(call.CalledValue().Name(), ".AllocU"):
+							allocation = call
+							allocations++
+						}
+					}
+				}
+			}
+			if allocations != 1 {
+				t.Fatalf("capture needs one scanned combined header/payload:\n%s", function)
+			}
+			for _, block := range function.BasicBlocks() {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.InstructionOpcode() == llvm.Store && inst.Operand(0) == function.Param(0) {
+						source = inst.Operand(1)
+					}
+				}
+			}
+			codeStored, envStored, captureStored := false, false, false
+			for _, block := range function.BasicBlocks() {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.InstructionOpcode() != llvm.Store {
+						continue
+					}
+					value, destination := inst.Operand(0), inst.Operand(1)
+					if root(destination) == allocation {
+						codeStored = codeStored || value == entry
+						envStored = envStored || root(value) == allocation && !value.IsNull()
+						captureStored = captureStored || !value.IsALoadInst().IsNil() && value.Operand(0) == source
+					}
+				}
+			}
+			if !codeStored || !envStored || source.IsNil() || !captureStored {
+				t.Fatalf("captured pointer lost its code, environment or source argument:\n%s", function)
 			}
 		})
 	}

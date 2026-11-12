@@ -1,7 +1,6 @@
 package plan9asm
 
 import (
-	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	llpackages "github.com/xgo-dev/llgo/internal/packages"
+	"github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
@@ -41,13 +41,44 @@ func TestTranslateGOAMD64CPUDetectionLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tr.Module.Dispose()
-			want := byte('1')
-			if level != "" {
-				want = level[1]
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid translated CPU-level module: %v", err)
 			}
-			ir := tr.Module.NamedFunction("internal/cpu.getGOAMD64level").String()
-			if !strings.Contains(ir, fmt.Sprintf("ret i32 %c", want)) {
-				t.Fatalf("wrong CPU baseline for %q:\n%s", level, ir)
+			// Translation may preserve the ABI0 result slot as a real
+			// alloca/store/load. Promote that slot before checking the exact
+			// return value, rather than requiring one unoptimized IR spelling.
+			options := llvm.NewPassBuilderOptions()
+			defer options.Dispose()
+			options.SetVerifyEach(true)
+			if err := tr.Module.RunPasses("function(mem2reg,instcombine,simplifycfg)", llvm.TargetMachine{}, options); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid optimized CPU-level module: %v", err)
+			}
+			want := uint64(1)
+			if level != "" {
+				want = uint64(level[1] - '0')
+			}
+			fn := tr.Module.NamedFunction("internal/cpu.getGOAMD64level")
+			if fn.IsNil() {
+				t.Fatal("missing CPU baseline function")
+			}
+			returns := 0
+			for block := fn.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.InstructionOpcode() != llvm.Ret {
+						continue
+					}
+					returns++
+					if inst.OperandsCount() != 1 || inst.Operand(0).Type() != tr.Module.Context().Int32Type() ||
+						inst.Operand(0).IsAConstantInt().IsNil() || inst.Operand(0).ZExtValue() != want {
+						t.Fatalf("wrong CPU baseline for %q, want i32 %d:\n%s", level, want, fn.String())
+					}
+				}
+			}
+			if returns != 1 {
+				t.Fatalf("CPU baseline must have one exact return, got %d:\n%s", returns, fn.String())
 			}
 		})
 	}
@@ -160,23 +191,32 @@ func Round(value float64) int64
 	FMOVVP F0, ret+8(FP)
 	RET
 `)
+	// Software lowering cannot inherit a hardware control word. Initialize it
+	// before loading F0: FINIT after FMOVD would also clear that live x87 stack.
+	initializedAsm := []byte(strings.Replace(string(asm), "\tFMOVD", "\tFINIT\n\tFMOVD", 1))
 
 	tests := []struct {
 		name       string
 		mode       extplan9asm.X87Mode
+		source     []byte
 		want       string
 		unwanted   string
 		wantErrSub string
 	}{
-		{name: "default hardware", mode: extplan9asm.X87Auto, want: `asm sideeffect "fldl $1; frndint; fstpl $0"`, unwanted: "call double @llvm.floor.f64"},
-		{name: "software fallback", mode: extplan9asm.X87Software, want: "call double @llvm.floor.f64", unwanted: "frndint"},
-		{name: "invalid", mode: extplan9asm.X87Mode(255), wantErrSub: "invalid x87 mode"},
+		{name: "default hardware", mode: extplan9asm.X87Auto, source: asm, want: `asm sideeffect "fldl $1; frndint; fstpl $0"`, unwanted: "call double @llvm.floor.f64"},
+		{name: "software initialized control word", mode: extplan9asm.X87Software, source: initializedAsm, want: "call double @llvm.floor.f64", unwanted: "frndint"},
+		{name: "software missing control word", mode: extplan9asm.X87Software, source: asm, wantErrSub: "instruction probe needs function context: result initialization"},
+		{name: "invalid", mode: extplan9asm.X87Mode(255), source: asm, wantErrSub: "invalid x87 mode"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "round_386.s", asm, "windows", "386", TranslateOptions{X87Mode: test.mode})
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "round_386.s", test.source, "windows", "386", TranslateOptions{X87Mode: test.mode})
 			if test.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErrSub) {
+				if err == nil {
+					tr.Module.Dispose()
+					t.Fatalf("expected rejection containing %q", test.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), test.wantErrSub) {
 					t.Fatalf("error = %v, want containing %q", err, test.wantErrSub)
 				}
 				return
@@ -185,6 +225,9 @@ func Round(value float64) int64
 				t.Fatal(err)
 			}
 			defer tr.Module.Dispose()
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid x87 module: %v", err)
+			}
 			ir := tr.Module.String()
 			if !strings.Contains(ir, test.want) {
 				t.Fatalf("IR missing %q:\n%s", test.want, ir)

@@ -119,7 +119,8 @@ func TestNativeVectorFieldOffsets(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/positions=%t", arch, sourcePositions), func(t *testing.T) {
 				prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
 				defer prog.Dispose()
-				sizes := prog.TypeSizes(types.SizesFor("gc", arch))
+				stock := types.SizesFor("gc", arch)
+				sizes := prog.TypeSizes(stock)
 				_, vector := layoutTestVector()
 				pkg := types.NewPackage("example.com/native", "native")
 				fields := []*types.Var{
@@ -139,7 +140,8 @@ func TestNativeVectorFieldOffsets(t *testing.T) {
 				native := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Native", nil), types.NewStruct(fields, nil), nil)
 				// Query offsets before any LLVM type or other source layout query.
 				offsets := sizes.Offsetsof(fields)
-				if offsets[1] != 16 || offsets[2] != int64(16+prog.ptrSize) || sizes.Sizeof(native) != 32 {
+				wantNativeTail := 16 + stock.Sizeof(types.Typ[types.UnsafePointer])
+				if offsets[1] != 16 || offsets[2] != wantNativeTail || sizes.Sizeof(native) != 32 {
 					t.Fatalf("native offsets=%v size=%d", offsets, sizes.Sizeof(native))
 				}
 				storage := prog.rawType(native)
@@ -153,8 +155,16 @@ func TestNativeVectorFieldOffsets(t *testing.T) {
 					types.NewField(token.NoPos, pkg, "Callback", NoArgsNoRet, false),
 					types.NewField(token.NoPos, pkg, "Tail", types.Typ[types.Byte], false),
 				}
-				if sizes.Offsetsof(ordinary)[2] != int64(16+2*prog.ptrSize) {
-					t.Fatal("unregistered fields lost Go closure layout")
+				wantGoTail := 16 + stock.Sizeof(NoArgsNoRet)
+				if got := sizes.Offsetsof(ordinary)[2]; got != wantGoTail {
+					t.Fatalf("unregistered Go function tail offset = %d, want stock Go word after vector at %d", got, wantGoTail)
+				}
+				ordinaryStorage := prog.Type(types.NewStruct(ordinary, nil), GoDecl)
+				if callback := prog.Field(ordinaryStorage, 1); callback.kind != vkClosure || prog.SizeOf(callback) != uint64(stock.Sizeof(NoArgsNoRet)) {
+					t.Fatal("unregistered callback lost its Go descriptor role or one-word storage")
+				}
+				if got := prog.OffsetOf(ordinaryStorage, 2); got != uint64(wantGoTail) {
+					t.Fatalf("Go callback LLVM storage tail = %d, want independently sized offset %d", got, wantGoTail)
 				}
 			})
 		}

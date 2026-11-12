@@ -105,8 +105,7 @@ if ($GoArch -eq '386') {
 
 $executable = Join-Path $bin 'llgo.exe'
 $buildTime = ([DateTimeOffset]$metadata.date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-$linkFlags = "-X github.com/xgo-dev/llgo/internal/env.buildVersion=v$($metadata.version) " +
-  "-X github.com/xgo-dev/llgo/internal/env.buildTime=$buildTime"
+$linkFlags = Get-ReleaseCompilerLinkFlags -Version $metadata.version -BuildTime $buildTime
 & go build -tags=byollvm -ldflags $linkFlags -o $executable ./cmd/llgo
 if ($LASTEXITCODE -ne 0) { throw 'Building the Windows release compiler failed' }
 Copy-ReleaseDLLs -ReadObj $readObj -Executable $executable -GoArch $GoArch -Profile 'msvc' `

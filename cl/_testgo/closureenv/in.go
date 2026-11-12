@@ -3,41 +3,49 @@ package main
 
 // Zero-sized captures need no environment, while real captures and bound
 // methods use LLVM's hidden closure-environment parameter.
+// CHECK-DAG: [[ZERO_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.zeroSizedCapture$1", ptr null }
+// CHECK-DAG: [[ZERO_ADDRESS_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.zeroSizedAddressCapture$1", ptr null }
 // CHECK-LABEL: define i1 @"main.(*nilReceiver).IsNil"(ptr %0){{.*}} {
 // CHECK: [[IS_NIL:%[0-9]+]] = icmp eq ptr %0, null
 // CHECK-NEXT: ret i1 [[IS_NIL]]
-// CHECK-LABEL: define { { ptr, ptr }, ptr } @main.zeroSizedAddressCapture(){{.*}} {
-// CHECK: ret { { ptr, ptr }, ptr } { { ptr, ptr } { ptr @"main.zeroSizedAddressCapture$1", ptr null }, ptr @"__llgo.moduleZeroSizedAlloc$" }
+// CHECK-LABEL: define { ptr, ptr } @main.zeroSizedAddressCapture(){{.*}} {
+// CHECK: ret { ptr, ptr } { ptr [[ZERO_ADDRESS_DESCRIPTOR]], ptr @"__llgo.moduleZeroSizedAlloc$" }
 // CHECK-LABEL: define ptr @"main.zeroSizedAddressCapture$1"(){{.*}} {
 // CHECK: ret ptr @"__llgo.moduleZeroSizedAlloc$"
-// CHECK-LABEL: define { ptr, ptr } @main.zeroSizedCapture(){{.*}} {
-// CHECK: ret { ptr, ptr } { ptr @"main.zeroSizedCapture$1", ptr null }
+// CHECK-LABEL: define ptr @main.zeroSizedCapture(){{.*}} {
+// CHECK: ret ptr [[ZERO_DESCRIPTOR]]
 // CHECK-LABEL: define i64 @"main.zeroSizedCapture$1"(){{.*}} {
 // CHECK: br i1 false, label %{{.*}}, label %{{.*}}
 // CHECK: ret i64 0
 // CHECK: ret i64 42
-// CHECK-LABEL: define { ptr, ptr } @main.zeroSizedPointerCapture(ptr %0){{.*}} {
+// CHECK-LABEL: define ptr @main.zeroSizedPointerCapture(ptr %0){{.*}} {
 // CHECK: [[ZSP_VALUE:%[0-9]+]] = alloca ptr
 // CHECK: store ptr %0, ptr [[ZSP_VALUE]]
 // CHECK-NEXT: [[ZSP_COPY:%[0-9]+]] = load ptr, ptr [[ZSP_VALUE]]
-// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: store ptr [[ZSP_COPY]], ptr %{{[0-9]+}}
-// CHECK: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
-// CHECK-NEXT: ret { ptr, ptr } [[ZSP_CLOSURE]]
-// ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest
+// CHECK: [[ZSP_ENV_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK-NEXT: [[ZSP_CLOSURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ZSP_ENV_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ZSP_ENV_ALLOCATION]], i32 0, i32 1
+// CHECK: [[ZSP_ENV_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[ZSP_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[ZSP_COPY]], ptr [[ZSP_ENV_CAPTURE_SLOT]]
+// CHECK: [[ZSP_CLOSURE_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ZSP_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.zeroSizedPointerCapture$1", ptr [[ZSP_CLOSURE_CODE_SLOT]]
+// CHECK-NEXT: [[ZSP_CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ZSP_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[ZSP_ENV]], ptr [[ZSP_CLOSURE_ENV_SLOT]]
+// CHECK-NEXT: ret ptr [[ZSP_CLOSURE]]
+// ARM64-LABEL: define hidden i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.zeroSizedPointerCapture$1"(ptr nest
 // CHECK: [[ZSP_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[ZSP_POINTER:%[0-9]+]] = load ptr, ptr [[ZSP_SLOT]]
 // CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_POINTER]], null
 // CHECK-NEXT: ret i1 [[ZSP_IS_NIL]]
-// ARM64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest
+// ARM64-LABEL: define hidden i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest
 // CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
 // CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i1 @"main.(*nilReceiver).IsNil"(ptr [[BOUND_RECEIVER]])
 // CHECK-NEXT: ret i1 [[BOUND_RESULT]]
-// ARM64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
+// ARM64-LABEL: define hidden i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
 // CHECK: [[IB_ENV:%[0-9]+]] = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[IB_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } [[IB_ENV]], 0
 // CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], ptr %{{[0-9]+}})

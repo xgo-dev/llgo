@@ -46,6 +46,7 @@ func installFinalizerCalls(events chan<- int) {
 	installComplexFinalizer(events)
 	installZeroResultFinalizer(events)
 	installNonCapturingFinalizers(events)
+	installPointerResultFinalizers(events)
 }
 
 // Keep each target in a separate frame. The linear collector is conservative,
@@ -174,8 +175,35 @@ func installNonCapturingFinalizers(events chan<- int) {
 	runtime.SetFinalizer(iface, nonCapturingInterfaceFinalizer)
 }
 
+// Pointer-shaped results use the physical Wasm pointer width even when their
+// Go storage occupies eight bytes. Exercise both argument dispatchers.
+//
+//go:noinline
+func installPointerResultFinalizers(events chan<- int) {
+	pointer := &object{value: 53}
+	runtime.SetFinalizer(pointer, func(value *object) *object {
+		events <- 13
+		return value
+	})
+	iface := &object{value: 54}
+	runtime.SetFinalizer(iface, func(value valued) func() {
+		events <- 14
+		return func() { _ = value.Value() }
+	})
+	channel := &object{value: 55}
+	runtime.SetFinalizer(channel, func(*object) chan int {
+		events <- 15
+		return nil
+	})
+	mapping := &object{value: 56}
+	runtime.SetFinalizer(mapping, func(*object) map[int]int {
+		events <- 16
+		return nil
+	})
+}
+
 func testFinalizerCalls() {
-	const kinds, copies = 12, 3
+	const kinds, copies = 16, 3
 	var events [copies]chan int
 	for i := range events {
 		events[i] = make(chan int, kinds)

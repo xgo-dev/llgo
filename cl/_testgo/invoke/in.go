@@ -123,6 +123,7 @@ type M interface {
 	Method()
 }
 
+// CHECK-DAG: [[T6_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = {{(linkonce_odr|private)}} constant { ptr, ptr } { ptr @"main.main$1", ptr null }
 // CHECK-LABEL: define i64 @main.T.Invoke(%main.T %0){{.*}} {
 // CHECK: store %main.T %0, ptr [[T_INVOKE_ADDR:%[0-9]+]]
 // CHECK: [[T_INVOKE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[T_INVOKE_ADDR]], i32 0, i32 0
@@ -193,9 +194,13 @@ type M interface {
 // CHECK: %[[T5_VALUE:[0-9]+]] = load %main.T5, ptr %0
 // CHECK: call i64 @main.T5.Invoke(%main.T5 %[[T5_VALUE]])
 
-// CHECK-LABEL: define i64 @main.T6.Invoke(%main.T6 %0){{.*}} {
-// CHECK: %[[T6_DATA:[0-9]+]] = extractvalue %main.T6 %0, 1
-// CHECK: %[[T6_CODE:[0-9]+]] = extractvalue %main.T6 %0, 0
+// CHECK-LABEL: define i64 @main.T6.Invoke(ptr %0){{.*}} {
+// CHECK: [[T6_DATA_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %0
+// CHECK-NEXT: [[T6_DATA_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[T6_DATA_SAFE]], i32 0, i32 1
+// CHECK-NEXT: %[[T6_DATA:[0-9]+]] = load ptr, ptr [[T6_DATA_FIELD]]
+// CHECK: [[T6_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr %0
+// CHECK-NEXT: [[T6_CODE_FIELD:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[T6_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: %[[T6_CODE:[0-9]+]] = load ptr, ptr [[T6_CODE_FIELD]]
 // CHECK: %[[T6_CALL:__llgo_funcval_code]] = call ptr asm "", "=r,0"(ptr %[[T6_CODE]])
 // ARM64: call i64 %[[T6_CALL]](ptr swiftself %[[T6_DATA]])
 // AMD64: call i64 %[[T6_CALL]](ptr nest %[[T6_DATA]])
@@ -203,8 +208,8 @@ type M interface {
 // CHECK-LABEL: define i64 @"main.(*T6).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T6_NIL:[0-9]+]] = icmp eq ptr %0, null
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T6_NIL]],{{.*}})
-// CHECK: %[[T6_LOADED:[0-9]+]] = load %main.T6, ptr %0
-// CHECK: call i64 @main.T6.Invoke(%main.T6 %[[T6_LOADED]])
+// CHECK: %[[T6_LOADED:[0-9]+]] = load ptr, ptr %0
+// CHECK: call i64 @main.T6.Invoke(ptr %[[T6_LOADED]])
 
 // CHECK-LABEL: define void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
 // CHECK: %[[INVOKE_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %0, ptr %{{[0-9]+}})
@@ -222,7 +227,7 @@ type M interface {
 // Capture the first pair completely, then retain descriptor checks for the
 // remaining matrix.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: store %main.T6 { ptr @"main.main$1", ptr null }, ptr %{{[0-9]+}}
+// CHECK: store ptr [[T6_DESCRIPTOR]], ptr %{{[0-9]+}}
 // CHECK: %[[T_VALUE_IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
 // CHECK: call void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %[[T_VALUE_IFACE]])
 // CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }

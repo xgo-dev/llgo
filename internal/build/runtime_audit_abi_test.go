@@ -104,11 +104,11 @@ func TestRuntimeAuditWasmLayouts(t *testing.T) {
 			// narrower on J32/W32; matching those widths would hide this ABI split.
 			got := report.ABI
 			if got.WasmProfile != tc.profile || got.LLGoTarget != tc.triple || got.GoWordBytes != 8 || got.NativePointerBytes != tc.pointerBytes ||
-				got.LLGoType.Size != 72 || got.GoType.Size != 48 || got.LLGoFuncValueBytes != 16 || got.GoFuncValueBytes != 8 {
+				got.LLGoType.Size != 64 || got.GoType.Size != 48 || got.LLGoFuncValueBytes != 8 || got.GoFuncValueBytes != 8 {
 				t.Fatalf("profile lost: %+v", got)
 			}
-			if !slices.ContainsFunc(got.Blockers, func(b string) bool { return strings.Contains(b, "function-value sizes differ") }) {
-				t.Fatalf("Go64 storage must not waive function-value compatibility: %v", got.Blockers)
+			if got.GoRuntimeASMReady || len(got.Blockers) == 0 {
+				t.Fatalf("matching function sizes must not waive the remaining runtime ABI boundaries: %+v", got)
 			}
 		})
 	}

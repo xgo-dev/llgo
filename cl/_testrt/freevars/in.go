@@ -16,35 +16,38 @@ func main() {
 	})
 }
 
+// CHECK: [[RESOLVE_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.main$2", ptr null }
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   call void @"main.main$1"({ ptr, ptr } { ptr @"main.main$2", ptr null })
+// CHECK-NEXT:   call void @"main.main$1"(ptr [[RESOLVE_DESCRIPTOR]])
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define void @"main.main$1"(
-// CHECK-SAME: { ptr, ptr } %[[TMP0:[0-9]+]]){{.*}} {
-// CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = alloca { { ptr, ptr } }, align 8
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca { ptr, ptr }, align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP2]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   store { ptr, ptr } %[[TMP0]], ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load { ptr, ptr }, ptr %[[TMP2]], align 8
-// CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr %[[TMP1]], i8 0, i64 16, i1 false)
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr } }, ptr %[[TMP1]], i32 0, i32 0
-// CHECK-NEXT:   store { ptr, ptr } %[[TMP3]], ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1$1", ptr undef }, ptr %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP5]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP5]], 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %[[TMP7]])
-// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP6]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// LINUX-ARM64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP6]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// WINDOWS-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP6]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP6]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// CHECK-NEXT:   ret void
-// CHECK-NEXT: }
+// CHECK-LABEL: define void @"main.main$1"(ptr %0){{.*}} {
+// CHECK: [[INNER_ALLOCATION:%.*]] = alloca { { ptr, ptr }, { ptr } }, align 8
+// CHECK-NEXT: [[RESOLVE_SLOT:%.*]] = alloca ptr, align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[RESOLVE_SLOT]], i8 0, i64 8, i1 false)
+// CHECK-NEXT: store ptr %0, ptr [[RESOLVE_SLOT]], align 8
+// CHECK-NEXT: [[RESOLVE_COPY:%.*]] = load ptr, ptr [[RESOLVE_SLOT]], align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[INNER_ALLOCATION]], i8 0, i64 24, i1 false)
+// CHECK-NEXT: [[INNER_DESCRIPTOR:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[INNER_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[INNER_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[INNER_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[INNER_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[INNER_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[RESOLVE_COPY]], ptr [[INNER_CAPTURE_SLOT]]
+// CHECK-NEXT: [[INNER_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[INNER_DESCRIPTOR]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.main$1$1", ptr [[INNER_CODE_SLOT]]
+// CHECK-NEXT: [[INNER_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[INNER_DESCRIPTOR]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[INNER_ENV]], ptr [[INNER_ENV_SLOT]]
+// CHECK: [[INNER_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[INNER_DESCRIPTOR]]
+// CHECK-NEXT: [[INNER_CALL_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[INNER_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[INNER_CALL_ENV:%.*]] = load ptr, ptr [[INNER_CALL_ENV_SLOT]]
+// DARWIN-ARM64: call void @"main.main$1$1"(ptr swiftself [[INNER_CALL_ENV]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// LINUX-ARM64: call void @"main.main$1$1"(ptr nest [[INNER_CALL_ENV]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// WINDOWS-ARM64: call void @"main.main$1$1"(ptr swiftself [[INNER_CALL_ENV]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// AMD64: call void @"main.main$1$1"(ptr nest [[INNER_CALL_ENV]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// CHECK-NEXT: ret void
 
-// CHECK-LABEL: define void @"main.main$1$1"(
+// CHECK-LABEL: define hidden void @"main.main$1$1"(
 // DARWIN-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // LINUX-ARM64-SAME: ptr nest %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // WINDOWS-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
@@ -62,27 +65,46 @@ func main() {
 // CHECK-NEXT:   br i1 %[[TMP10]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr } }, ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP12:[0-9]+]] = load { ptr, ptr }, ptr %[[TMP11]], align 8
-// CHECK-NEXT:   %[[TMP13:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP12]], 1
-// CHECK-NEXT:   %[[TMP14:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP12]], 0
-// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr %[[TMP14]])
-// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
-// LINUX-ARM64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
-// WINDOWS-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself %[[TMP13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
-// AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest %[[TMP13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
+// CHECK-NEXT:   %[[TMP12:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT: [[RESOLVE_13:%.*]] = load ptr, ptr %[[TMP12]], align 8
+// CHECK-NEXT: [[ERROR_RESOLVE_NIL:%.*]] = icmp eq ptr [[RESOLVE_13]], null
+// CHECK-NEXT: br i1 [[ERROR_RESOLVE_NIL]], label %[[ERROR_NIL_BLOCK:_llgo_[0-9]+]], label %[[ERROR_CALL_BLOCK:_llgo_[0-9]+]]
+// CHECK: _llgo_[[BB2]]:
+// CHECK-NEXT: %[[TMP16:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT: [[RESOLVE_17:%.*]] = load ptr, ptr %[[TMP16]], align 8
+// CHECK-NEXT: [[NIL_RESOLVE_NIL:%.*]] = icmp eq ptr [[RESOLVE_17]], null
+// CHECK-NEXT: br i1 [[NIL_RESOLVE_NIL]], label %[[NIL_NIL_BLOCK:_llgo_[0-9]+]], label %[[NIL_CALL_BLOCK:_llgo_[0-9]+]]
+// CHECK: [[ERROR_NIL_BLOCK]]:
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT: ret void
+// CHECK: [[ERROR_CALL_BLOCK]]:
+// CHECK: [[RESOLVE_13_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RESOLVE_13]]
+// CHECK-NEXT: [[RESOLVE_13_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RESOLVE_13_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[RESOLVE_ENV_13:%.*]] = load ptr, ptr [[RESOLVE_13_ENV_SLOT]]
+// CHECK: [[RESOLVE_13_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RESOLVE_13]]
+// CHECK-NEXT: [[RESOLVE_13_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RESOLVE_13_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[RESOLVE_CODE_13:%.*]] = load ptr, ptr [[RESOLVE_13_CODE_SLOT]]
+// CHECK-NEXT:   %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[RESOLVE_CODE_13]])
+// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself [[RESOLVE_ENV_13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
+// LINUX-ARM64-NEXT:   call void %__llgo_funcval_code(ptr nest [[RESOLVE_ENV_13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
+// WINDOWS-ARM64-NEXT:   call void %__llgo_funcval_code(ptr swiftself [[RESOLVE_ENV_13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
+// AMD64-NEXT:   call void %__llgo_funcval_code(ptr nest [[RESOLVE_ENV_13]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
 // CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB2]]:
-// CHECK-NEXT:   %[[TMP15:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr } }, ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP16:[0-9]+]] = load { ptr, ptr }, ptr %[[TMP15]], align 8
-// CHECK-NEXT:   %[[TMP17:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP16]], 1
-// CHECK-NEXT:   %[[TMP18:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP16]], 0
-// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr %[[TMP18]])
-// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr swiftself %[[TMP17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// LINUX-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr nest %[[TMP17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// WINDOWS-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr swiftself %[[TMP17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// AMD64-NEXT:   call void %__llgo_funcval_code1(ptr nest %[[TMP17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// CHECK: [[NIL_NIL_BLOCK]]:
+// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT: ret void
+// CHECK: [[NIL_CALL_BLOCK]]:
+// CHECK: [[RESOLVE_17_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RESOLVE_17]]
+// CHECK-NEXT: [[RESOLVE_17_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RESOLVE_17_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[RESOLVE_ENV_17:%.*]] = load ptr, ptr [[RESOLVE_17_ENV_SLOT]]
+// CHECK: [[RESOLVE_17_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RESOLVE_17]]
+// CHECK-NEXT: [[RESOLVE_17_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RESOLVE_17_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[RESOLVE_CODE_17:%.*]] = load ptr, ptr [[RESOLVE_17_CODE_SLOT]]
+// CHECK-NEXT:   %__llgo_funcval_code1 = call ptr asm "", "=r,0"(ptr [[RESOLVE_CODE_17]])
+// DARWIN-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr swiftself [[RESOLVE_ENV_17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// LINUX-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr nest [[RESOLVE_ENV_17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// WINDOWS-ARM64-NEXT:   call void %__llgo_funcval_code1(ptr swiftself [[RESOLVE_ENV_17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
+// AMD64-NEXT:   call void %__llgo_funcval_code1(ptr nest [[RESOLVE_ENV_17]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 

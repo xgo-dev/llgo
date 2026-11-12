@@ -11,6 +11,7 @@ func (t *T) Invoke() {
 	println("invoke")
 }
 
+// CHECK: [[CLOSURE_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.main$1", ptr null }
 // CHECK-LABEL: define void @main.dump(%"{{.*}}/runtime/internal/runtime.eface" %0){{.*}} {
 // CHECK: store %"{{.*}}eface" %0, ptr [[DUMP_ADDR:%[-A-Za-z0-9_.]+]]
 // CHECK: [[DUMP_TYPE_FIELD:%.*]] = getelementptr inbounds nuw %main.eface, ptr [[DUMP_ADDR]], i32 0, i32 0
@@ -97,7 +98,7 @@ type eface struct {
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_float32, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @_llgo_float64, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"[10]_llgo_int", ptr @"_llgo_ifacebox${{.*}}" })
-// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"_llgo_closure${{.*}}", ptr @"_llgo_ifacebox${{.*}}" })
+// CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[CLOSURE_DESCRIPTOR]] })
 // CHECK: call void @main.dump(%"{{.*}}eface" { ptr @"*_llgo_int", ptr null })
 // CHECK-DARWIN: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })
 // CHECK-LINUX: call void @main.dump(%"{{.*}}eface" { ptr @"[]_llgo_int", ptr {{.*}} })

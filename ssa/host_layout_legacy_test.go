@@ -83,11 +83,11 @@ const AliasSize = unsafe.Sizeof(Alias{})
 					}
 				})
 			}
-			// Marker-only Go records must still account for their closure
-			// environment, even in a package containing legacy declarations.
+			// A Go funcval is one word pointing at its code/context header,
+			// including in marker-only records beside legacy declarations.
 			goRecord := pkg.Scope().Lookup("GoRecord").Type()
 			word := int64(prog.GoWordSize())
-			checkHostLayout(t, prog, sizes, goRecord, 4*word, word, []int64{0, 0, word, 3 * word})
+			checkHostLayout(t, prog, sizes, goRecord, 3*word, word, []int64{0, 0, word, 2 * word})
 		})
 	}
 }

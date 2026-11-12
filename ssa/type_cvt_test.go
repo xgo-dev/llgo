@@ -201,8 +201,8 @@ func TestCFunctionAliasKeepsNativeRepresentation(t *testing.T) {
 		}
 	}
 	for _, alias := range []*types.Alias{goCallback, goOuter} {
-		if got := prog.Type(alias, GoDecl); got.kind != vkClosure || prog.SizeOf(got) != uint64(2*prog.PointerSize()) {
-			t.Fatalf("Go callback %s representation = (%v, %d bytes), want two-word closure", alias.Obj().Name(), got.kind, prog.SizeOf(got))
+		if got := prog.Type(alias, GoDecl); got.kind != vkClosure || prog.SizeOf(got) != uint64(prog.GoWordSize()) {
+			t.Fatalf("Go callback %s representation = (%v, %d bytes), want one-word Go descriptor", alias.Obj().Name(), got.kind, prog.SizeOf(got))
 		}
 	}
 	sizes := prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
@@ -212,10 +212,34 @@ func TestCFunctionAliasKeepsNativeRepresentation(t *testing.T) {
 		}
 	}
 	for _, alias := range []*types.Alias{goCallback, goOuter} {
-		if got := sizes.Sizeof(alias); got != int64(2*prog.PointerSize()) {
-			t.Fatalf("Go callback %s Go size = %d, want two pointers", alias.Obj().Name(), got)
+		if got := sizes.Sizeof(alias); got != int64(prog.GoWordSize()) {
+			t.Fatalf("Go callback %s Go size = %d, want one Go word", alias.Obj().Name(), got)
 		}
 	}
+
+	t.Run("WasmGoWordAndNativePointer", func(t *testing.T) {
+		wasm := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi"})
+		defer wasm.Dispose()
+		sizes := wasm.TypeSizes(&types.StdSizes{WordSize: 8, MaxAlign: 8})
+		wasm.SetTypeCallConv("example.com/callback.Callback", CDecl)
+		if wasm.GoWordSize() != 8 || wasm.PointerSize() != 4 {
+			t.Fatal("fixture must distinguish the Go word from the physical pointer")
+		}
+		for _, alias := range []*types.Alias{callback, outer} {
+			if got := wasm.Type(alias, CDecl); got.kind != vkFuncPtr || wasm.SizeOf(got) != 4 {
+				t.Fatalf("native Wasm callback %s = (%d, %d bytes), want entry pointer in 4 bytes", alias.Obj().Name(), got.kind, wasm.SizeOf(got))
+			}
+			if got := wasm.Type(alias, GoDecl); got.kind != vkFuncPtr || wasm.SizeOf(got) != 8 {
+				t.Fatalf("Go storage for native callback %s = (%d, %d bytes), want entry pointer in one 8-byte Go word", alias.Obj().Name(), got.kind, wasm.SizeOf(got))
+			}
+		}
+		for _, alias := range []*types.Alias{goCallback, goOuter} {
+			got := wasm.Type(alias, GoDecl)
+			if got.kind != vkClosure || wasm.SizeOf(got) != 8 || sizes.Sizeof(alias) != 8 {
+				t.Fatalf("Go Wasm callback %s = (%d, %d bytes, source %d), want descriptor in one 8-byte Go word", alias.Obj().Name(), got.kind, wasm.SizeOf(got), sizes.Sizeof(alias))
+			}
+		}
+	})
 }
 
 func TestRecursiveNamedTypesWithoutConversionKeepTheirIdentity(t *testing.T) {

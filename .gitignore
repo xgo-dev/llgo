@@ -20,6 +20,7 @@ err.log
 numpy.txt
 result.txt
 expect.txt.new
+meta-expect.txt.new
 
 _go/
 _runtime/
@@ -63,3 +64,7 @@ go.work*
 *.uf2
 *.img
 *.zip
+
+# Generated embedded and demo dependencies.
+/.cache/qemu/
+/_demo/c/cargs/libs/

@@ -101,14 +101,14 @@ const Offset = unsafe.Offsetof(Record{}.U)
 				checkHostLayout(t, prog, sizes, ordinary, innerSize, innerAlign, []int64{0, 0, sizes.Offsetsof(structFields(inner))[1], sizes.Offsetsof(structFields(inner))[2]})
 			}
 			fnOffset := align(innerSize, word)
-			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Nested").Type(), align(fnOffset+2*word, max(innerAlign, word)), max(innerAlign, word), []int64{0, 0, fnOffset})
+			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Nested").Type(), align(fnOffset+word, max(innerAlign, word)), max(innerAlign, word), []int64{0, 0, fnOffset})
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("HostTail").Type(), align(9, tc.alignment), tc.alignment, []int64{0, 0, 8})
 			fnOffset = word
 			for _, name := range []string{"Callbacks", "AliasCallbacks"} {
-				checkHostLayout(t, prog, sizes, pkg.Scope().Lookup(name).Type(), fnOffset+2*word, word, []int64{0, 0, fnOffset})
+				checkHostLayout(t, prog, sizes, pkg.Scope().Lookup(name).Type(), fnOffset+word, word, []int64{0, 0, fnOffset})
 			}
 			fnOffset = 2 * word
-			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("CallbackArrays").Type(), fnOffset+4*word, word, []int64{0, 0, fnOffset})
+			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("CallbackArrays").Type(), fnOffset+2*word, word, []int64{0, 0, fnOffset})
 		})
 	}
 }

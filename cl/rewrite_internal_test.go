@@ -293,7 +293,7 @@ func use() unsafe.Pointer { return closureEnv() }
 	for _, spelling := range []string{"//llgo:env", "// llgo:env"} {
 		t.Run(spelling, func(t *testing.T) {
 			ir := compileWithRewrites(t, strings.Replace(valid, "DIRECTIVE", spelling, 1), nil)
-			if !strings.Contains(ir, `define ptr @closureenv.use(ptr `) ||
+			if !strings.Contains(ir, `define hidden ptr @closureenv.use(ptr `) ||
 				!strings.Contains(ir, `ret ptr %0`) ||
 				(!strings.Contains(ir, `ptr nest %0`) && !strings.Contains(ir, `ptr swiftself %0`)) {
 				t.Fatalf("closureEnv intrinsic did not return the physical environment:\n%s", ir)
@@ -811,18 +811,22 @@ var Array = [1]func(int) int{func(v int) int { return v - 1 }}
 func Use(v int) int { offset = v; return Direct(v) + Nested.Call(v) + Array[0](v) }
 `
 	ir := compileWithRewrites(t, src, nil)
+	module := ownerIRModule(t, ir)
 	for i, name := range []string{"Direct", "Nested", "Array"} {
 		global := "@staticinit." + name
 		assertNoStoreToGlobal(t, ir, global)
-		code := fmt.Sprintf(`@"staticinit.init$%d"`, i+1)
-		found := false
-		for _, line := range strings.Split(ir, "\n") {
-			if strings.HasPrefix(line, global+" = ") && strings.Contains(line, code) {
-				found = true
-			}
+		value := module.NamedGlobal("staticinit." + name)
+		if value.IsNil() {
+			t.Fatal("missing static function-containing global", name)
 		}
-		if !found {
-			t.Fatalf("missing static closure %s in %s:\n%s", code, global, ir)
+		storage := value.Initializer()
+		if name != "Direct" {
+			storage = storage.Operand(0)
+		}
+		code, environment := ownerFuncvalParts(t, storage)
+		want := fmt.Sprintf("staticinit.init$%d", i+1)
+		if code.Name() != want || !environment.IsNull() {
+			t.Fatalf("static closure %s = code %s/environment %s, want %s/nil", name, code, environment, want)
 		}
 	}
 }

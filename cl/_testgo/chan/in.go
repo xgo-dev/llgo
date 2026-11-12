@@ -22,10 +22,16 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_CAP]])
 // CHECK: call void @"{{.*}}PrintEface"(%"{{.*}}eface" [[CH1_EFACE]])
 // CHECK: [[SEND_COPY:%.*]] = load ptr, ptr [[CH1_SLOT]]
-// CHECK: [[SEND_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[SEND_COPY]], ptr {{%.*}}
-// CHECK: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_ENV]], 1
-// CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
+// CHECK: [[SEND_ENV_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK-NEXT: [[SEND_CLOSURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[SEND_ENV_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[SEND_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[SEND_ENV_ALLOCATION]], i32 0, i32 1
+// CHECK: [[SEND_ENV_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[SEND_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[SEND_COPY]], ptr [[SEND_ENV_CAPTURE_SLOT]]
+// CHECK: [[SEND_CLOSURE_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SEND_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.main$1", ptr [[SEND_CLOSURE_CODE_SLOT]]
+// CHECK-NEXT: [[SEND_CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SEND_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[SEND_ENV]], ptr [[SEND_CLOSURE_ENV_SLOT]]
+// CHECK: store ptr [[SEND_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr {{%.*}})
 // CHECK: [[CH1_RECV:%.*]] = load ptr, ptr [[CH1_SLOT]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[CH1_RECV_BUF]], i8 0, i64 8, i1 false)
@@ -38,10 +44,16 @@ package main
 // CHECK: [[CH2:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH2]], ptr [[CH2_SLOT]]
 // CHECK: [[CLOSE_COPY:%.*]] = load ptr, ptr [[CH2_SLOT]]
-// CHECK: [[CLOSE_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[CLOSE_COPY]], ptr {{%.*}}
-// CHECK: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_ENV]], 1
-// CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
+// CHECK: [[CLOSE_ENV_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK-NEXT: [[CLOSE_CLOSURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[CLOSE_ENV_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[CLOSE_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[CLOSE_ENV_ALLOCATION]], i32 0, i32 1
+// CHECK: [[CLOSE_ENV_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[CLOSE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store ptr [[CLOSE_COPY]], ptr [[CLOSE_ENV_CAPTURE_SLOT]]
+// CHECK: [[CLOSE_CLOSURE_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CLOSE_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.main$2", ptr [[CLOSE_CLOSURE_CODE_SLOT]]
+// CHECK-NEXT: [[CLOSE_CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CLOSE_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[CLOSE_ENV]], ptr [[CLOSE_CLOSURE_ENV_SLOT]]
+// CHECK: store ptr [[CLOSE_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%.*}})
 // CHECK: [[CH2_RECV:%.*]] = load ptr, ptr [[CH2_SLOT]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[CH2_RECV_BUF]], i8 0, i64 8, i1 false)
@@ -55,8 +67,8 @@ package main
 // CHECK-NEXT: call void @"{{.*}}PrintInt"(i64 [[CH2_PRINT_VALUE]])
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[CH2_PRINT_OK]])
 
-// ARM64-LABEL: define void @"main.main$1"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$1"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$1"(ptr nest %0){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[SEND_BUF:%[0-9]+]] = alloca i64, align 8
 // CHECK: [[SEND_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
@@ -65,8 +77,8 @@ package main
 // CHECK: store i64 100, ptr [[SEND_BUF]]
 // CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[SEND_CH]], ptr [[SEND_BUF]], i64 8)
 
-// ARM64-LABEL: define void @"main.main$2"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$2"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$2"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$2"(ptr nest %0){{.*}} {
 // CHECK: [[CLOSE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CLOSE_CH:%.*]] = load ptr, ptr [[CLOSE_SLOT]]
 // CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[CLOSE_CH]])

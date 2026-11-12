@@ -186,16 +186,30 @@ func mapDemo2() {
 // CHECK: %[[CLOSURE_RESULTS:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %[[CLOSURE_VALUE]], %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}})
 // CHECK: %[[CLOSURE_LEN:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[CLOSURE_RESULTS]], 1
 // CHECK: br i1 %{{[0-9]+}}, label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
-// ARM64: call i64 %__llgo_funcval_code(ptr swiftself %{{[0-9]+}}, i64 100)
-// AMD64: call i64 %__llgo_funcval_code(ptr nest %{{[0-9]+}}, i64 100)
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 0, i64 %[[CLOSURE_LEN]])
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
 // CHECK: %[[CLOSURE_IFACE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[CLOSURE_VALUE]])
 // CHECK: %[[CLOSURE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[CLOSURE_IFACE]], 0
 // CHECK: %[[CLOSURE_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure${{[A-Za-z0-9_-]+}}", ptr %[[CLOSURE_TYPE]])
 // CHECK: br i1 %[[CLOSURE_MATCH]]
-// ARM64-LABEL: define i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
+// CHECK: %[[CLOSURE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[CLOSURE_IFACE]], 1
+// CHECK-NEXT: [[CLOSURE_SUCCESS_VALUE:%[0-9]+]] = insertvalue { ptr, i1 } undef, ptr %[[CLOSURE_DATA]], 0
+// CHECK-NEXT: [[CLOSURE_SUCCESS:%[0-9]+]] = insertvalue { ptr, i1 } [[CLOSURE_SUCCESS_VALUE]], i1 true, 1
+// CHECK: [[CLOSURE_ASSERTION:%[0-9]+]] = phi { ptr, i1 } [ [[CLOSURE_SUCCESS]], %{{_llgo_[0-9]+}} ], [ zeroinitializer, %{{_llgo_[0-9]+}} ]
+// CHECK-NEXT: [[CLOSURE_FN:%[0-9]+]] = extractvalue { ptr, i1 } [[CLOSURE_ASSERTION]], 0
+// CHECK-NEXT: [[CLOSURE_OK:%[0-9]+]] = extractvalue { ptr, i1 } [[CLOSURE_ASSERTION]], 1
+// CHECK-NEXT: br i1 [[CLOSURE_OK]]
+// CHECK: [[CLOSURE_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[CLOSURE_FN]]
+// CHECK-NEXT: [[CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CLOSURE_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[CLOSURE_ENV:%[0-9]+]] = load ptr, ptr [[CLOSURE_ENV_SLOT]]
+// CHECK: [[CLOSURE_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[CLOSURE_FN]]
+// CHECK-NEXT: [[CLOSURE_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[CLOSURE_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[CLOSURE_CODE:%[0-9]+]] = load ptr, ptr [[CLOSURE_CODE_SLOT]]
+// CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[CLOSURE_CODE]])
+// ARM64-NEXT: call i64 %__llgo_funcval_code(ptr swiftself [[CLOSURE_ENV]], i64 100)
+// AMD64-NEXT: call i64 %__llgo_funcval_code(ptr nest [[CLOSURE_ENV]], i64 100)
+// ARM64-LABEL: define hidden i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[CC_BASE_PTR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CC_BASE:%[0-9]+]] = load i64, ptr [[CC_BASE_PTR]]
 // CHECK-NEXT: [[CC_SUM:%[0-9]+]] = add i64 [[CC_BASE]], %1
@@ -215,6 +229,7 @@ func mapDemo2() {
 // CHECK: %[[IFACE_VALUE:[0-9]+]] = call %reflect.Value @reflect.ValueOf
 // CHECK: %[[IFACE_METHOD:[0-9]+]] = call %reflect.Value @reflect.Value.Method(%reflect.Value %[[IFACE_VALUE]], i64 0)
 // CHECK: %[[IFACE_RESULTS:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @reflect.Value.Call(%reflect.Value %[[IFACE_METHOD]],{{.*}})
+// CHECK: call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[IFACE_METHOD]])
 // ARM64: call i64 %__llgo_funcval_code(ptr swiftself %{{[0-9]+}}, i64 1)
 // AMD64: call i64 %__llgo_funcval_code(ptr nest %{{[0-9]+}}, i64 1)
 // CHECK: call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[IFACE_METHOD]])

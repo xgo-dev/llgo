@@ -23,10 +23,36 @@
 	.endef
 	.seh_proc llgo_windows_syscall
 llgo_windows_syscall:
-	subq $360, %rsp
-	.seh_stackalloc 360
+	pushq %rbp
+	.seh_pushreg %rbp
+	subq $48, %rsp
+	.seh_stackalloc 48
+	movq %rsp, %rbp
+	.seh_setframe %rbp, 0
 	.seh_endprologue
-	movq %rcx, 336(%rsp)
+	movq %rcx, 32(%rbp)
+
+	/* Keep the fixed frame recoverable while outgoing arguments grow below
+	 * it. Include Win64 shadow space, and reject only size arithmetic wrap. */
+	movq 8(%rcx), %rax
+	movq %rax, %r10
+	shrq $61, %r10
+	jnz .Lbad_x64
+	cmpq $4, %rax
+	jae .Lsize_x64
+	movl $4, %eax
+.Lsize_x64:
+	shlq $3, %rax
+	addq $15, %rax
+	jc .Lbad_x64
+	andq $-16, %rax
+#if defined(__MINGW32__)
+	callq ___chkstk_ms
+#else
+	callq __chkstk
+#endif
+	subq %rax, %rsp
+	movq 32(%rbp), %rcx
 
 	/* SetLastError(0) through the TEB. */
 	movq %gs:0x30, %r10
@@ -67,18 +93,21 @@ llgo_windows_syscall:
 	movq %rcx, %xmm0
 
 .Lcall_x64:
-	movq 336(%rsp), %r11
+	movq 32(%rbp), %r11
 	movq 0(%r11), %rax
 	callq *%rax
 
-	movq 336(%rsp), %rcx
+	movq 32(%rbp), %rcx
 	movq %rax, 24(%rcx)
 	movq %xmm0, 32(%rcx)
 	movq %gs:0x30, %r10
 	movl 0x68(%r10), %eax
 	movq %rax, 40(%rcx)
-	addq $360, %rsp
+	leaq 48(%rbp), %rsp
+	popq %rbp
 	retq
+.Lbad_x64:
+	ud2
 	.seh_endproc
 
 #elif defined(__aarch64__)
@@ -91,16 +120,30 @@ llgo_windows_syscall:
 	.endef
 llgo_windows_syscall:
 	.seh_proc llgo_windows_syscall
-	/* 34 stack arguments plus x19/x20 and frame/link registers. */
-	sub sp, sp, #304
-	.seh_stackalloc 304
-	stp x19, x20, [sp, #272]
-	.seh_save_regp x19, 272
-	stp x29, x30, [sp, #288]
-	.seh_save_fplr 288
+	/* Chained alloca frame: unwind always recovers SP through x29. */
+	stp x29, x30, [sp, #-32]!
+	.seh_save_fplr_x 32
+	str x19, [sp, #16]
+	.seh_save_reg x19, 16
+	mov x29, sp
+	.seh_set_fp
 	.seh_endprologue
-	add x29, sp, #288
 	mov x19, x0
+
+	ldr x9, [x19, #8]
+	cmp x9, #8
+	b.ls .Lallocated_arm64
+	sub x15, x9, #8
+	lsr x16, x15, #61
+	cbnz x16, .Lbad_arm64
+	lsl x15, x15, #3
+	adds x15, x15, #15
+	b.cs .Lbad_arm64
+	lsr x15, x15, #4
+	/* Windows __chkstk takes x15 in 16-byte units and preserves it. */
+	bl __chkstk
+	sub sp, sp, x15, lsl #4
+.Lallocated_arm64:
 
 	/* SetLastError(0) through the Windows ARM64 TEB register. */
 	str wzr, [x18, #0x68]
@@ -153,22 +196,24 @@ llgo_windows_syscall:
 	ldr x0, [x12]
 
 .Lcall_arm64:
-	ldr x20, [x19]
-	blr x20
+	ldr x16, [x19]
+	blr x16
 	str x0, [x19, #24]
 	str xzr, [x19, #32]
 	ldr w0, [x18, #0x68]
 	str x0, [x19, #40]
 
 	.seh_startepilogue
-	ldp x19, x20, [sp, #272]
-	.seh_save_regp x19, 272
-	ldp x29, x30, [sp, #288]
-	.seh_save_fplr 288
-	add sp, sp, #304
-	.seh_stackalloc 304
+	mov sp, x29
+	.seh_set_fp
+	ldr x19, [sp, #16]
+	.seh_save_reg x19, 16
+	ldp x29, x30, [sp], #32
+	.seh_save_fplr_x 32
 	.seh_endepilogue
 	ret
+.Lbad_arm64:
+	brk #0
 	.seh_endfunclet
 	.seh_endproc
 
@@ -205,12 +250,24 @@ _llgo_windows_syscall:
 	/* Both stdcall and cdecl receive their arguments on the stack. The
 	 * explicit stack restoration after the call accommodates either cleanup
 	 * convention, matching the Go runtime's x86 bridge. */
+	andl $-16, %esp
 	movl 4(%ebx), %ecx
 	testl %ecx, %ecx
 	jz .Lcall_x86
+	testl $0xc0000000, %ecx
+	jnz .Lbad_x86
 	movl %ecx, %eax
 	shll $2, %eax
+	addl $15, %eax
+	jc .Lbad_x86
+	andl $-16, %eax
+#if defined(__MINGW32__)
+	/* GNU's probe leaves ESP unchanged; MSVC's allocates the probed frame. */
+	calll ___chkstk_ms
 	subl %eax, %esp
+#else
+	calll __chkstk
+#endif
 	movl %esp, %edi
 	movl 8(%ebx), %esi
 	cld
@@ -230,6 +287,8 @@ _llgo_windows_syscall:
 	popl %ebx
 	popl %ebp
 	retl
+.Lbad_x86:
+	ud2
 
 #else
 #error "LLGo Windows SyscallN currently supports 386, amd64, and arm64"

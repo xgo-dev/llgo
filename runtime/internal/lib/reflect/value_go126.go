@@ -23,10 +23,10 @@ func (v Value) abiTypeSlow() *abi.Type {
 	}
 
 	typ := v.typ()
-	if v.typ_.IsClosure() {
-		return &v.closureFunc().Type
-	}
 	if v.flag&flagMethod == 0 {
+		if typ.IsClosure() {
+			return &v.closureFunc().Type
+		}
 		return typ
 	}
 

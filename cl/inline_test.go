@@ -79,7 +79,8 @@ var KeptValue = dep.Kept
 			if fn := mustNamedFunction(t, owner.Module(), "example.com/dep.Sum"); fn.IsDeclaration() || fn.Linkage() != llvm.ExternalLinkage {
 				t.Fatal("import changed defining package's real entry")
 			}
-			if !strings.Contains(mod.NamedGlobal("example.com/root.Value").String(), "example.com/dep.Sum") {
+			descriptor := constantFunctionDescriptor(t, mod, mustNamedFunction(t, mod, "example.com/dep.Sum"))
+			if mod.NamedGlobal("example.com/root.Value").Initializer() != descriptor {
 				t.Fatal("function value lost canonical entry")
 			}
 			mod.SetDataLayout(prog.DataLayout())

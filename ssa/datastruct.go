@@ -60,6 +60,9 @@ func (b Builder) Field(x Expr, idx int) Expr {
 }
 
 func (b Builder) getField(x Expr, idx int) Expr {
+	if x.kind == vkClosure {
+		return b.funcvalField(x, idx)
+	}
 	if x.kind == vkSIMD {
 		storage := b.Prog.rawType(x.RawType().Underlying())
 		return b.getField(Expr{b.simdToStorage(x.impl, x.Type), storage}, idx)

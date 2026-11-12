@@ -39,10 +39,10 @@ func TestTypedStackRootStorageLayouts(t *testing.T) {
 			pkg := p.NewPackage("roots", "roots")
 			fn := pkg.NewFunc("roots.fields", NoArgsNoRet, GoDecl)
 			b := fn.MakeBody(1)
-			typ := p.Struct(p.Uintptr(), p.VoidPtr(), p.Type(types.NewSlice(types.Typ[types.Int]), GoDecl), p.Type(types.NewInterfaceType(nil, nil).Complete(), GoDecl))
+			typ := p.Struct(p.Uintptr(), p.VoidPtr(), p.Type(types.NewSlice(types.Typ[types.Int]), GoDecl), p.Type(types.NewInterfaceType(nil, nil).Complete(), GoDecl), p.Type(NoArgsNoRet, GoDecl))
 			var offsets []uint64
 			fn.stackRootOffsets(typ, 0, func(offset uint64) { offsets = append(offsets, offset) })
-			if want := []uint64{tc.word, 2 * tc.word, 6 * tc.word}; !reflect.DeepEqual(offsets, want) {
+			if want := []uint64{tc.word, 2 * tc.word, 6 * tc.word, 7 * tc.word}; !reflect.DeepEqual(offsets, want) {
 				t.Fatalf("offsets=%v want %v", offsets, want)
 			}
 			root := fn.NewGCRoots(1)[0]
@@ -54,7 +54,7 @@ func TestTypedStackRootStorageLayouts(t *testing.T) {
 				t.Fatalf("%v\n%s", err, pkg.String())
 			}
 			ir := pkg.String()
-			if !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") || !strings.Contains(ir, "i32 4, i32 4") {
+			if !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") || !strings.Contains(ir, "i32 5, i32 5") {
 				t.Fatalf("missing typed map:\n%s", ir)
 			}
 			// A managed alloca and all field initialization must dominate the

@@ -6,20 +6,26 @@ _llgo_main.T:
 
 [OrdinaryEdges]
 *_llgo_main.T:
+    _llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231
     _llgo_main.T
+_llgo_funcval$5cc2aa444c9afe33a78580c48ee0face5a4193944be84057a7e50f2c8d5c7d8e:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+_llgo_funcval$b88bf73d8038316451484d1d3ab843bc624f5c0608c969daa1f96f34dcb9b231:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
+_llgo_funcval$df28404ce0408a7df48c8b3018797ebe037f20133ce3935bdb33a311fa041f67:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_itab$TICI59jcV6ebL9aVnDFuh3BidBlv40EGYDQe8VdVmdQ:
     _llgo_main.T
     github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
     main.(*T).m
 _llgo_main.T:
     *_llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+    _llgo_funcval$5cc2aa444c9afe33a78580c48ee0face5a4193944be84057a7e50f2c8d5c7d8e
 github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
+    _llgo_funcval$df28404ce0408a7df48c8b3018797ebe037f20133ce3935bdb33a311fa041f67
     github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods
-    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods:
-    _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+    _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8
 main.(*T).m:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/xgo-dev/llgo/runtime/internal/runtime.PanicWrapNilPointer
@@ -39,15 +45,15 @@ main.main:
 
 [UseIfaceMethod]
 main.use:
-    github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8
 
 [MethodInfo]
 *_llgo_main.T:
-    0 main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).m main.(*T).m
+    0 main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).m main.(*T).m
 _llgo_main.T:
-    0 main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac main.(*T).m main.T.m
+    0 main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8 main.(*T).m main.T.m
 
 [InterfaceInfo]
 github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
-    main.m _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
+    main.m _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8
 

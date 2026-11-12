@@ -1042,22 +1042,22 @@ replace github.com/pmezard/go-difflib v1.0.0 => ../depWork
 	writeFile(t, filepath.Join(mainDir, "go.mod"), mainMod)
 	writeFile(t, filepath.Join(mainDir, "main.go"), "package main\nimport (\"github.com/davecgh/go-spew/spew\"\n\"github.com/matryer/is\"\n\"github.com/pmezard/go-difflib/difflib\"\n)\nvar _ = spew.Sdump(is.OK(true)) + difflib.Name\nfunc main() {}\n")
 
-	oldWD, _ := os.Getwd()
 	goWork := "go 1.24\nuse ./main\nuse ./depWork\nuse ./depPath\n"
-	writeFile(t, filepath.Join(root, "go.work"), goWork)
+	workFile := filepath.Join(root, "go.work")
+	writeFile(t, workFile, goWork)
+	t.Setenv("GOWORK", workFile)
 	cmd := exec.Command("go", "work", "sync")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go work sync: %v\n%s", err, out)
 	}
 
-	must(os.Chdir(mainDir))
-	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	t.Chdir(mainDir)
 
 	conf := &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, Mode: ModeBuild, BinPath: filepath.Join(root, "bin")}
 	_ = os.MkdirAll(conf.BinPath, 0o755)
 
-	// Let Go discover workspace via parent go.work (no extra env needed)
+	// The Go oracle and LLGo must select this fixture, not an ambient workspace.
 
 	pkgs, err := Do(nil, conf)
 	if err != nil {
@@ -1657,5 +1657,20 @@ func TestDeadcodeDropCollectFingerprint(t *testing.T) {
 		if got := fingerprints[0] != fingerprints[1]; got != buildenv.Dev {
 			t.Fatalf("%s: original DCE changes cached lowering=%v, want %v", mode, got, buildenv.Dev)
 		}
+	}
+}
+
+func TestCollectEnvInputsSeparatesFuncvalABIWithoutCompilerHash(t *testing.T) {
+	ctx := &context{buildConf: &Config{Goos: "linux", Goarch: "amd64"}, llvmVersion: "test", goVersion: "go1.27.3"}
+	current := newManifestBuilder()
+	ctx.collectEnvInputs(current)
+	if current.env.LlgoCompilerHash != "" || current.env.GoFuncvalABI != "descriptor-v1" {
+		t.Fatalf("library build ABI identity = %+v", current.env)
+	}
+	old := newManifestBuilder()
+	old.env = current.env
+	old.env.GoFuncvalABI = ""
+	if current.Fingerprint() == old.Fingerprint() {
+		t.Fatal("old two-word and descriptor function values share package archives")
 	}
 }

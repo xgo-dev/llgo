@@ -62,8 +62,16 @@ func separate(f F, other any) F { return mixed(f, other) }
 				ir := compileInterfaceBoxIR(t, src, mode, &target, false)
 				for _, name := range []string{"direct", "helper", "forwarded", "commaOK", "nilComparison", "integer", "pair", "branch", "phi", "separate"} {
 					body := llvmFunction(t, ir, "ifacebox."+name)
-					if strings.Contains(body, "runtime.Alloc") || !strings.Contains(body, "alloca ") {
-						t.Errorf("%s should use stack box storage:\n%s", name, body)
+					if strings.Contains(body, "runtime.Alloc") {
+						t.Errorf("%s should not allocate heap box storage:\n%s", name, body)
+					}
+					// Function values are already descriptor pointers and fit
+					// directly in the interface payload. Aggregates and integers
+					// still exercise borrowed stack boxes.
+					if name == "integer" || name == "pair" {
+						if !strings.Contains(body, "alloca ") {
+							t.Errorf("%s lost borrowed stack box storage:\n%s", name, body)
+						}
 					}
 				}
 			})
@@ -84,13 +92,16 @@ func TestCompileInterfaceBoxPlacement(t *testing.T) {
 		{"closure", `func box(f F) func() F { x := any(f); return func() F { return x.(F) } }`},
 		{"recursive", `func box(f F) F { return recursive(f, 1) }`},
 		{"interface assertion", `func box(f F) any { return any(f).(interface{}) }`},
-		{"loop", `func box(f F, n int) int { sum := 0; for i:=0;i<n;i++ { sum += extract(f)() }; return sum }`},
+		{"loop", `func box(f F, n int) int { sum := 0; for i:=0;i<n;i++ { sum += int(extract(f).N) }; return sum }`},
 		{"recover", `func box(f F) F { defer func() { recover() }(); return extract(f) }`},
 		{"large", `func box(x [16385]uint64) [16385]uint64 { return any(x).([16385]uint64) }`},
 		{"budget", "func box(f F) { x := any(f);" + strings.Repeat("extract(x);", 1025) + "}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ir := compileInterfaceBoxIR(t, interfaceBoxDecl+tc.decl, ssa.InstantiateGenerics, nil, false)
+			// Keep testing composite boxes after function values became direct
+			// interface payloads; the escape graph must still place these boxes.
+			decl := strings.Replace(interfaceBoxDecl, "type F func() int", "type F struct { Value func() int; N uint64 }", 1)
+			ir := compileInterfaceBoxIR(t, decl+tc.decl, ssa.InstantiateGenerics, nil, false)
 			body := llvmFunction(t, ir, "ifacebox.box")
 			// These cases exceeded the old use walker's scope, but their boxes
 			// stay within the current invocation/iteration in the full graph.
@@ -132,7 +143,7 @@ func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, targe
 }
 
 func TestInterfaceBoxExplicitRoots(t *testing.T) {
-	ir := compileInterfaceBoxIR(t, interfaceBoxDecl+`func box(f F) F { return extract(f) }`, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
+	ir := compileInterfaceBoxIR(t, strings.Replace(interfaceBoxDecl, "type F func() int", "type F struct { Value func() int; P *int }", 1)+`func box(f F) F { return extract(f) }`, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
 	body := llvmFunction(t, ir, "ifacebox.box")
 	if strings.Contains(body, "runtime.AllocU") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
 		t.Fatalf("borrowed box must use typed stack roots:\n%s", body)

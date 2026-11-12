@@ -89,7 +89,11 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 	c.Memmove(ret, toFFIArg(v, typ), typ.Size_)
 }
 
-func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type) {
+func storeMakeFuncFFIResult(ret unsafe.Pointer, v Value, typ *abi.Type, ffiType *ffi.Type, native bool) {
+	if native && nativeFFIStorageDiffers(typ) {
+		copyNativeFFIValue(ret, toFFIArg(v, typ), typ, true)
+		return
+	}
 	size := typ.Size_
 	if ffiType.ByteSize() < size {
 		size = ffiType.ByteSize()
@@ -113,22 +117,11 @@ func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 	kind := typ.Kind()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
 	v.typ_ = typ
 	v.flag = flag(kind)
 	if typ.IfaceIndir() {
 		v.flag |= flagIndir
-		if typ.IsClosure() {
-			c := (*closure)(ptr)
-			v.ptr = unsafe.Pointer(&closure{
-				fn:  c.fn,
-				env: c.env,
-			})
-		} else {
-			v.ptr = ptr
-		}
+		v.ptr = ptr
 	} else {
 		v.ptr = *(*unsafe.Pointer)(ptr)
 	}

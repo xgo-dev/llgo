@@ -292,7 +292,7 @@ func (b Builder) appendGCRootPointers(roots *[]Expr, value Expr) {
 	case vkEface, vkIface:
 		*roots = append(*roots, b.InterfaceData(value))
 	case vkClosure:
-		*roots = append(*roots, b.Convert(b.Prog.VoidPtr(), b.getField(value, 1)))
+		*roots = append(*roots, b.Convert(b.Prog.VoidPtr(), value))
 	case vkStruct, vkTuple:
 		var count int
 		switch raw := value.Type.raw.Type.Underlying().(type) {

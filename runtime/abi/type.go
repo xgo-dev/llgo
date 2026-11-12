@@ -176,7 +176,7 @@ const (
 	// TFlagVariadic means a funcType with variadic parameters
 	TFlagVariadic TFlag = 1 << 4
 
-	// TFflagClosure means the structType is a closure
+	// TFlagClosure means the funcType is a Go function value.
 	TFlagClosure TFlag = 1 << 5
 
 	// TFlagGCMaskOnDemand means that the GC pointer bitmask will be
@@ -417,7 +417,7 @@ func (t *Type) IsDirectIface() bool {
 	return t.Kind_&KindDirectIface != 0
 }
 
-// IsClosure reports whether t is closure struct
+// IsClosure reports whether a Func value stores a Go descriptor, rather than a native entry pointer.
 func (t *Type) IsClosure() bool {
 	return t.TFlag&TFlagClosure != 0
 }

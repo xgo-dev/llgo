@@ -41,7 +41,6 @@ import "unsafe"
 // CHECK: [[CSTRING_FOR_N:%[0-9]+]] = load ptr, ptr [[CSTRING_SLOT]]
 // CHECK-NEXT: call %"{{.*}}String" @"{{.*}}GoStringN"(ptr [[CSTRING_FOR_N]], i64 2)
 // CHECK: [[CBYTES:%[0-9]+]] = call ptr @"main.main$1"()
-// CHECK: call %"{{.*}}Slice" %__llgo_funcval_code
 // CHECK: [[SUM:%[0-9]+]] = call i32 @main._Cfunc_add(i32 20, i32 22)
 // CHECK: [[MACRO:%[0-9]+]] = call ptr @main._Cmacro_TEST_OBJECT()
 // CHECK: [[OBJECT:%[0-9]+]] = call i32 @main._Cfunc_read_object(ptr [[MACRO]])
@@ -51,6 +50,9 @@ import "unsafe"
 // CHECK: [[WRAPPED:%[0-9]+]] = call ptr @main._Cfunc_new_wrapped(i32 11)
 // CHECK-NOT: _Cgo_use
 // CHECK: call i32 @main._Cfunc_read_wrapped(ptr [[WRAPPED]])
+// CHECK-NOT: call ptr asm
+// ARM64: call %"{{.*}}Slice" @"main.main$2"(ptr swiftself %{{[0-9]+}})
+// AMD64: call %"{{.*}}Slice" @"main.main$2"(ptr nest %{{[0-9]+}})
 
 // CBytes and GoBytes are emitted in compiler-generated expression helpers.
 // CHECK-LABEL: define ptr @"main.main$1"(){{.*}} {
@@ -59,7 +61,7 @@ import "unsafe"
 // CHECK: [[CBYTES_RESULT:%[0-9]+]] = call ptr @"{{.*}}CBytes"(%"{{.*}}Slice" [[BYTE_SLICE]])
 // CHECK-NEXT: ret ptr [[CBYTES_RESULT]]
 
-// CHECK-LABEL: define %"{{.*}}Slice" @"main.main$2"({{.*}}){{.*}} {
+// CHECK-LABEL: define hidden %"{{.*}}Slice" @"main.main$2"({{.*}}){{.*}} {
 // CHECK: [[CBYTES_ARG:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[GOBYTES_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}GoBytes"(ptr [[CBYTES_ARG]], i64 3)
 // CHECK-NEXT: ret %"{{.*}}Slice" [[GOBYTES_RESULT]]

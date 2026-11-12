@@ -58,8 +58,13 @@ check_new_shell() {
             continue
         fi
         printf 'START %s %s (%s)\n' "$shell_name" "$mode" "$scenario"
-        local startup=("${clean_env[@]}" LLGO_TEST_BIN="$install_root/bin"
-            "$shell_binary" "$mode" "$assertion")
+        local startup=("${clean_env[@]}" LLGO_TEST_BIN="$install_root/bin")
+        if [[ "$shell_name" == fish ]]; then
+            # Record configuration/command progress before a startup timeout.
+            # Fish writes this trace to the existing captured stderr log.
+            startup+=(fish_trace=1)
+        fi
+        startup+=("$shell_binary" "$mode" "$assertion")
         if [[ -n "$timeout_binary" ]]; then
             startup=("$timeout_binary" --verbose -k 2 "$LLGO_SHELL_TEST_TIMEOUT" "${startup[@]}")
         fi
@@ -68,7 +73,7 @@ check_new_shell() {
         else
             local status=$?
             cat "$temporary/install.log" "$temporary/shell.log" >&2
-            fail "$shell_name $mode ($scenario) did not find exactly one installed PATH entry (exit $status)"
+            fail "$shell_name $mode ($scenario) startup or validation failed (exit $status)"
         fi
     done
 }

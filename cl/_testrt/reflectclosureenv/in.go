@@ -7,6 +7,9 @@ type receiver struct {
 	base int
 }
 
+// CHECK-DAG: [[NINE_ARG_PROTOTYPE:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.main$1", ptr null }
+// CHECK-DAG: [[MAKEFUNC_CALLBACK:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @"main.main$2", ptr null }
+
 // CHECK-LABEL: define void @main.checkInt(%reflect.Value %0, %"{{.*}}Slice" %1){{.*}} {
 // CHECK-DAG: [[CHECK_RESULTS:%.*]] = call %"{{.*}}Slice" @reflect.Value.Call(%reflect.Value %0, %"{{.*}}Slice" %1)
 // CHECK-DAG: [[CHECK_RESULTS_PTR:%.*]] = extractvalue %"{{.*}}Slice" [[CHECK_RESULTS]], 0
@@ -55,19 +58,17 @@ type receiver struct {
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // The direct and nested integer closures are boxed and called with the same nine arguments.
 // CHECK-DAG: [[MAIN_INTS:%.*]] = call %"{{.*}}Slice" @main.intArgs()
-// CHECK-DAG: [[MAIN_SUM_FN:%.*]] = call { ptr, ptr } @main.makeSum(i64 10)
-// CHECK-DAG: store { ptr, ptr } [[MAIN_SUM_FN]], ptr [[MAIN_SUM_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK-DAG: [[MAIN_SUM_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_SUM_ADDR]], 1
+// CHECK-DAG: [[MAIN_SUM_FN:%.*]] = call ptr @main.makeSum(i64 10)
+// CHECK-DAG: [[MAIN_SUM_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_SUM_FN]], 1
 // CHECK-DAG: [[MAIN_SUM_VALUE:%.*]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[MAIN_SUM_BOX]])
 // CHECK-DAG: call void @main.checkInt(%reflect.Value [[MAIN_SUM_VALUE]], %"{{.*}}Slice" [[MAIN_INTS]])
-// CHECK-DAG: [[MAIN_NESTED_FN:%.*]] = call { ptr, ptr } @main.makeNestedSum(i64 10)
-// CHECK-DAG: store { ptr, ptr } [[MAIN_NESTED_FN]], ptr [[MAIN_NESTED_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK-DAG: [[MAIN_NESTED_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_NESTED_ADDR]], 1
+// CHECK-DAG: [[MAIN_NESTED_FN:%.*]] = call ptr @main.makeNestedSum(i64 10)
+// CHECK-DAG: [[MAIN_NESTED_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_NESTED_FN]], 1
 // CHECK-DAG: [[MAIN_NESTED_VALUE:%.*]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[MAIN_NESTED_BOX]])
 // CHECK-DAG: call void @main.checkInt(%reflect.Value [[MAIN_NESTED_VALUE]], %"{{.*}}Slice" [[MAIN_INTS]])
 // MakeFunc receives the type of the nine-argument literal and the slice callback main$2.
-// CHECK-DAG: [[FUNC_TYPE:%.*]] = call %"{{.*}}iface" @reflect.TypeOf(%"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr @"_llgo_ifacebox${{.*}}" })
-// CHECK-DAG: [[MADE:%.*]] = call %reflect.Value @reflect.MakeFunc(%"{{.*}}iface" [[FUNC_TYPE]], { ptr, ptr } { ptr @"main.main$2", ptr null })
+// CHECK-DAG: [[FUNC_TYPE:%.*]] = call %"{{.*}}iface" @reflect.TypeOf(%"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[NINE_ARG_PROTOTYPE]] })
+// CHECK-DAG: [[MADE:%.*]] = call %reflect.Value @reflect.MakeFunc(%"{{.*}}iface" [[FUNC_TYPE]], ptr [[MAKEFUNC_CALLBACK]])
 // CHECK-DAG: call void @main.checkInt(%reflect.Value [[MADE]], %"{{.*}}Slice" [[MAIN_INTS]])
 // MethodByName is performed on receiver{base: 10} and checked with the same arguments.
 // CHECK-DAG: store i64 10, ptr %{{.*}}
@@ -80,9 +81,8 @@ type receiver struct {
 // CHECK-DAG: [[METHOD_MATCH:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr [[METHOD_TYPE]])
 // CHECK-DAG: br i1 [[METHOD_MATCH]], label %{{.*}}, label %{{.*}}
 // The floating closure is reflect-called with floatArgs and compared with 55.
-// CHECK-DAG: [[MAIN_FLOAT_FN:%.*]] = call { ptr, ptr } @main.makeFloatSum(double 1.000000e+01)
-// CHECK-DAG: store { ptr, ptr } [[MAIN_FLOAT_FN]], ptr [[MAIN_FLOAT_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK-DAG: [[MAIN_FLOAT_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_FLOAT_ADDR]], 1
+// CHECK-DAG: [[MAIN_FLOAT_FN:%.*]] = call ptr @main.makeFloatSum(double 1.000000e+01)
+// CHECK-DAG: [[MAIN_FLOAT_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[MAIN_FLOAT_FN]], 1
 // CHECK-DAG: [[MAIN_FLOAT_VALUE:%.*]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[MAIN_FLOAT_BOX]])
 // CHECK-DAG: [[MAIN_FLOAT_ARGS:%.*]] = call %"{{.*}}Slice" @main.floatArgs()
 // CHECK-DAG: [[MAIN_FLOAT_RESULTS:%.*]] = call %"{{.*}}Slice" @reflect.Value.Call(%reflect.Value [[MAIN_FLOAT_VALUE]], %"{{.*}}Slice" [[MAIN_FLOAT_ARGS]])
@@ -91,9 +91,12 @@ type receiver struct {
 // CHECK-DAG: br i1 [[MAIN_FLOAT_BAD]], label %{{.*}}, label %{{.*}}
 // The asserted method closure keeps code and environment through the direct nine-argument call.
 // CHECK-DAG: [[METHOD_DATA:%.*]] = extractvalue %"{{.*}}eface" [[METHOD_IFACE]], 1
-// CHECK-DAG: [[METHOD_FN:%.*]] = load { ptr, ptr }, ptr [[METHOD_DATA]]
-// CHECK-DAG: [[METHOD_ENV:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 1
-// CHECK-DAG: [[METHOD_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 0
+// CHECK-DAG: [[METHOD_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[METHOD_DATA]]
+// CHECK-DAG: [[METHOD_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_ENV_SAFE]], i32 0, i32 1
+// CHECK-DAG: [[METHOD_ENV:%.*]] = load ptr, ptr [[METHOD_ENV_SLOT]]
+// CHECK-DAG: [[METHOD_CODE_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[METHOD_DATA]]
+// CHECK-DAG: [[METHOD_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[METHOD_CODE_SAFE]], i32 0, i32 0
+// CHECK-DAG: [[METHOD_CODE_RAW:%.*]] = load ptr, ptr [[METHOD_CODE_SLOT]]
 // CHECK-DAG: [[METHOD_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[METHOD_CODE_RAW]])
 // ARM64-DAG: [[METHOD_GOT:%.*]] = call i64 [[METHOD_CODE]](ptr swiftself [[METHOD_ENV]], i64 1, i64 2, i64 3, i64 4, i64 5, i64 6, i64 7, i64 8, i64 9)
 // AMD64-DAG: [[METHOD_GOT:%.*]] = call i64 [[METHOD_CODE]](ptr nest [[METHOD_ENV]], i64 1, i64 2, i64 3, i64 4, i64 5, i64 6, i64 7, i64 8, i64 9)
@@ -113,15 +116,23 @@ type receiver struct {
 // CHECK-DAG: store %reflect.Value [[MAKEFUNC_RESULT]], ptr %{{.*}}
 // CHECK-DAG: ret %"{{.*}}Slice" %{{.*}}
 
-// CHECK-LABEL: define { ptr, ptr } @main.makeFloatSum(double %0){{.*}} {
-// CHECK: store double %0, ptr [[FLOAT_BASE_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK: [[FLOAT_COPY:%.*]] = load double, ptr [[FLOAT_BASE_ADDR]]
-// CHECK: store double [[FLOAT_COPY]], ptr %{{.*}}
-// CHECK: [[FLOAT_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.makeFloatSum$1", ptr undef }, ptr %{{.*}}, 1
-// CHECK: ret { ptr, ptr } [[FLOAT_CLOSURE]]
+// CHECK-LABEL: define ptr @main.makeFloatSum(double %0){{.*}} {
+// CHECK: [[FLOAT_BASE_ADDR:%.*]] = alloca double
+// CHECK: store double %0, ptr [[FLOAT_BASE_ADDR]]
+// CHECK-NEXT: [[FLOAT_CAPTURE_COPY:%.*]] = load double, ptr [[FLOAT_BASE_ADDR]]
+// CHECK-NEXT: [[FLOAT_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[FLOAT_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { double } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[FLOAT_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { double } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[FLOAT_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { double }, ptr [[FLOAT_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store double [[FLOAT_CAPTURE_COPY]], ptr [[FLOAT_CAPTURE_SLOT]]
+// CHECK-NEXT: [[FLOAT_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[FLOAT_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.makeFloatSum$1", ptr [[FLOAT_ENTRY_SLOT]]
+// CHECK-NEXT: [[FLOAT_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[FLOAT_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[FLOAT_CAPTURE_ENV]], ptr [[FLOAT_CAPTURE_ENV_SLOT]]
+// CHECK-NEXT: ret ptr [[FLOAT_CLOSURE]]
 
-// ARM64-LABEL: define double @"main.makeFloatSum$1"(ptr swiftself %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
-// AMD64-LABEL: define double @"main.makeFloatSum$1"(ptr nest %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
+// ARM64-LABEL: define hidden double @"main.makeFloatSum$1"(ptr swiftself %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
+// AMD64-LABEL: define hidden double @"main.makeFloatSum$1"(ptr nest %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
 // CHECK: [[FLOAT_BASE_PTR:%.*]] = getelementptr inbounds nuw { double }, ptr %0, i32 0, i32 0
 // CHECK: [[FLOAT_BASE_VALUE:%.*]] = load double, ptr [[FLOAT_BASE_PTR]]
 // CHECK: [[FLOAT_S1:%.*]] = fadd double [[FLOAT_BASE_VALUE]], %1
@@ -135,15 +146,23 @@ type receiver struct {
 // CHECK: [[FLOAT_S9:%.*]] = fadd double [[FLOAT_S8]], %9
 // CHECK: ret double [[FLOAT_S9]]
 
-// CHECK-LABEL: define { ptr, ptr } @main.makeNestedSum(i64 %0){{.*}} {
-// CHECK: store i64 %0, ptr [[NESTED_BASE_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK: [[NESTED_COPY:%.*]] = load i64, ptr [[NESTED_BASE_ADDR]]
-// CHECK: store i64 [[NESTED_COPY]], ptr %{{.*}}
-// CHECK: [[NESTED_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.makeNestedSum$1", ptr undef }, ptr %{{.*}}, 1
-// CHECK: ret { ptr, ptr } [[NESTED_CLOSURE]]
+// CHECK-LABEL: define ptr @main.makeNestedSum(i64 %0){{.*}} {
+// CHECK: [[NESTED_BASE_ADDR:%.*]] = alloca i64
+// CHECK: store i64 %0, ptr [[NESTED_BASE_ADDR]]
+// CHECK-NEXT: [[NESTED_CAPTURE_COPY:%.*]] = load i64, ptr [[NESTED_BASE_ADDR]]
+// CHECK-NEXT: [[NESTED_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[NESTED_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[NESTED_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[NESTED_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[NESTED_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[NESTED_CAPTURE_COPY]], ptr [[NESTED_CAPTURE_SLOT]]
+// CHECK-NEXT: [[NESTED_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[NESTED_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.makeNestedSum$1", ptr [[NESTED_ENTRY_SLOT]]
+// CHECK-NEXT: [[NESTED_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[NESTED_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[NESTED_CAPTURE_ENV]], ptr [[NESTED_CAPTURE_ENV_SLOT]]
+// CHECK-NEXT: ret ptr [[NESTED_CLOSURE]]
 
-// ARM64-LABEL: define i64 @"main.makeNestedSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// AMD64-LABEL: define i64 @"main.makeNestedSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.makeNestedSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.makeNestedSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // CHECK: [[NESTED_VALUES:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
 // CHECK: [[NESTED_FIRST_PTR:%.*]] = getelementptr inbounds %reflect.Value, ptr [[NESTED_VALUES]], i64 0
 // CHECK: store i64 %1, ptr [[NESTED_FIRST_BOX_ADDR:%[-A-Za-z0-9_.]+]]
@@ -160,23 +179,30 @@ type receiver struct {
 // CHECK: [[NESTED_ARGS:%.*]] = insertvalue %"{{.*}}Slice" [[NESTED_ARGS_1]], i64 9, 2
 // CHECK: [[NESTED_CAPTURE_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[NESTED_CAPTURE:%.*]] = load i64, ptr [[NESTED_CAPTURE_ADDR]]
-// CHECK: [[NESTED_SUM_FN:%.*]] = call { ptr, ptr } @main.makeSum(i64 [[NESTED_CAPTURE]])
-// CHECK: store { ptr, ptr } [[NESTED_SUM_FN]], ptr [[NESTED_SUM_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK: [[NESTED_SUM_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[NESTED_SUM_ADDR]], 1
+// CHECK: [[NESTED_SUM_FN:%.*]] = call ptr @main.makeSum(i64 [[NESTED_CAPTURE]])
+// CHECK: [[NESTED_SUM_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[NESTED_SUM_FN]], 1
 // CHECK: [[NESTED_SUM_VALUE:%.*]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[NESTED_SUM_BOX]])
 // CHECK: [[NESTED_RESULTS:%.*]] = call %"{{.*}}Slice" @reflect.Value.Call(%reflect.Value [[NESTED_SUM_VALUE]], %"{{.*}}Slice" [[NESTED_ARGS]])
 // CHECK: [[NESTED_RESULT:%.*]] = call i64 @reflect.Value.Int(%reflect.Value %{{.*}})
 // CHECK: ret i64 [[NESTED_RESULT]]
 
-// CHECK-LABEL: define { ptr, ptr } @main.makeSum(i64 %0){{.*}} {
-// CHECK: store i64 %0, ptr [[SUM_BASE_ADDR:%[-A-Za-z0-9_.]+]]
-// CHECK: [[SUM_COPY:%.*]] = load i64, ptr [[SUM_BASE_ADDR]]
-// CHECK: store i64 [[SUM_COPY]], ptr %{{.*}}
-// CHECK: [[SUM_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.makeSum$1", ptr undef }, ptr %{{.*}}, 1
-// CHECK: ret { ptr, ptr } [[SUM_CLOSURE]]
+// CHECK-LABEL: define ptr @main.makeSum(i64 %0){{.*}} {
+// CHECK: [[SUM_BASE_ADDR:%.*]] = alloca i64
+// CHECK: store i64 %0, ptr [[SUM_BASE_ADDR]]
+// CHECK-NEXT: [[SUM_CAPTURE_COPY:%.*]] = load i64, ptr [[SUM_BASE_ADDR]]
+// CHECK-NEXT: [[SUM_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[SUM_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[SUM_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[SUM_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[SUM_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[SUM_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[SUM_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[SUM_CAPTURE_COPY]], ptr [[SUM_CAPTURE_SLOT]]
+// CHECK-NEXT: [[SUM_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SUM_CLOSURE]], i32 0, i32 0
+// CHECK-NEXT: store ptr @"main.makeSum$1", ptr [[SUM_ENTRY_SLOT]]
+// CHECK-NEXT: [[SUM_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SUM_CLOSURE]], i32 0, i32 1
+// CHECK-NEXT: store ptr [[SUM_CAPTURE_ENV]], ptr [[SUM_CAPTURE_ENV_SLOT]]
+// CHECK-NEXT: ret ptr [[SUM_CLOSURE]]
 
-// ARM64-LABEL: define i64 @"main.makeSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// AMD64-LABEL: define i64 @"main.makeSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.makeSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.makeSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // CHECK: [[SUM_BASE_PTR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[SUM_BASE_VALUE:%.*]] = load i64, ptr [[SUM_BASE_PTR]]
 // CHECK: [[SUM_S1:%.*]] = add i64 [[SUM_BASE_VALUE]], %1
@@ -285,5 +311,6 @@ func main() {
 	if got := reflect.ValueOf(makeFloatSum(10)).Call(floatArgs())[0].Float(); got != 55 {
 		panic(got)
 	}
+	checkMethodTypes()
 	println("ok")
 }

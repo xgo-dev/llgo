@@ -64,7 +64,16 @@ var Again = operation
 							t.Fatal("COFF entry lacks COMDAT")
 						}
 						init := mustNamedFunction(t, mod, "entry.init").String()
-						if strings.Count(init, "ptr @entry.operation,") != 2 {
+						descriptor := constantFunctionDescriptor(t, mod, entry)
+						stores := 0
+						for _, block := range mustNamedFunction(t, mod, "entry.init").BasicBlocks() {
+							for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+								if inst.InstructionOpcode() == llvm.Store && uncastFunctionValue(inst.Operand(0)) == descriptor {
+									stores++
+								}
+							}
+						}
+						if stores != 2 {
 							t.Fatalf("function values did not share the original entry:\n%s", init)
 						}
 						mod.SetDataLayout(prog.DataLayout())
@@ -154,5 +163,50 @@ func Direct(a,b uint64)(uint64,bool){return dep.Multiply(a,b)}
 				})
 			}
 		})
+	}
+}
+
+// Resolve the descriptor and inspect its code field rather than assuming that
+// the addressable function entry is stored directly in a Go function value.
+func constantFunctionDescriptor(t *testing.T, mod llvm.Module, entry llvm.Value) llvm.Value {
+	t.Helper()
+	for global := mod.FirstGlobal(); !global.IsNil(); global = llvm.NextGlobal(global) {
+		if !strings.HasPrefix(global.Name(), "_llgo_funcval$") || global.IsDeclaration() {
+			continue
+		}
+		init := global.Initializer()
+		if init.OperandsCount() < 2 {
+			continue
+		}
+		code := init.Operand(0)
+		// Go64 stores a physical Wasm32 pointer in a padded Go word.
+		if code.Type().TypeKind() == llvm.StructTypeKind && code.OperandsCount() > 0 {
+			code = code.Operand(0)
+		}
+		if uncastFunctionValue(code) == entry {
+			return global
+		}
+	}
+	t.Fatalf("missing canonical descriptor for %s:\n%s", entry.Name(), mod.String())
+	return llvm.Value{}
+}
+
+func uncastFunctionValue(value llvm.Value) llvm.Value {
+	for {
+		var opcode llvm.Opcode
+		switch {
+		case !value.IsAConstantExpr().IsNil():
+			opcode = value.Opcode()
+		case !value.IsAInstruction().IsNil():
+			opcode = value.InstructionOpcode()
+		default:
+			return value
+		}
+		switch opcode {
+		case llvm.BitCast, llvm.PtrToInt, llvm.IntToPtr, llvm.ZExt:
+			value = value.Operand(0)
+		default:
+			return value
+		}
 	}
 }
