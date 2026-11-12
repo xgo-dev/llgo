@@ -17,11 +17,61 @@
 package cl
 
 import (
+	"go/types"
 	"strings"
 	"sync"
 
 	"golang.org/x/tools/go/ssa"
 )
+
+func (p *context) canTailRecoverAlias(call *ssa.CallCommon) bool {
+	target := p.prog.Target()
+	return target != nil && target.GOARCH != "wasm" && recoverAliasTailPosition(p.goFn, call)
+}
+
+// recoverAliasTailPosition proves that an SSA-generated adapter immediately
+// returns the forwarded result. Other wrappers retain their scoped cleanup.
+// Keep composite results conservative: lowering may add result validation or
+// storage work after their physical call.
+func recoverAliasTailPosition(fn *ssa.Function, call *ssa.CallCommon) bool {
+	if fn == nil || call == nil || fn.Recover != nil || !(strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
+		strings.HasPrefix(fn.Synthetic, "thunk for ") || strings.HasPrefix(fn.Synthetic, "bound method wrapper for ")) {
+		return false
+	}
+	results := fn.Signature.Results()
+	if results.Len() > 1 {
+		return false
+	}
+	if results.Len() == 1 {
+		switch typ := results.At(0).Type().Underlying().(type) {
+		case *types.Basic:
+			if typ.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 {
+				return false
+			}
+		case *types.Pointer:
+		default:
+			return false
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if _, deferred := instr.(*ssa.Defer); deferred {
+				return false
+			}
+		}
+	}
+	for _, block := range fn.Blocks {
+		for i, instr := range block.Instrs {
+			invoke, ok := instr.(*ssa.Call)
+			if !ok || &invoke.Call != call || i+2 != len(block.Instrs) {
+				continue
+			}
+			ret, ok := block.Instrs[i+1].(*ssa.Return)
+			return ok && (len(ret.Results) == 0 || len(ret.Results) == 1 && ret.Results[0] == invoke)
+		}
+	}
+	return false
+}
 
 // recoverFacts caches recover classification for one LLGo compilation. The
 // build driver constructs all dependency Go SSA before consulting its package

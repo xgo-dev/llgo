@@ -65,7 +65,7 @@ func main() {
 // CHECK: store %main.S %0, ptr [[S_ONE_ADDR]]
 // CHECK-NEXT: [[S_ONE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S_ONE_ADDR]], i32 0, i32 0
 // CHECK-NEXT: [[S_ONE_IFACE:%[0-9]+]] = load %"{{.*}}iface", ptr [[S_ONE_FIELD]]
-// CHECK: [[S_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[S_ONE_IFACE]], ptr %{{[0-9]+}})
+// CHECK: [[S_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[S_ONE_IFACE]])
 // CHECK: [[S_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[S_ONE_IFACE]], 0
 // CHECK: [[S_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[S_ONE_ITAB]], i64 3
 // CHECK: [[S_ONE_CODE:%.*]] = load ptr, ptr [[S_ONE_SLOT]]
@@ -224,7 +224,7 @@ func main() {
 // AMD64-LABEL: define i64 @"main.I.one$bound"(ptr nest %0){{.*}} {
 // CHECK: [[BOUND_ONE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_ONE_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_ONE_ENV]], 0
-// CHECK: [[BOUND_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_ONE_IFACE]], ptr %{{[0-9]+}})
+// CHECK: [[BOUND_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_ONE_IFACE]])
 // CHECK: [[BOUND_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_ONE_IFACE]], 0
 // CHECK: [[BOUND_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ONE_ITAB]], i64 3
 // CHECK: [[BOUND_ONE_CODE:%.*]] = load ptr, ptr [[BOUND_ONE_SLOT]]
@@ -235,7 +235,7 @@ func main() {
 // CHECK-NEXT: [[BOUND_ONE_CALL_DATA:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_ONE_PAIR]], 1
 // CHECK-NEXT: [[BOUND_ONE_CALL_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[BOUND_ONE_PAIR]], 0
 // CHECK-NEXT: [[BOUND_ONE_RESULT:%[0-9]+]] = call i64 [[BOUND_ONE_CALL_CODE]](ptr [[BOUND_ONE_CALL_DATA]])
-// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[BOUND_ONE_RECOVER]])
+// CHECK-NOT: EndRecoverFrameAlias
 // CHECK: ret i64 [[BOUND_ONE_RESULT]]
 
 // ARM64-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr swiftself %0){{.*}} {

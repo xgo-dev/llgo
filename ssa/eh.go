@@ -740,17 +740,32 @@ func (b Builder) callRecoverScopedDefer(fn Expr, mayRecover bool, call func()) {
 // CallRecoverAlias invokes fn through a compiler-generated wrapper while
 // preserving the wrapped function as the direct deferred call for recover.
 func (b Builder) CallRecoverAlias(from Expr, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
-	token := b.recoverDeferToken(fn, mayRecover)
-	if from.IsNil() || token.IsNil() {
+	return b.callRecoverAlias(from, mayRecover, false, fn, buildCall, args...)
+}
+
+// CallRecoverTailAlias is for proven forwarding returns only. Their enclosing
+// deferred-call scope restores the alias after the adapter returns.
+func (b Builder) CallRecoverTailAlias(from Expr, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	return b.callRecoverAlias(from, mayRecover, true, fn, buildCall, args...)
+}
+
+func (b Builder) callRecoverAlias(from Expr, mayRecover, tail bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	aliasToken := b.recoverDeferToken(fn, mayRecover)
+	if from.IsNil() || aliasToken.IsNil() {
 		return buildCall(b, fn, args...)
 	}
 	prev := b.Call(
 		b.Pkg.rtFunc("StartRecoverFrameAlias"),
 		b.PtrCast(b.Prog.VoidPtr(), from),
-		token,
+		aliasToken,
 	)
 	ret := buildCall(b, fn, args...)
-	b.Call(b.Pkg.rtFunc("EndRecoverFrameAlias"), prev)
+	if !tail {
+		b.Call(b.Pkg.rtFunc("EndRecoverFrameAlias"), prev)
+	}
+	// A proven forwarding return has no later wrapper work needing the old
+	// alias. Its enclosing deferred-call scope restores it after return; an
+	// ordinary invocation never had a matching direct-defer token to change.
 	return ret
 }
 

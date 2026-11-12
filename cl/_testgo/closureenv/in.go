@@ -40,7 +40,7 @@ package main
 // AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
 // CHECK: [[IB_ENV:%[0-9]+]] = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[IB_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } [[IB_ENV]], 0
-// CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], ptr %{{[0-9]+}})
+// CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]])
 // CHECK: [[IB_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[IB_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[IB_METHOD]], 0
 // CHECK-NEXT: [[IB_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[IB_PAIR0]], ptr [[IB_DATA]], 1
@@ -49,7 +49,7 @@ package main
 // CHECK: [[IB_CALL_DATA:%[0-9]+]] = extractvalue { ptr, ptr } [[IB_PAIR]], 1
 // CHECK-NEXT: [[IB_CALL_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[IB_PAIR]], 0
 // CHECK-NEXT: [[IB_RESULT:%[0-9]+]] = call i1 [[IB_CALL_CODE]](ptr [[IB_CALL_DATA]])
-// CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[IB_FRAME]])
+// CHECK-NOT: EndRecoverFrameAlias
 // CHECK-NEXT: ret i1 [[IB_RESULT]]
 
 type nilReceiver struct{}
