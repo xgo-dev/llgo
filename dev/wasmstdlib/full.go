@@ -103,8 +103,9 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 	if !p.Reference && p.GOOS == "js" {
 		switch pkg {
 		case "test/escape", "test/std/crypto/mldsa", "test/std/go/types":
-			// Fixed Fiber stacks must fit the ABI-copy budget, cryptographic
-			// workspaces and recursive type-checker frames in these tests.
+			// These tests need more than the default fixed Fiber-stack size:
+			// escape's by-value ABI copy slots, ML-DSA's cryptographic
+			// workspaces and go/types' recursive type-checker frames.
 			args = append(args, "-goroutine-stack-size=1MB")
 		}
 	}
