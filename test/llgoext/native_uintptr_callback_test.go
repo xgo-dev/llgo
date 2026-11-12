@@ -10,6 +10,16 @@ import (
 //llgo:cdecl
 type nativeUintptrCallback func(uintptr) uintptr
 
+//llgo:cdecl
+type nativeUintptrCallbackAlias = func(uintptr) uintptr
+
+type nativeAliasCallbackRecord struct{ Callback nativeUintptrCallbackAlias }
+
+//go:noinline
+func callNativeAliasCallback(record *nativeAliasCallbackRecord, n uintptr) uintptr {
+	return record.Callback(n)
+}
+
 func nativeCallbackIncrement(n uintptr) uintptr { return n + 1 }
 
 //go:linkname callNativeUintptrCallback C.llgo_call_uintptr_callback
@@ -60,5 +70,12 @@ func TestNativeUintptrCallback(t *testing.T) {
 	var nilGoFunction func(uintptr) uintptr
 	if nativeUintptrCallback(nilGoFunction) != nil {
 		t.Fatal("nil Go funcval produced a non-nil native callback")
+	}
+}
+
+func TestNativeUintptrCallbackAlias(t *testing.T) {
+	record := nativeAliasCallbackRecord{Callback: nativeCallbackIncrement}
+	if got := callNativeAliasCallback(&record, 41); got != 42 {
+		t.Fatalf("native alias callback field = %d, want 42", got)
 	}
 }

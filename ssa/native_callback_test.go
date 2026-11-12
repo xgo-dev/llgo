@@ -118,3 +118,47 @@ func TestNativeUintptrCallbackRejectsDynamicGoFuncval(t *testing.T) {
 	}()
 	body.ChangeType(prog.Type(native, GoDecl), owner.Param(0))
 }
+
+func TestNativeUintptrAliasCallbackAdapter(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32"})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	word := types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(word), types.NewTuple(word), false)
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, types.NewPackage(pkg.Path(), "p"), "Callback", nil), sig)
+	prog.SetTypeCallConv(pkg.Path()+".Callback", CDecl)
+	source := pkg.NewFunc(pkg.Path()+".source", sig, GoDecl)
+	source.MakeBody(1).Return(source.Param(0))
+	body := pkg.NewFunc(pkg.Path()+".owner", NoArgsNoRet, GoDecl).MakeBody(1)
+	callback := body.ChangeType(prog.Type(alias, GoDecl), source.Expr)
+	if implicit := checkExpr(source.Expr, alias, body); implicit.impl != callback.impl {
+		t.Fatal("implicit alias assignment bypassed the native adapter")
+	}
+	body.Return()
+	if callback.impl == source.impl || callback.impl.GlobalValueType().ParamTypes()[0].IntTypeWidth() != 32 {
+		t.Fatalf("native alias did not adapt its callback:\n%s", pkg.String())
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNativeUintptrCallbackRejectsVariadicForwarding(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32"})
+	defer prog.Dispose()
+	pkg := prog.NewPackage("p", "example.com/p")
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(
+		types.NewParam(token.NoPos, nil, "n", types.Typ[types.Uintptr]), VArg(),
+	), nil, true)
+	native := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage(pkg.Path(), "p"), "Callback", nil), sig, nil)
+	prog.SetTypeCallConv(pkg.Path()+".Callback", CDecl)
+	source := pkg.NewFunc(pkg.Path()+".source", sig, GoDecl)
+	body := pkg.NewFunc(pkg.Path()+".owner", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer func() {
+		if got := recover(); got == nil || !strings.Contains(fmt.Sprint(got), "C variadic callbacks require a native function pointer") {
+			t.Fatalf("variadic callback diagnostic = %v", got)
+		}
+	}()
+	body.ChangeType(prog.Type(native, GoDecl), source.Expr)
+}
