@@ -420,7 +420,7 @@ func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
 	})
 }
 
-func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value) (fields []llvm.Value) {
+func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value, cc CallConv) (fields []llvm.Value) {
 	prog := b.Prog
 	pkg := b.Pkg
 	switch t := types.Unalias(t).(type) {
@@ -476,12 +476,16 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiTuples(t.Results(), name+"$out"),
 		}
 		if prog.target.usesWasmReflectBridges() {
-			bridges := pkg.wasmReflectBridge(t)
-			fields = append(fields, bridges.call.impl, bridges.make.impl)
+			bridges := pkg.wasmReflectBridge(t, cc)
+			makeCode := prog.Nil(prog.VoidPtr()).impl
+			if bridges.make != nil {
+				makeCode = bridges.make.impl
+			}
+			fields = append(fields, bridges.call.impl, makeCode)
 		}
 	case *types.Struct:
 		if IsClosure(t) {
-			return b.abiExtendedFields(t.Field(0).Type(), name, global)
+			return b.abiExtendedFields(t.Field(0).Type(), name, global, GoDecl)
 		}
 		name, _ = prog.abi.TypeName(t)
 		var pkgPath string
@@ -505,7 +509,7 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 			b.abiInterfaceImethods(t, name+"$imethods"),
 		}
 	case *types.Named:
-		return b.abiExtendedFields(t.Underlying(), name, global)
+		return b.abiExtendedFields(t.Underlying(), name, global, cc)
 	}
 	return
 }
@@ -855,7 +859,7 @@ func (b Builder) abiType(t types.Type) Expr {
 		}
 		g = pkg.doNewVar(name, prog.Type(types.NewPointer(typ), GoDecl))
 		commonFields := b.abiCommonFields(t, name, hasUncommon, g.impl)
-		extendedFields := b.abiExtendedFields(t, name, g.impl)
+		extendedFields := b.abiExtendedFields(t, name, g.impl, CDecl)
 		fields := commonFields
 		if len(extendedFields) != 0 {
 			fields = append([]llvm.Value{

@@ -32,3 +32,24 @@ func TestReflectGoVariadicMakeFunc(t *testing.T) {
 		})
 	}
 }
+
+func TestReflectGoUintptrCalls(t *testing.T) {
+	// Keep nonzero high bits on 64-bit Go targets, including Memory32 Wasm.
+	// On 32-bit Go, the same test still exercises the target's native word.
+	high := uint64(1) << 40
+	input := uintptr(high) | 41
+	typ := reflect.TypeOf((func(uintptr) uintptr)(nil))
+	made := reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
+		return []reflect.Value{reflect.ValueOf(uintptr(args[0].Uint()) + 1)}
+	})
+	ordinary := reflect.ValueOf(func(n uintptr) uintptr { return n + 1 })
+	for _, value := range []reflect.Value{ordinary, made} {
+		out := value.Call([]reflect.Value{reflect.ValueOf(input)})
+		if got := uintptr(out[0].Uint()); got != input+1 {
+			t.Fatalf("reflect.Call = %#x, want %#x", got, input+1)
+		}
+		if got := value.Interface().(func(uintptr) uintptr)(input); got != input+1 {
+			t.Fatalf("typed call = %#x, want %#x", got, input+1)
+		}
+	}
+}

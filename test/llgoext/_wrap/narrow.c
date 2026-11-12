@@ -76,3 +76,8 @@ narrow_u16_callback narrow_u16_roundtrip(narrow_u16_callback fn) {
     narrow_u16_callback volatile saved = fn;
     return saved;
 }
+
+#if defined(__wasm__)
+#include <stdint.h>
+uintptr_t llgo_reflect_wasm_increment(uintptr_t n) { return n + 1; }
+#endif

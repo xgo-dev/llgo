@@ -109,7 +109,7 @@ class WorkflowContractTests(unittest.TestCase):
                                 if step.get("uses") == "./.github/actions/setup-go")
                     step["with"] = {"go-version": "1.27.0" if mutation == "old host" else version}
                 elif mutation == "old image":
-                    dockerfile = "ARG BASE_IMAGE=golang:1.26.0-bookworm\n"
+                    dockerfile = "ARG BASE_IMAGE=golang:1.27.0-bookworm\n"
                 elif mutation == "floating image":
                     dockerfile = "ARG BASE_IMAGE=golang:1.27-bookworm\n"
                 else:

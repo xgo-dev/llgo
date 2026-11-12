@@ -33,11 +33,14 @@ type wasmReflectBridgePair struct {
 
 // wasmReflectBridge returns package-local bridges shared by every function
 // type with the same lowered WebAssembly signature and GC-root extraction
-// shape. Signedness, names, and other source-only distinctions deliberately do
-// not create more code.
-func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
-	rawSig := p.Prog.gocvt.cvtFunc(sig, nil)
-	key := p.Prog.wasmReflectBridgeShape(rawSig)
+// shape. Go signedness and names do not create more code; native integer
+// extension attributes remain part of the physical ABI.
+func (p Package) wasmReflectBridge(sig *types.Signature, cc CallConv) wasmReflectBridgePair {
+	rawSig := sig
+	if cc == GoDecl {
+		rawSig = p.Prog.gocvt.cvtFunc(sig, nil)
+	}
+	key := p.Prog.wasmReflectBridgeShape(rawSig, cc)
 	if bridges, ok := p.wasmReflectBridges[key]; ok {
 		return bridges
 	}
@@ -46,8 +49,10 @@ func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
 	}
 	id := compactWasmBridgeID(len(p.wasmReflectBridges))
 	bridges := wasmReflectBridgePair{
-		call: p.newWasmReflectCallBridge(rawSig, "$c"+id),
-		make: p.newWasmReflectMakeBridge(sig, "$m"+id),
+		call: p.newWasmReflectCallBridge(rawSig, "$c"+id, cc),
+	}
+	if cc == GoDecl {
+		bridges.make = p.newWasmReflectMakeBridge(sig, "$m"+id)
 	}
 	p.wasmReflectBridges[key] = bridges
 	return bridges
@@ -72,12 +77,19 @@ func compactWasmBridgeUint64(value uint64) string {
 	}
 }
 
-func (p Program) wasmReflectBridgeShape(sig *types.Signature) string {
+func (p Program) wasmReflectBridgeShape(sig *types.Signature, cc CallConv) string {
 	var shape strings.Builder
-	appendWasmLLVMTypeShape(&shape, p.toLLVMFuncBackground(sig, CDecl))
+	fmt.Fprintf(&shape, "%d:", cc)
+	ft := p.toLLVMFuncBackground(sig, cc)
+	appendWasmLLVMTypeShape(&shape, ft)
+	if isNativeCallConv(cc) {
+		p.nativeIntegerAttrs(sig, ft, func(index int, attr llvm.Attribute) {
+			fmt.Fprintf(&shape, "/%d:%d", index, attr.GetEnumKind())
+		})
+	}
 	shape.WriteByte('/')
 	for i := 0; i < sig.Params().Len(); i++ {
-		p.appendWasmRootShape(&shape, p.Type(sig.Params().At(i).Type(), CDecl))
+		p.appendWasmRootShape(&shape, p.Type(sig.Params().At(i).Type(), cc))
 		shape.WriteByte(';')
 	}
 	return shape.String()
@@ -189,7 +201,7 @@ func (p Program) appendWasmRootShape(shape *strings.Builder, typ Type) {
 // newWasmReflectCallBridge adapts arrays of addresses to the exact lowered
 // LLVM signature. A closure or interface method has an explicit environment
 // parameter, so both indirect-call forms are emitted.
-func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) Function {
+func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string, cc CallConv) Function {
 	ptr := types.Typ[types.UnsafePointer]
 	ptrs := types.NewPointer(ptr)
 	params := types.NewTuple(
@@ -206,7 +218,9 @@ func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) 
 	prog := p.Prog
 	args := make([]Expr, rawSig.Params().Len())
 	for i := range args {
-		typ := prog.Type(rawSig.Params().At(i).Type(), CDecl)
+		// Values live in Go-sized reflection storage. Call performs native
+		// ABI conversions afterwards, including checked uintptr narrowing.
+		typ := prog.rawType(rawSig.Params().At(i).Type())
 		args[i] = b.Load(b.Convert(prog.Pointer(typ), b.wasmReflectSlot(fn.Param(3), i)))
 	}
 	b.If(fn.Param(2), fn.Block(1), fn.Block(2))
@@ -218,7 +232,9 @@ func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) 
 			block = 1
 		}
 		b.SetBlock(fn.Block(block))
-		entry := Expr{fn.Param(0).impl, prog.FuncDecl(entrySig, CDecl)}
+		// Go entries retain Go uintptr width on Memory32. Native function
+		// pointers retain the target's C ABI instead.
+		entry := Expr{fn.Param(0).impl, prog.FuncDecl(entrySig, cc)}
 		ret := b.Call(entry, callArgs...)
 		for i := 0; i < rawSig.Results().Len(); i++ {
 			value := ret

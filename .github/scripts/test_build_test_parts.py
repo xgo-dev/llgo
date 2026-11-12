@@ -52,7 +52,7 @@ class BuildPartsTests(unittest.TestCase):
                  "BenchmarkGo126Fixture"] + [f"TestCase{i}" for i in range(12)]
         groups = run_build_tests.partition(names, 8)
         header = {"schema": 1, "source": {"head": "a" * 40, "tracked_sha256": "source"},
-                  "profile": {"go": {"GOVERSION": "go1.27.0", "GOOS": "darwin", "GOARCH": "arm64",
+                  "profile": {"go": {"GOVERSION": "go1.27.3", "GOOS": "darwin", "GOARCH": "arm64",
                                       "GOFLAGS": "", "CGO_ENABLED": "1", "GOEXPERIMENT": "", "GOARM64": "v8.0"},
                               "machine": "arm64", "llvm_version": "22.1.8",
                               "gomaxprocs": 2, "covermode": "set", "coverpkg": "./...",
@@ -285,7 +285,7 @@ class BuildPartsTests(unittest.TestCase):
                     if command[:2] == ["git", "rev-parse"]:
                         return b"a" * 40 + b"\n"
                     if command[:2] == ["go", "env"]:
-                        return json.dumps({"GOVERSION": "go1.27.0", "GOOS": "darwin",
+                        return json.dumps({"GOVERSION": "go1.27.3", "GOOS": "darwin",
                                            "GOARCH": "arm64", "GOFLAGS": "",
                                            "CGO_ENABLED": "1"})
                     raise AssertionError(command)

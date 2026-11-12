@@ -48,22 +48,22 @@ func TestWasmReflectBridgeShapeDeduplication(t *testing.T) {
 			types.NewTuple(types.NewParam(token.NoPos, nil, "x", in)),
 			types.NewTuple(types.NewParam(token.NoPos, nil, "", out)), false)
 	}
-	intBridge := pkg.wasmReflectBridge(signature(types.Typ[types.Int64], types.Typ[types.Uint64]))
-	unsignedBridge := pkg.wasmReflectBridge(signature(types.Typ[types.Uint64], types.Typ[types.Int64]))
+	intBridge := pkg.wasmReflectBridge(signature(types.Typ[types.Int64], types.Typ[types.Uint64]), GoDecl)
+	unsignedBridge := pkg.wasmReflectBridge(signature(types.Typ[types.Uint64], types.Typ[types.Int64]), GoDecl)
 	if intBridge != unsignedBridge {
 		t.Fatal("signedness-only distinction generated duplicate bridges")
 	}
 
-	pointerBridge := pkg.wasmReflectBridge(signature(types.Typ[types.UnsafePointer], types.Typ[types.UnsafePointer]))
+	pointerBridge := pkg.wasmReflectBridge(signature(types.Typ[types.UnsafePointer], types.Typ[types.UnsafePointer]), GoDecl)
 	mapType := types.NewMap(types.Typ[types.String], types.Typ[types.Int])
-	mapBridge := pkg.wasmReflectBridge(signature(mapType, mapType))
+	mapBridge := pkg.wasmReflectBridge(signature(mapType, mapType), GoDecl)
 	if pointerBridge != mapBridge {
 		t.Fatal("equivalent directly rooted pointers generated duplicate bridges")
 	}
 
 	emptyInterface := types.NewInterfaceType(nil, nil).Complete()
-	interfaceBridge := pkg.wasmReflectBridge(signature(emptyInterface, emptyInterface))
-	closureBridge := pkg.wasmReflectBridge(signature(NoArgsNoRet, NoArgsNoRet))
+	interfaceBridge := pkg.wasmReflectBridge(signature(emptyInterface, emptyInterface), GoDecl)
+	closureBridge := pkg.wasmReflectBridge(signature(NoArgsNoRet, NoArgsNoRet), GoDecl)
 	if closureBridge.call != pointerBridge.call || closureBridge.make != pointerBridge.make {
 		t.Fatal("the one-word rooted Go descriptor did not reuse both pointer bridges")
 	}
@@ -92,6 +92,85 @@ func TestWasmReflectBridgeShapeDeduplication(t *testing.T) {
 		if strings.Contains(ir, unwanted) {
 			t.Errorf("unexpected %q in compact bridge:\n%s", unwanted, ir)
 		}
+	}
+}
+
+func TestWasmReflectBridgesRetainGoUintptrABI(t *testing.T) {
+	for _, profile := range []string{"j32", "j64", "w32"} {
+		t.Run(profile, func(t *testing.T) {
+			goos, provider := "js", "emscripten"
+			if profile == "w32" {
+				goos, provider = "wasip1", "wasi"
+			}
+			prog := NewProgram(&Target{GOOS: goos, GOARCH: "wasm", WasmProfile: profile, WasmProvider: provider, WasmReflectBridges: true})
+			defer prog.Dispose()
+			setTestRuntime(t, prog)
+			pkg := prog.NewPackage("bridges", "example.com/bridges")
+			for _, variadic := range []bool{false, true} {
+				var input types.Type = types.Typ[types.Uintptr]
+				if variadic {
+					input = types.NewSlice(input)
+				}
+				sig := types.NewSignatureType(nil, nil, nil,
+					types.NewTuple(types.NewParam(token.NoPos, nil, "values", input)),
+					types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr])), variadic)
+				bridges := pkg.wasmReflectBridge(sig, GoDecl)
+				makeType := bridges.make.impl.GlobalValueType()
+				if makeType.ReturnType().IntTypeWidth() != prog.GoWordSize()*8 {
+					t.Fatal("MakeFunc entry narrowed Go uintptr")
+				}
+				plain := llvm.FunctionType(makeType.ReturnType(), makeType.ParamTypes()[1:], false)
+				calls := 0
+				for block := bridges.call.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+					for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+						call := inst.IsACallInst()
+						if call.IsNil() || call.CalledValue() != bridges.call.impl.Param(0) {
+							continue
+						}
+						got := call.CalledFunctionType()
+						if got != makeType && got != plain {
+							t.Fatalf("reflection calls %s, Go entry is %s (without env: %s)", got, makeType, plain)
+						}
+						calls++
+					}
+				}
+				if calls != 2 {
+					t.Fatalf("checked %d call edges, want both environment forms", calls)
+				}
+			}
+			tuple := func(typ types.Type) *types.Tuple { return types.NewTuple(types.NewParam(token.NoPos, nil, "", typ)) }
+			wide := types.NewSignatureType(nil, nil, nil, tuple(types.Typ[types.Uintptr]), tuple(types.Typ[types.Uintptr]), false)
+			narrow := types.NewSignatureType(nil, nil, nil, tuple(types.Typ[types.Uint32]), tuple(types.Typ[types.Uint32]), false)
+			if pkg.wasmReflectBridge(wide, GoDecl) == pkg.wasmReflectBridge(narrow, GoDecl) {
+				t.Fatal("Go uintptr shared a bridge with uint32")
+			}
+			native := pkg.wasmReflectBridge(wide, CDecl)
+			if native.make != nil {
+				t.Fatal("non-FFI provider generated an unsupported native MakeFunc entry")
+			}
+			if native == pkg.wasmReflectBridge(wide, GoDecl) {
+				t.Fatal("native and Go calling conventions shared a bridge")
+			}
+			for block := native.call.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					call := inst.IsACallInst()
+					if call.IsNil() || call.CalledValue() != native.call.impl.Param(0) {
+						continue
+					}
+					if got, want := call.CalledFunctionType().ReturnType().IntTypeWidth(), prog.PointerSize()*8; got != want {
+						t.Fatalf("native uintptr width = %d, want %d", got, want)
+					}
+				}
+			}
+			signed := types.NewSignatureType(nil, nil, nil, tuple(types.Typ[types.Int8]), tuple(types.Typ[types.Int]), false)
+			unsigned := types.NewSignatureType(nil, nil, nil, tuple(types.Typ[types.Uint8]), tuple(types.Typ[types.Int]), false)
+			if pkg.wasmReflectBridge(signed, CDecl) == pkg.wasmReflectBridge(unsigned, CDecl) {
+				t.Fatal("native signext and zeroext shared a bridge")
+			}
+			if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -154,12 +233,12 @@ func TestWasmReflectBridgeEmptyAndMultipleResults(t *testing.T) {
 	prog.EnableGCRoots(true)
 	pkg := prog.NewPackage("p", "example.com/p")
 
-	pkg.wasmReflectBridge(NoArgsNoRet)
+	pkg.wasmReflectBridge(NoArgsNoRet, GoDecl)
 	results := types.NewTuple(
 		types.NewParam(token.NoPos, nil, "", types.Typ[types.Int64]),
 		types.NewParam(token.NoPos, nil, "", types.Typ[types.String]),
 	)
-	pkg.wasmReflectBridge(types.NewSignatureType(nil, nil, nil, nil, results, false))
+	pkg.wasmReflectBridge(types.NewSignatureType(nil, nil, nil, nil, results, false), GoDecl)
 	if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG BASE_IMAGE=golang:1.27.0-bookworm
+ARG BASE_IMAGE=golang:1.27.3-bookworm
 FROM ${BASE_IMAGE} AS unpack
 
 ARG TARGETPLATFORM
