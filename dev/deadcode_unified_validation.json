@@ -1,0 +1,195 @@
+{
+  "description": "Consolidation of PR3011: one compiler selects native Strong or ThinLTO after shared optimized-snapshot name analysis. Correctness/size checks, not timing comparison. Known humanize failure remains a Draft blocker.",
+  "date": "2026-11-12",
+  "parent_commit": "d535781542b51f201ecdac1976571df2b91628f9",
+  "source_sha256": {
+    "cl/compile_test.go": "1cb4c7d8b4524fc06fe9218dc34e7858b16ff8780099bf78e6ee66bb6aafdeab",
+    "dev/audit_deadcode_live_slots.py": "0066ba0bf5e73c8667da3d049a7d898b86c9a5cfb3d5a2b50aafaf096c69df73",
+    "internal/build/build.go": "c3613ba798ab2be49cd25c7f9108b8746eab8d3e57be8ed3228a70b682d2d84f",
+    "internal/build/cache.go": "81329d7bd8219b21fa84c5699b1c5d1c82ddacf97c6a20d9f74b47b5fe5b7afb",
+    "internal/build/collect.go": "daadac8bfb0febad7c0c8a321cfb6304bdedb5f2797de58eb508e28541125055",
+    "internal/build/deadcode_reflect.go": "884eb67d6365c668193f01f22122c9ced9827d48b7d31a127276f611c61e9414",
+    "internal/build/deadcode_reflect_cache_test.go": "e80897de4bd939be887cbd46ca2cb7a659f5f5f593134e62c35d5492ba220561",
+    "internal/build/deadcode_thin.go": "e073c0345f30f026af9e201c91fbd75196f76b48fcce801281117710311919b5",
+    "internal/build/deadcode_thin_test.go": "0f3ad51cb126164c3d309c13edeb569344bb620cabaa80a41d3e834586751c37",
+    "internal/build/pclntab_embedded.go": "89bdbcbfd5769a74fb7f590e4f1346991d7331e0c9d97301f09636a9290edaa0",
+    "internal/build/thin_globals_test.go": "69d4b2242b0695a879e51f34e732c46ae09c292d48abc36208c0d05895d096cf",
+    "internal/dcepass/dcepass.go": "1e54fb2231e6ce8248002c41e6899651bdabd72f1a6c6360e460b6a9b762a7c6"
+  },
+  "compiler_sha256": "817a2775df19110ea273c968785011a908fbf865045f9168422fdbb00955a7f8",
+  "diagnostic_compiler_sha256": "e15d42cb182f102450bf043ef63af9bb8f054bd7bc833a2cb8ac3e64c68422d1",
+  "compiler_note": "Built from the modified consolidation source before committing; source hashes above identify implementation changes. Same uninstrumented compiler bytes used for both runtime backends; same diagnostic compiler for both map exports.",
+  "common_flags": [
+    "-a",
+    "-Os",
+    "-p=3",
+    "-deadcodedrop",
+    "-debug-artifact=none"
+  ],
+  "thin_additional_flags": [
+    "-lto=thin"
+  ],
+  "ldflags": "-Wl,-no_exported_symbols --ld-path=/opt/homebrew/opt/lld@23/bin/ld64.lld",
+  "scope": "macOS arm64; pinned GORM v1.31.2, workqueue v0.36.2, humanize v1.0.1. Forced builds; embedded PCLN; sizes after strip -x and ad-hoc signing. GORM runs 62 schema tests; no real database workload. Runtime output audited for fatal/panic/FAIL even on exit 0. Tests/builds overlapped; no speedup claims.",
+  "local_tests": {
+    "unit": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/deadcode\t0.460s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/meta\t0.872s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/reflectnames\t0.488s",
+      "ok  \tgithub.com/xgo-dev/llgo/internal/dcepass\t0.983s"
+    ],
+    "build-tests": [
+      "ok  \tgithub.com/xgo-dev/llgo/internal/build\t0.995s"
+    ],
+    "fixtures": [
+      "--- PASS: TestReflectTypeMethodRetainsCallableDemand (0.09s)",
+      "--- PASS: TestBuildAndCheckSymbolsFromTestdropIRReflection (161.99s)",
+      "ok  \tgithub.com/xgo-dev/llgo/cl\t162.702s"
+    ],
+    "ssa-sites": [
+      "ok  \tgithub.com/xgo-dev/llgo/ssa\t0.503s"
+    ]
+  },
+  "live_slots_comparisons": [
+    {
+      "case": "reflectcallbacks",
+      "equal": true,
+      "types": 79,
+      "slots": 112,
+      "sha256": "3c30230beff7b430bec136f544985938711469b16c4822a7f7442292147961a4",
+      "backends": {
+        "strong": {
+          "types": 79,
+          "slots": 112,
+          "sha256": "3c30230beff7b430bec136f544985938711469b16c4822a7f7442292147961a4"
+        },
+        "thin": {
+          "types": 79,
+          "slots": 112,
+          "sha256": "3c30230beff7b430bec136f544985938711469b16c4822a7f7442292147961a4"
+        }
+      },
+      "different_types": [],
+      "matches_committed_historical_maps": true
+    },
+    {
+      "case": "gormschema",
+      "equal": true,
+      "types": 285,
+      "slots": 649,
+      "sha256": "bffa6ceeeced60ef3f12e965993d5c8868e4e5c0724cec9034b6897d1ae18734",
+      "backends": {
+        "strong": {
+          "types": 285,
+          "slots": 649,
+          "sha256": "bffa6ceeeced60ef3f12e965993d5c8868e4e5c0724cec9034b6897d1ae18734"
+        },
+        "thin": {
+          "types": 285,
+          "slots": 649,
+          "sha256": "bffa6ceeeced60ef3f12e965993d5c8868e4e5c0724cec9034b6897d1ae18734"
+        }
+      },
+      "different_types": [],
+      "matches_committed_historical_maps": true
+    }
+  ],
+  "live_slots_data": "Complete exported maps were compared and are identical to the maps already committed in dev/deadcode_mfunc_live_slots.json. Those historical stored values can be inspected as the same canonical maps; the comparisons above are new one-compiler observations.",
+  "runtime_smoke": [
+    {
+      "case": "dustin_humanize",
+      "status": "runtime_failed",
+      "valid": false,
+      "bytes": 2229840,
+      "text_bytes": 894604,
+      "function_bodies": 3196,
+      "binary_sha256": "a04213bc7a60d97e9d9ab9b340b46b26265a5ab7cfe0a5e0fcdeb9355f6ae708",
+      "runtime_diagnostics": [
+        "fatal error:"
+      ],
+      "backend": "strong",
+      "build_exit_code": 0,
+      "execution_exit_code": 0
+    },
+    {
+      "case": "k8s_workqueue",
+      "status": "pass",
+      "valid": true,
+      "bytes": 6941280,
+      "text_bytes": 3222320,
+      "function_bodies": 11589,
+      "binary_sha256": "e46de9c760bf5eb4d234f8a0a978b0498e818732797abf80123b9f11f705e109",
+      "runtime_diagnostics": [],
+      "backend": "strong",
+      "build_exit_code": 0,
+      "execution_exit_code": 0
+    },
+    {
+      "case": "gorm_schema",
+      "status": "pass",
+      "valid": true,
+      "bytes": 3512784,
+      "text_bytes": 1428596,
+      "function_bodies": 4651,
+      "binary_sha256": "8d5e586e5cdba8cad168a1a31441d3e1b74395e78a295be4f55be00786b223a5",
+      "runtime_diagnostics": [],
+      "backend": "strong",
+      "build_exit_code": 0,
+      "execution_exit_code": 0,
+      "schema_tests": {
+        "returncode": 0,
+        "passed": 62,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "case": "dustin_humanize",
+      "status": "runtime_failed",
+      "valid": false,
+      "bytes": 2048048,
+      "text_bytes": 824664,
+      "function_bodies": 2425,
+      "binary_sha256": "19d01e69764836e27b3e4a38ff5dbd61e8c1c9dced1ac26e7aafbe2f024f7574",
+      "runtime_diagnostics": [
+        "fatal error:",
+        "(?m)^panic:"
+      ],
+      "backend": "thin",
+      "build_exit_code": 0,
+      "execution_exit_code": 2
+    },
+    {
+      "case": "k8s_workqueue",
+      "status": "pass",
+      "valid": true,
+      "bytes": 6676512,
+      "text_bytes": 3137700,
+      "function_bodies": 10071,
+      "binary_sha256": "1a975c20e0fc4258b7cf470295dcabccb6c0d23ef63c8837efdba139f8f3c0c4",
+      "runtime_diagnostics": [],
+      "backend": "thin",
+      "build_exit_code": 0,
+      "execution_exit_code": 0
+    },
+    {
+      "case": "gorm_schema",
+      "status": "pass",
+      "valid": true,
+      "bytes": 3314240,
+      "text_bytes": 1359508,
+      "function_bodies": 3632,
+      "binary_sha256": "94715c1669a277c54944faa8ad754e8013dae37fa0cac0ca498e844f73df2a84",
+      "runtime_diagnostics": [],
+      "backend": "thin",
+      "build_exit_code": 0,
+      "execution_exit_code": 0,
+      "schema_tests": {
+        "returncode": 0,
+        "passed": 62,
+        "failed": 0,
+        "skipped": 0
+      }
+    }
+  ]
+}

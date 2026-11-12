@@ -29,6 +29,7 @@ func formatMeta(w *strings.Builder, pm *PackageMeta) {
 	useIface := make(map[string][]string)
 	useIfaceMethod := make(map[string][]string) // src → ["iface[idx]", ...]
 	useNamed := make(map[string][]string)
+	reflectSites := make(map[string][]string)
 
 	for i := Symbol(0); i < Symbol(n); i++ {
 		src := symName(i)
@@ -49,6 +50,8 @@ func formatMeta(w *strings.Builder, pm *PackageMeta) {
 			case DemandNamedMethod:
 				name := pm.nameString(nameRef{Off: d.Target, Len: d.Extra})
 				useNamed[src] = append(useNamed[src], name)
+			case DemandReflectMethodSite:
+				reflectSites[src] = append(reflectSites[src], symName(Symbol(d.Target)))
 			}
 		}
 	}
@@ -92,7 +95,14 @@ func formatMeta(w *strings.Builder, pm *PackageMeta) {
 
 	// collect Reflect
 	var reflectSyms []string
+	var reflectMetadataSyms []string
 	for i := Symbol(0); i < Symbol(n); i++ {
+		for _, d := range pm.funcDemands(i) {
+			if d.Kind == DemandReflectMethodMetadata {
+				reflectMetadataSyms = append(reflectMetadataSyms, symName(i))
+				break
+			}
+		}
 		for _, d := range pm.funcDemands(i) {
 			if d.Kind == DemandReflectMethod {
 				reflectSyms = append(reflectSyms, symName(i))
@@ -123,6 +133,7 @@ func formatMeta(w *strings.Builder, pm *PackageMeta) {
 	printSection("UseIface", useIface)
 	printSection("UseIfaceMethod", useIfaceMethod)
 	printSection("UseNamedMethod", useNamed)
+	printSection("ReflectMethodSite", reflectSites)
 
 	if len(methodInfo) > 0 {
 		fmt.Fprintln(w, "[MethodInfo]")
@@ -160,6 +171,14 @@ func formatMeta(w *strings.Builder, pm *PackageMeta) {
 		sort.Strings(reflectSyms)
 		fmt.Fprintln(w, "[Reflect]")
 		for _, r := range reflectSyms {
+			fmt.Fprintf(w, "    %s\n", r)
+		}
+		fmt.Fprintln(w)
+	}
+	if len(reflectMetadataSyms) > 0 {
+		sort.Strings(reflectMetadataSyms)
+		fmt.Fprintln(w, "[ReflectMethodMetadata]")
+		for _, r := range reflectMetadataSyms {
 			fmt.Fprintf(w, "    %s\n", r)
 		}
 		fmt.Fprintln(w)

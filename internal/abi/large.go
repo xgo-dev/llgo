@@ -335,7 +335,11 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	result := l.allocResult(m, ctx, b, retType, call.InstructionDebugLoc())
 	params := make([]llvm.Value, 1, oldType.ParamTypesCount()+1)
 	params[0] = result
+	// Replacing the call must preserve its reflection identity. The added sret
+	// argument shifts the name parameter's attribute index by one; it does not
+	// change the call-level site ID used to join with package metadata.
 	reflectMethodByName := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
+	reflectSite := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
 	reflectNameParam := -1
 	for i := 0; i < oldType.ParamTypesCount(); i++ {
 		params = append(params, call.Operand(i))
@@ -348,6 +352,9 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	copyClosureEnvCallAttrs(call, newCall, 1)
 	if !reflectMethodByName.IsNil() {
 		newCall.AddCallSiteAttribute(-1, reflectMethodByName)
+	}
+	if !reflectSite.IsNil() {
+		newCall.AddCallSiteAttribute(-1, reflectSite)
 	}
 	if reflectNameParam >= 0 {
 		newCall.AddCallSiteAttribute(reflectNameParam, ctx.CreateStringAttribute(

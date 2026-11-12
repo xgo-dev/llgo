@@ -93,6 +93,10 @@ func (a Analysis) CanDropMethodMetadata(name string) bool {
 }
 
 // AnalyzeProgram computes method liveness and interface visibility together.
+// Optimized-IR name recovery happens before this graph walk: GlobalSummary
+// presents proven lookup sites as named demands and unresolved sites as generic
+// reflection. The graph walk does not select a backend; strong overrides and
+// private ThinLTO archive rewrites consume its LiveSlots decisions afterward.
 // The returned Analysis borrows info and must not outlive its package metadata.
 func AnalyzeProgram(info *meta.GlobalSummary, rootNames []string) Analysis {
 	roots := make([]meta.Symbol, 0, len(rootNames))
@@ -219,7 +223,9 @@ func (d *pass) flood() {
 
 		for _, demand := range d.info.FuncDemands(sym) {
 			switch demand.Kind {
-			case meta.DemandReflectMethod:
+			case meta.DemandReflectMethod, meta.DemandReflectMethodMetadata:
+				// Old experimental package caches can still carry the retired
+				// metadata-only marker. Treat it as callable reflection too.
 				d.reflectSeen = true
 			case meta.DemandUseIface:
 				d.markUsedInIface(demand.Target)
@@ -306,7 +312,12 @@ func (d *pass) shouldKeep(method methodRef) bool {
 
 func (d *pass) markMethod(method methodRef) {
 	d.liveSlots[method.owner] = append(d.liveSlots[method.owner], method.slot)
+	d.markMethodType(method)
+	d.markReachable(method.slotInfo.IFn)
+	d.markReachable(method.slotInfo.TFn)
+}
 
+func (d *pass) markMethodType(method methodRef) {
 	// The method descriptor is itself a type descriptor, and reflection can
 	// reach its parameter and result types through operations such as
 	// reflect.Type.Method(i).Type.Out(j). Traverse those child types with
@@ -314,8 +325,6 @@ func (d *pass) markMethod(method methodRef) {
 	// be reachable without U's methods participating in a later MethodByName.
 	d.markUsedInIface(method.slotInfo.MType)
 	d.markReachable(method.slotInfo.MType)
-	d.markReachable(method.slotInfo.IFn)
-	d.markReachable(method.slotInfo.TFn)
 }
 
 func (d *pass) markReachable(sym meta.Symbol) {
@@ -345,8 +354,11 @@ func (d *pass) markUsedInIface(typ meta.Symbol) {
 }
 
 func (d *pass) popWork() meta.Symbol {
-	sym := d.workQueue[0]
-	copy(d.workQueue, d.workQueue[1:])
-	d.workQueue = d.workQueue[:len(d.workQueue)-1]
+	// Reachability is a monotone fixed point; processing order is immaterial.
+	// Pop the tail so a broad reflection flood does not repeatedly copy the
+	// entire pending queue.
+	last := len(d.workQueue) - 1
+	sym := d.workQueue[last]
+	d.workQueue = d.workQueue[:last]
 	return sym
 }

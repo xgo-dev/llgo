@@ -1664,6 +1664,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 	}
 	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
+	reflectCall := ret.impl
 	llvmattr.ApplyAllocatorCall(b.Prog.ctx, ret.impl, fn.impl, params, b.Prog.GCRootsEnabled())
 	b.setNativeIntegerCallAttrs(ret.impl, fn, sig, params)
 	if ret.Type != b.Prog.Void() {
@@ -1675,7 +1676,13 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		if !data.IsNil() {
 			nameArgIndex++
 		}
-		b.MarkReflectValueMethodByNameCall(ret.impl, nameArgIndex)
+		b.MarkReflectValueMethodByNameCall(reflectCall, nameArgIndex)
+		if reflectCheck.Site != "" {
+			// The parameter marker says which value to analyze; this call-level
+			// ID says which metadata demand receives the recovered names. Attach
+			// both to the call, not to a conversion of its returned value.
+			reflectCall.AddCallSiteAttribute(-1, b.Prog.ctx.CreateStringAttribute("llgo.deadcode.reflectsite", reflectCheck.Site))
+		}
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
 	return
@@ -1844,7 +1851,7 @@ func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
 				break
 			}
 			reflectKind = ReflectMethodDynamic | ReflectMethodByName
-			pkg.MarkReflectMethod(b.Func.Name())
+			check.Site = pkg.recordReflectMethodSite(b.Func.Name())
 		}
 	}
 	pkg.NeedAbiInit |= reflectKind
@@ -1873,6 +1880,37 @@ func (p Package) RecordReflectMethodByName(funcName, name string) {
 func (p Package) MarkReflectMethod(funcName string) {
 	if mb := p.metaBuilder; mb != nil {
 		mb.MarkReflect(mb.Sym(funcName))
+	}
+}
+
+// RecordReflectTypeMethodUse retains callable method demands even when only
+// method metadata is observed. Constant names still use the existing named
+// demand; unknown names and indexed lookups remain conservative.
+func (p Package) RecordReflectTypeMethodUse(funcName string, check ReflectMethodCheck, index int) {
+	if check.Kind == 0 {
+		return
+	}
+	p.NeedAbiInit |= check.Kind
+	if check.Kind == ReflectTypeMethodByIndex {
+		if p.MethodByIndex == nil {
+			p.MethodByIndex = make(map[int]none)
+		}
+		p.MethodByIndex[index] = none{}
+	}
+	if check.Kind == ReflectTypeMethodByName {
+		if p.MethodByName == nil {
+			p.MethodByName = make(map[string]none)
+		}
+		p.MethodByName[check.Name] = none{}
+	}
+	if mb := p.metaBuilder; mb != nil {
+		sym := mb.Sym(funcName)
+		switch {
+		case check.Kind == ReflectTypeMethodByName:
+			mb.AddNamedMethodUse(sym, check.Name)
+		default:
+			mb.MarkReflect(sym)
+		}
 	}
 }
 
