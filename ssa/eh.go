@@ -976,6 +976,16 @@ func (b Builder) markRecoverForwardTail(ret Expr) {
 	if attr := b.Func.impl.GetStringAttributeAtIndex(-1, "disable-tail-calls"); !attr.IsNil() {
 		return
 	}
+	// Matching LLVM types alone do not match an ABI: e.g. a native int8
+	// argument may require signext while its ordinary Go caller has none.
+	// Keep ABI-annotated entries conservative rather than guessing equality.
+	for index := 0; index <= len(b.Func.ll.ParamTypes()); index++ {
+		for _, kind := range recoverForwardABIAttrs {
+			if !b.Func.impl.GetEnumAttributeAtIndex(index, kind).IsNil() || !call.GetCallSiteEnumAttribute(index, kind).IsNil() {
+				return
+			}
+		}
+	}
 	for _, param := range b.Func.ll.ParamTypes() {
 		switch param.TypeKind() {
 		case llvm.PointerTypeKind, llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
@@ -984,4 +994,13 @@ func (b Builder) markRecoverForwardTail(ret Expr) {
 		}
 	}
 	call.SetTailCallKind(llvm.TailCallKindMustTail)
+}
+
+var recoverForwardABIAttrs = [...]uint{
+	nativeSignExtKind, nativeZeroExtKind,
+	llvm.AttributeKindID("inreg"), llvm.AttributeKindID("sret"),
+	llvm.AttributeKindID("byval"), llvm.AttributeKindID("byref"),
+	llvm.AttributeKindID("inalloca"), llvm.AttributeKindID("preallocated"),
+	llvm.AttributeKindID("returned"), llvm.AttributeKindID("nest"),
+	llvm.AttributeKindID("swiftself"), llvm.AttributeKindID("swiftasync"), llvm.AttributeKindID("swifterror"),
 }
