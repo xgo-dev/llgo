@@ -11,7 +11,7 @@ require (
 	github.com/mattn/go-tty v0.0.8
 	github.com/qiniu/x v1.19.3
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
-	github.com/xgo-dev/llvm v0.10.3
+	github.com/xgo-dev/llvm v0.10.4
 	github.com/xgo-dev/plan9asm v0.6.2
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.6
@@ -30,6 +30,3 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
-
-// v0.10.3 plus CopyFunctionProperties (xgo-dev/llvm#61); remove after its upstream release.
-replace github.com/xgo-dev/llvm => github.com/cpunion/llvm v0.9.4-0.20261111222339-7fd8d0aebf59
