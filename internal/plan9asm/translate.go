@@ -141,9 +141,15 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	var boundSigs map[string]extplan9asm.FuncSig
 	usedExtra := false
 	extraSigs := extraAsmSigsAndDeclMap(pkg.PkgPath, goarch)
+	var manualErr error
 	manualSig := func(resolved string) (extplan9asm.FuncSig, bool) {
 		if sig, ok := boundSigs[resolved]; ok {
 			return sig, true
+		}
+		if goarch == "arm64" && resolved == "runtime.memmove" {
+			sig, err := arm64RuntimeMemmoveSig(pkg)
+			manualErr = err
+			return sig, err == nil
 		}
 		fs, ok := extraSigs[resolved]
 		usedExtra = usedExtra || ok
@@ -167,6 +173,12 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		ManualSig:          manualSig,
 	}
 	tr, err := extplan9asm.TranslateGoModule(goPkg, src, moduleOptions)
+	if manualErr != nil {
+		if tr != nil {
+			tr.Module.Dispose()
+		}
+		return nil, manualErr
+	}
 	// Preserve the existing ordinary ABI0 path. A physical source lease is
 	// needed only when that path lacks context or uses a legacy ABI override.
 	if goarch == "amd64" && (errors.Is(err, extplan9asm.ErrProbeNeedsContext) || usedExtra) {
@@ -319,6 +331,12 @@ func extraAsmSigsAndDeclMap(pkgPath string, goarch string) map[string]extplan9as
 			Ret:  extplan9asm.Ptr,
 		},
 	}
+	if goarch == "arm64" {
+		// Ordinary Go assembly calls runtime.memmove through ABI0 stack slots.
+		// Let the selected runtime declaration supply that source ABI instead
+		// of treating it as a register-based C memmove call.
+		delete(manual, "runtime.memmove")
+	}
 	if pkgPath == "internal/bytealg" {
 		switch goarch {
 		case "386":
@@ -384,4 +402,16 @@ func extraAsmSigsAndDeclMap(pkgPath string, goarch string) map[string]extplan9as
 		}
 	}
 	return manual
+}
+
+// A plain ARM64 CALL uses the Go ABI0 outgoing stack, not C argument registers.
+// Derive it from the selected runtime declaration: imported private functions
+// are not present in ordinary export data and cannot be guessed by the Core.
+func arm64RuntimeMemmoveSig(pkg *packages.Package) (extplan9asm.FuncSig, error) {
+	if runtimePkg := pkg.Imports["runtime"]; runtimePkg != nil && runtimePkg.Types != nil {
+		if fn, ok := runtimePkg.Types.Scope().Lookup("memmove").(*types.Func); ok {
+			return extplan9asm.DeriveGoFuncABI0Signature("runtime.memmove", fn, "arm64", types.SizesFor("gc", "arm64"))
+		}
+	}
+	return extplan9asm.FuncSig{}, fmt.Errorf("%s: ARM64 runtime.memmove requires its selected Go source declaration", pkg.PkgPath)
 }
