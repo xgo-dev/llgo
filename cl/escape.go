@@ -194,6 +194,9 @@ func (p *context) inspectEscapeBody(fn *ssa.Function) bool {
 }
 
 func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
+	if value, ok := site.(ssa.Value); ok && freshNilAppendAllocation(value) {
+		return "fresh append result storage"
+	}
 	switch site.(type) {
 	case *ssa.MakeSlice:
 		elem := typ.Underlying().(*types.Slice).Elem()
@@ -233,6 +236,9 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 }
 
 func (p *context) stackStorage(site ssa.Instruction) bool {
+	if value, ok := site.(ssa.Value); ok && freshNilAppendAllocation(value) {
+		return false
+	}
 	if decision, ok := p.options.EscapeAnalysis.LookupDecision(site); ok {
 		return !decision.Heap
 	}
