@@ -590,7 +590,7 @@ func TestFullProfileCommandsKeepLLGoAndReferenceDistinct(t *testing.T) {
 
 func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 	root := t.TempDir()
-	for _, pkg := range []string{"test/simd", "test/simd/portable"} {
+	for _, pkg := range []string{"test/simd", "test/simd/portable", "test/std/simd"} {
 		dir := filepath.Join(root, pkg)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
@@ -623,7 +623,7 @@ func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 			if err := json.Unmarshal(data, &result); err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Packages) != 2 {
+			if len(result.Packages) != 3 {
 				t.Fatalf("SIMD disappeared from the inventory: %s", data)
 			}
 			for _, entry := range result.Packages {
@@ -698,7 +698,7 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}
 		}
-		for _, pkg := range []string{"test/cgo", "test/std/runtime/cgo"} {
+		for _, pkg := range []string{"test/cgo", "test/cgo/c11", "test/std/runtime/cgo"} {
 			if reason, ok := fullSourceExclusion(p, pkg); !ok || reason == "" {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}
@@ -787,5 +787,21 @@ func TestFullWitnessUsesOnlySelectedSources(t *testing.T) {
 	}
 	if _, err := testWitness(selectedPackage{Dir: dir}); err == nil {
 		t.Fatal("accepted unselected tests")
+	}
+}
+
+func TestFullLargeStackCommandsAreTargeted(t *testing.T) {
+	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
+		p, err := fullProfile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pkg := range []string{"test/escape", "test/std/crypto/mldsa", "test/std/go/types", "test/std/fmt"} {
+			cmd := fullCommand(p, "go", "llgo", "/goroot", pkg)
+			want := !p.Reference && p.GOOS == "js" && pkg != "test/std/fmt"
+			if got := slices.Contains(cmd.Args, "-goroutine-stack-size=1MB"); got != want {
+				t.Errorf("%s %s: large stack = %v, want %v: %+v", name, pkg, got, want, cmd)
+			}
+		}
 	}
 }

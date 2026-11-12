@@ -100,6 +100,14 @@ func fullCommand(p profile, goCmd, llgo, goRoot, pkg string) command {
 		// addresses are known. Most packages do not inspect runtime metadata.
 		args = append(args, "-pclntab=none")
 	}
+	if !p.Reference && p.GOOS == "js" {
+		switch pkg {
+		case "test/escape", "test/std/crypto/mldsa", "test/std/go/types":
+			// Fixed Fiber stacks must fit the ABI-copy budget, cryptographic
+			// workspaces and recursive type-checker frames in these tests.
+			args = append(args, "-goroutine-stack-size=1MB")
+		}
+	}
 	packageArg := "./" + pkg
 	if pkg == wasmTimerStressPackage {
 		// The Go command excludes underscore directories from package patterns,
@@ -213,6 +221,8 @@ func fullSourceExclusion(p profile, pkg string) (string, bool) {
 		return "tests select Unix or Windows syscall surfaces, neither of which is the js/wasm or wasip1/wasm ABI", true
 	case "test/windows":
 		return "Windows-only integration suite", true
+	case "test/cgo/c11":
+		return "native C11 cgo tests explicitly exclude wasm", true
 	case "test/cgo":
 		return "the Go cgo frontend does not support GOARCH=wasm; C interoperability is covered by dedicated LLGo target tests", true
 	case "test/std/runtime/cgo":
@@ -355,7 +365,7 @@ func runFullAt(root, name, reportPath, goCmd, llgo string, shard, shards int, st
 			e.Status, e.Reason = "separate-suite", "host-side compiler integration suite is executed by the regular Go workflow"
 		case e.Package == "test/sizereport":
 			e.Status, e.Reason = "separate-suite", "host-side final-artifact size reporting is executed by the regular Go workflow"
-		case e.Package == "test/simd" || e.Package == "test/simd/portable":
+		case e.Package == "test/simd" || e.Package == "test/simd/portable" || e.Package == "test/std/simd":
 			e.Status, e.Reason = "separate-suite", "experimental SIMD requires GOEXPERIMENT=simd and is executed by the native and W32-WASI SIMD jobs in the regular Go workflow"
 		case excluded:
 			e.Status, e.Reason = "not-applicable", exclusionReason
