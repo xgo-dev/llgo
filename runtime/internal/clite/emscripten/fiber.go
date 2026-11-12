@@ -18,14 +18,16 @@
 // execution-context backend.
 package emscripten
 
-import c "github.com/xgo-dev/llgo/runtime/internal/clite"
+import (
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/structs"
+)
 
 // Fiber is the opaque emscripten_fiber_t storage. The C layout consists of
 // eight pointer-sized fields.
-//
-//llgo:cdecl
 type Fiber struct {
-	_ [8]uintptr
+	_ structs.HostLayout
+	_ [8]fiberWord
 }
 
 //llgo:cdecl

@@ -7,7 +7,7 @@ main.init:
     main.init$guard
 main.main:
     _llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.sink
 
 [UseIface]

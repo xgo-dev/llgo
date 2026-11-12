@@ -257,7 +257,7 @@ func TestAlignedStorageHelpers(t *testing.T) {
 			b.Return()
 			b.EndBuild()
 			ir := fn.impl.String()
-			for _, helper := range []string{"AllocZAligned", "AllocUAligned", "MakeSliceAligned", "NewChanAligned", "SliceAppendAligned"} {
+			for _, helper := range []string{"AllocAtomicUAligned", "MakeSliceAligned", "NewChanAligned", "SliceAppendAligned"} {
 				if !strings.Contains(ir, PkgRuntime+"."+helper) {
 					t.Fatalf("missing %s call:\n%s", helper, ir)
 				}

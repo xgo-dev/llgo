@@ -83,6 +83,28 @@ func hasTypesKind(typs []llvm.Type, kind llvm.TypeKind) bool {
 
 type TypeInfoAmd64 struct {
 	*Transformer
+	classifications map[llvm.Type]amd64AggregateClassification
+}
+
+type amd64AggregateClassification struct {
+	elements  int
+	unaligned bool
+}
+
+// A lowering pass shares aggregate classifications between wrap decisions and
+// lowering. Standalone queries compute directly, without retaining LLVM types.
+func (p *TypeInfoAmd64) classifyAggregate(typ llvm.Type) amd64AggregateClassification {
+	if classification, ok := p.classifications[typ]; ok {
+		return classification
+	}
+	classification := amd64AggregateClassification{
+		elements:  elementTypesCount(typ),
+		unaligned: p.hasUnalignedField(typ, 0),
+	}
+	if p.classifications != nil {
+		p.classifications[typ] = classification
+	}
+	return classification
 }
 
 func (p *TypeInfoAmd64) SupportByVal() bool {
@@ -94,20 +116,40 @@ func (p *TypeInfoAmd64) SkipEmptyParams() bool {
 }
 
 func (p *TypeInfoAmd64) IsWrapType(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) bool {
-	return elementTypesCount(typ) >= 2
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind, llvm.ArrayTypeKind:
+		classification := p.classifyAggregate(typ)
+		// An unaligned zero-sized member can require MEMORY even when the
+		// aggregate contains only one non-empty element.
+		return classification.elements >= 2 || classification.unaligned
+	}
+	return false
 }
 
 func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.Type, index int) *TypeInfo {
 	info := &TypeInfo{}
 	info.Type = typ
 	info.Type1 = typ
-	if typ.TypeKind() == llvm.VoidTypeKind {
+	kind := typ.TypeKind()
+	if kind == llvm.VoidTypeKind {
 		info.Kind = AttrVoid
 		return info
 	}
 	info.Size = p.Sizeof(typ)
 	info.Align = p.Alignof(typ)
-	if n := elementTypesCount(typ); n >= 2 {
+	switch kind {
+	case llvm.StructTypeKind, llvm.ArrayTypeKind:
+	default:
+		return info
+	}
+	classification := p.classifyAggregate(typ)
+	if classification.unaligned {
+		// SysV classifies aggregates with unaligned fields as MEMORY, even
+		// below 16 bytes. Flattening them loses the packed member offsets.
+		setSysVMemory(info, index != 0)
+		return info
+	}
+	if classification.elements >= 2 {
 		if info.Size > 16 {
 			info.Kind = AttrPointer
 			info.Type1 = llvm.PointerType(typ, 0)
@@ -119,56 +161,118 @@ func (p *TypeInfoAmd64) GetTypeInfo(ctx llvm.Context, ftyp llvm.Type, typ llvm.T
 				info.Type1 = llvm.VectorType(ctx.FloatType(), 2)
 			}
 		} else {
-			types := elementTypes(p.td, typ)
-			if n == 2 {
-				// skip (i64|double,*) (*,i64/double)
-				if p.Sizeof(types[0]) == 8 || p.Sizeof(types[1]) == 8 {
-					info.Kind = AttrWidthType2
-					info.Type1 = types[0]
-					info.Type2 = types[1]
-					return info
-				}
-			}
-			var offset int
-			var index int
-			for i, et := range types {
-				align := p.Alignof(et)
-				offset = (offset + p.Sizeof(et) + align - 1) &^ (align - 1)
-				if offset < 8 {
-					continue
-				} else if offset > 8 {
-					index = i
-				} else {
-					index = i + 1
-				}
-				break
-			}
-			subType := func(subs []llvm.Type, left bool) llvm.Type {
+			parts, highEnd := p.registerParts(typ)
+			subType := func(subs []llvm.Type, part int) llvm.Type {
 				if len(subs) == 1 {
 					return subs[0]
 				} else if len(subs) == 2 && subs[0] == ctx.FloatType() && subs[1] == ctx.FloatType() {
 					return llvm.VectorType(ctx.FloatType(), 2)
 				}
-				if left {
+				// Mixed INTEGER/SSE fields merge to INTEGER in SysV.
+				if part == 0 {
 					return ctx.Int64Type()
 				}
-				var n int
-				for _, sub := range subs {
-					align := p.Alignof(sub)
-					n = (n + p.Sizeof(sub) + align - 1) &^ (align - 1)
-				}
+				n := highEnd - 8
 				// Each SysV register component occupies at most one
 				// eightbyte, even when the aggregate is over-aligned.
 				align := min(info.Align, 8)
 				n = (n + align - 1) &^ (align - 1)
 				return ctx.IntType(n * 8)
 			}
-			info.Kind = AttrWidthType2
-			info.Type1 = subType(types[0:index], true)
-			info.Type2 = subType(types[index:], false)
+			info.Kind = AttrWidthType
+			info.Type1 = subType(parts[0], 0)
+			if len(parts[1]) != 0 {
+				info.Kind = AttrWidthType2
+				info.Type2 = subType(parts[1], 1)
+				// Fill the first eightbyte so the coercion pair keeps the
+				// second register at byte 8. Preserve its INTEGER/SSE class.
+				// Only narrow integers or a float need widening; pointers,
+				// i64, double and <2 x float> already fill the eightbyte.
+				pair := ctx.StructType([]llvm.Type{info.Type1, info.Type2}, false)
+				if p.td.ElementOffset(pair, 1) < 8 {
+					if info.Type1.TypeKind() == llvm.IntegerTypeKind {
+						info.Type1 = ctx.Int64Type()
+					} else {
+						info.Type1 = ctx.DoubleType()
+					}
+				}
+			}
 		}
 	}
 	return info
+}
+
+// registerParts groups scalar fields by their actual eightbyte in an aggregate
+// of at most 16 bytes. Repacking flattened field types loses nested padding.
+// Scalar fields must be naturally aligned; unaligned aggregates require MEMORY
+// classification instead of this register split.
+func (p *TypeInfoAmd64) registerParts(typ llvm.Type) (parts [2][]llvm.Type, highEnd int) {
+	var visit func(llvm.Type, int)
+	visit = func(typ llvm.Type, offset int) {
+		if p.Sizeof(typ) == 0 {
+			return
+		}
+		switch typ.TypeKind() {
+		case llvm.StructTypeKind:
+			for i, field := range typ.StructElementTypes() {
+				visit(field, offset+int(p.td.ElementOffset(typ, i)))
+			}
+		case llvm.ArrayTypeKind:
+			elem := typ.ElementType()
+			stride := p.Sizeof(elem)
+			for i := 0; i < typ.ArrayLength(); i++ {
+				visit(elem, offset+i*stride)
+			}
+		default:
+			part := offset / 8
+			if part >= len(parts) {
+				panic("cabi: SysV register split exceeds two eightbytes")
+			}
+			parts[part] = append(parts[part], typ)
+			if part == 1 {
+				highEnd = max(highEnd, offset+p.Sizeof(typ))
+			}
+		}
+	}
+	visit(typ, 0)
+	return
+}
+
+func (p *TypeInfoAmd64) hasUnalignedField(typ llvm.Type, offset uint64) bool {
+	_, unaligned := p.checkFieldAlignment(typ, offset)
+	return unaligned
+}
+
+// checkFieldAlignment detects unaligned members, including empty members.
+// The maximum member alignment is meaningful only when unaligned is false,
+// since an unaligned member stops the traversal before all members are visited.
+func (p *TypeInfoAmd64) checkFieldAlignment(typ llvm.Type, offset uint64) (uint64, bool) {
+	align := uint64(p.Alignof(typ))
+	// Zero-length array members still impose an alignment requirement.
+	if offset%align != 0 {
+		return align, true
+	}
+	if p.td.TypeAllocSize(typ) == 0 {
+		return align, false
+	}
+	switch typ.TypeKind() {
+	case llvm.StructTypeKind:
+		for i, field := range typ.StructElementTypes() {
+			fieldAlign, unaligned := p.checkFieldAlignment(field, offset+p.td.ElementOffset(typ, i))
+			align = max(align, fieldAlign)
+			if unaligned {
+				return align, true
+			}
+		}
+	case llvm.ArrayTypeKind:
+		elem := typ.ElementType()
+		elemAlign, unaligned := p.checkFieldAlignment(elem, offset)
+		// Alignments are powers of two. A stride divisible by the maximum
+		// preserves every member's alignment, so visit the element only once.
+		strideMisaligned := typ.ArrayLength() > 1 && p.td.TypeAllocSize(elem)%elemAlign != 0
+		return max(align, elemAlign), unaligned || strideMisaligned
+	}
+	return align, false
 }
 
 type TypeInfoArm64 struct {

@@ -248,6 +248,10 @@ _llgo_io.Reader:
 _llgo_io.Writer:
     _llgo_funcval$df28404ce0408a7df48c8b3018797ebe037f20133ce3935bdb33a311fa041f67
     _llgo_iface$kr1iSWwMezh0B9LdQN0MhEZUNZvBlHPhlst95jAyxE0$imethods
+_llgo_itab$rDYHFzHM8ToJeVDHQNMl4dlq5ed22GhfgKkd01126as:
+    *_llgo_bytes.Buffer
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    bytes.(*Buffer).Read
 _llgo_string:
     _llgo_funcval$5833d99c9f9c201db47c5c15a5d5a306c123e8d69caea634dbe691637cca3b46
 _llgo_uint8:
@@ -261,11 +265,9 @@ main.init:
     io.init
     main.init$guard
 main.main:
-    *_llgo_bytes.Buffer
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    _llgo_itab$rDYHFzHM8ToJeVDHQNMl4dlq5ed22GhfgKkd01126as
     bytes.NewBuffer
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
 
 [UseIface]
 main.main:

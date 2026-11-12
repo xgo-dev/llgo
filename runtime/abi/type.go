@@ -335,6 +335,19 @@ type UncommonType struct {
 	Moff     uint32 // offset from this uncommontype to [mcount]Method
 }
 
+// Method returns a pointer into t's method table without copying it.
+// Callers must treat the referenced metadata as read-only.
+// The table can be dynamically allocated; callers must keep its backing type
+// metadata alive for as long as they use the returned pointer.
+// It panics if i is out of range.
+func (t *UncommonType) Method(i int) *Method {
+	if uint(i) >= uint(t.Mcount) {
+		panic("abi: method index out of range")
+	}
+	methods := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "0 <= i < t.Mcount")
+	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "0 <= i < t.Mcount"))
+}
+
 func (t *UncommonType) Methods() []Method {
 	if t.Mcount == 0 {
 		return nil

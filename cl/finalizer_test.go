@@ -65,7 +65,7 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 				if got := strings.Contains(ir, "runtime.llgoSetFinalizerPointer"); got != (tc.name == "enabled") {
 					t.Errorf("%s direct = %v:\n%s", name, got, ir)
 				}
-				if tc.name == "enabled" && name != "shared" && strings.Contains(ir, "_llgo_finalizers.Item") {
+				if tc.name == "enabled" && name != "shared" && (strings.Contains(ir, "_llgo_finalizers.Item") || strings.Contains(ir, "_llgo_itab$") || strings.Contains(ir, "runtime.NewItab")) {
 					t.Errorf("%s still references argument type metadata:\n%s", name, ir)
 				}
 				if name == "shared" && !strings.Contains(ir, "_llgo_finalizers.Item") {

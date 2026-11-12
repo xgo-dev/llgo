@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"runtime"
 	"simd/archsimd"
+	"structs"
 	"testing"
 	"unsafe"
 )
@@ -18,10 +19,13 @@ type nativeVectorBox struct {
 type definedVector archsimd.Float32x4
 
 //llgo:cdecl
+type nativeCallback func(uint64) uint64
+
 type nativeCallbackBox struct {
+	_     structs.HostLayout
 	Tag   uint64
 	Value archsimd.Float32x4
-	Fn    func(uint64) uint64
+	Fn    nativeCallback
 	Tail  uint64
 }
 
@@ -30,7 +34,7 @@ func TestSIMDNativeCallbackFieldReflection(t *testing.T) {
 		Box      nativeCallbackBox
 		Sentinel uint64
 	}{Sentinel: 77}
-	if unsafe.Sizeof(holder.Box) != 48 || unsafe.Offsetof(holder.Box.Tail) != 40 || reflect.TypeFor[nativeCallbackBox]().Field(3).Offset != 40 {
+	if unsafe.Sizeof(holder.Box) != 48 || unsafe.Offsetof(holder.Box.Tail) != 40 || reflect.TypeFor[nativeCallbackBox]().Field(4).Offset != 40 {
 		t.Fatal("native callback field changed source/reflection offsets")
 	}
 	reflect.ValueOf(&holder.Box).Elem().FieldByName("Tail").SetUint(99)

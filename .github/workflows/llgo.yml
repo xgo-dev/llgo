@@ -504,7 +504,7 @@ jobs:
           LLGO_SIMD_ARTIFACT_DIR: ${{ runner.temp }}/llgo-simd-matrix
         run: |
           (cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)
-          go test -count=1 -timeout=2m ./test/simd/...
+          go test -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           bash dev/test_native_simd.sh
 
       - name: Upload failed native SIMD executables
@@ -1302,6 +1302,19 @@ jobs:
             du -sh "$(llgo_cache_dir)"
           fi
 
+      - name: Test escape lifetimes under WebAssembly GC
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: |
+          for target in wasi emscripten emscripten-memory64; do
+            # The budget stress test also needs large by-value ABI copies,
+            # which are outside the incremental escape-storage budget.
+            "$LLGO" test -O2 -goroutine-stack-size=1MB -target "$target" -emulator ./test/escape
+          done
+
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
         shell: bash
@@ -1313,6 +1326,16 @@ jobs:
             for target in wasi emscripten emscripten-memory64; do
               "$LLGO" run -O2 -target "$target" -emulator "./test/wasm/$fixture"
             done
+          done
+          for target in wasi emscripten emscripten-memory64; do
+            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              -run '^TestHostLayout(CallbackStorage|StructOf.*)$' ./test/std/reflect
+            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              ./internal/structs ./internal/ffi)
+            if [[ "$target" != wasi ]]; then
+              (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+                ./internal/clite/emscripten)
+            fi
           done
           for profile in J32-GoJS J32-Emscripten J64-Emscripten W32-WASI; do
             go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=4m -v -args \
@@ -1396,10 +1419,13 @@ jobs:
           GOEXPERIMENT: simd
           LLGO_BUILD_CACHE: "off"
         run: |
-          GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
+          # Go's WASI example runner captures stdout in temporary files.
+          wasi_tmp="$RUNNER_TEMP/go-wasi-example-tmp"
+          mkdir -p "$wasi_tmp"
+          GOOS=wasip1 GOARCH=wasm go test -exec="wasmtime --dir=$wasi_tmp::/tmp" -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           for opt in 0 2; do
             "$RUNNER_TEMP/llgo-bin/llgo" test "-O${opt}" -target wasi -emulator \
-              -v -count=1 -timeout=2m ./test/simd/...
+              -v -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           done
           LLGO="$RUNNER_TEMP/llgo-bin/llgo" bash dev/test_portable_simd_wasi.sh
 

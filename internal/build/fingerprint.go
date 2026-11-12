@@ -110,6 +110,7 @@ type envSection struct {
 	ToolTags         []string         `yaml:"TOOL_TAGS,omitempty"`
 	GoVersion        string           `yaml:"GO_VERSION,omitempty"`
 	LlgoVersion      string           `yaml:"LLGO_VERSION,omitempty"`
+	GoFuncvalABI     string           `yaml:"GO_FUNCVAL_ABI,omitempty"`
 	LlgoCompilerHash string           `yaml:"LLGO_COMPILER_HASH,omitempty"`
 	LlvmTriple       string           `yaml:"LLVM_TRIPLE,omitempty"`
 	LlvmVersion      string           `yaml:"LLVM_VERSION,omitempty"`
@@ -117,10 +118,12 @@ type envSection struct {
 }
 
 func (s *envSection) empty() bool {
-	return s.Goos == "" && s.Goarch == "" && s.Go386 == "" && s.Goamd64 == "" && s.Goarm == "" && s.Goarm64 == "" && s.Goexperiment == "" && s.SourceGoVersion == "" && len(s.ToolTags) == 0 && s.LlvmTriple == "" && s.LlgoVersion == "" && s.LlgoCompilerHash == "" && s.GoVersion == "" && s.LlvmVersion == "" && len(s.Vars) == 0
+	return s.Goos == "" && s.Goarch == "" && s.Go386 == "" && s.Goamd64 == "" && s.Goarm == "" && s.Goarm64 == "" && s.Goexperiment == "" && s.SourceGoVersion == "" && len(s.ToolTags) == 0 && s.LlvmTriple == "" && s.LlgoVersion == "" && s.GoFuncvalABI == "" && s.LlgoCompilerHash == "" && s.GoVersion == "" && s.LlvmVersion == "" && len(s.Vars) == 0
 }
 
 type commonSection struct {
+	EscapeAnalysisVersion int `yaml:"GO_ESCAPE_VERSION,omitempty"`
+
 	BuildTags            []string     `yaml:"BUILD_TAGS,omitempty"`
 	Target               string       `yaml:"TARGET,omitempty"`
 	TargetABI            string       `yaml:"TARGET_ABI,omitempty"`
@@ -164,7 +167,7 @@ type commonSection struct {
 }
 
 func (s *commonSection) empty() bool {
-	return len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
+	return s.EscapeAnalysisVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
 		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
@@ -177,6 +180,8 @@ func (s *commonSection) empty() bool {
 }
 
 type packageSection struct {
+	GoVersion        string            `yaml:"go_language_version,omitempty"`
+	FrontendInputs   string            `yaml:"frontend_inputs,omitempty"`
 	DeadInits        []string          `yaml:"unused_global_inits,omitempty"`
 	PthreadStackSize int64             `yaml:"pthread_stack_size,omitempty"`
 	PkgPath          string            `yaml:"pkg_path,omitempty"`
@@ -192,7 +197,7 @@ type packageSection struct {
 }
 
 func (s *packageSection) empty() bool {
-	return len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.Plan9AsmFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

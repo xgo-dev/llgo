@@ -26,6 +26,9 @@ import (
 // it is not inferred from matching sizes or offsets.
 type RuntimeABI struct {
 	LLGoTarget         string            `json:"llgo_target"`
+	WasmProfile        string            `json:"wasm_profile,omitempty"`
+	GoWordBytes        uint64            `json:"go_word_bytes"`
+	NativePointerBytes uint64            `json:"native_pointer_bytes"`
 	GoType             RuntimeTypeLayout `json:"go_type"`
 	LLGoType           RuntimeTypeLayout `json:"llgo_type"`
 	GoFuncValueBytes   uint64            `json:"go_func_value_bytes"`
@@ -76,10 +79,13 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target)
 	lltyp := prog.Type(llgo, llssa.GoDecl)
 	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
 	report := &RuntimeABI{
-		LLGoTarget:       target.Spec().Triple,
-		GoType:           RuntimeTypeLayout{Size: uint64(sizes.Sizeof(gc)), Align: uint64(sizes.Alignof(gc))},
-		LLGoType:         RuntimeTypeLayout{Size: prog.SizeOf(lltyp), Align: prog.AlignOf(lltyp)},
-		GoFuncValueBytes: uint64(sizes.Sizeof(sig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llssa.GoDecl)),
+		LLGoTarget:         target.Spec().Triple,
+		WasmProfile:        target.WasmProfile,
+		GoWordBytes:        uint64(prog.GoWordSize()),
+		NativePointerBytes: uint64(prog.PointerSize()),
+		GoType:             RuntimeTypeLayout{Size: uint64(sizes.Sizeof(gc)), Align: uint64(sizes.Alignof(gc))},
+		LLGoType:           RuntimeTypeLayout{Size: prog.SizeOf(lltyp), Align: prog.AlignOf(lltyp)},
+		GoFuncValueBytes:   uint64(sizes.Sizeof(sig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llssa.GoDecl)),
 		ClosureTransport: target.ClosureEnvBuildTag(),
 	}
 	var fields []*types.Var

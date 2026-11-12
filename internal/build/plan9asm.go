@@ -26,6 +26,11 @@ func plan9asmTranslateOptions(ctx *context) llplan9asm.TranslateOptions {
 	if conf.sourceGoVersion != "" {
 		opt.Environment = withEnv(opt.Environment, "GOEXPERIMENT="+conf.sourceGoExperiment)
 	}
+	targetTags := ctx.crossCompile.BuildTags
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	opt.NativeBDWGC = conf.Goarch == "arm64" && (conf.Goos == "darwin" || conf.Goos == "linux") &&
+		!slices.Contains(tags, "nogc") && !slices.Contains(tags, "baremetal") &&
+		!slices.Contains(targetTags, "nogc") && !slices.Contains(targetTags, "baremetal")
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
 		opt.X87Mode = extplan9asm.X87Software
 	}

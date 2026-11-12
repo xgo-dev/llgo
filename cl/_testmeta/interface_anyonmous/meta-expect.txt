@@ -19,6 +19,11 @@ _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo:
     _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods
 _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo$imethods:
     _llgo_closure$b7Su1hWaFih-M0M9hMk6nO_RD1K_GQu5WjIXQp6Q2e8
+_llgo_itab$dACDlmxu21tSXRxXNpIHvwgX0x95CkEbRwSczvSHkCQ:
+    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
+    _llgo_main.T
+    main.(*T).M
+    main.(*T).N
 _llgo_main.T:
     *_llgo_main.T
     _llgo_funcval$5cc2aa444c9afe33a78580c48ee0face5a4193944be84057a7e50f2c8d5c7d8e
@@ -33,13 +38,11 @@ main.(*T).N:
 main.init:
     main.init$guard
 main.main:
-    _llgo_iface$f14WsslTA1u5wwC83jLU0HU2u2mmAWxBVE38vPBbRAo
-    _llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
+    _llgo_itab$dACDlmxu21tSXRxXNpIHvwgX0x95CkEbRwSczvSHkCQ
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.use
 main.use:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
 
 [UseIface]
 main.main:

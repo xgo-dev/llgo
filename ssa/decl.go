@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -359,8 +360,10 @@ type aFunction struct {
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}
 
-	gcRootFrame Expr
-	gcRootPrev  Expr
+	gcRootFrame    Expr
+	gcRootPrev     Expr
+	gcRootSlots    []Expr
+	gcStackObjects []gcStackObject
 
 	diFunc DIFunction
 
@@ -374,7 +377,8 @@ type aFunction struct {
 	// function. If a build path panics before EndBuild the builder is leaked,
 	// but codegen panics abort the process, so the leak is bounded. Do not
 	// rely on this field surviving past EndBuild.
-	allocaBuilder llvm.Builder
+	allocaBuilder    llvm.Builder
+	escapeStackBytes uint64
 }
 
 // Function represents a function or method.
@@ -414,6 +418,11 @@ func (p Package) newFunc(
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
+			// An ordinary import or linkname alias may have declared the
+			// symbol before an on-demand shared definition is requested.
+			if instantiated && v.impl.IsDeclaration() {
+				p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+			}
 			return v
 		}
 		cached = v
@@ -469,15 +478,7 @@ func (p Package) newFunc(
 	if isNativeCallConv(cc) {
 		p.Prog.nativeIntegerAttrs(entrySig, t.ll, fn.AddAttributeAtIndex)
 	}
-	switch name {
-	case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ",
-		"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocRoot":
-		// These runtime allocators return a non-null pointer, even for zero
-		// bytes, or panic. Attach the contract to declarations as well as
-		// definitions so every module can use it without LTO or inlining.
-		fn.AddAttributeAtIndex(0, p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
-	}
+	llvmattr.ApplyAllocatorFunction(p.Prog.ctx, fn)
 	if cc == Stdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}
@@ -554,6 +555,13 @@ func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
 // Name returns the function's name.
 func (p Function) Name() string {
 	return p.impl.Name()
+}
+
+// Coalesce lets this definition share a COFF section group with equivalent
+// linkonce entries. Preserve its linkage so externally visible entries remain
+// available even when no function in this module references them.
+func (p Function) Coalesce() {
+	p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
 }
 
 // Params returns the function's ith parameter.

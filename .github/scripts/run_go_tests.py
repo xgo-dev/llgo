@@ -81,7 +81,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path("go-test-timings"))
     parser.add_argument("suite", choices=("main", "build", "compiler", "language",
-                                          "traceback", "embedded"))
+                                          "runtime-helpers", "embedded"))
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if not args.command:

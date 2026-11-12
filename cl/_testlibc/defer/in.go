@@ -31,7 +31,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK: [[GO_DEFER_DATA:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
 // CHECK: [[COND:%.*]] = call i1 @main.f(%"{{.*}}String" { ptr [[HELLO]], i64 5 })
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
@@ -43,14 +43,14 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-NEXT: [[FORMAT_FLAGS:%.*]] = or i64 [[FORMAT_FLAGS0]], 1
 // CHECK-NEXT: store i64 [[FORMAT_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[FORMAT_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[FORMAT_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: getelementptr inbounds nuw { ptr, i64, ptr, ptr }, ptr [[FORMAT_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[FORMAT_PREV]], ptr {{%.*}}
 // CHECK: store ptr [[FORMAT]], ptr {{%.*}}
 // CHECK: store ptr [[CSTR]], ptr {{%.*}}
 // CHECK: store ptr [[FORMAT_NODE]], ptr [[HEAD]]
 // Common path: bye is always the newest node.
 // CHECK: [[BYE_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[BYE_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK: getelementptr inbounds nuw { ptr, i64, ptr }, ptr [[BYE_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[BYE_PREV]], ptr {{%.*}}
 // CHECK: store i64 2, ptr {{%.*}}
 // CHECK: store ptr [[BYE]], ptr {{%.*}}
@@ -60,7 +60,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-NEXT: [[WORLD_FLAGS:%.*]] = or i64 [[WORLD_FLAGS0]], 2
 // CHECK-NEXT: store i64 [[WORLD_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[WORLD_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[WORLD_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 24)
+// CHECK: getelementptr inbounds nuw { ptr, i64, ptr }, ptr [[WORLD_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[WORLD_PREV]], ptr {{%.*}}
 // CHECK: store ptr [[WORLD]], ptr {{%.*}}
 // CHECK: store ptr [[WORLD_NODE]], ptr [[HEAD]]
@@ -71,7 +71,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK: [[BYE_ACTIVE:%.*]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: [[BYE_VALUE:%.*]] = load { ptr, i64, ptr }, ptr [[BYE_ACTIVE]]
 // CHECK: [[BYE_CALL_FORMAT:%.*]] = extractvalue { ptr, i64, ptr } [[BYE_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[BYE_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: [[BYE_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @printf)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr [[BYE_CALL_FORMAT]])
 // CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[BYE_RECOVER]])
@@ -80,7 +80,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK: [[WORLD_ACTIVE:%.*]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: [[WORLD_VALUE:%.*]] = load { ptr, i64, ptr }, ptr [[WORLD_ACTIVE]]
 // CHECK: [[WORLD_CALL_FORMAT:%.*]] = extractvalue { ptr, i64, ptr } [[WORLD_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[WORLD_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: [[WORLD_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @printf)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr [[WORLD_CALL_FORMAT]])
 // CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[WORLD_RECOVER]])
@@ -90,7 +90,7 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-NEXT: [[FORMAT_VALUE:%.*]] = load { ptr, i64, ptr, ptr }, ptr [[FORMAT_ACTIVE]]
 // CHECK: [[CALL_FORMAT:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[FORMAT_VALUE]], 2
 // CHECK-NEXT: [[CALL_CSTR:%.*]] = extractvalue { ptr, i64, ptr, ptr } [[FORMAT_VALUE]], 3
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[FORMAT_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: [[FORMAT_RECOVER:%.*]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @printf)
 // CHECK-NEXT: call i32 (ptr, ...) @printf(ptr [[CALL_FORMAT]], ptr [[CALL_CSTR]])
 // CHECK-NEXT: call void @"{{.*}}EndRecoverFrame"(%"{{.*}}recoverState" [[FORMAT_RECOVER]])

@@ -21,6 +21,13 @@ func CooperativeSafepoint() {
 		gcroot.FinishRebuild()
 	}
 	worker := currentWasmWorker()
+	if worker != nil && !worker.systemReady {
+		// Package initialization can race another worker's collection before
+		// RunWasmMain initializes the bootstrap G and system Fibers. Publish
+		// its native root chain and stop in place; neither Fiber can swap yet.
+		wasmWorkerStopForGC(worker)
+		return
+	}
 	// The collector owns its worker until sweeping has completed. Compiler-
 	// inserted polls in GC loops must not reschedule while the allocator and
 	// heap metadata are exclusively owned by that worker.

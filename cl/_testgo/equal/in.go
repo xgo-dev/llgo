@@ -10,9 +10,9 @@ package main
 // Function values: the generated function descriptor pointer is non-nil and that
 // predicate is what reaches assert.
 // CHECK-LABEL: define void @"main.init#1"(){{.*}} {
-// CHECK: [[EQUAL_CAPTURE:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 8)
-// CHECK: [[EQUAL_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
-// CHECK-NEXT: %[[CLOSURE:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[EQUAL_ALLOCATION]], i32 0, i32 0
+// CHECK: [[EQUAL_ALLOCATION:%[0-9]+]] = alloca { { ptr, ptr }, { ptr } }
+// CHECK: [[EQUAL_CAPTURE:%[0-9]+]] = alloca i64
+// CHECK: %[[CLOSURE:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[EQUAL_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[EQUAL_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[EQUAL_ALLOCATION]], i32 0, i32 1
 // CHECK: store ptr [[EQUAL_CAPTURE]], ptr %{{[0-9]+}}
 // CHECK: [[EQUAL_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr %[[CLOSURE]], i32 0, i32 0
@@ -90,7 +90,7 @@ package main
 // CHECK: call void @main.assert(i1 %[[CHAN_NE]])
 
 // CHECK-LABEL: define void @"main.init#7"(){{.*}} {
-// CHECK: %[[MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMap"(ptr @"map[_llgo_int]_llgo_string", i64 0)
+// CHECK: %[[MAP:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.MakeMapBuffer"(ptr @"map[_llgo_int]_llgo_string", i64 0, ptr %{{[0-9]+}}, ptr %{{[0-9]+}})
 // CHECK: %[[MAP_NONNULL:[0-9]+]] = icmp ne ptr %[[MAP]], null
 // CHECK: call void @main.assert(i1 %[[MAP_NONNULL]])
 

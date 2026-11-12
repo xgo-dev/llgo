@@ -1190,3 +1190,118 @@ func findPatchedPosition(file *ast.File, target string) (token.Pos, bool) {
 	}
 	return token.NoPos, false
 }
+
+func TestLLVMAESPatchPreservesCAST(t *testing.T) {
+	const pkg = "crypto/internal/fips140/aes"
+	goroot := runtime.GOROOT()
+	overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+		goos: "linux", goarch: "arm64", goversion: "go1.27.0", buildFlags: []string{"-tags=llgo,purego"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files[pkg]) == 0 {
+		t.Fatal("AES hardware patch was not selected")
+	}
+	castFile := filepath.Join(goroot, "src", filepath.FromSlash(pkg), "cast.go")
+	source, ok := overlay[castFile]
+	if !ok {
+		source, err = os.ReadFile(castFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), castFile, source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "init" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			name, literal := call.Args[0].(*ast.BasicLit)
+			if ok && selector.Sel.Name == "CAST" && literal && name.Value == `"AES-CBC"` {
+				found = true
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("source patch removed the AES-CBC self-test initializer")
+	}
+	for _, arch := range []string{"arm64", "amd64", "386", "arm", "ppc64", "ppc64le", "riscv64"} {
+		if !llruntime.SourcePatchReplacesAsmForGOARCH(pkg, arch) {
+			t.Fatalf("AES LLVM implementation missing for %s", arch)
+		}
+	}
+	for _, version := range []string{"go1.26.0", "go1.28.0"} {
+		_, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), goroot, sourcePatchBuildContext{
+			goos: "linux", goarch: "arm64", goversion: version, buildFlags: []string{"-tags=llgo,purego"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files[pkg]) != 0 {
+			t.Fatalf("AES patch selected for unvalidated %s", version)
+		}
+	}
+}
+
+// Exercise the package loader as well as file selection: source patches add
+// target-specific CPU-probe imports which must reach the dependency graph.
+func TestLLVMAESPatchTypeChecks(t *testing.T) {
+	for _, target := range []string{
+		"linux/amd64", "linux/386", "linux/arm64", "linux/arm",
+		"linux/ppc64", "linux/ppc64le", "linux/riscv64",
+		"darwin/arm64", "windows/amd64", "windows/arm64",
+		"freebsd/arm", "freebsd/riscv64",
+	} {
+		t.Run(target, func(t *testing.T) {
+			parts := strings.Split(target, "/")
+			cfgEnv := withEnv(os.Environ(), "GOOS="+parts[0], "GOARCH="+parts[1])
+			sourceGo, err := resolveSourceGoConfig(commandEnv{environ: cfgEnv}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfgEnv = sourceGo.apply(cfgEnv)
+			flags := []string{"-tags=llgo,purego"}
+			overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), sourceGo.GOROOT, sourcePatchBuildContext{
+				goos: parts[0], goarch: parts[1], goversion: sourceGo.GOVERSION,
+				toolTags: sourceGo.toolTags, buildFlags: flags,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dedup := packages.NewDeduper()
+			dedup.SetLLGoFiles(files)
+			pkgs, err := packages.LoadEx(dedup, nil, &packages.Config{
+				Mode: loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+				Env:  cfgEnv, Fset: token.NewFileSet(), BuildFlags: flags,
+				ParseFile: func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+					if data, ok := overlay[filename]; ok {
+						src = data
+					}
+					return parser.ParseFile(fset, filename, src, parser.AllErrors|parser.ParseComments)
+				},
+			}, "crypto/aes")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkgs) != 1 {
+				t.Fatalf("loaded %d packages, want 1", len(pkgs))
+			}
+			if pkgs[0].IllTyped {
+				logPackageErrors(t, pkgs[0], make(map[string]bool))
+				t.Fatal("AES source patch did not type-check")
+			}
+		})
+	}
+}

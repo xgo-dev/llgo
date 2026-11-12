@@ -127,8 +127,10 @@ func destroyG(ptr c.Pointer) {
 	if !gp.context.platform.systemG {
 		releaseGAndCheckDeadlock()
 	}
-	if gp.panic_ != nil {
-		c.Free(gp.panic_)
+	for gp.panic_ != nil {
+		node := (*panicNode)(gp.panic_)
+		gp.panic_ = node.prev
+		FreeRoot(unsafe.Pointer(node))
 	}
 	ctx := gp.context
 	unregisterTraceback(gp)

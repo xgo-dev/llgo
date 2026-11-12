@@ -6,11 +6,11 @@ package main
 // CHECK: @[[CLEANUP_FINAL:[0-9]+]] = private unnamed_addr constant [13 x i8] c"cleanup-final"
 // CHECK: @[[CLEANUP_BEFORE:[0-9]+]] = private unnamed_addr constant [19 x i8] c"cleanup-before-loop"
 // CHECK: @[[EXIT_OUTER:[0-9]+]] = private unnamed_addr constant [10 x i8] c"exit-outer"
-// CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK: @[[BRANCH_EVEN:[0-9]+]] = private unnamed_addr constant [11 x i8] c"branch-even"
 // CHECK: @[[BRANCH_ODD:[0-9]+]] = private unnamed_addr constant [10 x i8] c"branch-odd"
 // CHECK: @[[NESTED:[0-9]+]] = private unnamed_addr constant [6 x i8] c"nested"
 // CHECK: @[[NESTED_TAIL:[0-9]+]] = private unnamed_addr constant [11 x i8] c"nested-tail"
+// CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
 // CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
 // CHECK: [[RECORD_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 24)
@@ -24,7 +24,7 @@ package main
 // CHECK-NEXT: store ptr [[RECORD_ENV]], ptr [[RECORD_FN_ENV_SLOT]]
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)
 // CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[DEFER_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[DEFER_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREVIOUS_DEFER]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[DEFER_FRAME]])
 // CHECK: [[DEFER_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[DEFER_FRAME]], i32 0, i32 5
@@ -63,9 +63,18 @@ package main
 // CHECK: [[RUN_RECORD:%[0-9]+]] = load { ptr, i64, ptr, %"{{.*}}String" }, ptr [[RUN_NODE:%[0-9]+]]
 // CHECK: [[RUN_FN:%[0-9]+]] = extractvalue { ptr, i64, ptr, %"{{.*}}String" } [[RUN_RECORD]], 2
 // CHECK-NEXT: [[RUN_LABEL:%[0-9]+]] = extractvalue { ptr, i64, ptr, %"{{.*}}String" } [[RUN_RECORD]], 3
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[RUN_NODE]])
-// ARM64: call void %__llgo_funcval_code(ptr swiftself %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])
-// AMD64: call void %__llgo_funcval_code(ptr nest %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])
+// The final non-loop defer uses stack storage. Loop defer records are freed below.
+// CHECK-NOT: FreeDeferNode
+// CHECK: [[RUN_ENV_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RUN_FN]]
+// CHECK-NEXT: [[RUN_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RUN_ENV_SAFE]], i32 0, i32 1
+// CHECK-NEXT: [[RUN_ENV:%[0-9]+]] = load ptr, ptr [[RUN_ENV_SLOT]]
+// CHECK: [[RUN_CODE_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[RUN_FN]]
+// CHECK-NEXT: [[RUN_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[RUN_CODE_SAFE]], i32 0, i32 0
+// CHECK-NEXT: [[RUN_CODE:%[0-9]+]] = load ptr, ptr [[RUN_CODE_SLOT]]
+// CHECK-NEXT: [[RUN_TARGET:%[^ ]+]] = call ptr asm "", "=r,0"(ptr [[RUN_CODE]])
+// ARM64-NEXT: call void [[RUN_TARGET]](ptr swiftself [[RUN_ENV]], %"{{.*}}String" [[RUN_LABEL]])
+// AMD64-NEXT: call void [[RUN_TARGET]](ptr nest [[RUN_ENV]], %"{{.*}}String" [[RUN_LABEL]])
+// CHECK: call void @"{{.*}}FreeDeferNode"(ptr %{{[0-9]+}})
 // CHECK: [[SAVED_DEFER:%[0-9]+]] = load %"{{.*}}Defer", ptr [[DEFER_FRAME]]
 // CHECK-NEXT: [[RESTORED_DEFER:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[SAVED_DEFER]], 2
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[RESTORED_DEFER]])
@@ -77,7 +86,7 @@ package main
 // CHECK: store %"{{.*}}String" %1, ptr %{{[0-9]+}}
 // CHECK: [[APPEND_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE:%[0-9]+]], 0
 // CHECK-NEXT: [[APPEND_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE]], 1
-// CHECK-NEXT: [[NEW_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16)
+// CHECK-NEXT: [[NEW_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16, i1 true)
 // CHECK-NEXT: [[UPDATED_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
 // CHECK-NEXT: store %"{{.*}}Slice" [[NEW_RESULT]], ptr [[UPDATED_RESULT_SLOT]]
 // CHECK-LABEL: define void @main.main(){{.*}} {

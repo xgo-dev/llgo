@@ -115,8 +115,18 @@ func AuditRuntimeSources(conf RuntimeAuditConfig) (*RuntimeOwnership, error) {
 		return nil, err
 	}
 	target := &llssa.Target{GOOS: conf.GOOS, GOARCH: conf.GOARCH}
-	if conf.GOOS == "js" && conf.GOARCH == "wasm" && slices.Contains(tags, "llgo.wasm.emscripten.memory64") {
-		target.LLVMTarget = "wasm64-unknown-emscripten"
+	if conf.GOARCH == "wasm" {
+		switch conf.GOOS {
+		case "js":
+			target.WasmProfile = "j32"
+			target.LLVMTarget = "wasm32-unknown-emscripten"
+			if slices.Contains(tags, "llgo.wasm.emscripten.memory64") {
+				target.WasmProfile = "j64"
+				target.LLVMTarget = "wasm64-unknown-emscripten"
+			}
+		case "wasip1":
+			target.WasmProfile = "w32"
+		}
 	}
 	tags = append(tags, target.ClosureEnvBuildTag())
 	slices.Sort(tags)
@@ -520,7 +530,9 @@ func (a *runtimeAuditor) inventory(report *RuntimeOwnership, pkg, owner string, 
 					return fmt.Errorf("duplicate runtime declaration %s: %s and %s", symbol.Name, previous, symbol.Source)
 				}
 				a.definitions[symbol.Name] = symbol.Source
-				if body || (kind == "var" && symbol.Linkname == "") {
+				// Intrinsic aliases may keep Go fallback bodies, but LLGo emits
+				// the shared compiler instruction rather than those definitions.
+				if (body && symbol.Owner != "compiler-intrinsic") || (kind == "var" && symbol.Linkname == "") {
 					name := symbol.Name
 					if symbol.Linkname != "" {
 						name = symbol.Linkname

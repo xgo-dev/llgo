@@ -8,7 +8,7 @@ type Type interface {
 // CHECK-DAG: [[DEMO_DESCRIPTOR:@"_llgo_funcval\$[0-9a-f]+"]] = linkonce_odr constant { ptr, ptr } { ptr @main.demo, ptr null }
 // CHECK-DAG: @"main.list$data" = global [1 x ptr] [ptr [[DEMO_DESCRIPTOR]]]
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-// CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
+// CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %0, ptr %{{[0-9]+}})
 // CHECK: [[DEMO_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[DEMO_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[DEMO_METHOD]], 0
 // CHECK-NEXT: [[DEMO_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[DEMO_PAIR0]], ptr [[DEMO_DATA]], 1
@@ -44,7 +44,7 @@ var (
 // CHECK-NEXT: [[LIST_LEN:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 1
 // CHECK: [[LIST_SLOT:%[0-9]+]] = getelementptr inbounds ptr, ptr [[LIST_DATA]], i64 0
 // CHECK-NEXT: [[LIST_FN:%[0-9]+]] = load ptr, ptr [[LIST_SLOT]]
-// CHECK-NEXT: [[ITAB1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: [[MAP_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[MAP_FN]]
 // CHECK-NEXT: [[MAP_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[MAP_ENV_SAFE]], i32 0, i32 1
 // CHECK-NEXT: [[MAP_ENV:%.*]] = load ptr, ptr [[MAP_ENV_SLOT]]
@@ -53,7 +53,7 @@ var (
 // CHECK-NEXT: [[MAP_CODE:%.*]] = load ptr, ptr [[MAP_CODE_SLOT]]
 // ARM64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr swiftself [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
 // AMD64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr nest [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
-// CHECK: [[ITAB2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: [[LIST_ENV_SAFE:%.*]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[LIST_FN]]
 // CHECK-NEXT: [[LIST_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[LIST_ENV_SAFE]], i32 0, i32 1
 // CHECK-NEXT: [[LIST_ENV:%.*]] = load ptr, ptr [[LIST_ENV_SLOT]]

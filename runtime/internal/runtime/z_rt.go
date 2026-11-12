@@ -19,7 +19,6 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/setjmp"
 )
 
@@ -55,7 +54,7 @@ func (gp *g) movePanicToDefer(node *panicNode, link *Defer) {
 		if gp.recoverPanic == unsafe.Pointer(prev) {
 			gp.recoverPanic = nil
 		}
-		c.Free(unsafe.Pointer(prev))
+		FreeRoot(unsafe.Pointer(prev))
 	}
 	node.defer_ = link
 	gp.defer_ = link
@@ -76,7 +75,7 @@ func Recover(token unsafe.Pointer) (ret any) {
 		// eligible panic still prevents any subsequent recover from succeeding.
 		gp.recoverPanic = nil
 		ret = node.arg
-		c.Free(unsafe.Pointer(node))
+		FreeRoot(unsafe.Pointer(node))
 		// The deferred function that recovers keeps observing the panic
 		// stack until it returns (gc runs defers on top of it). The public
 		// runtime marks its frame so the pc snapshot stays spliceable that
@@ -175,7 +174,7 @@ func (gp *g) abortPanics() {
 	for gp.panic_ != nil {
 		node := (*panicNode)(gp.panic_)
 		gp.panic_ = node.prev
-		c.Free(unsafe.Pointer(node))
+		FreeRoot(unsafe.Pointer(node))
 	}
 	gp.recoverFrame = nil
 	gp.recoverPanic = nil
@@ -206,7 +205,10 @@ func Panic(v any) {
 		PanicPCSnapshot(v)
 	}
 	gp := getg()
-	ptr := (*panicNode)(c.Malloc(unsafe.Sizeof(panicNode{})))
+	// A longjmp discards the argument's original stack roots. Keep the panic
+	// payload in scanned, explicitly owned storage until recovery or exit.
+	// Plain C malloc is invisible to the collector, even on native targets.
+	ptr := (*panicNode)(AllocRoot(unsafe.Sizeof(panicNode{})))
 	ptr.prev = gp.panic_
 	ptr.arg = v
 	ptr.defer_ = gp.defer_
@@ -274,12 +276,12 @@ func stringTracef(fp c.FilePtr, format *c.Char, s String) {
 
 // New allocates memory and initializes it to zero.
 func New(t *Type) unsafe.Pointer {
-	return AllocZAligned(t.Size_, uintptr(t.Align_))
+	return allocZTyped(t.Size_, uintptr(t.Align_), t.Pointers())
 }
 
 // NewArray allocates memory for an array and initializes it to zero.
 func NewArray(t *Type, n int) unsafe.Pointer {
-	return AllocZAligned(uintptr(n)*t.Size_, uintptr(t.Align_))
+	return newarray(t, n)
 }
 
 // -----------------------------------------------------------------------------

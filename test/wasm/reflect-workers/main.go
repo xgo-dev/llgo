@@ -7,6 +7,20 @@ import (
 	"runtime"
 )
 
+var startupCallback = reflect.MakeFunc(reflect.TypeOf((func(*int))(nil)), func(args []reflect.Value) []reflect.Value {
+	if len(args) != 1 || !args[0].IsNil() {
+		panic("invalid startup MakeFunc arguments")
+	}
+	return nil
+}).Interface().(func(*int))
+
+// Exercise reflection and collection during package initialization, when peer
+// workers may still be initializing their scheduler Fibers.
+func init() {
+	runtime.GC()
+	startupCallback(nil)
+}
+
 func main() {
 	const count = 20
 	done := make(chan int, count)

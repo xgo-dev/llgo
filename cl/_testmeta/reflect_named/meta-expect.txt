@@ -28,8 +28,8 @@ main.init:
     reflect.init
 main.main:
     _llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
     reflect.TypeOf
 
 [UseIface]

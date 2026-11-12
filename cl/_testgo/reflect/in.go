@@ -190,7 +190,7 @@ func mapDemo2() {
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
 // CHECK: %[[CLOSURE_IFACE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.eface" @reflect.Value.Interface(%reflect.Value %[[CLOSURE_VALUE]])
 // CHECK: %[[CLOSURE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[CLOSURE_IFACE]], 0
-// CHECK: %[[CLOSURE_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure$QIHBTaw1IFobr8yvWpq-2AJFm3xBNhdW_aNBicqUBGk", ptr %[[CLOSURE_TYPE]])
+// CHECK: %[[CLOSURE_MATCH:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.MatchesClosure"(ptr @"_llgo_closure${{[A-Za-z0-9_-]+}}", ptr %[[CLOSURE_TYPE]])
 // CHECK: br i1 %[[CLOSURE_MATCH]]
 // CHECK: %[[CLOSURE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[CLOSURE_IFACE]], 1
 // CHECK-NEXT: [[CLOSURE_SUCCESS_VALUE:%[0-9]+]] = insertvalue { ptr, i1 } undef, ptr %[[CLOSURE_DATA]], 0
@@ -210,8 +210,7 @@ func mapDemo2() {
 // AMD64-NEXT: call i64 %__llgo_funcval_code(ptr nest [[CLOSURE_ENV]], i64 100)
 // ARM64-LABEL: define i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[CC_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[CC_BASE_PTR:%[0-9]+]] = extractvalue { ptr } [[CC_ENV]], 0
+// CHECK: [[CC_BASE_PTR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CC_BASE:%[0-9]+]] = load i64, ptr [[CC_BASE_PTR]]
 // CHECK-NEXT: [[CC_SUM:%[0-9]+]] = add i64 [[CC_BASE]], %1
 // CHECK-NEXT: [[CC_RESULT:%[0-9]+]] = add i64 [[CC_SUM]], 1

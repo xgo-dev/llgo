@@ -67,7 +67,7 @@ func add(p unsafe.Pointer, x uintptr) unsafe.Pointer {
 // compiler (both frontend and SSA backend) knows the signature
 // of this function.
 func newobject(typ *_type) unsafe.Pointer {
-	return AllocZAligned(typ.Size_, uintptr(typ.Align_))
+	return allocZTyped(typ.Size_, uintptr(typ.Align_), typ.Pointers())
 }
 
 // TODO
@@ -89,13 +89,13 @@ func roundupsize(size uintptr) uintptr {
 // newarray allocates an array of n elements of type typ.
 func newarray(typ *_type, n int) unsafe.Pointer {
 	if n == 1 {
-		return AllocZAligned(typ.Size_, uintptr(typ.Align_))
+		return newobject(typ)
 	}
 	mem, overflow := math.MulUintptr(typ.Size_, uintptr(n))
 	if overflow || mem > maxAlloc || n < 0 {
 		panic(plainError("runtime: allocation size out of range"))
 	}
-	return AllocZAligned(mem, uintptr(typ.Align_))
+	return allocZTyped(mem, uintptr(typ.Align_), typ.Pointers())
 }
 
 const (
@@ -121,6 +121,7 @@ func atomicOr8(ptr *uint8, v uint8) uint8 {
 	return (uint8)(atomic.Or((*uint)(unsafe.Pointer(ptr)), uint(v)))
 }
 
+//go:linkname noescape llgo.noescape
 func noescape(p unsafe.Pointer) unsafe.Pointer {
 	x := uintptr(p)
 	return unsafe.Pointer(x ^ 0)

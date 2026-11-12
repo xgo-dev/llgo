@@ -267,7 +267,7 @@ class WorkflowContractTests(unittest.TestCase):
         checkout, cancel = job["steps"]
         self.assertEqual(checkout["uses"], "actions/checkout@v7")
         self.assertEqual(checkout["with"], {
-            "ref": "${{ github.sha }}", "persist-credentials": "false",
+            "persist-credentials": "false",
             "sparse-checkout": ".github/scripts", "sparse-checkout-cone-mode": "false"})
         self.assertEqual(cancel["env"], {"GH_TOKEN": "${{ github.token }}"})
         self.assertEqual(cancel["run"], "python3 .github/scripts/pr_ci.py")
@@ -362,7 +362,7 @@ class WorkflowContractTests(unittest.TestCase):
             "LLGO_SIMD_ARTIFACT_DIR": "${{ runner.temp }}/llgo-simd-matrix"})
         self.assertEqual(test["run"].splitlines(), [
             "(cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)",
-            "go test -count=1 -timeout=2m ./test/simd/...",
+            "go test -count=1 -timeout=2m ./test/simd/... ./test/std/simd",
             "bash dev/test_native_simd.sh"])
         artifact = steps["Upload failed native SIMD executables"]
         self.assertEqual(artifact["if"], "failure() && steps.native_simd.outcome == 'failure'")
@@ -525,15 +525,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--- PASS:", run_script)
         self.assertIn("--- (FAIL|SKIP):", run_script)
 
-    def test_traceback_coverage_uses_bash_on_every_host(self):
+    def test_runtime_coverage_uses_bash_on_every_host(self):
         steps = load("go.yml")["jobs"]["test"]["steps"]
         step = next(step for step in steps
-                    if step.get("name") == "Test traceback formatter with coverage")
+                    if step.get("name") == "Test runtime ABI and helpers with coverage")
         # PowerShell splits the unquoted -coverprofile=../... argument and Go
         # treats its value as a package. Preserve the shell when moving steps.
         self.assertEqual(step["shell"], "bash")
         self.assertEqual(step["working-directory"], "runtime")
-        self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
+        self.assertIn("-coverprofile=../coverage-runtime-helpers.txt", step["run"])
+        for package in ("./abi", "./internal/traceback", "./internal/wordmap"):
+            self.assertIn(package, step["run"].split())
 
     def test_go_suite_scheduling_preserves_overlays_and_propagates_failures(self):
         step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]
@@ -803,7 +805,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         unchanged = {
             "Install Wasmer for W32": "b2231ab4857c56c9fb4cf999597a4e8b5bfd6d48b572800518b8fcd457f3decd",
             "Install llgo": "c5c0592b9a8f31d778c9850ee99917f526c4573ccd3c5ae1676515ad64048124",
-            "Test reflected method calls and large initializers": "c4cdd5df4c87b38c34128b3a70368e50804f5319d433ece60fe65f58eef3e3b0",
+            "Test reflected method calls and large initializers": "95f848952b7b7aa9c1f1f5d105c5b49ef59161d72effd1568002204cdff5ab77",
             "Compare WebAssembly EH encodings and Go/C++ boundary": "71fa2442751e2a7d916da2205382ecd9c853ae0f4503075b30e9165ec82572f0",
             "Test WebAssembly target profiles": "62d5330ed8b1ce1a41aec4102ea26de5b28efb7d5ecf0904a9d44474e4841e62",
             "Verify final WebAssembly DWARF": "13dcc317812a94ea68f19cf1ea39df09bc952c7a95fcc82ecd1ccf4bec44b181",
@@ -812,7 +814,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
             "Test wasm coverage reporting": "5010a21bd099561990c4acfb0e576c631f5ae27d4864b2c4771bee4750b68924",
             "Test single-worker wasm schedulers": "9d2e5c762b82303013a7ab4897f923256e3a1f5d455b3b60cb4714f972ff6c0d",
             "Test bounded browser workers": "97b72a7858c1a1a11fb2c5ebaaa7dd8c028f374115aa3f70d1a52fca2385d6f4",
-            "Test SIMD behavior on WebAssembly": "1dd431a9845c8a34f4945973590385bcdea220d1f678d7f1cc406ec7fef13ef8",
+            "Test SIMD behavior on WebAssembly": "c8ae1afd7e684ff7ff0c433c76c4b26dd5c4a016887091fe03551afac5ab2091",
             "Test SIMD on JavaScript targets with off, Thin and Full LTO": "2c280e97b386174a4a3fb5b0672f7a0c62e5ad62396ead18980479fc752e6d67",
             "Compare JavaScript call semantics with Go": "ce149b260e5963507567672ac0a037c5814aa0c1b37588f66cd35e04920d1ca5",
         }

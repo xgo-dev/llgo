@@ -33,6 +33,8 @@ type ModuleTranslation struct {
 }
 
 type TranslateOptions struct {
+	// NativeBDWGC keeps foreign stack switches outside BDWGC's active scan.
+	NativeBDWGC    bool
 	AnnotateSource bool
 	GOROOT         string
 	Overlay        map[string][]byte
@@ -116,8 +118,13 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	// reports its module-qualified import path.
 	symbolPkgPath := llssaabi.PathOf(pkg.Types)
 	resolve := resolveSymFuncForTarget(symbolPkgPath, goos, goarch)
+	physicalTails, physicalOnly, err := nativeTailSignatures(pkg, src, resolve, goos, goarch)
+	if err != nil {
+		return nil, err
+	}
 	keep := func(textSym, resolved string) bool {
-		return shouldKeepResolvedFunc(pkg.PkgPath, goos, goarch, resolved)
+		_, physical := physicalTails[resolved]
+		return !physical && shouldKeepResolvedFunc(pkg.PkgPath, goos, goarch, resolved)
 	}
 	imports := make(map[string]*types.Package, len(pkg.Imports))
 	importSyntax := make(map[string][]*ast.File, len(pkg.Imports))
@@ -146,6 +153,9 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		if sig, ok := boundSigs[resolved]; ok {
 			return sig, true
 		}
+		if sig, ok := physicalTails[resolved]; ok {
+			return sig, true
+		}
 		if goarch == "arm64" && resolved == "runtime.memmove" {
 			sig, err := arm64RuntimeMemmoveSig(pkg)
 			manualErr = err
@@ -172,7 +182,15 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		KeepFunc:           keep,
 		ManualSig:          manualSig,
 	}
-	tr, err := extplan9asm.TranslateGoModule(goPkg, src, moduleOptions)
+	var tr *extplan9asm.GoModuleTranslation
+	if physicalOnly {
+		// No virtual body or DATA remains for Core; emit only the validated
+		// physical entries without fabricating a source stub or swallowing an error.
+		tr = &extplan9asm.GoModuleTranslation{Module: gllvm.GlobalContext().NewModule(pkg.PkgPath), Signatures: make(map[string]extplan9asm.FuncSig)}
+		tr.Module.SetTarget(target)
+	} else {
+		tr, err = extplan9asm.TranslateGoModule(goPkg, src, moduleOptions)
+	}
 	if manualErr != nil {
 		if tr != nil {
 			tr.Module.Dispose()
@@ -210,6 +228,15 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		if tr != nil {
 			tr.Module.Dispose()
 		}
+		return nil, err
+	}
+
+	if err := declareNativeTailEntries(tr, physicalTails, src, resolve); err != nil {
+		tr.Module.Dispose()
+		return nil, err
+	}
+	if err := lowerNativeTailTransfers(tr.Module, src, tr.Signatures, resolve, goos, goarch, opt.NativeBDWGC, physicalTails); err != nil {
+		tr.Module.Dispose()
 		return nil, err
 	}
 

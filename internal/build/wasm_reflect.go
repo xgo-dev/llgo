@@ -42,7 +42,11 @@ func configureWasmReflectBridges(ctx *context) {
 		return
 	}
 	target := ctx.prog.Target()
-	target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges()
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		target.WasmReflectBridges = ctx.frontend.program.Features.ReflectBridges
+	} else {
+		target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges()
+	}
 }
 
 func wasmReflectBridgeProvider(ctx *context) bool {
@@ -69,7 +73,11 @@ func configureWasmFuncInfoEntries(ctx *context) {
 		target.WasmFuncInfoEntries = true
 		return
 	}
-	target.WasmFuncInfoEntries = wasmProgramUseFor(ctx).usesRuntimeFuncForPC()
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		target.WasmFuncInfoEntries = ctx.frontend.program.Features.FuncInfoEntries
+	} else {
+		target.WasmFuncInfoEntries = wasmProgramUseFor(ctx).usesRuntimeFuncForPC()
+	}
 }
 
 type wasmProgramUse struct {

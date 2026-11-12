@@ -19,13 +19,14 @@ package main
 // CHECK: ret i64 0
 // CHECK: ret i64 42
 // CHECK-LABEL: define ptr @main.zeroSizedPointerCapture(ptr %0){{.*}} {
-// CHECK: [[ZSP_VALUE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store ptr %0, ptr [[ZSP_VALUE]]
+// CHECK: [[ZSP_VALUE:%[0-9]+]] = alloca ptr
+// CHECK: store ptr %0, ptr [[ZSP_VALUE]]
+// CHECK-NEXT: [[ZSP_COPY:%[0-9]+]] = load ptr, ptr [[ZSP_VALUE]]
 // CHECK: [[ZSP_ENV_ALLOCATION:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
 // CHECK-NEXT: [[ZSP_CLOSURE:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ZSP_ENV_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ZSP_ENV_ALLOCATION]], i32 0, i32 1
 // CHECK: [[ZSP_ENV_CAPTURE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[ZSP_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[ZSP_VALUE]], ptr [[ZSP_ENV_CAPTURE_SLOT]]
+// CHECK-NEXT: store ptr [[ZSP_COPY]], ptr [[ZSP_ENV_CAPTURE_SLOT]]
 // CHECK: [[ZSP_CLOSURE_CODE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ZSP_CLOSURE]], i32 0, i32 0
 // CHECK-NEXT: store ptr @"main.zeroSizedPointerCapture$1", ptr [[ZSP_CLOSURE_CODE_SLOT]]
 // CHECK-NEXT: [[ZSP_CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ZSP_CLOSURE]], i32 0, i32 1
@@ -33,8 +34,7 @@ package main
 // CHECK-NEXT: ret ptr [[ZSP_CLOSURE]]
 // ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
 // AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest
-// CHECK: [[ZSP_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[ZSP_SLOT:%[0-9]+]] = extractvalue { ptr } [[ZSP_ENV_VALUE]], 0
+// CHECK: [[ZSP_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[ZSP_POINTER:%[0-9]+]] = load ptr, ptr [[ZSP_SLOT]]
 // CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_POINTER]], null
 // CHECK-NEXT: ret i1 [[ZSP_IS_NIL]]
@@ -48,7 +48,7 @@ package main
 // AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
 // CHECK: [[IB_ENV:%[0-9]+]] = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[IB_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } [[IB_ENV]], 0
-// CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]])
+// CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], ptr %{{[0-9]+}})
 // CHECK: [[IB_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[IB_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[IB_METHOD]], 0
 // CHECK-NEXT: [[IB_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[IB_PAIR0]], ptr [[IB_DATA]], 1

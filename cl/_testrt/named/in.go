@@ -49,22 +49,26 @@ func main() {
 		m.info.span.value, m.check(-2), m.info.span.check(-3))
 }
 
-// The closure captures the root slot in its environment, is stored as a
+// The closure copies the root identity into its environment, is stored as a
 // descriptor pointer, and both paths recover code and environment from it.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[ROOTSLOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: %[[ROOTSLOT:[0-9]+]] = alloca ptr
 // CHECK: %[[ROOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 56)
 // CHECK: store ptr %[[ROOT]], ptr %[[ROOTSLOT]], align 8
-// CHECK: [[ROOT_CHECK_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
+// CHECK: [[ROOT_SPAN_FIELD:%.*]] = getelementptr inbounds nuw %main.minfo, ptr %{{[0-9]+}}, i32 0, i32 0
+// CHECK-NEXT: store ptr %{{[0-9]+}}, ptr [[ROOT_SPAN_FIELD]], align 8
+// CHECK-NEXT: [[CHECK_RECEIVER:%.*]] = load ptr, ptr %[[ROOTSLOT]], align 8
+// CHECK-NEXT: [[ROOT_COPY:%.*]] = load ptr, ptr %[[ROOTSLOT]], align 8
+// CHECK-NEXT: [[ROOT_CHECK_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
 // CHECK-NEXT: [[ROOT_CHECK_DESCRIPTOR:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ROOT_CHECK_ALLOCATION]], i32 0, i32 0
 // CHECK-NEXT: [[ROOT_CHECK_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[ROOT_CHECK_ALLOCATION]], i32 0, i32 1
 // CHECK-NEXT: [[ROOT_CHECK_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[ROOT_CHECK_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr %[[ROOTSLOT]], ptr [[ROOT_CHECK_CAPTURE_SLOT]]
+// CHECK-NEXT: store ptr [[ROOT_COPY]], ptr [[ROOT_CHECK_CAPTURE_SLOT]]
 // CHECK-NEXT: [[ROOT_CHECK_CODE_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ROOT_CHECK_DESCRIPTOR]], i32 0, i32 0
 // CHECK-NEXT: store ptr @"main.main$1", ptr [[ROOT_CHECK_CODE_SLOT]]
 // CHECK-NEXT: [[ROOT_CHECK_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ROOT_CHECK_DESCRIPTOR]], i32 0, i32 1
 // CHECK-NEXT: store ptr [[ROOT_CHECK_ENV]], ptr [[ROOT_CHECK_ENV_SLOT]]
-// CHECK: %[[CHECKFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %{{[0-9]+}}, i32 0, i32 5
+// CHECK: %[[CHECKFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr [[CHECK_RECEIVER]], i32 0, i32 5
 // CHECK: store ptr [[ROOT_CHECK_DESCRIPTOR]], ptr %[[CHECKFIELD]], align 8
 // CHECK: [[DIRECT_CHECK_FIELD:%.*]] = getelementptr inbounds nuw %main.mspan, ptr %{{[0-9]+}}, i32 0, i32 5
 // CHECK-NEXT: [[PAIR1:%.*]] = load ptr, ptr [[DIRECT_CHECK_FIELD]], align 8
@@ -95,8 +99,7 @@ func main() {
 // CHECK-LABEL: define i64 @"main.main$1"(
 // ARM64-SAME: ptr swiftself %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
 // AMD64-SAME: ptr nest %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
-// CHECK: %[[CAPTURE:[0-9]+]] = load { ptr }, ptr %[[CENV]], align 8
-// CHECK: %[[CAPTUREDSLOT:[0-9]+]] = extractvalue { ptr } %[[CAPTURE]], 0
+// CHECK: %[[CAPTUREDSLOT:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[CENV]], i32 0, i32 0
 // CHECK: %[[CAPTUREDROOT:[0-9]+]] = load ptr, ptr %[[CAPTUREDSLOT]], align 8
 // CHECK: %[[VALUEFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %[[CAPTUREDROOT]], i32 0, i32 4
 // CHECK: %[[VALUE:[0-9]+]] = load i64, ptr %[[VALUEFIELD]], align 8

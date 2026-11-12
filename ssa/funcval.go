@@ -146,7 +146,21 @@ func (b Builder) makeCapturedFuncval(t Type, code llvm.Value, captures Type, fie
 	layout := prog.Struct(header, captures)
 	var allocation Expr
 	if heap {
-		allocation = b.AllocU(layout)
+		if code.IsConstant() && !prog.abi.HasPointers(captures.raw.Type) {
+			// The header's only data pointer targets its own capture payload.
+			// A constant code entry and scalar payload introduce no external
+			// GC edge, so keep pointer-free captures in atomic storage.
+			helper := "AllocAtomicU"
+			args := []Expr{prog.IntVal(prog.SizeOf(layout), prog.Uintptr())}
+			if alignment := prog.AlignOf(layout); alignment > uint64(prog.GoWordSize()) {
+				helper = "AllocAtomicUAligned"
+				args = append(args, prog.IntVal(alignment, prog.Uintptr()))
+			}
+			value := b.InlineCall(b.Pkg.rtFunc(helper), args...)
+			allocation = Expr{value.impl, prog.Pointer(layout)}
+		} else {
+			allocation = b.AllocU(layout)
+		}
 	} else {
 		allocation = b.Alloc(layout, false)
 	}

@@ -846,11 +846,15 @@ func runCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase,
 }
 
 func boundedCaseEnv(goos, goarch string, tc testCase, extra []string) []string {
-	if (goos == "linux" && goarch == "amd64" || goos == "windows" && goarch == "arm64") &&
+	if (goos == "linux" && goarch == "amd64" || goos == "windows" && goarch == "arm64" || goos == "darwin" && goarch == "arm64") &&
 		tc.Directive == "runoutput" && tc.RelPath == "rangegen.go" {
 		// The generated compiler torture test exceeded the 4 GiB hosted
 		// runner guard. Bound Go and LLGo's heaps for this case only.
 		limit := "3GiB"
+		if goos == "darwin" {
+			// Keep room for native LLVM and loader memory below the 4 GiB RSS guard.
+			limit = "2GiB"
+		}
 		if goos == "windows" {
 			// Leave room for ARM64 native LLVM/CodeView allocations, which
 			// are outside Go's soft memory limit.

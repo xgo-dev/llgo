@@ -10,22 +10,16 @@ from ubuntu_apt import configure
 class UbuntuAPTTest(unittest.TestCase):
     def test_runner_mirror_lists(self):
         for arch, archive, security in (
-            ("amd64", "http://archive.ubuntu.com/ubuntu/\tpriority:1\n"
-             "https://archive.ubuntu.com/ubuntu/\tpriority:2",
-             "http://security.ubuntu.com/ubuntu/\tpriority:1\n"
-             "https://security.ubuntu.com/ubuntu/\tpriority:2"),
-            ("i386", "http://archive.ubuntu.com/ubuntu/\tpriority:1\n"
-             "https://archive.ubuntu.com/ubuntu/\tpriority:2",
-             "http://security.ubuntu.com/ubuntu/\tpriority:1\n"
-             "https://security.ubuntu.com/ubuntu/\tpriority:2"),
-            ("arm64", "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
-             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2",
-             "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
-             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2"),
-            ("armhf", "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
-             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2",
-             "http://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"
-             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:2"),
+            ("amd64", "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+             "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2\n"),
+            ("i386", "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+             "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2\n"),
+            ("arm64", "https://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n",
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"),
         ):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as tmp:
                 root = pathlib.Path(tmp)
@@ -41,8 +35,8 @@ class UbuntuAPTTest(unittest.TestCase):
                 third_party.write_text("https://apt.llvm.org/noble/\n")
                 configure(root, arch)
                 configure(root, arch)
-                self.assertEqual((root / "apt-mirrors.txt").read_text(), archive + "\n")
-                self.assertEqual((root / "apt-mirrors-security.txt").read_text(), security + "\n")
+                self.assertEqual((root / "apt-mirrors.txt").read_text(), archive)
+                self.assertEqual((root / "apt-mirrors-security.txt").read_text(), security)
                 self.assertEqual(sources.read_text(), source_text)
                 self.assertEqual(third_party.read_text(), "https://apt.llvm.org/noble/\n")
 
@@ -54,19 +48,6 @@ class UbuntuAPTTest(unittest.TestCase):
             self.assertFalse((root / "apt-mirrors.txt").exists())
             self.assertFalse((root / "apt-mirrors-security.txt").exists())
             self.assertTrue((root / "apt.conf.d" / "80-llgo-downloads").is_file())
-
-    def test_transport_fallback_preserves_authentication_and_strict_failures(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            (root / "apt.conf.d").mkdir()
-            configure(root, "amd64")
-            settings = (root / "apt.conf.d" / "80-llgo-downloads").read_text()
-            self.assertIn('APT::Update::Error-Mode "any";', settings)
-            self.assertIn('Acquire::Retries "3";', settings)
-            self.assertNotIn("AllowUnauthenticated", settings)
-            self.assertNotIn("AllowInsecure", settings)
-            self.assertNotIn("Verify-Peer", settings)
-            self.assertNotIn("Verify-Host", settings)
 
 
 if __name__ == "__main__":

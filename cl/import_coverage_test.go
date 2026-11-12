@@ -15,6 +15,38 @@ import (
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
+func TestLinknameParsersAgree(t *testing.T) {
+	for _, line := range []string{
+		"//go:linkname\tF\tllvm.fshl.i8",
+		"//llgo:link\tF\tllvm.fshl.i8",
+		"// llgo:link F\tllvm.fshl.i8",
+	} {
+		t.Run(line, func(t *testing.T) {
+			prog := llssa.NewProgram(nil)
+			defer prog.Dispose()
+			ctx := &context{prog: prog}
+			if got := ctx.initLinkname(line, false, func(name string, _ bool) (string, bool, bool) {
+				return "legacy.F", false, name == "F"
+			}); got != hasLinkname {
+				t.Fatalf("legacy parser returned %d", got)
+			}
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "p.go", "package p\nimport _ \"unsafe\"\n"+line+"\nfunc F() {}", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), []*ast.File{file}); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"legacy.F", "p.F"} {
+				if got, ok := prog.Linkname(name); !ok || got != "llvm.fshl.i8" {
+					t.Fatalf("%s linkname = (%q, %v)", name, got, ok)
+				}
+			}
+		})
+	}
+}
+
 func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 	const sym = "runtime.memmove"
 	got := replaceGoName(sym, len("runtime"))

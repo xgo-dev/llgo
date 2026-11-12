@@ -63,6 +63,22 @@ run_emscripten() {
 	grep -Fxq "${expected}" "${output}"
 }
 
+run_reflect_worker_startups() {
+	local workers="$1" target="$2" name="$3"
+	local runner="${target}-runner.mjs"
+	local attempt
+	run_emscripten "${workers}" "${target}" "${runner}" \
+		"${reflect_worker_fixture}" "wasm reflect workers ok" "${name}"
+	# Remote worker initialization can request GC before the first Go fiber
+	# starts. Repeat fresh processes to exercise that startup race, reusing
+	# the compiled reflection fixture rather than recompiling it each time.
+	for ((attempt = 2; attempt <= 20; attempt++)); do
+		run_with_timeout "${node_cmd}" "${repo_root}/targets/${runner}" \
+			"${work_dir}/${name}.mjs" "${name}" 2>&1 | tee "${work_dir}/${name}.out"
+		grep -Fxq "wasm reflect workers ok" "${work_dir}/${name}.out"
+	done
+}
+
 run_single_hardening() {
 	local target="$1"
 	local runner="$2"
@@ -98,12 +114,12 @@ run_worker_go_test() {
 	local module="${work_dir}/test-go-${target}.mjs"
 	# Keep reflection and the other language cases together: the small
 	# reflection fixture alone misses collection after the larger live heap.
-	# Typed mutation consumed 377s in CI, leaving too little of the 480s
-	# package deadline for MakeFunc's continuous-GC race. Run that stress test
-	# separately below, reusing the module and preserving all its iterations.
+	# Forced-GC stress groups can exhaust the shared package alarm on slow
+	# CI workers. Give each group its own process using the same complete
+	# module and all iterations, while keeping the language cases together.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
 		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
-		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation)$' \
+		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*)$' \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
@@ -112,6 +128,20 @@ run_worker_go_test() {
 		-test.run '^TestGCConcurrentTypedMutation$' \
 		2>&1 | tee "${output}.typed-mutation"
 	grep -Fxq "PASS" "${output}.typed-mutation"
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+		-test.v -test.count=1 -test.timeout=480s \
+		-test.run '^TestEscapeTypedStack' \
+		2>&1 | tee "${output}.stack-roots"
+	grep -Fxq "PASS" "${output}.stack-roots"
+	# These lifetime tests force many collections; keep their full workload
+	# out of the shared language-suite alarm, reusing the same complete module.
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+		-test.v -test.count=1 -test.timeout=480s \
+		-test.run '^TestUintptrEscapes' \
+		2>&1 | tee "${output}.uintptr-roots"
+	grep -Fxq "PASS" "${output}.uintptr-roots"
 	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
 	# that subprocess itself; reuse the compiled module in a fresh process so
 	# exiting goroutines cannot cancel the measured count increment.
@@ -267,10 +297,8 @@ for workers in 2 4; do
 		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-emscripten"
 	run_emscripten "${workers}" emscripten-memory64 emscripten-memory64-runner.mjs \
 		"${js_worker_fixture}" "wasm js workers ok" "js-workers-${workers}-memory64"
-	run_emscripten "${workers}" emscripten emscripten-runner.mjs \
-		"${reflect_worker_fixture}" "wasm reflect workers ok" "reflect-workers-${workers}-emscripten"
-	run_emscripten "${workers}" emscripten-memory64 emscripten-memory64-runner.mjs \
-		"${reflect_worker_fixture}" "wasm reflect workers ok" "reflect-workers-${workers}-memory64"
+	run_reflect_worker_startups "${workers}" emscripten "reflect-workers-${workers}-emscripten"
+	run_reflect_worker_startups "${workers}" emscripten-memory64 "reflect-workers-${workers}-memory64"
 done
 run_emscripten 2 emscripten emscripten-runner.mjs \
 	"${hardening_fixture}" "wasm hardening ok" hardening-workers-emscripten \

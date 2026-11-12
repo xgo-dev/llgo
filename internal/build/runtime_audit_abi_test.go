@@ -79,20 +79,37 @@ func TestRuntimeMetadataRejectsInvalidBoundary(t *testing.T) {
 	}
 }
 
-func TestRuntimeAuditMemory64Layout(t *testing.T) {
-	report, err := AuditRuntimeSources(RuntimeAuditConfig{
-		RuntimeDir: env.LLGoRuntimeDir(), GOOS: "js", GOARCH: "wasm",
-		Tags: []string{"llgo.wasm.gc.linear", "llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Missing) != 0 || len(report.UnresolvedBoundaries) != 0 || len(report.DynamicCompilerUses) != 0 {
-		t.Fatalf("memory64 runtime boundaries: missing=%v, external=%v, dynamic=%v", report.Missing, report.UnresolvedBoundaries, report.DynamicCompilerUses)
-	}
-	// Memory64 uses 64-bit words. Go function values now occupy one word in
-	// both compilers; the runtime type descriptors still have different layouts.
-	if got := report.ABI; got.LLGoTarget != "wasm64-unknown-emscripten" || got.LLGoType.Size != 64 || got.GoType.Size != 48 || got.GoFuncValueBytes != 8 || got.LLGoFuncValueBytes != 8 || got.GoRuntimeASMReady || len(got.Blockers) == 0 {
-		t.Fatalf("memory64 profile lost: %+v", got)
+func TestRuntimeAuditWasmLayouts(t *testing.T) {
+	for _, tc := range []struct {
+		profile, goos, triple string
+		tags                  []string
+		pointerBytes          uint64
+	}{
+		{"j32", "js", "wasm32-unknown-emscripten", []string{"llgo.wasm.emscripten"}, 4},
+		{"j64", "js", "wasm64-unknown-emscripten", []string{"llgo.wasm.emscripten", "llgo.wasm.emscripten.memory64"}, 8},
+		{"w32", "wasip1", "wasm32-unknown-wasip1", []string{"llgo.wasi_threads", "llgo.wasm.workers"}, 4},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			report, err := AuditRuntimeSources(RuntimeAuditConfig{
+				RuntimeDir: env.LLGoRuntimeDir(), GOOS: tc.goos, GOARCH: "wasm",
+				Tags: append([]string{"llgo.wasm.gc.linear"}, tc.tags...),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Missing) != 0 || len(report.UnresolvedBoundaries) != 0 || len(report.DynamicCompilerUses) != 0 {
+				t.Fatalf("runtime boundaries: missing=%v, external=%v, dynamic=%v", report.Missing, report.UnresolvedBoundaries, report.DynamicCompilerUses)
+			}
+			// All hosted profiles use Go64 storage. Physical C addresses are
+			// narrower on J32/W32; matching those widths would hide this ABI split.
+			got := report.ABI
+			if got.WasmProfile != tc.profile || got.LLGoTarget != tc.triple || got.GoWordBytes != 8 || got.NativePointerBytes != tc.pointerBytes ||
+				got.LLGoType.Size != 64 || got.GoType.Size != 48 || got.LLGoFuncValueBytes != 8 || got.GoFuncValueBytes != 8 {
+				t.Fatalf("profile lost: %+v", got)
+			}
+			if got.GoRuntimeASMReady || len(got.Blockers) == 0 {
+				t.Fatalf("matching function sizes must not waive the remaining runtime ABI boundaries: %+v", got)
+			}
+		})
 	}
 }

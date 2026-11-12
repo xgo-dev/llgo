@@ -76,8 +76,8 @@ func keepPointer(pointer *struct{}) func() bool {
 			}
 
 			// A captured pointer value still needs an environment. Its closure
-			// header and payload share one collectible allocation; boxing the
-			// source pointer is separate and must retain the original argument.
+			// header and payload share one scanned allocation. The immutable
+			// pointer capture is copied by value from its invocation-local slot.
 			function := mustNamedFunction(t, module, "zeroclosure.keepPointer")
 			entry := mustNamedFunction(t, module, "zeroclosure.keepPointer$1")
 			if entry.ParamsCount() != 1 {
@@ -89,7 +89,7 @@ func keepPointer(pointer *struct{}) func() bool {
 				}
 				return value
 			}
-			var allocation, box llvm.Value
+			var allocation, source llvm.Value
 			allocations := 0
 			for _, block := range function.BasicBlocks() {
 				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
@@ -98,31 +98,35 @@ func keepPointer(pointer *struct{}) func() bool {
 						case strings.HasSuffix(call.CalledValue().Name(), ".AllocU"):
 							allocation = call
 							allocations++
-						case strings.HasSuffix(call.CalledValue().Name(), ".AllocZ"):
-							box = call
 						}
 					}
 				}
 			}
-			if allocations != 1 || box.IsNil() {
-				t.Fatalf("capture needs one combined header/payload and the source pointer box:\n%s", function)
+			if allocations != 1 {
+				t.Fatalf("capture needs one scanned combined header/payload:\n%s", function)
 			}
-			codeStored, envStored, argumentStored, captureStored := false, false, false, false
+			for _, block := range function.BasicBlocks() {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.InstructionOpcode() == llvm.Store && inst.Operand(0) == function.Param(0) {
+						source = inst.Operand(1)
+					}
+				}
+			}
+			codeStored, envStored, captureStored := false, false, false
 			for _, block := range function.BasicBlocks() {
 				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 					if inst.InstructionOpcode() != llvm.Store {
 						continue
 					}
 					value, destination := inst.Operand(0), inst.Operand(1)
-					argumentStored = argumentStored || value == function.Param(0) && destination == box
 					if root(destination) == allocation {
 						codeStored = codeStored || value == entry
 						envStored = envStored || root(value) == allocation && !value.IsNull()
-						captureStored = captureStored || value == box
+						captureStored = captureStored || !value.IsALoadInst().IsNil() && value.Operand(0) == source
 					}
 				}
 			}
-			if !codeStored || !envStored || !argumentStored || !captureStored {
+			if !codeStored || !envStored || source.IsNil() || !captureStored {
 				t.Fatalf("captured pointer lost its code, environment or source argument:\n%s", function)
 			}
 		})

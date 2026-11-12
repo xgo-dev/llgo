@@ -117,6 +117,54 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 	return roots
 }
 
+// uintptrEscapesBackingArray identifies compiler-created variadic storage whose
+// uintptr elements retain pointers for a marked call. Such storage must remain
+// scanned while a go/defer call is pending, even though uintptr has no pointers
+// in its ordinary type layout.
+func uintptrEscapesBackingArray(alloc *ssa.Alloc) bool {
+	if alloc.Comment != "varargs" {
+		return false
+	}
+	array, ok := alloc.Type().(*types.Pointer).Elem().Underlying().(*types.Array)
+	if !ok || basicKind(array.Elem()) != types.Uintptr {
+		return false
+	}
+	seen := make(map[ssa.Value]bool)
+	var usedByMarkedCall func(ssa.Value) bool
+	usedByMarkedCall = func(value ssa.Value) bool {
+		if seen[value] {
+			return false
+		}
+		seen[value] = true
+		for _, ref := range *value.Referrers() {
+			if call, ok := ref.(ssa.CallInstruction); ok {
+				common := call.Common()
+				if common.Signature().Variadic() && len(common.Args) != 0 &&
+					common.Args[len(common.Args)-1] == value &&
+					hasUintptrEscapesDirective(common.StaticCallee()) {
+					return true
+				}
+			}
+			switch ref := ref.(type) {
+			case *ssa.Slice:
+				if usedByMarkedCall(ref) {
+					return true
+				}
+			case *ssa.ChangeType:
+				if usedByMarkedCall(ref) {
+					return true
+				}
+			case *ssa.Phi:
+				if usedByMarkedCall(ref) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return usedByMarkedCall(alloc)
+}
+
 func hasUintptrEscapesDirective(fn *ssa.Function) bool {
 	seen := make(map[*ssa.Function]bool)
 	var visit func(*ssa.Function) bool

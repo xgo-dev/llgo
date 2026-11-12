@@ -163,7 +163,7 @@ func assertFuncvalCollectibleAllocations(t *testing.T, owner Function, want int)
 			if entry.IsNil() || !strings.HasPrefix(entry.Name(), PkgRuntime+".Alloc") {
 				continue
 			}
-			if entry.Name() != PkgRuntime+".AllocU" && entry.Name() != PkgRuntime+".AllocUAligned" {
+			if entry.Name() != PkgRuntime+".AllocU" && entry.Name() != PkgRuntime+".AllocUAligned" && entry.Name() != PkgRuntime+".AllocAtomicU" && entry.Name() != PkgRuntime+".AllocAtomicUAligned" {
 				t.Fatalf("descriptor uses an unexpected allocator %s", entry.Name())
 			}
 			count++

@@ -63,6 +63,10 @@ _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods:
     _llgo_closure$MQ2ZWlodL7TEMdmgiMKeZQg05eYQM3XSFySxP1VTspk
 _llgo_int:
     _llgo_funcval$65ca4976d166a6fca2f4c19f74eaa1268112be690390058bcf86e8180feefe74
+_llgo_itab$ARsbupbM5LJaIg5IQKIp4jqIVyeW-KWKFWg1yvba33A:
+    _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read
 _llgo_string:
     _llgo_funcval$5833d99c9f9c201db47c5c15a5d5a306c123e8d69caea634dbe691637cca3b46
 _llgo_uint8:
@@ -71,13 +75,11 @@ main.init:
     github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.init
     main.init$guard
 main.main:
-    _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
+    _llgo_itab$ARsbupbM5LJaIg5IQKIp4jqIVyeW-KWKFWg1yvba33A
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.use
 main.use:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
 
 [UseIface]
 main.main:

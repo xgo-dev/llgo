@@ -59,10 +59,53 @@ func parseNativeFlags(args []string) (*frontendGCFlags, error) {
 			if frontend == nil {
 				frontend = parsed
 			}
+			if pattern == "all" {
+				frontend.dependencyMCount = parsed.mCount
+			}
 			seenGCScopes[pattern] = true
 		}
 	}
 	return frontend, nil
+}
+
+// loaderBuildFlags removes only native -m controls while preserving argument
+// scopes and empty lists, which can override an earlier all= list.
+func loaderBuildFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		name, value, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if name != "gcflags" {
+			out = append(out, arg)
+			continue
+		}
+		pattern, fields, _ := splitPerPackageArgumentList(value) // Already validated.
+		kept := make([]string, 0, len(fields))
+		removed := false
+		for _, field := range fields {
+			flagName, _, _ := strings.Cut(strings.TrimLeft(field, "-"), "=")
+			if strings.HasPrefix(field, "-") && flagName == "m" {
+				removed = true
+				continue
+			}
+			if strings.ContainsAny(field, " \t\r\n") {
+				quote := "'"
+				if strings.Contains(field, quote) {
+					quote = "\""
+				}
+				field = quote + field + quote
+			}
+			kept = append(kept, field)
+		}
+		if removed {
+			prefix := ""
+			if pattern != "" {
+				prefix = pattern + "="
+			}
+			arg = "-gcflags=" + prefix + strings.Join(kept, " ")
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 // applyOverlay reads the same JSON view used by the Go loader into LLGo's

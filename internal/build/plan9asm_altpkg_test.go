@@ -3,6 +3,7 @@ package build
 import (
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
@@ -42,6 +43,33 @@ func TestInternalRuntimeSysUsesPlan9AsmWithoutAltPkg(t *testing.T) {
 	}
 	if hasAltPkgForTarget(conf, "internal/runtime/sys") {
 		t.Fatal("internal/runtime/sys should use its source patch instead of an alt package")
+	}
+}
+
+func TestPlan9AsmNativeCollectorSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conf Config
+		want bool
+	}{
+		{"darwin", Config{Goos: "darwin", Goarch: "arm64"}, true},
+		{"linux", Config{Goos: "linux", Goarch: "arm64"}, true},
+		{"nogc", Config{Goos: "linux", Goarch: "arm64", Tags: "other,nogc"}, false},
+		{"baremetal", Config{Goos: "linux", Goarch: "arm64", Tags: "baremetal"}, false},
+		{"named native target", Config{Goos: "linux", Goarch: "arm64", Target: "custom"}, true},
+		{"other architecture", Config{Goos: "linux", Goarch: "amd64"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := plan9asmTranslateOptions(&context{buildConf: &tc.conf}).NativeBDWGC; got != tc.want {
+				t.Fatalf("NativeBDWGC = %t, want %t", got, tc.want)
+			}
+		})
+	}
+	for _, tag := range []string{"nogc", "baremetal"} {
+		conf := Config{Goos: "linux", Goarch: "arm64", Target: "custom"}
+		if plan9asmTranslateOptions(&context{buildConf: &conf, crossCompile: crosscompile.Export{BuildTags: []string{tag}}}).NativeBDWGC {
+			t.Fatalf("target tag %s acquired a BDWGC dependency", tag)
+		}
 	}
 }
 

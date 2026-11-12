@@ -117,13 +117,14 @@ type receiver struct {
 // CHECK-DAG: ret %"{{.*}}Slice" %{{.*}}
 
 // CHECK-LABEL: define ptr @main.makeFloatSum(double %0){{.*}} {
-// CHECK: [[FLOAT_BASE_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store double %0, ptr [[FLOAT_BASE_ADDR]]
-// CHECK-NEXT: [[FLOAT_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT: [[FLOAT_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 0
-// CHECK-NEXT: [[FLOAT_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 1
-// CHECK-NEXT: [[FLOAT_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[FLOAT_CAPTURE_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[FLOAT_BASE_ADDR]], ptr [[FLOAT_CAPTURE_SLOT]]
+// CHECK: [[FLOAT_BASE_ADDR:%.*]] = alloca double
+// CHECK: store double %0, ptr [[FLOAT_BASE_ADDR]]
+// CHECK-NEXT: [[FLOAT_CAPTURE_COPY:%.*]] = load double, ptr [[FLOAT_BASE_ADDR]]
+// CHECK-NEXT: [[FLOAT_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[FLOAT_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { double } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[FLOAT_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { double } }, ptr [[FLOAT_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[FLOAT_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { double }, ptr [[FLOAT_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store double [[FLOAT_CAPTURE_COPY]], ptr [[FLOAT_CAPTURE_SLOT]]
 // CHECK-NEXT: [[FLOAT_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[FLOAT_CLOSURE]], i32 0, i32 0
 // CHECK-NEXT: store ptr @"main.makeFloatSum$1", ptr [[FLOAT_ENTRY_SLOT]]
 // CHECK-NEXT: [[FLOAT_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[FLOAT_CLOSURE]], i32 0, i32 1
@@ -132,8 +133,7 @@ type receiver struct {
 
 // ARM64-LABEL: define double @"main.makeFloatSum$1"(ptr swiftself %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
 // AMD64-LABEL: define double @"main.makeFloatSum$1"(ptr nest %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
-// CHECK: [[FLOAT_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[FLOAT_BASE_PTR:%.*]] = extractvalue { ptr } [[FLOAT_ENV]], 0
+// CHECK: [[FLOAT_BASE_PTR:%.*]] = getelementptr inbounds nuw { double }, ptr %0, i32 0, i32 0
 // CHECK: [[FLOAT_BASE_VALUE:%.*]] = load double, ptr [[FLOAT_BASE_PTR]]
 // CHECK: [[FLOAT_S1:%.*]] = fadd double [[FLOAT_BASE_VALUE]], %1
 // CHECK: [[FLOAT_S2:%.*]] = fadd double [[FLOAT_S1]], %2
@@ -147,13 +147,14 @@ type receiver struct {
 // CHECK: ret double [[FLOAT_S9]]
 
 // CHECK-LABEL: define ptr @main.makeNestedSum(i64 %0){{.*}} {
-// CHECK: [[NESTED_BASE_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store i64 %0, ptr [[NESTED_BASE_ADDR]]
-// CHECK-NEXT: [[NESTED_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT: [[NESTED_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 0
-// CHECK-NEXT: [[NESTED_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 1
-// CHECK-NEXT: [[NESTED_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[NESTED_CAPTURE_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[NESTED_BASE_ADDR]], ptr [[NESTED_CAPTURE_SLOT]]
+// CHECK: [[NESTED_BASE_ADDR:%.*]] = alloca i64
+// CHECK: store i64 %0, ptr [[NESTED_BASE_ADDR]]
+// CHECK-NEXT: [[NESTED_CAPTURE_COPY:%.*]] = load i64, ptr [[NESTED_BASE_ADDR]]
+// CHECK-NEXT: [[NESTED_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[NESTED_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[NESTED_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[NESTED_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[NESTED_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[NESTED_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[NESTED_CAPTURE_COPY]], ptr [[NESTED_CAPTURE_SLOT]]
 // CHECK-NEXT: [[NESTED_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[NESTED_CLOSURE]], i32 0, i32 0
 // CHECK-NEXT: store ptr @"main.makeNestedSum$1", ptr [[NESTED_ENTRY_SLOT]]
 // CHECK-NEXT: [[NESTED_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[NESTED_CLOSURE]], i32 0, i32 1
@@ -176,8 +177,7 @@ type receiver struct {
 // CHECK: [[NESTED_ARGS_0:%.*]] = insertvalue %"{{.*}}Slice" undef, ptr [[NESTED_VALUES]], 0
 // CHECK: [[NESTED_ARGS_1:%.*]] = insertvalue %"{{.*}}Slice" [[NESTED_ARGS_0]], i64 9, 1
 // CHECK: [[NESTED_ARGS:%.*]] = insertvalue %"{{.*}}Slice" [[NESTED_ARGS_1]], i64 9, 2
-// CHECK: [[NESTED_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[NESTED_CAPTURE_ADDR:%.*]] = extractvalue { ptr } [[NESTED_ENV]], 0
+// CHECK: [[NESTED_CAPTURE_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[NESTED_CAPTURE:%.*]] = load i64, ptr [[NESTED_CAPTURE_ADDR]]
 // CHECK: [[NESTED_SUM_FN:%.*]] = call ptr @main.makeSum(i64 [[NESTED_CAPTURE]])
 // CHECK: [[NESTED_SUM_BOX:%.*]] = insertvalue %"{{.*}}eface" { ptr @"_llgo_closure${{[-A-Za-z0-9_]+}}", ptr undef }, ptr [[NESTED_SUM_FN]], 1
@@ -187,13 +187,14 @@ type receiver struct {
 // CHECK: ret i64 [[NESTED_RESULT]]
 
 // CHECK-LABEL: define ptr @main.makeSum(i64 %0){{.*}} {
-// CHECK: [[SUM_BASE_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store i64 %0, ptr [[SUM_BASE_ADDR]]
-// CHECK-NEXT: [[SUM_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 24)
-// CHECK-NEXT: [[SUM_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[SUM_ALLOCATION]], i32 0, i32 0
-// CHECK-NEXT: [[SUM_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { ptr } }, ptr [[SUM_ALLOCATION]], i32 0, i32 1
-// CHECK-NEXT: [[SUM_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[SUM_CAPTURE_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[SUM_BASE_ADDR]], ptr [[SUM_CAPTURE_SLOT]]
+// CHECK: [[SUM_BASE_ADDR:%.*]] = alloca i64
+// CHECK: store i64 %0, ptr [[SUM_BASE_ADDR]]
+// CHECK-NEXT: [[SUM_CAPTURE_COPY:%.*]] = load i64, ptr [[SUM_BASE_ADDR]]
+// CHECK-NEXT: [[SUM_ALLOCATION:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 24)
+// CHECK-NEXT: [[SUM_CLOSURE:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[SUM_ALLOCATION]], i32 0, i32 0
+// CHECK-NEXT: [[SUM_CAPTURE_ENV:%.*]] = getelementptr inbounds nuw { { ptr, ptr }, { i64 } }, ptr [[SUM_ALLOCATION]], i32 0, i32 1
+// CHECK-NEXT: [[SUM_CAPTURE_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[SUM_CAPTURE_ENV]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[SUM_CAPTURE_COPY]], ptr [[SUM_CAPTURE_SLOT]]
 // CHECK-NEXT: [[SUM_ENTRY_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SUM_CLOSURE]], i32 0, i32 0
 // CHECK-NEXT: store ptr @"main.makeSum$1", ptr [[SUM_ENTRY_SLOT]]
 // CHECK-NEXT: [[SUM_CAPTURE_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[SUM_CLOSURE]], i32 0, i32 1
@@ -202,8 +203,7 @@ type receiver struct {
 
 // ARM64-LABEL: define i64 @"main.makeSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // AMD64-LABEL: define i64 @"main.makeSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// CHECK: [[SUM_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[SUM_BASE_PTR:%.*]] = extractvalue { ptr } [[SUM_ENV]], 0
+// CHECK: [[SUM_BASE_PTR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[SUM_BASE_VALUE:%.*]] = load i64, ptr [[SUM_BASE_PTR]]
 // CHECK: [[SUM_S1:%.*]] = add i64 [[SUM_BASE_VALUE]], %1
 // CHECK: [[SUM_S2:%.*]] = add i64 [[SUM_S1]], %2

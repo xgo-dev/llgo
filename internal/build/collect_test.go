@@ -1659,3 +1659,18 @@ func TestDeadcodeDropCollectFingerprint(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectEnvInputsSeparatesFuncvalABIWithoutCompilerHash(t *testing.T) {
+	ctx := &context{buildConf: &Config{Goos: "linux", Goarch: "amd64"}, llvmVersion: "test", goVersion: "go1.27.3"}
+	current := newManifestBuilder()
+	ctx.collectEnvInputs(current)
+	if current.env.LlgoCompilerHash != "" || current.env.GoFuncvalABI != "descriptor-v1" {
+		t.Fatalf("library build ABI identity = %+v", current.env)
+	}
+	old := newManifestBuilder()
+	old.env = current.env
+	old.env.GoFuncvalABI = ""
+	if current.Fingerprint() == old.Fingerprint() {
+		t.Fatal("old two-word and descriptor function values share package archives")
+	}
+}

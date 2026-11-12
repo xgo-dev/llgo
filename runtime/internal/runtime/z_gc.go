@@ -21,6 +21,7 @@ package runtime
 import (
 	"unsafe"
 
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
@@ -38,6 +39,28 @@ func AllocU(size uintptr) unsafe.Pointer {
 	}
 	recordMemProfileAlloc(size)
 	return ret
+}
+
+// AllocAtomicU allocates uninitialized memory that must never contain pointers.
+// It returns a non-nil pointer or panics, sharing AllocU's zero-size sentinel.
+func AllocAtomicU(size uintptr) unsafe.Pointer {
+	if size == 0 {
+		return unsafe.Pointer(&zerobase)
+	}
+	ret := bdwgc.MallocAtomic(size)
+	if ret == nil {
+		panic("out of memory")
+	}
+	recordMemProfileAlloc(size)
+	return ret
+}
+
+// AllocAtomicZ allocates zero-initialized memory that must never contain pointers.
+func AllocAtomicZ(size uintptr) unsafe.Pointer {
+	p := AllocAtomicU(size)
+	// Atomic allocations are not guaranteed to be cleared by the collector.
+	c.Memset(p, 0, size)
+	return p
 }
 
 func allocUAligned(size, alignment uintptr) unsafe.Pointer {

@@ -78,10 +78,11 @@ func TestOtherCommandsIgnoreKnownTestAliasDefaults(t *testing.T) {
 func TestCompilerOptionSpellingsFromCLIAndGOFLAGS(t *testing.T) {
 	t.Setenv("GOENV", "off")
 	for _, tc := range []struct {
-		value          string
-		wantGo         string
-		wantNoOpt      bool
-		wantSaturating bool
+		value           string
+		wantGo          string
+		wantNoOpt       bool
+		wantSaturating  bool
+		wantDiagnostics int
 	}{
 		{value: "-lang=go1.21", wantGo: "go1.21"},
 		{value: "-lang go1.21", wantGo: "go1.21"},
@@ -91,6 +92,10 @@ func TestCompilerOptionSpellingsFromCLIAndGOFLAGS(t *testing.T) {
 		{value: "--N", wantNoOpt: true},
 		{value: "--l", wantNoOpt: true},
 		{value: "-N=-1 -N"},
+		{value: "-m", wantDiagnostics: 1},
+		{value: "-m=2", wantDiagnostics: 2},
+		{value: "-m -m", wantDiagnostics: 2},
+		{value: "-m=2 -m=false"},
 	} {
 		for _, defaults := range []bool{false, true} {
 			source := "CLI"
@@ -119,7 +124,7 @@ func TestCompilerOptionSpellingsFromCLIAndGOFLAGS(t *testing.T) {
 				if tc.wantNoOpt {
 					wantLevel = optlevel.O0
 				}
-				if conf.GoVersion != tc.wantGo || conf.OptLevel != wantLevel || conf.SaturatingFloatToInt != tc.wantSaturating {
+				if conf.GoVersion != tc.wantGo || conf.OptLevel != wantLevel || conf.SaturatingFloatToInt != tc.wantSaturating || conf.EscapeDiagnostics != tc.wantDiagnostics {
 					t.Fatalf("compiler options were not applied: version=%q level=%v saturating=%v", conf.GoVersion, conf.OptLevel, conf.SaturatingFloatToInt)
 				}
 				if os.Getenv("GOFLAGS") != value {
@@ -133,13 +138,15 @@ func TestCompilerOptionSpellingsFromCLIAndGOFLAGS(t *testing.T) {
 func TestGOFLAGSCompilerListOverride(t *testing.T) {
 	t.Setenv("GOENV", "off")
 	for _, tc := range []struct {
-		defaults  string
-		explicit  string
-		wantError bool
+		defaults         string
+		explicit         string
+		wantError        bool
+		wantDependencies int
 	}{
-		{defaults: "-gcflags=-m", explicit: "-gcflags=-N"},
-		{defaults: "-gcflags=all=-m", explicit: "-gcflags=all=-N"},
-		{defaults: "-gcflags=all=-m", explicit: "-gcflags=-N", wantError: true},
+		{defaults: "-gcflags=-live", explicit: "-gcflags=-N"},
+		{defaults: "-gcflags=all=-live", explicit: "-gcflags=all=-N"},
+		{defaults: "-gcflags=all=-live", explicit: "-gcflags=-N", wantError: true},
+		{defaults: "-gcflags=all=-m", explicit: "-gcflags=-N", wantDependencies: 1},
 	} {
 		t.Run(tc.defaults+"/"+tc.explicit, func(t *testing.T) {
 			t.Setenv("GOFLAGS", tc.defaults)
@@ -157,6 +164,9 @@ func TestGOFLAGSCompilerListOverride(t *testing.T) {
 				}
 			} else if err != nil || conf.OptLevel != optlevel.O0 {
 				t.Fatalf("explicit compiler list did not replace defaults: level=%v err=%v", conf.OptLevel, err)
+			}
+			if err == nil && conf.DependencyEscapeDiagnostics != tc.wantDependencies {
+				t.Fatalf("dependency diagnostics=%d, want %d", conf.DependencyEscapeDiagnostics, tc.wantDependencies)
 			}
 			if os.Getenv("GOFLAGS") != tc.defaults {
 				t.Fatal("changed the caller's GOFLAGS")

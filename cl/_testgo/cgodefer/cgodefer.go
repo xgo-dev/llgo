@@ -70,13 +70,12 @@ import "C"
 // CHECK: [[GO_CALLBACK:%[0-9]+]] = load ptr, ptr @main._Cfpvar_fp_go_callback
 // CHECK-NEXT: [[GO_CALLBACK_PTR:%[0-9]+]] = call ptr @main._Cgo_ptr(ptr [[GO_CALLBACK]])
 // CHECK-NEXT: call i32 @main._Cfunc_invoke_callback(ptr [[GO_CALLBACK_PTR]], i32 40)
-// Pop and release the defer node before invoking its function value. Keeping
-// the node alive across the C call both leaks it on a non-returning call and
-// lets a nested panic observe stale defer state.
+// Pop the stack-owned defer node before invoking its function value. The
+// invocation must not observe stale defer state or free stack storage.
 // CHECK: [[ACTIVE_NODE:%[0-9]+]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: [[ACTIVE_DEFER:%[0-9]+]] = load { ptr, i64, ptr }, ptr [[ACTIVE_NODE]]
 // CHECK: [[DEFER_FUNC:%[0-9]+]] = extractvalue { ptr, i64, ptr } [[ACTIVE_DEFER]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[ACTIVE_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[DEFER_RECOVER_SAFE:%[0-9]+]] = select i1 %{{[0-9]+}}, ptr @_llgo_funcval_nil, ptr [[DEFER_FUNC]]
 // CHECK-NEXT: [[DEFER_RECOVER_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[DEFER_RECOVER_SAFE]], i32 0, i32 0
 // CHECK-NEXT: [[DEFER_RECOVER_CODE:%[0-9]+]] = load ptr, ptr [[DEFER_RECOVER_SLOT]]
@@ -94,11 +93,10 @@ import "C"
 
 // ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {
-// CHECK: [[DEFER_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = extractvalue { ptr } [[DEFER_ENV]], 0
+// CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[KEEPALIVE:%[0-9]+]] = load ptr, ptr [[KEEPALIVE_SLOT]]
 // CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[KEEPALIVE]], 1
-// CHECK-NEXT: [[DEFER_ARG_SLOT:%[0-9]+]] = extractvalue { ptr } [[DEFER_ENV]], 0
+// CHECK-NEXT: [[DEFER_ARG_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT: [[DEFER_ARG:%[0-9]+]] = load ptr, ptr [[DEFER_ARG_SLOT]]
 // CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr [[DEFER_ARG]])
 

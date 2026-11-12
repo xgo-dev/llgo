@@ -135,6 +135,16 @@ _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods:
     _llgo_closure$kb-YdROHHWOGJs1WAuO4KKcnneK-XAsNT5qjleHxr6c
     _llgo_closure$urV_ZVw_ymk_15hysHmKxsHCGGFwATc7M_EzgMVSSyM
     _llgo_closure$vK4RtX_aj54SK2qRpmq5G1J_JK9BvV_9Ps38HU_Uq6I
+_llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik:
+    _llgo_encoding/binary.littleEndian
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
+    encoding/binary.(*littleEndian).PutUint16
+    encoding/binary.(*littleEndian).PutUint32
+    encoding/binary.(*littleEndian).PutUint64
+    encoding/binary.(*littleEndian).String
+    encoding/binary.(*littleEndian).Uint16
+    encoding/binary.(*littleEndian).Uint32
+    encoding/binary.(*littleEndian).Uint64
 _llgo_string:
     _llgo_funcval$5833d99c9f9c201db47c5c15a5d5a306c123e8d69caea634dbe691637cca3b46
 _llgo_uint16:
@@ -150,13 +160,12 @@ main.init:
     main.init$guard
 main.main:
     _llgo_encoding/binary.littleEndian
-    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
+    _llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik
     encoding/binary.LittleEndian
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
-    github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
     github.com/xgo-dev/llgo/runtime/internal/runtime.Typedmemmove
+    llvm.memset.p0.i64
 
 [UseIface]
 main.main:

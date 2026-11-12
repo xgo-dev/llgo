@@ -80,6 +80,7 @@ func SourcePatchReplacesAsmForGOARCH(path, goarch string) bool {
 }
 
 var sourcePatchPkgs = map[string]struct{}{
+	"crypto/internal/fips140/aes":  {},
 	"crypto/internal/constanttime": {},
 	"crypto/internal/sysrand":      {},
 	"fmt":                          {},
@@ -93,6 +94,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/runtime/sys":         {},
 	"internal/sync":                {},
 	"iter":                         {},
+	"math/bits":                    {},
 	"runtime":                      {},
 	"runtime/internal/atomic":      {},
 	"runtime/metrics":              {},
@@ -108,7 +110,8 @@ var sourcePatchPkgs = map[string]struct{}{
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
-	"internal/runtime/atomic": {"arm": {}},
-	"sync/atomic":             {"*": {}},
-	"syscall":                 {"*": {}},
+	"crypto/internal/fips140/aes": {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
+	"internal/runtime/atomic":     {"arm": {}},
+	"sync/atomic":                 {"*": {}},
+	"syscall":                     {"*": {}},
 }

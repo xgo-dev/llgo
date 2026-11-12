@@ -174,14 +174,14 @@ It does not substitute Go layouts for LLGo metadata.
 | --- | ---: | ---: | ---: | ---: |
 | Native 64-bit | 48 | 72 | 8 | 16 |
 | Native 32-bit (386) | 32 | 40 | 4 | 8 |
-| Wasm32 | 48 | 40 | 8 | 8 |
+| J32 and W32 (Memory32) | 48 | 72 | 8 | 16 |
 | LLGo Memory64, compared with Go's Wasm port | 48 | 72 | 8 | 16 |
 
-Sizes are bytes. Go's Wasm port uses 64-bit words even with wasm32 linear
-memory; LLGo Wasm32 uses 32-bit words. With the
-`llgo.wasm.emscripten.memory64` tag, `abi.llgo_target` records wasm64 and
-LLGo uses 64-bit layouts. Equal function-value sizes on Wasm32 do not mean
-compatible representations. Go stores relative
+Sizes are bytes. All hosted Wasm profiles use 64-bit Go words, including
+Memory32. The report distinguishes `go_word_bytes` (8) from
+`native_pointer_bytes` (4 on J32/W32, 8 on J64), and records `wasm_profile`.
+The `llgo.wasm.emscripten.memory64` tag selects J64 and its wasm64 triple;
+it does not change the Go word model. Go stores relative
 name/type offsets and a pointer to a function-value object; LLGo stores a
 string, a direct type pointer and a code/environment pair. Even the descriptor's
 `Equal` field changes the offsets that follow it. Map/interface metadata,
