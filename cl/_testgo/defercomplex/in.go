@@ -6,11 +6,11 @@ package main
 // CHECK: @[[CLEANUP_FINAL:[0-9]+]] = private unnamed_addr constant [13 x i8] c"cleanup-final"
 // CHECK: @[[CLEANUP_BEFORE:[0-9]+]] = private unnamed_addr constant [19 x i8] c"cleanup-before-loop"
 // CHECK: @[[EXIT_OUTER:[0-9]+]] = private unnamed_addr constant [10 x i8] c"exit-outer"
-// CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK: @[[BRANCH_EVEN:[0-9]+]] = private unnamed_addr constant [11 x i8] c"branch-even"
 // CHECK: @[[BRANCH_ODD:[0-9]+]] = private unnamed_addr constant [10 x i8] c"branch-odd"
 // CHECK: @[[NESTED:[0-9]+]] = private unnamed_addr constant [6 x i8] c"nested"
 // CHECK: @[[NESTED_TAIL:[0-9]+]] = private unnamed_addr constant [11 x i8] c"nested-tail"
+// CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
 // CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
 // CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
@@ -53,12 +53,17 @@ package main
 // CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" [[BEFORE_LABEL]], ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[BEFORE_NODE:%[0-9]+]], ptr [[DEFER_HEAD]]
+// CHECK: [[LOOP_HEADER:%[0-9]+]] = load { ptr, i64 }, ptr %{{[0-9]+}}
+// CHECK-NEXT: [[LOOP_TAG:%[0-9]+]] = extractvalue { ptr, i64 } [[LOOP_HEADER]], 1
 // CHECK: [[RUN_RECORD:%[0-9]+]] = load { ptr, i64, { ptr, ptr }, %"{{.*}}String" }, ptr [[RUN_NODE:%[0-9]+]]
 // CHECK: [[RUN_FN:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr }, %"{{.*}}String" } [[RUN_RECORD]], 2
 // CHECK-NEXT: [[RUN_LABEL:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr }, %"{{.*}}String" } [[RUN_RECORD]], 3
 // CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[RUN_NODE]])
-// ARM64: call void %__llgo_funcval_code(ptr swiftself %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])
-// AMD64: call void %__llgo_funcval_code(ptr nest %{{[0-9]+}}, %"{{.*}}String" [[RUN_LABEL]])
+// CHECK-NEXT: [[RUN_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[RUN_FN]], 1
+// CHECK-NEXT: [[RUN_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[RUN_FN]], 0
+// CHECK-NEXT: [[RUN_TARGET:%[^ ]+]] = call ptr asm "", "=r,0"(ptr [[RUN_CODE]])
+// ARM64-NEXT: call void [[RUN_TARGET]](ptr swiftself [[RUN_ENV]], %"{{.*}}String" [[RUN_LABEL]])
+// AMD64-NEXT: call void [[RUN_TARGET]](ptr nest [[RUN_ENV]], %"{{.*}}String" [[RUN_LABEL]])
 // CHECK: [[SAVED_DEFER:%[0-9]+]] = load %"{{.*}}Defer", ptr [[DEFER_FRAME]]
 // CHECK-NEXT: [[RESTORED_DEFER:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[SAVED_DEFER]], 2
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[RESTORED_DEFER]])
