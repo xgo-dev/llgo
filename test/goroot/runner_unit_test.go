@@ -387,7 +387,6 @@ func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
 	}{
 		{version: "go1.27.0", platform: "linux/amd64", tc: testCase{RelPath: "heapsampling.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "linkmain_run.go", Directive: "run"}},
-		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue23305.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue42032.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "J32-GoJS", tc: testCase{RelPath: "init1.go", Directive: "run"}},
@@ -442,6 +441,15 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue79186.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}},
 	}
+	for _, version := range []string{"go1.26.7", "go1.27.0"} {
+		for _, platform := range []string{"windows-msvc/amd64", "windows-mingw/amd64"} {
+			tests = append(tests, struct {
+				version, platform string
+				tc                testCase
+			}{version, platform, testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}})
+		}
+	}
+
 	for _, tt := range tests {
 		if match, reason := cfg.Match(tt.version, tt.platform, tt.tc); match {
 			t.Errorf("%s unexpectedly matched xfail for %s/%s: %s", tt.tc.RelPath, tt.version, tt.platform, reason)
@@ -550,7 +558,8 @@ func TestBoundedCaseEnv(t *testing.T) {
 		{"windows", "arm64", rangegen, nil, []string{"GOMEMLIMIT=1GiB"}},
 		{"windows", "arm64", rangegen, []string{"GOMEMLIMIT=4GiB"}, []string{"GOMEMLIMIT=1GiB"}},
 		{"linux", "arm64", rangegen, nil, nil},
-		{"darwin", "arm64", rangegen, nil, nil},
+		{"darwin", "arm64", rangegen, nil, []string{"GOMEMLIMIT=2GiB"}},
+		{"darwin", "arm64", rangegen, []string{"GOMEMLIMIT=4GiB"}, []string{"GOMEMLIMIT=2GiB"}},
 		{"linux", "amd64", testCase{RelPath: "other.go", Directive: "runoutput"}, nil, nil},
 	} {
 		if got := boundedCaseEnv(tt.goos, tt.goarch, tt.tc, tt.initial); !reflect.DeepEqual(got, tt.want) {

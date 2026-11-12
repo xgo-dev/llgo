@@ -685,6 +685,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
 	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
 	verbose := conf.Verbose

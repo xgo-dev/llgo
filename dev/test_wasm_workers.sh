@@ -119,7 +119,7 @@ run_worker_go_test() {
 	# module and all iterations, while keeping the language cases together.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
 		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
-		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*)$' \
+		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*)$' \
 		"${repo_root}/test/go" 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
@@ -134,6 +134,14 @@ run_worker_go_test() {
 		-test.run '^TestEscapeTypedStack' \
 		2>&1 | tee "${output}.stack-roots"
 	grep -Fxq "PASS" "${output}.stack-roots"
+	# These lifetime tests force many collections; keep their full workload
+	# out of the shared language-suite alarm, reusing the same complete module.
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+		-test.v -test.count=1 -test.timeout=480s \
+		-test.run '^TestUintptrEscapes' \
+		2>&1 | tee "${output}.uintptr-roots"
+	grep -Fxq "PASS" "${output}.uintptr-roots"
 	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
 	# that subprocess itself; reuse the compiled module in a fresh process so
 	# exiting goroutines cannot cancel the measured count increment.

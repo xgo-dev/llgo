@@ -5,19 +5,22 @@ import json
 import os
 from pathlib import Path
 import shlex
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 
 from debug_session import FIXTURE, run, session, tool
 
 
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def qmp_command(process, command):
+    process.stdin.write(json.dumps({"execute": command}) + "\n")
+    process.stdin.flush()
+    while True:
+        response = json.loads(process.stdout.readline())
+        if "error" in response:
+            raise RuntimeError(f"QMP {command}: {response['error']}")
+        if "return" in response:
+            return response["return"]
 
 
 def verify_download(log):
@@ -53,23 +56,32 @@ def main():
             session(backend, debugger, artifact, "cortex-m-qemu")
             # Start with NO kernel image. Reaching the fixture can only succeed
             # when the product's explicit -load path really writes the image.
-            port = free_port()
             log = tmp / f"{backend}-load.jsonl"
             with open(tmp / f"{backend}-qemu.log", "w") as qemu_log:
                 process = subprocess.Popen([qemu, "-machine", "lm3s6965evb", "-semihosting", "-nographic",
-                                            "-S", "-gdb", f"tcp:127.0.0.1:{port}"],
-                                           stdout=qemu_log, stderr=subprocess.STDOUT)
+                                            "-serial", "null", "-monitor", "none", "-S",
+                                            "-gdb", "tcp:127.0.0.1:0", "-qmp", "stdio"],
+                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=qemu_log, text=True)
                 try:
-                    time.sleep(0.3)
-                    if process.poll() is not None:
-                        raise RuntimeError("QEMU stopped before debugger connection")
+                    # QEMU keeps its OS-assigned port bound. Discover it over
+                    # QMP instead of closing a reservation before starting it.
+                    greeting = json.loads(process.stdout.readline())
+                    if "QMP" not in greeting:
+                        raise RuntimeError(f"missing QMP greeting: {greeting}")
+                    qmp_command(process, "qmp_capabilities")
+                    filename = next(item["filename"] for item in qmp_command(process, "query-chardev")
+                                    if item["label"] == "gdb")
+                    port = int(filename.split("tcp:127.0.0.1:", 1)[1].split(",", 1)[0])
                     proxy = shlex.join([Path(sys.executable).as_posix(), (FIXTURE / "qemu_load_proxy.py").as_posix(),
-                                        "--listen", "{debug-port}", "--qemu", str(port), "--log", log.as_posix()])
+                                        "--transport", "{debug-stdio}", "--qemu", str(port), "--log", log.as_posix()])
                     session(backend, debugger, artifact, "cortex-m-qemu", ["-server", proxy, "-load"])
                     verify_download(log)
                 finally:
                     process.terminate()
                     process.wait(timeout=10)
+                    process.stdin.close()
+                    process.stdout.close()
             print(f"{backend}: preloaded and reset/load/reset Cortex-M sessions passed")
         # Host DWARF must not change the same ELF's flash bytes.
         stripped = tmp / "stripped.elf"
