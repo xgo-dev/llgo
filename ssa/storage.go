@@ -101,7 +101,7 @@ func (b Builder) fitLLVMValue(value llvm.Value, source Type, target llvm.Type) l
 	if source.kind == vkArray && value.Type().TypeKind() == llvm.ArrayTypeKind && target.TypeKind() == llvm.ArrayTypeKind && value.Type().ArrayLength() == target.ArrayLength() {
 		elem := b.Prog.Index(source)
 		result := llvm.Undef(target)
-		for i := 0; i < target.ArrayLength(); i++ {
+		for i, n := 0, target.ArrayLength(); i < n; i++ {
 			part := b.impl.CreateExtractValue(value, i, "")
 			part = b.fitLLVMValue(part, elem, target.ElementType())
 			result = b.impl.CreateInsertValue(result, part, i, "")

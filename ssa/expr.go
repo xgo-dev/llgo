@@ -89,7 +89,7 @@ func (v Expr) SetVolatile(volatile bool) Expr {
 func (v Expr) memoryInstruction() llvm.Value {
 	instr := v.impl
 	// Follow scalar conversions and aggregate repacking back to the load.
-	// Repacked pointer slots also insert a constant zero high word.
+	// Skip constant fields inserted while repacking an aggregate.
 	for {
 		switch {
 		case !instr.IsAInsertValueInst().IsNil() || !instr.IsAInsertElementInst().IsNil():
@@ -1149,11 +1149,12 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		// Go type identity does not imply identical native storage on Memory32.
 		// Convert logical elements before fitting each destination storage slot.
 		sourceElem := b.Prog.Index(x.Type)
+		sourceLogical := b.Prog.withoutNativeStorage(sourceElem)
 		targetElem := b.Prog.withoutNativeStorage(b.Prog.Index(t))
 		ret.impl = llvm.Undef(t.ll)
-		for i := 0; i < t.ll.ArrayLength(); i++ {
+		for i, n := 0, t.ll.ArrayLength(); i < n; i++ {
 			part := b.impl.CreateExtractValue(x.impl, i, "")
-			value := Expr{b.fromStorageValue(sourceElem, part), b.Prog.withoutNativeStorage(sourceElem)}
+			value := Expr{b.fromStorageValue(sourceElem, part), sourceLogical}
 			value = b.ChangeType(targetElem, value)
 			part = b.fitLLVMValue(value.impl, targetElem, t.ll.ElementType())
 			ret.impl = b.impl.CreateInsertValue(ret.impl, part, i, "")
