@@ -101,6 +101,24 @@ func TestInfos(t *testing.T) {
 				llssa.DeferInLoop,
 			},
 		},
+		{
+			// DFS visits 7 before 5, but closing the outer cycle leaves both
+			// inner-body blocks pending. Append them in block-index order,
+			// once each, before scheduling the outer exit (3).
+			name:      "multiple nested bodies before outer exit",
+			edges:     [][]int{{1}, {2, 3}, {4}, nil, {7, 6}, {4}, {1}, {5}},
+			wantOrder: []int{0, 1, 2, 4, 6, 5, 7, 3},
+			wantKinds: []llssa.DoAction{
+				llssa.DeferAlways,
+				llssa.DeferInLoop,
+				llssa.DeferInLoop,
+				llssa.DeferAlways,
+				llssa.DeferInLoop,
+				llssa.DeferInLoop,
+				llssa.DeferInLoop,
+				llssa.DeferInLoop,
+			},
+		},
 		disconnectedSharedSubgraph(),
 	}
 
