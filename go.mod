@@ -30,3 +30,6 @@ replace github.com/xgo-dev/llgo/runtime => ./runtime
 
 // v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
 replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1
+
+// v0.10.3 plus CopyFunctionProperties (xgo-dev/llvm#61); remove after its upstream release.
+replace github.com/xgo-dev/llvm => github.com/cpunion/llvm v0.9.4-0.20261111222339-7fd8d0aebf59
