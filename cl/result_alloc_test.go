@@ -125,7 +125,7 @@ func result() (r uint64) { _ = intrinsic(&r); return }`},
 		for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
 			t.Run(fmt.Sprintf("%s/%v", tc.name, mode), func(t *testing.T) {
 				ir := compileWithRewritesMode(t, prefix+tc.decl, nil, mode)
-				stack := tc.name == "returned alias" || tc.name == "recursive" || tc.name == "analysis limit" || tc.name == "intrinsic body"
+				stack := tc.name == "returned alias" || tc.name == "recursive" || tc.name == "analysis limit" || tc.name == "intrinsic body" || tc.name == "defer"
 				body := llvmFunction(t, ir, "resultalloc.result")
 				if heap := strings.Contains(body, "runtime.Alloc"); heap == stack {
 					t.Fatalf("result heap=%v, want %v:\n%s", heap, !stack, body)

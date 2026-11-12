@@ -19,9 +19,9 @@ package main
 
 // CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
 // The captured 42 is stored in the closure environment before the function pair is deferred.
-// CHECK: [[VALUE_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
-// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 false)
-// CHECK: store i64 42, ptr [[VALUE_CAPTURE]]
+// CHECK: [[VALUE_CAPTURE:%.*]] = alloca i64
+// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 false)
+// CHECK: store volatile i64 42, ptr [[VALUE_CAPTURE]]
 // CHECK: [[VALUE_COPY:%.*]] = load i64, ptr [[VALUE_CAPTURE]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_ENV:%[0-9]+]], i8 0, i64 8, i1 false)
 // CHECK: store i64 [[VALUE_COPY]], ptr %{{.*}}
@@ -69,7 +69,7 @@ package main
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr @{{.*}}, i64 19 })
 
 // CHECK-LABEL: define void @main.testDeferMethodLiteral(){{.*}} {
-// CHECK: [[METHOD_HANDLER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[METHOD_HANDLER:%.*]] = alloca %main.Handler
 // CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_HANDLER]], { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null })
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
 // The deferred receiver and second literal are recorded independently.
@@ -87,9 +87,9 @@ package main
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %0)
 
 // CHECK-LABEL: define void @main.testDeferStructClosure(){{.*}} {
-// CHECK: [[STRUCT_PROCESSOR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: [[STRUCT_MSG:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
-// CHECK: store %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
+// CHECK-DAG: [[STRUCT_PROCESSOR:%.*]] = alloca %main.Processor
+// CHECK-DAG: [[STRUCT_MSG:%.*]] = alloca %"{{.*}}String"
+// CHECK: store volatile %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
 // CHECK: [[STRUCT_COPY:%.*]] = load %"{{.*}}String", ptr [[STRUCT_MSG]]
 // CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK: store %"{{.*}}String" [[STRUCT_COPY]], ptr %{{.*}}
