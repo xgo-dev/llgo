@@ -1104,7 +1104,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 				return Expr{llvm.ConstNull(t.ll), t}
 			}
 			if code.impl.IsAFunction().IsNil() || !data.impl.IsNull() {
-				panic("C callback with a different ABI must be a direct function reference")
+				panic(nativeCallbackABIError)
 			}
 			return b.nativeCallback(t, Expr{code.impl, b.Prog.FuncDecl(goSig, GoDecl)}, CDecl, "c_callback")
 		}

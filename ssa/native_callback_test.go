@@ -112,7 +112,7 @@ func TestNativeUintptrCallbackRejectsDynamicGoFuncval(t *testing.T) {
 	owner := pkg.NewFunc(pkg.Path()+".owner", ownerSig, GoDecl)
 	body := owner.MakeBody(1)
 	defer func() {
-		if got := recover(); got == nil || !strings.Contains(fmt.Sprint(got), "C callback with a different ABI must be a direct function reference") {
+		if got := recover(); got == nil || !strings.Contains(fmt.Sprint(got), nativeCallbackABIError) {
 			t.Fatalf("dynamic callback diagnostic = %v", got)
 		}
 	}()

@@ -17,6 +17,8 @@ var (
 
 var nativeIntegerAttributeKinds = [...]uint{nativeSignExtKind, nativeZeroExtKind}
 
+const nativeCallbackABIError = "C callback with a different ABI must be a direct function reference"
+
 // nativeIntegerAttrs emits LLVM ABI parameter attributes while the Go signature
 // still carries signedness. LLVM integer types alone do not distinguish signed
 // from unsigned C values. These attributes tell LLVM codegen how to extend
@@ -155,7 +157,7 @@ func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
 				return true
 			}
 		case vkFuncDecl:
-			if b.Prog.isNativeStorage(fn.Type) && fn.ll != b.Prog.FuncDecl(fn.raw.Type.(*types.Signature), GoDecl).ll {
+			if b.Prog.isNativeStorage(fn.Type) && fn.ll != b.Prog.FuncDecl(fn.raw.Type.Underlying().(*types.Signature), GoDecl).ll {
 				return true
 			}
 		}
@@ -191,7 +193,7 @@ func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
 func (b Builder) nativeCallback(dst Type, fn Expr, cc CallConv, abi string) Expr {
 	direct := fn.impl.IsAFunction()
 	if direct.IsNil() {
-		panic("C callback with a different ABI must be a direct function reference")
+		panic(nativeCallbackABIError)
 	}
 	sig := dst.raw.Type.Underlying().(*types.Signature)
 	if HasNameValist(sig) {
