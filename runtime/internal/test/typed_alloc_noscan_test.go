@@ -38,6 +38,8 @@ func TestTypedAllocationCollectorKinds(t *testing.T) {
 	rstr.Grow(100)
 	rnew := reflect.New(reflect.TypeOf(scalarObject{}))
 	rptr := reflect.New(reflect.TypeOf(struct{ S string }{}))
+	naturalBytes := rt.MakeSlice(3, 7, 1, false)
+	naturalPointers := rt.MakeSlice(3, 7, int(unsafe.Sizeof(unsafe.Pointer(nil))), true)
 	// Small slice buffers must preserve the allocation kind when capacity
 	// exceeds the caller's buffer or no buffer is available.
 	var buffer [4]byte
@@ -50,6 +52,8 @@ func TestTypedAllocationCollectorKinds(t *testing.T) {
 		ptr    unsafe.Pointer
 		noscan bool
 	}{
+		{"natural bytes", unsafe.Pointer(unsafe.SliceData(*(*[]byte)(unsafe.Pointer(&naturalBytes)))), true},
+		{"natural pointers", unsafe.Pointer(unsafe.SliceData(*(*[]unsafe.Pointer)(unsafe.Pointer(&naturalPointers)))), false},
 		{"make bytes", unsafe.Pointer(unsafe.SliceData(bytes)), true},
 		{"grow runes", unsafe.Pointer(unsafe.SliceData(runes)), true},
 		{"literal floats", unsafe.Pointer(unsafe.SliceData(floats)), true},
