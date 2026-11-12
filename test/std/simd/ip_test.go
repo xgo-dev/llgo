@@ -9,7 +9,6 @@ package simd_test
 import (
 	"fmt"
 	"math/rand/v2"
-	"runtime"
 	"simd"
 	"testing"
 )
@@ -66,10 +65,6 @@ func ipFMA(x, y []float32) (float32, int, bool) {
 }
 
 func TestIP(t *testing.T) {
-	if runtime.Compiler == "llgo" && runtime.GOARCH == "amd64" && simd.VectorBitSize() > 128 && !simd.Emulated() {
-		t.Skip("TODO: LLGo does not implement Float32x8.ConcatAddPairsGrouped used by the upstream sum helper")
-	}
-
 	var a, b [50]float32
 	for i := 0; i < 50; i++ {
 		a[i] = float32(i)
@@ -85,10 +80,6 @@ func TestIP(t *testing.T) {
 }
 
 func TestIPGoTo(t *testing.T) {
-	if runtime.Compiler == "llgo" && runtime.GOARCH == "amd64" && simd.VectorBitSize() > 128 && !simd.Emulated() {
-		t.Skip("TODO: LLGo does not implement Float32x8.ConcatAddPairsGrouped used by the upstream sum helper")
-	}
-
 	var a, b [50]float32
 	for i := 0; i < 50; i++ {
 		a[i] = float32(i)

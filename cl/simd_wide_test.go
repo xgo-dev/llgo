@@ -42,6 +42,12 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llssa.SIMDFMA},
 		{"Int32x8", "MulAdd(Int32x8, Int32x8) Int32x8", llssa.SIMDUnimplemented},
+		{"Float32x4", "ConcatAddPairs(Float32x4) Float32x4", llssa.SIMDConcatAddPairs},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Float32x8", llssa.SIMDConcatAddPairsGrouped},
+		{"Float32x4", "ConcatAddPairsGrouped(Float32x4) Float32x4", llssa.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairs(Float32x8) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x4) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Int32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "Ceil() Float32x8", llssa.SIMDUnimplemented},
 
 		// Broadcasting may widen, but must preserve the element type and

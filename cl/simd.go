@@ -107,6 +107,8 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "SetLo"}:         {llssa.SIMDSetLo, simdHalf, 0},
 	{"numeric", "SetHi"}:         {llssa.SIMDSetHi, simdHalf, 0},
 
+	{"numeric", "ConcatAddPairs"}:           {llssa.SIMDConcatAddPairs, simdBinary, 0},
+	{"numeric", "ConcatAddPairsGrouped"}:    {llssa.SIMDConcatAddPairsGrouped, simdBinary, 0},
 	{"numeric", "Average"}:                  {llssa.SIMDAverage, simdBinary, types.IsInteger},
 	{"numeric", "MulAdd"}:                   {llssa.SIMDFMA, simdTernary, types.IsFloat},
 	{"numeric", "MulWidenLo"}:               {llssa.SIMDMulWidenLo, simdWidenBinary, types.IsInteger},
@@ -277,6 +279,10 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	}
 	if (d.op == llssa.SIMDCarrylessMultiply || d.op == llssa.SIMDCarrylessMultiplyLo) &&
 		!types.Identical(lanes.Elem(), types.Typ[types.Uint64]) {
+		return false
+	}
+	if d.op == llssa.SIMDConcatAddPairs && simdVectorBits(vector) != 128 ||
+		d.op == llssa.SIMDConcatAddPairsGrouped && simdVectorBits(vector) != 256 {
 		return false
 	}
 	var params []types.Type
@@ -491,6 +497,7 @@ func simdVectorBits(typ types.Type) int64 {
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
 	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+		llssa.SIMDConcatAddPairsGrouped,
 		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
 		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,
 		llssa.SIMDNeg, llssa.SIMDNot, llssa.SIMDAbs,
