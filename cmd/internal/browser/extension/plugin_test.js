@@ -126,12 +126,18 @@ test(`closure captures preserve reference and value storage (${width} bytes, des
   if (descriptor) {
     index.types.find(type => type.id === 'fn').id = 'legacyfn';
     index.types.push(
-      {id: 'header', kind: 'struct', name: 'struct{code func(); env unsafe.Pointer}', size: width * 2,
-        complete: true, fields: [{name: 'code', type: 'word', offset: 0}, {name: 'env', type: 'word', offset: width}]},
+      {id: 'header', kind: 'struct', name: 'struct{$code func(); $env unsafe.Pointer}', size: width * 2,
+        complete: true, fields: [{name: '$code', type: 'word', offset: 0}, {name: '$env', type: 'word', offset: width}]},
       {id: 'fn', kind: 'pointer', name: 'struct{$f func(); $data unsafe.Pointer}', size: width,
         elem: 'header', complete: true},
     );
   }
+  index.types.push(
+    {id: 'userHeader', kind: 'struct', name: 'struct{code func(); env unsafe.Pointer}', size: width * 2,
+      complete: true, fields: [{name: 'code', type: 'word', offset: 0}, {name: 'env', type: 'word', offset: width}]},
+    {id: 'userPointer', kind: 'pointer', name: '*struct{code func(); env unsafe.Pointer}', size: width,
+      elem: 'userHeader', complete: true},
+  );
   const memory = new Uint8Array(256), view = new DataView(memory.buffer);
   const word = (at, value) => width === 4 ? view.setUint32(at, value, true) : view.setBigUint64(at, BigInt(value), true);
   const entry = descriptor ? 64 : 16;
@@ -175,6 +181,11 @@ test(`closure captures preserve reference and value storage (${width} bytes, des
   await plugin.releaseObject(empty.objectId);
   word(16, 0);
   assert.equal((await read()).type, 'null');
+  word(16, 64);
+  const ordinary = await plugin.remoteObject(module, module.types.get('userPointer'),
+      {kind: 'address', value: 16n}, 'stop');
+  assert.equal(ordinary.description, '0x40', 'a user record is not a compiler function descriptor');
+  await plugin.releaseObject(ordinary.objectId);
 });
 }
 }

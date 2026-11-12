@@ -25,9 +25,11 @@ import (
 // Native function pointers remain vkFuncPtr, and interface invocation pairs
 // remain aggregates whose receiver is an ordinary call argument.
 func (p Program) funcvalDescriptorType(t Type) Type {
+	// Invalid Go identifiers distinguish compiler-owned descriptors from a
+	// user struct with ordinary code/env fields, including in debugger views.
 	fields := []*types.Var{
-		types.NewField(token.NoPos, nil, "code", p.Field(t, 0).raw.Type, false),
-		types.NewField(token.NoPos, nil, "env", types.Typ[types.UnsafePointer], false),
+		types.NewField(token.NoPos, nil, "$code", p.Field(t, 0).raw.Type, false),
+		types.NewField(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer], false),
 	}
 	return p.rawType(types.NewStruct(fields, nil))
 }
