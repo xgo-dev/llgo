@@ -280,7 +280,7 @@ Beyond the standard library, LLGo can import libraries from across the C/C++ eco
 Available bindings include:
 
 * [c/bdwgc](https://pkg.go.dev/github.com/goplus/lib/c/bdwgc)
-* [cjson](https://pkg.go.dev/github.com/llarhub/cjson)
+* [c/cjson](https://pkg.go.dev/github.com/llarhub/cjson)
 * [c/clang](https://pkg.go.dev/github.com/goplus/lib/c/clang)
 * [c/ffi](https://pkg.go.dev/github.com/goplus/lib/c/ffi)
 * [c/libuv](https://pkg.go.dev/github.com/goplus/lib/c/libuv)
@@ -288,8 +288,8 @@ Available bindings include:
 * [c/lua](https://pkg.go.dev/github.com/goplus/lib/c/lua)
 * [c/neco](https://pkg.go.dev/github.com/goplus/lib/c/neco)
 * [c/openssl](https://pkg.go.dev/github.com/goplus/lib/c/openssl)
-* [c/raylib](https://pkg.go.dev/github.com/goplus/lib/c/raylib)
-* [c/sqlite](https://pkg.go.dev/github.com/goplus/lib/c/sqlite)
+* [c/raylib](https://pkg.go.dev/github.com/llarhub/raylib)
+* [c/sqlite](https://pkg.go.dev/github.com/llarhub/sqlite)
 * [c/zlib](https://pkg.go.dev/github.com/goplus/lib/c/zlib)
 * [cpp/inih](https://pkg.go.dev/github.com/goplus/lib/cpp/inih)
 * [cpp/llvm](https://pkg.go.dev/github.com/goplus/lib/cpp/llvm)

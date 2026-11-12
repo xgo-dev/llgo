@@ -18,7 +18,6 @@ func TestSharedPoolsConcurrentOwnership(t *testing.T) {
 	const workers = 32
 	pools := make([]sync.Pool, 64)
 	for i := range pools {
-		i := i
 		pools[i].New = func() any { return &item{pool: i} }
 	}
 	var ready, done sync.WaitGroup
