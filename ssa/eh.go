@@ -762,6 +762,8 @@ func (b Builder) callRecoverAlias(from Expr, mayRecover, tail bool, fn Expr, bui
 	ret := buildCall(b, fn, args...)
 	if !tail {
 		b.Call(b.Pkg.rtFunc("EndRecoverFrameAlias"), prev)
+	} else {
+		b.markRecoverForwardTail(ret)
 	}
 	// A proven forwarding return has no later wrapper work needing the old
 	// alias. Its enclosing deferred-call scope restores it after return; an
@@ -956,3 +958,28 @@ func (b Builder) Panic(v Expr) {
 }
 
 // -----------------------------------------------------------------------------
+
+// x86 does not otherwise reuse outgoing C stack-argument slots for an indirect
+// sibling call. Require identical scalar LLVM signatures before requesting a
+// guaranteed tail call; aggregate lowering and closure-context ABIs stay out.
+func (b Builder) markRecoverForwardTail(ret Expr) {
+	if b.Prog.Target().GOARCH != "386" || b.Func.NeedsEnv() {
+		return
+	}
+	call := ret.impl.IsACallInst()
+	if call.IsNil() || call.CalledFunctionType() != b.Func.ll ||
+		call.InstructionCallConv() != b.Func.impl.FunctionCallConv() {
+		return
+	}
+	if attr := b.Func.impl.GetStringAttributeAtIndex(-1, "disable-tail-calls"); !attr.IsNil() && attr.GetStringValue() == "true" {
+		return
+	}
+	for _, param := range b.Func.ll.ParamTypes() {
+		switch param.TypeKind() {
+		case llvm.PointerTypeKind, llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
+		default:
+			return
+		}
+	}
+	call.SetTailCallKind(llvm.TailCallKindMustTail)
+}
