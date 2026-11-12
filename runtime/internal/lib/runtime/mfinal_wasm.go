@@ -37,8 +37,8 @@ const (
 	wasmFinalizerI64
 	wasmFinalizerF32
 	wasmFinalizerF64
-	wasmFinalizerPointer
 	wasmFinalizerSRet
+	wasmFinalizerPointer
 )
 
 var wasmFinalizers struct {

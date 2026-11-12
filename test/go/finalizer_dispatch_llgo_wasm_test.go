@@ -23,8 +23,9 @@ func callPointerFinalizerForTest(function, object unsafe.Pointer, result uint8, 
 
 func TestRuntimeWasmFinalizerResultDispatcher(t *testing.T) {
 	const (
-		i32Result  = uint8(1)
-		sretResult = uint8(5)
+		i32Result     = uint8(1)
+		sretResult    = uint8(5)
+		pointerResult = uint8(6)
 	)
 	observed := make(chan int, 2)
 	tests := []struct {
@@ -88,6 +89,22 @@ func TestRuntimeWasmFinalizerResultDispatcher(t *testing.T) {
 				return 4294967295
 			},
 			result: i32Result,
+		},
+		{
+			name: "pointer",
+			callback: func(p *int) *int {
+				observed <- *p
+				return p
+			},
+			result: pointerResult,
+		},
+		{
+			name: "function",
+			callback: func(p *int) func() {
+				observed <- *p
+				return func() {}
+			},
+			result: pointerResult,
 		},
 		{
 			name: "large_array",
