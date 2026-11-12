@@ -42,22 +42,25 @@ func ReadMemStats(m *runtime.MemStats) {
 }
 
 func GC() {
-	collectAndEnqueueFinalizers()
-	// Run one extra cycle for collector-side weak-pointer cleanup before map
-	// cleanup callbacks. User finalizers run independently of the GC caller.
-	collectAndEnqueueFinalizers()
+	requestExplicitGC()
 	unique_runtime_notifyMapCleanup()
 	if poolCleanup != nil {
 		poolCleanup()
 	}
 }
 
+func collectExplicitGCBatch() {
+	collectAndEnqueueFinalizers()
+	// Run one extra cycle for collector-side weak-pointer cleanup before map
+	// cleanup callbacks. User finalizers run independently of the GC caller.
+	collectAndEnqueueFinalizers()
+}
+
 func collectAndEnqueueFinalizers() {
 	bdwgc.Gcollect()
-	// GC_gcollect only discovers unreachable finalizable objects. Explicitly
-	// drain BDWGC's ready queue so runtime.GC does not depend on a later
-	// allocation to enqueue callbacks for the finalizer worker. Do not run user
-	// finalizers on this thread: they may block or invoke GC themselves.
+	// Explicitly drain BDWGC's ready queue, including when a C library enables
+	// finalize-on-demand. Go finalizers are enqueued for the finalizer worker;
+	// foreign C finalizers may execute here or inside GC_gcollect and reenter GC.
 	bdwgc.InvokeFinalizers()
 	// Let mutators run before another stop-the-world cycle, including the
 	// second collection performed by the same runtime.GC call.
