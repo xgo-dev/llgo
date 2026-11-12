@@ -207,6 +207,9 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		}
 	}
 	if err != nil {
+		if tr != nil {
+			tr.Module.Dispose()
+		}
 		return nil, err
 	}
 
