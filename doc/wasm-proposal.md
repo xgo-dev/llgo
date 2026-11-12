@@ -43,6 +43,20 @@ Shared Go sources and Go data model
        └── JavaScript / Emscripten provider
 ```
 
+Explicit `//llgo:cdecl` records use the C storage view: on J32/W32 their
+pointer and `uintptr` fields occupy four bytes, including in arrays and enclosing
+Go records. `unsafe.Sizeof`, `Alignof`, and `Offsetof` must describe that storage.
+Ordinary Go records keep eight-byte pointer/word fields; `structs.HostLayout`
+alone does not narrow them. Declare C integer widths explicitly (`int32` for C
+`int`; `int32`/`int64` for ILP32/LP64 `long` and `ptrdiff_t`). A pointer to an
+ordinary Go record is not an automatic deep conversion to a C record.
+
+`dev/test_wasm_target_profiles.sh` runs the same Go layout and overflow source
+with gc and LLGo on JS/WASI, plus C aggregate arguments/results and callbacks
+on all hosted profiles. Function values intentionally differ from gc: LLGo's
+Go value is a 16-byte code/environment pair, whereas gc's value is an eight-byte
+pointer. Native C callbacks use the target's physical function pointer.
+
 Assembly/runtime boundary: reuse applicable host-independent Go wasm assembly through Plan 9 translation to LLVM IR and target lowering. Code tied to the gc compiler's calling convention, stack layout, GC, scheduler, or runtime entry points requires LLGo adaptation. Source/API compatibility does not require identical generated function signatures or binary compatibility with gc compiler objects or artifacts for other targets.
 
 ## Delivered milestones: R1-R3 (merged)
