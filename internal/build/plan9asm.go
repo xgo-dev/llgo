@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -14,8 +15,13 @@ import (
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
-func plan9asmTranslateOptions(conf *Config) llplan9asm.TranslateOptions {
+func plan9asmTranslateOptions(conf *Config, targetTags []string) llplan9asm.TranslateOptions {
 	opt := llplan9asm.TranslateOptions{GOARM: conf.GOARM, GOAMD64: conf.GOAMD64}
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	opt.NativeBDWGC = conf.Goarch == "arm64" &&
+		(conf.Goos == "darwin" || conf.Goos == "linux") &&
+		!slices.Contains(tags, "nogc") && !slices.Contains(tags, "baremetal") &&
+		!slices.Contains(targetTags, "nogc") && !slices.Contains(targetTags, "baremetal")
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
 		opt.X87Mode = extplan9asm.X87Software
 	}
@@ -88,7 +94,7 @@ func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Packag
 				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
 			}
 		} else {
-			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
 			if err != nil {
 				// Some stdlib .s files are comment-only placeholders (e.g. internal/cpu/cpu.s).
 				// Skip those silently.
@@ -319,7 +325,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		if err != nil {
 			return nil, fmt.Errorf("%s: read %s: %w", pkg.PkgPath, sfile, err)
 		}
-		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue
