@@ -2337,8 +2337,13 @@ func toFFITypeForCall(typ *abi.Type, native bool) *ffi.Type {
 		panic("reflect: libffi calls with vector storage are not supported")
 	}
 	kind := typ.Kind()
-	if native && kind == abi.Uintptr && ffiNativeUintptrSize == 4 {
-		return ffi.TypeUint32
+	if native && ffiNativeUintptrSize == 4 {
+		switch kind {
+		case abi.Uintptr:
+			return ffi.TypeUint32
+		case abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map, abi.Func:
+			return ffiTypePointer32
+		}
 	}
 	switch kind {
 	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,

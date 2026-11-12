@@ -56,3 +56,24 @@ func TestReflectNativeMakeFuncArray(t *testing.T) {
 		t.Fatalf("reflected native array results = (%v, %d), want (%v, %d)", array, word, want, want[0])
 	}
 }
+
+//llgo:cdecl
+type reflectNativeMakeFuncPointers func([2]*byte) [2]*byte
+
+func TestReflectNativeMakeFuncPointerArray(t *testing.T) {
+	a, b := byte(20), byte(22)
+	input, want := [2]*byte{&a, &b}, [2]*byte{&b, &a}
+	value := reflect.MakeFunc(reflect.TypeOf(reflectNativeMakeFuncPointers(nil)), func(args []reflect.Value) []reflect.Value {
+		got := args[0].Interface().([2]*byte)
+		if got != input || *got[0]+*got[1] != 42 {
+			t.Fatalf("native pointer array argument = %v, want %v", got, input)
+		}
+		return []reflect.Value{reflect.ValueOf(want)}
+	})
+	if got := value.Interface().(reflectNativeMakeFuncPointers)(input); got != want {
+		t.Fatalf("native pointer array result = %v, want %v", got, want)
+	}
+	if got := value.Call([]reflect.Value{reflect.ValueOf(input)})[0].Interface().([2]*byte); got != want {
+		t.Fatalf("reflected native pointer array result = %v, want %v", got, want)
+	}
+}

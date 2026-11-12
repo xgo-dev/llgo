@@ -12,12 +12,14 @@ import (
 // targets whose ordinary Go uintptr is eight bytes. SizeT is uint32 there.
 const ffiNativeUintptrSize = unsafe.Sizeof(ffi.Type{}.Size)
 
+var ffiTypePointer32 = &ffi.Type{Size: 4, Alignment: 4, Type: ffi.TypePointer.Type}
+
 func nativeFFIStorageDiffers(typ *abi.Type) bool {
 	if ffiNativeUintptrSize >= unsafe.Sizeof(uintptr(0)) {
 		return false
 	}
 	switch typ.Kind() {
-	case abi.Uintptr:
+	case abi.Uintptr, abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map, abi.Func:
 		return true
 	case abi.Array:
 		return nativeFFIStorageDiffers(typ.ArrayType().Elem)
@@ -27,7 +29,7 @@ func nativeFFIStorageDiffers(typ *abi.Type) bool {
 
 func nativeFFIStorageSize(typ *abi.Type) uintptr {
 	switch typ.Kind() {
-	case abi.Uintptr:
+	case abi.Uintptr, abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map, abi.Func:
 		return ffiNativeUintptrSize
 	case abi.Array:
 		array := typ.ArrayType()
@@ -36,11 +38,11 @@ func nativeFFIStorageSize(typ *abi.Type) uintptr {
 	return typ.Size_
 }
 
-// Only uintptr and enclosing arrays change storage at this native boundary.
+// Native scalar slots and enclosing arrays use the physical pointer width.
 // Struct parameters keep their declared field layouts, as in SSA's CDecl.
 func copyNativeFFIValue(dst, src unsafe.Pointer, typ *abi.Type, toNative bool) {
 	switch typ.Kind() {
-	case abi.Uintptr:
+	case abi.Uintptr, abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map, abi.Func:
 		if toNative {
 			n := *(*uintptr)(src)
 			if n > uintptr(^uint32(0)) {

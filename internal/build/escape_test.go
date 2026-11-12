@@ -115,6 +115,7 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 		"go.mod": "module example.com/escape\n\ngo 1.24\n",
 		"dep/dep.go": `package dep
 type Payload [16]uint64
+// A funcval alone fits the interface data word and no longer needs boxing.
 type Callback struct { Fn func() uint64; Tag uint64 }
 //go:noinline
 func Read(p *Payload) uint64 { return p[0] + p[15] }
