@@ -8,6 +8,8 @@ import (
 )
 
 func TestRuntimeConcurrentGCRequests(t *testing.T) {
+	// Overlap a bounded set of requests while retaining a private object per
+	// goroutine. NumGC checks global progress, not ownership of a GC cycle.
 	const workers = 8
 	start, done := make(chan struct{}), make(chan bool, workers)
 	for id := range workers {
@@ -32,7 +34,7 @@ func TestRuntimeConcurrentGCRequests(t *testing.T) {
 	close(start)
 	for range workers {
 		if !<-done {
-			t.Fatal("GC returned without collection progress or lost a live object")
+			t.Fatal("overlapping GC requests made no global progress or lost a live object")
 		}
 	}
 }

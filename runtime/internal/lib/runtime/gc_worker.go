@@ -18,11 +18,12 @@ const (
 )
 
 var explicitGC struct {
-	state     uint32
-	mu        psync.Mutex
-	work      psync.Cond
-	done      psync.Cond
-	busy      bool
+	state uint32
+	mu    psync.Mutex
+	work  psync.Cond
+	done  psync.Cond
+	busy  bool
+	// This generation handshake admits one waiter; it never coalesces calls.
 	requested uint64
 	completed uint64
 }
@@ -63,6 +64,7 @@ func requestExplicitGC() {
 	explicitGC.mu.Unlock()
 }
 
+// A single system goroutine is created by the state CAS and lives until exit.
 func runExplicitGC() {
 	markSystemGoroutine()
 	for {
