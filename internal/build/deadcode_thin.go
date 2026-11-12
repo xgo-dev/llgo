@@ -15,16 +15,24 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// Thin rewriting consumes the same analysis as native Strong overrides. The
-// shared policy excludes DWARF (which needs persistent archive paths), foreign
-// archive formats and multi-root builds from this experimental Thin backend.
+// Thin rewriting consumes the current program's LiveSlots, already computed by
+// the shared Drop analysis and used for entry-module strong overrides. It does
+// not infer method liveness again. The shared policy excludes DWARF (which needs
+// persistent archive paths), foreign archive formats and multi-root builds from
+// this experimental Thin backend.
 func useDeadcodeThinArchives(ctx *context) bool {
 	return useDeadcodeReflectNames(ctx) && ctx.buildConf.ltoMode() == lto.Thin
 }
 
-// rewriteDeadcodeThinArchives never changes package archives or frontend
-// modules. Cached and freshly emitted archives follow the identical path, and
-// the returned directory belongs to this link (including a possible PCLN relink).
+// rewriteDeadcodeThinArchives applies the same live-slot decision as the entry
+// overrides to link-private package bitcode. Original package archives and
+// frontend modules remain unchanged; cached and fresh archives use this path.
+// Only archives with rewritten slots replace inputs in the returned list.
+//
+// On success the caller owns the returned directory and must retain it through
+// the final link, including any embedded-PCLN relink, before removing it. On
+// failure this function removes its partial outputs. Program-specific pruning
+// must never be published back into the shared package cache.
 func rewriteDeadcodeThinArchives(ctx *context, inputs []string, live map[string][]int, verbose bool) ([]string, string, error) {
 	dir, err := os.MkdirTemp("", "llgo-deadcode-thin-*")
 	if err != nil {
@@ -142,6 +150,11 @@ func isLLVMBitcode(data []byte) bool {
 		bytes.HasPrefix(data, []byte{0xde, 0xc0, 0x17, 0x0b})
 }
 
+// rewriteDeadcodeThinMember changes dead IFn/TFn references while preserving
+// descriptor linkage and the remaining method metadata. This applies an
+// existing analysis result; it does not rerun reachability or the package
+// optimization pipeline. Later ThinLTO optimization/codegen can still yield a
+// different final function set from native linking with the same LiveSlots.
 func rewriteDeadcodeThinMember(path string, live map[string][]int) (llvm.MemoryBuffer, int, error) {
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -157,8 +170,9 @@ func rewriteDeadcodeThinMember(path string, live map[string][]int) (llvm.MemoryB
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		return llvm.MemoryBuffer{}, 0, err
 	}
-	// Recompute the summary from the rewritten IR; retaining the old index
-	// would preserve the very method edges this pass is intended to remove.
+	// Name anonymous globals and regenerate the summary from the rewritten IR.
+	// Keeping the old summary would leave obsolete weak-initializer method
+	// references in ThinLTO's combined index despite the entry overrides.
 	buffer, err := emitThinLTOBitcode(mod, llvm.TargetMachine{})
 	return buffer, count, err
 }

@@ -1614,6 +1614,9 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		}
 		b.MarkReflectValueMethodByNameCall(reflectCall, nameArgIndex)
 		if reflectCheck.Site != "" {
+			// The parameter marker says which value to analyze; this call-level
+			// ID says which metadata demand receives the recovered names. Attach
+			// both to the call, not to a conversion of its returned value.
 			reflectCall.AddCallSiteAttribute(-1, b.Prog.ctx.CreateStringAttribute("llgo.deadcode.reflectsite", reflectCheck.Site))
 		}
 	}

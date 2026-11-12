@@ -1011,7 +1011,7 @@ type aPackage struct {
 	MethodByName        map[string]none
 	Meta                *meta.PackageMeta
 	metaBuilder         *meta.Builder
-	reflectSiteCounts   map[string]uint64
+	reflectSiteCounts   map[string]uint64 // full function symbol -> recorded dynamic lookup count
 	abiTypeWithUncommon map[llvm.Value]struct{}
 
 	export         map[string]string   // pkgPath.nameInPkg => exportname

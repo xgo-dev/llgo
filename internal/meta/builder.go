@@ -200,11 +200,13 @@ func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
 	})
 }
 
-// AddReflectMethodSite records a dynamic MethodByName call at site. The site's
-// symbol name must identify that source call uniquely across packages; cloned
-// IR calls retain the same identity. It is an analysis key, not an ordinary
-// reference to an executable symbol. Without a proven finite name set, the
-// whole-program view treats this demand as conservative reflection.
+// AddReflectMethodSite records a dynamic MethodByName demand owned by src.
+// Both arguments are builder-local symbols. The spelling of site must identify
+// the source lookup uniquely across packages; copies of that lookup, including
+// cloned generic bodies, share the same spelling even if local IDs differ.
+// This adds no executable reference edge: only reaching src activates the
+// demand. Without a proven finite name set, the whole-program view treats it
+// as conservative reflection.
 func (b *Builder) AddReflectMethodSite(src, site Symbol) {
 	b.funcDemands[src] = append(b.funcDemands[src], bFuncDemand{
 		kind:   DemandReflectMethodSite,

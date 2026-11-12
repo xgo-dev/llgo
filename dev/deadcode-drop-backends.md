@@ -46,6 +46,71 @@ Adjust the linker path to the local installation. Both programs should print
 reuse. Symbol assertions in the executable regression suite provide stronger
 checks than this smoke example alone.
 
+## Connecting an LLVM argument to a Drop demand
+
+The frontend already records constant `MethodByName` names as named demands.
+For an unresolved `reflect.Value.MethodByName`, it now records a separate
+`DemandReflectMethodSite` and attaches its identity to the generated LLVM call.
+The identity is the full caller symbol followed by `$reflectsite$` and a
+one-based, function-local count of recorded sites. Different packages can
+generate these independently using the existing function-symbol namespace.
+Corresponding sites in the same generic body emitted in multiple packages
+intentionally share an identity; unrelated compilation order does not change
+the function-local count. Source edits can change the count, so these are not
+permanent source identifiers.
+
+Two annotations on the same call connect value analysis to that demand. This
+standalone IR example uses a placeholder `lookup` callee to show their syntax:
+
+```llvm
+%String = type { ptr, i64 }
+%Value = type { ptr, ptr, i64 }
+
+declare void @lookup(%Value, %String)
+
+define void @"example.com/p.run"(%Value %v, %String %name) {
+  call void @lookup(
+    %Value %v,
+    %String "llgo.reflect.methodbyname.name"="1" %name
+  ) #0
+  ret void
+}
+
+attributes #0 = {
+  "llgo.reflect.methodbyname"="value"
+  "llgo.deadcode.reflectsite"="example.com/p.run$reflectsite$1"
+}
+```
+
+- The **parameter attribute** marks the name operand of this call. The resolver
+  starts tracing at `%name`; the attribute value `"1"` is a flag, not an argument
+  index or site ordinal. It does not label every use of that LLVM value.
+- The **call-level site attribute** identifies the metadata demand that receives
+  the recovered names. The additional `llgo.reflect.methodbyname="value"`
+  attribute describes the reflection API kind, not the call's identity.
+- `#0` is only this LLVM module's attribute-group number. It can change when IR
+  is printed or combined and has no role in matching package metadata.
+
+These are LLVM string attributes, not extra runtime arguments or `!` metadata
+attachments. ABI lowering preserves the call-level identity and moves the
+parameter marker when arguments change. For a split string, the marker is on
+the data-pointer argument and the length follows it. Inserting an `sret`
+argument also shifts the parameter attribute index without changing the site.
+
+If analysis proves `%name` is either `Save` or `Load`, the build collects:
+
+```text
+reflectNames["example.com/p.run$reflectsite$1"] = {"Save", "Load"}
+```
+
+The package demand stores its site as a package-local symbol index. The global
+summary resolves that index to the full site string before consulting this map;
+local symbol indexes need not agree between packages. It then exposes the two
+existing named demands to `AnalyzeProgram`. Missing or unknown results expose
+generic reflection instead. Results from observed copies of the same site are
+unioned; an unknown observed copy invalidates the site's finite result. Refining
+one site never removes another unresolved demand in the same function.
+
 ## Shared analysis input and contract
 
 Both backends capture optimized package IR at the same pre-codegen stage in an

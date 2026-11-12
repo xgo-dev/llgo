@@ -93,6 +93,10 @@ func (a Analysis) CanDropMethodMetadata(name string) bool {
 }
 
 // AnalyzeProgram computes method liveness and interface visibility together.
+// Optimized-IR name recovery happens before this graph walk: GlobalSummary
+// presents proven lookup sites as named demands and unresolved sites as generic
+// reflection. The graph walk does not select a backend; strong overrides and
+// private ThinLTO archive rewrites consume its LiveSlots decisions afterward.
 // The returned Analysis borrows info and must not outlive its package metadata.
 func AnalyzeProgram(info *meta.GlobalSummary, rootNames []string) Analysis {
 	roots := make([]meta.Symbol, 0, len(rootNames))

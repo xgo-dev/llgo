@@ -758,6 +758,9 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		ti := info.Params[i]
 		reflectMethodByNameArgAttr := call.GetCallSiteStringAttribute(i+1, "llgo.reflect.methodbyname.name")
 		if !reflectMethodByNameArgAttr.IsNil() {
+			// Move the marker with this argument's first lowered component. For
+			// a split Go string this is its data pointer, followed by its length.
+			// The call-level site ID stays unchanged on the replacement call.
 			remappedReflectMethodByNameArgAttrIndex = returnArgOffset + len(nparams) + 1
 		}
 		switch ti.Kind {

@@ -41,7 +41,9 @@ const (
 type ReflectMethodCheck struct {
 	Kind int
 	Name string
-	Site string // unresolved Drop lookup; identity survives ABI lowering/inlining
+	// Site joins an unresolved Drop demand to its LLVM call and optimized copies.
+	// It is empty for lookups that do not use Drop's call-site refinement.
+	Site string
 }
 
 func methodCapabilitySig(sig *types.Signature) string {
@@ -250,6 +252,13 @@ func (p Program) interfaceMethodCheckedLoad(b llvm.Builder, typedesc llvm.Value,
 	)
 }
 
+// MarkReflectMethodByNameCall attaches string attributes describing a lookup.
+// The call-level attribute identifies Value versus Type reflection; the argument
+// attribute selects the name operand to trace. Its value "1" is only a marker,
+// not an operand index or a Drop site ID. nameArgIndex is zero-based, whereas
+// LLVM parameter attribute indexes start at one (-1 selects call-level attrs).
+// Drop attaches llgo.deadcode.reflectsite separately to join the result back to
+// a metadata demand; that identity must be preserved when replacing the call.
 func (b Builder) MarkReflectMethodByNameCall(call llvm.Value, kind string, nameArgIndex int) {
 	if call.IsNil() {
 		return

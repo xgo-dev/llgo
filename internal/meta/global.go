@@ -73,10 +73,13 @@ func NewGlobalSummary(pkgs []*PackageMeta) (*GlobalSummary, error) {
 }
 
 // NewGlobalSummaryWithReflectNames merges package metadata and refines dynamic
-// MethodByName demands using proven finite name sets keyed by callsite symbol
-// name. Each set must cover every possible name at every IR copy of that site;
-// the caller must union names from clones and omit a site if any copy remains
-// unresolved. Missing and empty sets both retain conservative reflection.
+// MethodByName demands using proven finite name sets. Keys are stable source
+// callsite symbol names, not package-local Symbol IDs. The caller must prove
+// completeness and union names from every optimized copy of a site, including
+// copies of generic bodies emitted in different packages. An unresolved copy
+// invalidates the entire site's proof; this constructor does not inspect IR.
+// Missing and empty sets both retain conservative reflection. A set containing
+// the empty string is nonempty and still denotes a known lookup name.
 // In particular, a missing optimized call is not proof that its source demand
 // is dead. Other sites and ordinary generic demands remain independent.
 //
@@ -240,6 +243,8 @@ func (g *GlobalSummary) translateFuncDemands(tab []Symbol, pm *PackageMeta, li S
 		case DemandReflectMethod, DemandReflectMethodMetadata:
 			out = append(out, FuncDemand{Kind: d.Kind})
 		case DemandReflectMethodSite:
+			// Copies of one source site can have different package-local IDs.
+			// Join them to the IR proof by the stable symbol spelling instead.
 			site := pm.symbolName(Symbol(d.Target))
 			names := g.reflectNames[site]
 			if len(names) == 0 {

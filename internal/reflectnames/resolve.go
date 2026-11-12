@@ -1,5 +1,7 @@
 // Package reflectnames recovers bounded MethodByName name sets from optimized
 // LLVM IR. Unknown memory, aliases, and IR shapes retain generic reflection.
+// It follows the name argument's LLVM operands back to constants and readable
+// initializers; it does not solve call reachability or infer receiver types.
 package reflectnames
 
 import (
@@ -9,6 +11,8 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+// Exceeding a choice, depth or step bound makes the proof unknown; partially
+// recovered names must never be used to narrow a reflection demand.
 const maxChoices = 32
 const maxDepth = 24
 
@@ -19,6 +23,8 @@ func Resolve(mod llvm.Module, ptr, length llvm.Value) ([]string, bool) {
 }
 
 // ResolveWithGlobals returns a conservative finite set of string values.
+// Success means every supported alternative was resolved; the set may include
+// values from infeasible branches. Failure discards any partially recovered set.
 // canReadExternal must certify absence of unseen users and interposition for
 // a non-local global; local writes and pointer escapes are still checked here.
 // In particular, a global initializer is not itself a proof of immutability.
@@ -35,8 +41,11 @@ func ResolveStringValueWithGlobals(mod llvm.Module, value llvm.Value, canReadExt
 	return r.result(r.aggregate(value, 0))
 }
 
-// ResolveCall uses the frontend/C-ABI-preserved string argument marker. It
-// accepts both an aggregate Go string and its split pointer/length form.
+// ResolveCall uses llgo.reflect.methodbyname.name to locate the name argument
+// after frontend/ABI lowering. It accepts an aggregate Go string or a split
+// pointer followed by its length. The separate llgo.deadcode.reflectsite
+// attribute is handled by the caller to associate this result with metadata
+// and other optimized copies; it does not describe the argument's value.
 func ResolveCall(mod llvm.Module, call llvm.Value, canReadExternal func(llvm.Value) bool) ([]string, bool) {
 	if opcode(call) != llvm.Call && opcode(call) != llvm.Invoke {
 		return nil, false
@@ -93,6 +102,9 @@ func (r *resolver) step(depth int) bool {
 	return depth <= maxDepth && r.steps <= 4096
 }
 
+// pair traces a string's pointer and length together. Matching selects and
+// phis preserve their condition/predecessor relationship, and paired loads
+// must address the two fields of the same string header.
 func (r *resolver) pair(ptr, length llvm.Value, depth int) bool {
 	if !r.step(depth) || ptr.IsNil() || length.IsNil() || ptr.Type().TypeKind() != llvm.PointerTypeKind || ptr.Type().PointerAddressSpace() != 0 || length.Type().TypeKind() != llvm.IntegerTypeKind {
 		return false
@@ -277,9 +289,11 @@ func (r *resolver) pointers(v llvm.Value, depth int) ([]location, bool) {
 			}
 			return bases, true
 		}
-		// Only a complete top-level array is enumerated. LLVM inbounds plus
-		// the subsequent paired loads restrict defined executions to that
-		// allocation; an arbitrary subarray or dynamic byte offset is rejected.
+		// Enumerate every element of a complete top-level array instead of
+		// solving the dynamic index or simulating its loop. This may include
+		// elements the program never visits. LLVM inbounds plus the subsequent
+		// paired loads restrict defined executions to that allocation; an
+		// arbitrary subarray or dynamic byte offset is rejected.
 		if v.OperandsCount() != 2 || !inBoundsGEP(v) {
 			return nil, false
 		}
@@ -408,6 +422,10 @@ func (r *resolver) closedGlobal(g llvm.Value) bool {
 	return g.Linkage() == llvm.InternalLinkage || g.Linkage() == llvm.PrivateLinkage || r.external != nil && r.external(g)
 }
 
+// canRead establishes that the initializer remains a valid source of values.
+// Closed visibility excludes unseen writers/interposition; a non-constant
+// global additionally needs the forward-use checks in readUses. Merely having
+// an initializer or package-private source name is insufficient.
 func (r *resolver) canRead(g llvm.Value) bool {
 	if g.IsNil() || g.IsAGlobalVariable().IsNil() || g.Initializer().IsNil() {
 		return false
@@ -448,6 +466,8 @@ type readUse struct {
 	loads int
 }
 
+// readUses follows supported address uses forward, rejecting writes, escapes
+// and unrecognized users rather than attempting general alias analysis.
 // loads counts initializer indirections to the original global. A header that
 // contains its address requires following one pointer load; an address holder
 // pointing to that header requires following two. Aggregate constants alone do

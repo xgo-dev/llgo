@@ -18,9 +18,11 @@ import (
 
 const reflectSiteAttribute = "llgo.deadcode.reflectsite"
 
-// Both Drop backends use the same optimized snapshots and name analysis. Keep
-// the experiment on native macOS executables; Thin's temporary link archives
-// cannot currently supply the persistent paths required by a DWARF debug map.
+// Both Drop backends use this snapshot and name-analysis path. A snapshot comes
+// from the selected backend's package-optimization pipeline: sharing this path
+// does not imply byte-identical native/Thin IR or identical results for every
+// program. Keep the experiment on native macOS executables; Thin's temporary
+// link archives cannot supply the persistent paths required by a DWARF debug map.
 func useDeadcodeReflectNames(ctx *context) bool {
 	if ctx == nil || ctx.buildConf == nil || runtime.GOOS != "darwin" {
 		return false
@@ -38,10 +40,16 @@ func needsDeadcodeReflectIR(ctx *context, pm *meta.PackageMeta) bool {
 	return useDeadcodeReflectNames(ctx) && pm != nil && len(pm.ReflectMethodSites()) != 0
 }
 
-// Snapshot after optimization but before native codegen, which may transform
-// the module further. Fresh and cached builds analyze these same bytes. The
-// snapshot is never passed to the linker and contains no program-specific
-// pruning; global visibility is checked anew for every final program.
+// Snapshot after the selected package-optimization pipeline, before codegen or
+// later rewrites can change the module. Fresh and cached builds of that package
+// configuration analyze the saved bytes. The snapshot is never a linker input
+// and contains no program-specific pruning; final-program visibility is proved
+// again when refining names.
+//
+// This function owns a temporary file through reflectIRTemp. Cache publication
+// copies it to a persistent .reflect.bc sidecar and redirects reflectIRFile;
+// closePackageMetas removes the temporary file, not the published sidecar. A
+// required but missing sidecar makes cache loading fail so the package rebuilds.
 func captureDeadcodeReflectIR(ctx *context, pkg Package) error {
 	if !needsDeadcodeReflectIR(ctx, pkg.Meta) {
 		return nil
@@ -65,9 +73,13 @@ func captureDeadcodeReflectIR(ctx *context, pkg Package) error {
 	return nil
 }
 
-// Read optimized analysis snapshots, never the unoptimized type-registration
-// modules created on cache hits. Missing calls or unresolved clones retain the
-// original demand. Only Drop's demand view is refined; package IR is unchanged.
+// refineDeadcodeReflectNames reads optimized snapshots, never the unoptimized
+// type-registration modules created on cache hits. It recovers possible name
+// values, not call reachability. GlobalSummary uses these results to translate
+// site demands; AnalyzeProgram still decides which owning functions are live.
+// Only the demand view is refined here; the saved snapshots and package IR are
+// unchanged. The accumulator below defines how observed copies and unknown
+// results contribute to each source site's proof.
 func refineDeadcodeReflectNames(ctx *context, pkgs []Package, verbose bool) (map[string][]string, error) {
 	if !useDeadcodeReflectNames(ctx) {
 		return nil, nil
@@ -211,6 +223,15 @@ func privateReflectGlobal(ctx *context, pkgs []Package, owner Package, name stri
 	return true
 }
 
+// reflectNameAccumulator unions finite results from observed, annotated IR
+// copies of a source site. Any observed unresolved copy invalidates that site's
+// result, regardless of visit order. A site with no observed copies has no map
+// entry and retains generic reflection in GlobalSummary.
+//
+// There is no independent inventory of optimized clones here: this cannot
+// detect an individual copy whose marker was lost while another survived.
+// Preserving site/argument markers through supported lowering is part of the
+// input contract; absence is never evidence that a metadata demand is dead.
 type reflectNameAccumulator struct {
 	names   map[string][]string
 	unknown map[string]bool
@@ -231,6 +252,7 @@ func (a *reflectNameAccumulator) add(site string, names []string, proven bool) {
 func (a *reflectNameAccumulator) result() map[string][]string {
 	for site, names := range a.names {
 		if a.unknown[site] {
+			// Omission requests conservative fallback, not removal of the demand.
 			delete(a.names, site)
 			continue
 		}
@@ -250,7 +272,8 @@ func sortedReflectSites(names map[string][]string) []string {
 }
 
 func visitDeadcodeReflectIR(path string, visit func(llvm.Module) error) error {
-	// Packages without an optimized snapshot retain their original demand.
+	// No snapshot contributes no site proofs; unresolved demands stay generic.
+	// A nonempty path that cannot be read or parsed is an error, not dead code.
 	if path == "" {
 		return nil
 	}

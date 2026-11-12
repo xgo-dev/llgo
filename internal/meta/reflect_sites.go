@@ -6,8 +6,12 @@ import (
 )
 
 // ReflectMethodSites returns the distinct source lookup identities that could
-// be refined from this package's optimized IR, in sorted order. Both the slice
-// and its strings are owned by the caller and remain valid after pm.Close.
+// be refined from this package's optimized IR, in sorted order. These are the
+// stable string keys used by NewGlobalSummaryWithReflectNames, not local IDs.
+// This inventory includes unreachable functions' sites; demand activation is
+// left to whole-program reachability, not this package-level query.
+// Both the slice and its strings are owned by the caller and remain valid after
+// pm.Close.
 func (pm *PackageMeta) ReflectMethodSites() []string {
 	if pm == nil || pm.nsyms == 0 {
 		return nil
