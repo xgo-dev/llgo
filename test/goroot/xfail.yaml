@@ -187,10 +187,6 @@ timeouts:
     reason: nosplit run runs past the default timeout on linux/amd64
 flakes:
 xfails:
-  - platform: windows/amd64
-    directive: run
-    case: fixedbugs/issue58300.go
-    reason: LLGo emits unexpected runtime output for the unsafe string conversion test on Windows amd64
   - platform: windows/386
     directive: run
     case: fixedbugs/bug114.go
