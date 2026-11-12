@@ -63,7 +63,7 @@ func collectAndEnqueueFinalizers() {
 	// foreign C finalizers may execute here or inside GC_gcollect and reenter GC.
 	bdwgc.InvokeFinalizers()
 	// Let mutators run before another stop-the-world cycle, including the
-	// second collection performed by the same runtime.GC call.
+	// second collection in the same batch.
 	llruntime.Gosched()
 }
 

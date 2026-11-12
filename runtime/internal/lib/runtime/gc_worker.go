@@ -11,8 +11,14 @@ import (
 // A stable collecting thread avoids repeated collector handoffs between the
 // many short-lived native threads used by Windows/386 goroutines. Concurrent
 // or reentrant requests retain the synchronous path to avoid callback cycles.
+const (
+	explicitGCUninitialized uint32 = iota
+	explicitGCStarting
+	explicitGCReady
+)
+
 var explicitGC struct {
-	state     uint32 // 0: uninitialized, 1: starting, 2: ready
+	state     uint32
 	mu        psync.Mutex
 	work      psync.Cond
 	done      psync.Cond
@@ -22,8 +28,8 @@ var explicitGC struct {
 }
 
 func requestExplicitGC() {
-	if atomic.LoadUint32(&explicitGC.state) != 2 {
-		if !atomic.CompareAndSwapUint32(&explicitGC.state, 0, 1) {
+	if atomic.LoadUint32(&explicitGC.state) != explicitGCReady {
+		if !atomic.CompareAndSwapUint32(&explicitGC.state, explicitGCUninitialized, explicitGCStarting) {
 			// Starting the worker can allocate and invoke a foreign C
 			// finalizer. Reentry must not wait for that same initialization.
 			collectExplicitGCBatch()
@@ -33,7 +39,7 @@ func requestExplicitGC() {
 		explicitGC.work.Init(nil)
 		explicitGC.done.Init(nil)
 		go runExplicitGC()
-		atomic.StoreUint32(&explicitGC.state, 2)
+		atomic.StoreUint32(&explicitGC.state, explicitGCReady)
 	}
 	explicitGC.mu.Lock()
 	if explicitGC.busy {
