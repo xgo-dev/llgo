@@ -156,7 +156,7 @@ func (b Builder) makeCapturedFuncval(t Type, code llvm.Value, captures Type, fie
 				helper = "AllocAtomicUAligned"
 				args = append(args, prog.IntVal(alignment, prog.Uintptr()))
 			}
-			value := b.InlineCall(b.Pkg.rtFunc(helper), args...)
+			value := b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(helper, "AllocAtomicU", "AllocAtomicUAligned")), args...)
 			allocation = Expr{value.impl, prog.Pointer(layout)}
 		} else {
 			allocation = b.AllocU(layout)

@@ -7,8 +7,8 @@ package main
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1"
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2"
-// ARM64-LABEL: define void @"main.main$1"(ptr swiftself
-// AMD64-LABEL: define void @"main.main$1"(ptr nest
+// ARM64-LABEL: define hidden void @"main.main$1"(ptr swiftself
+// AMD64-LABEL: define hidden void @"main.main$1"(ptr nest
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[GOROUTINE_TEXT:%[0-9]+]])
 // CHECK: [[GOROUTINE_ENV:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[GOROUTINE_DONE:%[0-9]+]] = extractvalue { ptr } [[GOROUTINE_ENV]], 0

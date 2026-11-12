@@ -293,7 +293,7 @@ func use() unsafe.Pointer { return closureEnv() }
 	for _, spelling := range []string{"//llgo:env", "// llgo:env"} {
 		t.Run(spelling, func(t *testing.T) {
 			ir := compileWithRewrites(t, strings.Replace(valid, "DIRECTIVE", spelling, 1), nil)
-			if !strings.Contains(ir, `define ptr @closureenv.use(ptr `) ||
+			if !strings.Contains(ir, `define hidden ptr @closureenv.use(ptr `) ||
 				!strings.Contains(ir, `ret ptr %0`) ||
 				(!strings.Contains(ir, `ptr nest %0`) && !strings.Contains(ir, `ptr swiftself %0`)) {
 				t.Fatalf("closureEnv intrinsic did not return the physical environment:\n%s", ir)

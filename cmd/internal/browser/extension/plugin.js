@@ -499,6 +499,16 @@
         return this.interfaceRemote(module, originalType, type, address, stopId, interfaceSpec);
       }
       const functionSpec = module.layout?.function;
+      const descriptor = resolvePointee(module, type);
+      if (functionSpec?.descriptor_type_pattern && descriptor &&
+          runtimeTypeMatches(descriptor, descriptor, functionSpec.descriptor_type_pattern, true)) {
+        const pointer = await this.runtimePointerValue(module, type, located, stopId);
+        if (pointer === null) return null;
+        if (pointer === 0n) return {type: 'null', value: null, description: 'nil', hasChildren: false};
+        return this.functionRemote(module, originalType, descriptor, pointer, stopId, {
+          ...functionSpec, code: functionSpec.descriptor_code, data: functionSpec.descriptor_data,
+        });
+      }
       if (functionSpec && runtimeTypeMatches(originalType, type, functionSpec.type_pattern, true)) {
         return this.functionRemote(module, originalType, type, address, stopId, functionSpec);
       }

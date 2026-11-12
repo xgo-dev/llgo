@@ -44,8 +44,8 @@ func sum(seq Seq) (total int) {
 // The generated callback reads both the synthetic range state and the named
 // result from the same environment, which is the original duplicate-empty-name
 // failure shape.
-// ARM64-LABEL: define i1 @"main.sum$1"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i1 @"main.sum$1"(ptr nest %0, i64 %1){{.*}} {
+// ARM64-LABEL: define hidden i1 @"main.sum$1"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i1 @"main.sum$1"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[CAPTURE:%[0-9]+]] = load { ptr, ptr }, ptr %0
 // CHECK: [[RANGE_STATE_PTR:%[0-9]+]] = extractvalue { ptr, ptr } [[CAPTURE]], 0
 // CHECK: [[RANGE_TOTAL_PTR:%[0-9]+]] = extractvalue { ptr, ptr } [[CAPTURE]], 1

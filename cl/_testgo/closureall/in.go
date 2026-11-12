@@ -198,15 +198,15 @@ func makeWithFree(base int) Fn {
 // Named function conversion preserves the descriptor identity.
 // CHECK-NEXT: ret ptr [[WITH_FREE_FN]]
 
-// ARM64-LABEL: define i64 @"main.makeWithFree$1"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i64 @"main.makeWithFree$1"(ptr nest %0, i64 %1){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.makeWithFree$1"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.makeWithFree$1"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[FREE_ADDR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[FREE_VALUE:%[0-9]+]] = load i64, ptr [[FREE_ADDR]]
 // CHECK-NEXT: [[FREE_RESULT:%[0-9]+]] = add i64 %1, [[FREE_VALUE]]
 // CHECK: ret i64 [[FREE_RESULT]]
 
-// ARM64-LABEL: define i64 @"main.(*S).Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i64 @"main.(*S).Add$bound"(ptr nest %0, i64 %1){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.(*S).Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.(*S).Add$bound"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
 // CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr [[BOUND_RECEIVER]], i64 %1)
@@ -216,8 +216,8 @@ func makeWithFree(base int) Fn {
 // CHECK: [[THUNK_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr %0, i64 %1)
 // CHECK: ret i64 [[THUNK_RESULT]]
 
-// ARM64-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest %0, i64 %1){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.interface{Add(int) int}.Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[BOUND_IFACE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}iface" } [[BOUND_IFACE_ENV]], 0
 // CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_IFACE]], ptr %{{[0-9]+}})

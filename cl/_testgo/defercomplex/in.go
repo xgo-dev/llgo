@@ -78,8 +78,8 @@ package main
 // CHECK: [[SAVED_DEFER:%[0-9]+]] = load %"{{.*}}Defer", ptr [[DEFER_FRAME]]
 // CHECK-NEXT: [[RESTORED_DEFER:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[SAVED_DEFER]], 2
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[RESTORED_DEFER]])
-// ARM64-LABEL: define void @"main.complexOrder$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
-// AMD64-LABEL: define void @"main.complexOrder$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
+// ARM64-LABEL: define hidden void @"main.complexOrder$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
+// AMD64-LABEL: define hidden void @"main.complexOrder$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
 // CHECK: [[RECORD_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[RECORD_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
 // CHECK-NEXT: [[OLD_RESULT:%[0-9]+]] = load %"{{.*}}Slice", ptr [[RECORD_RESULT_SLOT]]

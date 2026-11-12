@@ -169,8 +169,8 @@ func main() {
 	println(s1 == "abc", s1 == s2, s1 != s2, s1 < s2, s1 <= s2, s1 > s2, s1 >= s2)
 }
 
-// ARM64-LABEL: define void @"main.main$3"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$3"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$3"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$3"(ptr nest %0){{.*}} {
 // CHECK: [[CAPTURE:%.*]] = load { ptr }, ptr %0
 // CHECK: [[N_ADDR:%.*]] = extractvalue { ptr } [[CAPTURE]], 0
 // CHECK: [[N:%.*]] = load i64, ptr [[N_ADDR]]

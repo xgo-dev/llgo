@@ -32,20 +32,20 @@ package main
 // CHECK-NEXT: [[ZSP_CLOSURE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[ZSP_CLOSURE]], i32 0, i32 1
 // CHECK-NEXT: store ptr [[ZSP_ENV]], ptr [[ZSP_CLOSURE_ENV_SLOT]]
 // CHECK-NEXT: ret ptr [[ZSP_CLOSURE]]
-// ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest
+// ARM64-LABEL: define hidden i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.zeroSizedPointerCapture$1"(ptr nest
 // CHECK: [[ZSP_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[ZSP_POINTER:%[0-9]+]] = load ptr, ptr [[ZSP_SLOT]]
 // CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_POINTER]], null
 // CHECK-NEXT: ret i1 [[ZSP_IS_NIL]]
-// ARM64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest
+// ARM64-LABEL: define hidden i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest
 // CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
 // CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i1 @"main.(*nilReceiver).IsNil"(ptr [[BOUND_RECEIVER]])
 // CHECK-NEXT: ret i1 [[BOUND_RESULT]]
-// ARM64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
+// ARM64-LABEL: define hidden i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr swiftself
+// AMD64-LABEL: define hidden i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
 // CHECK: [[IB_ENV:%[0-9]+]] = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[IB_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } [[IB_ENV]], 0
 // CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], ptr %{{[0-9]+}})

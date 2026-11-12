@@ -208,8 +208,8 @@ func mapDemo2() {
 // CHECK-NEXT: %__llgo_funcval_code = call ptr asm "", "=r,0"(ptr [[CLOSURE_CODE]])
 // ARM64-NEXT: call i64 %__llgo_funcval_code(ptr swiftself [[CLOSURE_ENV]], i64 100)
 // AMD64-NEXT: call i64 %__llgo_funcval_code(ptr nest [[CLOSURE_ENV]], i64 100)
-// ARM64-LABEL: define i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
-// AMD64-LABEL: define i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.callClosure$1"(ptr swiftself %0, i64 %1){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.callClosure$1"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[CC_BASE_PTR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CC_BASE:%[0-9]+]] = load i64, ptr [[CC_BASE_PTR]]
 // CHECK-NEXT: [[CC_SUM:%[0-9]+]] = add i64 [[CC_BASE]], %1

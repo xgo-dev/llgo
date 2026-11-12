@@ -256,8 +256,8 @@ func main() {
 // AMD64: [[PROMOTED_TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" @"main.I.two$bound"(ptr nest [[PROMOTED_TWO_BOUND_ENV]])
 // CHECK: [[PROMOTED_TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[PROMOTED_TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
 
-// ARM64-LABEL: define i64 @"main.I.one$bound"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define i64 @"main.I.one$bound"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.I.one$bound"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.I.one$bound"(ptr nest %0){{.*}} {
 // CHECK: [[BOUND_ONE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_ONE_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_ONE_ENV]], 0
 // CHECK: [[BOUND_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_ONE_IFACE]], ptr %{{[0-9]+}})
@@ -274,8 +274,8 @@ func main() {
 // CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrameAlias"(ptr [[BOUND_ONE_RECOVER]])
 // CHECK: ret i64 [[BOUND_ONE_RESULT]]
 
-// ARM64-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr nest %0){{.*}} {
 // CHECK: [[BOUND_TWO_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_TWO_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_TWO_ENV]], 0
 // CHECK: [[BOUND_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_TWO_IFACE]], ptr %{{[0-9]+}})

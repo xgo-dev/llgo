@@ -80,6 +80,8 @@ func testFunctionMetadata() {
 
 	cTyp := reflect.TypeOf((*reflectedCFunc)(nil)).Elem()
 	cValue := reflect.New(cTyp).Elem()
-	cValue.Set(base)
+	// Construct the native callable explicitly: a Go descriptor and a C
+	// entry pointer have distinct callable identities despite equal widths.
+	cValue.Set(reflect.ValueOf(reflectedCFunc(reflectedBase)))
 	checkCall(cValue)
 }

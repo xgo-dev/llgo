@@ -47,7 +47,7 @@ func main() {
 // AMD64: call void @"main.main$1$1"(ptr nest [[INNER_CALL_ENV]], %"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
 // CHECK-NEXT: ret void
 
-// CHECK-LABEL: define void @"main.main$1$1"(
+// CHECK-LABEL: define hidden void @"main.main$1$1"(
 // DARWIN-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // LINUX-ARM64-SAME: ptr nest %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // WINDOWS-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {

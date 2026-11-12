@@ -82,7 +82,7 @@ func main() {
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
 
-// CHECK-LABEL: define i64 @"main.main$1"(
+// CHECK-LABEL: define hidden i64 @"main.main$1"(
 // DARWIN-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // LINUX-ARM64-SAME: ptr nest %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // WINDOWS-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {

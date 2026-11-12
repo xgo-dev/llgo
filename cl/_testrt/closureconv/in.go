@@ -105,8 +105,8 @@ func demo4() Func {
 // CHECK-NEXT: store ptr [[DEMO5_ENV]], ptr [[DEMO5_ENV_SLOT]]
 // CHECK: ret ptr [[DEMO5_DESCRIPTOR]]
 
-// ARM64-LABEL: define i64 @"main.demo5$1"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
-// AMD64-LABEL: define i64 @"main.demo5$1"(ptr nest %0, i64 %1, i64 %2){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.demo5$1"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.demo5$1"(ptr nest %0, i64 %1, i64 %2){{.*}} {
 // CHECK: [[DEMO5_SUM:%.*]] = add i64 %1, %2
 // CHECK: [[DEMO5_CAPTURE_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[DEMO5_CAPTURE_VALUE:%.*]] = load i64, ptr [[DEMO5_CAPTURE_ADDR]]
@@ -183,8 +183,8 @@ func main() {
 	println(fn2(99, 200))
 }
 
-// ARM64-LABEL: define i64 @"main.(*Call).add$bound"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
-// AMD64-LABEL: define i64 @"main.(*Call).add$bound"(ptr nest %0, i64 %1, i64 %2){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.(*Call).add$bound"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.(*Call).add$bound"(ptr nest %0, i64 %1, i64 %2){{.*}} {
 // CHECK: [[BOUND_ENV:%.*]] = load { ptr }, ptr %0
 // CHECK: [[BOUND_CALL:%.*]] = extractvalue { ptr } [[BOUND_ENV]], 0
 // CHECK: [[BOUND_RESULT:%.*]] = call i64 @"main.(*Call).add"(ptr [[BOUND_CALL]], i64 %1, i64 %2)

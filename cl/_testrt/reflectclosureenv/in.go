@@ -131,8 +131,8 @@ type receiver struct {
 // CHECK-NEXT: store ptr [[FLOAT_CAPTURE_ENV]], ptr [[FLOAT_CAPTURE_ENV_SLOT]]
 // CHECK-NEXT: ret ptr [[FLOAT_CLOSURE]]
 
-// ARM64-LABEL: define double @"main.makeFloatSum$1"(ptr swiftself %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
-// AMD64-LABEL: define double @"main.makeFloatSum$1"(ptr nest %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
+// ARM64-LABEL: define hidden double @"main.makeFloatSum$1"(ptr swiftself %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
+// AMD64-LABEL: define hidden double @"main.makeFloatSum$1"(ptr nest %0, double %1, double %2, double %3, double %4, double %5, double %6, double %7, double %8, double %9){{.*}} {
 // CHECK: [[FLOAT_BASE_PTR:%.*]] = getelementptr inbounds nuw { double }, ptr %0, i32 0, i32 0
 // CHECK: [[FLOAT_BASE_VALUE:%.*]] = load double, ptr [[FLOAT_BASE_PTR]]
 // CHECK: [[FLOAT_S1:%.*]] = fadd double [[FLOAT_BASE_VALUE]], %1
@@ -161,8 +161,8 @@ type receiver struct {
 // CHECK-NEXT: store ptr [[NESTED_CAPTURE_ENV]], ptr [[NESTED_CAPTURE_ENV_SLOT]]
 // CHECK-NEXT: ret ptr [[NESTED_CLOSURE]]
 
-// ARM64-LABEL: define i64 @"main.makeNestedSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// AMD64-LABEL: define i64 @"main.makeNestedSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.makeNestedSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.makeNestedSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // CHECK: [[NESTED_VALUES:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 216)
 // CHECK: [[NESTED_FIRST_PTR:%.*]] = getelementptr inbounds %reflect.Value, ptr [[NESTED_VALUES]], i64 0
 // CHECK: store i64 %1, ptr [[NESTED_FIRST_BOX_ADDR:%[-A-Za-z0-9_.]+]]
@@ -201,8 +201,8 @@ type receiver struct {
 // CHECK-NEXT: store ptr [[SUM_CAPTURE_ENV]], ptr [[SUM_CAPTURE_ENV_SLOT]]
 // CHECK-NEXT: ret ptr [[SUM_CLOSURE]]
 
-// ARM64-LABEL: define i64 @"main.makeSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
-// AMD64-LABEL: define i64 @"main.makeSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// ARM64-LABEL: define hidden i64 @"main.makeSum$1"(ptr swiftself %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
+// AMD64-LABEL: define hidden i64 @"main.makeSum$1"(ptr nest %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // CHECK: [[SUM_BASE_PTR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[SUM_BASE_VALUE:%.*]] = load i64, ptr [[SUM_BASE_PTR]]
 // CHECK: [[SUM_S1:%.*]] = add i64 [[SUM_BASE_VALUE]], %1

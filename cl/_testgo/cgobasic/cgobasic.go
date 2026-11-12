@@ -61,7 +61,7 @@ import "unsafe"
 // CHECK: [[CBYTES_RESULT:%[0-9]+]] = call ptr @"{{.*}}CBytes"(%"{{.*}}Slice" [[BYTE_SLICE]])
 // CHECK-NEXT: ret ptr [[CBYTES_RESULT]]
 
-// CHECK-LABEL: define %"{{.*}}Slice" @"main.main$2"({{.*}}){{.*}} {
+// CHECK-LABEL: define hidden %"{{.*}}Slice" @"main.main$2"({{.*}}){{.*}} {
 // CHECK: [[CBYTES_ARG:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[GOBYTES_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}GoBytes"(ptr [[CBYTES_ARG]], i64 3)
 // CHECK-NEXT: ret %"{{.*}}Slice" [[GOBYTES_RESULT]]

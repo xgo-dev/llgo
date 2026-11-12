@@ -562,11 +562,21 @@ class FunctionPrinter:
 
     def to_string(self):
         function = self.layout["function"]
-        if re.fullmatch(function["type_pattern"],
-                        _canonical_type_name(self.value)) is None:
+        raw = self.value
+        code_field, data_field = function["code"], function["data"]
+        descriptor = function.get("descriptor_type_pattern", "(?!)")
+        if re.fullmatch(descriptor, _pointer_target_name(raw)):
+            address = _value_as_int(raw)
+            if address is None:
+                return None
+            if address == 0:
+                return "nil"
+            raw = raw.dereference()
+            code_field, data_field = function["descriptor_code"], function["descriptor_data"]
+        elif re.fullmatch(function["type_pattern"], _canonical_type_name(raw)) is None:
             return None
-        code = _value_as_int(_field(self.value, function["code"]))
-        data = _value_as_int(_field(self.value, function["data"]))
+        code = _value_as_int(_field(raw, code_field))
+        data = _value_as_int(_field(raw, data_field))
         if code is None or data is None:
             return None
         if code == 0:
@@ -835,7 +845,9 @@ def lookup_pretty_printer(value):
             return SlicePrinter(raw, layout)
         if re.fullmatch(layout["interface"]["type_pattern"], name):
             return InterfacePrinter(raw, layout)
-        if re.fullmatch(layout["function"]["type_pattern"], name):
+        if (re.fullmatch(layout["function"]["type_pattern"], name) or
+                re.fullmatch(layout["function"].get("descriptor_type_pattern", "(?!)"),
+                             _pointer_target_name(raw))):
             return FunctionPrinter(raw, layout)
         if (re.fullmatch(layout["map"]["type_pattern"], name) or
                 _pointer_target_name(raw).startswith("hash<")):

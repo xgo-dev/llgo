@@ -67,8 +67,8 @@ package main
 // CHECK-NEXT: call void @"{{.*}}PrintInt"(i64 [[CH2_PRINT_VALUE]])
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[CH2_PRINT_OK]])
 
-// ARM64-LABEL: define void @"main.main$1"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$1"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$1"(ptr nest %0){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[SEND_BUF:%[0-9]+]] = alloca i64, align 8
 // CHECK: [[SEND_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
@@ -77,8 +77,8 @@ package main
 // CHECK: store i64 100, ptr [[SEND_BUF]]
 // CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[SEND_CH]], ptr [[SEND_BUF]], i64 8)
 
-// ARM64-LABEL: define void @"main.main$2"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$2"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$2"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$2"(ptr nest %0){{.*}} {
 // CHECK: [[CLOSE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CLOSE_CH:%.*]] = load ptr, ptr [[CLOSE_SLOT]]
 // CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[CLOSE_CH]])

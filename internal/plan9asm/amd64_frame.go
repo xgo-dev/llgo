@@ -46,11 +46,20 @@ func bindAMD64Frame(pkg *packages.Package, source []byte, filename, goos, goarch
 	if err != nil {
 		return nil, nil, err
 	}
+	directory, err = physicalFramePath(directory)
+	if err != nil {
+		return nil, nil, err
+	}
 	for path := range opt.Overlay {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return nil, nil, err
 		}
+		parent, err := physicalFramePath(filepath.Dir(absolute))
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: cannot resolve physical overlay directory: %v", extplan9asm.ErrProbeNeedsContext, err)
+		}
+		absolute = filepath.Join(parent, filepath.Base(absolute))
 		if relative, err := filepath.Rel(directory, absolute); err == nil && filepath.IsLocal(relative) {
 			return nil, nil, fmt.Errorf("%w: physical AMD64 frame needs an original source mapping for package overlays", extplan9asm.ErrProbeNeedsContext)
 		}
@@ -59,7 +68,7 @@ func bindAMD64Frame(pkg *packages.Package, source []byte, filename, goos, goarch
 	if root == "" {
 		root = runtime.GOROOT()
 	}
-	root, err = filepath.EvalSymlinks(root)
+	root, err = physicalFramePath(root)
 	if err != nil {
 		return nil, nil, err
 	}

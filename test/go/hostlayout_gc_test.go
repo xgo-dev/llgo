@@ -47,7 +47,7 @@ func TestHostLayoutReflectionAndGC(t *testing.T) {
 	if typ.NumField() != 4 || typ.Field(3).Offset != unsafe.Offsetof(r.Value) || typ.Size() != unsafe.Sizeof(*r) {
 		t.Fatal("host record reflection layout")
 	}
-	if unsafe.Sizeof(*r) != 4*unsafe.Sizeof(uintptr(0)) || unsafe.Offsetof(r.Value) != 3*unsafe.Sizeof(uintptr(0)) {
+	if unsafe.Sizeof(*r) != 3*unsafe.Sizeof(uintptr(0)) || unsafe.Offsetof(r.Value) != 2*unsafe.Sizeof(uintptr(0)) {
 		t.Fatal("host record storage layout")
 	}
 	reflect.ValueOf(r).Elem().FieldByName("Value").Elem().SetInt(41)

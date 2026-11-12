@@ -24,8 +24,8 @@ package main
 // CHECK: [[FUNC_SUM:%[0-9]+]] = add i64 %0, %1
 // CHECK-NEXT: ret i64 [[FUNC_SUM]]
 
-// ARM64-LABEL: define void @"main.init#1$2"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.init#1$2"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.init#1$2"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.init#1$2"(ptr nest %0){{.*}} {
 // CHECK: load { ptr }, ptr %0
 
 // Arrays: all three elements participate in equality, and inequality negates

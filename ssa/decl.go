@@ -484,6 +484,11 @@ func (p Package) newFunc(
 	}
 	if envType != nil {
 		p.Prog.markClosureEnvFunction(fn, 0)
+		// Closure entries use compiler-owned context registers. ELF's lazy
+		// PLT resolver may clobber them (notably nest/R10 on amd64), so these
+		// implementation symbols must bind within the linked image. Funcvals
+		// can still carry their addresses across a shared-library boundary.
+		fn.SetVisibility(llvm.HiddenVisibility)
 	}
 	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
 		// Hardware faults and other-thread snapshots can interrupt any

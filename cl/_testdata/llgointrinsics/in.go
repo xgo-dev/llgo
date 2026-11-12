@@ -27,8 +27,8 @@ import (
 // CHECK-NEXT: [[UC_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr, ptr }, ptr [[UC_DESCRIPTOR]], i32 0, i32 1
 // CHECK-NEXT: store ptr [[UC_ENV]], ptr [[UC_ENV_SLOT]]
 // CHECK-NEXT: ret i64 ptrtoint (ptr @"{{.*}}.UseClosure$1" to i64)
-// ARM64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr swiftself
-// AMD64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr nest
+// ARM64-LABEL: define hidden void @"{{.*}}.UseClosure$1"(ptr swiftself
+// AMD64-LABEL: define hidden void @"{{.*}}.UseClosure$1"(ptr nest
 // CHECK: [[UC_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[UC_X_PTR:%[0-9]+]] = extractvalue { ptr } [[UC_ENV_VALUE]], 0
 // CHECK-NEXT: [[UC_OLD_X:%[0-9]+]] = load i64, ptr [[UC_X_PTR]]

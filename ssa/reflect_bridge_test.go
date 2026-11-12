@@ -168,6 +168,35 @@ func TestWasmReflectBridgeEmptyAndMultipleResults(t *testing.T) {
 	}
 }
 
+func TestWasmReflectFramePreservesFuncvalStorage(t *testing.T) {
+	for _, profile := range []string{"j32", "j64", "w32"} {
+		t.Run(profile, func(t *testing.T) {
+			goos, provider := "js", "emscripten"
+			if profile == "w32" {
+				goos, provider = "wasip1", "wasi"
+			}
+			prog := NewProgram(&Target{GOOS: goos, GOARCH: "wasm", WasmProfile: profile, WasmProvider: provider})
+			defer prog.Dispose()
+			setTestRuntime(t, prog)
+			pkg := prog.NewPackage("frame", "example.com/frame")
+			fn := pkg.NewFunc("frame", NoArgsNoRet, GoDecl)
+			b := fn.MakeBody(1)
+			callback := prog.Closure(NoArgsNoRet)
+			tuple := types.NewTuple(types.NewVar(token.NoPos, nil, "", callback.raw.Type))
+			_, slots := b.wasmReflectFrame(tuple, nil)
+			allocated := slots[0].impl.AllocatedType()
+			if got, want := prog.td.TypeAllocSize(allocated), prog.SizeOf(callback); got != want {
+				t.Fatalf("reflection copies %d bytes into a %d-byte funcval slot", want, got)
+			}
+			b.Return()
+			b.EndBuild()
+			if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestWasmMethodExpressionSignature(t *testing.T) {
 	plain := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	if got := methodExprSignature(plain); got != plain {

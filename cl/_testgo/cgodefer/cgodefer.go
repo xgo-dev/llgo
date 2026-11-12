@@ -91,8 +91,8 @@ import "C"
 // AMD64: call void [[DEFER_CALL]](ptr nest [[DEFER_CALL_ENV]])
 // CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.EndRecoverFrame"(%"{{.*}}recoverState" [[DEFER_RECOVER]])
 
-// ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.main$1$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.main$1$1"(ptr nest %0){{.*}} {
 // CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[KEEPALIVE:%[0-9]+]] = load ptr, ptr [[KEEPALIVE_SLOT]]
 // CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[KEEPALIVE]], 1

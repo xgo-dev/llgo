@@ -51,8 +51,8 @@ package main
 // ARM64: call void [[VALUE_RUN_CODE]](ptr swiftself [[VALUE_RUN_ENV]])
 // AMD64: call void [[VALUE_RUN_CODE]](ptr nest [[VALUE_RUN_ENV]])
 
-// ARM64-LABEL: define void @"main.testDeferClosureValue$1"(ptr swiftself %0){{.*}} {
-// AMD64-LABEL: define void @"main.testDeferClosureValue$1"(ptr nest %0){{.*}} {
+// ARM64-LABEL: define hidden void @"main.testDeferClosureValue$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define hidden void @"main.testDeferClosureValue$1"(ptr nest %0){{.*}} {
 // CHECK: [[VALUE_BODY_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK: [[VALUE_BODY_X:%.*]] = load i64, ptr [[VALUE_BODY_ADDR]]
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[VALUE_BODY_X]])
@@ -128,8 +128,8 @@ package main
 // CHECK-NOT: /runtime/internal/runtime.FreeDeferNode
 // CHECK: call void @"main.(*Processor).SetCallback"(ptr [[STRUCT_RUN_PROCESSOR]], ptr [[STRUCT_RUN_FN]])
 
-// ARM64-LABEL: define void @"main.testDeferStructClosure$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
-// AMD64-LABEL: define void @"main.testDeferStructClosure$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
+// ARM64-LABEL: define hidden void @"main.testDeferStructClosure$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
+// AMD64-LABEL: define hidden void @"main.testDeferStructClosure$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
 // CHECK: [[STRUCT_BODY_MSG_ADDR:%.*]] = getelementptr inbounds nuw { %"{{.*}}String" }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK: [[STRUCT_BODY_MSG:%.*]] = load %"{{.*}}String", ptr [[STRUCT_BODY_MSG_ADDR]]
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)

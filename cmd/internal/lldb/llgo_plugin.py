@@ -93,6 +93,9 @@ class LLGoRuntimeLayout:
     function_type_pattern: str
     function_code: str
     function_data: str
+    function_descriptor_type_pattern: str
+    function_descriptor_code: str
+    function_descriptor_data: str
     function_closure_symbol_pattern: str
     function_bound_symbol_suffix: str
     map_type_pattern: str
@@ -199,6 +202,9 @@ def _runtime_layouts() -> Dict[int, LLGoRuntimeLayout]:
                 function_type_pattern=function_layout["type_pattern"],
                 function_code=function_layout["code"],
                 function_data=function_layout["data"],
+                function_descriptor_type_pattern=function_layout.get("descriptor_type_pattern", "(?!)"),
+                function_descriptor_code=function_layout.get("descriptor_code", ""),
+                function_descriptor_data=function_layout.get("descriptor_data", ""),
                 function_closure_symbol_pattern=(
                     function_layout["closure_symbol_pattern"]),
                 function_bound_symbol_suffix=(
@@ -360,6 +366,15 @@ def register_type_formatters(debugger: lldb.SBDebugger) -> None:
         category.AddTypeSummary(
             lldb.SBTypeNameSpecifier(
                 layout.function_type_pattern, True),
+            lldb.SBTypeSummary.CreateWithFunctionName(
+                "llgo_plugin.function_summary", _type_options()),
+        )
+        # LLDB spells a DWARF pointer as the pointee name followed by " *".
+        descriptor = layout.function_descriptor_type_pattern
+        if descriptor.endswith("$"):
+            descriptor = descriptor[:-1]
+        category.AddTypeSummary(
+            lldb.SBTypeNameSpecifier(descriptor + r" \*$", True),
             lldb.SBTypeSummary.CreateWithFunctionName(
                 "llgo_plugin.function_summary", _type_options()),
         )
@@ -1304,12 +1319,25 @@ def function_summary(value: lldb.SBValue,
                      _internal_dict: Dict[str, Any]) -> Optional[str]:
     layout = _runtime_layout(value)
     raw = _raw_value(value)
-    if (layout is None or
-            not re.fullmatch(layout.function_type_pattern,
-                             _canonical_type_name(raw))):
+    if layout is None:
         return None
-    code = _value_as_int(raw.GetChildMemberWithName(layout.function_code))
-    data = _value_as_int(raw.GetChildMemberWithName(layout.function_data))
+    code_field, data_field = layout.function_code, layout.function_data
+    pointee = raw.GetType().GetCanonicalType().GetPointeeType()
+    pointee_name = pointee.GetName() or ""
+    if pointee_name.startswith("struct "):
+        pointee_name = pointee_name[len("struct "):]
+    if re.fullmatch(layout.function_descriptor_type_pattern, pointee_name):
+        address = _value_as_int(raw)
+        if address is None:
+            return None
+        if address == 0:
+            return "nil"
+        raw = raw.Dereference()
+        code_field, data_field = layout.function_descriptor_code, layout.function_descriptor_data
+    elif not re.fullmatch(layout.function_type_pattern, _canonical_type_name(raw)):
+        return None
+    code = _value_as_int(raw.GetChildMemberWithName(code_field))
+    data = _value_as_int(raw.GetChildMemberWithName(data_field))
     if code is None or data is None:
         return None
     if code == 0:

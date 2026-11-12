@@ -96,7 +96,7 @@ func main() {
 // AMD64: %[[SECOND:[0-9]+]] = call i64 %__llgo_funcval_code1(ptr nest [[ENV2]], i64 -3)
 // CHECK: call i32 (ptr, ...) @printf({{.*}}i64 %[[FIRST]], i64 %[[SECOND]])
 
-// CHECK-LABEL: define i64 @"main.main$1"(
+// CHECK-LABEL: define hidden i64 @"main.main$1"(
 // ARM64-SAME: ptr swiftself %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
 // AMD64-SAME: ptr nest %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
 // CHECK: %[[CAPTUREDSLOT:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[CENV]], i32 0, i32 0

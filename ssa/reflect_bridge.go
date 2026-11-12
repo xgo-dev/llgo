@@ -295,7 +295,10 @@ func (b Builder) wasmReflectFrame(tuple *types.Tuple, value func(int) Expr) (Exp
 	}
 	slots := make([]Expr, tuple.Len())
 	for i := range slots {
-		typ := prog.Type(tuple.At(i).Type(), CDecl)
+		// The signature is already converted to Go raw types. Reflection
+		// copies Go-sized values here; CDecl would narrow a Memory32 funcval
+		// slot to four bytes although its Go descriptor pointer needs eight.
+		typ := prog.rawType(tuple.At(i).Type())
 		slots[i] = b.AllocaT(typ)
 		initial := prog.Nil(typ)
 		if value != nil {

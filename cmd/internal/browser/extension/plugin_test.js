@@ -105,7 +105,8 @@ function response(value, init) {
 }
 
 for (const width of [4, 8]) {
-test(`closure captures preserve reference and value storage (${width} bytes)`, async () => {
+for (const descriptor of [false, true]) {
+test(`closure captures preserve reference and value storage (${width} bytes, descriptor=${descriptor})`, async () => {
   const index = fixtureIndex();
   index.record.pointer_size = width;
   index.function_values = [{index: 7, name: 'main.capture$1', environment: 'envptr'},
@@ -122,9 +123,20 @@ test(`closure captures preserve reference and value storage (${width} bytes)`, a
     {id: 'fn', kind: 'struct', name: 'struct{$f func(); $data unsafe.Pointer}', size: width * 2, complete: true,
       fields: [{name: '$f', type: 'word', offset: 0}, {name: '$data', type: 'word', offset: width}]},
   );
+  if (descriptor) {
+    index.types.find(type => type.id === 'fn').id = 'legacyfn';
+    index.types.push(
+      {id: 'header', kind: 'struct', name: 'struct{code func(); env unsafe.Pointer}', size: width * 2,
+        complete: true, fields: [{name: 'code', type: 'word', offset: 0}, {name: 'env', type: 'word', offset: width}]},
+      {id: 'fn', kind: 'pointer', name: 'struct{$f func(); $data unsafe.Pointer}', size: width,
+        elem: 'header', complete: true},
+    );
+  }
   const memory = new Uint8Array(256), view = new DataView(memory.buffer);
   const word = (at, value) => width === 4 ? view.setUint32(at, value, true) : view.setBigUint64(at, BigInt(value), true);
-  word(16, 7); word(16 + width, 128); word(128, 192);
+  const entry = descriptor ? 64 : 16;
+  if (descriptor) word(16, entry);
+  word(entry, 7); word(entry + width, 128); word(128, 192);
   view.setInt32(128 + width, 23, true); view.setInt32(192, 41, true);
   const plugin = new LLGoLanguageExtensionPlugin({
     getWasmLinearMemory: async (offset, length) => memory.slice(offset, offset + length).buffer,
@@ -151,19 +163,20 @@ test(`closure captures preserve reference and value storage (${width} bytes)`, a
     assert.equal(plugin.objects.size, 0, 'release includes captured pointers');
   }
   for (const code of [8, 9, 99]) {
-    word(16, code);
+    word(entry, code);
     const fn = await read();
     assert.ok(!(await plugin.getProperties(fn.objectId)).some(p => p.name === 'captures'),
       'opaque, incomplete and unknown functions have no guessed capture layout');
     await plugin.releaseObject(fn.objectId);
   }
-  word(16, 7); word(16 + width, 0);
+  word(entry, 7); word(entry + width, 0);
   const empty = await read();
   assert.ok(!(await plugin.getProperties(empty.objectId)).some(p => p.name === 'captures'));
   await plugin.releaseObject(empty.objectId);
   word(16, 0);
   assert.equal((await read()).type, 'null');
 });
+}
 }
 
 test('LLGo language extension maps DWARF index and evaluates constants and Wasm locals', async () => {
