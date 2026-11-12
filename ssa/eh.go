@@ -962,8 +962,10 @@ func (b Builder) Panic(v Expr) {
 // x86 does not otherwise reuse outgoing C stack-argument slots for an indirect
 // sibling call. Require identical scalar LLVM signatures before requesting a
 // guaranteed tail call; aggregate lowering and closure-context ABIs stay out.
+// Explicit roots add epilogue instructions, which cannot follow musttail.
 func (b Builder) markRecoverForwardTail(ret Expr) {
-	if b.Prog.Target().GOARCH != "386" || b.Func.NeedsEnv() {
+	target := b.Prog.Target()
+	if target == nil || target.GOARCH != "386" || b.Func.NeedsEnv() || b.Func.hasVArg || b.Prog.GCRootsEnabled() || ret.impl.IsNil() {
 		return
 	}
 	call := ret.impl.IsACallInst()
@@ -971,7 +973,7 @@ func (b Builder) markRecoverForwardTail(ret Expr) {
 		call.InstructionCallConv() != b.Func.impl.FunctionCallConv() {
 		return
 	}
-	if attr := b.Func.impl.GetStringAttributeAtIndex(-1, "disable-tail-calls"); !attr.IsNil() && attr.GetStringValue() == "true" {
+	if attr := b.Func.impl.GetStringAttributeAtIndex(-1, "disable-tail-calls"); !attr.IsNil() {
 		return
 	}
 	for _, param := range b.Func.ll.ParamTypes() {

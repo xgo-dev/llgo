@@ -31,11 +31,11 @@ func (p *context) canTailRecoverAlias(call *ssa.CallCommon) bool {
 
 // recoverAliasTailPosition proves that an SSA-generated adapter immediately
 // returns the forwarded result. Other wrappers retain their scoped cleanup.
+// Midway dispatchers are recover-transparent but need separate tail proofs.
 // Keep composite results conservative: lowering may add result validation or
 // storage work after their physical call.
 func recoverAliasTailPosition(fn *ssa.Function, call *ssa.CallCommon) bool {
-	if fn == nil || call == nil || fn.Recover != nil || !(strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
-		strings.HasPrefix(fn.Synthetic, "thunk for ") || strings.HasPrefix(fn.Synthetic, "bound method wrapper for ")) {
+	if fn == nil || call == nil || fn.Recover != nil || !isSyntheticForwardingWrapper(fn) {
 		return false
 	}
 	results := fn.Signature.Results()
@@ -257,10 +257,13 @@ func isRecoverTransparentWrapper(fn *ssa.Function) bool {
 	// These are the Go SSA forms of compiler-generated forwarding frames.
 	// Treating them as transparent mirrors the standard runtime's
 	// abi.FuncIDWrapper rule in gorecover.
-	return strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
+	return isSyntheticForwardingWrapper(fn) || isMidwayRecoverDispatcher(fn)
+}
+
+func isSyntheticForwardingWrapper(fn *ssa.Function) bool {
+	return fn != nil && (strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
 		strings.HasPrefix(fn.Synthetic, "thunk for ") ||
-		strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") ||
-		isMidwayRecoverDispatcher(fn)
+		strings.HasPrefix(fn.Synthetic, "bound method wrapper for "))
 }
 
 // Midway retains the source entry as a dispatcher, so it is not an SSA

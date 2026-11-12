@@ -2665,12 +2665,12 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
+		// Forwarding returns use owned receiver storage: a tail call cannot
+		// lend a word from the wrapper frame that it removes.
 		if act == llssa.Call && !p.canTailRecoverAlias(call) {
 			// Value-receiver adapters copy this borrowed word into the
 			// callee's parameter before it can be retained. A by-reference
 			// receiver ABI would require a separate lifetime proof here.
-			// A forwarding return cannot lend storage from a frame that a
-			// tail call removes; retain the ordinary owned receiver instead.
 			fn = b.ImethodBorrowed(o, mthd, needsRecoverToken)
 		} else if needsRecoverToken {
 			fn = b.ImethodWithRecoverToken(o, mthd)

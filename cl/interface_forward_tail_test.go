@@ -47,6 +47,12 @@ func composite(v CompositeForward) Composite { return v }
 				if !strings.Contains(pointer, "musttail call i64") {
 					t.Fatalf("x86 pointer adapter cannot reuse incoming stack slots:\n%s", pointer)
 				}
+				// Explicit roots require a return epilogue, which LLVM forbids
+				// after musttail. Verify the supported low-level configuration.
+				rooted := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &target, true)
+				if body := llvmFunction(t, rooted, "forwardtail.(*Forward).Read"); strings.Contains(body, "musttail") {
+					t.Fatalf("musttail cannot precede an explicit-root epilogue:\n%s", body)
+				}
 			}
 			composite := llvmFunction(t, ir, "forwardtail.CompositeForward.Read")
 			if !strings.Contains(composite, "EndRecoverFrameAlias") {
