@@ -30,7 +30,7 @@ func ffiIsGoWidePointerLeaf(typ *abi.Type) bool {
 			return false
 		}
 		switch typ.Kind() {
-		case abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map, abi.Func:
+		case abi.Pointer, abi.UnsafePointer, abi.Chan, abi.Map:
 			return true
 		case abi.Array:
 			at := typ.ArrayType()

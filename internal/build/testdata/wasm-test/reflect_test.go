@@ -209,6 +209,39 @@ func TestReflectCallCdeclOnePointerStruct(t *testing.T) {
 	}
 }
 
+type funcBox struct{ F func() int }
+
+func wrapFuncBox(p *int) funcBox {
+	return funcBox{F: func() int { return *p }}
+}
+
+func TestReflectCallFuncStruct(t *testing.T) {
+	x := 7
+	p := &x
+	out := reflect.ValueOf(wrapFuncBox).Call([]reflect.Value{reflect.ValueOf(p)})
+	got := out[0].Interface().(funcBox)
+	if got.F == nil {
+		t.Fatal("F is nil")
+	}
+	if n := got.F(); n != 7 {
+		t.Fatalf("F() = %d, want 7", n)
+	}
+
+	out = reflect.ValueOf(func(p *int) (funcBox, byte) {
+		return funcBox{F: func() int { return *p }}, 23
+	}).Call([]reflect.Value{reflect.ValueOf(p)})
+	got = out[0].Interface().(funcBox)
+	if out[1].Interface().(byte) != 23 {
+		t.Fatalf("second = %v, want 23", out[1].Interface())
+	}
+	if got.F == nil {
+		t.Fatal("multi-return F is nil")
+	}
+	if n := got.F(); n != 7 {
+		t.Fatalf("multi-return F() = %d, want 7", n)
+	}
+}
+
 type reflectRecord struct {
 	Label string
 	Value int64
