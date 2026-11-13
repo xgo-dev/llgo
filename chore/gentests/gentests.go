@@ -89,9 +89,8 @@ func runExpectDir(root, relDir string, configure ...func(*build.Config)) {
 		}
 		relPath := filepath.ToSlash(filepath.Join(relDir, name))
 		testDir := filepath.Join(dir, name)
-		expectFile := filepath.Join(testDir, "expect.txt")
-		expect, err := os.ReadFile(expectFile)
-		if err != nil || strings.TrimSpace(string(expect)) == ";" || strings.TrimSpace(string(expect)) == "; ir-only" {
+		expectFile, expect, err := cltest.ReadGolden(filepath.Join(testDir, "expect.txt"))
+		if err != nil || cltest.IsOutputMarker(expect) {
 			fmt.Fprintln(os.Stderr, "skip", relPath, "(no output golden)")
 			continue
 		}

@@ -51,6 +51,7 @@ func TestReadGoldenExecutionModes(t *testing.T) {
 		{"", true, true},
 		{"output\n", true, true},
 		{";\n\n", true, true},
+		{" ;", true, true},
 	} {
 		t.Run(fmt.Sprintf("%q", tc.data), func(t *testing.T) {
 			file := filepath.Join(t.TempDir(), "expect.txt")
@@ -58,12 +59,19 @@ func TestReadGoldenExecutionModes(t *testing.T) {
 				path := file
 				if versioned {
 					path, _ = goldenForGoVersion(file, runtime.Version())
+					fallback := "; ir-only"
+					if !tc.diff {
+						fallback = "literal output\n"
+					}
+					if err := os.WriteFile(file, []byte(fallback), 0644); err != nil {
+						t.Fatal(err)
+					}
 				}
 				if err := os.WriteFile(path, []byte(tc.data), 0644); err != nil {
 					t.Fatal(err)
 				}
 				data, run, err := readGolden(file)
-				if err != nil || run != tc.run || (run && !isRunOnlyGolden(data)) != tc.diff {
+				if err != nil || string(data) != tc.data || run != tc.run || (run && !isRunOnlyGolden(data)) != tc.diff {
 					t.Fatalf("readGolden(%q) = %q, %v, %v", path, data, run, err)
 				}
 			}
@@ -72,6 +80,9 @@ func TestReadGoldenExecutionModes(t *testing.T) {
 }
 
 func TestRuntimeGoldenExecution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs fixture programs")
+	}
 	const helperEnv = "LLGO_CLTEST_EXECUTION_DIR"
 	if dir := os.Getenv(helperEnv); dir != "" {
 		testRunAndTestFrom(t, dir, dir, "", runOptions{checkIR: true, checkOutput: true})
@@ -106,6 +117,7 @@ func main() {
 	if err := os.WriteFile("executed", []byte("yes"), 0600); err != nil { panic(err) }
 	%s
 }
+
 `, check, tc.statement)
 			for name, data := range map[string]string{"go.mod": "module example.com/execution\ngo 1.20\n", "main.go": source, "expect.txt": tc.golden} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0644); err != nil {
@@ -126,6 +138,41 @@ func main() {
 				t.Fatalf("execution marker: %v; want execution=%v", err, tc.runs)
 			}
 		})
+	}
+}
+
+func TestEmulatorRunOnlyOutput(t *testing.T) {
+	cases := []struct {
+		output, golden    string
+		emulator, failure bool
+	}{
+		{"address 0x1234\n", ";", true, false},
+		{"boot log\nfatal error\n", ";", true, true},
+		{"entry 0x1234\nfatal error: trap\n", ";", true, true},
+		{"panic: runtime trap\n", ";", true, true},
+		{"handled panic: example\n", ";", true, false},
+		{"panic: printed text\n", ";", false, false},
+	}
+	const helperEnv = "LLGO_CLTEST_EMULATOR_OUTPUT"
+	if index := os.Getenv(helperEnv); index != "" {
+		for i, tc := range cases {
+			if index != fmt.Sprint(i) {
+				continue
+			}
+			conf := build.NewDefaultConf(build.ModeRun)
+			conf.Emulator = tc.emulator
+			assertExpectedOutput(t, t.TempDir(), []byte(tc.golden), []byte(tc.output), runOptions{conf: conf, filter: func(string) string { return "" }})
+			return
+		}
+		t.Fatal("unknown helper case")
+	}
+	for i, tc := range cases {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestEmulatorRunOnlyOutput$")
+		cmd.Env = append(os.Environ(), helperEnv+"="+fmt.Sprint(i))
+		output, err := cmd.CombinedOutput()
+		if (err != nil) != tc.failure || tc.failure && !bytes.Contains(output, []byte("emulator runtime failure")) {
+			t.Fatalf("case %d: %v\n%s", i, err, output)
+		}
 	}
 }
 

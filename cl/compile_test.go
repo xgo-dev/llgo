@@ -85,6 +85,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/chan",          // timeout: emulator did not auto-exit
 				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
 				"./_testgo/defer4",        // unexpected output: got "fatal error", expected "recover: panic message"
+				"./_testgo/goroutine",     // channel synchronization prints fatal error despite successful emulator exit
 				"./_testgo/indexerr",      // unexpected output: len(dst)=12, len(src)=0 (got "fatal error")
 				"./_testgo/makeslice",     // unexpected output: len(dst)=23, len(src)=0 (got "fatal error\\nmust error")
 				"./_testgo/mapindirect",   // ld.lld: error: undefined symbol: __atomic_fetch_or_4

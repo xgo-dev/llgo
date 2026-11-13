@@ -234,9 +234,9 @@ go run ./chore/gentests
 
 Behavior:
 
-- Refreshes `expect.txt` for the built-in runtime test suites using the existing execution flow.
 - Refreshes `meta-expect.txt` for package-metadata tests.
-- Preserves `expect.txt` markers and leaves existing goldens unchanged when execution fails.
+- Refreshes the toolchain-specific `expect_go1.xx.txt` when present, otherwise `expect.txt`.
+- Preserves both execution markers and leaves existing goldens unchanged when execution fails.
 
 Runtime test modes are selected by `expect.txt` (including a toolchain-specific
 `expect_go1.xx.txt` override):
@@ -250,6 +250,8 @@ Runtime test modes are selected by `expect.txt` (including a toolchain-specific
 Both markers accept a final LF or CRLF. `gentests` preserves them without
 running their programs. Run-only tests still check FileCheck directives and
 report compilation, linking, or execution failures in the existing test jobs.
+Emulator run-only tests also reject runtime panic/fatal-error diagnostics when
+the emulator itself exits successfully.
 
 LLVM IR is not part of the `gentests` workflow; it is checked from the marked
 Go source with FileCheck.
