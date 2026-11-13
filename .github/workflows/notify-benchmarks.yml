@@ -1,6 +1,10 @@
-name: Notify release compatibility
+name: Notify benchmarks
 
 on:
+  workflow_dispatch:
+  # Every main revision receives full post-merge CI, including external benchmarks.
+  push:
+    branches: [main]
   pull_request:
     paths:
       - .github/scripts/ci_changes.py
@@ -34,7 +38,7 @@ jobs:
 
   dispatch:
     needs: prepare
-    if: github.repository == 'xgo-dev/llgo' && github.event_name == 'release'
+    if: github.repository == 'xgo-dev/llgo' && github.event_name != 'pull_request'
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
     env:
       # Override this repository variable only when testing another receiver.
@@ -42,7 +46,7 @@ jobs:
       BENCHMARKS_DISPATCH_TOKEN: ${{ secrets.BENCHMARKS_DISPATCH_TOKEN }}
       RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
-      - name: Request compatibility for this LLGo release
+      - name: Request benchmarks for this LLGo revision
         run: |
           set -euo pipefail
           if [[ -z "$BENCHMARKS_DISPATCH_TOKEN" ]]; then
@@ -50,18 +54,31 @@ jobs:
             exit 1
           fi
 
-          if [[ -z "$RELEASE_TAG" ]] || ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
-            echo "invalid release tag: ${RELEASE_TAG:-missing}" >&2
-            exit 1
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            if [[ -z "$RELEASE_TAG" ]] || ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
+              echo "invalid release tag: ${RELEASE_TAG:-missing}" >&2
+              exit 1
+            fi
+            tag_ref="refs/tags/$RELEASE_TAG"
+            tag_rows="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" \
+              "$tag_ref" "$tag_ref^{}")"
+            llgo_commit="$(awk -v ref="$tag_ref^{}" '$2 == ref { print $1; exit }' <<<"$tag_rows")"
+            if [[ -z "$llgo_commit" ]]; then
+              llgo_commit="$(awk -v ref="$tag_ref" '$2 == ref { print $1; exit }' <<<"$tag_rows")"
+            fi
+            event_type=llgo-tag-released
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Manual runs are an end-to-end transport check, not a request to
+            # benchmark the selected workflow ref. Always resolve authoritative
+            # main so the llgo-main-updated event cannot carry a branch commit.
+            llgo_commit="$(git ls-remote \
+              "https://github.com/${GITHUB_REPOSITORY}.git" \
+              refs/heads/main | awk 'NR == 1 { print $1 }')"
+            event_type=llgo-main-updated
+          else
+            llgo_commit="$GITHUB_SHA"
+            event_type=llgo-main-updated
           fi
-          tag_ref="refs/tags/$RELEASE_TAG"
-          tag_rows="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" \
-            "$tag_ref" "$tag_ref^{}")"
-          llgo_commit="$(awk -v ref="$tag_ref^{}" '$2 == ref { print $1; exit }' <<<"$tag_rows")"
-          if [[ -z "$llgo_commit" ]]; then
-            llgo_commit="$(awk -v ref="$tag_ref" '$2 == ref { print $1; exit }' <<<"$tag_rows")"
-          fi
-          event_type=llgo-tag-released
           if [[ ! "$llgo_commit" =~ ^[0-9a-f]{40}$ ]]; then
             echo "invalid LLGo commit for ${RELEASE_TAG:-$GITHUB_REF}: ${llgo_commit:-missing}" >&2
             exit 1

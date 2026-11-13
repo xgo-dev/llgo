@@ -12,9 +12,8 @@ checks retain the Linux PR gate and their daily native-host coverage.
 in the same runner job, with the exact merge-base recorded in both native and
 Wasm artifacts. A trusted `workflow_run` publisher validates source/configuration
 and updates one PR comment per suite. Its contents permission is read-only; no
-history branch or Pages site is updated. Publishing a release still dispatches
-the external release compatibility snapshot. Main pushes no longer dispatch
-external benchmark runs.
+history branch or Pages site is updated. The external `notify-benchmarks.yml` dispatch workflow is a separate service
+and keeps its original main, manual and release triggers unchanged.
 
 Linux work uses the existing centralized Qiniu runner policy, with hosted
 fallback for forks. Native macOS and Windows jobs retain their hosted images.

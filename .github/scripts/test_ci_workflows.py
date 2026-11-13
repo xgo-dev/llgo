@@ -938,15 +938,11 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 if path.endswith("head-source"):
                     self.assertEqual(options["ref"], "${{ needs.prepare.outputs.pr_head_sha }}")
 
-    def test_external_compatibility_dispatch_is_release_only(self):
-        workflow = load("notify-benchmarks.yml")
-        self.assertNotIn("push", workflow["on"])
-        self.assertNotIn("workflow_dispatch", workflow["on"])
-        job = workflow["jobs"]["dispatch"]
-        request = next(step for step in job["steps"] if step.get("name", "").startswith("Request compatibility"))
-        self.assertEqual(job["if"], "github.repository == 'xgo-dev/llgo' && github.event_name == 'release'")
-        self.assertNotIn("llgo-main-updated", request["run"])
-        self.assertIn("event_type=llgo-tag-released", request["run"])
+    def test_main_external_benchmark_dispatch_has_no_change_filter(self):
+        job = load("notify-benchmarks.yml")["jobs"]["dispatch"]
+        request = next(step for step in job["steps"] if step.get("name", "").startswith("Request benchmarks"))
+        self.assertNotIn("if", request)
+        self.assertEqual(job["if"], "github.repository == 'xgo-dev/llgo' && github.event_name != 'pull_request'")
 
     def test_wasm_baseline_metadata_requires_a_successful_measurement(self):
         steps = load("benchmark.yml")["jobs"]["wasm-benchmark"]["steps"]
