@@ -25,6 +25,7 @@ import (
 
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestDeferInLoopIR(t *testing.T) {
@@ -127,5 +128,43 @@ func TestDeferInLoopMaterializesArgsBeforeFree(t *testing.T) {
 	}
 	if freeIdx > callIdx {
 		t.Fatalf("FreeDeferNode must run before buildCall uses materialized args, got:\n%s", ir)
+	}
+}
+
+func TestStdcallLoopDeferIR(t *testing.T) {
+	for _, arch := range []string{"386", "amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: arch})
+			defer prog.Dispose()
+			prog.TypeSizes(types.SizesFor("gc", arch))
+			goPkg := types.NewPackage("callback", "callback")
+			typ := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Stdcall", nil), ssa.NoArgsNoRet, nil)
+			prog.SetTypeCallConv("callback.Stdcall", ssa.Stdcall)
+			pkg := prog.NewPackage("callback", "callback")
+			params := types.NewTuple(types.NewParam(token.NoPos, nil, "fn", typ))
+			fn := pkg.NewFunc("deferNative", types.NewSignatureType(nil, nil, nil, params, nil, false), ssa.GoDecl)
+			b := fn.MakeBody(1)
+			recoverBlock := fn.MakeBlock()
+			fn.SetRecover(recoverBlock)
+			b.SetBlock(recoverBlock)
+			b.Return()
+			b.SetBlock(fn.Block(0))
+			b.Return()
+			b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+			b.Defer(ssa.DeferInLoop, fn.Param(0), ssa.Builder.Call)
+			b.EndBuild()
+			ir := pkg.Module().String()
+			word, cc := "i64", ""
+			if arch == "386" {
+				word, cc = "i32", "x86_stdcallcc "
+			}
+			if !strings.Contains(ir, "extractvalue { ptr, "+word+", ptr }") ||
+				(!strings.Contains(ir, "call "+cc+"void %") && !strings.Contains(ir, "invoke "+cc+"void %")) {
+				t.Fatalf("stdcall callee capture or call convention missing:\n%s", ir)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

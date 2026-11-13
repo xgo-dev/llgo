@@ -653,7 +653,7 @@ func deferNeedsCalleeCapture(fn Expr) bool {
 
 func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
 	saveFn := deferNeedsCalleeCapture(fn)
-	if kind != DeferInLoop && fn != Nil && !saveFn && len(args) == 0 {
+	if kind != DeferInLoop && !fn.IsNil() && !saveFn && len(args) == 0 {
 		return nil
 	}
 	prog := b.Prog
