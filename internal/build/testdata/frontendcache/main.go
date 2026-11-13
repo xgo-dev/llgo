@@ -4,6 +4,8 @@ import (
 	"example.com/frontprobe/dep"
 	"example.com/frontprobe/generic"
 	"example.com/frontprobe/inline"
+	"example.com/frontprobe/nativebase"
+	"example.com/frontprobe/nativederived"
 	"reflect"
 	"strings"
 )
@@ -13,6 +15,18 @@ type runner struct{ N int }
 func (r runner) Run(p *int) { *p += r.N }
 func crash(out *int)        { defer dep.Catch(out); panic("expected") }
 func main() {
+	frame := struct {
+		Value    nativebase.Record
+		Sentinel uint64
+	}{Value: nativebase.Record{Tail: 7}, Sentinel: 123456}
+	p := (*nativederived.Record)(&frame.Value)
+	if p.Tail != 7 {
+		panic("native derived read")
+	}
+	p.Tail = 99
+	if frame.Value.Tail != 99 || frame.Sentinel != 123456 {
+		panic("native derived write")
+	}
 	h := dep.New(29)
 	if h.Value() != 29 {
 		panic("method")
