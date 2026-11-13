@@ -26,17 +26,21 @@ runs:
       id: esp_qemu_cache
       uses: actions/cache@v6
       with:
-        path: .cache/qemu
-        key: esp-qemu-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/install-esp-qemu.sh') }}
+        path: |
+          .cache/qemu
+          ~/.cache/llgo/crosscompile/esp-qemu-*
+          ~/Library/Caches/llgo/crosscompile/esp-qemu-*
+        key: esp-qemu-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('internal/crosscompile/esp_qemu.go', '.github/workflows/install-esp-qemu.sh') }}
 
     - name: Install ESP QEMU toolchains
-      if: steps.esp_qemu_cache.outputs.cache-hit != 'true'
+      if: runner.os == 'Windows' && steps.esp_qemu_cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         chmod +x .github/workflows/install-esp-qemu.sh
         .github/workflows/install-esp-qemu.sh .cache/qemu
 
     - name: Add ESP QEMU to PATH
+      if: runner.os == 'Windows'
       shell: bash
       run: |
         qemu_bin="${PWD}/.cache/qemu/bin"
@@ -46,15 +50,6 @@ runs:
           qemu_bin="$(cygpath -w "$qemu_bin")"
         fi
         echo "$qemu_bin" >> "$GITHUB_PATH"
-
-    - name: Verify ESP QEMU installation on Unix
-      if: runner.os != 'Windows'
-      shell: bash
-      run: |
-        command -v qemu-system-riscv32
-        command -v qemu-system-xtensa
-        qemu-system-riscv32 --version
-        qemu-system-xtensa --version
 
     - name: Verify ESP QEMU installation on Windows
       if: runner.os == 'Windows'

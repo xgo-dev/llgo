@@ -62,6 +62,32 @@ func TestRunInEmulatorValidation(t *testing.T) {
 	}
 }
 
+func TestESPQEMUAcquisitionFailureReportsExecutable(t *testing.T) {
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
+		t.Skip("requires Linux XDG cache selection and an ESP QEMU download host")
+	}
+	root := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", root)
+	// A regular file at the cache root forces acquisition to fail before any
+	// network access. Generic QEMU on PATH must not bypass this check.
+	if err := os.WriteFile(filepath.Join(root, "llgo"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "qemu-system-riscv32"), []byte("#!/bin/sh\necho 'virt Generic machine'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	commands := commandEnv{dir: root, environ: os.Environ()}
+	details := runnerDetails{phase: "run", target: "esp32c3-basic", artifact: "firmware.img"}
+	err := runEmuCmd(commands, map[string]string{"img": "firmware.img"},
+		"qemu-system-riscv32 -machine esp32c3 -drive file={img},if=mtd", nil, false, false, details)
+	var failure *runnerFailure
+	if !errors.As(err, &failure) || failure.status != runnerStatusUnavailable || failure.runner != "qemu-system-riscv32" {
+		t.Fatalf("acquisition error = %#v; want unavailable executable", err)
+	}
+}
+
 func TestWASIHostDirectories(t *testing.T) {
 	work, temp, cwd := wasiHostDirectories(`C:\project with spaces`, `D:\Temp`, true)
 	if work != `C:\project with spaces:/work` || temp != `D:\Temp:/tmp` || cwd != "/work" {
