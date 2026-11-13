@@ -2421,8 +2421,9 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 	}
 	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
 	// without changing llgo's callable ABI. HostLayout keeps that tail
-	// protection in LLVM storage, so the FFI description must match Size_.
-	if off < typ.Size_ && structHasHostLayout(typ) {
+	// protection in LLVM storage, so the FFI description must match Size_
+	// wherever that padding is also part of the calling convention.
+	if off < typ.Size_ && structHasHostLayout(typ) && ffiHostLayoutTailPadding {
 		fields, off = appendFFIPadding(fields, off, typ.Size_-off)
 	}
 	return ffi.StructOf(fields...)

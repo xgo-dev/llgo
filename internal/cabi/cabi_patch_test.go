@@ -494,6 +494,43 @@ func TestWindows386CABILowersGoAggregateToNativeLayout(t *testing.T) {
 	}
 }
 
+func TestWindows386HostLayoutTailReturnUsesRegisterABI(t *testing.T) {
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
+	defer prog.Dispose()
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+
+	// SSA storage for `struct { _ structs.HostLayout; P *int; Z struct{} }`
+	// keeps Go's extra tail byte (size/align 8/4). Windows/386 CABI strips
+	// that wrapper, so the callable type is a 4-byte pointer and
+	// (HostTail, byte) is an 8-byte register return, not a 12-byte sret.
+	empty := ctx.StructType(nil, false)
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	tailPad := ctx.StructType([]llvm.Type{empty, llvm.ArrayType(ctx.Int8Type(), 4)}, true)
+	hostTail := ctx.StructType([]llvm.Type{empty, ptr, tailPad}, false)
+	resultPad := ctx.StructType([]llvm.Type{ctx.Int8Type(), llvm.ArrayType(ctx.Int8Type(), 3)}, true)
+	pair := ctx.StructType([]llvm.Type{hostTail, resultPad}, false)
+
+	tr := NewTransformer(prog, "i686-pc-windows-msvc", "", true)
+	if got, want := tr.Sizeof(hostTail), 8; got != want {
+		t.Fatalf("HostTail storage size = %d, want %d", got, want)
+	}
+	if got, want := tr.Sizeof(pair), 12; got != want {
+		t.Fatalf("(HostTail, byte) storage size = %d, want %d", got, want)
+	}
+	nativeTail, changed := windows386NativeAggregateType(ctx, hostTail)
+	if !changed {
+		t.Fatal("HostTail Go/386 wrappers were not stripped")
+	}
+	if got, want := tr.Sizeof(nativeTail), 4; got != want {
+		t.Fatalf("HostTail callable size = %d, want %d (%s)", got, want, nativeTail)
+	}
+	checkTypeInfo(t, tr, pair, 0, AttrWidthType, "i64")
+}
+
 func TestWindows386AggregateLayoutMismatchPanics(t *testing.T) {
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
