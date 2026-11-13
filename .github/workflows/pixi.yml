@@ -26,30 +26,5 @@ jobs:
       - name: Verify CI preparation succeeded
         run: test "${{ needs.prepare.result }}" = "success"
 
-  devenv:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    name: Pixi (${{ matrix.os }})
-    needs: prepare
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: llgo dev
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          # Other host profiles run daily in llgo-compat/ci's Development environments.
-          - ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Exercise activation and builds from a checkout path containing spaces.
-          path: llgo dev
-      - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
-        with:
-          pixi-version: v0.81.0
-          working-directory: llgo dev/dev
-          locked: true
-      - name: Check the development environment
-        run: pixi run --manifest-path dev/pixi.toml --locked bash dev/check_devenv.sh
+  # Locked host environment builds run daily in llgo-compat/ci:
+  # .github/workflows/devenv.yml. Keep the existing gate name during migration.

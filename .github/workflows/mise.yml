@@ -26,32 +26,5 @@ jobs:
       - name: Verify CI preparation succeeded
         run: test "${{ needs.prepare.result }}" = "success"
 
-  devenv:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    name: Mise (${{ matrix.os }})
-    needs: prepare
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: llgo dev
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          # Other host profiles run daily in llgo-compat/ci's Development environments.
-          - ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Exercise activation and builds from a checkout path containing spaces.
-          path: llgo dev
-      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
-        with:
-          version: 2026.10.7
-          install_args: --locked
-          working_directory: llgo dev/dev
-          env: true
-          export_path: true
-      - name: Build LLGo and check native dependencies
-        run: bash dev/check_devenv.sh
+  # Locked host environment builds run daily in llgo-compat/ci:
+  # .github/workflows/devenv.yml. Keep the existing gate name during migration.

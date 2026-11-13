@@ -42,7 +42,7 @@ Development environments workflow in [llgo-compat/ci](https://github.com/llgo-co
 
 | Host | Architectures | CI cadence |
 | --- | --- | --- |
-| Linux | x86-64 | Every code change on Qiniu |
+| Linux | x86-64 | Daily |
 | Linux | ARM64 | Daily |
 | macOS | Intel, ARM64 | Daily |
 | Windows | x86-64, native PowerShell/CMD | Daily |
