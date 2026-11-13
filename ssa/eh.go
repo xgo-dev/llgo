@@ -645,8 +645,8 @@ func deferNeedsCalleeCapture(fn Expr) bool {
 	}
 	// A dynamic native callee, like a closure, is evaluated when the defer
 	// is registered. Its SSA value may not dominate the shared drain block.
-	// Constant function addresses need no per-registration storage;
-	// vkFuncDecl always denotes such a direct declaration.
+	// Constant function addresses need no per-registration storage.
+	// The vkFuncDecl callees currently passed to defer are direct declarations.
 	return fn.kind == vkClosure || fn.kind == vkIfaceMethod ||
 		(fn.kind == vkFuncPtr && !fn.impl.IsConstant())
 }
