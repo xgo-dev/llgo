@@ -226,3 +226,55 @@ func TestESPQEMUFailedInstallCanRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestESPQEMUFilesystemFailures(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix permissions enforced for a non-root user")
+	}
+	const command = "qemu-system-riscv32"
+	archive, checksum := espQEMUArchive(t, command)
+	for _, name := range []string{"unreadable cache", "invalid lock", "stale extraction", "incomplete cache"} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "qemu")
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				_, _ = w.Write(archive)
+			}))
+			defer server.Close()
+			blocked := dir
+			wantRequests := int32(0)
+			switch name {
+			case "invalid lock":
+				blocked = dir + ".lock"
+			case "stale extraction":
+				blocked = filepath.Join(dir+".extract", "readonly")
+			case "incomplete cache":
+				blocked = filepath.Join(dir, "readonly")
+				wantRequests = 1
+			}
+			if err := os.MkdirAll(blocked, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if name != "invalid lock" {
+				if err := os.WriteFile(filepath.Join(blocked, "retained"), []byte("data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				mode := os.FileMode(0555)
+				if name == "unreadable cache" {
+					mode = 0
+				}
+				if err := os.Chmod(blocked, mode); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(blocked, 0755) })
+			}
+			if _, err := installESPQEMU(dir, command, server.URL+"/qemu.tar.gz", checksum); err == nil {
+				t.Fatal("installation ignored a filesystem failure")
+			}
+			if got := requests.Load(); got != wantRequests {
+				t.Fatalf("requests = %d, want %d", got, wantRequests)
+			}
+		})
+	}
+}
