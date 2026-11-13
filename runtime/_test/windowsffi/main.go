@@ -4,7 +4,8 @@ import (
 	"reflect"
 	"runtime"
 	"syscall"
-	_ "unsafe"
+	"time"
+	"unsafe"
 
 	_ "github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
@@ -271,6 +272,8 @@ func testForeignThreadCallbackGoexit() {
 
 func testSyscallCallbacks() {
 	testCallbackValidation()
+	testNativeCallbacks()
+	testNativeFinalizers()
 
 	finalized := make(chan uintptr, 2)
 	deferred := false
@@ -324,6 +327,95 @@ func testSyscallCallbacks() {
 	testDistinctClosureCallbacks()
 	testRepeatedForeignThreadCallback()
 	testForeignThreadCallbackGoexit()
+}
+
+//llgo:cdecl
+type nativeCDeclCallback func(uintptr) uintptr
+
+//llgo:stdcall
+type nativeStdcallCallback func(uintptr) uintptr
+
+//llgo:cdecl
+type nativeInvalidCallback func(float64) uintptr
+
+func nativeCallbackResult(value uintptr) uintptr { return value + 600 }
+
+func testNativeCallbacks() {
+	for _, fn := range []any{nativeCDeclCallback(nativeCallbackResult), nativeStdcallCallback(nativeCallbackResult)} {
+		cdecl := syscall.NewCallbackCDecl(fn)
+		stdcall := syscall.NewCallback(fn)
+		if cdecl == 0 || syscall.NewCallbackCDecl(fn) != cdecl || syscall.NewCallback(fn) != stdcall {
+			panic("native callback was not cached")
+		}
+		if (cdecl == stdcall) != (runtime.GOARCH != "386") {
+			panic("native callback entry has the wrong calling convention")
+		}
+		var result uintptr
+		if errno := callOnForeignThreadStdcall(stdcall, 23, &result); errno != 0 || result != 623 {
+			panic("native callback through stdcall entry failed")
+		}
+		// Repetition on one thread exposes 386 stack cleanup errors in both
+		// the generated callback entry and the call to the original function.
+		const repeats = 4096
+		if errno := repeatOnForeignThreadCDecl(cdecl, 23, repeats, &result); errno != 0 || result != 623+repeats-1 {
+			panic("native callback through cdecl entry failed")
+		}
+	}
+	for _, fn := range []any{nativeCDeclCallback(nil), nativeStdcallCallback(nil)} {
+		expectCallbackPanic("compileCallback: expected function with one uintptr-sized result", func() {
+			syscall.NewCallback(fn)
+		})
+	}
+	if runtime.GOARCH != "386" {
+		expectCallbackPanic("compileCallback: float arguments not supported", func() {
+			syscall.NewCallback(nativeInvalidCallback(func(float64) uintptr { return 0 }))
+		})
+	}
+}
+
+type nativeFinalizerObject struct {
+	done  chan<- uintptr
+	value uintptr
+}
+
+//llgo:cdecl
+type nativeCDeclFinalizer func(*nativeFinalizerObject)
+
+//llgo:stdcall
+type nativeStdcallFinalizer func(*nativeFinalizerObject)
+
+//llgo:cdecl
+type collectorFinalizer func(unsafe.Pointer, unsafe.Pointer)
+
+//go:linkname registerCollectorFinalizer C.GC_register_finalizer
+func registerCollectorFinalizer(unsafe.Pointer, collectorFinalizer, unsafe.Pointer, *collectorFinalizer, *unsafe.Pointer)
+
+func nativeFinalize(p *nativeFinalizerObject) { p.done <- p.value }
+
+func testNativeFinalizers() {
+	for _, fn := range []any{nativeCDeclFinalizer(nativeFinalize), nativeStdcallFinalizer(nativeFinalize)} {
+		done := make(chan uintptr, 1)
+		p := &nativeFinalizerObject{done: done, value: 42}
+		runtime.SetFinalizer(p, fn)
+		// Invoke the collector's registered callback deterministically; the
+		// regular runtime tests separately exercise discovery by the GC.
+		var callback collectorFinalizer
+		var data unsafe.Pointer
+		registerCollectorFinalizer(unsafe.Pointer(p), nil, nil, &callback, &data)
+		if callback == nil {
+			panic("native finalizer was not registered")
+		}
+		callback(unsafe.Pointer(p), data)
+		select {
+		case value := <-done:
+			if value != 42 {
+				panic("native finalizer lost its argument")
+			}
+		case <-time.After(3 * time.Second):
+			panic("native finalizer did not run")
+		}
+		runtime.KeepAlive(p)
+	}
 }
 
 func main() {

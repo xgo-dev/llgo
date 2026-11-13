@@ -97,7 +97,10 @@ const (
 	// TODO (khr, drchase) why aren't these in TFlag?  Investigate, fix if possible.
 	KindDirectIface = 1 << 5
 	KindGCProg      = 1 << 6 // Type.gc points to GC program
-	KindMask        = (1 << 5) - 1
+	// KindStdcall records the calling convention of a native function value.
+	// It is independent of the callback convention selected by NewCallback.
+	KindStdcall = 1 << 7
+	KindMask    = (1 << 5) - 1
 )
 
 // String returns the name of k.
@@ -431,6 +434,12 @@ func (t *Type) IsClosure() bool {
 // HasNativeLayout reports whether t itself is marked with a legacy native ABI.
 func (t *Type) HasNativeLayout() bool {
 	return t.TFlag&TFlagNative != 0
+}
+
+// IsStdcall reports whether a native function type uses the stdcall ABI.
+// Windows amd64 and arm64 use the default ABI even with this annotation.
+func (t *Type) IsStdcall() bool {
+	return t.Kind() == Func && t.HasNativeLayout() && t.Kind_&KindStdcall != 0
 }
 
 // Size returns the size of data with type t.
