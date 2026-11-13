@@ -25,17 +25,6 @@ type frontendCExport struct {
 	Signature     int
 }
 
-type frontendFuncInfo struct {
-	Symbol, Name, File  string
-	Line, Column, Flags uint32
-}
-
-type frontendPCLine struct {
-	ID           uint64
-	Symbol, File string
-	Line, Column uint32
-}
-
 // frontendLinkExport carries the metadata previously recovered by lowering a
 // dependency again even when its archive was cached. The snapshot contains no
 // LLVM-owned pointers and is validated against that exact archive's inputs.
@@ -45,8 +34,8 @@ type frontendLinkExport struct {
 	MethodNames, ABISymbols []string
 	Types                   frontcache.TypeGraph
 	ABI                     []frontendABIType
-	Functions               []frontendFuncInfo
-	Lines                   []frontendPCLine
+	Functions               []cachedFuncInfo
+	Lines                   []cachedPCLine
 	LocalExports            bool
 	CExports                []frontendCExport
 }
@@ -73,10 +62,10 @@ func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLink
 		}
 	}
 	for _, info := range snapshot.funcInfo {
-		result.Functions = append(result.Functions, frontendFuncInfo{info.symbol, info.name, info.file, info.line, info.column, info.flags})
+		result.Functions = append(result.Functions, cachedFuncInfo{info.symbol, info.name, info.file, info.line, info.column, info.flags})
 	}
 	for _, line := range snapshot.pcLineInfo {
-		result.Lines = append(result.Lines, frontendPCLine{line.id, line.symbol, line.file, line.line, line.column})
+		result.Lines = append(result.Lines, cachedPCLine{line.id, line.symbol, line.file, line.line, line.column})
 	}
 	for _, export := range snapshot.cExports {
 		ref := -1

@@ -4213,10 +4213,11 @@ type aPackage struct {
 	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	// Cache related fields
-	Fingerprint    string          // fingerprint digest
-	Manifest       string          // manifest text content
-	CacheHit       bool            // whether cache was hit
-	frontendOpaque *frontendExport // validated body-independent archive contract
+	Fingerprint    string               // fingerprint digest
+	Manifest       string               // manifest text content
+	CacheHit       bool                 // whether cache was hit
+	cachedPCLN     *packagePCLNSnapshot // post-backend source mappings for ArchiveFile
+	frontendOpaque *frontendExport      // validated body-independent archive contract
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {

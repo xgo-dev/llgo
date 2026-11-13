@@ -371,8 +371,8 @@ func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
 		snapshot.methodByName[name] = none{}
 	}
 	if ctx.buildConf.PCLNMode != PCLNNone {
-		snapshot.funcInfo = readFuncInfo(lpkg.Module())
-		snapshot.pcLineInfo = readPCLineInfo(lpkg.Module())
+		snapshot.funcInfo = packageFuncInfo(pkg)
+		snapshot.pcLineInfo = packagePCLineInfo(pkg)
 	}
 	pkg.linkSnapshot = snapshot
 }
