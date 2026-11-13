@@ -11,14 +11,16 @@ import (
 // field is such a pointer is a two-element aggregate that LLVM returns via
 // sret. The first element's alignment is 8 so multi-value FFI layouts keep
 // Go's 8-byte alignment. Walk the single-field chain to the leaf: native
-// cdecl/stdcall storage keeps the original FFI description.
+// cdecl/stdcall storage keeps the original FFI description. Only replace
+// types that are themselves a Go pointer word (size/align 8/8); trailing
+// zero-size padding can make the Go type larger than one word.
 var ffiTypeWideGoPointerWord = ffi.StructOf(
 	&ffi.Type{Size: 4, Alignment: 8, Type: ffi.TypeUint32.Type},
 	ffi.TypeUint32,
 )
 
 func ffiWidenGoPointerStruct(ft *ffi.Type, typ *abi.Type) *ffi.Type {
-	if !ffiIsGoWidePointerLeaf(typ) {
+	if typ.Size_ != 8 || typ.Align_ != 8 || !ffiIsGoWidePointerLeaf(typ) {
 		return ft
 	}
 	return ffiTypeWideGoPointerWord
