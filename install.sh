@@ -152,7 +152,12 @@ install_windows_release() {
     local native_installer
     native_installer="$(windows_native_path "$installer")"
     local status=0
-    "$powershell" -NoProfile -ExecutionPolicy Bypass -File "$native_installer" || status=$?
+    (
+        # A pwsh parent can pass its PowerShell 7 modules through MSYS2 to
+        # Windows PowerShell. Let the selected engine rebuild its own paths.
+        unset PSModulePath
+        "$powershell" -NoProfile -ExecutionPolicy Bypass -File "$native_installer"
+    ) || status=$?
     rm -rf "$temporary"
     if [[ "$status" == 0 ]]; then
         # MSYS2's default minimal PATH drops Windows user PATH entries. Its own
