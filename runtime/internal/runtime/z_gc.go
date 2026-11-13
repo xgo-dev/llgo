@@ -41,6 +41,28 @@ func AllocU(size uintptr) unsafe.Pointer {
 	return ret
 }
 
+// AllocAtomicU allocates uninitialized memory that must never contain pointers.
+// It returns a non-nil pointer or panics, sharing AllocU's zero-size sentinel.
+func AllocAtomicU(size uintptr) unsafe.Pointer {
+	if size == 0 {
+		return unsafe.Pointer(&zerobase)
+	}
+	ret := bdwgc.MallocAtomic(size)
+	if ret == nil {
+		panic("out of memory")
+	}
+	recordMemProfileAlloc(size)
+	return ret
+}
+
+// AllocAtomicZ allocates zero-initialized memory that must never contain pointers.
+func AllocAtomicZ(size uintptr) unsafe.Pointer {
+	p := AllocAtomicU(size)
+	// Atomic allocations are not guaranteed to be cleared by the collector.
+	c.Memset(p, 0, size)
+	return p
+}
+
 func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 	ret := bdwgc.Memalign(alignment, size)
 	if ret == nil {
@@ -54,9 +76,9 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	ret := AllocU(size)
-	c.Memset(ret, 0, size)
-	return ret
+	// AllocU uses GC_malloc, whose non-atomic allocations are already cleared.
+	// Keep its zero-size sentinel, failure check, and allocation accounting.
+	return AllocU(size)
 }
 
 func AllocRoot(size uintptr) unsafe.Pointer {

@@ -46,12 +46,29 @@ func (b Builder) simdCarrylessMultiply(x, y Expr, selector llvm.Value) Expr {
 	xIndex := b.impl.CreateAnd(selector, one, "")
 	yIndex := b.impl.CreateAnd(b.impl.CreateLShr(selector, llvm.ConstInt(selector.Type(), 4, false), ""), one, "")
 	i128 := b.Prog.ctx.IntType(128)
-	a := b.impl.CreateZExt(b.impl.CreateExtractElement(x.impl, xIndex, ""), i128, "")
-	c := b.impl.CreateZExt(b.impl.CreateExtractElement(y.impl, yIndex, ""), i128, "")
-	// Widen before multiplying to retain the complete 64x64 polynomial product.
-	// LLVM legalizes clmul for the baseline; no optional CPU feature is assumed.
-	product := b.impl.CreateIntrinsic(i128, llvm.LookupIntrinsicID("llvm.clmul"), []llvm.Value{a, c}, "")
-	return Expr{b.impl.CreateBitCast(product, x.ll, ""), x.Type}
+	result := llvm.Undef(x.ll)
+	for base := 0; base < x.ll.VectorSize(); base += 2 {
+		// Each 128-bit group selects its own pair. In particular, the high
+		// group of a SIMD256 vector must not reuse the low group's operands.
+		offset := llvm.ConstInt(selector.Type(), uint64(base), false)
+		xLane := b.impl.CreateAdd(xIndex, offset, "")
+		yLane := b.impl.CreateAdd(yIndex, offset, "")
+		a := b.impl.CreateZExt(b.impl.CreateExtractElement(x.impl, xLane, ""), i128, "")
+		c := b.impl.CreateZExt(b.impl.CreateExtractElement(y.impl, yLane, ""), i128, "")
+		// Widen before multiplying to retain the complete 64x64 polynomial
+		// product. LLVM legalizes clmul without requiring optional features.
+		product := b.impl.CreateIntrinsic(i128, llvm.LookupIntrinsicID("llvm.clmul"), []llvm.Value{a, c}, "")
+		if x.ll.VectorSize() == 2 {
+			return Expr{b.impl.CreateBitCast(product, x.ll, ""), x.Type}
+		}
+		pair := b.impl.CreateBitCast(product, llvm.VectorType(x.ll.ElementType(), 2), "")
+		for i := 0; i < 2; i++ {
+			lane := llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
+			value := b.impl.CreateExtractElement(pair, lane, "")
+			result = b.impl.CreateInsertElement(result, value, llvm.ConstInt(b.Prog.tyInt32(), uint64(base+i), false), "")
+		}
+	}
+	return Expr{result, x.Type}
 }
 
 func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
@@ -67,7 +84,7 @@ func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
 	if x.ll.ElementType().TypeKind() == llvm.FloatTypeKind {
 		name = "SIMDFMA32"
 	}
-	fn := b.Pkg.rtFunc(name)
+	fn := b.Pkg.rtFunc(RuntimeSymbol(name, "SIMDFMA32", "SIMDFMA64"))
 	vector := llvm.Undef(result.ll)
 	for i := 0; i < result.ll.VectorSize(); i++ {
 		lane := llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)

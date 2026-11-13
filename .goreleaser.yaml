@@ -14,6 +14,7 @@ env:
 before:
   hooks:
     - go mod download
+    - bash .github/unix/stage-toolchains.sh
 
 builds:
   - id: llgo-darwin-amd64
@@ -48,7 +49,8 @@ builds:
     targets:
       - darwin_arm64
     mod_timestamp: "{{.CommitTimestamp}}"
-  - id: llgo-linux-amd64
+  - &linux-amd64
+    id: llgo-linux-amd64
     main: ./cmd/llgo
     binary: bin/llgo
     flags:
@@ -56,6 +58,7 @@ builds:
     ldflags:
       - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
       - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # Use the packaged host Clang with the Debian 12 sysroot and GCC 12 headers.
@@ -68,7 +71,8 @@ builds:
     targets:
       - linux_amd64
     mod_timestamp: "{{.CommitTimestamp}}"
-  - id: llgo-linux-arm64
+  - &linux-arm64
+    id: llgo-linux-arm64
     main: ./cmd/llgo
     binary: bin/llgo
     flags:
@@ -76,6 +80,7 @@ builds:
     ldflags:
       - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
       - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # The amd64 Clang driver is multi-target; libraries and headers stay arm64.
@@ -89,8 +94,30 @@ builds:
       - linux_arm64
     mod_timestamp: "{{.CommitTimestamp}}"
 
+  # System packages use the standard LLVM target set. The ESP-enabled tarball
+  # compilers above must not be reused: Fedora's LLVM lacks Xtensa initializers.
+  - <<: *linux-amd64
+    id: llgo-linux-amd64-system
+    env:
+      - CC={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang
+      - CXX={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang++
+      - CGO_CPPFLAGS=--target=x86_64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_AMD64}}/usr --sysroot={{.Env.SYSROOT_LINUX_AMD64}} -I{{.Env.PWD}}/.release-toolchains/system-linux/amd64/include -I{{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/include -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+      - CGO_CXXFLAGS=-std=c++17 -nostdinc++ -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/c++/12 -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/x86_64-linux-gnu/c++/12 -isystem {{.Env.SYSROOT_LINUX_AMD64}}/usr/include/c++/12/backward
+      - CGO_LDFLAGS=--target=x86_64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_AMD64}}/usr --sysroot={{.Env.SYSROOT_LINUX_AMD64}} -L{{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/gcc/x86_64-linux-gnu/12 -L{{.Env.SYSROOT_LINUX_AMD64}}/usr/lib/x86_64-linux-gnu -L{{.Env.SYSROOT_LINUX_AMD64}}/lib/x86_64-linux-gnu -lLLVM-22 -lz
+      - CGO_LDFLAGS_ALLOW=(--target=.*|--gcc-toolchain=.*|--sysroot.*)
+  - <<: *linux-arm64
+    id: llgo-linux-arm64-system
+    env:
+      - CC={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang
+      - CXX={{.Env.SYSROOT_LINUX_AMD64}}/crosscompile/clang/bin/clang++
+      - CGO_CPPFLAGS=--target=aarch64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_ARM64}}/usr --sysroot={{.Env.SYSROOT_LINUX_ARM64}} -I{{.Env.PWD}}/.release-toolchains/system-linux/arm64/include -I{{.Env.SYSROOT_LINUX_ARM64}}/crosscompile/clang/include -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+      - CGO_CXXFLAGS=-std=c++17 -nostdinc++ -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/c++/12 -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/aarch64-linux-gnu/c++/12 -isystem {{.Env.SYSROOT_LINUX_ARM64}}/usr/include/c++/12/backward
+      - CGO_LDFLAGS=--target=aarch64-linux-gnu --gcc-toolchain={{.Env.SYSROOT_LINUX_ARM64}}/usr --sysroot={{.Env.SYSROOT_LINUX_ARM64}} -L{{.Env.SYSROOT_LINUX_ARM64}}/crosscompile/clang/lib -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/gcc/aarch64-linux-gnu/12 -L{{.Env.SYSROOT_LINUX_ARM64}}/usr/lib/aarch64-linux-gnu -L{{.Env.SYSROOT_LINUX_ARM64}}/lib/aarch64-linux-gnu -lLLVM-22 -lz
+      - CGO_LDFLAGS_ALLOW=(--target=.*|--gcc-toolchain=.*|--sysroot.*)
+
 archives:
   - formats: [tar.gz]
+    ids: [llgo-darwin-amd64, llgo-darwin-arm64, llgo-linux-amd64, llgo-linux-arm64]
     name_template: >-
       {{.ProjectName}}{{.Version}}.{{.Os}}-{{.Arch}}
       {{- if .Arm}}v{{.Arm}}{{end}}
@@ -101,22 +128,22 @@ archives:
       - THIRD_PARTY_NOTICES.md
       - runtime
       - targets
-      - src: ".sysroot/{{.Os}}/{{.Arch}}/crosscompile/clang"
+      - src: ".release-toolchains/{{.Os}}/{{.Arch}}"
         dst: crosscompile/clang
         info:
           mode: 0755
 checksum:
   name_template: "{{.ProjectName}}{{.Version}}.checksums.txt"
   # Windows CGO builds run on native Windows runners and arrive as tested
-  # integrated archives. The snapshot pass produces the Unix build metadata
-  # they consume; the tag pass includes all four Windows ZIPs in the common checksum file.
+  # compact archives. The snapshot pass produces the Unix build metadata
+  # they consume; the tag pass includes all six compact Windows ZIPs in the common checksum file.
   extra_files:
     - glob: '{{ if not .IsSnapshot }}.windows-dist/llgo{{ .Version }}.windows-*.zip{{ end }}'
 
 nfpms:
   - id: llgo
     package_name: llgo
-    ids: [llgo-linux-amd64, llgo-linux-arm64]
+    ids: [llgo-linux-amd64-system, llgo-linux-arm64-system]
     vendor: goplus
     homepage: https://github.com/xgo-dev/llgo
     maintainer: Aofei Sheng <aofei@aofeisheng.com>
@@ -143,7 +170,15 @@ nfpms:
       deb:
         dependencies:
           - golang-go (>= 1.20)
+          - ca-certificates
+          - tar
+          - xz-utils
           - libc6 (>= 2.36)
+          - libllvm22 (>= 1:22.1)
+          - llvm-22
+          - clang-22
+          - lld-22
+          - libc++-22-dev
           - build-essential
           - pkg-config
           - libgc-dev
@@ -156,7 +191,22 @@ nfpms:
       rpm:
         dependencies:
           - golang-bin >= 1.20
+          - ca-certificates
+          - tar
+          - xz
           - glibc >= 2.36
+          - llvm-libs >= 22.1
+          - llvm-libs < 23
+          - llvm >= 22.1
+          - llvm < 23
+          - llvm-devel >= 22.1
+          - llvm-devel < 23
+          - clang >= 22.1
+          - clang < 23
+          - lld >= 22.1
+          - lld < 23
+          - libcxx-devel
+          - llvm-libunwind-devel
           - gcc
           - gcc-c++
           - make
@@ -182,9 +232,11 @@ nfpms:
       - src: targets/
         dst: /usr/lib/llgo/targets
         type: tree
-      - src: ".sysroot/linux/{{.Arch}}/crosscompile/clang/"
-        dst: /usr/lib/llgo/crosscompile/clang
+      - src: .release-toolchains/payloads/linux/{{.Arch}}/
+        dst: /usr/lib/llgo/crosscompile
         type: tree
+      - src: LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt
+        dst: /usr/lib/llgo/LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt
       - src: /usr/lib/llgo/bin/llgo
         dst: /usr/bin/llgo
         type: symlink

@@ -45,6 +45,8 @@ static constexpr char ReflectTypeMethodTypeIDPrefix[] =
 static constexpr char StaticItabSlotMetadata[] = "llgo.static.itab.slot";
 static constexpr char RuntimeStringCatSuffix[] =
     "runtime/internal/runtime.StringCat";
+static constexpr char RuntimeStringCatBufferSuffix[] =
+    "runtime/internal/runtime.StringCatBuffer";
 static constexpr char RuntimeStringSliceSuffix[] =
     "runtime/internal/runtime.StringSlice";
 static constexpr char RuntimeStringSlice2Suffix[] =
@@ -169,7 +171,9 @@ bool isRuntimeStringCat(CallBase *CB) {
   if (!CB)
     return false;
   Function *Callee = CB->getCalledFunction();
-  return Callee && Callee->getName().ends_with(RuntimeStringCatSuffix);
+  return Callee &&
+         (Callee->getName().ends_with(RuntimeStringCatSuffix) ||
+          Callee->getName().ends_with(RuntimeStringCatBufferSuffix));
 }
 
 unsigned runtimeStringSliceBoundsArgs(CallBase *CB) {
@@ -215,9 +219,14 @@ bool collectStringSetFromStringCat(CallBase *CB, const DataLayout &DL,
   SmallVector<std::string, 4> Prefixes;
   SmallVector<std::string, 4> Suffixes;
   unsigned NextArgIndex = 0;
+  // The caller-buffer variant computes the same string, with one trailing
+  // storage pointer that does not affect the set of possible method names.
+  bool HasBuffer = CB->getCalledFunction()->getName().ends_with(
+      RuntimeStringCatBufferSuffix);
   if (!consumeStringCallArgument(CB, NextArgIndex, DL, Prefixes, Depth) ||
       !consumeStringCallArgument(CB, NextArgIndex, DL, Suffixes, Depth) ||
-      NextArgIndex != CB->arg_size())
+      NextArgIndex + unsigned(HasBuffer) != CB->arg_size() ||
+      (HasBuffer && !CB->getArgOperand(NextArgIndex)->getType()->isPointerTy()))
     return false;
   return addConcatenatedNames(Names, Prefixes, Suffixes);
 }

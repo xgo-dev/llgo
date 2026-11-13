@@ -120,6 +120,8 @@ func (s *envSection) empty() bool {
 }
 
 type commonSection struct {
+	EscapeAnalysisVersion int `yaml:"GO_ESCAPE_VERSION,omitempty"`
+
 	BuildTags            []string     `yaml:"BUILD_TAGS,omitempty"`
 	Target               string       `yaml:"TARGET,omitempty"`
 	TargetABI            string       `yaml:"TARGET_ABI,omitempty"`
@@ -163,7 +165,7 @@ type commonSection struct {
 }
 
 func (s *commonSection) empty() bool {
-	return len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
+	return s.EscapeAnalysisVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
 		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
@@ -176,6 +178,8 @@ func (s *commonSection) empty() bool {
 }
 
 type packageSection struct {
+	GoVersion        string            `yaml:"go_language_version,omitempty"`
+	FrontendInputs   string            `yaml:"frontend_inputs,omitempty"`
 	DeadInits        []string          `yaml:"unused_global_inits,omitempty"`
 	PthreadStackSize int64             `yaml:"pthread_stack_size,omitempty"`
 	PkgPath          string            `yaml:"pkg_path,omitempty"`
@@ -190,7 +194,7 @@ type packageSection struct {
 }
 
 func (s *packageSection) empty() bool {
-	return len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

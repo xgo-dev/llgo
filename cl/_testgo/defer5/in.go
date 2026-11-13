@@ -17,7 +17,7 @@ func main() {
 	// thread frame and the initial resume block used after longjmp.
 	// CHECK: [[OUTER_DEFER:%[0-9]+]] = call ptr @"{{.*}}.GetThreadDefer"()
 	// CHECK-NEXT: [[DEFER_JMPBUF:%[0-9]+]] = alloca i8, i64 {{[0-9]+}}, align 1
-	// CHECK-NEXT: [[DEFER_FRAME:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 48)
+	// CHECK-NEXT: [[DEFER_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 	// CHECK: [[FRAME_BUF_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 0
 	// CHECK-NEXT: store ptr [[DEFER_JMPBUF]], ptr [[FRAME_BUF_FIELD]]
 	// CHECK: [[FRAME_PREV_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 2
@@ -42,22 +42,19 @@ func main() {
 
 	// Plain println defers are registered as linked nodes.  Their state and
 	// payload identify A as the outer defer and B as the inner one.
-	// CHECK: [[DEFER_A_NODE:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 32)
+	// CHECK: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[DEFER_A_NODE:%[0-9]+]], i32 0, i32 0
 	// CHECK: [[DEFER_A_STATE:%[0-9]+]] = getelementptr inbounds nuw { ptr, i64, %"{{.*}}.String" }, ptr [[DEFER_A_NODE]], i32 0, i32 1
 	// CHECK-NEXT: store i64 0, ptr [[DEFER_A_STATE]]
 	// CHECK-NEXT: [[DEFER_A_ARG:%[0-9]+]] = getelementptr inbounds nuw { ptr, i64, %"{{.*}}.String" }, ptr [[DEFER_A_NODE]], i32 0, i32 2
 	// CHECK-NEXT: store %"{{.*}}.String" { ptr [[DEFER_A]], i64 1 }, ptr [[DEFER_A_ARG]]
 	// CHECK-NEXT: store ptr [[DEFER_A_NODE]], ptr [[DEFER_HEAD_FIELD]]
-	// CHECK: [[DEFER_B_NODE:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 32)
+	// CHECK: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[DEFER_B_NODE:%[0-9]+]], i32 0, i32 0
 	// CHECK: [[DEFER_B_STATE:%[0-9]+]] = getelementptr inbounds nuw { ptr, i64, %"{{.*}}.String" }, ptr [[DEFER_B_NODE]], i32 0, i32 1
 	// CHECK-NEXT: store i64 3, ptr [[DEFER_B_STATE]]
 	// CHECK-NEXT: [[DEFER_B_ARG:%[0-9]+]] = getelementptr inbounds nuw { ptr, i64, %"{{.*}}.String" }, ptr [[DEFER_B_NODE]], i32 0, i32 2
 	// CHECK-NEXT: store %"{{.*}}.String" { ptr [[DEFER_B]], i64 1 }, ptr [[DEFER_B_ARG]]
 	// CHECK-NEXT: store ptr [[DEFER_B_NODE]], ptr [[DEFER_HEAD_FIELD]]
-	// CHECK: [[MAIN_PANIC_BOX:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 16)
-	// CHECK-NEXT: store %"{{.*}}.String" { ptr [[PANIC_MAIN]], i64 13 }, ptr [[MAIN_PANIC_BOX]]
-	// CHECK-NEXT: [[MAIN_PANIC_VALUE:%[0-9]+]] = insertvalue %"{{.*}}.eface" { ptr @_llgo_string, ptr undef }, ptr [[MAIN_PANIC_BOX]], 1
-	// CHECK-NEXT: call void @"{{.*}}.Panic"(%"{{.*}}.eface" [[MAIN_PANIC_VALUE]])
+	// CHECK: call void @"{{.*}}.Panic"(%"{{.*}}.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 
 	// The state machine invokes defer 2 first, then enters a recover frame for
 	// defer 1.  Capturing block labels keeps the relation without pinning their
@@ -77,21 +74,21 @@ func main() {
 	// CHECK: call void @"main.main$2"()
 	// CHECK-NEXT: br label %[[RECOVER_BLOCK]]
 
-	// Both linked println nodes are popped, freed, and printed through the
+	// Both linked println nodes are popped and printed through the
 	// values read from the same defer-head field.
 	// CHECK: [[POP1:%[0-9]+]] = load ptr, ptr [[DEFER_HEAD_FIELD]]
 	// CHECK-NEXT: [[POP1_RECORD:%[0-9]+]] = load { ptr, i64, %"{{.*}}.String" }, ptr [[POP1]]
 	// CHECK-NEXT: [[POP1_PREV:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}.String" } [[POP1_RECORD]], 0
 	// CHECK-NEXT: store ptr [[POP1_PREV]], ptr [[DEFER_HEAD_FIELD]]
 	// CHECK-NEXT: [[POP1_TEXT:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}.String" } [[POP1_RECORD]], 2
-	// CHECK-NEXT: call void @"{{.*}}.FreeDeferNode"(ptr [[POP1]])
+	// CHECK-NOT: FreeDeferNode
 	// CHECK-NEXT: call void @"{{.*}}.PrintString"(%"{{.*}}.String" [[POP1_TEXT]])
 	// CHECK: [[POP2:%[0-9]+]] = load ptr, ptr [[DEFER_HEAD_FIELD]]
 	// CHECK-NEXT: [[POP2_RECORD:%[0-9]+]] = load { ptr, i64, %"{{.*}}.String" }, ptr [[POP2]]
 	// CHECK-NEXT: [[POP2_PREV:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}.String" } [[POP2_RECORD]], 0
 	// CHECK-NEXT: store ptr [[POP2_PREV]], ptr [[DEFER_HEAD_FIELD]]
 	// CHECK-NEXT: [[POP2_TEXT:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}.String" } [[POP2_RECORD]], 2
-	// CHECK-NEXT: call void @"{{.*}}.FreeDeferNode"(ptr [[POP2]])
+	// CHECK-NOT: FreeDeferNode
 	// CHECK-NEXT: call void @"{{.*}}.PrintString"(%"{{.*}}.String" [[POP2_TEXT]])
 	// CHECK: [[DEFER_FRAME_VALUE:%[0-9]+]] = load %"{{.*}}.Defer", ptr [[DEFER_FRAME]]
 	// CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = extractvalue %"{{.*}}.Defer" [[DEFER_FRAME_VALUE]], 2
@@ -119,13 +116,7 @@ func main() {
 // CHECK-NEXT: [[RECOVER_NONEMPTY:%[0-9]+]] = xor i1 [[RECOVER_EMPTY]], true
 // CHECK-NEXT: br i1 [[RECOVER_NONEMPTY]], label %{{.*}}, label %{{.*}}
 // CHECK: call void @"{{.*}}.PrintString"(%"{{.*}}.String" { ptr [[PRINT_DEFER1]], i64 10 })
-// CHECK: [[DEFER1_PANIC_BOX:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 16)
-// CHECK-NEXT: store %"{{.*}}.String" { ptr [[PANIC_DEFER1]], i64 16 }, ptr [[DEFER1_PANIC_BOX]]
-// CHECK-NEXT: [[DEFER1_PANIC:%[0-9]+]] = insertvalue %"{{.*}}.eface" { ptr @_llgo_string, ptr undef }, ptr [[DEFER1_PANIC_BOX]], 1
-// CHECK-NEXT: call void @"{{.*}}.Panic"(%"{{.*}}.eface" [[DEFER1_PANIC]])
+// CHECK: call void @"{{.*}}.Panic"(%"{{.*}}.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK-LABEL: define void @"main.main$2"(){{.*}} {
 // CHECK: call void @"{{.*}}.PrintString"(%"{{.*}}.String" { ptr [[PRINT_DEFER2]], i64 10 })
-// CHECK: [[DEFER2_PANIC_BOX:%[0-9]+]] = call ptr @"{{.*}}.AllocU"(i64 16)
-// CHECK-NEXT: store %"{{.*}}.String" { ptr [[PANIC_DEFER2]], i64 16 }, ptr [[DEFER2_PANIC_BOX]]
-// CHECK-NEXT: [[DEFER2_PANIC:%[0-9]+]] = insertvalue %"{{.*}}.eface" { ptr @_llgo_string, ptr undef }, ptr [[DEFER2_PANIC_BOX]], 1
-// CHECK-NEXT: call void @"{{.*}}.Panic"(%"{{.*}}.eface" [[DEFER2_PANIC]])
+// CHECK: call void @"{{.*}}.Panic"(%"{{.*}}.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })

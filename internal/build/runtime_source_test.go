@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 func TestRuntimeSourceVersionSelection(t *testing.T) {
@@ -40,6 +41,13 @@ func encoderune(p []byte, r rune) int { return 0 }
 			if test.crash {
 				base[filepath.Join(goroot, "src/runtime/runtime.go")] = []byte(
 					"package runtime\nfunc setCrashFD(fd uintptr) uintptr { return fd }\n")
+			}
+			for _, name := range []string{"complex.go", "float.go"} {
+				data, err := os.ReadFile(filepath.Join(runtime.GOROOT(), "src/runtime", name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				base[filepath.Join(goroot, "src/runtime", name)] = data
 			}
 			overlay, err := runtimeSourceOverlay(base, root, goroot, test.version)
 			if err != nil {
@@ -298,6 +306,19 @@ func TestRuntimeSourceToolchains(t *testing.T) {
 			config := types.Config{Importer: importer.Default()}
 			if _, err := config.Check("runtime", fset, files, nil); err != nil {
 				t.Fatal(err)
+			}
+			for _, arch := range []string{"386", "amd64"} {
+				abi, err := auditRuntimeABI(env.LLGoRuntimeDir(), goroot, goVersion, &llssa.Target{GOOS: "linux", GOARCH: arch})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantGo, wantLLGo, pointer := uint64(48), uint64(72), uint64(8)
+				if arch == "386" {
+					wantGo, wantLLGo, pointer = 32, 40, 4
+				}
+				if abi.GoType.Size != wantGo || abi.LLGoType.Size != wantLLGo || abi.GoFuncValueBytes != pointer || abi.LLGoFuncValueBytes != 2*pointer || abi.GoRuntimeASMReady {
+					t.Fatalf("%s: unreviewed runtime ABI: %+v", arch, abi)
+				}
 			}
 		})
 	}

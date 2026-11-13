@@ -18,6 +18,7 @@ package build
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 
@@ -215,6 +216,12 @@ func buildPackage(ctx *context, task *packageBuildTask, verbose, isolated bool) 
 	if err := finalizePackageBuild(ctx, task, verbose); err != nil {
 		return err
 	}
+	if ctx.frontend != nil && task.pkg.frontendOpaque == nil {
+		ctx.snapshotBackendPackage(task.pkg)
+		if err := ctx.frontend.store(task.pkg); err != nil && verbose {
+			fmt.Fprintf(os.Stderr, "warning: frontend cache %s: %v\n", task.pkg.PkgPath, err)
+		}
+	}
 	// Ordinary builds and single-test executable links consume package snapshots
 	// and archives. Let later packages reuse each isolated backend's memory instead of retaining
 	// every LLVM context until the final link. Isolated backends are restricted
@@ -326,7 +333,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 		return nil
 	}
 	owned = false
-	if task.needsRuntimeSignals() {
+	if task.needsRuntimeSignals() && task.pkg.frontendOpaque == nil {
 		task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
 	}
 	// Cache hits still rebuild the frontend module in the isolated Program even
@@ -344,7 +351,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 // Program. It must run on the same package worker before that Program is
 // disposed; root link plans consume only the resulting Go-owned values.
 func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
-	if pkg == nil || pkg.LPkg == nil {
+	if pkg == nil || pkg.LPkg == nil || pkg.frontendOpaque != nil {
 		return
 	}
 	lpkg := pkg.LPkg
@@ -405,6 +412,8 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		crossCompile:      ctx.crossCompile,
 		commands:          ctx.commands,
 		frontendOptions:   ctx.frontendOptions,
+		frontend:          ctx.frontend,
+		staticByteArrays:  ctx.staticByteArrays,
 		wasmClosedProgram: ctx.wasmClosedProgram,
 		cTransformer:      session.transformer,
 		buildTrace:        ctx.buildTrace,

@@ -27,6 +27,35 @@ import (
 // entire allocation through interior pointers. This storage is not paired
 // with AllocRoot/FreeRoot and must not be passed to a native free.
 func AllocUAligned(size, alignment uintptr) unsafe.Pointer {
+	return allocAligned(size, alignment, false, false)
+}
+
+// AllocZAligned is the zero-initialized counterpart of AllocUAligned.
+func AllocZAligned(size, alignment uintptr) unsafe.Pointer {
+	return allocAligned(size, alignment, true, false)
+}
+
+// AllocAtomicUAligned allocates aligned memory that must never contain pointers.
+func AllocAtomicUAligned(size, alignment uintptr) unsafe.Pointer {
+	return allocAligned(size, alignment, false, true)
+}
+
+// AllocAtomicZAligned is the zero-initialized counterpart of AllocAtomicUAligned.
+func AllocAtomicZAligned(size, alignment uintptr) unsafe.Pointer {
+	return allocAligned(size, alignment, true, true)
+}
+
+// allocZTyped selects the collector kind from the allocated type, rather than
+// the type of the pointer holding the result, while preserving zero values.
+func allocZTyped(size, alignment uintptr, hasPointers bool) unsafe.Pointer {
+	if hasPointers {
+		return AllocZAligned(size, alignment)
+	}
+	return AllocAtomicZAligned(size, alignment)
+}
+
+// All entry points share validation and the natural-alignment boundary.
+func allocAligned(size, alignment uintptr, zero, noscan bool) unsafe.Pointer {
 	if alignment == 0 || alignment&(alignment-1) != 0 {
 		panic("runtime: invalid allocation alignment")
 	}
@@ -34,17 +63,40 @@ func AllocUAligned(size, alignment uintptr) unsafe.Pointer {
 		panic("runtime: allocation size out of range")
 	}
 	if alignment <= unsafe.Sizeof(uintptr(0)) {
+		if noscan {
+			if zero {
+				return AllocAtomicZ(size)
+			}
+			return AllocAtomicU(size)
+		}
+		if zero {
+			return AllocZ(size)
+		}
 		return AllocU(size)
 	}
 	// Keep even a zero-sized result inside its allocation.
-	if size == 0 {
-		size = 1
+	allocSize := size
+	if allocSize == 0 {
+		allocSize = 1
 	}
 	padding := alignment - 1
-	if padding > maxAlloc || size > maxAlloc-padding {
+	if padding > maxAlloc || allocSize > maxAlloc-padding {
 		panic("runtime: allocation size out of range")
 	}
-	return allocUAligned(size, alignment)
+	var p unsafe.Pointer
+	if noscan {
+		// Not every backend supports aligned pointer-free allocations. Align
+		// atomic storage ourselves; the supported GC backends retain its base
+		// through the interior pointer.
+		p = AllocAtomicU(allocSize + padding)
+		p = unsafe.Add(p, -uintptr(p)&padding)
+	} else {
+		p = allocUAligned(allocSize, alignment)
+	}
+	if zero {
+		c.Memset(p, 0, size)
+	}
+	return p
 }
 
 // allocUAlignedFallback is used when the backend cannot provide the requested
@@ -52,11 +104,4 @@ func AllocUAligned(size, alignment uintptr) unsafe.Pointer {
 func allocUAlignedFallback(size, alignment uintptr) unsafe.Pointer {
 	p := AllocU(size + alignment - 1)
 	return unsafe.Add(p, -uintptr(p)&(alignment-1))
-}
-
-// AllocZAligned is the zero-initialized counterpart of AllocUAligned.
-func AllocZAligned(size, alignment uintptr) unsafe.Pointer {
-	p := AllocUAligned(size, alignment)
-	c.Memset(p, 0, size)
-	return p
 }

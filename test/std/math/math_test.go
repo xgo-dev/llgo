@@ -190,6 +190,49 @@ func TestFloatBitConversions(t *testing.T) {
 	}
 }
 
+func TestFloatBitRoundTrips(t *testing.T) {
+	bits32 := []uint32{0, 1, 0x007fffff, 0x00800000, 0x7f7fffff, 0x7f800000, 0xff800000,
+		0x7fc12345, 0xffc12345, 0x7f800001, 0xff800001}
+	for bit := uint(0); bit < 32; bit++ {
+		bits32 = append(bits32, uint32(1)<<bit, ^(uint32(1) << bit))
+	}
+	for _, want := range bits32 {
+		if got := math.Float32bits(math.Float32frombits(want)); got != want {
+			t.Fatalf("Float32 round trip: %#08x != %#08x", got, want)
+		}
+	}
+	bits64 := []uint64{0, 1, 0x000fffffffffffff, 0x0010000000000000, 0x7fefffffffffffff,
+		0x7ff0000000000000, 0xfff0000000000000, 0x7ff8123456789abc, 0xfff8123456789abc,
+		0x7ff0000000000001, 0xfff0000000000001}
+	for bit := uint(0); bit < 64; bit++ {
+		bits64 = append(bits64, uint64(1)<<bit, ^(uint64(1) << bit))
+	}
+	for _, want := range bits64 {
+		if got := math.Float64bits(math.Float64frombits(want)); got != want {
+			t.Fatalf("Float64 round trip: %#016x != %#016x", got, want)
+		}
+	}
+}
+
+// Taking an intrinsic's address still uses the ordinary function-value path.
+// Keep that path working alongside direct caller-side lowering.
+func TestFloatBitFunctionValues(t *testing.T) {
+	from32 := []func(uint32) float32{math.Float32frombits}
+	to32 := []func(float32) uint32{math.Float32bits}
+	for _, want := range []uint32{0, 1, 0x80000000, 0x3f800000, 0x7f800000, 0x7fc12345} {
+		if got := to32[0](from32[0](want)); got != want {
+			t.Fatalf("Float32 function-value round trip: %#08x != %#08x", got, want)
+		}
+	}
+	from64 := []func(uint64) float64{math.Float64frombits}
+	to64 := []func(float64) uint64{math.Float64bits}
+	for _, want := range []uint64{0, 1, 0x8000000000000000, 0x3ff0000000000000, 0x7ff0000000000000, 0x7ff8123456789abc} {
+		if got := to64[0](from64[0](want)); got != want {
+			t.Fatalf("Float64 function-value round trip: %#016x != %#016x", got, want)
+		}
+	}
+}
+
 func TestNextafter(t *testing.T) {
 	next := math.Nextafter(1, 2)
 	want := math.Float64frombits(math.Float64bits(1) + 1)

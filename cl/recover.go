@@ -214,7 +214,7 @@ func isRecoverTransparentWrapper(fn *ssa.Function) bool {
 }
 
 // Midway retains the source entry as a dispatcher, so it is not an SSA
-// synthetic wrapper. Its two sibling names contain compiler-only identifiers;
+// synthetic wrapper. Its sibling names contain compiler-only identifiers;
 // ordinary Go source cannot declare or call them. Check the forwarding calls
 // as well, excluding the retained trapping entries with dependent signatures.
 func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
@@ -225,12 +225,22 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 	if origin.Pkg == nil {
 		return false
 	}
-	software := origin.Pkg.Func(origin.Name() + "@simd0")
-	hardware := origin.Pkg.Func(origin.Name() + "@simd128")
-	if software == nil || hardware == nil {
-		return false
+	// The baseline variants are mandatory. Every additional variant present
+	// in this package must be forwarded to as well.
+	pending := make(map[*ssa.Function]bool)
+	for _, variant := range []struct {
+		suffix   string
+		required bool
+	}{{"@simd0", true}, {"@simd128", true}, {"@simd256", false}} {
+		callee := origin.Pkg.Func(origin.Name() + variant.suffix)
+		if callee == nil {
+			if variant.required {
+				return false
+			}
+			continue
+		}
+		pending[callee] = true
 	}
-	var seenSoftware, seenHardware bool
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
 			call, ok := instr.(*ssa.Call)
@@ -244,9 +254,8 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 			if base := callee.Origin(); base != nil {
 				callee = base
 			}
-			seenSoftware = seenSoftware || callee == software
-			seenHardware = seenHardware || callee == hardware
+			delete(pending, callee)
 		}
 	}
-	return seenSoftware && seenHardware
+	return len(pending) == 0
 }

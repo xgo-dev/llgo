@@ -17,8 +17,13 @@ type stringStruct struct {
 	len int
 }
 
-func stringStructOf(s *string) *stringStruct {
-	return (*stringStruct)(unsafe.Pointer(s))
+// The hasher only borrows its input. On targets where LLGo's escape analysis
+// heap-promotes an address-taken string parameter, keep the temporary header
+// in explicit stack storage to avoid allocating it for each operation.
+func hashMapKeyString(t *maptype, key string, seed uintptr) uintptr {
+	p := c.Alloca(unsafe.Sizeof(key))
+	*(*string)(p) = key
+	return t.Hasher(p, seed)
 }
 
 func memequal(p, q unsafe.Pointer, size uintptr) bool {
@@ -35,7 +40,7 @@ func mapaccess1_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer {
 	if h.flags&hashWriting != 0 {
 		fatal("concurrent map read and map write")
 	}
-	key := stringStructOf(&ky)
+	key := stringStruct{unsafe.Pointer(unsafe.StringData(ky)), len(ky)}
 	if h.B == 0 {
 		// One-bucket table.
 		b := (*bmap)(h.buckets)
@@ -91,7 +96,7 @@ func mapaccess1_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer {
 		return unsafe.Pointer(&zeroVal[0])
 	}
 dohash:
-	hash := t.Hasher(noescape(unsafe.Pointer(&ky)), uintptr(h.hash0))
+	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
 	m := bucketMask(h.B)
 	b := (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 	if c := h.oldbuckets; c != nil {
@@ -135,7 +140,7 @@ func mapaccess2_faststr(t *maptype, h *hmap, ky string) (unsafe.Pointer, bool) {
 	if h.flags&hashWriting != 0 {
 		fatal("concurrent map read and map write")
 	}
-	key := stringStructOf(&ky)
+	key := stringStruct{unsafe.Pointer(unsafe.StringData(ky)), len(ky)}
 	if h.B == 0 {
 		// One-bucket table.
 		b := (*bmap)(h.buckets)
@@ -191,7 +196,7 @@ func mapaccess2_faststr(t *maptype, h *hmap, ky string) (unsafe.Pointer, bool) {
 		return unsafe.Pointer(&zeroVal[0]), false
 	}
 dohash:
-	hash := t.Hasher(noescape(unsafe.Pointer(&ky)), uintptr(h.hash0))
+	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
 	m := bucketMask(h.B)
 	b := (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 	if c := h.oldbuckets; c != nil {
@@ -237,8 +242,8 @@ func mapassign_faststr(t *maptype, h *hmap, s string) unsafe.Pointer {
 	if h.flags&hashWriting != 0 {
 		fatal("concurrent map writes")
 	}
-	key := stringStructOf(&s)
-	hash := t.Hasher(noescape(unsafe.Pointer(&s)), uintptr(h.hash0))
+	key := stringStruct{unsafe.Pointer(unsafe.StringData(s)), len(s)}
+	hash := hashMapKeyString(t, s, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapassign.
 	h.flags ^= hashWriting
@@ -312,7 +317,7 @@ bucketloop:
 
 	insertk = add(unsafe.Pointer(insertb), dataOffset+inserti*2*goarch.PtrSize)
 	// store new key at insert position
-	*((*stringStruct)(insertk)) = *key
+	*((*stringStruct)(insertk)) = key
 	h.count++
 
 done:
@@ -332,8 +337,8 @@ func mapdelete_faststr(t *maptype, h *hmap, ky string) {
 		fatal("concurrent map writes")
 	}
 
-	key := stringStructOf(&ky)
-	hash := t.Hasher(noescape(unsafe.Pointer(&ky)), uintptr(h.hash0))
+	key := stringStruct{unsafe.Pointer(unsafe.StringData(ky)), len(ky)}
+	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapdelete
 	h.flags ^= hashWriting

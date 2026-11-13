@@ -34,6 +34,7 @@ type blockState struct {
 	succs  []int
 	loop   bool // marks block during findLoop traversal (ordering purposes only)
 	inLoop bool // block participates in a cycle (SCC); defer in this block may execute multiple times
+	scc    int  // SCC root, used to keep nested loop bodies ahead of their exits
 	always bool
 	reach  bool
 	fdel   bool
@@ -78,6 +79,16 @@ func findLoop(states []*blockState, path []int, seen []bool, iblk int) []int {
 				s := states[i]
 				s.loop = true
 				s.fdel = true
+			}
+			// Complete this SCC before scheduling its successors. A selected
+			// outer cycle can omit an inner body whose defer must be compiled
+			// before ordinary defers after the enclosing loop.
+			// Closing the cycle puts self and path[0] in the same SCC.
+			for i, s := range states {
+				if !s.fdel && s.scc == self.scc {
+					s.loop, s.fdel = true, true
+					path = append(path, i)
+				}
 			}
 			for _, s := range states { // clear inner loop mark
 				if !s.fdel {
@@ -236,6 +247,7 @@ func markInLoop(states []*blockState) {
 			w := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			onStack[w] = false
+			states[w].scc = v
 			scc = append(scc, w)
 			if w == v {
 				break

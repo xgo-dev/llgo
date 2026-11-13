@@ -37,6 +37,14 @@ import (
 )
 
 func configureUnusedGlobalInits(ctx *context) {
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if err := ctx.frontend.restoreInitializers(); err == nil {
+			return
+		}
+		// An invalid positional plan must be recomputed from complete source SSA.
+		ctx.frontend.program = nil
+		ctx.frontend.buildAll()
+	}
 	ctx.wasmClosedProgram = false
 	ctx.frontendOptions.UnusedGlobalInits = nil
 	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.buildConf.Goarch != "wasm" {
@@ -186,7 +194,7 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		if err != nil {
 			return false
 		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue

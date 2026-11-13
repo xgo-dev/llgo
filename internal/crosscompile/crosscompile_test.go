@@ -33,7 +33,7 @@ func TestESPClangHostDownload(t *testing.T) {
 		{"darwin", "amd64", "x86_64-apple-darwin"},
 		{"linux", "arm64", "aarch64-linux-gnu"},
 		{"linux", "amd64", "x86_64-linux-gnu"},
-		{"windows", "386", "x86_64-w64-mingw32"},
+		{"windows", "386", "i686-w64-mingw32"},
 		{"windows", "amd64", "x86_64-w64-mingw32"},
 		{"windows", "arm64", "aarch64-w64-mingw32"},
 	}
@@ -49,11 +49,45 @@ func TestESPClangHostDownload(t *testing.T) {
 	}
 }
 
+func TestMalformedESPPinsFailBeforeUse(t *testing.T) {
+	for name, data := range map[string]string{
+		"truncated JSON":     "{",
+		"wrong release type": `{"release":22}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("malformed embedded pins must fail before download URLs or checksums are used")
+				}
+			}()
+			mustParseESPPins([]byte(data))
+		})
+	}
+}
+
+func TestESPClangPinsMatchDownloads(t *testing.T) {
+	for platform, pin := range espPins.Payloads {
+		if pin.Asset != "clang-esp-"+espClangVersion+"-"+platform+".tar.xz" {
+			t.Errorf("wrong %s download asset: %s", platform, pin.Asset)
+		}
+		if len(pin.SHA256) != 64 || espClangSHA256[platform] != pin.SHA256 {
+			t.Errorf("missing %s payload checksum", platform)
+		}
+		if !strings.Contains(espClangCacheDir(platform), espPins.Release+"-"+platform) {
+			t.Errorf("wrong %s cache key", platform)
+		}
+	}
+	if len(espPins.Payloads) != 7 {
+		t.Fatal("ESP payloads must cover four Unix and three Windows hosts")
+	}
+}
+
 func TestESPClangCacheSeparatesHosts(t *testing.T) {
 	legacy := filepath.Join(cacheDir(), "esp-clang-"+espClangVersion)
+	x86 := espClangCacheDir(getESPClangPlatform("windows", "386"))
 	x64 := espClangCacheDir(getESPClangPlatform("windows", "amd64"))
 	arm64 := espClangCacheDir(getESPClangPlatform("windows", "arm64"))
-	if x64 == arm64 || x64 == legacy || arm64 == legacy {
+	if x86 == x64 || x86 == arm64 || x64 == arm64 || x64 == legacy || arm64 == legacy {
 		t.Fatalf("ESP payload caches overlap: x64=%q arm64=%q legacy=%q", x64, arm64, legacy)
 	}
 }

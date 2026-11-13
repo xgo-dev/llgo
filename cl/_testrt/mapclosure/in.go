@@ -7,7 +7,7 @@ type Type interface {
 
 // CHECK: @"main.list$data" = global [1 x { ptr, ptr }] [{ ptr, ptr } { ptr @main.demo, ptr null }]
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @main.demo(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-// CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" %0)
+// CHECK: [[DEMO_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %0, ptr %{{[0-9]+}})
 // CHECK: [[DEMO_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[DEMO_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[DEMO_METHOD]], 0
 // CHECK-NEXT: [[DEMO_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[DEMO_PAIR0]], ptr [[DEMO_DATA]], 1
@@ -43,12 +43,12 @@ var (
 // CHECK-NEXT: [[LIST_LEN:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[LOADED_LIST]], 1
 // CHECK: [[LIST_SLOT:%[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr [[LIST_DATA]], i64 0
 // CHECK-NEXT: [[LIST_FN:%[0-9]+]] = load { ptr, ptr }, ptr [[LIST_SLOT]]
-// CHECK-NEXT: [[ITAB1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK-NEXT: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: [[MAP_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 1
 // CHECK-NEXT: [[MAP_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[MAP_FN]], 0
 // ARM64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr swiftself [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
 // AMD64: [[MAP_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code(ptr nest [[MAP_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[MAP_ARG:%[0-9]+]])
-// CHECK: [[ITAB2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.typ")
+// CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: [[LIST_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 1
 // CHECK-NEXT: [[LIST_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[LIST_FN]], 0
 // ARM64: [[LIST_RESULT:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" %__llgo_funcval_code1(ptr swiftself [[LIST_ENV]], %"{{.*}}/runtime/internal/runtime.iface" [[LIST_ARG:%[0-9]+]])

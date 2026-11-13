@@ -202,12 +202,13 @@ func TestMain(m *testing.M) {
 
 func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	input := &Config{
-		RunArgs:      []string{"run"},
-		Exec:         []string{"wrapper", "argument"},
-		GoBuildFlags: []string{"-tags=custom"},
-		Overlay:      map[string][]byte{"input.go": []byte("package input")},
-		Coverage:     &CoverageConfig{Mode: "count"},
-		coverage:     &coverageBuild{},
+		RunArgs:          []string{"run"},
+		Exec:             []string{"wrapper", "argument"},
+		GoBuildFlags:     []string{"-tags=custom"},
+		LoaderBuildFlags: []string{"-tags=custom", "-gcflags="},
+		Overlay:          map[string][]byte{"input.go": []byte("package input")},
+		Coverage:         &CoverageConfig{Mode: "count"},
+		coverage:         &coverageBuild{},
 		GlobalRewrites: map[string]Rewrites{
 			"example.com/p": {"value": "input"},
 			"nil":           nil,
@@ -217,6 +218,7 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	cloned.RunArgs[0] = "changed"
 	cloned.Exec[0] = "changed"
 	cloned.GoBuildFlags[0] = "-tags=changed"
+	cloned.LoaderBuildFlags[0] = "-tags=changed"
 	cloned.Overlay["input.go"][0] = 'P'
 	cloned.GlobalRewrites["example.com/p"]["value"] = "changed"
 	cloned.GlobalRewrites["new"] = Rewrites{"value": "new"}
@@ -230,6 +232,9 @@ func TestConfigCloneDoesNotAliasInput(t *testing.T) {
 	}
 	if got := input.GoBuildFlags[0]; got != "-tags=custom" {
 		t.Fatalf("input GoBuildFlags changed to %q", got)
+	}
+	if got := input.LoaderBuildFlags[0]; got != "-tags=custom" {
+		t.Fatalf("input LoaderBuildFlags changed to %q", got)
 	}
 	if got := string(input.Overlay["input.go"]); got != "package input" {
 		t.Fatalf("input overlay changed to %q", got)
@@ -3262,6 +3267,29 @@ func TestIsStandardLibraryPackage(t *testing.T) {
 		if got := isStandardLibraryPackage(test.pkg, goroot); got != test.want {
 			t.Fatalf("isStandardLibraryPackage(%+v, %q) = %v, want %v", test.pkg, goroot, got, test.want)
 		}
+	}
+}
+
+func TestDoReportsInvalidMethodReceiver(t *testing.T) {
+	for _, test := range []struct {
+		name, source, want string
+	}{
+		{"nonlocal", "import \"bufio\"\nfunc (b bufio.Reader) Buffered() int { return -1 }", "cannot define new methods on non-local type bufio.Reader"},
+		{"nonlocal pointer", "import \"bufio\"\nfunc (b *bufio.Reader) Buffered() int { return -1 }", "cannot define new methods on non-local type bufio.Reader"},
+		{"nested pointer", "type T struct{}\nfunc (**T) M() {}", "invalid receiver type **T"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "invalid.go")
+			if err := os.WriteFile(file, []byte("package p\n"+test.source+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			readStderr := captureStderr(t)
+			_, err := Do([]string{file}, NewDefaultConf(ModeGen))
+			output := readStderr()
+			if err == nil || !strings.Contains(output, test.want) {
+				t.Fatalf("Do error = %v, diagnostics = %q, want %q", err, output, test.want)
+			}
+		})
 	}
 }
 

@@ -24,7 +24,7 @@ func Rethrow(link *Defer) {
 			if TracebackEnabled() && (PanicTraceback == nil || !PanicTraceback(2)) {
 				debug.PrintStack(2)
 			}
-			c.Free(unsafe.Pointer(node))
+			FreeRoot(unsafe.Pointer(node))
 			exitPanic()
 		} else {
 			gcroot.BeginSJLJReplay()

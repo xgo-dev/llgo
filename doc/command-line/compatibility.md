@@ -41,10 +41,7 @@ see the ordinary filesystem, as with Go's build overlay.
 Empty replacement maps are valid. Logical paths that resolve to the same
 absolute path are rejected, as in Go.
 
-The portable `-gcflags` subset is `-lang`, `-N`, `-l` (0/1 or boolean), and global
-`-d=converthash` settings. Unpatterned and `all=` lists configure the global LLGo
-frontend; gc diagnostics, selective hash patterns and other package patterns
-are rejected. The `-ldflags` subset is `-s`, `-w`, `-extld` and `-extldflags` with
+The portable `-gcflags` subset is `-lang`, `-N`, `-l` (0/1 or boolean), `-m`, and global `-d=converthash` settings. `-m` reports LLGo allocation plans; `-m=2` adds reasons. Unpatterned diagnostic lists select command-line packages and `all=` includes dependencies. The existing global mapping of other frontend controls is unchanged. Full gc diagnostics, selective hash patterns, and other package patterns are rejected. The `-ldflags` subset is `-s`, `-w`, `-extld` and `-extldflags` with
 unpatterned or `all=` lists. These configure LLGo's native linker. Other linker
 options are rejected rather than discarded.
 
@@ -64,7 +61,7 @@ are accepted. The effective `-l` count must remain 0 or 1; gc inliner diagnostic
 levels are unsupported.
 
 Repeated `-gcflags` lists use Go's last-matching-list rule within these supported
-scopes. For example, command-line `-gcflags=-N` replaces `GOFLAGS=-gcflags=-m`;
+scopes. For example, command-line `-gcflags=-N` replaces `GOFLAGS=-gcflags=-live`;
 the superseded compiler option is not validated. A later `all=` list replaces
 both scopes, while an unpatterned list does not replace an earlier `all=` list
 for dependencies. Any unsupported compiler options that remain applicable are
@@ -98,8 +95,16 @@ Execution trace and block/mutex profile controls are rejected, including their
 reserved `-test.*` spellings after `-args`, because LLGo does not produce those
 runtime samples. `-cpu` is also rejected until native `GOMAXPROCS` enforces the
 requested execution limit. Merely repeating a test with CPU suffixes does not
-provide that behavior. Fuzz engine and worker/cache controls are rejected
-until instrumentation, minimization, crash and cache behavior are qualified.
+provide that behavior. The runtime preserves positive `GOMAXPROCS` settings,
+returns the previous setting, and reads its initial value from the process
+environment, falling back to the host CPU default for a missing or invalid
+value. `SetDefaultGOMAXPROCS` restores the host CPU default and ignores that
+environment override. LLGo's schedulers do not enforce these settings as
+execution-parallelism limits, including on the native one-to-one thread
+backend; automatic CPU-quota updates are also not implemented.
+
+Fuzz engine and worker/cache controls are rejected until instrumentation,
+minimization, crash and cache behavior are qualified.
 Fuzz seed cases still run as ordinary tests without `-fuzz`.
 
 Profiling is qualified for native Linux, macOS and Windows runtimes without

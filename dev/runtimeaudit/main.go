@@ -64,5 +64,11 @@ func run(args []string, stdout io.Writer) error {
 	if len(report.Missing) != 0 {
 		return fmt.Errorf("%d unresolved runtime references; see missing in the report", len(report.Missing))
 	}
+	if len(report.DynamicCompilerUses) != 0 {
+		return fmt.Errorf("%d unbounded compiler runtime lookups; see dynamic_compiler_uses in the report", len(report.DynamicCompilerUses))
+	}
+	if len(report.UnresolvedBoundaries) != 0 {
+		return fmt.Errorf("%d runtime boundaries without a provider; see unresolved_boundaries in the report", len(report.UnresolvedBoundaries))
+	}
 	return nil
 }

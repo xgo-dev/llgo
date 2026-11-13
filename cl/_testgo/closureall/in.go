@@ -93,6 +93,9 @@ func makeWithFree(base int) Fn {
 // CHECK: ret i32 [[CB_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// Immediately called bound methods keep their environments on the stack.
+// CHECK: [[IFACE_METHOD_ENV:%.*]] = alloca { %"{{.*}}iface" }, align 8
+// CHECK: [[METHOD_ENV:%.*]] = alloca { ptr }, align 8
 // A closure without free variables carries a null environment.
 // CHECK: [[NO_FREE:%.*]] = call %main.Fn @main.makeNoFree()
 // CHECK: [[WITH_FREE:%.*]] = call %main.Fn @main.makeWithFree(i64 3)
@@ -109,10 +112,11 @@ func makeWithFree(base int) Fn {
 // AMD64: call i64 [[WITH_FREE_CODE]](ptr nest [[WITH_FREE_ENV]], i64 2)
 // CHECK: call i64 @main.globalAdd(i64 1, i64 2)
 // A bound pointer method stores the receiver in the closure environment.
-// CHECK: [[S:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[S:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[S_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S]], i32 0, i32 0
 // CHECK-NEXT: store i64 5, ptr [[S_FIELD]]
-// CHECK: [[METHOD_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[METHOD_ENV]], i8 0, i64 8, i1 false)
 // CHECK: [[METHOD_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[METHOD_ENV]], i32 0, i32 0
 // CHECK: store ptr [[S]], ptr [[METHOD_ENV_SLOT]]
 // CHECK: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[METHOD_ENV]], 1
@@ -124,13 +128,11 @@ func makeWithFree(base int) Fn {
 // A method expression uses the receiver as an ordinary first argument.
 // CHECK: call i64 @"main.(*S).Add$thunk"(ptr [[S]], i64 8)
 // The interface method value keeps the same interface payload and checks it is non-nil.
-// CHECK: [[ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr @"*_llgo_main.S")
-// CHECK: [[IFACE_ITAB:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[ITAB]], 0
-// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" [[IFACE_ITAB]], ptr [[S]], 1
+// CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[S]], 1
 // CHECK: [[IFACE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[IFACE]])
 // CHECK: [[IFACE_OK:%.*]] = icmp ne ptr [[IFACE_TYPE]], null
 // CHECK: br i1 [[IFACE_OK]], label %{{.*}}, label %{{.*}}
-// CHECK: [[IFACE_METHOD_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[IFACE_METHOD_ENV]], i8 0, i64 16, i1 false)
 // CHECK: [[IFACE_METHOD_SLOT:%.*]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[IFACE_METHOD_ENV]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" [[IFACE]], ptr [[IFACE_METHOD_SLOT]]
 // CHECK: [[IFACE_METHOD:%.*]] = insertvalue { ptr, ptr } { ptr @"main.interface{Add(int) int}.Add$bound", ptr undef }, ptr [[IFACE_METHOD_ENV]], 1
@@ -155,11 +157,12 @@ func makeWithFree(base int) Fn {
 // CHECK: ret i64 [[NO_FREE_RESULT]]
 
 // CHECK-LABEL: define %main.Fn @main.makeWithFree(i64 %0){{.*}} {
-// CHECK: [[BASE_ADDR:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: store i64 %0, ptr [[BASE_ADDR]]
-// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[BASE_ADDR]], ptr [[WITH_FREE_ENV_SLOT]]
+// CHECK: [[BASE_ADDR:%[0-9]+]] = alloca i64
+// CHECK: store i64 %0, ptr [[BASE_ADDR]]
+// CHECK-NEXT: [[BASE_VALUE:%[0-9]+]] = load i64, ptr [[BASE_ADDR]]
+// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
+// CHECK-NEXT: store i64 [[BASE_VALUE]], ptr [[WITH_FREE_ENV_SLOT]]
 // CHECK-NEXT: [[WITH_FREE_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.makeWithFree$1", ptr undef }, ptr [[WITH_FREE_ENV_OUT]], 1
 // CHECK-NEXT: [[WITH_FREE_OUT:%[0-9]+]] = alloca %main.Fn
 // CHECK-NEXT: store { ptr, ptr } [[WITH_FREE_FN]], ptr [[WITH_FREE_OUT]]
@@ -168,8 +171,7 @@ func makeWithFree(base int) Fn {
 
 // ARM64-LABEL: define i64 @"main.makeWithFree$1"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.makeWithFree$1"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[FREE_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[FREE_ADDR:%[0-9]+]] = extractvalue { ptr } [[FREE_ENV]], 0
+// CHECK: [[FREE_ADDR:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[FREE_VALUE:%[0-9]+]] = load i64, ptr [[FREE_ADDR]]
 // CHECK-NEXT: [[FREE_RESULT:%[0-9]+]] = add i64 %1, [[FREE_VALUE]]
 // CHECK: ret i64 [[FREE_RESULT]]
@@ -189,7 +191,7 @@ func makeWithFree(base int) Fn {
 // AMD64-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[BOUND_IFACE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}iface" } [[BOUND_IFACE_ENV]], 0
-// CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_IFACE]])
+// CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_IFACE]], ptr %{{[0-9]+}})
 // CHECK: [[BOUND_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_IFACE]], 0
 // CHECK: [[BOUND_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ITAB]], i64 3
 // CHECK: [[BOUND_CODE:%.*]] = load ptr, ptr [[BOUND_SLOT]]

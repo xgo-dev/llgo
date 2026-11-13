@@ -282,10 +282,23 @@ jobs:
           fi
           exit "$status"
 
-      - name: Test traceback formatter with coverage
+      - name: Test LLVM AES on emulated CPU targets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user \
+            gcc-x86-64-linux-gnu gcc-i686-linux-gnu gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf gcc-powerpc64-linux-gnu gcc-powerpc64le-linux-gnu \
+            gcc-riscv64-linux-gnu libc6-dev-amd64-cross libc6-dev-i386-cross libc6-dev-arm64-cross \
+            libc6-dev-armhf-cross libc6-dev-ppc64-cross libc6-dev-ppc64el-cross \
+            libc6-dev-riscv64-cross
+          bash dev/test_aes_llvm.sh "$RUNNER_TEMP/llgo-aes-conformance"
+
+      - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings traceback go test -json -coverprofile=../coverage-traceback.txt -covermode=set ./internal/traceback
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:
@@ -340,7 +353,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-traceback.txt
+          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-runtime-helpers.txt
           flags: go-tests
           disable_search: true
 

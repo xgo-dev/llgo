@@ -2022,6 +2022,13 @@ func isPaddedField(t Type, i int) bool {
 // StructOf currently does not support promoted methods of embedded fields
 // and panics if passed unexported StructFields.
 func StructOf(fields []StructField) Type {
+	hostLayout := false
+	for _, field := range fields {
+		if field.Type != nil && isHostLayoutMarker(field.Type) {
+			hostLayout = true
+			break
+		}
+	}
 	var (
 		hash       = fnv1(0, []byte("struct {")...)
 		size       uintptr
@@ -2172,12 +2179,16 @@ func StructOf(fields []StructField) Type {
 
 		comparable = comparable && (ft.Equal != nil)
 
-		offset := align(size, uintptr(ft.Align_))
+		fieldAlign := ft.Align_
+		if hostLayout {
+			fieldAlign = hostLayoutFieldAlign(ft)
+		}
+		offset := align(size, uintptr(fieldAlign))
 		if offset < size {
 			panic("reflect.StructOf: struct size would exceed virtual address space")
 		}
-		if ft.Align_ > typalign {
-			typalign = ft.Align_
+		if fieldAlign > typalign {
+			typalign = fieldAlign
 		}
 		size = offset + ft.Size_
 		if size < offset {

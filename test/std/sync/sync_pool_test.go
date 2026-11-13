@@ -36,6 +36,40 @@ func TestPoolAfterGC(t *testing.T) {
 	}
 }
 
+func TestPoolManyOwners(t *testing.T) {
+	type value struct{ owner int }
+	var pools [128]sync.Pool
+	for i := range pools {
+		owner := i
+		pools[i].New = func() any { return &value{owner} }
+	}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			<-start
+			for round := 0; round < 8; round++ {
+				for index := range pools {
+					i := (index + worker) % len(pools)
+					v := pools[i].Get().(*value)
+					if v.owner != i {
+						t.Errorf("pool %d returned owner %d", i, v.owner)
+						return
+					}
+					pools[i].Put(v)
+				}
+				if worker == 0 {
+					runtime.GC()
+				}
+			}
+		}(worker)
+	}
+	close(start)
+	wg.Wait()
+}
+
 func TestPoolBasic(t *testing.T) {
 	var pool sync.Pool
 

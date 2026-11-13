@@ -17,9 +17,13 @@
 package ssa
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"go/token"
 	"go/types"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -177,6 +181,15 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
 }
 
+func (b Builder) mapLitIndexAddr(x, idx Expr) Expr {
+	prog := b.Prog
+	telem := prog.Index(x.Type)
+	pt := prog.Pointer(telem)
+	idx = b.physicalPointerIndex(idx)
+	indices := []llvm.Value{idx.impl}
+	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
+}
+
 func isKnownNonNilArrayBase(v llvm.Value) bool {
 	if !v.IsAGlobalValue().IsNil() || !v.IsAAllocaInst().IsNil() {
 		return true
@@ -185,6 +198,8 @@ func isKnownNonNilArrayBase(v llvm.Value) bool {
 		if fn := call.CalledValue().IsAFunction(); !fn.IsNil() {
 			switch fn.Name() {
 			case "github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU",
+				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicZ",
 				"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ":
 				return true
 			}
@@ -290,6 +305,9 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 			if signed {
 				panicIndex = "PanicExtendIndex"
 			}
+		}
+		fn := b.Pkg.rtFunc(RuntimeSymbol(panicIndex, "PanicIndex", "PanicIndexU", "PanicExtendIndex", "PanicExtendIndexU"))
+		if extended {
 			checkBytes := prog.SizeOf(checkIdx.Type)
 			wordBytes := prog.SizeOf(prog.Uint())
 			if checkBytes != 8 || wordBytes != 4 {
@@ -302,9 +320,9 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 				hiType = prog.Int()
 			}
 			hi := Expr{castInt(b, hi64, prog.Uint64(), hiType), hiType}
-			b.InlineCall(b.Pkg.rtFunc(panicIndex), hi, lo, max)
+			b.InlineCall(fn, hi, lo, max)
 		} else {
-			b.InlineCall(b.Pkg.rtFunc(panicIndex), nativeIdx, max)
+			b.InlineCall(fn, nativeIdx, max)
 		}
 		// Keep the failure path disconnected from the successful continuation,
 		// while retaining a post-call instruction for return-address line info.
@@ -543,6 +561,20 @@ func (b Builder) SliceLit(t Type, elts ...Expr) Expr {
 //	t1 = make []string 1:int t0
 //	t1 = make StringSlice 1:int t0
 func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
+	return b.MakeSliceEx(t, len, cap, true)
+}
+
+func (b Builder) MakeSliceEx(t Type, len, cap Expr, heap bool) (ret Expr) {
+	return b.makeSlice(t, len, cap, heap, -1)
+}
+
+// MakeSliceStackCapacity preserves runtime length checks while using a
+// statically bounded backing array whose lifetime was proved by the frontend.
+func (b Builder) MakeSliceStackCapacity(t Type, len, cap Expr, capacity int64) Expr {
+	return b.makeSlice(t, len, cap, false, capacity)
+}
+
+func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (ret Expr) {
 	dbgInstrf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
 	prog := b.Prog
 	telem := prog.Index(t)
@@ -556,11 +588,26 @@ func (b Builder) MakeSlice(t Type, len, cap Expr) (ret Expr) {
 		cap = b.FitIntSize(cap)
 	}
 	args := []Expr{len, cap, prog.IntVal(prog.SizeOf(telem), prog.Int())}
+	if !heap && prog.SizeOf(telem) != 0 {
+		if capacity < 0 {
+			capacity = int64(llabi.SmallStackBufferSize / prog.SizeOf(telem))
+		}
+	}
+	if !heap && capacity > 0 && prog.SizeOf(telem) <= llabi.MaxImplicitStackVarSize/uint64(capacity) {
+		buffer := b.uninitializedStackSlot(prog.Type(types.NewArray(telem.RawType(), capacity), GoDecl))
+		args = append(args, prog.IntVal(prog.AlignOf(telem), prog.Int()), b.Convert(prog.VoidPtr(), buffer), prog.IntVal(uint64(capacity), prog.Int()), prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
+		fn += "Buffer"
+		ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "MakeSliceBuffer", "MakeSlice64Buffer")), args...)
+		ret.Type = t
+		return
+	}
 	if alignment := prog.AlignOf(telem); alignment > uint64(prog.GoWordSize()) {
 		fn += "Aligned"
 		args = append(args, prog.IntVal(alignment, prog.Int()))
 	}
-	ret = b.InlineCall(b.Pkg.rtFunc(fn), args...)
+	args = append(args, prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
+	ret = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+		"MakeSlice", "MakeSlice64", "MakeSliceAligned", "MakeSlice64Aligned")), args...)
 	ret.Type = t
 	return
 }
@@ -600,14 +647,43 @@ func (b Builder) fitInt64(n Expr) Expr {
 //	t1 = make map[string]int t0
 //	t1 = make StringIntMap t0
 func (b Builder) MakeMap(t Type, nReserve Expr) (ret Expr) {
+	return b.MakeMapEx(t, nReserve, true)
+}
+
+func (b Builder) MakeMapEx(t Type, nReserve Expr, heap bool) (ret Expr) {
 	dbgInstrf("MakeMap %v, %v\n", t.RawType(), nReserve.impl)
 	if nReserve.IsNil() {
 		nReserve = b.Prog.Val(0)
 	}
 	nReserve = b.FitIntSize(nReserve)
 	typ := b.abiType(t.raw.Type)
+	if !heap {
+		ht, bt := b.Prog.MapStackStorage(t)
+		header := b.uninitializedStackSlot(ht)
+		bucket := b.Prog.Zero(b.Prog.VoidPtr())
+		if bt != nil {
+			bucket = b.Convert(b.Prog.VoidPtr(), b.uninitializedStackSlot(bt))
+		}
+		ret = b.InlineCall(b.Pkg.rtFunc("MakeMapBuffer"), typ, nReserve, header, bucket)
+		ret.Type = t
+		return
+	}
 	ret = b.InlineCall(b.Pkg.rtFunc("MakeMap"), typ, nReserve)
 	ret.Type = t
+	return
+}
+
+// MapStackStorage shares the exact header/bucket layout and eligibility policy
+// between escape-analysis reservation and allocation lowering.
+func (p Program) MapStackStorage(t Type) (header, bucket Type) {
+	header = p.rtType("Map")
+	mt := t.RawType().Underlying().(*types.Map)
+	if p.AlignOf(p.rawType(mt.Key())) <= uint64(p.GoWordSize()) && p.AlignOf(p.rawType(mt.Elem())) <= uint64(p.GoWordSize()) {
+		bt := p.Type(abi.MapBucketType(mt, p.sizes), GoDecl)
+		if p.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
+			bucket = bt
+		}
+	}
 	return
 }
 
@@ -640,8 +716,13 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		}
 		args = append(args, b.Pkg.mapZeroAddr(vsize, int(prog.AlignOf(vtyp))))
 	}
+	fn := b.Pkg.rtFunc(RuntimeSymbol(name,
+		"MapAccess1", "MapAccess2", "MapAccess1Fat", "MapAccess2Fat", "MapAccess1Fast32",
+		"MapAccess2Fast32", "MapAccess1Fast64", "MapAccess2Fast64", "MapAccess1FastStr",
+		"MapAccess2FastStr",
+	))
 	if commaOk {
-		vals := b.Call(b.Pkg.rtFunc(name), args...)
+		vals := b.Call(fn, args...)
 		valuePtr := b.getField(vals, 0)
 		valuePtr.Type = prog.Pointer(vtyp)
 		val := b.Load(valuePtr)
@@ -649,7 +730,7 @@ func (b Builder) Lookup(x, key Expr, commaOk bool) (ret Expr) {
 		t := prog.Struct(vtyp, prog.Bool())
 		return b.aggregateValue(t, val.impl, ok)
 	} else {
-		val := b.Call(b.Pkg.rtFunc(name), args...)
+		val := b.Call(fn, args...)
 		val.Type = prog.Pointer(vtyp)
 		ret = b.Load(val)
 	}
@@ -677,9 +758,93 @@ func (b Builder) MapUpdate(m, k, v Expr) {
 	typ := b.abiType(m.raw.Type)
 	kind := mapKeyFastKind(b.Prog, m.raw.Type)
 	arg := b.mapKeyAssignArg(m, k, kind)
-	ret := b.Call(b.Pkg.rtFunc(kind.assignName()), typ, m, arg)
+	ret := b.Call(b.Pkg.rtFunc(RuntimeSymbol(kind.assignName(),
+		"MapAssign", "MapAssignFast32", "MapAssignFast64", "MapAssignFast32Ptr", "MapAssignFast64Ptr",
+		"MapAssignFastStr",
+	)), typ, m, arg)
 	ret.Type = b.Prog.Pointer(v.Type)
 	b.Store(ret, v)
+}
+
+func llvmConstant(v Expr) bool {
+	return !v.impl.IsNil() && !v.impl.IsAConstant().IsNil()
+}
+
+func (b Builder) mapLitArray(suffix string, elems []Expr) Expr {
+	n := len(elems)
+	if n == 0 {
+		panic("mapLitArray: empty elements")
+	}
+	prog := b.Prog
+	arrTy := prog.Type(types.NewArray(elems[0].raw.Type, int64(n)), GoDecl)
+	ok := true
+	for _, e := range elems {
+		if !llvmConstant(e) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		h := sha256.New()
+		h.Write([]byte(elems[0].raw.Type.String()))
+		h.Write([]byte{0})
+		h.Write([]byte(suffix))
+		for _, e := range elems {
+			h.Write([]byte{0})
+			h.Write([]byte(e.impl.String()))
+		}
+		name := "_llgo_maplit$" + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+		g := b.Pkg.NewVarEx(name, prog.Pointer(arrTy))
+		g.Init(prog.ConstArray(arrTy, elems))
+		if !g.impl.IsNil() {
+			g.impl.SetLinkage(llvm.PrivateLinkage)
+			g.impl.SetGlobalConstant(true)
+			g.impl.SetUnnamedAddr(true)
+		}
+		return g.Expr
+	}
+	ptr := b.AllocaT(arrTy)
+	intTy := prog.Int()
+	for i, e := range elems {
+		b.Store(b.mapLitIndexAddr(ptr, prog.IntVal(uint64(i), intTy)), e)
+	}
+	return ptr
+}
+
+func (b Builder) StructLit(typ Type, fields []Expr) Expr {
+	vals := make([]llvm.Value, len(fields))
+	for i, f := range fields {
+		vals[i] = f.impl
+	}
+	return b.aggregateValue(typ, vals...)
+}
+
+func (b Builder) MapLitLoop(m Expr, keys, vals []Expr) {
+	n := len(keys)
+	if n == 0 || n != len(vals) {
+		panic("MapLitLoop: mismatched keys and values")
+	}
+	prog := b.Prog
+	intTy := prog.Int()
+	nVal := prog.IntVal(uint64(n), intTy)
+	one := prog.IntVal(1, intTy)
+	zero := prog.IntVal(0, intTy)
+	keyArr := b.mapLitArray("k", keys)
+	valArr := b.mapLitArray("v", vals)
+	iPtr := b.AllocaT(intTy)
+	b.Store(iPtr, zero)
+	blks := b.Func.MakeBlocks(3)
+	condBlk, bodyBlk, doneBlk := blks[0], blks[1], blks[2]
+	b.Jump(condBlk)
+	b.SetBlockEx(condBlk, AtEnd, false)
+	i := b.Load(iPtr)
+	b.If(b.BinOp(token.LSS, i, nVal), bodyBlk, doneBlk)
+	b.SetBlockEx(bodyBlk, AtEnd, false)
+	b.MapUpdate(m, b.Load(b.mapLitIndexAddr(keyArr, i)), b.Load(b.mapLitIndexAddr(valArr, i)))
+	b.Store(iPtr, b.BinOp(token.ADD, i, one))
+	b.Jump(condBlk)
+	b.SetBlockEx(doneBlk, AtEnd, false)
+	b.blk.last = doneBlk.last
 }
 
 type mapFastKind uint8
@@ -834,7 +999,16 @@ func (b Builder) mapKeyPtr(m, x Expr) Expr {
 		typ = x.Type
 	}
 	vtyp := b.Prog.VoidPtr()
-	vptr := b.AllocU(typ)
+	// Map helpers borrow the key address only for this call. Even indirect
+	// keys are copied into map-owned storage before MapAssign returns.
+	// Reserve one entry slot per operation, including in loops, and charge
+	// typed field roots against the same budget as other lowering helpers.
+	var vptr Expr
+	if b.Func.reserveEscapeStack(typ) {
+		vptr = b.uninitializedStackSlot(typ)
+	} else {
+		vptr = b.AllocU(typ)
+	}
 	if !types.Identical(typ.RawType(), x.RawType()) {
 		x = b.ChangeType(typ, x)
 	}
@@ -865,6 +1039,24 @@ func (b Builder) Range(x Expr) Expr {
 		return b.InlineCall(b.Pkg.rtFunc("NewMapIter"), typ, x)
 	}
 	panic("unsupport range for " + x.raw.Type.String())
+}
+
+// RangeBorrowed keeps its iterator in this invocation when the shared stack
+// budget permits. The iterator must not outlive the function's frame.
+func (b Builder) RangeBorrowed(x Expr) Expr {
+	switch x.kind {
+	case vkString:
+		typ := b.Prog.rtType("StringIter")
+		if b.Func.reserveEscapeStack(typ) {
+			return b.InlineCall(b.Pkg.rtFunc("NewStringIterBuffer"), x, b.uninitializedStackSlot(typ))
+		}
+	case vkMap:
+		typ := b.Prog.rtType("llgoMapIter")
+		if b.Func.reserveEscapeStack(typ) {
+			return b.InlineCall(b.Pkg.rtFunc("NewMapIterBuffer"), b.abiType(x.raw.Type), x, b.uninitializedStackSlot(typ))
+		}
+	}
+	return b.Range(x)
 }
 
 // The Next instruction reads and advances the (map or string)
@@ -955,7 +1147,8 @@ func (b Builder) MakeChan(t Type, size Expr) (ret Expr) {
 		fn += "Aligned"
 		args = append(args, prog.IntVal(alignment, prog.Int()))
 	}
-	ret.impl = b.InlineCall(b.Pkg.rtFunc(fn), args...).impl
+	ret.impl = b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+		"NewChan", "NewChan64", "NewChanAligned", "NewChan64Aligned")), args...).impl
 	return
 }
 
@@ -1133,6 +1326,19 @@ func (b Builder) chanOp(s *SelectState) Expr {
 
 // -----------------------------------------------------------------------------
 
+// AppendFreshSliceToNil forwards a fresh, exclusively used slice whose length
+// equals its capacity. The caller must give its backing array result lifetime.
+// An empty append preserves nil, unlike make of a zero-length slice.
+func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
+	length := b.SliceLen(fresh)
+	data := b.SliceData(fresh)
+	empty := llvm.CreateICmp(b.impl, llvm.IntEQ, length.impl, b.Prog.Zero(length.Type).impl)
+	data.impl = llvm.CreateSelect(b.impl, empty, b.Prog.Nil(data.Type).impl, data.impl)
+	ret := b.unsafeSlice(data, length.impl, length.impl)
+	ret.Type = t
+	return ret
+}
+
 // appendSlice selects aligned storage only for element types that need it.
 func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 	args := []Expr{src, data, count, b.Prog.Val(int(size))}
@@ -1141,5 +1347,6 @@ func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 		fn += "Aligned"
 		args = append(args, b.Prog.IntVal(alignment, b.Prog.Int()))
 	}
-	return b.InlineCall(b.Pkg.rtFunc(fn), args...)
+	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(b.Prog.Elem(src.Type).raw.Type)))
+	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
 }

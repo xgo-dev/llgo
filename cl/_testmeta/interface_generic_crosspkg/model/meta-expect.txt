@@ -1,6 +1,7 @@
 [OrdinaryEdges]
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.NewIntBox:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
+    llvm.memset.p0.i64
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.NewStringBox:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocZ
 github.com/xgo-dev/llgo/cl/_testmeta/interface_generic_crosspkg/model.init:

@@ -25,14 +25,19 @@ func TestPortableFamilies(t *testing.T) {
 			t.Fatalf("family %d has %d lanes", i, n)
 		}
 	}
-	for n := 0; n <= 4; n++ {
-		xs := []uint32{7, 9, 11, 13}[:n]
+	lanes32 := (simd.Uint32s{}).Len()
+	for n := 0; n <= lanes32; n++ {
+		xs := make([]uint32, n)
+		for i := range xs {
+			xs[i] = uint32(7 + 2*i)
+		}
 		v, loaded := simd.LoadUint32sPart(xs)
 		if loaded != n {
 			t.Fatalf("loaded %d, want %d", loaded, n)
 		}
 		v = v.IfElse(v.Greater(simd.BroadcastUint32s(8)), simd.BroadcastUint32s(99))
-		out := []uint32{0, 0, 0, 0, 0xfeed}
+		out := make([]uint32, n+1)
+		out[n] = 0xfeed
 		if stored := v.StorePart(out[:n]); stored != n {
 			t.Fatalf("stored %d, want %d", stored, n)
 		}
@@ -45,7 +50,7 @@ func TestPortableFamilies(t *testing.T) {
 				t.Fatalf("part[%d]=%d want %d", i, out[i], want)
 			}
 		}
-		if out[4] != 0xfeed {
+		if out[n] != 0xfeed {
 			t.Fatal("partial store overwrote guard")
 		}
 	}
@@ -76,9 +81,7 @@ func TestPortableArchConversion(t *testing.T) {
 		}
 		return
 	}
-	// The native Go control may choose a wider representation. This stage's
-	// architecture conversion contract is SIMD128; the shared arithmetic
-	// tests above still cover the control's full active width.
+	// The amd64-specific test covers the 256-bit architecture round trip.
 	if simd.VectorBitSize() != 128 {
 		return
 	}

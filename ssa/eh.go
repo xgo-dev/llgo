@@ -284,11 +284,18 @@ type deferTarget struct {
 // typ is the node struct type needed to decode the linked-list node.
 type loopDeferCase struct {
 	id         Expr
-	typ        Type
+	typ        *deferArgsStorage
 	mayRecover bool
 	fn         Expr
 	args       []Expr
 	buildCall  func(Builder, Expr, ...Expr) Expr
+}
+
+// Keep the registration's ownership decision with its record. The shared
+// function budget must not be queried again when generating the pop path.
+type deferArgsStorage struct {
+	typ  Type
+	heap bool
 }
 
 const (
@@ -389,7 +396,16 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	// Wasm Reth selector 0 is reserved for procBlk; Rund selector 0 is
 	// rethrowBlk. Native targets store the corresponding block addresses.
 	initialReth := deferTarget{index: 0, block: procBlk}
-	ptr := b.aggregateAllocU(prog.Defer(), jb.impl, zero.impl, link.impl, b.deferTargetValue(initialReth).impl)
+	fields := []llvm.Value{jb.impl, zero.impl, link.impl, b.deferTargetValue(initialReth).impl}
+	var ptr llvm.Value
+	if !self.reserveEscapeStack(prog.Defer()) {
+		ptr = b.aggregateAllocU(prog.Defer(), fields...)
+	} else {
+		// The thread chain borrows this frame until endDefer unlinks it.
+		// Managed fields are registered in the caller's typed root frame.
+		ptr = b.AllocaT(prog.Defer()).impl
+		b.aggregateInit(ptr, prog.Defer(), fields...)
+	}
 	deferData := Expr{ptr, prog.DeferPtr()}
 	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
 	if prog.GCRootsEnabled() {
@@ -523,7 +539,7 @@ func (b Builder) DeferToRecover(owner Function, stack Expr, mayRecover bool, fn 
 	self.loopCases = append(self.loopCases, loopCase)
 }
 
-func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
+func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
 	self.stmts = append(self.stmts, func(bits Expr, resume deferTarget) {
 		switch kind {
 		case DeferInCond:
@@ -534,13 +550,13 @@ func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ Type, mayRecov
 			zero := prog.Val(uintptr(0))
 			has := b.BinOp(token.NEQ, b.BinOp(token.AND, bits, nextbit), zero)
 			b.IfThen(has, func() {
-				b.callDefer(self, typ, mayRecover, buildCall, fn, args)
+				b.callDefer(self, kind, typ, mayRecover, buildCall, fn, args)
 			})
 		case DeferAlways:
 			// Leaving a run of loop defers; allow the next loop-defer statement
 			// (earlier in source order) to generate its own drainer.
 			self.loopDrainerGenerated = false
-			b.callDefer(self, typ, mayRecover, buildCall, fn, args)
+			b.callDefer(self, kind, typ, mayRecover, buildCall, fn, args)
 		case DeferInLoop:
 			b.loopDeferDrainer(self, resume)
 		}
@@ -597,7 +613,7 @@ func (b Builder) loopDeferDrainer(self *aDefer, resume deferTarget) {
 
 		b.SetBlockEx(caseBlks[i], AtEnd, true)
 		b.storeDeferTarget(self.rethPtr, resume)
-		b.callDefer(self, c.typ, c.mayRecover, c.buildCall, c.fn, c.args)
+		b.callDefer(self, DeferInLoop, c.typ, c.mayRecover, c.buildCall, c.fn, c.args)
 		b.Jump(condBlk)
 	}
 
@@ -619,11 +635,11 @@ defer.Args = node.prev
 free(node)
 */
 
-func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, args []Expr) Type {
+func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
 	return b.saveDeferArgsTo(self.argsPtr, kind, id, fn, args)
 }
 
-func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) Type {
+func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
 	saveFn := fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod)
 	if kind != DeferInLoop && fn != Nil && !saveFn && len(args) == 0 {
 		return nil
@@ -648,12 +664,22 @@ func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, 
 		flds[i+offset] = arg.impl
 	}
 	typ := prog.Struct(typs...)
-	ptr := Expr{b.aggregateAllocU(typ, flds...), prog.VoidPtr()}
+	var storage llvm.Value
+	heap := kind == DeferInLoop || !b.Func.reserveEscapeStack(typ)
+	if !heap {
+		// Each non-loop site runs at most once per invocation. Keep its slot
+		// in entry but capture arguments at the original defer statement.
+		storage = b.uninitializedStackSlot(typ).impl
+		b.aggregateInit(storage, typ, flds...)
+	} else {
+		storage = b.aggregateAllocU(typ, flds...)
+	}
+	ptr := Expr{storage, prog.VoidPtr()}
 	b.Store(argsPtr, ptr)
-	return typ
+	return &deferArgsStorage{typ: typ, heap: heap}
 }
 
-func (b Builder) callDefer(self *aDefer, typ Type, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
+func (b Builder) callDefer(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr) {
 	if typ == nil {
 		b.callRecoverScopedDefer(fn, mayRecover, func() {
 			buildCall(b, fn, args...)
@@ -669,7 +695,7 @@ func (b Builder) callDefer(self *aDefer, typ Type, mayRecover bool, buildCall fu
 	// pointer when no loop defers were recorded.
 	b.IfThen(has, func() {
 		ptr := b.Load(self.argsPtr)
-		data := b.Load(Expr{ptr.impl, prog.Pointer(typ)})
+		data := b.Load(Expr{ptr.impl, prog.Pointer(typ.typ)})
 		offset := 2 // prev + id
 		b.Store(self.argsPtr, Expr{b.getField(data, 0).impl, prog.VoidPtr()})
 		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
@@ -687,7 +713,9 @@ func (b Builder) callDefer(self *aDefer, typ Type, mayRecover bool, buildCall fu
 		for i := 0; i < len(args); i++ {
 			args[i] = b.getField(data, i+offset)
 		}
-		b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
+		if typ.heap {
+			b.Call(b.Pkg.rtFunc("FreeDeferNode"), ptr)
+		}
 		b.callRecoverScopedDefer(fn, mayRecover, func() {
 			buildCall(b, fn, args...)
 		})

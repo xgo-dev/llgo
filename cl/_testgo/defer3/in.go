@@ -9,30 +9,28 @@ package main
 // CHECK: @[[D3_WORLD:[0-9]+]] = private unnamed_addr constant [5 x i8] c"world"
 // CHECK-LABEL: define void @main.fail(){{.*}} {
 // CHECK: [[D3_FAIL_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D3_FAIL_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D3_FAIL_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: [[D3_FAIL_PREV_SLOT:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D3_FAIL_FRAME]], i32 0, i32 2
 // CHECK-NEXT: store ptr [[D3_FAIL_PREV]], ptr [[D3_FAIL_PREV_SLOT]]
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D3_FAIL_FRAME]])
 // CHECK: [[D3_FAIL_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D3_FAIL_FRAME]], i32 0, i32 5
 // CHECK: call void @"{{.*}}Rethrow"(ptr [[D3_FAIL_PREV]])
 // CHECK: [[D3_FAIL_OLD_HEAD:%[0-9]+]] = load ptr, ptr [[D3_FAIL_HEAD]]
-// CHECK-NEXT: [[D3_FAIL_NODE:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK-NEXT: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[D3_FAIL_NODE:%[0-9]+]], i32 0, i32 0
 // CHECK: store ptr [[D3_FAIL_OLD_HEAD]], ptr %{{[0-9]+}}
 // CHECK: store %"{{.*}}String" { ptr @[[D3_BYE]], i64 3 }, ptr %{{[0-9]+}}
 // CHECK-NEXT: store ptr [[D3_FAIL_NODE]], ptr [[D3_FAIL_HEAD]]
-// CHECK: store %"{{.*}}String" { ptr @[[D3_PANIC]], i64 13 }, ptr [[D3_PANIC_BOX:%[0-9]+]]
-// CHECK-NEXT: [[D3_PANIC_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @_llgo_string, ptr undef }, ptr [[D3_PANIC_BOX]], 1
-// CHECK-NEXT: call void @"{{.*}}Panic"(%"{{.*}}eface" [[D3_PANIC_EFACE]])
+// CHECK: call void @"{{.*}}Panic"(%"{{.*}}eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: [[D3_RUN_NODE:%[0-9]+]] = load ptr, ptr [[D3_FAIL_HEAD]]
 // CHECK: [[D3_RUN_PAYLOAD:%[0-9]+]] = extractvalue { ptr, i64, %"{{.*}}String" } %{{[0-9]+}}, 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[D3_RUN_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[D3_RUN_PAYLOAD]])
 // CHECK: [[D3_FAIL_SAVED:%[0-9]+]] = load %"{{.*}}Defer", ptr [[D3_FAIL_FRAME]]
 // CHECK-NEXT: [[D3_FAIL_RESTORE:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[D3_FAIL_SAVED]], 2
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[D3_FAIL_RESTORE]])
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[D3_MAIN_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[D3_MAIN_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[D3_MAIN_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[D3_MAIN_PREV]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D3_MAIN_FRAME]])
 // CHECK: store %"{{.*}}String" { ptr @[[D3_HELLO]], i64 5 }, ptr %{{[0-9]+}}
@@ -45,7 +43,7 @@ package main
 // CHECK: [[D3_MAIN_SAVED:%[0-9]+]] = load %"{{.*}}Defer", ptr [[D3_MAIN_FRAME]]
 // CHECK-NEXT: [[D3_MAIN_RESTORE:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[D3_MAIN_SAVED]], 2
 // CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[D3_MAIN_RESTORE]])
-// CHECK-COUNT-2: call void @"{{.*}}FreeDeferNode"(ptr %{{[0-9]+}})
+// CHECK-NOT: FreeDeferNode
 // CHECK-LABEL: define void @"main.main$1"(){{.*}} {
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @{{[0-9]+}}, i64 2 })
 // CHECK-NEXT: call void @"{{.*}}PrintByte"(i8 10)

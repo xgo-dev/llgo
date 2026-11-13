@@ -345,3 +345,156 @@ func TestReportBuildOutputsErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectArtifactsGoJSSidecars(t *testing.T) {
+	for _, output := range []string{"app.wasm", "app.mjs"} {
+		t.Run(output, func(t *testing.T) {
+			dir := t.TempDir()
+			conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", DebugArtifactMode: DebugArtifactEmbedded, DebugArtifactModeSet: true}
+			out := &OutFmtDetails{Out: filepath.Join(dir, output)}
+			module := filepath.Join(dir, "app.wasm")
+			driver := filepath.Join(dir, "app.mjs")
+			loader := goJSLoaderSidecar(driver)
+			for path, content := range map[string]string{module: "wasm", driver: "driver", loader: "loader", emscriptenBrowserHostSidecar(driver): "unrelated"} {
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			primary := Artifact{Role: ArtifactRoleDebugDeployment, Format: "wasm", Path: module, Size: 4}
+			glue := Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: driver, Size: 6}
+			want := []Artifact{primary, glue}
+			if output == "app.mjs" {
+				want = []Artifact{glue, primary}
+			}
+			want = append(want,
+				Artifact{Role: ArtifactRoleDeployment, Format: "javascript", Path: loader, Size: 6})
+			got, err := CollectArtifacts(conf, out)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("artifacts = %+v, %v; want %+v", got, err, want)
+			}
+			var listing bytes.Buffer
+			if err := reportBuildOutputs(conf, out, nil, io.Discard, &listing); err != nil {
+				t.Fatal(err)
+			}
+			for _, artifact := range want {
+				line := "role=" + string(artifact.Role) + " format=" + artifact.Format + " size=" + strconv.FormatInt(artifact.Size, 10) + " path=" + strconv.Quote(artifact.Path)
+				if !strings.Contains(listing.String(), line) {
+					t.Fatalf("missing %s in report: %s", line, listing.String())
+				}
+			}
+			if err := os.Remove(loader); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := CollectArtifacts(conf, out); got != nil || err == nil {
+				t.Fatalf("missing host: artifacts = %+v, error = %v", got, err)
+			}
+			if err := os.Mkdir(loader, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := CollectArtifacts(conf, out); got != nil || err == nil {
+				t.Fatalf("directory host: artifacts = %+v, error = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestCollectArtifactsGoJSSecondProgram(t *testing.T) {
+	dir := t.TempDir()
+	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", DebugArtifactMode: DebugArtifactEmbedded, DebugArtifactModeSet: true, OutFile: filepath.Join(dir, "second.wasm")}
+	out := &OutFmtDetails{Out: filepath.Join(dir, "second.wasm")}
+	module := filepath.Join(dir, "second.wasm")
+	driver := filepath.Join(dir, "second.mjs")
+	shared := goJSLoaderSidecar(driver)
+	unique := goJSUniqueLoaderSidecar(driver)
+	for path, content := range map[string]string{
+		module: "wasm",
+		driver: "driver",
+		shared: string(withGoJSWasmMarker("first.wasm", []byte("first-host"))),
+		unique: "second-host",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := CollectArtifacts(conf, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawShared, sawUnique bool
+	for _, artifact := range got {
+		if artifact.Path == shared {
+			sawShared = true
+		}
+		if artifact.Path == unique {
+			sawUnique = true
+			if artifact.Size != 11 {
+				t.Fatalf("unique size = %d", artifact.Size)
+			}
+		}
+	}
+	if sawShared || !sawUnique {
+		t.Fatalf("second program artifacts = %+v", got)
+	}
+	if err := os.Remove(shared); err != nil {
+		t.Fatal(err)
+	}
+	got, err = CollectArtifacts(conf, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawUnique = false
+	for _, artifact := range got {
+		if artifact.Path == unique {
+			sawUnique = true
+		}
+		if artifact.Path == shared {
+			t.Fatalf("missing shared still reported: %+v", got)
+		}
+	}
+	if !sawUnique {
+		t.Fatalf("standalone unique missing: %+v", got)
+	}
+}
+
+func TestCollectArtifactsGoJSSidecarOwnership(t *testing.T) {
+	for _, name := range []string{"run", "test", "install", "archive", "native", "wasi", "named emscripten", "custom target", "explicit module"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", DebugArtifactMode: DebugArtifactNone}
+			switch name {
+			case "run":
+				conf.Mode = ModeRun
+			case "test":
+				conf.Mode = ModeTest
+			case "install":
+				conf.Mode = ModeInstall
+			case "archive":
+				conf.BuildMode = BuildModeCArchive
+			case "native":
+				conf.Goos, conf.Goarch = "linux", "amd64"
+			case "wasi":
+				conf.Goos = "wasip1"
+			case "named emscripten":
+				conf.Target = "emscripten"
+			case "custom target":
+				conf.Target = "custom-js"
+			case "explicit module":
+				conf.OutFile = filepath.Join(dir, "app.mjs")
+			}
+			for _, file := range []string{"app.mjs", "app.wasm", wasmFSScriptName, goJSLoaderScriptName, "app_wasm_exec.js"} {
+				if err := os.WriteFile(filepath.Join(dir, file), []byte("unrelated"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := CollectArtifacts(conf, &OutFmtDetails{Out: filepath.Join(dir, "app.mjs")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, artifact := range got {
+				if base := filepath.Base(artifact.Path); base == goJSLoaderScriptName || strings.HasSuffix(base, "_wasm_exec.js") {
+					t.Fatalf("unowned GoJS host reported: %+v", artifact)
+				}
+			}
+		})
+	}
+}

@@ -25,17 +25,14 @@ type namedFunc func(int) int
 // CHECK: call %{{.*}} @reflect.Value.Interface(%reflect.Value [[FUNC_RESULT]])
 
 // CHECK-LABEL: define void @main.functionPointers(){{.*}} {
-// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 8)
+// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 8)
 // CHECK: [[CAPTURED_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.functionPointers$1", ptr undef }, ptr [[CAPTURED_ENV]], 1
 // CHECK-NEXT: [[CAPTURED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
 // CHECK-NEXT: store { ptr, ptr } [[CAPTURED_PAIR]], ptr [[CAPTURED_BOX]]
 // CHECK-NEXT: [[CAPTURED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[CAPTURED_BOX]], 1
 // CHECK-NEXT: [[CAPTURED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[CAPTURED_EFACE]])
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[CAPTURED_VALUE]])
-// CHECK: [[DECLARED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
-// CHECK-NEXT: store { ptr, ptr } { ptr @main.numericConversions, ptr null }, ptr [[DECLARED_BOX]]
-// CHECK-NEXT: [[DECLARED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[DECLARED_BOX]], 1
-// CHECK-NEXT: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[DECLARED_EFACE]])
+// CHECK: [[DECLARED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" { ptr @{{.*}}, ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK-NEXT: call ptr @reflect.Value.UnsafePointer(%reflect.Value [[DECLARED_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
@@ -47,11 +44,11 @@ type namedFunc func(int) int
 // CHECK: call void @main.nanConversion()
 
 // CHECK-LABEL: define void @main.nanConversion(){{.*}} {
-// CHECK: [[NAN:%[0-9]+]] = call float @math.Float32frombits(i32 2139095041)
+// CHECK-NOT: call float @math.Float32frombits
 // CHECK: [[NAN_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(
 // CHECK: [[FLOAT_TYPE:%[0-9]+]] = call %{{.*}} @reflect.TypeOf(
 // CHECK: [[FLOAT_VALUE:%[0-9]+]] = call %reflect.Value @reflect.Value.Convert(%reflect.Value [[NAN_VALUE]], {{.*}} [[FLOAT_TYPE]])
-// CHECK: call i32 @math.Float32bits(
+// CHECK: bitcast float {{.*}} to i32
 
 // CHECK-LABEL: define void @main.numericConversions(){{.*}} {
 // CHECK: [[INT_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(

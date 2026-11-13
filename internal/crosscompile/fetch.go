@@ -49,7 +49,36 @@ func checkDownloadAndExtractWasiSDK(dir string) (wasiSdkRoot string, err error) 
 }
 
 // checkDownloadAndExtractESPClang downloads and extracts ESP Clang binaries and libraries
-func checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, expectedSHA256, dir string) error {
+func checkDownloadAndExtractESPClang(baseURL, asset, expectedSHA256, dir string) error {
+	description := "ESP Clang " + strings.TrimSuffix(strings.TrimPrefix(asset, "clang-esp-"), ".tar.xz")
+	return installESPClang(dir, func(extracted string) error {
+		return downloadAndExtractArchiveWithChecksum(baseURL+"/"+asset, extracted, description, expectedSHA256)
+	})
+}
+
+// Release packages carry the original archive so ZIP does not duplicate tool
+// aliases stored as tar hard links. Extract into a writable per-user cache;
+// installation directories can be read-only (WinGet, DEB and RPM).
+func checkInstallESPClangArchive(archive, expectedSHA256, dir string) error {
+	return installESPClang(dir, func(extracted string) error {
+		actual, err := fileSHA256(archive)
+		if err != nil {
+			return fmt.Errorf("read bundled ESP Clang archive: %w", err)
+		}
+		if !strings.EqualFold(actual, expectedSHA256) {
+			return fmt.Errorf("bundled ESP Clang checksum mismatch: got %s, want %s", actual, expectedSHA256)
+		}
+		if err := os.MkdirAll(extracted, 0755); err != nil {
+			return err
+		}
+		if err := extractTarXz(archive, extracted); err != nil {
+			return fmt.Errorf("extract bundled ESP Clang archive: %w", err)
+		}
+		return nil
+	})
+}
+
+func installESPClang(dir string, extract func(string) error) error {
 	// Check if already exists
 	if _, err := os.Stat(dir); err == nil {
 		return nil
@@ -68,15 +97,15 @@ func checkDownloadAndExtractESPClang(baseURL, version, platformSuffix, expectedS
 		return nil
 	}
 
-	clangUrl := fmt.Sprintf("%s/clang-esp-%s-%s.tar.xz", baseURL, version, platformSuffix)
-	description := fmt.Sprintf("ESP Clang %s-%s", version, platformSuffix)
-
 	// Use temporary extraction directory for ESP Clang special handling
 	tempExtractDir := dir + ".extract"
-	if err := downloadAndExtractArchiveWithChecksum(clangUrl, tempExtractDir, description, expectedSHA256); err != nil {
+	if err := os.RemoveAll(tempExtractDir); err != nil {
 		return err
 	}
 	defer os.RemoveAll(tempExtractDir)
+	if err := extract(tempExtractDir); err != nil {
+		return err
+	}
 
 	// ESP Clang needs special handling: move esp-clang subdirectory to final destination
 	espClangDir := filepath.Join(tempExtractDir, "esp-clang")
@@ -304,10 +333,10 @@ func extractTarGz(tarGzFile, dest string) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dest, header.Name)
-		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("%s: illegal file path", target)
+		if !filepath.IsLocal(header.Name) {
+			return fmt.Errorf("%s: illegal file path", header.Name)
 		}
+		target := filepath.Join(dest, header.Name)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {
@@ -391,8 +420,13 @@ func extractTarXzWith7ZipCommand(sevenZip, tarXzFile, dest string, command func(
 }
 
 func windowsSevenZip(programFiles string) string {
-	if programFiles != "" {
-		sevenZip := filepath.Join(programFiles, "7-Zip", "7z.exe")
+	// WoW64 redirects ProgramFiles for an x86 LLGo process. The extractor can
+	// still be a native 64-bit executable installed under ProgramW6432.
+	for _, root := range []string{programFiles, os.Getenv("ProgramW6432"), os.Getenv("ProgramFiles(x86)")} {
+		if root == "" {
+			continue
+		}
+		sevenZip := filepath.Join(root, "7-Zip", "7z.exe")
 		if fileExists(sevenZip) {
 			return sevenZip
 		}
@@ -421,10 +455,16 @@ func fileExists(name string) bool {
 func extractZip(zipFile, dest string) error {
 	r, err := zip.OpenReader(zipFile)
 	if err != nil {
+		if r != nil {
+			r.Close()
+		}
 		return err
 	}
 	defer r.Close()
 	decompress := func(file *zip.File) error {
+		if !filepath.IsLocal(file.Name) {
+			return fmt.Errorf("unsafe ZIP entry path %q", file.Name)
+		}
 		path := filepath.Join(dest, file.Name)
 
 		if file.FileInfo().IsDir() {
@@ -437,6 +477,9 @@ func extractZip(zipFile, dest string) error {
 		}
 		defer fs.Close()
 
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
 		w, err := os.Create(path)
 		if err != nil {
 			return err

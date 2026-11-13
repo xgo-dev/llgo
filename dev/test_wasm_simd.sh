@@ -24,7 +24,7 @@ for profile in gojs emscripten emscripten-memory64; do
         flags+=("-lto=$lto")
       fi
       "$LLGO" test "${flags[@]}" "${target[@]}" \
-        -v -count=1 -timeout=2m -pclntab=none ./test/simd/...
+        -v -count=1 -timeout=2m -pclntab=none ./test/simd/... ./test/std/simd
     done
     for lto in thin full; do
       echo "SIMD: $profile O3 LTO=$lto boundary"
@@ -32,6 +32,6 @@ for profile in gojs emscripten emscripten-memory64; do
       "$LLGO" run -O3 "-lto=$lto" "${target[@]}" ./test/simd/testdata/boundary
     done
     GODEBUG=simd=0 "$LLGO" test -O2 "${target[@]}" \
-      -v -count=1 -timeout=2m -pclntab=none ./test/simd/portable
+      -v -count=1 -timeout=2m -pclntab=none ./test/simd/portable ./test/std/simd
   )
 done

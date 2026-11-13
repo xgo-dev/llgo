@@ -7,9 +7,10 @@
 package runtime
 
 import (
-	_ "unsafe"
+	"unsafe"
 
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
 )
 
 // This locally ports only the part of the Go runtime timer implementation that
@@ -28,13 +29,12 @@ var (
 	timerSchedulerMu   psync.Mutex
 	timerSchedulerCond psync.Cond
 	timerSchedulerHeap []*timerState
-	timerSchedulerMap  map[*runtimeTimer]*timerState
+	timerSchedulerMap  wordmap.Map[unsafe.Pointer, *timerState]
 )
 
 func initTimerScheduler() {
 	timerSchedulerMu.Init(nil)
 	initTimerSchedulerCond()
-	timerSchedulerMap = make(map[*runtimeTimer]*timerState)
 	go timerSchedulerLoop()
 }
 
@@ -70,10 +70,10 @@ func startRuntimeTimer(r *runtimeTimer) {
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
 	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
-		timerSchedulerMap[r] = st
+		timerSchedulerMap.Set(unsafe.Pointer(r), st)
 	} else if st.active {
 		timerHeapRemove(st.heapIndex)
 	}
@@ -94,12 +94,12 @@ func stopRuntimeTimer(r *runtimeTimer) bool {
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
 	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if wasActive {
 		timerHeapRemove(st.heapIndex)
 		st.active = false
-		delete(timerSchedulerMap, r)
+		timerSchedulerMap.Delete(unsafe.Pointer(r))
 		signalTimerSchedulerIfHeadChangedLocked(oldHead, oldHeadWhen)
 	}
 	timerSchedulerMu.Unlock()
@@ -125,11 +125,11 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool 
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
 	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
-	st := timerSchedulerMap[r]
+	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
-		timerSchedulerMap[r] = st
+		timerSchedulerMap.Set(unsafe.Pointer(r), st)
 	} else if st.active {
 		timerHeapRemove(st.heapIndex)
 	}
@@ -171,7 +171,7 @@ func timerSchedulerLoop() {
 			timerHeapAdd(st)
 		} else {
 			st.active = false
-			delete(timerSchedulerMap, st.r)
+			timerSchedulerMap.Delete(unsafe.Pointer(st.r))
 		}
 
 		delay := now - when

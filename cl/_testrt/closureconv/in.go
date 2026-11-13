@@ -82,11 +82,12 @@ func demo4() Func {
 }
 
 // CHECK-LABEL: define %main.Func @main.demo5(i64 %0){{.*}} {
-// CHECK: [[DEMO5_CAPTURE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[DEMO5_CAPTURE:%.*]] = alloca i64
 // CHECK: store i64 %0, ptr [[DEMO5_CAPTURE]]
-// CHECK: [[DEMO5_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: [[DEMO5_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO5_ENV]], i32 0, i32 0
-// CHECK: store ptr [[DEMO5_CAPTURE]], ptr [[DEMO5_ENV_SLOT]]
+// CHECK: [[DEMO5_COPY:%.*]] = load i64, ptr [[DEMO5_CAPTURE]]
+// CHECK: [[DEMO5_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK: [[DEMO5_ENV_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[DEMO5_ENV]], i32 0, i32 0
+// CHECK: store i64 [[DEMO5_COPY]], ptr [[DEMO5_ENV_SLOT]]
 // CHECK: [[DEMO5_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.demo5$1", ptr undef }, ptr [[DEMO5_ENV]], 1
 // CHECK: store { ptr, ptr } [[DEMO5_FN]], ptr [[DEMO5_OUT:%.*]]
 // CHECK: [[DEMO5_RET:%.*]] = load %main.Func, ptr [[DEMO5_OUT]]
@@ -95,8 +96,7 @@ func demo4() Func {
 // ARM64-LABEL: define i64 @"main.demo5$1"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
 // AMD64-LABEL: define i64 @"main.demo5$1"(ptr nest %0, i64 %1, i64 %2){{.*}} {
 // CHECK: [[DEMO5_SUM:%.*]] = add i64 %1, %2
-// CHECK: [[DEMO5_ENV_VALUE:%.*]] = load { ptr }, ptr %0
-// CHECK: [[DEMO5_CAPTURE_ADDR:%.*]] = extractvalue { ptr } [[DEMO5_ENV_VALUE]], 0
+// CHECK: [[DEMO5_CAPTURE_ADDR:%.*]] = getelementptr inbounds nuw { i64 }, ptr %0, i32 0, i32 0
 // CHECK: [[DEMO5_CAPTURE_VALUE:%.*]] = load i64, ptr [[DEMO5_CAPTURE_ADDR]]
 // CHECK: [[DEMO5_RESULT:%.*]] = add i64 [[DEMO5_SUM]], [[DEMO5_CAPTURE_VALUE]]
 // CHECK: ret i64 [[DEMO5_RESULT]]

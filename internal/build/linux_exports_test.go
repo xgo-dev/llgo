@@ -115,13 +115,20 @@ func TestLinuxExecutableExportPCLNFallback(t *testing.T) {
 		t.Skip("ELF executable exports")
 	}
 	setPCLNIntegrationEnv(t)
+	t.Setenv("LLGO_PCLNPOST", "0")
 	t.Setenv("LDFLAGS", "")
 	source := writePCLNIntegrationFixture(t)
 	for _, sites := range []string{"1", "0"} {
 		t.Run("sites="+sites, func(t *testing.T) {
 			t.Setenv(llgoFuncInfoSites, sites)
 			bin := buildPCLNIntegrationBinary(t, source, PCLNEmbedded, LinkOptions{})
+			if got := runPCLNIntegrationBinary(t, bin, "once"); got != "FULL\n" {
+				t.Fatal(got)
+			}
 			if got := runPCLNIntegrationBinary(t, bin, "apis"); got != "caller=FULL frames=FULL func=FULL\n" {
+				t.Fatal(got)
+			}
+			if got := runPCLNIntegrationBinary(t, bin, "closure"); got != "target=FULL funcval=FULL same-entry=true\n" {
 				t.Fatal(got)
 			}
 			if got := linuxDynamicDefinitions(t, bin)["main.pclnTarget"]; got != (sites == "0") {

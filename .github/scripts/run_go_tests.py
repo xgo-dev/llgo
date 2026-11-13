@@ -79,7 +79,7 @@ def main():
     parser.add_argument("--packages-from-stdin", action="store_true",
                         help="append the complete go list output in one native subprocess")
     parser.add_argument("suite", choices=("main", "build", "compiler", "language",
-                                          "traceback", "embedded"))
+                                          "runtime-helpers", "embedded"))
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if not args.command:

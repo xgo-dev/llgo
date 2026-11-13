@@ -387,12 +387,10 @@ func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
 	}{
 		{version: "go1.27.0", platform: "linux/amd64", tc: testCase{RelPath: "heapsampling.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "linkmain_run.go", Directive: "run"}},
-		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue23305.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue42032.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "J32-GoJS", tc: testCase{RelPath: "init1.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "J32-Emscripten", tc: testCase{RelPath: "init1.go", Directive: "run"}},
-		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5089.go", Directive: "errorcheck"}},
 	}
 	for _, tt := range tests {
 		if match, _ := cfg.Match(tt.version, tt.platform, tt.tc); !match {
@@ -409,6 +407,7 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		platform string
 		tc       testCase
 	}{
+		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5089.go", Directive: "errorcheck"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue14646.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue4618.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "darwin/arm64", tc: testCase{RelPath: "index0.go", Directive: "runoutput"}},
@@ -442,6 +441,15 @@ func TestObservedPassesDoNotHaveXFailClassifications(t *testing.T) {
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue79186.go", Directive: "run"}},
 		{version: "go1.27.0", platform: "js/wasm", tc: testCase{RelPath: "fixedbugs/issue5162.go", Directive: "runoutput"}},
 	}
+	for _, version := range []string{"go1.26.7", "go1.27.0"} {
+		for _, platform := range []string{"windows-msvc/amd64", "windows-mingw/amd64"} {
+			tests = append(tests, struct {
+				version, platform string
+				tc                testCase
+			}{version, platform, testCase{RelPath: "fixedbugs/issue58300.go", Directive: "run"}})
+		}
+	}
+
 	for _, tt := range tests {
 		if match, reason := cfg.Match(tt.version, tt.platform, tt.tc); match {
 			t.Errorf("%s unexpectedly matched xfail for %s/%s: %s", tt.tc.RelPath, tt.version, tt.platform, reason)
@@ -550,7 +558,8 @@ func TestBoundedCaseEnv(t *testing.T) {
 		{"windows", "arm64", rangegen, nil, []string{"GOMEMLIMIT=1GiB"}},
 		{"windows", "arm64", rangegen, []string{"GOMEMLIMIT=4GiB"}, []string{"GOMEMLIMIT=1GiB"}},
 		{"linux", "arm64", rangegen, nil, nil},
-		{"darwin", "arm64", rangegen, nil, nil},
+		{"darwin", "arm64", rangegen, nil, []string{"GOMEMLIMIT=2GiB"}},
+		{"darwin", "arm64", rangegen, []string{"GOMEMLIMIT=4GiB"}, []string{"GOMEMLIMIT=2GiB"}},
 		{"linux", "amd64", testCase{RelPath: "other.go", Directive: "runoutput"}, nil, nil},
 	} {
 		if got := boundedCaseEnv(tt.goos, tt.goarch, tt.tc, tt.initial); !reflect.DeepEqual(got, tt.want) {
@@ -787,6 +796,12 @@ func TestHostedThreadResourceSkip(t *testing.T) {
 		{"Emscripten32", "darwin/arm64", "J32-Emscripten", "github-hosted", "run", "gcgort.go", false},
 		{"Emscripten64", "darwin/arm64", "J64-Emscripten", "github-hosted", "run", "gcgort.go", false},
 		{"WASI", "darwin/arm64", "W32-WASI", "github-hosted", "run", "gcgort.go", false},
+		{"hosted WASI amd64", "linux/amd64", "W32-WASI", "github-hosted", "run", "gcgort.go", true},
+		{"hosted WASI arm64", "linux/arm64", "W32-WASI", "github-hosted", "run", "gcgort.go", true},
+		{"local WASI", "linux/amd64", "W32-WASI", "", "run", "gcgort.go", false},
+		{"self-hosted WASI", "linux/amd64", "W32-WASI", "self-hosted", "run", "gcgort.go", false},
+		{"another WASI case", "linux/amd64", "W32-WASI", "github-hosted", "run", "gcstring.go", false},
+		{"compile WASI", "linux/amd64", "W32-WASI", "github-hosted", "compile", "gcgort.go", false},
 		{"another case", "darwin/arm64", "darwin/arm64", "github-hosted", "run", "gcstring.go", false},
 		{"same basename", "darwin/arm64", "darwin/arm64", "github-hosted", "run", "fixedbugs/gcgort.go", false},
 		{"compile only", "darwin/arm64", "darwin/arm64", "github-hosted", "compile", "gcgort.go", false},
@@ -1207,6 +1222,40 @@ var _ = missing // ERROR "undefined: missing"
 	err := checkExpectedErrors("", file, "case.go")
 	if err == nil || !strings.Contains(err.Error(), "missing error") {
 		t.Fatalf("err=%v, want missing error", err)
+	}
+}
+
+func TestCheckExpectedErrorsPreservesFrontendWording(t *testing.T) {
+	guardTestTimeout(t)
+	tests := []struct {
+		name, message, pattern string
+	}{
+		{"raw field suggestion", "unknown field DoneChan in struct literal of type http.Server, but does have unexported doneChan", `^unknown field DoneChan in struct literal of type http.Server, but does have unexported doneChan$`},
+		{"raw unexported selector", "s.doneChan undefined (cannot refer to unexported field doneChan)", `^s.doneChan undefined [(]cannot refer to unexported field doneChan[)]$`},
+		{"raw nearby field", "i1.floats undefined (type it has no field or method floats, but does have field Floats)", `^i1.floats undefined [(]type it has no field or method floats, but does have field Floats[)]$`},
+		{"raw label", "label L declared and not used", `^label L declared and not used$`},
+		{"quoted field fallback", "unknown field 'foo' in struct literal of type struct{}", `^unknown field foo in struct literal of type struct[{][}]$`},
+		{"quoted unicode field fallback", "unknown field '字段' in struct literal of type T", `^unknown field 字段 in struct literal of type T$`},
+		{"normalized field fallback", "unknown field foo in struct literal of type T", `^unknown field 'foo' in struct literal of type T$`},
+		{"normalized selector fallback", "s.doneChan undefined (cannot refer to unexported field doneChan)", `^s.doneChan undefined [(]cannot refer to unexported field or method doneChan[)]$`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "case.go")
+			source := fmt.Sprintf("package p\nvar _ = 0 // ERROR \"%s\"\n", tt.pattern)
+			if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(file+":2: "+tt.message, file, "case.go"); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkExpectedErrors(file+":2: unrelated diagnostic", file, "case.go"); err == nil {
+				t.Fatal("unrelated diagnostic satisfied ERROR")
+			}
+			if err := checkExpectedErrors(file+":3: "+tt.message, file, "case.go"); err == nil {
+				t.Fatal("diagnostic on a different line satisfied ERROR")
+			}
+		})
 	}
 }
 

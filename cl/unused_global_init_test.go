@@ -121,6 +121,9 @@ func TestUnusedGlobalInitializerPreserve(t *testing.T) {
 	if absent.Names(pkg) != nil || absent.CacheKeys(pkg) != nil {
 		t.Fatal("nil plan has package entries")
 	}
+	if data := absent.Export(pkg); len(data.Names)+len(data.Keys)+len(data.Instructions) != 0 {
+		t.Fatal("nil plan exported removals")
+	}
 }
 
 func TestUnusedGlobalInitializerPreserveOnce(t *testing.T) {
@@ -142,5 +145,45 @@ var C = B
 		if count != 1 {
 			t.Fatalf("preserve(%s) called %d times", global, count)
 		}
+	}
+}
+
+func TestUnusedGlobalInitializerExportRoundTrip(t *testing.T) {
+	const src = `package foo;var Dead=map[int]int{1:2};var Kept=3;func main(){println(Kept)}`
+	original := buildSSAPackage(t, src)
+	plan := FindUnusedGlobalInits(original.Prog, func(*ssa.Global) bool { return false })
+	data := plan.Export(original)
+	if len(data.Instructions) == 0 {
+		t.Fatal("fixture has no removals")
+	}
+	fresh := buildSSAPackage(t, src)
+	restored, err := RestoreUnusedGlobalInits(map[*ssa.Package]GlobalInitExport{fresh: data})
+	if err != nil || !slices.Equal(restored.Names(fresh), plan.Names(original)) || !slices.Equal(restored.CacheKeys(fresh), plan.CacheKeys(original)) || len(restored.instrs[fresh]) != len(plan.instrs[original]) {
+		t.Fatalf("initializer plan changed: %v", err)
+	}
+	bad := data
+	bad.Instructions = append([]GlobalInitInstruction{}, data.Instructions...)
+	bad.Instructions[0].Text = "changed"
+	if _, err := RestoreUnusedGlobalInits(map[*ssa.Package]GlobalInitExport{fresh: bad}); err == nil {
+		t.Fatal("changed instruction accepted")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*GlobalInitExport)
+	}{
+		{"missing plan digest", func(d *GlobalInitExport) { d.Keys = nil }},
+		{"duplicate instruction", func(d *GlobalInitExport) { d.Instructions = append(d.Instructions[:1], d.Instructions[0]) }},
+		{"block index", func(d *GlobalInitExport) { d.Instructions[0].Block = len(fresh.Func("init").Blocks) }},
+		{"instruction index", func(d *GlobalInitExport) { d.Instructions[0].Index = 1 << 30 }},
+		{"plan digest", func(d *GlobalInitExport) { d.Keys = []string{"changed"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			copy := data
+			copy.Instructions = append([]GlobalInitInstruction{}, data.Instructions...)
+			tc.change(&copy)
+			if _, err := RestoreUnusedGlobalInits(map[*ssa.Package]GlobalInitExport{fresh: copy}); err == nil {
+				t.Fatal("invalid cached initializer plan accepted")
+			}
+		})
 	}
 }

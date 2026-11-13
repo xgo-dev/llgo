@@ -81,14 +81,14 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/crosscompile
-        key: llgo-crosscompile-v1-${{ runner.os }}-${{ runner.arch }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ hashFiles('internal/crosscompile/**/*.go') }}
+        key: llgo-crosscompile-v1-${{ runner.os }}-${{ runner.arch }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ hashFiles('internal/crosscompile/**/*.go', 'internal/crosscompile/espressif.json') }}
 
     - name: Cache LLGo cross-compilation downloads
       if: inputs.crosscompile-cache-mode == 'readwrite'
       uses: actions/cache@v6
       with:
         path: ${{ steps.llgo_cache.outputs.root }}/crosscompile
-        key: llgo-crosscompile-v1-${{ runner.os }}-${{ runner.arch }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ hashFiles('internal/crosscompile/**/*.go') }}
+        key: llgo-crosscompile-v1-${{ runner.os }}-${{ runner.arch }}-clang-${{ steps.llgo_cache.outputs.clang-version }}-${{ hashFiles('internal/crosscompile/**/*.go', 'internal/crosscompile/espressif.json') }}
 
     # Cache the exact checked-out tree. For a pull request github.sha is its
     # synthetic merge commit, so a base update invalidates the primary key. A

@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/xgo-dev/llgo/cl/ssawrap"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
@@ -202,7 +203,10 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
-				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
+				fullName, inPkgName, ok := astFuncName(pkgPath, decl, aliases)
+				if !ok {
+					continue
+				}
 				if preloaded {
 					if exportName, ok := p.prog.PackageExport(fullName); ok {
 						p.pkg.SetExport(fullName, exportName)
@@ -325,20 +329,20 @@ func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.Fil
 		item := directives[n]
 		switch item.Name {
 		case "go:linkname", "llgo:link":
-			fields := strings.Fields(item.Args)
+			local, target := directive.ParseLinknameArgs(item.Args)
 			if item.Name == "llgo:link" {
-				if len(fields) < 2 {
+				if target == "" {
 					return false, fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
 				}
-				if fields[0] != inPkgName && fields[0] != parenthesizedMethodName(inPkgName) {
-					return false, fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), fields[0], inPkgName)
+				if local != inPkgName && local != parenthesizedMethodName(inPkgName) {
+					return false, fmt.Errorf("%s: //llgo:link local name %q does not match declaration %q", fset.Position(item.Pos), local, inPkgName)
 				}
 			}
 			if linkCollected {
 				continue
 			}
-			if len(fields) >= 2 && (fields[0] == inPkgName || fields[0] == parenthesizedMethodName(inPkgName)) {
-				prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
+			if target != "" && (local == inPkgName || local == parenthesizedMethodName(inPkgName)) {
+				prog.SetLinkname(fullName, target)
 				linkCollected = true
 			}
 		case "export":
@@ -397,25 +401,25 @@ func collectPackageLinknames(prog llssa.Program, fset *token.FileSet, files []*a
 				if item.Name != "llgo:link" && (item.Name != "go:linkname" || !importsUnsafe) {
 					continue
 				}
-				fields := strings.Fields(item.Args)
+				local, target := directive.ParseLinknameArgs(item.Args)
 				if item.Name == "llgo:link" {
 					// LLGo links must be attached to the declaration they name.
 					// Declaration scanning above has already validated and stored them.
-					if len(fields) < 2 {
+					if target == "" {
 						return fmt.Errorf("%s: //llgo:link requires a local name and a target", fset.Position(item.Pos))
 					}
 					if linkDocs[group] {
 						continue
 					}
-					return fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(item.Pos), fields[0])
+					return fmt.Errorf("%s: //llgo:link local name %q is not attached to a declaration", fset.Position(item.Pos), local)
 				}
-				if len(fields) < 2 {
+				if target == "" {
 					continue // Single-name go:linkname is a valid export annotation.
 				}
-				if fullName, ok := syms[fields[0]]; ok {
-					prog.SetLinkname(fullName, strings.Join(fields[1:], " "))
-				} else if strings.Contains(fields[0], ".") {
-					return fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), fields[0])
+				if fullName, ok := syms[local]; ok {
+					prog.SetLinkname(fullName, target)
+				} else if strings.Contains(local, ".") {
+					return fmt.Errorf("%s: //go:linkname local method %q not found", fset.Position(item.Pos), local)
 				}
 			}
 		}
@@ -461,41 +465,31 @@ const (
 )
 
 func (p *context) initLinkname(line string, allowExport bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) int {
-	const (
-		linkname  = "//go:linkname "
-		llgolink  = "//llgo:link "
-		llgolink2 = "// llgo:link "
-		export    = "//export "
-		directive = "//go:"
-	)
-	if strings.HasPrefix(line, linkname) {
-		p.initLink(line, len(linkname), false, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, llgolink2) {
-		p.initLink(line, len(llgolink2), false, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, llgolink) {
-		p.initLink(line, len(llgolink), false, f)
-		return hasLinkname
-	} else if allowExport && strings.HasPrefix(line, export) {
-		// rewrite //export FuncName to //export FuncName FuncName
-		funcName := strings.TrimSpace(line[len(export):])
-		line = line + " " + funcName
-		p.initLink(line, len(export), true, f)
-		return hasLinkname
-	} else if strings.HasPrefix(line, directive) {
+	if item, ok := directive.Parse(&ast.Comment{Text: line}); ok {
+		switch item.Name {
+		case "go:linkname", "llgo:link":
+			p.initLink(item, false, f)
+			return hasLinkname
+		case "export":
+			if allowExport {
+				// An export's local and target names are the same.
+				item.Args += " " + item.Args
+				p.initLink(item, true, f)
+				return hasLinkname
+			}
+		}
+	}
+	if strings.HasPrefix(line, "//go:") {
 		// skip unknown annotation but continue to parse the next annotation
 		return unknownDirective
 	}
 	return noDirective
 }
 
-func (p *context) initLink(line string, prefix int, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {
-	text := strings.TrimSpace(line[prefix:])
-	if idx := strings.IndexByte(text, ' '); idx > 0 {
-		inPkgName := text[:idx]
+func (p *context) initLink(item directive.Directive, export bool, f func(inPkgName string, isExport bool) (fullName string, isVar, ok bool)) {
+	inPkgName, link := directive.ParseLinknameArgs(item.Args)
+	if link != "" {
 		if fullName, _, ok := f(inPkgName, export); ok {
-			link := strings.TrimLeft(text[idx+1:], " ")
 			p.prog.SetLinkname(fullName, link)
 			if export {
 				p.pkg.SetExport(fullName, link)
@@ -508,32 +502,33 @@ func (p *context) initLink(line string, prefix int, export bool, f func(inPkgNam
 			if export {
 				panic(fmt.Sprintf("export comment has wrong name %q", inPkgName))
 			}
-			fmt.Fprintln(os.Stderr, "==>", line)
+			fmt.Fprintln(os.Stderr, "==>", item.Raw)
 			fmt.Fprintf(os.Stderr, "llgo: linkname %s not found and ignored\n", inPkgName)
 		}
 	}
 }
 
-func recvTypeName(typ ast.Expr) string {
-retry:
+// recvTypeName extracts the named base and pointer form from receiver syntax
+// that can denote a locally declared type. Other syntax is left to the type
+// checker to report. The pointer result is meaningful only when ok is true.
+func recvTypeName(typ ast.Expr) (name string, pointer, ok bool) {
 	switch t := typ.(type) {
 	case *ast.Ident:
-		return t.Name
+		return t.Name, false, true
 	case *ast.IndexExpr:
-		return trecvTypeName(t.X, t.Index)
+		return recvTypeName(t.X)
 	case *ast.IndexListExpr:
-		return trecvTypeName(t.X, t.Indices...)
+		return recvTypeName(t.X)
 	case *ast.ParenExpr:
-		typ = t.X
-		goto retry
+		return recvTypeName(t.X)
+	case *ast.StarExpr:
+		name, nestedPointer, ok := recvTypeName(t.X)
+		if !ok || nestedPointer {
+			return "", false, false
+		}
+		return name, true, true
 	}
-	panic("unreachable")
-}
-
-// TODO(xsw): support generic type
-func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
-	_ = indices
-	return t.(*ast.Ident).Name
+	return "", false, false
 }
 
 // inPkgName:
@@ -542,15 +537,18 @@ func trecvTypeName(t ast.Expr, indices ...ast.Expr) string {
 // fullName:
 // - func: pkg.name
 // - method: pkg.(T).name, pkg.(*T).name
-func astFuncName(pkgPath string, fn *ast.FuncDecl, aliases map[string]ast.Expr) (fullName, inPkgName string) {
+// Invalid receiver syntax returns ok=false so declaration metadata collection
+// does not mask the type-checking diagnostic with an internal panic.
+func astFuncName(pkgPath string, fn *ast.FuncDecl, aliases map[string]ast.Expr) (fullName, inPkgName string, ok bool) {
 	name := fn.Name.Name
-	if recv := fn.Recv; recv != nil && len(recv.List) == 1 {
-		t := ast.Unparen(recv.List[0].Type)
-		pointer := false
-		if tp, ok := t.(*ast.StarExpr); ok {
-			t, pointer = tp.X, true
+	if recv := fn.Recv; recv != nil {
+		if len(recv.List) != 1 {
+			return "", "", false
 		}
-		recvName := recvTypeName(t)
+		recvName, pointer, recvOK := recvTypeName(recv.List[0].Type)
+		if !recvOK {
+			return "", "", false
+		}
 		canonical := recvName
 		canonicalPtr := pointer
 		// Preloading runs before type checking. Resolve local receiver aliases
@@ -578,9 +576,9 @@ func astFuncName(pkgPath string, fn *ast.FuncDecl, aliases map[string]ast.Expr) 
 		if canonicalPtr {
 			canonical = "(*" + canonical + ")"
 		}
-		return pkgPath + "." + canonical + "." + name, recvName + "." + name
+		return pkgPath + "." + canonical + "." + name, recvName + "." + name, true
 	}
-	return pkgPath + "." + name, name
+	return pkgPath + "." + name, name, true
 }
 
 func receiverAliases(files []*ast.File) map[string]ast.Expr {
@@ -636,7 +634,8 @@ func declarationFuncName(pkgPath string, decl *ast.FuncDecl, obj types.Object, r
 		canonical, _ := typesRecvName(recv.Type())
 		return pkgPath + "." + canonical + "." + decl.Name.Name
 	}
-	fullName, _ := astFuncName(pkgPath, decl, nil)
+	// SSA lowering follows go/types validation, so this receiver is valid.
+	fullName, _, _ := astFuncName(pkgPath, decl, nil)
 	return fullName
 }
 
@@ -723,12 +722,13 @@ func cgoIgnored(fnName string) bool {
 }
 
 const (
-	ignoredFunc = iota
-	goFunc      = int(llssa.GoDecl)
-	cFunc       = int(llssa.CDecl)
-	pyFunc      = int(llssa.PyDecl)
-	stdcallFunc = int(llssa.Stdcall)
-	llgoInstr   = -1
+	ignoredFunc   = iota
+	goFunc        = int(llssa.GoDecl)
+	cFunc         = int(llssa.CDecl)
+	pyFunc        = int(llssa.PyDecl)
+	stdcallFunc   = int(llssa.Stdcall)
+	llgoInstr     = -1
+	llvmIntrinsic = -2
 
 	llgoInstrBase   = 0x80
 	llgoUnreachable = llgoInstrBase + 0
@@ -781,22 +781,28 @@ const (
 	llgoCgoCheckPointer = llgoCgoBase + 0x6
 	llgoCgoCgocall      = llgoCgoBase + 0x7
 
-	llgoAsm                = llgoInstrBase + 0x40
-	llgoStackSave          = llgoInstrBase + 0x41
-	llgoFuncPCABI0         = llgoInstrBase + 0x42
-	llgoSkip               = llgoInstrBase + 0x43
-	llgoSyscall            = llgoInstrBase + 0x44
-	llgoAtomicCmpXchgOK    = llgoInstrBase + 0x45
-	llgoAtomicAddReturnNew = llgoInstrBase + 0x46
-	llgoBoolToUint8        = llgoInstrBase + 0x47
-	llgoClosureEnv         = llgoInstrBase + 0x48
-	llgoFloat32FromBits    = llgoInstrBase + 0x49
-	llgoFloat32Bits        = llgoInstrBase + 0x4a
-	llgoFloat64FromBits    = llgoInstrBase + 0x4b
-	llgoFloat64Bits        = llgoInstrBase + 0x4c
-	llgoUMulOverflow       = llgoInstrBase + 0x4d
-	llgoSIMD               = llgoInstrBase + 0x4e
-	llgoInterfaceKindUsed  = llgoInstrBase + 0x4f
+	llgoAsm                  = llgoInstrBase + 0x40
+	llgoStackSave            = llgoInstrBase + 0x41
+	llgoFuncPCABI0           = llgoInstrBase + 0x42
+	llgoSkip                 = llgoInstrBase + 0x43
+	llgoSyscall              = llgoInstrBase + 0x44
+	llgoAtomicCmpXchgOK      = llgoInstrBase + 0x45
+	llgoAtomicAddReturnNew   = llgoInstrBase + 0x46
+	llgoBoolToUint8          = llgoInstrBase + 0x47
+	llgoClosureEnv           = llgoInstrBase + 0x48
+	llgoFloat32FromBits      = llgoInstrBase + 0x49
+	llgoFloat32Bits          = llgoInstrBase + 0x4a
+	llgoFloat64FromBits      = llgoInstrBase + 0x4b
+	llgoFloat64Bits          = llgoInstrBase + 0x4c
+	llgoUMulOverflow         = llgoInstrBase + 0x4d
+	llgoSIMD                 = llgoInstrBase + 0x4e
+	llgoInterfaceKindUsed    = llgoInstrBase + 0x4f
+	llgoAtomicStoreUnordered = llgoInstrBase + 0x50
+	llgoAESRound             = llgoInstrBase + 0x51
+	llgoAESSubWord           = llgoInstrBase + 0x52
+	llgoAESAlloca            = llgoInstrBase + 0x53
+	llgoKeepAlive            = llgoInstrBase + 0x54
+	llgoNoEscape             = llgoInstrBase + 0x55
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
 )
@@ -841,6 +847,13 @@ func extractTrampolineCName(name string) string {
 }
 
 func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
+	if fn.Synthetic == ssawrap.CallWrapper {
+		pkg := p.goTyps
+		if fn.Pkg != nil {
+			pkg = fn.Pkg.Pkg
+		}
+		return pkg, funcName(pkg, fn, false), goFunc
+	}
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
@@ -892,6 +905,9 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 		if strings.HasPrefix(v, "llgo.") {
 			return nil, v[5:], llgoInstr
 		}
+		if strings.HasPrefix(v, "llvm.") {
+			return nil, v, llvmIntrinsic
+		}
 		return pkg, v, goFunc
 	}
 	if _, ok := p.simdOperation(fn); ok {
@@ -905,22 +921,18 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	if orgName == "hash/maphash.escapeForHash" {
 		return nil, "skip", llgoInstr
 	}
-	// The 386 C ABI returns floating-point values through x87. Loading a
-	// signaling NaN into x87 quiets it, so a normal call to the standard
-	// library's pointer-based frombits helpers would not preserve the bit
-	// pattern promised by package math. Lower all four bit conversions at the
-	// caller on 386, matching the Go compiler's intrinsic treatment.
-	if target := p.prog.Target(); target != nil && target.GOARCH == "386" {
-		switch orgName {
-		case "math.Float32frombits":
-			return nil, "float32FromBits", llgoInstr
-		case "math.Float32bits":
-			return nil, "float32Bits", llgoInstr
-		case "math.Float64frombits":
-			return nil, "float64FromBits", llgoInstr
-		case "math.Float64bits":
-			return nil, "float64Bits", llgoInstr
-		}
+	// Lower bit conversions at the caller on every target. The pointer-based
+	// library helpers otherwise allocate without escape analysis. On 386 this
+	// also avoids x87 calls that would quiet signaling NaNs during conversion.
+	switch orgName {
+	case "math.Float32frombits":
+		return nil, "float32FromBits", llgoInstr
+	case "math.Float32bits":
+		return nil, "float32Bits", llgoInstr
+	case "math.Float64frombits":
+		return nil, "float64FromBits", llgoInstr
+	case "math.Float64bits":
+		return nil, "float64Bits", llgoInstr
 	}
 	return pkg, funcName(pkg, fn, false), goFunc
 }
@@ -942,6 +954,9 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 			}
 			if strings.HasPrefix(v, "stdcall.") {
 				panic(fmt.Errorf("stdcall linkname namespace applies only to functions: %s", name))
+			}
+			if strings.HasPrefix(v, "llvm.") {
+				panic(fmt.Errorf("llvm linkname namespace applies only to functions: %s", name))
 			}
 			if strings.HasPrefix(v, "go:") {
 				if llssa.PathOf(pkg) == "runtime" {
@@ -1040,7 +1055,10 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 				if err := locality.ValidateFuncBody(fset, decl.Body); err != nil {
 					return err
 				}
-				fullName, inPkgName := astFuncName(pkgPath, decl, aliases)
+				fullName, inPkgName, ok := astFuncName(pkgPath, decl, aliases)
+				if !ok {
+					continue
+				}
 				syms[inPkgName] = fullName
 				if alias := parenthesizedMethodName(inPkgName); alias != "" {
 					syms[alias] = fullName

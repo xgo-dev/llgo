@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
 )
 
 type wasmWaiter struct {
@@ -107,17 +108,14 @@ func (q *wasmWaitQueue) checkWake() {
 	}
 }
 
-var semaQueues map[uintptr]*wasmWaitQueue
+var semaQueues wordmap.Map[uintptr, *wasmWaitQueue]
 
 func semaQueue(addr *uint32) *wasmWaitQueue {
-	if semaQueues == nil {
-		semaQueues = make(map[uintptr]*wasmWaitQueue)
-	}
 	key := uintptr(unsafe.Pointer(addr))
-	q := semaQueues[key]
+	q := semaQueues.Get(key)
 	if q == nil {
 		q = new(wasmWaitQueue)
-		semaQueues[key] = q
+		semaQueues.Set(key, q)
 	}
 	return q
 }
@@ -215,17 +213,14 @@ type notifyList struct {
 	tail   unsafe.Pointer
 }
 
-var notifyQueues map[uintptr]*wasmWaitQueue
+var notifyQueues wordmap.Map[uintptr, *wasmWaitQueue]
 
 func notifyQueue(l *notifyList) *wasmWaitQueue {
-	if notifyQueues == nil {
-		notifyQueues = make(map[uintptr]*wasmWaitQueue)
-	}
 	key := uintptr(unsafe.Pointer(l))
-	q := notifyQueues[key]
+	q := notifyQueues.Get(key)
 	if q == nil {
 		q = new(wasmWaitQueue)
-		notifyQueues[key] = q
+		notifyQueues.Set(key, q)
 	}
 	return q
 }

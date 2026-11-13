@@ -81,7 +81,7 @@ func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optim
 	case "riscv32":
 		tr.sys = &TypeInfoRiscv32{tr, targetAbi}
 	case "amd64":
-		tr.sys = &TypeInfoAmd64{tr}
+		tr.sys = &TypeInfoAmd64{Transformer: tr}
 	case "arm64":
 		triple := llvmTarget
 		if triple == "" || !strings.Contains(triple, "-") {
@@ -157,6 +157,16 @@ func (p *Transformer) TransformModule(path string, m llvm.Module) {
 }
 
 func (p *Transformer) transformModule(m llvm.Module, acceptCallConv func(llvm.CallConv) bool) {
+	if _, sysv := p.sys.(*TypeInfoAmd64); sysv {
+		// Keep the cache within this pass, where LLVM aggregate bodies are
+		// complete, so subsequent modules and contexts are classified afresh.
+		pass := *p
+		pass.sys = &TypeInfoAmd64{
+			Transformer:     &pass,
+			classifications: make(map[llvm.Type]amd64AggregateClassification),
+		}
+		p = &pass
+	}
 	ctx := m.Context()
 	var fns []llvm.Value
 	var callInstrs []CallInstr
@@ -240,6 +250,20 @@ func (p *FuncInfo) HasWrap() bool {
 	return false
 }
 
+// introducesIndirectStorage reports whether lowering adds sret or indirect
+// parameter storage. Register coercions do not add caller-owned memory accesses.
+func (p *FuncInfo) introducesIndirectStorage() bool {
+	if p.Return.Kind == AttrPointer {
+		return true
+	}
+	for _, param := range p.Params {
+		if param.Kind == AttrPointer {
+			return true
+		}
+	}
+	return false
+}
+
 type TypeInfo struct {
 	Type       llvm.Type
 	NativeType llvm.Type // native aggregate layout when it differs from Type
@@ -250,6 +274,9 @@ type TypeInfo struct {
 	Align      int
 	ByValAlign int // explicit stack alignment for AttrPointer parameters
 	StackAlign int // alignstack attribute for direct HFA parameters
+	// PreservePointerABI prevents later argument/return promotion from restoring
+	// a feature-dependent vector ABI across baseline and specialized functions.
+	PreservePointerABI bool
 }
 
 func (p *TypeInfo) nativeType() llvm.Type {
@@ -429,10 +456,15 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
-	nfn.SetLinkage(fn.Linkage())
-	nfn.SetComdat(fn.Comdat())
-	nfn.SetFunctionCallConv(fn.FunctionCallConv())
+	nfn.CopyFunctionProperties(fn)
 	for _, attr := range fn.GetFunctionAttributes() {
+		// Pre-ABI optimization can infer memory(none) or memory(read) for
+		// direct aggregate values. Indirect parameters add reads and sret
+		// adds writes through caller-owned storage. Let LLVM infer effects
+		// again for the lowered body rather than retaining stale promises.
+		if info.introducesIndirectStorage() && attr.IsEnum() && attr.GetEnumKind() == int(llvm.AttributeKindID("memory")) {
+			continue
+		}
 		nfn.AddAttributeAtIndex(-1, attr)
 	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
@@ -450,6 +482,7 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 
 func loadIndirectParam(b llvm.Builder, info *TypeInfo, ptr llvm.Value) llvm.Value {
 	value := b.CreateLoad(info.nativeType(), ptr, "")
+	value.SetVolatile(info.PreservePointerABI)
 	if info.ByValAlign != 0 {
 		value.SetAlignment(info.ByValAlign)
 	}
@@ -605,7 +638,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// store %typ %1, ptr %2, align 4
 			nv = aggregateFromNative(b, ti, loadIndirectParam(b, ti, params[index]))
 			// Reuse the incoming ABI storage for one proven parameter home.
-			if p.optimize && !ti.hasNativeLayoutConversion() {
+			if p.optimize && !ti.hasNativeLayoutConversion() && !ti.PreservePointerABI {
 				storageAlign := ti.Align
 				if ti.ByValAlign != 0 {
 					storageAlign = ti.ByValAlign
@@ -690,7 +723,8 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				// Note: We don't use memcpy optimization here because the source
 				// address content may be modified between load and ret.
 				// See: https://github.com/xgo-dev/llgo/issues/1608
-				b.CreateStore(nativeRet, params[0])
+				store := b.CreateStore(nativeRet, params[0])
+				store.SetVolatile(info.Return.PreservePointerABI)
 				rv = b.CreateRetVoid()
 			case AttrWidthType, AttrWidthType2:
 				if info.Return.Kind == AttrWidthType && p.optimize && !info.Return.hasNativeLayoutConversion() {
@@ -843,7 +877,14 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	case AttrWidthType, AttrWidthType2:
 		ret := llvm.CreateCall(b, nft, nfn, nparams)
 		updateCallAttr(ret)
-		ptr := createAlloca(nft.ReturnType())
+		storageType := nft.ReturnType()
+		if p.Sizeof(info.Return.nativeType()) > p.Sizeof(storageType) {
+			// Register coercions can omit trailing padding; the aggregate
+			// load below still needs storage for the whole native value.
+			storageType = info.Return.nativeType()
+		}
+		ptr := createAlloca(storageType)
+		ptr.SetAlignment(max(info.Return.Align, p.Alignof(nft.ReturnType())))
 		b.CreateStore(ret, ptr)
 		pret := b.CreateBitCast(ptr, llvm.PointerType(info.Return.nativeType(), 0), "")
 		instr = aggregateFromNative(b, info.Return, b.CreateLoad(info.Return.nativeType(), pret, ""))

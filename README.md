@@ -181,6 +181,50 @@ type WinProc func(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr
 
 The older `//llgo:type C` and `//llgo:type stdcall` spellings remain supported for backward compatibility but are **deprecated**: the compiler accepts them and prints a warning naming the replacement (`//llgo:type C` → `//llgo:cdecl`, `//llgo:type stdcall` → `//llgo:stdcall`). Prefer the new directives in new code. A type may carry only one calling-convention directive; combining them (for example `//llgo:cdecl` together with `//llgo:stdcall` or `//llgo:type stdcall`) is reported as an error.
 
+#### Host-layout structs
+
+Use a leading blank `structs.HostLayout` field for a struct exchanged with native
+code. LLGo recognizes the marker from type information, including aliases,
+defined marker types, and generic instantiations.
+
+```go
+import "structs"
+
+//llgo:cdecl
+type Callback func(int32) int32
+
+type Record struct {
+    _        structs.HostLayout
+    Callback Callback
+    Data     *byte
+}
+```
+
+The marker selects native field layout, not a calling convention. A plain Go
+`func` field still carries its closure environment; use an explicitly annotated
+function type for a native callback. Nested struct fields keep their own layout,
+and containing structs do not inherit the marker. Ordinary Go fields retain
+their storage representation, including when their address is passed to another
+function. On profiled wasm32 targets, Go pointers and `uintptr` still occupy
+eight bytes; explicitly annotated callback fields also retain their existing
+Go storage width. HostLayout does not change callback reflection or conversion
+semantics. Host records requiring four-byte address slots must use explicit
+fixed-width storage and convert at the interface boundary. A nonempty marked
+struct ending in a zero-sized field retains Go's protective trailing padding.
+
+The older struct-level `//llgo:cdecl` and `//llgo:type C` declarations remain
+accepted for compatibility. A struct that still carries a legacy type directive
+keeps its legacy source-layout behavior, including when a HostLayout marker is
+added directly or through a field. Remove the struct directive when adopting
+HostLayout. When migrating, give any native callback fields
+explicit callback types rather than relying on the outer struct's directive.
+If Go and native pointer widths differ, use target-specific address/size slots
+and boundary accessors, retaining Go references for any addresses the host saves.
+The marker is a real zero-sized field: reflection field indices and positional
+struct literals must be adjusted when adding it.
+The runtime uses an internal compatibility marker on Go 1.20–1.22 and an alias
+to the standard `structs.HostLayout` on Go 1.23 and later.
+
 ### C/C++ standard libraries
 
 LLGo provides Go bindings for the C/C++ standard library:
@@ -236,7 +280,7 @@ Beyond the standard library, LLGo can import libraries from across the C/C++ eco
 Available bindings include:
 
 * [c/bdwgc](https://pkg.go.dev/github.com/goplus/lib/c/bdwgc)
-* [c/cjson](https://pkg.go.dev/github.com/goplus/lib/c/cjson)
+* [c/cjson](https://pkg.go.dev/github.com/llarhub/cjson)
 * [c/clang](https://pkg.go.dev/github.com/goplus/lib/c/clang)
 * [c/ffi](https://pkg.go.dev/github.com/goplus/lib/c/ffi)
 * [c/libuv](https://pkg.go.dev/github.com/goplus/lib/c/libuv)
@@ -244,8 +288,8 @@ Available bindings include:
 * [c/lua](https://pkg.go.dev/github.com/goplus/lib/c/lua)
 * [c/neco](https://pkg.go.dev/github.com/goplus/lib/c/neco)
 * [c/openssl](https://pkg.go.dev/github.com/goplus/lib/c/openssl)
-* [c/raylib](https://pkg.go.dev/github.com/goplus/lib/c/raylib)
-* [c/sqlite](https://pkg.go.dev/github.com/goplus/lib/c/sqlite)
+* [c/raylib](https://pkg.go.dev/github.com/llarhub/raylib)
+* [c/sqlite](https://pkg.go.dev/github.com/llarhub/sqlite)
 * [c/zlib](https://pkg.go.dev/github.com/goplus/lib/c/zlib)
 * [cpp/inih](https://pkg.go.dev/github.com/goplus/lib/cpp/inih)
 * [cpp/llvm](https://pkg.go.dev/github.com/goplus/lib/cpp/llvm)
@@ -253,7 +297,7 @@ Available bindings include:
 Examples built on these bindings:
 
 * [llama2-c](_demo/c/llama2-c): inference Llama 2 (the first LLGo AI example)
-* [mkjson](https://github.com/goplus/lib/tree/main/c/cjson/_demo/mkjson): create a JSON object and print it
+* [mkjson](https://github.com/llarhub/cjson/tree/main/demo/mkjson): create a JSON object and print it
 * [sqlitedemo](https://github.com/llarhub/sqlite/tree/main/demo/sqlitedemo): a basic SQLite demo
 * [tetris](https://github.com/llarhub/raylib/tree/main/demo/tetris): a Tetris game based on raylib
 
@@ -262,7 +306,7 @@ Examples built on these bindings:
 
 You can import a Python library in LLGo!
 
-You can import Python libraries into `llgo` through `llpyg` (see [Development tools](#development-tools)). Available bindings include:
+You can import Python libraries into `llgo` through [llpyg](https://github.com/xgo-dev/llpyg). Available bindings include:
 
 * [py](https://pkg.go.dev/github.com/goplus/lib/py) (abi)
 * [py/std](https://pkg.go.dev/github.com/goplus/lib/py/std) (builtins)
@@ -422,6 +466,13 @@ The APT/YUM configurations below accept packages without GPG signature verificat
 
 #### Debian/Ubuntu
 
+The DEB contains LLGo's compiler, runtime, targets, licenses and a pinned ESP
+runtime archive, unpacked locally on the first embedded build. Native LLVM 22,
+Clang, LLD and native libraries are installed as system dependencies. Ubuntu
+26.04 provides LLVM 22 in its standard repositories; on older Debian/Ubuntu
+releases, enable the matching [apt.llvm.org LLVM 22 repository](https://apt.llvm.org/)
+before installing LLGo.
+
 Install the latest stable release for amd64 or arm64 from the APT repository:
 
 ```sh
@@ -458,6 +509,10 @@ export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
 ```
 
 #### Fedora Linux 44 or newer
+
+The RPM contains LLGo and a pinned ESP runtime archive, unpacked locally for
+embedded builds. Native compilation uses the system LLVM/Clang/LLD 22 packages
+and native libraries.
 
 Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
 
@@ -496,11 +551,11 @@ llgo run .
 
 ### on Windows
 
-The release workflow builds six integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. Each architecture's MSVC and MinGW archives contain the same statically linked, DLL-free `llgo.exe`.
+The release workflow builds six compact Windows ZIPs: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Each contains LLGo, its DLL dependencies, `runtime`, `targets` and licenses. Add the extracted `bin` directory to `PATH`. Each architecture's MSVC and MinGW archives contain the same statically linked `llgo.exe`. The pinned ESP runtime archive is bundled and unpacked locally into the user cache on the first ESP build.
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
+Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. Bundled ESP Clang matches the host architecture, including native i686 and ARM64 tools for those hosts.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 
@@ -579,13 +634,8 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 
 `build`, `clean`, `install`, `run`, `test`, `version`, and `tool compile` remain LLGo-specific. The Go `bug`, `doc`, and `telemetry` commands are not exposed: the first and last operate Go services, while `go doc` cannot select LLGo-only sources because it has no build-tag option.
 
-* [pydump](_xtool/pydump): It is the first production program compiled with `llgo` rather than `go`. It outputs symbol information (functions, variables, and constants) from a Python library in JSON format, preparing for the generation of corresponding packages in `llgo`.
-* [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
-* [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
-* [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
 * [gentests](chore/gentests): It refreshes runtime-output and package-metadata golden data under `cl/_test*`. LLVM IR checks live in Go sources as `// LITTEST` FileCheck directives.
 * [litgen](chore/litgen): It maintains explicitly opted-in, source-embedded FileCheck snapshots. It supports function/global selection, update-only operation, stale-check verification, and stable LLVM value abstractions. Small handwritten checks remain manual.
-* [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
 
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
 
@@ -598,10 +648,6 @@ git clone https://github.com/xgo-dev/llgo.git
 cd llgo
 go install -v ./cmd/...
 go install -v ./chore/...  # compile all tools except pydump
-export LLGO_ROOT=$PWD
-cd _xtool
-llgo install ./...   # compile pydump
-go install github.com/goplus/hdq/chore/pysigfetch@v0.8.1  # compile pysigfetch
 ```
 
 ## Key modules

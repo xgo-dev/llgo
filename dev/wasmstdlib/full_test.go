@@ -184,6 +184,7 @@ func TestFullAuditAcceptsReviewedSourceExclusions(t *testing.T) {
 		"test/cgo",
 		"test/std/plugin",
 		"test/std/runtime/cgo",
+		"test/std/runtime/abicall",
 		"test/std/syscall",
 		"test/windows",
 	}
@@ -589,12 +590,14 @@ func TestFullProfileCommandsKeepLLGoAndReferenceDistinct(t *testing.T) {
 
 func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "test", "simd")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "simd_test.go"), []byte("//go:build goexperiment.simd\n\npackage simd\n"), 0644); err != nil {
-		t.Fatal(err)
+	for _, pkg := range []string{"test/simd", "test/simd/portable", "test/std/simd"} {
+		dir := filepath.Join(root, pkg)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "simd_test.go"), []byte("//go:build goexperiment.simd\n\npackage simd\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	structured := func(_ string, c command) ([]byte, error) {
 		if c.Args[0] == "env" {
@@ -620,12 +623,13 @@ func TestFullAuditClassifiesExperimentalSIMDSeparately(t *testing.T) {
 			if err := json.Unmarshal(data, &result); err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Packages) != 1 {
+			if len(result.Packages) != 3 {
 				t.Fatalf("SIMD disappeared from the inventory: %s", data)
 			}
-			entry := result.Packages[0]
-			if entry.Package != "test/simd" || entry.Status != "separate-suite" || entry.Tests != 0 || !strings.Contains(entry.Reason, "W32-WASI") {
-				t.Fatalf("SIMD execution scope misreported: %+v", entry)
+			for _, entry := range result.Packages {
+				if entry.Status != "separate-suite" || entry.Tests != 0 || !strings.Contains(entry.Reason, "W32-WASI") {
+					t.Fatalf("SIMD execution scope misreported: %+v", entry)
+				}
 			}
 		})
 	}
@@ -694,7 +698,7 @@ func TestFullSourceExclusionsAreProfileSpecific(t *testing.T) {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}
 		}
-		for _, pkg := range []string{"test/cgo", "test/std/runtime/cgo"} {
+		for _, pkg := range []string{"test/cgo", "test/cgo/c11", "test/std/runtime/cgo"} {
 			if reason, ok := fullSourceExclusion(p, pkg); !ok || reason == "" {
 				t.Fatalf("%s did not classify %s", name, pkg)
 			}
@@ -783,5 +787,21 @@ func TestFullWitnessUsesOnlySelectedSources(t *testing.T) {
 	}
 	if _, err := testWitness(selectedPackage{Dir: dir}); err == nil {
 		t.Fatal("accepted unselected tests")
+	}
+}
+
+func TestFullLargeStackCommandsAreTargeted(t *testing.T) {
+	for _, name := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI", "GoJS-reference", "GoWASI-reference"} {
+		p, err := fullProfile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pkg := range []string{"test/escape", "test/std/crypto/mldsa", "test/std/go/types", "test/std/fmt"} {
+			cmd := fullCommand(p, "go", "llgo", "/goroot", pkg)
+			want := !p.Reference && p.GOOS == "js" && pkg != "test/std/fmt"
+			if got := slices.Contains(cmd.Args, "-goroutine-stack-size=1MB"); got != want {
+				t.Errorf("%s %s: large stack = %v, want %v: %+v", name, pkg, got, want, cmd)
+			}
+		}
 	}
 }

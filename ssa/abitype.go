@@ -136,13 +136,16 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 			typ := prog.Type(equal.raw.Type, GoDecl)
 			equal = checkExpr(equal, typ.raw.Type, b)
 		} else {
-			equal = b.Pkg.rtEnvFunc(name)
+			equal = b.Pkg.rtEnvFunc(RuntimeSymbol(name, "structequal", "arrayequal"))
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			env := b.abiType(t)
 			equal = b.aggregateValue(prog.Type(equalFunc, GoDecl), equal.impl, env.impl)
 		}
 	default:
-		equal = b.Pkg.rtFunc(name)
+		equal = b.Pkg.rtFunc(RuntimeSymbol(name,
+			"memequal0", "memequal8", "memequal16", "memequal32", "memequal64", "memequalptr", "f32equal",
+			"f64equal", "c64equal", "c128equal", "strequal", "nilinterequal", "interequal",
+		))
 		b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 		typ := b.Prog.Type(equal.raw.Type, GoDecl)
 		equal = checkExpr(equal, typ.raw.Type, b)
@@ -166,7 +169,8 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 func (p Package) regularMemoryEqual(size uint64) Expr {
 	switch size {
 	case 0, 1, 2, 4, 8, 16:
-		return p.rtFunc("memequal" + strconv.FormatUint(size*8, 10))
+		return p.rtFunc(RuntimeSymbol("memequal"+strconv.FormatUint(size*8, 10),
+			"memequal0", "memequal8", "memequal16", "memequal32", "memequal64", "memequal128"))
 	}
 	name := "_llgo_memequal." + strconv.FormatUint(size, 10)
 	fn := p.FuncOf(name)
@@ -187,7 +191,8 @@ func (p Package) regularMemoryHash(size uint64) Expr {
 	// returns the seed unchanged. Zero-sized keys need the wrapper below.
 	switch size {
 	case 1, 2, 4, 8, 16:
-		return p.rtFunc("memhash" + strconv.FormatUint(size*8, 10))
+		return p.rtFunc(RuntimeSymbol("memhash"+strconv.FormatUint(size*8, 10),
+			"memhash8", "memhash16", "memhash32", "memhash64", "memhash128"))
 	}
 	name := "_llgo_memhash." + strconv.FormatUint(size, 10)
 	fn := p.FuncOf(name)
@@ -223,7 +228,7 @@ func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
 				name = "c128hash"
 			}
 			if name != "" {
-				hash = pkg.rtFunc(name)
+				hash = pkg.rtFunc(RuntimeSymbol(name, "strhash", "f32hash", "f64hash", "c64hash", "c128hash"))
 			}
 		}
 	}
@@ -821,7 +826,7 @@ func (b Builder) abiType(t types.Type) Expr {
 			methods = b.abiInterfaceMethods(mset)
 		}
 		methodCount := len(methods)
-		rt := prog.rtNamed(prog.abi.RuntimeName(t))
+		rt := prog.rtNamedABI(t)
 		var typ types.Type = rt
 		if hasUncommon {
 			ut := prog.rtNamed("uncommonType")
@@ -908,7 +913,7 @@ func (p Package) RegisterAbiTypes(infos []AbiTypeInfo) {
 		if hasUncommon {
 			methods = builder.abiInterfaceMethods(mset)
 		}
-		rt := p.Prog.rtNamed(p.Prog.abi.RuntimeName(t))
+		rt := p.Prog.rtNamedABI(t)
 		var typ types.Type = rt
 		if hasUncommon {
 			ut := p.Prog.rtNamed("uncommonType")
@@ -1000,3 +1005,11 @@ func (p Package) InitAbiTypes(fname string) Function {
 }
 
 // -----------------------------------------------------------------------------
+
+// Keep the descriptor selector and its audited literal domain in one place.
+func (p Program) rtNamedABI(t types.Type) *types.Named {
+	return p.rtNamed(RuntimeSymbol(p.abi.RuntimeName(t),
+		"_type", "ptrtype", "slicetype", "functype", "interfacetype", "structtype",
+		"maptype", "arraytype", "chantype",
+	))
+}

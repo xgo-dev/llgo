@@ -158,6 +158,7 @@ type cdpPending struct {
 }
 
 type cdpClient struct {
+	ctx      context.Context
 	conn     *websocket.Conn
 	mu       sync.Mutex
 	next     uint64
@@ -183,7 +184,7 @@ func newCDPClient(ctx context.Context, endpoint string) (*cdpClient, error) {
 	}
 	conn.SetReadLimit(8 << 20)
 	client := &cdpClient{
-		conn: conn, pending: make(map[uint64]cdpPending),
+		ctx: ctx, conn: conn, pending: make(map[uint64]cdpPending),
 		events: make(chan cdpMessage, cdpEventCapacity), done: make(chan struct{}),
 	}
 	go func() {
@@ -257,7 +258,17 @@ func (c *cdpClient) call(ctx context.Context, session, method string, params any
 		delete(c.pending, id)
 		c.mu.Unlock()
 	}()
-	if err := wsjson.Write(ctx, c.conn, cdpMessage{ID: id, Method: method, SessionID: session, Params: data}); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Canceling a WebSocket write closes the entire connection. A canceled
+	// snapshot request (including a sibling worker exiting) must not disconnect
+	// the other targets. Bound the write by the debugger session instead; the
+	// caller's context still controls whether we wait for its reply.
+	writeCtx, writeCancel := context.WithTimeout(c.ctx, cdpRequestTimeout)
+	err = wsjson.Write(writeCtx, c.conn, cdpMessage{ID: id, Method: method, SessionID: session, Params: data})
+	writeCancel()
+	if err != nil {
 		return err
 	}
 	select {

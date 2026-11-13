@@ -1,14 +1,17 @@
 package local
 
-import "unsafe"
+import (
+	"structs"
+	"unsafe"
+)
 
 const (
 	LLGoFiles   = "_wrap/visit.c"
 	LLGoPackage = "link"
 )
 
-// llgo:cdecl
 type Node struct {
+	_    structs.HostLayout
 	Kind int32
 	Data int32
 }

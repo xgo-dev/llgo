@@ -395,7 +395,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 		b.SetBlock(ret.ensure.Block(1))
 		closure := b.MakeClosure(ret.dispatch.Expr, nil)
 		b.Call(
-			pkg.RuntimeFunc(ensureFunc),
+			pkg.RuntimeFunc(llssa.RuntimeSymbol(ensureFunc, "EnsureLocalInitializer", "EnsureGoroutineLocalInitializer")),
 			guard,
 			failure,
 			closure,

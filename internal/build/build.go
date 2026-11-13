@@ -56,6 +56,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
+	"github.com/xgo-dev/llgo/internal/heap2stack"
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -182,6 +183,7 @@ type Config struct {
 	CheckLLFiles       bool // check .ll files valid
 	CheckLinkArgs      bool // check linkargs valid
 	ForceEspClang      bool // force to use esp-clang
+	frontendSourceOnly bool
 	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
 	Tags               string
 	SizeReport         bool   // print size report after successful build
@@ -190,10 +192,17 @@ type Config struct {
 	CompilerHash       string // metadata hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+
+	EscapeDiagnostics           int // -m count for explicitly selected packages
+	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
 	// GoBuildFlags contains normalized raw Go build flags forwarded to
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
 	GoBuildFlags []string
+	// LoaderBuildFlags preserves package selection while removing diagnostics
+	// consumed by LLGo, so go/packages cannot emit host-compiler escape results.
+	// Nil uses GoBuildFlags for direct compiler API callers.
+	LoaderBuildFlags []string
 	// GoFlagsParsed means the command layer has consumed GOFLAGS into native
 	// configuration. Package probes must not parse those command defaults again.
 	GoFlagsParsed bool
@@ -297,6 +306,7 @@ func (c *Config) clone() *Config {
 	cloned.RunArgs = slices.Clone(c.RunArgs)
 	cloned.Exec = slices.Clone(c.Exec)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.LoaderBuildFlags = slices.Clone(c.LoaderBuildFlags)
 	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
 	cloned.SourceOverlay = cloneSourceOverlay(c.SourceOverlay)
@@ -532,6 +542,29 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 	}()
 	result, err := buildInvocation(inv, &plan)
+	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+		if plan.sourceOverlayFile != "" {
+			os.Remove(plan.sourceOverlayFile)
+			plan.sourceOverlayFile = ""
+		}
+		if inv.Config == nil {
+			inv.Config = NewDefaultConf(ModeBuild)
+		} else {
+			inv.Config = inv.Config.clone()
+		}
+		inv.Config.frontendSourceOnly = true
+		if filename := inv.Config.BuildTrace; filename != "" {
+			if !filepath.IsAbs(filename) {
+				base := inv.Dir
+				if base == "" {
+					base, _ = os.Getwd()
+				}
+				filename = filepath.Join(base, filename)
+			}
+			_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+		}
+		result, err = buildInvocation(inv, &plan)
+	}
 	if len(plan.invocations) == 0 {
 		return result, err
 	}
@@ -545,7 +578,7 @@ func Build(inv Invocation) ([]Package, error) {
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
 	var fallback *multiBuildFallback
 	defer func() {
-		if resultErr == nil || fallback == nil || inv.disableMultiFallback {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
 			return
 		}
 		result, resultErr = fallback.run()
@@ -652,7 +685,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
+	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
 	verbose := conf.Verbose
 	patterns := slices.Clone(inv.Args)
 	target := &llssa.Target{
@@ -684,7 +719,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
 	goBuildFlags := []string{"-tags=" + tags}
-	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
+	loaderFlags := conf.LoaderBuildFlags
+	if loaderFlags == nil {
+		loaderFlags = conf.GoBuildFlags
+	}
+	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
@@ -804,7 +843,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
 		cfg.Mode &^= packages.NeedExportFile
-		dedup.SetRewrite(rewritePortableSIMD)
+		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
+			return rewritePortableSIMD(pkg, conf.Goarch)
+		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
@@ -844,6 +885,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	if typeLoader != nil {
+		dedup.SetImportTypes(typeLoader.load)
+	}
 	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
 		"patterns": slices.Clone(patterns),
 	})
@@ -943,7 +988,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
-	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
 	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions, sourcePatchGOROOT); err != nil {
 		prepareSpan.done()
@@ -964,21 +1009,22 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:  make(map[string]bool),
-		pkgs:            map[*packages.Package]Package{},
-		pkgByID:         map[string]Package{},
-		cacheManager:    newCacheManager(),
-		patchFiles:      llgoFiles,
-		output:          output,
-		passOpt:         passOpt,
-		buildConf:       conf,
-		crossCompile:    export,
-		commands:        commands,
-		frontendOptions: frontendOptions,
-		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:      buildTrace,
-		goVersion:       sourcePatchGoVersion,
-		defaultGODEBUG:  defaultGODEBUG,
+		fingerprinting:   make(map[string]bool),
+		pkgs:             map[*packages.Package]Package{},
+		pkgByID:          map[string]Package{},
+		cacheManager:     newCacheManager(),
+		patchFiles:       llgoFiles,
+		output:           output,
+		passOpt:          passOpt,
+		buildConf:        conf,
+		crossCompile:     export,
+		commands:         commands,
+		frontendOptions:  frontendOptions,
+		staticByteArrays: altByteArrays,
+		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:       buildTrace,
+		goVersion:        sourcePatchGoVersion,
+		defaultGODEBUG:   defaultGODEBUG,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -1012,13 +1058,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
-	if err := recordPackageSSAInstructions(ctx); err != nil {
-		return nil, err
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	ctx.frontend = ctx.newFrontendCache(ssaEntries, buildMode)
+	if ctx.frontend != nil && typeLoader != nil {
+		ctx.frontend.loader = typeLoader
+		typeLoader.ctx = ctx
 	}
-	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
-	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
-	callerSpan.done()
+	if ctx.frontend != nil {
+		if err := ctx.frontend.prepare(); err != nil {
+			return nil, err
+		}
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+	}
+	if ctx.frontend == nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {
 		if target.GOARCH == "wasm" {
@@ -1050,6 +1110,46 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	if ctx.frontend != nil {
+		if err := ctx.frontend.certify(); err != nil {
+			return nil, err
+		}
+	}
+	if ctx.frontend != nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = ctx.prepareEscapeAnalysis(func(hits, misses int) {
+		escapeSpan.setArg("cache_hits", hits)
+		escapeSpan.setArg("cache_misses", misses)
+	})
+	escapeSpan.done()
+	if ctx.frontend != nil {
+		ctx.frontend.capture(ctx.frontendOptions.EscapeAnalysis)
+	}
+	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
+		selected := make(map[string]bool, len(initial))
+		for _, pkg := range initial {
+			selected[pkg.PkgPath] = true
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, func(fn *ssa.Function) int {
+			pkg := fn.Pkg
+			for parent := fn.Parent(); pkg == nil && parent != nil; parent = parent.Parent() {
+				pkg = parent.Pkg
+			}
+			if pkg != nil && selected[pkg.Pkg.Path()] {
+				return conf.EscapeDiagnostics
+			}
+			return conf.DependencyEscapeDiagnostics
+		}); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
 	allPkgs = append(allPkgs, depPkgs...)
 	var nativeTestRoots []*packages.Package
 	if mode == ModeTest && !inv.compileOnly {
@@ -1781,6 +1881,7 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
+	frontend       *frontendCache
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -1796,6 +1897,7 @@ type context struct {
 	crossCompile      crosscompile.Export
 	commands          commandEnv
 	frontendOptions   cl.Options
+	staticByteArrays  map[string][]byte
 	wasmRuntimeFree   bool
 	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
 
@@ -2220,7 +2322,7 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil && aPkg.frontendOpaque == nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
@@ -2707,6 +2809,9 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
 		return err
 	}
+	if err := publishGoJSLoader(ctx, driverOut, verbose); err != nil {
+		return err
+	}
 	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)
 }
 
@@ -2982,6 +3087,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	defer cleanupHiddenGlobals()
 	buildArgs = append(buildArgs, hiddenGlobalArgs...)
 	buildArgs = append(buildArgs, debugInfoLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
+	buildArgs = append(buildArgs, emscriptenLTOLibcallArgs(ctx)...)
 	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
 	if err != nil {
 		return err
@@ -3468,12 +3574,14 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 	options := ctx.frontendOptions
+	options.DeclarationsOnly = aPkg.frontendOpaque != nil
 	// Hosted //export entries use final-link wrappers to register foreign caller threads
 	// with the collector; Windows shared libraries also initialize lazily.
 	// Dependency implementations retain Go symbols too; their public entry
 	// wrappers are generated in the uncached final-link module.
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
+	options.StaticByteArrays = aPkg.staticByteArrays
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
@@ -3518,18 +3626,18 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 		return false, nil
 	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
+	ctx.cTransformer.LowerWideVectorCalls(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI copy pass as package modules.
+	lowerAggregateCopies(ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       ctx.buildConf.Goarch == "wasm",
+	})
 	if ctx.buildConf.Goarch != "wasm" {
 		return true, nil
 	}
-
-	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
-	// wrappers. Apply the same post-C-ABI Wasm passes as package modules.
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
-		GoWordSize: ctx.prog.GoWordSize(),
-		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
-	})
 	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
 	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
 		return true, err
@@ -3537,6 +3645,24 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	lowerEmscriptenSIMDCalls(ctx, mod)
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
 	return true, nil
+}
+
+var runHeapToStack = heap2stack.Run
+
+// optimizeHeapAllocations runs while aggregate arguments and results are still
+// SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
+// that can make Attributor's pointer and reachability analyses prohibitively
+// expensive. Run after large-aggregate lowering has rewritten oversized returns
+// so inferred memory effects include its result stores, and before the ordinary
+// pipeline can inline allocator wrappers.
+func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
+		return nil
+	}
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
 }
 
 func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
@@ -3567,6 +3693,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	// They must forward the caller's ABI storage, not materialize aggregates
 	// in a forwarding frame that a tail transfer immediately releases.
 	lowerLargeAggregates(ctx.prog, ret.Module())
+	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
@@ -3582,10 +3712,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return err
 		}
 	}
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
+	lowerAggregateCopies(ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
 		GoWordSize: ctx.prog.GoWordSize(),
 		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
+		Wasm:       ctx.buildConf.Goarch == "wasm",
 	})
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)
@@ -3902,6 +4032,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
+	defer os.Remove(f.Name())
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return "", err
@@ -3936,7 +4067,11 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.irCompiler()
-	return objFile.Name(), cmd.Compile(args...)
+	if err := cmd.Compile(args...); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
+	return objFile.Name(), nil
 }
 
 func llcCheck(commands commandEnv, exportFile string) (msg string, err error) {
@@ -4021,16 +4156,25 @@ type ssaBuildEntry struct {
 	complexity int64
 }
 
-func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) []ssaBuildEntry {
+func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) ([]ssaBuildEntry, map[string][]byte) {
 	var entries []ssaBuildEntry
+	var payloads map[string][]byte
 	packages.Visit(alts, nil, func(p *packages.Package) {
 		if typs := p.Types; typs != nil && !p.IllTyped {
 			if debugBuild || verbose {
 				log.Println("==> BuildSSA", p.ID)
 			}
+			// Only strip alt packages here. Original packages in this graph
+			// are stripped in registerSSAPkgs, where the alt skip set is
+			// known. Stripping them now would drop InitOrder before that
+			// eligibility check.
+			isAlt := strings.HasPrefix(p.ID, altPkgPathPrefix)
+			if isAlt {
+				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(typs, p.Syntax, p.TypesInfo))
+			}
 			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
 			entries = append(entries, ssaBuildEntry{id: p.ID, pkg: pkgSSA, syntax: p.Syntax})
-			if strings.HasPrefix(p.ID, altPkgPathPrefix) {
+			if isAlt {
 				path := p.ID[len(altPkgPathPrefix):]
 				// Even if an alt package exists and is pulled in as a dependency of other
 				// patches (e.g. runtime/reflect), we should only apply it when it is
@@ -4045,7 +4189,7 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 			}
 		}
 	})
-	return entries
+	return entries, payloads
 }
 
 type aPackage struct {
@@ -4059,18 +4203,20 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs     []string
-	ObjFiles     []string               // file-backed archive members: .o or .ll
-	ObjBuffers   []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile  string                 // archive file: .a (output of archiver, used for linking)
-	Meta         *meta.PackageMeta
-	rewriteVars  map[string]string
-	tempObjFiles []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs         []string
+	ObjFiles         []string               // file-backed archive members: .o or .ll
+	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
+	Meta             *meta.PackageMeta
+	rewriteVars      map[string]string
+	staticByteArrays map[string][]byte
+	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	// Cache related fields
-	Fingerprint string // fingerprint digest
-	Manifest    string // manifest text content
-	CacheHit    bool   // whether cache was hit
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {
@@ -4110,16 +4256,28 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				}
 			}
 			rewrites := collectRewriteVars(ctx, pkgPath)
+			var skipInit map[string]bool
+			if altPkg != nil {
+				skipInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
+			}
+			payloads := cl.StripLargeStaticByteArraysExcept(p.Types, p.Syntax, p.TypesInfo, skipInit)
+			if altPkg != nil {
+				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(altPkg.Types, altPkg.Syntax, altPkg.TypesInfo))
+			}
+			// Alt-package visits may already have stripped shared Syntax/InitOrder
+			// and stored the payload on the context. Keep that map for restore.
+			ctx.staticByteArrays = cl.MergeStaticByteArrays(ctx.staticByteArrays, payloads)
 			aPkg := &aPackage{
-				Package:     p,
-				SSA:         ssaPkg,
-				AltPkg:      altPkg,
-				LPkg:        nil,
-				NeedRt:      false,
-				NeedPyInit:  false,
-				LinkArgs:    nil,
-				ObjFiles:    nil,
-				rewriteVars: rewrites,
+				Package:          p,
+				SSA:              ssaPkg,
+				AltPkg:           altPkg,
+				LPkg:             nil,
+				NeedRt:           false,
+				NeedPyInit:       false,
+				LinkArgs:         nil,
+				ObjFiles:         nil,
+				rewriteVars:      rewrites,
+				staticByteArrays: ctx.staticByteArrays,
 			}
 			ctx.pkgs[p] = aPkg
 			ctx.pkgByID[p.ID] = aPkg
@@ -4429,7 +4587,25 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 			log.Println("==> BuildSSA", p.ID)
 		}
 		applyPatches(ctx, p, verbose)
-		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		if ctx.dedup.IsExported(p.ID) {
+			pkgSSA = prog.CreatePackage(p.Types, nil, nil, true)
+			for _, member := range pkgSSA.Members {
+				if fn, ok := member.(*ssa.Function); ok && fn.Name() != "init" {
+					fn.Synthetic = ""
+				}
+			}
+			for _, name := range p.Types.Scope().Names() {
+				if named, ok := p.Types.Scope().Lookup(name).Type().(*types.Named); ok {
+					for i := 0; i < named.NumMethods(); i++ {
+						if fn := prog.FuncValue(named.Method(i)); fn != nil {
+							fn.Synthetic = ""
+						}
+					}
+				}
+			}
+		} else {
+			pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		}
 		return pkgSSA, true
 	}
 	return pkgSSA, false

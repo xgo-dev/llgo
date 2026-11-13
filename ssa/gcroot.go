@@ -59,9 +59,21 @@ func (p Function) NewGCRoots(count int) []Expr {
 	if count <= 0 {
 		return nil
 	}
-	if !p.gcRootPrev.IsNil() {
+	if p.gcRootSlots != nil {
 		panic("ssa: GC roots already reserved")
 	}
+	// Storage lowering can discover additional managed fields. Reserve
+	// replaceable slots now and link the final single frame in EndBuild.
+	roots := make([]Expr, count)
+	for i := range roots {
+		value := llvm.CreateAlloca(p.entryAllocaBuilder(), p.Prog.storageType(p.Prog.VoidPtr()))
+		roots[i] = Expr{value, p.Prog.Pointer(p.Prog.VoidPtr())}
+	}
+	p.gcRootSlots = roots
+	return roots
+}
+
+func (p Function) buildGCRoots(count int) []Expr {
 	b := p.NewBuilder()
 	defer b.Dispose()
 	entry := p.Block(0)
@@ -74,6 +86,17 @@ func (p Function) NewGCRoots(count int) []Expr {
 	originalEntry := entry.first
 	prologue := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.entry")
 	b.impl.SetInsertPointAtEnd(prologue)
+	// Keep static local reservations in LLVM's physical entry block. Besides
+	// running once per invocation, this preserves mem2reg/SROA eligibility
+	// after the root prologue is inserted late.
+	for instr := originalEntry.FirstInstruction(); !instr.IsNil(); {
+		next := llvm.NextInstruction(instr)
+		if instr.InstructionOpcode() == llvm.Alloca && !instr.Operand(0).IsAConstantInt().IsNil() {
+			instr.RemoveFromParentAsInstruction()
+			b.impl.Insert(instr)
+		}
+		instr = next
+	}
 	frame := llvm.CreateAlloca(b.impl, frameType)
 	nextSlot := llvm.CreateStructGEP(b.impl, frameType, frame, 0)
 	frameMap := p.newGCRootMap(count)
@@ -102,9 +125,10 @@ func (p Function) NewGCRoots(count int) []Expr {
 		b.impl.SetInsertPointAtEnd(initialize)
 		b.Store(Expr{nextSlot, rootSlotType}, prev)
 		b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), rootSlotType}, Expr{frameMap, rootValueType})
-		for _, root := range roots {
+		for _, root := range roots[:len(p.gcRootSlots)] {
 			b.Store(root, prog.Nil(rootValueType))
 		}
+		p.initializeStackRoots(b, roots[len(p.gcRootSlots):])
 		b.Store(chain, Expr{frame, rootValueType})
 	}
 	b.impl.CreateBr(originalEntry)
@@ -161,19 +185,35 @@ func (b Builder) currentGCRootChain() Expr {
 
 func (p Function) newGCRootMap(count int) llvm.Value {
 	prog := p.Prog
-	mapType := prog.ctx.StructType([]llvm.Type{prog.tyInt32(), prog.tyInt32()}, false)
+	fields := []llvm.Type{prog.tyInt32(), prog.tyInt32()}
+	values := []llvm.Value{llvm.ConstInt(prog.tyInt32(), uint64(count), false), llvm.ConstInt(prog.tyInt32(), 0, false)}
+	if len(p.gcStackObjects) != 0 {
+		// Metadata is nil for value roots. A non-nil metadata byte gives the
+		// physical width of a pointer loaded from a registered stack field.
+		pointerType := prog.storageType(prog.VoidPtr())
+		metadata := make([]llvm.Value, count)
+		width := p.stackRootMetadata()
+		for i := range metadata {
+			value := llvm.ConstNull(prog.VoidPtr().ll)
+			if i >= len(p.gcRootSlots) {
+				value = width
+			}
+			metadata[i] = prog.toStorageConstant(prog.VoidPtr(), value)
+		}
+		fields = append(fields, llvm.ArrayType(pointerType, count))
+		values[1] = llvm.ConstInt(prog.tyInt32(), uint64(count), false)
+		values = append(values, llvm.ConstArray(pointerType, metadata))
+	}
+	mapType := prog.ctx.StructType(fields, false)
 	name := p.Name() + "$gcmap"
 	global := llvm.AddGlobal(p.Pkg.mod, mapType, name)
-	global.SetInitializer(llvm.ConstNamedStruct(mapType, []llvm.Value{
-		llvm.ConstInt(prog.tyInt32(), uint64(count), false),
-		llvm.ConstInt(prog.tyInt32(), 0, false),
-	}))
+	global.SetInitializer(llvm.ConstNamedStruct(mapType, values))
 	global.SetGlobalConstant(true)
-	// Only the root count is observed, never the map address. Let LLVM
+	// Only map contents are observed, never the map address. Let LLVM
 	// merge identical immutable maps, including across LTO modules.
 	global.SetUnnamedAddr(true)
 	global.SetLinkage(llvm.InternalLinkage)
-	global.SetAlignment(4)
+	global.SetAlignment(int(prog.AlignOf(prog.VoidPtr())))
 	return global
 }
 
@@ -292,6 +332,9 @@ func (p Function) ClosureContextParam() Expr {
 // Keep it within dev Wasm DCE at Oz: small hot functions pay measurable
 // call overhead, so Os and speed/debug builds retain inline bookkeeping.
 func (p Function) outlineGCRoots() bool {
+	if len(p.gcStackObjects) != 0 {
+		return false
+	}
 	target := p.Prog.Target()
 	if !p.Prog.DeadcodeDropEnabled() || target == nil || target.GOARCH != "wasm" {
 		return false

@@ -70,11 +70,26 @@ func ToEface(i Iface) Eface {
 const (
 	pointerSize = unsafe.Sizeof(uintptr(0))
 	itabHdrSize = unsafe.Sizeof(itab{}) - pointerSize
+	// Match Go's runtime itabInitSize. Capacities stay powers of two so probing
+	// can use a mask.
+	itabInitSize = 512
 )
+
+// itabTableType is an open-addressed table whose slots are only filled, never
+// removed. Writers hold itabTable.mutex. Hosted targets publish pointers
+// atomically; baremetal uses its single-context task backend. A grown table is
+// fully rehashed before publication, so readers never see a partial rehash.
+type itabTableType struct {
+	size    uintptr
+	count   uintptr
+	entries []unsafe.Pointer
+}
 
 var itabTable struct {
 	mutex
-	entries []*Itab
+	// table points to the current table. Use storeItabPointer to publish it
+	// because interface conversions read it without taking the lock.
+	table unsafe.Pointer
 }
 
 func init() {
@@ -91,22 +106,104 @@ func (m *mutex) Unlock() {
 	(*sync.Mutex)(m).Unlock()
 }
 
-func findItab(inter *InterfaceType, typ *Type) *Itab {
-	itabTable.Lock()
-	for _, i := range itabTable.entries {
-		if i.inter == inter && i._type == typ {
-			itabTable.Unlock()
-			return i
-		}
+func itabHash(inter *InterfaceType, typ *Type) uintptr {
+	return uintptr(inter.Hash ^ typ.Hash)
+}
+
+func loadItabTable() *itabTableType {
+	return (*itabTableType)(loadItabPointer(&itabTable.table))
+}
+
+func newItabTable(size uintptr) *itabTableType {
+	// Keep the table header and its pointer slots in one allocation.
+	// The unsafe.Pointer slots use target-specific pointer loads and stores.
+	bytes := unsafe.Sizeof(itabTableType{}) + size*unsafe.Sizeof(unsafe.Pointer(nil))
+	// Empty slots and count must start at zero, including with the nogc allocator.
+	ptr := AllocZ(bytes)
+	t := (*itabTableType)(ptr)
+	t.size = size
+	t.entries = unsafe.Slice((*unsafe.Pointer)(unsafe.Add(ptr, unsafe.Sizeof(itabTableType{}))), int(size))
+	return t
+}
+
+func (t *itabTableType) find(inter *InterfaceType, typ *Type) *Itab {
+	if t == nil || t.size == 0 {
+		return nil
 	}
-	itabTable.Unlock()
+	mask := t.size - 1
+	h := itabHash(inter, typ) & mask
+	// Triangular probing visits every slot in a power-of-two table. The 75%
+	// load limit guarantees an empty slot; bound probes if that invariant breaks.
+	for step := uintptr(1); step <= t.size; step++ {
+		m := (*Itab)(loadItabPointer(&t.entries[h]))
+		if m == nil {
+			return nil
+		}
+		if m.inter == inter && m._type == typ {
+			return m
+		}
+		h = (h + step) & mask
+	}
+	throw("itab table is full")
 	return nil
 }
 
-func addItab(i *Itab) {
+// add inserts an itab into a table. The caller must hold itabTable.mutex;
+// t.size must be a nonzero power of two and the table must have an empty slot.
+func (t *itabTableType) add(i *Itab) {
+	mask := t.size - 1
+	h := itabHash(i.inter, i._type) & mask
+	for step := uintptr(1); step <= t.size; step++ {
+		m := (*Itab)(loadItabPointer(&t.entries[h]))
+		if m == nil {
+			storeItabPointer(&t.entries[h], unsafe.Pointer(i))
+			t.count++
+			return
+		}
+		if m.inter == i.inter && m._type == i._type {
+			return
+		}
+		h = (h + step) & mask
+	}
+	throw("itab table is full")
+}
+
+func findItab(inter *InterfaceType, typ *Type) *Itab {
+	return loadItabTable().find(inter, typ)
+}
+
+func addItab(i *Itab) *Itab {
 	itabTable.Lock()
-	itabTable.entries = append(itabTable.entries, i)
+	t := loadItabTable()
+	if t == nil {
+		t = newItabTable(itabInitSize)
+		t.add(i)
+		storeItabPointer(&itabTable.table, unsafe.Pointer(t))
+		itabTable.Unlock()
+		return i
+	}
+	// NewItab constructs outside the lock. Recheck under the lock so two
+	// concurrent conversions still return one canonical itab pointer.
+	if existing := t.find(i.inter, i._type); existing != nil {
+		itabTable.Unlock()
+		return existing
+	}
+	if t.count >= 3*(t.size/4) {
+		grown := newItabTable(t.size * 2)
+		// Use the same pointer access helpers as concurrent lookups.
+		for index := range t.entries {
+			if old := (*Itab)(loadItabPointer(&t.entries[index])); old != nil {
+				grown.add(old)
+			}
+		}
+		grown.add(i)
+		storeItabPointer(&itabTable.table, unsafe.Pointer(grown))
+		itabTable.Unlock()
+		return i
+	}
+	t.add(i)
 	itabTable.Unlock()
+	return i
 }
 
 // NewItab returns a new itab.
@@ -152,7 +249,7 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 		}
 	}
 	if ret.fun[0] != 0 {
-		addItab(ret)
+		return addItab(ret)
 	}
 	return ret
 }
@@ -204,20 +301,22 @@ func IfacePtrData(i iface) unsafe.Pointer {
 	return i.data
 }
 
-func DirectIfaceData(typ *abi.Type) bool {
-	switch typ.Kind() {
-	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
-		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
-		abi.Float32, abi.Float64, abi.Array, abi.Struct,
-		// These are single-word values stored directly in iface.data.
-		// For interface method calls, non-pointer receivers still require a
-		// pointer to the stored word.
-		abi.Chan, abi.Func, abi.Map, abi.UnsafePointer:
-		if isDirectIface(typ) {
-			return true
-		}
+func IfacePtrDataBuffer(i iface, buffer *unsafe.Pointer) unsafe.Pointer {
+	if i.tab == nil {
+		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
-	return false
+	if DirectIfaceData(i.tab._type) {
+		*buffer = i.data
+		return unsafe.Pointer(buffer)
+	}
+	return i.data
+}
+
+func DirectIfaceData(typ *abi.Type) bool {
+	// Pointer receivers already carry their address. Other direct-interface
+	// values need an addressable copy of the stored word. The descriptor flag
+	// includes the single-element array and struct cases as well.
+	return isDirectIface(typ) && typ.Kind() != abi.Pointer
 }
 
 // MatchesClosure reports whether the type V matches the closure type T for
@@ -307,10 +406,9 @@ func interfaceImplementation(T, V *abi.Type) (missing *abi.Imethod, ok bool) {
 		return &t.Methods[0], false
 	}
 	i := 0
-	vmethods := v.Methods()
 	for j := 0; j < int(v.Mcount); j++ {
 		tm := &t.Methods[i]
-		vm := vmethods[j]
+		vm := v.Method(j)
 		if vm.Name_ == tm.Name_ && vm.Mtyp_ == tm.Typ_ {
 			if i++; i >= len(t.Methods) {
 				return nil, true

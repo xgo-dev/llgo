@@ -8,6 +8,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
 )
 
 type wasmFinalizerInterfaceArg struct {
@@ -41,7 +42,7 @@ const (
 
 var wasmFinalizers struct {
 	mu wasmFinalizerMutex
-	m  map[uintptr]*wasmFinalizerEntry
+	m  wordmap.Map[uintptr, *wasmFinalizerEntry]
 }
 
 // SetFinalizer implements the Go finalizer contract for the linear-memory
@@ -115,8 +116,8 @@ func llgoSetFinalizerPointer(objPtr, fn unsafe.Pointer, resultSize uintptr) {
 func clearWasmFinalizer(objPtr unsafe.Pointer) {
 	key := ^uintptr(objPtr)
 	lockWasmFinalizers()
-	if old := wasmFinalizers.m[key]; old != nil {
-		delete(wasmFinalizers.m, key)
+	if old := wasmFinalizers.m.Get(key); old != nil {
+		wasmFinalizers.m.Delete(key)
 		old.cancelCollector()
 	}
 	wasmFinalizers.mu.Unlock()
@@ -126,11 +127,11 @@ func registerWasmFinalizer(objPtr unsafe.Pointer, entry *wasmFinalizerEntry) {
 	key := ^uintptr(objPtr)
 	cancel, registered := tinygogc.AddFinalizer(objPtr, func(ptr unsafe.Pointer) {
 		lockWasmFinalizers()
-		if wasmFinalizers.m[key] != entry {
+		if wasmFinalizers.m.Get(key) != entry {
 			wasmFinalizers.mu.Unlock()
 			return
 		}
-		delete(wasmFinalizers.m, key)
+		wasmFinalizers.m.Delete(key)
 		wasmFinalizers.mu.Unlock()
 		callWasmFinalizer(entry, ptr)
 	})
@@ -140,7 +141,7 @@ func registerWasmFinalizer(objPtr unsafe.Pointer, entry *wasmFinalizerEntry) {
 	entry.cancelCollector = cancel
 
 	lockWasmFinalizers()
-	wasmFinalizers.m[key] = entry
+	wasmFinalizers.m.Set(key, entry)
 	wasmFinalizers.mu.Unlock()
 }
 

@@ -30,7 +30,7 @@ func fullChildCommand(p profile, root, goRoot, artifact, arg string) command {
 		}
 		args = []string{"node", filepath.Join(root, "targets", runner)}
 		if p.Target == "" {
-			// Raw GoJS glue has no Node loader. Supply its sibling wasm
+			// Raw GoJS wasm_exec.js has no Node loader. Supply its sibling wasm
 			// binary through the same browser host used by llgo test.
 			args = append(args, "--browser-only")
 		}

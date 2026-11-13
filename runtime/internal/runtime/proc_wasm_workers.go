@@ -148,6 +148,7 @@ func initWasmScheduler(gp *g) {
 	bindWasmWorkerG(mainWorker, gp)
 	gp.context.platform.owner = mainWorker
 	wasmMultiSched.started = true
+	readyWasmWorkerGC(mainWorker)
 
 	for i := 1; i < count; i++ {
 		worker := &wasmMultiSched.workers[i]

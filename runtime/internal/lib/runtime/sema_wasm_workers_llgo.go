@@ -10,8 +10,8 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/wasmsync"
 )
 
-// wasmWaitQueuesLock protects both queue maps and their shared waiter free
-// list. Separate map locks would still race through wasmWaiterFree.
+// wasmWaitQueuesLock protects both queue tables and their shared waiter free
+// list. Separate table locks would still race through wasmWaiterFree.
 var wasmWaitQueuesLock wasmSemaMutex
 
 type wasmSemaMutex struct {
@@ -57,10 +57,10 @@ func semaRelease(addr *uint32, handoff bool) {
 	w := func() *wasmWaiter {
 		wasmWaitQueuesLock.Lock()
 		defer wasmWaitQueuesLock.Unlock()
-		if q := semaQueues[key]; q != nil {
+		if q := semaQueues.Get(key); q != nil {
 			if w := q.pop(); w != nil {
 				if q.head == nil {
-					delete(semaQueues, key)
+					semaQueues.Delete(key)
 				}
 				w.synctest.Wake()
 				return w
@@ -108,10 +108,10 @@ func sync_runtime_notifyListNotifyAll(l *notifyList) {
 			return nil
 		}
 		key := uintptr(unsafe.Pointer(l))
-		q := notifyQueues[key]
+		q := notifyQueues.Get(key)
 		q.checkWake()
 		atomic.StoreUint32(&l.notify, wait)
-		delete(notifyQueues, key)
+		notifyQueues.Delete(key)
 		return q
 	}()
 	if q == nil {
@@ -133,12 +133,12 @@ func sync_runtime_notifyListNotifyOne(l *notifyList) {
 			return nil
 		}
 		key := uintptr(unsafe.Pointer(l))
-		q := notifyQueues[key]
+		q := notifyQueues.Get(key)
 		var w *wasmWaiter
 		if q != nil {
 			w = q.removeTicket(notify)
 			if q.head == nil {
-				delete(notifyQueues, key)
+				notifyQueues.Delete(key)
 			}
 		}
 		atomic.StoreUint32(&l.notify, notify+1)

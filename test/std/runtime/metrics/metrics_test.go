@@ -1,9 +1,23 @@
 package metrics_test
 
 import (
+	"runtime"
 	"runtime/metrics"
 	"testing"
 )
+
+func TestReadGOMAXPROCSSetting(t *testing.T) {
+	original := runtime.GOMAXPROCS(0)
+	defer runtime.GOMAXPROCS(original)
+	for _, n := range []int{1, 2} {
+		runtime.GOMAXPROCS(n)
+		samples := []metrics.Sample{{Name: "/sched/gomaxprocs:threads"}}
+		metrics.Read(samples)
+		if got, want := samples[0].Value.Uint64(), uint64(runtime.GOMAXPROCS(0)); got != want {
+			t.Fatalf("GOMAXPROCS metric = %d, want current setting %d", got, want)
+		}
+	}
+}
 
 func TestReadAllMetricKinds(t *testing.T) {
 	descs := metrics.All()

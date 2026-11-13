@@ -19,7 +19,7 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 21, "go.yml": 6, "targets.yml": 2, "build-cache.yml": 4,
+    "llgo.yml": 24, "go.yml": 6, "targets.yml": 2, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
     "mise.yml": 1, "pixi.yml": 1,
 }
@@ -61,6 +61,34 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_unix_archives_and_system_packages_bundle_pinned_esp(self):
+        root = WORKFLOWS.parents[1]
+        config = yaml.safe_load((root / '.goreleaser.yaml').read_text())
+        self.assertIn('bash .github/unix/stage-toolchains.sh', config['before']['hooks'])
+        toolchain = config['archives'][0]['files'][-1]
+        self.assertEqual(toolchain['src'], '.release-toolchains/{{.Os}}/{{.Arch}}')
+        self.assertEqual(toolchain['dst'], 'crosscompile/clang')
+        package = config['nfpms'][0]
+        self.assertEqual(package['ids'], ['llgo-linux-amd64-system', 'llgo-linux-arm64-system'])
+        self.assertFalse(set(package['ids']) & set(config['archives'][0]['ids']))
+        embedded = next(item for item in package['contents'] if item['dst'] == '/usr/lib/llgo/crosscompile')
+        self.assertEqual(embedded['src'], '.release-toolchains/payloads/linux/{{.Arch}}/')
+        self.assertEqual(embedded['type'], 'tree')
+        license_file = 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt'
+        license = next(item for item in package['contents'] if item['dst'] == '/usr/lib/llgo/' + license_file)
+        self.assertEqual(license['src'], license_file)
+        for dependency in ('libllvm22 (>= 1:22.1)', 'llvm-22', 'clang-22', 'lld-22'):
+            self.assertIn(dependency, package['overrides']['deb']['dependencies'])
+        for dependency in ('llvm-libs >= 22.1', 'llvm < 23', 'clang < 23', 'lld < 23'):
+            self.assertIn(dependency, package['overrides']['rpm']['dependencies'])
+        for build in config['builds']:
+            if build['id'].startswith('llgo-linux-'):
+                self.assertIn('-X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22', build['ldflags'])
+        job = load('release-build.yml')['jobs']['test-artifacts']
+        smoke = next(step for step in job['steps'] if step.get('name') == 'Test Hello World')
+        self.assertEqual(smoke['env']['LLGO_BUILD_CACHE'], '0')
+        self.assertTrue(smoke['env']['LLVM_CONFIG'].endswith('/current/crosscompile/clang/bin/llvm-config'))
+
     def test_macos_benchmark_installs_only_legacy_base_dependency(self):
         steps = load("benchmark.yml")["jobs"]["benchmark"]["steps"]
         step = next(s for s in steps if s.get("name") == "Install legacy macOS linker for the benchmark base")
@@ -95,7 +123,7 @@ class WorkflowContractTests(unittest.TestCase):
         checkout, cancel = job["steps"]
         self.assertEqual(checkout["uses"], "actions/checkout@v7")
         self.assertEqual(checkout["with"], {
-            "ref": "${{ github.sha }}", "persist-credentials": "false",
+            "persist-credentials": "false",
             "sparse-checkout": ".github/scripts", "sparse-checkout-cone-mode": "false"})
         self.assertEqual(cancel["env"], {"GH_TOKEN": "${{ github.token }}"})
         self.assertEqual(cancel["run"], "python3 .github/scripts/pr_ci.py")
@@ -176,15 +204,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", job)
         self.assertTrue(all("continue-on-error" not in step for step in job["steps"]))
 
-    def test_traceback_coverage_uses_bash_on_every_host(self):
+    def test_runtime_coverage_uses_bash_on_every_host(self):
         steps = load("go.yml")["jobs"]["test"]["steps"]
         step = next(step for step in steps
-                    if step.get("name") == "Test traceback formatter with coverage")
+                    if step.get("name") == "Test runtime ABI and helpers with coverage")
         # PowerShell splits the unquoted -coverprofile=../... argument and Go
         # treats its value as a package. Preserve the shell when moving steps.
         self.assertEqual(step["shell"], "bash")
         self.assertEqual(step["working-directory"], "runtime")
-        self.assertIn("-coverprofile=../coverage-traceback.txt", step["run"])
+        self.assertIn("-coverprofile=../coverage-runtime-helpers.txt", step["run"])
+        for package in ("./abi", "./internal/traceback", "./internal/wordmap"):
+            self.assertIn(package, step["run"].split())
 
     def test_go_suite_scheduling_preserves_overlays_and_propagates_failures(self):
         step = next(step for step in load("go.yml")["jobs"]["test"]["steps"]
@@ -359,10 +389,40 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                      if step.get("uses") == "./.github/actions/setup-llgo-cache")
         self.assertLess(go, cache)
         self.assertNotIn("if", steps[cache])
-        self.assertEqual(steps[cache]["with"]["build-cache-mode"], "readwrite")
+        self.assertEqual(steps[go]["with"]["cache"], "${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}")
+        restore_runtime = "${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}"
+        self.assertEqual(steps[cache]["with"]["build-cache-mode"], restore_runtime)
         self.assertEqual(steps[cache]["with"]["build-cache-scope"], "wasm-${{ matrix.suite }}")
-        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"], "readwrite")
+        self.assertEqual(steps[cache]["with"]["crosscompile-cache-mode"],
+                         "${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}")
+        self.assertIn("(matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore'",
+                      steps[cache]["with"]["wasmer-cache-mode"])
         self.assertIn("matrix.suite != 'workers'", steps[cache]["with"]["wasmer-cache-mode"])
+
+    def test_wasm_simd_runs_separately_from_command_regressions(self):
+        job = load("llgo.yml")["jobs"]["wasm-runtime"]
+        self.assertCountEqual(job["strategy"]["matrix"]["suite"],
+                              ["runtime", "workers", "test-command", "simd", "stdlib", "optimization"])
+        steps = {step.get("name"): step for step in job["steps"]}
+        for name in ("Test SIMD behavior on WebAssembly",
+                     "Test SIMD on JavaScript targets with off, Thin and Full LTO"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'simd'")
+            self.assertNotIn("continue-on-error", steps[name])
+            self.assertEqual(steps[name]["env"]["LLGO_BUILD_CACHE"], "off")
+        for name in ("Compare JavaScript call semantics with Go",
+                     "Run caller and large-function regressions on browser targets"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'test-command'")
+        for name in ("Test wasm standard-library packages", "Test wasm map and formatting regressions"):
+            self.assertEqual(steps[name]["if"], "matrix.suite == 'stdlib'")
+            self.assertEqual(steps[name]["timeout-minutes"], "20")
+        self.assertEqual(steps["Test optimized Emscripten runtime boundaries"]["if"],
+                         "matrix.suite == 'optimization'")
+        # The single-worker script only accepts runtime/test-command/all.
+        # A broad != 'workers' guard would also send it the new simd suite.
+        self.assertEqual(steps["Test single-worker wasm schedulers"]["if"],
+                         "matrix.suite == 'runtime' || matrix.suite == 'test-command'")
+        self.assertEqual(steps["Set up Chrome for browser acceptance"]["if"],
+                         "matrix.suite == 'runtime' || matrix.suite == 'workers' || matrix.suite == 'optimization'")
 
     def test_benchmark_runtime_manifest_keeps_versions_and_full_demo_dependencies(self):
         root = WORKFLOWS.parents[1]
@@ -500,34 +560,47 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         jobs = load("release-build.yml")["jobs"]
         self.assertNotIn("build-windows-x86-toolchains", jobs)
         self.assertFalse((WORKFLOWS.parent / "windows/build-x86-toolchains.sh").exists())
-        pins = json.loads((WORKFLOWS.parent / "windows/espressif-toolchain.json").read_text())
+        pins = json.loads((WORKFLOWS.parents[1] / "internal/crosscompile/espressif.json").read_text())
         self.assertRegex(pins["release"], r"^22\.1\.4_\d{8}$")
         self.assertRegex(pins["producer_commit"], r"^[0-9a-f]{40}$")
+        self.assertRegex(pins["sdk"]["release"], r"^22\.1\.4_\d{8}$")
+        self.assertRegex(pins["sdk"]["producer_commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(pins["sdk"]["version"], "22.1.8")
         self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-22.1.8-i686-w64-mingw32.tar.xz")
         self.assertRegex(pins["sdk"]["sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(set(pins["payloads"]), {"386", "amd64", "arm64"})
-        for arch, target in (("386", "i686"), ("amd64", "x86_64"), ("arm64", "aarch64")):
-            pin = pins["payloads"][arch]
-            self.assertEqual(pin["asset"], f"clang-esp-{pins['release']}-{target}-w64-mingw32.tar.xz")
+        self.assertEqual(pins['sdk']['repository'], 'xgo-dev/espressif-llvm-project-prebuilt')
+        self.assertEqual(pins['llvm_version'], '22.1.4')
+        self.assertEqual(set(pins["payloads"]), {
+            'i686-w64-mingw32', 'x86_64-w64-mingw32', 'aarch64-w64-mingw32',
+            'x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-linux-gnu', 'aarch64-linux-gnu'})
+        for target, pin in pins["payloads"].items():
+            self.assertEqual(pin["asset"], f"clang-esp-{pins['release']}-{target}.tar.xz")
             self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
         for name in ("build-windows-compiler", "build-windows-compiler-x86"):
             step = next(step for step in jobs[name]["steps"]
                         if step.get("name") == "Cache Windows x86 LLVM SDK archive")
             self.assertEqual(step["if"], "matrix.goarch == '386'")
-            self.assertIn("espressif-toolchain.json", step["with"]["key"])
+            self.assertIn("steps.llvm-sdk-pin.outputs.sha256", step["with"]["key"])
+            read_pin = next(step for step in jobs[name]["steps"]
+                            if step.get("id") == "llvm-sdk-pin")
+            self.assertIn("espressif.json", read_pin["run"])
+            self.assertIn("$pins.sdk.sha256", read_pin["run"])
             self.assertEqual(step["with"]["path"], "${{ runner.tool_cache }}/llgo-release-downloads/llvm-x86")
+        script = (WORKFLOWS.parent / "windows/build-compiler.ps1").read_text()
+        self.assertIn("espressif.json", script)
+        self.assertIn("https://github.com/$($toolchain.sdk.repository)/releases/download/", script)
+        self.assertIn("$($toolchain.sdk.release)/$($toolchain.sdk.asset)", script)
         for name in ("build-windows", "build-windows-x86"):
-            step = next(step for step in jobs[name]["steps"]
-                        if step.get("name") == "Cache ESP release archive")
-            self.assertNotIn("if", step)
-            self.assertIn("espressif-toolchain.json", step["with"]["key"])
-        for filename in ("build-compiler.ps1", "build-release.ps1"):
-            script = (WORKFLOWS.parent / "windows" / filename).read_text()
-            self.assertIn("espressif-toolchain.json", script)
-            self.assertIn("https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/", script)
-            self.assertNotIn("Expand-ReleaseLocalXz", script)
-            self.assertNotIn("cpunion/espressif", script)
+            cache = next(step for step in jobs[name]['steps'] if step.get('name') == 'Cache bundled ESP archive')
+            self.assertIn('steps.esp-pin.outputs.sha256', cache['with']['key'])
+            read_pin = next(step for step in jobs[name]['steps'] if step.get('id') == 'esp-pin')
+            self.assertIn('espressif.json', read_pin['run'])
+            self.assertIn('$pins.payloads.$target.sha256', read_pin['run'])
+        package = (WORKFLOWS.parent / "windows/build-release.ps1").read_text()
+        self.assertNotIn("Expand-ReleaseXz", package)
+        self.assertNotIn("create-native", package)
+        self.assertIn("distribution = 'full'", package)
+        self.assertIn('Copy-Item -LiteralPath $espArchive', package)
 
     def test_release_artifact_dependencies_and_tag_guard_are_preserved(self):
         jobs = load("release-build.yml")["jobs"]
@@ -697,10 +770,10 @@ sys.exit(subprocess.call(command + ['./internal/build']))
 
     def test_linux_container_jobs_use_large_runners_and_check_privileges(self):
         jobs = load("release-build.yml")["jobs"]
-        for name in ("populate-linux-sysroot", "build"):
-            self.assertEqual(jobs[name]["runs-on"],
-                             "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
-            self.assertIn("prepare", needs(jobs[name]))
+        sysroot = jobs["populate-linux-sysroot"]
+        self.assertEqual(sysroot["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
+        self.assertIn("prepare", needs(sysroot))
         probe = jobs["populate-linux-sysroot"]["steps"][0]
         self.assertNotIn("if", probe)  # A sysroot cache hit must still check the new runner.
         self.assertIn("docker run --rm --privileged", probe["run"])
@@ -711,6 +784,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(jobs["test-linux-distributions"]["strategy"]["matrix"]["include"],
                          [{"os": "ubuntu-24.04", "goarch": "amd64"}, {"os": "ubuntu-24.04-arm", "goarch": "arm64"}])
         self.assertEqual(jobs["release"]["runs-on"], "ubuntu-latest")
+        self.assertEqual(jobs["build"]["runs-on"], jobs["release"]["runs-on"])
         workflow = load("installer-shells.yml")
         self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
         installer = workflow["jobs"]["installer-shells"]

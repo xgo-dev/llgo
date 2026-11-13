@@ -11,8 +11,9 @@ Each backend first uses the production target-configured QEMU stdio server
 and its owned loopback relay, with a preloaded image and no writes requested.
 It then starts another QEMU **without a kernel image** and exercises the
 production `llgo debug -load` path. `qemu_load_proxy.py` translates OpenOCD's
-`monitor reset halt` to QEMU's `system_reset`; its TCP server rejects empty
-connections, verifying that readiness does not discard the only stub client.
+`monitor reset halt` to QEMU's `system_reset` over stdio. QMP reports QEMU's
+bound, OS-assigned GDB port. The CLI relay and QEMU keep their listeners for
+the whole session, avoiding port reservation races.
 All memory writes, register access,
 breakpoints and execution go to the real QEMU GDB stub. The test requires two
 resets with real image writes between them, then checks source location,

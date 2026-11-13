@@ -16,10 +16,13 @@ func TestCompileLargeSnapshotGCRoots(t *testing.T) {
 		goarch string
 		root   bool
 	}{
-		{"native threshold", 65536, "", false},
-		{"native large", 65537, "", true},
-		{"wasm below copy threshold", 4095, "wasm", false},
-		{"wasm copy threshold", 4096, "wasm", true},
+		{"native at CanSSA size", 32, "", false},
+		{"native above CanSSA array", 33, "", false},
+		{"native 4KiB array", 4096, "", true},
+		{"native sret threshold", 65536, "", true},
+		{"wasm at CanSSA size", 32, "wasm", false},
+		{"wasm above CanSSA array", 33, "wasm", false},
+		{"wasm 4KiB array", 4096, "wasm", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := fmt.Sprintf(`package main

@@ -3,6 +3,7 @@ package crosscompile
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -111,6 +112,8 @@ func createTestTarXz(t *testing.T, files map[string]string) string {
 }
 
 func TestWindowsArchiveTools(t *testing.T) {
+	t.Setenv("ProgramW6432", "")
+	t.Setenv("ProgramFiles(x86)", "")
 	touch := func(t *testing.T, name string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -139,6 +142,19 @@ func TestWindowsArchiveTools(t *testing.T) {
 			t.Fatalf("windowsSevenZip() = %q, want %q", got, sevenZip)
 		}
 	})
+
+	for _, variable := range []string{"ProgramW6432", "ProgramFiles(x86)"} {
+		t.Run("7-ZipFrom"+variable, func(t *testing.T) {
+			root := t.TempDir()
+			sevenZip := filepath.Join(root, "7-Zip", "7z.exe")
+			touch(t, sevenZip)
+			t.Setenv(variable, root)
+			t.Setenv("PATH", t.TempDir())
+			if got := windowsSevenZip(t.TempDir()); got != sevenZip {
+				t.Fatalf("redirected ProgramFiles lookup = %q, want %q", got, sevenZip)
+			}
+		})
+	}
 
 	t.Run("NativeFallback", func(t *testing.T) {
 		systemRoot := t.TempDir()
@@ -555,6 +571,33 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractTarGzRelativeDestination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	archive := createTestTarGz(t, map[string]string{"nested/file.txt": "content"})
+	t.Cleanup(func() { os.Remove(archive) })
+	if err := extractTarGz(archive, "output"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join("output", "nested/file.txt"))
+	if err != nil || string(content) != "content" {
+		t.Fatalf("nested file = %q, %v", content, err)
+	}
+}
+
+func TestExtractTarGzRejectsAbsoluteMember(t *testing.T) {
+	t.Setenv("GODEBUG", "tarinsecurepath=1")
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	archive := createTestTarGz(t, map[string]string{filepath.ToSlash(outside): "content"})
+	t.Cleanup(func() { os.Remove(archive) })
+	if err := extractTarGz(archive, filepath.Join(root, "output")); err == nil || !strings.Contains(err.Error(), "illegal file path") {
+		t.Fatalf("absolute member error = %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside file created: %v", err)
+	}
+}
+
 func TestDownloadAndExtractArchive(t *testing.T) {
 	// Create test archive
 	files := map[string]string{
@@ -825,7 +868,7 @@ func TestESPClangExtractionLogic(t *testing.T) {
 	}
 
 	// Test that function skips download for existing directory
-	err = checkDownloadAndExtractESPClang("", "", "", "", espClangDir)
+	err = checkDownloadAndExtractESPClang("", "", "", espClangDir)
 	if err != nil {
 		t.Fatalf("checkDownloadAndExtractESPClang failed: %v", err)
 	}
@@ -932,7 +975,7 @@ func TestESPClangDownloadWhenNotExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Test download and extract when directory doesn't exist
-	err = checkDownloadAndExtractESPClang(server.URL, "test", "linux", checksum, espClangDir)
+	err = checkDownloadAndExtractESPClang(server.URL, "clang-esp-test-linux.tar.xz", checksum, espClangDir)
 	if err != nil {
 		t.Fatalf("checkDownloadAndExtractESPClang failed: %v", err)
 	}
@@ -1002,7 +1045,7 @@ func TestESPClangDownloadLicenseFailure(t *testing.T) {
 	t.Setenv("LLGO_ROOT", llgoRoot)
 
 	destDir := filepath.Join(t.TempDir(), "esp-clang")
-	err = checkDownloadAndExtractESPClang(server.URL, "test", "linux", checksum, destDir)
+	err = checkDownloadAndExtractESPClang(server.URL, "clang-esp-test-linux.tar.xz", checksum, destDir)
 	if err == nil || !strings.Contains(err.Error(), "read ESP Clang license") {
 		t.Fatalf("checkDownloadAndExtractESPClang() error = %v, want license read error", err)
 	}
@@ -1121,7 +1164,7 @@ func TestESPClangRejectsChecksumMismatch(t *testing.T) {
 	defer server.Close()
 
 	destination := filepath.Join(t.TempDir(), "esp-clang")
-	err = checkDownloadAndExtractESPClang(server.URL, "test", "linux", strings.Repeat("0", 64), destination)
+	err = checkDownloadAndExtractESPClang(server.URL, "clang-esp-test-linux.tar.xz", strings.Repeat("0", 64), destination)
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("checksum mismatch error = %v", err)
 	}
@@ -1183,6 +1226,116 @@ func TestExtractZip(t *testing.T) {
 			t.Error("Expected error for non-directory destination, got nil")
 		}
 	})
+}
+
+func TestExtractZipRejectsEscapingPaths(t *testing.T) {
+	// Exercise our validation even when archive/zip accepts insecure names.
+	t.Setenv("GODEBUG", "zipinsecurepath=1")
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"../outside.txt", "child/../../outside.txt", filepath.ToSlash(outside), "../outside-dir/"}
+	if runtime.GOOS == "windows" {
+		names = append(names, `..\outside.txt`, `C:\outside.txt`, `C:outside.txt`, `\\server\share\outside.txt`)
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			var data bytes.Buffer
+			writer := zip.NewWriter(&data)
+			entry, err := writer.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(name, "/") {
+				if _, err := io.WriteString(entry, "replaced"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(root, "input.zip")
+			if err := os.WriteFile(archive, data.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(root, "extracted")
+			if err := os.MkdirAll(dest, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractZip(archive, dest); err == nil || !strings.Contains(err.Error(), "unsafe ZIP entry path") {
+				t.Fatalf("entry %q: error = %v", name, err)
+			}
+			content, err := os.ReadFile(outside)
+			if err != nil || string(content) != "original" {
+				t.Fatalf("outside file changed: %q, %v", content, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "outside-dir")); !os.IsNotExist(err) {
+				t.Fatalf("outside directory created: %v", err)
+			}
+			// archive/zip can return both a reader and ErrInsecurePath.
+			// Closing that reader permits archive cleanup on Windows too.
+			t.Setenv("GODEBUG", "zipinsecurepath=0")
+			if err := extractZip(archive, dest); err == nil {
+				t.Fatal("archive/zip rejection was ignored")
+			}
+			if err := os.Remove(archive); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestExtractZipCreatesFileParents(t *testing.T) {
+	for _, directoryRecords := range []bool{false, true} {
+		t.Run(fmt.Sprint(directoryRecords), func(t *testing.T) {
+			var data bytes.Buffer
+			writer := zip.NewWriter(&data)
+			entry, err := writer.Create("nested/deep/file.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(entry, "content"); err != nil {
+				t.Fatal(err)
+			}
+			if directoryRecords {
+				// Directory records may follow the files they contain.
+				for _, name := range []string{"nested/", "nested/deep/"} {
+					if _, err := writer.Create(name); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			archive := filepath.Join(root, "input.zip")
+			if err := os.WriteFile(archive, data.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(root, "output")
+			if err := extractZip(archive, dest); err != nil {
+				t.Fatal(err)
+			}
+			content, err := os.ReadFile(filepath.Join(dest, "nested/deep/file.txt"))
+			if err != nil || string(content) != "content" {
+				t.Fatalf("nested file = %q, %v", content, err)
+			}
+		})
+	}
+}
+
+func TestExtractZipRelativeDestination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := createTestZip("input.zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractZip("input.zip", "output"); err != nil {
+		t.Fatal(err)
+	}
+	verifyExtraction(t, "output")
 }
 
 // Create test ZIP file
