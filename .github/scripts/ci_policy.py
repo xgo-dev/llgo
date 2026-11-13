@@ -39,9 +39,18 @@ def classify(changes: list[Change]) -> dict:
     doc_inputs = any(
         f["path"].startswith(("doc/_readme/", ".github/")) for f in files
     )
+    winget_inputs = any(
+        f["path"].startswith((".github/windows/", "test/installer/")) or
+        f["path"] in {"install.ps1", "install.sh", ".goreleaser.yaml",
+                      ".github/workflows/release-build.yml", ".github/workflows/winget.yml",
+                      ".github/workflows/ci-prepare.yml", ".github/scripts/ci_policy.py",
+                      ".github/scripts/ci_changes.py"}
+        for f in files
+    )
     return {
         "run_code_ci": not files or structural or code,
         "run_doc_checks": not files or structural or docs or doc_inputs,
+        "run_winget_ci": not files or structural or winget_inputs,
         "files": files,
         "reason": "PR changes classified; unknown files require code CI",
     }
@@ -62,6 +71,7 @@ def prepare(event_name: str, event: dict, owner: str) -> dict:
     report = {
         "run_code_ci": True,
         "run_doc_checks": True,
+        "run_winget_ci": True,
         "pr_head_sha": "",
         "pr_merge_base": "",
         "files": [],
@@ -98,6 +108,7 @@ def prepare(event_name: str, event: dict, owner: str) -> dict:
     except (KeyError, TypeError, ValueError, OSError, subprocess.CalledProcessError) as error:
         report["run_code_ci"] = True
         report["run_doc_checks"] = True
+        report["run_winget_ci"] = True
         report["reason"] = f"Cannot classify the complete PR; all checks enabled ({type(error).__name__})"
         print(f"::warning::{report['reason']}", file=sys.stderr)
     return report
@@ -105,7 +116,7 @@ def prepare(event_name: str, event: dict, owner: str) -> dict:
 
 def write_outputs(path: str, report: dict) -> None:
     with open(path, "a", encoding="utf-8") as output:
-        for key in ("run_code_ci", "run_doc_checks", "pr_head_sha", "pr_merge_base",
+        for key in ("run_code_ci", "run_doc_checks", "run_winget_ci", "pr_head_sha", "pr_merge_base",
                     "linux_runner", "linux_large_runner"):
             value = report[key]
             if isinstance(value, bool):
@@ -117,7 +128,7 @@ def write_summary(path: str, report: dict) -> None:
     with open(path, "a", encoding="utf-8") as summary:
         summary.write("## CI policy\n\n")
         summary.write(report["reason"] + ".\n\n")
-        for key in ("run_code_ci", "run_doc_checks", "pr_head_sha", "pr_merge_base"):
+        for key in ("run_code_ci", "run_doc_checks", "run_winget_ci", "pr_head_sha", "pr_merge_base"):
             summary.write(f"- `{key}`: `{report[key]}`\n")
         if report["files"]:
             summary.write(f"\nChanged paths: {len(report['files'])}\n\n")

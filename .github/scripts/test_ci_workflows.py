@@ -649,6 +649,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertEqual(set(needs(jobs["release"])), {
             "prepare", "prepare-winget", "test-artifacts", "test-windows-artifacts", "test-windows-artifacts-x86", "test-winget-migration", "test-linux-distributions", "populate-linux-sysroot"})
         self.assertIn("test-windows-artifacts-x86", needs(jobs["prepare-winget"]))
+        self.assertNotIn("test-winget-migration", needs(jobs["prepare-winget"]))
+        self.assertIn("needs.prepare.outputs.run_winget_ci != 'false'",
+                      jobs["test-winget-migration"]["if"])
         self.assertIn("startsWith(github.ref, 'refs/tags/')", jobs["release"]["if"])
 
     def test_linux_distribution_ci_builds_packages_without_publishing(self):
@@ -826,7 +829,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertNotIn("concurrency", workflow)
         job = workflow["jobs"]["prepare"]
         outputs = workflow["on"]["workflow_call"]["outputs"]
-        self.assertEqual(set(outputs), {"run_code_ci", "run_doc_checks", "pr_head_sha",
+        self.assertEqual(set(outputs), {"run_code_ci", "run_doc_checks", "run_winget_ci", "pr_head_sha",
                                        "pr_merge_base", "linux_runner", "linux_large_runner"})
         for key in outputs:
             self.assertEqual(outputs[key]["value"], f"${{{{ jobs.prepare.outputs.{key} }}}}")

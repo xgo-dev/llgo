@@ -85,9 +85,10 @@ ManifestVersion: 1.12.0
   Invoke-WinGet -Arguments @('settings', '--enable', 'LocalManifestFiles')
   $new = Write-Candidate 'XGo.LLGo' '2.0.0' 'unified'
   $next = Write-Candidate 'XGo.LLGo' '2.0.1' 'next'
+  foreach ($manifest in @($new, $next)) { Invoke-WinGet -Arguments @('validate', '--manifest', $manifest) }
   foreach ($legacy in @('XGo.LLGo.MSVC', 'XGo.LLGo.MinGW')) {
     $old = Write-Candidate $legacy '1.0.0' $legacy
-    foreach ($manifest in @($old, $new, $next)) { Invoke-WinGet -Arguments @('validate', '--manifest', $manifest) }
+    Invoke-WinGet -Arguments @('validate', '--manifest', $old)
     Invoke-WinGet -Arguments @('install', '--manifest', $old, '--scope', 'user', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     if (@(Get-PortableRegistration $legacy).Count -ne 1) { throw "$legacy did not register" }
 

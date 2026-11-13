@@ -4,7 +4,7 @@ The Windows release pipeline builds and packages one compiler per architecture. 
 
 ZIP directory records are stored without compression for WinGet's pure ZIP checker. Release tests verify every extracted entry, DLL closure, standalone startup through a portable alias with an isolated PATH, native Go/C/C++ compilation, and ESP32/ESP32-C3 firmware compilation with default and Full LTO after local extraction into an empty cache, without downloading ESP tools. Inspection tools travel in CI-only compiler artifacts and are never included in release ZIPs.
 
-The `prepare-winget` job emits the `llgo-winget-candidates` artifact after all Windows artifact tests pass. Stable releases then submit one PR for `XGo.LLGo` through `xgo-dev/winget-pkgs`, each with x86, x64 and ARM64 installers. The shell/PowerShell installers and WinGet select the same compact ZIPs. The portable `llgo` command supports both target ABIs; select the native toolchain on PATH or with `CC`.
+The `prepare-winget` job emits the `llgo-winget-candidates` artifact after all Windows artifact tests pass. Stable releases then submit one PR for `XGo.LLGo` through `xgo-dev/winget-pkgs`, with x86, x64 and ARM64 installers. The shell/PowerShell installers and WinGet select the same compact ZIPs. The portable `llgo` command supports both target ABIs; select the native toolchain on PATH or with `CC`.
 
 ## Automatic submission
 
@@ -16,7 +16,7 @@ Preview or retry a release that includes the compact ZIPs without rebuilding (re
 
 ```sh
 gh workflow run winget.yml --repo xgo-dev/llgo -f tag=v1.1.0 -F dry_run=true
-# Submit both packages; results are linked in the workflow summary.
+# Submit the unified package; results are linked in the workflow summary.
 gh workflow run winget.yml --repo xgo-dev/llgo -f tag=v1.1.0 -F dry_run=false
 ```
 
@@ -37,7 +37,7 @@ Before submitting to [microsoft/winget-pkgs](https://github.com/microsoft/winget
 2. Run `winget validate --manifest <version-directory>` for the unified package, then test real installation, command startup, upgrade, and uninstall on a clean Windows environment. Keep WinGet's archive and hash checks enabled.
 3. Submit the reviewed `manifests/x/XGo/LLGo/...` directories, or use the workflow above.
 
-The installer manifest uses the portable `llgo` alias. The shared host compiler is tested through that alias for both ABI profiles, without adding the package directory to PATH. It points at `bin/llgo.exe` and include the external dependency notes from [WINDOWS.md](../../WINDOWS.md). The ESP runtime is bundled; native Windows SDK/CRT and libraries remain external dependencies.
+The installer manifest uses the portable `llgo` alias. The shared host compiler is tested through that alias for both ABI profiles, without adding the package directory to PATH. It points at `bin/llgo.exe` and includes the external dependency notes from [WINDOWS.md](../../WINDOWS.md). The ESP runtime is bundled; native Windows SDK/CRT and libraries remain external dependencies.
 
 Do not copy local validation `ProductCode` values ending in `__DefaultSource` into public manifests. A synthetic packaging upgrade using unchanged compiler bytes validates only the local lifecycle. In the local WinGet 1.29.290 test, upgrading a portable package moved it from the custom location to WinGet's default location; do not promise custom-location preservation from that test.
 
@@ -57,3 +57,6 @@ only `XGo.LLGo`, then uninstalls it. It verifies registration and the `llgo`
 command using WinGet 1.29.380 for amd64/x86 on Windows Server 2025 and natively on ARM64. Fixture versions exercise
 package-manager state transitions; the separate native lanes verify the real
 release metadata, binary architecture, DLL closure, and MSVC/MinGW compilation.
+The lifecycle checks run on main and tags, and on PRs changing the Windows
+release or installer inputs. Other code PRs retain native archive validation
+without starting the WinGet job. Tag publication always requires both checks.

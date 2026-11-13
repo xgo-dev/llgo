@@ -418,11 +418,11 @@ jobs:
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
 
       - name: Set up WinGet on native ARM64
-        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc'
-        shell: pwsh
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
+        shell: powershell
         run: ./.github/windows/setup-winget.ps1
       - name: Test native ARM64 WinGet migration and upgrades
-        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc'
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
         shell: pwsh
         run: |
           $archive = @(Get-ChildItem '.windows-dist/*.windows-arm64.zip')
@@ -454,7 +454,8 @@ jobs:
     steps: *windows-test-steps
 
   test-winget-migration:
-    if: needs.prepare.outputs.run_code_ci == 'true'
+    # An older base policy has no scoped flag; keep validation enabled then.
+    if: needs.prepare.outputs.run_code_ci == 'true' && needs.prepare.outputs.run_winget_ci != 'false'
     needs: [prepare, build-windows, build-windows-x86]
     runs-on: windows-2025
     timeout-minutes: 30
@@ -469,7 +470,7 @@ jobs:
           merge-multiple: true
           path: .windows-dist
       - name: Set up the supported WinGet client
-        shell: pwsh
+        shell: powershell
         run: ./.github/windows/setup-winget.ps1
       - name: Test both old IDs, subsequent upgrade and uninstall
         shell: pwsh
@@ -482,7 +483,7 @@ jobs:
 
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, test-windows-artifacts, test-windows-artifacts-x86, test-winget-migration]
+    needs: [prepare, test-windows-artifacts, test-windows-artifacts-x86]
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
     steps:
       - uses: actions/checkout@v7
