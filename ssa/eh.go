@@ -640,12 +640,13 @@ func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, ar
 }
 
 func deferNeedsCalleeCapture(fn Expr) bool {
-	if fn == Nil {
+	if fn.IsNil() {
 		return false
 	}
 	// A dynamic native callee, like a closure, is evaluated when the defer
 	// is registered. Its SSA value may not dominate the shared drain block.
-	// Constant function addresses need no per-registration storage.
+	// Constant function addresses need no per-registration storage;
+	// vkFuncDecl always denotes such a direct declaration.
 	return fn.kind == vkClosure || fn.kind == vkIfaceMethod ||
 		(fn.kind == vkFuncPtr && !fn.impl.IsConstant())
 }
