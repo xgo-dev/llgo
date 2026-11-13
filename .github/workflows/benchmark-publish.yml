@@ -1,4 +1,4 @@
-name: Publish baseline benchmarks
+name: Comment on baseline benchmarks
 
 on:
   workflow_run:
@@ -7,23 +7,30 @@ on:
 
 permissions:
   actions: read
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 jobs:
+  prepare:
+    uses: ./.github/workflows/ci-prepare.yml
+
   artifacts:
-    if: github.event.workflow_run.conclusion == 'success'
-    permissions:
-      actions: read
-    runs-on: ubuntu-24.04
+    needs: prepare
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
     timeout-minutes: 5
     outputs:
-      baseline: ${{ steps.artifacts.outputs.baseline }}
-      wasm: ${{ steps.artifacts.outputs.wasm }}
+      matrix: ${{ steps.artifacts.outputs.matrix }}
+      publish: ${{ steps.source.outputs.publish }}
+      number: ${{ steps.source.outputs.number }}
+      sha: ${{ steps.source.outputs.sha }}
+      repository: ${{ steps.source.outputs.repository }}
+      branch: ${{ steps.source.outputs.branch }}
+      base_sha: ${{ steps.source.outputs.base_sha }}
+      base_ref: ${{ steps.source.outputs.base_ref }}
+      baseline_sha: ${{ steps.source.outputs.baseline_sha }}
     steps:
-      # A docs-only run succeeds with skipped benchmark jobs and no artifacts.
-      # Inspect the triggering run without checking out or executing PR code.
+      # A docs-only run succeeds without artifacts. Inspect data, never PR code.
       - uses: actions/github-script@v9
         id: artifacts
         with:
@@ -32,29 +39,99 @@ jobs:
               github.rest.actions.listWorkflowRunArtifacts,
               { ...context.repo, run_id: context.payload.workflow_run.id, per_page: 100 }
             );
+            const include = [];
             for (const [suite, prefix] of Object.entries({
               baseline: 'go-benchmark-llgo-baseline-',
               wasm: 'go-benchmark-llgo-wasm-',
             })) {
               const present = artifacts.some(a => !a.expired && a.name.startsWith(prefix));
               core.setOutput(suite, String(present));
-              core.info(`${suite}: ${present ? 'publish artifacts' : 'skip; no artifacts'}`);
+              if (present) include.push({
+                suite, pattern: `${prefix}*`,
+                config: suite === 'baseline' ? '.github/llgo-benchmark.yml' : '.github/llgo-wasm-benchmark.yml',
+              });
+              core.info(`${suite}: ${present ? 'comment on artifacts' : 'skip; no artifacts'}`);
             }
+            core.setOutput('matrix', JSON.stringify({ include }));
+            core.setOutput('present', String(include.length > 0));
+      - uses: actions/checkout@v7
+        if: steps.artifacts.outputs.present == 'true'
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/github-script@v9
+        id: source
+        if: steps.artifacts.outputs.present == 'true'
+        with:
+          script: |
+            const { resolvePullRequest } = require('./.github/scripts/benchmark_pr_comment.js');
+            await resolvePullRequest({ github, context, core });
 
-  publish:
-    needs: artifacts
-    if: needs.artifacts.outputs.baseline == 'true'
-    uses: xgo-dev/setup-benchmark-go-action/.github/workflows/publish.yml@v1.0.6
-    with:
-      run_id: ${{ github.event.workflow_run.id }}
-      artifact_pattern: go-benchmark-llgo-baseline-*
-      config_path: .github/llgo-benchmark.yml
-
-  publish-wasm:
-    needs: artifacts
-    if: needs.artifacts.outputs.wasm == 'true'
-    uses: xgo-dev/setup-benchmark-go-action/.github/workflows/publish.yml@v1.0.6
-    with:
-      run_id: ${{ github.event.workflow_run.id }}
-      artifact_pattern: go-benchmark-llgo-wasm-*
-      config_path: .github/llgo-wasm-benchmark.yml
+  comment:
+    needs: [prepare, artifacts]
+    if: needs.artifacts.outputs.publish == 'true'
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.artifacts.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.artifacts.outputs.base_sha }}
+          path: benchmark-config
+          persist-credentials: false
+          sparse-checkout: ${{ matrix.config }}
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ matrix.pattern }}
+          path: benchmark-artifacts
+          merge-multiple: false
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      # The renderer writes only to this job's ephemeral directory. The reusable
+      # publish workflow also pushes Pages data, so deliberately do not call it.
+      - name: Render PR benchmark report
+        id: render
+        uses: xgo-dev/setup-benchmark-go-action/publish@v1.0.6
+        with:
+          artifacts: benchmark-artifacts
+          data-directory: ${{ runner.temp }}/benchmark-report
+          trusted-config: benchmark-config/${{ matrix.config }}
+          series-kind: pull
+          series-id: ${{ needs.artifacts.outputs.number }}
+          series-label: "PR #${{ needs.artifacts.outputs.number }}"
+          expected-source-repository: ${{ needs.artifacts.outputs.repository }}
+          expected-source-sha: ${{ needs.artifacts.outputs.sha }}
+          expected-baseline-repository: ${{ github.repository }}
+          expected-baseline-sha: ${{ needs.artifacts.outputs.baseline_sha }}
+          baseline-source-ref: ${{ needs.artifacts.outputs.base_ref }}
+          source-ref: ${{ needs.artifacts.outputs.branch }}
+          source-url: ${{ github.server_url }}/${{ needs.artifacts.outputs.repository }}/commit/${{ needs.artifacts.outputs.sha }}
+          source-run-url: ${{ github.event.workflow_run.html_url }}
+          source-timestamp: ${{ github.event.workflow_run.run_started_at }}
+          comment-path: ${{ runner.temp }}/benchmark-comment.md
+      - uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ needs.artifacts.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.artifacts.outputs.sha }}
+          PR_HEAD_REPOSITORY: ${{ needs.artifacts.outputs.repository }}
+          COMMENT_PATH: ${{ steps.render.outputs.comment-path }}
+          COMMENT_MARKER: ${{ steps.render.outputs.marker }}
+        with:
+          script: |
+            const { comment } = require('./.github/scripts/benchmark_pr_comment.js');
+            await comment({ github, context, core }, {
+              number: process.env.PR_NUMBER, sha: process.env.PR_HEAD_SHA,
+              repository: process.env.PR_HEAD_REPOSITORY,
+              path: process.env.COMMENT_PATH, marker: process.env.COMMENT_MARKER,
+            });

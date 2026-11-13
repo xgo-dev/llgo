@@ -21,6 +21,40 @@ groups:
   timers: "^Timer(AfterFuncZeroDelivery|CreateStop|RearmStopped|ResetActive|ResetHeap1024)/(Go|LLGo)$"
   strings: "^StringEquality/"
 views:
+  program-sizes:
+    title: Program file sizes
+    select:
+      groups: "^programs$"
+      benchmarks: "^Program/(println|cprintf|fmtprintf)$"
+      metrics: "^file-bytes$"
+    table:
+      rows: [platform]
+      columns: [benchmark]
+      missing: error
+      empty: error
+      dimensions:
+        benchmark:
+          trim-prefix: BenchmarkProgram/
+      metrics:
+        file-bytes:
+          format: bytes
+  program-lto-sizes:
+    title: Program file sizes (LTO)
+    select:
+      groups: "^programs$"
+      benchmarks: "^Program/(println|cprintf|fmtprintf)-lto$"
+      metrics: "^file-bytes$"
+    table:
+      rows: [platform]
+      columns: [benchmark]
+      missing: error
+      empty: error
+      dimensions:
+        benchmark:
+          trim-prefix: BenchmarkProgram/
+      metrics:
+        file-bytes:
+          format: bytes
   strings:
     title: String equality benchmarks
     select:
@@ -35,13 +69,14 @@ views:
       missing: error
       empty: error
   programs:
-    title: Program measurements
+    title: All program measurements
     select:
       groups: "^programs$"
       metrics: "^(file-bytes|text-bytes|build-ns|run-ns)$"
     table:
       rows: [platform, benchmark]
       columns: [metric]
+      collapsed: true
       missing: error
       empty: error
       dimensions:

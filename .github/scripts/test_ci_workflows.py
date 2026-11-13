@@ -19,9 +19,8 @@ import ci_policy
 WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
 PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
-    "llgo.yml": 24, "go.yml": 6, "targets.yml": 4, "build-cache.yml": 4,
+    "llgo.yml": 24, "go.yml": 6, "targets.yml": 2, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
-    "mise.yml": 5, "pixi.yml": 5,
 }
 BOOTSTRAP_RUNNER_JOBS = {
     ("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy"),
@@ -186,7 +185,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", complete)
         linux = next(step for step in steps
                      if step.get("name") == "GDB values, registry and complete worker unwind (Linux)")
-        self.assertIn("^TestGDB(Integration|CompleteWorkerUnwind)$", linux["run"])
+        self.assertIn("go test ./cmd/internal/gdb", linux["run"])
+        self.assertNotIn("-run", linux["run"])
 
     def test_intel_macos_runs_both_native_debuggers(self):
         job = load("llgo.yml")["jobs"]["native-debuggers-intel"]
@@ -351,7 +351,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
     def test_embedded_debuggers_share_setup_without_losing_backend_failures(self):
         job = load("targets.yml")["jobs"]["embedded-debug"]
         self.assertCountEqual(job["strategy"]["matrix"]["os"],
-                              ["ubuntu-24.04", "macos-15", "windows-2022"])
+                              ["ubuntu-24.04"])
+        self.assertEqual(job["runs-on"],
+                         "${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}")
         self.assertNotIn("backend", job["strategy"]["matrix"])
         for backend in ("gdb", "lldb"):
             step = next(step for step in job["steps"]
@@ -503,6 +505,14 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                     self.assertNotIn("paths", push)
                     self.assertNotIn("paths-ignore", push)
                 concurrency = workflow["concurrency"]
+                if path.name == "benchmark.yml":
+                    self.assertNotIn("push", events)
+                    self.assertNotIn("workflow_dispatch", events)
+                    self.assertEqual(concurrency, {
+                        "group": "benchmark.yml-pr-${{ github.event.pull_request.number }}",
+                        "cancel-in-progress": "true",
+                    })
+                    continue
                 # Use the filename as a stable key, independent of display names.
                 # Retain main supersession and unique tag/manual run groups.
                 self.assertEqual(concurrency["cancel-in-progress"],
@@ -742,18 +752,9 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertEqual(job["runs-on"], expected)
                 self.assertNotIn("needs", job)
 
-    def test_linux_environment_checks_keep_native_arm64_and_fork_fallbacks(self):
+    def test_environment_builds_have_moved_to_daily_compatibility_checks(self):
         for filename in ("mise.yml", "pixi.yml"):
-            workflow = load(filename)
-            job = workflow["jobs"]["devenv"]
-            with self.subTest(workflow=filename):
-                self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
-                self.assertIn("prepare", needs(job))
-                self.assertEqual(job["if"], "needs.prepare.outputs.run_code_ci == 'true'")
-                self.assertEqual(job["runs-on"],
-                                 "${{ matrix.os == 'ubuntu-24.04' && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}")
-                self.assertCountEqual(job["strategy"]["matrix"]["os"],
-                                      ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2025"])
+            self.assertFalse((WORKFLOWS / filename).exists())
 
     def test_release_artifact_runner_migration_keeps_native_architectures(self):
         jobs = load("release-build.yml")["jobs"]
@@ -952,12 +953,28 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                     "steps.measure-wasm-base.outcome == 'success' && "))
                 self.assertTrue(expression.endswith(" || '' }}"))
 
-    def test_publish_jobs_require_their_own_artifacts(self):
-        jobs = load("benchmark-publish.yml")["jobs"]
-        self.assertEqual(jobs["artifacts"]["if"], "github.event.workflow_run.conclusion == 'success'")
-        for name, suite in (("publish", "baseline"), ("publish-wasm", "wasm")):
-            self.assertIn("artifacts", needs(jobs[name]))
-            self.assertEqual(jobs[name]["if"], f"needs.artifacts.outputs.{suite} == 'true'")
+    def test_benchmark_publisher_only_comments_without_repository_writes(self):
+        workflow = load("benchmark-publish.yml")
+        self.assertEqual(workflow["permissions"]["contents"], "read")
+        jobs = workflow["jobs"]
+        self.assertIn("workflow_run.event == 'pull_request'", jobs["artifacts"]["if"])
+        self.assertEqual(jobs["comment"]["if"], "needs.artifacts.outputs.publish == 'true'")
+        self.assertEqual(jobs["comment"]["strategy"]["matrix"],
+                         "${{ fromJSON(needs.artifacts.outputs.matrix) }}")
+        self.assertEqual(jobs["comment"]["permissions"]["pull-requests"], "write")
+        for job in jobs.values():
+            self.assertNotIn("uses: xgo-dev/setup-benchmark-go-action/.github/workflows/publish", str(job))
+            self.assertNotEqual(job.get("permissions", {}).get("contents"), "write")
+            for step in job.get("steps", []):
+                self.assertNotIn("git push", step.get("run", ""))
+                if step.get("uses", "").startswith("actions/checkout"):
+                    self.assertEqual(step["with"]["persist-credentials"], "false")
+                    self.assertNotIn("head", step["with"].get("ref", ""))
+        render = next(step for step in jobs["comment"]["steps"] if step.get("id") == "render")
+        self.assertEqual(render["uses"], "xgo-dev/setup-benchmark-go-action/publish@v1.0.6")
+        self.assertNotIn("site-base-url", render["with"])
+        self.assertEqual(render["with"]["expected-baseline-sha"],
+                         "${{ needs.artifacts.outputs.baseline_sha }}")
 
     @unittest.skipUnless(shutil.which("node"), "Node is needed to exercise github-script")
     def test_artifact_probe_handles_empty_partial_and_expired_results(self):
@@ -994,7 +1011,13 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         result = subprocess.run(["node", "-e", harness],
                                 input=json.dumps({"script": script, "cases": cases}),
                                 text=True, capture_output=True, check=True)
-        self.assertEqual(json.loads(result.stdout), [
+        outputs = json.loads(result.stdout)
+        for output in outputs:
+            matrix = json.loads(output.pop("matrix"))["include"]
+            self.assertEqual(output.pop("present"), str(bool(matrix)).lower())
+            self.assertEqual({item["suite"] for item in matrix},
+                             {key for key, value in output.items() if value == "true"})
+        self.assertEqual(outputs, [
             {"baseline": "false", "wasm": "false"}, {"baseline": "false", "wasm": "false"},
             {"baseline": "false", "wasm": "false"}, {"baseline": "true", "wasm": "false"},
             {"baseline": "false", "wasm": "true"}, {"baseline": "true", "wasm": "true"},

@@ -1,19 +1,15 @@
 name: Baseline benchmarks
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches: ["**"]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: benchmark.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+  group: benchmark.yml-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   prepare:
@@ -283,6 +279,15 @@ jobs:
             ${{ github.event_name == 'pull_request' &&
                 steps.measure-base.outcome == 'success' &&
                 '.benchmark/base-results/benchmark.txt' || '' }}
+          baseline-repository: >-
+            ${{ steps.measure-base.outcome == 'success' &&
+                github.event.pull_request.base.repo.full_name || '' }}
+          baseline-sha: >-
+            ${{ steps.measure-base.outcome == 'success' &&
+                needs.prepare.outputs.pr_merge_base || '' }}
+          baseline-ref: >-
+            ${{ steps.measure-base.outcome == 'success' &&
+                github.event.pull_request.base.ref || '' }}
           platform-id: ${{ matrix.id }}
           platform-label: ${{ matrix.display }}
 
