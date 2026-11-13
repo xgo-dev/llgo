@@ -15,5 +15,8 @@ const ClosureEnvExplicit = false
 // ffi_call_go directly when libffi selects the same physical register, or
 // a register bridge on AArch64 ELF.
 func CallWithEnv(cif *Signature, fn, env, ret unsafe.Pointer, args ...unsafe.Pointer) {
-	ffi.CallWithEnv(cif, fn, ret, valuePointerArray(args), env)
+	avalue, pin := valuePointerArray(args)
+	ffi.CallWithEnv(cif, fn, ret, avalue, env)
+	keepAlive(pin)
+	keepAlive(args)
 }
