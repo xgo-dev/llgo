@@ -17,6 +17,8 @@ var (
 
 var nativeIntegerAttributeKinds = [...]uint{nativeSignExtKind, nativeZeroExtKind}
 
+const nativeCallbackABIError = "C callback with a different ABI must be a direct function reference"
+
 // nativeIntegerAttrs emits LLVM ABI parameter attributes while the Go signature
 // still carries signedness. LLVM integer types alone do not distinguish signed
 // from unsigned C values. These attributes tell LLVM codegen how to extend
@@ -143,10 +145,23 @@ func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.
 	}
 }
 
-// needsNativeIntegerFuncval identifies C entries whose argument extension is
-// absent from the Go funcval ABI. The adapter keeps that distinction at the
-// conversion boundary instead of changing calls through arbitrary Go values.
+// needsNativeIntegerFuncval identifies C entries whose physical prototype or
+// integer extension differs from the Go funcval ABI. Adapt at the conversion
+// boundary instead of changing calls through arbitrary Go values.
 func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
+	if b.Prog.usesWideGoStorage() {
+		switch fn.kind {
+		case vkFuncPtr:
+			sig := fn.raw.Type.Underlying().(*types.Signature)
+			if b.Prog.FuncDecl(sig, CDecl).ll != b.Prog.FuncDecl(sig, GoDecl).ll {
+				return true
+			}
+		case vkFuncDecl:
+			if b.Prog.isNativeStorage(fn.Type) && fn.ll != b.Prog.FuncDecl(fn.raw.Type.Underlying().(*types.Signature), GoDecl).ll {
+				return true
+			}
+		}
+	}
 	if b.Prog.nativeIntegerExt == nativeIntegerNoExt {
 		return false
 	}
@@ -170,6 +185,45 @@ func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
 		}
 	}
 	return false
+}
+
+// nativeCallback gives a known Go entry a native prototype. A C callback has
+// no environment slot, so a dynamically selected Go funcval cannot retain the
+// code pointer needed by an adapter when the two physical ABIs differ.
+func (b Builder) nativeCallback(dst Type, fn Expr, cc CallConv, abi string) Expr {
+	direct := fn.impl.IsAFunction()
+	if direct.IsNil() {
+		panic(nativeCallbackABIError)
+	}
+	sig := dst.raw.Type.Underlying().(*types.Signature)
+	if HasNameValist(sig) {
+		panic("C variadic callbacks require a native function pointer")
+	}
+	name := b.Pkg.Path() + ".__llgo_" + abi + "$" + direct.Name() + "$" + b.Prog.abi.FuncName(sig)
+	wrapper := b.Pkg.FuncOf(name)
+	if wrapper == nil {
+		wrapper = b.Pkg.NewFunc(name, sig, cc)
+		wrapper.impl.SetLinkage(llvm.InternalLinkage)
+		body := wrapper.MakeBody(1)
+		args := make([]Expr, sig.Params().Len())
+		for i := range args {
+			args[i] = wrapper.Param(i)
+		}
+		result := body.Call(fn, args...)
+		switch n := sig.Results().Len(); n {
+		case 0:
+			body.Return()
+		case 1:
+			body.Return(result)
+		default:
+			results := make([]Expr, n)
+			for i := range results {
+				results[i] = body.Extract(result, i)
+			}
+			body.Return(results...)
+		}
+	}
+	return Expr{wrapper.impl, dst}
 }
 
 // nativeFuncval adapts a native function pointer to LLGo's ordinary funcval

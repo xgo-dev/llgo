@@ -1096,6 +1096,18 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		return b.stdcallCallback(t.raw.Type, x)
 	}
 	if t.kind == vkFuncPtr && x.kind == vkClosure {
+		sig := t.raw.Type.Underlying().(*types.Signature)
+		goSig := x.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
+		if b.Prog.toLLVMFunc(goSig) != b.Prog.FuncDecl(sig, CDecl).ll {
+			code, data := b.Field(x, 0), b.Field(x, 1)
+			if code.impl.IsNull() && data.impl.IsNull() {
+				return Expr{llvm.ConstNull(t.ll), t}
+			}
+			if code.impl.IsAFunction().IsNil() || !data.impl.IsNull() {
+				panic(nativeCallbackABIError)
+			}
+			return b.nativeCallback(t, Expr{code.impl, b.Prog.FuncDecl(goSig, GoDecl)}, CDecl, "c_callback")
+		}
 		if direct := x.impl.IsAFunction(); !direct.IsNil() {
 			return Expr{direct, t}
 		}
@@ -1106,6 +1118,12 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 			"C callback must not capture variables",
 		)
 		return Expr{code.impl, t}
+	}
+	if t.kind == vkFuncPtr && x.kind == vkFuncDecl {
+		sig := t.raw.Type.Underlying().(*types.Signature)
+		if b.Prog.FuncDecl(sig, CDecl).ll != x.ll {
+			return b.nativeCallback(t, x, CDecl, "c_callback")
+		}
 	}
 	if t.kind == vkClosure {
 		switch x.kind {
@@ -2306,8 +2324,11 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		prog := b.Prog
 		fnType := prog.Field(tclosure, 0)
 		if v.Type != fnType {
-			// Signature conversions are representationally identical.
-			if v.Type.kind == vkFuncDecl || v.Type.kind == vkFuncPtr {
+			// This is a Go code slot, rather than a native callback boundary.
+			// Native entries requiring adaptation were handled above.
+			if v.Type.kind == vkFuncDecl {
+				v = Expr{v.impl, fnType}
+			} else if v.Type.kind == vkFuncPtr {
 				v = b.ChangeType(fnType, v)
 			} else {
 				v = b.Convert(fnType, v)
@@ -2323,6 +2344,13 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 			if dst := b.Prog.rawType(t); dst.kind == vkFuncPtr {
 				return b.ChangeType(dst, v)
 			}
+		}
+	}
+	if v.kind == vkFuncDecl {
+		if _, ok := t.Underlying().(*types.Signature); ok {
+			// Raw signatures are native pointer destinations. Alias identity
+			// can otherwise bypass ChangeType via the Identical check below.
+			return b.ChangeType(b.Prog.rawType(t), v)
 		}
 	}
 	if types.Identical(v.raw.Type, t) || !types.AssignableTo(v.raw.Type, t) {
