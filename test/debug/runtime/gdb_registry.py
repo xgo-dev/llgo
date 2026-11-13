@@ -16,7 +16,17 @@ def check_registry_and_main_stack():
     original = gdb.selected_thread()
     goroutines = _goroutines()
     root = [item for item in goroutines if item["goid"] == 1]
-    workers = [item for item in goroutines if item["parent"] == 1]
+    # Keep the runtime service visible in the registry and verify its native
+    # stack before excluding it from this fixture's two application workers.
+    workers = []
+    for item in goroutines:
+        if item["parent"] != 1:
+            continue
+        assert item["procid"] > 0 and item["thread"] is not None, item
+        stack = gdb.execute(f"llgo goroutine {item['goid']} bt", to_string=True)
+        assert gdb.selected_thread() == original, "backtrace changed selected thread"
+        if "runtime.runExplicitGC" not in stack:
+            workers.append(item)
     assert len(root) == 1, f"expected main goroutine: {goroutines}"
     assert len(workers) == 2, f"expected two live workers: {goroutines}"
     seen_threads = set()
