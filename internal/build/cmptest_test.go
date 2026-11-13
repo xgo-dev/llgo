@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestCmpTestExitHelper(t *testing.T) {
+func TestCmpTestExitStatus(t *testing.T) {
 	if code := os.Getenv("LLGO_CMPTEST_HELPER_EXIT"); code != "" {
 		n, err := strconv.Atoi(code)
 		if err != nil {
@@ -19,11 +19,8 @@ func TestCmpTestExitHelper(t *testing.T) {
 		}
 		os.Exit(n)
 	}
-}
-
-func TestCmpTestExitStatus(t *testing.T) {
 	exit := func(code string) error {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestCmpTestExitHelper$")
+		cmd := exec.Command(os.Args[0], "-test.run=^TestCmpTestExitStatus$")
 		cmd.Env = append(os.Environ(), "LLGO_CMPTEST_HELPER_EXIT="+code)
 		return cmd.Run()
 	}
@@ -63,7 +60,7 @@ func TestCmpTestReferenceBuild(t *testing.T) {
 		"main.go": `package main
 import "os"
 func main() {
- if len(os.Args) != 2 || os.Args[1] != "-test.run=^TestCmpTestExitHelper$" {
+ if len(os.Args) != 2 || os.Args[1] != "-test.run=^TestCmpTestExitStatus$" {
   panic("reference arguments were not forwarded")
  }
 }`,
@@ -75,7 +72,7 @@ func main() {
 	}
 	compare := func(file string) {
 		commands := commandEnv{dir: dir, environ: append(os.Environ(), "LLGO_CMPTEST_HELPER_EXIT=0")}
-		cmpTest(commands, dir, ".", os.Args[0], false, []string{"-test.run=^TestCmpTestExitHelper$"}, file)
+		cmpTest(commands, dir, ".", os.Args[0], false, []string{"-test.run=^TestCmpTestExitStatus$"}, file)
 	}
 	t.Run("selected files and program arguments", func(t *testing.T) {
 		// The invalid neighboring file must not be part of the Go reference.
