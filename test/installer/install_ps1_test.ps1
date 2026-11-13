@@ -69,6 +69,18 @@ Assert-Equal $amd64Components.Count 1
 Assert-Equal $arm64Components.Count 2
 Assert-Equal $arm64Components[1] 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
 
+# Universal assets win regardless of the dependency ABI; old pinned releases
+# remain installable without requiring old ABI-suffixed assets for new releases.
+foreach ($abi in @('msvc', 'mingw')) {
+  $unified = ('a' * 64) + '  llgo1.2.3.windows-amd64.zip'
+  $legacy = ('b' * 64) + "  llgo1.2.3.windows-amd64-$abi.zip"
+  Assert-Equal (Resolve-LLGoReleaseAsset '1.2.3' 'amd64' $abi @($legacy, $unified)).Asset 'llgo1.2.3.windows-amd64.zip'
+  Assert-Equal (Resolve-LLGoReleaseAsset '1.2.3' 'amd64' $abi @($legacy)).Asset "llgo1.2.3.windows-amd64-$abi.zip"
+}
+$rejected = $false
+try { Resolve-LLGoReleaseAsset '1.2.3' 'amd64' 'msvc' @($unified, $unified) } catch { $rejected = $true }
+if (-not $rejected) { throw 'Duplicate universal checksum was accepted' }
+
 $savedABI = $env:LLGO_ABI
 $savedMSYSTEM = $env:MSYSTEM
 try {
@@ -146,7 +158,7 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
       -Architecture 'amd64' `
       -ABI 'msvc' `
       -LocalArchive $archive
-    if (-not (Test-Path -LiteralPath (Join-Path $root 'versions\1.2.3\windows-amd64-msvc\bin\llgo.exe'))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'versions\1.2.3\windows-amd64\bin\llgo.exe'))) {
       throw 'installing a new version removed the old version'
     }
   } finally {

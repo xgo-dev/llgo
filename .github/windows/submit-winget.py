@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Submit a stable LLGo release through xgo-dev/winget-pkgs, one PR per ABI."""
+"""Submit a stable LLGo release through xgo-dev/winget-pkgs, one universal package PR."""
 
 import argparse
 import base64
@@ -109,16 +109,15 @@ def published_installers(api, tag):
             raise ValueError('Malformed or duplicate published checksum entry')
         hashes[match[2]] = match[1].lower()
     installers = {}
-    # Check all six profile/architecture ZIPs before either PR can be submitted.
-    for profile in manifests.PROFILES:
-        for arch in manifests.ARCHITECTURES:
-            name = manifests.archive_name(version, arch, profile)
-            value = asset(name)
-            if value['size'] > manifests.MAX_ZIP_SIZE:
-                raise ValueError(f'Published Windows ZIP exceeds the 128 MiB package budget: {name}')
-            if value['digest'] != 'sha256:' + hashes.get(name, ''):
-                raise ValueError(f'Published installer checksum mismatch: {name}')
-            installers[profile, arch] = (value['browser_download_url'], hashes[name])
+    # Validate all three architecture ZIPs before submitting the package.
+    for arch in manifests.ARCHITECTURES:
+        name = manifests.archive_name(version, arch)
+        value = asset(name)
+        if value['size'] > manifests.MAX_ZIP_SIZE:
+            raise ValueError(f'Published Windows ZIP exceeds the 128 MiB package budget: {name}')
+        if value['digest'] != 'sha256:' + hashes.get(name, ''):
+            raise ValueError(f'Published installer checksum mismatch: {name}')
+        installers[arch] = (value['browser_download_url'], hashes[name])
     return installers
 
 
@@ -151,22 +150,23 @@ def check_branch(api, branch, base, files):
             raise ValueError(f'Existing branch {branch} differs from the release manifests; inspect it manually')
 
 
-def submit(api, tag, profile, output, dry_run=False):
+def submit(api, tag, output, dry_run=False):
     installers = published_installers(api, tag)
     version = tag[1:]
     manifests.write_manifests(output, version, installers)
-    label = manifests.PROFILES[profile]
-    identifier = f'XGo.LLGo.{label}'
-    package = f'manifests/x/XGo/LLGo/{label}'
+    identifier = manifests.PACKAGE_ID
+    package = 'manifests/x/XGo/LLGo'
     directory = f'{package}/{version}'
-    branch = f'llgo/{profile}/{version}'
+    branch = f'llgo/universal/{version}'
     upstream = api.request(f'repos/{UPSTREAM}')
     base = upstream['default_branch']
     if api.optional(f'repos/{UPSTREAM}/contents/{directory}', ref=base) is not None:
         return f'{identifier} {version} is already published'
     if url := existing_pull(api, branch, directory, identifier, version):
         return f'Existing submission: {url}'
-    is_update = api.optional(f'repos/{UPSTREAM}/contents/{package}', ref=base) is not None
+    existing = api.optional(f'repos/{UPSTREAM}/contents/{package}', ref=base) or []
+    # The directory can contain only the historical MSVC/MinGW subpackages.
+    is_update = any(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', item['name']) for item in existing)
     title = f'Update: {identifier} to {version}' if is_update else f'New package: {identifier} version {version}'
     if dry_run:
         return f'Dry run: {title}; {FORK}:{branch} -> {UPSTREAM}:{base}'
@@ -197,7 +197,7 @@ def submit(api, tag, profile, output, dry_run=False):
 
 {identifier} {version} for x86, x64 and ARM64, from [LLGo {tag}](https://github.com/{SOURCE}/releases/tag/{tag}).
 
-The release pipeline tested all six Windows ZIPs. The pinned ESP runtime is bundled and unpacked locally when an embedded build needs it. Installer hashes match both the published checksum file and GitHub asset digests. Both profiles expose the tested portable llgo alias. WinGet installation validation runs on this PR.
+The release pipeline tested all three universal Windows ZIPs. The pinned ESP runtime is bundled and unpacked locally when an embedded build needs it. Installer hashes match both the published checksum file and GitHub asset digests. The package supports both MSVC and MinGW targets and exposes the tested portable llgo alias. WinGet installation validation runs on this PR.
 
 ## ✅ Checklist
 
@@ -222,7 +222,6 @@ The release pipeline tested all six Windows ZIPs. The pinned ESP runtime is bund
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
-    parser.add_argument('--profile', choices=manifests.PROFILES, required=True)
     parser.add_argument('--output', type=Path, default=Path('.winget'))
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
@@ -230,7 +229,7 @@ def main():
     if not args.dry_run and not token:
         parser.error('Set the WINGET_PR_TOKEN Actions secret; GITHUB_TOKEN cannot submit cross-repository PRs')
     api = GitHub(token or os.environ.get('GH_TOKEN', ''), dry_run=args.dry_run)
-    result = submit(api, args.tag, args.profile, args.output, args.dry_run)
+    result = submit(api, args.tag, args.output, args.dry_run)
     print(result)
     if summary := os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(summary, 'a', encoding='utf-8') as stream:
