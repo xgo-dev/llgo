@@ -632,6 +632,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 			if tc.dedup.preload != nil {
 				tc.dedup.preload(pkg)
 			}
+			typeConf.Sizes = pkg.TypesSizes
 			typErr = types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
 		}
 	}
