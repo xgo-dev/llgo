@@ -25,6 +25,19 @@ func isHostLayoutMarker(t Type) bool {
 	return f.Name_ == "_" && f.Typ == hostLayoutPrivateMarker
 }
 
+func structHasHostLayout(typ *abi.Type) bool {
+	st := typ.StructType()
+	if st == nil {
+		return false
+	}
+	for i := range st.Fields {
+		if isHostLayoutMarker(toType(st.Fields[i].Typ)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Ask the compiler for native scalar field alignment without changing the Go
 // scalar's own alignment or width. These can differ on ARM and Windows/386.
 func hostLayoutFieldAlign(t *abi.Type) uint8 {
