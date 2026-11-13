@@ -624,7 +624,7 @@ func (b Builder) loopDeferDrainer(self *aDefer, resume deferTarget) {
 type node struct {
 	prev *node
 	id   uintptr // identifies defer statement for dispatch
-	fn   func()  // (only if closure)
+	fn   func()  // present when deferNeedsCalleeCapture(fn)
 	args ...
 }
 // push
