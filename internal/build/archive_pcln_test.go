@@ -66,6 +66,20 @@ func TestArchivePCLNCache(t *testing.T) {
 			if !reflect.DeepEqual(loaded.linkSnapshot.funcInfo, wantFuncs) || !reflect.DeepEqual(loaded.linkSnapshot.pcLineInfo, wantLines) {
 				t.Fatal("isolated backend snapshot lost archive metadata")
 			}
+			// If this package is rebuilt, its new module is authoritative:
+			// neither the previous snapshot nor cached records may survive.
+			loaded.CacheHit = false
+			fresh := exportArchivePCLN(loaded)
+			if len(fresh.Functions) != 0 || len(fresh.Lines) != 0 {
+				t.Fatal("new backend capture reused stale archive records")
+			}
+			ctx.snapshotBackendPackage(loaded)
+			if len(loaded.linkSnapshot.funcInfo) != 0 || len(loaded.linkSnapshot.pcLineInfo) != 0 {
+				t.Fatal("new backend snapshot reused stale archive records")
+			}
+			if len(collectFuncInfo([]Package{loaded})) != 0 || len(collectPCLineInfo([]Package{loaded})) != 0 {
+				t.Fatal("link collectors reused invalidated archive records")
+			}
 		})
 	}
 	for _, tc := range []struct {

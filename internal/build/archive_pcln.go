@@ -34,13 +34,29 @@ type packagePCLNSnapshot struct {
 
 func exportArchivePCLN(pkg Package) *archivePCLNMetadata {
 	data := &archivePCLNMetadata{Version: archivePCLNVersion}
-	for _, info := range packageFuncInfo(pkg) {
+	snapshot := capturePackagePCLN(pkg)
+	for _, info := range snapshot.functions {
 		data.Functions = append(data.Functions, cachedFuncInfo{info.symbol, info.name, info.file, info.line, info.column, info.flags})
 	}
-	for _, line := range packagePCLineInfo(pkg) {
+	for _, line := range snapshot.lines {
 		data.Lines = append(data.Lines, cachedPCLine{line.id, line.symbol, line.file, line.line, line.column})
 	}
 	return data
+}
+
+// A cache miss captures the current backend module even if a previous link
+// snapshot exists. A cache hit must instead keep the emitted archive's records.
+func capturePackagePCLN(pkg Package) *packagePCLNSnapshot {
+	if pkg.CacheHit && pkg.cachedPCLN != nil {
+		return pkg.cachedPCLN
+	}
+	if pkg.LPkg != nil {
+		return &packagePCLNSnapshot{readFuncInfo(pkg.LPkg.Module()), readPCLineInfo(pkg.LPkg.Module())}
+	}
+	if pkg.linkSnapshot != nil {
+		return &packagePCLNSnapshot{pkg.linkSnapshot.funcInfo, pkg.linkSnapshot.pcLineInfo}
+	}
+	return &packagePCLNSnapshot{}
 }
 
 func (data *archivePCLNMetadata) snapshot() *packagePCLNSnapshot {
@@ -55,7 +71,7 @@ func (data *archivePCLNMetadata) snapshot() *packagePCLNSnapshot {
 }
 
 func packageFuncInfo(pkg Package) []funcInfoRecord {
-	if pkg.cachedPCLN != nil {
+	if pkg.CacheHit && pkg.cachedPCLN != nil {
 		return pkg.cachedPCLN.functions
 	}
 	if pkg.linkSnapshot != nil {
@@ -68,7 +84,7 @@ func packageFuncInfo(pkg Package) []funcInfoRecord {
 }
 
 func packagePCLineInfo(pkg Package) []pcLineRecord {
-	if pkg.cachedPCLN != nil {
+	if pkg.CacheHit && pkg.cachedPCLN != nil {
 		return pkg.cachedPCLN.lines
 	}
 	if pkg.linkSnapshot != nil {
