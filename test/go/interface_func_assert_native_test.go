@@ -5,6 +5,7 @@ package gotest
 import "testing"
 
 // Native-target comma-ok tuples have a separate Memory32 lowering limitation.
+// See https://github.com/xgo-dev/llgo/issues/3090.
 // TestNamedFunctionAssertionPanics covers single-result rejection on all targets.
 func TestGoToNativeFunctionAssertionIdentity(t *testing.T) {
 	for _, value := range []any{
