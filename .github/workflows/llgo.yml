@@ -243,9 +243,12 @@ jobs:
 
           # Native thread and TLS regressions live outside test/.
           (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/wordmap)
+          # Alloc creates process-lifetime native keys. Run the full package
+          # once; repeat the GC regressions that explicitly delete their keys.
+          (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/clite/tls)
           (cd runtime && "$LLGO" test -v -run '^TestSlot(GCAllocation|DestructorGCRegistration)$' -count=20 -timeout=2m ./internal/clite/tls)
           if [[ "$RUNNER_OS" != Windows ]]; then
-            (cd runtime && "$LLGO" test -v -run '^Test(KeyNativeLayout|DetachedStateNativeValue)$' -timeout=2m ./internal/thread)
+            (cd runtime && "$LLGO" test -v -timeout=2m ./internal/thread)
           fi
 
       - name: Install Codecov CLI with Windows host Python
@@ -467,7 +470,7 @@ jobs:
         timeout-minutes: 15
         env:
           LLGO_GDB_INTEGRATION: "1"
-        run: go test ./cmd/internal/gdb -run '^TestGDB(Integration|CompleteWorkerUnwind)$' -count=1 -v
+        run: go test ./cmd/internal/gdb -count=1 -v
 
       - name: Install MinGW LLDB for integration tests
         # R12 qualifies debugger behavior for the new GNU architectures. Keep
@@ -677,7 +680,7 @@ jobs:
         run: |
           "$LLGO" test -v -count=1 -timeout=2m ./test/cgo
           "$LLGO" test -v -count=1 -timeout=2m \
-            -run '^(TestNarrowC|TestLinknameNarrowC)' ./test/llgoext
+            ./test/llgoext
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
 
@@ -708,7 +711,7 @@ jobs:
       - name: Run narrow C ABI regressions
         run: |
           llgo test -v -count=1 -timeout=2m \
-            -run '^(TestNarrowC|TestLinknameNarrowC)' ./test/cgo ./test/llgoext
+            ./test/cgo ./test/llgoext
       - name: Install GDB
         uses: ./.github/actions/setup-gdb
       - name: Enable native GDB on the ephemeral Intel runner
@@ -1050,7 +1053,7 @@ jobs:
           done
           for target in wasi emscripten emscripten-memory64; do
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
-              -run '^TestHostLayout(CallbackStorage|StructOf.*)$' ./test/std/reflect
+              ./test/std/reflect
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
               ./internal/structs ./internal/ffi)
             if [[ "$target" != wasi ]]; then
@@ -1193,7 +1196,7 @@ jobs:
           for target in wasi emscripten emscripten-memory64; do
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
-              -run '^TestLiteral' ./test/std/fmt
+              ./test/std/fmt
             "$LLGO" run -target "$target" -emulator -O2 \
               ./internal/build/testdata/wasm-fmt-literal-callers
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \

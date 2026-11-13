@@ -4,8 +4,8 @@ Compiler, runtime, ABI and firmware correctness remain PR gates. Mise and Pixi
 host provisioning/build checks run daily in llgo-compat/ci's **Development
 environments** workflow (companion PR: https://github.com/llgo-compat/ci/pull/84).
 Both tools cover Linux amd64/arm64, macOS amd64/arm64 and Windows amd64. The
-existing Mise/Pixi gate names remain during migration; they check preparation,
-while the environment builds live in the daily repository. Embedded debugger
+Mise/Pixi workflows are removed from this repository after moving their host
+builds to the daily repository. Embedded debugger
 checks retain the Linux PR gate and their daily native-host coverage.
 
 **Baseline benchmarks** run only on PRs. Base and head are measured sequentially
@@ -51,3 +51,21 @@ prepared image and full ABI qualification are needed before claiming a Windows
 latency improvement. There is no verified Qiniu macOS runner in this sample.
 Runner inventory permissions were unavailable, so these numbers do not establish
 total capacity or the cause of hosted concurrency limits.
+
+## Test commands and reports
+
+Prefer whole-package test commands so new tests join the same gate automatically.
+The native C ABI, thread-layout, Linux GDB and Wasm reflect/fmt checks run their
+packages without case lists. TLS runs the full package once and repeats its
+explicitly released-key GC tests; repeating all process-lifetime key allocations
+exhausts native key limits. Its destructor assertion waits for the actual callback.
+
+Retain filters for distinct contracts: malloc-backed `nogc` allocation checks,
+100-iteration Windows fault stress, platform-specific debugger capabilities,
+LTO modes and upstream GOROOT/intentional-failure test fixtures. Replacing those
+with unrestricted runs would mix incompatible configurations or repeat whole
+compiler suites in a stress loop.
+
+PR benchmark reports expand only println/cprintf/fmtprintf sizes, including native
+LTO variants and Wasm module/glue sizes. Timing, text sizes, other programs and
+microbenchmarks remain in collapsed details.

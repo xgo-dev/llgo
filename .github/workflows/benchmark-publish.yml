@@ -109,7 +109,7 @@ jobs:
           trusted-config: benchmark-config/${{ matrix.config }}
           series-kind: pull
           series-id: ${{ needs.artifacts.outputs.number }}
-          series-label: PR #${{ needs.artifacts.outputs.number }}
+          series-label: "PR #${{ needs.artifacts.outputs.number }}"
           expected-source-repository: ${{ needs.artifacts.outputs.repository }}
           expected-source-sha: ${{ needs.artifacts.outputs.sha }}
           expected-baseline-repository: ${{ github.repository }}

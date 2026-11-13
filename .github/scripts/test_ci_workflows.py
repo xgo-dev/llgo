@@ -21,7 +21,6 @@ PREPARE = "./.github/workflows/ci-prepare.yml"
 CODE_WORKFLOWS = {
     "llgo.yml": 24, "go.yml": 6, "targets.yml": 2, "build-cache.yml": 4,
     "benchmark.yml": 9, "release-build.yml": 24, "doc.yml": 6, "fmt.yml": 1,
-    "mise.yml": 0, "pixi.yml": 0,
 }
 BOOTSTRAP_RUNNER_JOBS = {
     ("ci-prepare.yml", "prepare"), ("ci-policy.yml", "policy"),
@@ -186,7 +185,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", complete)
         linux = next(step for step in steps
                      if step.get("name") == "GDB values, registry and complete worker unwind (Linux)")
-        self.assertIn("^TestGDB(Integration|CompleteWorkerUnwind)$", linux["run"])
+        self.assertIn("go test ./cmd/internal/gdb", linux["run"])
+        self.assertNotIn("-run", linux["run"])
 
     def test_intel_macos_runs_both_native_debuggers(self):
         job = load("llgo.yml")["jobs"]["native-debuggers-intel"]
@@ -754,10 +754,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
 
     def test_environment_builds_have_moved_to_daily_compatibility_checks(self):
         for filename in ("mise.yml", "pixi.yml"):
-            workflow = load(filename)
-            with self.subTest(workflow=filename):
-                self.assertEqual(set(workflow["jobs"]), {"prepare", "ci-gate"})
-                self.assertEqual(workflow["jobs"]["prepare"]["uses"], PREPARE)
+            self.assertFalse((WORKFLOWS / filename).exists())
 
     def test_release_artifact_runner_migration_keeps_native_architectures(self):
         jobs = load("release-build.yml")["jobs"]

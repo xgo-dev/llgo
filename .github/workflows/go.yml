@@ -394,7 +394,7 @@ jobs:
           set -euo pipefail
           go test -tags=dev -count=1 ./internal/lto ./cmd/internal/flags
           go test -tags=dev -count=1 -timeout=30m \
-            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
+            -run 'LTOPlugin' \
             ./cl
 
   dev-lto-globaldce:
@@ -466,7 +466,7 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
-            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
+            -run 'LTOPlugin' \
             ./cl
           go tool cover -func=coverage-dev-lto-plugin-cl.txt
 
