@@ -104,6 +104,8 @@ func espQEMUArchitecture(command string, args []string) string {
 			selected = args[i+1]
 		} else if strings.HasPrefix(arg, "-machine=") {
 			selected = strings.TrimPrefix(arg, "-machine=")
+		} else if strings.HasPrefix(arg, "-M=") {
+			selected = strings.TrimPrefix(arg, "-M=")
 		}
 	}
 	selected, _, _ = strings.Cut(selected, ",")

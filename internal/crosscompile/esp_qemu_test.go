@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -28,6 +29,10 @@ func TestESPQEMUSelection(t *testing.T) {
 		{"qemu-system-riscv32", []string{"-machine", "esp32c3"}, "riscv32"},
 		{"qemu-system-xtensa", []string{"-M", "esp32"}, "xtensa"},
 		{"qemu-system-xtensa", []string{"-machine=esp32,usb=off"}, "xtensa"},
+		{"qemu-system-xtensa", []string{"-M=esp32,usb=off"}, "xtensa"},
+		{"qemu-system-riscv32", []string{"-M=esp32c3"}, "riscv32"},
+		{"qemu-system-riscv32", []string{"-machine", "esp32c3", "-M=virt"}, ""},
+		{"qemu-system-riscv32", []string{"-M=virt", "-machine=esp32c3"}, "riscv32"},
 		{"qemu-system-riscv32", []string{"-machine", "virt,aclint=on"}, ""},
 		{"qemu-system-riscv32", []string{"-machine", "esp32c3", "-M", "virt"}, ""},
 		{"qemu-system-riscv32", []string{"-machine"}, ""},
@@ -59,6 +64,39 @@ func TestESPQEMUSelection(t *testing.T) {
 		command := "qemu-system-xtensa"
 		if got, err := resolveESPQEMU(command, []string{"-machine", "esp32"}, host[0], host[1]); err != nil || got != command {
 			t.Errorf("unsupported host %v changed PATH resolution: %q, %v", host, got, err)
+		}
+	}
+}
+
+func TestESPQEMUPinsMatchCI(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "install-esp-qemu.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"RELEASE_TAG": "esp-develop-" + espQEMUVersion,
+		"VERSION":     "esp_develop_" + strings.ReplaceAll(espQEMUVersion, "-", "_"),
+	} {
+		match := regexp.MustCompile(`(?m)^` + name + `="([^"]+)"`).FindSubmatch(script)
+		if len(match) != 2 || string(match[1]) != want {
+			t.Fatalf("CI %s does not match %q", name, want)
+		}
+	}
+	packages := regexp.MustCompile(`qemu-([a-z0-9]+)-softmmu-`).FindAllSubmatch(script, -1)
+	if len(packages) != 2 {
+		t.Fatalf("CI has %d QEMU packages, want 2", len(packages))
+	}
+	for platform, checksums := range espQEMUChecksums {
+		pattern := `(?s)` + regexp.QuoteMeta(platform) + `\)\s+SHA256S=\(\s+"([a-f0-9]{64})"\s+"([a-f0-9]{64})"\s+\)`
+		match := regexp.MustCompile(pattern).FindSubmatch(script)
+		if len(match) != 3 {
+			t.Fatalf("missing CI checksums for %s", platform)
+		}
+		for i, pkg := range packages {
+			arch := string(pkg[1])
+			if got := string(match[i+1]); got != checksums[arch] {
+				t.Errorf("%s/%s: CI checksum %s, compiler checksum %s", platform, arch, got, checksums[arch])
+			}
 		}
 	}
 }
