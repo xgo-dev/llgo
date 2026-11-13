@@ -86,6 +86,13 @@ func TestESPQEMUPinsMatchCI(t *testing.T) {
 	if len(packages) != 2 {
 		t.Fatalf("CI has %d QEMU packages, want 2", len(packages))
 	}
+	platformBlocks := regexp.MustCompile(`(?m)^[\t ]*([^\s()|]+)\)\s+SHA256S=\(`).FindAllSubmatch(script, -1)
+	for _, block := range platformBlocks {
+		platform := string(block[1])
+		if platform != "x86_64-w64-mingw32" && espQEMUChecksums[platform] == nil {
+			t.Errorf("CI platform %s has no compiler QEMU pins", platform)
+		}
+	}
 	for platform, checksums := range espQEMUChecksums {
 		pattern := `(?s)` + regexp.QuoteMeta(platform) + `\)\s+SHA256S=\(\s+"([a-f0-9]{64})"\s+"([a-f0-9]{64})"\s+\)`
 		match := regexp.MustCompile(pattern).FindSubmatch(script)
