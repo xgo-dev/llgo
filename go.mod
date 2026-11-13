@@ -7,7 +7,7 @@ require (
 	github.com/goplus/cobra v1.9.12 //xgo:class
 	github.com/goplus/gogen v1.26.6
 	github.com/goplus/lib v0.7.1
-	github.com/goplus/mod v0.22.1
+	github.com/goplus/mod v0.23.0
 	github.com/mattn/go-tty v0.0.8
 	github.com/qiniu/x v1.19.3
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
