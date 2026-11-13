@@ -19,6 +19,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/frontcache"
 	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
 var errFrontendSourceRequired = errors.New("frontend cache requires source bodies")
@@ -187,7 +188,15 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 		}
 	}
 	for _, name := range pkg.Types.Scope().Names() {
-		typ := pkg.Types.Scope().Lookup(name).Type()
+		obj := pkg.Types.Scope().Lookup(name)
+		typ := obj.Type()
+		// Type exports currently retain the underlying type, but not its
+		// declaration RHS. Keep native definitions source-checked until that
+		// provenance has an export contract. Archive and SSA caching remain
+		// available; only the opaque type-checking shortcut is ineligible.
+		if _, ok := obj.(*types.TypeName); ok && l.ctx.prog.RepresentationOf(typ).Storage == llssa.NativeRepresentation {
+			return
+		}
 		switch v := typ.(type) {
 		case *types.Signature:
 			if v.TypeParams().Len() != 0 {
@@ -199,6 +208,15 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 			}
 		case *types.Alias:
 			if v.TypeParams().Len() != 0 {
+				return
+			}
+		}
+	}
+	if info := pkg.TypesInfo; info != nil {
+		for _, obj := range info.Defs {
+			if name, ok := obj.(*types.TypeName); ok && l.ctx.prog.RepresentationOf(name.Type()).Storage == llssa.NativeRepresentation {
+				// Local defined types can escape through exported signatures
+				// or runtime type metadata without appearing in package scope.
 				return
 			}
 		}

@@ -191,12 +191,13 @@ func TestFrontendCacheLoadsWasmProgramCertificate(t *testing.T) {
 }
 
 func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
-	f := frontendProgramFixture(t)
 	for _, tc := range []struct {
 		name, source string
 		want         bool
 	}{
 		{"plain", "var X int", true},
+		{"ordinary definition", "type Plain struct{ F func() }; type Copy Plain", true},
+		{"native definition", "//llgo:cdecl\ntype Native struct{ F func() }; type Copy Native", false},
 		{"generic function", "func F[T any](x T) T{return x}", false},
 		{"generic type", "type T[P any] struct{X P}", false},
 		{"generic alias", "type T[P any] = []P", false},
@@ -204,15 +205,20 @@ func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
 		{"missing source", "var X int", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := frontendProgramFixture(t)
 			file, err := parser.ParseFile(f.ctx.progSSA.Fset, "decl.go", "package dep\n"+tc.source, parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
-			checked, err := new(types.Config).Check("example/dep", f.ctx.progSSA.Fset, []*ast.File{file}, nil)
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object)}
+			checked, err := new(types.Config).Check("example/dep", f.ctx.progSSA.Fset, []*ast.File{file}, info)
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkg := &aPackage{Package: &packages.Package{ID: checked.Path(), PkgPath: checked.Path(), Name: checked.Name(), Types: checked, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
+			if err := cl.ParsePkgSyntaxWithOptions(f.ctx.prog, f.ctx.progSSA.Fset, checked, []*ast.File{file}, cl.Options{}, info); err != nil {
+				t.Fatal(err)
+			}
+			pkg := &aPackage{Package: &packages.Package{ID: checked.Path(), PkgPath: checked.Path(), Name: checked.Name(), Types: checked, TypesInfo: info, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
 			l := &frontendTypeLoader{ctx: f.ctx, keys: map[string]string{pkg.ID: "source"}, exports: make(map[string]*frontendTypeExport)}
 			if tc.name == "missing source" {
 				delete(l.keys, pkg.ID)
