@@ -327,6 +327,12 @@ func MatchesClosure(T, V *abi.Type) bool {
 	} else if T == nil || V == nil {
 		return false
 	}
+	// Distinct named types are never identical, even when their function
+	// signatures match. Check before unwrapping the closure representation,
+	// whose function field only describes the underlying signature.
+	if T.HasName() || V.HasName() {
+		return false
+	}
 	if T.IsClosure() {
 		T = T.StructType().Fields[0].Typ
 	}
