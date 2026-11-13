@@ -1,8 +1,12 @@
 # Exercise the portable package IDs with the real WinGet client and tested ZIP.
-param([Parameter(Mandatory = $true)][string]$Archive)
+param(
+  [Parameter(Mandatory = $true)][string]$Archive,
+  [Parameter(Mandatory = $true)][ValidateSet('amd64', 'arm64', '386')][string]$GoArch
+)
 $ErrorActionPreference = 'Stop'
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
 $winget = (Get-Command winget.exe).Source
+$installerArch = @{ amd64 = 'x64'; arm64 = 'arm64'; '386' = 'x86' }[$GoArch]
 $temp = Join-Path $env:RUNNER_TEMP ('llgo-winget-' + [Guid]::NewGuid())
 New-Item -ItemType Directory $temp | Out-Null
 $ids = @('XGo.LLGo.MSVC', 'XGo.LLGo.MinGW', 'XGo.LLGo')
@@ -49,7 +53,7 @@ try {
   $port = ''
   while ($port -notmatch '^[0-9]+$') {
     if ($server.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw 'WinGet fixture server did not start' }
-    if (Test-Path "$temp/port") { $port = (Get-Content "$temp/port" -Raw).Trim() }
+    if (Test-Path "$temp/port") { $port = ([string](Get-Content "$temp/port" -Raw)).Trim() }
     if ($port -notmatch '^[0-9]+$') { Start-Sleep -Milliseconds 100 }
   }
   function Write-Candidate([string]$Identifier, [string]$Version, [string]$Name) {
@@ -70,7 +74,7 @@ NestedInstallerFiles:
   PortableCommandAlias: llgo
 UpgradeBehavior: uninstallPrevious
 Installers:
-- Architecture: x64
+- Architecture: $installerArch
   InstallerUrl: http://127.0.0.1:$port/llgo.zip
   InstallerSha256: $checksum
 ManifestType: singleton
@@ -96,8 +100,11 @@ ManifestVersion: 1.12.0
     }
     $alias = Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links/llgo.exe'
     if (-not (Test-Path $alias)) { throw 'The unified portable alias is missing' }
-    & $alias version
-    if ($LASTEXITCODE -ne 0) { throw 'The migrated compiler did not start' }
+    $compilerVersion = (& $alias version | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $compilerVersion -notmatch " windows/$GoArch$") {
+      throw "Unexpected migrated compiler: $compilerVersion"
+    }
+    Write-Host $compilerVersion
 
     Invoke-WinGet -Arguments @('upgrade', '--manifest', $next, '--scope', 'user', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     $registration = @(Get-PortableRegistration 'XGo.LLGo')
@@ -106,7 +113,7 @@ ManifestVersion: 1.12.0
     }
     Invoke-WinGet -Arguments @('uninstall', '--id', 'XGo.LLGo', '--exact', '--accept-source-agreements', '--disable-interactivity')
     if (Test-Path $alias) { throw 'Uninstall left a stale llgo alias' }
-    Write-Host "Passed $legacy -> XGo.LLGo -> next unified version -> uninstall"
+    Write-Host "Passed windows/$GoArch $legacy -> XGo.LLGo -> next unified version -> uninstall"
   }
 } finally {
   foreach ($id in $ids) {

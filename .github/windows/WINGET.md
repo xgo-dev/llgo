@@ -54,6 +54,6 @@ This preserves old pinned installs without maintaining three publication streams
 The release CI's WinGet migration job installs each legacy portable ID using the
 new tested ZIP, performs the documented uninstall/install migration, upgrades
 only `XGo.LLGo`, then uninstalls it. It verifies registration and the `llgo`
-command using WinGet 1.29.380 on Windows Server 2025. Fixture versions exercise
+command using WinGet 1.29.380 for amd64/x86 on Windows Server 2025 and natively on ARM64. Fixture versions exercise
 package-manager state transitions; the separate native lanes verify the real
 release metadata, binary architecture, DLL closure, and MSVC/MinGW compilation.

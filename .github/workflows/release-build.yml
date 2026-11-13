@@ -417,6 +417,18 @@ jobs:
           -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
 
+      - name: Set up WinGet on native ARM64
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc'
+        shell: pwsh
+        run: ./.github/windows/setup-winget.ps1
+      - name: Test native ARM64 WinGet migration and upgrades
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc'
+        shell: pwsh
+        run: |
+          $archive = @(Get-ChildItem '.windows-dist/*.windows-arm64.zip')
+          if ($archive.Count -ne 1) { throw 'Expected one unified ARM64 archive' }
+          ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch arm64
+
       - name: Upload Windows bundled ESP validation evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -443,7 +455,7 @@ jobs:
 
   test-winget-migration:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build-windows]
+    needs: [prepare, build-windows, build-windows-x86]
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -453,19 +465,20 @@ jobs:
           python-version: '3.13'
       - uses: actions/download-artifact@v8
         with:
-          name: llgo-windows-amd64
+          pattern: llgo-windows-*
+          merge-multiple: true
           path: .windows-dist
       - name: Set up the supported WinGet client
         shell: pwsh
-        run: |
-          Install-Module -Name Microsoft.WinGet.Client -Force -AcceptLicense -Repository PSGallery -Scope CurrentUser
-          Repair-WinGetPackageManager -Version '1.29.380' -AllUsers
+        run: ./.github/windows/setup-winget.ps1
       - name: Test both old IDs, subsequent upgrade and uninstall
         shell: pwsh
         run: |
-          $archive = @(Get-ChildItem '.windows-dist/*.windows-amd64.zip')
-          if ($archive.Count -ne 1) { throw 'Expected one unified amd64 archive' }
-          ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName
+          foreach ($arch in @('amd64', '386')) {
+            $archive = @(Get-ChildItem ".windows-dist/*.windows-$arch.zip")
+            if ($archive.Count -ne 1) { throw "Expected one unified $arch archive" }
+            ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch $arch
+          }
 
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
