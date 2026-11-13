@@ -13,8 +13,8 @@ case "${1:-}" in
     ;;
 esac
 
-# Keep the scheduler deliberately small: directory consolidation owns coverage,
-# while this script only selects the few specialized profiles and runs them.
+# Discover host demos and comparison fixtures, select specialized profiles,
+# and run the selected cases with bounded parallelism.
 jobs="${LLGO_DEMO_JOBS:-4}"
 if [ "$mode" != "host" ] && [ -z "${LLGO_DEMO_JOBS:-}" ]; then
   # The first case for each target warms an expensive shared build cache. Run
@@ -140,7 +140,7 @@ else
     add_case "$d" "" "$d"
   done
 
-  # Compare every fixture with Go in the ordinary host lane. Specialized
+  # Compare every fixture with Go or llgo.expect in the ordinary host lane. Specialized
   # optimization and embedded profiles keep their existing focused coverage.
   if [ "${#llgo_run_flags[@]}" -eq 0 ]; then
     for d in ./_cmptest/*; do
