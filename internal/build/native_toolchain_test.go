@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -110,6 +111,28 @@ func TestBuildRejectsMalformedNativeToolchainInput(t *testing.T) {
 	_, err := Build(Invocation{Config: conf, Dir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "could not parse CC") {
 		t.Fatalf("Build() error = %v, want malformed CC error", err)
+	}
+}
+
+func TestBuildRejectsMalformedNativeLinkOptions(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("Unix native linker path")
+	}
+	for _, test := range []struct {
+		name    string
+		options LinkOptions
+	}{
+		{"-extld", LinkOptions{ExternalLinker: "'clang"}},
+		{"-extldflags", LinkOptions{ExternalLinkerFlags: "'-Wl,option"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.LinkOptions = test.options
+			_, err := Build(Invocation{Config: conf, Dir: t.TempDir()})
+			if err == nil || !strings.Contains(err.Error(), "could not parse "+test.name) {
+				t.Fatalf("Build() error = %v, want malformed %s error", err, test.name)
+			}
+		})
 	}
 }
 

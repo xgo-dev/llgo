@@ -644,6 +644,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if err != nil {
 			return nil, err
 		}
+	} else if conf.Target == "" && conf.Goos == runtime.GOOS && conf.Goarch == runtime.GOARCH {
+		// Unix compiler selection still follows its existing environment path.
+		// Parse the explicit linker options without changing CC/CXX handling.
+		nativeInput, err = parseNativeToolchainInput(commandEnv{dir: commands.dir}, conf.LinkOptions, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
 	if err != nil {

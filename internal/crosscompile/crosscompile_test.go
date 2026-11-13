@@ -1172,6 +1172,31 @@ func TestNativeToolchain(t *testing.T) {
 	}
 }
 
+func TestNativeExternalLinkOptions(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("Unix native linker path")
+	}
+	input := NativeToolchainInput{
+		ExternalLinker: []string{"custom-clang++", "--driver-prefix"},
+		ExternalFlags:  []string{"-Wl,--custom-link-flag", "path with spaces"},
+	}
+	export, err := UseWithGOARMAndToolchain(runtime.GOOS, runtime.GOARCH, "", "", false, optlevel.O3, lto.Full, false, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if export.Linker != input.ExternalLinker[0] || !slices.Equal(export.LinkerArgs, input.ExternalLinker[1:]) {
+		t.Fatalf("external linker = %q %q, want %q", export.Linker, export.LinkerArgs, input.ExternalLinker)
+	}
+	if n := len(export.LDFLAGS) - len(input.ExternalFlags); n < 0 || !slices.Equal(export.LDFLAGS[n:], input.ExternalFlags) {
+		t.Fatalf("external flags must follow generated flags: %q", export.LDFLAGS)
+	}
+	input.ExternalLinker[1] = "changed"
+	input.ExternalFlags[0] = "changed"
+	if export.LinkerArgs[0] != "--driver-prefix" || export.LDFLAGS[len(export.LDFLAGS)-2] != "-Wl,--custom-link-flag" {
+		t.Fatal("export aliases external linker input")
+	}
+}
+
 func TestNativeDebugInfoPolicy(t *testing.T) {
 	tests := []struct {
 		goos     string
