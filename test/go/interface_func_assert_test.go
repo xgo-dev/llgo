@@ -54,13 +54,10 @@ func TestFunctionTypeAssertionIdentity(t *testing.T) {
 }
 
 func TestNamedFunctionAssertionPanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("asserting a named function as an unnamed function did not panic")
-		}
-	}()
 	var value any = assertFuncA(func(x int32) int32 { return x })
-	_ = value.(func(int32) int32)
+	expectPanicContaining(t, "interface conversion", func() {
+		_ = value.(func(int32) int32)
+	})
 }
 
 func TestFunctionAssertionReflectRoundTrip(t *testing.T) {
