@@ -3,28 +3,26 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
 )
 
 func main() {
-	ls := "ls"
-	args := []string{ls, "-l"}
-	if runtime.GOOS == "windows" {
-		ls = "dir"
-		args = []string{ls}
+	if len(os.Args) > 1 && os.Args[1] == "child" {
+		fmt.Println("child process")
+		os.Exit(7)
 	}
-	lspath, _ := exec.LookPath(ls)
-	if lspath != "" {
-		ls = lspath
+	exe, err := os.Executable()
+	if err != nil {
+		panic(err)
 	}
-	proc, err := os.StartProcess(ls, args, &os.ProcAttr{
+	proc, err := os.StartProcess(exe, []string{exe, "child"}, &os.ProcAttr{
 		Files: []*os.File{nil, os.Stdout, os.Stderr},
 	})
 	if err != nil {
-		fmt.Println("os.StartProcess error:", err)
-		return
+		panic(err)
 	}
-	proc.Wait()
-	fmt.Println("proc.Wait done")
+	state, err := proc.Wait()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("child exit:", state.ExitCode())
 }

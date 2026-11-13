@@ -39,12 +39,14 @@ trap 'rm -rf "$tmp_root"' EXIT
 run_dirs=()
 run_targets=()
 run_labels=()
+run_kinds=()
 emulator=0
 
 add_case() {
   run_dirs+=("$1")
   run_targets+=("$2")
   run_labels+=("$3")
+  run_kinds+=("${4:-demo}")
 }
 
 if [ "$mode" != "host" ]; then
@@ -137,6 +139,16 @@ else
     fi
     add_case "$d" "" "$d"
   done
+
+  # Compare every fixture with Go in the ordinary host lane. Specialized
+  # optimization and embedded profiles keep their existing focused coverage.
+  if [ "${#llgo_run_flags[@]}" -eq 0 ]; then
+    for d in ./_cmptest/*; do
+      if [ -d "$d" ] && [ -n "$(ls "$d"/*.go 2>/dev/null)" ]; then
+        add_case "$d" "" "$d (cmptest)" cmptest
+      fi
+    done
+  fi
 fi
 
 total="${#run_dirs[@]}"
@@ -147,12 +159,22 @@ run_case() {
   local dir="$1"
   local target="$2"
   local output_dir="$3"
+  local kind="$4"
   local output executable
   local -a cmd
   if [ -n "$target" ]; then
     echo "Testing $dir (target=$target)"
   else
     echo "Testing $dir"
+  fi
+
+  if [ "$kind" = cmptest ]; then
+    if (cd "$dir" && GOTOOLCHAIN=local GOWORK=off llgo cmptest -p=1 .); then
+      echo "PASS"
+      return
+    fi
+    echo "FAIL"
+    return 1
   fi
 
   if [ -n "$target" ]; then
@@ -209,7 +231,7 @@ if [ "$jobs" -le 1 ] || [ "$total" -le 1 ]; then
     label="${run_labels[$i]}"
     idx=$((idx+1))
     output_dir="$tmp_root/$(printf '%04d' "$idx")"
-    if ! run_case "$d" "$target" "$output_dir"; then
+    if ! run_case "$d" "$target" "$output_dir" "${run_kinds[$i]}"; then
       failed=$((failed+1))
       failed_cases="$failed_cases\n* :x: $label"
     fi
@@ -265,7 +287,7 @@ else
     log="$tmp_root/$(printf '%04d' "$idx").log"
     output_dir="$tmp_root/$(printf '%04d' "$idx")"
     echo "Starting $label"
-    (run_case "$d" "$target" "$output_dir") >"$log" 2>&1 &
+    (run_case "$d" "$target" "$output_dir" "${run_kinds[$i]}") >"$log" 2>&1 &
     pid=$!
     active_pids+=("$pid")
     active_dirs+=("$label")
@@ -285,9 +307,9 @@ echo "=== Done"
 echo "$((total-failed))/$total tests passed"
 
 if [ "$failed" -ne 0 ]; then
-  echo ":bangbang: Failed demo cases:" | tee -a result.md
+  echo ":bangbang: Failed demo/comparison cases:" | tee -a result.md
   echo -e "$failed_cases" | tee -a result.md
   exit 1
 else
-  echo ":white_check_mark: All demo tests passed" | tee -a result.md
+  echo ":white_check_mark: All demo/comparison tests passed" | tee -a result.md
 fi
