@@ -158,6 +158,8 @@ type Callback func(context uintptr) uintptr
 
 `stdcall.` declarations and `//llgo:stdcall` apply only to non-variadic function types. A native callback is one function pointer, so a Go callback must be a direct function reference; pass state through an explicit context pointer rather than a capturing closure.
 
+`//llgo:cdecl` and `//llgo:stdcall` function values can be passed directly to `syscall.NewCallback`, `syscall.NewCallbackCDecl`, and `runtime.SetFinalizer`. On Windows, the type's convention governs calls into the function; independently, `NewCallback` creates a stdcall entry and `NewCallbackCDecl` creates a cdecl entry.
+
 #### Calling-convention directives
 
 A function type that models a C or Windows callback carries a calling-convention directive so the generated function pointer matches the native ABI:
