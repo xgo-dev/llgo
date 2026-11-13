@@ -113,7 +113,7 @@ func (p *context) emitDirectFinalizer(b llssa.Builder, call *ssa.CallCommon, ds 
 		), nil, false)
 		helper = p.pkg.NewFuncEx(name, sig, llssa.GoDecl, false, false)
 	}
-	p.emitDo(b, llssa.Call, ds, mayRecover, helper.Expr, llssa.Builder.Call,
+	p.emitDo(b, llssa.Call, call, ds, mayRecover, helper.Expr, llssa.Builder.Call,
 		objPtr, fnPtr, p.prog.IntVal(size, p.prog.Uintptr()))
 	return true
 }

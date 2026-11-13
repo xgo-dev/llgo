@@ -2417,7 +2417,7 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	return owner
 }
 
-func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferStack, mayRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, common *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
 	if ds != nil {
 		b.DeferToRecover(ds.owner, ds.stack, mayRecover, fn, buildCall, args...)
 		return llssa.Nil
@@ -2425,6 +2425,9 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	switch act {
 	case llssa.Call, llssa.Go:
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+			if p.canTailRecoverAlias(common) {
+				return b.CallRecoverTailAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
+			}
 			return b.CallRecoverAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
 		}
 		return b.Do(act, fn, buildCall, args...)
@@ -2662,7 +2665,9 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
-		if act == llssa.Call {
+		// Forwarding returns use owned receiver storage: a tail call cannot
+		// lend a word from the wrapper frame that it removes.
+		if act == llssa.Call && !p.canTailRecoverAlias(call) {
 			// Value-receiver adapters copy this borrowed word into the
 			// callee's parameter before it can be retained. A by-reference
 			// receiver ABI would require a separate lifetime proof here.
@@ -2677,7 +2682,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			hasVArg = fnHasVArg
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
-		ret = p.emitDo(b, act, ds, true, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, true, fn, llssa.Builder.Call, args...)
 		if reflectCheck.Kind&llssa.ReflectTypeMethodByName != 0 && reflectCheck.Name == "" {
 			b.MarkReflectTypeMethodByNameExpr(ret, 1)
 		}
@@ -2711,7 +2716,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		}
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
 		if act == llssa.Call {
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
@@ -2721,7 +2726,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)
-			ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
 			return
 		}
 		aFn, pyFn, ftype := p.compileFunction(cv)
@@ -2753,14 +2758,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				// recover-frame alias may surround it (or run after the call).
 				ret = b.CallForwardVarargs(aFn.Expr, args...)
 			} else {
-				ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+				ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
 		case llgoSIMD:
 			ret = p.simdCall(b, cv, args)
 		case llgoAESAlloca:
@@ -2855,7 +2860,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("keepAlive(any): invalid arguments")
 			}
 			values := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.KeepAlive(args[0])
 			}, values...)
 		case llgoSkip:
@@ -2911,45 +2916,45 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("umulOverflow(a, b T) (T, bool): invalid arguments")
 			}
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.UMulOverflow(args[0], args[1])
 			}, args...)
 		case llgoUnreachable: // func unreachable()
 			b.Unreachable()
 		case llgoAtomicLoad:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicLoad(b, args)
 			}, args...)
 		case llgoAtomicStore:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicStore(b, args)
 			}, args...)
 		case llgoAtomicStoreUnordered:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicStoreUnordered(b, args)
 			}, args...)
 		case llgoAtomicCmpXchg:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchg(b, args)
 			}, args...)
 		case llgoAtomicCmpXchgOK:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchgOK(b, args)
 			}, args...)
 		case llgoAtomicAddReturnNew:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {
 				args := p.compileValues(b, args, kind)
-				ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 					return p.atomic(b, llssa.AtomicOp(ftype-llgoAtomicOpBase), args)
 				}, args...)
 			} else {
@@ -2959,7 +2964,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	default:
 		fn := p.compileValue(b, cv)
 		args := p.compileDynamicCallValues(b, call, kind)
-		ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, args...)
 	}
 	return
 }

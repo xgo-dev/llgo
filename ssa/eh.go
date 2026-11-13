@@ -740,17 +740,34 @@ func (b Builder) callRecoverScopedDefer(fn Expr, mayRecover bool, call func()) {
 // CallRecoverAlias invokes fn through a compiler-generated wrapper while
 // preserving the wrapped function as the direct deferred call for recover.
 func (b Builder) CallRecoverAlias(from Expr, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
-	token := b.recoverDeferToken(fn, mayRecover)
-	if from.IsNil() || token.IsNil() {
+	return b.callRecoverAlias(from, mayRecover, false, fn, buildCall, args...)
+}
+
+// CallRecoverTailAlias is for proven forwarding returns only. Their enclosing
+// deferred-call scope restores the alias after the adapter returns.
+func (b Builder) CallRecoverTailAlias(from Expr, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	return b.callRecoverAlias(from, mayRecover, true, fn, buildCall, args...)
+}
+
+func (b Builder) callRecoverAlias(from Expr, mayRecover, tail bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) Expr {
+	aliasToken := b.recoverDeferToken(fn, mayRecover)
+	if from.IsNil() || aliasToken.IsNil() {
 		return buildCall(b, fn, args...)
 	}
 	prev := b.Call(
 		b.Pkg.rtFunc("StartRecoverFrameAlias"),
 		b.PtrCast(b.Prog.VoidPtr(), from),
-		token,
+		aliasToken,
 	)
 	ret := buildCall(b, fn, args...)
-	b.Call(b.Pkg.rtFunc("EndRecoverFrameAlias"), prev)
+	if !tail {
+		b.Call(b.Pkg.rtFunc("EndRecoverFrameAlias"), prev)
+	} else {
+		b.markRecoverForwardTail(ret)
+	}
+	// A proven forwarding return has no later wrapper work needing the old
+	// alias. Its enclosing deferred-call scope restores it after return; an
+	// ordinary invocation never had a matching direct-defer token to change.
 	return ret
 }
 
@@ -941,3 +958,49 @@ func (b Builder) Panic(v Expr) {
 }
 
 // -----------------------------------------------------------------------------
+
+// x86 does not otherwise reuse outgoing C stack-argument slots for an indirect
+// sibling call. Require identical scalar LLVM signatures before requesting a
+// guaranteed tail call; aggregate lowering and closure-context ABIs stay out.
+// Explicit roots add epilogue instructions, which cannot follow musttail.
+func (b Builder) markRecoverForwardTail(ret Expr) {
+	target := b.Prog.Target()
+	if target == nil || target.GOARCH != "386" || b.Func.NeedsEnv() || b.Func.hasVArg || b.Prog.GCRootsEnabled() || ret.impl.IsNil() {
+		return
+	}
+	call := ret.impl.IsACallInst()
+	if call.IsNil() || call.CalledFunctionType() != b.Func.ll ||
+		call.InstructionCallConv() != b.Func.impl.FunctionCallConv() {
+		return
+	}
+	if attr := b.Func.impl.GetStringAttributeAtIndex(-1, "disable-tail-calls"); !attr.IsNil() {
+		return
+	}
+	// Matching LLVM types alone do not match an ABI: e.g. a native int8
+	// argument may require signext while its ordinary Go caller has none.
+	// Keep ABI-annotated entries conservative rather than guessing equality.
+	for index := 0; index <= len(b.Func.ll.ParamTypes()); index++ {
+		for _, kind := range recoverForwardABIAttrs {
+			if !b.Func.impl.GetEnumAttributeAtIndex(index, kind).IsNil() || !call.GetCallSiteEnumAttribute(index, kind).IsNil() {
+				return
+			}
+		}
+	}
+	for _, param := range b.Func.ll.ParamTypes() {
+		switch param.TypeKind() {
+		case llvm.PointerTypeKind, llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
+		default:
+			return
+		}
+	}
+	call.SetTailCallKind(llvm.TailCallKindMustTail)
+}
+
+var recoverForwardABIAttrs = [...]uint{
+	nativeSignExtKind, nativeZeroExtKind,
+	llvm.AttributeKindID("inreg"), llvm.AttributeKindID("sret"),
+	llvm.AttributeKindID("byval"), llvm.AttributeKindID("byref"),
+	llvm.AttributeKindID("inalloca"), llvm.AttributeKindID("preallocated"),
+	llvm.AttributeKindID("returned"), llvm.AttributeKindID("nest"),
+	llvm.AttributeKindID("swiftself"), llvm.AttributeKindID("swiftasync"), llvm.AttributeKindID("swifterror"),
+}
