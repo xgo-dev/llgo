@@ -55,8 +55,11 @@ func TestFunctionTypeAssertionIdentity(t *testing.T) {
 
 func TestNamedFunctionAssertionPanics(t *testing.T) {
 	var value any = assertFuncA(func(x int32) int32 { return x })
-	expectPanicContaining(t, "interface conversion", func() {
+	expectPanicContaining(t, "gotest.assertFuncA, not func(int32) int32", func() {
 		_ = value.(func(int32) int32)
+	})
+	expectPanicContaining(t, "gotest.assertFuncA, not gotest.assertNativeFunc", func() {
+		_ = value.(assertNativeFunc)
 	})
 }
 
