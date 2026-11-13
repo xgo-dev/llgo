@@ -236,7 +236,20 @@ Behavior:
 
 - Refreshes `expect.txt` for the built-in runtime test suites using the existing execution flow.
 - Refreshes `meta-expect.txt` for package-metadata tests.
-- Preserves the runtime-output skip convention where `expect.txt` containing only `;` means "do not refresh".
+- Preserves `expect.txt` markers and leaves existing goldens unchanged when execution fails.
+
+Runtime test modes are selected by `expect.txt` (including a toolchain-specific
+`expect_go1.xx.txt` override):
+
+| Contents | Behavior |
+| --- | --- |
+| Output text, including an empty file | Run successfully and compare output. |
+| `;` | Run successfully without comparing output, for example addresses or map iteration order. |
+| `; ir-only`, or no file | Check source FileCheck directives without running, for example a library package or an intentional uncaught panic. |
+
+Both markers accept a final LF or CRLF. `gentests` preserves them without
+running their programs. Run-only tests still check FileCheck directives and
+report compilation, linking, or execution failures in the existing test jobs.
 
 LLVM IR is not part of the `gentests` workflow; it is checked from the marked
 Go source with FileCheck.

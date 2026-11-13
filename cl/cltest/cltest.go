@@ -90,7 +90,8 @@ func WithOutputFilter(filter func(string) string) RunOption {
 	}
 }
 
-// WithOutputCheck enables or disables runtime output golden checks.
+// WithOutputCheck enables runtime tests selected by expect.txt. Disabling it
+// leaves IR checks enabled; metadata checks can still require execution.
 func WithOutputCheck(enabled bool) RunOption {
 	return func(opts *runOptions) {
 		opts.checkOutput = enabled
@@ -162,7 +163,7 @@ func RunAndTestFromDir(t *testing.T, sel, relDir string, ignore []string, opts .
 		relPkg = "./" + filepath.ToSlash(relPkg)
 		if _, ok := ignoreSet[relPkg]; ok {
 			t.Run(name, func(t *testing.T) {
-				t.Skip("skip platform-specific output mismatch")
+				t.Skip("skip platform-specific fixture")
 			})
 			continue
 		}
@@ -729,6 +730,9 @@ func doWithConf(relPkg, pkgDir string, conf *build.Config, action string) ([]byt
 
 func assertExpectedOutput(t *testing.T, pkgDir string, expectedOutput, output []byte, opts runOptions) {
 	t.Helper()
+	if isRunOnlyGolden(expectedOutput) {
+		return
+	}
 	if opts.filter != nil {
 		output = []byte(opts.filter(string(output)))
 	}
@@ -768,8 +772,16 @@ func readGolden(file string) ([]byte, bool, error) {
 }
 
 func isIROnlyGolden(data []byte) bool {
+	return goldenMarker(data, "; ir-only")
+}
+
+func isRunOnlyGolden(data []byte) bool {
+	return goldenMarker(data, ";")
+}
+
+func goldenMarker(data []byte, marker string) bool {
 	data = normalizeGoldenNewlines(data)
-	return bytes.Equal(bytes.TrimSuffix(data, []byte{'\n'}), []byte{';'})
+	return bytes.Equal(bytes.TrimSuffix(data, []byte{'\n'}), []byte(marker))
 }
 
 func goldenForGoVersion(file, goVersion string) (string, bool) {

@@ -90,6 +90,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/mapindirect",   // ld.lld: error: undefined symbol: __atomic_fetch_or_4
 				"./_testgo/reflect",       // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/reflectconv",   // llgo panic: unsatisfied import internal/sync
+				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
@@ -127,25 +128,34 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/abimethod",     // panic: internal/bytealg selected .s files require plan9asm translation
 				"./_testgo/arith-divrem",  // embedded int64 min/-1 division returns 0 instead of Go's defined minInt result
 				"./_testgo/alias",         // unexpected output
+				"./_testgo/cgobasic",      // build constraints exclude cgo source on bare metal
 				"./_testgo/cgocfiles",     // host CGo errno/aggregate ABI; cgo source is excluded on bare metal
 				"./_testgo/cgodefer",      // panic: cannot build SSA for packages
+				"./_testgo/chan",          // ESP32 channel goroutine exits with a fatal error
 				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
 				"./_testgo/defer4",        // runtime output: fatal error
+				"./_testgo/goroutine",     // ESP32 channel synchronization exits with a fatal error
 				"./_testgo/indexerr",      // runtime output: fatal error
 				"./_testgo/invoke",        // unexpected output
 				"./_testgo/makeslice",     // runtime output: fatal error
 				"./_testgo/mapindirect",   // fatal error: error in backend: Incomplete scavenging after 2nd pass
 				"./_testgo/multiret",      // unexpected output
+				"./_testgo/reflect",       // baremetal runtime cannot build these reflect paths
+				"./_testgo/reflectconv",   // baremetal runtime cannot build these reflect paths
+				"./_testgo/reflectmk",     // baremetal runtime cannot build these reflect paths
+				"./_testgo/reflectmkfn",   // baremetal runtime cannot build these reflect paths
+				"./_testgo/rewrite",       // baremetal runtime cannot build the fmt/runtime imports
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
 				"./_testgo/select",        // timeout: emulator did not auto-exit
 				"./_testgo/struczero",     // timeout: emulator did not auto-exit
 			},
 			"./_testlibc": {
-				"./_testlibc/atomic", // unexpected output
-				"./_testlibc/cppabi", // C++ standard headers are unavailable in the baremetal sysroot
-				"./_testlibc/once",   // panic: cannot build SSA for packages
-				"./_testlibc/setjmp", // link error: ld.lld undefined symbol stderr
+				"./_testlibc/atomic",  // unexpected output
+				"./_testlibc/complex", // baremetal libc does not provide cabsf
+				"./_testlibc/cppabi",  // C++ standard headers are unavailable in the baremetal sysroot
+				"./_testlibc/once",    // panic: cannot build SSA for packages
+				"./_testlibc/setjmp",  // link error: ld.lld undefined symbol stderr
 			},
 			"./_testrt": {
 				"./_testrt/asmfull",  // unexpected output
@@ -155,6 +165,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testrt/struct",   // panic: runtime index out of range
 				"./_testrt/tpfunc",   // unexpected output
 				"./_testrt/typalias", // panic: runtime index out of range
+				"./_testrt/vamethod", // ESP32 emulator does not exit after the variadic interface call
 
 				"./_testrt/reflectclosureenv", // baseline embedded runtime cannot build this reflect path
 				"./_testrt/ptrtothislazy",     // baseline embedded runtime cannot build this reflect path

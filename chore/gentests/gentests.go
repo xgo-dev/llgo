@@ -89,6 +89,12 @@ func runExpectDir(root, relDir string, configure ...func(*build.Config)) {
 		}
 		relPath := filepath.ToSlash(filepath.Join(relDir, name))
 		testDir := filepath.Join(dir, name)
+		expectFile := filepath.Join(testDir, "expect.txt")
+		expect, err := os.ReadFile(expectFile)
+		if err != nil || strings.TrimSpace(string(expect)) == ";" || strings.TrimSpace(string(expect)) == "; ir-only" {
+			fmt.Fprintln(os.Stderr, "skip", relPath, "(no output golden)")
+			continue
+		}
 		fmt.Fprintln(os.Stderr, "expect", relPath)
 		pkgPath := "./" + relPath
 		var output []byte
@@ -103,12 +109,6 @@ func runExpectDir(root, relDir string, configure ...func(*build.Config)) {
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", relPath, err)
-			output = []byte{';'}
-		}
-		expectFile := filepath.Join(testDir, "expect.txt")
-		expect, err := os.ReadFile(expectFile)
-		if err != nil || strings.TrimSpace(string(expect)) == ";" {
-			fmt.Fprintln(os.Stderr, "skip", relPath, "(expect is ';')")
 			continue
 		}
 		check(os.WriteFile(expectFile, output, 0644))
