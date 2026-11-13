@@ -639,8 +639,19 @@ func (b Builder) saveDeferArgs(self *aDefer, kind DoAction, id Expr, fn Expr, ar
 	return b.saveDeferArgsTo(self.argsPtr, kind, id, fn, args)
 }
 
+func deferNeedsCalleeCapture(fn Expr) bool {
+	if fn == Nil {
+		return false
+	}
+	// A dynamic native callee, like a closure, is evaluated when the defer
+	// is registered. Its SSA value may not dominate the shared drain block.
+	// Constant function addresses need no per-registration storage.
+	return fn.kind == vkClosure || fn.kind == vkIfaceMethod ||
+		(fn.kind == vkFuncPtr && !fn.impl.IsConstant())
+}
+
 func (b Builder) saveDeferArgsTo(argsPtr Expr, kind DoAction, id Expr, fn Expr, args []Expr) *deferArgsStorage {
-	saveFn := fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod)
+	saveFn := deferNeedsCalleeCapture(fn)
 	if kind != DeferInLoop && fn != Nil && !saveFn && len(args) == 0 {
 		return nil
 	}
@@ -698,7 +709,7 @@ func (b Builder) callDefer(self *aDefer, kind DoAction, typ *deferArgsStorage, m
 		data := b.Load(Expr{ptr.impl, prog.Pointer(typ.typ)})
 		offset := 2 // prev + id
 		b.Store(self.argsPtr, Expr{b.getField(data, 0).impl, prog.VoidPtr()})
-		if fn != Nil && (fn.kind == vkClosure || fn.kind == vkIfaceMethod) {
+		if deferNeedsCalleeCapture(fn) {
 			savedType := fn.Type
 			fn = b.getField(data, 2)
 			// A transient interface invocation has the same physical pair as a
