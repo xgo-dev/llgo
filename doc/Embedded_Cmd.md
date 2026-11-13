@@ -13,6 +13,10 @@
 - `-port <port>` - Target port for flashing, testing, or monitoring
 - `-baudrate <rate>` - Baudrate for serial communication (default: 115200)
 
+For `esp32` and `esp32c3-basic`, `-emulator` uses an existing QEMU on `PATH` when it supports the requested ESP machine. On macOS/Linux amd64 and arm64, LLGo otherwise downloads a checksum-verified Espressif QEMU release and reuses it from the user cache: `llgo/crosscompile/esp-qemu-<version>/<host>/<architecture>` under `~/Library/Caches` on macOS or `$XDG_CACHE_HOME` (default `~/.cache`) on Linux. Ordinary builds do not download QEMU.
+
+For an offline or custom installation, put your Espressif QEMU `bin` directory first on `PATH`, or specify an executable path in a custom target's `emulator` field. Other host platforms keep using the configured executable through `PATH`.
+
 ## Commands
 
 ### llgo build

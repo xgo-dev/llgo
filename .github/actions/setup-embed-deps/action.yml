@@ -30,7 +30,7 @@ runs:
           .cache/qemu
           ~/.cache/llgo/crosscompile/esp-qemu-*
           ~/Library/Caches/llgo/crosscompile/esp-qemu-*
-        key: esp-qemu-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('internal/crosscompile/esp_qemu.go', '.github/workflows/install-esp-qemu.sh') }}
+        key: esp-qemu-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('internal/crosscompile/esp_qemu.go', '.github/workflows/install-esp-qemu.sh') }}
 
     - name: Install ESP QEMU toolchains
       if: runner.os == 'Windows' && steps.esp_qemu_cache.outputs.cache-hit != 'true'

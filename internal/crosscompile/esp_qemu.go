@@ -1,14 +1,19 @@
 package crosscompile
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
+// Keep this release and its checksums in sync with
+// .github/workflows/install-esp-qemu.sh (also used by Windows CI).
 const espQEMUVersion = "9.2.2-20250817"
 
 var espQEMUBaseURL = "https://github.com/espressif/qemu/releases/download/esp-develop-" + espQEMUVersion
@@ -38,18 +43,49 @@ var espQEMUChecksums = map[string]map[string]string{
 // machine on a supported Unix host. Explicit executable paths and other QEMU
 // machines retain their configured runner. Windows keeps its existing setup.
 func ResolveESPQEMU(command string, args []string) (string, error) {
+	return resolveESPQEMU(command, args, runtime.GOOS, runtime.GOARCH)
+}
+
+func resolveESPQEMU(command string, args []string, goos, goarch string) (string, error) {
 	arch := espQEMUArchitecture(command, args)
-	if arch == "" || runtime.GOOS == "windows" {
+	if arch == "" || goos == "windows" {
 		return command, nil
 	}
-	platform := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
+	platform := getESPClangPlatform(goos, goarch)
 	checksum := espQEMUChecksums[platform][arch]
 	if checksum == "" {
-		return "", fmt.Errorf("ESP QEMU download is not available for %s/%s; configure an explicit emulator path", runtime.GOOS, runtime.GOARCH)
+		return command, nil
+	}
+	// Preserve installed Espressif builds, including offline installations.
+	// Generic QEMU packages often have the same executable names without ESP
+	// machine support, so checking only LookPath would select the wrong binary.
+	machine := "esp32"
+	if arch == "riscv32" {
+		machine = "esp32c3"
+	}
+	if executable, err := exec.LookPath(command); err == nil && espQEMUSupportsMachine(executable, machine) {
+		return executable, nil
 	}
 	dir := filepath.Join(cacheDir(), "esp-qemu-"+espQEMUVersion, platform, arch)
 	asset := "qemu-" + arch + "-softmmu-esp_develop_" + strings.ReplaceAll(espQEMUVersion, "-", "_") + "-" + platform + ".tar.xz"
 	return installESPQEMU(dir, command, espQEMUBaseURL+"/"+asset, checksum)
+}
+
+func espQEMUSupportsMachine(executable, machine string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable, "-machine", "help")
+	cmd.WaitDelay = time.Second
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if fields := strings.Fields(line); len(fields) != 0 && fields[0] == machine {
+			return true
+		}
+	}
+	return false
 }
 
 func espQEMUArchitecture(command string, args []string) string {

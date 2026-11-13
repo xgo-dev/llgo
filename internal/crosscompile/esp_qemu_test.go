@@ -55,6 +55,12 @@ func TestESPQEMUSelection(t *testing.T) {
 			}
 		}
 	}
+	for _, host := range [][2]string{{"linux", "386"}, {"linux", "riscv64"}, {"freebsd", "amd64"}, {"windows", "amd64"}} {
+		command := "qemu-system-xtensa"
+		if got, err := resolveESPQEMU(command, []string{"-machine", "esp32"}, host[0], host[1]); err != nil || got != command {
+			t.Errorf("unsupported host %v changed PATH resolution: %q, %v", host, got, err)
+		}
+	}
 }
 
 func espQEMUArchive(t *testing.T, executable string) ([]byte, string) {
@@ -114,6 +120,12 @@ func TestResolveESPQEMU(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
+	bin := t.TempDir()
+	installed := filepath.Join(bin, "qemu-system-riscv32")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\necho 'virt Generic RISC-V machine'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	oldCache, oldURL, oldChecksums := cacheRoot, espQEMUBaseURL, espQEMUChecksums
 	cacheRoot, espQEMUBaseURL = func() string { return root }, server.URL
 	espQEMUChecksums = map[string]map[string]string{platform: {"riscv32": fmt.Sprintf("%x", sha256.Sum256(xz))}}
@@ -123,6 +135,20 @@ func TestResolveESPQEMU(t *testing.T) {
 	want := filepath.Join(root, "crosscompile", "esp-qemu-"+espQEMUVersion, platform, "riscv32", "bin", "qemu-system-riscv32")
 	if got, err := ResolveESPQEMU("qemu-system-riscv32", []string{"-machine", "esp32c3"}); err != nil || got != want {
 		t.Fatalf("resolved emulator = %q, %v; want %s", got, err, want)
+	}
+	// An installed ESP build takes precedence even when a cache already exists.
+	server.Close()
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\necho 'esp32c3 Espressif ESP32-C3'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveESPQEMU("qemu-system-riscv32", []string{"-machine", "esp32c3"}); err != nil || got != installed {
+		t.Fatalf("installed ESP QEMU was ignored: %q, %v", got, err)
+	}
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveESPQEMU("qemu-system-riscv32", []string{"-machine", "esp32c3"}); err != nil || got != want {
+		t.Fatalf("failed PATH probe did not fall back to cache: %q, %v", got, err)
 	}
 }
 

@@ -433,10 +433,11 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 		return newRunnerFailure(details, "", runnerStatusInvalidCommand, -1,
 			errors.New("empty emulator command"))
 	}
-	cmdParts[0], err = crosscompile.ResolveESPQEMU(cmdParts[0], cmdParts[1:])
+	runner, err := crosscompile.ResolveESPQEMU(cmdParts[0], cmdParts[1:])
 	if err != nil {
-		return newRunnerFailure(details, emulatorTemplate, runnerStatusUnavailable, -1, err)
+		return newRunnerFailure(details, cmdParts[0], runnerStatusUnavailable, -1, err)
 	}
+	cmdParts[0] = runner
 	if emulatorTemplate == crosscompile.WASIThreadedEmulator {
 		if details.phase == "test" {
 			// Wasmer tracing and guest stderr share the same stream. Disable

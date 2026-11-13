@@ -43,6 +43,8 @@ case "$OS" in
     ;;
 esac
 
+# Keep the release and Unix checksums in sync with
+# internal/crosscompile/esp_qemu.go, which acquires QEMU for Unix emulator runs.
 RELEASE_TAG="esp-develop-9.2.2-20250817"
 VERSION="esp_develop_9.2.2_20250817"
 PACKAGES=(
