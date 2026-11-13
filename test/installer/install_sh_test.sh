@@ -136,6 +136,7 @@ cat >"$mock_bin/powershell.exe" <<'EOF'
     printf 'root=%s\n' "$LLGO_INSTALL_ROOT"
     printf 'version=%s\n' "$LLGO_VERSION"
     printf 'msystem=%s\n' "$MSYSTEM"
+    printf 'module-path=%s\n' "${PSModulePath-unset}"
     printf 'args=%s\n' "$*"
 } >"$LLGO_INSTALLER_TEST_CAPTURE"
 cp "${!#}" "$LLGO_INSTALLER_TEST_CAPTURE.ps1"
@@ -148,7 +149,11 @@ export LLGO_INSTALL_ROOT="$temporary/windows-root"
 export LLGO_INSTALL_DEPS=0
 export LLGO_UPDATE_PATH=0
 export LLGO_INSTALLER_TEST_CAPTURE="$temporary/windows-installer.txt"
+export PSModulePath='C:\Program Files\PowerShell\7\Modules'
 install_windows_release ""
+assert_equal "$PSModulePath" 'C:\Program Files\PowerShell\7\Modules'
+grep -Fqx 'module-path=unset' "$LLGO_INSTALLER_TEST_CAPTURE" ||
+    fail 'MSYS2 installer inherited the parent PowerShell module path'
 grep -Fqx 'abi=mingw' "$LLGO_INSTALLER_TEST_CAPTURE" ||
     fail 'MSYS2 installer did not select MinGW'
 grep -Fqx "root=$temporary/windows-root" "$LLGO_INSTALLER_TEST_CAPTURE" ||
