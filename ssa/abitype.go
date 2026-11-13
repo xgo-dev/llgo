@@ -109,6 +109,9 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	if hasUncommon {
 		tflag |= abi.TFlagUncommon
 	}
+	if prog.hasLegacyNativeTypeLayout(t) || prog.hasNativeTypeDirective(t) {
+		tflag |= abi.TFlagNative
+	}
 	fields = append(fields, prog.IntVal(uint64(tflag), prog.Byte()).impl)
 	// Align uint8
 	align := prog.IntVal(uint64(ab.Align(t)), prog.Byte()).impl

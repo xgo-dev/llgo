@@ -179,6 +179,12 @@ const (
 	// TFflagClosure means the structType is a closure
 	TFlagClosure TFlag = 1 << 5
 
+	// TFlagNative means this named type has a legacy cdecl/stdcall
+	// storage and calling ABI. Go size and alignment queries may still
+	// report the ordinary Go layout. Unlabeled wrappers are not marked;
+	// consumers walk to this leaf.
+	TFlagNative TFlag = 1 << 6
+
 	// TFlagGCMaskOnDemand means that the GC pointer bitmask will be
 	// computed on demand at runtime instead of being precomputed at
 	// compile time. If this flag is set, the GCData field effectively
@@ -420,6 +426,11 @@ func (t *Type) IsDirectIface() bool {
 // IsClosure reports whether t is closure struct
 func (t *Type) IsClosure() bool {
 	return t.TFlag&TFlagClosure != 0
+}
+
+// HasNativeLayout reports whether t itself is marked with a legacy native ABI.
+func (t *Type) HasNativeLayout() bool {
+	return t.TFlag&TFlagNative != 0
 }
 
 // Size returns the size of data with type t.

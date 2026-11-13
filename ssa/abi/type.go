@@ -10,6 +10,7 @@ import (
 
 const (
 	TFlagUncommon   = abi.TFlagUncommon
+	TFlagNative     = abi.TFlagNative
 	KindDirectIface = abi.KindDirectIface
 )
 

@@ -39,9 +39,9 @@ func typePointerArray(values []*Type) **Type {
 	return &values[0]
 }
 
-func valuePointerArray(values []unsafe.Pointer) *unsafe.Pointer {
+func valuePointerArray(values []unsafe.Pointer) (avalue *unsafe.Pointer, pin any) {
 	if len(values) == 0 {
-		return nil
+		return nil, nil
 	}
-	return &values[0]
+	return &values[0], values
 }

@@ -16,5 +16,8 @@ const ClosureEnvExplicit = false
 // X18 use a TLS trampoline to install X20. Nil is installed as well so native
 // dynamic calls keep one uniform path.
 func CallWithEnv(cif *Signature, fn, env, ret unsafe.Pointer, args ...unsafe.Pointer) {
-	ffi.CallWithEnv(cif, fn, ret, valuePointerArray(args), env)
+	avalue, pin := valuePointerArray(args)
+	ffi.CallWithEnv(cif, fn, ret, avalue, env)
+	keepAlive(pin)
+	keepAlive(args)
 }

@@ -2296,7 +2296,11 @@ func toFFIWordArg(v Value) unsafe.Pointer {
 	if v.flag&flagIndir != 0 {
 		return v.ptr
 	}
-	return unsafe.Pointer(&v.ptr)
+	// Direct-iface values store the pointer in v.ptr. v is a by-value copy,
+	// so heap-allocate the word to keep it valid after this frame returns.
+	p := new(unsafe.Pointer)
+	*p = v.ptr
+	return unsafe.Pointer(p)
 }
 
 func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
@@ -2398,7 +2402,7 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		if typ.IsClosure() {
 			return ffiTypeClosure
 		}
-		return toFFIStructType(typ)
+		return ffiWidenGoPointerStruct(toFFIStructType(typ), typ)
 	case abi.UnsafePointer:
 		return ffi.TypePointer
 	}
