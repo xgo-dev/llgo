@@ -38,11 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # LLVM/Clang toolchain (matches .github/actions/setup-deps for Ubuntu).
 RUN set -eux; \
   . /etc/os-release; \
-  echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list; \
-  if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg; then \
+  if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /usr/share/keyrings/llvm-snapshot.asc; then \
     echo "failed to fetch llvm gpg key; aborting (avoid unverified LLVM packages)" >&2; \
     exit 1; \
   fi; \
+  chmod 0644 /usr/share/keyrings/llvm-snapshot.asc; \
+  echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.asc] https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list; \
   apt-get update; \
   if ! apt-get install -y --no-install-recommends \
     llvm-${LLVM_VERSION}-dev \
