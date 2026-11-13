@@ -4,12 +4,10 @@ These tests come from Go 1.27.0 `src/simd`, including the runnable
 `testdata/{iface,sizeof,compiles,tostring}_test.go` fixtures. The original BSD
 license is in `LICENSE`. The tests contain 27 Test functions and 6 examples.
 
-Local adaptations are limited to Go/experiment/architecture build constraints,
-fixture import paths under `internal`, and an explicit LLGo skip for `TestIP`
-and `TestIPGoTo` when executing vectors wider than 128 bits. Their upstream
-amd64 reduction helper uses `Float32x8.ConcatAddPairsGrouped`, which LLGo does
-not implement yet. Both tests run unchanged in emulated/128-bit mode and on
-Go. Other assertions and test vectors are preserved.
+Local adaptations are limited to Go/experiment/architecture build constraints
+and fixture import paths under `internal`. Assertions and test vectors are
+preserved, including the inner-product tests in emulated, 128-bit and 256-bit
+modes.
 
 The upstream subprocess driver `testdata_test.go` is intentionally not copied:
 it runs `go test`, which would test the Go compiler even from an LLGo binary.

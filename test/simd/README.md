@@ -13,6 +13,8 @@ amd64, arm64, and wasm. The architecture's API determines which type/method
 combinations exist; the families below do not imply identical APIs on every
 architecture.
 
+- Horizontal pairwise addition on amd64/arm64, with wrapping integer sums and
+  ordered floating sums.
 - Array/slice loads and stores, broadcast, and lane extraction/insertion.
   AMD64 masked stores preserve disabled lanes without accessing their memory.
 - Add/subtract/multiply, floating divide, negation, absolute value, square root,
@@ -93,7 +95,8 @@ The portable256 bridge's intrinsic dependencies are also implemented: integer
 and floating min/max, byte/word saturating add/subtract, rounded unsigned
 averages, square root, fused multiply-add, lane-preserving numeric/signedness
 conversions, and carryless multiplication independently within each 128-bit
-group. The bridge call-graph test covers all 350 entries in Go 1.27.0, including
+group. Horizontal pairwise addition also operates independently within each
+128-bit group. The bridge call-graph test covers all 350 entries in Go 1.27.0, including
 their private intrinsic dependencies. Cross-width and lane-count-changing
 conversions, integer resizing, and other wide target-specific operations remain
 separate stages; unimplemented declarations retain the recoverable panic.
