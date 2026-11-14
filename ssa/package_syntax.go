@@ -37,21 +37,25 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
+	typeDefinitions       map[*types.TypeName]types.Type
+	typeDefinitionSources map[*types.Package]TypeDefinitionSource
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		linknames:            make(map[string]string),
-		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
-		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
-		noInterface:          make(map[string]none),
-		typeCallConvs:        make(map[string]CallConv),
-		nativeStructFields:   make(map[token.Pos]bool),
-		nativeStructVars:     make(map[*types.Var]bool),
+		linknames:             make(map[string]string),
+		wasmImports:           make(map[string]wasmImport),
+		exports:               make(map[string]string),
+		closureEnvDirectives:  make(map[closureEnvDirectiveKey]none),
+		parsedPackages:        make(map[*types.Package]struct{}),
+		noInterface:           make(map[string]none),
+		typeCallConvs:         make(map[string]CallConv),
+		typeDefinitions:       make(map[*types.TypeName]types.Type),
+		typeDefinitionSources: make(map[*types.Package]TypeDefinitionSource),
+		nativeStructFields:    make(map[token.Pos]bool),
+		nativeStructVars:      make(map[*types.Var]bool),
 	}
 }
 

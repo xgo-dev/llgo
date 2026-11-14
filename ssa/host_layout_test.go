@@ -50,8 +50,11 @@ type Fake struct { _ hostLayout }
 type Ordinary struct { _ Fake; B byte; F float64; P *byte }
 type HostTail struct { _ structs.HostLayout; Value uint64; Tail struct{} }
 type NativeCallback func()
+type DerivedCallback NativeCallback
 type Callbacks struct { _ structs.HostLayout; Native NativeCallback; Go func() }
+type DerivedCallbacks struct { _ structs.HostLayout; Native DerivedCallback; Go func() }
 type CallbackArrays struct { _ structs.HostLayout; Native [2]NativeCallback; Go [2]func() }
+type DerivedCallbackArrays struct { _ structs.HostLayout; Native [2]DerivedCallback; Go [2]func() }
 type AliasCallback = func()
 type AliasCallbacks struct { _ structs.HostLayout; Native AliasCallback; Go func() }
 const Size = unsafe.Sizeof(Record{})
@@ -67,6 +70,7 @@ const Offset = unsafe.Offsetof(Record{}.U)
 			if err != nil {
 				t.Fatal(err)
 			}
+			prog.SetTypeDefinition(pkg.Scope().Lookup("DerivedCallback").(*types.TypeName), pkg.Scope().Lookup("NativeCallback").Type())
 			if pkg.Scope().Lookup("Size").(*types.Const).Val().ExactString() != strconv.FormatInt(tc.size, 10) || pkg.Scope().Lookup("Offset").(*types.Const).Val().ExactString() != strconv.FormatInt(tc.offsets[4], 10) {
 				t.Fatal("checker constants do not use host layout")
 			}
@@ -104,11 +108,12 @@ const Offset = unsafe.Offsetof(Record{}.U)
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("Nested").Type(), align(fnOffset+2*word, max(innerAlign, word)), max(innerAlign, word), []int64{0, 0, fnOffset})
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("HostTail").Type(), align(9, tc.alignment), tc.alignment, []int64{0, 0, 8})
 			fnOffset = word
-			for _, name := range []string{"Callbacks", "AliasCallbacks"} {
+			for _, name := range []string{"Callbacks", "AliasCallbacks", "DerivedCallbacks"} {
 				checkHostLayout(t, prog, sizes, pkg.Scope().Lookup(name).Type(), fnOffset+2*word, word, []int64{0, 0, fnOffset})
 			}
 			fnOffset = 2 * word
 			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("CallbackArrays").Type(), fnOffset+4*word, word, []int64{0, 0, fnOffset})
+			checkHostLayout(t, prog, sizes, pkg.Scope().Lookup("DerivedCallbackArrays").Type(), fnOffset+4*word, word, []int64{0, 0, fnOffset})
 		})
 	}
 }

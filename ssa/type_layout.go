@@ -35,13 +35,10 @@ func (p Program) hasNativeStructLayout(raw *types.Named) bool {
 // pointers. HostLayout only describes the struct itself; a Go pointer or slice
 // referring to it retains its ordinary representation.
 func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
-	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
-		return false
+	if p.RepresentationOf(raw).Storage == NativeRepresentation {
+		return true
 	}
 	switch t := types.Unalias(raw).(type) {
-	case *types.Named:
-		cc, ok := p.packageTypeCallConv(namedLinkname(t))
-		return ok && isNativeCallConv(cc)
 	case *types.Array:
 		return p.hasLegacyNativeTypeLayout(t.Elem())
 	}
