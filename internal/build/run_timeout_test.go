@@ -110,6 +110,43 @@ func TestNativeTestHostTimeout(t *testing.T) {
 	}
 }
 
+func TestNativeBenchmarkIgnoresHostTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	conf := &Config{
+		RunnerTimeout: time.Second,
+		RunArgs: []string{
+			"-test.run=^$", "-test.bench=^BenchmarkRunnerTimeoutHelper$", "-test.benchtime=1x",
+		},
+	}
+	var output bytes.Buffer
+	err = runNativeTest(timeoutHelperCommands(dir, "native-benchmark"),
+		testProgram{app: executable, pkgDir: dir, pkgName: "example/benchmark"},
+		conf, &output, &output)
+	if err != nil {
+		t.Fatalf("benchmark exceeded the test deadline: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "benchmark completed") {
+		t.Fatalf("benchmark did not finish: %q", output.String())
+	}
+	if conf.RunnerTimeout != time.Second {
+		t.Fatal("native benchmark changed the shared runner configuration")
+	}
+}
+
+func BenchmarkRunnerTimeoutHelper(b *testing.B) {
+	if os.Getenv("LLGO_TIMEOUT_HELPER") != "native-benchmark" {
+		b.Skip("native benchmark deadline regression helper")
+	}
+	for i := 0; i < b.N; i++ {
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Fprintln(os.Stdout, "benchmark completed")
+}
+
 func TestNativeTestAllowsDelayedOutputDrain(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

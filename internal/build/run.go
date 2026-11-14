@@ -217,6 +217,13 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		nativeTest:  true,
 		waitDelay:   conf.NativeTestWaitDelay,
 	}
+	// Like cmd/go, allow benchmark and fuzz phases to run indefinitely. Their
+	// duration is not governed by the test watchdog. Keep external runners'
+	// existing deadlines and the caller's shared configuration unchanged.
+	options := parseTestBinaryOptions(conf.RunArgs)
+	if options.bench || options.fuzz {
+		details.timeout = 0
+	}
 	err := runHostCommand(commands, program.app, conf.RunArgs, details, nil, stdout, stderr)
 	var failure *runnerFailure
 	if errors.As(err, &failure) {
