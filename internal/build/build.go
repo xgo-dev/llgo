@@ -46,6 +46,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
+	"github.com/xgo-dev/llgo/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
@@ -189,7 +190,7 @@ type Config struct {
 	SizeReport         bool   // print size report after successful build
 	SizeFormat         string // size report format: text,json (default text)
 	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // metadata hash for the running compiler (development builds only)
+	CompilerHash       string // content hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
 
@@ -344,6 +345,11 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 		return nil, errors.New("build config must not be nil")
 	}
 	conf := input.clone()
+	// Embedding callers bypass command-line flags but share the same archive
+	// cache. Give every development compiler an identity before fingerprinting.
+	if conf.CompilerHash == "" {
+		conf.CompilerHash = compilerhash.Value()
+	}
 	if conf.Goos == "" {
 		conf.Goos = runtime.GOOS
 	}
@@ -2338,9 +2344,19 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	return nil
 }
 
-// finalizePackageBuild publishes the archive and cache metadata. Cache hits
-// already carry both and therefore require no publication.
+// finalizePackageBuild publishes fresh archives, then reads the same link-time
+// source mappings from fresh and cached artifacts.
 func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	if err := publishPackageArchive(ctx, task, verbose); err != nil {
+		return err
+	}
+	if ctx.mode != ModeGen && ctx.buildConf.PCLNMode != PCLNNone {
+		return loadPackagePCLN(task.pkg)
+	}
+	return nil
+}
+
+func publishPackageArchive(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	if aPkg.CacheHit {
 		return nil
@@ -3455,6 +3471,10 @@ func (c *context) createMergedArchiveFile(archivePath string, inputs []string, v
 		}
 		fmt.Fprintf(&script, "%s %s\n", command, strconv.Quote(input))
 	}
+	// Source mappings have already been consumed to build the runtime tables.
+	// Strip every compiler-private carrier from this exported C archive so
+	// whole-archive consumers do not retain it. Input package caches stay intact.
+	fmt.Fprintf(&script, "DELETE %s\n", strconv.Quote(packagePCLNMember))
 	script.WriteString("SAVE\nEND\n")
 
 	arCmd, err := c.archiveMerger()
@@ -3821,7 +3841,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
 		}
 	}
-	return nil
+	return emitPackagePCLN(ctx, aPkg)
 }
 
 // dropUnusedWindowsTestMain mirrors cmd/link's treatment of a command package
@@ -4224,6 +4244,8 @@ type aPackage struct {
 	rewriteVars      map[string]string
 	staticByteArrays map[string][]byte
 	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
+
+	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
 	// Cache related fields
 	Fingerprint    string          // fingerprint digest

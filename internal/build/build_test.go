@@ -312,6 +312,47 @@ func TestResolveBuildConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// Direct build.Do/Build callers do not pass through the command-line flags.
+// They must invalidate archives from a different development compiler too.
+func TestResolveBuildConfigCompilerIdentity(t *testing.T) {
+	if !env.Devel() {
+		t.Skip("development compiler identity")
+	}
+	input := NewDefaultConf(ModeBuild)
+	resolved, err := resolveBuildConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.CompilerHash == "" {
+		t.Fatal("direct build config has no development compiler identity")
+	}
+	if input.CompilerHash != "" {
+		t.Fatal("resolving compiler identity mutated the caller's config")
+	}
+	stable, err := resolveBuildConfig(input)
+	if err != nil || stable.CompilerHash != resolved.CompilerHash {
+		t.Fatalf("compiler identity changed between invocations: %v", err)
+	}
+	input.CompilerHash = "explicit-compiler"
+	explicit, err := resolveBuildConfig(input)
+	if err != nil || explicit.CompilerHash != input.CompilerHash {
+		t.Fatalf("explicit compiler identity was overwritten: %v", err)
+	}
+	fingerprint := func(conf *Config) string {
+		m := newManifestBuilder()
+		(&context{buildConf: conf}).collectEnvInputs(m)
+		return m.Fingerprint()
+	}
+	unidentified := resolved.clone()
+	unidentified.CompilerHash = ""
+	if fingerprint(unidentified) == fingerprint(resolved) {
+		t.Fatal("unidentified old artifacts share the current compiler fingerprint")
+	}
+	if fingerprint(explicit) == fingerprint(resolved) {
+		t.Fatal("different compilers share an artifact fingerprint")
+	}
+}
+
 func TestNewDefaultConfDoesNotCreateBinDir(t *testing.T) {
 	binDir := filepath.Join(t.TempDir(), "not-created", "bin")
 	t.Setenv("GOBIN", binDir)

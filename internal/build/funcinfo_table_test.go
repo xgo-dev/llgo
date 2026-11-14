@@ -1247,14 +1247,15 @@ func TestFuncInfoTableFPChainOff(t *testing.T) {
 	}
 }
 
-// snapshotPkg builds a Package backed by a link snapshot so metadata collection
+// snapshotPkg builds a Package backed by parsed archive metadata so collection
 // can be exercised without an LLVM module.
 func snapshotPkg(pkgPath, symbol string) Package {
 	return &aPackage{
-		Package: &packages.Package{PkgPath: pkgPath},
-		linkSnapshot: &packageLinkSnapshot{
-			funcInfo:   []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
-			pcLineInfo: []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
+		Package:      &packages.Package{PkgPath: pkgPath},
+		linkSnapshot: &packageLinkSnapshot{},
+		pcln: &packagePCLN{
+			functions: []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
+			lines:     []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
 		},
 	}
 }

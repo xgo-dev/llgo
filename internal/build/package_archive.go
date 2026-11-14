@@ -51,8 +51,9 @@ func (c *context) closePackageArchiveBuffers() {
 }
 
 // createPackageArchiveFile writes path-backed auxiliary objects and
-// LLVM-produced memory buffers into one archive. LLVM performs archive symbol
-// indexing in-process; no temporary object is needed for memory members.
+// LLVM-produced memory buffers into one archive. Host-native codegen can use
+// LLVM's in-process writer without temporary objects for memory members;
+// cross-toolchain and self-hosted builds use their selected external archiver.
 func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, verbose bool) error {
 	if len(pkg.ObjFiles) == 0 && len(pkg.ObjBuffers) == 0 {
 		return fmt.Errorf("no object files provided for archive %s", archivePath)
@@ -70,7 +71,10 @@ func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, ve
 	// can terminate during its next collection. Keep in-memory code generation,
 	// but let an external archiver publish those buffers when llgo is the host
 	// compiler.
-	if useExternalPackageArchiver {
+	// Cross-toolchain objects can contain newer bitcode than the LLVM linked
+	// into LLGo (notably Emscripten). A metadata buffer must not switch those
+	// packages from their selected archiver to the host LLVM archive writer.
+	if useExternalPackageArchiver || !useInMemoryNativeCodegen(c) {
 		return c.createPackageArchiveFileWithExternalArchiver(archivePath, pkg, verbose)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".tmp-*")

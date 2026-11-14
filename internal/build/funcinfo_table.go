@@ -85,13 +85,7 @@ func collectFuncInfo(pkgs []Package) []funcInfoRecord {
 		if pkg == nil {
 			continue
 		}
-		var records []funcInfoRecord
-		if pkg.linkSnapshot != nil {
-			records = pkg.linkSnapshot.funcInfo
-		} else if pkg.LPkg != nil {
-			records = readFuncInfo(pkg.LPkg.Module())
-		}
-		for _, rec := range records {
+		for _, rec := range packageFuncInfo(pkg) {
 			if rec.symbol == "" {
 				continue
 			}
@@ -120,13 +114,7 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 		if pkg == nil {
 			continue
 		}
-		var records []pcLineRecord
-		if pkg.linkSnapshot != nil {
-			records = pkg.linkSnapshot.pcLineInfo
-		} else if pkg.LPkg != nil {
-			records = readPCLineInfo(pkg.LPkg.Module())
-		}
-		for _, rec := range records {
+		for _, rec := range packagePCLineInfo(pkg) {
 			if rec.id == 0 || rec.symbol == "" {
 				continue
 			}
