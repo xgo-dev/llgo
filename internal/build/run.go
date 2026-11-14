@@ -78,6 +78,7 @@ type runnerDetails struct {
 	packageName string
 	timeout     time.Duration
 	nativeTest  bool
+	waitDelay   time.Duration
 }
 
 // runnerFailure preserves the host-runner outcome while adding enough build
@@ -204,7 +205,8 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		fmt.Fprintf(stderr, "%s %s\n", program.app, strings.Join(conf.RunArgs, " "))
 	}
 	// The testing watchdog can itself stall with the runtime. Reuse the
-	// independent host deadline, preserving native tests' EOF stdin.
+	// independent host deadline, preserving native tests' EOF stdin. A passing
+	// test must also finish its inherited output within the pipe-drain grace.
 	commands.dir = program.pkgDir
 	details := runnerDetails{
 		phase:       "test",
@@ -213,6 +215,7 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 		packageName: program.pkgName,
 		timeout:     conf.RunnerTimeout,
 		nativeTest:  true,
+		waitDelay:   conf.NativeTestWaitDelay,
 	}
 	err := runHostCommand(commands, program.app, conf.RunArgs, details, nil, stdout, stderr)
 	var failure *runnerFailure
@@ -516,9 +519,9 @@ func runRunnerCommand(commands commandEnv, name string, args []string, details r
 }
 
 func runHostCommand(commands commandEnv, name string, args []string, details runnerDetails, stdin io.Reader, stdout, stderr io.Writer) error {
-	// The test binary owns its Go-level timeout;
-	// this outer deadline also covers a host runner that stops forwarding exit
-	// or otherwise hangs after the guest should have terminated.
+	// The test binary owns its Go-level watchdog. This independent deadline
+	// also covers a stalled native watchdog or an external runner that stops
+	// forwarding guest termination.
 	var runContext stdcontext.Context = stdcontext.Background()
 	cancel := func() {}
 	if details.timeout > 0 {
@@ -532,11 +535,15 @@ func runHostCommand(commands commandEnv, name string, args []string, details run
 		var restore func()
 		if details.nativeTest {
 			restore = configureNativeTestCancellation(cmd)
+			cmd.WaitDelay = details.waitDelay
+			if cmd.WaitDelay <= 0 {
+				cmd.WaitDelay = 5 * time.Second
+			}
 		} else {
 			restore = configureRunnerCancellation(cmd, details.phase == "run")
+			cmd.WaitDelay = time.Second
 		}
 		defer restore()
-		cmd.WaitDelay = time.Second
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -559,6 +566,9 @@ func runHostCommand(commands commandEnv, name string, args []string, details run
 			err = fmt.Errorf("runner exceeded %s: %w", details.timeout, stdcontext.DeadlineExceeded)
 		case errors.Is(err, exec.ErrWaitDelay):
 			status = runnerStatusOutputTimeout
+			if details.nativeTest {
+				err = fmt.Errorf("test I/O incomplete %s after exiting: %w", cmd.WaitDelay, err)
+			}
 		case errors.As(err, &exitErr):
 			status = runnerStatusExit
 			exitCode = exitErr.ExitCode()

@@ -31,6 +31,8 @@ import (
 func configureNativeTestCancellation(*exec.Cmd) func() {
 	// Keep native tests in their caller's group, as cmd/go does. Moving them
 	// to a new group would detach terminal interrupts and job control.
+	// On timeout, CommandContext kills only the test leader; descendants may
+	// survive, while WaitDelay bounds waiting for their inherited pipes.
 	return func() {}
 }
 
