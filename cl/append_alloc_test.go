@@ -11,6 +11,10 @@ import (
 func TestAppendTemporaryStorage(t *testing.T) {
 	const src = `package appendalloc
 type Item struct { P *int; A, B uint64 }
+type encoder struct{}
+func (encoder) AppendWord(s []byte, v uint32) []byte { return append(s, byte(v), byte(v>>8), byte(v>>16), byte(v>>24)) }
+func (*encoder) appendPointer(s []*int, v *int) []*int { return append(s, v) }
+func (*encoder) escaped(v int) *int { return &v }
 func scalar(s []Item, v Item) []Item { return append(s, v) }
 func several(s []int, x, y int) []int { return append(s, x, y) }
 func loop(s []int, n int) []int { for i:=0; i<n; i++ { s=append(s,i) }; return s }
@@ -36,7 +40,12 @@ func zero(s []struct{}) []struct{} { return append(s, struct{}{}) }
 						t.Errorf("%s retains temporary heap allocation:\n%s", name, body)
 					}
 				}
-				for _, name := range []string{"escaped", "escapedTwo", "addressEscapes"} {
+				for _, name := range []string{"encoder.AppendWord", "(*encoder).appendPointer"} {
+					if body := llvmFunction(t, ir, "appendalloc."+name); strings.Contains(body, "runtime.Alloc") {
+						t.Errorf("unreferenced private method retains temporary heap allocation:\n%s", body)
+					}
+				}
+				for _, name := range []string{"escaped", "escapedTwo", "addressEscapes", "(*encoder).escaped"} {
 					if body := llvmFunction(t, ir, "appendalloc."+name); !strings.Contains(body, "runtime.Alloc") {
 						t.Fatalf("%s lost escaping storage:\n%s", name, body)
 					}
