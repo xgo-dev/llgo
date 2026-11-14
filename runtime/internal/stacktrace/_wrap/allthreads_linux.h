@@ -1,6 +1,6 @@
-/* Private implementation included by traceback_unix.c. Production entry
- * modules must not enable this transport until creation exclusion covers
- * foreign C thread creators as well as the runtime's registered cohort. */
+/* Included by traceback_unix.c. Explicit controlled executables promise that
+ * every thread creator obeys the runtime registry's creation/exit barrier.
+ * Ordinary executables and C library modes never make that promise. */
 #if defined(__linux__)
 static pthread_mutex_t credential_lock = PTHREAD_MUTEX_INITIALIZER;
 void llgo_allthreads_credential_lock(void) { pthread_mutex_lock(&credential_lock); }
@@ -19,6 +19,33 @@ void llgo_traceback_mark_owned(void *raw)
 
 #if defined(__x86_64__) || defined(__aarch64__)
 __attribute__((weak, visibility("hidden"))) int __llgo_allthreads_executable;
+static unsigned allthreads_controlled;
+
+/* Weak references keep nogc executables independent of the collector. The
+ * entry module invokes this before runtime allocation, only on explicit opt-in.
+ * A collector initialized by an earlier foreign constructor is not eligible. */
+extern int GC_is_init_called(void) __attribute__((weak));
+extern void GC_set_markers_count(unsigned) __attribute__((weak));
+
+__attribute__((visibility("hidden")))
+void llgo_allthreads_enable_controlled(int uses_gc)
+{
+    if (uses_gc) {
+        if (!GC_is_init_called || !GC_set_markers_count || GC_is_init_called()) return;
+        /* BDWGC reads GC_MARKERS during initialization and lets it override
+         * the setter. This mode must exclude future native marker threads. */
+        if (setenv("GC_MARKERS", "1", 1)) return;
+        GC_set_markers_count(1);
+    }
+    __atomic_store_n(&__llgo_allthreads_executable, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&allthreads_controlled, 1, __ATOMIC_RELEASE);
+}
+
+__attribute__((visibility("hidden")))
+int llgo_allthreads_controlled_enabled(void)
+{
+    return __atomic_load_n(&allthreads_controlled, __ATOMIC_ACQUIRE) == 1;
+}
 
 enum { ALL_IDLE, ALL_ARMED, ALL_CLAIMED, ALL_READY, ALL_DONE, ALL_RELEASED, ALL_FAILED };
 enum { PHASE_IDLE, PHASE_PREPARE, PHASE_RUN, PHASE_RELEASE, PHASE_CANCEL };
@@ -172,8 +199,10 @@ static int allcall_complete_cohort(void)
 static int allcall_allowed_trap(uintptr_t trap)
 {
     switch (trap) {
-    /* Kernel credentials are per-thread; these setters return zero on
-     * success. Unlisted syscalls must not execute even on the caller. */
+    /* getpid is a harmless process-invariant probe. Kernel credentials are
+     * per-thread; these setters return zero on success. Unlisted syscalls
+     * must not execute even on the caller. */
+    case SYS_getpid:
     case SYS_setuid: case SYS_setgid: case SYS_setreuid: case SYS_setregid:
     case SYS_setresuid: case SYS_setresgid: case SYS_setgroups:
         return 1;
@@ -208,7 +237,8 @@ static void allcall_cancel(void)
 void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
 {
     call->r1 = (uintptr_t)-1; call->r2 = 0; call->error = ENOTSUP;
-    if (!__llgo_allthreads_executable || !current || !allcall_allowed_trap(call->trap)) return;
+    if (__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) != 1 ||
+        !current || !allcall_allowed_trap(call->trap)) return;
     pthread_mutex_lock(&credential_lock);
     pthread_mutex_lock(&registry_lock);
     /* Remain suspendible while acquiring runtime locks. A GC may have
@@ -299,6 +329,8 @@ finish:
     allcall_mask(&previous, 0);
 }
 #else
+__attribute__((visibility("hidden")))
+int llgo_allthreads_controlled_enabled(void) { return 0; }
 void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
 {
     call->r1 = (uintptr_t)-1; call->r2 = 0; call->error = ENOTSUP;

@@ -26,6 +26,7 @@ package build
 import (
 	"go/token"
 	"go/types"
+	"slices"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -507,6 +508,19 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		fnVal.SetUnnamedAddr(true)
 	}
 	b := fn.MakeBody(1)
+	// Opt-in is a closed-thread-set contract, not a deduction from build mode.
+	// Configure the collector before even the first runtime/context allocation.
+	if ctx.buildConf.BuildMode == BuildModeExe && ctx.buildConf.Goos == "linux" &&
+		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
+		slices.Contains(splitSourcePatchBuildTags(ctx.buildConf.Tags), "llgo.allthreads") {
+		setup := pkg.NewFunc("llgo_allthreads_enable_controlled", newSignature(
+			[]types.Type{types.Typ[types.Int32]}, nil), llssa.CDecl)
+		gc := uint64(1)
+		if slices.Contains(splitSourcePatchBuildTags(ctx.buildConf.Tags), "nogc") {
+			gc = 0
+		}
+		b.Call(setup.Expr, prog.IntVal(gc, prog.Int32()))
+	}
 	var localCtx, previousLocalCtx llssa.Expr
 	// The single-worker runtime itself uses owner-local state even when the
 	// user program has no TLS/GLS declarations. Root that state on the host

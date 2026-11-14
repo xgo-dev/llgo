@@ -10,7 +10,7 @@ import (
 
 // Build in-process so host Go coverage records the compiler paths exercised by
 // the fixture, even though its source and runtime assertions live under test/.
-// mode optionally selects a single build mode; omission uses exe.
+// mode optionally selects a build mode and build tags; omission uses exe.
 func buildCExportFixture(t *testing.T, dir, output string, mode ...string) {
 	t.Helper()
 	t.Chdir(dir)
@@ -18,6 +18,9 @@ func buildCExportFixture(t *testing.T, dir, output string, mode ...string) {
 	conf.OutFile = output
 	if len(mode) != 0 {
 		conf.BuildMode = build.BuildMode(mode[0])
+	}
+	if len(mode) > 1 {
+		conf.Tags = mode[1]
 	}
 	if _, err := build.Do([]string{"."}, conf); err != nil {
 		t.Fatal(err)

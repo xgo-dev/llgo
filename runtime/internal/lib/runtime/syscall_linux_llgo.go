@@ -15,6 +15,12 @@ type allThreadsCall struct {
 //go:linkname c_allThreadsCall C.llgo_traceback_all_threads_syscall
 func c_allThreadsCall(*allThreadsCall)
 
+//go:linkname c_allThreadsSupported C.llgo_allthreads_controlled_enabled
+func c_allThreadsSupported() int32
+
+//go:linkname syscall_allThreadsSupported syscall.runtime_allThreadsSyscallSupported
+func syscall_allThreadsSupported() bool { return c_allThreadsSupported() != 0 }
+
 // The native registry freezes creation/exit and parks the complete thread set
 // before any syscall runs. Libraries and processes with unregistered C threads
 // retain ENOTSUP. A masked transport or a pending creation returns EAGAIN before

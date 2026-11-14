@@ -5,12 +5,13 @@ package syscall
 import "unsafe"
 
 // LLGo's pthread/libc runtime cannot exclude all foreign C thread creators.
-// Keep Go's cgo boundary even in executables; a snapshot of registered TIDs
-// cannot prove ownership of future pthreads.
+// Ordinary executables and all C library modes keep Go's cgo boundary. The
+// explicit controlled-thread mode is a caller contract; a TID snapshot alone
+// never authorizes future foreign pthread creation.
 //
 //go:uintptrescapes
 func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
-	if cgo_libc_setegid != nil {
+	if cgo_libc_setegid != nil && !runtime_allThreadsSyscallSupported() {
 		return minus1, minus1, ENOTSUP
 	}
 	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, 0, 0, 0)
@@ -19,12 +20,14 @@ func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
 
 //go:uintptrescapes
 func AllThreadsSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
-	if cgo_libc_setegid != nil {
+	if cgo_libc_setegid != nil && !runtime_allThreadsSyscallSupported() {
 		return minus1, minus1, ENOTSUP
 	}
 	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6)
 	return r1, r2, Errno(errno)
 }
+
+func runtime_allThreadsSyscallSupported() bool
 
 // The runtime owns these pointers even when syscall is not imported.
 
