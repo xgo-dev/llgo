@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -116,21 +117,17 @@ func emitPCLNObject(ctx *context, pkg Package, carrier llvm.Module) (llvm.Memory
 	// Preserve the selected cross compiler and its object ABI flags, including
 	// embedded targets whose physical backend is absent from the host LLVM.
 	// Force native output after the ordinary flags, even for LTO builds.
-	f, err := os.CreateTemp("", "llgo-pcln-*.ll")
+	dir, err := os.MkdirTemp("", "llgo-pcln-*")
 	if err != nil {
 		return llvm.MemoryBuffer{}, err
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(carrier.String()); err != nil {
-		f.Close()
+	defer os.RemoveAll(dir)
+	input := filepath.Join(dir, "pcln.ll")
+	if err := os.WriteFile(input, []byte(carrier.String()), 0600); err != nil {
 		return llvm.MemoryBuffer{}, err
 	}
-	if err := f.Close(); err != nil {
-		return llvm.MemoryBuffer{}, err
-	}
-	obj := f.Name() + ".o"
-	defer os.Remove(obj)
-	if err := ctx.irCompiler().Compile("-c", f.Name(), "-o", obj, "-fno-lto", "-Wno-override-module"); err != nil {
+	obj := filepath.Join(dir, "pcln.o")
+	if err := ctx.irCompiler().Compile("-c", input, "-o", obj, "-fno-lto", "-Wno-override-module"); err != nil {
 		return llvm.MemoryBuffer{}, err
 	}
 	return llvm.NewMemoryBufferFromFile(obj)

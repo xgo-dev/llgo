@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -98,6 +99,71 @@ func TestPackagePCLNArchive(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPCLNCompilerTempIsolation(t *testing.T) {
+	if os.Getenv("LLGO_TEST_PCLN_TEMP_HELPER") == "1" {
+		var input, output string
+		for i, arg := range os.Args[:len(os.Args)-1] {
+			if arg == "-c" {
+				input = os.Args[i+1]
+			}
+			if arg == "-o" {
+				output = os.Args[i+1]
+			}
+		}
+		dir := filepath.Dir(input)
+		info, err := os.Stat(dir)
+		if err != nil || dir == os.TempDir() || dir != filepath.Dir(output) {
+			t.Fatalf("compiler input/output are not isolated together: %q %q: %v", input, output, err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
+			t.Fatalf("compiler directory permits other users: %v", info.Mode())
+		}
+		if _, err := os.ReadFile(input); err != nil {
+			t.Fatal(err)
+		}
+		// Exercise cleanup of both a successful output and a partial output
+		// left behind when a cross compiler fails.
+		if err := os.WriteFile(output, []byte("test object"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if os.Getenv("LLGO_TEST_PCLN_TEMP_FAIL") == "1" {
+			t.Fatal("requested compiler failure after writing partial output")
+		}
+		return
+	}
+	llssa.Initialize(llssa.InitAll)
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			dir := t.TempDir()
+			for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+				t.Setenv(key, dir)
+			}
+			t.Setenv("LLGO_TEST_PCLN_TEMP_HELPER", "1")
+			if fail {
+				t.Setenv("LLGO_TEST_PCLN_TEMP_FAIL", "1")
+			}
+			ctx := &context{buildConf: &Config{}, commands: commandEnv{environ: os.Environ()}, crossCompile: crosscompile.Export{CC: os.Args[0], CCArgs: []string{"-test.run=^TestPCLNCompilerTempIsolation$", "--"}}}
+			pkg := &aPackage{LPkg: prog.NewPackage("p", "p")}
+			buf, err := emitPCLNObject(ctx, pkg, pkg.LPkg.Module())
+			if !buf.IsNil() {
+				defer buf.Dispose()
+			}
+			if (err != nil) != fail {
+				t.Fatalf("compiler result: %v (want failure=%v)", err, fail)
+			}
+			if !fail && string(buf.Bytes()) != "test object" {
+				t.Fatal("did not read the compiler's output")
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("temporary compiler files leaked: %v %v", entries, err)
+			}
+		})
 	}
 }
 
