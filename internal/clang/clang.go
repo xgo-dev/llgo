@@ -38,7 +38,7 @@ type Config struct {
 	CCFLAGS           []string // Compiler flags for C/C++ compilation
 	CFLAGS            []string // C-specific flags
 	LDFLAGS           []string // Linker flags
-	Linker            string   // Linker to use (e.g., "ld.lld", "avr-ld")
+	Linker            string   // Link command: raw linker or compiler driver
 	LinkerArgs        []string // Arguments that are part of the linker command
 	ResponseFileStyle ResponseFileStyle
 }

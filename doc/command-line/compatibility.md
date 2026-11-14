@@ -42,8 +42,11 @@ Empty replacement maps are valid. Logical paths that resolve to the same
 absolute path are rejected, as in Go.
 
 The portable `-gcflags` subset is `-lang`, `-N`, `-l` (0/1 or boolean), `-m`, and global `-d=converthash` settings. `-m` reports LLGo allocation plans; `-m=2` adds reasons. Unpatterned diagnostic lists select command-line packages and `all=` includes dependencies. The existing global mapping of other frontend controls is unchanged. Full gc diagnostics, selective hash patterns, and other package patterns are rejected. The `-ldflags` subset is `-s`, `-w`, `-extld` and `-extldflags` with
-unpatterned or `all=` lists. These configure LLGo's native linker. Other linker
-options are rejected rather than discarded.
+unpatterned or `all=` lists. On native Windows and host-native Unix builds,
+`-extld` selects the external link command and `-extldflags` appends its link
+arguments. Unix native linking uses a compiler driver. These two options do not
+yet apply to named `-target` configurations
+or Unix cross builds. Other linker options are rejected rather than discarded.
 
 `build`, `run` and `install -v` print successfully compiled package paths.
 Use LLGo's separate `-compiler-verbose`/`-cv` extension for compiler and device

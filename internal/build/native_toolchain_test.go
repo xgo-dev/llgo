@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/debugabi"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 func TestUsesWindowsToolchainProfile(t *testing.T) {
@@ -111,6 +118,74 @@ func TestBuildRejectsMalformedNativeToolchainInput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not parse CC") {
 		t.Fatalf("Build() error = %v, want malformed CC error", err)
 	}
+}
+
+func TestBuildRejectsMalformedNativeLinkOptions(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("Unix native linker path")
+	}
+	for _, test := range []struct {
+		name    string
+		options LinkOptions
+	}{
+		{"-extld", LinkOptions{ExternalLinker: "'clang"}},
+		{"-extldflags", LinkOptions{ExternalLinkerFlags: "'-Wl,option"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.LinkOptions = test.options
+			_, err := Build(Invocation{Config: conf, Dir: t.TempDir()})
+			if err == nil || !strings.Contains(err.Error(), "could not parse "+test.name) {
+				t.Fatalf("Build() error = %v, want malformed %s error", err, test.name)
+			}
+		})
+	}
+}
+
+func TestDebuggerABIRootArgsLinkerDriver(t *testing.T) {
+	for _, test := range []struct {
+		name, goos, target, linker string
+		want                       []string
+	}{
+		{"Linux default", "linux", "", "", []string{"-Wl,--undefined=" + debugabi.LegacyMarkerSymbol, "-Wl,--undefined=" + debugabi.NativeRecordSymbol}},
+		{"Linux explicit driver", "linux", "", "clang++", []string{"-Wl,--undefined=" + debugabi.LegacyMarkerSymbol, "-Wl,--undefined=" + debugabi.NativeRecordSymbol}},
+		{"Linux raw target linker", "linux", "custom", "ld.lld", []string{"--undefined=" + debugabi.LegacyMarkerSymbol, "--undefined=" + debugabi.NativeRecordSymbol}},
+		{"Darwin default", "darwin", "", "", []string{"-Wl,-u,_" + debugabi.LegacyMarkerSymbol, "-Wl,-u,_" + debugabi.NativeRecordSymbol}},
+		{"Darwin explicit driver", "darwin", "", "clang++", []string{"-Wl,-u,_" + debugabi.LegacyMarkerSymbol, "-Wl,-u,_" + debugabi.NativeRecordSymbol}},
+		{"Darwin raw target linker", "darwin", "custom", "ld64.lld", []string{"-u", "_" + debugabi.LegacyMarkerSymbol, "-u", "_" + debugabi.NativeRecordSymbol}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := &context{
+				buildConf:       &Config{Goos: test.goos, Goarch: "amd64", Target: test.target},
+				frontendOptions: cl.Options{Debug: true},
+				crossCompile:    crosscompile.Export{Linker: test.linker},
+			}
+			if got := debuggerABIRootArgs(ctx); !slices.Equal(got, test.want) {
+				t.Fatalf("debugger roots = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNativeExternalLinkerDebugBuild(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("Unix native linker path")
+	}
+	driver, err := exec.LookPath("clang++")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.OutFile = filepath.Join(t.TempDir(), "external-linker-debug")
+	conf.OptLevel, conf.LTO = optlevel.O3, lto.Full
+	conf.LinkOptions = LinkOptions{ExternalLinker: driver, DWARF: DWARFPreserve}
+	if _, err := Do([]string{"./testdata/dwarf"}, conf); err != nil {
+		t.Fatal(err)
+	}
+	if got := runBinary(t, conf.OutFile); got != "dwarf-ok\n" {
+		t.Fatalf("debug fixture output = %q", got)
+	}
+	verifyStrippedDebuggerSymbols(t, conf.OutFile)
 }
 
 func TestParseNativeToolchainInputAcceptsEmptyLinkerFlags(t *testing.T) {

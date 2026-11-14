@@ -644,6 +644,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if err != nil {
 			return nil, err
 		}
+	} else if conf.Target == "" && conf.Goos == runtime.GOOS && conf.Goarch == runtime.GOARCH {
+		// Unix compiler selection still follows its existing environment path.
+		// Parse the explicit linker options without changing CC/CXX handling.
+		nativeInput, err = parseNativeToolchainInput(commandEnv{dir: commands.dir}, conf.LinkOptions, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
 	if err != nil {
@@ -3213,15 +3220,18 @@ func debuggerABIRootArgs(ctx *context) []string {
 	if ctx == nil || ctx.buildConf == nil || !ctx.frontendOptions.Debug || ctx.buildConf.Goarch == "wasm" || ctx.buildConf.Goos == "windows" {
 		return nil
 	}
+	// Named targets may invoke ld directly. Native Unix -extld selects a
+	// compiler driver and needs the same -Wl forwarding as the default driver.
+	rawLinker := ctx.buildConf.Target != "" && ctx.crossCompile.Linker != ""
 	var args []string
 	for _, symbol := range []string{debugabi.LegacyMarkerSymbol, debugabi.NativeRecordSymbol} {
 		if ctx.buildConf.Goos == "darwin" {
-			if ctx.crossCompile.Linker != "" {
+			if rawLinker {
 				args = append(args, "-u", "_"+symbol)
 			} else {
 				args = append(args, "-Wl,-u,_"+symbol)
 			}
-		} else if ctx.crossCompile.Linker != "" {
+		} else if rawLinker {
 			args = append(args, "--undefined="+symbol)
 		} else {
 			args = append(args, "-Wl,--undefined="+symbol)

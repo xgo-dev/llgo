@@ -47,7 +47,7 @@ type Export struct {
 	GOOS           string
 	GOARCH         string
 	Libc           string
-	Linker         string // Linker to use (e.g., "ld.lld", "avr-ld")
+	Linker         string // Link command: compiler driver or target-specific raw linker
 	LinkerArgs     []string
 	LinkerIdentity string
 	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)
@@ -658,6 +658,11 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			export.ClangRoot = ""
 		} else {
 			export.Toolchain = nativeToolchain(goos)
+			if len(nativeInput.ExternalLinker) != 0 {
+				export.Linker = nativeInput.ExternalLinker[0]
+				export.LinkerArgs = slices.Clone(nativeInput.ExternalLinker[1:])
+			}
+			export.LDFLAGS = slices.Clone(nativeInput.ExternalFlags)
 		}
 		export.DebugInfo = nativeDebugInfoPolicy(export.Toolchain)
 		// not cross compile
