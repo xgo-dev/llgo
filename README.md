@@ -556,11 +556,11 @@ llgo run .
 
 ### on Windows
 
-The release workflow builds six compact Windows ZIPs: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Each contains LLGo, its DLL dependencies, `runtime`, `targets` and licenses. Add the extracted `bin` directory to `PATH`. Each architecture's MSVC and MinGW archives contain the same statically linked `llgo.exe`. The pinned ESP runtime archive is bundled and unpacked locally into the user cache on the first ESP build.
+The release workflow builds three compact Windows ZIPs: `llgo<VERSION>.windows-{386,amd64,arm64}.zip`. Each contains LLGo, its DLL dependencies, `runtime`, `targets` and licenses. Add the extracted `bin` directory to `PATH`. Each compiler supports both MSVC and MinGW target ABIs. The pinned ESP runtime archive is bundled and unpacked locally into the user cache on the first ESP build.
 
 See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
 
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. Bundled ESP Clang matches the host architecture, including native i686 and ARM64 tools for those hosts.
+Use the archive matching your native architecture; `CC` or Clang on PATH selects the target ABI. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. Bundled ESP Clang matches the host architecture, including native i686 and ARM64 tools for those hosts.
 
 The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 22 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
 

@@ -1,7 +1,5 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('msvc', 'mingw')][string]$Profile,
-  [Parameter(Mandatory = $true)]
   [ValidateSet('amd64', 'arm64', '386')][string]$GoArch,
   [Parameter(Mandatory = $true)][string]$HostCompilerDirectory
 )
@@ -20,7 +18,7 @@ if ($metadata.version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
 $llvmVersion = '22.1.8'
 $buildTime = ([DateTimeOffset]$metadata.date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 Assert-ReleaseCompilerArtifact -Root $HostCompilerDirectory -Metadata $metadata -GoArch $GoArch -LLVMVersion $llvmVersion
-$stage = Join-Path $env:RUNNER_TEMP "llgo-release-$GoArch-$Profile"
+$stage = Join-Path $env:RUNNER_TEMP "llgo-release-$GoArch"
 if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item -LiteralPath (Join-Path $HostCompilerDirectory 'bin') -Destination $stage -Recurse
@@ -54,7 +52,7 @@ Copy-Item -LiteralPath $espArchive -Destination (Join-Path $embedded $payload.as
   date = $buildTime
   goos = 'windows'
   goarch = $GoArch
-  abi = $Profile
+  supported_abis = @("msvc", "mingw")
   llvm_version = $llvmVersion
   compiler_sha256 = (Get-FileHash -Algorithm SHA256 $executable).Hash.ToLowerInvariant()
   distribution = 'full'
@@ -65,7 +63,7 @@ Copy-Item -LiteralPath $espArchive -Destination (Join-Path $embedded $payload.as
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stage 'release.json')
 
 # Directory records must be STORE for WinGet compatibility.
-$zipName = "llgo$($metadata.version).windows-$GoArch-$Profile.zip"
+$zipName = "llgo$($metadata.version).windows-$GoArch.zip"
 $zip = Join-Path $root ".windows-dist/$zipName"
 & python (Join-Path $PSScriptRoot 'release_zip.py') create $zip $stage
 if ($LASTEXITCODE -ne 0) { throw 'Creating or verifying the Windows ZIP failed' }

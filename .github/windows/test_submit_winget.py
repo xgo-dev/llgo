@@ -37,13 +37,12 @@ class FakeGitHub(winget.GitHub):
                         'prerelease': False, 'published_at': '2026-10-22T00:00:00Z'}
         self.assets = []
         checksums = ''
-        for profile in winget.manifests.PROFILES:
-            for arch in winget.manifests.ARCHITECTURES:
-                name = f'llgo1.2.3.windows-{arch}-{profile}.zip'
-                data = name.encode()
-                digest = hashlib.sha256(data).hexdigest()
-                checksums += f'{digest}  {name}\n'
-                self.assets.append(self.asset(name, data))
+        for arch in winget.manifests.ARCHITECTURES:
+            name = f'llgo1.2.3.windows-{arch}.zip'
+            data = name.encode()
+            digest = hashlib.sha256(data).hexdigest()
+            checksums += f'{digest}  {name}\n'
+            self.assets.append(self.asset(name, data))
         self.checksums = checksums.encode()
         self.assets.append(self.asset('llgo1.2.3.checksums.txt', self.checksums))
 
@@ -92,7 +91,7 @@ class FakeGitHub(winget.GitHub):
         if path.startswith(f'{UPSTREAM}/contents/'):
             exists = self.version_exists if path.endswith('/1.2.3') else self.package_exists
             if exists:
-                return [{'name': 'existing'}]
+                return [{'name': '1.0.0'}]
         elif path.startswith(f'{FORK}/git/ref/heads/'):
             if self.ref_exists:
                 return {'object': {'sha': 'new-commit'}}
@@ -120,15 +119,15 @@ class SubmissionTests(unittest.TestCase):
         self.download = download.start()
         self.addCleanup(download.stop)
 
-    def submit(self, profile='msvc', dry_run=False):
-        return winget.submit(self.api, 'v1.2.3', profile, self.output, dry_run)
+    def submit(self, dry_run=False):
+        return winget.submit(self.api, 'v1.2.3', self.output, dry_run)
 
     def test_new_submission_is_one_package_on_an_org_fork_branch(self):
-        for profile, label in (('msvc', 'MSVC'), ('mingw', 'MinGW')):
-            with self.subTest(profile=profile):
+        for exists in (False, True):
+            with self.subTest(package_exists=exists):
                 self.api = FakeGitHub()
-                self.api.package_exists = profile == 'msvc'
-                self.assertTrue(self.submit(profile).endswith('/pull/123'))
+                self.api.package_exists = exists
+                self.assertTrue(self.submit().endswith('/pull/123'))
                 self.assertEqual([call[0] for call in self.api.writes], [
                     f'{FORK}/git/trees', f'{FORK}/git/commits', f'{FORK}/git/refs', f'{UPSTREAM}/pulls'])
                 tree, commit, ref, pull = [call[2] for call in self.api.writes]
@@ -136,14 +135,24 @@ class SubmissionTests(unittest.TestCase):
                 self.assertEqual(commit['parents'], ['upstream-head'])
                 self.assertEqual(len(tree['tree']), 3)
                 expected = {path.relative_to(self.output).as_posix(): path.read_text() for path in
-                            (self.output / f'manifests/x/XGo/LLGo/{label}/1.2.3').glob('*.yaml')}
+                            (self.output / 'manifests/x/XGo/LLGo/1.2.3').glob('*.yaml')}
                 self.assertEqual(self.api.branch_files, expected)
-                self.assertEqual(ref['ref'], f'refs/heads/llgo/{profile}/1.2.3')
-                self.assertEqual(pull['head'], f'xgo-dev:llgo/{profile}/1.2.3')
+                self.assertEqual(ref['ref'], 'refs/heads/llgo/universal/1.2.3')
+                self.assertEqual(pull['head'], 'xgo-dev:llgo/universal/1.2.3')
                 self.assertEqual(pull['base'], 'master')
-                self.assertTrue(pull['title'].startswith('Update:' if profile == 'msvc' else 'New package:'))
-                self.assertIn('- [ ] Tested with `winget install', pull['body'])
+                self.assertTrue(pull['title'].startswith('Update:' if exists else 'New package:'))
                 self.assertNotIn('test-only-token', json.dumps(self.api.writes))
+
+    def test_legacy_subdirectories_do_not_make_the_new_id_an_update(self):
+        original = self.api.request
+        def legacy_only(path, *args, **kwargs):
+            if path == f'{UPSTREAM}/contents/manifests/x/XGo/LLGo':
+                return [{'name': 'MSVC'}, {'name': 'MinGW'}]
+            return original(path, *args, **kwargs)
+        with mock.patch.object(self.api, 'request', side_effect=legacy_only):
+            self.submit()
+        pull = next(call[2] for call in self.api.writes if call[0] == f'{UPSTREAM}/pulls')
+        self.assertTrue(pull['title'].startswith('New package: XGo.LLGo'))
 
     def test_repeat_submission_leaves_review_changes_and_pr_untouched(self):
         self.submit()
@@ -188,20 +197,20 @@ class SubmissionTests(unittest.TestCase):
     def test_dry_run_and_already_published_version_do_not_write(self):
         self.assertIn('Dry run:', self.submit(dry_run=True))
         self.assertEqual(self.api.writes, [])
-        self.assertEqual(len(list(self.output.rglob('*.yaml'))), 6)
+        self.assertEqual(len(list(self.output.rglob('*.yaml'))), 3)
         self.api.version_exists = True
         self.assertIn('already published', self.submit())
         self.assertEqual(self.api.writes, [])
 
     def test_another_forks_matching_version_is_reused(self):
         self.api.other_prs = [{'number': 99, 'html_url': 'https://github.com/microsoft/winget-pkgs/pull/99'}]
-        self.api.other_files = [{'filename': 'manifests/x/XGo/LLGo/MSVC/1.2.3/XGo.LLGo.MSVC.yaml'}]
+        self.api.other_files = [{'filename': 'manifests/x/XGo/LLGo/1.2.3/XGo.LLGo.yaml'}]
         self.assertIn('/pull/99', self.submit())
         self.assertEqual(self.api.writes, [])
 
     def test_title_match_for_another_version_does_not_block_submission(self):
         self.api.other_prs = [{'number': 99, 'html_url': 'https://github.com/microsoft/winget-pkgs/pull/99'}]
-        self.api.other_files = [{'filename': 'manifests/x/XGo/LLGo/MSVC/1.2.30/XGo.LLGo.MSVC.yaml'}]
+        self.api.other_files = [{'filename': 'manifests/x/XGo/LLGo/1.2.30/XGo.LLGo.yaml'}]
         self.assertTrue(self.submit().endswith('/pull/123'))
 
     def test_closed_pr_is_not_reopened_or_replaced(self):
@@ -279,7 +288,7 @@ class SubmissionTests(unittest.TestCase):
 class TransportTests(unittest.TestCase):
     def test_missing_write_secret_fails_before_any_api_call(self):
         with mock.patch.dict(winget.os.environ, {'GH_TOKEN': 'read-only-token'}, clear=True):
-            with mock.patch.object(winget.sys, 'argv', ['submit-winget.py', '--tag', 'v1.2.3', '--profile', 'msvc']):
+            with mock.patch.object(winget.sys, 'argv', ['submit-winget.py', '--tag', 'v1.2.3', ]):
                 with mock.patch.object(winget, 'urlopen') as open_url, mock.patch('sys.stderr', new_callable=io.StringIO) as stderr:
                     with self.assertRaises(SystemExit) as result:
                         winget.main()

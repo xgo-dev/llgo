@@ -203,7 +203,7 @@ jobs:
           retention-days: 3
           include-hidden-files: true
 
-  build-windows-compiler:
+  build-windows:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     timeout-minutes: 90
@@ -281,49 +281,6 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-  # Keep x86 host qualification separate while sharing compiler/packaging steps.
-  build-windows-compiler-x86:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build]
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        goarch: ['386']
-        os: [windows-2022]
-    runs-on: ${{ matrix.os }}
-    steps: *windows-compiler-steps
-
-  build-windows:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build, build-windows-compiler]
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        abi: [msvc, mingw]
-        goarch: [amd64, arm64]
-        include:
-          - goarch: amd64
-            os: windows-2022
-          - goarch: arm64
-            os: windows-11-arm
-    runs-on: ${{ matrix.os }}
-    steps: &windows-package-steps
-      - uses: actions/checkout@v7
-      - name: Download release metadata
-        uses: actions/download-artifact@v8
-        with:
-          name: llgo-release-metadata
-          path: .windows-dist
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-      - name: Download shared host compiler
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-host-compiler-${{ matrix.goarch }}
-          path: ${{ runner.temp }}/llgo-windows-compiler
       - name: Read bundled ESP archive digest
         id: esp-pin
         shell: pwsh
@@ -340,32 +297,33 @@ jobs:
         shell: pwsh
         run: >-
           ./.github/windows/build-release.ps1
-          -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+          -GoArch '${{ matrix.goarch }}'
           -HostCompilerDirectory '${{ runner.temp }}/llgo-windows-compiler'
       - name: Upload Windows archive
         uses: actions/upload-artifact@v7
         with:
-          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          name: llgo-windows-${{ matrix.goarch }}
           path: |
-            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip
-            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip.sha256
+            .windows-dist/*.windows-${{ matrix.goarch }}.zip
+            .windows-dist/*.windows-${{ matrix.goarch }}.zip.sha256
           if-no-files-found: error
           retention-days: 3
           include-hidden-files: true
           compression-level: 0
 
+
+  # Keep x86 host qualification separate while sharing compiler/packaging steps.
   build-windows-x86:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build, build-windows-compiler-x86]
+    needs: [prepare, build]
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        abi: [msvc, mingw]
         goarch: ['386']
         os: [windows-2022]
     runs-on: ${{ matrix.os }}
-    steps: *windows-package-steps
+    steps: *windows-compiler-steps
 
   test-windows-artifacts:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -389,14 +347,14 @@ jobs:
       - name: Download Windows archive
         uses: actions/download-artifact@v8
         with:
-          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          name: llgo-windows-${{ matrix.goarch }}
           path: .windows-dist
       - name: Test release installer with the built archive
         shell: pwsh
         run: |
-          $archive = Get-ChildItem ".windows-dist/llgo*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip" |
+          $archive = Get-ChildItem ".windows-dist/llgo*.windows-${{ matrix.goarch }}.zip" |
             Select-Object -First 1
-          if (-not $archive -or $archive.Name -notmatch '^llgo(.+)\.windows-[^.]+-[^.]+\.zip$') {
+          if (-not $archive -or $archive.Name -notmatch '^llgo(.+)\.windows-(386|amd64|arm64)\.zip$') {
             throw 'Could not determine the LLGo version from the Windows archive'
           }
           $env:LLGO_VERSION = $Matches[1]
@@ -450,7 +408,7 @@ jobs:
         shell: msys2 {0}
         run: >-
           bash test/installer/install_msys_path_test.sh
-          .windows-dist/*.windows-${{ matrix.goarch }}-mingw.zip
+          .windows-dist/*.windows-${{ matrix.goarch }}.zip
           "$RUNNER_TEMP/llgo-release-install"
       - name: Test native compilation and bundled ESP toolchain
         shell: pwsh
@@ -458,6 +416,18 @@ jobs:
           ./.github/windows/test-release.ps1
           -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+
+      - name: Set up WinGet on native ARM64
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
+        shell: powershell
+        run: ./.github/windows/setup-winget.ps1
+      - name: Test native ARM64 WinGet migration and upgrades
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
+        shell: pwsh
+        run: |
+          $archive = @(Get-ChildItem '.windows-dist/*.windows-arm64.zip')
+          if ($archive.Count -ne 1) { throw 'Expected one unified ARM64 archive' }
+          ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch arm64
 
       - name: Upload Windows bundled ESP validation evidence
         if: always()
@@ -482,6 +452,34 @@ jobs:
         os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps: *windows-test-steps
+
+  test-winget-migration:
+    # An older base policy has no scoped flag; keep validation enabled then.
+    if: needs.prepare.outputs.run_code_ci == 'true' && needs.prepare.outputs.run_winget_ci != 'false'
+    needs: [prepare, build-windows, build-windows-x86]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: llgo-windows-*
+          merge-multiple: true
+          path: .windows-dist
+      - name: Set up the supported WinGet client
+        shell: powershell
+        run: ./.github/windows/setup-winget.ps1
+      - name: Test both old IDs, subsequent upgrade and uninstall
+        shell: pwsh
+        run: |
+          foreach ($arch in @('amd64', '386')) {
+            $archive = @(Get-ChildItem ".windows-dist/*.windows-$arch.zip")
+            if ($archive.Count -ne 1) { throw "Expected one unified $arch archive" }
+            ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch $arch
+          }
 
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -650,7 +648,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-windows-artifacts-x86, test-linux-distributions, populate-linux-sysroot]
+    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-windows-artifacts-x86, test-winget-migration, test-linux-distributions, populate-linux-sysroot]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.run_code_ci == 'true' && (startsWith(github.ref, 'refs/tags/'))
     outputs:
@@ -681,20 +679,18 @@ jobs:
           pattern: llgo-windows-*
           merge-multiple: true
           path: .windows-dist
-      - name: Verify all six compact Windows ZIPs
+      - name: Verify all three universal Windows ZIPs
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           cd .windows-dist
           archives=(llgo*.windows-*.zip)
-          test "${#archives[@]}" = 6
+          test "${#archives[@]}" = 3
           for arch in 386 amd64 arm64; do
-            for abi in msvc mingw; do
-              archive="llgo${version}.windows-${arch}-${abi}.zip"
-              test -s "$archive"
-              sha256sum -c "$archive.sha256"
-            done
+            archive="llgo${version}.windows-${arch}.zip"
+            test -s "$archive"
+            sha256sum -c "$archive.sha256"
           done
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4

@@ -42,6 +42,17 @@ class DecisionTests(unittest.TestCase):
         self.assertTrue(report["run_code_ci"])
         self.assertFalse(report["run_doc_checks"])
 
+    def test_winget_checks_follow_release_and_installer_changes(self):
+        for path in ("install.ps1", "install.sh", ".goreleaser.yaml",
+                     ".github/windows/test-release.ps1", "test/installer/install_ps1_test.ps1",
+                     ".github/workflows/release-build.yml", ".github/workflows/winget.yml",
+                     ".github/workflows/ci-prepare.yml", ".github/scripts/ci_policy.py"):
+            with self.subTest(path=path):
+                self.assertTrue(self.decide(path)["run_winget_ci"])
+        for path in ("cl/compile.go", "runtime/go.mod", "README.md"):
+            with self.subTest(path=path):
+                self.assertFalse(self.decide(path)["run_winget_ci"])
+
     def test_mixed_changes_require_both_checks(self):
         report = self.decide("cl/compile.go", "README.md")
         self.assertTrue(report["run_code_ci"])
@@ -62,6 +73,7 @@ class DecisionTests(unittest.TestCase):
         report = ci_policy.classify([])
         self.assertTrue(report["run_code_ci"])
         self.assertTrue(report["run_doc_checks"])
+        self.assertTrue(report["run_winget_ci"])
 
     def test_main_tags_manual_and_scheduled_runs_do_not_inspect_diff(self):
         with patch.object(ci_policy, "git", side_effect=AssertionError("must not inspect Git")):
@@ -70,6 +82,7 @@ class DecisionTests(unittest.TestCase):
                     report = ci_policy.prepare(event, {}, "xgo-dev")
                     self.assertTrue(report["run_code_ci"])
                     self.assertTrue(report["run_doc_checks"])
+                    self.assertTrue(report["run_winget_ci"])
 
     def test_runner_owner_is_the_workflow_repository_not_pr_author(self):
         self.assertEqual(json.loads(ci_policy.runners("xgo-dev")["linux_large_runner"]),
@@ -87,6 +100,7 @@ class DecisionTests(unittest.TestCase):
                     report = ci_policy.prepare("pull_request", event, "cpunion")
                     self.assertTrue(report["run_code_ci"])
                     self.assertTrue(report["run_doc_checks"])
+                    self.assertTrue(report["run_winget_ci"])
 
     def test_mode_check_failure_cannot_leave_a_skip_decision(self):
         event = {"pull_request": {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}}}

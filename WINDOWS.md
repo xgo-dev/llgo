@@ -1,10 +1,10 @@
 # Using LLGo Windows releases
 
-Choose the release matching your host architecture (`386`, `amd64` or `arm64`) and native ABI (`msvc` or `mingw`). The release workflow produces a ZIP for each variant; check the [release assets](https://github.com/xgo-dev/llgo/releases) for the formats available in your version. Extract the entire archive and add its `bin` directory to PATH.
+Choose the release matching your host architecture (`386`, `amd64` or `arm64`). Each architecture has one ZIP that supports both MSVC and MinGW targets; check the [release assets](https://github.com/xgo-dev/llgo/releases) for the formats available in your version. Extract the entire archive and add its `bin` directory to PATH.
 
-For each architecture, the two ABI archives contain the same `llgo.exe`. The native C/C++ toolchain selects the ABI used by generated programs.
+The native C/C++ toolchain selects the ABI used by generated programs. With `CC` unset, LLGo probes the `clang` on PATH; MSVC/GNU target triples select the corresponding ABI. An explicit `CC` takes precedence, and incompatible `CXX` or linker profiles are rejected.
 
-The ZIP (`llgo<VERSION>.windows-<ARCH>-<ABI>.zip`) contains LLGo, its DLL dependencies, `runtime`, `targets`, documentation and licenses. There is one compact archive per architecture/ABI; native C/C++ tools are installed separately. The matching, checksum-pinned ESP runtime archive is included under `crosscompile`.
+The ZIP (`llgo<VERSION>.windows-<ARCH>.zip`) contains LLGo, its DLL dependencies, `runtime`, `targets`, documentation and licenses. There is one compact archive per architecture; native C/C++ tools are installed separately. The matching, checksum-pinned ESP runtime archive is included under `crosscompile`.
 
 The first ESP build verifies the bundled archive and unpacks it locally into the user cache, keyed by version and host architecture. Subsequent builds reuse that cache. Keeping the original xz archive preserves its tool aliases without duplicating large executables in ZIP. The toolchain includes its LLVM and component licenses. Extraction uses 7-Zip or a Windows tar with built-in xz support. Target support sources may still need network access.
 
@@ -119,6 +119,25 @@ Run the generated program as well as compiling it. Its DLL dependencies are sepa
 
 ## WinGet packaging
 
-The native WinGet packages use a portable `llgo` command alias for both ABI profiles. Release tests run the shared compiler through a symbolic link outside the installation directory with an isolated PATH, and compile native programs through the same alias. Older MinGW manifests used `ArchiveBinariesDependOnPath: true` for DLL lookup; do not remove it from an older package without verifying that package's compiler and DLL dependencies.
+The unified `XGo.LLGo` WinGet package uses a portable `llgo` command alias for both ABI targets. Release tests run the shared compiler through a symbolic link outside the installation directory with an isolated PATH, and compile native programs through the same alias. Older MinGW manifests used `ArchiveBinariesDependOnPath: true` for DLL lookup; do not remove it from an older package without verifying that package's compiler and DLL dependencies.
 
 The repository can [prepare WinGet candidates](https://github.com/xgo-dev/llgo/blob/main/.github/windows/WINGET.md) from tested release ZIPs. Candidate generation does not publish a package to the public WinGet source; check publication status before using a package ID. Each candidate explains the external development dependencies rather than installing a complete native development environment.
+
+### Migrating an older WinGet installation
+
+After the unified package is published, replace the installed legacy package once:
+
+```powershell
+# Confirm which old ID is installed; remove that ID (not both).
+winget list --id XGo.LLGo --accept-source-agreements
+winget uninstall --id XGo.LLGo.MSVC --exact
+# For a MinGW installation, use XGo.LLGo.MinGW instead of XGo.LLGo.MSVC above.
+winget install --id XGo.LLGo --exact
+```
+
+Future updates use `winget upgrade --id XGo.LLGo --exact`. Native MSVC/MinGW
+dependencies stay installed; select the desired toolchain on PATH or with `CC`.
+The old IDs do not redirect automatically: WinGet's portable registrations are
+bound to their package ID. Neither `Moniker` nor `--rename` migrates that ID.
+New releases publish only `XGo.LLGo`, with no recurring legacy manifests.
+Historical ABI-suffixed release assets and manifests are left intact.

@@ -9,8 +9,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-lib.ps1')
-$archives = @(Get-ChildItem '.windows-dist' -Filter "*.windows-$GoArch-$Profile.zip")
-if ($archives.Count -ne 1) { throw "Expected exactly one windows/$GoArch/$Profile ZIP" }
+$archives = @(Get-ChildItem '.windows-dist' -Filter "*.windows-$GoArch.zip")
+if ($archives.Count -ne 1) { throw "Expected exactly one windows/$GoArch ZIP" }
 $archive = $archives[0]
 $checksumLine = (Get-Content -Raw ($archive.FullName + '.sha256')).Trim()
 $actual = (Get-FileHash -Algorithm SHA256 $archive.FullName).Hash.ToLowerInvariant()
@@ -27,8 +27,8 @@ foreach ($entry in @('bin/llgo.exe', 'runtime/go.mod', 'targets', 'LICENSES', 'W
   if (-not (Test-Path (Join-Path $releaseRoot $entry))) { throw "Release archive is missing $entry" }
 }
 $metadata = Get-Content -Raw (Join-Path $releaseRoot 'release.json') | ConvertFrom-Json
-if ($metadata.goos -ne 'windows' -or $metadata.goarch -ne $GoArch -or $metadata.abi -ne $Profile -or
-    $archive.Name -ne "llgo$($metadata.version).windows-$GoArch-$Profile.zip") {
+if ($metadata.goos -ne 'windows' -or $metadata.goarch -ne $GoArch -or (@($metadata.supported_abis) -join ',') -ne 'msvc,mingw' -or
+    $archive.Name -ne "llgo$($metadata.version).windows-$GoArch.zip") {
   throw 'The archive name, host architecture, and ABI metadata disagree'
 }
 $commit = (& git rev-parse HEAD).Trim()

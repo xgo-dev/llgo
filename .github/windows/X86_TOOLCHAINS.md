@@ -31,7 +31,7 @@ uses the Unix payload digests and restores unchanged archives across updates;
 unrelated SDK or host pin edits do not force their download again.
 
 Compiler, packaging, and native artifact tests remain separate for x86 and
-amd64/arm64. WinGet candidates and publication require all six compact Windows ZIPs
+amd64/arm64. WinGet candidates and publication require all three compact Windows ZIPs
 and all architecture tests to pass.
 
 The llvm-mingw runtime dependencies apply `bdwgc-windows-fault-guard.patch` to
