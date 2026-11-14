@@ -1,14 +1,8 @@
 package build
 
 import (
-	"bufio"
-	"bytes"
-	stdcontext "context"
 	"errors"
-	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -16,10 +10,28 @@ import (
 	"time"
 )
 
-func TestPCLNArchiveLockProcess(t *testing.T) {
-	path := os.Getenv("LLGO_TEST_PCLN_LOCK_PATH")
-	if path == "" {
-		t.Skip("subprocess helper")
+// Use a direct Win32 reader to exercise real sharing violations. On the
+// native Windows CI hosts os.Open can read through this read-only exclusive
+// handle even while this CreateFile call returns ERROR_SHARING_VIOLATION.
+// The retry policy must handle the error when it occurs, not require every
+// reader and host to reject an otherwise successful read.
+func openPCLNTestArchive(path string) (*os.File, error) {
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := syscall.CreateFile(name, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+func lockPCLNTestArchive(t *testing.T) (string, func() error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pkg.a")
+	if err := os.WriteFile(path, []byte("archive contents"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -29,91 +41,62 @@ func TestPCLNArchiveLockProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.CloseHandle(h)
-	// Check the native handle before involving the parent. This distinguishes
-	// a failed lock fixture from premature helper exit or a different file.
-	var info syscall.ByHandleFileInformation
-	if err := syscall.GetFileInformationByHandle(h, &info); err != nil {
-		t.Fatal(err)
-	}
-	probe, probeErr := syscall.CreateFile(name, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
-	if probe != syscall.InvalidHandle {
-		syscall.CloseHandle(probe)
-	}
-	f, openErr := os.Open(path)
-	var readErr error
-	if f != nil {
-		_, readErr = f.ReadAt(make([]byte, 1), 0)
-		f.Close()
-	}
-	if !errors.Is(probeErr, syscall.Errno(32)) || !errors.Is(openErr, syscall.Errno(32)) {
-		fmt.Fprintf(os.Stderr, "lock self-check: path=%q handle=%#x volume=%x file=%x:%x nativeHandle=%#x nativeError=%v openError=%v readError=%v\n", path, h, info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow, probe, probeErr, openErr, readErr)
-		t.Fatal("exclusive handle did not establish a sharing conflict in its own process")
-	}
-	fmt.Println("locked")
-	// Require an explicit release command so an unexpected stdin EOF cannot
-	// silently release the handle before the parent has exercised the reader.
-	command := make([]byte, len("release\n"))
-	if _, err := io.ReadFull(os.Stdin, command); err != nil || string(command) != "release\n" {
-		fmt.Fprintf(os.Stderr, "archive lock release command: %q, %v\n", command, err)
-		t.Fatal("missing archive lock release command")
-	}
-}
-
-func lockPCLNTestArchive(t *testing.T) (string, func() error) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "pkg.a")
-	if err := os.WriteFile(path, []byte("archive contents"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPCLNArchiveLockProcess$")
-	cmd.Env = append(os.Environ(), "LLGO_TEST_PCLN_LOCK_PATH="+path)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		stdin.Close()
-		stdout.Close()
-		t.Fatal(err)
-	}
 	var once sync.Once
-	var waitErr error
+	var closeErr error
 	release := func() error {
-		once.Do(func() {
-			_, writeErr := io.WriteString(stdin, "release\n")
-			stdin.Close()
-			waitErr = errors.Join(writeErr, cmd.Wait())
-		})
-		return waitErr
+		once.Do(func() { closeErr = syscall.CloseHandle(h) })
+		return closeErr
 	}
 	t.Cleanup(func() {
 		if err := release(); err != nil {
-			t.Errorf("archive lock helper: %v\n%s", err, stderr.String())
+			t.Error(err)
 		}
 	})
-	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "locked\n" {
-		t.Fatalf("archive lock helper readiness: %q, %v", line, err)
-	}
-	// Verify the fixture before testing the retry wrapper: a successful open
-	// here must not turn the transient-conflict test into a false positive.
-	f, err := os.Open(path)
+	f, err := openPCLNTestArchive(path)
 	if f != nil {
 		f.Close()
 	}
 	if !errors.Is(err, syscall.Errno(32)) {
-		t.Fatalf("archive lock helper did not establish a sharing conflict: %v", err)
+		t.Fatalf("exclusive handle did not establish a sharing conflict: %v", err)
 	}
 	return path, release
+}
+
+// Exercise the production os.Open path too. It may open immediately or after
+// release, but must return a readable archive with the original contents.
+func TestOpenPCLNArchiveNativeReader(t *testing.T) {
+	path, release := lockPCLNTestArchive(t)
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		released <- release()
+	}()
+	f, err := openPCLNArchive(path)
+	if f != nil {
+		defer f.Close()
+	}
+	if closeErr := <-released; closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len("archive contents"))
+	if _, err := f.ReadAt(buf, 0); err != nil || string(buf) != "archive contents" {
+		t.Fatalf("native read: %q, %v", buf, err)
+	}
+}
+
+func TestOpenPCLNArchivePermanentError(t *testing.T) {
+	want := &os.PathError{Op: "open", Path: "archive.a", Err: syscall.ERROR_ACCESS_DENIED}
+	calls := 0
+	f, err := openPCLNArchiveWithOpener(want.Path, func(string) (*os.File, error) {
+		calls++
+		return nil, want
+	})
+	if f != nil || err != want || calls != 1 {
+		t.Fatalf("permanent error: file=%v err=%v calls=%d", f, err, calls)
+	}
 }
 
 func TestOpenPCLNArchiveSharingViolation(t *testing.T) {
@@ -124,7 +107,7 @@ func TestOpenPCLNArchiveSharingViolation(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		released <- release()
 	}()
-	f, err := openPCLNArchive(path)
+	f, err := openPCLNArchiveWithOpener(path, openPCLNTestArchive)
 	if f != nil {
 		defer f.Close()
 	}
@@ -143,7 +126,7 @@ func TestOpenPCLNArchiveSharingViolation(t *testing.T) {
 func TestOpenPCLNArchivePersistentSharingViolation(t *testing.T) {
 	path, _ := lockPCLNTestArchive(t)
 	start := time.Now()
-	f, err := openPCLNArchive(path)
+	f, err := openPCLNArchiveWithOpener(path, openPCLNTestArchive)
 	if f != nil {
 		f.Close()
 		t.Fatal("opened exclusively locked archive")
