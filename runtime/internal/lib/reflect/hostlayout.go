@@ -25,14 +25,28 @@ func isHostLayoutMarker(t Type) bool {
 	return f.Name_ == "_" && f.Typ == hostLayoutPrivateMarker
 }
 
+// structHasHostLayout reports whether typ's compiler layout includes a
+// HostLayout marker. Direct markers do not propagate as a layout policy, but
+// enclosing structs and arrays inherit the marked field's size, including
+// trailing zero-size protection. Match ssa.containsHostLayout so FFI tail
+// padding follows the Size_ the compiler actually produced.
 func structHasHostLayout(typ *abi.Type) bool {
-	st := typ.StructType()
-	if st == nil {
+	if typ == nil {
 		return false
 	}
-	for i := range st.Fields {
-		if isHostLayoutMarker(toType(st.Fields[i].Typ)) {
-			return true
+	switch Kind(typ.Kind()) {
+	case Array:
+		return structHasHostLayout(typ.Elem())
+	case Struct:
+		st := typ.StructType()
+		if st == nil {
+			return false
+		}
+		for i := range st.Fields {
+			ft := st.Fields[i].Typ
+			if isHostLayoutMarker(toType(ft)) || structHasHostLayout(ft) {
+				return true
+			}
 		}
 	}
 	return false
