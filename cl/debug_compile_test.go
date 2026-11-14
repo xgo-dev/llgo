@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -55,7 +56,7 @@ func TestWasmDebuggerMemoryLocation(t *testing.T) {
 					t.Fatal(err, pkg.Module().String())
 				}
 				want := enabled && target.GOARCH == "wasm"
-				if strings.Contains(pkg.Module().String(), `name: "__llgo_wasm_memory"`) != want {
+				if strings.Contains(pkg.Module().String(), `name: "`+debugabi.WasmMemoryAnchorVariable+`"`) != want {
 					t.Fatal("linear-memory anchor escaped its Wasm debugger opt-in")
 				}
 				if want {

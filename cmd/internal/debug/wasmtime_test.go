@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,6 +14,50 @@ import (
 	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
+
+func TestThreadedWasmtimeSelection(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	t.Setenv("PATH", dir)
+	t.Setenv("LLGO_WASMTIME", missing)
+	if _, err := findThreadedWasmtime(""); err == nil || !strings.Contains(err.Error(), "find Wasmtime") {
+		t.Fatalf("missing environment executable: %v", err)
+	}
+	t.Setenv("LLGO_WASMTIME", "")
+	if _, err := findThreadedWasmtime(""); err == nil {
+		t.Fatal("accepted missing default executable")
+	}
+	if runtime.GOOS == "windows" {
+		return // The remaining fixtures are executable POSIX shell wrappers.
+	}
+	path := filepath.Join(dir, "wasmtime")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("printf 'wasmtime 46.0.3\\n'")
+	if got, err := findThreadedWasmtime(""); err != nil || got != path {
+		t.Fatalf("PATH executable: %s, %v", got, err)
+	}
+	t.Setenv("LLGO_WASMTIME", missing)
+	if got, err := findThreadedWasmtime(path); err != nil || got != path {
+		t.Fatalf("explicit executable must override environment: %s, %v", got, err)
+	}
+	t.Setenv("LLGO_WASMTIME", path)
+	if got, err := findThreadedWasmtime(""); err != nil || got != path {
+		t.Fatalf("environment executable: %s, %v", got, err)
+	}
+	write("printf 'wasmtime 47.0.0\\n'")
+	if _, err := findThreadedWasmtime(path); err == nil || !strings.Contains(err.Error(), "removed WASI threads") {
+		t.Fatalf("accepted incompatible runtime: %v", err)
+	}
+	write("exit 7")
+	if _, err := findThreadedWasmtime(path); err == nil || !strings.Contains(err.Error(), "query Wasmtime version") {
+		t.Fatalf("accepted failed version query: %v", err)
+	}
+}
 
 func TestThreadedWasmtimeVersions(t *testing.T) {
 	for _, tc := range []struct {
@@ -78,6 +123,19 @@ func TestWASIDeployedCodeIdentity(t *testing.T) {
 	write(module, correct)
 	if _, err := wasiDebugModule(module, nil); err != nil {
 		t.Fatal(err)
+	}
+	for _, record := range []debugabi.Record{
+		debugabi.NewRecord(8, debugabi.ByteOrderLittle),
+		debugabi.NewRecord(4, debugabi.ByteOrderBig),
+	} {
+		unsupported, err := wasmdebug.SetDebuggerRecord(correct, record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(module, unsupported)
+		if _, err := wasiDebugModule(module, nil); err == nil || !strings.Contains(err.Error(), "little-endian W32") {
+			t.Fatalf("accepted unsupported WASI record %+v: %v", record, err)
+		}
 	}
 	deployed, err := wasmdebug.Externalize(correct, "probe%20debug.wasm")
 	if err != nil {

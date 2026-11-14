@@ -23,7 +23,8 @@ substituting a single-thread module. Acceptance checks:
   captures, growing and indirect maps, closed/wrapped channels and zero-sized values.
 - A second all-stop snapshot after resume, container mutations, channel
   draining, worker exit and another GC; inspection rejected after process exit.
-- Deployment/debug sizes and exact tool versions in the JSON report.
+- Deployment/debug sizes, fixture and artifact SHA-256 identities, and exact
+  tool versions in the JSON report.
 
 The private debugger module must reproduce the deployed code/data exactly.
 Package tests reject a changed sidecar even when it advertises the original
@@ -42,11 +43,15 @@ can enter that cache. See [Wasmtime #15290](https://github.com/bytecodealliance/
 also reproduced with a six-line C program on Wasmtime 48.0.1.
 Engine-cache hits must not be used as a debugging gate.
 
-Qualification on 2026-11-14: macOS arm64, Go 1.27.3, Clang/LLVM 22.1.8,
-Apple LLDB 2103.0.34.103 / Swift 6.4, Wasmtime 46.0.3 (`c5569e6aa`),
-Node.js 26.8.1. Both complete sessions passed. Embedded deployment: 2,099,277
-bytes; external deployment: 723,561 bytes; full debug sidecar: 2,099,277 bytes.
-Sizes are fixture/build-specific. Linux qualification is also an explicit
-`cross-compile` workflow gate. Cross-architecture Docker emulation cannot
+Qualification on 2026-11-14, with Clang/LLVM 22.1.8 and Wasmtime 46.0.3 (`c5569e6aa`):
+
+| Native host | Go | LLDB | Node.js | Embedded bytes | External bytes | Debug sidecar bytes |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| macOS arm64 | 1.27.3 | Apple 2103.0.34.103 / Swift 6.4 | 26.8.1 | 2,099,271 | 723,561 | 2,099,271 |
+| Linux amd64 (CI) | 1.27.0 | 22.1.8 | 22.23.5 | 2,096,958 | 722,614 | 2,096,958 |
+
+Both complete sessions passed on each host. Sizes are fixture/build-specific;
+the Linux record precedes the private marker-name adjustment. Linux qualification
+is an explicit `cross-compile` workflow gate. Cross-architecture Docker emulation cannot
 qualify a native debugger. Physical probe qualification remains in
 [`../hardware`](../hardware/README.md).

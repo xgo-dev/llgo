@@ -37,7 +37,7 @@ const (
 	LegacyMarkerSymbol = "__llgo_debugger_marker_v1"
 	WasmSectionName    = "llgo.debugger"
 
-	WasmMemoryAnchorVariable = "__llgo_wasm_memory"
+	WasmMemoryAnchorVariable = "$llgo.memory"
 	WasmMemoryAnchorOffset   = 1
 )
 

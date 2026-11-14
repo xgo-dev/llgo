@@ -5,10 +5,12 @@
 """Qualify the real threaded W32/EH module with Wasmtime's native JIT DWARF."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import tempfile
 
@@ -29,6 +31,12 @@ def main():
         'node': ['node', '--version'], 'clang': ['clang', '--version'],
     }.items()}
     report['sessions'] = []
+    report['source_commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    report['compiler_sha256'] = hashlib.sha256(Path(shutil.which(llgo) or llgo).read_bytes()).hexdigest()
+    fixture = ROOT / 'test/debug/wasm'
+    report['fixture_sha256'] = {str(path.relative_to(fixture)): hashlib.sha256(path.read_bytes()).hexdigest()
+                                for path in sorted(fixture.rglob('*'))
+                                if path.is_file() and path.suffix in ('.go', '.cpp', '.mod')}
     with tempfile.TemporaryDirectory(prefix='llgo-wasi-debug-') as directory:
         directory = Path(directory)
         for mode in ('embedded', 'external'):
@@ -44,7 +52,9 @@ def main():
                 raise SystemExit(mode + ' WASI debugger acceptance failed')
             report['sessions'].append({'mode': mode, 'deployment_bytes': module.stat().st_size,
                                        'files': {p.name: p.stat().st_size for p in directory.glob(mode + '*')
-                                                 if p.suffix != '.result'}})
+                                                 if p.suffix != '.result'},
+                                       'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                                  for p in directory.glob(mode + '*') if p.suffix != '.result'}})
     encoded = json.dumps(report, indent=2, ensure_ascii=False) + '\n'
     print(encoded, end='')
     if args.report:
