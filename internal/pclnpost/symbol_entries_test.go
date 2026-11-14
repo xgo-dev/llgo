@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,9 @@ func TestRewriteSymbolEntryCarrier(t *testing.T) {
 
 func TestSymbolEntryCarrierRequiresCatalog(t *testing.T) {
 	path := symbolCarrierFixture(t)
+	if _, err := AnalyzeExternal(path); err != nil {
+		t.Fatalf("valid symbol-only carrier: %v", err)
+	}
 	info, err := load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +111,9 @@ func TestSymbolEntryCarrierRequiresCatalog(t *testing.T) {
 	before := bytes.Clone(info.raw)
 	if _, err := Rewrite(path); err == nil {
 		t.Fatal("symbol-only carrier accepted without a Go catalog")
+	}
+	if _, err := AnalyzeExternal(path); err == nil || !strings.Contains(err.Error(), "__llgo_funcinfo_symbol_index") {
+		t.Fatalf("external analysis lost the missing catalog error: %v", err)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
