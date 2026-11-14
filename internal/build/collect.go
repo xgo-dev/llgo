@@ -513,20 +513,6 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	if err != nil {
 		return false
 	}
-	// Parse the metadata paired with this archive's fingerprint.
-	archiveMeta, err := parseManifestMetadata(content)
-	if err != nil {
-		return false
-	}
-	var pcln *packagePCLNSnapshot
-	if c.buildConf.PCLNMode != PCLNNone {
-		// Old manifests cannot reconstruct post-backend mappings from source.
-		// Rebuild once to publish a complete archive contract instead.
-		if archiveMeta.PCLN == nil || archiveMeta.PCLN.Version != archivePCLNVersion {
-			return false
-		}
-		pcln = archiveMeta.PCLN.snapshot()
-	}
 	var pkgMeta *meta.PackageMeta
 	if c.buildConf.packageMetaEnabled() {
 		pkgMeta, err = readMeta(paths.Meta)
@@ -535,13 +521,18 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 		}
 	}
 
+	// Parse metadata from manifest [Package] section (INI format)
+	meta, err := parseManifestMetadata(content)
+	if err != nil {
+		return false
+	}
+
 	// Use the .a archive directly for linking (no extraction needed)
 	pkg.ArchiveFile = paths.Archive
-	pkg.LinkArgs = archiveMeta.LinkArgs
-	pkg.NeedRt = archiveMeta.NeedRt
-	pkg.NeedPyInit = archiveMeta.NeedPyInit
+	pkg.LinkArgs = meta.LinkArgs
+	pkg.NeedRt = meta.NeedRt
+	pkg.NeedPyInit = meta.NeedPyInit
 	pkg.Meta = pkgMeta
-	pkg.cachedPCLN = pcln
 	pkg.CacheHit = true
 
 	return true
@@ -557,7 +548,6 @@ func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
 			meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
 			meta.NeedRt = data.Metadata.NeedRt
 			meta.NeedPyInit = data.Metadata.NeedPyInit
-			meta.PCLN = data.Metadata.PCLN
 		}
 		return meta, nil
 	}
@@ -611,7 +601,6 @@ type cacheArchiveMetadata struct {
 	LinkArgs   []string
 	NeedRt     bool
 	NeedPyInit bool
-	PCLN       *archivePCLNMetadata
 }
 
 // saveToCache saves a built package to cache.
@@ -676,10 +665,7 @@ func (c *context) saveToCache(pkg *aPackage) error {
 		NeedRt:     pkg.NeedRt,
 		NeedPyInit: pkg.NeedPyInit,
 	}
-	if c.buildConf.PCLNMode != PCLNNone {
-		meta.PCLN = exportArchivePCLN(pkg)
-	}
-	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit && meta.PCLN == nil {
+	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit {
 		data.Metadata = nil
 	} else {
 		data.Metadata = meta

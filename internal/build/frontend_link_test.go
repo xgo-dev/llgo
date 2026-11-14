@@ -21,7 +21,7 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 	index := frontcache.NewTypes(ids, fset)
 	index.Add(sig)
 	f := &frontendCache{ctx: &context{progSSA: ssa.NewProgram(fset, 0)}, ids: ids, packages: map[string]*types.Package{pkg.Path(): pkg}, types: index}
-	original := &packageLinkSnapshot{needAbiInit: 2, methodByIndex: map[int]none{3: {}}, methodByName: map[string]none{"Private": {}}, abiSymbols: map[string]none{"type.p": {}}, abiTypes: []llssa.AbiTypeInfo{{Name: "type.p", Raw: types.Typ[types.Int]}, {Name: "not-owned", Raw: types.Typ[types.String]}}, funcInfo: []funcInfoRecord{{symbol: "p.F", name: "F", file: "pkg.go", line: 12}}, pcLineInfo: []pcLineRecord{{id: 1, symbol: "p.F", file: "pkg.go", line: 12}}, hasLocalExports: true, cExports: []cExport{{goName: "p.F", cName: "external", sig: sig}, {goName: "p.Raw", cName: "raw"}}}
+	original := &packageLinkSnapshot{needAbiInit: 2, methodByIndex: map[int]none{3: {}}, methodByName: map[string]none{"Private": {}}, abiSymbols: map[string]none{"type.p": {}}, abiTypes: []llssa.AbiTypeInfo{{Name: "type.p", Raw: types.Typ[types.Int]}, {Name: "not-owned", Raw: types.Typ[types.String]}}, hasLocalExports: true, cExports: []cExport{{goName: "p.F", cName: "external", sig: sig}, {goName: "p.Raw", cName: "raw"}}}
 	data, err := f.exportLink(original)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 	if len(restored.abiTypes) != 1 || restored.abiTypes[0].Name != "type.p" || len(restored.cExports) != 2 || restored.cExports[1].sig != nil {
 		t.Fatal("ABI ownership or raw export changed")
 	}
-	if !types.Identical(restored.cExports[0].sig, sig) || restored.cExports[0].sig.Params().At(0).Name() != "input" || !reflect.DeepEqual(original.funcInfo, restored.funcInfo) || !reflect.DeepEqual(original.pcLineInfo, restored.pcLineInfo) || !reflect.DeepEqual(original.methodByIndex, restored.methodByIndex) {
+	if !types.Identical(restored.cExports[0].sig, sig) || restored.cExports[0].sig.Params().At(0).Name() != "input" || !reflect.DeepEqual(original.methodByIndex, restored.methodByIndex) {
 		t.Fatal("link contract changed")
 	}
 	for _, key := range []string{"invalid", "pkg.go:no", "pkg.go:-1", "pkg.go:101", "missing.go:1"} {

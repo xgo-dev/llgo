@@ -37,8 +37,6 @@ type packageLinkSnapshot struct {
 	methodByName    map[string]none
 	abiSymbols      map[string]none
 	abiTypes        []llssa.AbiTypeInfo
-	funcInfo        []funcInfoRecord
-	pcLineInfo      []pcLineRecord
 	hasLocalExports bool
 	cExports        []cExport
 }
@@ -347,7 +345,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	return nil
 }
 
-// snapshotBackendPackage copies all link-time metadata out of one isolated
+// snapshotBackendPackage copies ABI and export metadata out of one isolated
 // Program. It must run on the same package worker before that Program is
 // disposed; root link plans consume only the resulting Go-owned values.
 func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
@@ -369,11 +367,6 @@ func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
 	}
 	for name := range lpkg.MethodByName {
 		snapshot.methodByName[name] = none{}
-	}
-	if ctx.buildConf.PCLNMode != PCLNNone {
-		pcln := capturePackagePCLN(pkg)
-		snapshot.funcInfo = pcln.functions
-		snapshot.pcLineInfo = pcln.lines
 	}
 	pkg.linkSnapshot = snapshot
 }

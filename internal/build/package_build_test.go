@@ -258,7 +258,7 @@ func TestFinalizePackageBuildPreservesCachedRuntimeNeeds(t *testing.T) {
 		Types:   types.NewPackage("example.com/cached", "cached"),
 	}, CacheHit: true, NeedPyInit: true}
 
-	if err := finalizePackageBuild(&context{}, newPackageBuildTask(pkg), false); err != nil {
+	if err := finalizePackageBuild(&context{buildConf: &Config{}}, newPackageBuildTask(pkg), false); err != nil {
 		t.Fatal(err)
 	}
 	if !pkg.NeedPyInit {
@@ -585,8 +585,6 @@ func TestSnapshotBackendPackageAndConsumers(t *testing.T) {
 
 	snapshot.abiSymbols = map[string]none{"example.com/p.global": {}}
 	snapshot.abiTypes = []llssa.AbiTypeInfo{{Name: "example.com/p.Type", Raw: types.Typ[types.Int]}}
-	snapshot.funcInfo = []funcInfoRecord{{symbol: "example.com/p.fn", name: "Fn"}}
-	snapshot.pcLineInfo = []pcLineRecord{{id: 1, symbol: "example.com/p.fn", line: 12}}
 	if !snapshot.hasLocalExports {
 		t.Fatal("snapshot lost the package C export")
 	}
@@ -595,12 +593,6 @@ func TestSnapshotBackendPackageAndConsumers(t *testing.T) {
 	}
 	if globals := linkedModuleGlobals([]Package{nil, pkg}); len(globals) != 1 {
 		t.Fatalf("snapshot globals = %v", globals)
-	}
-	if records := collectFuncInfo([]Package{pkg}); len(records) != 1 || records[0].symbol != "example.com/p.fn" {
-		t.Fatalf("snapshot funcinfo = %+v", records)
-	}
-	if records := collectPCLineInfo([]Package{pkg}); len(records) != 1 || records[0].id != 1 {
-		t.Fatalf("snapshot pcline = %+v", records)
 	}
 	if !mainPackageHasExports([]*aPackage{pkg}) {
 		t.Fatal("snapshot C export was not detected")

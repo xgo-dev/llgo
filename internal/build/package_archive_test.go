@@ -34,14 +34,14 @@ func TestNormalizeToArchiveUsesMemoryBuffer(t *testing.T) {
 	defer llvmCtx.Dispose()
 	mod := llvmCtx.NewModule("archive")
 	defer mod.Dispose()
-	mod.SetTarget("x86_64-unknown-linux-gnu")
+	mod.SetTarget(gllvm.DefaultTargetTriple())
 	gllvm.AddFunction(mod, "memory_symbol", gllvm.FunctionType(llvmCtx.Int32Type(), nil, false))
 
 	memoryBuf := gllvm.WriteBitcodeToMemoryBuffer(mod)
 	ctx := &context{
-		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
 		crossCompile: crosscompile.Export{
-			LLVMTarget: "x86_64-unknown-linux-gnu",
+			LLVMTarget: gllvm.DefaultTargetTriple(),
 		},
 	}
 	fileBuf := gllvm.WriteBitcodeToMemoryBuffer(mod)
@@ -127,6 +127,21 @@ func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
 		}
 		if !bytes.Contains(data, []byte("memory-member.bc")) {
 			t.Fatal("archive does not contain memory-member.bc")
+		}
+	})
+
+	t.Run("cross toolchain dispatch", func(t *testing.T) {
+		// An in-memory metadata member must not redirect a cross package's
+		// potentially newer bitcode through the host LLVM archive writer.
+		t.Setenv("LLGO_AR", os.Args[0])
+		t.Setenv("LLGO_TEST_FAILING_ARCHIVER", "1")
+		cross := &context{
+			buildConf: &Config{Goos: "js", Goarch: "wasm", Target: "emscripten"},
+			commands:  commandEnv{environ: os.Environ()},
+		}
+		err := cross.createPackageArchiveFile(filepath.Join(t.TempDir(), "cross.a"), pkg, false)
+		if err == nil || !strings.Contains(err.Error(), "merge failed") {
+			t.Fatalf("selected cross archiver was not invoked: %v", err)
 		}
 	})
 

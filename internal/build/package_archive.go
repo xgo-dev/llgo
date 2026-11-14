@@ -70,7 +70,10 @@ func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, ve
 	// can terminate during its next collection. Keep in-memory code generation,
 	// but let an external archiver publish those buffers when llgo is the host
 	// compiler.
-	if useExternalPackageArchiver {
+	// Cross-toolchain objects can contain newer bitcode than the LLVM linked
+	// into LLGo (notably Emscripten). A metadata buffer must not switch those
+	// packages from their selected archiver to the host LLVM archive writer.
+	if useExternalPackageArchiver || !useInMemoryNativeCodegen(c) {
 		return c.createPackageArchiveFileWithExternalArchiver(archivePath, pkg, verbose)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".tmp-*")

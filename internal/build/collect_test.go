@@ -1416,8 +1416,8 @@ func TestSaveToCache_Success(t *testing.T) {
 	if data.Env.Goos != "darwin" {
 		t.Errorf("manifest should contain original env content")
 	}
-	if data.Metadata == nil || data.Metadata.PCLN == nil || data.Metadata.PCLN.Version != archivePCLNVersion {
-		t.Fatal("archive must record even an empty PCLN snapshot")
+	if data.Metadata != nil {
+		t.Errorf("metadata should be empty when no link args/runtime flags")
 	}
 
 	// Check archive exists
@@ -1518,7 +1518,6 @@ func TestTryLoadFromCacheRejectsBadMeta(t *testing.T) {
 	ctx := &context{
 		conf: &packages.Config{},
 		buildConf: &Config{
-			PCLNMode:           PCLNNone, // This fixture tests package summaries independently of PCLN.
 			Goos:               "darwin",
 			Goarch:             "arm64",
 			CollectPackageMeta: true,
@@ -1567,9 +1566,8 @@ func TestTryLoadFromCacheIgnoresMetaWhenPackageMetaDisabled(t *testing.T) {
 	ctx := &context{
 		conf: &packages.Config{},
 		buildConf: &Config{
-			PCLNMode: PCLNNone, // This fixture tests package summaries independently of PCLN.
-			Goos:     "darwin",
-			Goarch:   "arm64",
+			Goos:   "darwin",
+			Goarch: "arm64",
 		},
 		crossCompile: crosscompile.Export{
 			LLVMTarget: "arm64-apple-darwin",

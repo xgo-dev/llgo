@@ -1,114 +1,133 @@
 package build
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
-func TestArchivePCLNCache(t *testing.T) {
-	t.Setenv(llgoBuildCache, "1")
-	root := t.TempDir()
-	oldRoot := cacheRootFunc
-	cacheRootFunc = func() string { return root }
-	t.Cleanup(func() { cacheRootFunc = oldRoot })
-	ctx := &context{
-		buildConf:    &Config{PCLNMode: PCLNEmbedded},
-		crossCompile: crosscompile.Export{LLVMTarget: "x86_64-unknown-linux-gnu"},
-	}
-	archive := filepath.Join(root, "source.a")
-	if err := os.WriteFile(archive, []byte("archive fixture"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	wantFuncs := []funcInfoRecord{
-		{"p.Trace", "p.Trace", "p.go", 10, 2, 1},
-		{"p.Trace.__llgo_fmv_avx2", "p.Trace", "p.go", 10, 2, 0},
-	}
-	wantLines := []pcLineRecord{{1<<63 + 7, "p.Trace.__llgo_fmv_avx2", "p.go", 14, 3}}
-	m := newManifestBuilder()
-	m.pkg.PkgPath = "p"
-	pkg := &aPackage{
-		Package:     &packages.Package{ID: "p", PkgPath: "p", Name: "p"},
-		Fingerprint: "pcln-test", Manifest: m.Build(), ArchiveFile: archive,
-		linkSnapshot: &packageLinkSnapshot{funcInfo: wantFuncs, pcLineInfo: wantLines},
-	}
-	if err := ctx.saveToCache(pkg); err != nil {
-		t.Fatal(err)
-	}
-	paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
-	content, err := readManifest(paths.Manifest)
+func TestPackagePCLNArchive(t *testing.T) {
+	llssa.Initialize(llssa.InitAll)
+	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(nil)
-	defer prog.Dispose()
-	for _, mode := range []PCLNMode{PCLNEmbedded, PCLNExternal} {
-		t.Run(mode.String(), func(t *testing.T) {
-			ctx.buildConf.PCLNMode = mode
-			// A reconstructed module without the physical variants must not
-			// overwrite the cached function identity, flags or line IDs.
-			loaded := &aPackage{Package: pkg.Package, Fingerprint: pkg.Fingerprint, LPkg: prog.NewPackage("p", "p")}
-			if !ctx.tryLoadFromCache(loaded) {
-				t.Fatal("valid archive metadata was not reused")
-			}
-			if got := collectFuncInfo([]Package{loaded}); !reflect.DeepEqual(got, wantFuncs) {
-				t.Fatalf("cached functions = %#v, want %#v", got, wantFuncs)
-			}
-			if got := collectPCLineInfo([]Package{loaded}); !reflect.DeepEqual(got, wantLines) {
-				t.Fatalf("cached lines = %#v, want %#v", got, wantLines)
-			}
-			ctx.snapshotBackendPackage(loaded)
-			if !reflect.DeepEqual(loaded.linkSnapshot.funcInfo, wantFuncs) || !reflect.DeepEqual(loaded.linkSnapshot.pcLineInfo, wantLines) {
-				t.Fatal("isolated backend snapshot lost archive metadata")
-			}
-			// If this package is rebuilt, its new module is authoritative:
-			// neither the previous snapshot nor cached records may survive.
-			loaded.CacheHit = false
-			fresh := exportArchivePCLN(loaded)
-			if len(fresh.Functions) != 0 || len(fresh.Lines) != 0 {
-				t.Fatal("new backend capture reused stale archive records")
-			}
-			ctx.snapshotBackendPackage(loaded)
-			if len(loaded.linkSnapshot.funcInfo) != 0 || len(loaded.linkSnapshot.pcLineInfo) != 0 {
-				t.Fatal("new backend snapshot reused stale archive records")
-			}
-			if len(collectFuncInfo([]Package{loaded})) != 0 || len(collectPCLineInfo([]Package{loaded})) != 0 {
-				t.Fatal("link collectors reused invalidated archive records")
-			}
-		})
+	for _, target := range []struct{ goos, goarch, triple string }{
+		{"linux", "amd64", "x86_64-unknown-linux-gnu"},
+		{"darwin", "arm64", "arm64-apple-darwin"},
+		{"windows", "amd64", "x86_64-pc-windows-msvc"},
+		{"windows", "386", "i686-pc-windows-msvc"},
+		{"wasip1", "wasm", "wasm32-unknown-wasip1"},
+		{"wasip1", "wasm", "wasm64-unknown-wasip1"},
+	} {
+		for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+			t.Run(target.triple+"/"+mode.String(), func(t *testing.T) {
+				prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch, LLVMTarget: target.triple})
+				defer prog.Dispose()
+				src := prog.NewPackage("p", "example.com/p")
+				src.EmitFuncInfoFlags("p.Trace.__llgo_fmv_avx2", "p.Trace", "路径/p.go", 10, 2, 1)
+				src.EmitPCLineInfo(1<<63+7, "p.Trace.__llgo_fmv_avx2", "路径/p.go", 14, 3)
+				wantFuncs := readFuncInfo(src.Module())
+				wantLines := readPCLineInfo(src.Module())
+				ctx := &context{prog: prog, buildConf: &Config{Goos: target.goos, Goarch: target.goarch, LTO: mode, PCLNMode: PCLNEmbedded}, crossCompile: crosscompile.Export{LLVMTarget: target.triple, CC: clang, CCFLAGS: []string{"--target=" + target.triple, "-flto"}}}
+				pkg := &aPackage{Package: &packages.Package{ID: "p", PkgPath: "example.com/p", Name: "p"}, LPkg: src}
+				// Mix the ordinary package object/bitcode and the always-native carrier.
+				buf, _, err := emitObjectToMemoryBuffer(ctx, src)
+				if err != nil {
+					t.Fatal(err)
+				}
+				pkg.ObjBuffers = append(pkg.ObjBuffers, packageArchiveBuffer{"p.o", buf})
+				defer pkg.disposeArchiveBuffers()
+				if err := emitPackagePCLN(ctx, pkg); err != nil {
+					t.Fatal(err)
+				}
+				if err := normalizeToArchive(ctx, pkg, false); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(pkg.ArchiveFile)
+				raw, err := readPCLNArchiveMember(pkg.ArchiveFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if bytes.HasPrefix(raw, []byte{'B', 'C', 0xc0, 0xde}) {
+					t.Fatal("metadata carrier is LTO bitcode")
+				}
+				for _, hit := range []bool{false, true} {
+					// A reconstructed module and any previous parse must not override the
+					// actual archive, regardless of cache status or backend disposal.
+					loaded := &aPackage{Package: pkg.Package, ArchiveFile: pkg.ArchiveFile, CacheHit: hit, LPkg: prog.NewPackage("stale", "stale"), pcln: &packagePCLN{functions: []funcInfoRecord{{symbol: "stale"}}}}
+					if err := loadPackagePCLN(loaded); err != nil {
+						t.Fatal(err)
+					}
+					loaded.LPkg = nil
+					if got := collectFuncInfo([]Package{loaded}); !reflect.DeepEqual(got, wantFuncs) {
+						t.Fatalf("functions = %#v, want %#v", got, wantFuncs)
+					}
+					if got := collectPCLineInfo([]Package{loaded}); !reflect.DeepEqual(got, wantLines) {
+						t.Fatalf("lines = %#v, want %#v", got, wantLines)
+					}
+				}
+				ctx.buildConf.PCLNMode = PCLNNone
+				if err := emitPackagePCLN(ctx, pkg); err != nil || len(pkg.ObjBuffers) != 0 {
+					t.Fatalf("PCLN none emitted a carrier: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestPCLNArchiveRejectsIncompleteArtifacts(t *testing.T) {
+	member := func(name string, data []byte) []byte {
+		header := fmt.Sprintf("%-16s%-12d%-6d%-6d%-8o%-10d`\n", name, 0, 0, 0, 0644, len(data))
+		result := append([]byte(header), data...)
+		if len(data)%2 != 0 {
+			result = append(result, '\n')
+		}
+		return result
 	}
 	for _, tc := range []struct {
 		name string
-		pcln *archivePCLNMetadata
+		raw  []byte
 	}{
-		{"missing", nil},
-		{"unknown-version", &archivePCLNMetadata{Version: archivePCLNVersion + 1}},
+		{"empty", nil},
+		{"missing", []byte("!<arch>\n")},
+		{"header", []byte("!<arch>\nshort")},
+		{"truncated", append([]byte("!<arch>\n"), member(packagePCLNMember+"/", []byte("abc"))[:61]...)},
+		{"duplicate", append(append([]byte("!<arch>\n"), member(packagePCLNMember+"/", []byte("a"))...), member(packagePCLNMember+"/", []byte("b"))...)},
+		{"bad BSD name", append([]byte("!<arch>\n"), member("#1/999", []byte("a"))...)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := decodeManifest(content)
-			if err != nil {
+			path := filepath.Join(t.TempDir(), "pkg.a")
+			if err := os.WriteFile(path, tc.raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			data.Metadata.PCLN = tc.pcln
-			changed, err := buildManifestYAML(data)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := writeManifest(paths.Manifest, changed); err != nil {
-				t.Fatal(err)
-			}
-			for _, mode := range []PCLNMode{PCLNEmbedded, PCLNExternal, PCLNNone} {
-				ctx.buildConf.PCLNMode = mode
-				loaded := &aPackage{Package: pkg.Package, Fingerprint: pkg.Fingerprint}
-				if got, want := ctx.tryLoadFromCache(loaded), mode == PCLNNone; got != want {
-					t.Fatalf("%s cache hit = %v, want %v", mode, got, want)
-				}
+			if _, err := readPCLNArchiveMember(path); err == nil {
+				t.Fatal("incomplete archive accepted")
 			}
 		})
+	}
+	for _, raw := range [][]byte{nil, []byte("not an object"), []byte("\x7fELF"), []byte("\x00asm"), []byte("\x00asm\x01\x00\x00\x00\x00\xff")} {
+		if _, err := readPCLNObject(raw); err == nil {
+			t.Fatalf("invalid object accepted: %q", raw)
+		}
+	}
+	// The loader must not silently reconstruct mappings after a missing artifact.
+	path := filepath.Join(t.TempDir(), "missing.a")
+	if err := os.WriteFile(path, []byte("!<arch>\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &aPackage{Package: &packages.Package{PkgPath: "p"}, ArchiveFile: path, pcln: &packagePCLN{functions: []funcInfoRecord{{symbol: "stale"}}}}
+	if err := loadPackagePCLN(pkg); err == nil || !strings.Contains(err.Error(), "missing "+packagePCLNMember) || pkg.pcln != nil {
+		t.Fatalf("missing artifact retained old mappings: %v", err)
 	}
 }

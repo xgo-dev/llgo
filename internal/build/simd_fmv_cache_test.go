@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
@@ -89,42 +90,60 @@ func Ordinary(pcs *[20]uintptr, n *int) { *n = runtime.Callers(0, pcs[:]) }
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/multibuild\n\ngo 1.27\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, phase := range []string{"cold", "warm-isolated", "warm-coordinator"} {
-		t.Run(phase, func(t *testing.T) {
-			conf := NewDefaultConf(ModeBuild)
-			conf.GOEXPERIMENT, conf.GOAMD64 = "simd", "v1"
-			conf.OptLevel = optlevel.O2
-			conf.BuildParallelism = 2
-			conf.OutFile = filepath.Join(t.TempDir(), "fmvcache")
-			if runtime.GOOS == "windows" {
-				conf.OutFile += ".exe"
+	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			phases := []string{"cold", "warm-isolated", "warm-coordinator"}
+			if mode == lto.Off {
+				phases = append(phases, "frontend-cold", "warm-frontend")
 			}
-			if phase == "warm-coordinator" {
-				conf.ModuleHook = func(Package) {}
-			}
-			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: root})
-			if err != nil {
-				t.Fatal(err)
-			}
-			found := false
-			for _, pkg := range pkgs {
-				if pkg.PkgPath == "example.com/multibuild/kernel" {
-					found = true
-					if want := phase != "cold"; pkg.CacheHit != want {
-						t.Fatalf("kernel cache hit = %v, want %v", pkg.CacheHit, want)
+			for _, phase := range phases {
+				t.Run(phase, func(t *testing.T) {
+					conf := NewDefaultConf(ModeBuild)
+					conf.GOEXPERIMENT, conf.GOAMD64 = "simd", "v1"
+					conf.OptLevel = optlevel.O2
+					conf.LTO = mode
+					if phase == "frontend-cold" || phase == "warm-frontend" {
+						t.Setenv(llgoEscapeCache, "1")
 					}
-				}
-			}
-			if !found {
-				t.Fatal("missing kernel package")
-			}
-			for _, cpu := range []string{"", "cpu.avx2=off", "cpu.all=off"} {
-				cmd := exec.Command(conf.OutFile)
-				cmd.Env = append(os.Environ(), "GODEBUG="+cpu)
-				out, err := cmd.CombinedOutput()
-				if err != nil || string(out) != "ok\n" {
-					t.Fatalf("GODEBUG=%s: %v\n%s", cpu, err, out)
-				}
+					conf.BuildParallelism = 2
+					conf.OutFile = filepath.Join(t.TempDir(), "fmvcache")
+					if runtime.GOOS == "windows" {
+						conf.OutFile += ".exe"
+					}
+					if phase == "warm-coordinator" {
+						conf.ModuleHook = func(Package) {}
+					}
+					pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: root})
+					if err != nil {
+						t.Fatal(err)
+					}
+					found := false
+					for _, pkg := range pkgs {
+						if pkg.PkgPath == "example.com/multibuild/kernel" {
+							found = true
+							if pkg.pcln == nil {
+								t.Fatal("archive source mappings were not loaded")
+							}
+							if phase == "warm-frontend" && pkg.frontendOpaque == nil {
+								t.Fatal("frontend cache was not exercised")
+							}
+							if want := phase != "cold" && phase != "frontend-cold"; pkg.CacheHit != want {
+								t.Fatalf("kernel cache hit = %v, want %v", pkg.CacheHit, want)
+							}
+						}
+					}
+					if !found {
+						t.Fatal("missing kernel package")
+					}
+					for _, cpu := range []string{"", "cpu.avx2=off", "cpu.all=off"} {
+						cmd := exec.Command(conf.OutFile)
+						cmd.Env = append(os.Environ(), "GODEBUG="+cpu)
+						out, err := cmd.CombinedOutput()
+						if err != nil || string(out) != "ok\n" {
+							t.Fatalf("GODEBUG=%s: %v\n%s", cpu, err, out)
+						}
+					}
+				})
 			}
 		})
 	}

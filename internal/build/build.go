@@ -2328,9 +2328,19 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	return nil
 }
 
-// finalizePackageBuild publishes the archive and cache metadata. Cache hits
-// already carry both and therefore require no publication.
+// finalizePackageBuild publishes fresh archives, then reads the same link-time
+// source mappings from fresh and cached artifacts.
 func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	if err := publishPackageArchive(ctx, task, verbose); err != nil {
+		return err
+	}
+	if ctx.mode != ModeGen && ctx.buildConf.PCLNMode != PCLNNone {
+		return loadPackagePCLN(task.pkg)
+	}
+	return nil
+}
+
+func publishPackageArchive(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	if aPkg.CacheHit {
 		return nil
@@ -3808,7 +3818,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
 		}
 	}
-	return nil
+	return emitPackagePCLN(ctx, aPkg)
 }
 
 // dropUnusedWindowsTestMain mirrors cmd/link's treatment of a command package
@@ -4212,12 +4222,13 @@ type aPackage struct {
 	staticByteArrays map[string][]byte
 	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
+	pcln *packagePCLN // source mappings read from ArchiveFile before linking
+
 	// Cache related fields
-	Fingerprint    string               // fingerprint digest
-	Manifest       string               // manifest text content
-	CacheHit       bool                 // whether cache was hit
-	cachedPCLN     *packagePCLNSnapshot // post-backend source mappings for ArchiveFile
-	frontendOpaque *frontendExport      // validated body-independent archive contract
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {
