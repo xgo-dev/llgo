@@ -77,6 +77,8 @@ type runnerDetails struct {
 	artifact    string
 	packageName string
 	timeout     time.Duration
+	nativeTest  bool
+	waitDelay   time.Duration
 }
 
 // runnerFailure preserves the host-runner outcome while adding enough build
@@ -202,14 +204,35 @@ func runNativeTest(commands commandEnv, program testProgram, conf *Config, stdou
 	if conf.PrintCommands {
 		fmt.Fprintf(stderr, "%s %s\n", program.app, strings.Join(conf.RunArgs, " "))
 	}
-	// Native test binaries have their own testing watchdog. RunnerTimeout
-	// bounds only the external host runner used by cross-target tests.
-	cmd := exec.Command(program.app, conf.RunArgs...)
-	commands.configure(cmd)
-	cmd.Dir = program.pkgDir
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	err := cmd.Run()
+	// The testing watchdog can itself stall with the runtime. Reuse the
+	// independent host deadline, preserving native tests' EOF stdin. A passing
+	// test must also finish its inherited output within the pipe-drain grace.
+	commands.dir = program.pkgDir
+	details := runnerDetails{
+		phase:       "test",
+		profile:     program.profile,
+		artifact:    program.app,
+		packageName: program.pkgName,
+		timeout:     conf.RunnerTimeout,
+		nativeTest:  true,
+		waitDelay:   conf.NativeTestWaitDelay,
+	}
+	// Like cmd/go, allow benchmark and fuzz phases to run indefinitely. Their
+	// duration is not governed by the test watchdog. Keep external runners'
+	// existing deadlines and the caller's shared configuration unchanged.
+	options := parseTestBinaryOptions(conf.RunArgs)
+	if options.bench || options.fuzz {
+		details.timeout = 0
+	}
+	err := runHostCommand(commands, program.app, conf.RunArgs, details, nil, stdout, stderr)
+	var failure *runnerFailure
+	if errors.As(err, &failure) {
+		if failure.status == runnerStatusTimeout || failure.status == runnerStatusOutputTimeout {
+			return err
+		}
+		// Native tests retain their original exit errors and diagnostics.
+		err = failure.err
+	}
 	if err == nil {
 		return nil
 	}
@@ -499,9 +522,13 @@ func wasiHostDirectories(cwd, tempDir string, windows bool) (workVolume, tempVol
 }
 
 func runRunnerCommand(commands commandEnv, name string, args []string, details runnerDetails, stdout, stderr io.Writer) error {
-	// The test binary owns its Go-level timeout;
-	// this outer deadline also covers a host runner that stops forwarding exit
-	// or otherwise hangs after the guest should have terminated.
+	return runHostCommand(commands, name, args, details, os.Stdin, stdout, stderr)
+}
+
+func runHostCommand(commands commandEnv, name string, args []string, details runnerDetails, stdin io.Reader, stdout, stderr io.Writer) error {
+	// The test binary owns its Go-level watchdog. This independent deadline
+	// also covers a stalled native watchdog or an external runner that stops
+	// forwarding guest termination.
 	var runContext stdcontext.Context = stdcontext.Background()
 	cancel := func() {}
 	if details.timeout > 0 {
@@ -510,20 +537,30 @@ func runRunnerCommand(commands commandEnv, name string, args []string, details r
 	defer cancel()
 	cmd := exec.CommandContext(runContext, name, args...)
 	commands.configure(cmd)
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = stdin
 	if details.timeout > 0 {
-		restore := configureRunnerCancellation(cmd, details.phase == "run")
+		var restore func()
+		if details.nativeTest {
+			restore = configureNativeTestCancellation(cmd)
+			cmd.WaitDelay = details.waitDelay
+			if cmd.WaitDelay <= 0 {
+				cmd.WaitDelay = 5 * time.Second
+			}
+		} else {
+			restore = configureRunnerCancellation(cmd, details.phase == "run")
+			cmd.WaitDelay = time.Second
+		}
 		defer restore()
-		cmd.WaitDelay = time.Second
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	if err != nil && details.timeout > 0 {
 		// A failed runner can leave descendants holding output pipes. Wait
-		// preserves a nonzero exit status over ErrWaitDelay. A Unix process
-		// group remains killable after the leader exits; Windows needs a Job
-		// Object for an equivalent post-exit guarantee.
+		// preserves a nonzero exit status over ErrWaitDelay. An isolated Unix
+		// runner group remains killable after its leader exits. Native Unix
+		// tests retain their caller's group; Windows needs a Job Object for
+		// post-exit descendant cleanup.
 		cleanupRunnerAfterExit(cmd)
 	}
 	if err != nil {
@@ -536,6 +573,9 @@ func runRunnerCommand(commands commandEnv, name string, args []string, details r
 			err = fmt.Errorf("runner exceeded %s: %w", details.timeout, stdcontext.DeadlineExceeded)
 		case errors.Is(err, exec.ErrWaitDelay):
 			status = runnerStatusOutputTimeout
+			if details.nativeTest {
+				err = fmt.Errorf("test I/O incomplete %s after exiting: %w", cmd.WaitDelay, err)
+			}
 		case errors.As(err, &exitErr):
 			status = runnerStatusExit
 			exitCode = exitErr.ExitCode()

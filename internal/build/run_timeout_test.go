@@ -19,13 +19,16 @@
 package build
 
 import (
+	"bytes"
 	stdcontext "context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,17 +40,27 @@ func TestRunnerTimeoutKillsDescendants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"native", "wasm-runtime", "emulator"} {
+	for _, path := range []string{"native", "native-test", "wasm-runtime", "emulator"} {
 		t.Run(path, func(t *testing.T) {
+			if path == "native-test" && runtime.GOOS != "windows" {
+				t.Skip("Unix native tests inherit the caller's process group for terminal signals")
+			}
 			dir := t.TempDir()
 			commands := timeoutHelperCommands(dir, "tree")
 			t.Cleanup(func() { killTimeoutHelper(dir) })
+			// Bound the fixture so dropping a host watchdog fails this suite
+			// instead of hanging it (including native tests on Windows).
+			fallback := time.AfterFunc(5*time.Second, func() { killTimeoutHelper(dir) })
+			t.Cleanup(func() { fallback.Stop() })
 			conf := &Config{RunnerTimeout: 2 * time.Second, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}}
 			started := time.Now()
 			var err error
 			switch path {
 			case "native":
 				err = runNative(&context{commands: commands}, executable, "", "probe", conf, ModeRun)
+			case "native-test":
+				err = runNativeTest(commands, testProgram{app: executable, pkgDir: dir, pkgName: "example/native"},
+					conf, io.Discard, io.Discard)
 			case "wasm-runtime":
 				t.Setenv(llgoWasmRuntime, executable+" -test.run=^TestRunnerTimeoutHelper$")
 				conf.Goos = "wasip1"
@@ -66,6 +79,191 @@ func TestRunnerTimeoutKillsDescendants(t *testing.T) {
 			}
 			assertTimeoutHelperStopped(t, dir)
 		})
+	}
+}
+
+func TestNativeTestHostTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	program := testProgram{app: executable, pkgDir: dir, pkgName: "example/hanging-test"}
+	conf := &Config{
+		RunArgs:       []string{"-test.run=^TestRunnerTimeoutHelper$"},
+		RunnerTimeout: 2 * time.Second,
+	}
+	started := time.Now()
+	err = runNativeTest(timeoutHelperCommands(dir, "native-hang"), program, conf, &stdout, &stderr)
+	var failure *runnerFailure
+	if !errors.As(err, &failure) || failure.status != runnerStatusTimeout ||
+		failure.phase != "test" || failure.packageName != program.pkgName ||
+		!errors.Is(err, stdcontext.DeadlineExceeded) {
+		t.Fatalf("native test error = %v, want package-qualified host deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Fatalf("native test took %s to stop", elapsed)
+	}
+	if !strings.Contains(stdout.String(), "=== RUN   TestHostDeadlineProbe") {
+		t.Fatalf("lost output before timeout: %q", stdout.String())
+	}
+}
+
+func TestNativeBenchmarkIgnoresHostTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	conf := &Config{
+		RunnerTimeout: time.Second,
+		RunArgs: []string{
+			"-test.run=^$", "-test.bench=^BenchmarkRunnerTimeoutHelper$", "-test.benchtime=1x",
+		},
+	}
+	var output bytes.Buffer
+	err = runNativeTest(timeoutHelperCommands(dir, "native-benchmark"),
+		testProgram{app: executable, pkgDir: dir, pkgName: "example/benchmark"},
+		conf, &output, &output)
+	if err != nil {
+		t.Fatalf("benchmark exceeded the test deadline: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "benchmark completed") {
+		t.Fatalf("benchmark did not finish: %q", output.String())
+	}
+	if conf.RunnerTimeout != time.Second {
+		t.Fatal("native benchmark changed the shared runner configuration")
+	}
+}
+
+func BenchmarkRunnerTimeoutHelper(b *testing.B) {
+	if os.Getenv("LLGO_TIMEOUT_HELPER") != "native-benchmark" {
+		b.Skip("native benchmark deadline regression helper")
+	}
+	for i := 0; i < b.N; i++ {
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Fprintln(os.Stdout, "benchmark completed")
+}
+
+func TestNativeTestAllowsDelayedOutputDrain(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Cleanup(func() { killTimeoutHelper(dir) })
+	var output bytes.Buffer
+	err = runNativeTest(timeoutHelperCommands(dir, "exit-with-short-child"),
+		testProgram{app: executable, pkgDir: dir, pkgName: "example/delayed-output"},
+		&Config{RunnerTimeout: 10 * time.Second, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}},
+		&output, &output)
+	if err != nil {
+		t.Fatalf("passing test with delayed helper output: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "background output drained") {
+		t.Fatalf("helper output was not drained: %q", output.String())
+	}
+}
+
+func TestNativeTestHostTimeoutBoundsOutputWait(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Cleanup(func() { killTimeoutHelper(dir) })
+	fallback := time.AfterFunc(12*time.Second, func() { killTimeoutHelper(dir) })
+	t.Cleanup(func() { fallback.Stop() })
+	started := time.Now()
+	err = runNativeTest(timeoutHelperCommands(dir, "exit-with-child"),
+		testProgram{app: executable, pkgDir: dir, pkgName: "example/inherited-output"},
+		&Config{RunnerTimeout: 10 * time.Second, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}},
+		io.Discard, io.Discard)
+	var failure *runnerFailure
+	if !errors.As(err, &failure) || failure.status != runnerStatusOutputTimeout || !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("native output wait = %v, want bounded inherited-pipe failure", err)
+	}
+	if elapsed := time.Since(started); elapsed < 4500*time.Millisecond || elapsed > 9*time.Second {
+		t.Fatalf("native output wait took %s to stop", elapsed)
+	}
+	// Native Unix tests keep their caller's process group, and Windows taskkill
+	// cannot recover descendants after their parent exits. Fixture cleanup owns
+	// the orphan here; the host must still stop waiting for inherited pipes.
+}
+
+func TestNativeTestHostTimeoutControls(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Native tests historically receive EOF on stdin, unlike llgo run and
+	// external runners. A shared command implementation must preserve that.
+	input, err := os.CreateTemp(t.TempDir(), "parent-stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	if _, err := input.WriteString("parent-only input"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	originalStdin := os.Stdin
+	os.Stdin = input
+	t.Cleanup(func() { os.Stdin = originalStdin })
+	for _, timeout := range []time.Duration{0, 2 * time.Second} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			commands := timeoutHelperCommands(dir, "native-control")
+			commands.dir = t.TempDir()
+			program := testProgram{app: executable, pkgDir: dir, pkgName: "example/control"}
+			conf := &Config{RunnerTimeout: timeout, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}}
+			var stdout, stderr bytes.Buffer
+			if err := runNativeTest(commands, program, conf, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			var result struct{ Dir, Env, Input string }
+			if err := json.NewDecoder(&stdout).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			actualDir, err := filepath.EvalSymlinks(result.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantDir, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actualDir != wantDir || result.Env != dir || result.Input != "" {
+				t.Fatalf("native invocation = %+v, want directory/environment %q and EOF stdin", result, dir)
+			}
+			if stderr.String() != "native stderr" {
+				t.Fatalf("native stderr = %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestNativeTestHostTimeoutPreservesExit(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err = runNativeTest(timeoutHelperCommands(dir, "native-exit"),
+		testProgram{app: executable, pkgDir: dir, pkgName: "example/exit"},
+		&Config{RunnerTimeout: 2 * time.Second, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}}, &stdout, &stderr)
+	var exitErr *exec.ExitError
+	var failure *runnerFailure
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 23 || errors.As(err, &failure) {
+		t.Fatalf("native exit = %v, want original exit code 23", err)
+	}
+	if stdout.String() != "native stdout" || !strings.Contains(stderr.String(), "exit code 23") {
+		t.Fatalf("lost exit output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
@@ -127,6 +325,52 @@ func TestRunnerTimeoutHelper(t *testing.T) {
 		return
 	}
 	dir := os.Getenv("LLGO_TIMEOUT_DIR")
+	if mode == "native-test-runner" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = runNativeTest(timeoutHelperCommands(dir, "child"),
+			testProgram{app: executable, pkgDir: dir, pkgName: "example/interrupted"},
+			&Config{RunnerTimeout: 30 * time.Second, RunArgs: []string{"-test.run=^TestRunnerTimeoutHelper$"}},
+			os.Stdout, os.Stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if mode == "native-hang" {
+		fmt.Fprintln(os.Stdout, "=== RUN   TestHostDeadlineProbe")
+		time.Sleep(4 * time.Second)
+		return
+	}
+	if mode == "short-child" {
+		if err := os.WriteFile(filepath.Join(dir, "child.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Second)
+		fmt.Fprintln(os.Stdout, "background output drained")
+		return
+	}
+	if mode == "native-control" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(struct{ Dir, Env, Input string }{cwd, dir, string(input)}); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprint(os.Stderr, "native stderr")
+		return
+	}
+	if mode == "native-exit" {
+		fmt.Fprint(os.Stdout, "native stdout")
+		os.Exit(23)
+	}
 	if mode == "terminal-input" {
 		var word string
 		if _, err := fmt.Fscanln(os.Stdin, &word); err != nil {
@@ -193,11 +437,14 @@ func TestRunnerTimeoutHelper(t *testing.T) {
 	}
 	cmd := exec.Command(executable, "-test.run=^TestRunnerTimeoutHelper$")
 	cmd.Env = withEnv(os.Environ(), "LLGO_TIMEOUT_HELPER=child")
+	if mode == "exit-with-short-child" {
+		cmd.Env = withEnv(cmd.Env, "LLGO_TIMEOUT_HELPER=short-child")
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if mode == "exit-with-child" {
+	if mode == "exit-with-child" || mode == "exit-with-short-child" {
 		return
 	}
 	if mode == "fail-with-child" {

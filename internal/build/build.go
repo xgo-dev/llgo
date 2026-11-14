@@ -217,6 +217,9 @@ type Config struct {
 	TestRunSequential bool
 	// TestFailFast stops launching test binaries after the first failure.
 	TestFailFast bool
+	// NativeTestWaitDelay bounds native test pipe draining after process exit.
+	// Zero defaults to 5s when RunnerTimeout is enabled.
+	NativeTestWaitDelay time.Duration
 	// TestJSON streams package-attributed test2json events.
 	TestJSON          bool
 	testOutput        *testOutputPolicy
