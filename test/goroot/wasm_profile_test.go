@@ -69,6 +69,25 @@ func gorootRuntimeEnv(env []string) []string {
 	return out
 }
 
+func gorootJSRuntimeEnv(env []string) []string {
+	// wasm_exec.js places argv and environ in a fixed startup area. Build
+	// flags and CI service variables can exhaust it before main starts. Give
+	// both JS baselines the same runtime environment, retaining test directives
+	// and paths needed by the runner and source-tree tests.
+	out := make([]string, 0, len(env))
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		switch strings.ToUpper(key) {
+		case "PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+			"TMPDIR", "TMP", "TEMP", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TZ",
+			"GOROOT", "GOPATH", "GO111MODULE", "GOENV", "GOTOOLCHAIN", "LLGO_ROOT",
+			"GODEBUG", "GOEXPERIMENT", "GOGC", "GOMEMLIMIT", "GOTRACEBACK":
+			out = append(out, item)
+		}
+	}
+	return gorootRuntimeEnv(out)
+}
+
 func gorootArtifactPath(rootDir, label string, llgo bool) string {
 	p, ok := activeGOROOTWasmProfile()
 	if ok {
@@ -172,7 +191,7 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 			return "", nil, nil, errors.New("target Go execution requires GOROOT")
 		}
 		runner := filepath.Join(goroot, "lib", "wasm", "go_"+p.goos+"_wasm_exec")
-		return runner, append([]string{artifact}, programArgs...), gorootRuntimeEnv(env), nil
+		return runner, append([]string{artifact}, programArgs...), gorootJSRuntimeEnv(env), nil
 	}
 	root := envEntry(env, "LLGO_ROOT")
 	if root == "" {
@@ -187,7 +206,7 @@ func gorootArtifactCommand(dir, artifact string, llgo bool, env []string, progra
 	}
 	args = append(args, artifact)
 	args = append(args, programArgs...)
-	return "node", args, gorootRuntimeEnv(env), nil
+	return "node", args, gorootJSRuntimeEnv(env), nil
 }
 
 // uintptrescapes deliberately forces stack growth with 4096 recursive frames.
