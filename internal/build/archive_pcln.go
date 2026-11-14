@@ -60,10 +60,9 @@ func emitPackagePCLN(ctx *context, pkg Package) error {
 	for _, r := range readPCLineInfo(mod) {
 		data.Lines = append(data.Lines, objectPCLine{r.id, r.symbol, r.file, r.line, r.column})
 	}
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
+	// This fixed schema contains only slices, strings and integers, so JSON
+	// encoding cannot fail (there are no cycles, floats or custom marshalers).
+	raw, _ := json.Marshal(data)
 	// Object sections may contain trailing alignment padding.
 	payload := binary.LittleEndian.AppendUint64(nil, uint64(len(raw)))
 	payload = append(payload, raw...)
