@@ -73,13 +73,12 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
 	host := hasHostLayout(raw)
 	fields := p.toLLVMFields(raw, native)
-	goarch := p.target.effectiveGOARCH()
 	if native || len(fields) == 0 {
 		return fields, nil
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !p.containsVectorStorage(raw) && !(containsHostLayout(raw) && !p.hostUsesNativeGoLayout()) {
+	if !p.reconcilesStructLayout(raw) {
 		return fields, nil
 	}
 
@@ -93,12 +92,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	goAlign := int64(1)
 	goSize := int64(0)
 	for i, field := range fields {
-		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
-		if host {
-			fieldAlign = (*goProgram)(p).hostFieldLayout(raw.Field(i).Type(), false).align
-		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
-			fieldAlign = int64(p.td.ABITypeAlignment(field))
-		}
+		fieldAlign := (*goProgram)(p).structFieldAlignment(raw.Field(i).Type(), int64(p.td.ABITypeAlignment(field)), host)
 		alignments[i] = fieldAlign
 		if fieldAlign > goAlign {
 			goAlign = fieldAlign
@@ -187,4 +181,21 @@ func (p Program) hasNativeTypeLayout(raw types.Type) bool {
 		return p.hasNativeTypeLayout(t.Elem())
 	}
 	return false
+}
+
+// reconcilesStructLayout selects the storage policy shared by LLVM lowering
+// and source-time offset queries. Legacy native records bypass this policy.
+func (p Program) reconcilesStructLayout(raw *types.Struct) bool {
+	arch := p.target.effectiveGOARCH()
+	return hasHostLayout(raw) || arch == "386" || arch == "wasm" && p.target.WasmProfile != "" || p.containsVectorStorage(raw) || containsHostLayout(raw) && !p.hostUsesNativeGoLayout()
+}
+
+func (p *goProgram) structFieldAlignment(t types.Type, nativeAlign int64, host bool) int64 {
+	if host {
+		return p.hostFieldLayout(t, false).align
+	}
+	if Program(p).hasNativeTypeLayout(t) {
+		return nativeAlign
+	}
+	return p.Alignof(t)
 }

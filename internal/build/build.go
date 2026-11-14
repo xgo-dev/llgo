@@ -835,6 +835,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options); err != nil {
 			recordSyntaxErr(err)
 		}
+		pkg.TypesSizes = withUnsafeOffsetOwner(prog, pkg)
 	})
 
 	if patterns == nil {
