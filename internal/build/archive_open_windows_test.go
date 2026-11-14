@@ -3,7 +3,7 @@ package build
 import (
 	"bufio"
 	"bytes"
-	"context"
+	stdcontext "context"
 	"errors"
 	"fmt"
 	"io"
@@ -44,7 +44,7 @@ func lockPCLNTestArchive(t *testing.T) (string, func() error) {
 	if err := os.WriteFile(path, []byte("archive contents"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPCLNArchiveLockProcess$")
 	cmd.Env = append(os.Environ(), "LLGO_TEST_PCLN_LOCK_PATH="+path)
