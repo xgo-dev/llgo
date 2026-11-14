@@ -731,13 +731,14 @@ func shouldEmitRuntimeSites(ctx *context) bool {
 
 // Entry-block inline assembly disturbs LLDB's initial lexical scope on Darwin.
 // PC-line anchors carry no source location and remain safe with DWARF. External
-// pclntab still needs final entry addresses to construct its sidecar.
+// pclntab still needs final entry addresses to construct its sidecar. LTO also
+// needs them because its internal functions cannot be recovered through dlsym.
 func shouldEmitRuntimeEntrySites(ctx *context) bool {
 	if !shouldEmitRuntimeSites(ctx) {
 		return false
 	}
 	conf := ctx.buildConf
-	return conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
+	return conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal || conf.ltoEnabled() ||
 		!shouldEmitDebugInfo(conf, &ctx.crossCompile)
 }
 

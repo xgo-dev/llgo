@@ -1950,6 +1950,10 @@ type context struct {
 	// already internalized ordinary Go symbols, but pclnpost still needs them
 	// until the runtime tables have been rewritten.
 	stripDarwinLTOLocals bool
+	// Metadata relinks stage the executable elsewhere, but its debug map must
+	// keep LTO objects under the final output's persistent directory.
+	darwinLTOObjectOutput    string
+	darwinLTOObjectDirectory string
 
 	// A non-nil list hides data/type globals while preserving function
 	// exports needed by the DWARF runtime dlsym path.

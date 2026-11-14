@@ -158,7 +158,16 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 			plan.address = server.address
 		}
 	}
-	args, err := debuggerArguments(s.backend, s.artifact, s.debuggerArgs, plan)
+	extra := s.debuggerArgs
+	if s.backend == backendLLDB && plan == nil {
+		arguments, cleanup, err := darwinLTOSymbols(s.artifact)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		extra = append(arguments, extra...)
+	}
+	args, err := debuggerArguments(s.backend, s.artifact, extra, plan)
 	if err != nil {
 		return err
 	}

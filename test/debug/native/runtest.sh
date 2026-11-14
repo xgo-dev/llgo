@@ -31,3 +31,17 @@ if grep -Fq 'Traceback (most recent call last)' "$lldb_log" || \
     ! grep -Fq 'NATIVE_DEBUG_ACCEPTANCE_OK' "$lldb_log"; then
     exit 1
 fi
+
+# Exercise the user-facing launcher as well as raw platform debugging. Each
+# LTO session owns its symbol materialization until LLDB finishes.
+for lto in thin full; do
+    lto_log="$test_tmp_dir/lldb-$lto.log"
+    "$LLGO" debug -O2 "-lto=$lto" -lldb "$LLDB_PATH" \
+        -o "$test_tmp_dir/native-debug-$lto.out" . -- --batch \
+        -o 'script import os, runpy; _ = runpy.run_path(os.path.join(os.environ["LLGO_NATIVE_DEBUG_SOURCE"], "acceptance.py")); _["current_session"](os.environ["LLGO_NATIVE_DEBUG_SOURCE"])' \
+        2>&1 | tee "$lto_log"
+    if grep -Fq 'Traceback (most recent call last)' "$lto_log" || \
+        ! grep -Fq 'NATIVE_DEBUG_ACCEPTANCE_OK' "$lto_log"; then
+        exit 1
+    fi
+done

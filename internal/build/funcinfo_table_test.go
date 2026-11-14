@@ -706,6 +706,20 @@ func TestRuntimeSitePolicy(t *testing.T) {
 			wantPCLine:  true,
 		},
 		{
+			name:        "darwin embedded dwarf with full LTO",
+			conf:        Config{Goos: "darwin", PCLNMode: PCLNEmbedded, LTO: lto.Full},
+			enableSites: true,
+			wantPCLine:  true,
+			wantAddress: true,
+		},
+		{
+			name:        "darwin embedded dwarf with ThinLTO",
+			conf:        Config{Goos: "darwin", PCLNMode: PCLNEmbedded, LTO: lto.Thin},
+			enableSites: true,
+			wantPCLine:  true,
+			wantAddress: true,
+		},
+		{
 			name: "darwin embedded without dwarf",
 			conf: Config{
 				Goos:        "darwin",

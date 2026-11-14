@@ -125,10 +125,12 @@ a later native-strip mutation is added.
 sites are not produced. `-pclntab=embedded` keeps the existing post-link
 prebuilt-table rewrite.
 
-Darwin builds with embedded pclntab and DWARF suppress function-entry address
+Darwin builds without LTO, with embedded pclntab and DWARF, suppress function-entry address
 sites, whose inline assembly disturbs LLDB's initial lexical scope. PC-line
 anchors retain precise runtime source locations and carry no debug location.
-Linux and Windows retain entry sites because they cannot reconstruct every
+LTO retains entry sites because internal functions are unavailable to `dlsym`;
+their final symbol ownership is established by the post-link rewrite.
+Linux and Windows also retain entry sites because they cannot reconstruct every
 function address through a dynamic symbol lookup. External mode retains both
 categories to construct the sidecar.
 
