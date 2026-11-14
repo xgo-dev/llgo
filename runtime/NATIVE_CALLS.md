@@ -35,25 +35,44 @@ atomics; it never calls Go, allocates, or acquires application locks.
 ## Linux ownership and barrier
 
 Public `AllThreadsSyscall` and `AllThreadsSyscall6` retain Go's libc/cgo guard
-and return `ENOTSUP` in LLGo native Linux executables and C shared/archive
-libraries. Every such executable links pthread/libc code; an import graph or
+and return `ENOTSUP` in ordinary LLGo native Linux executables and all C
+shared/archive libraries. Every such executable links pthread/libc code; an import graph or
 an executable build mode cannot prove exclusion of all foreign thread
-creators. Entry modules do not enable the raw transport. The `syscall`
-credential setters use the libc wrappers above and remain supported.
+creators. The `syscall` credential setters use the libc wrappers above and
+remain supported independently of the raw all-thread API.
 
-The private amd64/arm64 signal transport is qualified only by a C test harness
-that supplies its own controlled cohort and enable symbol. It is not a public
-opt-in or a completed implementation of #2130. Production activation requires
-a creation-exclusion boundary covering every participating thread creator;
-enumerating `/proc/self/task` before and after parking is insufficient.
+Standalone Linux amd64/arm64 executables can explicitly select a controlled
+thread set:
+
+```sh
+llgo build -tags=llgo.allthreads ./app
+```
+
+This is an application contract: **every thread creator must use the runtime's
+registration and creation/exit barrier**. Unknown C-library worker pools,
+direct `pthread_create`/`clone`, hidden native helpers, and foreign credential
+setters are outside this mode. A successful call never grants permission to
+start an uncoordinated thread later. In particular, `/proc/self/task` checks
+can detect a visible violation but cannot prove that arbitrary native code
+will not create a thread after the check. Programs that cannot establish this
+boundary must keep the default `ENOTSUP` behavior.
+
+The executable entry configures the collector before its first runtime/context
+allocation. It fixes `GC_MARKERS=1` and calls `GC_set_markers_count(1)`; BDWGC's
+environment otherwise overrides that setter. This intentionally disables
+parallel native marker threads for the opt-in mode. A collector already
+initialized by an earlier C constructor, or missing configuration APIs, leaves
+the public API disabled. `nogc` executables do not acquire a GC dependency.
+C shared/archive modes never emit this activation, even with the tag. Other
+Linux architectures retain `ENOTSUP`.
 
 A runtime-created pthread has a registry entry before `pthread_create` runs.
 The main thread is explicitly marked owned. Adopted foreign threads are
 registered for callbacks and stack capture but remain unowned. Parallel GC
 marker threads, foreign C threads, and emulator helper threads are outside the
-owned cohort; their presence returns `ENOTSUP`. `GC_MARKERS=1` can provide a
-collector configuration without parallel marker threads, but never overrides
-ownership checks.
+owned cohort; their presence returns `ENOTSUP`. The collector configuration
+does not override ownership checks. A C callback on an owned runtime thread
+reuses its context; an adopted host thread remains unowned through teardown.
 
 The registry lock excludes registration, attachment, and exit. An entry whose
 thread is not yet attached returns `EAGAIN` before executing the syscall. All
@@ -70,18 +89,27 @@ threads. On success, every other participant executes once; all result words
 and errno must agree. Disagreement, or a peer blocked after execution starts,
 terminates the process because partial state cannot be rolled back.
 
-The private bridge uses an explicit allowlist: raw `setuid`, `setgid`,
-`setreuid`, `setregid`, `setresuid`, `setresgid`, and `setgroups`. These change
-per-thread kernel credentials and return zero on success. Every other trap
+The bridge uses an explicit allowlist: `getpid` for harmless functional probes,
+and raw `setuid`, `setgid`, `setreuid`, `setregid`, `setresuid`, `setresgid`, and
+`setgroups`. The setters change per-thread kernel credentials and return zero
+on success. Every other trap
 returns `ENOTSUP` before executing the caller syscall, including process-wide
-operations such as `umask`, `chdir`, and `setsid`, and read-only probes such as
-`getpid`. No host-cooperation API or production enable switch is exposed.
+operations such as `umask`, `chdir`, and `setsid`, and thread-dependent probes
+such as `gettid`. This is initially Linux-only; it does not introduce a host
+cooperation API for C-library modes or claim full arbitrary-C process support.
 
 The tests cover executables and both C library modes on Linux/macOS, packed
 calls with GC, nested callbacks, signals and unwind, credential errors, and the
-Linux native protocol under creation/exit stress plus ASan/UBSan. Executable
-and library-mode tests require `ENOTSUP`. A linked C shared-library integration
+Linux native protocol under creation/exit stress plus ASan/UBSan. Ordinary
+executables and library modes require `ENOTSUP`. Controlled GC and `nogc`
+executables exercise both public signatures with `getpid`, no-op credentials,
+locked threads, GC and concurrent thread creation/exit. Earlier C constructors
+that initialize the collector or start foreign threads are rejected. A linked C shared-library integration
 test checks rejection before pthread creation, while its thread is live, and
 after joining it, including the direct runtime hook. A C-only native test
 supplies a controlled owned cohort for no-op `setresuid(-1, -1, -1)` calls,
 rejected process-wide calls with an unchanged umask, and barrier cancellation.
+Isolated seccomp subprocesses verify fatal result disagreement and prove that
+a caller syscall error does not execute the syscall on its peers. Those cases
+report an explicit unavailable result on kernels/emulators without the native
+seccomp facility. Both C-library modes are also tested with the opt-in tag.

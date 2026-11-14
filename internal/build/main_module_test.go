@@ -140,6 +140,42 @@ func TestGenMainModuleBuildModeFlags(t *testing.T) {
 	}
 }
 
+func TestGenMainModuleControlledAllThreads(t *testing.T) {
+	for _, tc := range []struct {
+		goos, arch, tags string
+		mode             BuildMode
+		enabled, gc      bool
+	}{
+		{"linux", "amd64", "llgo.allthreads", BuildModeExe, true, true},
+		{"linux", "arm64", "llgo.allthreads,nogc", BuildModeExe, true, false},
+		{"linux", "amd64", "", BuildModeExe, false, false},
+		{"linux", "amd64", "llgo.allthreads", BuildModeCShared, false, false},
+		{"linux", "arm64", "llgo.allthreads", BuildModeCArchive, false, false},
+		{"linux", "386", "llgo.allthreads", BuildModeExe, false, false},
+		{"darwin", "arm64", "llgo.allthreads", BuildModeExe, false, false},
+	} {
+		t.Run(tc.goos+"/"+tc.arch+"/"+string(tc.mode)+"/"+tc.tags, func(t *testing.T) {
+			ctx := &context{
+				prog:      llssa.NewProgram(nil),
+				buildConf: &Config{BuildMode: tc.mode, Goos: tc.goos, Goarch: tc.arch, Tags: tc.tags},
+			}
+			defer ctx.prog.Dispose()
+			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
+			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
+			if strings.Contains(ir, "@llgo_allthreads_enable_controlled") != tc.enabled {
+				t.Fatalf("incorrect controlled-thread eligibility:\n%s", ir)
+			}
+			if tc.enabled {
+				argument := "0"
+				if tc.gc {
+					argument = "1"
+				}
+				assertInOrder(t, ir, "call void @llgo_allthreads_enable_controlled(i32 "+argument+")", "call void @runtime.main()")
+			}
+		})
+	}
+}
+
 func TestGenMainModuleExecutableRegistersCExportThread(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		t.Run(goos, func(t *testing.T) {

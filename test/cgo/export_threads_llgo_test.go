@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// mode optionally selects a single build mode; omission uses exe.
+// mode optionally selects a build mode and build tags; omission uses exe.
 func buildCExportFixture(t *testing.T, dir, output string, mode ...string) {
 	t.Helper()
 	compiler := os.Getenv("LLGO_TEST_LLGO")
@@ -18,6 +18,9 @@ func buildCExportFixture(t *testing.T, dir, output string, mode ...string) {
 	args := []string{"build", "-o", output}
 	if len(mode) != 0 {
 		args = append(args, "-buildmode="+mode[0])
+	}
+	if len(mode) > 1 {
+		args = append(args, "-tags="+mode[1])
 	}
 	cmd := exec.Command(compiler, append(args, ".")...)
 	cmd.Dir = dir
