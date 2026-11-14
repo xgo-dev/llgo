@@ -20,10 +20,12 @@ New workers remain at Chrome's startup barrier during a stop; acceptance
 checks that they cannot update shared memory until the group resumes.
 
 Logical frames provide function/file/line. For waiting frames with saved base
-addresses, the extension also reads locals whose DWARF locations stay in
-linear memory across the executable scope. The fixture checks distinct arrays
-in four/five recursive frames after memory growth and GC. Register-dependent
-or changing locations and unwound panic snapshots remain unavailable.
+addresses, the extension matches exact pre-Asyncify call-site PCs to the final
+module's DWARF. It selects active scopes and memory location-list entries. The
+fixture checks distinct arrays in four/five recursive frames after memory
+growth and GC, plus a leaf block's local that must not leak into callers.
+Register-dependent locations and unwound panic snapshots remain unavailable;
+hosts without qualified PC snapshots retain the whole-function location rule.
 The same stops inspect nested strings/slices, named interface payloads from
 main and imported packages, typed nils, functions and closure addresses, a map
 during bucket evacuation, indirect map keys/values, closed wrapped channels,

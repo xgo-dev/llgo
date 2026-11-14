@@ -57,7 +57,7 @@ Go 1.27.3, Clang/LLVM 22.1.8 and Node.js 26.8.1:
 
 | Native host | LLDB | Embedded bytes | External bytes | Debug sidecar bytes |
 | --- | --- | ---: | ---: | ---: |
-| macOS arm64 | Apple 2103.0.34.103 / Swift 6.4 | 2,099,266 | 723,561 | 2,099,266 |
+| macOS arm64 | Apple 2103.0.34.103 / Swift 6.4 | 2,103,260 | 727,141 | 2,103,260 |
 
 The shared-descriptor test and both complete source sessions passed. Sizes
 are fixture/build-specific. The same acceptance is a `cross-compile` workflow

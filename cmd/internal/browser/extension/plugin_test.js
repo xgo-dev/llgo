@@ -649,3 +649,26 @@ test('unsupported DWARF constant encodings remain unavailable instead of becomin
   assert.equal(await plugin.evaluate('raw', context, 'stop'), null);
   assert.equal(await plugin.evaluate('text', context, 'stop'), null);
 });
+
+test('suspended PC instruction bytes survive asynchronous transfer of the raw-module buffer', async () => {
+  const bytes = new Uint8Array([...moduleBytes(),
+    1, 4, 1, 0x60, 0, 0, // () -> ()
+    3, 2, 1, 0,         // one function
+    10, 6, 1, 4, 0, 0x10, 0, 0x0b]); // call 0
+  new WebAssembly.Module(bytes);
+  const original = bytes.buffer;
+  const plugin = new LLGoLanguageExtensionPlugin({}, async url => {
+    if (url.endsWith('/debug-index.json')) {
+      structuredClone(original, {transfer: [original]});
+      return response(fixtureIndex());
+    }
+    if (url.endsWith('/debug-schema.json')) return response(schema);
+    if (url.endsWith('/plugin-ready')) return new Response(null, {status: 204});
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await plugin.addRawModule('module', undefined, {url: 'https://host/app.wasm', code: original});
+  assert.equal(original.byteLength, 0);
+  const code = plugin.module('module').code;
+  assert.equal(code.bytes[code.start + 3], 0x10);
+  assert.ok(code.end <= code.bytes.length);
+});

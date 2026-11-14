@@ -376,9 +376,12 @@ func TestUnreadableTypePreservesVariableStorage(t *testing.T) {
 			{Attr: dwarf.AttrType, Val: dwarf.Offset(0x100)},
 			{Attr: dwarf.AttrLocation, Val: []byte{0x91, 0}},
 		},
-	}, scopeState{function: true, ranges: []AddressRange{{Start: 10, End: 20}}}, 1)
+	}, scopeState{function: true, functionName: "main.owner", ranges: []AddressRange{{Start: 10, End: 20}}}, 1)
 	if len(builder.index.Variables) != 1 || builder.index.Variables[0].Type != "" || len(builder.index.Variables[0].Locations) != 1 {
 		t.Fatalf("unreadable type discarded readable storage or invented a type: %+v", builder.index.Variables)
+	}
+	if builder.index.Variables[0].Function != "main.owner" {
+		t.Fatalf("lost local's DWARF owner: %+v", builder.index.Variables[0])
 	}
 	if len(builder.index.Diagnostics) != 1 || !strings.Contains(builder.index.Diagnostics[0], "DWARF type at 0x100") {
 		t.Fatalf("missing type failure diagnostic: %v", builder.index.Diagnostics)

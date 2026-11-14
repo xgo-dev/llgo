@@ -193,9 +193,11 @@ watch view of logical Go source stacks, including parked fibers. The session
 coordinates pauses, resumes and stepping across the page and its dedicated
 workers. Shared-memory inspection waits for a stable group stop and rejects
 values if the stop or worker membership changes. Expand a waiting goroutine's
-frame to inspect memory locals whose DWARF scope and frame-relative location
-remain valid throughout the function. Register values, changing locations and
-panic snapshots remain unavailable.
+frame to inspect memory locals. Qualified browser builds save exact call-site
+PCs before Asyncify unwinds, allowing active lexical scopes and changing memory
+locations to be selected from DWARF. Register-dependent values and unwound panic
+snapshots remain unavailable; unsupported hosts retain the stricter rule that
+one frame-relative location and scope cover the whole function.
 See [browser debugging](../dev/browser-debugging.md).
 
 W32 WASI sessions use native LLDB and the optional

@@ -25,12 +25,24 @@ func debugWaiter(depth int, ready chan<- bool, release <-chan bool, done chan<- 
 		}
 		return
 	}
-	ready <- true
-	<-release
+	{
+		scoped := [4]int{depth + 71, depth + 72, depth + 73, depth + 74}
+		scoped[index] += 17
+		ready <- true
+		<-release
+		checkScoped(scoped)
+	}
 	if local[index] != depth+index*11+100 {
 		panic("parked local changed")
 	}
 	done <- true
+}
+
+//go:noinline
+func checkScoped(value [4]int) {
+	if value != [4]int{88, 72, 73, 74} {
+		panic("parked scoped local changed")
+	}
 }
 
 //go:noinline
