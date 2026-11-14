@@ -86,7 +86,7 @@ The automatic backend depends on the selected target:
 | --- | --- | --- |
 | Native Darwin/Linux/Windows | LLDB | Local process |
 | Non-Wasm embedded | GDB | Target `debug-server`, OpenOCD, or `-remote` |
-| WASI W32 | LLDB + Wasmtime 46.x | Local process (`-wasmtime` / `LLGO_WASMTIME`) |
+| WASI W32 | LLDB + `llgo-wasi-debug` | Local process (`-wasi-host` / `LLGO_WASI_HOST`) |
 | Browser Wasm | Chrome DevTools | LLGo language extension and the generated Emscripten host |
 
 Use `-backend=gdb` or `-backend=lldb` to override a native or GDB Remote
@@ -198,12 +198,14 @@ remain valid throughout the function. Register values, changing locations and
 panic snapshots remain unavailable.
 See [browser debugging](../dev/browser-debugging.md).
 
-W32 WASI sessions use Wasmtime **46.0.3 or a later 46.x patch** with native
-LLDB. Wasmtime 47+ removed the WASI threads host interface. Install the supported
-version separately and select it with `-wasmtime` or `LLGO_WASMTIME`:
+W32 WASI sessions use native LLDB and the optional
+[`llgo-wasi-debug` host](../test/debug/wasi/host/README.md). Build it with
+Rust 1.97+, then select it with `-wasi-host` or `LLGO_WASI_HOST`, or put it on
+PATH. It embeds Wasmtime 50.0.1 and the maintained preview1 libraries from
+36.0.20 LTS; it supplies the threads interface removed from the upstream CLI:
 
 ```sh
-llgo debug -target=wasi -wasmtime=/path/to/wasmtime ./app
+llgo debug -target=wasi -wasi-host=/path/to/llgo-wasi-debug ./app
 # In LLDB:
 # breakpoint set --name main.main
 # run
@@ -222,9 +224,10 @@ addresses and object handles are never reused across resume or memory growth.
 Unavailable DWARF locations remain unavailable; this is not a Go expression evaluator.
 
 The session preserves shared `env.memory`, real `wasi.thread-spawn`, worker exit
-and exception handling. It disables Wasmtime's native compilation cache:
-JIT registration can expose code to breakpoint patching before the engine
-serializes a cache miss. Reusing that cache can retain breakpoint instructions.
+and exception handling. All instances share one process descriptor table,
+including descriptors opened after worker creation. The host is built without
+Wasmtime's persistent compilation cache: debugger-patched JIT code must not
+enter a reusable cache.
 External DWARF runs from a private full-module copy only after stripping its
 DWARF reproduces the deployed module byte for byte. `-remote`, `-server` and
 `-load` remain native/embedded options. `llgo run -target=wasi` continues to use

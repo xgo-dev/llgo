@@ -15,67 +15,65 @@ import (
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
 
-func TestThreadedWasmtimeSelection(t *testing.T) {
+func TestWASIHostSelection(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "missing")
 	t.Setenv("PATH", dir)
-	t.Setenv("LLGO_WASMTIME", missing)
-	if _, err := findThreadedWasmtime(""); err == nil || !strings.Contains(err.Error(), "find Wasmtime") {
+	t.Setenv("LLGO_WASI_HOST", missing)
+	if _, err := findWASIHost(""); err == nil || !strings.Contains(err.Error(), "find WASI host") {
 		t.Fatalf("missing environment executable: %v", err)
 	}
-	t.Setenv("LLGO_WASMTIME", "")
-	if _, err := findThreadedWasmtime(""); err == nil {
+	t.Setenv("LLGO_WASI_HOST", "")
+	if _, err := findWASIHost(""); err == nil {
 		t.Fatal("accepted missing default executable")
 	}
 	if runtime.GOOS == "windows" {
 		return // The remaining fixtures are executable POSIX shell wrappers.
 	}
-	path := filepath.Join(dir, "wasmtime")
+	path := filepath.Join(dir, "llgo-wasi-debug")
 	write := func(body string) {
 		t.Helper()
 		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("printf 'wasmtime 46.0.3\\n'")
-	if got, err := findThreadedWasmtime(""); err != nil || got != path {
+	write("printf 'llgo-wasi-debug 1.0.0\\n'")
+	if got, err := findWASIHost(""); err != nil || got != path {
 		t.Fatalf("PATH executable: %s, %v", got, err)
 	}
-	t.Setenv("LLGO_WASMTIME", missing)
-	if got, err := findThreadedWasmtime(path); err != nil || got != path {
+	t.Setenv("LLGO_WASI_HOST", missing)
+	if got, err := findWASIHost(path); err != nil || got != path {
 		t.Fatalf("explicit executable must override environment: %s, %v", got, err)
 	}
-	t.Setenv("LLGO_WASMTIME", path)
-	if got, err := findThreadedWasmtime(""); err != nil || got != path {
+	t.Setenv("LLGO_WASI_HOST", path)
+	if got, err := findWASIHost(""); err != nil || got != path {
 		t.Fatalf("environment executable: %s, %v", got, err)
 	}
-	write("printf 'wasmtime 47.0.0\\n'")
-	if _, err := findThreadedWasmtime(path); err == nil || !strings.Contains(err.Error(), "removed WASI threads") {
+	write("printf 'llgo-wasi-debug 2.0.0\\n'")
+	if _, err := findWASIHost(path); err == nil || !strings.Contains(err.Error(), "ABI 1") {
 		t.Fatalf("accepted incompatible runtime: %v", err)
 	}
 	write("exit 7")
-	if _, err := findThreadedWasmtime(path); err == nil || !strings.Contains(err.Error(), "query Wasmtime version") {
+	if _, err := findWASIHost(path); err == nil || !strings.Contains(err.Error(), "query WASI host version") {
 		t.Fatalf("accepted failed version query: %v", err)
 	}
 }
 
-func TestThreadedWasmtimeVersions(t *testing.T) {
+func TestWASIHostVersions(t *testing.T) {
 	for _, tc := range []struct {
 		output string
 		valid  bool
 	}{
-		{"wasmtime 46.0.3 (build)", true},
-		{"wasmtime 46.0.4", true},
-		{"wasmtime 46.0.2", false},
-		{"wasmtime 47.0.0", false},
-		{"wasmtime 47.0.0-rc.1", false},
-		{"wasmtime 48.0.1 (7bac2c277 2026-08-24)", false},
-		{"wasmer 46.0.3", false},
-		{"wasmtime development", false},
+		{"llgo-wasi-debug 1.0.0 (Wasmtime 50.0.1)", true},
+		{"llgo-wasi-debug 1.1.0", true},
+		{"llgo-wasi-debug 2.0.0", false},
+		{"llgo-wasi-debug 0.1.0", false},
+		{"wasmtime 50.0.1", false},
+		{"llgo-wasi-debug development", false},
 		{"", false},
 	} {
 		t.Run(tc.output, func(t *testing.T) {
-			_, err := threadedWasmtimeVersion(tc.output)
+			err := wasiHostVersion(tc.output)
 			if (err == nil) != tc.valid {
 				t.Fatalf("version %q: %v", tc.output, err)
 			}
@@ -171,8 +169,8 @@ func TestWASIDeployedCodeIdentity(t *testing.T) {
 func TestWASIHostArguments(t *testing.T) {
 	// The debugger owns these options; guest paths and debugger commands stay
 	// separate argv entries. Keep actual WASI threads, shared memory and EH.
-	args := wasiLLDBArguments("dir with space/wasmtime", "dir with space/app.wasm", []string{"--batch", "-o", "breakpoint set --name main.main"})
-	want := []string{"-O", "settings set plugin.jit-loader.gdb.enable on", "--batch", "-o", "breakpoint set --name main.main", "--", "dir with space/wasmtime", "run", "-Ccache=n", "-Ddebug-info=y", "-Oopt-level=0", "-Sthreads=y", "-Wthreads=y,shared-memory=y,exceptions=y", "dir with space/app.wasm"}
+	args := wasiLLDBArguments("dir with space/llgo-wasi-debug", "dir with space/app.wasm", []string{"--batch", "-o", "breakpoint set --name main.main"})
+	want := []string{"-O", "settings set plugin.jit-loader.gdb.enable on", "--batch", "-o", "breakpoint set --name main.main", "--", "dir with space/llgo-wasi-debug", "dir with space/app.wasm"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("WASI debugger arguments: %q", args)
 	}

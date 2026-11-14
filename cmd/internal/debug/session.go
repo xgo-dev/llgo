@@ -58,7 +58,7 @@ type options struct {
 	backend  backend
 	lldb     string
 	gdb      string
-	wasmtime string
+	wasiHost string
 	remote   string
 	server   string
 	load     bool
@@ -203,7 +203,7 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func wasiBackendRequired() error {
-	return errors.New("llgo debug: WASI source sessions use -backend=wasmtime with LLDB; select the Wasmtime executable with -wasmtime or LLGO_WASMTIME")
+	return errors.New("llgo debug: WASI source sessions use -backend=wasmtime with LLDB; select llgo-wasi-debug with -wasi-host or LLGO_WASI_HOST")
 }
 
 func validateBackendOptions(selected backend, opts options) error {

@@ -50,7 +50,7 @@ var (
 	backendFlag     string
 	lldbPath        string
 	gdbPath         string
-	wasmtimePath    string
+	wasiHostPath    string
 	remoteAddress   string
 	serverCommand   string
 	chromePath      string
@@ -70,7 +70,7 @@ func init() {
 	Cmd.Flag.StringVar(&backendFlag, "backend", string(backendAuto), "debug backend: auto, lldb, gdb, wasmtime, or browser")
 	Cmd.Flag.StringVar(&lldbPath, "lldb", "", "path to LLDB (default $LLGO_LLDB or auto-detect)")
 	Cmd.Flag.StringVar(&gdbPath, "gdb", "", "path to GDB (default $LLGO_GDB, target candidates, or auto-detect)")
-	Cmd.Flag.StringVar(&wasmtimePath, "wasmtime", "", "path to a threaded Wasmtime runtime for WASI debugging (default $LLGO_WASMTIME or PATH)")
+	Cmd.Flag.StringVar(&wasiHostPath, "wasi-host", "", "path to llgo-wasi-debug (default $LLGO_WASI_HOST or PATH)")
 	Cmd.Flag.StringVar(&remoteAddress, "remote", "", "connect to an existing debug server at host:port")
 	Cmd.Flag.StringVar(&serverCommand, "server", "", "debug-server template: {} is the artifact, {debug-stdio} selects RSP over stdin/stdout, {debug-port} selects legacy TCP")
 	Cmd.Flag.BoolVar(&loadImage, "load", false, "reset, load the image, and halt an existing remote or custom debug server")
@@ -91,7 +91,7 @@ func runCmd(cmd *base.Command, args []string) {
 		backend:  backend(backendFlag),
 		lldb:     lldbPath,
 		gdb:      gdbPath,
-		wasmtime: wasmtimePath,
+		wasiHost: wasiHostPath,
 		remote:   remoteAddress,
 		server:   serverCommand,
 		load:     loadImage,
