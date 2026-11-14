@@ -189,7 +189,7 @@ C.llgo_signal_recv`,
 		`runtime/internal/lib/runtime/_wrap/timer_wait.c`,
 	},
 	{
-		`C.llgo_traceback_all_threads_syscall C.llgo_traceback_mark_owned`,
+		`C.llgo_traceback_all_threads_syscall C.llgo_traceback_mark_owned C.llgo_allthreads_controlled_enabled`,
 		"LLGo owned-thread registry and guarded syscall protocol",
 		`runtime/internal/stacktrace/_wrap/allthreads_linux.h`,
 	},
