@@ -30,11 +30,33 @@ func TestPCLNArchiveLockProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer syscall.CloseHandle(h)
-	fmt.Println("locked")
-	// Keep the handle open until the parent closes stdin. Returning normally
-	// also lets TestMain clean up the child process's test resources.
-	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+	// Check the native handle before involving the parent. This distinguishes
+	// a failed lock fixture from premature helper exit or a different file.
+	var info syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(h, &info); err != nil {
 		t.Fatal(err)
+	}
+	probe, probeErr := syscall.CreateFile(name, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if probe != syscall.InvalidHandle {
+		syscall.CloseHandle(probe)
+	}
+	f, openErr := os.Open(path)
+	var readErr error
+	if f != nil {
+		_, readErr = f.ReadAt(make([]byte, 1), 0)
+		f.Close()
+	}
+	if !errors.Is(probeErr, syscall.Errno(32)) || !errors.Is(openErr, syscall.Errno(32)) {
+		fmt.Fprintf(os.Stderr, "lock self-check: path=%q handle=%#x volume=%x file=%x:%x nativeHandle=%#x nativeError=%v openError=%v readError=%v\n", path, h, info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow, probe, probeErr, openErr, readErr)
+		t.Fatal("exclusive handle did not establish a sharing conflict in its own process")
+	}
+	fmt.Println("locked")
+	// Require an explicit release command so an unexpected stdin EOF cannot
+	// silently release the handle before the parent has exercised the reader.
+	command := make([]byte, len("release\n"))
+	if _, err := io.ReadFull(os.Stdin, command); err != nil || string(command) != "release\n" {
+		fmt.Fprintf(os.Stderr, "archive lock release command: %q, %v\n", command, err)
+		t.Fatal("missing archive lock release command")
 	}
 }
 
@@ -68,8 +90,9 @@ func lockPCLNTestArchive(t *testing.T) (string, func() error) {
 	var waitErr error
 	release := func() error {
 		once.Do(func() {
+			_, writeErr := io.WriteString(stdin, "release\n")
 			stdin.Close()
-			waitErr = cmd.Wait()
+			waitErr = errors.Join(writeErr, cmd.Wait())
 		})
 		return waitErr
 	}
