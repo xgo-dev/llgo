@@ -60,6 +60,7 @@ try {
     $directory = Join-Path $temp $Name
     New-Item -ItemType Directory -Force $directory | Out-Null
     @"
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json
 PackageIdentifier: $Identifier
 PackageVersion: '$Version'
 PackageLocale: en-US
