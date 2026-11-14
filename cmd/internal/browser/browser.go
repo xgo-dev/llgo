@@ -303,6 +303,20 @@ func (s *Session) WriteExtension(directory string) error {
 	return nil
 }
 
+// WriteRuntimeDecoder shares the transport-independent Wasm value and logical
+// stack decoders with guest-debugger transports.
+func WriteRuntimeDecoder(directory string) error {
+	for name, data := range map[string][]byte{
+		"plugin.js":     extensionPlugin,
+		"goroutines.js": extensionGoroutines,
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type Session struct {
 	URL             string
 	Listener        net.Listener

@@ -55,13 +55,14 @@ const (
 )
 
 type options struct {
-	backend backend
-	lldb    string
-	gdb     string
-	remote  string
-	server  string
-	load    bool
-	browser browser.Options
+	backend  backend
+	lldb     string
+	gdb      string
+	wasmtime string
+	remote   string
+	server   string
+	load     bool
+	browser  browser.Options
 }
 
 func (o options) validate() error {
@@ -143,6 +144,9 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 		opts.ChromeArgs = append(append([]string(nil), opts.ChromeArgs...), s.debuggerArgs...)
 		return browser.Run(browserModulePath(s.artifact), opts, stdin, stdout, stderr)
 	}
+	if s.backend == backendWasmtime {
+		return runWASISession(s, stdin, stdout, stderr)
+	}
 	plan, err := makeServerPlan(s.target, s.artifact, s.options)
 	if err != nil {
 		return err
@@ -199,12 +203,12 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func wasiDebuggerUnavailable() error {
-	return errors.New("llgo debug: WASI source-debug sessions are unavailable for W32 pthread modules: the current Wasmtime backend does not implement shared env.memory and wasi.thread-spawn; use llgo run -target=wasi with Wasmer for execution")
+	return errors.New("llgo debug: WASI source sessions use -backend=wasmtime with LLDB; select the Wasmtime executable with -wasmtime or LLGO_WASMTIME")
 }
 
 func validateBackendOptions(selected backend, opts options) error {
-	if selected == backendWasmtime {
-		return wasiDebuggerUnavailable()
+	if selected == backendWasmtime && (opts.remote != "" || opts.server != "" || opts.load) {
+		return errors.New("llgo debug: WASI sessions launch a Wasmtime process; -remote, -server and -load apply to native/embedded transports")
 	}
 	if selected == backendBrowser && (opts.remote != "" || opts.server != "" || opts.load) {
 		return errors.New("llgo debug: browser sessions use their own loopback HTTP server; -remote, -server and -load apply to native/embedded debugger transports")

@@ -196,11 +196,41 @@ values if the stop or worker membership changes. Expand a waiting goroutine's
 frame to inspect memory locals whose DWARF scope and frame-relative location
 remain valid throughout the function. Register values, changing locations and
 panic snapshots remain unavailable.
-WASI source sessions are explicitly rejected: current W32 modules require
-shared `env.memory` and `wasi.thread-spawn`, which the
-current Wasmtime debug backend does not implement. Use `llgo run -target=wasi`
-with Wasmer for execution; retaining valid DWARF does not provide a runtime
-debugger transport. See [browser debugging](../dev/browser-debugging.md).
+See [browser debugging](../dev/browser-debugging.md).
+
+W32 WASI sessions use Wasmtime **46.0.3 or a later 46.x patch** with native
+LLDB. Wasmtime 47+ removed the WASI threads host interface. Install the supported
+version separately and select it with `-wasmtime` or `LLGO_WASMTIME`:
+
+```sh
+llgo debug -target=wasi -wasmtime=/path/to/wasmtime ./app
+# In LLDB:
+# breakpoint set --name main.main
+# run
+# frame variable
+# llgo-wasi print packageGlobal -depth 2
+# llgo-wasi goroutines -depth 3
+```
+
+LLDB owns source breakpoints, stepping, native guest-thread stacks and local
+variables. `llgo-wasi print NAME [-depth 0..8]` also inspects selected-frame
+locals and module globals, including strings, slices, interfaces, maps,
+channels, functions and closure captures. These runtime views require Node.js
+22+ and reuse the browser's versioned schema and value decoder. All shared-memory
+reads require an unchanged all-stop process. Views are rebuilt at each command;
+addresses and object handles are never reused across resume or memory growth.
+Unavailable DWARF locations remain unavailable; this is not a Go expression evaluator.
+
+The session preserves shared `env.memory`, real `wasi.thread-spawn`, worker exit
+and exception handling. It disables Wasmtime's native compilation cache:
+JIT registration can expose code to breakpoint patching before the engine
+serializes a cache miss. Reusing that cache can retain breakpoint instructions.
+External DWARF runs from a private full-module copy only after stripping its
+DWARF reproduces the deployed module byte for byte. `-remote`, `-server` and
+`-load` remain native/embedded options. `llgo run -target=wasi` continues to use
+the execution profile's Wasmer host.
+
+See [WASI acceptance and qualification](../test/debug/wasi/README.md).
 
 Debug information can also be packaged without starting a debugger:
 

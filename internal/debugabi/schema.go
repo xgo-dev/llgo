@@ -36,6 +36,9 @@ const (
 	NativeRecordSymbol = "__llgo_debugger_abi_v1"
 	LegacyMarkerSymbol = "__llgo_debugger_marker_v1"
 	WasmSectionName    = "llgo.debugger"
+
+	WasmMemoryAnchorVariable = "__llgo_wasm_memory"
+	WasmMemoryAnchorOffset   = 1
 )
 
 const recordMagic = "LLGODBG\x00"

@@ -636,7 +636,7 @@ func pathPrefix(path, prefix string) (string, bool) {
 
 func (b *indexBuilder) addVariable(entry *dwarf.Entry, state scopeState, depth int) {
 	name, _ := b.attribute(entry, dwarf.AttrName).(string)
-	if name == "" {
+	if name == "" || name == debugabi.WasmMemoryAnchorVariable {
 		return
 	}
 	if name == "$env" {

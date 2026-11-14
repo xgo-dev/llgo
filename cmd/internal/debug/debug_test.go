@@ -88,11 +88,14 @@ func TestBrowserAndWASISessionBoundaries(t *testing.T) {
 			t.Fatalf("browser accepted native transport: %v", err)
 		}
 	}
-	err := runSession(session{backend: backendWasmtime, target: &targets.Config{DebugServer: "must-not-execute"}}, nil, nil, nil)
-	for _, requirement := range []string{"W32 pthread", "env.memory", "wasi.thread-spawn", "Wasmer"} {
-		if err == nil || !strings.Contains(err.Error(), requirement) {
-			t.Fatalf("WASI diagnostic must identify %q: %v", requirement, err)
+	for _, opts := range []options{{remote: ":3333"}, {server: "must-not-execute"}, {load: true}} {
+		err := runSession(session{backend: backendWasmtime, options: opts, target: &targets.Config{DebugServer: "must-not-execute"}}, nil, nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "-remote, -server and -load") {
+			t.Fatalf("WASI accepted a native server transport: %v", err)
 		}
+	}
+	if err := validateSessionTarget(&build.Config{Goos: "wasip1", Goarch: "wasm"}, nil, backendWasmtime, options{}); err != nil {
+		t.Fatalf("raw WASI source mode must not require a native remote: %v", err)
 	}
 }
 

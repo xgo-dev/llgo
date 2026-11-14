@@ -13,6 +13,7 @@ import (
 	"go/types"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,6 +23,53 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
+
+func TestWasmDebuggerMemoryLocation(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "memory.go", "package memory; func Probe(x int) int { return x + 1 }", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssapkg, _, err := ssautil.BuildPackage(&types.Config{}, fset, types.NewPackage("memory", "memory"),
+		[]*ast.File{file}, ssa.SanityCheckFunctions|ssa.InstantiateGenerics|ssa.GlobalDebug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []llssa.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", LLVMTarget: "wasm32-unknown-emscripten"},
+		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", LLVMTarget: "wasm64-unknown-emscripten"},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(target.GOOS+"/"+target.GOARCH+"/"+target.WasmProfile+"/"+strconv.FormatBool(enabled), func(t *testing.T) {
+				target.OptLevel = optlevel.O0
+				prog := newLLSSAProgForTarget(t, &target)
+				defer prog.Dispose()
+				pkg, _, err := newPackageEx(prog, nil, nil, nil, ssapkg, []*ast.File{file}, nil, false,
+					Options{Debug: true, DebugSymbols: true, DebuggerFrames: enabled})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err, pkg.Module().String())
+				}
+				want := enabled && target.GOARCH == "wasm"
+				if strings.Contains(pkg.Module().String(), `name: "__llgo_wasm_memory"`) != want {
+					t.Fatal("linear-memory anchor escaped its Wasm debugger opt-in")
+				}
+				if want {
+					ir := pkg.Module().String()
+					for _, text := range []string{"DIFlagArtificial", "DIExpression(DW_OP_deref)", "store ptr inttoptr (i64 1 to ptr)"} {
+						if !strings.Contains(ir, text) {
+							t.Fatalf("missing debugger memory location %q:\n%s", text, ir)
+						}
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestCompileDebugMetadata(t *testing.T) {
 	const source = `package debugcompile
