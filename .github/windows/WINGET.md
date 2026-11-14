@@ -60,3 +60,7 @@ release metadata, binary architecture, DLL closure, and MSVC/MinGW compilation.
 The lifecycle checks run on main and tags, and on PRs changing the Windows
 release or installer inputs. Other code PRs retain native archive validation
 without starting the WinGet job. Tag publication always requires both checks.
+Local manifests lack public-catalog correlation. These fixtures select the
+registered ProductCode for uninstall and use it in the local upgrade manifest;
+the published manifests omit it. Published installations use the documented
+package-ID commands.

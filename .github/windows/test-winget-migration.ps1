@@ -29,6 +29,15 @@ function Get-PortableRegistration([string]$Identifier) {
   }
 }
 
+function Assert-InstalledCompiler([string]$Alias) {
+  if (-not (Test-Path $Alias)) { throw 'The unified portable alias is missing' }
+  $compilerVersion = (& $Alias version | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $compilerVersion -notmatch " windows/$GoArch$") {
+    throw "Unexpected migrated compiler: $compilerVersion"
+  }
+  Write-Host $compilerVersion
+}
+
 foreach ($id in $ids) {
   if (@(Get-PortableRegistration $id).Count) { throw "Refusing to replace an existing $id installation" }
 }
@@ -56,9 +65,10 @@ try {
     if (Test-Path "$temp/port") { $port = ([string](Get-Content "$temp/port" -Raw)).Trim() }
     if ($port -notmatch '^[0-9]+$') { Start-Sleep -Milliseconds 100 }
   }
-  function Write-Candidate([string]$Identifier, [string]$Version, [string]$Name) {
+  function Write-Candidate([string]$Identifier, [string]$Version, [string]$Name, [string]$ProductCode = '') {
     $directory = Join-Path $temp $Name
     New-Item -ItemType Directory -Force $directory | Out-Null
+    $productCodeLine = if ($ProductCode) { 'ProductCode: ' + (ConvertTo-Json -InputObject $ProductCode -Compress) } else { '' }
     @"
 # yaml-language-server: `$schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json
 PackageIdentifier: $Identifier
@@ -74,6 +84,7 @@ NestedInstallerFiles:
 - RelativeFilePath: bin/llgo.exe
   PortableCommandAlias: llgo
 UpgradeBehavior: uninstallPrevious
+$productCodeLine
 Installers:
 - Architecture: $installerArch
   InstallerUrl: http://127.0.0.1:$port/llgo.zip
@@ -85,42 +96,48 @@ ManifestVersion: 1.12.0
   }
   Invoke-WinGet -Arguments @('settings', '--enable', 'LocalManifestFiles')
   $new = Write-Candidate 'XGo.LLGo' '2.0.0' 'unified'
-  $next = Write-Candidate 'XGo.LLGo' '2.0.1' 'next'
-  foreach ($manifest in @($new, $next)) { Invoke-WinGet -Arguments @('validate', '--manifest', $manifest) }
+  Invoke-WinGet -Arguments @('validate', '--manifest', $new)
+  $next = $null
+  $unifiedProductCode = ''
   foreach ($legacy in @('XGo.LLGo.MSVC', 'XGo.LLGo.MinGW')) {
     $old = Write-Candidate $legacy '1.0.0' $legacy
     Invoke-WinGet -Arguments @('validate', '--manifest', $old)
     Invoke-WinGet -Arguments @('install', '--manifest', $old, '--scope', 'user', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-    if (@(Get-PortableRegistration $legacy).Count -ne 1) { throw "$legacy did not register" }
+    $registration = @(Get-PortableRegistration $legacy)
+    if ($registration.Count -ne 1) { throw "$legacy did not register" }
 
-    # This is the documented one-time migration. No --force, hash bypass,
-    # registry rewrite or repeated legacy manifests are involved.
-    Invoke-WinGet -Arguments @('uninstall', '--id', $legacy, '--exact', '--accept-source-agreements', '--disable-interactivity')
+    # Local manifests have no public-catalog correlation. Select the actual
+    # public ARP ProductCode; published installs use the documented --id form.
+    Invoke-WinGet -Arguments @('uninstall', '--product-code', $registration[0].PSChildName, '--exact', '--accept-source-agreements', '--disable-interactivity')
     Invoke-WinGet -Arguments @('install', '--manifest', $new, '--scope', 'user', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-    if (@(Get-PortableRegistration $legacy).Count -ne 0 -or @(Get-PortableRegistration 'XGo.LLGo').Count -ne 1) {
+    $registration = @(Get-PortableRegistration 'XGo.LLGo')
+    if (@(Get-PortableRegistration $legacy).Count -ne 0 -or $registration.Count -ne 1) {
       throw "Migration from $legacy did not leave exactly one unified registration"
     }
-    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links/llgo.exe'
-    if (-not (Test-Path $alias)) { throw 'The unified portable alias is missing' }
-    $compilerVersion = (& $alias version | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $compilerVersion -notmatch " windows/$GoArch$") {
-      throw "Unexpected migrated compiler: $compilerVersion"
+    if (-not $next) {
+      $unifiedProductCode = $registration[0].PSChildName
+      $next = Write-Candidate 'XGo.LLGo' '2.0.1' 'next' $unifiedProductCode
+      Invoke-WinGet -Arguments @('validate', '--manifest', $next)
+    } elseif ($registration[0].PSChildName -ne $unifiedProductCode) {
+      throw 'The unified package registration changed between migrations'
     }
-    Write-Host $compilerVersion
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links/llgo.exe'
+    Assert-InstalledCompiler $alias
 
     Invoke-WinGet -Arguments @('upgrade', '--manifest', $next, '--scope', 'user', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     $registration = @(Get-PortableRegistration 'XGo.LLGo')
     if ($registration.Count -ne 1 -or $registration[0].DisplayVersion -ne '2.0.1') {
       throw 'Subsequent upgrades must use only the unified ID'
     }
-    Invoke-WinGet -Arguments @('uninstall', '--id', 'XGo.LLGo', '--exact', '--accept-source-agreements', '--disable-interactivity')
+    Assert-InstalledCompiler $alias
+    Invoke-WinGet -Arguments @('uninstall', '--product-code', $registration[0].PSChildName, '--exact', '--accept-source-agreements', '--disable-interactivity')
     if (Test-Path $alias) { throw 'Uninstall left a stale llgo alias' }
     Write-Host "Passed windows/$GoArch $legacy -> XGo.LLGo -> next unified version -> uninstall"
   }
 } finally {
   foreach ($id in $ids) {
-    if (@(Get-PortableRegistration $id).Count) {
-      & $winget uninstall --id $id --exact --accept-source-agreements --disable-interactivity
+    foreach ($entry in @(Get-PortableRegistration $id)) {
+      & $winget uninstall --product-code $entry.PSChildName --exact --accept-source-agreements --disable-interactivity
     }
   }
   if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
