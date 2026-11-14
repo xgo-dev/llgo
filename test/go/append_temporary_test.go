@@ -1,9 +1,33 @@
 package gotest
 
 import (
+	"bytes"
+	"encoding/binary"
 	"runtime"
 	"testing"
 )
+
+func TestAppendBinaryWords(t *testing.T) {
+	for _, order := range []binary.AppendByteOrder{binary.LittleEndian, binary.BigEndian} {
+		for _, capacity := range []int{2, 5, 32} {
+			b := make([]byte, 2, capacity)
+			b[0], b[1] = 0xab, 0xcd
+			b = order.AppendUint16(b, 0x1234)
+			b = order.AppendUint32(b, 0x56789abc)
+			b = order.AppendUint64(b, 0xdef0123456789abc)
+			want := []byte{0xab, 0xcd, 0x34, 0x12, 0xbc, 0x9a, 0x78, 0x56,
+				0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0xf0, 0xde}
+			if order == binary.BigEndian {
+				want = []byte{0xab, 0xcd, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+					0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc}
+			}
+			runtime.GC()
+			if !bytes.Equal(b, want) {
+				t.Fatalf("%s, cap %d: got %x, want %x", order, capacity, b, want)
+			}
+		}
+	}
+}
 
 type appendTemporaryItem struct {
 	p    *int
