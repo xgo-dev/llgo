@@ -117,28 +117,39 @@ func TestRuntimeSetFinalizerCancel(t *testing.T) {
 }
 
 func TestRuntimeSetFinalizerWithLargeResult(t *testing.T) {
-	finalized := make(chan int, 1)
+	// This checks the callback's result ABI, not collection of one particular
+	// object. Like the assignability cases, allow a conservative collector to
+	// retain a stale pointer while still requiring a real callback with value 42.
+	const registrations = 8
+	finalized := make(chan int, registrations)
 	registerFinalizerForTest(func() {
-		x := new(int)
-		*x = 42
-		runtime.SetFinalizer(x, func(p *int) (unused [250]int) {
-			finalized <- *p
-			return
-		})
+		for range registrations {
+			x := new(int)
+			*x = 42
+			runtime.SetFinalizer(x, func(p *int) (unused [250]int) {
+				finalized <- *p
+				return
+			})
+		}
 	})
 
 	waitForFinalizerValue(t, finalized, 42)
 }
 
 func TestRuntimeSetFinalizerWithNarrowResult(t *testing.T) {
-	finalized := make(chan int, 1)
+	// Match the large-result case's conservative-GC tolerance. Buffer every
+	// callback so late finalizers cannot block the serial finalizer worker.
+	const registrations = 8
+	finalized := make(chan int, registrations)
 	registerFinalizerForTest(func() {
-		x := new(int)
-		*x = 42
-		runtime.SetFinalizer(x, func(p *int) bool {
-			finalized <- *p
-			return true
-		})
+		for range registrations {
+			x := new(int)
+			*x = 42
+			runtime.SetFinalizer(x, func(p *int) bool {
+				finalized <- *p
+				return true
+			})
+		}
 	})
 
 	waitForFinalizerValue(t, finalized, 42)

@@ -50,6 +50,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
 	"github.com/xgo-dev/llgo/internal/debugabi"
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
 	"github.com/xgo-dev/llgo/internal/flash"
@@ -827,6 +828,15 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 	})
 
+	dedup.SetValidate(func(pkg *packages.Package) error {
+		if !prog.MayUseCompilerVariables(pkg.Types) {
+			return nil
+		}
+		if err := prog.PackageVariables(pkg.Types).Validate(cfg.Fset, pkg.Types); err != nil {
+			return err
+		}
+		return directive.ValidateVariableUses(cfg.Fset, pkg.Types, pkg.TypesInfo, pkg.Syntax, prog.VariableDirective)
+	})
 	if patterns == nil {
 		patterns = []string{"."}
 	}
@@ -2066,6 +2076,18 @@ func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup p
 		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
 			return err
 		}
+		// Overlay declaration records, rather than reapplying original source
+		// comments to a replacement that happens to have the same name.
+		vars := make(directive.Variables)
+		if original := dedup.Check(pkgPath); original != nil {
+			for name, rec := range prog.PackageVariables(original.Types) {
+				vars[name] = rec
+			}
+		}
+		for name, rec := range prog.PackageVariables(alt.Types) {
+			vars[name] = rec
+		}
+		prog.SetPackageVariables(patch.Types, vars)
 	}
 	return nil
 }
