@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
@@ -42,6 +43,46 @@ unreachable:
   switch i32 %n, label %unreachable [i32 0, label %exit]
 }
 `
+
+func TestDispatchInlineBackendOverrides(t *testing.T) {
+	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS"} {
+		t.Setenv(name, "")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*context)
+	}{
+		{"default", nil},
+		{"external linker", func(c *context) { c.buildConf.LinkOptions.ExternalLinker = "clang" }},
+		{"direct linker", func(c *context) { c.crossCompile.Linker = "ld.lld" }},
+		{"other backend", func(c *context) { c.crossCompile.Toolchain.Linker = "" }},
+		{"extldflags", func(c *context) { c.buildConf.LinkOptions.ExternalLinkerFlags = "-Wl,-mllvm,-inline-threshold=20" }},
+		{"driver args", func(c *context) { c.crossCompile.CXXArgs = []string{"-fno-inline"} }},
+		{"target flags", func(c *context) { c.crossCompile.LDFLAGS = []string{"-Wl,-mllvm,-cold-callsite-rel-freq=0"} }},
+		{"environment", func(c *context) { t.Setenv("LDFLAGS", "-Wl,-mllvm,-inline-cost-full=false") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := &context{buildConf: dispatchInlineConfig(), crossCompile: crosscompile.Export{
+				Toolchain: crosscompile.NativeToolchain{ObjectFormat: crosscompile.ObjectFormatELF, Linker: crosscompile.LinkerFlavorELFLLD},
+			}}
+			if test.change != nil {
+				test.change(c)
+			}
+			want := test.change == nil
+			if got := c.dispatchInlineBudgetEnabled(); got != want {
+				t.Fatalf("policy enabled = %v, want %v", got, want)
+			}
+			args := c.clangConfig().LDFLAGS
+			found := false
+			for _, arg := range args {
+				found = found || arg == "-Wl,-mllvm,-inline-cost-full"
+			}
+			if found != want {
+				t.Fatalf("complete-cost default = %v, want %v: %v", found, want, args)
+			}
+		})
+	}
+}
 
 func dispatchInlineConfig() *Config {
 	return &Config{Goos: "linux", Goarch: "amd64", BuildMode: BuildModeExe, OptLevel: optlevel.O3, LTO: lto.Full}

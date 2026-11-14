@@ -1,15 +1,18 @@
 package build
 
 import (
+	"os"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 
-// Prototype: restore the ordinary LLVM 22 O3 cost budget only in unprofiled
-// switch cycles. This does not force inlining or manufacture profile weights.
+// Use LLVM 22's ordinary O3 cost budget in unprofiled switch cycles, where
+// dividing probability across cases can otherwise suppress useful inlining.
+// LLVM still checks cost and viability; no profile weights are manufactured.
 func applyDispatchInlineBudget(conf *Config, mod llvm.Module) int {
 	if !dispatchInlineEnabled(conf) {
 		return 0
@@ -61,6 +64,31 @@ func applyDispatchInlineBudget(conf *Config, mod llvm.Module) int {
 func dispatchInlineEnabled(conf *Config) bool {
 	return conf != nil && conf.Goos == "linux" && conf.Goarch == "amd64" &&
 		conf.OptLevel == optlevel.O3 && conf.ltoMode() == lto.Full && conf.BuildMode == BuildModeExe
+}
+
+// Leave explicit backend policy and alternative linkers in control. The same
+// predicate gates both the bitcode hints and the LLVM complete-cost option.
+func (c *context) dispatchInlineBudgetEnabled() bool {
+	if c == nil || !dispatchInlineEnabled(c.buildConf) ||
+		c.crossCompile.Toolchain.ObjectFormat != crosscompile.ObjectFormatELF ||
+		c.crossCompile.Toolchain.Linker != crosscompile.LinkerFlavorELFLLD ||
+		c.crossCompile.Linker != "" || c.buildConf.LinkOptions.ExternalLinker != "" {
+		return false
+	}
+	flags := []string{c.buildConf.LinkOptions.ExternalLinkerFlags}
+	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS"} {
+		flags = append(flags, os.Getenv(name), c.commands.lookup(name))
+	}
+	for _, args := range [][]string{c.crossCompile.CCArgs, c.crossCompile.CXXArgs,
+		c.crossCompile.LinkerArgs, c.crossCompile.CCFLAGS, c.crossCompile.CFLAGS, c.crossCompile.LDFLAGS} {
+		flags = append(flags, args...)
+	}
+	for _, flag := range flags {
+		if strings.Contains(flag, "inline") || strings.Contains(flag, "callsite") {
+			return false
+		}
+	}
+	return true
 }
 
 func hasInlineBarrier(value llvm.Value, call bool, names ...string) bool {
