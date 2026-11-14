@@ -87,27 +87,32 @@ func pruneEmbeddedPCLN(ctx *context, plan *mainLinkPlan, output string, verbose 
 		analyze = func(path string) (pclnpost.ExternalAnalysis, error) { return analyzeWasmPCLN(path, *plan.embeddedPCLN) }
 	}
 	var relinkObjects string
+	previousObjects := ctx.darwinLTOObjectDirectory
 	err := pruneEmbeddedPCLNWith(plan, output, verbose, embeddedPCLNLinker{
 		analyze: analyze,
 		compile: func(ir, object string) error { return compileEmbeddedEntry(ctx, plan, ir, object) },
 		link: func(candidate string, inputs []string) error {
-			linkCtx := ctx
 			if ctx.buildConf.Goos == "darwin" && ctx.buildConf.ltoEnabled() {
-				nativeCtx := *ctx
-				nativeCtx.darwinLTOObjectOutput = output
-				nativeCtx.darwinLTOObjectDirectory = ""
-				linkCtx = &nativeCtx
+				oldOutput, oldDirectory := ctx.darwinLTOObjectOutput, ctx.darwinLTOObjectDirectory
+				ctx.darwinLTOObjectOutput, ctx.darwinLTOObjectDirectory = output, ""
+				defer func() {
+					ctx.darwinLTOObjectOutput, ctx.darwinLTOObjectDirectory = oldOutput, oldDirectory
+				}()
+				err := linkObjFiles(ctx, candidate, inputs, plan.linkArgs, verbose)
+				relinkObjects = ctx.darwinLTOObjectDirectory
+				return err
 			}
-			err := linkObjFiles(linkCtx, candidate, inputs, plan.linkArgs, verbose)
-			if linkCtx != ctx {
-				relinkObjects = linkCtx.darwinLTOObjectDirectory
-			}
-			return err
+			return linkObjFiles(ctx, candidate, inputs, plan.linkArgs, verbose)
 		},
 		publish: replaceFile,
 	})
 	if err != nil && relinkObjects != "" {
 		_ = os.RemoveAll(relinkObjects)
+	} else if relinkObjects != "" {
+		if previousObjects != "" && previousObjects != relinkObjects {
+			_ = os.RemoveAll(previousObjects)
+		}
+		ctx.darwinLTOObjectDirectory = relinkObjects
 	}
 	return err
 }

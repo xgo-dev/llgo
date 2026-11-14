@@ -151,6 +151,12 @@ func TestDWARFPCLNLineSites(t *testing.T) {
 			if out := runBinary(t, conf.OutFile); !strings.Contains(out, "PCLN_DWARF_OK") {
 				t.Fatalf("unexpected DWARF PCLN probe output: %s", out)
 			}
+			if runtime.GOOS == "darwin" && mode.Enabled() {
+				objects, err := os.ReadDir(darwinLTOObjectDir(conf.OutFile))
+				if err != nil || len(objects) != 1 {
+					t.Fatalf("metadata relink retained obsolete LTO objects: %v, %v", objects, err)
+				}
+			}
 		})
 	}
 }

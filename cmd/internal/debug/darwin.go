@@ -16,20 +16,29 @@ import (
 // many compile units. LLDB can find functions while failing file/line
 // breakpoints. Materialize a private dSYM for the session, leaving the linked
 // executable and its platform-default debug packaging untouched.
-func darwinLTOSymbols(artifact string) (arguments []string, cleanup func(), err error) {
+func darwinLTOSymbols(artifact string, enabled bool) (arguments []string, cleanup func(), err error) {
 	cleanup = func() {}
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" || !enabled {
 		return
 	}
-	info, err := os.Stat(artifact + ".llgo-debug-lto")
-	if os.IsNotExist(err) {
-		return nil, cleanup, nil
-	}
+	image, err := macho.Open(artifact)
 	if err != nil {
-		return nil, cleanup, fmt.Errorf("llgo debug: invalid Darwin LTO debug-object directory: %v", err)
+		return nil, cleanup, fmt.Errorf("llgo debug: read Darwin LTO debug map: %w", err)
 	}
-	if !info.IsDir() {
-		return nil, cleanup, fmt.Errorf("llgo debug: Darwin LTO debug-object path is not a directory")
+	defer image.Close()
+	hasMap := false
+	if image.Symtab != nil {
+		for _, symbol := range image.Symtab.Syms {
+			if symbol.Type == 0x66 { // N_OSO: retained object in a Darwin debug map.
+				hasMap = true
+				break
+			}
+		}
+	}
+	// A stripped executable uses its adjacent dSYM. Historical LTO directories
+	// are not evidence of this build's mode or of an available debug map.
+	if !hasMap {
+		return nil, cleanup, nil
 	}
 	directory, err := os.MkdirTemp("", "llgo-debug-dsym-")
 	if err != nil {

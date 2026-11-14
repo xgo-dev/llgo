@@ -129,6 +129,7 @@ func selectBackend(requested backend, kind targetKind) (backend, error) {
 type session struct {
 	backend      backend
 	artifact     string
+	lto          bool
 	debuggerArgs []string
 	target       *targets.Config
 	options      options
@@ -160,7 +161,7 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	extra := s.debuggerArgs
 	if s.backend == backendLLDB && plan == nil {
-		arguments, cleanup, err := darwinLTOSymbols(s.artifact)
+		arguments, cleanup, err := darwinLTOSymbols(s.artifact, s.lto)
 		if err != nil {
 			return err
 		}

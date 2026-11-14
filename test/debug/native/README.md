@@ -18,6 +18,7 @@ The inline leaf calls a volatile C probe so whole-program optimization cannot
 legitimately eliminate the instructions used for its source breakpoint.
 Darwin LTO sessions require `dsymutil`; the launcher creates and removes a
 private dSYM without changing the build output's debug packaging.
+Darwin also exercises stripped-with-DWARF and custom LTO-object paths.
 
 This dedicated panic/inline acceptance suite currently runs on Linux and
 macOS CI. Windows is not yet covered by this suite: the runner and its
