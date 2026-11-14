@@ -44,8 +44,8 @@ Engine-cache hits must not be used as a debugging gate.
 
 Qualification on 2026-11-14: macOS arm64, Go 1.27.3, Clang/LLVM 22.1.8,
 Apple LLDB 2103.0.34.103 / Swift 6.4, Wasmtime 46.0.3 (`c5569e6aa`),
-Node.js 26.8.1. Both complete sessions passed. Embedded deployment: 2,099,289
-bytes; external deployment: 723,561 bytes; full debug sidecar: 2,099,289 bytes.
+Node.js 26.8.1. Both complete sessions passed. Embedded deployment: 2,099,277
+bytes; external deployment: 723,561 bytes; full debug sidecar: 2,099,277 bytes.
 Sizes are fixture/build-specific. Linux qualification is also an explicit
 `cross-compile` workflow gate. Cross-architecture Docker emulation cannot
 qualify a native debugger. Physical probe qualification remains in

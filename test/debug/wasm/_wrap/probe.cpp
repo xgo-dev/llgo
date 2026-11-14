@@ -1,11 +1,11 @@
 #include <stdint.h>
-#include <stddef.h>
 
 extern "C" __attribute__((noinline)) int32_t llgo_debug_cpp_probe(int32_t input) {
-  volatile int32_t cpp_local = input + 7;
+  int32_t cpp_local = input + 7;
   return cpp_local;
 }
 
+#include <stddef.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten/heap.h>
 #endif
