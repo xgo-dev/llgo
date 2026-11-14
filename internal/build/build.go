@@ -46,6 +46,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
+	"github.com/xgo-dev/llgo/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
@@ -341,6 +342,11 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 		return nil, errors.New("build config must not be nil")
 	}
 	conf := input.clone()
+	// Embedding callers bypass command-line flags but share the same archive
+	// cache. Give every development compiler an identity before fingerprinting.
+	if conf.CompilerHash == "" {
+		conf.CompilerHash = compilerhash.Value()
+	}
 	if conf.Goos == "" {
 		conf.Goos = runtime.GOOS
 	}

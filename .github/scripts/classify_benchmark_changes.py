@@ -50,7 +50,6 @@ COMPILER_DIRS = {
     "cmd/internal/build",
     "cmd/internal/clean",
     "cmd/internal/compile",
-    "cmd/internal/compilerhash",
     "cmd/internal/flags",
     "cmd/internal/get",
     "cmd/internal/help",
