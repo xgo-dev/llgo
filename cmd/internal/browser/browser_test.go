@@ -277,6 +277,11 @@ func TestChromeLanguageExtension(t *testing.T) {
 		}
 	}
 	if session.PluginReady() == 0 || session.RuntimeReady() == 0 {
+		diagCtx, diagCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer diagCancel()
+		diag := exec.CommandContext(diagCtx, "node", filepath.Join("testdata", "chrome_session.mjs"), profileData, session.URL, "--diagnostics")
+		diagOutput, _ := diag.CombinedOutput()
+		t.Logf("registration diagnostics: %s", diagOutput)
 		t.Fatalf("Chrome did not complete LLGo module registration/instantiation (index=%d plugin-ready=%d runtime-ready=%d)\ntargets: %s\n%s",
 			session.PluginRequests(), session.PluginReady(), session.RuntimeReady(),
 			chromeTargets(profileData), output.String())

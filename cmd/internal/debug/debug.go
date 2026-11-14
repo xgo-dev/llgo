@@ -41,7 +41,7 @@ import (
 
 // Cmd is the llgo debug command.
 var Cmd = &base.Command{
-	UsageLine: "llgo debug [-backend auto|lldb|gdb|browser] [-target platform] [build flags] [package] [-- debugger arguments...]",
+	UsageLine: "llgo debug [-backend auto|lldb|gdb|wasmtime|browser] [-target platform] [build flags] [package] [-- debugger arguments...]",
 	Short:     "Build and debug an LLGo program",
 }
 
@@ -50,6 +50,7 @@ var (
 	backendFlag     string
 	lldbPath        string
 	gdbPath         string
+	wasiHostPath    string
 	remoteAddress   string
 	serverCommand   string
 	chromePath      string
@@ -66,9 +67,10 @@ func init() {
 	flags.AddBuildFlags(&Cmd.Flag)
 	flags.AddEmbeddedFlags(&Cmd.Flag)
 	flags.AddOutputFlags(&Cmd.Flag)
-	Cmd.Flag.StringVar(&backendFlag, "backend", string(backendAuto), "debug backend: auto, lldb, gdb, or browser; wasmtime is reserved and unavailable")
+	Cmd.Flag.StringVar(&backendFlag, "backend", string(backendAuto), "debug backend: auto, lldb, gdb, wasmtime, or browser")
 	Cmd.Flag.StringVar(&lldbPath, "lldb", "", "path to LLDB (default $LLGO_LLDB or auto-detect)")
 	Cmd.Flag.StringVar(&gdbPath, "gdb", "", "path to GDB (default $LLGO_GDB, target candidates, or auto-detect)")
+	Cmd.Flag.StringVar(&wasiHostPath, "wasi-host", "", "path to llgo-wasi-debug (default $LLGO_WASI_HOST or PATH)")
 	Cmd.Flag.StringVar(&remoteAddress, "remote", "", "connect to an existing debug server at host:port")
 	Cmd.Flag.StringVar(&serverCommand, "server", "", "debug-server template: {} is the artifact, {debug-stdio} selects RSP over stdin/stdout, {debug-port} selects legacy TCP")
 	Cmd.Flag.BoolVar(&loadImage, "load", false, "reset, load the image, and halt an existing remote or custom debug server")
@@ -86,13 +88,14 @@ func runCmd(cmd *base.Command, args []string) {
 		return
 	}
 	if err := run(cmd.Flag.Args(), debuggerArgs, options{
-		backend: backend(backendFlag),
-		lldb:    lldbPath,
-		gdb:     gdbPath,
-		remote:  remoteAddress,
-		server:  serverCommand,
-		load:    loadImage,
-		browser: browser.Options{Chrome: chromePath, DisableTools: !browserDevtools, SourceMaps: sourceMaps},
+		backend:  backend(backendFlag),
+		lldb:     lldbPath,
+		gdb:      gdbPath,
+		wasiHost: wasiHostPath,
+		remote:   remoteAddress,
+		server:   serverCommand,
+		load:     loadImage,
+		browser:  browser.Options{Chrome: chromePath, DisableTools: !browserDevtools, SourceMaps: sourceMaps},
 	}, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		mockable.Exit(1)
@@ -177,7 +180,7 @@ func run(packageArgs, debuggerArgs []string, opts options, stdin io.Reader, stdo
 	if err := validateSessionTarget(conf, target, selected, opts); err != nil {
 		return err
 	}
-	if selected == backendBrowser && !slices.Contains(strings.Fields(strings.ReplaceAll(conf.Tags, ",", " ")), "llgo.wasm.debugger") {
+	if (selected == backendBrowser || selected == backendWasmtime) && !slices.Contains(strings.Fields(strings.ReplaceAll(conf.Tags, ",", " ")), "llgo.wasm.debugger") {
 		if conf.Tags != "" {
 			conf.Tags += ","
 		}
@@ -248,7 +251,7 @@ func validateSessionTarget(conf *build.Config, target *targets.Config, selected 
 	if target == nil && (conf.Goos == "darwin" || conf.Goos == "windows") && selected == backendLLDB && conf.LinkOptions.DWARFCompression == build.DWARFCompressionEnabled {
 		return errors.New("llgo debug: LLDB cannot read experimental compressed Mach-O/PE DWARF; use -ldflags=-compressdwarf=false")
 	}
-	if selected != backendBrowser && target == nil && opts.remote == "" && (conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH) {
+	if selected != backendBrowser && selected != backendWasmtime && target == nil && opts.remote == "" && (conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH) {
 		return fmt.Errorf("llgo debug: cannot launch a %s/%s program on %s/%s without -remote", conf.Goos, conf.Goarch, runtime.GOOS, runtime.GOARCH)
 	}
 	return nil

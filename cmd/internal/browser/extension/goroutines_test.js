@@ -102,7 +102,7 @@ for (const width of [4, 8]) {
 
 test('goroutine decoder rejects corrupt, oversized and changing snapshots', async t => {
   const cases = [
-    ['version', f => f.u32(64, 2), /unsupported.*registry/],
+    ['version', f => f.u32(64, 3), /unsupported.*registry/],
     ['registry update', f => f.u32(68, 3), /registry is changing/],
     ['stack update', f => f.u32(160, 5), /stack is changing/],
     ['cycle', f => f.ptr(128, 128), /invalid.*registry/],
@@ -270,4 +270,120 @@ test('failed parked reads release objects allocated by earlier locals', async ()
   f.plugin.languageServices.getWasmLinearMemory = async () => { throw new Error('read failed'); };
   await assert.rejects(LLGoWasmGoroutines.locals(f.plugin, f.module, {function: 'main.wait', base: '9216'}, 'stop'), /read failed/);
   assert.equal(f.plugin.objects.size, 0);
+});
+
+for (const width of [4, 8]) {
+  test(`Memory${width * 8} v2 suspended call sites preserve recursive order and old registries`, async () => {
+    const f = parkedFixture(width), {module, memory, u32, u64, ptr, plugin, context} = f;
+    memory.set(memory.slice(128, 176), 2048);
+    ptr(72, 2048);
+    const node = module.types.get('node');
+    node.fields.push({name: 'pcCount', type: 'u32', offset: 44}, {name: 'pcs', type: 'pcArray', offset: 48});
+    node.size = 48 + 128 * 8;
+    module.types.set('pcArray', {kind: 'array', elem: 'u64', size: 128 * 8, count: 128});
+    u32(64, 2); u32(2092, 2); u64(2096, 136); u64(2104, 146);
+    module.code = {start: 16, end: 384, bytes: new Uint8Array(384)};
+    module.code.bytes[136] = 0x10; module.code.bytes[146] = 0x11;
+    module.index.functions = [{name: 'main.wait', ranges: [{start: 100, end: 200}]}];
+    // Two recursive logical frames use the same DIE but retain separate PCs.
+    module.index.variables[0].locations = [{expression: width === 4 ? '0340000000' : '034000000000000000'}];
+    const records = await LLGoWasmGoroutines.read(plugin, module, context, 'stop');
+    assert.equal(records[0].frames[0].pc, 120);
+    const recursive = [{function: 'main.wait', base: '100'}, {function: 'main.wait', base: '200'}];
+    LLGoWasmGoroutines.suspendedPCs(module, recursive, [136, 146]);
+    assert.deepEqual(recursive.map(frame => frame.pc), [120, 130]);
+    u32(2092, 129);
+    await assert.rejects(LLGoWasmGoroutines.read(plugin, module, context, 'stop'), /invalid suspended PC count/);
+    u32(64, 1); // v1 does not consume v2-only fields, even if present in DWARF.
+    assert.ok((await LLGoWasmGoroutines.read(plugin, module, context, 'stop'))[0].frames.every(frame => frame.pc === undefined));
+    for (const bad of [[135], [1], [384], [NaN], [Number.MAX_SAFE_INTEGER + 1]]) {
+      const frames = [{function: 'main.wait', base: '100'}];
+      LLGoWasmGoroutines.suspendedPCs(module, frames, bad);
+      assert.equal(frames[0].pc, undefined, JSON.stringify(bad));
+    }
+  });
+
+  test(`Memory${width * 8} exact PCs select lexical scopes and changing memory locations without registers`, async () => {
+    const f = parkedFixture(width), {module, plugin} = f;
+    const variable = module.index.variables[1];
+    variable.function = 'main.wait';
+    variable.locations = [{start: 100, end: 150, expression: '9170'},
+      {start: 150, end: 200, expression: 'ed00019f'}];
+    const frame = {function: 'main.wait', base: '9216', pc: 125};
+    let locals = await LLGoWasmGoroutines.locals(plugin, module, frame, 'stop');
+    assert.deepEqual((await plugin.getProperties(locals[0].value.objectId)).map(p => p.value.value), [40, 41, 42, 43]);
+    await plugin.releaseObject(locals[0].value.objectId);
+    frame.pc = 175;
+    locals = await LLGoWasmGoroutines.locals(plugin, module, frame, 'stop');
+    assert.match(locals[0].value.value, /unavailable/);
+    module.index.variables = [
+      {name: 'value', function: 'main.wait', scope: 'LOCAL', type: 'u64', depth: 1,
+        ranges: [{start: 100, end: 200}], constant: {kind: 'unsigned', value: '11'}},
+      {name: 'value', function: 'main.wait', scope: 'LOCAL', type: 'u64', depth: 2,
+        ranges: [{start: 150, end: 180}], constant: {kind: 'unsigned', value: '22'}},
+      {name: 'foreign', function: 'main.inline', scope: 'LOCAL', type: 'u64', depth: 3,
+        ranges: [{start: 100, end: 200}], constant: {kind: 'unsigned', value: '99'}},
+    ];
+    assert.deepEqual((await LLGoWasmGoroutines.locals(plugin, module, frame, 'stop')).map(p => [p.name, p.value.value]), [['value', 22]]);
+    frame.pc = 125;
+    assert.deepEqual((await LLGoWasmGoroutines.locals(plugin, module, frame, 'stop')).map(p => [p.name, p.value.value]), [['value', 11]]);
+    assert.equal(plugin.objects.size, 0);
+  });
+}
+
+// Execute the shipping EM_JS body as well as the decoder: malformed browser
+// stacks must not manufacture an identity or alter the application's Error API.
+function captureFixture(stack, configuredURL = 'https://host/app.wasm') {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../../../../runtime/internal/wasmdebugpc/_wrap/capture.c'), 'utf8');
+  const body = source.slice(source.indexOf('{', source.indexOf('EM_JS(')) + 1, source.indexOf('\n});'));
+  const Error = function () { this.stack = stack; };
+  Object.defineProperty(Error, 'stackTraceLimit', {value: 10, writable: true, configurable: true});
+  const memory = new Uint8Array(2048), Module = {};
+  const context = {Error, HEAPU8: memory, Module, wasmBinaryFile: configuredURL,
+    findWasmBinary: () => 'https://host/app.wasm'};
+  const capture = vm.runInNewContext(`(function(output, capacity) {${body}})`, context);
+  return {capture, Error, memory, Module, context};
+}
+
+test('browser PC capture preserves module identity, target addresses and Error descriptors', () => {
+  const stack = 'Error\n at app.f (https://host/app.wasm:wasm-function[12]:0x100)\n at app.g (https://host/app.wasm:wasm-function[13]:0x200)';
+  for (const output of [32, 32n]) {
+    const f = captureFixture(stack);
+    const before = Object.getOwnPropertyDescriptor(f.Error, 'stackTraceLimit');
+    assert.equal(f.capture(output, 128), 2);
+    const view = new DataView(f.memory.buffer);
+    assert.deepEqual([view.getBigUint64(32, true), view.getBigUint64(40, true)], [256n, 512n]);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(f.Error, 'stackTraceLimit'), before);
+    f.context.wasmBinaryFile = undefined; // Emscripten's cloned pthread module.
+    assert.equal(f.capture(output, 128), 2);
+    f.Module.locateFile = () => assert.fail('do not reenter a user URL resolver');
+    assert.equal(f.capture(output, 128), 0);
+  }
+});
+
+test('unknown, foreign, truncated and customized PC stacks remain unavailable', () => {
+  for (const stack of [
+    'Error\n at wasm.f (wasm://wasm/anonymous:wasm-function[1]:0x100)',
+    'Error\n at wasm.f (https://foreign/app.wasm:wasm-function[1]:0x100)',
+    'Error\n at wasm.f (https://host/app.wasm:wasm-function[bad]:0x100)',
+    'Error\n at wasm.f (https://host/app.wasm:wasm-function[1]:0x20000000000000)',
+    'Error\n at wasm.f (https://host/app.wasm:wasm-function[1]:0x100)\n'.repeat(300),
+    {custom: true},
+  ]) {
+    const f = captureFixture(stack);
+    assert.equal(f.capture(32, 128), 0);
+    assert.equal(f.Error.stackTraceLimit, 10);
+    assert.ok(f.memory.every(byte => byte === 0));
+  }
+  const f = captureFixture('Error');
+  f.Error.prepareStackTrace = () => assert.fail('do not call user formatters');
+  assert.equal(f.capture(32, 128), 0);
+  delete f.Error.prepareStackTrace;
+  Object.defineProperty(f.Error, 'prepareStackTrace', {get() { assert.fail('do not invoke user accessors'); }, configurable: true});
+  assert.equal(f.capture(32, 128), 0);
+  delete f.Error.prepareStackTrace;
+  Object.defineProperty(f.Error, 'stackTraceLimit', {writable: false, configurable: false});
+  assert.equal(f.capture(32, 128), 0);
+  assert.equal(f.Error.stackTraceLimit, 10);
 });

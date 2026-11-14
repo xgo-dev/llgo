@@ -71,6 +71,23 @@
     return result;
   }
 
+  // V8 Error.stack PCs are module byte offsets; DWARF and the language
+  // extension use offsets relative to the code section payload.
+  function codeSection(moduleBytes) {
+    const bytes = moduleBytes instanceof Uint8Array ? moduleBytes : new Uint8Array(moduleBytes);
+    const owned = bytes.slice();
+    const cursor = {offset: 8};
+    while (cursor.offset < bytes.length) {
+      const id = bytes[cursor.offset++];
+      const size = Number(readULEB(bytes, cursor));
+      const start = cursor.offset, end = start + size;
+      if (!Number.isSafeInteger(end) || end > bytes.length) throw new Error('truncated WebAssembly section');
+      if (id === 10) return {start, end, bytes: owned};
+      cursor.offset = end;
+    }
+    return null;
+  }
+
   function debuggerRecord(sections) {
     const bytes = sections.get('llgo.debugger');
     if (!bytes) return null;
@@ -154,6 +171,9 @@
       // A dedicated LLGo session must leave non-LLGo modules usable as raw
       // WebAssembly instead of claiming source presentation for them.
       if (!record) return [];
+      // Own the validated instruction bytes before any asynchronous service
+      // calls can detach or reuse the incoming protocol buffer.
+      const executableCode = codeSection(code);
       const id = buildID(sections);
       if (!id) throw new Error('LLGo WebAssembly module has no build_id');
 
@@ -198,6 +218,7 @@
       const layout = runtimeLayouts[String(record.runtime_layout_version)] || null;
       this.modules.set(rawModuleId, {
         rawModuleId, rawModule, symbolsURL, record, index, sources, sourceByURL, types, typesByName, layout,
+        code: executableCode,
         functionValues: new Map((index.function_values || []).map(value => [String(value.index), value])),
       });
       const ready = await this.fetcher(new URL('/__llgo/plugin-ready', rawModule.url).href, {
@@ -392,7 +413,7 @@
       return this.remoteObject(module, type, located, stopId);
     }
 
-    async variableLocation(variable, codeOffset, module, stopId) {
+    async variableLocation(variable, codeOffset, module, stopId, savedBase) {
       if (variable.constant) {
         const value = constantToValue(variable.constant);
         return value === null ? null : {kind: 'value', value};
@@ -400,10 +421,10 @@
       const location = variable.locations.find(item => inRanges(codeOffset, [item]));
       if (!location) return null;
       const frameBase = variable.frame_base?.find(item => inRanges(codeOffset, [item]));
-      return this.evaluateDWARF(bytesFromHex(location.expression), module, stopId, frameBase?.expression);
+      return this.evaluateDWARF(bytesFromHex(location.expression), module, stopId, frameBase?.expression, savedBase);
     }
 
-    async evaluateDWARF(bytes, module, stopId, frameBase) {
+    async evaluateDWARF(bytes, module, stopId, frameBase, savedBase) {
       const cursor = {offset: 0};
       const stack = [];
       let stackValue = false;
@@ -449,6 +470,10 @@
           case 0x25: { const right = pop(); stack.push(pop() >> right); break; }
           case 0x27: { const right = pop(); stack.push(pop() ^ right); break; }
           case 0x91: { // DW_OP_fbreg: locations of O0 locals and address-backed parameters.
+            if (savedBase !== undefined) {
+              stack.push(savedBase + readSLEB(bytes, cursor));
+              break;
+            }
             if (!frameBase) return null;
             const base = await this.evaluateDWARF(bytesFromHex(frameBase), module, stopId);
             if (!base) return null;
@@ -457,6 +482,9 @@
           }
           case 0x9f: stackValue = true; break;
           case 0xed: {
+            // A parked fiber has no saved Wasm registers/operand stack. Its
+            // current worker's machine state belongs to another goroutine.
+            if (savedBase !== undefined) return null;
             if (cursor.offset >= bytes.length) throw new Error('truncated DW_OP_WASM_location');
             const kind = bytes[cursor.offset++];
             const index = kind === 3 ? Number(readFixed(bytes, cursor, 4, false)) : Number(readULEB(bytes, cursor));
@@ -470,6 +498,7 @@
             break;
           }
           default:
+            if (savedBase !== undefined) return null;
             throw new Error(`unsupported DWARF expression opcode 0x${op.toString(16)}`);
         }
       }

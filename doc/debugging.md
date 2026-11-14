@@ -86,7 +86,7 @@ The automatic backend depends on the selected target:
 | --- | --- | --- |
 | Native Darwin/Linux/Windows | LLDB | Local process |
 | Non-Wasm embedded | GDB | Target `debug-server`, OpenOCD, or `-remote` |
-| WASI | Unavailable | W32 pthread execution uses Wasmer; source debugging is a subsequent phase |
+| WASI W32 | LLDB + `llgo-wasi-debug` | Local process (`-wasi-host` / `LLGO_WASI_HOST`) |
 | Browser Wasm | Chrome DevTools | LLGo language extension and the generated Emscripten host |
 
 Use `-backend=gdb` or `-backend=lldb` to override a native or GDB Remote
@@ -142,8 +142,8 @@ support. Likewise, these Cortex-M tests do not establish LLDB support for every
 embedded LLVM target. Other RISC-V boards and probes require their own
 acceptance; AVR and Xtensa must use a debugger that implements those targets.
 No physical probe is exercised in ordinary CI. Browser sessions use the
-separate DevTools frontend contribution; the current threaded WASI runtime
-does not gain a source-debugger frontend from this remote-debugging matrix.
+separate DevTools frontend. WASI sessions use the local Wasmtime/LLDB transport
+described below; they are not part of this embedded remote-debugging matrix.
 
 Native runtime inspection has additional debugger-specific limits. Current
 GDB acceptance on the following hosts is partial; use LLDB when complete
@@ -193,14 +193,49 @@ watch view of logical Go source stacks, including parked fibers. The session
 coordinates pauses, resumes and stepping across the page and its dedicated
 workers. Shared-memory inspection waits for a stable group stop and rejects
 values if the stop or worker membership changes. Expand a waiting goroutine's
-frame to inspect memory locals whose DWARF scope and frame-relative location
-remain valid throughout the function. Register values, changing locations and
-panic snapshots remain unavailable.
-WASI source sessions are explicitly rejected: current W32 modules require
-shared `env.memory` and `wasi.thread-spawn`, which the
-current Wasmtime debug backend does not implement. Use `llgo run -target=wasi`
-with Wasmer for execution; retaining valid DWARF does not provide a runtime
-debugger transport. See [browser debugging](../dev/browser-debugging.md).
+frame to inspect memory locals. Qualified browser builds save exact call-site
+PCs before Asyncify unwinds, allowing active lexical scopes and changing memory
+locations to be selected from DWARF. Register-dependent values and unwound panic
+snapshots remain unavailable; unsupported hosts retain the stricter rule that
+one frame-relative location and scope cover the whole function.
+See [browser debugging](../dev/browser-debugging.md).
+
+W32 WASI sessions use native LLDB and the optional
+[`llgo-wasi-debug` host](../test/debug/wasi/host/README.md). Build it with
+Rust 1.97+, then select it with `-wasi-host` or `LLGO_WASI_HOST`, or put it on
+PATH. It embeds Wasmtime 50.0.1 and the maintained preview1 libraries from
+36.0.20 LTS; it supplies the threads interface removed from the upstream CLI:
+
+```sh
+llgo debug -target=wasi -wasi-host=/path/to/llgo-wasi-debug ./app
+# In LLDB:
+# breakpoint set --name main.main
+# run
+# frame variable
+# llgo-wasi print packageGlobal -depth 2
+# llgo-wasi goroutines -depth 3
+```
+
+LLDB owns source breakpoints, stepping, native guest-thread stacks and local
+variables. `llgo-wasi print NAME [-depth 0..8]` also inspects selected-frame
+locals and module globals, including strings, slices, interfaces, maps,
+channels, functions and closure captures. These runtime views require Node.js
+22+ and reuse the browser's versioned schema and value decoder. All shared-memory
+reads require an unchanged all-stop process. Views are rebuilt at each command;
+addresses and object handles are never reused across resume or memory growth.
+Unavailable DWARF locations remain unavailable; this is not a Go expression evaluator.
+
+The session preserves shared `env.memory`, real `wasi.thread-spawn`, worker exit
+and exception handling. All instances share one process descriptor table,
+including descriptors opened after worker creation. The host is built without
+Wasmtime's persistent compilation cache: debugger-patched JIT code must not
+enter a reusable cache.
+External DWARF runs from a private full-module copy only after stripping its
+DWARF reproduces the deployed module byte for byte. `-remote`, `-server` and
+`-load` remain native/embedded options. `llgo run -target=wasi` continues to use
+the execution profile's Wasmer host.
+
+See [WASI acceptance and qualification](../test/debug/wasi/README.md).
 
 Debug information can also be packaged without starting a debugger:
 

@@ -28,6 +28,10 @@ type wasmDebuggerNode struct {
 	sequence       uint32
 	updateDepth    uint32
 	processorID    int32 // last P; -1 until first execution
+	// Registry v2 stores complete pre-Asyncify browser call-site snapshots.
+	// Count follows processorID so pcs has 8-byte alignment on Memory32/64.
+	pcCount uint32
+	pcs     [128]uint64
 }
 
 var wasmDebuggerRegistry struct {
@@ -79,7 +83,7 @@ func registerTraceback(gp, _ *g) {
 	atomic.Add(&wasmDebuggerRegistry.epoch, uint32(1))
 	// Initialization precedes Go package init; avoid an initializer that
 	// would subsequently overwrite the already-published registry head.
-	wasmDebuggerRegistry.version = 1
+	wasmDebuggerRegistry.version = 2
 	node.next = wasmDebuggerRegistry.head
 	if node.next != nil {
 		node.next.previous = node
