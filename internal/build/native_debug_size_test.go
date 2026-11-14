@@ -337,11 +337,7 @@ func TestDarwinDWARFSizeSymbols(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	t.Setenv(llgoFuncInfo, "1")
 	t.Setenv(llgoFuncInfoSites, "1")
-	source := dwarfPCLNProbe
-	for _, marker := range []string{"CALLER", "FRAMES", "LOG"} {
-		source = strings.ReplaceAll(source, marker+"_LINE", strconv.Itoa(dwarfPCLNMarkerLine(source, marker+"_MARK")))
-	}
-	fixture := writePCLNIntegrationSource(t, source)
+	fixture := writePCLNIntegrationSource(t, dwarfPCLNProbeSource())
 	panicFixture := writePCLNIntegrationSource(t, darwinDWARFPanicProbe)
 	for _, mode := range []lto.Mode{lto.Off, lto.Full, lto.Thin} {
 		t.Run(mode.String(), func(t *testing.T) {

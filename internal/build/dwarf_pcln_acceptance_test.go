@@ -28,7 +28,8 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
-const dwarfPCLNProbe = `package main
+func dwarfPCLNProbeSource() string {
+	source := `package main
 
 import (
 	"log"
@@ -139,12 +140,14 @@ func checkLineDirectives() {
 	checkDirective("caller-second.go")
 }
 `
-
-func TestDWARFPCLNLineSites(t *testing.T) {
-	source := dwarfPCLNProbe
 	for _, marker := range []string{"CALLER", "FRAMES", "LOG", "DEFER"} {
 		source = strings.ReplaceAll(source, marker+"_LINE", strconv.Itoa(dwarfPCLNMarkerLine(source, marker+"_MARK")))
 	}
+	return source
+}
+
+func TestDWARFPCLNLineSites(t *testing.T) {
+	source := dwarfPCLNProbeSource()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
