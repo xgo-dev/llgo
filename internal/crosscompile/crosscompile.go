@@ -47,7 +47,7 @@ type Export struct {
 	GOOS           string
 	GOARCH         string
 	Libc           string
-	Linker         string // Linker to use (e.g., "ld.lld", "avr-ld")
+	Linker         string // Link command: compiler driver or target-specific raw linker
 	LinkerArgs     []string
 	LinkerIdentity string
 	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)

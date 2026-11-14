@@ -3220,15 +3220,18 @@ func debuggerABIRootArgs(ctx *context) []string {
 	if ctx == nil || ctx.buildConf == nil || !ctx.frontendOptions.Debug || ctx.buildConf.Goarch == "wasm" || ctx.buildConf.Goos == "windows" {
 		return nil
 	}
+	// Named targets may invoke ld directly. Native Unix -extld selects a
+	// compiler driver and needs the same -Wl forwarding as the default driver.
+	rawLinker := ctx.buildConf.Target != "" && ctx.crossCompile.Linker != ""
 	var args []string
 	for _, symbol := range []string{debugabi.LegacyMarkerSymbol, debugabi.NativeRecordSymbol} {
 		if ctx.buildConf.Goos == "darwin" {
-			if ctx.crossCompile.Linker != "" {
+			if rawLinker {
 				args = append(args, "-u", "_"+symbol)
 			} else {
 				args = append(args, "-Wl,-u,_"+symbol)
 			}
-		} else if ctx.crossCompile.Linker != "" {
+		} else if rawLinker {
 			args = append(args, "--undefined="+symbol)
 		} else {
 			args = append(args, "-Wl,--undefined="+symbol)
