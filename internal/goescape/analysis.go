@@ -26,7 +26,7 @@ import (
 // Version participates in package fingerprints, including compiler API users
 // that do not supply a development compiler hash. Bump when semantic contracts
 // or placement proofs change incompatibly with previously emitted archives.
-const Version = 18
+const Version = 19
 
 // Config supplies the backend's representation and resolved call contracts.
 // Callbacks run synchronously during Analyze. Results do not retain them.
@@ -241,6 +241,7 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 	a := &analyzer{config: config, result: &Result{
 		objects: make(map[ssa.Instruction]Decision), summaries: make(map[*ssa.Function]Summary), stackBytes: make(map[*ssa.Function]uint64), captures: make(map[*ssa.FreeVar]bool), componentKeys: make(map[*ssa.Function]string),
 	}, bodies: make(map[*ssa.Function]bool), functions: make(map[*ssa.Function]bool), scopes: make(map[*ssa.Function]*scopes), deps: make(map[*ssa.Function][]*ssa.Function), solved: make(map[*ssa.Function]bool)}
+	captures := captureAnalysis{inspect: a.inspect, sites: make(map[*ssa.Function][]*ssa.MakeClosure), indexed: make(map[*ssa.Function]bool), proofs: make(map[*ssa.Alloc]bool)}
 	var discover func(*ssa.Function)
 	discover = func(fn *ssa.Function) {
 		if fn == nil || a.functions[fn] {
@@ -252,7 +253,7 @@ func Analyze(roots []*ssa.Function, config Config) *Result {
 		}
 		a.bodies[fn] = true
 		for i, v := range fn.FreeVars {
-			a.result.captures[v] = immutableCapture(fn, i)
+			a.result.captures[v] = captures.immutableCapture(fn, i)
 		}
 		a.result.summaries[fn] = emptySummary(fn)
 		for _, callee := range a.dependencies(fn) {
