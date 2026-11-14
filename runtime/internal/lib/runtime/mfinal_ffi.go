@@ -135,7 +135,7 @@ func newFinalizerFFISignature(ft *abi.FuncType, explicitEnv bool, argType *ffi.T
 		paramTypes = append(paramTypes, ffi.TypePointer)
 	}
 	paramTypes = append(paramTypes, argType)
-	sig, err := ffi.NewSignature(finalizerFFIReturnType(ft.Out), paramTypes...)
+	sig, err := ffi.NewSignatureWithABI(callbackABI(ft), finalizerFFIReturnType(ft.Out), paramTypes...)
 	if err != nil {
 		panic(err)
 	}

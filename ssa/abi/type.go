@@ -12,6 +12,7 @@ const (
 	TFlagUncommon   = abi.TFlagUncommon
 	TFlagNative     = abi.TFlagNative
 	KindDirectIface = abi.KindDirectIface
+	KindStdcall     = abi.KindStdcall
 )
 
 func (b *Builder) MapBucket(t *types.Map) types.Type {

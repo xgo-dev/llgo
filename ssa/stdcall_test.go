@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -42,6 +43,34 @@ func newStdcallType(prog Program, pkgPath, name string, sig *types.Signature) *t
 	named := types.NewNamed(types.NewTypeName(token.NoPos, pkg, name, nil), sig, nil)
 	prog.SetTypeCallConv(pkgPath+"."+name, Stdcall)
 	return named
+}
+
+func TestNativeCallbackTypeMetadata(t *testing.T) {
+	for _, arch := range []string{"386", "amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			prog := NewProgram(&Target{GOOS: "windows", GOARCH: arch})
+			defer prog.Dispose()
+			prog.TypeSizes(types.SizesFor("gc", arch))
+			setTestRuntime(t, prog)
+			pkg := prog.NewPackage("p", "example.com/p")
+			b := pkg.NewFunc("use", NoArgsNoRet, GoDecl).MakeBody(1)
+			for _, cc := range []CallConv{GoDecl, CDecl, Stdcall} {
+				name := fmt.Sprintf("Callback%d", cc)
+				typ := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage(pkg.Path(), "p"), name, nil), NoArgsNoRet, nil)
+				if cc != GoDecl {
+					prog.SetTypeCallConv(pkg.Path()+"."+name, cc)
+				}
+				fields := b.abiCommonFields(typ, name, false, llvm.Value{})
+				flags, kind := fields[3].ZExtValue(), fields[6].ZExtValue()
+				if (flags&uint64(abi.TFlagNative) != 0) != (cc != GoDecl) ||
+					(kind&uint64(abi.KindStdcall) != 0) != (cc == Stdcall) ||
+					kind&uint64(abi.KindMask) != uint64(abi.Func) {
+					t.Fatalf("%s: flags=%#x kind=%#x", name, flags, kind)
+				}
+			}
+			b.Return()
+		})
+	}
 }
 
 func TestStdcallCallConventions(t *testing.T) {

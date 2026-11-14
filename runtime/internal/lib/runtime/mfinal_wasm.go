@@ -83,8 +83,15 @@ func SetFinalizer(obj any, finalizer any) {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
 	result, resultSize := classifyWasmFinalizerResult(fnType.Out)
+	fn := finalizerFace.data
+	if finalizerFace._type.HasNativeLayout() {
+		// Existing Wasm bridges consume a code/environment pair. Materialize
+		// a nil-environment pair instead of reading beyond a native pointer.
+		value := decodeCallback(finalizerFace)
+		fn = unsafe.Pointer(&wasmFinalizerClosure{function: value.code})
+	}
 	entry := &wasmFinalizerEntry{
-		fn:            finalizerFace.data,
+		fn:            fn,
 		interfaceType: interfaceType,
 		result:        result,
 		resultSize:    resultSize,
@@ -153,14 +160,7 @@ func wasmFinalizerObjectPointer(e *eface) unsafe.Pointer {
 }
 
 func wasmFinalizerFuncType(t *abi.Type) *abi.FuncType {
-	if !t.IsClosure() {
-		return nil
-	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return callbackFuncType(t)
 }
 
 // prepareWasmFinalizerArgument follows the same assignability subset used by

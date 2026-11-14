@@ -29,24 +29,21 @@ import (
 
 const windowsCallbackMaxFrame = 64 * unsafe.Sizeof(uintptr(0))
 
-type windowsCallbackFunc struct {
-	code unsafe.Pointer
-	env  unsafe.Pointer
-}
-
 type windowsCallbackKey struct {
 	code       unsafe.Pointer
 	env        unsafe.Pointer
+	abi        ffi.ABI
 	cleanstack bool
 }
 
 type windowsCallbackEntry struct {
 	fnValue     any
-	fn          *windowsCallbackFunc
+	fn          callbackValue
 	closure     *ffi.Closure
 	goSig       *ffi.Signature
 	cSig        *ffi.Signature
 	explicitEnv bool
+	native      bool
 
 	// Both signatures retain pointers into these backing arrays.
 	goArgTypes []*ffi.Type
@@ -68,14 +65,7 @@ func initWindowsCallbacks() {
 }
 
 func windowsCallbackFuncType(t *abi.Type) *abi.FuncType {
-	if t == nil || !t.IsClosure() {
-		return nil
-	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return callbackFuncType(t)
 }
 
 func windowsCallbackABI(cleanstack bool) ffi.ABI {
@@ -120,7 +110,7 @@ func windowsCallbackFFIType(t *abi.Type) *ffi.Type {
 	return finalizerFFIType(t)
 }
 
-func newWindowsCallbackEntry(fn any, callbackFn *windowsCallbackFunc, ft *abi.FuncType, cleanstack bool) *windowsCallbackEntry {
+func newWindowsCallbackEntry(fn any, callbackFn callbackValue, ft *abi.FuncType, cleanstack bool) *windowsCallbackEntry {
 	goArgTypes := make([]*ffi.Type, 0, len(ft.In)+1)
 	explicitEnv := false
 	if callbackFn.env != nil && ffi.ClosureEnvExplicit {
@@ -163,7 +153,7 @@ func newWindowsCallbackEntry(fn any, callbackFn *windowsCallbackFunc, ft *abi.Fu
 	}
 
 	goResultType := finalizerFFIType(ft.Out[0])
-	goSig, err := ffi.NewSignature(goResultType, goArgTypes...)
+	goSig, err := ffi.NewSignatureWithABI(callbackABI(ft), goResultType, goArgTypes...)
 	if err != nil {
 		panic("libffi error: " + err.Error())
 	}
@@ -178,6 +168,7 @@ func newWindowsCallbackEntry(fn any, callbackFn *windowsCallbackFunc, ft *abi.Fu
 		goSig:       goSig,
 		cSig:        cSig,
 		explicitEnv: explicitEnv,
+		native:      ft.HasNativeLayout(),
 		goArgTypes:  goArgTypes,
 		cArgTypes:   cArgTypes,
 		cArgIndex:   cArgIndex,
@@ -215,7 +206,11 @@ func callWindowsCallback(_ *ffi.Signature, ret unsafe.Pointer, args *unsafe.Poin
 	}
 
 	var result uintptr
-	ffi.CallWithEnv(entry.goSig, entry.fn.code, entry.fn.env, unsafe.Pointer(&result), goArgs...)
+	if entry.native {
+		ffi.Call(entry.goSig, entry.fn.code, unsafe.Pointer(&result), goArgs...)
+	} else {
+		ffi.CallWithEnv(entry.goSig, entry.fn.code, entry.fn.env, unsafe.Pointer(&result), goArgs...)
+	}
 	*(*uintptr)(ret) = result
 	KeepAlive(entry.fnValue)
 	KeepAlive(entry.goArgTypes)
@@ -241,12 +236,12 @@ func syscall_compileCallback(fn any, cleanstack bool) uintptr {
 	if GOARCH != "386" {
 		cleanstack = false
 	}
-	callbackFn := (*windowsCallbackFunc)(fnFace.data)
-	if callbackFn == nil || callbackFn.code == nil {
+	callbackFn := decodeCallback(fnFace)
+	if callbackFn.code == nil {
 		panic("compileCallback: expected function with one uintptr-sized result")
 	}
 	key := windowsCallbackKey{
-		code: callbackFn.code, env: callbackFn.env, cleanstack: cleanstack,
+		code: callbackFn.code, env: callbackFn.env, abi: callbackABI(ft), cleanstack: cleanstack,
 	}
 
 	windowsCallbacks.once.Do(initWindowsCallbacks)

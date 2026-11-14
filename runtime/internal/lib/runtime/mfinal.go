@@ -19,11 +19,6 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
-type finalizerClosure struct {
-	fn  unsafe.Pointer
-	env unsafe.Pointer
-}
-
 type finalizerInterfaceArg struct {
 	typeOrItab unsafe.Pointer
 	data       unsafe.Pointer
@@ -120,7 +115,7 @@ func SetFinalizer(obj any, finalizer any) {
 	if !ok {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
-	c := (*finalizerClosure)(finalizerFace.data)
+	c := decodeCallback(finalizerFace)
 	explicitEnv := c.env != nil && ffi.ClosureEnvExplicit
 	sig, argTypes, retSize := newFinalizerFFISignature(ft, explicitEnv, argFFIType)
 	entry := &finalizerEntry{
@@ -172,19 +167,12 @@ func ifacePointerData(e *eface) unsafe.Pointer {
 }
 
 func finalizerFuncType(t *abi.Type) *abi.FuncType {
-	if !t.IsClosure() {
-		return nil
-	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return callbackFuncType(t)
 }
 
 func callFinalizer(entry *finalizerEntry, hasInterfaceArg bool) {
 	face := (*eface)(unsafe.Pointer(&entry.fn))
-	c := (*finalizerClosure)(face.data)
+	c := decodeCallback(face)
 	var ret unsafe.Pointer
 	if entry.retSize != 0 {
 		ret = llruntime.AllocU(entry.retSize)
@@ -194,10 +182,12 @@ func callFinalizer(entry *finalizerEntry, hasInterfaceArg bool) {
 		ptr := entry.arg
 		arg = unsafe.Pointer(&ptr)
 	}
-	if entry.explicitEnv {
-		ffi.CallWithEnv(entry.sig, c.fn, c.env, ret, unsafe.Pointer(&c.env), arg)
+	if face._type.HasNativeLayout() {
+		ffi.Call(entry.sig, c.code, ret, arg)
+	} else if entry.explicitEnv {
+		ffi.CallWithEnv(entry.sig, c.code, c.env, ret, unsafe.Pointer(&c.env), arg)
 	} else {
-		ffi.CallWithEnv(entry.sig, c.fn, c.env, ret, arg)
+		ffi.CallWithEnv(entry.sig, c.code, c.env, ret, arg)
 	}
 	KeepAlive(entry.fn)
 	KeepAlive(entry.sig)

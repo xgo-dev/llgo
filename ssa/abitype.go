@@ -124,6 +124,9 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	if directIfaceType(t) {
 		kind |= uint8(abi.KindDirectIface)
 	}
+	if prog.isStdcallType(t) {
+		kind |= uint8(abi.KindStdcall)
+	}
 	fields = append(fields, prog.IntVal(uint64(kind), prog.Byte()).impl)
 	// Equal func(unsafe.Pointer, unsafe.Pointer) bool
 	var equal Expr
