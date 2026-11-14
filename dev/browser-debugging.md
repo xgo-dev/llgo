@@ -106,7 +106,7 @@ WASI W32 source sessions use a separate local LLDB/Wasmtime transport:
 `llgo debug -target=wasi -wasmtime /path/to/wasmtime-46.0.3`. It executes the
 shared `env.memory`, `wasi.thread-spawn`, real thread exit and EH imports,
 and reuses these runtime-value decoders through stopped-process memory reads.
-See [WASI debugging](../doc/debugging.md#wasi-source-debugging) for version
+See [WASI debugging](../doc/debugging.md) for version
 requirements and qualification. `llgo run -target=wasi` continues to use Wasmer.
 
 ## Qualification
