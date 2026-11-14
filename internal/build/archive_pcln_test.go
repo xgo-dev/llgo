@@ -93,6 +93,23 @@ func TestPackagePCLNArchive(t *testing.T) {
 						t.Fatalf("lines = %#v, want %#v", got, wantLines)
 					}
 				}
+				before, err := os.ReadFile(pkg.ArchiveFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				merged := filepath.Join(t.TempDir(), "exported.a")
+				// Multiple packages carry the same private member name. Remove
+				// every copy from the exported archive, including under LTO.
+				if err := ctx.createMergedArchiveFile(merged, []string{pkg.ArchiveFile, pkg.ArchiveFile}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := readPCLNArchiveMember(merged); err == nil || !strings.Contains(err.Error(), "missing "+packagePCLNMember) {
+					t.Fatalf("exported archive retained compiler mappings: %v", err)
+				}
+				after, err := os.ReadFile(pkg.ArchiveFile)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("export changed the cached archive: %v", err)
+				}
 				ctx.buildConf.PCLNMode = PCLNNone
 				if err := emitPackagePCLN(ctx, pkg); err != nil || len(pkg.ObjBuffers) != 0 {
 					t.Fatalf("PCLN none emitted a carrier: %v", err)

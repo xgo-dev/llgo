@@ -190,7 +190,7 @@ type Config struct {
 	SizeReport         bool   // print size report after successful build
 	SizeFormat         string // size report format: text,json (default text)
 	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // metadata hash for the running compiler (development builds only)
+	CompilerHash       string // content hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
 
@@ -3458,6 +3458,10 @@ func (c *context) createMergedArchiveFile(archivePath string, inputs []string, v
 		}
 		fmt.Fprintf(&script, "%s %s\n", command, strconv.Quote(input))
 	}
+	// Source mappings have already been consumed to build the runtime tables.
+	// Strip every compiler-private carrier from this exported C archive so
+	// whole-archive consumers do not retain it. Input package caches stay intact.
+	fmt.Fprintf(&script, "DELETE %s\n", strconv.Quote(packagePCLNMember))
 	script.WriteString("SAVE\nEND\n")
 
 	arCmd, err := c.archiveMerger()

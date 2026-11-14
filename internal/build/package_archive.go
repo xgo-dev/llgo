@@ -51,8 +51,9 @@ func (c *context) closePackageArchiveBuffers() {
 }
 
 // createPackageArchiveFile writes path-backed auxiliary objects and
-// LLVM-produced memory buffers into one archive. LLVM performs archive symbol
-// indexing in-process; no temporary object is needed for memory members.
+// LLVM-produced memory buffers into one archive. Host-native codegen can use
+// LLVM's in-process writer without temporary objects for memory members;
+// cross-toolchain and self-hosted builds use their selected external archiver.
 func (c *context) createPackageArchiveFile(archivePath string, pkg *aPackage, verbose bool) error {
 	if len(pkg.ObjFiles) == 0 && len(pkg.ObjBuffers) == 0 {
 		return fmt.Errorf("no object files provided for archive %s", archivePath)

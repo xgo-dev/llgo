@@ -292,6 +292,9 @@ Package archives contain a dedicated metadata object with post-backend function
 identities, wrapper flags, and PC-line records. Both fresh and cached archives
 supply these mappings to the linker; reconstructed frontend modules and frontend
 cache exports are not sources for the archived machine code's traceback data.
+The final exported C archive omits these compiler-private members; runtime
+traceback tables are generated before that merge, and cached package archives
+retain their mappings.
 The metadata object is native even with LTO and has no code-address relocations.
 `TestSIMDFMVArchiveCache` checks cold and warm builds through isolated and
 coordinator backends with off/Thin/Full LTO, plus frontend-cache reuse, baseline
