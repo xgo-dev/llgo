@@ -6,6 +6,7 @@ const LLGoFiles = "_wrap/opaque.c"
 
 // A volatile host side effect keeps the leaf's call alive even under full
 // LTO. A write-only Go global can legally disappear with its entire call.
+//
 //go:linkname inlineOpaque C.llgo_debug_inline_opaque
 func inlineOpaque(value int) int
 
