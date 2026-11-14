@@ -37,15 +37,31 @@ func deferCaptureAllocation(value int, callback func()) {
 }
 
 func TestDeferCaptureNoAllocation(t *testing.T) {
-	deferCaptureAllocSink = 0
 	callback := func() {}
 	deferCaptureAllocation(0, callback)
-	before := deferCaptureAllocEvents()
-	for i := 1; i <= 100; i++ {
-		deferCaptureAllocation(i, callback)
+
+	// These counters are process-wide: test timers or another runtime
+	// thread may allocate during a measurement. Require a zero-allocation
+	// run, allowing a few attempts to exclude that unrelated activity.
+	best := ^uint64(0)
+	var checksum int
+	for attempt := 0; attempt < 4; attempt++ {
+		deferCaptureAllocSink = 0
+		before := deferCaptureAllocEvents()
+		for i := 1; i <= 100; i++ {
+			deferCaptureAllocation(i, callback)
+		}
+		after := deferCaptureAllocEvents()
+		checksum = deferCaptureAllocSink
+		if after < before {
+			t.Fatal("allocation profile wrapped")
+		}
+		if delta := after - before; delta < best {
+			best = delta
+		}
+		if best == 0 && checksum == 5050 {
+			return
+		}
 	}
-	after := deferCaptureAllocEvents()
-	if after != before || deferCaptureAllocSink != 5050 {
-		t.Fatalf("100 calls: allocations=%d, checksum=%d; want 0, 5050", after-before, deferCaptureAllocSink)
-	}
+	t.Fatalf("100 calls: allocations=%d, checksum=%d; want 0, 5050", best, checksum)
 }
