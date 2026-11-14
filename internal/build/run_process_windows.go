@@ -25,6 +25,10 @@ import (
 	"time"
 )
 
+func configureNativeTestCancellation(cmd *exec.Cmd) func() {
+	return configureRunnerCancellation(cmd, false)
+}
+
 func configureRunnerCancellation(cmd *exec.Cmd, _ bool) func() {
 	cmd.Cancel = func() error {
 		ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 2*time.Second)

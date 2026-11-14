@@ -103,6 +103,57 @@ finally:
 	}
 }
 
+func TestNativeTestInterruptStopsDescendants(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is needed to exercise process-group signals")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Cleanup(func() { killTimeoutHelper(dir) })
+	const script = `
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[2])
+parent = subprocess.Popen([sys.argv[1], '-test.run=^TestRunnerTimeoutHelper$'],
+                          start_new_session=True,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+child = None
+try:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            child = int((root / 'child.pid').read_text())
+            if (root / 'heartbeat').stat().st_size:
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.02)
+    assert child is not None and (root / 'heartbeat').exists(), 'child did not start'
+    os.killpg(parent.pid, signal.SIGINT)
+    assert parent.wait(timeout=4) != 0, 'interrupted test reported success'
+    before = (root / 'heartbeat').stat().st_size
+    time.sleep(0.3)
+    assert (root / 'heartbeat').stat().st_size == before, 'native test survived its parent interrupt'
+finally:
+    if child is not None:
+        try: os.kill(child, signal.SIGKILL)
+        except ProcessLookupError: pass
+    try: os.killpg(parent.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    parent.wait()
+`
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 12*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, "-c", script, executable, dir)
+	cmd.Env = timeoutHelperCommands(dir, "native-test-runner").environ
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("native test interrupt: %v\n%s", err, output)
+	}
+}
+
 func TestRunnerTestDoesNotTakeForegroundTerminal(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {

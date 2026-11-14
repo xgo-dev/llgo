@@ -28,6 +28,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func configureNativeTestCancellation(*exec.Cmd) func() {
+	// Keep native tests in their caller's group, as cmd/go does. Moving them
+	// to a new group would detach terminal interrupts and job control.
+	return func() {}
+}
+
 func configureRunnerCancellation(cmd *exec.Cmd, attachTerminal bool) func() {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
