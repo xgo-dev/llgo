@@ -1,19 +1,25 @@
 package build
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func lockPCLNTestArchive(t *testing.T) (string, syscall.Handle) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "pkg.a")
-	if err := os.WriteFile(path, []byte("archive contents"), 0600); err != nil {
-		t.Fatal(err)
+func TestPCLNArchiveLockProcess(t *testing.T) {
+	path := os.Getenv("LLGO_TEST_PCLN_LOCK_PATH")
+	if path == "" {
+		t.Skip("subprocess helper")
 	}
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -23,16 +29,77 @@ func lockPCLNTestArchive(t *testing.T) (string, syscall.Handle) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return path, h
+	defer syscall.CloseHandle(h)
+	fmt.Println("locked")
+	// Keep the handle open until the parent closes stdin. Returning normally
+	// also lets TestMain clean up the child process's test resources.
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func lockPCLNTestArchive(t *testing.T) (string, func() error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pkg.a")
+	if err := os.WriteFile(path, []byte("archive contents"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPCLNArchiveLockProcess$")
+	cmd.Env = append(os.Environ(), "LLGO_TEST_PCLN_LOCK_PATH="+path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		t.Fatal(err)
+	}
+	var once sync.Once
+	var waitErr error
+	release := func() error {
+		once.Do(func() {
+			stdin.Close()
+			waitErr = cmd.Wait()
+		})
+		return waitErr
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("archive lock helper: %v\n%s", err, stderr.String())
+		}
+	})
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "locked\n" {
+		t.Fatalf("archive lock helper readiness: %q, %v", line, err)
+	}
+	// Verify the fixture before testing the retry wrapper: a successful open
+	// here must not turn the transient-conflict test into a false positive.
+	f, err := os.Open(path)
+	if f != nil {
+		f.Close()
+	}
+	if !errors.Is(err, syscall.Errno(32)) {
+		t.Fatalf("archive lock helper did not establish a sharing conflict: %v", err)
+	}
+	return path, release
 }
 
 func TestOpenPCLNArchiveSharingViolation(t *testing.T) {
-	path, handle := lockPCLNTestArchive(t)
+	path, release := lockPCLNTestArchive(t)
 	// Release a real conflicting Windows handle while the reader retries.
 	released := make(chan error, 1)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		released <- syscall.CloseHandle(handle)
+		released <- release()
 	}()
 	f, err := openPCLNArchive(path)
 	if f != nil {
@@ -51,8 +118,7 @@ func TestOpenPCLNArchiveSharingViolation(t *testing.T) {
 }
 
 func TestOpenPCLNArchivePersistentSharingViolation(t *testing.T) {
-	path, handle := lockPCLNTestArchive(t)
-	defer syscall.CloseHandle(handle)
+	path, _ := lockPCLNTestArchive(t)
 	start := time.Now()
 	f, err := openPCLNArchive(path)
 	if f != nil {
