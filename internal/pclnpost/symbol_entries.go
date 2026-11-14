@@ -25,17 +25,9 @@ func entryRecords(path string, info *binaryInfo) ([]siteRecord, error) {
 	}
 	var records []siteRecord
 	for _, sym := range info.syms {
-		name := sym.name
-		for {
-			id := fnv64(name)
-			if _, ok := lookupSymIndex(index, id); ok {
-				records = append(records, siteRecord{pc: sym.addr, symbolID: id})
-				break
-			}
-			if info.format != "macho" || len(name) < 2 || name[0] != '_' {
-				break
-			}
-			name = name[1:]
+		id := fnv64(sourceSymbolName(info, sym.name))
+		if _, ok := lookupSymIndex(index, id); ok {
+			records = append(records, siteRecord{pc: sym.addr, symbolID: id})
 		}
 	}
 	return records, nil

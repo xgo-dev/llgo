@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclntab"
 )
@@ -325,23 +326,20 @@ func fnv64(name string) uint64 {
 	return h
 }
 
-// canonicalOwner reports whether owner symbol `name` is the function the
-// record's symbolID names.
-// Mach-O symbol names carry a C-mangling underscore, and debug/macho's
-// suffix-shared string table can surface one underscore more or less than
-// the source-level name, so try each plausible normalization — matching a
-// specific 64-bit FNV makes a false positive practically impossible.
-func canonicalOwner(info *binaryInfo, name string, symbolID uint64) bool {
-	for {
-		if fnv64(name) == symbolID {
-			return true
-		}
-		if info.format == "macho" && len(name) > 1 && name[0] == '_' {
-			name = name[1:]
-			continue
-		}
-		return false
+// sourceSymbolName converts a reader's symbol name to its source-level name.
+// debug/macho already removes the ABI underscore from dotted names. Other
+// Mach-O names still carry exactly one ABI underscore; any others are part of
+// the source name and must survive catalog and owner joins.
+func sourceSymbolName(info *binaryInfo, name string) string {
+	if info.format == "macho" && !strings.Contains(name, ".") {
+		return strings.TrimPrefix(name, "_")
 	}
+	return name
+}
+
+// canonicalOwner reports whether the owner is the function named by symbolID.
+func canonicalOwner(info *binaryInfo, name string, symbolID uint64) bool {
+	return fnv64(sourceSymbolName(info, name)) == symbolID
 }
 
 // dedupe keeps exactly the canonical record per emitting function: a record
@@ -474,13 +472,12 @@ func loadBindTargets(info *binaryInfo, mf *macho.File) {
 			continue
 		}
 		name := cstr(hdr[nameOff:])
-		addr, ok := byName[name]
-		if !ok && len(name) > 1 && name[0] == '_' {
-			// debug/macho's Symtab names may carry one less mangling
-			// underscore than the import strings.
-			addr = byName[name[1:]]
+		// Import strings are raw Mach-O names. Apply the same one-time
+		// transformation as debug/macho before consulting its symbol table.
+		if strings.Contains(name, ".") {
+			name = strings.TrimPrefix(name, "_")
 		}
-		targets[i] = addr
+		targets[i] = byName[name]
 	}
 	info.bindTargets = targets
 }

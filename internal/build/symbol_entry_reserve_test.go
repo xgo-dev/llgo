@@ -68,11 +68,37 @@ func TestSymbolEntryReservationGrowth(t *testing.T) {
 	if _, changed, err := growSymbolEntryReserve("@ordinary = global i32 0", analysis); err != nil || changed {
 		t.Fatalf("ordinary entry IR = %v, %v", changed, err)
 	}
+	if _, _, err := growSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant i64 0", analysis); err == nil {
+		t.Fatal("unexpected reservation declaration accepted")
+	}
 	if _, _, err := growSymbolEntryReserve(source, pclnpost.ExternalAnalysis{}); err == nil {
 		t.Fatal("invalid linked text range accepted")
 	}
 	if _, _, err := growSymbolEntryReserve(source, pclnpost.ExternalAnalysis{TextStart: 1, TextEnd: ^uint64(0)}); err == nil {
 		t.Fatal("text offsets exceeding the runtime's 32-bit format accepted")
+	}
+}
+
+func TestDarwinSymbolEntryRewriteRequired(t *testing.T) {
+	t.Setenv("LLGO_PCLNPOST", "1")
+	sites := true
+	c := &context{linkRuntimeSites: &sites, buildConf: &Config{
+		Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeExe, PCLNMode: PCLNEmbedded, LTO: lto.Full,
+	}}
+	path := filepath.Join(t.TempDir(), "app")
+	const original = "not an executable"
+	if err := os.WriteFile(path, []byte(original), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewritePrebuiltFuncTab(c, path, false); err == nil || !strings.Contains(err.Error(), "build native symbol index") {
+		t.Fatalf("required symbol rewrite failure was lost: %v", err)
+	}
+	c.buildConf.Goos = "linux"
+	if err := rewritePrebuiltFuncTab(c, path, false); err != nil {
+		t.Fatalf("raw-site first-use fallback became mandatory: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != original {
+		t.Fatalf("rewrite failure changed output: %q, %v", raw, err)
 	}
 }
 

@@ -529,3 +529,17 @@ func chainMachOSitePointers(t *testing.T, path string) uint64 {
 	}
 	return pageStartOff
 }
+
+func TestExternalPCLineSitesPreservesUnderscoreOwners(t *testing.T) {
+	info := &binaryInfo{format: "macho", textStart: 0x1000, textEnd: 0x1040,
+		syms: []textSym{
+			{addr: 0x1000, size: 0x10, name: "__probe"},
+			{addr: 0x1010, size: 0x10, name: "___probe"},
+			{addr: 0x1020, size: 0x10, name: "_pkg.F"},
+		},
+	}
+	sites := externalPCLineSites(info, []siteRecord{{pc: 0x1004}, {pc: 0x1014}, {pc: 0x1024}})
+	if len(sites) != 3 || sites[0].OwnerSymbol != "_probe" || sites[1].OwnerSymbol != "__probe" || sites[2].OwnerSymbol != "_pkg.F" {
+		t.Fatalf("source-level owners = %+v", sites)
+	}
+}

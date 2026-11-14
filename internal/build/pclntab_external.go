@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
@@ -139,26 +138,10 @@ func filterExternalPCLNJoins(data *pclnmap.Data, pcSiteOwners []string) error {
 	pcSites := data.PCSites[:0]
 	for i, site := range data.PCSites {
 		funcIndex := pcLines[site.ID]
-		if funcIndex != 0 && externalOwnerFuncIndex(symbols, pcSiteOwners[i], data.GOOS) == funcIndex {
+		if funcIndex != 0 && symbols[funcInfoSymbolID(pcSiteOwners[i])] == funcIndex {
 			pcSites = append(pcSites, site)
 		}
 	}
 	data.PCSites = pcSites
 	return nil
-}
-
-func externalOwnerFuncIndex(symbols map[uint64]uint32, owner, goos string) uint32 {
-	for {
-		if index := symbols[funcInfoSymbolID(owner)]; index != 0 {
-			return index
-		}
-		// Mach-O has one C-mangling underscore, while debug/macho's
-		// suffix-shared string table can expose one more or less. Try the same
-		// candidate sequence as pclnpost.canonicalOwner, stopping as soon as a
-		// real funcinfo symbol joins.
-		if goos != "darwin" || !strings.HasPrefix(owner, "_") {
-			return 0
-		}
-		owner = owner[1:]
-	}
 }
