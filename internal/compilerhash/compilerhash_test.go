@@ -2,128 +2,55 @@ package compilerhash
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestHashMetadataDeterminism(t *testing.T) {
-	resetForTesting()
-
-	const (
-		modTime = int64(1700000000000000000)
-		size    = int64(4096)
-	)
-
-	first, err := hashMetadata(modTime, size)
-	if err != nil {
-		t.Fatalf("hashMetadata returned error: %v", err)
-	}
-	second, err := hashMetadata(modTime, size)
-	if err != nil {
-		t.Fatalf("hashMetadata repeated call error: %v", err)
-	}
-	if first != second {
-		t.Fatalf("hashMetadata is not deterministic: %q vs %q", first, second)
-	}
-
-	zeroSize, err := hashMetadata(modTime, 0)
-	if err != nil {
-		t.Fatalf("hashMetadata zero size error: %v", err)
-	}
-	if zeroSize == "" {
-		t.Fatal("hashMetadata zero size returned empty hash")
-	}
-
-	modTimeChanged, err := hashMetadata(modTime+1, size)
-	if err != nil {
-		t.Fatalf("hashMetadata modTimeChanged error: %v", err)
-	}
-	if modTimeChanged == first {
-		t.Fatalf("hashMetadata should change when mod time changes")
-	}
-
-	sizeChanged, err := hashMetadata(modTime, size+1)
-	if err != nil {
-		t.Fatalf("hashMetadata sizeChanged error: %v", err)
-	}
-	if sizeChanged == first {
-		t.Fatalf("hashMetadata should change when size changes")
-	}
-}
-
-func TestHashMetadataNegativeSize(t *testing.T) {
-	resetForTesting()
-	if _, err := hashMetadata(0, -1); err == nil {
-		t.Fatal("hashMetadata should error for negative size")
-	}
-}
-
-func TestHashMetadataTimestampWriteError(t *testing.T) {
-	resetForTesting()
-	wantErr := errors.New("write timestamp")
-	writeUint64LE = func(ioWriter io.Writer, v uint64) error {
-		return wantErr
-	}
-
-	if _, err := hashMetadata(1, 1); !errors.Is(err, wantErr) {
-		t.Fatalf("hashMetadata error = %v, want %v", err, wantErr)
-	}
-}
-
-func TestHashMetadataSizeWriteError(t *testing.T) {
-	resetForTesting()
-	wantErr := errors.New("write size")
-	call := 0
-	writeUint64LE = func(ioWriter io.Writer, v uint64) error {
-		call++
-		if call == 2 {
-			return wantErr
-		}
-		return nil
-	}
-
-	if _, err := hashMetadata(1, 1); !errors.Is(err, wantErr) {
-		t.Fatalf("hashMetadata error = %v, want %v", err, wantErr)
-	}
-}
-
+// Copies of the same compiler must reuse archives even when the filesystem
+// timestamps differ. Conversely, same-size edits must invalidate them even if
+// a packaging tool preserves the old timestamp.
 func TestCompilerHashFromPath(t *testing.T) {
-	resetForTesting()
-
 	dir := t.TempDir()
-	path := filepath.Join(dir, "llgo-bin")
-	data := []byte("fake binary data")
-	if err := os.WriteFile(path, data, 0o755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	first := filepath.Join(dir, "first")
+	second := filepath.Join(dir, "second")
+	data := []byte("compiler one")
+	timestamp := time.Unix(1735584000, 0)
+	for i, path := range []string{first, second} {
+		if err := os.WriteFile(path, data, 0755); err != nil {
+			t.Fatal(err)
+		}
+		stamp := timestamp.Add(time.Duration(i) * time.Hour)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	modTime := time.Unix(1735584000, 123_000_000)
-	if err := os.Chtimes(path, modTime, modTime); err != nil {
-		t.Fatalf("Chtimes: %v", err)
+	hash := func(path string) string {
+		t.Helper()
+		got, err := compilerHashFromPath(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
 	}
-
-	got, err := compilerHashFromPath(path)
-	if err != nil {
-		t.Fatalf("compilerHashFromPath: %v", err)
+	before := hash(first)
+	if got := hash(second); got != before {
+		t.Errorf("identical compiler contents have different identities: %s != %s", got, before)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
+	if err := os.WriteFile(first, []byte("compiler two"), 0755); err != nil {
+		t.Fatal(err)
 	}
-	want, err := hashMetadata(info.ModTime().UTC().UnixNano(), info.Size())
-	if err != nil {
-		t.Fatalf("hashMetadata: %v", err)
+	if err := os.Chtimes(first, timestamp, timestamp); err != nil {
+		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("compilerHashFromPath = %q, want %q", got, want)
+	if got := hash(first); got == before {
+		t.Error("changed contents retained identity with unchanged size and timestamp")
 	}
-
-	missingPath := filepath.Join(dir, "missing")
-	if _, err := compilerHashFromPath(missingPath); err == nil {
-		t.Fatal("compilerHashFromPath should error for missing file")
+	for _, path := range []string{filepath.Join(dir, "missing"), dir} {
+		if _, err := compilerHashFromPath(path); err == nil {
+			t.Errorf("unreadable compiler %q accepted", path)
+		}
 	}
 }
 
