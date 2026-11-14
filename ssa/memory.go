@@ -88,14 +88,21 @@ func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value
 	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
 		return value
 	}
-	value = b.toStorageValue(b.Prog.aggregateElementType(t, index), value)
+	elem := t.ll.StructElementTypes()[index]
 	layout, ok := b.Prog.structLayout(t)
-	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
+	wrapped := ok && index < len(layout.wrapped) && layout.wrapped[index]
+	physical := elem
+	if wrapped {
+		physical = elem.StructElementTypes()[0]
+	}
+	// The aggregate owns the physical slot. A native field view can still
+	// occupy a widened Go pointer slot on Memory32.
+	value = b.fitLLVMValue(value, b.Prog.aggregateElementType(t, index), physical)
+	if !wrapped {
 		return value
 	}
-	elem := t.ll.StructElementTypes()[index]
-	wrapped := llvm.Undef(elem)
-	return b.impl.CreateInsertValue(wrapped, value, 0, "")
+	aggregate := llvm.Undef(elem)
+	return b.impl.CreateInsertValue(aggregate, value, 0, "")
 }
 
 func (b Builder) unwrapStructField(t Type, index int, value llvm.Value) llvm.Value {
