@@ -24,27 +24,28 @@ import (
 )
 
 func TestCanonicalOwner(t *testing.T) {
-	elf := &binaryInfo{format: "elf"}
-	macho := &binaryInfo{format: "macho"}
-	id := fnv64("example.com/p.F")
 	cases := []struct {
-		info *binaryInfo
-		name string
-		want bool
+		format, name, source string
+		want                 bool
 	}{
-		// ELF: symbol names are source-level.
-		{elf, "example.com/p.F", true},
-		{elf, "example.com/p.G", false},
-		// Mach-O: one C-mangling underscore, and debug/macho's suffix-shared
-		// string table can surface one underscore more or less.
-		{macho, "_example.com/p.F", true},
-		{macho, "example.com/p.F", true},
-		// An LTO inline copy: record id names F but the owner is the host.
-		{macho, "_example.com/p.Host", false},
+		{"elf", "example.com/p.F", "example.com/p.F", true},
+		{"elf", "_probe", "_probe", true},
+		{"elf", "_probe", "probe", false},
+		// Dotted Mach-O names have already lost their ABI underscore.
+		{"macho", "example.com/p.F", "example.com/p.F", true},
+		{"macho", "_example.com/p.F", "example.com/p.F", false},
+		{"macho", "_example.com/p.F", "_example.com/p.F", true},
+		{"macho", "example.com/p.Host", "example.com/p.F", false},
+		// Nondotted names retain exactly one ABI underscore.
+		{"macho", "_probe", "probe", true},
+		{"macho", "__probe", "_probe", true},
+		{"macho", "___probe", "__probe", true},
+		{"macho", "__probe", "probe", false},
+		{"macho", "__probe", "__probe", false},
 	}
 	for _, c := range cases {
-		if got := canonicalOwner(c.info, c.name, id); got != c.want {
-			t.Errorf("canonicalOwner(%s, %q) = %v, want %v", c.info.format, c.name, got, c.want)
+		if got := canonicalOwner(&binaryInfo{format: c.format}, c.name, fnv64(c.source)); got != c.want {
+			t.Errorf("canonicalOwner(%s, %q, %q) = %v, want %v", c.format, c.name, c.source, got, c.want)
 		}
 	}
 }
@@ -143,12 +144,32 @@ func chainedFixupFixture(fixOff, fixSize uint32, format uint32) []byte {
 	return raw
 }
 
+func TestLoadBindTargetsPreservesUnderscores(t *testing.T) {
+	for _, name := range []string{"__pkg.F", "__probe"} {
+		t.Run(name, func(t *testing.T) {
+			raw := chainedFixupFixture(64, 64, 1)
+			copy(raw[64+40:], name+"\x00")
+			mf := &macho.File{Symtab: &macho.Symtab{Syms: []macho.Symbol{
+				{Name: "_pkg.F", Value: 0x1234},
+				{Name: "__pkg.F", Value: 0x5678},
+				{Name: "__probe", Value: 0x1234},
+				{Name: "_probe", Value: 0x5678},
+			}}}
+			info := &binaryInfo{raw: raw}
+			loadBindTargets(info, mf)
+			if len(info.bindTargets) != 1 || info.bindTargets[0] != 0x1234 {
+				t.Fatalf("import %q selected another symbol: %v", name, info.bindTargets)
+			}
+		})
+	}
+}
+
 func TestLoadBindTargetsFormatsAndInvalidImports(t *testing.T) {
 	for _, format := range []uint32{1, 2} {
 		t.Run(string(rune('0'+format)), func(t *testing.T) {
 			raw := chainedFixupFixture(64, 64, format)
-			copy(raw[64+40:], "_target\x00")
-			mf := &macho.File{Symtab: &macho.Symtab{Syms: []macho.Symbol{{Name: "target", Value: 0x1234}}}}
+			copy(raw[64+40:], "_pkg.target\x00")
+			mf := &macho.File{Symtab: &macho.Symtab{Syms: []macho.Symbol{{Name: "pkg.target", Value: 0x1234}}}}
 			info := &binaryInfo{raw: raw}
 			loadBindTargets(info, mf)
 			if len(info.bindTargets) != 1 || info.bindTargets[0] != 0x1234 {

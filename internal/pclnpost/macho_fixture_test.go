@@ -260,11 +260,16 @@ func TestLoadMachOFixture(t *testing.T) {
 // entry section (readVM resolves it through the __DATA section).
 func machoRewriteFixture(t *testing.T, entryPad int) string {
 	t.Helper()
+	return machoRewriteFixtureNamed(t, entryPad, "example.com/p.A", "example.com/p.B")
+}
+
+func machoRewriteFixtureNamed(t *testing.T, entryPad int, nameA, nameB string) string {
+	t.Helper()
 	const base = uint64(0x100000000)
-	fns := []elfFn{{name: "example.com/p.A", size: 0x10}, {name: "example.com/p.B", size: 0x3F000}} // far apart: findfunctab spans many buckets
-	aAddr := base + 0x1000 + fns[0].size                                                            // buildMachO uses size as text offset
+	fns := []elfFn{{name: nameA, size: 0x10}, {name: nameB, size: 0x3F000}} // far apart: findfunctab spans many buckets
+	aAddr := base + 0x1000 + fns[0].size                                    // buildMachO uses size as text offset
 	bAddr := base + 0x1000 + fns[1].size
-	idA, idB := fnv64("example.com/p.A"), fnv64("example.com/p.B")
+	idA, idB := fnv64(nameA), fnv64(nameB)
 
 	// Symbol index table + pointer/count globals live in the entry section
 	// tail so readVM can reach them via the __llgo_fie section.

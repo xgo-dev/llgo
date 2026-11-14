@@ -99,6 +99,33 @@ func TestDarwinLTOObjectLifecycle(t *testing.T) {
 	}
 }
 
+func TestDarwinStagedLTOObjectLifecycle(t *testing.T) {
+	conf := Config{Goos: "darwin", LTO: lto.Full, LinkOptions: LinkOptions{DWARF: DWARFPreserve}}
+	output := filepath.Join(t.TempDir(), "final output")
+	ctx := &context{buildConf: &conf, crossCompile: configurableDebugInfo(), darwinLTOObjectOutput: output}
+	stage := t.TempDir()
+	args, err := darwinLTOObjectArgs(ctx, filepath.Join(stage, "candidate"), ctx.linker(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := args[len(args)-1]
+	if err := os.WriteFile(object, []byte("retained LTO object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(stage); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(object); err != nil || string(data) != "retained LTO object" {
+		t.Fatalf("removing the metadata-link stage invalidated the debug map: %s: %v", object, err)
+	}
+	if err := removeExecutableArtifacts(output, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(object); !os.IsNotExist(err) {
+		t.Fatalf("clean retained staged LTO objects: %v", err)
+	}
+}
+
 func TestDarwinLTOObjectPolicy(t *testing.T) {
 	base := Config{Goos: "darwin", LTO: lto.Full, LinkOptions: LinkOptions{DWARF: DWARFPreserve}}
 	for _, name := range []string{"linux", "no-lto", "named-target", "omit-dwarf", "driver-option", "linker-option", "environment-option"} {

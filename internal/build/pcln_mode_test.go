@@ -257,7 +257,7 @@ func TestFilterExternalPCLNJoins(t *testing.T) {
 			{PCOffset: 0x130, ID: 202},
 		},
 	}
-	if err := filterExternalPCLNJoins(&data, []string{"__example.com/p.A", "_example.com/p.B", "_example.com/p.B"}); err != nil {
+	if err := filterExternalPCLNJoins(&data, []string{"example.com/p.A", "example.com/p.B", "example.com/p.B"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(data.EntrySites) != 1 || data.EntrySites[0] != (pclnmap.Site{PCOffset: 0x100, ID: idA}) {
@@ -266,5 +266,24 @@ func TestFilterExternalPCLNJoins(t *testing.T) {
 	wantPCSites := []pclnmap.Site{{PCOffset: 0x110, ID: 101}, {PCOffset: 0x130, ID: 202}}
 	if !reflect.DeepEqual(data.PCSites, wantPCSites) {
 		t.Fatalf("pcline sites = %#v, want %#v", data.PCSites, wantPCSites)
+	}
+}
+
+func TestFilterExternalPCLNJoinsPreservesUnderscoreOwners(t *testing.T) {
+	id := funcInfoSymbolID("probe")
+	data := pclnmap.Data{
+		GOOS:        "darwin",
+		Table:       buildfuncinfo.Table{PCLines: []buildfuncinfo.EncodedPCLineRecord{{ID: 1, Func: 1}}},
+		SymbolIndex: []pclnmap.SymbolIndexEntry{{SymbolID: id, FuncIndex: 1}},
+		EntrySites:  []pclnmap.Site{{PCOffset: 0x100, ID: id}},
+		PCSites:     []pclnmap.Site{{PCOffset: 0x110, ID: 1}, {PCOffset: 0x120, ID: 1}},
+	}
+	// These are source names, normalized by pclnpost. A line copied into
+	// an unrelated _probe must not be joined to probe by stripping its name.
+	if err := filterExternalPCLNJoins(&data, []string{"probe", "_probe"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(data.PCSites, []pclnmap.Site{{PCOffset: 0x110, ID: 1}}) {
+		t.Fatalf("significant owner underscore was lost: %+v", data.PCSites)
 	}
 }

@@ -731,6 +731,12 @@ jobs:
         env:
           LLGO_LLDB: /usr/bin/lldb
         run: bash test/debug/runtime/runtest.sh -v
+      - name: LTO source locations and native LLDB acceptance (Intel)
+        env:
+          LLGO_LLDB: /usr/bin/lldb
+        run: |
+          go test ./internal/build -run '^TestDWARFPCLNLineSites$' -count=1 -timeout=10m
+          bash test/debug/native/runtest.sh
       # GDB 17/18 cannot load dyld 17 shared libraries or unwind blocked
       # system frames here; a plain pthread C control reproduces the failure.
       # Keep TestGDBCompleteWorkerUnwind strict and separately runnable.

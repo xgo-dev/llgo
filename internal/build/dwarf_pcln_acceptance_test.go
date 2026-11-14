@@ -23,6 +23,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 const dwarfPCLNProbe = `package main
@@ -57,6 +60,22 @@ func checkFrames() {
 		if !more {
 			panic("checkFrames frame missing")
 		}
+	}
+}
+
+//go:noinline
+func deferredCaller(file *string, line *int) {
+	defer func() {
+		_, *file, *line, _ = runtime.Caller(1)
+	}()
+} // DEFER_MARK
+
+func checkDeferredLine() {
+	var file string
+	var line int
+	deferredCaller(&file, &line)
+	if !strings.HasSuffix(file, "main.go") || line != DEFER_LINE {
+		panic("bad deferred caller: " + file + ":" + strconv.Itoa(line))
 	}
 }
 
@@ -97,14 +116,33 @@ func main() {
 
 	checkCaller()
 	checkFrames()
+	checkDeferredLine()
 	checkRecoveredPanic()
+	checkLineDirectives()
 	os.Stdout.WriteString("PCLN_DWARF_OK\n")
+}
+
+//go:noinline
+func checkDirective(want string) {
+	_, file, line, ok := runtime.Caller(1)
+	if !ok || file != want || line != 1 { panic("wrong Caller directive: " + file) }
+	var pcs [1]uintptr
+	if runtime.Callers(2, pcs[:]) != 1 { panic("missing caller") }
+	frame, _ := runtime.CallersFrames(pcs[:]).Next()
+	if frame.File != want || frame.Line != 1 { panic("wrong CallersFrames directive: " + frame.File) }
+}
+
+func checkLineDirectives() {
+//line caller-first.go:1
+	checkDirective("caller-first.go")
+//line caller-second.go:1
+	checkDirective("caller-second.go")
 }
 `
 
 func TestDWARFPCLNLineSites(t *testing.T) {
 	source := dwarfPCLNProbe
-	for _, marker := range []string{"CALLER", "FRAMES", "LOG"} {
+	for _, marker := range []string{"CALLER", "FRAMES", "LOG", "DEFER"} {
 		source = strings.ReplaceAll(source, marker+"_LINE", strconv.Itoa(dwarfPCLNMarkerLine(source, marker+"_MARK")))
 	}
 	dir := t.TempDir()
@@ -113,16 +151,41 @@ func TestDWARFPCLNLineSites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conf := NewDefaultConf(ModeBuild)
-	conf.OutFile = filepath.Join(dir, "probe")
-	if runtime.GOOS == "windows" {
-		conf.OutFile += ".exe"
+	type buildMode struct {
+		mode  lto.Mode
+		level optlevel.Level
 	}
-	if _, err := Do([]string{file}, conf); err != nil {
-		t.Fatal(err)
+	modes := []buildMode{{lto.Off, optlevel.Unset}}
+	if runtime.GOOS == "darwin" {
+		modes = append(modes, buildMode{lto.Thin, optlevel.Unset},
+			buildMode{lto.Full, optlevel.Unset})
 	}
-	if out := runBinary(t, conf.OutFile); !strings.Contains(out, "PCLN_DWARF_OK") {
-		t.Fatalf("unexpected DWARF PCLN probe output: %s", out)
+	modes = append(modes, buildMode{lto.Full, optlevel.O3})
+	for _, test := range modes {
+		name := test.mode.String() + "-" + test.level.String()
+		t.Run(name, func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.LTO = test.mode
+			if test.level.IsValid() {
+				conf.OptLevel = test.level
+			}
+			conf.OutFile = filepath.Join(dir, "probe-"+name)
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Do([]string{file}, conf); err != nil {
+				t.Fatal(err)
+			}
+			if out := runBinary(t, conf.OutFile); !strings.Contains(out, "PCLN_DWARF_OK") {
+				t.Fatalf("unexpected DWARF PCLN probe output: %s", out)
+			}
+			if runtime.GOOS == "darwin" && conf.LTO.Enabled() {
+				objects, err := os.ReadDir(darwinLTOObjectDir(conf.OutFile))
+				if err != nil || len(objects) != 1 {
+					t.Fatalf("metadata relink retained obsolete LTO objects: %v, %v", objects, err)
+				}
+			}
+		})
 	}
 }
 

@@ -17,6 +17,7 @@
 package build
 
 import (
+	"os"
 	"sort"
 	"strings"
 
@@ -24,6 +25,7 @@ import (
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
+	"github.com/xgo-dev/llgo/internal/pclnpost"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -457,6 +459,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	emitSites := shouldEmitRuntimeSites(ctx)
 	emitEntrySites := shouldEmitRuntimeEntrySites(ctx) && len(encoded.Records) != 0
 	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), siteFormat, entrySiteInfo, emitSites && len(pcLineValues) != 0, emitEntrySites)
+	if darwinSymbolEntries(ctx) {
+		emitSymbolEntryReserve(mod, entrySiteInfo, len(encoded.Records))
+	}
 	if emitEntrySites {
 		entryStart, entryEnd := emitRuntimeSiteBoundaries(
 			mod, funcEntryRecordType, ctx.prog.PointerSize(), siteFormat,
@@ -731,14 +736,41 @@ func shouldEmitRuntimeSites(ctx *context) bool {
 
 // Entry-block inline assembly disturbs LLDB's initial lexical scope on Darwin.
 // PC-line anchors carry no source location and remain safe with DWARF. External
-// pclntab still needs final entry addresses to construct its sidecar.
+// pclntab still needs final entry addresses to construct its sidecar. Embedded
+// Darwin LTO executables collect them through a data-only symbol carrier.
 func shouldEmitRuntimeEntrySites(ctx *context) bool {
 	if !shouldEmitRuntimeSites(ctx) {
 		return false
 	}
 	conf := ctx.buildConf
-	return conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
+	return darwinSymbolEntries(ctx) || conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
 		!shouldEmitDebugInfo(conf, &ctx.crossCompile)
+}
+
+func darwinSymbolEntries(ctx *context) bool {
+	return ctx != nil && ctx.buildConf != nil && shouldEmitRuntimeSites(ctx) &&
+		ctx.buildConf.Goos == "darwin" && ctx.buildConf.BuildMode == BuildModeExe &&
+		ctx.buildConf.PCLNMode == PCLNEmbedded && ctx.buildConf.ltoEnabled() &&
+		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
+		shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) && os.Getenv("LLGO_PCLNPOST") != "0"
+}
+
+func emitSymbolEntryReserve(mod llvm.Module, info siteSectionInfo, count int) {
+	ctx := mod.Context()
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	// The link phase grows this reservation if final text needs more buckets.
+	bytes := llvm.ArrayType(ctx.Int8Type(), count*32+4096)
+	typ := ctx.StructType([]llvm.Type{ctx.Int64Type(), ptr, bytes}, false)
+	reserve := llvm.AddGlobal(mod, typ, "__llgo_funcinfo_entry_reserve")
+	reserve.SetInitializer(ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int64Type(), pclnpost.SymbolEntryCarrierMagic, false),
+		llvm.ConstBitCast(reserve, ptr), llvm.ConstNull(bytes),
+	}, false))
+	reserve.SetLinkage(llvm.PrivateLinkage)
+	reserve.SetGlobalConstant(true)
+	reserve.SetAlignment(8)
+	reserve.SetSection(info.machO + ",regular,live_support")
+	appendLLVMUsed(mod, reserve)
 }
 
 // siteSectionInfo names one metadata site section in each supported object format.
@@ -859,7 +891,7 @@ func emitRuntimeSiteBoundaries(mod llvm.Module, recordType llvm.Type, pointerSiz
 }
 
 func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
-	if !shouldEmitRuntimeEntrySites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
+	if !shouldEmitRuntimeEntrySites(ctx) || darwinSymbolEntries(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}
 	mod := pkg.Module()

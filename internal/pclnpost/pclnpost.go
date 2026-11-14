@@ -39,9 +39,9 @@ type Stats struct {
 // Rewrite parses the linked binary's funcinfo site sections, deduplicates
 // LTO inline copies against the symbol table, builds the Go-layout prebuilt
 // table, stages a compact executable image, and atomically replaces the input.
-// The runtime adopts the table when it sees the magic header and falls back
-// to first-use construction otherwise, so failures here leave a fully
-// functional and byte-for-byte unchanged binary.
+// The runtime adopts the table when it sees the magic header. Raw-site
+// carriers support first-use construction; symbol-only carriers require a
+// successful rewrite. Any failure leaves the input byte-for-byte unchanged.
 func Rewrite(path string) (Stats, error) {
 	var st Stats
 	info, err := load(path)
@@ -54,7 +54,10 @@ func Rewrite(path string) (Stats, error) {
 			return st, fmt.Errorf("already rewritten")
 		}
 	}
-	entries := parseRecords(info, info.entrySec)
+	entries, err := entryRecords(path, info)
+	if err != nil {
+		return st, err
+	}
 	st.EntryRecords = len(entries)
 	if len(entries) == 0 {
 		return st, fmt.Errorf("no entry records")
