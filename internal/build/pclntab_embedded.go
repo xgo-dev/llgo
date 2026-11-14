@@ -139,8 +139,12 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	if err != nil {
 		return fmt.Errorf("prune embedded pclntab: %w", err)
 	}
+	entryIR, grown, err := growSymbolEntryReserve(plan.entryIR, analysis)
+	if err != nil {
+		return err
+	}
 	if len(pruned.Table.Records) == len(plan.embeddedPCLN.Table.Records) &&
-		len(pruned.Table.PCLines) == len(plan.embeddedPCLN.Table.PCLines) {
+		len(pruned.Table.PCLines) == len(plan.embeddedPCLN.Table.PCLines) && !grown {
 		return nil
 	}
 	dir, err := os.MkdirTemp(filepath.Dir(output), ".llgo-pcln-link-*")
@@ -149,7 +153,7 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	}
 	defer os.RemoveAll(dir)
 	ir := filepath.Join(dir, "entry.ll")
-	if err := os.WriteFile(ir, []byte(plan.entryIR), 0o600); err != nil {
+	if err := os.WriteFile(ir, []byte(entryIR), 0o600); err != nil {
 		return err
 	}
 	if err := rewriteEmbeddedPCLNIR(ir, pruned); err != nil {
@@ -168,6 +172,11 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	final, err := linker.analyze(candidate)
 	if err != nil {
 		return fmt.Errorf("verify compact embedded pclntab: %w", err)
+	}
+	if _, growAgain, err := growSymbolEntryReserve(entryIR, final); err != nil {
+		return err
+	} else if growAgain {
+		return fmt.Errorf("linked text outgrew the symbol entry reservation")
 	}
 	// Recompute from the original catalog: using only the pruned catalog here
 	// would hide a newly-live function whose metadata we had removed.

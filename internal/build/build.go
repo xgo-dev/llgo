@@ -2544,29 +2544,33 @@ func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
 // linked executable: it deduplicates LTO inline copies of the funcinfo entry
 // records against the symbol table and replaces the entry section with a
 // sorted ftab plus findfunctab that the runtime adopts zero-copy (see
-// internal/pclnpost and doc/design/pclntab-linkphase.md). Any failure leaves
-// the binary fully functional on the first-use construction fallback.
-func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
+// internal/pclnpost and doc/design/pclntab-linkphase.md). Raw entry carriers
+// support first-use fallback; symbol-only carriers require materialization.
+func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) error {
 	if !shouldEmitRuntimeEntrySites(ctx) {
-		return
+		return nil
 	}
 	if ctx.buildConf.BuildMode != BuildModeExe {
-		return
+		return nil
 	}
 	if os.Getenv("LLGO_PCLNPOST") == "0" { // escape hatch: keep first-use construction
-		return
+		return nil
 	}
 	st, err := pclnpost.Rewrite(out)
 	if err != nil {
+		if darwinSymbolEntries(ctx) {
+			return fmt.Errorf("build native symbol index: %w", err)
+		}
 		if verbose {
 			fmt.Fprintf(os.Stderr, "llgo: prebuilt functab rewrite skipped: %v\n", err)
 		}
-		return
+		return nil
 	}
 	if verbose {
 		fmt.Fprintf(os.Stderr, "llgo: prebuilt functab: %d entries (%d LTO inline copies removed), %d buckets, %d carrier bytes removed\n",
 			st.FtabEntries, st.InlineCopies, st.Buckets, st.CarrierBytesRemoved)
 	}
+	return nil
 }
 
 type mainLinkPlan struct {

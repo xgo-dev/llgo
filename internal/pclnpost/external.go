@@ -85,7 +85,10 @@ func AnalyzeExternal(path string) (ExternalAnalysis, error) {
 		}
 	}
 
-	entries := parseRecords(info, info.entrySec)
+	entries, err := entryRecords(path, info)
+	if err != nil {
+		return out, err
+	}
 	pcLines := parseRecords(info, info.pcLineSec)
 	out.EntryRecords = len(entries)
 	out.PCLineRecords = len(pcLines)

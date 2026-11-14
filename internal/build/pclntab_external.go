@@ -32,7 +32,9 @@ func finalizeRuntimePCLN(ctx *context, out *OutFmtDetails, verbose bool) error {
 	}
 	switch ctx.buildConf.PCLNMode {
 	case PCLNEmbedded:
-		rewritePrebuiltFuncTab(ctx, out.Out, verbose)
+		if err := rewritePrebuiltFuncTab(ctx, out.Out, verbose); err != nil {
+			return err
+		}
 		// A successful non-external rebuild owns this conventional sibling
 		// path and must not leave a stale optional artifact behind.
 		_ = os.Remove(pclnSidecarPath(out.Out))
