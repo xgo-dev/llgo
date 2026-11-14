@@ -2423,8 +2423,14 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		fields = append(fields, toFFIType(fs.Typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
-	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
-	// Go-visible size without consuming registers in llgo's callable ABI.
+	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
+	// without changing llgo's callable ABI. HostLayout keeps that tail
+	// protection in LLVM storage, including in enclosing aggregates, so
+	// the FFI description must match Size_ wherever that padding is also
+	// part of the calling convention.
+	if off < typ.Size_ && structHasHostLayout(typ) && ffiHostLayoutTailPadding {
+		fields, off = appendFFIPadding(fields, off, typ.Size_-off)
+	}
 	return ffi.StructOf(fields...)
 }
 
