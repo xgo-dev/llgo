@@ -42,7 +42,7 @@ func zero(s []struct{}) []struct{} { return append(s, struct{}{}) }
 				}
 				for _, name := range []string{"encoder.AppendWord", "(*encoder).appendPointer"} {
 					if body := llvmFunction(t, ir, "appendalloc."+name); strings.Contains(body, "runtime.Alloc") {
-						t.Errorf("unreferenced private method retains temporary heap allocation:\n%s", body)
+						t.Errorf("%s (method on unexported type) retains temporary heap allocation:\n%s", name, body)
 					}
 				}
 				for _, name := range []string{"escaped", "escapedTwo", "addressEscapes", "(*encoder).escaped"} {

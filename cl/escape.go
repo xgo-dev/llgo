@@ -77,9 +77,11 @@ func (p *context) analyzeEscapeCached(cache *goescape.Cache) *goescape.Result {
 	for fn := range ssautil.AllFunctions(p.goProg) {
 		roots = append(roots, fn)
 	}
-	// AllFunctions can omit private named types unless a current caller or
-	// runtime type reaches them. The backend emits their methods regardless;
-	// include them so archives do not depend on which client builds first.
+	// AllFunctions can omit methods of private types unless a current caller
+	// or runtime type reaches them. The backend emits those methods regardless.
+	// The default driver has no frontend-cache method inventory, and compiler
+	// API callers may supply only partial EscapeRoots. Include package methods
+	// so archives do not depend on which client builds first.
 	for _, pkg := range p.goProg.AllPackages() {
 		roots = append(roots, collectRuntimeCallerMethods(pkg, nil)...)
 	}

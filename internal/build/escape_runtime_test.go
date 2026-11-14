@@ -12,6 +12,9 @@ import (
 )
 
 func TestAppendUint32CachedPrivateMethod(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the cached AppendUint32 regression")
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
