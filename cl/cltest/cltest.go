@@ -90,7 +90,8 @@ func WithOutputFilter(filter func(string) string) RunOption {
 	}
 }
 
-// WithOutputCheck enables or disables runtime output golden checks.
+// WithOutputCheck enables runtime tests selected by expect.txt. Disabling it
+// leaves IR checks enabled; metadata checks can still require execution.
 func WithOutputCheck(enabled bool) RunOption {
 	return func(opts *runOptions) {
 		opts.checkOutput = enabled
@@ -162,7 +163,7 @@ func RunAndTestFromDir(t *testing.T, sel, relDir string, ignore []string, opts .
 		relPkg = "./" + filepath.ToSlash(relPkg)
 		if _, ok := ignoreSet[relPkg]; ok {
 			t.Run(name, func(t *testing.T) {
-				t.Skip("skip platform-specific output mismatch")
+				t.Skip("skip platform-specific fixture")
 			})
 			continue
 		}
@@ -729,6 +730,19 @@ func doWithConf(relPkg, pkgDir string, conf *build.Config, action string) ([]byt
 
 func assertExpectedOutput(t *testing.T, pkgDir string, expectedOutput, output []byte, opts runOptions) {
 	t.Helper()
+	if isRunOnlyGolden(expectedOutput) {
+		if opts.conf != nil && opts.conf.Emulator {
+			// Bare-metal emulators can exit successfully after a runtime trap.
+			// Inspect the raw output before a filter can discard diagnostics.
+			for _, line := range strings.Split(string(output), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "fatal error" || strings.HasPrefix(line, "fatal error:") || strings.HasPrefix(line, "panic:") {
+					t.Fatalf("emulator runtime failure: %s", line)
+				}
+			}
+		}
+		return
+	}
 	if opts.filter != nil {
 		output = []byte(opts.filter(string(output)))
 	}
@@ -745,31 +759,46 @@ func normalizeGoldenNewlines(data []byte) []byte {
 }
 
 func readGolden(file string) ([]byte, bool, error) {
+	_, data, err := ReadGolden(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	return data, err == nil && !isIROnlyGolden(data), err
+}
+
+// ReadGolden reads the toolchain-specific golden when present, otherwise file.
+// It returns the selected path so refresh tools update the same file tests use.
+func ReadGolden(file string) (string, []byte, error) {
 	if versioned, ok := goldenForGoVersion(file, runtime.Version()); ok {
 		data, err := os.ReadFile(versioned)
 		if err == nil {
-			return data, !isIROnlyGolden(data), nil
+			return versioned, data, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return nil, false, err
+			return versioned, nil, err
 		}
 	}
 	data, err := os.ReadFile(file)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	if isIROnlyGolden(data) {
-		return data, false, nil
-	}
-	return data, true, nil
+	return file, data, err
+}
+
+// IsOutputMarker reports whether data selects run-only or IR-only execution.
+// A marker permits one final LF or CRLF, but no other surrounding whitespace.
+func IsOutputMarker(data []byte) bool {
+	return isIROnlyGolden(data) || isRunOnlyGolden(data)
 }
 
 func isIROnlyGolden(data []byte) bool {
+	return goldenMarker(data, "; ir-only")
+}
+
+func isRunOnlyGolden(data []byte) bool {
+	return goldenMarker(data, ";")
+}
+
+func goldenMarker(data []byte, marker string) bool {
 	data = normalizeGoldenNewlines(data)
-	return bytes.Equal(bytes.TrimSuffix(data, []byte{'\n'}), []byte{';'})
+	return bytes.Equal(bytes.TrimSuffix(data, []byte{'\n'}), []byte(marker))
 }
 
 func goldenForGoVersion(file, goVersion string) (string, bool) {
