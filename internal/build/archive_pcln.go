@@ -171,7 +171,7 @@ func loadPackagePCLN(pkg Package) error {
 // members (including GNU name/symbol tables) can be skipped without loading
 // machine code. BSD archives put even short filenames in the member payload.
 func readPCLNArchiveMember(path string) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := openPCLNArchive(path)
 	if err != nil {
 		return nil, err
 	}
