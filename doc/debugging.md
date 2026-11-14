@@ -86,7 +86,7 @@ The automatic backend depends on the selected target:
 | --- | --- | --- |
 | Native Darwin/Linux/Windows | LLDB | Local process |
 | Non-Wasm embedded | GDB | Target `debug-server`, OpenOCD, or `-remote` |
-| WASI | Unavailable | W32 pthread execution uses Wasmer; source debugging is a subsequent phase |
+| WASI W32 | LLDB + Wasmtime 46.x | Local process (`-wasmtime` / `LLGO_WASMTIME`) |
 | Browser Wasm | Chrome DevTools | LLGo language extension and the generated Emscripten host |
 
 Use `-backend=gdb` or `-backend=lldb` to override a native or GDB Remote
@@ -142,8 +142,8 @@ support. Likewise, these Cortex-M tests do not establish LLDB support for every
 embedded LLVM target. Other RISC-V boards and probes require their own
 acceptance; AVR and Xtensa must use a debugger that implements those targets.
 No physical probe is exercised in ordinary CI. Browser sessions use the
-separate DevTools frontend contribution; the current threaded WASI runtime
-does not gain a source-debugger frontend from this remote-debugging matrix.
+separate DevTools frontend. WASI sessions use the local Wasmtime/LLDB transport
+described below; they are not part of this embedded remote-debugging matrix.
 
 Native runtime inspection has additional debugger-specific limits. Current
 GDB acceptance on the following hosts is partial; use LLDB when complete

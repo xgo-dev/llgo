@@ -102,12 +102,12 @@ keep the raw code/data view. Dynamic table rebinding is outside this static
 mapping contract. Inspection never calls the function. Container expansion is
 bounded to 100 elements and map scans to 4096 buckets.
 
-WASI source sessions remain unavailable for current W32 pthread artifacts.
-Their shared `env.memory`, `wasi.thread-spawn` and `wasix_32v1.thread_exit` imports
-require a compatible runtime debugger; the current Wasmtime backend cannot
-provide that contract. `llgo debug -target=wasi` reports the limitation and
-`llgo run -target=wasi` continues to use Wasmer. No thread imports are replaced
-with synthetic stubs.
+WASI W32 source sessions use a separate local LLDB/Wasmtime transport:
+`llgo debug -target=wasi -wasmtime /path/to/wasmtime-46.0.3`. It executes the
+shared `env.memory`, `wasi.thread-spawn`, real thread exit and EH imports,
+and reuses these runtime-value decoders through stopped-process memory reads.
+See [WASI debugging](../doc/debugging.md#wasi-source-debugging) for version
+requirements and qualification. `llgo run -target=wasi` continues to use Wasmer.
 
 ## Qualification
 

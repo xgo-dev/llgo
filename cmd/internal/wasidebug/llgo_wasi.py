@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import lldb
 
@@ -14,9 +15,21 @@ DIRECTORY = Path(__file__).resolve().parent
 INDEX = json.loads((DIRECTORY / 'index.json').read_text(encoding='utf-8'))
 SCHEMA = json.loads((DIRECTORY / 'schema.json').read_text(encoding='utf-8'))
 TYPES = {value['id']: value for value in INDEX['types']}
+FUNCTIONS = {}
+VARIABLES = {}
+for function in INDEX.get('functions') or []:
+    FUNCTIONS.setdefault(function['name'], []).append(function)
+for variable in INDEX.get('variables') or []:
+    if variable['scope'] != 'GLOBAL':
+        VARIABLES.setdefault(variable['name'], []).append(variable)
+_BASE_CACHE = None
 
 
 def _memory_base(process):
+    global _BASE_CACHE
+    key = (process.GetUniqueID(), process.GetStopID())
+    if _BASE_CACHE is not None and _BASE_CACHE[0] == key:
+        return _BASE_CACHE[1]
     spec = SCHEMA['runtime_layouts'][str(INDEX['record']['runtime_layout_version'])]['wasm_memory']
     offset = spec['anchor_offset']
     bases = set()
@@ -29,7 +42,9 @@ def _memory_base(process):
                     bases.add(address - offset)
     if len(bases) != 1:
         raise ValueError('no stable guest memory base; stop in an LLGo guest frame')
-    return bases.pop()
+    base = bases.pop()
+    _BASE_CACHE = (key, base)
+    return base
 
 
 def _local_request(frame, expression, base):
@@ -39,10 +54,11 @@ def _local_request(frame, expression, base):
     if value.GetError().Fail():
         raise ValueError('variable is unavailable: ' + str(value.GetError()))
     function = frame.GetFunctionName() or ''
-    functions = [f for f in INDEX['functions'] if function == f['name'] or
-                 function.startswith(f['name'] + '(')]
-    candidates = [v for v in INDEX['variables'] if v['name'] == expression and
-                  v['scope'] != 'GLOBAL' and any(
+    # LLDB may append a signature, including receiver parentheses. Match the
+    # exact name and each possible signature boundary without scanning INDEX.
+    names = [function] + [function[:i] for i, char in enumerate(function) if char == '(']
+    functions = [f for name in names for f in FUNCTIONS.get(name, [])]
+    candidates = [v for v in VARIABLES.get(expression, []) if any(
                       r['start'] < s['end'] and s['start'] < r['end']
                       for f in functions for r in f['ranges'] for s in v.get('ranges', []))]
     types = {v['type'] for v in candidates}
@@ -91,8 +107,15 @@ def inspect(debugger, expression, depth=2):
         if (process.GetState() != lldb.eStateStopped or process.GetStopID() != stop or
                 process.GetUniqueID() != identity):
             raise ValueError('process resumed or stop changed; inspect the current stop again')
-    with subprocess.Popen([node, str(DIRECTORY / 'decoder.js')], stdin=subprocess.PIPE,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+    # A pipe which is only read on failure can fill and deadlock a decoder
+    # writing diagnostics. Keep stderr separate from the stdout RPC stream.
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8', errors='replace') as errors, \
+            subprocess.Popen([node, str(DIRECTORY / 'decoder.js')], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=errors, text=True) as child:
+        def diagnostic():
+            errors.seek(0)
+            return errors.read(65536)
+
         timer = threading.Timer(30, child.kill)
         timer.start()
         reads, total = 0, 0
@@ -123,10 +146,10 @@ def inspect(debugger, expression, depth=2):
                 child.stdin.write(json.dumps(response) + '\n')
                 child.stdin.flush()
             else:
-                raise ValueError('WASI value decoder failed or timed out: ' + child.stderr.read())
+                raise ValueError('WASI value decoder failed or timed out: ' + diagnostic())
             child.wait(timeout=5)
             if child.returncode:
-                raise ValueError('WASI value decoder failed: ' + child.stderr.read())
+                raise ValueError('WASI value decoder failed: ' + diagnostic())
             stable()
             return result
         finally:

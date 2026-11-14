@@ -4,6 +4,7 @@ package wasidebug
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -11,11 +12,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xgo-dev/llgo/internal/browserdebug"
 	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
+
+func TestAdapterTransport(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is unavailable")
+	}
+	_, plugin, err := Prepare(t.TempDir(), sessionFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, python, "testdata/adapter_test.py", plugin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("WASI adapter transport: %v\n%s", err, output)
+	}
+}
 
 func sessionFixture(t *testing.T) *browserdebug.Bundle {
 	t.Helper()

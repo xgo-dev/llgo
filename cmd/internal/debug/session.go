@@ -102,7 +102,7 @@ func selectBackend(requested backend, kind targetKind) (backend, error) {
 		switch kind {
 		case targetWASI:
 			if requested != backendWasmtime {
-				return "", wasiDebuggerUnavailable()
+				return "", wasiBackendRequired()
 			}
 		case targetBrowser:
 			if requested != backendBrowser {
@@ -202,7 +202,7 @@ func runSession(s session, stdin io.Reader, stdout, stderr io.Writer) error {
 	return debugErr
 }
 
-func wasiDebuggerUnavailable() error {
+func wasiBackendRequired() error {
 	return errors.New("llgo debug: WASI source sessions use -backend=wasmtime with LLDB; select the Wasmtime executable with -wasmtime or LLGO_WASMTIME")
 }
 
