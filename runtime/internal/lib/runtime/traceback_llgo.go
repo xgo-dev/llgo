@@ -11,8 +11,14 @@ func appendTracebackHeader(out []byte) []byte {
 }
 
 func tracebackFrame(frame Frame) traceback.Frame {
+	pc := frame.PC
+	if prebuiltTextContains(pc) {
+		// Stack trace offsets use the physical return PC; public Frame.PC
+		// identifies the call instruction. Synthetic PCs keep their encoding.
+		pc++
+	}
 	return traceback.Frame{
-		PC: frame.PC, Entry: frame.Entry, Function: frame.Function,
+		PC: pc, Entry: frame.Entry, Function: frame.Function,
 		File: frame.File, Line: frame.Line,
 	}
 }
