@@ -276,6 +276,8 @@ func TestCrossPackageInlinePatchedMethodGuards(t *testing.T) {
 		{name: "different parameters", replacement: "type T int64\nfunc (T) Value(int64) int64 { return 2 }"},
 		{name: "different result", replacement: "type T int64\nfunc (T) Value() uint64 { return 2 }"},
 		{name: "missing body", replacement: "type T int64\nfunc (T) Value() int64"},
+		{name: "declaration package", original: "const LLGoPackage = \"decl\"\n" + original, replacement: replacement},
+		{name: "declaration replacement", replacement: "const LLGoPackage = \"decl\"\n" + replacement},
 		{name: "original noinline", original: strings.Replace(original, "func", "//go:noinline\nfunc", 1), replacement: replacement},
 		{name: "replacement noinline", replacement: strings.Replace(replacement, "func", "//go:noinline\nfunc", 1)},
 		{name: "generic original", original: "type T[A any] int64\nfunc (x T[A]) Value() int64 { return int64(x) }", replacement: replacement},

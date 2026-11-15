@@ -192,16 +192,9 @@ func (f *frontendCache) importBodies() error {
 				if !ok {
 					continue
 				}
-				target := call.Common().StaticCallee()
+				target := cl.ResolveInlineTarget(call.Common().StaticCallee(), f.ctx.patches)
 				if target == nil {
 					continue
-				}
-				if target.Pkg != nil && target.Signature.Recv() == nil {
-					if patch, ok := f.ctx.patches[target.Pkg.Pkg.Path()]; ok {
-						if replacement := patch.Alt.Func(target.Name()); replacement != nil {
-							target = replacement
-						}
-					}
 				}
 				if cost, ok := costs[frontcache.FunctionID(target, f.types)]; ok && cost <= bodyBudget {
 					if owner := f.owners[target.Pkg]; owner != nil && !f.built[target.Pkg] {

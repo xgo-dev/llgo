@@ -90,3 +90,23 @@ func TestCrossPackageInlineWithCachedDependency(t *testing.T) {
 		}
 	}
 }
+
+func TestCrossPackageInlineDeclarationOnly(t *testing.T) {
+	t.Setenv(llgoBuildCache, "0")
+	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2, optlevel.O3} {
+		t.Run(level.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = level, lto.Off
+			conf.OutFile = filepath.Join(t.TempDir(), "program")
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Do([]string{"./testdata/crossinlinedecl"}, conf); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(runBinary(t, conf.OutFile)); got != "42" {
+				t.Fatalf("linked method returned %s, want 42", got)
+			}
+		})
+	}
+}

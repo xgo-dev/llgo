@@ -157,6 +157,11 @@ func analyzeInlineCost(fn *ssa.Function, costs map[*ssa.Function]inlineCost, act
 // inlineProhibited checks declaration restrictions shared by the original and
 // replacement. Body availability and cost apply only to the resolved target.
 func inlineProhibited(fn *ssa.Function) bool {
+	if fn.Pkg != nil {
+		if kind, _ := PkgKindOf(fn.Pkg.Pkg); kind == PkgDeclOnly {
+			return true // Declaration packages do not own executable Go bodies.
+		}
+	}
 	if fn.Synthetic != "" || fn.Origin() != nil ||
 		fn.Signature.RecvTypeParams().Len() != 0 || fn.Signature.TypeParams().Len() != 0 {
 		return true
@@ -176,14 +181,18 @@ func inlineProhibited(fn *ssa.Function) bool {
 	return false
 }
 
-// resolveInlineTarget resolves the implementation used by the defining package.
-// An unresolved patched method must not fall back to its original body.
-func (p *context) resolveInlineTarget(fn *ssa.Function) *ssa.Function {
-	patch, ok := p.patches[llssa.PathOf(fn.Pkg.Pkg)]
+// ResolveInlineTarget selects the same implementation for frontend body
+// preloading and backend import. An unresolved patched method must not fall
+// back to its original body. Body availability and cost are checked separately.
+func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
+	if fn == nil || fn.Pkg == nil || inlineProhibited(fn) {
+		return nil
+	}
+	patch, ok := patches[llssa.PathOf(fn.Pkg.Pkg)]
 	if !ok {
 		return fn
 	}
-	if patch.Alt == nil || inlineProhibited(fn) {
+	if patch.Alt == nil {
 		return nil
 	}
 	recv := fn.Signature.Recv()
@@ -236,7 +245,7 @@ func (p *context) importInlineBody(original *ssa.Function) {
 	if depth > inlineImportDepth {
 		return
 	}
-	fn := p.resolveInlineTarget(original)
+	fn := ResolveInlineTarget(original, p.patches)
 	if fn == nil {
 		return
 	}

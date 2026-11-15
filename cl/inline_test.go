@@ -440,38 +440,56 @@ func TestCrossPackageInlineDisabledAndDepth(t *testing.T) {
 }
 
 func TestCrossPackageInlineModuleBudget(t *testing.T) {
-	depSrc, rootSrc := "package dep\n", "package root\nimport \"example.com/dep\"\nfunc Use(x int) int {return "
-	const count = 80
-	for i := 0; i < count; i++ {
-		depSrc += fmt.Sprintf("func F%d(x int) int {", i)
-		for n := 1; n <= 10; n++ {
-			depSrc += fmt.Sprintf("x=x*3+%d;", i+n)
-		}
-		depSrc += "return x}\n"
-		if i != 0 {
-			rootSrc += "+"
-		}
-		rootSrc += fmt.Sprintf("dep.F%d(x)", i)
-	}
-	rootSrc += "}\n"
-	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", depSrc, "example.com/root", rootSrc)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
-	defer prog.Dispose()
-	pkg, err := NewPackage(prog, root, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pkg.Module().Dispose()
-	facts := newInlineFacts()
-	imported, cost := 0, 0
-	for i := 0; i < count; i++ {
-		name := fmt.Sprintf("F%d", i)
-		if !mustNamedFunction(t, pkg.Module(), "example.com/dep."+name).IsDeclaration() {
-			imported++
-			cost += facts.cost(dep.Func(name))
-		}
-	}
-	if imported == 0 || imported == count || cost > inlineModuleBudget {
-		t.Fatalf("imported %d bodies at cost %d", imported, cost)
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("methods=%t", mixed), func(t *testing.T) {
+			depSrc, rootSrc := "package dep\ntype Number int\n", "package root\nimport \"example.com/dep\"\nfunc Use(x int) int {return "
+			const count = 80
+			for i := 0; i < count; i++ {
+				receiver := ""
+				if mixed && i%2 == 0 {
+					receiver = "(n Number) "
+				}
+				depSrc += fmt.Sprintf("func %sF%d(x int) int {", receiver, i)
+				for n := 1; n <= 10; n++ {
+					depSrc += fmt.Sprintf("x=x*3+%d;", i+n)
+				}
+				depSrc += "return x}\n"
+				if i != 0 {
+					rootSrc += "+"
+				}
+				if mixed && i%2 == 0 {
+					rootSrc += fmt.Sprintf("dep.Number(0).F%d(x)", i)
+				} else {
+					rootSrc += fmt.Sprintf("dep.F%d(x)", i)
+				}
+			}
+			rootSrc += "}\n"
+			dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", depSrc, "example.com/root", rootSrc)
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			defer prog.Dispose()
+			pkg, err := NewPackage(prog, root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkg.Module().Dispose()
+			facts := newInlineFacts()
+			imported, cost := 0, 0
+			for i := 0; i < count; i++ {
+				name := fmt.Sprintf("F%d", i)
+				fn := dep.Func(name)
+				symbol := "example.com/dep." + name
+				if mixed && i%2 == 0 {
+					fn = dep.Prog.LookupMethod(dep.Type("Number").Type(), dep.Pkg, name)
+					symbol = "example.com/dep.Number." + name
+				}
+				if !mustNamedFunction(t, pkg.Module(), symbol).IsDeclaration() {
+					imported++
+					cost += facts.cost(fn)
+				}
+			}
+			if imported == 0 || imported == count || cost > inlineModuleBudget || cost+facts.cost(dep.Func("F1")) <= inlineModuleBudget {
+				t.Fatalf("imported %d bodies at cost %d", imported, cost)
+			}
+		})
 	}
 }

@@ -226,6 +226,8 @@ jobs:
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
 
+          "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
+
           # GC_malloc returns zeroed memory, so check allocation clearing with
           # the malloc-backed runtime too. Poison fresh allocations on glibc.
           (
