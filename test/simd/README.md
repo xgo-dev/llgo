@@ -53,8 +53,9 @@ The initial amd64 SIMD256 coverage is described below.
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
 `SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
 extends coverage to 128/256-bit `ExtendTo`, cross-width `ExtendLo`, `TruncTo`,
-saturation and grouped concatenation, plus ARM64/WASM low-lane conversions. Shared cases run under official
-Go and LLGo; AMD64 unary saturation requires AVX512 in the official compiler,
+saturation and grouped concatenation, plus ARM64/WASM low-lane conversions.
+Shared cases run under official Go and LLGo. AMD64 unary saturation, truncation,
+and several 64-bit/unsigned conversions require AVX512 in the official compiler,
 so those cases use scalar references under LLGo at the v1 baseline. LLVM
 verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
 WASM, including callable intrinsic definitions. This does not add wider-vector
@@ -332,7 +333,8 @@ On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
 The same overrides also exercise integer extension and narrowing, horizontal
-pair operations, and integer interleaving.
+pair operations, integer interleaving, numeric conversions, float widening/narrowing,
+and 256-bit rounding.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.
