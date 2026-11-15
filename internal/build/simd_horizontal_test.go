@@ -13,8 +13,8 @@ import (
 )
 
 func TestSIMDHorizontalLLVM(t *testing.T) {
-	for _, target := range []struct{ os, arch string }{{"linux", "amd64"}, {"windows", "amd64"}, {"darwin", "arm64"}} {
-		t.Run(target.os+"/"+target.arch, func(t *testing.T) {
+	for _, target := range []struct{ os, arch, operation string }{{"linux", "amd64", "Add"}, {"windows", "amd64", "Add"}, {"darwin", "arm64", "Add"}, {"linux", "amd64", "Sub"}, {"windows", "amd64", "Sub"}} {
+		t.Run(target.os+"/"+target.arch+"/"+target.operation, func(t *testing.T) {
 			types := []string{"Float32x4", "Float64x2", "Int16x8", "Uint16x8", "Int32x4", "Uint32x4"}
 			if target.arch == "arm64" {
 				types = append(types, "Int64x2", "Uint64x2")
@@ -24,7 +24,7 @@ func TestSIMDHorizontalLLVM(t *testing.T) {
 			wide := map[string]bool{"Float32x8": true, "Float64x4": true, "Int16x16": true, "Uint16x16": true, "Int32x8": true, "Uint32x8": true}
 			source := "package main\nimport \"simd/archsimd\"\nfunc main() {}\n"
 			for _, typ := range types {
-				op := "ConcatAddPairs"
+				op := "Concat" + target.operation + "Pairs"
 				if wide[typ] {
 					op += "Grouped"
 				}
@@ -37,6 +37,9 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
  return y.ConcatAddPairsGrouped(x)
 }
 `
+			}
+			if target.operation == "Sub" {
+				source = strings.ReplaceAll(source, "ConcatAddPairsGrouped", "ConcatSubPairsGrouped")
 			}
 			dir := t.TempDir()
 			for name, body := range map[string]string{"go.mod": "module horizontal\n\ngo 1.27\n", "main.go": source} {
@@ -72,7 +75,7 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
 				for _, typ := range types {
 					name := "main.add" + typ
 					if pkg.PkgPath == "simd/archsimd" {
-						name = "simd/archsimd." + typ + ".ConcatAddPairs"
+						name = "simd/archsimd." + typ + ".Concat" + target.operation + "Pairs"
 						if wide[typ] {
 							name += "Grouped"
 						}
@@ -82,9 +85,9 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
 						t.Fatalf("missing %s", name)
 					}
 					body := fn.String()
-					op := "add <"
+					op := strings.ToLower(target.operation) + " <"
 					if strings.HasPrefix(typ, "Float") {
-						op = "fadd <"
+						op = "f" + op
 					}
 					if !strings.Contains(body, "shufflevector") || !strings.Contains(body, op) || strings.Contains(body, "PanicSIMDUnimplemented") {
 						t.Fatalf("invalid horizontal operation %s:\n%s", name, body)

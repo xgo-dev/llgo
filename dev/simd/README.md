@@ -51,10 +51,9 @@ so later instruction work can expand the lists deliberately.
 | `TestOnesCount` | `simd/archsimd.Int8x16.OnesCount` |
 ## amd64 failures
 
-Horizontal pairwise addition is now covered for the applicable 128/256-bit
-shapes by `test/simd`. `TestAddSubPairs` still fails at `ConcatSubPairs`, so it
-remains excluded from the upstream allowlist. The initial audit totals above
-are unchanged by this partial improvement.
+Horizontal pairwise addition and subtraction are now covered for the applicable
+128/256-bit shapes by `test/simd`; `TestAddSubPairs` is enabled in the amd64
+allowlist. The initial audit totals above are retained as historical results.
 
 
 | Test | First reported unsupported intrinsic |
@@ -81,7 +80,6 @@ are unchanged by this partial improvement.
 | `TestPermuteScalarsLo` | `simd/archsimd.Int16x8.permuteScalarsLo` |
 | `TestPermuteScalarsHiGrouped` | `simd/archsimd.Int16x16.permuteScalarsHiGrouped` |
 | `TestPermuteScalarsLoGrouped` | `simd/archsimd.Int16x16.permuteScalarsLoGrouped` |
-| `TestAddSubPairs` | `simd/archsimd.Int16x8.ConcatSubPairs` |
 | `TestSaturateConcat` | `simd/archsimd.Int32x8.SaturateToInt16ConcatGrouped` |
 | `TestTranspose4` | `simd/archsimd.Int32x4.InterleaveLo` |
 | `TestTranspose8` | `simd/archsimd.Int32x8.InterleaveLoGrouped` |
