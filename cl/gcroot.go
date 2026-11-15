@@ -67,7 +67,9 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			}
 		}
 	}
-	if p.prog.DeadcodeDropEnabled() && p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+	if p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+		// A backing allocation keeps all of its views alive. This requires no
+		// whole-program reachability proof, including in ordinary Wasm builds.
 		owners := make(map[ssa.Value]struct{}, len(planned))
 		for value := range planned {
 			value = gcRootOwner(value)

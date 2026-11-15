@@ -91,6 +91,7 @@ func static() { use(&global.A); use(&global.B) }
 	}{
 		{"enabled", "wasip1", "wasm", true, true},
 		{"no-dce", "wasip1", "wasm", false, true},
+		{"browser", "js", "wasm", false, true},
 		{"no-roots", "wasip1", "wasm", true, false},
 		{"native", "linux", "amd64", true, true},
 	} {
@@ -112,7 +113,7 @@ func static() { use(&global.A); use(&global.B) }
 				if name == "static" {
 					want = 2
 				}
-				if tc.name == "enabled" {
+				if tc.arch == "wasm" {
 					want = 1
 					if name == "static" {
 						want = 0

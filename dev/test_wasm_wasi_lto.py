@@ -93,8 +93,11 @@ def main():
                 ("wasm-finalizer-direct", "wasm direct finalizers passed"),
                 ("wasm-root-sharing", "wasm root sharing passed"),
             ):
+                # Shared backing allocations need no dev DCE proof. Exercise
+                # their production root plan under both LTO modes.
+                flags = () if fixture == "wasm-root-sharing" else ("-deadcodedrop", "-globaldce=false")
                 module = build(env, directory, mode, ROOT / "internal/build/testdata" / fixture,
-                               extra_flags=("-deadcodedrop", "-globaldce=false"))
+                               extra_flags=flags)
                 run(env, module, [marker])
                 if fixture == "wasm-root-sharing":
                     # Frame helpers are outlined only by size optimization.

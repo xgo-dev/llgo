@@ -15,6 +15,11 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
+Wasm GC root frames share a root for pointer and slice views of the same
+backing allocation. Loads, phi nodes and conversions that allocate retain
+independent roots. This also applies to ordinary builds, without development
+DCE or LTO flags. Root-frame bookkeeping stays inlined to avoid extra calls.
+
 `-ldflags=-s` strips optional Wasm names and DWARF, as it strips native symbols
 and debug information. `-ldflags="-s -w=0"` strips names while retaining DWARF
 and source maps. `-w` alone controls DWARF and does not request name stripping.
