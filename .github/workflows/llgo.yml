@@ -154,7 +154,7 @@ jobs:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
           # Only this compiler lane executes the LLDB integration suite. Test
-          # lanes still install the Python 3.12 demo ABI but skip the unrelated
+          # lanes still install the Python demo ABI but skip the unrelated
           # target-native debugger runtime.
           install-lldb-python: "true"
 

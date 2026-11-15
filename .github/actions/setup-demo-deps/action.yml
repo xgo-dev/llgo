@@ -284,12 +284,13 @@ runs:
           "$python" -m pip install --user --break-system-packages torch
         fi
 
-        pcdir="${HOME}/pc"
-        mkdir -p "${pcdir}"
-        pkgconfigdir="$(pkg-config --variable=pcfiledir "$python_pc")"
-        ln -sf "${pkgconfigdir}/${python_pc}.pc" "${pcdir}/python3-embed.pc"
-
-        echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "${GITHUB_ENV}"
+        if [[ "$python_pc" != python3-embed ]]; then
+          pcdir="${HOME}/pc"
+          mkdir -p "$pcdir"
+          pkgconfigdir="$(pkg-config --variable=pcfiledir "$python_pc")"
+          ln -sf "${pkgconfigdir}/${python_pc}.pc" "${pcdir}/python3-embed.pc"
+          echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+        fi
         echo "LLGO_FULL_RPATH=true" >> "${GITHUB_ENV}"
 
     - name: Install Python demo dependencies on Windows
