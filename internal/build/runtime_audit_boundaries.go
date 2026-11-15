@@ -106,6 +106,7 @@ type runtimeNativeOwner struct {
 // Sources include all platform implementations where selection happens in C
 // preprocessing or LLGoFiles. SDK entries are supplied by the target sysroot.
 var runtimeNativeOwners = []runtimeNativeOwner{
+	{"C.llgo_wasm_debug_capture_pcs", "LLGo opt-in browser suspended-PC bridge", "runtime/internal/wasmdebugpc/_wrap/capture.c"},
 	{
 		`C.getenv C.getpagesize C.gettimeofday C.pipe2 C.poll C.rand C.srand C.syscall C.write C.getentropy
 C.clock_gettime_nsec_np`,

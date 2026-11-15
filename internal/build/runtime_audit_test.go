@@ -63,6 +63,25 @@ func TestRuntimeOwnership(t *testing.T) {
 	}
 }
 
+func TestRuntimeOwnershipBrowserDebugger(t *testing.T) {
+	for _, workers := range []bool{false, true} {
+		tags := []string{"llgo.wasm.gc.linear", "llgo.wasm.emscripten", "llgo.wasm.debugger"}
+		if workers {
+			tags = append(tags, "llgo.wasm.workers")
+		}
+		report, err := AuditRuntimeSources(RuntimeAuditConfig{
+			RuntimeDir: env.LLGoRuntimeDir(), GOOS: "js", GOARCH: "wasm", Tags: tags,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Missing) != 0 || len(report.DynamicCompilerUses) != 0 || len(report.UnresolvedBoundaries) != 0 {
+			t.Fatalf("browser debugger workers=%v: missing=%v dynamic=%v boundaries=%v",
+				workers, report.Missing, report.DynamicCompilerUses, report.UnresolvedBoundaries)
+		}
+	}
+}
+
 func runtimeAuditFixture(t *testing.T) *runtimeAuditor {
 	t.Helper()
 	root := t.TempDir()

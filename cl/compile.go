@@ -1185,6 +1185,9 @@ func (p *context) debugRefValue(b llssa.Builder, value ssa.Value) (llssa.Expr, b
 
 func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
 	b.DIClosureEnv(p.fset.Position(f.Pos()), p.fn.Block(0))
+	if p.options.DebuggerFrames && p.prog.Target().GOARCH == "wasm" {
+		b.DIWasmMemory(p.fset.Position(f.Pos()), p.fn.Block(0))
+	}
 	params := f.Params
 	if llssa.HasNameValist(f.Signature) {
 		// C ellipsis has no fixed parameter slot. For example, the promoted

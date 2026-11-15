@@ -65,7 +65,7 @@
     const registryFields = fields(registry, [spec.version, spec.epoch, spec.head]);
     const registryBytes = await memory(located.value, registry.size);
     const version = unsigned(registryBytes, registryFields[spec.version]);
-    if (version !== BigInt(spec.registry_version)) throw new Error(`unsupported Wasm goroutine registry ${version}`);
+    if (version !== 1n && version !== BigInt(spec.registry_version)) throw new Error(`unsupported Wasm goroutine registry ${version}`);
     const epoch = unsigned(registryBytes, registryFields[spec.epoch]);
     if (epoch & 1n) throw new Error('goroutine registry is changing; pause all workers outside runtime updates');
     let nodeAddress = unsigned(registryBytes, registryFields[spec.head]);
@@ -76,6 +76,12 @@
     const stack = fieldType(module, caller, spec.stack);
     const frame = pointee(module, stack, module.layout.slice.data);
     const nodeFields = fields(node, [spec.sequence, spec.goroutine, spec.processor_id, spec.callers, spec.next]);
+    const pcCount = version >= 2n && fields(node, [spec.pc_count])[spec.pc_count];
+    const pcsField = version >= 2n && node.fields.find(field => field.name === spec.pcs);
+    const pcsType = pcsField && fieldType(module, node, spec.pcs);
+    if (pcsType && (pcsType.kind !== 'array' || pcsType.count !== 128 || pcsType.size !== 128 * 8)) {
+      throw new Error('unsupported suspended PC array');
+    }
     const gFields = fields(g, [spec.id, spec.parent_id, spec.status]);
     const stackFields = fields(stack, [module.layout.slice.data, module.layout.slice.length]);
     const frameFields = fields(frame, [spec.function, spec.file, spec.line]);
@@ -139,6 +145,15 @@
           record.frames.push(value);
         }
       }
+      if (pcCount && record.state === 'waiting') {
+        const count = unsigned(nodeBytes, pcCount);
+        if (count > 128n) throw new Error('invalid suspended PC count');
+        const pcs = [];
+        for (let i = 0; i < Number(count); ++i) {
+          pcs.push(Number(unsigned(nodeBytes, {name: 'PC', offset: pcsField.offset + i * 8, size: 8})));
+        }
+        suspendedPCs(module, record.frames, pcs);
+      }
       // The trailing scalar reads must stay fresh, outside the cached blocks.
       if (await plugin.readNamedUnsigned(module, node, nodeAddress, spec.sequence, stopId) !== sequence) throw new Error('goroutine stack changed during inspection; pause all workers');
       results.push(record);
@@ -148,11 +163,69 @@
     return results;
   }
 
-  // A logical stack has no exact Wasm PC. Only expose a variable when its
+  function suspendedPCs(module, frames, pcs) {
+    const code = module.code;
+    // Every saved PC must be an actual call site in this verified module.
+    if (!code || pcs.some(pc => !Number.isSafeInteger(pc) || pc < code.start || pc >= code.end ||
+        ![0x10, 0x11, 0x12, 0x13].includes(code.bytes[pc]))) return;
+    let cursor = 0;
+    for (const frame of frames) {
+      if (!frame.base) continue;
+      for (let i = cursor; i < pcs.length; ++i) {
+        const pc = pcs[i] - code.start;
+        const matches = module.index.functions?.filter(fn => fn.name === frame.function &&
+          fn.ranges?.some(range => pc >= range.start && pc < range.end)) || [];
+        if (matches.length !== 1) continue;
+        frame.pc = pc;
+        cursor = i + 1;
+        break;
+      }
+    }
+  }
+
+  async function exactLocals(plugin, module, frame, stopId, unavailable) {
+    const functions = module.index.functions?.filter(fn => fn.name === frame.function &&
+      fn.ranges?.some(range => frame.pc >= range.start && frame.pc < range.end)) || [];
+    if (functions.length !== 1) return [{name: 'status', value: unavailable('ambiguous suspended PC')}];
+    const active = module.index.variables.filter(variable => variable.scope !== 'GLOBAL' &&
+      variable.function === frame.function && variable.ranges?.some(range => frame.pc >= range.start && frame.pc < range.end));
+    const properties = [], names = new Set();
+    try {
+      for (const variable of active.sort((a, b) => b.depth - a.depth)) {
+        if (names.has(variable.name)) continue;
+        names.add(variable.name);
+        const peers = active.filter(v => v.name === variable.name && v.depth === variable.depth);
+        let value = unavailable('register location, missing location or ambiguous declaration');
+        const locations = variable.locations?.filter(location => (!location.start && !location.end) ||
+          (frame.pc >= location.start && frame.pc < location.end)) || [];
+        if (peers.length === 1 && (variable.constant || locations.length === 1)) {
+          const located = await plugin.variableLocation(variable, frame.pc, module, stopId, BigInt(frame.base));
+          if (located) {
+            const limit = 1n << BigInt(module.record.pointer_size * 8);
+            if (located.kind !== 'address' || (located.value >= 0n && located.value < limit)) {
+              value = await plugin.remoteObject(module, module.types.get(variable.type), located, stopId) || unavailable('unsupported type');
+            }
+          }
+        }
+        properties.push({name: variable.name, value});
+      }
+    } catch (error) {
+      for (const property of properties) {
+        if (property.value.objectId) await plugin.releaseObject(property.value.objectId);
+      }
+      throw error;
+    }
+    return properties;
+  }
+
+  // Legacy/unsupported hosts have no exact Wasm PC. Only expose a variable when its
   // scope and a single fbreg location cover the entire function. In particular,
   // never borrow the paused worker's Wasm locals/operand stack for a parked G.
   async function locals(plugin, module, frame, stopId) {
     const unavailable = message => ({type: 'string', value: `<unavailable: ${message}>`, hasChildren: false});
+    if (Number.isSafeInteger(frame.pc) && frame.pc >= 0 && frame.base) {
+      return exactLocals(plugin, module, frame, stopId, unavailable);
+    }
     const functions = module.index.functions?.filter(fn => fn.name === frame.function) || [];
     if (functions.length !== 1 || !functions[0].ranges?.length || !frame.base) {
       return [{name: 'status', value: unavailable('no unambiguous saved frame')}];
@@ -212,5 +285,5 @@
     return properties;
   }
 
-  globalThis.LLGoWasmGoroutines = {read, locals};
+  globalThis.LLGoWasmGoroutines = {read, locals, suspendedPCs};
 })();

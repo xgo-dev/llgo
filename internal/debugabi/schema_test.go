@@ -103,6 +103,16 @@ func TestSchemaV1Contract(t *testing.T) {
 	if err := json.Unmarshal(layout, &categories); err != nil {
 		t.Fatal(err)
 	}
+	var memory struct {
+		Variable string `json:"anchor_variable"`
+		Offset   int    `json:"anchor_offset"`
+	}
+	if err := json.Unmarshal(categories["wasm_memory"], &memory); err != nil {
+		t.Fatal(err)
+	}
+	if memory.Variable != WasmMemoryAnchorVariable || memory.Offset != WasmMemoryAnchorOffset {
+		t.Fatalf("Wasm memory anchor disagrees with compiler contract: %+v", memory)
+	}
 	for _, category := range []string{
 		"string", "slice", "interface", "runtime_type", "function",
 		"map", "channel", "goroutine",

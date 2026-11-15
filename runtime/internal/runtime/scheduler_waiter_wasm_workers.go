@@ -47,6 +47,7 @@ func (w *SchedulerWaiter) Park() {
 	atomic.Add(&wasmMultiSched.active, ^uint32(0))
 	wakeWasmEventWorker()
 	worker := gp.context.platform.owner
+	captureWasmSuspension(gp)
 	gp.context.platform.context.Swap(
 		&worker.system,
 		wasmWorkerSystemRootPointer(worker),

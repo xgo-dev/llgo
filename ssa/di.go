@@ -1208,6 +1208,28 @@ func (b Builder) DIClosureEnv(pos token.Position, blk BasicBlock) {
 	b.DIValue(nil, b.Func.Env(), dv, b.Func, pos, blk)
 }
 
+// DIWasmMemory exposes a byte at linear-memory offset 1 through each guest
+// frame. Engines translate the indirect DWARF location through the current
+// instance without a dependency on their private VMContext layout.
+func (b Builder) DIWasmMemory(pos token.Position, blk BasicBlock) {
+	ty := b.di().diType(b.Prog.Byte(), pos)
+	dv := &aDIVar{ll: b.di().di.CreateAutoVariable(
+		b.Func.scopeMeta(b.di(), pos).ll,
+		llvm.DIAutoVariable{
+			Name: debugabi.WasmMemoryAnchorVariable, File: b.di().file(pos.Filename).ll, Line: pos.Line,
+			Type: ty.ll, Flags: llvm.FlagArtificial, AlwaysPreserve: true,
+		},
+	)}
+	entry := *b
+	entry.impl = b.Func.entryAllocaBuilder()
+	// This is a debugger address, not a Go pointer or GC root. Use native
+	// pointer storage instead of the padded Go pointer slots used by W32.
+	slot := Expr{llvm.CreateAlloca(entry.impl, b.Prog.VoidPtr().ll), b.Prog.Pointer(b.Prog.VoidPtr())}
+	address := b.Convert(b.Prog.VoidPtr(), b.Prog.IntVal(debugabi.WasmMemoryAnchorOffset, b.Prog.Uintptr()))
+	b.impl.CreateStore(address.impl, slot.impl)
+	b.di().dbgDeclare(slot, dv, b.Func, pos, b.di().createExpression([]uint64{opDeref}), blk)
+}
+
 func (b Builder) Param(idx int) Expr {
 	return b.logicalValue(b.Func.Param(idx))
 }

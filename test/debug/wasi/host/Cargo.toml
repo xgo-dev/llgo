@@ -1,0 +1,15 @@
+[package]
+name = "llgo-wasi-debug"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+
+[dependencies]
+wasmtime = { version = "=50.0.1", default-features = false, features = ["cranelift", "runtime", "std", "threads", "debug-builtins", "parallel-compilation", "addr2line", "demangle", "gc", "gc-drc"] }
+anyhow = "1"
+wasi-common = { version = "=36.0.20", default-features = false, features = ["sync"] }
+wiggle-legacy = { package = "wiggle", version = "=36.0.20", default-features = false }
+
+[profile.dev]
+debug = 0

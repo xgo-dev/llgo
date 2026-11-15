@@ -125,6 +125,7 @@ type Constant struct {
 
 type Variable struct {
 	Name      string         `json:"name"`
+	Function  string         `json:"function,omitempty"`
 	Scope     string         `json:"scope"`
 	Type      string         `json:"type"`
 	Ranges    []AddressRange `json:"ranges,omitempty"`
@@ -636,14 +637,14 @@ func pathPrefix(path, prefix string) (string, bool) {
 
 func (b *indexBuilder) addVariable(entry *dwarf.Entry, state scopeState, depth int) {
 	name, _ := b.attribute(entry, dwarf.AttrName).(string)
-	if name == "" {
+	if name == "" || name == debugabi.WasmMemoryAnchorVariable {
 		return
 	}
 	if name == "$env" {
 		b.addClosureEnv(entry, state.functionName)
 		return
 	}
-	value := Variable{Name: name, Depth: depth}
+	value := Variable{Name: name, Function: state.functionName, Depth: depth}
 	if entry.Tag == dwarf.TagFormalParameter {
 		value.Scope = "PARAMETER"
 	} else if state.function {

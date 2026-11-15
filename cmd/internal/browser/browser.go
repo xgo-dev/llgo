@@ -40,6 +40,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xgo-dev/llgo/cmd/internal/wasmdecoder"
 	"github.com/xgo-dev/llgo/internal/browserdebug"
 	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/env"
@@ -53,12 +54,6 @@ var extensionManifest []byte
 
 //go:embed extension/devtools.html
 var extensionPage []byte
-
-//go:embed extension/plugin.js
-var extensionPlugin []byte
-
-//go:embed extension/goroutines.js
-var extensionGoroutines []byte
 
 //go:embed page.html
 var sessionPage string
@@ -293,14 +288,12 @@ func (s *Session) WriteExtension(directory string) error {
 	for name, data := range map[string][]byte{
 		"manifest.json": manifestJSON,
 		"devtools.html": extensionPage,
-		"plugin.js":     extensionPlugin,
-		"goroutines.js": extensionGoroutines,
 	} {
 		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
 			return err
 		}
 	}
-	return nil
+	return wasmdecoder.Write(directory, 0o644)
 }
 
 type Session struct {

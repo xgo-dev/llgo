@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const debuggerSchema = require('../../../../internal/debugabi/schema_v1.json');
+const debuggerSchema = require('../../../internal/debugabi/schema_v1.json');
 
 require('./plugin.js');
 require('./goroutines.js');
@@ -648,4 +648,48 @@ test('unsupported DWARF constant encodings remain unavailable instead of becomin
   assert.equal((await plugin.evaluate('zero', context, 'stop')).value, 0);
   assert.equal(await plugin.evaluate('raw', context, 'stop'), null);
   assert.equal(await plugin.evaluate('text', context, 'stop'), null);
+});
+
+test('suspended PC instruction bytes survive asynchronous transfer of the raw-module buffer', async () => {
+  const bytes = new Uint8Array([...moduleBytes(),
+    1, 4, 1, 0x60, 0, 0, // () -> ()
+    3, 2, 1, 0,         // one function
+    10, 6, 1, 4, 0, 0x10, 0, 0x0b]); // call 0
+  new WebAssembly.Module(bytes);
+  const original = bytes.buffer;
+  const plugin = new LLGoLanguageExtensionPlugin({}, async url => {
+    if (url.endsWith('/debug-index.json')) {
+      structuredClone(original, {transfer: [original]});
+      return response(fixtureIndex());
+    }
+    if (url.endsWith('/debug-schema.json')) return response(schema);
+    if (url.endsWith('/plugin-ready')) return new Response(null, {status: 204});
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await plugin.addRawModule('module', undefined, {url: 'https://host/app.wasm', code: original});
+  assert.equal(original.byteLength, 0);
+  const code = plugin.module('module').code;
+  assert.equal(code.bytes[code.start + 3], 0x10);
+  assert.ok(code.end <= code.bytes.length);
+});
+
+
+test('transport runtime decoder loads modules and resolves types without exposing plugin state', async () => {
+  const reads = [];
+  const decoder = globalThis.LLGoLanguageExtension.createRuntimeDecoder({
+    getWasmLinearMemory: async (address, length, stopId) => {
+      reads.push({address, length, stopId});
+      return new Uint8Array([99, 0, 0, 0]).buffer;
+    },
+  }, async url => response(url.endsWith('/debug-index.json') ? fixtureIndex() : schema));
+  await decoder.loadModule('guest', 'http://host/program.wasm', moduleBytes());
+  assert.equal((await decoder.evaluate('guest', 'constant', 'stop', 12)).value, 41);
+  assert.equal((await decoder.decodeValue('guest', 'int32', {kind: 'value', value: 42n}, 'stop')).value, 42);
+  assert.equal((await decoder.decodeValue('guest', 'int32', {kind: 'address', value: 16n}, 'stop')).value, 99);
+  assert.deepEqual(reads, [{address: 16, length: 4, stopId: 'stop'}]);
+  await assert.rejects(decoder.decodeValue('guest', 'missing', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo type/);
+  await assert.rejects(decoder.decodeValue('absent', 'int32', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo raw module/);
+  assert.equal(decoder.modules, undefined);
+  await assert.rejects(decoder.loadModule('guest', 'http://host/program.wasm', moduleBytes({marker: false})), /missing LLGo debugger record/);
+  await assert.rejects(decoder.decodeValue('guest', 'int32', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo raw module/);
 });

@@ -77,17 +77,28 @@ transport disables coordinated inspection with an error. Registry/stack guards
 remain an additional check.
 
 Expand a waiting goroutine's frame in `$goroutines` to inspect its memory
-locals. Debug builds save each frame's native base; the reader accepts a
-`DW_OP_fbreg` location only when one scope and location cover the entire
-function. Recursive frames therefore use their own addresses after GC and
-fiber switches. Register values, changing locations, ambiguous names and
-unwound panic snapshots remain unavailable. Ordinary builds retain no frame
-bases. Existing artifacts without saved bases still show source stacks.
+locals. Debug builds save native frame bases and, before Asyncify unwinds,
+Chrome's exact Wasm call sites. Registry v2 records a bounded complete PC
+snapshot; readers also support v1 artifacts without PCs. Only frames with
+unambiguous DWARF function ranges receive a PC. V8 module byte offsets are
+checked against calls in the verified module and translated to DWARF offsets.
+
+With a saved PC, the reader selects the active lexical scope and location-list
+entry. It can recover constants and supported memory expressions, including
+frame-relative locations that change across the function. A recursive caller
+cannot expose a leaf block's declarations. Wasm locals, operand-stack values,
+unsupported expressions and unwound panic snapshots remain unavailable.
+Register state from another goroutine is never reused.
+
+The PC transport is qualified for Chrome 152 and the generated Emscripten
+6.0.8 host. Unknown stack formats, anonymous/foreign modules, user Error
+formatters, custom worker URL resolvers and truncated stacks disable the PC
+snapshot. In that case, the reader retains the v1 rule: a unique frame-relative
+location and scope must cover the entire function. Ordinary builds retain
+neither frame bases nor PC snapshots.
 
 Selecting a logical frame does not switch the execution context. DevTools'
 normal frame selector and local-variable pane refer to the paused Wasm frame.
-Exact parked PCs, optimized register reconstruction and complete runtime-object
-views remain a later phase.
 
 Runtime views expand strings, slices, arrays, interface payloads, maps and
 buffered channels, including nested values and zero-sized elements. Named
@@ -102,12 +113,12 @@ keep the raw code/data view. Dynamic table rebinding is outside this static
 mapping contract. Inspection never calls the function. Container expansion is
 bounded to 100 elements and map scans to 4096 buckets.
 
-WASI source sessions remain unavailable for current W32 pthread artifacts.
-Their shared `env.memory`, `wasi.thread-spawn` and `wasix_32v1.thread_exit` imports
-require a compatible runtime debugger; the current Wasmtime backend cannot
-provide that contract. `llgo debug -target=wasi` reports the limitation and
-`llgo run -target=wasi` continues to use Wasmer. No thread imports are replaced
-with synthetic stubs.
+WASI W32 source sessions use a separate local LLDB/Wasmtime transport:
+`llgo debug -target=wasi -wasi-host /path/to/llgo-wasi-debug`. It executes the
+shared `env.memory`, `wasi.thread-spawn`, real thread exit and EH imports,
+and reuses these runtime-value decoders through stopped-process memory reads.
+See [WASI debugging](../doc/debugging.md) for version
+requirements and qualification. `llgo run -target=wasi` continues to use Wasmer.
 
 ## Qualification
 
@@ -149,3 +160,12 @@ sessions passed with typed captures, including nested closures, bound methods
 and independent counter closures before and after mutation. Captures remain
 readable after memory growth and GC, and releasing the function view releases
 its expanded children. Native LLDB O0/O2 regression acceptance also passes.
+
+The 2026-11-15 macOS arm64 run on Go 1.27.3, LLVM 22.1.8, Emscripten 6.0.8,
+Binaryen `llgo-v132.3`, Node 26.8.1 and Chrome 152.0.7977.54 passed all twelve
+variants with exact suspended PCs. Nine recursive waiting frames retain their
+own call sites; a leaf block's array is readable without leaking its declaration
+into recursive callers. Memory32/64, 1/2/4 workers, O0/Os, embedded/external
+DWARF, GC/memory growth, resume and worker exit are covered. Unit tests also
+exercise changing location lists, shadowed constants, malformed/foreign stack
+identities, formatter/accessor refusal and transferred instruction buffers.

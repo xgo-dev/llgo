@@ -54,7 +54,7 @@ async function until(probe, description) {
 const page = await connect(pageTarget);
 const frontend = await connect(devtoolsTarget);
 let browser;
-try {
+qualification: try {
   const workerSessions = [], workerPauses = new Set();
   const breakpoints = [];
   let paused, pausedSession, pagePause, stepping, stepped;
@@ -110,6 +110,14 @@ try {
     });
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
+  }
+  if (process.argv[4] === '--diagnostics') {
+    console.log(JSON.stringify(await extension(`(() => {
+      const plugin = globalThis.__llgoLanguageExtensionPlugin;
+      return {calls: plugin.addRawModuleCalls, error: plugin.lastAddRawModuleError,
+        modules: [...plugin.modules.keys()]};
+    })()`)));
+    break qualification;
   }
   const optimizedFixture = process.env.LLGO_BROWSER_DEBUG_OPTIMIZED === '1';
   await extension(`(() => {
@@ -311,10 +319,22 @@ try {
           for (const child of await plugin.getProperties(frames.objectId)) {
             const frame = record.frames[Number(child.name)];
             if (frame.function !== 'main.debugWaiter') continue;
+            if (!Number.isSafeInteger(frame.pc) || frame.pc < 0) {
+              throw new Error('exact parked PC unavailable: ' + JSON.stringify(record));
+            }
             const locals = await plugin.getProperties(child.value.objectId);
             const local = locals.find(property => property.name === 'local')?.value;
             if (!local?.objectId) throw new Error('parked array local unavailable: ' + JSON.stringify(locals));
             frame.local = (await plugin.getProperties(local.objectId)).map(property => property.value.value);
+            const scoped = locals.find(property => property.name === 'scoped')?.value;
+            if (Number(child.name) === 0) {
+              if (scoped?.objectId) {
+                const values = (await plugin.getProperties(scoped.objectId)).map(property => property.value.value);
+                if (JSON.stringify(values) !== '[88,72,73,74]') throw new Error('wrong lexical local: ' + JSON.stringify(values));
+              } else if (globalThis.__llgoExpectScopedLocal) {
+                throw new Error('lexical parked local unavailable: ' + JSON.stringify(locals));
+              }
+            } else if (scoped) throw new Error('leaf lexical declaration leaked into a recursive caller');
           }
         }
         const owned = [...plugin.objects].filter(([, object]) =>
@@ -324,6 +344,7 @@ try {
         return records;
       })()`);
     }
+    await extension(`globalThis.__llgoExpectScopedLocal = ${process.env.LLGO_BROWSER_DEBUG_OPTIMIZED !== '1'}`);
     const records = await goroutines();
     const beforeLifecycle = await (await fetch(`${sessionURL}__llgo/worker-state`)).json();
     assert.ok(pagePause, 'host page is paused too');
@@ -367,7 +388,7 @@ try {
     const recovered = records.find(g => g.frames.some(f => f.function === 'main.debugRecoveredWaiter'));
     assert.equal(recovered?.state, 'waiting', 'recovered goroutine parks in a later defer');
     assert.ok(recovered.frames.filter(f => f.function === 'main.debugRecoveredWaiter' || f.function === 'main.debugPanicLeaf')
-      .every(f => !f.base), 'cleared panic snapshots must not expose retained physical frame addresses');
+      .every(f => !f.base && f.pc === undefined), 'cleared panic snapshots must not expose retained addresses or PCs');
     assert.equal(parked.length, 2, JSON.stringify(records));
     assert.ok(parked.every(g => g.state === 'waiting'), JSON.stringify(parked));
     assert.deepEqual(parked.map(g => g.frames.filter(f => f.function === 'main.debugWaiter').length).sort(), [4, 5]);
