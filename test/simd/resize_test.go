@@ -19,10 +19,16 @@ func testSIMDIntegerResize[S, D resizeInteger](t *testing.T, mode string, apply 
 	t.Helper()
 	var s S
 	var d D
+	testSIMDIntegerResizeShape(t, mode, 16/int(unsafe.Sizeof(s)), 16/int(unsafe.Sizeof(d)), apply)
+}
+
+func testSIMDIntegerResizeShape[S, D resizeInteger](t *testing.T, mode string, n, m int, apply func([]S, []D)) {
+	t.Helper()
+	var s S
+	var d D
 	sbits, dbits := int(unsafe.Sizeof(s)*8), int(unsafe.Sizeof(d)*8)
-	n, m := 128/sbits, 128/dbits
 	input := make([]S, n)
-	if mode == "concat" {
+	if mode == "concat" || mode == "grouped" {
 		input = make([]S, 2*n)
 	}
 	out := make([]D, m)
@@ -46,7 +52,7 @@ func testSIMDIntegerResize[S, D resizeInteger](t *testing.T, mode string, apply 
 		}
 	}
 	step := len(input)
-	if mode == "lo" || mode == "hi" {
+	if mode == "lo" || mode == "hi" || mode == "extend" {
 		step = m
 	}
 	for start := 0; start < len(values); start += step {
@@ -57,36 +63,48 @@ func testSIMDIntegerResize[S, D resizeInteger](t *testing.T, mode string, apply 
 			out[i] = ^D(0)
 		}
 		apply(input, out)
+		reference := input
+		if mode == "grouped" {
+			reference = nil
+			for base := 0; base < n; base += n / 2 {
+				reference = append(reference, input[base:base+n/2]...)
+				reference = append(reference, input[n+base:n+base+n/2]...)
+			}
+		}
 		for i, got := range out {
 			var want D
 			index := i
 			if mode == "hi" {
 				index += n / 2
 			}
-			if mode == "lo" || mode == "hi" {
+			if mode == "lo" || mode == "hi" || mode == "extend" {
 				want = D(input[index])
 			} else if i < len(input) {
-				x := input[i]
-				upper := uint64(1)<<dbits - 1
-				if ^D(0) < 0 {
-					upper >>= 1
-				}
-				if ^S(0) < 0 && x < 0 {
-					lower := int64(0)
-					if ^D(0) < 0 {
-						lower = -int64(upper) - 1
-					}
-					v := int64(x)
-					if v < lower {
-						v = lower
-					}
-					want = D(v)
+				x := reference[index]
+				if mode == "truncate" {
+					want = D(x)
 				} else {
-					v := uint64(x)
-					if v > upper {
-						v = upper
+					upper := uint64(1)<<dbits - 1
+					if ^D(0) < 0 {
+						upper >>= 1
 					}
-					want = D(v)
+					if ^S(0) < 0 && x < 0 {
+						lower := int64(0)
+						if ^D(0) < 0 {
+							lower = -int64(upper) - 1
+						}
+						v := int64(x)
+						if v < lower {
+							v = lower
+						}
+						want = D(v)
+					} else {
+						v := uint64(x)
+						if v > upper {
+							v = upper
+						}
+						want = D(v)
+					}
 				}
 			}
 			if got != want {

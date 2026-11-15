@@ -36,12 +36,17 @@ four larger transpose cases still reach unimplemented constant-pair shuffles;
 their updated first failures are retained below. The initial totals above
 remain the historical audit, not a recount after these additions.
 
+The conversion/resize follow-up enables `TestConvertARM64` and
+`TestTruncateARM64`, plus the AMD64 ceil/floor/trunc/round, conversion,
+extension and concatenating-saturation cases listed in the allowlist. The
+initial audit totals above are historical. AVX512-only tests with empty gated
+bodies remain excluded; LLGo's additional scalar-reference cases exercise
+128/256-bit narrowing without requiring AVX512 hardware.
+
 ## arm64 failures
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |
-| `TestConvertARM64` | `simd/archsimd.Float32x4.ConvertLo2ToFloat64` |
-| `TestTruncateARM64` | `simd/archsimd.Int16x8.TruncToInt8` |
 | `TestReduceSum` | `simd/archsimd.Int8x16.reduceSum` |
 | `TestReduceMax` | `simd/archsimd.Int8x16.reduceMax` |
 | `TestReduceMin` | `simd/archsimd.Int8x16.reduceMin` |
@@ -77,17 +82,9 @@ the table below lists the remaining failures after subsequent fixes.
 | `TestPermuteScalarsLo` | `simd/archsimd.Int16x8.permuteScalarsLo` |
 | `TestPermuteScalarsHiGrouped` | `simd/archsimd.Int16x16.permuteScalarsHiGrouped` |
 | `TestPermuteScalarsLoGrouped` | `simd/archsimd.Int16x16.permuteScalarsLoGrouped` |
-| `TestSaturateConcat` | `simd/archsimd.Int32x8.SaturateToInt16ConcatGrouped` |
 | `TestTranspose4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
 | `TestTranspose8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
 | `TestTransposeTiled4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
 | `TestTransposeTiled8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
-| `TestCeilAMD64` | `simd/archsimd.Float32x8.Ceil` |
-| `TestFloorAMD64` | `simd/archsimd.Float32x8.Floor` |
-| `TestTruncAMD64` | `simd/archsimd.Float32x8.Trunc` |
-| `TestRoundAMD64` | `simd/archsimd.Float32x8.Round` |
-| `TestConvert` | `simd/archsimd.Float64x4.ConvertToFloat32` |
-| `TestExtend` | `simd/archsimd.Int8x16.ExtendToInt16` |
-| `TestExtendLo` | `simd/archsimd.Int8x16.ExtendLo4ToInt64` |
 
 Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.

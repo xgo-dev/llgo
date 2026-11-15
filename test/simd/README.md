@@ -22,7 +22,7 @@ architecture.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
   low-half multiplication, and carryless multiplication.
-- Integer low/high-lane extension, saturating narrowing with zero-filled upper
+- Integer low/high-lane extension, truncating and saturating narrowing with zero-filled upper
   lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
   unsigned saturation follow each architecture's official declarations. The
   current WASM API provides extension methods but no saturating narrowing methods.
@@ -51,7 +51,9 @@ general feature-combination FMV, and 512-bit vectors remain outside this stage.
 The initial amd64 SIMD256 coverage is described below.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
-`SaturateTo`, and `SaturateTo*Concat` declaration. Shared cases run under official
+`SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
+extends coverage to 128/256-bit `ExtendTo`, cross-width `ExtendLo`, `TruncTo`,
+saturation and grouped concatenation, plus ARM64/WASM low-lane conversions. Shared cases run under official
 Go and LLGo; AMD64 unary saturation requires AVX512 in the official compiler,
 so those cases use scalar references under LLGo at the v1 baseline. LLVM
 verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
@@ -101,9 +103,12 @@ group. Horizontal pairwise addition and subtraction also operate independently
 within each 128-bit group. `InterleaveLoGrouped` and `InterleaveHiGrouped` likewise
 interleave integer lanes independently within each 128-bit group.
 The bridge call-graph test covers all 350 entries in Go 1.27.0, including
-their private intrinsic dependencies. Cross-width and lane-count-changing
-conversions, integer resizing, and other wide target-specific operations remain
-separate stages; unimplemented declarations retain the recoverable panic.
+their private intrinsic dependencies. The applicable 128/256-bit numeric
+conversions, integer extension/truncation/saturation, grouped concatenating
+saturation and 256-bit floating rounding are also implemented. Shape checks
+preserve selected lanes, zero-filled upper lanes and 128-bit group order;
+invalid floating-to-integer inputs retain the architecture's defined results.
+Remaining target-specific operations and SIMD512 retain the recoverable panic.
 
 Wide Go parameters and results use an explicit memory carrier on amd64,
 including indirect calls, cross-package calls and multiple-result tuples.
