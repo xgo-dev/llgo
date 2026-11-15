@@ -133,7 +133,7 @@ const (
 	// TinyGC allocation also stays on its caller: allocator waits only
 	// acknowledge STW and finalizers are queued for a separate G. Keep their
 	// callback runner instrumented, since user finalizers may suspend.
-	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*PushCallerLocationFrameWasm*","*RecordCallerLocationWasm*","*RecordPanicLocationWasm*","*tinygogc*Alloc*"]`
+	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*PushCallerLocationFrameWasm*","*RecordCallerLocationWasm*","*RecordPanicLocationWasm*","*PushCallerLocationFrameID*","*RecordCallerLocationID*","*RecordPanicLocationID*","*tinygogc*Alloc*"]`
 	wasm32LibffiRelDir       = "runtime/internal/clite/ffi/wasm32"
 	wasm64LibffiRelDir       = "runtime/internal/clite/ffi/wasm64"
 )

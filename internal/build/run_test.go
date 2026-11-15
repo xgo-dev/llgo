@@ -220,6 +220,24 @@ func testWASIThreadedEmulatorHostContract(t *testing.T, emulator string) {
 	if want := "--volume=" + cwd; !slices.Contains(args, want) {
 		t.Fatalf("Wasmer arguments %q omit default working directory %q", args, want)
 	}
+	// External maps are often in a different temporary directory from cwd.
+	// The explicit guest path also avoids using Windows host paths in WASI.
+	symbols := filepath.Join(t.TempDir(), "symbols with spaces")
+	sidecar := filepath.Join(symbols, "program.wasm.pclntab")
+	if err := runEmuCmd(commands, map[string]string{"": artifact, "pclntab": sidecar}, emulator,
+		nil, false, false, runnerDetails{phase: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args = strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, want := range []string{"--volume=" + symbols + ":/llgo-symbols", "--env=LLGO_PCLNTAB=/llgo-symbols/program.wasm.pclntab"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("Wasmer arguments %q omit external symbol path %q", args, want)
+		}
+	}
 }
 
 func TestNativeWasmerRunUsesThreadedHostContract(t *testing.T) {
@@ -248,6 +266,18 @@ func TestNativeWasmerRunUsesThreadedHostContract(t *testing.T) {
 	}
 	if !slices.Equal(args[len(args)-3:], []string{artifact, "--", "hello world"}) {
 		t.Fatalf("artifact/arguments = %q", args)
+	}
+	conf.PCLNMode = PCLNExternal
+	if err := runNative(&context{commands: commands}, artifact, dir, "main", conf, ModeRun); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args = strings.Split(strings.TrimSpace(string(data)), "\n")
+	if !slices.Contains(args, "--env=LLGO_PCLNTAB=/llgo-symbols/app.wasm.pclntab") {
+		t.Fatalf("raw GOOS=wasip1 run omitted its external map: %q", args)
 	}
 }
 

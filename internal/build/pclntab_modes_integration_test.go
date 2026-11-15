@@ -350,6 +350,12 @@ func TestPCLNModeNativeIntegration(t *testing.T) {
 			mutate func(*testing.T, string)
 		}{
 			{name: "missing", mutate: removePCLNIntegrationSidecar},
+			{name: "fifo", mutate: func(t *testing.T, path string) {
+				removePCLNIntegrationSidecar(t, path)
+				if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
+					t.Fatalf("mkfifo: %v\n%s", err, out)
+				}
+			}},
 			{name: "truncated", mutate: truncatePCLNIntegrationSidecar},
 			{name: "permission-denied", mutate: denyPCLNIntegrationPermission},
 			{name: "corrupt-payload", mutate: corruptPCLNIntegrationPayload},

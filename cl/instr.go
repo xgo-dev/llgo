@@ -2010,6 +2010,10 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 		directiveFilename(p.fset, fn.Pos(), pos.Filename, p.sourceLine),
 	)
 	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	if p.options.CompactCallerLocations {
+		p.callerFrameMark = p.callRuntimeLocationID(b, "PushCallerLocationFrame", entry, pos)
+		return
+	}
 	p.callerFrameMark = p.callRuntimeLocation(
 		b, "PushCallerLocationFrame",
 		entry,
@@ -2067,6 +2071,9 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	}
 	name := p.runtimeCallerFrameName()
 	b.EmitLocationRecord(fn, name, position.Filename, position.Line, func() llssa.Expr {
+		if p.options.CompactCallerLocations {
+			return p.callRuntimeLocationID(b, fn, b.Convert(p.prog.Uintptr(), p.fn.Expr), position)
+		}
 		return p.callRuntimeLocation(
 			b, fn,
 			b.Convert(p.prog.Uintptr(), p.fn.Expr),
@@ -2075,6 +2082,32 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 			p.prog.IntVal(uint64(position.Line), p.prog.Int()),
 		)
 	})
+}
+
+func (p *context) callRuntimeLocationID(b llssa.Builder, fn string, entry llssa.Expr, pos token.Position) llssa.Expr {
+	key := pcLinePosition{p.fn.Name(), pos.Filename, pos.Line}
+	if p.pcLineIDs == nil {
+		p.pcLineIDs = make(map[pcLinePosition]uint64)
+	}
+	id, ok := p.pcLineIDs[key]
+	if !ok {
+		p.pcLineSeq++
+		id = pcLineID(p.fn.Name(), p.pcLineSeq)
+		p.pcLineIDs[key] = id
+		p.pkg.EmitPCLineInfo(id, p.fn.Name(), pos.Filename, pos.Line, pos.Column)
+	}
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+		types.NewVar(token.NoPos, nil, "location", types.Typ[types.Uint64]),
+		types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+	)
+	var results *types.Tuple
+	if fn == "PushCallerLocationFrame" {
+		results = types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int]))
+	}
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	return b.Call(p.runtimeFunc(llssa.RuntimeSymbol(fn+"ID", "PushCallerLocationFrameID", "RecordCallerLocationID", "RecordPanicLocationID"), sig), entry,
+		p.prog.IntVal(id, p.prog.Uint64()), p.prog.IntVal(uint64(pos.Line), p.prog.Int()))
 }
 
 // callRuntimeLocation keeps static strings out of the caller's Wasm C stack.

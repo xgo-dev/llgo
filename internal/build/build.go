@@ -372,8 +372,15 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 	if conf.SizeReport && conf.SizeLevel == "" {
 		conf.SizeLevel = "module"
 	}
-	if err := validatePCLNMode(conf); err != nil {
+	if err := conf.PCLNMode.validate(); err != nil {
 		return nil, err
+	}
+	// Named targets replace GOOS/GOARCH later. Validate their target policy
+	// after resolution, while still rejecting invalid build modes here.
+	if conf.Target == "" || conf.Mode == ModeGen || conf.BuildMode != BuildModeExe {
+		if err := validatePCLNMode(conf); err != nil {
+			return nil, err
+		}
 	}
 	if err := ensureSizeReporting(conf); err != nil {
 		return nil, err
@@ -666,6 +673,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
 	}
+	if err := validatePCLNMode(conf); err != nil {
+		return nil, err
+	}
 	resolveTestPthreadStackSize(conf)
 	if err := validateWASIThreads(conf); err != nil {
 		return nil, err
@@ -698,6 +708,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
 	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
+	if conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal {
+		export.LDFLAGS = append(export.LDFLAGS, "-Wl,--export="+pclnIdentitySymbol)
+	}
 	verbose := conf.Verbose
 	patterns := slices.Clone(inv.Args)
 	target := &llssa.Target{
@@ -768,8 +781,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		// named -target.
 		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		// Wasm has no inspectable native return addresses for runtime callers.
-		ShadowStack:    conf.Goarch == "wasm",
-		DebuggerFrames: conf.Goarch == "wasm" && slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+		ShadowStack:            conf.Goarch == "wasm",
+		DebuggerFrames:         conf.Goarch == "wasm" && slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+		CompactCallerLocations: conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal && !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {

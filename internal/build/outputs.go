@@ -272,7 +272,7 @@ func buildOutFmts(pkgName string, conf *Config, multiPkg bool, crossCompile *cro
 	}
 	details.Out = outputPath
 	if conf.PCLNMode == PCLNExternal {
-		details.PCLN = pclnSidecarPath(details.Out)
+		details.PCLN = pclnSidecarPath(debugWasmModulePath(conf, details.Out))
 	}
 	if conf.DebugArtifactMode == DebugArtifactExternal {
 		details.DWARF = dwarfSidecarPath(debugWasmModulePath(conf, details.Out))
