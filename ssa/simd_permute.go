@@ -39,15 +39,18 @@ func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
 	if op == SIMDInterleaveLoGrouped || op == SIMDInterleaveHiGrouped {
+		// The frontend restricts Grouped declarations to 256 bits.
 		group /= 2
 	}
 	mask := make([]llvm.Value, n)
 	for base := 0; base < n; base += group {
 		for i := 0; i < group; i++ {
-			index := base + i/2 + (i%2)*n
+			var index int
 			switch op {
+			case SIMDInterleaveLo, SIMDInterleaveLoGrouped:
+				index = base + i/2 + (i%2)*n
 			case SIMDInterleaveHi, SIMDInterleaveHiGrouped:
-				index += group / 2
+				index = base + i/2 + (i%2)*n + group/2
 			case SIMDInterleaveEven, SIMDInterleaveOdd:
 				index = base + 2*(i/2) + (i%2)*n
 				if op == SIMDInterleaveOdd {

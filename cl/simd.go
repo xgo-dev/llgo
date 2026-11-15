@@ -269,6 +269,19 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if !ok {
 		return false
 	}
+	// Check operation-specific widths before the general wide-operation gate,
+	// so malformed plain and grouped declarations use the same shape validation.
+	switch d.op {
+	case llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped:
+		if simdVectorBits(vector) != 256 {
+			return false
+		}
+	case llssa.SIMDInterleaveLo, llssa.SIMDInterleaveHi,
+		llssa.SIMDConcatEven, llssa.SIMDConcatOdd, llssa.SIMDInterleaveEven, llssa.SIMDInterleaveOdd:
+		if simdVectorBits(vector) != 128 {
+			return false
+		}
+	}
 	// Extending type recognition must not silently enable width-specific
 	// handlers, or cross-width conversions with different lane semantics.
 	wide := simdVectorBits(vector) == 256
@@ -293,17 +306,6 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if d.op == llssa.SIMDConcatAddPairs && simdVectorBits(vector) != 128 ||
 		d.op == llssa.SIMDConcatAddPairsGrouped && simdVectorBits(vector) != 256 {
 		return false
-	}
-	switch d.op {
-	case llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped:
-		if simdVectorBits(vector) != 256 {
-			return false
-		}
-	case llssa.SIMDInterleaveLo, llssa.SIMDInterleaveHi,
-		llssa.SIMDConcatEven, llssa.SIMDConcatOdd, llssa.SIMDInterleaveEven, llssa.SIMDInterleaveOdd:
-		if simdVectorBits(vector) != 128 {
-			return false
-		}
 	}
 	var params []types.Type
 	result := vector

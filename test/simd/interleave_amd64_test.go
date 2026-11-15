@@ -8,7 +8,7 @@ import (
 )
 
 func TestSIMDInterleave(t *testing.T) {
-	requireHorizontal128(t)
+	requireSIMD128(t)
 	t.Run("Int16x8/InterleaveHi", func(t *testing.T) {
 		testInterleave[int16](t, 8, 8, "InterleaveHi", func(x, y, out []int16) {
 			a, b := archsimd.LoadInt16x8Array((*[8]int16)(x)), archsimd.LoadInt16x8Array((*[8]int16)(y))
