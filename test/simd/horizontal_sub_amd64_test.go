@@ -8,7 +8,7 @@ import (
 )
 
 func TestSIMDHorizontalSub(t *testing.T) {
-	requireHorizontal128(t)
+	requireSIMD128(t)
 	t.Run("Float32x4", func(t *testing.T) {
 		testHorizontalSub[float32](t, 4, 4, func(x, y, out []float32) {
 			a, b := archsimd.LoadFloat32x4Array((*[4]float32)(x)), archsimd.LoadFloat32x4Array((*[4]float32)(y))

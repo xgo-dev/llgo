@@ -23,23 +23,21 @@ func TestSIMDHorizontalLLVM(t *testing.T) {
 			}
 			wide := map[string]bool{"Float32x8": true, "Float64x4": true, "Int16x16": true, "Uint16x16": true, "Int32x8": true, "Uint32x8": true}
 			source := "package main\nimport \"simd/archsimd\"\nfunc main() {}\n"
+			operation := "Concat" + target.operation + "Pairs"
 			for _, typ := range types {
-				op := "Concat" + target.operation + "Pairs"
+				op := operation
 				if wide[typ] {
 					op += "Grouped"
 				}
-				source += fmt.Sprintf("func add%s(x,y archsimd.%s) archsimd.%s { return x.%s(y) }\n", typ, typ, typ, op)
+				source += fmt.Sprintf("func pairs%s(x,y archsimd.%s) archsimd.%s { return x.%s(y) }\n", typ, typ, typ, op)
 			}
 			if target.arch == "amd64" {
-				source += `//go:noinline
+				source += fmt.Sprintf(`//go:noinline
 func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
- if archsimd.X86.AVX2() { return x.ConcatAddPairsGrouped(y) }
- return y.ConcatAddPairsGrouped(x)
+ if archsimd.X86.AVX2() { return x.%[1]s(y) }
+ return y.%[1]s(x)
 }
-`
-			}
-			if target.operation == "Sub" {
-				source = strings.ReplaceAll(source, "ConcatAddPairsGrouped", "ConcatSubPairsGrouped")
+`, operation+"Grouped")
 			}
 			dir := t.TempDir()
 			for name, body := range map[string]string{"go.mod": "module horizontal\n\ngo 1.27\n", "main.go": source} {
@@ -73,9 +71,9 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
 					t.Fatal(err)
 				}
 				for _, typ := range types {
-					name := "main.add" + typ
+					name := "main.pairs" + typ
 					if pkg.PkgPath == "simd/archsimd" {
-						name = "simd/archsimd." + typ + ".Concat" + target.operation + "Pairs"
+						name = "simd/archsimd." + typ + "." + operation
 						if wide[typ] {
 							name += "Grouped"
 						}

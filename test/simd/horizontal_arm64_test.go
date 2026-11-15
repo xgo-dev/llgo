@@ -8,7 +8,7 @@ import (
 )
 
 func TestSIMDHorizontalAddARM64(t *testing.T) {
-	requireHorizontal128(t)
+	requireSIMD128(t)
 	t.Run("Int64x2", func(t *testing.T) {
 		testHorizontal[int64](t, 2, 2, func(x, y, out []int64) {
 			a, b := archsimd.LoadInt64x2Array((*[2]int64)(x)), archsimd.LoadInt64x2Array((*[2]int64)(y))
@@ -23,4 +23,4 @@ func TestSIMDHorizontalAddARM64(t *testing.T) {
 	})
 }
 
-func requireHorizontal128(t *testing.T) { t.Helper() }
+func requireSIMD128(t *testing.T) { t.Helper() }

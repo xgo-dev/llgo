@@ -53,8 +53,8 @@ so later instruction work can expand the lists deliberately.
 
 Horizontal pairwise addition and subtraction are now covered for the applicable
 128/256-bit shapes by `test/simd`; `TestAddSubPairs` is enabled in the amd64
-allowlist. The initial audit totals above are retained as historical results.
-
+allowlist. The initial audit totals above are retained as historical results;
+the table below lists the remaining failures after subsequent fixes.
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |

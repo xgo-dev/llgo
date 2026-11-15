@@ -48,10 +48,10 @@ func TestSIMD256HorizontalAdd(t *testing.T) {
 	})
 }
 
-func requireHorizontal128(t *testing.T) {
+func requireSIMD128(t *testing.T) {
 	t.Helper()
 	if runtime.Compiler != "llgo" && !archsimd.X86.AVX() {
-		t.Skip("official Go horizontal add requires AVX")
+		t.Skip("official Go SIMD128 tests require AVX")
 	}
 }
 
