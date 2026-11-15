@@ -84,6 +84,7 @@ func useBytes([]byte)
 func fields(p *Pair) { use(&p.A); use(&p.B) }
 func slices(p []byte) { useBytes(p[1:]); useBytes(p[2:]) }
 func static() { use(&global.A); use(&global.B) }
+func cold(p *Pair, yes bool) { if yes { use(&p.B) } }
 `
 	for _, tc := range []struct {
 		name, goos, arch string
@@ -107,6 +108,11 @@ func static() { use(&global.A); use(&global.B) }
 			}
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
+			}
+			cold := pkg.Module().NamedFunction("roots.cold")
+			publishedAtEntry := strings.Contains(cold.String(), "store "+cold.Param(0).String()+",")
+			if want := tc.arch == "wasm" && tc.dce && tc.roots; publishedAtEntry != want {
+				t.Errorf("cold view publishes its parameter = %v, want %v:\n%s", publishedAtEntry, want, cold)
 			}
 			for _, name := range []string{"fields", "slices", "static"} {
 				want := uint64(3)
