@@ -8,10 +8,11 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Keep this specialization within the existing dev Wasm DCE and linear-GC
-// gates. Other collectors and debugger builds retain the public entry point.
+// Exact pointer/callback types can use the linear-GC dispatcher without
+// retaining reflection metadata. Other collectors and debugger builds use the
+// public entry point.
 func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterface, result types.Type, ok bool) {
-	if !p.prog.DeadcodeDropEnabled() || !p.prog.GCRootsEnabled() || p.options.DebuggerFrames ||
+	if !p.prog.GCRootsEnabled() || p.options.DebuggerFrames ||
 		p.prog.Target() == nil || p.prog.Target().GOARCH != "wasm" {
 		return
 	}

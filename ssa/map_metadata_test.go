@@ -77,7 +77,7 @@ func TestWasmMapMetadata(t *testing.T) {
 			pkg := prog.NewPackage("main", "main")
 			fn := pkg.NewFunc("use", NoArgsNoRet, GoDecl)
 			b := fn.MakeBody(1)
-			specialized := tc.dce && tc.arch == "wasm"
+			specialized := tc.arch == "wasm"
 			for _, key := range keys {
 				mt := types.NewMap(key.typ, types.Typ[types.Int])
 				b.abiType(mt)

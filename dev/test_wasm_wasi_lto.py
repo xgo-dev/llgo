@@ -93,9 +93,9 @@ def main():
                 ("wasm-finalizer-direct", "wasm direct finalizers passed"),
                 ("wasm-root-sharing", "wasm root sharing passed"),
             ):
-                # Shared backing allocations need no dev DCE proof. Exercise
-                # their production root plan under both LTO modes.
-                flags = () if fixture == "wasm-root-sharing" else ("-deadcodedrop", "-globaldce=false")
+                # These local lowerings need no dev DCE proof. Exercise their
+                # production behavior under both LTO modes.
+                flags = () if fixture in ("wasm-root-sharing", "wasm-map-metadata", "wasm-finalizer-direct") else ("-deadcodedrop", "-globaldce=false")
                 module = build(env, directory, mode, ROOT / "internal/build/testdata" / fixture,
                                extra_flags=flags)
                 run(env, module, [marker])

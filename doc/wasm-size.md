@@ -21,6 +21,14 @@ of introducing owner stores at function entry. Loads, phi nodes and conversions 
 independent roots. This also applies to ordinary builds, without development
 DCE or LTO flags. Root-frame bookkeeping stays inlined to avoid extra calls.
 
+Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
+values and direct hashers for scalar keys. Padded structs, blank fields and
+interfaces keep their general algorithms. Private map buckets retain allocator
+layout without source-type reflection metadata. Exact pointer finalizers use
+the linear-GC dispatcher directly; dynamic types, foreign callbacks and debugger
+frames retain the general path. These local lowerings let ordinary linker DCE
+discard unnecessary generic algorithms and descriptors.
+
 `-ldflags=-s` strips optional Wasm names and DWARF, as it strips native symbols
 and debug information. `-ldflags="-s -w=0"` strips names while retaining DWARF
 and source maps. `-w` alone controls DWARF and does not request name stripping.
