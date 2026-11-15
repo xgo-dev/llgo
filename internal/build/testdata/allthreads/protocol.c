@@ -113,12 +113,12 @@ static void retry_pause(void)
     nanosleep(&pause, 0);
 }
 
-static llgo_allthreads_call await_result(uintptr_t expected)
+static llgo_allthreads_call await_result(uintptr_t trap, uintptr_t expected)
 {
     struct timespec start, now;
     assert(!clock_gettime(CLOCK_MONOTONIC, &start));
     for (;;) {
-        llgo_allthreads_call c = call(SYS_setresuid);
+        llgo_allthreads_call c = call(trap);
         if (c.error == expected) return c;
         assert(c.error == EAGAIN || c.error == ENOTSUP);
         assert(!clock_gettime(CLOCK_MONOTONIC, &now));
@@ -244,7 +244,8 @@ int main(int argc, char **argv)
             assert(!setrlimit(RLIMIT_NOFILE, &original));
         }
         while (atomic_load(&w.ready) != 2) sched_yield();
-        llgo_allthreads_call c = call(SYS_getpid);
+        /* join's futex wake may precede task removal from procfs. */
+        llgo_allthreads_call c = gone ? await_result(SYS_getpid, 0) : call(SYS_getpid);
         if (gone) {
             assert(!c.error && c.r1 == (uintptr_t)getpid());
         } else {
@@ -252,7 +253,7 @@ int main(int argc, char **argv)
             atomic_store(&w.stop, 1);
             assert(!pthread_join(thread, 0));
         }
-        assert(await_result(0).r1 == 0);
+        assert(await_result(SYS_setresuid, 0).r1 == 0);
         llgo_traceback_unregister(main_node);
         return 0;
     }
@@ -266,7 +267,7 @@ int main(int argc, char **argv)
             assert(!pthread_create(&thread, 0, foreign, &foreign_stop));
         else
             thread = start(&adopted, 7, 0);
-        c = await_result(ENOTSUP);
+        c = await_result(SYS_setresuid, ENOTSUP);
         assert(c.error == ENOTSUP);
         if (!strcmp(argv[1], "foreign")) {
             atomic_store(&foreign_stop, 1);
@@ -339,7 +340,7 @@ int main(int argc, char **argv)
     __llgo_allthreads_executable = 1;
 
     pthread_t thread;
-    llgo_allthreads_call probe = await_result(0);
+    llgo_allthreads_call probe = await_result(SYS_setresuid, 0);
     assert(probe.r1 == 0);
 
     fputs("allthreads: masked signal and cancellation\n", stderr);
@@ -350,7 +351,7 @@ int main(int argc, char **argv)
     assert(c.error == EAGAIN);
     atomic_store(&masked.unblock, 1);
     while (atomic_load(&masked.unblock)) sched_yield();
-    c = await_result(0);
+    c = await_result(SYS_setresuid, 0);
     assert(!c.error);
     stop(&masked, thread);
 
@@ -370,7 +371,7 @@ int main(int argc, char **argv)
     }
     assert(!pthread_join(thread, 0));
     assert(attempts);
-    assert(await_result(0).r1 == 0);
+    assert(await_result(SYS_setresuid, 0).r1 == 0);
     fputs("allthreads: final teardown\n", stderr);
     for (unsigned i = 0; i < 3; i++) stop(&children[i], threads[i]);
     llgo_traceback_unregister(main_node);
