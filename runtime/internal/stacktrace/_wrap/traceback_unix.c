@@ -321,9 +321,11 @@ void llgo_traceback_unregister(void *raw)
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
     retired = allcall_retire_owned(node);
 #endif
+    int was_current = current == node;
+    /* A disabled-mode prune may free retired nodes as soon as we unlock. */
+    if (was_current) current = 0;
     pthread_mutex_unlock(&registry_lock);
-    if (current == node) {
-        current = 0;
+    if (was_current) {
         if (fault_buffer) {
             munmap(fault_buffer, LLGO_TRACEBACK_MAX * sizeof(uintptr_t));
             fault_buffer = 0;

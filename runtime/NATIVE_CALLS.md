@@ -71,11 +71,18 @@ A runtime-created pthread has a registry entry before `pthread_create` runs.
 The main thread is explicitly marked owned. Adopted foreign threads are
 registered for callbacks and stack capture but remain unowned. Parallel GC
 marker threads, foreign C threads, and emulator helper threads are outside the
-owned cohort; their presence returns `ENOTSUP`. The collector configuration
-does not restore a process after an unowned thread is observed: both public
-and raw all-thread calls remain disabled even after that thread exits. It
-does not override ownership checks. A C callback on an owned runtime thread
-reuses its context; an adopted host thread remains unowned through teardown.
+owned cohort; their presence returns `ENOTSUP`. Once an unowned thread is
+observed, both public and raw calls stay disabled after it exits. Collector
+configuration does not override ownership checks. A C callback on an owned
+runtime thread reuses its context; an adopted host thread remains unowned
+through teardown.
+
+An owned pthread may unregister before the kernel removes its task. Calls
+return `EAGAIN` during this teardown. The runtime temporarily holds one proc
+directory descriptor per retiring thread to preserve identity across TID reuse.
+Fd exhaustion leaves a conservative TID record and retryable teardown; pinning
+is retried after resources recover. Applications must preserve runtime-owned
+descriptors, including when using daemonization or `close_range` helpers.
 
 The registry lock excludes registration, attachment, and exit. An entry whose
 thread is not yet attached returns `EAGAIN` before executing the syscall. All

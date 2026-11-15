@@ -61,11 +61,6 @@ func TestAllThreadsBuildModeBoundary(t *testing.T) {
 			}
 			continue
 		}
-		// A failed ownership check can come from the raw bridge (r2 == 0)
-		// before later calls hit the now-disabled public guard (r2 == -1).
-		if allThreadsControlled && err == syscall.ENOTSUP && r1 == ^uintptr(0) && (r2 == 0 || r2 == ^uintptr(0)) {
-			continue
-		}
 		if err != syscall.ENOTSUP || r1 != ^uintptr(0) || r2 != ^uintptr(0) {
 			t.Fatalf("libc/cgo all-thread boundary=%d,%d,%v", r1, r2, err)
 		}

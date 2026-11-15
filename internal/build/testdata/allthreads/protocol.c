@@ -2,6 +2,7 @@
 #include "../../../../runtime/internal/stacktrace/_wrap/traceback.h"
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/audit.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
@@ -14,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -132,12 +134,38 @@ static void *foreign(void *raw)
     return 0;
 }
 
+/* Create an unregistered task only after the first cohort scan has armed this
+ * owned peer. Unmasking then lets PREPARE finish and reaches the second scan. */
+static void *foreign_during_prepare(void *raw)
+{
+    worker *w = raw;
+    llgo_traceback_attach(w->node);
+    sigset_t mask, pending;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGURG);
+    assert(!pthread_sigmask(SIG_BLOCK, &mask, 0));
+    atomic_store(&w->ready, 1);
+    do { assert(!sigpending(&pending)); sched_yield(); }
+    while (!sigismember(&pending, SIGURG));
+    pthread_t thread;
+    assert(!pthread_create(&thread, 0, foreign, &w->stop));
+    assert(!pthread_sigmask(SIG_UNBLOCK, &mask, 0));
+    while (!atomic_load(&w->stop)) sched_yield();
+    assert(!pthread_join(thread, 0));
+    llgo_traceback_unregister(w->node);
+    return 0;
+}
+
 static void *retiring(void *raw)
 {
     worker *w = raw;
     llgo_traceback_attach(w->node);
+    if (w->masked) {
+        atomic_store(&w->ready, 1);
+        while (!atomic_load(&w->unblock)) sched_yield();
+    }
     llgo_traceback_unregister(w->node);
-    atomic_store(&w->ready, 1);
+    atomic_store(&w->ready, 2);
     while (!atomic_load(&w->stop)) sched_yield();
     return 0;
 }
@@ -164,13 +192,50 @@ int main(int argc, char **argv)
     assert(main_node);
     llgo_traceback_attach(main_node);
     llgo_traceback_mark_owned(main_node);
-    if (argc == 2 && !strcmp(argv[1], "retiring")) {
+    if (argc == 2 && !strcmp(argv[1], "foreign-prepare")) {
         worker w = {0};
         w.node = llgo_traceback_register(2, 1, 0, 0);
         llgo_traceback_mark_owned(w.node);
         pthread_t thread;
-        assert(!pthread_create(&thread, 0, retiring, &w));
+        assert(!pthread_create(&thread, 0, foreign_during_prepare, &w));
         while (!atomic_load(&w.ready)) sched_yield();
+        /* A missing second-scan cancellation would kill this process before
+         * any credential syscall could run on a participant. */
+        filter_syscall(SYS_setresuid, SECCOMP_RET_KILL_PROCESS);
+        llgo_allthreads_call c = call(SYS_setresuid);
+        assert(c.error == ENOTSUP);
+        atomic_store(&w.stop, 1);
+        assert(!pthread_join(thread, 0));
+        assert(call(SYS_getpid).error == ENOTSUP);
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
+    if (argc == 2 && (!strcmp(argv[1], "retiring") || !strcmp(argv[1], "retiring-fdlimit"))) {
+        int pressure = !strcmp(argv[1], "retiring-fdlimit");
+        worker w = {.masked = pressure};
+        w.node = llgo_traceback_register(2, 1, 0, 0);
+        llgo_traceback_mark_owned(w.node);
+        pthread_t thread;
+        assert(!pthread_create(&thread, 0, retiring, &w));
+        if (pressure) {
+            while (atomic_load(&w.ready) != 1) sched_yield();
+            struct rlimit original, limited;
+            assert(!getrlimit(RLIMIT_NOFILE, &original));
+            limited = original;
+            if (limited.rlim_cur > 128) limited.rlim_cur = 128;
+            assert(!setrlimit(RLIMIT_NOFILE, &limited));
+            int fds[128], count = 0;
+            while (count < 128) {
+                int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+                if (fd < 0) { assert(errno == EMFILE); break; }
+                fds[count++] = fd;
+            }
+            atomic_store(&w.unblock, 1);
+            while (atomic_load(&w.ready) != 2) sched_yield();
+            while (count) assert(!close(fds[--count]));
+            assert(!setrlimit(RLIMIT_NOFILE, &original));
+        }
+        while (atomic_load(&w.ready) != 2) sched_yield();
         llgo_allthreads_call c = call(SYS_getpid);
         assert(c.error == EAGAIN); /* Owned libc teardown is still in /proc. */
         atomic_store(&w.stop, 1);
@@ -297,7 +362,7 @@ int main(int argc, char **argv)
     fputs("allthreads: final teardown\n", stderr);
     for (unsigned i = 0; i < 3; i++) stop(&children[i], threads[i]);
     llgo_traceback_unregister(main_node);
-    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring"};
+    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring", "retiring-fdlimit", "foreign-prepare"};
     for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         pid_t child = fork();
         assert(child >= 0);

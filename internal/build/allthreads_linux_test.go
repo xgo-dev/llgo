@@ -41,7 +41,7 @@ func join() int32
 //go:linkname raw syscall.runtime_doAllThreadsSyscall
 func raw(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, errno uintptr)
 func check(supported bool) {
- for _, call := range []func() (uintptr, uintptr, syscall.Errno){
+ for i, call := range []func() (uintptr, uintptr, syscall.Errno){
   func() (uintptr, uintptr, syscall.Errno) { return syscall.AllThreadsSyscall(syscall.SYS_GETPID,0,0,0) },
   func() (uintptr, uintptr, syscall.Errno) { return syscall.AllThreadsSyscall6(syscall.SYS_GETPID,0,0,0,0,0,0) },
   func() (uintptr, uintptr, syscall.Errno) { r1,r2,err:=raw(syscall.SYS_GETPID,0,0,0,0,0,0); return r1,r2,syscall.Errno(err) },
@@ -49,7 +49,7 @@ func check(supported bool) {
   r1,r2,err := call()
   if supported {
    if err!=0 || r1!=uintptr(os.Getpid()) || r2!=0 { panic("owned cohort rejected before foreign pthread") }
-  } else if err!=syscall.ENOTSUP || r1!=^uintptr(0) {
+  } else if err!=syscall.ENOTSUP || r1!=^uintptr(0) || (i!=2 && r2!=^uintptr(0)) {
    panic("all-thread call accepted outside the owned cohort")
   }
  }

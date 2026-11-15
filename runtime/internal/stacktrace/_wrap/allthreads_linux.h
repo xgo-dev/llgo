@@ -99,33 +99,70 @@ static kernel_result kernel_syscall(uintptr_t trap, const uintptr_t *args)
  * foreign creator, including when Linux later reuses its numeric TID. Only
  * registry_lock protects this list; pruning runs before any peers are parked. */
 static thread_node *allcall_retired;
+static thread_node **allcall_retired_tail = &allcall_retired;
+static unsigned allcall_retired_count;
 
-static void allcall_prune_retired(void)
+static void allcall_queue_retired(thread_node *node)
 {
-    thread_node **slot = &allcall_retired;
-    while (*slot) {
-        thread_node *node = *slot;
-        uintptr_t args[6] = {(uintptr_t)node->retirement_fd, (uintptr_t)"stat", O_RDONLY | O_CLOEXEC};
-        kernel_result live = kernel_syscall(SYS_openat, args);
-        if (!live.error) {
-            uintptr_t closeargs[6] = {live.r1};
-            kernel_syscall(SYS_close, closeargs);
+    node->next = 0;
+    *allcall_retired_tail = node;
+    allcall_retired_tail = &node->next;
+    allcall_retired_count++;
+}
+
+static void allcall_prune_retired(unsigned budget)
+{
+    unsigned count = allcall_retired_count;
+    if (budget && budget < count) count = budget;
+    while (count--) {
+        thread_node *node = allcall_retired;
+        allcall_retired = node->next;
+        if (!allcall_retired) allcall_retired_tail = &allcall_retired;
+        allcall_retired_count--;
+        int keep = 0;
+        if (__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1) {
+            if (node->retirement_fd < 0) {
+                /* Retry pinning after transient fd pressure. Until then the
+                 * numeric TID remains conservatively unavailable, never owned. */
+                char path[64];
+                char digits[32];
+                uintptr_t tid = node->debugger_thread_id;
+                unsigned n = 0, pos = 0;
+                const char prefix[] = "/proc/self/task/";
+                while (prefix[pos]) { path[pos] = prefix[pos]; pos++; }
+                do { digits[n++] = (char)('0' + tid%10); tid /= 10; } while (tid);
+                while (n) path[pos++] = digits[--n];
+                path[pos] = 0;
+                uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)path, O_RDONLY | O_DIRECTORY | O_CLOEXEC};
+                kernel_result directory = kernel_syscall(SYS_openat, args);
+                if (!directory.error) node->retirement_fd = (int)directory.r1;
+                keep = directory.error != ENOENT && directory.error != ESRCH;
+            } else {
+                uintptr_t args[6] = {(uintptr_t)node->retirement_fd, (uintptr_t)"stat", O_RDONLY | O_CLOEXEC};
+                kernel_result live = kernel_syscall(SYS_openat, args);
+                if (!live.error) {
+                    uintptr_t closeargs[6] = {live.r1};
+                    kernel_syscall(SYS_close, closeargs);
+                }
+                keep = live.error != ENOENT && live.error != ESRCH;
+            }
         }
-        if ((!live.error || (live.error != ENOENT && live.error != ESRCH)) &&
-            __atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1) {
-            slot = &node->next;
-            continue;
+        if (keep) {
+            allcall_queue_retired(node);
+        } else {
+            if (node->retirement_fd >= 0) {
+                uintptr_t closeargs[6] = {(uintptr_t)node->retirement_fd};
+                kernel_syscall(SYS_close, closeargs);
+            }
+            free(node);
         }
-        uintptr_t closeargs[6] = {(uintptr_t)node->retirement_fd};
-        kernel_syscall(SYS_close, closeargs);
-        *slot = node->next;
-        free(node);
     }
 }
 
 static int allcall_retire_owned(thread_node *node)
 {
-    allcall_prune_retired();
+    /* Bound exit work; a full pass runs before an all-thread barrier. */
+    allcall_prune_retired(__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1 ? 8 : 0);
     if (!node->owned || !node->attached ||
         __atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) != 1) return 0;
     if (node != current) { allcall_disable_controlled(); return 0; }
@@ -133,10 +170,8 @@ static int allcall_retire_owned(thread_node *node)
      * are needed to pin its identity while its libc teardown finishes. */
     uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)"/proc/thread-self", O_RDONLY | O_DIRECTORY | O_CLOEXEC};
     kernel_result directory = kernel_syscall(SYS_openat, args);
-    if (directory.error) { allcall_disable_controlled(); return 0; }
-    node->retirement_fd = (int)directory.r1;
-    node->next = allcall_retired;
-    allcall_retired = node;
+    node->retirement_fd = directory.error ? -1 : (int)directory.r1;
+    allcall_queue_retired(node);
     return 1;
 }
 
@@ -312,7 +347,7 @@ void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
         pthread_mutex_unlock(&credential_lock);
         return;
     }
-    allcall_prune_retired();
+    allcall_prune_retired(0);
     /* Remain suspendible while acquiring runtime locks. A GC may have
      * suspended their owner and must be allowed to finish before we park it. */
     uint64_t full = UINT64_MAX, previous;
