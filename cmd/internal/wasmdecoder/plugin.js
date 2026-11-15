@@ -1138,8 +1138,31 @@
     return (ranges || []).reduce((total, range) => total + Math.max(0, range.end - range.start), 0);
   }
 
+  // Transport-facing API: consumers supply bytes, memory reads and a stop ID;
+  // module/type indexes and Chrome's plugin protocol stay encapsulated here.
+  function createRuntimeDecoder(services, fetcher) {
+    const plugin = new LLGoLanguageExtensionPlugin(services, fetcher);
+    return {
+      async loadModule(id, url, code) {
+        await plugin.addRawModule(id, '', {url, code});
+        plugin.module(id);
+      },
+      evaluate(id, expression, stopId, codeOffset = -1) {
+        return plugin.evaluate(expression, {rawModuleId: id, codeOffset}, stopId);
+      },
+      async decodeValue(id, typeID, location, stopId) {
+        const module = plugin.module(id), type = module.types.get(typeID);
+        if (!type) throw new Error(`unknown LLGo type ${typeID}`);
+        return plugin.remoteObject(module, type, location, stopId);
+      },
+      getProperties: id => plugin.getProperties(id),
+      releaseObject: id => plugin.releaseObject(id),
+    };
+  }
+
   globalThis.LLGoLanguageExtension = {
     LLGoLanguageExtensionPlugin,
+    createRuntimeDecoder,
     customSections,
     debuggerRecord,
     buildID,

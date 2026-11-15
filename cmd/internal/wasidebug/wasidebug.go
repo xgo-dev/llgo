@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xgo-dev/llgo/cmd/internal/browser"
+	"github.com/xgo-dev/llgo/cmd/internal/wasmdecoder"
 	"github.com/xgo-dev/llgo/internal/browserdebug"
 	"github.com/xgo-dev/llgo/internal/debugabi"
 )
@@ -25,7 +25,7 @@ var decoder []byte
 // Prepare materializes a private session. Return paths are passed as argv, not
 // interpolated into shell commands. The caller keeps directory alive in LLDB.
 func Prepare(directory string, bundle *browserdebug.Bundle) (module, plugin string, err error) {
-	if err = browser.WriteRuntimeDecoder(directory); err != nil {
+	if err = wasmdecoder.Write(directory, 0o600); err != nil {
 		return
 	}
 	index, err := json.Marshal(bundle.Index)

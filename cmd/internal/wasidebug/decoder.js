@@ -29,18 +29,15 @@ const receive = async () => {
   }};
   const fetcher = async url => ({ok: true, status: 200,
     json: async () => url.endsWith('debug-index.json') ? index : schema});
-  const plugin = new globalThis.LLGoLanguageExtension.LLGoLanguageExtensionPlugin(services, fetcher);
-  await plugin.addRawModule('wasi', '', {url: 'http://llgo.invalid/module.wasm', code: bytes});
-  const module = plugin.modules.get('wasi');
-  if (!module) throw new Error('missing LLGo debugger record');
-  const context = {rawModuleId: 'wasi', codeOffset: -1};
+  const decoder = globalThis.LLGoLanguageExtension.createRuntimeDecoder(services, fetcher);
+  await decoder.loadModule('wasi', 'http://llgo.invalid/module.wasm', bytes);
   let value;
   if (request.type) {
-    value = await plugin.remoteObject(module, module.types.get(request.type),
+    value = await decoder.decodeValue('wasi', request.type,
       request.address !== undefined ? {kind: 'address', value: BigInt(request.address)} :
         {kind: 'value', value: BigInt(request.value)}, request.stopId);
   } else {
-    value = await plugin.evaluate(request.expression, context, request.stopId);
+    value = await decoder.evaluate('wasi', request.expression, request.stopId);
   }
   if (!value) throw new Error('variable is unavailable or not in scope');
   let remaining = 1024;
@@ -50,7 +47,7 @@ const receive = async () => {
     delete result.objectId;
     if (depth && value.objectId) {
       result.children = [];
-      for (const child of await plugin.getProperties(value.objectId)) {
+      for (const child of await decoder.getProperties(value.objectId)) {
         result.children.push({name: child.name, value: await expand(child.value, depth - 1)});
       }
     }
@@ -59,7 +56,7 @@ const receive = async () => {
   try {
     send({result: await expand(value, request.depth)});
   } finally {
-    if (value.objectId) await plugin.releaseObject(value.objectId);
+    if (value.objectId) await decoder.releaseObject(value.objectId);
   }
 })().catch(error => {send({error: String(error.message || error)}); process.exitCode = 1;})
   .finally(() => process.stdin.destroy());

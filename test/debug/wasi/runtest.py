@@ -55,6 +55,13 @@ def main():
             raise SystemExit('WASI descriptor-table acceptance failed:\n' + shared_fd.stdout + shared_fd.stderr)
         report['shared_fd'] = 'worker created before open; cross-instance write and close passed'
         report['shared_fd_module_sha256'] = hashlib.sha256(fd_module.read_bytes()).hexdigest()
+        inherited = subprocess.run([engine, str(fd_module), 'args-env', 'two words', '--flag'],
+                                   env=dict(os.environ, LLGO_WASI_DEBUG_ENV='inherited value'),
+                                   capture_output=True, text=True, timeout=60)
+        if inherited.returncode or 'wasi-args-env-ok' not in inherited.stdout + inherited.stderr:
+            raise SystemExit('WASI guest arguments/environment acceptance failed:\n'
+                             + inherited.stdout + inherited.stderr)
+        report['guest_process'] = 'argv with spaces/flags and inherited worker environment passed'
         for mode, expected in (('exit', 19), ('worker-exit', 23)):
             result = subprocess.run([engine, str(fd_module), mode], capture_output=True,
                                     text=True, timeout=60)

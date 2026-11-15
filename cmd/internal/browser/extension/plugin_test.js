@@ -2,8 +2,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const debuggerSchema = require('../../../../internal/debugabi/schema_v1.json');
 
-require('./plugin.js');
-require('./goroutines.js');
+require('../../wasmdecoder/plugin.js');
+require('../../wasmdecoder/goroutines.js');
 
 const {LLGoLanguageExtensionPlugin} = globalThis.LLGoLanguageExtension;
 
@@ -671,4 +671,23 @@ test('suspended PC instruction bytes survive asynchronous transfer of the raw-mo
   const code = plugin.module('module').code;
   assert.equal(code.bytes[code.start + 3], 0x10);
   assert.ok(code.end <= code.bytes.length);
+});
+
+
+test('transport runtime decoder loads modules and resolves types without exposing plugin state', async () => {
+  const reads = [];
+  const decoder = globalThis.LLGoLanguageExtension.createRuntimeDecoder({
+    getWasmLinearMemory: async (address, length, stopId) => {
+      reads.push({address, length, stopId});
+      return new Uint8Array([99, 0, 0, 0]).buffer;
+    },
+  }, async url => response(url.endsWith('/debug-index.json') ? fixtureIndex() : schema));
+  await decoder.loadModule('guest', 'http://host/program.wasm', moduleBytes());
+  assert.equal((await decoder.evaluate('guest', 'constant', 'stop', 12)).value, 41);
+  assert.equal((await decoder.decodeValue('guest', 'int32', {kind: 'value', value: 42n}, 'stop')).value, 42);
+  assert.equal((await decoder.decodeValue('guest', 'int32', {kind: 'address', value: 16n}, 'stop')).value, 99);
+  assert.deepEqual(reads, [{address: 16, length: 4, stopId: 'stop'}]);
+  await assert.rejects(decoder.decodeValue('guest', 'missing', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo type/);
+  await assert.rejects(decoder.decodeValue('absent', 'int32', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo raw module/);
+  assert.equal(decoder.modules, undefined);
 });

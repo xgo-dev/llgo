@@ -198,6 +198,8 @@ PCs before Asyncify unwinds, allowing active lexical scopes and changing memory
 locations to be selected from DWARF. Register-dependent values and unwound panic
 snapshots remain unavailable; unsupported hosts retain the stricter rule that
 one frame-relative location and scope cover the whole function.
+Custom URL resolvers must leave a resolved module URL in workers for exact
+parked PCs; otherwise the conservative whole-function fallback remains in use.
 See [browser debugging](../dev/browser-debugging.md).
 
 W32 WASI sessions use native LLDB and the optional
@@ -230,6 +232,17 @@ and exception handling. All instances share one process descriptor table,
 including descriptors opened after worker creation. The host is built without
 Wasmtime's persistent compilation cache: debugger-patched JIT code must not
 enter a reusable cache.
+WASI guests inherit the debugger host's environment; `PWD` names the preopened
+working directory. Arguments after `llgo debug ./app --` configure LLDB; to append guest arguments, use the following
+before `run` (the module path already in `target.run-args` is preserved):
+
+```text
+settings append target.run-args --flag "two words"
+```
+
+The preview1 context does not support `fd_fdstat_set_flags` while its descriptor
+table is shared with workers ([wasmtime#5643](https://github.com/bytecodealliance/wasmtime/issues/5643)).
+
 External DWARF runs from a private full-module copy only after stripping its
 DWARF reproduces the deployed module byte for byte. `-remote`, `-server` and
 `-load` remain native/embedded options. `llgo run -target=wasi` continues to use

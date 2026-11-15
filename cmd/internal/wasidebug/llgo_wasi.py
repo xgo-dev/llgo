@@ -171,7 +171,7 @@ def command(debugger, arguments, result, _internal_dict):
         elif len(args) == 2 and args[0] == 'print':
             expression = args[1]
         else:
-            raise ValueError('usage: llgo-wasi print NAME|goroutines [-depth 0..8]')
+            raise ValueError('usage: llgo-wasi print NAME | goroutines [-depth 0..8]')
         result.AppendMessage(json.dumps(inspect(debugger, expression, depth), ensure_ascii=False, indent=2))
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         result.SetError(str(error))

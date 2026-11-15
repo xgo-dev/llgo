@@ -12,7 +12,7 @@ EM_JS(uint32_t, llgo_wasm_debug_capture_pcs_js, (uint64_t *output, uint32_t capa
         // Pthreads instantiate an already-compiled module and leave
         // wasmBinaryFile unset. Use this generated host's own URL resolver;
         // do not rerun a user-supplied locateFile callback during suspension.
-        const moduleURL = wasmBinaryFile || (!Module['locateFile'] && findWasmBinary());
+        const moduleURL = wasmBinaryFile || (!('locateFile' in Module) && findWasmBinary());
         if (!capacity || capacity > 128 || typeof moduleURL !== 'string' ||
             !(moduleURL.startsWith('http:') || moduleURL.startsWith('https:')) ||
             'prepareStackTrace' in Error) return 0;

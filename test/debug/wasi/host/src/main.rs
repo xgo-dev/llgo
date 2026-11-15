@@ -75,15 +75,26 @@ fn main() -> Result<()> {
         tid: AtomicI32::new(0),
     });
     let mut wasi = WasiCtxBuilder::new();
-    wasi.inherit_stdio()
-        .args(&argv)
+    let cwd = std::env::current_dir()?;
+    let guest_cwd = if cfg!(windows) {
+        "/".to_owned()
+    } else {
+        cwd.to_string_lossy().into_owned()
+    };
+    wasi.inherit_stdio();
+    wasi.envs(
+        &std::env::vars()
+            .filter(|(name, _)| name != "PWD")
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| Error::msg(format!("{error:?}")))?;
+    wasi.env("PWD", &guest_cwd)
+        .map_err(|error| Error::msg(format!("{error:?}")))?;
+    wasi.args(&argv)
         .map_err(|error| Error::msg(format!("{error:?}")))?;
     // Match LLGo's normal WASI emulator: the working directory and /tmp are
     // shared process resources, not independently reopened in each worker.
-    for (host, guest) in [
-        (std::env::current_dir()?, "/"),
-        (std::env::temp_dir(), "/tmp"),
-    ] {
+    for (host, guest) in [(cwd, guest_cwd.as_str()), (std::env::temp_dir(), "/tmp")] {
         let directory =
             wasi_common::sync::Dir::open_ambient_dir(host, wasi_common::sync::ambient_authority())?;
         wasi.preopened_dir(directory, guest)

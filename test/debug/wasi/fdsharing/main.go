@@ -12,6 +12,16 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "args-env":
+            if len(os.Args) != 4 || os.Args[2] != "two words" || os.Args[3] != "--flag" { panic("guest arguments") }
+            done := make(chan bool)
+            go func() {
+                if os.Getenv("LLGO_WASI_DEBUG_ENV") != "inherited value" { panic("guest environment") }
+                close(done)
+            }()
+            <-done
+            println("wasi-args-env-ok")
+            return
 		case "exit":
 			os.Exit(19)
 		case "worker-exit":

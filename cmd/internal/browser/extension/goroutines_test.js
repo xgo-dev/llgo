@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const schema = require('../../../../internal/debugabi/schema_v1.json');
-require('./goroutines.js');
-require('./plugin.js');
+require('../../wasmdecoder/goroutines.js');
+require('../../wasmdecoder/plugin.js');
 
 // Memory32 uses 64-bit Go ints and padded Go pointer slots. Read sizes must
 // come from DWARF fields, rather than assuming all fields have pointer width.
@@ -358,6 +358,11 @@ test('browser PC capture preserves module identity, target addresses and Error d
     f.context.wasmBinaryFile = undefined; // Emscripten's cloned pthread module.
     assert.equal(f.capture(output, 128), 2);
     f.Module.locateFile = () => assert.fail('do not reenter a user URL resolver');
+    assert.equal(f.capture(output, 128), 0);
+    f.context.wasmBinaryFile = 'https://host/app.wasm';
+    assert.equal(f.capture(output, 128), 2, 'an already-resolved worker URL needs no callback');
+    f.context.wasmBinaryFile = undefined;
+    Object.defineProperty(f.Module, 'locateFile', {get() { assert.fail('do not invoke a resolver accessor'); }});
     assert.equal(f.capture(output, 128), 0);
   }
 });
