@@ -48,6 +48,21 @@ func TestGCPercentConcurrentExchange(t *testing.T) {
 	}
 }
 
+func TestGCPercentLowersLargeCachedBudget(t *testing.T) {
+	old := debug.SetGCPercent(1<<31 - 1)
+	defer debug.SetGCPercent(old)
+	gcPercentAllocate(16)
+	debug.SetGCPercent(100)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	gcPercentAllocate(2048)
+	runtime.ReadMemStats(&after)
+	if after.NumGC <= before.NumGC {
+		t.Fatal("lowering GOGC retained the previous enormous collection threshold")
+	}
+	gcPercentAllocationSink = nil
+}
+
 func TestGCPercentControlsAutomaticCollection(t *testing.T) {
 	old := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(old)

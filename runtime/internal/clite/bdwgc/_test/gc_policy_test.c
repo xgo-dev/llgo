@@ -53,6 +53,13 @@ int main(int argc, char **argv)
     }
     assert(GC_get_gc_no() > before);
     assert(llgo_gc_set_percent(100) == 0);
+    assert(llgo_gc_set_percent(INT32_MAX) == 100);
+    /* Prime the collector's cached threshold with the large percentage. */
+    for (int i = 0; i < 128; ++i)
+        sink = GC_malloc_atomic(4096);
+    before = GC_get_gc_no();
+    assert(llgo_gc_set_percent(100) == INT32_MAX);
+    assert(GC_get_gc_no() > before);
     puts("BDWGC policy: budget, overflow, callback, explicit GC and resume pass");
     return 0;
 }

@@ -22,9 +22,10 @@ extern void GC_set_min_bytes_allocd(size_t);
 extern size_t GC_get_min_bytes_allocd(void);
 extern void GC_set_free_space_divisor(uintptr_t);
 extern void GC_set_disable_automatic_collection(int);
+extern void GC_gcollect(void);
 
 static int32_t llgo_gc_percent = 100;
-static size_t llgo_gc_original_min = 1;
+static size_t llgo_gc_original_min;
 static llgo_gc_event_fn llgo_gc_previous_event;
 static atomic_flag llgo_gc_policy_lock = ATOMIC_FLAG_INIT;
 static atomic_int llgo_gc_policy_initialized;
@@ -53,12 +54,17 @@ static void *llgo_gc_update_budget(void *unused)
 {
     llgo_gc_stats stats = {0, 0, 0};
     (void)unused;
+    if (llgo_gc_original_min == 0)
+        llgo_gc_original_min = GC_get_min_bytes_allocd();
     size_t filled = GC_get_prof_stats_unsafe(&stats, sizeof(stats));
     size_t live = filled >= 2 * sizeof(uintptr_t) && stats.heap_size > stats.free_bytes
         ? stats.heap_size - stats.free_bytes : 0;
     /* Do not install SIZE_MAX while automatic GC is disabled. BDWGC caches
      * this minimum until its next collection; that would prevent resuming. */
     size_t budget = llgo_gc_budget(live, llgo_gc_percent < 0 ? 100 : llgo_gc_percent);
+    /* Leave room for the collector's expansion arithmetic on 32-bit hosts. */
+    if (budget > SIZE_MAX / 2)
+        budget = SIZE_MAX / 2;
     /* BDWGC normally permits roughly one third of its estimated scan work
      * in allocations per collection. GOGC=100 permits the full estimate,
      * including roots; a heap-only floor misses this fixed scanning cost. */
@@ -89,6 +95,7 @@ static void *llgo_gc_change_percent(void *raw)
 
 int32_t llgo_gc_set_percent(int32_t percent)
 {
+    int32_t requested = percent < 0 ? -1 : percent;
     int disable = percent < 0;
     /* Serialize the two collector operations, including concurrent callers.
      * Collection callbacks never acquire this outer lock. */
@@ -96,6 +103,13 @@ int32_t llgo_gc_set_percent(int32_t percent)
     GC_call_with_alloc_lock(llgo_gc_change_percent, &percent);
     GC_set_disable_automatic_collection(disable);
     atomic_flag_clear_explicit(&llgo_gc_policy_lock, memory_order_release);
+    /* BDWGC caches its threshold until the next collection. A lower target
+     * must not remain stuck behind an arbitrarily large previous budget.
+     * Collect outside both locks: finalizers can reenter this API. Startup
+     * configuration does not force a collection during runtime init. */
+    if (atomic_load(&llgo_gc_policy_initialized) == 2 && requested >= 0 &&
+        (percent < 0 || requested < percent))
+        GC_gcollect();
     return percent;
 }
 
@@ -120,7 +134,6 @@ void llgo_gc_init_policy(void)
                 percent = (int32_t)number;
         }
     }
-    llgo_gc_original_min = GC_get_min_bytes_allocd();
     llgo_gc_previous_event = GC_get_on_collection_event();
     GC_set_on_collection_event(llgo_gc_collection_event);
     llgo_gc_set_percent(percent);

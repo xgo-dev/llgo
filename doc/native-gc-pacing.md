@@ -30,7 +30,10 @@ continues to scale with the full percentage.
 automatic collection; explicit `runtime.GC` remains available. Changing the
 percentage is synchronized and returns the previous value. BDWGC can retain its
 current scan-cost estimate until the next collection, so a percentage change is
-not an exact heap-size limit. Existing BDWGC process-wide disablement is preserved.
+not an exact heap-size limit. Lowering the percentage or resuming automatic GC
+performs a collection to refresh that cached estimate; it runs outside the policy
+lock so finalizers can reenter the API. Existing BDWGC process-wide disablement is
+preserved.
 
 The collection callback performs only C arithmetic and uses the collector's
 unsynchronized statistics API while holding its allocation lock. It neither
