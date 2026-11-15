@@ -158,11 +158,11 @@ func pointers(n int)int{s:=make([]*int,n);return len(s)}
 			}
 			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &llssa.Target{GOOS: tc.os, GOARCH: tc.arch}, tc.roots)
 			for name, helper := range map[string]string{
-				"dynamic": "MakeSliceBuffer", "fromBytes": "StringFromBytesBuffer", "toBytes": "StringToBytesBuffer",
+				"dynamic": "MakeSliceBuffer", "fromBytes": "StringFromBytesReadOnly", "toBytes": "StringToBytesBuffer",
 				"fromRunes": "StringFromRunesBuffer", "toRunes": "StringToRunesBuffer", "concat": "StringCatBuffer", "readOnly": "StringToBytesReadOnly", "compare": "StringFromBytesReadOnly", "lookup": "StringFromBytesReadOnly",
 			} {
 				if body := llvmFunction(t, ir, "transient."+name); !strings.Contains(body, "runtime."+helper) {
-					t.Errorf("%s lost buffer helper:\n%s", name, body)
+					t.Errorf("%s missing runtime.%s:\n%s", name, helper, body)
 				}
 			}
 			if body := llvmFunction(t, ir, "transient.fixed"); strings.Contains(body, "runtime.Alloc") {
