@@ -94,12 +94,11 @@ func analyzeInlineCost(fn *ssa.Function, costs map[*ssa.Function]inlineCost, act
 			costs[fn] = result
 		}
 	}()
-	if fn.Pkg == nil || fn.Parent() != nil || fn.Synthetic != "" ||
+	if fn.Pkg == nil || fn.Parent() != nil ||
 		len(fn.Blocks) == 0 || len(fn.FreeVars) != 0 || len(fn.AnonFuncs) != 0 || fn.Recover != nil ||
-		fn.Signature.Recv() != nil || fn.Signature.Variadic() ||
-		fn.Signature.TypeParams().Len() != 0 || fn.Origin() != nil ||
+		fn.Signature.Variadic() ||
 		fn.Name() == "init" || strings.HasPrefix(fn.Name(), "init#") ||
-		inlineProhibitedDirective(fn) {
+		inlineProhibited(fn) {
 		return reject
 	}
 	active[fn] = true
@@ -155,26 +154,84 @@ func analyzeInlineCost(fn *ssa.Function, costs map[*ssa.Function]inlineCost, act
 	return result
 }
 
-func inlineProhibitedDirective(fn *ssa.Function) bool {
+// inlineProhibited checks declaration restrictions shared by the original and
+// replacement. Body availability and cost apply only to the resolved target.
+func inlineProhibited(fn *ssa.Function) bool {
+	if fn.Pkg != nil {
+		if kind, _ := PkgKindOf(fn.Pkg.Pkg); kind == PkgDeclOnly {
+			return true // Declaration packages do not own executable Go bodies.
+		}
+	}
+	if fn.Synthetic != "" || fn.Origin() != nil ||
+		fn.Signature.RecvTypeParams().Len() != 0 || fn.Signature.TypeParams().Len() != 0 {
+		return true
+	}
 	decl, _ := fn.Syntax().(*ast.FuncDecl)
-	if decl != nil {
-		for _, d := range directive.ParseGroup(decl.Doc) {
-			switch d.Name {
-			case "go:noinline", "go:cgo_unsafe_args", "go:uintptrkeepalive", "go:uintptrescapes",
-				"go:yeswritebarrierrec", "go:norace", "go:nocheckptr",
-				"llgo:env", "llgo:link", "go:linkname":
-				return true
-			}
+	if decl == nil {
+		return false
+	}
+	for _, d := range directive.ParseGroup(decl.Doc) {
+		switch d.Name {
+		case "go:noinline", "go:cgo_unsafe_args", "go:uintptrkeepalive", "go:uintptrescapes",
+			"go:yeswritebarrierrec", "go:norace", "go:nocheckptr",
+			"llgo:env", "llgo:link", "go:linkname":
+			return true
 		}
 	}
 	return false
+}
+
+// ResolveInlineTarget selects the same implementation for frontend body
+// preloading and backend import. An unresolved patched method must not fall
+// back to its original body. Body availability and cost are checked separately.
+func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
+	if fn == nil || fn.Pkg == nil || inlineProhibited(fn) {
+		return nil
+	}
+	patch, ok := patches[llssa.PathOf(fn.Pkg.Pkg)]
+	if !ok {
+		return fn
+	}
+	if patch.Alt == nil {
+		return nil
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil {
+		if replacement := patch.Alt.Func(fn.Name()); replacement != nil {
+			return replacement
+		}
+		return fn
+	}
+	receiver := recvNamedOk(recv.Type())
+	if receiver == nil {
+		return nil
+	}
+	// Use SSA members, not the merged type scope: the latter may contain
+	// original types and has a different package identity after lowering.
+	member := patch.Alt.Type(receiver.Obj().Name())
+	if member == nil {
+		// Even an original-only type may be excluded by skip directives.
+		// The merged scope alone cannot prove ownership of its method bodies.
+		return nil
+	}
+	replacement, ok := types.Unalias(member.Type()).(*types.Named)
+	if !ok {
+		return nil
+	}
+	for method := range replacement.Methods() {
+		if method.Name() == fn.Name() {
+			return patch.Alt.Prog.FuncValue(method)
+		}
+	}
+	return nil
 }
 
 // importInlineBody supplies an optimization-only definition for a direct
 // cross-package call. The defining package remains the owner of the real
 // function entry, including when its address escapes or LLVM declines to inline.
 func (p *context) importInlineBody(original *ssa.Function) {
-	if disableInline || p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
+	if disableInline || p.options.DisableInlineBodyImports ||
+		p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
 		p.options.DebuggerFrames || p.options.ShadowStack ||
 		p.inlineCost >= inlineModuleBudget || original.Pkg == nil || original.Pkg == p.goPkg ||
 		llssa.PathOf(original.Pkg.Pkg) == p.pkg.Path() {
@@ -191,13 +248,8 @@ func (p *context) importInlineBody(original *ssa.Function) {
 	if depth > inlineImportDepth {
 		return
 	}
-	fn := original
-	if patch, ok := p.patches[llssa.PathOf(fn.Pkg.Pkg)]; ok && fn.Signature.Recv() == nil {
-		if replacement := patch.Alt.Func(fn.Name()); replacement != nil {
-			fn = replacement
-		}
-	}
-	if fn != original && inlineProhibitedDirective(original) {
+	fn := ResolveInlineTarget(original, p.patches)
+	if fn == nil {
 		return
 	}
 	facts := p.inlineFacts.info(fn)
@@ -222,6 +274,14 @@ func (p *context) importInlineBody(original *ssa.Function) {
 	if kind != goFunc || replacementKind != goFunc || name != replacementName ||
 		!types.Identical(p.patchType(original.Signature), p.patchType(fn.Signature)) {
 		return
+	}
+	// Signature identity excludes receivers. Check their mapped types as
+	// well before giving an existing call the replacement method's body.
+	if recv := original.Signature.Recv(); recv != nil {
+		replacementRecv := fn.Signature.Recv()
+		if replacementRecv == nil || !types.Identical(p.patchType(recv.Type()), p.patchType(replacementRecv.Type())) {
+			return
+		}
 	}
 	if existing := p.pkg.Module().NamedFunction(name); !existing.IsNil() && !existing.IsDeclaration() {
 		return // Never turn an existing real definition into an imported copy.

@@ -3,7 +3,6 @@ package build
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -26,58 +25,28 @@ func TestCrossPackageInlineWithCachedDependency(t *testing.T) {
 	cacheRootFunc = func() string { return cacheDir }
 	t.Cleanup(func() { cacheRootFunc = oldCacheRoot })
 	dir := t.TempDir()
-	files := map[string]string{
-		"go.mod": "module example.com/crossinline\n\ngo 1.24\n",
-		"dep/arith.go": `package dep
-var Counter int
-func Next() uint64 {Counter++;return uint64(Counter)}
-func Sum(x,y uint64)uint64{return x+y+2}
-func Split(x uint64)(uint64,bool){return x+1,x>3}
-//go:noinline
-func Kept(x uint64)uint64{return x+1}
-`,
-		"main.go": `package main
-import "example.com/crossinline/dep"
-import "example.com/crossinline/bridge"
-const offset=2
-var value=bridge.Sum
-//go:noinline
-func indirect(fn func(uint64,uint64)uint64,x,y uint64)uint64{return fn(x,y)}
-func main(){
- if bridge.Sum(dep.Next(),dep.Next())!=3+offset || dep.Counter!=2 {panic("argument evaluation")}
- for x:=uint64(0);x<100;x++ {
-  if bridge.Sum(x,3)!=x+3+offset || indirect(value,x,3)!=x+3+offset {panic("function value")}
-  n,b:=dep.Split(x);if n!=x+1 || b!=(x>3){panic("tuple")}
-  if dep.Kept(x)!=x+1 {panic("noinline")}
- }
- println("cross inline ok")
-}
-`,
-		"bridge/sum.go": `package bridge
-import "example.com/crossinline/dep"
-func Sum(x,y uint64)uint64{return dep.Sum(x,y)}
-`,
+	copyTree(t, filepath.Join("testdata", "crossinline"), dir)
+	wantImports := []string{
+		"example.com/crossinline/dep.Sum", "example.com/crossinline/dep.Number.Add",
+		"reflect.Value.IsValid", "reflect.Value.CanAddr", "reflect.Value.CanSet",
+		"runtime.(*Func).Name",
 	}
-	for name, source := range files {
-		path := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for phase := 0; phase < 3; phase++ {
+	for phase := range 3 {
 		if phase == 2 {
 			// Change only the dependency's private implementation. The bridge
 			// source is unchanged, but its inlined body must be rebuilt too.
-			for name, source := range map[string]string{
-				"dep/arith.go": strings.Replace(files["dep/arith.go"], "x+y+2", "x+y+1002", 1),
-				"main.go":      strings.Replace(files["main.go"], "offset=2", "offset=1002", 1),
-			} {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+			const old = "const offset = 2"
+			for _, name := range []string{"dep/arith.go", "main.go"} {
+				path := filepath.Join(dir, name)
+				source, err := os.ReadFile(path)
+				if err != nil {
 					t.Fatal(err)
 				}
+				text := string(source)
+				if count := strings.Count(text, old); count != 1 {
+					t.Fatalf("%s: found %d occurrences of %q, want 1", name, count, old)
+				}
+				writeFile(t, path, strings.Replace(text, old, "const offset = 1002", 1))
 			}
 		}
 		conf := NewDefaultConf(ModeBuild)
@@ -87,36 +56,95 @@ func Sum(x,y uint64)uint64{return dep.Sum(x,y)}
 		if runtime.GOOS == "windows" {
 			conf.OutFile += ".exe"
 		}
-		imported := false
+		missingImports := wantImports
 		conf.ModuleHook = func(pkg Package) {
 			if pkg.PkgPath != "example.com/crossinline" || pkg.LPkg == nil {
 				return
 			}
-			fn := pkg.LPkg.Module().NamedFunction("example.com/crossinline/dep.Sum")
-			imported = !fn.IsNil() && !fn.IsDeclaration() && fn.Linkage() == llvm.AvailableExternallyLinkage
+			missingImports = nil
+			for _, name := range wantImports {
+				fn := pkg.LPkg.Module().NamedFunction(name)
+				if fn.IsNil() || fn.IsDeclaration() || fn.Linkage() != llvm.AvailableExternallyLinkage {
+					missingImports = append(missingImports, name)
+				}
+			}
 		}
 		pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !imported {
-			t.Fatalf("phase %d: caller lacks dependency inline body", phase)
+		if len(missingImports) != 0 {
+			t.Fatalf("phase %d: caller lacks dependency inline bodies: %v", phase, missingImports)
 		}
-		found := 0
-		for _, pkg := range pkgs {
-			if pkg.PkgPath == "example.com/crossinline/dep" || pkg.PkgPath == "example.com/crossinline/bridge" {
-				found++
-				if pkg.CacheHit != (phase == 1) {
-					t.Fatalf("phase %d: dependency CacheHit=%v", phase, pkg.CacheHit)
-				}
+		for _, path := range []string{"example.com/crossinline/dep", "example.com/crossinline/bridge", "reflect"} {
+			pkg := findPkg(pkgs, path)
+			if pkg == nil {
+				t.Fatalf("phase %d: missing package %s", phase, path)
+			}
+			wantCacheHit := phase == 1 || path == "reflect" && phase == 2
+			if pkg.CacheHit != wantCacheHit {
+				t.Fatalf("phase %d: %s CacheHit=%v, want %v", phase, path, pkg.CacheHit, wantCacheHit)
 			}
 		}
-		if found != 2 {
-			t.Fatal("dependency or importing bridge missing")
+		if out := strings.TrimSpace(runBinary(t, conf.OutFile)); out != "cross inline ok" {
+			t.Fatalf("phase %d: unexpected output: %s", phase, out)
 		}
-		out, err := exec.Command(conf.OutFile).CombinedOutput()
-		if err != nil || strings.TrimSpace(string(out)) != "cross inline ok" {
-			t.Fatalf("run: %v\n%s", err, out)
-		}
+	}
+}
+
+func TestCrossPackageInlineDeclarationOnly(t *testing.T) {
+	t.Setenv(llgoBuildCache, "0")
+	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2, optlevel.O3} {
+		t.Run(level.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = level, lto.Off
+			conf.OutFile = filepath.Join(t.TempDir(), "program")
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Do([]string{"./testdata/crossinlinedecl"}, conf); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(runBinary(t, conf.OutFile)); got != "42" {
+				t.Fatalf("linked method returned %s, want 42", got)
+			}
+		})
+	}
+}
+
+func TestCrossPackageInlineLTOPolicy(t *testing.T) {
+	t.Setenv(llgoBuildCache, "0")
+	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = optlevel.Os, mode
+			conf.BuildParallelism = 2
+			conf.OutFile = filepath.Join(t.TempDir(), "program")
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			checked := false
+			conf.ModuleHook = func(pkg Package) {
+				if pkg.PkgPath != "example.com/crossinline" || pkg.LPkg == nil {
+					return
+				}
+				checked = true
+				for _, name := range []string{"example.com/crossinline/bridge.Sum", "example.com/crossinline/dep.Number.Add", "runtime.(*Func).Name"} {
+					fn := pkg.LPkg.Module().NamedFunction(name)
+					if fn.IsNil() || fn.IsDeclaration() != (mode == lto.Full) {
+						t.Errorf("%s: unexpected body import with %s LTO", name, mode)
+					}
+				}
+			}
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join("testdata", "crossinline")}); err != nil {
+				t.Fatal(err)
+			}
+			if !checked {
+				t.Fatal("caller module not checked")
+			}
+			if got := strings.TrimSpace(runBinary(t, conf.OutFile)); got != "cross inline ok" {
+				t.Fatalf("unexpected output: %s", got)
+			}
+		})
 	}
 }
