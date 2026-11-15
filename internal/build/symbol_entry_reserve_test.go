@@ -71,6 +71,9 @@ func TestSymbolEntryReservationGrowth(t *testing.T) {
 	if _, _, err := growSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant i64 0", analysis); err == nil {
 		t.Fatal("unexpected reservation declaration accepted")
 	}
+	if _, _, err := growSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant [18446744073709551616 x i8] zeroinitializer", analysis); err == nil {
+		t.Fatal("overflowing reservation capacity accepted")
+	}
 	if _, _, err := growSymbolEntryReserve(source, pclnpost.ExternalAnalysis{}); err == nil {
 		t.Fatal("invalid linked text range accepted")
 	}

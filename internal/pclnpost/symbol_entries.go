@@ -7,7 +7,7 @@ import "encoding/binary"
 const SymbolEntryCarrierMagic uint64 = 0x314d59534f474c4c // LLGOSYM1
 
 func symbolEntryCarrier(info *binaryInfo) bool {
-	for off := 0; off <= 64 && off+16 <= len(info.entrySec); off += 16 {
+	for off := 0; off <= 64 && off+16 <= len(info.entrySec); off += 8 {
 		if binary.LittleEndian.Uint64(info.entrySec[off:]) == SymbolEntryCarrierMagic {
 			return true
 		}

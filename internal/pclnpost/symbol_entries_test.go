@@ -3,10 +3,60 @@ package pclnpost
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestSymbolEntryCarrierAlignment(t *testing.T) {
+	for off := 0; off <= 64; off += 8 {
+		t.Run(fmt.Sprint(off), func(t *testing.T) {
+			info := &binaryInfo{entrySec: make([]byte, off+16)}
+			binary.LittleEndian.PutUint64(info.entrySec[off:], SymbolEntryCarrierMagic)
+			if !symbolEntryCarrier(info) {
+				t.Fatal("missed an 8-byte-aligned carrier")
+			}
+			info.entrySec = info.entrySec[:off+8]
+			if symbolEntryCarrier(info) {
+				t.Fatal("accepted a truncated carrier")
+			}
+		})
+	}
+}
+
+func TestSymbolEntryReserveCoversEncodedTable(t *testing.T) {
+	for _, offsets := range [][2]uint64{{0, 1}, {0xfff, 0x1000}, {0x10, 0x3f000}} {
+		t.Run(fmt.Sprint(offsets), func(t *testing.T) {
+			path := symbolCarrierFixture(t)
+			info, err := load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries := []siteRecord{
+				{pc: info.textStart + offsets[0], symbolID: fnv64("example.com/p.A")},
+				{pc: info.textStart + offsets[1], symbolID: fnv64("example.com/p.B")},
+			}
+			bound, err := SymbolEntryReserveSize(ExternalAnalysis{
+				TextStart: entries[0].pc, TextEnd: entries[1].pc + 1,
+				EntrySites: make([]ExternalSite, len(entries)),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := writeBack(path, info, entries); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if encoded.entryVMSize > bound {
+				t.Fatalf("encoded table needs %d bytes, reservation bound is %d", encoded.entryVMSize, bound)
+			}
+		})
+	}
+}
 
 func symbolCarrierFixture(t *testing.T) string {
 	t.Helper()

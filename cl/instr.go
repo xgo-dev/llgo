@@ -2435,6 +2435,8 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, common *ssa.CallCo
 		// The deferred call is emitted later in the shared defer dispatcher,
 		// rather than beside RunDefers's exit label. Anchor that actual call
 		// at the closing brace too, so optimized block placement keeps its PC.
+		// This is the Go caller-line rule on every tracked target, including
+		// non-Darwin builds; it is independent of the LTO entry-table policy.
 		if common != nil && p.shouldTrackCallerFrames() {
 			call := buildCall
 			pos := p.deferRunPos(common.Pos())

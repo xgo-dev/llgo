@@ -9,6 +9,8 @@ import (
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 )
 
+// LLVM must print the reservation's type and initializer as [N x i8] on its
+// global declaration line. A printer format change must fail closed below.
 var symbolEntryArrayType = regexp.MustCompile(`\[([0-9]+) x i8\]`)
 
 // The linked text range bounds the bucket count even when foreign code lies
@@ -25,12 +27,13 @@ func growSymbolEntryReserve(ir string, analysis pclnpost.ExternalAnalysis) (stri
 			return "", false, fmt.Errorf("invalid symbol entry reservation")
 		}
 		capacity, err := strconv.ParseUint(match[1], 10, 64)
-		if err != nil || analysis.TextEnd <= analysis.TextStart ||
-			analysis.TextEnd-analysis.TextStart > uint64(^uint32(0)) || uint64(len(analysis.EntrySites)) > uint64(^uint32(0)) {
-			return "", false, fmt.Errorf("invalid symbol entry capacity or text range")
+		if err != nil {
+			return "", false, fmt.Errorf("invalid symbol entry capacity: %w", err)
 		}
-		buckets := (analysis.TextEnd-analysis.TextStart)/4096 + 2
-		need := uint64(32) + (uint64(len(analysis.EntrySites))+1)*8 + buckets*36
+		need, err := pclnpost.SymbolEntryReserveSize(analysis)
+		if err != nil {
+			return "", false, err
+		}
 		if capacity >= need {
 			return ir, false, nil
 		}
