@@ -251,12 +251,18 @@ static int handle_allthreads(thread_node *node)
 /* Enumeration is a completeness check on the registered, stopped cohort,
  * not a source of thread handles. Raw getdents avoids allocator/libc locks
  * that a parked thread might hold. It is repeated after every target parks. */
+static int allcall_proc_error(uintptr_t error)
+{
+    return error == EMFILE || error == ENFILE || error == ENOMEM ||
+           error == EINTR || error == EAGAIN ? EAGAIN : ENOTSUP;
+}
+
 static int allcall_complete_cohort(void)
 {
     uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)"/proc/self/task",
                          O_RDONLY | O_DIRECTORY | O_CLOEXEC};
     kernel_result opened = kernel_syscall(SYS_openat, args);
-    if (opened.error) return ENOTSUP;
+    if (opened.error) return allcall_proc_error(opened.error);
     uintptr_t fd = opened.r1;
     unsigned count = 0, registered = 0;
     for (thread_node *n = llgo_debugger_threads_v1; n; n = n->next) registered++;
@@ -265,7 +271,7 @@ static int allcall_complete_cohort(void)
         unsigned char buffer[1024];
         uintptr_t readargs[6] = {fd, (uintptr_t)buffer, sizeof(buffer)};
         kernel_result read = kernel_syscall(SYS_getdents64, readargs);
-        if (read.error) { error = ENOTSUP; break; }
+        if (read.error) { error = allcall_proc_error(read.error); break; }
         if (!read.r1) break;
         for (size_t pos = 0; pos < read.r1;) {
             if (read.r1-pos < 20) { error = EAGAIN; break; }

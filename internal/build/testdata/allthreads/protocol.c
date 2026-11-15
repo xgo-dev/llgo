@@ -210,8 +210,9 @@ int main(int argc, char **argv)
         llgo_traceback_unregister(main_node);
         return 0;
     }
-    if (argc == 2 && (!strcmp(argv[1], "retiring") || !strcmp(argv[1], "retiring-fdlimit"))) {
-        int pressure = !strcmp(argv[1], "retiring-fdlimit");
+    if (argc == 2 && (!strcmp(argv[1], "retiring") || !strcmp(argv[1], "retiring-fdlimit") || !strcmp(argv[1], "retiring-fdlimit-gone"))) {
+        int gone = !strcmp(argv[1], "retiring-fdlimit-gone");
+        int pressure = strcmp(argv[1], "retiring") != 0;
         worker w = {.masked = pressure};
         w.node = llgo_traceback_register(2, 1, 0, 0);
         llgo_traceback_mark_owned(w.node);
@@ -232,14 +233,25 @@ int main(int argc, char **argv)
             }
             atomic_store(&w.unblock, 1);
             while (atomic_load(&w.ready) != 2) sched_yield();
+            if (gone) {
+                atomic_store(&w.stop, 1);
+                assert(!pthread_join(thread, 0));
+            }
+            /* The scan itself needs a descriptor too; fd pressure must not
+             * turn into a permanent unsupported result or disable the mode. */
+            assert(call(SYS_getpid).error == EAGAIN);
             while (count) assert(!close(fds[--count]));
             assert(!setrlimit(RLIMIT_NOFILE, &original));
         }
         while (atomic_load(&w.ready) != 2) sched_yield();
         llgo_allthreads_call c = call(SYS_getpid);
-        assert(c.error == EAGAIN); /* Owned libc teardown is still in /proc. */
-        atomic_store(&w.stop, 1);
-        assert(!pthread_join(thread, 0));
+        if (gone) {
+            assert(!c.error && c.r1 == (uintptr_t)getpid());
+        } else {
+            assert(c.error == EAGAIN); /* Owned libc teardown is still in /proc. */
+            atomic_store(&w.stop, 1);
+            assert(!pthread_join(thread, 0));
+        }
         assert(await_result(0).r1 == 0);
         llgo_traceback_unregister(main_node);
         return 0;
@@ -362,7 +374,7 @@ int main(int argc, char **argv)
     fputs("allthreads: final teardown\n", stderr);
     for (unsigned i = 0; i < 3; i++) stop(&children[i], threads[i]);
     llgo_traceback_unregister(main_node);
-    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring", "retiring-fdlimit", "foreign-prepare"};
+    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring", "retiring-fdlimit", "retiring-fdlimit-gone", "foreign-prepare"};
     for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         pid_t child = fork();
         assert(child >= 0);

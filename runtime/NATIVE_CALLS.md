@@ -81,7 +81,10 @@ An owned pthread may unregister before the kernel removes its task. Calls
 return `EAGAIN` during this teardown. The runtime temporarily holds one proc
 directory descriptor per retiring thread to preserve identity across TID reuse.
 Fd exhaustion leaves a conservative TID record and retryable teardown; pinning
-is retried after resources recover. Applications must preserve runtime-owned
+is retried after resources recover. If another thread reuses an unpinned TID,
+`EAGAIN` can persist for that thread's lifetime; callers must bound retries.
+Temporary fd/memory pressure during cohort scans also returns `EAGAIN`. Public
+`ENOTSUP` results consistently return `(-1, -1)`. Applications must preserve runtime-owned
 descriptors, including when using daemonization or `close_range` helpers.
 
 The registry lock excludes registration, attachment, and exit. An entry whose

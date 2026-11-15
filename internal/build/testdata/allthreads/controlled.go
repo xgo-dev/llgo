@@ -65,8 +65,8 @@ func main() {
 		panic("controlled credentials")
 	}
 	mask := syscall.Umask(0077)
-	_, _, err := syscall.AllThreadsSyscall(syscall.SYS_UMASK, 0022, 0, 0)
-	if after := syscall.Umask(mask); err != syscall.ENOTSUP || after != 0077 {
+	r1, r2, err := syscall.AllThreadsSyscall(syscall.SYS_UMASK, 0022, 0, 0)
+	if after := syscall.Umask(mask); err != syscall.ENOTSUP || r1 != ^uintptr(0) || r2 != ^uintptr(0) || after != 0077 {
 		panic("unlisted syscall executed")
 	}
 	finished := make(chan bool)

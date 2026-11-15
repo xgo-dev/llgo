@@ -15,7 +15,7 @@ func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
 		return minus1, minus1, ENOTSUP
 	}
 	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, 0, 0, 0)
-	if errno == uintptr(ENOTSUP) && !runtime_allThreadsSyscallSupported() {
+	if errno == uintptr(ENOTSUP) {
 		return minus1, minus1, ENOTSUP
 	}
 	return r1, r2, Errno(errno)
@@ -27,7 +27,7 @@ func AllThreadsSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, e
 		return minus1, minus1, ENOTSUP
 	}
 	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6)
-	if errno == uintptr(ENOTSUP) && !runtime_allThreadsSyscallSupported() {
+	if errno == uintptr(ENOTSUP) {
 		return minus1, minus1, ENOTSUP
 	}
 	return r1, r2, Errno(errno)
