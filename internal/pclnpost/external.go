@@ -37,8 +37,8 @@ const (
 // ExternalSite is one final linked site. PCOffset is relative to the image
 // base, so it remains valid after ASLR. ID is a funcinfo symbol ID for an
 // entry site and a pcline record ID for a PC-line site. PC-line sites also
-// carry the final linked owner in OwnerSymbol; it is a post-link join key and
-// is not serialized into the sidecar.
+// carry the source-level name of the final linked owner in OwnerSymbol; it is
+// a post-link join key and is not serialized into the sidecar.
 type ExternalSite struct {
 	PCOffset    uint64
 	ID          uint64
@@ -85,7 +85,10 @@ func AnalyzeExternal(path string) (ExternalAnalysis, error) {
 		}
 	}
 
-	entries := parseRecords(info, info.entrySec)
+	entries, err := entryRecords(path, info)
+	if err != nil {
+		return out, err
+	}
 	pcLines := parseRecords(info, info.pcLineSec)
 	out.EntryRecords = len(entries)
 	out.PCLineRecords = len(pcLines)
@@ -176,7 +179,7 @@ func externalPCLineSites(info *binaryInfo, records []siteRecord) []ExternalSite 
 		sites = append(sites, ExternalSite{
 			PCOffset:    record.pc - info.imageBase,
 			ID:          record.symbolID,
-			OwnerSymbol: sym.name,
+			OwnerSymbol: sourceSymbolName(info, sym.name),
 		})
 	}
 	// Preserve linker-section order for records at the same PC. Consecutive

@@ -45,6 +45,9 @@ func darwinLTOObjectArgs(ctx *context, app string, cmd *clang.Cmd, args []string
 	if hasDarwinLTOObjectPath(cmd.LinkArguments(args...)) {
 		return nil, nil
 	}
+	if ctx.darwinLTOObjectOutput != "" {
+		app = ctx.darwinLTOObjectOutput
+	}
 	root := darwinLTOObjectDir(app)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
@@ -53,6 +56,7 @@ func darwinLTOObjectArgs(ctx *context, app string, cmd *clang.Cmd, args []string
 	if err != nil {
 		return nil, err
 	}
+	ctx.darwinLTOObjectDirectory = dir
 	return []string{"-Xlinker", "-object_path_lto", "-Xlinker", filepath.Join(dir, "lto.o")}, nil
 }
 

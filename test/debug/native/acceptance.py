@@ -6,6 +6,7 @@ from typing import Iterable, List
 
 import lldb
 
+session_target = None
 
 class AcceptanceError(RuntimeError):
     pass
@@ -78,6 +79,9 @@ def find_frame(
 
 
 def create_session(executable: str) -> tuple[lldb.SBDebugger, lldb.SBTarget]:
+    if session_target is not None:
+        session_target.DeleteAllBreakpoints()
+        return lldb.debugger, session_target
     debugger = lldb.SBDebugger.Create()
     debugger.SetAsync(False)
     # The fixtures contain their DWARF. Keep inferior launch and unwinding
@@ -102,7 +106,8 @@ def destroy_session(debugger: lldb.SBDebugger, process: lldb.SBProcess) -> None:
         lldb.eStateDetached,
     ):
         process.Kill()
-    lldb.SBDebugger.Destroy(debugger)
+    if session_target is None:
+        lldb.SBDebugger.Destroy(debugger)
 
 
 def set_panic_breakpoint(target: lldb.SBTarget) -> lldb.SBBreakpoint:
@@ -256,6 +261,17 @@ def main() -> None:
         os.environ["LLGO_NATIVE_DEBUG_OPTIMIZED_ARTIFACT"],
         os.environ["LLGO_NATIVE_DEBUG_SOURCE"],
     )
+
+
+def current_session(source_root: str) -> None:
+    global session_target
+    lldb.debugger.SetAsync(False)
+    session_target = lldb.debugger.GetSelectedTarget()
+    executable = str(session_target.GetExecutable())
+    try:
+        run_all(executable, executable, source_root)
+    finally:
+        session_target = None
 
 
 if __name__ == "__main__":

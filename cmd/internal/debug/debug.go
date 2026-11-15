@@ -207,6 +207,7 @@ func run(packageArgs, debuggerArgs []string, opts options, stdin io.Reader, stdo
 	return runSession(session{
 		backend:      selected,
 		artifact:     artifact,
+		lto:          conf.LTO.Enabled(),
 		debuggerArgs: debuggerArgs,
 		target:       target,
 		options:      opts,

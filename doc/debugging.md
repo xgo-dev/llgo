@@ -162,6 +162,11 @@ patched GDB to remove those upstream limits.
 `llgo lldb` remains the explicit compatibility command for opening an existing
 artifact without building it.
 
+Native Darwin `llgo debug` sessions with ThinLTO or Full LTO use `dsymutil`
+to resolve the retained LTO debug map into a private dSYM. The session removes
+it on exit; build outputs retain their platform-default packaging. Keep the
+executable's `.llgo-debug-lto` directory when opening its debug map directly.
+
 For browser source debugging, use Chrome for Testing or Chromium with the
 unpacked-extension command-line flags enabled:
 

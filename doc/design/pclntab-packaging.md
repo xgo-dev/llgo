@@ -125,9 +125,14 @@ a later native-strip mutation is added.
 sites are not produced. `-pclntab=embedded` keeps the existing post-link
 prebuilt-table rewrite.
 
-Darwin builds with embedded pclntab and DWARF suppress function-entry address
-sites, whose inline assembly disturbs LLDB's initial lexical scope. PC-line
-anchors retain precise runtime source locations and carry no debug location.
+Darwin amd64/arm64 LTO executables with embedded pclntab and DWARF collect entry
+addresses from the final native symbol table, joined to the funcinfo catalog
+by symbol ID. A data-only carrier in the entry module reserves space for the
+prebuilt table; the metadata relink grows it when the linked text range needs
+more buckets. This preserves function bodies and dead-code elimination without
+entry assembly or function-address roots. `LLGO_PCLNPOST=0` retains the legacy
+dynamic-symbol fallback and its optimized source-location limitations.
+PC-line anchors retain precise runtime source locations and carry no debug location.
 Linux and Windows retain entry sites because they cannot reconstruct every
 function address through a dynamic symbol lookup. External mode retains both
 categories to construct the sidecar.
