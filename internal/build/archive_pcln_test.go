@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -37,6 +38,7 @@ func TestPackagePCLNArchive(t *testing.T) {
 				prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch, LLVMTarget: target.triple})
 				defer prog.Dispose()
 				src := prog.NewPackage("p", "example.com/p")
+				src.EmitFuncInfoFlags("p.Boundary", "p.Boundary", "p.go", int(buildfuncinfo.EncodedLineMask), 0, buildfuncinfo.RecordFlagWrapper)
 				src.EmitFuncInfoFlags("p.Trace.__llgo_fmv_avx2", "p.Trace", "路径/p.go", 10, 2, 1)
 				src.EmitPCLineInfo(1<<63+7, "p.Trace.__llgo_fmv_avx2", "路径/p.go", 14, 3)
 				wantFuncs := readFuncInfo(src.Module())
@@ -194,6 +196,11 @@ func TestLoadPackagePCLNRejectsCorruptPayload(t *testing.T) {
 		raw = binary.AppendUvarint(raw, uint64(len(section)))
 		return append(raw, section...)
 	}
+	function := func(line, flags uint32) []byte {
+		// Put a valid record first to catch publication of partially loaded data.
+		raw := fmt.Appendf(nil, `{"Functions":[{"Symbol":"p.Valid"},{"Symbol":"p.F","Line":%d,"Flags":%d}]}`, line, flags)
+		return wasm(append(binary.LittleEndian.AppendUint64(nil, uint64(len(raw))), raw...))
+	}
 	for _, tc := range []struct {
 		name, want string
 		object     []byte
@@ -203,6 +210,10 @@ func TestLoadPackagePCLNRejectsCorruptPayload(t *testing.T) {
 		{"oversized length", "invalid PCLN payload length", wasm(binary.LittleEndian.AppendUint64(nil, ^uint64(0)))},
 		{"invalid JSON", "decode PCLN", wasm(append(binary.LittleEndian.AppendUint64(nil, 1), '{'))},
 		{"wrong JSON type", "decode PCLN", wasm(append(binary.LittleEndian.AppendUint64(nil, 2), '[', ']'))},
+		{"unsupported flags", `invalid PCLN for p: function "p.F" has unsupported flags 0x2`, function(1, 2)},
+		{"wrapper with unsupported flags", `invalid PCLN for p: function "p.F" has unsupported flags 0x3`, function(1, buildfuncinfo.RecordFlagWrapper|2)},
+		{"line exceeds encoding", `invalid PCLN for p: function "p.F" source line 2147483648 exceeds 2147483647`, function(buildfuncinfo.EncodedLineMask+1, 0)},
+		{"maximum uint32 line", `invalid PCLN for p: function "p.F" source line 4294967295 exceeds 2147483647`, function(^uint32(0), 0)},
 		{"empty mappings with padding", "", wasm(append(binary.LittleEndian.AppendUint64(nil, 2), '{', '}', 0, 0))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

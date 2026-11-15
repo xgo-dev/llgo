@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llvm"
+
+	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 )
 
 // This member is a native object even in LTO archives. It has no externally
@@ -158,6 +160,14 @@ func loadPackagePCLN(pkg Package) error {
 	}
 	result := &packagePCLN{}
 	for _, r := range data.Functions {
+		// Reject malformed cache records before publishing mappings that would
+		// otherwise make the final funcinfo table encoder panic.
+		if r.Flags & ^buildfuncinfo.RecordFlagWrapper != 0 {
+			return fmt.Errorf("invalid PCLN for %s: function %q has unsupported flags %#x", pkg.PkgPath, r.Symbol, r.Flags)
+		}
+		if r.Line > buildfuncinfo.EncodedLineMask {
+			return fmt.Errorf("invalid PCLN for %s: function %q source line %d exceeds %d", pkg.PkgPath, r.Symbol, r.Line, buildfuncinfo.EncodedLineMask)
+		}
 		result.functions = append(result.functions, funcInfoRecord{r.Symbol, r.Name, r.File, r.Line, r.Column, r.Flags})
 	}
 	for _, r := range data.Lines {
