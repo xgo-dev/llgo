@@ -23,6 +23,7 @@ import (
 )
 
 type CallerFrame struct {
+	callerLocationMetadata
 	wasmCallerFrame
 	PC        uintptr
 	Entry     uintptr
@@ -530,7 +531,7 @@ func syntheticFrameForPC(pc uintptr) (CallerFrame, bool) {
 	if frame.Entry == 0 {
 		frame.Entry = pc
 	}
-	return frame, true
+	return resolveCallerFrame(frame), true
 }
 
 func callerLocationStoreForGoroutine() *callerLocationStore {
@@ -552,7 +553,7 @@ func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) C
 	if rec.Entry == 0 {
 		rec.Entry = rec.PC
 	}
-	return rec
+	return resolveCallerFrame(rec)
 }
 
 // capturePC returns the synthetic PC for a shadow-stack slot, memoizing the
@@ -576,7 +577,7 @@ func (s *callerLocationStore) captureFrameAt(frame *CallerFrame, pcValue uintptr
 	if rec.Entry == 0 {
 		rec.Entry = pc
 	}
-	return rec
+	return resolveCallerFrame(rec)
 }
 
 // staticPC memoizes the synthetic PC base of a process-static frame (e.g.
@@ -634,11 +635,13 @@ func (s *callerLocationStore) syntheticSlot(frame CallerFrame) uintptr {
 	h := frame.Entry ^ (uintptr(frame.Line) << 12) ^ (uintptr(frame.StartLine) << 24)
 	h ^= uintptr(len(frame.Function)) << 4
 	h ^= uintptr(len(frame.File)) << 8
+	h ^= callerLocationHash(frame)
 	return h & (uintptr(len(s.syntheticHash)) - 1)
 }
 
 func sameSyntheticFrame(a, b CallerFrame) bool {
 	return a.Entry == b.Entry &&
+		sameCallerLocationMetadata(a, b) &&
 		a.Function == b.Function &&
 		a.File == b.File &&
 		a.Line == b.Line &&

@@ -82,8 +82,9 @@ type Options struct {
 	// CExportWrappers keeps //export implementations under their Go symbols;
 	// the final-link module supplies the public C entry points.
 	// It does not apply to package C, which defines its exports directly.
-	CExportWrappers bool
-	ShadowStack     bool
+	CExportWrappers        bool
+	ShadowStack            bool
+	CompactCallerLocations bool
 	// DebuggerFrames retains logical stacks for every eligible function in
 	// opt-in Wasm debugger builds, including parked goroutines.
 	DebuggerFrames bool

@@ -12,6 +12,8 @@ const modulePath = path.resolve(process.argv[2]);
 const expected = process.argv[3];
 const programArgs = process.argv.slice(4);
 const requireExit = process.env.LLGO_BROWSER_REQUIRE_EXIT === "1";
+const pclnMode = process.env.LLGO_BROWSER_PCLN;
+let pclnRequests = 0;
 const root = path.dirname(modulePath);
 const moduleName = path.basename(modulePath);
 const browserProfile = path.join(root, `.chrome-profile-${process.pid}`);
@@ -117,10 +119,26 @@ const server = http.createServer(async (request, response) => {
 			response.writeHead(403).end();
 			return;
 		}
-		const data = await readFile(requested);
+		if (pclnMode && requested.endsWith(".pclntab")) pclnRequests++;
+		let data = await readFile(requested);
+		if (pclnMode && requested.endsWith(".pclntab")) {
+			if (pclnMode === "missing") { response.writeHead(404).end(); return; }
+			if (pclnMode === "timeout") {
+				const timer = setTimeout(() => response.end(data), 8000);
+				response.once("close", () => clearTimeout(timer));
+				return;
+			}
+			if (pclnMode === "corrupt") data[data.length-1] ^= 1;
+			if (pclnMode === "stale") data[64] ^= 1;
+			if (pclnMode === "oversized") {
+				response.setHeader("Content-Length", (64 << 20) + 1);
+				response.end(); return;
+			}
+		}
 		response.setHeader(
 			"Content-Type",
-			requested.endsWith(".wasm") ? "application/wasm" : "text/javascript; charset=utf-8",
+			requested.endsWith(".wasm") ? "application/wasm" :
+			requested.endsWith(".pclntab") ? "application/octet-stream" : "text/javascript; charset=utf-8",
 		);
 		response.end(data);
 	} catch (error) {
@@ -197,6 +215,9 @@ try {
 	if (outcome.pageStatus !== "success") {
 		process.stderr.write(stderr);
 		throw new Error(`WebAssembly browser module failed: ${outcome.detail}`);
+	}
+	if (pclnMode && pclnRequests !== (pclnMode === "no-symbols" ? 0 : 1)) {
+		throw new Error(`PCLN ${pclnMode}: unexpected request count ${pclnRequests}`);
 	}
 	process.stdout.write(`${outcome.detail}\n`);
 } finally {

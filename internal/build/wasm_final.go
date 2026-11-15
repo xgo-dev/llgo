@@ -208,6 +208,9 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 	if out.DWARF != "" {
 		staged.DWARF = filepath.Join(dir, filepath.Base(out.DWARF))
 	}
+	if out.PCLN != "" {
+		staged.PCLN = filepath.Join(dir, filepath.Base(out.PCLN))
+	}
 	localPlan := *plan
 	localPlan.outputPath = staged.Out
 	if err := executeMainLink(ctx, &localPlan, verbose); err != nil {
@@ -292,7 +295,7 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		return err
 	}
 	if ctx.buildConf.PCLNMode != PCLNExternal {
-		remove = append(remove, filepath.Base(pclnSidecarPath(staged.Out)))
+		remove = append(remove, filepath.Base(pclnSidecarPath(module)))
 	}
 	if ctx.buildConf.DebugArtifactMode != DebugArtifactExternal {
 		remove = append(remove, filepath.Base(dwarfSidecarPath(module)))

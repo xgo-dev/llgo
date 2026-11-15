@@ -69,7 +69,7 @@ func TestValidatePCLNMode(t *testing.T) {
 		{name: "external unsupported OS", conf: Config{Goos: "windows", Goarch: "amd64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external unsupported linux arch", conf: Config{Goos: "linux", Goarch: "386", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external unsupported darwin arch", conf: Config{Goos: "darwin", Goarch: "riscv64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
-		{name: "external named target", conf: Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
+		{name: "external WASI target", conf: Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}},
 		{name: "external archive", conf: Config{Goos: "linux", Goarch: "amd64", BuildMode: BuildModeCArchive, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external shared library", conf: Config{Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeCShared, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external generation mode", conf: Config{Goos: "linux", Goarch: "amd64", Mode: ModeGen, BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},

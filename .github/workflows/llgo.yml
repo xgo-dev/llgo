@@ -1134,6 +1134,13 @@ jobs:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
         run: python3 dev/compare_wasm_eh.py --browser
 
+      - name: Test optional WebAssembly runtime symbol maps
+        if: matrix.suite == 'runtime'
+        env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+        run: python3 dev/test_wasm_pclntab.py --browser
+
       - name: Test WebAssembly target profiles
         if: matrix.suite == 'runtime'
         shell: bash

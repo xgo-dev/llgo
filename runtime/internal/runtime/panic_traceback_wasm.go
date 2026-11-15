@@ -40,15 +40,20 @@ func printWasmPanicTraceback(_ int) bool {
 	}
 	printed := false
 	for i := len(frames) - 1; i >= 0; i-- {
-		frame := frames[i]
-		if frame.Function == "" || frame.Function == "runtime.main" || frame.Function == "runtime.goexit" {
+		frame := resolveCallerFrame(frames[i])
+		if (frame.Function == "" && !hasCallerLocation(frame)) || frame.Function == "runtime.main" || frame.Function == "runtime.goexit" {
 			continue
 		}
 		if !printed {
 			print("goroutine ", getg().goid, " [running]:\n")
 			printed = true
 		}
-		print(frame.Function, "(...)\n\t")
+		if frame.Function == "" {
+			print("???", " [pc=", frame.Entry, "]")
+		} else {
+			print(frame.Function)
+		}
+		print("(...)\n\t")
 		if frame.File == "" {
 			print("???")
 		} else {

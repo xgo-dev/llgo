@@ -26,6 +26,7 @@ import (
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
+	"github.com/xgo-dev/llgo/internal/wasmdebug"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -618,7 +619,19 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 
 	identityType := llvm.ArrayType(typ.i8, 32)
 	identity := llvm.AddGlobal(mod, identityType, pclnIdentitySymbol)
-	identity.SetInitializer(llvm.ConstNull(identityType))
+	if ctx.buildConf.Goarch == "wasm" {
+		// Keep this slot initialized in the final data section, including
+		// optimized links that omit trailing zero bytes. Post-link pairing
+		// replaces its contents without moving code or debug offsets.
+		values := make([]llvm.Value, 32)
+		placeholder := wasmdebug.PCLNIdentityPlaceholder()
+		for i, b := range placeholder {
+			values[i] = llvm.ConstInt(typ.i8, uint64(b), false)
+		}
+		identity.SetInitializer(llvm.ConstArray(typ.i8, values))
+	} else {
+		identity.SetInitializer(llvm.ConstNull(identityType))
+	}
 	identity.SetAlignment(8)
 	if ctx.buildConf.Goos == "darwin" {
 		identity.SetSection("__DATA,__llgo_pid")
