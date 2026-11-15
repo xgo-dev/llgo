@@ -2,6 +2,10 @@
 #include "../../../../runtime/internal/stacktrace/_wrap/traceback.h"
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/audit.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -9,6 +13,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -21,12 +28,39 @@ extern void llgo_traceback_mark_owned(void *);
 typedef struct {
     void *node;
     atomic_int ready, stop, masked, unblock;
+    unsigned filter_trap, filter_action;
 } worker;
+
+static void filter_syscall(unsigned trap, unsigned action)
+{
+#if defined(__x86_64__)
+    const unsigned architecture = AUDIT_ARCH_X86_64;
+#else
+    const unsigned architecture = AUDIT_ARCH_AARCH64;
+#endif
+    struct sock_filter rules[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, architecture, 1, 0),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, trap, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, action),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter = {sizeof(rules)/sizeof(rules[0]), rules};
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter)) _exit(77);
+}
 
 static void *work(void *raw)
 {
     worker *w = raw;
     llgo_traceback_attach(w->node);
+    if (w->filter_action) {
+        filter_syscall(w->filter_trap, w->filter_action);
+        if (w->filter_trap == SYS_getpid &&
+            (syscall(SYS_getpid) != -1 || errno != EPERM)) _exit(77);
+    }
     if (atomic_load(&w->masked)) {
         sigset_t mask;
         sigemptyset(&mask); sigaddset(&mask, SIGURG);
@@ -79,12 +113,12 @@ static void retry_pause(void)
     nanosleep(&pause, 0);
 }
 
-static llgo_allthreads_call await_result(uintptr_t expected)
+static llgo_allthreads_call await_result(uintptr_t trap, uintptr_t expected)
 {
     struct timespec start, now;
     assert(!clock_gettime(CLOCK_MONOTONIC, &start));
     for (;;) {
-        llgo_allthreads_call c = call(SYS_setresuid);
+        llgo_allthreads_call c = call(trap);
         if (c.error == expected) return c;
         assert(c.error == EAGAIN || c.error == ENOTSUP);
         assert(!clock_gettime(CLOCK_MONOTONIC, &now));
@@ -97,6 +131,42 @@ static void *foreign(void *raw)
 {
     atomic_int *stop = raw;
     while (!atomic_load(stop)) sched_yield();
+    return 0;
+}
+
+/* Create an unregistered task only after the first cohort scan has armed this
+ * owned peer. Unmasking then lets PREPARE finish and reaches the second scan. */
+static void *foreign_during_prepare(void *raw)
+{
+    worker *w = raw;
+    llgo_traceback_attach(w->node);
+    sigset_t mask, pending;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGURG);
+    assert(!pthread_sigmask(SIG_BLOCK, &mask, 0));
+    atomic_store(&w->ready, 1);
+    do { assert(!sigpending(&pending)); sched_yield(); }
+    while (!sigismember(&pending, SIGURG));
+    pthread_t thread;
+    assert(!pthread_create(&thread, 0, foreign, &w->stop));
+    assert(!pthread_sigmask(SIG_UNBLOCK, &mask, 0));
+    while (!atomic_load(&w->stop)) sched_yield();
+    assert(!pthread_join(thread, 0));
+    llgo_traceback_unregister(w->node);
+    return 0;
+}
+
+static void *retiring(void *raw)
+{
+    worker *w = raw;
+    llgo_traceback_attach(w->node);
+    if (w->masked) {
+        atomic_store(&w->ready, 1);
+        while (!atomic_load(&w->unblock)) sched_yield();
+    }
+    llgo_traceback_unregister(w->node);
+    atomic_store(&w->ready, 2);
+    while (!atomic_load(&w->stop)) sched_yield();
     return 0;
 }
 
@@ -118,17 +188,133 @@ static void *creation(void *raw)
 
 int main(int argc, char **argv)
 {
-    (void)argv;
-    (void)argc;
     void *main_node = llgo_traceback_register(1, 0, 0, 0);
     assert(main_node);
     llgo_traceback_attach(main_node);
     llgo_traceback_mark_owned(main_node);
+    if (argc == 2 && !strcmp(argv[1], "foreign-prepare")) {
+        worker w = {0};
+        w.node = llgo_traceback_register(2, 1, 0, 0);
+        llgo_traceback_mark_owned(w.node);
+        pthread_t thread;
+        assert(!pthread_create(&thread, 0, foreign_during_prepare, &w));
+        while (!atomic_load(&w.ready)) sched_yield();
+        /* A missing second-scan cancellation would kill this process before
+         * any credential syscall could run on a participant. */
+        filter_syscall(SYS_setresuid, SECCOMP_RET_KILL_PROCESS);
+        llgo_allthreads_call c = call(SYS_setresuid);
+        assert(c.error == ENOTSUP);
+        atomic_store(&w.stop, 1);
+        assert(!pthread_join(thread, 0));
+        assert(call(SYS_getpid).error == ENOTSUP);
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
+    if (argc == 2 && (!strcmp(argv[1], "retiring") || !strcmp(argv[1], "retiring-fdlimit") || !strcmp(argv[1], "retiring-fdlimit-gone"))) {
+        int gone = !strcmp(argv[1], "retiring-fdlimit-gone");
+        int pressure = strcmp(argv[1], "retiring") != 0;
+        worker w = {.masked = pressure};
+        w.node = llgo_traceback_register(2, 1, 0, 0);
+        llgo_traceback_mark_owned(w.node);
+        pthread_t thread;
+        assert(!pthread_create(&thread, 0, retiring, &w));
+        if (pressure) {
+            while (atomic_load(&w.ready) != 1) sched_yield();
+            struct rlimit original, limited;
+            assert(!getrlimit(RLIMIT_NOFILE, &original));
+            limited = original;
+            if (limited.rlim_cur > 128) limited.rlim_cur = 128;
+            assert(!setrlimit(RLIMIT_NOFILE, &limited));
+            int fds[128], count = 0;
+            while (count < 128) {
+                int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+                if (fd < 0) { assert(errno == EMFILE); break; }
+                fds[count++] = fd;
+            }
+            atomic_store(&w.unblock, 1);
+            while (atomic_load(&w.ready) != 2) sched_yield();
+            if (gone) {
+                atomic_store(&w.stop, 1);
+                assert(!pthread_join(thread, 0));
+            }
+            /* The scan itself needs a descriptor too; fd pressure must not
+             * turn into a permanent unsupported result or disable the mode. */
+            assert(call(SYS_getpid).error == EAGAIN);
+            while (count) assert(!close(fds[--count]));
+            assert(!setrlimit(RLIMIT_NOFILE, &original));
+        }
+        while (atomic_load(&w.ready) != 2) sched_yield();
+        /* join's futex wake may precede task removal from procfs. */
+        llgo_allthreads_call c = gone ? await_result(SYS_getpid, 0) : call(SYS_getpid);
+        if (gone) {
+            assert(!c.error && c.r1 == (uintptr_t)getpid());
+        } else {
+            assert(c.error == EAGAIN); /* Owned libc teardown is still in /proc. */
+            atomic_store(&w.stop, 1);
+            assert(!pthread_join(thread, 0));
+        }
+        assert(await_result(SYS_setresuid, 0).r1 == 0);
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
+    if (argc == 2 && (!strcmp(argv[1], "foreign") || !strcmp(argv[1], "adopted"))) {
+        llgo_allthreads_call c = call(SYS_getpid);
+        assert(!c.error && c.r1 == (uintptr_t)getpid());
+        atomic_int foreign_stop = 0;
+        worker adopted = {0};
+        pthread_t thread;
+        if (!strcmp(argv[1], "foreign"))
+            assert(!pthread_create(&thread, 0, foreign, &foreign_stop));
+        else
+            thread = start(&adopted, 7, 0);
+        c = await_result(SYS_setresuid, ENOTSUP);
+        assert(c.error == ENOTSUP);
+        if (!strcmp(argv[1], "foreign")) {
+            atomic_store(&foreign_stop, 1);
+            assert(!pthread_join(thread, 0));
+        } else {
+            stop(&adopted, thread);
+        }
+        c = call(SYS_getpid);
+        assert(c.error == ENOTSUP); /* Exiting cannot restore the contract. */
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
+    if (argc == 2) {
+        const int mismatch = !strcmp(argv[1], "mismatch");
+        worker peer = {0};
+        if (mismatch) {
+            peer.filter_trap = SYS_getpid;
+            peer.filter_action = SECCOMP_RET_ERRNO | EPERM;
+        } else {
+            filter_syscall(SYS_setgroups, SECCOMP_RET_ERRNO | E2BIG);
+            if (syscall(SYS_setgroups, -1, 0) != -1 || errno != E2BIG) return 77;
+            peer.filter_trap = SYS_setgroups;
+            peer.filter_action = SECCOMP_RET_KILL_PROCESS;
+        }
+        pthread_t thread = start(&peer, 2, 1);
+        llgo_allthreads_call result = call(mismatch ? SYS_getpid : SYS_setgroups);
+        assert(!mismatch); /* A peer result mismatch must terminate with 2. */
+        assert(result.error == E2BIG && result.r1 == (uintptr_t)-1);
+        /* Killing the process on a peer's setgroups proves a caller error
+         * never executed it. Its handler must also be reusable afterward. */
+        for (unsigned retry = 0; retry < 5000; retry++) {
+            result = call(SYS_getpid);
+            if (result.error != EAGAIN) break;
+            retry_pause();
+        }
+        assert(!result.error && result.r1 == (uintptr_t)getpid());
+        stop(&peer, thread);
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
     worker children[3] = {0};
     pthread_t threads[3];
     for (unsigned i = 0; i < 3; i++) threads[i] = start(&children[i], i+2, 1);
     fputs("allthreads: owned-cohort calls\n", stderr);
     for (unsigned i = 0; i < 200; i++) {
+        llgo_allthreads_call probe = call(SYS_getpid);
+        assert(!probe.error && probe.r1 == (uintptr_t)getpid() && probe.r2 == 0);
         llgo_allthreads_call c = call(SYS_setresuid);
         assert(!c.error && c.r1 == 0);
     }
@@ -137,7 +323,7 @@ int main(int argc, char **argv)
     mode_t previous_mask = umask(0022);
     const uintptr_t rejected[] = {SYS_umask, SYS_setpgid, SYS_setsid,
         SYS_sethostname, SYS_setdomainname, SYS_chdir, SYS_fchdir, SYS_chroot,
-        SYS_rt_sigprocmask, SYS_gettid, SYS_getpid};
+        SYS_rt_sigprocmask, SYS_gettid};
     for (size_t i = 0; i < sizeof(rejected)/sizeof(rejected[0]); i++) {
         llgo_allthreads_call c = call(rejected[i]);
         assert(c.error == ENOTSUP && c.r1 == (uintptr_t)-1);
@@ -153,25 +339,9 @@ int main(int argc, char **argv)
     assert(c.error == ENOTSUP);
     __llgo_allthreads_executable = 1;
 
-    fputs("allthreads: foreign/adopted rejection\n", stderr);
-
-    atomic_int foreign_stop = 0;
     pthread_t thread;
-    assert(!pthread_create(&thread, 0, foreign, &foreign_stop));
-    c = await_result(ENOTSUP);
-    assert(c.error == ENOTSUP);
-    atomic_store(&foreign_stop, 1);
-    assert(!pthread_join(thread, 0));
-
-    worker adopted = {0};
-    thread = start(&adopted, 7, 0);
-    c = call(SYS_setresuid);
-    assert(c.error == ENOTSUP);
-    stop(&adopted, thread);
-
-    /* pthread_join's clear-child-TID wake can precede removal from procfs.
-     * Establish the complete owned cohort before isolating signal masking. */
-    assert(await_result(0).r1 == 0);
+    llgo_allthreads_call probe = await_result(SYS_setresuid, 0);
+    assert(probe.r1 == 0);
 
     fputs("allthreads: masked signal and cancellation\n", stderr);
     worker masked = {.masked = 1};
@@ -181,7 +351,7 @@ int main(int argc, char **argv)
     assert(c.error == EAGAIN);
     atomic_store(&masked.unblock, 1);
     while (atomic_load(&masked.unblock)) sched_yield();
-    c = await_result(0);
+    c = await_result(SYS_setresuid, 0);
     assert(!c.error);
     stop(&masked, thread);
 
@@ -201,10 +371,29 @@ int main(int argc, char **argv)
     }
     assert(!pthread_join(thread, 0));
     assert(attempts);
-    assert(await_result(0).r1 == 0);
+    assert(await_result(SYS_setresuid, 0).r1 == 0);
     fputs("allthreads: final teardown\n", stderr);
     for (unsigned i = 0; i < 3; i++) stop(&children[i], threads[i]);
     llgo_traceback_unregister(main_node);
+    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring", "retiring-fdlimit", "retiring-fdlimit-gone", "foreign-prepare"};
+    for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        pid_t child = fork();
+        assert(child >= 0);
+        if (!child) {
+            char *args[] = {argv[0], (char *)cases[i], 0};
+            execv(args[0], args);
+            _exit(1);
+        }
+        int status;
+        assert(waitpid(child, &status, 0) == child);
+        assert(WIFEXITED(status));
+        if (WEXITSTATUS(status) == 77) {
+            fprintf(stderr, "allthreads: seccomp unavailable for %s\n", cases[i]);
+        } else {
+            assert(WEXITSTATUS(status) == (i == 0 ? 2 : 0));
+            fprintf(stderr, "allthreads: %s result verified\n", cases[i]);
+        }
+    }
     puts("allthreads-ok");
     return 0;
 }

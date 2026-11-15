@@ -683,6 +683,8 @@ jobs:
             ./test/llgoext
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
+      - name: Run Linux all-thread ownership and barrier acceptance
+        run: go test ./internal/build -run '^TestAllThreads' -count=1 -v -timeout=8m
 
   native-debuggers-intel:
     name: Native debuggers (macOS Intel, GDB values and registry)

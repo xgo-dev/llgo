@@ -27,15 +27,19 @@ func TestAllThreadsMainThreadOwnership(t *testing.T) {
 	if unwind, err := exec.Command("pkg-config", "--libs", "libunwind").Output(); err == nil {
 		flags = append(flags, unwind...)
 	}
-	for _, mode := range []string{"exe", "c-shared", "c-archive"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct{ mode, tags string }{
+		{"exe", ""}, {"c-shared", ""}, {"c-archive", ""},
+		{"c-shared", "llgo.allthreads"}, {"c-archive", "llgo.allthreads"},
+	} {
+		t.Run(tc.mode+"/"+tc.tags, func(t *testing.T) {
+			mode := tc.mode
 			output := filepath.Join(t.TempDir(), "owned")
 			if mode == "c-shared" {
 				output += ".so"
 			} else if mode == "c-archive" {
 				output += ".a"
 			}
-			buildCExportFixture(t, dir, output, mode)
+			buildCExportFixture(t, dir, output, mode, tc.tags)
 			binary, want := output, "allthreads-owned-main-ok"
 			if mode != "exe" {
 				binary, want = output+".host", "allthreads-adopted-host-ok"

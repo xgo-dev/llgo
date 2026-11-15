@@ -1,6 +1,6 @@
-/* Private implementation included by traceback_unix.c. Production entry
- * modules must not enable this transport until creation exclusion covers
- * foreign C thread creators as well as the runtime's registered cohort. */
+/* Included by traceback_unix.c. Explicit controlled executables promise that
+ * every thread creator obeys the runtime registry's creation/exit barrier.
+ * Ordinary executables and C library modes never make that promise. */
 #if defined(__linux__)
 static pthread_mutex_t credential_lock = PTHREAD_MUTEX_INITIALIZER;
 void llgo_allthreads_credential_lock(void) { pthread_mutex_lock(&credential_lock); }
@@ -19,6 +19,42 @@ void llgo_traceback_mark_owned(void *raw)
 
 #if defined(__x86_64__) || defined(__aarch64__)
 __attribute__((weak, visibility("hidden"))) int __llgo_allthreads_executable;
+static unsigned allthreads_controlled;
+
+static int allcall_disable_controlled(void)
+{
+    /* Losing proof of ownership invalidates the process contract,
+     * even after its current threads exit. Disable public and raw entry paths. */
+    __atomic_store_n(&allthreads_controlled, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&__llgo_allthreads_executable, 0, __ATOMIC_RELEASE);
+    return ENOTSUP;
+}
+
+/* Weak references keep nogc executables independent of the collector. The
+ * entry module invokes this before runtime allocation, only on explicit opt-in.
+ * A collector initialized by an earlier foreign constructor is not eligible. */
+extern int GC_is_init_called(void) __attribute__((weak));
+extern void GC_set_markers_count(unsigned) __attribute__((weak));
+
+__attribute__((visibility("hidden")))
+void llgo_allthreads_enable_controlled(int uses_gc)
+{
+    if (uses_gc) {
+        if (!GC_is_init_called || !GC_set_markers_count || GC_is_init_called()) return;
+        /* BDWGC reads GC_MARKERS during initialization and lets it override
+         * the setter. This mode must exclude future native marker threads. */
+        if (setenv("GC_MARKERS", "1", 1)) return;
+        GC_set_markers_count(1);
+    }
+    __atomic_store_n(&__llgo_allthreads_executable, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&allthreads_controlled, 1, __ATOMIC_RELEASE);
+}
+
+__attribute__((visibility("hidden")))
+int llgo_allthreads_controlled_enabled(void)
+{
+    return __atomic_load_n(&allthreads_controlled, __ATOMIC_ACQUIRE) == 1;
+}
 
 enum { ALL_IDLE, ALL_ARMED, ALL_CLAIMED, ALL_READY, ALL_DONE, ALL_RELEASED, ALL_FAILED };
 enum { PHASE_IDLE, PHASE_PREPARE, PHASE_RUN, PHASE_RELEASE, PHASE_CANCEL };
@@ -56,6 +92,94 @@ static kernel_result kernel_syscall(uintptr_t trap, const uintptr_t *args)
     if (r1 >= (uintptr_t)-4095)
         return (kernel_result){(uintptr_t)-1, 0, (uintptr_t)-(intptr_t)r1};
     return (kernel_result){r1, r2, 0};
+}
+
+/* unregister precedes the kernel's final task removal. Keep the old task's
+ * proc directory pinned so a retiring owned pthread cannot be mistaken for a
+ * foreign creator, including when Linux later reuses its numeric TID. Only
+ * registry_lock protects this list; pruning runs before any peers are parked. */
+static thread_node *allcall_retired;
+static thread_node **allcall_retired_tail = &allcall_retired;
+static unsigned allcall_retired_count;
+
+static void allcall_queue_retired(thread_node *node)
+{
+    node->next = 0;
+    *allcall_retired_tail = node;
+    allcall_retired_tail = &node->next;
+    allcall_retired_count++;
+}
+
+static void allcall_prune_retired(unsigned budget)
+{
+    unsigned count = allcall_retired_count;
+    if (budget && budget < count) count = budget;
+    while (count--) {
+        thread_node *node = allcall_retired;
+        allcall_retired = node->next;
+        if (!allcall_retired) allcall_retired_tail = &allcall_retired;
+        allcall_retired_count--;
+        int keep = 0;
+        if (__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1) {
+            if (node->retirement_fd < 0) {
+                /* Retry pinning after transient fd pressure. Until then the
+                 * numeric TID remains conservatively unavailable, never owned. */
+                char path[64];
+                char digits[32];
+                uintptr_t tid = node->debugger_thread_id;
+                unsigned n = 0, pos = 0;
+                const char prefix[] = "/proc/self/task/";
+                while (prefix[pos]) { path[pos] = prefix[pos]; pos++; }
+                do { digits[n++] = (char)('0' + tid%10); tid /= 10; } while (tid);
+                while (n) path[pos++] = digits[--n];
+                path[pos] = 0;
+                uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)path, O_RDONLY | O_DIRECTORY | O_CLOEXEC};
+                kernel_result directory = kernel_syscall(SYS_openat, args);
+                if (!directory.error) node->retirement_fd = (int)directory.r1;
+                keep = directory.error != ENOENT && directory.error != ESRCH;
+            } else {
+                uintptr_t args[6] = {(uintptr_t)node->retirement_fd, (uintptr_t)"stat", O_RDONLY | O_CLOEXEC};
+                kernel_result live = kernel_syscall(SYS_openat, args);
+                if (!live.error) {
+                    uintptr_t closeargs[6] = {live.r1};
+                    kernel_syscall(SYS_close, closeargs);
+                }
+                keep = live.error != ENOENT && live.error != ESRCH;
+            }
+        }
+        if (keep) {
+            allcall_queue_retired(node);
+        } else {
+            if (node->retirement_fd >= 0) {
+                uintptr_t closeargs[6] = {(uintptr_t)node->retirement_fd};
+                kernel_syscall(SYS_close, closeargs);
+            }
+            free(node);
+        }
+    }
+}
+
+static int allcall_retire_owned(thread_node *node)
+{
+    /* Bound exit work; a full pass runs before an all-thread barrier. */
+    allcall_prune_retired(__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1 ? 8 : 0);
+    if (!node->owned || !node->attached ||
+        __atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) != 1) return 0;
+    if (node != current) { allcall_disable_controlled(); return 0; }
+    /* This node belongs to the calling pthread. No callbacks or allocations
+     * are needed to pin its identity while its libc teardown finishes. */
+    uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)"/proc/thread-self", O_RDONLY | O_DIRECTORY | O_CLOEXEC};
+    kernel_result directory = kernel_syscall(SYS_openat, args);
+    node->retirement_fd = directory.error ? -1 : (int)directory.r1;
+    allcall_queue_retired(node);
+    return 1;
+}
+
+static int allcall_owned_retiring(uintptr_t tid)
+{
+    for (thread_node *node = allcall_retired; node; node = node->next)
+        if (node->debugger_thread_id == tid) return 1;
+    return 0;
 }
 
 /* The raw mask includes libc's private signals, unlike pthread_sigmask.
@@ -127,12 +251,18 @@ static int handle_allthreads(thread_node *node)
 /* Enumeration is a completeness check on the registered, stopped cohort,
  * not a source of thread handles. Raw getdents avoids allocator/libc locks
  * that a parked thread might hold. It is repeated after every target parks. */
+static int allcall_proc_error(uintptr_t error)
+{
+    return error == EMFILE || error == ENFILE || error == ENOMEM ||
+           error == EINTR || error == EAGAIN ? EAGAIN : ENOTSUP;
+}
+
 static int allcall_complete_cohort(void)
 {
     uintptr_t args[6] = {(uintptr_t)AT_FDCWD, (uintptr_t)"/proc/self/task",
                          O_RDONLY | O_DIRECTORY | O_CLOEXEC};
     kernel_result opened = kernel_syscall(SYS_openat, args);
-    if (opened.error) return ENOTSUP;
+    if (opened.error) return allcall_proc_error(opened.error);
     uintptr_t fd = opened.r1;
     unsigned count = 0, registered = 0;
     for (thread_node *n = llgo_debugger_threads_v1; n; n = n->next) registered++;
@@ -141,7 +271,7 @@ static int allcall_complete_cohort(void)
         unsigned char buffer[1024];
         uintptr_t readargs[6] = {fd, (uintptr_t)buffer, sizeof(buffer)};
         kernel_result read = kernel_syscall(SYS_getdents64, readargs);
-        if (read.error) { error = ENOTSUP; break; }
+        if (read.error) { error = allcall_proc_error(read.error); break; }
         if (!read.r1) break;
         for (size_t pos = 0; pos < read.r1;) {
             if (read.r1-pos < 20) { error = EAGAIN; break; }
@@ -157,7 +287,10 @@ static int allcall_complete_cohort(void)
             if (tid && i < pos+len && buffer[i] == 0) {
                 thread_node *n = llgo_debugger_threads_v1;
                 while (n && n->debugger_thread_id != tid) n = n->next;
-                if (!n) { error = ENOTSUP; break; }
+                if (!n) {
+                    error = allcall_owned_retiring(tid) ? EAGAIN : allcall_disable_controlled();
+                    break;
+                }
                 count++;
             }
             pos += len;
@@ -172,8 +305,10 @@ static int allcall_complete_cohort(void)
 static int allcall_allowed_trap(uintptr_t trap)
 {
     switch (trap) {
-    /* Kernel credentials are per-thread; these setters return zero on
-     * success. Unlisted syscalls must not execute even on the caller. */
+    /* getpid is a harmless process-invariant probe. Kernel credentials are
+     * per-thread; these setters return zero on success. Unlisted syscalls
+     * must not execute even on the caller. */
+    case SYS_getpid:
     case SYS_setuid: case SYS_setgid: case SYS_setreuid: case SYS_setregid:
     case SYS_setresuid: case SYS_setresgid: case SYS_setgroups:
         return 1;
@@ -208,9 +343,17 @@ static void allcall_cancel(void)
 void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
 {
     call->r1 = (uintptr_t)-1; call->r2 = 0; call->error = ENOTSUP;
-    if (!__llgo_allthreads_executable || !current || !allcall_allowed_trap(call->trap)) return;
+    if (__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) != 1 ||
+        !current || !allcall_allowed_trap(call->trap)) return;
     pthread_mutex_lock(&credential_lock);
     pthread_mutex_lock(&registry_lock);
+    /* Another caller may have observed a foreign creator while we waited. */
+    if (__atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) != 1) {
+        pthread_mutex_unlock(&registry_lock);
+        pthread_mutex_unlock(&credential_lock);
+        return;
+    }
+    allcall_prune_retired(0);
     /* Remain suspendible while acquiring runtime locks. A GC may have
      * suspended their owner and must be allowed to finish before we park it. */
     uint64_t full = UINT64_MAX, previous;
@@ -220,7 +363,7 @@ void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
         return;
     }
     for (thread_node *n = llgo_debugger_threads_v1; n; n = n->next) {
-        if (!n->owned) goto finish;
+        if (!n->owned) { call->error = allcall_disable_controlled(); goto finish; }
         unsigned state = __atomic_load_n(&n->allcall_state, __ATOMIC_ACQUIRE);
         /* Teardown publishes dead before waiting for registry_lock. Do not
          * repeatedly interrupt an exiting thread while it tries to acquire
@@ -299,6 +442,8 @@ finish:
     allcall_mask(&previous, 0);
 }
 #else
+__attribute__((visibility("hidden")))
+int llgo_allthreads_controlled_enabled(void) { return 0; }
 void llgo_traceback_all_threads_syscall(llgo_allthreads_call *call)
 {
     call->r1 = (uintptr_t)-1; call->r2 = 0; call->error = ENOTSUP;
