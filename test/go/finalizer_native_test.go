@@ -28,6 +28,9 @@ type nativeResultFinalizer func(*nativeFinalizerObject) int64
 //llgo:cdecl
 type nativeAggregateFinalizer func(*nativeFinalizerObject) [64]int
 
+type inheritedNativePointerFinalizer nativePointerFinalizer
+type inheritedNativeFinalizerAlias = inheritedNativePointerFinalizer
+
 //go:noinline
 func registerBoxedFinalizer(obj, fn any) { runtime.SetFinalizer(obj, fn) }
 
@@ -37,6 +40,8 @@ func TestRuntimeSetFinalizerNative(t *testing.T) {
 		fn   any
 	}{
 		{"pointer", nativePointerFinalizer(func(p *nativeFinalizerObject) { p.finalize() })},
+		{"inherited pointer", inheritedNativePointerFinalizer(func(p *nativeFinalizerObject) { p.finalize() })},
+		{"inherited alias", inheritedNativeFinalizerAlias(func(p *nativeFinalizerObject) { p.finalize() })},
 		{"interface", nativeInterfaceFinalizer(func(p nativeFinalizerInterface) { p.finalize() })},
 		{"scalar result", nativeResultFinalizer(func(p *nativeFinalizerObject) int64 { p.finalize(); return 123 })},
 		{"aggregate result", nativeAggregateFinalizer(func(p *nativeFinalizerObject) (r [64]int) { p.finalize(); r[63] = 123; return })},

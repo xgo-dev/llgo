@@ -115,3 +115,12 @@ func TestNativeDefinitionArrayStride(t *testing.T) {
 		t.Fatal("derived array write changed adjacent storage")
 	}
 }
+
+func TestNativeDefinitionDoesNotInheritMethods(t *testing.T) {
+	type nativeMethod interface{ NativeMethod() }
+	var original nativeMethod = native.Record{}
+	original.NativeMethod()
+	if _, ok := any(derived.Copy{}).(nativeMethod); ok {
+		t.Fatal("a new defined type inherited its source type's method set")
+	}
+}

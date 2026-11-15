@@ -102,3 +102,29 @@ func TestDerivedNativeCallbackKeepsStdcallABI(t *testing.T) {
 		t.Fatal("derived native callback lost its pointer representation or invocation ABI")
 	}
 }
+
+func TestRepresentationRejectsIncompleteDefinitionRegistration(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	obj := types.NewTypeName(0, types.NewPackage("p", "p"), "Copy", nil)
+	for _, tc := range []struct {
+		name string
+		obj  *types.TypeName
+		rhs  types.Type
+	}{
+		{"missing owner", nil, types.Typ[types.Int]},
+		{"missing RHS", obj, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if got := recover(); got != "ssa: type definition requires an object and a RHS" {
+					t.Fatalf("invalid metadata accepted or wrong diagnostic: %v", got)
+				}
+			}()
+			prog.SetTypeDefinition(tc.obj, tc.rhs)
+		})
+	}
+	if len(prog.packageSyntax.typeDefinitions) != 0 {
+		t.Fatal("rejected metadata partially registered a definition")
+	}
+}

@@ -34,10 +34,8 @@ import (
 //
 // A one-shot SSA client may have discarded Info already. For that path, query
 // only named RHS expressions in the completed package's original lexical scope.
+// ParsePkgSyntaxWithOptions only calls this helper for a non-nil package.
 func registerTypeDefinitions(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, info *types.Info) {
-	if pkg == nil {
-		return
-	}
 	rhs := make(map[token.Pos]ast.Expr)
 	for _, file := range files {
 		ast.Inspect(file, func(node ast.Node) bool {

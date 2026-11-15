@@ -1,11 +1,13 @@
 package cl
 
 import (
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 	"testing"
 
@@ -162,5 +164,41 @@ type Instance renamed.Generic[uint64]
 			}
 			workers.Wait()
 		})
+	}
+}
+
+func TestNativeRepresentationRejectsLostScope(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", "package p; type Copy Native", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := file.Decls[0].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
+	// A one-shot importer retained checked declarations, but lost their scope.
+	// An unresolved RHS must never silently select Go storage for Copy.
+	pkg := types.NewPackage("example.com/lostscope", "p")
+	st := types.NewStruct(nil, nil)
+	copyType := types.NewNamed(types.NewTypeName(spec.Name.Pos(), pkg, "Copy", nil), st, nil)
+	pkg.Scope().Insert(copyType.Obj())
+	pkg.MarkComplete()
+	prog.SetTypeCallConv(pkg.Path()+".Native", llssa.CDecl)
+	registerTypeDefinitions(prog, fset, pkg, []*ast.File{file}, nil)
+	func() {
+		defer func() {
+			failure := recover()
+			if failure == nil || !strings.Contains(fmt.Sprint(failure), "resolve representation of") || !strings.Contains(fmt.Sprint(failure), "no position") {
+				t.Fatalf("lost scope must fail closed, got %v", failure)
+			}
+		}()
+		prog.RepresentationOf(copyType)
+	}()
+	// A failed query must not poison later queries after scope restoration.
+	types.NewScope(pkg.Scope(), file.Pos(), file.End(), "restored file scope")
+	native := types.NewNamed(types.NewTypeName(0, pkg, "Native", nil), st, nil)
+	pkg.Scope().Insert(native.Obj())
+	if got := prog.RepresentationOf(copyType); got.Storage != llssa.NativeRepresentation || got.Origin != native.Obj() {
+		t.Fatalf("restored scope did not restore native provenance: %+v", got)
 	}
 }
