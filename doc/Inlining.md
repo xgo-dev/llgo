@@ -3,9 +3,11 @@
 LLGo makes small Go function and method bodies available to LLVM in importing
 packages, including when the defining package's backend archive is cached. This
 follows Go's cross-package inline model: the caller needs the body as well as the
-declaration. The build driver already constructs dependency Go SSA before
-looking up backend archives, so no additional source loading or export format
-is required.
+declaration. Cold builds construct dependency Go SSA. With frontend caching
+enabled, the driver restores validated frontend facts and materializes eligible
+dependency bodies on demand before lowering callers. Frontend preloading and
+backend import share the same replacement-target resolver and reuse the
+existing frontend exports and SSA loading path.
 
 No new directive is introduced. `//go:noinline` prevents import and marks both
 the defining function and importing declarations with LLVM `noinline`, including
@@ -33,6 +35,9 @@ generic declarations and instances, closure environments, goroutines,
 defer/recover, and functions with pragmas that depend on retaining their call
 frame. Functions that need runtime caller frames or access package-owned
 locality storage are also excluded. Missing bodies remain ordinary calls.
+Declaration-only packages (`LLGoPackage = "decl"`) are excluded even when their
+source contains a body: the build driver does not emit that body, and the real
+implementation may be supplied by another module.
 Imports are disabled at `-O0` and for shadow-stack and debugger-frame
 instrumented builds.
 
@@ -57,12 +62,25 @@ the canonical function address, whether or not a direct call is inlined.
 ordinary function control using the same computation. Run it with the same
 optimization level and LTO setting on both compiler revisions; the ordinary
 function already benefits from cross-package body import.
+The microbenchmarks pass the final result to `runtime.KeepAlive`, retaining the
+computation when LTO could otherwise eliminate an unread global sink.
 
 `benchmark/crossinline/json` measures decoding, updating 64 records and encoding
 the result. `benchmark/crossinline/template` renders 64 records into a
 reused buffer, with parsing and initial buffer growth outside the timer. Both
 programs also run independently and emit their complete output for comparison
-with native Go. These are library workloads, not application-level benchmarks.
+with native Go. They use the built-in `print`/`println`; native Go writes this
+output to stderr. Capture both streams, and check that the reference is nonempty:
+
+```sh
+go run ./benchmark/crossinline/json > go.out 2>&1 &&
+    llgo run -Os ./benchmark/crossinline/json > llgo.out 2>&1 &&
+    test -s go.out &&
+    cmp go.out llgo.out
+```
+
+Use the same commands with `template` in place of `json`. These are library
+workloads, not application-level benchmarks.
 For compiler comparisons, alternate runs of prebuilt test binaries with the
 same inputs and flags. Measure empty-cache and warmed-cache builds separately
 with isolated LLGo backend caches; disabling the cache is not an empty-cache

@@ -1,14 +1,14 @@
 package crossinline_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llgo/benchmark/crossinline/value"
 )
 
-var sink uint64
-
-// Each iteration depends on the previous result; sink keeps the loop live.
+// Each iteration depends on the previous result. KeepAlive retains the final
+// value even when LTO can remove an otherwise unread package-level sink.
 // The ordinary function is a control for the existing cross-package importer.
 // Keep calls direct: a shared function-value helper would change what is measured.
 func BenchmarkFunction(b *testing.B) {
@@ -16,7 +16,7 @@ func BenchmarkFunction(b *testing.B) {
 	for i := range b.N {
 		n = value.Mix(n, uint64(i))
 	}
-	sink = n
+	runtime.KeepAlive(n)
 }
 
 func BenchmarkValueMethod(b *testing.B) {
@@ -24,7 +24,7 @@ func BenchmarkValueMethod(b *testing.B) {
 	for i := range b.N {
 		n = n.Mix(uint64(i))
 	}
-	sink = uint64(n)
+	runtime.KeepAlive(n)
 }
 
 func BenchmarkPointerMethod(b *testing.B) {
@@ -32,7 +32,7 @@ func BenchmarkPointerMethod(b *testing.B) {
 	for i := range b.N {
 		s.Mix(uint64(i))
 	}
-	sink = s.Value
+	runtime.KeepAlive(s.Value)
 }
 
 func pairs(seed uint64) [1024]value.Pair {
@@ -52,7 +52,7 @@ func BenchmarkFunctionFields(b *testing.B) {
 	for i := range b.N {
 		sum += value.Sum(values[i&(len(values)-1)])
 	}
-	sink = sum
+	runtime.KeepAlive(sum)
 }
 
 func BenchmarkValueMethodFields(b *testing.B) {
@@ -62,7 +62,7 @@ func BenchmarkValueMethodFields(b *testing.B) {
 	for i := range b.N {
 		sum += values[i&(len(values)-1)].Sum()
 	}
-	sink = sum
+	runtime.KeepAlive(sum)
 }
 
 func BenchmarkPointerMethodFields(b *testing.B) {
@@ -72,7 +72,7 @@ func BenchmarkPointerMethodFields(b *testing.B) {
 	for i := range b.N {
 		sum += values[i&(len(values)-1)].PointerSum()
 	}
-	sink = sum
+	runtime.KeepAlive(sum)
 }
 
 func records(seed uint64) [256]value.Record {
@@ -93,7 +93,7 @@ func BenchmarkFunctionRecord(b *testing.B) {
 	for i := range b.N {
 		sum += value.First(values[i&(len(values)-1)])
 	}
-	sink = sum
+	runtime.KeepAlive(sum)
 }
 
 func BenchmarkValueMethodRecord(b *testing.B) {
@@ -103,7 +103,7 @@ func BenchmarkValueMethodRecord(b *testing.B) {
 	for i := range b.N {
 		sum += values[i&(len(values)-1)].First()
 	}
-	sink = sum
+	runtime.KeepAlive(sum)
 }
 
 func TestMethodResults(t *testing.T) {

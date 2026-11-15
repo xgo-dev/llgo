@@ -10,7 +10,6 @@ import (
 
 func TestCrossPackageInlineAggregateABI(t *testing.T) {
 	const dependency = "github.com/xgo-dev/llgo/benchmark/crossinline/value"
-	methods := []string{"Mixed.Shift", "Mixed.Summary", "ScalarPair.Shift"}
 	for _, target := range []struct{ os, arch, smallABI string }{
 		{"linux", "amd64", "{ i64, double } (i64, double, i64)"},
 		{"linux", "arm64", "[2 x i64] ([2 x i64], i64)"},
@@ -38,8 +37,12 @@ func TestCrossPackageInlineAggregateABI(t *testing.T) {
 				t.Fatal("dependency module missing")
 			}
 			mod := caller.Module()
-			for _, method := range methods {
-				name := dependency + "." + method
+			for _, method := range []struct{ name, signature string }{
+				{"Mixed.Shift", "void (ptr, ptr, i64)"},
+				{"Mixed.Summary", "void (ptr, ptr)"},
+				{"ScalarPair.Shift", target.smallABI},
+			} {
+				name := dependency + "." + method.name
 				imported, defined := mod.NamedFunction(name), owner.Module().NamedFunction(name)
 				if imported.IsNil() || defined.IsNil() {
 					t.Fatalf("missing method %s", name)
@@ -51,14 +54,8 @@ func TestCrossPackageInlineAggregateABI(t *testing.T) {
 				if imported.IsDeclaration() != (target.arch == "wasm") {
 					t.Fatalf("unexpected import policy for %s", name)
 				}
-				want := "void (ptr, ptr, i64)"
-				if method == "Mixed.Summary" {
-					want = "void (ptr, ptr)"
-				} else if method == "ScalarPair.Shift" {
-					want = target.smallABI
-				}
-				if got := imported.GlobalValueType().String(); got != want {
-					t.Fatalf("%s: ABI = %s, want %s", name, got, want)
+				if got := imported.GlobalValueType().String(); got != method.signature {
+					t.Fatalf("%s: ABI = %s, want %s", name, got, method.signature)
 				}
 				if imported.GlobalValueType().ReturnType().TypeKind() == llvm.VoidTypeKind &&
 					imported.GetEnumAttributeAtIndex(1, llvm.AttributeKindID("sret")).IsNil() {
