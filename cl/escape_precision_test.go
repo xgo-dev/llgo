@@ -14,6 +14,9 @@ func read(p *int) int {return *p}
 func apply(fn func(*int)int, p *int) int {return fn(p)}
 func borrow(x int)int{return apply(read,&x)}
 func immutable(x int)func()int{return func()int{return x}}
+func nested(p *int)func()int{return func()int{previous:=*p;defer func(){*p=previous}();(*p)++;return *p}}
+func nestedTwo(p,q *int)func()int{return func()int{previous:=*p;defer func(){*p=previous;*q+=0}();(*p)++;return *p}}
+func nestedMutable(p *int)func()int{return func()int{defer func(){p=nil}();return *p}}
 func mutable(x int)func()int{return func()int{x++;return x}}
 func repeated()[]func()int{var x int;var fs []func()int;for i:=0;i<3;i++{x=i;fs=append(fs,func()int{return x})};return fs}
 func equal(a,b string)bool{return a==b}
@@ -33,6 +36,15 @@ func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
 			}
 			if body := llvmFunction(t, ir, "precision.immutable"); strings.Contains(body, "runtime.AllocZ") || strings.Count(body, "runtime.AllocAtomicU\"(") != 1 {
 				t.Errorf("immutable variable has separate heap storage:\n%s", body)
+			}
+			for _, name := range []string{"nested", "nestedTwo"} {
+				body := llvmFunction(t, ir, "precision."+name)
+				if strings.Contains(body, "runtime.AllocZ") || strings.Contains(body, "runtime.AllocAtomicU\"(") || strings.Count(body, "runtime.AllocU\"(") != 1 {
+					t.Errorf("%s has separate captured-pointer cells:\n%s", name, body)
+				}
+			}
+			if body := llvmFunction(t, ir, "precision.nestedMutable"); strings.Count(body, "runtime.AllocU\"(") != 1 || strings.Count(body, "runtime.AllocZ\"(") != 1 {
+				t.Errorf("nested reassignment lost shared pointer cell:\n%s", body)
 			}
 			for _, name := range []string{"mutable", "repeated"} {
 				if body := llvmFunction(t, ir, "precision."+name); !strings.Contains(body, "runtime.AllocAtomicU\"(") || !strings.Contains(body, "runtime.AllocU\"(") {

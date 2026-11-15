@@ -7,86 +7,153 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Copy only a small, initialized lexical variable whose address is never
-// observed and whose closure reads it exclusively. Forwarded captures and
-// method wrappers retain the ordinary shared-variable representation.
-func immutableCapture(fn *ssa.Function, index int) bool {
-	if fn.Parent() == nil || fn.Synthetic != "" {
-		return false
+const maxCaptureCells = 64
+
+// A capture's representation must agree across its whole lexical graph:
+// copying an outer variable while an inner closure still retains its address
+// would let that inner closure refer to a short-lived environment field.
+type captureAnalysis struct {
+	inspect func(*ssa.Function) bool
+	sites   map[*ssa.Function][]*ssa.MakeClosure
+	indexed map[*ssa.Function]bool
+	proofs  map[*ssa.Alloc]bool
+}
+
+func (a *captureAnalysis) binding(fn *ssa.Function, index int) ssa.Value {
+	parent := fn.Parent()
+	if parent == nil || fn.Synthetic != "" || !a.inspect(fn) {
+		return nil
 	}
-	v := fn.FreeVars[index]
-	ptr, ok := v.Type().Underlying().(*types.Pointer)
-	if !ok || captureUnits(ptr.Elem(), 0) > 8 || v.Referrers() == nil {
-		return false
+	if !a.indexed[parent] {
+		a.indexed[parent] = true
+		for _, block := range parent.Blocks {
+			for _, instr := range block.Instrs {
+				if closure, ok := instr.(*ssa.MakeClosure); ok {
+					if child, ok := closure.Fn.(*ssa.Function); ok {
+						a.sites[child] = append(a.sites[child], closure)
+					}
+				}
+			}
+		}
 	}
-	for _, ref := range *v.Referrers() {
-		switch use := ref.(type) {
-		case *ssa.DebugRef:
-		case *ssa.UnOp:
-			if use.Op != token.MUL || use.X != v {
+	var binding ssa.Value
+	for _, site := range a.sites[fn] {
+		if index >= len(site.Bindings) || (binding != nil && binding != site.Bindings[index]) {
+			return nil
+		}
+		binding = site.Bindings[index]
+	}
+	return binding
+}
+
+// Trace forwarded free variables to their initialized cell, then prove that
+// every lexical consumer only loads or forwards it. Writes through a loaded
+// pointer are allowed; writes to, or observations of, the variable's address
+// retain shared storage. Method wrappers and opaque bodies remain excluded.
+func (a *captureAnalysis) immutableCapture(fn *ssa.Function, index int) bool {
+	for range maxCaptureCells {
+		switch binding := a.binding(fn, index).(type) {
+		case *ssa.Alloc:
+			if proof, ok := a.proofs[binding]; ok {
+				return proof
+			}
+			proof := a.immutableCell(binding)
+			a.proofs[binding] = proof
+			return proof
+		case *ssa.FreeVar:
+			fn = binding.Parent()
+			index = -1
+			for i, v := range fn.FreeVars {
+				if v == binding {
+					index = i
+					break
+				}
+			}
+			if index < 0 {
 				return false
 			}
 		default:
 			return false
 		}
 	}
-	found := false
-	for _, block := range fn.Parent().Blocks {
-		for _, instr := range block.Instrs {
-			closure, ok := instr.(*ssa.MakeClosure)
-			if !ok || closure.Fn != fn {
-				continue
-			}
-			found = true
-			alloc, ok := closure.Bindings[index].(*ssa.Alloc)
-			if !ok || alloc.Referrers() == nil {
-				return false
-			}
-			var init *ssa.Store
-			for _, ref := range *alloc.Referrers() {
-				switch use := ref.(type) {
-				case *ssa.DebugRef:
-				case *ssa.Store:
-					if init != nil || use.Addr != alloc {
-						return false
-					}
-					init = use
-				case *ssa.UnOp:
-					if use.Op != token.MUL {
-						return false
-					}
-				case *ssa.MakeClosure:
-					if use.Fn != fn {
-						return false
-					}
-					// The same variable in another capture position might be
-					// writable through that free variable.
-					for j, binding := range use.Bindings {
-						if binding == alloc && j != index {
-							return false
-						}
-					}
-				default:
+	return false
+}
+
+func (a *captureAnalysis) immutableCell(alloc *ssa.Alloc) bool {
+	if !a.inspect(alloc.Parent()) {
+		return false
+	}
+	seen := map[ssa.Value]bool{alloc: true}
+	pending := []ssa.Value{alloc}
+	var init *ssa.Store
+	var captures []*ssa.MakeClosure
+	for len(pending) > 0 {
+		cell := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		ptr, ok := cell.Type().Underlying().(*types.Pointer)
+		if !ok || captureUnits(ptr.Elem(), 0) > 8 || cell.Referrers() == nil {
+			return false
+		}
+		for _, ref := range *cell.Referrers() {
+			switch use := ref.(type) {
+			case *ssa.DebugRef:
+			case *ssa.Store:
+				if cell != alloc || init != nil || use.Addr != alloc {
 					return false
 				}
-			}
-			if init == nil || !init.Block().Dominates(closure.Block()) || !captureInitializedOnce(alloc, init) {
-				return false
-			}
-			if init.Block() == closure.Block() {
-				initialized := false
-				for _, instr := range init.Block().Instrs {
-					if instr == init {
-						initialized = true
+				init = use
+			case *ssa.UnOp:
+				if use.Op != token.MUL || use.X != cell {
+					return false
+				}
+			case *ssa.MakeClosure:
+				fn, ok := use.Fn.(*ssa.Function)
+				if !ok || fn.Parent() != use.Parent() {
+					return false
+				}
+				for i, binding := range use.Bindings {
+					if binding != cell {
+						continue
 					}
-					if instr == closure && !initialized {
+					if i >= len(fn.FreeVars) || a.binding(fn, i) != cell {
 						return false
 					}
+					v := fn.FreeVars[i]
+					if !seen[v] {
+						seen[v] = true
+						if len(seen) > maxCaptureCells {
+							return false
+						}
+						pending = append(pending, v)
+					}
+				}
+				if cell == alloc {
+					captures = append(captures, use)
+				}
+			default:
+				return false
+			}
+		}
+	}
+	if init == nil || len(captures) == 0 || !captureInitializedOnce(alloc, init) {
+		return false
+	}
+	for _, closure := range captures {
+		if !init.Block().Dominates(closure.Block()) {
+			return false
+		}
+		if init.Block() == closure.Block() {
+			for _, instr := range init.Block().Instrs {
+				if instr == init {
+					break
+				}
+				if instr == closure {
+					return false
 				}
 			}
 		}
 	}
-	return found
+	return true
 }
 
 // One SSA store can execute repeatedly. A capture is immutable only if every
