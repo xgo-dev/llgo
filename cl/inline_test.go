@@ -82,14 +82,7 @@ var KeptValue = dep.Kept
 			if !strings.Contains(mod.NamedGlobal("example.com/root.Value").String(), "example.com/dep.Sum") {
 				t.Fatal("function value lost canonical entry")
 			}
-			mod.SetDataLayout(prog.DataLayout())
-			mod.SetTarget(target.Spec().Triple)
-			opts := llvm.NewPassBuilderOptions()
-			defer opts.Dispose()
-			opts.SetVerifyEach(true)
-			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
-			}
+			runModulePasses(t, prog, mod, "default<O2>")
 			for _, name := range []string{"Sum", "Split", "Branch"} {
 				if ir := mustNamedFunction(t, mod, "example.com/root."+name).String(); strings.Contains(ir, "call ") {
 					t.Fatalf("cross-package call survived optimization:\n%s", ir)
@@ -125,9 +118,7 @@ var KeptValue = dep.Kept
 			if err := llvm.LinkModules(linked, clone(owner.Module())); err != nil {
 				t.Fatal(err)
 			}
-			if err := linked.RunPasses("lto<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
-			}
+			runModulePasses(t, prog, linked, "lto<O2>")
 			if ir := mustNamedFunction(t, linked, "example.com/root.Kept").String(); !strings.Contains(ir, "example.com/dep.Kept") {
 				t.Fatalf("LTO inlined go:noinline function:\n%s", ir)
 			}
@@ -137,6 +128,18 @@ var KeptValue = dep.Kept
 			}
 			buf.Dispose()
 		})
+	}
+}
+
+func runModulePasses(t *testing.T, prog llssa.Program, mod llvm.Module, passes string) {
+	t.Helper()
+	mod.SetDataLayout(prog.DataLayout())
+	mod.SetTarget(prog.Target().Spec().Triple)
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	opts.SetVerifyEach(true)
+	if err := mod.RunPasses(passes, prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
 	}
 }
 
