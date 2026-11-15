@@ -143,7 +143,8 @@ func (f *functionAnalysis) readOnlyInstruction(instr ssa.Instruction, active map
 	case *ssa.Convert:
 		// Conversions do not mutate their inputs, even when they allocate a
 		// copy. In string(a) == string(b), the second conversion must not
-		// prevent the first from borrowing its byte slice.
+		// prevent the first from borrowing its byte slice. This also admits
+		// ordinary conversions in inspected callees, such as int(s[0]).
 		return true
 	case *ssa.Call:
 		if builtin, ok := v.Call.Value.(*ssa.Builtin); ok {
