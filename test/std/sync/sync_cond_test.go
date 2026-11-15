@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+func BenchmarkCondNotifyIdle(b *testing.B) {
+	cond := sync.NewCond(new(sync.Mutex))
+	for _, op := range []struct {
+		name   string
+		notify func()
+	}{{"Signal", cond.Signal}, {"Broadcast", cond.Broadcast}} {
+		b.Run(op.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				op.notify()
+			}
+		})
+	}
+}
+
 func TestCondBasic(t *testing.T) {
 	var mu sync.Mutex
 	cond := sync.NewCond(&mu)
