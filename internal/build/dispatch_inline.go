@@ -53,6 +53,11 @@ func applyDispatchInlineBudget(conf *Config, mod llvm.Module) int {
 					!call.GetCallSiteStringAttribute(-1, "function-inline-threshold").IsNil() {
 					continue
 				}
+				if !callee.GetStringAttributeAtIndex(-1, "function-inline-threshold").IsNil() ||
+					!callee.GetStringAttributeAtIndex(-1, "function-inline-cost").IsNil() ||
+					!call.GetCallSiteStringAttribute(-1, "function-inline-cost").IsNil() {
+					continue
+				}
 				call.AddCallSiteAttribute(-1, hint)
 				count++
 			}

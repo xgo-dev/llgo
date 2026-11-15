@@ -14,6 +14,7 @@ const dispatchInlineIR = `
 declare i32 @helper(ptr)
 declare i32 @blocked(ptr) noinline
 declare i32 @panic(ptr) cold noreturn
+declare i32 @custom_helper(ptr) "function-inline-threshold"="12"
 define void @dispatch(i32 %n, ptr %p, i1 %choose) {
 entry:
   %outside = call i32 @helper(ptr %p)
@@ -27,6 +28,8 @@ work:
   %cold = call i32 @panic(ptr %p)
   %custom = call i32 @helper(ptr %p) "function-inline-threshold"="12"
   %explicit = call i32 @helper(ptr %p) noinline
+  %function_policy = call i32 @custom_helper(ptr %p)
+  %cost_policy = call i32 @helper(ptr %p) "function-inline-cost"="1000"
   br label %switch
 other:
   %unrelated = call i32 @helper(ptr %p)
