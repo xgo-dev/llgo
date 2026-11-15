@@ -38,6 +38,9 @@ func main() {
 	if len(os.Args) > 1 {
 		mode = os.Args[1]
 	}
+	if mode == "panic" {
+		panic("pcln-fatal")
+	}
 	if mode == "no-symbols" {
 		println("pcln-ok")
 		return

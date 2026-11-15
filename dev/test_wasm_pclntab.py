@@ -53,14 +53,22 @@ def main():
                 run += [str(output)]
                 guest_sidecar = str(sidecar)
 
-            def execute(mode):
+            def execute(mode, status=0, output='pcln-ok'):
                 result = subprocess.run(run + [mode, guest_sidecar], cwd=directory, env=environment,
                                         capture_output=True, text=True, timeout=60)
                 combined = result.stdout + result.stderr
-                if result.returncode or 'pcln-ok' not in combined:
+                if result.returncode != status or output not in combined:
                     raise RuntimeError(f'{target}/{mode}: exit {result.returncode}\n{combined}')
+                return combined
 
             cases = []
+
+            # A valid map exists, but a fatal traceback must neither start a
+            # load nor wait for one. Only unresolved frame PCs are available.
+            fatal = execute('panic', status=2, output='panic: pcln-fatal')
+            if '??? [pc=' not in fatal or 'pcln-callsite.go:' in fatal:
+                raise RuntimeError(f'{target}: fatal path loaded source metadata\n{fatal}')
+            cases.append('fatal-without-load')
             for mode in ['available', 'concurrent', 'cached-success', 'cached-failure']:
                 execute(mode)
                 if sidecar.read_bytes() != original:

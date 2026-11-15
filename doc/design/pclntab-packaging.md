@@ -228,5 +228,5 @@ metadata or immediately fall back.
 
 `dev/test_wasm_pclntab.py --browser` exercises real WASI/Node hosts and HTTP
 browser loading, including lazy loading, terminal caching, concurrent callers
-with explicit GC, malformed records, missing files, FIFO rejection and HTTP
-timeout. It runs in the existing Wasm runtime CI job.
+with explicit GC, fatal tracebacks without loading, malformed records, missing
+files, FIFO rejection and HTTP timeout. It runs in the existing Wasm runtime CI job.
