@@ -12,6 +12,11 @@ type record struct {
 }
 
 var garbage any
+var sliceSink []int
+var stringSink string
+
+//go:noinline
+func newRecord(n int) *record { return &record{a: n, b: n + 1} }
 
 //go:noinline
 func pressure() {
@@ -25,8 +30,9 @@ func pressure() {
 
 //go:noinline
 func views(n int) {
-	p := &record{a: n, b: n + 1}
+	p := newRecord(n)
 	p.data[3], p.data[5] = n+2, n+3
+	pressure() // Plan the heap owner before deriving views that share its root.
 	a, b := &p.a, &p.b
 	part := p.data[2:8][1:]
 	array := (*[3]int)(part)
@@ -43,6 +49,10 @@ func synthetic(n int) {
 	// A nonconstant length with constant capacity uses SSA's synthetic array
 	// form. LLGo elides that array and allocates at the slice instead.
 	values := make([]int, n, 26)
+	// Force the synthetic makeslice allocation onto the heap without keeping
+	// a global root alive during the collection below.
+	sliceSink = values
+	sliceSink = nil
 	values[8], values[9] = 81, 92
 	part := values[8:10]
 	pressure()
@@ -55,6 +65,8 @@ func synthetic(n int) {
 func text(n byte) {
 	bytes := []byte{'a', n, n + 1, 'z'}
 	str := string(bytes)
+	stringSink = str
+	stringSink = ""
 	sub := str[1:3][1:]
 	bytes[2] = 0 // The conversion must keep its independent allocation.
 	pressure()
@@ -77,10 +89,11 @@ func closure(n int) func() {
 
 //go:noinline
 func loop() {
-	previous := &record{a: -1}
+	previous := newRecord(-1)
 	p := &previous.a
 	for i := 0; i < 5; i++ {
-		next := &record{a: i}
+		next := newRecord(i)
+		pressure() // Root the new owner independently of the old pointer phi.
 		q := &next.a
 		pressure()
 		if *p != i-1 || *q != i {
@@ -92,7 +105,8 @@ func loop() {
 
 //go:noinline
 func unwinding(n int) {
-	p := &record{a: n}
+	p := newRecord(n)
+	pressure()
 	a := &p.a
 	defer func() {
 		if recover() != n {

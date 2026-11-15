@@ -81,10 +81,19 @@ type Pair struct { A, B int }
 var global Pair
 func use(*int)
 func useBytes([]byte)
+func newPair() *Pair
+func safepoint()
 func fields(p *Pair) { use(&p.A); use(&p.B) }
 func slices(p []byte) { useBytes(p[1:]); useBytes(p[2:]) }
 func static() { use(&global.A); use(&global.B) }
 func cold(p *Pair, yes bool) { if yes { use(&p.B) } }
+func heap() {
+    p := newPair()
+    safepoint()
+    a, b := &p.A, &p.B
+    safepoint()
+    use(a); use(b)
+}
 `
 	for _, tc := range []struct {
 		name, goos, arch string
@@ -114,7 +123,7 @@ func cold(p *Pair, yes bool) { if yes { use(&p.B) } }
 			if want := tc.arch == "wasm" && tc.dce && tc.roots; publishedAtEntry != want {
 				t.Errorf("cold view publishes its parameter = %v, want %v:\n%s", publishedAtEntry, want, cold)
 			}
-			for _, name := range []string{"fields", "slices", "static"} {
+			for _, name := range []string{"fields", "slices", "static", "heap"} {
 				want := uint64(3)
 				if name == "static" {
 					want = 2

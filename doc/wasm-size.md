@@ -15,11 +15,11 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
-Wasm GC root frames reuse an already-required backing-allocation root for
-pointer and slice views. This preserves cold-path publication points instead
-of introducing owner stores at function entry. Loads, phi nodes and conversions that allocate retain
-independent roots. This also applies to ordinary builds, without development
-DCE or LTO flags. Root-frame bookkeeping stays inlined to avoid extra calls.
+Ordinary Wasm builds reuse already-required backing-allocation roots for
+pointer and slice views, preserving cold-path publication points. Loads, phi
+nodes and allocating conversions keep independent roots. Frame bookkeeping
+stays inline to avoid extra calls. Development DCE can also introduce owner
+roots and, at `-Oz`, outline frame bookkeeping.
 
 Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
 values and direct hashers for scalar keys. Padded structs, blank fields and
