@@ -48,6 +48,14 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 		{"Float32x8", "ConcatAddPairs(Float32x8) Float32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "ConcatAddPairsGrouped(Float32x4) Float32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Int32x8", llssa.SIMDUnimplemented},
+		{"Int32x4", "InterleaveLo(Int32x4) Int32x4", llssa.SIMDInterleaveLo},
+		{"Int32x8", "InterleaveHiGrouped(Int32x8) Int32x8", llssa.SIMDInterleaveHiGrouped},
+		{"Int32x4", "ConcatEven(Int32x4) Int32x4", llssa.SIMDConcatEven},
+		{"Int32x8", "InterleaveLo(Int32x8) Int32x8", llssa.SIMDUnimplemented},
+		{"Int32x4", "InterleaveHiGrouped(Int32x4) Int32x4", llssa.SIMDUnimplemented},
+		{"Int32x8", "InterleaveHiGrouped(Int32x4) Int32x8", llssa.SIMDUnimplemented},
+		{"Int32x8", "InterleaveHiGrouped(Int32x8) Uint32x8", llssa.SIMDUnimplemented},
+		{"Float32x4", "InterleaveLo(Float32x4) Float32x4", llssa.SIMDUnimplemented},
 		{"Float32x8", "Ceil() Float32x8", llssa.SIMDUnimplemented},
 
 		// Broadcasting may widen, but must preserve the element type and

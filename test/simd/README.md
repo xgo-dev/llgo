@@ -30,6 +30,8 @@ architecture.
   with defined results for NaN and out-of-range floating inputs.
 - Four mask shapes, comparisons, mask bitmaps where provided, and the official
   Go helpers for masking and conditional selection.
+- Native integer interleave-low/high operations, ARM64 even/odd concatenation
+  and interleave, and AMD64 SIMD256 interleave within each 128-bit group.
 - Byte lookup with out-of-range zeroing on arm64/wasm, and baseline-safe amd64
   byte/word permutations and negative-index zeroing. Constant permutations
   fold to vector shuffles at O2; dynamic indices use a per-lane fallback.

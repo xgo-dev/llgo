@@ -30,16 +30,16 @@ The allowlists contain only tests that actually passed; hardware skips are not
 promoted to passing coverage. Failure and skip inventories below are retained
 so later instruction work can expand the lists deliberately.
 
+The interleave/concatenation follow-up enables six ARM64 cases and three AMD64
+cases (`TestInterleaveLo`, `TestInterleaveHi`, `TestFlattenedTranspose`). The
+four larger transpose cases still reach unimplemented constant-pair shuffles;
+their updated first failures are retained below. The initial totals above
+remain the historical audit, not a recount after these additions.
+
 ## arm64 failures
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |
-| `TestConcatEven` | `simd/archsimd.Int8x16.ConcatEven` |
-| `TestConcatOdd` | `simd/archsimd.Int8x16.ConcatOdd` |
-| `TestInterleaveEven` | `simd/archsimd.Int8x16.InterleaveEven` |
-| `TestInterleaveOdd` | `simd/archsimd.Int8x16.InterleaveOdd` |
-| `TestInterleaveLoARM64` | `simd/archsimd.Int8x16.InterleaveLo` |
-| `TestInterleaveHiARM64` | `simd/archsimd.Int8x16.InterleaveHi` |
 | `TestConvertARM64` | `simd/archsimd.Float32x4.ConvertLo2ToFloat64` |
 | `TestTruncateARM64` | `simd/archsimd.Int16x8.TruncToInt8` |
 | `TestReduceSum` | `simd/archsimd.Int8x16.reduceSum` |
@@ -59,11 +59,8 @@ are unchanged by this partial improvement.
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |
-| `TestInterleaveLo` | `simd/archsimd.Int16x8.InterleaveLo` |
-| `TestInterleaveHi` | `simd/archsimd.Int16x8.InterleaveHi` |
 | `TestIsNaN` | `simd/archsimd.Float32x4.IsNaN` |
 | `TestConcatShiftBytesRight` | `simd/archsimd.Uint8x16.ConcatShiftBytesRight` |
-| `TestFlattenedTranspose` | `simd/archsimd.Int32x4.InterleaveLo` |
 | `TestClearAVXUpperBits` | `simd/archsimd.ClearAVXUpperBits` |
 | `TestIsZero` | `simd/archsimd.Uint64x2.IsZero` |
 | `TestSelect4FromPairConst` | `simd/archsimd.Int32x4.concatSelectedConstant` |
@@ -83,10 +80,10 @@ are unchanged by this partial improvement.
 | `TestPermuteScalarsLoGrouped` | `simd/archsimd.Int16x16.permuteScalarsLoGrouped` |
 | `TestAddSubPairs` | `simd/archsimd.Int16x8.ConcatSubPairs` |
 | `TestSaturateConcat` | `simd/archsimd.Int32x8.SaturateToInt16ConcatGrouped` |
-| `TestTranspose4` | `simd/archsimd.Int32x4.InterleaveLo` |
-| `TestTranspose8` | `simd/archsimd.Int32x8.InterleaveLoGrouped` |
-| `TestTransposeTiled4` | `simd/archsimd.Int32x4.InterleaveLo` |
-| `TestTransposeTiled8` | `simd/archsimd.Int32x8.InterleaveLoGrouped` |
+| `TestTranspose4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
+| `TestTranspose8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
+| `TestTransposeTiled4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
+| `TestTransposeTiled8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
 | `TestCeilAMD64` | `simd/archsimd.Float32x8.Ceil` |
 | `TestFloorAMD64` | `simd/archsimd.Float32x8.Floor` |
 | `TestTruncAMD64` | `simd/archsimd.Float32x8.Trunc` |
