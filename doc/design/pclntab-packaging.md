@@ -89,10 +89,12 @@ suites exercise both default and explicit-DWARF executable paths.
 
 `internal/build` validates the selected target, enables compiler metadata,
 coordinates link finalization, and owns output paths. `internal/pclnpost`
-contains host-side ELF/Mach-O inspection and safe binary rewriting.
-`internal/pclnmap` owns the versioned sidecar format. The runtime contains a
-small build-tag-selected loader and an independent, dependency-minimal
-decoder.
+contains host-side ELF/Mach-O inspection and rewriting; `internal/wasmdebug`
+owns the Wasm identity-slot rewrite. `internal/pclnmap` owns the versioned
+sidecar format. Build tags select the native loader/decoder in
+`runtime/internal/lib/runtime/pclntab_external.go` or the Wasm implementation
+in `runtime/internal/pcln`. Both runtime decoders keep their format constants
+and validation rules synchronized with the host encoder.
 
 This separation keeps both binary-format policy and command syntax out of the
 compiler pipeline.
@@ -227,9 +229,11 @@ process lifetime. A missing, truncated, corrupt, stale, oversized or timed-out
 sidecar leaves available PCs and fallback diagnostics, and does not terminate
 the program. Installing a sidecar after the first failed query requires a
 restart. Fatal traceback paths never start or wait for a load; they use ready
-metadata or immediately fall back.
+metadata or immediately fall back. Resolved synthetic frames cache their
+function/file strings; immutable location IDs keep their PCs stable. A frame
+captured before loading can resolve later when the map becomes ready.
 
 `dev/test_wasm_pclntab.py --browser` exercises real WASI/Node hosts and HTTP
-browser loading, including lazy loading, terminal caching, concurrent callers
+browser loading, including lazy loading, terminal caching, synthetic-frame string/PC reuse, concurrent callers
 with explicit GC, fatal tracebacks without loading, malformed records, missing
 files, FIFO rejection and HTTP timeout. It runs in the existing Wasm runtime CI job.

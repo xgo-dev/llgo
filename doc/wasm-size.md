@@ -156,17 +156,17 @@ sidecar is deferred, not compressed: shipping/loading it increases total bytes,
 and first symbolization uses additional resident memory. Small programs can
 grow because the identity/loader support exceeds their removed metadata.
 
-| Profile | Example | Embedded module | External module | Change | Optional PCLN map |
+| Profile | Example | Embedded module | External module | Change | External PCLN file |
 | --- | --- | ---: | ---: | ---: | ---: |
 | W32 | cprintf | 12,745 | 12,829 | +0.66% | 256 |
 | W32 | println | 14,490 | 15,348 | +5.92% | 256 |
-| W32 | fmtprintf | 456,380 | 382,455 | -16.20% | 385,736 |
-| J32 | cprintf | 151,656 | 154,704 | +2.01% | 84,472 |
-| J32 | println | 150,855 | 153,819 | +1.96% | 84,472 |
-| J32 | fmtprintf | 1,111,100 | 730,086 | -34.29% | 397,256 |
-| J64 | cprintf | 138,876 | 141,638 | +1.99% | 84,480 |
-| J64 | println | 138,077 | 140,827 | +1.99% | 84,480 |
-| J64 | fmtprintf | 1,046,497 | 665,241 | -36.43% | 397,176 |
+| W32 | fmtprintf | 456,380 | 382,223 | -16.25% | 385,880 |
+| J32 | cprintf | 151,656 | 154,393 | +1.80% | 84,616 |
+| J32 | println | 150,855 | 153,584 | +1.81% | 84,616 |
+| J32 | fmtprintf | 1,111,100 | 729,940 | -34.30% | 397,400 |
+| J64 | cprintf | 138,876 | 141,371 | +1.80% | 84,616 |
+| J64 | println | 138,077 | 140,580 | +1.81% | 84,616 |
+| J64 | fmtprintf | 1,046,497 | 665,101 | -36.45% | 397,320 |
 
 For `fmtprintf`, the data section drops from 159,501 to 83,599 bytes (W32),
 474,571 to 90,613 (J32), and 474,801 to 90,892 (J64). This reduction comes

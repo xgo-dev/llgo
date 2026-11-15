@@ -70,20 +70,38 @@ for (const method of ["log", "info", "warn", "error"]) {
 		original(...values);
 	};
 }
+const recordExit = status => {
+	if (status !== 0) {
+		finish("failure", "exit " + status + ": " + result.textContent);
+		return;
+	}
+	successfulExit = true;
+	if (result.textContent.includes(expected)) finish("success", result.textContent);
+};
 try {
-	const loaded = await import(${JSON.stringify(`/${moduleName}`)});
-	await loaded.default({
-		arguments: ${JSON.stringify(programArgs)}, print: write, printErr: write,
-		onAbort(reason) { finish("failure", String(reason)); },
-		onExit(status) {
-			if (status !== 0) {
-				finish("failure", "exit " + status + ": " + result.textContent);
-				return;
-			}
-			successfulExit = true;
-			if (result.textContent.includes(expected)) finish("success", result.textContent);
-		},
-	});
+	if (${JSON.stringify(moduleName.endsWith(".wasm"))}) {
+		// Raw GoJS keeps Emscripten alive by design. Its supported completion
+		// contract is Go.run/Go.exit from the generated wasm_exec.js adapter.
+		await new Promise((resolve, reject) => {
+			const script = document.createElement("script");
+			script.src = "/wasm_exec.js";
+			script.onload = resolve;
+			script.onerror = () => reject(new Error("failed to load wasm_exec.js"));
+			document.head.append(script);
+		});
+		const go = new Go({ wasm: ${JSON.stringify(`/${moduleName}`)} });
+		go.argv = [${JSON.stringify(moduleName)}, ...${JSON.stringify(programArgs)}];
+		go.exit = recordExit;
+		const loaded = await WebAssembly.instantiateStreaming(fetch(${JSON.stringify(`/${moduleName}`)}), go.importObject);
+		await go.run(loaded.instance);
+	} else {
+		const loaded = await import(${JSON.stringify(`/${moduleName}`)});
+		await loaded.default({
+			arguments: ${JSON.stringify(programArgs)}, print: write, printErr: write,
+			onAbort(reason) { finish("failure", String(reason)); },
+			onExit: recordExit,
+		});
+	}
 } catch (error) {
 	write(error?.stack || error);
 	finish("failure", result.textContent);

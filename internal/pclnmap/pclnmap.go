@@ -15,9 +15,10 @@
  */
 
 // Package pclnmap encodes LLGo's optional external runtime-symbolization map.
-// The runtime has a deliberately dependency-free decoder for the same format;
-// keep the layout constants and validation rules in sync with
-// runtime/internal/lib/runtime/pclntab_external.go.
+// Keep layout constants, target codes and validation rules synchronized with
+// both dependency-minimal runtime decoders:
+// runtime/internal/lib/runtime/pclntab_external.go (native) and
+// runtime/internal/pcln/pcln_wasm.go (Wasm).
 package pclnmap
 
 import (

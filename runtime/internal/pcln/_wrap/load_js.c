@@ -2,16 +2,29 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+extern int __llgo_argc;
+extern char **__llgo_argv;
+
 // Return to Go immediately. The Go timer/scheduler owns suspension; a raw
 // Asyncify Promise wait inside a Go fiber corrupts multi-worker rewind state.
-EM_JS(void, llgo_pcln_load_start_js, (void *request), {
+EM_JS(void, llgo_pcln_load_start_js, (void *request, const char *executable), {
     (async () => {
     let timer, controller, pointer;
     const address = Number(request), size = address + 4, out = address + 8;
     try {
         const moduleURL = wasmBinaryFile || findWasmBinary();
         if (typeof moduleURL !== 'string') return;
-        const resolved = new URL(moduleURL, import.meta.url);
+        // Emscripten captures this URL for both ES modules and the classic
+        // wasm_exec.js factory. import.meta is invalid in a classic script.
+        let resolved;
+        try { resolved = new URL(moduleURL, _scriptName); }
+        catch (_) {
+            // A classic GoJS host loaded with Node's require() has no
+            // document.currentScript. Its argv[0] identifies the module.
+            if (!executable || !globalThis.process?.versions?.node) return;
+            const {pathToFileURL} = await import('node:url');
+            resolved = pathToFileURL(UTF8ToString(Number(executable)));
+        }
         resolved.pathname += '.pclntab';
         const url = resolved.href, limit = 64 * 1024 * 1024;
         let bytes;
@@ -70,7 +83,7 @@ EM_JS(void, llgo_pcln_load_start_js, (void *request), {
 });
 
 void llgo_pcln_load_start(void *request) {
-    llgo_pcln_load_start_js(request);
+    llgo_pcln_load_start_js(request, __llgo_argc > 0 && __llgo_argv ? __llgo_argv[0] : NULL);
 }
 
 uint32_t llgo_pcln_pointer_size(void) { return sizeof(void *); }

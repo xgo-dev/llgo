@@ -11,7 +11,11 @@ import (
 
 func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error {
 	module := debugWasmModulePath(ctx.buildConf, out.Out)
-	analysis, err := analyzeWasmPCLN(module, *ctx.pclnExternal)
+	raw, err := os.ReadFile(module)
+	if err != nil {
+		return err
+	}
+	analysis, err := analyzeWasmPCLNData(raw, *ctx.pclnExternal)
 	if err != nil {
 		return err
 	}
@@ -23,10 +27,6 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 	// Shadow locations use stable IDs, independent of final code offsets.
 	data.EntrySites, data.PCSites = nil, nil
 	data.ImageBase, data.TextStart, data.TextEnd = 0, 1, 2
-	raw, err := os.ReadFile(module)
-	if err != nil {
-		return err
-	}
 	data.Identity = sha256.Sum256(raw)
 	placeholder := wasmdebug.PCLNIdentityPlaceholder()
 	patched, err := wasmdebug.ReplaceData(raw, pclnIdentitySymbol, placeholder[:], data.Identity[:])

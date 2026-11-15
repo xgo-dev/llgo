@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/funcinfo"
@@ -82,7 +83,7 @@ func TestExternalWasmPCLNPairing(t *testing.T) {
 }
 
 func TestExternalWasmPCLNFailureDoesNotPublish(t *testing.T) {
-	for _, failure := range []string{"missing-module", "invalid-module", "missing-slot", "invalid-pointer-width", "sidecar-write"} {
+	for _, failure := range []string{"missing-module", "invalid-module", "missing-slot", "invalid-pointer-width", "invalid-symbol-index", "sidecar-write", "module-write"} {
 		t.Run(failure, func(t *testing.T) {
 			dir := t.TempDir()
 			module := filepath.Join(dir, "app.wasm")
@@ -98,6 +99,8 @@ func TestExternalWasmPCLNFailureDoesNotPublish(t *testing.T) {
 				raw = raw[:8]
 			case "invalid-pointer-width":
 				ctx.pclnExternal.PointerSize = 3
+			case "invalid-symbol-index":
+				ctx.pclnExternal.SymbolIndex = []pclnmap.SymbolIndexEntry{{SymbolID: 1, FuncIndex: 1}}
 			case "sidecar-write":
 				// A non-directory component prevents artifact staging.
 				out.PCLN = filepath.Join(module, "sidecar")
@@ -106,6 +109,16 @@ func TestExternalWasmPCLNFailureDoesNotPublish(t *testing.T) {
 				if err := os.WriteFile(module, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if failure == "module-write" {
+				if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+					t.Skip("requires Unix directory permission enforcement")
+				}
+				out.PCLN = filepath.Join(t.TempDir(), "app.wasm.pclntab")
+				if err := os.Chmod(dir, 0500); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Chmod(dir, 0700)
 			}
 			if err := finalizeRuntimePCLN(ctx, out, false); err == nil {
 				t.Fatal("accepted invalid external artifact")

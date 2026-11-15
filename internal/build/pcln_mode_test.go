@@ -95,6 +95,28 @@ func TestValidatePCLNMode(t *testing.T) {
 	}
 }
 
+func TestResolveExternalPCLNTargetPolicy(t *testing.T) {
+	t.Setenv(llgoFuncInfoSites, "1")
+	for _, tc := range []struct {
+		name  string
+		conf  Config
+		allow bool
+	}{
+		{"defer named target", Config{Target: "wasi", PCLNMode: PCLNExternal}, true},
+		{"generation", Config{Target: "wasi", Mode: ModeGen, PCLNMode: PCLNExternal}, false},
+		{"archive", Config{Target: "wasi", BuildMode: BuildModeCArchive, PCLNMode: PCLNExternal}, false},
+		{"shared", Config{Target: "wasi", BuildMode: BuildModeCShared, PCLNMode: PCLNExternal}, false},
+		{"unsupported native host", Config{Goos: "windows", PCLNMode: PCLNExternal}, false},
+		{"invalid mode", Config{Target: "wasi", PCLNMode: PCLNMode(255)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := resolveBuildConfig(&tc.conf); (err == nil) != tc.allow {
+				t.Fatalf("resolveBuildConfig() error = %v, allow %v", err, tc.allow)
+			}
+		})
+	}
+}
+
 func TestEffectivePCLNModeLegacyPrecedence(t *testing.T) {
 	tests := []struct {
 		name     string

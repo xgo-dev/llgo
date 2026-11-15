@@ -440,6 +440,9 @@ func TestWasmFinalFailurePreservesArtifacts(t *testing.T) {
 			dir := t.TempDir()
 			out := &OutFmtDetails{Out: filepath.Join(dir, "app.wasm")}
 			paths := []string{out.Out, wasmManifestPath(out.Out), dwarfSidecarPath(out.Out)}
+			if tc.name == "unsupported PCLN" {
+				out.PCLN = pclnSidecarPath(out.Out)
+			}
 			for _, path := range paths {
 				if err := os.WriteFile(path, []byte("previous artifact"), 0600); err != nil {
 					t.Fatal(err)

@@ -16,6 +16,15 @@ func resolveCallerFrame(frame CallerFrame) CallerFrame {
 	return frame
 }
 
+func resolveCachedCallerFrame(frame *CallerFrame) CallerFrame {
+	if frame.locationID != 0 && frame.Function == "" {
+		// Leave unresolved entries retryable until the optional map is ready.
+		// Successful names/files then live as long as the interned frame.
+		*frame = resolveCallerFrame(*frame)
+	}
+	return *frame
+}
+
 func callerLocationHash(frame CallerFrame) uintptr {
 	return uintptr(frame.locationID) ^ uintptr(frame.locationID>>32)
 }
@@ -30,28 +39,7 @@ func PushCallerLocationFrameID(entry uintptr, id uint64, line int) int {
 
 //go:noinline
 func RecordCallerLocationID(entry uintptr, id uint64, line int) {
-	RecordCallerLocation(entry, "", "", line)
-	store := callerLocationStoreCurrent
-	if store == nil {
-		return
-	}
-	for i := len(store.stack) - 1; i >= 0; i-- {
-		frame := &store.stack[i]
-		if frame.Entry == entry {
-			if frame.locationID != id {
-				frame.captured = 0
-			}
-			frame.locationID = id
-			break
-		}
-	}
-	for i := len(store.frames) - 1; i >= 0; i-- {
-		frame := &store.frames[i]
-		if frame.Entry == entry && frame.PC == 0 {
-			frame.locationID = id
-			break
-		}
-	}
+	recordCallerLocation(entry, "", "", line, callerLocationMetadata{locationID: id})
 }
 
 //go:noinline

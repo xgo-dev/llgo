@@ -121,22 +121,22 @@ func PopCallerLocationFrame(mark int) {
 }
 
 func RecordCallerLocation(entry uintptr, name, file string, line int) {
-	if entry == 0 || line <= 0 {
-		return
-	}
-	updateCurrentFrame(entry, name, file, line)
-	recordPCLocation(0, entry, name, file, line)
+	recordCallerLocation(entry, name, file, line, callerLocationMetadata{})
 }
 
 func RecordPanicLocation(entry uintptr, name, file string, line int) {
+	recordCallerLocation(entry, name, file, line, callerLocationMetadata{})
+}
+
+func recordCallerLocation(entry uintptr, name, file string, line int, metadata callerLocationMetadata) {
 	if entry == 0 || line <= 0 {
 		return
 	}
-	updateCurrentFrame(entry, name, file, line)
-	recordPCLocation(0, entry, name, file, line)
+	updateCurrentFrame(entry, name, file, line, metadata)
+	recordPCLocation(0, entry, name, file, line, metadata)
 }
 
-func updateCurrentFrame(entry uintptr, name, file string, line int) {
+func updateCurrentFrame(entry uintptr, name, file string, line int, metadata callerLocationMetadata) {
 	store := callerLocationStoreCurrent
 	if store == nil {
 		return
@@ -150,9 +150,10 @@ func updateCurrentFrame(entry uintptr, name, file string, line int) {
 		if frame.Entry == entry {
 			// Line directives can change the filename while retaining the same
 			// line number. Invalidate the cached frame index before updating it.
-			if frame.Line != line || frame.File != file {
+			if frame.Line != line || frame.File != file || frame.callerLocationMetadata != metadata {
 				frame.captured = 0
 			}
+			frame.callerLocationMetadata = metadata
 			frame.Function = name
 			frame.File = file
 			frame.Line = line
@@ -167,11 +168,12 @@ func updateCurrentFrame(entry uintptr, name, file string, line int) {
 	}
 }
 
-func recordPCLocation(pc, entry uintptr, name, file string, line int) {
+func recordPCLocation(pc, entry uintptr, name, file string, line int, metadata callerLocationMetadata) {
 	store := callerLocationStoreForGoroutine()
 	for i := range store.frames {
 		frame := &store.frames[i]
 		if (pc != 0 && frame.PC == pc) || (pc == 0 && frame.PC == 0 && frame.Entry == entry) {
+			frame.callerLocationMetadata = metadata
 			frame.PC = pc
 			frame.Entry = entry
 			frame.Function = name
@@ -186,11 +188,12 @@ func recordPCLocation(pc, entry uintptr, name, file string, line int) {
 		store.frames = store.frames[:len(store.frames)-1]
 	}
 	store.frames = append(store.frames, CallerFrame{
-		PC:       pc,
-		Entry:    entry,
-		Function: name,
-		File:     file,
-		Line:     line,
+		callerLocationMetadata: metadata,
+		PC:                     pc,
+		Entry:                  entry,
+		Function:               name,
+		File:                   file,
+		Line:                   line,
 	})
 }
 
@@ -453,9 +456,9 @@ func callerLocationByName(store *callerLocationStore, rawName string) (CallerFra
 }
 
 func bindCallerLocationPC(pc uintptr, frame CallerFrame) {
-	recordPCLocation(pc, frame.Entry, frame.Function, frame.File, frame.Line)
+	recordPCLocation(pc, frame.Entry, frame.Function, frame.File, frame.Line, frame.callerLocationMetadata)
 	if pc > 0 {
-		recordPCLocation(pc-1, frame.Entry, frame.Function, frame.File, frame.Line)
+		recordPCLocation(pc-1, frame.Entry, frame.Function, frame.File, frame.Line, frame.callerLocationMetadata)
 	}
 }
 
@@ -526,12 +529,12 @@ func syntheticFrameForPC(pc uintptr) (CallerFrame, bool) {
 	if lo == len(store.synthetic) || store.synthetic[lo].PC&^callerPCMask != base {
 		return CallerFrame{}, false
 	}
-	frame := store.synthetic[lo]
+	frame := resolveCachedCallerFrame(&store.synthetic[lo])
 	frame.PC = pc
 	if frame.Entry == 0 {
 		frame.Entry = pc
 	}
-	return resolveCallerFrame(frame), true
+	return frame, true
 }
 
 func callerLocationStoreForGoroutine() *callerLocationStore {
@@ -548,12 +551,12 @@ func callerLocationStoreForGoroutine() *callerLocationStore {
 
 func (s *callerLocationStore) captureFrame(frame CallerFrame, pcValue uintptr) CallerFrame {
 	idx := s.internSyntheticFrame(frame)
-	rec := s.synthetic[idx]
+	rec := resolveCachedCallerFrame(&s.synthetic[idx])
 	rec.PC = rec.PC&^callerPCMask | pcValue
 	if rec.Entry == 0 {
 		rec.Entry = rec.PC
 	}
-	return resolveCallerFrame(rec)
+	return rec
 }
 
 // capturePC returns the synthetic PC for a shadow-stack slot, memoizing the
@@ -572,12 +575,12 @@ func (s *callerLocationStore) capturePC(frame *CallerFrame, pcValue uintptr) uin
 // captureFrameAt is capturePC plus the full frame copy Caller needs.
 func (s *callerLocationStore) captureFrameAt(frame *CallerFrame, pcValue uintptr) CallerFrame {
 	pc := s.capturePC(frame, pcValue)
-	rec := s.synthetic[int(frame.captured)-1]
+	rec := resolveCachedCallerFrame(&s.synthetic[int(frame.captured)-1])
 	rec.PC = pc
 	if rec.Entry == 0 {
 		rec.Entry = pc
 	}
-	return resolveCallerFrame(rec)
+	return rec
 }
 
 // staticPC memoizes the synthetic PC base of a process-static frame (e.g.
@@ -632,6 +635,11 @@ func (s *callerLocationStore) rehashSyntheticFrames(size int) {
 }
 
 func (s *callerLocationStore) syntheticSlot(frame CallerFrame) uintptr {
+	// External frames are keyed by their immutable location IDs. Resolving
+	// cached strings must not change the hash or force a new synthetic PC.
+	if hasCallerLocation(frame) {
+		return (frame.Entry ^ callerLocationHash(frame)) & (uintptr(len(s.syntheticHash)) - 1)
+	}
 	h := frame.Entry ^ (uintptr(frame.Line) << 12) ^ (uintptr(frame.StartLine) << 24)
 	h ^= uintptr(len(frame.Function)) << 4
 	h ^= uintptr(len(frame.File)) << 8
@@ -640,9 +648,13 @@ func (s *callerLocationStore) syntheticSlot(frame CallerFrame) uintptr {
 }
 
 func sameSyntheticFrame(a, b CallerFrame) bool {
-	return a.Entry == b.Entry &&
-		sameCallerLocationMetadata(a, b) &&
-		a.Function == b.Function &&
+	if a.Entry != b.Entry || !sameCallerLocationMetadata(a, b) {
+		return false
+	}
+	if hasCallerLocation(a) {
+		return true
+	}
+	return a.Function == b.Function &&
 		a.File == b.File &&
 		a.Line == b.Line &&
 		a.StartLine == b.StartLine

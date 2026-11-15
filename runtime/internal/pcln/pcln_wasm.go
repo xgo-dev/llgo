@@ -89,9 +89,11 @@ func Ready() bool {
 	return latomic.Load(&externalPCLNState) == externalPCLNLoaded
 }
 
-// ensureRuntimePCLN is called only by allocation/I/O-safe public
-// symbolization entry points. Fatal-signal paths consult runtimePCLNReady and
-// never enter this function. Success and failure are both terminal states.
+// Ensure loads metadata only on allocation/I/O-safe symbolization paths.
+// Success and failure are terminal states. The JS provider requires poll to
+// yield the current goroutine while its asynchronous read completes. When
+// poll is nil, a caller observing another load in progress returns false
+// instead of waiting. Fatal paths consult Ready without calling Ensure.
 func Ensure(poll func()) bool {
 	for {
 		switch latomic.Load(&externalPCLNState) {

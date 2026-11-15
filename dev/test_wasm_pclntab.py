@@ -69,7 +69,7 @@ def main():
             if '??? [pc=' not in fatal or 'pcln-callsite.go:' in fatal:
                 raise RuntimeError(f'{target}: fatal path loaded source metadata\n{fatal}')
             cases.append('fatal-without-load')
-            for mode in ['available', 'concurrent', 'cached-success', 'cached-failure']:
+            for mode in ['available', 'cache-reuse', 'concurrent', 'cached-success', 'cached-failure']:
                 execute(mode)
                 if sidecar.read_bytes() != original:
                     raise RuntimeError('fixture did not restore its sidecar')
@@ -142,8 +142,14 @@ def main():
                     cases.append('cli-' + subcommand)
             browser_cases = []
             if args.browser and target != 'wasi':
-                for mode in ['available', 'concurrent', 'no-symbols', 'missing', 'corrupt', 'stale', 'oversized', 'timeout']:
-                    argument = mode if mode in ('available', 'concurrent', 'no-symbols') else 'missing'
+                if target == 'gojs':
+                    # Exercise the actual GoJS host, whose Emscripten runtime
+                    # intentionally has no onExit callback in ordinary builds.
+                    output = directory / 'browser' / 'app.wasm'
+                    subprocess.run([llgo, 'build', *flags, '-o', str(output), './internal/build/testdata/wasm-pclntab'],
+                                   cwd=ROOT, env=build_environment, check=True, timeout=300)
+                for mode in ['available', 'cache-reuse', 'concurrent', 'no-symbols', 'missing', 'corrupt', 'stale', 'oversized', 'timeout']:
+                    argument = mode if mode in ('available', 'cache-reuse', 'concurrent', 'no-symbols') else 'missing'
                     browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN=mode)
                     subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-ok', argument],
                                    cwd=ROOT, env=browser_env, check=True, timeout=70)

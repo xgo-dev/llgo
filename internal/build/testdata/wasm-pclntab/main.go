@@ -41,6 +41,12 @@ func main() {
 	if mode == "panic" {
 		panic("pcln-fatal")
 	}
+	if mode == "cache-reuse" {
+		// Capture unresolved synthetic frames before the first symbol query,
+		// then verify that resolving them preserves their identity and strings.
+		checkCallersCache()
+		checkCallerCache()
+	}
 	if mode == "no-symbols" {
 		println("pcln-ok")
 		return
