@@ -23,8 +23,15 @@ func TestAllThreadsForeignLibrary(t *testing.T) {
 		"testdata/allthreads/foreign.c").CombinedOutput(); err != nil {
 		t.Fatalf("compile C pthread library: %v\n%s", err, out)
 	}
-	source := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(source, []byte(`package main
+	for _, tags := range []string{"", "llgo.allthreads"} {
+		name := "default"
+		if tags != "" {
+			name = "controlled"
+		}
+		t.Run(name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "main.go")
+			if err := os.WriteFile(source, []byte(`package main
+import "os"
 import "syscall"
 import _ "unsafe"
 //go:linkname start C.foreign_thread_start
@@ -33,37 +40,44 @@ func start() int32
 func join() int32
 //go:linkname raw syscall.runtime_doAllThreadsSyscall
 func raw(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, errno uintptr)
-func check() {
- for _, call := range []func() syscall.Errno{
-  func() syscall.Errno { _,_,err:=syscall.AllThreadsSyscall(syscall.SYS_GETPID,0,0,0); return err },
-  func() syscall.Errno { _,_,err:=syscall.AllThreadsSyscall6(syscall.SYS_SETRESUID,^uintptr(0),^uintptr(0),^uintptr(0),0,0,0); return err },
-  func() syscall.Errno { _,_,err:=raw(syscall.SYS_SETRESUID,^uintptr(0),^uintptr(0),^uintptr(0),0,0,0); return syscall.Errno(err) },
+func check(supported bool) {
+ for _, call := range []func() (uintptr, uintptr, syscall.Errno){
+  func() (uintptr, uintptr, syscall.Errno) { return syscall.AllThreadsSyscall(syscall.SYS_GETPID,0,0,0) },
+  func() (uintptr, uintptr, syscall.Errno) { return syscall.AllThreadsSyscall6(syscall.SYS_GETPID,0,0,0,0,0,0) },
+  func() (uintptr, uintptr, syscall.Errno) { r1,r2,err:=raw(syscall.SYS_GETPID,0,0,0,0,0,0); return r1,r2,syscall.Errno(err) },
  } {
-  if call()!=syscall.ENOTSUP { panic("all-thread call enabled with a foreign C thread creator") }
+  r1,r2,err := call()
+  if supported {
+   if err!=0 || r1!=uintptr(os.Getpid()) || r2!=0 { panic("owned cohort rejected before foreign pthread") }
+  } else if err!=syscall.ENOTSUP || r1!=^uintptr(0) {
+   panic("all-thread call accepted outside the owned cohort")
+  }
  }
 }
 func main() {
- check() // A linked creator must be rejected before its first pthread exists.
+ check(controlled)
  if start()!=0 { panic("pthread_create") }
- check()
+ check(false)
  if join()!=0 { panic("pthread_join") }
- check() // Joining a foreign thread must not re-enable the operation.
+ check(false) // Detecting a foreign thread permanently invalidates ownership.
  println("allthreads-foreign-ok")
 }
-`+fmt.Sprintf("\n//go:cgo_import_dynamic _ _ %q\n", library)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	conf := NewDefaultConf(ModeBuild)
-	conf.OutFile = filepath.Join(dir, "foreign")
-	if _, err := Do([]string{source}, conf); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, conf.OutFile)
-	cmd.Env = append(os.Environ(), "GC_MARKERS=1")
-	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "allthreads-foreign-ok") {
-		t.Fatalf("foreign C library: %v\n%s", err, out)
+`+fmt.Sprintf("\nconst controlled = %t\n//go:cgo_import_dynamic _ _ %q\n", tags != "", library)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			conf := NewDefaultConf(ModeBuild)
+			conf.Tags, conf.OutFile = tags, filepath.Join(filepath.Dir(source), "foreign")
+			if _, err := Do([]string{source}, conf); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, conf.OutFile)
+			cmd.Env = append(os.Environ(), "GC_MARKERS=1")
+			if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "allthreads-foreign-ok") {
+				t.Fatalf("foreign C library: %v\n%s", err, out)
+			}
+		})
 	}
 }
 

@@ -41,6 +41,9 @@ typedef struct thread_node {
     uintptr_t allcall_r1, allcall_r2, allcall_error;
 #endif
     uintptr_t creator_count, creator_pcs[LLGO_TRACEBACK_CREATOR_MAX];
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    int retirement_fd;
+#endif
 } thread_node;
 
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -64,6 +67,7 @@ static void (*urgent_user)(int) = original_urgent;
 
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
 static int handle_allthreads(thread_node *);
+static int allcall_retire_owned(thread_node *);
 #endif
 
 static void *map_buffer(void)
@@ -313,6 +317,10 @@ void llgo_traceback_unregister(void *raw)
     if (node->prev) node->prev->next = node->next;
     else llgo_debugger_threads_v1 = node->next;
     if (node->next) node->next->prev = node->prev;
+    int retired = 0;
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    retired = allcall_retire_owned(node);
+#endif
     pthread_mutex_unlock(&registry_lock);
     if (current == node) {
         current = 0;
@@ -321,7 +329,7 @@ void llgo_traceback_unregister(void *raw)
             fault_buffer = 0;
         }
     }
-    free(node);
+    if (!retired) free(node);
 }
 
 void llgo_traceback_state(void *raw, uint32_t state)

@@ -60,7 +60,8 @@ boundary must keep the default `ENOTSUP` behavior.
 The executable entry configures the collector before its first runtime/context
 allocation. It fixes `GC_MARKERS=1` and calls `GC_set_markers_count(1)`; BDWGC's
 environment otherwise overrides that setter. This intentionally disables
-parallel native marker threads for the opt-in mode. A collector already
+parallel native marker threads for the opt-in mode. Setting `GC_MARKERS=1`
+overwrites any user value, and child processes inherit it. A collector already
 initialized by an earlier C constructor, or missing configuration APIs, leaves
 the public API disabled. `nogc` executables do not acquire a GC dependency.
 C shared/archive modes never emit this activation, even with the tag. Other
@@ -71,6 +72,8 @@ The main thread is explicitly marked owned. Adopted foreign threads are
 registered for callbacks and stack capture but remain unowned. Parallel GC
 marker threads, foreign C threads, and emulator helper threads are outside the
 owned cohort; their presence returns `ENOTSUP`. The collector configuration
+does not restore a process after an unowned thread is observed: both public
+and raw all-thread calls remain disabled even after that thread exits. It
 does not override ownership checks. A C callback on an owned runtime thread
 reuses its context; an adopted host thread remains unowned through teardown.
 

@@ -132,6 +132,16 @@ static void *foreign(void *raw)
     return 0;
 }
 
+static void *retiring(void *raw)
+{
+    worker *w = raw;
+    llgo_traceback_attach(w->node);
+    llgo_traceback_unregister(w->node);
+    atomic_store(&w->ready, 1);
+    while (!atomic_load(&w->stop)) sched_yield();
+    return 0;
+}
+
 static void *creation(void *raw)
 {
     worker *w = raw;
@@ -154,6 +164,44 @@ int main(int argc, char **argv)
     assert(main_node);
     llgo_traceback_attach(main_node);
     llgo_traceback_mark_owned(main_node);
+    if (argc == 2 && !strcmp(argv[1], "retiring")) {
+        worker w = {0};
+        w.node = llgo_traceback_register(2, 1, 0, 0);
+        llgo_traceback_mark_owned(w.node);
+        pthread_t thread;
+        assert(!pthread_create(&thread, 0, retiring, &w));
+        while (!atomic_load(&w.ready)) sched_yield();
+        llgo_allthreads_call c = call(SYS_getpid);
+        assert(c.error == EAGAIN); /* Owned libc teardown is still in /proc. */
+        atomic_store(&w.stop, 1);
+        assert(!pthread_join(thread, 0));
+        assert(await_result(0).r1 == 0);
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
+    if (argc == 2 && (!strcmp(argv[1], "foreign") || !strcmp(argv[1], "adopted"))) {
+        llgo_allthreads_call c = call(SYS_getpid);
+        assert(!c.error && c.r1 == (uintptr_t)getpid());
+        atomic_int foreign_stop = 0;
+        worker adopted = {0};
+        pthread_t thread;
+        if (!strcmp(argv[1], "foreign"))
+            assert(!pthread_create(&thread, 0, foreign, &foreign_stop));
+        else
+            thread = start(&adopted, 7, 0);
+        c = await_result(ENOTSUP);
+        assert(c.error == ENOTSUP);
+        if (!strcmp(argv[1], "foreign")) {
+            atomic_store(&foreign_stop, 1);
+            assert(!pthread_join(thread, 0));
+        } else {
+            stop(&adopted, thread);
+        }
+        c = call(SYS_getpid);
+        assert(c.error == ENOTSUP); /* Exiting cannot restore the contract. */
+        llgo_traceback_unregister(main_node);
+        return 0;
+    }
     if (argc == 2) {
         const int mismatch = !strcmp(argv[1], "mismatch");
         worker peer = {0};
@@ -213,25 +261,9 @@ int main(int argc, char **argv)
     assert(c.error == ENOTSUP);
     __llgo_allthreads_executable = 1;
 
-    fputs("allthreads: foreign/adopted rejection\n", stderr);
-
-    atomic_int foreign_stop = 0;
     pthread_t thread;
-    assert(!pthread_create(&thread, 0, foreign, &foreign_stop));
-    c = await_result(ENOTSUP);
-    assert(c.error == ENOTSUP);
-    atomic_store(&foreign_stop, 1);
-    assert(!pthread_join(thread, 0));
-
-    worker adopted = {0};
-    thread = start(&adopted, 7, 0);
-    c = call(SYS_setresuid);
-    assert(c.error == ENOTSUP);
-    stop(&adopted, thread);
-
-    /* pthread_join's clear-child-TID wake can precede removal from procfs.
-     * Establish the complete owned cohort before isolating signal masking. */
-    assert(await_result(0).r1 == 0);
+    llgo_allthreads_call probe = await_result(0);
+    assert(probe.r1 == 0);
 
     fputs("allthreads: masked signal and cancellation\n", stderr);
     worker masked = {.masked = 1};
@@ -265,8 +297,8 @@ int main(int argc, char **argv)
     fputs("allthreads: final teardown\n", stderr);
     for (unsigned i = 0; i < 3; i++) stop(&children[i], threads[i]);
     llgo_traceback_unregister(main_node);
-    const char *cases[] = {"mismatch", "caller-error"};
-    for (unsigned i = 0; i < 2; i++) {
+    const char *cases[] = {"mismatch", "caller-error", "foreign", "adopted", "retiring"};
+    for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         pid_t child = fork();
         assert(child >= 0);
         if (!child) {
