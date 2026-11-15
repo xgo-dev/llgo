@@ -266,22 +266,31 @@ runs:
       run: |
         set -euo pipefail
 
-        pip3.12 install --user --break-system-packages numpy
+        python=python3.12
+        python_pc=python-3.12-embed
+        if [[ "${RUNNER_OS}" == "Linux" ]]; then
+          # Match python3-dev and its embedding library, even when the runner
+          # exposes another Python installation earlier on PATH.
+          python=/usr/bin/python3
+          python_pc=python3-embed
+        fi
+        "$python" -m pip install --user --break-system-packages numpy
         if [[ "${RUNNER_OS}" == "Linux" ]]; then
           # The demos use CPU tensors. The default PyPI wheel pulls CUDA
           # libraries that can exhaust this job's one-hour time limit.
-          pip3.12 install --user --break-system-packages torch \
+          "$python" -m pip install --user --break-system-packages torch \
             --index-url https://download.pytorch.org/whl/cpu
         else
-          pip3.12 install --user --break-system-packages torch
+          "$python" -m pip install --user --break-system-packages torch
         fi
 
-        pcdir="${HOME}/pc"
-        mkdir -p "${pcdir}"
-        libdir="$(pkg-config --variable=libdir python-3.12-embed)"
-        ln -sf "${libdir}/pkgconfig/python-3.12-embed.pc" "${pcdir}/python3-embed.pc"
-
-        echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "${GITHUB_ENV}"
+        if [[ "$python_pc" != python3-embed ]]; then
+          pcdir="${HOME}/pc"
+          mkdir -p "$pcdir"
+          pkgconfigdir="$(pkg-config --variable=pcfiledir "$python_pc")"
+          ln -sf "${pkgconfigdir}/${python_pc}.pc" "${pcdir}/python3-embed.pc"
+          echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+        fi
         echo "LLGO_FULL_RPATH=true" >> "${GITHUB_ENV}"
 
     - name: Install Python demo dependencies on Windows

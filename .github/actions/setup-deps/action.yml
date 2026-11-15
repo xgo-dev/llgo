@@ -890,6 +890,7 @@ runs:
         opt_deps=(
           libcjson-dev   # for github.com/goplus/lib/c/cjson
           libsqlite3-dev # for github.com/goplus/lib/c/sqlite
-          python3.12-dev # for github.com/goplus/lib/py
+          python3-dev    # for github.com/goplus/lib/py (distribution Python)
+          python3-pip    # demo modules for the same interpreter
         )
         apt_get install -y "${opt_deps[@]}"
