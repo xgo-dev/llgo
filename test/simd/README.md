@@ -288,6 +288,18 @@ the original Go display name. These are FMV-specific identity rules; LLGo's
 general runtime inline-frame representation remains separate from GoALLC's
 GoObj inline-tree format.
 
+Package archives contain a dedicated metadata object with post-backend function
+identities, wrapper flags, and PC-line records. Both fresh and cached archives
+supply these mappings to the linker; reconstructed frontend modules and frontend
+cache exports are not sources for the archived machine code's traceback data.
+The final exported C archive omits these compiler-private members; runtime
+traceback tables are generated before that merge, and cached package archives
+retain their mappings.
+The metadata object is native even with LTO and has no code-address relocations.
+`TestSIMDFMVArchiveCache` checks cold and warm builds through isolated and
+coordinator backends with off/Thin/Full LTO, plus frontend-cache reuse, baseline
+CPU overrides, and source-frame identity.
+
 On Windows/amd64, the compiler exposes the native indirect SIMD128 parameter
 ABI before creating dispatchers. Tail transfers forward the caller's parameter
 storage, avoiding vector temporaries in a resolver frame that the jump releases.

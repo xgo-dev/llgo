@@ -2,7 +2,6 @@ package compilerhash
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -20,7 +19,6 @@ var (
 	cached  string
 	onceErr error
 
-	writeUint64LE            = func(w io.Writer, v uint64) error { return binary.Write(w, binary.LittleEndian, v) }
 	executablePath           = os.Executable
 	compilerHashFromPathFunc = compilerHashFromPath
 	isDevel                  = env.Devel
@@ -28,7 +26,8 @@ var (
 
 // Value returns the compiler hash used for cache invalidation. Release builds
 // leave it empty (unless preset via -X), while development builds hash the
-// running executable's metadata.
+// running executable's contents once per process. Copies of an unchanged
+// executable reuse archives even when their filesystem timestamps differ.
 func Value() string {
 	ensure()
 	return cached
@@ -63,23 +62,14 @@ func ensure() {
 }
 
 func compilerHashFromPath(path string) (string, error) {
-	info, err := os.Stat(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("llgo: stat executable: %w", err)
+		return "", fmt.Errorf("llgo: open executable: %w", err)
 	}
-	return hashMetadata(info.ModTime().UTC().UnixNano(), info.Size())
-}
-
-func hashMetadata(modTimeNano int64, size int64) (string, error) {
-	if size < 0 {
-		return "", fmt.Errorf("llgo: invalid executable size: %d", size)
-	}
+	defer f.Close()
 	h := sha256.New()
-	if err := writeUint64LE(h, uint64(modTimeNano)); err != nil {
-		return "", fmt.Errorf("llgo: hash metadata timestamp: %w", err)
-	}
-	if err := writeUint64LE(h, uint64(size)); err != nil {
-		return "", fmt.Errorf("llgo: hash metadata size: %w", err)
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("llgo: read executable: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -91,6 +81,5 @@ func resetForTesting() {
 	LinkedValue = ""
 	executablePath = os.Executable
 	compilerHashFromPathFunc = compilerHashFromPath
-	writeUint64LE = func(w io.Writer, v uint64) error { return binary.Write(w, binary.LittleEndian, v) }
 	isDevel = env.Devel
 }
