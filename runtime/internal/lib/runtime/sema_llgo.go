@@ -131,23 +131,25 @@ type notifyState struct {
 
 var notifyOnce psync.Once
 var notifyMu psync.Mutex
-var notifyMap map[uintptr]*notifyState
+
+// Pointer keys are cleared by map deletion. A uintptr key can leave stale
+// address bits in an empty bucket, retaining the Cond under conservative GC.
+var notifyMap map[*notifyList]*notifyState
 
 func initNotifyMap() {
 	notifyMu.Init(nil)
-	notifyMap = make(map[uintptr]*notifyState)
+	notifyMap = make(map[*notifyList]*notifyState)
 }
 
 func getNotifyState(l *notifyList) *notifyState {
 	notifyOnce.Do(initNotifyMap)
-	key := uintptr(unsafe.Pointer(l))
 	notifyMu.Lock()
-	st := notifyMap[key]
+	st := notifyMap[l]
 	if st == nil {
 		st = &notifyState{}
 		st.mu.Init(nil)
 		st.cond.Init(nil)
-		notifyMap[key] = st
+		notifyMap[l] = st
 	}
 	st.refs++
 	notifyMu.Unlock()
@@ -159,7 +161,7 @@ func releaseNotifyState(l *notifyList, st *notifyState) {
 	st.refs--
 	idle := st.refs == 0
 	if idle {
-		delete(notifyMap, uintptr(unsafe.Pointer(l)))
+		delete(notifyMap, l)
 	}
 	notifyMu.Unlock()
 	if idle {
@@ -175,6 +177,9 @@ func sync_runtime_notifyListAdd(l *notifyList) uint32 {
 
 //go:linkname sync_runtime_notifyListWait sync.runtime_notifyListWait
 func sync_runtime_notifyListWait(l *notifyList, t uint32) {
+	if int32(t-latomic.LoadUint32(&l.notify)) < 0 {
+		return
+	}
 	st := getNotifyState(l)
 	defer releaseNotifyState(l, st)
 	st.mu.Lock()
@@ -198,6 +203,9 @@ func sync_runtime_notifyListWait(l *notifyList, t uint32) {
 
 //go:linkname sync_runtime_notifyListNotifyAll sync.runtime_notifyListNotifyAll
 func sync_runtime_notifyListNotifyAll(l *notifyList) {
+	if latomic.LoadUint32(&l.wait) == latomic.LoadUint32(&l.notify) {
+		return
+	}
 	st := getNotifyState(l)
 	defer releaseNotifyState(l, st)
 	st.mu.Lock()
@@ -214,6 +222,9 @@ func sync_runtime_notifyListNotifyAll(l *notifyList) {
 
 //go:linkname sync_runtime_notifyListNotifyOne sync.runtime_notifyListNotifyOne
 func sync_runtime_notifyListNotifyOne(l *notifyList) {
+	if latomic.LoadUint32(&l.wait) == latomic.LoadUint32(&l.notify) {
+		return
+	}
 	st := getNotifyState(l)
 	defer releaseNotifyState(l, st)
 	st.mu.Lock()

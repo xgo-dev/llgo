@@ -89,8 +89,8 @@ func TestBubbleRejectedChild(t *testing.T) {
 	case "waitgroup":
 		outside := make(chan *sync.WaitGroup)
 		// An outside channel keeps the owner bubble active until the other
-		// bubble tries Add. A bubble-owned nil wait can instead cause teardown
-		// to remove the association before the rejected operation runs.
+		// bubble tries Add. Receiving on a bubble-owned channel durably blocks
+		// the bubble, so teardown can remove the association before Add runs.
 		hold := make(chan struct{})
 		go func() { wg := <-outside; run(func() { wg.Add(1) }) }()
 		run(func() { wg := new(sync.WaitGroup); wg.Add(1); outside <- wg; <-hold })
