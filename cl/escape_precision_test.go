@@ -22,6 +22,8 @@ func repeated()[]func()int{var x int;var fs []func()int;for i:=0;i<3;i++{x=i;fs=
 func equal(a,b string)bool{return a==b}
 func compare(b []byte,a,c string)bool{s:=string(b);return equal(s,a)||s==c}
 func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
+func compareSlices(a,b []byte)bool{return string(a)==string(b)}
+func snapshotSlices(a,b []byte)bool{s:=string(a);b[0]++;return s==string(b)}
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "linux", GOARCH: "amd64"},
@@ -56,6 +58,12 @@ func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
 			}
 			if body := llvmFunction(t, ir, "precision.snapshot"); strings.Contains(body, "StringFromBytesReadOnly") {
 				t.Errorf("mutable source lost snapshot:\n%s", body)
+			}
+			if body := llvmFunction(t, ir, "precision.compareSlices"); strings.Count(body, "StringFromBytesReadOnly") != 2 || strings.Contains(body, "StringFromBytesBuffer") {
+				t.Errorf("slice comparison still copies an operand:\n%s", body)
+			}
+			if body := llvmFunction(t, ir, "precision.snapshotSlices"); strings.Count(body, "StringFromBytesReadOnly") != 1 || !strings.Contains(body, "StringFromBytesBuffer") {
+				t.Errorf("slice comparison lost its pre-mutation snapshot:\n%s", body)
 			}
 		})
 	}
