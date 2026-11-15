@@ -42,6 +42,7 @@ func TestEqualAllocations(t *testing.T) {
 			if equalSnapshot(a, a) {
 				t.Fatal("conversion lost the snapshot before an aliased write")
 			}
+			a[0] ^= 1
 		})
 	}
 }
