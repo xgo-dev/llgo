@@ -24,16 +24,10 @@ LTS implementation. Workers clone one `WasiCtx`, retaining its shared table,
 and instantiate the same module and memory. A worker trap terminates the
 process; `proc_exit` preserves its real exit code.
 
-WASI guests inherit the debugger host's environment; `PWD` names the preopened
-working directory. Arguments after `llgo debug ./app --` configure LLDB; to append guest arguments, use the following
-before `run` (the module path already in `target.run-args` is preserved):
-
-```text
-settings append target.run-args --flag "two words"
-```
-
-The preview1 context does not support `fd_fdstat_set_flags` while its descriptor
-table is shared with workers ([wasmtime#5643](https://github.com/bytecodealliance/wasmtime/issues/5643)).
+Guests inherit UTF-8 host environment entries with PWD matching the preopened
+working directory. This differs from the minimal environment of `llgo run`.
+See [guest arguments and environment controls](../../../../doc/debugging.md)
+for the LLDB settings and shared-descriptor limitation.
 
 Source sessions compile with native DWARF, no JIT optimization, and
 `debug-builtins` for GDB JIT registration. Persistent compilation caching is

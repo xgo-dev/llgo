@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const schema = require('../../../../internal/debugabi/schema_v1.json');
-require('../../wasmdecoder/goroutines.js');
-require('../../wasmdecoder/plugin.js');
+const schema = require('../../../internal/debugabi/schema_v1.json');
+require('./goroutines.js');
+require('./plugin.js');
 
 // Memory32 uses 64-bit Go ints and padded Go pointer slots. Read sizes must
 // come from DWARF fields, rather than assuming all fields have pointer width.
@@ -335,7 +335,7 @@ for (const width of [4, 8]) {
 // stacks must not manufacture an identity or alter the application's Error API.
 function captureFixture(stack, configuredURL = 'https://host/app.wasm') {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
-  const source = fs.readFileSync(path.join(__dirname, '../../../../runtime/internal/wasmdebugpc/_wrap/capture.c'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../../runtime/internal/wasmdebugpc/_wrap/capture.c'), 'utf8');
   const body = source.slice(source.indexOf('{', source.indexOf('EM_JS(')) + 1, source.indexOf('\n});'));
   const Error = function () { this.stack = stack; };
   Object.defineProperty(Error, 'stackTraceLimit', {value: 10, writable: true, configurable: true});

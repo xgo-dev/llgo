@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const debuggerSchema = require('../../../../internal/debugabi/schema_v1.json');
+const debuggerSchema = require('../../../internal/debugabi/schema_v1.json');
 
-require('../../wasmdecoder/plugin.js');
-require('../../wasmdecoder/goroutines.js');
+require('./plugin.js');
+require('./goroutines.js');
 
 const {LLGoLanguageExtensionPlugin} = globalThis.LLGoLanguageExtension;
 
@@ -690,4 +690,6 @@ test('transport runtime decoder loads modules and resolves types without exposin
   await assert.rejects(decoder.decodeValue('guest', 'missing', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo type/);
   await assert.rejects(decoder.decodeValue('absent', 'int32', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo raw module/);
   assert.equal(decoder.modules, undefined);
+  await assert.rejects(decoder.loadModule('guest', 'http://host/program.wasm', moduleBytes({marker: false})), /missing LLGo debugger record/);
+  await assert.rejects(decoder.decodeValue('guest', 'int32', {kind: 'value', value: 0n}, 'stop'), /unknown LLGo raw module/);
 });

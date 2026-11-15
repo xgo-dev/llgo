@@ -55,13 +55,38 @@ def main():
             raise SystemExit('WASI descriptor-table acceptance failed:\n' + shared_fd.stdout + shared_fd.stderr)
         report['shared_fd'] = 'worker created before open; cross-instance write and close passed'
         report['shared_fd_module_sha256'] = hashlib.sha256(fd_module.read_bytes()).hexdigest()
-        inherited = subprocess.run([engine, str(fd_module), 'args-env', 'two words', '--flag'],
-                                   env=dict(os.environ, LLGO_WASI_DEBUG_ENV='inherited value'),
+        inherited = subprocess.run([engine, str(fd_module), 'args-env', '--flag', 'two words'],
+                                   env=dict(os.environ, LLGO_WASI_DEBUG_ENV='inherited value', LLGO_WASI_NON_UTF8=''),
                                    capture_output=True, text=True, timeout=60)
         if inherited.returncode or 'wasi-args-env-ok' not in inherited.stdout + inherited.stderr:
             raise SystemExit('WASI guest arguments/environment acceptance failed:\n'
                              + inherited.stdout + inherited.stderr)
-        report['guest_process'] = 'argv with spaces/flags and inherited worker environment passed'
+        guest_env = dict(os.environ, LLGO_WASI_DEBUG_ENV='inherited value', LLGO_WASI_NON_UTF8='')
+        if os.name == 'posix':
+            encoded_env = {os.fsencode(key): os.fsencode(value) for key, value in guest_env.items()}
+            encoded_env[b'LLGO_WASI_NON_UTF8'] = b'\xff'
+            encoded_env[b'LLGO_WASI_BAD_\xff'] = b'value'
+            malformed = subprocess.run([engine, str(fd_module), 'args-env', '--flag', 'two words'],
+                                       env=encoded_env, capture_output=True, text=True, timeout=60)
+            if malformed.returncode or 'wasi-args-env-ok' not in malformed.stdout + malformed.stderr:
+                raise SystemExit('WASI non-UTF-8 environment acceptance failed:\n'
+                                 + malformed.stdout + malformed.stderr)
+        lldb_args = subprocess.run([
+            lldb, '--batch', '-o', 'target create ' + shlex.quote(str(shutil.which(engine) or engine)),
+            '-o', 'settings set target.disable-aslr false',
+            '-o', 'settings set -- target.run-args ' + shlex.quote(str(fd_module)),
+            '-o', 'settings append target.run-args args-env --flag "two words"',
+            '-o', 'run', '-o',
+            'script p = lldb.debugger.GetSelectedTarget().GetProcess(); '
+            'assert p.GetState() == lldb.eStateExited and p.GetExitStatus() == 0; '
+            'print("wasi-args-env-lldb-ok")',
+        ], env=guest_env, capture_output=True, text=True, timeout=90)
+        lldb_lines = {line.strip() for line in (lldb_args.stdout + lldb_args.stderr).splitlines()}
+        if lldb_args.returncode or not {'wasi-args-env-ok', 'wasi-args-env-lldb-ok'} <= lldb_lines:
+            raise SystemExit('WASI LLDB guest argument acceptance failed:\n'
+                             + lldb_args.stdout + lldb_args.stderr)
+        report['guest_process'] = 'argv with spaces/flags, LLDB forwarding and inherited worker environment passed'
+        report['environment_encoding'] = 'non-UTF-8 host keys/values omitted' if os.name == 'posix' else 'Unicode host environment'
         for mode, expected in (('exit', 19), ('worker-exit', 23)):
             result = subprocess.run([engine, str(fd_module), mode], capture_output=True,
                                     text=True, timeout=60)

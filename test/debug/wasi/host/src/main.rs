@@ -77,13 +77,14 @@ fn main() -> Result<()> {
     let mut wasi = WasiCtxBuilder::new();
     let cwd = std::env::current_dir()?;
     let guest_cwd = if cfg!(windows) {
-        "/".to_owned()
+        "/work".to_owned()
     } else {
         cwd.to_string_lossy().into_owned()
     };
     wasi.inherit_stdio();
     wasi.envs(
-        &std::env::vars()
+        &std::env::vars_os()
+            .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
             .filter(|(name, _)| name != "PWD")
             .collect::<Vec<_>>(),
     )

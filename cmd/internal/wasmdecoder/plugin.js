@@ -1144,8 +1144,9 @@
     const plugin = new LLGoLanguageExtensionPlugin(services, fetcher);
     return {
       async loadModule(id, url, code) {
+        await plugin.removeRawModule(id);
         await plugin.addRawModule(id, '', {url, code});
-        plugin.module(id);
+        if (!plugin.modules.has(id)) throw new Error('missing LLGo debugger record');
       },
       evaluate(id, expression, stopId, codeOffset = -1) {
         return plugin.evaluate(expression, {rawModuleId: id, codeOffset}, stopId);

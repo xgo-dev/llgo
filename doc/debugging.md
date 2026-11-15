@@ -233,7 +233,11 @@ including descriptors opened after worker creation. The host is built without
 Wasmtime's persistent compilation cache: debugger-patched JIT code must not
 enter a reusable cache.
 WASI guests inherit the debugger host's environment; `PWD` names the preopened
-working directory. Arguments after `llgo debug ./app --` configure LLDB; to append guest arguments, use the following
+working directory. Host entries that cannot be represented as UTF-8 are omitted.
+`llgo run -target=wasi` forwards only `PWD`, `PATH` and `LLGO_STRESS_PROFILE`;
+debug sessions inherit the full host environment, like native debugging. LLDB's
+`target.inherit-env` and `target.env-vars` settings can narrow that environment.
+Arguments after `llgo debug ./app --` configure LLDB; to append guest arguments, use the following
 before `run` (the module path already in `target.run-args` is preserved):
 
 ```text

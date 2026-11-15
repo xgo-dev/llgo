@@ -26,7 +26,7 @@ func TestExtensionJavaScript(t *testing.T) {
 	if err != nil {
 		t.Skip("node is unavailable")
 	}
-	command := exec.Command(node, "--test", filepath.Join("extension", "plugin_test.js"), filepath.Join("extension", "goroutines_test.js"), filepath.Join("testdata", "page_test.js"))
+	command := exec.Command(node, "--test", filepath.Join("testdata", "page_test.js"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("language extension tests: %v\n%s", err, output)
 	}
