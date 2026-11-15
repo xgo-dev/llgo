@@ -46,7 +46,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			optimized := tc.arch == "wasm" && tc.enabled
+			optimized := tc.arch == "wasm"
 			for _, item := range []struct{ name, equal, fallback string }{
 				{"Zero", "memequal0", "arrayequal"}, {"One", "memequal8", "structequal"},
 				{"Two", "memequal16", "arrayequal"}, {"Four", "memequal32", "structequal"},

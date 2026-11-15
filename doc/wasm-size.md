@@ -15,6 +15,20 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
+Ordinary Wasm builds reuse already-required backing-allocation roots for
+pointer and slice views, preserving cold-path publication points. Loads, phi
+nodes and allocating conversions keep independent roots. Frame bookkeeping
+stays inline to avoid extra calls. Development DCE can also introduce owner
+roots and, at `-Oz`, outline frame bookkeeping.
+
+Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
+values and direct hashers for scalar keys. Padded structs, blank fields and
+interfaces keep their general algorithms. Private map buckets retain allocator
+layout without source-type reflection metadata. Exact pointer finalizers use
+the linear-GC dispatcher directly; dynamic types, foreign callbacks and debugger
+frames retain the general path. These local lowerings let ordinary linker DCE
+discard unnecessary generic algorithms and descriptors.
+
 `-ldflags=-s` strips optional Wasm names and DWARF, as it strips native symbols
 and debug information. `-ldflags="-s -w=0"` strips names while retaining DWARF
 and source maps. `-w` alone controls DWARF and does not request name stripping.

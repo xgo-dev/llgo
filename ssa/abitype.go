@@ -134,9 +134,9 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	case "":
 		equal = prog.Nil(prog.Type(equalFunc, GoDecl))
 	case "structequal", "arrayequal":
-		// Hidden regular-memory structs may lose their field metadata during
-		// dev Wasm DCE. Compare bytes without consulting that metadata.
-		if prog.enableDeadcodeDrop && prog.target.effectiveGOARCH() == "wasm" && ab.IsRegularMemory(t) {
+		// Regular-memory values have no padding or special equality rules.
+		// A fixed-size helper avoids retaining field metadata for comparison.
+		if prog.target.effectiveGOARCH() == "wasm" && ab.IsRegularMemory(t) {
 			equal = b.Pkg.regularMemoryEqual(uint64(ab.Size(t)))
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			typ := prog.Type(equal.raw.Type, GoDecl)
@@ -216,7 +216,7 @@ func (p Package) regularMemoryHash(size uint64) Expr {
 func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
 	prog, pkg := b.Prog, b.Pkg
 	var hash Expr
-	if prog.enableDeadcodeDrop && prog.target.effectiveGOARCH() == "wasm" {
+	if prog.target.effectiveGOARCH() == "wasm" {
 		if prog.abi.IsRegularMemory(key) {
 			hash = pkg.regularMemoryHash(uint64(prog.abi.Size(key)))
 		} else if basic, ok := key.Underlying().(*types.Basic); ok {
@@ -249,7 +249,7 @@ func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
 
 func (b Builder) abiMapBucket(t *types.Map, bucket types.Type) Expr {
 	prog, pkg := b.Prog, b.Pkg
-	if !prog.enableDeadcodeDrop || prog.target.effectiveGOARCH() != "wasm" {
+	if prog.target.effectiveGOARCH() != "wasm" {
 		return b.abiType(bucket)
 	}
 	// Buckets are allocator records, not source Go values. Like reflect.bucketOf,

@@ -67,16 +67,23 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			}
 		}
 	}
-	if p.prog.DeadcodeDropEnabled() && p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+	if p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+		// A backing allocation keeps all of its views alive. This requires no
+		// whole-program reachability proof, including in ordinary Wasm builds.
 		owners := make(map[ssa.Value]struct{}, len(planned))
 		for value := range planned {
-			value = gcRootOwner(value)
-			switch value.(type) {
+			owner := gcRootOwner(value)
+			switch owner.(type) {
 			case *ssa.Const, *ssa.Global, *ssa.Function, *ssa.FreeVar:
 				// Static storage needs no heap root; free variables are kept
 				// by the separately rooted closure context.
 				continue
 			}
+			if _, rooted := planned[owner]; rooted || p.prog.DeadcodeDropEnabled() {
+				value = owner
+			}
+			// Otherwise keep the existing publication point. Introducing an
+			// owner root at entry can move cold panic-path stores into hot code.
 			owners[value] = struct{}{}
 		}
 		planned = owners
