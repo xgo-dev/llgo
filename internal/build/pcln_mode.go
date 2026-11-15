@@ -92,6 +92,9 @@ func validatePCLNMode(conf *Config) error {
 	if conf.BuildMode != BuildModeExe {
 		return fmt.Errorf("external PCLN metadata is not supported for -buildmode=%s", conf.BuildMode)
 	}
+	if !IsFuncInfoSitesEnabled() {
+		return fmt.Errorf("external PCLN metadata requires LLGO_FUNCINFO_SITES to be enabled")
+	}
 	if conf.Goarch == "wasm" {
 		if conf.Goos == "js" || conf.Goos == "wasip1" {
 			return nil
@@ -110,9 +113,6 @@ func validatePCLNMode(conf *Config) error {
 	case "amd64", "arm64":
 	default:
 		return fmt.Errorf("external PCLN metadata is not supported for GOARCH=%s", conf.Goarch)
-	}
-	if !IsFuncInfoSitesEnabled() {
-		return fmt.Errorf("external PCLN metadata requires LLGO_FUNCINFO_SITES to be enabled")
 	}
 	return nil
 }

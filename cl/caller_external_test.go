@@ -19,8 +19,10 @@ func observe() { runtime.Caller(0) }
 			t.Fatal(err)
 		}
 		ir := pkg.Module().String()
-		if strings.Contains(ir, `c"example.com/external.observe`) == compact {
-			t.Fatalf("compact=%v: unexpected runtime source string:\n%s", compact, ir)
+		for _, literal := range []string{`c"example.com/external.observe`, `c"caller_frame_compile.go`} {
+			if strings.Contains(ir, literal) == compact {
+				t.Fatalf("compact=%v: unexpected runtime source string %s:\n%s", compact, literal, ir)
+			}
 		}
 		if compact {
 			for _, want := range []string{"PushCallerLocationFrameID", "RecordCallerLocationID", "!llgo.pcline"} {
