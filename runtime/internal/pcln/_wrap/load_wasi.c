@@ -10,18 +10,26 @@ extern int __llgo_argc;
 extern char **__llgo_argv;
 
 static void *read_pcln(uint32_t *size) {
-    if (__llgo_argc < 1 || !__llgo_argv || !__llgo_argv[0]) return NULL;
-    const char *name = __llgo_argv[0];
+    const char *name = getenv("LLGO_PCLNTAB");
+    const int explicit_path = name && name[0];
+    if (explicit_path) {
+        if (name[0] != '/') return NULL;
+    } else {
+        if (__llgo_argc < 1 || !__llgo_argv || !__llgo_argv[0]) return NULL;
+        name = __llgo_argv[0];
+    }
+    const char *suffix = explicit_path ? "" : ".pclntab";
+    const size_t suffix_size = explicit_path ? 1 : sizeof(".pclntab");
     const size_t length = strlen(name);
     const char *directory = name[0] == '/' ? NULL : getenv("PWD");
     const size_t prefix = directory && directory[0] == '/' ? strlen(directory) : 0;
     if (length > 4096 || prefix > 4096) return NULL;
-    char *path = malloc(prefix + 1 + length + sizeof(".pclntab"));
+    char *path = malloc(prefix + 1 + length + suffix_size);
     if (!path) return NULL;
     if (prefix) { memcpy(path, directory, prefix); path[prefix] = '/'; }
     size_t offset = prefix ? prefix + 1 : 0;
     memcpy(path + offset, name, length);
-    memcpy(path + offset + length, ".pclntab", sizeof(".pclntab"));
+    memcpy(path + offset + length, suffix, suffix_size);
     int fd = open(path, O_RDONLY | O_NONBLOCK);
     free(path);
     if (fd < 0) return NULL;

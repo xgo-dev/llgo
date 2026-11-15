@@ -206,7 +206,10 @@ On the first safe public symbolization query:
 
 - WASI reads the sibling of `argv[0]`. For a relative executable path, an
   absolute `PWD` supplies its directory. The host must preopen that directory;
-  an inaccessible sidecar is an ordinary soft failure.
+  an inaccessible sidecar is an ordinary soft failure. Hosts may instead set
+  `LLGO_PCLNTAB` to an absolute guest path. The default `llgo run`/`test`
+  Wasmer adapter preopens the build artifact directory and supplies this path,
+  including for temporary outputs and Windows host paths.
 - Emscripten resolves the actual module URL and appends `.pclntab` to its
   pathname, preserving any query. Browsers fetch over HTTP(S); Node reads a
   `file:` URL. The HTTP request and body read have a 5-second timeout.

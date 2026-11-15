@@ -125,6 +125,21 @@ def main():
                 elif sidecar.exists():
                     sidecar.unlink()
                 backup.rename(sidecar)
+            if target == 'wasi':
+                # The real CLI uses a separate temporary artifact directory.
+                # It must preopen the map rather than rely on cwd visibility.
+                cli_environment = dict(build_environment)
+                if Path(wasmer).is_absolute():
+                    cli_environment['PATH'] = str(Path(wasmer).parent) + os.pathsep + cli_environment.get('PATH', '')
+                for subcommand, expected in [('run', 'pcln-ok'), ('test', 'PASS')]:
+                    command = [llgo, subcommand, *flags, '-emulator']
+                    if subcommand == 'test':
+                        command += ['-v']
+                    result = subprocess.run(command + ['./internal/build/testdata/wasm-pclntab'],
+                                            cwd=ROOT, env=cli_environment, capture_output=True, text=True, timeout=300)
+                    if result.returncode or expected not in result.stdout + result.stderr:
+                        raise RuntimeError(f'WASI CLI {subcommand}: {result.stdout}{result.stderr}')
+                    cases.append('cli-' + subcommand)
             browser_cases = []
             if args.browser and target != 'wasi':
                 for mode in ['available', 'concurrent', 'no-symbols', 'missing', 'corrupt', 'stale', 'oversized', 'timeout']:

@@ -371,7 +371,11 @@ func runNative(ctx *context, app, pkgDir, pkgName string, conf *Config, mode Mod
 				args = append(args, "--wasm", "multi-memory=true", app)
 				args = append(args, conf.RunArgs...)
 			case "wasmer":
-				return runEmuCmd(ctx.commands, map[string]string{"": app}, crosscompile.WASIThreadedEmulator,
+				envMap := map[string]string{"": app}
+				if conf.PCLNMode == PCLNExternal {
+					envMap["pclntab"] = pclnSidecarPath(app)
+				}
+				return runEmuCmd(ctx.commands, envMap, crosscompile.WASIThreadedEmulator,
 					conf.RunArgs, false, conf.PrintCommands, details)
 			default:
 				args = append(args, wasmerArgs...)
@@ -491,6 +495,18 @@ func runEmuCmdTo(commands commandEnv, envMap map[string]string, emulatorTemplate
 		// Preserve the raw WASI run/test PWD and PATH contract without exposing
 		// every host variable. PWD follows the package directory/preopen.
 		cmdParts = slices.Insert(cmdParts, len(cmdParts)-1, "--env=PWD="+guestCwd)
+		if sidecar := envMap["pclntab"]; sidecar != "" {
+			// Run/test artifacts can live outside both cwd and /tmp (notably
+			// macOS's per-user temporary directory). Use a POSIX guest path
+			// independent of the host's argv[0] spelling, including on Windows.
+			absolute, err := filepath.Abs(sidecar)
+			if err != nil {
+				return newRunnerFailure(details, "", runnerStatusInvalidCommand, -1, err)
+			}
+			cmdParts = slices.Insert(cmdParts, len(cmdParts)-1,
+				"--volume="+filepath.Dir(absolute)+":/llgo-symbols",
+				"--env=LLGO_PCLNTAB=/llgo-symbols/"+filepath.Base(absolute))
+		}
 		if path := commands.lookup("PATH"); path != "" {
 			cmdParts = slices.Insert(cmdParts, len(cmdParts)-1, "--env=PATH="+path)
 		}
