@@ -18,14 +18,16 @@ func TestFrontendInlineReplacementBodies(t *testing.T) {
 	t.Setenv(llgoEscapeCache, "1")
 	for _, test := range []struct {
 		name, original, replacement, call string
-		wantBuild                         bool
+		wantBuild, disableImports         bool
 	}{
-		{"function", "func Value(x T) int { for x > 0 { x-- }; return int(x) }", "func Value(x T) int { return int(x) + 1 }", "dep.Value(1)", true},
-		{"value method", "func (x T) Value() int { for x > 0 { x-- }; return int(x) }", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", true},
-		{"pointer method", "func (x *T) Value() int { for *x > 0 { *x-- }; return int(*x) }", "func (x *T) Value() int { return int(*x) + 1 }", "new(dep.T).Value()", true},
-		{"bodyless method", "func (T) Value() int", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", true},
-		{"noinline method", "//go:noinline\nfunc (x T) Value() int { return int(x) }", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", false},
-		{"missing method", "func (x T) Value() int { return int(x) }", "", "dep.T(1).Value()", false},
+		{"function", "func Value(x T) int { for x > 0 { x-- }; return int(x) }", "func Value(x T) int { return int(x) + 1 }", "dep.Value(1)", true, false},
+		{"value method", "func (x T) Value() int { for x > 0 { x-- }; return int(x) }", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", true, false},
+		{"pointer method", "func (x *T) Value() int { for *x > 0 { *x-- }; return int(*x) }", "func (x *T) Value() int { return int(*x) + 1 }", "new(dep.T).Value()", true, false},
+		{"bodyless method", "func (T) Value() int", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", true, false},
+		{"noinline method", "//go:noinline\nfunc (x T) Value() int { return int(x) }", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", false, false},
+		{"missing method", "func (x T) Value() int { return int(x) }", "", "dep.T(1).Value()", false, false},
+		{"deferred method", "func (x T) Value() int { return int(x) }", "func (x T) Value() int { return int(x) + 1 }", "dep.T(1).Value()", false, true},
+		{"deferred function", "func Value(x T) int { return int(x) }", "func Value(x T) int { return int(x) + 1 }", "dep.Value(1)", false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -73,6 +75,7 @@ func TestFrontendInlineReplacementBodies(t *testing.T) {
 			warm, pkgs := ssautil.Packages(loaded, ssa.SanityCheckFunctions)
 			ctx := &context{progSSA: warm, buildConf: NewDefaultConf(ModeBuild),
 				callerTracking: cl.NewCallerTracking(), pkgByID: make(map[string]*aPackage)}
+			ctx.frontendOptions.DisableInlineBodyImports = test.disableImports
 			var entries []ssaBuildEntry
 			for i, pkg := range pkgs {
 				ctx.pkgByID[loaded[i].ID] = &aPackage{Package: loaded[i], SSA: pkg, CacheHit: true}

@@ -255,6 +255,47 @@ func Other() int64 { return dep.U(1).Value() }
 	}
 }
 
+func TestCrossPackageInlinePatchedReceiverLayout(t *testing.T) {
+	dep, root, patch := buildInlinePatch(t, `package dep
+type T struct { opaque struct{} }
+func (T) Value() int64 { return -1 }
+func (*T) Pointer() int64 { return -1 }
+`, `package dep
+type T struct { Padding, X int64 }
+func (t T) Value() int64 { return t.X }
+func (t *T) Pointer() int64 { return t.X }
+`, `package root
+import "example.com/dep"
+func Value(t dep.T) int64 { return t.Value() }
+func Pointer(t *dep.T) int64 { return t.Pointer() }
+`)
+	typepatch.Merge(patch.Types, dep.Pkg, nil, false)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	pkg, _, err := NewPackageEx(prog, Patches{dep.Pkg.Path(): patch}, nil, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := pkg.Module()
+	defer mod.Dispose()
+	for _, method := range []string{"T.Value", "(*T).Pointer"} {
+		fn := mustNamedFunction(t, mod, "example.com/dep."+method)
+		if fn.IsDeclaration() || fn.Linkage() != llvm.AvailableExternallyLinkage {
+			t.Fatalf("replacement method not imported: %s", fn.String())
+		}
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	runModulePasses(t, prog, mod, "default<O2>")
+	for name, field := range map[string]string{"Value": ", 1", "Pointer": "i64 8"} {
+		ir := mustNamedFunction(t, mod, "example.com/root."+name).String()
+		if strings.Contains(ir, "call ") || !strings.Contains(ir, field) {
+			t.Fatalf("%s did not inline the replacement's second field:\n%s", name, ir)
+		}
+	}
+}
+
 func TestCrossPackageInlinePatchedMethodGuards(t *testing.T) {
 	const original = "type T int64\nfunc (x T) Value() int64 { return int64(x) + 1 }"
 	const replacement = "type T int64\nfunc (x T) Value() int64 { return int64(x) + 2 }"

@@ -759,9 +759,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
 	emitCodeView := shouldEmitCodeView(conf, &export)
 	frontendOptions := cl.Options{
-		Debug:        emitDebugInfo,
-		DebugSymbols: emitDebugInfo,
-		Trace:        IsTraceEnabled(),
+		DisableInlineBodyImports: conf.ltoMode() == lto.Full,
+		Debug:                    emitDebugInfo,
+		DebugSymbols:             emitDebugInfo,
+		Trace:                    IsTraceEnabled(),
 		// Hosted wasm profiles need renamed //export symbols for allocator and
 		// host entries even when selected through raw GOOS/GOARCH rather than a
 		// named -target.

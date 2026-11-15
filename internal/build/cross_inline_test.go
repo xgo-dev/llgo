@@ -29,6 +29,7 @@ func TestCrossPackageInlineWithCachedDependency(t *testing.T) {
 	wantImports := []string{
 		"example.com/crossinline/dep.Sum", "example.com/crossinline/dep.Number.Add",
 		"reflect.Value.IsValid", "reflect.Value.CanAddr", "reflect.Value.CanSet",
+		"runtime.(*Func).Name",
 	}
 	for phase := range 3 {
 		if phase == 2 {
@@ -106,6 +107,43 @@ func TestCrossPackageInlineDeclarationOnly(t *testing.T) {
 			}
 			if got := strings.TrimSpace(runBinary(t, conf.OutFile)); got != "42" {
 				t.Fatalf("linked method returned %s, want 42", got)
+			}
+		})
+	}
+}
+
+func TestCrossPackageInlineLTOPolicy(t *testing.T) {
+	t.Setenv(llgoBuildCache, "0")
+	for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = optlevel.Os, mode
+			conf.BuildParallelism = 2
+			conf.OutFile = filepath.Join(t.TempDir(), "program")
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			checked := false
+			conf.ModuleHook = func(pkg Package) {
+				if pkg.PkgPath != "example.com/crossinline" || pkg.LPkg == nil {
+					return
+				}
+				checked = true
+				for _, name := range []string{"example.com/crossinline/bridge.Sum", "example.com/crossinline/dep.Number.Add", "runtime.(*Func).Name"} {
+					fn := pkg.LPkg.Module().NamedFunction(name)
+					if fn.IsNil() || fn.IsDeclaration() != (mode == lto.Full) {
+						t.Errorf("%s: unexpected body import with %s LTO", name, mode)
+					}
+				}
+			}
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join("testdata", "crossinline")}); err != nil {
+				t.Fatal(err)
+			}
+			if !checked {
+				t.Fatal("caller module not checked")
+			}
+			if got := strings.TrimSpace(runBinary(t, conf.OutFile)); got != "cross inline ok" {
+				t.Fatalf("unexpected output: %s", got)
 			}
 		})
 	}

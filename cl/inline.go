@@ -210,6 +210,8 @@ func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
 	// original types and has a different package identity after lowering.
 	member := patch.Alt.Type(receiver.Obj().Name())
 	if member == nil {
+		// Even an original-only type may be excluded by skip directives.
+		// The merged scope alone cannot prove ownership of its method bodies.
 		return nil
 	}
 	replacement, ok := types.Unalias(member.Type()).(*types.Named)
@@ -228,7 +230,8 @@ func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
 // cross-package call. The defining package remains the owner of the real
 // function entry, including when its address escapes or LLVM declines to inline.
 func (p *context) importInlineBody(original *ssa.Function) {
-	if disableInline || p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
+	if disableInline || p.options.DisableInlineBodyImports ||
+		p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
 		p.options.DebuggerFrames || p.options.ShadowStack ||
 		p.inlineCost >= inlineModuleBudget || original.Pkg == nil || original.Pkg == p.goPkg ||
 		llssa.PathOf(original.Pkg.Pkg) == p.pkg.Path() {

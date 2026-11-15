@@ -171,7 +171,13 @@ func (f *frontendCache) bindFunctions() {
 // which actually lower code may import an eligible dependency body; cached
 // packages that only contribute declarations do not request optimization bodies.
 func (f *frontendCache) importBodies() error {
+	if f.ctx.frontendOptions.DisableInlineBodyImports {
+		return nil
+	}
 	bodyBudget, _, depth := cl.FrontendInlinePolicy()
+	// Resolving a target depends on declarations, not materialized bodies.
+	// Keep these results across rounds without caching depth-dependent visits.
+	targets := make(map[*ssa.Function]*ssa.Function)
 	costs := make(map[string]int)
 	for _, record := range f.records {
 		for _, fn := range record.Functions {
@@ -192,7 +198,12 @@ func (f *frontendCache) importBodies() error {
 				if !ok {
 					continue
 				}
-				target := cl.ResolveInlineTarget(call.Common().StaticCallee(), f.ctx.patches)
+				callee := call.Common().StaticCallee()
+				target, resolved := targets[callee]
+				if !resolved {
+					target = cl.ResolveInlineTarget(callee, f.ctx.patches)
+					targets[callee] = target
+				}
 				if target == nil {
 					continue
 				}

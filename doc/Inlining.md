@@ -4,10 +4,12 @@ LLGo makes small Go function and method bodies available to LLVM in importing
 packages, including when the defining package's backend archive is cached. This
 follows Go's cross-package inline model: the caller needs the body as well as the
 declaration. Cold builds construct dependency Go SSA. With frontend caching
-enabled, the driver restores validated frontend facts and materializes eligible
-dependency bodies on demand before lowering callers. Frontend preloading and
-backend import share the same replacement-target resolver and reuse the
-existing frontend exports and SSA loading path.
+enabled (`LLGO_ESCAPE_CACHE=1`, with the build cache enabled and a supported
+build mode; see [escape analysis](escape-analysis.md)), the driver restores
+validated frontend facts and materializes eligible dependency bodies on demand
+before lowering callers. Frontend preloading and backend import share the same
+replacement-target resolver and reuse the existing frontend exports and SSA
+loading path.
 
 No new directive is introduced. `//go:noinline` prevents import and marks both
 the defining function and importing declarations with LLVM `noinline`, including
@@ -16,6 +18,11 @@ defined in their original package for function values and calls that LLVM does
 not inline. Importing a body does not force inlining; LLVM applies its normal
 optimization-level, target and call-site cost policy.
 Cross-package inlining therefore does not require LTO.
+
+With Full LTO, the frontend skips optimization-body imports and leaves
+cross-package inlining to the final linker, which sees the defining packages'
+real bodies. This avoids changing optimization order through early inline
+copies. Without LTO and with ThinLTO, the import policy below applies.
 
 ## Candidate and import limits
 

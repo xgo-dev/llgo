@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"runtime"
 
 	"example.com/crossinline/bridge"
 	"example.com/crossinline/dep"
@@ -35,6 +36,15 @@ func mustPanic(fn func()) {
 }
 
 func main() {
+	// Go's Func is opaque; LLGo's replacement has a different field layout.
+	var nilFunc *runtime.Func
+	if nilFunc.Name() != "" {
+		panic("nil runtime function name")
+	}
+	pc, _, _, ok := runtime.Caller(0)
+	if !ok || runtime.FuncForPC(pc).Name() != "main.main" {
+		panic("runtime function name")
+	}
 	var invalid reflect.Value
 	if invalid.IsValid() {
 		panic("invalid replacement value")
