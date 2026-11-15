@@ -6,6 +6,8 @@
 package runtime
 
 import (
+	_ "unsafe"
+
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
@@ -26,9 +28,8 @@ type chanSignal struct {
 	sleeping bool
 }
 
-// Bound the work before falling back to a condition wait. This is a count of
-// atomic polls, not a time guarantee, and never repeatedly wakes an idle thread.
-const chanSignalSpinLimit = 8192
+//go:linkname chanSignalSpinHint llgo.asm
+func chanSignalSpinHint(instruction string)
 
 func (s *chanSignal) init() {
 	s.mutex.Init(nil)
@@ -41,10 +42,16 @@ func (s *chanSignal) park() {
 	TracebackWaiting(true)
 	atomic.Store(&s.notified, uint32(0))
 	s.unlock()
+	// The architecture bounds iterations with a CPU relax hint, not elapsed
+	// time. After the budget, fall back to the ordinary condition wait.
 	for i := 0; i < chanSignalSpinLimit; i++ {
-		if atomic.Load(&s.notified) != 0 {
-			break
+		if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
+			// ready publishes before the notifier unlocks. Keep trying until
+			// that unlock instead of immediately joining a fair-share wait.
+			TracebackWaiting(false)
+			return
 		}
+		chanSignalSpinHint(chanSignalSpinInstruction)
 	}
 	s.lock()
 	// Reset and the decision to sleep are both protected by mutex. A notifier
