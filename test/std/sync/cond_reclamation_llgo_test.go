@@ -13,7 +13,15 @@ import (
 func TestCondStateReclamation(t *testing.T) {
 	const count = 32
 	collected := make(chan struct{}, count)
-	exerciseCondStates(t, collected, count)
+	// Retire the creating goroutine's stack before checking reclamation.
+	// Conservative collectors can otherwise keep its last Cond pointer alive
+	// even though notifyMap released every key and all waiters have exited.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		exerciseCondStates(t, collected, count)
+	}()
+	<-done
 	deadline := time.Now().Add(5 * time.Second)
 	for len(collected) != count && time.Now().Before(deadline) {
 		runtime.GC()

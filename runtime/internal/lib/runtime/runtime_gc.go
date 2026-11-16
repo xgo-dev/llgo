@@ -11,6 +11,7 @@ import (
 
 func init() {
 	bdwgc.Init()
+	bdwgc.InitPolicy()
 	enableForeignThreadRegistration()
 }
 

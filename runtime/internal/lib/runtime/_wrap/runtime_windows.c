@@ -88,7 +88,7 @@ RtlVirtualUnwind(llgo_dword handler_type, llgo_uintptr image_base,
                  void *context, void **handler_data,
                  llgo_uintptr *establisher_frame, void *context_pointers);
 
-__attribute__((noinline)) void *
+__attribute__((noinline)) int
 llgo_windows_capture_context(void *context, llgo_size_t pc_offset)
 {
     llgo_runtime_function *function_entry;
@@ -106,7 +106,7 @@ llgo_windows_capture_context(void *context, llgo_size_t pc_offset)
     /* HandlerData is a required output on ARM64, even for a no-handler walk. */
     RtlVirtualUnwind(0, image_base, pc, function_entry, context,
                      &handler_data, &frame, 0);
-    return context;
+    return 1;
 }
 
 llgo_runtime_function *
@@ -115,15 +115,15 @@ llgo_windows_lookup_function_entry(llgo_uintptr pc, llgo_uintptr *image_base)
     return RtlLookupFunctionEntry(pc, image_base, 0);
 }
 
-void *llgo_windows_virtual_unwind(llgo_uintptr image_base, llgo_uintptr pc,
-                                  llgo_runtime_function *function_entry,
-                                  void *context,
-                                  llgo_uintptr *establisher_frame)
+void llgo_windows_virtual_unwind(llgo_uintptr image_base, llgo_uintptr pc,
+                               llgo_runtime_function *function_entry,
+                               void *context,
+                               llgo_uintptr *establisher_frame)
 {
     void *handler_data;
     /* HandlerData is a required output on ARM64, even for a no-handler walk. */
-    return RtlVirtualUnwind(0, image_base, pc, function_entry, context,
-                            &handler_data, establisher_frame, 0);
+    RtlVirtualUnwind(0, image_base, pc, function_entry, context,
+                     &handler_data, establisher_frame, 0);
 }
 #endif
 
