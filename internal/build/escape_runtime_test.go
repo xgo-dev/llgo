@@ -126,3 +126,37 @@ func TestRuntimeEscapeContractsAvoidObserverAndMapKeyAllocation(t *testing.T) {
 		})
 	}
 }
+
+func TestWindowsUnwindBorrowedBuffers(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch = "windows", arch
+			pkgs, err := Build(Invocation{Args: []string{"runtime"}, Config: conf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkgs) != 1 || pkgs[0].LPkg == nil {
+				t.Fatal("missing Windows runtime module")
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			for _, name := range []string{
+				"fpCallers", "windowsUnwindOne", "recoverFrameMarks", "recoverFrameLive",
+				"platformFaultCallers", "runtimeFuncPCSiteEntry", "runtimeFuncPCMayUseEntrySlack",
+			} {
+				fn := pkgs[0].LPkg.Module().NamedFunction("runtime." + name)
+				if fn.IsNil() || fn.FirstBasicBlock().IsNil() {
+					t.Fatalf("missing %s definition", name)
+				}
+				if body := fn.String(); strings.Contains(body, "runtime.Alloc") {
+					t.Errorf("%s retains temporary heap storage:\n%s", name, body)
+				}
+			}
+		})
+	}
+}

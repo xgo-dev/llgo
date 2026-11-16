@@ -13,14 +13,20 @@ import (
 // frame. Use the platform unwinder, which consumes the same .pdata/.xdata
 // records that the compiler emits for exception handling.
 
+// These wrappers synchronously read or fill caller-owned buffers. No Go
+// pointer is retained or returned; capture reports success as a C int.
+//
+//go:noescape
 //go:linkname c_windowsCaptureContext C.llgo_windows_capture_context
-func c_windowsCaptureContext(context *windowsFaultContext, pcOffset uintptr) unsafe.Pointer
+func c_windowsCaptureContext(context *windowsFaultContext, pcOffset uintptr) int32
 
+//go:noescape
 //go:linkname c_windowsLookupFunctionEntry C.llgo_windows_lookup_function_entry
 func c_windowsLookupFunctionEntry(pc uintptr, imageBase *uintptr) unsafe.Pointer
 
+//go:noescape
 //go:linkname c_windowsVirtualUnwind C.llgo_windows_virtual_unwind
-func c_windowsVirtualUnwind(imageBase, pc uintptr, functionEntry unsafe.Pointer, context *windowsFaultContext, establisherFrame *uintptr) unsafe.Pointer
+func c_windowsVirtualUnwind(imageBase, pc uintptr, functionEntry unsafe.Pointer, context *windowsFaultContext, establisherFrame *uintptr)
 
 const windowsFaultContextAlignment = 16
 
@@ -29,10 +35,15 @@ const windowsFaultContextAlignment = 16
 // to select a suitably aligned address before calling the platform unwinder.
 type windowsFaultContextStorage [windowsFaultContextSize + windowsFaultContextAlignment - 1]byte
 
+//go:linkname windowsContextNoEscape llgo.noescape
+func windowsContextNoEscape(p unsafe.Pointer) unsafe.Pointer
+
 func (storage *windowsFaultContextStorage) context() *windowsFaultContext {
 	base := unsafe.Pointer(&storage[0])
-	offset := (-uintptr(base)) & (windowsFaultContextAlignment - 1)
-	return (*windowsFaultContext)(unsafe.Add(base, offset))
+	// Only the low alignment bits become an integer. Index the original array
+	// so the returned pointer still carries storage's lifetime.
+	offset := (-uintptr(windowsContextNoEscape(base))) & (windowsFaultContextAlignment - 1)
+	return (*windowsFaultContext)(unsafe.Pointer(&storage[offset]))
 }
 
 func windowsUnwindOne(context *windowsFaultContext) bool {
@@ -121,7 +132,7 @@ func fpCallers(skip int, pc []uintptr) int {
 	initRuntimeFuncPCFrames()
 	var storage windowsFaultContextStorage
 	context := storage.context()
-	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == nil {
+	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == 0 {
 		return 0
 	}
 	// The capture wrapper already unwound itself. The next unwind reaches
@@ -158,7 +169,7 @@ func platformFaultCallers(raw unsafe.Pointer, _ uintptr, pc []uintptr) int {
 func recoverFrameMarks() (uintptr, uintptr) {
 	var storage windowsFaultContextStorage
 	context := storage.context()
-	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == nil {
+	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == 0 {
 		return 0, 0
 	}
 	// The capture wrapper already unwound itself. Walk recoverFrameMarks ->
@@ -195,7 +206,7 @@ func recoverFrameLive(stack, entry uintptr) bool {
 	}
 	var storage windowsFaultContextStorage
 	context := storage.context()
-	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == nil {
+	if c_windowsCaptureContext(context, windowsFaultContextPCOffset) == 0 {
 		return false
 	}
 	for i := 0; i < maxPanicSpliceFrames; i++ {
