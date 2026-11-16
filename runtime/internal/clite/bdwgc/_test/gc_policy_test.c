@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "../_wrap/gc_policy.c"
 
 extern void GC_init(void);
@@ -24,6 +25,15 @@ int main(int argc, char **argv)
     assert(llgo_gc_budget(0, 0) == 1);
 
     GC_init();
+    if (argc == 2 && strcmp(argv[1], "host-disabled") == 0) {
+        GC_set_disable_automatic_collection(1);
+        llgo_gc_init_policy();
+        assert(GC_get_disable_automatic_collection());
+        assert(llgo_gc_set_percent(-1) == 100);
+        assert(llgo_gc_set_percent(100) == -1);
+        assert(GC_get_disable_automatic_collection());
+        return 0;
+    }
     GC_set_on_collection_event(previous_event);
     llgo_gc_init_policy();
     llgo_gc_init_policy(); /* Must not chain the callback to itself. */
@@ -53,6 +63,21 @@ int main(int argc, char **argv)
     }
     assert(GC_get_gc_no() > before);
     assert(llgo_gc_set_percent(100) == 0);
+    GC_gcollect();
+    before = GC_get_gc_no();
+    assert(llgo_gc_set_percent(-1) == 100);
+    assert(llgo_gc_set_percent(100) == -1);
+    assert(GC_get_gc_no() == before);
+    assert(llgo_gc_set_percent(101) == 100);
+    assert(llgo_gc_set_percent(100) == 101);
+    assert(GC_get_gc_no() == before);
+    assert(llgo_gc_set_percent(25) == 100);
+    assert(llgo_gc_set_percent(-1) == 25);
+    assert(GC_get_free_space_divisor() == 4);
+    before = GC_get_gc_no();
+    assert(llgo_gc_set_percent(25) == -1);
+    assert(GC_get_gc_no() == before);
+    assert(llgo_gc_set_percent(100) == 25);
     assert(llgo_gc_set_percent(INT32_MAX) == 100);
     /* Prime the collector's cached threshold with the large percentage. */
     for (int i = 0; i < 128; ++i)
