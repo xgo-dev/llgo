@@ -47,30 +47,14 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
-      - name: Install dependencies on macOS
+      - name: Test README Homebrew install
         if: startsWith(matrix.os, 'macos')
-        run: bash doc/_readme/scripts/deps_macos.sh
-
-      - name: Install dependencies on Ubuntu
-        if: startsWith(matrix.os, 'ubuntu')
-        run: bash doc/_readme/scripts/deps_ubuntu.sh
-
-      - name: Test documented dependencies on other Linux distributions
-        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: doc/_readme
         run: |
-          set -euo pipefail
-          for distro in fedora arch opensuse; do
-            case "$distro" in
-              fedora) image=fedora:44 ;;
-              arch) image=archlinux:latest ;;
-              opensuse) image=opensuse/tumbleweed:latest ;;
-            esac
-            docker run --platform linux/amd64 --rm --init -v "$GITHUB_WORKSPACE:/src:ro" "$image" bash -ec '
-              sudo() { "$@"; }
-              source "/src/doc/_readme/scripts/deps_$1.sh"
-              pkg-config --exists bdw-gc libffi openssl zlib libcjson sqlite3 libuv
-            ' _ "$distro"
-          done
+          bash scripts/install_brew.sh
+          export PATH="$(brew --prefix llgo)/bin:$PATH"
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
 
       - name: Test README quick install
         env:

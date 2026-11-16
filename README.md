@@ -438,68 +438,49 @@ llgo version
 
 ### Manual installation
 
-Unix archives include LLVM/Clang/LLD 22. For Alpine/musl, use a
-[source build](CONTRIBUTING.md#manual-development-setup).
+#### Homebrew (macOS)
 
-1. Install [Go](https://go.dev/dl/) and the platform dependencies below.
-2. Download your host's archive from [GitHub releases](https://github.com/xgo-dev/llgo/releases)
-   and verify its checksums.
-3. Extract the entire archive and add its `bin` directory to `PATH`.
-   Open a new terminal and run `llgo version`.
+Homebrew installs Go, LLVM/LLD 22, and the declared library dependencies.
 
-#### macOS dependencies
-
-<!-- embedme doc/_readme/scripts/deps_macos.sh#L3-L1000 -->
+<!-- embedme doc/_readme/scripts/install_brew.sh#L3-L1000 -->
 
 ```sh
-brew install go bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib
+brew install llgo
 ```
 
-#### Linux dependencies
+#### WinGet (Windows)
 
-On Debian/Ubuntu:
+Install the [native dependencies](WINDOWS.md#versions-and-shared-dependencies) first.
 
-<!-- embedme doc/_readme/scripts/deps_ubuntu.sh#L3-L1000 -->
+<!-- embedme doc/_readme/scripts/install_winget.ps1#L2-L2 -->
+
+```powershell
+winget install --id XGo.LLGo.MSVC --exact --source winget --scope user
+```
+
+#### APT / YUM (Linux)
+
+Download the DEB or RPM for your architecture from
+[GitHub releases](https://github.com/xgo-dev/llgo/releases).
+The package manager installs dependencies; LLVM 22 must be available in your
+configured repositories.
+
+Debian/Ubuntu:
+
+<!-- embedme doc/_readme/scripts/install_deb.sh#L3-L1000 -->
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential ca-certificates curl pkg-config \
-  libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
+sudo apt-get install -y ./llgo*.linux-*.deb
 ```
 
-On Fedora:
+Fedora/RPM:
 
-<!-- embedme doc/_readme/scripts/deps_fedora.sh#L3-L1000 -->
+<!-- embedme doc/_readme/scripts/install_rpm.sh#L3-L1000 -->
 
 ```sh
-sudo dnf install -y gcc gcc-c++ make ca-certificates curl pkgconf-pkg-config \
-  gc-devel openssl-devel zlib-devel libffi-devel cjson-devel sqlite-devel libuv-devel
+sudo yum install -y ./llgo*.linux-*.rpm
 ```
-
-On Arch Linux:
-
-<!-- embedme doc/_readme/scripts/deps_arch.sh#L3-L1000 -->
-
-```sh
-sudo pacman -Syu --needed --noconfirm base-devel ca-certificates curl pkgconf gc openssl zlib \
-  libffi cjson sqlite libuv
-
-```
-
-On openSUSE:
-
-<!-- embedme doc/_readme/scripts/deps_opensuse.sh#L3-L1000 -->
-
-```sh
-sudo zypper --non-interactive install gcc gcc-c++ make ca-certificates curl pkg-config \
-  gc-devel libopenssl-devel zlib-devel libffi-devel cJSON-devel sqlite3-devel libuv-devel
-
-```
-
-#### Windows dependencies
-
-Install LLVM/Clang/LLD 22 and native dependencies as described in
-[WINDOWS.md](WINDOWS.md).
 
 For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

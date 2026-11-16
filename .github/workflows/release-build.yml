@@ -480,6 +480,12 @@ jobs:
             if ($archive.Count -ne 1) { throw "Expected one unified $arch archive" }
             ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch $arch
           }
+      - name: Test README WinGet install
+        shell: pwsh
+        run: |
+          ./doc/_readme/scripts/install_winget.ps1
+          & (Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links/llgo.exe') version
+          if ($LASTEXITCODE -ne 0) { throw 'The WinGet compiler failed to start' }
 
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
