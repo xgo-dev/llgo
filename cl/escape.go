@@ -231,14 +231,13 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		if size == 0 && alloc.Heap {
 			return "zero-size heap identity"
 		}
-		if alloc.Heap && alloc.Parent().Recover != nil &&
-			(alloc.Block() != alloc.Parent().Blocks[0] || size > llabi.MaxSSAValueSize(p.prog.PointerSize())) {
-			// Small entry allocations have one identity for the invocation.
-			// Escape analysis proves their aliases stay within that lifetime;
+		if alloc.Heap && alloc.Parent().Recover != nil && size > llabi.MaxSSAValueSize(p.prog.PointerSize()) {
+			// Escape analysis proves small captures stay within their owning
+			// invocation, including captures created after a branch or type check;
 			// markRecoverSlot keeps their owner accesses volatile across SJLJ,
 			// and ordinary stack-root lowering preserves captured pointers.
-			// Keep larger aggregates and later allocations conservative: their
-			// volatile zeroing and accesses can cost more than a heap allocation.
+			// Larger aggregates remain conservative: volatile zeroing and
+			// accesses can cost more than a heap allocation.
 			return "recover-visible storage"
 		}
 	} else if size == 0 {

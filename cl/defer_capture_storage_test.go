@@ -18,6 +18,37 @@ func local(value int, callback func()) {
  callback()
  returned = true
 }
+func branch(value any, callback func()) {
+ n, ok := value.(int)
+ if !ok { panic("type") }
+ returned := false
+ defer func(){ if returned { Sink = n } else { Sink = -n } }()
+ callback()
+ returned = true
+}
+func conditional(value int, callback func()) {
+ if value < 0 { return }
+ returned := false
+ defer func(){ if returned { Sink = value } }()
+ callback()
+ returned = true
+}
+func branchEscaping(value any, callback func()) {
+ if _, ok := value.(int); !ok { return }
+ returned := false
+ defer func(){ returned = !returned }()
+ Escaped = &returned
+ callback()
+}
+func branchLoop(n int, callback func()) {
+ for i:=0;i<n;i++ {
+  if i&1==0 { continue }
+  returned := false
+  defer func(){ if returned { Sink++ } }()
+  callback()
+  returned = true
+ }
+}
 func named(value int, callback func()) (result int) {
  defer func(){ result += value }()
  callback()
@@ -52,7 +83,7 @@ func aggregate(callback func()) {
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &target, target.GOARCH == "wasm")
-			for _, name := range []string{"local", "named"} {
+			for _, name := range []string{"local", "named", "branch", "conditional"} {
 				body := llvmFunction(t, ir, "recoverstorage."+name)
 				if strings.Contains(body, "runtime.Alloc") {
 					t.Errorf("%s retains invocation-owned capture storage:\n%s", name, body)
@@ -61,7 +92,7 @@ func aggregate(callback func()) {
 					t.Errorf("%s lost recover-visible accesses:\n%s", name, body)
 				}
 			}
-			for _, name := range []string{"escaping", "asynchronous", "loop", "aggregate"} {
+			for _, name := range []string{"escaping", "asynchronous", "loop", "aggregate", "branchEscaping", "branchLoop"} {
 				if body := llvmFunction(t, ir, "recoverstorage."+name); !strings.Contains(body, "runtime.Alloc") {
 					t.Errorf("%s lost retained storage:\n%s", name, body)
 				}

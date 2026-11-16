@@ -48,7 +48,7 @@ The solver limits work to one million location/edge visits per function solve. A
 | append/copy | Borrow source backing storage; copied pointer elements may escape into a destination or newly allocated array. |
 | Maps/channels/select | Retain inserted keys/values and sent values. Nonescaping maps use a caller-owned header and typed initial bucket; growth, overflow and oversized/over-aligned buckets retain runtime allocation. Channels retain runtime storage. Explicit-root targets register managed fields with typed stack roots. |
 | defer/go | Non-loop defer arguments persist to invocation exit. Loop defers, goroutines and foreign-owner range-function defer stacks require longer lifetimes. Eventual callee retention is modeled separately. |
-| panic/recover | Panic payloads escape. Existing recover-visible SSA storage remains heap allocated; new defer records preserve SJLJ ownership. |
+| panic/recover | Panic payloads escape. Small recover-visible captures can use stack storage after conditional branches as well as at entry. Owner accesses remain volatile across SJLJ; escaping, loop-retained and large captures keep heap storage. Defer records preserve SJLJ ownership. |
 | unsafe/native/indirect calls | Unknown publication is conservative. Pointer-to-uintptr conversion cannot hide an address from the analysis. Existing backend uintptr liveness handling remains in force. |
 | Unknown SSA operation | Retain all allocation sites and operands instead of accepting an unrecognized operation as harmless. |
 

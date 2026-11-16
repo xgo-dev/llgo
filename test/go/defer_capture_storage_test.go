@@ -89,6 +89,9 @@ func newDeferCapturePayload(value int) *deferCapturePayload {
 
 //go:noinline
 func deferredCapturePointer(value int, callback func()) (result int) {
+	if value < 0 {
+		return -1
+	}
 	p := newDeferCapturePayload(value)
 	defer func() { result = p.value }()
 	callback()
