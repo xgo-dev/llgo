@@ -132,7 +132,7 @@ jobs:
       - name: Test default and full local installs
         shell: bash
         run: |
-          # Keep nounset disabled: this wrapper sources the README and
+          # Keep nounset disabled: this wrapper sources the contributor examples and
           # generated virtualenv scripts, which manage optional variables.
           set -eo pipefail
           set -x
@@ -144,7 +144,7 @@ jobs:
             export LLGO_STDIO_NOBUF=1
           fi
 
-          # Both README installation modes run after one platform dependency
+          # Both documented installation modes run after one platform dependency
           # setup, but use separate binary directories. Reset PATH between
           # them so the full install cannot pass using the default install.
           git() {

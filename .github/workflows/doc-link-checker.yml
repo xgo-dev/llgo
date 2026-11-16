@@ -44,8 +44,19 @@ jobs:
       - name: Install embedme
         run: npm install -g embedme
 
-      - name: Verify README.md embedded code
-        run: embedme --verify README.md
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Check documentation audiences
+        run: |
+          python3 .github/scripts/check_doc_structure.py
+          python3 -m unittest discover -s .github/scripts -p test_doc_structure.py -v
+
+      - name: Verify embedded code
+        run: |
+          embedme --verify README.md
+          embedme --verify CONTRIBUTION.md
 
       - name: Link Checker
         id: lychee
@@ -56,7 +67,7 @@ jobs:
         with:
           # pkg.go.dev may generate package documentation on demand. Space
           # requests to the same host while retaining strict status checks.
-          args: --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md
+          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTION.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
 
       - name: Wait before retrying failed links
         if: steps.lychee.outcome == 'failure'
@@ -66,4 +77,4 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md
+          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTION.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
