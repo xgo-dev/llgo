@@ -84,3 +84,25 @@ func globalScanTestValue(typ llvm.Type) llvm.Value {
 	}
 	panic("unexpected global storage type")
 }
+
+func TestWasmStaticByteStorageKeepsZeroDataInBSS(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "js", GOARCH: "wasm"})
+	defer prog.Dispose()
+	prog.EnableGCRoots(true)
+	pkg := prog.NewPackage("bytes", "bytes")
+	for _, tc := range []struct {
+		data    []byte
+		section string
+	}{
+		{[]byte{1, 2, 3}, WasmGCNoScanSection},
+		{make([]byte, 1024), ""},
+	} {
+		ptr := pkg.createGlobalBytes(tc.data)
+		if ptr.IsAGlobalValue().IsNil() {
+			ptr = ptr.Operand(0)
+		}
+		if got := ptr.Section(); got != tc.section {
+			t.Fatalf("static byte storage section = %q, want %q", got, tc.section)
+		}
+	}
+}

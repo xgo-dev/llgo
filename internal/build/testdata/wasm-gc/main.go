@@ -12,11 +12,11 @@ type payload struct {
 }
 
 var (
-	globalRoot *payload
-	garbage    *payload
-	liveChunks [][]byte
+	globalRoot   *payload
+	garbage      *payload
+	liveChunks   [][]byte
 	largeGarbage []byte
-	stopLoop   atomic.Bool
+	stopLoop     atomic.Bool
 )
 
 func main() {
