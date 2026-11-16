@@ -28,8 +28,8 @@ func TestWasmGCConstantSections(t *testing.T) {
 			mod := ctx.NewModule("roots")
 			defer mod.Dispose()
 			mod.SetTarget(tc.triple)
-			constant := llvm.AddGlobal(mod, ctx.Int32Type(), "packed_numbers")
-			constant.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 12345678, false))
+			constant := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int32Type(), 2), "packed_numbers")
+			constant.SetInitializer(llvm.ConstArray(ctx.Int32Type(), []llvm.Value{llvm.ConstInt(ctx.Int32Type(), 12345678, false), llvm.ConstInt(ctx.Int32Type(), 23456789, false)}))
 			constant.SetGlobalConstant(true)
 			mutable := llvm.AddGlobal(mod, ctx.Int32Type(), "mutable_root")
 			mutable.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 0, false))
@@ -39,8 +39,14 @@ func TestWasmGCConstantSections(t *testing.T) {
 			custom.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 1, false))
 			custom.SetGlobalConstant(true)
 			custom.SetSection("custom")
-			prepareWasmGCGlobals(mod, tc.roots, "roots")
-			if constant.Section() != tc.want || mutable.Section() != "" || decl.Section() != "" || custom.Section() != "custom" {
+			relocated := llvm.AddGlobal(mod, llvm.PointerType(ctx.Int32Type(), 0), "type_test_member")
+			relocated.SetInitializer(mutable)
+			relocated.SetGlobalConstant(true)
+			encoded := llvm.AddGlobal(mod, ctx.Int64Type(), "type_test_encoded_pointer")
+			encoded.SetInitializer(llvm.ConstPtrToInt(mutable, ctx.Int64Type()))
+			encoded.SetGlobalConstant(true)
+			prepareWasmGCGlobals(mod, tc.roots, "roots", true)
+			if constant.Section() != tc.want || mutable.Section() != "" || decl.Section() != "" || custom.Section() != "custom" || relocated.Section() != "" || encoded.Section() != "" {
 				t.Fatal("incorrect root exclusion", mod.String())
 			}
 		})
@@ -81,7 +87,7 @@ define i32 @dead_function() { ret i32 42 }
 		t.Fatal(err)
 	}
 	defer mod.Dispose()
-	prepareWasmGCGlobals(mod, true, "linker-test")
+	prepareWasmGCGlobals(mod, true, "linker-test", false)
 	if err := os.WriteFile(input, []byte(mod.String()), 0600); err != nil {
 		t.Fatal(err)
 	}

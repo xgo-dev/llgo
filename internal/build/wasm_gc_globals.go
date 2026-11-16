@@ -14,14 +14,14 @@ import (
 // A C identifier gives wasm-ld synthesized __start_/__stop_ boundaries.
 const wasmGCNoScanSection = ssa.WasmGCNoScanSection
 
-func prepareWasmGCGlobals(mod llvm.Module, roots bool, namespace string) {
+func prepareWasmGCGlobals(mod llvm.Module, roots bool, namespace string, typeTests bool) {
 	if !roots || !strings.HasPrefix(mod.Target(), "wasm") {
 		return
 	}
 	index := 0
 	for global := mod.FirstGlobal(); !global.IsNil(); global = llvm.NextGlobal(global) {
 		index++
-		if global.IsGlobalConstant() && !global.IsThreadLocal() && global.Section() == "" && !global.Initializer().IsNil() {
+		if global.IsGlobalConstant() && !global.IsThreadLocal() && global.Section() == "" && !global.Initializer().IsNil() && (!typeTests || relocationFreeGCData(global.Initializer())) {
 			global.SetSection(wasmGCNoScanSection)
 		}
 		if global.Section() == wasmGCNoScanSection && global.Comdat().C == nil {
@@ -32,4 +32,20 @@ func prepareWasmGCGlobals(mod llvm.Module, roots bool, namespace string) {
 			global.SetComdat(group)
 		}
 	}
+}
+
+// When type tests are enabled, keep symbol-bearing constants in their ordinary
+// sections. In particular,
+// static itabs acquire type-test metadata during LTO, and LowerTypeTests owns
+// their layout and rejects explicit sections. Numeric tables need no symbols.
+func relocationFreeGCData(value llvm.Value) bool {
+	if value.IsNil() || !value.IsAGlobalValue().IsNil() {
+		return false
+	}
+	for i := 0; i < value.OperandsCount(); i++ {
+		if !relocationFreeGCData(value.Operand(i)) {
+			return false
+		}
+	}
+	return true
 }
