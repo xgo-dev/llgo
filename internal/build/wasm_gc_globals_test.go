@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -50,6 +53,75 @@ func TestWasmGCConstantSections(t *testing.T) {
 				t.Fatal("incorrect root exclusion", mod.String())
 			}
 		})
+	}
+}
+
+func TestWasmNoScanStringsShareAcrossPackages(t *testing.T) {
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("Clang unavailable")
+	}
+	linker, err := exec.LookPath("wasm-ld")
+	if err != nil {
+		t.Skip("wasm-ld unavailable")
+	}
+	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-unknown"})
+	defer prog.Dispose()
+	prog.EnableGCRoots(true)
+	const text = "shared-no-scan-string-across-packages"
+	dir := t.TempDir()
+	args := []string{"--no-entry", "--export=get0", "--export=get1", "--export=bytes0", "--export=bytes1"}
+	for i := 0; i < 2; i++ {
+		pkg := prog.NewPackage("literal"+string(rune('a'+i)), "literal")
+		pkg.ConstString(text)
+		pkg.ConstBytes([]byte(text))
+		mod := pkg.Module()
+		var data, mutable llvm.Value
+		for g := mod.FirstGlobal(); !g.IsNil(); g = llvm.NextGlobal(g) {
+			if strings.HasPrefix(g.Name(), "__llgo_noscan_string$") {
+				data = g
+			} else if !g.IsGlobalConstant() && g.GlobalValueType().TypeKind() == llvm.ArrayTypeKind {
+				mutable = g
+			}
+		}
+		if data.IsNil() || mutable.IsNil() {
+			t.Fatal("missing string or writable byte storage")
+		}
+		ctx := mod.Context()
+		name := "get" + string(rune('0'+i))
+		fn := llvm.AddFunction(mod, name, llvm.FunctionType(llvm.PointerType(ctx.Int8Type(), 0), nil, false))
+		b := ctx.NewBuilder()
+		b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
+		b.CreateRet(data)
+		b.Dispose()
+		fn = llvm.AddFunction(mod, "bytes"+string(rune('0'+i)), llvm.FunctionType(llvm.PointerType(ctx.Int8Type(), 0), nil, false))
+		b = ctx.NewBuilder()
+		b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
+		b.CreateRet(mutable)
+		b.Dispose()
+		prepareWasmGCGlobals(mod, true, name, false)
+		input, object := filepath.Join(dir, name+".ll"), filepath.Join(dir, name+".o")
+		if err := os.WriteFile(input, []byte(mod.String()), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(clang, "--target=wasm32-unknown-unknown", "-flto=full", "-c", input, "-o", object)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("compile: %v\n%s", err, out)
+		}
+		args = append(args, object)
+	}
+	output := filepath.Join(dir, "shared.wasm")
+	args = append(args, "-o", output)
+	if out, err := exec.Command(linker, args...).CombinedOutput(); err != nil {
+		t.Fatalf("link: %v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One immutable string is shared; each writable []byte retains its own copy.
+	if n := bytes.Count(raw, []byte(text)); n != 3 {
+		t.Fatalf("storage copies after full LTO: %d, want 3", n)
 	}
 }
 

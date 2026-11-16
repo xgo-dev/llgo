@@ -17,6 +17,7 @@
 package ssa
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -1168,12 +1169,30 @@ func (p Package) createGlobalStr(v string) (ret llvm.Value) {
 	prog := p.Prog
 	if v != "" {
 		typ := llvm.ArrayType(prog.tyInt8(), len(v))
-		global := llvm.AddGlobal(p.mod, typ, "")
-		global.SetInitializer(prog.ctx.ConstString(v, false))
-		global.SetLinkage(llvm.PrivateLinkage)
-		global.SetGlobalConstant(true)
-		global.SetUnnamedAddr(true)
-		global.SetAlignment(1)
+		var global llvm.Value
+		name := ""
+		if prog.GCRootsEnabled() && prog.Target().GOARCH == "wasm" {
+			// Explicit no-scan sections disable LLVM constant merging. Use
+			// the linker's ODR folding for immutable string bytes instead.
+			name = fmt.Sprintf("__llgo_noscan_string$%x", sha256.Sum256([]byte(v)))
+			global = p.mod.NamedGlobal(name)
+		}
+		if global.IsNil() {
+			global = llvm.AddGlobal(p.mod, typ, name)
+			global.SetInitializer(prog.ctx.ConstString(v, false))
+			global.SetLinkage(llvm.PrivateLinkage)
+			global.SetGlobalConstant(true)
+			global.SetUnnamedAddr(true)
+			global.SetAlignment(1)
+			if name != "" {
+				global.SetLinkage(llvm.LinkOnceODRLinkage)
+				global.SetVisibility(llvm.HiddenVisibility)
+				global.SetSection(WasmGCNoScanSection)
+				group := p.mod.Comdat(name)
+				group.SetSelectionKind(llvm.AnyComdatSelectionKind)
+				global.SetComdat(group)
+			}
+		}
 		if p.staticStringBacking == nil {
 			p.staticStringBacking = make(map[llvm.Value]struct{})
 		}

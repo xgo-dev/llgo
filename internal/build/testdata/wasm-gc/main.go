@@ -44,8 +44,8 @@ func main() {
 }
 
 // Packed pclntab constants used to act as conservative Memory32 roots and
-// retain almost every large allocation. Mutable Go and C globals must still
-// be scanned; the other tests below check their liveness across collection.
+// retain almost every large allocation. Pointer-bearing Go globals and C
+// globals must still be scanned; the tests below check their liveness.
 func testRepeatedLargeAllocations() {
 	const chunkSize = 1 << 20
 	bytes := make([]byte, chunkSize)
@@ -57,9 +57,15 @@ func testRepeatedLargeAllocations() {
 	runtime.ReadMemStats(&before)
 	for i := 0; i < 1000; i++ {
 		largeGarbage = []byte(text)
+		if i&15 == 15 {
+			runtime.ReadMemStats(&after)
+			if after.Sys > before.Sys+64*chunkSize {
+				panic("unreachable large allocations exceeded the memory budget")
+			}
+		}
 	}
 	runtime.ReadMemStats(&after)
-	if after.Sys-before.Sys >= 1000*chunkSize || after.NumGC == before.NumGC {
+	if after.Sys > before.Sys+64*chunkSize || after.NumGC == before.NumGC {
 		panic("unreachable large allocations were retained by constant data")
 	}
 	if len(largeGarbage) != chunkSize || largeGarbage[12345] != byte(12345%10+'0') {

@@ -8,10 +8,9 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// LLVM constants cannot acquire pointers to dynamically allocated objects.
-// Keep them outside the conservative global-root scan: packed numeric tables
-// (including pclntab hashes) otherwise look like Memory32 heap addresses.
-// A C identifier gives wasm-ld synthesized __start_/__stop_ boundaries.
+// This section holds storage that cannot contain heap pointers, including
+// writable pointer-free Go globals classified by SSA. Its C identifier gives
+// wasm-ld synthesized __start_/__stop_ boundaries.
 const wasmGCNoScanSection = ssa.WasmGCNoScanSection
 
 func prepareWasmGCGlobals(mod llvm.Module, roots bool, namespace string, typeTests bool) {
