@@ -19,9 +19,10 @@ unwinding paths:
 - `-pclntab=none` does not generate the metadata and does not link the external
   loader or its path/probe code.
 
-`-pclntab=external` is initially supported only for native executable builds
-without `-target` on Darwin/Linux amd64/arm64. `ModeGen`, `c-archive`,
-`c-shared`, named targets, and other OS/architecture combinations reject it.
+`-pclntab=external` supports native executable builds without `-target` on
+Darwin/Linux amd64/arm64, and hosted Wasm executables: WASI W32, Emscripten
+J32/J64, and `GOOS=js GOARCH=wasm`. `ModeGen`, `c-archive`, `c-shared`, native
+named targets, and other OS/architecture combinations reject it.
 
 The policy is deliberately separate from Go's `-ldflags=-s` and `-w`:
 
@@ -88,10 +89,12 @@ suites exercise both default and explicit-DWARF executable paths.
 
 `internal/build` validates the selected target, enables compiler metadata,
 coordinates link finalization, and owns output paths. `internal/pclnpost`
-contains host-side ELF/Mach-O inspection and safe binary rewriting.
-`internal/pclnmap` owns the versioned sidecar format. The runtime contains a
-small build-tag-selected loader and an independent, dependency-minimal
-decoder.
+contains host-side ELF/Mach-O inspection and rewriting; `internal/wasmdebug`
+owns the Wasm identity-slot rewrite. `internal/pclnmap` owns the versioned
+sidecar format. Build tags select the native loader/decoder in
+`runtime/internal/lib/runtime/pclntab_external.go` or the Wasm implementation
+in `runtime/internal/pcln`. Both runtime decoders keep their format constants
+and validation rules synchronized with the host encoder.
 
 This separation keeps both binary-format policy and command syntax out of the
 compiler pipeline.
@@ -162,10 +165,75 @@ One caller performs validation and index construction. Concurrent callers
 wait only on safe paths. Both success and failure are terminal and cached, so
 the filesystem is never probed repeatedly.
 
-The initial implementation uses one bounded read, capped at 512 MiB, instead
-of `mmap`; read-only mapping remains a possible follow-up optimization.
+The native implementation uses one bounded read, capped at 512 MiB, instead
+of `mmap`. It opens nonblocking and accepts only regular files, so an optional
+FIFO cannot hang the first query. Read-only mapping remains a possible
+follow-up optimization.
 
 The format is intentionally private to LLGo and versioned. Its unit is a
 physical function: compiler-generated wrappers and adapters use ordinary
 function records, while calling conventions and closure environment transport
 remain outside PCLN.
+
+## Hosted Wasm
+
+```sh
+llgo build -target=wasi -Oz -ldflags=-s -pclntab=external -o app.wasm ./app
+llgo build -target=emscripten -Oz -ldflags=-s -pclntab=external -o app.mjs ./app
+llgo build -target=emscripten-memory64 -Oz -ldflags=-s -pclntab=external -o app.mjs ./app
+```
+
+Each command writes `app.wasm.pclntab`, including when the requested output
+is JavaScript glue. This is runtime metadata, independent of external DWARF.
+The default remains `embedded`. A successful embedded/none rebuild removes
+the previous module's sidecar.
+
+Wasm has function-table indexes rather than native return addresses. The
+small entry-site array remains linked; source records, strings and location
+IDs are stored in the sidecar. In ordinary external builds, shadow-stack
+instrumentation records numeric location IDs instead of rooting function and
+file strings in every function. Symbolization resolves these IDs only after
+the map is ready. Builds with `llgo.wasm.debugger` retain their existing
+shadow-frame strings for the interactive debugger.
+
+The linker reserves an initialized 32-byte identity slot. Finalization prunes
+the metadata with conservative linked-name evidence, computes the pairing
+token, and patches only that slot. Code offsets, section sizes and DWARF
+remain intact. The v4 sidecar records the physical Wasm pointer width (4 or 8
+bytes); this does not change Go's `uintptr` contract. It contains no native
+entry/PC relocation records. Final stripping and DWARF packaging remain
+independent and happen after pairing.
+
+On the first safe public symbolization query:
+
+- WASI reads the sibling of `argv[0]`. For a relative executable path, an
+  absolute `PWD` supplies its directory. The host must preopen that directory;
+  an inaccessible sidecar is an ordinary soft failure. Hosts may instead set
+  `LLGO_PCLNTAB` to an absolute guest path. The default `llgo run`/`test`
+  Wasmer adapter preopens the build artifact directory and supplies this path,
+  including for temporary outputs and Windows host paths.
+- Emscripten resolves the actual module URL and appends `.pclntab` to its
+  pathname, preserving any query. Browsers fetch over HTTP(S); Node reads a
+  `file:` URL. The HTTP request and body read have a 5-second timeout.
+- One caller starts the load. Other callers yield through the existing Go
+  scheduler while it completes, including in multi-worker J32/J64 builds.
+  The JS Promise returns immediately to Go and never owns a Go fiber's
+  Asyncify suspension.
+
+Wasm reads at most 64 MiB and accepts only regular filesystem files. Format,
+ABI, target, pairing identity, checksum, section bounds and all referenced
+record/string IDs are validated before table pointers are published. The
+successful C buffer stays resident without a second full-size Go copy;
+rejected buffers are freed. Both success and failure are cached for the
+process lifetime. A missing, truncated, corrupt, stale, oversized or timed-out
+sidecar leaves available PCs and fallback diagnostics, and does not terminate
+the program. Installing a sidecar after the first failed query requires a
+restart. Fatal traceback paths never start or wait for a load; they use ready
+metadata or immediately fall back. Resolved synthetic frames cache their
+function/file strings; immutable location IDs keep their PCs stable. A frame
+captured before loading can resolve later when the map becomes ready.
+
+`dev/test_wasm_pclntab.py --browser` exercises real WASI/Node hosts and HTTP
+browser loading, including lazy loading, terminal caching, synthetic-frame string/PC reuse, concurrent callers
+with explicit GC, fatal tracebacks without loading, malformed records, missing
+files, FIFO rejection and HTTP timeout. It runs in the existing Wasm runtime CI job.

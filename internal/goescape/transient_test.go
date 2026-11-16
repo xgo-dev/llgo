@@ -132,6 +132,9 @@ func TestTemporaryByteStringProof(t *testing.T) {
 		borrowed  bool
 	}{
 		{"compare", `func f(b []byte,s string)bool{return string(b)==s}`, true},
+		{"compare slices", `func f(a,b []byte)bool{return string(a)==string(b)}`, true},
+		{"compare overlapping slices", `func f(b []byte)bool{return string(b[1:])!=string(b[:len(b)-1])}`, true},
+		{"order slices", `func f(a,b []byte)bool{return string(a)<string(b)}`, true},
 		{"lookup", `func f(m map[string]int,b []byte)int{return m[string(b)]}`, true},
 		{"length", `func f(b []byte)int{return len(string(b))}`, true},
 		{"return", `func f(b []byte)string{return string(b)}`, false},
@@ -155,5 +158,20 @@ func TestTemporaryByteStringProof(t *testing.T) {
 				t.Fatal("missing conversion")
 			}
 		})
+	}
+}
+
+func TestTemporaryByteStringsPreserveSnapshot(t *testing.T) {
+	fn := sourceFunction(t, `func f(a,b []byte)bool{x:=string(a);b[0]++;return x==string(b)}`)
+	r := Analyze([]*ssa.Function{fn}, Config{})
+	conversions := sitesOf[*ssa.Convert](fn)
+	if len(conversions) != 2 {
+		t.Fatalf("got %d conversions, want 2", len(conversions))
+	}
+	if r.Decision(conversions[0]).ReadOnly {
+		t.Fatal("first conversion must copy: the slices can alias across the write")
+	}
+	if !r.Decision(conversions[1]).ReadOnly {
+		t.Fatal("conversion after the write should borrow its input")
 	}
 }

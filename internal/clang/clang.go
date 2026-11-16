@@ -133,6 +133,18 @@ func (c *Cmd) Compile(args ...string) error {
 	return c.exec(allArgs...)
 }
 
+// CompileWithoutLTO emits a native object with the same target and ABI flags
+// as Compile. Whole-program optimizations that require LTO must not reach
+// this invocation: -fno-lto overrides -flto, but does not disable them.
+func (c *Cmd) CompileWithoutLTO(args ...string) error {
+	flags := slices.DeleteFunc(c.CompileArguments(args...), func(arg string) bool {
+		return arg == "-fvirtual-function-elimination" || arg == "-fwhole-program-vtables"
+	})
+	cmd := *c
+	cmd.prefixArgs = nil // CompileArguments already included the prefix.
+	return cmd.exec(append(flags, "-fno-lto")...)
+}
+
 // CompileArguments returns the effective driver arguments without executing
 // the compiler, including the command prefix and environment flags.
 func (c *Cmd) CompileArguments(args ...string) []string {

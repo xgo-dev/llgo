@@ -13,8 +13,8 @@ amd64, arm64, and wasm. The architecture's API determines which type/method
 combinations exist; the families below do not imply identical APIs on every
 architecture.
 
-- Horizontal pairwise addition on amd64/arm64, with wrapping integer sums and
-  ordered floating sums.
+- Horizontal pairwise addition on amd64/arm64 and subtraction on amd64,
+  preserving integer wrapping and floating operand order.
 - Array/slice loads and stores, broadcast, and lane extraction/insertion.
   AMD64 masked stores preserve disabled lanes without accessing their memory.
 - Add/subtract/multiply, floating divide, negation, absolute value, square root,
@@ -97,8 +97,8 @@ The portable256 bridge's intrinsic dependencies are also implemented: integer
 and floating min/max, byte/word saturating add/subtract, rounded unsigned
 averages, square root, fused multiply-add, lane-preserving numeric/signedness
 conversions, and carryless multiplication independently within each 128-bit
-group. Horizontal pairwise addition also operates independently within each
-128-bit group. `InterleaveLoGrouped` and `InterleaveHiGrouped` likewise
+group. Horizontal pairwise addition and subtraction also operate independently
+within each 128-bit group. `InterleaveLoGrouped` and `InterleaveHiGrouped` likewise
 interleave integer lanes independently within each 128-bit group.
 The bridge call-graph test covers all 350 entries in Go 1.27.0, including
 their private intrinsic dependencies. Cross-width and lane-count-changing
@@ -291,6 +291,18 @@ frame. The baseline/AVX2 implementations keep their own debug subprograms and
 the original Go display name. These are FMV-specific identity rules; LLGo's
 general runtime inline-frame representation remains separate from GoALLC's
 GoObj inline-tree format.
+
+Package archives contain a dedicated metadata object with post-backend function
+identities, wrapper flags, and PC-line records. Both fresh and cached archives
+supply these mappings to the linker; reconstructed frontend modules and frontend
+cache exports are not sources for the archived machine code's traceback data.
+The final exported C archive omits these compiler-private members; runtime
+traceback tables are generated before that merge, and cached package archives
+retain their mappings.
+The metadata object is native even with LTO and has no code-address relocations.
+`TestSIMDFMVArchiveCache` checks cold and warm builds through isolated and
+coordinator backends with off/Thin/Full LTO, plus frontend-cache reuse, baseline
+CPU overrides, and source-frame identity.
 
 On Windows/amd64, the compiler exposes the native indirect SIMD128 parameter
 ABI before creating dispatchers. Tail transfers forward the caller's parameter

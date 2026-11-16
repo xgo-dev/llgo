@@ -25,17 +25,6 @@ type frontendCExport struct {
 	Signature     int
 }
 
-type frontendFuncInfo struct {
-	Symbol, Name, File  string
-	Line, Column, Flags uint32
-}
-
-type frontendPCLine struct {
-	ID           uint64
-	Symbol, File string
-	Line, Column uint32
-}
-
 // frontendLinkExport carries the metadata previously recovered by lowering a
 // dependency again even when its archive was cached. The snapshot contains no
 // LLVM-owned pointers and is validated against that exact archive's inputs.
@@ -45,8 +34,6 @@ type frontendLinkExport struct {
 	MethodNames, ABISymbols []string
 	Types                   frontcache.TypeGraph
 	ABI                     []frontendABIType
-	Functions               []frontendFuncInfo
-	Lines                   []frontendPCLine
 	LocalExports            bool
 	CExports                []frontendCExport
 }
@@ -71,12 +58,6 @@ func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLink
 		if _, owned := snapshot.abiSymbols[info.Name]; owned && info.Raw != nil {
 			result.ABI = append(result.ABI, frontendABIType{Name: info.Name, Type: graph.Add(info.Raw)})
 		}
-	}
-	for _, info := range snapshot.funcInfo {
-		result.Functions = append(result.Functions, frontendFuncInfo{info.symbol, info.name, info.file, info.line, info.column, info.flags})
-	}
-	for _, line := range snapshot.pcLineInfo {
-		result.Lines = append(result.Lines, frontendPCLine{line.id, line.symbol, line.file, line.line, line.column})
 	}
 	for _, export := range snapshot.cExports {
 		ref := -1
@@ -140,12 +121,6 @@ func (f *frontendCache) importLink(data *frontendLinkExport) (*packageLinkSnapsh
 			return nil, fmt.Errorf("invalid cached ABI type %s: %v", info.Name, err)
 		}
 		result.abiTypes = append(result.abiTypes, llssa.AbiTypeInfo{Name: info.Name, Raw: typ})
-	}
-	for _, info := range data.Functions {
-		result.funcInfo = append(result.funcInfo, funcInfoRecord{info.Symbol, info.Name, info.File, info.Line, info.Column, info.Flags})
-	}
-	for _, line := range data.Lines {
-		result.pcLineInfo = append(result.pcLineInfo, pcLineRecord{line.ID, line.Symbol, line.File, line.Line, line.Column})
 	}
 	for _, export := range data.CExports {
 		if export.Signature == -1 && export.GoName != "" && export.CName != "" {

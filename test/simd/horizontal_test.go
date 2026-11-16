@@ -15,6 +15,16 @@ type horizontalNumber interface {
 // The callbacks exercise real loads, arithmetic and stores, not vector layout.
 func testHorizontal[T horizontalNumber](t *testing.T, n, group int, apply func([]T, []T, []T)) {
 	t.Helper()
+	testHorizontalOp(t, n, group, false, apply)
+}
+
+func testHorizontalSub[T horizontalNumber](t *testing.T, n, group int, apply func([]T, []T, []T)) {
+	t.Helper()
+	testHorizontalOp(t, n, group, true, apply)
+}
+
+func testHorizontalOp[T horizontalNumber](t *testing.T, n, group int, subtract bool, apply func([]T, []T, []T)) {
+	t.Helper()
 	x, y, got := make([]T, n), make([]T, n), make([]T, n)
 	var zero T
 	_, f32 := any(zero).(float32)
@@ -62,6 +72,9 @@ func testHorizontal[T horizontalNumber](t *testing.T, n, group int, apply func([
 				for pair := 0; pair < group/2; pair++ {
 					index := base + input*(group/2) + pair
 					want := src[base+2*pair] + src[base+2*pair+1]
+					if subtract {
+						want = src[base+2*pair] - src[base+2*pair+1]
+					}
 					value := got[index]
 					same := value == want
 					if f32 || f64 {

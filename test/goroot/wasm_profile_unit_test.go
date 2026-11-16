@@ -5,8 +5,48 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestGOROOTJSRuntimeEnvironment(t *testing.T) {
+	for _, profile := range []string{"", "J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI"} {
+		t.Run(profile, func(t *testing.T) {
+			withGOROOTWasmProfile(t, profile)
+			env := []string{"GOROOT=/go", "LLGO_ROOT=/llgo", "PATH=/bin", "HOME=/home/test", "TMPDIR=/tmp",
+				"GODEBUG=panicnil=1", "GOEXPERIMENT=loopvar", "GOMEMLIMIT=128MiB", "GOGC=50", "GOTRACEBACK=all",
+				"SystemRoot=C:\\Windows", "CGO_LDFLAGS=" + strings.Repeat("x", 16000), "GITHUB_EVENT_PATH=/ci/event"}
+			original := append([]string(nil), env...)
+			var baseline []string
+			for _, llgo := range []bool{false, true} {
+				_, _, got, err := gorootArtifactCommand(t.TempDir(), "out", llgo, env)
+				if err != nil {
+					t.Fatal(err)
+				}
+				js := strings.HasPrefix(profile, "J")
+				if js {
+					if envEntry(got, "CGO_LDFLAGS") != "" || envEntry(got, "GITHUB_EVENT_PATH") != "" {
+						t.Fatal("JS runtime inherited build/CI environment")
+					}
+					for _, key := range []string{"GOROOT", "LLGO_ROOT", "PATH", "HOME", "TMPDIR", "SystemRoot", "GODEBUG", "GOEXPERIMENT", "GOMEMLIMIT", "GOGC", "GOTRACEBACK"} {
+						if envEntry(got, key) != envEntry(env, key) {
+							t.Fatalf("lost runtime variable %s", key)
+						}
+					}
+				} else if envEntry(got, "CGO_LDFLAGS") != envEntry(env, "CGO_LDFLAGS") {
+					t.Fatal("changed non-JS runtime environment")
+				}
+				if llgo && !reflect.DeepEqual(got, baseline) {
+					t.Fatal("Go and LLGo have different runtime environments")
+				}
+				baseline = got
+			}
+			if !reflect.DeepEqual(env, original) {
+				t.Fatal("changed compiler environment")
+			}
+		})
+	}
+}
 
 func withGOROOTWasmProfile(t *testing.T, name string) {
 	t.Helper()

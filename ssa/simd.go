@@ -88,6 +88,8 @@ const (
 	SIMDInterleaveOdd
 	SIMDConcatAddPairs
 	SIMDConcatAddPairsGrouped
+	SIMDConcatSubPairs
+	SIMDConcatSubPairsGrouped
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -231,8 +233,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	switch op {
 	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
 		return b.simdInterleave(op, args[0], args[1])
-	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped:
-		return b.simdConcatAddPairs(op, args[0], args[1])
+	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
+		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
 		return b.simdAverage(args[0], args[1])
 	case SIMDFMA:

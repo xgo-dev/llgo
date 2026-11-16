@@ -13,8 +13,8 @@ import (
 )
 
 func TestSIMDHorizontalLLVM(t *testing.T) {
-	for _, target := range []struct{ os, arch string }{{"linux", "amd64"}, {"windows", "amd64"}, {"darwin", "arm64"}} {
-		t.Run(target.os+"/"+target.arch, func(t *testing.T) {
+	for _, target := range []struct{ os, arch, operation string }{{"linux", "amd64", "Add"}, {"windows", "amd64", "Add"}, {"darwin", "arm64", "Add"}, {"linux", "amd64", "Sub"}, {"windows", "amd64", "Sub"}} {
+		t.Run(target.os+"/"+target.arch+"/"+target.operation, func(t *testing.T) {
 			types := []string{"Float32x4", "Float64x2", "Int16x8", "Uint16x8", "Int32x4", "Uint32x4"}
 			if target.arch == "arm64" {
 				types = append(types, "Int64x2", "Uint64x2")
@@ -23,20 +23,21 @@ func TestSIMDHorizontalLLVM(t *testing.T) {
 			}
 			wide := map[string]bool{"Float32x8": true, "Float64x4": true, "Int16x16": true, "Uint16x16": true, "Int32x8": true, "Uint32x8": true}
 			source := "package main\nimport \"simd/archsimd\"\nfunc main() {}\n"
+			operation := "Concat" + target.operation + "Pairs"
 			for _, typ := range types {
-				op := "ConcatAddPairs"
+				op := operation
 				if wide[typ] {
 					op += "Grouped"
 				}
-				source += fmt.Sprintf("func add%s(x,y archsimd.%s) archsimd.%s { return x.%s(y) }\n", typ, typ, typ, op)
+				source += fmt.Sprintf("func pairs%s(x,y archsimd.%s) archsimd.%s { return x.%s(y) }\n", typ, typ, typ, op)
 			}
 			if target.arch == "amd64" {
-				source += `//go:noinline
+				source += fmt.Sprintf(`//go:noinline
 func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
- if archsimd.X86.AVX2() { return x.ConcatAddPairsGrouped(y) }
- return y.ConcatAddPairsGrouped(x)
+ if archsimd.X86.AVX2() { return x.%[1]s(y) }
+ return y.%[1]s(x)
 }
-`
+`, operation+"Grouped")
 			}
 			dir := t.TempDir()
 			for name, body := range map[string]string{"go.mod": "module horizontal\n\ngo 1.27\n", "main.go": source} {
@@ -70,9 +71,9 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
 					t.Fatal(err)
 				}
 				for _, typ := range types {
-					name := "main.add" + typ
+					name := "main.pairs" + typ
 					if pkg.PkgPath == "simd/archsimd" {
-						name = "simd/archsimd." + typ + ".ConcatAddPairs"
+						name = "simd/archsimd." + typ + "." + operation
 						if wide[typ] {
 							name += "Grouped"
 						}
@@ -82,9 +83,9 @@ func guarded(x,y archsimd.Float32x8) archsimd.Float32x8 {
 						t.Fatalf("missing %s", name)
 					}
 					body := fn.String()
-					op := "add <"
+					op := strings.ToLower(target.operation) + " <"
 					if strings.HasPrefix(typ, "Float") {
-						op = "fadd <"
+						op = "f" + op
 					}
 					if !strings.Contains(body, "shufflevector") || !strings.Contains(body, op) || strings.Contains(body, "PanicSIMDUnimplemented") {
 						t.Fatalf("invalid horizontal operation %s:\n%s", name, body)

@@ -121,6 +121,9 @@ type notifyList struct {
 }
 
 type notifyState struct {
+	// refs counts calls using this state, including parked waiters. notifyMu
+	// protects it so an idle list cannot retain its address and native resources.
+	refs    uint32
 	waiters map[uint32]*rt.SynctestWaiter
 	mu      psync.Mutex
 	cond    psync.Cond
@@ -128,26 +131,43 @@ type notifyState struct {
 
 var notifyOnce psync.Once
 var notifyMu psync.Mutex
-var notifyMap map[uintptr]*notifyState
+
+// Pointer keys are cleared by map deletion. A uintptr key can leave stale
+// address bits in an empty bucket, retaining the Cond under conservative GC.
+var notifyMap map[*notifyList]*notifyState
 
 func initNotifyMap() {
 	notifyMu.Init(nil)
-	notifyMap = make(map[uintptr]*notifyState)
+	notifyMap = make(map[*notifyList]*notifyState)
 }
 
 func getNotifyState(l *notifyList) *notifyState {
 	notifyOnce.Do(initNotifyMap)
-	key := uintptr(unsafe.Pointer(l))
 	notifyMu.Lock()
-	st := notifyMap[key]
+	st := notifyMap[l]
 	if st == nil {
 		st = &notifyState{}
 		st.mu.Init(nil)
 		st.cond.Init(nil)
-		notifyMap[key] = st
+		notifyMap[l] = st
 	}
+	st.refs++
 	notifyMu.Unlock()
 	return st
+}
+
+func releaseNotifyState(l *notifyList, st *notifyState) {
+	notifyMu.Lock()
+	st.refs--
+	idle := st.refs == 0
+	if idle {
+		delete(notifyMap, l)
+	}
+	notifyMu.Unlock()
+	if idle {
+		st.cond.Destroy()
+		st.mu.Destroy()
+	}
 }
 
 //go:linkname sync_runtime_notifyListAdd sync.runtime_notifyListAdd
@@ -157,7 +177,11 @@ func sync_runtime_notifyListAdd(l *notifyList) uint32 {
 
 //go:linkname sync_runtime_notifyListWait sync.runtime_notifyListWait
 func sync_runtime_notifyListWait(l *notifyList, t uint32) {
+	if int32(t-latomic.LoadUint32(&l.notify)) < 0 {
+		return
+	}
 	st := getNotifyState(l)
+	defer releaseNotifyState(l, st)
 	st.mu.Lock()
 	var waiter *rt.SynctestWaiter
 	if int32(t-latomic.LoadUint32(&l.notify)) >= 0 {
@@ -179,7 +203,11 @@ func sync_runtime_notifyListWait(l *notifyList, t uint32) {
 
 //go:linkname sync_runtime_notifyListNotifyAll sync.runtime_notifyListNotifyAll
 func sync_runtime_notifyListNotifyAll(l *notifyList) {
+	if latomic.LoadUint32(&l.wait) == latomic.LoadUint32(&l.notify) {
+		return
+	}
 	st := getNotifyState(l)
+	defer releaseNotifyState(l, st)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for _, w := range st.waiters {
@@ -194,7 +222,11 @@ func sync_runtime_notifyListNotifyAll(l *notifyList) {
 
 //go:linkname sync_runtime_notifyListNotifyOne sync.runtime_notifyListNotifyOne
 func sync_runtime_notifyListNotifyOne(l *notifyList) {
+	if latomic.LoadUint32(&l.wait) == latomic.LoadUint32(&l.notify) {
+		return
+	}
 	st := getNotifyState(l)
+	defer releaseNotifyState(l, st)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if n := latomic.LoadUint32(&l.notify); n != latomic.LoadUint32(&l.wait) {

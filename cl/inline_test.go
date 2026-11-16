@@ -82,14 +82,7 @@ var KeptValue = dep.Kept
 			if !strings.Contains(mod.NamedGlobal("example.com/root.Value").String(), "example.com/dep.Sum") {
 				t.Fatal("function value lost canonical entry")
 			}
-			mod.SetDataLayout(prog.DataLayout())
-			mod.SetTarget(target.Spec().Triple)
-			opts := llvm.NewPassBuilderOptions()
-			defer opts.Dispose()
-			opts.SetVerifyEach(true)
-			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
-			}
+			runModulePasses(t, prog, mod, "default<O2>")
 			for _, name := range []string{"Sum", "Split", "Branch"} {
 				if ir := mustNamedFunction(t, mod, "example.com/root."+name).String(); strings.Contains(ir, "call ") {
 					t.Fatalf("cross-package call survived optimization:\n%s", ir)
@@ -125,9 +118,7 @@ var KeptValue = dep.Kept
 			if err := llvm.LinkModules(linked, clone(owner.Module())); err != nil {
 				t.Fatal(err)
 			}
-			if err := linked.RunPasses("lto<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
-			}
+			runModulePasses(t, prog, linked, "lto<O2>")
 			if ir := mustNamedFunction(t, linked, "example.com/root.Kept").String(); !strings.Contains(ir, "example.com/dep.Kept") {
 				t.Fatalf("LTO inlined go:noinline function:\n%s", ir)
 			}
@@ -137,6 +128,66 @@ var KeptValue = dep.Kept
 			}
 			buf.Dispose()
 		})
+	}
+}
+
+func TestCrossPackageInlineDeferredToLTO(t *testing.T) {
+	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", `package dep
+type T int64
+func Add(x int64) int64 { return x + 1 }
+func (x T) Add() int64 { return int64(x) + 2 }
+//go:noinline
+func (x T) Kept() int64 { return int64(x) + 3 }
+`, "example.com/root", `package root
+import "example.com/dep"
+func Function(x int64) int64 { return dep.Add(x) }
+func Method(x dep.T) int64 { return x.Add() }
+func Kept(x dep.T) int64 { return x.Kept() }
+`)
+	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	options := Options{DisableInlineBodyImports: true}
+	pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil, root, nil, nil, false, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := pkg.Module()
+	defer mod.Dispose()
+	for _, name := range []string{"Add", "T.Add", "T.Kept"} {
+		if fn := mustNamedFunction(t, mod, "example.com/dep."+name); !fn.IsDeclaration() {
+			t.Fatalf("body imported before LTO: %s", fn.String())
+		}
+	}
+	runModulePasses(t, prog, mod, "lto-pre-link<O2>")
+	owner, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil, dep, nil, nil, false, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runModulePasses(t, prog, owner.Module(), "lto-pre-link<O2>")
+	// LinkModules consumes the source module, including on failure.
+	if err := llvm.LinkModules(mod, owner.Module()); err != nil {
+		t.Fatal(err)
+	}
+	runModulePasses(t, prog, mod, "lto<O2>")
+	for _, name := range []string{"Function", "Method"} {
+		if ir := mustNamedFunction(t, mod, "example.com/root."+name).String(); strings.Contains(ir, "call ") {
+			t.Fatalf("LTO did not inline %s:\n%s", name, ir)
+		}
+	}
+	if ir := mustNamedFunction(t, mod, "example.com/root.Kept").String(); !strings.Contains(ir, "example.com/dep.T.Kept") {
+		t.Fatalf("LTO inlined go:noinline method:\n%s", ir)
+	}
+}
+
+func runModulePasses(t *testing.T, prog llssa.Program, mod llvm.Module, passes string) {
+	t.Helper()
+	mod.SetDataLayout(prog.DataLayout())
+	mod.SetTarget(prog.Target().Spec().Triple)
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	opts.SetVerifyEach(true)
+	if err := mod.RunPasses(passes, prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -437,38 +488,56 @@ func TestCrossPackageInlineDisabledAndDepth(t *testing.T) {
 }
 
 func TestCrossPackageInlineModuleBudget(t *testing.T) {
-	depSrc, rootSrc := "package dep\n", "package root\nimport \"example.com/dep\"\nfunc Use(x int) int {return "
-	const count = 80
-	for i := 0; i < count; i++ {
-		depSrc += fmt.Sprintf("func F%d(x int) int {", i)
-		for n := 1; n <= 10; n++ {
-			depSrc += fmt.Sprintf("x=x*3+%d;", i+n)
-		}
-		depSrc += "return x}\n"
-		if i != 0 {
-			rootSrc += "+"
-		}
-		rootSrc += fmt.Sprintf("dep.F%d(x)", i)
-	}
-	rootSrc += "}\n"
-	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", depSrc, "example.com/root", rootSrc)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
-	defer prog.Dispose()
-	pkg, err := NewPackage(prog, root, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pkg.Module().Dispose()
-	facts := newInlineFacts()
-	imported, cost := 0, 0
-	for i := 0; i < count; i++ {
-		name := fmt.Sprintf("F%d", i)
-		if !mustNamedFunction(t, pkg.Module(), "example.com/dep."+name).IsDeclaration() {
-			imported++
-			cost += facts.cost(dep.Func(name))
-		}
-	}
-	if imported == 0 || imported == count || cost > inlineModuleBudget {
-		t.Fatalf("imported %d bodies at cost %d", imported, cost)
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("methods=%t", mixed), func(t *testing.T) {
+			depSrc, rootSrc := "package dep\ntype Number int\n", "package root\nimport \"example.com/dep\"\nfunc Use(x int) int {return "
+			const count = 80
+			for i := 0; i < count; i++ {
+				receiver := ""
+				if mixed && i%2 == 0 {
+					receiver = "(n Number) "
+				}
+				depSrc += fmt.Sprintf("func %sF%d(x int) int {", receiver, i)
+				for n := 1; n <= 10; n++ {
+					depSrc += fmt.Sprintf("x=x*3+%d;", i+n)
+				}
+				depSrc += "return x}\n"
+				if i != 0 {
+					rootSrc += "+"
+				}
+				if mixed && i%2 == 0 {
+					rootSrc += fmt.Sprintf("dep.Number(0).F%d(x)", i)
+				} else {
+					rootSrc += fmt.Sprintf("dep.F%d(x)", i)
+				}
+			}
+			rootSrc += "}\n"
+			dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", depSrc, "example.com/root", rootSrc)
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			defer prog.Dispose()
+			pkg, err := NewPackage(prog, root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkg.Module().Dispose()
+			facts := newInlineFacts()
+			imported, cost := 0, 0
+			for i := 0; i < count; i++ {
+				name := fmt.Sprintf("F%d", i)
+				fn := dep.Func(name)
+				symbol := "example.com/dep." + name
+				if mixed && i%2 == 0 {
+					fn = dep.Prog.LookupMethod(dep.Type("Number").Type(), dep.Pkg, name)
+					symbol = "example.com/dep.Number." + name
+				}
+				if !mustNamedFunction(t, pkg.Module(), symbol).IsDeclaration() {
+					imported++
+					cost += facts.cost(fn)
+				}
+			}
+			if imported == 0 || imported == count || cost > inlineModuleBudget || cost+facts.cost(dep.Func("F1")) <= inlineModuleBudget {
+				t.Fatalf("imported %d bodies at cost %d", imported, cost)
+			}
+		})
 	}
 }

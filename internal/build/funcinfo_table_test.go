@@ -1194,6 +1194,7 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 		{name: "linux", goos: "linux", goarch: "amd64", identitySect: "llgo_pclntab_id", entryBoundary: "__start_llgo_funcinfo_entry"},
 		{name: "darwin/no-lto", goos: "darwin", goarch: "arm64", identitySect: "__llgo_pid", entryBoundary: "section$start$__DATA$__llgo_fie"},
 		{name: "darwin/full-lto", goos: "darwin", goarch: "arm64", lto: lto.Full, identitySect: "__llgo_pid", entryBoundary: "section$start$__DATA$__llgo_fie"},
+		{name: "wasm", goos: "wasip1", goarch: "wasm", identitySect: "llgo_pclntab_id", entryBoundary: "__llgo_funcinfo_entry"},
 	} {
 		t.Run(target.name, func(t *testing.T) {
 			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
@@ -1221,10 +1222,16 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 				t.Fatalf("external payload = %+v", ctx.pclnExternal)
 			}
 			ir := src.String()
+			identity := "@__llgo_pclntab_identity = global [32 x i8] zeroinitializer"
+			count := "@__llgo_funcinfo_count = global i64 0"
+			if target.goarch == "wasm" {
+				identity = "@__llgo_pclntab_identity = global [32 x i8] c\""
+				count = "@__llgo_funcinfo_count = global i32 0"
+			}
 			for _, want := range []string{
 				"@__llgo_funcinfo_table = global ptr null",
-				"@__llgo_funcinfo_count = global i64 0",
-				"@__llgo_pclntab_identity = global [32 x i8] zeroinitializer",
+				count,
+				identity,
 				"@llvm.used = appending global [1 x ptr] [ptr @__llgo_pclntab_identity], section \"llvm.metadata\"",
 				target.identitySect,
 				target.entryBoundary,
@@ -1268,14 +1275,15 @@ func TestFuncInfoTableFPChainOff(t *testing.T) {
 	}
 }
 
-// snapshotPkg builds a Package backed by a link snapshot so metadata collection
+// snapshotPkg builds a Package backed by parsed archive metadata so collection
 // can be exercised without an LLVM module.
 func snapshotPkg(pkgPath, symbol string) Package {
 	return &aPackage{
-		Package: &packages.Package{PkgPath: pkgPath},
-		linkSnapshot: &packageLinkSnapshot{
-			funcInfo:   []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
-			pcLineInfo: []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
+		Package:      &packages.Package{PkgPath: pkgPath},
+		linkSnapshot: &packageLinkSnapshot{},
+		pcln: &packagePCLN{
+			functions: []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
+			lines:     []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
 		},
 	}
 }

@@ -82,11 +82,14 @@ type Options struct {
 	// CExportWrappers keeps //export implementations under their Go symbols;
 	// the final-link module supplies the public C entry points.
 	// It does not apply to package C, which defines its exports directly.
-	CExportWrappers bool
-	ShadowStack     bool
+	CExportWrappers        bool
+	ShadowStack            bool
+	CompactCallerLocations bool
 	// DebuggerFrames retains logical stacks for every eligible function in
 	// opt-in Wasm debugger builds, including parked goroutines.
 	DebuggerFrames bool
+	// DisableInlineBodyImports leaves cross-package inlining to the linker.
+	DisableInlineBodyImports bool
 	// PreloadedSyntax means all Program-side source metadata was collected
 	// before lowering and is now shared read-only by backend Programs.
 	PreloadedSyntax bool
@@ -3320,10 +3323,16 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 			return types.NewTuple(vars...), true
 		}
 	case *types.Signature:
+		recv := typ.Recv()
+		if recv != nil {
+			if t, ok := p._patchType(recv.Type()); ok {
+				recv = types.NewVar(recv.Pos(), recv.Pkg(), recv.Name(), t)
+			}
+		}
 		params, ok1 := p._patchType(typ.Params())
 		results, ok2 := p._patchType(typ.Results())
-		if ok1 || ok2 {
-			return types.NewSignature(typ.Recv(), params.(*types.Tuple), results.(*types.Tuple), typ.Variadic()), true
+		if recv != typ.Recv() || ok1 || ok2 {
+			return types.NewSignature(recv, params.(*types.Tuple), results.(*types.Tuple), typ.Variadic()), true
 		}
 	}
 	return typ, false

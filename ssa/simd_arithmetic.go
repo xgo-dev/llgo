@@ -95,12 +95,12 @@ func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
 	return Expr{vector, result}
 }
 
-// simdConcatAddPairs preserves the API's adjacent pair order. Wide grouped
-// operations concatenate x/y sums independently within each 128-bit group.
-func (b Builder) simdConcatAddPairs(op SIMDOp, x, y Expr) Expr {
+// simdConcatPairs preserves the API's adjacent pair order. Wide grouped
+// operations concatenate x/y results independently within each 128-bit group.
+func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
-	if op == SIMDConcatAddPairsGrouped {
+	if op == SIMDConcatAddPairsGrouped || op == SIMDConcatSubPairsGrouped {
 		group /= 2
 	}
 	even, odd := make([]llvm.Value, n), make([]llvm.Value, n)
@@ -116,9 +116,16 @@ func (b Builder) simdConcatAddPairs(op SIMDOp, x, y Expr) Expr {
 	}
 	a := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(even, false), "")
 	c := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(odd, false), "")
+	subtract := op == SIMDConcatSubPairs || op == SIMDConcatSubPairsGrouped
 	if simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0 {
+		if subtract {
+			return Expr{b.impl.CreateFSub(a, c, ""), x.Type}
+		}
 		return Expr{b.impl.CreateFAdd(a, c, ""), x.Type}
 	}
-	// Plain add wraps at the lane width; it must not carry nsw/nuw flags.
+	// Plain add/sub wrap at the lane width; neither may carry nsw/nuw flags.
+	if subtract {
+		return Expr{b.impl.CreateSub(a, c, ""), x.Type}
+	}
 	return Expr{b.impl.CreateAdd(a, c, ""), x.Type}
 }

@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/compat"
-	"github.com/xgo-dev/llgo/cmd/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 )

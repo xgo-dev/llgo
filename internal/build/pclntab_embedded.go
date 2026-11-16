@@ -58,8 +58,17 @@ func linkedPCLNData(original pclnmap.Data, analysis pclnpost.ExternalAnalysis) (
 		data.EntrySites[i] = pclnmap.Site{PCOffset: site.PCOffset, ID: site.ID}
 	}
 	if original.GOARCH == "wasm" {
-		if len(original.Table.PCLines) != 0 || len(analysis.PCLineSites) != 0 {
+		if len(analysis.PCLineSites) != 0 {
 			return pclnmap.Data{}, fmt.Errorf("unexpected native PC-line records in Wasm pclntab")
+		}
+		liveFunctions := make(map[uint64]bool, len(data.EntrySites))
+		for _, site := range data.EntrySites {
+			liveFunctions[site.ID] = true
+		}
+		for _, rec := range original.Table.PCLines {
+			if rec.Func != 0 && int(rec.Func) <= len(original.Table.Records) && liveFunctions[funcInfoSymbolID(original.Table.Symbol(original.Table.Records[rec.Func-1]))] {
+				data.PCSites = append(data.PCSites, pclnmap.Site{PCOffset: 1, ID: rec.ID})
+			}
 		}
 		// A fully inlined program can legitimately have no named Go bodies.
 		return pclnmap.Prune(data)

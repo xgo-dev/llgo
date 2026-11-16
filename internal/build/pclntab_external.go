@@ -36,10 +36,10 @@ func finalizeRuntimePCLN(ctx *context, out *OutFmtDetails, verbose bool) error {
 		}
 		// A successful non-external rebuild owns this conventional sibling
 		// path and must not leave a stale optional artifact behind.
-		_ = os.Remove(pclnSidecarPath(out.Out))
+		_ = os.Remove(pclnSidecarPath(debugWasmModulePath(ctx.buildConf, out.Out)))
 		return nil
 	case PCLNNone:
-		_ = os.Remove(pclnSidecarPath(out.Out))
+		_ = os.Remove(pclnSidecarPath(debugWasmModulePath(ctx.buildConf, out.Out)))
 		return nil
 	case PCLNExternal:
 		return writeExternalPCLN(ctx, out, verbose)
@@ -54,6 +54,9 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 	}
 	if ctx.pclnExternal == nil {
 		return fmt.Errorf("external pclntab metadata was not generated")
+	}
+	if ctx.buildConf.Goarch == "wasm" {
+		return writeExternalWasmPCLN(ctx, out, verbose)
 	}
 	analysis, err := pclnpost.AnalyzeExternal(out.Out)
 	if err != nil {

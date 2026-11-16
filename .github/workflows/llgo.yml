@@ -154,7 +154,7 @@ jobs:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
           # Only this compiler lane executes the LLDB integration suite. Test
-          # lanes still install the Python 3.12 demo ABI but skip the unrelated
+          # lanes still install the Python demo ABI but skip the unrelated
           # target-native debugger runtime.
           install-lldb-python: "true"
 
@@ -225,6 +225,8 @@ jobs:
           export LLGO="$RUNNER_TEMP/llgo-bin/llgo${tool_suffix}"
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
+
+          "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
           # the malloc-backed runtime too. Poison fresh allocations on glibc.
@@ -1133,6 +1135,13 @@ jobs:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
         run: python3 dev/compare_wasm_eh.py --browser
+
+      - name: Test optional WebAssembly runtime symbol maps
+        if: matrix.suite == 'runtime'
+        env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+        run: python3 dev/test_wasm_pclntab.py --browser
 
       - name: Test WebAssembly target profiles
         if: matrix.suite == 'runtime'

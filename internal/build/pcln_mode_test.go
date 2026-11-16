@@ -69,7 +69,12 @@ func TestValidatePCLNMode(t *testing.T) {
 		{name: "external unsupported OS", conf: Config{Goos: "windows", Goarch: "amd64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external unsupported linux arch", conf: Config{Goos: "linux", Goarch: "386", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external unsupported darwin arch", conf: Config{Goos: "darwin", Goarch: "riscv64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
-		{name: "external named target", conf: Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
+		{name: "external WASI target", conf: Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}},
+		{name: "external GoJS", conf: Config{Goos: "js", Goarch: "wasm", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}},
+		{name: "external Emscripten J32", conf: Config{Goos: "js", Goarch: "wasm", Target: "emscripten", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}},
+		{name: "external Emscripten J64", conf: Config{Goos: "js", Goarch: "wasm", Target: "emscripten-memory64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}},
+		{name: "external unsupported Wasm host", conf: Config{Goos: "linux", Goarch: "wasm", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
+		{name: "external WASI requires sites", conf: Config{Goos: "wasip1", Goarch: "wasm", Target: "wasi", BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, funcInfoSites: "0", wantErr: true},
 		{name: "external archive", conf: Config{Goos: "linux", Goarch: "amd64", BuildMode: BuildModeCArchive, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external shared library", conf: Config{Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeCShared, PCLNMode: PCLNExternal}, wantErr: true},
 		{name: "external generation mode", conf: Config{Goos: "linux", Goarch: "amd64", Mode: ModeGen, BuildMode: BuildModeExe, PCLNMode: PCLNExternal}, wantErr: true},
@@ -85,6 +90,28 @@ func TestValidatePCLNMode(t *testing.T) {
 			}
 			if tt.funcInfoSites == "0" && err != nil && !strings.Contains(err.Error(), llgoFuncInfoSites) {
 				t.Fatalf("validatePCLNMode() error = %v, want %s diagnostic", err, llgoFuncInfoSites)
+			}
+		})
+	}
+}
+
+func TestResolveExternalPCLNTargetPolicy(t *testing.T) {
+	t.Setenv(llgoFuncInfoSites, "1")
+	for _, tc := range []struct {
+		name  string
+		conf  Config
+		allow bool
+	}{
+		{"defer named target", Config{Target: "wasi", PCLNMode: PCLNExternal}, true},
+		{"generation", Config{Target: "wasi", Mode: ModeGen, PCLNMode: PCLNExternal}, false},
+		{"archive", Config{Target: "wasi", BuildMode: BuildModeCArchive, PCLNMode: PCLNExternal}, false},
+		{"shared", Config{Target: "wasi", BuildMode: BuildModeCShared, PCLNMode: PCLNExternal}, false},
+		{"unsupported native host", Config{Goos: "windows", PCLNMode: PCLNExternal}, false},
+		{"invalid mode", Config{Target: "wasi", PCLNMode: PCLNMode(255)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := resolveBuildConfig(&tc.conf); (err == nil) != tc.allow {
+				t.Fatalf("resolveBuildConfig() error = %v, allow %v", err, tc.allow)
 			}
 		})
 	}

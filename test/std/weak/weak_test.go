@@ -94,11 +94,13 @@ func makeCollectableWeakPointer(value int, register func(*int)) weak.Pointer[int
 	return wp
 }
 
-//go:noinline
 func weakPointerCleared(wp weak.Pointer[int]) bool {
-	// Keep the temporary strong pointer out of the frame that starts the next
-	// collection. Conservative collectors may otherwise retain its stale bits.
-	return wp.Value() == nil
+	// Resolve on a separate goroutine so neither stack slots nor registers on
+	// the collecting thread retain a temporary strong pointer. A noinline call
+	// alone does not guarantee that conservative roots have been overwritten.
+	result := make(chan bool, 1)
+	go func() { result <- wp.Value() == nil }()
+	return <-result
 }
 
 func TestPointerZeroValue(t *testing.T) {
