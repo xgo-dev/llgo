@@ -272,6 +272,7 @@ func (g Global) Init(v Expr) {
 	}
 	elem := g.prog.Elem(g.Type)
 	g.impl.SetInitializer(g.prog.toStorageConstant(elem, v.impl))
+	g.excludePointerFreeGlobal()
 }
 
 func (g Global) InitNil() {
@@ -281,6 +282,7 @@ func (g Global) InitNil() {
 		return
 	}
 	g.impl.SetInitializer(llvm.ConstNull(g.impl.GlobalValueType()))
+	g.excludePointerFreeGlobal()
 }
 
 func (g Global) ReplaceAllUsesWith(v Expr) {

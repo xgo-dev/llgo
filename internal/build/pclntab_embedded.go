@@ -268,6 +268,8 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		array.SetGlobalConstant(true)
 		array.SetUnnamedAddr(true)
 		array.SetAlignment(old.Alignment())
+		array.SetSection(old.Section())
+		array.SetComdat(old.Comdat())
 		old.ReplaceAllUsesWith(array)
 		old.EraseFromParentAsGlobal()
 		return nil

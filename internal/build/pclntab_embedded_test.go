@@ -56,6 +56,14 @@ func TestEmbeddedPCLNPruningScope(t *testing.T) {
 
 func TestRewriteEmbeddedPCLNIRRemapsAllTables(t *testing.T) {
 	ir, data := embeddedPCLNFixture(t)
+	// The metadata relink must retain the root-scan exclusion.
+	lines := strings.Split(ir, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "@") && strings.Contains(line, " constant [") {
+			lines[i] = strings.Replace(line, ", align ", ", section \"llgo_gc_noscan\", align ", 1)
+		}
+	}
+	ir = strings.Join(lines, "\n")
 	data.EntrySites = []pclnmap.Site{{PCOffset: 16, ID: funcInfoSymbolID("main.live")}}
 	pruned, err := pclnmap.Prune(data)
 	if err != nil {
@@ -73,6 +81,9 @@ func TestRewriteEmbeddedPCLNIRRemapsAllTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	ir = string(raw)
+	if strings.Count(ir, `section "llgo_gc_noscan"`) < 6 {
+		t.Fatal("metadata relink lost root-scan exclusions", ir)
+	}
 	for _, forbidden := range []string{"DeadOnly2420", "/dead", ".unpruned"} {
 		if strings.Contains(ir, forbidden) {
 			t.Fatalf("rewritten entry retains %q", forbidden)

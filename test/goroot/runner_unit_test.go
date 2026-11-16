@@ -389,8 +389,6 @@ func TestObservedFailuresHaveXFailClassifications(t *testing.T) {
 		{version: "go1.26.7", platform: "windows-msvc/amd64", tc: testCase{RelPath: "linkmain_run.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue23305.go", Directive: "run"}},
 		{version: "go1.26.7", platform: "windows-msvc/386", tc: testCase{RelPath: "fixedbugs/issue42032.go", Directive: "run"}},
-		{version: "go1.27.0", platform: "J32-GoJS", tc: testCase{RelPath: "init1.go", Directive: "run"}},
-		{version: "go1.27.0", platform: "J32-Emscripten", tc: testCase{RelPath: "init1.go", Directive: "run"}},
 	}
 	for _, tt := range tests {
 		if match, _ := cfg.Match(tt.version, tt.platform, tt.tc); !match {
@@ -667,11 +665,11 @@ func TestRangerCasesAreGloballyNotApplicable(t *testing.T) {
 	}
 }
 
-func TestWasmExpectationsRespectProfile(t *testing.T) {
+func TestWasmInitCollectionDoesNotHaveXFail(t *testing.T) {
 	cfg := loadXFailConfig(t, repoRoot(t), filepath.Join("test", "goroot", "xfail.yaml"))
 	for _, profile := range []string{"J32-GoJS", "J32-Emscripten", "J64-Emscripten", "W32-WASI"} {
 		for _, version := range []string{"go1.26.7", "go1.27.0"} {
-			want := profile == "J32-GoJS" || profile == "J32-Emscripten"
+			want := false
 			got, _ := cfg.Match(version, profile, testCase{RelPath: "init1.go", Directive: "run"})
 			if got != want {
 				t.Errorf("init1.go %s %s: xfail = %v, want %v", profile, version, got, want)

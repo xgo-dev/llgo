@@ -359,11 +359,3 @@ xfails:
   - directive: run
     case: heapsampling.go
     reason: LLGo does not currently report the heap-profile samples required by this runtime test
-  - platform: J32-GoJS
-    directive: run
-    case: init1.go
-    reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold
-  - platform: J32-Emscripten
-    directive: run
-    case: init1.go
-    reason: the conservative linear collector retains enough loop-temporary pointers to grow memory past this Go allocator threshold

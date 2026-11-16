@@ -15,10 +15,12 @@ var (
 	globalRoot *payload
 	garbage    *payload
 	liveChunks [][]byte
+	largeGarbage []byte
 	stopLoop   atomic.Bool
 )
 
 func main() {
+	testRepeatedLargeAllocations()
 	testReadMemStatsNil()
 	if testAlignedAlloc() == 0 {
 		panic("aligned allocation failed")
@@ -39,6 +41,31 @@ func main() {
 	testReclamation()
 	testHeapGrowth()
 	println("wasm gc ok")
+}
+
+// Packed pclntab constants used to act as conservative Memory32 roots and
+// retain almost every large allocation. Mutable Go and C globals must still
+// be scanned; the other tests below check their liveness across collection.
+func testRepeatedLargeAllocations() {
+	const chunkSize = 1 << 20
+	bytes := make([]byte, chunkSize)
+	for i := range bytes {
+		bytes[i] = byte(i%10 + '0')
+	}
+	text := string(bytes)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < 1000; i++ {
+		largeGarbage = []byte(text)
+	}
+	runtime.ReadMemStats(&after)
+	if after.Sys-before.Sys >= 1000*chunkSize || after.NumGC == before.NumGC {
+		panic("unreachable large allocations were retained by constant data")
+	}
+	if len(largeGarbage) != chunkSize || largeGarbage[12345] != byte(12345%10+'0') {
+		panic("live large allocation was reclaimed")
+	}
+	largeGarbage = nil
 }
 
 func testCGlobalRoot() {

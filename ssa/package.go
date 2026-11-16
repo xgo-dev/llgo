@@ -1196,6 +1196,9 @@ func (p Package) createGlobalBytes(v []byte) (ret llvm.Value) {
 	global.SetInitializer(prog.ctx.ConstString(string(v), false))
 	global.SetLinkage(llvm.PrivateLinkage)
 	global.SetAlignment(1)
+	if prog.GCRootsEnabled() && prog.Target().GOARCH == "wasm" {
+		global.SetSection(WasmGCNoScanSection)
+	}
 	return llvm.ConstInBoundsGEP(typ, global, []llvm.Value{prog.Val(0).impl})
 }
 
