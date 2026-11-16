@@ -417,7 +417,7 @@ llgo run .
 
 Unix release archives include Clang, LLD, and LLVM runtime libraries.
 
-### Install with a script
+### Quick install
 
 **macOS and Linux:**
 
