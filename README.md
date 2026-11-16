@@ -404,25 +404,51 @@ llgo run .
 
 ## How to install
 
-Install a stable release using the package manager or installer for your host.
-For source builds and development environments, see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Install the latest stable release with the installer for your platform.
 
-### macOS
-
-Install the native compiler and linker with [Homebrew](https://brew.sh), then
-run the release installer. Xcode Command Line Tools must be installed.
+**macOS and Linux (amd64 or arm64):**
 
 ```sh
-brew install llvm@22 lld@22
 curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
+```
+
+The installers select the host architecture and install Go and native libraries
+by default. On Windows, the installer also sets up the native C/C++ toolchain;
+x86 requires separate dependency setup. See [Windows releases](WINDOWS.md)
+for MSVC/MinGW profiles and architecture-specific requirements.
+
+On macOS, Homebrew and Xcode Command Line Tools must be installed first.
+On macOS and Linux, the installer does not install LLVM/Clang/LLD 22; these
+must be available before compiling native programs. See the platform notes
+below or [host dependency setup](CONTRIBUTING.md#manual-development-setup).
+
+Open a new terminal after installation, then verify:
+
+```sh
 llgo version
 ```
 
-The installer installs LLGo, Go, and native C libraries. Native macOS programs
-require a macOS SDK older than 27; LLGo selects a compatible installed SDK.
+For source builds and development environments, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Linux
+### macOS prerequisites
+
+Install the native compiler and linker with [Homebrew](https://brew.sh):
+
+```sh
+brew install llvm@22 lld@22
+```
+
+Native macOS programs require a macOS SDK older than 27; LLGo selects a
+compatible installed SDK.
+
+### Linux packages (alternative)
 
 The APT/YUM repositories below use HTTPS and disable package signature
 verification (`trusted=yes` / `gpgcheck=0`).
@@ -467,32 +493,10 @@ llgo version
 
 With YUM, use `sudo yum install -y llgo` for the installation command.
 
-### Windows
+### MSYS2
 
-Run the release installer in PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
-llgo version
-```
-
-The installer selects the host architecture and sets up Go, the native C/C++
-toolchain, and libraries. See [Windows releases](WINDOWS.md) for supported
-MSVC/MinGW profiles and architecture-specific requirements.
-
-### Other Linux distributions and MSYS2
-
-On Linux, or in an MSYS2 `CLANG64`/`CLANGARM64` shell on Windows:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
-llgo version
-```
-
-The Unix installer installs LLGo and, by default, Go and native C libraries;
-it does not install LLVM/Clang/LLD 22. These must be available before compiling
-native programs. For host dependency setup, see
-[manual setup](CONTRIBUTING.md#manual-development-setup).
+In an MSYS2 `CLANG64` or `CLANGARM64` shell on Windows, use the Bash installer
+above. It selects the MinGW profile and uses PowerShell to complete installation.
 
 ## Go environment
 
