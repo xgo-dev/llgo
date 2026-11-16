@@ -3905,6 +3905,7 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 }
 
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
 	applyWASILTOFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
@@ -3915,6 +3916,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 }
 
 func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applyWASILTOFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if !useInMemoryNativeCodegen(ctx) {
