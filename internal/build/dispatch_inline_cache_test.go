@@ -38,6 +38,12 @@ func TestDispatchInlineBackendOptionParsing(t *testing.T) {
 		{[]string{"-Wl,--mllvm,-align-loops=16,--mllvm,-inline-threshold=20"}, false, false},
 		{[]string{"-Wl,--mllvm,-inline-threshold=20"}, false, true},
 		{[]string{"-Wl,--mllvm=-inline-threshold=20"}, false, true},
+		{[]string{"-Wl,-plugin-opt=-inline-threshold=20"}, false, true},
+		{[]string{"-Wl,--plugin-opt=-inline-threshold=20"}, false, true},
+		{[]string{"-Wl,-plugin-opt=-align-loops=16"}, true, false},
+		{[]string{"-Wl,--plugin-opt=-align-loops=16"}, true, false},
+		{[]string{"-Wl,-plugin-opt=O2,--plugin-opt=jobs=4"}, true, true},
+		{[]string{"-Wl,-plugin-opt=inline-threshold=20"}, true, true},
 		{[]string{"-Wl,-mllvm=-x86-align-branch-boundary=64"}, true, false},
 		{[]string{"-Wl,--mllvm=-x86-align-branch-boundary=64"}, true, false},
 	} {
@@ -55,6 +61,8 @@ func TestDispatchInlineBackendOptionParsing(t *testing.T) {
 		"-Wl,-mllvm,-inline-threshold=20",
 		"-Wl,--mllvm,-inline-threshold=20",
 		"-Wl,--mllvm=-inline-threshold=20",
+		"-Wl,-plugin-opt=-inline-threshold=20",
+		"-Wl,--plugin-opt=-inline-threshold=20",
 	} {
 		c := dispatchInlineContext()
 		c.commands.environ = []string{"LDFLAGS=" + flags}

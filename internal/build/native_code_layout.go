@@ -56,11 +56,17 @@ func (c *context) nativeBackendOptions() []string {
 			value = false
 		} else {
 			introducer, operand, assigned := strings.Cut(token, "=")
-			if introducer != "-mllvm" && introducer != "--mllvm" {
-				continue
-			}
-			if !assigned {
-				value = true
+			switch introducer {
+			case "-mllvm", "--mllvm":
+				if !assigned {
+					value = true
+					continue
+				}
+			case "-plugin-opt", "--plugin-opt":
+				if !assigned || !strings.HasPrefix(operand, "-") {
+					continue
+				}
+			default:
 				continue
 			}
 			option = operand
