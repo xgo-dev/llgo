@@ -1,6 +1,6 @@
 # Working on LLGo
 
-Read [CONTRIBUTION.md](CONTRIBUTION.md) for environment setup, repository
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, repository
 structure, test selection, and submission checks. Keep those instructions there.
 
 ## Make the repository a reliable reference

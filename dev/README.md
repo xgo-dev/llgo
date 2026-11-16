@@ -3,15 +3,15 @@
 This directory contains reproducible host environments and scripts for running
 LLGo locally or inside reusable Linux dev containers.
 
-For test selection and pull-request expectations, see [CONTRIBUTION.md](../CONTRIBUTION.md).
+For test selection and pull-request expectations, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Host development environment
 
-See [CONTRIBUTION.md](../CONTRIBUTION.md#development-environments) for mise,
+See [CONTRIBUTING.md](../CONTRIBUTING.md#development-environments) for mise,
 Pixi, platform dependencies, environment checks, and lockfile updates. The
-[manual setup](../CONTRIBUTION.md#manual-development-setup) covers a host
+[manual setup](../CONTRIBUTING.md#manual-development-setup) covers a host
 managed without an environment tool. For Docker setup, see
-[Linux containers](../CONTRIBUTION.md#linux-containers).
+[Linux containers](../CONTRIBUTING.md#linux-containers).
 
 ## Run on the host
 

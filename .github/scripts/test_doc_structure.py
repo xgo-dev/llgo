@@ -5,7 +5,7 @@ from check_doc_structure import check_readme
 
 class ReadmeAudienceTests(unittest.TestCase):
     def check(self, content):
-        return check_readme(content + "\n[Contributing](CONTRIBUTION.md)\n")
+        return check_readme(content + "\n[Contributing](CONTRIBUTING.md)\n")
 
     def test_user_installation_and_usage(self):
         self.assertEqual(self.check("""## How to install
@@ -44,7 +44,7 @@ irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
 
     def test_prose_can_link_to_development_setup(self):
         self.assertEqual(self.check(
-            "For mise or Pixi, see [development setup](CONTRIBUTION.md)."
+            "For mise or Pixi, see [development setup](CONTRIBUTING.md)."
         ), [])
 
     def test_contributor_link_required(self):

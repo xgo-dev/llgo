@@ -75,6 +75,21 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn('$GITHUB_ENV', install['run'])
         self.assertNotIn('$GITHUB_PATH', install['run'])
 
+    def test_documentation_checks_cover_user_and_contributor_guides(self):
+        steps = load("doc-link-checker.yml")["jobs"]["doc_verify"]["steps"]
+        commands = "\n".join(step.get("run", "") for step in steps)
+        for filename in ("README.md", "CONTRIBUTING.md"):
+            self.assertIn(f"embedme --verify {filename}", commands)
+        self.assertIn("python3 .github/scripts/check_doc_structure.py", commands)
+        link_checks = [step for step in steps
+                       if step.get("uses", "").startswith("lycheeverse/lychee-action@")]
+        self.assertEqual(len(link_checks), 2)
+        for step in link_checks:
+            args = step["with"]["args"].split()
+            self.assertIn("--include-fragments", args)
+            self.assertTrue({"README.md", "CONTRIBUTING.md", "dev/README.md",
+                             "AGENTS.md", "CLAUDE.md"}.issubset(args))
+
     def test_unix_archives_and_system_packages_bundle_pinned_esp(self):
         root = WORKFLOWS.parents[1]
         config = yaml.safe_load((root / '.goreleaser.yaml').read_text())

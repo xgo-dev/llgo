@@ -56,7 +56,7 @@ jobs:
       - name: Verify embedded code
         run: |
           embedme --verify README.md
-          embedme --verify CONTRIBUTION.md
+          embedme --verify CONTRIBUTING.md
 
       - name: Link Checker
         id: lychee
@@ -67,7 +67,7 @@ jobs:
         with:
           # pkg.go.dev may generate package documentation on demand. Space
           # requests to the same host while retaining strict status checks.
-          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTION.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
+          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
 
       - name: Wait before retrying failed links
         if: steps.lychee.outcome == 'failure'
@@ -77,4 +77,4 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTION.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
+          args: --include-fragments --max-concurrency 3 --host-concurrency 1 --host-request-interval 1s --retry-wait-time 15 README.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md

@@ -39,10 +39,10 @@ def check_readme(source: str) -> list[str]:
             not fence and DEVELOPMENT_HEADING.search(line)
         ):
             errors.append(
-                f"README.md:{number}: move development setup to CONTRIBUTION.md"
+                f"README.md:{number}: move development setup to CONTRIBUTING.md"
             )
-    if not re.search(r"\]\(CONTRIBUTION\.md(?:#[^)]+)?\)", source):
-        errors.append("README.md: link to CONTRIBUTION.md for contributor setup")
+    if not re.search(r"\]\(CONTRIBUTING\.md(?:#[^)]+)?\)", source):
+        errors.append("README.md: link to CONTRIBUTING.md for contributor setup")
     return errors
 
 

@@ -32,7 +32,7 @@ LLGo is compatible with the C ecosystem through the C **Application Binary Inter
 
 LLGo is compatible with Go 1.20+ source code and supports the complete Go 1.27 language syntax, as well as `cgo`.
 
-See [compatibility coverage](CONTRIBUTION.md#choose-tests-for-the-change) for
+See [compatibility coverage](CONTRIBUTING.md#choose-tests-for-the-change) for
 validation details and recorded differences from the standard Go compiler.
 
 ### Runtime
@@ -406,7 +406,7 @@ llgo run .
 
 Install a stable release using the package manager or installer for your host.
 For source builds and development environments, see
-[CONTRIBUTION.md](CONTRIBUTION.md).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### macOS
 
@@ -492,7 +492,7 @@ llgo version
 The Unix installer installs LLGo and, by default, Go and native C libraries;
 it does not install LLVM/Clang/LLD 22. These must be available before compiling
 native programs. For host dependency setup, see
-[manual setup](CONTRIBUTION.md#manual-development-setup).
+[manual setup](CONTRIBUTING.md#manual-development-setup).
 
 ## Go environment
 
@@ -518,5 +518,5 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 
 ## Contributing
 
-See [CONTRIBUTION.md](CONTRIBUTION.md) for development environments, source
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development environments, source
 builds, repository structure, testing, and the pull-request workflow.
