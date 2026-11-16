@@ -304,6 +304,13 @@ jobs:
             (cd runtime && "$LLGO" test -v -timeout=2m ./internal/thread)
           fi
 
+      - name: Select supported Python for Codecov on macOS
+        if: ${{ runner.os == 'macOS' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
+        uses: actions/setup-python@v7
+        with:
+          # The runner default can be newer than Codecov's native dependencies.
+          python-version: "3.13"
+
       - name: Install Codecov CLI with Windows host Python
         if: ${{ runner.os == 'Windows' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
         id: windows_codecov
