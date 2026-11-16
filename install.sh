@@ -205,7 +205,7 @@ check_linux_dependencies() {
         done
     fi
     if ((${#missing[@]})); then
-        die "missing Linux system dependencies: ${missing[*]}; install the packages listed at https://github.com/$LLGO_REPOSITORY#linux-dependencies, then rerun the installer (it does not invoke sudo)"
+        die "missing Linux system dependencies: ${missing[*]}; install the packages listed at https://github.com/$LLGO_REPOSITORY#linux-dependencies, then rerun the installer"
     fi
 }
 
@@ -486,8 +486,8 @@ update_shell_path() {
 
 usage() {
     cat <<'EOF'
-Install the latest LLGo release and set up user-installable dependencies.
-Linux system dependencies must already be installed; this script never invokes sudo.
+Install the latest LLGo release and configure dependencies.
+Install Linux system dependencies before running this script.
 
 Usage: install.sh [--version VERSION] [--root DIRECTORY] [--no-deps]
 

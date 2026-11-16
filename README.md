@@ -406,22 +406,16 @@ llgo run .
 
 ### System requirements
 
-- **macOS (Intel or Apple Silicon):** install [Homebrew](https://brew.sh) first.
-  Xcode Command Line Tools and a macOS SDK older than 27 are required. If the
-  command-line tools are missing, the installer opens Apple's installation
-  dialog; finish that installation and rerun the script.
-- **Linux (amd64 or arm64):** Bash, curl, tar, a system C/C++ development
-  environment, pkg-config, and native libraries are required. Install the
-  [Linux dependencies](#linux-dependencies) before running the script. Linux
-  release archives use glibc; for Alpine/musl, see
-  [source builds](CONTRIBUTING.md#manual-development-setup).
-- **Windows:** use PowerShell and WinGet for automatic dependency setup on
-  amd64 and arm64; x86 requires a separately configured toolchain. See
-  [Windows requirements](WINDOWS.md) for MSVC/MinGW profiles and details.
+- **macOS (Intel or Apple Silicon):** [Homebrew](https://brew.sh), Xcode Command
+  Line Tools, and a macOS SDK older than 27. The installer can open the Xcode
+  tools installation dialog; complete it and rerun the script.
+- **Linux (amd64 or arm64, glibc):** Bash, curl, tar, C/C++ development tools,
+  pkg-config, and the [native libraries](#linux-dependencies).
+  For Alpine/musl, [build from source](CONTRIBUTING.md#manual-development-setup).
+- **Windows:** PowerShell and WinGet for amd64/arm64. For x86 and toolchain
+  requirements, see [WINDOWS.md](WINDOWS.md).
 
-The Unix release archives include Clang, LLD, and LLVM runtime libraries;
-a separate LLVM development installation is needed for
-[source builds](CONTRIBUTING.md#build-dependencies).
+Unix release archives include Clang, LLD, and LLVM runtime libraries.
 
 ### Install with a script
 
@@ -431,21 +425,13 @@ a separate LLVM development installation is needed for
 curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
 ```
 
-The Bash installer installs LLGo in your user directory, ensures Go is
-available, and updates your shell profile. On macOS it installs missing native
-libraries through the existing Homebrew installation. On Linux it checks the system dependencies.
-It does not install Homebrew or invoke sudo.
-
 **Windows (PowerShell):**
 
 ```powershell
 irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
 ```
 
-The PowerShell installer selects the host architecture and sets up Go, the
-native C/C++ toolchain, and libraries. In an MSYS2 `CLANG64` or `CLANGARM64`
-shell, use the Bash command above; it delegates to PowerShell with the MinGW
-profile selected.
+For MSYS2, use the Bash command in a `CLANG64` or `CLANGARM64` shell.
 
 Open a new terminal after installation, then verify:
 
@@ -456,25 +442,18 @@ llgo version
 ### Manual installation
 
 1. Install [Go](https://go.dev/dl/) and the platform dependencies below.
-2. Download the archive for your host from [GitHub releases](https://github.com/xgo-dev/llgo/releases)
-   and verify it against the release's checksums. Unix releases use
-   `llgo<VERSION>.<OS>-<ARCH>.tar.gz`; Windows releases use ZIP archives.
-3. Extract the entire archive, keeping `bin`, `runtime`, `targets`, and
-   `crosscompile` together. Add its `bin` directory to `PATH`.
-4. Open a new terminal and run `llgo version`.
+2. Download your host's archive from [GitHub releases](https://github.com/xgo-dev/llgo/releases)
+   and verify its checksums.
+3. Extract the entire archive and add its `bin` directory to `PATH`.
+   Open a new terminal and run `llgo version`.
 
 #### macOS dependencies
-
-After installing Homebrew and the Xcode tools, install Go and native libraries:
 
 ```sh
 brew install go bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib
 ```
 
 #### Linux dependencies
-
-These commands install system dependencies; LLGo itself is installed using the
-script or release archive above.
 
 On Debian/Ubuntu:
 
@@ -507,11 +486,9 @@ sudo zypper --non-interactive install gcc gcc-c++ make ca-certificates curl pkg-
 
 #### Windows dependencies
 
-Follow [WINDOWS.md](WINDOWS.md) for native toolchain, SDK/CRT, libraries, and
-pkg-config setup.
+See [WINDOWS.md](WINDOWS.md).
 
-For building LLGo from source or using mise/Pixi, see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Go environment
 
