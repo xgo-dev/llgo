@@ -104,6 +104,32 @@ func TestConfiguredCommandPrefixes(t *testing.T) {
 	}
 }
 
+func TestCompileWithoutLTOPreservesTargetFlags(t *testing.T) {
+	t.Setenv("CCFLAGS", "-fvirtual-function-elimination -pthread")
+	t.Setenv("CFLAGS", "-fwhole-program-vtables -DTEST=1")
+	cmd := NewCompiler(Config{
+		CC:      os.Args[0],
+		CCArgs:  []string{"--driver-mode=g++", "-fwhole-program-vtables"},
+		CCFLAGS: []string{"--target=wasm32-unknown-wasip1", "-flto=full", "-fvirtual-function-elimination"},
+		CFLAGS:  []string{"-fvisibility=hidden"},
+	})
+	cmd.Env = append(os.Environ(), clangTestHelperEnv+"=1")
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	args := []string{"-c", "pcln.ll", "-o", "pcln.o"}
+	ordinary := cmd.CompileArguments(args...)
+	if err := cmd.CompileWithoutLTO(args...); err != nil {
+		t.Fatal(err)
+	}
+	want := "--driver-mode=g++ -pthread -DTEST=1 --target=wasm32-unknown-wasip1 -flto=full -fvisibility=hidden -c pcln.ll -o pcln.o -fno-lto"
+	if got := strings.TrimSpace(output.String()); got != want {
+		t.Fatalf("native compile arguments = %q, want %q", got, want)
+	}
+	if got := cmd.CompileArguments(args...); !slices.Equal(got, ordinary) {
+		t.Fatalf("ordinary compile arguments changed: got %q, want %q", got, ordinary)
+	}
+}
+
 func TestCXXCompilerFallsBackToCCCommand(t *testing.T) {
 	config := Config{CC: os.Args[0], CCArgs: []string{"--cc-prefix"}}
 	cmd := NewCXXCompiler(config)

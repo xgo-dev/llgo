@@ -43,7 +43,16 @@ func TestPackagePCLNArchive(t *testing.T) {
 				src.EmitPCLineInfo(1<<63+7, "p.Trace.__llgo_fmv_avx2", "路径/p.go", 14, 3)
 				wantFuncs := readFuncInfo(src.Module())
 				wantLines := readPCLineInfo(src.Module())
-				ctx := &context{prog: prog, buildConf: &Config{Goos: target.goos, Goarch: target.goarch, LTO: mode, PCLNMode: PCLNEmbedded}, crossCompile: crosscompile.Export{LLVMTarget: target.triple, CC: clang, CCFLAGS: []string{"--target=" + target.triple, "-flto"}}}
+				ccflags := []string{"--target=" + target.triple}
+				if mode.Enabled() {
+					ccflags = append(ccflags, mode.ClangFlag())
+				}
+				if target.goarch == "wasm" && mode == lto.Full {
+					// Match the driver's Full LTO + GlobalDCE flags. Clang
+					// rejects them if the native carrier only adds -fno-lto.
+					ccflags = append(ccflags, "-fvirtual-function-elimination", "-fwhole-program-vtables")
+				}
+				ctx := &context{prog: prog, buildConf: &Config{Goos: target.goos, Goarch: target.goarch, LTO: mode, PCLNMode: PCLNEmbedded}, crossCompile: crosscompile.Export{LLVMTarget: target.triple, CC: clang, CCFLAGS: ccflags}}
 				pkg := &aPackage{Package: &packages.Package{ID: "p", PkgPath: "example.com/p", Name: "p"}, LPkg: src}
 				if mode == lto.Off {
 					// A valid target object without our section is not a mapping

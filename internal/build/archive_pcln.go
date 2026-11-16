@@ -129,7 +129,7 @@ func emitPCLNObject(ctx *context, pkg Package, carrier llvm.Module) (llvm.Memory
 		return llvm.MemoryBuffer{}, err
 	}
 	obj := filepath.Join(dir, "pcln.o")
-	if err := ctx.irCompiler().Compile("-c", input, "-o", obj, "-fno-lto", "-Wno-override-module"); err != nil {
+	if err := ctx.irCompiler().CompileWithoutLTO("-c", input, "-o", obj, "-Wno-override-module"); err != nil {
 		return llvm.MemoryBuffer{}, err
 	}
 	return llvm.NewMemoryBufferFromFile(obj)
