@@ -35,9 +35,9 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 		{"Float32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
 		{"Int64x4", "ConvertToFloat64() Float64x4", llssa.SIMDConvert},
 		{"Uint32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
-		{"Float64x4", "ConvertToFloat32() Float32x4", llssa.SIMDUnimplemented},
+		{"Float64x4", "ConvertToFloat32() Float32x4", llssa.SIMDConvert},
 		{"Float64x4", "ConvertToFloat32() Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConvertToFloat64() Float64x4", llssa.SIMDUnimplemented},
+		{"Float32x4", "ConvertToFloat64() Float64x4", llssa.SIMDConvert},
 		{"Uint64x4", "carrylessMultiply(uint8, Uint64x4) Uint64x4", llssa.SIMDCarrylessMultiply},
 		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llssa.SIMDUnimplemented},
 		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llssa.SIMDFMA},
@@ -73,7 +73,7 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 		{"Int32x8", "InterleaveHiGrouped(Int32x4) Int32x8", llssa.SIMDUnimplemented},
 		{"Int32x8", "InterleaveHiGrouped(Int32x8) Uint32x8", llssa.SIMDUnimplemented},
 		{"Float32x4", "InterleaveLo(Float32x4) Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "Ceil() Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "Ceil() Float32x8", llssa.SIMDCeil},
 
 		// Broadcasting may widen, but must preserve the element type and
 		// match the lane count encoded in the declaration name.

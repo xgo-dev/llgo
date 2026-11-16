@@ -22,7 +22,7 @@ architecture.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
   low-half multiplication, and carryless multiplication.
-- Integer low/high-lane extension, saturating narrowing with zero-filled upper
+- Integer low/high-lane extension, truncating and saturating narrowing with zero-filled upper
   lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
   unsigned saturation follow each architecture's official declarations. The
   current WASM API provides extension methods but no saturating narrowing methods.
@@ -51,8 +51,11 @@ general feature-combination FMV, and 512-bit vectors remain outside this stage.
 The initial amd64 SIMD256 coverage is described below.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
-`SaturateTo`, and `SaturateTo*Concat` declaration. Shared cases run under official
-Go and LLGo; AMD64 unary saturation requires AVX512 in the official compiler,
+`SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
+extends coverage to 128/256-bit `ExtendTo`, cross-width `ExtendLo`, `TruncTo`,
+saturation and grouped concatenation, plus ARM64/WASM low-lane conversions.
+Shared cases run under official Go and LLGo. AMD64 unary saturation, truncation,
+and several 64-bit/unsigned conversions require AVX512 in the official compiler,
 so those cases use scalar references under LLGo at the v1 baseline. LLVM
 verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
 WASM, including callable intrinsic definitions. This does not add wider-vector
@@ -101,9 +104,12 @@ group. Horizontal pairwise addition and subtraction also operate independently
 within each 128-bit group. `InterleaveLoGrouped` and `InterleaveHiGrouped` likewise
 interleave integer lanes independently within each 128-bit group.
 The bridge call-graph test covers all 350 entries in Go 1.27.0, including
-their private intrinsic dependencies. Cross-width and lane-count-changing
-conversions, integer resizing, and other wide target-specific operations remain
-separate stages; unimplemented declarations retain the recoverable panic.
+their private intrinsic dependencies. The applicable 128/256-bit numeric
+conversions, integer extension/truncation/saturation, grouped concatenating
+saturation and 256-bit floating rounding are also implemented. Shape checks
+preserve selected lanes, zero-filled upper lanes and 128-bit group order;
+invalid floating-to-integer inputs retain the architecture's defined results.
+Remaining target-specific operations and SIMD512 retain the recoverable panic.
 
 Wide Go parameters and results use an explicit memory carrier on amd64,
 including indirect calls, cross-package calls and multiple-result tuples.
@@ -327,7 +333,8 @@ On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
 The same overrides also exercise integer extension and narrowing, horizontal
-pair operations, and integer interleaving.
+pair operations, integer interleaving, numeric conversions, float widening/narrowing,
+and 256-bit rounding.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.

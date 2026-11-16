@@ -86,6 +86,10 @@ const (
 	SIMDConcatOdd
 	SIMDInterleaveEven
 	SIMDInterleaveOdd
+	SIMDExtend
+	SIMDTruncate
+	SIMDSaturateConcatGrouped
+	SIMDConvertLo
 	SIMDConcatAddPairs
 	SIMDConcatAddPairsGrouped
 	SIMDConcatSubPairs
@@ -254,9 +258,9 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdStoreMasked(args[0], args[1], args[2])
 	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
 		return b.simdPermute(op, args[0], args[1])
-	case SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat:
+	case SIMDExtend, SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat, SIMDSaturateConcatGrouped, SIMDTruncate:
 		return b.simdIntegerResize(op, result, args)
-	case SIMDConvert:
+	case SIMDConvert, SIMDConvertLo:
 		return b.simdConvert(result, args[0])
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:
 		return b.simdShift(op, args[0], args[1])
