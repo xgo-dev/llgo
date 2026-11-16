@@ -404,13 +404,37 @@ llgo run .
 
 ## How to install
 
-Install the latest stable release with the installer for your platform.
+### System requirements
 
-**macOS and Linux (amd64 or arm64):**
+- **macOS (Intel or Apple Silicon):** install [Homebrew](https://brew.sh) first.
+  Xcode Command Line Tools and a macOS SDK older than 27 are required. If the
+  command-line tools are missing, the installer opens Apple's installation
+  dialog; finish that installation and rerun the script.
+- **Linux (amd64 or arm64):** Bash, curl, tar, a system C/C++ development
+  environment, pkg-config, and native libraries are required. Install the
+  [Linux dependencies](#linux-dependencies) before running the script. Linux
+  release archives use glibc; for Alpine/musl, see
+  [source builds](CONTRIBUTING.md#manual-development-setup).
+- **Windows:** use PowerShell and WinGet for automatic dependency setup on
+  amd64 and arm64; x86 requires a separately configured toolchain. See
+  [Windows requirements](WINDOWS.md) for MSVC/MinGW profiles and details.
+
+The Unix release archives include Clang, LLD, and LLVM runtime libraries;
+a separate LLVM development installation is needed for
+[source builds](CONTRIBUTING.md#build-dependencies).
+
+### Install with a script
+
+**macOS and Linux:**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
 ```
+
+The Bash installer installs LLGo in your user directory, ensures Go is
+available, and updates your shell profile. On macOS it installs missing native
+libraries through the existing Homebrew installation. On Linux it checks the system dependencies.
+It does not install Homebrew or invoke sudo.
 
 **Windows (PowerShell):**
 
@@ -418,15 +442,10 @@ curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
 irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
 ```
 
-The installers select the host architecture and install Go and native libraries
-by default. On Windows, the installer also sets up the native C/C++ toolchain;
-x86 requires separate dependency setup. See [Windows releases](WINDOWS.md)
-for MSVC/MinGW profiles and architecture-specific requirements.
-
-On macOS, Homebrew and Xcode Command Line Tools must be installed first.
-On macOS and Linux, the installer does not install LLVM/Clang/LLD 22; these
-must be available before compiling native programs. See the platform notes
-below or [host dependency setup](CONTRIBUTING.md#manual-development-setup).
+The PowerShell installer selects the host architecture and sets up Go, the
+native C/C++ toolchain, and libraries. In an MSYS2 `CLANG64` or `CLANGARM64`
+shell, use the Bash command above; it delegates to PowerShell with the MinGW
+profile selected.
 
 Open a new terminal after installation, then verify:
 
@@ -434,69 +453,65 @@ Open a new terminal after installation, then verify:
 llgo version
 ```
 
-For source builds and development environments, see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+### Manual installation
 
-### macOS prerequisites
+1. Install [Go](https://go.dev/dl/) and the platform dependencies below.
+2. Download the archive for your host from [GitHub releases](https://github.com/xgo-dev/llgo/releases)
+   and verify it against the release's checksums. Unix releases use
+   `llgo<VERSION>.<OS>-<ARCH>.tar.gz`; Windows releases use ZIP archives.
+3. Extract the entire archive, keeping `bin`, `runtime`, `targets`, and
+   `crosscompile` together. Add its `bin` directory to `PATH`.
+4. Open a new terminal and run `llgo version`.
 
-Install the native compiler and linker with [Homebrew](https://brew.sh):
+#### macOS dependencies
+
+After installing Homebrew and the Xcode tools, install Go and native libraries:
 
 ```sh
-brew install llvm@22 lld@22
+brew install go bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib
 ```
 
-Native macOS programs require a macOS SDK older than 27; LLGo selects a
-compatible installed SDK.
+#### Linux dependencies
 
-### Linux packages (alternative)
+These commands install system dependencies; LLGo itself is installed using the
+script or release archive above.
 
-The APT/YUM repositories below use HTTPS and disable package signature
-verification (`trusted=yes` / `gpgcheck=0`).
-
-#### Debian/Ubuntu
-
-The DEB contains LLGo's compiler, runtime, targets, licenses and a pinned ESP
-runtime archive, unpacked locally on the first embedded build. Native LLVM 22,
-Clang, LLD and native libraries are installed as system dependencies. Ubuntu
-26.04 provides LLVM 22 in its standard repositories; on older Debian/Ubuntu
-releases, enable the matching [apt.llvm.org LLVM 22 repository](https://apt.llvm.org/)
-before installing LLGo.
-
-Install the latest stable release for amd64 or arm64 from the APT repository:
+On Debian/Ubuntu:
 
 ```sh
-echo 'deb [trusted=yes] https://pkgs.goplus.org/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
 sudo apt-get update
-sudo apt-get install -y llgo
-llgo version
+sudo apt-get install -y build-essential ca-certificates curl pkg-config \
+  libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
 ```
 
-#### Fedora Linux 44 or newer
-
-The RPM contains LLGo and a pinned ESP runtime archive, unpacked locally for
-embedded builds. Native compilation uses the system LLVM/Clang/LLD 22 packages
-and native libraries.
-
-Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
+On Fedora:
 
 ```sh
-sudo tee /etc/yum.repos.d/fury.repo > /dev/null <<'EOF'
-[fury]
-name=goplus (Gemfury)
-baseurl=https://pkgs.goplus.org/yum/
-enabled=1
-gpgcheck=0
-EOF
-sudo dnf install -y llgo
-llgo version
+sudo dnf install -y gcc gcc-c++ make ca-certificates curl pkgconf-pkg-config \
+  gc-devel openssl-devel zlib-devel libffi-devel cjson-devel sqlite-devel libuv-devel
 ```
 
-With YUM, use `sudo yum install -y llgo` for the installation command.
+On Arch Linux:
 
-### MSYS2
+```sh
+sudo pacman -S --needed base-devel ca-certificates curl pkgconf gc openssl zlib \
+  libffi cjson sqlite libuv
+```
 
-In an MSYS2 `CLANG64` or `CLANGARM64` shell on Windows, use the Bash installer
-above. It selects the MinGW profile and uses PowerShell to complete installation.
+On openSUSE:
+
+```sh
+sudo zypper --non-interactive install gcc gcc-c++ make ca-certificates curl pkg-config \
+  libgc-devel libopenssl-devel zlib-devel libffi-devel libcjson-devel sqlite3-devel libuv-devel
+```
+
+#### Windows dependencies
+
+Follow [WINDOWS.md](WINDOWS.md) for native toolchain, SDK/CRT, libraries, and
+pkg-config setup.
+
+For building LLGo from source or using mise/Pixi, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Go environment
 
