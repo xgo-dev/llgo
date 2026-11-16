@@ -404,22 +404,17 @@ llgo run .
 
 ## How to install
 
-### System requirements
-
-- **macOS (Intel or Apple Silicon):** [Homebrew](https://brew.sh), Xcode Command
-  Line Tools, and a macOS SDK older than 27. The installer can open the Xcode
-  tools installation dialog; complete it and rerun the script.
-- **Linux (amd64 or arm64, glibc):** Bash, curl, tar, C/C++ development tools,
-  pkg-config, and the [native libraries](#linux-dependencies).
-  For Alpine/musl, [build from source](CONTRIBUTING.md#manual-development-setup).
-- **Windows:** PowerShell and WinGet for amd64/arm64. For x86 and toolchain
-  requirements, see [WINDOWS.md](WINDOWS.md).
-
-Unix release archives include Clang, LLD, and LLVM runtime libraries.
-
 ### Quick install
 
+- **macOS:** [Homebrew](https://brew.sh), Xcode Command Line Tools, and a macOS
+  SDK older than 27. The installer can open the Xcode tools installation dialog.
+- **Linux (glibc):** Bash, curl, tar, and sudo or root access.
+- **Windows:** PowerShell and WinGet. Use an administrator PowerShell for the
+  first installation to set up native dependencies.
+
 **macOS and Linux:**
+
+<!-- embedme doc/_readme/scripts/quick_install.sh#L3-L1000 -->
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
@@ -427,19 +422,24 @@ curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
 
 **Windows (PowerShell):**
 
+<!-- embedme doc/_readme/scripts/quick_install.ps1#L2-L2 -->
+
 ```powershell
 irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
 ```
 
-For MSYS2, use the Bash command in a `CLANG64` or `CLANGARM64` shell.
-
 Open a new terminal after installation, then verify:
+
+<!-- embedme doc/_readme/scripts/verify_install.sh#L3-L1000 -->
 
 ```sh
 llgo version
 ```
 
 ### Manual installation
+
+Unix archives include LLVM/Clang/LLD 22. For Alpine/musl, use a
+[source build](CONTRIBUTING.md#manual-development-setup).
 
 1. Install [Go](https://go.dev/dl/) and the platform dependencies below.
 2. Download your host's archive from [GitHub releases](https://github.com/xgo-dev/llgo/releases)
@@ -449,6 +449,8 @@ llgo version
 
 #### macOS dependencies
 
+<!-- embedme doc/_readme/scripts/deps_macos.sh#L3-L1000 -->
+
 ```sh
 brew install go bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib
 ```
@@ -456,6 +458,8 @@ brew install go bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib
 #### Linux dependencies
 
 On Debian/Ubuntu:
+
+<!-- embedme doc/_readme/scripts/deps_ubuntu.sh#L3-L1000 -->
 
 ```sh
 sudo apt-get update
@@ -465,6 +469,8 @@ sudo apt-get install -y build-essential ca-certificates curl pkg-config \
 
 On Fedora:
 
+<!-- embedme doc/_readme/scripts/deps_fedora.sh#L3-L1000 -->
+
 ```sh
 sudo dnf install -y gcc gcc-c++ make ca-certificates curl pkgconf-pkg-config \
   gc-devel openssl-devel zlib-devel libffi-devel cjson-devel sqlite-devel libuv-devel
@@ -472,21 +478,28 @@ sudo dnf install -y gcc gcc-c++ make ca-certificates curl pkgconf-pkg-config \
 
 On Arch Linux:
 
+<!-- embedme doc/_readme/scripts/deps_arch.sh#L3-L1000 -->
+
 ```sh
-sudo pacman -S --needed base-devel ca-certificates curl pkgconf gc openssl zlib \
+sudo pacman -Syu --needed --noconfirm base-devel ca-certificates curl pkgconf gc openssl zlib \
   libffi cjson sqlite libuv
+
 ```
 
 On openSUSE:
 
+<!-- embedme doc/_readme/scripts/deps_opensuse.sh#L3-L1000 -->
+
 ```sh
 sudo zypper --non-interactive install gcc gcc-c++ make ca-certificates curl pkg-config \
-  libgc-devel libopenssl-devel zlib-devel libffi-devel libcjson-devel sqlite3-devel libuv-devel
+  gc-devel libopenssl-devel zlib-devel libffi-devel cJSON-devel sqlite3-devel libuv-devel
+
 ```
 
 #### Windows dependencies
 
-See [WINDOWS.md](WINDOWS.md).
+Install LLVM/Clang/LLD 22 and native dependencies as described in
+[WINDOWS.md](WINDOWS.md).
 
 For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

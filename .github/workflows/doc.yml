@@ -49,23 +49,52 @@ jobs:
 
       - name: Install dependencies on macOS
         if: startsWith(matrix.os, 'macos')
-        run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/install_macos.sh
+        run: bash doc/_readme/scripts/deps_macos.sh
 
       - name: Install dependencies on Ubuntu
         if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/install_ubuntu.sh
+        run: bash doc/_readme/scripts/deps_ubuntu.sh
 
-      - name: Test doc code blocks
+      - name: Test documented dependencies on other Linux distributions
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/run.sh
+          set -euo pipefail
+          for distro in fedora arch opensuse; do
+            case "$distro" in
+              fedora) image=fedora:44 ;;
+              arch) image=archlinux:latest ;;
+              opensuse) image=opensuse/tumbleweed:latest ;;
+            esac
+            docker run --platform linux/amd64 --rm --init -v "$GITHUB_WORKSPACE:/src:ro" "$image" bash -ec '
+              sudo() { "$@"; }
+              source "/src/doc/_readme/scripts/deps_$1.sh"
+              pkg-config --exists bdw-gc libffi openssl zlib libcjson sqlite3 libuv
+            ' _ "$distro"
+          done
+
+      - name: Test README quick install
+        env:
+          LLGO_INSTALL_ROOT: ${{ runner.temp }}/llgo-readme
+          LLGO_UPDATE_PATH: "0"
+        run: |
+          set -euo pipefail
+          # Use the PR's installer for the documented download URL.
+          curl() {
+            if [[ "${!#}" == https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh ]]; then
+              cat "$GITHUB_WORKSPACE/install.sh"
+            else
+              command curl "$@"
+            fi
+          }
+          export -f curl
+          bash doc/_readme/scripts/quick_install.sh
+
+      - name: Verify README installation
+        run: |
+          test "$(cd "$(llgo env LLGO_ROOT)" && pwd -P)" = \
+            "$(cd "$RUNNER_TEMP/llgo-readme/current" && pwd -P)"
+          bash doc/_readme/scripts/verify_install.sh
+          llgo run ./doc/_readme/llgo_simple
 
   local_install:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -128,6 +157,29 @@ jobs:
         uses: ./.github/actions/setup-deps
         with:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
+
+      - name: Test README PowerShell quick install
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        env:
+          LLGO_INSTALL_ROOT: ${{ runner.temp }}/llgo-readme
+          LLGO_INSTALL_DEPS: "0"
+          LLGO_UPDATE_PATH: "0"
+          LLGO_ABI: ${{ matrix.windows_abi }}
+        run: |
+          # Use the PR's installer for the documented download URL.
+          function Invoke-RestMethod {
+            param([string]$Uri)
+            if ($Uri -ne 'https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1') {
+              throw "Unexpected installer URL: $Uri"
+            }
+            Get-Content -Raw (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')
+          }
+          . ./doc/_readme/scripts/quick_install.ps1
+          bash doc/_readme/scripts/verify_install.sh
+          if ($LASTEXITCODE -ne 0) { throw 'Installation verification failed' }
+          llgo run ./doc/_readme/llgo_simple
+          if ($LASTEXITCODE -ne 0) { throw 'Compiled program failed' }
 
       - name: Test default and full local installs
         shell: bash

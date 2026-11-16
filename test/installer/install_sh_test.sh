@@ -148,28 +148,8 @@ assert_equal "$(readlink "$install_root/current")" versions/1.2.4/linux-amd64
     install_macos_dependencies
     assert_equal "$(cat "$temporary/brew-calls")" 'install sqlite zlib'
 )
-(
-    command_exists() { return 0; }
-    pkg-config() { return 0; }
-    check_linux_dependencies
-    pkg-config() { [[ "$2" != sqlite3 ]]; }
-    if (check_linux_dependencies) >"$temporary/missing-library.log" 2>&1; then
-        fail 'missing Linux library was accepted'
-    fi
-    grep -Fq 'missing Linux system dependencies: sqlite3;' "$temporary/missing-library.log" ||
-        fail 'missing Linux library was not identified'
-)
-(
-    command_exists() { [[ "$1" != cc && "$1" != pkg-config ]]; }
-    if (check_linux_dependencies) >"$temporary/missing-tools.log" 2>&1; then
-        fail 'missing Linux tools were accepted'
-    fi
-    grep -Fq 'missing Linux system dependencies: cc pkg-config;' "$temporary/missing-tools.log" ||
-        fail 'missing Linux tools were not identified'
-)
-
 dependency_calls=0
-check_linux_dependencies() {
+install_linux_dependencies() {
     dependency_calls=$((dependency_calls + 1))
 }
 ensure_go() {

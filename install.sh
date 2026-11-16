@@ -168,6 +168,16 @@ install_windows_release() {
     return "$status"
 }
 
+run_as_root() {
+    if [[ "$(id -u)" == 0 ]]; then
+        "$@"
+    elif command_exists sudo; then
+        sudo "$@"
+    else
+        die "installing system dependencies requires root or sudo: $*"
+    fi
+}
+
 install_macos_dependencies() {
     command_exists brew || die "Homebrew is required to install LLGo dependencies: https://brew.sh"
     command_exists xcode-select || die "xcode-select is required on macOS"
@@ -188,25 +198,51 @@ install_macos_dependencies() {
     fi
 }
 
-check_linux_dependencies() {
-    local missing=()
-    local tool
-    for tool in cc c++ pkg-config; do
-        if ! command_exists "$tool"; then
-            missing+=("$tool")
-        fi
-    done
-    if command_exists pkg-config; then
-        local package
-        for package in bdw-gc libffi openssl zlib libcjson sqlite3 libuv; do
-            if ! pkg-config --exists "$package"; then
-                missing+=("$package")
-            fi
-        done
-    fi
-    if ((${#missing[@]})); then
-        die "missing Linux system dependencies: ${missing[*]}; install the packages listed at https://github.com/$LLGO_REPOSITORY#linux-dependencies, then rerun the installer"
-    fi
+linux_distribution() {
+    [[ -r /etc/os-release ]] || return 1
+    # The distribution owns this file and ID/ID_LIKE are shell-compatible.
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s %s\n' "${ID:-}" "${ID_LIKE:-}"
+}
+
+install_linux_dependencies() {
+    local distribution
+    distribution="$(linux_distribution || true)"
+    case " $distribution " in
+        *" debian "* | *" ubuntu "*)
+            run_as_root apt-get update
+            run_as_root apt-get install -y \
+                build-essential ca-certificates curl pkg-config \
+                libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev \
+                libsqlite3-dev libuv1-dev
+            ;;
+        *" fedora "* | *" rhel "*)
+            run_as_root dnf install -y \
+                gcc gcc-c++ make ca-certificates curl pkgconf-pkg-config \
+                gc-devel openssl-devel zlib-devel libffi-devel cjson-devel \
+                sqlite-devel libuv-devel
+            ;;
+        *" alpine "*)
+            run_as_root apk add \
+                build-base ca-certificates curl pkgconf gc-dev openssl-dev \
+                zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
+            ;;
+        *" arch "*)
+            run_as_root pacman -Syu --needed --noconfirm \
+                base-devel ca-certificates curl pkgconf gc openssl zlib \
+                libffi cjson sqlite libuv
+            ;;
+        *" suse "* | *" opensuse "*)
+            run_as_root zypper --non-interactive install \
+                gcc gcc-c++ make ca-certificates curl pkg-config \
+                gc-devel libopenssl-devel zlib-devel libffi-devel \
+                cJSON-devel sqlite3-devel libuv-devel
+            ;;
+        *)
+            die "unsupported Linux distribution; install a C/C++ toolchain, pkg-config, bdwgc, OpenSSL, zlib, libffi, cJSON, SQLite, and libuv, then rerun with --no-deps"
+            ;;
+    esac
 }
 
 system_go_is_compatible() {
@@ -312,7 +348,7 @@ install_dependencies() {
     fi
     case "$os" in
         darwin) install_macos_dependencies ;;
-        linux) check_linux_dependencies ;;
+        linux) install_linux_dependencies ;;
     esac
     ensure_go "$root" "$os" "$arch"
     mkdir -p "$(dirname "$marker")"
@@ -486,15 +522,14 @@ update_shell_path() {
 
 usage() {
     cat <<'EOF'
-Install the latest LLGo release and configure dependencies.
-Install Linux system dependencies before running this script.
+Install the latest LLGo release and its native dependencies.
 
 Usage: install.sh [--version VERSION] [--root DIRECTORY] [--no-deps]
 
 Environment variables:
   LLGO_VERSION       release tag or version (default: latest)
   LLGO_INSTALL_ROOT  installation root (default: ~/.llgo)
-  LLGO_INSTALL_DEPS  1 to set up/check dependencies, 0 to skip (default: 1)
+  LLGO_INSTALL_DEPS  1 to install dependencies, 0 to skip (default: 1)
   LLGO_UPDATE_PATH   1 to update the shell profile, 0 to skip (default: 1)
 EOF
 }
