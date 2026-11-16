@@ -28,3 +28,22 @@ func TestDeferCaptureBranchAllocations(t *testing.T) {
 		t.Fatalf("10000 frame-bounded defer calls allocated %d objects", n)
 	}
 }
+
+func TestUnsafeLocalViewsAllocations(t *testing.T) {
+	for i := range 64 {
+		unsafeLocalViews(byte(i))
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	var sum int
+	for i := range 10000 {
+		sum += unsafeLocalViews(byte(i % 128))
+	}
+	runtime.ReadMemStats(&after)
+	if sum == 0 {
+		t.Fatal("missing view result")
+	}
+	if n := after.Mallocs - before.Mallocs; n > 16 {
+		t.Fatalf("10000 local unsafe views allocated %d objects", n)
+	}
+}

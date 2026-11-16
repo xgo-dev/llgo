@@ -1915,6 +1915,11 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			hoistToEntry = inLoop
 		}
 		heap := !p.stackStorage(v)
+		if !heap && p.recoverSlots != nil {
+			// SjLj restores the entry stack pointer. Recover-visible slots
+			// must survive that reset, including in package initializers.
+			hoistToEntry = true
+		}
 		if heap && uintptrEscapesBackingArray(v) {
 			// The pragma gives uintptr arguments pointer lifetime semantics.
 			// Pending go/defer calls retain their pointees through this array.

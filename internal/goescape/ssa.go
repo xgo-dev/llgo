@@ -626,6 +626,14 @@ func (f *functionAnalysis) effect(dst *location, arg ssa.Value, effect Effect) {
 
 func (f *functionAnalysis) builtin(site ssa.CallInstruction, call *ssa.CallCommon, name string) {
 	switch name {
+	case "Add", "Slice", "SliceData", "String", "StringData":
+		// unsafe views and pointer arithmetic preserve their first operand's
+		// backing storage. Creating the view neither retains nor mutates it;
+		// later uses of the result decide its lifetime and effects.
+		if result := site.Value(); result != nil && len(call.Args) > 0 {
+			f.flow(f.value(result), call.Args[0], 0)
+			return
+		}
 	case "append":
 		if len(call.Args) == 2 {
 			if result := site.Value(); result != nil {

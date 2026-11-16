@@ -12,6 +12,15 @@ func TestRecoverVisibleInvocationStorage(t *testing.T) {
 	const source = `package recoverstorage
 var Sink int
 var Escaped *bool
+var Cond bool
+var Callback func()
+func init() {
+ if !Cond { return }
+ returned := false
+ defer func(){ if !returned { recover() } }()
+ Callback()
+ returned = true
+}
 func local(value int, callback func()) {
  returned := false
  defer func(){ if !returned { Sink = -value } else { Sink = value } }()
@@ -83,6 +92,19 @@ func aggregate(callback func()) {
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &target, target.GOARCH == "wasm")
+			init := llvmFunction(t, ir, "recoverstorage.init#1")
+			if strings.Contains(init, "runtime.Alloc") {
+				t.Errorf("initializer retains a frame-bounded capture:\n%s", init)
+			}
+			entry := true
+			for _, line := range strings.Split(init, "\n") {
+				if strings.HasPrefix(line, "_llgo_") && !strings.HasPrefix(line, "_llgo_0:") {
+					entry = false
+				}
+				if !entry && strings.Contains(line, " = alloca ") {
+					t.Errorf("initializer alloca below the SjLj entry stack pointer: %s", line)
+				}
+			}
 			for _, name := range []string{"local", "named", "branch", "conditional"} {
 				body := llvmFunction(t, ir, "recoverstorage."+name)
 				if strings.Contains(body, "runtime.Alloc") {

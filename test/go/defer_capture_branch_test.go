@@ -1,11 +1,39 @@
 package gotest
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 type branchDeferStep func([]uint64) error
 
 var branchDeferCallback any
 var branchDeferCleanup uint64
+var branchDeferInitRecovered bool
+
+func init() {
+	if len(os.Args) == 0 {
+		return
+	}
+	panicked := true
+	defer func() {
+		if recover() != "branch initializer" || !panicked {
+			panic("initializer capture corrupted during unwind")
+		}
+		branchDeferInitRecovered = true
+	}()
+	branchDeferInitPanic()
+	panicked = false
+}
+
+//go:noinline
+func branchDeferInitPanic() { panic("branch initializer") }
+
+func TestDeferCaptureInitializer(t *testing.T) {
+	if !branchDeferInitRecovered {
+		t.Fatal("initializer did not recover its panic")
+	}
+}
 
 //go:noinline
 func branchDeferInvoke(words []uint64) error {
