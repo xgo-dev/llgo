@@ -13,12 +13,19 @@ import (
 )
 
 func TestBDWGCAllocationPolicy(t *testing.T) {
+	unavailable := func(format string, args ...any) {
+		t.Helper()
+		if os.Getenv("CI") == "true" {
+			t.Fatalf(format, args...)
+		}
+		t.Skipf(format, args...)
+	}
 	clang, err := exec.LookPath("clang")
 	if err != nil {
-		t.Skipf("native GC tests require Clang: %v", err)
+		unavailable("native GC tests require Clang: %v", err)
 	}
 	if out, err := exec.Command("pkg-config", "--atleast-version=8.2.0", "bdw-gc").CombinedOutput(); err != nil {
-		t.Skipf("native GC tests require BDWGC >= 8.2.0: %v\n%s", err, out)
+		unavailable("native GC tests require BDWGC >= 8.2.0: %v\n%s", err, out)
 	}
 	flags, err := exec.Command("pkg-config", "--libs", "bdw-gc").Output()
 	if err != nil {

@@ -181,7 +181,7 @@ nfpms:
           - libc++-22-dev
           - build-essential
           - pkg-config
-          - libgc-dev
+          - libgc-dev (>= 1:8.2)
           - libssl-dev
           - zlib1g-dev
           - libffi-dev
@@ -211,7 +211,7 @@ nfpms:
           - gcc-c++
           - make
           - pkgconf-pkg-config
-          - gc-devel
+          - gc-devel >= 8.2
           - openssl-devel
           - zlib-devel
           - libffi-devel
