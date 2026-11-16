@@ -112,15 +112,21 @@ run_worker_go_test() {
 	local target="$1"
 	local output="${work_dir}/test-go-${target}.out"
 	local module="${work_dir}/test-go-${target}.mjs"
-	# Keep reflection and the other language cases together: the small
-	# reflection fixture alone misses collection after the larger live heap.
-	# Forced-GC stress groups can exhaust the shared package alarm on slow
-	# CI workers. Give each group its own process using the same complete
-	# module and all iterations, while keeping the language cases together.
+	# Keep reflection with the language cases after a substantial live heap.
+	# Reuse one complete module, but give forced-GC lifetime groups their own
+	# process alarm so conservative heap growth cannot exhaust the shared one.
+	local lifetime_tests='TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop'
+	local language_skip="^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|${lifetime_tests})$"
+	# Bound compilation separately from guest execution, as for the reused
+	# groups below. All groups execute the same module and iteration counts.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
-		-target "${target}" -emulator -o "${module}" -v -count=1 -timeout=480s \
-		-skip '^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*)$' \
-		"${repo_root}/test/go" 2>&1 | tee "${output}"
+		-c -target "${target}" -o "${module}" "${repo_root}/test/go"
+	(
+		cd "${repo_root}/test/go"
+		run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+			"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+			-test.v -test.count=1 -test.timeout=480s -test.skip "${language_skip}"
+	) 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
 		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
@@ -139,9 +145,9 @@ run_worker_go_test() {
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
 		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
 		-test.v -test.count=1 -test.timeout=480s \
-		-test.run '^TestUintptrEscapes' \
-		2>&1 | tee "${output}.uintptr-roots"
-	grep -Fxq "PASS" "${output}.uintptr-roots"
+		-test.run "^(${lifetime_tests})$" \
+		2>&1 | tee "${output}.lifetime-roots"
+	grep -Fxq "PASS" "${output}.lifetime-roots"
 	# Native tests isolate this assertion with os/exec. Wasm cannot spawn
 	# that subprocess itself; reuse the compiled module in a fresh process so
 	# exiting goroutines cannot cancel the measured count increment.
