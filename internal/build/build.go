@@ -2177,16 +2177,12 @@ func (c *context) clangConfig() clang.Config {
 	config.CXX = c.crossCompile.CXX
 	config.CXXArgs = slices.Clone(c.crossCompile.CXXArgs)
 	config.LinkerArgs = slices.Clone(c.crossCompile.LinkerArgs)
-	if c.dispatchInlineBudgetEnabled() {
-		// LLVM 22 reads function-inline-threshold only after completing its
-		// cost walk; without this, its cold-site early exit masks the hint.
-		config.LDFLAGS = append(slices.Clone(config.LDFLAGS), "-Wl,-mllvm,-inline-cost-full")
-	}
 	return config
 }
 
 func (c *context) linker() *clang.Cmd {
 	config := c.clangConfig()
+	config.LDFLAGS = append(c.nativeFullLTOLinkerArgs(), config.LDFLAGS...)
 	linkerProgram := config.Linker
 	useCXX := config.Linker == "" && config.CXX != ""
 	if useCXX {

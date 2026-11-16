@@ -75,7 +75,7 @@ func TestDispatchInlineBackendOverrides(t *testing.T) {
 			if got := c.dispatchInlineBudgetEnabled(); got != want {
 				t.Fatalf("policy enabled = %v, want %v", got, want)
 			}
-			args := c.clangConfig().LDFLAGS
+			args := c.linker().LinkArguments()
 			found := false
 			for _, arg := range args {
 				found = found || arg == "-Wl,-mllvm,-inline-cost-full"
