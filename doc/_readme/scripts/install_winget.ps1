@@ -1,3 +1,3 @@
 $ErrorActionPreference = 'Stop'
-winget install --id XGo.LLGo.MSVC --exact --source winget --scope user
+winget install XGo.LLGo.MSVC
 if ($LASTEXITCODE -ne 0) { throw 'WinGet installation failed' }

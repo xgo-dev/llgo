@@ -81,6 +81,27 @@ jobs:
           bash scripts/verify_install.sh
           llgo run ./llgo_simple
 
+      - name: Test README APT and YUM repositories
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          set -euo pipefail
+          for manager in apt yum; do
+            case "$manager" in
+              apt) image=ubuntu:26.04 ;;
+              yum) image=fedora:44 ;;
+            esac
+            docker run --rm --init -v "$GITHUB_WORKSPACE/doc/_readme:/readme:ro" "$image" bash -ec '
+              sudo() { "$@"; }
+              if [[ "$1" == apt ]]; then
+                apt-get update
+                apt-get install -y ca-certificates
+              fi
+              source "/readme/scripts/install_$1.sh"
+              cd /readme
+              bash scripts/verify_install.sh
+              llgo run ./llgo_simple
+            ' _ "$manager"
+
   local_install:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare

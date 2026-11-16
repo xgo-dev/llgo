@@ -406,12 +406,6 @@ llgo run .
 
 ### Quick install
 
-- **macOS:** [Homebrew](https://brew.sh), Xcode Command Line Tools, and a macOS
-  SDK older than 27. The installer can open the Xcode tools installation dialog.
-- **Linux (glibc):** Bash, curl, tar, and sudo or root access.
-- **Windows:** PowerShell and WinGet. Use an administrator PowerShell for the
-  first installation to set up native dependencies.
-
 **macOS and Linux:**
 
 <!-- embedme doc/_readme/scripts/quick_install.sh#L3-L1000 -->
@@ -440,8 +434,6 @@ llgo version
 
 #### Homebrew (macOS)
 
-Homebrew installs Go, LLVM/LLD 22, and the declared library dependencies.
-
 <!-- embedme doc/_readme/scripts/install_brew.sh#L3-L1000 -->
 
 ```sh
@@ -450,36 +442,32 @@ brew install llgo
 
 #### WinGet (Windows)
 
-Install the [native dependencies](WINDOWS.md#versions-and-shared-dependencies) first.
-
 <!-- embedme doc/_readme/scripts/install_winget.ps1#L2-L2 -->
 
 ```powershell
-winget install --id XGo.LLGo.MSVC --exact --source winget --scope user
+winget install XGo.LLGo.MSVC
 ```
 
 #### APT / YUM (Linux)
 
-Download the DEB or RPM for your architecture from
-[GitHub releases](https://github.com/xgo-dev/llgo/releases).
-The package manager installs dependencies; LLVM 22 must be available in your
-configured repositories.
-
 Debian/Ubuntu:
 
-<!-- embedme doc/_readme/scripts/install_deb.sh#L3-L1000 -->
+<!-- embedme doc/_readme/scripts/install_apt.sh#L3-L1000 -->
 
 ```sh
+echo 'deb [trusted=yes] https://pkgs.xgo.dev/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
 sudo apt-get update
-sudo apt-get install -y ./llgo*.linux-*.deb
+sudo apt-get install -y llgo
 ```
 
 Fedora/RPM:
 
-<!-- embedme doc/_readme/scripts/install_rpm.sh#L3-L1000 -->
+<!-- embedme doc/_readme/scripts/install_yum.sh#L3-L1000 -->
 
 ```sh
-sudo yum install -y ./llgo*.linux-*.rpm
+printf '%s\n' '[goplus]' 'name=XGo' 'baseurl=https://pkgs.xgo.dev/yum/' 'enabled=1' 'gpgcheck=0' | \
+  sudo tee /etc/yum.repos.d/goplus.repo
+sudo yum install -y llgo
 ```
 
 For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
