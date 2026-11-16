@@ -113,10 +113,23 @@ func configureUnusedGlobalInits(ctx *context) {
 // providers use declared linknames; user-supplied objects require a future
 // linker-summary join, so retain all initializers in their presence.
 func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
+	return opaqueGlobalInitPackageWithPolicy(ctx, exported, globalVisibilityPolicy{})
+}
+
+type globalVisibilityPolicy struct {
+	safeLinkFlag      func(string) bool
+	safeCgoLinkFlag   func(string, string) bool
+	safeDynamicImport func(cgoImportDynamicDecl) bool
+}
+
+func opaqueGlobalInitPackageWithPolicy(ctx *context, exported map[string]bool, policy globalVisibilityPolicy) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
 	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
 	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
 		for _, flag := range safesplit.SplitPkgConfigFlags(flags) {
+			if policy.safeLinkFlag != nil && policy.safeLinkFlag(flag) {
+				continue
+			}
 			// Clang splits -Wl on every comma; a diagnostic option can be
 			// followed by an export, forced root or native object.
 			if strings.Count(flag, ",") != 1 || flag != "-Wl,--save-temps" && flag != "-Wl,--print-map" &&
@@ -175,8 +188,16 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
 				}
 			}
 		}
-		if flags, imports := collectGoCgoPragmas(pkg.Syntax); len(flags) != 0 || len(imports) != 0 {
-			return pkg.PkgPath
+		flags, imports := collectGoCgoPragmas(pkg.Syntax)
+		for _, flag := range flags {
+			if policy.safeCgoLinkFlag == nil || !policy.safeCgoLinkFlag(pkg.PkgPath, flag) {
+				return pkg.PkgPath
+			}
+		}
+		for _, imp := range imports {
+			if policy.safeDynamicImport == nil || !policy.safeDynamicImport(imp) {
+				return pkg.PkgPath
+			}
 		}
 	}
 	return ""

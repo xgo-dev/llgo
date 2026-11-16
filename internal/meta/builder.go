@@ -192,6 +192,28 @@ func (b *Builder) MarkReflect(sym Symbol) {
 	})
 }
 
+// MarkReflectMethodMetadata encodes the retired experimental wire kind for
+// compatibility tests. New compiler output must use callable demands instead.
+func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
+	b.funcDemands[sym] = append(b.funcDemands[sym], bFuncDemand{
+		kind: DemandReflectMethodMetadata,
+	})
+}
+
+// AddReflectMethodSite records a dynamic MethodByName demand owned by src.
+// Both arguments are builder-local symbols. The spelling of site must identify
+// the source lookup uniquely across packages; copies of that lookup, including
+// cloned generic bodies, share the same spelling even if local IDs differ.
+// This adds no executable reference edge: only reaching src activates the
+// demand. Without a proven finite name set, the whole-program view treats it
+// as conservative reflection.
+func (b *Builder) AddReflectMethodSite(src, site Symbol) {
+	b.funcDemands[src] = append(b.funcDemands[src], bFuncDemand{
+		kind:   DemandReflectMethodSite,
+		target: uint32(site),
+	})
+}
+
 // Build serializes all accumulated facts into a PackageMeta.
 //
 // The process is:

@@ -1,0 +1,3013 @@
+{
+  "purpose": "Complete LiveSlots equality after removal of the SSA Func-use proof. Both compilers use the same runtime/program sources. Diagnostic compilers are not timing baselines.",
+  "comparisons": [
+    {
+      "case": "reflectcallbacks",
+      "equal": true,
+      "types": 79,
+      "slots": 112,
+      "sha256": "3c30230beff7b430bec136f544985938711469b16c4822a7f7442292147961a4",
+      "different_types": []
+    },
+    {
+      "case": "gormschema",
+      "equal": true,
+      "types": 285,
+      "slots": 649,
+      "sha256": "bffa6ceeeced60ef3f12e965993d5c8868e4e5c0724cec9034b6897d1ae18734",
+      "different_types": []
+    }
+  ],
+  "snapshots": {
+    "reflectcallbacks": {
+      "strong": {
+        "*_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/json.InvalidUnmarshalError": [
+          0
+        ],
+        "*_llgo_encoding/json.MarshalerError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.Number": [
+          3
+        ],
+        "*_llgo_encoding/json.SyntaxError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnmarshalTypeError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.UnsupportedTypeError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnsupportedValueError": [
+          0
+        ],
+        "*_llgo_encoding/json/internal/jsonwire.InvalidTextError": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.SyntacticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Value": [
+          8
+        ],
+        "*_llgo_encoding/json/v2.addressableValue": [
+          72
+        ],
+        "*_llgo_errors.errorString": [
+          0
+        ],
+        "*_llgo_fmt.pp": [
+          3,
+          4
+        ],
+        "*_llgo_fmt.wrapError": [
+          0,
+          1
+        ],
+        "*_llgo_fmt.wrapErrors": [
+          0,
+          1
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.FuncType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.Type": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.PanicNilError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.TypeAssertionError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "*_llgo_internal/poll.DeadlineExceededError": [
+          0
+        ],
+        "*_llgo_internal/poll.FD": [
+          39
+        ],
+        "*_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31
+        ],
+        "*_llgo_io.discard": [
+          1,
+          2
+        ],
+        "*_llgo_io/fs.FileMode": [
+          3
+        ],
+        "*_llgo_io/fs.PathError": [
+          0,
+          2
+        ],
+        "*_llgo_main.model": [
+          0,
+          1
+        ],
+        "*_llgo_os.File": [
+          20,
+          22
+        ],
+        "*_llgo_os.SyscallError": [
+          0,
+          2
+        ],
+        "*_llgo_os.fileStat": [
+          2
+        ],
+        "*_llgo_os.unixDirent": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_reflect.ChanDir": [
+          0
+        ],
+        "*_llgo_reflect.Kind": [
+          0
+        ],
+        "*_llgo_reflect.Value": [
+          72
+        ],
+        "*_llgo_reflect.ValueError": [
+          0
+        ],
+        "*_llgo_reflect.rtype": [
+          1,
+          8,
+          9,
+          20,
+          25,
+          27,
+          29,
+          38,
+          39
+        ],
+        "*_llgo_strings.appendSliceWriter": [
+          0,
+          1
+        ],
+        "*_llgo_strings.byteReplacer": [
+          0
+        ],
+        "*_llgo_strings.byteStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.genericReplacer": [
+          0
+        ],
+        "*_llgo_strings.singleStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.stringWriter": [
+          0
+        ],
+        "*_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Signal": [
+          1
+        ],
+        "*_llgo_time.Duration": [
+          8
+        ],
+        "*_llgo_time.Location": [
+          0
+        ],
+        "*_llgo_time.Time": [
+          13,
+          31
+        ],
+        "*_llgo_time.fileSizeError": [
+          0
+        ],
+        "_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/json.Number": [
+          3
+        ],
+        "_llgo_encoding/json/jsontext.Value": [
+          4
+        ],
+        "_llgo_encoding/json/v2.addressableValue": [
+          72
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31
+        ],
+        "_llgo_io.discard": [
+          1,
+          2
+        ],
+        "_llgo_io/fs.FileMode": [
+          3
+        ],
+        "_llgo_main.model": [
+          0,
+          1
+        ],
+        "_llgo_reflect.ChanDir": [
+          0
+        ],
+        "_llgo_reflect.Kind": [
+          0
+        ],
+        "_llgo_reflect.Value": [
+          72
+        ],
+        "_llgo_strings.stringWriter": [
+          0
+        ],
+        "_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "_llgo_syscall.Signal": [
+          1
+        ],
+        "_llgo_time.Duration": [
+          8
+        ],
+        "_llgo_time.Time": [
+          13,
+          30
+        ],
+        "_llgo_time.fileSizeError": [
+          0
+        ]
+      },
+      "thin": {
+        "*_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/json.InvalidUnmarshalError": [
+          0
+        ],
+        "*_llgo_encoding/json.MarshalerError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.Number": [
+          3
+        ],
+        "*_llgo_encoding/json.SyntaxError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnmarshalTypeError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.UnsupportedTypeError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnsupportedValueError": [
+          0
+        ],
+        "*_llgo_encoding/json/internal/jsonwire.InvalidTextError": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.SyntacticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Value": [
+          8
+        ],
+        "*_llgo_encoding/json/v2.addressableValue": [
+          72
+        ],
+        "*_llgo_errors.errorString": [
+          0
+        ],
+        "*_llgo_fmt.pp": [
+          3,
+          4
+        ],
+        "*_llgo_fmt.wrapError": [
+          0,
+          1
+        ],
+        "*_llgo_fmt.wrapErrors": [
+          0,
+          1
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.FuncType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.Type": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.PanicNilError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.TypeAssertionError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "*_llgo_internal/poll.DeadlineExceededError": [
+          0
+        ],
+        "*_llgo_internal/poll.FD": [
+          39
+        ],
+        "*_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31
+        ],
+        "*_llgo_io.discard": [
+          1,
+          2
+        ],
+        "*_llgo_io/fs.FileMode": [
+          3
+        ],
+        "*_llgo_io/fs.PathError": [
+          0,
+          2
+        ],
+        "*_llgo_main.model": [
+          0,
+          1
+        ],
+        "*_llgo_os.File": [
+          20,
+          22
+        ],
+        "*_llgo_os.SyscallError": [
+          0,
+          2
+        ],
+        "*_llgo_os.fileStat": [
+          2
+        ],
+        "*_llgo_os.unixDirent": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_reflect.ChanDir": [
+          0
+        ],
+        "*_llgo_reflect.Kind": [
+          0
+        ],
+        "*_llgo_reflect.Value": [
+          72
+        ],
+        "*_llgo_reflect.ValueError": [
+          0
+        ],
+        "*_llgo_reflect.rtype": [
+          1,
+          8,
+          9,
+          20,
+          25,
+          27,
+          29,
+          38,
+          39
+        ],
+        "*_llgo_strings.appendSliceWriter": [
+          0,
+          1
+        ],
+        "*_llgo_strings.byteReplacer": [
+          0
+        ],
+        "*_llgo_strings.byteStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.genericReplacer": [
+          0
+        ],
+        "*_llgo_strings.singleStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.stringWriter": [
+          0
+        ],
+        "*_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Signal": [
+          1
+        ],
+        "*_llgo_time.Duration": [
+          8
+        ],
+        "*_llgo_time.Location": [
+          0
+        ],
+        "*_llgo_time.Time": [
+          13,
+          31
+        ],
+        "*_llgo_time.fileSizeError": [
+          0
+        ],
+        "_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/json.Number": [
+          3
+        ],
+        "_llgo_encoding/json/jsontext.Value": [
+          4
+        ],
+        "_llgo_encoding/json/v2.addressableValue": [
+          72
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31
+        ],
+        "_llgo_io.discard": [
+          1,
+          2
+        ],
+        "_llgo_io/fs.FileMode": [
+          3
+        ],
+        "_llgo_main.model": [
+          0,
+          1
+        ],
+        "_llgo_reflect.ChanDir": [
+          0
+        ],
+        "_llgo_reflect.Kind": [
+          0
+        ],
+        "_llgo_reflect.Value": [
+          72
+        ],
+        "_llgo_strings.stringWriter": [
+          0
+        ],
+        "_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "_llgo_syscall.Signal": [
+          1
+        ],
+        "_llgo_time.Duration": [
+          8
+        ],
+        "_llgo_time.Time": [
+          13,
+          30
+        ],
+        "_llgo_time.fileSizeError": [
+          0
+        ]
+      }
+    },
+    "gormschema": {
+      "strong": {
+        "*_llgo_bufio.Reader": [
+          3,
+          7,
+          14
+        ],
+        "*_llgo_bufio.Writer": [
+          4,
+          7,
+          10
+        ],
+        "*_llgo_bytes.Buffer": [
+          8,
+          11,
+          12,
+          15,
+          19,
+          22,
+          23
+        ],
+        "*_llgo_compress/flate.InternalError": [
+          0
+        ],
+        "*_llgo_compress/flate.fastEncL1": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL2": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL3": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL4": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL5": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL6": [
+          1,
+          5
+        ],
+        "*_llgo_context.backgroundCtx": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_context.cancelCtx": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_context.deadlineExceededError": [
+          0
+        ],
+        "*_llgo_context.emptyCtx": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_context.stopCtx": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_crypto/internal/fips140/aes.KeySizeError": [
+          0
+        ],
+        "*_llgo_crypto/internal/fips140/hmac.HMAC": [
+          0,
+          2,
+          4,
+          5
+        ],
+        "*_llgo_crypto/internal/fips140/sha256.Digest": [
+          1,
+          3,
+          4,
+          6,
+          7,
+          8
+        ],
+        "*_llgo_crypto/internal/rand.reader": [
+          0
+        ],
+        "*_llgo_crypto/sha1.digest": [
+          1,
+          4,
+          5,
+          7,
+          8,
+          9
+        ],
+        "*_llgo_database/sql.NullInt64": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.NullString": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.NullTime": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.closingMutex": [
+          0,
+          4
+        ],
+        "*_llgo_database/sql.driverConn": [
+          1,
+          3
+        ],
+        "*_llgo_database/sql.driverStmt": [
+          1,
+          2
+        ],
+        "*_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/binary.bigEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "*_llgo_encoding/binary.littleEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "*_llgo_encoding/gob.CommonType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/gob.arrayType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.decBuffer": [
+          3
+        ],
+        "*_llgo_encoding/gob.encBuffer": [
+          3
+        ],
+        "*_llgo_encoding/gob.gobEncoderType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/gob.mapType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.sliceType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.structType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/hex.InvalidByteError": [
+          0
+        ],
+        "*_llgo_encoding/json.InvalidUnmarshalError": [
+          0
+        ],
+        "*_llgo_encoding/json.MarshalerError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.Number": [
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/json.SyntaxError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnmarshalTypeError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.UnsupportedTypeError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnsupportedValueError": [
+          0
+        ],
+        "*_llgo_encoding/json/internal/jsonwire.InvalidTextError": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.Decoder": [
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Encoder": [
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Kind": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.SyntacticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Value": [
+          7,
+          8,
+          9
+        ],
+        "*_llgo_encoding/json/jsontext.decoderState": [
+          0,
+          30,
+          31
+        ],
+        "*_llgo_encoding/json/jsontext.encoderState": [
+          2,
+          17,
+          18
+        ],
+        "*_llgo_encoding/json/jsontext.ioError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.pointerSuffixError": [
+          0
+        ],
+        "*_llgo_encoding/json/v2.SemanticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/v2.addressableValue": [
+          35,
+          72
+        ],
+        "*_llgo_errors.errorString": [
+          0
+        ],
+        "*_llgo_flag.boolValue": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_flag.durationValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.intValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.stringValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.uintValue": [
+          1,
+          2
+        ],
+        "*_llgo_fmt.pp": [
+          3,
+          4
+        ],
+        "*_llgo_fmt.wrapError": [
+          0,
+          1
+        ],
+        "*_llgo_fmt.wrapErrors": [
+          0,
+          1
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.FuncType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.StructType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.Type": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.PanicNilError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.TypeAssertionError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "*_llgo_golang.org/x/text/cases.titleCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undLowerCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undLowerIgnoreSigmaCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undUpperCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Language": [
+          3
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Region": [
+          7
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Script": [
+          1
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Tag": [
+          7,
+          9,
+          13,
+          15
+        ],
+        "*_llgo_golang.org/x/text/internal/language.ValueError": [
+          0
+        ],
+        "*_llgo_golang.org/x/text/internal/language.bytesSort": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.sortVariants": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.variantsSort": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/language.Base": [
+          2
+        ],
+        "*_llgo_golang.org/x/text/language.Region": [
+          7
+        ],
+        "*_llgo_golang.org/x/text/language.Script": [
+          1
+        ],
+        "*_llgo_golang.org/x/text/language.Tag": [
+          4,
+          10,
+          12
+        ],
+        "*_llgo_golang.org/x/text/transform.discard": [
+          0,
+          1
+        ],
+        "*_llgo_golang.org/x/text/transform.nop": [
+          0,
+          2
+        ],
+        "*_llgo_gorm.io/gorm.DeletedAt": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "*_llgo_gorm.io/gorm.Statement": [
+          83
+        ],
+        "*_llgo_gorm.io/gorm/logger.logger": [
+          0,
+          4,
+          6
+        ],
+        "*_llgo_gorm.io/gorm/schema.CustomReplacer": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema.GobSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.JSONSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.NamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema.Schema": [
+          8
+        ],
+        "*_llgo_gorm.io/gorm/schema.UnixSecondSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.embeddedNamer": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema.serializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.Book": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.CustomizeTable": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.CustomizedNamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.UserWithCallback": [
+          0,
+          1
+        ],
+        "*_llgo_internal/bisect.parseError": [
+          0
+        ],
+        "*_llgo_internal/godebug.runtimeStderr": [
+          0
+        ],
+        "*_llgo_internal/poll.DeadlineExceededError": [
+          0
+        ],
+        "*_llgo_internal/poll.FD": [
+          18,
+          39
+        ],
+        "*_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.ValueError": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31,
+          34
+        ],
+        "*_llgo_internal/strconv.Error": [
+          0
+        ],
+        "*_llgo_internal/sync.Mutex": [
+          0,
+          2
+        ],
+        "*_llgo_io.discard": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_io/fs.FileMode": [
+          3
+        ],
+        "*_llgo_io/fs.PathError": [
+          0,
+          2
+        ],
+        "*_llgo_log.Logger": [
+          10
+        ],
+        "*_llgo_log/slog.Attr": [
+          1
+        ],
+        "*_llgo_log/slog.Kind": [
+          0
+        ],
+        "*_llgo_log/slog.Level": [
+          0,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "*_llgo_log/slog.Value": [
+          10
+        ],
+        "*_llgo_math/rand.rngSource": [
+          0
+        ],
+        "*_llgo_os.File": [
+          6,
+          9,
+          20,
+          22,
+          23
+        ],
+        "*_llgo_os.SyscallError": [
+          0,
+          2
+        ],
+        "*_llgo_os.errSymlink": [
+          0
+        ],
+        "*_llgo_os.fileStat": [
+          2
+        ],
+        "*_llgo_os.fileWithoutReadFrom": [
+          6,
+          19,
+          21,
+          22
+        ],
+        "*_llgo_os.fileWithoutWriteTo": [
+          6,
+          9,
+          20,
+          22
+        ],
+        "*_llgo_os.noReadFrom": [
+          0
+        ],
+        "*_llgo_os.noWriteTo": [
+          0
+        ],
+        "*_llgo_os.unixDirent": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_reflect.ChanDir": [
+          0
+        ],
+        "*_llgo_reflect.Kind": [
+          0
+        ],
+        "*_llgo_reflect.Value": [
+          35,
+          72
+        ],
+        "*_llgo_reflect.ValueError": [
+          0
+        ],
+        "*_llgo_reflect.rtype": [
+          0,
+          1,
+          2,
+          6,
+          7,
+          8,
+          9,
+          12,
+          15,
+          16,
+          19,
+          20,
+          21,
+          25,
+          26,
+          28,
+          36,
+          37,
+          38,
+          39
+        ],
+        "*_llgo_reflect.structType": [
+          25
+        ],
+        "*_llgo_regexp.Regexp": [
+          0,
+          24,
+          36,
+          39
+        ],
+        "*_llgo_regexp.inputBytes": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.inputReader": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.inputString": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.onePassInst": [
+          3
+        ],
+        "*_llgo_regexp/syntax.Error": [
+          0
+        ],
+        "*_llgo_regexp/syntax.ErrorCode": [
+          0
+        ],
+        "*_llgo_regexp/syntax.Inst": [
+          3
+        ],
+        "*_llgo_regexp/syntax.InstOp": [
+          0
+        ],
+        "*_llgo_regexp/syntax.Prog": [
+          2
+        ],
+        "*_llgo_regexp/syntax.ranges": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime.traceError": [
+          0
+        ],
+        "*_llgo_runtime/pprof.keysByCount": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime/pprof.labelMap": [
+          0
+        ],
+        "*_llgo_runtime/pprof.runtimeProfile": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime/pprof.stackProfile": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_strconv.NumError": [
+          0,
+          1
+        ],
+        "*_llgo_strings.Builder": [
+          4,
+          5,
+          8
+        ],
+        "*_llgo_strings.Replacer": [
+          0
+        ],
+        "*_llgo_strings.appendSliceWriter": [
+          0,
+          1
+        ],
+        "*_llgo_strings.byteReplacer": [
+          0
+        ],
+        "*_llgo_strings.byteStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.genericReplacer": [
+          0
+        ],
+        "*_llgo_strings.singleStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.stringWriter": [
+          0
+        ],
+        "*_llgo_struct$1ReNIA5saq-Xf7fc1kn20duKnzoewVVTPRH3tI_YeKE": [
+          0
+        ],
+        "*_llgo_struct$HC0XJvZWuhdd097vtNhbunHKu7FlfWcGFLm0OZfIzyU": [
+          0
+        ],
+        "*_llgo_struct$U_q9FhuubBrsArJoKxehFp3hp9z16ZrCr6IFugG0tnY": [
+          0
+        ],
+        "*_llgo_struct$yJB_ppPM0mvZIDht3vsTXJwnDV3DbvDwaMS-dw1Np08": [
+          0
+        ],
+        "*_llgo_sync.Mutex": [
+          0,
+          2
+        ],
+        "*_llgo_sync.RWMutex": [
+          0,
+          6
+        ],
+        "*_llgo_sync.noCopy": [
+          0,
+          1
+        ],
+        "*_llgo_sync/atomic.noCopy": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Signal": [
+          1
+        ],
+        "*_llgo_testing.alternationMatch": [
+          0,
+          1
+        ],
+        "*_llgo_testing.chattyFlag": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_testing.durationOrCountFlag": [
+          0,
+          1
+        ],
+        "*_llgo_testing.indenter": [
+          0
+        ],
+        "*_llgo_testing.outputWriter": [
+          0
+        ],
+        "*_llgo_testing.simpleMatch": [
+          0,
+          1
+        ],
+        "*_llgo_testing/internal/testdeps.TestDeps": [
+          2,
+          3,
+          4,
+          5,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "*_llgo_testing/internal/testdeps.testLog": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_text/tabwriter.Writer": [
+          2
+        ],
+        "*_llgo_time.Duration": [
+          8
+        ],
+        "*_llgo_time.Location": [
+          0
+        ],
+        "*_llgo_time.ParseError": [
+          0
+        ],
+        "*_llgo_time.Time": [
+          5,
+          13,
+          14,
+          15,
+          20,
+          23,
+          24,
+          25,
+          31,
+          39,
+          40,
+          41
+        ],
+        "*_llgo_time.fileSizeError": [
+          0
+        ],
+        "*_llgo_time.parseDurationError": [
+          0
+        ],
+        "_llgo_compress/flate.InternalError": [
+          0
+        ],
+        "_llgo_context.backgroundCtx": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "_llgo_context.deadlineExceededError": [
+          0
+        ],
+        "_llgo_context.emptyCtx": [
+          1,
+          2,
+          3
+        ],
+        "_llgo_context.stopCtx": [
+          1,
+          2,
+          3
+        ],
+        "_llgo_crypto/internal/fips140/aes.KeySizeError": [
+          0
+        ],
+        "_llgo_crypto/internal/rand.reader": [
+          0
+        ],
+        "_llgo_database/sql.NullInt64": [
+          0
+        ],
+        "_llgo_database/sql.NullString": [
+          0
+        ],
+        "_llgo_database/sql.NullTime": [
+          0
+        ],
+        "_llgo_database/sql.driverStmt": [
+          0,
+          1
+        ],
+        "_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/binary.bigEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "_llgo_encoding/binary.littleEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "_llgo_encoding/hex.InvalidByteError": [
+          0
+        ],
+        "_llgo_encoding/json.Number": [
+          2,
+          3
+        ],
+        "_llgo_encoding/json/jsontext.Kind": [
+          0
+        ],
+        "_llgo_encoding/json/jsontext.Value": [
+          3,
+          4
+        ],
+        "_llgo_encoding/json/jsontext.pointerSuffixError": [
+          0
+        ],
+        "_llgo_encoding/json/v2.addressableValue": [
+          35,
+          72
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "_llgo_golang.org/x/text/cases.undLowerCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/cases.undLowerIgnoreSigmaCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/cases.undUpperCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.Language": [
+          3
+        ],
+        "_llgo_golang.org/x/text/internal/language.Region": [
+          7
+        ],
+        "_llgo_golang.org/x/text/internal/language.Script": [
+          1
+        ],
+        "_llgo_golang.org/x/text/internal/language.Tag": [
+          7,
+          9,
+          12
+        ],
+        "_llgo_golang.org/x/text/internal/language.ValueError": [
+          0
+        ],
+        "_llgo_golang.org/x/text/internal/language.bytesSort": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.sortVariants": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.variantsSort": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/language.Base": [
+          2
+        ],
+        "_llgo_golang.org/x/text/language.Region": [
+          7
+        ],
+        "_llgo_golang.org/x/text/language.Script": [
+          1
+        ],
+        "_llgo_golang.org/x/text/language.Tag": [
+          4,
+          10
+        ],
+        "_llgo_golang.org/x/text/transform.discard": [
+          0,
+          1
+        ],
+        "_llgo_golang.org/x/text/transform.nop": [
+          0,
+          2
+        ],
+        "_llgo_gorm.io/gorm.DeletedAt": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "_llgo_gorm.io/gorm/logger.logger": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema.CustomReplacer": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema.GobSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.JSONSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.NamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema.UnixSecondSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.embeddedNamer": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema.serializer": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.Book": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.CustomizeTable": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.CustomizedNamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema_test.UserWithCallback": [
+          0,
+          1
+        ],
+        "_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31,
+          34
+        ],
+        "_llgo_internal/strconv.Error": [
+          0
+        ],
+        "_llgo_io.discard": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_io/fs.FileMode": [
+          3
+        ],
+        "_llgo_log/slog.Attr": [
+          1
+        ],
+        "_llgo_log/slog.Kind": [
+          0
+        ],
+        "_llgo_log/slog.Level": [
+          0,
+          2,
+          3,
+          4
+        ],
+        "_llgo_log/slog.Value": [
+          10
+        ],
+        "_llgo_os.errSymlink": [
+          0
+        ],
+        "_llgo_os.fileWithoutReadFrom": [
+          6,
+          19,
+          21,
+          22
+        ],
+        "_llgo_os.fileWithoutWriteTo": [
+          6,
+          9,
+          20,
+          22
+        ],
+        "_llgo_os.noReadFrom": [
+          0
+        ],
+        "_llgo_os.noWriteTo": [
+          0
+        ],
+        "_llgo_reflect.ChanDir": [
+          0
+        ],
+        "_llgo_reflect.Kind": [
+          0
+        ],
+        "_llgo_reflect.Value": [
+          35,
+          72
+        ],
+        "_llgo_regexp/syntax.ErrorCode": [
+          0
+        ],
+        "_llgo_regexp/syntax.InstOp": [
+          0
+        ],
+        "_llgo_regexp/syntax.ranges": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_runtime.traceError": [
+          0
+        ],
+        "_llgo_runtime/pprof.stackProfile": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_strings.stringWriter": [
+          0
+        ],
+        "_llgo_struct$1ReNIA5saq-Xf7fc1kn20duKnzoewVVTPRH3tI_YeKE": [
+          0
+        ],
+        "_llgo_struct$HC0XJvZWuhdd097vtNhbunHKu7FlfWcGFLm0OZfIzyU": [
+          0
+        ],
+        "_llgo_struct$U_q9FhuubBrsArJoKxehFp3hp9z16ZrCr6IFugG0tnY": [
+          0
+        ],
+        "_llgo_struct$yJB_ppPM0mvZIDht3vsTXJwnDV3DbvDwaMS-dw1Np08": [
+          0
+        ],
+        "_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "_llgo_syscall.Signal": [
+          1
+        ],
+        "_llgo_testing.alternationMatch": [
+          0,
+          1
+        ],
+        "_llgo_testing.indenter": [
+          0
+        ],
+        "_llgo_testing.simpleMatch": [
+          0,
+          1
+        ],
+        "_llgo_testing/internal/testdeps.TestDeps": [
+          2,
+          3,
+          4,
+          5,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "_llgo_time.Duration": [
+          8
+        ],
+        "_llgo_time.Time": [
+          5,
+          13,
+          14,
+          19,
+          22,
+          23,
+          24,
+          30
+        ],
+        "_llgo_time.fileSizeError": [
+          0
+        ]
+      },
+      "thin": {
+        "*_llgo_bufio.Reader": [
+          3,
+          7,
+          14
+        ],
+        "*_llgo_bufio.Writer": [
+          4,
+          7,
+          10
+        ],
+        "*_llgo_bytes.Buffer": [
+          8,
+          11,
+          12,
+          15,
+          19,
+          22,
+          23
+        ],
+        "*_llgo_compress/flate.InternalError": [
+          0
+        ],
+        "*_llgo_compress/flate.fastEncL1": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL2": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL3": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL4": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL5": [
+          1,
+          5
+        ],
+        "*_llgo_compress/flate.fastEncL6": [
+          1,
+          5
+        ],
+        "*_llgo_context.backgroundCtx": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_context.cancelCtx": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_context.deadlineExceededError": [
+          0
+        ],
+        "*_llgo_context.emptyCtx": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_context.stopCtx": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_crypto/internal/fips140/aes.KeySizeError": [
+          0
+        ],
+        "*_llgo_crypto/internal/fips140/hmac.HMAC": [
+          0,
+          2,
+          4,
+          5
+        ],
+        "*_llgo_crypto/internal/fips140/sha256.Digest": [
+          1,
+          3,
+          4,
+          6,
+          7,
+          8
+        ],
+        "*_llgo_crypto/internal/rand.reader": [
+          0
+        ],
+        "*_llgo_crypto/sha1.digest": [
+          1,
+          4,
+          5,
+          7,
+          8,
+          9
+        ],
+        "*_llgo_database/sql.NullInt64": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.NullString": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.NullTime": [
+          0,
+          1
+        ],
+        "*_llgo_database/sql.closingMutex": [
+          0,
+          4
+        ],
+        "*_llgo_database/sql.driverConn": [
+          1,
+          3
+        ],
+        "*_llgo_database/sql.driverStmt": [
+          1,
+          2
+        ],
+        "*_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "*_llgo_encoding/binary.bigEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "*_llgo_encoding/binary.littleEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "*_llgo_encoding/gob.CommonType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/gob.arrayType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.decBuffer": [
+          3
+        ],
+        "*_llgo_encoding/gob.encBuffer": [
+          3
+        ],
+        "*_llgo_encoding/gob.gobEncoderType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/gob.mapType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.sliceType": [
+          0,
+          2,
+          3,
+          4,
+          5
+        ],
+        "*_llgo_encoding/gob.structType": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/hex.InvalidByteError": [
+          0
+        ],
+        "*_llgo_encoding/json.InvalidUnmarshalError": [
+          0
+        ],
+        "*_llgo_encoding/json.MarshalerError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.Number": [
+          2,
+          3,
+          4
+        ],
+        "*_llgo_encoding/json.SyntaxError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnmarshalTypeError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json.UnsupportedTypeError": [
+          0
+        ],
+        "*_llgo_encoding/json.UnsupportedValueError": [
+          0
+        ],
+        "*_llgo_encoding/json/internal/jsonwire.InvalidTextError": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.Decoder": [
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Encoder": [
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Kind": [
+          0
+        ],
+        "*_llgo_encoding/json/jsontext.SyntacticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.Value": [
+          7,
+          8,
+          9
+        ],
+        "*_llgo_encoding/json/jsontext.decoderState": [
+          0,
+          30,
+          31
+        ],
+        "*_llgo_encoding/json/jsontext.encoderState": [
+          2,
+          17,
+          18
+        ],
+        "*_llgo_encoding/json/jsontext.ioError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/jsontext.pointerSuffixError": [
+          0
+        ],
+        "*_llgo_encoding/json/v2.SemanticError": [
+          0,
+          1
+        ],
+        "*_llgo_encoding/json/v2.addressableValue": [
+          35,
+          72
+        ],
+        "*_llgo_errors.errorString": [
+          0
+        ],
+        "*_llgo_flag.boolValue": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_flag.durationValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.intValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.stringValue": [
+          1,
+          2
+        ],
+        "*_llgo_flag.uintValue": [
+          1,
+          2
+        ],
+        "*_llgo_fmt.pp": [
+          3,
+          4
+        ],
+        "*_llgo_fmt.wrapError": [
+          0,
+          1
+        ],
+        "*_llgo_fmt.wrapErrors": [
+          0,
+          1
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.FuncType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.StructType": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/abi.Type": [
+          21
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.PanicNilError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.TypeAssertionError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "*_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "*_llgo_golang.org/x/text/cases.titleCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undLowerCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undLowerIgnoreSigmaCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/cases.undUpperCaser": [
+          0,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Language": [
+          3
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Region": [
+          7
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Script": [
+          1
+        ],
+        "*_llgo_golang.org/x/text/internal/language.Tag": [
+          7,
+          9,
+          13,
+          15
+        ],
+        "*_llgo_golang.org/x/text/internal/language.ValueError": [
+          0
+        ],
+        "*_llgo_golang.org/x/text/internal/language.bytesSort": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.sortVariants": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/internal/language.variantsSort": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_golang.org/x/text/language.Base": [
+          2
+        ],
+        "*_llgo_golang.org/x/text/language.Region": [
+          7
+        ],
+        "*_llgo_golang.org/x/text/language.Script": [
+          1
+        ],
+        "*_llgo_golang.org/x/text/language.Tag": [
+          4,
+          10,
+          12
+        ],
+        "*_llgo_golang.org/x/text/transform.discard": [
+          0,
+          1
+        ],
+        "*_llgo_golang.org/x/text/transform.nop": [
+          0,
+          2
+        ],
+        "*_llgo_gorm.io/gorm.DeletedAt": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "*_llgo_gorm.io/gorm.Statement": [
+          83
+        ],
+        "*_llgo_gorm.io/gorm/logger.logger": [
+          0,
+          4,
+          6
+        ],
+        "*_llgo_gorm.io/gorm/schema.CustomReplacer": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema.GobSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.JSONSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.NamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema.Schema": [
+          8
+        ],
+        "*_llgo_gorm.io/gorm/schema.UnixSecondSerializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema.embeddedNamer": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema.serializer": [
+          0,
+          1
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.Book": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.CustomizeTable": [
+          0
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.CustomizedNamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "*_llgo_gorm.io/gorm/schema_test.UserWithCallback": [
+          0,
+          1
+        ],
+        "*_llgo_internal/bisect.parseError": [
+          0
+        ],
+        "*_llgo_internal/godebug.runtimeStderr": [
+          0
+        ],
+        "*_llgo_internal/poll.DeadlineExceededError": [
+          0
+        ],
+        "*_llgo_internal/poll.FD": [
+          18,
+          39
+        ],
+        "*_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.ValueError": [
+          0
+        ],
+        "*_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31,
+          34
+        ],
+        "*_llgo_internal/strconv.Error": [
+          0
+        ],
+        "*_llgo_internal/sync.Mutex": [
+          0,
+          2
+        ],
+        "*_llgo_io.discard": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_io/fs.FileMode": [
+          3
+        ],
+        "*_llgo_io/fs.PathError": [
+          0,
+          2
+        ],
+        "*_llgo_log.Logger": [
+          10
+        ],
+        "*_llgo_log/slog.Attr": [
+          1
+        ],
+        "*_llgo_log/slog.Kind": [
+          0
+        ],
+        "*_llgo_log/slog.Level": [
+          0,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "*_llgo_log/slog.Value": [
+          10
+        ],
+        "*_llgo_math/rand.rngSource": [
+          0
+        ],
+        "*_llgo_os.File": [
+          6,
+          9,
+          20,
+          22,
+          23
+        ],
+        "*_llgo_os.SyscallError": [
+          0,
+          2
+        ],
+        "*_llgo_os.errSymlink": [
+          0
+        ],
+        "*_llgo_os.fileStat": [
+          2
+        ],
+        "*_llgo_os.fileWithoutReadFrom": [
+          6,
+          19,
+          21,
+          22
+        ],
+        "*_llgo_os.fileWithoutWriteTo": [
+          6,
+          9,
+          20,
+          22
+        ],
+        "*_llgo_os.noReadFrom": [
+          0
+        ],
+        "*_llgo_os.noWriteTo": [
+          0
+        ],
+        "*_llgo_os.unixDirent": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_reflect.ChanDir": [
+          0
+        ],
+        "*_llgo_reflect.Kind": [
+          0
+        ],
+        "*_llgo_reflect.Value": [
+          35,
+          72
+        ],
+        "*_llgo_reflect.ValueError": [
+          0
+        ],
+        "*_llgo_reflect.rtype": [
+          0,
+          1,
+          2,
+          6,
+          7,
+          8,
+          9,
+          12,
+          15,
+          16,
+          19,
+          20,
+          21,
+          25,
+          26,
+          28,
+          36,
+          37,
+          38,
+          39
+        ],
+        "*_llgo_reflect.structType": [
+          25
+        ],
+        "*_llgo_regexp.Regexp": [
+          0,
+          24,
+          36,
+          39
+        ],
+        "*_llgo_regexp.inputBytes": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.inputReader": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.inputString": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "*_llgo_regexp.onePassInst": [
+          3
+        ],
+        "*_llgo_regexp/syntax.Error": [
+          0
+        ],
+        "*_llgo_regexp/syntax.ErrorCode": [
+          0
+        ],
+        "*_llgo_regexp/syntax.Inst": [
+          3
+        ],
+        "*_llgo_regexp/syntax.InstOp": [
+          0
+        ],
+        "*_llgo_regexp/syntax.Prog": [
+          2
+        ],
+        "*_llgo_regexp/syntax.ranges": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime.traceError": [
+          0
+        ],
+        "*_llgo_runtime/pprof.keysByCount": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime/pprof.labelMap": [
+          0
+        ],
+        "*_llgo_runtime/pprof.runtimeProfile": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_runtime/pprof.stackProfile": [
+          0,
+          1,
+          2
+        ],
+        "*_llgo_strconv.NumError": [
+          0,
+          1
+        ],
+        "*_llgo_strings.Builder": [
+          4,
+          5,
+          8
+        ],
+        "*_llgo_strings.Replacer": [
+          0
+        ],
+        "*_llgo_strings.appendSliceWriter": [
+          0,
+          1
+        ],
+        "*_llgo_strings.byteReplacer": [
+          0
+        ],
+        "*_llgo_strings.byteStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.genericReplacer": [
+          0
+        ],
+        "*_llgo_strings.singleStringReplacer": [
+          0
+        ],
+        "*_llgo_strings.stringWriter": [
+          0
+        ],
+        "*_llgo_struct$1ReNIA5saq-Xf7fc1kn20duKnzoewVVTPRH3tI_YeKE": [
+          0
+        ],
+        "*_llgo_struct$HC0XJvZWuhdd097vtNhbunHKu7FlfWcGFLm0OZfIzyU": [
+          0
+        ],
+        "*_llgo_struct$U_q9FhuubBrsArJoKxehFp3hp9z16ZrCr6IFugG0tnY": [
+          0
+        ],
+        "*_llgo_struct$yJB_ppPM0mvZIDht3vsTXJwnDV3DbvDwaMS-dw1Np08": [
+          0
+        ],
+        "*_llgo_sync.Mutex": [
+          0,
+          2
+        ],
+        "*_llgo_sync.RWMutex": [
+          0,
+          6
+        ],
+        "*_llgo_sync.noCopy": [
+          0,
+          1
+        ],
+        "*_llgo_sync/atomic.noCopy": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "*_llgo_syscall.Signal": [
+          1
+        ],
+        "*_llgo_testing.alternationMatch": [
+          0,
+          1
+        ],
+        "*_llgo_testing.chattyFlag": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_testing.durationOrCountFlag": [
+          0,
+          1
+        ],
+        "*_llgo_testing.indenter": [
+          0
+        ],
+        "*_llgo_testing.outputWriter": [
+          0
+        ],
+        "*_llgo_testing.simpleMatch": [
+          0,
+          1
+        ],
+        "*_llgo_testing/internal/testdeps.TestDeps": [
+          2,
+          3,
+          4,
+          5,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "*_llgo_testing/internal/testdeps.testLog": [
+          1,
+          2,
+          3
+        ],
+        "*_llgo_text/tabwriter.Writer": [
+          2
+        ],
+        "*_llgo_time.Duration": [
+          8
+        ],
+        "*_llgo_time.Location": [
+          0
+        ],
+        "*_llgo_time.ParseError": [
+          0
+        ],
+        "*_llgo_time.Time": [
+          5,
+          13,
+          14,
+          15,
+          20,
+          23,
+          24,
+          25,
+          31,
+          39,
+          40,
+          41
+        ],
+        "*_llgo_time.fileSizeError": [
+          0
+        ],
+        "*_llgo_time.parseDurationError": [
+          0
+        ],
+        "_llgo_compress/flate.InternalError": [
+          0
+        ],
+        "_llgo_context.backgroundCtx": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "_llgo_context.deadlineExceededError": [
+          0
+        ],
+        "_llgo_context.emptyCtx": [
+          1,
+          2,
+          3
+        ],
+        "_llgo_context.stopCtx": [
+          1,
+          2,
+          3
+        ],
+        "_llgo_crypto/internal/fips140/aes.KeySizeError": [
+          0
+        ],
+        "_llgo_crypto/internal/rand.reader": [
+          0
+        ],
+        "_llgo_database/sql.NullInt64": [
+          0
+        ],
+        "_llgo_database/sql.NullString": [
+          0
+        ],
+        "_llgo_database/sql.NullTime": [
+          0
+        ],
+        "_llgo_database/sql.driverStmt": [
+          0,
+          1
+        ],
+        "_llgo_encoding/base32.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/base64.CorruptInputError": [
+          0
+        ],
+        "_llgo_encoding/binary.bigEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "_llgo_encoding/binary.littleEndian": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "_llgo_encoding/hex.InvalidByteError": [
+          0
+        ],
+        "_llgo_encoding/json.Number": [
+          2,
+          3
+        ],
+        "_llgo_encoding/json/jsontext.Kind": [
+          0
+        ],
+        "_llgo_encoding/json/jsontext.Value": [
+          3,
+          4
+        ],
+        "_llgo_encoding/json/jsontext.pointerSuffixError": [
+          0
+        ],
+        "_llgo_encoding/json/v2.addressableValue": [
+          35,
+          72
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/ffi.Error": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.boundsError": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.errorString": [
+          0
+        ],
+        "_llgo_github.com/xgo-dev/llgo/runtime/internal/runtime.plainError": [
+          0
+        ],
+        "_llgo_golang.org/x/text/cases.undLowerCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/cases.undLowerIgnoreSigmaCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/cases.undUpperCaser": [
+          0,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.Language": [
+          3
+        ],
+        "_llgo_golang.org/x/text/internal/language.Region": [
+          7
+        ],
+        "_llgo_golang.org/x/text/internal/language.Script": [
+          1
+        ],
+        "_llgo_golang.org/x/text/internal/language.Tag": [
+          7,
+          9,
+          12
+        ],
+        "_llgo_golang.org/x/text/internal/language.ValueError": [
+          0
+        ],
+        "_llgo_golang.org/x/text/internal/language.bytesSort": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.sortVariants": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/internal/language.variantsSort": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_golang.org/x/text/language.Base": [
+          2
+        ],
+        "_llgo_golang.org/x/text/language.Region": [
+          7
+        ],
+        "_llgo_golang.org/x/text/language.Script": [
+          1
+        ],
+        "_llgo_golang.org/x/text/language.Tag": [
+          4,
+          10
+        ],
+        "_llgo_golang.org/x/text/transform.discard": [
+          0,
+          1
+        ],
+        "_llgo_golang.org/x/text/transform.nop": [
+          0,
+          2
+        ],
+        "_llgo_gorm.io/gorm.DeletedAt": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "_llgo_gorm.io/gorm/logger.logger": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema.CustomReplacer": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema.GobSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.JSONSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.NamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema.UnixSecondSerializer": [
+          0,
+          1
+        ],
+        "_llgo_gorm.io/gorm/schema.embeddedNamer": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema.serializer": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.Book": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.CustomizeTable": [
+          0
+        ],
+        "_llgo_gorm.io/gorm/schema_test.CustomizedNamingStrategy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7
+        ],
+        "_llgo_gorm.io/gorm/schema_test.UserWithCallback": [
+          0,
+          1
+        ],
+        "_llgo_internal/poll.errNetClosing": [
+          0
+        ],
+        "_llgo_internal/reflectlite.Kind": [
+          0
+        ],
+        "_llgo_internal/reflectlite.rtype": [
+          5,
+          6,
+          31,
+          34
+        ],
+        "_llgo_internal/strconv.Error": [
+          0
+        ],
+        "_llgo_io.discard": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_io/fs.FileMode": [
+          3
+        ],
+        "_llgo_log/slog.Attr": [
+          1
+        ],
+        "_llgo_log/slog.Kind": [
+          0
+        ],
+        "_llgo_log/slog.Level": [
+          0,
+          2,
+          3,
+          4
+        ],
+        "_llgo_log/slog.Value": [
+          10
+        ],
+        "_llgo_os.errSymlink": [
+          0
+        ],
+        "_llgo_os.fileWithoutReadFrom": [
+          6,
+          19,
+          21,
+          22
+        ],
+        "_llgo_os.fileWithoutWriteTo": [
+          6,
+          9,
+          20,
+          22
+        ],
+        "_llgo_os.noReadFrom": [
+          0
+        ],
+        "_llgo_os.noWriteTo": [
+          0
+        ],
+        "_llgo_reflect.ChanDir": [
+          0
+        ],
+        "_llgo_reflect.Kind": [
+          0
+        ],
+        "_llgo_reflect.Value": [
+          35,
+          72
+        ],
+        "_llgo_regexp/syntax.ErrorCode": [
+          0
+        ],
+        "_llgo_regexp/syntax.InstOp": [
+          0
+        ],
+        "_llgo_regexp/syntax.ranges": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_runtime.traceError": [
+          0
+        ],
+        "_llgo_runtime/pprof.stackProfile": [
+          0,
+          1,
+          2
+        ],
+        "_llgo_strings.stringWriter": [
+          0
+        ],
+        "_llgo_struct$1ReNIA5saq-Xf7fc1kn20duKnzoewVVTPRH3tI_YeKE": [
+          0
+        ],
+        "_llgo_struct$HC0XJvZWuhdd097vtNhbunHKu7FlfWcGFLm0OZfIzyU": [
+          0
+        ],
+        "_llgo_struct$U_q9FhuubBrsArJoKxehFp3hp9z16ZrCr6IFugG0tnY": [
+          0
+        ],
+        "_llgo_struct$yJB_ppPM0mvZIDht3vsTXJwnDV3DbvDwaMS-dw1Np08": [
+          0
+        ],
+        "_llgo_syscall.Errno": [
+          0,
+          1
+        ],
+        "_llgo_syscall.Signal": [
+          1
+        ],
+        "_llgo_testing.alternationMatch": [
+          0,
+          1
+        ],
+        "_llgo_testing.indenter": [
+          0
+        ],
+        "_llgo_testing.simpleMatch": [
+          0,
+          1
+        ],
+        "_llgo_testing/internal/testdeps.TestDeps": [
+          2,
+          3,
+          4,
+          5,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "_llgo_time.Duration": [
+          8
+        ],
+        "_llgo_time.Time": [
+          5,
+          13,
+          14,
+          19,
+          22,
+          23,
+          24,
+          30
+        ],
+        "_llgo_time.fileSizeError": [
+          0
+        ]
+      }
+    }
+  }
+}

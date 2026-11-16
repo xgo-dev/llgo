@@ -55,10 +55,11 @@ func newCacheManager() *cacheManager {
 
 // cachePaths holds the paths for a cached package
 type cachePaths struct {
-	Dir      string // Directory containing cache files
-	Archive  string // Path to .a file
-	Manifest string // Path to .manifest file
-	Meta     string // Path to .meta file
+	Dir       string // Directory containing cache files
+	Archive   string // Path to .a file
+	Manifest  string // Path to .manifest file
+	Meta      string // Path to .meta file
+	ReflectIR string // Optimized reflection-analysis snapshot, separate from link archive
 }
 
 // PackagePaths returns the cache paths for a package
@@ -66,10 +67,11 @@ func (cm *cacheManager) PackagePaths(targetTriple, pkgPath, fingerprint string) 
 	dir := cm.packageDir(targetTriple, pkgPath)
 	fingerprint = sanitizeComponent(fingerprint)
 	return cachePaths{
-		Dir:      dir,
-		Archive:  filepath.Join(dir, fingerprint+cacheArchiveExt),
-		Manifest: filepath.Join(dir, fingerprint+cacheManifestExt),
-		Meta:     filepath.Join(dir, fingerprint+cacheMetaExt),
+		Dir:       dir,
+		Archive:   filepath.Join(dir, fingerprint+cacheArchiveExt),
+		Manifest:  filepath.Join(dir, fingerprint+cacheManifestExt),
+		Meta:      filepath.Join(dir, fingerprint+cacheMetaExt),
+		ReflectIR: filepath.Join(dir, fingerprint+".reflect.bc"),
 	}
 }
 

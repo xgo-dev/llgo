@@ -1124,7 +1124,7 @@ entry:
   ret %Small %value
 }
 
-attributes #0 = { "llgo.reflect.methodbyname"="value" }
+attributes #0 = { "llgo.reflect.methodbyname"="value" "llgo.deadcode.reflectsite"="caller$reflectsite$1" }
 attributes #1 = { noinline }
 `
 
@@ -1180,6 +1180,17 @@ attributes #1 = { noinline }
 	}
 	if !strings.Contains(mod.String(), `"llgo.reflect.methodbyname"="value"`) {
 		t.Fatalf("reflect MethodByName call marker was not preserved:\n%s", mod.String())
+	}
+	for bb := mod.NamedFunction("caller").FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for call := bb.FirstInstruction(); !call.IsNil(); call = llvm.NextInstruction(call) {
+			if call.IsACallInst().IsNil() || call.CalledValue().Name() != "callee" {
+				continue
+			}
+			attr := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
+			if attr.IsNil() || attr.GetStringValue() != "caller$reflectsite$1" {
+				t.Fatalf("reflection site identity was not preserved: %s", call.String())
+			}
+		}
 	}
 
 	for _, name := range []string{"wrapper", "indirect", "self_copy"} {

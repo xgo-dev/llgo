@@ -767,6 +767,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	nft, attrs, paramMap := p.transformFuncType(ctx, &info)
 	preloweredSRet := call.GetCallSiteEnumAttribute(1, llvm.AttributeKindID("sret"))
 	reflectMethodByNameAttr := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
+	reflectSiteAttr := call.GetCallSiteStringAttribute(-1, "llgo.deadcode.reflectsite")
 	b := ctx.NewBuilder()
 	b.SetInsertPointBefore(call)
 
@@ -790,6 +791,9 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		ti := info.Params[i]
 		reflectMethodByNameArgAttr := call.GetCallSiteStringAttribute(i+1, "llgo.reflect.methodbyname.name")
 		if !reflectMethodByNameArgAttr.IsNil() {
+			// Move the marker with this argument's first lowered component. For
+			// a split Go string this is its data pointer, followed by its length.
+			// The call-level site ID stays unchanged on the replacement call.
 			remappedReflectMethodByNameArgAttrIndex = returnArgOffset + len(nparams) + 1
 		}
 		switch ti.Kind {
@@ -848,6 +852,9 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 		}
 		if !reflectMethodByNameAttr.IsNil() {
 			replacement.AddCallSiteAttribute(-1, reflectMethodByNameAttr)
+		}
+		if !reflectSiteAttr.IsNil() {
+			replacement.AddCallSiteAttribute(-1, reflectSiteAttr)
 		}
 		if remappedReflectMethodByNameArgAttrIndex >= 0 {
 			replacement.AddCallSiteAttribute(remappedReflectMethodByNameArgAttrIndex, ctx.CreateStringAttribute(

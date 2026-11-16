@@ -1218,6 +1218,12 @@ func TestDevLTOGlobalDCEReflectMethodByNameCallMarkers(t *testing.T) {
 		t.Fatalf("reflect MethodByName name-arg marker should be disabled by default")
 	}
 
+	prog.EnableDeadcodeDrop(true)
+	b.MarkReflectValueMethodByNameCall(call, 2)
+	if attr := call.GetCallSiteStringAttribute(3, reflectMethodByNameArgAttr); attr.IsNil() || attr.GetStringValue() != "1" {
+		t.Fatal("Drop must preserve the name argument without an LTO plugin")
+	}
+	prog.EnableDeadcodeDrop(false)
 	prog.EnableLTOPluginMarkers(true)
 	b.MarkReflectValueMethodByNameCall(call, 2)
 	if attr := call.GetCallSiteStringAttribute(-1, reflectMethodByNameCallAttr); attr.IsNil() || attr.GetStringValue() != reflectMethodByNameValue {

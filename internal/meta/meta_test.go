@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -8,6 +9,55 @@ import (
 	"testing"
 	"unsafe"
 )
+
+func TestReflectMethodMetadataRoundTrip(t *testing.T) {
+	b := NewBuilder()
+	sym := b.Sym("pkg.metadata")
+	b.MarkReflectMethodMetadata(sym)
+	pm, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	var data bytes.Buffer
+	if _, err := pm.WriteTo(&data); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "metadata.meta")
+	if err := os.WriteFile(path, data.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	g, err := NewGlobalSummary([]*PackageMeta{opened})
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, ok := g.LookupSymbol("pkg.metadata")
+	if !ok {
+		t.Fatal("missing demand owner")
+	}
+	if demands := g.FuncDemands(global); len(demands) != 1 || demands[0].Kind != DemandReflectMethodMetadata {
+		t.Fatalf("metadata-only demand lost after mmap/translation: %+v", demands)
+	}
+	if got := opened.String(); got != "[ReflectMethodMetadata]\n    pkg.metadata\n\n" {
+		t.Fatalf("metadata-only demand format: %q", got)
+	}
+	// A v1 reader silently ignored the added kind. The version boundary must
+	// therefore prevent a cache from being reused without its visibility fact.
+	binary.LittleEndian.PutUint32(data.Bytes()[4:8], 1)
+	oldPath := filepath.Join(t.TempDir(), "old.meta")
+	if err := os.WriteFile(oldPath, data.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if old, err := Open(oldPath); err == nil {
+		old.Close()
+		t.Fatal("accepted old metadata format")
+	}
+}
 
 // TestWireLayout verifies the zero-copy structs match their on-disk byte layout:
 // correct total size and field offsets. If these drift, unsafe reinterpretation
@@ -341,7 +391,7 @@ func TestOpenErrors(t *testing.T) {
 				binary.LittleEndian.PutUint32(raw[4:8], version+1)
 				return raw
 			},
-			want: "meta: unsupported version 2",
+			want: "meta: unsupported version 4",
 		},
 		{
 			name: "section offset past end",
