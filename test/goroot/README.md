@@ -36,8 +36,17 @@ The runner keeps a small, explicit set of gc backend controls on the official
 Go baseline: `-l=4`, `-d=ssa/check/on`, `-d=softfloat`, and `-d=checkptr`
 (including `all=-d=checkptr`). LLGo executes the same source
 assertions using LLVM's backend; this does not test gc's instrumentation or
-lowering in LLGo. Both programs must satisfy the unmodified case and output
+lowering in LLGo. Both programs must satisfy the same assertions and output
 comparison. Other compiler payloads retain their normal validation.
+
+On 32-bit targets, staged run cases give integer arguments to `print` and
+`println` an explicit `int64` or `uint64` type when they exceed `int32`.
+The integer expressions, assertions and source line numbers stay intact,
+and both compilers receive the same staged source.
+
+Windows MSVC lanes use a separate GNU/UCRT C compiler for the official Go
+reference and nested Go commands. LLGo builds retain their MSVC compiler
+and dependencies. Reference binaries do not inherit the host LLVM build flags.
 
 The external [LLGo compatibility workflows](https://github.com/llgo-compat/ci)
 build LLGo and this runner from a selected repository revision, then run the

@@ -148,6 +148,9 @@ func envEntry(env []string, key string) string {
 }
 
 func runGOROOTArtifact(dir, artifact string, llgo bool, env []string, timeout time.Duration, programArgs ...string) ([]byte, []byte, int, time.Duration, error) {
+	// Both programs may launch nested Go commands (for example linkmain_run).
+	// Their reference tool environment is independent of LLGo's build compiler.
+	env = baselineCgoEnv(env)
 	app, args, runEnv, err := gorootArtifactCommand(dir, artifact, llgo, env, programArgs...)
 	if err != nil {
 		return nil, nil, 0, 0, err

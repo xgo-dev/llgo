@@ -73,6 +73,13 @@ runs:
           Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_TEST_COMPILER=$hostCompilerPath"
         }
 
+    - name: Set up the Go reference C compiler
+      if: runner.os == 'Windows' && inputs.windows-abi == 'msvc'
+      uses: ./.github/actions/setup-llvm-mingw
+      with:
+        windows-arch: ${{ inputs.windows-arch }}
+        compiler-only: "true"
+
     - name: Activate Windows MSVC target
       if: runner.os == 'Windows' && inputs.windows-abi == 'msvc'
       shell: pwsh

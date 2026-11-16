@@ -986,7 +986,7 @@ func baselineGoEnv() []string {
 	env := append([]string{}, os.Environ()...)
 	env = upsertEnv(env, "GOENV=off")
 	env = upsertEnv(env, "GOFLAGS=")
-	return upsertEnv(env, "GOTOOLCHAIN=local")
+	return baselineCgoEnv(upsertEnv(env, "GOTOOLCHAIN=local"))
 }
 
 func appendIfMissing(env []string, kv string) []string {
@@ -2819,9 +2819,16 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 		}
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
+	if !nestedDirCase && len(sourceFiles) == 1 {
+		if count, err := normalizePrintConstants(filepath.Join(ws.workDir, sourceFiles[0]), targetGoArch(env)); err != nil {
+			return err
+		} else if count != 0 {
+			t.Logf("made %d out-of-range print constants explicitly 64-bit for %s", count, targetGoArch(env))
+		}
+	}
 
 	targetEnv := gorootTargetEnv(env)
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -3021,7 +3028,7 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 	metrics := caseMetrics{}
 	targetEnv := gorootTargetEnv(env)
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)

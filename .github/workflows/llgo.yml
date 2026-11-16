@@ -173,6 +173,28 @@ jobs:
           echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Set up Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: "1.26.7"
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
+
+      - name: Record Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        shell: bash
+        run: echo "LLGO_GOROOT_GO126=$(GOTOOLCHAIN=local go env GOROOT)" >> "$GITHUB_ENV"
+
+      - name: Restore build Go toolchain
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        with:
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
+
       - name: Activate native Windows target
         if: runner.os == 'Windows'
         uses: ./.github/actions/activate-windows-target
@@ -233,6 +255,26 @@ jobs:
               unset LLGO_TEST_COVERPROFILE LLGO_TEST_COVERPKG
               LLGO_TEST_SUITE=std dev/test_go_version.sh 1.27 ./test/std/weak
             )
+          fi
+
+          if [[ "$RUNNER_OS" == Windows && ( "$LLGO_WINDOWS_ABI" == msvc || "$LLGO_WINDOWS_ARCH" == 386 ) ]]; then
+            reference_llgo="$(cygpath -w "$LLGO")"
+            reference_cases='^(printbig|fixedbugs/(bug114|issue23305))\.go$'
+            if [[ "$LLGO_WINDOWS_ABI" == msvc ]]; then
+              reference_cases='^(printbig|linkmain_run|fixedbugs/(bug114|bug514|issue23305|issue34968|issue40954|issue42032|issue42076|issue46903|issue47227|issue51733))\.go$'
+            fi
+            reference_roots=("$(go env GOROOT)")
+            if [[ -n "${LLGO_GOROOT_GO126:-}" ]]; then
+              reference_roots+=("$LLGO_GOROOT_GO126")
+            fi
+            for reference_root in "${reference_roots[@]}"; do
+              (
+                cd test/goroot
+                go test -run '^TestGoRootRunCases$' -count=1 -timeout=15m -args \
+                  -goroot "$reference_root" -llgo "$reference_llgo" -directive-mode ci \
+                  -case "$reference_cases"
+              )
+            done
           fi
 
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
