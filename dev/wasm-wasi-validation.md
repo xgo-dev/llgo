@@ -5,11 +5,11 @@ that backend; they do not introduce an M:N scheduler on native or WASI targets.
 
 ## Fixed failure modes
 
-- The default runner is the Wasmer CLI pinned by [the installer](install_wasmer.sh),
-  with Cranelift on Unix and V8 on Windows,
+- The default runner is the unmodified Wasmer 7.5.0 CLI with Cranelift on Unix
+  and V8 on Windows,
   standard Wasm EH, SIMD and shared memory. LLVM emits standard EH directly
   with `-wasm-use-legacy-eh=false`, including the LTO link; no Binaryen
-  exception translation is needed. WASI libc supplies pthread creation
+  translation or runtime patch is needed. WASI libc supplies pthread creation
   and TLS, and the runtime maps `pthread_exit` to `wasix_32v1.thread_exit`.
   This is a Preview 1 + WASI threads + WASIX thread-exit host contract, not a
   portable single-thread Preview 1 binary. The earlier WAMR exception failures
@@ -64,14 +64,14 @@ stderr use the same host stream, so `llgo test` and these acceptance drivers set
 `RUST_LOG=off` for the host process. Guest stdout/stderr and runner failures are
 preserved without parsing or filtering their text. Ordinary `llgo run` retains
 the caller's logging configuration; use `RUST_LOG=warn` when diagnosing the
-engine. The pinned Wasmer CLI normally disables tracing when `RUST_LOG` is unset.
+engine. Wasmer 7.5.0 normally disables tracing when `RUST_LOG` is unset.
 The acceptance driver uses a fresh cache to verify cold/warm execution, unchanged
 cached artifacts, separate guest stdout/stderr, and a nonzero guest exit status.
 Guest stderr deliberately resembles an engine log to guard against text filters.
 
 The installer verifies pinned release archive SHA-256 digests. Prebuilt hosts
 are macOS arm64, Linux amd64/aarch64/riscv64 and Windows amd64 (including use
-from MinGW). The pinned Wasmer release does not publish a macOS Intel archive; that host
+from MinGW). Wasmer 7.5.0 does not publish a macOS Intel archive; that host
 requires a source-built CLI on PATH. The Windows CLI is a standalone host
 process and does not need to match the guest compiler's C ABI. Its official
 archive only includes the V8 backend. All invocations leave backend selection to

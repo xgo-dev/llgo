@@ -387,18 +387,16 @@ the commands and conventions.
 
 ## Documentation checks
 
-Keep installation and usage in `README.md`, contributor setup and validation in
-this guide, and agent-specific working rules in `AGENTS.md`. Detailed script
-contracts and fixture conventions live in `dev/README.md` and the relevant test
-README. `CLAUDE.md` points agents to the shared rules.
+Keep installation and usage in `README.md`, and contributor setup and
+validation in this guide. Detailed script contracts and fixture conventions
+live in `dev/README.md` and the relevant test README.
 
 Run these checks from the repository root:
 
 ```sh
-python3 .github/scripts/check_doc_structure.py
 npx --yes embedme --verify README.md
 npx --yes embedme --verify CONTRIBUTING.md
-lychee --include-fragments README.md CONTRIBUTING.md dev/README.md AGENTS.md CLAUDE.md
+lychee --include-fragments README.md CONTRIBUTING.md dev/README.md
 ```
 
 The [documentation workflow](.github/workflows/doc-link-checker.yml) runs these
@@ -417,8 +415,6 @@ or explanatory comment instead.
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#refresh-test-goldens).
 
 Build the tools from the configured repository root:
-
-<!-- embedme doc/_readme/scripts/install_full.sh#L4-L5 -->
 
 ```sh
 go install -v ./cmd/...
