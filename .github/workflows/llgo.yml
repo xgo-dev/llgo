@@ -226,6 +226,15 @@ jobs:
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
 
+          # Also check weak pointers without coverage, as llgo-compat/ci does:
+          # instrumentation can change the roots observed by conservative GC.
+          if [[ "$RUNNER_OS" == Windows && "${LLGO_WINDOWS_ARCH:-}" == 386 ]]; then
+            (
+              unset LLGO_TEST_COVERPROFILE LLGO_TEST_COVERPKG
+              LLGO_TEST_SUITE=std dev/test_go_version.sh 1.27 ./test/std/weak
+            )
+          fi
+
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
