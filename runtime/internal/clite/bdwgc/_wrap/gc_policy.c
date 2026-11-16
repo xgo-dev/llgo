@@ -73,23 +73,34 @@ static size_t llgo_gc_budget(size_t live, int32_t percent)
  * not an exact object count; BDWGC's own scan-cost budget is still a floor. */
 static size_t llgo_gc_update_budget(void)
 {
-    llgo_gc_stats stats = {0, 0, 0};
     if (llgo_gc_original_min == 0)
         llgo_gc_original_min = GC_get_min_bytes_allocd();
+    size_t live = 0;
+#if !defined(_WIN32)
+    llgo_gc_stats stats = {0, 0, 0};
     size_t filled = GC_get_prof_stats_unsafe(&stats, sizeof(stats));
-    size_t live = filled >= 2 * sizeof(uintptr_t) && stats.heap_size > stats.free_bytes
+    live = filled >= 2 * sizeof(uintptr_t) && stats.heap_size > stats.free_bytes
         ? stats.heap_size - stats.free_bytes : 0;
+#endif
+    /* Occupied blocks include fragmentation and deferred sweep. Windows'
+     * bounded VirtualAlloc-region table cannot tolerate using them as a live
+     * heap target: retain the fixed minimum and let BDWGC pace larger heaps. */
     /* Preserve the last active budget while automatic GC is disabled. A
      * disable/restore pair must not invalidate the collector's cached target. */
     size_t budget = llgo_gc_budget(live, llgo_gc_budget_percent);
     /* Leave room for the collector's expansion arithmetic on 32-bit hosts. */
     if (budget > SIZE_MAX / 2)
         budget = SIZE_MAX / 2;
-    /* BDWGC normally permits roughly one third of its estimated scan work
-     * in allocations per collection. GOGC=100 permits the full estimate,
-     * including roots; a heap-only floor misses this fixed scanning cost. */
+    /* Scale BDWGC's scan-work estimate as well as the heap-only floor, so
+     * the fixed cost of scanning roots participates in the budget. */
     uint32_t percent = (uint32_t)llgo_gc_budget_percent;
-    uintptr_t divisor = percent == 0 ? UINTPTR_MAX : (100u / percent + (100u % percent != 0));
+#if defined(_WIN32)
+    /* Keep the collector's normal expansion scale at GOGC=100 on Windows. */
+    const uint32_t scan_percent = 300;
+#else
+    const uint32_t scan_percent = 100;
+#endif
+    uintptr_t divisor = percent == 0 ? UINTPTR_MAX : (scan_percent / percent + (scan_percent % percent != 0));
     GC_set_free_space_divisor(divisor > 0 ? divisor : 1);
     budget = budget > llgo_gc_original_min ? budget : llgo_gc_original_min;
     GC_set_min_bytes_allocd(budget);

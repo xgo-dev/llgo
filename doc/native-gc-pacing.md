@@ -11,8 +11,10 @@ collection:
 
 ```
 p = last active non-negative GOGC percentage (initially 100)
-heap budget = clamp(max(4 MiB, occupied heap blocks) * p / 100, 1, SIZE_MAX/2)
-divisor = p == 0 ? UINTPTR_MAX : max(1, ceil(100 / p))
+heap estimate = Windows: 0; other native targets: occupied heap blocks
+heap budget = clamp(max(4 MiB, heap estimate) * p / 100, 1, SIZE_MAX/2)
+scan scale = Windows: 300; other native targets: 100
+divisor = p == 0 ? UINTPTR_MAX : max(1, ceil(scan scale / p))
 effective budget = max(BDWGC scan-work estimate / divisor, heap budget, preexisting minimum)
 ```
 
@@ -22,18 +24,25 @@ and the minimum heap budget avoids excessive collection in small heaps. It can
 increase physical memory use in exchange for less collection work. It does not
 allocate an artificial warmup heap or change the root set.
 
-The collector's scan-cost budget also participates: at GOGC=100 it permits its
-full scan-work estimate between collections, rather than BDWGC's default one
-third. This includes the fixed cost of scanning roots, which a heap-only floor
-cannot account for. Other percentages map to the collector's integer free-space
-divisor, rounded toward more frequent collection. The divisor remains 1 for
-percentages of 100 or greater; the occupied-heap floor continues to scale with
-the full percentage. A zero percentage sets the heap floor to one byte.
+The collector's scan-cost budget also participates, including the fixed cost of
+scanning roots. At GOGC=100, non-Windows targets permit the full scan-work
+estimate between collections, rather than BDWGC's default one third. Windows
+retains the default one-third scale and uses only the fixed heap minimum:
+occupied blocks include fragmentation and deferred sweep, and using them as a
+growing floor can exhaust Windows' bounded VirtualAlloc-region table. The
+complete upstream SIMD corpus reproduces this failure even when isolated
+TestAdd passes.
+
+Other percentages map to the collector's integer free-space divisor, rounded
+toward more frequent collection. The divisor reaches 1 at 100 on non-Windows
+targets and at 300 on Windows; the heap floor continues to scale with the full
+percentage. A zero percentage sets the heap floor to one byte.
 
 The divisor also controls BDWGC's heap expansion step, approximately the current
 heap size divided by the divisor before collector limits are applied. At the
-default percentage this can grow the heap by about its current size, rather than
-about one third. Both this expansion and the allocation budget can increase
+default percentage this can grow the heap by about its current size on
+non-Windows targets; Windows retains approximately one third. Both this
+expansion and the allocation budget can increase
 managed and physical heap footprints; the percentage is a memory/time tradeoff.
 
 `GOGC` defaults to 100. `GOGC=off` and negative `debug.SetGCPercent` values disable
