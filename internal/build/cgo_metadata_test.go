@@ -14,12 +14,17 @@ func TestCgoMetadataEnvironmentScope(t *testing.T) {
 	base := []string{"CGO_ENABLED=1", "CC=clang --target=i686-pc-windows-msvc"}
 	for _, tc := range []struct{ version, triple string }{
 		{"go1.27.0", "i686-pc-windows-msvc"},
+		{"devel go1.27-abcdef", "i686-pc-windows-msvc"},
 		{"go1.26.7", "i686-w64-windows-gnu"},
 		{"go1.26.7", "aarch64-unknown-linux-gnu"},
 	} {
 		if got := cgoMetadataEnvironment(base, tc.version, tc.triple); !reflect.DeepEqual(got, base) {
 			t.Fatalf("changed unrelated metadata environment for %+v", tc)
 		}
+	}
+	disabled := withEnv(base, "CGO_ENABLED=0")
+	if got := cgoMetadataEnvironment(disabled, "go1.26.7", "i686-pc-windows-msvc"); !reflect.DeepEqual(got, disabled) {
+		t.Fatal("changed environment with cgo disabled")
 	}
 	before := append([]string{}, base...)
 	got := cgoMetadataEnvironment(base, "go1.26.7", "i686-pc-windows-msvc")

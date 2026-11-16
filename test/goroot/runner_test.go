@@ -3160,7 +3160,11 @@ func toolchainGoModVersion(goroot string) (string, error) {
 func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, buildTimeout, runTimeout time.Duration) ([]byte, []byte, int, time.Duration, time.Duration, error) {
 	isLLGO := label == "llgo"
 	out := gorootArtifactPath(ws.rootDir, label+"-generated", isLLGO)
-	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, gorootTargetEnv(env), buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
+	buildEnv := gorootTargetEnv(env)
+	if !isLLGO {
+		buildEnv = baselineCgoEnv(buildEnv)
+	}
+	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, buildEnv, buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
 	if cmdErr := requireSuccessfulExit(err, buildExit); cmdErr != nil {
 		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, cmdErr, buildStdout, buildStderr, buildExit)
 	}
