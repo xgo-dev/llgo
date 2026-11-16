@@ -120,7 +120,7 @@ func (s *envSection) empty() bool {
 }
 
 type commonSection struct {
-	DispatchInlineBudget bool `yaml:"DISPATCH_INLINE_BUDGET"`
+	DispatchInlineBudget bool `yaml:"DISPATCH_INLINE_BUDGET,omitempty"`
 
 	EscapeAnalysisVersion int `yaml:"GO_ESCAPE_VERSION,omitempty"`
 
