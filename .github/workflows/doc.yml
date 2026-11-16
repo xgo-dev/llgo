@@ -52,7 +52,8 @@ jobs:
         working-directory: doc/_readme
         run: |
           bash scripts/install_brew.sh
-          export PATH="$(brew --prefix llgo)/bin:$PATH"
+          brew_bin="$(brew --prefix llgo)/bin"
+          export PATH="$brew_bin:$PATH"
           bash scripts/verify_install.sh
           llgo run ./llgo_simple
 
@@ -101,6 +102,7 @@ jobs:
               bash scripts/verify_install.sh
               llgo run ./llgo_simple
             ' _ "$manager"
+          done
 
   local_install:
     if: needs.prepare.outputs.run_code_ci == 'true'
