@@ -29,10 +29,17 @@ func TestDispatchInlineBackendOptionParsing(t *testing.T) {
 	}{
 		{[]string{"-L/opt/inline-libs", "-I/opt/align-loops", "-finline-functions", "-fno-inline-small-functions"}, true, true},
 		{[]string{"-mllvm", "-inline-threshold=20"}, false, true},
+		{[]string{"--mllvm", "-inline-threshold=20"}, false, true},
 		{[]string{"-mllvm=-inlinehint-threshold=20"}, false, true},
+		{[]string{"--mllvm=-inlinehint-threshold=20"}, false, true},
 		{[]string{"-Xlinker", "-mllvm", "-Xlinker", "-cold-callsite-rel-freq=0"}, false, true},
+		{[]string{"-Xlinker", "--mllvm", "-Xlinker", "-cold-callsite-rel-freq=0"}, false, true},
 		{[]string{"-Wl,-mllvm,-align-loops=16,-mllvm,-inline-threshold=20"}, false, false},
+		{[]string{"-Wl,--mllvm,-align-loops=16,--mllvm,-inline-threshold=20"}, false, false},
+		{[]string{"-Wl,--mllvm,-inline-threshold=20"}, false, true},
+		{[]string{"-Wl,--mllvm=-inline-threshold=20"}, false, true},
 		{[]string{"-Wl,-mllvm=-x86-align-branch-boundary=64"}, true, false},
+		{[]string{"-Wl,--mllvm=-x86-align-branch-boundary=64"}, true, false},
 	} {
 		c := dispatchInlineContext()
 		c.crossCompile.CXXArgs = tt.flags
@@ -44,10 +51,16 @@ func TestDispatchInlineBackendOptionParsing(t *testing.T) {
 			t.Errorf("%v: layout=%v, want %v", tt.flags, got, tt.layout)
 		}
 	}
-	c := dispatchInlineContext()
-	c.commands.environ = []string{"LDFLAGS=-Wl,-mllvm,-inline-threshold=20"}
-	if c.dispatchInlineBudgetEnabled() {
-		t.Fatal("ignored captured command environment")
+	for _, flags := range []string{
+		"-Wl,-mllvm,-inline-threshold=20",
+		"-Wl,--mllvm,-inline-threshold=20",
+		"-Wl,--mllvm=-inline-threshold=20",
+	} {
+		c := dispatchInlineContext()
+		c.commands.environ = []string{"LDFLAGS=" + flags}
+		if c.dispatchInlineBudgetEnabled() {
+			t.Errorf("ignored captured command environment: %s", flags)
+		}
 	}
 }
 

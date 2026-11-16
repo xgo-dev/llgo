@@ -50,16 +50,23 @@ func (c *context) nativeBackendOptions() []string {
 	}
 	value := false
 	for _, token := range tokens {
+		var option string
 		if value {
-			name, _, _ := strings.Cut(strings.TrimLeft(token, "-"), "=")
-			options = append(options, name)
+			option = token
 			value = false
-		} else if token == "-mllvm" {
-			value = true
-		} else if rest, ok := strings.CutPrefix(token, "-mllvm="); ok {
-			name, _, _ := strings.Cut(strings.TrimLeft(rest, "-"), "=")
-			options = append(options, name)
+		} else {
+			introducer, operand, assigned := strings.Cut(token, "=")
+			if introducer != "-mllvm" && introducer != "--mllvm" {
+				continue
+			}
+			if !assigned {
+				value = true
+				continue
+			}
+			option = operand
 		}
+		name, _, _ := strings.Cut(strings.TrimLeft(option, "-"), "=")
+		options = append(options, name)
 	}
 	return options
 }
