@@ -879,6 +879,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
+	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceGo.GOVERSION, export.Toolchain.TargetTriple)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}

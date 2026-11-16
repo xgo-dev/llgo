@@ -39,14 +39,18 @@ assertions using LLVM's backend; this does not test gc's instrumentation or
 lowering in LLGo. Both programs must satisfy the same assertions and output
 comparison. Other compiler payloads retain their normal validation.
 
-On 32-bit targets, staged run cases give integer arguments to `print` and
-`println` an explicit `int64` or `uint64` type when they exceed `int32`.
-The integer expressions, assertions and source line numbers stay intact,
-and both compilers receive the same staged source.
+On 32-bit targets, single-file `run`/`buildrun` cases give locally resolvable
+untyped integer constant arguments to built-in `print`/`println` an explicit
+`int64` or `uint64` type when they exceed `int32`. Values outside `uint64`
+remain unchanged. The integer expressions, assertions and source line numbers
+stay intact, and both compilers receive the same staged source.
 
-Windows MSVC lanes use a separate GNU/UCRT C compiler for the official Go
-reference and nested Go commands. LLGo builds retain their MSVC compiler
-and dependencies. Reference binaries do not inherit the host LLVM build flags.
+Windows MSVC lanes set `LLGO_GOROOT_BASELINE_CC` and
+`LLGO_GOROOT_BASELINE_CXX` to separate GNU/UCRT compilers for the official Go
+reference and nested Go commands. These overrides clear inherited
+`CGO_CFLAGS`, `CGO_CPPFLAGS`, `CGO_CXXFLAGS`, `CGO_FFLAGS` and `CGO_LDFLAGS`
+in reference builds and program execution. LLGo builds retain their MSVC
+compiler and dependencies.
 
 The external [LLGo compatibility workflows](https://github.com/llgo-compat/ci)
 build LLGo and this runner from a selected repository revision, then run the

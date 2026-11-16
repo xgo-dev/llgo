@@ -45,6 +45,7 @@ func TestBaselineCgoEnvironmentDoesNotChangeLLGoTarget(t *testing.T) {
 
 func TestPrintConstantNormalizationPreservesAssertions(t *testing.T) {
 	source := `package main
+import "unknown.invalid/package"
 const C32 = (-1) & ((1 << 32) - 1)
 func main() {
  if C32 != 0xFFFFFFFF { println("bad", C32); panic("fail") }
@@ -66,6 +67,9 @@ func main() {
 	if strings.Count(string(data), "\n") != strings.Count(source, "\n") || !strings.Contains(string(data), `if C32 != 0xFFFFFFFF { println("bad", int64(C32)); panic("fail") }`) {
 		t.Fatalf("normalization changed assertion logic or line numbers:\n%s", data)
 	}
+	// Import loading is intentionally omitted by normalization. Strip the
+	// unresolved import only for this independent 386 type-check assertion.
+	data = []byte(strings.Replace(string(data), "import \"unknown.invalid/package\"\n", "", 1))
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, name, data, 0)
 	if err != nil {

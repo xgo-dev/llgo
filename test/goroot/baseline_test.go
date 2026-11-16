@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -78,7 +77,9 @@ func normalizePrintConstants(filename, arch string) (int, error) {
 		Uses:   make(map[*ast.Ident]types.Object),
 		Scopes: make(map[ast.Node]*types.Scope),
 	}
-	config := types.Config{Sizes: sizes, Importer: importer.Default(), Error: func(error) {}}
+	// Resolve local constant expressions without loading imported export data.
+	// The real compiler retains responsibility for the complete program.
+	config := types.Config{Sizes: sizes, Error: func(error) {}}
 	pkg, _ := config.Check(file.Name.Name, fset, []*ast.File{file}, info)
 	bits := uint(sizes.Sizeof(types.Typ[types.Int]) * 8)
 	minimum := constant.MakeInt64(-1 << (bits - 1))
