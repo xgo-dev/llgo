@@ -61,7 +61,7 @@ func TestDispatchInlineBackendOverrides(t *testing.T) {
 		{"driver linker override", func(c *context) { c.crossCompile.CXXArgs = []string{"-fuse-ld=gold"} }},
 		{"other backend", func(c *context) { c.crossCompile.Toolchain.Linker = "" }},
 		{"extldflags", func(c *context) { c.buildConf.LinkOptions.ExternalLinkerFlags = "-Wl,-mllvm,-inline-threshold=20" }},
-		{"driver args", func(c *context) { c.crossCompile.CXXArgs = []string{"-fno-inline"} }},
+		{"driver backend args", func(c *context) { c.crossCompile.CXXArgs = []string{"-mllvm", "-inline-threshold=20"} }},
 		{"target flags", func(c *context) { c.crossCompile.LDFLAGS = []string{"-Wl,-mllvm,-cold-callsite-rel-freq=0"} }},
 		{"environment", func(c *context) { t.Setenv("LDFLAGS", "-Wl,-mllvm,-inline-cost-full=false") }},
 	} {
@@ -81,8 +81,8 @@ func TestDispatchInlineBackendOverrides(t *testing.T) {
 			for _, arg := range args {
 				found = found || arg == "-Wl,-mllvm,-inline-cost-full"
 			}
-			if found != want {
-				t.Fatalf("complete-cost default = %v, want %v: %v", found, want, args)
+			if found {
+				t.Fatalf("complete-cost flag without package hints: %v", args)
 			}
 		})
 	}

@@ -2722,6 +2722,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
 
+	linkArgs = deduplicateDispatchInlineCost(linkArgs)
+
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
 	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
@@ -3736,9 +3738,6 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
 		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
 	}
-	if ctx.dispatchInlineBudgetEnabled() {
-		applyDispatchInlineBudget(ctx.buildConf, mod)
-	}
 	return nil
 }
 
@@ -3800,6 +3799,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())

@@ -120,6 +120,8 @@ func (s *envSection) empty() bool {
 }
 
 type commonSection struct {
+	DispatchInlineBudget bool `yaml:"DISPATCH_INLINE_BUDGET"`
+
 	EscapeAnalysisVersion int `yaml:"GO_ESCAPE_VERSION,omitempty"`
 
 	BuildTags            []string     `yaml:"BUILD_TAGS,omitempty"`
@@ -165,7 +167,7 @@ type commonSection struct {
 }
 
 func (s *commonSection) empty() bool {
-	return s.EscapeAnalysisVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
+	return !s.DispatchInlineBudget && s.EscapeAnalysisVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
 		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&

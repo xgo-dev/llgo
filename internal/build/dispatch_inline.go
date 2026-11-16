@@ -1,6 +1,7 @@
 package build
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/lto"
@@ -30,13 +31,14 @@ func applyDispatchInlineBudget(conf *Config, mod llvm.Module) int {
 		if fn.IsDeclaration() || hasInlineBarrier(fn, false, "optnone", "optsize", "minsize", "cold") {
 			continue
 		}
-		profiled := false
+		profiled, dispatch := false, false
 		for _, bb := range fn.BasicBlocks() {
+			dispatch = dispatch || bb.LastInstruction().InstructionOpcode() == llvm.Switch
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				profiled = profiled || !inst.Metadata(prof).IsNil()
 			}
 		}
-		if profiled {
+		if profiled || !dispatch {
 			continue
 		}
 		for bb := range cyclicSwitchBlocks(fn.FirstBasicBlock()) {
@@ -75,9 +77,9 @@ func (c *context) dispatchInlineBudgetEnabled() bool {
 	if !c.nativeFullLTOELFEnabled() {
 		return false
 	}
-	flags := c.nativeBackendFlags()
+	flags := c.nativeBackendOptions()
 	for _, flag := range flags {
-		if strings.Contains(flag, "inline") || strings.Contains(flag, "callsite") {
+		if strings.HasPrefix(flag, "inline") || strings.Contains(flag, "callsite") {
 			return false
 		}
 	}
@@ -145,4 +147,26 @@ func cyclicSwitchBlocks(entry llvm.BasicBlock) map[llvm.BasicBlock]bool {
 	}
 	visit(entry)
 	return result
+}
+
+const dispatchInlineCostFlag = "-Wl,-mllvm,-inline-cost-full"
+
+func applyPackageDispatchInlineBudget(c *context, pkg *aPackage, mod llvm.Module) {
+	if c.passOpt && c.dispatchInlineBudgetEnabled() && applyDispatchInlineBudget(c.buildConf, mod) > 0 {
+		// LinkArgs is already persisted with each archive. A warm link must
+		// request complete cost analysis exactly when a linked package has hints.
+		pkg.LinkArgs = append(pkg.LinkArgs, dispatchInlineCostFlag)
+	}
+}
+
+func deduplicateDispatchInlineCost(args []string) []string {
+	seen := false
+	return slices.DeleteFunc(args, func(arg string) bool {
+		if arg != dispatchInlineCostFlag {
+			return false
+		}
+		duplicate := seen
+		seen = true
+		return duplicate
+	})
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/quoted"
+	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
 
 func (c *context) nativeFullLTOELFEnabled() bool {
@@ -14,27 +16,52 @@ func (c *context) nativeFullLTOELFEnabled() bool {
 		c.crossCompile.Linker != "" || c.buildConf.LinkOptions.ExternalLinker != "" {
 		return false
 	}
-	for _, flag := range c.nativeBackendFlags() {
-		for _, arg := range strings.Fields(flag) {
-			if strings.HasPrefix(arg, "--ld-path=") ||
-				(strings.HasPrefix(arg, "-fuse-ld=") && arg != "-fuse-ld=lld") {
-				return false
-			}
+	for _, arg := range c.nativeBackendArgs() {
+		if strings.HasPrefix(arg, "--ld-path=") ||
+			(strings.HasPrefix(arg, "-fuse-ld=") && arg != "-fuse-ld=lld") {
+			return false
 		}
 	}
 	return true
 }
 
-func (c *context) nativeBackendFlags() []string {
-	flags := []string{c.buildConf.LinkOptions.ExternalLinkerFlags}
+// Match driver arguments rather than substrings of paths or ordinary C flags.
+func (c *context) nativeBackendArgs() []string {
+	flags, _ := quoted.Split(c.buildConf.LinkOptions.ExternalLinkerFlags)
 	for _, name := range []string{"CCFLAGS", "CFLAGS", "LDFLAGS"} {
-		flags = append(flags, os.Getenv(name), c.commands.lookup(name))
+		flags = append(flags, safesplit.SplitPkgConfigFlags(os.Getenv(name))...)
+		flags = append(flags, safesplit.SplitPkgConfigFlags(c.commands.lookup(name))...)
 	}
 	for _, args := range [][]string{c.crossCompile.CCArgs, c.crossCompile.CXXArgs,
 		c.crossCompile.LinkerArgs, c.crossCompile.CCFLAGS, c.crossCompile.CFLAGS, c.crossCompile.LDFLAGS} {
 		flags = append(flags, args...)
 	}
 	return flags
+}
+
+func (c *context) nativeBackendOptions() []string {
+	var tokens, options []string
+	for _, arg := range c.nativeBackendArgs() {
+		if rest, ok := strings.CutPrefix(arg, "-Wl,"); ok {
+			tokens = append(tokens, strings.Split(rest, ",")...)
+		} else if arg != "-Xlinker" {
+			tokens = append(tokens, arg)
+		}
+	}
+	value := false
+	for _, token := range tokens {
+		if value {
+			name, _, _ := strings.Cut(strings.TrimLeft(token, "-"), "=")
+			options = append(options, name)
+			value = false
+		} else if token == "-mllvm" {
+			value = true
+		} else if rest, ok := strings.CutPrefix(token, "-mllvm="); ok {
+			name, _, _ := strings.Cut(strings.TrimLeft(rest, "-"), "=")
+			options = append(options, name)
+		}
+	}
+	return options
 }
 
 // Set final-backend defaults only for optimized native x86-64 ELF executables.
@@ -45,11 +72,10 @@ func (c *context) nativeFullLTOLinkerArgs() []string {
 		return nil
 	}
 	layout := true
-	for _, flag := range c.nativeBackendFlags() {
-		for _, option := range []string{"align-loops", "align-all", "x86-align-branch", "x86-branches-within"} {
-			if strings.Contains(flag, option) {
-				layout = false
-			}
+	for _, option := range c.nativeBackendOptions() {
+		if option == "align-loops" || strings.HasPrefix(option, "align-all-") ||
+			strings.HasPrefix(option, "x86-align-branch") || strings.HasPrefix(option, "x86-branches-within") {
+			layout = false
 		}
 	}
 	var args []string
@@ -60,10 +86,6 @@ func (c *context) nativeFullLTOLinkerArgs() []string {
 			// in runtime stack and source-position metadata.
 			"-Wl,-mllvm,-x86-align-branch=fused+jcc+jmp+indirect")
 	}
-	if c.dispatchInlineBudgetEnabled() {
-		// LLVM 22 reads function-inline-threshold only after completing its
-		// cost walk; otherwise a cold-site early exit masks the hint.
-		args = append(args, "-Wl,-mllvm,-inline-cost-full")
-	}
+
 	return args
 }
