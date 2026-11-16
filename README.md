@@ -408,7 +408,7 @@ llgo run .
 - [LLD 22](https://lld.llvm.org)
 - [LLDB](https://lldb.llvm.org) (LLVM 22 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
-- [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
+- [bdwgc/libgc 8.2+](https://www.hboehm.info/gc/)
 - [libffi](https://sourceware.org/libffi/)
 - [OpenSSL 3.0+](https://www.openssl.org/)
 - [zlib 1.2+](https://github.com/madler/zlib)
