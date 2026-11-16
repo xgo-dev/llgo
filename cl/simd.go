@@ -107,6 +107,15 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "SetLo"}:         {llssa.SIMDSetLo, simdHalf, 0},
 	{"numeric", "SetHi"}:         {llssa.SIMDSetHi, simdHalf, 0},
 
+	{"numeric", "InterleaveLo"}:        {llssa.SIMDInterleaveLo, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveHi"}:        {llssa.SIMDInterleaveHi, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveLoGrouped"}: {llssa.SIMDInterleaveLoGrouped, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveHiGrouped"}: {llssa.SIMDInterleaveHiGrouped, simdBinary, types.IsInteger},
+	{"numeric", "ConcatEven"}:          {llssa.SIMDConcatEven, simdBinary, types.IsInteger},
+	{"numeric", "ConcatOdd"}:           {llssa.SIMDConcatOdd, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveEven"}:      {llssa.SIMDInterleaveEven, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveOdd"}:       {llssa.SIMDInterleaveOdd, simdBinary, types.IsInteger},
+
 	{"numeric", "ConcatAddPairs"}:           {llssa.SIMDConcatAddPairs, simdBinary, 0},
 	{"numeric", "ConcatAddPairsGrouped"}:    {llssa.SIMDConcatAddPairsGrouped, simdBinary, 0},
 	{"numeric", "ConcatSubPairs"}:           {llssa.SIMDConcatSubPairs, simdBinary, 0},
@@ -261,6 +270,19 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	lanes, ok := llssa.SIMDVectorShape(vector)
 	if !ok {
 		return false
+	}
+	// Check operation-specific widths before the general wide-operation gate,
+	// so malformed plain and grouped declarations use the same shape validation.
+	switch d.op {
+	case llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped:
+		if simdVectorBits(vector) != 256 {
+			return false
+		}
+	case llssa.SIMDInterleaveLo, llssa.SIMDInterleaveHi,
+		llssa.SIMDConcatEven, llssa.SIMDConcatOdd, llssa.SIMDInterleaveEven, llssa.SIMDInterleaveOdd:
+		if simdVectorBits(vector) != 128 {
+			return false
+		}
 	}
 	// Extending type recognition must not silently enable width-specific
 	// handlers, or cross-width conversions with different lane semantics.
@@ -499,6 +521,7 @@ func simdVectorBits(typ types.Type) int64 {
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
 	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatAddPairsGrouped, llssa.SIMDConcatSubPairsGrouped,
 		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
 		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,

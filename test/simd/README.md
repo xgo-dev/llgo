@@ -30,6 +30,8 @@ architecture.
   with defined results for NaN and out-of-range floating inputs.
 - Four mask shapes, comparisons, mask bitmaps where provided, and the official
   Go helpers for masking and conditional selection.
+- Native integer interleave-low/high operations, ARM64 even/odd concatenation
+  and interleave, and AMD64 SIMD256 interleave within each 128-bit group.
 - Byte lookup with out-of-range zeroing on arm64/wasm, and baseline-safe amd64
   byte/word permutations and negative-index zeroing. Constant permutations
   fold to vector shuffles at O2; dynamic indices use a per-lane fallback.
@@ -96,7 +98,9 @@ and floating min/max, byte/word saturating add/subtract, rounded unsigned
 averages, square root, fused multiply-add, lane-preserving numeric/signedness
 conversions, and carryless multiplication independently within each 128-bit
 group. Horizontal pairwise addition and subtraction also operate independently
-within each 128-bit group. The bridge call-graph test covers all 350 entries in Go 1.27.0, including
+within each 128-bit group. `InterleaveLoGrouped` and `InterleaveHiGrouped` likewise
+interleave integer lanes independently within each 128-bit group.
+The bridge call-graph test covers all 350 entries in Go 1.27.0, including
 their private intrinsic dependencies. Cross-width and lane-count-changing
 conversions, integer resizing, and other wide target-specific operations remain
 separate stages; unimplemented declarations retain the recoverable panic.
@@ -322,7 +326,8 @@ LLGO=/path/to/llgo bash dev/test_native_simd.sh
 On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
-The same overrides also exercise integer extension and narrowing.
+The same overrides also exercise integer extension and narrowing, horizontal
+pair operations, and integer interleaving.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.

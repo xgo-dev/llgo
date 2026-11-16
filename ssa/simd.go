@@ -78,6 +78,14 @@ const (
 	SIMDGetHi
 	SIMDSetLo
 	SIMDSetHi
+	SIMDInterleaveLo
+	SIMDInterleaveHi
+	SIMDInterleaveLoGrouped
+	SIMDInterleaveHiGrouped
+	SIMDConcatEven
+	SIMDConcatOdd
+	SIMDInterleaveEven
+	SIMDInterleaveOdd
 	SIMDConcatAddPairs
 	SIMDConcatAddPairsGrouped
 	SIMDConcatSubPairs
@@ -223,6 +231,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
+		return b.simdInterleave(op, args[0], args[1])
 	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
 		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
