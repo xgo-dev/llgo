@@ -65,7 +65,7 @@ class WorkerReuseTests(unittest.TestCase):
                     self.assertIn(f"{target}-runner.mjs", args[0])
                     self.assertEqual(compile_args[compile_args.index("-o") + 1], args[1])
                 self.assertEqual(language_args[language_args.index("-test.skip") + 1],
-                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop)$")
+                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$")
                 self.assertEqual(gc_args[gc_args.index("-test.run") + 1],
                                  "^TestGCConcurrentTypedMutation$")
                 self.assertIn("-test.timeout=480s", gc_args)
@@ -73,7 +73,7 @@ class WorkerReuseTests(unittest.TestCase):
                                  "^TestEscapeTypedStack")
                 self.assertIn("-test.timeout=480s", stack_args)
                 self.assertEqual(lifetime_args[lifetime_args.index("-test.run") + 1],
-                                 "^(TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop)$")
+                                 "^(TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$")
                 self.assertIn("-test.timeout=480s", lifetime_args)
                 self.assertEqual(run_args[run_args.index("-test.run") + 1],
                                  "^TestRuntimeNumGoroutineIncludesNewProc$")

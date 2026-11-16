@@ -115,7 +115,7 @@ run_worker_go_test() {
 	# Keep reflection with the language cases after a substantial live heap.
 	# Reuse one complete module, but give forced-GC lifetime groups their own
 	# process alarm so conservative heap growth cannot exhaust the shared one.
-	local lifetime_tests='TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop'
+	local lifetime_tests='TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC'
 	local language_skip="^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|${lifetime_tests})$"
 	# Bound compilation separately from guest execution, as for the reused
 	# groups below. All groups execute the same module and iteration counts.
