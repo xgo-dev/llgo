@@ -632,7 +632,13 @@ function Install-LLGoRelease {
   New-Item -ItemType Directory -Force $Root | Out-Null
   $current = Join-Path $Root 'current'
   Set-LLGoJunction -Path $current -Target $versionRoot
-  Set-LLGoJunction -Path (Join-Path $Root 'bin') -Target (Join-Path $current 'bin')
+  # Go keeps junction paths when locating the executable's runtime tree.
+  foreach ($directory in @('bin', 'runtime', 'targets', 'crosscompile')) {
+    $target = Join-Path $current $directory
+    if (Test-Path -LiteralPath $target -PathType Container) {
+      Set-LLGoJunction -Path (Join-Path $Root $directory) -Target $target
+    }
+  }
   return $executable
 }
 

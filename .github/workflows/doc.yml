@@ -90,11 +90,12 @@ jobs:
           bash doc/_readme/scripts/quick_install.sh
 
       - name: Verify README installation
+        working-directory: doc/_readme
         run: |
           test "$(cd "$(llgo env LLGO_ROOT)" && pwd -P)" = \
             "$(cd "$RUNNER_TEMP/llgo-readme/current" && pwd -P)"
-          bash doc/_readme/scripts/verify_install.sh
-          llgo run ./doc/_readme/llgo_simple
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
 
   local_install:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -176,10 +177,15 @@ jobs:
             Get-Content -Raw (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')
           }
           . ./doc/_readme/scripts/quick_install.ps1
-          bash doc/_readme/scripts/verify_install.sh
-          if ($LASTEXITCODE -ne 0) { throw 'Installation verification failed' }
-          llgo run ./doc/_readme/llgo_simple
-          if ($LASTEXITCODE -ne 0) { throw 'Compiled program failed' }
+
+      - name: Verify README installation on Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        working-directory: doc/_readme
+        run: |
+          llgo env LLGO_ROOT LLGO_RUNTIME_DIR
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
 
       - name: Test default and full local installs
         shell: bash

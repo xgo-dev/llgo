@@ -131,6 +131,7 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\llgo.exe') -Value 'test'
     Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\go.mod') `
       -Value 'module github.com/xgo-dev/llgo/runtime'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\release.txt') -Value '1.2.3'
     $archive = Join-Path $temporary 'llgo.zip'
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
 
@@ -152,18 +153,22 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     if (-not (Test-Path -LiteralPath (Join-Path $root 'bin\llgo.exe'))) {
       throw 'the stable executable path does not resolve'
     }
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'runtime\release.txt')) '1.2.3'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\release.txt') -Value '1.2.4'
+    Compress-Archive -Force -Path (Join-Path $payload '*') -DestinationPath $archive
     $null = Install-LLGoRelease `
       -Root $root `
       -Version '1.2.4' `
       -Architecture 'amd64' `
       -ABI 'msvc' `
       -LocalArchive $archive
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'runtime\release.txt')) '1.2.4'
     if (-not (Test-Path -LiteralPath (Join-Path $root 'versions\1.2.3\windows-amd64\bin\llgo.exe'))) {
       throw 'installing a new version removed the old version'
     }
   } finally {
     if (Test-Path -LiteralPath $temporary) {
-      foreach ($link in @('bin', 'current')) {
+      foreach ($link in @('bin', 'runtime', 'targets', 'crosscompile', 'current')) {
         $linkPath = Join-Path $temporary "root\$link"
         if (Get-Item -Force -LiteralPath $linkPath -ErrorAction SilentlyContinue) {
           Remove-Item -Force -LiteralPath $linkPath
