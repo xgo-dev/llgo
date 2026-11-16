@@ -58,6 +58,7 @@ func TestDispatchInlineBackendOverrides(t *testing.T) {
 		{"default", nil},
 		{"external linker", func(c *context) { c.buildConf.LinkOptions.ExternalLinker = "clang" }},
 		{"direct linker", func(c *context) { c.crossCompile.Linker = "ld.lld" }},
+		{"driver linker override", func(c *context) { c.crossCompile.CXXArgs = []string{"-fuse-ld=gold"} }},
 		{"other backend", func(c *context) { c.crossCompile.Toolchain.Linker = "" }},
 		{"extldflags", func(c *context) { c.buildConf.LinkOptions.ExternalLinkerFlags = "-Wl,-mllvm,-inline-threshold=20" }},
 		{"driver args", func(c *context) { c.crossCompile.CXXArgs = []string{"-fno-inline"} }},

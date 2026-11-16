@@ -80,6 +80,8 @@ func TestNativeFullLTOCodeLayoutScope(t *testing.T) {
 		func(c *context) { c.buildConf.BuildMode = BuildModeCArchive },
 		func(c *context) { c.buildConf.LinkOptions.ExternalLinker = "clang" },
 		func(c *context) { c.crossCompile.Linker = "ld.lld" },
+		func(c *context) { c.crossCompile.CXXArgs = []string{"-fuse-ld=bfd"} },
+		func(c *context) { c.buildConf.LinkOptions.ExternalLinkerFlags = "--ld-path=custom-ld" },
 		func(c *context) { c.crossCompile.Toolchain.Linker = "" },
 	} {
 		c := &context{buildConf: dispatchInlineConfig(), crossCompile: crosscompile.Export{

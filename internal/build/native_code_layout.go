@@ -8,10 +8,21 @@ import (
 )
 
 func (c *context) nativeFullLTOELFEnabled() bool {
-	return c != nil && dispatchInlineEnabled(c.buildConf) &&
-		c.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatELF &&
-		c.crossCompile.Toolchain.Linker == crosscompile.LinkerFlavorELFLLD &&
-		c.crossCompile.Linker == "" && c.buildConf.LinkOptions.ExternalLinker == ""
+	if c == nil || !dispatchInlineEnabled(c.buildConf) ||
+		c.crossCompile.Toolchain.ObjectFormat != crosscompile.ObjectFormatELF ||
+		c.crossCompile.Toolchain.Linker != crosscompile.LinkerFlavorELFLLD ||
+		c.crossCompile.Linker != "" || c.buildConf.LinkOptions.ExternalLinker != "" {
+		return false
+	}
+	for _, flag := range c.nativeBackendFlags() {
+		for _, arg := range strings.Fields(flag) {
+			if strings.HasPrefix(arg, "--ld-path=") ||
+				(strings.HasPrefix(arg, "-fuse-ld=") && arg != "-fuse-ld=lld") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *context) nativeBackendFlags() []string {
