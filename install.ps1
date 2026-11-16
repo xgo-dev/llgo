@@ -632,8 +632,20 @@ function Install-LLGoRelease {
   New-Item -ItemType Directory -Force $Root | Out-Null
   $current = Join-Path $Root 'current'
   Set-LLGoJunction -Path $current -Target $versionRoot
-  # Go keeps junction paths when locating the executable's runtime tree.
-  foreach ($directory in @('bin', 'runtime', 'targets', 'crosscompile')) {
+
+  # Go's executable-path resolution can fail when bin is a junction.
+  $bin = Join-Path $Root 'bin'
+  $binItem = Get-Item -Force -LiteralPath $bin -ErrorAction SilentlyContinue
+  if ($binItem -and ($binItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Remove-Item -Force -LiteralPath $bin
+  }
+  New-Item -ItemType Directory -Force $bin | Out-Null
+  foreach ($file in Get-ChildItem -File -LiteralPath (Join-Path $versionRoot 'bin')) {
+    $path = Join-Path $bin $file.Name
+    if (Test-Path -LiteralPath $path) { Remove-Item -Force -LiteralPath $path }
+    New-Item -ItemType HardLink -Path $path -Target $file.FullName | Out-Null
+  }
+  foreach ($directory in @('runtime', 'targets', 'crosscompile')) {
     $target = Join-Path $current $directory
     if (Test-Path -LiteralPath $target -PathType Container) {
       Set-LLGoJunction -Path (Join-Path $Root $directory) -Target $target
