@@ -43,7 +43,8 @@ func TestNativeChannelSignalLifetime(t *testing.T) {
 	}
 	// Compile the shared Go/LLGo testcase with a companion that replaces only
 	// its synchronization factory. Keep each scenario in a separate process so
-	// the C probe can target exactly one wait.
+	// the C probe can target exactly one wait. The probe checks notification
+	// completion even when the waiter retains its signal until its G exits.
 	dir := t.TempDir()
 	for _, name := range []string{"channel_waiter_test.go", "channel_waiter_norace_test.go", "_wrap/channel_signal_lifetime.c"} {
 		data, err := os.ReadFile(filepath.Join(root, "test/go", name))

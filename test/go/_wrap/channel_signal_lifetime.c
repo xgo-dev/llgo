@@ -13,7 +13,6 @@ static pthread_mutex_t *target_mutex;
 static _Atomic int waiting;
 static _Atomic int resume_wait;
 static _Atomic int signaling;
-static _Atomic int destroyed;
 
 static void fail(const char *message) {
     fprintf(stderr, "%s\n", message);
@@ -45,7 +44,7 @@ int llgo_lifetime_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
         sched_yield();
     }
     // A legal spurious return: the mutex must be reacquired before the
-    // channel waiter can observe completion and destroy its signal.
+    // channel waiter can observe completion and release or reuse its signal.
     return pthread_mutex_lock(mutex);
 }
 
@@ -56,8 +55,8 @@ int llgo_lifetime_cond_signal(pthread_cond_t *cond) {
     atomic_store(&signaling, 1);
     // The waiter is still behind resume_wait, so it cannot own this mutex.
     // If finish has already unlocked, force the spurious return and hold
-    // this call until destroy detects the lifetime violation. No timing
-    // assumptions or access to a destroyed pthread object are needed.
+    // this call until the completion check detects the lifetime violation.
+    // No timing assumptions or access to a destroyed pthread object are needed.
     int result = pthread_mutex_trylock(target_mutex);
     if (result == 0) {
         pthread_mutex_unlock(target_mutex);
@@ -80,14 +79,19 @@ int llgo_lifetime_cond_destroy(pthread_cond_t *cond) {
         if (atomic_load(&signaling)) {
             fail("condition destroyed while its signal call is active");
         }
-        atomic_store(&destroyed, 1);
     }
     return pthread_cond_destroy(cond);
 }
 
 void llgo_lifetime_check(void) {
-    if (!atomic_load(&destroyed)) {
+    // A completed waiter may cache its condition variable until its G exits.
+    // Check that the armed wait ran and notification finished before the
+    // waiter was released for destruction or reuse.
+    if (!atomic_load(&waiting) || !atomic_load(&resume_wait)) {
         fail("channel waiter lifetime was not exercised");
+    }
+    if (atomic_load(&signaling)) {
+        fail("channel waiter completed while its signal call is active");
     }
     atomic_store(&waiting, 0);
 }
