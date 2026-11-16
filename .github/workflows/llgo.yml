@@ -226,6 +226,16 @@ jobs:
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
 
+          # Match the external compatibility lane's uninstrumented Windows/386
+          # profile: conservative GC roots can change with coverage codegen.
+          if [[ "$RUNNER_OS" == Windows && "${LLGO_WINDOWS_ARCH:-}" == 386 ]]; then
+            (
+              unset LLGO_TEST_COVERPROFILE LLGO_TEST_COVERPKG
+              LLGO_TEST_SUITE=std LLGO_TEST_CHECK_SYMBOLS=0 LLGO_TEST_STD_BUILDMODES=0 \
+                dev/test_go_version.sh 1.27 ./test/std/...
+            )
+          fi
+
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
