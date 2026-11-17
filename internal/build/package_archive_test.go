@@ -19,6 +19,7 @@ package build
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -83,6 +84,14 @@ func TestNormalizeToArchiveUsesMemoryBuffer(t *testing.T) {
 }
 
 func TestCreatePackageArchiveFileWithExternalArchiver(t *testing.T) {
+	// This fixture contains LLVM bitcode, which the host's system ar may not
+	// understand. Select the LLVM archiver explicitly, as the toolchain does.
+	llvmAr, err := exec.LookPath("llvm-ar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_AR", llvmAr)
+
 	llvmCtx := gllvm.NewContext()
 	defer llvmCtx.Dispose()
 	mod := llvmCtx.NewModule("external-archive")

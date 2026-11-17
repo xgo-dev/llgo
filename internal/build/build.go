@@ -2183,6 +2183,7 @@ func (c *context) clangConfig() clang.Config {
 
 func (c *context) linker() *clang.Cmd {
 	config := c.clangConfig()
+	config.LDFLAGS = append(c.nativeFullLTOLinkerArgs(), config.LDFLAGS...)
 	linkerProgram := config.Linker
 	useCXX := config.Linker == "" && config.CXX != ""
 	if useCXX {
@@ -2721,6 +2722,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
+
+	linkArgs = deduplicateDispatchInlineCost(linkArgs)
 
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
@@ -3797,6 +3800,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())

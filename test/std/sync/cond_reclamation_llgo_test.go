@@ -1,4 +1,4 @@
-//go:build llgo && go1.27 && !nogc
+//go:build llgo && go1.27 && !nogc && wasm && !llgo.wasi_threads
 
 package sync_test
 

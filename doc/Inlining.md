@@ -24,6 +24,23 @@ cross-package inlining to the final linker, which sees the defining packages'
 real bodies. This avoids changing optimization order through early inline
 copies. Without LTO and with ThinLTO, the import policy below applies.
 
+For Linux amd64 executables built with `-O3 -lto=full` through ELF LLD, calls
+in unprofiled cyclic switch regions can receive LLVM 22's ordinary O3 inline
+budget (250). Packages that receive hints request complete inline-cost analysis
+at final link, including after an archive-cache hit. The hint decision participates
+in the package fingerprint. Profile summaries, branch profiles and explicit
+inline attributes remain authoritative. The same link profile aligns loops to
+64 bytes and pads selected branches at 32-byte boundaries, excluding calls and
+returns. This trades code size for dispatch performance.
+
+To select an explicit inline budget, use, for example,
+`LDFLAGS=-Wl,-mllvm,-inline-threshold=20`; this disables LLGo's switch-call hints
+and their automatic complete-cost flag. An explicit LLVM layout option, such as
+`LDFLAGS=-Wl,-mllvm,-align-loops=16`, replaces the automatic loop/branch layout
+settings. Ordinary C flags and library paths do not disable these policies.
+Other optimization levels, Thin/off LTO and explicitly selected alternate
+linkers retain their existing behavior.
+
 ## Candidate and import limits
 
 The initial frontend policy uses a budget of 80 SSA cost units per body,

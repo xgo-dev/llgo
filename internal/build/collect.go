@@ -145,6 +145,9 @@ func (c *context) sourceGoVersion() string {
 
 // collectCommonInputs collects common build configuration inputs.
 func (c *context) collectCommonInputs(m *manifestBuilder) {
+	// This decision changes cached LLVM call-site attributes, including when
+	// driven by environment or external-linker flags used only at final link.
+	m.common.DispatchInlineBudget = c.dispatchInlineBudgetEnabled()
 	m.common.EscapeAnalysisVersion = goescape.Version
 	if c.buildConf.Tags != "" {
 		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
