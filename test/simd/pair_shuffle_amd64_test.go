@@ -274,6 +274,89 @@ func pairHalfFMV(x, y archsimd.Uint64x4) archsimd.Uint64x4 {
 	return x.ConcatPermute128Scalars(0, 3, y)
 }
 
+//go:noinline
+func pairHalfBytesIndirect(f func(uint8, uint8, archsimd.Uint8x32) archsimd.Uint8x32, lo, hi uint8, y archsimd.Uint8x32) archsimd.Uint8x32 {
+	return f(lo, hi, y)
+}
+
+//go:noinline
+func pairHalfBytesFMV(x, y archsimd.Uint8x32, lo, hi uint8) archsimd.Uint8x32 {
+	if archsimd.X86.AVX2() {
+		return x.ConcatPermute128Scalars(lo, hi, y)
+	}
+	return x.ConcatPermute128Scalars(lo, hi, y)
+}
+
+func TestSIMDPairShuffleByteCalls(t *testing.T) {
+	requireSIMD256(t)
+	for _, indirect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indirect=%v", indirect), func(t *testing.T) {
+			testPairHalves[uint8](t, 32, func(x, y []uint8, lo, hi uint8, out []uint8) {
+				a, b := archsimd.LoadUint8x32Array((*[32]uint8)(x)), archsimd.LoadUint8x32Array((*[32]uint8)(y))
+				if indirect {
+					pairHalfBytesIndirect(a.ConcatPermute128Scalars, lo, hi, b).StoreArray((*[32]uint8)(out))
+				} else {
+					pairHalfBytesFMV(a, b, lo, hi).StoreArray((*[32]uint8)(out))
+				}
+			})
+		})
+	}
+	x, y, out := pairInputs[uint8](32)
+	a, b := archsimd.LoadUint8x32Array((*[32]uint8)(x)), archsimd.LoadUint8x32Array((*[32]uint8)(y))
+	source := append(append([]uint8{}, x...), y...)
+	for index := uint8(0); index < 4; index++ {
+		a.ConcatPermute128Scalars(3, index, b).StoreArray((*[32]uint8)(out))
+		want := append(append([]uint8{}, source[48:64]...), source[int(index)*16:int(index+1)*16]...)
+		if !bytes.Equal(out, want) {
+			t.Fatalf("constant low, dynamic high %d: got %x want %x", index, out, want)
+		}
+		a.ConcatPermute128Scalars(index, 0, b).StoreArray((*[32]uint8)(out))
+		want = append(append([]uint8{}, source[int(index)*16:int(index+1)*16]...), source[:16]...)
+		if !bytes.Equal(out, want) {
+			t.Fatalf("dynamic low %d, constant high: got %x want %x", index, out, want)
+		}
+	}
+}
+
+var pairHalfBenchmarkResult [32]uint8
+
+func BenchmarkSIMDPairShuffleHalves(b *testing.B) {
+	if runtime.Compiler != "llgo" && !archsimd.X86.AVX2() {
+		b.Skip("official Go SIMD256 requires AVX2")
+	}
+	// Runtime selectors remain dynamic across the noinline call. Generate the
+	// deterministic random stream before timing, and carry the result between
+	// iterations so the benchmark measures a dependent sequence of shuffles.
+	x, y, _ := pairInputs[uint8](32)
+	for _, random := range []bool{false, true} {
+		name := "predictable"
+		if random {
+			name = "random"
+		}
+		b.Run(name, func(b *testing.B) {
+			var selectors [4096][2]uint8
+			state := uint32(0x12345678)
+			for i := range selectors {
+				selectors[i] = [2]uint8{1, 2}
+				if random {
+					state ^= state << 13
+					state ^= state >> 17
+					state ^= state << 5
+					selectors[i] = [2]uint8{uint8(state & 3), uint8((state >> 2) & 3)}
+				}
+			}
+			a, other := archsimd.LoadUint8x32Array((*[32]uint8)(x)), archsimd.LoadUint8x32Array((*[32]uint8)(y))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				s := selectors[i&(len(selectors)-1)]
+				a = pairHalfBytesFMV(a, other, s[0], s[1])
+			}
+			b.StopTimer()
+			a.StoreArray(&pairHalfBenchmarkResult)
+		})
+	}
+}
+
 func TestSIMDPairShuffleCalls(t *testing.T) {
 	requireSIMD256(t)
 	testPairHalves[uint64](t, 4, func(x, y []uint64, lo, hi uint8, out []uint64) {

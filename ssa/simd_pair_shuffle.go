@@ -59,17 +59,28 @@ func (b Builder) simdConcatPermute128(x, lo, hi, y Expr) Expr {
 		}
 		return Expr{b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(mask, false), ""), x.Type}
 	}
-	result := llvm.Undef(x.ll)
+	// Select whole 128-bit halves. Dynamic element extraction otherwise makes
+	// x86 spill the vectors and reconstruct the result with indexed scalar loads.
+	var candidates [4]llvm.Value
+	for half := range candidates {
+		mask := make([]llvm.Value, group)
+		for i := range mask {
+			mask[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(half*group+i), false)
+		}
+		candidates[half] = b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(mask, false), "")
+	}
+	var halves [2]llvm.Value
 	for half, index := range indices {
 		fromX := llvm.CreateICmp(b.impl, llvm.IntULT, index, llvm.ConstInt(index.Type(), 2, false))
-		input := b.impl.CreateSelect(fromX, x.impl, y.impl, "")
-		base := b.impl.CreateAnd(index, llvm.ConstInt(index.Type(), 1, false), "")
-		base = b.impl.CreateMul(base, llvm.ConstInt(index.Type(), uint64(group), false), "")
-		for i := 0; i < group; i++ {
-			lane := b.impl.CreateAdd(base, llvm.ConstInt(index.Type(), uint64(i), false), "")
-			value := b.impl.CreateExtractElement(input, lane, "")
-			result = b.impl.CreateInsertElement(result, value, llvm.ConstInt(index.Type(), uint64(half*group+i), false), "")
-		}
+		lowBit := b.impl.CreateAnd(index, llvm.ConstInt(index.Type(), 1, false), "")
+		isHigh := llvm.CreateICmp(b.impl, llvm.IntNE, lowBit, llvm.ConstInt(index.Type(), 0, false))
+		xHalf := b.impl.CreateSelect(isHigh, candidates[1], candidates[0], "")
+		yHalf := b.impl.CreateSelect(isHigh, candidates[3], candidates[2], "")
+		halves[half] = b.impl.CreateSelect(fromX, xHalf, yHalf, "")
 	}
-	return Expr{result, x.Type}
+	mask := make([]llvm.Value, n)
+	for i := range mask {
+		mask[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
+	}
+	return Expr{b.impl.CreateShuffleVector(halves[0], halves[1], llvm.ConstVector(mask, false), ""), x.Type}
 }

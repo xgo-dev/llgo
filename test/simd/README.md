@@ -423,6 +423,22 @@ IR still uses explicit JS SjLj codegen and retains the bridge.
 WASI SIMD execution is also qualified at O2 with Thin and Full LTO using the
 commands above and Wasmer 7.5.0.
 
+## Dynamic half-selection benchmark
+
+On native amd64, compare predictable and deterministic random selectors with
+the same binary. The noinline kernel retains dynamic selectors; its AVX2 guard
+exercises FMV, while `cpu.all=off` selects the baseline implementation.
+
+```sh
+GOAMD64=v1 GOEXPERIMENT=simd llgo test -O2 -c -o /tmp/simd-half.test ./test/simd
+/tmp/simd-half.test -test.run='^$' -test.bench='^BenchmarkSIMDPairShuffleHalves$' -test.count=6
+GODEBUG=cpu.all=off /tmp/simd-half.test -test.run='^$' -test.bench='^BenchmarkSIMDPairShuffleHalves$' -test.count=6
+```
+
+The result includes call/dispatch overhead and a dependent sequence of shuffles;
+it is not an application-level speedup. Inspect both selector distributions,
+since whole-half selection may lower to branches.
+
 ## CPU initialization and reference boundaries
 
 Effective CPU flags are initialized before `archsimd` and user initialization,
