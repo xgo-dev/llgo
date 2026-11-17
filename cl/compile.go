@@ -2443,6 +2443,14 @@ func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
 	if p.prog.Target().GOARCH == "wasm" {
 		return true
 	}
+	if index, ok := addr.(*ssa.IndexAddr); ok {
+		if _, slice := types.Unalias(index.X.Type()).Underlying().(*types.Slice); slice {
+			// A successful slice bounds check establishes a valid element
+			// address. Rechecking its data pointer adds impossible failure
+			// returns that can obscure finite string results during LTO.
+			return false
+		}
+	}
 	ptr, ok := types.Unalias(addr.Type()).Underlying().(*types.Pointer)
 	if !ok {
 		return false

@@ -40,6 +40,7 @@ func Field() int { return field.value }
 func Store(value int) { field.value = value }
 func SliceArray(p *[2]int) []int { return p[:] }
 func EmptyArray(p *[0]int) []int { return p[:] }
+func SliceElement(p []string, i int) string { return p[i] }
 `
 	for _, arch := range []string{"amd64", "arm64", "386"} {
 		t.Run(arch, func(t *testing.T) {
@@ -49,6 +50,10 @@ func EmptyArray(p *[0]int) []int { return p[:] }
 				if !strings.Contains(body, "AssertNilDeref") {
 					t.Errorf("%s lost its recoverable nil check:\n%s", name, body)
 				}
+			}
+			body := llvmFunction(t, ir, "nativenil.SliceElement")
+			if strings.Contains(body, "AssertNilDeref") || !strings.Contains(body, "PanicIndex") {
+				t.Errorf("slice element must retain bounds checks without redundant nil exits:\n%s", body)
 			}
 		})
 	}

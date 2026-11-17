@@ -32,8 +32,8 @@ func main() {
 // CHECK-NEXT:   br label %_llgo_[[BB1:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = phi %"{{.*}}/runtime/internal/runtime.String" [ zeroinitializer, %_llgo_[[BB0]] ], [ %[[TMP12:[0-9]+]], %_llgo_[[BB7:[0-9]+]] ]
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = phi i64 [ -1, %_llgo_[[BB0]] ], [ %[[TMP4:[0-9]+]], %_llgo_[[BB7]] ]
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = phi %"{{.*}}/runtime/internal/runtime.String" [ zeroinitializer, %_llgo_[[BB0]] ], [ %[[TMP11:[0-9]+]], %_llgo_[[BB5:[0-9]+]] ]
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = phi i64 [ -1, %_llgo_[[BB0]] ], [ %[[TMP4:[0-9]+]], %_llgo_[[BB5]] ]
 // CHECK-NEXT:   %[[TMP4]] = add i64 %[[TMP3]], 1
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = icmp slt i64 %[[TMP4]], %[[TMP1]]
 // CHECK-NEXT:   br i1 %[[TMP5]], label %_llgo_[[BB2:[0-9]+]], label %_llgo_[[BB3:[0-9]+]]
@@ -42,7 +42,7 @@ func main() {
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP0]], 0
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP0]], 1
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = icmp uge i64 %[[TMP4]], %[[TMP7]]
-// CHECK-NEXT:   br i1 %[[TMP8]], label %_llgo_[[BB4:[0-9]+]], label %_llgo_[[BB5:[0-9]+]]
+// CHECK-NEXT:   br i1 %[[TMP8]], label %_llgo_[[BB4:[0-9]+]], label %_llgo_[[BB5]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB3]]:
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" %[[TMP2]]
@@ -53,16 +53,8 @@ func main() {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB5]]:
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP6]], i64 %[[TMP4]]
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = icmp eq ptr %[[TMP9]], null
-// CHECK-NEXT:   br i1 %[[TMP10]], label %_llgo_[[BB6:[0-9]+]], label %_llgo_[[BB7]]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB6]]:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.String" undef
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB7]]:
-// CHECK-NEXT:   %[[TMP11:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP9]], align 8
-// CHECK-NEXT:   %[[TMP12]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP2]], %"{{.*}}/runtime/internal/runtime.String" %[[TMP11]])
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP9]], align 8
+// CHECK-NEXT:   %[[TMP11]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/runtime/internal/runtime.StringCat"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP2]], %"{{.*}}/runtime/internal/runtime.String" %[[TMP10]])
 // CHECK-NEXT:   br label %_llgo_[[BB1]]
 // CHECK-NEXT: }
 

@@ -195,38 +195,30 @@ func main() {
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB4]]:
 // CHECK-NEXT:   %[[TMP65:[0-9]+]] = getelementptr inbounds %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP62]], i64 0
-// CHECK-NEXT:   %[[TMP66:[0-9]+]] = icmp eq ptr %[[TMP65]], null
-// CHECK-NEXT:   br i1 %[[TMP66]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB5]]:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
-// CHECK-NEXT:   ret void
-// CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB6]]:
-// CHECK-NEXT:   %[[TMP67:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP65]], align 8
+// CHECK-NEXT:   %[[TMP66:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr %[[TMP65]], align 8
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP59]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP67]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}/runtime/internal/runtime.String" %[[TMP66]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
-// CHECK-NEXT:   %[[TMP68:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP2]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP69:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP68]], align 8
-// CHECK-NEXT:   %[[TMP70:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP2]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP71:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP70]], align 8
-// CHECK-NEXT:   %[[TMP72:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP71]], 0
-// CHECK-NEXT:   %[[TMP73:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP71]], 1
-// CHECK-NEXT:   %[[TMP74:[0-9]+]] = icmp uge i64 0, %[[TMP73]]
-// CHECK-NEXT:   br i1 %[[TMP74]], label %_llgo_[[BB7:[0-9]+]], label %_llgo_[[BB8:[0-9]+]]
+// CHECK-NEXT:   %[[TMP67:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP2]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP68:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP67]], align 8
+// CHECK-NEXT:   %[[TMP69:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP2]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP70:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP69]], align 8
+// CHECK-NEXT:   %[[TMP71:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP70]], 0
+// CHECK-NEXT:   %[[TMP72:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP70]], 1
+// CHECK-NEXT:   %[[TMP73:[0-9]+]] = icmp uge i64 0, %[[TMP72]]
+// CHECK-NEXT:   br i1 %[[TMP73]], label %_llgo_[[BB5:[0-9]+]], label %_llgo_[[BB6:[0-9]+]]
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB7]]:
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 0, i64 %[[TMP73]])
-// CHECK-NEXT:   br label %_llgo_[[BB7]]
+// CHECK-NEXT: _llgo_[[BB5]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 0, i64 %[[TMP72]])
+// CHECK-NEXT:   br label %_llgo_[[BB5]]
 // CHECK-EMPTY:
-// CHECK-NEXT: _llgo_[[BB8]]:
-// CHECK-NEXT:   %[[TMP75:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP72]], i64 0
-// CHECK-NEXT:   %[[TMP76:[0-9]+]] = load i64, ptr %[[TMP75]], align 8
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP69]])
+// CHECK-NEXT: _llgo_[[BB6]]:
+// CHECK-NEXT:   %[[TMP74:[0-9]+]] = getelementptr inbounds i64, ptr %[[TMP71]], i64 0
+// CHECK-NEXT:   %[[TMP75:[0-9]+]] = load i64, ptr %[[TMP74]], align 8
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintSlice"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP68]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 32)
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP76]])
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[TMP75]])
 // CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PrintByte"(i8 10)
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }
