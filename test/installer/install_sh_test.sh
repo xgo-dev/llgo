@@ -112,6 +112,51 @@ assert_equal "$(readlink "$install_root/current")" versions/1.2.4/linux-amd64
 [[ -x "$install_root/versions/1.2.3/linux-amd64/bin/llgo" ]] ||
     fail 'installing a new version removed the old version'
 
+(
+    command_exists() { [[ "$1" != brew ]]; }
+    if (install_macos_dependencies) >"$temporary/no-brew.log" 2>&1; then
+        fail 'missing Homebrew was accepted'
+    fi
+    grep -Fq 'Homebrew is required' "$temporary/no-brew.log" ||
+        fail 'missing Homebrew was not explained'
+)
+(
+    command_exists() { return 0; }
+    xcode-select() {
+        [[ "$1" == --install ]] || return 1
+        printf '%s\n' "$1" >"$temporary/xcode-dialog"
+    }
+    if (install_macos_dependencies) >"$temporary/no-xcode.log" 2>&1; then
+        fail 'installation continued before Xcode tools were installed'
+    fi
+    assert_equal "$(cat "$temporary/xcode-dialog")" --install
+    grep -Fq 'then run the installer again' "$temporary/no-xcode.log" ||
+        fail 'pending Xcode installation did not explain how to continue'
+)
+(
+    command_exists() { return 0; }
+    xcode-select() { return 0; }
+    brew() {
+        if [[ "$1" == list ]]; then
+            [[ -f "$temporary/brew-installed" || ( "$3" != sqlite && "$3" != zlib ) ]]
+        else
+            printf '%s\n' "$*" >>"$temporary/brew-calls"
+            touch "$temporary/brew-installed"
+        fi
+    }
+    install_macos_dependencies
+    install_macos_dependencies
+    assert_equal "$(cat "$temporary/brew-calls")" 'install sqlite zlib'
+)
+(
+    linux_distribution() { printf 'arch\n'; }
+    run_as_root() { printf '%s\n' "$*" >"$temporary/pacman-calls"; }
+    install_linux_dependencies >"$temporary/arch-output" 2>&1
+    grep -Fq 'full unattended system upgrade' "$temporary/arch-output" ||
+        fail 'Arch installation did not explain the full system upgrade'
+    grep -Fq 'pacman -Syu --needed --noconfirm' "$temporary/pacman-calls" ||
+        fail 'Arch dependencies did not retain the full-upgrade transaction'
+)
 dependency_calls=0
 install_linux_dependencies() {
     dependency_calls=$((dependency_calls + 1))
@@ -123,6 +168,8 @@ system_go_is_compatible() {
     return 0
 }
 dependency_root="$temporary/dependency-root"
+mkdir -p "$dependency_root/dependencies"
+touch "$dependency_root/dependencies/unix-v1-linux-amd64-go-$LLGO_GO_VERSION.complete"
 install_dependencies "$dependency_root" linux amd64
 install_dependencies "$dependency_root" linux amd64
 assert_equal "$dependency_calls" 2

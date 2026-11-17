@@ -632,7 +632,31 @@ function Install-LLGoRelease {
   New-Item -ItemType Directory -Force $Root | Out-Null
   $current = Join-Path $Root 'current'
   Set-LLGoJunction -Path $current -Target $versionRoot
-  Set-LLGoJunction -Path (Join-Path $Root 'bin') -Target (Join-Path $current 'bin')
+
+  # Go's executable-path resolution can fail when bin is a junction.
+  $bin = Join-Path $Root 'bin'
+  $binItem = Get-Item -Force -LiteralPath $bin -ErrorAction SilentlyContinue
+  if ($binItem -and ($binItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Remove-Item -Force -LiteralPath $bin
+  }
+  New-Item -ItemType Directory -Force $bin | Out-Null
+  $releaseBin = Join-Path $versionRoot 'bin'
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $bin) {
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseBin $file.Name) -PathType Leaf)) {
+      Remove-Item -Force -LiteralPath $file.FullName
+    }
+  }
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $releaseBin) {
+    $path = Join-Path $bin $file.Name
+    if (Test-Path -LiteralPath $path) { Remove-Item -Force -LiteralPath $path }
+    New-Item -ItemType HardLink -Path $path -Target $file.FullName | Out-Null
+  }
+  foreach ($directory in @('runtime', 'targets', 'crosscompile')) {
+    $target = Join-Path $current $directory
+    if (Test-Path -LiteralPath $target -PathType Container) {
+      Set-LLGoJunction -Path (Join-Path $Root $directory) -Target $target
+    }
+  }
   return $executable
 }
 

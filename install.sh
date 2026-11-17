@@ -179,16 +179,16 @@ run_as_root() {
 }
 
 install_macos_dependencies() {
+    command_exists brew || die "Homebrew is required to install LLGo dependencies: https://brew.sh"
     command_exists xcode-select || die "xcode-select is required on macOS"
     if ! xcode-select -p >/dev/null 2>&1; then
         xcode-select --install || true
         die "finish installing the Xcode Command Line Tools, then run the installer again"
     fi
-    command_exists brew || die "Homebrew is required to install LLGo dependencies: https://brew.sh"
 
     local formula
     local missing=()
-    for formula in bdw-gc openssl cjson libffi libuv pkg-config; do
+    for formula in bdw-gc openssl cjson libffi libuv pkg-config sqlite zlib; do
         if ! brew list --versions "$formula" >/dev/null 2>&1; then
             missing+=("$formula")
         fi
@@ -229,15 +229,16 @@ install_linux_dependencies() {
                 zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
             ;;
         *" arch "*)
-            run_as_root pacman -S --needed --noconfirm \
+            printf 'Installing Arch dependencies performs a full unattended system upgrade (pacman -Syu --noconfirm).\n' >&2
+            run_as_root pacman -Syu --needed --noconfirm \
                 base-devel ca-certificates curl pkgconf gc openssl zlib \
                 libffi cjson sqlite libuv
             ;;
         *" suse "* | *" opensuse "*)
             run_as_root zypper --non-interactive install \
                 gcc gcc-c++ make ca-certificates curl pkg-config \
-                libgc-devel libopenssl-devel zlib-devel libffi-devel \
-                libcjson-devel sqlite3-devel libuv-devel
+                gc-devel libopenssl-devel zlib-devel libffi-devel \
+                cJSON-devel sqlite3-devel libuv-devel
             ;;
         *)
             die "unsupported Linux distribution; install a C/C++ toolchain, pkg-config, bdwgc, OpenSSL, zlib, libffi, cJSON, SQLite, and libuv, then rerun with --no-deps"
@@ -342,7 +343,7 @@ install_dependencies() {
     local os="$2"
     local arch="$3"
     export PATH="$root/bin:$PATH"
-    local marker="$root/dependencies/unix-v1-$os-$arch-go-$LLGO_GO_VERSION.complete"
+    local marker="$root/dependencies/unix-v2-$os-$arch-go-$LLGO_GO_VERSION.complete"
     if [[ -f "$marker" ]] && system_go_is_compatible; then
         return
     fi

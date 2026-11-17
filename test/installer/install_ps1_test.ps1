@@ -128,13 +128,18 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     New-Item -ItemType Directory -Force `
       (Join-Path $payload 'bin'), `
       (Join-Path $payload 'runtime') | Out-Null
-    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\llgo.exe') -Value 'test'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\llgo.exe') -Value 'test 1.2.3'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\obsolete.dll') -Value 'old DLL'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\obsolete.exe') -Value 'old tool'
     Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\go.mod') `
       -Value 'module github.com/xgo-dev/llgo/runtime'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\release.txt') -Value '1.2.3'
     $archive = Join-Path $temporary 'llgo.zip'
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
 
     $root = Join-Path $temporary 'root'
+    New-Item -ItemType Directory -Force $root | Out-Null
+    New-Item -ItemType Junction -Path (Join-Path $root 'bin') -Target (Join-Path $payload 'bin') | Out-Null
     $null = Install-LLGoRelease `
       -Root $root `
       -Version '1.2.3' `
@@ -146,24 +151,41 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     if (-not ($current.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
       throw 'current is not a junction'
     }
-    if (-not ($bin.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      throw 'bin is not a junction'
+    if ($bin.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      throw 'the stable bin directory still requires junction resolution'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $root 'bin\llgo.exe'))) {
       throw 'the stable executable path does not resolve'
     }
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'runtime\release.txt')) '1.2.3'
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'bin\llgo.exe')) 'test 1.2.3'
+    Remove-Item -LiteralPath (Join-Path $payload 'bin\obsolete.dll'), (Join-Path $payload 'bin\obsolete.exe')
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'bin\llgo.exe') -Value 'test 1.2.4'
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $payload 'runtime\release.txt') -Value '1.2.4'
+    Compress-Archive -Force -Path (Join-Path $payload '*') -DestinationPath $archive
     $null = Install-LLGoRelease `
       -Root $root `
       -Version '1.2.4' `
       -Architecture 'amd64' `
       -ABI 'msvc' `
       -LocalArchive $archive
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'runtime\release.txt')) '1.2.4'
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'bin\llgo.exe')) 'test 1.2.4'
+    foreach ($name in @('obsolete.dll', 'obsolete.exe')) {
+      if (Test-Path -LiteralPath (Join-Path $root "bin\$name")) {
+        throw "A dropped release file remains in bin after upgrade: $name"
+      }
+      if (-not (Test-Path -LiteralPath (Join-Path $root "versions\1.2.3\windows-amd64\bin\$name"))) {
+        throw "An archived release file was removed during upgrade: $name"
+      }
+    }
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $root 'versions\1.2.3\windows-amd64\bin\llgo.exe')) 'test 1.2.3'
     if (-not (Test-Path -LiteralPath (Join-Path $root 'versions\1.2.3\windows-amd64\bin\llgo.exe'))) {
       throw 'installing a new version removed the old version'
     }
   } finally {
     if (Test-Path -LiteralPath $temporary) {
-      foreach ($link in @('bin', 'current')) {
+      foreach ($link in @('runtime', 'targets', 'crosscompile', 'current')) {
         $linkPath = Join-Path $temporary "root\$link"
         if (Get-Item -Force -LiteralPath $linkPath -ErrorAction SilentlyContinue) {
           Remove-Item -Force -LiteralPath $linkPath
