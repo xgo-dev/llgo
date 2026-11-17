@@ -1,4 +1,4 @@
-//go:build llgo && wasm && !llgo.wasm.debugger
+//go:build llgo && wasip1 && !llgo.wasm.debugger
 
 package fmt
 
