@@ -141,6 +141,16 @@ func initNotifyMap() {
 	notifyMap = make(map[*notifyList]*notifyState)
 }
 
+// syncNotifyStateCountForTesting observes the side table without depending on
+// conservative GC's treatment of stale address bits, especially on 32-bit hosts.
+func syncNotifyStateCountForTesting() int {
+	notifyOnce.Do(initNotifyMap)
+	notifyMu.Lock()
+	n := len(notifyMap)
+	notifyMu.Unlock()
+	return n
+}
+
 func getNotifyState(l *notifyList) *notifyState {
 	notifyOnce.Do(initNotifyMap)
 	notifyMu.Lock()
