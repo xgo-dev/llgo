@@ -17,8 +17,10 @@
 package build
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -315,6 +317,48 @@ func TestWasmStripOnlyPreservesEncoding(t *testing.T) {
 	raw, err := os.ReadFile(out.Out)
 	if err != nil || string(raw) != "\x00asm\x01\x00\x00\x00\x0a\x81\x80\x80\x80\x00\x00" {
 		t.Fatalf("strip-only changed code section encoding: %x, %v", raw, err)
+	}
+}
+
+func TestWasmFinalSizeUsesNamesFromOptimizedModule(t *testing.T) {
+	t.Setenv("WASMOPT", writeWasmOptTestTool(t, t.TempDir()))
+	t.Setenv("LLGO_TEST_FINAL_WASM", "1")
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-wasm")
+	t.Setenv("LLGO_TEST_WASM_OPT_HELPER", "write-size-fixture")
+	out := &OutFmtDetails{Out: filepath.Join(t.TempDir(), "app.wasm")}
+	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
+		WasmOpt: WasmOptSize, WasmStrip: WasmStripAll, DebugArtifactMode: DebugArtifactNone,
+		PCLNMode: PCLNNone, SizeReport: true, SizeFormat: "json", SizeLevel: "full"}
+	ctx := &context{buildConf: conf, llvmVersion: "test", crossCompile: crosscompile.Export{
+		CC: os.Args[0], WasmProfile: crosscompile.WasmProfileW32, WasmProvider: crosscompile.WasmProviderWASI,
+	}}
+	if err := finalizeWasmArtifacts(ctx, &mainLinkPlan{outputPath: out.Out}, out, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(out.Out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, sizeWasmFixture()) {
+		t.Fatalf("stripped module = %x", raw)
+	}
+	var output bytes.Buffer
+	if err := reportBuildOutputs(conf, out, nil, &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		FileSize uint64 `json:"file_size"`
+		Modules  []struct {
+			Name string
+			Code uint64
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.FileSize != uint64(len(raw)) || len(report.Modules) != 1 ||
+		report.Modules[0].Name != "main.live" || report.Modules[0].Code != 2 {
+		t.Fatalf("final size report = %s", output.String())
 	}
 }
 

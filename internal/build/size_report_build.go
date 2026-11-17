@@ -14,7 +14,7 @@ import (
 func reportFinalSize(conf *Config, out *OutFmtDetails, pkgs []Package, artifacts []Artifact, w io.Writer) error {
 	packages := sizeReportPackages(pkgs)
 	path := debugWasmModulePath(conf, out.Out)
-	report, err := sizereport.Collect(path, packages, conf.SizeLevel)
+	report, err := sizereport.CollectWithWasmNames(path, packages, conf.SizeLevel, out.wasmSizeNames)
 	if errors.Is(err, sizereport.ErrUnsupportedFormat) {
 		report, err = collectReadelfSize(path, packages, conf.SizeLevel)
 	}

@@ -136,7 +136,8 @@ type OutFmtDetails struct {
 
 	WasmManifest string // Final Wasm artifact manifest
 
-	tempDir string // LLGo-owned directory removed with implicit test outputs
+	wasmSizeNames map[uint32]string // Function indexes from the final module before stripping
+	tempDir       string            // LLGo-owned directory removed with implicit test outputs
 }
 
 // ModuleHook observes a package module immediately after it is generated and

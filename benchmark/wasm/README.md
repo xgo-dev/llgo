@@ -30,4 +30,21 @@ The `println` profile builds have one warm-up followed by measured builds; the C
 
 The existing WebAssembly benchmark job tests this harness and measures both PR base and head, publishing their results through `.github/llgo-wasm-benchmark.yml`.
 
+## Release size and formatting dependencies
+
+`testdata/fmtrich/main.go` reproduces the complex-formatting workload from #2480. It exercises compound values, reflection, Unicode, numeric formatting, and a user-defined Stringer. Run it separately from the per-PR timing matrix:
+
+```sh
+src=./benchmark/wasm/testdata/fmtrich/main.go
+mkdir -p out/llgo out/go out/tinygo
+llgo build -target=wasi -Oz -debug-artifact=none -ldflags=-s \
+  -size -size-level=package -size-format=json -o out/llgo/app.wasm "$src" > out/llgo-size.json
+GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -ldflags=-s -o out/go/app.wasm "$src"
+tinygo build -target=wasip1 -opt=z -no-debug -o out/tinygo/app.wasm "$src"
+```
+
+Use the pinned Binaryen tools described in [Wasm size optimization](../../doc/wasm-size.md). Validate modules and compare their output in the same Wasmer version with exceptions and SIMD enabled. Repeat with `-target=emscripten` and `-target=emscripten-memory64` for LLGo browser deployment sizes, using the corresponding Node runners. Measure Wasm, JS, workers and manifests separately and sum the independently compressed files for transport size. Record the compiler revisions, feature flags, artifact sizes and runner versions with the results. Keep debug files in a separate total. Go and TinyGo use different runtime and host contracts.
+
+The LLGo report attributes final function bodies even with stripping enabled. Use `-size-level=full` to investigate individual symbols. Body sizes include inline code attributed to the containing function. The report keeps unowned data and anonymous bodies in separate unknown buckets. The JSON `wasm.imports` and `wasm.exports` lists show the final module boundary, including internal names for function exports where available. Compare those lists alongside JS and worker bytes when changing host roots.
+
 For explicit final optimization, metadata stripping and complete deployment accounting, see [Final WebAssembly size optimization](../../doc/wasm-size.md). The existing benchmark defaults remain unchanged.

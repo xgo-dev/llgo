@@ -12,9 +12,26 @@ import (
 type wasmSizeDetails struct {
 	Sections       []wasmSizeSection `json:"sections"`
 	Memories       []wasmSizeMemory  `json:"memories"`
+	Imports        []wasmSizeImport  `json:"imports,omitempty"`
+	Exports        []wasmSizeExport  `json:"exports,omitempty"`
 	StructureBytes uint64            `json:"structure_bytes"`
 	CustomBytes    uint64            `json:"custom_bytes"`
 }
+
+type wasmSizeImport struct {
+	Module string `json:"module"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+}
+
+type wasmSizeExport struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Index    uint32 `json:"index"`
+	Function string `json:"function,omitempty"`
+}
+
+var wasmSizeExternKinds = [...]string{"function", "table", "memory", "global", "tag"}
 
 type wasmSizeSection struct {
 	ID           byte   `json:"id"`
@@ -195,7 +212,7 @@ func wasmFunctionNames(payload []byte) (map[uint64]string, error) {
 	return names, r.done()
 }
 
-func collectWasmSize(path string, raw []byte, pkgs []Package, level string) (*Report, error) {
+func collectWasmSize(path string, raw []byte, pkgs []Package, level string, strippedNames map[uint32]string) (*Report, error) {
 	if len(raw) < 8 || !bytes.Equal(raw[:8], []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) {
 		return nil, fmt.Errorf("invalid WebAssembly header")
 	}
@@ -245,15 +262,24 @@ func collectWasmSize(path string, raw []byte, pkgs []Package, level string) (*Re
 	if err := r.done(); err != nil {
 		return nil, err
 	}
+	functionName := func(index uint64) string {
+		if name := names[index]; name != "" {
+			return name
+		}
+		if index <= math.MaxUint32 {
+			return strippedNames[uint32(index)]
+		}
+		return ""
+	}
 
 	var importedFunctions uint64
 	if payload, ok := sections[2]; ok {
 		sub := wasmSizeReader{data: payload}
 		count := sub.uint(32)
 		for i := uint64(0); i < count && sub.err == nil; i++ {
-			sub.name()
-			sub.name()
-			switch kind := sub.byte(); kind {
+			module, name := sub.name(), sub.name()
+			kind := sub.byte()
+			switch kind {
 			case 0:
 				sub.uint(32)
 				importedFunctions++
@@ -271,6 +297,9 @@ func collectWasmSize(path string, raw []byte, pkgs []Package, level string) (*Re
 			default:
 				sub.err = fmt.Errorf("unsupported WebAssembly import kind %d", kind)
 			}
+			if sub.err == nil {
+				w.Imports = append(w.Imports, wasmSizeImport{Module: module, Name: name, Kind: wasmSizeExternKinds[kind]})
+			}
 		}
 		if err := sub.done(); err != nil {
 			return nil, err
@@ -286,6 +315,27 @@ func collectWasmSize(path string, raw []byte, pkgs []Package, level string) (*Re
 			return nil, err
 		}
 	}
+	if payload, ok := sections[7]; ok {
+		sub := wasmSizeReader{data: payload}
+		count := sub.uint(32)
+		for i := uint64(0); i < count && sub.err == nil; i++ {
+			name, kind, index := sub.name(), sub.byte(), sub.uint(32)
+			if sub.err != nil {
+				break
+			}
+			if int(kind) >= len(wasmSizeExternKinds) {
+				return nil, fmt.Errorf("unsupported WebAssembly export kind %d", kind)
+			}
+			entry := wasmSizeExport{Name: name, Kind: wasmSizeExternKinds[kind], Index: uint32(index)}
+			if kind == 0 {
+				entry.Function = functionName(index)
+			}
+			w.Exports = append(w.Exports, entry)
+		}
+		if err := sub.done(); err != nil {
+			return nil, err
+		}
+	}
 	if payload, ok := sections[10]; ok {
 		sub := wasmSizeReader{data: payload}
 		count := sub.uint(32)
@@ -294,10 +344,11 @@ func collectWasmSize(path string, raw []byte, pkgs []Package, level string) (*Re
 			size := sub.uint(32)
 			sub.take(size)
 			name := "(unknown code)"
-			if n := names[importedFunctions+i]; n != "" {
+			index := importedFunctions + i
+			if n := functionName(index); n != "" {
 				name = res.resolve(n)
 			} else if level == "full" {
-				name = fmt.Sprintf("(unknown function %d)", importedFunctions+i)
+				name = fmt.Sprintf("(unknown function %d)", index)
 			}
 			report.add(name, sectionText, size)
 		}
