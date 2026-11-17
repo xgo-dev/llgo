@@ -473,12 +473,14 @@ func TestScrubIRLineGeneralizesCgoSymbolHash(t *testing.T) {
 }
 
 func TestScrubIRLineGeneralizesUnstableHeapBoxAndAttributes(t *testing.T) {
-	line := `  call void @f(ptr @"_llgo_ifacebox$tXM_abc-123") #42`
-	want := `  call void @f(ptr @"_llgo_ifacebox${{[A-Za-z0-9_-]+}}") #{{[0-9]+}}`
-	if got := scrubIRLine(line); got != want {
-		t.Fatalf("scrubIRLine = %q, want %q", got, want)
+	for _, prefix := range []string{"_llgo_iface$", "_llgo_ifacebox$"} {
+		line := `  call void @f(ptr @"` + prefix + `tXM_abc-123") #42`
+		want := `  call void @f(ptr @"` + prefix + `{{[A-Za-z0-9_-]+}}") #{{[0-9]+}}`
+		if got := scrubIRLine(line); got != want {
+			t.Fatalf("scrubIRLine = %q, want %q", got, want)
+		}
 	}
-	line = `@message = constant [4 x i8] c"#42\00"`
+	line := `@message = constant [4 x i8] c"#42\00"`
 	if got := scrubIRLine(line); got != line {
 		t.Fatalf("attribute pattern changed a string literal: %s", got)
 	}

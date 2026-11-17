@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !windows && !wasm && !baremetal
 
 package signal
 
@@ -10,6 +10,7 @@ import (
 
 const (
 	LLGoPackage = "link"
+	LLGoFiles   = "_wrap/signal.c"
 )
 
 //llgo:cdecl

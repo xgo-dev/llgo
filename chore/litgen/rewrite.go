@@ -102,7 +102,7 @@ var (
 	checkLineRE     = regexp.MustCompile(`^\s*//\s*CHECK(?:-[A-Z]+)?:`)
 	debugMetaRE     = regexp.MustCompile(`, ![A-Za-z0-9_.-]+ ![0-9]+`)
 	cgoSymbolHashRE = regexp.MustCompile(`_cgo_[0-9a-f]+_`)
-	ifaceBoxHashRE  = regexp.MustCompile(`@"_llgo_ifacebox\$[A-Za-z0-9_-]+"`)
+	ifaceHashRE     = regexp.MustCompile(`(@"_llgo_iface(?:box)?\$)[A-Za-z0-9_-]+"`)
 	attributeRefRE  = regexp.MustCompile(`#[0-9]+\b`)
 	numericNameRE   = regexp.MustCompile(`^\d+$`)
 	predsCommentRE  = regexp.MustCompile(`\s+; preds =.*$`)
@@ -1131,9 +1131,7 @@ func generalizeIRLine(line, modulePath string) string {
 func scrubIRLine(line string) string {
 	line = debugMetaRE.ReplaceAllString(line, "")
 	line = cgoSymbolHashRE.ReplaceAllString(line, `_cgo_{{[0-9a-f]+}}_`)
-	line = ifaceBoxHashRE.ReplaceAllStringFunc(line, func(string) string {
-		return `@"_llgo_ifacebox${{[A-Za-z0-9_-]+}}"`
-	})
+	line = ifaceHashRE.ReplaceAllString(line, `${1}{{[A-Za-z0-9_-]+}}"`)
 	line = rewriteOutsideQuotes(line, func(segment string) string {
 		return attributeRefRE.ReplaceAllString(segment, `#{{[0-9]+}}`)
 	})
