@@ -171,7 +171,7 @@ func TestFrontendProgramInvalidInitializerFallsBack(t *testing.T) {
 	f := frontendProgramFixture(t)
 	f.captureProgram()
 	f.program = f.loadProgram()
-	configureUnusedGlobalInits(f.ctx)
+	configureUnusedGlobalInits(f.ctx, nil)
 	if f.program == nil {
 		t.Fatal("valid initializer plan was discarded")
 	}
@@ -185,7 +185,7 @@ func TestFrontendProgramInvalidInitializerFallsBack(t *testing.T) {
 		t.Fatal("changed initializer accepted")
 	}
 	// Opaque link metadata cannot authorize source instruction changes.
-	configureUnusedGlobalInits(f.ctx)
+	configureUnusedGlobalInits(f.ctx, nil)
 	if f.program != nil || f.ctx.frontendOptions.UnusedGlobalInits != nil {
 		t.Fatal("invalid initializer context survived fallback")
 	}

@@ -56,14 +56,14 @@ func main() { Read() }
 	ctx := &context{prog: prog, progSSA: pkg.Prog,
 		buildConf: &Config{BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", Overlay: map[string][]byte{path: assembly}},
 		pkgByID:   map[string]*aPackage{"main": {Package: p, SSA: pkg}}}
-	configureUnusedGlobalInits(ctx)
+	configureUnusedGlobalInits(ctx, nil)
 	if names := ctx.frontendOptions.UnusedGlobalInits.Names(pkg); len(names) != 1 || names[0] != pkg.Var("Dead").String() {
 		t.Fatalf("pruned %v; assembly-referenced global must survive", names)
 	}
 	// Arbitrary native inputs cannot be inspected through Go SSA.
 	p.OtherFiles = append(p.OtherFiles, filepath.Join(dir, "opaque.c"))
 	ctx.frontendOptions.UnusedGlobalInits = nil
-	configureUnusedGlobalInits(ctx)
+	configureUnusedGlobalInits(ctx, nil)
 	if ctx.frontendOptions.UnusedGlobalInits != nil || canPruneWasmTypeMetadata(ctx) {
 		t.Fatal("pruning remained enabled despite opaque native inputs")
 	}
@@ -88,7 +88,7 @@ func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 			prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
 		}
 		ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"}}
-		configureUnusedGlobalInits(ctx)
+		configureUnusedGlobalInits(ctx, nil)
 		if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != (alias == "") {
 			t.Fatalf("alias %q: pruned = %v", alias, got)
 		}
@@ -124,7 +124,7 @@ func TestUnusedGlobalInitScope(t *testing.T) {
 			defer prog.Dispose()
 			ctx := &context{prog: prog, progSSA: pkg.Prog, mode: tc.mode,
 				buildConf: &Config{BuildMode: tc.buildMode, Goarch: tc.arch, OptLevel: tc.level}}
-			configureUnusedGlobalInits(ctx)
+			configureUnusedGlobalInits(ctx, nil)
 			if got := canPruneWasmTypeMetadata(ctx); got != tc.want {
 				t.Fatalf("metadata pruning=%v, want %v", got, tc.want)
 			}
@@ -153,7 +153,7 @@ func TestUnusedGlobalInitExportAnnotation(t *testing.T) {
 			p.Syntax = nil
 			ctx.pkgByID["main"].AltPkg = &packages.Cached{Types: pkg.Pkg, Syntax: []*ast.File{file}}
 		}
-		configureUnusedGlobalInits(ctx)
+		configureUnusedGlobalInits(ctx, nil)
 		if names := ctx.frontendOptions.UnusedGlobalInits.Names(pkg); len(names) != 0 {
 			t.Fatalf("alternate=%v: single-name exported globals were pruned: %v", alternate, names)
 		}
@@ -168,7 +168,7 @@ func TestUnusedGlobalInitRewrite(t *testing.T) {
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg}
 	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
 		pkgByID: map[string]*aPackage{"main": {Package: p, SSA: pkg, rewriteVars: map[string]string{"Version": "release"}}}}
-	configureUnusedGlobalInits(ctx)
+	configureUnusedGlobalInits(ctx, nil)
 	if names := ctx.frontendOptions.UnusedGlobalInits.Names(pkg); len(names) != 0 {
 		t.Fatalf("rewritten initializer was pruned: %v", names)
 	}
@@ -231,7 +231,7 @@ func TestUnusedGlobalInitNativeInputs(t *testing.T) {
 			if tc.asmDisabled {
 				t.Setenv(llgoPlan9ASMPkgs, "none")
 			}
-			configureUnusedGlobalInits(ctx)
+			configureUnusedGlobalInits(ctx, nil)
 			if got := canPruneWasmTypeMetadata(ctx); got != tc.prune {
 				t.Fatalf("metadata pruning=%v, want %v", got, tc.prune)
 			}
@@ -248,7 +248,7 @@ func TestWasmMetadataEligibilityWithoutInitializerPlan(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	ctx := &context{prog: prog, progSSA: pkg.Prog, mode: ModeBuild, buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.O2}}
-	configureUnusedGlobalInits(ctx)
+	configureUnusedGlobalInits(ctx, nil)
 	if !canPruneWasmTypeMetadata(ctx) {
 		t.Fatal("closed optimized Wasm program was rejected")
 	}

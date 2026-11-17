@@ -409,6 +409,7 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		frontend:          ctx.frontend,
 		staticByteArrays:  ctx.staticByteArrays,
 		wasmClosedProgram: ctx.wasmClosedProgram,
+		wasiSizeRoots:     ctx.wasiSizeRoots,
 		cTransformer:      session.transformer,
 		buildTrace:        ctx.buildTrace,
 		sfilesCache:       ctx.sfilesCache,

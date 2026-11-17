@@ -288,6 +288,7 @@ type Config struct {
 	// Preserve inferred optimization levels when invocations are cloned.
 	// Only explicit -Oz requests the optional final optimizer.
 	optLevelDefaulted bool
+	wasiReleaseDCE    bool
 }
 
 type Rewrites map[string]string
@@ -520,7 +521,7 @@ func (c *Config) goGlobalDCEEnabled() bool {
 }
 
 func (c *Config) deadcodeDropEnabled() bool {
-	return buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
+	return c.wasiReleaseDCE || buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
 }
 
 func (c *Config) packageMetaEnabled() bool {
@@ -1141,7 +1142,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	configureWasmRuntimeFree(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
-	configureUnusedGlobalInits(ctx)
+	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+	configureUnusedGlobalInits(ctx, asmRoots)
+	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
 			return nil, err
@@ -1932,6 +1935,7 @@ type context struct {
 	staticByteArrays  map[string][]byte
 	wasmRuntimeFree   bool
 	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
+	wasiSizeRoots     []string
 
 	cTransformer *cabi.Transformer
 
@@ -2799,7 +2803,13 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
 		trimMethods := canPruneWasmTypeMetadata(ctx)
-		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose); err != nil {
+		var roots []string
+		if ctx.buildConf.wasiReleaseDCE {
+			// Entry thunks are generated outside package compilation. Record
+			// their references, including WASI worker entry calls.
+			roots = appendModuleDeclarationRoots(slices.Clone(ctx.wasiSizeRoots), entryPkg.LPkg.Module())
+		}
+		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
 			return nil, err
 		}
 	}
@@ -2903,7 +2913,7 @@ func linkedPackageMetas(pkgs []Package) ([]*meta.PackageMeta, error) {
 	return metas, nil
 }
 
-func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool) error {
+func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool, externalRoots ...string) error {
 	metas, err := linkedPackageMetas(pkgs)
 	if err != nil {
 		return err
@@ -2914,6 +2924,7 @@ func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, t
 	}
 
 	roots := dceEntryRootCandidates(pkgs, needRuntime)
+	roots = append(roots, externalRoots...)
 	analysis := deadcode.AnalyzeProgram(summary, roots)
 	var dropMetadata func(string) bool
 	var rejectInterfaceType func(string) bool
