@@ -555,6 +555,7 @@ func gc() (freeBytes uintptr) {
 
 	finishMark()
 	preserveFinalizableObjects()
+	clearProfileWeakLinks()
 	markHeads.reset()
 
 	// Sweep phase: free all non-marked objects and unmark marked objects for

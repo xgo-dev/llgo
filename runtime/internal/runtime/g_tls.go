@@ -44,6 +44,12 @@ var currentG uintptr
 //llgointernal:tls
 var currentGHasLifecycle bool
 
+// initializingG suppresses profiling while getg allocates its bootstrap
+// traceback registration, including when another runtime subsystem called getg.
+//
+//llgointernal:tls
+var initializingG bool
+
 // gLifecycleKey is not used to locate the current G. It only retains the
 // thread-local destructor needed for contexts lazily created on main or foreign
 // threads, which have no runtime-owned mexit path.
@@ -74,13 +80,18 @@ func getg() *g {
 	if gp := (*g)(unsafe.Pointer(currentG)); gp != nil {
 		return gp
 	}
+	initializingG = true
 	registerWasiGCThread()
 	gp := initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
+	// setAutoG publishes the slot before allocating traceback bookkeeping.
+	gp.heapProfile.depth++
 	if ret := setAutoG(gp); ret != 0 {
 		destroyG(c.Pointer(unsafe.Pointer(gp)))
 		diagnostic.Error("runtime: thread-local value installation failed ", ret)
 		panic("runtime: failed to install g")
 	}
+	gp.heapProfile.depth--
+	initializingG = false
 	return gp
 }
 
@@ -133,6 +144,7 @@ func destroyG(ptr c.Pointer) {
 		FreeRoot(unsafe.Pointer(node))
 	}
 	ctx := gp.context
+	releaseHeapProfileG(gp)
 	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {
 		root := ctx.root

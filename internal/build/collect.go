@@ -149,6 +149,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	// driven by environment or external-linker flags used only at final link.
 	m.common.DispatchInlineBudget = c.dispatchInlineBudgetEnabled()
 	m.common.EscapeAnalysisVersion = goescape.Version
+	m.common.HeapProfileFrames = c.heapProfileFrames
 	if c.buildConf.Tags != "" {
 		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
 	}

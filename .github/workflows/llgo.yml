@@ -277,6 +277,14 @@ jobs:
             done
           fi
 
+          reference_llgo="$LLGO"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            reference_llgo="$(cygpath -w "$LLGO")"
+          fi
+          go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=5m -v -args \
+            -goroot "$(go env GOROOT)" -llgo "$reference_llgo" -directive-mode ci \
+            -case '^heapsampling\.go$'
+
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
@@ -1199,7 +1207,7 @@ jobs:
           for profile in J32-GoJS J32-Emscripten J64-Emscripten W32-WASI; do
             go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=4m -v -args \
               -llgo "$LLGO" -goroot "$(go env GOROOT)" -directive-mode ci \
-              -case '^cmplxdivide\.go$' -wasm-profile "$profile"
+              -case '^(cmplxdivide|heapsampling)\.go$' -wasm-profile "$profile"
           done
 
       - name: Compare WebAssembly EH encodings and Go/C++ boundary

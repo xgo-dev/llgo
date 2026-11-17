@@ -1091,6 +1091,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	ctx.heapProfileFrames, err = ctx.sourceUsesHeapProfiles(ssaEntries)
+	if err != nil {
+		return nil, err
+	}
+	ctx.callerTracking.EnableHeapProfileFrames(ctx.heapProfileFrames)
 	ctx.frontend = ctx.newFrontendCache(ssaEntries, buildMode)
 	if ctx.frontend != nil && typeLoader != nil {
 		ctx.frontend.loader = typeLoader
@@ -1907,23 +1912,24 @@ const (
 )
 
 type context struct {
-	conf           *packages.Config
-	progSSA        *ssa.Program
-	prog           llssa.Program
-	dedup          packages.Deduper
-	patches        cl.Patches
-	callerTracking *cl.CallerTracking
-	frontend       *frontendCache
-	fingerprinting map[string]bool
-	cacheDisabled  map[string]none
-	patchFiles     map[string][]string
-	initial        []*packages.Package
-	pkgs           map[*packages.Package]Package // cache for lookup
-	pkgByID        map[string]Package            // cache for lookup by pkg.ID
-	mode           Mode
-	nLibdir        int32
-	output         bool
-	passOpt        bool
+	conf              *packages.Config
+	progSSA           *ssa.Program
+	prog              llssa.Program
+	dedup             packages.Deduper
+	patches           cl.Patches
+	callerTracking    *cl.CallerTracking
+	heapProfileFrames bool
+	frontend          *frontendCache
+	fingerprinting    map[string]bool
+	cacheDisabled     map[string]none
+	patchFiles        map[string][]string
+	initial           []*packages.Package
+	pkgs              map[*packages.Package]Package // cache for lookup
+	pkgByID           map[string]Package            // cache for lookup by pkg.ID
+	mode              Mode
+	nLibdir           int32
+	output            bool
+	passOpt           bool
 
 	buildConf         *Config
 	crossCompile      crosscompile.Export

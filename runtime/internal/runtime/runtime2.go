@@ -64,6 +64,7 @@ type g struct {
 	goexit       bool
 	isMain       bool
 	paniconfault bool
+	heapProfile  heapProfileGState
 }
 
 // m represents the host execution resource running Go code. Platform-specific

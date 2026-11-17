@@ -1,8 +1,12 @@
 package runtime
 
-// MemProfileRecord describes allocations aggregated by size class.
+import "unsafe"
+
+// MemProfileRate is shared with the public runtime variable.
+var MemProfileRate = 512 * 1024
+
+// MemProfileRecord has the layout of runtime.MemProfileRecord.
 type MemProfileRecord struct {
-	ObjectSize                int64
 	AllocBytes, FreeBytes     int64
 	AllocObjects, FreeObjects int64
 	Stack0                    [32]uintptr
@@ -66,9 +70,18 @@ var memProfileBuckets = [...]memProfileBucket{
 // duplicated code and native binary-size variation.
 //
 //go:noinline
-func recordMemProfileAlloc(size uintptr) {
+func recordMemProfileAlloc(ptr unsafe.Pointer, size uintptr) {
 	if size != 0 {
+		gp := heapProfileG()
+		if gp != nil && gp.heapProfile.depth != 0 {
+			return // profiler bookkeeping is outside the measured allocation path
+		}
 		memProfileAddObject(&memProfileBuckets[memProfileBucketIndex(size)].objects)
+		if gp != nil {
+			recordHeapProfileAlloc(gp, ptr, size)
+		} else {
+			recordHeapProfileWithoutG(ptr, size)
+		}
 	}
 }
 
@@ -120,6 +133,10 @@ func MemProfileMallocs() uint64 {
 }
 
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
+	return readHeapProfile(p, inuseZero)
+}
+
+func memProfileClassRecords(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	for i := range memProfileBuckets {
 		if memProfileLoadObjects(&memProfileBuckets[i].objects) != 0 {
 			n++
@@ -136,7 +153,6 @@ func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 			continue
 		}
 		p[j] = MemProfileRecord{
-			ObjectSize:   int64(b.size),
 			AllocBytes:   int64(uint64(b.size) * uint64(objects)),
 			AllocObjects: int64(objects),
 		}

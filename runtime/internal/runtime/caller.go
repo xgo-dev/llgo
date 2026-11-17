@@ -65,6 +65,9 @@ type callerLocationStore struct {
 }
 
 func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) int {
+	if !callerLocationHasContext() {
+		return -1
+	}
 	var update unsafe.Pointer
 	if wasmDebuggerEnabled {
 		update = beginWasmCallerUpdate()
@@ -72,7 +75,7 @@ func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) in
 	store := callerLocationStoreForGoroutine()
 	mark := len(store.stack)
 	if mark == cap(store.stack) {
-		store.stack = append(store.stack, CallerFrame{})
+		store.stack = appendCallerBookkeepingFrame(store.stack, CallerFrame{})
 	} else {
 		store.stack = store.stack[:mark+1]
 	}
@@ -93,6 +96,9 @@ func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) in
 }
 
 func PopCallerLocationFrame(mark int) {
+	if mark < 0 || !callerLocationHasContext() {
+		return
+	}
 	store := callerLocationStoreCurrent
 	if store == nil {
 		return
@@ -129,7 +135,7 @@ func RecordPanicLocation(entry uintptr, name, file string, line int) {
 }
 
 func recordCallerLocation(entry uintptr, name, file string, line int, metadata callerLocationMetadata) {
-	if entry == 0 || line <= 0 {
+	if entry == 0 || line <= 0 || !callerLocationHasContext() {
 		return
 	}
 	updateCurrentFrame(entry, name, file, line, metadata)
@@ -187,7 +193,7 @@ func recordPCLocation(pc, entry uintptr, name, file string, line int, metadata c
 		store.frames[len(store.frames)-1] = CallerFrame{}
 		store.frames = store.frames[:len(store.frames)-1]
 	}
-	store.frames = append(store.frames, CallerFrame{
+	store.frames = appendCallerBookkeepingFrame(store.frames, CallerFrame{
 		callerLocationMetadata: metadata,
 		PC:                     pc,
 		Entry:                  entry,
@@ -470,6 +476,9 @@ func FrameForPC(pc uintptr) (CallerFrame, bool) {
 		if frame, ok := syntheticFrameForPC(pc); ok {
 			return frame, true
 		}
+		if frame, ok := heapProfileFrameForPC(pc); ok {
+			return frame, true
+		}
 	}
 	store := callerLocationStoreCurrent
 	if store == nil || pc == 0 {
@@ -540,7 +549,7 @@ func syntheticFrameForPC(pc uintptr) (CallerFrame, bool) {
 func callerLocationStoreForGoroutine() *callerLocationStore {
 	store := callerLocationStoreCurrent
 	if store == nil {
-		store = new(callerLocationStore)
+		store = newCallerBookkeepingStore()
 		callerLocationStoreCurrent = store
 		if wasmDebuggerEnabled {
 			publishWasmCallerStore(store)
@@ -606,7 +615,7 @@ func (s *callerLocationStore) internSyntheticFrame(frame CallerFrame) int {
 		idx := s.syntheticHash[slot]
 		if idx == 0 {
 			frame.PC = nextCallerPCBase(s) | callerPCValue
-			s.synthetic = append(s.synthetic, frame)
+			s.synthetic = appendCallerBookkeepingFrame(s.synthetic, frame)
 			s.syntheticHash[slot] = uintptr(len(s.synthetic))
 			return len(s.synthetic) - 1
 		}
@@ -619,6 +628,8 @@ func (s *callerLocationStore) internSyntheticFrame(frame CallerFrame) int {
 }
 
 func (s *callerLocationStore) rehashSyntheticFrames(size int) {
+	token := PauseHeapProfile()
+	defer ResumeHeapProfile(token)
 	old := s.syntheticHash
 	s.syntheticHash = make([]uintptr, size)
 	for _, idx := range old {
@@ -711,4 +722,25 @@ func lastIndexByte(s string, c byte) int {
 		}
 	}
 	return -1
+}
+
+// Shadow-stack storage is runtime bookkeeping, not an application allocation.
+// Suppress sampling only on the uncommon growth paths.
+func newCallerBookkeepingStore() *callerLocationStore {
+	token := PauseHeapProfile()
+	defer ResumeHeapProfile(token)
+	return new(callerLocationStore)
+}
+
+func appendCallerBookkeepingFrame(frames []CallerFrame, frame CallerFrame) []CallerFrame {
+	if len(frames) < cap(frames) {
+		return append(frames, frame)
+	}
+	return growCallerBookkeepingFrames(frames, frame)
+}
+
+func growCallerBookkeepingFrames(frames []CallerFrame, frame CallerFrame) []CallerFrame {
+	token := PauseHeapProfile()
+	defer ResumeHeapProfile(token)
+	return append(frames, frame)
 }

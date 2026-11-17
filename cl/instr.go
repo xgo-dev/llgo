@@ -1286,6 +1286,7 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
+	heapProfiles         bool
 	base                 map[*ssa.Package]map[*ssa.Function]bool
 	extended             map[*ssa.Package]callerTrackingFuncSets
 	recover              *recoverFacts
@@ -1348,6 +1349,16 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		analyses[i] = analyzeCallerTrackingPackage(pkgs[i], methods[pkgs[i]])
 		base[i] = analyses[i].base
 	}
+	importedHeapFrames := make(map[*ssa.Function]bool)
+	if c.heapProfiles {
+		for pkg := range c.imported {
+			for fn := range c.extended[pkg].frames {
+				importedHeapFrames[fn] = true
+			}
+		}
+	}
+	heapFrames := heapProfileFunctions(analyses, c.heapProfiles, importedHeapFrames)
+	c.heapProfiles = len(heapFrames) != 0
 	for i := range pkgs {
 		if c.imported[pkgs[i]] {
 			continue
@@ -1361,6 +1372,16 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 		})
 	}
 
+	for i := range pkgs {
+		for fn := range analyses[i].trackable {
+			if heapFrames[fn] {
+				if extended[i].frames == nil {
+					extended[i].frames = make(map[*ssa.Function]bool)
+				}
+				extended[i].frames[fn] = true
+			}
+		}
+	}
 	for i, pkg := range pkgs {
 		c.base[pkg] = base[i]
 	}

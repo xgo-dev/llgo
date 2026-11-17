@@ -37,7 +37,7 @@ func AllocU(size uintptr) unsafe.Pointer {
 	if ret == nil {
 		panic("out of memory")
 	}
-	recordMemProfileAlloc(size)
+	recordMemProfileAlloc(ret, size)
 	return ret
 }
 
@@ -51,7 +51,7 @@ func AllocAtomicU(size uintptr) unsafe.Pointer {
 	if ret == nil {
 		panic("out of memory")
 	}
-	recordMemProfileAlloc(size)
+	recordMemProfileAlloc(ret, size)
 	return ret
 }
 
@@ -70,7 +70,7 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 		// size. Preserve support for those requests using scanned storage.
 		return allocUAlignedFallback(size, alignment)
 	}
-	recordMemProfileAlloc(size)
+	recordMemProfileAlloc(ret, size)
 	return ret
 }
 

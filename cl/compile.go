@@ -1688,6 +1688,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			return cached
 		}
 	}
+	if instr, ok := iv.(ssa.Instruction); ok && p.callerTracking.heapProfiles && heapProfileAllocation(instr) {
+		p.recordCallerLocation(b, instr.Pos())
+		p.emitPCLineLabel(b, instr.Pos())
+	}
 	if asValue {
 		// Allocations are order-independent and are normally emitted in their
 		// SSA instruction order. Some self-hosted go/ssa graphs expose an Alloc

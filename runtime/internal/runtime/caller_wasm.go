@@ -28,3 +28,10 @@ func RecordCallerLocationWasm(entry uintptr, nameData *byte, nameLen int, fileDa
 func RecordPanicLocationWasm(entry uintptr, nameData *byte, nameLen int, fileData *byte, fileLen, line int) {
 	RecordPanicLocation(entry, unsafe.String(nameData, nameLen), unsafe.String(fileData, fileLen), line)
 }
+
+// Scheduler host-event helpers can run on the system G. It has no GLS block
+// and contributes no user frame, so instrumentation must leave it untouched.
+func callerLocationHasContext() bool {
+	gp := getg()
+	return gp != nil && gp.context != nil
+}

@@ -99,6 +99,7 @@ func freeRuntimeContext(ctx *runtimeContext) {
 		return
 	}
 	root := ctx.root
+	releaseHeapProfileG(&ctx.g)
 	leaveSynctest(&ctx.g)
 	unregisterTraceback(&ctx.g)
 	ctx.root = nil

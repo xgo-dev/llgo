@@ -50,30 +50,52 @@ type BlockProfileRecord struct {
 }
 
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
-	n, _ = llrt.MemProfile(nil, inuseZero)
-	if len(p) < n {
-		return n, false
+	token := llrt.PauseHeapProfile()
+	defer llrt.ResumeHeapProfile(token)
+	if len(p) == 0 {
+		return llrt.MemProfile(nil, inuseZero)
 	}
-	if n == 0 {
-		return 0, true
-	}
-	var records [64]llrt.MemProfileRecord
-	if n > len(records) {
-		return n, false
-	}
-	n, ok = llrt.MemProfile(records[:n], inuseZero)
-	if !ok {
-		return n, false
-	}
-	for i := 0; i < n; i++ {
-		p[i] = MemProfileRecord{
-			AllocBytes: records[i].AllocBytes, FreeBytes: records[i].FreeBytes,
-			AllocObjects: records[i].AllocObjects, FreeObjects: records[i].FreeObjects,
-			Stack0: records[i].Stack0,
+	// Matching layouts let the collector fill the caller's storage directly.
+	records := unsafe.Slice((*llrt.MemProfileRecord)(unsafe.Pointer(&p[0])), len(p))
+	n, ok = llrt.MemProfile(records, inuseZero)
+	if ok {
+		for i := 0; i < n; i++ {
+			trimHeapProfileStack(&p[i])
 		}
 	}
-	return n, true
+	return n, ok
 }
+
+// Capture raw PCs cheaply at allocation time. Resolve and discard allocator
+// plumbing only when a client reads the profile, so its first frame identifies
+// the allocation site without loading symbol tables on the allocation path.
+func trimHeapProfileStack(record *MemProfileRecord) {
+	stack := record.Stack()
+	first := 0
+	for first < len(stack) {
+		frame, _ := CallersFrames(stack[first : first+1]).Next()
+		name := frame.Function
+		internal := name == ""
+		for _, prefix := range []string{"runtime.", "github.com/xgo-dev/llgo/runtime/internal/"} {
+			if len(name) >= len(prefix) && name[:len(prefix)] == prefix {
+				internal = true
+			}
+		}
+		if !internal {
+			break
+		}
+		first++
+	}
+	if first != 0 {
+		n := copy(record.Stack0[:], stack[first:])
+		for i := n; i < len(record.Stack0); i++ {
+			record.Stack0[i] = 0
+		}
+	}
+}
+
+var _ [unsafe.Sizeof(MemProfileRecord{}) - unsafe.Sizeof(llrt.MemProfileRecord{})]byte
+var _ [unsafe.Sizeof(llrt.MemProfileRecord{}) - unsafe.Sizeof(MemProfileRecord{})]byte
 
 func BlockProfile(p []BlockProfileRecord) (n int, ok bool) {
 	return 0, false

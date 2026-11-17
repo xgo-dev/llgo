@@ -30,6 +30,6 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 	if ret == nil {
 		panic("out of memory")
 	}
-	recordMemProfileAlloc(size)
+	recordMemProfileAlloc(ret, size)
 	return ret
 }

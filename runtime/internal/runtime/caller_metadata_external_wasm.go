@@ -33,6 +33,9 @@ func sameCallerLocationMetadata(a, b CallerFrame) bool { return a.locationID == 
 //go:noinline
 func PushCallerLocationFrameID(entry uintptr, id uint64, line int) int {
 	mark := PushCallerLocationFrame(entry, "", "", line)
+	if mark < 0 {
+		return mark
+	}
 	callerLocationStoreCurrent.stack[mark].locationID = id
 	return mark
 }

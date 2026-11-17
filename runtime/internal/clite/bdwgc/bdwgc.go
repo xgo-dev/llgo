@@ -80,6 +80,12 @@ func Realloc(ptr c.Pointer, size uintptr) c.Pointer
 //go:linkname Base C.GC_base
 func Base(ptr c.Pointer) c.Pointer
 
+// RegisterLongLink clears link after obj can no longer be resurrected.
+// The word at link may contain an encoded pointer; it must not retain obj.
+//
+//go:linkname RegisterLongLink C.GC_register_long_link
+func RegisterLongLink(link *uintptr, obj c.Pointer) c.Int
+
 //go:linkname Free C.GC_free
 func Free(ptr c.Pointer)
 

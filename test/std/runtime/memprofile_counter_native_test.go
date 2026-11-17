@@ -73,10 +73,10 @@ func TestNativeProfileConcurrentCounterSnapshots(t *testing.T) {
 	for round := uint64(0); round < 3; round++ {
 		var done sync.WaitGroup
 		done.Add(workers)
-		for range workers {
+		for worker := 0; worker < workers; worker++ {
 			go func() {
 				defer done.Done()
-				for range iterations {
+				for iteration := 0; iteration < iterations; iteration++ {
 					nativeProfileAdd(ptr)
 				}
 			}()
@@ -113,19 +113,28 @@ func TestNativeProfileConcurrentCounterSnapshots(t *testing.T) {
 var nativeProfileRetained [16]*[262144]byte
 
 func TestNativeProfilePublicAllocationRecords(t *testing.T) {
-	t.Cleanup(func() { clear(nativeProfileRetained[:]) })
-	var records [64]runtime.MemProfileRecord
+	previousRate := runtime.MemProfileRate
+	runtime.MemProfileRate = 1
+	defer func() { runtime.MemProfileRate = previousRate }()
+	t.Cleanup(func() {
+		for i := range nativeProfileRetained {
+			nativeProfileRetained[i] = nil
+		}
+	})
 	objects := func() int64 {
-		n, ok := runtime.MemProfile(records[:], true)
+		n, _ := runtime.MemProfile(nil, true)
+		records := make([]runtime.MemProfileRecord, n+32)
+		n, ok := runtime.MemProfile(records, true)
 		if !ok {
 			t.Fatal("profile capacity")
 		}
+		var total int64
 		for _, record := range records[:n] {
 			if record.AllocObjects > 0 && record.AllocBytes/record.AllocObjects == 262144 {
-				return record.AllocObjects
+				total += record.AllocObjects
 			}
 		}
-		return 0
+		return total
 	}
 	before := objects()
 	for i := range nativeProfileRetained {
