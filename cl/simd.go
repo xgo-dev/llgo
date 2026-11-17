@@ -41,6 +41,8 @@ const (
 	simdSplat
 	simdHalf
 	simdConvertLo
+	simdPairSelector
+	simdPairHalfSelectors
 )
 
 type simdOperation struct {
@@ -108,14 +110,18 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "SetLo"}:         {llssa.SIMDSetLo, simdHalf, 0},
 	{"numeric", "SetHi"}:         {llssa.SIMDSetHi, simdHalf, 0},
 
-	{"numeric", "InterleaveLo"}:        {llssa.SIMDInterleaveLo, simdBinary, types.IsInteger},
-	{"numeric", "InterleaveHi"}:        {llssa.SIMDInterleaveHi, simdBinary, types.IsInteger},
-	{"numeric", "InterleaveLoGrouped"}: {llssa.SIMDInterleaveLoGrouped, simdBinary, types.IsInteger},
-	{"numeric", "InterleaveHiGrouped"}: {llssa.SIMDInterleaveHiGrouped, simdBinary, types.IsInteger},
-	{"numeric", "ConcatEven"}:          {llssa.SIMDConcatEven, simdBinary, types.IsInteger},
-	{"numeric", "ConcatOdd"}:           {llssa.SIMDConcatOdd, simdBinary, types.IsInteger},
-	{"numeric", "InterleaveEven"}:      {llssa.SIMDInterleaveEven, simdBinary, types.IsInteger},
-	{"numeric", "InterleaveOdd"}:       {llssa.SIMDInterleaveOdd, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveLo"}:                  {llssa.SIMDInterleaveLo, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveHi"}:                  {llssa.SIMDInterleaveHi, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveLoGrouped"}:           {llssa.SIMDInterleaveLoGrouped, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveHiGrouped"}:           {llssa.SIMDInterleaveHiGrouped, simdBinary, types.IsInteger},
+	{"numeric", "ConcatEven"}:                    {llssa.SIMDConcatEven, simdBinary, types.IsInteger},
+	{"numeric", "ConcatOdd"}:                     {llssa.SIMDConcatOdd, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveEven"}:                {llssa.SIMDInterleaveEven, simdBinary, types.IsInteger},
+	{"numeric", "InterleaveOdd"}:                 {llssa.SIMDInterleaveOdd, simdBinary, types.IsInteger},
+	{"numeric", "concatSelectedConstant"}:        {llssa.SIMDConcatSelected, simdPairSelector, 0},
+	{"numeric", "concatSelectedConstantGrouped"}: {llssa.SIMDConcatSelectedGrouped, simdPairSelector, 0},
+	{"numeric", "ConcatPermute128Scalars"}:       {llssa.SIMDConcatPermute128, simdPairHalfSelectors, 0},
+
 	{"numeric", "ConvertLo2ToFloat64"}: {llssa.SIMDConvertLo, simdConvertLo, 0},
 
 	{"numeric", "ConcatAddPairs"}:           {llssa.SIMDConcatAddPairs, simdBinary, 0},
@@ -236,6 +242,9 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if desc.op == llssa.SIMDLookupOrZero && arch != "arm64" && arch != "wasm" {
 		return fallback()
 	}
+	if (desc.signature == simdPairSelector || desc.signature == simdPairHalfSelectors) && arch != "amd64" {
+		return fallback()
+	}
 	if desc.signature == simdConvert {
 		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
 		elem := shape.Elem().(*types.Basic).Name()
@@ -325,6 +334,21 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdPairSelector:
+		bits := int64(128)
+		if d.op == llssa.SIMDConcatSelectedGrouped {
+			bits = 256
+		}
+		elemBits := simdVectorBits(vector) / lanes.Len()
+		if simdVectorBits(vector) != bits || elemBits != 32 && elemBits != 64 {
+			return false
+		}
+		params = []types.Type{types.Typ[types.Uint8], vector}
+	case simdPairHalfSelectors:
+		if simdVectorBits(vector) != 256 {
+			return false
+		}
+		params = []types.Type{types.Typ[types.Uint8], types.Typ[types.Uint8], vector}
 	case simdSplat:
 		if sig.Results().Len() != 1 {
 			return false
@@ -561,6 +585,7 @@ func (d simdOperation) supportsWide() bool {
 	switch d.op {
 	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
+		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDConcatAddPairsGrouped, llssa.SIMDConcatSubPairsGrouped,
 		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
 		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,

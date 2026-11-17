@@ -90,6 +90,9 @@ const (
 	SIMDTruncate
 	SIMDSaturateConcatGrouped
 	SIMDConvertLo
+	SIMDConcatSelected
+	SIMDConcatSelectedGrouped
+	SIMDConcatPermute128
 	SIMDConcatAddPairs
 	SIMDConcatAddPairsGrouped
 	SIMDConcatSubPairs
@@ -237,6 +240,10 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	switch op {
 	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
 		return b.simdInterleave(op, args[0], args[1])
+	case SIMDConcatSelected, SIMDConcatSelectedGrouped:
+		return b.simdConcatSelected(args[0], args[1], args[2])
+	case SIMDConcatPermute128:
+		return b.simdConcatPermute128(args[0], args[1], args[2], args[3])
 	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
 		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
@@ -456,14 +463,13 @@ func (b Builder) simdBinary(op SIMDOp, x, y Expr) Expr {
 	return Expr{v, x.Type}
 }
 
-func (b Builder) simd128Index(x, index Expr) llvm.Value {
-	lanes := simdLanes(x.RawType()).Len()
-	if c := index.impl.IsAConstantInt(); !c.IsNil() && c.ZExtValue() < uint64(lanes) {
+func (b Builder) simdCheckedIndex(index Expr, limit int) llvm.Value {
+	if c := index.impl.IsAConstantInt(); !c.IsNil() && c.ZExtValue() < uint64(limit) {
 		return llvm.ConstInt(b.Prog.tyInt32(), c.ZExtValue(), false)
 	}
 	// Check even when ordinary slice bounds checks are disabled: an invalid
 	// immediate is an intrinsic error and must never become LLVM poison.
-	bad := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, index.impl, llvm.ConstInt(index.ll, uint64(lanes), false)), b.Prog.Bool()}
+	bad := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, index.impl, llvm.ConstInt(index.ll, uint64(limit), false)), b.Prog.Bool()}
 	blocks := b.Func.MakeBlocks(2)
 	b.If(bad, blocks[0], blocks[1])
 	b.SetBlockEx(blocks[0], AtEnd, false)
@@ -477,14 +483,14 @@ func (b Builder) simd128Index(x, index Expr) llvm.Value {
 // Lane indices are uint8 at the Go API boundary. Valid constants need no
 // runtime check; dynamic and out-of-range indices retain the panic check.
 func (b Builder) simdGetElem(x, index Expr) Expr {
-	i := b.simd128Index(x, index)
+	i := b.simdCheckedIndex(index, int(simdLanes(x.RawType()).Len()))
 	v := b.impl.CreateExtractElement(x.impl, i, "")
 	elem := simdLanes(x.RawType()).Elem()
 	return Expr{v, b.Prog.toType(elem)}
 }
 
 func (b Builder) simdSetElem(x, index, value Expr) Expr {
-	i := b.simd128Index(x, index)
+	i := b.simdCheckedIndex(index, int(simdLanes(x.RawType()).Len()))
 	v := b.impl.CreateInsertElement(x.impl, value.impl, i, "")
 	return Expr{v, x.Type}
 }

@@ -32,9 +32,8 @@ so later instruction work can expand the lists deliberately.
 
 The interleave/concatenation follow-up enables six ARM64 cases and three AMD64
 cases (`TestInterleaveLo`, `TestInterleaveHi`, `TestFlattenedTranspose`). The
-four larger transpose cases still reach unimplemented constant-pair shuffles;
-their updated first failures are retained below. The initial totals above
-remain the historical audit, not a recount after these additions.
+initial totals above remain the historical audit, not a recount after these
+additions.
 
 The conversion/resize follow-up enables `TestConvertARM64` and
 `TestTruncateARM64`, plus the AMD64 ceil/floor/trunc/round, conversion,
@@ -42,6 +41,13 @@ extension and concatenating-saturation cases listed in the allowlist. The
 initial audit totals above are historical. AVX512-only tests with empty gated
 bodies remain excluded; LLGo's additional scalar-reference cases exercise
 128/256-bit narrowing without requiring AVX512 hardware.
+
+The pair-shuffle follow-up enables thirteen more AMD64 cases: 128/256-bit
+selection from two vectors, 128-bit-half selection, and the four 4x4/8x8
+transpose cases. `concatSelectedConstant`/`concatSelectedConstantGrouped`
+and `ConcatPermute128Scalars` cover both constant and variable selectors.
+The current allowlists contain 150 AMD64 cases and 80 ARM64 cases; these
+are enabled top-level tests, not counts of implemented intrinsics.
 
 ## arm64 failures
 
@@ -67,24 +73,11 @@ the table below lists the remaining failures after subsequent fixes.
 | `TestConcatShiftBytesRight` | `simd/archsimd.Uint8x16.ConcatShiftBytesRight` |
 | `TestClearAVXUpperBits` | `simd/archsimd.ClearAVXUpperBits` |
 | `TestIsZero` | `simd/archsimd.Uint64x2.IsZero` |
-| `TestSelect4FromPairConst` | `simd/archsimd.Int32x4.concatSelectedConstant` |
-| `TestSelect4FromPairVar` | `simd/archsimd.Int32x4.concatSelectedConstant` |
-| `TestSelect4FromPairConstGrouped` | `simd/archsimd.Float32x8.concatSelectedConstantGrouped` |
-| `TestConcatPermute128Scalars` | `simd/archsimd.Uint64x4.ConcatPermute128Scalars` |
-| `TestConcatPermute128ScalarsVar` | `simd/archsimd.Uint64x4.ConcatPermute128Scalars` |
-| `TestSelect2FromPairConst` | `simd/archsimd.Uint64x2.concatSelectedConstant` |
-| `TestSelect2FromPairConstGroupedUint` | `simd/archsimd.Uint64x4.concatSelectedConstantGrouped` |
-| `TestSelect2FromPairConstGroupedFloat` | `simd/archsimd.Float64x4.concatSelectedConstantGrouped` |
-| `TestSelect2FromPairConstGroupedInt` | `simd/archsimd.Int64x4.concatSelectedConstantGrouped` |
 | `TestPermuteScalars` | `simd/archsimd.Int32x4.permuteScalars` |
 | `TestPermuteScalarsGrouped` | `simd/archsimd.Int32x8.permuteScalarsGrouped` |
 | `TestPermuteScalarsHi` | `simd/archsimd.Int16x8.permuteScalarsHi` |
 | `TestPermuteScalarsLo` | `simd/archsimd.Int16x8.permuteScalarsLo` |
 | `TestPermuteScalarsHiGrouped` | `simd/archsimd.Int16x16.permuteScalarsHiGrouped` |
 | `TestPermuteScalarsLoGrouped` | `simd/archsimd.Int16x16.permuteScalarsLoGrouped` |
-| `TestTranspose4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
-| `TestTranspose8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
-| `TestTransposeTiled4` | `simd/archsimd.Int32x4.concatSelectedConstant` |
-| `TestTransposeTiled8` | `simd/archsimd.Int32x8.concatSelectedConstantGrouped` |
 
 Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.

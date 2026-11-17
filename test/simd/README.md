@@ -32,6 +32,9 @@ architecture.
   Go helpers for masking and conditional selection.
 - Native integer interleave-low/high operations, ARM64 even/odd concatenation
   and interleave, and AMD64 SIMD256 interleave within each 128-bit group.
+- AMD64 128/256-bit selection from two vectors, including independent 128-bit
+  groups and 256-bit selection of whole 128-bit halves. Constant and variable
+  selectors preserve lane bits; invalid half selectors retain a recoverable panic.
 - Byte lookup with out-of-range zeroing on arm64/wasm, and baseline-safe amd64
   byte/word permutations and negative-index zeroing. Constant permutations
   fold to vector shuffles at O2; dynamic indices use a per-lane fallback.
@@ -333,8 +336,8 @@ On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
 The same overrides also exercise integer extension and narrowing, horizontal
-pair operations, integer interleaving, numeric conversions, float widening/narrowing,
-and 256-bit rounding.
+pair operations, integer interleaving, pair selection and half shuffles, numeric
+conversions, float widening/narrowing, and 256-bit rounding.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.
@@ -419,6 +422,22 @@ IR still uses explicit JS SjLj codegen and retains the bridge.
 
 WASI SIMD execution is also qualified at O2 with Thin and Full LTO using the
 commands above and Wasmer 7.5.0.
+
+## Dynamic half-selection benchmark
+
+On native amd64, compare predictable and deterministic random selectors with
+the same binary. The noinline kernel retains dynamic selectors; its AVX2 guard
+exercises FMV, while `cpu.all=off` selects the baseline implementation.
+
+```sh
+GOAMD64=v1 GOEXPERIMENT=simd llgo test -O2 -c -o /tmp/simd-half.test ./test/simd
+/tmp/simd-half.test -test.run='^$' -test.bench='^BenchmarkSIMDPairShuffleHalves$' -test.count=6
+GODEBUG=cpu.all=off /tmp/simd-half.test -test.run='^$' -test.bench='^BenchmarkSIMDPairShuffleHalves$' -test.count=6
+```
+
+The result includes call/dispatch overhead and a dependent sequence of shuffles;
+it is not an application-level speedup. Inspect both selector distributions,
+since whole-half selection may lower to branches.
 
 ## CPU initialization and reference boundaries
 
