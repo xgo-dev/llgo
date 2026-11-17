@@ -10,15 +10,15 @@ type counter struct {
 }
 
 // CHECK-LABEL: define %main.stateFn @main.countState(ptr %0){{.*}} {
-// CHECK: %[[VALUE_PTR1:[0-9]+]] = getelementptr inbounds nuw %main.counter, ptr %0, i32 0, i32 0
-// CHECK-NEXT: %[[OLD_VALUE:[0-9]+]] = load i64, ptr %[[VALUE_PTR1]]
+// CHECK-DAG: %[[VALUE_PTR1:[0-9]+]] = getelementptr inbounds nuw %main.counter, ptr %0, i32 0, i32 0
+// CHECK-DAG: ret %main.stateFn zeroinitializer
+// CHECK-DAG: ret %main.stateFn { ptr @main.countState, ptr null }
+// CHECK: %[[OLD_VALUE:[0-9]+]] = load i64, ptr %[[VALUE_PTR1]]
 // CHECK-NEXT: %[[NEW_VALUE:[0-9]+]] = add i64 %[[OLD_VALUE]], 1
 // CHECK: store i64 %[[NEW_VALUE]], ptr %{{[0-9]+}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 %[[PRINTED_VALUE:[0-9]+]])
 // CHECK: %[[DONE:[0-9]+]] = icmp sge i64 %{{[0-9]+}}, %{{[0-9]+}}
 // CHECK-NEXT: br i1 %[[DONE]], label %{{.*}}, label %{{.*}}
-// CHECK: ret %main.stateFn zeroinitializer
-// CHECK: ret %main.stateFn { ptr @main.countState, ptr null }
 func countState(c *counter) stateFn {
 	c.value++
 	println("count:", c.value)

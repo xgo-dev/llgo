@@ -2566,7 +2566,16 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 		p.emitNilDerefBaseCheck(b, addr.X)
 		if isPointerGoType(addr.X.Type()) {
 			base := p.compileValue(b, addr.X)
+			if p.nilCheckBlock != nil && p.nilCheckedPointers[addr.X] {
+				return
+			}
 			b.AssertNilDeref(base)
+			if p.nilCheckBlock != nil {
+				if p.nilCheckedPointers == nil {
+					p.nilCheckedPointers = make(map[ssa.Value]bool)
+				}
+				p.nilCheckedPointers[addr.X] = true
+			}
 		}
 	}
 }

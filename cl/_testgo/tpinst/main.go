@@ -67,20 +67,20 @@ func (pt *M[T]) value() T {
 
 // CHECK-LABEL: define linkonce i64 @"main.(*M[int]).Value"(ptr %0){{.*}} {
 // CHECK: [[INT_VALUE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"main.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[INT_VALUE:%[0-9]+]] = load i64, ptr [[INT_VALUE_FIELD]]
+// CHECK: [[INT_VALUE:%[0-9]+]] = load i64, ptr [[INT_VALUE_FIELD]]
 // CHECK-NEXT: ret i64 [[INT_VALUE]]
 
 // CHECK-LABEL: define linkonce i64 @"main.(*M[int]).value"(ptr %0){{.*}} {
 // CHECK: [[INT_PRIVATE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"main.M[int]", ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[INT_PRIVATE_VALUE:%[0-9]+]] = load i64, ptr [[INT_PRIVATE_FIELD]]
+// CHECK: [[INT_PRIVATE_VALUE:%[0-9]+]] = load i64, ptr [[INT_PRIVATE_FIELD]]
 // CHECK-NEXT: ret i64 [[INT_PRIVATE_VALUE]]
 
 // CHECK-LABEL: define linkonce double @"main.(*M[float64]).Value"(ptr %0){{.*}} {
 // CHECK: [[FLOAT_VALUE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"main.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[FLOAT_VALUE:%[0-9]+]] = load double, ptr [[FLOAT_VALUE_FIELD]]
+// CHECK: [[FLOAT_VALUE:%[0-9]+]] = load double, ptr [[FLOAT_VALUE_FIELD]]
 // CHECK-NEXT: ret double [[FLOAT_VALUE]]
 
 // CHECK-LABEL: define linkonce double @"main.(*M[float64]).value"(ptr %0){{.*}} {
 // CHECK: [[FLOAT_PRIVATE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"main.M[float64]", ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[FLOAT_PRIVATE_VALUE:%[0-9]+]] = load double, ptr [[FLOAT_PRIVATE_FIELD]]
+// CHECK: [[FLOAT_PRIVATE_VALUE:%[0-9]+]] = load double, ptr [[FLOAT_PRIVATE_FIELD]]
 // CHECK-NEXT: ret double [[FLOAT_PRIVATE_VALUE]]

@@ -71,19 +71,19 @@ package main
 // AMD64-LABEL: define void @"main.complexOrder$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
 // CHECK: [[RECORD_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %0
 // CHECK-NEXT: [[RECORD_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
-// CHECK-NEXT: [[OLD_RESULT:%[0-9]+]] = load %"{{.*}}Slice", ptr [[RECORD_RESULT_SLOT]]
+// CHECK: [[OLD_RESULT:%[0-9]+]] = load %"{{.*}}Slice", ptr [[RECORD_RESULT_SLOT]]
 // CHECK: store %"{{.*}}String" %1, ptr %{{[0-9]+}}
 // CHECK: [[APPEND_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE:%[0-9]+]], 0
 // CHECK-NEXT: [[APPEND_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE]], 1
 // CHECK-NEXT: [[NEW_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16, i1 true)
 // CHECK-NEXT: [[UPDATED_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
-// CHECK-NEXT: store %"{{.*}}Slice" [[NEW_RESULT]], ptr [[UPDATED_RESULT_SLOT]]
+// CHECK: store %"{{.*}}Slice" [[NEW_RESULT]], ptr [[UPDATED_RESULT_SLOT]]
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[ORDER:%[0-9]+]] = call %"{{.*}}Slice" @main.complexOrder()
 // CHECK-NEXT: [[ORDER_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[ORDER]], 1
 // CHECK: [[ORDER_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[ORDER]], 0
 // CHECK: [[LABEL_PTR:%[0-9]+]] = getelementptr inbounds %"{{.*}}String", ptr [[ORDER_DATA]], i64 %{{[0-9]+}}
-// CHECK-NEXT: [[LABEL:%[0-9]+]] = load %"{{.*}}String", ptr [[LABEL_PTR]]
+// CHECK: [[LABEL:%[0-9]+]] = load %"{{.*}}String", ptr [[LABEL_PTR]]
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[LABEL]])
 
 func main() {

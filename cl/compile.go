@@ -198,6 +198,8 @@ type context struct {
 	bvals                map[ssa.Value]llssa.Expr    // block values
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
+	nilCheckBlock        *ssa.BasicBlock
+	nilCheckedPointers   map[ssa.Value]bool
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
@@ -1837,11 +1839,13 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op != token.ARROW {
 			p.recordPanicSite(b, v.Pos())
 		}
-		if shouldAssertDirectNilDeref(v) || v.Op == token.MUL && p.needsWasmNilGuard(v.X) {
-			if p.needsWasmNilGuard(v.X) {
+		if shouldAssertDirectNilDeref(v) || v.Op == token.MUL && p.needsRecoverableNilGuard(v.X) {
+			if p.needsRecoverableNilGuard(v.X) {
 				p.emitNilDerefBaseCheck(b, v.X)
 			}
-			b.AssertNilDeref(x)
+			if _, field := v.X.(*ssa.FieldAddr); !field {
+				b.AssertNilDeref(x)
+			}
 		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
@@ -1941,6 +1945,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
 		p.recordPanicSite(b, v.Pos())
+		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
+			p.emitNilDerefBaseCheck(b, vx)
+		}
 		ret = b.IndexAddr(x, idx)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
@@ -1980,6 +1987,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			max = p.compileValue(b, v.Max)
 		}
 		p.recordPanicSite(b, v.Pos())
+		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
+			p.emitNilDerefBaseCheck(b, vx)
+		}
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.GoDecl)
 	case *ssa.MakeInterface:
@@ -2420,14 +2430,39 @@ func instructionPrecedes(before, after ssa.Instruction) bool {
 	return false
 }
 
-func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
-	// Linear memory includes address zero, and WebAssembly traps do not enter
-	// Go's panic/recover machinery. Native guard-page assumptions do not apply.
+func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
+	// A derived address can be non-nil while its original base is nil, and
+	// aggregate loads may fault inside a lowered memcpy rather than a Go frame.
+	// WebAssembly also has mapped address zero and non-recoverable memory traps.
 	// Runtime support packages maintain their own pointer invariants; routing an
 	// internal failure through the recoverable user-panic path makes almost the
 	// entire runtime reachable from every checked load and store.
-	return p.prog.Target().GOARCH == "wasm" && !llssa.IsRuntimeSupportPackage(p.pkg.Path()) &&
-		!isKnownNonNilAddr(addr) && !isWrapNilCheckCall(addr)
+	if llssa.IsRuntimeSupportPackage(p.pkg.Path()) || isKnownNonNilAddr(addr) || isWrapNilCheckCall(addr) {
+		return false
+	}
+	if p.prog.Target().GOARCH == "wasm" {
+		return true
+	}
+	ptr, ok := types.Unalias(addr.Type()).Underlying().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	// A direct native scalar access faults at its Go instruction. Aggregates
+	// may instead be split or lowered to a foreign memcpy. A field address
+	// must preserve the original base's nil check before LLVM folds its GEP,
+	// including nested fields and offsets that reach mapped memory.
+	if _, ok := addr.(*ssa.FieldAddr); ok {
+		return true
+	}
+	switch elem := types.Unalias(ptr.Elem()).Underlying().(type) {
+	case *types.Array, *types.Struct, *types.Slice, *types.Interface:
+		return true
+	case *types.Basic:
+		if elem.Kind() == types.String {
+			return true
+		}
+	}
+	return false
 }
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its
@@ -2468,6 +2503,12 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 }
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
+	if p.nilCheckBlock != instr.Block() {
+		// Facts are local to the current source block. Inlining can revisit
+		// the same callee SSA graph from different caller branches.
+		p.nilCheckBlock = instr.Block()
+		p.nilCheckedPointers = nil
+	}
 	p.panicSitePos = token.NoPos
 	if _, ok := p.staticInitInstrs[instr]; ok {
 		return
@@ -2516,19 +2557,21 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		wasmNilGuard := p.needsWasmNilGuard(va)
-		if wasmNilGuard {
+		nilGuard := p.needsRecoverableNilGuard(va)
+		if nilGuard {
 			p.recordPanicSite(b, v.Pos())
 			// A field assignment evaluates its RHS before faulting on a nil
 			// destination. Check the original base here, not at FieldAddr.
 			p.emitNilDerefBaseCheck(b, va)
-			b.AssertNilDeref(ptr)
+			if _, field := va.(*ssa.FieldAddr); !field {
+				b.AssertNilDeref(ptr)
+			}
 		}
 		// Hardware faults report the store instruction itself rather than a
 		// runtime nil-check return address. Preserve its exact source site on
 		// every native target; recordPanicSite scopes the metadata to functions
 		// whose recovered panic stack can be observed.
-		if !wasmNilGuard && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
+		if !nilGuard && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
 		}
 		store := b.Store(ptr, val)

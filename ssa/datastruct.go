@@ -456,6 +456,12 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 		telem := t.Elem()
 		switch te := telem.Underlying().(type) {
 		case *types.Array:
+			// Array slicing dereferences its operand even for p[:0] and *[0]T.
+			// Keep the check before the full-array fast path as well as bounds
+			// lowering: constructing a slice need not access any array memory.
+			if !isKnownNonNilArrayBase(x.impl) {
+				b.AssertNilDeref(x)
+			}
 			elem := prog.rawType(te.Elem())
 			ret.Type = prog.Slice(elem)
 			nEltSize = SizeOf(prog, elem)
@@ -473,9 +479,6 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 		}
 	}
 	if prog.disableBoundsChecks {
-		if _, ok := x.raw.Type.Underlying().(*types.Pointer); ok && !isKnownNonNilArrayBase(x.impl) {
-			b.AssertNilDeref(x)
-		}
 		upper := nCap
 		if !max.IsNil() {
 			upper = max

@@ -290,7 +290,13 @@ func Pointer(t *dep.T) int64 { return t.Pointer() }
 	runModulePasses(t, prog, mod, "default<O2>")
 	for name, field := range map[string]string{"Value": ", 1", "Pointer": "i64 8"} {
 		ir := mustNamedFunction(t, mod, "example.com/root."+name).String()
-		if strings.Contains(ir, "call ") || !strings.Contains(ir, field) {
+		unexpectedCall := false
+		for _, line := range strings.Split(ir, "\n") {
+			if strings.Contains(line, "call ") && !strings.Contains(line, llssa.PkgRuntime+".AssertNilDeref") {
+				unexpectedCall = true
+			}
+		}
+		if unexpectedCall || !strings.Contains(ir, field) {
 			t.Fatalf("%s did not inline the replacement's second field:\n%s", name, ir)
 		}
 	}

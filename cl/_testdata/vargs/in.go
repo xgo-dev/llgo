@@ -33,7 +33,7 @@ func test(a ...any) {
 // CHECK: [[LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" %0, 1
 // CHECK: [[INDEX:%[0-9]+]] = phi i64
 // CHECK: [[SLOT:%[0-9]+]] = getelementptr inbounds %"{{.*}}eface", ptr {{%[0-9]+}}, i64 {{%[0-9]+}}
-// CHECK-NEXT: [[VALUE:%[0-9]+]] = load %"{{.*}}eface", ptr [[SLOT]]
+// CHECK: [[VALUE:%[0-9]+]] = load %"{{.*}}eface", ptr [[SLOT]]
 // CHECK-NEXT: [[TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[VALUE]], 0
 // CHECK-NEXT: [[IS_INT:%[0-9]+]] = icmp eq ptr [[TYPE]], @_llgo_int
 // CHECK: [[DATA:%[0-9]+]] = extractvalue %"{{.*}}eface" [[VALUE]], 1

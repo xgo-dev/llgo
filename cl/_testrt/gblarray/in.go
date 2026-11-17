@@ -62,7 +62,7 @@ func main() {
 // CHECK-LABEL: define ptr @main.basicType(
 // CHECK-SAME: i64 %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72)
+// CHECK-NEXT:   %[[TMP1:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 72) #3
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/runtime/abi.Type", ptr %[[TMP1]], i32 0, i32 0
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP0]], 25
 // CHECK-NEXT:   br i1 %[[TMP3]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
@@ -109,10 +109,18 @@ func main() {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP0:[0-9]+]] = call ptr @main.Basic(i64 24)
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/runtime/abi.Type", ptr %[[TMP0]], i32 0, i32 6
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load i8, ptr %[[TMP1]], align 1
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = zext i8 %[[TMP2]] to i64
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/runtime/abi.Type", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = load i64, ptr %[[TMP4]], align 8
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call i32 (ptr, ...) @printf(ptr @[[GLOB0]], i64 %[[TMP3]], i64 %[[TMP5]])
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp eq ptr %[[TMP0]], null
+// CHECK-NEXT:   br i1 %[[TMP2]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB1]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   ret void
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB2]]:
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load i8, ptr %[[TMP1]], align 1
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = zext i8 %[[TMP3]] to i64
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr inbounds nuw %"{{.*}}/runtime/abi.Type", ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = load i64, ptr %[[TMP5]], align 8
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call i32 (ptr, ...) @printf(ptr @[[GLOB0]], i64 %[[TMP4]], i64 %[[TMP6]])
 // CHECK-NEXT:   ret void
 // CHECK-NEXT: }

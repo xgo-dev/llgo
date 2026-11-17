@@ -30,6 +30,30 @@ func Selected(p, q *int, b bool) int { if b { p = q }; return *p }
 	}
 }
 
+func TestNativeNilChecksPreserveGlobalPointerBases(t *testing.T) {
+	const source = `package nativenil
+type T struct { pad [8192]byte; value int }
+var slice *[]byte
+var field *T
+func SliceHeader() []byte { return *slice }
+func Field() int { return field.value }
+func Store(value int) { field.value = value }
+func SliceArray(p *[2]int) []int { return p[:] }
+func EmptyArray(p *[0]int) []int { return p[:] }
+`
+	for _, arch := range []string{"amd64", "arm64", "386"} {
+		t.Run(arch, func(t *testing.T) {
+			ir := compileWithRewritesTarget(t, source, nil, &llssa.Target{GOOS: "linux", GOARCH: arch})
+			for _, name := range []string{"SliceHeader", "Field", "Store", "SliceArray", "EmptyArray"} {
+				body := llvmFunction(t, ir, "nativenil."+name)
+				if !strings.Contains(body, "AssertNilDeref") {
+					t.Errorf("%s lost its recoverable nil check:\n%s", name, body)
+				}
+			}
+		})
+	}
+}
+
 func TestWasmNilChecksExcludeRuntimeSupportPackages(t *testing.T) {
 	for _, test := range []struct {
 		path string

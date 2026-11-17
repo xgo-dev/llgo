@@ -489,10 +489,12 @@ func pinnedPanicSite() {
 	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 1 {
 		t.Fatalf("branch panic line produced %d metadata records, want 1:\n%s", got, ir)
 	}
+	// Explicit cold nil checks can add machine ranges for the same source
+	// operation. Require all original ranges; source rows remain deduplicated.
 	for name, want := range map[string]int{"repeatedPanicLeaf": 3, "branchPanicLeaf": 4} {
 		body := pkg.Module().NamedFunction("example.com/foo." + name).String()
-		if got := strings.Count(body, ".pushsection llgo_pcline"); got != want {
-			t.Fatalf("%s has %d machine-code anchors, want %d:\n%s", name, got, want, body)
+		if got := strings.Count(body, ".pushsection llgo_pcline"); got < want {
+			t.Fatalf("%s has %d machine-code anchors, want at least %d:\n%s", name, got, want, body)
 		}
 	}
 	if strings.Contains(ir, `!"non_recover_site.go"`) {
@@ -575,8 +577,8 @@ func branchStorePanicLeaf(p *int, branch bool) {
 				t.Fatalf("branch stores have %d shared source rows, want 1:\n%s", sharedRows, ir)
 			}
 			body := pkg.Module().NamedFunction("example.com/foo.branchStorePanicLeaf").String()
-			if got := strings.Count(body, ".pushsection"); got != 2 {
-				t.Fatalf("branch stores have %d code-range anchors, want 2:\n%s", got, body)
+			if got := strings.Count(body, ".pushsection"); got < 2 {
+				t.Fatalf("branch stores have %d code-range anchors, want at least 2:\n%s", got, body)
 			}
 		})
 	}

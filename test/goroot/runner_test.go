@@ -378,6 +378,10 @@ func TestGoRootRunCases(t *testing.T) {
 				writeCaseResult(os.Stdout, tc, caseResultNotApplicable)
 				t.Skipf("skipping not-applicable case: %s", notApplyReason)
 			}
+			if reason := targetLayoutSkip(targetPlatform, tc); reason != "" {
+				writeCaseResult(os.Stdout, tc, caseResultHostSkip)
+				t.Skipf("skipping target-layout-limited case: %s", reason)
+			}
 			if match, reason := xfails.MatchHostSkip(envInfo.GOVERSION, hostPlatform, tc); match {
 				writeCaseResult(os.Stdout, tc, caseResultHostSkip)
 				t.Skipf("skipping host-unsafe case: %s", reason)
@@ -415,6 +419,13 @@ func TestGoRootRunCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func targetLayoutSkip(targetPlatform string, tc testCase) string {
+	if targetPlatform == "darwin/amd64" && tc.Directive == "run" && tc.RelPath == "nilptr.go" {
+		return "nilptr.go requires dummy below 256 MiB, but LLD's 64-bit Mach-O image starts at 4 GiB; TestNilArrayPointerSlicesPanic and TestNilGlobalPointerLoadsPanic cover the nil semantics without that layout precondition"
+	}
+	return ""
 }
 
 func hostedThreadResourceSkip(hostPlatform, targetPlatform, runnerEnvironment string, tc testCase) string {

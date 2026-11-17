@@ -58,7 +58,7 @@ var (
 // CHECK-NEXT: br i1 [[RESULT_MISMATCH]], label %{{.*}}, label %{{.*}}
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.(*typ).String"(ptr %0){{.*}} {
 // CHECK: [[STRING_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.typ, ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[STRING_VALUE:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr [[STRING_FIELD]]
+// CHECK: [[STRING_VALUE:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr [[STRING_FIELD]]
 // CHECK-NEXT: ret %"{{.*}}/runtime/internal/runtime.String" [[STRING_VALUE]]
 func main() {
 	t := &typ{"hello"}
