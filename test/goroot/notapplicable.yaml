@@ -58,12 +58,6 @@ not_applicable:
   - directive: run
     case: fixedbugs/issue54343.go
     reason: "not applicable: this case observes the exact receiver lifetime of a cleared bound method through a finalizer; LLGo uses conservative BDWGC roots, so exact finalizer timing is not currently an LLGo compatibility goal"
-  - directive: run
-    case: nilptr2.go
-    reason: "not applicable: this case requires comprehensive explicit nil checks for dereferences and derived addresses even when LLVM emits no faulting load; LLGo only preserves the required check for unused loads and relies on LLVM and target fault behavior for the remaining address-only forms, so reproducing cmd/compile's complete nil-check insertion is not currently an LLGo compatibility goal"
-  - directive: run
-    case: nilptr.go
-    reason: "not applicable: this case requires explicit nil checks for large-offset array, slice, and struct operations whose derived address may be mapped and therefore not fault; LLGo relies on LLVM and target memory faults for these non-load forms, so reproducing cmd/compile's large-offset nil-check strategy is not currently an LLGo compatibility goal"
   - directive: errorcheck
     case: escape_array.go
     reason: "not applicable: this case asserts cmd/compile-specific -m escape-analysis diagnostics; LLGo uses go/types plus LLVM and does not reproduce gc compiler diagnostic output; supporting this toolchain-specific behavior is not an LLGo compatibility goal"

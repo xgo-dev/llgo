@@ -24,7 +24,7 @@ func main() {
 
 // CHECK-LABEL: define void @"main.(*item).Reset"(ptr %0){{.*}} {
 // CHECK: [[RESET_VALUE_PTR:%.*]] = getelementptr inbounds nuw %main.item, ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[RESET_VALUE:%.*]] = load i64, ptr [[RESET_VALUE_PTR]]
+// CHECK: [[RESET_VALUE:%.*]] = load i64, ptr [[RESET_VALUE_PTR]]
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[RESET_VALUE]])
 
 // CHECK-LABEL: define void @main.main(){{.*}} {

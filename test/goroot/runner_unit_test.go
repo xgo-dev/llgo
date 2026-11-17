@@ -345,6 +345,23 @@ func TestStackIsGloballyNotApplicable(t *testing.T) {
 	}
 }
 
+func TestNilPointerSemanticsRemainApplicable(t *testing.T) {
+	repo := repoRoot(t)
+	cfg := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))
+	for _, path := range []string{"nilptr.go", "nilptr2.go"} {
+		for _, platform := range []string{"darwin/amd64", "linux/amd64", "windows-msvc/386", "js/wasm", "wasip1/wasm"} {
+			tc := testCase{RelPath: path, Directive: "run"}
+			if match, reason := cfg.Match("go1.27.0", platform, tc); match {
+				t.Errorf("%s on %s incorrectly excludes language semantics: %s", path, platform, reason)
+			}
+			want := path == "nilptr.go" && platform == "darwin/amd64"
+			if match := targetLayoutSkip(platform, tc) != ""; match != want {
+				t.Errorf("%s on %s host skip = %v, want %v", path, platform, match, want)
+			}
+		}
+	}
+}
+
 func TestObservedNotApplicableCasesAreGlobal(t *testing.T) {
 	repo := repoRoot(t)
 	cfg := loadNotApplicableConfig(t, repo, filepath.Join("test", "goroot", "notapplicable.yaml"))

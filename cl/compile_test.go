@@ -93,6 +93,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/reflectconv",   // llgo panic: unsatisfied import internal/sync
 				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
+				"./_testgo/repeatedfault", // baremetal cannot recover native hardware faults
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
@@ -145,6 +146,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/reflectconv",   // baremetal runtime cannot build these reflect paths
 				"./_testgo/reflectmk",     // baremetal runtime cannot build these reflect paths
 				"./_testgo/reflectmkfn",   // baremetal runtime cannot build these reflect paths
+				"./_testgo/repeatedfault", // baremetal cannot recover native hardware faults
 				"./_testgo/rewrite",       // baremetal runtime cannot build the fmt/runtime imports
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build

@@ -277,6 +277,13 @@ jobs:
             done
           fi
 
+          nil_llgo="$LLGO"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            nil_llgo="$(cygpath -w "$LLGO")"
+          fi
+          go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=5m -args \
+            -goroot "$(go env GOROOT)" -llgo "$nil_llgo" -dirs . -case '^nilptr2?\.go$'
+
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
@@ -1362,5 +1369,5 @@ jobs:
           for profile in J32-Emscripten J64-Emscripten J32-GoJS; do
             go test ./test/goroot -v -run '^TestGoRootRunCases$' -count=1 -timeout=10m -args \
               -goroot "$(go env GOROOT)" -llgo "$LLGO" -wasm-profile "$profile" -directive-mode ci -dirs .,fixedbugs \
-              -case '^(clearfat\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
+              -case '^(clearfat\.go|nilptr2?\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
           done

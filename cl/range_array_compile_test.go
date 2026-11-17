@@ -403,6 +403,9 @@ func lenSlice(s []int) int { return len(s) }
 	if !strings.Contains(ir, "foo.nextArray") || !strings.Contains(ir, "AssertNilDeref") {
 		t.Fatalf("builtin-referenced array deref should retain its call and nil check:\n%s", ir)
 	}
+	if got := strings.Count(ir, "AssertNilDeref"); got != 1 {
+		t.Fatalf("effectful array deref has %d nil checks, want 1:\n%s", got, ir)
+	}
 }
 
 func findUnOp(t *testing.T, fn *ssa.Function, op token.Token, wantArray bool) *ssa.UnOp {

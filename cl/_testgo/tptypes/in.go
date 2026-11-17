@@ -227,43 +227,67 @@ func main() {
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp eq ptr %[[TMP0]], null
+// CHECK-NEXT:   br i1 %[[TMP3]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB1]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" undef
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB2]]:
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP8]], align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP9]]
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP9]], align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP10]]
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[}}]string,string]).Append"(
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 16, i1 true)
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp eq ptr %[[TMP0]], null
+// CHECK-NEXT:   br i1 %[[TMP3]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB1]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" undef
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB2]]:
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 16, i1 true)
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP8]], align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP9]]
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP9]], align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP10]]
 // CHECK-NEXT: }
 
 // CHECK-LABEL: define linkonce %"{{.*}}/runtime/internal/runtime.Slice" @"main.(*Slice{{\[\[}}]int,int]).Append2"(
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP3]], ptr %[[TMP4]], i64 %[[TMP5]], i64 8, i1 false)
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP6]], ptr %[[TMP7]], align 8
+// CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp eq ptr %[[TMP0]], null
+// CHECK-NEXT:   br i1 %[[TMP3]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB1]]:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" undef
+// CHECK-EMPTY:
+// CHECK-NEXT: _llgo_[[BB2]]:
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP8]], align 8
-// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP9]]
+// CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
+// CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
+// CHECK-NEXT:   %[[TMP10:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP9]], align 8
+// CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP10]]
 // CHECK-NEXT: }

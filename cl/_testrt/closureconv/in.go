@@ -14,7 +14,7 @@ type Call struct {
 // CHECK-LABEL: define i64 @"main.(*Call).add"(ptr %0, i64 %1, i64 %2){{.*}} {
 // CHECK: [[ADD_AB:%.*]] = add i64 %1, %2
 // CHECK: [[ADD_N_FIELD:%.*]] = getelementptr inbounds nuw %main.Call, ptr %0, i32 0, i32 1
-// CHECK-NEXT: [[ADD_N:%.*]] = load i64, ptr [[ADD_N_FIELD]]
+// CHECK: [[ADD_N:%.*]] = load i64, ptr [[ADD_N_FIELD]]
 // CHECK-NEXT: [[ADD_RESULT:%.*]] = add i64 [[ADD_AB]], [[ADD_N]]
 // CHECK-NEXT: ret i64 [[ADD_RESULT]]
 func (c *Call) add(a int, b int) int {

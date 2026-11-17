@@ -19,7 +19,7 @@ package main
 // CHECK: [[PANIC2_LEN:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[SLICE2]], 1
 // CHECK-NEXT: call void @"{{.*}}/runtime/internal/runtime.PanicSliceConvert"(i64 2, i64 [[PANIC2_LEN]])
 // CHECK: [[SLICE2_DATA:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" [[SLICE2]], 0
-// CHECK-NEXT: [[ARRAY2:%[0-9]+]] = load [2 x i8], ptr [[SLICE2_DATA]]
+// CHECK: [[ARRAY2:%[0-9]+]] = load [2 x i8], ptr [[SLICE2_DATA]]
 // CHECK: [[ARRAY2_LAST:%[0-9]+]] = extractvalue [2 x i8] [[ARRAY2]], 1
 // CHECK: [[EQUAL2_LAST:%[0-9]+]] = icmp eq i8 [[ARRAY2_LAST]], %{{[0-9]+}}
 // CHECK-NEXT: [[EQUAL2:%[0-9]+]] = and i1 %{{[0-9]+}}, [[EQUAL2_LAST]]
