@@ -264,6 +264,11 @@ func TestWorkspaceToolchainSwitch(t *testing.T) {
 			}
 			launcherRoot, selectedVersion := oldRoot, runtime.Version()
 			want := "41 true"
+			if direction == "up" {
+				// Select the installed patch release instead of downloading the
+				// minimum Go version from this intentionally offline workspace.
+				writeFile(t, filepath.Join(root, "go.work"), "go 1.27.0\ntoolchain "+selectedVersion+"\nuse (\n ./app\n ./lib\n)\n")
+			}
 			if direction == "down" {
 				launcherRoot, selectedVersion = runtime.GOROOT(), "go1.21.13"
 				writeFile(t, filepath.Join(root, "go.work"), "go 1.21\ntoolchain go1.21.13\nuse (\n ./app\n ./lib\n)\n")
