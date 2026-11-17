@@ -31,7 +31,9 @@ class FakeGitHub(winget.GitHub):
         self.package_exists = True
         self.ref_exists = False
         self.branch_files = {}
-        self.fork = {'fork': True, 'parent': {'full_name': winget.UPSTREAM}}
+        self.fork = {'fork': True, 'parent': {'full_name': winget.UPSTREAM}, 'default_branch': 'master'}
+        self.fork_base = 'fork-head'
+        self.merge_base = 'fork-head'
         self.fail_pull = False
         self.release = {'id': 1, 'tag_name': 'v1.2.3', 'draft': False,
                         'prerelease': False, 'published_at': '2026-10-22T00:00:00Z'}
@@ -92,6 +94,8 @@ class FakeGitHub(winget.GitHub):
             exists = self.version_exists if path.endswith('/1.2.3') else self.package_exists
             if exists:
                 return [{'name': '1.0.0'}]
+        elif path == f'{FORK}/git/ref/heads/{self.fork["default_branch"]}':
+            return {'object': {'sha': self.fork_base}}
         elif path.startswith(f'{FORK}/git/ref/heads/'):
             if self.ref_exists:
                 return {'object': {'sha': 'new-commit'}}
@@ -99,6 +103,10 @@ class FakeGitHub(winget.GitHub):
             return {'object': {'sha': 'upstream-head'}}
         elif path == f'{UPSTREAM}/git/commits/upstream-head':
             return {'tree': {'sha': 'upstream-tree'}}
+        elif path == f'{FORK}/git/commits/{self.fork_base}':
+            return {'tree': {'sha': 'fork-tree'}}
+        elif path == f'{UPSTREAM}/compare/{self.fork_base}...upstream-head':
+            return {'merge_base_commit': {'sha': self.merge_base}}
         elif path.startswith(f'{FORK}/compare/upstream-head...'):
             return {'files': [{'filename': name, 'status': 'added'} for name in self.branch_files]}
         elif path.startswith(f'{FORK}/contents/'):
@@ -131,8 +139,8 @@ class SubmissionTests(unittest.TestCase):
                 self.assertEqual([call[0] for call in self.api.writes], [
                     f'{FORK}/git/trees', f'{FORK}/git/commits', f'{FORK}/git/refs', f'{UPSTREAM}/pulls'])
                 tree, commit, ref, pull = [call[2] for call in self.api.writes]
-                self.assertEqual(tree['base_tree'], 'upstream-tree')
-                self.assertEqual(commit['parents'], ['upstream-head'])
+                self.assertEqual(tree['base_tree'], 'fork-tree')
+                self.assertEqual(commit['parents'], ['fork-head'])
                 self.assertEqual(len(tree['tree']), 3)
                 expected = {path.relative_to(self.output).as_posix(): path.read_text() for path in
                             (self.output / 'manifests/x/XGo/LLGo/1.2.3').glob('*.yaml')}
@@ -142,6 +150,35 @@ class SubmissionTests(unittest.TestCase):
                 self.assertEqual(pull['base'], 'master')
                 self.assertTrue(pull['title'].startswith('Update:' if exists else 'New package:'))
                 self.assertNotIn('test-only-token', json.dumps(self.api.writes))
+
+    def test_upstream_workflow_changes_do_not_enter_submission_branch(self):
+        original = self.api.request
+        def reject_foreign_tree(path, method='GET', data=None, **params):
+            if path == f'{UPSTREAM}/git/commits/upstream-head':
+                self.fail('the upstream tree may contain workflow files absent from the fork')
+            if path == f'{FORK}/git/trees' and data['base_tree'] != 'fork-tree':
+                self.fail('submission must retain the workflows already reachable in the fork')
+            return original(path, method, data, **params)
+        with mock.patch.object(self.api, 'request', side_effect=reject_foreign_tree):
+            self.submit()
+        comparison = next(call for call in self.api.calls if '/compare/fork-head...upstream-head' in call[0])
+        self.assertEqual(comparison[3], {'per_page': 1})
+        self.assertTrue(all(item['path'].startswith('manifests/x/XGo/LLGo/1.2.3/')
+                            for item in self.api.writes[0][2]['tree']))
+
+    def test_diverged_or_ahead_fork_is_rejected_before_writing(self):
+        for merge_base in ('common-ancestor', 'upstream-head'):
+            with self.subTest(merge_base=merge_base):
+                self.api = FakeGitHub()
+                self.api.merge_base = merge_base
+                with self.assertRaisesRegex(ValueError, 'ancestor of upstream'):
+                    self.submit()
+                self.assertEqual(self.api.writes, [])
+
+    def test_fork_already_at_upstream_head_is_accepted(self):
+        self.api.fork_base = self.api.merge_base = 'upstream-head'
+        self.assertTrue(self.submit().endswith('/pull/123'))
+        self.assertEqual(self.api.writes[1][2]['parents'], ['upstream-head'])
 
     def test_legacy_subdirectories_do_not_make_the_new_id_an_update(self):
         original = self.api.request

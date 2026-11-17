@@ -193,14 +193,20 @@ def submit(api, tag, output, dry_run=False):
     ref = api.optional(f'repos/{FORK}/git/ref/heads/{branch}')
     parent = api.request(f'repos/{UPSTREAM}/git/ref/heads/{quote(base, safe="")}')['object']['sha']
     if ref is None:
-        commit = api.request(f'repos/{UPSTREAM}/git/commits/{parent}')
+        # Reuse workflow files already present on the fork. Starting from a
+        # newer upstream tree can require workflow scope just to create a ref.
+        fork_base = api.request(f'repos/{FORK}/git/ref/heads/{quote(fork["default_branch"], safe="")}')['object']['sha']
+        comparison = api.request(f'repos/{UPSTREAM}/compare/{fork_base}...{parent}', per_page=1)
+        if comparison['merge_base_commit']['sha'] != fork_base:
+            raise ValueError(f'{FORK} default branch must be an ancestor of upstream; inspect it manually')
+        commit = api.request(f'repos/{FORK}/git/commits/{fork_base}')
         tree = api.request(f'repos/{FORK}/git/trees', method='POST', data={
             'base_tree': commit['tree']['sha'],
             'tree': [{'path': path, 'mode': '100644', 'type': 'blob', 'content': content}
                      for path, content in files.items()],
         })
         commit = api.request(f'repos/{FORK}/git/commits', method='POST', data={
-            'message': title, 'tree': tree['sha'], 'parents': [parent],
+            'message': title, 'tree': tree['sha'], 'parents': [fork_base],
         })
         api.request(f'repos/{FORK}/git/refs', method='POST', data={
             'ref': f'refs/heads/{branch}', 'sha': commit['sha'],
