@@ -41,14 +41,29 @@ func Store(value int) { field.value = value }
 func SliceArray(p *[2]int) []int { return p[:] }
 func EmptyArray(p *[0]int) []int { return p[:] }
 func SliceElement(p []string, i int) string { return p[i] }
+type Small struct { value int; text string }
+func SmallLoad(p *Small) int { return p.value }
+func SmallStore(p *Small, x int) { p.value = x }
+func SmallAggregate(p *Small) string { return p.text }
+type Boundary struct { pad [4095]byte; last byte; outside byte }
+func GuardedPage(p *Boundary) byte { return p.last }
+func OutsidePage(p *Boundary) byte { return p.outside }
+type Inner struct { pad [2000]byte; value byte }
+type Outer struct { pad [3000]byte; inner Inner }
+func NestedField(p *Outer) byte { return p.inner.value }
 `
 	for _, arch := range []string{"amd64", "arm64", "386"} {
 		t.Run(arch, func(t *testing.T) {
 			ir := compileWithRewritesTarget(t, source, nil, &llssa.Target{GOOS: "linux", GOARCH: arch})
-			for _, name := range []string{"SliceHeader", "Field", "Store", "SliceArray", "EmptyArray"} {
+			for _, name := range []string{"SliceHeader", "Field", "Store", "SliceArray", "EmptyArray", "SmallAggregate", "OutsidePage", "NestedField"} {
 				body := llvmFunction(t, ir, "nativenil."+name)
 				if !strings.Contains(body, "AssertNilDeref") {
 					t.Errorf("%s lost its recoverable nil check:\n%s", name, body)
+				}
+			}
+			for _, name := range []string{"SmallLoad", "SmallStore", "GuardedPage"} {
+				if body := llvmFunction(t, ir, "nativenil."+name); strings.Contains(body, "AssertNilDeref") {
+					t.Errorf("%s added a redundant native scalar nil check:\n%s", name, body)
 				}
 			}
 			body := llvmFunction(t, ir, "nativenil.SliceElement")

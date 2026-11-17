@@ -22,15 +22,24 @@ func dump(v any) {
 }
 
 // CHECK-LABEL: define void @main.dumpTyp(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
-// CHECK-DAG: [[TYPE_NAME:%[-A-Za-z0-9_.]+]] = call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
-// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[TYPE_NAME]])
-// CHECK-DAG: call i{{[0-9]+}} @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
-// CHECK-DAG: [[RECURSE_ELEM:%[-A-Za-z0-9_.]+]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr {{%[-A-Za-z0-9_.]+}})
-// CHECK-DAG: [[ELEM_SEP:%[-A-Za-z0-9_.]+]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 7 }, ptr %{{[0-9]+}})
-// CHECK-DAG: call void @main.dumpTyp(ptr [[RECURSE_ELEM]], %"{{.*}}String" [[ELEM_SEP]])
-// CHECK-DAG: {{%[-A-Za-z0-9_.]+}} = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr {{%[-A-Za-z0-9_.]+}})
-// CHECK-DAG: [[UNCOMMON_SEP:%[-A-Za-z0-9_.]+]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 9 }, ptr %{{[0-9]+}})
-// CHECK-DAG: call void @main.dumpUncommon(ptr {{%[-A-Za-z0-9_.]+}}, %"{{.*}}String" [[UNCOMMON_SEP]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
+// CHECK: [[TYPE_NAME:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"(ptr %0)
+// CHECK: [[TYPE_KIND:%.*]] = call i{{[0-9]+}} @"{{.*}}/runtime/abi.(*Type).Kind"(ptr %0)
+// CHECK: [[TYPE_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[TYPE_NAME]])
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintUint"(i64 {{%.*}})
+// CHECK: [[TYPE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK: [[HAS_ELEM:%.*]] = icmp ne ptr [[TYPE_ELEM]], null
+// CHECK: br i1 [[HAS_ELEM]], label %{{.*}}, label %{{.*}}
+// CHECK: [[RECURSE_ELEM:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Elem"(ptr %0)
+// CHECK: [[ELEM_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 7 }, ptr %{{[0-9]+}})
+// CHECK: call void @main.dumpTyp(ptr [[RECURSE_ELEM]], %"{{.*}}String" [[ELEM_SEP]])
+// CHECK: [[RECHECK_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: [[HAS_UNCOMMON:%.*]] = icmp ne ptr [[RECHECK_UNCOMMON]], null
+// CHECK: br i1 [[HAS_UNCOMMON]], label %{{.*}}, label %{{.*}}
+// CHECK: [[DUMP_UNCOMMON:%.*]] = call ptr @"{{.*}}/runtime/abi.(*Type).Uncommon"(ptr %0)
+// CHECK: [[UNCOMMON_SEP:%.*]] = call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringCatBuffer"(%"{{.*}}String" %1, %"{{.*}}String" { ptr @{{.*}}, i{{[0-9]+}} 9 }, ptr %{{[0-9]+}})
+// CHECK: call void @main.dumpUncommon(ptr [[DUMP_UNCOMMON]], %"{{.*}}String" [[UNCOMMON_SEP]])
 func dumpTyp(t *abi.Type, sep string) {
 	print(sep)
 	println(t.String(), t.Kind(), t.Size_, t.PtrBytes, t.Hash, t.TFlag, t.Align_, t.PtrToThis_, t.Uncommon())

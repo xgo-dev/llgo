@@ -3,10 +3,9 @@
 package signal
 
 import (
-	"unsafe"
+	_ "unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
-	"github.com/xgo-dev/llgo/runtime/internal/structs"
 )
 
 const (
@@ -16,19 +15,8 @@ const (
 //llgo:cdecl
 type SignalHandler func(c.Int)
 
-type sigactiont struct {
-	_       structs.HostLayout
-	handler SignalHandler
-	tramp   unsafe.Pointer
-	mask    c.Int
-	flags   c.Int
-}
-
-//go:linkname sigaction C.sigaction
-func sigaction(sig c.Int, act, old *sigactiont) c.Int
-
-func Signal(sig c.Int, hanlder SignalHandler) c.Int {
-	var act sigactiont
-	act.handler = hanlder
-	return sigaction(sig, &act, nil)
-}
+// Signal installs a handler using the platform's sigaction layout. Hardware
+// faults must remain deliverable after a panic longjmps out of the handler.
+//
+//go:linkname Signal C.llgo_core_signal
+func Signal(sig c.Int, handler SignalHandler) c.Int

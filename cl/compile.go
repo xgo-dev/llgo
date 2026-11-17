@@ -2455,13 +2455,13 @@ func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
 	if !ok {
 		return false
 	}
-	// A direct native scalar access faults at its Go instruction. Aggregates
-	// may instead be split or lowered to a foreign memcpy. A field address
-	// must preserve the original base's nil check before LLVM folds its GEP,
-	// including nested fields and offsets that reach mapped memory.
-	if _, ok := addr.(*ssa.FieldAddr); ok {
+	// Small-offset native scalar accesses fault in the unmapped zero page.
+	// Guard derived fields only when their combined offset can leave it.
+	if field, ok := addr.(*ssa.FieldAddr); ok && p.fieldOutsideNilGuardPage(field) {
 		return true
 	}
+	// Aggregates may be split or lowered to a foreign memcpy instead of
+	// faulting at a recoverable Go instruction, even at offset zero.
 	switch elem := types.Unalias(ptr.Elem()).Underlying().(type) {
 	case *types.Array, *types.Struct, *types.Slice, *types.Interface:
 		return true
@@ -2471,6 +2471,23 @@ func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
 		}
 	}
 	return false
+}
+
+func (p *context) fieldOutsideNilGuardPage(field *ssa.FieldAddr) bool {
+	const guardPage = 4096
+	offset := 0
+	for {
+		part, ok := p.offsetOfFieldAddr(field)
+		if !ok || part < 0 || part >= guardPage-offset {
+			return true
+		}
+		offset += part
+		parent, ok := field.X.(*ssa.FieldAddr)
+		if !ok {
+			return false
+		}
+		field = parent
+	}
 }
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its

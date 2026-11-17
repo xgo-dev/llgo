@@ -32,6 +32,11 @@ skip: its nested goroutines can exhaust host threads with LLGo's 1:1 backend.
 The bounded `test/go` case `TestGCConcurrentTypedMutation` covers the same
 typed-store GC behavior. Local and self-hosted runs retain the original case.
 
+`nilptr.go` is skipped on darwin/amd64 because LLD's Mach-O image base exceeds
+the original case's assumption that `dummy` is below 256 MiB. The `test/go`
+cases `TestNilArrayPointerSlicesPanic` and `TestNilGlobalPointerLoadsPanic`
+cover the nil behavior without that linker-address assumption.
+
 The runner keeps a small, explicit set of gc backend controls on the official
 Go baseline: `-l=4`, `-d=ssa/check/on`, `-d=softfloat`, and `-d=checkptr`
 (including `all=-d=checkptr`). LLGo executes the same source
