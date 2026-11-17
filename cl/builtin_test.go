@@ -197,9 +197,18 @@ package foo
 func compareInterfacePtr(p *interface{}, q interface{}) bool {
 	return *p == q
 }
+
+type Box struct { value interface{} }
+
+func compareInterfaceField(p *Box, q interface{}) bool {
+	return p.value == q
+}
 `)
-	if ir := m.String(); !strings.Contains(ir, "AssertNilDeref") {
-		t.Fatalf("compiled IR missing AssertNilDeref for interface compare deref:\n%s", ir)
+	for _, name := range []string{"compareInterfacePtr", "compareInterfaceField"} {
+		ir := mustNamedFunction(t, m, "foo."+name).String()
+		if got := strings.Count(ir, "AssertNilDeref"); got != 1 {
+			t.Fatalf("%s has %d nil checks, want 1:\n%s", name, got, ir)
+		}
 	}
 }
 

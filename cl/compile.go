@@ -1777,6 +1777,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			ret = b.BinOpEx(v.Op, x, y, !p.stackStorage(v))
 		}
 	case *ssa.UnOp:
+		pointerNilChecked := false
 		if v.Op == token.MUL {
 			if pos, ok := p.recvNilDerefChecks[v]; ok {
 				p.recordPanicSite(b, pos)
@@ -1810,6 +1811,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				x := p.compileValue(b, v.X)
 				p.recordPanicSite(b, v.Pos())
 				b.AssertNilDeref(x)
+				pointerNilChecked = true
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 1 {
 				if _, ok := refs[0].(*ssa.MakeInterface); ok {
@@ -1839,24 +1841,21 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op != token.ARROW {
 			p.recordPanicSite(b, v.Pos())
 		}
-		if shouldAssertDirectNilDeref(v) || v.Op == token.MUL && p.needsRecoverableNilGuard(v.X) {
-			if p.needsRecoverableNilGuard(v.X) {
-				p.emitNilDerefBaseCheck(b, v.X)
-			}
-			if _, field := v.X.(*ssa.FieldAddr); !field {
-				b.AssertNilDeref(x)
-			}
-		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {
 			if v.Op == token.MUL {
-				if t := p.type_(v.Type(), llssa.GoDecl); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.emitNilDerefBaseCheck(b, v.X)
-				}
-				if isInterfaceCompareDeref(v) {
+				nilGuard := p.needsRecoverableNilGuard(v.X)
+				typ := p.type_(v.Type(), llssa.GoDecl)
+				zeroSized := typ.RawType() != nil && p.isZeroSizedValue(typ)
+				interfaceCompare := isInterfaceCompareDeref(v)
+				if nilGuard || zeroSized || interfaceCompare {
 					// Preserve p.bvals: a branch-local reload would break SSA dominance.
 					p.emitNilDerefBaseCheck(b, v.X)
+				}
+				_, field := v.X.(*ssa.FieldAddr)
+				checkPointer := !field && (interfaceCompare || shouldAssertDirectNilDeref(v) || nilGuard)
+				if checkPointer && !pointerNilChecked {
 					b.AssertNilDeref(x)
 				}
 			}
@@ -2583,21 +2582,18 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
 		nilGuard := p.needsRecoverableNilGuard(va)
-		if nilGuard {
+		// Preserve the store's source site for both explicit checks and
+		// hardware faults, whose PC points at the store instruction itself.
+		if nilGuard || !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
+		}
+		if nilGuard {
 			// A field assignment evaluates its RHS before faulting on a nil
 			// destination. Check the original base here, not at FieldAddr.
 			p.emitNilDerefBaseCheck(b, va)
 			if _, field := va.(*ssa.FieldAddr); !field {
 				b.AssertNilDeref(ptr)
 			}
-		}
-		// Hardware faults report the store instruction itself rather than a
-		// runtime nil-check return address. Preserve its exact source site on
-		// every native target; recordPanicSite scopes the metadata to functions
-		// whose recovered panic stack can be observed.
-		if !nilGuard && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
-			p.recordPanicSite(b, v.Pos())
 		}
 		store := b.Store(ptr, val)
 		if p.isRecoverSlotAddr(va) {
