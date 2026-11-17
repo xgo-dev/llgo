@@ -263,13 +263,11 @@ func collectWasmSize(path string, raw []byte, pkgs []Package, level string, stri
 		return nil, err
 	}
 	functionName := func(index uint64) string {
-		if name := names[index]; name != "" {
-			return name
+		name := names[index]
+		if name == "" && index <= math.MaxUint32 {
+			name = strippedNames[uint32(index)]
 		}
-		if index <= math.MaxUint32 {
-			return strippedNames[uint32(index)]
-		}
-		return ""
+		return name
 	}
 
 	var importedFunctions uint64

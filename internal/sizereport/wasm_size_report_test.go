@@ -216,6 +216,9 @@ func TestWasmSizeRejectsInvalidModuleFields(t *testing.T) {
 		{"unknown import kind", append(bytes.Clone(header), importField(5)...), "unsupported WebAssembly import kind"},
 		{"invalid table element type", append(bytes.Clone(header), importField(1, 0, 0, 0)...), "unsupported WebAssembly value type"},
 		{"truncated global import", append(bytes.Clone(header), importField(3, 0x7f)...), "truncated WebAssembly encoding"},
+		{"truncated export", append(bytes.Clone(header), sizeWasmSection(7, []byte{1, 1, 'f', 0})...), "truncated WebAssembly encoding"},
+		{"unknown export kind", append(bytes.Clone(header), sizeWasmSection(7, []byte{1, 1, 'f', 5, 0})...), "unsupported WebAssembly export kind"},
+		{"trailing export bytes", append(bytes.Clone(header), sizeWasmSection(7, []byte{0, 0})...), "unexpected trailing WebAssembly bytes"},
 		{"trailing memory bytes", append(bytes.Clone(header), sizeWasmSection(5, []byte{0, 0})...), "unexpected trailing WebAssembly bytes"},
 		{"memory byte overflow", append(bytes.Clone(header), sizeWasmSection(5, append([]byte{1, 4}, sizeWasmUint(1<<48)...))...), "memory byte size overflow"},
 	} {
