@@ -10,6 +10,8 @@ The `prepare-winget` job emits the `llgo-winget-candidates` artifact after all W
 
 Fork `microsoft/winget-pkgs` as `xgo-dev/winget-pkgs`. Set the LLGo Actions secret `WINGET_PR_TOKEN` to a classic PAT with `public_repo` scope and fork write access. The submitting account must complete the [Microsoft CLA](https://cla.opensource.microsoft.com). Use `gh secret set WINGET_PR_TOKEN --repo xgo-dev/llgo` to configure or rotate the token.
 
+Submission branches start from the fork's default branch, after verifying that it is an ancestor of upstream. This preserves workflow files already present in the fork, so new upstream workflow changes do not require adding `workflow` scope to the submission token. The PR targets upstream's default branch and adds only the release manifests. A fork with commits outside upstream history is rejected before any writes.
+
 After a stable `vMAJOR.MINOR.PATCH` release succeeds, [winget.yml](../workflows/winget.yml) verifies all three public compact ZIP asset digests against the published checksum file and renders schema 1.12.0 manifests. It skips published versions and existing PRs. Interrupted submissions reuse their branch after checking its contents; unexpected edits or closed PRs require manual inspection. Microsoft's PR checks perform WinGet installation validation.
 
 Preview or retry a release that includes the compact ZIPs without rebuilding (replace the example tag with that release):
