@@ -100,6 +100,12 @@ identity for user Writers. Only escaped percent signs are decoded. Other formats
 use the general formatter; Writer.Write calls, counts, errors and current Stdout
 are preserved. Neither optimization applies at -O0 or with debugger frames.
 
+WASI `fmt.Print`, `Printf` and `Println` pass a private writer to the existing
+formatting functions. Its underlying pointer is the `os.Stdout` value captured
+before formatting. The writer exposes only `Write`, which avoids retaining
+other `*os.File` methods when formatting is their only reachability path. The
+write still uses `os.File.Write`, and debugger builds use the standard source.
+
 For size comparisons, report linked bytes and final optimized bytes separately,
 with the same Binaryen version and flags for each compiler. Include JavaScript,
 manifest and symbol sidecars in deployment totals where present; a minimal WASI
