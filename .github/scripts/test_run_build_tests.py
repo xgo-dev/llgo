@@ -54,12 +54,15 @@ func Second() int { return 22 }
 func ChildOnly() int { return 33 }
 func Uncovered() int { return 44 }
 var Config = "original"
+func LaterOnly() int { return 55 }
 """)
             # Pick names on different shards so both test environments exercise
             # the same relative file without interfering with each other.
             names = [next(f"TestCase{i}" for i in range(100)
-                          if run_build_tests.shard_index(f"TestCase{i}", 2) == index)
+                          if run_build_tests.shard_index(f"TestCase{i}", 4) == index)
                      for index in range(2)]
+            later = next(f"TestLater{i}" for i in range(100)
+                         if run_build_tests.shard_index(f"TestLater{i}", 4) == 3)
             (package / "fixture_test.go").write_text("""package build
 import (
  "os"
@@ -92,11 +95,15 @@ func SECOND(t *testing.T) {
  if Second() != 22 { t.Fatal("second") }
  if os.Getenv("SHARD_FAIL") == "1" { t.Fatal("intentional failure") }
 }
+func LATER(t *testing.T) {
+ lock(t)
+ if LaterOnly() != 55 { t.Fatal("later batch") }
+}
 func TestHelper(t *testing.T) {
  if os.Getenv("SHARD_HELPER") != "1" { t.Skip("subprocess only") }
  if ChildOnly() != 33 { t.Fatal("child") }
 }
-""".replace("FIRST", names[0]).replace("SECOND", names[1]), encoding="utf-8")
+""".replace("FIRST", names[0]).replace("SECOND", names[1]).replace("LATER", later), encoding="utf-8")
             unused = root / "unused"
             unused.mkdir()
             (unused / "unused.go").write_text("package unused\nfunc Never() int { return 99 }\n")
@@ -116,8 +123,10 @@ func TestHelper(t *testing.T) {
                                       capture_output=True, text=True, timeout=120)
             self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
             results = []
-            for workers, failing in ((1, False), (2, False), (2, True)):
+            for workers, batches, failing in ((1, 1, False), (1, 2, False),
+                                               (2, 1, False), (2, 2, False), (2, 2, True)):
                 result = subprocess.run([sys.executable, str(script), "--workers", str(workers),
+                                         "--batches", str(batches),
                                          "--overlay", str(overlay), "--ldflags=" + ldflags],
                                         cwd=root, env={**environment, "SHARD_FAIL": str(int(failing))},
                                         capture_output=True, text=True, encoding="utf-8", timeout=120)
@@ -126,10 +135,15 @@ func TestHelper(t *testing.T) {
                 self.assertTrue(any("Unicode output: 中文" in event.get("Output", "") for event in events))
                 outcomes = [event["Test"] for event in events
                             if event.get("Test") and event.get("Action") in ("pass", "skip", "fail")]
-                self.assertCountEqual(outcomes, names + ["TestHelper"])
+                self.assertCountEqual(outcomes, names + [later, "TestHelper"])
+                report = json.loads((root / "go-test-timings/build-shards.json").read_text())
+                self.assertEqual(len(report["shards"]), workers * batches)
+                self.assertEqual(len(report["results"]), workers)
+                self.assertEqual(sum(batch["reported_tests"] for worker in report["results"]
+                                     for batch in worker["batches"]), 4)
                 if not failing:
                     results.append((root / "coverage-build.txt").read_text())
-            self.assertEqual(results[0], results[1])
+            self.assertTrue(all(profile == results[0] for profile in results))
             self.assertEqual(sorted((root / "baseline.txt").read_text().splitlines()),
                              sorted(results[1].splitlines()))
             # ChildOnly is executed only in a re-execed helper. It must still
