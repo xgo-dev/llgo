@@ -321,10 +321,25 @@ func TestWasmStripOnlyPreservesEncoding(t *testing.T) {
 }
 
 func TestWasmFinalSizeUsesNamesFromOptimizedModule(t *testing.T) {
+	for _, test := range []struct {
+		mode, owner string
+		warning     bool
+	}{
+		{"write-size-fixture", "main.live", false},
+		{"write-invalid-size-fixture", "(unknown function 0)", true},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			checkWasmFinalSizeNames(t, test.mode, test.owner, test.warning)
+		})
+	}
+}
+
+func checkWasmFinalSizeNames(t *testing.T, mode, owner string, warning bool) {
+	t.Helper()
 	t.Setenv("WASMOPT", writeWasmOptTestTool(t, t.TempDir()))
 	t.Setenv("LLGO_TEST_FINAL_WASM", "1")
 	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-wasm")
-	t.Setenv("LLGO_TEST_WASM_OPT_HELPER", "write-size-fixture")
+	t.Setenv("LLGO_TEST_WASM_OPT_HELPER", mode)
 	out := &OutFmtDetails{Out: filepath.Join(t.TempDir(), "app.wasm")}
 	conf := &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
 		WasmOpt: WasmOptSize, WasmStrip: WasmStripAll, DebugArtifactMode: DebugArtifactNone,
@@ -352,13 +367,21 @@ func TestWasmFinalSizeUsesNamesFromOptimizedModule(t *testing.T) {
 			Name string
 			Code uint64
 		}
+		Warnings []string
 	}
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
 	if report.FileSize != uint64(len(raw)) || len(report.Modules) != 1 ||
-		report.Modules[0].Name != "main.live" || report.Modules[0].Code != 2 {
+		report.Modules[0].Name != owner || report.Modules[0].Code != 2 {
 		t.Fatalf("final size report = %s", output.String())
+	}
+	if warning {
+		if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "ignored invalid function names") {
+			t.Fatalf("missing invalid-name warning: %v", report.Warnings)
+		}
+	} else if len(report.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", report.Warnings)
 	}
 }
 

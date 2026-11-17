@@ -263,11 +263,12 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		return err
 	}
 	var sizeNames map[uint32]string
+	var sizeNamesErr error
 	if ctx.buildConf.WasmStrip != "" && ctx.buildConf.WasmStrip != WasmStripNone {
-		if ctx.buildConf.Mode == ModeBuild && ctx.buildConf.SizeReport {
+		if ctx.buildConf.wantsSizeReport() {
 			// Stripping preserves the indexes of the final optimized functions.
 			// Optional name metadata can be missing or malformed.
-			sizeNames, _ = wasmdebug.FunctionNames(data)
+			sizeNames, sizeNamesErr = wasmdebug.FunctionNames(data)
 		}
 		if ctx.buildConf.WasmStrip == WasmStripSymbols {
 			data, err = wasmdebug.StripNames(data)
@@ -317,6 +318,7 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 	}
 	out.WasmManifest = filepath.Join(filepath.Dir(out.Out), manifestName)
 	out.wasmSizeNames = sizeNames
+	out.wasmSizeNamesErr = sizeNamesErr
 	return nil
 }
 

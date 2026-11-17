@@ -44,9 +44,17 @@ func sizeWasmFixture(withNames bool) []byte {
 }
 
 func TestWasmSizeFinalEncoding(t *testing.T) {
-	for _, names := range []bool{false, true} {
-		raw := sizeWasmFixture(names)
-		report, err := collectWasmSize("app.wasm", raw, nil, "full", nil)
+	for _, test := range []struct {
+		names         bool
+		strippedNames map[uint32]string
+		function      string
+	}{
+		{},
+		{names: true, function: "main.(*T).Method"},
+		{strippedNames: map[uint32]string{0: "env.call", 1: "main.live"}, function: "main.live"},
+	} {
+		raw := sizeWasmFixture(test.names)
+		report, err := collectWasmSize("app.wasm", raw, nil, "full", test.strippedNames)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,8 +62,8 @@ func TestWasmSizeFinalEncoding(t *testing.T) {
 			t.Fatalf("payload: %+v", report.Total)
 		}
 		owner := "(unknown function 1)"
-		if names {
-			owner = "main.(*T).Method"
+		if test.function != "" {
+			owner = test.function
 		}
 		if report.Modules[owner] == nil || report.Modules[owner].Code != 2 {
 			t.Fatalf("function attribution: %+v", report.Modules)
@@ -64,10 +72,7 @@ func TestWasmSizeFinalEncoding(t *testing.T) {
 		if len(w.Imports) != 2 || w.Imports[0] != (wasmSizeImport{Module: "env", Name: "call", Kind: "function"}) {
 			t.Fatalf("imports: %+v", w.Imports)
 		}
-		export := wasmSizeExport{Name: "run", Kind: "function", Index: 1}
-		if names {
-			export.Function = owner
-		}
+		export := wasmSizeExport{Name: "run", Kind: "function", Index: 1, Function: test.function}
 		if len(w.Exports) != 1 || w.Exports[0] != export {
 			t.Fatalf("exports: %+v, want %+v", w.Exports, export)
 		}

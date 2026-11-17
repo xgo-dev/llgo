@@ -17,8 +17,10 @@ it is not silently replaced by a warning.
   accurate section totals even when source attribution is unavailable.
 - Wasm is read directly, without invoking `llvm-readelf`. Code is the encoded
   function bodies (including local declarations); data is the stored segment
-  content, including passive segments. Names are taken from the final `name`
-  section when available, otherwise code/data stay in explicit unknown buckets.
+  content, including passive segments. Function names come from the final
+  `name` section or from the same module immediately before LLGo strips it.
+  Functions without names and data without ownership information use explicit
+  unknown buckets. Invalid optional function names generate a report warning.
   Custom-section bytes and the remaining encoding bytes are listed separately:
   `code + data + custom_bytes + structure_bytes == file_size`.
 - Browser output resolves the sibling `.wasm` instead of reading JavaScript or
@@ -87,9 +89,12 @@ llgo build -size -size-format=json .   # JSON output (works with all levels)
 
 JSON reports have `version: 1`, `stage: "final"`, `format`, `file_size`,
 `binary`, `modules`, `total` and `artifacts`. Wasm additionally has a `wasm`
-object containing sections, memory limits and encoding overhead. Optional
-diagnostic warnings do not change the measured totals. Native per-module fields
-remain compatible with the previous report.
+object containing sections, memory limits and encoding overhead. When present,
+`imports` entries contain `module`, `name` and `kind`. `exports` entries contain
+`name`, `kind` and `index`, plus `function` when the internal function name is
+available. The text report shows import and export counts. Optional diagnostic
+warnings do not change the measured totals. Native per-module fields remain
+compatible with the previous report.
 
 1. Unit tests:
    ```sh
