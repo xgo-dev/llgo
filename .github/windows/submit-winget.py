@@ -24,6 +24,17 @@ UPSTREAM = 'microsoft/winget-pkgs'
 FORK = 'xgo-dev/winget-pkgs'
 
 
+def describe_http_error(error, request):
+    details = [request]
+    # Only log diagnostic headers, never authorization or request/response bodies.
+    for header in ('X-GitHub-Request-Id', 'X-OAuth-Scopes',
+                   'X-Accepted-OAuth-Scopes', 'X-Accepted-GitHub-Permissions'):
+        if value := (error.headers or {}).get(header):
+            details.append(f'{header}: {value}')
+    error.msg = f'{error.msg} [{"; ".join(details)}]'
+    return error
+
+
 class GitHub:
     def __init__(self, token='', dry_run=False):
         self.token = token
@@ -47,7 +58,7 @@ class GitHub:
             except HTTPError as error:
                 # Writes are recovered by the next run, never blindly replayed.
                 if method != 'GET' or error.code not in (429, 500, 502, 503, 504) or attempt == 2:
-                    raise
+                    raise describe_http_error(error, f'{method} /{path}')
                 error.close()
                 time.sleep(2 ** attempt)
         raise RuntimeError('GitHub API retries exhausted')
@@ -73,8 +84,12 @@ class GitHub:
 
 def public_bytes(url):
     # Keep credentials out of public asset downloads and their redirects.
-    with urlopen(url, timeout=60) as response:
-        return response.read()
+    try:
+        with urlopen(url, timeout=60) as response:
+            return response.read()
+    except HTTPError as error:
+        # Use the original public asset URL, not a signed redirect URL.
+        raise describe_http_error(error, f'GET {url}')
 
 
 def published_installers(api, tag):

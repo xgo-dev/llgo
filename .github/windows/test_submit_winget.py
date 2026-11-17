@@ -286,6 +286,44 @@ class SubmissionTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_failed_api_request_identifies_endpoint_without_secret_data(self):
+        path = f'{FORK}/git/trees'
+        headers = {'X-GitHub-Request-Id': 'request-123',
+                   'X-OAuth-Scopes': 'public_repo',
+                   'X-Accepted-OAuth-Scopes': 'repo',
+                   'X-Accepted-GitHub-Permissions': 'contents=write',
+                   'Authorization': 'Bearer header-secret'}
+        error = HTTPError('https://api.github.com/' + path, 404, 'Not Found',
+                          headers, io.BytesIO(b'response-secret'))
+        with mock.patch.object(winget, 'urlopen', side_effect=error) as open_url:
+            with self.assertRaises(HTTPError) as result:
+                winget.GitHub('token-secret').request(path, method='POST',
+                                                     data={'content': 'manifest-secret'})
+        message = str(result.exception)
+        self.assertIn('POST /' + path, message)
+        self.assertIn('request-123', message)
+        self.assertIn('X-OAuth-Scopes: public_repo', message)
+        self.assertIn('X-Accepted-OAuth-Scopes: repo', message)
+        self.assertIn('contents=write', message)
+        for secret in ('header-secret', 'response-secret', 'token-secret', 'manifest-secret'):
+            self.assertNotIn(secret, message)
+        open_url.assert_called_once()
+
+    def test_annotated_not_found_still_allows_optional_lookup(self):
+        error = HTTPError('url', 404, 'Not Found', {}, io.BytesIO())
+        with mock.patch.object(winget, 'urlopen', side_effect=error):
+            self.assertIsNone(winget.GitHub('test-only-token').optional(FORK + '/git/ref/heads/new'))
+
+    def test_download_error_uses_public_url_instead_of_signed_redirect(self):
+        public = 'https://github.com/xgo-dev/llgo/releases/download/v1.2.3/checksums'
+        error = HTTPError('https://release-assets.githubusercontent.com/private?sig=redirect-secret',
+                          404, 'Not Found', {}, io.BytesIO())
+        with mock.patch.object(winget, 'urlopen', side_effect=error):
+            with self.assertRaises(HTTPError) as result:
+                winget.public_bytes(public)
+        self.assertIn('GET ' + public, str(result.exception))
+        self.assertNotIn('redirect-secret', str(result.exception))
+
     def test_missing_write_secret_fails_before_any_api_call(self):
         with mock.patch.dict(winget.os.environ, {'GH_TOKEN': 'read-only-token'}, clear=True):
             with mock.patch.object(winget.sys, 'argv', ['submit-winget.py', '--tag', 'v1.2.3', ]):
