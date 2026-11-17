@@ -640,7 +640,13 @@ function Install-LLGoRelease {
     Remove-Item -Force -LiteralPath $bin
   }
   New-Item -ItemType Directory -Force $bin | Out-Null
-  foreach ($file in Get-ChildItem -File -LiteralPath (Join-Path $versionRoot 'bin')) {
+  $releaseBin = Join-Path $versionRoot 'bin'
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $bin) {
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseBin $file.Name) -PathType Leaf)) {
+      Remove-Item -Force -LiteralPath $file.FullName
+    }
+  }
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $releaseBin) {
     $path = Join-Path $bin $file.Name
     if (Test-Path -LiteralPath $path) { Remove-Item -Force -LiteralPath $path }
     New-Item -ItemType HardLink -Path $path -Target $file.FullName | Out-Null

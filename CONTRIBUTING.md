@@ -332,6 +332,8 @@ The [documentation workflow](.github/workflows/doc-link-checker.yml) runs these
 checks. Edit embedded examples in `doc/_readme/scripts/` first; the
 [installation workflow](.github/workflows/doc.yml) also executes those scripts.
 
+Embedme treats a single-token `//` comment at the start of a fenced block as a filename. For examples starting with a directive such as `//llgo:cdecl`, place a real statement or a comment containing spaces first so the directive is not mistaken for a file reference.
+
 ## Repository tools
 
 - [gentests](chore/gentests): refresh runtime-output and package-metadata goldens.

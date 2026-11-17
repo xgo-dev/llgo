@@ -229,6 +229,7 @@ install_linux_dependencies() {
                 zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
             ;;
         *" arch "*)
+            printf 'Installing Arch dependencies performs a full unattended system upgrade (pacman -Syu --noconfirm).\n' >&2
             run_as_root pacman -Syu --needed --noconfirm \
                 base-devel ca-certificates curl pkgconf gc openssl zlib \
                 libffi cjson sqlite libuv

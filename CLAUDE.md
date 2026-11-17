@@ -121,29 +121,11 @@ go vet ./...
 
 **Note:** Currently reports some issues related to lock passing by value in `ssa/type_cvt.go` and a possible unsafe.Pointer misuse in `cl/builtin_test.go`. These are known issues.
 
-### Documentation checks (README.md)
+### Documentation checks
 
-Any modification to `README.md` must keep the checks in
-`.github/workflows/doc-link-checker.yml` (the `doc_verify` job) passing. That
-job runs two tools against `README.md`:
-
-- **`embedme --verify README.md`** — verifies embedded code blocks. embedme
-  treats the first line of a fenced code block as an `embedme <file>` reference
-  when it is a single-token `//`-style comment (for example `//llgo:cdecl`),
-  and fails if that file does not exist. When a Go example must *lead* with such
-  a directive, start the block with a real statement (an `import`, declaration,
-  or a comment that contains spaces, e.g. `//go:linkname Name sym`) so the first
-  line is not mistaken for a filename.
-- **`lychee README.md`** — checks that every link in `README.md` is reachable.
-  Avoid adding dead or private links.
-
-Verify locally before pushing a README change:
-
-```bash
-npm install -g embedme   # or: npx embedme ...
-embedme --verify README.md
-```
-
+Run the [documentation checks](CONTRIBUTING.md#documentation-checks) for changes
+to README.md, CONTRIBUTING.md, and dev/README.md. Keep the commands and embedded
+example guidance in that contribution-guide section.
 
 ## Common Development Tasks
 

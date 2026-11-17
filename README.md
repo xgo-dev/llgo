@@ -442,13 +442,17 @@ brew install llgo
 
 #### WinGet (Windows)
 
-<!-- embedme doc/_readme/scripts/install_winget.ps1#L2-L2 -->
+Until `XGo.LLGo` is published, use the legacy package below. See [WinGet migration](WINDOWS.md#migrating-an-older-winget-installation) when the unified package becomes available.
+
+<!-- embedme doc/_readme/scripts/install_winget.ps1#L3-L3 -->
 
 ```powershell
 winget install XGo.LLGo.MSVC
 ```
 
 #### APT / YUM (Linux)
+
+For Debian/Ubuntu without LLVM 22 packages, first enable the matching [apt.llvm.org repository](https://apt.llvm.org/). RPM installation requires Fedora 44 or newer. These repository entries use HTTPS and disable package signature checks (`trusted=yes` / `gpgcheck=0`).
 
 Debian/Ubuntu:
 

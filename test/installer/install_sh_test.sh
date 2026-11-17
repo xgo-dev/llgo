@@ -148,6 +148,15 @@ assert_equal "$(readlink "$install_root/current")" versions/1.2.4/linux-amd64
     install_macos_dependencies
     assert_equal "$(cat "$temporary/brew-calls")" 'install sqlite zlib'
 )
+(
+    linux_distribution() { printf 'arch\n'; }
+    run_as_root() { printf '%s\n' "$*" >"$temporary/pacman-calls"; }
+    install_linux_dependencies >"$temporary/arch-output" 2>&1
+    grep -Fq 'full unattended system upgrade' "$temporary/arch-output" ||
+        fail 'Arch installation did not explain the full system upgrade'
+    grep -Fq 'pacman -Syu --needed --noconfirm' "$temporary/pacman-calls" ||
+        fail 'Arch dependencies did not retain the full-upgrade transaction'
+)
 dependency_calls=0
 install_linux_dependencies() {
     dependency_calls=$((dependency_calls + 1))
