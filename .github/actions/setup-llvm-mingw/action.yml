@@ -8,6 +8,10 @@ inputs:
     description: "LLGo host LLVM major version"
     required: false
     default: "22"
+  compiler-only:
+    description: "Windows only: install the Go reference compiler without changing the LLGo target"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -19,7 +23,11 @@ runs:
         if ("${{ inputs.llvm-version }}" -ne "22") {
           throw "llvm-mingw 20260616 is paired with LLVM 22, not ${{ inputs.llvm-version }}"
         }
-        if ("${{ inputs.windows-arch }}" -ne "386") {
+        if ("${{ inputs.compiler-only }}" -eq "true") {
+          if ("${{ inputs.windows-arch }}" -notin @("386", "amd64", "arm64")) {
+            throw "Unsupported Go reference architecture: ${{ inputs.windows-arch }}"
+          }
+        } elseif ("${{ inputs.windows-arch }}" -ne "386") {
           throw "The native llvm-mingw target currently qualifies windows/386, not windows/${{ inputs.windows-arch }}"
         }
 
@@ -80,8 +88,29 @@ runs:
         }
         Move-Item -LiteralPath $source.FullName -Destination $installRoot
 
+    - name: Export Go reference compilers
+      if: runner.os == 'Windows' && inputs.compiler-only == 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $arch = switch ("${{ inputs.windows-arch }}") {
+          "386" { "i686" }
+          "amd64" { "x86_64" }
+          "arm64" { "aarch64" }
+        }
+        $bin = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20260616\ucrt-x86_64\bin"
+        $cc = (Join-Path $bin "$arch-w64-mingw32-clang.exe").Replace('\', '/')
+        $cxx = (Join-Path $bin "$arch-w64-mingw32-clang++.exe").Replace('\', '/')
+        foreach ($compiler in @($cc, $cxx)) {
+          if (-not (Test-Path $compiler)) { throw "Missing Go reference compiler: $compiler" }
+        }
+        # Keep the MSVC compiler and DLL search path intact for LLGo. Only
+        # reference Go subprocesses opt into these GNU/UCRT drivers.
+        Add-Content -Encoding utf8 $env:GITHUB_ENV ('LLGO_GOROOT_BASELINE_CC="' + $cc + '" -fuse-ld=lld')
+        Add-Content -Encoding utf8 $env:GITHUB_ENV ('LLGO_GOROOT_BASELINE_CXX="' + $cxx + '" -fuse-ld=lld')
+
     - name: Cache llvm-mingw target dependencies
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && inputs.compiler-only != 'true'
       id: llvm_mingw_vcpkg_cache
       uses: actions/cache@v6
       with:
@@ -89,7 +118,7 @@ runs:
         key: llgo-llvm-mingw-20260616-ucrt-386-${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}-${{ hashFiles('.github/windows/bdwgc-windows-fault-guard.patch', '.github/windows/prepare-bdwgc-port.py') }}
 
     - name: Build llvm-mingw target dependencies
-      if: runner.os == 'Windows' && steps.llvm_mingw_vcpkg_cache.outputs.cache-hit != 'true'
+      if: runner.os == 'Windows' && inputs.compiler-only != 'true' && steps.llvm_mingw_vcpkg_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
         VCPKG_BASELINE: ddd0023b0eee70986e42ed49d9d4afb8098f212e
@@ -132,7 +161,7 @@ runs:
         }
 
     - name: Configure llvm-mingw target
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && inputs.compiler-only != 'true'
       shell: pwsh
       env:
         VCPKG_MANIFEST_HASH: ${{ hashFiles('.github/windows/vcpkg/vcpkg.json') }}

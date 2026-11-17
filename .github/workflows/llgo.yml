@@ -173,6 +173,28 @@ jobs:
           echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Set up Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: "1.26.7"
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
+
+      - name: Record Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        shell: bash
+        run: echo "LLGO_GOROOT_GO126=$(GOTOOLCHAIN=local go env GOROOT)" >> "$GITHUB_ENV"
+
+      - name: Restore build Go toolchain
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        with:
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
+
       - name: Activate native Windows target
         if: runner.os == 'Windows'
         uses: ./.github/actions/activate-windows-target
@@ -235,6 +257,26 @@ jobs:
             )
           fi
 
+          if [[ "$RUNNER_OS" == Windows && ( "$LLGO_WINDOWS_ABI" == msvc || "$LLGO_WINDOWS_ARCH" == 386 ) ]]; then
+            reference_llgo="$(cygpath -w "$LLGO")"
+            reference_cases='^(printbig|fixedbugs/(bug114|issue23305))\.go$'
+            if [[ "$LLGO_WINDOWS_ABI" == msvc ]]; then
+              reference_cases='^(printbig|linkmain_run|fixedbugs/(bug114|bug514|issue23305|issue34968|issue40954|issue42032|issue42076|issue46903|issue47227|issue51733))\.go$'
+            fi
+            reference_roots=("$(go env GOROOT)")
+            if [[ -n "${LLGO_GOROOT_GO126:-}" ]]; then
+              reference_roots+=("$LLGO_GOROOT_GO126")
+            fi
+            for reference_root in "${reference_roots[@]}"; do
+              (
+                cd test/goroot
+                go test -run '^TestGoRootRunCases$' -count=1 -timeout=15m -args \
+                  -goroot "$reference_root" -llgo "$reference_llgo" -directive-mode ci \
+                  -case "$reference_cases"
+              )
+            done
+          fi
+
           "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
 
           # GC_malloc returns zeroed memory, so check allocation clearing with
@@ -262,6 +304,30 @@ jobs:
             (cd runtime && "$LLGO" test -v -timeout=2m ./internal/thread)
           fi
 
+      - name: Select supported Python for Codecov on macOS
+        if: ${{ runner.os == 'macOS' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
+        id: macos_codecov_python
+        uses: actions/setup-python@v7
+        with:
+          # The runner default can be newer than Codecov's native dependencies.
+          python-version: "3.13"
+          # Later demos and debuggers require their existing Python ABI and .pc files.
+          update-environment: false
+
+      - name: Install Codecov CLI with isolated macOS Python
+        if: ${{ runner.os == 'macOS' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
+        id: macos_codecov
+        shell: bash
+        env:
+          CODECOV_PYTHON: ${{ steps.macos_codecov_python.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/llgo-codecov"
+          "$CODECOV_PYTHON" -m venv "$venv"
+          "$venv/bin/python" -m pip install --only-binary=:all: codecov-cli==11.3.1
+          "$venv/bin/codecovcli" --version
+          echo "binary=$venv/bin/codecovcli" >> "$GITHUB_OUTPUT"
+
       - name: Install Codecov CLI with Windows host Python
         if: ${{ runner.os == 'Windows' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
         id: windows_codecov
@@ -282,7 +348,7 @@ jobs:
         if: ${{ !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
         uses: codecov/codecov-action@v7
         with:
-          binary: ${{ steps.windows_codecov.outputs.binary }}
+          binary: ${{ steps.windows_codecov.outputs.binary || steps.macos_codecov.outputs.binary }}
           use_pypi: true
           version: "11.3.1"
           token: ${{ secrets.CODECOV_TOKEN }}

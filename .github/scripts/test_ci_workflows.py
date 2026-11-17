@@ -60,6 +60,21 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_macos_codecov_preserves_later_demo_environment(self):
+        steps = load('llgo.yml')['jobs']['llgo']['steps']
+        demo = next(i for i, step in enumerate(steps) if step.get('name') == 'Test demos')
+        for step in steps[:demo]:
+            if step.get('uses', '').startswith('actions/setup-python@'):
+                self.assertEqual(str(step.get('with', {}).get('update-environment', True)).lower(),
+                                 'false', 'coverage tooling must preserve the demo PATH and PKG_CONFIG_PATH')
+        python = next(step for step in steps if step.get('id') == 'macos_codecov_python')
+        install = next(step for step in steps if step.get('id') == 'macos_codecov')
+        self.assertIn(f"steps.{python['id']}.outputs.python-path", install['env']['CODECOV_PYTHON'])
+        upload = next(step for step in steps if step.get('name') == 'Upload LLGo test coverage to Codecov')
+        self.assertIn(f"steps.{install['id']}.outputs.binary", upload['with']['binary'])
+        self.assertNotIn('$GITHUB_ENV', install['run'])
+        self.assertNotIn('$GITHUB_PATH', install['run'])
+
     def test_unix_archives_and_system_packages_bundle_pinned_esp(self):
         root = WORKFLOWS.parents[1]
         config = yaml.safe_load((root / '.goreleaser.yaml').read_text())

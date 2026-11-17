@@ -986,7 +986,7 @@ func baselineGoEnv() []string {
 	env := append([]string{}, os.Environ()...)
 	env = upsertEnv(env, "GOENV=off")
 	env = upsertEnv(env, "GOFLAGS=")
-	return upsertEnv(env, "GOTOOLCHAIN=local")
+	return baselineCgoEnv(upsertEnv(env, "GOTOOLCHAIN=local"))
 }
 
 func appendIfMissing(env []string, kv string) []string {
@@ -2819,9 +2819,16 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 		}
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
+	if !nestedDirCase && len(sourceFiles) == 1 {
+		if count, err := normalizePrintConstants(filepath.Join(ws.workDir, sourceFiles[0]), targetGoArch(env)); err != nil {
+			return err
+		} else if count != 0 {
+			t.Logf("made %d out-of-range print constants explicitly 64-bit for %s", count, targetGoArch(env))
+		}
+	}
 
 	targetEnv := gorootTargetEnv(env)
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -3021,7 +3028,7 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 	metrics := caseMetrics{}
 	targetEnv := gorootTargetEnv(env)
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -3153,7 +3160,11 @@ func toolchainGoModVersion(goroot string) (string, error) {
 func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, buildTimeout, runTimeout time.Duration) ([]byte, []byte, int, time.Duration, time.Duration, error) {
 	isLLGO := label == "llgo"
 	out := gorootArtifactPath(ws.rootDir, label+"-generated", isLLGO)
-	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, gorootTargetEnv(env), buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
+	buildEnv := gorootTargetEnv(env)
+	if !isLLGO {
+		buildEnv = baselineCgoEnv(buildEnv)
+	}
+	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, buildEnv, buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
 	if cmdErr := requireSuccessfulExit(err, buildExit); cmdErr != nil {
 		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, cmdErr, buildStdout, buildStderr, buildExit)
 	}
