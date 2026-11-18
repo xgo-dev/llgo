@@ -64,11 +64,16 @@ def main():
             cases = []
 
             # A valid map exists, but a fatal traceback must neither start a
-            # load nor wait for one. Only unresolved frame PCs are available.
+            # load nor wait for one. Resolve the recorded IDs on the host.
             fatal = execute('panic', status=2, output='panic: pcln-fatal')
-            if '??? [pc=' not in fatal or 'pcln-callsite.go:' in fatal:
+            if '[llgo-location=' not in fatal or 'pcln-callsite.go:' in fatal:
                 raise RuntimeError(f'{target}: fatal path loaded source metadata\n{fatal}')
             cases.append('fatal-without-load')
+            resolved = subprocess.run([llgo, 'tool', 'symbolize', str(module)], input=fatal, cwd=ROOT,
+                                      env=environment, capture_output=True, text=True, timeout=60)
+            if resolved.returncode or 'pcln-callsite.go:' not in resolved.stdout or 'panic: pcln-fatal' not in resolved.stdout:
+                raise RuntimeError(f'{target}: offline symbolization failed\n{resolved.stdout}{resolved.stderr}')
+            cases.append('offline-symbolization')
             for mode in ['available', 'cache-reuse', 'concurrent', 'cached-success', 'cached-failure']:
                 execute(mode)
                 if sidecar.read_bytes() != original:

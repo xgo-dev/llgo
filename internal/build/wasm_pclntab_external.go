@@ -1,7 +1,6 @@
 package build
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"os"
 
@@ -27,7 +26,10 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 	// Shadow locations use stable IDs, independent of final code offsets.
 	data.EntrySites, data.PCSites = nil, nil
 	data.ImageBase, data.TextStart, data.TextEnd = 0, 1, 2
-	data.Identity = sha256.Sum256(raw)
+	data.Identity, err = wasmdebug.PCLNModuleIdentity(raw)
+	if err != nil {
+		return err
+	}
 	placeholder := wasmdebug.PCLNIdentityPlaceholder()
 	patched, err := wasmdebug.ReplaceData(raw, pclnIdentitySymbol, placeholder[:], data.Identity[:])
 	if err != nil {

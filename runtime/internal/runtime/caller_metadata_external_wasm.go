@@ -48,3 +48,5 @@ func RecordPanicLocationID(entry uintptr, id uint64, line int) {
 }
 
 func hasCallerLocation(frame CallerFrame) bool { return frame.locationID != 0 }
+
+func callerLocationID(frame CallerFrame) uint64 { return frame.locationID }

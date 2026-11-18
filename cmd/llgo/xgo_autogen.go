@@ -20,8 +20,10 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/mod"
 	"github.com/xgo-dev/llgo/cmd/internal/monitor"
 	"github.com/xgo-dev/llgo/cmd/internal/run"
+	"github.com/xgo-dev/llgo/cmd/internal/symbolize"
 	"github.com/xgo-dev/llgo/cmd/internal/test"
 	"github.com/xgo-dev/llgo/cmd/internal/version"
+	"os"
 )
 
 const _ = true
@@ -113,6 +115,10 @@ type Cmd_tool_compile struct {
 	xcmd.Command
 	*App
 }
+type Cmd_tool_symbolize struct {
+	xcmd.Command
+	*App
+}
 type Cmd_version struct {
 	xcmd.Command
 	*App
@@ -152,10 +158,11 @@ func (this *App) Main() {
 	_xgo_obj18 := &Cmd_test{App: this}
 	_xgo_obj19 := &Cmd_tool{App: this}
 	_xgo_obj20 := &Cmd_tool_compile{App: this}
-	_xgo_obj21 := &Cmd_version{App: this}
-	_xgo_obj22 := &Cmd_vet{App: this}
-	_xgo_obj23 := &Cmd_work{App: this}
-	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12, _xgo_obj13, _xgo_obj14, _xgo_obj15, _xgo_obj16, _xgo_obj17, _xgo_obj18, _xgo_obj19, _xgo_obj20, _xgo_obj21, _xgo_obj22, _xgo_obj23)
+	_xgo_obj21 := &Cmd_tool_symbolize{App: this}
+	_xgo_obj22 := &Cmd_version{App: this}
+	_xgo_obj23 := &Cmd_vet{App: this}
+	_xgo_obj24 := &Cmd_work{App: this}
+	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12, _xgo_obj13, _xgo_obj14, _xgo_obj15, _xgo_obj16, _xgo_obj17, _xgo_obj18, _xgo_obj19, _xgo_obj20, _xgo_obj21, _xgo_obj22, _xgo_obj23, _xgo_obj24)
 }
 //line cmd/llgo/bug_cmd.gox:16
 func (this *Cmd_bug) Main(_xgo_arg0 string) {
@@ -539,6 +546,29 @@ func (this *Cmd_tool_compile) Main(_xgo_arg0 string) {
 }
 func (this *Cmd_tool_compile) Classfname() string {
 	return "tool_compile"
+}
+//line cmd/llgo/tool_symbolize_cmd.gox:9
+func (this *Cmd_tool_symbolize) Main(_xgo_arg0 string) {
+	this.Command.Main(_xgo_arg0)
+//line cmd/llgo/tool_symbolize_cmd.gox:9:1
+	this.Use("symbolize module.wasm")
+//line cmd/llgo/tool_symbolize_cmd.gox:11:1
+	this.Short("Resolve WebAssembly traceback locations from stdin")
+//line cmd/llgo/tool_symbolize_cmd.gox:13:1
+	this.Run__1(func(args []string) {
+//line cmd/llgo/tool_symbolize_cmd.gox:14:1
+		if len(args) != 1 {
+//line cmd/llgo/tool_symbolize_cmd.gox:15:1
+			gocommand.Exit("symbolize", fmt.Errorf("expected one Wasm module path"))
+//line cmd/llgo/tool_symbolize_cmd.gox:16:1
+			return
+		}
+//line cmd/llgo/tool_symbolize_cmd.gox:18:1
+		gocommand.Exit("symbolize", symbolize.Run(args[0], os.Stdin, os.Stdout))
+	})
+}
+func (this *Cmd_tool_symbolize) Classfname() string {
+	return "tool_symbolize"
 }
 //line cmd/llgo/version_cmd.gox:18
 func (this *Cmd_version) Main(_xgo_arg0 string) {

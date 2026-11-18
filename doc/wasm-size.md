@@ -53,6 +53,13 @@ query symbols need no sidecar request. See
 [PCLN packaging](design/pclntab-packaging.md#hosted-wasm) for deployment and
 failure semantics.
 
+Fatal tracebacks without loaded metadata include logical location IDs. Resolve
+them with the original Wasm module and its adjacent `.pclntab` file.
+
+```sh
+llgo tool symbolize app.wasm < panic.log
+```
+
 For Emscripten, size mode sets `EXPORT_ALL=0`. Explicit native/public exports
 and the existing runtime methods (`cwrap`, `allocateUTF8`, `stringToUTF8`,
 `UTF8ToString`, `FS`, `setValue`, `getValue`, `ENV`) remain available; incidental

@@ -394,7 +394,7 @@ func Resolve(id uint64) (name, file string, line, start int) {
 	}
 	fn := (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), uintptr(rec.funcIndex-1)*externalRecordSize))
 	name = join(fn.namePkg, fn.nameName, ".")
-	file = join(rec.fileRoot, rec.fileName, "/")
+	file = join(rec.fileRoot, rec.fileName, "")
 	line, start = int(rec.line), int(fn.line&((1<<31)-1))
 	return
 }
