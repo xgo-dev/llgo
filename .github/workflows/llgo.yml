@@ -1253,6 +1253,7 @@ jobs:
         run: |
           node --test test/wasm/optimization/asyncify-exports.test.mjs
           python3 test/wasm/optimization/test.py --browser
+          python3 test/sizebuild/runtest.py --target=emscripten --browser
 
       - name: Build standard runtime for wasm
         if: matrix.suite == 'runtime'

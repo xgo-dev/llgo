@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
@@ -24,22 +25,94 @@ func canSpecializeFormats(ctx *context) bool {
 }
 
 func prepareValueFormatSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return wasiSizePruningConfig(conf, target, frontend) &&
+	return (wasiSizePruningConfig(conf, target, frontend) || hostedValueFormatSupport(conf, target, frontend)) &&
 		conf.ltoMode() != lto.Thin && !conf.LTOPlugin.Enabled() && !frontendCacheEnabled(conf)
+}
+
+// Hosted targets use the same typed functions. Require the size-link flags
+// under which removing the general formatter has been validated.
+func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
+	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
+		conf.OptLevel != optlevel.Oz || conf.BuildMode != BuildModeExe ||
+		conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() ||
+		conf.LinkOptions.ExternalLinker != "" || len(target.ExtraFiles) != 0 ||
+		conf.Coverage != nil || conf.ModuleHook != nil || frontend.Debug || frontend.DebuggerFrames {
+		return false
+	}
+	if conf.Goarch == "wasm" {
+		return target.WasmProvider == crosscompile.WasmProviderEmscripten &&
+			(target.WasmProfile == crosscompile.WasmProfileJ32 || target.WasmProfile == crosscompile.WasmProfileJ64) &&
+			conf.WasmOpt == WasmOptSize
+	}
+	return conf.Target == "" && conf.Goos == "darwin" && conf.Goarch == "arm64"
+}
+
+// Resolve typed rewrites before init and caller accounting. For hosted targets
+// use the same checks for unknown native code and assembly as WASI.
+func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPruningInputs) {
+	formatInputs := wasiInputs
+	if formatInputs == nil && hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
+		formatInputs = &linkPruningInputs{goroot: goroot, nativeFormat: ctx.buildConf.Goarch != "wasm"}
+		if ctx.buildConf.Goarch != "wasm" {
+			if opaque := opaqueGlobalInitPackage(ctx, make(map[string]bool), formatInputs); opaque != "" {
+				if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
+					fmt.Fprintf(os.Stderr, "llgo: retain generic fmt: unknown native input in %s\n", opaque)
+				}
+				formatInputs = nil
+			}
+		}
+	}
+	configureUnusedGlobalInits(ctx, formatInputs)
+	configureValueFormats(ctx, formatInputs)
+}
+
+// Darwin's runtime and syscall packages use these system libraries without
+// introducing application-owned native objects.
+func allowsNativeFormatImports(ctx *context, in *linkPruningInputs, pkg *packages.Package, flags []string, imports []cgoImportDynamicDecl) bool {
+	conf := ctx.buildConf
+	if in == nil || !in.nativeFormat || conf.Goos != "darwin" || !isStandardLibraryPackage(pkg, in.goroot) {
+		return false
+	}
+	for _, path := range slices.Concat(pkg.GoFiles, pkg.CompiledGoFiles) {
+		if _, replaced := conf.SourceOverlay[path]; replaced {
+			return false
+		}
+	}
+	if pkg.PkgPath != "syscall" && pkg.PkgPath != "internal/syscall/unix" && pkg.PkgPath != "runtime" {
+		return false
+	}
+	for _, flag := range flags {
+		if flag != "-lresolv" || pkg.PkgPath != "internal/syscall/unix" {
+			return false
+		}
+	}
+	for _, imp := range imports {
+		switch {
+		case (imp.library == "/usr/lib/libSystem.B.dylib" || imp.library == "") && strings.HasPrefix(imp.local, "libc_"):
+		case imp.library == "/usr/lib/libresolv.9.dylib" && strings.HasPrefix(imp.local, "libresolv_") &&
+			pkg.PkgPath == "internal/syscall/unix":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Only replace the calls if doing so can release the general formatter. Use
 // the same input proof as release DCE, including its translated assembly roots.
-func configureValueFormats(ctx *context, in *wasiSizePruningInputs) {
+func configureValueFormats(ctx *context, in *linkPruningInputs) {
 	plan := ctx.valueFormatPlan
 	ctx.valueFormatPlan = nil
 	if !plan.HasCalls() {
 		return
 	}
 	verbose := ctx.buildConf.Verbose || ctx.buildConf.PrintCommands
-	if in == nil || !canPruneWasmTypeMetadata(ctx) || in.opaqueAsmPkg != "" {
+	if in == nil || ctx.buildConf.Goarch == "wasm" && !ctx.wasmClosedProgram || in.opaqueAsmPkg != "" {
 		if verbose {
 			fmt.Fprintln(os.Stderr, "llgo: retain generic fmt: open link inputs")
+			if in != nil && in.opaqueAsmPkg != "" {
+				fmt.Fprintf(os.Stderr, "llgo: opaque assembly for format reachability in %s\n", in.opaqueAsmPkg)
+			}
 		}
 		return
 	}

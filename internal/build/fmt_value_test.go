@@ -3,11 +3,15 @@ package build
 import (
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	buildenv "github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -25,21 +29,24 @@ func AppendMap[K comparable,V any](b []byte, m map[K]V, cmp func(K,K) int, k fun
 `
 
 func TestSpecializeValueFormats(t *testing.T) {
+	t.Setenv("LDFLAGS", "")
 	for _, tc := range []struct {
-		name   string
-		lang   string
-		decl   string
-		main   string
-		local  string
-		expr   string
-		asm    string
-		alt    string
-		rtInit bool
-		dot    bool
-		extra  string
-		open   bool
-		native bool
-		typed  bool
+		name        string
+		lang        string
+		decl        string
+		main        string
+		local       string
+		expr        string
+		asm         string
+		alt         string
+		rtInit      bool
+		dot         bool
+		extra       string
+		open        bool
+		noRuntime   bool
+		foreignLink bool
+		native      bool
+		typed       bool
 	}{
 		{name: "string-int map", typed: true},
 		{name: "go1.16 map", lang: "go1.16", typed: true},
@@ -81,7 +88,10 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "unknown host export", decl: "//go:wasmexport extra\n"},
 		{name: "user linkname", decl: "//go:linkname extra external_extra\n"},
 		{name: "unknown native roots", open: true},
-		{name: "native target", native: true},
+		{name: "missing runtime helper", noRuntime: true},
+		{name: "native typed formatter", native: true, typed: true},
+		{name: "native generic fallback", native: true, main: "extra()"},
+		{name: "native opaque linker flags", native: true, foreignLink: true},
 		{name: "custom method", expr: "namedMap(nil)"},
 		{name: "interface operand", expr: "dynamicMap()"},
 	} {
@@ -151,7 +161,19 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			entry.Imports = map[string]*packages.Package{"fmt": {PkgPath: "fmt", Types: fmtPkg.Pkg}}
 			ctx.dedup = packages.NewDeduper()
 			runtimePackage := &packages.Package{ID: fmtspecialize.RuntimePath, PkgPath: fmtspecialize.RuntimePath, Types: runtime.Pkg}
-			if !tc.native {
+			if tc.native {
+				ctx.buildConf.Goarch = "arm64"
+				ctx.buildConf.Goos = "darwin"
+				ctx.buildConf.Mode = ModeBuild
+				ctx.buildConf.LTO = lto.Full
+				ctx.buildConf.DeadcodeDrop = true
+				ctx.buildConf.DisableGoGlobalDCE = true
+				ctx.wasmClosedProgram = false
+				if tc.foreignLink {
+					ctx.commands.environ = []string{"LDFLAGS=-Wl,--undefined=foreign"}
+				}
+			}
+			if !tc.noRuntime {
 				ctx.formatRuntime = &packages.Cached{Package: runtimePackage, Types: runtime.Pkg}
 			}
 			dep, err := ctx.prepareValueFormatSource(entry)
@@ -164,7 +186,7 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			if tc.name == "string-int map" && dep != runtimePackage {
 				t.Errorf("formatter helper dependency = %v, want %v", dep, runtimePackage)
 			}
-			if (tc.native || tc.name == "bool") && dep != nil {
+			if (tc.noRuntime || tc.name == "bool") && dep != nil {
 				t.Errorf("unexpected formatter helper dependency %v", dep)
 			}
 			mainPkg := prog.CreatePackage(entry.Types, entry.Syntax, entry.TypesInfo, true)
@@ -172,11 +194,18 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			if err := recordPackageSSAInstructions(ctx); err != nil {
 				t.Fatal(err)
 			}
-			in := &wasiSizePruningInputs{}
+			in := &linkPruningInputs{}
 			if tc.asm != "" {
 				in.roots = []string{tc.asm}
 			}
-			configureValueFormats(ctx, in)
+			switch {
+			case tc.native && buildenv.Dev:
+				configureFormattingAndInits(ctx, "", nil)
+			case tc.foreignLink:
+				configureValueFormats(ctx, nil)
+			default:
+				configureValueFormats(ctx, in)
+			}
 			found := false
 			for _, inst := range mainPkg.Func("render").Blocks[0].Instrs {
 				if tc.typed {
@@ -235,5 +264,81 @@ func main() { println(fmt.Sprintf("%v", 1)) }
 	all, entries, err := registerSSAPkgs(ctx, []*packages.Package{entry, other}, false)
 	if err == nil || !strings.Contains(err.Error(), "AppendInt") || len(all) != 0 || len(entries) != 0 {
 		t.Fatalf("register returned %d packages, %d SSA entries, %v", len(all), len(entries), err)
+	}
+}
+
+func TestHostedValueFormatSupport(t *testing.T) {
+	native := Config{
+		Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "darwin", Goarch: "arm64",
+		LTO: lto.Full, OptLevel: optlevel.Oz, DisableGoGlobalDCE: true, DeadcodeDrop: true,
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*Config, *crosscompile.Export)
+		want   bool
+	}{
+		{name: "darwin arm64", want: true},
+		{name: "linux amd64", change: func(c *Config, _ *crosscompile.Export) { c.Goos, c.Goarch = "linux", "amd64" }},
+		{name: "shared library", change: func(c *Config, _ *crosscompile.Export) { c.BuildMode = BuildModeCShared }},
+		{name: "ordinary build", change: func(c *Config, _ *crosscompile.Export) { c.DeadcodeDrop = false }},
+		{name: "thin LTO", change: func(c *Config, _ *crosscompile.Export) { c.LTO = lto.Thin }},
+		{name: "extra link files", change: func(_ *Config, x *crosscompile.Export) { x.ExtraFiles = []string{"bridge.o"} }},
+		{name: "emscripten wasm32", want: true, change: func(c *Config, x *crosscompile.Export) {
+			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
+			x.WasmProfile, x.WasmProvider = crosscompile.WasmProfileJ32, crosscompile.WasmProviderEmscripten
+		}},
+		{name: "emscripten memory64", want: true, change: func(c *Config, x *crosscompile.Export) {
+			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
+			x.WasmProfile, x.WasmProvider = crosscompile.WasmProfileJ64, crosscompile.WasmProviderEmscripten
+		}},
+		{name: "raw js wasm", change: func(c *Config, x *crosscompile.Export) {
+			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
+			x.WasmProfile = crosscompile.WasmProfileJ32
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf, target := native, crosscompile.Export{}
+			if tc.change != nil {
+				tc.change(&conf, &target)
+			}
+			if got := hostedValueFormatSupport(&conf, target, cl.Options{}); got != (tc.want && buildenv.Dev) {
+				t.Fatalf("hosted formatter enabled = %v", got)
+			}
+		})
+	}
+}
+
+func TestNativeFormatImports(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name, pkg, lib, symbol, flag string
+		replaced                     bool
+		want                         bool
+	}{
+		{name: "Darwin runtime", pkg: "runtime", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", want: true},
+		{name: "Darwin syscall alias", pkg: "syscall", symbol: "libc_write", want: true},
+		{name: "resolver", pkg: "internal/syscall/unix", lib: "/usr/lib/libresolv.9.dylib", symbol: "libresolv_res_init", flag: "-lresolv", want: true},
+		{name: "unexpected flag", pkg: "syscall", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", flag: "-ldylib"},
+		{name: "unexpected import", pkg: "syscall", lib: "/opt/vendor/libfoo.dylib", symbol: "libc_write"},
+		{name: "user package", pkg: "user", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write"},
+		{name: "source overlay", pkg: "runtime", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", replaced: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(root, "src", tc.pkg)
+			path := filepath.Join(dir, "sys.go")
+			pkg := &packages.Package{PkgPath: tc.pkg, Dir: dir, GoFiles: []string{path}}
+			ctx := &context{buildConf: &Config{Goos: "darwin"}}
+			if tc.replaced {
+				ctx.buildConf.SourceOverlay = map[string]SourceOverlayFile{path: {}}
+			}
+			var flags []string
+			if tc.flag != "" {
+				flags = []string{tc.flag}
+			}
+			imports := []cgoImportDynamicDecl{{local: tc.symbol, library: tc.lib}}
+			if got := allowsNativeFormatImports(ctx, &linkPruningInputs{goroot: root, nativeFormat: true}, pkg, flags, imports); got != tc.want {
+				t.Fatalf("allowsNativeFormatImports = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

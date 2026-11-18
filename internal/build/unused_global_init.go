@@ -36,7 +36,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
+func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if err := ctx.frontend.restoreInitializers(); err == nil {
 			return
@@ -113,7 +113,7 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 // Native objects can reference Go globals without a Go SSA operand. Runtime
 // providers use declared linknames; user-supplied objects require a future
 // linker-summary join, so retain all initializers in their presence.
-func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *wasiSizePruningInputs) string {
+func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *linkPruningInputs) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
 	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
 	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.commands.lookup("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
@@ -182,7 +182,8 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *w
 				}
 			}
 		}
-		if flags, imports := collectGoCgoPragmas(pkg.Syntax); len(flags) != 0 || len(imports) != 0 {
+		flags, imports := collectGoCgoPragmas(pkg.Syntax)
+		if (len(flags) != 0 || len(imports) != 0) && !allowsNativeFormatImports(ctx, asmRoots, pkg, flags, imports) {
 			return pkg.PkgPath
 		}
 	}
@@ -191,7 +192,7 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *w
 
 // Translated assembly exposes its global references in LLVM IR, including
 // cross-package references. Unsupported or opaque inputs retain all Go inits.
-func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool, asmRoots *wasiSizePruningInputs) bool {
+func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool, asmRoots *linkPruningInputs) bool {
 	files, err := compiledPkgSFiles(ctx, pkg)
 	if err != nil {
 		return false

@@ -452,7 +452,7 @@ jobs:
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
-            -run '^TestDevLTOGlobalDCE' \
+            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats)' \
             ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
