@@ -114,9 +114,10 @@ other `*os.File` methods when formatting is their only reachability path. The
 write still uses `os.File.Write`, and debugger builds use the standard source.
 
 On closed WASI Wasm32 executables built with `-Oz`, constant `fmt.Sprintf`
-calls with one `%v` operand can use the standalone value formatter. It covers
-statically described scalars, arrays, slices, structures and maps, including
-compound keys. Types with formatting methods and unresolved interface values
+calls with one `%v` operand can use a generated formatter that takes the
+operand's concrete type. It covers statically described scalars, arrays, slices,
+structs and maps, including compound keys. The independent helper package shares
+typed map sorting and buffer operations. Types with formatting methods and unresolved interface values
 keep the general formatter. This pass shares the release pruning checks for
 link inputs, coverage, debugging and LTO.
 

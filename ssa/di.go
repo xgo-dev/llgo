@@ -51,13 +51,15 @@ func (b diBuilder) finalize() {
 	b.di = nil
 }
 
-func hasTypeParam(typ types.Type) bool {
+// HasTypeParam reports whether typ contains unbound type parameters.
+func HasTypeParam(typ types.Type) bool {
 	visited := make(map[types.Type]bool)
 	var visit func(types.Type) bool
 	visit = func(tt types.Type) bool {
 		if tt == nil {
 			return false
 		}
+		tt = types.Unalias(tt)
 		if visited[tt] {
 			return false
 		}
@@ -841,7 +843,7 @@ func diTypeName(t types.Type) string {
 }
 
 func (b diBuilder) diType(t Type, pos token.Position) DIType {
-	if hasTypeParam(t.RawType()) {
+	if HasTypeParam(t.RawType()) {
 		return &aDIType{}
 	}
 	name := diTypeName(t.RawType())

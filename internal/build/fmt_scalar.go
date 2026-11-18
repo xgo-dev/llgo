@@ -75,6 +75,20 @@ func scalarFormatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.
 // x/tools emits this array for individually supplied variadic arguments.
 // Require every element to come from a known concrete conversion.
 func formatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.Type {
+	values := formatValues(call, variadic)
+	if len(values) == 0 {
+		return nil
+	}
+	operands := make([]types.Type, len(values))
+	for i, value := range values {
+		if value != nil {
+			operands[i] = value.X.Type()
+		}
+	}
+	return operands
+}
+
+func formatValues(call ssa.CallInstruction, variadic ssa.Value) []*ssa.MakeInterface {
 	args, ok := variadic.(*ssa.Slice)
 	if !ok || args.Low != nil || args.High != nil || args.Max != nil {
 		return nil
@@ -87,7 +101,7 @@ func formatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.Type {
 		return nil
 	}
 	n := array.Type().(*types.Pointer).Elem().(*types.Array).Len()
-	operands := make([]types.Type, n)
+	operands := make([]*ssa.MakeInterface, n)
 	for _, ref := range *array.Referrers() {
 		if ref == args {
 			continue
@@ -112,7 +126,7 @@ func formatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.Type {
 		if !ok {
 			return nil
 		}
-		operands[i] = value.X.Type()
+		operands[i] = value
 	}
 	return operands
 }

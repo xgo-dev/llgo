@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -33,18 +34,31 @@ func (i literalFormatImporter) Import(string) (*types.Package, error) { return i
 
 func buildFormatTestPackage(t *testing.T, prog *ssa.Program, path, source string, imported *types.Package) *ssa.Package {
 	t.Helper()
-	fset := prog.Fset
-	file, err := parser.ParseFile(fset, path+".go", source, 0)
+	pkg := checkFormatTestPackage(t, prog.Fset, path, source, imported)
+	return prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+}
+
+func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source string, imported *types.Package) *packages.Package {
+	t.Helper()
+	file, err := parser.ParseFile(fset, path+".go", source, parser.ParseComments)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object), Scopes: make(map[ast.Node]*types.Scope)}
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object),
+		Uses: make(map[*ast.Ident]types.Object), Implicits: make(map[ast.Node]types.Object),
+		Instances: make(map[*ast.Ident]types.Instance), Scopes: make(map[ast.Node]*types.Scope),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection), FileVersions: make(map[*ast.File]string),
+	}
 	conf := &types.Config{Importer: literalFormatImporter{imported}}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return prog.CreatePackage(pkg, []*ast.File{file}, info, true)
+	return &packages.Package{
+		PkgPath: path, Name: pkg.Name(), Types: pkg, TypesInfo: info, Fset: fset,
+		TypesSizes: types.SizesFor("gc", "wasm"), Syntax: []*ast.File{file},
+	}
 }
 
 func literalFormatProgram(t *testing.T, helpers bool) *ssa.Package {
