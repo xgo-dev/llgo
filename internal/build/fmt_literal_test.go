@@ -16,7 +16,12 @@ import (
 
 type literalFormatImporter struct{ pkg *types.Package }
 
-func (i literalFormatImporter) Import(string) (*types.Package, error) { return i.pkg, nil }
+func (i literalFormatImporter) Import(path string) (*types.Package, error) {
+	if path == "unsafe" {
+		return types.Unsafe, nil
+	}
+	return i.pkg, nil
+}
 
 func buildFormatTestPackage(t *testing.T, prog *ssa.Program, path, source string, imported *types.Package) *ssa.Package {
 	t.Helper()
