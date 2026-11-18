@@ -8,6 +8,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"
@@ -23,15 +24,30 @@ type wasiSizePruningInputs struct {
 
 func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
 	conf := ctx.buildConf
-	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() || conf.ltoEnabled() ||
+	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() ||
 		(conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.BuildMode != BuildModeExe || conf.OptLevel != optlevel.Oz || conf.WasmOpt != WasmOptSize ||
 		(conf.Target != "" && conf.Target != "wasi" && conf.Target != "wasip1") ||
 		ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 ||
 		ctx.crossCompile.WasmProvider != crosscompile.WasmProviderWASI || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		conf.LinkOptions.ExternalLinker != "" || ctx.commands.lookup("LDFLAGS") != "" ||
+		conf.LinkOptions.ExternalLinker != "" ||
 		ctx.wasmRuntimeFree || ctx.frontend != nil ||
 		conf.Coverage != nil || conf.ModuleHook != nil || ctx.frontendOptions.Debug || ctx.frontendOptions.DebuggerFrames {
+		return nil
+	}
+	// Full LTO consumes the strong overrides in the merged module. ThinLTO
+	// resolves archive ownership separately, so release builds use its
+	// conservative link until that combination has been validated.
+	if conf.ltoMode() == lto.Thin {
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: retain WASI code and metadata: ThinLTO")
+		}
+		return nil
+	}
+	if conf.LTOPlugin.Enabled() {
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: retain WASI code and metadata: LTO pass plugin")
+		}
 		return nil
 	}
 	if len(wasmReflectRoots(ctx)) == 0 {
@@ -43,8 +59,20 @@ func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs 
 // Alternate and bundled native packages bypass the initializer pass's normal
 // assembly inspection. A selected assembly body here precludes size pruning.
 func (in *wasiSizePruningInputs) checkAlternateAsm(ctx *context, pkg *packages.Package) {
-	if files, err := compiledPkgSFiles(ctx, pkg); err != nil || len(files) != 0 {
+	files, err := compiledPkgSFiles(ctx, pkg)
+	if err != nil {
 		in.opaqueAsmPkg = pkg.PkgPath
+		return
+	}
+	for _, path := range files {
+		mod, err := translatePruningAssembly(ctx, pkg, path)
+		if err != nil || !mod.IsNil() {
+			if !mod.IsNil() {
+				mod.Dispose()
+			}
+			in.opaqueAsmPkg = pkg.PkgPath
+			return
+		}
 	}
 }
 
@@ -110,6 +138,9 @@ func configureWasiReleaseDCE(ctx *context, in *wasiSizePruningInputs) {
 	}
 	for _, pkg := range ctx.pkgByID {
 		if hasUntrackedWasmExport(pkg.Syntax) || pkg.AltPkg != nil && hasUntrackedWasmExport(pkg.AltPkg.Syntax) {
+			if conf.Verbose || conf.PrintCommands {
+				fmt.Fprintf(os.Stderr, "llgo: retain WASI code and metadata: untracked host export in %s\n", pkg.PkgPath)
+			}
 			return
 		}
 	}

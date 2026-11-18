@@ -15,11 +15,22 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
+Closed WASI executables built with explicit `-Oz` also use Go reachability
+pruning with LTO off or with `-lto=full`. ThinLTO, external LTO passes,
+opaque native inputs and unknown host exports keep conservative linking.
+Coverage, logical debugger frames and frontend-cache builds also keep the
+conservative path. Output-only linker diagnostics such as
+`LDFLAGS=-Wl,--print-map` use the same reachability analysis. With `-x` or
+`-compiler-verbose`, look for `enable closed-program WASI size pruning`
+or a `retain WASI code and metadata` diagnostic. The shared check reports
+opaque inputs with `retain global initializers: native inputs in …`. Builds
+outside the eligible configuration skip the release pruning check.
+
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi
 nodes and allocating conversions keep independent roots. Frame bookkeeping
-stays inline to avoid extra calls. Development DCE can also introduce owner
-roots and, at `-Oz`, outline frame bookkeeping.
+stays inline to avoid extra calls in ordinary builds. Go reachability pruning
+can introduce owner roots and outline frame bookkeeping at `-Oz`.
 
 Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
 values and direct hashers for scalar keys. Padded structs, blank fields and
