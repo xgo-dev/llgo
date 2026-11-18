@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -14,11 +15,11 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 	if err != nil {
 		return err
 	}
-	analysis, err := analyzeWasmPCLNData(raw, *ctx.pclnExternal)
+	identity, err := wasmdebug.PCLNModuleIdentity(raw)
 	if err != nil {
 		return err
 	}
-	data, err := linkedPCLNData(*ctx.pclnExternal, analysis)
+	data, err := linkExternalWasmPCLNData(ctx, raw)
 	if err != nil {
 		return err
 	}
@@ -26,10 +27,7 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 	// Shadow locations use stable IDs, independent of final code offsets.
 	data.EntrySites, data.PCSites = nil, nil
 	data.ImageBase, data.TextStart, data.TextEnd = 0, 1, 2
-	data.Identity, err = wasmdebug.PCLNModuleIdentity(raw)
-	if err != nil {
-		return err
-	}
+	data.Identity = identity
 	placeholder := wasmdebug.PCLNIdentityPlaceholder()
 	patched, err := wasmdebug.ReplaceData(raw, pclnIdentitySymbol, placeholder[:], data.Identity[:])
 	if err != nil {
@@ -50,4 +48,25 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 		fmt.Fprintf(os.Stderr, "llgo: external Wasm pclntab: %d records, %d bytes -> %s\n", len(data.Table.Records), len(sidecar), out.PCLN)
 	}
 	return nil
+}
+
+func linkExternalWasmPCLNData(ctx *context, raw []byte) (pclnmap.Data, error) {
+	data := *ctx.pclnExternal
+	if canPruneWasmTypeMetadata(ctx) && ctx.linkRuntimeSites != nil && !shouldEmitRuntimeSites(ctx) &&
+		len(data.Table.PCLines) > 0 &&
+		!slices.Contains(splitSourcePatchBuildTags(ctx.buildConf.Tags), "llgo.wasm.debugger") {
+		// This executable resolves logical frame IDs. Keep every location and
+		// its owner, including inline frames without a named Wasm function.
+		// Functions with no such record do not need an entry in this map.
+		data.PCSites = make([]pclnmap.Site, 0, len(data.Table.PCLines))
+		for _, line := range data.Table.PCLines {
+			data.PCSites = append(data.PCSites, pclnmap.Site{ID: line.ID})
+		}
+		return pclnmap.Prune(data)
+	}
+	analysis, err := analyzeWasmPCLNData(raw, data)
+	if err != nil {
+		return pclnmap.Data{}, err
+	}
+	return linkedPCLNData(data, analysis)
 }

@@ -85,6 +85,28 @@ func TestGenMainModuleExecutable(t *testing.T) {
 	)
 }
 
+func TestGenMainModuleWasmPCLNStartup(t *testing.T) {
+	for _, scheduler := range []bool{false, true} {
+		conf := &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, PCLNLoad: PCLNLoadRequired}
+		ctx := &context{prog: llssa.NewProgram(nil), buildConf: conf}
+		defer ctx.prog.Dispose()
+		if scheduler {
+			ctx.buildConf.Goos = "js"
+			ctx.crossCompile.WasmProfile = crosscompile.WasmProfileJ64
+			installLocalContextTestRuntime(ctx.prog)
+		}
+		pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
+		cfg := &genConfig{rtInit: true, packageInits: []string{"example.com/user.init"}}
+		ir := genMainModule(ctx, llssa.PkgRuntime, pkg, cfg).LPkg.String()
+		assertInOrder(t, ir, `call void @"`+llssa.PkgRuntime+`.StartWasmPCLN"()`,
+			`call void @"example.com/user.init"()`)
+		if scheduler {
+			assertInOrder(t, ir, `define hidden ptr @__llgo_wasm_main(`,
+				`call void @"`+llssa.PkgRuntime+`.StartWasmPCLN"()`, `call void @"example.com/user.init"()`)
+		}
+	}
+}
+
 func TestGenMainModuleWindowsExitsAfterMain(t *testing.T) {
 	llvm.InitializeAllTargets()
 	ctx := &context{

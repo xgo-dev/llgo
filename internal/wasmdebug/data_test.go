@@ -84,3 +84,21 @@ func TestReplaceDataRejectsMalformedSegments(t *testing.T) {
 		t.Fatal("accepted a slot outside a data segment")
 	}
 }
+
+func TestPCLNModuleIdentity(t *testing.T) {
+	if _, err := PCLNModuleIdentity(nil); err == nil {
+		t.Fatal("accepted invalid module")
+	}
+	module := append(bytes.Clone(wasmHeader), 5, 3, 1, 0, 1)
+	identity, err := PCLNModuleIdentity(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCustom := append(bytes.Clone(module), 0, 5, 4, 'n', 'a', 'm', 'e')
+	if got, err := PCLNModuleIdentity(withCustom); err != nil || got != identity {
+		t.Fatalf("custom section changed identity: %x, %v", got, err)
+	}
+	if err := MatchPCLNIdentity(module, identity); err == nil {
+		t.Fatal("accepted module without the matching identity slot")
+	}
+}

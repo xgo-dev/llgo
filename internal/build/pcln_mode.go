@@ -21,6 +21,27 @@ import "fmt"
 // PCLNMode controls how Go program counter and line metadata is packaged.
 type PCLNMode uint8
 
+// PCLNLoadPolicy controls when a hosted Wasm executable loads its sidecar.
+type PCLNLoadPolicy string
+
+const (
+	PCLNLoadLazy       PCLNLoadPolicy = ""
+	PCLNLoadRequired   PCLNLoadPolicy = "required"
+	PCLNLoadBackground PCLNLoadPolicy = "background"
+	PCLNLoadNone       PCLNLoadPolicy = "none"
+)
+
+func (p PCLNLoadPolicy) startsAtEntry() bool {
+	return p == PCLNLoadRequired || p == PCLNLoadBackground
+}
+
+func (p PCLNLoadPolicy) buildTags() string {
+	if p == PCLNLoadLazy {
+		return ""
+	}
+	return ",llgo_pclntab_explicit,llgo_pclntab_" + string(p)
+}
+
 const (
 	// PCLNEmbedded keeps the metadata in the executable. It is the default.
 	PCLNEmbedded PCLNMode = iota
@@ -82,6 +103,15 @@ func shouldEnablePCLNSites(conf *Config, funcInfo bool) bool {
 func validatePCLNMode(conf *Config) error {
 	if err := conf.PCLNMode.validate(); err != nil {
 		return err
+	}
+	switch conf.PCLNLoad {
+	case PCLNLoadLazy:
+	case PCLNLoadRequired, PCLNLoadBackground, PCLNLoadNone:
+		if conf.PCLNMode != PCLNExternal || conf.Goarch != "wasm" {
+			return fmt.Errorf("-pclntab-load=%s requires external metadata on a hosted Wasm target", conf.PCLNLoad)
+		}
+	default:
+		return fmt.Errorf("invalid PCLN loading policy %q", conf.PCLNLoad)
 	}
 	if conf.PCLNMode != PCLNExternal {
 		return nil

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise optional, lazy runtime symbol maps with real Wasm hosts."""
+"""Exercise external runtime symbol maps with real Wasm hosts."""
 
 import argparse
 import json
@@ -9,6 +9,54 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_load_policies(llgo, target, directory, flags, build_environment, environment, browser):
+    cases = []
+    for policy in ['required', 'background', 'none']:
+        work = directory / policy
+        work.mkdir()
+        output = work / ('app.wasm' if target == 'wasi' else 'app.mjs')
+        command = [llgo, 'build', *flags, '-pclntab-load=' + policy, '-o', str(output),
+                   './internal/build/testdata/wasm-pclntab-policy']
+        subprocess.run(command, cwd=ROOT, env=build_environment, check=True, timeout=300)
+        if target == 'wasi':
+            wasm_runner = os.environ.get('WASMER', 'wasmer')
+            run = [wasm_runner, 'run', '--enable-exceptions', '--enable-simd', '--stack-size=1048576',
+                   '--volume=' + str(work) + ':/home', '--env=PWD=/home', './app.wasm', '--', policy]
+        else:
+            run = ['node', str(ROOT / 'targets/emscripten-memory64-runner.mjs'), str(output), policy]
+
+        def execute():
+            return subprocess.run(run, cwd=work, env=environment, capture_output=True, text=True, timeout=60)
+
+        result = execute()
+        if result.returncode or 'pcln-policy-ok' not in result.stdout + result.stderr:
+            raise RuntimeError(f'{target}/{policy}: exit {result.returncode}\n{result.stdout}{result.stderr}')
+        cases.append(policy)
+        if policy == 'required':
+            sidecar = work / 'app.wasm.pclntab'
+            original = sidecar.read_bytes()
+            for failure in ['missing', 'corrupt']:
+                if failure == 'missing':
+                    sidecar.unlink()
+                else:
+                    sidecar.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+                result = execute()
+                combined = result.stdout + result.stderr
+                if (not result.returncode or 'unable to preload required PCLN metadata' not in combined
+                        or 'pcln-policy-init' in combined):
+                    raise RuntimeError(f'{target}/{policy}/{failure}: exit {result.returncode}\n{combined}')
+                cases.append(policy + '-' + failure)
+            sidecar.write_bytes(original)
+        if browser:
+            response_mode = {'background': 'delayed', 'none': 'no-symbols', 'required': 'available'}[policy]
+            argument = 'background-pending' if policy == 'background' else policy
+            browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN=response_mode)
+            subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-policy-ok', argument],
+                           cwd=ROOT, env=browser_env, check=True, timeout=70)
+            cases.append('browser-' + policy)
+    return cases
 
 
 def main():
@@ -159,8 +207,13 @@ def main():
                     subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-ok', argument],
                                    cwd=ROOT, env=browser_env, check=True, timeout=70)
                     browser_cases.append(mode)
+            policy_cases = []
+            if target in ('wasi', 'emscripten-memory64'):
+                policy_cases = run_load_policies(llgo, target, directory, flags, build_environment, environment,
+                                                  args.browser and target != 'wasi')
             reports.append({'target': target, 'module_bytes': module.stat().st_size,
-                            'sidecar_bytes': len(original), 'cases': cases, 'browser_cases': browser_cases})
+                            'sidecar_bytes': len(original), 'cases': cases, 'browser_cases': browser_cases,
+                            'load_policy_cases': policy_cases})
             print(json.dumps(reports[-1]), flush=True)
     if args.report:
         args.report.write_text(json.dumps(reports, indent=2) + '\n')

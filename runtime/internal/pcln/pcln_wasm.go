@@ -95,6 +95,14 @@ func Ready() bool {
 // poll is nil, a caller observing another load in progress returns false
 // instead of waiting. Fatal paths consult Ready without calling Ensure.
 func Ensure(poll func()) bool {
+	if externalPCLNQueryOnly {
+		return Ready()
+	}
+	return Preload(poll)
+}
+
+// Preload starts the load on the runtime's startup path.
+func Preload(poll func()) bool {
 	for {
 		switch latomic.Load(&externalPCLNState) {
 		case externalPCLNLoaded:

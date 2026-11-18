@@ -226,8 +226,13 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		defineCExportWrappers(mainPkg, cfg.cExports, nil)
 	}
 	var wasmRunMain llssa.Function
+	var startPCLN llssa.Function
+	if ctx.buildConf.PCLNLoad.startsAtEntry() {
+		startPCLN = declareNoArgFunc(mainPkg, rtPkgPath+".StartWasmPCLN")
+	}
 	if wasmRuntimeScheduler {
-		defineWasmMainTask(mainPkg, packageInits, mainInit, mainMain)
+		defineWasmMainTask(mainPkg, startPCLN, packageInits, mainInit, mainMain)
+		startPCLN = nil
 		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
 	}
 	var coverageExit llssa.Function
@@ -244,6 +249,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		mainInit:     mainInit,
 		mainMain:     mainMain,
 		wasmRunMain:  wasmRunMain,
+		startPCLN:    startPCLN,
 		pyInit:       pyInit,
 		pyFinalize:   pyFinalize,
 		rtInit:       rtInit,
@@ -473,6 +479,7 @@ type entryFunctions struct {
 	mainInit     llssa.Function
 	mainMain     llssa.Function
 	wasmRunMain  llssa.Function
+	startPCLN    llssa.Function
 	pyInit       llssa.Function
 	pyFinalize   llssa.Function
 	rtInit       llssa.Function
@@ -581,6 +588,9 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 		b.Call(fns.abiInit.Expr)
 	}
 	b.Call(fns.runtimeStub.Expr)
+	if fns.startPCLN != nil {
+		b.Call(fns.startPCLN.Expr)
+	}
 	if fns.wasmRunMain != nil {
 		b.Call(fns.wasmRunMain.Expr)
 	} else {
@@ -630,7 +640,7 @@ func defineDefaultGODEBUGInit(pkg llssa.Package, defaults string) llssa.Function
 	return fn
 }
 
-func defineWasmMainTask(pkg llssa.Package, packageInits []llssa.Function, mainInit, mainMain llssa.Function) {
+func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInits []llssa.Function, mainInit, mainMain llssa.Function) {
 	prog := pkg.Prog
 	sig := newSignature(
 		[]types.Type{types.Typ[types.UnsafePointer]},
@@ -640,6 +650,9 @@ func defineWasmMainTask(pkg llssa.Package, packageInits []llssa.Function, mainIn
 	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
 	fnVal.SetVisibility(llvm.HiddenVisibility)
 	b := fn.MakeBody(1)
+	if startPCLN != nil {
+		b.Call(startPCLN.Expr)
+	}
 	for _, init := range packageInits {
 		b.Call(init.Expr)
 	}

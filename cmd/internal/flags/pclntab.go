@@ -50,8 +50,23 @@ func (f *pclnFlag) Set(value string) error {
 }
 
 var PCLN pclnFlag
+var pclnLoadPolicy *build.PCLNLoadPolicy
 
 func addPCLNFlag(fs *flag.FlagSet) {
 	PCLN = pclnFlag{Mode: build.PCLNEmbedded}
+	pclnLoadPolicy = nil
 	fs.Var(&PCLN, "pclntab", "PCLN metadata mode: embedded, external, or none (default: embedded)")
+	fs.Func("pclntab-load", "Wasm external PCLN loading policy: lazy, required, background, or none", func(value string) error {
+		var policy build.PCLNLoadPolicy
+		switch value {
+		case "lazy":
+			policy = build.PCLNLoadLazy
+		case "required", "background", "none":
+			policy = build.PCLNLoadPolicy(value)
+		default:
+			return fmt.Errorf("invalid PCLN loading policy %q", value)
+		}
+		pclnLoadPolicy = &policy
+		return nil
+	})
 }

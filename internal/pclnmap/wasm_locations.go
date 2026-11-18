@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"sort"
-
-	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 )
 
 // WasmLocations resolves logical location IDs from a validated sidecar.
@@ -18,10 +16,9 @@ type WasmLocations struct {
 
 // WasmLocation is a source position recorded in the Wasm shadow stack.
 type WasmLocation struct {
-	Function  string
-	File      string
-	Line      uint32
-	StartLine uint32
+	Function string
+	File     string
+	Line     uint32
 }
 
 func ParseWasmLocations(raw []byte) (WasmLocations, error) {
@@ -67,10 +64,9 @@ func (m WasmLocations) Resolve(id uint64) (WasmLocation, bool) {
 		return WasmLocation{}, false
 	}
 	return WasmLocation{
-		Function:  name,
-		File:      m.join(rec[12:], "", rec[16:]),
-		Line:      binary.LittleEndian.Uint32(rec[20:]),
-		StartLine: binary.LittleEndian.Uint32(fn[24:]) & funcinfo.EncodedLineMask,
+		Function: name,
+		File:     m.join(rec[12:], "", rec[16:]),
+		Line:     binary.LittleEndian.Uint32(rec[20:]),
 	}, true
 }
 

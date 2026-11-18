@@ -6,12 +6,60 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
+
+func TestExternalWasmPCLNRetainsLogicalOwners(t *testing.T) {
+	const owner = "main.inlined"
+	table, err := funcinfo.EncodeWithPCLines(
+		[]funcinfo.Record{
+			{Symbol: owner, Name: owner, File: "app.go", Line: 3},
+			{Symbol: "main.withoutLocation", Name: "main.withoutLocation", File: "app.go", Line: 5},
+		},
+		[]funcinfo.PCLineRecord{{ID: 42, Symbol: owner, File: "call.go", Line: 11}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		wasmClosedProgram: true,
+		buildConf:         &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe},
+		pclnExternal: &pclnmap.Data{
+			GOOS: "wasip1", GOARCH: "wasm", PointerSize: 4, Table: table,
+			SymbolIndex: []pclnmap.SymbolIndexEntry{
+				{SymbolID: funcInfoSymbolID(owner), FuncIndex: 1},
+				{SymbolID: funcInfoSymbolID("main.withoutLocation"), FuncIndex: 2},
+			},
+		},
+	}
+	// No module names can keep an inlined owner alive.
+	module := []byte("\x00asm\x01\x00\x00\x00")
+	plan := &mainLinkPlan{pclnExternal: ctx.pclnExternal}
+	pruned, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pruned.Table.Records) != 1 || pruned.Table.Symbol(pruned.Table.Records[0]) != owner {
+		t.Fatalf("expected only the logical frame owner, got %+v", pruned.Table.Records)
+	}
+	if len(pruned.Table.PCLines) != 1 || pruned.Table.PCLines[0].ID != 42 || pruned.Table.PCLines[0].Func != 1 {
+		t.Fatalf("logical frame location changed: %+v", pruned.Table.PCLines)
+	}
+	plan.runtimeSites = true
+	full, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), module)
+	if err != nil || len(full.Table.Records) != 2 {
+		t.Fatalf("table-index symbolization lost unknown owners: %v, %+v", err, full.Table.Records)
+	}
+	badNames := append(slices.Clone(module), 0, 6, 4, 'n', 'a', 'm', 'e', 1)
+	if _, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), badNames); err == nil {
+		t.Fatal("accepted an incomplete Wasm name subsection")
+	}
+}
 
 func TestExternalWasmPCLNPairing(t *testing.T) {
 	table, err := funcinfo.EncodeWithPCLines([]funcinfo.Record{{Symbol: "main.main", Name: "main.main", File: "main.go", Line: 1}}, []funcinfo.PCLineRecord{{ID: 7, Symbol: "main.main", File: "line.go", Line: 123}})

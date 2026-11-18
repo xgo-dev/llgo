@@ -297,3 +297,68 @@ func TestDescriptorAndOverflowHelpers(t *testing.T) {
 		t.Fatal("checkedBytes accepted an overflow")
 	}
 }
+
+func TestWasmLocations(t *testing.T) {
+	data := sampleData(t)
+	raw, err := Encode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseWasmLocations(raw); err == nil {
+		t.Fatal("accepted a native sidecar")
+	}
+	data.GOOS, data.GOARCH, data.PointerSize = "wasip1", "wasm", 4
+	raw, err = Encode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := ParseWasmLocations(raw)
+	if err != nil || m.Identity() != data.Identity {
+		t.Fatalf("identity mismatch: %v", err)
+	}
+	loc, ok := m.Resolve(7)
+	if !ok || loc.Function != "main.main" || loc.File != "/src/main.go" || loc.Line != 4 {
+		t.Fatalf("location = %+v, valid = %t", loc, ok)
+	}
+	for _, id := range []uint64{0, 6, 8} {
+		if _, ok := m.Resolve(id); ok {
+			t.Fatalf("resolved unknown ID %d", id)
+		}
+	}
+	line := m.view.Sections[descPCLines].Offset
+	binary.LittleEndian.PutUint32(raw[line+8:], 0)
+	if _, ok := m.Resolve(7); ok {
+		t.Fatal("resolved malformed function index")
+	}
+	// A malformed catalog can pass the section envelope checks. Invalid
+	// string references must leave the numeric location unresolved.
+	binary.LittleEndian.PutUint32(raw[line+8:], 1)
+	record := m.view.Sections[descRecords].Offset
+	binary.LittleEndian.PutUint32(raw[record+8:], math.MaxUint32)
+	names := m.view.Sections[descStringOffsets]
+	binary.LittleEndian.PutUint32(raw[record+12:], uint32(names.Count-1))
+	binary.LittleEndian.PutUint32(raw[names.Offset+(names.Count-1)*4:], math.MaxUint32)
+	if _, ok := m.Resolve(7); ok {
+		t.Fatal("resolved malformed string references")
+	}
+
+	data.Table, err = funcinfo.EncodeWithPCLines(
+		[]funcinfo.Record{{Symbol: "main.main", Name: "main", File: "/"}},
+		[]funcinfo.PCLineRecord{{ID: 7, Symbol: "main.main", File: "/"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = Encode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err = ParseWasmLocations(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc, ok := m.Resolve(7); !ok || loc.Function != "main" || loc.File != "/" {
+		t.Fatalf("root-only file and unqualified name: %+v, %v", loc, ok)
+	}
+
+}

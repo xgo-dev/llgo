@@ -433,6 +433,9 @@ func UpdateConfig(conf *build.Config) error {
 		conf.PCLNMode = PCLN.Mode
 		conf.PCLNModeSet = true
 	}
+	if pclnLoadPolicy != nil {
+		conf.PCLNLoad = *pclnLoadPolicy
+	}
 	if DebugArtifact.Specified {
 		conf.DebugArtifactMode = DebugArtifact.Mode
 		conf.DebugArtifactModeSet = true

@@ -197,14 +197,31 @@ the map is ready. Builds with `llgo.wasm.debugger` retain their existing
 shadow-frame strings for the interactive debugger.
 
 The linker reserves an initialized 32-byte identity slot. Finalization prunes
-the metadata with conservative linked-name evidence, computes the pairing
-token, and patches only that slot. Code offsets, section sizes and DWARF
+the metadata, computes the pairing token, and patches only that slot. Closed
+programs that use logical locations keep all their source locations and the
+functions they describe. Programs that use physical function-table indexes
+retain the conservative linked-name analysis. Code offsets, section sizes and DWARF
 remain intact. The v4 sidecar records the physical Wasm pointer width (4 or 8
 bytes); this does not change Go's `uintptr` contract. It contains no native
 entry/PC relocation records. Final stripping and DWARF packaging remain
 independent and happen after pairing.
 
-On the first safe public symbolization query:
+Wasm executables with `-pclntab=external` can select a loading policy with
+`-pclntab-load`:
+
+- `lazy` is the default. The first safe symbolization query starts the load.
+- `required` validates the sidecar before application package initialization
+  and stops with an error when the map is unavailable.
+- `background` starts a loader goroutine at entry. Until it publishes the
+  map, symbol queries return the available fallback without waiting.
+- `none` keeps the sidecar for offline use and performs no runtime reads.
+
+An unresolved traceback includes logical location IDs. To resolve it with a
+matching module and sidecar, run `llgo tool symbolize app.wasm < panic.log`.
+The pairing check covers the standard Wasm sections and survives stripping
+custom debug and name sections.
+
+The host resolves the sidecar as follows:
 
 - WASI reads the sibling of `argv[0]`. For a relative executable path, an
   absolute `PWD` supplies its directory. The host must preopen that directory;
@@ -225,9 +242,8 @@ ABI, target, pairing identity, checksum, section bounds and all referenced
 record/string IDs are validated before table pointers are published. The
 successful C buffer stays resident without a second full-size Go copy;
 rejected buffers are freed. Both success and failure are cached for the
-process lifetime. A missing, truncated, corrupt, stale, oversized or timed-out
-sidecar leaves available PCs and fallback diagnostics, and does not terminate
-the program. Installing a sidecar after the first failed query requires a
+process lifetime. Under the lazy and background policies, a missing, truncated, corrupt, stale,
+oversized or timed-out sidecar leaves available PCs and fallback diagnostics. Installing a sidecar after the first failed query requires a
 restart. Fatal traceback paths never start or wait for a load; they use ready
 metadata or immediately fall back. Resolved synthetic frames cache their
 function/file strings; immutable location IDs keep their PCs stable. A frame

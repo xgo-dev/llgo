@@ -1,6 +1,8 @@
 package symbolize
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,14 +50,31 @@ func TestRunResolvesMatchingWasmLocations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := Run(path, strings.NewReader(""), io.Discard); !os.IsNotExist(err) {
+		t.Fatalf("missing module: %v", err)
+	}
 	write(path, module)
+	if err := Run(path, strings.NewReader(""), io.Discard); !os.IsNotExist(err) {
+		t.Fatalf("missing sidecar: %v", err)
+	}
+	write(path+".pclntab", []byte("invalid"))
+	if err := Run(path, strings.NewReader(""), io.Discard); err == nil {
+		t.Fatal("accepted invalid sidecar")
+	}
+
 	write(path+".pclntab", sidecar)
 	const unknown = "??? [pc=16] [llgo-location=999](...)\n\t???:0\n"
-	const trace = "panic: example\n??? [pc=16] [llgo-location=42](...)\n\t???:0\n" + unknown
-	const want = "panic: example\nmain.crash(...)\n\tapp/panic.go:9\n" + unknown
+	const unchanged = "??? [pc=16] [llgo-location=18446744073709551616](...)\n\t???:0\n"
+	const trace = "panic: example\n??? [pc=16] [llgo-location=42](...)\n\t???:0\n" + unknown + unchanged
+	const want = "panic: example\nmain.crash(...)\n\tapp/panic.go:9\n" + unknown + unchanged
 	var out strings.Builder
 	if err := Run(path, strings.NewReader(trace), &out); err != nil || out.String() != want {
 		t.Fatalf("offline trace = %q, error = %v", out.String(), err)
+	}
+
+	refused := refusedTraceWriter{errors.New("write failed")}
+	if err := Run(path, strings.NewReader(trace), refused); !errors.Is(err, refused.err) {
+		t.Fatalf("write error = %v", err)
 	}
 
 	// The identity slot can still be found, but it no longer matches the code
@@ -67,3 +86,7 @@ func TestRunResolvesMatchingWasmLocations(t *testing.T) {
 		t.Fatalf("mismatched module produced trace %q, error = %v", out.String(), err)
 	}
 }
+
+type refusedTraceWriter struct{ err error }
+
+func (w refusedTraceWriter) Write([]byte) (int, error) { return 0, w.err }

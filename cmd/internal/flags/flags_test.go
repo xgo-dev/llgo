@@ -234,6 +234,7 @@ func TestBuildPCLNFlagInvalid(t *testing.T) {
 		{"-pclntab=true"},
 		{"-pclntab=off"},
 		{"-pclntab=EXTERNAL"},
+		{"-pclntab-load=invalid"},
 	}
 	for _, args := range tests {
 		fs := flag.NewFlagSet("invalid-pclntab", flag.ContinueOnError)
@@ -242,6 +243,29 @@ func TestBuildPCLNFlagInvalid(t *testing.T) {
 		if err := fs.Parse(args); err == nil {
 			t.Fatalf("Parse(%v) expected error", args)
 		}
+	}
+}
+
+func TestBuildPCLNLoadPolicy(t *testing.T) {
+	for _, input := range []string{"", "lazy", "required", "background", "none"} {
+		t.Run(input, func(t *testing.T) {
+			fs := flag.NewFlagSet("pclntab-load", flag.ContinueOnError)
+			AddBuildFlags(fs)
+			conf := &build.Config{PCLNLoad: build.PCLNLoadRequired}
+			want := build.PCLNLoadRequired
+			if input != "" {
+				if err := fs.Parse([]string{"-pclntab-load=" + input}); err != nil {
+					t.Fatal(err)
+				}
+				want = build.PCLNLoadPolicy(input)
+				if input == "lazy" {
+					want = build.PCLNLoadLazy
+				}
+			}
+			if err := UpdateConfig(conf); err != nil || conf.PCLNLoad != want {
+				t.Fatalf("configured %q, want %q: %v", conf.PCLNLoad, want, err)
+			}
+		})
 	}
 }
 
