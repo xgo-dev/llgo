@@ -36,7 +36,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func configureUnusedGlobalInits(ctx *context) {
+func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if err := ctx.frontend.restoreInitializers(); err == nil {
 			return
@@ -54,7 +54,7 @@ func configureUnusedGlobalInits(ctx *context) {
 		return
 	}
 	exported := make(map[string]bool)
-	if pkg := opaqueGlobalInitPackage(ctx, exported); pkg != "" {
+	if pkg := opaqueGlobalInitPackage(ctx, exported, asmRoots); pkg != "" {
 		if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "llgo: retain global initializers: native inputs in %s\n", pkg)
 		}
@@ -112,7 +112,7 @@ func configureUnusedGlobalInits(ctx *context) {
 // Native objects can reference Go globals without a Go SSA operand. Runtime
 // providers use declared linknames; user-supplied objects require a future
 // linker-summary join, so retain all initializers in their presence.
-func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
+func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *wasiSizePruningInputs) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
 	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
 	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
@@ -145,7 +145,13 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
 	}
 	for _, entry := range ctx.pkgByID {
 		pkg := entry.Package
+		if asmRoots != nil && entry.AltPkg != nil && entry.AltPkg.Package != nil {
+			asmRoots.checkAlternateAsm(ctx, entry.AltPkg.Package)
+		}
 		if trusted(pkg) {
+			if asmRoots != nil {
+				asmRoots.checkAlternateAsm(ctx, pkg)
+			}
 			continue
 		}
 		for _, path := range pkg.OtherFiles {
@@ -155,7 +161,7 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
 				return pkg.PkgPath
 			}
 		}
-		if !collectAsmGlobalInitReferences(ctx, pkg, exported) {
+		if !collectAsmGlobalInitReferences(ctx, pkg, exported, asmRoots) {
 			return pkg.PkgPath
 		}
 		if pkg.Types != nil {
@@ -184,7 +190,7 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
 
 // Translated assembly exposes its global references in LLVM IR, including
 // cross-package references. Unsupported or opaque inputs retain all Go inits.
-func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool) bool {
+func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool, asmRoots *wasiSizePruningInputs) bool {
 	files, err := compiledPkgSFiles(ctx, pkg)
 	if err != nil {
 		return false
@@ -203,6 +209,9 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		}
 		for global := tr.Module.FirstGlobal(); !global.IsNil(); global = gllvm.NextGlobal(global) {
 			exported[global.Name()] = true
+		}
+		if asmRoots != nil {
+			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, tr.Module)
 		}
 		tr.Module.Dispose()
 	}
