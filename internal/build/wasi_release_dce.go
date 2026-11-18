@@ -24,7 +24,7 @@ type wasiSizePruningInputs struct {
 
 func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
 	conf := ctx.buildConf
-	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.mapFormatPlan == nil {
+	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.valueFormatPlan == nil {
 		return nil
 	}
 	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
@@ -128,7 +128,7 @@ func hasUntrackedWasmExport(syntax []*ast.File) bool {
 }
 
 func configureWasiReleaseDCE(ctx *context, in *wasiSizePruningInputs) {
-	if in == nil || !canPruneWasmTypeMetadata(ctx) {
+	if in == nil || ctx.wasmRuntimeFree || !canPruneWasmTypeMetadata(ctx) {
 		return
 	}
 	conf := ctx.buildConf

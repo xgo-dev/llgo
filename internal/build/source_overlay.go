@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 )
 
@@ -82,4 +83,20 @@ func cloneSourceOverlay(input map[string]SourceOverlayFile) map[string]SourceOve
 		out[name] = file
 	}
 	return out
+}
+
+const formatPackagePath = "internal/llgofmt"
+
+// The standalone formatter has no files in GOROOT. Include its files in
+// cmd/go's overlay so the metadata loader can discover the package.
+func formatPackageOverlay(user map[string]SourceOverlayFile, files []string, goroot string) (string, error) {
+	combined := make(map[string]SourceOverlayFile, len(user)+len(files))
+	for path, replacement := range user {
+		combined[path] = replacement
+	}
+	for _, file := range files {
+		path := filepath.Join(goroot, "src", formatPackagePath, "z_llgo_patch_"+filepath.Base(file))
+		combined[path] = SourceOverlayFile{BackingFile: file}
+	}
+	return prepareSourceOverlay(&Config{SourceOverlay: combined})
 }

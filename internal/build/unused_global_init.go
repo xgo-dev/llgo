@@ -63,6 +63,7 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 	// Both pruning passes require this proof, even when no initializer plan
 	// is produced. Its representation is independent of the initializer plan.
 	ctx.wasmClosedProgram = true
+	configureValueFormats(ctx, asmRoots)
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
 	inspect := func(pkg *types.Package, files []*ast.File) {

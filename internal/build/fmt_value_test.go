@@ -12,18 +12,26 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestSpecializeMapFormats(t *testing.T) {
+func TestSpecializeValueFormats(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		decl     string
-		main     string
-		expr     string
-		asm      string
-		open     bool
-		native   bool
-		wantFast bool
+		name   string
+		decl   string
+		main   string
+		expr   string
+		asm    string
+		open   bool
+		native bool
+		helper string
 	}{
-		{name: "closed", wantFast: true},
+		{name: "string-int map", helper: "llgoSprintfValueWithMaps"},
+		{name: "named map without methods", expr: "plainMap(nil)", helper: "llgoSprintfValueWithMaps"},
+		{name: "compound map", expr: "map[[2]bool][]uint16(nil)", helper: "llgoSprintfValueWithMaps"},
+		{name: "struct array and slice", expr: "struct{ X [2][]int }{}", helper: "llgoSprintfValue"},
+		{name: "float", expr: "float32(4.25)", helper: "llgoSprintfValue"},
+		{name: "pointer to map", expr: "new(map[int]string)", helper: "llgoSprintfValueWithMaps"},
+		{name: "recursive slice", expr: "recursive(nil)"},
+		{name: "interface field", expr: "struct{ X any }{}"},
+		{name: "nested method", expr: "[]namedMap(nil)"},
 		{name: "general formatting", main: "extra()"},
 		{name: "assembly calls Go", asm: "main.extra"},
 		{name: "C export", decl: "//export extra\n"},
@@ -40,7 +48,8 @@ func TestSpecializeMapFormats(t *testing.T) {
 type pp struct{}
 func (*pp) printArg(a any) string { return "generic" }
 func Sprintf(_ string, args ...any) string { return (&pp{}).printArg(args[0]) }
-func llgoSprintfStringIntMap(_ string, args ...any) string { return "specialized" }
+func llgoSprintfValue(_ string, args ...any) string { return "specialized" }
+func llgoSprintfValueWithMaps(_ string, args ...any) string { return "specialized with maps" }
 `, nil)
 			expr := tc.expr
 			if expr == "" {
@@ -48,6 +57,8 @@ func llgoSprintfStringIntMap(_ string, args ...any) string { return "specialized
 			}
 			src := `package main
 import "fmt"
+type plainMap map[string]int
+type recursive []recursive
 type namedMap map[string]int
 func (namedMap) String() string { return "named" }
 func dynamicMap() any { return map[string]int(nil) }
@@ -84,10 +95,10 @@ func main() { println(render()); ` + tc.main + ` }
 			if tc.asm != "" {
 				in.roots = []string{tc.asm}
 			}
-			configureMapFormats(ctx, in)
-			want := "Sprintf"
-			if tc.wantFast {
-				want = "llgoSprintfStringIntMap"
+			configureValueFormats(ctx, in)
+			want := tc.helper
+			if want == "" {
+				want = "Sprintf"
 			}
 			found := false
 			for _, inst := range mainPkg.Func("render").Blocks[0].Instrs {
@@ -101,8 +112,8 @@ func main() { println(render()); ` + tc.main + ` }
 			if !found {
 				t.Fatal("missing render call")
 			}
-			if got := ctx.mapFormatPackages[mainPkg.Pkg]; got != tc.wantFast {
-				t.Errorf("cache key specialized = %v, want %v", got, tc.wantFast)
+			if got, want := ctx.valueFormatPackages[mainPkg.Pkg], tc.helper != ""; got != want {
+				t.Errorf("cache key specialized = %v, want %v", got, want)
 			}
 		})
 	}

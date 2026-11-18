@@ -7,10 +7,11 @@ python3 test/sizebuild/runtest.py --target=wasi
 python3 test/sizebuild/runtest.py --target=esp32c3
 ```
 
-The runner builds its own development LLGo. The WASI lane first verifies that
+The runner builds its own development LLGo. The WASI lane verifies that
 `-Oz -lto=full -globaldce=false` enables production Go reachability pruning
 and preserves formatter caller identity and panic/recover during thread startup.
-The other WASI Full LTO cases exercise development Go-metadata DCE. The separate
+It also verifies that the standalone value formatter handles compound values
+and reports that it was selected. The other WASI Full LTO cases exercise development Go-metadata DCE. The separate
 ESP32-C3 lane uses `-deadcodedrop`. WASI requires Wasmer (`wasmer`, or
 `WASMER=/path/to/wasmer`) with threads and standard exception handling. It builds and
 runs C printf and println with off/full/ThinLTO and fmt.Printf with full LTO, first forcing
