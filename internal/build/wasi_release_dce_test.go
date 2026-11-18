@@ -11,6 +11,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -84,8 +85,11 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 		proof     bool
 		noRoot    bool
 		nativeAsm string
+		lto       lto.Mode
 	}{
 		{name: "closed", arch: crosscompile.WasmProfileW32, proof: true},
+		{name: "full LTO", arch: crosscompile.WasmProfileW32, lto: lto.Full, proof: true},
+		{name: "thin LTO", arch: crosscompile.WasmProfileW32, lto: lto.Thin},
 		{name: "known C export", decl: "//export main\n", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "unknown export", decl: "//go:wasmexport hostMain\n", arch: crosscompile.WasmProfileW32},
 		{name: "explicit linker root", flags: "-Wl,--export=hostMain", arch: crosscompile.WasmProfileW32},
@@ -106,6 +110,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			conf := &Config{
 				Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
 				OptLevel: optlevel.Oz, WasmOpt: WasmOptSize, PrintCommands: true,
+				LTO: test.lto, DisableGoGlobalDCE: true,
 				LinkOptions: LinkOptions{ExternalLinkerFlags: test.flags},
 			}
 			ctx := &context{

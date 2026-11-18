@@ -60,6 +60,20 @@ def controlled_environment(source):
     return env
 
 
+def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
+    module = directory / "fmt-literal-callers-full-size.wasm"
+    log = command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
+                   "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                   "-o", str(module), "./internal/build/testdata/wasm-fmt-literal-callers"], env)
+    if "llgo: enable closed-program WASI size pruning" not in log:
+        raise RuntimeError(f"WASI Full LTO skipped Go reachability pruning\n{log}")
+    actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
+                      "--stack-size=1048576", str(module)], env, timeout=90)
+    if actual.strip() != "literal format caller parity passed":
+        raise RuntimeError(f"WASI Full LTO changed formatter callers: {actual}")
+    print("WASI Full LTO size pruning preserved formatter callers", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
@@ -89,6 +103,7 @@ def main():
             raise RuntimeError(f"Wasmer runner not found: {wasmer}")
         env["RUST_LOG"] = "off"
         runtime_free_cache_probe(llgo, wasmer, directory, env)
+        wasi_full_lto_size_probe(llgo, wasmer, directory, env)
         cases = (("off", "cprintf"), ("off", "println"),
                  ("thin", "cprintf"), ("full", "cprintf"),
                  ("full", "println"), ("thin", "println"),
