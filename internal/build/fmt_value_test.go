@@ -26,6 +26,7 @@ func AppendMap[K comparable,V any](b []byte, m map[K]V, cmp func(K,K) int, k fun
 func TestSpecializeValueFormats(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		lang   string
 		decl   string
 		main   string
 		local  string
@@ -36,6 +37,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		typed  bool
 	}{
 		{name: "string-int map", typed: true},
+		{name: "go1.16 map", lang: "go1.16", typed: true},
 		{name: "named map", expr: "plainMap(nil)", typed: true},
 		{name: "compound map", expr: "map[[2]bool][]uint16(nil)", typed: true},
 		{name: "struct array and slice", expr: "struct{ X [2][]int }{}", typed: true},
@@ -85,12 +87,14 @@ type plainMap map[string]int
 type recursive []recursive
 type namedMap map[string]int
 func (namedMap) String() string { return "named" }
-func dynamicMap() any { return map[string]int(nil) }
+func dynamicMap() interface{} { return map[string]int(nil) }
 func render() string { ` + tc.local + `return fmt.Sprintf("%v", ` + expr + `) }
 ` + tc.decl + `func extra() { println(fmt.Sprintf("%#v", []int{1, 2})) }
 func main() { println(render()); ` + tc.main + ` }
 `
-			entry := checkFormatTestPackage(t, prog.Fset, "main", src, fmtPkg.Pkg)
+			entry := checkFormatTestPackage(t, prog.Fset, "main", src, types.Config{
+				Importer: literalFormatImporter{fmtPkg.Pkg}, GoVersion: tc.lang,
+			})
 			ctx := &context{
 				progSSA: prog, initial: []*packages.Package{entry},
 				pkgByID: map[string]*aPackage{"main": {Package: entry}},
@@ -106,6 +110,9 @@ func main() { println(render()); ` + tc.main + ` }
 				names, err := addValueFormatSource(entry, runtime.Pkg)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if entry.Types.GoVersion() != tc.lang {
+					t.Fatalf("package language version changed to %s", entry.Types.GoVersion())
 				}
 				if names != nil {
 					ctx.valueFormatFunctions = map[*types.Package]*typeutil.Map{entry.Types: names}

@@ -34,11 +34,11 @@ func (i literalFormatImporter) Import(string) (*types.Package, error) { return i
 
 func buildFormatTestPackage(t *testing.T, prog *ssa.Program, path, source string, imported *types.Package) *ssa.Package {
 	t.Helper()
-	pkg := checkFormatTestPackage(t, prog.Fset, path, source, imported)
+	pkg := checkFormatTestPackage(t, prog.Fset, path, source, types.Config{Importer: literalFormatImporter{imported}})
 	return prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
 }
 
-func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source string, imported *types.Package) *packages.Package {
+func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source string, conf types.Config) *packages.Package {
 	t.Helper()
 	file, err := parser.ParseFile(fset, path+".go", source, parser.ParseComments)
 	if err != nil {
@@ -50,7 +50,6 @@ func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source stri
 		Instances: make(map[*ast.Ident]types.Instance), Scopes: make(map[ast.Node]*types.Scope),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection), FileVersions: make(map[*ast.File]string),
 	}
-	conf := &types.Config{Importer: literalFormatImporter{imported}}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatal(err)
