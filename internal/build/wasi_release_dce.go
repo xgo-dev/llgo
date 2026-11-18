@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"go/ast"
 	"os"
+	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
@@ -107,34 +107,12 @@ func (in *linkPruningInputs) collectAsmReferences(pkg *packages.Package, path st
 	in.roots = appendModuleDeclarationRoots(in.roots, mod)
 }
 
-// The ARM64 translator emits system register access as LLVM inline assembly.
-// A single MRS or MSR instruction cannot transfer control to a Go symbol.
+// The ARM64 translator emits these single-instruction register accesses as
+// inline assembly. They cannot transfer control or reference a Go symbol.
+var systemRegisterAsm = regexp.MustCompile(`(?i)^[ 	]*(?:mrs[ 	]+\$0,[ 	]+[a-z0-9_]+|msr[ 	]+[a-z0-9_]+,[ 	]+\$0)[ 	]*$`)
+
 func isSystemRegisterAsm(callee llvm.Value) bool {
-	if callee.IsAInlineAsm().IsNil() {
-		return false
-	}
-	fields := strings.Fields(callee.InlineAsmInfo().Assembly)
-	if len(fields) != 3 {
-		return false
-	}
-	var reg string
-	switch strings.ToLower(fields[0]) {
-	case "mrs":
-		if fields[1] != "$0," {
-			return false
-		}
-		reg = fields[2]
-	case "msr":
-		if fields[2] != "$0" || !strings.HasSuffix(fields[1], ",") {
-			return false
-		}
-		reg = strings.TrimSuffix(fields[1], ",")
-	default:
-		return false
-	}
-	return reg != "" && strings.IndexFunc(reg, func(r rune) bool {
-		return r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	}) < 0
+	return !callee.IsAInlineAsm().IsNil() && systemRegisterAsm.MatchString(callee.InlineAsmInfo().Assembly)
 }
 
 func appendModuleDeclarationRoots(roots []string, mod llvm.Module) []string {

@@ -63,6 +63,7 @@ func main() {
 	m, other = binary.Decode(nil, binary.LittleEndian, &zero)
 	check(n == 0 && m == 0 && err == nil && other == nil)
 	testFloatingBits()
+	testSingleByteFields()
 	println("fixed binary codec ok")
 }
 
@@ -86,4 +87,18 @@ func testFloatingBits() {
 	check(n == len(buf) && err == nil)
 	check(math.Float32bits(out.A) == 0x7fe00001)
 	check(math.Float64bits(out.C) == math.Float64bits(in.C))
+}
+
+func testSingleByteFields() {
+	type pair struct {
+		A uint8
+		B int8
+	}
+	values := [...]pair{{0xa5, -85}, {1, -1}}
+	var buf [4]byte
+	n, err := binary.Encode(buf[:], binary.BigEndian, values)
+	check(n == 4 && err == nil && buf == [4]byte{0xa5, 0xab, 1, 0xff})
+	var actual [2]pair
+	n, err = binary.Decode(buf[:], binary.BigEndian, &actual)
+	check(n == 4 && err == nil && actual == values)
 }

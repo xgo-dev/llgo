@@ -45,6 +45,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		open        bool
 		noRuntime   bool
 		foreignLink bool
+		opaqueAsm   bool
 		native      bool
 		typed       bool
 	}{
@@ -81,6 +82,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "general formatter via a function value", main: "extra()",
 			decl: "var indirect = fmt.Sprintf\n", extra: `println(indirect("%d", 7))`},
 		{name: "assembly calls Go", asm: "main.extra"},
+		{name: "unresolved assembly", opaqueAsm: true},
 		{name: "native assembly symbol", asm: "native_symbol", typed: true},
 		{name: "unknown translated symbol", asm: "main.missing", typed: true},
 		{name: "runtime initializer calls fmt", rtInit: true},
@@ -198,6 +200,9 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 				t.Fatal(err)
 			}
 			in := &linkPruningInputs{}
+			if tc.opaqueAsm {
+				in.opaqueAsmPkg = "example.com/native"
+			}
 			if tc.asm != "" {
 				in.roots = []string{tc.asm}
 			}
