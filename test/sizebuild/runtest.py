@@ -62,7 +62,8 @@ def controlled_environment(source):
 
 def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
     cases = (
-        ("wasm-fmt-literal-callers", "literal format caller parity passed"),
+        ("wasm-fmt-literal-callers",
+         "stdout captured before formatting\nliteral format caller parity passed"),
         ("wasm-wasi-thread-startup", "wasi thread startup ok"),
     )
     for fixture, expected in cases:
