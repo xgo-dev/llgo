@@ -89,12 +89,18 @@ func Ready() bool {
 	return latomic.Load(&externalPCLNState) == externalPCLNLoaded
 }
 
-// Ensure loads metadata only on allocation/I/O-safe symbolization paths.
-// Success and failure are terminal states. The JS provider requires poll to
-// yield the current goroutine while its asynchronous read completes. When
-// poll is nil, a caller observing another load in progress returns false
-// instead of waiting. Fatal paths consult Ready without calling Ensure.
-func Ensure(poll func()) bool {
+// Ensure loads or waits for metadata on safe paths under the lazy policy.
+// With an explicit policy, it only reports whether Preload has finished.
+func Ensure(wait func(ready func() bool)) bool {
+	if externalPCLNQueryOnly {
+		return Ready()
+	}
+	return Preload(wait)
+}
+
+// Preload performs the one-time load. A JS caller must provide a scheduler
+// wait that yields to the host until the request completes.
+func Preload(wait func(ready func() bool)) bool {
 	for {
 		switch latomic.Load(&externalPCLNState) {
 		case externalPCLNLoaded:
@@ -105,27 +111,23 @@ func Ensure(poll func()) bool {
 			if _, ok := latomic.CompareAndExchange(&externalPCLNState, externalPCLNUnattempted, externalPCLNLoading); !ok {
 				continue
 			}
-			if loadExternalPCLN(poll) {
+			if loadExternalPCLN(wait) {
 				latomic.Store(&externalPCLNState, externalPCLNLoaded)
 				return true
 			}
 			latomic.Store(&externalPCLNState, externalPCLNUnavailable)
 			return false
 		default:
-			// Only safe callers wait. A signal path observes !Ready and
-			// immediately degrades without entering this loop.
-			if poll != nil {
-				poll()
-			}
-			if poll == nil {
+			if wait == nil {
 				return false
 			}
+			wait(func() bool { return latomic.Load(&externalPCLNState) != externalPCLNLoading })
 		}
 	}
 }
 
-func loadExternalPCLN(poll func()) bool {
-	raw := readExternalPCLN(poll)
+func loadExternalPCLN(wait func(ready func() bool)) bool {
+	raw := readExternalPCLN(wait)
 	if len(raw) == 0 {
 		return false
 	}
@@ -394,7 +396,7 @@ func Resolve(id uint64) (name, file string, line, start int) {
 	}
 	fn := (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), uintptr(rec.funcIndex-1)*externalRecordSize))
 	name = join(fn.namePkg, fn.nameName, ".")
-	file = join(rec.fileRoot, rec.fileName, "/")
+	file = join(rec.fileRoot, rec.fileName, "")
 	line, start = int(rec.line), int(fn.line&((1<<31)-1))
 	return
 }

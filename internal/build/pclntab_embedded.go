@@ -61,13 +61,17 @@ func linkedPCLNData(original pclnmap.Data, analysis pclnpost.ExternalAnalysis) (
 		if len(analysis.PCLineSites) != 0 {
 			return pclnmap.Data{}, fmt.Errorf("unexpected native PC-line records in Wasm pclntab")
 		}
-		liveFunctions := make(map[uint64]bool, len(data.EntrySites))
-		for _, site := range data.EntrySites {
-			liveFunctions[site.ID] = true
-		}
-		for _, rec := range original.Table.PCLines {
-			if rec.Func != 0 && int(rec.Func) <= len(original.Table.Records) && liveFunctions[funcInfoSymbolID(original.Table.Symbol(original.Table.Records[rec.Func-1]))] {
-				data.PCSites = append(data.PCSites, pclnmap.Site{PCOffset: 1, ID: rec.ID})
+		// Compact external maps supply logical sites independently of the
+		// linked names used for physical function-table entries.
+		if len(data.PCSites) == 0 {
+			liveFunctions := make(map[uint64]bool, len(data.EntrySites))
+			for _, site := range data.EntrySites {
+				liveFunctions[site.ID] = true
+			}
+			for _, rec := range original.Table.PCLines {
+				if rec.Func != 0 && int(rec.Func) <= len(original.Table.Records) && liveFunctions[funcInfoSymbolID(original.Table.Symbol(original.Table.Records[rec.Func-1]))] {
+					data.PCSites = append(data.PCSites, pclnmap.Site{PCOffset: 1, ID: rec.ID})
+				}
 			}
 		}
 		// A fully inlined program can legitimately have no named Go bodies.

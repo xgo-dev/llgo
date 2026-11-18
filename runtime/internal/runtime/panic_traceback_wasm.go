@@ -49,7 +49,7 @@ func printWasmPanicTraceback(_ int) bool {
 			printed = true
 		}
 		if frame.Function == "" {
-			print("???", " [pc=", frame.Entry, "]")
+			print("??? [pc=", frame.Entry, "] [llgo-location=", callerLocationID(frame), "]")
 		} else {
 			print(frame.Function)
 		}

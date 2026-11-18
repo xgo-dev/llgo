@@ -5,8 +5,11 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llgo/internal/mockable"
 )
 
 func TestToolCommand(t *testing.T) {
@@ -68,6 +71,26 @@ func TestToolCompileCommand(t *testing.T) {
 	})
 	if !strings.Contains(output, "compile version llgo") {
 		t.Fatalf("tool compile version output = %q", output)
+	}
+}
+
+func TestToolSymbolizeCommand(t *testing.T) {
+	cmd := &Cmd_tool_symbolize{App: new(App)}
+	cmd.Main("symbolize")
+	if cmd.Classfname() != "tool_symbolize" || cmd.Command.Command.Use != "symbolize module.wasm" {
+		t.Fatalf("unexpected tool metadata: %q", cmd.Command.Command.Use)
+	}
+	for _, args := range [][]string{nil, {filepath.Join(t.TempDir(), "missing.wasm")}} {
+		func() {
+			mockable.EnableMock()
+			defer mockable.DisableMock()
+			defer func() {
+				if got := recover(); got != "exit" || mockable.ExitCode() != 1 {
+					t.Fatalf("symbolize %v error = %v, exit = %d", args, got, mockable.ExitCode())
+				}
+			}()
+			cmd.Run(&cmd.Command.Command, args)
+		}()
 	}
 }
 

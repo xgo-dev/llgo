@@ -29,7 +29,7 @@ func configureWasmRuntimeFree(ctx *context) {
 	conf := ctx.buildConf
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
 		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" ||
+		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
 		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
 		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {

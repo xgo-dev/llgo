@@ -95,6 +95,39 @@ func TestValidatePCLNMode(t *testing.T) {
 	}
 }
 
+func TestValidateWasmPCLNLoadPolicy(t *testing.T) {
+	t.Setenv(llgoFuncInfoSites, "1")
+	for _, test := range []struct {
+		policy PCLNLoadPolicy
+		tags   string
+	}{
+		{PCLNLoadLazy, ""},
+		{PCLNLoadRequired, ",llgo_pclntab_explicit,llgo_pclntab_required"},
+		{PCLNLoadBackground, ",llgo_pclntab_explicit,llgo_pclntab_background"},
+		{PCLNLoadNone, ",llgo_pclntab_explicit,llgo_pclntab_none"},
+	} {
+		if got := test.policy.buildTags(); got != test.tags {
+			t.Fatalf("tags for %q = %q, want %q", test.policy, got, test.tags)
+		}
+		conf := Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, PCLNMode: PCLNExternal, PCLNLoad: test.policy}
+		if err := validatePCLNMode(&conf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conf := Config{Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeExe, PCLNMode: PCLNExternal, PCLNLoad: PCLNLoadRequired}
+	if err := validatePCLNMode(&conf); err == nil {
+		t.Fatal("accepted a native PCLN loading policy")
+	}
+	conf.Goos, conf.Goarch, conf.PCLNMode = "js", "wasm", PCLNEmbedded
+	if err := validatePCLNMode(&conf); err == nil {
+		t.Fatal("accepted a sidecar loading policy for embedded metadata")
+	}
+	conf.PCLNLoad = "invalid"
+	if err := validatePCLNMode(&conf); err == nil {
+		t.Fatal("accepted an unknown PCLN loading policy")
+	}
+}
+
 func TestResolveExternalPCLNTargetPolicy(t *testing.T) {
 	t.Setenv(llgoFuncInfoSites, "1")
 	for _, tc := range []struct {

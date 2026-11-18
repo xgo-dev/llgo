@@ -1,0 +1,19 @@
+import (
+	"fmt"
+	"os"
+
+	"github.com/xgo-dev/llgo/cmd/internal/gocommand"
+	"github.com/xgo-dev/llgo/cmd/internal/symbolize"
+)
+
+use "symbolize module.wasm"
+
+short "Resolve WebAssembly traceback locations from stdin"
+
+run args => {
+	if len(args) != 1 {
+		gocommand.Exit "symbolize", fmt.Errorf("expected one Wasm module path")
+		return
+	}
+	gocommand.Exit "symbolize", symbolize.Run(args[0], os.Stdin, os.Stdout)
+}

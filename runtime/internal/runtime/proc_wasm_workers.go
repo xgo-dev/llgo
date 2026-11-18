@@ -532,6 +532,7 @@ func waitWasmWorkerRunq(worker *wasmWorker) *g {
 		sequence := atomic.Load(&worker.wake)
 		wasmWorkerStopForGC(worker)
 		PollWasmEvent()
+		pendingPCLN := worker.index == 0 && pollWasmPCLN()
 		if gp := popWasmWorkerRunq(worker); gp != nil {
 			return gp
 		}
@@ -541,13 +542,13 @@ func waitWasmWorkerRunq(worker *wasmWorker) *g {
 			return gp
 		}
 		timeout := int64(-1)
-		asyncWait := hooks.pollCallbacks != nil
+		asyncWait := hooks.pollCallbacks != nil || pendingPCLN
 		if worker.index == 0 {
 			hooks.pollTimerEvents()
 			if gp := popWasmWorkerRunq(worker); gp != nil {
 				return gp
 			}
-			hasWaitSource := hooks.pollCallbacks != nil
+			hasWaitSource := asyncWait
 			if hooks.timerWait != nil {
 				if wait, active := hooks.timerWait(); active {
 					hasWaitSource = true
@@ -571,6 +572,9 @@ func waitWasmWorkerRunq(worker *wasmWorker) *g {
 
 		if gp := popWasmWorkerRunq(worker); gp != nil {
 			return gp
+		}
+		if pendingPCLN && (timeout < 0 || timeout > wasmPCLNPollInterval) {
+			timeout = wasmPCLNPollInterval
 		}
 		// A synchronous JavaScript callback still owns the caller's JS stack.
 		// Do not unwind the pthread entry while its Go handler is parked; a

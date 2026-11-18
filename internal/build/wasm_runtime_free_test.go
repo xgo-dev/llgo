@@ -114,6 +114,7 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 		{"verbose", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Verbose = true }, true},
 		{"native", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Goarch = "amd64" }, false},
 		{"no optimization", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.OptLevel = optlevel.O0 }, false},
+		{"required PCLN preload", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.PCLNLoad = PCLNLoadRequired }, false},
 		{"library", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.BuildMode = BuildModeCArchive }, false},
 		{"generation", func(_ *testing.T, c *context, _ *aPackage) { c.mode = ModeGen }, false},
 		{"coverage hooks", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Coverage = &CoverageConfig{} }, false},

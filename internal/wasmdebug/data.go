@@ -71,6 +71,42 @@ func ReplaceData(module []byte, symbol string, expected, replacement []byte) ([]
 
 func PCLNIdentityPlaceholder() [32]byte { return sha256.Sum256([]byte("LLGo.PCLN.Identity.Slot.v1")) }
 
+// PCLNModuleIdentity hashes the linked module with its identity slot still
+// reserved. Custom sections can change during debugger packaging or stripping.
+func PCLNModuleIdentity(module []byte) ([32]byte, error) {
+	sections, err := parse(module)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	hash := sha256.New()
+	hash.Write(wasmHeader)
+	for _, section := range sections {
+		if section.id != 0 {
+			hash.Write(section.raw)
+		}
+	}
+	var identity [32]byte
+	copy(identity[:], hash.Sum(nil))
+	return identity, nil
+}
+
+// MatchPCLNIdentity verifies the sidecar against the linked module's contents.
+func MatchPCLNIdentity(module []byte, identity [32]byte) error {
+	slot := PCLNIdentityPlaceholder()
+	unpatched, err := ReplaceData(module, "__llgo_pclntab_identity", identity[:], slot[:])
+	if err != nil {
+		return err
+	}
+	got, err := PCLNModuleIdentity(unpatched)
+	if err != nil {
+		return err
+	}
+	if got != identity {
+		return fmt.Errorf("pclntab map does not match the Wasm module")
+	}
+	return nil
+}
+
 func readConstAddress(raw []byte, off *int) (uint64, error) {
 	if *off >= len(raw) || (raw[*off] != 0x41 && raw[*off] != 0x42) {
 		return 0, fmt.Errorf("unsupported Wasm address expression")

@@ -142,28 +142,16 @@ categories to construct the sidecar.
 
 ## Sidecar identity and addressing
 
-The sidecar header contains a format version, runtime ABI version, target
-tuple, pointer size, section descriptors, payload checksum, and the SHA-256
-identity of the exact linked executable before detachment. The same identity
-is written into a dedicated 32-byte executable section. A sidecar is accepted
-only when both values match. It is a pre-mutation pairing token, not the digest
-of the final detached, stripped, or signed executable.
+The header records the format and runtime ABI versions, target, pointer size, section descriptors, payload checksum, and pairing identity. The executable has the same identity in an initialized 32-byte slot.
 
-All code addresses are stored relative to the lowest file-backed load segment.
-At runtime they are relocated with the image base returned by `dladdr`, so the
-format works for PIE/ASLR and non-PIE executables without relocations in the
-sidecar.
+- Native targets use the SHA-256 of the linked executable before detachment. The code addresses are relative to the lowest file-backed load segment and relocate with the image base from `dladdr`.
+- Hosted Wasm hashes the header and non-custom sections with the identity placeholder in place. Stripping custom debug and name sections preserves the pairing.
 
 ## Loading and failure semantics
 
-Only allocation and I/O-safe public symbolization paths may start a load.
-Fatal signal handling never loads or waits; it immediately uses the available
-fallback while a load is absent or in progress.
+The default lazy policy starts loading on the first safe public symbolization query. Hosted Wasm also supports the startup policies below. Fatal paths consult the loaded state and use fallback diagnostics while metadata is unavailable.
 
-The loader has four states: unattempted, loading, loaded, and unavailable.
-One caller performs validation and index construction. Concurrent callers
-wait only on safe paths. Both success and failure are terminal and cached, so
-the filesystem is never probed repeatedly.
+One caller reads and validates the sidecar. Lazy queries may wait on safe paths. With the explicit Wasm policies, queries use whatever is already available. Both success and failure are cached for the process lifetime.
 
 The native implementation uses one bounded read, capped at 512 MiB, instead
 of `mmap`. It opens nonblocking and accepts only regular files, so an optional
@@ -197,14 +185,27 @@ the map is ready. Builds with `llgo.wasm.debugger` retain their existing
 shadow-frame strings for the interactive debugger.
 
 The linker reserves an initialized 32-byte identity slot. Finalization prunes
-the metadata with conservative linked-name evidence, computes the pairing
-token, and patches only that slot. Code offsets, section sizes and DWARF
+the metadata, computes the pairing token, and patches only that slot. Closed
+programs that use logical locations keep the function records those locations describe, including inlined frames. When the runtime uses physical function-table indexes, the map also retains entries based on linked names. Code offsets, section sizes and DWARF
 remain intact. The v4 sidecar records the physical Wasm pointer width (4 or 8
 bytes); this does not change Go's `uintptr` contract. It contains no native
 entry/PC relocation records. Final stripping and DWARF packaging remain
 independent and happen after pairing.
 
-On the first safe public symbolization query:
+Wasm executables with `-pclntab=external` can select a loading policy with
+`-pclntab-load`:
+
+- `lazy` is the default. The first safe symbolization query starts the load.
+- `required` validates the sidecar before application package initialization
+  and stops with an error when the map is unavailable.
+- `background` starts a loader goroutine at entry. Until it publishes the
+  map, symbol queries return the available fallback without waiting.
+- `none` keeps the sidecar for offline use and performs no runtime reads.
+
+An unresolved traceback includes logical location IDs. To resolve it with a
+matching module and sidecar, run `llgo tool symbolize app.wasm < panic.log`.
+
+The host resolves the sidecar as follows:
 
 - WASI reads the sibling of `argv[0]`. For a relative executable path, an
   absolute `PWD` supplies its directory. The host must preopen that directory;
@@ -215,19 +216,15 @@ On the first safe public symbolization query:
 - Emscripten resolves the actual module URL and appends `.pclntab` to its
   pathname, preserving any query. Browsers fetch over HTTP(S); Node reads a
   `file:` URL. The HTTP request and body read have a 5-second timeout.
-- One caller starts the load. Other callers yield through the existing Go
-  scheduler while it completes, including in multi-worker J32/J64 builds.
-  The JS Promise returns immediately to Go and never owns a Go fiber's
-  Asyncify suspension.
+- On JS hosts, the provider starts an asynchronous read. Startup policies wait through the core scheduler on the worker that started the request. Lazy loads yield through the standard-library scheduler timers. Both paths leave Asyncify waits on the system stack.
 
 Wasm reads at most 64 MiB and accepts only regular filesystem files. Format,
 ABI, target, pairing identity, checksum, section bounds and all referenced
 record/string IDs are validated before table pointers are published. The
 successful C buffer stays resident without a second full-size Go copy;
 rejected buffers are freed. Both success and failure are cached for the
-process lifetime. A missing, truncated, corrupt, stale, oversized or timed-out
-sidecar leaves available PCs and fallback diagnostics, and does not terminate
-the program. Installing a sidecar after the first failed query requires a
+process lifetime. Under the lazy and background policies, a missing, truncated, corrupt, stale,
+oversized or timed-out sidecar leaves available PCs and fallback diagnostics. Installing a sidecar after the first failed query requires a
 restart. Fatal traceback paths never start or wait for a load; they use ready
 metadata or immediately fall back. Resolved synthetic frames cache their
 function/file strings; immutable location IDs keep their PCs stable. A frame

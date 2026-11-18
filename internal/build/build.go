@@ -235,6 +235,7 @@ type Config struct {
 	// explicitly specified. Explicit -w and -w=false always win.
 	OmitDWARFByDefault bool
 	PCLNMode           PCLNMode
+	PCLNLoad           PCLNLoadPolicy
 	// PCLNModeSet marks PCLNMode as authoritative. Command flags set it for
 	// explicit requests; Do sets it after resolving the legacy environment
 	// default.
@@ -743,6 +744,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		// cache key. Embedded and none builds do not compile any loader or
 		// sidecar probing code.
 		tags += ",llgo_pclntab_external"
+		tags += conf.PCLNLoad.buildTags()
 	}
 	if conf.Tags != "" {
 		tags += "," + conf.Tags
@@ -1568,6 +1570,8 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		crossCompile:         ctx.crossCompile,
 		commands:             ctx.commands,
 		pclnExternal:         plan.pclnExternal,
+		wasmClosedProgram:    ctx.wasmClosedProgram,
+		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
 		linkRuntimeSites:     &plan.runtimeSites,
 		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
 		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
@@ -2662,7 +2666,7 @@ func prepareMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage, outp
 // generate one entry module. Native test DAG callers invoke it on the
 // coordinator; isolated package Programs may already have been disposed.
 func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainLinkPreparation, error) {
-	needRuntime := false
+	needRuntime := ctx.buildConf.PCLNLoad.startsAtEntry()
 	needPyInit := false
 	var needAbiInit int
 	methodByIndex := make(map[int]none)

@@ -6,12 +6,76 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
+
+func TestExternalWasmPCLNRetainsLogicalOwners(t *testing.T) {
+	const owner = "main.inlined"
+	const physical = "main.withoutLocation"
+	table, err := funcinfo.EncodeWithPCLines(
+		[]funcinfo.Record{
+			{Symbol: owner, Name: owner, File: "app.go", Line: 3},
+			{Symbol: physical, Name: physical, File: "app.go", Line: 5},
+		},
+		[]funcinfo.PCLineRecord{{ID: 42, Symbol: owner, File: "call.go", Line: 11}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &context{
+		wasmClosedProgram: true,
+		frontendOptions:   cl.Options{CompactCallerLocations: true},
+		buildConf:         &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe},
+		pclnExternal: &pclnmap.Data{
+			GOOS: "wasip1", GOARCH: "wasm", PointerSize: 4, Table: table,
+			SymbolIndex: []pclnmap.SymbolIndexEntry{
+				{SymbolID: funcInfoSymbolID(owner), FuncIndex: 1},
+				{SymbolID: funcInfoSymbolID(physical), FuncIndex: 2},
+			},
+		},
+	}
+	// The complete name section lists only the physical function.
+	module := []byte("\x00asm\x01\x00\x00\x00\x01\x04\x01\x60\x00\x00\x03\x02\x01\x00\x0a\x04\x01\x02\x00\x0b")
+	names := append([]byte{1, 0, byte(len(physical))}, physical...)
+	custom := append([]byte{4, 'n', 'a', 'm', 'e', 1, byte(len(names))}, names...)
+	module = append(module, 0, byte(len(custom)))
+	module = append(module, custom...)
+	plan := &mainLinkPlan{pclnExternal: ctx.pclnExternal}
+	pruned, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pruned.Table.Records) != 1 || pruned.Table.Symbol(pruned.Table.Records[0]) != owner {
+		t.Fatalf("expected only the logical frame owner, got %+v", pruned.Table.Records)
+	}
+	if len(pruned.Table.PCLines) != 1 || pruned.Table.PCLines[0].ID != 42 || pruned.Table.PCLines[0].Func != 1 {
+		t.Fatalf("logical frame location changed: %+v", pruned.Table.PCLines)
+	}
+	for _, closed := range []bool{true, false} {
+		ctx.wasmClosedProgram = closed
+		plan.runtimeSites = closed
+		full, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), module)
+		if err != nil || len(full.Table.Records) != 2 ||
+			len(full.Table.PCLines) != 1 || full.Table.PCLines[0].ID != 42 {
+			t.Fatalf("closed=%t: lost physical entry or inline location: %v, %+v", closed, err, full)
+		}
+	}
+	ctx.frontendOptions.CompactCallerLocations = false
+	debugger, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), module)
+	if err != nil || len(debugger.Table.Records) != 1 || len(debugger.Table.PCLines) != 0 {
+		t.Fatalf("debugger map must keep the linked-name policy: %v, %+v", err, debugger)
+	}
+	badNames := append(slices.Clone(module[:8]), 0, 6, 4, 'n', 'a', 'm', 'e', 1)
+	if _, err := linkExternalWasmPCLNData(newLinkExecutionContext(ctx, plan), badNames); err == nil {
+		t.Fatal("accepted an incomplete Wasm name subsection")
+	}
+}
 
 func TestExternalWasmPCLNPairing(t *testing.T) {
 	table, err := funcinfo.EncodeWithPCLines([]funcinfo.Record{{Symbol: "main.main", Name: "main.main", File: "main.go", Line: 1}}, []funcinfo.PCLineRecord{{ID: 7, Symbol: "main.main", File: "line.go", Line: 123}})

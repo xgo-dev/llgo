@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise optional, lazy runtime symbol maps with real Wasm hosts."""
+"""Exercise external runtime symbol maps with real Wasm hosts."""
 
 import argparse
 import json
@@ -9,6 +9,56 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_load_policies(llgo, target, directory, flags, build_environment, environment, browser):
+    cases = []
+    for policy in ['required', 'background', 'none']:
+        work = directory / policy
+        work.mkdir()
+        output = work / ('app.wasm' if target == 'wasi' else 'app.mjs')
+        command = [llgo, 'build', *flags, '-pclntab-load=' + policy, '-o', str(output),
+                   './internal/build/testdata/wasm-pclntab-policy']
+        subprocess.run(command, cwd=ROOT, env=build_environment, check=True, timeout=300)
+        if target == 'wasi':
+            wasm_runner = os.environ.get('WASMER', 'wasmer')
+            run = [wasm_runner, 'run', '--enable-exceptions', '--enable-simd', '--stack-size=1048576',
+                   '--volume=' + str(work) + ':/home', '--env=PWD=/home', './app.wasm', '--', policy]
+        else:
+            run = ['node', str(ROOT / 'targets/emscripten-memory64-runner.mjs'), str(output), policy]
+
+        def execute():
+            return subprocess.run(run, cwd=work, env=environment, capture_output=True, text=True, timeout=60)
+
+        result = execute()
+        if result.returncode or 'pcln-policy-ok' not in result.stdout + result.stderr:
+            raise RuntimeError(f'{target}/{policy}: exit {result.returncode}\n{result.stdout}{result.stderr}')
+        cases.append(policy)
+        if policy == 'required':
+            sidecar = work / 'app.wasm.pclntab'
+            original = sidecar.read_bytes()
+            if target == 'wasi' and len(original) > 64 * 1024:
+                raise RuntimeError(f'WASI logical-location map grew to {len(original)} bytes')
+            for failure in ['missing', 'corrupt']:
+                if failure == 'missing':
+                    sidecar.unlink()
+                else:
+                    sidecar.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+                result = execute()
+                combined = result.stdout + result.stderr
+                if (not result.returncode or 'unable to preload required PCLN metadata' not in combined
+                        or 'pcln-policy-init' in combined):
+                    raise RuntimeError(f'{target}/{policy}/{failure}: exit {result.returncode}\n{combined}')
+                cases.append(policy + '-' + failure)
+            sidecar.write_bytes(original)
+        if browser:
+            response_mode = {'background': 'delayed', 'none': 'no-symbols', 'required': 'delayed'}[policy]
+            argument = 'background-pending' if policy == 'background' else policy
+            browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN=response_mode)
+            subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-policy-ok', argument],
+                           cwd=ROOT, env=browser_env, check=True, timeout=70)
+            cases.append('browser-' + policy)
+    return cases
 
 
 def main():
@@ -64,11 +114,16 @@ def main():
             cases = []
 
             # A valid map exists, but a fatal traceback must neither start a
-            # load nor wait for one. Only unresolved frame PCs are available.
+            # load nor wait for one. Resolve the recorded IDs on the host.
             fatal = execute('panic', status=2, output='panic: pcln-fatal')
-            if '??? [pc=' not in fatal or 'pcln-callsite.go:' in fatal:
+            if '[llgo-location=' not in fatal or 'pcln-callsite.go:' in fatal:
                 raise RuntimeError(f'{target}: fatal path loaded source metadata\n{fatal}')
             cases.append('fatal-without-load')
+            resolved = subprocess.run([llgo, 'tool', 'symbolize', str(module)], input=fatal, cwd=ROOT,
+                                      env=environment, capture_output=True, text=True, timeout=60)
+            if resolved.returncode or 'pcln-callsite.go:' not in resolved.stdout or 'panic: pcln-fatal' not in resolved.stdout:
+                raise RuntimeError(f'{target}: offline symbolization failed\n{resolved.stdout}{resolved.stderr}')
+            cases.append('offline-symbolization')
             for mode in ['available', 'cache-reuse', 'concurrent', 'cached-success', 'cached-failure']:
                 execute(mode)
                 if sidecar.read_bytes() != original:
@@ -154,8 +209,28 @@ def main():
                     subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-ok', argument],
                                    cwd=ROOT, env=browser_env, check=True, timeout=70)
                     browser_cases.append(mode)
+            policy_cases = []
+            if target in ('wasi', 'emscripten-memory64'):
+                policy_cases = run_load_policies(llgo, target, directory, flags, build_environment, environment,
+                                                  args.browser and target != 'wasi')
+            elif args.browser and target == 'gojs':
+                # An import-free main cannot supply the standard runtime's
+                # timer hooks. Delay the map so startup must yield to JS.
+                minimal = directory / 'minimal'
+                minimal.mkdir()
+                source = minimal / 'main.go'
+                source.write_text('package main\nfunc main() { println("pcln-required-ok") }\n', encoding='utf-8')
+                output = minimal / 'app.wasm'
+                minimal_flags = [flag for flag in flags if flag != '-Oz']
+                subprocess.run([llgo, 'build', '-O0', *minimal_flags, '-pclntab-load=required', '-o', str(output), str(source)],
+                               cwd=ROOT, env=build_environment, check=True, timeout=300)
+                browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN='delayed')
+                subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-required-ok'],
+                               cwd=ROOT, env=browser_env, check=True, timeout=70)
+                policy_cases.append('browser-required-without-imports')
             reports.append({'target': target, 'module_bytes': module.stat().st_size,
-                            'sidecar_bytes': len(original), 'cases': cases, 'browser_cases': browser_cases})
+                            'sidecar_bytes': len(original), 'cases': cases, 'browser_cases': browser_cases,
+                            'load_policy_cases': policy_cases})
             print(json.dumps(reports[-1]), flush=True)
     if args.report:
         args.report.write_text(json.dumps(reports, indent=2) + '\n')

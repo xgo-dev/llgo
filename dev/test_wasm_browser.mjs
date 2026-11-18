@@ -141,8 +141,8 @@ const server = http.createServer(async (request, response) => {
 		let data = await readFile(requested);
 		if (pclnMode && requested.endsWith(".pclntab")) {
 			if (pclnMode === "missing") { response.writeHead(404).end(); return; }
-			if (pclnMode === "timeout") {
-				const timer = setTimeout(() => response.end(data), 8000);
+			if (pclnMode === "timeout" || pclnMode === "delayed") {
+				const timer = setTimeout(() => response.end(data), pclnMode === "timeout" ? 8000 : 500);
 				response.once("close", () => clearTimeout(timer));
 				return;
 			}
