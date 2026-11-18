@@ -9,6 +9,7 @@ import (
 
 var dynamicFormat = "literal%%"
 var stdoutFormat = "%v\n"
+var scalarFormat = "id=%016X count=%04d text=%5s ok=%5t oct=%o bin=%b lower=%x default=%v %%\x00\xff"
 
 type writer struct{ frames []string }
 
@@ -94,7 +95,24 @@ func checkStdout() {
 	}
 }
 
+func testScalarFormats() {
+	for _, text := range []string{"", "世界", "longer", "\xff"} {
+		const id = ^uint64(0)
+		const count = -1 << 63
+		got := fmt.Sprintf("id=%016X count=%04d text=%5s ok=%5t oct=%o bin=%b lower=%x default=%v %%\x00\xff",
+			uint64(id), int64(count), text, true, uint8(040), int8(-9), uintptr(0xff), -7)
+		want := fmt.Sprintf(scalarFormat, uint64(id), int64(count), text, true, uint8(040), int8(-9), uintptr(0xff), -7)
+		if got != want {
+			panic("scalar format changed output: " + got + " != " + want)
+		}
+		if line := fmt.Sprintln(text, -7, true); line != text+" -7 true\n" {
+			panic("scalar Sprintln changed output: " + line)
+		}
+	}
+}
+
 func main() {
+	testScalarFormats()
 	var literal, reference writer
 	write(&literal, false)
 	write(&reference, true)

@@ -4472,7 +4472,8 @@ func recordPackageSSAInstructions(ctx *context) error {
 	defer span.done()
 	counts := make(map[*ssa.Package]int64)
 	var total int64
-	literalFormats := canSpecializeLiteralFormats(ctx)
+	formats := canSpecializeFormats(ctx)
+	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
 		validateMaps = ctx.prog.VectorMapValidator()
@@ -4487,9 +4488,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 			}
 		}
 		for _, block := range fn.Blocks {
-			if literalFormats {
+			if formats {
 				for _, instruction := range block.Instrs {
-					specializeLiteralFormat(instruction)
+					specializeFormat(instruction, scalarFormats)
 				}
 			}
 			if fn.Pkg == nil {
