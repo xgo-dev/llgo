@@ -8,15 +8,15 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func canSpecializeLiteralFormats(ctx *context) bool {
+func canSpecializeFormats(ctx *context) bool {
 	conf := ctx.buildConf
 	return conf != nil && conf.OptLevel != optlevel.O0 &&
 		ctx.mode != ModeGen && !ctx.frontendOptions.DebuggerFrames
 }
 
 // Rewrite during the instruction-counting pass, before reachability analysis,
-// so a literal write need not retain the general formatter and reflection.
-func specializeLiteralFormat(instruction ssa.Instruction) {
+// so a specialized format can release the general formatter and reflection.
+func specializeFormat(instruction ssa.Instruction, scalarFormats bool) {
 	call, ok := instruction.(ssa.CallInstruction)
 	if !ok {
 		return
@@ -30,18 +30,25 @@ func specializeLiteralFormat(instruction ssa.Instruction) {
 	// Fprintf until a helper can preserve its original frame identity.
 	switch callee.Name() {
 	case "Printf", "Sprintf":
+	case "Println", "Sprintln":
+		if scalarFormats {
+			specializeScalarPrintln(call, callee)
+		}
+		return
 	default:
 		return
 	}
 	if len(common.Args) != 2 {
 		return
 	}
-	args, ok := common.Args[1].(*ssa.Const)
-	if !ok || !args.IsNil() {
-		return
-	}
 	format, ok := common.Args[0].(*ssa.Const)
 	if !ok || format.Value == nil || format.Value.Kind() != constant.String {
+		return
+	}
+	if args, ok := common.Args[1].(*ssa.Const); !ok || !args.IsNil() {
+		if scalarFormats {
+			specializeScalarFormat(call, callee, constant.StringVal(format.Value))
+		}
 		return
 	}
 	text, ok := literalFormat(constant.StringVal(format.Value))

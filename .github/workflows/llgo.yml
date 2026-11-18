@@ -1346,7 +1346,7 @@ jobs:
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
               ./test/std/fmt
-            "$LLGO" run -target "$target" -emulator -O2 \
+            "$LLGO" run -target "$target" -emulator -Oz \
               ./internal/build/testdata/wasm-fmt-literal-callers
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
               ./internal/build/testdata/wasm-fmt-literal-debugger

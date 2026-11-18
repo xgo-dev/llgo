@@ -53,12 +53,16 @@ func Printf(s string, a ...any) (int, error) { return 0, nil }
 func Fprintf(w any, s string, a ...any) (int, error) { return 0, nil }
 func Sprintf(s string, a ...any) string { return s }
 func Sprint(a ...any) string { return "" }
+func Println(a ...any) (int, error) { return 0, nil }
+func Sprintln(a ...any) string { return "" }
 `
 	if helpers {
 		fmtSource += `
 func llgoPrintfLiteral(s string) (int, error) { return 0, nil }
 func llgoFprintfLiteral(w any, s string) (int, error) { return 0, nil }
 func llgoSprintfLiteral(s string) string { return s }
+func llgoPrintfScalars(s string, a ...any) (int, error) { return 0, nil }
+func llgoSprintfScalars(s string, a ...any) string { return s }
 `
 	}
 	fmtPkg := build("fmt", fmtSource, nil)
@@ -75,6 +79,37 @@ func nilSpread() { fmt.Printf("literal", []any(nil)...) }
 func deferred() { defer fmt.Printf("literal") }
 func goroutine() { go fmt.Printf("literal") }
 func other() { _ = fmt.Sprint("literal") }
+type namedInt int
+func (namedInt) String() string { return "named" }
+type intAlias = int16
+func scalar(i intAlias, s string, t bool) string { return fmt.Sprintf("id=%04X %% name=%8s valid=%t", i, s, t) }
+func scalarPrint(n uint64) { fmt.Printf("%b %o %d %x", n, n, n, n) }
+func scalarDefer(s string) { defer fmt.Printf("%s", s) }
+func scalarGo(s string) { go fmt.Printf("%s", s) }
+func scalarLiteralSpread(s string) { fmt.Printf("%s", []any{s}...) }
+func scalarDefault(i int, s string, b bool) string { return fmt.Sprintf("%03v %5v %v", i, s, b) }
+func scalarBadDefault(f float64) { fmt.Printf("%v", f) }
+func scalarPrintln(i int, s string, b bool) { fmt.Println(i, s, b) }
+func scalarSprintln(s string) string { return fmt.Sprintln(s) }
+func scalarEmptyPrintln() { fmt.Println() }
+func scalarComplexPrintln(n float64) { fmt.Println(n) }
+func scalarSpread(a []any) { fmt.Printf("%d", a...) }
+func scalarInterface(a any) { fmt.Printf("%d", a) }
+func scalarNamed(n namedInt) { fmt.Printf("%d", n) }
+func scalarNil() { fmt.Printf("%s", nil) }
+func scalarTooFew(n int) { fmt.Printf("%d %d", n) }
+func scalarTooMany(n int) { fmt.Printf("%d", n, n) }
+func scalarBadType(n int) { fmt.Printf("%s", n) }
+func scalarBadBool(n int) { fmt.Printf("%t", n) }
+func scalarBadInt(s string) { fmt.Printf("%x", s) }
+func scalarTrailingPercent(n int) { fmt.Printf("%d%", n) }
+func scalarStar(n int) { fmt.Printf("%*d", n, n) }
+func scalarIndex(n int) { fmt.Printf("%[1]d", n) }
+func scalarPrecision(n int) { fmt.Printf("%.2d", n) }
+func scalarFlag(n int) { fmt.Printf("%+d", n) }
+func scalarLarge(n int) { fmt.Printf("%100d", n) }
+func scalarTruncated(n int) { fmt.Printf("%d %0", n) }
+func scalarWriter(w any) { fmt.Fprintf(w, "%d", 42) }
 func ordinary() {}
 func main() { ordinary(); println("ok") }
 `, fmtPkg.Pkg)
