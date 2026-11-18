@@ -163,6 +163,12 @@ func Write(w io.Writer, report *Report, format string) error {
 
 // Collect measures a final Wasm, ELF or PE artifact.
 func Collect(path string, pkgs []Package, level string) (*Report, error) {
+	return CollectWithWasmNames(path, pkgs, level, nil)
+}
+
+// CollectWithWasmNames measures the final artifact, with optional names
+// captured from the same function indexes before Wasm metadata stripping.
+func CollectWithWasmNames(path string, pkgs []Package, level string, names map[uint32]string) (*Report, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -188,7 +194,7 @@ func Collect(path string, pkgs []Package, level string) (*Report, error) {
 			var raw []byte
 			raw, err = readWasmSizeBytes(f, info.Size())
 			if err == nil {
-				report, err = collectWasmSize(path, raw, pkgs, level)
+				report, err = collectWasmSize(path, raw, pkgs, level, names)
 			}
 		}
 	case "\x7fELF":
@@ -595,6 +601,7 @@ func printTextReport(w io.Writer, report *Report) {
 		}
 		fmt.Fprintf(w, "%7d %7d | total\n", report.Total.Code, report.Total.Data)
 		fmt.Fprintf(w, "Custom sections: %d bytes; other encoding: %d bytes\n", report.Wasm.CustomBytes, report.Wasm.StructureBytes)
+		fmt.Fprintf(w, "Wasm imports: %d, exports: %d\n", len(report.Wasm.Imports), len(report.Wasm.Exports))
 		for i, memory := range report.Wasm.Memories {
 			fmt.Fprintf(w, "Memory %d: initial=%d", i, memory.InitialBytes)
 			if memory.MaximumBytes != nil {

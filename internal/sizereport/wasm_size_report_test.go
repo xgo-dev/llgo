@@ -30,6 +30,8 @@ func sizeWasmFixture(withNames bool) []byte {
 	imports = append(imports, 2, 3, 2, 4) // shared memory: min 2, max 4 pages
 	raw = append(raw, sizeWasmSection(2, imports)...)
 	raw = append(raw, sizeWasmSection(3, []byte{1, 0})...)
+	exports := append([]byte{1}, sizeWasmName("run")...)
+	raw = append(raw, sizeWasmSection(7, append(exports, 0, 1))...)
 	raw = append(raw, sizeWasmSection(10, []byte{1, 2, 0, 0x0b})...)
 	// Active and passive data, with exactly 3 + 2 stored bytes.
 	raw = append(raw, sizeWasmSection(11, []byte{2, 0, 0x41, 0, 0x0b, 3, 'a', 'b', 'c', 1, 2, 'd', 'e'})...)
@@ -42,9 +44,17 @@ func sizeWasmFixture(withNames bool) []byte {
 }
 
 func TestWasmSizeFinalEncoding(t *testing.T) {
-	for _, names := range []bool{false, true} {
-		raw := sizeWasmFixture(names)
-		report, err := collectWasmSize("app.wasm", raw, nil, "full")
+	for _, test := range []struct {
+		names         bool
+		strippedNames map[uint32]string
+		function      string
+	}{
+		{},
+		{names: true, function: "main.(*T).Method"},
+		{strippedNames: map[uint32]string{0: "env.call", 1: "main.live"}, function: "main.live"},
+	} {
+		raw := sizeWasmFixture(test.names)
+		report, err := collectWasmSize("app.wasm", raw, nil, "full", test.strippedNames)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,13 +62,20 @@ func TestWasmSizeFinalEncoding(t *testing.T) {
 			t.Fatalf("payload: %+v", report.Total)
 		}
 		owner := "(unknown function 1)"
-		if names {
-			owner = "main.(*T).Method"
+		if test.function != "" {
+			owner = test.function
 		}
 		if report.Modules[owner] == nil || report.Modules[owner].Code != 2 {
 			t.Fatalf("function attribution: %+v", report.Modules)
 		}
 		w := report.Wasm
+		if len(w.Imports) != 2 || w.Imports[0] != (wasmSizeImport{Module: "env", Name: "call", Kind: "function"}) {
+			t.Fatalf("imports: %+v", w.Imports)
+		}
+		export := wasmSizeExport{Name: "run", Kind: "function", Index: 1, Function: test.function}
+		if len(w.Exports) != 1 || w.Exports[0] != export {
+			t.Fatalf("exports: %+v, want %+v", w.Exports, export)
+		}
 		if got := report.Total.Code + report.Total.Data + w.CustomBytes + w.StructureBytes; got != uint64(len(raw)) {
 			t.Fatalf("file accounting = %d, want %d", got, len(raw))
 		}
@@ -102,7 +119,7 @@ func TestWasmSizeMemory64AndImports(t *testing.T) {
 	raw = append(raw, sizeWasmSection(5, []byte{1, 5, 2, 4})...)
 	// Explicit memory index, i64.const offset and zero stored data.
 	raw = append(raw, sizeWasmSection(11, []byte{1, 2, 0, 0x42, 0, 0x0b, 0})...)
-	report, err := collectWasmSize("64.wasm", raw, nil, "module")
+	report, err := collectWasmSize("64.wasm", raw, nil, "module", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +134,7 @@ func TestWasmSizeTable64LimitsAreElements(t *testing.T) {
 	imports = append(imports, 1, 0x70, 5, 0)
 	imports = append(imports, sizeWasmUint(1<<63)...)
 	raw := append([]byte{0, 'a', 's', 'm', 1, 0, 0, 0}, sizeWasmSection(2, imports)...)
-	if report, err := collectWasmSize("table.wasm", raw, nil, "module"); err != nil || len(report.Wasm.Memories) != 0 {
+	if report, err := collectWasmSize("table.wasm", raw, nil, "module", nil); err != nil || len(report.Wasm.Memories) != 0 {
 		t.Fatalf("table limits must not be converted to memory bytes: %v", err)
 	}
 }
@@ -126,7 +143,7 @@ func FuzzWasmSizeEncoding(f *testing.F) {
 	f.Add(sizeWasmFixture(true))
 	f.Add(sizeWasmFixture(false))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		report, err := collectWasmSize("fuzz.wasm", raw, nil, "full")
+		report, err := collectWasmSize("fuzz.wasm", raw, nil, "full", nil)
 		if err != nil {
 			return
 		}
@@ -168,14 +185,14 @@ func TestWasmSizeMalformedAndOptionalNames(t *testing.T) {
 		sizeWasmSection(0, []byte{2, 'a'}),
 		append(sizeWasmSection(5, []byte{0}), sizeWasmSection(5, []byte{0})...),
 	} {
-		if _, err := collectWasmSize("bad.wasm", append(bytes.Clone(header), tail...), nil, "module"); err == nil {
+		if _, err := collectWasmSize("bad.wasm", append(bytes.Clone(header), tail...), nil, "module", nil); err == nil {
 			t.Fatalf("accepted malformed tail %x", tail)
 		}
 	}
 	// Optional debug names cannot make an otherwise measurable module fail.
 	badNames := append(sizeWasmName("name"), []byte{1, 3, 1}...)
 	raw := append(sizeWasmFixture(false), sizeWasmSection(0, badNames)...)
-	report, err := collectWasmSize("names.wasm", raw, nil, "module")
+	report, err := collectWasmSize("names.wasm", raw, nil, "module", nil)
 	if err != nil || len(report.Warnings) != 1 || report.Total.Code != 2 {
 		t.Fatalf("optional names = %+v, %v", report, err)
 	}
@@ -199,11 +216,14 @@ func TestWasmSizeRejectsInvalidModuleFields(t *testing.T) {
 		{"unknown import kind", append(bytes.Clone(header), importField(5)...), "unsupported WebAssembly import kind"},
 		{"invalid table element type", append(bytes.Clone(header), importField(1, 0, 0, 0)...), "unsupported WebAssembly value type"},
 		{"truncated global import", append(bytes.Clone(header), importField(3, 0x7f)...), "truncated WebAssembly encoding"},
+		{"truncated export", append(bytes.Clone(header), sizeWasmSection(7, []byte{1, 1, 'f', 0})...), "truncated WebAssembly encoding"},
+		{"unknown export kind", append(bytes.Clone(header), sizeWasmSection(7, []byte{1, 1, 'f', 5, 0})...), "unsupported WebAssembly export kind"},
+		{"trailing export bytes", append(bytes.Clone(header), sizeWasmSection(7, []byte{0, 0})...), "unexpected trailing WebAssembly bytes"},
 		{"trailing memory bytes", append(bytes.Clone(header), sizeWasmSection(5, []byte{0, 0})...), "unexpected trailing WebAssembly bytes"},
 		{"memory byte overflow", append(bytes.Clone(header), sizeWasmSection(5, append([]byte{1, 4}, sizeWasmUint(1<<48)...))...), "memory byte size overflow"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			report, err := collectWasmSize("invalid.wasm", tc.raw, nil, "full")
+			report, err := collectWasmSize("invalid.wasm", tc.raw, nil, "full", nil)
 			if report != nil || err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("invalid module report = %+v, error = %v; want %q", report, err, tc.wantErr)
 			}
@@ -228,7 +248,7 @@ func TestWasmSizeExtendedOffsetsAndOptionalNameSubsections(t *testing.T) {
 	functions := append([]byte{1, 0}, sizeWasmName("main.work")...)
 	names = append(names, sizeWasmSection(1, functions)...)
 	raw = append(raw, sizeWasmSection(0, names)...)
-	report, err := collectWasmSize("offset.wasm", raw, nil, "full")
+	report, err := collectWasmSize("offset.wasm", raw, nil, "full", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +268,7 @@ func TestWasmSizeDuplicateFunctionNamesRemainOptional(t *testing.T) {
 	}
 	names := append(sizeWasmName("name"), sizeWasmSection(1, functions)...)
 	raw := append(sizeWasmFixture(false), sizeWasmSection(0, names)...)
-	report, err := collectWasmSize("duplicate-names.wasm", raw, nil, "full")
+	report, err := collectWasmSize("duplicate-names.wasm", raw, nil, "full", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +293,7 @@ func TestSizeReportErrorsAndConfiguration(t *testing.T) {
 }
 
 func TestFinalSizeTextAndReadErrors(t *testing.T) {
-	report, err := collectWasmSize("app.wasm", sizeWasmFixture(true), nil, "full")
+	report, err := collectWasmSize("app.wasm", sizeWasmFixture(true), nil, "full", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

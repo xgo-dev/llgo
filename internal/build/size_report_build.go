@@ -11,15 +11,22 @@ import (
 	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
+func (conf *Config) wantsSizeReport() bool {
+	return conf.Mode == ModeBuild && conf.SizeReport
+}
+
 func reportFinalSize(conf *Config, out *OutFmtDetails, pkgs []Package, artifacts []Artifact, w io.Writer) error {
 	packages := sizeReportPackages(pkgs)
 	path := debugWasmModulePath(conf, out.Out)
-	report, err := sizereport.Collect(path, packages, conf.SizeLevel)
+	report, err := sizereport.CollectWithWasmNames(path, packages, conf.SizeLevel, out.wasmSizeNames)
 	if errors.Is(err, sizereport.ErrUnsupportedFormat) {
 		report, err = collectReadelfSize(path, packages, conf.SizeLevel)
 	}
 	if err != nil {
 		return fmt.Errorf("size report: %w", err)
+	}
+	if out.wasmSizeNamesErr != nil {
+		report.Warnings = append(report.Warnings, "ignored invalid function names: "+out.wasmSizeNamesErr.Error())
 	}
 	for _, a := range artifacts {
 		report.Artifacts = append(report.Artifacts, sizereport.Artifact{

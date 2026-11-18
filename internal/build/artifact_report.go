@@ -234,7 +234,7 @@ func reportBuildOutputs(conf *Config, out *OutFmtDetails, pkgs []Package, sizeOu
 	if conf == nil {
 		return nil
 	}
-	wantSize := conf.Mode == ModeBuild && conf.SizeReport
+	wantSize := conf.wantsSizeReport()
 	wantArtifacts := conf.DebugArtifactModeSet || conf.Target != ""
 	if !wantSize && !wantArtifacts {
 		return nil

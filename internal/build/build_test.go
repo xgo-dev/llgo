@@ -102,6 +102,13 @@ func TestMain(m *testing.M) {
 		if mode == "rewrite-wasm" {
 			data = []byte("\x00asm\x01\x00\x00\x00\x0a\x01\x00")
 		}
+		if mode == "write-size-fixture" || mode == "write-invalid-size-fixture" {
+			// Add a function name that is only present in the optimizer output.
+			data = append(sizeWasmFixture(), "\x00\x13\x04name\x01\x0c\x01\x00\x09main.live"...)
+			if mode == "write-invalid-size-fixture" {
+				data[len(data)-1] = 0xff // Invalid UTF-8 in the function name.
+			}
+		}
 		if mode == "invalid-wasm" {
 			data = []byte("invalid Wasm")
 		}
