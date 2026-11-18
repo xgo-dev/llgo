@@ -83,9 +83,34 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
     print("WASI Full LTO size pruning preserved formatter callers and worker startup", flush=True)
 
 
+def hosted_fmt_probe(llgo, directory, env, targets, browser=False):
+    fixture = "./internal/build/testdata/wasm-fmt-map"
+    expected = "wasi default value formatting ok"
+    marker = "llgo: specialize default value formatting"
+    node = env.get("NODE", "node")
+    for target in targets:
+        wasm = target.startswith("emscripten")
+        artifact = directory / (f"{target}.mjs" if wasm else "native")
+        flags = ["-target", target] if wasm else []
+        log = command([str(llgo), "build", *flags, "-Oz", "-lto=full", "-deadcodedrop",
+                       "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(artifact), fixture], env)
+        if marker not in log:
+            raise RuntimeError(f"{target}: skipped value formatting specialization\n{log}")
+        runner = [node, str(ROOT / "targets" / f"{target}-runner.mjs")] if wasm else []
+        actual = command([*runner, str(artifact)], env, timeout=90)
+        if actual.strip() != expected:
+            raise RuntimeError(f"{target}: expected {expected!r}, got {actual!r}")
+        if wasm and browser:
+            command([node, str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact),
+                     expected, "single"], env, timeout=90)
+        print(f"{target} Full LTO typed formatting passed", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
+    parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3"), required=True)
+    parser.add_argument("--browser", action="store_true", help="also run Emscripten products in Chrome")
     args = parser.parse_args()
     env = controlled_environment(os.environ)
     with tempfile.TemporaryDirectory(prefix="llgo-size-build-") as directory:
@@ -93,6 +118,13 @@ def main():
         suffix = ".exe" if os.name == "nt" else ""
         llgo = directory / f"llgo{suffix}"
         command(["go", "build", "-tags=dev", "-o", str(llgo), "./cmd/llgo"], env)
+        if args.target == "emscripten":
+            env["LLGO_WASM_WORKERS"] = "1"
+            hosted_fmt_probe(llgo, directory, env, ("emscripten", "emscripten-memory64"), args.browser)
+            return
+        if args.target == "native":
+            hosted_fmt_probe(llgo, directory, env, ("native",))
+            return
         if args.target == "esp32c3":
             # This entry never builds the Go runtime. Its preloaded runtime
             # packages must not become DCE inputs with missing metadata.

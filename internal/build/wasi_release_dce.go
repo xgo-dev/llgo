@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
@@ -15,15 +16,16 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// WASI size pruning needs both the initializer pass's native-input proof and
-// the function references that don't appear in Go package metadata.
-type wasiSizePruningInputs struct {
+// linkPruningInputs tracks assembly references and foreign link inputs that
+// do not appear in the Go call graph.
+type linkPruningInputs struct {
 	goroot       string
 	roots        []string
 	opaqueAsmPkg string
+	nativeFormat bool
 }
 
-func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
+func (ctx *context) wasiSizePruningInputs(goroot string) *linkPruningInputs {
 	conf := ctx.buildConf
 	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.valueFormatPlan == nil {
 		return nil
@@ -49,7 +51,7 @@ func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs 
 	if len(wasmReflectRoots(ctx)) == 0 {
 		return nil
 	}
-	return &wasiSizePruningInputs{goroot: goroot}
+	return &linkPruningInputs{goroot: goroot}
 }
 
 func wasiSizePruningConfig(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
@@ -63,7 +65,7 @@ func wasiSizePruningConfig(conf *Config, target crosscompile.Export, frontend cl
 
 // Alternate and bundled native packages bypass the initializer pass's normal
 // assembly inspection. A selected assembly body here precludes size pruning.
-func (in *wasiSizePruningInputs) checkAlternateAsm(ctx *context, pkg *packages.Package) {
+func (in *linkPruningInputs) checkAlternateAsm(ctx *context, pkg *packages.Package) {
 	files, err := compiledPkgSFiles(ctx, pkg)
 	if err != nil {
 		in.opaqueAsmPkg = pkg.PkgPath
@@ -81,7 +83,7 @@ func (in *wasiSizePruningInputs) checkAlternateAsm(ctx *context, pkg *packages.P
 	}
 }
 
-func (in *wasiSizePruningInputs) collectAsmReferences(pkg *packages.Package, path string, conf *Config, mod llvm.Module) {
+func (in *linkPruningInputs) collectAsmReferences(pkg *packages.Package, path string, conf *Config, mod llvm.Module) {
 	// Even with complete symbol references, arbitrary assembly could operate
 	// directly on Go interfaces or method tables.
 	if _, overlaid := conf.Overlay[path]; overlaid || !isStandardLibraryPackage(pkg, in.goroot) {
@@ -91,7 +93,11 @@ func (in *wasiSizePruningInputs) collectAsmReferences(pkg *packages.Package, pat
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if (!inst.IsACallInst().IsNil() || !inst.IsAInvokeInst().IsNil()) && inst.CalledValue().IsAFunction().IsNil() {
+				if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
+					continue
+				}
+				callee := inst.CalledValue()
+				if callee.IsAFunction().IsNil() && !(in.nativeFormat && isSystemRegisterAsm(callee)) {
 					in.opaqueAsmPkg = pkg.PkgPath
 					return
 				}
@@ -99,6 +105,36 @@ func (in *wasiSizePruningInputs) collectAsmReferences(pkg *packages.Package, pat
 		}
 	}
 	in.roots = appendModuleDeclarationRoots(in.roots, mod)
+}
+
+// The ARM64 translator emits system register access as LLVM inline assembly.
+// A single MRS or MSR instruction cannot transfer control to a Go symbol.
+func isSystemRegisterAsm(callee llvm.Value) bool {
+	if callee.IsAInlineAsm().IsNil() {
+		return false
+	}
+	fields := strings.Fields(callee.InlineAsmInfo().Assembly)
+	if len(fields) != 3 {
+		return false
+	}
+	var reg string
+	switch strings.ToLower(fields[0]) {
+	case "mrs":
+		if fields[1] != "$0," {
+			return false
+		}
+		reg = fields[2]
+	case "msr":
+		if fields[2] != "$0" || !strings.HasSuffix(fields[1], ",") {
+			return false
+		}
+		reg = strings.TrimSuffix(fields[1], ",")
+	default:
+		return false
+	}
+	return reg != "" && strings.IndexFunc(reg, func(r rune) bool {
+		return r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}) < 0
 }
 
 func appendModuleDeclarationRoots(roots []string, mod llvm.Module) []string {
@@ -130,7 +166,7 @@ func hasUntrackedWasmExport(syntax []*ast.File) bool {
 	return false
 }
 
-func configureWasiReleaseDCE(ctx *context, in *wasiSizePruningInputs) {
+func configureWasiReleaseDCE(ctx *context, in *linkPruningInputs) {
 	if in == nil || ctx.wasmRuntimeFree || !canPruneWasmTypeMetadata(ctx) {
 		return
 	}

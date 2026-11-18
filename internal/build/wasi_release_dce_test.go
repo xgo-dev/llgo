@@ -45,7 +45,7 @@ define void @asmEntry(ptr %fn) {
 	standard := &packages.Package{PkgPath: "internal/bytealg", Dir: dir}
 	thirdParty := &packages.Package{PkgPath: "example.com/bytealg", Dir: t.TempDir()}
 
-	known := &wasiSizePruningInputs{goroot: goroot}
+	known := &linkPruningInputs{goroot: goroot}
 	known.collectAsmReferences(standard, path, &Config{}, direct)
 	if known.opaqueAsmPkg != "" || !slices.Equal(known.roots, []string{"callGo", "input"}) {
 		t.Fatalf("standard assembly roots: %+v", known)
@@ -60,17 +60,43 @@ define void @asmEntry(ptr %fn) {
 	}
 	for _, test := range assembly {
 		t.Run(test.name, func(t *testing.T) {
-			in := &wasiSizePruningInputs{goroot: goroot}
+			in := &linkPruningInputs{goroot: goroot}
 			in.collectAsmReferences(test.pkg, path, test.conf, direct)
 			if in.opaqueAsmPkg != test.pkg.PkgPath || len(in.roots) != 0 {
 				t.Fatalf("opaque assembly modeled as ordinary roots: %+v", in)
 			}
 		})
 	}
-	in := &wasiSizePruningInputs{goroot: goroot}
+	in := &linkPruningInputs{goroot: goroot}
 	in.collectAsmReferences(standard, path, &Config{}, indirect)
 	if in.opaqueAsmPkg != standard.PkgPath {
 		t.Fatalf("indirect assembly call treated as closed: %+v", in)
+	}
+}
+
+func TestWasiSizePruningAssemblySystemRegisters(t *testing.T) {
+	goroot := t.TempDir()
+	dir := filepath.Join(goroot, "src", "internal", "cpu")
+	pkg := &packages.Package{PkgPath: "internal/cpu", Dir: dir}
+	path := filepath.Join(dir, "cpu_arm64.s")
+	const read = `%n = call i64 asm sideeffect "mrs $0, ID_AA64ISAR0_EL1", "=r"()`
+	for _, tc := range []struct {
+		name, call   string
+		native, want bool
+	}{
+		{name: "read", call: read, native: true, want: true},
+		{name: "write", call: `call void asm sideeffect "msr S3_3_C4_C2_5, $0", "r,~{memory}"(i64 1)`, native: true, want: true},
+		{name: "wasm", call: read},
+		{name: "escape", call: strings.Replace(read, "EL1", "EL1; bl external", 1), native: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := parseWasmAggregateIR(t, "define void @asmEntry() { "+tc.call+" ret void }")
+			in := &linkPruningInputs{goroot: goroot, nativeFormat: tc.native}
+			in.collectAsmReferences(pkg, path, &Config{}, mod)
+			if got := in.opaqueAsmPkg == ""; got != tc.want {
+				t.Fatalf("register instruction modeled as closed = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

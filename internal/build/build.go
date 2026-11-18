@@ -1117,7 +1117,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	} else {
 		buildSSAPkgs(ctx, ssaEntries)
 	}
-	var asmRoots *wasiSizePruningInputs
+	var asmRoots *linkPruningInputs
 	var preparedInitializers bool
 	if ctx.frontend == nil {
 		if err := recordPackageSSAInstructions(ctx); err != nil {
@@ -1126,8 +1126,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if ctx.valueFormatPlan != nil {
 			// Resolve the rewrite before collecting initializer and feature usage.
 			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT)
-			configureUnusedGlobalInits(ctx, asmRoots)
-			configureValueFormats(ctx, asmRoots)
+			configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			preparedInitializers = true
 		}
 		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
