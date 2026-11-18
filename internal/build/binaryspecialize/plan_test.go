@@ -29,6 +29,12 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 			packages.Visit([]*packages.Package{initial}, nil, func(p *packages.Package) {
 				closure = append(closure, p)
 			})
+			info := initial.TypesInfo
+			initial.TypesInfo = nil
+			if changed, err := Rewrite(closure, binary); len(changed) != 0 || err != nil {
+				t.Fatalf("missing types produced %d rewritten packages, %v", len(changed), err)
+			}
+			initial.TypesInfo = info
 			changed, err := Rewrite(closure, binary)
 			if err != nil {
 				t.Fatal(err)
@@ -87,6 +93,9 @@ var value record
 var ptr *record
 var order binary.ByteOrder
 var boxed any = value
+var len int
+type userOrder struct{ binary.ByteOrder }
+
 
 func goodEncode() { binary.Encode(buf, binary.BigEndian, &value) }
 func goodDecode() { binary.Decode(buf, binary.LittleEndian, new(record)) }
@@ -94,6 +103,7 @@ func goodPrivate() { binary.Encode(buf, binary.NativeEndian, private{}) }
 func goodNilSize() { binary.Size(ptr) }
 func noOrder() { binary.Encode(buf, order, value) }
 func noBoxed() { binary.Encode(buf, binary.BigEndian, boxed) }
+func noLocalOrder() { binary.Encode(buf, userOrder{binary.BigEndian}, value) }
 func noNilDecode() { binary.Decode(buf, binary.BigEndian, ptr) }
 func noValueDecode() { binary.Decode(buf, binary.BigEndian, value) }
 func noPrivateDecode() { binary.Decode(buf, binary.BigEndian, new(private)) }
@@ -109,6 +119,9 @@ func main() {}
 		}
 	}
 	initial := loadCodecInput(t, dir)
+	if !shadowsGeneratedBuiltins(initial.Types) {
+		t.Fatal("package-level len must suppress generated codecs")
+	}
 	for _, decl := range initial.Syntax[0].Decls {
 		f, ok := decl.(*ast.FuncDecl)
 		if !ok || len(f.Body.List) == 0 {
