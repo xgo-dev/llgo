@@ -43,6 +43,7 @@ const (
 	simdConvertLo
 	simdPairSelector
 	simdPairHalfSelectors
+	simdScalarSelector
 )
 
 type simdOperation struct {
@@ -121,6 +122,12 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "concatSelectedConstant"}:        {llssa.SIMDConcatSelected, simdPairSelector, 0},
 	{"numeric", "concatSelectedConstantGrouped"}: {llssa.SIMDConcatSelectedGrouped, simdPairSelector, 0},
 	{"numeric", "ConcatPermute128Scalars"}:       {llssa.SIMDConcatPermute128, simdPairHalfSelectors, 0},
+	{"numeric", "permuteScalars"}:                {llssa.SIMDPermuteScalars, simdScalarSelector, types.IsInteger},
+	{"numeric", "permuteScalarsGrouped"}:         {llssa.SIMDPermuteScalarsGrouped, simdScalarSelector, types.IsInteger},
+	{"numeric", "permuteScalarsHi"}:              {llssa.SIMDPermuteScalarsHi, simdScalarSelector, types.IsInteger},
+	{"numeric", "permuteScalarsLo"}:              {llssa.SIMDPermuteScalarsLo, simdScalarSelector, types.IsInteger},
+	{"numeric", "permuteScalarsHiGrouped"}:       {llssa.SIMDPermuteScalarsHiGrouped, simdScalarSelector, types.IsInteger},
+	{"numeric", "permuteScalarsLoGrouped"}:       {llssa.SIMDPermuteScalarsLoGrouped, simdScalarSelector, types.IsInteger},
 
 	{"numeric", "ConvertLo2ToFloat64"}: {llssa.SIMDConvertLo, simdConvertLo, 0},
 
@@ -242,7 +249,7 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if desc.op == llssa.SIMDLookupOrZero && arch != "arm64" && arch != "wasm" {
 		return fallback()
 	}
-	if (desc.signature == simdPairSelector || desc.signature == simdPairHalfSelectors) && arch != "amd64" {
+	if (desc.signature == simdPairSelector || desc.signature == simdPairHalfSelectors || desc.signature == simdScalarSelector) && arch != "amd64" {
 		return fallback()
 	}
 	if desc.signature == simdConvert {
@@ -334,6 +341,19 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdScalarSelector:
+		bits, elemBits := int64(128), int64(16)
+		switch d.op {
+		case llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped:
+			bits = 256
+		}
+		if d.op == llssa.SIMDPermuteScalars || d.op == llssa.SIMDPermuteScalarsGrouped {
+			elemBits = 32
+		}
+		if simdVectorBits(vector) != bits || bits/lanes.Len() != elemBits {
+			return false
+		}
+		params = []types.Type{types.Typ[types.Uint8]}
 	case simdPairSelector:
 		bits := int64(128)
 		if d.op == llssa.SIMDConcatSelectedGrouped {
@@ -586,6 +606,7 @@ func (d simdOperation) supportsWide() bool {
 	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
+		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,
 		llssa.SIMDConcatAddPairsGrouped, llssa.SIMDConcatSubPairsGrouped,
 		llssa.SIMDShiftAllLeft, llssa.SIMDShiftAllRight,
 		llssa.SIMDAnd, llssa.SIMDOr, llssa.SIMDXor, llssa.SIMDAndNot, llssa.SIMDOrNot,

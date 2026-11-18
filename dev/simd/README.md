@@ -46,7 +46,10 @@ The pair-shuffle follow-up enables thirteen more AMD64 cases: 128/256-bit
 selection from two vectors, 128-bit-half selection, and the four 4x4/8x8
 transpose cases. `concatSelectedConstant`/`concatSelectedConstantGrouped`
 and `ConcatPermute128Scalars` cover both constant and variable selectors.
-The current allowlists contain 150 AMD64 cases and 80 ARM64 cases; these
+The scalar-permute follow-up enables the six `TestPermuteScalars*` cases for
+128/256-bit dword and high/low word shuffles. Dynamic selectors use fixed
+shuffles and vector masks, retaining the untouched word half in each 128-bit
+group. The current allowlists contain 156 AMD64 cases and 80 ARM64 cases; these
 are enabled top-level tests, not counts of implemented intrinsics.
 
 ## arm64 failures
@@ -73,11 +76,5 @@ the table below lists the remaining failures after subsequent fixes.
 | `TestConcatShiftBytesRight` | `simd/archsimd.Uint8x16.ConcatShiftBytesRight` |
 | `TestClearAVXUpperBits` | `simd/archsimd.ClearAVXUpperBits` |
 | `TestIsZero` | `simd/archsimd.Uint64x2.IsZero` |
-| `TestPermuteScalars` | `simd/archsimd.Int32x4.permuteScalars` |
-| `TestPermuteScalarsGrouped` | `simd/archsimd.Int32x8.permuteScalarsGrouped` |
-| `TestPermuteScalarsHi` | `simd/archsimd.Int16x8.permuteScalarsHi` |
-| `TestPermuteScalarsLo` | `simd/archsimd.Int16x8.permuteScalarsLo` |
-| `TestPermuteScalarsHiGrouped` | `simd/archsimd.Int16x16.permuteScalarsHiGrouped` |
-| `TestPermuteScalarsLoGrouped` | `simd/archsimd.Int16x16.permuteScalarsLoGrouped` |
 
 Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.
