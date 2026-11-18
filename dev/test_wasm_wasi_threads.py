@@ -89,8 +89,8 @@ def run_llgo(env, args, marker, timeout=180):
         raise SystemExit(f"LLGo {' '.join(args)} failed with exit code {result.returncode}")
 
 
-def check_size_probe(env, module):
-    if b"unusedFunctionMetadata" in module.read_bytes():
+def check_size_probe(env, module, *, keeps_linker_export=False):
+    if not keeps_linker_export and b"unusedFunctionMetadata" in module.read_bytes():
         raise SystemExit(f"{module.name}: dead function metadata survived")
     source = ROOT / "internal/build/testdata/wasm-size/main.go"
     panic_line = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
@@ -108,6 +108,35 @@ def check_size_probe(env, module):
         if args and ("main.panicSite" not in output
                      or f"/wasm-size/main.go:{panic_line}" not in output):
             raise SystemExit(f"{module.name}: panic source location lost")
+
+
+def run_release_size_probe(env, directory):
+    env = env.copy()
+    for key in ("LDFLAGS", "LLGO_LTO_PLUGIN"):
+        env.pop(key, None)
+    marker = "llgo: enable closed-program WASI size pruning"
+    fixture = ROOT / "internal/build/testdata/wasm-size"
+    cases = (
+        ("default", [], False, ""),
+        ("size", ["-Oz"], True, ""),
+        ("size-full-lto", ["-Oz", "-lto=full"], True, ""),
+        ("size-linker-export", ["-Oz"], False, "main.unusedFunctionMetadata"),
+    )
+    for name, flags, pruning, export in cases:
+        module = pathlib.Path(directory) / f"{name}.wasm"
+        build_env = dict(env, LDFLAGS=f"-Wl,--export={export}") if export else env
+        result = subprocess.run(
+            [LLGO, "build", "-target", "wasi", "-compiler-verbose", *flags, "-o", str(module), str(fixture)],
+            env=build_env, capture_output=True, text=True, timeout=300,
+        )
+        log = result.stdout + result.stderr
+        if result.returncode or (marker in log) != pruning:
+            raise SystemExit(f"{name}: expected reachability pruning={pruning}, build exited {result.returncode}\n{log}")
+        if export and ("retain global initializers: native inputs in linker flags" not in log
+                       or export.encode() not in module.read_bytes()):
+            raise SystemExit(f"{name}: explicit linker export was not conservatively retained\n{log}")
+        check_size_probe(env, module, keeps_linker_export=bool(export))
+        print(f"WASI reachability probe ({name}) passed", flush=True)
 
 
 def run_arena_boundaries(env, directory):
@@ -239,11 +268,7 @@ def main():
     env.pop("LLGO_WASI_THREADS", None)
     env["PATH"] = str(pathlib.Path(wasmer).resolve().parent) + os.pathsep + env["PATH"]
     with tempfile.TemporaryDirectory(prefix="llgo-wasi-threads-") as directory:
-        module = pathlib.Path(directory) / "size.wasm"
-        subprocess.run([LLGO, "build", "-target", "wasi", "-o", str(module),
-                        str(ROOT / "internal/build/testdata/wasm-size")],
-                       check=True, env=env, timeout=300)
-        check_size_probe(env, module)
+        run_release_size_probe(env, directory)
         run_memory_config_probe(env, directory)
         run_output_cache_probe(env, directory)
         simd = pathlib.Path(directory) / "simd-threads-eh.wasm"
