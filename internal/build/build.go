@@ -1149,6 +1149,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
 	configureUnusedGlobalInits(ctx, asmRoots)
 	configureWasiReleaseDCE(ctx, asmRoots)
+	configureMapFormats(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
 			return nil, err
@@ -1939,6 +1940,8 @@ type context struct {
 	commands          commandEnv
 	frontendOptions   cl.Options
 	staticByteArrays  map[string][]byte
+	mapFormatPlan     *mapFormatPlan
+	mapFormatPackages map[*types.Package]bool
 	wasmRuntimeFree   bool
 	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots     []string
@@ -4474,6 +4477,10 @@ func recordPackageSSAInstructions(ctx *context) error {
 	var total int64
 	formats := canSpecializeFormats(ctx)
 	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
+	var mapFormats *mapFormatPlan
+	if scalarFormats {
+		mapFormats = ctx.newMapFormatPlan()
+	}
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
 		validateMaps = ctx.prog.VectorMapValidator()
@@ -4491,6 +4498,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 			if formats {
 				for _, instruction := range block.Instrs {
 					specializeFormat(instruction, scalarFormats)
+					if mapFormats != nil {
+						mapFormats.record(instruction, fn.Pkg)
+					}
 				}
 			}
 			if fn.Pkg == nil {
@@ -4500,6 +4510,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 			counts[fn.Pkg] += instructions
 			total += instructions
 		}
+	}
+	if mapFormats != nil && len(mapFormats.calls) != 0 {
+		ctx.mapFormatPlan = mapFormats
 	}
 	for _, pkg := range ctx.pkgs {
 		if pkg == nil {

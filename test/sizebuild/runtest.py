@@ -65,6 +65,7 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
         ("wasm-fmt-literal-callers",
          "stdout captured before formatting\nliteral format caller parity passed"),
         ("wasm-wasi-thread-startup", "wasi thread startup ok"),
+        ("wasm-fmt-map", "wasi map format ok"),
     )
     for fixture, expected in cases:
         module = directory / f"{fixture}-full-size.wasm"
@@ -73,6 +74,8 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
                        "-o", str(module), f"./internal/build/testdata/{fixture}"], env)
         if "llgo: enable closed-program WASI size pruning" not in log:
             raise RuntimeError(f"{fixture}: WASI Full LTO skipped Go reachability pruning\n{log}")
+        if fixture == "wasm-fmt-map" and "llgo: specialize map formatting" not in log:
+            raise RuntimeError(f"{fixture}: closed WASI build skipped map formatting specialization\n{log}")
         actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
                           "--stack-size=1048576", str(module)], env, timeout=90)
         if actual.strip() != expected:

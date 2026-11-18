@@ -249,6 +249,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if c.frontend != nil {
 		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
 	}
+	m.pkg.SpecializeMapFormat = c.mapFormatPackages[p.Types] || pkg.AltPkg != nil && c.mapFormatPackages[pkg.AltPkg.Types]
 	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
 	if pkg.AltPkg != nil && c.progSSA != nil {
 		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)

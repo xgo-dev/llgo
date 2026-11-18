@@ -58,9 +58,23 @@ func specializeScalarPrintln(call ssa.CallInstruction, callee *ssa.Function) {
 	common.Args = []ssa.Value{ssa.NewConst(constant.MakeString(string(format)), types.Typ[types.String]), args}
 }
 
-// x/tools emits this array for individually supplied variadic arguments.
-// Require every element to come from an undisguised scalar conversion.
 func scalarFormatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.BasicKind {
+	operands := formatOperands(call, variadic)
+	kinds := make([]types.BasicKind, len(operands))
+	for i, typ := range operands {
+		// A defined type may implement Formatter, Stringer or error.
+		basic, ok := types.Unalias(typ).(*types.Basic)
+		if !ok {
+			return nil
+		}
+		kinds[i] = basic.Kind()
+	}
+	return kinds
+}
+
+// x/tools emits this array for individually supplied variadic arguments.
+// Require every element to come from a known concrete conversion.
+func formatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.Type {
 	args, ok := variadic.(*ssa.Slice)
 	if !ok || args.Low != nil || args.High != nil || args.Max != nil {
 		return nil
@@ -73,7 +87,7 @@ func scalarFormatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.
 		return nil
 	}
 	n := array.Type().(*types.Pointer).Elem().(*types.Array).Len()
-	kinds := make([]types.BasicKind, n)
+	operands := make([]types.Type, n)
 	for _, ref := range *array.Referrers() {
 		if ref == args {
 			continue
@@ -87,7 +101,7 @@ func scalarFormatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.
 			return nil
 		}
 		i, ok := constant.Int64Val(index.Value)
-		if !ok || i < 0 || i >= n || kinds[i] != types.Invalid {
+		if !ok || i < 0 || i >= n || operands[i] != nil {
 			return nil
 		}
 		store, ok := (*addr.Referrers())[0].(*ssa.Store)
@@ -98,14 +112,9 @@ func scalarFormatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.
 		if !ok {
 			return nil
 		}
-		// A defined type may implement Formatter, Stringer or error.
-		basic, ok := types.Unalias(value.X.Type()).(*types.Basic)
-		if !ok {
-			return nil
-		}
-		kinds[i] = basic.Kind()
+		operands[i] = value.X.Type()
 	}
-	return kinds
+	return operands
 }
 
 func scalarFormatString(format string, operands []types.BasicKind) (string, bool) {
