@@ -94,11 +94,18 @@ coverage hooks, debugger frames and non-WASI targets retain the full runtime.
 Package cache keys include this decision; development-only DCE flags retain
 their existing policy.
 
-Constant fmt.Printf/Sprintf calls with no formatting arguments can use a literal
-path. Fprintf retains its original caller
-identity for user Writers. Only escaped percent signs are decoded. Other formats
-use the general formatter; Writer.Write calls, counts, errors and current Stdout
-are preserved. Neither optimization applies at -O0 or with debugger frames.
+Constant `fmt.Printf` and `fmt.Sprintf` calls with no formatting arguments
+can use a literal path that decodes `%%`. At `-Oz`, the compiler can also
+specialize constant formats with built-in strings, booleans and integers
+passed as individual arguments. It accepts `%s`, `%t`, `%b`, `%d`, `%o`,
+`%x`, `%X` and `%v`, with optional zero padding and widths through 99.
+`Println` and `Sprintln` specialize the same scalar argument types.
+
+Dynamic formats, named argument types, floats, spread arguments, precision,
+other flags and `*` widths use the general formatter. `Fprintf` preserves
+its caller identity for arbitrary Writers. Stdout calls use the current
+`os.Stdout` and preserve byte counts and errors. The literal and scalar
+specializations are disabled at `-O0` and with logical debugger frames.
 
 WASI `fmt.Print`, `Printf` and `Println` pass a private writer to the existing
 formatting functions. Its underlying pointer is the `os.Stdout` value captured

@@ -1342,12 +1342,14 @@ jobs:
         run: |
           llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
           go build -tags=dev -o "$llgo_dev" ./cmd/llgo
+          "$LLGO" run -Oz ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
+          "$LLGO" run -target wasi -emulator -O2 ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
           for target in wasi emscripten emscripten-memory64; do
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
               ./test/std/fmt
             "$LLGO" run -target "$target" -emulator -Oz \
-              ./internal/build/testdata/wasm-fmt-literal-callers
+              ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
               ./internal/build/testdata/wasm-fmt-literal-debugger
             "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \

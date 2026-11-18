@@ -111,8 +111,34 @@ func testScalarFormats() {
 	}
 }
 
+func testScalarStdout() {
+	if n, err := fmt.Printf("literal output %%\n"); n != len("literal output %\n") || err != nil {
+		panic("literal Printf returned wrong count or error")
+	}
+	emit := func() (int, error, int, error) {
+		printfN, printfErr := fmt.Printf("%d %s\n", -17, "界")
+		printlnN, printlnErr := fmt.Println("label", 42, true)
+		return printfN, printfErr, printlnN, printlnErr
+	}
+	printfN, printfErr, printlnN, printlnErr := emit()
+	if printfN != len("-17 界\n") || printfErr != nil || printlnN != len("label 42 true\n") || printlnErr != nil {
+		panic("scalar stdout returned wrong count or error")
+	}
+
+	stdout := os.Stdout
+	os.Stdout = nil
+	printfN, printfErr, printlnN, printlnErr = emit()
+	os.Stdout = stdout
+	if printfN != 0 || printfErr != os.ErrInvalid || printlnN != 0 || printlnErr != os.ErrInvalid {
+		panic("scalar stdout did not propagate os.ErrInvalid")
+	}
+}
+
 func main() {
 	testScalarFormats()
+	if len(os.Args) == 2 && os.Args[1] == "check-stdout" {
+		testScalarStdout()
+	}
 	var literal, reference writer
 	write(&literal, false)
 	write(&reference, true)
