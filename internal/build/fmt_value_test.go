@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 const typedFormatTestRuntime = `package llgofmt
@@ -38,6 +38,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 	}{
 		{name: "string-int map", typed: true},
 		{name: "go1.16 map", lang: "go1.16", typed: true},
+		{name: "go1.16 imported private field", lang: "go1.16", expr: "fmt.NewRecord()", typed: true},
 		{name: "named map", expr: "plainMap(nil)", typed: true},
 		{name: "compound map", expr: "map[[2]bool][]uint16(nil)", typed: true},
 		{name: "struct array and slice", expr: "struct{ X [2][]int }{}", typed: true},
@@ -71,8 +72,10 @@ func TestSpecializeValueFormats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 			prog.CreatePackage(types.Unsafe, nil, nil, true)
-			runtime := buildFormatTestPackage(t, prog, formatPackagePath, typedFormatTestRuntime, nil)
+			runtime := buildFormatTestPackage(t, prog, fmtspecialize.RuntimePath, typedFormatTestRuntime, nil)
 			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
+type record struct { hidden int }
+func NewRecord() record { return record{7} }
 type pp struct{}
 func (*pp) printArg(a any) string { return "generic" }
 func Sprintf(_ string, args ...any) string { return (&pp{}).printArg(args[0]) }
@@ -106,17 +109,24 @@ func main() { println(render()); ` + tc.main + ` }
 				},
 				wasmClosedProgram: !tc.open,
 			}
+			entry.Imports = map[string]*packages.Package{"fmt": {PkgPath: "fmt", Types: fmtPkg.Pkg}}
+			ctx.dedup = packages.NewDeduper()
+			runtimePackage := &packages.Package{ID: fmtspecialize.RuntimePath, PkgPath: fmtspecialize.RuntimePath, Types: runtime.Pkg}
 			if !tc.native {
-				names, err := addValueFormatSource(entry, runtime.Pkg)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if entry.Types.GoVersion() != tc.lang {
-					t.Fatalf("package language version changed to %s", entry.Types.GoVersion())
-				}
-				if names != nil {
-					ctx.valueFormatFunctions = map[*types.Package]*typeutil.Map{entry.Types: names}
-				}
+				ctx.formatRuntime = &packages.Cached{Package: runtimePackage, Types: runtime.Pkg}
+			}
+			dep, err := ctx.prepareValueFormatSource(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry.Types.GoVersion() != tc.lang {
+				t.Fatalf("package language version changed to %s", entry.Types.GoVersion())
+			}
+			if tc.name == "string-int map" && dep != runtimePackage {
+				t.Errorf("formatter helper dependency = %v, want %v", dep, runtimePackage)
+			}
+			if (tc.native || tc.name == "bool") && dep != nil {
+				t.Errorf("unexpected formatter helper dependency %v", dep)
 			}
 			mainPkg := prog.CreatePackage(entry.Types, entry.Syntax, entry.TypesInfo, true)
 			prog.Build()
@@ -143,7 +153,7 @@ func main() { println(render()); ` + tc.main + ` }
 				if call, ok := inst.(*ssa.Call); ok {
 					common := call.Common()
 					callee := common.StaticCallee()
-					if callee == nil || callee.Pkg != fmtPkg && !strings.HasPrefix(callee.Name(), "__llgo_fmt_") {
+					if callee == nil || callee != fmtPkg.Func("Sprintf") && !strings.HasPrefix(callee.Name(), "__llgo_fmt_") {
 						continue
 					}
 					found = true

@@ -67,6 +67,8 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 
 	wrapped := func(pkg *packages.Package) *aPackage { return &aPackage{Package: pkg} }
 	rootPkg := wrapped(root)
+	formatRuntime := &packages.Package{ID: "formatter", ExportFile: "formatter.a"}
+	rootPkg.formatRuntime = formatRuntime
 	rootPkg.AltPkg = &packages.Cached{Package: &packages.Package{
 		ID: "alt-root", Imports: map[string]*packages.Package{"alt-only": altOnly},
 	}}
@@ -77,7 +79,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	ctx := &context{
 		pkgs: map[*packages.Package]Package{
 			root: rootPkg, base: basePkg, altOnly: altPkg, unrelated: unrelatedPkg, runtimePkg: runtimeWrapped,
-			unrelatedDep: unrelatedDepPkg,
+			unrelatedDep: unrelatedDepPkg, formatRuntime: wrapped(formatRuntime),
 		},
 		pkgByID: map[string]Package{
 			"root": rootPkg, "base": basePkg, "alt-only": altPkg, "unrelated": unrelatedPkg, "runtime": runtimeWrapped,
@@ -89,7 +91,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	for i, pkg := range gotPkgs {
 		got[i] = pkg.ID
 	}
-	if want := []string{"alt-only", "base", "root", "runtime"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"alt-only", "base", "formatter", "root", "runtime"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("linkedPackageClosure = %v, want %v", got, want)
 	}
 }

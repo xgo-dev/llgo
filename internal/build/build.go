@@ -44,6 +44,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
@@ -740,10 +741,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	tags := DefaultBuildTags()
 	tags += "," + target.ClosureEnvBuildTag()
-	if conf.OptLevel == optlevel.Oz && conf.BuildMode == BuildModeExe && conf.Mode != ModeGen &&
-		export.WasmProvider == crosscompile.WasmProviderWASI && export.WasmProfile == crosscompile.WasmProfileW32 {
-		tags += ",llgo.fmt.value"
-	}
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
 		// cache key. Embedded and none builds do not compile any loader or
@@ -911,19 +908,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	if files := llgoFiles[formatPackagePath]; len(files) != 0 {
-		formatOverlay, err := formatPackageOverlay(conf.SourceOverlay, files, sourcePatchGOROOT)
-		if err != nil {
-			return nil, err
-		}
-		defer os.Remove(formatOverlay)
-		cfg.BuildFlags = slices.DeleteFunc(slices.Clone(cfg.BuildFlags), func(flag string) bool {
-			return flag == "-overlay="+overlayFile
-		})
-		cfg.BuildFlags = append(cfg.BuildFlags, "-overlay="+formatOverlay)
-		// The metadata overlay now supplies this package's compiled filenames.
-		delete(llgoFiles, formatPackagePath)
-	}
 	dedup.SetLLGoFiles(llgoFiles)
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
 		if data, ok := conf.Overlay[filename]; ok {
@@ -1008,6 +992,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
+	formatSupport := dedup.Check("fmt") != nil && prepareValueFormatSupport(conf, export, frontendOptions)
+	if formatSupport {
+		altPkgPaths = append(altPkgPaths, fmtspecialize.RuntimePath)
+	}
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
 	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
@@ -1080,6 +1068,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		buildTrace:       buildTrace,
 		goVersion:        sourcePatchGoVersion,
 		defaultGODEBUG:   defaultGODEBUG,
+	}
+	if formatSupport {
+		ctx.formatRuntime = dedup.Check(fmtspecialize.RuntimePath)
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -1968,7 +1959,8 @@ type context struct {
 	commands             commandEnv
 	frontendOptions      cl.Options
 	staticByteArrays     map[string][]byte
-	valueFormatPlan      *valueFormatPlan
+	formatRuntime        *packages.Cached
+	valueFormatPlan      *fmtspecialize.ValuePlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	wasmRuntimeFree      bool
@@ -4310,6 +4302,8 @@ type aPackage struct {
 	AltPkg *packages.Cached
 	LPkg   llssa.Package
 
+	formatRuntime *packages.Package
+
 	NeedRt          bool
 	NeedPyInit      bool
 	ssaInstructions int64
@@ -4364,11 +4358,14 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				return
 			}
 			var altPkg *packages.Cached
+			var formatRuntime *packages.Package
 			if prog.Package(p.Types) == nil {
-				if err := ctx.prepareValueFormatSource(p); err != nil {
+				dep, err := ctx.prepareValueFormatSource(p)
+				if err != nil {
 					formatErr = err
 					return
 				}
+				formatRuntime = dep
 			}
 			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
 			if created {
@@ -4395,6 +4392,7 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				Package:          p,
 				SSA:              ssaPkg,
 				AltPkg:           altPkg,
+				formatRuntime:    formatRuntime,
 				LPkg:             nil,
 				NeedRt:           false,
 				NeedPyInit:       false,
@@ -4519,9 +4517,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 	var total int64
 	formats := canSpecializeFormats(ctx)
 	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
-	var valueFormats *valueFormatPlan
-	if scalarFormats {
-		valueFormats = ctx.newValueFormatPlan()
+	var valueFormats *fmtspecialize.ValuePlan
+	if scalarFormats && ctx.frontend == nil {
+		valueFormats = fmtspecialize.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
 	}
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
@@ -4540,9 +4538,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 			if formats {
 				for _, instruction := range block.Instrs {
 					if valueFormats != nil {
-						valueFormats.record(instruction, fn.Pkg)
+						valueFormats.Record(instruction, fn.Pkg)
 					}
-					specializeFormat(instruction, scalarFormats)
+					fmtspecialize.RewriteCall(instruction, scalarFormats)
 				}
 			}
 			if fn.Pkg == nil {
@@ -4553,7 +4551,7 @@ func recordPackageSSAInstructions(ctx *context) error {
 			total += instructions
 		}
 	}
-	if valueFormats != nil && len(valueFormats.calls) != 0 {
+	if valueFormats.HasCalls() {
 		ctx.valueFormatPlan = valueFormats
 	}
 	for _, pkg := range ctx.pkgs {

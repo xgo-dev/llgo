@@ -72,7 +72,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 
 	srcDir := filepath.Join(goroot, "src", filepath.FromSlash(pkgPath))
 	srcEntries, err := os.ReadDir(srcDir)
-	if err != nil && !(os.IsNotExist(err) && pkgPath == formatPackagePath) {
+	if err != nil {
 		if os.IsNotExist(err) {
 			return false, current, nil, nil
 		}

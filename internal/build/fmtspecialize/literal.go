@@ -1,22 +1,16 @@
-package build
+// Package fmtspecialize lowers fmt calls whose format and operand types are known.
+package fmtspecialize
 
 import (
 	"go/constant"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/optlevel"
 	"golang.org/x/tools/go/ssa"
 )
 
-func canSpecializeFormats(ctx *context) bool {
-	conf := ctx.buildConf
-	return conf != nil && conf.OptLevel != optlevel.O0 &&
-		ctx.mode != ModeGen && !ctx.frontendOptions.DebuggerFrames
-}
-
 // Rewrite during the instruction-counting pass, before reachability analysis,
 // so a specialized format can release the general formatter and reflection.
-func specializeFormat(instruction ssa.Instruction, scalarFormats bool) {
+func RewriteCall(instruction ssa.Instruction, scalarFormats bool) {
 	call, ok := instruction.(ssa.CallInstruction)
 	if !ok {
 		return

@@ -234,35 +234,3 @@ func TestCleanReportsRemovalErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestFormatPackageOverlayKeepsUserMappings(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "backing.go")
-	replaced := filepath.Join(root, "main.go")
-	deleted := filepath.Join(root, "old.go")
-	patch := filepath.Join(root, "format.go")
-	path, err := formatPackageOverlay(map[string]SourceOverlayFile{
-		replaced: {BackingFile: source},
-		deleted:  {},
-	}, []string{patch}, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(path) })
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest struct{ Replace map[string]string }
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{
-		replaced: source,
-		deleted:  "",
-		filepath.Join(root, "src", formatPackagePath, "z_llgo_patch_format.go"): patch,
-	}
-	if !reflect.DeepEqual(manifest.Replace, want) {
-		t.Fatalf("format package overlay = %v, want %v", manifest.Replace, want)
-	}
-}
