@@ -2,9 +2,11 @@ package binaryspecialize
 
 import (
 	"encoding/binary"
+	"fmt"
 	"go/token"
 	"go/types"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +62,18 @@ func TestFixedLayoutChecksWidthLimit(t *testing.T) {
 		if wire := fixedLayout(checkedType(t, text), 4); wire != nil {
 			t.Fatalf("%s exceeds the target width limit: %+v", text, wire)
 		}
+	}
+}
+
+func TestFixedLayoutLimitsGeneratedBody(t *testing.T) {
+	var text strings.Builder
+	text.WriteString("struct{")
+	for i := 0; i < maxCodecNodes; i++ {
+		fmt.Fprintf(&text, " F%d uint8;", i)
+	}
+	text.WriteString(" }")
+	if wire := fixedLayout(checkedType(t, text.String()), math.MaxInt32); wire != nil {
+		t.Fatalf("generated codec exceeded its node budget")
 	}
 }
 

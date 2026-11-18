@@ -1030,6 +1030,15 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
+	// Generated codecs must be registered before any package is given to SSA,
+	// including standard libraries also reachable from alternate runtime roots.
+	var binaryCodecPackages map[*types.Package]bool
+	if codec := dedup.Check("encoding/binary"); codec != nil {
+		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
@@ -1052,22 +1061,23 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:   make(map[string]bool),
-		pkgs:             map[*packages.Package]Package{},
-		pkgByID:          map[string]Package{},
-		cacheManager:     newCacheManager(),
-		patchFiles:       llgoFiles,
-		output:           output,
-		passOpt:          passOpt,
-		buildConf:        conf,
-		crossCompile:     export,
-		commands:         commands,
-		frontendOptions:  frontendOptions,
-		staticByteArrays: altByteArrays,
-		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:       buildTrace,
-		goVersion:        sourcePatchGoVersion,
-		defaultGODEBUG:   defaultGODEBUG,
+		fingerprinting:      make(map[string]bool),
+		pkgs:                map[*packages.Package]Package{},
+		pkgByID:             map[string]Package{},
+		cacheManager:        newCacheManager(),
+		patchFiles:          llgoFiles,
+		output:              output,
+		passOpt:             passOpt,
+		buildConf:           conf,
+		crossCompile:        export,
+		commands:            commands,
+		frontendOptions:     frontendOptions,
+		staticByteArrays:    altByteArrays,
+		binaryCodecPackages: binaryCodecPackages,
+		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:          buildTrace,
+		goVersion:           sourcePatchGoVersion,
+		defaultGODEBUG:      defaultGODEBUG,
 	}
 	if formatSupport {
 		ctx.formatRuntime = dedup.Check(fmtspecialize.RuntimePath)
@@ -1962,6 +1972,7 @@ type context struct {
 	valueFormatPlan      *fmtspecialize.ValuePlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
+	binaryCodecPackages  map[*types.Package]bool
 	wasmRuntimeFree      bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots        []string
