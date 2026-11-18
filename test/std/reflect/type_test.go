@@ -79,6 +79,37 @@ func TestTypeForFuncMatchesTypeOf(t *testing.T) {
 	}
 }
 
+func TestFuncOfInternsSignaturesAcrossGoroutines(t *testing.T) {
+	in := []reflect.Type{reflect.TypeFor[[]int]()}
+	out := []reflect.Type{reflect.TypeFor[int]()}
+	want := reflect.TypeFor[func(...int) int]()
+
+	const workers = 4
+	types := make(chan reflect.Type, workers)
+	for range workers {
+		go func() {
+			typ := reflect.FuncOf(in, out, true)
+			fn := reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
+				return []reflect.Value{reflect.ValueOf(args[0].Len())}
+			})
+			got := fn.CallSlice([]reflect.Value{reflect.ValueOf([]int{4, 5})})[0].Int()
+			if got != 2 || fn.Type() != typ || typ != want {
+				t.Errorf("MakeFunc type = %v, FuncOf type = %v, result = %d", fn.Type(), typ, got)
+			}
+			types <- reflect.FuncOf(in, out, false)
+		}()
+	}
+	plain := <-types
+	if plain == want || plain.IsVariadic() {
+		t.Fatalf("non-variadic signature interned as %v", plain)
+	}
+	for range workers - 1 {
+		if got := <-types; got != plain {
+			t.Errorf("FuncOf reused distinct descriptors for %v and %v", got, plain)
+		}
+	}
+}
+
 func TestTypeForMatchesStructFieldType(t *testing.T) {
 	type holder struct {
 		Value *big.Int
