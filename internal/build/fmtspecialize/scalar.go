@@ -1,4 +1,4 @@
-package build
+package fmtspecialize
 
 import (
 	"go/constant"

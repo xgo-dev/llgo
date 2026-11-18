@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"golang.org/x/tools/go/ssa"
 )
@@ -115,7 +116,7 @@ func TestScalarFormatsRequireKnownArgumentStorage(t *testing.T) {
 				array := slice.X.(*ssa.Alloc)
 				slot := (*array.Referrers())[0].(*ssa.IndexAddr)
 				change(slice, slot)
-				specializeFormat(call, true)
+				fmtspecialize.RewriteCall(call, true)
 				if got := call.Common().StaticCallee().Name(); got != "Sprintf" {
 					t.Fatalf("specialized a call with %s: %s", name, got)
 				}

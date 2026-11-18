@@ -1,5 +1,3 @@
-//go:build llgo && wasip1 && wasm && llgo.fmt.value
-
 // Package llgofmt provides shared formatting operations for compiler-generated
 // typed formatters. Each call site supplies concrete values and formatters.
 package llgofmt

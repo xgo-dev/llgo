@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/lto"
@@ -27,14 +28,7 @@ func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs 
 	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.valueFormatPlan == nil {
 		return nil
 	}
-	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
-		conf.BuildMode != BuildModeExe || conf.OptLevel != optlevel.Oz || conf.WasmOpt != WasmOptSize ||
-		(conf.Target != "" && conf.Target != "wasi" && conf.Target != "wasip1") ||
-		ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 ||
-		ctx.crossCompile.WasmProvider != crosscompile.WasmProviderWASI || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		conf.LinkOptions.ExternalLinker != "" ||
-		ctx.wasmRuntimeFree || ctx.frontend != nil ||
-		conf.Coverage != nil || conf.ModuleHook != nil || ctx.frontendOptions.Debug || ctx.frontendOptions.DebuggerFrames {
+	if !wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions) || ctx.wasmRuntimeFree || ctx.frontend != nil {
 		return nil
 	}
 	// Full LTO consumes the strong overrides in the merged module. ThinLTO
@@ -56,6 +50,15 @@ func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs 
 		return nil
 	}
 	return &wasiSizePruningInputs{goroot: goroot}
+}
+
+func wasiSizePruningConfig(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
+	return (conf.Mode == ModeBuild || conf.Mode == ModeRun || conf.Mode == ModeTest) &&
+		conf.BuildMode == BuildModeExe && conf.OptLevel == optlevel.Oz && conf.WasmOpt == WasmOptSize &&
+		(conf.Target == "" || conf.Target == "wasi" || conf.Target == "wasip1") &&
+		target.WasmProfile == crosscompile.WasmProfileW32 && target.WasmProvider == crosscompile.WasmProviderWASI &&
+		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
+		conf.Coverage == nil && conf.ModuleHook == nil && !frontend.Debug && !frontend.DebuggerFrames
 }
 
 // Alternate and bundled native packages bypass the initializer pass's normal

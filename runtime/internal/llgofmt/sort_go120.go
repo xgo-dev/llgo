@@ -1,4 +1,4 @@
-//go:build llgo && wasip1 && wasm && llgo.fmt.value && !go1.21
+//go:build !go1.21
 
 package llgofmt
 

@@ -39,6 +39,9 @@ func effectiveDependencies(pkg *aPackage) []*packages.Package {
 		}
 	}
 	add(pkg.Imports)
+	if pkg.formatRuntime != nil {
+		deps[pkg.formatRuntime.ID] = pkg.formatRuntime
+	}
 	if pkg.AltPkg != nil {
 		add(pkg.AltPkg.Imports)
 	}
