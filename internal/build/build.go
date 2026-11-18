@@ -739,6 +739,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	tags := DefaultBuildTags()
 	tags += "," + target.ClosureEnvBuildTag()
+	if conf.OptLevel == optlevel.Oz && conf.BuildMode == BuildModeExe && conf.Mode != ModeGen &&
+		export.WasmProvider == crosscompile.WasmProviderWASI && export.WasmProfile == crosscompile.WasmProfileW32 {
+		tags += ",llgo.fmt.value"
+	}
 	if conf.PCLNMode == PCLNExternal {
 		// Select the optional runtime loader as part of the normal package
 		// cache key. Embedded and none builds do not compile any loader or
@@ -905,6 +909,19 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchGoVersion)
 	if err != nil {
 		return nil, err
+	}
+	if files := llgoFiles[formatPackagePath]; len(files) != 0 {
+		formatOverlay, err := formatPackageOverlay(conf.SourceOverlay, files, sourcePatchGOROOT)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(formatOverlay)
+		cfg.BuildFlags = slices.DeleteFunc(slices.Clone(cfg.BuildFlags), func(flag string) bool {
+			return flag == "-overlay="+overlayFile
+		})
+		cfg.BuildFlags = append(cfg.BuildFlags, "-overlay="+formatOverlay)
+		// The metadata overlay now supplies this package's compiled filenames.
+		delete(llgoFiles, formatPackagePath)
 	}
 	dedup.SetLLGoFiles(llgoFiles)
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
@@ -1108,9 +1125,18 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	} else {
 		buildSSAPkgs(ctx, ssaEntries)
 	}
+	var asmRoots *wasiSizePruningInputs
+	var preparedInitializers bool
 	if ctx.frontend == nil {
 		if err := recordPackageSSAInstructions(ctx); err != nil {
 			return nil, err
+		}
+		if ctx.valueFormatPlan != nil {
+			// Resolve the rewrite before collecting initializer and feature usage.
+			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+			configureUnusedGlobalInits(ctx, asmRoots)
+			configureValueFormats(ctx, asmRoots)
+			preparedInitializers = true
 		}
 		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
@@ -1146,10 +1172,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	configureWasmRuntimeFree(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
-	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
-	configureUnusedGlobalInits(ctx, asmRoots)
+	if !preparedInitializers {
+		asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+		configureUnusedGlobalInits(ctx, asmRoots)
+	}
 	configureWasiReleaseDCE(ctx, asmRoots)
-	configureMapFormats(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
 			return nil, err
@@ -1935,16 +1962,16 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf         *Config
-	crossCompile      crosscompile.Export
-	commands          commandEnv
-	frontendOptions   cl.Options
-	staticByteArrays  map[string][]byte
-	mapFormatPlan     *mapFormatPlan
-	mapFormatPackages map[*types.Package]bool
-	wasmRuntimeFree   bool
-	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
-	wasiSizeRoots     []string
+	buildConf           *Config
+	crossCompile        crosscompile.Export
+	commands            commandEnv
+	frontendOptions     cl.Options
+	staticByteArrays    map[string][]byte
+	valueFormatPlan     *valueFormatPlan
+	valueFormatPackages map[*types.Package]bool
+	wasmRuntimeFree     bool
+	wasmClosedProgram   bool // true when native inputs cannot introduce untracked Go references
+	wasiSizeRoots       []string
 
 	cTransformer *cabi.Transformer
 
@@ -4477,9 +4504,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 	var total int64
 	formats := canSpecializeFormats(ctx)
 	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
-	var mapFormats *mapFormatPlan
+	var valueFormats *valueFormatPlan
 	if scalarFormats {
-		mapFormats = ctx.newMapFormatPlan()
+		valueFormats = ctx.newValueFormatPlan()
 	}
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
@@ -4498,8 +4525,8 @@ func recordPackageSSAInstructions(ctx *context) error {
 			if formats {
 				for _, instruction := range block.Instrs {
 					specializeFormat(instruction, scalarFormats)
-					if mapFormats != nil {
-						mapFormats.record(instruction, fn.Pkg)
+					if valueFormats != nil {
+						valueFormats.record(instruction, fn.Pkg)
 					}
 				}
 			}
@@ -4511,8 +4538,8 @@ func recordPackageSSAInstructions(ctx *context) error {
 			total += instructions
 		}
 	}
-	if mapFormats != nil && len(mapFormats.calls) != 0 {
-		ctx.mapFormatPlan = mapFormats
+	if valueFormats != nil && len(valueFormats.calls) != 0 {
+		ctx.valueFormatPlan = valueFormats
 	}
 	for _, pkg := range ctx.pkgs {
 		if pkg == nil {
