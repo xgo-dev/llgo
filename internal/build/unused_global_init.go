@@ -115,7 +115,7 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *wasiSizePruningInputs) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
 	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
-	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
+	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.commands.lookup("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
 		for _, flag := range safesplit.SplitPkgConfigFlags(flags) {
 			// Clang splits -Wl on every comma; a diagnostic option can be
 			// followed by an export, forced root or native object.
@@ -196,26 +196,40 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		return false
 	}
 	for _, path := range files {
-		src, err := llplan9asm.ReadFileWithOverlay(ctx.buildConf.Overlay, path)
+		mod, err := translatePruningAssembly(ctx, pkg, path)
 		if err != nil {
 			return false
 		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
-		if err != nil {
-			if strings.Contains(err.Error(), "no TEXT directive found") {
-				continue
-			}
-			return false
+		if mod.IsNil() {
+			continue
 		}
-		for global := tr.Module.FirstGlobal(); !global.IsNil(); global = gllvm.NextGlobal(global) {
+		for global := mod.FirstGlobal(); !global.IsNil(); global = gllvm.NextGlobal(global) {
 			exported[global.Name()] = true
 		}
 		if asmRoots != nil {
-			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, tr.Module)
+			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, mod)
 		}
-		tr.Module.Dispose()
+		mod.Dispose()
 	}
 	return true
+}
+
+// translatePruningAssembly returns an empty module for placeholder files
+// skipped by the Plan 9 assembly compiler.
+func translatePruningAssembly(ctx *context, pkg *packages.Package, path string) (gllvm.Module, error) {
+	conf := ctx.buildConf
+	src, err := llplan9asm.ReadFileWithOverlay(conf.Overlay, path)
+	if err != nil {
+		return gllvm.Module{}, err
+	}
+	tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, conf.Goos, conf.Goarch, plan9asmTranslateOptions(conf, ctx.crossCompile.BuildTags))
+	if err != nil {
+		if strings.Contains(err.Error(), "no TEXT directive found") {
+			return gllvm.Module{}, nil
+		}
+		return gllvm.Module{}, err
+	}
+	return tr.Module, nil
 }
 
 // canPruneWasmTypeMetadata shares the closed-program boundary with initializer

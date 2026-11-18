@@ -4,9 +4,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
@@ -80,25 +82,36 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		flags     string
+		envFlags  string
+		wantLog   string
 		decl      string
 		arch      crosscompile.WasmProfile
 		proof     bool
 		noRoot    bool
 		nativeAsm string
+		asmSource string
+		noAsm     bool
 		lto       lto.Mode
 		plugin    string
 	}{
 		{name: "closed", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "full LTO", arch: crosscompile.WasmProfileW32, lto: lto.Full, proof: true},
-		{name: "full LTO with plugin", arch: crosscompile.WasmProfileW32, lto: lto.Full, plugin: "unknown-pass.so"},
+		{name: "full LTO with plugin", arch: crosscompile.WasmProfileW32, lto: lto.Full, plugin: "unknown-pass.so", wantLog: "LTO pass plugin"},
 		{name: "full LTO with bundled assembly", arch: crosscompile.WasmProfileW32, lto: lto.Full, nativeAsm: "bundled"},
-		{name: "thin LTO", arch: crosscompile.WasmProfileW32, lto: lto.Thin},
+		{name: "thin LTO", arch: crosscompile.WasmProfileW32, lto: lto.Thin, wantLog: "retain WASI code and metadata: ThinLTO"},
+		{name: "link map", arch: crosscompile.WasmProfileW32, lto: lto.Full, envFlags: "-Wl,--print-map", proof: true},
+		{name: "environment adds root", arch: crosscompile.WasmProfileW32, lto: lto.Full, envFlags: "-Wl,--print-map,--undefined=main.hostMain", wantLog: "linker flags"},
+		{name: "bundled placeholder", arch: crosscompile.WasmProfileW32, lto: lto.Full, nativeAsm: "bundled", asmSource: "// linker placeholder\n", proof: true},
+		{name: "alternate placeholder", arch: crosscompile.WasmProfileW32, lto: lto.Full, nativeAsm: "alternate", asmSource: "// linker placeholder\n", proof: true},
 		{name: "known C export", decl: "//export main\n", arch: crosscompile.WasmProfileW32, proof: true},
-		{name: "unknown export", decl: "//go:wasmexport hostMain\n", arch: crosscompile.WasmProfileW32},
+		{name: "unknown export", decl: "//go:wasmexport hostMain\n", arch: crosscompile.WasmProfileW32, wantLog: "untracked host export in main"},
 		{name: "explicit linker root", flags: "-Wl,--export=hostMain", arch: crosscompile.WasmProfileW32},
 		{name: "JS", arch: crosscompile.WasmProfileJ32},
 		{name: "no source roots", arch: crosscompile.WasmProfileW32, noRoot: true},
-		{name: "bundled assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "bundled"},
+		{name: "bundled assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "bundled",
+			asmSource: "TEXT ·Read(SB),NOSPLIT,$0-0\n\tRET\n", wantLog: "opaque assembly in example.com/runtime-test"},
+		{name: "unreadable alternate assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "alternate",
+			noAsm: true, wantLog: "opaque assembly in example.com/runtime-test"},
 		{name: "alternate assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "alternate"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -118,8 +131,9 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			}
 			ctx := &context{
 				mode: ModeBuild, prog: prog, progSSA: ssaPkg.Prog, buildConf: conf,
-				initial: []*packages.Package{pkg},
-				pkgByID: map[string]*aPackage{"main": {Package: pkg}},
+				commands: commandEnv{environ: []string{"LDFLAGS=" + test.envFlags}},
+				initial:  []*packages.Package{pkg},
+				pkgByID:  map[string]*aPackage{"main": {Package: pkg}},
 				crossCompile: crosscompile.Export{
 					WasmProfile: test.arch, WasmProvider: crosscompile.WasmProviderWASI,
 				},
@@ -132,17 +146,32 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 				if test.nativeAsm == "bundled" {
 					dir = filepath.Join(env.LLGoROOT(), "runtime")
 				}
+				path := filepath.Join(dir, "read_wasm.s")
 				native := &packages.Package{ID: "runtime-test", PkgPath: "example.com/runtime-test", Dir: dir,
-					OtherFiles: []string{filepath.Join(dir, "read_wasm.s")}}
+					Types: types.NewPackage("example.com/runtime-test", "runtimetest"), OtherFiles: []string{path},
+					TypesSizes: &types.StdSizes{WordSize: 4, MaxAlign: 8}}
+				read := types.NewFunc(token.NoPos, native.Types, "Read", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+				native.Types.Scope().Insert(read)
+				if test.noAsm {
+					t.Setenv(llgoPlan9ASMPkgs, "none")
+				}
+				if test.asmSource != "" {
+					conf.Overlay = map[string][]byte{path: []byte(test.asmSource)}
+				}
 				if test.nativeAsm == "bundled" {
 					ctx.pkgByID[native.ID] = &aPackage{Package: native}
 				} else {
 					ctx.pkgByID["main"].AltPkg = &packages.Cached{Package: native}
 				}
 			}
+			readStderr := captureStderr(t)
 			inputs := ctx.wasiSizePruningInputs(t.TempDir())
 			configureUnusedGlobalInits(ctx, inputs)
 			configureWasiReleaseDCE(ctx, inputs)
+			log := readStderr()
+			if test.wantLog != "" && !strings.Contains(log, test.wantLog) {
+				t.Fatalf("WASI -Oz diagnostics = %q, want %q", log, test.wantLog)
+			}
 			if got := conf.deadcodeDropEnabled(); got != test.proof {
 				t.Fatalf("WASI -Oz pruning = %v, want %v", got, test.proof)
 			}
