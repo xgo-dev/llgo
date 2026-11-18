@@ -86,9 +86,12 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 		noRoot    bool
 		nativeAsm string
 		lto       lto.Mode
+		plugin    string
 	}{
 		{name: "closed", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "full LTO", arch: crosscompile.WasmProfileW32, lto: lto.Full, proof: true},
+		{name: "full LTO with plugin", arch: crosscompile.WasmProfileW32, lto: lto.Full, plugin: "unknown-pass.so"},
+		{name: "full LTO with bundled assembly", arch: crosscompile.WasmProfileW32, lto: lto.Full, nativeAsm: "bundled"},
 		{name: "thin LTO", arch: crosscompile.WasmProfileW32, lto: lto.Thin},
 		{name: "known C export", decl: "//export main\n", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "unknown export", decl: "//go:wasmexport hostMain\n", arch: crosscompile.WasmProfileW32},
@@ -110,7 +113,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			conf := &Config{
 				Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
 				OptLevel: optlevel.Oz, WasmOpt: WasmOptSize, PrintCommands: true,
-				LTO: test.lto, DisableGoGlobalDCE: true,
+				LTO: test.lto, DisableGoGlobalDCE: true, LTOPlugin: lto.PassPlugin{Path: test.plugin},
 				LinkOptions: LinkOptions{ExternalLinkerFlags: test.flags},
 			}
 			ctx := &context{

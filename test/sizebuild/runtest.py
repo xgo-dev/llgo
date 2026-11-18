@@ -61,17 +61,22 @@ def controlled_environment(source):
 
 
 def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
-    module = directory / "fmt-literal-callers-full-size.wasm"
-    log = command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
-                   "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
-                   "-o", str(module), "./internal/build/testdata/wasm-fmt-literal-callers"], env)
-    if "llgo: enable closed-program WASI size pruning" not in log:
-        raise RuntimeError(f"WASI Full LTO skipped Go reachability pruning\n{log}")
-    actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
-                      "--stack-size=1048576", str(module)], env, timeout=90)
-    if actual.strip() != "literal format caller parity passed":
-        raise RuntimeError(f"WASI Full LTO changed formatter callers: {actual}")
-    print("WASI Full LTO size pruning preserved formatter callers", flush=True)
+    cases = (
+        ("wasm-fmt-literal-callers", "literal format caller parity passed"),
+        ("wasm-wasi-thread-startup", "wasi thread startup ok"),
+    )
+    for fixture, expected in cases:
+        module = directory / f"{fixture}-full-size.wasm"
+        log = command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
+                       "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(module), f"./internal/build/testdata/{fixture}"], env)
+        if "llgo: enable closed-program WASI size pruning" not in log:
+            raise RuntimeError(f"{fixture}: WASI Full LTO skipped Go reachability pruning\n{log}")
+        actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
+                          "--stack-size=1048576", str(module)], env, timeout=90)
+        if actual.strip() != expected:
+            raise RuntimeError(f"{fixture}: expected {expected!r}, got {actual!r}")
+    print("WASI Full LTO size pruning preserved formatter callers and worker startup", flush=True)
 
 
 def main():

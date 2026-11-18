@@ -24,9 +24,7 @@ type wasiSizePruningInputs struct {
 
 func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
 	conf := ctx.buildConf
-	// Full LTO can consume the generated strong overrides directly. ThinLTO's
-	// archive ownership and prevailing-definition rules need a separate pass.
-	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() || conf.ltoMode() == lto.Thin ||
+	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() || conf.LTOPlugin.Enabled() ||
 		(conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.BuildMode != BuildModeExe || conf.OptLevel != optlevel.Oz || conf.WasmOpt != WasmOptSize ||
 		(conf.Target != "" && conf.Target != "wasi" && conf.Target != "wasip1") ||
@@ -35,6 +33,15 @@ func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs 
 		conf.LinkOptions.ExternalLinker != "" || ctx.commands.lookup("LDFLAGS") != "" ||
 		ctx.wasmRuntimeFree || ctx.frontend != nil ||
 		conf.Coverage != nil || conf.ModuleHook != nil || ctx.frontendOptions.Debug || ctx.frontendOptions.DebuggerFrames {
+		return nil
+	}
+	// Full LTO consumes the strong overrides in the merged module. ThinLTO
+	// resolves archive ownership separately, so release builds use its
+	// conservative link until that combination has been validated.
+	if conf.ltoMode() == lto.Thin {
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: retain WASI code and metadata: ThinLTO")
+		}
 		return nil
 	}
 	if len(wasmReflectRoots(ctx)) == 0 {
