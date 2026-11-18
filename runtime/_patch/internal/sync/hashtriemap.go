@@ -39,9 +39,15 @@ type entry[K comparable, V any] struct {
 	value    V
 }
 
+type hashTrieEntry[K comparable, V any] struct {
+	key   K
+	value V
+}
+
 // HashTrieMap is a compatibility implementation for llgo.
-// It preserves the zero-value and concurrency semantics expected by sync.Map,
-// but uses a simple mutex-protected slice instead of the runtime hash trie.
+// It preserves the zero-value and concurrency semantics expected by sync.Map
+// while using a mutex-protected key-to-index map for average O(1) lookups and
+// a dense entry slice for efficient Range snapshots.
 type HashTrieMap[K comparable, V any] struct {
 	// Keep the leading field layout compatible with the upstream type so
 	// imported stdlib code that still selects these fields by index can build.
@@ -52,40 +58,36 @@ type HashTrieMap[K comparable, V any] struct {
 	valEqual equalFunc
 	seed     uintptr
 
-	mu Mutex
-	m  []hashTrieEntry[K, V]
-}
-
-type hashTrieEntry[K comparable, V any] struct {
-	key   K
-	value V
+	mu      Mutex
+	m       map[K]int
+	entries []hashTrieEntry[K, V]
 }
 
 func (ht *HashTrieMap[K, V]) ensureMap() {
 	if ht.m == nil {
-		ht.m = make([]hashTrieEntry[K, V], 0)
+		ht.m = make(map[K]int)
 	}
 }
 
 func (ht *HashTrieMap[K, V]) Load(key K) (value V, ok bool) {
 	ht.mu.Lock()
-	if i := ht.findIndex(key); i >= 0 {
-		value, ok = ht.m[i].value, true
+	defer ht.mu.Unlock()
+	index, ok := ht.m[key]
+	if ok {
+		value = ht.entries[index].value
 	}
-	ht.mu.Unlock()
 	return
 }
 
 func (ht *HashTrieMap[K, V]) LoadOrStore(key K, value V) (result V, loaded bool) {
 	ht.mu.Lock()
+	defer ht.mu.Unlock()
 	ht.ensureMap()
-	if i := ht.findIndex(key); i >= 0 {
-		existing := ht.m[i].value
-		ht.mu.Unlock()
-		return existing, true
+	if index, ok := ht.m[key]; ok {
+		return ht.entries[index].value, true
 	}
-	ht.m = append(ht.m, hashTrieEntry[K, V]{key: key, value: value})
-	ht.mu.Unlock()
+	ht.m[key] = len(ht.entries)
+	ht.entries = append(ht.entries, hashTrieEntry[K, V]{key: key, value: value})
 	return value, false
 }
 
@@ -95,38 +97,37 @@ func (ht *HashTrieMap[K, V]) Store(key K, value V) {
 
 func (ht *HashTrieMap[K, V]) Swap(key K, new V) (previous V, loaded bool) {
 	ht.mu.Lock()
+	defer ht.mu.Unlock()
 	ht.ensureMap()
-	if i := ht.findIndex(key); i >= 0 {
-		previous = ht.m[i].value
-		ht.m[i].value = new
-		loaded = true
-	} else {
-		ht.m = append(ht.m, hashTrieEntry[K, V]{key: key, value: new})
+	if index, ok := ht.m[key]; ok {
+		previous, loaded = ht.entries[index].value, true
+		ht.entries[index].value = new
+		return
 	}
-	ht.mu.Unlock()
+	ht.m[key] = len(ht.entries)
+	ht.entries = append(ht.entries, hashTrieEntry[K, V]{key: key, value: new})
 	return
 }
 
 func (ht *HashTrieMap[K, V]) CompareAndSwap(key K, old, new V) bool {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if i := ht.findIndex(key); i < 0 {
+	index, ok := ht.m[key]
+	if !ok || !hashTrieValueEqual(ht.entries[index].value, old) {
 		return false
-	} else if !hashTrieValueEqual(ht.m[i].value, old) {
-		return false
-	} else {
-		ht.m[i].value = new
-		return true
 	}
+	ht.entries[index].value = new
+	return true
 }
 
 func (ht *HashTrieMap[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
 	ht.mu.Lock()
-	if i := ht.findIndex(key); i >= 0 {
-		value, loaded = ht.m[i].value, true
-		ht.deleteIndex(i)
+	defer ht.mu.Unlock()
+	index, loaded := ht.m[key]
+	if loaded {
+		value = ht.entries[index].value
+		ht.deleteIndex(index)
 	}
-	ht.mu.Unlock()
 	return
 }
 
@@ -137,14 +138,12 @@ func (ht *HashTrieMap[K, V]) Delete(key K) {
 func (ht *HashTrieMap[K, V]) CompareAndDelete(key K, old V) bool {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if i := ht.findIndex(key); i < 0 {
+	index, ok := ht.m[key]
+	if !ok || !hashTrieValueEqual(ht.entries[index].value, old) {
 		return false
-	} else if !hashTrieValueEqual(ht.m[i].value, old) {
-		return false
-	} else {
-		ht.deleteIndex(i)
-		return true
 	}
+	ht.deleteIndex(index)
+	return true
 }
 
 func (ht *HashTrieMap[K, V]) All() func(yield func(K, V) bool) {
@@ -165,43 +164,40 @@ func (ht *HashTrieMap[K, V]) Range(yield func(K, V) bool) {
 func (ht *HashTrieMap[K, V]) Clear() {
 	ht.mu.Lock()
 	ht.m = nil
+	ht.entries = nil
 	ht.mu.Unlock()
 }
 
 func (ht *HashTrieMap[K, V]) snapshot() []hashTrieEntry[K, V] {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
-	if len(ht.m) == 0 {
+	if len(ht.entries) == 0 {
 		return nil
 	}
-	entries := make([]hashTrieEntry[K, V], len(ht.m))
-	copy(entries, ht.m)
+	entries := make([]hashTrieEntry[K, V], len(ht.entries))
+	copy(entries, ht.entries)
 	return entries
+}
+
+func (ht *HashTrieMap[K, V]) deleteIndex(index int) {
+	last := len(ht.entries) - 1
+	removed := ht.entries[index].key
+	if index != last {
+		moved := ht.entries[last]
+		ht.entries[index] = moved
+		// Non-reflexive keys cannot be looked up; assigning again adds an entry.
+		if moved.key == moved.key {
+			ht.m[moved.key] = index
+		}
+	}
+	delete(ht.m, removed)
+	var zero hashTrieEntry[K, V]
+	ht.entries[last] = zero
+	ht.entries = ht.entries[:last]
 }
 
 func hashTrieValueEqual[V any](a, b V) bool {
 	// Match upstream sync.Map CompareAndSwap/CompareAndDelete behavior:
 	// non-comparable values panic during equality comparison.
 	return any(a) == any(b)
-}
-
-func hashTrieKeyEqual[K comparable](a, b K) bool {
-	return a == b
-}
-
-func (ht *HashTrieMap[K, V]) findIndex(key K) int {
-	for i := range ht.m {
-		if hashTrieKeyEqual(ht.m[i].key, key) {
-			return i
-		}
-	}
-	return -1
-}
-
-func (ht *HashTrieMap[K, V]) deleteIndex(i int) {
-	last := len(ht.m) - 1
-	ht.m[i] = ht.m[last]
-	var zero hashTrieEntry[K, V]
-	ht.m[last] = zero
-	ht.m = ht.m[:last]
 }
