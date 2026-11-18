@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/parser"
 	"go/token"
 	"go/types"
-	"go/version"
-	"maps"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/types/typeutil"
@@ -19,18 +17,9 @@ import (
 // RuntimePath is the shared runtime support for generated formatters.
 const RuntimePath = "github.com/xgo-dev/llgo/runtime/internal/llgofmt"
 
-type formatSourceImporter map[string]*types.Package
-
-func (i formatSourceImporter) Import(path string) (*types.Package, error) {
-	if pkg := i[path]; pkg != nil {
-		return pkg, nil
-	}
-	return nil, fmt.Errorf("typed formatter cannot find package %s", path)
-}
-
 type formatSource struct {
 	owner   *types.Package
-	imports formatSourceImporter
+	imports typesynth.Importer
 	types   typeutil.Map
 	sizes   types.Sizes
 	top     typeutil.Map
@@ -52,7 +41,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 		}
 	}
 	gen := &formatSource{
-		owner: p.Types, imports: formatSourceImporter{RuntimePath: runtime, "unsafe": types.Unsafe},
+		owner: p.Types, imports: typesynth.Importer{RuntimePath: runtime, "unsafe": types.Unsafe},
 		sizes: p.TypesSizes,
 	}
 	for _, file := range p.Syntax {
@@ -102,35 +91,10 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 		src.WriteString("import __llgo_fmt_unsafe \"unsafe\"\n")
 	}
 	src.WriteString(gen.funcs.String())
-	file, err := parser.ParseFile(p.Fset, p.PkgPath+"/__llgo_format.go", src.String(), parser.SkipObjectResolution)
-	if err != nil {
-		return nil, false, fmt.Errorf("parse typed formatter: %w", err)
+	// Only the generated file requires the newer formatter language features.
+	if err := typesynth.AddFile(p, "__llgo_format.go", src.String(), gen.imports, "go1.21"); err != nil {
+		return nil, false, err
 	}
-	info := &types.Info{
-		Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object),
-		Uses: make(map[*ast.Ident]types.Object), Implicits: make(map[ast.Node]types.Object),
-		Instances: make(map[*ast.Ident]types.Instance), Scopes: make(map[ast.Node]*types.Scope),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection), FileVersions: make(map[*ast.File]string),
-	}
-	// Only the synthetic file uses the language features required by the formatter.
-	// Go 1.21 is the minimum override that go/types accepts for a single file.
-	lang := p.Types.GoVersion()
-	if lang != "" && version.Compare(lang, "go1.21") < 0 {
-		file.GoVersion = "go1.21"
-	}
-	conf := types.Config{Importer: gen.imports, Sizes: p.TypesSizes, GoVersion: lang}
-	if err := types.NewChecker(&conf, p.Fset, p.Types, info).Files([]*ast.File{file}); err != nil {
-		return nil, false, fmt.Errorf("type-check typed formatter for %s: %w", p.PkgPath, err)
-	}
-	maps.Copy(p.TypesInfo.Types, info.Types)
-	maps.Copy(p.TypesInfo.Defs, info.Defs)
-	maps.Copy(p.TypesInfo.Uses, info.Uses)
-	maps.Copy(p.TypesInfo.Implicits, info.Implicits)
-	maps.Copy(p.TypesInfo.Instances, info.Instances)
-	maps.Copy(p.TypesInfo.Scopes, info.Scopes)
-	maps.Copy(p.TypesInfo.Selections, info.Selections)
-	maps.Copy(p.TypesInfo.FileVersions, info.FileVersions)
-	p.Syntax = append(p.Syntax, file)
 	return &gen.tops, usesRuntime, nil
 }
 

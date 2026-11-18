@@ -19,7 +19,19 @@ type fieldLayout struct {
 	value  *layout
 }
 
+const maxCodecNodes = 256
+
 func fixedLayout(typ types.Type, maxWidth int64) *layout {
+	remaining := maxCodecNodes
+	return buildLayout(typ, maxWidth, &remaining)
+}
+
+func buildLayout(typ types.Type, maxWidth int64, remaining *int) *layout {
+	if *remaining == 0 {
+		return nil
+	}
+	*remaining--
+
 	wire := &layout{typ: typ}
 	switch base := typ.Underlying().(type) {
 	case *types.Basic:
@@ -41,7 +53,7 @@ func fixedLayout(typ types.Type, maxWidth int64) *layout {
 			return nil
 		}
 	case *types.Array:
-		item := fixedLayout(base.Elem(), maxWidth)
+		item := buildLayout(base.Elem(), maxWidth, remaining)
 		if item == nil || base.Len() < 0 || item.width != 0 && base.Len() > maxWidth/item.width {
 			return nil
 		}
@@ -50,7 +62,7 @@ func fixedLayout(typ types.Type, maxWidth int64) *layout {
 	case *types.Struct:
 		for i := 0; i < base.NumFields(); i++ {
 			field := base.Field(i)
-			value := fixedLayout(field.Type(), maxWidth)
+			value := buildLayout(field.Type(), maxWidth, remaining)
 			if value == nil || value.width > maxWidth-wire.width {
 				return nil
 			}
