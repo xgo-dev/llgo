@@ -1,34 +1,58 @@
 package build
 
 import (
-	"go/ast"
-	"go/parser"
 	"go/token"
+	"go/types"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/types/typeutil"
 )
+
+const typedFormatTestRuntime = `package llgofmt
+func AppendInt(b []byte, value int64) []byte { return b }
+func AppendUint(b []byte, value uint64) []byte { return b }
+func AppendFloat(b []byte, value float64, bits int) []byte { return b }
+func AppendComplex(b []byte, value complex128, bits int) []byte { return b }
+func AppendPointer(b []byte, value uintptr) []byte { return b }
+func Compare[T any](a,b T) int { return 0 }
+func AppendMap[K comparable,V any](b []byte, m map[K]V, cmp func(K,K) int, k func([]byte,K) []byte, v func([]byte,V) []byte) []byte { return b }
+`
 
 func TestSpecializeValueFormats(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		decl   string
 		main   string
+		local  string
 		expr   string
 		asm    string
 		open   bool
 		native bool
-		helper string
+		typed  bool
 	}{
-		{name: "string-int map", helper: "llgoSprintfValueWithMaps"},
-		{name: "named map without methods", expr: "plainMap(nil)", helper: "llgoSprintfValueWithMaps"},
-		{name: "compound map", expr: "map[[2]bool][]uint16(nil)", helper: "llgoSprintfValueWithMaps"},
-		{name: "struct array and slice", expr: "struct{ X [2][]int }{}", helper: "llgoSprintfValue"},
-		{name: "float", expr: "float32(4.25)", helper: "llgoSprintfValue"},
-		{name: "pointer to map", expr: "new(map[int]string)", helper: "llgoSprintfValueWithMaps"},
+		{name: "string-int map", typed: true},
+		{name: "named map", expr: "plainMap(nil)", typed: true},
+		{name: "compound map", expr: "map[[2]bool][]uint16(nil)", typed: true},
+		{name: "struct array and slice", expr: "struct{ X [2][]int }{}", typed: true},
+		{name: "float", expr: "float32(4.25)", typed: true},
+		{name: "float64", expr: "4.25", typed: true},
+		{name: "complex64", expr: "complex64(4+2i)", typed: true},
+		{name: "complex128", expr: "4+2i", typed: true},
+		{name: "int", expr: "17", typed: true},
+		{name: "uint", expr: "uint(17)", typed: true},
+		{name: "bool", expr: "true", typed: true},
+		{name: "string", expr: "string(118)", typed: true},
+		{name: "blank field", expr: "struct{ _ int; I int }{I: 1}", typed: true},
+		{name: "struct key", expr: "map[struct{ X float64; _ int; P *int }]uint(nil)", typed: true},
+		{name: "channel key", expr: "map[chan int]bool(nil)", typed: true},
+		{name: "channel", expr: "(chan int)(nil)", typed: true},
+		{name: "pointer to map", expr: "new(map[int]string)", typed: true},
+		{name: "local named type", local: "type local struct{ a int }; ", expr: "local{7}", typed: true},
 		{name: "recursive slice", expr: "recursive(nil)"},
 		{name: "interface field", expr: "struct{ X any }{}"},
 		{name: "nested method", expr: "[]namedMap(nil)"},
@@ -39,17 +63,17 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "user linkname", decl: "//go:linkname extra external_extra\n"},
 		{name: "unknown native roots", open: true},
 		{name: "native target", native: true},
-		{name: "named map", expr: "namedMap(nil)"},
+		{name: "custom method", expr: "namedMap(nil)"},
 		{name: "interface operand", expr: "dynamicMap()"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+			prog.CreatePackage(types.Unsafe, nil, nil, true)
+			runtime := buildFormatTestPackage(t, prog, formatPackagePath, typedFormatTestRuntime, nil)
 			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
 type pp struct{}
 func (*pp) printArg(a any) string { return "generic" }
 func Sprintf(_ string, args ...any) string { return (&pp{}).printArg(args[0]) }
-func llgoSprintfValue(_ string, args ...any) string { return "specialized" }
-func llgoSprintfValueWithMaps(_ string, args ...any) string { return "specialized with maps" }
 `, nil)
 			expr := tc.expr
 			if expr == "" {
@@ -62,17 +86,11 @@ type recursive []recursive
 type namedMap map[string]int
 func (namedMap) String() string { return "named" }
 func dynamicMap() any { return map[string]int(nil) }
-func render() string { return fmt.Sprintf("%v", ` + expr + `) }
+func render() string { ` + tc.local + `return fmt.Sprintf("%v", ` + expr + `) }
 ` + tc.decl + `func extra() { println(fmt.Sprintf("%#v", []int{1, 2})) }
 func main() { println(render()); ` + tc.main + ` }
 `
-			mainPkg := buildFormatTestPackage(t, prog, "main", src, fmtPkg.Pkg)
-			prog.Build()
-			file, err := parser.ParseFile(token.NewFileSet(), "main.go", src, parser.ParseComments)
-			if err != nil {
-				t.Fatal(err)
-			}
-			entry := &packages.Package{PkgPath: "main", Types: mainPkg.Pkg, Syntax: []*ast.File{file}}
+			entry := checkFormatTestPackage(t, prog.Fset, "main", src, fmtPkg.Pkg)
 			ctx := &context{
 				progSSA: prog, initial: []*packages.Package{entry},
 				pkgByID: map[string]*aPackage{"main": {Package: entry}},
@@ -84,10 +102,17 @@ func main() { println(render()); ` + tc.main + ` }
 				},
 				wasmClosedProgram: !tc.open,
 			}
-			if tc.native {
-				ctx.buildConf.Goarch = "arm64"
-				ctx.crossCompile = crosscompile.Export{}
+			if !tc.native {
+				names, err := addValueFormatSource(entry, runtime.Pkg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if names != nil {
+					ctx.valueFormatFunctions = map[*types.Package]*typeutil.Map{entry.Types: names}
+				}
 			}
+			mainPkg := prog.CreatePackage(entry.Types, entry.Syntax, entry.TypesInfo, true)
+			prog.Build()
 			if err := recordPackageSSAInstructions(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -96,24 +121,38 @@ func main() { println(render()); ` + tc.main + ` }
 				in.roots = []string{tc.asm}
 			}
 			configureValueFormats(ctx, in)
-			want := tc.helper
-			if want == "" {
-				want = "Sprintf"
-			}
 			found := false
 			for _, inst := range mainPkg.Func("render").Blocks[0].Instrs {
-				if call, ok := inst.(*ssa.Call); ok && call.Common().StaticCallee().Pkg == fmtPkg {
+				if tc.typed {
+					switch ir := inst.(type) {
+					case *ssa.MakeInterface:
+						t.Error("typed formatter retained interface boxing")
+					case *ssa.Alloc:
+						if ir.Comment == "varargs" {
+							t.Error("typed formatter retained the variadic array")
+						}
+					}
+				}
+				if call, ok := inst.(*ssa.Call); ok {
+					common := call.Common()
+					callee := common.StaticCallee()
+					if callee == nil || callee.Pkg != fmtPkg && !strings.HasPrefix(callee.Name(), "__llgo_fmt_") {
+						continue
+					}
 					found = true
-					if got := call.Common().StaticCallee().Name(); got != want {
-						t.Errorf("render calls %s, want %s", got, want)
+					gotTyped := callee.Pkg == mainPkg && len(common.Args) == 1 &&
+						!types.IsInterface(common.Args[0].Type()) &&
+						types.Identical(common.Args[0].Type(), callee.Signature.Params().At(0).Type())
+					if gotTyped != tc.typed {
+						t.Errorf("render calls %s with args %v, want typed=%v", callee, common.Args, tc.typed)
 					}
 				}
 			}
 			if !found {
 				t.Fatal("missing render call")
 			}
-			if got, want := ctx.valueFormatPackages[mainPkg.Pkg], tc.helper != ""; got != want {
-				t.Errorf("cache key specialized = %v, want %v", got, want)
+			if got := ctx.valueFormatPackages[mainPkg.Pkg]; got != tc.typed {
+				t.Errorf("cache key specialized = %v, want %v", got, tc.typed)
 			}
 		})
 	}

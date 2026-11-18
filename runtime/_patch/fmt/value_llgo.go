@@ -2,12 +2,5 @@
 
 package fmt
 
-import "internal/llgofmt"
-
-func llgoSprintfValue(_ string, args ...any) string {
-	return llgofmt.Value(args[0])
-}
-
-func llgoSprintfValueWithMaps(_ string, args ...any) string {
-	return llgofmt.ValueWithMaps(args[0])
-}
+// Load the typed formatting helpers for compiler-generated functions.
+import _ "internal/llgofmt"

@@ -1,95 +1,73 @@
 //go:build llgo && wasip1 && wasm && llgo.fmt.value
 
-// Package llgofmt formats values whose default formatting is determined by
-// their static shape. The compiler checks the shape before calling this package.
+// Package llgofmt provides shared formatting operations for compiler-generated
+// typed formatters. Each call site supplies concrete values and formatters.
 package llgofmt
 
-import (
-	"internal/fmtsort"
-	"reflect"
-	"strconv"
-)
+import "strconv"
 
-func Value(v any) string {
-	return string(appendValue(nil, reflect.ValueOf(v), true, nil))
+func AppendInt(dst []byte, value int64) []byte {
+	return strconv.AppendInt(dst, value, 10)
 }
 
-func ValueWithMaps(v any) string {
-	return string(appendValue(nil, reflect.ValueOf(v), true, appendMap))
+func AppendUint(dst []byte, value uint64) []byte {
+	return strconv.AppendUint(dst, value, 10)
 }
 
-type mapAppender func([]byte, reflect.Value) []byte
+func AppendFloat(dst []byte, value float64, bits int) []byte {
+	return strconv.AppendFloat(dst, value, 'g', -1, bits)
+}
 
-func appendValue(dst []byte, v reflect.Value, top bool, maps mapAppender) []byte {
-	switch v.Kind() {
-	case reflect.Bool:
-		return strconv.AppendBool(dst, v.Bool())
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return strconv.AppendInt(dst, v.Int(), 10)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return strconv.AppendUint(dst, v.Uint(), 10)
-	case reflect.Float32, reflect.Float64:
-		bits := 64
-		if v.Kind() == reflect.Float32 {
-			bits = 32
-		}
-		return strconv.AppendFloat(dst, v.Float(), 'g', -1, bits)
-	case reflect.Complex64, reflect.Complex128:
-		bits := 128
-		if v.Kind() == reflect.Complex64 {
-			bits = 64
-		}
-		return append(dst, strconv.FormatComplex(v.Complex(), 'g', -1, bits)...)
-	case reflect.String:
-		return append(dst, v.String()...)
-	case reflect.Array, reflect.Slice:
-		dst = append(dst, '[')
-		for i := 0; i < v.Len(); i++ {
-			if i != 0 {
-				dst = append(dst, ' ')
-			}
-			dst = appendValue(dst, v.Index(i), false, maps)
-		}
-		return append(dst, ']')
-	case reflect.Struct:
-		dst = append(dst, '{')
-		for i := 0; i < v.NumField(); i++ {
-			if i != 0 {
-				dst = append(dst, ' ')
-			}
-			dst = appendValue(dst, v.Field(i), false, maps)
-		}
-		return append(dst, '}')
-	case reflect.Map:
-		return maps(dst, v)
-	case reflect.Pointer:
-		if top && v.UnsafePointer() != nil {
-			elem := v.Elem()
-			switch elem.Kind() {
-			case reflect.Array, reflect.Slice, reflect.Struct, reflect.Map:
-				return appendValue(append(dst, '&'), elem, false, maps)
-			}
-		}
-		fallthrough
-	case reflect.UnsafePointer, reflect.Chan, reflect.Func:
-		if p := v.UnsafePointer(); p != nil {
-			return strconv.AppendUint(append(dst, "0x"...), uint64(uintptr(p)), 16)
-		}
+func AppendComplex(dst []byte, value complex128, bits int) []byte {
+	return append(dst, strconv.FormatComplex(value, 'g', -1, bits)...)
+}
+
+func AppendPointer(dst []byte, value uintptr) []byte {
+	if value == 0 {
 		return append(dst, "<nil>"...)
-	default:
-		panic("llgofmt: unsupported value")
 	}
+	return strconv.AppendUint(append(dst, "0x"...), uint64(value), 16)
 }
 
-func appendMap(dst []byte, v reflect.Value) []byte {
+type ordered interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr |
+		~float32 | ~float64 | ~string
+}
+
+func Compare[T ordered](a, b T) int {
+	if a < b || a != a && b == b {
+		return -1
+	}
+	if a > b || a == a && b != b {
+		return 1
+	}
+	return 0
+}
+
+type entry[K comparable, V any] struct {
+	key   K
+	value V
+}
+
+// AppendMap snapshots keys and values before sorting, including entries that
+// cannot be retrieved by a second lookup, such as NaN keys.
+func AppendMap[K comparable, V any](dst []byte, value map[K]V,
+	compare func(K, K) int, appendKey func([]byte, K) []byte, appendElem func([]byte, V) []byte,
+) []byte {
+	entries := make([]entry[K, V], 0, len(value))
+	for key, elem := range value {
+		entries = append(entries, entry[K, V]{key, elem})
+	}
+	sortEntries(entries, compare)
 	dst = append(dst, "map["...)
-	for i, pair := range fmtsort.Sort(v) {
+	for i, pair := range entries {
 		if i != 0 {
 			dst = append(dst, ' ')
 		}
-		dst = appendValue(dst, pair.Key, false, appendMap)
+		dst = appendKey(dst, pair.key)
 		dst = append(dst, ':')
-		dst = appendValue(dst, pair.Value, false, appendMap)
+		dst = appendElem(dst, pair.value)
 	}
 	return append(dst, ']')
 }

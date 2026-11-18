@@ -40,6 +40,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
+	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
@@ -1962,16 +1963,17 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf           *Config
-	crossCompile        crosscompile.Export
-	commands            commandEnv
-	frontendOptions     cl.Options
-	staticByteArrays    map[string][]byte
-	valueFormatPlan     *valueFormatPlan
-	valueFormatPackages map[*types.Package]bool
-	wasmRuntimeFree     bool
-	wasmClosedProgram   bool // true when native inputs cannot introduce untracked Go references
-	wasiSizeRoots       []string
+	buildConf            *Config
+	crossCompile         crosscompile.Export
+	commands             commandEnv
+	frontendOptions      cl.Options
+	staticByteArrays     map[string][]byte
+	valueFormatPlan      *valueFormatPlan
+	valueFormatFunctions map[*types.Package]*typeutil.Map
+	valueFormatPackages  map[*types.Package]bool
+	wasmRuntimeFree      bool
+	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
+	wasiSizeRoots        []string
 
 	cTransformer *cabi.Transformer
 
@@ -4350,7 +4352,11 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 	var all []*aPackage
 	var entries []ssaBuildEntry
 	var errs []*packages.Package
+	var formatErr error
 	packages.Visit(initial, nil, func(p *packages.Package) {
+		if formatErr != nil {
+			return
+		}
 		if p.Types != nil && !p.IllTyped {
 			pkgPath := p.PkgPath
 			// Use p.ID to check duplicates since same pkgPath may have different IDs
@@ -4358,6 +4364,12 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				return
 			}
 			var altPkg *packages.Cached
+			if prog.Package(p.Types) == nil {
+				if err := ctx.prepareValueFormatSource(p); err != nil {
+					formatErr = err
+					return
+				}
+			}
 			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
 			if created {
 				entries = append(entries, ssaBuildEntry{id: p.ID, pkg: ssaPkg, syntax: p.Syntax, fixOrder: true})
@@ -4398,6 +4410,9 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 			errs = append(errs, p)
 		}
 	})
+	if formatErr != nil {
+		return nil, nil, formatErr
+	}
 	if len(errs) > 0 {
 		for _, errPkg := range errs {
 			for _, err := range errPkg.Errors {
@@ -4524,10 +4539,10 @@ func recordPackageSSAInstructions(ctx *context) error {
 		for _, block := range fn.Blocks {
 			if formats {
 				for _, instruction := range block.Instrs {
-					specializeFormat(instruction, scalarFormats)
 					if valueFormats != nil {
 						valueFormats.record(instruction, fn.Pkg)
 					}
+					specializeFormat(instruction, scalarFormats)
 				}
 			}
 			if fn.Pkg == nil {

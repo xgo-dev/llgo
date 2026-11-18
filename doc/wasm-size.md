@@ -25,7 +25,7 @@ conservative path. Output-only linker diagnostics such as
 or a `retain WASI code and metadata` diagnostic. The shared check reports
 opaque inputs with `retain global initializers: native inputs in …`. Builds
 outside the eligible configuration skip the release pruning check.
-The default value formatter reports `specialize default value formatting`
+The compiler-generated default value formatter reports `specialize default value formatting`
 when selected. A `retain generic fmt` diagnostic identifies open link inputs,
 foreign entry points or a reachable general formatter.
 
