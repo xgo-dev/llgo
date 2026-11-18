@@ -154,7 +154,7 @@ jobs:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
           windows-arch: ${{ matrix.windows_arch || 'amd64' }}
           # Only this compiler lane executes the LLDB integration suite. Test
-          # lanes still install the Python 3.12 demo ABI but skip the unrelated
+          # lanes still install the Python demo ABI but skip the unrelated
           # target-native debugger runtime.
           install-lldb-python: "true"
 
@@ -172,6 +172,28 @@ jobs:
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "$RUNNER_TEMP/llgo-bin" >> "$GITHUB_PATH"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: "1.26.7"
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
+
+      - name: Record Go 1.26 reference corpus
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        shell: bash
+        run: echo "LLGO_GOROOT_GO126=$(GOTOOLCHAIN=local go env GOROOT)" >> "$GITHUB_ENV"
+
+      - name: Restore build Go toolchain
+        if: runner.os == 'Windows' && matrix.windows_abi == 'msvc'
+        uses: ./.github/actions/setup-go
+        with:
+          architecture: ${{ matrix.os == 'windows-11-arm' && 'arm64' || 'x64' }}
+          cache: false
 
       - name: Activate native Windows target
         if: runner.os == 'Windows'
@@ -226,6 +248,44 @@ jobs:
           export LLGO_TEST_LLGEN="$RUNNER_TEMP/llgo-bin/llgen${tool_suffix}"
           dev/test_go_version.sh 1.27
 
+          # Also check weak pointers without coverage, as llgo-compat/ci does:
+          # instrumentation can change the roots observed by conservative GC.
+          if [[ "$RUNNER_OS" == Windows && "${LLGO_WINDOWS_ARCH:-}" == 386 ]]; then
+            (
+              unset LLGO_TEST_COVERPROFILE LLGO_TEST_COVERPKG
+              LLGO_TEST_SUITE=std dev/test_go_version.sh 1.27 ./test/std/weak
+            )
+          fi
+
+          if [[ "$RUNNER_OS" == Windows && ( "$LLGO_WINDOWS_ABI" == msvc || "$LLGO_WINDOWS_ARCH" == 386 ) ]]; then
+            reference_llgo="$(cygpath -w "$LLGO")"
+            reference_cases='^(printbig|fixedbugs/(bug114|issue23305))\.go$'
+            if [[ "$LLGO_WINDOWS_ABI" == msvc ]]; then
+              reference_cases='^(printbig|linkmain_run|fixedbugs/(bug114|bug514|issue23305|issue34968|issue40954|issue42032|issue42076|issue46903|issue47227|issue51733))\.go$'
+            fi
+            reference_roots=("$(go env GOROOT)")
+            if [[ -n "${LLGO_GOROOT_GO126:-}" ]]; then
+              reference_roots+=("$LLGO_GOROOT_GO126")
+            fi
+            for reference_root in "${reference_roots[@]}"; do
+              (
+                cd test/goroot
+                go test -run '^TestGoRootRunCases$' -count=1 -timeout=15m -args \
+                  -goroot "$reference_root" -llgo "$reference_llgo" -directive-mode ci \
+                  -case "$reference_cases"
+              )
+            done
+          fi
+
+          nil_llgo="$LLGO"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            nil_llgo="$(cygpath -w "$LLGO")"
+          fi
+          go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=5m -args \
+            -goroot "$(go env GOROOT)" -llgo "$nil_llgo" -dirs . -case '^nilptr2?\.go$'
+
+          "$LLGO" test -Os -count=1 ./benchmark/crossinline/...
+
           # GC_malloc returns zeroed memory, so check allocation clearing with
           # the malloc-backed runtime too. Poison fresh allocations on glibc.
           (
@@ -242,10 +302,38 @@ jobs:
           "$LLGO" run -O0 ./internal/build/testdata/wasm-fmt-literal-debugger
 
           # Native thread and TLS regressions live outside test/.
+          (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/wordmap)
+          # Alloc creates process-lifetime native keys. Run the full package
+          # once; repeat the GC regressions that explicitly delete their keys.
+          (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/clite/tls)
           (cd runtime && "$LLGO" test -v -run '^TestSlot(GCAllocation|DestructorGCRegistration)$' -count=20 -timeout=2m ./internal/clite/tls)
           if [[ "$RUNNER_OS" != Windows ]]; then
-            (cd runtime && "$LLGO" test -v -run '^Test(KeyNativeLayout|DetachedStateNativeValue)$' -timeout=2m ./internal/thread)
+            (cd runtime && "$LLGO" test -v -timeout=2m ./internal/thread)
           fi
+
+      - name: Select supported Python for Codecov on macOS
+        if: ${{ runner.os == 'macOS' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
+        id: macos_codecov_python
+        uses: actions/setup-python@v7
+        with:
+          # The runner default can be newer than Codecov's native dependencies.
+          python-version: "3.13"
+          # Later demos and debuggers require their existing Python ABI and .pc files.
+          update-environment: false
+
+      - name: Install Codecov CLI with isolated macOS Python
+        if: ${{ runner.os == 'macOS' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
+        id: macos_codecov
+        shell: bash
+        env:
+          CODECOV_PYTHON: ${{ steps.macos_codecov_python.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/llgo-codecov"
+          "$CODECOV_PYTHON" -m venv "$venv"
+          "$venv/bin/python" -m pip install --only-binary=:all: codecov-cli==11.3.1
+          "$venv/bin/codecovcli" --version
+          echo "binary=$venv/bin/codecovcli" >> "$GITHUB_OUTPUT"
 
       - name: Install Codecov CLI with Windows host Python
         if: ${{ runner.os == 'Windows' && !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
@@ -267,7 +355,7 @@ jobs:
         if: ${{ !cancelled() && hashFiles('coverage-llgo.txt') != '' }}
         uses: codecov/codecov-action@v7
         with:
-          binary: ${{ steps.windows_codecov.outputs.binary }}
+          binary: ${{ steps.windows_codecov.outputs.binary || steps.macos_codecov.outputs.binary }}
           use_pypi: true
           version: "11.3.1"
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -352,7 +440,7 @@ jobs:
           LLGO_SIMD_ARTIFACT_DIR: ${{ runner.temp }}/llgo-simd-matrix
         run: |
           (cd runtime && go test -count=1 -timeout=2m ./internal/runtime/math)
-          go test -count=1 -timeout=2m ./test/simd/...
+          go test -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           bash dev/test_native_simd.sh
 
       - name: Upload failed native SIMD executables
@@ -441,16 +529,6 @@ jobs:
           fi
           ./test_esp32c3_startup.sh "${args[@]}"
 
-      - name: _xtool build tests
-        # _xtool contains host developer utilities that link the host LLVM and
-        # Python libraries. Windows amd64 already covers that build; the 386
-        # and ARM64 lanes qualify target programs and cannot link those x64
-        # host libraries into target-native tools.
-        if: runner.os != 'Windows' || matrix.windows_arch == 'amd64'
-        run: |
-          cd _xtool
-          llgo build -v ./...
-
       - name: Show test result
         run: cat result.md
 
@@ -476,7 +554,7 @@ jobs:
         timeout-minutes: 15
         env:
           LLGO_GDB_INTEGRATION: "1"
-        run: go test ./cmd/internal/gdb -run '^TestGDB(Integration|CompleteWorkerUnwind)$' -count=1 -v
+        run: go test ./cmd/internal/gdb -count=1 -v
 
       - name: Install MinGW LLDB for integration tests
         # R12 qualifies debugger behavior for the new GNU architectures. Keep
@@ -686,9 +764,11 @@ jobs:
         run: |
           "$LLGO" test -v -count=1 -timeout=2m ./test/cgo
           "$LLGO" test -v -count=1 -timeout=2m \
-            -run '^(TestNarrowC|TestLinknameNarrowC)' ./test/llgoext
+            ./test/llgoext
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
+      - name: Run Linux all-thread ownership and barrier acceptance
+        run: go test ./internal/build -run '^TestAllThreads' -count=1 -v -timeout=8m
 
   native-debuggers-intel:
     name: Native debuggers (macOS Intel, GDB values and registry)
@@ -717,7 +797,7 @@ jobs:
       - name: Run narrow C ABI regressions
         run: |
           llgo test -v -count=1 -timeout=2m \
-            -run '^(TestNarrowC|TestLinknameNarrowC)' ./test/cgo ./test/llgoext
+            ./test/cgo ./test/llgoext
       - name: Install GDB
         uses: ./.github/actions/setup-gdb
       - name: Enable native GDB on the ephemeral Intel runner
@@ -737,6 +817,12 @@ jobs:
         env:
           LLGO_LLDB: /usr/bin/lldb
         run: bash test/debug/runtime/runtest.sh -v
+      - name: LTO source locations and native LLDB acceptance (Intel)
+        env:
+          LLGO_LLDB: /usr/bin/lldb
+        run: |
+          go test ./internal/build -run '^TestDWARFPCLNLineSites$' -count=1 -timeout=10m
+          bash test/debug/native/runtest.sh
       # GDB 17/18 cannot load dyld 17 shared libraries or unwind blocked
       # system frames here; a plain pthread C control reproduces the failure.
       # Keep TestGDBCompleteWorkerUnwind strict and separately runnable.
@@ -810,6 +896,56 @@ jobs:
         run: |
           python3 -m unittest discover -s dev -p test_wasm_wasi_threads_test.py
           python3 dev/test_wasm_wasi_threads.py
+
+      - name: Cache WASI debugger host dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test/debug/wasi/host/target
+          key: wasi-debug-${{ runner.os }}-${{ runner.arch }}-rust1.97-${{ hashFiles('test/debug/wasi/host/Cargo.lock', 'test/debug/wasi/host/Cargo.toml') }}
+
+      - name: Build WASI source debugger host
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+              sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.0 --profile minimal --component rustfmt
+          RUSTFMT="$(rustup which --toolchain 1.97.0 rustfmt)" \
+            rustup run 1.97.0 cargo fmt --manifest-path test/debug/wasi/host/Cargo.toml --check
+          RUSTC="$(rustup which --toolchain 1.97.0 rustc)" \
+            rustup run 1.97.0 cargo build --locked --manifest-path test/debug/wasi/host/Cargo.toml
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Test threaded WASI source and runtime debugging
+        shell: bash
+        env:
+          LLGO_WASI_HOST: ${{ github.workspace }}/test/debug/wasi/host/target/debug/llgo-wasi-debug
+        run: |
+          sudo apt-get install -y lldb-${{matrix.llvm}}
+          wrapper="$RUNNER_TEMP/llgo-wasi-lldb"
+          cat > "$wrapper" <<'EOF'
+          #!/usr/bin/env bash
+          exec /usr/bin/lldb-${{ matrix.llvm }} --no-lldbinit \
+            -O 'settings clear plugin.symbol-locator.debuginfod.server-urls' "$@"
+          EOF
+          chmod +x "$wrapper"
+          LLGO_LLDB="$wrapper" python3 test/debug/wasi/runtest.py --report "$RUNNER_TEMP/wasi-debug-qualification.json"
+
+      - name: Upload WASI debugger qualification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasi-debug-qualification
+          path: ${{ runner.temp }}/wasi-debug-qualification.json
+          if-no-files-found: ignore
 
       - name: Test dev WASI Thin and Full LTO (Wasmer)
         shell: bash
@@ -951,8 +1087,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [runtime, workers, test-command]
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+        # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
+        # command and caller regressions exhausted the 60-minute job limit.
+        # Optimization and stdlib links need fresh disks after the runtime
+        # and debug fixtures on the 17-GiB ephemeral runner image.
+        suite: [runtime, workers, test-command, simd, stdlib, optimization]
+    # Keep these matrices outside the smaller Qiniu runner template.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
@@ -972,7 +1113,7 @@ jobs:
           node-version: "24"
 
       - name: Set up Chrome for browser acceptance
-        if: matrix.suite != 'test-command'
+        if: matrix.suite == 'runtime' || matrix.suite == 'workers' || matrix.suite == 'optimization'
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
@@ -982,24 +1123,30 @@ jobs:
         uses: ./.github/actions/setup-binaryen
 
       - name: Set up Wasmtime
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
           version: "39.0.1"
 
       - name: Set up Go for building llgo
         uses: ./.github/actions/setup-go
+        with:
+          # Profile/LTO caches nearly fill the 17-GiB runner.
+          # Cache archives need another payload copy during post-job save.
+          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: readwrite
+          build-cache-mode: ${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}
           build-cache-scope: wasm-${{ matrix.suite }}
-          crosscompile-cache-mode: readwrite
-          wasmer-cache-mode: ${{ matrix.suite != 'workers' && 'readwrite' || 'off' }}
+          # These suites need only WASI or Emscripten, not a shared snapshot
+          # containing other targets' downloaded toolchains.
+          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}
+          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
-        if: matrix.suite != 'workers'
+        if: matrix.suite != 'workers' && matrix.suite != 'optimization'
         run: bash dev/install_wasmer.sh
 
       - name: Set up wasm-tools
@@ -1012,6 +1159,28 @@ jobs:
           dev/build_ci_tools.sh "$RUNNER_TEMP/llgo-bin"
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      - name: Report WebAssembly build disk usage
+        run: |
+          df -h . "$RUNNER_TEMP" /tmp
+          source dev/llgo_cache_dir.sh
+          du -sh "$GOCACHE" "$GOMODCACHE"
+          if [[ -d "$(llgo_cache_dir)" ]]; then
+            du -sh "$(llgo_cache_dir)"
+          fi
+
+      - name: Test escape lifetimes under WebAssembly GC
+        if: matrix.suite == 'runtime'
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "1"
+        run: |
+          for target in wasi emscripten emscripten-memory64; do
+            # The budget stress test also needs large by-value ABI copies,
+            # which are outside the incremental escape-storage budget.
+            "$LLGO" test -O2 -goroutine-stack-size=1MB -target "$target" -emulator ./test/escape
+          done
+
       - name: Test reflected method calls and large initializers
         if: matrix.suite == 'runtime'
         shell: bash
@@ -1023,6 +1192,16 @@ jobs:
             for target in wasi emscripten emscripten-memory64; do
               "$LLGO" run -O2 -target "$target" -emulator "./test/wasm/$fixture"
             done
+          done
+          for target in wasi emscripten emscripten-memory64; do
+            "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              ./test/std/reflect
+            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+              ./internal/structs ./internal/ffi)
+            if [[ "$target" != wasi ]]; then
+              (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=90s \
+                ./internal/clite/emscripten)
+            fi
           done
           for profile in J32-GoJS J32-Emscripten J64-Emscripten W32-WASI; do
             go test ./test/goroot -run '^TestGoRootRunCases$' -count=1 -timeout=4m -v -args \
@@ -1038,6 +1217,13 @@ jobs:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
         run: python3 dev/compare_wasm_eh.py --browser
+
+      - name: Test optional WebAssembly runtime symbol maps
+        if: matrix.suite == 'runtime'
+        env:
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+        run: python3 dev/test_wasm_pclntab.py --browser
 
       - name: Test WebAssembly target profiles
         if: matrix.suite == 'runtime'
@@ -1059,7 +1245,7 @@ jobs:
           python3 dev/test_wasm_debug_info.py --opt z --strip-symbols --source-maps --artifact embedded --artifact external
 
       - name: Test optimized Emscripten runtime boundaries
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'optimization'
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
           LLGO_BUILD_CACHE: "1"
@@ -1082,7 +1268,7 @@ jobs:
         run: dev/wasm_ci_report_test.sh
 
       - name: Test single-worker wasm schedulers
-        if: matrix.suite != 'workers'
+        if: matrix.suite == 'runtime' || matrix.suite == 'test-command'
         shell: bash
         env:
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -1100,24 +1286,30 @@ jobs:
         run: dev/test_wasm_workers.sh
 
       - name: Test SIMD behavior on WebAssembly
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           GOEXPERIMENT: simd
+          LLGO_BUILD_CACHE: "off"
         run: |
-          GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime -count=1 -timeout=2m ./test/simd/...
+          # Go's WASI example runner captures stdout in temporary files.
+          wasi_tmp="$RUNNER_TEMP/go-wasi-example-tmp"
+          mkdir -p "$wasi_tmp"
+          GOOS=wasip1 GOARCH=wasm go test -exec="wasmtime --dir=$wasi_tmp::/tmp" -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           for opt in 0 2; do
             "$RUNNER_TEMP/llgo-bin/llgo" test "-O${opt}" -target wasi -emulator \
-              -v -count=1 -timeout=2m ./test/simd/...
+              -v -count=1 -timeout=2m ./test/simd/... ./test/std/simd
           done
           LLGO="$RUNNER_TEMP/llgo-bin/llgo" bash dev/test_portable_simd_wasi.sh
 
       - name: Test SIMD on JavaScript targets with off, Thin and Full LTO
-        if: matrix.suite == 'test-command'
+        if: matrix.suite == 'simd'
         shell: bash
         env:
           LLGO: ${{ runner.temp }}/llgo-bin/llgo
-          LLGO_BUILD_CACHE: "1"
+          # Target/optimization/LTO variants have different cache keys. Keep
+          # each build's dependency DAG, without retaining every variant.
+          LLGO_BUILD_CACHE: "off"
         run: dev/test_wasm_simd.sh
 
       - name: Compare JavaScript call semantics with Go
@@ -1130,7 +1322,7 @@ jobs:
             ./internal/build/testdata/wasm-test
 
       - name: Test wasm standard-library packages
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'stdlib'
         timeout-minutes: 20
         shell: bash
         env:
@@ -1139,13 +1331,27 @@ jobs:
         run: |
           bash dev/test_wasm_stdlib_test.sh
           bash dev/test_wasm_stdlib.sh
+
+      - name: Test wasm map and formatting regressions
+        if: matrix.suite == 'stdlib'
+        timeout-minutes: 20
+        shell: bash
+        env:
+          LLGO: ${{ runner.temp }}/llgo-bin/llgo
+          LLGO_BUILD_CACHE: "off"
+        run: |
+          llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
+          go build -tags=dev -o "$llgo_dev" ./cmd/llgo
           for target in wasi emscripten emscripten-memory64; do
+            (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
-              -run '^TestLiteral' ./test/std/fmt
+              ./test/std/fmt
             "$LLGO" run -target "$target" -emulator -O2 \
               ./internal/build/testdata/wasm-fmt-literal-callers
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
               ./internal/build/testdata/wasm-fmt-literal-debugger
+            "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \
+              ./internal/build/testdata/wasm-map-metadata
           done
 
       - name: Run caller and large-function regressions on browser targets
@@ -1163,5 +1369,5 @@ jobs:
           for profile in J32-Emscripten J64-Emscripten J32-GoJS; do
             go test ./test/goroot -v -run '^TestGoRootRunCases$' -count=1 -timeout=10m -args \
               -goroot "$(go env GOROOT)" -llgo "$LLGO" -wasm-profile "$profile" -directive-mode ci -dirs .,fixedbugs \
-              -case '^(clearfat\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
+              -case '^(clearfat\.go|nilptr2?\.go|fixedbugs/issue(22662|5856)\.go)$' -min-swap-free-mib=0
           done

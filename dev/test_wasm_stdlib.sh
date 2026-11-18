@@ -34,7 +34,9 @@ run_stdlib() {
 	local temp_dir="${work_dir}/${target}-tmp"
 	mkdir -p "${temp_dir}"
 	echo "testing bytes, strings, and encoding/json on ${target}"
-	env TMPDIR="${temp_dir}" "${llgo_cmd}" test -target "${target}" -emulator \
+	# Keep the shared dependency graph in one invocation, but avoid overlapping
+	# the three large final links on disk-constrained CI runners.
+	env TMPDIR="${temp_dir}" "${llgo_cmd}" test -p=1 -target "${target}" -emulator \
 		-v -count=1 -timeout=60s "${packages[@]}" 2>&1 | tee "${output}"
 
 	# Each independently executed test binary prints one terminal PASS. Check

@@ -36,7 +36,7 @@ func testCheck(t *testing.T, imports testImporter, path, source string, rewrite 
 		t.Fatal(err)
 	}
 	if rewrite {
-		changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file})
+		changed, _, err := Rewrite(fset, pkg, info, []*ast.File{file}, "amd64")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,10 +68,13 @@ func testSIMDImports(t *testing.T) testImporter {
 	testCheck(t, imports, bridgePath, `package bridge
  type Uint32s [8]uint32
  type Uint32x4 [4]uint32
+ type Uint32x8 [8]uint32
  func (Uint32s) Len() int {return 8}
  func (Uint32x4) Len() int {return 4}
+ func (Uint32x8) Len() int {return 8}
  func BroadcastUint32s(uint32) Uint32s {return Uint32s{}}
  func BroadcastUint32x4(uint32) Uint32x4 {return Uint32x4{}}
+ func BroadcastUint32x8(uint32) Uint32x8 {return Uint32x8{}}
  func LLGoMidwayUnreachable(){panic("unspecialized")}
  type LLGoMidwayInt = int
  type LLGoMidwayBool = bool

@@ -14,7 +14,7 @@ type Base struct {
 
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}.(*Base).Name"(ptr %0){{.*}} {
 // CHECK: [[NAME_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Base", ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[NAME_VALUE:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr [[NAME_FIELD]]
+// CHECK: [[NAME_VALUE:%[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.String", ptr [[NAME_FIELD]]
 // CHECK-NEXT: ret %"{{.*}}/runtime/internal/runtime.String" [[NAME_VALUE]]
 
 func (b *Base) Name() string {
@@ -23,7 +23,7 @@ func (b *Base) Name() string {
 
 // CHECK-LABEL: define void @"{{.*}}.(*Base).setName"(ptr %0, %"{{.*}}/runtime/internal/runtime.String" %1){{.*}} {
 // CHECK: [[SET_NAME_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Base", ptr %0, i32 0, i32 0
-// CHECK-NEXT: store %"{{.*}}/runtime/internal/runtime.String" %1, ptr [[SET_NAME_FIELD]]
+// CHECK: store %"{{.*}}/runtime/internal/runtime.String" %1, ptr [[SET_NAME_FIELD]]
 
 func (b *Base) setName(name string) {
 	b.name = name
@@ -40,7 +40,7 @@ func NewBase(name string) *Base {
 
 // Use calls the unexported method through interface
 // CHECK-LABEL: define void @"{{.*}}.Use"(%"{{.*}}.iface" %0){{.*}} {
-// CHECK: %[[OBJ_DATA:[0-9]+]] = call ptr @"{{.*}}.IfacePtrData"(%"{{.*}}.iface" %0)
+// CHECK: %[[OBJ_DATA:[0-9]+]] = call ptr @"{{.*}}.IfacePtrDataBuffer"(%"{{.*}}.iface" %0, ptr %{{[0-9]+}})
 // CHECK: insertvalue { ptr, ptr } %{{[0-9]+}}, ptr %[[OBJ_DATA]], 1
 func Use(obj Object) {
 	obj.setName("modified")

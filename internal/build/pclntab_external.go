@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
@@ -32,13 +31,15 @@ func finalizeRuntimePCLN(ctx *context, out *OutFmtDetails, verbose bool) error {
 	}
 	switch ctx.buildConf.PCLNMode {
 	case PCLNEmbedded:
-		rewritePrebuiltFuncTab(ctx, out.Out, verbose)
+		if err := rewritePrebuiltFuncTab(ctx, out.Out, verbose); err != nil {
+			return err
+		}
 		// A successful non-external rebuild owns this conventional sibling
 		// path and must not leave a stale optional artifact behind.
-		_ = os.Remove(pclnSidecarPath(out.Out))
+		_ = os.Remove(pclnSidecarPath(debugWasmModulePath(ctx.buildConf, out.Out)))
 		return nil
 	case PCLNNone:
-		_ = os.Remove(pclnSidecarPath(out.Out))
+		_ = os.Remove(pclnSidecarPath(debugWasmModulePath(ctx.buildConf, out.Out)))
 		return nil
 	case PCLNExternal:
 		return writeExternalPCLN(ctx, out, verbose)
@@ -53,6 +54,9 @@ func writeExternalPCLN(ctx *context, out *OutFmtDetails, verbose bool) (err erro
 	}
 	if ctx.pclnExternal == nil {
 		return fmt.Errorf("external pclntab metadata was not generated")
+	}
+	if ctx.buildConf.Goarch == "wasm" {
+		return writeExternalWasmPCLN(ctx, out, verbose)
 	}
 	analysis, err := pclnpost.AnalyzeExternal(out.Out)
 	if err != nil {
@@ -137,26 +141,10 @@ func filterExternalPCLNJoins(data *pclnmap.Data, pcSiteOwners []string) error {
 	pcSites := data.PCSites[:0]
 	for i, site := range data.PCSites {
 		funcIndex := pcLines[site.ID]
-		if funcIndex != 0 && externalOwnerFuncIndex(symbols, pcSiteOwners[i], data.GOOS) == funcIndex {
+		if funcIndex != 0 && symbols[funcInfoSymbolID(pcSiteOwners[i])] == funcIndex {
 			pcSites = append(pcSites, site)
 		}
 	}
 	data.PCSites = pcSites
 	return nil
-}
-
-func externalOwnerFuncIndex(symbols map[uint64]uint32, owner, goos string) uint32 {
-	for {
-		if index := symbols[funcInfoSymbolID(owner)]; index != 0 {
-			return index
-		}
-		// Mach-O has one C-mangling underscore, while debug/macho's
-		// suffix-shared string table can expose one more or less. Try the same
-		// candidate sequence as pclnpost.canonicalOwner, stopping as soon as a
-		// real funcinfo symbol joins.
-		if goos != "darwin" || !strings.HasPrefix(owner, "_") {
-			return 0
-		}
-		owner = owner[1:]
-	}
 }

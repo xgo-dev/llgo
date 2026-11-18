@@ -54,7 +54,7 @@ async function until(probe, description) {
 const page = await connect(pageTarget);
 const frontend = await connect(devtoolsTarget);
 let browser;
-try {
+qualification: try {
   const workerSessions = [], workerPauses = new Set();
   const breakpoints = [];
   let paused, pausedSession, pagePause, stepping, stepped;
@@ -110,6 +110,14 @@ try {
     });
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
+  }
+  if (process.argv[4] === '--diagnostics') {
+    console.log(JSON.stringify(await extension(`(() => {
+      const plugin = globalThis.__llgoLanguageExtensionPlugin;
+      return {calls: plugin.addRawModuleCalls, error: plugin.lastAddRawModuleError,
+        modules: [...plugin.modules.keys()]};
+    })()`)));
+    break qualification;
   }
   const optimizedFixture = process.env.LLGO_BROWSER_DEBUG_OPTIMIZED === '1';
   await extension(`(() => {
@@ -219,11 +227,12 @@ try {
             result.growing = (await plugin.readNamedUnsigned(plugin.module(context.rawModuleId),
               object.hashType, object.address, object.spec.old_buckets, stopId)) !== 0n;
           }
-          // Function values expose a table index and context address. There is
-          // no typed closure-environment view; do not dereference raw code/data.
-          if (value.hasChildren && depth < 6 && !value.description?.startsWith('func[')) {
+          if (value.hasChildren && depth < 8) {
+            let properties = await plugin.getProperties(value.objectId);
+            // Expand the compiler-described captures, never raw code pointers.
+            if (value.description?.startsWith('func[')) properties = properties.filter(p => p.name === 'captures');
             result.properties = Object.fromEntries(await Promise.all(
-              (await plugin.getProperties(value.objectId)).map(async p => [p.name, await expand(p.value, depth + 1)])));
+              properties.map(async p => [p.name, await expand(p.value, depth + 1)])));
           }
           return result;
         }
@@ -256,8 +265,17 @@ try {
       for (const name of ['Nil', 'NilFunction', 'NilMap', 'NilChannel']) {
         assert.equal(views[name].type, 'null', name);
       }
-      assert.match(views.Function.description, /^func\[\d+\]$/);
-      assert.match(views.Closure.description, /^func\[\d+\] data=0x[1-9a-f][0-9a-f]*$/);
+      assert.match(views.Function.description, /^func\[\d+\] main.debugAnswer$/);
+      assert.match(views.Closure.description, /^func\[\d+\] main.prepareDebugViews\$1 data=0x[1-9a-f][0-9a-f]*$/);
+      // Immutable lexical captures live in the environment by value. The
+      // copied node is itself a pointer; mutable counters still use cells.
+      node(views.Closure.properties.captures.properties.node.properties['*'],
+        'runtime 世界', [first, 5, 8]);
+      const captured = value => value.properties.captures.properties;
+      node(captured(views.Bound).recv.properties['*'], 'runtime 世界', [first, 5, 8]);
+      assert.equal(captured(views.Nested).value.value, 29);
+      assert.equal(captured(views.Counter).value.properties['*'].value, afterResume ? 12 : 11);
+      assert.equal(captured(views.OtherCounter).value.properties['*'].value, afterResume ? 22 : 21);
       const count = afterResume ? 48 : 49;
       assert.equal(views.Mapping.description, `len=${count}`);
       if (!afterResume) assert.equal(views.Mapping.growing, true, 'inspect a partially evacuated map');
@@ -301,10 +319,22 @@ try {
           for (const child of await plugin.getProperties(frames.objectId)) {
             const frame = record.frames[Number(child.name)];
             if (frame.function !== 'main.debugWaiter') continue;
+            if (!Number.isSafeInteger(frame.pc) || frame.pc < 0) {
+              throw new Error('exact parked PC unavailable: ' + JSON.stringify(record));
+            }
             const locals = await plugin.getProperties(child.value.objectId);
             const local = locals.find(property => property.name === 'local')?.value;
             if (!local?.objectId) throw new Error('parked array local unavailable: ' + JSON.stringify(locals));
             frame.local = (await plugin.getProperties(local.objectId)).map(property => property.value.value);
+            const scoped = locals.find(property => property.name === 'scoped')?.value;
+            if (Number(child.name) === 0) {
+              if (scoped?.objectId) {
+                const values = (await plugin.getProperties(scoped.objectId)).map(property => property.value.value);
+                if (JSON.stringify(values) !== '[88,72,73,74]') throw new Error('wrong lexical local: ' + JSON.stringify(values));
+              } else if (globalThis.__llgoExpectScopedLocal) {
+                throw new Error('lexical parked local unavailable: ' + JSON.stringify(locals));
+              }
+            } else if (scoped) throw new Error('leaf lexical declaration leaked into a recursive caller');
           }
         }
         const owned = [...plugin.objects].filter(([, object]) =>
@@ -314,6 +344,7 @@ try {
         return records;
       })()`);
     }
+    await extension(`globalThis.__llgoExpectScopedLocal = ${process.env.LLGO_BROWSER_DEBUG_OPTIMIZED !== '1'}`);
     const records = await goroutines();
     const beforeLifecycle = await (await fetch(`${sessionURL}__llgo/worker-state`)).json();
     assert.ok(pagePause, 'host page is paused too');
@@ -357,7 +388,7 @@ try {
     const recovered = records.find(g => g.frames.some(f => f.function === 'main.debugRecoveredWaiter'));
     assert.equal(recovered?.state, 'waiting', 'recovered goroutine parks in a later defer');
     assert.ok(recovered.frames.filter(f => f.function === 'main.debugRecoveredWaiter' || f.function === 'main.debugPanicLeaf')
-      .every(f => !f.base), 'cleared panic snapshots must not expose retained physical frame addresses');
+      .every(f => !f.base && f.pc === undefined), 'cleared panic snapshots must not expose retained addresses or PCs');
     assert.equal(parked.length, 2, JSON.stringify(records));
     assert.ok(parked.every(g => g.state === 'waiting'), JSON.stringify(parked));
     assert.deepEqual(parked.map(g => g.frames.filter(f => f.function === 'main.debugWaiter').length).sort(), [4, 5]);

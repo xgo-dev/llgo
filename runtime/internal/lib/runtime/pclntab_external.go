@@ -10,6 +10,7 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	clitedebug "github.com/xgo-dev/llgo/runtime/internal/clite/debug"
 	cliteos "github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	clitesyscall "github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 )
 
 const (
@@ -132,13 +133,13 @@ func loadExternalPCLN() bool {
 		return false
 	}
 	path += ".pclntab"
-	fd := cliteos.Open(c.AllocaCStr(path), cliteos.O_RDONLY)
+	fd := cliteos.Open(c.AllocaCStr(path), cliteos.O_RDONLY|clitesyscall.O_NONBLOCK)
 	if fd < 0 {
 		return false
 	}
 	defer cliteos.Close(fd)
 	var st cliteos.StatT
-	if cliteos.Fstat(fd, &st) != 0 || st.Size < int64(externalPCLNHeaderSize) || st.Size > externalPCLNMaxSize {
+	if cliteos.Fstat(fd, &st) != 0 || st.Mode&clitesyscall.S_IFMT != clitesyscall.S_IFREG || st.Size < int64(externalPCLNHeaderSize) || st.Size > externalPCLNMaxSize {
 		return false
 	}
 	raw := make([]byte, int(st.Size))

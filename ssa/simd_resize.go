@@ -12,7 +12,7 @@ import (
 func (b Builder) simdIntegerResize(op SIMDOp, result Type, args []Expr) Expr {
 	x := args[0]
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
-	if op == SIMDExtendLo || op == SIMDExtendHi {
+	if op == SIMDExtend || op == SIMDExtendLo || op == SIMDExtendHi {
 		mask := make([]llvm.Value, result.ll.VectorSize())
 		offset := 0
 		if op == SIMDExtendHi {
@@ -40,6 +40,9 @@ func (b Builder) simdIntegerResize(op SIMDOp, result Type, args []Expr) Expr {
 		lower = ^upper
 	}
 	narrow := func(v llvm.Value) llvm.Value {
+		if op == SIMDTruncate {
+			return b.impl.CreateTrunc(v, llvm.VectorType(result.ll.ElementType(), x.ll.VectorSize()), "")
+		}
 		greater := llvm.IntSGT
 		if unsigned {
 			greater = llvm.IntUGT
@@ -54,13 +57,16 @@ func (b Builder) simdIntegerResize(op SIMDOp, result Type, args []Expr) Expr {
 	}
 	lo := narrow(x.impl)
 	hi := llvm.ConstNull(lo.Type())
-	if op == SIMDSaturateConcat {
+	if op == SIMDSaturateConcat || op == SIMDSaturateConcatGrouped {
 		hi = narrow(args[1].impl)
 	}
 	mask := make([]llvm.Value, result.ll.VectorSize())
 	for i := range mask {
 		index := i
-		if op != SIMDSaturateConcat && i >= x.ll.VectorSize() {
+		if op == SIMDSaturateConcatGrouped {
+			group := x.ll.VectorSize() / 2
+			index = (i/(2*group))*group + i%group + ((i/group)%2)*x.ll.VectorSize()
+		} else if op != SIMDSaturateConcat && i >= x.ll.VectorSize() {
 			index = x.ll.VectorSize()
 		}
 		mask[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(index), false)

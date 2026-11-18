@@ -67,16 +67,23 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			}
 		}
 	}
-	if p.prog.DeadcodeDropEnabled() && p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+	if p.prog.Target() != nil && p.prog.Target().GOARCH == "wasm" {
+		// A backing allocation keeps all of its views alive. This requires no
+		// whole-program reachability proof, including in ordinary Wasm builds.
 		owners := make(map[ssa.Value]struct{}, len(planned))
 		for value := range planned {
-			value = gcRootOwner(value)
-			switch value.(type) {
+			owner := gcRootOwner(value)
+			switch owner.(type) {
 			case *ssa.Const, *ssa.Global, *ssa.Function, *ssa.FreeVar:
 				// Static storage needs no heap root; free variables are kept
 				// by the separately rooted closure context.
 				continue
 			}
+			if _, rooted := planned[owner]; rooted || p.prog.DeadcodeDropEnabled() {
+				value = owner
+			}
+			// Otherwise keep the existing publication point. Introducing an
+			// owner root at entry can move cold panic-path stores into hot code.
 			owners[value] = struct{}{}
 		}
 		planned = owners
@@ -207,13 +214,17 @@ func (p *context) functionHasGCSafepoint(fn *ssa.Function) bool {
 
 func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
 	if load, ok := instr.(*ssa.UnOp); ok && load.Op == token.MUL {
-		switch load.Type().Underlying().(type) {
-		case *types.Array, *types.Struct:
-			// ABI lowering snapshots large aggregate loads on the heap after
-			// this root plan is built. Account for that added allocation now.
-			size := p.prog.SizeOf(p.type_(load.Type(), llssa.GoDecl))
-			if size > llabi.MaxImplicitStackVarSize ||
-				(p.prog.Target().GOARCH == "wasm" && size >= llabi.MinWasmAggregateCopySize) {
+		// ABI lowering may snapshot these loads with AllocU after this root
+		// plan is built. Keep the predicate in sync with abi.ShouldSnapshotAggregateLoad.
+		size := p.prog.SizeOf(p.type_(load.Type(), llssa.GoDecl))
+		ptrSize := p.prog.PointerSize()
+		switch t := load.Type().Underlying().(type) {
+		case *types.Array:
+			if llabi.ShouldSnapshotAggregateLoad(true, int(t.Len()), false, size, ptrSize) {
+				return true
+			}
+		case *types.Struct:
+			if llabi.ShouldSnapshotAggregateLoad(false, 0, true, size, ptrSize) {
 				return true
 			}
 		}

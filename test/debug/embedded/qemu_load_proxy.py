@@ -6,8 +6,11 @@ Memory writes and debugger execution are handled by the real QEMU GDB stub.
 
 import argparse
 import json
-import select
+import os
+import queue
 import socket
+import sys
+import threading
 
 
 def packet(payload):
@@ -29,9 +32,36 @@ def translate(payload, log):
     return payload
 
 
-def forward(client, upstream, first, log):
-    pending = first
+def forward(client_input, client_output, upstream, log):
+    events = queue.Queue()
+
+    def read(source, origin):
+        try:
+            while data := source(65536):
+                events.put((origin, data))
+            events.put((origin, b""))
+        except OSError as error:
+            events.put((origin, error))
+
+    # Pipe readers work on Windows too, where select only accepts sockets.
+    for source, origin in ((lambda size: os.read(client_input.fileno(), size), "client"),
+                           (upstream.recv, "qemu")):
+        threading.Thread(target=read, args=(source, origin), daemon=True).start()
+    pending = b""
     while True:
+        try:
+            origin, data = events.get(timeout=30)
+        except queue.Empty:
+            raise TimeoutError("debugger/QEMU session inactive for 30 seconds") from None
+        if isinstance(data, OSError):
+            raise data
+        if not data:
+            return
+        if origin == "qemu":
+            client_output.write(data)
+            client_output.flush()
+            continue
+        pending += data
         # RSP escapes reserved bytes, so a literal '#' terminates the payload.
         while pending:
             if pending[:1] != b"$":
@@ -45,37 +75,24 @@ def forward(client, upstream, first, log):
             rewritten = translate(payload, log)
             upstream.sendall(packet(rewritten) if rewritten != payload else pending[:end + 3])
             pending = pending[end + 3:]
-        readable, _, _ = select.select([client, upstream], [], [], 30)
-        if not readable:
-            raise TimeoutError("debugger/QEMU session inactive for 30 seconds")
-        for source in readable:
-            data = source.recv(65536)
-            if not data:
-                return
-            if source is client:
-                pending += data
-            else:
-                client.sendall(data)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--listen", type=int, required=True)
+    parser.add_argument("--transport", choices=("stdio",), required=True)
     parser.add_argument("--qemu", type=int, required=True)
     parser.add_argument("--log", required=True)
     args = parser.parse_args()
-    with socket.socket() as listener, open(args.log, "w", encoding="utf-8") as log:
-        listener.bind(("127.0.0.1", args.listen))
-        listener.listen()
-        while True:
-            with listener.accept()[0] as client:
-                first = client.recv(65536)
-                if not first:
-                    raise RuntimeError("debugger disconnected without sending RSP")
-                with socket.create_connection(("127.0.0.1", args.qemu), timeout=10) as upstream:
-                    upstream.settimeout(None)
-                    forward(client, upstream, first, log)
-                return
+    with socket.create_connection(("127.0.0.1", args.qemu), timeout=10) as upstream, \
+            open(args.log, "w", encoding="utf-8") as log:
+        upstream.settimeout(None)
+        try:
+            forward(sys.stdin.buffer, sys.stdout.buffer, upstream, log)
+        finally:
+            try:
+                upstream.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

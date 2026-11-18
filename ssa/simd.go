@@ -74,7 +74,58 @@ const (
 	SIMDExtendHi
 	SIMDSaturate
 	SIMDSaturateConcat
+	SIMDGetLo
+	SIMDGetHi
+	SIMDSetLo
+	SIMDSetHi
+	SIMDInterleaveLo
+	SIMDInterleaveHi
+	SIMDInterleaveLoGrouped
+	SIMDInterleaveHiGrouped
+	SIMDConcatEven
+	SIMDConcatOdd
+	SIMDInterleaveEven
+	SIMDInterleaveOdd
+	SIMDExtend
+	SIMDTruncate
+	SIMDSaturateConcatGrouped
+	SIMDConvertLo
+	SIMDConcatSelected
+	SIMDConcatSelectedGrouped
+	SIMDConcatPermute128
+	SIMDConcatAddPairs
+	SIMDConcatAddPairsGrouped
+	SIMDConcatSubPairs
+	SIMDConcatSubPairsGrouped
 )
+
+// simdTagIndex recognizes the official zero-sized alignment/noncomparability
+// tag. Giving the tag native alignment propagates through defined types,
+// unnamed underlying structs, and every enclosing array or struct.
+func simdTagIndex(t types.Type) (int, bool) {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok || n.Obj().Pkg() == nil || n.Obj().Pkg().Path() != "simd/archsimd" {
+		return 0, false
+	}
+	index := -1
+	switch n.Obj().Name() {
+	case "v128":
+		index = 0
+	case "v256":
+		index = 1
+	case "v512":
+		index = 2
+	}
+	if index < 0 {
+		return 0, false
+	}
+	st, ok := n.Underlying().(*types.Struct)
+	if !ok || st.NumFields() != 1 {
+		return 0, false
+	}
+	a, ok := st.Field(0).Type().(*types.Array)
+	return index, ok && a.Len() == 0
+}
 
 // SIMDNumericShape validates the official numeric aggregate representation.
 // Keep storage knowledge here, separate from operation selection and features.
@@ -83,14 +134,14 @@ func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
 	return lanes, ok && !strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDMaskShape recognizes the four SIMD128 masks. Masks use canonical zero
+// SIMDMaskShape recognizes fixed-width SIMD masks. Masks use canonical zero
 // or all-one integer lanes, preserving their public Go storage representation.
 func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
 	lanes, ok := SIMDVectorShape(typ)
 	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDVectorShape validates numeric and mask SIMD128 storage.
+// SIMDVectorShape validates numeric and mask SIMD128/256 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
@@ -126,11 +177,12 @@ func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	if strings.HasPrefix(named.Obj().Name(), "Mask") && elem.Info()&types.IsInteger != 0 && elem.Info()&types.IsUnsigned == 0 {
 		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
 	}
-	if named.Obj().Name() != expected || lanes.Len()*bits != 128 {
+	width := lanes.Len() * bits
+	if named.Obj().Name() != expected || width != 128 && width != 256 {
 		return nil, false
 	}
 	tag, ok := st.Field(0).Type().(*types.Named)
-	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != "v128" {
+	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != fmt.Sprintf("v%d", width) {
 		return nil, false
 	}
 	if (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
@@ -145,6 +197,26 @@ func simdLanes(typ types.Type) *types.Array {
 		panic("unsupported SIMD numeric storage: " + typ.String())
 	}
 	return lanes
+}
+
+// Pointers and slices are explicit memory interfaces and do not carry a vector
+// by value. Go aggregates containing vectors still need the same native-boundary
+// restriction as a direct vector parameter or result.
+func containsWideSIMD(typ types.Type) bool {
+	if lanes, ok := SIMDVectorShape(typ); ok {
+		return (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(lanes) > 16
+	}
+	switch typ := typ.Underlying().(type) {
+	case *types.Array:
+		return typ.Len() != 0 && containsWideSIMD(typ.Elem())
+	case *types.Struct:
+		for i := 0; i < typ.NumFields(); i++ {
+			if containsWideSIMD(typ.Field(i).Type()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SIMD lowers a validated source operation. LLVM legalizes these operations
@@ -166,6 +238,14 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
+		return b.simdInterleave(op, args[0], args[1])
+	case SIMDConcatSelected, SIMDConcatSelectedGrouped:
+		return b.simdConcatSelected(args[0], args[1], args[2])
+	case SIMDConcatPermute128:
+		return b.simdConcatPermute128(args[0], args[1], args[2], args[3])
+	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
+		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
 		return b.simdAverage(args[0], args[1])
 	case SIMDFMA:
@@ -185,9 +265,9 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdStoreMasked(args[0], args[1], args[2])
 	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
 		return b.simdPermute(op, args[0], args[1])
-	case SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat:
+	case SIMDExtend, SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat, SIMDSaturateConcatGrouped, SIMDTruncate:
 		return b.simdIntegerResize(op, result, args)
-	case SIMDConvert:
+	case SIMDConvert, SIMDConvertLo:
 		return b.simdConvert(result, args[0])
 	case SIMDShiftAllLeft, SIMDShiftAllRight, SIMDShiftLeft, SIMDShiftRight, SIMDShift:
 		return b.simdShift(op, args[0], args[1])
@@ -244,7 +324,11 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		v := b.impl.CreateInsertElement(llvm.Undef(result.ll), args[0].impl, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
 		return b.simdSplatLane0(Expr{v, result})
 	case SIMDSplatLane0:
-		return b.simdSplatLane0(args[0])
+		mask := llvm.ConstNull(llvm.VectorType(b.Prog.tyInt32(), result.ll.VectorSize()))
+		v := b.impl.CreateShuffleVector(args[0].impl, llvm.Undef(args[0].ll), mask, "")
+		return Expr{v, result}
+	case SIMDGetLo, SIMDGetHi, SIMDSetLo, SIMDSetHi:
+		return b.simdHalf(op, result, args)
 	case SIMDExtractLane:
 		return b.simdGetElem(args[0], args[1])
 	case SIMDInsertLane:
@@ -379,14 +463,13 @@ func (b Builder) simdBinary(op SIMDOp, x, y Expr) Expr {
 	return Expr{v, x.Type}
 }
 
-func (b Builder) simd128Index(x, index Expr) llvm.Value {
-	lanes := simdLanes(x.RawType()).Len()
-	if c := index.impl.IsAConstantInt(); !c.IsNil() && c.ZExtValue() < uint64(lanes) {
+func (b Builder) simdCheckedIndex(index Expr, limit int) llvm.Value {
+	if c := index.impl.IsAConstantInt(); !c.IsNil() && c.ZExtValue() < uint64(limit) {
 		return llvm.ConstInt(b.Prog.tyInt32(), c.ZExtValue(), false)
 	}
 	// Check even when ordinary slice bounds checks are disabled: an invalid
 	// immediate is an intrinsic error and must never become LLVM poison.
-	bad := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, index.impl, llvm.ConstInt(index.ll, uint64(lanes), false)), b.Prog.Bool()}
+	bad := Expr{llvm.CreateICmp(b.impl, llvm.IntUGE, index.impl, llvm.ConstInt(index.ll, uint64(limit), false)), b.Prog.Bool()}
 	blocks := b.Func.MakeBlocks(2)
 	b.If(bad, blocks[0], blocks[1])
 	b.SetBlockEx(blocks[0], AtEnd, false)
@@ -400,14 +483,14 @@ func (b Builder) simd128Index(x, index Expr) llvm.Value {
 // Lane indices are uint8 at the Go API boundary. Valid constants need no
 // runtime check; dynamic and out-of-range indices retain the panic check.
 func (b Builder) simdGetElem(x, index Expr) Expr {
-	i := b.simd128Index(x, index)
+	i := b.simdCheckedIndex(index, int(simdLanes(x.RawType()).Len()))
 	v := b.impl.CreateExtractElement(x.impl, i, "")
 	elem := simdLanes(x.RawType()).Elem()
 	return Expr{v, b.Prog.toType(elem)}
 }
 
 func (b Builder) simdSetElem(x, index, value Expr) Expr {
-	i := b.simd128Index(x, index)
+	i := b.simdCheckedIndex(index, int(simdLanes(x.RawType()).Len()))
 	v := b.impl.CreateInsertElement(x.impl, value.impl, i, "")
 	return Expr{v, x.Type}
 }

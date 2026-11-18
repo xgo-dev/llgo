@@ -47,7 +47,7 @@ type Export struct {
 	GOOS           string
 	GOARCH         string
 	Libc           string
-	Linker         string // Linker to use (e.g., "ld.lld", "avr-ld")
+	Linker         string // Link command: compiler driver or target-specific raw linker
 	LinkerArgs     []string
 	LinkerIdentity string
 	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)
@@ -133,7 +133,7 @@ const (
 	// TinyGC allocation also stays on its caller: allocator waits only
 	// acknowledge STW and finalizers are queued for a separate G. Keep their
 	// callback runner instrumented, since user finalizers may suspend.
-	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*PushCallerLocationFrameWasm*","*RecordCallerLocationWasm*","*RecordPanicLocationWasm*","*tinygogc*Alloc*"]`
+	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*PushCallerLocationFrameWasm*","*RecordCallerLocationWasm*","*RecordPanicLocationWasm*","*PushCallerLocationFrameID*","*RecordCallerLocationID*","*RecordPanicLocationID*","*tinygogc*Alloc*"]`
 	wasm32LibffiRelDir       = "runtime/internal/clite/ffi/wasm32"
 	wasm64LibffiRelDir       = "runtime/internal/clite/ffi/wasm64"
 )
@@ -332,18 +332,10 @@ func targetDebugInfoPolicy(linker, llvmTarget string) DebugInfoPolicy {
 var (
 	wasiSdkUrl      = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz"
 	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
-	espClangBaseUrl = "https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/download/" + espClangVersion
-	espClangSHA256  = map[string]string{
-		"aarch64-apple-darwin": "0e7e1cf82161bedab7a58bb19b3247a733423b0e298ef50a027cf64d8a2dc887",
-		"aarch64-linux-gnu":    "fc69dae5fcfd6051bb07d7f2fafbbd7dcb68b5c2211090483574e872d3055c9f",
-		"aarch64-w64-mingw32":  "0b495fccacca00bb3032b0625411d5d41f0dbbe2c0b1c5a6763e425c946100d8",
-		"x86_64-apple-darwin":  "c3e567a1ad434269311d4200dd11fe0c5b1e0b2a2e74fe5858aadea180d22c42",
-		"x86_64-linux-gnu":     "50f6840a92286fecd486b90457de7905eb5f1eb59272467852c5d3fdc140b62b",
-		"x86_64-w64-mingw32":   "9ca0606fc3a1ef7a2ffbad7328671b91035872d06bb8470f014c39e3a16ebc0c",
-	}
+	espClangBaseUrl = "https://github.com/" + espPins.Repository + "/releases/download"
+	espClangVersion = espPins.Release
+	espClangSHA256  = espClangChecksums()
 )
-
-const espClangVersion = "23.1.4_20261027.1"
 
 // cacheRoot can be overridden for testing
 var cacheRoot = env.LLGoCacheDir
@@ -401,21 +393,37 @@ func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
 		return "", nil
 	}
 
-	// Try to download ESP Clang if platform is supported
+	// Install bundled ESP Clang, or download it for source checkouts.
 	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
 	if platformSuffix != "" {
+		version := espClangVersion
 		checksum, ok := espClangSHA256[platformSuffix]
 		if !ok {
 			err = fmt.Errorf("missing ESP Clang checksum for %s", platformSuffix)
 			return
+		}
+		pin := espPins.Payloads[platformSuffix]
+		if pin.Asset == "" {
+			return "", fmt.Errorf("missing ESP Clang asset for %s", platformSuffix)
 		}
 		cacheClangDir := espClangCacheDir(platformSuffix)
 		if _, err = os.Stat(cacheClangDir); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return
 			}
-			fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
-			if err = checkDownloadAndExtractESPClang(espClangBaseUrl, espClangVersion, platformSuffix, checksum, cacheClangDir); err != nil {
+			bundle := filepath.Join(filepath.Dir(espClangRoot), pin.Asset)
+			_, bundleErr := os.Stat(bundle)
+			switch {
+			case bundleErr == nil:
+				fmt.Fprintln(os.Stderr, "Using bundled ESP Clang archive:", bundle)
+				err = checkInstallESPClangArchive(bundle, checksum, cacheClangDir)
+			case errors.Is(bundleErr, fs.ErrNotExist):
+				fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
+				err = checkDownloadAndExtractESPClang(espClangBaseUrl+"/"+version, pin.Asset, checksum, cacheClangDir)
+			default:
+				return "", bundleErr
+			}
+			if err != nil {
 				return
 			}
 		}
@@ -452,8 +460,9 @@ func getESPClangPlatform(goos, goarch string) string {
 		}
 	case "windows":
 		switch goarch {
-		case "386", "amd64":
-			// 32-bit LLGo hosts run the x64 tools as separate processes.
+		case "386":
+			return "i686-w64-mingw32"
+		case "amd64":
 			return "x86_64-w64-mingw32"
 		case "arm64":
 			return "aarch64-w64-mingw32"
@@ -649,6 +658,11 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 			export.ClangRoot = ""
 		} else {
 			export.Toolchain = nativeToolchain(goos)
+			if len(nativeInput.ExternalLinker) != 0 {
+				export.Linker = nativeInput.ExternalLinker[0]
+				export.LinkerArgs = slices.Clone(nativeInput.ExternalLinker[1:])
+			}
+			export.LDFLAGS = slices.Clone(nativeInput.ExternalFlags)
 		}
 		export.DebugInfo = nativeDebugInfoPolicy(export.Toolchain)
 		// not cross compile

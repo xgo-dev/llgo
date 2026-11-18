@@ -50,11 +50,25 @@ func cmpTest(commands commandEnv, dir, pkgPath, llApp string, genExpect bool, ru
 	}
 
 	var goOut, goErr bytes.Buffer
-	goArgs := []string{"run", pkgPath}
-	if len(goFiles) != 0 {
-		goArgs = append([]string{"run"}, goFiles...)
+	// Run the reference executable directly: go run appends its own stderr
+	// message and returns status 1 when the program exits with a nonzero code.
+	tmp, err := os.MkdirTemp("", "llgo-cmptest-")
+	if err != nil {
+		fatal(err)
 	}
-	var goRunErr = runApp(commands, runArgs, dir, &goOut, &goErr, "go", goArgs...)
+	defer os.RemoveAll(tmp)
+	goApp := filepath.Join(tmp, "reference.exe")
+	goArgs := []string{"build", "-o", goApp}
+	if len(goFiles) != 0 {
+		goArgs = append(goArgs, goFiles...)
+	} else {
+		goArgs = append(goArgs, pkgPath)
+	}
+	var buildOutput bytes.Buffer
+	if err := runApp(commands, nil, dir, &buildOutput, &buildOutput, "go", goArgs...); err != nil {
+		fatal(fmt.Errorf("build cmptest reference: %w\n%s", err, buildOutput.Bytes()))
+	}
+	goRunErr := runApp(commands, runArgs, dir, &goOut, &goErr, goApp)
 
 	checkEqual("output", llgoOut.Bytes(), goOut.Bytes())
 	checkEqual("stderr", llgoErr.Bytes(), goErr.Bytes())
@@ -74,11 +88,17 @@ func formatExpect(stdout, stderr []byte, runErr error) []byte {
 }
 
 func checkEqualRunErr(llgoRunErr, goRunErr error) {
-	if llgoRunErr == goRunErr {
+	if llgoRunErr == nil && goRunErr == nil {
+		return
+	}
+	var llgoExit, goExit *exec.ExitError
+	if errors.As(llgoRunErr, &llgoExit) && errors.As(goRunErr, &goExit) &&
+		llgoExit.ExitCode() >= 0 && llgoExit.ExitCode() == goExit.ExitCode() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "=> Exit:", llgoRunErr)
 	fmt.Fprintln(os.Stderr, "\n=> Expected Exit:", goRunErr)
+	fatal(errors.New("checkEqual: unexpected exit status"))
 }
 
 func checkEqual(prompt string, a, expected []byte) {

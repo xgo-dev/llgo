@@ -1567,6 +1567,11 @@ func funcStr(ft *funcType) string {
 // If the key type is not a valid map key type (that is, if it does
 // not implement Go's == operator), MapOf panics.
 func MapOf(key, elem Type) Type {
+	// Map buckets support at most 8-byte alignment, independently of pointer
+	// width. SIMD storage needs more; pointers to it remain valid map entries.
+	if key.Align() > 8 || elem.Align() > 8 {
+		panic("reflect.MapOf: vector storage is not supported in map key/value; use an array of scalars or a pointer")
+	}
 	ktyp := key.common()
 	publicElem := elem.common()
 	etyp := publicElem
@@ -2017,6 +2022,13 @@ func isPaddedField(t Type, i int) bool {
 // StructOf currently does not support promoted methods of embedded fields
 // and panics if passed unexported StructFields.
 func StructOf(fields []StructField) Type {
+	hostLayout := false
+	for _, field := range fields {
+		if field.Type != nil && isHostLayoutMarker(field.Type) {
+			hostLayout = true
+			break
+		}
+	}
 	var (
 		hash       = fnv1(0, []byte("struct {")...)
 		size       uintptr
@@ -2167,12 +2179,16 @@ func StructOf(fields []StructField) Type {
 
 		comparable = comparable && (ft.Equal != nil)
 
-		offset := align(size, uintptr(ft.Align_))
+		fieldAlign := ft.Align_
+		if hostLayout {
+			fieldAlign = hostLayoutFieldAlign(ft)
+		}
+		offset := align(size, uintptr(fieldAlign))
 		if offset < size {
 			panic("reflect.StructOf: struct size would exceed virtual address space")
 		}
-		if ft.Align_ > typalign {
-			typalign = ft.Align_
+		if fieldAlign > typalign {
+			typalign = fieldAlign
 		}
 		size = offset + ft.Size_
 		if size < offset {

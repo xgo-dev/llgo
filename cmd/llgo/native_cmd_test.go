@@ -132,7 +132,7 @@ func main() {
 func TestNativeUnsupportedControlsFailBeforeLoading(t *testing.T) {
 	dir := t.TempDir()
 	for _, command := range []string{"build", "install", "run", "cmptest", "test"} {
-		for _, control := range []string{"-race", "-msan", "-asan", "-pgo=off", "-trimpath", "-work", "-n", "-gcflags=-m", "-ldflags=-X main.Version=1"} {
+		for _, control := range []string{"-race", "-msan", "-asan", "-pgo=off", "-trimpath", "-work", "-n", "-gcflags=-live", "-ldflags=-X main.Version=1"} {
 			t.Run(command+control, func(t *testing.T) {
 				out, code := nativeCommand(t, dir, nil, command, control, "./nonexistent-package")
 				if code == 0 || !strings.Contains(out, "unsupported") || strings.Contains(out, "nonexistent-package") {
@@ -215,7 +215,7 @@ func TestMonitorHelpDoesNotRequireGoDefaultsOrToolchain(t *testing.T) {
 
 func TestNativeGOFLAGSCannotBypassUnsupportedControls(t *testing.T) {
 	dir := t.TempDir()
-	for _, value := range []string{"-race", "-gcflags=-m", "-pgo=off"} {
+	for _, value := range []string{"-race", "-gcflags=-live", "-pgo=off"} {
 		for _, command := range []string{"build", "install", "run", "test"} {
 			out, code := nativeCommand(t, dir, []string{"GOFLAGS=" + value}, command, "./missing")
 			if code == 0 || !strings.Contains(out, "unsupported") {
@@ -228,6 +228,31 @@ func TestNativeGOFLAGSCannotBypassUnsupportedControls(t *testing.T) {
 	out, code := nativeCommand(t, dir, []string{"GOENV=" + goenv, "GOFLAGS="}, "build", "./missing")
 	if code == 0 || !strings.Contains(out, "unsupported") {
 		t.Fatalf("persisted GOFLAGS exit=%d output=%s", code, out)
+	}
+}
+
+func TestNativeEscapeDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	nativeFile(t, filepath.Join(dir, "go.mod"), "module example.com/escapediagnostics\ngo 1.27.0\n")
+	nativeFile(t, filepath.Join(dir, "main.go"), `package main
+func use(p *int) int { return *p }
+func main() { p := new(int); *p = 42; println(use(p)) }
+`)
+	for _, defaults := range []bool{false, true} {
+		name := "CLI"
+		args := []string{"run", "-gcflags=-m", "."}
+		var environ []string
+		if defaults {
+			name = "GOFLAGS"
+			args = []string{"run", "."}
+			environ = []string{"GOFLAGS=-gcflags=-m"}
+		}
+		t.Run(name, func(t *testing.T) {
+			out, code := nativeCommand(t, dir, environ, args...)
+			if code != 0 || !strings.Contains(out, "Alloc stack") || !strings.HasSuffix(strings.TrimSpace(out), "42") {
+				t.Fatalf("escape diagnostics/execution: exit=%d output=%s", code, out)
+			}
+		})
 	}
 }
 

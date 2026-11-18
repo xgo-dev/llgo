@@ -8,7 +8,7 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-const LLGoFiles = "_wrap/blocking_unix.c"
+const blockingLLGoFiles = "_wrap/blocking_unix.c"
 
 // CondWait preserves the caller's roots without suspending the blocked thread
 // during collection. It restores the active GC state before returning.

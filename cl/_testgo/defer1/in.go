@@ -13,7 +13,7 @@ package main
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
@@ -23,7 +23,7 @@ package main
 // CHECK-NEXT: [[HELLO_FLAGS:%.*]] = or i64 [[HELLO_FLAGS0]], 1
 // CHECK-NEXT: store i64 [[HELLO_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[HELLO_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[HELLO_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[HELLO_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[HELLO_PREV]], ptr {{%.*}}
 // CHECK: store i64 1, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[HELLO]], i64 5 }, ptr {{%.*}}
@@ -32,7 +32,7 @@ package main
 // CHECK-NEXT: [[BYE_FLAGS:%.*]] = or i64 [[BYE_FLAGS0]], 2
 // CHECK-NEXT: store i64 [[BYE_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[BYE_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[BYE_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[BYE_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[BYE_PREV]], ptr {{%.*}}
 // CHECK: store i64 2, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[BYE]], i64 3 }, ptr {{%.*}}
@@ -42,7 +42,7 @@ package main
 // CHECK-NEXT: [[WORLD_FLAGS:%.*]] = or i64 [[WORLD_FLAGS0]], 4
 // CHECK-NEXT: store i64 [[WORLD_FLAGS]], ptr [[FLAGS]]
 // CHECK: [[WORLD_PREV:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[WORLD_NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 32)
+// CHECK: getelementptr inbounds nuw { ptr, i64, %"{{.*}}String" }, ptr [[WORLD_NODE:%.*]], i32 0, i32 0
 // CHECK: store ptr [[WORLD_PREV]], ptr {{%.*}}
 // CHECK: store i64 3, ptr {{%.*}}
 // CHECK: store %"{{.*}}String" { ptr [[WORLD]], i64 5 }, ptr {{%.*}}
@@ -64,7 +64,7 @@ package main
 // CHECK: [[WORLD_NEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[WORLD_VALUE]], 0
 // CHECK-NEXT: store ptr [[WORLD_NEXT]], ptr [[HEAD]]
 // CHECK: [[WORLD_TEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[WORLD_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[WORLD_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[WORLD_TEXT]])
 // CHECK: [[BYE_CANDIDATE:%.*]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: icmp ne ptr [[BYE_CANDIDATE]], null
@@ -73,7 +73,7 @@ package main
 // CHECK: [[BYE_NEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[BYE_VALUE]], 0
 // CHECK-NEXT: store ptr [[BYE_NEXT]], ptr [[HEAD]]
 // CHECK: [[BYE_TEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[BYE_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[BYE_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[BYE_TEXT]])
 // CHECK: [[HELLO_CANDIDATE:%.*]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: icmp ne ptr [[HELLO_CANDIDATE]], null
@@ -82,7 +82,7 @@ package main
 // CHECK: [[HELLO_NEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[HELLO_VALUE]], 0
 // CHECK-NEXT: store ptr [[HELLO_NEXT]], ptr [[HEAD]]
 // CHECK: [[HELLO_TEXT:%.*]] = extractvalue { ptr, i64, %"{{.*}}String" } [[HELLO_VALUE]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[HELLO_ACTIVE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[HELLO_TEXT]])
 // CHECK-LABEL: define void @"main.main$1"(){{.*}} {
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr [[HI]], i64 2 })
@@ -109,7 +109,7 @@ func main() {
 // zLoopJoin preserves the former nextblock regression exactly: an empty range
 // before and after registration must not let block[0] movement bypass cleanup.
 // CHECK-LABEL: define void @main.zLoopJoin(){{.*}} {
-// CHECK: [[LOOP_FRAME:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[LOOP_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[LOOP_FRAME]])
 // CHECK: [[LOOP_FLAGS:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[LOOP_FRAME]], i32 0, i32 1
 // CHECK: [[FIRST_INDEX:%[0-9]+]] = phi i64
@@ -118,8 +118,8 @@ func main() {
 // CHECK-NEXT: store i64 [[NEW_LOOP_FLAGS]], ptr [[LOOP_FLAGS]]
 // CHECK: [[SECOND_INDEX:%[0-9]+]] = phi i64
 // CHECK: [[ACTIVE_LOOP_BIT:%[0-9]+]] = and i64 {{%[0-9]+}}, 1
-// CHECK: call void @"{{.*}}FreeDeferNode"(ptr %{{[0-9]+}})
-// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" %{{[0-9]+}})
+// CHECK-NOT: FreeDeferNode
+// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" %{{[0-9]+}})
 func zLoopJoin() {
 	values := []int{}
 	for range values {

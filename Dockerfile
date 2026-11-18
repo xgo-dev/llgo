@@ -12,12 +12,19 @@ RUN dpkg-deb --extract /tmp/llgo.deb /install
 
 FROM ${BASE_IMAGE}
 # Keep native dependencies aligned with the DEB override in .goreleaser.yaml.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+        | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-23 main" \
+        > /etc/apt/sources.list.d/llvm-23.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    libllvm23 llvm-23 clang-23 lld-23 libc++-23-dev tar xz-utils \
     build-essential pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev \
     libcjson-dev libsqlite3-dev libuv1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=unpack /install/ /
-ENV PATH="/usr/lib/llgo/crosscompile/clang/bin:${PATH}"
+ENV LLVM_CONFIG=/usr/bin/llvm-config-23
 WORKDIR /workspace
 CMD ["llgo", "version"]

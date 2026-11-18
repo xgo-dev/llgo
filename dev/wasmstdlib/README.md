@@ -12,7 +12,7 @@ The full audit requires GNU `timeout`. Each package has a five-minute build/run 
 
 Reviewed exclusions are reported as `not-applicable` with a profile-specific reason. Native-only signal, CPU-profiler, BDWGC finalizer and weak-reference stress suites; OS-only plugin, syscall and Windows suites; and the unsupported Go `cgo` frontend are not counted as passes. Official Go reference profiles also classify `test/llgoext` explicitly because those packages require LLGo-only build tags and runtime APIs. Dedicated target tests continue to cover LLGo's C ABI and host boundaries.
 
-`test/simd` is reported as `separate-suite`: it requires `GOEXPERIMENT=simd` and runs in the regular Go workflow's dedicated native and W32-WASI SIMD jobs at O0 and O2. This does not claim SIMD acceptance on the JavaScript profiles or count the package as a standard-library pass.
+`test/simd` and `test/simd/portable` are reported as `separate-suite`: they require `GOEXPERIMENT=simd` and run in the regular Go workflow's dedicated native and W32-WASI SIMD jobs at O0 and O2. This does not claim SIMD acceptance on the JavaScript profiles or count those packages as standard-library passes. The native libc ABI and signal tests in `test/std/runtime/abicall` explicitly exclude wasm and are reported as `not-applicable`.
 
 ## Focused standard-library slice
 

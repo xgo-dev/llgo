@@ -183,28 +183,31 @@ func TestTestRunsMustBeSequential(t *testing.T) {
 	}
 }
 
-func TestTestRunnerTimeout(t *testing.T) {
+func TestTestRunnerLimits(t *testing.T) {
 	maxDuration := time.Duration(1<<63 - 1)
 	tests := []struct {
-		value   string
-		want    time.Duration
-		wantErr bool
+		value    string
+		want     time.Duration
+		wantWait time.Duration
+		wantErr  bool
 	}{
-		{value: "10m", want: 10*time.Minute + testRunnerExitGrace},
-		{value: "250ms", want: 250*time.Millisecond + testRunnerExitGrace},
+		{value: "10m", want: 10*time.Minute + testRunnerExitGrace, wantWait: time.Minute},
+		{value: "250ms", want: 250*time.Millisecond + testRunnerExitGrace, wantWait: 5 * time.Second},
+		{value: "50s", want: 50*time.Second + testRunnerExitGrace, wantWait: 5 * time.Second},
+		{value: "51s", want: 51*time.Second + testRunnerExitGrace, wantWait: 5100 * time.Millisecond},
 		{value: "0", want: 0},
 		{value: "-1s", want: 0},
-		{value: maxDuration.String(), want: maxDuration},
+		{value: maxDuration.String(), want: maxDuration, wantWait: maxDuration / 10},
 		{value: "not-a-duration", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
-			got, err := testRunnerTimeout(tt.value)
+			got, wait, err := testRunnerLimits(tt.value)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("testRunnerTimeout(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+				t.Fatalf("testRunnerLimits(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Fatalf("testRunnerTimeout(%q) = %s, want %s", tt.value, got, tt.want)
+			if got != tt.want || wait != tt.wantWait {
+				t.Fatalf("testRunnerLimits(%q) = (%s, %s), want (%s, %s)", tt.value, got, wait, tt.want, tt.wantWait)
 			}
 		})
 	}

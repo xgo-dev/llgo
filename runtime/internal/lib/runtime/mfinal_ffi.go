@@ -135,14 +135,14 @@ func newFinalizerFFISignature(ft *abi.FuncType, explicitEnv bool, argType *ffi.T
 		paramTypes = append(paramTypes, ffi.TypePointer)
 	}
 	paramTypes = append(paramTypes, argType)
-	sig, err := ffi.NewSignature(finalizerFFIReturnType(ft.Out), paramTypes...)
+	sig, err := ffi.NewSignatureWithABI(callbackABI(ft), finalizerFFIReturnType(ft.Out), paramTypes...)
 	if err != nil {
 		panic(err)
 	}
-	if sig.RType == ffi.TypeVoid {
+	if sig.ReturnType() == ffi.TypeVoid {
 		return sig, paramTypes, 0
 	}
-	retSize := sig.RType.Size
+	retSize := sig.ReturnType().ByteSize()
 	if argSize := unsafe.Sizeof(uintptr(0)); retSize < argSize {
 		// Conservatively reserve one word for every non-void result. In
 		// particular, libffi writes sub-register scalar results as ffi_arg.

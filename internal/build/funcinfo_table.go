@@ -17,6 +17,7 @@
 package build
 
 import (
+	"os"
 	"sort"
 	"strings"
 
@@ -24,6 +25,8 @@ import (
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
+	"github.com/xgo-dev/llgo/internal/pclnpost"
+	"github.com/xgo-dev/llgo/internal/wasmdebug"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -85,13 +88,7 @@ func collectFuncInfo(pkgs []Package) []funcInfoRecord {
 		if pkg == nil {
 			continue
 		}
-		var records []funcInfoRecord
-		if pkg.linkSnapshot != nil {
-			records = pkg.linkSnapshot.funcInfo
-		} else if pkg.LPkg != nil {
-			records = readFuncInfo(pkg.LPkg.Module())
-		}
-		for _, rec := range records {
+		for _, rec := range packageFuncInfo(pkg) {
 			if rec.symbol == "" {
 				continue
 			}
@@ -120,13 +117,7 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 		if pkg == nil {
 			continue
 		}
-		var records []pcLineRecord
-		if pkg.linkSnapshot != nil {
-			records = pkg.linkSnapshot.pcLineInfo
-		} else if pkg.LPkg != nil {
-			records = readPCLineInfo(pkg.LPkg.Module())
-		}
-		for _, rec := range records {
+		for _, rec := range packagePCLineInfo(pkg) {
 			if rec.id == 0 || rec.symbol == "" {
 				continue
 			}
@@ -457,6 +448,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	emitSites := shouldEmitRuntimeSites(ctx)
 	emitEntrySites := shouldEmitRuntimeEntrySites(ctx) && len(encoded.Records) != 0
 	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), siteFormat, entrySiteInfo, emitSites && len(pcLineValues) != 0, emitEntrySites)
+	if darwinSymbolEntries(ctx) {
+		emitSymbolEntryReserve(mod, entrySiteInfo, len(encoded.Records))
+	}
 	if emitEntrySites {
 		entryStart, entryEnd := emitRuntimeSiteBoundaries(
 			mod, funcEntryRecordType, ctx.prog.PointerSize(), siteFormat,
@@ -613,7 +607,19 @@ func emitExternalFuncInfoTable(ctx *context, mod llvm.Module, records []funcInfo
 
 	identityType := llvm.ArrayType(typ.i8, 32)
 	identity := llvm.AddGlobal(mod, identityType, pclnIdentitySymbol)
-	identity.SetInitializer(llvm.ConstNull(identityType))
+	if ctx.buildConf.Goarch == "wasm" {
+		// Keep this slot initialized in the final data section, including
+		// optimized links that omit trailing zero bytes. Post-link pairing
+		// replaces its contents without moving code or debug offsets.
+		values := make([]llvm.Value, 32)
+		placeholder := wasmdebug.PCLNIdentityPlaceholder()
+		for i, b := range placeholder {
+			values[i] = llvm.ConstInt(typ.i8, uint64(b), false)
+		}
+		identity.SetInitializer(llvm.ConstArray(typ.i8, values))
+	} else {
+		identity.SetInitializer(llvm.ConstNull(identityType))
+	}
 	identity.SetAlignment(8)
 	if ctx.buildConf.Goos == "darwin" {
 		identity.SetSection("__DATA,__llgo_pid")
@@ -731,14 +737,41 @@ func shouldEmitRuntimeSites(ctx *context) bool {
 
 // Entry-block inline assembly disturbs LLDB's initial lexical scope on Darwin.
 // PC-line anchors carry no source location and remain safe with DWARF. External
-// pclntab still needs final entry addresses to construct its sidecar.
+// pclntab still needs final entry addresses to construct its sidecar. Embedded
+// Darwin LTO executables collect them through a data-only symbol carrier.
 func shouldEmitRuntimeEntrySites(ctx *context) bool {
 	if !shouldEmitRuntimeSites(ctx) {
 		return false
 	}
 	conf := ctx.buildConf
-	return conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
+	return darwinSymbolEntries(ctx) || conf.Goos != "darwin" || conf.PCLNMode == PCLNExternal ||
 		!shouldEmitDebugInfo(conf, &ctx.crossCompile)
+}
+
+func darwinSymbolEntries(ctx *context) bool {
+	return ctx != nil && ctx.buildConf != nil && shouldEmitRuntimeSites(ctx) &&
+		ctx.buildConf.Goos == "darwin" && ctx.buildConf.BuildMode == BuildModeExe &&
+		ctx.buildConf.PCLNMode == PCLNEmbedded && ctx.buildConf.ltoEnabled() &&
+		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
+		shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) && os.Getenv("LLGO_PCLNPOST") != "0"
+}
+
+func emitSymbolEntryReserve(mod llvm.Module, info siteSectionInfo, count int) {
+	ctx := mod.Context()
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	// The link phase grows this reservation if final text needs more buckets.
+	bytes := llvm.ArrayType(ctx.Int8Type(), count*32+4096)
+	typ := ctx.StructType([]llvm.Type{ctx.Int64Type(), ptr, bytes}, false)
+	reserve := llvm.AddGlobal(mod, typ, "__llgo_funcinfo_entry_reserve")
+	reserve.SetInitializer(ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int64Type(), pclnpost.SymbolEntryCarrierMagic, false),
+		llvm.ConstBitCast(reserve, ptr), llvm.ConstNull(bytes),
+	}, false))
+	reserve.SetLinkage(llvm.PrivateLinkage)
+	reserve.SetGlobalConstant(true)
+	reserve.SetAlignment(8)
+	reserve.SetSection(info.machO + ",regular,live_support")
+	appendLLVMUsed(mod, reserve)
 }
 
 // siteSectionInfo names one metadata site section in each supported object format.
@@ -859,7 +892,7 @@ func emitRuntimeSiteBoundaries(mod llvm.Module, recordType llvm.Type, pointerSiz
 }
 
 func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
-	if !shouldEmitRuntimeEntrySites(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
+	if !shouldEmitRuntimeEntrySites(ctx) || darwinSymbolEntries(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}
 	mod := pkg.Module()
@@ -891,17 +924,18 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 	// findfunc bucket index, because LLVM IR generation does not know final
 	// linked text order.
 	//
-	// Known limitation: because the record is emitted inside the function
-	// body, LTO inlining duplicates it into every inline site, bloating the
-	// section (~4x on multipkg) and registering host-function PCs under the
-	// inlinee's symbol ID; the runtime only consults this table when native
-	// symbolization fails, which bounds the impact. Data-global alternatives
-	// were tried and do not work with the current LLVM semantics: !associated
+	// Known limitation on native targets: LTO inlining duplicates these
+	// body-local records into every inline site, bloating the section (~4x on
+	// multipkg). Anchor records can attribute host PCs to the inlinee; exact
+	// entry records repeat the original function's PC. The post-link analyzer
+	// normalizes and deduplicates both forms when constructing the final ftab.
+	// Without that rewrite, the runtime uses these raw records as fallback.
+	// Data-global alternatives do not work with the current LLVM semantics:
+	// !associated
 	// affects only linker GC, so IR-level GlobalDCE deletes every record;
 	// keeping records via llvm.compiler.used makes their function-address
 	// initializers pin dead functions alive; and noduplicate on the asm call
-	// blocks inlining outright. Deduplicating the section is therefore
-	// link-phase work and lands together with the final ftab generation.
+	// blocks inlining outright.
 	siteFormat := runtimeSiteObjectFormat(ctx)
 	entrySiteInfo := runtimeEntrySiteSectionInfo(ctx)
 	llvmCtx := mod.Context()
@@ -945,14 +979,12 @@ func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
 		asmType := noArgsAsmType
 		constraints := ""
 		var args []llvm.Value
-		if siteFormat == siteObjectCOFF && ctx.prog.PointerSize() == 4 && functionAddressTaken(fn) {
-			// Win32 has no PE unwind table from which the runtime can recover an
-			// exact function boundary. Address-taken functions are already kept
-			// live by the program, so their associative record may safely carry
-			// the true entry instead of the post-prologue inline-asm anchor. This
-			// lets FuncForPC distinguish a function value from an ordinary PC in
-			// the tail of the preceding function without retaining any otherwise
-			// dead function.
+		if functionAddressTaken(fn) {
+			// Function values need the true entry even when the link-phase table
+			// rewrite is disabled. An inline-asm anchor follows the prologue and
+			// can misattribute an entry PC, notably on byte-aligned amd64.
+			// Address-taken functions already have address uses, so their body-local
+			// record can carry the true entry without keeping a dead function live.
 			entryPC = "${0:c}"
 			asmType = llvm.FunctionType(llvmCtx.VoidType(), []llvm.Type{fn.Type()}, false)
 			constraints = "X"

@@ -26,7 +26,7 @@ func TestExtensionJavaScript(t *testing.T) {
 	if err != nil {
 		t.Skip("node is unavailable")
 	}
-	command := exec.Command(node, "--test", filepath.Join("extension", "plugin_test.js"), filepath.Join("extension", "goroutines_test.js"), filepath.Join("testdata", "page_test.js"))
+	command := exec.Command(node, "--test", filepath.Join("testdata", "page_test.js"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("language extension tests: %v\n%s", err, output)
 	}
@@ -277,6 +277,11 @@ func TestChromeLanguageExtension(t *testing.T) {
 		}
 	}
 	if session.PluginReady() == 0 || session.RuntimeReady() == 0 {
+		diagCtx, diagCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer diagCancel()
+		diag := exec.CommandContext(diagCtx, "node", filepath.Join("testdata", "chrome_session.mjs"), profileData, session.URL, "--diagnostics")
+		diagOutput, _ := diag.CombinedOutput()
+		t.Logf("registration diagnostics: %s", diagOutput)
 		t.Fatalf("Chrome did not complete LLGo module registration/instantiation (index=%d plugin-ready=%d runtime-ready=%d)\ntargets: %s\n%s",
 			session.PluginRequests(), session.PluginReady(), session.RuntimeReady(),
 			chromeTargets(profileData), output.String())

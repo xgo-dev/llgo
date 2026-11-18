@@ -1850,7 +1850,7 @@ func (v Value) grow(n int) {
 		// plain 3-word struct may use a different calling convention.
 		// Reinterpret the header as a builtin slice so the call ABI matches.
 		sh := *(*[]byte)(unsafe.Pointer(p))
-		sh = growslice(sh, n, int(t.Size_), int(t.Align_))
+		sh = growslice(sh, n, int(t.Size_), int(t.Align_), t.Pointers())
 		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&sh))
 		p.Len = oldLen // set oldLen back
 	}
@@ -2162,9 +2162,9 @@ func verifyNotInHeapPtr(p uintptr) bool {
 	return true
 }
 
-func growslice(src []byte, num, etSize, etAlign int) []byte {
+func growslice(src []byte, num, etSize, etAlign int, hasPointers bool) []byte {
 	rs := *(*runtime.Slice)(unsafe.Pointer(&src))
-	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign)
+	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign, hasPointers)
 	return *(*[]byte)(unsafe.Pointer(&rs))
 }
 
@@ -2296,7 +2296,11 @@ func toFFIWordArg(v Value) unsafe.Pointer {
 	if v.flag&flagIndir != 0 {
 		return v.ptr
 	}
-	return unsafe.Pointer(&v.ptr)
+	// Direct-iface values store the pointer in v.ptr. v is a by-value copy,
+	// so heap-allocate the word to keep it valid after this frame returns.
+	p := new(unsafe.Pointer)
+	*p = v.ptr
+	return unsafe.Pointer(p)
 }
 
 func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
@@ -2364,6 +2368,13 @@ var (
 )
 
 func toFFIType(typ *abi.Type) *ffi.Type {
+	// Vector storage (including zero-length arrays and enclosing aggregates)
+	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
+	// descriptions cannot represent its vector calling convention. Check before
+	// skipping zero-sized fields; pointers and slice headers retain scalar ABI.
+	if typ.Align_ > 8 {
+		panic("reflect: libffi calls with vector storage are not supported")
+	}
 	kind := typ.Kind()
 	switch kind {
 	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
@@ -2391,7 +2402,7 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		if typ.IsClosure() {
 			return ffiTypeClosure
 		}
-		return toFFIStructType(typ)
+		return ffiWidenGoPointerStruct(toFFIStructType(typ), typ)
 	case abi.UnsafePointer:
 		return ffi.TypePointer
 	}
@@ -2412,8 +2423,14 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		fields = append(fields, toFFIType(fs.Typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
-	// Do not pad to typ.Size_: trailing zero-sized fields can enlarge the
-	// Go-visible size without consuming registers in llgo's callable ABI.
+	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
+	// without changing llgo's callable ABI. HostLayout keeps that tail
+	// protection in LLVM storage, including in enclosing aggregates, so
+	// the FFI description must match Size_ wherever that padding is also
+	// part of the calling convention.
+	if off < typ.Size_ && structHasHostLayout(typ) && ffiHostLayoutTailPadding {
+		fields, off = appendFFIPadding(fields, off, typ.Size_-off)
+	}
 	return ffi.StructOf(fields...)
 }
 
@@ -2441,10 +2458,19 @@ func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintp
 	return fields, off
 }
 
+func omitFFIArg(typ *abi.Type) bool {
+	// Keep the vector-storage diagnostic in toFFIType, including for empty
+	// arrays with vector alignment.
+	return ffiSkipEmptyArgs && typ.Size_ == 0 && typ.Align_ <= 8
+}
+
 func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
-	args := make([]*ffi.Type, len(tin))
-	for i, in := range tin {
-		args[i] = toFFIType(in)
+	args := make([]*ffi.Type, 0, len(tin))
+	for _, in := range tin {
+		if omitFFIArg(in) {
+			continue
+		}
+		args = append(args, toFFIType(in))
 	}
 	return ffi.NewSignature(toFFIRetType(tout), args...)
 }
@@ -2584,6 +2610,9 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	}
 	for i, arg := range in {
 		typ := tin[ioff+i]
+		if omitFFIArg(typ) {
+			continue
+		}
 		if ffiCallSliceAsTriple && typ.Kind() == abi.Slice {
 			h := (*unsafeheaderSlice)(arg.ptr)
 			ffiArgs = append(ffiArgs, ffi.TypePointer, ffi.TypeInt, ffi.TypeInt)
@@ -2598,8 +2627,8 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	if err != nil {
 		panic(err)
 	}
-	if sig.RType != ffi.TypeVoid {
-		v := runtime.AllocZAligned(sig.RType.Size, uintptr(sig.RType.Alignment))
+	if sig.ReturnType() != ffi.TypeVoid {
+		v := runtime.AllocZAligned(sig.ReturnType().ByteSize(), uintptr(sig.ReturnType().Alignment))
 		// libffi expects rvalue to point to the return value storage.
 		ret = v
 	}
@@ -2609,12 +2638,12 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	switch n := len(tout); n {
 	case 0:
 	case 1:
-		return []Value{valueFromFFIResult(ret, tout[0], sig.RType)}
+		return []Value{valueFromFFIResult(ret, tout[0], sig.ReturnType())}
 	default:
 		out = make([]Value, n)
 		var off uintptr
 		for i, tout := range tout {
-			field, fieldOffset, next := ffiResultField(sig.RType, i, off)
+			field, fieldOffset, next := ffiResultField(sig.ReturnType(), i, off)
 			out[i] = valueFromFFIResult(add(ret, fieldOffset, ""), tout, field)
 			off = next
 		}
@@ -2623,9 +2652,9 @@ func (v Value) call(op string, in []Value) (out []Value) {
 }
 
 func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Value {
-	if ffiType.Size != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
+	if ffiType.ByteSize() != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
 		storage := runtime.AllocZAligned(typ.Size_, uintptr(typ.Align_))
-		size := ffiType.Size
+		size := ffiType.ByteSize()
 		if typ.Size_ < size {
 			size = typ.Size_
 		}

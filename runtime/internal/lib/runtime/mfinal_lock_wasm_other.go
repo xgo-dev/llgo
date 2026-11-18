@@ -10,7 +10,6 @@ var wasmFinalizerOnce psync.Once
 
 func initWasmFinalizers() {
 	wasmFinalizers.mu.Init(nil)
-	wasmFinalizers.m = make(map[uintptr]*wasmFinalizerEntry)
 }
 
 func lockWasmFinalizers() {

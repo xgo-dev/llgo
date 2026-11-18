@@ -7,7 +7,10 @@ import (
 
 func main() {
 	fileName := "err.log"
-	os.WriteFile(fileName, []byte("123"), 0644)
+	if err := os.WriteFile(fileName, []byte("123"), 0644); err != nil {
+		panic(err)
+	}
+	defer os.Remove(fileName)
 
 	_, err := os.Stat(fileName)
 	if os.IsNotExist(err) {

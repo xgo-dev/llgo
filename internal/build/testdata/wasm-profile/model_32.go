@@ -2,6 +2,8 @@
 
 package main
 
+type nativeSignedWord = int32
+
 const (
 	expectedGoWordSize   = 8
 	expectedCPointerSize = 4

@@ -7,6 +7,9 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/clite/ffi"
 )
 
+//go:linkname keepAlive llgo.keepAlive
+func keepAlive(x any)
+
 type Type = ffi.Type
 
 type Signature = ffi.Cif
@@ -57,7 +60,10 @@ func NewSignatureVar(ret *Type, fixed int, args ...*Type) (*Signature, error) {
 }
 
 func Call(cif *Signature, fn unsafe.Pointer, ret unsafe.Pointer, args ...unsafe.Pointer) {
-	ffi.Call(cif, fn, ret, valuePointerArray(args))
+	avalue, pin := valuePointerArray(args)
+	ffi.Call(cif, fn, ret, avalue)
+	keepAlive(pin)
+	keepAlive(args)
 }
 
 type Closure struct {
@@ -93,8 +99,5 @@ func Index(args *unsafe.Pointer, i uintptr) unsafe.Pointer {
 // TypeElement returns one entry from a null-terminated aggregate element
 // array. The array follows the physical pointer width used by libffi.
 func TypeElement(aggregate *Type, i uintptr) *Type {
-	if aggregate == nil || aggregate.Elements == nil {
-		return nil
-	}
-	return (*Type)(ffi.Index((*unsafe.Pointer)(unsafe.Pointer(aggregate.Elements)), i))
+	return aggregate.Element(i)
 }

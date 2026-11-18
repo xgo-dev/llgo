@@ -112,6 +112,17 @@ run_llgo_timer_samples '^BenchmarkTimerCreateStop$' 10000x | tee -a "$go_results
 run_llgo_timer_samples '^BenchmarkTimerAfterFuncZeroDelivery$' 10000x | tee -a "$go_results"
 run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$' 20000x | tee -a "$go_results"
 
+# As with timer benchmarks, use one current-checkout source for both compiler
+# revisions. Keep the data checksum and fixed iteration count comparable.
+(
+  cd "$harness_root"
+  GOMAXPROCS=1 go test -run '^$' -bench '^BenchmarkStringEquality$' \
+    -benchtime=1000000x -count=5 -cpu=1 ./benchmark/stringequal
+  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test -O3 -lto=full \
+    -run '^$' -bench '^BenchmarkStringEquality$' \
+    -benchtime=1000000x -count=5 ./benchmark/stringequal
+) | tee -a "$go_results"
+
 (
   cd "$source_root"
   GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \

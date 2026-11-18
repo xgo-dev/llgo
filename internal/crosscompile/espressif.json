@@ -1,0 +1,44 @@
+{
+  "repository": "xgo-dev/espressif-llvm-project-prebuilt",
+  "release": "23.1.6_20261118.3",
+  "producer_commit": "4676aadf664cd6e7b4acb50ea78060ae24e31714",
+  "llvm_version": "23.1.6",
+  "sdk": {
+    "repository": "xgo-dev/espressif-llvm-project-prebuilt",
+    "release": "23.1.6_20261118.3",
+    "producer_commit": "4676aadf664cd6e7b4acb50ea78060ae24e31714",
+    "version": "23.1.6",
+    "asset": "llvm-sdk-23.1.6-i686-w64-mingw32.tar.xz",
+    "sha256": "c6a947dee086d21dadb6a2d228f8032c5ad8a27a1559b2941166290e2744790e"
+  },
+  "payloads": {
+    "i686-w64-mingw32": {
+      "asset": "clang-esp-23.1.6_20261118.3-i686-w64-mingw32.tar.xz",
+      "sha256": "cb4cca9cb908120a33afb024bef10cd506e1b59a4270a3bf3107fc5bbc593a58"
+    },
+    "x86_64-w64-mingw32": {
+      "asset": "clang-esp-23.1.6_20261118.3-x86_64-w64-mingw32.tar.xz",
+      "sha256": "501068a48db6b0227cc826aa422f319807b39106829e0698a8540b6bf8cbb36d"
+    },
+    "aarch64-w64-mingw32": {
+      "asset": "clang-esp-23.1.6_20261118.3-aarch64-w64-mingw32.tar.xz",
+      "sha256": "ff734473f7f38d6dabccda6651b2af804095edb8c39c703f921dfbf6729d3fc0"
+    },
+    "x86_64-apple-darwin": {
+      "asset": "clang-esp-23.1.6_20261118.3-x86_64-apple-darwin.tar.xz",
+      "sha256": "71152bd7d84405f8e61c3bb1eb1778a09ba8e79b016acc967d14ec97d055dfe4"
+    },
+    "aarch64-apple-darwin": {
+      "asset": "clang-esp-23.1.6_20261118.3-aarch64-apple-darwin.tar.xz",
+      "sha256": "0a9d2d229e4ae8c126c8861745d1c52b308d1c58e57741316a0062bace23cec0"
+    },
+    "x86_64-linux-gnu": {
+      "asset": "clang-esp-23.1.6_20261118.3-x86_64-linux-gnu.tar.xz",
+      "sha256": "2faaae07dbbe324fae5068e45245208342d6700658f7a3692d852ce0bbc74fd9"
+    },
+    "aarch64-linux-gnu": {
+      "asset": "clang-esp-23.1.6_20261118.3-aarch64-linux-gnu.tar.xz",
+      "sha256": "66f95bab06a7504fd43decc59e7c4f20b6718d1188dbf5d52cd65bd815aac3ef"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc"
+	"github.com/xgo-dev/llgo/runtime/internal/wordmap"
 )
 
 type wasmFinalizerInterfaceArg struct {
@@ -41,7 +42,7 @@ const (
 
 var wasmFinalizers struct {
 	mu wasmFinalizerMutex
-	m  map[uintptr]*wasmFinalizerEntry
+	m  wordmap.Map[uintptr, *wasmFinalizerEntry]
 }
 
 // SetFinalizer implements the Go finalizer contract for the linear-memory
@@ -82,8 +83,15 @@ func SetFinalizer(obj any, finalizer any) {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
 	result, resultSize := classifyWasmFinalizerResult(fnType.Out)
+	fn := finalizerFace.data
+	if finalizerFace._type.HasNativeLayout() {
+		// Existing Wasm bridges consume a code/environment pair. Materialize
+		// a nil-environment pair instead of reading beyond a native pointer.
+		value := decodeCallback(finalizerFace)
+		fn = unsafe.Pointer(&wasmFinalizerClosure{function: value.code})
+	}
 	entry := &wasmFinalizerEntry{
-		fn:            finalizerFace.data,
+		fn:            fn,
 		interfaceType: interfaceType,
 		result:        result,
 		resultSize:    resultSize,
@@ -115,8 +123,8 @@ func llgoSetFinalizerPointer(objPtr, fn unsafe.Pointer, resultSize uintptr) {
 func clearWasmFinalizer(objPtr unsafe.Pointer) {
 	key := ^uintptr(objPtr)
 	lockWasmFinalizers()
-	if old := wasmFinalizers.m[key]; old != nil {
-		delete(wasmFinalizers.m, key)
+	if old := wasmFinalizers.m.Get(key); old != nil {
+		wasmFinalizers.m.Delete(key)
 		old.cancelCollector()
 	}
 	wasmFinalizers.mu.Unlock()
@@ -126,11 +134,11 @@ func registerWasmFinalizer(objPtr unsafe.Pointer, entry *wasmFinalizerEntry) {
 	key := ^uintptr(objPtr)
 	cancel, registered := tinygogc.AddFinalizer(objPtr, func(ptr unsafe.Pointer) {
 		lockWasmFinalizers()
-		if wasmFinalizers.m[key] != entry {
+		if wasmFinalizers.m.Get(key) != entry {
 			wasmFinalizers.mu.Unlock()
 			return
 		}
-		delete(wasmFinalizers.m, key)
+		wasmFinalizers.m.Delete(key)
 		wasmFinalizers.mu.Unlock()
 		callWasmFinalizer(entry, ptr)
 	})
@@ -140,7 +148,7 @@ func registerWasmFinalizer(objPtr unsafe.Pointer, entry *wasmFinalizerEntry) {
 	entry.cancelCollector = cancel
 
 	lockWasmFinalizers()
-	wasmFinalizers.m[key] = entry
+	wasmFinalizers.m.Set(key, entry)
 	wasmFinalizers.mu.Unlock()
 }
 
@@ -152,14 +160,7 @@ func wasmFinalizerObjectPointer(e *eface) unsafe.Pointer {
 }
 
 func wasmFinalizerFuncType(t *abi.Type) *abi.FuncType {
-	if !t.IsClosure() {
-		return nil
-	}
-	st := t.StructType()
-	if st == nil || len(st.Fields) == 0 {
-		return nil
-	}
-	return st.Fields[0].Typ.FuncType()
+	return callbackFuncType(t)
 }
 
 // prepareWasmFinalizerArgument follows the same assignability subset used by

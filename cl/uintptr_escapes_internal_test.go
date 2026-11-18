@@ -145,6 +145,77 @@ func convert(p unsafe.Pointer) { named(Word(uintptr(p))) }
 	}
 }
 
+func TestUintptrEscapesBackingArray(t *testing.T) {
+	pkg := uintptrEscapesPackage(t, `package p
+//go:uintptrescapes
+func marked(...uintptr) {}
+func ordinary(...uintptr) {}
+func pointer(...*int) {}
+func direct() { marked(1) }
+func deferred() { defer marked(1) }
+func goroutine() { go marked(1) }
+func unmarked() { ordinary(1) }
+func pointerArgs() { pointer(new(int)) }
+`)
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{"direct", true}, {"deferred", true}, {"goroutine", true},
+		{"unmarked", false}, {"pointerArgs", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, block := range pkg.Func(tc.name).Blocks {
+				for _, instr := range block.Instrs {
+					if alloc, ok := instr.(*ssa.Alloc); ok {
+						if got := uintptrEscapesBackingArray(alloc); got != tc.want {
+							t.Errorf("%s scanned variadic backing = %v, want %v", alloc, got, tc.want)
+						}
+					}
+				}
+			}
+		})
+	}
+	for _, view := range []string{"named", "merged", "cycle"} {
+		t.Run(view, func(t *testing.T) {
+			// Transparent slice views may be inserted by SSA rewrites. Build
+			// their reference graph explicitly so a cycle cannot hang analysis.
+			fn := pkg.Func("direct")
+			var alloc *ssa.Alloc
+			var slice *ssa.Slice
+			var call *ssa.Call
+			for _, instr := range fn.Blocks[0].Instrs {
+				switch instr := instr.(type) {
+				case *ssa.Alloc:
+					alloc = instr
+				case *ssa.Slice:
+					slice = instr
+				case *ssa.Call:
+					call = instr
+				}
+			}
+			refs := append([]ssa.Instruction(nil), *slice.Referrers()...)
+			args := append([]ssa.Value(nil), call.Call.Args...)
+			t.Cleanup(func() { *slice.Referrers(), call.Call.Args = refs, args })
+			var alias ssa.Value
+			if view == "named" {
+				alias = &ssa.ChangeType{X: slice}
+			} else {
+				alias = &ssa.Phi{Edges: []ssa.Value{slice}}
+			}
+			*slice.Referrers() = []ssa.Instruction{alias.(ssa.Instruction)}
+			*alias.Referrers() = []ssa.Instruction{call}
+			call.Call.Args[len(call.Call.Args)-1] = alias
+			if view == "cycle" {
+				*alias.Referrers() = []ssa.Instruction{alias.(ssa.Instruction)}
+			}
+			if got, want := uintptrEscapesBackingArray(alloc), view != "cycle"; got != want {
+				t.Errorf("%s view scanned backing = %v, want %v", view, got, want)
+			}
+		})
+	}
+}
+
 func TestUintptrEscapesHeapAllocation(t *testing.T) {
 	pkg := uintptrEscapesPackage(t, `package p
 import "unsafe"

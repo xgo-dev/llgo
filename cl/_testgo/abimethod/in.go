@@ -232,10 +232,8 @@ type I2 interface {
 
 // Pointer-to-anonymous-struct embedding *T: form I, dispatch Demo1, and test its result.
 // CHECK-LABEL: define void @main.testAnonymous1(){{.*}} {
-// CHECK: [[A1_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK: [[A1_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A1_ITAB]], 0
-// CHECK: [[A1_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A1_I0]], ptr %{{[0-9]+}}, 1
-// CHECK: [[A1_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A1_IFACE]])
+// CHECK: [[A1_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK: [[A1_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A1_IFACE]], ptr %{{[0-9]+}})
 // CHECK: [[A1_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A1_IFACE]], 0
 // CHECK-NEXT: [[A1_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A1_TABLE]], i64 3
 // CHECK-NEXT: [[A1_METHOD:%[0-9]+]] = load ptr, ptr [[A1_SLOT]]
@@ -249,10 +247,8 @@ type I2 interface {
 
 // Value anonymous struct embedding *T uses the value descriptor, but the same promoted method.
 // CHECK-LABEL: define void @main.testAnonymous2(){{.*}} {
-// CHECK: [[A2_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A2_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A2_ITAB]], 0
-// CHECK-NEXT: [[A2_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A2_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A2_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A2_IFACE]])
+// CHECK: [[A2_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A2_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A2_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A2_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A2_IFACE]], 0
 // CHECK-NEXT: [[A2_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A2_TABLE]], i64 3
 // CHECK-NEXT: [[A2_METHOD:%[0-9]+]] = load ptr, ptr [[A2_SLOT]]
@@ -266,10 +262,8 @@ type I2 interface {
 
 // Value and pointer anonymous structs embedding T select distinct concrete descriptors.
 // CHECK-LABEL: define void @main.testAnonymous3(){{.*}} {
-// CHECK: [[A3_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A3_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A3_ITAB]], 0
-// CHECK-NEXT: [[A3_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A3_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A3_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A3_IFACE]])
+// CHECK: [[A3_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A3_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A3_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A3_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A3_IFACE]], 0
 // CHECK-NEXT: [[A3_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A3_TABLE]], i64 3
 // CHECK-NEXT: [[A3_METHOD:%[0-9]+]] = load ptr, ptr [[A3_SLOT]]
@@ -282,10 +276,8 @@ type I2 interface {
 // CHECK-NEXT: br i1 [[A3_BAD]],
 
 // CHECK-LABEL: define void @main.testAnonymous4(){{.*}} {
-// CHECK: [[A4_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A4_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A4_ITAB]], 0
-// CHECK-NEXT: [[A4_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A4_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A4_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A4_IFACE]])
+// CHECK: [[A4_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A4_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A4_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A4_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A4_IFACE]], 0
 // CHECK-NEXT: [[A4_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A4_TABLE]], i64 3
 // CHECK-NEXT: [[A4_METHOD:%[0-9]+]] = load ptr, ptr [[A4_SLOT]]
@@ -299,10 +291,8 @@ type I2 interface {
 
 // Demo2 requires the pointer method set, for both embedding T and embedding *T.
 // CHECK-LABEL: define void @main.testAnonymous5(){{.*}} {
-// CHECK: [[A5_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A5_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A5_ITAB]], 0
-// CHECK-NEXT: [[A5_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A5_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A5_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A5_IFACE]])
+// CHECK: [[A5_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A5_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A5_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A5_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A5_IFACE]], 0
 // CHECK-NEXT: [[A5_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A5_TABLE]], i64 3
 // CHECK-NEXT: [[A5_METHOD:%[0-9]+]] = load ptr, ptr [[A5_SLOT]]
@@ -315,10 +305,8 @@ type I2 interface {
 // CHECK-NEXT: br i1 [[A5_BAD]],
 
 // CHECK-LABEL: define void @main.testAnonymous6(){{.*}} {
-// CHECK: [[A6_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A6_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A6_ITAB]], 0
-// CHECK-NEXT: [[A6_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A6_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A6_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A6_IFACE]])
+// CHECK: [[A6_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A6_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A6_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A6_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A6_IFACE]], 0
 // CHECK-NEXT: [[A6_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[A6_TABLE]], i64 3
 // CHECK-NEXT: [[A6_METHOD:%[0-9]+]] = load ptr, ptr [[A6_SLOT]]
@@ -332,10 +320,8 @@ type I2 interface {
 
 // A two-method anonymous interface must dispatch two different itab slots on one interface value.
 // CHECK-LABEL: define void @main.testAnonymous7(){{.*}} {
-// CHECK: [[A7_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A7_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A7_ITAB]], 0
-// CHECK-NEXT: [[A7_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A7_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A7_DATA1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]])
+// CHECK: [[A7_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A7_DATA1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A7_TAB1:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]], 0
 // CHECK-NEXT: [[A7_SLOT1:%[0-9]+]] = getelementptr ptr, ptr [[A7_TAB1]], i64 3
 // CHECK-NEXT: [[A7_METHOD1:%[0-9]+]] = load ptr, ptr [[A7_SLOT1]]
@@ -346,7 +332,7 @@ type I2 interface {
 // CHECK-NEXT: [[A7_RES1:%[0-9]+]] = call i64 [[A7_CODE1]](ptr [[A7_RECV1]])
 // CHECK: [[A7_BAD1:%[0-9]+]] = icmp ne i64 [[A7_RES1]], 100
 // CHECK-NEXT: br i1 [[A7_BAD1]],
-// CHECK: [[A7_DATA2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]])
+// CHECK: [[A7_DATA2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A7_TAB2:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A7_IFACE]], 0
 // CHECK-NEXT: [[A7_SLOT2:%[0-9]+]] = getelementptr ptr, ptr [[A7_TAB2]], i64 4
 // CHECK-NEXT: [[A7_METHOD2:%[0-9]+]] = load ptr, ptr [[A7_SLOT2]]
@@ -360,10 +346,8 @@ type I2 interface {
 
 // The package-local interface adds the unexported demo3 slot after Demo1 and Demo2.
 // CHECK-LABEL: define void @main.testAnonymous8(){{.*}} {
-// CHECK: [[A8_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/abimethod.iface${{[-A-Za-z0-9_]+}}", ptr @"{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[A8_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[A8_ITAB]], 0
-// CHECK-NEXT: [[A8_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[A8_I0]], ptr %{{[0-9]+}}, 1
-// CHECK-NEXT: [[A8_DATA1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]])
+// CHECK: [[A8_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %{{[0-9]+}}, 1
+// CHECK-NEXT: [[A8_DATA1:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A8_TAB1:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], 0
 // CHECK-NEXT: [[A8_SLOT1:%[0-9]+]] = getelementptr ptr, ptr [[A8_TAB1]], i64 3
 // CHECK-NEXT: [[A8_METHOD1:%[0-9]+]] = load ptr, ptr [[A8_SLOT1]]
@@ -374,7 +358,7 @@ type I2 interface {
 // CHECK-NEXT: [[A8_RES1:%[0-9]+]] = call i64 [[A8_CODE1]](ptr [[A8_RECV1]])
 // CHECK-NEXT: [[A8_BAD1:%[0-9]+]] = icmp ne i64 [[A8_RES1]], 100
 // CHECK-NEXT: br i1 [[A8_BAD1]],
-// CHECK: [[A8_DATA2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]])
+// CHECK: [[A8_DATA2:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A8_TAB2:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], 0
 // CHECK-NEXT: [[A8_SLOT2:%[0-9]+]] = getelementptr ptr, ptr [[A8_TAB2]], i64 4
 // CHECK-NEXT: [[A8_METHOD2:%[0-9]+]] = load ptr, ptr [[A8_SLOT2]]
@@ -385,7 +369,7 @@ type I2 interface {
 // CHECK-NEXT: [[A8_RES2:%[0-9]+]] = call i64 [[A8_CODE2]](ptr [[A8_RECV2]])
 // CHECK-NEXT: [[A8_BAD2:%[0-9]+]] = icmp ne i64 [[A8_RES2]], 100
 // CHECK-NEXT: br i1 [[A8_BAD2]],
-// CHECK: [[A8_DATA3:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]])
+// CHECK: [[A8_DATA3:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[A8_TAB3:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[A8_IFACE]], 0
 // CHECK-NEXT: [[A8_SLOT3:%[0-9]+]] = getelementptr ptr, ptr [[A8_TAB3]], i64 5
 // CHECK-NEXT: [[A8_METHOD3:%[0-9]+]] = load ptr, ptr [[A8_SLOT3]]
@@ -399,14 +383,12 @@ type I2 interface {
 
 // The promoted bytes.Buffer.String method remains the implementation behind fmt.Stringer.
 // CHECK-LABEL: define void @main.testAnonymousBuffer(){{.*}} {
-// CHECK: [[BUF_OWNER:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[BUF_OWNER:%[0-9]+]] = alloca { i64, ptr }
 // CHECK: [[BUF_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i64, ptr }, ptr [[BUF_OWNER]], i32 0, i32 1
 // CHECK-NEXT: [[BUF:%[0-9]+]] = call ptr @bytes.NewBufferString(
 // CHECK: store ptr [[BUF]], ptr [[BUF_FIELD]]
-// CHECK-NEXT: [[BUF_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*{{.*}}/abimethod.struct${{[-A-Za-z0-9_]+}}")
-// CHECK-NEXT: [[BUF_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[BUF_ITAB]], 0
-// CHECK-NEXT: [[BUF_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[BUF_I0]], ptr [[BUF_OWNER]], 1
-// CHECK-NEXT: [[BUF_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[BUF_IFACE]])
+// CHECK-NEXT: [[BUF_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[BUF_OWNER]], 1
+// CHECK-NEXT: [[BUF_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[BUF_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[BUF_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BUF_IFACE]], 0
 // CHECK-NEXT: [[BUF_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[BUF_TABLE]], i64 3
 // CHECK-NEXT: [[BUF_METHOD:%[0-9]+]] = load ptr, ptr [[BUF_SLOT]]
@@ -421,12 +403,10 @@ type I2 interface {
 
 // IP.Store and IP.Load must operate on the same Pointer[any] interface value.
 // CHECK-LABEL: define void @main.testGeneric(){{.*}} {
-// CHECK: [[P_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
-// CHECK-NEXT: [[P_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.Pointer{{\[.*\]}}")
-// CHECK: [[P_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[P_ITAB]], 0
-// CHECK-NEXT: [[P_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[P_I0]], ptr [[P_OBJECT]], 1
+// CHECK: [[P_OBJECT:%[0-9]+]] = alloca %"main.Pointer[interface{}]"
+// CHECK: [[P_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[P_OBJECT]], 1
 // CHECK: [[P_VALUE:%[0-9]+]] = call ptr @"main.testGeneric$1"()
-// CHECK-NEXT: [[P_SDATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]])
+// CHECK-NEXT: [[P_SDATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[P_STAB:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]], 0
 // CHECK-NEXT: [[P_STORE_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[P_STAB]], i64 4
 // CHECK-NEXT: [[P_STORE_METHOD:%[0-9]+]] = load ptr, ptr [[P_STORE_SLOT]]
@@ -435,7 +415,7 @@ type I2 interface {
 // CHECK-NEXT: [[P_STORE_RECV:%[0-9]+]] = extractvalue { ptr, ptr } [[P_STORE_PAIR]], 1
 // CHECK-NEXT: [[P_STORE_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[P_STORE_PAIR]], 0
 // CHECK-NEXT: call void [[P_STORE_CODE]](ptr [[P_STORE_RECV]], ptr [[P_VALUE]])
-// CHECK-NEXT: [[P_LDATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]])
+// CHECK-NEXT: [[P_LDATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[P_LTAB:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[P_IFACE]], 0
 // CHECK-NEXT: [[P_LOAD_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[P_LTAB]], i64 3
 // CHECK-NEXT: [[P_LOAD_METHOD:%[0-9]+]] = load ptr, ptr [[P_LOAD_SLOT]]
@@ -453,20 +433,17 @@ type I2 interface {
 // CHECK: [[P_BAD:%[0-9]+]] = icmp ne i64 [[P_INT]], 100
 
 // CHECK-LABEL: define ptr @"main.testGeneric$1"(){{.*}} {
-// CHECK: store i64 100, ptr [[P_BOX:%[0-9]+]]
-// CHECK: [[P_EFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr undef }, ptr [[P_BOX]], 1
-// CHECK: store %"{{.*}}/runtime/internal/runtime.eface" [[P_EFACE]], ptr [[P_RESULT:%[0-9]+]]
+// CHECK: store %"{{.*}}/runtime/internal/runtime.eface" { ptr @_llgo_int, ptr @"_llgo_ifacebox${{.*}}" }, ptr [[P_RESULT:%[0-9]+]]
 // CHECK: ret ptr [[P_RESULT]]
 
 // Named T and *T select the proper descriptor and dispatch through the requested interface method.
 // CHECK-LABEL: define void @main.testNamed1(){{.*}} {
-// CHECK: [[N1_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[N1_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[N1_OBJECT]], i8 0, i64 8, i1 false)
 // CHECK: [[N1_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[N1_OBJECT]], i32 0, i32 0
 // CHECK-NEXT: store i64 100, ptr [[N1_FIELD]]
-// CHECK-NEXT: [[N1_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
-// CHECK-NEXT: [[N1_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[N1_ITAB]], 0
-// CHECK-NEXT: [[N1_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[N1_I0]], ptr [[N1_OBJECT]], 1
-// CHECK-NEXT: [[N1_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[N1_IFACE]])
+// CHECK-NEXT: [[N1_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[N1_OBJECT]], 1
+// CHECK-NEXT: [[N1_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[N1_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[N1_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[N1_IFACE]], 0
 // CHECK-NEXT: [[N1_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[N1_TABLE]], i64 3
 // CHECK-NEXT: [[N1_METHOD:%[0-9]+]] = load ptr, ptr [[N1_SLOT]]
@@ -480,12 +457,9 @@ type I2 interface {
 
 // CHECK-LABEL: define void @main.testNamed2(){{.*}} {
 // CHECK: [[N2_VALUE:%[0-9]+]] = load %main.T, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[N2_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT: store %main.T [[N2_VALUE]], ptr [[N2_OBJECT]]
-// CHECK-NEXT: [[N2_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @_llgo_main.T)
-// CHECK-NEXT: [[N2_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[N2_ITAB]], 0
-// CHECK-NEXT: [[N2_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[N2_I0]], ptr [[N2_OBJECT]], 1
-// CHECK-NEXT: [[N2_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[N2_IFACE]])
+// CHECK: store %main.T [[N2_VALUE]], ptr [[N2_OBJECT:%[0-9]+]]
+// CHECK-NEXT: [[N2_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[N2_OBJECT]], 1
+// CHECK-NEXT: [[N2_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[N2_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[N2_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[N2_IFACE]], 0
 // CHECK-NEXT: [[N2_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[N2_TABLE]], i64 3
 // CHECK-NEXT: [[N2_METHOD:%[0-9]+]] = load ptr, ptr [[N2_SLOT]]
@@ -498,13 +472,11 @@ type I2 interface {
 // CHECK-NEXT: br i1 [[N2_BAD]],
 
 // CHECK-LABEL: define void @main.testNamed3(){{.*}} {
-// CHECK: [[N3_OBJECT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[N3_OBJECT:%[0-9]+]] = alloca %main.T
 // CHECK: [[N3_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.T, ptr [[N3_OBJECT]], i32 0, i32 0
 // CHECK-NEXT: store i64 100, ptr [[N3_FIELD]]
-// CHECK-NEXT: [[N3_ITAB:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr @"*_llgo_main.T")
-// CHECK-NEXT: [[N3_I0:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr [[N3_ITAB]], 0
-// CHECK-NEXT: [[N3_IFACE:%[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" [[N3_I0]], ptr [[N3_OBJECT]], 1
-// CHECK-NEXT: [[N3_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[N3_IFACE]])
+// CHECK-NEXT: [[N3_IFACE:%[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[N3_OBJECT]], 1
+// CHECK-NEXT: [[N3_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" [[N3_IFACE]], ptr %{{[0-9]+}})
 // CHECK-NEXT: [[N3_TABLE:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[N3_IFACE]], 0
 // CHECK-NEXT: [[N3_SLOT:%[0-9]+]] = getelementptr ptr, ptr [[N3_TABLE]], i64 3
 // CHECK-NEXT: [[N3_METHOD:%[0-9]+]] = load ptr, ptr [[N3_SLOT]]

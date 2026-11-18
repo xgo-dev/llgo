@@ -18,7 +18,7 @@ import (
 )
 
 func TestUnusedGlobalInitCache(t *testing.T) {
-	pkg := buildWasmReflectTestProgram(t, `package main; var M = 42; func main() {}`)
+	pkg := buildWasmReflectTestProgram(t, `package main; var M = map[string]int{"key":42}; func main() {}`)
 	ctx := &context{conf: &packages.Config{}, mode: ModeGen, buildConf: &Config{Goos: "wasip1", Goarch: "wasm"}, progSSA: pkg.Prog}
 	fingerprint := func(preserve bool) (string, string) {
 		ctx.frontendOptions.UnusedGlobalInits = cl.FindUnusedGlobalInits(pkg.Prog, func(*ssa.Global) bool { return preserve })
@@ -64,14 +64,14 @@ func main() { Read() }
 	p.OtherFiles = append(p.OtherFiles, filepath.Join(dir, "opaque.c"))
 	ctx.frontendOptions.UnusedGlobalInits = nil
 	configureUnusedGlobalInits(ctx)
-	if ctx.frontendOptions.UnusedGlobalInits != nil {
-		t.Fatal("pruned initializers despite opaque native inputs")
+	if ctx.frontendOptions.UnusedGlobalInits != nil || canPruneWasmTypeMetadata(ctx) {
+		t.Fatal("pruning remained enabled despite opaque native inputs")
 	}
 }
 
 func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
-	pkg := buildWasmReflectTestProgram(t, `package main; var M = 42; func main() {}`)
+	pkg := buildWasmReflectTestProgram(t, `package main; var M = map[string]int{"key":42}; func main() {}`)
 	for _, alias := range []string{"", "source", "target", "thread local", "goroutine local"} {
 		prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 		name := llssa.FullName(pkg.Pkg, "M")
@@ -87,7 +87,7 @@ func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 		if alias == "goroutine local" {
 			prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
 		}
-		ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe}}
+		ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"}}
 		configureUnusedGlobalInits(ctx)
 		if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != (alias == "") {
 			t.Fatalf("alias %q: pruned = %v", alias, got)
@@ -113,6 +113,8 @@ func TestUnusedGlobalInitScope(t *testing.T) {
 		{"native object", "wasm", "extra.o", ModeBuild, BuildModeExe, optlevel.Oz, false},
 		{"link export", "wasm", "-Wl,--export=main.M", ModeBuild, BuildModeExe, optlevel.Oz, false},
 		{"LTO diagnostics", "wasm", "-Wl,--save-temps -Wl,--lto-obj-path=out.o", ModeBuild, BuildModeExe, optlevel.Oz, true},
+		{"ThinLTO cache", "wasm", "-Wl,--thinlto-cache-dir=cache", ModeBuild, BuildModeExe, optlevel.Oz, true},
+		{"combined cache and root", "wasm", "-Wl,--thinlto-cache-dir=cache,--undefined=main.M", ModeBuild, BuildModeExe, optlevel.Oz, false},
 		{"combined map and export", "wasm", "-Wl,-Map=out.map,--export=main.M", ModeBuild, BuildModeExe, optlevel.Oz, false},
 		{"combined LTO output and root", "wasm", "-Wl,--lto-obj-path=out.o,--undefined=main.M", ModeBuild, BuildModeExe, optlevel.Oz, false},
 	} {
@@ -121,8 +123,11 @@ func TestUnusedGlobalInitScope(t *testing.T) {
 			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: tc.arch})
 			defer prog.Dispose()
 			ctx := &context{prog: prog, progSSA: pkg.Prog, mode: tc.mode,
-				buildConf: &Config{BuildMode: tc.buildMode, OptLevel: tc.level}}
+				buildConf: &Config{BuildMode: tc.buildMode, Goarch: tc.arch, OptLevel: tc.level}}
 			configureUnusedGlobalInits(ctx)
+			if got := canPruneWasmTypeMetadata(ctx); got != tc.want {
+				t.Fatalf("metadata pruning=%v, want %v", got, tc.want)
+			}
 			if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != tc.want {
 				t.Fatalf("pruned=%v, want %v", got, tc.want)
 			}
@@ -141,7 +146,7 @@ func TestUnusedGlobalInitExportAnnotation(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg, Syntax: []*ast.File{file}}
-	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe},
+	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
 		pkgByID: map[string]*aPackage{"main": {Package: p, SSA: pkg}}}
 	for _, alternate := range []bool{false, true} {
 		if alternate {
@@ -161,7 +166,7 @@ func TestUnusedGlobalInitRewrite(t *testing.T) {
 	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg}
-	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe},
+	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
 		pkgByID: map[string]*aPackage{"main": {Package: p, SSA: pkg, rewriteVars: map[string]string{"Version": "release"}}}}
 	configureUnusedGlobalInits(ctx)
 	if names := ctx.frontendOptions.UnusedGlobalInits.Names(pkg); len(names) != 0 {
@@ -227,9 +232,29 @@ func TestUnusedGlobalInitNativeInputs(t *testing.T) {
 				t.Setenv(llgoPlan9ASMPkgs, "none")
 			}
 			configureUnusedGlobalInits(ctx)
+			if got := canPruneWasmTypeMetadata(ctx); got != tc.prune {
+				t.Fatalf("metadata pruning=%v, want %v", got, tc.prune)
+			}
 			if got := len(ctx.frontendOptions.UnusedGlobalInits.Names(pkg)) != 0; got != tc.prune {
 				t.Fatalf("pruned=%v, want %v", got, tc.prune)
 			}
 		})
+	}
+}
+
+func TestWasmMetadataEligibilityWithoutInitializerPlan(t *testing.T) {
+	t.Setenv("LDFLAGS", "")
+	pkg := buildWasmReflectTestProgram(t, "package main; func main() {}")
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer prog.Dispose()
+	ctx := &context{prog: prog, progSSA: pkg.Prog, mode: ModeBuild, buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.O2}}
+	configureUnusedGlobalInits(ctx)
+	if !canPruneWasmTypeMetadata(ctx) {
+		t.Fatal("closed optimized Wasm program was rejected")
+	}
+	// An absent initializer-removal plan is not a change in native visibility.
+	ctx.frontendOptions.UnusedGlobalInits = nil
+	if !canPruneWasmTypeMetadata(ctx) {
+		t.Fatal("metadata eligibility depends on the initializer-removal plan")
 	}
 }

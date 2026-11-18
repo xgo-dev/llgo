@@ -8,6 +8,7 @@ install_root="$(cygpath -au "$2")"
 version="${archive##*/llgo}"
 version="${version%%.windows-*}"
 architecture="${archive##*.windows-}"
+architecture="${architecture%.zip}"
 architecture="${architecture%%-*}"
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/llgo-msys-path.XXXXXXXX")"
 trap 'rm -rf "$temporary"' EXIT

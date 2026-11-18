@@ -12,13 +12,13 @@ import (
 // runtime type descriptors; the test body then exercises lazy pointer-to-this
 // and element links from those descriptors.
 // CHECK-LABEL: define void @main.checkBasicNames(){{.*}} {
-// CHECK-DAG: insertvalue %"{{.*}}eface" { ptr @_llgo_int32,
-// CHECK-DAG: insertvalue %"{{.*}}eface" { ptr @_llgo_uint8,
+// CHECK-DAG: store %"{{.*}}eface" { ptr @_llgo_int32, ptr @"_llgo_ifacebox${{.*}}" }
+// CHECK-DAG: store %"{{.*}}eface" { ptr @_llgo_uint8, ptr @"_llgo_ifacebox${{.*}}" }
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/abi.(*Type).String"
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: insertvalue %"{{.*}}eface" { ptr @_llgo_main.T,
-// CHECK: insertvalue %"{{.*}}eface" { ptr @"_llgo_{{.*}}/runtime/abi.Type",
+// CHECK: call ptr @main.toEface(%"{{.*}}eface" { ptr @_llgo_main.T, ptr @"_llgo_ifacebox${{.*}}" })
+// CHECK: call ptr @main.toEface(%"{{.*}}eface" { ptr @"_llgo_{{.*}}/runtime/abi.Type", ptr @"_llgo_ifacebox${{.*}}" })
 // CHECK: call ptr @"{{.*}}/runtime/abi.(*Type).StructType"
 // CHECK: call ptr @"{{.*}}/runtime/abi.(*Type).Elem"
 

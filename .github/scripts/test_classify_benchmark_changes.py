@@ -41,7 +41,6 @@ class ClassifyPathTests(unittest.TestCase):
             "internal/gohex/LICENSE": "docs",
             ".github/workflows/ci.yml": "ci",
             "chore/gentests/main.go": "tooling",
-            "_xtool/astdump/main.go": "tooling",
             "CODEOWNERS": "other",
         }
         for path, expected in cases.items():

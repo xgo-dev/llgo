@@ -77,3 +77,15 @@ func ParseGroup(doc *ast.CommentGroup) []Directive {
 	}
 	return ret
 }
+
+// ParseLinknameArgs splits a local symbol from its link target. A single-name
+// go:linkname annotation has no target. Keep target whitespace normalization
+// identical in declaration collection and legacy imports.
+func ParseLinknameArgs(args string) (local, target string) {
+	fields := strings.Fields(args)
+	if len(fields) != 0 {
+		local = fields[0]
+		target = strings.Join(fields[1:], " ")
+	}
+	return
+}

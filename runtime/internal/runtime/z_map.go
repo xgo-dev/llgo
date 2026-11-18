@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
 // Map represents a Go map.
@@ -45,6 +46,18 @@ func MakeSmallMap() *Map {
 
 func MakeMap(t *maptype, hint int) *hmap {
 	return makemap(t, hint, nil)
+}
+
+// MakeMapBuffer initializes a caller-owned header and an optional bucket
+// with t.Bucket's layout. Growth and overflow still use ordinary heap buckets;
+// neither the map nor its iterators may outlive the caller's buffers.
+func MakeMapBuffer(t *maptype, hint int, h *Map, bucket unsafe.Pointer) *Map {
+	c.Memset(unsafe.Pointer(h), 0, unsafe.Sizeof(*h))
+	if hint <= bucketCnt && bucket != nil {
+		c.Memset(bucket, 0, t.Bucket.Size())
+		h.buckets = bucket
+	}
+	return makemap(t, hint, h)
 }
 
 func MapAssign(t *maptype, h *Map, key unsafe.Pointer) unsafe.Pointer {
@@ -140,10 +153,17 @@ type llgoMapIter struct {
 }
 
 func NewMapIter(t *maptype, h *hmap) *llgoMapIter {
-	var it llgoMapIter
+	return NewMapIterBuffer(t, h, new(llgoMapIter))
+}
+
+// NewMapIterBuffer initializes caller-owned iteration storage, resetting every
+// field even for nil or empty maps. The caller must retain the buffer and its
+// managed fields until iteration stops; neither the map nor its buckets retain it.
+func NewMapIterBuffer(t *maptype, h *hmap, it *llgoMapIter) *llgoMapIter {
+	*it = llgoMapIter{}
 	mapiterinit(t, h, &it.hiter)
 	it.ready = true
-	return &it
+	return it
 }
 
 func MapIterNext(it *llgoMapIter) (ok bool, k unsafe.Pointer, v unsafe.Pointer) {

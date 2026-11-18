@@ -29,7 +29,7 @@ func TestPortableEmbeddedGlobals(t *testing.T) {
 	if string(midwayEmbeddedText) != want || string(midwayEmbeddedBytes) != want || embeddedAtInit != want+want {
 		t.Fatalf("embedded globals: text=%q bytes=%q init=%q", midwayEmbeddedText, midwayEmbeddedBytes, embeddedAtInit)
 	}
-	if midwayEmbeddedText.Width() != 4 || midwayEmbeddedBytes.Width() != 4 {
+	if midwayEmbeddedText.Width() != simd.VectorBitSize()/32 || midwayEmbeddedBytes.Width() != simd.VectorBitSize()/32 {
 		t.Fatal("unexpected SIMD width")
 	}
 }

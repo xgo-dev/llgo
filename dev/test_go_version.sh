@@ -242,6 +242,13 @@ while IFS= read -r package; do
 			github.com/xgo-dev/llgo/test/goroot|github.com/xgo-dev/llgo/test/goroot/*)
 				continue
 				;;
+			github.com/xgo-dev/llgo/test/std/weak|github.com/xgo-dev/llgo/test/std/testing/synctest)
+				# Keep lifecycle and bubble regressions in the existing Go 1.27
+				# core lanes, including native Windows 386 and ARM64.
+				if (( ${target_minor#1.} < 27 )); then
+					continue
+				fi
+				;;
 			github.com/xgo-dev/llgo/test/std/bufio|\
 			github.com/xgo-dev/llgo/test/std/bytes|\
 			github.com/xgo-dev/llgo/test/std/encoding/binary|\

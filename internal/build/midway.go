@@ -7,7 +7,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
-func rewritePortableSIMD(pkg *packages.Package) (bool, error) {
+func rewritePortableSIMD(pkg *packages.Package, arch string) (bool, error) {
 	// Keep the metadata graph in step with the transformed syntax. Internal
 	// bridge access is added only after the user's original source has passed
 	// normal package loading and type checking.
@@ -16,7 +16,7 @@ func rewritePortableSIMD(pkg *packages.Package) (bool, error) {
 		byPath[p.PkgPath] = p
 		return true
 	}, nil)
-	changed, imports, err := midway.Rewrite(pkg.Fset, pkg.Types, pkg.TypesInfo, pkg.Syntax)
+	changed, imports, err := midway.Rewrite(pkg.Fset, pkg.Types, pkg.TypesInfo, pkg.Syntax, arch)
 	if err != nil {
 		return false, err
 	}

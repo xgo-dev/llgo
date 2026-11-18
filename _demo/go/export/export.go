@@ -102,13 +102,12 @@ func captureCFuncInfo() FuncInfoResult {
 			result.FrameFile = frame.File
 			result.FrameLine = int32(frame.Line)
 
-			// Callers PCs are return addresses. Apply Go's pc-1 convention
-			// before asking FuncForPC for the containing function.
+			// Frame.PC already identifies the call instruction.
 			if frame.PC > 0 {
-				if fn := runtime.FuncForPC(frame.PC - 1); fn != nil {
+				if fn := runtime.FuncForPC(frame.PC); fn != nil {
 					result.FuncName = fn.Name()
 					result.FuncEntry = fn.Entry()
-					result.FuncFile, frame.Line = fn.FileLine(frame.PC - 1)
+					result.FuncFile, frame.Line = fn.FileLine(frame.PC)
 					result.FuncLine = int32(frame.Line)
 				}
 			}

@@ -13,7 +13,6 @@ LLGo contains source derived from the [TinyGo project](https://github.com/tinygo
 - firmware image support in `internal/firmware/esp.go`, `nrfutil.go`, `objcopy.go`, and `uf2.go`;
 - the marked flashing-support portions of `internal/flash/flash.go`;
 - serial monitoring and panic-location support in `internal/monitor/monitor.go`;
-- the deprecated archive builder in `chore/_deprecated/ar/ar.go`;
 - target configurations and support files under `targets`.
 
 Reference snapshots contemporaneous with the initial LLGo imports are:
@@ -75,11 +74,11 @@ executables; development- and test-only modules are not included.
 ## LLVM/Clang
 
 LLGo can download the Espressif-maintained ESP LLVM/Clang 23 toolchain
-[`23.1.4_20261027.1`](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.4_20261027.1).
+[`23.1.6_20261118.3`](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.6_20261118.3).
 
 Current LLGo release archives use the LLVM 23 payload and include it under
 `crosscompile/clang`. Darwin and Linux executables dynamically link its LLVM
-library. Windows executables statically link LLVM 23.1.4 development libraries:
+library. Windows executables statically link LLVM 23.1.6 development libraries:
 the official SDK for amd64/arm64, and the separately built i686 SDK for 386.
 The same host compiler serves both native ABI profiles. Bundled runtime DLLs
 carry their component licenses under `LICENSES/windows-runtime`.

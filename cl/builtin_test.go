@@ -197,9 +197,18 @@ package foo
 func compareInterfacePtr(p *interface{}, q interface{}) bool {
 	return *p == q
 }
+
+type Box struct { value interface{} }
+
+func compareInterfaceField(p *Box, q interface{}) bool {
+	return p.value == q
+}
 `)
-	if ir := m.String(); !strings.Contains(ir, "AssertNilDeref") {
-		t.Fatalf("compiled IR missing AssertNilDeref for interface compare deref:\n%s", ir)
+	for _, name := range []string{"compareInterfacePtr", "compareInterfaceField"} {
+		ir := mustNamedFunction(t, m, "foo."+name).String()
+		if got := strings.Count(ir, "AssertNilDeref"); got != 1 {
+			t.Fatalf("%s has %d nil checks, want 1:\n%s", name, got, ir)
+		}
 	}
 }
 
@@ -611,24 +620,30 @@ func setRefs(v ssa.Value, refs ...ssa.Instruction) {
 }
 
 func TestRecvTypeName(t *testing.T) {
-	if ret := recvTypeName(&ast.IndexExpr{
+	if ret, pointer, ok := recvTypeName(&ast.IndexExpr{
 		X:     &ast.Ident{Name: "Pointer"},
 		Index: &ast.Ident{Name: "T"},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexExpr:", ret)
+	}); !ok || pointer || ret != "Pointer" {
+		t.Fatal("recvTypeName IndexExpr:", ret, pointer, ok)
 	}
-	if ret := recvTypeName(&ast.IndexListExpr{
-		X:       &ast.Ident{Name: "Pointer"},
+	if ret, pointer, ok := recvTypeName(&ast.StarExpr{X: &ast.IndexListExpr{
+		X:       &ast.ParenExpr{X: &ast.Ident{Name: "Pointer"}},
 		Indices: []ast.Expr{&ast.Ident{Name: "T"}},
-	}); ret != "Pointer" {
-		t.Fatal("recvTypeName IndexListExpr:", ret)
+	}}); !ok || !pointer || ret != "Pointer" {
+		t.Fatal("recvTypeName pointer IndexListExpr:", ret, pointer, ok)
 	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("recvTypeName: no error?")
-		}
-	}()
-	recvTypeName(&ast.BadExpr{})
+	if _, _, ok := recvTypeName(&ast.SelectorExpr{
+		X:   &ast.Ident{Name: "bufio"},
+		Sel: &ast.Ident{Name: "Reader"},
+	}); ok {
+		t.Fatal("recvTypeName accepted a non-local selector")
+	}
+	if _, _, ok := recvTypeName(&ast.StarExpr{X: &ast.StarExpr{X: &ast.Ident{Name: "T"}}}); ok {
+		t.Fatal("recvTypeName accepted a pointer-to-pointer receiver")
+	}
+	if _, _, ok := recvTypeName(&ast.BadExpr{}); ok {
+		t.Fatal("recvTypeName accepted a bad expression")
+	}
 }
 
 func TestRecvType(t *testing.T) {

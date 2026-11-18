@@ -22,6 +22,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"maps"
 	"slices"
 
 	"golang.org/x/tools/go/ssa"
@@ -35,6 +36,78 @@ type UnusedGlobalInits struct {
 	names  map[*ssa.Package][]string
 	instrs map[*ssa.Package][]ssa.Instruction
 	keys   map[*ssa.Package][]string
+}
+
+// GlobalInitExport is a program-context plan, not a generic package property.
+// The coordinator keys it by all source inputs and executable roots.
+type GlobalInitExport struct {
+	Names, Keys  []string
+	Instructions []GlobalInitInstruction
+}
+
+type GlobalInitInstruction struct {
+	Block, Index int
+	Text         string
+}
+
+func (p *UnusedGlobalInits) Export(pkg *ssa.Package) GlobalInitExport {
+	if p == nil {
+		return GlobalInitExport{}
+	}
+	result := GlobalInitExport{Names: p.names[pkg], Keys: p.keys[pkg]}
+	remove := make(map[ssa.Instruction]bool)
+	for _, instr := range p.instrs[pkg] {
+		remove[instr] = true
+	}
+	if init := pkg.Func("init"); init != nil {
+		for b, block := range init.Blocks {
+			for i, instr := range block.Instrs {
+				if remove[instr] {
+					result.Instructions = append(result.Instructions, GlobalInitInstruction{b, i, instr.String()})
+				}
+			}
+		}
+	}
+	return result
+}
+
+// RestoreUnusedGlobalInits binds removals only in source-built initializers.
+// Opaque packages already contain this plan in their validated archive.
+func RestoreUnusedGlobalInits(exports map[*ssa.Package]GlobalInitExport) (*UnusedGlobalInits, error) {
+	plan := &UnusedGlobalInits{names: make(map[*ssa.Package][]string), keys: make(map[*ssa.Package][]string), instrs: make(map[*ssa.Package][]ssa.Instruction)}
+	for pkg, data := range exports {
+		if len(data.Instructions) == 0 && len(data.Keys) != 0 || len(data.Instructions) != 0 && len(data.Keys) != 1 {
+			return nil, fmt.Errorf("incomplete cached initializer plan in %s", pkg.Pkg.Path())
+		}
+		plan.names[pkg], plan.keys[pkg] = data.Names, data.Keys
+		init := pkg.Func("init")
+		if init == nil || len(init.Blocks) == 0 {
+			continue
+		}
+		hash := sha256.New()
+		previousBlock, previousIndex := -1, -1
+		for _, item := range data.Instructions {
+			if item.Block < previousBlock || item.Block == previousBlock && item.Index <= previousIndex {
+				return nil, fmt.Errorf("unordered cached initializer plan in %s", pkg.Pkg.Path())
+			}
+			previousBlock, previousIndex = item.Block, item.Index
+			if item.Block < 0 || item.Block >= len(init.Blocks) || item.Index < 0 || item.Index >= len(init.Blocks[item.Block].Instrs) {
+				return nil, fmt.Errorf("invalid cached initializer index in %s", pkg.Pkg.Path())
+			}
+			instr := init.Blocks[item.Block].Instrs[item.Index]
+			if instr.String() != item.Text {
+				return nil, fmt.Errorf("cached initializer changed in %s", pkg.Pkg.Path())
+			}
+			plan.instrs[pkg] = append(plan.instrs[pkg], instr)
+			if _, debug := instr.(*ssa.DebugRef); !debug {
+				fmt.Fprintf(hash, "%d:%d;", item.Block, item.Index)
+			}
+		}
+		if len(data.Keys) != 0 && data.Keys[0] != fmt.Sprintf("%s:%x", pkg.Pkg.Path(), hash.Sum(nil)) {
+			return nil, fmt.Errorf("cached initializer key changed in %s", pkg.Pkg.Path())
+		}
+	}
+	return plan, nil
 }
 
 // CacheKeys identifies the exact instruction plan, including discarded blank
@@ -60,8 +133,8 @@ func (p *UnusedGlobalInits) Names(pkg *ssa.Package) []string {
 // through aliases or native code, and must not apply this plan to a library.
 // Removing dead stores and map operations leaves operand evaluation in place,
 // including calls, channel receives, and expressions that may panic. A fixed
-// point also removes now-unused scalar global loads. Pointer-bearing globals
-// remain GC roots even when the program never explicitly reads them.
+// point also removes now-unused global loads. Pointer-bearing globals remain
+// GC roots unless their initializer graph is provably private and constant.
 func FindUnusedGlobalInits(prog *ssa.Program, preserve func(*ssa.Global) bool) *UnusedGlobalInits {
 	plan := &UnusedGlobalInits{names: make(map[*ssa.Package][]string), instrs: make(map[*ssa.Package][]ssa.Instruction), keys: make(map[*ssa.Package][]string)}
 	uses := make(map[*ssa.Global][]ssa.Instruction)
@@ -83,13 +156,20 @@ func FindUnusedGlobalInits(prog *ssa.Program, preserve func(*ssa.Global) bool) *
 	preserved := make(map[*ssa.Global]bool, len(uses))
 	for global := range uses {
 		preserved[global] = preserve(global)
+	}
+	proof := globalInitRootProof{uses: uses, preserved: maps.Clone(preserved), checked: make(map[*ssa.Global]bool), safe: make(map[*ssa.Global]bool)}
+	keepRoots := make(map[*ssa.Global]bool)
+	for global := range uses {
 		// A global is a GC root even if no SSA instruction reads it. Calls
 		// in its initializer can return objects with registered finalizers,
 		// including pointers nested in aggregates, maps and closure contexts.
 		// Keep these roots until their lifetime can be proved unobservable.
-		if mayContainGCRoot(global.Type().Underlying().(*types.Pointer).Elem()) {
-			preserved[global] = true
+		if mayContainGCRoot(global.Type().Underlying().(*types.Pointer).Elem()) && !proof.global(global) {
+			keepRoots[global] = true
 		}
+	}
+	for global := range keepRoots {
+		preserved[global] = true
 	}
 	removed := make(map[ssa.Instruction]bool)
 	deadGlobals := make(map[*ssa.Global]bool)
@@ -210,6 +290,105 @@ func FindUnusedGlobalInits(prog *ssa.Program, preserve func(*ssa.Global) bool) *
 		plan.keys[pkg] = []string{fmt.Sprintf("%s:%x", pkg.Pkg.Path(), hash.Sum(nil))}
 	}
 	return plan
+}
+
+// A constant allocation can still acquire a finalizer through an alias. Loads
+// from another global are safe only if that root cannot be replaced or escape
+// through its address. Any remaining load keeps the source root alive in the
+// fixed point; removing its last load requires the same proof for its contents.
+type globalInitRootProof struct {
+	uses      map[*ssa.Global][]ssa.Instruction
+	preserved map[*ssa.Global]bool
+	checked   map[*ssa.Global]bool
+	safe      map[*ssa.Global]bool
+}
+
+func (p *globalInitRootProof) global(global *ssa.Global) bool {
+	if p.preserved[global] || p.checked[global] {
+		return p.safe[global]
+	}
+	p.checked[global] = true // Cycles fail closed.
+	init := global.Pkg.Func("init")
+	if init == nil || init.Synthetic != "package initializer" {
+		return false
+	}
+	var initializer *ssa.Store
+	for _, ref := range p.uses[global] {
+		switch ref := ref.(type) {
+		case *ssa.Store:
+			if ref.Addr != global || ref.Parent() != init || initializer != nil {
+				return false
+			}
+			initializer = ref
+		case *ssa.UnOp:
+			if ref.Op != token.MUL || ref.X != global {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	p.safe[global] = initializer == nil || p.value(initializer.Val, initializer)
+	return p.safe[global]
+}
+
+func (p *globalInitRootProof) value(value ssa.Value, consumer ssa.Instruction) bool {
+	switch value := value.(type) {
+	case *ssa.Const:
+		return true
+	case *ssa.UnOp:
+		if global, ok := value.X.(*ssa.Global); ok && value.Op == token.MUL {
+			return p.global(global)
+		}
+	case *ssa.MakeMap:
+		if !discardableMap(value) {
+			return false
+		}
+		// Without referrers, the consumer check below fails closed.
+		refs, _ := nonDebugReferrers(value)
+		seenConsumer := false
+		for _, ref := range refs {
+			if ref == consumer {
+				seenConsumer = true
+				continue
+			}
+			update, ok := ref.(*ssa.MapUpdate)
+			if !ok || update.Map != value || update.Key == value || update.Value == value ||
+				!p.value(update.Key, update) || !p.value(update.Value, update) {
+				return false
+			}
+		}
+		return seenConsumer
+	}
+	// Reuse the static initializer checks: every allocation must have a single
+	// terminal use, and its private fields/backing arrays must contain constants.
+	store, ok := consumer.(*ssa.Store)
+	if !ok || store.Val != value {
+		return false
+	}
+	var stores []staticInitStore
+	var instrs []ssa.Instruction
+	if collectStaticInitLeaf(store, nil, &stores, &instrs, nil) {
+		return staticInitRootStores(stores)
+	}
+	if load, ok := value.(*ssa.UnOp); ok && load.Op == token.MUL {
+		if alloc, ok := load.X.(*ssa.Alloc); ok && !alloc.Heap {
+			return collectAllocStores(alloc, load, store, nil, &stores, &instrs, make(map[*ssa.Alloc]bool)) && staticInitRootStores(stores)
+		}
+	}
+	return false
+}
+
+func staticInitRootStores(stores []staticInitStore) bool {
+	for _, store := range stores {
+		// SSA free variables do not describe implicit //llgo:env contexts.
+		// Their final ABI is resolved later during static initializer lowering.
+		if store.function != nil || (store.slice != nil && !staticInitRootStores(store.slice.stores)) ||
+			(store.pointer != nil && !staticInitRootStores(store.pointer.stores)) {
+			return false
+		}
+	}
+	return true
 }
 
 // Map construction and writes can be removed only when they cannot introduce a

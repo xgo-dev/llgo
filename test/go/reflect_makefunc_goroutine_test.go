@@ -84,3 +84,29 @@ func TestReflectMakeFuncGoroutineGC(t *testing.T) {
 	go f()
 	<-done
 }
+
+// Exercise the interface-result allocation path from GOROOT's issue39541.
+func TestReflectMakeFuncConcurrentInterfaceResults(t *testing.T) {
+	type result struct{ x, y int }
+	f := reflect.MakeFunc(reflect.TypeOf((func() any)(nil)), func([]reflect.Value) []reflect.Value {
+		return []reflect.Value{reflect.ValueOf(result{1, 2})}
+	}).Interface().(func() any)
+	const workers = 8
+	done := make(chan bool, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			valid := true
+			for j := 0; j < 512; j++ {
+				if f() != (result{1, 2}) {
+					valid = false
+				}
+			}
+			done <- valid
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		if !<-done {
+			t.Fatal("concurrent MakeFunc call returned an incorrect interface value")
+		}
+	}
+}

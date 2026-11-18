@@ -43,6 +43,8 @@ case "$OS" in
     ;;
 esac
 
+# Keep the release and Unix checksums in sync with
+# internal/crosscompile/esp_qemu.go, which acquires QEMU for Unix emulator runs.
 RELEASE_TAG="esp-develop-9.2.2-20250817"
 VERSION="esp_develop_9.2.2_20250817"
 PACKAGES=(
@@ -97,7 +99,7 @@ for index in "${!PACKAGES[@]}"; do
   archive="${INSTALL_DIR}/${filename}"
   url="https://github.com/espressif/qemu/releases/download/${RELEASE_TAG}/${filename}"
   echo "Downloading: $url"
-  curl -fsSL -o "$archive" "$url"
+  curl -fsSL --retry 5 --retry-all-errors -o "$archive" "$url"
   if command -v sha256sum >/dev/null 2>&1; then
     actual_sha256="$(sha256sum "$archive")"
   else
@@ -123,7 +125,7 @@ if [[ "$PLATFORM" == "x86_64-w64-mingw32" ]]; then
   LIBICONV_URL="https://repo.msys2.org/mingw/mingw64/${LIBICONV_PACKAGE}"
   libiconv_archive="${INSTALL_DIR}/${LIBICONV_PACKAGE}"
   echo "Downloading: $LIBICONV_URL"
-  curl -fsSL -o "$libiconv_archive" "$LIBICONV_URL"
+  curl -fsSL --retry 5 --retry-all-errors -o "$libiconv_archive" "$LIBICONV_URL"
   echo "${LIBICONV_SHA256}  ${libiconv_archive}" | sha256sum -c -
   # Git Bash's GNU tar delegates zstd decompression to an optional executable;
   # Windows' built-in bsdtar has native zstd support on every supported runner.

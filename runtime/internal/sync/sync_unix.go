@@ -70,6 +70,9 @@ func pthreadMutexDestroy(m *Mutex) c.Int
 //go:linkname pthreadMutexLock C.pthread_mutex_lock
 func pthreadMutexLock(m *Mutex) c.Int
 
+//go:linkname pthreadMutexTryLock C.pthread_mutex_trylock
+func pthreadMutexTryLock(m *Mutex) c.Int
+
 //go:linkname pthreadMutexUnlock C.pthread_mutex_unlock
 func pthreadMutexUnlock(m *Mutex) c.Int
 
@@ -83,6 +86,10 @@ func (m *Mutex) Destroy() {
 
 func (m *Mutex) Lock() {
 	mutexLock(m)
+}
+
+func (m *Mutex) TryLock() bool {
+	return pthreadMutexTryLock(m) == 0
 }
 
 func (m *Mutex) Unlock() {

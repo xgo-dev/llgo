@@ -39,16 +39,12 @@ func Version() string {
 	return buildVersion
 }
 
-func GOMAXPROCS(n int) int {
-	return int(c_maxprocs())
-}
-
 func Goexit() {
 	runtime.Goexit()
 }
 
-func KeepAlive(x any) {
-}
+//go:linkname KeepAlive llgo.keepAlive
+func KeepAlive(x any)
 
 //go:linkname c_write C.write
 func c_write(fd c.Int, p unsafe.Pointer, n c.SizeT) c.SsizeT

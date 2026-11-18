@@ -7,7 +7,7 @@ package main
 // CHECK: [[LOOP_TEXT:@[0-9]+]] = private unnamed_addr constant [4 x i8] c"loop"
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
-// CHECK: [[FRAME:%.*]] = call ptr @"{{.*}}AllocU"(i64 48)
+// CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5

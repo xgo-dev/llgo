@@ -26,36 +26,46 @@ type testOutputPolicy struct {
 	show   bool
 }
 
-func newTestOutputPolicy(conf *Config, local bool, count int) *testOutputPolicy {
-	var verbose, list, bench, fuzz, help bool
-	for i := 0; i < len(conf.RunArgs); i++ {
-		arg := conf.RunArgs[i]
+// testBinaryOptions is shared by output routing and native deadline selection,
+// including test flags forwarded after -args and repeated flag values.
+type testBinaryOptions struct {
+	verbose, list, bench, fuzz, help bool
+}
+
+func parseTestBinaryOptions(args []string) (options testBinaryOptions) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
 			break
 		}
 		name, value, hasValue := strings.Cut(arg, "=")
 		switch name {
 		case "-test.v", "--test.v":
-			verbose = !hasValue || value == "true" || value == "test2json"
+			options.verbose = !hasValue || value == "true" || value == "test2json"
 		case "-test.list", "--test.list", "-test.bench", "--test.bench", "-test.fuzz", "--test.fuzz":
-			if !hasValue && i+1 < len(conf.RunArgs) {
+			if !hasValue && i+1 < len(args) {
 				i++
-				value = conf.RunArgs[i]
+				value = args[i]
 			}
 			switch name {
 			case "-test.list", "--test.list":
-				list = value != ""
+				options.list = value != ""
 			case "-test.bench", "--test.bench":
-				bench = value != ""
+				options.bench = value != ""
 			case "-test.fuzz", "--test.fuzz":
-				fuzz = value != ""
+				options.fuzz = value != ""
 			}
 		case "-h", "--h", "-help", "--help":
-			help = true
+			options.help = true
 		}
 	}
-	show := verbose || list || help
-	direct := local || bench || fuzz
+	return options
+}
+
+func newTestOutputPolicy(conf *Config, local bool, count int) *testOutputPolicy {
+	options := parseTestBinaryOptions(conf.RunArgs)
+	show := options.verbose || options.list || options.help
+	direct := local || options.bench || options.fuzz
 	return &testOutputPolicy{
 		stream: direct || show && (count == 1 || conf.BuildParallelism == 1) || conf.TestJSON,
 		direct: direct,

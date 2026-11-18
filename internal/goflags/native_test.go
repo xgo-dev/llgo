@@ -33,11 +33,11 @@ func TestNativeGCFlagsOverrideUnsupportedDefaults(t *testing.T) {
 		args      []string
 		wantError bool
 	}{
-		{name: "same command packages", args: []string{"-gcflags=-m", "-gcflags=-N"}},
-		{name: "same all packages", args: []string{"-gcflags=all=-m", "-gcflags=all=-N"}},
-		{name: "all replaces command packages", args: []string{"-gcflags=-m", "-gcflags=all=-N"}},
-		{name: "dependencies still unsupported", args: []string{"-gcflags=all=-m", "-gcflags=-N"}, wantError: true},
-		{name: "final unsupported value", args: []string{"-gcflags=-N", "-gcflags=-m"}, wantError: true},
+		{name: "same command packages", args: []string{"-gcflags=-live", "-gcflags=-N"}},
+		{name: "same all packages", args: []string{"-gcflags=all=-live", "-gcflags=all=-N"}},
+		{name: "all replaces command packages", args: []string{"-gcflags=-live", "-gcflags=all=-N"}},
+		{name: "dependencies still unsupported", args: []string{"-gcflags=all=-live", "-gcflags=-N"}, wantError: true},
+		{name: "final unsupported value", args: []string{"-gcflags=-N", "-gcflags=-live"}, wantError: true},
 		{name: "overridden malformed list", args: []string{"-gcflags=-N '", "-gcflags=-N"}, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestNativeOverlayDuplicatePathsAreAtomic(t *testing.T) {
 func TestUnsupportedNativeFlagsAreAtomic(t *testing.T) {
 	args := []string{
 		"-race", "--asan=false", "-msan", "-pgo=off", "-linkshared", "-compiler=gc", "-asmflags=-S", "-gccgoflags=-O2", "-installsuffix=test", "-pkgdir=tmp", "-toolexec=wrapper", "-trimpath", "-buildvcs=false", "-n", "-work",
-		"-gcflags=-m", "-gcflags=-live", "-gcflags=-S", "-gcflags=-wb=false", "-gcflags=-smallframes", "-gcflags=-d=maymorestack=hook", "-gcflags=fmt=-N", "-gcflags=-lang=bad", "-gcflags=-N=bad", "-gcflags=-l=4", "-gcflags=-N=TRUE", "-gcflags=-l=T", "-gcflags=-l -l", "-gcflags=-lang", "-gcflags=-lang=go1.22 operand", "-gcflags=broken", "-gcflags=-d=converthash=01", "-ldflags=-X main.version=v1",
+		"-gcflags=-live", "-gcflags=-S", "-gcflags=-wb=false", "-gcflags=-smallframes", "-gcflags=-d=maymorestack=hook", "-gcflags=fmt=-N", "-gcflags=-lang=bad", "-gcflags=-N=bad", "-gcflags=-l=4", "-gcflags=-N=TRUE", "-gcflags=-l=T", "-gcflags=-l -l", "-gcflags=-lang", "-gcflags=-lang=go1.22 operand", "-gcflags=broken", "-gcflags=-d=converthash=01", "-ldflags=-X main.version=v1",
 	}
 	for _, arg := range args {
 		t.Run(arg, func(t *testing.T) {

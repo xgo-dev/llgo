@@ -12,9 +12,10 @@ for format in deb rpm; do
     test "${#package[@]}" = 1
     test -s "${package[0]}"
     if [[ "$format" == deb ]]; then
-        image=ubuntu:24.04
+        # Enable the LLVM 23 repository inside the clean Ubuntu image.
+        image=ubuntu:26.04
     else
-        image=fedora:44
+        image=fedora:45
     fi
     docker run --rm --platform "linux/$arch" \
         -e DEBIAN_FRONTEND=noninteractive \
@@ -23,6 +24,11 @@ for format in deb rpm; do
         "$image" bash -c '
             set -euo pipefail
             if [[ "$1" == deb ]]; then
+                apt-get update
+                apt-get install -y --no-install-recommends ca-certificates curl
+                curl -fsSL --retry 5 https://apt.llvm.org/llvm-snapshot.gpg.key -o /usr/share/keyrings/llvm-snapshot.asc
+                . /etc/os-release
+                echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.asc] https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-23 main" > /etc/apt/sources.list.d/llvm.list
                 apt-get update
                 apt-get install -y --no-install-recommends /packages/llgo.deb
             else

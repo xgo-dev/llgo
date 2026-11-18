@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -23,7 +24,11 @@ class WorkerReuseTests(unittest.TestCase):
             fake.write_text(
                 "import json, os, pathlib, sys\n"
                 "args = sys.argv[1:]\n"
-                "kind = 'compile' if '-emulator' in args else 'run'\n"
+                "kind = ('compile' if '-c' in args else\n"
+                "        'language' if '-test.skip' in args else\n"
+                "        'gc' if '^TestGCConcurrentTypedMutation$' in args else\n"
+                "        'stack' if '^TestEscapeTypedStack' in args else\n"
+                "        'lifetime' if any('TestUintptrEscapes' in x for x in args) else 'run')\n"
                 "with open(os.environ['TRACE'], 'a') as out:\n"
                 "    out.write(json.dumps([kind, args, os.getenv('LLGO_WASM_WORKERS')]) + '\\n')\n"
                 "if os.getenv('FAIL_TOOL') == kind: sys.exit(7)\n"
@@ -54,15 +59,35 @@ class WorkerReuseTests(unittest.TestCase):
             with self.subTest(target=target):
                 result, calls = self.run_worker(target)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual([call[0] for call in calls], ["compile", "run"])
-                compile_args, run_args = calls[0][1], calls[1][1]
-                self.assertIn(f"{target}-runner.mjs", run_args[0])
-                self.assertEqual(compile_args[compile_args.index("-o") + 1], run_args[1])
-                self.assertEqual(compile_args[compile_args.index("-skip") + 1],
-                                 "^TestRuntimeNumGoroutineIncludesNewProc$")
+                self.assertEqual([call[0] for call in calls], ["compile", "language", "gc", "stack", "lifetime", "run"])
+                compile_args, language_args, gc_args, stack_args, lifetime_args, run_args = [call[1] for call in calls]
+                for args in (language_args, gc_args, stack_args, lifetime_args, run_args):
+                    self.assertIn(f"{target}-runner.mjs", args[0])
+                    self.assertEqual(compile_args[compile_args.index("-o") + 1], args[1])
+                self.assertEqual(language_args[language_args.index("-test.skip") + 1],
+                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$")
+                self.assertEqual(gc_args[gc_args.index("-test.run") + 1],
+                                 "^TestGCConcurrentTypedMutation$")
+                self.assertIn("-test.timeout=480s", gc_args)
+                self.assertEqual(stack_args[stack_args.index("-test.run") + 1],
+                                 "^TestEscapeTypedStack")
+                self.assertIn("-test.timeout=480s", stack_args)
+                self.assertEqual(lifetime_args[lifetime_args.index("-test.run") + 1],
+                                 "^(TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$")
+                self.assertIn("-test.timeout=480s", lifetime_args)
                 self.assertEqual(run_args[run_args.index("-test.run") + 1],
                                  "^TestRuntimeNumGoroutineIncludesNewProc$")
-                self.assertEqual([call[2] for call in calls], ["2", "2"])
+                self.assertEqual([call[2] for call in calls], ["2", "2", "2", "2", "2", "2"])
+                skip = language_args[language_args.index("-test.skip") + 1]
+                isolated = [args[args.index("-test.run") + 1]
+                            for args in (gc_args, stack_args, lifetime_args, run_args)]
+                # Check the real suite inventory: every test still runs exactly
+                # once, either in the main process or an isolated stress group.
+                for source in (ROOT / "test/go").glob("*_test.go"):
+                    for name in re.findall(r"^func (Test\w+)\(.*\*testing\.T", source.read_text(), re.M):
+                        runs = int(re.search(skip, name) is None)
+                        runs += sum(re.search(pattern, name) is not None for pattern in isolated)
+                        self.assertEqual(runs, 1, f"{source.name}: {name}")
 
     def test_compile_failure_stops_before_isolated_process(self):
         result, calls = self.run_worker("emscripten", "compile")
@@ -70,9 +95,13 @@ class WorkerReuseTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["compile"])
 
     def test_isolated_process_failure_fails_acceptance(self):
-        result, calls = self.run_worker("emscripten", "run")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual([call[0] for call in calls], ["compile", "run"])
+        stages = ["compile", "language", "gc", "stack", "lifetime", "run"]
+        for failure in stages[1:]:
+            with self.subTest(failure=failure):
+                result, calls = self.run_worker("emscripten", failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([call[0] for call in calls],
+                                 stages[:stages.index(failure) + 1])
 
 
 if __name__ == "__main__":

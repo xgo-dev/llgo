@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xgo-dev/llgo/runtime/internal/clite/tls"
 )
@@ -66,36 +67,29 @@ func TestAllocThreadLocalIsolation(t *testing.T) {
 }
 
 func TestDestructorRuns(t *testing.T) {
-	var mu sync.Mutex
-	var calls int
-	values := make([]int, 0, 1)
-
+	values := make(chan int, 1)
 	h := tls.Alloc[*int](func(p **int) {
-		mu.Lock()
-		defer mu.Unlock()
+		value := 0
 		if p != nil && *p != nil {
-			calls++
-			values = append(values, **p)
+			value = **p
 		}
+		values <- value
 	})
-
-	var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		val := new(int)
 		*val = 123
 		h.Set(val)
 	}()
-	wg.Wait()
 
-	mu.Lock()
-	defer mu.Unlock()
-	if calls == 0 {
-		t.Fatalf("expected destructor to be invoked")
-	}
-	if len(values) != 1 || values[0] != 123 {
-		t.Fatalf("destructor saw unexpected values: %v", values)
+	// A goroutine's deferred WaitGroup.Done runs before native thread-local
+	// destructors. Wait for the destructor itself, rather than that earlier signal.
+	select {
+	case value := <-values:
+		if value != 123 {
+			t.Fatalf("destructor value = %d, want 123", value)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected destructor to be invoked")
 	}
 }
 

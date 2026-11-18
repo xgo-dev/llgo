@@ -10,10 +10,16 @@ from ubuntu_apt import configure
 class UbuntuAPTTest(unittest.TestCase):
     def test_runner_mirror_lists(self):
         for arch, archive, security in (
-            ("amd64", "https://archive.ubuntu.com/ubuntu/",
-             "https://security.ubuntu.com/ubuntu/"),
-            ("arm64", "https://ports.ubuntu.com/ubuntu-ports/",
-             "https://ports.ubuntu.com/ubuntu-ports/"),
+            ("amd64", "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+             "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2\n"),
+            ("i386", "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+             "https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+             "https://security.ubuntu.com/ubuntu/\tpriority:2\n"),
+            ("arm64", "https://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n",
+             "https://ports.ubuntu.com/ubuntu-ports/\tpriority:1\n"),
         ):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as tmp:
                 root = pathlib.Path(tmp)
@@ -29,8 +35,8 @@ class UbuntuAPTTest(unittest.TestCase):
                 third_party.write_text("https://apt.llvm.org/noble/\n")
                 configure(root, arch)
                 configure(root, arch)
-                self.assertEqual((root / "apt-mirrors.txt").read_text(), archive + "\n")
-                self.assertEqual((root / "apt-mirrors-security.txt").read_text(), security + "\n")
+                self.assertEqual((root / "apt-mirrors.txt").read_text(), archive)
+                self.assertEqual((root / "apt-mirrors-security.txt").read_text(), security)
                 self.assertEqual(sources.read_text(), source_text)
                 self.assertEqual(third_party.read_text(), "https://apt.llvm.org/noble/\n")
 

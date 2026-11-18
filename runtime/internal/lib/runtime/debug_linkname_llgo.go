@@ -31,9 +31,7 @@ func setMaxStack(in int) (out int) {
 
 //go:linkname setGCPercent runtime/debug.setGCPercent
 func setGCPercent(in int32) (out int32) {
-	out = llgoGCPercent
-	llgoGCPercent = in
-	return out
+	return setCollectorGCPercent(in)
 }
 
 //go:linkname setPanicOnFault runtime/debug.setPanicOnFault

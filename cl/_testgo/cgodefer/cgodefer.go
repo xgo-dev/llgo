@@ -76,17 +76,16 @@ import "C"
 // CHECK: [[ACTIVE_NODE:%[0-9]+]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: [[ACTIVE_DEFER:%[0-9]+]] = load { ptr, i64, { ptr, ptr } }, ptr [[ACTIVE_NODE]]
 // CHECK: [[DEFER_FUNC:%[0-9]+]] = extractvalue { ptr, i64, { ptr, ptr } } [[ACTIVE_DEFER]], 2
-// CHECK-NEXT: call void @"{{.*}}FreeDeferNode"(ptr [[ACTIVE_NODE]])
+// CHECK-NOT: FreeDeferNode
 // CHECK: [[DEFER_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[DEFER_FUNC]], 0
 // CHECK: call void %{{.*}}
 
 // ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {
-// CHECK: [[DEFER_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = extractvalue { ptr } [[DEFER_ENV]], 0
+// CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[KEEPALIVE:%[0-9]+]] = load ptr, ptr [[KEEPALIVE_SLOT]]
 // CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[KEEPALIVE]], 1
-// CHECK-NEXT: [[DEFER_ARG_SLOT:%[0-9]+]] = extractvalue { ptr } [[DEFER_ENV]], 0
+// CHECK-NEXT: [[DEFER_ARG_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %0, i32 0, i32 0
 // CHECK-NEXT: [[DEFER_ARG:%[0-9]+]] = load ptr, ptr [[DEFER_ARG_SLOT]]
 // CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr [[DEFER_ARG]])
 

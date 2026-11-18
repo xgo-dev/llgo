@@ -43,6 +43,7 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 	}{
 		{"enabled", "wasip1", "wasm", true, true, false},
 		{"no-dce", "wasip1", "wasm", false, true, false},
+		{"browser", "js", "wasm", false, true, false},
 		{"no-gc", "wasip1", "wasm", true, false, false},
 		{"native", "linux", "amd64", true, true, false},
 		{"debugger", "wasip1", "wasm", true, true, true},
@@ -60,12 +61,13 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
+			wantDirect := tc.arch == "wasm" && tc.gc && !tc.debug
 			for _, name := range []string{"register", "closure", "result", "cancel", "shared"} {
 				ir := pkg.Module().NamedFunction("finalizers." + name).String()
-				if got := strings.Contains(ir, "runtime.llgoSetFinalizerPointer"); got != (tc.name == "enabled") {
+				if got := strings.Contains(ir, "runtime.llgoSetFinalizerPointer"); got != wantDirect {
 					t.Errorf("%s direct = %v:\n%s", name, got, ir)
 				}
-				if tc.name == "enabled" && name != "shared" && (strings.Contains(ir, "@_llgo_") || strings.Contains(ir, `@"_llgo_`)) {
+				if wantDirect && name != "shared" && (strings.Contains(ir, "_llgo_finalizers.Item") || strings.Contains(ir, "_llgo_itab$") || strings.Contains(ir, "runtime.NewItab")) {
 					t.Errorf("%s still references argument type metadata:\n%s", name, ir)
 				}
 				if name == "shared" && !strings.Contains(ir, "_llgo_finalizers.Item") {

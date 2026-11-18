@@ -67,3 +67,40 @@ func marked(p uintptr) { collect() }
 		t.Fatalf("pragma changed the native conservative collector path:\n%s", ir)
 	}
 }
+
+func TestCompileUintptrEscapesVariadicStorage(t *testing.T) {
+	const src = `package main
+import "unsafe"
+func source() unsafe.Pointer
+//go:uintptrescapes
+func marked(...uintptr)
+func ordinary(...uintptr)
+func direct() { marked(uintptr(source())) }
+func deferred() { defer marked(uintptr(source())) }
+func goroutine() { go marked(uintptr(source())) }
+func unmarked() { ordinary(uintptr(source())) }
+`
+	ir := cltest.CompileIREx(t, src, "uintptr_escapes_variadic.go", false, nil)
+	for _, name := range []string{"direct", "deferred", "goroutine", "unmarked"} {
+		start := strings.Index(ir, "define void @main."+name+"(")
+		if start < 0 {
+			t.Fatalf("missing %s:\n%s", name, ir)
+		}
+		body := ir[start:]
+		end := strings.Index(body, "\n}")
+		if end < 0 {
+			t.Fatalf("unterminated %s:\n%s", name, body)
+		}
+		body = body[:end]
+		allocator := "runtime.AllocZ"
+		if name == "unmarked" {
+			allocator = "runtime.AllocAtomicU"
+		}
+		if !strings.Contains(body, allocator) {
+			t.Errorf("%s variadic storage did not use %s:\n%s", name, allocator, body)
+		}
+		if name != "unmarked" && strings.Contains(body, "runtime.AllocAtomicU") {
+			t.Errorf("%s variadic pointer roots used atomic storage:\n%s", name, body)
+		}
+	}
+}

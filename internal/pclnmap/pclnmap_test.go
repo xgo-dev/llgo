@@ -65,6 +65,28 @@ func TestEncodeParse(t *testing.T) {
 	}
 }
 
+func TestWasmTargets(t *testing.T) {
+	for _, goos := range []string{"wasip1", "js"} {
+		for _, size := range []int{4, 8} {
+			data := sampleData(t)
+			data.GOOS, data.GOARCH, data.PointerSize = goos, "wasm", size
+			raw, err := Encode(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := Parse(raw)
+			if err != nil || int(view.PointerSize) != size || view.GOARCHCode != GOARCHWasm {
+				t.Fatalf("%s/%d: %+v %v", goos, size, view, err)
+			}
+			// Native 32-bit maps remain outside this format's supported ABI.
+			data.GOOS, data.GOARCH, data.PointerSize = "linux", "amd64", 4
+			if _, err := Encode(data); err == nil {
+				t.Fatal("accepted a native 32-bit map")
+			}
+		}
+	}
+}
+
 func TestVersion4FunctionCentricDescriptorLayout(t *testing.T) {
 	if Version != 4 {
 		t.Fatalf("format version = %d, want 4", Version)

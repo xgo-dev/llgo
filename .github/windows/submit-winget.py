@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Submit a stable LLGo release through xgo-dev/winget-pkgs, one PR per ABI."""
+"""Submit a stable LLGo release through xgo-dev/winget-pkgs, one universal package PR."""
 
 import argparse
 import base64
@@ -22,6 +22,17 @@ spec.loader.exec_module(manifests)
 SOURCE = 'xgo-dev/llgo'
 UPSTREAM = 'microsoft/winget-pkgs'
 FORK = 'xgo-dev/winget-pkgs'
+
+
+def describe_http_error(error, request):
+    details = [request]
+    # Only log diagnostic headers, never authorization or request/response bodies.
+    for header in ('X-GitHub-Request-Id', 'X-OAuth-Scopes',
+                   'X-Accepted-OAuth-Scopes', 'X-Accepted-GitHub-Permissions'):
+        if value := (error.headers or {}).get(header):
+            details.append(f'{header}: {value}')
+    error.msg = f'{error.msg} [{"; ".join(details)}]'
+    return error
 
 
 class GitHub:
@@ -47,7 +58,7 @@ class GitHub:
             except HTTPError as error:
                 # Writes are recovered by the next run, never blindly replayed.
                 if method != 'GET' or error.code not in (429, 500, 502, 503, 504) or attempt == 2:
-                    raise
+                    raise describe_http_error(error, f'{method} /{path}')
                 error.close()
                 time.sleep(2 ** attempt)
         raise RuntimeError('GitHub API retries exhausted')
@@ -73,8 +84,12 @@ class GitHub:
 
 def public_bytes(url):
     # Keep credentials out of public asset downloads and their redirects.
-    with urlopen(url, timeout=60) as response:
-        return response.read()
+    try:
+        with urlopen(url, timeout=60) as response:
+            return response.read()
+    except HTTPError as error:
+        # Use the original public asset URL, not a signed redirect URL.
+        raise describe_http_error(error, f'GET {url}')
 
 
 def published_installers(api, tag):
@@ -109,14 +124,15 @@ def published_installers(api, tag):
             raise ValueError('Malformed or duplicate published checksum entry')
         hashes[match[2]] = match[1].lower()
     installers = {}
-    # Check all six profile/architecture ZIPs before either PR can be submitted.
-    for profile in manifests.PROFILES:
-        for arch in manifests.ARCHITECTURES:
-            name = f'llgo{version}.windows-{arch}-{profile}.zip'
-            value = asset(name)
-            if value['digest'] != 'sha256:' + hashes.get(name, ''):
-                raise ValueError(f'Published installer checksum mismatch: {name}')
-            installers[profile, arch] = (value['browser_download_url'], hashes[name])
+    # Validate all three architecture ZIPs before submitting the package.
+    for arch in manifests.ARCHITECTURES:
+        name = manifests.archive_name(version, arch)
+        value = asset(name)
+        if value['size'] > manifests.MAX_ZIP_SIZE:
+            raise ValueError(f'Published Windows ZIP exceeds the 128 MiB package budget: {name}')
+        if value['digest'] != 'sha256:' + hashes.get(name, ''):
+            raise ValueError(f'Published installer checksum mismatch: {name}')
+        installers[arch] = (value['browser_download_url'], hashes[name])
     return installers
 
 
@@ -149,22 +165,23 @@ def check_branch(api, branch, base, files):
             raise ValueError(f'Existing branch {branch} differs from the release manifests; inspect it manually')
 
 
-def submit(api, tag, profile, output, dry_run=False):
+def submit(api, tag, output, dry_run=False):
     installers = published_installers(api, tag)
     version = tag[1:]
     manifests.write_manifests(output, version, installers)
-    label = manifests.PROFILES[profile]
-    identifier = f'XGo.LLGo.{label}'
-    package = f'manifests/x/XGo/LLGo/{label}'
+    identifier = manifests.PACKAGE_ID
+    package = 'manifests/x/XGo/LLGo'
     directory = f'{package}/{version}'
-    branch = f'llgo/{profile}/{version}'
+    branch = f'llgo/universal/{version}'
     upstream = api.request(f'repos/{UPSTREAM}')
     base = upstream['default_branch']
     if api.optional(f'repos/{UPSTREAM}/contents/{directory}', ref=base) is not None:
         return f'{identifier} {version} is already published'
     if url := existing_pull(api, branch, directory, identifier, version):
         return f'Existing submission: {url}'
-    is_update = api.optional(f'repos/{UPSTREAM}/contents/{package}', ref=base) is not None
+    existing = api.optional(f'repos/{UPSTREAM}/contents/{package}', ref=base) or []
+    # The directory can contain only the historical MSVC/MinGW subpackages.
+    is_update = any(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', item['name']) for item in existing)
     title = f'Update: {identifier} to {version}' if is_update else f'New package: {identifier} version {version}'
     if dry_run:
         return f'Dry run: {title}; {FORK}:{branch} -> {UPSTREAM}:{base}'
@@ -176,14 +193,20 @@ def submit(api, tag, profile, output, dry_run=False):
     ref = api.optional(f'repos/{FORK}/git/ref/heads/{branch}')
     parent = api.request(f'repos/{UPSTREAM}/git/ref/heads/{quote(base, safe="")}')['object']['sha']
     if ref is None:
-        commit = api.request(f'repos/{UPSTREAM}/git/commits/{parent}')
+        # Reuse workflow files already present on the fork. Starting from a
+        # newer upstream tree can require workflow scope just to create a ref.
+        fork_base = api.request(f'repos/{FORK}/git/ref/heads/{quote(fork["default_branch"], safe="")}')['object']['sha']
+        comparison = api.request(f'repos/{UPSTREAM}/compare/{fork_base}...{parent}', per_page=1)
+        if comparison['merge_base_commit']['sha'] != fork_base:
+            raise ValueError(f'{FORK} default branch must be an ancestor of upstream; inspect it manually')
+        commit = api.request(f'repos/{FORK}/git/commits/{fork_base}')
         tree = api.request(f'repos/{FORK}/git/trees', method='POST', data={
             'base_tree': commit['tree']['sha'],
             'tree': [{'path': path, 'mode': '100644', 'type': 'blob', 'content': content}
                      for path, content in files.items()],
         })
         commit = api.request(f'repos/{FORK}/git/commits', method='POST', data={
-            'message': title, 'tree': tree['sha'], 'parents': [parent],
+            'message': title, 'tree': tree['sha'], 'parents': [fork_base],
         })
         api.request(f'repos/{FORK}/git/refs', method='POST', data={
             'ref': f'refs/heads/{branch}', 'sha': commit['sha'],
@@ -195,7 +218,7 @@ def submit(api, tag, profile, output, dry_run=False):
 
 {identifier} {version} for x86, x64 and ARM64, from [LLGo {tag}](https://github.com/{SOURCE}/releases/tag/{tag}).
 
-The release pipeline tested all six Windows ZIPs. Installer hashes match both the published checksum file and GitHub asset digests. MSVC retains the portable alias; MinGW adds the archive binaries to PATH. WinGet installation validation runs on this PR.
+The release pipeline tested all three universal Windows ZIPs. The pinned ESP runtime is bundled and unpacked locally when an embedded build needs it. Installer hashes match both the published checksum file and GitHub asset digests. The package supports both MSVC and MinGW targets and exposes the tested portable llgo alias. WinGet installation validation runs on this PR.
 
 ## ✅ Checklist
 
@@ -220,7 +243,6 @@ The release pipeline tested all six Windows ZIPs. Installer hashes match both th
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
-    parser.add_argument('--profile', choices=manifests.PROFILES, required=True)
     parser.add_argument('--output', type=Path, default=Path('.winget'))
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
@@ -228,7 +250,7 @@ def main():
     if not args.dry_run and not token:
         parser.error('Set the WINGET_PR_TOKEN Actions secret; GITHUB_TOKEN cannot submit cross-repository PRs')
     api = GitHub(token or os.environ.get('GH_TOKEN', ''), dry_run=args.dry_run)
-    result = submit(api, args.tag, args.profile, args.output, args.dry_run)
+    result = submit(api, args.tag, args.output, args.dry_run)
     print(result)
     if summary := os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(summary, 'a', encoding='utf-8') as stream:

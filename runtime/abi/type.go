@@ -97,7 +97,10 @@ const (
 	// TODO (khr, drchase) why aren't these in TFlag?  Investigate, fix if possible.
 	KindDirectIface = 1 << 5
 	KindGCProg      = 1 << 6 // Type.gc points to GC program
-	KindMask        = (1 << 5) - 1
+	// KindStdcall records the calling convention of a native function value.
+	// It is independent of the callback convention selected by NewCallback.
+	KindStdcall = 1 << 7
+	KindMask    = (1 << 5) - 1
 )
 
 // String returns the name of k.
@@ -178,6 +181,12 @@ const (
 
 	// TFflagClosure means the structType is a closure
 	TFlagClosure TFlag = 1 << 5
+
+	// TFlagNative means this named type has a legacy cdecl/stdcall
+	// storage and calling ABI. Go size and alignment queries may still
+	// report the ordinary Go layout. Unlabeled wrappers are not marked;
+	// consumers walk to this leaf.
+	TFlagNative TFlag = 1 << 6
 
 	// TFlagGCMaskOnDemand means that the GC pointer bitmask will be
 	// computed on demand at runtime instead of being precomputed at
@@ -335,6 +344,19 @@ type UncommonType struct {
 	Moff     uint32 // offset from this uncommontype to [mcount]Method
 }
 
+// Method returns a pointer into t's method table without copying it.
+// Callers must treat the referenced metadata as read-only.
+// The table can be dynamically allocated; callers must keep its backing type
+// metadata alive for as long as they use the returned pointer.
+// It panics if i is out of range.
+func (t *UncommonType) Method(i int) *Method {
+	if uint(i) >= uint(t.Mcount) {
+		panic("abi: method index out of range")
+	}
+	methods := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "0 <= i < t.Mcount")
+	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "0 <= i < t.Mcount"))
+}
+
 func (t *UncommonType) Methods() []Method {
 	if t.Mcount == 0 {
 		return nil
@@ -407,6 +429,17 @@ func (t *Type) IsDirectIface() bool {
 // IsClosure reports whether t is closure struct
 func (t *Type) IsClosure() bool {
 	return t.TFlag&TFlagClosure != 0
+}
+
+// HasNativeLayout reports whether t itself is marked with a legacy native ABI.
+func (t *Type) HasNativeLayout() bool {
+	return t.TFlag&TFlagNative != 0
+}
+
+// IsStdcall reports whether a native function type uses the stdcall ABI.
+// Windows amd64 and arm64 use the default ABI even with this annotation.
+func (t *Type) IsStdcall() bool {
+	return t.Kind() == Func && t.HasNativeLayout() && t.Kind_&KindStdcall != 0
 }
 
 // Size returns the size of data with type t.

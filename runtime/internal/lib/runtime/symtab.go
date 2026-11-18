@@ -2220,11 +2220,10 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		// right after the call — so a raw-pc nearest-below lookup would
 		// report the following line. Synthetic shadow-stack pcs live
 		// outside the text range and keep raw-pc semantics.
-		lookupPC := pc
 		if prebuiltTextContains(pc) {
-			lookupPC = pc - 1
+			pc--
 		}
-		sym := frameSymbol(lookupPC)
+		sym := frameSymbol(pc)
 		sym.pc = pc
 		if GOOS == "windows" {
 			// Win64 keeps the wrapper marker in the high bit of the private

@@ -50,7 +50,6 @@ COMPILER_DIRS = {
     "cmd/internal/build",
     "cmd/internal/clean",
     "cmd/internal/compile",
-    "cmd/internal/compilerhash",
     "cmd/internal/flags",
     "cmd/internal/get",
     "cmd/internal/help",
@@ -117,7 +116,7 @@ def classify_path(raw_path: str) -> str:
     if _under_any(path, COMPILER_DIRS):
         return "compiler"
 
-    if _under_any(path, {"_xtool", "chore", "dev"}) or path == "install.sh":
+    if _under_any(path, {"chore", "dev"}) or path == "install.sh":
         return "tooling"
     return "other"
 

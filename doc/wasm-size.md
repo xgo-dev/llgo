@@ -15,6 +15,20 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
+Ordinary Wasm builds reuse already-required backing-allocation roots for
+pointer and slice views, preserving cold-path publication points. Loads, phi
+nodes and allocating conversions keep independent roots. Frame bookkeeping
+stays inline to avoid extra calls. Development DCE can also introduce owner
+roots and, at `-Oz`, outline frame bookkeeping.
+
+Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
+values and direct hashers for scalar keys. Padded structs, blank fields and
+interfaces keep their general algorithms. Private map buckets retain allocator
+layout without source-type reflection metadata. Exact pointer finalizers use
+the linear-GC dispatcher directly; dynamic types, foreign callbacks and debugger
+frames retain the general path. These local lowerings let ordinary linker DCE
+discard unnecessary generic algorithms and descriptors.
+
 `-ldflags=-s` strips optional Wasm names and DWARF, as it strips native symbols
 and debug information. `-ldflags="-s -w=0"` strips names while retaining DWARF
 and source maps. `-w` alone controls DWARF and does not request name stripping.
@@ -27,6 +41,17 @@ source-map metadata; `-wasm-strip=all` additionally removes producer metadata.
 The default is `none` unless `-s` requests stripping. Explicit
 `-wasm-strip=none` conflicts with `-s`. PCLN policy remains independently
 controlled by `-pclntab`.
+
+To defer runtime symbol strings and line tables as well, use
+`-pclntab=external`. Hosted W32/J32/J64 and `GOOS=js GOARCH=wasm` write an
+optional `app.wasm.pclntab` beside the module. Ordinary shadow frames then
+record location IDs instead of embedding source strings. The first safe
+symbol query loads and validates the map; missing or failed loads are cached
+and execution continues with fallback diagnostics. Browser fetches time out
+after 5 seconds. Fatal tracebacks never initiate loading. Programs that never
+query symbols need no sidecar request. See
+[PCLN packaging](design/pclntab-packaging.md#hosted-wasm) for deployment and
+failure semantics.
 
 For Emscripten, size mode sets `EXPORT_ALL=0`. Explicit native/public exports
 and the existing runtime methods (`cwrap`, `allocateUTF8`, `stringToUTF8`,
@@ -115,3 +140,36 @@ can have a slightly larger compressed total because of the manifest.
 | J64 | cprintf | 242,604 / 66,670 | 239,736 / 66,807 | 1.18% |
 | J64 | println | 242,194 / 66,485 | 239,296 / 66,574 | 1.20% |
 | J64 | fmtprintf | 2,908,050 / 642,098 | 2,848,135 / 640,863 | 2.06% |
+
+## Optional runtime symbols
+
+Measured against main `0539ea6e2` (including #3108), with the same `-Oz
+-debug-artifact=none -ldflags=-s` settings on both sides. Only
+`-pclntab=embedded` versus `external` differs. Darwin arm64, Go 1.27.3,
+LLVM 22.1.8, Emscripten 6.0.8 and LLGo Binaryen `llgo-v132.3`;
+fixtures `benchmark/binary_size/{cprintf,println,fmtprintf}`. Every before/after
+product executed in Wasmer or the matching Node runner. No DWARF is present.
+
+These are **uncompressed Wasm module bytes**, with the optional map reported
+separately. JS glue and manifest bytes are excluded from this table. The
+sidecar is deferred, not compressed: shipping/loading it increases total bytes,
+and first symbolization uses additional resident memory. Small programs can
+grow because the identity/loader support exceeds their removed metadata.
+
+| Profile | Example | Embedded module | External module | Change | External PCLN file |
+| --- | --- | ---: | ---: | ---: | ---: |
+| W32 | cprintf | 12,745 | 12,829 | +0.66% | 256 |
+| W32 | println | 14,490 | 15,348 | +5.92% | 256 |
+| W32 | fmtprintf | 456,380 | 382,223 | -16.25% | 385,880 |
+| J32 | cprintf | 151,656 | 154,393 | +1.80% | 84,616 |
+| J32 | println | 150,855 | 153,584 | +1.81% | 84,616 |
+| J32 | fmtprintf | 1,111,100 | 729,940 | -34.30% | 397,400 |
+| J64 | cprintf | 138,876 | 141,371 | +1.80% | 84,616 |
+| J64 | println | 138,077 | 140,580 | +1.81% | 84,616 |
+| J64 | fmtprintf | 1,046,497 | 665,101 | -36.45% | 397,320 |
+
+For `fmtprintf`, the data section drops from 159,501 to 83,599 bytes (W32),
+474,571 to 90,613 (J32), and 474,801 to 90,892 (J64). This reduction comes
+from runtime metadata and shadow-frame source strings in ordinary data
+sections, rather than removing DWARF. The code section changes slightly to
+support lazy loading.

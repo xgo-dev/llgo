@@ -51,13 +51,15 @@ type g struct {
 	atomicstatus    uint32
 	goid            uint64
 	parentGoid      uint64
-	createdPC       uintptr
 	tracebackThread unsafe.Pointer
 
 	startfn  goroutineFunc
 	startarg unsafe.Pointer
 
 	context *runtimeContext
+
+	// One idle ordinary channel waiter; active/select waiters are never cached.
+	chanWaiter *chanWaiter
 
 	goexit       bool
 	isMain       bool

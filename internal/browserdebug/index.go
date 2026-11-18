@@ -56,17 +56,18 @@ func ParsePathMapping(value string) (PathMapping, error) {
 
 // Index is the transport-neutral state consumed by the browser extension.
 type Index struct {
-	Contract    string      `json:"contract"`
-	Version     int         `json:"version"`
-	BuildID     string      `json:"build_id"`
-	Artifact    string      `json:"artifact"`
-	Record      Record      `json:"record"`
-	Sources     []Source    `json:"sources"`
-	Lines       []LineRange `json:"lines"`
-	Functions   []Function  `json:"functions"`
-	Variables   []Variable  `json:"variables"`
-	Types       []Type      `json:"types"`
-	Diagnostics []string    `json:"diagnostics,omitempty"`
+	Contract       string          `json:"contract"`
+	Version        int             `json:"version"`
+	BuildID        string          `json:"build_id"`
+	Artifact       string          `json:"artifact"`
+	Record         Record          `json:"record"`
+	Sources        []Source        `json:"sources"`
+	Lines          []LineRange     `json:"lines"`
+	Functions      []Function      `json:"functions"`
+	FunctionValues []FunctionValue `json:"function_values,omitempty"`
+	Variables      []Variable      `json:"variables"`
+	Types          []Type          `json:"types"`
+	Diagnostics    []string        `json:"diagnostics,omitempty"`
 }
 
 type Record struct {
@@ -103,6 +104,14 @@ type Function struct {
 	Ranges []AddressRange `json:"ranges"`
 }
 
+// FunctionValue joins a module-owned indirect-call index to its DWARF name
+// and optional, compiler-described closure environment pointer type.
+type FunctionValue struct {
+	Index       uint32 `json:"index"`
+	Name        string `json:"name"`
+	Environment string `json:"environment,omitempty"`
+}
+
 type Location struct {
 	Start      uint64 `json:"start,omitempty"`
 	End        uint64 `json:"end,omitempty"`
@@ -116,6 +125,7 @@ type Constant struct {
 
 type Variable struct {
 	Name      string         `json:"name"`
+	Function  string         `json:"function,omitempty"`
 	Scope     string         `json:"scope"`
 	Type      string         `json:"type"`
 	Ranges    []AddressRange `json:"ranges,omitempty"`
@@ -317,6 +327,9 @@ func Load(mainPath string, mappings []PathMapping, sourceRoots ...string) (*Bund
 	if err := builder.build(); err != nil {
 		return nil, err
 	}
+	// Externalize preserves element/name sections; the build_id check above
+	// ensures the sidecar describes the same linked module as main.
+	builder.addFunctionValues(symbols)
 	builder.index.Contract = "llgo.browser.debug"
 	builder.index.Version = IndexVersion
 	builder.index.BuildID = hex.EncodeToString(buildID)
@@ -402,9 +415,10 @@ func dwarfData(sections map[string][]byte) (*dwarf.Data, error) {
 }
 
 type scopeState struct {
-	function  bool
-	ranges    []AddressRange
-	frameBase []Location
+	function     bool
+	functionName string
+	ranges       []AddressRange
+	frameBase    []Location
 }
 
 type indexBuilder struct {
@@ -417,6 +431,7 @@ type indexBuilder struct {
 	sourceByPath map[string]string
 	sourceFiles  map[string]string
 	typeByKey    map[uintptr]string
+	closureEnvs  map[string]string
 }
 
 func (b *indexBuilder) build() error {
@@ -445,14 +460,15 @@ func (b *indexBuilder) build() error {
 				b.index.Diagnostics = append(b.index.Diagnostics, err.Error())
 			}
 		case dwarf.TagSubprogram, dwarf.TagInlinedSubroutine:
-			name, _ := entry.Val(dwarf.AttrName).(string)
-			if linkage, ok := entry.Val(dwarf.AttrLinkageName).(string); ok && linkage != "" {
+			name, _ := b.attribute(entry, dwarf.AttrName).(string)
+			if linkage, ok := b.attribute(entry, dwarf.AttrLinkageName).(string); ok && linkage != "" {
 				name = linkage
 			}
 			if name != "" && len(ranges) != 0 {
 				b.index.Functions = append(b.index.Functions, Function{Name: name, Ranges: ranges})
 			}
 			current.function = true
+			current.functionName = name
 			// An abstract or eliminated function has no execution scope. Do not
 			// inherit the enclosing function's ranges for its local declarations.
 			current.ranges = ranges
@@ -620,11 +636,15 @@ func pathPrefix(path, prefix string) (string, bool) {
 }
 
 func (b *indexBuilder) addVariable(entry *dwarf.Entry, state scopeState, depth int) {
-	name, _ := entry.Val(dwarf.AttrName).(string)
-	if name == "" {
+	name, _ := b.attribute(entry, dwarf.AttrName).(string)
+	if name == "" || name == debugabi.WasmMemoryAnchorVariable {
 		return
 	}
-	value := Variable{Name: name, Depth: depth}
+	if name == "$env" {
+		b.addClosureEnv(entry, state.functionName)
+		return
+	}
+	value := Variable{Name: name, Function: state.functionName, Depth: depth}
 	if entry.Tag == dwarf.TagFormalParameter {
 		value.Scope = "PARAMETER"
 	} else if state.function {
@@ -639,7 +659,7 @@ func (b *indexBuilder) addVariable(entry *dwarf.Entry, state scopeState, depth i
 	}
 	value.Ranges = append(value.Ranges, state.ranges...)
 	value.FrameBase = append(value.FrameBase, state.frameBase...)
-	if typeOffset, ok := entry.Val(dwarf.AttrType).(dwarf.Offset); ok {
+	if typeOffset, ok := b.attribute(entry, dwarf.AttrType).(dwarf.Offset); ok {
 		if dwarfType, err := b.data.Type(typeOffset); err == nil {
 			value.Type = b.addType(dwarfType)
 		} else {

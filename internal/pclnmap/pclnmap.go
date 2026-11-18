@@ -15,9 +15,10 @@
  */
 
 // Package pclnmap encodes LLGo's optional external runtime-symbolization map.
-// The runtime has a deliberately dependency-free decoder for the same format;
-// keep the layout constants and validation rules in sync with
-// runtime/internal/lib/runtime/pclntab_external.go.
+// Keep layout constants, target codes and validation rules synchronized with
+// both dependency-minimal runtime decoders:
+// runtime/internal/lib/runtime/pclntab_external.go (native) and
+// runtime/internal/pcln/pcln_wasm.go (Wasm).
 package pclnmap
 
 import (
@@ -39,9 +40,12 @@ const (
 
 	GOOSLinux  = uint8(1)
 	GOOSDarwin = uint8(2)
+	GOOSWASI   = uint8(3)
+	GOOSJS     = uint8(4)
 
 	GOARCHAMD64 = uint8(1)
 	GOARCHARM64 = uint8(2)
+	GOARCHWasm  = uint8(3)
 )
 
 const (
@@ -140,6 +144,10 @@ func targetCodes(goos, goarch string) (uint8, uint8, error) {
 		osCode = GOOSLinux
 	case "darwin":
 		osCode = GOOSDarwin
+	case "wasip1":
+		osCode = GOOSWASI
+	case "js":
+		osCode = GOOSJS
 	default:
 		return 0, 0, fmt.Errorf("unsupported GOOS %q", goos)
 	}
@@ -149,6 +157,8 @@ func targetCodes(goos, goarch string) (uint8, uint8, error) {
 		archCode = GOARCHAMD64
 	case "arm64":
 		archCode = GOARCHARM64
+	case "wasm":
+		archCode = GOARCHWasm
 	default:
 		return 0, 0, fmt.Errorf("unsupported GOARCH %q", goarch)
 	}
@@ -178,7 +188,7 @@ func Encode(data Data) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if data.PointerSize != 8 {
+	if data.PointerSize != 8 && !(data.GOARCH == "wasm" && data.PointerSize == 4) {
 		return nil, fmt.Errorf("unsupported pointer size %d", data.PointerSize)
 	}
 	if data.TextStart < data.ImageBase || data.TextEnd <= data.TextStart {
@@ -348,7 +358,8 @@ func Parse(raw []byte) (View, error) {
 	if binary.LittleEndian.Uint64(raw[headerFileSize:]) != uint64(len(raw)) {
 		return view, errors.New("pclntab map size mismatch")
 	}
-	if raw[headerEndian] != EndianLittle || raw[headerPointerSize] != 8 {
+	if raw[headerEndian] != EndianLittle || (raw[headerPointerSize] != 8 &&
+		!(raw[headerGOARCH] == GOARCHWasm && raw[headerPointerSize] == 4)) {
 		return view, errors.New("unsupported pclntab map target encoding")
 	}
 	if binary.LittleEndian.Uint64(raw[headerPayloadHash:]) != fnv64(raw[HeaderSize:]) {

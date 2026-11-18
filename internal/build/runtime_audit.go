@@ -31,17 +31,28 @@ import (
 // A declaration with no Go body records a boundary; it does not establish that
 // an assembly implementation or external library satisfies that boundary.
 type RuntimeOwnership struct {
-	GoVersion               string          `json:"go_version"`
-	GOOS                    string          `json:"goos"`
-	GOARCH                  string          `json:"goarch"`
-	Tags                    []string        `json:"tags"`
-	ToolTags                []string        `json:"tool_tags"`
-	CgoEnabled              bool            `json:"cgo_enabled"`
-	Symbols                 []RuntimeSymbol `json:"symbols"`
-	Required                []RuntimeUse    `json:"required"`
-	Missing                 []RuntimeUse    `json:"missing,omitempty"`
-	DynamicCompilerUses     []RuntimeUse    `json:"dynamic_compiler_uses,omitempty"`
-	OtherTargetCompilerUses []RuntimeUse    `json:"other_target_compiler_uses,omitempty"`
+	GoVersion               string            `json:"go_version"`
+	GOOS                    string            `json:"goos"`
+	GOARCH                  string            `json:"goarch"`
+	Tags                    []string          `json:"tags"`
+	ToolTags                []string          `json:"tool_tags"`
+	CgoEnabled              bool              `json:"cgo_enabled"`
+	Symbols                 []RuntimeSymbol   `json:"symbols"`
+	Required                []RuntimeUse      `json:"required"`
+	Missing                 []RuntimeUse      `json:"missing,omitempty"`
+	DynamicCompilerUses     []RuntimeUse      `json:"dynamic_compiler_uses,omitempty"`
+	CompilerSelectors       []RuntimeSelector `json:"compiler_selectors,omitempty"`
+	CompilerForwarders      []RuntimeUse      `json:"compiler_forwarders,omitempty"`
+	ExternalBoundaries      []RuntimeBoundary `json:"external_boundaries,omitempty"`
+	UnresolvedBoundaries    []RuntimeUse      `json:"unresolved_boundaries,omitempty"`
+	ABI                     *RuntimeABI       `json:"abi,omitempty"`
+	OtherTargetCompilerUses []RuntimeUse      `json:"other_target_compiler_uses,omitempty"`
+}
+
+type RuntimeSelector struct {
+	Expression string   `json:"expression"`
+	Source     string   `json:"source"`
+	Candidates []string `json:"candidates"`
 }
 
 type RuntimeSymbol struct {
@@ -104,13 +115,31 @@ func AuditRuntimeSources(conf RuntimeAuditConfig) (*RuntimeOwnership, error) {
 		return nil, err
 	}
 	target := &llssa.Target{GOOS: conf.GOOS, GOARCH: conf.GOARCH}
+	if conf.GOARCH == "wasm" {
+		switch conf.GOOS {
+		case "js":
+			target.WasmProfile = "j32"
+			target.LLVMTarget = "wasm32-unknown-emscripten"
+			if slices.Contains(tags, "llgo.wasm.emscripten.memory64") {
+				target.WasmProfile = "j64"
+				target.LLVMTarget = "wasm64-unknown-emscripten"
+			}
+		case "wasip1":
+			target.WasmProfile = "w32"
+		}
+	}
 	tags = append(tags, target.ClosureEnvBuildTag())
 	slices.Sort(tags)
 	flags = []string{"-tags=" + strings.Join(slices.Compact(tags), ",")}
 	cgoEnabled := source.CGO_ENABLED == "1"
-	return auditRuntimeSources(conf.RuntimeDir, source.GOROOT, sourcePatchBuildContext{
+	report, err := auditRuntimeSources(conf.RuntimeDir, source.GOROOT, sourcePatchBuildContext{
 		goos: conf.GOOS, goarch: conf.GOARCH, goversion: source.GOVERSION,
 		buildFlags: flags, toolTags: source.toolTags, cgoEnabled: &cgoEnabled})
+	if err != nil {
+		return nil, err
+	}
+	report.ABI, err = auditRuntimeABI(conf.RuntimeDir, source.GOROOT, source.GOVERSION, target)
+	return report, err
 }
 
 func auditRuntimeSources(runtimeDir, goroot string, ctx sourcePatchBuildContext) (*RuntimeOwnership, error) {
@@ -260,6 +289,9 @@ func auditRuntimeSources(runtimeDir, goroot string, ctx sourcePatchBuildContext)
 		return nil, err
 	}
 	if err := a.compilerUses(report); err != nil {
+		return nil, err
+	}
+	if err := a.externalBoundaries(report); err != nil {
 		return nil, err
 	}
 	a.resolve(report)
@@ -498,7 +530,9 @@ func (a *runtimeAuditor) inventory(report *RuntimeOwnership, pkg, owner string, 
 					return fmt.Errorf("duplicate runtime declaration %s: %s and %s", symbol.Name, previous, symbol.Source)
 				}
 				a.definitions[symbol.Name] = symbol.Source
-				if body || (kind == "var" && symbol.Linkname == "") {
+				// Intrinsic aliases may keep Go fallback bodies, but LLGo emits
+				// the shared compiler instruction rather than those definitions.
+				if (body && symbol.Owner != "compiler-intrinsic") || (kind == "var" && symbol.Linkname == "") {
 					name := symbol.Name
 					if symbol.Linkname != "" {
 						name = symbol.Linkname
@@ -567,9 +601,8 @@ func runtimeAuditOwnedSymbol(name string) bool {
 	return false
 }
 
-// Literal compiler runtime lookups are checked against the selected ABI.
-// Dynamic selectors are retained with their source location for review; their
-// target/type-dependent paths are exercised by compiler and execution tests.
+// Check literal lookups and every candidate of bounded dynamic selectors.
+// Unbounded expressions remain explicit failures of the ownership gate.
 func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 	// Compiler sources contain lowering for every target. A literal used only
 	// by a different target must still have a declaration somewhere in the ABI,
@@ -612,6 +645,7 @@ func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 				return err
 			}
 			parsedFiles++
+			forwarders := runtimeAuditForwarders(pkg, entry.Name(), file)
 			ast.Inspect(file, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok || len(call.Args) == 0 {
@@ -621,8 +655,17 @@ func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 				if !ok || !slices.Contains([]string{"rtFunc", "rtEnvFunc", "rtNamed", "rtType", "RuntimeFunc", "runtimeFunc"}, sel.Sel.Name) {
 					return true
 				}
-				if literal, ok := call.Args[0].(*ast.BasicLit); ok && literal.Kind == token.STRING {
-					name, _ := strconv.Unquote(literal.Value)
+				if forwarding := forwarders[call]; forwarding != "" {
+					report.CompilerForwarders = append(report.CompilerForwarders, RuntimeUse{forwarding, a.source(call.Pos()), "compiler-forwarder"})
+					return true
+				}
+				names, bounded := runtimeAuditCandidates(file, call.Args[0])
+				if bounded {
+					var expr bytes.Buffer
+					_ = format.Node(&expr, a.fset, call.Args[0].(*ast.CallExpr).Args[0])
+					report.CompilerSelectors = append(report.CompilerSelectors, RuntimeSelector{expr.String(), a.source(call.Pos()), names})
+				}
+				for _, name := range names {
 					name = "github.com/xgo-dev/llgo/runtime/internal/runtime." + name
 					use := RuntimeUse{name, a.source(call.Pos()), "compiler"}
 					if a.definitions[name] == "" && available[name] {
@@ -630,7 +673,8 @@ func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 					} else {
 						report.Required = append(report.Required, use)
 					}
-				} else {
+				}
+				if len(names) == 0 {
 					var expr bytes.Buffer
 					_ = format.Node(&expr, a.fset, call.Args[0])
 					report.DynamicCompilerUses = append(report.DynamicCompilerUses, RuntimeUse{expr.String(), a.source(call.Pos()), "compiler-selector"})

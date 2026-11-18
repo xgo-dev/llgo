@@ -603,6 +603,13 @@ func (p *context) atomicStore(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
+func (p *context) atomicStoreUnordered(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+	if len(args) == 2 {
+		return b.Store(args[0], args[1]).SetOrdering(llssa.OrderingUnordered)
+	}
+	panic("atomicStoreUnordered(addr *T, val T): invalid arguments")
+}
+
 func (p *context) atomicCmpXchg(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 3 {
 		addr := args[0]
@@ -638,6 +645,9 @@ func (p *context) bitCastIntrinsic(b llssa.Builder, args []llssa.Expr, result ty
 // -----------------------------------------------------------------------------
 
 var llgoInstrs = map[string]int{
+	"aesRound":          llgoAESRound,
+	"aesSubWord":        llgoAESSubWord,
+	"aesAlloca":         llgoAESAlloca,
 	"simd":              llgoSIMD,
 	"cstr":              llgoCstr,
 	"advance":           llgoAdvance,
@@ -650,7 +660,9 @@ var llgoInstrs = map[string]int{
 	"stringData":        llgoStringData,
 	"funcAddr":          llgoFuncAddr,
 	"funcPCABI0":        llgoFuncPCABI0,
+	"keepAlive":         llgoKeepAlive,
 	"skip":              llgoSkip,
+	"noescape":          llgoNoEscape,
 	"syscall":           llgoSyscall,
 	"boolToUint8":       llgoBoolToUint8,
 	"interfaceKindUsed": llgoInterfaceKindUsed,
@@ -666,11 +678,12 @@ var llgoInstrs = map[string]int{
 	"deferData":         llgoDeferData,
 	"unreachable":       llgoUnreachable,
 
-	"atomicLoad":         llgoAtomicLoad,
-	"atomicStore":        llgoAtomicStore,
-	"atomicCmpXchg":      llgoAtomicCmpXchg,
-	"atomicCmpXchgOK":    llgoAtomicCmpXchgOK,
-	"atomicAddReturnNew": llgoAtomicAddReturnNew,
+	"atomicLoad":           llgoAtomicLoad,
+	"atomicStore":          llgoAtomicStore,
+	"atomicStoreUnordered": llgoAtomicStoreUnordered,
+	"atomicCmpXchg":        llgoAtomicCmpXchg,
+	"atomicCmpXchgOK":      llgoAtomicCmpXchgOK,
+	"atomicAddReturnNew":   llgoAtomicAddReturnNew,
 
 	"atomicXchg": int(llgoAtomicXchg),
 	"atomicAdd":  int(llgoAtomicAdd),
@@ -708,6 +721,8 @@ var llgoInstrs = map[string]int{
 func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
 	pkgTypes, name, ftype := p.funcName(fn)
 	switch ftype {
+	case llvmIntrinsic:
+		p.resolveLLVMIntrinsic(fn, name)
 	case pyFunc:
 		if kind, mod := pkgKindByScope(pkgTypes.Scope()); kind == PkgPyModule {
 			pkg := p.pkg
@@ -732,8 +747,12 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			// Source env-bearing bodies are created by compileFuncDecl before
 			// lowering. Imported declarations cannot reconstruct //llgo:env.
 			aFn = pkg.NewFuncEx(name, sig, llssa.CallConv(ftype), false, p.needsLinkOnce(fn))
-			if disableInline {
+			noInlineDirective := hasNoInlineDirective(fn)
+			if disableInline || noInlineDirective {
 				aFn.Inline(llssa.NoInline)
+			}
+			if noInlineDirective {
+				aFn.DisableTailCalls()
 			}
 		}
 		if ftype == goFunc {
@@ -1267,10 +1286,13 @@ func (a *runtimeCallerAnalysis) callTargets(fn *ssa.Function, call *ssa.CallComm
 // Precompute before workers start; recover facts also synchronize lazy queries
 // for nested and synthetic functions that are not package members.
 type CallerTracking struct {
-	base        map[*ssa.Package]map[*ssa.Function]bool
-	extended    map[*ssa.Package]callerTrackingFuncSets
-	recover     *recoverFacts
-	precomputed bool
+	base                 map[*ssa.Package]map[*ssa.Function]bool
+	extended             map[*ssa.Package]callerTrackingFuncSets
+	recover              *recoverFacts
+	inlines              *inlineFacts
+	precomputed          bool
+	imported             map[*ssa.Package]bool // validated archive-owned frontend facts
+	exportedRuntimeTypes []types.Type
 }
 
 // Precompute resolves caller-tracking and recover data before package backends
@@ -1307,7 +1329,7 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 	// serial: interface target resolution may still consult MethodValue, and
 	// scheduling those calls concurrently makes later module layout depend on
 	// worker completion order.
-	runtimeTypes := callerTrackingRuntimeTypes(pkgs)
+	runtimeTypes := callerTrackingRuntimeTypes(pkgs, c.exportedRuntimeTypes...)
 	methods := callerTrackingMethods(pkgs, runtimeTypes)
 	analyses := make([]callerTrackingPackageAnalysis, len(pkgs))
 	base := make([]map[*ssa.Function]bool, len(pkgs))
@@ -1318,10 +1340,18 @@ func (c *CallerTracking) Precompute(pkgs []*ssa.Package) {
 	}
 
 	for i := range pkgs {
+		if c.imported[pkgs[i]] {
+			base[i] = c.base[pkgs[i]]
+			extended[i] = c.extended[pkgs[i]]
+			continue
+		}
 		analyses[i] = analyzeCallerTrackingPackage(pkgs[i], methods[pkgs[i]])
 		base[i] = analyses[i].base
 	}
 	for i := range pkgs {
+		if c.imported[pkgs[i]] {
+			continue
+		}
 		extended[i] = computeRuntimeCallerFuncSets(c.recoverAnalysis(), pkgs[i], analyses[i].funcs, base[i], analyses[i].trackable, func(dep *ssa.Package) map[*ssa.Function]bool {
 			j, ok := index[dep]
 			if !ok {
@@ -1378,7 +1408,7 @@ func callerTrackingMethods(pkgs []*ssa.Package, runtimeTypes map[*ssa.Package][]
 // computes derived types under Program and method-set locks; calling it from
 // every package worker would serialize the supposedly parallel phase and would
 // repeatedly scan the same whole-program data.
-func callerTrackingRuntimeTypes(pkgs []*ssa.Package) map[*ssa.Package][]types.Type {
+func callerTrackingRuntimeTypes(pkgs []*ssa.Package, extra ...types.Type) map[*ssa.Package][]types.Type {
 	byProgram := make(map[*ssa.Program]map[*types.Package][]types.Type)
 	result := make(map[*ssa.Package][]types.Type, len(pkgs))
 	for _, pkg := range pkgs {
@@ -1389,6 +1419,11 @@ func callerTrackingRuntimeTypes(pkgs []*ssa.Package) map[*ssa.Package][]types.Ty
 		if !ok {
 			byPackage = make(map[*types.Package][]types.Type)
 			for _, typ := range pkg.Prog.RuntimeTypes() {
+				if owner := typeOwnerPackage(typ); owner != nil {
+					byPackage[owner] = append(byPackage[owner], typ)
+				}
+			}
+			for _, typ := range extra {
 				if owner := typeOwnerPackage(typ); owner != nil {
 					byPackage[owner] = append(byPackage[owner], typ)
 				}
@@ -1418,6 +1453,7 @@ func NewCallerTracking() *CallerTracking {
 		base:     make(map[*ssa.Package]map[*ssa.Function]bool),
 		extended: make(map[*ssa.Package]callerTrackingFuncSets),
 		recover:  newRecoverFacts(),
+		inlines:  newInlineFacts(),
 	}
 }
 
@@ -1974,6 +2010,10 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 		directiveFilename(p.fset, fn.Pos(), pos.Filename, p.sourceLine),
 	)
 	entry := b.Convert(p.prog.Uintptr(), p.fn.Expr)
+	if p.options.CompactCallerLocations {
+		p.callerFrameMark = p.callRuntimeLocationID(b, "PushCallerLocationFrame", entry, pos)
+		return
+	}
 	p.callerFrameMark = p.callRuntimeLocation(
 		b, "PushCallerLocationFrame",
 		entry,
@@ -2031,6 +2071,9 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	}
 	name := p.runtimeCallerFrameName()
 	b.EmitLocationRecord(fn, name, position.Filename, position.Line, func() llssa.Expr {
+		if p.options.CompactCallerLocations {
+			return p.callRuntimeLocationID(b, fn, b.Convert(p.prog.Uintptr(), p.fn.Expr), position)
+		}
 		return p.callRuntimeLocation(
 			b, fn,
 			b.Convert(p.prog.Uintptr(), p.fn.Expr),
@@ -2041,6 +2084,32 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	})
 }
 
+func (p *context) callRuntimeLocationID(b llssa.Builder, fn string, entry llssa.Expr, pos token.Position) llssa.Expr {
+	key := pcLinePosition{p.fn.Name(), pos.Filename, pos.Line}
+	if p.pcLineIDs == nil {
+		p.pcLineIDs = make(map[pcLinePosition]uint64)
+	}
+	id, ok := p.pcLineIDs[key]
+	if !ok {
+		p.pcLineSeq++
+		id = pcLineID(p.fn.Name(), p.pcLineSeq)
+		p.pcLineIDs[key] = id
+		p.pkg.EmitPCLineInfo(id, p.fn.Name(), pos.Filename, pos.Line, pos.Column)
+	}
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "entry", types.Typ[types.Uintptr]),
+		types.NewVar(token.NoPos, nil, "location", types.Typ[types.Uint64]),
+		types.NewVar(token.NoPos, nil, "line", types.Typ[types.Int]),
+	)
+	var results *types.Tuple
+	if fn == "PushCallerLocationFrame" {
+		results = types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int]))
+	}
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	return b.Call(p.runtimeFunc(llssa.RuntimeSymbol(fn+"ID", "PushCallerLocationFrameID", "RecordCallerLocationID", "RecordPanicLocationID"), sig), entry,
+		p.prog.IntVal(id, p.prog.Uint64()), p.prog.IntVal(uint64(pos.Line), p.prog.Int()))
+}
+
 // callRuntimeLocation keeps static strings out of the caller's Wasm C stack.
 // The C ABI passes each Go string indirectly; separate instrumentation calls
 // otherwise reserve separate aggregate argument slots in every recursive
@@ -2049,7 +2118,7 @@ func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, f
 	push := fn == "PushCallerLocationFrame"
 	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
 		return b.Call(
-			p.runtimeFunc(fn+"Wasm", wasmRuntimeLocationSig(push)),
+			p.runtimeFunc(llssa.RuntimeSymbol(fn+"Wasm", "PushCallerLocationFrameWasm", "RecordCallerLocationWasm", "RecordPanicLocationWasm"), wasmRuntimeLocationSig(push)),
 			entry, b.StringData(name), b.StringLen(name), b.StringData(file), b.StringLen(file), line,
 		)
 	}
@@ -2057,7 +2126,7 @@ func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, f
 	if push {
 		sig = pushCallerLocationFrameSig()
 	}
-	return b.Call(p.runtimeFunc(fn, sig), entry, name, file, line)
+	return b.Call(p.runtimeFunc(llssa.RuntimeSymbol(fn, "PushCallerLocationFrame", "RecordCallerLocation", "RecordPanicLocation"), sig), entry, name, file, line)
 }
 
 func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
@@ -2381,7 +2450,7 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	return owner
 }
 
-func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferStack, mayRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, common *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
 	if ds != nil {
 		b.DeferToRecover(ds.owner, ds.stack, mayRecover, fn, buildCall, args...)
 		return llssa.Nil
@@ -2389,10 +2458,27 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, ds *explicitDeferS
 	switch act {
 	case llssa.Call, llssa.Go:
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+			if p.canTailRecoverAlias(common) {
+				return b.CallRecoverTailAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
+			}
 			return b.CallRecoverAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
 		}
 		return b.Do(act, fn, buildCall, args...)
 	default:
+		// The deferred call is emitted later in the shared defer dispatcher,
+		// rather than beside RunDefers's exit label. Anchor that actual call
+		// at the closing brace too, so optimized block placement keeps its PC.
+		// This is the Go caller-line rule on every tracked target, including
+		// non-Darwin builds; it is independent of the LTO entry-table policy.
+		if common != nil && p.shouldTrackCallerFrames() {
+			call := buildCall
+			pos := p.deferRunPos(common.Pos())
+			buildCall = func(b llssa.Builder, fn llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				p.lastPCLineFile = ""
+				p.emitPCLineLabel(b, pos)
+				return call(b, fn, args...)
+			}
+		}
 		b.DeferRecover(act, mayRecover, fn, buildCall, args...)
 		return llssa.Nil
 	}
@@ -2480,7 +2566,16 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 		p.emitNilDerefBaseCheck(b, addr.X)
 		if isPointerGoType(addr.X.Type()) {
 			base := p.compileValue(b, addr.X)
+			if p.nilCheckBlock != nil && p.nilCheckedPointers[addr.X] {
+				return
+			}
 			b.AssertNilDeref(base)
+			if p.nilCheckBlock != nil {
+				if p.nilCheckedPointers == nil {
+					p.nilCheckedPointers = make(map[ssa.Value]bool)
+				}
+				p.nilCheckedPointers[addr.X] = true
+			}
 		}
 	}
 }
@@ -2626,7 +2721,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
-		if needsRecoverToken {
+		// Forwarding returns use owned receiver storage: a tail call cannot
+		// lend a word from the wrapper frame that it removes.
+		if act == llssa.Call && !p.canTailRecoverAlias(call) {
+			// Value-receiver adapters copy this borrowed word into the
+			// callee's parameter before it can be retained. A by-reference
+			// receiver ABI would require a separate lifetime proof here.
+			fn = b.ImethodBorrowed(o, mthd, needsRecoverToken)
+		} else if needsRecoverToken {
 			fn = b.ImethodWithRecoverToken(o, mthd)
 		} else {
 			fn = b.Imethod(o, mthd)
@@ -2636,7 +2738,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			hasVArg = fnHasVArg
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
-		ret = p.emitDo(b, act, ds, true, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, true, fn, llssa.Builder.Call, args...)
 		if reflectCheck.Kind&llssa.ReflectTypeMethodByName != 0 && reflectCheck.Name == "" {
 			b.MarkReflectTypeMethodByNameExpr(ret, 1)
 		}
@@ -2670,16 +2772,24 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			}
 		}
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
 	case *ssa.Function:
+		if act == llssa.Call {
+			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
+				return folded
+			}
+			p.importInlineBody(cv)
+		}
 		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
 			fn := p.compileValue(b, cv)
-			ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
 			return
 		}
 		aFn, pyFn, ftype := p.compileFunction(cv)
 		// TODO(xsw): check ca != llssa.Call
 		switch ftype {
+		case llvmIntrinsic:
+			ret = p.callLLVMIntrinsic(b, act, cv, call)
 		case cFunc, stdcallFunc:
 			p.inCFunc = true
 			args := p.compileValues(b, args, kind)
@@ -2704,16 +2814,41 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				// recover-frame alias may surround it (or run after the call).
 				ret = b.CallForwardVarargs(aFn.Expr, args...)
 			} else {
-				ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+				ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
 		case llgoSIMD:
 			ret = p.simdCall(b, cv, args)
+		case llgoAESAlloca:
+			if len(args) != 1 {
+				panic("aesAlloca: expected a constant buffer size")
+			}
+			size, ok := constInt(args[0])
+			if !ok || (size != 16 && size != 128) {
+				panic("aesAlloca: expected 16 or 128 bytes")
+			}
+			ret = b.AESAlloca(size)
+		case llgoAESRound:
+			if len(args) != 4 {
+				panic("aesRound: expected an operation and three pointers")
+			}
+			op, ok := constInt(args[0])
+			if !ok || op < 0 || op > int(llssa.AESXORBlock) {
+				panic("aesRound: invalid constant operation")
+			}
+			values := p.compileValues(b, args[1:], fnNormal)
+			ret = b.AESRound(llssa.AESOp(op), values[0], values[1], values[2])
+		case llgoAESSubWord:
+			if len(args) != 1 {
+				panic("aesSubWord: expected one uint32")
+			}
+			values := p.compileValues(b, args, fnNormal)
+			ret = b.AESSubWord(values[0])
 		case llgoPyList:
 			args := p.compileValues(b, args, fnHasVArg)
 			ret = b.PyList(args...)
@@ -2776,10 +2911,26 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			ret = p.funcAddr(b, args)
 		case llgoFuncPCABI0:
 			ret = p.funcPCABI0(b, args)
+		case llgoKeepAlive:
+			if len(args) != 1 || call.Signature().Results().Len() != 0 {
+				panic("keepAlive(any): invalid arguments")
+			}
+			values := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return b.KeepAlive(args[0])
+			}, values...)
 		case llgoSkip:
 			if results := call.Signature().Results(); results.Len() != 0 {
 				ret = p.zeroResult(results)
 			}
+		case llgoNoEscape:
+			if !noEscapeSignature(call.Signature()) {
+				panic("noescape(p unsafe.Pointer) unsafe.Pointer: invalid signature")
+			}
+			args := p.compileValues(b, args, kind)
+			ret = b.Do(act, llssa.Nil, func(_ llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return args[0]
+			}, args...)
 		case llgoSyscall:
 			ret = p.syscallIntrinsic(b, args, call.Signature().Results())
 		case llgoBoolToUint8:
@@ -2821,40 +2972,45 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("umulOverflow(a, b T) (T, bool): invalid arguments")
 			}
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.UMulOverflow(args[0], args[1])
 			}, args...)
 		case llgoUnreachable: // func unreachable()
 			b.Unreachable()
 		case llgoAtomicLoad:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicLoad(b, args)
 			}, args...)
 		case llgoAtomicStore:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicStore(b, args)
+			}, args...)
+		case llgoAtomicStoreUnordered:
+			args := p.compileValues(b, args, kind)
+			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return p.atomicStoreUnordered(b, args)
 			}, args...)
 		case llgoAtomicCmpXchg:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchg(b, args)
 			}, args...)
 		case llgoAtomicCmpXchgOK:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return p.atomicCmpXchgOK(b, args)
 			}, args...)
 		case llgoAtomicAddReturnNew:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {
 				args := p.compileValues(b, args, kind)
-				ret = p.emitDo(b, act, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 					return p.atomic(b, llssa.AtomicOp(ftype-llgoAtomicOpBase), args)
 				}, args...)
 			} else {
@@ -2864,7 +3020,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	default:
 		fn := p.compileValue(b, cv)
 		args := p.compileDynamicCallValues(b, call, kind)
-		ret = p.emitDo(b, act, ds, mayRecover, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, args...)
 	}
 	return
 }

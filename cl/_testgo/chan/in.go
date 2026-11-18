@@ -4,10 +4,11 @@ package main
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[CH2_RECV_BUF:%[0-9]+]] = alloca i64, align 8
-// CHECK-NEXT: [[CH1_RECV_BUF:%[0-9]+]] = alloca i64, align 8
+// CHECK-NEXT: [[CH2_SLOT:%.*]] = alloca ptr
+// CHECK: [[CH1_RECV_BUF:%[0-9]+]] = alloca i64, align 8
 // First channel: box/inspect one channel identity, capture its slot in the
 // sender goroutine, then receive and print the transmitted value.
-// CHECK: [[CH1_SLOT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
+// CHECK: [[CH1_SLOT:%.*]] = alloca ptr
 // CHECK: [[CH1:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH1]], ptr [[CH1_SLOT]]
 // CHECK: [[CH1_BOX_DATA:%.*]] = load ptr, ptr [[CH1_SLOT]]
@@ -20,8 +21,9 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_LEN]])
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_CAP]])
 // CHECK: call void @"{{.*}}PrintEface"(%"{{.*}}eface" [[CH1_EFACE]])
+// CHECK: [[SEND_COPY:%.*]] = load ptr, ptr [[CH1_SLOT]]
 // CHECK: [[SEND_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[CH1_SLOT]], ptr {{%.*}}
+// CHECK: store ptr [[SEND_COPY]], ptr {{%.*}}
 // CHECK: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_ENV]], 1
 // CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr {{%.*}})
@@ -33,11 +35,11 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_VALUE]])
 // Second channel: capture it in a closer goroutine and preserve the receive ok
 // bit alongside the zero value returned after close.
-// CHECK: [[CH2_SLOT:%.*]] = call ptr @"{{.*}}AllocZ"(i64 8)
 // CHECK: [[CH2:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH2]], ptr [[CH2_SLOT]]
+// CHECK: [[CLOSE_COPY:%.*]] = load ptr, ptr [[CH2_SLOT]]
 // CHECK: [[CLOSE_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[CH2_SLOT]], ptr {{%.*}}
+// CHECK: store ptr [[CLOSE_COPY]], ptr {{%.*}}
 // CHECK: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_ENV]], 1
 // CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%.*}})
@@ -57,8 +59,7 @@ package main
 // AMD64-LABEL: define void @"main.main$1"(ptr nest %0){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[SEND_BUF:%[0-9]+]] = alloca i64, align 8
-// CHECK: [[SEND_CAPTURE:%.*]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[SEND_SLOT:%.*]] = extractvalue { ptr } [[SEND_CAPTURE]], 0
+// CHECK: [[SEND_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[SEND_CH:%.*]] = load ptr, ptr [[SEND_SLOT]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[SEND_BUF]], i8 0, i64 8, i1 false)
 // CHECK: store i64 100, ptr [[SEND_BUF]]
@@ -66,8 +67,7 @@ package main
 
 // ARM64-LABEL: define void @"main.main$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$2"(ptr nest %0){{.*}} {
-// CHECK: [[CLOSE_CAPTURE:%.*]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[CLOSE_SLOT:%.*]] = extractvalue { ptr } [[CLOSE_CAPTURE]], 0
+// CHECK: [[CLOSE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
 // CHECK-NEXT: [[CLOSE_CH:%.*]] = load ptr, ptr [[CLOSE_SLOT]]
 // CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[CLOSE_CH]])
 

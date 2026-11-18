@@ -98,6 +98,35 @@ func (b Builder) fitLLVMValue(value llvm.Value, source Type, target llvm.Type) l
 	if value.Type() == target {
 		return value
 	}
+	if source.kind == vkArray && value.Type().TypeKind() == llvm.ArrayTypeKind && target.TypeKind() == llvm.ArrayTypeKind && value.Type().ArrayLength() == target.ArrayLength() {
+		elem := b.Prog.Index(source)
+		result := llvm.Undef(target)
+		for i, n := 0, target.ArrayLength(); i < n; i++ {
+			part := b.impl.CreateExtractValue(value, i, "")
+			part = b.fitLLVMValue(part, elem, target.ElementType())
+			result = b.impl.CreateInsertValue(result, part, i, "")
+		}
+		return result
+	}
+	logical := b.Prog.withoutNativeStorage(source)
+	if logical.kind == vkSIMD {
+		storage := b.Prog.storageType(logical)
+		if value.Type() == logical.ll && target == storage {
+			return b.toStorageValue(logical, value)
+		}
+		if value.Type() == storage && target == logical.ll {
+			return b.fromStorageValue(logical, value)
+		}
+	}
+	if b.Prog.needsWidePointerStorage(logical) {
+		wide := b.Prog.widePointerStorageType()
+		if value.Type() == wide && target.TypeKind() == llvm.PointerTypeKind {
+			return b.fromStorageValue(logical, value)
+		}
+		if value.Type().TypeKind() == llvm.PointerTypeKind && target == wide {
+			return b.toStorageValue(logical, value)
+		}
+	}
 	if value.Type().TypeKind() == llvm.IntegerTypeKind && target.TypeKind() == llvm.IntegerTypeKind {
 		if value.Type().IntTypeWidth() > target.IntTypeWidth() {
 			truncated := llvm.CreateTrunc(b.impl, value, target)
@@ -147,7 +176,10 @@ func (p Program) childStorageType(parent Type, child types.Type) Type {
 	if !p.usesWideGoStorage() {
 		return t
 	}
-	if p.isNativeStorage(parent) || p.hasNativeTypeLayout(parent.raw.Type) || p.hasNativeTypeLayout(child) {
+	if hasHostLayout(parent.raw.Type) {
+		return t
+	}
+	if p.isNativeStorage(parent) || p.hasLegacyNativeTypeLayout(parent.raw.Type) || p.hasLegacyNativeTypeLayout(child) {
 		return p.withNativeStorage(t)
 	}
 	return t

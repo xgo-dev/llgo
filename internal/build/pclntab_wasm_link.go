@@ -40,6 +40,10 @@ func analyzeWasmPCLN(path string, original pclnmap.Data) (pclnpost.ExternalAnaly
 	if err != nil {
 		return pclnpost.ExternalAnalysis{}, err
 	}
+	return analyzeWasmPCLNData(raw, original)
+}
+
+func analyzeWasmPCLNData(raw []byte, original pclnmap.Data) (pclnpost.ExternalAnalysis, error) {
 	names, err := wasmdebug.FunctionNames(raw)
 	if err != nil {
 		return pclnpost.ExternalAnalysis{}, err

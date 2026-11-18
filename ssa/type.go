@@ -93,6 +93,19 @@ type goProgram aProgram
 // Alignof must implement the alignment guarantees required by the spec.
 // The result must be >= 1.
 func (p *goProgram) Alignof(T types.Type) int64 {
+	if layout, ok := p.wasmNativeLayout(T); ok {
+		return layout.align
+	}
+	return p.goAlignof(T)
+}
+
+func (p *goProgram) goAlignof(T types.Type) int64 {
+	if layout, ok := p.hostLayout(T); ok {
+		return layout.align
+	}
+	if layout, ok := p.vectorLayout(T, false); ok {
+		return layout.align
+	}
 	return p.sizes.Alignof(T)
 }
 
@@ -100,10 +113,31 @@ func (p *goProgram) Alignof(T types.Type) int64 {
 // Offsetsof must implement the offset guarantees required by the spec.
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
-	prog := Program(unsafe.Pointer(p))
+	prog := Program(p)
+	native := prog.nativeFields(fields)
+	if prog.usesWideGoStorage() {
+		if native {
+			_, offsets := p.wasmNativeFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] })
+			return offsets
+		}
+		if _, offsets, ok := p.wasmGoFieldsLayout(len(fields), func(i int) *types.Var { return fields[i] }); ok {
+			return offsets
+		}
+	}
+	if !native {
+		for _, f := range fields {
+			if isHostLayoutMarker(f.Type()) || containsHostLayout(f.Type()) {
+				_, offsets := p.hostFieldsLayout(fields)
+				return offsets
+			}
+		}
+	}
 	ptrSize := int64(prog.GoWordSize())
 	if abi.IsClosureFields(fields) {
 		return []int64{0, ptrSize}
+	}
+	if _, offsets, ok := p.vectorStructLayout(fields, native); ok {
+		return offsets
 	}
 	extra := int64(0)
 	ret = p.sizes.Offsetsof(fields)
@@ -118,6 +152,19 @@ func (p *goProgram) Offsetsof(fields []*types.Var) (ret []int64) {
 // Sizeof must implement the size guarantees required by the spec.
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
+	if layout, ok := p.wasmNativeLayout(T); ok {
+		return layout.size
+	}
+	return p.goSizeof(T)
+}
+
+func (p *goProgram) goSizeof(T types.Type) int64 {
+	if layout, ok := p.hostLayout(T); ok {
+		return layout.size
+	}
+	if layout, ok := p.vectorLayout(T, false); ok {
+		return layout.size
+	}
 	prog := Program(unsafe.Pointer(p))
 	ptrSize := int64(prog.GoWordSize())
 	baseSize := prog.sizes.Sizeof(T) + p.extraSize(T, ptrSize)
@@ -251,7 +298,7 @@ func (p Program) Pointer(typ Type) Type {
 	if !p.usesWideGoStorage() {
 		return ret
 	}
-	if p.isNativeStorage(typ) || p.hasNativeTypeLayout(typ.raw.Type) {
+	if p.isNativeStorage(typ) || p.hasLegacyNativeTypeLayout(typ.raw.Type) {
 		return p.withNativeStorage(ret)
 	}
 	return ret
@@ -460,6 +507,9 @@ func (p Program) toType(raw types.Type) Type {
 	case *types.Slice:
 		return &aType{p.rtSlice(), typ, vkSlice}
 	case *types.Map:
+		if err := p.validateVectorMap(t); err != nil {
+			panic(err)
+		}
 		return &aType{llvm.PointerType(p.rtMap(), 0), typ, vkMap}
 	case *types.Struct:
 		ll, kind := p.toLLVMStruct(t)
@@ -488,7 +538,7 @@ func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Stru
 	typ := &aType{t, rawType{raw}, kind}
 	p.named[name] = typ
 	p.typs.Set(raw, typ)
-	fields, layout := p.toLLVMStructBody(st, p.hasNativeStructLayout(raw))
+	fields, layout := p.toLLVMStructBody(st, p.hasLegacyNativeTypeLayout(raw))
 	t.StructSetBody(fields, false)
 	p.setStructLayout(raw, layout)
 	return typ
@@ -568,6 +618,15 @@ func (p Program) toLLVMFunc(sig *types.Signature) llvm.Type {
 }
 
 func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Type {
+	if isNativeCallConv(cc) {
+		for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
+			for i := 0; i < tuple.Len(); i++ {
+				if containsWideSIMD(tuple.At(i).Type()) {
+					panic("256-bit SIMD values at native C call boundaries are not supported; use an explicit memory interface")
+				}
+			}
+		}
+	}
 	valueBackground := cc
 	if cc == Stdcall {
 		// Stdcall validation applies to the function type as a whole; its scalar
@@ -678,6 +737,15 @@ func (p Program) toNamed(raw *types.Named) Type {
 			break
 		}
 	}
+	if index, ok := simdTagIndex(raw); ok {
+		// Preserve the one-field, zero-size shape while making LLVM carry the
+		// target vector alignment into all aggregate storage.
+		ll := p.ctx.StructCreateNamed(name)
+		ll.StructSetBody([]llvm.Type{llvm.ArrayType(llvm.VectorType(p.tyInt8(), int(p.simdAlignments[index])), 0)}, false)
+		typ := &aType{ll, rawType{raw}, vkStruct}
+		p.named[name] = typ
+		return typ
+	}
 	if lanes, ok := SIMDVectorShape(raw); ok {
 		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkSIMD}
 		p.named[name] = typ
@@ -692,6 +760,9 @@ func (p Program) toNamed(raw *types.Named) Type {
 		return p.toLLVMNamedStruct(name, raw, t, kind)
 	default:
 		typ := p.rawType(t)
+		if _, array := t.(*types.Array); array && p.hasLegacyNativeTypeLayout(raw) {
+			typ = p.withNativeStorage(typ)
+		}
 		return &aType{typ.ll, rawType{raw}, typ.kind}
 	}
 }

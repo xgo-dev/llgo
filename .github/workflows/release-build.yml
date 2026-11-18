@@ -95,7 +95,9 @@ jobs:
           retention-days: 3
   build:
     if: needs.prepare.outputs.run_code_ci == 'true'
-    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
+    # The four build SDKs plus goreleaser-cross exhaust the Qiniu template's
+    # disk. Use the same hosted runner as the actual tag-release build.
+    runs-on: ubuntu-latest
     needs: [prepare, populate-linux-sysroot]
     steps:
       - name: Check out code
@@ -107,6 +109,11 @@ jobs:
           path: .sysroot
       - name: Set up Release
         uses: ./.github/actions/setup-goreleaser
+      - name: Report release build disk usage
+        run: |
+          df -h . /var/lib/docker
+          du -sh .sysroot .release-toolchains .esp-runtime-downloads
+          docker system df
       - name: Run GoReleaser (Build & Test)
         env:
           GITHUB_TOKEN: ${{github.token}}
@@ -196,7 +203,7 @@ jobs:
           retention-days: 3
           include-hidden-files: true
 
-  build-windows-compiler:
+  build-windows:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     timeout-minutes: 90
@@ -228,12 +235,19 @@ jobs:
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-arm64
           key: llgo-release-llvm-archive-v1-de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1
+      - name: Read Windows x86 LLVM SDK archive digest
+        if: matrix.goarch == '386'
+        id: llvm-sdk-pin
+        shell: pwsh
+        run: |
+          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          "sha256=$($pins.sdk.sha256)" >> $env:GITHUB_OUTPUT
       - name: Cache Windows x86 LLVM SDK archive
         if: matrix.goarch == '386'
         uses: actions/cache@v6
         with:
           path: ${{ runner.tool_cache }}/llgo-release-downloads/llvm-x86
-          key: llgo-release-llvm-x86-v1-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
+          key: llgo-release-llvm-x86-v1-${{ steps.llvm-sdk-pin.outputs.sha256 }}
       - name: Download release metadata
         uses: actions/download-artifact@v8
         with:
@@ -267,8 +281,39 @@ jobs:
           compression-level: 0
           retention-days: 3
 
+      - name: Read bundled ESP archive digest
+        id: esp-pin
+        shell: pwsh
+        run: |
+          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          $target = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32'; '386' = 'i686-w64-mingw32' }['${{ matrix.goarch }}']
+          "sha256=$($pins.payloads.$target.sha256)" >> $env:GITHUB_OUTPUT
+      - name: Cache bundled ESP archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp-${{ matrix.goarch }}
+          key: llgo-esp-archive-v1-${{ matrix.goarch }}-${{ steps.esp-pin.outputs.sha256 }}
+      - name: Build compact Windows archive
+        shell: pwsh
+        run: >-
+          ./.github/windows/build-release.ps1
+          -GoArch '${{ matrix.goarch }}'
+          -HostCompilerDirectory '${{ runner.temp }}/llgo-windows-compiler'
+      - name: Upload Windows archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: llgo-windows-${{ matrix.goarch }}
+          path: |
+            .windows-dist/*.windows-${{ matrix.goarch }}.zip
+            .windows-dist/*.windows-${{ matrix.goarch }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: true
+          compression-level: 0
+
+
   # Keep x86 host qualification separate while sharing compiler/packaging steps.
-  build-windows-compiler-x86:
+  build-windows-x86:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     timeout-minutes: 90
@@ -279,73 +324,6 @@ jobs:
         os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps: *windows-compiler-steps
-
-  build-windows:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build, build-windows-compiler]
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        abi: [msvc, mingw]
-        goarch: [amd64, arm64]
-        include:
-          - goarch: amd64
-            os: windows-2022
-          - goarch: arm64
-            os: windows-11-arm
-    runs-on: ${{ matrix.os }}
-    steps: &windows-package-steps
-      - uses: actions/checkout@v7
-      - name: Cache ESP release archive
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.tool_cache }}/llgo-release-downloads/esp
-          key: llgo-release-esp-archive-v3-${{ matrix.goarch }}-${{ hashFiles('.github/windows/espressif-toolchain.json') }}
-          enableCrossOsArchive: true
-      - name: Download release metadata
-        uses: actions/download-artifact@v8
-        with:
-          name: llgo-release-metadata
-          path: .windows-dist
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-      - name: Download shared host compiler
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-host-compiler-${{ matrix.goarch }}
-          path: ${{ runner.temp }}/llgo-windows-compiler
-      - name: Build integrated Windows archive
-        shell: pwsh
-        run: >-
-          ./.github/windows/build-release.ps1
-          -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
-          -HostCompilerDirectory '${{ runner.temp }}/llgo-windows-compiler'
-      - name: Upload Windows archive
-        uses: actions/upload-artifact@v7
-        with:
-          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
-          path: |
-            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip
-            .windows-dist/*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip.sha256
-          if-no-files-found: error
-          retention-days: 3
-          include-hidden-files: true
-          compression-level: 0
-
-  build-windows-x86:
-    if: needs.prepare.outputs.run_code_ci == 'true'
-    needs: [prepare, build, build-windows-compiler-x86]
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        abi: [msvc, mingw]
-        goarch: ['386']
-        os: [windows-2022]
-    runs-on: ${{ matrix.os }}
-    steps: *windows-package-steps
 
   test-windows-artifacts:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -369,14 +347,14 @@ jobs:
       - name: Download Windows archive
         uses: actions/download-artifact@v8
         with:
-          name: llgo-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          name: llgo-windows-${{ matrix.goarch }}
           path: .windows-dist
       - name: Test release installer with the built archive
         shell: pwsh
         run: |
-          $archive = Get-ChildItem ".windows-dist/llgo*.windows-${{ matrix.goarch }}-${{ matrix.abi }}.zip" |
+          $archive = Get-ChildItem ".windows-dist/llgo*.windows-${{ matrix.goarch }}.zip" |
             Select-Object -First 1
-          if (-not $archive -or $archive.Name -notmatch '^llgo(.+)\.windows-[^.]+-[^.]+\.zip$') {
+          if (-not $archive -or $archive.Name -notmatch '^llgo(.+)\.windows-(386|amd64|arm64)\.zip$') {
             throw 'Could not determine the LLGo version from the Windows archive'
           }
           $env:LLGO_VERSION = $Matches[1]
@@ -393,21 +371,27 @@ jobs:
           } else {
             ./install.ps1
           }
-          $current = Get-Item -Force -LiteralPath (Join-Path $env:LLGO_INSTALL_ROOT 'current')
-          $bin = Get-Item -Force -LiteralPath (Join-Path $env:LLGO_INSTALL_ROOT 'bin')
-          if (-not ($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-              -not ($bin.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'The installer did not create the current and bin junctions'
+          Remove-Item Env:LLGO_ROOT -ErrorAction SilentlyContinue
+          $runtimeDir = & (Join-Path $env:LLGO_INSTALL_ROOT 'bin/llgo.exe') env LLGO_RUNTIME_DIR
+          if ($LASTEXITCODE -ne 0 -or -not $runtimeDir -or
+              -not (Test-Path -LiteralPath (Join-Path $runtimeDir 'go.mod') -PathType Leaf)) {
+            throw 'The installed compiler could not locate its runtime'
           }
       # Execute the unpacked compiler before installing any LLVM or native
       # dependencies: this catches missing DLLs that the build runner can mask.
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
+      - name: Download compiler inspection tools
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-host-compiler-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/llgo-release-inspection
       - name: Verify standalone compiler and archive
         shell: pwsh
         run: >-
           ./.github/windows/test-release.ps1 -CheckOnly
+          -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
       - name: Install native target dependencies
         uses: ./.github/actions/setup-deps
@@ -424,13 +408,37 @@ jobs:
         shell: msys2 {0}
         run: >-
           bash test/installer/install_msys_path_test.sh
-          .windows-dist/*.windows-${{ matrix.goarch }}-mingw.zip
+          .windows-dist/*.windows-${{ matrix.goarch }}.zip
           "$RUNNER_TEMP/llgo-release-install"
-      - name: Test extracted native and embedded compiler
+      - name: Test native compilation and bundled ESP toolchain
         shell: pwsh
         run: >-
           ./.github/windows/test-release.ps1
+          -ReadObj '${{ runner.temp }}/llgo-release-inspection/inspection/llvm-readobj.exe'
           -Profile '${{ matrix.abi }}' -GoArch '${{ matrix.goarch }}'
+
+      - name: Set up WinGet on native ARM64
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
+        shell: powershell
+        run: ./.github/windows/setup-winget.ps1
+      - name: Test native ARM64 WinGet migration and upgrades
+        if: matrix.goarch == 'arm64' && matrix.abi == 'msvc' && needs.prepare.outputs.run_winget_ci != 'false'
+        shell: pwsh
+        run: |
+          $archive = @(Get-ChildItem '.windows-dist/*.windows-arm64.zip')
+          if ($archive.Count -ne 1) { throw 'Expected one unified ARM64 archive' }
+          ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch arm64
+
+      - name: Upload Windows bundled ESP validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-runtime-windows-${{ matrix.goarch }}-${{ matrix.abi }}
+          path: |
+            ${{ runner.temp }}/llgo-esp-runtime-${{ matrix.goarch }}-${{ matrix.abi }}/*.log
+            ${{ runner.temp }}/llgo-esp-runtime-${{ matrix.goarch }}-${{ matrix.abi }}/results.json
+          if-no-files-found: warn
+          retention-days: 7
 
   test-windows-artifacts-x86:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -444,6 +452,41 @@ jobs:
         os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps: *windows-test-steps
+
+  test-winget-migration:
+    # An older base policy has no scoped flag; keep validation enabled then.
+    if: needs.prepare.outputs.run_code_ci == 'true' && needs.prepare.outputs.run_winget_ci != 'false'
+    needs: [prepare, build-windows, build-windows-x86]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: llgo-windows-*
+          merge-multiple: true
+          path: .windows-dist
+      - name: Set up the supported WinGet client
+        shell: powershell
+        run: ./.github/windows/setup-winget.ps1
+      - name: Test both old IDs, subsequent upgrade and uninstall
+        shell: pwsh
+        run: |
+          foreach ($arch in @('amd64', '386')) {
+            $archive = @(Get-ChildItem ".windows-dist/*.windows-$arch.zip")
+            if ($archive.Count -ne 1) { throw "Expected one unified $arch archive" }
+            ./.github/windows/test-winget-migration.ps1 -Archive $archive[0].FullName -GoArch $arch
+          }
+      # The README temporarily uses the legacy ID until XGo.LLGo is published.
+      - name: Test README WinGet install
+        shell: pwsh
+        run: |
+          ./doc/_readme/scripts/install_winget.ps1
+          & (Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links/llgo.exe') version
+          if ($LASTEXITCODE -ne 0) { throw 'The WinGet compiler failed to start' }
 
   prepare-winget:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -480,6 +523,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: [prepare, build]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-15-intel
@@ -533,8 +577,16 @@ jobs:
             "versions/$version/${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "$LLGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
 
+      - name: Verify Unix runtime payload
+        run: bash .github/unix/test-release.sh "$RUNNER_TEMP/llgo-release-install/current"
+
       - name: Test Hello World
         uses: ./.github/actions/test-helloworld
+        env:
+          # Use the installed runtime toolchain, with no cache from a source build.
+          LLVM_CONFIG: ${{ runner.temp }}/llgo-release-install/current/crosscompile/clang/bin/llvm-config
+          LLGO_BUILD_CACHE: '0'
+          LLGO_ROOT: ''
         with:
           mod-version: ${{ matrix.go-mod-version }}
 
@@ -547,6 +599,23 @@ jobs:
 
       - name: Test native assembly shared-library calls
         run: bash dev/test_native_asm.sh
+
+      - name: Test bundled ESP runtime and firmware
+        run: >-
+          python3 .github/unix/test-esp-runtime.py
+          "$RUNNER_TEMP/llgo-release-install/current"
+          --output "$RUNNER_TEMP/llgo-esp-runtime"
+
+      - name: Upload bundled ESP validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-runtime-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            ${{ runner.temp }}/llgo-esp-runtime/*.log
+            ${{ runner.temp }}/llgo-esp-runtime/results.json
+          if-no-files-found: warn
+          retention-days: 7
 
   test-linux-distributions:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -586,7 +655,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-windows-artifacts-x86, test-linux-distributions, populate-linux-sysroot]
+    needs: [prepare, prepare-winget, test-artifacts, test-windows-artifacts, test-windows-artifacts-x86, test-winget-migration, test-linux-distributions, populate-linux-sysroot]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.run_code_ci == 'true' && (startsWith(github.ref, 'refs/tags/'))
     outputs:
@@ -617,20 +686,18 @@ jobs:
           pattern: llgo-windows-*
           merge-multiple: true
           path: .windows-dist
-      - name: Verify all six Windows ZIPs
+      - name: Verify all three universal Windows ZIPs
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           cd .windows-dist
           archives=(llgo*.windows-*.zip)
-          test "${#archives[@]}" = 6
+          test "${#archives[@]}" = 3
           for arch in 386 amd64 arm64; do
-            for abi in msvc mingw; do
-              archive="llgo${version}.windows-${arch}-${abi}.zip"
-              test -s "$archive"
-              sha256sum -c "$archive.sha256"
-            done
+            archive="llgo${version}.windows-${arch}.zip"
+            test -s "$archive"
+            sha256sum -c "$archive.sha256"
           done
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4

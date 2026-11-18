@@ -213,6 +213,48 @@ func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	}
 }
 
+func TestWasm32PointerLoadMemoryAttributes(t *testing.T) {
+	for _, name := range []string{"unsafe-pointer", "typed-pointer"} {
+		t.Run(name, func(t *testing.T) {
+			prog := newJ32Program(t)
+			pkg := prog.NewPackage("p", "example.com/p")
+			fn := pkg.NewFunc("example.com/p.atomicPointer", NoArgsNoRet, CDecl)
+			b := fn.MakeBody(1)
+			ptr := prog.VoidPtr()
+			if name == "typed-pointer" {
+				ptr = prog.Pointer(prog.Byte())
+			}
+			slot := b.Alloc(ptr, false)
+			b.Store(slot, prog.Nil(ptr)).SetOrdering(OrderingSeqConsistent)
+			value := b.Load(slot).SetOrdering(OrderingSeqConsistent).SetVolatile(true)
+			b.Return()
+			b.EndBuild()
+
+			ir := pkg.Module().String()
+			load := value.memoryInstruction()
+			if load.IsALoadInst().IsNil() {
+				t.Fatalf("pointer memory attributes target a conversion instead of the load:\n%s", ir)
+			}
+			if load.Ordering() != OrderingSeqConsistent || !load.IsVolatile() {
+				t.Fatalf("pointer load lost its atomic or volatile attribute:\n%s", ir)
+			}
+			for _, want := range []string{
+				"store atomic i64 0",
+				"load atomic volatile i64",
+				"trunc i64",
+				"inttoptr i32",
+			} {
+				if !strings.Contains(ir, want) {
+					t.Fatalf("J32 pointer memory attributes IR does not contain %q:\n%s", want, ir)
+				}
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid J32 atomic pointer module: %v\n%s", err, ir)
+			}
+		})
+	}
+}
+
 func TestWasm32GEPIndexesUsePhysicalAddressWidth(t *testing.T) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)

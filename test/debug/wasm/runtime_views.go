@@ -27,6 +27,10 @@ var debugViews struct {
 	Label           debugLabel
 	Function        func() int
 	Closure         func() int
+	Bound           func() string
+	Nested          func() int
+	Counter         func() int
+	OtherCounter    func() int
 	NilFunction     func() int
 	Mapping         map[int]debugNode
 	Indirect        map[debugLargeKey]debugLargeValue
@@ -39,6 +43,11 @@ var debugViews struct {
 }
 
 func debugAnswer() int { return 42 }
+
+//go:noinline
+func makeDebugCounter(value int) func() int {
+	return func() int { value++; return value }
+}
 
 func prepareDebugViews() {
 	imported := &shape.Record{Name: "imported", Value: 87}
@@ -53,6 +62,13 @@ func prepareDebugViews() {
 	debugViews.Label = node
 	debugViews.Function = debugAnswer
 	debugViews.Closure = func() int { return node.Values[0] + len(node.Values) }
+	debugViews.Bound = node.Label
+	debugViews.Nested = func() func() int {
+		value := 29
+		return func() int { return value }
+	}()
+	debugViews.Counter = makeDebugCounter(11)
+	debugViews.OtherCounter = makeDebugCounter(21)
 	debugViews.Mapping = make(map[int]debugNode)
 	// The 49th insertion starts a grow from eight buckets. Inspect both the
 	// evacuated new buckets and the remaining old buckets at the breakpoint.
@@ -78,6 +94,8 @@ func prepareDebugViews() {
 func checkDebugViews() {
 	if debugViews.Imported.(shape.Record).Value != 87 || debugViews.ImportedPointer.(*shape.Record).Name != "imported" ||
 		debugViews.Function() != 42 || debugViews.Closure() != 6 ||
+		debugViews.Bound() != "runtime 世界" || debugViews.Nested() != 29 ||
+		debugViews.Counter() != 12 || debugViews.OtherCounter() != 22 ||
 		debugViews.Box.(debugNode).Values[2] != 8 ||
 		debugViews.Pointer.(*debugNode).Name != debugViews.Label.Label() ||
 		debugViews.TypedNil == nil || debugViews.Nil != nil ||

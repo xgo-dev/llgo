@@ -154,8 +154,14 @@
           "6": "dead"
         }
       },
+      "wasm_memory": {
+        "anchor_variable": "$llgo.memory",
+        "anchor_offset": 1
+      },
       "wasm_goroutine": {
-        "registry_version": 1,
+        "registry_version": 2,
+        "pc_count": "pcCount",
+        "pcs": "pcs",
         "registry_symbol": "wasmDebuggerRegistry",
         "version": "version",
         "epoch": "epoch",

@@ -27,12 +27,35 @@ are also skipped. Each not-applicable entry documents both the
 toolchain-specific mechanism under test and why the corresponding behavior is
 not an LLGo compatibility goal.
 
+On GitHub-hosted macOS and Linux/Wasmer WASI runners, `gcgort.go` is a host
+skip: its nested goroutines can exhaust host threads with LLGo's 1:1 backend.
+The bounded `test/go` case `TestGCConcurrentTypedMutation` covers the same
+typed-store GC behavior. Local and self-hosted runs retain the original case.
+
+`nilptr.go` is skipped on darwin/amd64 because LLD's Mach-O image base exceeds
+the original case's assumption that `dummy` is below 256 MiB. The `test/go`
+cases `TestNilArrayPointerSlicesPanic` and `TestNilGlobalPointerLoadsPanic`
+cover the nil behavior without that linker-address assumption.
+
 The runner keeps a small, explicit set of gc backend controls on the official
 Go baseline: `-l=4`, `-d=ssa/check/on`, `-d=softfloat`, and `-d=checkptr`
 (including `all=-d=checkptr`). LLGo executes the same source
 assertions using LLVM's backend; this does not test gc's instrumentation or
-lowering in LLGo. Both programs must satisfy the unmodified case and output
+lowering in LLGo. Both programs must satisfy the same assertions and output
 comparison. Other compiler payloads retain their normal validation.
+
+On 32-bit targets, single-file `run`/`buildrun` cases give locally resolvable
+untyped integer constant arguments to built-in `print`/`println` an explicit
+`int64` or `uint64` type when they exceed `int32`. Values outside `uint64`
+remain unchanged. The integer expressions, assertions and source line numbers
+stay intact, and both compilers receive the same staged source.
+
+Windows MSVC lanes set `LLGO_GOROOT_BASELINE_CC` and
+`LLGO_GOROOT_BASELINE_CXX` to separate GNU/UCRT compilers for the official Go
+reference and nested Go commands. These overrides clear inherited
+`CGO_CFLAGS`, `CGO_CPPFLAGS`, `CGO_CXXFLAGS`, `CGO_FFLAGS` and `CGO_LDFLAGS`
+in reference builds and program execution. LLGo builds retain their MSVC
+compiler and dependencies.
 
 The external [LLGo compatibility workflows](https://github.com/llgo-compat/ci)
 build LLGo and this runner from a selected repository revision, then run the

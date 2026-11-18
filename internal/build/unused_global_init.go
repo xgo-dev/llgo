@@ -37,7 +37,17 @@ import (
 )
 
 func configureUnusedGlobalInits(ctx *context) {
-	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.prog.Target().GOARCH != "wasm" {
+	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if err := ctx.frontend.restoreInitializers(); err == nil {
+			return
+		}
+		// An invalid positional plan must be recomputed from complete source SSA.
+		ctx.frontend.program = nil
+		ctx.frontend.buildAll()
+	}
+	ctx.wasmClosedProgram = false
+	ctx.frontendOptions.UnusedGlobalInits = nil
+	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.buildConf.Goarch != "wasm" {
 		return
 	}
 	if ctx.buildConf.OptLevel == optlevel.O0 {
@@ -50,6 +60,9 @@ func configureUnusedGlobalInits(ctx *context) {
 		}
 		return
 	}
+	// Both pruning passes require this proof, even when no initializer plan
+	// is produced. Its representation is independent of the initializer plan.
+	ctx.wasmClosedProgram = true
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
 	inspect := func(pkg *types.Package, files []*ast.File) {
@@ -101,13 +114,14 @@ func configureUnusedGlobalInits(ctx *context) {
 // linker-summary join, so retain all initializers in their presence.
 func opaqueGlobalInitPackage(ctx *context, exported map[string]bool) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
-	// Permit output-only diagnostics used by the LTO/size qualification jobs.
+	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
 	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
 		for _, flag := range safesplit.SplitPkgConfigFlags(flags) {
 			// Clang splits -Wl on every comma; a diagnostic option can be
 			// followed by an export, forced root or native object.
 			if strings.Count(flag, ",") != 1 || flag != "-Wl,--save-temps" && flag != "-Wl,--print-map" &&
-				!strings.HasPrefix(flag, "-Wl,--lto-obj-path=") && !strings.HasPrefix(flag, "-Wl,-Map=") {
+				!strings.HasPrefix(flag, "-Wl,--lto-obj-path=") && !strings.HasPrefix(flag, "-Wl,--thinlto-cache-dir=") &&
+				!strings.HasPrefix(flag, "-Wl,-Map=") {
 				return "linker flags"
 			}
 		}
@@ -180,7 +194,7 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		if err != nil {
 			return false
 		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf))
+		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue
@@ -193,4 +207,10 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		tr.Module.Dispose()
 	}
 	return true
+}
+
+// canPruneWasmTypeMetadata shares the closed-program boundary with initializer
+// pruning while retaining the metadata pass's executable/target restrictions.
+func canPruneWasmTypeMetadata(ctx *context) bool {
+	return ctx.buildConf.Goarch == "wasm" && ctx.buildConf.BuildMode == BuildModeExe && ctx.wasmClosedProgram
 }

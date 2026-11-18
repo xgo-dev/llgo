@@ -47,25 +47,62 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
-      - name: Install dependencies on macOS
+      - name: Test README Homebrew install
         if: startsWith(matrix.os, 'macos')
+        working-directory: doc/_readme
         run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/install_macos.sh
+          bash scripts/install_brew.sh
+          brew_bin="$(brew --prefix llgo)/bin"
+          export PATH="$brew_bin:$PATH"
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
 
-      - name: Install dependencies on Ubuntu
+      - name: Test README quick install
+        env:
+          LLGO_INSTALL_ROOT: ${{ runner.temp }}/llgo-readme
+          LLGO_UPDATE_PATH: "0"
+        run: |
+          set -euo pipefail
+          # Use the PR's installer for the documented download URL.
+          curl() {
+            if [[ "${!#}" == https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh ]]; then
+              cat "$GITHUB_WORKSPACE/install.sh"
+            else
+              command curl "$@"
+            fi
+          }
+          export -f curl
+          bash doc/_readme/scripts/quick_install.sh
+
+      - name: Verify README installation
+        working-directory: doc/_readme
+        run: |
+          test "$(cd "$(llgo env LLGO_ROOT)" && pwd -P)" = \
+            "$(cd "$RUNNER_TEMP/llgo-readme/current" && pwd -P)"
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
+
+      - name: Test README APT and YUM repositories
         if: startsWith(matrix.os, 'ubuntu')
         run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/install_ubuntu.sh
-
-      - name: Test doc code blocks
-        run: |
-          set -e
-          set -x
-          source doc/_readme/scripts/run.sh
+          set -euo pipefail
+          for manager in apt yum; do
+            case "$manager" in
+              apt) image=ubuntu:26.04 ;;
+              yum) image=fedora:44 ;;
+            esac
+            docker run --rm --init -v "$GITHUB_WORKSPACE/doc/_readme:/readme:ro" "$image" bash -ec '
+              sudo() { "$@"; }
+              if [[ "$1" == apt ]]; then
+                apt-get update
+                apt-get install -y ca-certificates
+              fi
+              source "/readme/scripts/install_$1.sh"
+              cd /readme
+              bash scripts/verify_install.sh
+              llgo run ./llgo_simple
+            ' _ "$manager"
+          done
 
   local_install:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -129,10 +166,38 @@ jobs:
         with:
           windows-abi: ${{ matrix.windows_abi || 'msvc' }}
 
+      - name: Test README PowerShell quick install
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        env:
+          LLGO_INSTALL_ROOT: ${{ runner.temp }}/llgo-readme
+          LLGO_INSTALL_DEPS: "0"
+          LLGO_UPDATE_PATH: "0"
+          LLGO_ABI: ${{ matrix.windows_abi }}
+        run: |
+          # Use the PR's installer for the documented download URL.
+          function Invoke-RestMethod {
+            param([string]$Uri)
+            if ($Uri -ne 'https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1') {
+              throw "Unexpected installer URL: $Uri"
+            }
+            Get-Content -Raw (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')
+          }
+          . ./doc/_readme/scripts/quick_install.ps1
+
+      - name: Verify README installation on Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        working-directory: doc/_readme
+        run: |
+          llgo env LLGO_ROOT LLGO_RUNTIME_DIR
+          bash scripts/verify_install.sh
+          llgo run ./llgo_simple
+
       - name: Test default and full local installs
         shell: bash
         run: |
-          # Keep nounset disabled: this wrapper sources the README and
+          # Keep nounset disabled: this wrapper sources the contributor examples and
           # generated virtualenv scripts, which manage optional variables.
           set -eo pipefail
           set -x
@@ -144,7 +209,7 @@ jobs:
             export LLGO_STDIO_NOBUF=1
           fi
 
-          # Both README installation modes run after one platform dependency
+          # Both documented installation modes run after one platform dependency
           # setup, but use separate binary directories. Reset PATH between
           # them so the full install cannot pass using the default install.
           git() {

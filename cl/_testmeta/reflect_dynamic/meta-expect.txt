@@ -22,7 +22,7 @@ main.main:
     main.use
 main.use:
     _llgo_main.T
-    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     reflect.Value.MethodByName
     reflect.ValueOf
 

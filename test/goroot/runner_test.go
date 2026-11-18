@@ -378,6 +378,10 @@ func TestGoRootRunCases(t *testing.T) {
 				writeCaseResult(os.Stdout, tc, caseResultNotApplicable)
 				t.Skipf("skipping not-applicable case: %s", notApplyReason)
 			}
+			if reason := targetLayoutSkip(targetPlatform, tc); reason != "" {
+				writeCaseResult(os.Stdout, tc, caseResultHostSkip)
+				t.Skipf("skipping target-layout-limited case: %s", reason)
+			}
 			if match, reason := xfails.MatchHostSkip(envInfo.GOVERSION, hostPlatform, tc); match {
 				writeCaseResult(os.Stdout, tc, caseResultHostSkip)
 				t.Skipf("skipping host-unsafe case: %s", reason)
@@ -417,11 +421,22 @@ func TestGoRootRunCases(t *testing.T) {
 	}
 }
 
+func targetLayoutSkip(targetPlatform string, tc testCase) string {
+	if targetPlatform == "darwin/amd64" && tc.Directive == "run" && tc.RelPath == "nilptr.go" {
+		return "nilptr.go requires dummy below 256 MiB, but LLD's 64-bit Mach-O image starts at 4 GiB; TestNilArrayPointerSlicesPanic and TestNilGlobalPointerLoadsPanic cover the nil semantics without that layout precondition"
+	}
+	return ""
+}
+
 func hostedThreadResourceSkip(hostPlatform, targetPlatform, runnerEnvironment string, tc testCase) string {
-	// xfail.yaml host_skips cannot express the runner environment or native-only execution.
-	if runnerEnvironment != "github-hosted" || targetPlatform != hostPlatform ||
-		(hostPlatform != "darwin/arm64" && hostPlatform != "darwin/amd64") ||
-		tc.Directive != "run" || tc.RelPath != "gcgort.go" {
+	// xfail.yaml host_skips cannot express the runner environment or host/target pairing.
+	if runnerEnvironment != "github-hosted" || tc.Directive != "run" || tc.RelPath != "gcgort.go" {
+		return ""
+	}
+	if targetPlatform == "W32-WASI" && (hostPlatform == "linux/amd64" || hostPlatform == "linux/arm64") {
+		return "gcgort.go can exhaust hosted Linux/Wasmer threads with LLGo's 1:1 WASI backend; bounded coverage: TestGCConcurrentTypedMutation"
+	}
+	if targetPlatform != hostPlatform || (hostPlatform != "darwin/arm64" && hostPlatform != "darwin/amd64") {
 		return ""
 	}
 	// The original source stays unchanged. Its nested goroutines can exceed
@@ -842,11 +857,15 @@ func runCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc testCase,
 }
 
 func boundedCaseEnv(goos, goarch string, tc testCase, extra []string) []string {
-	if (goos == "linux" && goarch == "amd64" || goos == "windows" && goarch == "arm64") &&
+	if (goos == "linux" && goarch == "amd64" || goos == "windows" && goarch == "arm64" || goos == "darwin" && goarch == "arm64") &&
 		tc.Directive == "runoutput" && tc.RelPath == "rangegen.go" {
 		// The generated compiler torture test exceeded the 4 GiB hosted
 		// runner guard. Bound Go and LLGo's heaps for this case only.
 		limit := "3GiB"
+		if goos == "darwin" {
+			// Keep room for native LLVM and loader memory below the 4 GiB RSS guard.
+			limit = "2GiB"
+		}
 		if goos == "windows" {
 			// Leave room for ARM64 native LLVM/CodeView allocations, which
 			// are outside Go's soft memory limit.
@@ -978,7 +997,7 @@ func baselineGoEnv() []string {
 	env := append([]string{}, os.Environ()...)
 	env = upsertEnv(env, "GOENV=off")
 	env = upsertEnv(env, "GOFLAGS=")
-	return upsertEnv(env, "GOTOOLCHAIN=local")
+	return baselineCgoEnv(upsertEnv(env, "GOTOOLCHAIN=local"))
 }
 
 func appendIfMissing(env []string, kv string) []string {
@@ -1376,7 +1395,6 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 			lines[i] = replaceDiagnosticPrefix(lines[i], source.full, source.short)
 		}
 	}
-	lines = normalizeCompilerDiagnostics(lines)
 	lines = preferSpecificDiagnostics(lines)
 	var wanted []wantedError
 	sourceLines := make(map[string][]string, len(sources))
@@ -1470,22 +1488,6 @@ func checkExpectedErrorsForFiles(output string, sources []diagnosticSource) erro
 		errs = append(errs, fmt.Errorf("unmatched errors:\n%s", strings.Join(local, "\n")))
 	}
 	return errors.Join(errs...)
-}
-
-// normalizeCompilerDiagnostics maps the go/types spellings emitted by llgo to
-// equivalent gc spellings already accepted by GOROOT's ERROR expressions.
-func normalizeCompilerDiagnostics(lines []string) []string {
-	for i, line := range lines {
-		diagnostic, ok := parseCompilerDiagnostic(line)
-		if !ok {
-			continue
-		}
-		message := normalizeCompilerDiagnosticMessage(diagnostic.message)
-		if message != diagnostic.message {
-			lines[i] = line[:len(line)-len(diagnostic.message)] + message
-		}
-	}
-	return lines
 }
 
 func normalizeCompilerDiagnosticMessage(message string) string {
@@ -1601,6 +1603,9 @@ func filterSecondaryDiagnostics(lines []string, matched []matchedDiagnostic, sou
 }
 
 func isSecondaryDiagnostic(diagnostic compilerDiagnostic, matched []matchedDiagnostic, source []string) bool {
+	// Classify equivalent secondary spellings without changing the diagnostic
+	// text used for ERROR matching or unmatched-error reports.
+	diagnostic.message = normalizeCompilerDiagnosticMessage(diagnostic.message)
 	if strings.HasPrefix(diagnostic.message, "initialization cycle for ") &&
 		hasMatchedDiagnostic(matched, diagnostic.file, diagnostic.line, func(item matchedDiagnostic) bool {
 			return strings.Contains(item.expected.pattern, "initialization loop")
@@ -2010,6 +2015,12 @@ func matchesExpectedDiagnostic(expected *regexp.Regexp, message string) bool {
 		aliases = []string{"string not terminated"}
 	}
 	aliases = append(aliases, goTypesDiagnosticAliases(message)...)
+	// Preserve diagnostics that already match upstream ERROR expressions. The
+	// alternate spelling is only a fallback, including aliases of that spelling.
+	if normalized := normalizeCompilerDiagnosticMessage(message); normalized != message {
+		aliases = append(aliases, normalized)
+		aliases = append(aliases, goTypesDiagnosticAliases(normalized)...)
+	}
 	for _, alias := range aliases {
 		if expected.MatchString(alias) {
 			return true
@@ -2621,10 +2632,6 @@ func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directi
 	if !*flagKeep {
 		defer ws.cleanup()
 	}
-	importCfg := filepath.Join(ws.rootDir, "importcfg")
-	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
-		return nil, nil, 0, 0, err
-	}
 	sourcePath := tc.SourcePath()
 	if strings.HasSuffix(filepath.Base(tc.Dir), ".dir") {
 		sourcePath, err = stageNestedCompilerCase(ws.workDir, tc)
@@ -2632,9 +2639,11 @@ func runLLGOCompiler(repoRoot, goroot, llgoBin string, tc testCase, opts directi
 			return nil, nil, 0, 0, err
 		}
 	}
-	args := []string{"tool", "compile", "-e", "-p=p", "-importcfg=" + importCfg}
+	// LLGo resolves imports from source and does not emit gc object files.
+	// Keep the case's explicit flags, but do not synthesize gc-only options.
+	args := []string{"tool", "compile", "-e"}
 	if errorCheck {
-		args = append(args, "-C", "-d=panic", "-o", filepath.Join(ws.rootDir, "a.o"))
+		args = append(args, "-C", "-d=panic")
 	}
 	args = append(args, opts.CompilerFlags...)
 	if errorCheck && !hasSSACheckFlag(opts.CompilerFlags) {
@@ -2725,10 +2734,6 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 	if err := ensureModuleWorkspace(ws.workDir, "test", modVersion); err != nil {
 		return err
 	}
-	importCfg := filepath.Join(ws.rootDir, "importcfg")
-	if err := os.WriteFile(importCfg, nil, 0o644); err != nil {
-		return err
-	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, append(opts.ExtraEnv, "GO111MODULE=on"))
 	compilerEnv := gorootTargetEnv(env)
 	var diagnosticErrs []error
@@ -2737,7 +2742,8 @@ func runErrorCheckAndRunCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin stri
 		if pkg.name != "main" {
 			pkgDir = filepath.Join(ws.workDir, pkg.dir)
 		}
-		args := []string{"tool", "compile", "-e", "-C", "-d=panic", "-importcfg=" + importCfg}
+		// LLGo loads imports from source and does not consume gc object metadata.
+		args := []string{"tool", "compile", "-e", "-C", "-d=panic"}
 		args = append(args, opts.CompilerFlags...)
 		var sources []diagnosticSource
 		for _, fileName := range pkg.files {
@@ -2824,9 +2830,16 @@ func runSingleFileCase(t *testing.T, repoRoot, goroot, goCmd, llgoBin string, tc
 		}
 	}
 	env := runnerEnv(repoRoot, goroot, ws.gopath, extraEnv)
+	if !nestedDirCase && len(sourceFiles) == 1 {
+		if count, err := normalizePrintConstants(filepath.Join(ws.workDir, sourceFiles[0]), targetGoArch(env)); err != nil {
+			return err
+		} else if count != 0 {
+			t.Logf("made %d out-of-range print constants explicitly 64-bit for %s", count, targetGoArch(env))
+		}
+	}
 
 	targetEnv := gorootTargetEnv(env)
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(ws.workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, opts.BuildFlags, goBin, buildTarget)...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -3026,7 +3039,7 @@ func runBuildAndCompare(t *testing.T, casePath, workDir, rootDir string, env []s
 	metrics := caseMetrics{}
 	targetEnv := gorootTargetEnv(env)
 
-	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, targetEnv, buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
+	goBuildStdout, goBuildStderr, goBuildExit, goBuildDur, err := runProgram(workDir, goCmd, baselineCgoEnv(targetEnv), buildTimeout, gorootBuildArgs(false, goBuildFlags, goBin, ".")...)
 	metrics.goBuild += goBuildDur
 	if cmdErr := requireSuccessfulExit(err, goBuildExit); cmdErr != nil {
 		return commandFailure("baseline go build", goBuildDur, cmdErr, goBuildStdout, goBuildStderr, goBuildExit)
@@ -3158,7 +3171,11 @@ func toolchainGoModVersion(goroot string) (string, error) {
 func runGeneratedProgram(ws caseWorkspace, tool string, env []string, fileName, label string, buildTimeout, runTimeout time.Duration) ([]byte, []byte, int, time.Duration, time.Duration, error) {
 	isLLGO := label == "llgo"
 	out := gorootArtifactPath(ws.rootDir, label+"-generated", isLLGO)
-	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, gorootTargetEnv(env), buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
+	buildEnv := gorootTargetEnv(env)
+	if !isLLGO {
+		buildEnv = baselineCgoEnv(buildEnv)
+	}
+	buildStdout, buildStderr, buildExit, buildDur, err := runProgram(ws.workDir, tool, buildEnv, buildTimeout, gorootBuildArgs(isLLGO, nil, out, fileName)...)
 	if cmdErr := requireSuccessfulExit(err, buildExit); cmdErr != nil {
 		return nil, nil, 0, buildDur, 0, commandFailure(label+" generated build", buildDur, cmdErr, buildStdout, buildStderr, buildExit)
 	}

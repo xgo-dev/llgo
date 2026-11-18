@@ -44,12 +44,13 @@ func TestWideMakeOperandsUseCheckedHelpersOn386(t *testing.T) {
 	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(1))
 	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(2))
 	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(3))
+	b.MakeSliceEx(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(1), false)
 	b.MakeChan(prog.Type(types.NewChan(types.SendRecv, types.Typ[types.Byte]), ssa.GoDecl), fn.Param(1))
 	b.Return()
 	b.EndBuild()
 
 	ir := pkg.String()
-	for _, helper := range []string{"MakeSlice64", "NewChan64"} {
+	for _, helper := range []string{"MakeSlice64", "MakeSlice64Buffer", "NewChan64"} {
 		if !strings.Contains(ir, helper) {
 			t.Errorf("386 wide make IR does not call %s:\n%s", helper, ir)
 		}

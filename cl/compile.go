@@ -35,6 +35,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
+	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -60,21 +61,35 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
-	Debug        bool
-	DebugSymbols bool
-	Trace        bool
-	ExportRename bool
+	// EscapeAnalysis contains immutable storage decisions prepared before
+	// backend workers. Direct API callers may omit it to analyze their input.
+	EscapeAnalysis *goescape.Result
+	// EscapeImports are validated contracts owned by cached dependency archives.
+	EscapeImports    map[*ssa.Function]goescape.Summary
+	EscapeImportKeys map[*ssa.Function]string
+	// EscapeRoots includes methods materialized from exported runtime types.
+	EscapeRoots []*ssa.Function
+	// DeclarationsOnly preserves source/type bindings for a cached archive;
+	// its definitions and link metadata are supplied by that archive's export.
+	DeclarationsOnly bool
+	Debug            bool
+	DebugSymbols     bool
+	Trace            bool
+	ExportRename     bool
 	// AllowInternalDirectives permits directives reserved for LLGo's runtime.
 	// Package loaders set it only for verified Go standard-library sources.
 	AllowInternalDirectives bool
 	// CExportWrappers keeps //export implementations under their Go symbols;
 	// the final-link module supplies the public C entry points.
 	// It does not apply to package C, which defines its exports directly.
-	CExportWrappers bool
-	ShadowStack     bool
+	CExportWrappers        bool
+	ShadowStack            bool
+	CompactCallerLocations bool
 	// DebuggerFrames retains logical stacks for every eligible function in
 	// opt-in Wasm debugger builds, including parked goroutines.
 	DebuggerFrames bool
+	// DisableInlineBodyImports leaves cross-package inlining to the linker.
+	DisableInlineBodyImports bool
 	// PreloadedSyntax means all Program-side source metadata was collected
 	// before lowering and is now shared read-only by backend Programs.
 	PreloadedSyntax bool
@@ -82,6 +97,10 @@ type Options struct {
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
 	UnusedGlobalInits *UnusedGlobalInits
+	// StaticByteArrays are package-level [N]byte payloads extracted after
+	// type checking and before ssa.Package.Build so go/ssa does not emit
+	// one store per element. Keys use StaticByteArrayKey(pkg.Path(), name).
+	StaticByteArrays map[string][]byte
 }
 
 // SetDebug sets debug flags.
@@ -179,13 +198,21 @@ type context struct {
 	bvals                map[ssa.Value]llssa.Expr    // block values
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
+	nilCheckBlock        *ssa.BasicBlock
+	nilCheckedPointers   map[ssa.Value]bool
 	vargs                map[*ssa.Alloc][]llssa.Expr // varargs
 	funcs                map[*ssa.Function]llssa.Function
 	variadicErrors       map[*ssa.Function]error
+	llvmIntrinsics       map[*ssa.Function]*llssa.LLVMIntrinsic
 	linkOnceFns          map[*ssa.Function]none
 	stackDefers          map[*ssa.Function]bool
 	anonDefers           map[*ssa.Function]bool
 	recoverFacts         *recoverFacts
+	callerTracking       *CallerTracking
+	inlineFacts          *inlineFacts
+	inlineChecked        map[*ssa.Function]bool
+	inlineImports        map[*ssa.Function]int
+	inlineCost           int
 	debugDIVars          map[*types.Var]llssa.DIVar
 	debugAllocVars       map[*ssa.Alloc]*types.Var
 	debugAllocObjects    map[*types.Var]bool
@@ -238,7 +265,35 @@ type context struct {
 	staticInitStores     map[*ssa.Store]none
 	staticInitInstrs     map[ssa.Instruction]none
 	staticMapSliceValues map[*ssa.MapUpdate]llssa.Expr
+	staticByteArrays     map[string][]byte
+	mapLitLoops          map[*ssa.MapUpdate]*mapLitPlan
 	locality             localityLowering
+}
+
+func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llssa.Global) bool {
+	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
+		return false
+	}
+	data, ok := p.staticByteArrays[staticByteArrayDeclKey(gbl)]
+	if !ok {
+		return false
+	}
+	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	arr, ok := types.Unalias(ptr.Elem()).Underlying().(*types.Array)
+	if !ok || arr.Len() != int64(len(data)) {
+		return false
+	}
+	// Length is the restore-time check. Byte contents are trusted because
+	// StripLargeStaticByteArrays only accepts INT/CHAR literals.
+	basic, ok := arr.Elem().Underlying().(*types.Basic)
+	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
+		return false
+	}
+	g.Init(p.prog.ConstByteArray(p.type_(ptr.Elem(), llssa.GoDecl), data))
+	return true
 }
 
 func (p *context) rewriteValue(name string) (string, bool) {
@@ -434,6 +489,9 @@ func (p *context) compileGlobal(pkg llssa.Package, gbl *ssa.Global) {
 	if p.tryEmbedGlobalInit(pkg, gbl, g, name) {
 		return
 	}
+	if p.initStaticByteArrayGlobal(define, gbl, g) {
+		return
+	}
 	if value, ok := p.rewriteValue(name); ok {
 		if p.isStringPtrType(gbl.Type()) {
 			g.Init(pkg.ConstString(value))
@@ -464,7 +522,11 @@ func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*s
 		if name == "" {
 			name = "_"
 		}
-		flds[i] = types.NewField(token.NoPos, pkg, name, p.patchType(v.Type()), false)
+		typ := v.Type()
+		if p.options.EscapeAnalysis.CaptureByValue(v) {
+			typ = typ.Underlying().(*types.Pointer).Elem()
+		}
+		flds[i] = types.NewField(token.NoPos, pkg, name, p.patchType(typ), false)
 	}
 	t := types.NewPointer(types.NewStruct(flds, nil))
 	return types.NewParam(token.NoPos, pkg, "$env", t)
@@ -504,6 +566,9 @@ func (p *context) elidedZeroSizedFreeVar(b llssa.Builder, freeVar *ssa.FreeVar) 
 }
 
 func isCgoExternSymbol(f *ssa.Function) bool {
+	if f.Synthetic == ssawrap.CallWrapper {
+		return false
+	}
 	name := f.Name()
 	return isCgoCfunc(name) || isCgoCmacro(name) || isCgoC2func(name)
 }
@@ -598,6 +663,10 @@ func hasInstantiatedRecv(recv *types.Var) bool {
 
 func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Function, llssa.PyObjRef, int) {
 	pkgTypes, name, ftype := p.funcName(f)
+	if ftype == llvmIntrinsic {
+		p.resolveLLVMIntrinsic(f, name)
+		return nil, nil, llvmIntrinsic
+	}
 	simd, simdDecl := lookupSIMD(f, p.prog.Target().GOARCH)
 	simdDecl = simdDecl && f.Pkg == p.goPkg
 	if simdDecl {
@@ -624,8 +693,10 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 	if isInit && state == pkgHasPatch {
 		name = initFnNameOfHasPatch(name)
 		// TODO(xsw): pkg.init$guard has been set, change ssa.If to ssa.Jump
-		block := f.Blocks[0].Instrs[1].(*ssa.If).Block()
-		block.Succs[0], block.Succs[1] = block.Succs[1], block.Succs[0]
+		if !p.options.DeclarationsOnly {
+			block := f.Blocks[0].Instrs[1].(*ssa.If).Block()
+			block.Succs[0], block.Succs[1] = block.Succs[1], block.Succs[0]
+		}
 	}
 
 	fn := pkg.FuncOf(name)
@@ -659,7 +730,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			return fn, nil, goFunc
 		}
 	}
-	if fn == nil {
+	if fn == nil || p.needsLinkOnce(f) {
 		cc := llssa.CallConv(ftype)
 		if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
 			// Executable-mode //export functions keep their final C symbol in
@@ -703,8 +774,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		fn.AllowSIMDDispatcherInlining()
 	}
 	p.funcs[f] = fn
+	if p.options.DeclarationsOnly {
+		return fn, nil, goFunc
+	}
 	isCgo := isCgoExternSymbol(f)
-	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() {
+	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() && p.inlineImports[f] == 0 {
 		goName := fn.Name()
 		if pkgTypes != nil {
 			goName = funcName(pkgTypes, f, false)
@@ -717,6 +791,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		}
 	}
 	if simdDecl {
+		// Keep the defining entry visible to external linkname aliases, while
+		// allowing it to share a COFF group with imported function-value entries.
+		fn.Coalesce()
 		b := fn.MakeBody(1)
 		if simd.op == llssa.SIMDUnimplemented {
 			b.SIMD(simd.op, p.prog.Void(), b.Str(name))
@@ -774,6 +851,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
 			p.goFn = f
+			fn.SetEscapeStackBytes(p.options.EscapeAnalysis.StackBytes(f))
 			p.callerFrameMark = llssa.Nil
 			p.locality.function = localityFunction{}
 			p.state = state // restore pkgState when compiling funcBody
@@ -813,6 +891,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 			p.prepareExportedLocalContext(f)
 			p.bvals = make(map[ssa.Value]llssa.Expr)
+			p.mapLitLoops = collectLargeMapLits(f)
+			p.applyMapLitPlans(p.mapLitLoops)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
 			p.prepareCooperativeSafepoints(f, isCgo)
 			p.prepareGCRoots(f, hasCtx)
@@ -1109,6 +1189,10 @@ func (p *context) debugRefValue(b llssa.Builder, value ssa.Value) (llssa.Expr, b
 }
 
 func (p *context) debugParams(b llssa.Builder, f *ssa.Function) {
+	b.DIClosureEnv(p.fset.Position(f.Pos()), p.fn.Block(0))
+	if p.options.DebuggerFrames && p.prog.Target().GOARCH == "wasm" {
+		b.DIWasmMemory(p.fset.Position(f.Pos()), p.fn.Block(0))
+	}
 	params := f.Params
 	if llssa.HasNameValist(f.Signature) {
 		// C ellipsis has no fixed parameter slot. For example, the promoted
@@ -1209,8 +1293,12 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 		if isCgoCfunc || isCgoC2 || isCgoCmacro {
 			switch instr := instr.(type) {
 			case *ssa.Alloc:
-				// return value allocation
-				p.compileInstr(b, instr)
+				// Cfunc/C2func return the direct C call's SSA value. Their gc
+				// argument/result frame is unused after this rewrite. Cmacro
+				// still loads its result through the generated address.
+				if isCgoCmacro {
+					p.compileInstr(b, instr)
+				}
 			case *ssa.UnOp:
 				// load cgo function pointer
 				varName := instr.X.Name()
@@ -1463,6 +1551,11 @@ func (p *context) compileSyntheticMakeSlice(b llssa.Builder, v *ssa.Slice) (llss
 	}
 	t := p.type_(v.Type(), llssa.GoDecl)
 	length := p.compileValue(b, v.High)
+	alloc := v.X.(*ssa.Alloc)
+	if p.stackStorage(alloc) {
+		array := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+		return b.MakeSliceStackCapacity(t, length, capacity, array.Len()), true
+	}
 	return b.MakeSlice(t, length, capacity), true
 }
 
@@ -1487,8 +1580,8 @@ func (p *context) syntheticMakeSliceCap(v *ssa.Slice) (llssa.Expr, bool) {
 	return p.prog.IntVal(uint64(arr.Len()), p.prog.Int()), true
 }
 
-func (p *context) markRecoverSlot(v *ssa.Alloc) {
-	if p.recoverSlots == nil || v.Heap {
+func (p *context) markRecoverSlot(v *ssa.Alloc, heap bool) {
+	if p.recoverSlots == nil || heap {
 		return
 	}
 	p.recoverSlots[v] = none{}
@@ -1617,6 +1710,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:
+		if src := freshNilAppendSource(v); src != nil {
+			ret = b.AppendFreshSliceToNil(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, src))
+			break
+		}
 		p.checkMethodCallReceiver(b, &v.Call)
 		ret = p.call(b, llssa.Call, &v.Call)
 		if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
@@ -1677,9 +1774,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		} else {
 			x := p.compileValueAs(b, v.X, v.Y.Type())
 			y := p.compileValueAs(b, v.Y, v.X.Type())
-			ret = b.BinOp(v.Op, x, y)
+			ret = b.BinOpEx(v.Op, x, y, !p.stackStorage(v))
 		}
 	case *ssa.UnOp:
+		pointerNilChecked := false
 		if v.Op == token.MUL {
 			if pos, ok := p.recvNilDerefChecks[v]; ok {
 				p.recordPanicSite(b, pos)
@@ -1713,6 +1811,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 				x := p.compileValue(b, v.X)
 				p.recordPanicSite(b, v.Pos())
 				b.AssertNilDeref(x)
+				pointerNilChecked = true
 			}
 			if refs, ok := nonDebugReferrers(v); ok && len(refs) == 1 {
 				if _, ok := refs[0].(*ssa.MakeInterface); ok {
@@ -1742,22 +1841,21 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		if v.Op != token.ARROW {
 			p.recordPanicSite(b, v.Pos())
 		}
-		if shouldAssertDirectNilDeref(v) || v.Op == token.MUL && p.needsWasmNilGuard(v.X) {
-			if p.needsWasmNilGuard(v.X) {
-				p.emitNilDerefBaseCheck(b, v.X)
-			}
-			b.AssertNilDeref(x)
-		}
 		if v.Op == token.ARROW {
 			ret = b.Recv(x, v.CommaOk)
 		} else {
 			if v.Op == token.MUL {
-				if t := p.type_(v.Type(), llssa.GoDecl); t.RawType() != nil && p.prog.SizeOf(t) == 0 {
-					p.emitNilDerefBaseCheck(b, v.X)
-				}
-				if isInterfaceCompareDeref(v) {
+				nilGuard := p.needsRecoverableNilGuard(v.X)
+				typ := p.type_(v.Type(), llssa.GoDecl)
+				zeroSized := typ.RawType() != nil && p.isZeroSizedValue(typ)
+				interfaceCompare := isInterfaceCompareDeref(v)
+				if nilGuard || zeroSized || interfaceCompare {
 					// Preserve p.bvals: a branch-local reload would break SSA dominance.
 					p.emitNilDerefBaseCheck(b, v.X)
+				}
+				_, field := v.X.(*ssa.FieldAddr)
+				checkPointer := !field && (interfaceCompare || shouldAssertDirectNilDeref(v) || nilGuard)
+				if checkPointer && !pointerNilChecked {
 					b.AssertNilDeref(x)
 				}
 			}
@@ -1781,7 +1879,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			break
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.Convert(p.type_(t, llssa.GoDecl), x)
+		if decision, ok := p.options.EscapeAnalysis.LookupDecision(v); ok && decision.ReadOnly {
+			if _, stringResult := t.Underlying().(*types.Basic); stringResult {
+				ret = b.ReadOnlyBytesString(p.type_(t, llssa.GoDecl), x)
+			} else {
+				ret = b.ReadOnlyStringBytes(p.type_(t, llssa.GoDecl), x)
+			}
+		} else {
+			ret = b.ConvertEx(p.type_(t, llssa.GoDecl), x, !p.stackStorage(v))
+		}
 	case *ssa.FieldAddr:
 		x := p.compileValue(b, v.X)
 		p.recordPanicSite(b, v.Pos())
@@ -1811,9 +1917,22 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 			hoistToEntry = inLoop
 		}
-		ret = b.AllocEx(elem, v.Heap, hoistToEntry)
+		heap := !p.stackStorage(v)
+		if !heap && p.recoverSlots != nil {
+			// SjLj restores the entry stack pointer. Recover-visible slots
+			// must survive that reset, including in package initializers.
+			hoistToEntry = true
+		}
+		if heap && uintptrEscapesBackingArray(v) {
+			// The pragma gives uintptr arguments pointer lifetime semantics.
+			// Pending go/defer calls retain their pointees through this array.
+			ret = b.AllocZ(p.prog.IntVal(p.prog.SizeOf(elem), p.prog.Uintptr()))
+			ret.Type = p.prog.Pointer(elem)
+		} else {
+			ret = b.AllocEx(elem, heap, hoistToEntry)
+		}
 		p.debugAlloc(b, v, ret)
-		p.markRecoverSlot(v)
+		p.markRecoverSlot(v, heap)
 		if p.isRecoverSlotAddr(v) {
 			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
 		}
@@ -1825,6 +1944,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
 		p.recordPanicSite(b, v.Pos())
+		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
+			p.emitNilDerefBaseCheck(b, vx)
+		}
 		ret = b.IndexAddr(x, idx)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
@@ -1864,9 +1986,16 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			max = p.compileValue(b, v.Max)
 		}
 		p.recordPanicSite(b, v.Pos())
+		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
+			p.emitNilDerefBaseCheck(b, vx)
+		}
 		ret = b.Slice(x, low, high, max)
 		ret.Type = p.type_(v.Type(), llssa.GoDecl)
 	case *ssa.MakeInterface:
+		if p.keepAliveDataOnly(v) {
+			ret = b.MakeInterfaceDataOnlyEx(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X), !p.stackStorage(v))
+			break
+		}
 		if p.finalizerDataOnly(v) {
 			ret = b.MakeInterfaceDataOnly(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, v.X))
 			break
@@ -1904,19 +2033,19 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			}
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.MakeInterface(t, x)
+		ret = b.MakeInterfaceEx(t, x, !p.stackStorage(v))
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
 		nCap := p.compileValue(b, v.Cap)
-		ret = b.MakeSlice(t, nLen, nCap)
+		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:
 		var nReserve llssa.Expr
 		t := p.type_(v.Type(), llssa.GoDecl)
 		if v.Reserve != nil {
 			nReserve = p.compileValue(b, v.Reserve)
 		}
-		ret = b.MakeMap(t, nReserve)
+		ret = b.MakeMapEx(t, nReserve, !p.stackStorage(v))
 	case *ssa.MakeClosure:
 		p.checkBoundMethodReceiver(b, v)
 		fn := p.compileValue(b, v.Fn)
@@ -1924,8 +2053,15 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		goFn, _ := v.Fn.(*ssa.Function)
 		if !p.canElideZeroSizedClosureEnv(goFn) {
 			bindings = p.compileValues(b, v.Bindings, 0)
+			if goFn != nil {
+				for i, freeVar := range goFn.FreeVars {
+					if p.options.EscapeAnalysis.CaptureByValue(freeVar) {
+						bindings[i] = b.Load(bindings[i])
+					}
+				}
+			}
 		}
-		ret = b.MakeClosure(fn, bindings)
+		ret = b.MakeClosureEx(fn, bindings, !p.stackStorage(v))
 	case *ssa.TypeAssert:
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llssa.GoDecl)
@@ -1936,7 +2072,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		ret = b.Extract(x, v.Index)
 	case *ssa.Range:
 		x := p.compileValue(b, v.X)
-		ret = b.Range(x)
+		// Go's opaque iterator is consumed by Next in this invocation; source
+		// code cannot publish it or capture it in an asynchronous operation.
+		ret = b.RangeBorrowed(x)
 	case *ssa.Next:
 		var typ llssa.Type
 		if !v.IsString {
@@ -2291,14 +2429,64 @@ func instructionPrecedes(before, after ssa.Instruction) bool {
 	return false
 }
 
-func (p *context) needsWasmNilGuard(addr ssa.Value) bool {
-	// Linear memory includes address zero, and WebAssembly traps do not enter
-	// Go's panic/recover machinery. Native guard-page assumptions do not apply.
+func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
+	// A derived address can be non-nil while its original base is nil, and
+	// aggregate loads may fault inside a lowered memcpy rather than a Go frame.
+	// WebAssembly also has mapped address zero and non-recoverable memory traps.
 	// Runtime support packages maintain their own pointer invariants; routing an
 	// internal failure through the recoverable user-panic path makes almost the
 	// entire runtime reachable from every checked load and store.
-	return p.prog.Target().GOARCH == "wasm" && !llssa.IsRuntimeSupportPackage(p.pkg.Path()) &&
-		!isKnownNonNilAddr(addr) && !isWrapNilCheckCall(addr)
+	if llssa.IsRuntimeSupportPackage(p.pkg.Path()) || isKnownNonNilAddr(addr) || isWrapNilCheckCall(addr) {
+		return false
+	}
+	if p.prog.Target().GOARCH == "wasm" {
+		return true
+	}
+	if index, ok := addr.(*ssa.IndexAddr); ok {
+		if _, slice := types.Unalias(index.X.Type()).Underlying().(*types.Slice); slice {
+			// A successful slice bounds check establishes a valid element
+			// address. Rechecking its data pointer adds impossible failure
+			// returns that can obscure finite string results during LTO.
+			return false
+		}
+	}
+	ptr, ok := types.Unalias(addr.Type()).Underlying().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	// Small-offset native scalar accesses fault in the unmapped zero page.
+	// Guard derived fields only when their combined offset can leave it.
+	if field, ok := addr.(*ssa.FieldAddr); ok && p.fieldOutsideNilGuardPage(field) {
+		return true
+	}
+	// Aggregates may be split or lowered to a foreign memcpy instead of
+	// faulting at a recoverable Go instruction, even at offset zero.
+	switch elem := types.Unalias(ptr.Elem()).Underlying().(type) {
+	case *types.Array, *types.Struct, *types.Slice, *types.Interface:
+		return true
+	case *types.Basic:
+		if elem.Kind() == types.String {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) fieldOutsideNilGuardPage(field *ssa.FieldAddr) bool {
+	const guardPage = 4096
+	offset := 0
+	for {
+		part, ok := p.offsetOfFieldAddr(field)
+		if !ok || part < 0 || part >= guardPage-offset {
+			return true
+		}
+		offset += part
+		parent, ok := field.X.(*ssa.FieldAddr)
+		if !ok {
+			return false
+		}
+		field = parent
+	}
 }
 
 // assertNilDerefBase uses pointer-returning checks to rewrite p.bvals. Keep its
@@ -2339,6 +2527,12 @@ func (p *context) getDebugLocScope(v *ssa.Function, pos token.Pos) *types.Scope 
 }
 
 func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
+	if p.nilCheckBlock != instr.Block() {
+		// Facts are local to the current source block. Inlining can revisit
+		// the same callee SSA graph from different caller branches.
+		p.nilCheckBlock = instr.Block()
+		p.nilCheckedPointers = nil
+	}
 	p.panicSitePos = token.NoPos
 	if _, ok := p.staticInitInstrs[instr]; ok {
 		return
@@ -2387,20 +2581,19 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		}
 		ptr := p.compileValue(b, va)
 		val := p.compileValue(b, v.Val)
-		wasmNilGuard := p.needsWasmNilGuard(va)
-		if wasmNilGuard {
+		nilGuard := p.needsRecoverableNilGuard(va)
+		// Preserve the store's source site for both explicit checks and
+		// hardware faults, whose PC points at the store instruction itself.
+		if nilGuard || !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
 			p.recordPanicSite(b, v.Pos())
+		}
+		if nilGuard {
 			// A field assignment evaluates its RHS before faulting on a nil
 			// destination. Check the original base here, not at FieldAddr.
 			p.emitNilDerefBaseCheck(b, va)
-			b.AssertNilDeref(ptr)
-		}
-		// Hardware faults report the store instruction itself rather than a
-		// runtime nil-check return address. Preserve its exact source site on
-		// every native target; recordPanicSite scopes the metadata to functions
-		// whose recovered panic stack can be observed.
-		if !wasmNilGuard && !isKnownNonNilAddr(va) && !isWrapNilCheckCall(va) {
-			p.recordPanicSite(b, v.Pos())
+			if _, field := va.(*ssa.FieldAddr); !field {
+				b.AssertNilDeref(ptr)
+			}
 		}
 		store := b.Store(ptr, val)
 		if p.isRecoverSlotAddr(va) {
@@ -2450,6 +2643,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		elseb := fn.Block(succs[1].Index)
 		b.If(cond, thenb, elseb)
 	case *ssa.MapUpdate:
+		if p.compileMapLitUpdate(b, v) {
+			return
+		}
 		m := p.compileValue(b, v.Map)
 		key := p.compileValue(b, v.Key)
 		var val llssa.Expr
@@ -2515,7 +2711,7 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 
 func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
-	if v.Pkg == p.goPkg || v.Pkg == nil {
+	if v.Pkg == p.goPkg || v.Pkg == nil || v.Synthetic == ssawrap.CallWrapper {
 		// function in this package
 		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
 		if kind != ignoredFunc {
@@ -2538,11 +2734,20 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			}
 		}
 	case *ssa.Function:
-		if _, _, ftype := p.funcName(v); ftype == llgoInstr {
+		_, _, ftype := p.funcName(v)
+		original := v
+		if ftype == llvmIntrinsic || ftype == llgoInstr {
+			if fn := p.funcs[v]; fn != nil {
+				return fn.Expr
+			}
 			v = ssawrap.MakeCallWrapper(p.goProg, v)
+			p.markLinkOnce(v)
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
 		if aFn != nil {
+			if v != original {
+				p.funcs[original] = aFn
+			}
 			return aFn.Expr
 		}
 		return pyFn.Expr
@@ -2570,6 +2775,9 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			if freeVar == v {
 				if p.canElideZeroSizedClosureEnv(fn) {
 					return p.elidedZeroSizedFreeVar(b, v)
+				}
+				if p.options.EscapeAnalysis.CaptureByValue(v) {
+					return b.FieldAddr(p.fn.Env(), idx)
 				}
 				return p.fn.FreeVar(b, idx)
 			}
@@ -2945,6 +3153,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	if ct == nil {
 		ct = NewCallerTracking()
 	}
+	if ct.inlines == nil {
+		ct.inlines = newInlineFacts()
+	}
 	ctx := &context{
 		prog:             prog,
 		pkg:              ret,
@@ -2959,12 +3170,15 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		funcs:            make(map[*ssa.Function]llssa.Function),
 		linkOnceFns:      make(map[*ssa.Function]none),
 		recoverFacts:     ct.recoverAnalysis(),
+		callerTracking:   ct,
+		inlineFacts:      ct.inlines,
 		addrOfFieldAddrs: collectAddrOfFieldSelectors(files),
 		loaded: map[*types.Package]*pkgInfo{
 			types.Unsafe: {kind: PkgDeclOnly}, // TODO(xsw): PkgNoInit or PkgDeclOnly?
 		},
-		cgoSymbols: make([]string, 0, 128),
-		rewrites:   rewrites,
+		cgoSymbols:       make([]string, 0, 128),
+		rewrites:         rewrites,
+		staticByteArrays: options.StaticByteArrays,
 
 		trackCallerFrames:  options.DebuggerFrames || filesUseRuntimeCaller(files) || packageUsesRuntimeCaller(ct, pkg),
 		runtimeCallerFuncs: runtimeCallerFuncSet(ct, pkg),
@@ -2983,6 +3197,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	ctx.prog.SetPatch(ctx.patchType)
 	ctx.prog.SetCompileMethods(ctx.checkCompileMethods)
 	ret.SetResolveLinkname(ctx.resolveLinkname)
+	if ctx.options.EscapeAnalysis == nil {
+		ctx.options.EscapeAnalysis = ctx.analyzeEscape()
+	}
 
 	if hasPatch {
 		skips := ctx.skips
@@ -3033,9 +3250,11 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 		val  ssa.Member
 	}
 
-	ctx.collectStaticGlobalInits(pkg)
-	ctx.collectStaticMapInits(pkg)
-	ctx.collectUnusedGlobalInits(pkg)
+	if !ctx.options.DeclarationsOnly {
+		ctx.collectStaticGlobalInits(pkg)
+		ctx.collectStaticMapInits(pkg)
+		ctx.collectUnusedGlobalInits(pkg)
+	}
 
 	members := make([]*namedMember, 0, len(pkg.Members))
 	skips := ctx.skips
@@ -3067,6 +3286,9 @@ func processPkg(ctx *context, ret llssa.Package, pkg *ssa.Package) {
 				continue
 			}
 			if member.TypeParams() != nil || member.TypeArgs() != nil {
+				if _, name, kind := ctx.funcName(member); kind == llvmIntrinsic {
+					ctx.resolveLLVMIntrinsic(member, name)
+				}
 				// TODO(xsw): don't compile generic functions
 				// Do not try to build generic (non-instantiated) functions.
 				continue
@@ -3170,10 +3392,16 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 			return types.NewTuple(vars...), true
 		}
 	case *types.Signature:
+		recv := typ.Recv()
+		if recv != nil {
+			if t, ok := p._patchType(recv.Type()); ok {
+				recv = types.NewVar(recv.Pos(), recv.Pkg(), recv.Name(), t)
+			}
+		}
 		params, ok1 := p._patchType(typ.Params())
 		results, ok2 := p._patchType(typ.Results())
-		if ok1 || ok2 {
-			return types.NewSignature(typ.Recv(), params.(*types.Tuple), results.(*types.Tuple), typ.Variadic()), true
+		if recv != typ.Recv() || ok1 || ok2 {
+			return types.NewSignature(recv, params.(*types.Tuple), results.(*types.Tuple), typ.Variadic()), true
 		}
 	}
 	return typ, false

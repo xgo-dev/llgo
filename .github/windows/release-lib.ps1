@@ -138,11 +138,11 @@ function Get-ReleaseArchive {
     } finally {
       if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial }
     }
+  } else {
+    # Restored caches are untrusted; fresh downloads were checked before moving.
+    $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
+    if ($actual -ne $SHA256) { throw "SHA-256 for $URL is $actual, expected $SHA256" }
   }
-  # Restored caches are untrusted. Verify the pinned archive on every use and
-  # always extract it afresh; neither extracted files nor markers are cached.
-  $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
-  if ($actual -ne $SHA256) { throw "SHA-256 for $URL is $actual, expected $SHA256" }
   return $archive
 }
 
@@ -233,9 +233,9 @@ function Assert-ReleaseCompilerArtifact {
 }
 
 function Get-ReleaseX86Bootstrap {
-  $version = '20261020'
+  $version = '20261104'
   $archive = Join-Path (Get-ReleaseTemporaryRoot) "llvm-mingw-$version-ucrt-x86_64.zip"
-  $checksum = 'fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd'
+  $checksum = '552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f'
   if (-not (Test-Path $archive)) {
     & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive `
       "https://github.com/mstorsjo/llvm-mingw/releases/download/$version/llvm-mingw-$version-ucrt-x86_64.zip"

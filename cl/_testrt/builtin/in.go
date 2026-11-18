@@ -22,7 +22,7 @@ const (
 )
 
 // CHECK-LABEL: define double @main.Float64frombits(i64 %0){{.*}} {
-// CHECK: [[BITS_ADDR:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[BITS_ADDR:%.*]] = alloca i64, align 8
 // CHECK: store i64 %0, ptr [[BITS_ADDR]]
 // CHECK: [[FLOAT:%.*]] = load double, ptr [[BITS_ADDR]]
 // CHECK: ret double [[FLOAT]]
@@ -66,30 +66,33 @@ func demo() {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
+// The append argument array is borrowed storage in the caller's frame.
+// CHECK-DAG: [[INT_TAIL:%.*]] = alloca [4 x i64], align 8
 // make([]byte, 4, 10) must preserve both the requested length and capacity.
-// CHECK: [[D_STORAGE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 10)
+// CHECK-DAG: [[D_STORAGE:%.*]] = alloca [10 x i8], align 1
 // CHECK: [[D:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[D_STORAGE]], i64 1, i64 10, i64 0, i64 4, i1 true, i1 true, i1 true)
-// append(s, 5, 6, 7, 8) forwards the materialized four-element tail.
+// len("hello"[5:]) keeps the empty string slice's bounds.
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}String" { ptr @{{.*}}, i64 5 }, i64 5, i64 5)
-// CHECK: [[INT_TAIL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// append(s, 5, 6, 7, 8) forwards the materialized four-element tail.
+// CHECK: call void @llvm.memset.p0.i64(ptr [[INT_TAIL]], i8 0, i64 32, i1 false)
 // CHECK: [[INT_TAIL_0:%.*]] = getelementptr inbounds i64, ptr [[INT_TAIL]], i64 0
 // CHECK: store i64 5, ptr [[INT_TAIL_0]]
 // CHECK: [[INT_TAIL_PTR:%.*]] = extractvalue %"{{.*}}Slice" %{{.*}}, 0
 // CHECK: [[INT_TAIL_LEN:%.*]] = extractvalue %"{{.*}}Slice" %{{.*}}, 1
-// CHECK: [[INT_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr [[INT_TAIL_PTR]], i64 [[INT_TAIL_LEN]], i64 8)
+// CHECK: [[INT_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr [[INT_TAIL_PTR]], i64 [[INT_TAIL_LEN]], i64 8, i1 false)
 // append(data, "def"...) uses three one-byte elements.
-// CHECK: [[DATA_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr @{{.*}}, i64 3, i64 1)
+// CHECK: [[DATA_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" %{{.*}}, ptr @{{.*}}, i64 3, i64 1, i1 false)
 // Appending a function closure uses the two-word function representation.
 // CHECK: [[FN_PTR:%.*]] = extractvalue %"{{.*}}Slice" [[FN_SLICE:%.*]], 0
 // CHECK: [[FN_LEN:%.*]] = extractvalue %"{{.*}}Slice" [[FN_SLICE]], 1
-// CHECK: [[FN_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[FN_PTR]], i64 [[FN_LEN]], i64 16)
+// CHECK: [[FN_APPEND:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i64 0, i64 0 }, ptr [[FN_PTR]], i64 [[FN_LEN]], i64 16, i1 true)
 // Both copy forms retain destination/source lengths and the byte element size.
 // CHECK: [[COPY_DATA:%.*]] = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}Slice" %{{.*}}, ptr %{{.*}}, i64 %{{.*}}, i64 1)
 // CHECK: store i64 [[COPY_DATA]], ptr [[COPY_N:%.*]]
 // CHECK: [[COPY_LITERAL:%.*]] = call i64 @"{{.*}}/runtime/internal/runtime.SliceCopy"(%"{{.*}}Slice" %{{.*}}, ptr @{{.*}}, i64 4, i64 1)
 // CHECK: store i64 [[COPY_LITERAL]], ptr [[COPY_N]]
 // String range is lowered to one iterator whose yielded index/rune are consumed.
-// CHECK: [[ITER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewStringIter"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: [[ITER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewStringIterBuffer"(%"{{.*}}String" { ptr @{{.*}}, i64 7 }, ptr %{{[0-9]+}})
 // CHECK: [[NEXT:%.*]] = call { i1, i64, i32 } @"{{.*}}/runtime/internal/runtime.StringIterNext"(ptr [[ITER]])
 // CHECK: [[HAS_NEXT:%.*]] = extractvalue { i1, i64, i32 } [[NEXT]], 0
 // CHECK: br i1 [[HAS_NEXT]], label %{{.*}}, label %{{.*}}
@@ -101,16 +104,16 @@ func demo() {
 // CHECK: [[NAN_TRUE:%.*]] = call i1 @main.IsNaN(double [[NAN_INPUT]])
 // CHECK: [[NAN_FALSE:%.*]] = call i1 @main.IsNaN(double 1.000000e+00)
 // Byte/rune conversions are round-tripped through their originating slices.
-// CHECK: [[BYTES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToBytes"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
-// CHECK: [[RUNES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToRunes"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromBytes"(%"{{.*}}Slice" [[BYTES]])
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromRunes"(%"{{.*}}Slice" [[RUNES]])
+// CHECK: [[BYTES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToBytesReadOnly"(%"{{.*}}String" { ptr @{{.*}}, i64 7 })
+// CHECK: [[RUNES:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.StringToRunesBuffer"(%"{{.*}}String" { ptr @{{.*}}, i64 7 }, ptr %{{[0-9]+}})
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromBytesBuffer"(%"{{.*}}Slice" [[BYTES]], ptr %{{[0-9]+}})
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromRunesBuffer"(%"{{.*}}Slice" [[RUNES]], ptr %{{[0-9]+}})
 // CHECK: [[BYTE_VALUE:%.*]] = load i8, ptr %{{.*}}
 // CHECK: [[BYTE64:%.*]] = zext i8 [[BYTE_VALUE]] to i64
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromUint64"(i64 [[BYTE64]])
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromUint64Buffer"(i64 [[BYTE64]], ptr %{{[0-9]+}})
 // CHECK: [[RUNE_VALUE:%.*]] = load i32, ptr %{{.*}}
 // CHECK: [[RUNE64:%.*]] = sext i32 [[RUNE_VALUE]] to i64
-// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromInt64"(i64 [[RUNE64]])
+// CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringFromInt64Buffer"(i64 [[RUNE64]], ptr %{{[0-9]+}})
 
 func main() {
 	var s = []int{1, 2, 3, 4}

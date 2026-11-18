@@ -18,6 +18,7 @@ package build
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 
@@ -36,8 +37,6 @@ type packageLinkSnapshot struct {
 	methodByName    map[string]none
 	abiSymbols      map[string]none
 	abiTypes        []llssa.AbiTypeInfo
-	funcInfo        []funcInfoRecord
-	pcLineInfo      []pcLineRecord
 	hasLocalExports bool
 	cExports        []cExport
 }
@@ -215,6 +214,12 @@ func buildPackage(ctx *context, task *packageBuildTask, verbose, isolated bool) 
 	if err := finalizePackageBuild(ctx, task, verbose); err != nil {
 		return err
 	}
+	if ctx.frontend != nil && task.pkg.frontendOpaque == nil {
+		ctx.snapshotBackendPackage(task.pkg)
+		if err := ctx.frontend.store(task.pkg); err != nil && verbose {
+			fmt.Fprintf(os.Stderr, "warning: frontend cache %s: %v\n", task.pkg.PkgPath, err)
+		}
+	}
 	// Ordinary builds and single-test executable links consume package snapshots
 	// and archives. Let later packages reuse each isolated backend's memory instead of retaining
 	// every LLVM context until the final link. Isolated backends are restricted
@@ -326,7 +331,7 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 		return nil
 	}
 	owned = false
-	if task.needsRuntimeSignals() {
+	if task.needsRuntimeSignals() && task.pkg.frontendOpaque == nil {
 		task.pkg.setNeedRuntimeOrPyInit(task.pkg.LPkg.NeedRuntime, task.pkg.LPkg.NeedPyInit)
 	}
 	// Cache hits still rebuild the frontend module in the isolated Program even
@@ -340,11 +345,11 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 	return nil
 }
 
-// snapshotBackendPackage copies all link-time metadata out of one isolated
+// snapshotBackendPackage copies ABI and export metadata out of one isolated
 // Program. It must run on the same package worker before that Program is
 // disposed; root link plans consume only the resulting Go-owned values.
 func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
-	if pkg == nil || pkg.LPkg == nil {
+	if pkg == nil || pkg.LPkg == nil || pkg.frontendOpaque != nil {
 		return
 	}
 	lpkg := pkg.LPkg
@@ -362,10 +367,6 @@ func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
 	}
 	for name := range lpkg.MethodByName {
 		snapshot.methodByName[name] = none{}
-	}
-	if ctx.buildConf.PCLNMode != PCLNNone {
-		snapshot.funcInfo = readFuncInfo(lpkg.Module())
-		snapshot.pcLineInfo = readPCLineInfo(lpkg.Module())
 	}
 	pkg.linkSnapshot = snapshot
 }
@@ -389,32 +390,35 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 	// before workers start. Backend tasks share those maps read-only; a frozen
 	// miss returns an error instead of mutating coordinator state concurrently.
 	return &context{
-		conf:            ctx.conf,
-		progSSA:         ctx.progSSA,
-		prog:            session.prog,
-		dedup:           ctx.dedup,
-		patches:         ctx.patches,
-		callerTracking:  ctx.callerTracking,
-		initial:         ctx.initial,
-		pkgs:            ctx.pkgs,
-		pkgByID:         ctx.pkgByID,
-		mode:            ctx.mode,
-		output:          ctx.output,
-		passOpt:         ctx.passOpt,
-		buildConf:       ctx.buildConf,
-		crossCompile:    ctx.crossCompile,
-		commands:        ctx.commands,
-		frontendOptions: ctx.frontendOptions,
-		cTransformer:    session.transformer,
-		buildTrace:      ctx.buildTrace,
-		sfilesCache:     ctx.sfilesCache,
-		sfilesFrozen:    true,
-		llgoFilesCache:  ctx.llgoFilesCache,
-		llgoFilesFrozen: true,
-		plan9asmReady:   true,
-		plan9asmMode:    ctx.plan9asmMode,
-		plan9asmPkgs:    ctx.plan9asmPkgs,
-		goVersion:       ctx.goVersion,
+		conf:              ctx.conf,
+		progSSA:           ctx.progSSA,
+		prog:              session.prog,
+		dedup:             ctx.dedup,
+		patches:           ctx.patches,
+		callerTracking:    ctx.callerTracking,
+		initial:           ctx.initial,
+		pkgs:              ctx.pkgs,
+		pkgByID:           ctx.pkgByID,
+		mode:              ctx.mode,
+		output:            ctx.output,
+		passOpt:           ctx.passOpt,
+		buildConf:         ctx.buildConf,
+		crossCompile:      ctx.crossCompile,
+		commands:          ctx.commands,
+		frontendOptions:   ctx.frontendOptions,
+		frontend:          ctx.frontend,
+		staticByteArrays:  ctx.staticByteArrays,
+		wasmClosedProgram: ctx.wasmClosedProgram,
+		cTransformer:      session.transformer,
+		buildTrace:        ctx.buildTrace,
+		sfilesCache:       ctx.sfilesCache,
+		sfilesFrozen:      true,
+		llgoFilesCache:    ctx.llgoFilesCache,
+		llgoFilesFrozen:   true,
+		plan9asmReady:     true,
+		plan9asmMode:      ctx.plan9asmMode,
+		plan9asmPkgs:      ctx.plan9asmPkgs,
+		goVersion:         ctx.goVersion,
 	}
 }
 

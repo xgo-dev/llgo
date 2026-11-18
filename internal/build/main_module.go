@@ -26,6 +26,7 @@ package build
 import (
 	"go/token"
 	"go/types"
+	"slices"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -90,6 +91,14 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	argvValueType := prog.Pointer(prog.CStr())
 	argvVar := mainPkg.NewVarEx("__llgo_argv", prog.Pointer(argvValueType))
 	argvVar.InitNil()
+	// Match Go's islibrary/isarchive linker flags, read by runtime.init.
+	// https://github.com/golang/go/blob/go1.27.3/src/cmd/link/internal/ld/lib.go#L805-L819
+	islibrary := mainPkg.NewVarEx("runtime.islibrary", prog.Pointer(prog.Bool()))
+	islibrary.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCShared))
+	isarchive := mainPkg.NewVarEx("runtime.isarchive", prog.Pointer(prog.Bool()))
+	isarchive.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCArchive))
+	mainPkg.Module().NamedGlobal("runtime.islibrary").SetVisibility(llvm.HiddenVisibility)
+	mainPkg.Module().NamedGlobal("runtime.isarchive").SetVisibility(llvm.HiddenVisibility)
 	funcInfo := cfg.funcInfo
 	if needsRuntimeMainFrame(ctx) {
 		// The native process entry is the physical frame below runtime.main,
@@ -479,6 +488,8 @@ type entryFunctions struct {
 // "main" for standard targets, or "__main_argc_argv" with hidden visibility
 // for WASM targets that don't require _start.
 //
+// Controlled-thread Linux amd64/arm64 executables first enable the ownership
+// protocol and configure the collector, before any runtime/context allocation.
 // The entry stores argc/argv, optionally disables stdio buffering, and manages
 // the local context. Native PCLN builds run the common startup sequence through
 // runtime.main; other builds run it inline. That sequence initializes Python,
@@ -499,6 +510,20 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		fnVal.SetUnnamedAddr(true)
 	}
 	b := fn.MakeBody(1)
+	tags := splitSourcePatchBuildTags(ctx.buildConf.Tags)
+	// Opt-in is a closed-thread-set contract, not a deduction from build mode.
+	// Configure the collector before even the first runtime/context allocation.
+	if ctx.buildConf.BuildMode == BuildModeExe && ctx.buildConf.Goos == "linux" &&
+		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
+		slices.Contains(tags, "llgo.allthreads") {
+		setup := pkg.NewFunc("llgo_allthreads_enable_controlled", newSignature(
+			[]types.Type{types.Typ[types.Int32]}, nil), llssa.CDecl)
+		gc := uint64(1)
+		if slices.Contains(tags, "nogc") {
+			gc = 0
+		}
+		b.Call(setup.Expr, prog.IntVal(gc, prog.Int32()))
+	}
 	var localCtx, previousLocalCtx llssa.Expr
 	// The single-worker runtime itself uses owner-local state even when the
 	// user program has no TLS/GLS declarations. Root that state on the host

@@ -64,6 +64,13 @@ func Load[T valtype](ptr *T) T { return *ptr }
 // llgo:link Store llgo.atomicStore
 func Store[T valtype](ptr *T, v T) {}
 
+// StoreUnordered performs an indivisible store without synchronization or
+// ordering guarantees. It is intended for runtime memory operations that must
+// prevent torn words; it must not be used to publish other memory accesses.
+//
+// llgo:link StoreUnordered llgo.atomicStoreUnordered
+func StoreUnordered[T valtype](ptr *T, v T) {}
+
 // llgo:link Exchange llgo.atomicXchg
 func Exchange[T valtype](ptr *T, v T) T { return v }
 

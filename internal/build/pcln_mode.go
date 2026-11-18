@@ -77,8 +77,8 @@ func shouldEnablePCLNSites(conf *Config, funcInfo bool) bool {
 }
 
 // validatePCLNMode checks whether the selected build can produce the requested
-// PCLN artifact. External sidecars initially support native ELF and Mach-O
-// executables only.
+// PCLN artifact. External sidecars support native ELF/Mach-O executables and
+// the WASI and Emscripten Wasm hosts.
 func validatePCLNMode(conf *Config) error {
 	if err := conf.PCLNMode.validate(); err != nil {
 		return err
@@ -92,6 +92,15 @@ func validatePCLNMode(conf *Config) error {
 	if conf.BuildMode != BuildModeExe {
 		return fmt.Errorf("external PCLN metadata is not supported for -buildmode=%s", conf.BuildMode)
 	}
+	if !IsFuncInfoSitesEnabled() {
+		return fmt.Errorf("external PCLN metadata requires LLGO_FUNCINFO_SITES to be enabled")
+	}
+	if conf.Goarch == "wasm" {
+		if conf.Goos == "js" || conf.Goos == "wasip1" {
+			return nil
+		}
+		return fmt.Errorf("external PCLN metadata is not supported for GOOS=%s", conf.Goos)
+	}
 	if conf.Target != "" {
 		return fmt.Errorf("external PCLN metadata is not supported for target %q", conf.Target)
 	}
@@ -104,9 +113,6 @@ func validatePCLNMode(conf *Config) error {
 	case "amd64", "arm64":
 	default:
 		return fmt.Errorf("external PCLN metadata is not supported for GOARCH=%s", conf.Goarch)
-	}
-	if !IsFuncInfoSitesEnabled() {
-		return fmt.Errorf("external PCLN metadata requires LLGO_FUNCINFO_SITES to be enabled")
 	}
 	return nil
 }

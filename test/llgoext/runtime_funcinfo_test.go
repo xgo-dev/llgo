@@ -49,13 +49,13 @@ func checkRuntimeFuncInfoFramePCStatementLine(t *testing.T) {
 	for {
 		frame, more := frames.Next()
 		if strings.HasSuffix(frame.Function, ".checkRuntimeFuncInfoFramePCStatementLine") {
-			fn := runtime.FuncForPC(frame.PC - 1)
+			fn := runtime.FuncForPC(frame.PC)
 			if fn == nil {
-				t.Fatal("FuncForPC(pc-1) returned nil")
+				t.Fatal("FuncForPC(Frame.PC) returned nil")
 			}
-			file, line := fn.FileLine(frame.PC - 1)
+			file, line := fn.FileLine(frame.PC)
 			if file != wantFile || line != wantLine {
-				t.Fatalf("Func.FileLine(pc-1) = %s:%d, want %s:%d", file, line, wantFile, wantLine)
+				t.Fatalf("Func.FileLine(Frame.PC) = %s:%d, want %s:%d", file, line, wantFile, wantLine)
 			}
 			return
 		}

@@ -32,7 +32,8 @@ LLGo is compatible with the C ecosystem through the C **Application Binary Inter
 
 LLGo is compatible with Go 1.20+ source code and supports the complete Go 1.27 language syntax, as well as `cgo`.
 
-Compiler compatibility is checked against applicable upstream [`GOROOT/test`](test/goroot/README.md) cases using the pinned Go 1.27 toolchain. User projects and packages under `test/` are additionally tested with exact Go 1.20 through Go 1.27 toolchains. Remaining applicable differences are recorded in [`xfail.yaml`](test/goroot/xfail.yaml); gc-specific mechanisms outside LLGo's compatibility goals are documented in [`notapplicable.yaml`](test/goroot/notapplicable.yaml).
+See [compatibility coverage](CONTRIBUTING.md#choose-tests-for-the-change) for
+validation details and recorded differences from the standard Go compiler.
 
 ### Runtime
 
@@ -48,15 +49,16 @@ llgo run -tags nogc .
 
 ### Standard libraries
 
-LLGo fully supports the Go standard library on supported native platforms. CI requires compatibility coverage for every public package and exported symbol in the primary Go toolchain, and runs focused [`test/std`](test/std/README.md) compatibility sets with each older supported toolchain.
+LLGo fully supports the Go standard library on supported native platforms.
+See [standard-library compatibility](test/std/README.md) for coverage details.
 
 Other targets may not provide every OS service or implementation-specific runtime behavior.
 
 | Target | Current coverage |
 | --- | --- |
-| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows 386/amd64/arm64 (MSVC and MinGW) release builds; primary CI on Linux amd64, macOS arm64, and Windows toolchain profiles |
-| WebAssembly | `js/wasm` and `wasip1/wasm` builds; WASI and Emscripten CI coverage |
-| Embedded | [`-target`](doc/Embedded_Cmd.md) configurations for supported boards and MCUs, with selected QEMU/emulator smoke tests |
+| Native | Linux amd64/arm64, macOS amd64/arm64, and Windows 386/amd64/arm64 (MSVC and MinGW) release builds |
+| WebAssembly | `js/wasm` and `wasip1/wasm` builds; WASI and Emscripten profiles |
+| Embedded | [`-target`](doc/Embedded_Cmd.md) configurations for supported boards and MCUs, with QEMU/emulator support for selected targets |
 
 The supported WebAssembly profiles combine a memory ABI with a host ABI.
 `-target emscripten` emits a Memory32 ES module and its sibling wasm module,
@@ -158,6 +160,8 @@ type Callback func(context uintptr) uintptr
 
 `stdcall.` declarations and `//llgo:stdcall` apply only to non-variadic function types. A native callback is one function pointer, so a Go callback must be a direct function reference; pass state through an explicit context pointer rather than a capturing closure.
 
+`//llgo:cdecl` and `//llgo:stdcall` function values can be passed directly to `syscall.NewCallback`, `syscall.NewCallbackCDecl`, and `runtime.SetFinalizer`. On Windows, the type's convention governs calls into the function; independently, `NewCallback` creates a stdcall entry and `NewCallbackCDecl` creates a cdecl entry.
+
 #### Calling-convention directives
 
 A function type that models a C or Windows callback carries a calling-convention directive so the generated function pointer matches the native ABI:
@@ -180,6 +184,50 @@ type WinProc func(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr
 ```
 
 The older `//llgo:type C` and `//llgo:type stdcall` spellings remain supported for backward compatibility but are **deprecated**: the compiler accepts them and prints a warning naming the replacement (`//llgo:type C` → `//llgo:cdecl`, `//llgo:type stdcall` → `//llgo:stdcall`). Prefer the new directives in new code. A type may carry only one calling-convention directive; combining them (for example `//llgo:cdecl` together with `//llgo:stdcall` or `//llgo:type stdcall`) is reported as an error.
+
+#### Host-layout structs
+
+Use a leading blank `structs.HostLayout` field for a struct exchanged with native
+code. LLGo recognizes the marker from type information, including aliases,
+defined marker types, and generic instantiations.
+
+```go
+import "structs"
+
+//llgo:cdecl
+type Callback func(int32) int32
+
+type Record struct {
+    _        structs.HostLayout
+    Callback Callback
+    Data     *byte
+}
+```
+
+The marker selects native field layout, not a calling convention. A plain Go
+`func` field still carries its closure environment; use an explicitly annotated
+function type for a native callback. Nested struct fields keep their own layout,
+and containing structs do not inherit the marker. Ordinary Go fields retain
+their storage representation, including when their address is passed to another
+function. On profiled wasm32 targets, Go pointers and `uintptr` still occupy
+eight bytes; explicitly annotated callback fields also retain their existing
+Go storage width. HostLayout does not change callback reflection or conversion
+semantics. Host records requiring four-byte address slots must use explicit
+fixed-width storage and convert at the interface boundary. A nonempty marked
+struct ending in a zero-sized field retains Go's protective trailing padding.
+
+The older struct-level `//llgo:cdecl` and `//llgo:type C` declarations remain
+accepted for compatibility. A struct that still carries a legacy type directive
+keeps its legacy source-layout behavior, including when a HostLayout marker is
+added directly or through a field. Remove the struct directive when adopting
+HostLayout. When migrating, give any native callback fields
+explicit callback types rather than relying on the outer struct's directive.
+If Go and native pointer widths differ, use target-specific address/size slots
+and boundary accessors, retaining Go references for any addresses the host saves.
+The marker is a real zero-sized field: reflection field indices and positional
+struct literals must be adjusted when adding it.
+The runtime uses an internal compatibility marker on Go 1.20–1.22 and an alias
+to the standard `structs.HostLayout` on Go 1.23 and later.
 
 ### C/C++ standard libraries
 
@@ -236,7 +284,7 @@ Beyond the standard library, LLGo can import libraries from across the C/C++ eco
 Available bindings include:
 
 * [c/bdwgc](https://pkg.go.dev/github.com/goplus/lib/c/bdwgc)
-* [c/cjson](https://pkg.go.dev/github.com/goplus/lib/c/cjson)
+* [c/cjson](https://pkg.go.dev/github.com/llarhub/cjson)
 * [c/clang](https://pkg.go.dev/github.com/goplus/lib/c/clang)
 * [c/ffi](https://pkg.go.dev/github.com/goplus/lib/c/ffi)
 * [c/libuv](https://pkg.go.dev/github.com/goplus/lib/c/libuv)
@@ -244,8 +292,8 @@ Available bindings include:
 * [c/lua](https://pkg.go.dev/github.com/goplus/lib/c/lua)
 * [c/neco](https://pkg.go.dev/github.com/goplus/lib/c/neco)
 * [c/openssl](https://pkg.go.dev/github.com/goplus/lib/c/openssl)
-* [c/raylib](https://pkg.go.dev/github.com/goplus/lib/c/raylib)
-* [c/sqlite](https://pkg.go.dev/github.com/goplus/lib/c/sqlite)
+* [c/raylib](https://pkg.go.dev/github.com/llarhub/raylib)
+* [c/sqlite](https://pkg.go.dev/github.com/llarhub/sqlite)
 * [c/zlib](https://pkg.go.dev/github.com/goplus/lib/c/zlib)
 * [cpp/inih](https://pkg.go.dev/github.com/goplus/lib/cpp/inih)
 * [cpp/llvm](https://pkg.go.dev/github.com/goplus/lib/cpp/llvm)
@@ -253,7 +301,7 @@ Available bindings include:
 Examples built on these bindings:
 
 * [llama2-c](_demo/c/llama2-c): inference Llama 2 (the first LLGo AI example)
-* [mkjson](https://github.com/goplus/lib/tree/main/c/cjson/_demo/mkjson): create a JSON object and print it
+* [mkjson](https://github.com/llarhub/cjson/tree/main/demo/mkjson): create a JSON object and print it
 * [sqlitedemo](https://github.com/llarhub/sqlite/tree/main/demo/sqlitedemo): a basic SQLite demo
 * [tetris](https://github.com/llarhub/raylib/tree/main/demo/tetris): a Tetris game based on raylib
 
@@ -262,7 +310,7 @@ Examples built on these bindings:
 
 You can import a Python library in LLGo!
 
-You can import Python libraries into `llgo` through `llpyg` (see [Development tools](#development-tools)). Available bindings include:
+You can import Python libraries into `llgo` through [llpyg](https://github.com/xgo-dev/llpyg). Available bindings include:
 
 * [py](https://pkg.go.dev/github.com/goplus/lib/py) (abi)
 * [py/std](https://pkg.go.dev/github.com/goplus/lib/py/std) (builtins)
@@ -354,199 +402,84 @@ cd <demo-directory>  # eg. cd _demo/py/basic
 llgo run .
 ```
 
-## Dependencies
-
-- [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
-- [LLVM 23](https://llvm.org)
-- [Clang 23](https://clang.llvm.org)
-- [LLD 23](https://lld.llvm.org)
-- [LLDB](https://lldb.llvm.org) (LLVM 23 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
-- [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
-- [bdwgc/libgc 8.0+](https://www.hboehm.info/gc/)
-- [libffi](https://sourceware.org/libffi/)
-- [OpenSSL 3.0+](https://www.openssl.org/)
-- [zlib 1.2+](https://github.com/madler/zlib)
-- [Python 3.12+](https://www.python.org) (optional, for [github.com/goplus/lib/py](https://pkg.go.dev/github.com/goplus/lib/py))
-
 ## How to install
 
-Use the platform package manager instructions below whenever possible.
+### Quick install
 
-### with mise or Pixi (development)
+**macOS and Linux:**
 
-Install [mise](https://mise.jdx.dev/installing-mise.html) or
-[Pixi](https://pixi.prefix.dev/latest/installation/), then enter the environment
-from the repository root:
-
-```sh
-mise -C dev trust
-mise -C dev install --locked
-mise -C dev en
-```
-
-Or, with Pixi:
-
-```sh
-cd dev
-pixi shell --locked
-```
-
-In either shell, run `cd ..`, then use `go run ./cmd/llgo version` or
-`go build ./cmd/llgo`. See [development tooling](dev/README.md) for details.
-
-### on macOS
-
-<!-- embedme doc/_readme/scripts/install_macos.sh#L2-L1000 -->
-
-```sh
-brew update
-brew install llvm@23 lld@23 bdw-gc openssl cjson libffi libuv pkg-config
-brew install python@3.12 # optional
-brew link --force --overwrite llvm@23 lld@23 libffi
-./install.sh
-```
-
-Native macOS builds use LLVM/LLD 23, which supports the SDK 27 text-stub
-format. LLGo uses the active SDK when its compile-and-link probe succeeds,
-and otherwise tries installed alternatives. Set `SDKROOT` to pin an SDK;
-an incompatible or missing explicit SDK is an error. The selected SDK is
-used for both compilation and linking.
-
-Homebrew's versioned LLVM 23 formula does not ship LLDB and there is no `lldb@23` formula. LLGo checks common Homebrew and system locations, then `lldb` on `PATH`; use `LLGO_LLDB` or `llgo lldb -lldb` to select one explicitly.
-
-### on Linux
-
-The APT/YUM configurations below accept packages without GPG signature verification
-(`trusted=yes` / `gpgcheck=0`); downloads use HTTPS.
-
-#### Debian/Ubuntu
-
-Install the latest stable release for amd64 or arm64 from the APT repository:
-
-```sh
-echo 'deb [trusted=yes] https://pkgs.goplus.org/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
-sudo apt-get update
-sudo apt-get install -y llgo
-llgo version
-```
-
-For source builds, install the build dependencies:
-
-<!-- embedme doc/_readme/scripts/install_ubuntu.sh#L2-L1000 -->
-
-```sh
-echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-23 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-sudo apt-get update
-sudo apt-get install -y llvm-23-dev clang-23 libclang-23-dev lld-23 lldb-23 libunwind-23-dev libc++-23-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
-sudo apt-get install -y python3.12-dev # optional
-./install.sh
-```
-
-#### Alpine Linux
-
-```sh
-apk add go llvm23-dev clang23-dev lld23 lldb pkgconf gc-dev libunwind-dev openssl-dev zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
-apk add python3-dev # optional
-apk add g++ # build only
-export LLVM_CONFIG=/usr/lib/llvm23/bin/llvm-config
-export CGO_CPPFLAGS="$($LLVM_CONFIG --cppflags)"
-export CGO_CXXFLAGS=-std=c++17
-export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
-./install.sh
-```
-
-#### Fedora Linux 44 or newer
-
-Install the latest stable release for amd64 or arm64 from the YUM/DNF repository:
-
-```sh
-sudo tee /etc/yum.repos.d/fury.repo > /dev/null <<'EOF'
-[fury]
-name=goplus (Gemfury)
-baseurl=https://pkgs.goplus.org/yum/
-enabled=1
-gpgcheck=0
-EOF
-sudo dnf install -y llgo
-llgo version
-```
-
-With YUM, use `sudo yum install -y llgo` for the installation command.
-
-Source builds require LLVM 23. If your Fedora release supplies an older
-LLVM stack, use the pinned [Mise or Pixi development environment](dev/README.md)
-instead of the system LLVM packages.
-
-docker alpine 386 llgo environment
-```
-export GCC_ROOT_DIR=$(gcc -print-search-dirs | grep 'install:' | awk -F': ' '{print $2}')
-export LDFLAGS="-L$GCC_ROOT_DIR -B$GCC_ROOT_DIR -Wl,-dynamic-linker,/lib/ld-musl-i386.so.1"
-llgo run .
-```
-
-### on Windows
-
-The release workflow builds six integrated Windows variants, each as a ZIP: `llgo<VERSION>.windows-{386,amd64,arm64}-{msvc,mingw}.zip`. Check the [release assets](https://github.com/xgo-dev/llgo/releases) for availability in each version. Add the extracted `bin` directory to `PATH`; the archives keep the same `runtime`, `targets`, and `crosscompile/clang` layout as Unix releases. Each architecture's MSVC and MinGW archives contain the same statically linked, DLL-free `llgo.exe`.
-
-See [Windows release dependencies and PowerShell setup](WINDOWS.md) for the external tools, ABI-specific libraries, and pkg-config configuration needed to compile native programs. The document is included in every Windows ZIP.
-
-Use the archive matching your native architecture and toolchain profile. Native programs still need the corresponding SDK/CRT, Clang, and dependencies described below: Visual Studio's C++ developer environment for MSVC, or MSYS2 `CLANG64` (`amd64`) / `CLANGARM64` (`arm64`) for MinGW. For `386`, configure the native i686 MSVC or MinGW environment described in [WINDOWS.md](WINDOWS.md); automatic dependency installation is unavailable. The bundled ESP Clang matches the host architecture: ARM64 archives contain native ARM64 ESP tools and DLLs for both MSVC and MinGW variants.
-
-The recommended GNU-hosted setup is an MSYS2 `CLANG64` shell. Install the LLVM 23 stack and LLGo's native dependencies, then provide the versioned pkg-config metadata used by the Go/C++ bindings:
-
-```sh
-pacman -S --needed \
-  mingw-w64-clang-x86_64-{clang,llvm,llvm-tools,lld,lldb,compiler-rt,libc++,libunwind} \
-  mingw-w64-clang-x86_64-{gc,libffi,libuv,openssl,cjson,sqlite3,zlib,pkgconf}
-test "$(llvm-config --version | cut -d. -f1)" = 23
-pc_dir="$MINGW_PREFIX/lib/pkgconfig"
-mkdir -p "$pc_dir"
-printf '%s\n' \
-  'Name: LLVM 23' \
-  'Description: LLVM 23 host compiler and linker flags' \
-  "Version: $(llvm-config --version)" \
-  "Cflags: $(llvm-config --cflags)" \
-  "Libs: $(llvm-config --ldflags --libs all --system-libs)" \
-  > "$pc_dir/llvm-23.pc"
-```
-
-The native MSVC CI profile uses LLVM's official 23.1.4 development archive for headers, libraries, Clang, LLD, and all code-generation backends. LLDB is extracted from the matching official `win64` or `woa64` MSI. The Windows 386 lane uses the LLVM 23.1.4-based llvm-mingw 20261020 builtins and native i686 LLDB with its bundled Python runtime. MSYS2's LLVM packages are pinned separately to 23.1.3. The complete setup, checksums, and generated `llvm-23.pc` are in `.github/actions/setup-deps/action.yml`.
-
-
-### Install from source
-
-<!-- embedme doc/_readme/scripts/install_llgo.sh#L2-L1000 -->
-
-```sh
-git clone https://github.com/xgo-dev/llgo.git
-cd llgo
-./install.sh
-```
-
-### Fallback release installers
-
-The Unix fallback installs LLGo and, by default, Go and native C libraries. It
-does not install LLVM/Clang/LLD 23; install those with the platform steps above
-before compiling programs with LLGo.
-
-On macOS or Linux:
+<!-- embedme doc/_readme/scripts/quick_install.sh#L3-L1000 -->
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
 ```
 
-On Windows with MSVC, run in PowerShell:
+**Windows (PowerShell):**
+
+<!-- embedme doc/_readme/scripts/quick_install.ps1#L2-L2 -->
 
 ```powershell
 irm https://raw.githubusercontent.com/xgo-dev/llgo/main/install.ps1 | iex
 ```
 
-On Windows with MinGW, run in an MSYS2 `CLANG64` or `CLANGARM64` shell:
+Open a new terminal after installation, then verify:
+
+<!-- embedme doc/_readme/scripts/verify_install.sh#L3-L1000 -->
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/xgo-dev/llgo/main/install.sh | bash
+llgo version
 ```
+
+### Manual installation
+
+#### Homebrew (macOS)
+
+<!-- embedme doc/_readme/scripts/install_brew.sh#L3-L1000 -->
+
+```sh
+brew install llgo
+```
+
+#### WinGet (Windows)
+
+Until `XGo.LLGo` is published, use the legacy package below. See [WinGet migration](WINDOWS.md#migrating-an-older-winget-installation) when the unified package becomes available.
+
+<!-- embedme doc/_readme/scripts/install_winget.ps1#L3-L3 -->
+
+```powershell
+winget install XGo.LLGo.MSVC
+```
+
+#### APT / YUM (Linux)
+
+For Debian/Ubuntu without LLVM 22 packages, first enable the matching [apt.llvm.org repository](https://apt.llvm.org/). RPM installation requires Fedora 44 or newer. These repository entries use HTTPS and disable package signature checks (`trusted=yes` / `gpgcheck=0`).
+
+Debian/Ubuntu:
+
+<!-- embedme doc/_readme/scripts/install_apt.sh#L3-L1000 -->
+
+```sh
+echo 'deb [trusted=yes] https://pkgs.xgo.dev/apt/ /' | sudo tee /etc/apt/sources.list.d/goplus.list
+sudo apt-get update
+sudo apt-get install -y llgo
+```
+
+Fedora/RPM:
+
+<!-- embedme doc/_readme/scripts/install_yum.sh#L3-L1000 -->
+
+```sh
+sudo tee /etc/yum.repos.d/goplus.repo <<'EOF'
+[goplus]
+name=XGo
+baseurl=https://pkgs.xgo.dev/yum/
+enabled=1
+gpgcheck=0
+EOF
+sudo yum install -y llgo
+```
+
+For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Go environment
 
@@ -562,7 +495,7 @@ Use `llgo mod init`, `llgo mod tidy`, `llgo mod vendor`, and other `go mod` subc
 
 Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `vendor` already consider all build tags except `ignore`, including dependencies imported only by files with `//go:build llgo`.
 
-## Development tools
+## Package and project commands
 
 `llgo list` provides a Go-compatible package query backed by the real Go toolchain while adding LLGo's source-selection build tags to package queries. Module queries keep caller-supplied and explicit target tags but do not add LLGo's defaults. It supports the list queries used by `golang.org/x/tools/go/packages`, including `list -f '{{context.GOARCH}} {{context.Compiler}}' -- unsafe`; the reported `gc` context identifies Go frontend and type-size compatibility, not LLGo's LLVM backend. Use `-target name` to apply a resolved LLGo target's GOOS, GOARCH, and build tags without installing its toolchain. When `go/packages` requests `-export=true`, paths in the `Export` field refer to Go frontend type data in Go's build cache, not LLGo package archives.
 
@@ -570,35 +503,7 @@ Module maintenance does not inject LLGo-specific build tags. Go's `tidy` and `ve
 
 `build`, `clean`, `install`, `run`, `test`, `version`, and `tool compile` remain LLGo-specific. The Go `bug`, `doc`, and `telemetry` commands are not exposed: the first and last operate Go services, while `go doc` cannot select LLGo-only sources because it has no build-tag option.
 
-* [pydump](_xtool/pydump): It is the first production program compiled with `llgo` rather than `go`. It outputs symbol information (functions, variables, and constants) from a Python library in JSON format, preparing for the generation of corresponding packages in `llgo`.
-* [pysigfetch](https://github.com/goplus/hdq/tree/main/chore/pysigfetch): It generates symbol information by extracting information from Python's documentation site. This tool is not part of the `llgo` project, but we depend on it.
-* [llpyg](chore/llpyg): It is used to automatically convert Python libraries into Go packages that `llgo` can import. It depends on `pydump` and `pysigfetch` to accomplish the task.
-* [llgen](chore/llgen): It is used to compile Go packages into LLVM IR files (*.ll).
-* [gentests](chore/gentests): It refreshes runtime-output and package-metadata golden data under `cl/_test*`. LLVM IR checks live in Go sources as `// LITTEST` FileCheck directives.
-* [litgen](chore/litgen): It maintains explicitly opted-in, source-embedded FileCheck snapshots. It supports function/global selection, update-only operation, stale-check verification, and stable LLVM value abstractions. Small handwritten checks remain manual.
-* [ssadump](chore/ssadump): It is a Go SSA builder and interpreter.
+## Contributing
 
-For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#6-refresh-test-goldens).
-
-How do I generate these tools?
-
-<!-- embedme doc/_readme/scripts/install_full.sh#L2-L1000 -->
-
-```sh
-git clone https://github.com/xgo-dev/llgo.git
-cd llgo
-go install -v ./cmd/...
-go install -v ./chore/...  # compile all tools except pydump
-export LLGO_ROOT=$PWD
-cd _xtool
-llgo install ./...   # compile pydump
-go install github.com/goplus/hdq/chore/pysigfetch@v0.8.1  # compile pysigfetch
-```
-
-## Key modules
-
-Below are the key modules for understanding the implementation principles of `llgo`:
-
-* [ssa](https://pkg.go.dev/github.com/xgo-dev/llgo/ssa): It generates LLVM IR files (LLVM SSA) using the semantics and interfaces of Go SSA. Although `LLVM SSA` and `Go SSA` are both IR languages, they work at completely different levels. `LLVM SSA` is closer to machine code and abstracts over different instruction sets, while `Go SSA` is closer to a high-level language. We can think of it as the instruction set of the `Go computer`. `llgo/ssa` is not limited to the `llgo` compiler. If we view it as providing the high-level expressive power of `LLVM`, it is very useful. Its advanced SSA form lets clients use LLVM without operating directly on machine-code semantics.
-* [cl](https://pkg.go.dev/github.com/xgo-dev/llgo/cl): It is the core of the llgo compiler. It converts a Go package into LLVM IR files. It depends on `llgo/ssa`.
-* [internal/build](https://pkg.go.dev/github.com/xgo-dev/llgo/internal/build): It strings together the entire compilation process of `llgo`. It depends on `llgo/ssa` and `llgo/cl`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development environments, source
+builds, repository structure, testing, and the pull-request workflow.

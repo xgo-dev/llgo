@@ -46,6 +46,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
+	"github.com/xgo-dev/llgo/internal/compilerhash"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/dcepass"
 	"github.com/xgo-dev/llgo/internal/deadcode"
@@ -56,6 +57,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
+	"github.com/xgo-dev/llgo/internal/heap2stack"
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -182,18 +184,26 @@ type Config struct {
 	CheckLLFiles       bool // check .ll files valid
 	CheckLinkArgs      bool // check linkargs valid
 	ForceEspClang      bool // force to use esp-clang
+	frontendSourceOnly bool
 	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
 	Tags               string
 	SizeReport         bool   // print size report after successful build
 	SizeFormat         string // size report format: text,json (default text)
 	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // metadata hash for the running compiler (development builds only)
+	CompilerHash       string // content hash for the running compiler (development builds only)
 	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
 	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+
+	EscapeDiagnostics           int // -m count for explicitly selected packages
+	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
 	// GoBuildFlags contains normalized raw Go build flags forwarded to
 	// go/packages. Callers use internal/goflags to parse supported compiler and
 	// linker semantics into typed Config fields before calling Do.
 	GoBuildFlags []string
+	// LoaderBuildFlags preserves package selection while removing diagnostics
+	// consumed by LLGo, so go/packages cannot emit host-compiler escape results.
+	// Nil uses GoBuildFlags for direct compiler API callers.
+	LoaderBuildFlags []string
 	// GoFlagsParsed means the command layer has consumed GOFLAGS into native
 	// configuration. Package probes must not parse those command defaults again.
 	GoFlagsParsed bool
@@ -208,6 +218,9 @@ type Config struct {
 	TestRunSequential bool
 	// TestFailFast stops launching test binaries after the first failure.
 	TestFailFast bool
+	// NativeTestWaitDelay bounds native test pipe draining after process exit.
+	// Zero defaults to 5s when RunnerTimeout is enabled.
+	NativeTestWaitDelay time.Duration
 	// TestJSON streams package-attributed test2json events.
 	TestJSON          bool
 	testOutput        *testOutputPolicy
@@ -297,6 +310,7 @@ func (c *Config) clone() *Config {
 	cloned.RunArgs = slices.Clone(c.RunArgs)
 	cloned.Exec = slices.Clone(c.Exec)
 	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.LoaderBuildFlags = slices.Clone(c.LoaderBuildFlags)
 	cloned.toolTags = slices.Clone(c.toolTags)
 	cloned.Overlay = cloneOverlay(c.Overlay)
 	cloned.SourceOverlay = cloneSourceOverlay(c.SourceOverlay)
@@ -331,6 +345,11 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 		return nil, errors.New("build config must not be nil")
 	}
 	conf := input.clone()
+	// Embedding callers bypass command-line flags but share the same archive
+	// cache. Give every development compiler an identity before fingerprinting.
+	if conf.CompilerHash == "" {
+		conf.CompilerHash = compilerhash.Value()
+	}
 	if conf.Goos == "" {
 		conf.Goos = runtime.GOOS
 	}
@@ -359,8 +378,15 @@ func resolveBuildConfig(input *Config) (*Config, error) {
 	if conf.SizeReport && conf.SizeLevel == "" {
 		conf.SizeLevel = "module"
 	}
-	if err := validatePCLNMode(conf); err != nil {
+	if err := conf.PCLNMode.validate(); err != nil {
 		return nil, err
+	}
+	// Named targets replace GOOS/GOARCH later. Validate their target policy
+	// after resolution, while still rejecting invalid build modes here.
+	if conf.Target == "" || conf.Mode == ModeGen || conf.BuildMode != BuildModeExe {
+		if err := validatePCLNMode(conf); err != nil {
+			return nil, err
+		}
 	}
 	if err := ensureSizeReporting(conf); err != nil {
 		return nil, err
@@ -532,6 +558,29 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 	}()
 	result, err := buildInvocation(inv, &plan)
+	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+		if plan.sourceOverlayFile != "" {
+			os.Remove(plan.sourceOverlayFile)
+			plan.sourceOverlayFile = ""
+		}
+		if inv.Config == nil {
+			inv.Config = NewDefaultConf(ModeBuild)
+		} else {
+			inv.Config = inv.Config.clone()
+		}
+		inv.Config.frontendSourceOnly = true
+		if filename := inv.Config.BuildTrace; filename != "" {
+			if !filepath.IsAbs(filename) {
+				base := inv.Dir
+				if base == "" {
+					base, _ = os.Getwd()
+				}
+				filename = filepath.Join(base, filename)
+			}
+			_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+		}
+		result, err = buildInvocation(inv, &plan)
+	}
 	if len(plan.invocations) == 0 {
 		return result, err
 	}
@@ -545,7 +594,7 @@ func Build(inv Invocation) ([]Package, error) {
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
 	var fallback *multiBuildFallback
 	defer func() {
-		if resultErr == nil || fallback == nil || inv.disableMultiFallback {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
 			return
 		}
 		result, resultErr = fallback.run()
@@ -611,6 +660,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if err != nil {
 			return nil, err
 		}
+	} else if conf.Target == "" && conf.Goos == runtime.GOOS && conf.Goarch == runtime.GOARCH {
+		// Unix compiler selection still follows its existing environment path.
+		// Parse the explicit linker options without changing CC/CXX handling.
+		nativeInput, err = parseNativeToolchainInput(commandEnv{dir: commands.dir}, conf.LinkOptions, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
 	if err != nil {
@@ -622,6 +678,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	if conf.Target != "" && export.GOARCH != "" {
 		conf.Goarch = export.GOARCH
+	}
+	if err := validatePCLNMode(conf); err != nil {
+		return nil, err
 	}
 	resolveTestPthreadStackSize(conf)
 	if err := validateWASIThreads(conf); err != nil {
@@ -652,7 +711,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
+	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
+	if conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal {
+		export.LDFLAGS = append(export.LDFLAGS, "-Wl,--export="+pclnIdentitySymbol)
+	}
 	verbose := conf.Verbose
 	patterns := slices.Clone(inv.Args)
 	target := &llssa.Target{
@@ -684,7 +748,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		tags += "," + strings.Join(export.BuildTags, ",")
 	}
 	goBuildFlags := []string{"-tags=" + tags}
-	goBuildFlags = append(goBuildFlags, conf.GoBuildFlags...)
+	loaderFlags := conf.LoaderBuildFlags
+	if loaderFlags == nil {
+		loaderFlags = conf.GoBuildFlags
+	}
+	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
@@ -710,16 +778,18 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
 	emitCodeView := shouldEmitCodeView(conf, &export)
 	frontendOptions := cl.Options{
-		Debug:        emitDebugInfo,
-		DebugSymbols: emitDebugInfo,
-		Trace:        IsTraceEnabled(),
+		DisableInlineBodyImports: conf.ltoMode() == lto.Full,
+		Debug:                    emitDebugInfo,
+		DebugSymbols:             emitDebugInfo,
+		Trace:                    IsTraceEnabled(),
 		// Hosted wasm profiles need renamed //export symbols for allocator and
 		// host entries even when selected through raw GOOS/GOARCH rather than a
 		// named -target.
 		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
 		// Wasm has no inspectable native return addresses for runtime callers.
-		ShadowStack:    conf.Goarch == "wasm",
-		DebuggerFrames: conf.Goarch == "wasm" && slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+		ShadowStack:            conf.Goarch == "wasm",
+		DebuggerFrames:         conf.Goarch == "wasm" && slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+		CompactCallerLocations: conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal && !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
@@ -804,9 +874,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
 		cfg.Mode &^= packages.NeedExportFile
-		dedup.SetRewrite(rewritePortableSIMD)
+		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
+			return rewritePortableSIMD(pkg, conf.Goarch)
+		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
+	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceGo.GOVERSION, export.Toolchain.TargetTriple)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}
@@ -844,6 +917,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	if typeLoader != nil {
+		dedup.SetImportTypes(typeLoader.load)
+	}
 	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
 		"patterns": slices.Clone(patterns),
 	})
@@ -943,13 +1020,17 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
-	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
 	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions, sourcePatchGOROOT); err != nil {
 		prepareSpan.done()
 		return nil, err
 	}
 	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	if err := validateVectorMaps(prog, initial, altPkgs); err != nil {
 		prepareSpan.done()
 		return nil, err
 	}
@@ -960,21 +1041,22 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:  make(map[string]bool),
-		pkgs:            map[*packages.Package]Package{},
-		pkgByID:         map[string]Package{},
-		cacheManager:    newCacheManager(),
-		patchFiles:      llgoFiles,
-		output:          output,
-		passOpt:         passOpt,
-		buildConf:       conf,
-		crossCompile:    export,
-		commands:        commands,
-		frontendOptions: frontendOptions,
-		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:      buildTrace,
-		goVersion:       sourcePatchGoVersion,
-		defaultGODEBUG:  defaultGODEBUG,
+		fingerprinting:   make(map[string]bool),
+		pkgs:             map[*packages.Package]Package{},
+		pkgByID:          map[string]Package{},
+		cacheManager:     newCacheManager(),
+		patchFiles:       llgoFiles,
+		output:           output,
+		passOpt:          passOpt,
+		buildConf:        conf,
+		crossCompile:     export,
+		commands:         commands,
+		frontendOptions:  frontendOptions,
+		staticByteArrays: altByteArrays,
+		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:       buildTrace,
+		goVersion:        sourcePatchGoVersion,
+		defaultGODEBUG:   defaultGODEBUG,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -1008,11 +1090,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	buildSSAPkgs(ctx, append(append(altEntries, pkgEntries...), depEntries...))
-	recordPackageSSAInstructions(ctx)
-	callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
-	ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
-	callerSpan.done()
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	ctx.frontend = ctx.newFrontendCache(ssaEntries, buildMode)
+	if ctx.frontend != nil && typeLoader != nil {
+		ctx.frontend.loader = typeLoader
+		typeLoader.ctx = ctx
+	}
+	if ctx.frontend != nil {
+		if err := ctx.frontend.prepare(); err != nil {
+			return nil, err
+		}
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+	}
+	if ctx.frontend == nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
 	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
 	if features == nil {
 		if target.GOARCH == "wasm" {
@@ -1044,6 +1142,46 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	configureUnusedGlobalInits(ctx)
+	if ctx.frontend != nil {
+		if err := ctx.frontend.certify(); err != nil {
+			return nil, err
+		}
+	}
+	if ctx.frontend != nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = ctx.prepareEscapeAnalysis(func(hits, misses int) {
+		escapeSpan.setArg("cache_hits", hits)
+		escapeSpan.setArg("cache_misses", misses)
+	})
+	escapeSpan.done()
+	if ctx.frontend != nil {
+		ctx.frontend.capture(ctx.frontendOptions.EscapeAnalysis)
+	}
+	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
+		selected := make(map[string]bool, len(initial))
+		for _, pkg := range initial {
+			selected[pkg.PkgPath] = true
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, func(fn *ssa.Function) int {
+			pkg := fn.Pkg
+			for parent := fn.Parent(); pkg == nil && parent != nil; parent = parent.Parent() {
+				pkg = parent.Pkg
+			}
+			if pkg != nil && selected[pkg.Pkg.Path()] {
+				return conf.EscapeDiagnostics
+			}
+			return conf.DependencyEscapeDiagnostics
+		}); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
 	allPkgs = append(allPkgs, depPkgs...)
 	var nativeTestRoots []*packages.Package
 	if mode == ModeTest && !inv.compileOnly {
@@ -1775,6 +1913,7 @@ type context struct {
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
+	frontend       *frontendCache
 	fingerprinting map[string]bool
 	cacheDisabled  map[string]none
 	patchFiles     map[string][]string
@@ -1786,11 +1925,13 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf       *Config
-	crossCompile    crosscompile.Export
-	commands        commandEnv
-	frontendOptions cl.Options
-	wasmRuntimeFree bool
+	buildConf         *Config
+	crossCompile      crosscompile.Export
+	commands          commandEnv
+	frontendOptions   cl.Options
+	staticByteArrays  map[string][]byte
+	wasmRuntimeFree   bool
+	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
 
 	cTransformer *cabi.Transformer
 
@@ -1831,6 +1972,10 @@ type context struct {
 	// already internalized ordinary Go symbols, but pclnpost still needs them
 	// until the runtime tables have been rewritten.
 	stripDarwinLTOLocals bool
+	// Metadata relinks stage the executable elsewhere, but its debug map must
+	// keep LTO objects under the final output's persistent directory.
+	darwinLTOObjectOutput    string
+	darwinLTOObjectDirectory string
 
 	// A non-nil list hides data/type globals while preserving function
 	// exports needed by the DWARF runtime dlsym path.
@@ -2038,6 +2183,7 @@ func (c *context) clangConfig() clang.Config {
 
 func (c *context) linker() *clang.Cmd {
 	config := c.clangConfig()
+	config.LDFLAGS = append(c.nativeFullLTOLinkerArgs(), config.LDFLAGS...)
 	linkerProgram := config.Linker
 	useCXX := config.Linker == "" && config.CXX != ""
 	if useCXX {
@@ -2213,15 +2359,25 @@ func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) err
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}
-	if task.needsRuntimeSignals() && aPkg.LPkg != nil {
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil && aPkg.frontendOpaque == nil {
 		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
 	}
 	return nil
 }
 
-// finalizePackageBuild publishes the archive and cache metadata. Cache hits
-// already carry both and therefore require no publication.
+// finalizePackageBuild publishes fresh archives, then reads the same link-time
+// source mappings from fresh and cached artifacts.
 func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	if err := publishPackageArchive(ctx, task, verbose); err != nil {
+		return err
+	}
+	if ctx.mode != ModeGen && ctx.buildConf.PCLNMode != PCLNNone {
+		return loadPackagePCLN(task.pkg)
+	}
+	return nil
+}
+
+func publishPackageArchive(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
 	if aPkg.CacheHit {
 		return nil
@@ -2421,29 +2577,33 @@ func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
 // linked executable: it deduplicates LTO inline copies of the funcinfo entry
 // records against the symbol table and replaces the entry section with a
 // sorted ftab plus findfunctab that the runtime adopts zero-copy (see
-// internal/pclnpost and doc/design/pclntab-linkphase.md). Any failure leaves
-// the binary fully functional on the first-use construction fallback.
-func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) {
+// internal/pclnpost and doc/design/pclntab-linkphase.md). Raw entry carriers
+// support first-use fallback; symbol-only carriers require materialization.
+func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) error {
 	if !shouldEmitRuntimeEntrySites(ctx) {
-		return
+		return nil
 	}
 	if ctx.buildConf.BuildMode != BuildModeExe {
-		return
+		return nil
 	}
 	if os.Getenv("LLGO_PCLNPOST") == "0" { // escape hatch: keep first-use construction
-		return
+		return nil
 	}
 	st, err := pclnpost.Rewrite(out)
 	if err != nil {
+		if darwinSymbolEntries(ctx) {
+			return fmt.Errorf("build native symbol index: %w", err)
+		}
 		if verbose {
 			fmt.Fprintf(os.Stderr, "llgo: prebuilt functab rewrite skipped: %v\n", err)
 		}
-		return
+		return nil
 	}
 	if verbose {
 		fmt.Fprintf(os.Stderr, "llgo: prebuilt functab: %d entries (%d LTO inline copies removed), %d buckets, %d carrier bytes removed\n",
 			st.FtabEntries, st.InlineCopies, st.Buckets, st.CarrierBytesRemoved)
 	}
+	return nil
 }
 
 type mainLinkPlan struct {
@@ -2563,6 +2723,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
 
+	linkArgs = deduplicateDispatchInlineCost(linkArgs)
+
 	// Generate main module file (needed for global variables even in library modes)
 	// This is compiled directly to .o and added to linkInputs (not cached)
 	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
@@ -2635,9 +2797,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		return nil, err
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
-		// The initializer plan exists only after accounting for native inputs.
-		// Reuse that boundary before pruning unobservable method metadata.
-		trimMethods := ctx.buildConf.Goarch == "wasm" && ctx.buildConf.BuildMode == BuildModeExe && ctx.frontendOptions.UnusedGlobalInits != nil
+		// Share the native-input visibility proof with initializer pruning.
+		trimMethods := canPruneWasmTypeMetadata(ctx)
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose); err != nil {
 			return nil, err
 		}
@@ -2699,6 +2860,9 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return err
 	}
 	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
+		return err
+	}
+	if err := publishGoJSLoader(ctx, driverOut, verbose); err != nil {
 		return err
 	}
 	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)
@@ -2976,6 +3140,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	defer cleanupHiddenGlobals()
 	buildArgs = append(buildArgs, hiddenGlobalArgs...)
 	buildArgs = append(buildArgs, debugInfoLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
+	buildArgs = append(buildArgs, emscriptenLTOLibcallArgs(ctx)...)
 	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
 	if err != nil {
 		return err
@@ -3101,15 +3266,18 @@ func debuggerABIRootArgs(ctx *context) []string {
 	if ctx == nil || ctx.buildConf == nil || !ctx.frontendOptions.Debug || ctx.buildConf.Goarch == "wasm" || ctx.buildConf.Goos == "windows" {
 		return nil
 	}
+	// Named targets may invoke ld directly. Native Unix -extld selects a
+	// compiler driver and needs the same -Wl forwarding as the default driver.
+	rawLinker := ctx.buildConf.Target != "" && ctx.crossCompile.Linker != ""
 	var args []string
 	for _, symbol := range []string{debugabi.LegacyMarkerSymbol, debugabi.NativeRecordSymbol} {
 		if ctx.buildConf.Goos == "darwin" {
-			if ctx.crossCompile.Linker != "" {
+			if rawLinker {
 				args = append(args, "-u", "_"+symbol)
 			} else {
 				args = append(args, "-Wl,-u,_"+symbol)
 			}
-		} else if ctx.crossCompile.Linker != "" {
+		} else if rawLinker {
 			args = append(args, "--undefined="+symbol)
 		} else {
 			args = append(args, "-Wl,--undefined="+symbol)
@@ -3330,6 +3498,10 @@ func (c *context) createMergedArchiveFile(archivePath string, inputs []string, v
 		}
 		fmt.Fprintf(&script, "%s %s\n", command, strconv.Quote(input))
 	}
+	// Source mappings have already been consumed to build the runtime tables.
+	// Strip every compiler-private carrier from this exported C archive so
+	// whole-archive consumers do not retain it. Input package caches stay intact.
+	fmt.Fprintf(&script, "DELETE %s\n", strconv.Quote(packagePCLNMember))
 	script.WriteString("SAVE\nEND\n")
 
 	arCmd, err := c.archiveMerger()
@@ -3462,12 +3634,14 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 	options := ctx.frontendOptions
+	options.DeclarationsOnly = aPkg.frontendOpaque != nil
 	// Hosted //export entries use final-link wrappers to register foreign caller threads
 	// with the collector; Windows shared libraries also initialize lazily.
 	// Dependency implementations retain Go symbols too; their public entry
 	// wrappers are generated in the uncached final-link module.
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
+	options.StaticByteArrays = aPkg.staticByteArrays
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
@@ -3512,18 +3686,18 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 		return false, nil
 	}
 	ctx.cTransformer.LowerWindowsVectorParams(mod)
+	ctx.cTransformer.LowerWideVectorCalls(mod)
 	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI copy pass as package modules.
+	lowerAggregateCopies(ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       ctx.buildConf.Goarch == "wasm",
+	})
 	if ctx.buildConf.Goarch != "wasm" {
 		return true, nil
 	}
-
-	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
-	// wrappers. Apply the same post-C-ABI Wasm passes as package modules.
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
-		GoWordSize: ctx.prog.GoWordSize(),
-		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
-	})
 	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
 	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
 		return true, err
@@ -3531,6 +3705,24 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	lowerEmscriptenSIMDCalls(ctx, mod)
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
 	return true, nil
+}
+
+var runHeapToStack = heap2stack.Run
+
+// optimizeHeapAllocations runs while aggregate arguments and results are still
+// SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
+// that can make Attributor's pointer and reachability analyses prohibitively
+// expensive. Run after large-aggregate lowering has rewritten oversized returns
+// so inferred memory effects include its result stores, and before the ordinary
+// pipeline can inline allocator wrappers.
+func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
+		return nil
+	}
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
 }
 
 func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
@@ -3561,6 +3753,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	// They must forward the caller's ABI storage, not materialize aggregates
 	// in a forwarding frame that a tail transfer immediately releases.
 	lowerLargeAggregates(ctx.prog, ret.Module())
+	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
@@ -3576,10 +3772,10 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			return err
 		}
 	}
-	lowerWasmAggregateCopies(ctx.buildConf.Goarch, ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
+	lowerAggregateCopies(ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
 		GoWordSize: ctx.prog.GoWordSize(),
 		GCRoots:    ctx.prog.GCRootsEnabled(),
-		Wasm:       true,
+		Wasm:       ctx.buildConf.Goarch == "wasm",
 	})
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)
@@ -3604,6 +3800,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
@@ -3672,7 +3869,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
 		}
 	}
-	return nil
+	return emitPackagePCLN(ctx, aPkg)
 }
 
 // dropUnusedWindowsTestMain mirrors cmd/link's treatment of a command package
@@ -3713,6 +3910,7 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 }
 
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
 	applyWASIFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
@@ -3723,6 +3921,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 }
 
 func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applyWASIFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if !useInMemoryNativeCodegen(ctx) {
@@ -3898,6 +4097,7 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 	if err != nil {
 		return "", err
 	}
+	defer os.Remove(f.Name())
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return "", err
@@ -3932,7 +4132,11 @@ func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data
 		fmt.Fprintln(os.Stderr, "clang", args)
 	}
 	cmd := ctx.irCompiler()
-	return objFile.Name(), cmd.Compile(args...)
+	if err := cmd.Compile(args...); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
+	return objFile.Name(), nil
 }
 
 func llcCheck(commands commandEnv, exportFile string) (msg string, err error) {
@@ -4017,16 +4221,25 @@ type ssaBuildEntry struct {
 	complexity int64
 }
 
-func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) []ssaBuildEntry {
+func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) ([]ssaBuildEntry, map[string][]byte) {
 	var entries []ssaBuildEntry
+	var payloads map[string][]byte
 	packages.Visit(alts, nil, func(p *packages.Package) {
 		if typs := p.Types; typs != nil && !p.IllTyped {
 			if debugBuild || verbose {
 				log.Println("==> BuildSSA", p.ID)
 			}
+			// Only strip alt packages here. Original packages in this graph
+			// are stripped in registerSSAPkgs, where the alt skip set is
+			// known. Stripping them now would drop InitOrder before that
+			// eligibility check.
+			isAlt := strings.HasPrefix(p.ID, altPkgPathPrefix)
+			if isAlt {
+				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(typs, p.Syntax, p.TypesInfo))
+			}
 			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
 			entries = append(entries, ssaBuildEntry{id: p.ID, pkg: pkgSSA, syntax: p.Syntax})
-			if strings.HasPrefix(p.ID, altPkgPathPrefix) {
+			if isAlt {
 				path := p.ID[len(altPkgPathPrefix):]
 				// Even if an alt package exists and is pulled in as a dependency of other
 				// patches (e.g. runtime/reflect), we should only apply it when it is
@@ -4041,7 +4254,7 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 			}
 		}
 	})
-	return entries
+	return entries, payloads
 }
 
 type aPackage struct {
@@ -4055,18 +4268,22 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs     []string
-	ObjFiles     []string               // file-backed archive members: .o or .ll
-	ObjBuffers   []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile  string                 // archive file: .a (output of archiver, used for linking)
-	Meta         *meta.PackageMeta
-	rewriteVars  map[string]string
-	tempObjFiles []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs         []string
+	ObjFiles         []string               // file-backed archive members: .o or .ll
+	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
+	Meta             *meta.PackageMeta
+	rewriteVars      map[string]string
+	staticByteArrays map[string][]byte
+	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
+
+	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
 	// Cache related fields
-	Fingerprint string // fingerprint digest
-	Manifest    string // manifest text content
-	CacheHit    bool   // whether cache was hit
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {
@@ -4106,16 +4323,28 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				}
 			}
 			rewrites := collectRewriteVars(ctx, pkgPath)
+			var skipInit map[string]bool
+			if altPkg != nil {
+				skipInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
+			}
+			payloads := cl.StripLargeStaticByteArraysExcept(p.Types, p.Syntax, p.TypesInfo, skipInit)
+			if altPkg != nil {
+				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(altPkg.Types, altPkg.Syntax, altPkg.TypesInfo))
+			}
+			// Alt-package visits may already have stripped shared Syntax/InitOrder
+			// and stored the payload on the context. Keep that map for restore.
+			ctx.staticByteArrays = cl.MergeStaticByteArrays(ctx.staticByteArrays, payloads)
 			aPkg := &aPackage{
-				Package:     p,
-				SSA:         ssaPkg,
-				AltPkg:      altPkg,
-				LPkg:        nil,
-				NeedRt:      false,
-				NeedPyInit:  false,
-				LinkArgs:    nil,
-				ObjFiles:    nil,
-				rewriteVars: rewrites,
+				Package:          p,
+				SSA:              ssaPkg,
+				AltPkg:           altPkg,
+				LPkg:             nil,
+				NeedRt:           false,
+				NeedPyInit:       false,
+				LinkArgs:         nil,
+				ObjFiles:         nil,
+				rewriteVars:      rewrites,
+				staticByteArrays: ctx.staticByteArrays,
 			}
 			ctx.pkgs[p] = aPkg
 			ctx.pkgByID[p.ID] = aPkg
@@ -4219,18 +4448,28 @@ func syntaxNodeCount(files []*ast.File) (nodes int64) {
 // recordPackageSSAInstructions makes backend ordering a single linear pass
 // over the SSA that was already built. It includes methods, wrappers, and
 // closures without repeating a whole-program reachability scan per package.
-func recordPackageSSAInstructions(ctx *context) {
+// Reuse that traversal to validate concrete map types before LLVM lowering.
+func recordPackageSSAInstructions(ctx *context) error {
 	if ctx == nil || ctx.progSSA == nil {
-		return
+		return nil
 	}
 	span := ctx.buildTrace.startCoordinator("count SSA instructions", nil)
 	defer span.done()
 	counts := make(map[*ssa.Package]int64)
 	var total int64
 	literalFormats := canSpecializeLiteralFormats(ctx)
+	var validateMaps func(types.Type) error
+	if ctx.prog != nil {
+		validateMaps = ctx.prog.VectorMapValidator()
+	}
 	for fn := range ssautil.AllFunctions(ctx.progSSA) {
-		if fn == nil || fn.Pkg == nil && !literalFormats {
+		if fn == nil {
 			continue
+		}
+		if validateMaps != nil {
+			if err := validateSSAVectorMaps(fn, validateMaps); err != nil {
+				return err
+			}
 		}
 		for _, block := range fn.Blocks {
 			if literalFormats {
@@ -4257,6 +4496,7 @@ func recordPackageSSAInstructions(ctx *context) {
 	}
 	span.setArg("packages", len(counts))
 	span.setArg("instructions", total)
+	return nil
 }
 
 func formatPackageError(err packages.Error, noColumn bool) string {
@@ -4414,7 +4654,25 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 			log.Println("==> BuildSSA", p.ID)
 		}
 		applyPatches(ctx, p, verbose)
-		pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		if ctx.dedup.IsExported(p.ID) {
+			pkgSSA = prog.CreatePackage(p.Types, nil, nil, true)
+			for _, member := range pkgSSA.Members {
+				if fn, ok := member.(*ssa.Function); ok && fn.Name() != "init" {
+					fn.Synthetic = ""
+				}
+			}
+			for _, name := range p.Types.Scope().Names() {
+				if named, ok := p.Types.Scope().Lookup(name).Type().(*types.Named); ok {
+					for i := 0; i < named.NumMethods(); i++ {
+						if fn := prog.FuncValue(named.Method(i)); fn != nil {
+							fn.Synthetic = ""
+						}
+					}
+				}
+			}
+		} else {
+			pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		}
 		return pkgSSA, true
 	}
 	return pkgSSA, false

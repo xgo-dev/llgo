@@ -549,6 +549,22 @@ function Set-LLGoJunction {
   New-Item -ItemType Junction -Path $Path -Target $Target | Out-Null
 }
 
+function Resolve-LLGoReleaseAsset {
+  param([string]$Version, [string]$Architecture, [string]$ABI, [string[]]$Checksums)
+
+  # New releases have one archive per host architecture. Keep pinned historical
+  # versions installable; LLGO_ABI selects dependencies and the legacy fallback.
+  foreach ($platform in @("windows-$Architecture", "windows-$Architecture-$ABI")) {
+    $asset = "llgo$Version.$platform.zip"
+    $checksumRows = @($Checksums | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($asset))$" })
+    if ($checksumRows.Count -gt 1) { throw "Duplicate checksum for $asset" }
+    if ($checksumRows.Count -eq 1) {
+      return [PSCustomObject]@{ Platform = $platform; Asset = $asset; SHA256 = ($checksumRows[0] -split '\s+')[0] }
+    }
+  }
+  throw "No checksummed Windows release for windows/$Architecture"
+}
+
 function Install-LLGoRelease {
   param(
     [Parameter(Mandatory = $true)][string]$Root,
@@ -558,7 +574,12 @@ function Install-LLGoRelease {
     [string]$LocalArchive
   )
 
-  $platform = "windows-$Architecture-$ABI"
+  $platform = "windows-$Architecture"
+  $legacyPlatform = "$platform-$ABI"
+  if (-not (Test-Path -LiteralPath (Join-Path $Root "versions\$Version\$platform\bin\llgo.exe")) -and
+      (Test-Path -LiteralPath (Join-Path $Root "versions\$Version\$legacyPlatform\bin\llgo.exe"))) {
+    $platform = $legacyPlatform
+  }
   $asset = "llgo$Version.$platform.zip"
   $versionRoot = Join-Path $Root "versions\$Version\$platform"
   $executable = Join-Path $versionRoot 'bin\llgo.exe'
@@ -578,12 +599,15 @@ function Install-LLGoRelease {
         Invoke-LLGoDownload `
           -Uri "$base/llgo$Version.checksums.txt" `
           -OutFile $checksums
+        $selected = Resolve-LLGoReleaseAsset -Version $Version -Architecture $Architecture -ABI $ABI `
+          -Checksums @(Get-Content -LiteralPath $checksums)
+        $platform = $selected.Platform
+        $asset = $selected.Asset
+        $versionRoot = Join-Path $Root "versions\$Version\$platform"
+        $executable = Join-Path $versionRoot 'bin\llgo.exe'
+        $archive = Join-Path $temporary $asset
         Invoke-LLGoDownload -Uri "$base/$asset" -OutFile $archive
-        $checksumLine = Get-Content -LiteralPath $checksums |
-          Where-Object { $_ -match "^[0-9a-f]{64}\s+$([regex]::Escape($asset))$" } |
-          Select-Object -First 1
-        if (-not $checksumLine) { throw "Checksum for $asset is missing" }
-        $expected = ($checksumLine -split '\s+')[0]
+        $expected = $selected.SHA256
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
         if ($actual -ne $expected) { throw "SHA-256 mismatch for $asset" }
       }
@@ -608,7 +632,31 @@ function Install-LLGoRelease {
   New-Item -ItemType Directory -Force $Root | Out-Null
   $current = Join-Path $Root 'current'
   Set-LLGoJunction -Path $current -Target $versionRoot
-  Set-LLGoJunction -Path (Join-Path $Root 'bin') -Target (Join-Path $current 'bin')
+
+  # Go's executable-path resolution can fail when bin is a junction.
+  $bin = Join-Path $Root 'bin'
+  $binItem = Get-Item -Force -LiteralPath $bin -ErrorAction SilentlyContinue
+  if ($binItem -and ($binItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Remove-Item -Force -LiteralPath $bin
+  }
+  New-Item -ItemType Directory -Force $bin | Out-Null
+  $releaseBin = Join-Path $versionRoot 'bin'
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $bin) {
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseBin $file.Name) -PathType Leaf)) {
+      Remove-Item -Force -LiteralPath $file.FullName
+    }
+  }
+  foreach ($file in Get-ChildItem -File -Force -LiteralPath $releaseBin) {
+    $path = Join-Path $bin $file.Name
+    if (Test-Path -LiteralPath $path) { Remove-Item -Force -LiteralPath $path }
+    New-Item -ItemType HardLink -Path $path -Target $file.FullName | Out-Null
+  }
+  foreach ($directory in @('runtime', 'targets', 'crosscompile')) {
+    $target = Join-Path $current $directory
+    if (Test-Path -LiteralPath $target -PathType Container) {
+      Set-LLGoJunction -Path (Join-Path $Root $directory) -Target $target
+    }
+  }
   return $executable
 }
 

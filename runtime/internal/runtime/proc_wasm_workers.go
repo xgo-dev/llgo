@@ -148,6 +148,7 @@ func initWasmScheduler(gp *g) {
 	bindWasmWorkerG(mainWorker, gp)
 	gp.context.platform.owner = mainWorker
 	wasmMultiSched.started = true
+	readyWasmWorkerGC(mainWorker)
 
 	for i := 1; i < count; i++ {
 		worker := &wasmMultiSched.workers[i]
@@ -401,6 +402,7 @@ func goschedBackend() {
 	worker := currentWasmWorker()
 	casgstatus(gp, _Grunning, _Grunnable)
 	enqueueWasmG(worker, gp)
+	captureWasmSuspension(gp)
 	gp.context.platform.context.Swap(
 		&worker.system,
 		wasmWorkerSystemRootPointer(worker),
@@ -417,6 +419,7 @@ func parkWasmG(gp *g) {
 	atomic.Add(&wasmMultiSched.active, ^uint32(0))
 	wakeWasmEventWorker()
 	worker := gp.context.platform.owner
+	captureWasmSuspension(gp)
 	gp.context.platform.context.Swap(
 		&worker.system,
 		wasmWorkerSystemRootPointer(worker),

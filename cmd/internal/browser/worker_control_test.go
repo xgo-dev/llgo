@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -415,5 +416,61 @@ func TestWorkerSnapshotDrainsRepliesAfterTargetExit(t *testing.T) {
 	}
 	if err := client.call(ctx, "page", "Runtime.getIsolateId", map[string]any{}, nil); err != nil {
 		t.Fatalf("surviving target lost its debugger transport: %v", err)
+	}
+}
+
+func TestCDPCanceledWritePreservesOtherTargets(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	ctx, client := workerTestClient(t, func(ctx context.Context, conn *websocket.Conn) {
+		conn.SetReadLimit(64 << 20)
+		_, reader, err := conn.Reader(ctx)
+		if err != nil {
+			return
+		}
+		var first [1]byte
+		if _, err := io.ReadFull(reader, first[:]); err != nil {
+			return
+		}
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return
+		}
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return
+		}
+		var command cdpMessage
+		if wsjson.Read(ctx, conn, &command) == nil {
+			_ = wsjson.Write(ctx, conn, cdpMessage{ID: command.ID, Result: json.RawMessage(`{}`)})
+		}
+	})
+	request, cancel := context.WithCancel(ctx)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		// Keep the server's first request outstanding until cancellation.
+		result <- client.call(request, "exiting", "Runtime.evaluate", map[string]any{
+			"expression": strings.Repeat(" ", 32<<20),
+		}, nil)
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("request did not reach the server")
+	}
+	cancel()
+	close(release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled request: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("canceled request did not finish")
+	}
+	if err := client.call(ctx, "surviving", "Runtime.getIsolateId", map[string]any{}, nil); err != nil {
+		t.Fatalf("canceling one request closed the shared connection: %v", err)
 	}
 }

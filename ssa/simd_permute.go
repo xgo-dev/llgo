@@ -31,3 +31,39 @@ func (b Builder) simdPermute(op SIMDOp, x, indices Expr) Expr {
 	}
 	return Expr{result, x.Type}
 }
+
+// simdInterleave only selects existing lanes: no integer arithmetic, poison
+// padding or target-specific intrinsic is needed. Grouped operations stay
+// within each corresponding 128-bit pair of input groups.
+func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
+	n := x.ll.VectorSize()
+	group := n
+	if op == SIMDInterleaveLoGrouped || op == SIMDInterleaveHiGrouped {
+		// The frontend restricts Grouped declarations to 256 bits.
+		group /= 2
+	}
+	mask := make([]llvm.Value, n)
+	for base := 0; base < n; base += group {
+		for i := 0; i < group; i++ {
+			var index int
+			switch op {
+			case SIMDInterleaveLo, SIMDInterleaveLoGrouped:
+				index = base + i/2 + (i%2)*n
+			case SIMDInterleaveHi, SIMDInterleaveHiGrouped:
+				index = base + i/2 + (i%2)*n + group/2
+			case SIMDInterleaveEven, SIMDInterleaveOdd:
+				index = base + 2*(i/2) + (i%2)*n
+				if op == SIMDInterleaveOdd {
+					index++
+				}
+			case SIMDConcatEven, SIMDConcatOdd:
+				index = base + 2*(i%(group/2)) + (i/(group/2))*n
+				if op == SIMDConcatOdd {
+					index++
+				}
+			}
+			mask[base+i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(index), false)
+		}
+	}
+	return Expr{b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(mask, false), ""), x.Type}
+}

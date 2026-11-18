@@ -39,11 +39,30 @@ import (
 const prebuiltMagic = uint64(0x314254464F474C4C)
 
 const (
-	bucketSize    = 4096
-	subbucketCnt  = 16
-	subbucketSize = bucketSize / subbucketCnt
-	bucketBytes   = 4 + 2*subbucketCnt
+	prebuiltHeaderBytes = 32
+	prebuiltEntryBytes  = 8
+	bucketSize          = 4096
+	subbucketCnt        = 16
+	subbucketSize       = bucketSize / subbucketCnt
+	bucketBytes         = 4 + 2*subbucketCnt
 )
+
+func prebuiltTableSize(entries, buckets uint64) uint64 {
+	return prebuiltHeaderBytes + entries*prebuiltEntryBytes + buckets*bucketBytes
+}
+
+// SymbolEntryReserveSize bounds the encoded table, including its sentinel and
+// buckets spanning foreign text between Go functions. The extra bucket covers
+// an unaligned first PC; entry and text offsets use the runtime's uint32 format.
+func SymbolEntryReserveSize(analysis ExternalAnalysis) (uint64, error) {
+	if analysis.TextEnd <= analysis.TextStart ||
+		analysis.TextEnd-analysis.TextStart > uint64(^uint32(0)) ||
+		uint64(len(analysis.EntrySites)) >= uint64(^uint32(0)) {
+		return 0, fmt.Errorf("invalid symbol entry count or text range")
+	}
+	buckets := (analysis.TextEnd-analysis.TextStart)/bucketSize + 2
+	return prebuiltTableSize(uint64(len(analysis.EntrySites))+1, buckets), nil
+}
 
 type symIndexEntry struct {
 	id  uint64
@@ -114,7 +133,7 @@ func writeBack(path string, info *binaryInfo, kept []siteRecord) (ftabCount, buc
 		buckets = append(buckets, tmp[:]...)
 	}
 
-	need := 32 + count*8 + len(buckets)
+	need := int(prebuiltTableSize(uint64(count), uint64(nbuckets)))
 	if need > int(info.entryVMSize) {
 		return 0, 0, 0, fmt.Errorf("prebuilt blob needs %d bytes; entry section has %d", need, info.entryVMSize)
 	}
@@ -124,15 +143,15 @@ func writeBack(path string, info *binaryInfo, kept []siteRecord) (ftabCount, buc
 	binary.LittleEndian.PutUint64(blob[16:], base)
 	binary.LittleEndian.PutUint32(blob[24:], uint32(count))
 	binary.LittleEndian.PutUint32(blob[28:], uint32(len(buckets)/bucketBytes))
-	off := 32
+	off := prebuiltHeaderBytes
 	for _, r := range rows {
 		binary.LittleEndian.PutUint32(blob[off:], uint32(r.pc-base))
 		binary.LittleEndian.PutUint32(blob[off+4:], r.idx)
-		off += 8
+		off += prebuiltEntryBytes
 	}
 	// Sentinel: end of text, funcIndex 0.
 	binary.LittleEndian.PutUint32(blob[off:], uint32(info.textEnd-base))
-	off += 8
+	off += prebuiltEntryBytes
 	copy(blob[off:], buckets)
 
 	raw := make([]byte, len(info.raw))

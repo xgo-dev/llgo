@@ -7,6 +7,72 @@ groups:
   wasm-size: "^WasmSize/"
   wasm-build: "^WasmBuild/"
 views:
+  println-sizes:
+    title: println WebAssembly sizes
+    select:
+      groups: "^wasm-size$"
+      benchmarks: "^WasmSize/(j32-|j64-|w32-)"
+      metrics: "^(module-bytes|glue-bytes)$"
+    table:
+      rows: [benchmark]
+      columns: [metric]
+      missing: error
+      empty: error
+      dimensions:
+        benchmark:
+          title: Profile and compiler
+          trim-prefix: BenchmarkWasmSize/
+      metrics:
+        module-bytes:
+          title: Wasm module
+          format: bytes
+        glue-bytes:
+          title: Generated JS glue
+          format: bytes
+  cprintf-sizes:
+    title: cprintf WebAssembly sizes
+    select:
+      groups: "^wasm-size$"
+      benchmarks: "^WasmSize/cprintf/"
+      metrics: "^(module-bytes|glue-bytes)$"
+    table:
+      rows: [benchmark]
+      columns: [metric]
+      missing: error
+      empty: error
+      dimensions:
+        benchmark:
+          title: Profile and compiler
+          trim-prefix: BenchmarkWasmSize/cprintf/
+      metrics:
+        module-bytes:
+          title: Wasm module
+          format: bytes
+        glue-bytes:
+          title: Generated JS glue
+          format: bytes
+  fmtprintf-sizes:
+    title: fmtprintf WebAssembly sizes
+    select:
+      groups: "^wasm-size$"
+      benchmarks: "^WasmSize/fmtprintf/"
+      metrics: "^(module-bytes|glue-bytes)$"
+    table:
+      rows: [benchmark]
+      columns: [metric]
+      missing: error
+      empty: error
+      dimensions:
+        benchmark:
+          title: Profile and compiler
+          trim-prefix: BenchmarkWasmSize/fmtprintf/
+      metrics:
+        module-bytes:
+          title: Wasm module
+          format: bytes
+        glue-bytes:
+          title: Generated JS glue
+          format: bytes
   wasm-size:
     title: WebAssembly output sizes
     select:

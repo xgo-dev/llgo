@@ -711,7 +711,21 @@ class LLDBDebugger:
                 "tid": int(match.group(4)),
                 "thread": match.group(5),
             })
-        return goroutines
+        # The fixture asserts the main G and its two user workers. Windows/386
+        # GC also starts a persistent runtime service. Keep it visible in the
+        # adapter, and require a mapped, readable stack before excluding it
+        # from the fixture's user-worker assertions.
+        users = []
+        for goroutine in goroutines:
+            stack = lldb.SBCommandReturnObject()
+            self.debugger.GetCommandInterpreter().HandleCommand(
+                f"llgo goroutine {goroutine['goid']} bt", stack)
+            if (stack.Succeeded() and
+                    goroutine["thread"] != "unavailable" and
+                    "runtime.runExplicitGC" in (stack.GetOutput() or "")):
+                continue
+            users.append(goroutine)
+        return users
 
     def get_goroutine_summary(self) -> Optional[str]:
         goroutines = self.get_goroutines()

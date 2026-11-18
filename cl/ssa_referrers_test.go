@@ -18,6 +18,9 @@ func TestNonDebugReferrers(t *testing.T) {
 	if refs, available := nonDebugReferrers(constantValue); available || refs != nil {
 		t.Fatalf("constant referrers = %v, available = %v", refs, available)
 	}
+	if singleNonDebugReferrer(constantValue) != nil {
+		t.Fatal("constant unexpectedly has a sole referrer")
+	}
 	const source = `package refs
 func f(p int) int {
 	x := p + 1
@@ -50,6 +53,12 @@ func f(p int) int {
 	}
 	if sum == nil {
 		t.Fatal("sum instruction not found")
+	}
+	if singleNonDebugReferrer(sum) != nil {
+		t.Fatal("multiply used value has a sole referrer")
+	}
+	if singleNonDebugReferrer(pkg.Func("f").Params[0]) != sum {
+		t.Fatal("debug references hid the parameter's sole executable use")
 	}
 	all := *sum.Referrers()
 	refs, available := nonDebugReferrers(sum)

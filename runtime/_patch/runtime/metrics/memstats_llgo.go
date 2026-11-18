@@ -7,8 +7,7 @@ import "runtime"
 func llgoReadMetricMemStats() runtime.MemStats {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	if m.HeapObjects == 0 {
-		m.HeapObjects = llgoSaturatingSub(m.Mallocs, m.Frees)
-	}
+	// A collector may expose allocation events without live/free object
+	// counts. Do not turn an unavailable live count into cumulative Mallocs.
 	return m
 }

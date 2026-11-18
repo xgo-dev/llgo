@@ -115,55 +115,67 @@ def run(args):
                  if line.startswith(("Test", "Example", "Fuzz", "BenchmarkGo126"))]
         if not names:
             raise ValueError("internal/build listed no tests")
-        groups = partition(names, args.workers)
+        groups = partition(names, args.workers * args.batches)
         timing_dir = root / "go-test-timings"
         timing_dir.mkdir(exist_ok=True)
-        report = {"gomaxprocs_per_worker": args.gomaxprocs, "shards": groups}
+        report = {"gomaxprocs_per_worker": args.gomaxprocs,
+                  "batches_per_worker": args.batches, "shards": groups}
         report_path = timing_dir / "build-shards.json"
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         files = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
         files = [name for name in files if name]
         roots = [temporary / f"source-{i}" for i in range(args.workers)]
-        profiles = [temporary / f"coverage-{i}.txt" for i in range(args.workers)]
+        profiles = [temporary / f"coverage-{i}.txt" for i in range(len(groups))]
         for source in roots:
             copy_sources(root, source, files)
 
         def worker(index):
             started = time.monotonic()
-            tests = [name for name in groups[index] if not name.startswith("Benchmark")]
-            benchmarks = [name for name in groups[index] if name.startswith("Benchmark")]
             executor = exec_argument([Path(sys.executable).as_posix(),
                                       Path(__file__).resolve().as_posix(), "--run-binary",
                                       roots[index].as_posix(), str(args.gomaxprocs)])
-            command = go_test + ["-json", "-run=" + selection(tests),
-                                 "-bench=" + selection(benchmarks),
-                                 "-coverprofile=" + str(profiles[index]),
-                                 "-exec=" + executor, "./internal/build"]
-            progress(f"Starting build shard {index + 1}/{args.workers}: "
-                     f"{len(tests)} tests, {len(benchmarks)} benchmarks")
             environment = {**os.environ, "GOMAXPROCS": str(args.gomaxprocs)}
-            outcomes = []
-            with subprocess.Popen(command, cwd=root,
-                                  env=environment, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, text=True,
-                                  encoding="utf-8", errors="replace", bufsize=1) as process:
-                for line in process.stdout:
-                    emit(line)
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        continue
-                    if (isinstance(event, dict) and event.get("Package") == PACKAGE
-                            and event.get("Action") in ("pass", "skip", "fail")
-                            and event.get("Test") and "/" not in event["Test"]):
-                        outcomes.append(event["Test"])
-                status = process.wait()
-            if sorted(outcomes) != sorted(tests):
-                progress(f"Build shard {index + 1} did not report every selected test exactly once")
-                status = 1
-            progress(f"Build shard {index + 1} exited with {status}")
-            return {"shard": index, "status": status, "seconds": time.monotonic() - started,
-                    "reported_tests": len(outcomes), "selected_tests": len(tests)}
+            batches = []
+            # Keep the same bounded concurrency and per-worker source/cache.
+            # Fresh test processes bound cumulative package timers without
+            # shortening or restarting any individual test.
+            for batch in range(args.batches):
+                shard = index + batch * args.workers
+                tests = [name for name in groups[shard] if not name.startswith("Benchmark")]
+                benchmarks = [name for name in groups[shard] if name.startswith("Benchmark")]
+                command = go_test + ["-json", "-run=" + selection(tests),
+                                     "-bench=" + selection(benchmarks),
+                                     "-coverprofile=" + str(profiles[shard]),
+                                     "-exec=" + executor, "./internal/build"]
+                progress(f"Starting build worker {index + 1}/{args.workers}, "
+                         f"batch {batch + 1}/{args.batches}: "
+                         f"{len(tests)} tests, {len(benchmarks)} benchmarks")
+                batch_started = time.monotonic()
+                outcomes = []
+                with subprocess.Popen(command, cwd=root,
+                                      env=environment, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True,
+                                      encoding="utf-8", errors="replace", bufsize=1) as process:
+                    for line in process.stdout:
+                        emit(line)
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            continue
+                        if (isinstance(event, dict) and event.get("Package") == PACKAGE
+                                and event.get("Action") in ("pass", "skip", "fail")
+                                and event.get("Test") and "/" not in event["Test"]):
+                            outcomes.append(event["Test"])
+                    status = process.wait()
+                if sorted(outcomes) != sorted(tests):
+                    progress(f"Build shard {shard + 1} did not report every selected test exactly once")
+                    status = 1
+                progress(f"Build shard {shard + 1} exited with {status}")
+                batches.append({"shard": shard, "status": status,
+                                "seconds": time.monotonic() - batch_started,
+                                "reported_tests": len(outcomes), "selected_tests": len(tests)})
+            return {"worker": index, "status": int(any(b["status"] for b in batches)),
+                    "seconds": time.monotonic() - started, "batches": batches}
 
         # Drain every worker even on failure; their logs and coverage remain
         # useful, and no compiler may outlive cleanup of its source directory.
@@ -174,7 +186,7 @@ def run(args):
         available = [profile for profile in profiles if profile.is_file()]
         if available:
             merge_coverage(available, root / "coverage-build.txt")
-        if len(available) != args.workers or any(result["status"] for result in results):
+        if len(available) != len(groups) or any(result["status"] for result in results):
             return 1
     return 0
 
@@ -193,6 +205,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
     parser.add_argument("--gomaxprocs", type=int, default=2)
+    parser.add_argument("--batches", type=int, choices=(1, 2), default=2,
+                        help="sequential test processes per worker; concurrency stays bounded")
     parser.add_argument("--overlay", default="")
     parser.add_argument("--ldflags", default="")
     args = parser.parse_args()

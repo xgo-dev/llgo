@@ -3,18 +3,30 @@
 package runtime
 
 import (
+	"unsafe"
+
 	"github.com/xgo-dev/llgo/runtime/internal/stacktrace"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
-// TracebackCreator is installed by the public runtime's symbol-aware walker.
-var TracebackCreator func() uintptr
+// TracebackCreator captures the parent PCs. Unix uses native stack bounds
+// without symbol tables; Windows retains its platform-specific walker.
+var TracebackCreator func([]uintptr) int
 
 func registerTraceback(gp, parent *g) {
+	var pcs [stacktrace.MaxCreatorFrames]uintptr
+	var n int
 	if parent != nil && TracebackCreator != nil {
-		gp.createdPC = TracebackCreator()
+		n = TracebackCreator(pcs[:])
 	}
-	gp.tracebackThread = stacktrace.Register(gp.goid, gp.parentGoid, gp.createdPC)
+	gp.tracebackThread = stacktrace.Register(gp.goid, gp.parentGoid, &pcs[0], uintptr(n))
+}
+
+func TracebackParentPCs() (uint64, []uintptr) {
+	gp := getg()
+	var n uintptr
+	pcs := stacktrace.ThreadCreator(gp.tracebackThread, &n)
+	return gp.parentGoid, unsafe.Slice(pcs, n)
 }
 
 func attachTraceback(gp *g) {

@@ -81,7 +81,7 @@ runs:
       env:
         PATH: ${{ steps.windows_setup_python_path.outputs.path }}
       with:
-        # LLVM 23.1.4's official win64 and Windows-on-Arm LLDB packages both
+        # LLVM 23's official win64 and Windows-on-Arm LLDB packages both
         # link python311.dll. Native Win32 LLDB uses llvm-mingw's bundled
         # Python instead, keeping the interpreter and debugger ABI matched.
         python-version: "3.11.9"
@@ -95,12 +95,13 @@ runs:
         $ErrorActionPreference = "Stop"
         if ("${{ inputs.windows-arch }}" -eq "386") {
           $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\$env:LLGO_WINDOWS_LLVM_VERSION\386\lldb"
+          # The pinned llvm-mingw debugger has its own patch version.
           $prefix = Join-Path $lldbRoot "python"
           $pythonPath = Join-Path $prefix "lib\python3.14\site-packages"
           $env:PYTHONHOME = $prefix
           $env:PYTHONPATH = $pythonPath
           $env:PATH = "$(Join-Path $lldbRoot 'bin');$env:PATH"
-          & (Join-Path $lldbRoot "bin\lldb.exe") --batch -o "script import os, struct, lldb; (struct.calcsize('P') == 4 and lldb.SBDebugger.GetVersionString().startswith('lldb version $env:LLGO_WINDOWS_LLVM_VERSION')) or os._exit(1)"
+          & (Join-Path $lldbRoot "bin\lldb.exe") --batch -o "script import os, struct, lldb; (struct.calcsize('P') == 4 and lldb.SBDebugger.GetVersionString().startswith('lldb version 23.1.5')) or os._exit(1)"
           if ($LASTEXITCODE -ne 0) {
             throw "The native Win32 LLDB/Python runtime check failed"
           }
@@ -142,7 +143,8 @@ runs:
 
         libs_dir="${GITHUB_WORKSPACE}/_demo/c/cargs/libs"
         mkdir -p "${libs_dir}"
-        wget -P "${libs_dir}" "https://github.com/xgo-dev/llpkg/releases/download/cargs/v1.0.0/${demo_pkg}"
+        curl --fail --location --retry 5 --retry-all-errors \
+          --output "${libs_dir}/${demo_pkg}" "https://github.com/xgo-dev/llpkg/releases/download/cargs/v1.0.0/${demo_pkg}"
         unzip -o "${libs_dir}/${demo_pkg}" -d "${libs_dir}"
 
         for tmpl in "${libs_dir}"/lib/pkgconfig/*.pc.tmpl; do
@@ -265,22 +267,31 @@ runs:
       run: |
         set -euo pipefail
 
-        pip3.12 install --user --break-system-packages numpy
+        python=python3.12
+        python_pc=python-3.12-embed
+        if [[ "${RUNNER_OS}" == "Linux" ]]; then
+          # Match python3-dev and its embedding library, even when the runner
+          # exposes another Python installation earlier on PATH.
+          python=/usr/bin/python3
+          python_pc=python3-embed
+        fi
+        "$python" -m pip install --user --break-system-packages numpy
         if [[ "${RUNNER_OS}" == "Linux" ]]; then
           # The demos use CPU tensors. The default PyPI wheel pulls CUDA
           # libraries that can exhaust this job's one-hour time limit.
-          pip3.12 install --user --break-system-packages torch \
+          "$python" -m pip install --user --break-system-packages torch \
             --index-url https://download.pytorch.org/whl/cpu
         else
-          pip3.12 install --user --break-system-packages torch
+          "$python" -m pip install --user --break-system-packages torch
         fi
 
-        pcdir="${HOME}/pc"
-        mkdir -p "${pcdir}"
-        libdir="$(pkg-config --variable=libdir python-3.12-embed)"
-        ln -sf "${libdir}/pkgconfig/python-3.12-embed.pc" "${pcdir}/python3-embed.pc"
-
-        echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "${GITHUB_ENV}"
+        if [[ "$python_pc" != python3-embed ]]; then
+          pcdir="${HOME}/pc"
+          mkdir -p "$pcdir"
+          pkgconfigdir="$(pkg-config --variable=pcfiledir "$python_pc")"
+          ln -sf "${pkgconfigdir}/${python_pc}.pc" "${pcdir}/python3-embed.pc"
+          echo "PKG_CONFIG_PATH=${pcdir}:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+        fi
         echo "LLGO_FULL_RPATH=true" >> "${GITHUB_ENV}"
 
     - name: Install Python demo dependencies on Windows

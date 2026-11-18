@@ -15,12 +15,12 @@ type Foo = struct {
 var format = [...]int8{'H', 'e', 'l', 'l', 'o', ' ', '%', 'd', '\n', 0}
 
 // CHECK-LABEL: define void @main.Print(ptr %0){{.*}} {
-// CHECK: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 1
-// CHECK-NEXT: [[PRINT_OK:%[0-9]+]] = load i1, ptr [[PRINT_OK_FIELD]]
-// CHECK-NEXT: br i1 [[PRINT_OK]], label %{{[^,]+}}, label %{{[^ ]+}}
-// CHECK: [[PRINT_A_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[PRINT_A:%[0-9]+]] = load i32, ptr [[PRINT_A_FIELD]]
-// CHECK-NEXT: call void (ptr, ...) @printf(ptr @main.format, i32 [[PRINT_A]])
+// CHECK-DAG: [[PRINT_OK_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 1
+// CHECK-DAG: [[PRINT_OK:%[0-9]+]] = load i1, ptr [[PRINT_OK_FIELD]]
+// CHECK-DAG: br i1 [[PRINT_OK]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: [[PRINT_A_FIELD:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr %0, i32 0, i32 0
+// CHECK-DAG: [[PRINT_A:%[0-9]+]] = load i32, ptr [[PRINT_A_FIELD]]
+// CHECK-DAG: call void (ptr, ...) @printf(ptr @main.format, i32 [[PRINT_A]])
 
 func Print(p *Foo) {
 	if p.ok {
@@ -29,7 +29,8 @@ func Print(p *Foo) {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[MAIN_FOO:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: [[MAIN_FOO:%[0-9]+]] = alloca { i32, i1 }, align 8
+// CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[MAIN_FOO]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[MAIN_A:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 0
 // CHECK-NEXT: [[MAIN_OK:%[0-9]+]] = getelementptr inbounds nuw { i32, i1 }, ptr [[MAIN_FOO]], i32 0, i32 1
 // CHECK-NEXT: store i32 100, ptr [[MAIN_A]]

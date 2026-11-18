@@ -215,13 +215,13 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	prog := llssa.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	// cl/ssawrap.MakeCallWrapper uses this suffix when an intrinsic is used as
-	// a function value. It is a physical function, not a separate PCLN class.
-	src.EmitFuncInfo("example.com/p.intrinsic$wrapper", "example.com/p.Live", "live.go", 17, 3)
+	// Instruction function values use their original Go symbol for the
+	// synthesized physical entry, without a separate PCLN class.
+	src.EmitFuncInfo("example.com/p.intrinsic", "example.com/p.Live", "live.go", 17, 3)
 	src.EmitFuncInfo("example.com/p.missing", "example.com/p.Missing", "missing.go", 19, 1)
 	liveFn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.CDecl)
 	liveFn.MakeBody(1).Return()
-	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic$wrapper", llssa.NoArgsNoRet, llssa.CDecl)
+	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic", llssa.NoArgsNoRet, llssa.CDecl)
 	intrinsicWrapper.MakeBody(1).Return()
 	otherFn := src.NewFunc("example.com/p.other", llssa.NoArgsNoRet, llssa.CDecl)
 	otherFn.MakeBody(1).Return()
@@ -250,7 +250,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	}
 	for _, bad := range []string{
 		`.quad \22example.com/p.live\22`,
-		`.quad \22example.com/p.intrinsic$wrapper\22`,
+		`.quad \22example.com/p.intrinsic\22`,
 		`.quad \22example.com/p.other\22`,
 		`.quad \22example.com/p.missing\22`,
 	} {
@@ -261,7 +261,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	if got := strings.Count(srcIR, ".pushsection llgo_funcinfo_entry"); got != 2 {
 		t.Fatalf("entry site count = %d, want one per physical function with funcinfo:\n%s", got, srcIR)
 	}
-	for _, symbol := range []string{"example.com/p.live", "example.com/p.intrinsic$wrapper"} {
+	for _, symbol := range []string{"example.com/p.live", "example.com/p.intrinsic"} {
 		if id := uint64Hex(funcInfoSymbolID(symbol)); !strings.Contains(srcIR, ".quad "+id) {
 			t.Fatalf("entry site IR missing physical function %q (id %s):\n%s", symbol, id, srcIR)
 		}
@@ -308,44 +308,57 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	}
 }
 
-func TestWin32FuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
-	defer prog.Dispose()
-	prog.EnableFuncInfoMetadata(true)
-	prog.EnableFuncInfoSites(true)
-	ctx := &context{
-		prog: prog,
-		buildConf: &Config{
-			BuildMode: BuildModeExe,
-			Goos:      "windows",
-			Goarch:    "386",
-		},
-	}
-	pkg := prog.NewPackage("example.com/p", "example.com/p")
-	for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
-		pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
-		pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
-	}
-	addressed := pkg.Module().NamedFunction("example.com/p.addressed")
-	keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
-	keep.SetInitializer(addressed)
+func TestFuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
+	for _, target := range []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"linux", "arm64"}, {"linux", "386"},
+		{"darwin", "amd64"}, {"darwin", "arm64"},
+		{"windows", "386"}, {"windows", "amd64"}, {"windows", "arm64"},
+	} {
+		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
+			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
+			defer prog.Dispose()
+			prog.EnableFuncInfoMetadata(true)
+			prog.EnableFuncInfoSites(true)
+			ctx := &context{
+				prog: prog,
+				buildConf: &Config{
+					BuildMode:   BuildModeExe,
+					Goos:        target.goos,
+					Goarch:      target.goarch,
+					LinkOptions: LinkOptions{DWARF: DWARFOmit},
+				},
+			}
+			pkg := prog.NewPackage("example.com/p", "example.com/p")
+			for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
+				pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
+				pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
+			}
+			addressed := pkg.Module().NamedFunction("example.com/p.addressed")
+			keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
+			keep.SetInitializer(addressed)
 
-	emitFuncInfoEntrySites(ctx, pkg)
-	ir := pkg.String()
-	if got := strings.Count(ir, `.long ${0:c}`); got != 1 {
-		t.Fatalf("Win32 exact-entry record count = %d, want 1:\n%s", got, ir)
+			emitFuncInfoEntrySites(ctx, pkg)
+			ir := pkg.String()
+			directive := ".quad"
+			if prog.PointerSize() == 4 {
+				directive = ".long"
+			}
+			if got := strings.Count(ir, directive+" ${0:c}"); got != 1 {
+				t.Fatalf("exact-entry record count = %d, want 1:\n%s", got, ir)
+			}
+			if !strings.Contains(ir, `"X"(ptr @"example.com/p.addressed")`) {
+				t.Fatalf("address-taken function is not the exact-entry operand:\n%s", ir)
+			}
+			if got := strings.Count(ir, directive+" "+siteAnchorLabel(runtimeSiteObjectFormat(ctx), "funcinfo_entry")); got != 1 {
+				t.Fatalf("anchor entry record count = %d, want 1:\n%s", got, ir)
+			}
+			buf, err := prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), llvm.ObjectFile)
+			if err != nil {
+				t.Fatalf("emit exact-entry object: %v\n%s", err, ir)
+			}
+			buf.Dispose()
+		})
 	}
-	if !strings.Contains(ir, `"X"(ptr @"example.com/p.addressed")`) {
-		t.Fatalf("Win32 address-taken function is not the exact-entry operand:\n%s", ir)
-	}
-	if got := strings.Count(ir, ".long .Lllgo_funcinfo_entry_anchor_"); got != 1 {
-		t.Fatalf("Win32 anchor entry record count = %d, want 1:\n%s", got, ir)
-	}
-	buf, err := prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), llvm.ObjectFile)
-	if err != nil {
-		t.Fatalf("emit Win32 exact-entry COFF object: %v\n%s", err, ir)
-	}
-	buf.Dispose()
 }
 
 func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
@@ -672,6 +685,7 @@ func TestFuncInfoTableIgnoresInvalidMetadata(t *testing.T) {
 }
 
 func TestRuntimeSitePolicy(t *testing.T) {
+	t.Setenv("LLGO_PCLNPOST", "1")
 	tests := []struct {
 		name        string
 		conf        Config
@@ -691,6 +705,26 @@ func TestRuntimeSitePolicy(t *testing.T) {
 			conf:        Config{Goos: "darwin", PCLNMode: PCLNEmbedded},
 			enableSites: true,
 			wantPCLine:  true,
+		},
+		{
+			name: "darwin embedded dwarf with full LTO",
+			conf: Config{
+				Goos: "darwin", Goarch: "amd64", BuildMode: BuildModeExe,
+				PCLNMode: PCLNEmbedded, LTO: lto.Full,
+			},
+			enableSites: true,
+			wantPCLine:  true,
+			wantAddress: true,
+		},
+		{
+			name: "darwin embedded dwarf with ThinLTO",
+			conf: Config{
+				Goos: "darwin", Goarch: "amd64", BuildMode: BuildModeExe,
+				PCLNMode: PCLNEmbedded, LTO: lto.Thin,
+			},
+			enableSites: true,
+			wantPCLine:  true,
+			wantAddress: true,
 		},
 		{
 			name: "darwin embedded without dwarf",
@@ -1160,6 +1194,7 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 		{name: "linux", goos: "linux", goarch: "amd64", identitySect: "llgo_pclntab_id", entryBoundary: "__start_llgo_funcinfo_entry"},
 		{name: "darwin/no-lto", goos: "darwin", goarch: "arm64", identitySect: "__llgo_pid", entryBoundary: "section$start$__DATA$__llgo_fie"},
 		{name: "darwin/full-lto", goos: "darwin", goarch: "arm64", lto: lto.Full, identitySect: "__llgo_pid", entryBoundary: "section$start$__DATA$__llgo_fie"},
+		{name: "wasm", goos: "wasip1", goarch: "wasm", identitySect: "llgo_pclntab_id", entryBoundary: "__llgo_funcinfo_entry"},
 	} {
 		t.Run(target.name, func(t *testing.T) {
 			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
@@ -1187,10 +1222,16 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 				t.Fatalf("external payload = %+v", ctx.pclnExternal)
 			}
 			ir := src.String()
+			identity := "@__llgo_pclntab_identity = global [32 x i8] zeroinitializer"
+			count := "@__llgo_funcinfo_count = global i64 0"
+			if target.goarch == "wasm" {
+				identity = "@__llgo_pclntab_identity = global [32 x i8] c\""
+				count = "@__llgo_funcinfo_count = global i32 0"
+			}
 			for _, want := range []string{
 				"@__llgo_funcinfo_table = global ptr null",
-				"@__llgo_funcinfo_count = global i64 0",
-				"@__llgo_pclntab_identity = global [32 x i8] zeroinitializer",
+				count,
+				identity,
 				"@llvm.used = appending global [1 x ptr] [ptr @__llgo_pclntab_identity], section \"llvm.metadata\"",
 				target.identitySect,
 				target.entryBoundary,
@@ -1234,14 +1275,15 @@ func TestFuncInfoTableFPChainOff(t *testing.T) {
 	}
 }
 
-// snapshotPkg builds a Package backed by a link snapshot so metadata collection
+// snapshotPkg builds a Package backed by parsed archive metadata so collection
 // can be exercised without an LLVM module.
 func snapshotPkg(pkgPath, symbol string) Package {
 	return &aPackage{
-		Package: &packages.Package{PkgPath: pkgPath},
-		linkSnapshot: &packageLinkSnapshot{
-			funcInfo:   []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
-			pcLineInfo: []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
+		Package:      &packages.Package{PkgPath: pkgPath},
+		linkSnapshot: &packageLinkSnapshot{},
+		pcln: &packagePCLN{
+			functions: []funcInfoRecord{{symbol: symbol, name: symbol, file: "x.go", line: 1, column: 1}},
+			lines:     []pcLineRecord{{id: funcInfoSymbolID(symbol), symbol: symbol, line: 1}},
 		},
 	}
 }

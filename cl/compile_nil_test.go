@@ -167,7 +167,7 @@ func escaping() *object { return &object{} }
 		for _, name := range []string{"unused", "escaping"} {
 			body := llvmFunction(t, ir, "foo."+name)
 			want := name == "escaping"
-			if got := strings.Contains(body, "runtime.AllocZ"); got != want {
+			if got := strings.Contains(body, "runtime.Alloc"); got != want {
 				t.Errorf("%s allocation with SSA mode %v = %v, want %v:\n%s", name, mode, got, want, body)
 			}
 		}

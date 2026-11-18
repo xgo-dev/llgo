@@ -26,6 +26,13 @@ Goroutines not yet attached to a thread have no native backtrace. Targets withou
 this registry, including Wasm fibers and bare metal, report the capability as
 unavailable rather than treating a goroutine as a host thread.
 
+The native registry's legacy `created` slot is reserved and always zero; it
+preserves the offsets of later debugger fields. Adapters that displayed a
+created-by location from this slot must instead read the trailing
+`creator_count`/`creator_pcs` fields through DWARF and symbolize those raw PCs
+when displaying the traceback. This location is outside the public goroutine
+contract of Go ID, parent, state, and OS thread ID.
+
 On a native Windows ARM64 host, the LLDB adapter supplies an unset code-address
 mask from the operating system's user-address bounds before unwinding. This
 allows LLDB to interpret authenticated return addresses in Windows library

@@ -233,6 +233,7 @@ func wasmGStart(arg unsafe.Pointer) {
 }
 
 func suspendWasmG(gp *g) {
+	captureWasmSuspension(gp)
 	gp.context.platform.context.Swap(
 		&wasmSched.system,
 		wasmGCRootPointer(&wasmSystemGCRoot),

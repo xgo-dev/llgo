@@ -24,6 +24,15 @@ var wasmGCWorld struct {
 	owner   uint32
 }
 
+// The bootstrap G already owns compiler roots before its Fiber is initialized.
+// Count it in stop-the-world requests before starting the other workers.
+func readyWasmWorkerGC(worker *wasmWorker) {
+	if atomic.Load(&worker.gc.ready) == 0 {
+		atomic.Store(&worker.gc.ready, uint32(1))
+		atomic.Add(&wasmGCWorld.ready, uint32(1))
+	}
+}
+
 func initWasmWorkerGCSystem(worker *wasmWorker) {
 	if worker.index == 0 {
 		registerWasmGCRoot(&worker.gc.systemRoot, false)
@@ -33,8 +42,7 @@ func initWasmWorkerGCSystem(worker *wasmWorker) {
 	} else {
 		registerWasmGCRoot(&worker.gc.systemRoot, true)
 	}
-	atomic.Store(&worker.gc.ready, uint32(1))
-	atomic.Add(&wasmGCWorld.ready, uint32(1))
+	readyWasmWorkerGC(worker)
 	wasmWorkerStopForGC(worker)
 }
 

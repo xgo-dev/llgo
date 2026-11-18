@@ -43,9 +43,14 @@ func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGr
 			localContext: ctx.prog.NeedsLocalContextForPackages(activeLocalityPackages([]*packages.Package{pkg}, alts)),
 		}
 		if target.GOARCH == "wasm" {
-			use := analyzeWasmInitialUse(ctx.progSSA, pkg.Types)
-			features.reflectBridges = wasmReflectBridgeProvider(ctx) && use.usesWasmReflectBridges()
-			features.funcInfoEntries = ctx.buildConf.BuildMode != BuildModeExe || use.usesRuntimeFuncForPC()
+			if ctx.frontend != nil && ctx.frontend.program != nil {
+				imported := ctx.frontend.program.Initials[pkg.ID]
+				features.reflectBridges, features.funcInfoEntries = imported.ReflectBridges, imported.FuncInfoEntries
+			} else {
+				use := analyzeWasmInitialUse(ctx.progSSA, pkg.Types)
+				features.reflectBridges = wasmReflectBridgeProvider(ctx) && use.usesWasmReflectBridges()
+				features.funcInfoEntries = ctx.buildConf.BuildMode != BuildModeExe || use.usesRuntimeFuncForPC()
+			}
 		}
 		index, ok := indexes[features]
 		if !ok {

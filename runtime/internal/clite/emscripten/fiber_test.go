@@ -6,9 +6,14 @@ import (
 	"unsafe"
 )
 
-func TestFiberStorageUsesEightWords(t *testing.T) {
-	if got, want := unsafe.Sizeof(Fiber{}), uintptr(8)*unsafe.Sizeof(uintptr(0)); got != want {
+func TestFiberStorageUsesEightNativeWords(t *testing.T) {
+	if got, want := unsafe.Sizeof(Fiber{}), expectedFiberSize; got != want {
 		t.Fatalf("Fiber size = %d, want %d", got, want)
+	}
+	var fibers [2]Fiber
+	stride := uintptr(unsafe.Pointer(&fibers[1])) - uintptr(unsafe.Pointer(&fibers[0]))
+	if stride != expectedFiberSize {
+		t.Fatalf("Fiber storage stride = %d, want %d", stride, expectedFiberSize)
 	}
 }
 

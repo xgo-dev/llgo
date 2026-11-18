@@ -59,13 +59,24 @@ func gcGrowMemory(oldHeapEnd uintptr) uintptr {
 func gcMarkReachable() {
 	gcMarkStackRoots()
 	if globalsStart < globalsEnd {
-		markRoots(globalsStart, globalsEnd)
+		start, end := gcWasmNoScanStart(), gcWasmNoScanEnd()
+		if globalsStart <= start && start < end && end <= globalsEnd {
+			if globalsStart < start {
+				markRoots(globalsStart, start)
+			}
+			end = alignUp(end, gcScanWordSize)
+			if end < globalsEnd {
+				markRoots(end, globalsEnd)
+			}
+		} else {
+			markRoots(globalsStart, globalsEnd)
+		}
 	}
 	gcroot.Visit(markWasmGCRoot)
 }
 
-func markWasmGCRoot(root *unsafe.Pointer, _ unsafe.Pointer) {
-	markRoot(uintptr(unsafe.Pointer(root)), uintptr(*root))
+func markWasmGCRoot(root *unsafe.Pointer, metadata unsafe.Pointer) {
+	markRoot(uintptr(unsafe.Pointer(root)), gcroot.RootValue(root, metadata))
 }
 
 func gcStackStats() (inuse, sys uintptr) {
@@ -91,6 +102,12 @@ func gcWasmGlobalsStart() uintptr
 
 //go:linkname gcWasmGlobalsEnd C.llgo_gc_globals_end
 func gcWasmGlobalsEnd() uintptr
+
+//go:linkname gcWasmNoScanStart C.llgo_gc_noscan_start
+func gcWasmNoScanStart() uintptr
+
+//go:linkname gcWasmNoScanEnd C.llgo_gc_noscan_end
+func gcWasmNoScanEnd() uintptr
 
 //go:linkname gcWasmHeapBase C.llgo_gc_heap_base
 func gcWasmHeapBase() uintptr

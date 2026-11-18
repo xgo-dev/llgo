@@ -78,7 +78,7 @@ You need Python 3.12 or newer installed. The standard-library bindings work out 
 
 Notes:
 
-- Need a Python library that is not listed? Generate your own binding with `llpyg`, which converts a Python library into a Go package that LLGo can import. It relies on `pydump` and `pysigfetch`; see the [Development tools](https://github.com/xgo-dev/llgo#development-tools) section of the LLGo README.
+- Need a Python library that is not listed? Generate your own binding with `llpyg`, which converts a Python library into a Go package that LLGo can import. It relies on `pydump` and `pysigfetch`; see [Repository tools](../CONTRIBUTING.md#repository-tools).
 
 ---
 

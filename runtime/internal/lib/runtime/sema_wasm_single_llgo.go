@@ -28,10 +28,10 @@ func semaAcquireInternal(addr *uint32, lifo, durable bool) {
 
 func semaRelease(addr *uint32, handoff bool) {
 	key := uintptr(unsafe.Pointer(addr))
-	if q := semaQueues[key]; q != nil {
+	if q := semaQueues.Get(key); q != nil {
 		if w := q.pop(); w != nil {
 			if q.head == nil {
-				delete(semaQueues, key)
+				semaQueues.Delete(key)
 			}
 			w.synctest.Wake()
 			w.waiter.Ready()
@@ -64,13 +64,13 @@ func sync_runtime_notifyListNotifyAll(l *notifyList) {
 		return
 	}
 	key := uintptr(unsafe.Pointer(l))
-	q := notifyQueues[key]
+	q := notifyQueues.Get(key)
 	q.checkWake()
 	atomic.StoreUint32(&l.notify, wait)
 	if q == nil {
 		return
 	}
-	delete(notifyQueues, key)
+	notifyQueues.Delete(key)
 	for {
 		w := q.pop()
 		if w == nil {
@@ -88,7 +88,7 @@ func sync_runtime_notifyListNotifyOne(l *notifyList) {
 		return
 	}
 	key := uintptr(unsafe.Pointer(l))
-	q := notifyQueues[key]
+	q := notifyQueues.Get(key)
 	if q == nil {
 		atomic.StoreUint32(&l.notify, notify+1)
 		return
@@ -97,7 +97,7 @@ func sync_runtime_notifyListNotifyOne(l *notifyList) {
 	atomic.StoreUint32(&l.notify, notify+1)
 	if w != nil {
 		if q.head == nil {
-			delete(notifyQueues, key)
+			notifyQueues.Delete(key)
 		}
 		w.synctest.Wake()
 		w.waiter.Ready()

@@ -47,3 +47,19 @@ func TestParseGroupPreservesSourceOrder(t *testing.T) {
 		t.Fatalf("ParseGroup = %+v", got)
 	}
 }
+
+func TestParseLinknameArgs(t *testing.T) {
+	for _, tc := range []struct{ args, local, target string }{
+		{"", "", ""},
+		{" Exported ", "Exported", ""},
+		{" F C.f ", "F", "C.f"},
+		{"F\tllvm.fshl.i8", "F", "llvm.fshl.i8"},
+		{"(*T).Method\t C.method", "(*T).Method", "C.method"},
+		{"F\t target  with\tspaces", "F", "target with spaces"},
+	} {
+		local, target := ParseLinknameArgs(tc.args)
+		if local != tc.local || target != tc.target {
+			t.Errorf("ParseLinknameArgs(%q) = (%q, %q), want (%q, %q)", tc.args, local, target, tc.local, tc.target)
+		}
+	}
+}

@@ -20,7 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          # Default checkout uses this trusted pull_request_target event's base
+          # commit. An explicit merge SHA also matches the closed fork PR's
+          # merge_commit_sha and is rejected by checkout's custom-ref guard.
           persist-credentials: false
           sparse-checkout: .github/scripts
           sparse-checkout-cone-mode: false

@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
 	"os"
@@ -62,11 +63,15 @@ func TestSIMDFMVBridgeIdentity(t *testing.T) {
 }
 
 // The portable bridge composes archsimd operations, including private helpers.
-// Check that the entire static call graph of its 128-bit entries is supported,
-// so changes in the selected Go toolchain cannot silently introduce a fallback.
+// Check each supported width's entire static call graph, so changes in the
+// selected Go toolchain cannot silently introduce an unimplemented fallback.
 func TestSIMDPortableBridgeClosure(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "wasm"} {
-		t.Run(arch, func(t *testing.T) {
+	for _, target := range []struct {
+		arch string
+		bits int
+	}{{"amd64", 128}, {"amd64", 256}, {"arm64", 128}, {"wasm", 128}} {
+		arch := target.arch
+		t.Run(fmt.Sprintf("%s/%d", arch, target.bits), func(t *testing.T) {
 			goos := "linux"
 			if arch == "wasm" {
 				goos = "wasip1"
@@ -85,12 +90,12 @@ func TestSIMDPortableBridgeClosure(t *testing.T) {
 			prog.Build()
 			var queue []*ssa.Function
 			for fn := range ssautil.AllFunctions(prog) {
-				if fn.Pkg == roots[0] && bridge128Signature(fn.Signature, pkgs[0].TypesSizes) {
+				if fn.Pkg == roots[0] && bridgeWidthSignature(fn.Signature, pkgs[0].TypesSizes, target.bits) {
 					queue = append(queue, fn)
 				}
 			}
 			if len(queue) == 0 {
-				t.Fatal("no 128-bit bridge entries were found")
+				t.Fatalf("no %d-bit bridge entries were found", target.bits)
 			}
 			t.Logf("checking %d bridge entries", len(queue))
 			seen := make(map[*ssa.Function]bool)
@@ -121,8 +126,8 @@ func TestSIMDPortableBridgeClosure(t *testing.T) {
 	}
 }
 
-func bridge128Signature(sig *types.Signature, sizes types.Sizes) bool {
-	has128, hasWide := false, false
+func bridgeWidthSignature(sig *types.Signature, sizes types.Sizes, bits int) bool {
+	hasWidth, hasWider := false, false
 	check := func(t types.Type) {
 		named, ok := types.Unalias(t).(*types.Named)
 		if !ok || named.Obj().Pkg() == nil {
@@ -140,10 +145,10 @@ func bridge128Signature(sig *types.Signature, sizes types.Sizes) bool {
 		if !ok {
 			return
 		}
-		if sizes.Sizeof(lanes) == 16 {
-			has128 = true
-		} else {
-			hasWide = true
+		if sizes.Sizeof(lanes)*8 == int64(bits) {
+			hasWidth = true
+		} else if sizes.Sizeof(lanes)*8 > int64(bits) {
+			hasWider = true
 		}
 	}
 	if sig.Recv() != nil {
@@ -154,7 +159,7 @@ func bridge128Signature(sig *types.Signature, sizes types.Sizes) bool {
 			check(tuple.At(i).Type())
 		}
 	}
-	return has128 && !hasWide
+	return hasWidth && !hasWider
 }
 
 func TestSIMDFMVBridgeRequiresArchsimdPeer(t *testing.T) {

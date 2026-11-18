@@ -14,6 +14,46 @@ import run_go_tests
 
 
 class GoTestReportTests(unittest.TestCase):
+    def test_large_package_list_keeps_one_process_and_complete_reports(self):
+        packages = [f"example.com/long-package-path/package{i:04d}" for i in range(500)]
+        self.assertGreater(len(" ".join(packages)), 16384)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "fake_go.py"
+            fake.write_text(
+                "import json, pathlib, sys\n"
+                f"root = pathlib.Path({str(root)!r})\n"
+                "with (root / 'calls').open('a') as calls: calls.write('invoked\\n')\n"
+                "(root / 'coverage').write_text('\\n'.join(sys.argv[1:]))\n"
+                "for package in sys.argv[1:]:\n"
+                "    print(json.dumps(dict(Package=package, Test='TestCase', Action='pass', Elapsed=1)))\n")
+            result = subprocess.run(
+                [sys.executable, str(Path(run_go_tests.__file__).resolve()),
+                 "--output-dir", str(root), "--packages-from-stdin", "main",
+                 sys.executable, str(fake)],
+                input="\n".join(packages) + "\n", capture_output=True, text=True,
+                timeout=15, env={key: value for key, value in os.environ.items()
+                                 if key != "GITHUB_STEP_SUMMARY"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "calls").read_text(), "invoked\n")
+            self.assertEqual((root / "coverage").read_text().splitlines(), packages)
+            cases = json.loads((root / "main-times.json").read_text())
+            self.assertEqual([case["Package"] for case in cases], packages)
+            self.assertEqual(len((root / "main.jsonl").read_text().splitlines()), len(packages))
+
+    def test_empty_package_input_does_not_run_an_unselected_suite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = subprocess.run(
+                [sys.executable, str(Path(run_go_tests.__file__).resolve()),
+                 "--output-dir", str(root), "--packages-from-stdin", "main",
+                 sys.executable, "-c", "raise RuntimeError('must not execute')"],
+                input="\n", capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("the package list is empty", result.stderr)
+            self.assertNotIn("must not execute", result.stderr)
+            self.assertFalse((root / "main.jsonl").exists())
+
     def invoke(self, lines, status=0):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -129,11 +169,13 @@ class GoTestReportTests(unittest.TestCase):
                     "testing.(*T).Run\nFAIL github.com/xgo-dev/llgo/test/runtime 0.1s\n" + extra)
                 event = json.dumps({"Action": "output", "Output": diagnostic})
                 command = ["bash", str(repo / "dev/go_test_windows.sh"), sys.executable,
-                           str(repo / ".github/scripts/run_go_tests.py"), "main", sys.executable,
+                           str(repo / ".github/scripts/run_go_tests.py"),
+                           "--packages-from-stdin", "main", sys.executable,
                            "-c", f"import sys; print({event!r}); sys.exit(1)"]
                 output = root / "outputs"
                 output.touch()
                 result = subprocess.run(command, cwd=root, capture_output=True, text=True,
+                                        input="example.com/package\n",
                                         env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                                              "GITHUB_OUTPUT": str(output),
                                              "GITHUB_STEP_SUMMARY": str(root / "summary")})

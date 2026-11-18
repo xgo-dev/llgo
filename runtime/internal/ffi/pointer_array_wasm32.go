@@ -2,7 +2,10 @@
 
 package ffi
 
-import "unsafe"
+import (
+	native "github.com/xgo-dev/llgo/runtime/internal/clite/ffi"
+	"unsafe"
+)
 
 type signatureStorage struct {
 	cif   Signature
@@ -43,7 +46,7 @@ func newAggregateType(size uintptr, alignment, kind uint16, values []*Type) *Typ
 			storage.slots[i] = uint32(uintptr(unsafe.Pointer(value)))
 		}
 	}
-	storage.typ = Type{size, alignment, kind, typePointerArrayFromSlots(storage.slots)}
+	storage.typ = native.NewType(size, alignment, kind, typePointerArrayFromSlots(storage.slots))
 	return &storage.typ
 }
 
@@ -54,13 +57,16 @@ func typePointerArrayFromSlots(slots []uint32) **Type {
 	return (**Type)(unsafe.Pointer(&slots[0]))
 }
 
-func valuePointerArray(values []unsafe.Pointer) *unsafe.Pointer {
+func valuePointerArray(values []unsafe.Pointer) (avalue *unsafe.Pointer, pin any) {
 	if len(values) == 0 {
-		return nil
+		return nil, nil
 	}
+	// slots holds integer-encoded wasm32 addresses, not Go pointers, so the
+	// GC cannot trace through avalue. Callers must keepAlive(args) as well
+	// as pin. The uint32 truncation is lossless on this 32-bit wasm target.
 	slots := make([]uint32, len(values))
 	for i, value := range values {
 		slots[i] = uint32(uintptr(value))
 	}
-	return (*unsafe.Pointer)(unsafe.Pointer(&slots[0]))
+	return (*unsafe.Pointer)(unsafe.Pointer(&slots[0])), slots
 }

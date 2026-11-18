@@ -43,8 +43,11 @@ func TestPointerGC(t *testing.T) {
 	wp := makeCollectableWeakPointer(123, nil)
 
 	deadline := time.Now().Add(3 * time.Second)
-	for !weakPointerCleared(wp) && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
 		runtime.GC()
+		if weakPointerCleared(wp) {
+			break
+		}
 		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
@@ -62,8 +65,11 @@ func TestPointerGCWithCleanup(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(3 * time.Second)
-	for !weakPointerCleared(wp) && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
 		runtime.GC()
+		if weakPointerCleared(wp) {
+			break
+		}
 		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
@@ -77,12 +83,20 @@ func TestPointerGCWithCleanup(t *testing.T) {
 	}
 }
 
+// Weak pointers to tiny objects are not guaranteed to become nil when another
+// object sharing their allocation remains live. Keep GC assertions outside that
+// allocation class, while retaining a pointer-free referent.
+type collectableWeakInt struct {
+	value int
+	_     [64]byte
+}
+
 func makeCollectableWeakPointer(value int, register func(*int)) weak.Pointer[int] {
 	result := make(chan weak.Pointer[int], 1)
 	done := make(chan struct{})
 	go func() {
-		x := new(int)
-		*x = value
+		object := &collectableWeakInt{value: value}
+		x := &object.value
 		if register != nil {
 			register(x)
 		}
@@ -94,11 +108,15 @@ func makeCollectableWeakPointer(value int, register func(*int)) weak.Pointer[int
 	return wp
 }
 
-//go:noinline
 func weakPointerCleared(wp weak.Pointer[int]) bool {
-	// Keep the temporary strong pointer out of the frame that starts the next
-	// collection. Conservative collectors may otherwise retain its stale bits.
-	return wp.Value() == nil
+	// Resolve on a separate goroutine so neither stack slots nor registers on
+	// the collecting thread retain a temporary strong pointer. A noinline call
+	// alone does not guarantee that conservative roots have been overwritten.
+	// Call this after collection: its goroutine can still be exiting after the
+	// result arrives, and must not create a strong reference just before GC.
+	result := make(chan bool, 1)
+	go func() { result <- wp.Value() == nil }()
+	return <-result
 }
 
 func TestPointerZeroValue(t *testing.T) {

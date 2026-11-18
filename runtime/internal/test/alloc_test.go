@@ -17,6 +17,8 @@ func TestAllocatorNonNull(t *testing.T) {
 			fn   func(uintptr) unsafe.Pointer
 		}{
 			{"AllocU", rt.AllocU},
+			{"AllocAtomicU", rt.AllocAtomicU},
+			{"AllocAtomicZ", rt.AllocAtomicZ},
 			{"AllocZ", rt.AllocZ},
 			{"AllocRoot", rt.AllocRoot},
 		} {
@@ -29,8 +31,8 @@ func TestAllocatorNonNull(t *testing.T) {
 			}
 			data := unsafe.Slice((*byte)(ptr), size)
 			for i := range data {
-				if alloc.name == "AllocZ" && data[i] != 0 {
-					t.Fatalf("AllocZ(%d) byte %d = %d", size, i, data[i])
+				if (alloc.name == "AllocZ" || alloc.name == "AllocAtomicZ") && data[i] != 0 {
+					t.Fatalf("%s(%d) byte %d = %d", alloc.name, size, i, data[i])
 				}
 				data[i] = 0xa5
 			}
@@ -56,6 +58,8 @@ func TestZeroSizeAllocatorsShareBase(t *testing.T) {
 			fn   func(uintptr) unsafe.Pointer
 		}{
 			{"AllocU", rt.AllocU},
+			{"AllocAtomicU", rt.AllocAtomicU},
+			{"AllocAtomicZ", rt.AllocAtomicZ},
 			{"AllocZ", rt.AllocZ},
 			{"AllocRoot", rt.AllocRoot},
 		} {

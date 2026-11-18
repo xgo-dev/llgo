@@ -17,11 +17,61 @@
 package cl
 
 import (
+	"go/types"
 	"strings"
 	"sync"
 
 	"golang.org/x/tools/go/ssa"
 )
+
+func (p *context) canTailRecoverAlias(call *ssa.CallCommon) bool {
+	target := p.prog.Target()
+	return target != nil && target.GOARCH != "wasm" && recoverAliasTailPosition(p.goFn, call)
+}
+
+// recoverAliasTailPosition proves that an SSA-generated adapter immediately
+// returns the forwarded result. Other wrappers retain their scoped cleanup.
+// Midway dispatchers are recover-transparent but need separate tail proofs.
+// Keep composite results conservative: lowering may add result validation or
+// storage work after their physical call.
+func recoverAliasTailPosition(fn *ssa.Function, call *ssa.CallCommon) bool {
+	if fn == nil || call == nil || fn.Recover != nil || !isSyntheticForwardingWrapper(fn) {
+		return false
+	}
+	results := fn.Signature.Results()
+	if results.Len() > 1 {
+		return false
+	}
+	if results.Len() == 1 {
+		switch typ := results.At(0).Type().Underlying().(type) {
+		case *types.Basic:
+			if typ.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 {
+				return false
+			}
+		case *types.Pointer:
+		default:
+			return false
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if _, deferred := instr.(*ssa.Defer); deferred {
+				return false
+			}
+		}
+	}
+	for _, block := range fn.Blocks {
+		for i, instr := range block.Instrs {
+			invoke, ok := instr.(*ssa.Call)
+			if !ok || &invoke.Call != call || i+2 != len(block.Instrs) {
+				continue
+			}
+			ret, ok := block.Instrs[i+1].(*ssa.Return)
+			return ok && (len(ret.Results) == 0 || len(ret.Results) == 1 && ret.Results[0] == invoke)
+		}
+	}
+	return false
+}
 
 // recoverFacts caches recover classification for one LLGo compilation. The
 // build driver constructs all dependency Go SSA before consulting its package
@@ -207,14 +257,17 @@ func isRecoverTransparentWrapper(fn *ssa.Function) bool {
 	// These are the Go SSA forms of compiler-generated forwarding frames.
 	// Treating them as transparent mirrors the standard runtime's
 	// abi.FuncIDWrapper rule in gorecover.
-	return strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
+	return isSyntheticForwardingWrapper(fn) || isMidwayRecoverDispatcher(fn)
+}
+
+func isSyntheticForwardingWrapper(fn *ssa.Function) bool {
+	return fn != nil && (strings.HasPrefix(fn.Synthetic, "wrapper for ") ||
 		strings.HasPrefix(fn.Synthetic, "thunk for ") ||
-		strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") ||
-		isMidwayRecoverDispatcher(fn)
+		strings.HasPrefix(fn.Synthetic, "bound method wrapper for "))
 }
 
 // Midway retains the source entry as a dispatcher, so it is not an SSA
-// synthetic wrapper. Its two sibling names contain compiler-only identifiers;
+// synthetic wrapper. Its sibling names contain compiler-only identifiers;
 // ordinary Go source cannot declare or call them. Check the forwarding calls
 // as well, excluding the retained trapping entries with dependent signatures.
 func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
@@ -225,12 +278,22 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 	if origin.Pkg == nil {
 		return false
 	}
-	software := origin.Pkg.Func(origin.Name() + "@simd0")
-	hardware := origin.Pkg.Func(origin.Name() + "@simd128")
-	if software == nil || hardware == nil {
-		return false
+	// The baseline variants are mandatory. Every additional variant present
+	// in this package must be forwarded to as well.
+	pending := make(map[*ssa.Function]bool)
+	for _, variant := range []struct {
+		suffix   string
+		required bool
+	}{{"@simd0", true}, {"@simd128", true}, {"@simd256", false}} {
+		callee := origin.Pkg.Func(origin.Name() + variant.suffix)
+		if callee == nil {
+			if variant.required {
+				return false
+			}
+			continue
+		}
+		pending[callee] = true
 	}
-	var seenSoftware, seenHardware bool
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
 			call, ok := instr.(*ssa.Call)
@@ -244,9 +307,8 @@ func isMidwayRecoverDispatcher(fn *ssa.Function) bool {
 			if base := callee.Origin(); base != nil {
 				callee = base
 			}
-			seenSoftware = seenSoftware || callee == software
-			seenHardware = seenHardware || callee == hardware
+			delete(pending, callee)
 		}
 	}
-	return seenSoftware && seenHardware
+	return len(pending) == 0
 }

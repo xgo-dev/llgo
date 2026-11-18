@@ -20,6 +20,8 @@ package build
 
 import "os/exec"
 
+func configureNativeTestCancellation(*exec.Cmd) func() { return func() {} }
+
 func configureRunnerCancellation(cmd *exec.Cmd, _ bool) func() { return func() {} }
 
 func cleanupRunnerAfterExit(*exec.Cmd) {}

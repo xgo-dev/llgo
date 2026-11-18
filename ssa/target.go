@@ -235,6 +235,13 @@ func (p *Target) Spec() (spec TargetSpec) {
 			features = append(features, "-fmv")
 		}
 		spec.Features = strings.Join(features, ",")
+	case "riscv64":
+		if p.Target == "" {
+			// Hosted Go/RISC-V uses the RV64GC, LP64D ABI. Keep optional
+			// scalar crypto extensions confined to their guarded functions.
+			spec.CPU = "generic-rv64"
+			spec.Features = "+m,+a,+f,+d,+c,+zicsr,+zifencei"
+		}
 	case "wasm":
 		spec.CPU = "generic"
 		spec.Features = "+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext"

@@ -3,142 +3,17 @@
 This directory contains reproducible host environments and scripts for running
 LLGo locally or inside reusable Linux dev containers.
 
+For test selection and pull-request expectations, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Host development environment
 
-Choose [mise](https://mise.jdx.dev/installing-mise.html) 2026.10.7 or newer, or
-[Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. Both
-provide Go and install LLVM/Clang/LLD 23, pkg-config, and native libraries
-from conda-forge. Their configuration and lockfiles live in this directory.
-Use Go directly to run or build LLGo in either environment.
+See [CONTRIBUTING.md](../CONTRIBUTING.md#development-environments) for mise,
+Pixi, platform dependencies, environment checks, and lockfile updates. The
+[manual setup](../CONTRIBUTING.md#manual-development-setup) covers a host
+managed without an environment tool. For Docker setup, see
+[Linux containers](../CONTRIBUTING.md#linux-containers).
 
-From the repository root, enter the mise environment:
-
-```sh
-mise -C dev trust
-mise -C dev install --locked
-mise -C dev en
-```
-
-Or enter the Pixi environment:
-
-```sh
-cd dev
-pixi shell --locked
-```
-
-Both examples start the shell inside `dev/`. Return to the repository root:
-
-```sh
-cd ..
-go run ./cmd/llgo version
-go build ./cmd/llgo
-```
-
-The build creates `llgo` (`llgo.exe` on Windows). The environment stays loaded
-when you change directories; type `exit` to leave the shell.
-
-Both environments are checked in CI on these platforms:
-
-| Host | Architectures |
-| --- | --- |
-| Linux | x86-64, ARM64 |
-| macOS | Intel, ARM64 |
-| Windows | x86-64, native PowerShell/CMD |
-
-macOS requires the Xcode Command Line Tools (`xcode-select --install`). Windows
-requires the Visual Studio C++ Build Tools with the Windows SDK and the
-x86-64 C++ toolchain. Python, LLDB, cJSON, and cross-compilers are optional and
-are not included in either environment.
-
-Run the shared checks from the repository root in either development shell:
-
-```sh
-bash dev/check_devenv.sh
-```
-
-On Windows PowerShell, run `.\dev\check_devenv.ps1`. These scripts build LLGo,
-run a compiled Go program, and check GC, libffi, OpenSSL, SQLite, libuv, and zlib.
-
-For a single command without entering a shell, use these commands from the
-repository root. mise runs inside `dev/`; Pixi uses the current directory:
-
-```sh
-mise -C dev exec -- go run ../cmd/llgo version
-pixi run --manifest-path dev/pixi.toml --locked go run ./cmd/llgo version
-```
-
-Both configurations enable the LLVM Go bindings' `byollvm` tag and obtain
-headers and linker flags from `llvm-config`. Include `byollvm` if you supply
-`-tags` explicitly. The shared Linux wrappers in `conda-tools/` activate the
-compiler's prefix and sysroot; the shared flag helpers quote LLVM paths and
-preserve Visual Studio's SDK/CRT library discovery on Windows.
-The Unix pkg-config wrapper handles Conda prefixes containing spaces.
-Windows uses the compatible `pkgconf` implementation for paths containing spaces.
-
-mise installs packages in its user data directory; keep `MISE_DATA_DIR` local
-to each host if you override it. Pixi stores its environment in `dev/.pixi/`,
-which is ignored by Git. Do not share that directory between different hosts.
-
-To update mise dependencies, edit `dev/mise.toml` (or `.go-version` for Go):
-
-```sh
-mise -C dev lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64,windows-x64
-mise -C dev install --locked
-```
-
-For Pixi, edit `dev/pixi.toml` and update its lockfile:
-
-```sh
-pixi update --manifest-path dev/pixi.toml
-pixi install --manifest-path dev/pixi.toml --locked
-```
-
-Keep Pixi's Go major/minor version aligned with `.go-version`. Patch versions
-may differ between providers. Open a new shell, run the
-shared checks, and commit each changed configuration with its lockfile.
-
-## Containers and scripts
-
-## Prerequisites
-
-- Docker installed and running
-- Docker Compose v2 (`docker compose`, not `docker-compose`)
-
-## 1) Start a Linux container, then run `dev/llgo.sh` / `dev/llgo_wasm.sh`
-
-Start an interactive shell (pick one):
-
-```bash
-./dev/docker.sh amd64
-./dev/docker.sh arm64
-./dev/docker.sh i386
-```
-
-Notes:
-- `amd64` uses the `pydeps` image target (includes extra Python demo deps like `numpy`/`torch`).
-- `arm64` and `i386` use the smaller `base` target (no extra Python ML deps).
-
-Inside the container, run tests/builds using the repo scripts:
-
-```bash
-./dev/llgo.sh test ./...
-./dev/llgo.sh test ./test
-
-# WASI/WASM (wasip1/wasm)
-./dev/llgo_wasm.sh build ./...
-```
-
-Notes:
-- `dev/docker.sh` starts in the same repo subdirectory you launched it from.
-- `dev/llgo.sh` and `dev/llgo_wasm.sh` must be run from within `LLGO_ROOT` (the repo) and will error otherwise.
-
-## 2) Start a Linux container, run one command, then exit
-
-```bash
-./dev/docker.sh amd64 bash -lc './dev/llgo.sh test ./test'
-```
-
-## 3) Run on the host (no container)
+## Run on the host
 
 From anywhere inside the repo:
 
@@ -147,7 +22,7 @@ From anywhere inside the repo:
 ./dev/llgo_wasm.sh build ./...
 ```
 
-## 4) Run versioned tests
+## Versioned tests
 
 Run one exact Go toolchain against its default representative/full package set:
 
@@ -190,7 +65,7 @@ Any standalone task can be run under an exact target toolchain with:
 All scripts select exact toolchains, set `GOTOOLCHAIN=local` while testing, and
 build llgo and repository tools with the version pinned in `.go-version`.
 
-## 5) Run local CI (covers most checks)
+## Local CI
 
 ```bash
 ./dev/local_ci.sh
@@ -200,7 +75,7 @@ This script creates a temporary workspace, runs formatting/build/tests, runs the
 complete versioned llgo test integration script, and then runs demo checks.
 You can control demo parallelism via `LLGO_DEMO_JOBS` (defaults to up to 4 jobs).
 
-## 6) `dev/docker.sh` (composition-friendly)
+## Docker wrapper
 
 `dev/docker.sh` is a thin wrapper around `docker compose`:
 
@@ -213,7 +88,7 @@ You can control demo parallelism via `LLGO_DEMO_JOBS` (defaults to up to 4 jobs)
 - If `[command...]` is provided, it runs that command and exits.
 - You must run it from within the repo (within `LLGO_ROOT`), and it will start in the matching repo subdirectory inside the container.
 
-## 7) Refresh test goldens
+## Refresh test goldens
 
 LLGo has separate refresh flows for runtime data and LLVM IR checks:
 
@@ -231,9 +106,24 @@ go run ./chore/gentests
 
 Behavior:
 
-- Refreshes `expect.txt` for the built-in runtime test suites using the existing execution flow.
 - Refreshes `meta-expect.txt` for package-metadata tests.
-- Preserves the runtime-output skip convention where `expect.txt` containing only `;` means "do not refresh".
+- Refreshes the toolchain-specific `expect_go1.xx.txt` when present, otherwise `expect.txt`.
+- Preserves both execution markers and leaves existing goldens unchanged when execution fails.
+
+Runtime test modes are selected by `expect.txt` (including a toolchain-specific
+`expect_go1.xx.txt` override):
+
+| Contents | Behavior |
+| --- | --- |
+| Output text, including an empty file | Run successfully and compare output. |
+| `;` | Run successfully without comparing output, for example addresses or map iteration order. |
+| `; ir-only`, or no file | Check source FileCheck directives without running, for example a library package or an intentional uncaught panic. |
+
+Both markers accept a final LF or CRLF. `gentests` preserves them without
+running their programs. Run-only tests still check FileCheck directives and
+report compilation, linking, or execution failures in the existing test jobs.
+Emulator run-only tests also reject runtime panic/fatal-error diagnostics when
+the emulator itself exits successfully.
 
 LLVM IR is not part of the `gentests` workflow; it is checked from the marked
 Go source with FileCheck.

@@ -27,6 +27,29 @@ runs:
       if: steps.cache-esp-clang.outputs.cache-hit != 'true'
       run: bash .github/workflows/download_esp_clang.sh
       shell: bash
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.13'
+    - name: Read Unix ESP archive digests
+      id: esp-runtime-pins
+      shell: bash
+      run: |
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        import hashlib, json
+        pins = json.load(open('internal/crosscompile/espressif.json'))
+        digests = ''.join(pin['sha256'] for target, pin in sorted(pins['payloads'].items())
+                          if not target.endswith('-w64-mingw32'))
+        print('sha256=' + hashlib.sha256(digests.encode()).hexdigest())
+        PY
+    - name: Cache ESP runtime archives
+      uses: actions/cache@v6
+      with:
+        path: .esp-runtime-downloads
+        key: esp-runtime-v2-${{ steps.esp-runtime-pins.outputs.sha256 }}
+        restore-keys: esp-runtime-v2-
+    - name: Stage verified ESP runtimes and bundled archives
+      run: python3 .github/esp-toolchain.py
+      shell: bash
     - name: Check file
       run: tree .sysroot
       shell: bash

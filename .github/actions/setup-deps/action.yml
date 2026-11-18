@@ -46,7 +46,7 @@ runs:
         "manifest-hash=$env:VCPKG_MANIFEST_HASH" >> $env:GITHUB_OUTPUT
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ABI=${{ inputs.windows-abi }}"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_ARCH=${{ inputs.windows-arch }}"
-        Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLVM_VERSION=23.1.4"
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_WINDOWS_LLVM_VERSION=23.1.6"
 
     - name: Cache compressed full-target Windows LLVM archive
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
@@ -54,8 +54,8 @@ runs:
       with:
         # Cache the host architecture's full LLVM archive: x64 on windows-2022
         # and native ARM64 on windows-11-arm.
-        path: ${{ runner.tool_cache }}\llgo-llvm-archives\${{ runner.arch == 'ARM64' && 'clang+llvm-23.1.4-aarch64-pc-windows-msvc.tar.xz' || 'clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz' }}
-        key: llgo-llvm-archive-23.1.4-${{ runner.arch }}-${{ runner.arch == 'ARM64' && 'f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811' || '854bffcfc84528e0ee92490ff5c178920abd358a79c3e98f053e41e3e8e4c6d2' }}
+        path: ${{ runner.tool_cache }}\llgo-llvm-archives\${{ runner.arch == 'ARM64' && 'clang+llvm-23.1.6-aarch64-pc-windows-msvc.tar.xz' || 'clang+llvm-23.1.6-x86_64-pc-windows-msvc.tar.xz' }}
+        key: llgo-llvm-archive-23.1.6-${{ runner.arch }}-${{ runner.arch == 'ARM64' && 'fa5a25df6a1405fdfb9942f4d5cc73bfc3b8b31cfd43ee2fbd43bd2e3168be01' || '16af05919cf36958dfb4ddaa4fc4d9d4ff577f5daeb76bc112ea49cd8ced82b2' }}
 
     - name: Install full-target Windows LLVM
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
@@ -64,7 +64,7 @@ runs:
         # The development archive contains llvm-config, headers, libraries,
         # Clang, LLD, and the WebAssembly backend required by LLGo's Windows
         # host and WASI cross-compilation paths.
-        LLVM_VERSION: "23.1.4"
+        LLVM_VERSION: "23.1.6"
       run: |
         $ErrorActionPreference = "Stop"
         if ("${{ inputs.llvm-version }}" -ne "23") {
@@ -72,9 +72,9 @@ runs:
         }
         $hostArch = if ($env:RUNNER_ARCH -eq "ARM64") { "aarch64" } else { "x86_64" }
         $expectedSha256 = if ($env:RUNNER_ARCH -eq "ARM64") {
-          "f0d2e32424850ffb9b6aef190587a8298353d858a8a7260f490c173fe98d6811"
+          "fa5a25df6a1405fdfb9942f4d5cc73bfc3b8b31cfd43ee2fbd43bd2e3168be01"
         } else {
-          "854bffcfc84528e0ee92490ff5c178920abd358a79c3e98f053e41e3e8e4c6d2"
+          "16af05919cf36958dfb4ddaa4fc4d9d4ff577f5daeb76bc112ea49cd8ced82b2"
         }
 
         $archiveName = "clang+llvm-$env:LLVM_VERSION-$hostArch-pc-windows-msvc.tar.xz"
@@ -128,16 +128,16 @@ runs:
       id: windows_target_llvm_cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.tool_cache }}\llgo-windows-support\23.1.4\${{ inputs.windows-arch }}
-        key: llgo-windows-support-23.1.4-${{ inputs.windows-arch }}-${{ inputs.windows-abi }}-${{ hashFiles('.github/actions/setup-deps/action.yml') }}
+        path: ${{ runner.tool_cache }}\llgo-windows-support\23.1.6\${{ inputs.windows-arch }}
+        key: llgo-windows-support-23.1.6-${{ inputs.windows-arch }}-${{ inputs.windows-abi }}-${{ hashFiles('.github/actions/setup-deps/action.yml') }}
 
     - name: Install Windows LLDB and target builtins
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-arch != '386' && (inputs.windows-abi == 'msvc' || inputs.windows-arch != 'amd64') && steps.windows_target_llvm_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_VERSION: "23.1.4"
+        LLVM_VERSION: "23.1.6"
         LLVM_INSTALLER_ARCH: ${{ inputs.windows-arch == 'arm64' && 'woa64' || 'win64' }}
-        LLVM_INSTALLER_SHA256: ${{ inputs.windows-arch == 'arm64' && 'b484f54264400f0a75b63704b1068da8086f0b14625575f6efea08813109b068' || '15e49aca3540991a6f28a0e57babab67da82155c4f73f79dd5e8666a851f9127' }}
+        LLVM_INSTALLER_SHA256: ${{ inputs.windows-arch == 'arm64' && '18b5b93305262760e107178de218f17fdd487642d34e1502e3a6dc8231e5a50d' || '81f7eb520ca698eb2d5cd8bc4b8f24f7add9ed66ed40a6f722a6e6f060737c00' }}
         LLVM_BUILTINS_ARCH: ${{ inputs.windows-arch == 'arm64' && 'aarch64' || inputs.windows-arch == 'amd64' && 'x86_64' || 'i386' }}
       run: |
         $ErrorActionPreference = "Stop"
@@ -202,8 +202,8 @@ runs:
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-arch == '386' && steps.windows_target_llvm_cache.outputs.cache-hit != 'true'
       shell: pwsh
       env:
-        LLVM_MINGW_VERSION: 20261020
-        LLVM_MINGW_SHA256: 8e8eaf7f0c178ffe0582a5d871dbf3ac50f0a54d71cf5d5edb2e3634f6f9f002
+        LLVM_MINGW_VERSION: 20261104
+        LLVM_MINGW_SHA256: bd5c8b4b8b1fe485525466127ec70e3def2547151fade54d2ed61405d582383c
       run: |
         $ErrorActionPreference = "Stop"
         $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-i686.zip"
@@ -220,7 +220,7 @@ runs:
         $extractRoot = Join-Path $env:RUNNER_TEMP "llgo-win32-lldb-extract"
         Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
         $sourceRoot = Join-Path $extractRoot "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-i686"
-        $cacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.4\386"
+        $cacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.6\386"
         $lldbRoot = Join-Path $cacheRoot "lldb"
         New-Item -ItemType Directory -Force $lldbRoot | Out-Null
         # Preserve the debugger's DLLs and matching Python layout without
@@ -291,8 +291,8 @@ runs:
       if: runner.os == 'Windows' && inputs.install-llvm == 'true' && inputs.windows-abi == 'msvc'
       shell: pwsh
       env:
-        LLVM_VERSION: "23.1.4"
-        LLVM_TARGET_VERSION: "23.1.4"
+        LLVM_VERSION: "23.1.6"
+        LLVM_TARGET_VERSION: "23.1.6"
         VCPKG_MANIFEST_HASH: ${{ steps.windows_profile.outputs.manifest-hash }}
       run: |
         $ErrorActionPreference = "Stop"
@@ -593,9 +593,9 @@ runs:
         llvm_major="${{ inputs.llvm-version }}"
         case "$llvm_major" in
           23)
-            llvm_version=23.1.3
-            package_version=23.1.3-1
-            runtime_package_version=23.1.3-1
+            llvm_version=23.1.5
+            package_version=23.1.5-1
+            runtime_package_version=23.1.5-1
             ;;
           *)
             echo "unsupported Windows LLVM version: $llvm_major" >&2
@@ -750,7 +750,7 @@ runs:
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_MINGW_HOST_PKGCONF=$pkgconf"
         Add-Content -Encoding utf8 $env:GITHUB_ENV "LLGO_MINGW_HOST_ROOT=$mingwRoot"
         if ("${{ inputs.windows-arch }}" -ne "amd64") {
-          $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.4\${{ inputs.windows-arch }}\lldb"
+          $lldbRoot = Join-Path $env:RUNNER_TOOL_CACHE "llgo-windows-support\23.1.6\${{ inputs.windows-arch }}\lldb"
           $lldb = Join-Path $lldbRoot "bin\lldb.exe"
           if (-not (Test-Path $lldb)) {
             throw "lldb.exe was not found for Windows ${{ inputs.windows-arch }}"
@@ -884,10 +884,15 @@ runs:
         }
         # Install LLVM if requested
         if [[ "${{ inputs.install-llvm }}" == "true" ]]; then
-          echo "deb https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{inputs.llvm-version}} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          # Ubuntu 26.04 removed apt-key. Scope the ASCII-armored signing key
+          # to the LLVM source instead of adding it to global apt trust.
+          llvm_key="$(mktemp)"
+          trap 'rm -f "$llvm_key"' EXIT
           # Some Linux runners resolve IPv6 addresses without an IPv6 route.
           # Retry transient DNS errors, but keep HTTPS and bounded failures.
-          wget -4 --retry-on-host-error --tries=3 --timeout=15 --waitretry=2 -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          wget -4 --retry-on-host-error --tries=3 --timeout=15 --waitretry=2 -O "$llvm_key" https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo install -m 0644 "$llvm_key" /usr/share/keyrings/llvm-snapshot.asc
+          echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.asc] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{inputs.llvm-version}} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           apt_get update
           apt_get install -y llvm-${{inputs.llvm-version}}-dev clang-${{inputs.llvm-version}} libclang-${{inputs.llvm-version}}-dev lld-${{inputs.llvm-version}} libunwind-${{inputs.llvm-version}}-dev libc++-${{inputs.llvm-version}}-dev
           echo "PATH=/usr/lib/llvm-${{inputs.llvm-version}}/bin:$PATH" >> $GITHUB_ENV
@@ -904,6 +909,7 @@ runs:
         opt_deps=(
           libcjson-dev   # for github.com/goplus/lib/c/cjson
           libsqlite3-dev # for github.com/goplus/lib/c/sqlite
-          python3.12-dev # for github.com/goplus/lib/py
+          python3-dev    # for github.com/goplus/lib/py (distribution Python)
+          python3-pip    # demo modules for the same interpreter
         )
         apt_get install -y "${opt_deps[@]}"

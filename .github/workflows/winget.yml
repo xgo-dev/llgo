@@ -35,10 +35,6 @@ jobs:
     if: github.repository == 'xgo-dev/llgo' || inputs.dry_run
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [msvc, mingw]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,12 +45,11 @@ jobs:
       - name: Submit release manifests
         env:
           RELEASE_TAG: ${{ inputs.tag }}
-          PROFILE: ${{ matrix.profile }}
           DRY_RUN: ${{ inputs.dry_run }}
           WINGET_PR_TOKEN: ${{ !inputs.dry_run && secrets.WINGET_PR_TOKEN || '' }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          args=(--tag "$RELEASE_TAG" --profile "$PROFILE")
+          args=(--tag "$RELEASE_TAG")
           if [[ "$DRY_RUN" == true ]]; then
             args+=(--dry-run)
           fi

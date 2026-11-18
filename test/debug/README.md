@@ -17,6 +17,8 @@ entry points and their tool requirements.
   target. It requires explicit opt-in and is not part of normal CI.
 - [Wasm logical stacks](wasm/README.md) exercises the installed Chrome extension
   with Memory32/64, parked goroutines, GC, and 1/2/4 workers.
+- [WASI source sessions](wasi/README.md) runs the same object and goroutine
+  fixture with real shared-memory WASI threads, EH and LLDB JIT DWARF.
 
 Run the native LLDB suite from the repository root:
 

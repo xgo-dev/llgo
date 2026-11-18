@@ -193,9 +193,9 @@ jobs:
             # Keep the main batch's existing narrow fatal-signature quarantine.
             # The separate build, cl and test/go invocations use a measured runtime
             # overlay to reserve enough stack for hardware exception recovery.
-            main_go_test=(bash dev/go_test_windows.sh python .github/scripts/run_go_tests.py main "${go_test[@]}")
+            main_go_test=(bash dev/go_test_windows.sh python .github/scripts/run_go_tests.py --packages-from-stdin main "${go_test[@]}")
           else
-            main_go_test=(python .github/scripts/run_go_tests.py main "${go_test[@]}")
+            main_go_test=(python .github/scripts/run_go_tests.py --packages-from-stdin main "${go_test[@]}")
           fi
           if [[ "$RUNNER_OS" == Linux ]]; then
             main_go_test+=(-p=2)
@@ -213,11 +213,14 @@ jobs:
             # main test packages. Each compiler has its package worker pool.
             # The direct language suite retains its own invocation and is
             # excluded from host coverage: test/ is measured by LLGo.
+            # MSYS2 xargs can split this list into multiple invocations that
+            # overwrite the same timing and coverage files. Let the native
+            # Python subprocess receive every package in one invocation.
             go list ./... \
               | grep -v '^github.com/xgo-dev/llgo/test/go$' \
               | grep -v '^github.com/xgo-dev/llgo/cl$' \
               | grep -v '^github.com/xgo-dev/llgo/internal/build$' \
-              | xargs "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
+              | "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
                   -coverpkg=./... -bench '^BenchmarkGo126' -benchtime=1x
           }
 
@@ -279,10 +282,23 @@ jobs:
           fi
           exit "$status"
 
-      - name: Test traceback formatter with coverage
+      - name: Test LLVM AES on emulated CPU targets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user \
+            gcc-x86-64-linux-gnu gcc-i686-linux-gnu gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf gcc-powerpc64-linux-gnu gcc-powerpc64le-linux-gnu \
+            gcc-riscv64-linux-gnu libc6-dev-amd64-cross libc6-dev-i386-cross libc6-dev-arm64-cross \
+            libc6-dev-armhf-cross libc6-dev-ppc64-cross libc6-dev-ppc64el-cross \
+            libc6-dev-riscv64-cross
+          bash dev/test_aes_llvm.sh "$RUNNER_TEMP/llgo-aes-conformance"
+
+      - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings traceback go test -json -coverprofile=../coverage-traceback.txt -covermode=set ./internal/traceback
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:
@@ -314,6 +330,13 @@ jobs:
           path: go-test-timings/
           retention-days: 7
 
+      - name: Select supported Python for Codecov on macOS
+        if: runner.os == 'macOS' && steps.test_coverage.outputs.windows_runtime_corruption != 'true'
+        uses: actions/setup-python@v7
+        with:
+          # The runner default can be newer than Codecov's native dependencies.
+          python-version: "3.13"
+
       - name: Install Codecov CLI with Windows host Python
         if: runner.os == 'Windows' && steps.test_coverage.outputs.windows_runtime_corruption != 'true'
         id: windows_codecov
@@ -337,7 +360,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-traceback.txt
+          files: coverage-main-host.txt,coverage-build-host.txt,coverage-compiler-host.txt,coverage-runtime-helpers.txt
           flags: go-tests
           disable_search: true
 
@@ -378,7 +401,7 @@ jobs:
           set -euo pipefail
           go test -tags=dev -count=1 ./internal/lto ./cmd/internal/flags
           go test -tags=dev -count=1 -timeout=30m \
-            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
+            -run 'LTOPlugin' \
             ./cl
 
   dev-lto-globaldce:
@@ -450,7 +473,7 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
-            -run '^(TestRunAndTestFromTestltoLTOPlugin|TestBuildAndCheckSymbolsFromTestltoLTOPlugin|TestLTOPlugin)' \
+            -run 'LTOPlugin' \
             ./cl
           go tool cover -func=coverage-dev-lto-plugin-cl.txt
 

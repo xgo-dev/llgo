@@ -85,6 +85,13 @@ run_node emscripten-runner.mjs --browser-only "${raw_js}"
 
 build_wasi wasi wasi
 
+# Compile the same Go layout/overflow checks with gc as an independent oracle.
+for goos in js wasip1; do
+	GOOS="${goos}" GOARCH=wasm go build -o "${work_dir}/gc-${goos}.wasm" "${fixture}"
+done
+GOMAXPROCS=1 "${node_cmd}" "$(go env GOROOT)/lib/wasm/wasm_exec_node.js" "${work_dir}/gc-js.wasm"
+GOMAXPROCS=1 "${wasmer_cmd}" run "${work_dir}/gc-wasip1.wasm"
+
 raw_wasi="${work_dir}/raw-wasip1.wasm"
 GOOS=wasip1 GOARCH=wasm "${llgo_cmd}" build -o "${raw_wasi}" "${fixture}"
 assert_wasm_module "${raw_wasi}"

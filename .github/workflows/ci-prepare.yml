@@ -9,6 +9,9 @@ on:
       run_doc_checks:
         description: Run the existing README link and embedded-source checks
         value: ${{ jobs.prepare.outputs.run_doc_checks }}
+      run_winget_ci:
+        description: Run WinGet lifecycle checks for relevant PRs and all main/tag runs
+        value: ${{ jobs.prepare.outputs.run_winget_ci }}
       pr_head_sha:
         description: PR head from the triggering event
         value: ${{ jobs.prepare.outputs.pr_head_sha }}
@@ -34,6 +37,7 @@ jobs:
     outputs:
       run_code_ci: ${{ steps.policy.outputs.run_code_ci }}
       run_doc_checks: ${{ steps.policy.outputs.run_doc_checks }}
+      run_winget_ci: ${{ steps.policy.outputs.run_winget_ci }}
       pr_head_sha: ${{ steps.policy.outputs.pr_head_sha }}
       pr_merge_base: ${{ steps.policy.outputs.pr_merge_base }}
       linux_runner: ${{ steps.policy.outputs.linux_runner }}
@@ -85,6 +89,7 @@ jobs:
           {
             echo "run_code_ci=true"
             echo "run_doc_checks=true"
+            echo "run_winget_ci=true"
             echo "pr_head_sha=$pr_head_sha"
             echo "pr_merge_base=$pr_merge_base"
             if [[ "$GITHUB_REPOSITORY_OWNER" == "xgo-dev" ]]; then

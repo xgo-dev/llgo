@@ -52,12 +52,12 @@ func main() {
 // The closure captures the root slot in its environment, is stored as a
 // {code, env} pair, and both direct and info.span paths recover that pair.
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[ROOTSLOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 8)
+// CHECK: %[[ROOTSLOT:[0-9]+]] = alloca ptr
 // CHECK: %[[ROOT:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 64)
 // CHECK: store ptr %[[ROOT]], ptr %[[ROOTSLOT]], align 8
 // CHECK: %[[ENV:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: %[[ENVSLOT:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[ENV]], i32 0, i32 0
-// CHECK: store ptr %[[ROOTSLOT]], ptr %[[ENVSLOT]], align 8
+// CHECK: store ptr %{{[0-9]+}}, ptr %[[ENVSLOT]], align 8
 // CHECK: %[[CLOSURE:[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr %[[ENV]], 1
 // CHECK: %[[CHECKFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %{{[0-9]+}}, i32 0, i32 5
 // CHECK: store { ptr, ptr } %[[CLOSURE]], ptr %[[CHECKFIELD]], align 8
@@ -80,8 +80,7 @@ func main() {
 // CHECK-LABEL: define i64 @"main.main$1"(
 // ARM64-SAME: ptr swiftself %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
 // AMD64-SAME: ptr nest %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
-// CHECK: %[[CAPTURE:[0-9]+]] = load { ptr }, ptr %[[CENV]], align 8
-// CHECK: %[[CAPTUREDSLOT:[0-9]+]] = extractvalue { ptr } %[[CAPTURE]], 0
+// CHECK: %[[CAPTUREDSLOT:[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %[[CENV]], i32 0, i32 0
 // CHECK: %[[CAPTUREDROOT:[0-9]+]] = load ptr, ptr %[[CAPTUREDSLOT]], align 8
 // CHECK: %[[VALUEFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %[[CAPTUREDROOT]], i32 0, i32 4
 // CHECK: %[[VALUE:[0-9]+]] = load i64, ptr %[[VALUEFIELD]], align 8

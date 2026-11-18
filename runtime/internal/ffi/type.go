@@ -52,29 +52,29 @@ const (
 )
 
 var (
-	TypeVoid       = &Type{1, 1, ffi.Void, nil}
-	TypeBool       = &Type{1, 1, ffi.Uint8, nil}
-	TypeInt8       = &Type{1, 1, ffi.Sint8, nil}
-	TypeInt16      = &Type{2, 2, ffi.Sint16, nil}
-	TypeInt32      = &Type{4, 4, ffi.Sint32, nil}
-	TypeInt64      = &Type{8, 8, ffi.Sint64, nil}
-	TypeUint8      = &Type{1, 1, ffi.Uint8, nil}
-	TypeUint16     = &Type{2, 2, ffi.Uint16, nil}
-	TypeUint32     = &Type{4, 4, ffi.Uint32, nil}
-	TypeUint64     = &Type{8, 8, ffi.Uint64, nil}
-	TypeFloat32    = &Type{4, 4, ffi.Float, nil}
-	TypeFloat64    = &Type{8, 8, ffi.Double, nil}
+	TypeVoid       = &Type{Size: 1, Alignment: 1, Type: ffi.Void}
+	TypeBool       = &Type{Size: 1, Alignment: 1, Type: ffi.Uint8}
+	TypeInt8       = &Type{Size: 1, Alignment: 1, Type: ffi.Sint8}
+	TypeInt16      = &Type{Size: 2, Alignment: 2, Type: ffi.Sint16}
+	TypeInt32      = &Type{Size: 4, Alignment: 4, Type: ffi.Sint32}
+	TypeInt64      = &Type{Size: 8, Alignment: 8, Type: ffi.Sint64}
+	TypeUint8      = &Type{Size: 1, Alignment: 1, Type: ffi.Uint8}
+	TypeUint16     = &Type{Size: 2, Alignment: 2, Type: ffi.Uint16}
+	TypeUint32     = &Type{Size: 4, Alignment: 4, Type: ffi.Uint32}
+	TypeUint64     = &Type{Size: 8, Alignment: 8, Type: ffi.Uint64}
+	TypeFloat32    = &Type{Size: 4, Alignment: 4, Type: ffi.Float}
+	TypeFloat64    = &Type{Size: 8, Alignment: 8, Type: ffi.Double}
 	TypeComplex64  = newComplexType(TypeFloat32, 8, 4)
 	TypeComplex128 = newComplexType(TypeFloat64, 16, 8)
-	TypeInt        = &Type{_sizei, _aligni, _Int, nil}
-	TypeUint       = &Type{_sizei, _aligni, _Uint, nil}
-	TypeUintptr    = &Type{_sizei, _aligni, _Uint, nil}
-	TypePointer    = &Type{_sizei, _aligni, ffi.Pointer, nil}
+	TypeInt        = &Type{Size: ffi.SizeT(_sizei), Alignment: _aligni, Type: _Int}
+	TypeUint       = &Type{Size: ffi.SizeT(_sizei), Alignment: _aligni, Type: _Uint}
+	TypeUintptr    = &Type{Size: ffi.SizeT(_sizei), Alignment: _aligni, Type: _Uint}
+	TypePointer    = &Type{Size: ffi.SizeT(_sizei), Alignment: _aligni, Type: ffi.Pointer}
 	TypeString     = StructOf(TypePointer, TypeInt)
 	TypeInterface  = StructOf(TypePointer, TypePointer)
 	TypeSlice      = StructOf(TypePointer, TypeInt, TypeInt)
 	empty          = [2]*Type{TypeInt8, nil}
-	typeEmpty      = &Type{0, 0, ffi.Struct, &empty[0]}
+	typeEmpty      = newAggregateType(0, 0, ffi.Struct, empty[:])
 )
 
 var Typ = []*Type{

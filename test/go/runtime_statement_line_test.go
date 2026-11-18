@@ -66,13 +66,13 @@ func checkRuntimeCallersFramesStatement(t *testing.T, want int) {
 			if !strings.HasSuffix(frame.File, "runtime_statement_line_test.go") || frame.Line != want {
 				t.Fatalf("callers frame = %s:%d, want line %d", frame.File, frame.Line, want)
 			}
-			fn := runtime.FuncForPC(frame.PC - 1)
+			fn := runtime.FuncForPC(frame.PC)
 			if fn == nil || !strings.HasSuffix(fn.Name(), ".checkRuntimeCallersFramesStatement") {
-				t.Fatalf("FuncForPC(pc-1) = %s", runtimeFunctionName(fn))
+				t.Fatalf("FuncForPC(Frame.PC) = %s", runtimeFunctionName(fn))
 			}
-			file, line := fn.FileLine(frame.PC - 1)
+			file, line := fn.FileLine(frame.PC)
 			if !strings.HasSuffix(file, "runtime_statement_line_test.go") || line == 0 {
-				t.Fatalf("Func.FileLine(pc-1) = %s:%d", file, line)
+				t.Fatalf("Func.FileLine(Frame.PC) = %s:%d", file, line)
 			}
 			return
 		}

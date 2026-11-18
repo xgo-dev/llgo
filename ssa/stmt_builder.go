@@ -90,6 +90,7 @@ func (b Builder) EndBuild() {
 		b.Func.emitFakeUsesInlineAsm(b)
 	}
 	b.Func.endDefer(b)
+	b.Func.finalizeGCRoots()
 	b.Func.endGCRoots(b)
 	b.preserveNilCheckCondition()
 	b.Func.disposeAllocaBuilder()

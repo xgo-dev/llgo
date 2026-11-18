@@ -42,6 +42,7 @@ func TestTargetArchitectureFeatures(t *testing.T) {
 		{name: "arm64 v8.1", target: Target{GOOS: "windows", GOARCH: "arm64", GOARM64: "v8.1"}, wantCPU: "generic", wantFeat: "+v8.1a,+neon,+lse,-fmv"},
 		{name: "arm64 v9 crypto", target: Target{GOOS: "windows", GOARCH: "arm64", GOARM64: "v9.0,crypto"}, wantCPU: "generic", wantFeat: "+v9a,+neon,+lse,+crypto,-fmv"},
 		{name: "darwin arm64", target: Target{GOOS: "darwin", GOARCH: "arm64", GOARM64: "v8.2"}, wantCPU: "generic", wantFeat: "+v8.2a,+neon,+lse"},
+		{name: "hosted riscv64", target: Target{GOOS: "linux", GOARCH: "riscv64"}, wantCPU: "generic-rv64", wantFeat: "+m,+a,+f,+d,+c,+zicsr,+zifencei"},
 		{name: "named 386 target unchanged", target: Target{GOOS: "linux", GOARCH: "386", GO386: "softfloat", Target: "custom"}, wantCPU: "pentium4", wantFeat: "+cx8,+fxsr,+mmx,+sse,+sse2,+x87"},
 		{name: "named amd64 target unchanged", target: Target{GOOS: "linux", GOARCH: "amd64", GOAMD64: "v4", Target: "custom"}, wantCPU: "x86-64", wantFeat: "+cx8,+fxsr,+mmx,+sse,+sse2,+x87"},
 		{name: "named arm target unchanged", target: Target{GOOS: "linux", GOARCH: "arm", GOARM: "5,hardfloat", Target: "custom"}, wantCPU: "generic", wantFeat: "+armv7-a,+d32,+dsp,+fp64,+neon,+vfp2,+vfp2sp,+vfp3,+vfp3d16,+vfp3d16sp,+vfp3sp,-aes,-fp-armv8,-fp-armv8d16,-fp-armv8d16sp,-fp-armv8sp,-fp16,-fp16fml,-fullfp16,-sha2,-thumb-mode,-vfp4,-vfp4d16,-vfp4d16sp,-vfp4sp"},

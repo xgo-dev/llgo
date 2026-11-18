@@ -116,6 +116,13 @@ func runtimeSourceOverlay(base map[string][]byte, runtimeDir, goroot, goVersion 
 		indexSource = append(indexSource, adapterOverlayMarker...)
 	}
 	out[indexPath] = indexSource
+	floating, err := runtimeFloatingPointSources(read, goroot)
+	if err != nil {
+		return nil, err
+	}
+	for name, data := range floating {
+		out[filepath.Join(runtimeDir, "internal", "runtime", name+"_goroot.go")] = data
+	}
 
 	if version.Compare(goVersion, "go1.23") < 0 {
 		return out, nil // SetCrashOutput was introduced in Go 1.23.

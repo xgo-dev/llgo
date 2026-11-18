@@ -81,9 +81,19 @@ type Pair struct { A, B int }
 var global Pair
 func use(*int)
 func useBytes([]byte)
+func newPair() *Pair
+func safepoint()
 func fields(p *Pair) { use(&p.A); use(&p.B) }
 func slices(p []byte) { useBytes(p[1:]); useBytes(p[2:]) }
 func static() { use(&global.A); use(&global.B) }
+func cold(p *Pair, yes bool) { if yes { use(&p.B) } }
+func heap() {
+    p := newPair()
+    safepoint()
+    a, b := &p.A, &p.B
+    safepoint()
+    use(a); use(b)
+}
 `
 	for _, tc := range []struct {
 		name, goos, arch string
@@ -91,6 +101,7 @@ func static() { use(&global.A); use(&global.B) }
 	}{
 		{"enabled", "wasip1", "wasm", true, true},
 		{"no-dce", "wasip1", "wasm", false, true},
+		{"browser", "js", "wasm", false, true},
 		{"no-roots", "wasip1", "wasm", true, false},
 		{"native", "linux", "amd64", true, true},
 	} {
@@ -107,12 +118,17 @@ func static() { use(&global.A); use(&global.B) }
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"fields", "slices", "static"} {
+			cold := pkg.Module().NamedFunction("roots.cold")
+			publishedAtEntry := strings.Contains(cold.String(), "store "+cold.Param(0).String()+",")
+			if want := tc.arch == "wasm" && tc.dce && tc.roots; publishedAtEntry != want {
+				t.Errorf("cold view publishes its parameter = %v, want %v:\n%s", publishedAtEntry, want, cold)
+			}
+			for _, name := range []string{"fields", "slices", "static", "heap"} {
 				want := uint64(3)
 				if name == "static" {
 					want = 2
 				}
-				if tc.name == "enabled" {
+				if tc.arch == "wasm" {
 					want = 1
 					if name == "static" {
 						want = 0

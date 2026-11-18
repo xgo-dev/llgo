@@ -17,6 +17,7 @@
 package ssa
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -147,6 +148,9 @@ type aProgram struct {
 	// map to their native view, while native views map to themselves.
 	nativeStorage map[Type]Type
 	goWordSize    int
+	// Immutable target ABI alignments, safe to read during concurrent type checking.
+	simdAlignments   [3]int64
+	hostBasicLayouts [types.UnsafePointer + 1]sourceLayout
 	// Resolve the physical C ABI once, outside declaration/call lowering.
 	nativeIntegerExt nativeIntegerExtension
 
@@ -349,8 +353,25 @@ func NewProgram(target *Target) Program {
 		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
 		nativeIntegerExt:   nativeIntegerExtensionForTarget(target),
 	}
+	for i, lanes := range []int{16, 32, 64} {
+		prog.simdAlignments[i] = int64(td.ABITypeAlignment(llvm.VectorType(ctx.Int8Type(), lanes)))
+		// Clang caps fixed-length AArch64 C vector alignment at 128 bits,
+		// even when LLVM's raw wide-vector type has a larger ABI alignment.
+		if target.effectiveGOARCH() == "arm64" {
+			prog.simdAlignments[i] = min(prog.simdAlignments[i], 16)
+		}
+	}
 	if goWordSize > prog.ptrSize {
 		prog.nativeStorage = make(map[Type]Type)
+	}
+	// Freeze scalar host layouts before concurrent source type checking.
+	for kind := types.Bool; kind <= types.UnsafePointer; kind++ {
+		if kind == types.String {
+			continue
+		}
+		raw := types.Typ[kind]
+		ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
+		prog.hostBasicLayouts[kind] = sourceLayout{int64(td.TypeAllocSize(ll)), int64(td.ABITypeAlignment(ll))}
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
@@ -433,6 +454,12 @@ func (p Program) DeadcodeDropEnabled() bool {
 	return p.enableDeadcodeDrop
 }
 
+// useRuntimeStaticItab reports whether T2I can use a compiler-emitted itab as
+// the live vtable. LTO and deadcode-drop keep Fun[] from pinning unused methods.
+func (p Program) useRuntimeStaticItab() bool {
+	return !p.enableLTOPluginMarker && !p.enableDeadcodeDrop
+}
+
 // DisableBoundsChecks controls index, slice, and slice-to-array conversion
 // bounds checks. Other dynamic validity checks, including nil pointer and
 // unsafe builtin checks, are not affected.
@@ -502,9 +529,19 @@ func (p Program) SetRuntime(runtime any) {
 
 // SetTypeCallConv sets the default calling convention for the named type, controlling
 // how that type (and functions using it) are lowered.
-func (p Program) SetTypeCallConv(typFullName string, cc CallConv) {
+// For a programmatically constructed native struct, supply its original fields
+// so types.Sizes.Offsetsof can identify the enclosing layout without a named
+// type or source positions. Source loaders instead call SetNativeStructFields
+// before type checking. Synthetic structs must not reuse registered fields.
+func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
 	p.packageSyntax.mu.Lock()
 	p.packageSyntax.typeCallConvs[typFullName] = cc
+	if isNativeCallConv(cc) {
+		if len(fields) != 0 {
+			p.packageSyntax.nativeStructVars[fields[0]] = true
+		}
+		p.packageSyntax.hasNativeTypeMetadata.Store(true)
+	}
 	p.packageSyntax.mu.Unlock()
 }
 
@@ -992,6 +1029,9 @@ type aPackage struct {
 	llvmUsedValues []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
+	ifaceBoxByValue     map[llvm.Value]llvm.Value
+	staticItabByType    map[staticItabKey]Expr
+	staticStringBacking map[llvm.Value]struct{}
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }
@@ -1129,12 +1169,34 @@ func (p Package) createGlobalStr(v string) (ret llvm.Value) {
 	prog := p.Prog
 	if v != "" {
 		typ := llvm.ArrayType(prog.tyInt8(), len(v))
-		global := llvm.AddGlobal(p.mod, typ, "")
-		global.SetInitializer(prog.ctx.ConstString(v, false))
-		global.SetLinkage(llvm.PrivateLinkage)
-		global.SetGlobalConstant(true)
-		global.SetUnnamedAddr(true)
-		global.SetAlignment(1)
+		var global llvm.Value
+		name := ""
+		if prog.GCRootsEnabled() && prog.Target().GOARCH == "wasm" {
+			// Explicit no-scan sections disable LLVM constant merging. Use
+			// the linker's ODR folding for immutable string bytes instead.
+			name = fmt.Sprintf("__llgo_noscan_string$%x", sha256.Sum256([]byte(v)))
+			global = p.mod.NamedGlobal(name)
+		}
+		if global.IsNil() {
+			global = llvm.AddGlobal(p.mod, typ, name)
+			global.SetInitializer(prog.ctx.ConstString(v, false))
+			global.SetLinkage(llvm.PrivateLinkage)
+			global.SetGlobalConstant(true)
+			global.SetUnnamedAddr(true)
+			global.SetAlignment(1)
+			if name != "" {
+				global.SetLinkage(llvm.LinkOnceODRLinkage)
+				global.SetVisibility(llvm.HiddenVisibility)
+				global.SetSection(WasmGCNoScanSection)
+				group := p.mod.Comdat(name)
+				group.SetSelectionKind(llvm.AnyComdatSelectionKind)
+				global.SetComdat(group)
+			}
+		}
+		if p.staticStringBacking == nil {
+			p.staticStringBacking = make(map[llvm.Value]struct{})
+		}
+		p.staticStringBacking[global] = struct{}{}
 		ret = llvm.ConstInBoundsGEP(typ, global, []llvm.Value{prog.Val(0).impl})
 	} else {
 		ret = llvm.ConstNull(prog.CStr().ll)
@@ -1153,6 +1215,9 @@ func (p Package) createGlobalBytes(v []byte) (ret llvm.Value) {
 	global.SetInitializer(prog.ctx.ConstString(string(v), false))
 	global.SetLinkage(llvm.PrivateLinkage)
 	global.SetAlignment(1)
+	if prog.GCRootsEnabled() && prog.Target().GOARCH == "wasm" && !global.Initializer().IsNull() {
+		global.SetSection(WasmGCNoScanSection)
+	}
 	return llvm.ConstInBoundsGEP(typ, global, []llvm.Value{prog.Val(0).impl})
 }
 

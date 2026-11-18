@@ -89,11 +89,15 @@ def main():
             for fixture, marker in (
                 ("wasm-type-fields", "wasm type fields passed"),
                 ("wasm-type-fields-reflect", "wasm type fields reflection passed"),
+                ("wasm-map-metadata", "wasm map metadata passed"),
                 ("wasm-finalizer-direct", "wasm direct finalizers passed"),
                 ("wasm-root-sharing", "wasm root sharing passed"),
             ):
+                # These local lowerings need no dev DCE proof. Exercise their
+                # production behavior under both LTO modes.
+                flags = () if fixture in ("wasm-root-sharing", "wasm-map-metadata", "wasm-finalizer-direct") else ("-deadcodedrop", "-globaldce=false")
                 module = build(env, directory, mode, ROOT / "internal/build/testdata" / fixture,
-                               extra_flags=("-deadcodedrop", "-globaldce=false"))
+                               extra_flags=flags)
                 run(env, module, [marker])
                 if fixture == "wasm-root-sharing":
                     # Frame helpers are outlined only by size optimization.

@@ -23,6 +23,8 @@ typedef struct thread_node {
     struct thread_node *next, *prev;
     uint64_t id, parent;
     uint64_t debugger_thread_id;
+    /* Always zero; retained for native debugger v1 field offsets. Created-by
+     * adapters must read the trailing creator_count/creator_pcs instead. */
     uintptr_t created, low, high;
     pthread_t thread;
     int attached;
@@ -37,6 +39,10 @@ typedef struct thread_node {
     unsigned owned;
     unsigned allcall_state;
     uintptr_t allcall_r1, allcall_r2, allcall_error;
+#endif
+    uintptr_t creator_count, creator_pcs[LLGO_TRACEBACK_CREATOR_MAX];
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    int retirement_fd;
 #endif
 } thread_node;
 
@@ -61,6 +67,7 @@ static void (*urgent_user)(int) = original_urgent;
 
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
 static int handle_allthreads(thread_node *);
+static int allcall_retire_owned(thread_node *);
 #endif
 
 static void *map_buffer(void)
@@ -227,14 +234,20 @@ void llgo_traceback_set_unwinder(llgo_traceback_unwinder walk,
     __atomic_store_n(&unwind_context, walk, __ATOMIC_RELEASE);
 }
 
-void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
+void *llgo_traceback_register(uint64_t id, uint64_t parent,
+                              const uintptr_t *pcs, uintptr_t count)
 {
     thread_node *node = calloc(1, sizeof(*node));
     if (!node)
         return 0;
-    node->id = id; node->parent = parent; node->created = created;
+    node->id = id; node->parent = parent;
+
+    if (count > LLGO_TRACEBACK_CREATOR_MAX) count = LLGO_TRACEBACK_CREATOR_MAX;
+    node->creator_count = count;
+    if (count) memcpy(node->creator_pcs, pcs, count * sizeof(uintptr_t));
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
-    node->owned = parent != 0; /* NewProc children; main is marked at init. */
+    /* NewProc children; init marks main only in standalone executables. */
+    node->owned = parent != 0;
 #endif
     node->state = 1; /* runnable */
     pthread_mutex_lock(&registry_lock);
@@ -243,6 +256,13 @@ void *llgo_traceback_register(uint64_t id, uint64_t parent, uintptr_t created)
     llgo_debugger_threads_v1 = node;
     pthread_mutex_unlock(&registry_lock);
     return node;
+}
+
+uintptr_t *llgo_traceback_thread_creator(void *raw, uintptr_t *count)
+{
+    thread_node *n = raw;
+    *count = n ? n->creator_count : 0;
+    return n ? n->creator_pcs : 0;
 }
 
 void llgo_traceback_attach(void *raw)
@@ -297,15 +317,21 @@ void llgo_traceback_unregister(void *raw)
     if (node->prev) node->prev->next = node->next;
     else llgo_debugger_threads_v1 = node->next;
     if (node->next) node->next->prev = node->prev;
+    int retired = 0;
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    retired = allcall_retire_owned(node);
+#endif
+    int was_current = current == node;
+    /* A disabled-mode prune may free retired nodes as soon as we unlock. */
+    if (was_current) current = 0;
     pthread_mutex_unlock(&registry_lock);
-    if (current == node) {
-        current = 0;
+    if (was_current) {
         if (fault_buffer) {
             munmap(fault_buffer, LLGO_TRACEBACK_MAX * sizeof(uintptr_t));
             fault_buffer = 0;
         }
     }
-    free(node);
+    if (!retired) free(node);
 }
 
 void llgo_traceback_state(void *raw, uint32_t state)
@@ -363,7 +389,9 @@ llgo_traceback_snapshot *llgo_traceback_capture(uint64_t except)
         llgo_traceback_snapshot *s = calloc(1, sizeof(*s) + node->count*sizeof(uintptr_t));
         if (!s)
             break;
-        s->id = node->id; s->parent = node->parent; s->created = node->created;
+        s->id = node->id; s->parent = node->parent;
+        s->creator_count = node->creator_count;
+        memcpy(s->creator_pcs, node->creator_pcs, s->creator_count * sizeof(uintptr_t));
         s->state = state; s->count = node->count;
         s->pcs = (uintptr_t *)(s+1);
         memcpy(s->pcs, scratch, node->count*sizeof(uintptr_t));

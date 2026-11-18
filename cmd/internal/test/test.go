@@ -118,13 +118,14 @@ func runCmd(cmd *base.Command, args []string) {
 		mockable.Exit(1)
 		return
 	}
-	runnerTimeout, err := testRunnerTimeout(flags.TestTimeout)
+	runnerTimeout, waitDelay, err := testRunnerLimits(flags.TestTimeout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		mockable.Exit(1)
 		return
 	}
 	conf.RunnerTimeout = runnerTimeout
+	conf.NativeTestWaitDelay = waitDelay
 	conf.TestFailFast = flags.TestFailfast
 	conf.TestJSON = flags.TestJSON
 	conf.TestRunSequential = testRunsMustBeSequential()
@@ -221,22 +222,23 @@ func interspersedTestFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	return append(options, packages...), nil
 }
 
-// testRunnerTimeout gives the guest test watchdog time to print its panic and
-// terminate the host normally. A non-positive -timeout retains testing's
-// documented behavior and disables both watchdogs.
-func testRunnerTimeout(value string) (time.Duration, error) {
+// testRunnerLimits backs up the test watchdog with an independent deadline.
+// The native pipe-drain grace follows cmd/go: max(5s, testTimeout/10).
+// A non-positive -timeout disables both limits.
+func testRunnerLimits(value string) (timeout, waitDelay time.Duration, err error) {
 	testTimeout, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, fmt.Errorf("invalid value %q for -timeout: %w", value, err)
+		return 0, 0, fmt.Errorf("invalid value %q for -timeout: %w", value, err)
 	}
 	if testTimeout <= 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
+	waitDelay = max(5*time.Second, testTimeout/10)
 	const maxDuration = time.Duration(1<<63 - 1)
 	if testTimeout > maxDuration-testRunnerExitGrace {
-		return maxDuration, nil
+		return maxDuration, waitDelay, nil
 	}
-	return testTimeout + testRunnerExitGrace, nil
+	return testTimeout + testRunnerExitGrace, waitDelay, nil
 }
 
 func testRunsMustBeSequential() bool {

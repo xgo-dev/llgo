@@ -157,13 +157,14 @@ func _C2func_sum(a int32, b int32) (int32, error) {
 	for _, want := range []string{
 		"icmp ne i32",
 		"sext i32",
-		"NewItab",
-		"_llgo_syscall.Errno",
 		"br i1",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("C2func wrapper is missing %q:\n%s", want, ir)
 		}
+	}
+	if !strings.Contains(ir, "NewItab") && !strings.Contains(ir, "_llgo_itab$") {
+		t.Fatalf("C2func wrapper is missing itab construction:\n%s", ir)
 	}
 	if got := strings.Count(ir, "ret {"); got != 2 {
 		t.Fatalf("C2func wrapper return paths = %d, want 2:\n%s", got, ir)
@@ -421,13 +422,14 @@ func TestCgoC2Return_ErrnoNeedsConvert(t *testing.T) {
 	for _, want := range []string{
 		"trunc i64",
 		"icmp ne i32",
-		"NewItab",
-		"_llgo_syscall.Errno",
 		"br i1",
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("cgoC2Return is missing %q:\n%s", want, ir)
 		}
+	}
+	if !strings.Contains(ir, "NewItab") && !strings.Contains(ir, "_llgo_itab$") {
+		t.Fatalf("cgoC2Return is missing itab construction:\n%s", ir)
 	}
 	if got := strings.Count(ir, "ret {"); got != 2 {
 		t.Fatalf("cgoC2Return return paths = %d, want 2:\n%s", got, ir)

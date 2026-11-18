@@ -23,11 +23,20 @@ var globalArray = [1]*object{makeGlobalRoot()}
 var globalStruct = struct{ P *object }{makeGlobalRoot()}
 var globalSlice = []*object{makeGlobalRoot()}
 var globalMap = map[int]*object{0: makeGlobalRoot()}
+var globalMapKey = map[*object]int{makeGlobalRoot(): 0}
 var globalInterface any = makeGlobalRoot()
 var globalClosure = func() func() *object {
 	p := makeGlobalRoot()
 	return func() *object { return p }
 }()
+
+var aliasSource = makeGlobalRoot()
+var globalAliasMap = map[int]*object{0: aliasSource}
+
+func init() {
+	// The copied pointer remains a root after its source variable is cleared.
+	aliasSource = nil
+}
 
 //go:noinline
 func makeGlobalRoot() *object {
