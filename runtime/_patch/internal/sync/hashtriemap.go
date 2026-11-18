@@ -185,7 +185,10 @@ func (ht *HashTrieMap[K, V]) deleteIndex(index int) {
 	if index != last {
 		moved := ht.entries[last]
 		ht.entries[index] = moved
-		ht.m[moved.key] = index
+		// Non-reflexive keys cannot be looked up; assigning again adds an entry.
+		if moved.key == moved.key {
+			ht.m[moved.key] = index
+		}
 	}
 	delete(ht.m, removed)
 	var zero hashTrieEntry[K, V]

@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -1301,5 +1302,46 @@ func TestLLVMAESPatchTypeChecks(t *testing.T) {
 				t.Fatal("AES source patch did not type-check")
 			}
 		})
+	}
+}
+
+func TestHashTrieMapNonReflexiveCompaction(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "_patch", "internal", "sync", "hashtriemap.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// Exercise the actual patch with a public mutex so its private index is testable.
+	code := strings.Replace(string(source), "package sync", "package hashmap", 1)
+	code = strings.Replace(code, "\"sync/atomic\"", "\"sync/atomic\"\n\"sync\"", 1)
+	code += "\ntype Mutex = sync.Mutex\n"
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module hashmap\n\ngo 1.26\n")
+	mustWriteFile(t, filepath.Join(dir, "hashtriemap.go"), code)
+	mustWriteFile(t, filepath.Join(dir, "hashtriemap_test.go"), `package hashmap
+import ("math"; "testing")
+func TestCompaction(t *testing.T) {
+ for _, key := range []any{math.NaN(), complex(math.NaN(), 0), [1]float64{math.NaN()}, struct{ F float64 }{math.NaN()}} {
+  var ht HashTrieMap[any, int]
+  for batch := 0; batch < 32; batch++ {
+   for k := 0; k < 256; k++ { ht.Store(k, k) }
+   ht.Store(key, batch)
+   for k := 255; k >= 0; k-- { ht.Delete(k) }
+   if len(ht.entries) != batch+1 || len(ht.m) != batch+1 { t.Fatalf("%T batch %d: entries=%d index=%d", key, batch, len(ht.entries), len(ht.m)) }
+  }
+  ht.Store("regular", 42)
+  if got, ok := ht.LoadAndDelete("regular"); !ok || got != 42 { t.Fatal(got, ok) }
+  count := 0
+  ht.Range(func(_ any, _ int) bool { count++; return true })
+  if count != 32 { t.Fatal(count) }
+  ht.Clear()
+  if len(ht.entries) != 0 || len(ht.m) != 0 { t.Fatal("Clear retained entries") }
+ }
+}
+`)
+	cmd := exec.Command("go", "test", "-count=1", ".")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hashtriemap regression: %v\n%s", err, output)
 	}
 }
