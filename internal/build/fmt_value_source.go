@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"go/version"
 	"maps"
 	"strings"
 
@@ -125,7 +126,13 @@ func addValueFormatSource(p *packages.Package, runtime *types.Package) (*typeuti
 		Instances: make(map[*ast.Ident]types.Instance), Scopes: make(map[ast.Node]*types.Scope),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection), FileVersions: make(map[*ast.File]string),
 	}
-	conf := types.Config{Importer: gen.imports, Sizes: p.TypesSizes, GoVersion: p.Types.GoVersion()}
+	// Only the synthetic file uses the language features required by the formatter.
+	// Go 1.21 is the minimum override that go/types accepts for a single file.
+	lang := p.Types.GoVersion()
+	if lang != "" && version.Compare(lang, "go1.21") < 0 {
+		file.GoVersion = "go1.21"
+	}
+	conf := types.Config{Importer: gen.imports, Sizes: p.TypesSizes, GoVersion: lang}
 	if err := types.NewChecker(&conf, p.Fset, p.Types, info).Files([]*ast.File{file}); err != nil {
 		return nil, fmt.Errorf("type-check typed formatter for %s: %w", p.PkgPath, err)
 	}
