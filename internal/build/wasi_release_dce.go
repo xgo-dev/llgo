@@ -8,6 +8,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"
@@ -23,7 +24,9 @@ type wasiSizePruningInputs struct {
 
 func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
 	conf := ctx.buildConf
-	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() || conf.ltoEnabled() ||
+	// Full LTO can consume the generated strong overrides directly. ThinLTO's
+	// archive ownership and prevailing-definition rules need a separate pass.
+	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() || conf.ltoMode() == lto.Thin ||
 		(conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.BuildMode != BuildModeExe || conf.OptLevel != optlevel.Oz || conf.WasmOpt != WasmOptSize ||
 		(conf.Target != "" && conf.Target != "wasi" && conf.Target != "wasip1") ||
