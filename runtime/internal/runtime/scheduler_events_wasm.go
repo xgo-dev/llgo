@@ -44,8 +44,15 @@ func popWasmRunq() *g {
 
 func waitWasmRunq() *g {
 	for {
+		pendingPCLN := pollWasmPCLN()
 		if gp := popWasmRunq(); gp != nil {
 			return gp
+		}
+		if pendingPCLN {
+			// Asyncify waits on the system stack so the JS promise can
+			// settle even before the standard-library timers are initialized.
+			wasmevent.Wait(wasmPCLNPollInterval)
+			continue
 		}
 		if wasmTimerWaitHook == nil {
 			return nil

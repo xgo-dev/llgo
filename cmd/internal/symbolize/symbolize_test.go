@@ -72,6 +72,13 @@ func TestRunResolvesMatchingWasmLocations(t *testing.T) {
 		t.Fatalf("offline trace = %q, error = %v", out.String(), err)
 	}
 
+	out.Reset()
+	const prefixed = "[stderr] ??? [pc=16] [llgo-location=42](...)\r\n[stderr] \t???:0\r\n"
+	const prefixedWant = "[stderr] main.crash(...)\n[stderr] \tapp/panic.go:9\n"
+	if err := Run(path, strings.NewReader(prefixed), &out); err != nil || out.String() != prefixedWant {
+		t.Fatalf("prefixed CRLF trace = %q, error = %v", out.String(), err)
+	}
+
 	refused := refusedTraceWriter{errors.New("write failed")}
 	if err := Run(path, strings.NewReader(trace), refused); !errors.Is(err, refused.err) {
 		t.Fatalf("write error = %v", err)

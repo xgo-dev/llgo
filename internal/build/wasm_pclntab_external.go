@@ -3,7 +3,6 @@ package build
 import (
 	"fmt"
 	"os"
-	"slices"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -52,17 +51,16 @@ func writeExternalWasmPCLN(ctx *context, out *OutFmtDetails, verbose bool) error
 
 func linkExternalWasmPCLNData(ctx *context, raw []byte) (pclnmap.Data, error) {
 	data := *ctx.pclnExternal
-	if canPruneWasmTypeMetadata(ctx) && ctx.linkRuntimeSites != nil && !shouldEmitRuntimeSites(ctx) &&
-		len(data.Table.PCLines) > 0 &&
-		!slices.Contains(splitSourcePatchBuildTags(ctx.buildConf.Tags), "llgo.wasm.debugger") {
-		// This executable resolves logical frame IDs. Keep every location and
-		// its owner, including inline frames without a named Wasm function.
-		// Functions with no such record do not need an entry in this map.
+	if ctx.frontendOptions.CompactCallerLocations && len(data.Table.PCLines) != 0 {
+		// An inlined frame can survive even when its original function is
+		// absent from the Wasm name section.
 		data.PCSites = make([]pclnmap.Site, 0, len(data.Table.PCLines))
 		for _, line := range data.Table.PCLines {
 			data.PCSites = append(data.PCSites, pclnmap.Site{ID: line.ID})
 		}
-		return pclnmap.Prune(data)
+		if canPruneWasmTypeMetadata(ctx) && ctx.linkRuntimeSites != nil && !shouldEmitRuntimeSites(ctx) {
+			return pclnmap.Prune(data)
+		}
 	}
 	analysis, err := analyzeWasmPCLNData(raw, data)
 	if err != nil {

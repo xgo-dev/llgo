@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -33,7 +32,9 @@ func Run(modulePath string, trace io.Reader, out io.Writer) error {
 	return resolveTrace(trace, out, locations)
 }
 
-var rawFrame = regexp.MustCompile(`^\?\?\? \[pc=[^\]]+\] \[llgo-location=([0-9]+)\]\(\.\.\.\)$`)
+var rawFrame = regexp.MustCompile(`\?\?\? \[pc=[^\]]+\] \[llgo-location=([0-9]+)\]\(\.\.\.\)$`)
+
+var rawPosition = regexp.MustCompile(`\t\?\?\?:[0-9]+$`)
 
 func resolveTrace(trace io.Reader, out io.Writer, locations pclnmap.WasmLocations) error {
 	scan := bufio.NewScanner(trace)
@@ -41,16 +42,17 @@ func resolveTrace(trace io.Reader, out io.Writer, locations pclnmap.WasmLocation
 	replacePosition := false
 	for scan.Scan() {
 		line := scan.Text()
-		skip := replacePosition && strings.HasPrefix(line, "\t???:")
+		skip := replacePosition && rawPosition.MatchString(line)
 		replacePosition = false
 		if skip {
 			continue
 		}
-		if match := rawFrame.FindStringSubmatch(line); match != nil {
-			id, err := strconv.ParseUint(match[1], 10, 64)
+		if match := rawFrame.FindStringSubmatchIndex(line); match != nil {
+			id, err := strconv.ParseUint(line[match[2]:match[3]], 10, 64)
 			if err == nil {
 				if loc, ok := locations.Resolve(id); ok {
-					line = fmt.Sprintf("%s(...)\n\t%s:%d", loc.Function, loc.File, loc.Line)
+					prefix := line[:match[0]]
+					line = fmt.Sprintf("%s%s(...)\n%s\t%s:%d", prefix, loc.Function, prefix, loc.File, loc.Line)
 					replacePosition = true
 				}
 			}

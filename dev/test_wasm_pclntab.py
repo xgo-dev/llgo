@@ -37,6 +37,8 @@ def run_load_policies(llgo, target, directory, flags, build_environment, environ
         if policy == 'required':
             sidecar = work / 'app.wasm.pclntab'
             original = sidecar.read_bytes()
+            if target == 'wasi' and len(original) > 64 * 1024:
+                raise RuntimeError(f'WASI logical-location map grew to {len(original)} bytes')
             for failure in ['missing', 'corrupt']:
                 if failure == 'missing':
                     sidecar.unlink()
@@ -50,7 +52,7 @@ def run_load_policies(llgo, target, directory, flags, build_environment, environ
                 cases.append(policy + '-' + failure)
             sidecar.write_bytes(original)
         if browser:
-            response_mode = {'background': 'delayed', 'none': 'no-symbols', 'required': 'available'}[policy]
+            response_mode = {'background': 'delayed', 'none': 'no-symbols', 'required': 'delayed'}[policy]
             argument = 'background-pending' if policy == 'background' else policy
             browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN=response_mode)
             subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-policy-ok', argument],
@@ -211,6 +213,21 @@ def main():
             if target in ('wasi', 'emscripten-memory64'):
                 policy_cases = run_load_policies(llgo, target, directory, flags, build_environment, environment,
                                                   args.browser and target != 'wasi')
+            elif args.browser and target == 'gojs':
+                # An import-free main cannot supply the standard runtime's
+                # timer hooks. Delay the map so startup must yield to JS.
+                minimal = directory / 'minimal'
+                minimal.mkdir()
+                source = minimal / 'main.go'
+                source.write_text('package main\nfunc main() { println("pcln-required-ok") }\n', encoding='utf-8')
+                output = minimal / 'app.wasm'
+                minimal_flags = [flag for flag in flags if flag != '-Oz']
+                subprocess.run([llgo, 'build', '-O0', *minimal_flags, '-pclntab-load=required', '-o', str(output), str(source)],
+                               cwd=ROOT, env=build_environment, check=True, timeout=300)
+                browser_env = dict(environment, LLGO_BROWSER_REQUIRE_EXIT='1', LLGO_BROWSER_PCLN='delayed')
+                subprocess.run(['node', str(ROOT / 'dev/test_wasm_browser.mjs'), str(output), 'pcln-required-ok'],
+                               cwd=ROOT, env=browser_env, check=True, timeout=70)
+                policy_cases.append('browser-required-without-imports')
             reports.append({'target': target, 'module_bytes': module.stat().st_size,
                             'sidecar_bytes': len(original), 'cases': cases, 'browser_cases': browser_cases,
                             'load_policy_cases': policy_cases})

@@ -12,7 +12,8 @@ import (
 
 func TestWasmPCLNLiveness(t *testing.T) {
 	records := []funcInfoRecord{{symbol: "main.live", name: "main.live", file: "live.go", line: 2}, {symbol: "main.dead", name: "main.dead", file: "dead.go", line: 3}}
-	table, err := funcinfo.EncodeWithPCLines(toFuncInfoRecords(records), nil)
+	table, err := funcinfo.EncodeWithPCLines(toFuncInfoRecords(records),
+		[]funcinfo.PCLineRecord{{ID: 3, Symbol: "main.live", File: "live.go", Line: 4}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +73,13 @@ func TestWasmPCLNLiveness(t *testing.T) {
 			}
 			if len(pruned.Table.Records) != tc.want {
 				t.Fatalf("records=%d, want %d", len(pruned.Table.Records), tc.want)
+			}
+			wantLines := 0
+			if tc.want > 0 {
+				wantLines = 1
+			}
+			if len(pruned.Table.PCLines) != wantLines {
+				t.Fatalf("locations=%d, want %d", len(pruned.Table.PCLines), wantLines)
 			}
 		})
 	}

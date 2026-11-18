@@ -1566,6 +1566,7 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		commands:             ctx.commands,
 		pclnExternal:         plan.pclnExternal,
 		wasmClosedProgram:    ctx.wasmClosedProgram,
+		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
 		linkRuntimeSites:     &plan.runtimeSites,
 		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
 		darwinHiddenGlobals:  plan.darwinHiddenGlobals,

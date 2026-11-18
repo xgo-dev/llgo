@@ -56,7 +56,7 @@ func addPCLNFlag(fs *flag.FlagSet) {
 	PCLN = pclnFlag{Mode: build.PCLNEmbedded}
 	pclnLoadPolicy = nil
 	fs.Var(&PCLN, "pclntab", "PCLN metadata mode: embedded, external, or none (default: embedded)")
-	fs.Func("pclntab-load", "Wasm external PCLN loading policy: lazy, required, background, or none", func(value string) error {
+	fs.Func("pclntab-load", "PCLN loading policy: lazy (default), required, background, or none. Explicit non-default policies require Wasm and -pclntab=external", func(value string) error {
 		var policy build.PCLNLoadPolicy
 		switch value {
 		case "lazy":

@@ -6,4 +6,8 @@ import "github.com/xgo-dev/llgo/runtime/internal/pcln"
 
 func ensureRuntimePCLN() bool { return pcln.Ensure(waitRuntimePCLN) }
 func runtimePCLNReady() bool  { return pcln.Ready() }
-func waitRuntimePCLN()        { timeSleep(1000000) }
+func waitRuntimePCLN(ready func() bool) {
+	for !ready() {
+		timeSleep(1000000)
+	}
+}
