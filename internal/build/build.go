@@ -159,6 +159,7 @@ type Config struct {
 	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
 	OptLevel           optlevel.Level
 	WasmOpt            WasmOptMode
+	WasmMinimalHost    bool // allow a reduced Emscripten host when runtime-free
 	WasmStrip          WasmStripMode
 	LTO                lto.Mode
 	LTOPlugin          lto.PassPlugin
@@ -290,8 +291,9 @@ type Config struct {
 	toolTags        []string
 	// Preserve inferred optimization levels when invocations are cloned.
 	// Only explicit -Oz requests the optional final optimizer.
-	optLevelDefaulted bool
-	wasiReleaseDCE    bool
+	optLevelDefaulted       bool
+	wasiReleaseDCE          bool
+	wasmMinimalHostSelected bool
 }
 
 type Rewrites map[string]string
@@ -304,6 +306,7 @@ func (c *Config) clone() *Config {
 		return nil
 	}
 	cloned := *c
+	cloned.wasmMinimalHostSelected = false
 	// Per-invocation coverage state may retain loaded packages and temporary
 	// paths. A cloned invocation rebuilds that state from Coverage.
 	cloned.coverage = nil
@@ -524,7 +527,7 @@ func (c *Config) goGlobalDCEEnabled() bool {
 }
 
 func (c *Config) deadcodeDropEnabled() bool {
-	return c.wasiReleaseDCE || buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
+	return c.wasiReleaseDCE || (c.wasmMinimalHostSelected || buildenv.Dev && c.DeadcodeDrop) && !c.goGlobalDCEEnabled()
 }
 
 func (c *Config) packageMetaEnabled() bool {

@@ -71,7 +71,8 @@ type frontendCache struct {
 }
 
 func (c *context) newFrontendCache(entries []ssaBuildEntry, mode ssa.BuilderMode) *frontendCache {
-	if !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || c.buildConf.ForceRebuild || c.buildConf.ModuleHook != nil ||
+	// Minimal host selection requires current SSA and linker inputs.
+	if c.buildConf.WasmMinimalHost || !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || c.buildConf.ForceRebuild || c.buildConf.ModuleHook != nil ||
 		c.mode == ModeGen || c.buildConf.BuildMode != BuildModeExe || c.buildConf.deadcodeDropEnabled() || c.buildConf.DependencyEscapeDiagnostics > 0 {
 		return nil
 	}

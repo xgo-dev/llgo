@@ -67,6 +67,9 @@ func validateWasmFinalOptions(conf *Config, target *crosscompile.Export) error {
 	}
 	hostedExe := conf.BuildMode == BuildModeExe && conf.Mode != ModeGen &&
 		target.WasmProfile != crosscompile.WasmProfileNone && conf.OutFmts == (OutFmts{})
+	if conf.WasmMinimalHost && (!hostedExe || !isEmscriptenNamedTarget(conf) || target.WasmProvider != crosscompile.WasmProviderEmscripten) {
+		return fmt.Errorf("-wasm-minimal-host requires a named Emscripten executable")
+	}
 	if hostedExe {
 		// The aggressive cross-platform size level also optimizes the final
 		// Wasm executable. -Os and inferred target defaults retain their

@@ -47,13 +47,15 @@ func isEmscriptenNamedTarget(conf *Config) bool {
 	return false
 }
 
+func ownsEmscriptenGlue(conf *Config, output string) bool {
+	return conf != nil && conf.BuildMode == BuildModeExe && emscriptenBrowserHostExt(output) != "" &&
+		isEmscriptenNamedTarget(conf)
+}
+
 func needsEmscriptenBrowserHost(conf *Config, output string) bool {
-	if conf == nil || conf.BuildMode != BuildModeExe || emscriptenBrowserHostExt(output) == "" {
-		return false
-	}
-	// GoJS uses wasm_exec.js / Node fs. Only named Emscripten targets need
-	// the Module.FS → Node-shaped fs sidecar.
-	return isEmscriptenNamedTarget(conf)
+	// GoJS uses wasm_exec.js. Minimal Emscripten executables also have no
+	// filesystem sidecar, but still own their generated glue.
+	return ownsEmscriptenGlue(conf, output) && !conf.wasmMinimalHostSelected
 }
 
 func publishEmscriptenBrowserHost(ctx *context, output string, verbose bool) error {
@@ -77,7 +79,7 @@ func removeStaleEmscriptenGlue(conf *Config, driverOut string) error {
 	// Native and non-Emscripten links can use .js/.mjs names too. Only the
 	// Emscripten JS executable contract owns the alternate glue sidecar
 	// (.js ↔ .mjs) left behind when switching emcc -o suffixes.
-	if !needsEmscriptenBrowserHost(conf, driverOut) {
+	if !ownsEmscriptenGlue(conf, driverOut) {
 		return nil
 	}
 	stale := staleEmscriptenGluePath(driverOut)

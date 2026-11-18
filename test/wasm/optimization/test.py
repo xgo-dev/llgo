@@ -12,6 +12,38 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
+def check_minimal_host(llgo, node, target, directory, env, browser):
+    root = pathlib.Path(directory) / (target + "-minimal")
+    root.mkdir()
+    output = root / "app.mjs"
+    subprocess.run(
+        [llgo, "build", "-target", target, "-Oz", "-lto=full", "-ldflags=-s",
+         "-wasm-minimal-host", "-debug-artifact=none", "-o", str(output),
+         str(ROOT / "benchmark/binary_size/println/main.go")],
+        env=env, check=True, timeout=300,
+    )
+    manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
+    files = {entry["path"] for entry in manifest["artifacts"]}
+    if not manifest.get("minimal_host") or files != {"app.mjs", "app.wasm"}:
+        raise RuntimeError(f"{target}: incorrect minimal host artifacts: {files!r}")
+    if (root / "wasm_fs.js").exists():
+        raise RuntimeError(f"{target}: minimal host packaged the browser filesystem")
+    result = subprocess.run(
+        [node, str(ROOT / "targets" / f"{target}-runner.mjs"), str(output)],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    marker = "Hello, world"
+    if result.returncode or (result.stdout + result.stderr).strip() != marker:
+        raise RuntimeError(f"{target}: exit {result.returncode}\n{result.stdout}\n{result.stderr}")
+    if browser:
+        subprocess.run(
+            [node, str(ROOT / "dev/test_wasm_browser.mjs"), str(output), marker, "single"],
+            env=env, check=True, timeout=90,
+        )
+    size = sum(entry["bytes"] for entry in manifest["artifacts"])
+    print(f"{target}: minimal host passed ({size} deployment bytes)", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", action="store_true", help="also run each artifact in Chrome")
@@ -40,13 +72,14 @@ def main():
             if rejected.returncode == 0 or "exit 2: wasm deferred marker" not in rejected.stderr:
                 raise RuntimeError(f"browser accepted a failed program or lost its arguments:\n{rejected.stdout}\n{rejected.stderr}")
         for target in ("emscripten", "emscripten-memory64"):
+            check_minimal_host(llgo, node, target, directory, dict(env, LLGO_WASM_WORKERS="1"), args.browser)
             for level, workers, fixture, marker in cases:
                 name = f"{target}-{level}-{workers}-workers"
                 output = pathlib.Path(directory) / f"{name}.mjs"
                 build_env = dict(env, LLGO_WASM_WORKERS=str(workers))
                 print(f"Checking {name}", flush=True)
                 subprocess.run(
-                    [llgo, "build", "-target", target, f"-{level}", "-o", str(output),
+                    [llgo, "build", "-target", target, f"-{level}", "-wasm-minimal-host", "-o", str(output),
                      str(ROOT / "internal/build/testdata" / fixture)],
                     env=build_env, check=True, timeout=300,
                 )
@@ -72,12 +105,12 @@ def main():
             # when size mode stops publishing incidental JS implementation names.
             output = pathlib.Path(directory) / f"{target}-exports.mjs"
             subprocess.run(
-                [llgo, "build", "-target", target, "-Oz", "-ldflags=-s",
+                [llgo, "build", "-target", target, "-Oz", "-ldflags=-s", "-wasm-minimal-host",
                  "-o", str(output), str(ROOT / "internal/build/testdata/wasm-exports")],
                 env=dict(env, LLGO_WASM_WORKERS="1"), check=True, timeout=300,
             )
             manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
-            if manifest["optimization"] != "size" or manifest["strip"] != "debug":
+            if manifest.get("minimal_host") or manifest["optimization"] != "size" or manifest["strip"] != "debug":
                 raise RuntimeError(f"{target}: -Oz/-s policy was not applied")
             subprocess.run(
                 [node, "--input-type=module", "-e", '''
