@@ -113,6 +113,11 @@ before formatting. The writer exposes only `Write`, which avoids retaining
 other `*os.File` methods when formatting is their only reachability path. The
 write still uses `os.File.Write`, and debugger builds use the standard source.
 
+On closed WASI Wasm32 executables built with `-Oz`, a direct
+`fmt.Sprintf("%v", m)` with an unnamed `map[string]int` can use a typed
+formatter. LLGo keeps the general formatter when other calls still need it
+or when the linker cannot account for native and host entry points.
+
 For size comparisons, report linked bytes and final optimized bytes separately,
 with the same Binaryen version and flags for each compiler. Include JavaScript,
 manifest and symbol sidecars in deployment totals where present; a minimal WASI

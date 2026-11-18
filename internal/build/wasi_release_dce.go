@@ -24,8 +24,10 @@ type wasiSizePruningInputs struct {
 
 func (ctx *context) wasiSizePruningInputs(goroot string) *wasiSizePruningInputs {
 	conf := ctx.buildConf
-	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() ||
-		(conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
+	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.mapFormatPlan == nil {
+		return nil
+	}
+	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.BuildMode != BuildModeExe || conf.OptLevel != optlevel.Oz || conf.WasmOpt != WasmOptSize ||
 		(conf.Target != "" && conf.Target != "wasi" && conf.Target != "wasip1") ||
 		ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 ||
@@ -130,6 +132,9 @@ func configureWasiReleaseDCE(ctx *context, in *wasiSizePruningInputs) {
 		return
 	}
 	conf := ctx.buildConf
+	if conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() {
+		return
+	}
 	if in.opaqueAsmPkg != "" {
 		if conf.Verbose || conf.PrintCommands {
 			fmt.Fprintf(os.Stderr, "llgo: retain WASI code and metadata: opaque assembly in %s\n", in.opaqueAsmPkg)

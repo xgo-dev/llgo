@@ -31,23 +31,26 @@ type literalFormatImporter struct{ pkg *types.Package }
 
 func (i literalFormatImporter) Import(string) (*types.Package, error) { return i.pkg, nil }
 
+func buildFormatTestPackage(t *testing.T, prog *ssa.Program, path, source string, imported *types.Package) *ssa.Package {
+	t.Helper()
+	fset := prog.Fset
+	file, err := parser.ParseFile(fset, path+".go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object), Scopes: make(map[ast.Node]*types.Scope)}
+	conf := &types.Config{Importer: literalFormatImporter{imported}}
+	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prog.CreatePackage(pkg, []*ast.File{file}, info, true)
+}
+
 func literalFormatProgram(t *testing.T, helpers bool) *ssa.Package {
 	t.Helper()
 	fset := token.NewFileSet()
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-	build := func(path, source string, imported *types.Package) *ssa.Package {
-		file, err := parser.ParseFile(fset, path+".go", source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object), Scopes: make(map[ast.Node]*types.Scope)}
-		conf := &types.Config{Importer: literalFormatImporter{imported}}
-		pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return prog.CreatePackage(pkg, []*ast.File{file}, info, true)
-	}
 	fmtSource := `package fmt
 func Printf(s string, a ...any) (int, error) { return 0, nil }
 func Fprintf(w any, s string, a ...any) (int, error) { return 0, nil }
@@ -65,8 +68,8 @@ func llgoPrintfScalars(s string, a ...any) (int, error) { return 0, nil }
 func llgoSprintfScalars(s string, a ...any) string { return s }
 `
 	}
-	fmtPkg := build("fmt", fmtSource, nil)
-	main := build("main", `package main
+	fmtPkg := buildFormatTestPackage(t, prog, "fmt", fmtSource, nil)
+	main := buildFormatTestPackage(t, prog, "main", `package main
 import "fmt"
 func literal() { fmt.Printf("hello%%") }
 func writer(w any) { fmt.Fprintf(w, "") }
