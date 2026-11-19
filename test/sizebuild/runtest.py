@@ -4,6 +4,7 @@
 import argparse
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -60,6 +61,11 @@ def controlled_environment(source):
     return env
 
 
+def has_go127_release_tag(version):
+    match = re.match(r"(?:devel )?go(\d+)\.(\d+)", version.strip())
+    return match is not None and tuple(map(int, match.groups())) >= (1, 27)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
@@ -84,14 +90,14 @@ def main():
             print("ESP32-C3 C-only DCE cold/warm builds passed (build-only)")
             # Go 1.27's fmt dependency graph uses the portable assembly,
             # console and runtime providers for this bare-metal target.
-            if command(["go", "env", "GOVERSION"], env).strip().startswith("go1.27"):
+            if has_go127_release_tag(command(["go", "env", "GOVERSION"], env)):
                 output = directory / "fmtprintf.elf"
                 command([str(llgo), "build", "-target=esp32c3", "-Oz",
                          "-deadcodedrop", "-globaldce=false", "-lto=full",
                          "-o", str(output), "./benchmark/binary_size/fmtprintf"], env)
                 if output.read_bytes()[:4] != b"\x7fELF":
                     raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
-                print("ESP32-C3 Go 1.27 fmt build passed (build-only)")
+                print("ESP32-C3 Go 1.27+ fmt build passed (build-only)")
             return
 
         wasmer = env.get("WASMER", "wasmer")

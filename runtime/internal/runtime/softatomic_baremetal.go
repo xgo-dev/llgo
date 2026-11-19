@@ -1,4 +1,4 @@
-//go:build esp32c3 || (cortexm && qemu && lm3s6965)
+//go:build esp32c3 || (arm && baremetal && llgo.singlecontext)
 
 package runtime
 

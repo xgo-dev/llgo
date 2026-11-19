@@ -1,4 +1,4 @@
-//go:build !nogc && !wasm && !(llgo.baremetal.stdio && go1.27)
+//go:build !nogc && !wasm && !(baremetal && llgo.baremetal.stdio && go1.27)
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.

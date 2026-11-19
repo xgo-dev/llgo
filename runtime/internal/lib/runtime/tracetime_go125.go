@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	// osHasLowResClock indicates that timestamps produced by nanotime on the platform have a
-	// low resolution, typically on the order of 1 ms or more.
+	// LLGo normalizes QueryPerformanceCounter to nanoseconds on Windows,
+	// so all hosted targets use the high-resolution nanotime trace path.
 	osHasLowResClock = false
 )
 

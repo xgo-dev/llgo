@@ -1,4 +1,4 @@
-//go:build !windows && !(cortexm && qemu && lm3s6965)
+//go:build !windows && !(baremetal && llgo.singlecontext)
 
 package thread
 

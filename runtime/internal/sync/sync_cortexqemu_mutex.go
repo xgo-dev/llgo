@@ -1,4 +1,4 @@
-//go:build cortexm && qemu && lm3s6965
+//go:build baremetal && llgo.singlecontext
 
 package sync
 
@@ -17,6 +17,7 @@ func pthreadMutexDestroy(m *Mutex) c.Int {
 
 func pthreadMutexLock(m *Mutex) c.Int {
 	if pthreadMutexTryLock(m) != 0 {
+		c.Fputs(c.Str("mutex deadlock on the single-context Cortex-M runtime\n"), c.Stderr)
 		c.Exit(1)
 	}
 	return 0

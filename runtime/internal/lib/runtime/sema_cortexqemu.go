@@ -1,4 +1,4 @@
-//go:build linux && cortexm && qemu && lm3s6965
+//go:build linux && baremetal && llgo.singlecontext
 
 package runtime
 

@@ -62,8 +62,12 @@ func compiledLibraryCacheKey(compilerKey string, flagGroups ...[]string) string 
 	return fmt.Sprintf("%s-%x", compilerKey, digest[:6])
 }
 
-func compiledLibraryDir(baseDir string, config compile.LibConfig, compiledLibraryKey string) string {
-	return filepath.Join(baseDir, config.String()+"-"+compiledLibraryKey)
+func compiledLibraryDir(baseDir string, library compile.LibConfig, compilerKey string, config compile.CompileConfig) string {
+	var inputs [][]string
+	for _, group := range config.Groups {
+		inputs = append(inputs, []string{group.OutputFileName}, group.Files, group.CFlags, group.CCFlags, group.LDFlags)
+	}
+	return filepath.Join(baseDir, library.String()+"-"+compiledLibraryCacheKey(compilerKey, inputs...))
 }
 
 // getLibcCompileConfigByName retrieves libc compilation configuration by name
@@ -90,10 +94,7 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu, compiledLibrary
 		err = fmt.Errorf("unsupported libc: %s", libcName)
 		return
 	}
-	if libcName == "picolibc" {
-		compiledLibraryKey = compiledLibraryCacheKey(compiledLibraryKey, compileConfig.Groups[0].Files)
-	}
-	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey)
+	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey, compileConfig)
 	if needSkipDownload {
 		return outputDir, compileConfig, err
 	}
@@ -125,10 +126,7 @@ func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string
 		err = fmt.Errorf("unsupported rt: %s", rtName)
 		return
 	}
-	if strings.HasPrefix(target, "thumb") {
-		compiledLibraryKey = compiledLibraryCacheKey(compiledLibraryKey, compileConfig.Groups[0].Files)
-	}
-	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey)
+	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey, compileConfig)
 	if needSkipDownload {
 		return outputDir, compileConfig, err
 	}

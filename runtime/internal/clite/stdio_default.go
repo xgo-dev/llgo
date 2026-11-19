@@ -1,4 +1,4 @@
-//go:build !darwin && !windows && (!baremetal || (cortexm && qemu && lm3s6965))
+//go:build !darwin && !windows && (!baremetal || llgo.baremetal.cstdio)
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
