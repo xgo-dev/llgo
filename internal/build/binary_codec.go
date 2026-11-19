@@ -16,7 +16,7 @@ import (
 )
 
 func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
-	if conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() ||
+	if conf.disableSizeSpecialization || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() ||
 		conf.BuildMode != BuildModeExe || conf.Mode == ModeGen || conf.Coverage != nil ||
 		conf.ModuleHook != nil || frontend.Debug || frontend.DebuggerFrames ||
 		conf.LTOPlugin.Enabled() || frontendCacheEnabled(conf) || len(conf.SourceOverlay) != 0 || len(initial) != 1 {

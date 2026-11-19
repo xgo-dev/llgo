@@ -2,7 +2,10 @@
 // typed formatters. Each call site supplies concrete values and formatters.
 package llgofmt
 
-import "strconv"
+import (
+	"math"
+	"strconv"
+)
 
 func AppendInt(dst []byte, value int64) []byte {
 	return strconv.AppendInt(dst, value, 10)
@@ -17,7 +20,14 @@ func AppendFloat(dst []byte, value float64, bits int) []byte {
 }
 
 func AppendComplex(dst []byte, value complex128, bits int) []byte {
-	return append(dst, strconv.FormatComplex(value, 'g', -1, bits)...)
+	dst = append(dst, '(')
+	dst = AppendFloat(dst, real(value), bits/2)
+	imaginary := imag(value)
+	if math.IsNaN(imaginary) || !math.Signbit(imaginary) && !math.IsInf(imaginary, 1) {
+		dst = append(dst, '+')
+	}
+	dst = AppendFloat(dst, imaginary, bits/2)
+	return append(dst, 'i', ')')
 }
 
 func AppendPointer(dst []byte, value uintptr) []byte {

@@ -113,13 +113,14 @@ before formatting. The writer exposes only `Write`, which avoids retaining
 other `*os.File` methods when formatting is their only reachability path. The
 write still uses `os.File.Write`, and debugger builds use the standard source.
 
-On closed WASI Wasm32 executables built with `-Oz`, constant `fmt.Sprintf`
-calls with one `%v` operand can use a generated formatter that takes the
-operand's concrete type. It covers statically described scalars, arrays, slices,
-structs and maps, including compound keys. The compiler loads the helper from its runtime module. It shares typed map
-sorting and buffer operations. Types with formatting methods and unresolved interface values
-keep the general formatter. This pass shares the release pruning checks for
-link inputs, coverage, debugging and LTO.
+On closed WASI Wasm32 executables built with `-Oz`, a constant
+`fmt.Sprintf("%v", value)` can use a generated formatter for the operand's
+concrete type. The same pass runs in dev builds for Emscripten J32/J64 and
+macOS arm64 with `-Oz -lto=full -deadcodedrop -globaldce=false`. It supports
+scalars, arrays, slices, structs, maps with compound keys, pointers, channels,
+and `unsafe.Pointer`. The runtime helper provides typed sorting and buffer
+operations. Formatting methods and unresolved interfaces keep the generic
+path.
 
 For size comparisons, report linked bytes and final optimized bytes separately,
 with the same Binaryen version and flags for each compiler. Include JavaScript,

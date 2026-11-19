@@ -4,7 +4,7 @@ import "encoding/binary"
 
 type packet struct{ A uint16 }
 
-// Keep a second reference to the generic formatter through a function value.
+// Keep a second reference to the generic encoder through a function value.
 var encode = binary.Encode
 
 func main() {
