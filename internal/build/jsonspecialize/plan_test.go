@@ -32,9 +32,15 @@ func TestRewriteJSONMarshal(t *testing.T) {
 			library := initial.Imports["encoding/json"]
 			var closure []*packages.Package
 			packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
-			changed, err := Rewrite(closure, library)
+			if changed, err := Rewrite(closure, library, nil); len(changed) != 0 || err != nil {
+				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
+			}
+			changed, err := Rewrite(closure, library, initial)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(changed) > 1 || len(changed) == 1 && changed[0] != initial {
+				t.Fatal("only the executable package can be rewritten")
 			}
 			if (len(changed) != 0) != tc.rewrite {
 				t.Fatalf("changed %d packages, rewrite expected %v", len(changed), tc.rewrite)

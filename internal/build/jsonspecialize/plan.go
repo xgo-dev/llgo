@@ -39,7 +39,7 @@ type packagePlan struct {
 // Rewrite uses the compact path when all calls to the legacy encoder can be
 // lowered. Keeping a single encoder avoids duplicating the standard codec in
 // programs that still need dynamic reflection or custom JSON methods.
-func Rewrite(closure []*packages.Package, library *packages.Package) ([]*packages.Package, error) {
+func Rewrite(closure []*packages.Package, library, entry *packages.Package) ([]*packages.Package, error) {
 	deps := make(map[string]*packages.Package)
 	for _, p := range closure {
 		deps[p.PkgPath] = p
@@ -72,19 +72,18 @@ func Rewrite(closure []*packages.Package, library *packages.Package) ([]*package
 			return nil, nil
 		}
 		if len(plan.calls) != 0 {
+			if pkg != entry {
+				return nil, nil
+			}
 			plans = append(plans, plan)
 		}
 	}
 	if len(plans) == 0 {
 		return nil, nil
 	}
-	quote, err := addStringAppender(library, deps["unicode/utf8"])
-	if err != nil {
-		return nil, err
-	}
-	changed := []*packages.Package{library}
+	var changed []*packages.Package
 	for _, plan := range plans {
-		if err := plan.apply(library, quote, sortPkg, deps["strconv"]); err != nil {
+		if err := plan.apply(library.Imports["encoding/json/v2"] != nil, sortPkg, deps["strconv"], deps["unicode/utf8"]); err != nil {
 			return nil, err
 		}
 		changed = append(changed, plan.pkg)

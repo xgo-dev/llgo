@@ -12,9 +12,9 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Keep the standard library error object, including interface identity when
-// a caller compares errors. This declaration exists only in the checked AST.
-func addShortBufferAccessor(pkg *packages.Package) (string, error) {
+// AddShortBufferAccessor always provides the same declaration for this
+// compiler profile. It keeps the standard library's original error object.
+func AddShortBufferAccessor(pkg *packages.Package) (string, error) {
 	errVar, _ := pkg.Types.Scope().Lookup("errBufferTooSmall").(*types.Var)
 	if errVar == nil || !types.Identical(errVar.Type(), types.Universe.Lookup("error").Type()) {
 		return "", nil

@@ -10,7 +10,7 @@ import (
 
 func (ctx *context) prepareValueFormatSource(p *packages.Package) (*packages.Package, error) {
 	runtime := ctx.formatRuntime
-	if runtime == nil || p.Imports["fmt"] == nil || p.TypesInfo == nil ||
+	if runtime == nil || p.Name != "main" || p.Imports["fmt"] == nil || p.TypesInfo == nil ||
 		len(p.Syntax) == 0 || ctx.dedup.IsExported(p.ID) {
 		return nil, nil
 	}

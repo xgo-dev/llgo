@@ -29,15 +29,25 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 			packages.Visit([]*packages.Package{initial}, nil, func(p *packages.Package) {
 				closure = append(closure, p)
 			})
+			shortBuffer, err := AddShortBufferAccessor(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
 			info := initial.TypesInfo
 			initial.TypesInfo = nil
-			if changed, err := Rewrite(closure, binary); len(changed) != 0 || err != nil {
+			if changed, err := Rewrite(closure, binary, initial, shortBuffer); len(changed) != 0 || err != nil {
 				t.Fatalf("missing types produced %d rewritten packages, %v", len(changed), err)
 			}
 			initial.TypesInfo = info
-			changed, err := Rewrite(closure, binary)
+			if changed, err := Rewrite(closure, binary, nil, shortBuffer); len(changed) != 0 || err != nil {
+				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
+			}
+			changed, err := Rewrite(closure, binary, initial, shortBuffer)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(changed) > 1 || len(changed) == 1 && changed[0] != initial {
+				t.Fatal("only the executable package can be rewritten")
 			}
 			if got := len(changed) != 0; got != fixture.want {
 				t.Fatalf("rewrite = %v, want %v", got, fixture.want)

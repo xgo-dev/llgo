@@ -46,7 +46,12 @@ func TestBinaryCodecSupport(t *testing.T) {
 					List: []*ast.Comment{{Text: "//go:linkname nativePacket encoding/binary.Encode"}},
 				})
 			}
-			changed, err := specializeBinaryCodecs(&conf, cl.Options{}, runtime.GOROOT(), initial[0].Imports["encoding/binary"], initial, nil)
+			library := initial[0].Imports["encoding/binary"]
+			shortBuffer, err := prepareBinaryCodecSupport(&conf, cl.Options{}, runtime.GOROOT(), library)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed, err := specializeBinaryCodecs(&conf, cl.Options{}, runtime.GOROOT(), library, initial, nil, shortBuffer)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -3,6 +3,8 @@ package build
 import (
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"

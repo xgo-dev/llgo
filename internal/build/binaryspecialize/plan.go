@@ -23,7 +23,7 @@ type rewrite struct {
 
 // Rewrite specializes a program only when it accounts for all Go uses of
 // the generic encoding/binary operations. Mixed uses keep one implementation.
-func Rewrite(closure []*packages.Package, library *packages.Package) ([]*packages.Package, error) {
+func Rewrite(closure []*packages.Package, library, entry *packages.Package, shortBuffer string) ([]*packages.Package, error) {
 	var planned []packageRewrites
 	needsError := false
 	for _, pkg := range closure {
@@ -38,6 +38,9 @@ func Rewrite(closure []*packages.Package, library *packages.Package) ([]*package
 			return nil, nil
 		}
 		if len(calls) != 0 {
+			if pkg != entry {
+				return nil, nil
+			}
 			planned = append(planned, packageRewrites{pkg, calls})
 			for _, call := range calls {
 				needsError = needsError || call.op != "Size"
@@ -48,16 +51,10 @@ func Rewrite(closure []*packages.Package, library *packages.Package) ([]*package
 		return nil, nil
 	}
 
-	var changed []*packages.Package
-	var shortBuffer string
-	if needsError {
-		var err error
-		shortBuffer, err = addShortBufferAccessor(library)
-		if err != nil || shortBuffer == "" {
-			return nil, err
-		}
-		changed = append(changed, library)
+	if needsError && shortBuffer == "" {
+		return nil, nil
 	}
+	var changed []*packages.Package
 	for _, group := range planned {
 		if err := group.apply(library, shortBuffer); err != nil {
 			return nil, err

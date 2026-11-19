@@ -184,6 +184,7 @@ type packageSection struct {
 	FrontendInputs        string            `yaml:"frontend_inputs,omitempty"`
 	DeadInits             []string          `yaml:"unused_global_inits,omitempty"`
 	GeneratedValueFormat  bool              `yaml:"generated_value_format,omitempty"`
+	BinaryCodecAccessor   bool              `yaml:"binary_codec_accessor,omitempty"`
 	SpecializeBinary      bool              `yaml:"specialize_binary,omitempty"`
 	SpecializeJSON        bool              `yaml:"specialize_json,omitempty"`
 	SpecializeValueFormat bool              `yaml:"specialize_value_format,omitempty"`
@@ -200,7 +201,7 @@ type packageSection struct {
 }
 
 func (s *packageSection) empty() bool {
-	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && !s.GeneratedValueFormat && !s.SpecializeValueFormat && !s.SpecializeBinary && !s.SpecializeJSON && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && !s.GeneratedValueFormat && !s.SpecializeValueFormat && !s.BinaryCodecAccessor && !s.SpecializeBinary && !s.SpecializeJSON && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

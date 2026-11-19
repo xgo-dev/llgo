@@ -22,10 +22,10 @@ type emitter struct {
 	appendQuote string
 }
 
-func (p packagePlan) apply(library *packages.Package, quote string, sortPkg, strconvPkg *packages.Package) error {
+func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg *packages.Package) error {
 	e := &emitter{pkg: p.pkg.Types, encoders: make(map[*shape]string)}
-	jsonAlias, intAlias, sortAlias := e.name(), e.name(), e.name()
-	e.strconv, e.sort, e.appendQuote = intAlias, sortAlias+".Strings", jsonAlias+"."+quote
+	quote, intAlias, sortAlias, utf8Alias := e.name(), e.name(), e.name(), e.name()
+	e.strconv, e.sort, e.appendQuote = intAlias, sortAlias+".Strings", quote
 	if sortPkg.PkgPath == "slices" {
 		e.sort = sortAlias + ".Sort"
 	}
@@ -43,10 +43,19 @@ func (p packagePlan) apply(library *packages.Package, quote string, sortPkg, str
 	var source strings.Builder
 	fmt.Fprintf(&source, "package %s\n", p.pkg.Name)
 	imports := make(typesynth.Importer)
+	if strings.Contains(e.body.String(), quote+"(") {
+		// The v2-backed encoder writes the replacement rune directly. The
+		// original encoder writes the escaped form for invalid UTF-8.
+		replacement := "\\ufffd"
+		if jsonV2 {
+			replacement = "\uFFFD"
+		}
+		fmt.Fprintf(&e.body, "func %s%s\n", quote, fmt.Sprintf(quoteBody, replacement, utf8Alias))
+	}
 	for _, item := range []struct {
 		pkg   *packages.Package
 		alias string
-	}{{library, jsonAlias}, {strconvPkg, intAlias}, {sortPkg, sortAlias}} {
+	}{{utf8Pkg, utf8Alias}, {strconvPkg, intAlias}, {sortPkg, sortAlias}} {
 		if strings.Contains(e.body.String(), item.alias+".") {
 			fmt.Fprintf(&source, "import %s %q\n", item.alias, item.pkg.PkgPath)
 			imports[item.pkg.PkgPath] = item.pkg.Types
@@ -173,28 +182,12 @@ func notEmpty(member field, value string) string {
 	return ""
 }
 
-func addStringAppender(pkg, utf8 *packages.Package) (string, error) {
-	name := "LLGoAppendJSONString"
-	for pkg.Types.Scope().Lookup(name) != nil {
-		name += "_"
-	}
-	replacement := "\\ufffd"
-	if pkg.Imports["encoding/json/v2"] != nil {
-		// Go's v2-backed legacy encoder writes the replacement rune
-		// directly, while the original v1 encoder escapes it.
-		replacement = "\uFFFD"
-	}
-	source := "package json\nimport utf8 \"unicode/utf8\"\nfunc " + name + fmt.Sprintf(quoteBody, replacement)
-	pkg.Imports[utf8.PkgPath] = utf8
-	return name, typesynth.AddFile(pkg, "__llgo_json_string.go", source, typesynth.Importer{utf8.PkgPath: utf8.Types}, "")
-}
-
 const quoteBody = `(dst []byte, s string) []byte {
 	const hex = "0123456789abcdef"
 	dst = append(dst, '"')
 	for i := 0; i < len(s); {
 		b := s[i]
-		if b < utf8.RuneSelf {
+		if b < %[2]s.RuneSelf {
 			i++
 			switch b {
 			case '"', '\\':
@@ -218,10 +211,10 @@ const quoteBody = `(dst []byte, s string) []byte {
 			}
 			continue
 		}
-		r, n := utf8.DecodeRuneInString(s[i:])
+		r, n := %[2]s.DecodeRuneInString(s[i:])
 		switch {
-		case r == utf8.RuneError && n == 1:
-			dst = append(dst, %q...)
+		case r == %[2]s.RuneError && n == 1:
+			dst = append(dst, %[1]q...)
 		case r == '\u2028' || r == '\u2029':
 			dst = append(dst, '\\', 'u', '2', '0', '2', hex[r&15])
 		default:

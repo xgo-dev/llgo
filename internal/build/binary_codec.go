@@ -16,19 +16,35 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
-func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
-	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, binaryspecialize.Rewrite, "fixed-size binary encoding")
+func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, shortBuffer string) (map[*types.Package]bool, error) {
+	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs,
+		func(closure []*packages.Package, library, entry *packages.Package) ([]*packages.Package, error) {
+			return binaryspecialize.Rewrite(closure, library, entry, shortBuffer)
+		}, "fixed-size binary encoding")
 }
 
 func specializeJSONMarshals(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
 	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, jsonspecialize.Rewrite, "statically typed JSON encoding")
 }
 
-func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, rewrite func([]*packages.Package, *packages.Package) ([]*packages.Package, error), description string) (map[*types.Package]bool, error) {
-	if conf.disableSizeSpecialization || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() ||
-		conf.BuildMode != BuildModeExe || conf.Mode == ModeGen || conf.Coverage != nil ||
-		conf.ModuleHook != nil || frontend.Debug || frontend.DebuggerFrames ||
-		conf.LTOPlugin.Enabled() || frontendCacheEnabled(conf) || len(conf.SourceOverlay) != 0 || len(initial) != 1 {
+// The binary accessor belongs to a fixed compiler profile and is installed
+// before collecting callers. The cache key depends only on its presence.
+func prepareBinaryCodecSupport(conf *Config, frontend cl.Options, goroot string, library *packages.Package) (string, error) {
+	if conf.disableSizeSpecialization || !sizeCodecBuild(conf, frontend) || library == nil || library.TypesInfo == nil || !isStandardLibraryPackage(library, goroot) {
+		return "", nil
+	}
+	return binaryspecialize.AddShortBufferAccessor(library)
+}
+
+func sizeCodecBuild(conf *Config, frontend cl.Options) bool {
+	return conf.OptLevel == optlevel.Oz && conf.ltoMode() == lto.Full && conf.deadcodeDropEnabled() &&
+		conf.BuildMode == BuildModeExe && conf.Mode != ModeGen && conf.Coverage == nil &&
+		conf.ModuleHook == nil && !frontend.Debug && !frontend.DebuggerFrames &&
+		!conf.LTOPlugin.Enabled() && !frontendCacheEnabled(conf) && len(conf.SourceOverlay) == 0
+}
+
+func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, rewrite func([]*packages.Package, *packages.Package, *packages.Package) ([]*packages.Package, error), description string) (map[*types.Package]bool, error) {
+	if conf.disableSizeSpecialization || !sizeCodecBuild(conf, frontend) || len(initial) != 1 || initial[0].Name != "main" {
 		return nil, nil
 	}
 	if stdlib == nil || stdlib.TypesInfo == nil || !isStandardLibraryPackage(stdlib, goroot) {
@@ -56,7 +72,7 @@ func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdli
 	if aliased {
 		return nil, nil
 	}
-	changed, err := rewrite(closure, stdlib)
+	changed, err := rewrite(closure, stdlib, initial[0])
 	if err != nil || len(changed) == 0 {
 		return nil, err
 	}

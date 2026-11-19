@@ -1042,11 +1042,18 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
-	// Generated codecs must be registered before any package is given to SSA,
-	// including standard libraries also reachable from alternate runtime roots.
+	// Register codec declarations before creating SSA packages.
 	var binaryCodecPackages map[*types.Package]bool
+	var binaryCodecLibrary *types.Package
 	if codec := dedup.Check("encoding/binary"); codec != nil {
-		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		shortBuffer, err := prepareBinaryCodecSupport(conf, frontendOptions, sourcePatchGOROOT, codec.Package)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+		if shortBuffer != "" {
+			binaryCodecLibrary = codec.Types
+		}
+		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs, shortBuffer)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}
@@ -1093,6 +1100,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		commands:            commands,
 		frontendOptions:     frontendOptions,
 		staticByteArrays:    altByteArrays,
+		binaryCodecLibrary:  binaryCodecLibrary,
 		binaryCodecPackages: binaryCodecPackages,
 		jsonCodecPackages:   jsonCodecPackages,
 		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
@@ -1993,6 +2001,7 @@ type context struct {
 	valueFormatPlan      *fmtspecialize.ValuePlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
+	binaryCodecLibrary   *types.Package
 	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
 	wasmRuntimeFree      bool
