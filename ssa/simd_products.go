@@ -10,7 +10,8 @@ func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
 	negate := make([]llvm.Value, result.ll.VectorSize())
 	for i := range negate {
 		bit := uint64(i & 1)
-		if op != SIMDMulAddEvenSubOdd {
+		// Go 1.27 selects VFMADDSUB for MulAddEvenSubOdd (subtract in lane zero).
+		if op != SIMDMulAddOddSubEven {
 			bit = 1 - bit
 		}
 		negate[i] = llvm.ConstInt(b.Prog.ctx.Int1Type(), bit, false)

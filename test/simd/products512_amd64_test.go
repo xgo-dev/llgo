@@ -44,7 +44,7 @@ func TestSIMD512Products(t *testing.T) {
 	v.MulAddOddSubEven(v, v).StoreArray(&q)
 	for i, n := range f {
 		add := n
-		if i%2 != 0 {
+		if i%2 == 0 {
 			add = -add
 		}
 		if p[i] != n*n+add || q[i] != n*n-add {
