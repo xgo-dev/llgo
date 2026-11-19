@@ -502,5 +502,5 @@ jobs:
           LLGO_DEMO_LLGORUN_FLAGS="-deadcodedrop" \
             bash .github/workflows/test_demo.sh
 
-      - name: Test C-only embedded deadcode-drop builds
+      - name: Test ESP32-C3 size builds and emulator output
         run: python3 test/sizebuild/runtest.py --target=esp32c3

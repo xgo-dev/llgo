@@ -13,7 +13,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def command(args, env, timeout=300):
+def command(args, env, timeout=300, *, stdout_only=False):
     try:
         result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True,
                                 text=True, timeout=timeout)
@@ -26,7 +26,7 @@ def command(args, env, timeout=300):
     if result.returncode:
         raise RuntimeError(f"{args!r} failed ({result.returncode})\n"
                            f"{result.stdout}{result.stderr}")
-    return result.stdout + result.stderr
+    return result.stdout if stdout_only else result.stdout + result.stderr
 
 
 def runtime_free_cache_probe(llgo, wasmer, directory, env):
@@ -66,6 +66,16 @@ def has_go127_release_tag(version):
     return match is not None and tuple(map(int, match.groups())) >= (1, 27)
 
 
+def run_esp32c3_case(llgo, env, sample, flags):
+    output = command([str(llgo), "run", "-target=esp32c3-basic", "-emulator",
+                      *flags, f"./benchmark/binary_size/{sample}"], env, stdout_only=True)
+    # The ROM writes its boot banner before handing control to the program.
+    boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", output, re.MULTILINE)
+    if boot is None or output[boot.end():] != "Hello, world\n":
+        raise RuntimeError(f"ESP32-C3 {sample} emulator output mismatch\n{output}")
+    print(f"ESP32-C3 {sample} emulator output passed", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
@@ -87,17 +97,18 @@ def main():
                          "./benchmark/binary_size/cprintf"], env)
                 if output.read_bytes()[:4] != b"\x7fELF":
                     raise RuntimeError("C-only DCE did not produce an ELF image")
-            print("ESP32-C3 C-only DCE cold/warm builds passed (build-only)")
+            print("ESP32-C3 C-only DCE cold/warm builds passed", flush=True)
+            run_esp32c3_case(llgo, env, "cprintf", ["-deadcodedrop"])
             # Go 1.27's fmt dependency graph uses the portable assembly,
             # console and runtime providers for this bare-metal target.
             if has_go127_release_tag(command(["go", "env", "GOVERSION"], env)):
                 output = directory / "fmtprintf.elf"
-                command([str(llgo), "build", "-target=esp32c3", "-Oz",
-                         "-deadcodedrop", "-globaldce=false", "-lto=full",
+                flags = ["-Oz", "-deadcodedrop", "-globaldce=false", "-lto=full"]
+                command([str(llgo), "build", "-target=esp32c3", *flags,
                          "-o", str(output), "./benchmark/binary_size/fmtprintf"], env)
                 if output.read_bytes()[:4] != b"\x7fELF":
                     raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
-                print("ESP32-C3 Go 1.27+ fmt build passed (build-only)")
+                run_esp32c3_case(llgo, env, "fmtprintf", flags)
             return
 
         wasmer = env.get("WASMER", "wasmer")
