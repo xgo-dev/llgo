@@ -286,6 +286,28 @@ func init() {
 	}
 }
 
+// Go's amd64 partial-load helpers mask an ordinary full-array load. LLVM
+// needs the mask on the load itself so inactive lanes never access memory.
+func simdPartialLoadType(f *ssa.Function, arch string) types.Type {
+	obj, ok := f.Object().(*types.Func)
+	if arch != "amd64" || !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" ||
+		!strings.HasSuffix(obj.Name(), "Part") || !types.Identical(obj.Type(), f.Signature) {
+		return nil
+	}
+	sig := f.Signature
+	if sig.Recv() != nil || sig.Params().Len() != 1 || sig.Results().Len() != 2 ||
+		!types.Identical(sig.Results().At(1).Type(), types.Typ[types.Int]) {
+		return nil
+	}
+	result := sig.Results().At(0).Type()
+	lanes, ok := llssa.SIMDNumericShape(result)
+	if !ok || !types.Identical(sig.Params().At(0).Type(), types.NewSlice(lanes.Elem())) ||
+		obj.Name() != "Load"+types.Unalias(result).(*types.Named).Obj().Name()+"Part" {
+		return nil
+	}
+	return result
+}
+
 // Resolve only declared official operations, never synthetic wrapper names.
 // Direct calls and calls inside the existing SSA wrappers use this same path.
 func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
