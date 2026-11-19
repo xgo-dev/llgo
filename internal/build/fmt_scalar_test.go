@@ -2,6 +2,7 @@ package build
 
 import (
 	"go/constant"
+	"go/token"
 	"go/types"
 	"testing"
 
@@ -123,6 +124,56 @@ func TestScalarFormatsRequireKnownArgumentStorage(t *testing.T) {
 				return
 			}
 			t.Fatal("missing fmt.Sprintf call")
+		})
+	}
+}
+
+func TestSpecializeBuiltinDynamicFormat(t *testing.T) {
+	for _, test := range []struct {
+		name, operands string
+		wantBuiltin    bool
+	}{
+		{"builtin values", ", 17, 1.5, false, \"label\"", true},
+		{"empty arguments", "", false},
+		{"named value", ", named(3)", false},
+		{"interface value", ", value", false},
+		{"unsafe pointer", ", pointer", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			prog.CreatePackage(types.Unsafe, nil, nil, true)
+			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
+type pp struct{}
+func (*pp) printArg(_ any) string { return "generic" }
+func Sprintf(format string, args ...any) string { return (&pp{}).printArg(args) }
+func llgoSprintfBuiltins(format string, args ...any) string { return format }
+`, nil)
+			main := buildFormatTestPackage(t, prog, "main", `package main
+import "fmt"
+import "unsafe"
+type named int
+func render(format string, value any, pointer unsafe.Pointer) string {
+	return fmt.Sprintf(format`+test.operands+`)
+}
+`, fmtPkg.Pkg)
+			prog.Build()
+			render := main.Func("render")
+			plan := fmtspecialize.NewValuePlan(prog, nil)
+			var formatted *ssa.Call
+			for _, instr := range render.Blocks[0].Instrs {
+				if call, ok := instr.(*ssa.Call); ok && call.Common().StaticCallee() == fmtPkg.Func("Sprintf") {
+					formatted = call
+					plan.Record(call, main)
+				}
+			}
+			if formatted == nil {
+				t.Fatal("missing Sprintf call")
+			}
+			plan.ApplyStandalone([]*ssa.Function{render})
+			gotBuiltin := formatted.Common().StaticCallee() == fmtPkg.Func("llgoSprintfBuiltins")
+			if gotBuiltin != test.wantBuiltin {
+				t.Fatalf("builtin formatter selected = %v, want %v", gotBuiltin, test.wantBuiltin)
+			}
 		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,6 +33,23 @@ func TestRewriteJSONMarshal(t *testing.T) {
 			library := initial.Imports["encoding/json"]
 			var closure []*packages.Package
 			packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
+			for _, exclude := range []func(*packages.Package) bool{
+				func(p *packages.Package) bool { return p.PkgPath == "strconv" },
+				func(p *packages.Package) bool { return p.PkgPath == "sort" || p.PkgPath == "slices" },
+				func(p *packages.Package) bool { return p == initial },
+			} {
+				incomplete := slices.DeleteFunc(slices.Clone(closure), exclude)
+				if changed, err := Rewrite(incomplete, library, initial); len(changed) != 0 || err != nil {
+					t.Fatalf("incomplete dependencies produced %d rewritten packages, %v", len(changed), err)
+				}
+			}
+			if v2 := library.Imports["encoding/json/v2"]; v2 != nil {
+				initial.Imports[v2.PkgPath] = v2
+				if changed, err := Rewrite(closure, library, initial); len(changed) != 0 || err != nil {
+					t.Fatalf("direct JSON v2 import produced %d rewritten packages, %v", len(changed), err)
+				}
+				delete(initial.Imports, v2.PkgPath)
+			}
 			if changed, err := Rewrite(closure, library, nil); len(changed) != 0 || err != nil {
 				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
 			}

@@ -2,6 +2,7 @@ package binaryspecialize
 
 import (
 	"go/ast"
+	"go/types"
 	"math"
 	"os"
 	"path/filepath"
@@ -41,6 +42,19 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 			initial.TypesInfo = info
 			if changed, err := Rewrite(closure, binary, nil, shortBuffer); len(changed) != 0 || err != nil {
 				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
+			}
+			if changed, err := Rewrite(closure, binary, initial, ""); len(changed) != 0 || err != nil {
+				t.Fatalf("missing short buffer error produced %d rewritten packages, %v", len(changed), err)
+			}
+			if fixture.want {
+				// Floating-point wire conversion requires math from the same
+				// standard library. A missing dependency must be reported.
+				dep := binary.Imports["math"]
+				delete(binary.Imports, "math")
+				if _, err := Rewrite(closure, binary, initial, shortBuffer); err == nil {
+					t.Fatal("generated binary codec accepted a missing math dependency")
+				}
+				binary.Imports["math"] = dep
 			}
 			changed, err := Rewrite(closure, binary, initial, shortBuffer)
 			if err != nil {
@@ -91,6 +105,28 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 	}
 }
 
+func TestShortBufferAccessorContract(t *testing.T) {
+	pkg := &packages.Package{Types: types.NewPackage("encoding/binary", "binary")}
+	if name, err := AddShortBufferAccessor(pkg); name != "" || err != nil {
+		t.Fatalf("missing short buffer sentinel returned %q, %v", name, err)
+	}
+	pkg.Types.Scope().Insert(types.NewVar(0, pkg.Types, "errBufferTooSmall", types.Typ[types.String]))
+	if name, err := AddShortBufferAccessor(pkg); name != "" || err != nil {
+		t.Fatalf("incompatible short buffer sentinel returned %q, %v", name, err)
+	}
+
+	initial := loadCodecInput(t, filepath.Join("..", "testdata", "binary-fixed"))
+	binary := initial.Imports["encoding/binary"]
+	base, err := AddShortBufferAccessor(binary)
+	if err != nil || base == "" {
+		t.Fatalf("first short buffer accessor = %q, %v", base, err)
+	}
+	next, err := AddShortBufferAccessor(binary)
+	if err != nil || next == "" || next == base {
+		t.Fatalf("second short buffer accessor = %q, %v", next, err)
+	}
+}
+
 func TestBinaryCallEligibility(t *testing.T) {
 	dir := t.TempDir()
 	source := `package main
@@ -104,6 +140,9 @@ var ptr *record
 var order binary.ByteOrder
 var boxed any = value
 var len int
+var array [8]byte
+var pointer *[8]byte
+var low int
 type userOrder struct{ binary.ByteOrder }
 
 
@@ -111,6 +150,9 @@ func goodEncode() { binary.Encode(buf, binary.BigEndian, &value) }
 func goodDecode() { binary.Decode(buf, binary.LittleEndian, new(record)) }
 func goodPrivate() { binary.Encode(buf, binary.NativeEndian, private{}) }
 func goodNilSize() { binary.Size(ptr) }
+func goodFixedBounds() { binary.Encode(pointer[1:7], binary.BigEndian, value) }
+func goodDynamicBounds() { binary.Encode(array[low:], binary.BigEndian, value) }
+func goodSliceBounds() { binary.Encode(buf[1:7], binary.BigEndian, value) }
 func noOrder() { binary.Encode(buf, order, value) }
 func noBoxed() { binary.Encode(buf, binary.BigEndian, boxed) }
 func noLocalOrder() { binary.Encode(buf, userOrder{binary.BigEndian}, value) }
@@ -129,6 +171,7 @@ func main() {}
 		}
 	}
 	initial := loadCodecInput(t, dir)
+	initial.TypesSizes = types.SizesFor("gc", "386")
 	if !shadowsGeneratedBuiltins(initial.Types) {
 		t.Fatal("package-level len must suppress generated codecs")
 	}
@@ -138,10 +181,16 @@ func main() {}
 			continue
 		}
 		call := f.Body.List[0].(*ast.ExprStmt).X.(*ast.CallExpr)
-		_, got := planCall(initial, call, calleeIdent(call.Fun).Name, initial.Imports["encoding/binary"].Types, math.MaxInt32)
+		plan, got := planCall(initial, call, calleeIdent(call.Fun).Name, initial.Imports["encoding/binary"].Types, math.MaxInt32)
 		if want := strings.HasPrefix(f.Name.Name, "good"); got != want {
 			t.Errorf("%s: eligible = %v, want %v", f.Name, got, want)
 		}
+		if want := f.Name.Name == "goodFixedBounds"; plan.unchecked != want {
+			t.Errorf("%s: unchecked = %v, want %v", f.Name, plan.unchecked, want)
+		}
+	}
+	if _, ok := planPackage(initial, initial.Imports["encoding/binary"].Types); ok {
+		t.Fatal("mixed generic calls or shadowed builtins enabled binary specialization")
 	}
 }
 

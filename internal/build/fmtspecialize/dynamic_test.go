@@ -1,6 +1,7 @@
 package fmtspecialize
 
 import (
+	"bytes"
 	"go/parser"
 	"go/token"
 	"go/version"
@@ -32,5 +33,32 @@ func TestBuiltinFormatSource(t *testing.T) {
 	}
 	if BuiltinFormatSource([]byte("package fmt\n")) != nil {
 		t.Fatal("missing standard-library methods did not disable specialization")
+	}
+	if BuiltinFormatSource([]byte("package")) != nil {
+		t.Fatal("invalid standard-library source did not disable specialization")
+	}
+	for _, test := range []struct {
+		name, old, replacement string
+	}{
+		{"changed receiver", "func (p *pp) printArg(", "func (p pp) printArg("},
+		{"changed parameter type", "printArg(arg any, verb rune)", "printArg(arg interface{}, verb rune)"},
+		{"changed pointer handling", "case 'p':\n\t\tp.fmtPointer", "case 'x':\n\t\tp.fmtPointer"},
+		{"combined type cases", "case bool:", "case bool, int:"},
+		{"missing scalar type", "case bool:", "case fmt.Stringer:"},
+		{"changed bad verb guard", "case value.IsValid():", "case value.CanAddr():"},
+		{"reflective call from scalar helper", "func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) {",
+			"func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) { p.printValue(value, verb, 0);"},
+		{"unbound parser method", "func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) {",
+			"func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) { _ = p.fmtString;"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			modified := bytes.ReplaceAll(data, []byte(test.old), []byte(test.replacement))
+			if bytes.Equal(modified, data) {
+				t.Fatalf("standard-library source lacks %q", test.old)
+			}
+			if BuiltinFormatSource(modified) != nil {
+				t.Fatal("unsupported parser shape enabled specialization")
+			}
+		})
 	}
 }

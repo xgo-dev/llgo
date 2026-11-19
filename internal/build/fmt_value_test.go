@@ -98,6 +98,24 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "native generic fallback", native: true, main: "extra()"},
 		{name: "native opaque linker flags", native: true, foreignLink: true},
 		{name: "custom method", expr: "namedMap(nil)", typed: true},
+		{name: "safe field and package variables", expr: "label{}", typed: true,
+			decl: "type label struct { text string }; var suffix string; func (l label) String() string { return l.text + suffix + fmt.Prefix }\n"},
+		{name: "safe error method", expr: "label(0)", typed: true,
+			decl: "type label int; func (label) Error() string { return \"error\" }\n"},
+		{name: "error overrides string", expr: "label(0)", typed: true,
+			decl: "type label int; func (label) String() string { panic(0) }; func (label) Error() string { return \"error\" }\n"},
+		{name: "format overrides string", expr: "label(0)",
+			decl: "type label int; func (label) String() string { return \"text\" }; func (label) Format(int, rune) {}\n"},
+		{name: "method with pointer receiver", expr: "new(label)",
+			decl: "type label int; func (*label) String() string { return \"text\" }\n"},
+		{name: "promoted method", expr: "struct { label }{}",
+			decl: "type label int; func (label) String() string { return \"text\" }\n"},
+		{name: "method reads field through pointer", expr: "label{}",
+			decl: "type child struct { text string }; type label struct { p *child }; func (l label) String() string { return l.p.text }\n"},
+		{name: "method indexes slice", expr: "label(nil)",
+			decl: "type label []string; func (l label) String() string { return l[0] }\n"},
+		{name: "method with unexpected signature", expr: "label(0)",
+			decl: "type label int; func (label) String(int) string { return \"text\" }\n"},
 		{name: "interface operand", expr: "dynamicMap()"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,6 +125,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
 type record struct { hidden int }
 func NewRecord() record { return record{7} }
+var Prefix string
 type pp struct{}
 func (*pp) printArg(a any) string { return "generic" }
 func Sprintf(_ string, args ...any) string { return (&pp{}).printArg(args[0]) }
