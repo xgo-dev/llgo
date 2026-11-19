@@ -167,7 +167,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		}
 	}
 
-	if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, ctx.goarch) {
+	if llruntime.SourcePatchReplacesAsm(pkgPath, buildCtx.GOARCH, buildCtx.BuildTags) {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {
 				continue

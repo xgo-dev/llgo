@@ -42,8 +42,14 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 // compiledPkgSFiles shares assembly selection between compilation and analyses
 // that must account for references outside Go SSA.
 func compiledPkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
-	if len(ctx.patchFiles[pkg.PkgPath]) != 0 && llruntime.SourcePatchReplacesAsmForGOARCH(pkg.PkgPath, ctx.buildConf.Goarch) {
-		return nil, nil
+	if len(ctx.patchFiles[pkg.PkgPath]) != 0 {
+		var tags []string
+		if ctx.conf != nil {
+			tags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+		}
+		if llruntime.SourcePatchReplacesAsm(pkg.PkgPath, ctx.buildConf.Goarch, tags) {
+			return nil, nil
+		}
 	}
 	sfiles, err := pkgSFiles(ctx, pkg)
 	if err != nil {
