@@ -85,9 +85,12 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
 
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
     binary_marker = "llgo: specialize fixed-size binary encoding"
+    json_marker = "llgo: specialize statically typed JSON encoding"
     fixtures = [
         ("binary-fixed", "fixed binary codec ok", binary_marker, True),
         ("binary-mixed", "generic binary codec ok", binary_marker, False),
+        ("json-static", "typed JSON encoding ok", json_marker, True),
+        ("json-mixed", "generic JSON encoding ok", json_marker, False),
     ]
     if target != "wasi":
         fixtures.append(("wasm-fmt-map", "wasi default value formatting ok",
@@ -101,8 +104,11 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         if (marker in log) != specialized:
             raise RuntimeError(f"{target} {fixture}: incorrect specialization policy\n{log}")
         actual = command([*runner, str(artifact)], env, timeout=90)
-        if actual.strip() != expected:
-            raise RuntimeError(f"{target} {fixture}: expected {expected!r}, got {actual!r}")
+        expected_output = expected
+        if fixture == "json-static":
+            expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
+        if actual.strip() != expected_output:
+            raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
         if browser:
             node = env.get("NODE", "node")
             command([node, str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact),
