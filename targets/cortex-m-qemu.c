@@ -13,6 +13,7 @@ enum {
     SEMIHOST_WRITE_CHAR = 0x03,
     SEMIHOST_WRITE_STRING = 0x04,
     SEMIHOST_READ_CHAR = 0x07,
+    SEMIHOST_CLOCK = 0x10,
     SEMIHOST_TIME = 0x11,
     SEMIHOST_EXIT_EXTENDED = 0x20,
     APPLICATION_EXIT = 0x20026,
@@ -76,6 +77,20 @@ time_t time(time_t *result) {
     if (result)
         *result = now;
     return now;
+}
+
+char *getenv(const char *name) {
+    (void)name;
+    return NULL;
+}
+
+int usleep(unsigned usec) {
+    // The semihost clock is measured in centiseconds.
+    uint32_t ticks = usec / 10000 + (usec % 10000 != 0);
+    uint32_t start = (uint32_t)SemihostingCall(SEMIHOST_CLOCK, NULL);
+    while ((uint32_t)SemihostingCall(SEMIHOST_CLOCK, NULL) - start < ticks) {
+    }
+    return 0;
 }
 
 _Noreturn void handleHardFault(uint32_t *frame) {

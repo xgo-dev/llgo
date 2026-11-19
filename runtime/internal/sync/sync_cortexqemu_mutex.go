@@ -42,3 +42,15 @@ func (o *Once) Do(f OnceFunc) c.Int {
 	}
 	return 0
 }
+
+func pthreadCondInit(_ *Cond, _ *CondAttr) c.Int { return 0 }
+func pthreadCondDestroy(_ *Cond) c.Int           { return 0 }
+func pthreadCondSignal(_ *Cond) c.Int            { return 0 }
+func pthreadCondBroadcast(_ *Cond) c.Int         { return 0 }
+
+func pthreadCondWait(_ *Cond, _ *Mutex) c.Int {
+	// There is no second execution context to wake the waiter.
+	c.Fputs(c.Str("condition wait on the single-context Cortex-M runtime\n"), c.Stderr)
+	c.Exit(1)
+	return 0
+}

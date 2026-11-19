@@ -23,7 +23,11 @@ func GetPicolibcCompileConfig(baseDir, target string) compile.CompileConfig {
 	arm := strings.HasPrefix(target, "thumb") || strings.HasPrefix(target, "arm")
 	var armFiles []string
 	if arm {
-		armFiles = []string{filepath.Join(baseDir, "newlib", "libc", "machine", "arm", "setjmp.S")}
+		armFiles = []string{
+			filepath.Join(baseDir, "newlib", "libc", "machine", "arm", "setjmp.S"),
+			filepath.Join(baseDir, "newlib", "libc", "errno", "errno.c"),
+			filepath.Join(baseDir, "newlib", "libc", "misc", "lock.c"),
+		}
 	}
 	return compile.CompileConfig{
 		ExportCFlags: []string{

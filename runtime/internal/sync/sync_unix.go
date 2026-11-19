@@ -90,21 +90,6 @@ type Cond struct {
 	unused [pthreadCondSize]c.Char
 }
 
-//go:linkname pthreadCondInit C.pthread_cond_init
-func pthreadCondInit(cond *Cond, attr *CondAttr) c.Int
-
-//go:linkname pthreadCondDestroy C.pthread_cond_destroy
-func pthreadCondDestroy(cond *Cond) c.Int
-
-//go:linkname pthreadCondSignal C.pthread_cond_signal
-func pthreadCondSignal(cond *Cond) c.Int
-
-//go:linkname pthreadCondBroadcast C.pthread_cond_broadcast
-func pthreadCondBroadcast(cond *Cond) c.Int
-
-//go:linkname pthreadCondWait C.pthread_cond_wait
-func pthreadCondWait(cond *Cond, m *Mutex) c.Int
-
 func (cond *Cond) Init(attr *CondAttr) c.Int {
 	return pthreadCondInit(cond, attr)
 }
