@@ -37,6 +37,13 @@ layouts and standard byte orders. Mixed or dynamic uses retain the standard
 codec. With `-x`, selected codecs report
 `llgo: specialize fixed-size binary encoding`.
 
+In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
+`encoding/json.Marshal` calls to typed encoders. Closed shapes can use
+integers, booleans, strings, pointers, arrays, slices, structs and string-keyed
+maps. Custom marshalers, dynamic inputs and other reachable codec operations
+retain the standard encoder. The verbose diagnostic is
+`specialize statically typed JSON encoding`.
+
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi
 nodes and allocating conversions keep independent roots. Frame bookkeeping

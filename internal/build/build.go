@@ -1051,6 +1051,14 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}
 	}
+	var jsonCodecPackages map[*types.Package]bool
+	if codec := dedup.Check("encoding/json"); codec != nil {
+		jsonCodecPackages, err = specializeJSONMarshals(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
@@ -1086,6 +1094,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		frontendOptions:     frontendOptions,
 		staticByteArrays:    altByteArrays,
 		binaryCodecPackages: binaryCodecPackages,
+		jsonCodecPackages:   jsonCodecPackages,
 		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:          buildTrace,
 		goVersion:           sourcePatchGoVersion,
@@ -1985,6 +1994,7 @@ type context struct {
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	binaryCodecPackages  map[*types.Package]bool
+	jsonCodecPackages    map[*types.Package]bool
 	wasmRuntimeFree      bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots        []string

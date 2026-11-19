@@ -9,6 +9,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/binaryspecialize"
+	"github.com/xgo-dev/llgo/internal/build/jsonspecialize"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -16,6 +17,14 @@ import (
 )
 
 func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
+	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, binaryspecialize.Rewrite, "fixed-size binary encoding")
+}
+
+func specializeJSONMarshals(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
+	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, jsonspecialize.Rewrite, "statically typed JSON encoding")
+}
+
+func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, rewrite func([]*packages.Package, *packages.Package) ([]*packages.Package, error), description string) (map[*types.Package]bool, error) {
 	if conf.disableSizeSpecialization || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() ||
 		conf.BuildMode != BuildModeExe || conf.Mode == ModeGen || conf.Coverage != nil ||
 		conf.ModuleHook != nil || frontend.Debug || frontend.DebuggerFrames ||
@@ -36,7 +45,7 @@ func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, st
 					}
 					args := strings.Fields(item.Args)
 					for _, arg := range args {
-						aliased = aliased || strings.HasPrefix(arg, "encoding/binary.")
+						aliased = aliased || strings.HasPrefix(arg, stdlib.PkgPath+".")
 					}
 				}
 			}
@@ -47,7 +56,7 @@ func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, st
 	if aliased {
 		return nil, nil
 	}
-	changed, err := binaryspecialize.Rewrite(closure, stdlib)
+	changed, err := rewrite(closure, stdlib)
 	if err != nil || len(changed) == 0 {
 		return nil, err
 	}
@@ -56,7 +65,7 @@ func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, st
 		rewritten[pkg.Types] = true
 	}
 	if conf.Verbose || conf.PrintCommands {
-		fmt.Fprintln(os.Stderr, "llgo: specialize fixed-size binary encoding")
+		fmt.Fprintln(os.Stderr, "llgo: specialize "+description)
 	}
 	return rewritten, nil
 }
