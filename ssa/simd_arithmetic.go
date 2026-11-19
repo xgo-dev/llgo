@@ -129,3 +129,32 @@ func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	}
 	return Expr{b.impl.CreateAdd(a, c, ""), x.Type}
 }
+
+// The ARM64 reduction declarations place the scalar in lane zero and clear
+// the remaining lanes. The public Go wrappers read lane zero.
+func (b Builder) simdReduceLanes(op SIMDOp, x Expr) Expr {
+	name := "add"
+	if op != SIMDReduceSum {
+		info := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()
+		switch {
+		case info&types.IsFloat != 0:
+			if op == SIMDReduceMax {
+				name = "fmaximum"
+			} else {
+				name = "fminimum"
+			}
+		default:
+			name = "s"
+			if info&types.IsUnsigned != 0 {
+				name = "u"
+			}
+			if op == SIMDReduceMax {
+				name += "max"
+			} else {
+				name += "min"
+			}
+		}
+	}
+	scalar := b.impl.CreateIntrinsic(x.ll.ElementType(), llvm.LookupIntrinsicID("llvm.vector.reduce."+name), []llvm.Value{x.impl}, "")
+	return Expr{b.impl.CreateInsertElement(llvm.ConstNull(x.ll), scalar, llvm.ConstInt(b.Prog.tyInt32(), 0, false), ""), x.Type}
+}

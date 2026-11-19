@@ -103,6 +103,12 @@ const (
 	SIMDPermuteScalarsLo
 	SIMDPermuteScalarsHiGrouped
 	SIMDPermuteScalarsLoGrouped
+	SIMDReduceMax
+	SIMDReduceMin
+	SIMDReduceSum
+	SIMDShiftSaturated
+	SIMDOnesCount
+	SIMDIntegerMulAdd
 	SIMDConcatShiftBytesGrouped
 	SIMDConcatShiftBytes
 	SIMDIsZero
@@ -250,6 +256,19 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	switch op {
 	case SIMDConcatShiftBytes, SIMDConcatShiftBytesGrouped:
 		return b.simdConcatShiftBytes(args[0], args[1], args[2])
+	case SIMDIntegerMulAdd:
+		product := b.impl.CreateMul(args[0].impl, args[1].impl, "")
+		return Expr{b.impl.CreateAdd(product, args[2].impl, ""), result}
+	case SIMDOnesCount:
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.ctpop"), []llvm.Value{args[0].impl}, ""), result}
+	case SIMDShiftSaturated:
+		name := "llvm.aarch64.neon.sqshl"
+		if simdLanes(result.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0 {
+			name = "llvm.aarch64.neon.uqshl"
+		}
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID(name), []llvm.Value{args[0].impl, args[1].impl}, ""), result}
+	case SIMDReduceSum, SIMDReduceMin, SIMDReduceMax:
+		return b.simdReduceLanes(op, args[0])
 	case SIMDIsNaN:
 		x := args[0].impl
 		nan := b.impl.CreateFCmp(llvm.FloatUNO, x, x, "")

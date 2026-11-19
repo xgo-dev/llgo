@@ -49,19 +49,13 @@ and `ConcatPermute128Scalars` cover both constant and variable selectors.
 The scalar-permute follow-up enables the six `TestPermuteScalars*` cases for
 128/256-bit dword and high/low word shuffles. Dynamic selectors use fixed
 shuffles and vector masks, retaining the untouched word half in each 128-bit
-group. The current allowlists contain 159 AMD64 cases and 81 ARM64 cases; these
+group. The current allowlists contain 159 AMD64 cases and 87 ARM64 cases; these
 are enabled top-level tests, not counts of implemented intrinsics.
 
 ## arm64 failures
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |
-| `TestReduceSum` | `simd/archsimd.Int8x16.reduceSum` |
-| `TestReduceMax` | `simd/archsimd.Int8x16.reduceMax` |
-| `TestReduceMin` | `simd/archsimd.Int8x16.reduceMin` |
-| `TestShiftSaturated` | `simd/archsimd.Int8x16.ShiftSaturated` |
-| `TestMulAdd` | `simd/archsimd.Int8x16.MulAdd` |
-| `TestOnesCount` | `simd/archsimd.Int8x16.OnesCount` |
 ## amd64 failures
 
 Horizontal pairwise addition and subtraction are now covered for the applicable

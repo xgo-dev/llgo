@@ -63,6 +63,11 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "IsZero"}:                       {llssa.SIMDIsZero, simdBool, types.IsInteger},
 	{"numeric", "ConcatShiftBytesRight"}:        {llssa.SIMDConcatShiftBytes, simdConcatShift, types.IsUnsigned},
 	{"numeric", "ConcatShiftBytesRightGrouped"}: {llssa.SIMDConcatShiftBytesGrouped, simdConcatShift, types.IsUnsigned},
+	{"numeric", "OnesCount"}:                    {llssa.SIMDOnesCount, simdUnary, types.IsInteger},
+	{"numeric", "ShiftSaturated"}:               {llssa.SIMDShiftSaturated, simdSignedVector, types.IsInteger},
+	{"numeric", "reduceSum"}:                    {llssa.SIMDReduceSum, simdUnary, types.IsInteger},
+	{"numeric", "reduceMin"}:                    {llssa.SIMDReduceMin, simdUnary, 0},
+	{"numeric", "reduceMax"}:                    {llssa.SIMDReduceMax, simdUnary, 0},
 	{"numeric", "Add"}:                          {llssa.SIMDAdd, simdBinary, 0},
 	{"numeric", "Sub"}:                          {llssa.SIMDSub, simdBinary, 0},
 	{"numeric", "And"}:                          {llssa.SIMDAnd, simdBinary, types.IsInteger},
@@ -249,6 +254,18 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 		vector = sig.Results().At(0).Type()
 	}
 	desc, ok := simdOperations[key]
+	if arch == "arm64" && key == (simdKey{"numeric", "MulAdd"}) {
+		lanes, _ := llssa.SIMDNumericShape(vector)
+		if lanes.Elem().Underlying().(*types.Basic).Info()&types.IsInteger != 0 && lanes.Len() >= 4 {
+			desc = simdOperation{llssa.SIMDIntegerMulAdd, simdTernary, types.IsInteger}
+		}
+	}
+	switch desc.op {
+	case llssa.SIMDShiftSaturated, llssa.SIMDReduceSum, llssa.SIMDReduceMin, llssa.SIMDReduceMax:
+		if arch != "arm64" {
+			return fallback()
+		}
+	}
 	if !ok || !desc.matches(sig, vector) {
 		return fallback()
 	}
@@ -620,7 +637,7 @@ func simdVectorBits(typ types.Type) int64 {
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
-	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,
