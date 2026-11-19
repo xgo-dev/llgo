@@ -35,6 +35,9 @@ architecture.
 - AMD64 128/256-bit selection from two vectors, including independent 128-bit
   groups and 256-bit selection of whole 128-bit halves. Constant and variable
   selectors preserve lane bits; invalid half selectors retain a recoverable panic.
+- AMD64 128/256-bit `PermuteScalars*` dword and high/low word shuffles,
+  including all 256 packed selectors, public selector masking, preserved
+  word halves, method values, callable intrinsics, and AVX2 FMV.
 - Byte lookup with out-of-range zeroing on arm64/wasm, and baseline-safe amd64
   byte/word permutations and negative-index zeroing. Constant permutations
   fold to vector shuffles at O2; dynamic indices use a per-lane fallback.
@@ -336,8 +339,8 @@ On amd64 it runs O0 without LTO and O2 without LTO, with ThinLTO, and with
 Full LTO. Each binary runs the complete SIMD suite, then the FMV and bridge-operation tests with
 AVX2, AVX, FMA, and all optional CPU features disabled in separate processes.
 The same overrides also exercise integer extension and narrowing, horizontal
-pair operations, integer interleaving, pair selection and half shuffles, numeric
-conversions, float widening/narrowing, and 256-bit rounding.
+pair operations, integer interleaving, pair selection and half shuffles, scalar
+permutations, numeric conversions, float widening/narrowing, and 256-bit rounding.
 The FMV tests cover initialization, direct and indirect entry calls,
 cross-package calls, aggregate value copies and multiple results, closures,
 independent CPU queries, and source-level stack traces.

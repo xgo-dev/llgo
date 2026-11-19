@@ -97,6 +97,12 @@ const (
 	SIMDConcatAddPairsGrouped
 	SIMDConcatSubPairs
 	SIMDConcatSubPairsGrouped
+	SIMDPermuteScalars
+	SIMDPermuteScalarsGrouped
+	SIMDPermuteScalarsHi
+	SIMDPermuteScalarsLo
+	SIMDPermuteScalarsHiGrouped
+	SIMDPermuteScalarsLoGrouped
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -244,6 +250,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdConcatSelected(args[0], args[1], args[2])
 	case SIMDConcatPermute128:
 		return b.simdConcatPermute128(args[0], args[1], args[2], args[3])
+	case SIMDPermuteScalars, SIMDPermuteScalarsGrouped, SIMDPermuteScalarsHi, SIMDPermuteScalarsLo, SIMDPermuteScalarsHiGrouped, SIMDPermuteScalarsLoGrouped:
+		return b.simdPermuteScalars(op, args[0], args[1])
 	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
 		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
