@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -29,6 +30,7 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 		source string
 		change func(*testing.T, *context, *aPackage)
 		want   bool
+		usesGC bool
 	}{
 		{name: "eligible", want: true},
 		{name: "emit diagnostic", want: true, change: func(_ *testing.T, ctx *context, _ *aPackage) {
@@ -37,6 +39,9 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 		{name: "cached minimal host", want: true, change: func(_ *testing.T, ctx *context, _ *aPackage) {
 			ctx.frontend = &frontendCache{program: &frontendProgramExport{RuntimeFree: true, MinimalHost: true}}
 		}},
+		{name: "cached synchronous host", want: true, usesGC: true, change: func(_ *testing.T, ctx *context, _ *aPackage) {
+			ctx.frontend = &frontendCache{program: &frontendProgramExport{MinimalHost: true}}
+		}},
 		{name: "cached fallback", change: func(_ *testing.T, ctx *context, _ *aPackage) {
 			ctx.frontend = &frontendCache{program: &frontendProgramExport{}}
 		}},
@@ -44,6 +49,23 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 			ctx.buildConf.WasmMinimalHost = false
 		}},
 		{name: "panic", source: "func main() { panic(42) }"},
+		{name: "synchronous allocation", change: func(_ *testing.T, ctx *context, _ *aPackage) {
+			ctx.buildConf.PrintCommands = true
+		}, source: "func main(){ s:=make([]string,1); s[0]=\"hi\"; println(s[0]) }", want: true, usesGC: true},
+		{name: "channel operation", source: "func wait(ch chan int){ println(<-ch) }; func main(){ wait(nil) }"},
+		{name: "interface print", source: "func main(){ println(any(42)) }"},
+		{name: "unknown builtin", source: "func main(){ println(recover() != nil) }"},
+		{name: "recursive synchronous calls", source: "func f(n int){ if n > 0 { f(n-1) }; println(len(make([]int,n))) }; func main(){ f(3) }", want: true, usesGC: true},
+		{name: "linked global", source: "var a = []int{1}; func main(){ println(a[0]) }", change: func(_ *testing.T, ctx *context, _ *aPackage) {
+			ctx.prog.SetLinkname("main.a", "C.a")
+		}},
+		{name: "channel receive", source: "func main(){ ch:=make(chan int); println(<-ch) }"},
+		{name: "deferred call", source: "func emit(){ println(0) }; func main(){ defer emit() }"},
+		{name: "indirect call", source: "var f = func() int { return 7 }; func main(){ println(f()) }"},
+		{name: "patched package", source: "func main(){ println(len(make([]int,1))) }", change: func(_ *testing.T, ctx *context, p *aPackage) {
+			ctx.patches = cl.Patches{p.Types.Path(): {Alt: p.SSA}}
+		}},
+
 		{name: "goroutine", source: "func main() { go func() { println(42) }() }"},
 		{name: "workers", change: func(_ *testing.T, ctx *context, _ *aPackage) {
 			ctx.crossCompile.WasmRuntime.RunMainTask = true
@@ -85,6 +107,8 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 				Types: ssp.Pkg, Syntax: []*ast.File{f}}, SSA: ssp}
 			prog := llssa.NewProgram(&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "emscripten"})
 			defer prog.Dispose()
+			prog.EnableGCRoots(true)
+			prog.EnableCooperativeSafepoints(true)
 			conf := &Config{Goos: "js", Goarch: "wasm", Target: "emscripten", OptLevel: optlevel.Oz,
 				BuildMode: BuildModeExe, WasmMinimalHost: true, DebugArtifactMode: DebugArtifactNone}
 			target := crosscompile.Export{WasmProvider: crosscompile.WasmProviderEmscripten, WasmProfile: crosscompile.WasmProfileJ32,
@@ -98,17 +122,29 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 			if tc.change != nil {
 				tc.change(t, ctx, p)
 			}
+			ctx.frontendOptions.ShadowStack = true
 			if ctx.buildConf.PrintCommands {
 				finish := captureStderr(t)
 				configureWasmRuntimeFree(ctx)
-				if got := finish(); !strings.Contains(got, "select minimal Emscripten host") {
+				got := finish()
+				if !strings.Contains(got, "select minimal Emscripten host") ||
+					tc.usesGC && !strings.Contains(got, "keep GC with a synchronous Emscripten host") {
 					t.Fatalf("missing minimal host diagnostic: %s", got)
 				}
 			} else {
 				configureWasmRuntimeFree(ctx)
 			}
-			if conf.wasmMinimalHostSelected != tc.want || ctx.wasmRuntimeFree != tc.want || conf.deadcodeDropEnabled() != tc.want {
+			if conf.wasmMinimalHostSelected != tc.want || ctx.wasmRuntimeFree != (tc.want && !tc.usesGC) || conf.deadcodeDropEnabled() != tc.want {
 				t.Fatalf("minimal=%v runtime-free=%v DCE=%v, want %v", conf.wasmMinimalHostSelected, ctx.wasmRuntimeFree, conf.deadcodeDropEnabled(), tc.want)
+			}
+			if prog.GCRootsEnabled() != !ctx.wasmRuntimeFree || ctx.frontendOptions.ShadowStack != !ctx.wasmRuntimeFree ||
+				prog.CooperativeSafepointsEnabled() == tc.want {
+				t.Fatal("GC roots, shadow stack or scheduling polls do not match host policy")
+			}
+			inputs := newManifestBuilder()
+			ctx.collectCommonInputs(inputs)
+			if inputs.common.WasmSynchronousGC != tc.usesGC {
+				t.Fatal("GC-capable synchronous builds must have a distinct archive fingerprint")
 			}
 			if needsWasmRuntimeScheduler(ctx) == tc.want || needsEmscriptenBrowserHost(conf, "app.mjs") == tc.want {
 				t.Fatal("scheduler and sidecar must match the resolved host")
@@ -151,5 +187,11 @@ func TestValidateMinimalEmscriptenHost(t *testing.T) {
 				t.Fatalf("validate -wasm-minimal-host: %v, want success=%v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestSynchronousWasmNeedsExecutableRoots(t *testing.T) {
+	if wasmSynchronousFunctions(nil, nil, nil) {
+		t.Fatal("an entry-less package cannot prove synchronous execution")
 	}
 }

@@ -22,7 +22,7 @@ import (
 func configureWasmRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.MinimalHost {
-			selectMinimalEmscriptenHost(ctx)
+			selectSynchronousEmscriptenHost(ctx, ctx.frontend.program.RuntimeFree)
 		}
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
@@ -59,7 +59,13 @@ func configureWasmRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	roots := wasmReflectRoots(ctx)
+	runtimeFree := wasmRuntimeFreeFunctions(roots, linkname, globalSafe)
+	closedCall := func(fn *ssa.Function) bool {
+		// The original SSA does not describe an alternate implementation.
+		return fn.Pkg != nil && ctx.patches[fn.Pkg.Pkg.Path()].Alt == nil && linkname(fn) == ""
+	}
+	if !runtimeFree && (!minimalHost || !ctx.prog.GCRootsEnabled() || !wasmSynchronousFunctions(roots, closedCall, globalSafe)) {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -86,6 +92,9 @@ func configureWasmRuntimeFree(ctx *context) {
 		for _, file := range pkg.Syntax {
 			for _, imp := range file.Imports {
 				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" {
+					return
+				}
+				if !runtimeFree && (imp.Path.Value == `"unsafe"` || imp.Path.Value == "`unsafe`") {
 					return
 				}
 			}
@@ -129,9 +138,23 @@ func configureWasmRuntimeFree(ctx *context) {
 		}
 	}
 	if minimalHost {
-		selectMinimalEmscriptenHost(ctx)
+		selectSynchronousEmscriptenHost(ctx, runtimeFree)
 	}
-	enableWasmRuntimeFree(ctx)
+	if runtimeFree {
+		enableWasmRuntimeFree(ctx)
+	}
+}
+
+func selectSynchronousEmscriptenHost(ctx *context, runtimeFree bool) {
+	selectMinimalEmscriptenHost(ctx)
+	if runtimeFree {
+		return
+	}
+	// GC keeps the shadow stack but needs no scheduler polls.
+	ctx.prog.EnableCooperativeSafepoints(false)
+	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
+		fmt.Fprintln(os.Stderr, "llgo: keep GC with a synchronous Emscripten host")
+	}
 }
 
 func enableWasmRuntimeFree(ctx *context) {

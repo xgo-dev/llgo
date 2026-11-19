@@ -12,8 +12,8 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
-def check_minimal_host(llgo, node, target, directory, env, browser):
-    root = pathlib.Path(directory) / (target + "-minimal")
+def check_minimal_host(llgo, node, target, directory, env, browser, name, source, marker, gc):
+    root = pathlib.Path(directory) / f"{target}-{name}"
     root.mkdir()
     old = root / "app.js"
     fixture = str(ROOT / "benchmark/binary_size/println/main.go")
@@ -24,12 +24,14 @@ def check_minimal_host(llgo, node, target, directory, env, browser):
     if not old.exists() or not (root / "wasm_fs.js").exists():
         raise RuntimeError(f"{target}: full host did not generate glue and filesystem")
     output = root / "app.mjs"
-    subprocess.run(
-        [llgo, "build", "-target", target, "-Oz", "-lto=full", "-ldflags=-s",
-         "-wasm-minimal-host", "-debug-artifact=none", "-o", str(output),
-         str(ROOT / "benchmark/binary_size/println/main.go")],
-        env=env, check=True, timeout=300,
+    build = subprocess.run(
+        [llgo, "build", "-target", target, "-Oz", "-lto=full", "-ldflags=-s", "-compiler-verbose",
+         "-wasm-minimal-host", "-debug-artifact=none", "-o", str(output), str(source)],
+        env=env, capture_output=True, text=True, timeout=300,
     )
+    log = build.stdout + build.stderr
+    if build.returncode or ("keep GC with a synchronous Emscripten host" in log) != gc:
+        raise RuntimeError(f"{target}/{name}: unexpected build result\n{log}")
     manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
     files = {entry["path"] for entry in manifest["artifacts"]}
     if not manifest.get("minimal_host") or files != {"app.mjs", "app.wasm"}:
@@ -40,7 +42,6 @@ def check_minimal_host(llgo, node, target, directory, env, browser):
         [node, str(ROOT / "targets" / f"{target}-runner.mjs"), str(output)],
         env=env, capture_output=True, text=True, timeout=120,
     )
-    marker = "Hello, world"
     if result.returncode or (result.stdout + result.stderr).strip() != marker:
         raise RuntimeError(f"{target}: exit {result.returncode}\n{result.stdout}\n{result.stderr}")
     if browser:
@@ -49,7 +50,7 @@ def check_minimal_host(llgo, node, target, directory, env, browser):
             env=env, check=True, timeout=90,
         )
     size = sum(entry["bytes"] for entry in manifest["artifacts"])
-    print(f"{target}: minimal host passed ({size} deployment bytes)", flush=True)
+    print(f"{target}/{name}: minimal host passed ({size} deployment bytes)", flush=True)
 
 
 def main():
@@ -80,7 +81,12 @@ def main():
             if rejected.returncode == 0 or "exit 2: wasm deferred marker" not in rejected.stderr:
                 raise RuntimeError(f"browser accepted a failed program or lost its arguments:\n{rejected.stdout}\n{rejected.stderr}")
         for target in ("emscripten", "emscripten-memory64"):
-            check_minimal_host(llgo, node, target, directory, dict(env, LLGO_WASM_WORKERS="1"), args.browser)
+            minimal_env = dict(env, LLGO_WASM_WORKERS="1")
+            check_minimal_host(llgo, node, target, directory, minimal_env, args.browser,
+                               "minimal", ROOT / "benchmark/binary_size/println/main.go", "Hello, world", False)
+            check_minimal_host(llgo, node, target, directory, minimal_env, args.browser,
+                               "synchronous-gc", ROOT / "internal/build/testdata/wasm-synchronous-gc",
+                               "wasm synchronous GC ok", True)
             for level, workers, fixture, marker in cases:
                 name = f"{target}-{level}-{workers}-workers"
                 output = pathlib.Path(directory) / f"{name}.mjs"

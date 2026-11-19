@@ -159,7 +159,7 @@ type Config struct {
 	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
 	OptLevel           optlevel.Level
 	WasmOpt            WasmOptMode
-	WasmMinimalHost    bool // allow a reduced Emscripten host when runtime-free
+	WasmMinimalHost    bool // allow a reduced Emscripten host for proven synchronous programs
 	WasmStrip          WasmStripMode
 	LTO                lto.Mode
 	LTOPlugin          lto.PassPlugin
@@ -2669,7 +2669,7 @@ func prepareMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage, outp
 // generate one entry module. Native test DAG callers invoke it on the
 // coordinator; isolated package Programs may already have been disposed.
 func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainLinkPreparation, error) {
-	needRuntime := ctx.buildConf.PCLNLoad.startsAtEntry()
+	needRuntime := ctx.buildConf.PCLNLoad.startsAtEntry() || ctx.buildConf.wasmMinimalHostSelected && !ctx.wasmRuntimeFree
 	needPyInit := false
 	var needAbiInit int
 	methodByIndex := make(map[int]none)

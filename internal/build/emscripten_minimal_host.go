@@ -34,7 +34,7 @@ func canUseMinimalEmscriptenHost(ctx *context) bool {
 }
 
 // selectMinimalEmscriptenHost is called after proving that neither Go nor
-// native inputs need allocation, host callbacks, or scheduling. Keep the
+// native inputs need host callbacks, filesystem access, or scheduling. Keep the
 // ordinary Emscripten driver and its standard executable entry.
 func selectMinimalEmscriptenHost(ctx *context) {
 	conf := ctx.buildConf
