@@ -1,4 +1,4 @@
-//go:build darwin || linux || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)
+//go:build (darwin || linux || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)) && !(cortexm && qemu && lm3s6965)
 
 package runtime
 

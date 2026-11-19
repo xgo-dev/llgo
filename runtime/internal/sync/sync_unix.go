@@ -46,9 +46,6 @@ type Once struct {
 	unused [pthreadOnceSize]c.Char
 }
 
-// llgo:link (*Once).Do C.pthread_once
-func (o *Once) Do(f OnceFunc) c.Int { return 0 }
-
 // MutexAttr has the native layout of pthread_mutexattr_t.
 type MutexAttr struct {
 	_      alignMutexAttr
@@ -60,21 +57,6 @@ type Mutex struct {
 	_      alignMutex
 	unused [pthreadMutexSize]c.Char
 }
-
-//go:linkname pthreadMutexInit C.pthread_mutex_init
-func pthreadMutexInit(m *Mutex, attr *MutexAttr) c.Int
-
-//go:linkname pthreadMutexDestroy C.pthread_mutex_destroy
-func pthreadMutexDestroy(m *Mutex) c.Int
-
-//go:linkname pthreadMutexLock C.pthread_mutex_lock
-func pthreadMutexLock(m *Mutex) c.Int
-
-//go:linkname pthreadMutexTryLock C.pthread_mutex_trylock
-func pthreadMutexTryLock(m *Mutex) c.Int
-
-//go:linkname pthreadMutexUnlock C.pthread_mutex_unlock
-func pthreadMutexUnlock(m *Mutex) c.Int
 
 func (m *Mutex) Init(attr *MutexAttr) c.Int {
 	return pthreadMutexInit(m, attr)

@@ -82,6 +82,16 @@ def main():
                 if output.read_bytes()[:4] != b"\x7fELF":
                     raise RuntimeError("C-only DCE did not produce an ELF image")
             print("ESP32-C3 C-only DCE cold/warm builds passed (build-only)")
+            # Go 1.27's fmt dependency graph uses the portable assembly,
+            # console and runtime providers for this bare-metal target.
+            if command(["go", "env", "GOVERSION"], env).strip().startswith("go1.27"):
+                output = directory / "fmtprintf.elf"
+                command([str(llgo), "build", "-target=esp32c3", "-Oz",
+                         "-deadcodedrop", "-globaldce=false", "-lto=full",
+                         "-o", str(output), "./benchmark/binary_size/fmtprintf"], env)
+                if output.read_bytes()[:4] != b"\x7fELF":
+                    raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
+                print("ESP32-C3 Go 1.27 fmt build passed (build-only)")
             return
 
         wasmer = env.get("WASMER", "wasmer")

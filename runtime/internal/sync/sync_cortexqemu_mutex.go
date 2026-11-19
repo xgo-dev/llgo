@@ -1,0 +1,44 @@
+//go:build cortexm && qemu && lm3s6965
+
+package sync
+
+import c "github.com/xgo-dev/llgo/runtime/internal/clite"
+
+// The Cortex-M QEMU runtime executes Go on a single context. Keep lock
+// state to catch reentrant runtime calls and preserve TryLock behavior.
+func pthreadMutexInit(m *Mutex, _ *MutexAttr) c.Int {
+	m.unused[0] = 0
+	return 0
+}
+
+func pthreadMutexDestroy(m *Mutex) c.Int {
+	return pthreadMutexInit(m, nil)
+}
+
+func pthreadMutexLock(m *Mutex) c.Int {
+	if pthreadMutexTryLock(m) != 0 {
+		c.Exit(1)
+	}
+	return 0
+}
+
+func pthreadMutexTryLock(m *Mutex) c.Int {
+	if m.unused[0] != 0 {
+		return 1
+	}
+	m.unused[0] = 1
+	return 0
+}
+
+func pthreadMutexUnlock(m *Mutex) c.Int {
+	m.unused[0] = 0
+	return 0
+}
+
+func (o *Once) Do(f OnceFunc) c.Int {
+	if o.unused[0] == 0 {
+		o.unused[0] = 1
+		f()
+	}
+	return 0
+}

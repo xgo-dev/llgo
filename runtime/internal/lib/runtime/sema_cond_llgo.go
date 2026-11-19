@@ -1,4 +1,4 @@
-//go:build darwin || (linux && baremetal)
+//go:build darwin || (linux && baremetal && !(cortexm && qemu && lm3s6965))
 
 package runtime
 

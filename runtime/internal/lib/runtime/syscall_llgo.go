@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build (darwin || linux) && !(llgo.baremetal.stdio && go1.27)
 
 package runtime
 

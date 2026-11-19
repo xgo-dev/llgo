@@ -1,4 +1,4 @@
-//go:build baremetal
+//go:build baremetal && !(cortexm && qemu && lm3s6965)
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.

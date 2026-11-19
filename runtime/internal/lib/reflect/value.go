@@ -2495,6 +2495,9 @@ func (v Value) closureFunc() *abi.FuncType {
 }
 
 func (v Value) call(op string, in []Value) (out []Value) {
+	if baremetalReflection {
+		panic("reflect: dynamic calls require a function call provider")
+	}
 	var (
 		ft   *abi.FuncType
 		tin  []*abi.Type

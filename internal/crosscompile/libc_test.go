@@ -124,7 +124,7 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
-		expectedDir := compiledLibraryDir(baseDir, libc.GetPicolibcConfig(), testCompilerKey)
+		expectedDir := compiledLibraryDir(baseDir, libc.GetPicolibcConfig(), compiledLibraryCacheKey(testCompilerKey, group.Files))
 		if outputDir != expectedDir {
 			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
 		}

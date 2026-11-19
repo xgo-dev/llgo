@@ -1,4 +1,4 @@
-//go:build !nogc || windows
+//go:build (!nogc || windows) && !(llgo.baremetal.stdio && go1.27)
 
 package runtime
 

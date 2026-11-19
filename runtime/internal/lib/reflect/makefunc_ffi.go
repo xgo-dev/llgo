@@ -10,6 +10,9 @@ import (
 )
 
 func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+	if baremetalReflection {
+		panic("reflect: dynamic calls require a function call provider")
+	}
 	sig, err := toFFISig(ftyp.In, ftyp.Out)
 	if err != nil {
 		panic(err)

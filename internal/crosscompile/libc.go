@@ -90,6 +90,9 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu, compiledLibrary
 		err = fmt.Errorf("unsupported libc: %s", libcName)
 		return
 	}
+	if libcName == "picolibc" {
+		compiledLibraryKey = compiledLibraryCacheKey(compiledLibraryKey, compileConfig.Groups[0].Files)
+	}
 	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey)
 	if needSkipDownload {
 		return outputDir, compileConfig, err
@@ -121,6 +124,9 @@ func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string
 	default:
 		err = fmt.Errorf("unsupported rt: %s", rtName)
 		return
+	}
+	if strings.HasPrefix(target, "thumb") {
+		compiledLibraryKey = compiledLibraryCacheKey(compiledLibraryKey, compileConfig.Groups[0].Files)
 	}
 	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey)
 	if needSkipDownload {

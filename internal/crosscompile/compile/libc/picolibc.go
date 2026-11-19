@@ -3,6 +3,7 @@ package libc
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 )
@@ -19,15 +20,21 @@ func GetPicolibcConfig() compile.LibConfig {
 
 // GetPicolibcCompileConfig returns configuration for picolibc
 func GetPicolibcCompileConfig(baseDir, target string) compile.CompileConfig {
+	arm := strings.HasPrefix(target, "thumb") || strings.HasPrefix(target, "arm")
+	var armFiles []string
+	if arm {
+		armFiles = []string{filepath.Join(baseDir, "newlib", "libc", "machine", "arm", "setjmp.S")}
+	}
 	return compile.CompileConfig{
 		ExportCFlags: []string{
 			"-I" + baseDir,
 			"-isystem" + filepath.Join(baseDir, "newlib", "libc", "include"),
+			"-isystem" + filepath.Join(baseDir, "newlib", "libc", "tinystdio"),
 		},
 		Groups: []compile.CompileGroup{
 			{
 				OutputFileName: fmt.Sprintf("libc-%s.a", target),
-				Files: []string{
+				Files: append([]string{
 					filepath.Join(baseDir, "newlib", "libc", "string", "bcmp.c"),
 					filepath.Join(baseDir, "newlib", "libc", "string", "bcopy.c"),
 					filepath.Join(baseDir, "newlib", "libc", "string", "bzero.c"),
@@ -136,13 +143,21 @@ func GetPicolibcCompileConfig(baseDir, target string) compile.CompileConfig {
 					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-realloc.c"),
 					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-valloc.c"),
 					filepath.Join(baseDir, "newlib", "libc", "stdlib", "rand.c"),
+					filepath.Join(baseDir, "newlib", "libc", "stdlib", "random.c"),
+					filepath.Join(baseDir, "newlib", "libc", "stdlib", "srandom.c"),
 					filepath.Join(baseDir, "newlib", "libc", "stdlib", "srand.c"),
 					filepath.Join(baseDir, "newlib", "libc", "stdlib", "nano-free.c"),
 
 					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "printf.c"),
 					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "putchar.c"),
 					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "puts.c"),
-				},
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "fputc.c"),
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "fputs.c"),
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "fwrite.c"),
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "getchar.c"),
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "snprintf.c"),
+					filepath.Join(baseDir, "newlib", "libc", "tinystdio", "vfprintf.c"),
+				}, armFiles...),
 				CFlags: []string{
 					"-D_COMPILING_NEWLIB",
 					"-D_HAVE_ALIAS_ATTRIBUTE",

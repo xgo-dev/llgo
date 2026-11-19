@@ -52,7 +52,7 @@ func platformSpecifiedFiles(builtinsDir, target string) []string {
 			filepath.Join(builtinsDir, "trunctfsf2.c"),
 			filepath.Join(builtinsDir, "atomic.c"),
 		}
-	case strings.Contains(target, "arm"):
+	case strings.Contains(target, "arm") || strings.HasPrefix(target, "thumb"):
 		return []string{
 			filepath.Join(builtinsDir, "arm", "aeabi_cdcmp.S"),
 			filepath.Join(builtinsDir, "arm", "aeabi_cdcmpeq_check_nan.c"),
