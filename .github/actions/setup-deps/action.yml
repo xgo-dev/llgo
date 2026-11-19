@@ -346,6 +346,10 @@ runs:
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $llvmLibDir)) {
           throw "llvm-config reported an invalid library directory: $llvmLibDir"
         }
+        & (Join-Path $env:GITHUB_WORKSPACE '.github/windows/test-llvm-msvc-deps.ps1')
+        . (Join-Path $env:GITHUB_WORKSPACE '.github/windows/llvm-msvc-deps.ps1')
+        $llvmDeps = Get-LLGoLLVMMSVCDependencies -GoArch $hostGoArch -LLVMVersion $env:LLVM_VERSION
+        $llvmDepsLibDir = (Join-Path $llvmDeps 'lib').Replace('\', '/')
         $llvmLibOutput = ((& $llvmConfig --link-static --libnames all) -join " ").Trim()
         if ($LASTEXITCODE -ne 0) {
           throw "llvm-config failed to report the static LLVM libraries"
@@ -374,7 +378,8 @@ runs:
         # llvm-config prints full .lib paths on Windows. Express the same
         # ordered static link as standard -L/-l flags so pkgconf does not treat
         # backslashes as escapes and Go's CGO flag validation remains intact.
-        $ldflags = (@("-L$llvmLibDir") + @($libraryFlags)) -join " "
+        $ldflags = Get-ReleaseMSVCLinkFlags -LibraryDirectory $llvmLibDir `
+          -AdditionalLibraryDirectories @($llvmDepsLibDir) -LibraryFlags $libraryFlags
         @"
         Name: LLVM ${{ inputs.llvm-version }}
         Description: LLVM ${{ inputs.llvm-version }} host compiler and linker flags
@@ -419,6 +424,7 @@ runs:
           -std=c++17 `
           "-I$llvmIncludeDir" `
           "-L$llvmLibDir" `
+          "-L$llvmDepsLibDir" `
           $fileCheckSource `
           $fileCheckLibraries `
           $fileCheckSystemLibraries `

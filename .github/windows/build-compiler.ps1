@@ -89,6 +89,8 @@ if ($GoArch -eq '386') {
     '" --target=' + $target.Triple + ' -fuse-ld=lld -fms-runtime-lib=static'
   $env:CXX = '"' + (Join-Path $bootstrapBin 'clang++.exe').Replace('\', '/') +
     '" --target=' + $target.Triple + ' -fuse-ld=lld -fms-runtime-lib=static'
+  . (Join-Path $PSScriptRoot 'llvm-msvc-deps.ps1')
+  $llvmDeps = Get-LLGoLLVMMSVCDependencies -GoArch $GoArch -LLVMVersion $llvmVersion
   $libraryNames = (Invoke-ReleaseCapture $llvmConfig @('--link-static', '--libnames', 'all')).Trim() -split '\s+'
   $systemNames = (Invoke-ReleaseCapture $llvmConfig @('--link-static', '--system-libs')) -split '\s+' |
     Where-Object { $_ -and $_ -notin @('libxml2s.lib', 'xml2s.lib') }
@@ -100,7 +102,8 @@ if ($GoArch -eq '386') {
     }
     '-l' + [IO.Path]::GetFileNameWithoutExtension($_)
   }
-  $env:CGO_LDFLAGS = Get-ReleaseMSVCLinkFlags -LibraryDirectory (Join-Path $llvmRoot 'lib') -LibraryFlags $libraryFlags
+  $env:CGO_LDFLAGS = Get-ReleaseMSVCLinkFlags -LibraryDirectory (Join-Path $llvmRoot 'lib') `
+    -AdditionalLibraryDirectories @((Join-Path $llvmDeps 'lib')) -LibraryFlags $libraryFlags
 }
 
 $executable = Join-Path $bin 'llgo.exe'
@@ -131,6 +134,10 @@ Copy-Item -LiteralPath (Join-Path $root 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-
   -Destination (Join-Path $licenses 'LLGO-LLVM-LICENSE.txt')
 if ($GoArch -eq '386') {
   Copy-Item -Path (Join-Path $llvmRoot 'third-party-licenses/*') -Destination $licenses -Recurse
+} else {
+  Copy-Item -Path (Join-Path $llvmDeps 'licenses/*') -Destination $licenses
+  Copy-Item -LiteralPath (Join-Path $llvmDeps 'build-manifest.json') `
+    -Destination (Join-Path $stage 'llvm-msvc-deps-manifest.json')
 }
 @{
   version = $metadata.version
