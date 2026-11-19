@@ -1,4 +1,5 @@
 #include <string>
+#include <stddef.h>
 #include <stdint.h>
 #include <emscripten.h>
 #include <emscripten/val.h>
@@ -53,8 +54,11 @@ T as_value(EM_VAL val, Policies...) {
 
 struct GoString {
     char *data;
-    int len;   
+    // Go string lengths are 64 bits on both wasm32 and wasm64.
+    int64_t len;
 };
+static_assert(sizeof(GoString::len) == 8 && offsetof(GoString, len) == 8 &&
+              sizeof(GoString) == 16, "GoString must match the Go string layout");
 
 extern "C" {
 
