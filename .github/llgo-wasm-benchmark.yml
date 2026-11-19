@@ -73,6 +73,25 @@ views:
         glue-bytes:
           title: Generated JS glue
           format: bytes
+  wasi-size-matrix:
+    title: WASI size matrix
+    select:
+      groups: "^wasm-size$"
+      benchmarks: "^WasmSize/wasi-size/"
+      metrics: "^module-bytes$"
+    table:
+      rows: [benchmark]
+      columns: [metric]
+      missing: error
+      empty: hide
+      dimensions:
+        benchmark:
+          title: Workload and compiler
+          trim-prefix: BenchmarkWasmSize/wasi-size/
+      metrics:
+        module-bytes:
+          title: Wasm module
+          format: bytes
   wasm-size:
     title: WebAssembly output sizes
     select:

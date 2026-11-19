@@ -381,7 +381,7 @@ func TestWriteResultsPreservesZeroBuildDuration(t *testing.T) {
 		{name: "timed-positive", build: 17 * time.Nanosecond, buildMeasured: true},
 		{name: "size-only"},
 	}
-	if err := writeResults(path, results, nil); err != nil {
+	if err := writeResults(path, results, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -404,7 +404,7 @@ func TestWriteResultsPreservesZeroBuildDuration(t *testing.T) {
 }
 
 func TestWriteResultsReturnsFilesystemError(t *testing.T) {
-	err := writeResults(filepath.Join(t.TempDir(), "missing", "benchmark.txt"), nil, nil)
+	err := writeResults(filepath.Join(t.TempDir(), "missing", "benchmark.txt"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("writeResults unexpectedly succeeded")
 	}

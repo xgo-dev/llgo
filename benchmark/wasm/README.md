@@ -48,3 +48,23 @@ Use the pinned Binaryen tools described in [Wasm size optimization](../../doc/wa
 The LLGo report attributes final function bodies using any names that survive linking and optimization, including names LLGo removes during final stripping. Use `-size-level=full` to investigate individual symbols. Body sizes include inline code attributed to the containing function. Unowned data and anonymous bodies remain in separate unknown buckets. For example, optimized Emscripten builds can omit names before LLGo's final strip. The JSON `wasm.imports` and `wasm.exports` lists show the final module boundary for these builds as well, with internal names for function exports where available. Compare those lists alongside JS and worker bytes when changing host roots.
 
 For explicit final optimization, metadata stripping and complete deployment accounting, see [Final WebAssembly size optimization](../../doc/wasm-size.md). The existing benchmark defaults remain unchanged.
+
+## WASI size matrix
+
+The existing WebAssembly benchmark job also records the final stripped modules
+for `cprintf`, `println`, and `fmtprintf`. LLGo uses a dev compiler at
+`-Oz` with default reachability, explicit `-deadcodedrop`, and
+`-deadcodedrop -globaldce=false -lto=full`. Go and TinyGo build the same
+`println` and `fmtprintf` sources for WASI with debug information stripped.
+The LLGo C FFI fixture has no same-source Go or TinyGo reference.
+
+For a local size-only run after building a dev LLGo:
+
+```sh
+go run ./benchmark/wasm -size-only -size-llgo ./llgo-dev -tinygo tinygo -out /tmp/llgo-wasi-size
+```
+
+PR comparisons use the same fixture paths and toolchains for base and head.
+The matrix enables the ordinary LLGo package cache for all size modes. The
+historical build-time series still uses its existing cache settings and
+metric names.

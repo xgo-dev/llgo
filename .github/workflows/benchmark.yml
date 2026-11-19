@@ -303,6 +303,8 @@ jobs:
       # Keep the existing println timing budget. Other examples are built once
       # for exact sizes; only W32 repeats reflectcall to measure bridge cost.
       LLGO_WASM_BENCH_BUILD_RUNS: "1"
+      LLGO_WASM_BENCH_SIZE_MATRIX: "1"
+      LLGO_WASM_BENCH_DEV_TAGS: dev,llvm22
       GOFLAGS: -tags=llvm22
     steps:
       - uses: actions/checkout@v7
@@ -366,6 +368,24 @@ jobs:
 
       - name: Set up Go
         uses: ./.github/actions/setup-go
+
+      - name: Set up pinned TinyGo reference
+        shell: bash
+        run: |
+          version=0.44.0
+          case "$RUNNER_ARCH" in
+            X64) arch=amd64; digest=ed0f45543a49ff2a99120a5a1b8814a0750e1fda1a66f8e2a0a172576134aaf9 ;;
+            ARM64) arch=arm64; digest=48cece9e1e886a176caad0918182d90f8348ad3084774e6239f42e5e11e40990 ;;
+            *) echo "Unsupported Linux architecture: $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          asset="tinygo$version.linux-$arch.tar.gz"
+          staging="$(mktemp -d "$RUNNER_TEMP/tinygo.XXXXXX")"
+          curl --fail --location --retry 3 --output "$staging/$asset" \
+            "https://github.com/tinygo-org/tinygo/releases/download/v$version/$asset"
+          printf '%s  %s\n' "$digest" "$staging/$asset" | sha256sum --check
+          tar -xzf "$staging/$asset" -C "$staging"
+          "$staging/tinygo/bin/tinygo" version
+          echo "$staging/tinygo/bin" >> "$GITHUB_PATH"
 
       - name: Test WebAssembly benchmark matrix and runner
         run: go test ./benchmark/wasm -count=1

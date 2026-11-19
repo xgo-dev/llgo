@@ -15,10 +15,18 @@ mkdir -p "$(dirname "$2")" "$3"
 llgo_output="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 result_directory="$(cd "$3" && pwd)"
 
+size_args=()
 (
   cd "$source_root"
   LLGO_ROOT="$source_root" go build -p=1 -o "$llgo_output" ./cmd/llgo
 )
+if [[ "${LLGO_WASM_BENCH_SIZE_MATRIX:-0}" == 1 ]]; then
+  (
+    cd "$source_root"
+    LLGO_ROOT="$source_root" go build -p=1 -tags="${LLGO_WASM_BENCH_DEV_TAGS:-dev}" -o "$llgo_output-dev" ./cmd/llgo
+  )
+  size_args=(-size-llgo "$llgo_output-dev" -tinygo "${TINYGO:-tinygo}")
+fi
 
 (
   cd "$harness_root"
@@ -27,5 +35,5 @@ result_directory="$(cd "$3" && pwd)"
     -fixture-root "$fixture_root" \
     -llgo "$llgo_output" \
     -out "$result_directory" \
-    -build-runs "${LLGO_WASM_BENCH_BUILD_RUNS:-3}"
+    -build-runs "${LLGO_WASM_BENCH_BUILD_RUNS:-3}" "${size_args[@]}"
 )
