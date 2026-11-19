@@ -7,10 +7,9 @@ compiler now provides both backends through the existing Drop and LTO options.
 
 The SSA `reflect.Method.Func` use proof remains removed. `Type.Method` and
 `Type.MethodByName` retain callable demands; constant names still use the
-existing named demand. The retired metadata-only wire kind remains readable in
-compatible version-3 experimental caches and is treated as conservative
-callable reflection. This does not add support for older metadata file versions.
-New compiler output does not emit that kind.
+existing named demand. Package metadata uses format version 4, with
+`DemandReflectMethodSite` as kind 5. Older metadata files are rejected and their
+packages rebuilt.
 
 ## Selecting a backend
 

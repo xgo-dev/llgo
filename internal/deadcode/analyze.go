@@ -223,9 +223,7 @@ func (d *pass) flood() {
 
 		for _, demand := range d.info.FuncDemands(sym) {
 			switch demand.Kind {
-			case meta.DemandReflectMethod, meta.DemandReflectMethodMetadata:
-				// Old experimental package caches can still carry the retired
-				// metadata-only marker. Treat it as callable reflection too.
+			case meta.DemandReflectMethod:
 				d.reflectSeen = true
 			case meta.DemandUseIface:
 				d.markUsedInIface(demand.Target)

@@ -192,14 +192,6 @@ func (b *Builder) MarkReflect(sym Symbol) {
 	})
 }
 
-// MarkReflectMethodMetadata encodes the retired experimental wire kind for
-// compatibility tests. New compiler output must use callable demands instead.
-func (b *Builder) MarkReflectMethodMetadata(sym Symbol) {
-	b.funcDemands[sym] = append(b.funcDemands[sym], bFuncDemand{
-		kind: DemandReflectMethodMetadata,
-	})
-}
-
 // AddReflectMethodSite records a dynamic MethodByName demand owned by src.
 // Both arguments are builder-local symbols. The spelling of site must identify
 // the source lookup uniquely across packages; copies of that lookup, including

@@ -20,14 +20,10 @@ const (
 	DemandIfaceMethod   DemandKind = 2
 	DemandNamedMethod   DemandKind = 3
 	DemandReflectMethod DemandKind = 4
-	// DemandReflectMethodMetadata is a retired experimental wire kind retained
-	// for compatible caches. New output never emits it; analysis treats it as
-	// DemandReflectMethod, without assuming that reflect.Method.Func is unused.
-	DemandReflectMethodMetadata DemandKind = 5
 	// DemandReflectMethodSite records a dynamic reflect.Value.MethodByName
 	// lookup for refinement from optimized IR. It is a package-local wire kind;
 	// GlobalSummary translates it to named demands or conservative reflection.
-	DemandReflectMethodSite DemandKind = 6
+	DemandReflectMethodSite DemandKind = 5
 )
 
 // MethodSlot is a method slot in the global namespace.
@@ -53,7 +49,6 @@ type MethodSig struct {
 //   - DemandNamedMethod: MethodName is one required lookup name, either a
 //     constant argument or a member of a finite set proven from optimized IR.
 //   - DemandReflectMethod: no additional fields are set.
-//   - DemandReflectMethodMetadata: no additional fields are set.
 type FuncDemand struct {
 	Kind       DemandKind
 	Target     Symbol

@@ -106,9 +106,6 @@ func unsafeLayoutOnly(t reflect.Type, i int) any { m := t.Method(i); return unsa
 					meta := pkg.Meta.String()
 					pkg.Meta.Close()
 					prog.Dispose()
-					if strings.Contains(meta, "[ReflectMethodMetadata]") {
-						t.Fatalf("retired metadata-only demand was emitted:\n%s", meta)
-					}
 					if drop {
 						want := "[Reflect]"
 						if check.Kind == llssa.ReflectTypeMethodByName {

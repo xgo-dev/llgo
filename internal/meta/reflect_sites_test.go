@@ -53,10 +53,12 @@ func TestReflectMethodSiteRoundTrip(t *testing.T) {
 			t.Fatalf("translated roundtrip demand: got %v, want %v", got, want)
 		}
 	}
-	old := bytes.Clone(data.Bytes())
-	binary.LittleEndian.PutUint32(old[4:8], 2)
-	if _, err := newPackageMeta(old); err == nil {
-		t.Fatal("accepted v2 metadata with unknown callsite-demand semantics")
+	for _, oldVersion := range []uint32{1, 2, 3} {
+		old := bytes.Clone(data.Bytes())
+		binary.LittleEndian.PutUint32(old[4:8], oldVersion)
+		if _, err := newPackageMeta(old); err == nil || !strings.Contains(err.Error(), "unsupported version") {
+			t.Fatalf("v%d metadata must be rejected as an unsupported version: %v", oldVersion, err)
+		}
 	}
 	invalid := bytes.Clone(data.Bytes())
 	record := pm.demandOff + 4 + (pm.nsyms+1)*4
@@ -74,7 +76,6 @@ func TestReflectMethodSiteRefinementIsolation(t *testing.T) {
 	generic := b.Sym("pkg.generic")
 	b.AddReflectMethodSite(generic, b.Sym("pkg.lookup.site0"))
 	b.MarkReflect(generic)
-	b.MarkReflectMethodMetadata(generic)
 	pm, err := b.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +101,7 @@ func TestReflectMethodSiteRefinementIsolation(t *testing.T) {
 				t.Fatalf("lookup demand: got %v, want %v", got, tc.want)
 			}
 			generic := reflectSiteDemands(t, g, "pkg.generic")
-			if !slices.Contains(generic, "reflect") || !slices.Contains(generic, "metadata") {
+			if !slices.Contains(generic, "reflect") {
 				t.Fatalf("refining a site erased an independent demand: %v", generic)
 			}
 		})
@@ -206,8 +207,6 @@ func reflectSiteDemands(t *testing.T, g *GlobalSummary, caller string) []string 
 		switch demand.Kind {
 		case DemandReflectMethod:
 			out = append(out, "reflect")
-		case DemandReflectMethodMetadata:
-			out = append(out, "metadata")
 		case DemandNamedMethod:
 			out = append(out, "name:"+g.Name(demand.MethodName))
 		default:

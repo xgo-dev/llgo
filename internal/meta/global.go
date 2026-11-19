@@ -240,7 +240,7 @@ func (g *GlobalSummary) translateFuncDemands(tab []Symbol, pm *PackageMeta, li S
 		case DemandNamedMethod:
 			name := pm.nameString(nameRef{Off: d.Target, Len: d.Extra})
 			out = append(out, FuncDemand{Kind: d.Kind, MethodName: g.internName(name)})
-		case DemandReflectMethod, DemandReflectMethodMetadata:
+		case DemandReflectMethod:
 			out = append(out, FuncDemand{Kind: d.Kind})
 		case DemandReflectMethodSite:
 			// Copies of one source site can have different package-local IDs.
