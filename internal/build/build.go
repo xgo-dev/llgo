@@ -906,12 +906,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
-		goos:       conf.Goos,
-		goarch:     conf.Goarch,
-		goversion:  sourcePatchGoVersion,
-		toolTags:   sourceGo.toolTags,
-		buildFlags: cfg.BuildFlags,
-		cgoEnabled: &sourceCgoEnabled,
+		goos:           conf.Goos,
+		goarch:         conf.Goarch,
+		goversion:      sourcePatchGoVersion,
+		toolTags:       sourceGo.toolTags,
+		buildFlags:     cfg.BuildFlags,
+		builtinFormats: conf.OptLevel == optlevel.Oz,
+		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
 		return nil, err
@@ -1162,11 +1163,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if err := recordPackageSSAInstructions(ctx); err != nil {
 			return nil, err
 		}
-		if ctx.valueFormatPlan != nil {
+		if ctx.valueFormatPlan != nil || len(ctx.jsonCodecPackages) != 0 {
 			// Resolve the rewrite before collecting initializer and feature usage.
 			configureWasmRuntimeFree(ctx)
 			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT, true)
-			configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+			formatInputs := configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+			configureCodecInits(ctx, formatInputs)
 			preparedInitializers = true
 		}
 		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
@@ -2004,6 +2006,7 @@ type context struct {
 	binaryCodecLibrary   *types.Package
 	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
+	codecInitDrops       map[string]bool
 	wasmRuntimeFree      bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots        []string
@@ -2822,6 +2825,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	if err != nil {
 		return nil, err
 	}
+	packageInits = slices.DeleteFunc(packageInits, func(name string) bool {
+		return ctx.codecInitDrops[name]
+	})
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
 		rtInit:         needRuntime && !ctx.wasmRuntimeFree,

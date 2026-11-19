@@ -452,8 +452,9 @@ jobs:
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
-            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports)' \
-            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+            -coverpkg=./ssa,./internal/build/...,./internal/crosscompile,./cmd/internal/flags,./internal/cabi \
+            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports|BuiltinFormatSource|DiscardableJSONInit|JSONV2Initializers|RewriteBinaryCodecs|RewriteJSONMarshal)' \
+            ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \

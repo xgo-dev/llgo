@@ -126,6 +126,29 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                      expected, "single"], env, timeout=90)
         print(f"{target} Full LTO {fixture} passed", flush=True)
 
+def wasi_specialization_probe(llgo, directory, env, runner):
+    for case, marker, want in (
+        ("fmt-dynamic", "llgo: specialize default value formatting", True),
+        ("fmt-method-fallback", "llgo: specialize default value formatting", False),
+        ("json-static", "llgo: omit unused JSON package initialization", True),
+        ("json-init-linked", "llgo: omit unused JSON package initialization", False),
+    ):
+        fixture = f"./internal/build/testdata/{case}"
+        artifact = directory / (case + ".wasm")
+        log = command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full", "-deadcodedrop",
+                       "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(artifact), fixture], env)
+        if (marker in log) != want:
+            raise RuntimeError(f"{case}: unexpected size specialization policy\n{log}")
+        variants = ([], ["%[2]*.[3]*[1]f", "%w", "%p"]) if case == "fmt-dynamic" else ([],)
+        for args in variants:
+            expected = command(["go", "run", fixture, *args], env)
+            actual = command([*runner, str(artifact), *(["--", *args] if args else [])], env, timeout=90)
+            if actual != expected:
+                raise RuntimeError(f"{case}: expected {expected!r}, got {actual!r}")
+        print(f"WASI {case} specialization policy and Go parity passed", flush=True)
+
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -169,9 +192,10 @@ def main():
         runtime_free_cache_probe(llgo, wasmer, directory, env)
         wasi_full_lto_size_probe(llgo, wasmer, directory, env)
         reflect_method_size_probe(llgo, wasmer, directory, env)
-        full_lto_codec_probe(llgo, directory, env, "wasi",
-                             [wasmer, "run", "--enable-exceptions", "--enable-simd",
-                              "--stack-size=1048576"], ".wasm")
+        wasi_runner = [wasmer, "run", "--enable-exceptions", "--enable-simd",
+                       "--stack-size=1048576"]
+        full_lto_codec_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")
+        wasi_specialization_probe(llgo, directory, env, wasi_runner)
         cases = (("off", "cprintf"), ("off", "println"),
                  ("thin", "cprintf"), ("full", "cprintf"),
                  ("full", "println"), ("thin", "println"),

@@ -25,8 +25,10 @@ conservative path. Output-only linker diagnostics such as
 or a `retain WASI code and metadata` diagnostic. The shared check reports
 opaque inputs with `retain global initializers: native inputs in …`. Builds
 outside the eligible configuration skip the release pruning check.
-The compiler-generated default value formatter reports `specialize default value formatting`
-when selected. A `retain generic fmt` diagnostic identifies open link inputs,
+The compiler can specialize default formatting for concrete values, including
+direct value methods it can prove cannot panic. It can also reuse Go's format
+parser with a scalar-only dispatcher when all arguments have known builtin
+types. A `retain generic fmt` diagnostic identifies open link inputs,
 foreign entry points, unknown native input, or a reachable general formatter.
 
 Development LLGo builds also specialize typed value formatting on closed
@@ -43,6 +45,10 @@ integers, booleans, strings, pointers, arrays, slices, structs and string-keyed
 maps. Custom marshalers, dynamic inputs and other reachable codec operations
 retain the standard encoder. The verbose diagnostic is
 `specialize statically typed JSON encoding`.
+When the entry has no other JSON uses and the JSON initializers only build
+private state, the compiler omits those calls from the executable's startup.
+Explicit blank imports and other JSON consumers retain initialization. The
+standard-library archives are shared across both cases.
 
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi

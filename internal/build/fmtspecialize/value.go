@@ -10,9 +10,10 @@ import (
 )
 
 type ValuePlan struct {
-	callee *ssa.Function
-	names  map[*types.Package]*typeutil.Map
-	calls  []formatRewrite
+	callee  *ssa.Function
+	builtin *ssa.Function
+	names   map[*types.Package]*typeutil.Map
+	calls   []formatRewrite
 }
 
 type formatRewrite struct {
@@ -26,10 +27,10 @@ type formatRewrite struct {
 // NewValuePlan tracks replacements for default-value formatting.
 func NewValuePlan(prog *ssa.Program, names map[*types.Package]*typeutil.Map) *ValuePlan {
 	pkg := prog.ImportedPackage("fmt")
-	if len(names) == 0 || pkg == nil || pkg.Func("Sprintf") == nil {
+	if pkg == nil || pkg.Func("Sprintf") == nil || len(names) == 0 && pkg.Func(builtinSprintf) == nil {
 		return nil
 	}
-	return &ValuePlan{callee: pkg.Func("Sprintf"), names: names}
+	return &ValuePlan{callee: pkg.Func("Sprintf"), builtin: pkg.Func(builtinSprintf), names: names}
 }
 
 // HasCalls reports whether the plan found any eligible call sites.
@@ -56,7 +57,7 @@ func (plan *ValuePlan) apply(accept func() bool) map[*types.Package]bool {
 // Record adds a call to the plan when its packed operands are used only here.
 func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 	call, ok := instruction.(*ssa.Call)
-	if !ok || owner == nil || plan.names[owner.Pkg] == nil {
+	if !ok || owner == nil || owner.Pkg.Name() != "main" {
 		return
 	}
 	common := call.Common()
@@ -64,7 +65,11 @@ func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 		return
 	}
 	format, ok := common.Args[0].(*ssa.Const)
-	if !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
+	if !ok && plan.builtin != nil && builtinFormatOperands(call) {
+		plan.calls = append(plan.calls, formatRewrite{call: call, function: plan.builtin})
+		return
+	}
+	if plan.names[owner.Pkg] == nil || !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
 		return
 	}
 	values := formatValues(call, common.Args[1])
@@ -105,41 +110,42 @@ func formatDereference(t types.Type) bool {
 
 // defaultFormatType checks the actual paths visited by a default formatter.
 // A named value can have methods that override formatting at any level.
-func defaultFormatType(t types.Type, top bool, visiting map[types.Type]bool) bool {
+func defaultFormatType(t types.Type, top bool, visiting map[types.Type]bool, methods map[*types.Func]bool) bool {
 	t = types.Unalias(t)
 	if visiting[t] {
 		return false
 	}
 	visiting[t] = true
 	defer delete(visiting, t)
-	methods := types.NewMethodSet(t)
-	for i := 0; i < methods.Len(); i++ {
-		switch methods.At(i).Obj().Name() {
-		case "Format", "String", "Error":
-			return false
-		}
+	method, ok := defaultValueMethod(t, methods)
+	if !ok || method != "" {
+		return ok
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		return u.Kind() >= types.Bool && u.Kind() <= types.UnsafePointer
 	case *types.Array:
-		return defaultFormatType(u.Elem(), false, visiting)
+		return defaultFormatType(u.Elem(), false, visiting, methods)
 	case *types.Slice:
-		return defaultFormatType(u.Elem(), false, visiting)
+		return defaultFormatType(u.Elem(), false, visiting, methods)
 	case *types.Struct:
 		for i := 0; i < u.NumFields(); i++ {
 			f := u.Field(i)
-			if !defaultFormatType(f.Type(), false, visiting) {
+			visible := methods
+			if !f.Exported() {
+				visible = nil
+			}
+			if !defaultFormatType(f.Type(), false, visiting, visible) {
 				return false
 			}
 		}
 		return true
 	case *types.Map:
-		return defaultFormatType(u.Key(), false, visiting) && defaultFormatType(u.Elem(), false, visiting)
+		return defaultFormatType(u.Key(), false, visiting, methods) && defaultFormatType(u.Elem(), false, visiting, methods)
 	case *types.Chan:
 		return true
 	case *types.Pointer:
-		return !top || !formatDereference(u.Elem()) || defaultFormatType(u.Elem(), false, visiting)
+		return !top || !formatDereference(u.Elem()) || defaultFormatType(u.Elem(), false, visiting, methods)
 	default:
 		return false
 	}
@@ -153,7 +159,9 @@ func (plan *ValuePlan) tentativeRewrite() (map[*ssa.BasicBlock][]ssa.Instruction
 		common := rewrite.call.Common()
 		rewrite.saved = *common
 		common.Value = rewrite.function
-		common.Args = []ssa.Value{rewrite.input}
+		if rewrite.input != nil {
+			common.Args = []ssa.Value{rewrite.input}
+		}
 		for _, instruction := range rewrite.packed {
 			remove[instruction] = true
 			block := instruction.Block()
@@ -186,13 +194,16 @@ func removeFormatRef(value ssa.Value, instruction ssa.Instruction) {
 func (plan *ValuePlan) commit(remove map[ssa.Instruction]bool) map[*types.Package]bool {
 	owners := make(map[*types.Package]bool)
 	for _, rewrite := range plan.calls {
+		owners[rewrite.call.Parent().Pkg.Pkg] = true
+		if rewrite.input == nil {
+			continue
+		}
 		for _, arg := range rewrite.saved.Args {
 			removeFormatRef(arg, rewrite.call)
 		}
 		if refs := rewrite.input.Referrers(); refs != nil {
 			*refs = append(*refs, rewrite.call)
 		}
-		owners[rewrite.call.Parent().Pkg.Pkg] = true
 	}
 	for instruction := range remove {
 		for _, operand := range instruction.Operands(nil) {

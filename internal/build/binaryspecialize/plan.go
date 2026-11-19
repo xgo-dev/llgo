@@ -2,6 +2,7 @@ package binaryspecialize
 
 import (
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 	"math"
@@ -11,14 +12,15 @@ import (
 )
 
 type rewrite struct {
-	call   *ast.CallExpr
-	op     string
-	order  types.Type
-	input  types.Type
-	wire   *layout
-	ptr    bool
-	slice  bool
-	helper string
+	call      *ast.CallExpr
+	op        string
+	order     types.Type
+	input     types.Type
+	wire      *layout
+	ptr       bool
+	slice     bool
+	unchecked bool
+	helper    string
 }
 
 // Rewrite specializes a program only when it accounts for all Go uses of
@@ -43,7 +45,7 @@ func Rewrite(closure []*packages.Package, library, entry *packages.Package, shor
 			}
 			planned = append(planned, packageRewrites{pkg, calls})
 			for _, call := range calls {
-				needsError = needsError || call.op != "Size"
+				needsError = needsError || call.op != "Size" && !call.unchecked
 			}
 		}
 	}
@@ -168,7 +170,54 @@ func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *typ
 	if r.wire == nil || op != "Size" && !canAccess(r.wire, pkg.Types, op == "Decode") {
 		return r, false
 	}
+	if op != "Size" && !r.slice {
+		r.unchecked = r.wire.width == 0 || arraySliceLength(pkg.TypesInfo, call.Args[0]) >= r.wire.width
+	}
 	return r, true
+}
+
+// A slice of an array has fixed bounds when both indices are constant. The
+// argument is still evaluated, including any nil-pointer and bounds checks.
+func arraySliceLength(info *types.Info, expr ast.Expr) int64 {
+	slice, ok := ast.Unparen(expr).(*ast.SliceExpr)
+	if !ok {
+		return -1
+	}
+	typ := info.TypeOf(slice.X)
+	if typ == nil {
+		return -1
+	}
+	base := typ.Underlying()
+	if ptr, ok := base.(*types.Pointer); ok {
+		base = ptr.Elem().Underlying()
+	}
+	array, ok := base.(*types.Array)
+	if !ok {
+		return -1
+	}
+	lo, hi := int64(0), array.Len()
+	for i, index := range []ast.Expr{slice.Low, slice.High} {
+		if index == nil {
+			continue
+		}
+		value := info.Types[index].Value
+		if value == nil || value.Kind() != constant.Int {
+			return -1
+		}
+		n, ok := constant.Int64Val(value)
+		if !ok {
+			return -1
+		}
+		if i == 0 {
+			lo = n
+		} else {
+			hi = n
+		}
+	}
+	if lo < 0 || hi < lo || hi > array.Len() {
+		return -1
+	}
+	return hi - lo
 }
 
 func standardByteOrder(typ types.Type, library *types.Package) bool {

@@ -48,7 +48,7 @@ func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend
 
 // Resolve typed rewrites before init and caller accounting. For hosted targets
 // use the same checks for unknown native code and assembly as WASI.
-func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPruningInputs) {
+func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPruningInputs) *linkPruningInputs {
 	formatInputs := wasiInputs
 	if formatInputs == nil && hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
 		formatInputs = &linkPruningInputs{goroot: goroot, nativeFormat: ctx.buildConf.Goarch != "wasm"}
@@ -63,6 +63,7 @@ func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPr
 	}
 	configureUnusedGlobalInits(ctx, formatInputs)
 	configureValueFormats(ctx, formatInputs)
+	return formatInputs
 }
 
 // Darwin's runtime and syscall packages use these system libraries without

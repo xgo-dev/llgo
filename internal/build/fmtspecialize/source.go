@@ -27,6 +27,7 @@ type formatSource struct {
 	compare typeutil.Map
 	tops    typeutil.Map
 	funcs   strings.Builder
+	methods map[*types.Func]bool
 	nextID  int
 }
 
@@ -42,7 +43,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 	}
 	gen := &formatSource{
 		owner: p.Types, imports: typesynth.Importer{RuntimePath: runtime, "unsafe": types.Unsafe},
-		sizes: p.TypesSizes,
+		sizes: p.TypesSizes, methods: valueMethods(p),
 	}
 	for _, file := range p.Syntax {
 		ast.Inspect(file, func(node ast.Node) bool {
@@ -71,7 +72,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 				return true
 			}
 			typ = types.Default(typ)
-			if gen.tops.At(typ) == nil && !llssa.HasTypeParam(typ) && defaultFormatType(typ, true, make(map[types.Type]bool)) {
+			if gen.tops.At(typ) == nil && !llssa.HasTypeParam(typ) && defaultFormatType(typ, true, make(map[types.Type]bool), gen.methods) {
 				gen.addTop(typ)
 			}
 			return true
@@ -141,6 +142,11 @@ func (g *formatSource) appendFunc(typ types.Type, top bool) string {
 	cache.Set(typ, name)
 	var b strings.Builder
 	fmt.Fprintf(&b, "func %s(dst []byte, v %s) []byte {\n", name, g.typeName(typ))
+	if method, _ := defaultValueMethod(typ, g.methods); method != "" {
+		fmt.Fprintf(&b, "return append(dst,v.%s()...)\n}\n", method)
+		g.funcs.WriteString(b.String())
+		return name
+	}
 	switch u := typ.Underlying().(type) {
 	case *types.Basic:
 		g.appendBasic(&b, u.Kind())

@@ -77,7 +77,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "local named type", local: "type local struct{ a int }; ", expr: "local{7}", typed: true},
 		{name: "recursive slice", expr: "recursive(nil)"},
 		{name: "interface field", expr: "struct{ X any }{}"},
-		{name: "nested method", expr: "[]namedMap(nil)"},
+		{name: "nested method", expr: "[]namedMap(nil)", typed: true},
 		{name: "general formatting", main: "extra()"},
 		{name: "general formatter via a function value", main: "extra()",
 			decl: "var indirect = fmt.Sprintf\n", extra: `println(indirect("%d", 7))`},
@@ -97,7 +97,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		{name: "native typed formatter", native: true, typed: true},
 		{name: "native generic fallback", native: true, main: "extra()"},
 		{name: "native opaque linker flags", native: true, foreignLink: true},
-		{name: "custom method", expr: "namedMap(nil)"},
+		{name: "custom method", expr: "namedMap(nil)", typed: true},
 		{name: "interface operand", expr: "dynamicMap()"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

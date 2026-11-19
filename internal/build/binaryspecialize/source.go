@@ -30,6 +30,7 @@ func AddShortBufferAccessor(pkg *packages.Package) (string, error) {
 type codecKey struct {
 	operation string
 	order     types.Type
+	unchecked bool
 }
 
 type codecSource struct {
@@ -46,7 +47,7 @@ func (p packageRewrites) apply(library *packages.Package, shortBuffer string) er
 	binaryAlias, mathAlias := g.nextName(), g.nextName()
 	for i := range p.calls {
 		call := &p.calls[i]
-		key := codecKey{call.op, call.order}
+		key := codecKey{call.op, call.order, call.unchecked}
 		codecs := g.codecs[key]
 		if codecs == nil {
 			codecs = new(typeutil.Map)
@@ -143,7 +144,10 @@ func (g *codecSource) emit(call rewrite, shortBuffer, mathAlias string) {
 	}
 
 	fmt.Fprintf(b, "func %s(buf []byte, order %s, v %s) (int,error) {\n", call.helper, g.typeName(call.order), g.typeName(call.input))
-	fmt.Fprintf(b, "n := %s\nif len(buf)<n { return 0,%s() }\n", size, shortBuffer)
+	fmt.Fprintf(b, "n := %s\n", size)
+	if !call.unchecked {
+		fmt.Fprintf(b, "if len(buf)<n { return 0,%s() }\n", shortBuffer)
+	}
 	decode := call.op == "Decode"
 	if call.slice && call.wire.width != 0 {
 		fmt.Fprintf(b, "for i:=range %s {\n", value)

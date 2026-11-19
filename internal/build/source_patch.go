@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -32,12 +33,13 @@ func cloneOverlay(src map[string][]byte) map[string][]byte {
 }
 
 type sourcePatchBuildContext struct {
-	goos       string
-	goarch     string
-	goversion  string
-	toolTags   []string
-	buildFlags []string
-	cgoEnabled *bool
+	goos           string
+	goarch         string
+	goversion      string
+	toolTags       []string
+	buildFlags     []string
+	builtinFormats bool
+	cgoEnabled     *bool
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
@@ -262,6 +264,17 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		out[target] = src.data
 		files = append(files, src.filename)
 		changed = true
+	}
+	if pkgPath == "fmt" && ctx.builtinFormats {
+		printFile := filepath.Join(srcDir, "print.go")
+		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
+			if generated := fmtspecialize.BuiltinFormatSource(source); len(generated) != 0 {
+				ensureOverlay()
+				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
+				out[target] = generated
+				files = append(files, target)
+			}
+		}
 	}
 	return changed, out, files, nil
 }

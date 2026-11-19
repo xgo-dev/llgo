@@ -19,6 +19,7 @@ package build
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,6 +253,9 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
 	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
 	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
+	if m.pkg.SpecializeBinary || m.pkg.SpecializeJSON {
+		m.pkg.CodecInitDrops = slices.Sorted(maps.Keys(c.codecInitDrops))
+	}
 	m.pkg.GeneratedValueFormat = c.valueFormatFunctions[p.Types] != nil
 	m.pkg.SpecializeValueFormat = c.valueFormatPackages[p.Types] || pkg.AltPkg != nil && c.valueFormatPackages[pkg.AltPkg.Types]
 	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
