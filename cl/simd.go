@@ -44,6 +44,7 @@ const (
 	simdPairSelector
 	simdPairHalfSelectors
 	simdScalarSelector
+	simdBool
 )
 
 type simdOperation struct {
@@ -57,6 +58,8 @@ type simdOperation struct {
 // operation; functions with Go bodies continue through normal compilation.
 var simdOperations = map[simdKey]simdOperation{
 	{"*", "*"}:                   {llssa.SIMDUnimplemented, simdUnsupported, 0},
+	{"numeric", "IsNaN"}:         {llssa.SIMDIsNaN, simdToMask, types.IsFloat},
+	{"numeric", "IsZero"}:        {llssa.SIMDIsZero, simdBool, types.IsInteger},
 	{"numeric", "Add"}:           {llssa.SIMDAdd, simdBinary, 0},
 	{"numeric", "Sub"}:           {llssa.SIMDSub, simdBinary, 0},
 	{"numeric", "And"}:           {llssa.SIMDAnd, simdBinary, types.IsInteger},
@@ -341,6 +344,8 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdBool:
+		result = types.Typ[types.Bool]
 	case simdScalarSelector:
 		bits, elemBits := int64(128), int64(16)
 		switch d.op {
@@ -603,7 +608,7 @@ func simdVectorBits(typ types.Type) int64 {
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
-	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,

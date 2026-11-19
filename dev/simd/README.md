@@ -49,7 +49,7 @@ and `ConcatPermute128Scalars` cover both constant and variable selectors.
 The scalar-permute follow-up enables the six `TestPermuteScalars*` cases for
 128/256-bit dword and high/low word shuffles. Dynamic selectors use fixed
 shuffles and vector masks, retaining the untouched word half in each 128-bit
-group. The current allowlists contain 156 AMD64 cases and 80 ARM64 cases; these
+group. The current allowlists contain 158 AMD64 cases and 80 ARM64 cases; these
 are enabled top-level tests, not counts of implemented intrinsics.
 
 ## arm64 failures
@@ -72,9 +72,7 @@ the table below lists the remaining failures after subsequent fixes.
 
 | Test | First reported unsupported intrinsic |
 | --- | --- |
-| `TestIsNaN` | `simd/archsimd.Float32x4.IsNaN` |
 | `TestConcatShiftBytesRight` | `simd/archsimd.Uint8x16.ConcatShiftBytesRight` |
 | `TestClearAVXUpperBits` | `simd/archsimd.ClearAVXUpperBits` |
-| `TestIsZero` | `simd/archsimd.Uint64x2.IsZero` |
 
 Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.

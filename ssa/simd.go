@@ -103,6 +103,8 @@ const (
 	SIMDPermuteScalarsLo
 	SIMDPermuteScalarsHiGrouped
 	SIMDPermuteScalarsLoGrouped
+	SIMDIsZero
+	SIMDIsNaN
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -244,6 +246,14 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDIsNaN:
+		x := args[0].impl
+		nan := b.impl.CreateFCmp(llvm.FloatUNO, x, x, "")
+		return Expr{b.impl.CreateSExt(nan, result.ll, ""), result}
+	case SIMDIsZero:
+		x := args[0]
+		zeros := llvm.CreateICmp(b.impl, llvm.IntEQ, x.impl, llvm.ConstNull(x.ll))
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.vector.reduce.and"), []llvm.Value{zeros}, ""), result}
 	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
 		return b.simdInterleave(op, args[0], args[1])
 	case SIMDConcatSelected, SIMDConcatSelectedGrouped:
