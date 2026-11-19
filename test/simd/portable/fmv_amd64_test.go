@@ -27,7 +27,7 @@ func TestPortableFMVSelection(t *testing.T) {
 	if strings.Contains(debug, ",simd=0,") && !simd.Emulated() {
 		t.Fatal("simd=0 selected hardware")
 	}
-	t.Logf("width=%d emulated=%t AVX2=%t AVX=%t FMA=%t", simd.VectorBitSize(), simd.Emulated(), archsimd.X86.AVX2(), archsimd.X86.AVX(), archsimd.X86.FMA())
+	t.Logf("width=%d emulated=%t AVX512=%t AVX2=%t AVX=%t FMA=%t", simd.VectorBitSize(), simd.Emulated(), archsimd.X86.AVX512(), archsimd.X86.AVX2(), archsimd.X86.AVX(), archsimd.X86.FMA())
 }
 
 func TestPortableFMVComposition(t *testing.T) {
