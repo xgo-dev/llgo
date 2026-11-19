@@ -35,7 +35,7 @@ func addHeapSegment(start, end uintptr) bool {
 		return false
 	}
 	position := heapSegmentCount
-	for position > 0 && heapSegmentsByAddress[position-1].start > start {
+	for maxHeapSegments > 1 && position > 0 && heapSegmentsByAddress[position-1].start > start {
 		heapSegmentsByAddress[position] = heapSegmentsByAddress[position-1]
 		position--
 	}
