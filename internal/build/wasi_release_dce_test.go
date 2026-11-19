@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
@@ -203,8 +204,9 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			if test.runtimeFree && inputs != nil {
 				t.Fatal("the formatter prepass must skip runtime-free programs")
 			}
-			if test.manualDCE && (inputs != nil) != test.forFormat {
-				t.Fatalf("manual DCE collects formatter inputs = %v, want %v", inputs != nil, test.forFormat)
+			manual := test.manualDCE && buildenv.Dev
+			if wantInputs := !manual || test.forFormat; test.manualDCE && (inputs != nil) != wantInputs {
+				t.Fatalf("manual DCE collects formatter inputs = %v, want %v", inputs != nil, wantInputs)
 			}
 			configureUnusedGlobalInits(ctx, inputs)
 			configureWasiReleaseDCE(ctx, inputs)
@@ -212,8 +214,9 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			if test.wantLog != "" && !strings.Contains(log, test.wantLog) {
 				t.Fatalf("WASI -Oz diagnostics = %q, want %q", log, test.wantLog)
 			}
-			if conf.wasiReleaseDCE != test.proof || conf.deadcodeDropEnabled() != (test.manualDCE || test.proof) {
-				t.Fatalf("WASI -Oz automatic pruning = %v, want %v (manual DCE = %v)", conf.wasiReleaseDCE, test.proof, test.manualDCE)
+			wantAutomatic := test.proof || test.manualDCE && !manual
+			if conf.wasiReleaseDCE != wantAutomatic || conf.deadcodeDropEnabled() != (manual || wantAutomatic) {
+				t.Fatalf("WASI -Oz automatic pruning = %v, want %v (manual DCE = %v)", conf.wasiReleaseDCE, wantAutomatic, manual)
 			}
 		})
 	}
