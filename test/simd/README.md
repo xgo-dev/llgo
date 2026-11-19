@@ -488,3 +488,20 @@ Reference boundaries:
   currently hits duplicate symbols from the original/test package archives.
   This was reproduced without the CPU-initialization change. The dedicated
   CPU startup executables and target-hook tests pass independently.
+
+### Guarded x86 feature combinations
+
+On AMD64 the compiler also recognizes positive branches on the official
+`archsimd.X86` predicates. At control-flow joins it retains the predicates
+proven on every incoming path. When a guarded block performs vector work,
+a resolver can select an implementation with those target features. Nested
+AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
+Other CPU queries continue to read their effective values.
+
+Specializations reuse local helper copies for the same guard combination.
+Calls to separately compiled functions can use their ordinary Go entries.
+The public function value and its wide argument/return carriers stay valid
+through dispatch. The baseline implementation serves calls before CPU feature
+publication. `TestSIMD512Guarded` exercises the runtime path, and
+`TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
+local helper calls and repeated execution of the LLVM transformation.
