@@ -85,19 +85,21 @@ func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
 // the rank is at most n-1, including for all-true and all-false masks.
 func (b Builder) simdPack(op SIMDOp, x, mask Expr) Expr {
 	active := llvm.CreateICmp(b.impl, llvm.IntNE, mask.impl, llvm.ConstNull(mask.ll))
-	if op == SIMDCompress {
-		packed := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.experimental.vector.compress"), []llvm.Value{x.impl, active, llvm.ConstNull(x.ll)}, "")
-		return Expr{packed, x.Type}
-	}
 	i32 := b.Prog.tyInt32()
 	rank := llvm.ConstNull(i32)
-	result := llvm.Undef(x.ll)
+	result := llvm.ConstNull(x.ll)
 	for i := 0; i < x.ll.VectorSize(); i++ {
 		lane := llvm.ConstInt(i32, uint64(i), false)
 		enabled := b.impl.CreateExtractElement(active, lane, "")
-		value := b.impl.CreateExtractElement(x.impl, rank, "")
-		value = b.impl.CreateSelect(enabled, value, llvm.ConstNull(value.Type()), "")
-		result = b.impl.CreateInsertElement(result, value, lane, "")
+		if op == SIMDCompress {
+			value := b.impl.CreateExtractElement(x.impl, lane, "")
+			packed := b.impl.CreateInsertElement(result, value, rank, "")
+			result = b.impl.CreateSelect(enabled, packed, result, "")
+		} else {
+			value := b.impl.CreateExtractElement(x.impl, rank, "")
+			value = b.impl.CreateSelect(enabled, value, llvm.ConstNull(value.Type()), "")
+			result = b.impl.CreateInsertElement(result, value, lane, "")
+		}
 		rank = b.impl.CreateAdd(rank, b.impl.CreateZExt(enabled, i32, ""), "")
 	}
 	return Expr{result, x.Type}
