@@ -74,10 +74,74 @@ func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) u
 	return 0
 }
 
+// directGuardCallee excludes indirect calls even when a function address also
+// appears as an ordinary argument to the same instruction.
+func directGuardCallee(inst llvm.Value) llvm.Value {
+	if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
+		return llvm.Value{}
+	}
+	return inst.CalledValue().IsAFunction()
+}
+
+// Collect evidence of vector work along direct calls in this module. Start
+// from functions with a feature query and propagate back from SIMD operations
+// to their callers. The two walks handle cycles without relying on DFS order.
+func guardedWork(candidates map[llvm.Value]bool) map[llvm.Value]bool {
+	work := make(map[llvm.Value]bool)
+	seen := make(map[llvm.Value]bool)
+	var visit []llvm.Value
+	for fn := range candidates {
+		visit = append(visit, fn)
+	}
+	for len(visit) != 0 {
+		fn := visit[len(visit)-1]
+		visit = visit[:len(visit)-1]
+		if seen[fn] {
+			continue
+		}
+		seen[fn] = true
+		if hasAttribute(fn, EntryAttribute) || strings.HasSuffix(fn.Name(), variantSuffix) {
+			work[fn] = true
+		}
+		if fn.IsDeclaration() || !supported(fn) {
+			continue
+		}
+		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if inst.Type().TypeKind() == llvm.VectorTypeKind {
+					work[fn] = true
+				}
+				if callee := directGuardCallee(inst); !callee.IsNil() && !seen[callee] {
+					visit = append(visit, callee)
+				}
+			}
+		}
+	}
+	for fn := range work {
+		visit = append(visit, fn)
+	}
+	for len(visit) != 0 {
+		fn := visit[len(visit)-1]
+		visit = visit[:len(visit)-1]
+		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
+			inst := use.User()
+			if directGuardCallee(inst) != fn {
+				continue
+			}
+			caller := inst.InstructionParent().Parent()
+			if seen[caller] && !work[caller] && supported(caller) {
+				work[caller] = true
+				visit = append(visit, caller)
+			}
+		}
+	}
+	return work
+}
+
 // guardContexts intersects known true predicates at joins. This builds
 // versions for the positive guard combinations present in the CFG, without
 // enumerating the power set of the runtime feature bitmap.
-func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64) []uint64 {
+func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool) []uint64 {
 	entry := fn.EntryBasicBlock()
 	known := map[llvm.BasicBlock]uint64{entry: 0}
 	queue := []llvm.BasicBlock{entry}
@@ -107,15 +171,7 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64) []uint64 {
 			continue
 		}
 		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if inst.Type().TypeKind() == llvm.VectorTypeKind {
-				sets[mask] = true
-				break
-			}
-			if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
-				continue
-			}
-			callee := inst.CalledValue()
-			if !callee.IsAFunction().IsNil() && (hasAttribute(callee, EntryAttribute) || strings.HasSuffix(callee.Name(), variantSuffix)) {
+			if inst.Type().TypeKind() == llvm.VectorTypeKind || work[directGuardCallee(inst)] {
 				sets[mask] = true
 				break
 			}
@@ -182,12 +238,13 @@ func runGuardedFeatures(mod llvm.Module) error {
 	if len(candidates) == 0 {
 		return nil
 	}
+	work := guardedWork(candidates)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
 			continue
 		}
-		masks := guardContexts(fn, queries)
+		masks := guardContexts(fn, queries, work)
 		if len(masks) == 0 {
 			continue
 		}
@@ -252,11 +309,8 @@ func runGuardedFeatures(mod llvm.Module) error {
 		simplifyGuards(v)
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
-					continue
-				}
-				target := inst.CalledValue()
-				if target.IsAFunction().IsNil() || target.IsDeclaration() || !hasAttribute(target, EntryAttribute) || !supported(target) {
+				target := directGuardCallee(inst)
+				if !work[target] || target.IsDeclaration() || !supported(target) {
 					continue
 				}
 				callee, err := specializeLocal(target, mask)

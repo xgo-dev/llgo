@@ -123,3 +123,69 @@ func TestGuardedSymbolCollision(t *testing.T) {
 		})
 	}
 }
+
+// A Go helper taking array pointers may do SIMD work without a vector in its
+// signature. The guard must reach the actual computation through local calls.
+func TestGuardedScalarSignatureHelpers(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare void @external(ptr)
+define void @scalar(ptr %p) noinline {
+ store i32 9, ptr %p
+ ret void
+}
+define void @kernel(ptr %p) noinline {
+ %v = load <16 x i32>, ptr %p, align 4
+ %r = add <16 x i32> %v, %v
+ store <16 x i32> %r, ptr %p, align 4
+ ret void
+}
+define void @helper(ptr %p, i1 %again) noinline {
+ br i1 %again, label %recurse, label %work
+recurse:
+ call void @helper(ptr %p, i1 false)
+ br label %work
+work:
+ call void @kernel(ptr %p)
+ ret void
+}
+define void @root(ptr %p, ptr %callback) {
+ %a = call i1 @wide()
+ br i1 %a, label %work, label %exit
+work:
+ call void @scalar(ptr %p)
+ call void @external(ptr %p)
+ call void %callback(ptr %p)
+ call void @helper(ptr %p, i1 true)
+ br label %exit
+exit:
+ ret void
+}
+`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	const suffix = ".__llgo_fmv_guard_avx512"
+	root, helper, kernel := m.NamedFunction("root"+suffix), m.NamedFunction("helper"+suffix), m.NamedFunction("kernel"+suffix)
+	if root.IsNil() || helper.IsNil() || kernel.IsNil() {
+		t.Fatalf("guard did not reach scalar-signature helper and kernel:\n%s", m.String())
+	}
+	for _, call := range []string{"@scalar(", "@external(", "%callback(", "@helper" + suffix + "("} {
+		if !strings.Contains(root.String(), "call void "+call) {
+			t.Fatalf("missing call to %s:\n%s", call, root.String())
+		}
+	}
+	if !strings.Contains(helper.String(), "call void @kernel"+suffix) || !strings.Contains(helper.String(), "call void @helper"+suffix) {
+		t.Fatal(helper.String())
+	}
+	if !m.NamedFunction("scalar"+suffix).IsNil() || !strings.Contains(stringAttribute(kernel, "target-features"), "+avx512f") {
+		t.Fatalf("incorrect specialization set:\n%s", m.String())
+	}
+	if strings.Contains(m.NamedFunction("helper").String(), suffix) {
+		t.Fatal("unguarded helper calls a specialized entry")
+	}
+}

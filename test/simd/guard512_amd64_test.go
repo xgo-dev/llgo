@@ -54,3 +54,41 @@ func TestSIMD512Guarded(t *testing.T) {
 		}
 	}
 }
+
+//go:noinline
+func doubleSIMD512Kernel(dst, src *[16]int32) {
+	x := archsimd.LoadInt32x16Array(src)
+	x.Add(x).StoreArray(dst)
+}
+
+//go:noinline
+func doubleSIMD512Helper(dst, src *[16]int32) {
+	doubleSIMD512Kernel(dst, src)
+}
+
+//go:noinline
+func doubleSIMD512(dst, src *[16]int32) bool {
+	if archsimd.X86.AVX512() {
+		doubleSIMD512Helper(dst, src)
+		return true
+	}
+	for i, v := range src {
+		dst[i] = 2 * v
+	}
+	return false
+}
+
+func TestSIMD512ScalarSignatureHelpers(t *testing.T) {
+	var input, out [16]int32
+	for i := range input {
+		input[i] = int32(i - 8)
+	}
+	if wide := doubleSIMD512(&out, &input); wide != archsimd.X86.AVX512() {
+		t.Fatalf("guarded path %t, AVX512 %t", wide, archsimd.X86.AVX512())
+	}
+	for i, got := range out {
+		if want := 2 * input[i]; got != want {
+			t.Fatalf("lane %d = %d, want %d", i, got, want)
+		}
+	}
+}

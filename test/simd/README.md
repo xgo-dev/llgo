@@ -498,7 +498,10 @@ a resolver can select an implementation with those target features. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
 Other CPU queries continue to read their effective values.
 
-Specializations reuse local helper copies for the same guard combination.
+Specializations follow direct calls through local helpers, including kernels
+that take array pointers and use vectors internally. Recursive helper calls
+reuse the same copy for a given feature combination. Indirect calls keep
+the ordinary entry.
 Calls to separately compiled functions can use their ordinary Go entries.
 The public function value and its wide argument/return carriers stay valid
 through dispatch. The baseline implementation serves calls before CPU feature
