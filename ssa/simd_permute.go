@@ -39,8 +39,7 @@ func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
 	if op == SIMDInterleaveLoGrouped || op == SIMDInterleaveHiGrouped {
-		// The frontend restricts Grouped declarations to 256 bits.
-		group /= 2
+		group = 16 / int(b.Prog.td.TypeAllocSize(x.ll.ElementType()))
 	}
 	mask := make([]llvm.Value, n)
 	for base := 0; base < n; base += group {

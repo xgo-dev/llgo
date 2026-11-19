@@ -28,6 +28,7 @@ const (
 	simdCompare
 	simdToMask
 	simdTernary
+	simdMaskedBlend
 	simdMaskFromBits
 	simdMaskToBits
 	simdScalarShift
@@ -99,6 +100,7 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "bitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
 	{"numeric", "BitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
 	{"numeric", "bitSelectNot"}:                 {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
+	{"numeric", "blendMasked"}:                  {llssa.SIMDBlend, simdMaskedBlend, types.IsInteger},
 	{"numeric", "blend"}:                        {llssa.SIMDBlend, simdTernary, types.IsInteger},
 	{"mask", "And"}:                             {llssa.SIMDAnd, simdBinary, 0},
 	{"mask", "Or"}:                              {llssa.SIMDOr, simdBinary, 0},
@@ -199,17 +201,18 @@ func init() {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
-	for _, lanes := range []int{2, 4, 8, 16, 32} {
+	for _, lanes := range []int{2, 4, 8, 16, 32, 64} {
 		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdSplat, 0}
 	}
-	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4"} {
+	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4",
+		"Int8x64", "Uint8x64", "Int16x32", "Uint16x32", "Int32x16", "Uint32x16", "Int64x8", "Uint64x8", "Float32x16", "Float64x8"} {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
-	for _, name := range []string{"Mask8x32", "Mask16x16", "Mask32x8", "Mask64x4"} {
+	for _, name := range []string{"Mask8x32", "Mask16x16", "Mask32x8", "Mask64x4", "Mask8x64", "Mask16x32", "Mask32x16", "Mask64x8"} {
 		simdOperations[simdKey{"", name + "FromBits"}] = simdOperation{llssa.SIMDMaskFromBits, simdMaskFromBits, 0}
 	}
-	for _, name := range []string{"ToInt8x32", "ToInt16x16", "ToInt32x8", "ToInt64x4"} {
+	for _, name := range []string{"ToInt8x32", "ToInt16x16", "ToInt32x8", "ToInt64x4", "ToInt8x64", "ToInt16x32", "ToInt32x16", "ToInt64x8"} {
 		simdOperations[simdKey{"mask", name}] = simdOperation{llssa.SIMDBitcast, simdBitcast, 0}
 	}
 }
@@ -336,7 +339,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	// so malformed plain and grouped declarations use the same shape validation.
 	switch d.op {
 	case llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped:
-		if simdVectorBits(vector) != 256 {
+		if simdVectorBits(vector) < 256 {
 			return false
 		}
 	case llssa.SIMDInterleaveLo, llssa.SIMDInterleaveHi,
@@ -347,10 +350,11 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	}
 	// Extending type recognition must not silently enable width-specific
 	// handlers, or cross-width conversions with different lane semantics.
-	wide := simdVectorBits(vector) == 256
+	width := simdVectorBits(vector)
+	wide := width > 128
 	for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 		for i := 0; i < tuple.Len(); i++ {
-			wide = wide || simdVectorBits(tuple.At(i).Type()) == 256
+			wide = wide || simdVectorBits(tuple.At(i).Type()) > 128
 		}
 	}
 	if wide && !d.supportsWide() {
@@ -376,7 +380,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	case simdConcatShift:
 		n := int64(16)
 		if d.op == llssa.SIMDConcatShiftBytesGrouped {
-			n = 32
+			n = max(32, width/8)
 		}
 		if lanes.Len() != n || !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
 			return false
@@ -388,7 +392,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		bits, elemBits := int64(128), int64(16)
 		switch d.op {
 		case llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped:
-			bits = 256
+			bits = max(256, width)
 		}
 		if d.op == llssa.SIMDPermuteScalars || d.op == llssa.SIMDPermuteScalarsGrouped {
 			elemBits = 32
@@ -400,7 +404,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	case simdPairSelector:
 		bits := int64(128)
 		if d.op == llssa.SIMDConcatSelectedGrouped {
-			bits = 256
+			bits = max(256, width)
 		}
 		elemBits := simdVectorBits(vector) / lanes.Len()
 		if simdVectorBits(vector) != bits || elemBits != 32 && elemBits != 64 {
@@ -422,7 +426,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 	case simdHalf:
-		if simdVectorBits(vector) != 256 || sig.Results().Len() != 1 {
+		if width < 256 || sig.Results().Len() != 1 {
 			return false
 		}
 		var half types.Type
@@ -437,7 +441,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			params = []types.Type{half}
 		}
 		shape, ok := llssa.SIMDNumericShape(half)
-		if !ok || simdVectorBits(half) != 128 || !types.Identical(shape.Elem(), lanes.Elem()) {
+		if !ok || 2*simdVectorBits(half) != width || !types.Identical(shape.Elem(), lanes.Elem()) {
 			return false
 		}
 	case simdScalarShift:
@@ -474,7 +478,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		case llssa.SIMDSaturateConcat, llssa.SIMDSaturateConcatGrouped:
 			bits := int64(128)
 			if d.op == llssa.SIMDSaturateConcatGrouped {
-				bits = 256
+				bits = max(256, width)
 			}
 			if simdVectorBits(vector) != bits || simdVectorBits(result) != bits || shape.Len() != lanes.Len()*2 || from&types.IsUnsigned != 0 {
 				return false
@@ -542,6 +546,8 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			bits = types.Typ[types.Uint16]
 		} else if lanes.Len() == 32 {
 			bits = types.Typ[types.Uint32]
+		} else if lanes.Len() == 64 {
+			bits = types.Typ[types.Uint64]
 		}
 		if d.signature == simdMaskFromBits {
 			params = []types.Type{bits}
@@ -560,6 +566,16 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		if d.signature == simdCompare {
 			params = []types.Type{vector}
 		}
+	case simdMaskedBlend:
+		if sig.Params().Len() != 2 {
+			return false
+		}
+		maskType := sig.Params().At(1).Type()
+		mask, ok := llssa.SIMDMaskShape(maskType)
+		if !ok || mask.Len() != lanes.Len() || simdVectorBits(maskType) != width {
+			return false
+		}
+		params = []types.Type{vector, maskType}
 	case simdTernary:
 		params = []types.Type{vector, vector}
 	case simdBitcast, simdConvert, simdConvertLo:

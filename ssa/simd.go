@@ -161,7 +161,7 @@ func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
 	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDVectorShape validates numeric and mask SIMD128/256 storage.
+// SIMDVectorShape validates numeric and mask SIMD128/256/512 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
@@ -198,7 +198,7 @@ func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
 	}
 	width := lanes.Len() * bits
-	if named.Obj().Name() != expected || width != 128 && width != 256 {
+	if named.Obj().Name() != expected || width != 128 && width != 256 && width != 512 {
 		return nil, false
 	}
 	tag, ok := st.Field(0).Type().(*types.Named)
