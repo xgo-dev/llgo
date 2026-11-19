@@ -113,6 +113,8 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 		decl        string
 		arch        crosscompile.WasmProfile
 		proof       bool
+		manualDCE   bool
+		forFormat   bool
 		noRoot      bool
 		runtimeFree bool
 		nativeAsm   string
@@ -123,6 +125,8 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 	}{
 		{name: "closed", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "full LTO", arch: crosscompile.WasmProfileW32, lto: lto.Full, proof: true},
+		{name: "manual DCE", arch: crosscompile.WasmProfileW32, manualDCE: true},
+		{name: "manual DCE and formatter", arch: crosscompile.WasmProfileW32, lto: lto.Full, manualDCE: true, forFormat: true},
 		{name: "full LTO with plugin", arch: crosscompile.WasmProfileW32, lto: lto.Full, plugin: "unknown-pass.so", wantLog: "LTO pass plugin"},
 		{name: "full LTO with bundled assembly", arch: crosscompile.WasmProfileW32, lto: lto.Full, nativeAsm: "bundled"},
 		{name: "thin LTO", arch: crosscompile.WasmProfileW32, lto: lto.Thin, wantLog: "retain WASI code and metadata: ThinLTO"},
@@ -154,7 +158,8 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			conf := &Config{
 				Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
 				OptLevel: optlevel.Oz, WasmOpt: WasmOptSize, PrintCommands: true,
-				LTO: test.lto, DisableGoGlobalDCE: true, LTOPlugin: lto.PassPlugin{Path: test.plugin},
+				DeadcodeDrop: test.manualDCE,
+				LTO:          test.lto, DisableGoGlobalDCE: true, LTOPlugin: lto.PassPlugin{Path: test.plugin},
 				LinkOptions: LinkOptions{ExternalLinkerFlags: test.flags},
 			}
 			ctx := &context{
@@ -194,9 +199,12 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			}
 			readStderr := captureStderr(t)
 			ctx.wasmRuntimeFree = test.runtimeFree
-			inputs := ctx.wasiSizePruningInputs(t.TempDir(), test.runtimeFree)
+			inputs := ctx.wasiSizePruningInputs(t.TempDir(), test.runtimeFree || test.forFormat)
 			if test.runtimeFree && inputs != nil {
 				t.Fatal("the formatter prepass must skip runtime-free programs")
+			}
+			if test.manualDCE && (inputs != nil) != test.forFormat {
+				t.Fatalf("manual DCE collects formatter inputs = %v, want %v", inputs != nil, test.forFormat)
 			}
 			configureUnusedGlobalInits(ctx, inputs)
 			configureWasiReleaseDCE(ctx, inputs)
@@ -204,8 +212,8 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 			if test.wantLog != "" && !strings.Contains(log, test.wantLog) {
 				t.Fatalf("WASI -Oz diagnostics = %q, want %q", log, test.wantLog)
 			}
-			if got := conf.deadcodeDropEnabled(); got != test.proof {
-				t.Fatalf("WASI -Oz pruning = %v, want %v", got, test.proof)
+			if conf.wasiReleaseDCE != test.proof || conf.deadcodeDropEnabled() != (test.manualDCE || test.proof) {
+				t.Fatalf("WASI -Oz automatic pruning = %v, want %v (manual DCE = %v)", conf.wasiReleaseDCE, test.proof, test.manualDCE)
 			}
 		})
 	}
