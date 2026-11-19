@@ -65,6 +65,9 @@ const (
 	SIMDAverage
 	SIMDFMA
 	SIMDMulWidenLo
+	SIMDLeadingZeros
+	SIMDLeadingSignBits
+	SIMDMulWidenHi
 	SIMDRotateAllLeft
 	SIMDRotateAllRight
 	SIMDCarrylessMultiply
@@ -294,8 +297,22 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdAverage(args[0], args[1])
 	case SIMDFMA:
 		return b.simdFMA(result, args[0], args[1], args[2])
-	case SIMDMulWidenLo:
-		return b.simdMulWidenLo(result, args[0], args[1])
+	case SIMDMulWidenLo, SIMDMulWidenHi:
+		return b.simdMulWiden(op, result, args[0], args[1])
+	case SIMDLeadingZeros, SIMDLeadingSignBits:
+		x := args[0]
+		bits := x.impl
+		if op == SIMDLeadingSignBits {
+			// Complement negative lanes before counting redundant sign bits.
+			shift := simdIntegerConstant(x.ll, uint64(x.ll.ElementType().IntTypeWidth()-1))
+			bits = b.impl.CreateXor(bits, b.impl.CreateAShr(bits, shift, ""), "")
+		}
+		zeroIsPoison := llvm.ConstInt(b.Prog.ctx.Int1Type(), 0, false)
+		count := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.ctlz"), []llvm.Value{bits, zeroIsPoison}, "")
+		if op == SIMDLeadingSignBits {
+			count = b.impl.CreateSub(count, simdIntegerConstant(x.ll, 1), "")
+		}
+		return Expr{count, result}
 	case SIMDRotateAllLeft, SIMDRotateAllRight:
 		return b.simdRotate(op, args[0], args[1])
 	case SIMDCarrylessMultiply, SIMDCarrylessMultiplyLo:

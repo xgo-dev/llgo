@@ -1,4 +1,4 @@
-//go:build llgo && goexperiment.simd && (amd64 || arm64 || wasm)
+//go:build llgo && goexperiment.simd && amd64
 
 package simd_test
 
@@ -33,9 +33,6 @@ func TestUnimplementedSIMD(t *testing.T) {
 		t.Fatal("Go helper was replaced by the fallback")
 	}
 }
-
-//go:noinline
-func invokeUnsupported[A, R any](f func(A) R, x A) R { return f(x) }
 
 //go:noinline
 func invokeUnsupportedPair[A, R any](f func(A, A) R, x A) R { return f(x, x) }

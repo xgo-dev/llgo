@@ -22,10 +22,14 @@ func (b Builder) simdAverage(x, y Expr) Expr {
 	return Expr{b.impl.CreateAdd(b.impl.CreateAdd(shared, half, ""), round, ""), x.Type}
 }
 
-func (b Builder) simdMulWidenLo(result Type, x, y Expr) Expr {
+func (b Builder) simdMulWiden(op SIMDOp, result Type, x, y Expr) Expr {
 	indices := make([]llvm.Value, result.ll.VectorSize())
+	offset := 0
+	if op == SIMDMulWidenHi {
+		offset = len(indices)
+	}
 	for i := range indices {
-		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
+		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(offset+i), false)
 	}
 	mask := llvm.ConstVector(indices, false)
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
