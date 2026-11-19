@@ -14,12 +14,17 @@ type item struct {
 }
 
 type record struct {
-	Items   []*item         `json:"items"`
-	Map     map[string]int  `json:"map"`
-	Array   [2]bool         `json:"pair"`
-	NilMap  map[string]bool `json:"nilMap"`
-	NoMore  []int           `json:"none"`
-	Dropped string          `json:"-"`
+	Items    []*item         `json:"items"`
+	Map      map[string]int  `json:"map"`
+	Array    [2]bool         `json:"pair"`
+	NilMap   map[string]bool `json:"nilMap"`
+	NoMore   []int           `json:"none"`
+	Dropped  string          `json:"-"`
+	Optional *int            `json:"opt,omitempty"`
+	False    bool            `json:"false,omitempty"`
+	Zero     int             `json:"zero,omitempty"`
+	Blank    string          `json:"blank,omitempty"`
+	Struct   struct{}        `json:"struct,omitempty"`
 }
 
 //go:noinline
@@ -28,7 +33,7 @@ func printRecord(v record) {
 	if err != nil {
 		panic(err)
 	}
-	const expected = `{"items":[{"name":"\u003c\u003e\u0026\u0001\u2028\u2029\ufffd�","count":18446744073709551615},null],"map":{"a":-3,"z":7},"pair":[true,false],"nilMap":null,"none":[]}`
+	const expected = `{"items":[{"name":"\u003c\u003e\u0026\u0001\u2028\u2029\ufffd�","count":18446744073709551615},null],"map":{"a":-3,"z":7},"pair":[true,false],"nilMap":null,"none":[],"struct":{}}`
 	if string(b) != expected && string(b) != strings.Replace(expected, `\ufffd`, "�", 1) {
 		panic(string(b))
 	}
