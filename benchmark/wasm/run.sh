@@ -26,6 +26,16 @@ if [[ "${LLGO_WASM_BENCH_SIZE_MATRIX:-0}" == 1 ]]; then
     LLGO_ROOT="$source_root" go build -p=1 -tags="${LLGO_WASM_BENCH_DEV_TAGS:-dev}" -o "$llgo_output-dev" ./cmd/llgo
   )
   size_args=(-size-llgo "$llgo_output-dev" -tinygo "${TINYGO:-tinygo}")
+  if [[ "${LLGO_WASM_BENCH_OPTIONAL_SIZE_MATRIX:-0}" == 1 ]]; then
+    size_help="$(LLGO_ROOT="$source_root" "$llgo_output-dev" build -h 2>&1 || true)"
+    for flag in debug-artifact deadcodedrop globaldce lto; do
+      if ! grep -Eq "^[[:space:]]*-${flag}([[:space:]]|$)" <<< "$size_help"; then
+        echo "Skipping the base WASI size matrix because -$flag is unavailable" >&2
+        size_args=()
+        break
+      fi
+    done
+  fi
 fi
 
 (
@@ -35,5 +45,5 @@ fi
     -fixture-root "$fixture_root" \
     -llgo "$llgo_output" \
     -out "$result_directory" \
-    -build-runs "${LLGO_WASM_BENCH_BUILD_RUNS:-3}" "${size_args[@]}"
+    -build-runs "${LLGO_WASM_BENCH_BUILD_RUNS:-3}" ${size_args[@]+"${size_args[@]}"}
 )

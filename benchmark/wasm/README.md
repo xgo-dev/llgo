@@ -58,13 +58,19 @@ for `cprintf`, `println`, and `fmtprintf`. LLGo uses a dev compiler at
 `println` and `fmtprintf` sources for WASI with debug information stripped.
 The LLGo C FFI fixture has no same-source Go or TinyGo reference.
 
-For a local size-only run after building a dev LLGo:
+For a local size-only run with LLVM 22:
 
 ```sh
+go build -tags=dev,llvm22 -o llgo-dev ./cmd/llgo
 go run ./benchmark/wasm -size-only -size-llgo ./llgo-dev -tinygo tinygo -out /tmp/llgo-wasi-size
 ```
 
+To include the matrix in `run.sh`, set `LLGO_WASM_BENCH_SIZE_MATRIX=1`.
+Use `LLGO_WASM_BENCH_DEV_TAGS` to select tags for the dev compiler and
+`TINYGO` to select the TinyGo executable.
+
 PR comparisons use the same fixture paths and toolchains for base and head.
+An older base that lacks the size flags still records the historical series.
 The matrix enables the ordinary LLGo package cache for all size modes. The
 historical build-time series still uses its existing cache settings and
 metric names.

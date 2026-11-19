@@ -396,6 +396,8 @@ jobs:
           steps.wasm-merge-base.outputs.compatible-base == 'true'
         id: measure-wasm-base
         shell: bash
+        env:
+          LLGO_WASM_BENCH_OPTIONAL_SIZE_MATRIX: "1"
         run: |
           benchmark/wasm/run.sh \
             .benchmark/wasm-base-source \
