@@ -152,7 +152,7 @@ func TestDispatchInlineBudgetScope(t *testing.T) {
 }
 
 func TestDispatchInlineBudgetPreservesProfiles(t *testing.T) {
-	source := strings.Replace(dispatchInlineIR, "br label %switch", "br label %switch, !prof !0", 1) + "\n!0 = !{!\"branch_weights\", i32 10}\n"
+	source := strings.Replace(dispatchInlineIR, "br i1 %choose, label %switch, label %other", "br i1 %choose, label %switch, label %other, !prof !0", 1) + "\n!0 = !{!\"branch_weights\", i32 10, i32 1}\n"
 	mod := parseWasmAggregateIR(t, source)
 	if got := applyDispatchInlineBudget(dispatchInlineConfig(), mod); got != 0 {
 		t.Fatalf("hinted %d calls in a profiled function", got)
