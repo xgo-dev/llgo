@@ -103,6 +103,8 @@ const (
 	SIMDPermuteScalarsLo
 	SIMDPermuteScalarsHiGrouped
 	SIMDPermuteScalarsLoGrouped
+	SIMDConcatShiftBytesGrouped
+	SIMDConcatShiftBytes
 	SIMDIsZero
 	SIMDIsNaN
 )
@@ -246,6 +248,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDConcatShiftBytes, SIMDConcatShiftBytesGrouped:
+		return b.simdConcatShiftBytes(args[0], args[1], args[2])
 	case SIMDIsNaN:
 		x := args[0].impl
 		nan := b.impl.CreateFCmp(llvm.FloatUNO, x, x, "")
@@ -495,7 +499,7 @@ func (b Builder) simdCheckedIndex(index Expr, limit int) llvm.Value {
 	b.Unreachable()
 	b.SetBlockEx(blocks[1], AtEnd, false)
 	b.blk.last = blocks[1].last
-	return b.impl.CreateZExt(index.impl, b.Prog.tyInt32(), "")
+	return b.impl.CreateIntCast(index.impl, b.Prog.tyInt32(), "")
 }
 
 // Lane indices are uint8 at the Go API boundary. Valid constants need no
