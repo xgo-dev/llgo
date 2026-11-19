@@ -83,6 +83,17 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
     print("WASI Full LTO size pruning preserved formatter callers and worker startup", flush=True)
 
 
+def reflect_method_size_probe(llgo, wasmer, directory, env):
+    module = directory / "reflect-method-value.wasm"
+    command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
+             "-globaldce=false", "-debug-artifact=none",
+             "-o", str(module), "./test/wasm/reflect-method-value"], env)
+    actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
+                      "--stack-size=1048576", str(module)], env, timeout=90)
+    if actual.strip() != "wasm reflect method values: 42 42 42 42 42":
+        raise RuntimeError(f"reflect method values under WASI Full LTO: {actual!r}")
+
+
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
     binary_marker = "llgo: specialize fixed-size binary encoding"
     json_marker = "llgo: specialize statically typed JSON encoding"
@@ -157,6 +168,7 @@ def main():
         env["RUST_LOG"] = "off"
         runtime_free_cache_probe(llgo, wasmer, directory, env)
         wasi_full_lto_size_probe(llgo, wasmer, directory, env)
+        reflect_method_size_probe(llgo, wasmer, directory, env)
         full_lto_codec_probe(llgo, directory, env, "wasi",
                              [wasmer, "run", "--enable-exceptions", "--enable-simd",
                               "--stack-size=1048576"], ".wasm")

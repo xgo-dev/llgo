@@ -870,7 +870,7 @@ func valueInterface(v Value, safe bool) any {
 		panic("reflect.Value.Interface: cannot return value obtained from unexported field or method")
 	}
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue("Interface", v)
+		v = convertMethodValue("Interface", v)
 	}
 
 	if v.kind() == Interface {
@@ -2030,7 +2030,7 @@ func NewAt(typ Type, p unsafe.Pointer) Value {
 // target must be initialized memory (or nil).
 func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Value {
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue(context, v)
+		v = convertMethodValue(context, v)
 	}
 	typ := v.typ()
 	if typ.Kind() == abi.Func {
@@ -2080,7 +2080,7 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 // of the value v to type t, or if converting v to type t panics, Convert panics.
 func (v Value) Convert(t Type) Value {
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue("Convert", v)
+		v = convertMethodValue("Convert", v)
 	}
 	var op func(Value, Type) Value
 	if kind := v.Kind(); kind == Func && kind == t.Kind() {
@@ -2215,6 +2215,7 @@ func (v Value) Method(i int) Value {
 	fl := v.flag.ro() | (v.flag & flagIndir)
 	fl |= flag(Func)
 	fl |= flag(i)<<flagMethodShift | flagMethod
+	enableMethodValueConversion()
 	return Value{v.typ(), v.ptr, fl}
 }
 

@@ -23,6 +23,7 @@
 package reflect
 
 import (
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
@@ -229,6 +230,23 @@ type methodValue struct {
 	rcvr   Value
 }
 */
+
+// Only Method creates a Value with flagMethod set. Attach the converter
+// there so ordinary reflection does not keep the dynamic call and closure
+// machinery live. Publishing an immutable function value is safe when methods
+// are looked up concurrently.
+var methodValueConverter atomic.Pointer[func(string, Value) Value]
+var methodValueConverterImpl = makeMethodValue
+
+func enableMethodValueConversion() {
+	if methodValueConverter.Load() == nil {
+		methodValueConverter.Store(&methodValueConverterImpl)
+	}
+}
+
+func convertMethodValue(op string, v Value) Value {
+	return (*methodValueConverter.Load())(op, v)
+}
 
 // makeMethodValue converts v from the rcvr+method index representation
 // of a method value to an actual method func value, which is
