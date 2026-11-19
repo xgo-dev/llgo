@@ -296,7 +296,7 @@ jobs:
     needs: prepare
     name: benchmark (WebAssembly)
     runs-on: ${{ fromJSON(needs.prepare.outputs.linux_large_runner) }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       GOMAXPROCS: "2"
       LLGO_ROOT: ${{ github.workspace }}
