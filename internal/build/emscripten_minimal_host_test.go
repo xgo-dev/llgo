@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
@@ -32,6 +33,12 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 		{name: "eligible", want: true},
 		{name: "emit diagnostic", want: true, change: func(_ *testing.T, ctx *context, _ *aPackage) {
 			ctx.buildConf.PrintCommands = true
+		}},
+		{name: "cached minimal host", want: true, change: func(_ *testing.T, ctx *context, _ *aPackage) {
+			ctx.frontend = &frontendCache{program: &frontendProgramExport{RuntimeFree: true, MinimalHost: true}}
+		}},
+		{name: "cached fallback", change: func(_ *testing.T, ctx *context, _ *aPackage) {
+			ctx.frontend = &frontendCache{program: &frontendProgramExport{}}
 		}},
 		{name: "default host", change: func(_ *testing.T, ctx *context, _ *aPackage) {
 			ctx.buildConf.WasmMinimalHost = false
@@ -91,7 +98,15 @@ func TestMinimalEmscriptenHost(t *testing.T) {
 			if tc.change != nil {
 				tc.change(t, ctx, p)
 			}
-			configureWasmRuntimeFree(ctx)
+			if ctx.buildConf.PrintCommands {
+				finish := captureStderr(t)
+				configureWasmRuntimeFree(ctx)
+				if got := finish(); !strings.Contains(got, "select minimal Emscripten host") {
+					t.Fatalf("missing minimal host diagnostic: %s", got)
+				}
+			} else {
+				configureWasmRuntimeFree(ctx)
+			}
 			if conf.wasmMinimalHostSelected != tc.want || ctx.wasmRuntimeFree != tc.want || conf.deadcodeDropEnabled() != tc.want {
 				t.Fatalf("minimal=%v runtime-free=%v DCE=%v, want %v", conf.wasmMinimalHostSelected, ctx.wasmRuntimeFree, conf.deadcodeDropEnabled(), tc.want)
 			}

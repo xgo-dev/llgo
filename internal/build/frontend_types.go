@@ -38,7 +38,7 @@ type frontendTypeLoader struct {
 }
 
 func newFrontendTypeLoader(ctx *context) *frontendTypeLoader {
-	if ctx.buildConf.frontendSourceOnly || ctx.buildConf.WasmMinimalHost || !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || ctx.buildConf.ForceRebuild || ctx.buildConf.ModuleHook != nil || ctx.buildConf.Coverage != nil || ctx.mode == ModeGen || ctx.buildConf.BuildMode != BuildModeExe || ctx.buildConf.deadcodeDropEnabled() || ctx.buildConf.DependencyEscapeDiagnostics > 0 {
+	if ctx.buildConf.frontendSourceOnly || !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || ctx.buildConf.ForceRebuild || ctx.buildConf.ModuleHook != nil || ctx.buildConf.Coverage != nil || ctx.mode == ModeGen || ctx.buildConf.BuildMode != BuildModeExe || ctx.buildConf.deadcodeDropEnabled() || ctx.buildConf.DependencyEscapeDiagnostics > 0 {
 		return nil
 	}
 	m := newManifestBuilder()

@@ -15,6 +15,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 def check_minimal_host(llgo, node, target, directory, env, browser):
     root = pathlib.Path(directory) / (target + "-minimal")
     root.mkdir()
+    old = root / "app.js"
+    fixture = str(ROOT / "benchmark/binary_size/println/main.go")
+    subprocess.run(
+        [llgo, "build", "-target", target, "-Oz", "-ldflags=-s", "-o", str(old), fixture],
+        env=env, check=True, timeout=300,
+    )
+    if not old.exists() or not (root / "wasm_fs.js").exists():
+        raise RuntimeError(f"{target}: full host did not generate glue and filesystem")
     output = root / "app.mjs"
     subprocess.run(
         [llgo, "build", "-target", target, "-Oz", "-lto=full", "-ldflags=-s",
@@ -26,8 +34,8 @@ def check_minimal_host(llgo, node, target, directory, env, browser):
     files = {entry["path"] for entry in manifest["artifacts"]}
     if not manifest.get("minimal_host") or files != {"app.mjs", "app.wasm"}:
         raise RuntimeError(f"{target}: incorrect minimal host artifacts: {files!r}")
-    if (root / "wasm_fs.js").exists():
-        raise RuntimeError(f"{target}: minimal host packaged the browser filesystem")
+    if old.exists() or (root / "wasm_fs.js").exists():
+        raise RuntimeError(f"{target}: minimal host did not clean up the previous full host")
     result = subprocess.run(
         [node, str(ROOT / "targets" / f"{target}-runner.mjs"), str(output)],
         env=env, capture_output=True, text=True, timeout=120,
@@ -110,7 +118,9 @@ def main():
                 env=dict(env, LLGO_WASM_WORKERS="1"), check=True, timeout=300,
             )
             manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
-            if manifest.get("minimal_host") or manifest["optimization"] != "size" or manifest["strip"] != "debug":
+            if manifest.get("minimal_host"):
+                raise RuntimeError(f"{target}: exported entries selected the minimal host")
+            if manifest["optimization"] != "size" or manifest["strip"] != "debug":
                 raise RuntimeError(f"{target}: -Oz/-s policy was not applied")
             subprocess.run(
                 [node, "--input-type=module", "-e", '''

@@ -17,6 +17,7 @@
 package build
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -311,9 +312,12 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		remove = append(remove, filepath.Base(dwarfSidecarPath(module)))
 	}
 	driverOut := emscriptenDriverOutput(ctx.buildConf, staged.Out)
-	if needsEmscriptenBrowserHost(ctx.buildConf, driverOut) {
+	if ownsEmscriptenGlue(ctx.buildConf, driverOut) {
 		if stale := staleEmscriptenGluePath(driverOut); stale != "" {
 			remove = append(remove, filepath.Base(stale))
+		}
+		if ctx.buildConf.wasmMinimalHostSelected && ownsPreviousEmscriptenFS(filepath.Dir(out.Out), manifestName) {
+			remove = append(remove, wasmFSScriptName)
 		}
 	}
 	if err := publishWasmArtifacts(dir, filepath.Dir(out.Out), manifestName, remove, os.Rename); err != nil {
@@ -323,6 +327,33 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 	out.wasmSizeNames = sizeNames
 	out.wasmSizeNamesErr = sizeNamesErr
 	return nil
+}
+
+// The filesystem shim has a shared basename. Remove it only when the
+// replaced build declared it and no sibling manifest still uses it.
+func ownsPreviousEmscriptenFS(dir, manifestName string) bool {
+	files, err := filepath.Glob(filepath.Join(dir, "*.wasm-manifest.json"))
+	if err != nil {
+		return false
+	}
+	owned := false
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		var manifest wasmManifest
+		if err != nil || json.Unmarshal(data, &manifest) != nil {
+			return false
+		}
+		for _, artifact := range manifest.Artifacts {
+			if artifact.Path != wasmFSScriptName {
+				continue
+			}
+			if filepath.Base(path) != manifestName {
+				return false
+			}
+			owned = true
+		}
+	}
+	return owned
 }
 
 func wasmManifestPath(module string) string {

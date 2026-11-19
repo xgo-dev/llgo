@@ -21,6 +21,9 @@ import (
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
 func configureWasmRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if ctx.frontend.program.MinimalHost {
+			selectMinimalEmscriptenHost(ctx)
+		}
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
 		}
