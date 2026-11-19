@@ -2,6 +2,7 @@ package jsonspecialize
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -71,6 +72,7 @@ func TestRewriteJSONMarshal(t *testing.T) {
 
 func TestMarshalShapeEligibility(t *testing.T) {
 	const source = `package example
+	import "encoding/json"
 	type Marshaler string
 	func (*Marshaler) MarshalText() ([]byte, error) { return nil, nil }
 	type Graph map[string]Graph
@@ -89,13 +91,23 @@ func TestMarshalShapeEligibility(t *testing.T) {
 	var floating float64
 	var dynamic any
 	var wrongKey map[int]int
+	var standardNumber json.Number
+	var unsupportedField struct { Value any }
+	var invalidTag struct { Value int ~json:"x\\y"~ }
+	var omittedOptionalFields struct {
+		Pointer *int ~json:",omitempty"~
+		Flag bool ~json:",omitempty"~
+		Text string ~json:",omitempty"~
+		Number int ~json:",omitempty"~
+		Object struct{} ~json:",omitempty"~
+	}
 	`
 	files := token.NewFileSet()
 	file, err := parser.ParseFile(files, "types.go", strings.ReplaceAll(source, "~", "`"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg, err := (&types.Config{}).Check("example", files, []*ast.File{file}, nil)
+	pkg, err := (&types.Config{Importer: importer.Default()}).Check("example", files, []*ast.File{file}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +119,48 @@ func TestMarshalShapeEligibility(t *testing.T) {
 		{"basic", true}, {"named", true}, {"record", true}, {"array", true}, {"pointer", true},
 		{"text", false}, {"graph", false}, {"bytes", false}, {"duplicate", false},
 		{"tagged", false}, {"embedded", false}, {"floating", false}, {"dynamic", false}, {"wrongKey", false},
+		{"standardNumber", false}, {"unsupportedField", false}, {"invalidTag", false},
 	} {
 		if got := planShape(pkg.Scope().Lookup(tc.name).Type(), &known) != nil; got != tc.want {
 			t.Errorf("%s: eligible %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestPlanJSONFallback(t *testing.T) {
+	const common = `package p
+		import "encoding/json"
+	`
+	for _, tc := range []struct {
+		name, source string
+		want         bool
+	}{
+		{"typed", "func encode() { _, _ = json.Marshal(struct{N int}{1}) }", true},
+		{"unknown type parameter", "func encode[T any](v T) { _, _ = json.Marshal(v) }", false},
+		{"shadowed builtin", "var append int; func encode() { _, _ = json.Marshal(1) }", false},
+		{"function value", "var encode = json.Marshal", false},
+		{"streaming", "var _ = json.NewEncoder; var _ = json.NewDecoder", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := token.NewFileSet()
+			file, err := parser.ParseFile(files, "p.go", common+tc.source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Uses: make(map[*ast.Ident]types.Object)}
+			pkg, err := (&types.Config{Importer: importer.Default()}).Check("example/p", files, []*ast.File{file}, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep := pkg.Imports()[0]
+			planned := &packages.Package{Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Imports: map[string]*packages.Package{"encoding/json": {Types: dep}}}
+			_, got := planPackage(planned, dep)
+			if got != tc.want {
+				t.Fatalf("accepted = %v, want %v", got, tc.want)
+			}
+			if _, ok := planPackage(planned, types.NewPackage(dep.Path(), dep.Name())); ok {
+				t.Fatal("accepted a different type universe for encoding/json")
+			}
+		})
 	}
 }

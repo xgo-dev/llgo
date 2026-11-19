@@ -106,19 +106,20 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 	src := "package main\nfunc main() {}"
 	ssaPkg := buildWasmReflectTestProgram(t, src)
 	for _, test := range []struct {
-		name      string
-		flags     string
-		envFlags  string
-		wantLog   string
-		decl      string
-		arch      crosscompile.WasmProfile
-		proof     bool
-		noRoot    bool
-		nativeAsm string
-		asmSource string
-		noAsm     bool
-		lto       lto.Mode
-		plugin    string
+		name        string
+		flags       string
+		envFlags    string
+		wantLog     string
+		decl        string
+		arch        crosscompile.WasmProfile
+		proof       bool
+		noRoot      bool
+		runtimeFree bool
+		nativeAsm   string
+		asmSource   string
+		noAsm       bool
+		lto         lto.Mode
+		plugin      string
 	}{
 		{name: "closed", arch: crosscompile.WasmProfileW32, proof: true},
 		{name: "full LTO", arch: crosscompile.WasmProfileW32, lto: lto.Full, proof: true},
@@ -133,6 +134,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 		{name: "unknown export", decl: "//go:wasmexport hostMain\n", arch: crosscompile.WasmProfileW32, wantLog: "untracked host export in main"},
 		{name: "explicit linker root", flags: "-Wl,--export=hostMain", arch: crosscompile.WasmProfileW32},
 		{name: "JS", arch: crosscompile.WasmProfileJ32},
+		{name: "runtime-free before formatter proof", arch: crosscompile.WasmProfileW32, runtimeFree: true},
 		{name: "no source roots", arch: crosscompile.WasmProfileW32, noRoot: true},
 		{name: "bundled assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "bundled",
 			asmSource: "TEXT ·Read(SB),NOSPLIT,$0-0\n\tRET\n", wantLog: "opaque assembly in example.com/runtime-test"},
@@ -191,7 +193,11 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 				}
 			}
 			readStderr := captureStderr(t)
-			inputs := ctx.wasiSizePruningInputs(t.TempDir(), false)
+			ctx.wasmRuntimeFree = test.runtimeFree
+			inputs := ctx.wasiSizePruningInputs(t.TempDir(), test.runtimeFree)
+			if test.runtimeFree && inputs != nil {
+				t.Fatal("the formatter prepass must skip runtime-free programs")
+			}
 			configureUnusedGlobalInits(ctx, inputs)
 			configureWasiReleaseDCE(ctx, inputs)
 			log := readStderr()
