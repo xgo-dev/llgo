@@ -37,14 +37,14 @@ func (plan *ValuePlan) HasCalls() bool {
 	return plan != nil && len(plan.calls) != 0
 }
 
-// IsGenericFormatter identifies functions that keep the generic formatter.
-func (plan *ValuePlan) IsGenericFormatter(fn *ssa.Function) bool {
+// isGenericFormatter identifies functions that keep the generic formatter.
+func (plan *ValuePlan) isGenericFormatter(fn *ssa.Function) bool {
 	return fn.Pkg == plan.callee.Pkg && (fn.Name() == "printArg" || fn.Name() == "printValue")
 }
 
-// Apply temporarily rewrites the calls while accept inspects the call graph.
+// apply temporarily rewrites the calls while accept inspects the call graph.
 // Return the packages whose calls were replaced, or nil after restoring SSA.
-func (plan *ValuePlan) Apply(accept func() bool) map[*types.Package]bool {
+func (plan *ValuePlan) apply(accept func() bool) map[*types.Package]bool {
 	blocks, removed := plan.tentativeRewrite()
 	if !accept() {
 		plan.restore(blocks)
