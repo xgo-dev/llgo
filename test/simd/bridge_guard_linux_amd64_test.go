@@ -67,3 +67,45 @@ func TestSIMD256MaskedStoreGuardPage(t *testing.T) {
 	x.StoreArrayMasked((*[8]uint32)(unsafe.Pointer(&mem[page])), archsimd.Mask32x8{})
 	x.StoreArrayMasked(nil, archsimd.Mask32x8{})
 }
+
+func TestSIMDPartialLoadsAtPageEnd(t *testing.T) {
+	page := os.Getpagesize()
+	mem, err := syscall.Mmap(-1, 0, 2*page, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Munmap(mem)
+	if err := syscall.Mprotect(mem[page:], syscall.PROT_NONE); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, width := range []int{2, 4, 8} {
+		for n := 0; n <= width+1; n++ {
+			input := unsafe.Slice((*uint64)(unsafe.Pointer(&mem[page-8*n])), n)
+			for i := range input {
+				input[i] = uint64(i + 1)
+			}
+			var out [8]uint64
+			var count int
+			switch width {
+			case 2:
+				v, c := archsimd.LoadUint64x2Part(input)
+				v.StoreArray((*[2]uint64)(out[:]))
+				count = c
+			case 4:
+				v, c := archsimd.LoadUint64x4Part(input)
+				v.StoreArray((*[4]uint64)(out[:]))
+				count = c
+			case 8:
+				v, c := archsimd.LoadUint64x8Part(input)
+				v.StoreArray(&out)
+				count = c
+			}
+			var want [8]uint64
+			copy(want[:width], input)
+			if out != want || count != min(n, width) {
+				t.Fatalf("width %d, len %d: got %v, %d; want %v, %d", width, n, out, count, want, min(n, width))
+			}
+		}
+	}
+}
