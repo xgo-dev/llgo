@@ -140,6 +140,33 @@ const (
 	SIMDConcatShiftBytes
 	SIMDIsZero
 	SIMDIsNaN
+	SIMDReciprocal
+	SIMDReciprocalSqrt
+	SIMDScale
+	SIMDCeilScaled
+	SIMDCeilScaledResidue
+	SIMDFloorScaled
+	SIMDFloorScaledResidue
+	SIMDRoundScaled
+	SIMDRoundScaledResidue
+	SIMDTruncScaled
+	SIMDTruncScaledResidue
+	SIMDAESEncryptLastRound
+	SIMDAESEncryptOneRound
+	SIMDAESDecryptLastRound
+	SIMDAESDecryptOneRound
+	SIMDAESInvMixColumns
+	SIMDAESRoundKeyGenAssist
+	SIMDSHA1FourRounds
+	SIMDSHA1Message1
+	SIMDSHA1Message2
+	SIMDSHA1NextE
+	SIMDSHA256Message1
+	SIMDSHA256Message2
+	SIMDSHA256TwoRounds
+	SIMDGaloisFieldMul
+	SIMDGaloisFieldAffineTransform
+	SIMDGaloisFieldAffineTransformInverse
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -273,6 +300,9 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.Call(b.Pkg.rtFunc("PanicSIMDUnimplemented"), args...)
 	}
 	b.requireSIMDFeatures()
+	if SIMDX86Special(op) {
+		return b.simdX86Special(op, result, args)
+	}
 	if op == SIMDRound && b.Prog.Target().GOARCH == "amd64" {
 		return b.simdRoundEven(args[0])
 	}
