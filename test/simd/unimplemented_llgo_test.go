@@ -6,30 +6,21 @@ import (
 	"simd/archsimd"
 	"strings"
 	"testing"
-	_ "unsafe"
 )
 
-//go:linkname simdOnesCount simd/archsimd.Int8x16.OnesCount
-func simdOnesCount(x archsimd.Int8x16) archsimd.Int8x16
+type unsupportedCall struct {
+	name string
+	call func()
+}
 
 func TestUnimplementedSIMD(t *testing.T) {
 	var x archsimd.Int8x16
-	method := x.OnesCount
-	for _, tc := range []struct {
-		name   string
-		call   func()
-		symbol string
-	}{
-		{"direct", func() { x.OnesCount() }, "simd/archsimd.Int8x16.OnesCount"},
-		{"method value", func() { method() }, "simd/archsimd.Int8x16.OnesCount"},
-		{"method expression", func() { indirectOnesCount(archsimd.Int8x16.OnesCount, x) }, "simd/archsimd.Int8x16.OnesCount"},
-		{"deferred", func() { defer x.OnesCount() }, "simd/archsimd.Int8x16.OnesCount"},
-		{"linkname", func() { simdOnesCount(x) }, "simd/archsimd.Int8x16.OnesCount"},
-	} {
+	symbol, calls := unsupportedCalls(x)
+	for _, tc := range calls {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
 				err, ok := recover().(interface{ Error() string })
-				if !ok || !strings.HasPrefix(err.Error(), "runtime error: unimplemented SIMD intrinsic: "+tc.symbol) {
+				if !ok || !strings.HasPrefix(err.Error(), "runtime error: unimplemented SIMD intrinsic: "+symbol) {
 					t.Fatalf("unexpected panic: %v", err)
 				}
 			}()
@@ -44,6 +35,7 @@ func TestUnimplementedSIMD(t *testing.T) {
 }
 
 //go:noinline
-func indirectOnesCount(f func(archsimd.Int8x16) archsimd.Int8x16, x archsimd.Int8x16) archsimd.Int8x16 {
-	return f(x)
-}
+func invokeUnsupported[A, R any](f func(A) R, x A) R { return f(x) }
+
+//go:noinline
+func invokeUnsupportedPair[A, R any](f func(A, A) R, x A) R { return f(x, x) }
