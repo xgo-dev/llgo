@@ -585,7 +585,12 @@ func (hw *cheaderWriter) writeFunctionDecl(fullName, linkName string, fn ssa.Fun
 
 // writeCommonIncludes writes common C header includes and Go runtime type definitions
 func (hw *cheaderWriter) writeCommonIncludes() error {
-	includes := `
+	stringLenType := "intptr_t"
+	if hw.p.GoWordSize() != hw.p.PointerSize() {
+		// Hosted Wasm32 strings have a 64-bit length despite 32-bit addresses.
+		stringLenType = fmt.Sprintf("int%d_t", hw.p.GoWordSize()*8)
+	}
+	_, err := fmt.Fprintf(hw.typeBuf, `
 // Platform-specific symbol renaming macro
 #ifdef __APPLE__
     #define GO_SYMBOL_RENAME(go_name) __asm("_" go_name);
@@ -594,7 +599,7 @@ func (hw *cheaderWriter) writeCommonIncludes() error {
 #endif
 
 // Go runtime types
-typedef struct { const char *p; intptr_t n; } GoString;
+typedef struct { const char *p; %s n; } GoString;
 typedef struct { void *data; intptr_t len; intptr_t cap; } GoSlice;
 typedef struct { void *data; } GoMap;
 typedef struct { void *data; } GoChan;
@@ -602,12 +607,8 @@ typedef struct { void *data; void *type; } GoInterface;
 typedef struct { float real; float imag; } GoComplex64;
 typedef struct { double real; double imag; } GoComplex128;
 
-`
-
-	if _, err := hw.typeBuf.WriteString(includes); err != nil {
-		return err
-	}
-	return nil
+`, stringLenType)
+	return err
 }
 
 // writeTo writes all generated content to the output writer
