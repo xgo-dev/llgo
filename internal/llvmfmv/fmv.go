@@ -42,29 +42,38 @@ func hasAttribute(fn llvm.Value, name string) bool {
 }
 
 func isQuery(fn llvm.Value) bool {
-	if fn.IsNil() || fn.IsAFunction().IsNil() || stringAttribute(fn, QueryAttribute) != AVX2Query {
-		return false
+	return checkedQuery(fn) == AVX2Query
+}
+func checkedQuery(fn llvm.Value) string {
+	if fn.IsNil() || fn.IsAFunction().IsNil() {
+		return ""
+	}
+	name := stringAttribute(fn, QueryAttribute)
+	if name == "" {
+		return ""
 	}
 	typ := fn.GlobalValueType()
 	ret := typ.ReturnType()
 	if ret.TypeKind() != llvm.IntegerTypeKind || ret.IntTypeWidth() != 1 || typ.IsFunctionVarArg() {
-		return false
+		return ""
 	}
 	params := typ.ParamTypes()
 	if len(params) == 0 {
-		return true
+		return name
 	}
 	if len(params) != 1 {
-		return false
+		return ""
 	}
 	// SysV may retain the empty receiver. Win64 lowers an empty aggregate
 	// to i32. The query attribute comes from the checked Go declaration.
 	param := params[0]
 	if param.TypeKind() == llvm.StructTypeKind && param.StructElementTypesCount() == 0 {
-		return true
+		return name
 	}
-	return strings.Contains(fn.GlobalParent().Target(), "windows") &&
-		param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32
+	if strings.Contains(fn.GlobalParent().Target(), "windows") && param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32 {
+		return name
+	}
+	return ""
 }
 
 // ABI lowering leaves register tuples and single-leaf aggregate wrappers on
@@ -129,6 +138,12 @@ func supported(fn llvm.Value) bool {
 // resolved compile-time GOAMD64 level, never a host environment read. Running
 // it again is harmless.
 func Run(mod llvm.Module, baseline string) error {
+	if err := runAVX2(mod, baseline); err != nil {
+		return err
+	}
+	return runGuardedFeatures(mod)
+}
+func runAVX2(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
@@ -237,7 +252,7 @@ func Run(mod llvm.Module, baseline string) error {
 		specialize(ctx, variant, variants, true)
 		if baseline := baselines[fn]; !baseline.IsNil() {
 			specialize(ctx, baseline, baselines, false)
-			dispatch(mod, source, fn, baseline, variant)
+			dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}})
 		}
 	}
 	return nil
@@ -268,6 +283,10 @@ func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Va
 		query.ReplaceAllUsesWith(llvm.ConstInt(ctx.Int1Type(), bit, false))
 		query.EraseFromParentAsInstruction()
 	}
+	simplifyGuards(fn)
+}
+
+func simplifyGuards(fn llvm.Value) {
 	// Mandatory legality cleanup, even at O0. These are local LLVM IR utilities,
 	// not a registered pass or an optional optimization pipeline. Iterate for
 	// conditions propagated through PHIs and short-circuit boolean expressions.
@@ -290,7 +309,12 @@ func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Va
 	}
 }
 
-func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline, variant llvm.Value) {
+type dispatchChoice struct {
+	bits uint64
+	fn   llvm.Value
+}
+
+func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choices []dispatchChoice) {
 	ctx := mod.Context()
 	resolver := fn.CloneFunction()
 	resolver.SetName(fn.Name() + resolverSuffix)
@@ -354,9 +378,13 @@ func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline, variant llvm.Va
 	call := tailReturn(b, resolver, baseline)
 	call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 	b.SetInsertPointAtEnd(selectImpl)
-	enabled := b.CreateAnd(features, llvm.ConstInt(ctx.Int64Type(), featureAVX2, false), "")
-	check := b.CreateICmp(llvm.IntNE, enabled, llvm.ConstInt(ctx.Int64Type(), 0, false), "")
-	selected := b.CreateSelect(check, variant, baseline, "selected")
+	selected := baseline
+	for _, choice := range choices {
+		required := llvm.ConstInt(ctx.Int64Type(), choice.bits, false)
+		enabled := b.CreateAnd(features, required, "")
+		check := b.CreateICmp(llvm.IntEQ, enabled, required, "")
+		selected = b.CreateSelect(check, choice.fn, selected, "selected")
+	}
 	publish := b.CreateStore(selected, slot)
 	publish.SetAlignment(8)
 	publish.SetOrdering(llvm.AtomicOrderingMonotonic)

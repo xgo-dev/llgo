@@ -39,6 +39,30 @@ func init() {
 	if X86.HasAVX512 {
 		features |= 256
 	}
+	if X86.HasAVXVNNI {
+		features |= 1 << 16
+	}
+	if X86.HasAVX512VPOPCNTDQ {
+		features |= 1 << 15
+	}
+	if X86.HasAVX512VPCLMULQDQ {
+		features |= 1 << 14
+	}
+	if X86.HasAVX512VNNI {
+		features |= 1 << 13
+	}
+	if X86.HasAVX512VBMI2 {
+		features |= 1 << 12
+	}
+	if X86.HasAVX512VBMI {
+		features |= 1 << 11
+	}
+	if X86.HasAVX512BITALG {
+		features |= 1 << 10
+	}
+	if X86.HasFMA {
+		features |= 1 << 9
+	}
 	llgoCPUFeatures = features
 }
 
