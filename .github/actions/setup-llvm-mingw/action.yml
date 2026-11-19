@@ -98,7 +98,7 @@ runs:
           "amd64" { "x86_64" }
           "arm64" { "aarch64" }
         }
-        $bin = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20260616\ucrt-x86_64\bin"
+        $bin = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\20261104\ucrt-x86_64\bin"
         $cc = (Join-Path $bin "$arch-w64-mingw32-clang.exe").Replace('\', '/')
         $cxx = (Join-Path $bin "$arch-w64-mingw32-clang++.exe").Replace('\', '/')
         foreach ($compiler in @($cc, $cxx)) {
