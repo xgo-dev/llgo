@@ -297,7 +297,7 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 					t.Fatal("missing callable population count")
 				}
 				if target.arch == "amd64" {
-					if fn := mod.NamedFunction("simd/archsimd.Int8x16.MulSign"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+					if fn := mod.NamedFunction("simd/archsimd.Uint32x4.SHA1Message1"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
 						t.Fatal("missing explicit unsupported implementation")
 					}
 				}

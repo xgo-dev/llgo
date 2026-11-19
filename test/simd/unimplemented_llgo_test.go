@@ -14,7 +14,7 @@ type unsupportedCall struct {
 }
 
 func TestUnimplementedSIMD(t *testing.T) {
-	var x archsimd.Int8x16
+	var x archsimd.Uint32x4
 	symbol, calls := unsupportedCalls(x)
 	for _, tc := range calls {
 		t.Run(tc.name, func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestUnimplementedSIMD(t *testing.T) {
 		})
 	}
 	// Go helper bodies remain executable; the fallback applies to declarations.
-	if x.Len() != 16 {
+	if x.Len() != 4 {
 		t.Fatal("Go helper was replaced by the fallback")
 	}
 }

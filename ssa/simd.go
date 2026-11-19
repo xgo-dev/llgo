@@ -68,6 +68,19 @@ const (
 	SIMDExpand
 	SIMDAverage
 	SIMDFMA
+	SIMDMulSign
+	SIMDMulHigh
+	SIMDMulWidenEven
+	SIMDDotProductPairs
+	SIMDDotProductPairsSaturated
+	SIMDSumOf8AbsDiff
+	SIMDAddOddSubEven
+	SIMDMulAddEvenSubOdd
+	SIMDMulAddOddSubEven
+	SIMDConcatAddPairsSaturated
+	SIMDConcatAddPairsSaturatedGrouped
+	SIMDConcatSubPairsSaturated
+	SIMDConcatSubPairsSaturatedGrouped
 	SIMDMulWidenLo
 	SIMDLeadingZeros
 	SIMDLeadingSignBits
@@ -301,13 +314,17 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdConcatPermute128(args[0], args[1], args[2], args[3])
 	case SIMDPermuteScalars, SIMDPermuteScalarsGrouped, SIMDPermuteScalarsHi, SIMDPermuteScalarsLo, SIMDPermuteScalarsHiGrouped, SIMDPermuteScalarsLoGrouped:
 		return b.simdPermuteScalars(op, args[0], args[1])
-	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
+	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped, SIMDConcatAddPairsSaturated, SIMDConcatSubPairsSaturated, SIMDConcatAddPairsSaturatedGrouped, SIMDConcatSubPairsSaturatedGrouped:
 		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
 		return b.simdAverage(args[0], args[1])
+	case SIMDAddOddSubEven, SIMDMulAddEvenSubOdd, SIMDMulAddOddSubEven:
+		return b.simdAlternating(op, result, args)
+	case SIMDMulHigh, SIMDMulSign, SIMDDotProductPairs, SIMDDotProductPairsSaturated, SIMDSumOf8AbsDiff:
+		return b.simdIntegerProduct(op, result, args[0], args[1])
 	case SIMDFMA:
 		return b.simdFMA(result, args[0], args[1], args[2])
-	case SIMDMulWidenLo, SIMDMulWidenHi:
+	case SIMDMulWidenLo, SIMDMulWidenHi, SIMDMulWidenEven:
 		return b.simdMulWiden(op, result, args[0], args[1])
 	case SIMDLeadingZeros, SIMDLeadingSignBits:
 		x := args[0]

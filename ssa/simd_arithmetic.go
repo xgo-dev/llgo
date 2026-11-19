@@ -29,7 +29,11 @@ func (b Builder) simdMulWiden(op SIMDOp, result Type, x, y Expr) Expr {
 		offset = len(indices)
 	}
 	for i := range indices {
-		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(offset+i), false)
+		index := offset + i
+		if op == SIMDMulWidenEven {
+			index = 2 * i
+		}
+		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(index), false)
 	}
 	mask := llvm.ConstVector(indices, false)
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
@@ -104,7 +108,7 @@ func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
 func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
-	if op == SIMDConcatAddPairsGrouped || op == SIMDConcatSubPairsGrouped {
+	if op == SIMDConcatAddPairsGrouped || op == SIMDConcatSubPairsGrouped || op == SIMDConcatAddPairsSaturatedGrouped || op == SIMDConcatSubPairsSaturatedGrouped {
 		group /= 2
 	}
 	even, odd := make([]llvm.Value, n), make([]llvm.Value, n)
@@ -120,6 +124,12 @@ func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	}
 	a := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(even, false), "")
 	c := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(odd, false), "")
+	switch op {
+	case SIMDConcatAddPairsSaturated, SIMDConcatAddPairsSaturatedGrouped:
+		return b.simdIntegerIntrinsic(SIMDAddSaturated, Expr{a, x.Type}, Expr{c, x.Type})
+	case SIMDConcatSubPairsSaturated, SIMDConcatSubPairsSaturatedGrouped:
+		return b.simdIntegerIntrinsic(SIMDSubSaturated, Expr{a, x.Type}, Expr{c, x.Type})
+	}
 	subtract := op == SIMDConcatSubPairs || op == SIMDConcatSubPairsGrouped
 	if simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0 {
 		if subtract {
