@@ -29,6 +29,8 @@ const (
 	simdToMask
 	simdTernary
 	simdMaskedBlend
+	simdMaskedUnary
+	simdTwoSourcePermute
 	simdMaskFromBits
 	simdMaskToBits
 	simdScalarShift
@@ -116,8 +118,12 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "SubSaturated"}:                 {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
 	{"numeric", "Min"}:                          {llssa.SIMDMin, simdBinary, 0},
 	{"numeric", "LookupOrZero"}:                 {llssa.SIMDLookupOrZero, simdBinary, types.IsInteger},
+	{"numeric", "PermuteOrZeroGrouped"}:         {llssa.SIMDPermuteOrZeroGrouped, simdSignedVector, types.IsInteger},
+	{"numeric", "ConcatPermute"}:                {llssa.SIMDConcatPermute, simdTwoSourcePermute, 0},
+	{"numeric", "Compress"}:                     {llssa.SIMDCompress, simdMaskedUnary, 0},
+	{"numeric", "Expand"}:                       {llssa.SIMDExpand, simdMaskedUnary, 0},
 	{"numeric", "PermuteOrZero"}:                {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
-	{"numeric", "Permute"}:                      {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
+	{"numeric", "Permute"}:                      {llssa.SIMDPermute, simdUnsignedVector, 0},
 	{"numeric", "Max"}:                          {llssa.SIMDMax, simdBinary, 0},
 	{"numeric", "GetLo"}:                        {llssa.SIMDGetLo, simdHalf, 0},
 	{"numeric", "GetHi"}:                        {llssa.SIMDGetHi, simdHalf, 0},
@@ -523,20 +529,23 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		params, result = []types.Type{types.NewPointer(lanes), maskType}, nil
-	case simdUnsignedVector, simdSignedVector:
-		if sig.Params().Len() != 1 {
+	case simdTwoSourcePermute, simdUnsignedVector, simdSignedVector:
+		if d.signature == simdTwoSourcePermute {
+			params = []types.Type{vector}
+		}
+		if sig.Params().Len() != len(params)+1 {
 			return false
 		}
-		counts := sig.Params().At(0).Type()
+		counts := sig.Params().At(len(params)).Type()
 		shape, ok := llssa.SIMDNumericShape(counts)
-		if !ok || shape.Len() != lanes.Len() {
+		if !ok || shape.Len() != lanes.Len() || simdVectorBits(counts) != width {
 			return false
 		}
 		info := shape.Elem().Underlying().(*types.Basic).Info()
-		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature == simdUnsignedVector) {
+		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature != simdSignedVector) {
 			return false
 		}
-		params = []types.Type{counts}
+		params = append(params, counts)
 	case simdMaskFromBits, simdMaskToBits:
 		if _, ok := llssa.SIMDMaskShape(vector); !ok {
 			return false
@@ -566,16 +575,19 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		if d.signature == simdCompare {
 			params = []types.Type{vector}
 		}
-	case simdMaskedBlend:
-		if sig.Params().Len() != 2 {
+	case simdMaskedBlend, simdMaskedUnary:
+		if d.signature == simdMaskedBlend {
+			params = []types.Type{vector}
+		}
+		if sig.Params().Len() != len(params)+1 {
 			return false
 		}
-		maskType := sig.Params().At(1).Type()
+		maskType := sig.Params().At(len(params)).Type()
 		mask, ok := llssa.SIMDMaskShape(maskType)
 		if !ok || mask.Len() != lanes.Len() || simdVectorBits(maskType) != width {
 			return false
 		}
-		params = []types.Type{vector, maskType}
+		params = append(params, maskType)
 	case simdTernary:
 		params = []types.Type{vector, vector}
 	case simdBitcast, simdConvert, simdConvertLo:
@@ -662,7 +674,7 @@ func simdVectorBits(typ types.Type) int64 {
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
-	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDCompress, llssa.SIMDExpand, llssa.SIMDConcatPermute, llssa.SIMDPermute, llssa.SIMDPermuteOrZeroGrouped, llssa.SIMDShiftRight, llssa.SIMDShiftLeft, llssa.SIMDLeadingZeros, llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,

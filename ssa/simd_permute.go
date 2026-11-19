@@ -2,7 +2,8 @@ package ssa
 
 import "github.com/xgo-dev/llvm"
 
-func (b Builder) simdPermute(op SIMDOp, x, indices Expr) Expr {
+func (b Builder) simdPermute(op SIMDOp, args []Expr) Expr {
+	x, indices := args[0], args[len(args)-1]
 	if op == SIMDLookupOrZero {
 		name := "llvm.aarch64.neon.tbl1"
 		if b.Prog.Target().GOARCH == "wasm" {
@@ -16,14 +17,27 @@ func (b Builder) simdPermute(op SIMDOp, x, indices Expr) Expr {
 	// Mask indices before extracting a lane, including indices whose sign bit
 	// requests zero. An out-of-bounds extract would create LLVM poison.
 	n := x.ll.VectorSize()
-	mask := llvm.ConstInt(indices.ll.ElementType(), uint64(n-1), false)
+	group := n
+	if op == SIMDPermuteOrZeroGrouped {
+		group = 16
+	}
+	mask := llvm.ConstInt(indices.ll.ElementType(), uint64(group-1), false)
 	result := llvm.Undef(x.ll)
 	for i := 0; i < n; i++ {
 		lane := llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
 		index := b.impl.CreateExtractElement(indices.impl, lane, "")
 		safe := b.impl.CreateAnd(index, mask, "")
+		if op == SIMDPermuteOrZeroGrouped {
+			safe = b.impl.CreateOr(safe, llvm.ConstInt(safe.Type(), uint64(i/group*group), false), "")
+		}
 		value := b.impl.CreateExtractElement(x.impl, safe, "")
-		if op == SIMDPermuteOrZero {
+		if op == SIMDConcatPermute {
+			other := b.impl.CreateExtractElement(args[1].impl, safe, "")
+			sourceBit := b.impl.CreateAnd(index, llvm.ConstInt(index.Type(), uint64(n), false), "")
+			fromY := llvm.CreateICmp(b.impl, llvm.IntNE, sourceBit, llvm.ConstNull(index.Type()))
+			value = b.impl.CreateSelect(fromY, other, value, "")
+		}
+		if op == SIMDPermuteOrZero || op == SIMDPermuteOrZeroGrouped {
 			negative := llvm.CreateICmp(b.impl, llvm.IntSLT, index, llvm.ConstNull(index.Type()))
 			value = b.impl.CreateSelect(negative, llvm.ConstNull(value.Type()), value, "")
 		}
@@ -65,4 +79,26 @@ func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
 		}
 	}
 	return Expr{b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(mask, false), ""), x.Type}
+}
+
+// simdPack uses a running rank for each lane. Before the last extraction
+// the rank is at most n-1, including for all-true and all-false masks.
+func (b Builder) simdPack(op SIMDOp, x, mask Expr) Expr {
+	active := llvm.CreateICmp(b.impl, llvm.IntNE, mask.impl, llvm.ConstNull(mask.ll))
+	if op == SIMDCompress {
+		packed := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.experimental.vector.compress"), []llvm.Value{x.impl, active, llvm.ConstNull(x.ll)}, "")
+		return Expr{packed, x.Type}
+	}
+	i32 := b.Prog.tyInt32()
+	rank := llvm.ConstNull(i32)
+	result := llvm.Undef(x.ll)
+	for i := 0; i < x.ll.VectorSize(); i++ {
+		lane := llvm.ConstInt(i32, uint64(i), false)
+		enabled := b.impl.CreateExtractElement(active, lane, "")
+		value := b.impl.CreateExtractElement(x.impl, rank, "")
+		value = b.impl.CreateSelect(enabled, value, llvm.ConstNull(value.Type()), "")
+		result = b.impl.CreateInsertElement(result, value, lane, "")
+		rank = b.impl.CreateAdd(rank, b.impl.CreateZExt(enabled, i32, ""), "")
+	}
+	return Expr{result, x.Type}
 }

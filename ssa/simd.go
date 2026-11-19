@@ -62,6 +62,10 @@ const (
 	SIMDLookupOrZero
 	SIMDPermuteOrZero
 	SIMDPermute
+	SIMDPermuteOrZeroGrouped
+	SIMDConcatPermute
+	SIMDCompress
+	SIMDExpand
 	SIMDAverage
 	SIMDFMA
 	SIMDMulWidenLo
@@ -324,8 +328,10 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdCarrylessMultiply(x, y, selector)
 	case SIMDStoreMasked:
 		return b.simdStoreMasked(args[0], args[1], args[2])
-	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
-		return b.simdPermute(op, args[0], args[1])
+	case SIMDCompress, SIMDExpand:
+		return b.simdPack(op, args[0], args[1])
+	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermuteOrZeroGrouped, SIMDPermute, SIMDConcatPermute:
+		return b.simdPermute(op, args)
 	case SIMDExtend, SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat, SIMDSaturateConcatGrouped, SIMDTruncate:
 		return b.simdIntegerResize(op, result, args)
 	case SIMDConvert, SIMDConvertLo:
