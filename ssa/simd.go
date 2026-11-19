@@ -103,6 +103,7 @@ const (
 	SIMDPermuteScalarsLo
 	SIMDPermuteScalarsHiGrouped
 	SIMDPermuteScalarsLoGrouped
+	SIMDClearAVXUpperBits
 	SIMDReduceMax
 	SIMDReduceMin
 	SIMDReduceSum
@@ -256,6 +257,8 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	switch op {
 	case SIMDConcatShiftBytes, SIMDConcatShiftBytesGrouped:
 		return b.simdConcatShiftBytes(args[0], args[1], args[2])
+	case SIMDClearAVXUpperBits:
+		return b.simdClearAVXUpperBits()
 	case SIMDIntegerMulAdd:
 		product := b.impl.CreateMul(args[0].impl, args[1].impl, "")
 		return Expr{b.impl.CreateAdd(product, args[2].impl, ""), result}

@@ -239,6 +239,12 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if isDecl && decl.Body != nil {
 		return simdOperation{}, false
 	}
+	if obj.Name() == "ClearAVXUpperBits" && sig.Recv() == nil && sig.Params().Len() == 0 && sig.Results().Len() == 0 && !sig.Variadic() {
+		if arch == "amd64" {
+			return simdOperation{op: llssa.SIMDClearAVXUpperBits}, true
+		}
+		return fallback()
+	}
 	key := simdKey{name: obj.Name()}
 	var vector types.Type
 	if recv := sig.Recv(); recv != nil {

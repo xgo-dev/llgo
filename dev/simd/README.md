@@ -49,22 +49,15 @@ and `ConcatPermute128Scalars` cover both constant and variable selectors.
 The scalar-permute follow-up enables the six `TestPermuteScalars*` cases for
 128/256-bit dword and high/low word shuffles. Dynamic selectors use fixed
 shuffles and vector masks, retaining the untouched word half in each 128-bit
-group. The current allowlists contain 159 AMD64 cases and 87 ARM64 cases; these
+group. The current allowlists contain 160 AMD64 cases and 87 ARM64 cases; these
 are enabled top-level tests, not counts of implemented intrinsics.
 
-## arm64 failures
+All failing top-level cases from the initial ARM64 and AMD64 profiles are now
+enabled. The additions cover AMD64 predicates and AVX upper-register clearing,
+128-bit byte concatenation on both architectures and the grouped AMD64 form,
+and ARM64 reductions, saturating shifts, integer multiply-add and population
+count.
 
-| Test | First reported unsupported intrinsic |
-| --- | --- |
-## amd64 failures
-
-Horizontal pairwise addition and subtraction are now covered for the applicable
-128/256-bit shapes by `test/simd`; `TestAddSubPairs` is enabled in the amd64
-allowlist. The initial audit totals above are retained as historical results;
-the table below lists the remaining failures after subsequent fixes.
-
-| Test | First reported unsupported intrinsic |
-| --- | --- |
-| `TestClearAVXUpperBits` | `simd/archsimd.ClearAVXUpperBits` |
+## AMD64 hardware-gated cases
 
 Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.
