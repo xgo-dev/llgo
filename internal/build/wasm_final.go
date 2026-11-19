@@ -332,13 +332,17 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 // The filesystem shim has a shared basename. Remove it only when the
 // replaced build declared it and no sibling manifest still uses it.
 func ownsPreviousEmscriptenFS(dir, manifestName string) bool {
-	files, err := filepath.Glob(filepath.Join(dir, "*.wasm-manifest.json"))
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
 	owned := false
-	for _, path := range files {
-		data, err := os.ReadFile(path)
+	for _, file := range files {
+		name := file.Name()
+		if file.IsDir() || !strings.HasSuffix(name, ".wasm-manifest.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
 		var manifest wasmManifest
 		if err != nil || json.Unmarshal(data, &manifest) != nil {
 			return false
@@ -347,7 +351,7 @@ func ownsPreviousEmscriptenFS(dir, manifestName string) bool {
 			if artifact.Path != wasmFSScriptName {
 				continue
 			}
-			if filepath.Base(path) != manifestName {
+			if name != manifestName {
 				return false
 			}
 			owned = true
