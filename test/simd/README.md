@@ -284,8 +284,8 @@ Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
-and indirect calls retain the original entry. Arbitrary feature
-combinations are not yet specialized.
+and indirect calls retain the original entry. Other guarded feature combinations
+use the local specializations described below.
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
 including when nested in arrays and structs. The compiler validates the bridge
