@@ -30,6 +30,10 @@ const (
 	simdTernary
 	simdMaskedBlend
 	simdMaskedUnary
+	simdFunnelVector
+	simdFunnelScalar
+	simdTernaryTable
+	simdMaskedSplat
 	simdTwoSourcePermute
 	simdMaskFromBits
 	simdMaskToBits
@@ -160,6 +164,9 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "LeadingSignBits"}:          {llssa.SIMDLeadingSignBits, simdUnary, types.IsInteger},
 	{"numeric", "MulWidenHi"}:               {llssa.SIMDMulWidenHi, simdWidenBinary, types.IsInteger},
 	{"numeric", "MulWidenLo"}:               {llssa.SIMDMulWidenLo, simdWidenBinary, types.IsInteger},
+	{"numeric", "RotateLeft"}:               {llssa.SIMDRotateLeft, simdBinary, types.IsInteger},
+	{"numeric", "RotateRight"}:              {llssa.SIMDRotateRight, simdBinary, types.IsInteger},
+	{"numeric", "tern"}:                     {llssa.SIMDTernaryLogic, simdTernaryTable, types.IsInteger},
 	{"numeric", "RotateAllLeft"}:            {llssa.SIMDRotateAllLeft, simdScalarShift, types.IsInteger},
 	{"numeric", "RotateAllRight"}:           {llssa.SIMDRotateAllRight, simdScalarShift, types.IsInteger},
 	{"numeric", "StoreArrayMasked"}:         {llssa.SIMDStoreMasked, simdStoreMasked, 0},
@@ -207,7 +214,18 @@ func init() {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
+	for _, bits := range []int{16, 32, 64} {
+		for _, direction := range []struct {
+			name string
+			op   llssa.SIMDOp
+		}{{"Left", llssa.SIMDFunnelLeft}, {"Right", llssa.SIMDFunnelRight}} {
+			name := direction.name + "ConcatMod" + fmt.Sprint(bits)
+			simdOperations[simdKey{"numeric", "Shift" + name}] = simdOperation{direction.op, simdFunnelVector, types.IsInteger}
+			simdOperations[simdKey{"numeric", "ShiftAll" + name}] = simdOperation{direction.op, simdFunnelScalar, types.IsInteger}
+		}
+	}
 	for _, lanes := range []int{2, 4, 8, 16, 32, 64} {
+		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%dMasked", lanes)}] = simdOperation{llssa.SIMDSplatMasked, simdMaskedSplat, 0}
 		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdSplat, 0}
 	}
 	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4",
@@ -300,9 +318,15 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 			return fallback()
 		}
 	}
-	if desc.signature == simdSplat {
+	if desc.signature == simdFunnelVector || desc.signature == simdFunnelScalar {
+		lanes, _ := llssa.SIMDNumericShape(vector)
+		if !strings.HasSuffix(key.name, fmt.Sprint(simdVectorBits(vector)/lanes.Len())) {
+			return fallback()
+		}
+	}
+	if desc.signature == simdSplat || desc.signature == simdMaskedSplat {
 		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
-		if key.name != fmt.Sprintf("broadcast1To%d", shape.Len()) {
+		if strings.TrimSuffix(key.name, "Masked") != fmt.Sprintf("broadcast1To%d", shape.Len()) {
 			return fallback()
 		}
 	}
@@ -422,7 +446,18 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		params = []types.Type{types.Typ[types.Uint8], types.Typ[types.Uint8], vector}
-	case simdSplat:
+	case simdSplat, simdMaskedSplat:
+		if d.signature == simdMaskedSplat {
+			if sig.Params().Len() != 1 {
+				return false
+			}
+			typ := sig.Params().At(0).Type()
+			shape, ok := llssa.SIMDMaskShape(typ)
+			if !ok || shape.Len() != lanes.Len() || simdVectorBits(typ) != width {
+				return false
+			}
+			params = []types.Type{typ}
+		}
 		if sig.Results().Len() != 1 {
 			return false
 		}
@@ -529,8 +564,12 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		params, result = []types.Type{types.NewPointer(lanes), maskType}, nil
-	case simdTwoSourcePermute, simdUnsignedVector, simdSignedVector:
-		if d.signature == simdTwoSourcePermute {
+	case simdTernaryTable:
+		params = []types.Type{types.Typ[types.Uint8], vector, vector}
+	case simdFunnelScalar:
+		params = []types.Type{vector, types.Typ[types.Uint64]}
+	case simdFunnelVector, simdTwoSourcePermute, simdUnsignedVector, simdSignedVector:
+		if d.signature == simdTwoSourcePermute || d.signature == simdFunnelVector {
 			params = []types.Type{vector}
 		}
 		if sig.Params().Len() != len(params)+1 {
@@ -674,7 +713,7 @@ func simdVectorBits(typ types.Type) int64 {
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
-	case llssa.SIMDCompress, llssa.SIMDExpand, llssa.SIMDConcatPermute, llssa.SIMDPermute, llssa.SIMDPermuteOrZeroGrouped, llssa.SIMDShiftRight, llssa.SIMDShiftLeft, llssa.SIMDLeadingZeros, llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDFunnelLeft, llssa.SIMDFunnelRight, llssa.SIMDRotateLeft, llssa.SIMDRotateRight, llssa.SIMDTernaryLogic, llssa.SIMDSplatMasked, llssa.SIMDCompress, llssa.SIMDExpand, llssa.SIMDConcatPermute, llssa.SIMDPermute, llssa.SIMDPermuteOrZeroGrouped, llssa.SIMDShiftRight, llssa.SIMDShiftLeft, llssa.SIMDLeadingZeros, llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,

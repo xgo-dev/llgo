@@ -73,6 +73,12 @@ const (
 	SIMDLeadingSignBits
 	SIMDMulWidenHi
 	SIMDRotateAllLeft
+	SIMDRotateLeft
+	SIMDRotateRight
+	SIMDFunnelLeft
+	SIMDFunnelRight
+	SIMDTernaryLogic
+	SIMDSplatMasked
 	SIMDRotateAllRight
 	SIMDCarrylessMultiply
 	SIMDCarrylessMultiplyLo
@@ -317,8 +323,12 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 			count = b.impl.CreateSub(count, simdIntegerConstant(x.ll, 1), "")
 		}
 		return Expr{count, result}
-	case SIMDRotateAllLeft, SIMDRotateAllRight:
-		return b.simdRotate(op, args[0], args[1])
+	case SIMDRotateAllLeft, SIMDRotateAllRight, SIMDRotateLeft, SIMDRotateRight:
+		return b.simdFunnel(op, args[0], args[0], args[1])
+	case SIMDFunnelLeft, SIMDFunnelRight:
+		return b.simdFunnel(op, args[0], args[1], args[2])
+	case SIMDTernaryLogic:
+		return b.simdTernaryLogic(args[0], args[1], args[2], args[3])
 	case SIMDCarrylessMultiply, SIMDCarrylessMultiplyLo:
 		x, y := args[0], args[len(args)-1]
 		selector := llvm.ConstInt(b.Prog.ctx.Int8Type(), 0, false)
@@ -390,9 +400,18 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	case SIMDBroadcast:
 		v := b.impl.CreateInsertElement(llvm.Undef(result.ll), args[0].impl, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
 		return b.simdSplatLane0(Expr{v, result})
-	case SIMDSplatLane0:
+	case SIMDSplatLane0, SIMDSplatMasked:
 		mask := llvm.ConstNull(llvm.VectorType(b.Prog.tyInt32(), result.ll.VectorSize()))
 		v := b.impl.CreateShuffleVector(args[0].impl, llvm.Undef(args[0].ll), mask, "")
+		if op == SIMDSplatMasked {
+			m := args[1]
+			pred := llvm.CreateICmp(b.impl, llvm.IntNE, m.impl, llvm.ConstNull(m.ll))
+			// A narrow input mask has no set bits above its last lane.
+			bits := b.impl.CreateBitCast(pred, b.Prog.ctx.IntType(m.ll.VectorSize()), "")
+			bits = b.impl.CreateZExt(bits, b.Prog.ctx.IntType(result.ll.VectorSize()), "")
+			pred = b.impl.CreateBitCast(bits, llvm.VectorType(b.Prog.ctx.Int1Type(), result.ll.VectorSize()), "")
+			v = b.impl.CreateSelect(pred, v, llvm.ConstNull(result.ll), "")
+		}
 		return Expr{v, result}
 	case SIMDGetLo, SIMDGetHi, SIMDSetLo, SIMDSetHi:
 		return b.simdHalf(op, result, args)
