@@ -151,52 +151,53 @@ type OutFmtDetails struct {
 type ModuleHook func(pkg Package)
 
 type Config struct {
-	Goos               string
-	Goarch             string
-	GO386              string // 386 floating-point implementation: sse2 or softfloat
-	GOAMD64            string // amd64 microarchitecture level: v1 through v4
-	GOARM              string // arm architecture and floating-point implementation
-	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
-	GOEXPERIMENT       string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
-	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
-	OptLevel           optlevel.Level
-	WasmOpt            WasmOptMode
-	WasmStrip          WasmStripMode
-	LTO                lto.Mode
-	LTOPlugin          lto.PassPlugin
-	BinPath            string
-	AppExt             string  // ".exe" on Windows, empty on Unix
-	OutFile            string  // output file, or directory for ModeBuild package executables
-	OutFmts            OutFmts // Output format specifications (only for Target != "")
-	CompileOnly        bool    // compile test binary but do not run it (only valid for ModeTest)
-	RetainTestBinary   bool    // profiling keeps the test executable in the invocation directory
-	Emulator           bool    // run in emulator mode
-	Port               string  // target port for flashing
-	BaudRate           int     // baudrate for serial communication
-	RunArgs            []string
-	Exec               []string      // Explicit execution wrapper, before the artifact and RunArgs.
-	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
-	Mode               Mode
-	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
-	GenExpect          bool      // only valid for ModeCmpTest
-	Verbose            bool
-	PrintPackages      bool // print package paths after successful compilation
-	PrintCommands      bool
-	GenLL              bool // generate pkg .ll files
-	DeadcodeDrop       bool // enable Go dead code drop (development builds only)
-	CollectPackageMeta bool // collect package metadata without enabling dead code drop
-	CheckLLFiles       bool // check .ll files valid
-	CheckLinkArgs      bool // check linkargs valid
-	ForceEspClang      bool // force to use esp-clang
-	frontendSourceOnly bool
-	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
-	Tags               string
-	SizeReport         bool   // print size report after successful build
-	SizeFormat         string // size report format: text,json (default text)
-	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // content hash for the running compiler (development builds only)
-	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
-	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+	Goos                      string
+	Goarch                    string
+	GO386                     string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64                   string // amd64 microarchitecture level: v1 through v4
+	GOARM                     string // arm architecture and floating-point implementation
+	GOARM64                   string // arm64 ISA version and optional lse/crypto extensions
+	GOEXPERIMENT              string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
+	Target                    string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel                  optlevel.Level
+	WasmOpt                   WasmOptMode
+	WasmStrip                 WasmStripMode
+	LTO                       lto.Mode
+	LTOPlugin                 lto.PassPlugin
+	BinPath                   string
+	AppExt                    string  // ".exe" on Windows, empty on Unix
+	OutFile                   string  // output file, or directory for ModeBuild package executables
+	OutFmts                   OutFmts // Output format specifications (only for Target != "")
+	CompileOnly               bool    // compile test binary but do not run it (only valid for ModeTest)
+	RetainTestBinary          bool    // profiling keeps the test executable in the invocation directory
+	Emulator                  bool    // run in emulator mode
+	Port                      string  // target port for flashing
+	BaudRate                  int     // baudrate for serial communication
+	RunArgs                   []string
+	Exec                      []string      // Explicit execution wrapper, before the artifact and RunArgs.
+	RunnerTimeout             time.Duration // Host execution limit; zero disables it.
+	Mode                      Mode
+	BuildMode                 BuildMode // Build mode: exe, c-archive, c-shared
+	GenExpect                 bool      // only valid for ModeCmpTest
+	Verbose                   bool
+	PrintPackages             bool // print package paths after successful compilation
+	PrintCommands             bool
+	GenLL                     bool // generate pkg .ll files
+	DeadcodeDrop              bool // enable Go dead code drop (development builds only)
+	CollectPackageMeta        bool // collect package metadata without enabling dead code drop
+	CheckLLFiles              bool // check .ll files valid
+	CheckLinkArgs             bool // check linkargs valid
+	ForceEspClang             bool // force to use esp-clang
+	frontendSourceOnly        bool
+	disableSizeSpecialization bool
+	ForceRebuild              bool // force rebuilding of packages that are already up-to-date
+	Tags                      string
+	SizeReport                bool   // print size report after successful build
+	SizeFormat                string // size report format: text,json (default text)
+	SizeLevel                 string // size aggregation level: full,module,package (default module)
+	CompilerHash              string // content hash for the running compiler (development builds only)
+	GoVersion                 string // Go language version accepted by the frontend (for example, "go1.22")
+	NoErrorColumn             bool   // omit source columns from frontend diagnostics
 
 	EscapeDiagnostics           int // -m count for explicitly selected packages
 	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
@@ -551,6 +552,8 @@ const (
 
 var llssaInitOnce sync.Once
 
+var errGeneratedSizeSource = errors.New("generated size specialization failed")
+
 func Do(args []string, conf *Config) ([]Package, error) {
 	return Build(Invocation{Args: args, Config: conf})
 }
@@ -564,7 +567,12 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 	}()
 	result, err := buildInvocation(inv, &plan)
-	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+	for err != nil {
+		reload := errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly)
+		generic := errors.Is(err, errGeneratedSizeSource) && (inv.Config == nil || !inv.Config.disableSizeSpecialization)
+		if !reload && !generic {
+			break
+		}
 		if plan.sourceOverlayFile != "" {
 			os.Remove(plan.sourceOverlayFile)
 			plan.sourceOverlayFile = ""
@@ -574,7 +582,11 @@ func Build(inv Invocation) ([]Package, error) {
 		} else {
 			inv.Config = inv.Config.clone()
 		}
-		inv.Config.frontendSourceOnly = true
+		inv.Config.frontendSourceOnly = inv.Config.frontendSourceOnly || reload
+		inv.Config.disableSizeSpecialization = inv.Config.disableSizeSpecialization || generic
+		if generic && (inv.Config.Verbose || inv.Config.PrintCommands) {
+			fmt.Fprintf(os.Stderr, "llgo: retain generic size build: %v\n", err)
+		}
 		if filename := inv.Config.BuildTrace; filename != "" {
 			if !filepath.IsAbs(filename) {
 				base := inv.Dir
@@ -600,7 +612,7 @@ func Build(inv Invocation) ([]Package, error) {
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
 	var fallback *multiBuildFallback
 	defer func() {
-		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) || errors.Is(resultErr, errGeneratedSizeSource) {
 			return
 		}
 		result, resultErr = fallback.run()
@@ -992,7 +1004,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
-	formatSupport := dedup.Check("fmt") != nil && prepareValueFormatSupport(conf, export, frontendOptions)
+	formatSupport := !conf.disableSizeSpecialization && dedup.Check("fmt") != nil && prepareValueFormatSupport(conf, export, frontendOptions)
 	if formatSupport {
 		altPkgPaths = append(altPkgPaths, fmtspecialize.RuntimePath)
 	}
@@ -1036,7 +1048,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if codec := dedup.Check("encoding/binary"); codec != nil {
 		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}
 	}
 	patches := make(cl.Patches, len(altPkgPaths))
@@ -1135,7 +1147,8 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		if ctx.valueFormatPlan != nil {
 			// Resolve the rewrite before collecting initializer and feature usage.
-			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+			configureWasmRuntimeFree(ctx)
+			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT, true)
 			configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			preparedInitializers = true
 		}
@@ -1170,11 +1183,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		configureWasmReflectBridges(ctx)
 		configureWasmFuncInfoEntries(ctx)
 	}
-	configureWasmRuntimeFree(ctx)
-
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
-		asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+		configureWasmRuntimeFree(ctx)
+		asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT, false)
 		configureUnusedGlobalInits(ctx, asmRoots)
 	}
 	configureWasiReleaseDCE(ctx, asmRoots)
@@ -4372,7 +4384,7 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 			if prog.Package(p.Types) == nil {
 				dep, err := ctx.prepareValueFormatSource(p)
 				if err != nil {
-					formatErr = err
+					formatErr = fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 					return
 				}
 				formatRuntime = dep

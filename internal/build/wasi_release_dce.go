@@ -25,9 +25,9 @@ type linkPruningInputs struct {
 	nativeFormat bool
 }
 
-func (ctx *context) wasiSizePruningInputs(goroot string) *linkPruningInputs {
+func (ctx *context) wasiSizePruningInputs(goroot string, forFormatter bool) *linkPruningInputs {
 	conf := ctx.buildConf
-	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && ctx.valueFormatPlan == nil {
+	if (conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled()) && !forFormatter {
 		return nil
 	}
 	if !wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions) || ctx.wasmRuntimeFree || ctx.frontend != nil {
@@ -109,7 +109,7 @@ func (in *linkPruningInputs) collectAsmReferences(pkg *packages.Package, path st
 
 // The ARM64 translator emits these single-instruction register accesses as
 // inline assembly. They cannot transfer control or reference a Go symbol.
-var systemRegisterAsm = regexp.MustCompile(`(?i)^[ 	]*(?:mrs[ 	]+\$0,[ 	]+[a-z0-9_]+|msr[ 	]+[a-z0-9_]+,[ 	]+\$0)[ 	]*$`)
+var systemRegisterAsm = regexp.MustCompile(`(?i)^[ \t]*(?:mrs[ \t]+\$0,[ \t]+[a-z0-9_]+|msr[ \t]+[a-z0-9_]+,[ \t]+\$0)[ \t]*$`)
 
 func isSystemRegisterAsm(callee llvm.Value) bool {
 	return !callee.IsAInlineAsm().IsNil() && systemRegisterAsm.MatchString(callee.InlineAsmInfo().Assembly)

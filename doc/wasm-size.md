@@ -27,7 +27,15 @@ opaque inputs with `retain global initializers: native inputs in …`. Builds
 outside the eligible configuration skip the release pruning check.
 The compiler-generated default value formatter reports `specialize default value formatting`
 when selected. A `retain generic fmt` diagnostic identifies open link inputs,
-foreign entry points or a reachable general formatter.
+foreign entry points, unknown native input, or a reachable general formatter.
+
+Development LLGo builds also specialize typed value formatting on closed
+Emscripten J32/J64 and macOS arm64 programs with
+`-Oz -lto=full -deadcodedrop -globaldce=false`. This configuration can replace
+`encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
+layouts and standard byte orders. Mixed or dynamic uses retain the standard
+codec. With `-x`, selected codecs report
+`llgo: specialize fixed-size binary encoding`.
 
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi

@@ -42,6 +42,34 @@ func (plan *ValuePlan) IsGenericFormatter(fn *ssa.Function) bool {
 	return fn.Pkg == plan.callee.Pkg && (fn.Name() == "printArg" || fn.Name() == "printValue")
 }
 
+// HasDirectGenericPath rejects a candidate before RTA if static calls alone
+// still reach the generic formatter. Use it only after the tentative rewrite.
+func (plan *ValuePlan) HasDirectGenericPath(roots []*ssa.Function) bool {
+	work := append([]*ssa.Function(nil), roots...)
+	seen := make(map[*ssa.Function]bool)
+	for len(work) != 0 {
+		fn := work[len(work)-1]
+		work = work[:len(work)-1]
+		if seen[fn] {
+			continue
+		}
+		seen[fn] = true
+		if plan.IsGenericFormatter(fn) {
+			return true
+		}
+		for _, block := range fn.Blocks {
+			for _, inst := range block.Instrs {
+				if call, ok := inst.(ssa.CallInstruction); ok {
+					if callee := call.Common().StaticCallee(); callee != nil {
+						work = append(work, callee)
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Apply temporarily rewrites the calls while accept inspects the call graph.
 // Return the packages whose calls were replaced, or nil after restoring SSA.
 func (plan *ValuePlan) Apply(accept func() bool) map[*types.Package]bool {

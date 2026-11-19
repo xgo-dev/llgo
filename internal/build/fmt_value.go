@@ -153,9 +153,11 @@ func configureValueFormats(ctx *context, in *linkPruningInputs) {
 			}
 		}
 	}
-	var use *wasmProgramUse
 	ctx.valueFormatPackages = plan.Apply(func() bool {
-		use = analyzeWasmProgramUse(ctx.progSSA, roots)
+		if plan.HasDirectGenericPath(roots) {
+			return false
+		}
+		use := analyzeWasmProgramUse(ctx.progSSA, roots)
 		for fn := range use.reachable {
 			if plan.IsGenericFormatter(fn) {
 				return false
@@ -169,7 +171,6 @@ func configureValueFormats(ctx *context, in *linkPruningInputs) {
 		}
 		return
 	}
-	ctx.wasmProgramUseOnce.Do(func() { ctx.wasmProgramUse = use })
 	if verbose {
 		fmt.Fprintln(os.Stderr, "llgo: specialize default value formatting")
 	}

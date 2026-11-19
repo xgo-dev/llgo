@@ -78,6 +78,9 @@ func (p packageRewrites) apply(library *packages.Package, shortBuffer string) er
 	if strings.Contains(generated, mathAlias+".") {
 		fmt.Fprintf(&source, "import %s \"math\"\n", mathAlias)
 		dep := library.Imports["math"]
+		if dep == nil || dep.Types == nil {
+			return fmt.Errorf("generated binary codec needs math")
+		}
 		imports["math"] = dep.Types
 		p.pkg.Imports["math"] = dep
 	}
@@ -188,8 +191,6 @@ func addOffset(offset string, n int64) string {
 func (g *codecSource) basic(wire *layout, kind types.BasicKind, value, offset, mathAlias string, decode bool) {
 	b := &g.functions
 	width := wire.width
-	// Capture both complex components before a write to a potentially
-	// overlapping destination, as the reflective encoder does.
 	switch kind {
 	case types.Bool:
 		if decode {
@@ -199,6 +200,7 @@ func (g *codecSource) basic(wire *layout, kind types.BasicKind, value, offset, m
 		}
 		return
 	case types.Complex64, types.Complex128:
+		// Capture both components before writing a potentially overlapping destination.
 		width /= 2
 		second := addOffset(offset, width)
 		if decode {

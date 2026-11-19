@@ -207,6 +207,9 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			case tc.native && buildenv.Dev:
 				configureFormattingAndInits(ctx, "", nil)
 			case tc.foreignLink:
+				if opaque := opaqueGlobalInitPackage(ctx, make(map[string]bool), &linkPruningInputs{nativeFormat: true}); opaque == "" {
+					t.Error("external linker input must make hosted inputs opaque")
+				}
 				configureValueFormats(ctx, nil)
 			default:
 				configureValueFormats(ctx, in)

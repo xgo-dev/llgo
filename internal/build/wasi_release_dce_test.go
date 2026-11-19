@@ -191,7 +191,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 				}
 			}
 			readStderr := captureStderr(t)
-			inputs := ctx.wasiSizePruningInputs(t.TempDir())
+			inputs := ctx.wasiSizePruningInputs(t.TempDir(), false)
 			configureUnusedGlobalInits(ctx, inputs)
 			configureWasiReleaseDCE(ctx, inputs)
 			log := readStderr()
