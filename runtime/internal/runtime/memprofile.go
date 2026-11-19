@@ -31,7 +31,8 @@ const (
 	memProfileMaxSizeClass = uintptr(1) << memProfileMaxSizeShift
 )
 
-// Bucket i counts allocations rounded to 2^(memProfileMinSizeShift+i).
+// Bucket i counts allocations rounded up to 2^(memProfileMinSizeShift+i).
+// The last bucket also counts larger allocations.
 // Keeping sizes out of this array lets its counters start in zero-fill storage.
 var memProfileBuckets [memProfileMaxSizeShift - memProfileMinSizeShift + 1]memProfileCounter
 
