@@ -911,7 +911,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		goversion:      sourcePatchGoVersion,
 		toolTags:       sourceGo.toolTags,
 		buildFlags:     cfg.BuildFlags,
-		builtinFormats: conf.OptLevel == optlevel.Oz,
+		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
 		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
