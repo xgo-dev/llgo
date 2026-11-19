@@ -59,3 +59,67 @@ out:
 		t.Fatalf("second run changed module: %v", err)
 	}
 }
+
+const guardedVectorFixture = `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+define void @root(ptr %p) {
+ %a = call i1 @wide()
+ %b = call i1 @fma()
+ %both = and i1 %a, %b
+ br i1 %both, label %vector, label %exit
+vector:
+ %v = load <16 x float>, ptr %p, align 4
+ %neg = fneg <16 x float> %v
+ store <16 x float> %neg, ptr %p, align 4
+ br label %exit
+exit:
+ ret void
+}
+define void @unrelated(ptr %p, i1 %flag) {
+ %a = call i1 @wide()
+ %either = or i1 %a, %flag
+ br i1 %either, label %vector, label %exit
+vector:
+ %v = load <16 x float>, ptr %p, align 4
+ %neg = fneg <16 x float> %v
+ store <16 x float> %neg, ptr %p, align 4
+ br label %exit
+exit:
+ ret void
+}
+`
+
+func TestGuardedVectorConjunction(t *testing.T) {
+	m := parseModule(t, guardedVectorFixture)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	both := m.NamedFunction("root.__llgo_fmv_guard_avx512_fma")
+	if both.IsNil() || !strings.Contains(stringAttribute(both, "target-features"), "+fma") || !strings.Contains(stringAttribute(both, "target-features"), "+avx512f") {
+		t.Fatal("missing specialization for the conjunction")
+	}
+	if !m.NamedFunction("unrelated.__llgo_fmv_guard_base").IsNil() {
+		t.Fatal("a disjunction with an independent flag cannot establish AVX512")
+	}
+}
+
+func TestGuardedSymbolCollision(t *testing.T) {
+	for _, symbol := range []string{
+		"root.__llgo_fmv_guard_base",
+		"root.__llgo_fmv_guard_avx512_fma",
+		featureSymbol,
+	} {
+		t.Run(symbol, func(t *testing.T) {
+			m := parseModule(t, guardedVectorFixture+"\n@\""+symbol+"\" = global i8 0\n")
+			err := Run(m, "v1")
+			if err == nil || !strings.Contains(err.Error(), "symbol collision: "+symbol) {
+				t.Fatalf("expected collision on %s, got %v", symbol, err)
+			}
+		})
+	}
+}
