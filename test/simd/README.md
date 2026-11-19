@@ -50,11 +50,9 @@ defer/recover, goroutines, and scheduling. The hex-encoding workload checks
 all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
 It is a correctness workload, not a performance benchmark.
 
-Go helper bodies are compiled normally. Remaining bodyless intrinsic
-implementations panic with their symbol name; `unimplemented_llgo_test.go`
-checks direct, indirect, deferred, and linkname calls. SIMD reflection,
-general feature-combination FMV, and 512-bit vectors remain outside this stage.
-The initial amd64 SIMD256 coverage is described below.
+Go helper bodies are compiled normally. The declaration test loads the selected
+Go toolchain's `simd/archsimd` source for each target and checks every bodyless
+declaration against the compiler's lowering table.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
 `SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
@@ -115,7 +113,7 @@ conversions, integer extension/truncation/saturation, grouped concatenating
 saturation and 256-bit floating rounding are also implemented. Shape checks
 preserve selected lanes, zero-filled upper lanes and 128-bit group order;
 invalid floating-to-integer inputs retain the architecture's defined results.
-Remaining target-specific operations and SIMD512 retain the recoverable panic.
+The same group boundaries apply to SIMD512.
 
 Wide Go parameters and results use an explicit memory carrier on amd64,
 including indirect calls, cross-package calls and multiple-result tuples.
@@ -151,13 +149,37 @@ GOEXPERIMENT=simd llgo run ./test/simd/testdata/upstream-simd256-recover
 Portable `simd` also generates and selects a 256-bit variant on amd64, using
 these bridge operations. By-value native C bindings using these wide `archsimd`
 types receive a diagnostic; explicit memory interfaces remain available.
-Native C vector ABI and SIMD512 need separate qualification.
+By-value `archsimd` values across native C boundaries require a separate ABI contract.
+
+## AMD64 SIMD512
+
+The compiler recognizes all ten numeric 512-bit types and four mask shapes.
+Their Go size, alignment and indirect call carriers follow the same rules as
+the 256-bit family. Grouped permutations and saturating packing operate within
+128-bit groups. Mask bitsets can carry up to 64 active lanes.
+
+The AMD64 implementation includes compression and expansion, vector and scalar
+funnel shifts, truth tables, widening products, cryptographic rounds and scaled
+floating-point operations. Instruction-specific leaves check the effective CPU
+predicate before loading their vector operands from caller-owned storage.
+`GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
+
+On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
+
+```sh
+LLGO=/path/to/llgo SDE=/path/to/sde64 bash dev/test_simd_amd64_sde.sh
+```
+
+The script compares the complete upstream instruction case list against each
+compiler's passing tests and checks the selected portable width. It runs on
+a host that can execute the built Linux binaries and find their runtime
+libraries. Use hardware runs for throughput measurements.
 
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,
 arm64, and wasm. The first type check identifies dependent declarations;
-Midway generates emulated and 128-bit variants, plus a 256-bit variant on
+Midway generates emulated and 128-bit variants, plus 256-bit and 512-bit variants on
 amd64, rewrites their references to the official `simd/internal/bridge`, and
 type-checks the result before Go SSA.
 Importers see both the original declarations and the specialized exports.
@@ -173,19 +195,14 @@ dependency order, and execute side effects once; multiple `init` functions
 retain their order. The loader avoids requesting unused gc export data, which
 would otherwise run the official compiler's own Midway before LLGo's checks.
 
-On amd64, selection follows Go's effective AVX/AVX2 and VPCLMULQDQ policy,
-with the maximum compiled width capped at 256. AVX2 without VPCLMULQDQ defaults
-to 128 bits; `GODEBUG=simd=+256` overrides that feature reduction. The implemented
-256-bit bridge operations remain baseline-safe, including carryless multiply.
-`GODEBUG=simd=0` selects emulation. When hardware is eligible, explicit widths
-above its supported maximum fail; with no eligible hardware, Go's initialization
-selects emulation before processing width requests. ARM64 and wasm retain their
-128-bit feature policy. CPU queries and LLVM's instruction-level FMV remain
-separate from this representation choice.
+On amd64 the upstream width selector uses effective AVX, AVX2, AVX512 and
+carryless-multiply flags. An explicit `+` bypasses the all-feature downgrade
+within the available hardware width. `GODEBUG=simd=0` selects emulation.
+ARM64 and Wasm retain their 128-bit feature policy.
 
-The native amd64 matrix exercises default, emulated, 128-bit and eligible
-256-bit selection at O0/O2 and Thin/Full LTO, including disabled CPU features
-and rejected width requests. Cross-package calls, indirect calls, global
+The native amd64 matrix exercises default, emulated and eligible explicit
+widths at O0/O2 and Thin/Full LTO, including CPU overrides and rejected width
+requests. Cross-package calls, indirect calls, global
 initialization and deferred recovery use the same selected representation.
 LLVM tests verify that ARM64 and Wasm do not acquire 256-bit variants.
 
@@ -207,7 +224,7 @@ The latter two cases produce source diagnostics. Midway also diagnoses
 or link directives targeting a known SIMD-dependent global: an external storage
 binding needs an ABI shared by all concrete representations. Embedded named
 strings and byte slices retain their contents in every generated variant.
-512-bit variants and general FMV are follow-up work.
+The AVX2 function multiversioning policy is described below.
 
 For the WASI portable matrix, including explicit guest emulation, run
 `LLGO=/path/to/llgo bash dev/test_portable_simd_wasi.sh`. It passes `GODEBUG`
@@ -326,8 +343,7 @@ Vector results keep their native register ABI.
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
 other observable query results. In particular, the AVX and FMA queries remain
-dynamic when AVX2 is enabled. This does not implement portable `simd` width
-selection or 256/512-bit vector calling conventions.
+dynamic when AVX2 is enabled. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -452,8 +468,7 @@ queries with official Go and check the platform hooks:
 go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestEmscriptenSIMDCallBridge)' -count=1
 ```
 
-Generic LLVM legalization keeps the implemented native operations valid for
-the compilation baseline. The amd64 assembly check explicitly uses
+Generic LLVM legalization handles baseline operations. CPU-guarded leaves carry the features required by instruction-specific operations. The amd64 assembly check explicitly uses
 `GOAMD64=v1` and rejects AVX instructions. Tests needing official AVX512 APIs
 use separate LLGo-only scalar-reference cases when that hardware is not
 available; this does not qualify native AVX512 execution.
