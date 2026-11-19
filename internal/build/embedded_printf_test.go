@@ -20,6 +20,8 @@ func cstr(string) *byte
 func printf(*byte, ...any)
 func fprintf(int, *byte, ...any)
 func warn(*byte, ...any)
+type Format byte
+func (*Format) Printf(...any) {}
 `
 	for _, test := range []struct {
 		name, code string
@@ -32,6 +34,8 @@ func warn(*byte, ...any)
 		{"dynamic", `func main() { output(cstr("%g")) }; func output(s *byte) { printf(s, 1.25) }`, false, true},
 		{"function value", `var f = printf; func main() { f(cstr("%f"), 1.25) }`, false, true},
 		{"foreign alias", `func main() { warn(cstr("%f"), 1.25) }`, false, true},
+		{"method", `func main() { (*Format)(nil).Printf(1.25) }`, false, true},
+		{"alternate archive source", `func main() { printf(cstr("%f"), 1.25) }`, false, true},
 		{"link override", `func main() {}`, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -40,6 +44,9 @@ func warn(*byte, ...any)
 			defer prog.Dispose()
 			for name, link := range map[string]string{"cstr": "llgo.cstr", "printf": "C.printf", "fprintf": "C.fprintf", "warn": "C.warn"} {
 				prog.SetLinkname(llssa.FullName(ssaPkg.Pkg, name), link)
+			}
+			if test.name == "method" {
+				prog.SetLinkname("main.(*Format).Printf", "C.printf")
 			}
 			pkg := &packages.Package{Name: "main", PkgPath: "main", Types: ssaPkg.Pkg}
 			ctx := &context{
@@ -50,7 +57,12 @@ func warn(*byte, ...any)
 			if test.custom {
 				ctx.buildConf.LinkOptions.ExternalLinkerFlags = "-lfmt"
 			}
-			configureEmbeddedPrintf(ctx)
+			archive := &aPackage{Package: pkg, SSA: ssaPkg}
+			if test.name == "alternate archive source" {
+				archive.SSA = nil
+				archive.AltPkg = &packages.Cached{Package: pkg, Types: ssaPkg.Pkg}
+			}
+			configureEmbeddedPrintf(ctx, []*aPackage{archive})
 			if got := slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot); got != test.keep {
 				t.Fatalf("keep float root = %v, want %v", got, test.keep)
 			}

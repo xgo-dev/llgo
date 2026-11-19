@@ -2727,7 +2727,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	// Even a leaf export needs the runtime for foreign-thread registration.
 	needRuntime = needRuntime || len(cExports) != 0
 	if !needRuntime && !needPyInit && len(linkArgs) == 0 {
-		configureEmbeddedPrintf(ctx)
+		configureEmbeddedPrintf(ctx, linkedOrder)
 	}
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).

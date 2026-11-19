@@ -18,9 +18,10 @@ const espPrintfFloatRoot = "--undefined=_printf_float"
 
 // The stock ESP32-C3 newlib is built with nano formatted I/O. Its printf
 // implementation can omit the floating-point backend if every Go call site
-// has a known integer-only format. The linker calls this proof only when it
-// has established that it will omit the Go runtime and its panic formatter.
-func configureEmbeddedPrintf(ctx *context) {
+// has a known integer-only format. planMainLink calls this for C-only links
+// without extra package linker arguments. The input proof also excludes
+// foreign objects and linker overrides.
+func configureEmbeddedPrintf(ctx *context, linkedOrder []*aPackage) {
 	conf := ctx.buildConf
 	if conf.Target != "esp32c3-basic" || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full ||
 		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.frontend != nil || len(ctx.initial) != 1 ||
@@ -42,10 +43,24 @@ func configureEmbeddedPrintf(ctx *context) {
 		if fn.Pkg == nil {
 			return ""
 		}
-		name, _ := ctx.prog.Linkname(llssa.FullName(fn.Pkg.Pkg, fn.Name()))
+		pkg := fn.Pkg.Pkg
+		symbol := llssa.FuncName(pkg, fn.Name(), fn.Signature.Recv(), true)
+		name, _ := ctx.prog.Linkname(symbol)
 		return name
 	}
-	if needsEmbeddedPrintfFloat(ssautil.AllFunctions(ctx.progSSA), extern) {
+	linked := make(map[*ssa.Package]bool)
+	for _, archive := range linkedOrder {
+		if isRuntimePkg(archive.PkgPath) {
+			continue
+		}
+		linked[archive.SSA] = true
+		// The alternate package is emitted into this ordinary archive, even
+		// though the alternate source belongs to the runtime module.
+		if archive.AltPkg != nil {
+			linked[ctx.progSSA.Package(archive.AltPkg.Types)] = true
+		}
+	}
+	if needsEmbeddedPrintfFloat(ssautil.AllFunctions(ctx.progSSA), linked, extern) {
 		return
 	}
 	ctx.crossCompile.LDFLAGS = slices.DeleteFunc(slices.Clone(ctx.crossCompile.LDFLAGS), func(flag string) bool {
@@ -56,11 +71,15 @@ func configureEmbeddedPrintf(ctx *context) {
 	}
 }
 
-func needsEmbeddedPrintfFloat(functions map[*ssa.Function]bool, extern func(*ssa.Function) string) bool {
+func needsEmbeddedPrintfFloat(functions map[*ssa.Function]bool, linked map[*ssa.Package]bool, extern func(*ssa.Function) string) bool {
 	var scratch [8]*ssa.Value
 	for fn := range functions {
-		if fn.Pkg != nil && isRuntimePkg(fn.Pkg.Pkg.Path()) {
+		if fn.Pkg != nil && !linked[fn.Pkg] {
 			continue
+		}
+		// A C-linked method can derive the format from its receiver.
+		if fn.Signature.Recv() != nil && isPrintfSymbol(extern(fn)) {
+			return true
 		}
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instrs {
