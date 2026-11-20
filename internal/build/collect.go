@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -253,7 +254,12 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
 	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
 	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
-	m.pkg.GuardMapInitializers = pkg.guardMapInitializers
+	for _, groups := range pkg.guardedInitializers {
+		for _, group := range groups {
+			m.pkg.InitializerGuards = append(m.pkg.InitializerGuards, cl.InitializerGuardName(group.Global))
+		}
+	}
+	slices.Sort(m.pkg.InitializerGuards)
 	if m.pkg.SpecializeBinary || m.pkg.SpecializeJSON {
 		m.pkg.CodecInitDrops = slices.Sorted(maps.Keys(c.codecInitDrops))
 	}

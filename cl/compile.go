@@ -61,9 +61,9 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
-	// GuardMapInitializers emits weak defaults for selected data tables.
-	// Only the final-link module may override those defaults.
-	GuardMapInitializers bool
+	// GuardedInitializers emits weak defaults for selected package variables.
+	// The final link can override a default after proving the variable unused.
+	GuardedInitializers map[*ssa.BasicBlock][]OptionalInitializer
 	// EscapeAnalysis contains immutable storage decisions prepared before
 	// backend workers. Direct API callers may omit it to analyze their input.
 	EscapeAnalysis *goescape.Result
@@ -1284,17 +1284,14 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	isCgoCfunc := isCgoCfunc(fnName)
 	isCgoC2 := isCgoC2func(fnName)
 	isCgoCmacro := isCgoCmacro(fnName)
-	var maps []OptionalMapInitializer
-	var mapEnd llssa.BasicBlock
-	if p.options.GuardMapInitializers && block.Parent().Synthetic == "package initializer" {
-		maps = optionalMapInitializersInBlock(block)
-	}
+	initializers := p.options.GuardedInitializers[block]
+	var initEnd llssa.BasicBlock
 	for i, instr := range instrs {
-		if len(maps) != 0 && instr == maps[0].Make {
+		if len(initializers) != 0 && instr == initializers[0].First {
 			body := fn.MakeBlock()
-			mapEnd = fn.MakeBlock()
-			guard := DefineMapInitializerGuard(pkg, MapInitializerGuardName(maps[0].Global), true)
-			b.If(b.Load(guard.Expr), body, mapEnd)
+			initEnd = fn.MakeBlock()
+			guard := DefineInitializerGuard(pkg, InitializerGuardName(initializers[0].Global), true)
+			b.If(b.Load(guard.Expr), body, initEnd)
 			b.SetBlock(body)
 		}
 		if p.isCooperativeSafepoint(instr) {
@@ -1346,10 +1343,10 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 			}
 		} else {
 			p.compileInstr(b, instr)
-			if len(maps) != 0 && instr == maps[0].Store {
-				b.Jump(mapEnd)
-				b.SetBlock(mapEnd)
-				maps = maps[1:]
+			if len(initializers) != 0 && instr == initializers[0].Store {
+				b.Jump(initEnd)
+				b.SetBlock(initEnd)
+				initializers = initializers[1:]
 			}
 			// llgo.unreachable is an LLVM terminator. Go SSA still appends a
 			// synthetic Return for a direct tail call, so do not lower that

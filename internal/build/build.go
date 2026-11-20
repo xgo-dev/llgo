@@ -1170,6 +1170,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		buildSSAPkgs(ctx, ssaEntries)
 	}
 	var asmRoots *linkPruningInputs
+	var formatInputs *linkPruningInputs
 	var preparedInitializers bool
 	if ctx.frontend == nil {
 		if err := recordPackageSSAInstructions(ctx); err != nil {
@@ -1179,7 +1180,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			// Resolve the rewrite before collecting initializer and feature usage.
 			configureRuntimeFree(ctx)
 			asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, true)
-			formatInputs := configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+			formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			configureCodecInits(ctx, formatInputs)
 			preparedInitializers = true
 		}
@@ -1218,9 +1219,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if !preparedInitializers {
 		configureRuntimeFree(ctx)
 		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, false)
-		configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
-	configureOptionalMapInitializers(ctx, sourcePatchGOROOT)
+	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -2025,7 +2026,7 @@ type context struct {
 	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
 	codecInitDrops       map[string]bool
-	mapInitDrops         []string
+	initializerGuardsOff []string
 	wasmRuntimeFree      bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
@@ -2907,8 +2908,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
 	}
-	for _, name := range ctx.mapInitDrops {
-		cl.DefineMapInitializerGuard(entryPkg.LPkg, name, false)
+	for _, name := range ctx.initializerGuardsOff {
+		cl.DefineInitializerGuard(entryPkg.LPkg, name, false)
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
@@ -3765,7 +3766,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
 	options.StaticByteArrays = aPkg.staticByteArrays
-	options.GuardMapInitializers = aPkg.guardMapInitializers
+	options.GuardedInitializers = aPkg.guardedInitializers
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
@@ -4392,15 +4393,15 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs             []string
-	ObjFiles             []string               // file-backed archive members: .o or .ll
-	ObjBuffers           []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile          string                 // archive file: .a (output of archiver, used for linking)
-	Meta                 *meta.PackageMeta
-	rewriteVars          map[string]string
-	staticByteArrays     map[string][]byte
-	guardMapInitializers bool
-	tempObjFiles         []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs            []string
+	ObjFiles            []string               // file-backed archive members: .o or .ll
+	ObjBuffers          []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile         string                 // archive file: .a (output of archiver, used for linking)
+	Meta                *meta.PackageMeta
+	rewriteVars         map[string]string
+	staticByteArrays    map[string][]byte
+	guardedInitializers map[*ssa.BasicBlock][]cl.OptionalInitializer
+	tempObjFiles        []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 

@@ -15,7 +15,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestOptionalMapInitializers(t *testing.T) {
+func TestOptionalInitializersMaps(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("native size profile requires DCE")
 	}
@@ -81,17 +81,42 @@ func Lookup() int { return Table["key"].N }
 			if tc.linkname {
 				backend.SetLinkname("other.lookup", "data.Lookup")
 			}
-			configureOptionalMapInitializers(ctx, goroot)
-			if got := pkgs["data"].guardMapInitializers; got != tc.wantGuard {
+			configureOptionalInitializers(ctx, goroot, nil)
+			if got := len(pkgs["data"].guardedInitializers) != 0; got != tc.wantGuard {
 				t.Fatalf("archive guard = %v, want %v", got, tc.wantGuard)
 			}
 			var want []string
 			if tc.wantDrop {
-				want = []string{"_llgo_init_map.data.Table"}
+				want = []string{"_llgo_init_var.data.Table"}
 			}
-			if !slices.Equal(ctx.mapInitDrops, want) {
-				t.Fatalf("link overrides = %v, want %v", ctx.mapInitDrops, want)
+			if !slices.Equal(ctx.initializerGuardsOff, want) {
+				t.Fatalf("link overrides = %v, want %v", ctx.initializerGuardsOff, want)
 			}
 		})
+	}
+}
+
+func TestOptionalInitializersStandardFiles(t *testing.T) {
+	const source = `package os
+type File struct{}
+func NewFile(uintptr, string) *File { return new(File) }
+func other(uintptr, string) *File { return new(File) }
+func filename() string { return "/dev/stderr" }
+var Stdin = NewFile(0, "/dev/stdin")
+var Stdout = NewFile(2, "/dev/stdout")
+var Stderr = NewFile(2, filename())
+var Other = NewFile(0, "/dev/stdin")
+var OtherCall = other(1, "/dev/stdout")
+`
+	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+	pkg := checkFormatTestPackage(t, prog.Fset, "os", source, types.Config{})
+	ssapkg := prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+	prog.Build()
+	groups := optionalStandardFileInitializers(ssapkg.Func("init"))
+	if len(groups) != 1 || groups[0].Global.Name() != "Stdin" {
+		t.Fatalf("wanted exactly the matching standard file initializer, got %v", groups)
+	}
+	if groups := optionalStandardFileInitializers(ssapkg.Func("NewFile")); len(groups) != 0 {
+		t.Fatalf("matched initialization in an ordinary function: %v", groups)
 	}
 }

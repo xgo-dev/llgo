@@ -9,15 +9,15 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// OptionalMapInitializer is a map literal stored in a package variable.
-type OptionalMapInitializer struct {
-	Make   *ssa.MakeMap
+// OptionalInitializer is an instruction range ending with a package variable store.
+type OptionalInitializer struct {
+	First  ssa.Instruction
 	Store  *ssa.Store
 	Global *ssa.Global
 }
 
 // OptionalMapInitializers finds map literals that can be guarded independently.
-func OptionalMapInitializers(fn *ssa.Function) (groups []OptionalMapInitializer) {
+func OptionalMapInitializers(fn *ssa.Function) (groups []OptionalInitializer) {
 	if fn != nil && fn.Synthetic == "package initializer" {
 		for _, block := range fn.Blocks {
 			groups = append(groups, optionalMapInitializersInBlock(block)...)
@@ -28,8 +28,8 @@ func OptionalMapInitializers(fn *ssa.Function) (groups []OptionalMapInitializer)
 
 // Accept a contiguous literal with no effects other than constructing the
 // map and storing its address. Every value computed in the group is local.
-func optionalMapInitializersInBlock(block *ssa.BasicBlock) []OptionalMapInitializer {
-	var groups []OptionalMapInitializer
+func optionalMapInitializersInBlock(block *ssa.BasicBlock) []OptionalInitializer {
+	var groups []OptionalInitializer
 	var current *ssa.MakeMap
 	start := 0
 	for i, inst := range block.Instrs {
@@ -52,8 +52,8 @@ func optionalMapInitializersInBlock(block *ssa.BasicBlock) []OptionalMapInitiali
 		case *ssa.Store:
 			global, ok := v.Addr.(*ssa.Global)
 			if current != nil && v.Val == current && ok && global.Pkg == block.Parent().Pkg &&
-				mapInitializerHasLocalUses(block.Instrs[start:i+1]) {
-				groups = append(groups, OptionalMapInitializer{Make: current, Store: v, Global: global})
+				InitializerHasLocalUses(block.Instrs[start:i+1]) {
+				groups = append(groups, OptionalInitializer{First: current, Store: v, Global: global})
 			}
 			current = nil
 		default:
@@ -63,7 +63,8 @@ func optionalMapInitializersInBlock(block *ssa.BasicBlock) []OptionalMapInitiali
 	return groups
 }
 
-func mapInitializerHasLocalUses(instrs []ssa.Instruction) bool {
+// InitializerHasLocalUses determines whether all computed values stay within the range.
+func InitializerHasLocalUses(instrs []ssa.Instruction) bool {
 	owned := make(map[ssa.Instruction]bool, len(instrs))
 	for _, inst := range instrs {
 		owned[inst] = true
@@ -86,14 +87,14 @@ func mapInitializerHasLocalUses(instrs []ssa.Instruction) bool {
 	return true
 }
 
-// MapInitializerGuardName identifies a package variable's initializer guard.
-func MapInitializerGuardName(g *ssa.Global) string {
-	return "_llgo_init_map." + llssa.FullName(g.Pkg.Pkg, g.Name())
+// InitializerGuardName identifies a package variable's initializer guard.
+func InitializerGuardName(g *ssa.Global) string {
+	return "_llgo_init_var." + llssa.FullName(g.Pkg.Pkg, g.Name())
 }
 
-// DefineMapInitializerGuard emits a weak true default in the package archive
+// DefineInitializerGuard emits a weak true default in the package archive
 // or a strong false override for a closed final link.
-func DefineMapInitializerGuard(pkg llssa.Package, name string, enabled bool) llssa.Global {
+func DefineInitializerGuard(pkg llssa.Package, name string, enabled bool) llssa.Global {
 	prog := pkg.Prog
 	guard := pkg.NewVarEx(name, prog.Pointer(prog.Bool()))
 	guard.Init(prog.BoolVal(enabled))

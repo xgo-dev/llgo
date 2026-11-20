@@ -17,43 +17,68 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Determine which initialized maps are visible to this executable. The
-// package archive always defines the same guards for the native size profile.
-func configureOptionalMapInitializers(ctx *context, goroot string) {
+// Select unused initializers at the final link. Each package archive defines
+// the same guards for every executable in the selected size profile.
+func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPruningInputs) {
 	conf := ctx.buildConf
-	if conf.Goarch == "wasm" || !hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions) ||
+	if !hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions) ||
 		ctx.progSSA == nil || ctx.frontend != nil || len(conf.SourceOverlay) != 0 {
 		return
 	}
+	browser := conf.Goarch == "wasm"
 	candidates := make(map[*ssa.Global]*ssa.Store)
 	for _, pkg := range ctx.pkgByID {
-		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) || !hasStaticMapValues(pkg.Package) {
+		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
 			continue
 		}
-		if source := ctx.progSSA.Package(pkg.Types); source != nil {
-			for _, group := range cl.OptionalMapInitializers(source.Func("init")) {
-				pkg.guardMapInitializers = true
-				candidates[group.Global] = group.Store
-			}
+		source := ctx.progSSA.Package(pkg.Types)
+		if source == nil {
+			continue
+		}
+		var groups []cl.OptionalInitializer
+		switch {
+		case browser && pkg.PkgPath == "os":
+			groups = optionalStandardFileInitializers(source.Func("init"))
+		case !browser && hasStaticMapValues(pkg.Package):
+			groups = cl.OptionalMapInitializers(source.Func("init"))
+		}
+		if len(groups) == 0 {
+			continue
+		}
+		pkg.guardedInitializers = make(map[*ssa.BasicBlock][]cl.OptionalInitializer)
+		for _, group := range groups {
+			block := group.First.Block()
+			pkg.guardedInitializers[block] = append(pkg.guardedInitializers[block], group)
+			candidates[group.Global] = group.Store
 		}
 	}
-	if !ctx.nativeClosedProgram || len(candidates) == 0 {
+	if len(candidates) == 0 {
+		return
+	}
+	assembly := ctx.sizePruningRoots
+	if browser {
+		if !ctx.wasmClosedProgram || inputs == nil || inputs.opaqueAsmPkg != "" ||
+			len(ctx.initial) != 1 || hasOpaqueFormatExports(ctx, goroot) {
+			return
+		}
+		assembly = inputs.roots
+	} else if !ctx.nativeClosedProgram {
 		return
 	}
 
 	roots := wasmReflectRoots(ctx)
 	blankImports := make(map[string]bool)
 	for _, pkg := range ctx.pkgByID {
-		roots = mapInitializerRoots(ctx, roots, pkg.Package, goroot, blankImports)
+		roots = guardedInitializerRoots(ctx, roots, pkg.Package, goroot, blankImports)
 		if pkg.AltPkg != nil {
-			roots = mapInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports)
+			roots = guardedInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports)
 		}
 	}
-	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, ctx.sizePruningRoots)
+	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, assembly)
 	for global := range candidates {
 		name := llssa.FullName(global.Pkg.Pkg, global.Name())
 		if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) ||
-			blankImports[global.Pkg.Pkg.Path()] || slices.Contains(ctx.sizePruningRoots, name) {
+			blankImports[global.Pkg.Pkg.Path()] || slices.Contains(assembly, name) {
 			delete(candidates, global)
 		}
 	}
@@ -77,11 +102,15 @@ func configureOptionalMapInitializers(ctx *context, goroot string) {
 		}
 	}
 	for global := range candidates {
-		ctx.mapInitDrops = append(ctx.mapInitDrops, cl.MapInitializerGuardName(global))
+		ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, cl.InitializerGuardName(global))
 	}
-	slices.Sort(ctx.mapInitDrops)
-	if len(ctx.mapInitDrops) != 0 && (conf.Verbose || conf.PrintCommands) {
-		fmt.Fprintf(os.Stderr, "llgo: omit unused map initializers (%d)\n", len(ctx.mapInitDrops))
+	slices.Sort(ctx.initializerGuardsOff)
+	if len(ctx.initializerGuardsOff) != 0 && (conf.Verbose || conf.PrintCommands) {
+		kind := "map"
+		if browser {
+			kind = "standard file"
+		}
+		fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, len(ctx.initializerGuardsOff))
 	}
 }
 
@@ -134,7 +163,7 @@ func staticDataExpr(pkg *packages.Package, expr ast.Expr) bool {
 	return false
 }
 
-func mapInitializerRoots(ctx *context, roots []*ssa.Function, pkg *packages.Package, goroot string, blankImports map[string]bool) []*ssa.Function {
+func guardedInitializerRoots(ctx *context, roots []*ssa.Function, pkg *packages.Package, goroot string, blankImports map[string]bool) []*ssa.Function {
 	if pkg == nil || pkg.Types == nil {
 		return roots
 	}

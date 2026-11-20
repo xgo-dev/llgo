@@ -48,6 +48,10 @@ Emscripten Full LTO size builds repeat Binaryen size passes while the
 deployment module shrinks. Embedded and external DWARF profiles use a single
 pass.
 
+Closed Emscripten size builds can omit the setup of unreferenced Go standard
+files. The final link selects the setup to omit from the cached `os` archive.
+Code that uses or reassigns a standard stream keeps its initialization.
+
 In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
 `encoding/json.Marshal` calls to typed encoders. Closed shapes can use
 integers, booleans, strings, pointers, arrays, slices, structs and string-keyed

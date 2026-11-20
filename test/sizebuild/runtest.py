@@ -106,6 +106,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     binary_marker = "llgo: specialize fixed-size binary encoding"
     json_marker = "llgo: specialize statically typed JSON codec"
     init_marker = "llgo: omit unused JSON package initialization"
+    standard_file_marker = "llgo: omit unused standard file initializers"
     linux_native = target == "native" and platform.system() == "Linux"
     linux_amd64 = linux_native and platform.machine() == "x86_64"
     mac_arm64 = target == "native" and platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -127,6 +128,9 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     if target != "wasi" and (not linux_native or linux_amd64):
         fixtures.append(("wasm-fmt-map", "wasi default value formatting ok",
                          "llgo: specialize default value formatting", True))
+    if target.startswith("emscripten"):
+        fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
+                         standard_file_marker, False))
     if linux_amd64 or mac_arm64:
         fixture = "native-link-parity"
         expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
@@ -140,6 +144,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                        "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
         if (marker in log) != specialized:
             raise RuntimeError(f"{target} {fixture}: incorrect specialization policy\n{log}")
+        if target.startswith("emscripten") and fixture == "wasm-fmt-map" and standard_file_marker not in log:
+            raise RuntimeError(f"{target}: unused standard files retained\n{log}")
         if linux_amd64 and on_v2 and fixture in ("json-static", "json-typed-decode"):
             if init_marker not in log:
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
