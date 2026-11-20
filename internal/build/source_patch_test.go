@@ -216,11 +216,6 @@ func logPackageErrors(t *testing.T, pkg *packages.Package, seen map[string]bool)
 }
 
 func TestWasmKeepsStandardLibraryAssembly(t *testing.T) {
-	for _, pkgPath := range []string{"internal/bytealg", "internal/chacha8rand"} {
-		if llruntime.HasSourcePatchPkg(pkgPath) {
-			t.Fatalf("%s should use its standard-library wasm implementation", pkgPath)
-		}
-	}
 	for _, pkgPath := range []string{"internal/runtime/atomic", "crypto/internal/boring/sig", "math"} {
 		if llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, "wasm") {
 			t.Fatalf("%s should retain the Go wasm assembly implementation", pkgPath)
@@ -230,13 +225,19 @@ func TestWasmKeepsStandardLibraryAssembly(t *testing.T) {
 		}
 	}
 
-	overlay, _, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), runtime.GOROOT(), sourcePatchBuildContext{
-		goos:      "js",
-		goarch:    "wasm",
-		goversion: runtime.Version(),
+	overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), runtime.GOROOT(), sourcePatchBuildContext{
+		goos:       "js",
+		goarch:     "wasm",
+		goversion:  runtime.Version(),
+		buildFlags: []string{"-tags=llgo"},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, pkgPath := range []string{"internal/bytealg", "internal/chacha8rand"} {
+		if len(files[pkgPath]) != 0 {
+			t.Fatalf("%s should use its standard-library wasm implementation", pkgPath)
+		}
 	}
 	for _, file := range []string{
 		"internal/bytealg/compare_wasm.s",
@@ -566,6 +567,56 @@ func TestCompilePkgSFilesSkipsSourcePatchedAssembly(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("compilePkgSFiles returned %v, want no object files", got)
+	}
+}
+
+func TestBaremetalARMSourcePatchAssembly(t *testing.T) {
+	for _, test := range []struct {
+		pkg, filename, goversion string
+	}{
+		{"runtime/internal/atomic", "atomic_arm.s", "go1.20"},
+		{"runtime/internal/syscall", "asm_linux_arm.s", "go1.20"},
+		{"internal/bytealg", "compare_arm.s", "go1.20"},
+		{"internal/chacha8rand", "chacha8_stub.s", "go1.22"},
+		{"internal/runtime/syscall", "asm_linux_arm.s", "go1.23"},
+		{"internal/runtime/syscall/linux", "asm_linux_arm.s", "go1.26"},
+	} {
+		t.Run(test.pkg, func(t *testing.T) {
+			goroot := t.TempDir()
+			target := sourcePatchBuildContext{goos: "linux", goarch: "arm", goversion: test.goversion}
+			path := filepath.Join(goroot, "src", filepath.FromSlash(test.pkg), test.filename)
+			mustWriteFile(t, path, "TEXT ·unused(SB),$0\n")
+			for _, tags := range []struct {
+				flags, targetTags []string
+				baremetal         bool
+			}{
+				{[]string{"-tags=llgo"}, nil, false},
+				{[]string{"-tags=llgo,baremetal,llgo.baremetal.stdio"}, nil, true},
+				{[]string{"-tags=llgo"}, []string{"baremetal", "llgo.baremetal.stdio"}, true},
+			} {
+				target.buildFlags, target.targetTags = tags.flags, tags.targetTags
+				_, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), goroot, test.pkg, target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, replaced := overlay[path]; replaced != tags.baremetal {
+					t.Fatalf("assembly replaced = %v with tags %+v", replaced, tags)
+				}
+				if tags.baremetal {
+					ctx := &context{
+						conf:         &packages.Config{BuildFlags: target.buildFlags},
+						buildConf:    &Config{Goarch: "arm"},
+						crossCompile: crosscompile.Export{BuildTags: target.targetTags},
+						patchFiles:   map[string][]string{test.pkg: files},
+						sfilesCache:  map[string][]string{test.pkg: {path}},
+					}
+					planned, err := compiledPkgSFiles(ctx, &packages.Package{ID: test.pkg, PkgPath: test.pkg})
+					if err != nil || len(planned) != 0 {
+						t.Fatalf("source-patched assembly planned = %v, error = %v", planned, err)
+					}
+				}
+			}
+		})
 	}
 }
 

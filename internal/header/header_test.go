@@ -2,9 +2,12 @@ package header
 
 import (
 	"bytes"
+	"fmt"
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -121,6 +124,91 @@ func TestGenHeaderMissingExport(t *testing.T) {
 	err := genHeader(prog, []ssa.Package{pkg}, &bytes.Buffer{})
 	if err == nil || err.Error() != "function Missing not found in package "+pkgPath {
 		t.Fatalf("genHeader() error = %v", err)
+	}
+}
+
+func TestGenHeaderGoWordLayout(t *testing.T) {
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang is required to check generated C and C++ layouts")
+	}
+	for _, tc := range []struct {
+		target                ssa.Target
+		pointerSize, wordSize int
+	}{
+		{ssa.Target{GOOS: "linux", GOARCH: "386"}, 4, 4},
+		{ssa.Target{GOOS: "linux", GOARCH: "amd64"}, 8, 8},
+		{ssa.Target{GOOS: "windows", GOARCH: "amd64"}, 8, 8},
+		{ssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"}, 4, 8},
+		{ssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", LLVMTarget: "wasm32-unknown-emscripten"}, 4, 8},
+		{ssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", LLVMTarget: "wasm64-unknown-emscripten"}, 8, 8},
+	} {
+		t.Run(tc.target.Spec().Triple, func(t *testing.T) {
+			prog := ssa.NewProgram(&tc.target)
+			defer prog.Dispose()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "goword.h")
+			pkg := prog.NewPackage("probe", "probe")
+			for name, kind := range map[string]types.BasicKind{
+				"SignedWord": types.Int, "UnsignedWord": types.Uint, "CAddress": types.Uintptr,
+			} {
+				word := types.NewTuple(types.NewVar(token.NoPos, nil, "x", types.Typ[kind]))
+				pkg.NewFunc(name, types.NewSignatureType(nil, nil, nil, word, word, false), ssa.CDecl)
+				pkg.SetExport(name, name)
+			}
+			if err := GenHeaderFile(prog, []ssa.Package{pkg}, "goword", path, false); err != nil {
+				t.Fatal(err)
+			}
+			signedWord, unsignedWord := "intptr_t", "uintptr_t"
+			if tc.target.WasmProfile != "" {
+				signedWord, unsignedWord = "int64_t", "uint64_t"
+			}
+			// Freestanding compilation uses Clang's standard integer definitions
+			// without requiring a target SDK, libraries, or an executable runner.
+			source := fmt.Sprintf(`#include "goword.h"
+#include <stddef.h>
+#ifdef __cplusplus
+#define ASSERT static_assert
+#define ALIGNOF alignof
+#else
+#define ASSERT _Static_assert
+#define ALIGNOF _Alignof
+#endif
+ASSERT(sizeof(void *) == %[1]d, "physical pointer width");
+ASSERT(sizeof(((GoString *)0)->n) == %[2]d, "Go string length width");
+ASSERT(offsetof(GoString, p) == 0, "Go string data offset");
+ASSERT(offsetof(GoString, n) == %[2]d, "Go string length offset");
+ASSERT(sizeof(GoString) == 2 * %[2]d, "Go string size");
+ASSERT(ALIGNOF(GoString) == %[2]d, "Go string alignment");
+ASSERT(sizeof(((GoSlice *)0)->data) == %[1]d, "C slice pointer width");
+ASSERT(sizeof(((GoSlice *)0)->len) == %[2]d, "Go slice length width");
+ASSERT(sizeof(((GoSlice *)0)->cap) == %[2]d, "Go slice capacity width");
+ASSERT(offsetof(GoSlice, data) == 0, "Go slice data offset");
+ASSERT(offsetof(GoSlice, len) == %[2]d, "Go slice length offset");
+ASSERT(offsetof(GoSlice, cap) == 2 * %[2]d, "Go slice capacity offset");
+ASSERT(sizeof(GoSlice) == 3 * %[2]d, "Go slice size");
+ASSERT(ALIGNOF(GoSlice) == %[2]d, "Go slice alignment");
+#ifdef __cplusplus
+extern "C" {
+#endif
+%[3]s SignedWord(%[3]s);
+%[4]s UnsignedWord(%[4]s);
+uintptr_t CAddress(uintptr_t);
+#ifdef __cplusplus
+}
+#endif
+`, tc.pointerSize, tc.wordSize, signedWord, unsignedWord)
+			for _, language := range []struct{ name, standard string }{{"c", "c11"}, {"c++", "c++17"}} {
+				t.Run(language.standard, func(t *testing.T) {
+					cmd := exec.Command(clang, "--target="+tc.target.Spec().Triple, "-ffreestanding", "-fsyntax-only",
+						"-Werror", "-x", language.name, "-std="+language.standard, "-I", dir, "-")
+					cmd.Stdin = strings.NewReader(source)
+					if output, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("generated Go ABI declarations: %v\n%s", err, output)
+					}
+				})
+			}
+		})
 	}
 }
 

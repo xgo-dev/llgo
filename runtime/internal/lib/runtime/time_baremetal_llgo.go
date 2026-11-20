@@ -102,7 +102,3 @@ func resetTimer(t *timeTimer, when, period int64) bool {
 	}
 	return resetRuntimeTimer(&t.r, when, period, t.r.f, t.r.arg, t.r.seq)
 }
-
-func runtimeNano() int64 {
-	return 0
-}

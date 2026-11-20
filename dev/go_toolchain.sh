@@ -3,6 +3,10 @@
 # Shared helpers for selecting exact Go toolchains in local and CI scripts.
 # This file is intended to be sourced.
 
+llgo_supported_go_releases() {
+	printf '%s\n' '1.20 1.21 1.22 1.23 1.24 1.25 1.26 1.27'
+}
+
 llgo_resolve_go_version() {
 	local repo_root=$1
 	local requested=$2

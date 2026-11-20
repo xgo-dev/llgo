@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
 )
@@ -93,6 +94,37 @@ func TestCompilerCacheKeyErrors(t *testing.T) {
 	}
 }
 
+func TestCompiledLibraryDirTracksCompileGroups(t *testing.T) {
+	baseDir := t.TempDir()
+	library := compile.LibConfig{Name: "lib", Version: "1"}
+	config := compile.CompileConfig{Groups: []compile.CompileGroup{
+		{OutputFileName: "first.a", Files: []string{"first.c"}},
+		{OutputFileName: "second.a", Files: []string{"second.c", "third.c"},
+			CFlags: []string{"-DORIGINAL"}, CCFlags: []string{"-Oz"}, LDFlags: []string{"-s"}},
+	}}
+	original := compiledLibraryDir(baseDir, library, testCompilerKey, config)
+
+	for _, test := range []struct {
+		name string
+		edit func(*compile.CompileGroup)
+	}{
+		{"archive", func(g *compile.CompileGroup) { g.OutputFileName = "renamed.a" }},
+		{"source files", func(g *compile.CompileGroup) { g.Files = []string{"third.c", "second.c"} }},
+		{"C flags", func(g *compile.CompileGroup) { g.CFlags = []string{"-DREPLACEMENT"} }},
+		{"compiler flags", func(g *compile.CompileGroup) { g.CCFlags = []string{"-O2"} }},
+		{"linker flags", func(g *compile.CompileGroup) { g.LDFlags = nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := config
+			changed.Groups = slices.Clone(config.Groups)
+			test.edit(&changed.Groups[1])
+			if got := compiledLibraryDir(baseDir, library, testCompilerKey, changed); got == original {
+				t.Fatalf("reused archive directory %q after changing %s", got, test.name)
+			}
+		})
+	}
+}
+
 func TestGetLibcCompileConfigByName(t *testing.T) {
 	baseDir := filepath.FromSlash("/test/base")
 	target := "armv7"
@@ -124,7 +156,7 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
-		expectedDir := compiledLibraryDir(baseDir, libc.GetPicolibcConfig(), testCompilerKey)
+		expectedDir := compiledLibraryDir(baseDir, libc.GetPicolibcConfig(), testCompilerKey, cfg)
 		if outputDir != expectedDir {
 			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
 		}
@@ -150,7 +182,7 @@ func TestGetLibcCompileConfigByName(t *testing.T) {
 		}
 		group := cfg.Groups[0]
 
-		expectedDir := compiledLibraryDir(baseDir, libc.GetNewlibESP32Config(), testCompilerKey)
+		expectedDir := compiledLibraryDir(baseDir, libc.GetNewlibESP32Config(), testCompilerKey, cfg)
 		if outputDir != expectedDir {
 			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
 		}
@@ -197,13 +229,25 @@ func TestGetRTCompileConfigByName(t *testing.T) {
 		group := cfg.Groups[0]
 
 		compilerRTConfig := rtlib.GetCompilerRTConfig()
-		expectedDir := compiledLibraryDir(baseDir, compilerRTConfig, testCompilerKey)
+		expectedDir := compiledLibraryDir(baseDir, compilerRTConfig, testCompilerKey, cfg)
 		if outputDir != expectedDir {
 			t.Fatalf("output dir = %q, want %q", outputDir, expectedDir)
 		}
 		expectedFile := filepath.Join(baseDir, compilerRTConfig.String(), "lib", "builtins", "absvdi2.c")
 		if !slices.Contains(group.Files, expectedFile) {
 			t.Errorf("Expected files [%s], got: %v", expectedFile, group.Files)
+		}
+
+		thumbDir, thumb, err := getRTCompileConfigByName(baseDir, "compiler-rt", "thumbv7m-unknown-unknown-eabi", testCompilerKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thumbDir == outputDir {
+			t.Fatalf("Thumb and %s reuse archive directory %q", target, outputDir)
+		}
+		thumbFile := filepath.Join(baseDir, compilerRTConfig.String(), "lib", "builtins", "arm", "aeabi_memcpy.S")
+		if len(thumb.Groups) != 1 || !slices.Contains(thumb.Groups[0].Files, thumbFile) {
+			t.Fatalf("Thumb compiler-rt needs %s, got %v", thumbFile, thumb.Groups)
 		}
 	})
 }

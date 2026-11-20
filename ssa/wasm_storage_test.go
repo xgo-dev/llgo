@@ -150,6 +150,80 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
+func TestWasm32SliceBoundary(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	slice := types.NewSlice(types.Typ[types.Byte])
+	// Include both an ordinary Go record and an array in the by-value ABI.
+	record := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "Slices", types.NewArray(slice, 2), false),
+	}, nil)
+	params := types.NewTuple(types.NewParam(token.NoPos, nil, "record", record))
+	high := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32]))
+	sig := types.NewSignatureType(nil, nil, nil, params, high, false)
+	if goABI, cABI := prog.FuncDecl(sig, GoDecl).ll, prog.FuncDecl(sig, CDecl).ll; goABI != cABI {
+		t.Fatalf("Go and C callbacks must share their ABI: %s vs %s", goABI, cABI)
+	}
+	observe := pkg.NewFunc("example.com/p.observe", sig, GoDecl)
+	native := pkg.NewFunc("nativeRecord", types.NewSignatureType(nil, nil, nil, nil, params, false), CDecl)
+	readCall := pkg.NewFunc("example.com/p.readCall", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	readGlobal := pkg.NewFunc("example.com/p.readGlobal", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	global := pkg.NewVar("C.nativeRecord", types.NewPointer(record), CDecl)
+	returnHigh := func(b Builder, v Expr) {
+		array := b.impl.CreateExtractValue(v.impl, 0, "")
+		part := b.impl.CreateExtractValue(array, 1, "")
+		slot := b.impl.CreateExtractValue(part, 0, "")
+		b.Return(Expr{b.impl.CreateExtractValue(slot, 1, ""), prog.Uint32()})
+		b.EndBuild()
+	}
+	param := observe.Param(0)
+	returnHigh(observe.MakeBody(1), param)
+	b := readCall.MakeBody(1)
+	returnHigh(b, b.Call(native.Expr))
+	b = readGlobal.MakeBody(1)
+	returnHigh(b, b.Load(global.Expr))
+
+	mod := pkg.Module()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range []Function{observe, readCall, readGlobal} {
+		if value := fn.impl.EntryBasicBlock().LastInstruction().Operand(0); !value.IsNull() {
+			t.Errorf("nested slice retained its pointer high word: %s", fn.impl)
+		}
+	}
+}
+
+func TestWasm32NativeResultCallConv(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	word := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]))
+	sig := types.NewSignatureType(nil, nil, nil, nil, word, false)
+	native := pkg.NewFunc("nativeWord", sig, CDecl)
+	native.impl.SetFunctionCallConv(llvm.FastCallConv)
+	caller := pkg.NewFunc("example.com/p.caller", sig, GoDecl)
+	b := caller.MakeBody(1)
+	result := b.Call(native.Expr)
+	b.Return(result)
+	b.EndBuild()
+	if result.impl.InstructionOpcode() != llvm.ZExt {
+		t.Fatalf("native pointer-sized result was not widened: %s", result.impl)
+	}
+	if call := result.impl.Operand(0); call.IsACallInst().IsNil() || call.InstructionCallConv() != llvm.FastCallConv {
+		t.Fatalf("calling convention was not applied to the native call: %s", call)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")

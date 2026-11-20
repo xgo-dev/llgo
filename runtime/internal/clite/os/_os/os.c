@@ -2,7 +2,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 #include <stdint.h>
 
 int cliteClearenv()
@@ -16,6 +15,9 @@ int cliteClearenv()
 }
 
 int cliteErrno() { return errno; }
+
+#ifdef __APPLE__
+#include <sys/ioctl.h>
 
 // Darwin syscall trampolines are called from llgo with uintptr-typed
 // signatures. Use uintptr_t in both params and return to avoid ABI mismatch
@@ -39,3 +41,4 @@ uintptr_t llgo_ioctl(uintptr_t fd, uintptr_t req, uintptr_t arg) {
 	int ret = ioctl((int)fd, (unsigned long)req, (void *)arg);
 	return (uintptr_t)(intptr_t)ret;
 }
+#endif

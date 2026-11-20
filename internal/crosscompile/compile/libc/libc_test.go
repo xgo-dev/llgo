@@ -76,8 +76,8 @@ func TestGetPicolibcCompileConfig(t *testing.T) {
 	config := GetPicolibcCompileConfig(baseDir, target)
 
 	// Test LibcCFlags
-	if len(config.ExportCFlags) != 2 {
-		t.Errorf("Expected 2 LibcCFlags, got %d", len(config.ExportCFlags))
+	if len(config.ExportCFlags) != 3 {
+		t.Errorf("Expected 3 LibcCFlags, got %d", len(config.ExportCFlags))
 	} else {
 		expected := "-I" + baseDir
 		if config.ExportCFlags[0] != expected {
@@ -87,6 +87,10 @@ func TestGetPicolibcCompileConfig(t *testing.T) {
 		expected = "-isystem" + filepath.Join(baseDir, "newlib", "libc", "include")
 		if config.ExportCFlags[1] != expected {
 			t.Errorf("Expected LibcCFlags[1] to be '%s', got '%s'", expected, config.ExportCFlags[1])
+		}
+		expected = "-isystem" + filepath.Join(baseDir, "newlib", "libc", "tinystdio")
+		if config.ExportCFlags[2] != expected {
+			t.Errorf("Expected LibcCFlags[2] to be %q, got %q", expected, config.ExportCFlags[2])
 		}
 	}
 

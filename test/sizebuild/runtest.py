@@ -4,6 +4,7 @@
 import argparse
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,9 +13,9 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def command(args, env, timeout=300):
+def command(args, env, timeout=300, *, stdout_only=False, cwd=ROOT):
     try:
-        result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True,
+        result = subprocess.run(args, cwd=cwd, env=env, capture_output=True,
                                 text=True, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         # TimeoutExpired may hold bytes even with text=True, or None when the
@@ -25,7 +26,7 @@ def command(args, env, timeout=300):
     if result.returncode:
         raise RuntimeError(f"{args!r} failed ({result.returncode})\n"
                            f"{result.stdout}{result.stderr}")
-    return result.stdout + result.stderr
+    return result.stdout if stdout_only else result.stdout + result.stderr
 
 
 def runtime_free_cache_probe(llgo, wasmer, directory, env):
@@ -150,10 +151,22 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 
 
 
+def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT):
+    output = command([str(llgo), "run", "-target=esp32c3-basic", "-emulator",
+                      *flags, package], env, stdout_only=True, cwd=cwd)
+    # The ROM writes its boot banner before handing control to the program.
+    boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", output, re.MULTILINE)
+    if boot is None or output[boot.end():] != "Hello, world\n":
+        raise RuntimeError(f"ESP32-C3 {package} emulator output mismatch\n{output}")
+    print(f"ESP32-C3 {package} emulator output passed", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3"), required=True)
     parser.add_argument("--browser", action="store_true", help="also run Emscripten products in Chrome")
+    parser.add_argument("--esp32c3-go-root", type=pathlib.Path, action="append", default=[],
+                        help="also run fmt with this Go standard library")
     args = parser.parse_args()
     env = controlled_environment(os.environ)
     with tempfile.TemporaryDirectory(prefix="llgo-size-build-") as directory:
@@ -182,7 +195,26 @@ def main():
                          "./benchmark/binary_size/cprintf"], env)
                 if output.read_bytes()[:4] != b"\x7fELF":
                     raise RuntimeError("C-only DCE did not produce an ELF image")
-            print("ESP32-C3 C-only DCE cold/warm builds passed (build-only)")
+            print("ESP32-C3 C-only DCE cold/warm builds passed", flush=True)
+            run_esp32c3_case(llgo, env, "./benchmark/binary_size/cprintf", ["-deadcodedrop"])
+            output = directory / "fmtprintf.elf"
+            flags = ["-Oz", "-deadcodedrop", "-globaldce=false", "-lto=full"]
+            command([str(llgo), "build", "-target=esp32c3", *flags,
+                     "-o", str(output), "./benchmark/binary_size/fmtprintf"], env)
+            if output.read_bytes()[:4] != b"\x7fELF":
+                raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
+            run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", flags)
+            if args.esp32c3_go_root:
+                sample = directory / "fmtprintf"
+                sample.mkdir()
+                (sample / "go.mod").write_text("module embedded.probe\n\ngo 1.20\n")
+                shutil.copyfile(ROOT / "benchmark/binary_size/fmtprintf/main.go", sample / "main.go")
+                for goroot in args.esp32c3_go_root:
+                    go_env = dict(env, GOROOT=str(goroot), GOTOOLCHAIN="local", GOWORK="off",
+                                  PATH=os.pathsep.join((str(goroot / "bin"), env["PATH"])))
+                    version = command(["go", "env", "GOVERSION"], go_env, cwd=sample).strip()
+                    print(f"Testing ESP32-C3 fmt.Printf with {version}", flush=True)
+                    run_esp32c3_case(llgo, go_env, ".", flags, cwd=sample)
             return
 
         wasmer = env.get("WASMER", "wasmer")

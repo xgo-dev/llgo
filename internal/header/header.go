@@ -183,9 +183,9 @@ retry:
 		case types.Uint64:
 			return "uint64_t"
 		case types.Int:
-			return "intptr_t"
+			return hw.goWordType("intptr_t", "int")
 		case types.Uint:
-			return "uintptr_t"
+			return hw.goWordType("uintptr_t", "uint")
 		case types.Uintptr:
 			return "uintptr_t"
 		case types.Float32:
@@ -583,9 +583,18 @@ func (hw *cheaderWriter) writeFunctionDecl(fullName, linkName string, fn ssa.Fun
 	return nil
 }
 
+// Hosted Wasm uses fixed-width Go words in both memory modes.
+func (hw *cheaderWriter) goWordType(pointerType, prefix string) string {
+	if hw.p.Target().WasmProfile == "" && hw.p.GoWordSize() == hw.p.PointerSize() {
+		return pointerType
+	}
+	return fmt.Sprintf("%s%d_t", prefix, hw.p.GoWordSize()*8)
+}
+
 // writeCommonIncludes writes common C header includes and Go runtime type definitions
 func (hw *cheaderWriter) writeCommonIncludes() error {
-	includes := `
+	wordType := hw.goCTypeName(types.Typ[types.Int])
+	_, err := fmt.Fprintf(hw.typeBuf, `
 // Platform-specific symbol renaming macro
 #ifdef __APPLE__
     #define GO_SYMBOL_RENAME(go_name) __asm("_" go_name);
@@ -594,20 +603,16 @@ func (hw *cheaderWriter) writeCommonIncludes() error {
 #endif
 
 // Go runtime types
-typedef struct { const char *p; intptr_t n; } GoString;
-typedef struct { void *data; intptr_t len; intptr_t cap; } GoSlice;
+typedef struct { const char *p; %[1]s n; } GoString;
+typedef struct { void *data; %[1]s len; %[1]s cap; } GoSlice;
 typedef struct { void *data; } GoMap;
 typedef struct { void *data; } GoChan;
 typedef struct { void *data; void *type; } GoInterface;
 typedef struct { float real; float imag; } GoComplex64;
 typedef struct { double real; double imag; } GoComplex128;
 
-`
-
-	if _, err := hw.typeBuf.WriteString(includes); err != nil {
-		return err
-	}
-	return nil
+`, wordType)
+	return err
 }
 
 // writeTo writes all generated content to the output writer

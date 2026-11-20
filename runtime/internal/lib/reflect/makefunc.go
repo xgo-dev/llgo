@@ -256,6 +256,9 @@ func convertMethodValue(op string, v Value) Value {
 // reflect can tell, but the true func representation can be handled
 // by code like Convert and Interface and Assign.
 func makeMethodValue(op string, v Value) Value {
+	if baremetalReflection {
+		panic("reflect: dynamic calls require a function call provider")
+	}
 	if v.flag&flagMethod == 0 {
 		panic("reflect: internal error: invalid use of makeMethodValue")
 	}

@@ -23,6 +23,9 @@ func Addrinfo(addr unsafe.Pointer, info *Info) c.Int {
 	panic("not implemented")
 }
 
+// Symbol lookup is unavailable on freestanding targets.
+func Symbol(_ *c.Char) unsafe.Pointer { return nil }
+
 type Frame struct {
 	PC     uintptr
 	Offset uintptr

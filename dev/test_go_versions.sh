@@ -3,11 +3,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${repo_root}/dev/go_toolchain.sh"
 cd "${repo_root}"
 
 versions=("$@")
 if [[ ${#versions[@]} -eq 0 ]]; then
-	versions=(1.20 1.21 1.22 1.23 1.24 1.25 1.26 1.27)
+	read -r -a versions <<< "$(llgo_supported_go_releases)"
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-test-go-versions.XXXXXX")"
