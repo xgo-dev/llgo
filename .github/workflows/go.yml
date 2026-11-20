@@ -459,6 +459,10 @@ jobs:
             ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
+          go test -tags=dev -timeout 5m -covermode=atomic \
+            -coverprofile=coverage-dev-size-codecs.txt \
+            ./internal/build/binaryspecialize ./internal/build/fmtspecialize ./internal/build/jsonspecialize
+
           native_cover="$(mktemp -d)"
           go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
             -o "$native_cover/llgo" ./cmd/llgo
@@ -498,7 +502,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-dev-globaldce-unit.txt,coverage-dev-native-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
+          files: coverage-dev-globaldce-unit.txt,coverage-dev-size-codecs.txt,coverage-dev-native-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
           flags: dev-lto-globaldce
           disable_search: true
 

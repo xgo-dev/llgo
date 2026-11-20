@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -118,5 +119,62 @@ var OtherCall = other(1, "/dev/stdout")
 	}
 	if groups := optionalStandardFileInitializers(ssapkg.Func("NewFile")); len(groups) != 0 {
 		t.Fatalf("matched initialization in an ordinary function: %v", groups)
+	}
+}
+
+func TestOptionalInitializersBrowserBoundaries(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("browser size profile requires DCE")
+	}
+	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+	osPkg := checkFormatTestPackage(t, prog.Fset, "os", `package os
+type File struct{}
+func NewFile(uintptr, string) *File { return new(File) }
+var Stdout = NewFile(1, "/dev/stdout")
+`, types.Config{})
+	entry := checkFormatTestPackage(t, prog.Fset, "main", "package main; func main() {}", types.Config{})
+	prog.CreatePackage(osPkg.Types, osPkg.Syntax, osPkg.TypesInfo, true)
+	prog.CreatePackage(entry.Types, entry.Syntax, entry.TypesInfo, true)
+	prog.Build()
+
+	goroot := t.TempDir()
+	osPkg.Dir = filepath.Join(goroot, "src", "os")
+	backend := llssa.NewProgram(&llssa.Target{GOOS: "js", GOARCH: "wasm"})
+	defer backend.Dispose()
+	for _, tc := range []struct {
+		name    string
+		inputs  *linkPruningInputs
+		closed  bool
+		wantOff bool
+	}{
+		{name: "closed", inputs: &linkPruningInputs{}, closed: true, wantOff: true},
+		{name: "open", inputs: &linkPruningInputs{}},
+		{name: "unknown inputs", closed: true},
+		{name: "opaque assembly", inputs: &linkPruningInputs{opaqueAsmPkg: "unknown"}, closed: true},
+		{name: "assembly reads stdout", inputs: &linkPruningInputs{roots: []string{"os.Stdout"}}, closed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := &aPackage{Package: osPkg}
+			ctx := &context{
+				prog: backend, progSSA: prog, initial: []*packages.Package{entry},
+				pkgByID: map[string]*aPackage{"os": archive}, wasmClosedProgram: tc.closed,
+				crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderEmscripten, WasmProfile: crosscompile.WasmProfileJ32},
+				buildConf: &Config{
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", WasmOpt: WasmOptSize,
+					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true,
+				},
+			}
+			configureOptionalInitializers(ctx, goroot, tc.inputs)
+			if len(archive.guardedInitializers) != 1 {
+				t.Fatal("archive must provide the same initializer guard in every link")
+			}
+			var want []string
+			if tc.wantOff {
+				want = []string{"_llgo_init_var.os.Stdout"}
+			}
+			if !slices.Equal(ctx.initializerGuardsOff, want) {
+				t.Fatalf("link guards disabled = %v, want %v", ctx.initializerGuardsOff, want)
+			}
+		})
 	}
 }

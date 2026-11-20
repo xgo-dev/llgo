@@ -1080,6 +1080,9 @@ jobs:
           fail_ci_if_error: true
 
   wasm-runtime:
+    permissions:
+      contents: read
+      id-token: write
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     name: wasm-runtime (${{ matrix.suite }})
@@ -1251,9 +1254,29 @@ jobs:
           LLGO_BUILD_CACHE: "1"
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
+          set -euo pipefail
           node --test test/wasm/optimization/asyncify-exports.test.mjs
           python3 test/wasm/optimization/test.py --browser
-          python3 test/sizebuild/runtest.py --target=emscripten --browser
+          cover_dir="$RUNNER_TEMP/llgo-wasm-size-cover"
+          mkdir -p "$cover_dir"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=emscripten --browser --llgo "$cover_dir/llgo"
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-emscripten-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+
+      - name: Upload Emscripten size coverage to Codecov
+        if: matrix.suite == 'optimization'
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: "11.3.1"
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-dev-emscripten-size.txt
+          flags: dev-lto-emscripten
+          disable_search: true
 
       - name: Build standard runtime for wasm
         if: matrix.suite == 'runtime'
