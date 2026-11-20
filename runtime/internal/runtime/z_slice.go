@@ -150,6 +150,20 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 	return src
 }
 
+// ReflectGrowSlice preserves the length and all elements in the old capacity.
+// The caller has checked that len+num exceeds cap.
+func ReflectGrowSlice(src Slice, num int, elem *Type) Slice {
+	oldLen := src.len
+	num -= src.cap - oldLen
+	src.len = src.cap
+	grown := GrowSliceAligned(src, num, int(elem.Size_), int(elem.Align_), elem.Pointers())
+	if wideGoHeaderSlots {
+		clearTypedHeaderRange(elem, grown.data, uintptr(src.len), elem.Size_)
+	}
+	grown.len = oldLen
+	return grown
+}
+
 // nextslicecap computes the next appropriate slice length.
 func nextslicecap(newLen, oldCap int) int {
 	newcap := oldCap
