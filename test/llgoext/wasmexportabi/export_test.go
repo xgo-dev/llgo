@@ -2,7 +2,10 @@
 
 package wasmexportabi
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestWasmGoExports(t *testing.T) {
 	if got := callGoExports(); got != 0 {
@@ -11,7 +14,7 @@ func TestWasmGoExports(t *testing.T) {
 
 	data := [5]byte{7, 8, 9, 10, 11}
 	got := cSlice(data[:3])
-	if len(got) != 3 || cap(got) != 4 || !slicePointerSlotOK(&got) || &got[0] != &data[1] {
+	if len(got) != 3 || cap(got) != 4 || !slicePointerSlotOK(&got) || unsafe.SliceData(got) != &data[1] {
 		t.Fatalf("slice returned by C: len=%d cap=%d, want 3 and 4 with data[1:]", len(got), cap(got))
 	}
 }
@@ -25,6 +28,14 @@ func TestWasmAggregateExports(t *testing.T) {
 	if got.Text != "wasm" || len(got.Data) != 3 || cap(got.Data) != 4 ||
 		!slicePointerSlotOK(&got.Data) || &got.Data[0] != &data[1] {
 		t.Fatalf("unexpected mixed value returned by C: %+v", got)
+	}
+}
+
+func TestWasmOverlappingHeaderCopies(t *testing.T) {
+	got := []string{"a", "a", "b"}
+	copy(got, got[1:])
+	if got[0] != "a" || got[1] != "b" {
+		t.Fatalf("overlapping copy produced %v", got)
 	}
 }
 

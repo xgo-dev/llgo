@@ -2,7 +2,9 @@
 
 package wasmexportabi
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 const LLGoFiles = "_wrap/caller.c"
 
@@ -25,6 +27,11 @@ func slicePointerSlotOK(s *[]byte) bool {
 	// Read the whole Go storage word as well as the actual pointer. On
 	// Memory32, incoming C padding must never become the high half of the word.
 	return *(*uintptr)(unsafe.Pointer(s)) == uintptr(unsafe.Pointer(unsafe.SliceData(*s)))
+}
+
+//go:noinline
+func stringPointerSlotOK(s *string) bool {
+	return *(*uintptr)(unsafe.Pointer(s)) == uintptr(unsafe.Pointer(unsafe.StringData(*s)))
 }
 
 //go:linkname callGoExports C.llgo_test_call_go_exports
