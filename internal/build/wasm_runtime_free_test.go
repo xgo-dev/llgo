@@ -2,6 +2,7 @@ package build
 
 import (
 	buildenv "github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"go/ast"
 	"go/constant"
@@ -10,6 +11,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -132,6 +134,17 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 		{"custom target", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Target = "custom-wasi.json" }, false},
 		{"target native input", func(_ *testing.T, c *context, _ *aPackage) { c.crossCompile.ExtraFiles = []string{"entry.c"} }, false},
 		{"browser", func(_ *testing.T, c *context, _ *aPackage) { c.prog.Target().WasmProvider = "emscripten" }, false},
+		{"direct browser main", func(t *testing.T, c *context, _ *aPackage) {
+			t.Setenv("EMCC_CFLAGS", "")
+			c.buildConf.Goos, c.buildConf.Target = "js", "emscripten"
+			c.buildConf.DebugArtifactMode = DebugArtifactNone
+			c.buildConf.OptLevel, c.buildConf.LTO = optlevel.Oz, lto.Full
+			c.buildConf.DeadcodeDrop, c.buildConf.DisableGoGlobalDCE = true, true
+			c.prog.Target().WasmProvider = "emscripten"
+			c.crossCompile.WasmProvider = crosscompile.WasmProviderEmscripten
+			c.crossCompile.WasmPostLink.Asyncify = true
+			c.crossCompile.LDFLAGS = []string{"-sASYNCIFY=1", "--pre-js", emscriptenAsyncifyExportsJS, "-Oz"}
+		}, buildenv.Dev},
 		{"asyncify", func(_ *testing.T, c *context, _ *aPackage) { c.crossCompile.WasmPostLink.Asyncify = true }, false},
 		{"linker flags", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.LinkOptions.ExternalLinkerFlags = "-lforeign" }, false},
 		{"environment linker flags", func(_ *testing.T, c *context, _ *aPackage) { c.commands.environ = []string{"LDFLAGS=-lforeign"} }, false},
@@ -201,6 +214,24 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 			ctx.frontendOptions.ShadowStack = true
 			test.change(t, ctx, pkg)
 			configureRuntimeFree(ctx)
+			if ctx.buildConf.Target == "emscripten" {
+				link := newLinkExecutionContext(ctx, &mainLinkPlan{})
+				if ctx.emscriptenDirectMain != test.want || !ctx.crossCompile.WasmPostLink.Asyncify ||
+					link.crossCompile.WasmPostLink.Asyncify == test.want ||
+					needsWasmRuntimeScheduler(ctx) == test.want {
+					t.Fatal("Emscripten entry and Asyncify policy disagree")
+				}
+				if ctx.wasmRuntimeFree || !ctx.frontendOptions.ShadowStack || !prog.GCRootsEnabled() || !prog.CooperativeSafepointsEnabled() {
+					t.Fatal("direct Emscripten entry changed dependency instrumentation")
+				}
+				if !slices.Equal(ctx.crossCompile.LDFLAGS, []string{"-sASYNCIFY=1", "--pre-js", emscriptenAsyncifyExportsJS, "-Oz"}) {
+					t.Fatal("direct Emscripten entry changed compiler flags")
+				}
+				if test.want && !slices.Equal(link.crossCompile.LDFLAGS, []string{"-Oz"}) {
+					t.Fatalf("direct Emscripten entry flags = %v", link.crossCompile.LDFLAGS)
+				}
+				return
+			}
 			if ctx.buildConf.Target == "cortex-m-mps2" {
 				if ctx.embeddedRuntimeFree != test.want || ctx.wasmRuntimeFree || !ctx.frontendOptions.ShadowStack {
 					t.Fatal("bare-metal startup proof changed WASI state or retained startup")

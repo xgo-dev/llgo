@@ -155,6 +155,9 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
         if actual.strip() != expected_output:
             raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
+        if target.startswith("emscripten") and fixture == "wasm-standard-files":
+            if "llgo: omit Emscripten scheduler" in log:
+                raise RuntimeError(f"{target}: suspending filesystem operations lost the scheduler")
         if target == "emscripten" and fixture == "wasm-standard-files":
             result = subprocess.run([runner[0], "--import", str(ROOT / "test/sizebuild/wasm-invalid-fs-flag.mjs"),
                                      *runner[1:], str(artifact)], cwd=ROOT, env=env, timeout=90,
@@ -166,6 +169,25 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             command([node, str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact),
                      expected, "single"], env, timeout=90)
         print(f"{target} Full LTO {fixture} passed", flush=True)
+
+def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
+    marker = "llgo: omit Emscripten scheduler for a synchronous executable"
+    for fixture in ("cprintf", "println"):
+        artifact = directory / f"{target}-{fixture}.mjs"
+        log = command([str(llgo), "build", f"-target={target}", "-Oz", "-lto=full", "-deadcodedrop",
+                       "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(artifact), f"./benchmark/binary_size/{fixture}"], env)
+        if marker not in log:
+            raise RuntimeError(f"{target} {fixture}: direct entry absent\n{log}")
+        expected = "Hello, world"
+        actual = command([*runner, str(artifact)], env, timeout=90)
+        if actual.strip() != expected:
+            raise RuntimeError(f"{target} {fixture}: expected {expected!r}, got {actual!r}")
+        if browser:
+            command([runner[0], str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact), expected],
+                    env, timeout=90)
+        print(f"{target} Full LTO {fixture} used direct entry", flush=True)
+
 
 def wasi_specialization_probe(llgo, directory, env, runner):
     for case, marker, want in (
@@ -263,6 +285,7 @@ def main():
             for target in ("emscripten", "emscripten-memory64"):
                 runner = [node, str(ROOT / "targets" / f"{target}-runner.mjs")]
                 full_lto_codec_probe(llgo, directory, env, target, runner, ".mjs", args.browser)
+                emscripten_startup_probe(llgo, directory, env, target, runner, args.browser)
             return
         if args.target == "native":
             full_lto_codec_probe(llgo, directory, env, "native", [], "")

@@ -47,6 +47,9 @@ codec. With `-x`, selected codecs report
 Emscripten Full LTO size builds repeat Binaryen size passes while the
 deployment module shrinks. Embedded and external DWARF profiles use a single
 pass.
+With DCE, the final link can call a proven synchronous executable directly
+and omit its scheduler and Asyncify. The direct entry initializes the Go
+runtime and reuses package archives.
 
 Closed Emscripten size builds can omit the setup of unreferenced Go standard
 files. The final link selects the setup to omit from the cached `os` archive.

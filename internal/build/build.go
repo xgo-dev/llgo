@@ -1654,11 +1654,15 @@ func goCompatibleWasmRunner(conf *Config) string {
 }
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
+	target := ctx.crossCompile
+	if ctx.emscriptenDirectMain {
+		configureEmscriptenDirectLink(&target)
+	}
 	return &context{
 		prog:         ctx.prog,
 		mode:         ctx.mode,
 		buildConf:    ctx.buildConf,
-		crossCompile: ctx.crossCompile,
+		crossCompile: target,
 		commands:     ctx.commands,
 		pclnExternal: plan.pclnExternal,
 
@@ -1814,6 +1818,8 @@ func DefaultBuildTags() string {
 	return "llgo,math_big_pure_go,purego"
 }
 
+const emscriptenAsyncifyExportsJS = "emscripten-asyncify-exports.js"
+
 func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworkers.Config, error) {
 	config, err := wasmworkers.Parse(os.Getenv(llgoWasmWorkers))
 	if err != nil {
@@ -1827,7 +1833,7 @@ func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworker
 	// or non-Emscripten provider does not require Asyncify control exports.
 	if conf.Goos == "js" && conf.Goarch == "wasm" && slices.Contains(export.LDFLAGS, "-sASYNCIFY=1") {
 		export.LDFLAGS = append(export.LDFLAGS,
-			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "emscripten-asyncify-exports.js"),
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", emscriptenAsyncifyExportsJS),
 		)
 	}
 	if conf.Goos == "js" && export.WasmProvider == crosscompile.WasmProviderEmscripten {
@@ -2046,6 +2052,7 @@ type context struct {
 	codecInitDrops       map[string]bool
 	initializerGuardsOff []string
 	wasmRuntimeFree      bool
+	emscriptenDirectMain bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
 
