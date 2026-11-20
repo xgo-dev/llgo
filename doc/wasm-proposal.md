@@ -19,6 +19,7 @@ collection, arena ownership, and the reclamation limits of blocking C calls.
   - J64 (wasm64 with JavaScript): Memory64, `i64` addresses, and the LP64 C ABI, extending the same Go data model to a wider address space.
   - Differences belong in address lowering, Go/C boundaries, libffi, memory accesses, and host glue; ordinary Go source does not require separate forks for these differences.
   - C types use `github.com/goplus/lib/c`; Go and C `int` need not have the same width. The compiler and boundary adapters perform the required checked width conversions.
+  - Generated C headers declare exported Go `int` and `uint` as `int64_t` and `uint64_t`. `GoSlice` uses a native C pointer and two `int64_t` fields, with size 24 and length/capacity at offsets 8 and 16. On Memory32, LLGo clears the high half of each incoming by-value Go slice's pointer slot, including slices nested in aggregates.
 
 - Host ABI:
 
@@ -154,6 +155,7 @@ R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续
   - J64（wasm64 + JavaScript）：Memory64，使用 `i64` 地址，C ABI 为 LP64，将同一 Go 数据模型扩展到更大的地址空间。
   - 差异集中在地址 lowering、Go/C 边界、libffi、内存访问和 host glue，无须为这些差异分叉普通 Go 源码。
   - C 类型使用 `github.com/goplus/lib/c`；Go 与 C 的 `int` 不必同宽。编译器和边界适配器执行必要的带检查宽度转换。
+  - 生成的 C 头文件用 `int64_t` 和 `uint64_t` 声明导出的 Go `int` 和 `uint`。`GoSlice` 包含一个原生 C 指针和两个 `int64_t` 字段，大小为 24 字节，长度和容量的偏移分别为 8 和 16。在 Memory32 上，LLGo 会清零按值进入 Go 的 slice 指针槽高半部，包括嵌套在复合类型中的 slice。
 
 - Host ABI：
 
