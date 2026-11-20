@@ -20,6 +20,8 @@ type espImageSegment struct {
 	data []byte
 }
 
+const esp32c3FlashSize = 4 * 1024 * 1024
+
 // makeESPFirmareImage converts an input ELF file to an image file for an ESP32 or
 // ESP8266 chip. This is a special purpose image format just for the ESP chip
 // family, and is parsed by the on-chip mask ROM bootloader.
@@ -35,9 +37,16 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 	}
 	defer inf.Close()
 
+	chip := strings.TrimSuffix(format, "-img")
+	makeImage := chip != format
+	flashMapped := chip == "esp32c3-flash"
+	if flashMapped {
+		chip = "esp32c3"
+	}
+
 	// Load all segments to be written to the image. These are actually ELF
 	// sections, not true ELF segments (similar to how esptool does it).
-	var segments []*espImageSegment
+	var segments, flashSegments []*espImageSegment
 	for _, section := range inf.Sections {
 		if section.Size == 0 || section.Flags&elf.SHF_ALLOC == 0 {
 			continue
@@ -54,17 +63,21 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read section data: %w", err)
 		}
-		for len(data)%4 != 0 {
-			// Align segment to 4 bytes.
-			data = append(data, 0)
-		}
 		if uint64(uint32(section.Addr)) != section.Addr {
 			return fmt.Errorf("section address too big: 0x%x", section.Addr)
 		}
-		segments = append(segments, &espImageSegment{
-			addr: uint32(section.Addr),
-			data: data,
-		})
+		addr := uint32(section.Addr)
+		if flashMapped {
+			if offset, ok := esp32c3FlashOffset(addr); ok {
+				flashSegments = append(flashSegments, &espImageSegment{addr: offset, data: data})
+				continue
+			}
+		}
+		for len(data)%4 != 0 {
+			// The ROM loads segments in 4-byte units.
+			data = append(data, 0)
+		}
+		segments = append(segments, &espImageSegment{addr: addr, data: data})
 	}
 
 	// Sort the segments by address. This is what esptool does too.
@@ -83,15 +96,6 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 	// calculate a hash over the entire image.
 	// An added benefit is that we don't need to check for errors all the time.
 	outf := &bytes.Buffer{}
-
-	// Separate esp32 and esp32-img. The -img suffix indicates we should make an
-	// image, not just a binary to be flashed at 0x1000 for example.
-	chip := format
-	makeImage := false
-	if strings.HasSuffix(format, "-img") {
-		makeImage = true
-		chip = format[:len(format)-len("-img")]
-	}
 
 	if makeImage {
 		// For QEMU emulation, we need to place the image at the correct offset.
@@ -117,6 +121,10 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		// Note: not adding a SHA256 hash as the binary is modified by
 		// esptool.py while flashing and therefore the hash won't be valid
 		// anymore.
+		spiSpeedSize := uint8(0x1f) // 80 MHz, 2 MiB
+		if flashMapped {
+			spiSpeedSize = 0x2f // 80 MHz, 4 MiB
+		}
 		binary.Write(outf, binary.LittleEndian, struct {
 			magic          uint8
 			segment_count  uint8
@@ -132,8 +140,8 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		}{
 			magic:          0xE9,
 			segment_count:  byte(len(segments)),
-			spi_mode:       2,    // ESP_IMAGE_SPI_MODE_DIO
-			spi_speed_size: 0x1f, // ESP_IMAGE_SPI_SPEED_80M, ESP_IMAGE_FLASH_SIZE_2MB
+			spi_mode:       2, // ESP_IMAGE_SPI_MODE_DIO
+			spi_speed_size: spiSpeedSize,
 			entry_addr:     uint32(inf.Entry),
 			wp_pin:         0xEE, // disable WP pin
 			chip_id:        chip_id,
@@ -185,16 +193,55 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		outf.Write(hash[:])
 	}
 
+	if flashMapped {
+		if err := appendESP32C3FlashSections(outf, flashSegments); err != nil {
+			return err
+		}
+	}
+
 	// QEMU (or more precisely, qemu-system-xtensa from Espressif) expects the
 	// image to be a certain size.
 	if makeImage {
 		// Use a default image size of 4MB.
-		grow := 4096*1024 - outf.Len()
+		grow := esp32c3FlashSize - outf.Len()
 		if grow > 0 {
-			outf.Write(make([]byte, grow))
+			fill := byte(0)
+			if flashMapped {
+				fill = 0xff
+			}
+			outf.Write(bytes.Repeat([]byte{fill}, grow))
 		}
 	}
 
 	// Write the image to the output file.
 	return os.WriteFile(outfile, outf.Bytes(), 0666)
+}
+
+// The boot code maps the same SPI flash offsets into the instruction and data
+// windows. Keep these windows in sync with targets/esp32c3-flash.ld.
+func esp32c3FlashOffset(addr uint32) (uint32, bool) {
+	for _, base := range [...]uint32{0x42000000, 0x3c000000} {
+		if addr >= base && addr < base+esp32c3FlashSize {
+			return addr - base, true
+		}
+	}
+	return 0, false
+}
+
+// The ROM loads only the checksummed SRAM image. Place mapped sections after
+// that image at the offsets the flash MMU will use at runtime.
+func appendESP32C3FlashSections(out *bytes.Buffer, sections []*espImageSegment) error {
+	sort.Slice(sections, func(i, j int) bool { return sections[i].addr < sections[j].addr })
+	for _, section := range sections {
+		offset := int(section.addr)
+		if offset < out.Len() {
+			return fmt.Errorf("ESP32-C3 flash section at offset %#x overlaps preceding image data", offset)
+		}
+		if len(section.data) > esp32c3FlashSize-offset {
+			return fmt.Errorf("ESP32-C3 flash section at offset %#x exceeds 4 MiB", offset)
+		}
+		out.Write(bytes.Repeat([]byte{0xff}, offset-out.Len()))
+		out.Write(section.data)
+	}
+	return nil
 }

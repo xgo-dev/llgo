@@ -35,6 +35,7 @@ and the same source and `/tmp` volumes as the main WASI acceptance runner.
 
 The ESP32-C3 lane checks C-only `-deadcodedrop` firmware compilation before and
 after cache reuse, then runs C printf and a Full LTO Go `fmt.Printf` build in QEMU.
+It also runs `fmt.Printf` with `-Oz` on the SPI flash layout.
 Pass `--esp32c3-go-root` for each additional Go toolchain to run the `fmt.Printf`
 probe against its standard library.
 

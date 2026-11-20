@@ -151,14 +151,14 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 
 
 
-def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT):
-    output = command([str(llgo), "run", "-target=esp32c3-basic", "-emulator",
+def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-basic"):
+    output = command([str(llgo), "run", f"-target={target}", "-emulator",
                       *flags, package], env, stdout_only=True, cwd=cwd)
     # The ROM writes its boot banner before handing control to the program.
     boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", output, re.MULTILINE)
     if boot is None or output[boot.end():] != "Hello, world\n":
-        raise RuntimeError(f"ESP32-C3 {package} emulator output mismatch\n{output}")
-    print(f"ESP32-C3 {package} emulator output passed", flush=True)
+        raise RuntimeError(f"{target} {package} emulator output mismatch\n{output}")
+    print(f"{target} {package} emulator output passed", flush=True)
 
 
 def main():
@@ -204,6 +204,8 @@ def main():
             if output.read_bytes()[:4] != b"\x7fELF":
                 raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", flags)
+            run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", ["-Oz"],
+                             target="esp32c3-flash")
             if args.esp32c3_go_root:
                 sample = directory / "fmtprintf"
                 sample.mkdir()

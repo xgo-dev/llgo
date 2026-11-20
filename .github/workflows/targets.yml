@@ -105,6 +105,11 @@ jobs:
       - uses: ./.github/actions/setup-gdb
       - name: Install Linux emulator and LLDB
         run: sudo apt-get install -y qemu-system-arm lldb-22
+      - name: Run Cortex-M3 MPS2 standard-library firmware
+        shell: bash
+        run: |
+          output="$(LLGO_ROOT="$PWD" llgo run -target=cortex-m-mps2 -emulator -Oz ./benchmark/binary_size/fmtprintf)"
+          test "$output" = 'Hello, world'
       # Separate steps keep both backends observable and run LLDB even when
       # the GDB acceptance test fails, as the former fail-fast:false matrix did.
       - name: Test GDB preloaded and explicit-download Cortex-M sessions
