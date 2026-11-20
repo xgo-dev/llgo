@@ -38,11 +38,13 @@ type wasmProfile struct {
 	goos      string
 	outputExt string
 	hasJSGlue bool
+	flags     []string
 }
 
 type goWasmProfile struct {
-	name string
-	goos string
+	name  string
+	goos  string
+	flags []string
 }
 
 type wasmExample struct {
@@ -130,10 +132,16 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	fixtureRoot := flags.String("fixture-root", "", "repository root containing benchmark fixtures (defaults to -root)")
 	llgo := flags.String("llgo", "llgo", "LLGo command")
 	goCommand := flags.String("go", "go", "Go command")
+	sizeLLGo := flags.String("size-llgo", "", "dev LLGo command for the extra WASI size matrix")
+	tinygo := flags.String("tinygo", "tinygo", "TinyGo command for the extra WASI size matrix")
+	sizeOnly := flags.Bool("size-only", false, "collect only the WASI size matrix")
 	out := flags.String("out", filepath.Join("benchmark", "wasm", "out"), "result directory")
 	buildRuns := flags.Int("build-runs", 3, "build repetitions per timed profile")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *sizeOnly && *sizeLLGo == "" {
+		return errors.New("-size-only requires -size-llgo")
 	}
 	if *buildRuns <= 0 {
 		return errors.New("build repetitions must be positive")
@@ -168,34 +176,44 @@ func runCLI(ctx context.Context, args []string, runner commandRunner) error {
 	)
 	measurements := make([]measurement, 0, len(wasmExamples)*len(wasmProfiles))
 	var goSizes []measurement
-	for _, example := range wasmExamples {
-		fixture := example.sourcePath(absFixtureRoot)
-		exampleOut := filepath.Join(absOut, example.name)
-		for _, profile := range wasmProfiles {
-			profileBuildRuns := 0
-			if example.measuresBuild(profile.name) {
-				profileBuildRuns = *buildRuns
+	if !*sizeOnly {
+		for _, example := range wasmExamples {
+			fixture := example.sourcePath(absFixtureRoot)
+			exampleOut := filepath.Join(absOut, example.name)
+			for _, profile := range wasmProfiles {
+				profileBuildRuns := 0
+				if example.measuresBuild(profile.name) {
+					profileBuildRuns = *buildRuns
+				}
+				result, err := measureProfile(ctx, runner, env, absRoot, *llgo, exampleOut, fixture, profile, profileBuildRuns)
+				if err != nil {
+					return fmt.Errorf("build %s/%s: %w", example.name, profile.name, err)
+				}
+				result.name = example.metricName(profile.name)
+				measurements = append(measurements, result)
 			}
-			result, err := measureProfile(ctx, runner, env, absRoot, *llgo, exampleOut, fixture, profile, profileBuildRuns)
-			if err != nil {
-				return fmt.Errorf("build %s/%s: %w", example.name, profile.name, err)
+			if !example.goReference {
+				continue
 			}
-			result.name = example.metricName(profile.name)
-			measurements = append(measurements, result)
-		}
-		if !example.goReference {
-			continue
-		}
-		for _, profile := range goWasmProfiles {
-			result, err := measureGoProfile(ctx, runner, env, absRoot, *goCommand, exampleOut, fixture, profile)
-			if err != nil {
-				return fmt.Errorf("build official Go %s/%s: %w", example.name, profile.name, err)
+			for _, profile := range goWasmProfiles {
+				result, err := measureGoProfile(ctx, runner, env, absRoot, *goCommand, exampleOut, fixture, profile)
+				if err != nil {
+					return fmt.Errorf("build official Go %s/%s: %w", example.name, profile.name, err)
+				}
+				result.name = example.metricName(profile.name)
+				goSizes = append(goSizes, result)
 			}
-			result.name = example.metricName(profile.name)
-			goSizes = append(goSizes, result)
 		}
 	}
-	return writeResults(filepath.Join(absOut, "benchmark.txt"), measurements, goSizes)
+	var matrix []measurement
+	if *sizeLLGo != "" {
+		matrix, err = measureWASISizeMatrix(ctx, runner, env, absRoot, absFixtureRoot, absOut, *sizeLLGo, *goCommand, *tinygo)
+		if err != nil {
+			return err
+		}
+	}
+
+	return writeResults(filepath.Join(absOut, "benchmark.txt"), measurements, goSizes, matrix)
 }
 
 func measureProfile(
@@ -208,7 +226,7 @@ func measureProfile(
 ) (measurement, error) {
 	profileDir := filepath.Join(out, "bin", profile.name)
 	output := filepath.Join(profileDir, "program"+profile.outputExt)
-	args := []string{"build"}
+	args := append([]string{"build"}, profile.flags...)
 	if profile.target != "" {
 		args = append(args, "-target", profile.target)
 	}
@@ -289,7 +307,8 @@ func measureGoProfile(
 	}
 	output := filepath.Join(profileDir, "program.wasm")
 	profileEnv := append(slices.Clone(env), "GOOS="+profile.goos, "GOARCH=wasm")
-	if err := runner(ctx, root, profileEnv, goCommand, "build", "-o", output, fixture); err != nil {
+	args := append([]string{"build"}, profile.flags...)
+	if err := runner(ctx, root, profileEnv, goCommand, append(args, "-o", output, fixture)...); err != nil {
 		return measurement{}, err
 	}
 	moduleBytes, err := wasmModuleSize(output)
@@ -325,7 +344,7 @@ func medianDuration(values []time.Duration) time.Duration {
 	return values[len(values)/2]
 }
 
-func writeResults(path string, measurements, goSizes []measurement) error {
+func writeResults(path string, measurements, goSizes, matrix []measurement) error {
 	var output strings.Builder
 	fmt.Fprintf(&output, "goos: %s\ngoarch: %s\npkg: github.com/xgo-dev/llgo/benchmark/wasm\n", runtime.GOOS, runtime.GOARCH)
 	for _, unit := range []string{"module-bytes", "glue-bytes"} {
@@ -357,6 +376,9 @@ func writeResults(path string, measurements, goSizes []measurement) error {
 			result.moduleBytes,
 			result.glueBytes,
 		)
+	}
+	for _, result := range matrix {
+		fmt.Fprintf(&output, "BenchmarkWasmSize/%s 1 %d module-bytes %d glue-bytes\n", result.name, result.moduleBytes, result.glueBytes)
 	}
 	return os.WriteFile(path, []byte(output.String()), 0o644)
 }
