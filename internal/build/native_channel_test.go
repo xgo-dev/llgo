@@ -28,7 +28,7 @@ func TestNativeChannelSignalLifetime(t *testing.T) {
 
 	// Redirect only the pthread boundary in this test build. The channel
 	// implementation and its wait/finish/cleanup paths remain unmodified.
-	file := filepath.Join(root, "runtime/internal/sync/sync_unix.go")
+	file := filepath.Join(root, "runtime/internal/sync/sync_unix_native.go")
 	source, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)

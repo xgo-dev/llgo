@@ -1218,7 +1218,8 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, compiledLibraryKey)
+		rtKey := compiledLibraryCacheKey(compiledLibraryKey, libcIncludeDir)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, rtKey)
 		if err != nil {
 			return
 		}

@@ -1,4 +1,4 @@
-//go:build baremetal
+//go:build baremetal && !llgo.baremetal.cstdio
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.

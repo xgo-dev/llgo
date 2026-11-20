@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !wasm && !(baremetal && llgo.baremetal.stdio)
 
 package ffi
 

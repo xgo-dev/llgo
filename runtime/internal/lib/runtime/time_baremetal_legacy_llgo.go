@@ -2,6 +2,8 @@
 
 package runtime
 
+import _ "unsafe"
+
 // Minimal timer hooks for baremetal builds.
 // They keep stdlib packages linkable for target smoke tests but do not
 // provide asynchronous timer delivery.
@@ -82,8 +84,4 @@ func time_runtimeIsBubbled() bool {
 //go:linkname timeSleep time.Sleep
 func timeSleep(ns int64) {
 	_ = ns
-}
-
-func runtimeNano() int64 {
-	return 0
 }

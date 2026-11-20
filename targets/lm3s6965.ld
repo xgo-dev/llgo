@@ -8,3 +8,7 @@ MEMORY
 _stack_size = 4K;
 
 INCLUDE "targets/arm.ld"
+
+_heapStart = _heap_start;
+_heapEnd = _heap_end;
+_stack_end = ADDR(.stack);
