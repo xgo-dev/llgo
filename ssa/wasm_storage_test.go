@@ -180,7 +180,8 @@ func TestWasm32NativeSliceBoundary(t *testing.T) {
 }
 
 func TestWasm32NativeSliceConstants(t *testing.T) {
-	prog := newJ32Program(t)
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	defer prog.Dispose()
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
 	slice := prog.Slice(prog.Byte())
