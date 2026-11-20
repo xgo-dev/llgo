@@ -18,8 +18,8 @@ package ssa
 
 import (
 	"go/types"
-	"slices"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -43,19 +43,32 @@ func (p Program) isWasmABIPaddedHeader(t llvm.Type) bool {
 }
 
 func (p Program) hasWasmABIPadding(t llvm.Type) bool {
-	if !p.usesWideGoStorage() {
-		return false
-	}
+	return p.usesWideGoStorage() && p.wasmHeaderCount(t, 1) != 0
+}
+
+// wasmHeaderCount counts string and slice headers up to limit. Inspect each
+// array element type once, irrespective of the array length.
+func (p Program) wasmHeaderCount(t llvm.Type, limit int) int {
 	if p.isWasmABIPaddedHeader(t) {
-		return true
+		return 1
 	}
 	switch t.TypeKind() {
-	case llvm.StructTypeKind:
-		return slices.ContainsFunc(t.StructElementTypes(), p.hasWasmABIPadding)
 	case llvm.ArrayTypeKind:
-		return t.ArrayLength() > 0 && p.hasWasmABIPadding(t.ElementType())
+		n := min(t.ArrayLength(), limit)
+		if n != 0 {
+			return min(limit, n*p.wasmHeaderCount(t.ElementType(), limit))
+		}
+	case llvm.StructTypeKind:
+		count := 0
+		for _, field := range t.StructElementTypes() {
+			count += p.wasmHeaderCount(field, limit-count)
+			if count == limit {
+				break
+			}
+		}
+		return count
 	}
-	return false
+	return 0
 }
 
 // clearWasmABIPadding zeroes the high word of each string or slice data slot.
@@ -317,11 +330,67 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 	return b.fitLLVMValue(value, b.Prog.withoutNativeStorage(t), t.ll)
 }
 
-func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
-	if value.Type() == b.Prog.withoutNativeStorage(t).ll {
-		if b.Prog.isNativeStorage(t) && b.Prog.hasWasmABIPadding(value.Type()) {
-			return b.Prog.clearWasmABIPadding(b.impl, value)
+// A Go pointer or slice can alias C memory after it has passed through
+// another package. A typed load canonicalizes its value without writing back
+// into the source or depending on the pointer retaining its storage view.
+func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Value {
+	const maxInlineHeaders = 8
+	count := 0
+	var scratch llvm.Value
+	if b.Prog.usesWideGoStorage() {
+		count = b.Prog.wasmHeaderCount(logical.ll, maxInlineHeaders+1)
+		if count > maxInlineHeaders {
+			scratch = b.wasmHeaderSnapshotStorage(logical)
 		}
+	}
+
+	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storage), ptr)
+	b.setGoAccessAlignment(stored, storage)
+	value := b.fromStorageValue(storage, stored)
+	switch {
+	case count == 0:
+		return value
+	case count <= maxInlineHeaders:
+		return b.Prog.clearWasmABIPadding(b.impl, value)
+	default:
+		b.impl.CreateStore(value, scratch)
+		b.clearWasmHeaderRange(logical.ll, scratch, b.Prog.IntVal(1, b.Prog.Int()).impl)
+		result := llvm.CreateLoad(b.impl, logical.ll, scratch)
+		ctx := b.Prog.ctx
+		result.SetMetadata(ctx.MDKindID(wasmHeaderSnapshotMD), ctx.MDNode(nil))
+		return result
+	}
+}
+
+const wasmHeaderSnapshotMD = "llgo.header.snapshot"
+
+func (b Builder) wasmHeaderSnapshotStorage(typ Type) llvm.Value {
+	size := b.Prog.SizeOf(typ)
+	if size >= llabi.MinAggregateCopySize {
+		// ABI lowering can allocate while materializing the subsequent reload
+		// at this size. Give it a scanned heap source to root. Allocate before
+		// reading the original, while its owner is still live.
+		return b.AllocU(typ).impl
+	}
+	// A snapshot lives only through the range helper's scalar stores and its
+	// immediately following SSA load. All sites in this invocation can share
+	// a single slot. Recursion has its own frame and there is no safepoint.
+	slot := b.Func.wasmHeaderScratch
+	if slot.IsNil() {
+		slot = b.Func.entryAllocaBuilder().CreateArrayAlloca(b.Prog.tyInt8(), llvm.ConstInt(b.Prog.tyInt32(), size, false), "")
+		b.Func.wasmHeaderScratch = slot
+	} else if size > slot.Operand(0).ZExtValue() {
+		slot.SetOperand(0, llvm.ConstInt(b.Prog.tyInt32(), size, false))
+	}
+	if align := int(b.Prog.AlignOf(typ)); align > slot.Alignment() {
+		slot.SetAlignment(align)
+	}
+	return slot
+}
+
+func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
+	logical := b.Prog.withoutNativeStorage(t)
+	if value.Type() == logical.ll {
 		return value
 	}
 	if t.kind == vkSIMD {
@@ -330,7 +399,6 @@ func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 	if b.Prog.needsWidePointerStorage(t) {
 		return b.impl.CreateExtractValue(value, 0, "")
 	}
-	logical := b.Prog.withoutNativeStorage(t)
 	return b.fitLLVMValue(value, t, logical.ll)
 }
 

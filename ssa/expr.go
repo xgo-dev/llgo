@@ -102,6 +102,19 @@ func (v Expr) memoryInstruction() llvm.Value {
 			!instr.IsAIntToPtrInst().IsNil() || !instr.IsATruncInst().IsNil(),
 			!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil():
 			instr = instr.Operand(0)
+		case !instr.IsALoadInst().IsNil() && instr.HasMetadata() &&
+			!instr.Metadata(instr.Type().Context().MDKindID(wasmHeaderSnapshotMD)).IsNil():
+			// A large header snapshot reloads a private slot after clearing its
+			// padding. Memory flags apply to the original source access.
+			slot := instr.Operand(0)
+			store := llvm.PrevInstruction(instr)
+			for !store.IsNil() && (store.IsAStoreInst().IsNil() || store.Operand(1) != slot) {
+				store = llvm.PrevInstruction(store)
+			}
+			if store.IsNil() {
+				panic("ssa: missing header snapshot source")
+			}
+			instr = store.Operand(0)
 		default:
 			return instr
 		}

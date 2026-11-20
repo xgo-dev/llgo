@@ -80,7 +80,7 @@ func TestWasmStringBoundaryPadding(t *testing.T) {
 	}
 	// Check behavior rather than a particular insertvalue/mask sequence.
 	// Both native directions must preserve every data field while clearing
-	// only string and slice padding.
+	// only string and slice padding. Typed loads leave the source bytes intact.
 	for _, name := range checks {
 		fn := mod.NamedFunction(name)
 		if fn.IsNil() {

@@ -1031,6 +1031,7 @@ type aPackage struct {
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
 	staticItabByType    map[staticItabKey]Expr
 	staticStringBacking map[llvm.Value]struct{}
+	wasmHeaderRanges    map[llvm.Type]llvm.Value
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }
