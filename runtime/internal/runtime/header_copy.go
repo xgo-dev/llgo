@@ -18,7 +18,9 @@ const wideGoHeaderSlots = unsafe.Sizeof(uintptr(0)) > unsafe.Sizeof(nativePointe
 // fields. It reports whether it found a header, so that an array of other
 // values only requires one visit to its element type.
 func clearTypedHeaderRange(typ *Type, dst unsafe.Pointer, count, stride uintptr) bool {
-	if count == 0 || !typ.Pointers() {
+	// Regular-memory types can be compared bytewise, so they contain no
+	// inline string or slice headers even when they contain pointers.
+	if count == 0 || !typ.Pointers() || typ.TFlag&abi.TFlagRegularMemory != 0 {
 		return false
 	}
 	switch typ.Kind() {
