@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const library = fs.readFileSync(new URL('./browser_fs.js', import.meta.url), 'utf8');
+const library = fs.readFileSync(new URL('./browser_fs.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const source = library.replace(/^#.*$/gm, '');
 for (const isNode of [false, true]) {
   const module = {};
