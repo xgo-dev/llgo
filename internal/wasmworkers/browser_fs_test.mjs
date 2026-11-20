@@ -2,8 +2,33 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('./browser_fs.js', import.meta.url), 'utf8')
-  .replace(/^#.*$/gm, '');
+const library = fs.readFileSync(new URL('./browser_fs.js', import.meta.url), 'utf8');
+const source = library.replace(/^#.*$/gm, '');
+for (const isNode of [false, true]) {
+  const module = {};
+  let installs = 0;
+  let symbols;
+  const context = {
+    Module: module,
+    ENVIRONMENT_IS_NODE: isNode,
+    llgoAttachWasmFS(installed) {
+      assert.equal(installed, module);
+      installs++;
+    },
+    addToLibrary(entries) {
+      const installer = entries.$llgoBrowserFS;
+      context.llgoBrowserFS = installer;
+      symbols = Object.keys(entries);
+      assert.deepEqual(Array.from(entries.$llgoBrowserFS__deps), ['$FS']);
+      assert.equal(installer.invoke, undefined);
+      installer.install();
+      installer.install();
+    },
+  };
+  vm.runInNewContext(library.replace(/^#if PTHREADS\n[\s\S]*?^#endif\n/gm, ''), context);
+  assert.ok(!symbols.some(name => name.startsWith('llgo_browser_fs_')));
+  assert.equal(installs, isNode ? 0 : 1);
+}
 for (const memory64 of [false, true]) {
   const memory = new WebAssembly.Memory({initial: 16, maximum: 128, shared: true});
   let heap = new Uint8Array(memory.buffer);
