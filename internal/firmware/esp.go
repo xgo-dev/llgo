@@ -97,21 +97,26 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 		// For QEMU emulation, we need to place the image at the correct offset.
 		// ESP32 (Xtensa): bootloader starts at 0x1000, so we pad 4KB of zeros.
 		// ESP32-C3 (RISC-V): bootloader starts at 0x0, so no padding needed.
+		// ESP32-S31 (RISC-V): bootloader starts at 0x2000 (the first two flash
+		// sectors are reserved), so we pad 8KB of zeros.
 		if chip == "esp32" {
 			outf.Write(make([]byte, 4096))
+		} else if chip == "esp32s31" {
+			outf.Write(make([]byte, 8192))
 		}
 	}
 
 	// Chip IDs. Source:
-	// https://github.com/espressif/esp-idf/blob/v4.3/components/bootloader_support/include/esp_app_format.h#L22
+	// https://github.com/espressif/esp-idf/blob/master/components/bootloader_support/include/esp_app_format.h
 	chip_id := map[string]uint16{
-		"esp32":   0x0000,
-		"esp32c3": 0x0005,
+		"esp32":    0x0000,
+		"esp32c3":  0x0005,
+		"esp32s31": 0x0020,
 	}[chip]
 
 	// Image header.
 	switch chip {
-	case "esp32", "esp32c3":
+	case "esp32", "esp32c3", "esp32s31":
 		// Header format:
 		// https://github.com/espressif/esp-idf/blob/v4.3/components/bootloader_support/include/esp_app_format.h#L71
 		// Note: not adding a SHA256 hash as the binary is modified by
