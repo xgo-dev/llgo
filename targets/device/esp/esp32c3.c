@@ -339,6 +339,69 @@ static inline int usb_serial_jtag_ll_write_txfifo(const uint8_t *buf, uint32_t w
 }
 
 // ============================================================================
+// Boot-time HP watchdog shutdown
+// ============================================================================
+// The ROM bootloader arms the RWDT (RTC watchdog) in flashboot mode with an
+// ~8 s timeout and arms MWDT0 flashboot protection as well. Bare-metal images
+// boot straight from the ROM with no second-stage bootloader, so nothing ever
+// reconfigures them and any task that legitimately runs longer than ~8 s gets
+// reset mid-run. Mirror what the ESP-IDF second-stage bootloader does in
+// bootloader_config_wdt(): unlock with the WDT key, clear the enable and
+// flashboot bits, feed, and re-lock.
+//
+// Register addresses and bit positions follow ESP-IDF:
+//   components/soc/<chip>/register/soc/{rtc_cntl,timer_group,rtc_wdt}_reg.h
+//   components/esp_hal_wdt/<chip>/include/hal/{rwdt,mwdt}_ll.h
+// The constructor runs from crt0's __libc_init_array, before main and before
+// the Go runtime starts scheduling, which is the earliest hook the device C
+// file can install.
+
+#define ESP_WDT_WKEY 0x50D83AA1u
+
+#define ESP_WDT_EN (1u << 31)
+#define ESP_WDT_CONF_UPDATE (1u << 22)
+#define ESP_RWDT_FLASHBOOT_EN (1u << 12)
+#define ESP_MWDT_FLASHBOOT_EN (1u << 14)
+
+// RWDT lives in RTC_CNTL; MWDT0 in timer group 0.
+#define ESP_RWDT_CONFIG0_REG (0x60008000u + 0x90)
+#define ESP_RWDT_FEED_REG (0x60008000u + 0xA4)
+#define ESP_RWDT_WPROTECT_REG (0x60008000u + 0xA8)
+#define ESP_MWDT_CONFIG0_REG (0x6001F000u + 0x48)
+#define ESP_MWDT_FEED_REG (0x6001F000u + 0x60)
+#define ESP_MWDT_WPROTECT_REG (0x6001F000u + 0x64)
+
+// RTC_CNTL_OPTIONS0.SW_SYS_RST: full system software reset.
+#define ESP_SOFT_RESET_REG (0x60008000u + 0x00)
+#define ESP_SOFT_RESET_BIT (1u << 31)
+
+// USB_SERIAL_JTAG base: ep1_conf.serial_in_ep_data_free lives at +0x4 bit 1.
+#define ESP_USB_SJ_BASE 0x60043000u
+
+static void esp_disable_hp_wdt(void) {
+  volatile uint32_t *rwdt_config0 = (volatile uint32_t *)ESP_RWDT_CONFIG0_REG;
+  volatile uint32_t *rwdt_feed = (volatile uint32_t *)ESP_RWDT_FEED_REG;
+  volatile uint32_t *rwdt_wprotect = (volatile uint32_t *)ESP_RWDT_WPROTECT_REG;
+  volatile uint32_t *mwdt_config0 = (volatile uint32_t *)ESP_MWDT_CONFIG0_REG;
+  volatile uint32_t *mwdt_feed = (volatile uint32_t *)ESP_MWDT_FEED_REG;
+  volatile uint32_t *mwdt_wprotect = (volatile uint32_t *)ESP_MWDT_WPROTECT_REG;
+
+  // RWDT (RTC watchdog): disarm and drop flashboot mode.
+  *rwdt_wprotect = ESP_WDT_WKEY;
+  *rwdt_config0 &= ~(ESP_WDT_EN | ESP_RWDT_FLASHBOOT_EN);
+  *rwdt_feed = 1;
+  *rwdt_wprotect = 0;
+
+  // MWDT0: disarm and drop flashboot mode. The config registers latch
+  // asynchronously on this silicon, so request an update explicitly.
+  *mwdt_wprotect = ESP_WDT_WKEY;
+  *mwdt_config0 = (*mwdt_config0 & ~(ESP_WDT_EN | ESP_MWDT_FLASHBOOT_EN)) |
+                  ESP_WDT_CONF_UPDATE;
+  *mwdt_feed = 1;
+  *mwdt_wprotect = 0;
+}
+
+// ============================================================================
 // System Call Implementation for Bare-Metal ESP32-C3
 // ============================================================================
 // note(zzy): _write() implementation is inspired by ESP-IDF VFS layer:
@@ -346,23 +409,35 @@ static inline int usb_serial_jtag_ll_write_txfifo(const uint8_t *buf, uint32_t w
 
 #include <sys/types.h>
 
+// The EP1 TX FIFO holds one 64-byte packet. A full 64-byte packet is treated
+// as an incomplete USB transaction by CDC-ACM hosts (it only completes when a
+// further packet or a zero-length packet follows), so chunks are capped at 63
+// bytes and every chunk ends with an explicit wr_done flush.
+#define USB_SJ_CHUNK_MAX 63
+
+// After wr_done, the writable flag only returns once the host has picked the
+// packet up, which takes at most a few USB frames (~1 ms each). A missing host
+// (no terminal attached) never returns the flag, so every wait is bounded and
+// degrades to dropped output instead of hanging the program.
+#define USB_SJ_FLUSH_SPIN 500000
+
 /**
- * @brief Write one character to USB Serial JTAG (blocking)
- *
- * Waits until FIFO has space before writing.
+ * @brief Push buf into the TX FIFO, handing full packets to the host as needed.
  */
-static void usb_serial_jtag_write_char(char c) {
-    // Wait until TX FIFO has space (blocking)
-    while (!usb_serial_jtag_ll_txfifo_writable()) {
-        // Busy wait
-    }
-
-    uint8_t byte = (uint8_t)c;
-    usb_serial_jtag_ll_write_txfifo(&byte, 1);
-
-    // Flush on newline to ensure output is displayed immediately
-    if (c == '\n') {
-        usb_serial_jtag_ll_txfifo_flush();
+static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        off += usb_serial_jtag_ll_write_txfifo(buf + off, len - off);
+        if (off < len) {
+            usb_serial_jtag_ll_txfifo_flush();
+            int spin = USB_SJ_FLUSH_SPIN;
+            while (!usb_serial_jtag_ll_txfifo_writable() && spin-- > 0) {
+                // Busy wait until the host drains the packet
+            }
+            if (spin <= 0) {
+                return; // no host is reading; drop the remainder
+            }
+        }
     }
 }
 
@@ -372,26 +447,142 @@ static void usb_serial_jtag_write_char(char c) {
  * For bare-metal ESP32-C3, only stdout (1) and stderr (2) are supported
  * via USB Serial JTAG. Other file descriptors return error.
  *
+ * Output is batched into stack chunks of up to 63 bytes instead of writing
+ * byte by byte: each chunk needs one wr_done handshake with the host, so
+ * batching removes most of that per-byte overhead. Chunks flush on newline
+ * for interactive output, and _exit flushes anything left over.
+ *
  * @param fd File descriptor (only 1 and 2 supported)
  * @param buf Data buffer to write
  * @param count Number of bytes to write
  * @return Number of bytes written, or -1 on error
  */
 ssize_t _write(int fd, const void *buf, size_t count) {
-    const char *data = (const char *)buf;
-
-    // Write each character
-    for (size_t i = 0; i < count; i++) {
-        char c = data[i];
-
-        // Auto convert LF to CRLF for terminal compatibility
-        if (c == '\n') {
-            usb_serial_jtag_write_char('\r');
-        }
-        usb_serial_jtag_write_char(c);
+    if (fd != 1 && fd != 2) {
+        return -1;
     }
 
-    return (ssize_t)count; // Always report success (non-blocking)
+    const uint8_t *data = (const uint8_t *)buf;
+    uint8_t chunk[USB_SJ_CHUNK_MAX];
+    size_t n = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        uint8_t c = data[i];
+        size_t need = (c == '\n') ? 2 : 1; // LF expands to CRLF
+
+        if (n + need > sizeof(chunk)) {
+            usb_serial_jtag_push(chunk, n);
+            usb_serial_jtag_ll_txfifo_flush();
+            n = 0;
+        }
+        if (c == '\n') {
+            chunk[n++] = '\r';
+        }
+        chunk[n++] = c;
+
+        if (c == '\n') {
+            usb_serial_jtag_push(chunk, n);
+            usb_serial_jtag_ll_txfifo_flush();
+            n = 0;
+        }
+    }
+
+    if (n > 0) {
+        usb_serial_jtag_push(chunk, n);
+        usb_serial_jtag_ll_txfifo_flush();
+    }
+
+    return (ssize_t)count;
+}
+
+// ============================================================================
+// Exit path fallback for real hardware
+// ============================================================================
+// _exit comes from newlib's libsemihost archive (RISC-V semihosting
+// SYS_EXIT: a0=0x18 SYS_EXIT, a1=0x20026 ADP_Stopped_ApplicationExit, with
+// the uncompressed slli/ebreak/srai trap sequence). esp-emu and QEMU
+// (-semihosting) intercept that EBREAK and terminate cleanly.
+//
+// On real hardware there is no semihosting host: the EBREAK raises a
+// breakpoint exception (mcause=3). This device file installs a chained trap
+// at boot that recognizes the semihosting sequence by the magic slli in
+// front of the faulting EBREAK and performs an RTC soft reset, instead of
+// falling into the ROM exception handler (which spins until a watchdog
+// reset). Every other exception/interrupt chains to the handler that was
+// in mtvec at boot, so ordinary traps keep their existing behavior.
+//
+// The link order puts the libc archives before the extra-file objects, so a
+// strong _exit here would collide with the archive's definition; the trap
+// below is the device-side complement to the archive's exit.
+
+// 0x01f01013: slli zero, zero, 0x1f - first half of the semihosting pair.
+#define ESP_SEMIHOST_SLII 0x01f01013u
+
+// Bounded host-drain window in the exit trap (same rationale as
+// USB_SJ_FLUSH_SPIN: a few USB frames, and it never runs under esp-emu/QEMU
+// because the semihosting host terminates the process at the EBREAK).
+#define ESP_TRAP_DRAIN_SPIN 1500000
+
+// Previous (ROM) mtvec, saved at boot for chaining. `used` keeps the
+// definition in the object: the only reader is the naked trap's assembly,
+// which the optimizer cannot see.
+__attribute__((used)) static uint32_t esp_prev_mtvec;
+
+__attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
+    __asm__ volatile(
+        "addi sp, sp, -20\n"
+        "sw a0, 0(sp)\n"
+        "sw a1, 4(sp)\n"
+        "sw a2, 8(sp)\n"
+        "sw t0, 12(sp)\n"
+        "sw t1, 16(sp)\n"
+        "csrr a0, mcause\n"
+        "bltz a0, 2f\n" // interrupts chain to the previous handler
+        "li a1, 3\n" // EXCAUSE_BREAKPOINT
+        "bne a0, a1, 2f\n"
+        "csrr a0, mepc\n"
+        "lw a1, -4(a0)\n" // instruction in front of the EBREAK
+        "li a2, %0\n"
+        "bne a1, a2, 2f\n" // not our semihosting exit: chain
+        // Semihosting exit without a semihosting host. Give the USB host a
+        // bounded window to drain the last flushed packet (ep1_conf
+        // serial_in_ep_data_free), then soft reset.
+        "li a0, %1\n"
+        "li a3, %2\n"
+        "3: lw a1, 4(a0)\n"
+        "andi a1, a1, 2\n" // serial_in_ep_data_free
+        "bnez a1, 4f\n"
+        "addi a3, a3, -1\n"
+        "bnez a3, 3b\n"
+        "4: li a0, %3\n"
+        "lw a1, 0(a0)\n"
+        "li a2, %4\n"
+        "or a1, a1, a2\n"
+        "sw a1, 0(a0)\n"
+        "1: wfi\n" // reset takes effect; park if it somehow does not
+        "j 1b\n"
+        "2: la t0, esp_prev_mtvec\n"
+        "lw t0, 0(t0)\n"
+        "lw a0, 0(sp)\n"
+        "lw a1, 4(sp)\n"
+        "lw a2, 8(sp)\n"
+        "lw t1, 16(sp)\n"
+        "addi sp, sp, 20\n"
+        "jr t0\n"
+        :
+        : "i"(ESP_SEMIHOST_SLII), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN),
+          "i"(ESP_SOFT_RESET_REG), "i"(ESP_SOFT_RESET_BIT));
+}
+
+// Boot hook: disarm the ROM-armed watchdogs and install the exit trap.
+// crt0 runs .init_array constructors before main, so this happens before
+// any Go code - the earliest hook the device C file can install.
+__attribute__((constructor)) static void esp_boot_early(void) {
+    esp_disable_hp_wdt();
+    uint32_t prev;
+    __asm__ volatile("csrr %0, mtvec" : "=r"(prev));
+    esp_prev_mtvec = prev & ~3u; // strip the mtvec mode bits: chain in direct mode
+    __asm__ volatile("csrw mtvec, %0" : : "r"(esp_trap_handler));
 }
 
 #ifdef __cplusplus
