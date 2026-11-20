@@ -84,7 +84,11 @@ func TestWasmHostLayoutHeaderLoads(t *testing.T) {
 }
 
 func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
-	for _, delayed := range []bool{false, true} {
+	for _, tc := range []struct{ volatile, delayed bool }{
+		{},
+		{volatile: true},
+		{volatile: true, delayed: true},
+	} {
 		prog := newJ32Program(t)
 		setTestRuntime(t, prog)
 		pkg := prog.NewPackage("p", "example.com/p")
@@ -94,15 +98,15 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 		fn := pkg.NewFunc("copyHeaders", types.NewSignatureType(nil, nil, nil, params, nil, false), GoDecl)
 		b := fn.MakeBody(1)
 		src, dst := fn.Param(0), fn.Param(1)
-		value := b.Load(src).SetVolatile(delayed)
-		if delayed {
+		value := b.Load(src).SetVolatile(tc.volatile)
+		if tc.delayed {
 			// An intervening call can collect and overwrite the source.
 			sig := llvm.FunctionType(prog.ctx.VoidType(), []llvm.Type{src.impl.Type()}, false)
 			mutate := llvm.AddFunction(pkg.mod, "mutate", sig)
 			b.impl.CreateCall(sig, mutate, []llvm.Value{src.impl}, "")
 		}
 		b.Store(dst, value)
-		if delayed {
+		if tc.delayed {
 			last := b.impl.CreateExtractValue(value.impl, 255, "")
 			b.impl.CreateStore(last, dst.impl)
 		}
@@ -116,7 +120,7 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		var slot, clear, move, copy, field llvm.Value
+		var slot, clear, read, write, field llvm.Value
 		allocs := 0
 		for block := fn.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
 			for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
@@ -133,24 +137,33 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 					slot = inst
 				case strings.HasPrefix(name, "__llgo_clear_header_range"):
 					clear = inst
-				case strings.HasPrefix(name, "llvm.memmove"):
-					move = inst
-				case strings.HasPrefix(name, "llvm.memcpy"):
-					copy = inst
+				case strings.HasPrefix(name, "llvm.memmove"), strings.HasPrefix(name, "llvm.memcpy"):
+					if inst.Operand(1) == src.impl {
+						if !read.IsNil() {
+							t.Fatal("aggregate copy read its source twice")
+						}
+						read = inst
+					}
+					if inst.Operand(0) == dst.impl {
+						write = inst
+					}
 				}
 			}
 		}
-		if move.IsNil() || move.Operand(1) != src.impl || clear.IsNil() {
-			t.Fatalf("missing source read or padding normalization:\n%s", fn.impl.String())
+		if read.IsNil() || !strings.HasPrefix(read.CalledValue().Name(), "llvm.memmove") || write.IsNil() || clear.IsNil() {
+			t.Fatalf("missing source read, destination write or padding normalization:\n%s", fn.impl)
 		}
-		if delayed {
-			if allocs != 1 || move.Operand(0) != slot || move.Operand(3).ZExtValue() != 1 ||
-				clear.Operand(0) != slot || copy.IsNil() || copy.Operand(1) != slot || copy.Operand(0) != dst.impl ||
-				field.IsNil() || field.Operand(2).ZExtValue() != 255 || !strings.Contains(fn.impl.String(), "gcroot.entry") {
-				t.Fatalf("delayed assignment must retain one rooted, normalized snapshot:\n%s", fn.impl.String())
+		if tc.volatile {
+			if allocs != 1 || read.Operand(0) != slot || read.Operand(3).ZExtValue() != 1 ||
+				clear.Operand(0) != slot || write.Operand(1) != slot || write.Operand(3).ZExtValue() != 0 {
+				t.Fatalf("only the original source read should be volatile:\n%s", fn.impl)
 			}
-		} else if allocs != 0 || move.Operand(0) != dst.impl || clear.Operand(0) != dst.impl || !copy.IsNil() {
-			t.Fatalf("immediate assignment must normalize in the destination:\n%s", fn.impl.String())
+			if tc.delayed && (!strings.HasPrefix(write.CalledValue().Name(), "llvm.memcpy") || field.IsNil() ||
+				field.Operand(2).ZExtValue() != 255 || !strings.Contains(fn.impl.String(), "gcroot.entry")) {
+				t.Fatalf("delayed assignment must retain one rooted, normalized snapshot:\n%s", fn.impl)
+			}
+		} else if allocs != 0 || read != write || clear.Operand(0) != dst.impl {
+			t.Fatalf("immediate assignment must normalize in the destination:\n%s", fn.impl)
 		}
 	}
 }
@@ -209,7 +222,7 @@ func TestWasmHeaderSnapshotSourceAndStorage(t *testing.T) {
 	fn := pkg.NewFunc("snapshots", types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), nil, false), GoDecl)
 	b := fn.MakeBody(1)
 	defer b.Dispose()
-	var scratch llvm.Value
+	var scratch, consume, heapSlot llvm.Value
 	for i, n := range lengths {
 		src := fn.Param(i)
 		value := b.Load(src).SetVolatile(true)
@@ -228,6 +241,10 @@ func TestWasmHeaderSnapshotSourceAndStorage(t *testing.T) {
 			if slot.IsACallInst().IsNil() {
 				t.Fatalf("[%d]string needs a scanned heap snapshot", n)
 			}
+			// A by-value consumer still needs the normalized aggregate in SSA.
+			heapSlot = slot
+			sig := llvm.FunctionType(prog.ctx.VoidType(), []llvm.Type{value.impl.Type()}, false)
+			consume = b.impl.CreateCall(sig, llvm.AddFunction(pkg.mod, "consume", sig), []llvm.Value{value.impl}, "")
 		} else if scratch.IsNil() {
 			scratch = slot
 		} else if scratch != slot {
@@ -238,6 +255,13 @@ func TestWasmHeaderSnapshotSourceAndStorage(t *testing.T) {
 	b.EndBuild()
 	if scratch.IsAAllocaInst().IsNil() || scratch.Operand(0).ZExtValue() != uint64(threshold-1)*stringSize || scratch.Alignment() < 8 {
 		t.Fatalf("shared stack slot has insufficient storage: %s", scratch.String())
+	}
+	cfg := llabi.AggregateLoweringConfig{GoWordSize: prog.GoWordSize(), Wasm: true}
+	llabi.LowerLargeAggregates(prog.TargetData(), pkg.mod, cfg)
+	llabi.LowerAggregateCopies(prog.TargetData(), pkg.mod, cfg)
+	arg := consume.Operand(0)
+	if arg.IsALoadInst().IsNil() || arg.Operand(0) != heapSlot {
+		t.Fatalf("by-value call lost its normalized snapshot:\n%s", fn.impl)
 	}
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
