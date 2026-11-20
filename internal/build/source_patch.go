@@ -40,6 +40,7 @@ type sourcePatchBuildContext struct {
 	buildFlags     []string
 	targetTags     []string
 	builtinFormats bool
+	fsSnapshot     []byte
 	cgoEnabled     *bool
 }
 
@@ -128,12 +129,20 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		return io.NopCloser(strings.NewReader("package sourcepatch\n")), nil
 	}
 
+	var fsSnapshot []byte
+	fsSource := filepath.Join(srcDir, "fs_js.go")
+	if pkgPath == "syscall" && base[fsSource] == nil {
+		fsSnapshot = ctx.fsSnapshot
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if name == wasmFSSnapshotPatch && fsSnapshot == nil {
 			continue
 		}
 		match, err := buildCtx.MatchFile(patchDir, name)
@@ -274,6 +283,11 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		out[target] = src.data
 		files = append(files, src.filename)
 		changed = true
+	}
+	if fsSnapshot != nil {
+		if _, ok := patchSrcs[wasmFSSnapshotPatch]; ok {
+			out[fsSource] = fsSnapshot
+		}
 	}
 	if pkgPath == "fmt" && ctx.builtinFormats {
 		printFile := filepath.Join(srcDir, "print.go")

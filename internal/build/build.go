@@ -903,6 +903,22 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}
 	commands.environ = sourceGo.apply(commands.environ)
+	var fsSnapshot []byte
+	if export.WasmProvider == crosscompile.WasmProviderEmscripten && !wasmWorkers.Enabled() &&
+		len(conf.SourceOverlay) == 0 && conf.DebugArtifactMode == DebugArtifactNone &&
+		conf.LinkOptions.ExternalLinkerFlags == "" && commands.lookup("LDFLAGS") == "" && commands.lookup("EMCC_CFLAGS") == "" &&
+		prepareValueFormatSupport(conf, export, frontendOptions) {
+		fsSource := filepath.Join(sourcePatchGOROOT, "src", "syscall", "fs_js.go")
+		if conf.Overlay[fsSource] == nil {
+			if source, err := os.ReadFile(fsSource); err == nil {
+				fsSnapshot = rewriteWasmFSInitializers(source)
+			}
+		}
+		if fsSnapshot != nil {
+			export.BuildTags = append(export.BuildTags, wasmFSSnapshotTag)
+			cfg.BuildFlags = appendWasmFSSnapshotTag(cfg.BuildFlags)
+		}
+	}
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
 	sourceTargetTags := slices.Clone(export.BuildTags)
@@ -924,6 +940,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		buildFlags:     cfg.BuildFlags,
 		targetTags:     sourceTargetTags,
 		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
+		fsSnapshot:     fsSnapshot,
 		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
@@ -1817,6 +1834,7 @@ func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworker
 		export.LDFLAGS = append(export.LDFLAGS,
 			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "wasm_fs.js"),
 			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs.js"),
+			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs_snapshot.js"),
 			"-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS",
 		)
 	}

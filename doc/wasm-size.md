@@ -51,6 +51,9 @@ pass.
 Closed Emscripten size builds can omit the setup of unreferenced Go standard
 files. The final link selects the setup to omit from the cached `os` archive.
 Code that uses or reassigns a standard stream keeps its initialization.
+Single-worker Full LTO size builds with supported Go sources read host
+filesystem properties during initialization and create Go JavaScript handles
+on first use.
 
 In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
 `encoding/json.Marshal` calls to typed encoders. Closed shapes can use

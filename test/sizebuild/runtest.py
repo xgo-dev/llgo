@@ -57,7 +57,7 @@ def runtime_free_cache_probe(llgo, wasmer, directory, env):
 def controlled_environment(source):
     env = dict(source, LLGO_ROOT=str(ROOT), LLGO_BUILD_CACHE="1")
     # Ambient compiler/linker flags can invalidate the runtime-free proof.
-    for name in ("LLGO_LTO_PLUGIN", "LLGO_PLAN9ASM_PKGS", "CCFLAGS", "CFLAGS", "LDFLAGS"):
+    for name in ("LLGO_LTO_PLUGIN", "LLGO_PLAN9ASM_PKGS", "CCFLAGS", "CFLAGS", "LDFLAGS", "EMCC_CFLAGS"):
         env.pop(name, None)
     return env
 
@@ -155,6 +155,12 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
         if actual.strip() != expected_output:
             raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
+        if target == "emscripten" and fixture == "wasm-standard-files":
+            result = subprocess.run([runner[0], "--import", str(ROOT / "test/sizebuild/wasm-invalid-fs-flag.mjs"),
+                                     *runner[1:], str(artifact)], cwd=ROOT, env=env, timeout=90,
+                                    capture_output=True, text=True)
+            if result.returncode != 2 or "panic: syscall/js: call of Value.Int on undefined" not in result.stderr:
+                raise RuntimeError(f"{target}: filesystem initialization error changed\n{result}")
         if browser:
             node = env.get("NODE", "node")
             command([node, str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact),
