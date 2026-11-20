@@ -912,6 +912,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if typedJSONSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
+	if linuxSizeCodecBuild(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.native")
+	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:           conf.Goos,
 		goarch:         conf.Goarch,

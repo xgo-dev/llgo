@@ -55,7 +55,7 @@ func typedJSONSupport(conf *Config, target crosscompile.Export, frontend cl.Opti
 }
 
 func linuxSizeCodecBuild(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return conf.Target == "" && conf.Goos == "linux" &&
+	return !conf.disableSizeSpecialization && conf.Target == "" && conf.Goos == "linux" &&
 		(conf.Goarch == "amd64" || conf.Goarch == "arm64") &&
 		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
 		conf.LinkOptions.ExternalLinkerFlags == "" && sizeCodecBuild(conf, frontend)

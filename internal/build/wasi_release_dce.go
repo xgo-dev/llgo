@@ -107,9 +107,9 @@ func (in *linkPruningInputs) collectAsmReferences(pkg *packages.Package, path st
 	in.roots = appendModuleDeclarationRoots(in.roots, mod)
 }
 
-// The ARM64 translator emits these single-instruction register accesses as
+// The Plan 9 translator emits these single-instruction register accesses as
 // inline assembly. They cannot transfer control or reference a Go symbol.
-var systemRegisterAsm = regexp.MustCompile(`(?i)^[ \t]*(?:mrs[ \t]+\$0,[ \t]+[a-z0-9_]+|msr[ \t]+[a-z0-9_]+,[ \t]+\$0)[ \t]*$`)
+var systemRegisterAsm = regexp.MustCompile(`(?i)^[ \t]*(?:cpuid|xgetbv|mrs[ \t]+\$0,[ \t]+[a-z0-9_]+|msr[ \t]+[a-z0-9_]+,[ \t]+\$0)[ \t]*$`)
 
 func isSystemRegisterAsm(callee llvm.Value) bool {
 	return !callee.IsAInlineAsm().IsNil() && systemRegisterAsm.MatchString(callee.InlineAsmInfo().Assembly)

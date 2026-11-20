@@ -459,6 +459,8 @@ jobs:
             ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
+          python3 test/sizebuild/runtest.py --target=native
+
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-cl.txt \

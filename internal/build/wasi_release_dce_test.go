@@ -87,6 +87,9 @@ func TestWasiSizePruningAssemblySystemRegisters(t *testing.T) {
 	}{
 		{name: "read", call: read, native: true, want: true},
 		{name: "write", call: `call void asm sideeffect "msr S3_3_C4_C2_5, $0", "r,~{memory}"(i64 1)`, native: true, want: true},
+		{name: "cpuid", call: `call void asm sideeffect "cpuid", ""()`, native: true, want: true},
+		{name: "xgetbv", call: `call void asm sideeffect "xgetbv", ""()`, native: true, want: true},
+		{name: "x86 escape", call: `call void asm sideeffect "cpuid; call other", ""()`, native: true},
 		{name: "wasm", call: read},
 		{name: "escape", call: strings.Replace(read, "EL1", "EL1; bl external", 1), native: true},
 	} {

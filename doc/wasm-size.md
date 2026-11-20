@@ -53,6 +53,8 @@ can lower supported `encoding/json.Unmarshal` calls to typed decoders on closed
 WASI, Emscripten, macOS arm64, Linux amd64/arm64 and bare-metal builds. This path
 uses the v2-backed legacy API, enabled by default in Go 1.27 or with
 `GOEXPERIMENT=jsonv2` in Go 1.26. Unknown native references keep codec startup.
+Linux amd64 size builds use Go's software span scanner for the standard
+runtime package. LLGo's collector is selected independently.
 
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi

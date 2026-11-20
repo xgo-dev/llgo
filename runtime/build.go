@@ -109,6 +109,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/cpu":                   {},
 	"internal/poll":                  {},
 	"internal/runtime/atomic":        {},
+	"internal/runtime/gc/scan":       {},
 	"internal/runtime/maps":          {},
 	"internal/runtime/syscall":       {},
 	"internal/runtime/syscall/linux": {},
@@ -133,6 +134,7 @@ var sourcePatchPkgs = map[string]struct{}{
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
 	"crypto/internal/fips140/aes": {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
 	"internal/runtime/atomic":     {"arm": {}},
+	"internal/runtime/gc/scan":    {"amd64": {}},
 	"runtime/internal/atomic":     {"arm": {}},
 	"sync/atomic":                 {"*": {}},
 	"syscall":                     {"*": {}},
