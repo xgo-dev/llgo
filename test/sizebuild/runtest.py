@@ -131,6 +131,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         fixture = "native-link-parity"
         expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
         fixtures.append((fixture, expected, "llgo: prune native type metadata", True))
+        fixtures.append(("native-map-init", "true true true", "llgo: omit unused map initializers", True))
     for fixture, expected, marker, specialized in fixtures:
         artifact = directory / f"{target}-{fixture}{suffix}"
         flags = ["-target", target] if target != "native" else []
@@ -229,6 +230,7 @@ def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-bas
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3", "cortex-m-mps2"), required=True)
+    parser.add_argument("--llgo", type=pathlib.Path, help="use an existing development LLGo executable")
     parser.add_argument("--browser", action="store_true", help="also run Emscripten products in Chrome")
     parser.add_argument("--esp32c3-go-root", type=pathlib.Path, action="append", default=[],
                         help="also run fmt with this Go standard library")
@@ -237,8 +239,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="llgo-size-build-") as directory:
         directory = pathlib.Path(directory)
         suffix = ".exe" if os.name == "nt" else ""
-        llgo = directory / f"llgo{suffix}"
-        command(["go", "build", "-tags=dev", "-o", str(llgo), "./cmd/llgo"], env)
+        llgo = args.llgo
+        if llgo is None:
+            llgo = directory / f"llgo{suffix}"
+            command(["go", "build", "-tags=dev", "-o", str(llgo), "./cmd/llgo"], env)
+        else:
+            llgo = llgo.resolve(strict=True)
         if args.target == "emscripten":
             env["LLGO_WASM_WORKERS"] = "1"
             node = env.get("NODE", "node")

@@ -35,11 +35,18 @@ Development LLGo builds also specialize typed value formatting on closed
 Emscripten J32/J64, macOS arm64, and supported Linux programs with
 `-Oz -lto=full -deadcodedrop -globaldce=false`. Native links can prune type
 metadata using the same reachability proof as WASI, with assembly references
-and native entry points included in the analysis. This configuration can replace
+and native entry points included in the analysis. Native archives can guard
+static map construction in standard-library leaf packages. The final link
+can omit a map when its initializer accepts only static data and the program
+has no reachable use of the map. This configuration can replace
 `encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
 layouts and standard byte orders. Mixed or dynamic uses retain the standard
 codec. With `-x`, selected codecs report
 `llgo: specialize fixed-size binary encoding`.
+
+Emscripten Full LTO size builds repeat Binaryen size passes while the
+deployment module shrinks. Embedded and external DWARF profiles use a single
+pass.
 
 In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
 `encoding/json.Marshal` calls to typed encoders. Closed shapes can use

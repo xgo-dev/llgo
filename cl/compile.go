@@ -61,6 +61,9 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
+	// GuardMapInitializers emits weak defaults for selected data tables.
+	// Only the final-link module may override those defaults.
+	GuardMapInitializers bool
 	// EscapeAnalysis contains immutable storage decisions prepared before
 	// backend workers. Direct API callers may omit it to analyze their input.
 	EscapeAnalysis *goescape.Result
@@ -1281,7 +1284,19 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	isCgoCfunc := isCgoCfunc(fnName)
 	isCgoC2 := isCgoC2func(fnName)
 	isCgoCmacro := isCgoCmacro(fnName)
+	var maps []OptionalMapInitializer
+	var mapEnd llssa.BasicBlock
+	if p.options.GuardMapInitializers && block.Parent().Synthetic == "package initializer" {
+		maps = optionalMapInitializersInBlock(block)
+	}
 	for i, instr := range instrs {
+		if len(maps) != 0 && instr == maps[0].Make {
+			body := fn.MakeBlock()
+			mapEnd = fn.MakeBlock()
+			guard := DefineMapInitializerGuard(pkg, MapInitializerGuardName(maps[0].Global), true)
+			b.If(b.Load(guard.Expr), body, mapEnd)
+			b.SetBlock(body)
+		}
 		if p.isCooperativeSafepoint(instr) {
 			p.emitCooperativeSafepoint(b)
 		}
@@ -1331,6 +1346,11 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 			}
 		} else {
 			p.compileInstr(b, instr)
+			if len(maps) != 0 && instr == maps[0].Store {
+				b.Jump(mapEnd)
+				b.SetBlock(mapEnd)
+				maps = maps[1:]
+			}
 			// llgo.unreachable is an LLVM terminator. Go SSA still appends a
 			// synthetic Return for a direct tail call, so do not lower that
 			// Return into the already-terminated LLVM block. Restrict this to

@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
@@ -476,10 +477,16 @@ func TestRemoveStaleWasmManifest(t *testing.T) {
 
 func TestWasmFinalDebugPasses(t *testing.T) {
 	for _, debug := range []DebugArtifactMode{DebugArtifactNone, DebugArtifactEmbedded, DebugArtifactExternal} {
-		args := wasmFinalArgs(&Config{WasmOpt: WasmOptSize, DebugArtifactMode: debug}, &crosscompile.Export{}, "in", "out")
-		for _, pass := range []string{"precompute", "precompute-propagate", "local-cse"} {
-			if slices.Contains(args, "--skip-pass="+pass) != (debug != DebugArtifactNone) {
-				t.Fatalf("debug=%v: %v", debug, args)
+		target := crosscompile.Export{WasmProvider: crosscompile.WasmProviderEmscripten}
+		for _, mode := range []lto.Mode{lto.Off, lto.Full} {
+			args := wasmFinalArgs(&Config{WasmOpt: WasmOptSize, DebugArtifactMode: debug, LTO: mode}, &target, "in", "out")
+			if slices.Contains(args, "--converge") != (debug == DebugArtifactNone && mode == lto.Full) {
+				t.Fatalf("debug=%v LTO=%v: %v", debug, mode, args)
+			}
+			for _, pass := range []string{"precompute", "precompute-propagate", "local-cse"} {
+				if slices.Contains(args, "--skip-pass="+pass) != (debug != DebugArtifactNone) {
+					t.Fatalf("debug=%v LTO=%v: %v", debug, mode, args)
+				}
 			}
 		}
 	}

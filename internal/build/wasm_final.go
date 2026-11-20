@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
 )
@@ -158,6 +159,10 @@ func wasmFinalArgs(conf *Config, target *crosscompile.Export, input, output stri
 			// passes. Keep the rest of -Oz, including its DWARF compatibility
 			// checks, until those passes preserve the debugger contract too.
 			args = append(args, "--skip-pass=precompute", "--skip-pass=precompute-propagate", "--skip-pass=local-cse")
+		} else if target.WasmProvider == crosscompile.WasmProviderEmscripten && conf.ltoMode() == lto.Full {
+			// Asyncify and wrapper lowering expose new simplifications after
+			// the first size pass. Repeat while the deployment module shrinks.
+			args = append(args, "--converge")
 		}
 	}
 	// Keep names and DWARF until debugger packaging and explicit stripping.
