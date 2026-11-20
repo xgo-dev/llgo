@@ -165,6 +165,11 @@ func TestEffectivePCLNModeLegacyPrecedence(t *testing.T) {
 		{name: "explicit none wins", funcInfo: "1", conf: Config{PCLNMode: PCLNNone, PCLNModeSet: true}, want: PCLNNone},
 		{name: "typed external is authoritative", funcInfo: "0", conf: Config{PCLNMode: PCLNExternal}, want: PCLNExternal},
 		{name: "typed none is authoritative", funcInfo: "1", conf: Config{PCLNMode: PCLNNone}, want: PCLNNone},
+		{name: "target default none", conf: Config{Target: "esp32c3"}, want: PCLNNone},
+		{name: "target legacy disabled", funcInfo: "0", conf: Config{Target: "esp32c3"}, want: PCLNNone},
+		{name: "target explicit opt-in", funcInfo: "1", conf: Config{Target: "esp32c3"}, want: PCLNEmbedded},
+		{name: "target explicit embedded wins", conf: Config{Target: "esp32c3", PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "target typed external is authoritative", funcInfo: "0", conf: Config{Target: "esp32c3", PCLNMode: PCLNExternal}, want: PCLNExternal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -234,17 +239,20 @@ func TestDoValidatesPCLNMode(t *testing.T) {
 }
 
 func TestDoNormalizesLegacyPCLNMode(t *testing.T) {
-	t.Setenv(llgoFuncInfo, "0")
 	tests := []struct {
-		name string
-		conf Config
-		want PCLNMode
+		name     string
+		funcInfo string
+		conf     Config
+		want     PCLNMode
 	}{
-		{name: "legacy default", conf: Config{}, want: PCLNNone},
-		{name: "explicit embedded", conf: Config{PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "legacy default", funcInfo: "0", conf: Config{}, want: PCLNNone},
+		{name: "explicit embedded", funcInfo: "0", conf: Config{PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "target default none", funcInfo: "", conf: Config{Target: "wasi"}, want: PCLNNone},
+		{name: "target explicit opt-in", funcInfo: "1", conf: Config{Target: "wasi"}, want: PCLNEmbedded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(llgoFuncInfo, tt.funcInfo)
 			conf := tt.conf
 			before := conf
 			// Stop after PCLN normalization without setting up a toolchain.

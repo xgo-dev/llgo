@@ -4746,6 +4746,14 @@ func isEnvOn(env string, defVal bool) bool {
 	return envVal == "1" || envVal == "true" || envVal == "on"
 }
 
+// isEnvExplicitlyOn reports whether env is set to an affirmative value.
+// Unlike isEnvOn with a default, leaving the variable unset fails the check,
+// letting callers distinguish the documented default from an explicit opt-in.
+func isEnvExplicitlyOn(env string) bool {
+	envVal := strings.ToLower(os.Getenv(env))
+	return envVal == "1" || envVal == "true" || envVal == "on"
+}
+
 // cacheEnabled checks if build cache is enabled.
 // Cache can be disabled by setting LLGO_BUILD_CACHE=off|0
 func cacheEnabled() bool {

@@ -84,10 +84,21 @@ func (m PCLNMode) validate() error {
 // effectivePCLNMode translates the legacy environment escape hatch once at
 // the configuration boundary. An explicit -pclntab value always wins.
 func effectivePCLNMode(conf *Config) PCLNMode {
-	if !conf.PCLNModeSet && conf.PCLNMode == PCLNEmbedded && !IsFuncInfoEnabled() {
+	if conf.PCLNModeSet || conf.PCLNMode != PCLNEmbedded {
+		return conf.PCLNMode
+	}
+	if !IsFuncInfoEnabled() {
 		return PCLNNone
 	}
-	return conf.PCLNMode
+	// Target runtimes cannot consume embedded funcinfo tables: the baremetal
+	// site object format is unsupported, so entry-site records never resolve
+	// and traceback lookups always fail. Emitting the tables is pure dead
+	// weight there, so default target builds to no metadata; an explicit
+	// LLGO_FUNCINFO=1 opts back in. Hosted builds keep the embedded default.
+	if conf.Target != "" && !isEnvExplicitlyOn(llgoFuncInfo) {
+		return PCLNNone
+	}
+	return PCLNEmbedded
 }
 
 // shouldEnablePCLNSites reports whether compiler-emitted PC anchor records are
