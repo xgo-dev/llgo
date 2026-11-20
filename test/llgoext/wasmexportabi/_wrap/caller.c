@@ -35,3 +35,42 @@ GoSlice llgo_test_c_slice(GoSlice s) {
         return make_slice(0, 0, 0);
     return make_slice(data + 1, 3, 4);
 }
+
+typedef struct { const char *p; int64_t n; } GoString;
+typedef struct { GoString Text; GoSlice Data; } Mixed;
+extern Mixed llgo_test_go_mixed(Mixed m);
+
+static Mixed make_mixed(const char *text, void *data, int64_t len, int64_t cap) {
+    Mixed m;
+    memset(&m, 0xa5, sizeof(m));
+    m.Text.p = text;
+    m.Text.n = 4;
+    m.Data.data = data;
+    m.Data.len = len;
+    m.Data.cap = cap;
+    return m;
+}
+
+int32_t llgo_test_call_go_mixed(void) {
+    unsigned char data[5] = {7, 8, 9, 10, 11};
+    Mixed got = llgo_test_go_mixed(make_mixed("wasm", data, 3, 5));
+    return got.Text.n == 4 && memcmp(got.Text.p, "wasm", 4) == 0
+        && got.Data.data == data + 1 && got.Data.len == 3 && got.Data.cap == 4;
+}
+
+Mixed llgo_test_c_mixed(Mixed m) {
+    GoSlice s = llgo_test_c_slice(m.Data);
+    return make_mixed(m.Text.p, s.data, s.len, s.cap);
+}
+
+void llgo_test_call_sink(void (*sink)(GoSlice)) {
+    unsigned char data[5] = {7, 8, 9, 10, 11};
+    sink(make_slice(data, 3, 5));
+}
+
+int32_t llgo_test_call_source(GoSlice (*source)(void)) {
+    GoSlice s = source();
+    if (s.len != 3 || s.cap < 4 || s.data == 0)
+        return -1;
+    return *(unsigned char *)s.data;
+}

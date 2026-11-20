@@ -145,21 +145,23 @@ func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.
 	}
 }
 
-// needsNativeIntegerFuncval identifies C entries whose physical prototype or
-// integer extension differs from the Go funcval ABI. Adapt at the conversion
-// boundary instead of changing calls through arbitrary Go values.
-func (b Builder) needsNativeIntegerFuncval(fn Expr) bool {
-	if b.Prog.usesWideGoStorage() {
-		switch fn.kind {
-		case vkFuncPtr:
-			sig := fn.raw.Type.Underlying().(*types.Signature)
-			if b.Prog.FuncDecl(sig, CDecl).ll != b.Prog.FuncDecl(sig, GoDecl).ll {
-				return true
-			}
-		case vkFuncDecl:
-			if b.Prog.isNativeStorage(fn.Type) && fn.ll != b.Prog.FuncDecl(fn.raw.Type.Underlying().(*types.Signature), GoDecl).ll {
-				return true
-			}
+func (p Program) isWasm32NativeCall(fn Expr) bool {
+	return p.usesWideGoStorage() && (fn.kind == vkFuncPtr || fn.kind == vkFuncDecl && p.isNativeStorage(fn.Type))
+}
+
+// needsNativeFuncval identifies C entries whose prototype, result normalization
+// or integer extension differs from the Go funcval ABI. Adapt at conversion
+// instead of changing calls through arbitrary Go values.
+func (b Builder) needsNativeFuncval(fn Expr) bool {
+	prog := b.Prog
+	if prog.isWasm32NativeCall(fn) {
+		sig := fn.raw.Type.Underlying().(*types.Signature)
+		native := fn.ll
+		if fn.kind == vkFuncPtr {
+			native = prog.FuncDecl(sig, CDecl).ll
+		}
+		if native != prog.FuncDecl(sig, GoDecl).ll || prog.hasWasmSlicePadding(native.ReturnType()) {
+			return true
 		}
 	}
 	if b.Prog.nativeIntegerExt == nativeIntegerNoExt {

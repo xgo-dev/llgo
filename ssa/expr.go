@@ -197,7 +197,9 @@ func (p Program) Zero(t Type) Expr {
 			flds[i] = p.Zero(p.rawType(u.Field(i).Type())).impl
 		}
 		ret = p.constStructValue(t, flds)
-	case *types.Slice, *types.Array:
+	case *types.Slice:
+		ret = p.Zero(p.rtType("Slice")).impl
+	case *types.Array:
 		ret = llvm.ConstNull(t.ll)
 	case *types.Interface:
 		var name string
@@ -1083,7 +1085,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		if b.needsStdcallFuncval(x) {
 			return b.stdcallFuncval(t, x)
 		}
-		if b.needsNativeIntegerFuncval(x) {
+		if b.needsNativeFuncval(x) {
 			return b.nativeFuncval(t, x, llvm.CCallConv, "c")
 		}
 		if b.Prog.isStdcallType(x.raw.Type) {
@@ -1706,19 +1708,23 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 			params[i] = b.fitLLVMValue(params[i], source.Type, physicalParams[i])
 		}
 	}
-	ret.impl = llvm.CreateCall(b.impl, ll, fn.impl, params)
-	llvmattr.ApplyAllocatorCall(b.Prog.ctx, ret.impl, fn.impl, params, b.Prog.GCRootsEnabled())
-	b.setNativeIntegerCallAttrs(ret.impl, fn, sig, params)
-	if ret.Type != b.Prog.Void() {
-		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
-	}
-	b.setNativeCallConv(ret.impl, fn)
+	call := llvm.CreateCall(b.impl, ll, fn.impl, params)
+	llvmattr.ApplyAllocatorCall(b.Prog.ctx, call, fn.impl, params, b.Prog.GCRootsEnabled())
+	b.setNativeIntegerCallAttrs(call, fn, sig, params)
+	b.setNativeCallConv(call, fn)
 	if reflectCheck.Kind&ReflectMethodByName != 0 && reflectCheck.Name == "" {
 		nameArgIndex := len(args) - 1
 		if !data.IsNil() {
 			nameArgIndex++
 		}
-		b.MarkReflectValueMethodByNameCall(ret.impl, nameArgIndex)
+		b.MarkReflectValueMethodByNameCall(call, nameArgIndex)
+	}
+	ret.impl = call
+	if ret.Type != b.Prog.Void() {
+		ret.impl = b.fitLLVMResult(call, ret.Type)
+		if b.Prog.isWasm32NativeCall(fn) && b.Prog.hasWasmSlicePadding(ret.impl.Type()) {
+			ret.impl = b.Prog.clearWasmSlicePadding(b.impl, ret.impl)
+		}
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
 	return
@@ -2313,7 +2319,7 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		if b.needsStdcallFuncval(v) {
 			return b.stdcallFuncval(tclosure, v)
 		}
-		if b.needsNativeIntegerFuncval(v) {
+		if b.needsNativeFuncval(v) {
 			return b.nativeFuncval(tclosure, v, llvm.CCallConv, "c")
 		}
 		if v.kind == vkClosure {

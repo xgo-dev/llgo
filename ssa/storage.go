@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"go/types"
+	"slices"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -32,6 +33,73 @@ func (p Program) GoWordSize() int {
 
 func (p Program) usesWideGoStorage() bool {
 	return p.goWordSize > p.ptrSize
+}
+
+// Go's widened data slot and C's native pointer followed by padding occupy
+// the same bytes in a by-value GoSlice. Keep their LLVM prototypes identical
+// so a noncapturing Go callback can retain its code address.
+func (p Program) hasWasmSlicePadding(t llvm.Type) bool {
+	if !p.usesWideGoStorage() || p.rtSliceTy.IsNil() {
+		return false
+	}
+	if t == p.rtSliceTy {
+		return true
+	}
+	switch t.TypeKind() {
+	case llvm.StructTypeKind:
+		return slices.ContainsFunc(t.StructElementTypes(), p.hasWasmSlicePadding)
+	case llvm.ArrayTypeKind:
+		return t.ArrayLength() > 0 && p.hasWasmSlicePadding(t.ElementType())
+	}
+	return false
+}
+
+// clearWasmSlicePadding discards C's padding while keeping the pointer and
+// both Go-sized bounds. Nested aggregate fields use the same representation.
+func (p Program) clearWasmSlicePadding(b llvm.Builder, value llvm.Value) llvm.Value {
+	t := value.Type()
+	if t == p.rtSliceTy {
+		slot := b.CreateExtractValue(value, 0, "")
+		slot = b.CreateInsertValue(slot, llvm.ConstNull(p.tyInt32()), 1, "")
+		return b.CreateInsertValue(value, slot, 0, "")
+	}
+	result := value
+	update := func(i int) {
+		field := b.CreateExtractValue(value, i, "")
+		result = b.CreateInsertValue(result, p.clearWasmSlicePadding(b, field), i, "")
+	}
+	if t.TypeKind() == llvm.ArrayTypeKind {
+		for i := 0; i < t.ArrayLength(); i++ {
+			update(i)
+		}
+	} else {
+		for i, field := range t.StructElementTypes() {
+			if p.hasWasmSlicePadding(field) {
+				update(i)
+			}
+		}
+	}
+	return result
+}
+
+func (f Function) finishWasmSliceParams() {
+	if !f.Prog.usesWideGoStorage() || f.env != nil {
+		return
+	}
+	// A C callback can call any environment-free Go entry. Rewrite each used
+	// parameter once, including values obtained before the body was built.
+	for i := range f.params {
+		param := f.impl.Param(i)
+		if param.FirstUse().IsNil() || !f.Prog.hasWasmSlicePadding(param.Type()) {
+			continue
+		}
+		b := f.entryAllocaBuilder()
+		placeholder := b.CreatePHI(param.Type(), "")
+		param.ReplaceAllUsesWith(placeholder)
+		value := f.Prog.clearWasmSlicePadding(b, param)
+		placeholder.ReplaceAllUsesWith(value)
+		placeholder.EraseFromParentAsInstruction()
+	}
 }
 
 func (p Program) needsWidePointerStorage(t Type) bool {
@@ -75,8 +143,6 @@ func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.
 		if t.Kind() == types.Uintptr {
 			return llvmIntType(p.ctx, p.PointerSize())
 		}
-	case *types.Slice:
-		return p.nativeWasmSliceType()
 	case *types.Array:
 		elem := p.rawType(t.Elem())
 		return llvm.ArrayType(p.nativeStorageLLVMType(t.Elem(), elem.ll), int(t.Len()))
@@ -84,18 +150,14 @@ func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.
 	return fallback
 }
 
-// A C GoSlice has a native data pointer and two Go-sized lengths. In
-// Memory32 the gap before len is C padding, not part of the pointer.
-func (p Program) nativeWasmSliceType() llvm.Type {
-	return p.ctx.StructType([]llvm.Type{p.tyVoidPtr(), p.tyInt(), p.tyInt()}, false)
-}
-
 func (b Builder) logicalValue(v Expr) Expr {
 	t := b.Prog.withoutNativeStorage(v.Type)
 	if t == v.Type {
 		return v
 	}
-	v.impl = b.fitLLVMValue(v.impl, v.Type, t.ll)
+	if v.impl.Type() != t.ll {
+		v.impl = castInt(b, v.impl, v.Type, t)
+	}
 	v.Type = t
 	return v
 }
@@ -115,25 +177,6 @@ func (b Builder) fitLLVMValue(value llvm.Value, source Type, target llvm.Type) l
 		return result
 	}
 	logical := b.Prog.withoutNativeStorage(source)
-	if logical.kind == vkSlice && b.Prog.usesWideGoStorage() {
-		native := b.Prog.nativeWasmSliceType()
-		switch {
-		case value.Type() == native && target == logical.ll:
-			// Rebuild the Go pointer slot from the address alone. C may leave
-			// the alignment padding uninitialized or copy unrelated bits there.
-			return b.aggregateValue(logical,
-				b.impl.CreateExtractValue(value, 0, ""),
-				b.impl.CreateExtractValue(value, 1, ""),
-				b.impl.CreateExtractValue(value, 2, "")).impl
-		case value.Type() == logical.ll && target == native:
-			result := llvm.Undef(native)
-			for i := 0; i < 3; i++ {
-				field := b.getField(Expr{value, logical}, i)
-				result = b.impl.CreateInsertValue(result, field.impl, i, "")
-			}
-			return result
-		}
-	}
 	if logical.kind == vkSIMD {
 		storage := b.Prog.storageType(logical)
 		if value.Type() == logical.ll && target == storage {
@@ -269,6 +312,9 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 
 func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 	if value.Type() == b.Prog.withoutNativeStorage(t).ll {
+		if b.Prog.isNativeStorage(t) && b.Prog.hasWasmSlicePadding(value.Type()) {
+			return b.Prog.clearWasmSlicePadding(b.impl, value)
+		}
 		return value
 	}
 	if t.kind == vkSIMD {
@@ -303,31 +349,7 @@ func (p Program) toStorageConstant(t Type, value llvm.Value) llvm.Value {
 }
 
 func (p Program) fitLLVMConstant(value llvm.Value, source Type, target llvm.Type) llvm.Value {
-	if value.Type() == target {
-		return value
-	}
-	if p.isNativeStorage(source) {
-		// Native slice fields and arrays may be initialized from ordinary
-		// Go constants. Preserve the pointer relocation and Go-sized bounds.
-		switch {
-		case source.kind == vkSlice:
-			if value.IsNull() {
-				return llvm.ConstNull(target)
-			}
-			data := value.Operand(0).Operand(0)
-			return p.ctx.ConstStruct([]llvm.Value{data, value.Operand(1), value.Operand(2)}, false)
-		case source.kind == vkArray && value.IsNull():
-			return llvm.ConstNull(target)
-		case source.kind == vkArray && !value.IsAConstantArray().IsNil():
-			elem := p.Index(source)
-			fields := make([]llvm.Value, target.ArrayLength())
-			for i := range fields {
-				fields[i] = p.toStorageConstant(elem, value.Operand(i))
-			}
-			return llvm.ConstArray(target.ElementType(), fields)
-		}
-	}
-	if value.Type().TypeKind() != llvm.IntegerTypeKind || target.TypeKind() != llvm.IntegerTypeKind {
+	if value.Type() == target || value.Type().TypeKind() != llvm.IntegerTypeKind || target.TypeKind() != llvm.IntegerTypeKind {
 		return value
 	}
 	fromBits := value.Type().IntTypeWidth()

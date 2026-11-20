@@ -150,68 +150,75 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
-func TestWasm32NativeSliceBoundary(t *testing.T) {
+func TestWasm32SliceBoundary(t *testing.T) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
 	slice := types.NewSlice(types.Typ[types.Byte])
-	params := types.NewTuple(types.NewParam(token.NoPos, nil, "s", slice))
-	sig := types.NewSignatureType(nil, nil, nil, params, params, false)
-	fn := pkg.NewFunc("roundTrip", sig, CDecl)
-	b := fn.MakeBody(1)
-	logical := b.Param(0)
-	if first := logical.impl.Type().StructElementTypes()[0]; first != prog.widePointerStorageType() {
-		t.Fatalf("Go slice data field has type %s, want a Go pointer slot", first)
+	// Include both an ordinary Go record and an array in the by-value ABI.
+	record := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "Slices", types.NewArray(slice, 2), false),
+	}, nil)
+	params := types.NewTuple(types.NewParam(token.NoPos, nil, "record", record))
+	high := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32]))
+	sig := types.NewSignatureType(nil, nil, nil, params, high, false)
+	if goABI, cABI := prog.FuncDecl(sig, GoDecl).ll, prog.FuncDecl(sig, CDecl).ll; goABI != cABI {
+		t.Fatalf("Go and C callbacks must share their ABI: %s vs %s", goABI, cABI)
 	}
-	b.Return(logical)
-	b.EndBuild()
+	observe := pkg.NewFunc("example.com/p.observe", sig, GoDecl)
+	native := pkg.NewFunc("nativeRecord", types.NewSignatureType(nil, nil, nil, nil, params, false), CDecl)
+	readCall := pkg.NewFunc("example.com/p.readCall", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	readGlobal := pkg.NewFunc("example.com/p.readGlobal", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	global := pkg.NewVar("C.nativeRecord", types.NewPointer(record), CDecl)
+	returnHigh := func(b Builder, v Expr) {
+		array := b.impl.CreateExtractValue(v.impl, 0, "")
+		part := b.impl.CreateExtractValue(array, 1, "")
+		slot := b.impl.CreateExtractValue(part, 0, "")
+		b.Return(Expr{b.impl.CreateExtractValue(slot, 1, ""), prog.Uint32()})
+		b.EndBuild()
+	}
+	param := observe.Param(0)
+	returnHigh(observe.MakeBody(1), param)
+	b := readCall.MakeBody(1)
+	returnHigh(b, b.Call(native.Expr))
+	b = readGlobal.MakeBody(1)
+	returnHigh(b, b.Load(global.Expr))
 
-	for _, ty := range []llvm.Type{fn.impl.Param(0).Type(), fn.impl.GlobalValueType().ReturnType()} {
-		if fields := ty.StructElementTypes(); len(fields) != 3 || fields[0] != prog.tyVoidPtr() || fields[1] != prog.tyInt() || fields[2] != prog.tyInt() {
-			t.Fatalf("C slice type = %s, want {ptr, i64, i64}", ty)
-		}
-	}
-	if ir := fn.impl.String(); !strings.Contains(ir, ", i32 0, 1") {
-		t.Fatalf("C-to-Go slice conversion did not clear the pointer slot's high word:\n%s", ir)
-	}
-	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+	mod := pkg.Module()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
+	}
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range []Function{observe, readCall, readGlobal} {
+		if value := fn.impl.EntryBasicBlock().LastInstruction().Operand(0); !value.IsNull() {
+			t.Errorf("nested slice retained its pointer high word: %s", fn.impl)
+		}
 	}
 }
 
-func TestWasm32NativeSliceConstants(t *testing.T) {
-	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
-	defer prog.Dispose()
+func TestWasm32NativeResultCallConv(t *testing.T) {
+	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
-	slice := prog.Slice(prog.Byte())
-	nativeSlice := prog.Type(slice.RawType(), CDecl)
-	if got := prog.Zero(nativeSlice).impl; got.Type() != nativeSlice.ll || !got.IsNull() {
-		t.Fatalf("native nil slice = %s, want zero %s", got, nativeSlice.ll)
+	word := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]))
+	sig := types.NewSignatureType(nil, nil, nil, nil, word, false)
+	native := pkg.NewFunc("nativeWord", sig, CDecl)
+	native.impl.SetFunctionCallConv(llvm.FastCallConv)
+	caller := pkg.NewFunc("example.com/p.caller", sig, GoDecl)
+	b := caller.MakeBody(1)
+	result := b.Call(native.Expr)
+	b.Return(result)
+	b.EndBuild()
+	if result.impl.InstructionOpcode() != llvm.ZExt {
+		t.Fatalf("native pointer-sized result was not widened: %s", result.impl)
 	}
-
-	typesPkg := types.NewPackage(pkg.Path(), "p")
-	name := types.NewTypeName(token.NoPos, typesPkg, "Record", nil)
-	slices := types.NewArray(slice.RawType(), 2)
-	record := types.NewNamed(name, types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, typesPkg, "Slice", slice.RawType(), false),
-		types.NewField(token.NoPos, typesPkg, "Array", slices, false),
-	}, nil), nil)
-	prog.SetTypeCallConv(pkg.Path()+".Record", CDecl)
-	nativeRecord := prog.Type(record, CDecl)
-	if zero := prog.Zero(nativeRecord).impl; !zero.IsNull() {
-		t.Fatalf("zero native record = %s, want zeroinitializer", zero)
+	if call := result.impl.Operand(0); call.IsACallInst().IsNil() || call.InstructionCallConv() != llvm.FastCallConv {
+		t.Fatalf("calling convention was not applied to the native call: %s", call)
 	}
-	sample := pkg.ConstBytes([]byte{7, 8, 9})
-	array := prog.ConstArray(prog.rawType(slices), []Expr{prog.Zero(slice), sample})
-	value := prog.ConstStruct(nativeRecord, []Expr{sample, array})
-	for _, field := range []llvm.Value{value.impl.Operand(0), value.impl.Operand(1).Operand(1)} {
-		if field.Type() != nativeSlice.ll || field.Operand(0).IsNull() || field.Operand(1).ZExtValue() != 3 || field.Operand(2).ZExtValue() != 3 {
-			t.Fatalf("native constant slice lost its pointer or bounds: %s", field)
-		}
-	}
-	global := pkg.NewVar("C.globalSlice", types.NewPointer(slice.RawType()), CDecl)
-	global.Init(sample)
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}

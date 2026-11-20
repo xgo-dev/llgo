@@ -93,6 +93,7 @@ func (b Builder) EndBuild() {
 	b.Func.finalizeGCRoots()
 	b.Func.endGCRoots(b)
 	b.preserveNilCheckCondition()
+	b.Func.finishWasmSliceParams()
 	b.Func.disposeAllocaBuilder()
 	b.finishSIMDFeatures()
 }
