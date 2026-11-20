@@ -470,8 +470,11 @@ func runEspEmuFirmware(t *testing.T, emu string, tgt espEmuTarget, elfPath strin
 		t.Fatalf("esp-emu failed: %v\n%s", err, espOutputTail(buf.String()))
 	}
 	// Emulators can exit successfully after a runtime trap, so the unfiltered
-	// output is checked before any filter can discard diagnostics. The same
-	// guard backs the shared embed suite.
+	// output is checked before any filter can discard diagnostics. Unlike the
+	// shared harness, which scans only run-only goldens, this scans every
+	// runnable fixture on purpose: esp-emu reports no distinguishable process
+	// exit for guest traps, and a fixture whose expected lines happen to
+	// precede a fatal error would otherwise compare clean.
 	for line := range strings.SplitSeq(buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "fatal error" || strings.HasPrefix(line, "fatal error:") || strings.HasPrefix(line, "panic:") {
@@ -496,7 +499,7 @@ func runESPEmuImage(t *testing.T, emu string, tgt espEmuTarget, elfPath string, 
 // espEmuLogLine matches the emulator's own log lines. esp-emu reports the
 // semihost exit after the guest output while QEMU stays silent, so suite
 // comparisons must not see them.
-var espEmuLogLine = regexp.MustCompile(`^\[(INFO|WARN|ERROR|DEBUG|TRACE)\s`)
+var espEmuLogLine = regexp.MustCompile(`^\[(INFO|WARN|ERROR|DEBUG|TRACE)(\s|])`)
 
 // filterEspEmuOutput strips esp-emu's log lines from filtered app output.
 func filterEspEmuOutput(output string) string {
@@ -507,6 +510,25 @@ func filterEspEmuOutput(output string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+func TestFilterEspEmuOutput(t *testing.T) {
+	input := strings.Join([]string{
+		"[INFO  cli::run] Starting emulation (chip=esp32s31)",
+		"[WARN] no host console attached",
+		"[ERROR machine] simulated bus fault",
+		"hello from app",
+		"ESP-ROM:esp32s31-20251218",
+		"",
+	}, "\n")
+	want := strings.Join([]string{
+		"hello from app",
+		"ESP-ROM:esp32s31-20251218",
+		"",
+	}, "\n")
+	if got := filterEspEmuOutput(input); got != want {
+		t.Fatalf("filterEspEmuOutput() = %q, want %q", got, want)
+	}
 }
 
 func espOutputTail(s string) string {

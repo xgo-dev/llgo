@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 // for testing, in testing env, we use fake path, it will cause downloading failure
@@ -117,17 +118,31 @@ func rtCompileConfigByName(baseDir, rtName, target string) (config compile.LibCo
 }
 
 // rtlibCacheKeyGroups returns the rtlib source-file list as cache-key flag
-// groups. The archive identity must cover the file list: the compile step
-// only stats the archive, so a changed file list would otherwise keep
-// serving a stale archive.
+// groups. The archive identity must cover the source file list and the
+// contents of repo-vendored sources (unlike the version-pinned downloads,
+// those can change between builds): the compile step only stats the archive,
+// so a changed list or file would otherwise keep serving a stale archive.
 func rtlibCacheKeyGroups(baseDir, rtName, target string) ([][]string, error) {
 	_, compileConfig, err := rtCompileConfigByName(baseDir, rtName, target)
 	if err != nil {
 		return nil, err
 	}
+	root := env.LLGoROOT()
 	groups := make([][]string, 0, len(compileConfig.Groups))
 	for _, group := range compileConfig.Groups {
-		groups = append(groups, group.Files)
+		files := append([]string(nil), group.Files...)
+		for _, file := range group.Files {
+			if root == "" || !strings.HasPrefix(file, root) {
+				continue // downloaded sources are pinned by the version tag
+			}
+			content, err := os.ReadFile(file)
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(content)
+			files = append(files, fmt.Sprintf("content:%x", sum))
+		}
+		groups = append(groups, files)
 	}
 	return groups, nil
 }

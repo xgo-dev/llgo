@@ -407,6 +407,7 @@ static void esp_disable_hp_wdt(void) {
 // note(zzy): _write() implementation is inspired by ESP-IDF VFS layer:
 // https://github.com/espressif/esp-idf/blob/release/v6.0/components/esp_driver_usb_serial_jtag/src/usb_serial_jtag_vfs.c
 
+#include <errno.h>
 #include <sys/types.h>
 
 // The EP1 TX FIFO holds one 64-byte packet. A full 64-byte packet is treated
@@ -425,6 +426,12 @@ static void esp_disable_hp_wdt(void) {
  * @brief Push buf into the TX FIFO, handing full packets to the host as needed.
  */
 static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
+    // Once a timeout has proved that no host drains the FIFO, skip future
+    // writes instead of re-running the full spin for every following chunk.
+    static int host_lost;
+    if (host_lost) {
+        return;
+    }
     size_t off = 0;
     while (off < len) {
         off += usb_serial_jtag_ll_write_txfifo(buf + off, len - off);
@@ -435,7 +442,8 @@ static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
                 // Busy wait until the host drains the packet
             }
             if (spin <= 0) {
-                return; // no host is reading; drop the remainder
+                host_lost = 1;
+                return; // no host is reading; drop the remainder and future output
             }
         }
     }
@@ -459,6 +467,7 @@ static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
  */
 ssize_t _write(int fd, const void *buf, size_t count) {
     if (fd != 1 && fd != 2) {
+        errno = EBADF;
         return -1;
     }
 
@@ -515,8 +524,12 @@ ssize_t _write(int fd, const void *buf, size_t count) {
 // strong _exit here would collide with the archive's definition; the trap
 // below is the device-side complement to the archive's exit.
 
-// 0x01f01013: slli zero, zero, 0x1f - first half of the semihosting pair.
-#define ESP_SEMIHOST_SLII 0x01f01013u
+// The semihosting pair opens with the uncompressed 0x01f01013 (slli zero,
+// zero, 0x1f). Its high halfword 0x01f0 identifies the sequence: the trap
+// loads it with a 2-byte-aligned lhu because RISC-V only guarantees 2-byte
+// instruction alignment, so the sequence may start at an address that is not
+// 4-byte aligned when preceded by compressed instructions.
+#define ESP_SEMIHOST_SLII_HIGH 0x01f0u
 
 // Bounded host-drain window in the exit trap (same rationale as
 // USB_SJ_FLUSH_SPIN: a few USB frames, and it never runs under esp-emu/QEMU
@@ -530,7 +543,7 @@ __attribute__((used)) static uint32_t esp_prev_mtvec;
 
 __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
     __asm__ volatile(
-        "addi sp, sp, -20\n"
+        "addi sp, sp, -24\n"
         "sw a0, 0(sp)\n"
         "sw a1, 4(sp)\n"
         "sw a2, 8(sp)\n"
@@ -541,7 +554,7 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         "li a1, 3\n" // EXCAUSE_BREAKPOINT
         "bne a0, a1, 2f\n"
         "csrr a0, mepc\n"
-        "lw a1, -4(a0)\n" // instruction in front of the EBREAK
+        "lhu a1, -2(a0)\n" // high half of the slli in front of the EBREAK
         "li a2, %0\n"
         "bne a1, a2, 2f\n" // not our semihosting exit: chain
         // Semihosting exit without a semihosting host. Give the USB host a
@@ -563,14 +576,17 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         "j 1b\n"
         "2: la t0, esp_prev_mtvec\n"
         "lw t0, 0(t0)\n"
+        "sw t0, 20(sp)\n" // park the chain target above the saved set
         "lw a0, 0(sp)\n"
         "lw a1, 4(sp)\n"
         "lw a2, 8(sp)\n"
+        "lw t0, 12(sp)\n"
         "lw t1, 16(sp)\n"
-        "addi sp, sp, 20\n"
+        "lw t0, 20(sp)\n" // reload the chain target last: t0 jumps
+        "addi sp, sp, 24\n"
         "jr t0\n"
         :
-        : "i"(ESP_SEMIHOST_SLII), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN),
+        : "i"(ESP_SEMIHOST_SLII_HIGH), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN),
           "i"(ESP_SOFT_RESET_REG), "i"(ESP_SOFT_RESET_BIT));
 }
 
@@ -581,7 +597,10 @@ __attribute__((constructor)) static void esp_boot_early(void) {
     esp_disable_hp_wdt();
     uint32_t prev;
     __asm__ volatile("csrr %0, mtvec" : "=r"(prev));
-    esp_prev_mtvec = prev & ~3u; // strip the mtvec mode bits: chain in direct mode
+    // Chaining assumes the boot-time mtvec is a direct-mode handler (the ROM
+    // installs one). If a vectored handler ever ran before this constructor,
+    // the chained jump would lose its per-cause offset dispatch.
+    esp_prev_mtvec = prev & ~3u;
     __asm__ volatile("csrw mtvec, %0" : : "r"(esp_trap_handler));
 }
 

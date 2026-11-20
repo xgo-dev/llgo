@@ -90,7 +90,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/cgodefer",      // fast fail: build constraints exclude all Go files (cgo)
 				"./_testgo/chan",          // timeout: emulator did not auto-exit
 				"./_testgo/goroutine",     // channel synchronization prints fatal error despite successful emulator exit
-				"./_testgo/reflect",       // llgo panic: unsatisfied import internal/runtime/sys
+				"./_testgo/reflect",       // text+rodata overflow the 256 KiB C3 IRAM at link time
 				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/repeatedfault", // baremetal cannot recover native hardware faults

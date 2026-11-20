@@ -1,6 +1,6 @@
-/* LLGo vendored __atomic_* fallback for riscv32-esp targets (RV32IMC, no A
+/* LLGo vendored __atomic_* fallback for riscv32 targets (RV32IMC, no A
  * extension). LLVM lowers every atomic operation on this target to the
- * __atomic_* libcalls; compiler-rt's atomic.c is excluded from the ESP rtlib
+ * __atomic_* libcalls; compiler-rt's atomic.c is excluded from the rtlib
  * because its spinlocks deadlock when an interrupt interrupts a holder, so
  * this file provides the libcall set instead.
  *
@@ -16,6 +16,7 @@
  * All definitions are weak: llgo's Go runtime provides strong definitions of
  * the same libcalls, and the strong versions must win when both link.
  */
+#include <stddef.h>
 #include <stdint.h>
 
 /* Clang objects if you redefine a builtin. Define the size-generalized
@@ -26,6 +27,8 @@
 #pragma redefine_extname atomic_exchange_c __atomic_exchange
 #pragma redefine_extname atomic_compare_exchange_c __atomic_compare_exchange
 #pragma redefine_extname atomic_clear_c __atomic_clear
+#pragma redefine_extname atomic_test_and_set_c __atomic_test_and_set
+#pragma redefine_extname atomic_is_lock_free_c __atomic_is_lock_free
 
 #define LLGO_ATOMIC_MIE 0x8u
 
@@ -213,4 +216,22 @@ __attribute__((weak)) void atomic_clear_c(unsigned char *p, int model)
 {
     (void)model;
     *p = 0;
+}
+
+/* C11 atomic_flag test-and-set and the lock-free query. Go IR never emits
+ * these, but C translation units using stdatomic may, and this archive
+ * replaces compiler-rt's atomic.c which used to serve them. */
+__attribute__((weak)) _Bool atomic_test_and_set_c(void *ptr, int model)
+{
+    (void)model;
+    unsigned int saved = atomic_irq_save();
+    _Bool old = *(volatile unsigned char *)ptr != 0;
+    *(volatile unsigned char *)ptr = 1;
+    atomic_irq_restore(saved);
+    return old;
+}
+
+__attribute__((weak)) _Bool atomic_is_lock_free_c(size_t size, const void *ptr)
+{
+    return ((uintptr_t)ptr & (size - 1)) == 0;
 }

@@ -26,15 +26,12 @@ func platformSpecifiedFiles(builtinsDir, target string) []string {
 			filepath.Join(builtinsDir, "riscv", "save.S"),
 			filepath.Join(builtinsDir, "riscv", "restore.S"),
 		}
-		// compiler-rt's atomic.c is excluded for ESP targets: its spinlocks
-		// deadlock when an interrupt interrupts a holder. The ESP rtlib
-		// links LLGo's vendored interrupt-masked implementation instead; its
-		// symbols are weak so llgo's Go runtime wins when both link.
-		if target != "riscv32-esp-elf" {
-			files = append(files, filepath.Join(builtinsDir, "atomic.c"))
-		} else {
-			files = append(files, espAtomicRiscv32File())
-		}
+		// compiler-rt's atomic.c is excluded for all riscv32 targets: its
+		// spinlocks deadlock when an interrupt interrupts a holder. LLGo's
+		// vendored interrupt-masked implementation covers the libcall set
+		// instead; its symbols are weak so llgo's Go runtime wins when both
+		// link, and pure-C links keep a fallback.
+		files = append(files, espAtomicRiscv32File())
 		return files
 	case strings.Contains(target, "riscv64"):
 		return []string{
