@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
 )
@@ -1517,7 +1518,9 @@ func mapclone2(t *maptype, src *hmap) *hmap {
 	if src.B == 0 {
 		dst.buckets = newobject(t.Bucket)
 		dst.count = src.count
-		typedmemmove(t.Bucket, dst.buckets, src.buckets)
+		// Bucket descriptors can omit struct fields. Clone the existing key
+		// and element slots together with the bucket's bookkeeping.
+		c.Memmove(dst.buckets, src.buckets, t.Bucket.Size_)
 		return dst
 	}
 
