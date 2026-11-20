@@ -150,6 +150,72 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
+func TestWasm32NativeSliceBoundary(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	slice := types.NewSlice(types.Typ[types.Byte])
+	params := types.NewTuple(types.NewParam(token.NoPos, nil, "s", slice))
+	sig := types.NewSignatureType(nil, nil, nil, params, params, false)
+	fn := pkg.NewFunc("roundTrip", sig, CDecl)
+	b := fn.MakeBody(1)
+	logical := b.Param(0)
+	if first := logical.impl.Type().StructElementTypes()[0]; first != prog.widePointerStorageType() {
+		t.Fatalf("Go slice data field has type %s, want a Go pointer slot", first)
+	}
+	b.Return(logical)
+	b.EndBuild()
+
+	for _, ty := range []llvm.Type{fn.impl.Param(0).Type(), fn.impl.GlobalValueType().ReturnType()} {
+		if fields := ty.StructElementTypes(); len(fields) != 3 || fields[0] != prog.tyVoidPtr() || fields[1] != prog.tyInt() || fields[2] != prog.tyInt() {
+			t.Fatalf("C slice type = %s, want {ptr, i64, i64}", ty)
+		}
+	}
+	if ir := fn.impl.String(); !strings.Contains(ir, ", i32 0, 1") {
+		t.Fatalf("C-to-Go slice conversion did not clear the pointer slot's high word:\n%s", ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWasm32NativeSliceConstants(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	slice := prog.Slice(prog.Byte())
+	nativeSlice := prog.Type(slice.RawType(), CDecl)
+	if got := prog.Zero(nativeSlice).impl; got.Type() != nativeSlice.ll || !got.IsNull() {
+		t.Fatalf("native nil slice = %s, want zero %s", got, nativeSlice.ll)
+	}
+
+	typesPkg := types.NewPackage(pkg.Path(), "p")
+	name := types.NewTypeName(token.NoPos, typesPkg, "Record", nil)
+	slices := types.NewArray(slice.RawType(), 2)
+	record := types.NewNamed(name, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, typesPkg, "Slice", slice.RawType(), false),
+		types.NewField(token.NoPos, typesPkg, "Array", slices, false),
+	}, nil), nil)
+	prog.SetTypeCallConv(pkg.Path()+".Record", CDecl)
+	nativeRecord := prog.Type(record, CDecl)
+	if zero := prog.Zero(nativeRecord).impl; !zero.IsNull() {
+		t.Fatalf("zero native record = %s, want zeroinitializer", zero)
+	}
+	sample := pkg.ConstBytes([]byte{7, 8, 9})
+	array := prog.ConstArray(prog.rawType(slices), []Expr{prog.Zero(slice), sample})
+	value := prog.ConstStruct(nativeRecord, []Expr{sample, array})
+	for _, field := range []llvm.Value{value.impl.Operand(0), value.impl.Operand(1).Operand(1)} {
+		if field.Type() != nativeSlice.ll || field.Operand(0).IsNull() || field.Operand(1).ZExtValue() != 3 || field.Operand(2).ZExtValue() != 3 {
+			t.Fatalf("native constant slice lost its pointer or bounds: %s", field)
+		}
+	}
+	global := pkg.NewVar("C.globalSlice", types.NewPointer(slice.RawType()), CDecl)
+	global.Init(sample)
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")

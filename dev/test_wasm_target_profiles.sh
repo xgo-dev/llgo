@@ -102,7 +102,8 @@ else
 fi
 
 # LLGoFiles and go:linkname bypass the native-only Go cgo frontend. Execute
-# narrow C arguments, ellipsis calls and native function values on every profile.
+# narrow C arguments, ellipsis calls, native function values and Go word/slice
+# exports on every profile.
 variadic_package="${repo_root}/test/llgoext"
 export_abi_package="${repo_root}/test/llgoext/wasmexportabi"
 for target in emscripten emscripten-memory64 wasi; do

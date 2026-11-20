@@ -197,9 +197,7 @@ func (p Program) Zero(t Type) Expr {
 			flds[i] = p.Zero(p.rawType(u.Field(i).Type())).impl
 		}
 		ret = p.constStructValue(t, flds)
-	case *types.Slice:
-		ret = p.Zero(p.rtType("Slice")).impl
-	case *types.Array:
+	case *types.Slice, *types.Array:
 		ret = llvm.ConstNull(t.ll)
 	case *types.Interface:
 		var name string

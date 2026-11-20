@@ -303,7 +303,31 @@ func (p Program) toStorageConstant(t Type, value llvm.Value) llvm.Value {
 }
 
 func (p Program) fitLLVMConstant(value llvm.Value, source Type, target llvm.Type) llvm.Value {
-	if value.Type() == target || value.Type().TypeKind() != llvm.IntegerTypeKind || target.TypeKind() != llvm.IntegerTypeKind {
+	if value.Type() == target {
+		return value
+	}
+	if p.isNativeStorage(source) {
+		// Native slice fields and arrays may be initialized from ordinary
+		// Go constants. Preserve the pointer relocation and Go-sized bounds.
+		switch {
+		case source.kind == vkSlice:
+			if value.IsNull() {
+				return llvm.ConstNull(target)
+			}
+			data := value.Operand(0).Operand(0)
+			return p.ctx.ConstStruct([]llvm.Value{data, value.Operand(1), value.Operand(2)}, false)
+		case source.kind == vkArray && value.IsNull():
+			return llvm.ConstNull(target)
+		case source.kind == vkArray && !value.IsAConstantArray().IsNil():
+			elem := p.Index(source)
+			fields := make([]llvm.Value, target.ArrayLength())
+			for i := range fields {
+				fields[i] = p.toStorageConstant(elem, value.Operand(i))
+			}
+			return llvm.ConstArray(target.ElementType(), fields)
+		}
+	}
+	if value.Type().TypeKind() != llvm.IntegerTypeKind || target.TypeKind() != llvm.IntegerTypeKind {
 		return value
 	}
 	fromBits := value.Type().IntTypeWidth()
