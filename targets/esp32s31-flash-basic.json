@@ -1,0 +1,11 @@
+{
+	"inherits": [
+		"esp32s31-basic"
+	],
+	"extra-files": [
+		"targets/device/esp/esp32s31-flash-appdesc.c"
+	],
+	"linkerscript": "targets/esp32s31-flash.memory.ld",
+	"binary-format": "esp32s31",
+	"flash-command": "esptool.py --chip=esp32s31 --port {port} write_flash 0x10000 {bin}"
+}

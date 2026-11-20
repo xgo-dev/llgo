@@ -29,6 +29,9 @@ type espImageSegment struct {
 // https://github.com/espressif/esp-idf/blob/8fbb63c2a701c22ccf4ce249f43aded73e134a34/components/bootloader_support/include/esp_image_format.h#L58
 // https://github.com/espressif/esptool/blob/master/esptool.py
 func makeESPFirmareImage(infile, outfile, format string) error {
+	if strings.Contains(format, "-dboot") {
+		return makeDirectBootImage(infile, outfile)
+	}
 	inf, err := elf.Open(infile)
 	if err != nil {
 		return err
@@ -202,4 +205,92 @@ func makeESPFirmareImage(infile, outfile, format string) error {
 
 	// Write the image to the output file.
 	return os.WriteFile(outfile, outf.Bytes(), 0666)
+}
+
+// makeDirectBootImage flattens an ELF into a raw flash image for the
+// ESP32-S31 direct-boot path. The mask ROM maps the whole flash 1:1 into the
+// XIP window at 0x40000000 and jumps into it, so every byte must sit at
+// exactly its load address: flash-resident sections at their identity-mapped
+// offset, and writable sections at their LMA (the linker script places them
+// behind the read-only image for the boot-time copy into SRAM). Sections with
+// no file contents (.bss, .stack) start out zero and are not written.
+func makeDirectBootImage(infile, outfile string) error {
+	const (
+		flashSize   = 4 * 1024 * 1024
+		xipWindow   = 0x40000000
+		erasedFlash = 0xFF
+	)
+
+	inf, err := elf.Open(infile)
+	if err != nil {
+		return err
+	}
+	defer inf.Close()
+
+	// The load addresses come from the program headers: a section's bytes
+	// live at PAddr + (Addr - VAddr) of the PT_LOAD segment carrying them.
+	type loadSegment struct {
+		vaddr, paddr, filesz uint32
+	}
+	var loads []loadSegment
+	for _, prog := range inf.Progs {
+		if prog.Type == elf.PT_LOAD && prog.Filesz > 0 {
+			loads = append(loads, loadSegment{
+				vaddr:  uint32(prog.Vaddr),
+				paddr:  uint32(prog.Paddr),
+				filesz: uint32(prog.Filesz),
+			})
+		}
+	}
+
+	flash := make([]byte, flashSize)
+	for i := range flash {
+		flash[i] = erasedFlash
+	}
+	written := make([][2]int, 0, 8)
+	for _, section := range inf.Sections {
+		if section.Size == 0 || section.Flags&elf.SHF_ALLOC == 0 {
+			continue
+		}
+		switch section.Type {
+		case elf.SHT_PROGBITS, elf.SHT_INIT_ARRAY, elf.SHT_PREINIT_ARRAY, elf.SHT_FINI_ARRAY:
+		default:
+			continue
+		}
+		data, err := section.Data()
+		if err != nil {
+			return fmt.Errorf("failed to read section %s: %w", section.Name, err)
+		}
+		if len(data) == 0 {
+			continue
+		}
+		addr := uint32(section.Addr)
+		off := -1
+		for _, load := range loads {
+			if addr >= load.vaddr && addr < load.vaddr+load.filesz {
+				off = int(load.paddr + (addr - load.vaddr))
+				break
+			}
+		}
+		if off < 0 {
+			return fmt.Errorf("section %s (0x%x) is not covered by a loadable segment", section.Name, addr)
+		}
+		if off >= xipWindow {
+			// A flash-resident section whose load address stayed equal to its
+			// virtual address is identity-mapped by the ROM.
+			off -= xipWindow
+		}
+		if off < 0 || off+len(data) > flashSize {
+			return fmt.Errorf("section %s (load address 0x%x, %d bytes) does not fit in the %d MiB flash image", section.Name, addr, len(data), flashSize/(1024*1024))
+		}
+		for _, w := range written {
+			if off < w[1] && w[0] < off+len(data) {
+				return fmt.Errorf("section %s (flash offset 0x%x) overlaps a section written at 0x%x", section.Name, off, w[0])
+			}
+		}
+		copy(flash[off:], data)
+		written = append(written, [2]int{off, off + len(data)})
+	}
+
+	return os.WriteFile(outfile, flash, 0666)
 }

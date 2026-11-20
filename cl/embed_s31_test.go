@@ -16,16 +16,166 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/firmware"
 )
 
 // The ESP32-S31 baremetal target maps one 512 KiB DIRAM window for code and
-// data, and esp-emu boots the app image from flash offset 0x2000.
+// data, and esp-emu boots the app image from flash offset 0x2000. The flash
+// (XIP) variant boots through the ESP-IDF second-stage bootloader instead.
 const (
 	s31SRAMStart = 0x2f000000
 	s31SRAMEnd   = 0x2f080000
 	s31FlashOff  = 0x2000
 	s31ChipID    = 0x0020
+
+	s31XIPWindowBase    = 0x40000000
+	s31XIPBootloaderOff = 0x2000
+	s31XIPPartitionOff  = 0x8000
+	s31XIPAppOff        = 0x10000
 )
+
+// TestS31XIPReflectSmoke runs the flash (XIP) target through the ESP-IDF
+// second-stage bootloader under esp-emu. reflectmkfn exercises the libffi
+// closure bridge, whose trampolines execute from SRAM allocated at runtime —
+// exactly the path the SRAM-only layout cannot fit. The test needs the
+// bootloader and partition table binaries of any ESP-IDF build for esp32s31
+// (docker run espressif/idf:latest idf.py build); their paths come through
+// LLGO_S31_XIP_BOOTLOADER and LLGO_S31_XIP_PARTTABLE.
+func TestS31XIPReflectSmoke(t *testing.T) {
+	requireEmbedTest(t)
+	emu, ok := findEspEmu()
+	if !ok {
+		t.Skip("esp-emu is not available; set ESP_EMU to the emulator path")
+	}
+	bootloader := os.Getenv("LLGO_S31_XIP_BOOTLOADER")
+	parttable := os.Getenv("LLGO_S31_XIP_PARTTABLE")
+	if bootloader == "" || parttable == "" {
+		t.Skip("flash (XIP) boot assets not configured; set LLGO_S31_XIP_BOOTLOADER and LLGO_S31_XIP_PARTTABLE")
+	}
+
+	elfPath := buildS31ELFWithTarget(t, "esp32s31-flash", "./_testgo/reflectmkfn", t.TempDir())
+	assertS31CacheSyncWrap(t, elfPath)
+
+	appImg := filepath.Join(t.TempDir(), "app.bin")
+	if err := firmware.ConvertFormats("esp32s31", "", map[string]string{
+		"out": elfPath,
+		"bin": appImg,
+	}); err != nil {
+		t.Fatalf("app image generation failed: %v", err)
+	}
+	assertS31XIPImage(t, appImg)
+
+	imgPath := filepath.Join(t.TempDir(), "flash.bin")
+	mergeS31XIPFlash(t, bootloader, parttable, appImg, imgPath)
+	runS31XIPImage(t, emu, imgPath)
+}
+
+// assertS31XIPImage checks the app image the bootloader will parse: the
+// writable segment first with the app descriptor at image offset 0x20,
+// exactly two mapped segments, and every mapped segment holding its data at
+// the file offset its virtual address maps to (offset in the image file must
+// equal VMA-0x40000000, modulo the MMU page size, since the app partition is
+// 64 KiB aligned).
+func assertS31XIPImage(t *testing.T, imgPath string) {
+	t.Helper()
+	img, err := os.ReadFile(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img[0] != 0xE9 {
+		t.Fatalf("not an ESP image: magic %#x", img[0])
+	}
+	const appDescMagic = 0xABCD5432
+	if got := binary.LittleEndian.Uint32(img[0x20:]); got != appDescMagic {
+		t.Fatalf("app descriptor magic at image offset 0x20: got %#x", got)
+	}
+	off := 24
+	maps := 0
+	for seg := 0; seg < int(img[1]); seg++ {
+		if off+8 > len(img) {
+			t.Fatalf("segment %d header past end of image", seg)
+		}
+		addr := binary.LittleEndian.Uint32(img[off:])
+		length := binary.LittleEndian.Uint32(img[off+4:])
+		off += 8
+		if off+int(length) > len(img) {
+			t.Fatalf("segment %d data past end of image", seg)
+		}
+		if addr >= s31XIPWindowBase {
+			maps++
+			if want := addr - s31XIPWindowBase; uint32(off) != want {
+				t.Fatalf("mapped segment %d data at file offset %#x, virtual address %#x maps %#x", seg, off, addr, want)
+			}
+		}
+		off += int(length)
+	}
+	if maps != 2 {
+		t.Fatalf("bootloader expects exactly 2 mapped segments, image has %d", maps)
+	}
+}
+
+// mergeS31XIPFlash assembles the 4 MiB flash dump: bootloader, partition
+// table and the application at their ESP-IDF default offsets.
+func mergeS31XIPFlash(t *testing.T, bootloader, parttable, appImg, imgPath string) {
+	t.Helper()
+	flash := make([]byte, 4*1024*1024)
+	for i := range flash {
+		flash[i] = 0xFF
+	}
+	for _, place := range []struct {
+		off int
+		src string
+	}{
+		{s31XIPBootloaderOff, bootloader},
+		{s31XIPPartitionOff, parttable},
+		{s31XIPAppOff, appImg},
+	} {
+		data, err := os.ReadFile(place.src)
+		if err != nil {
+			t.Fatalf("read %s: %v", place.src, err)
+		}
+		if place.off+len(data) > len(flash) {
+			t.Fatalf("%s overflows the 4 MiB flash image", place.src)
+		}
+		copy(flash[place.off:], data)
+	}
+	if err := os.WriteFile(imgPath, flash, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runS31XIPImage boots the merged flash under esp-emu. The XIP application
+// drives USB-Serial/JTAG outside the ROM console selector, so the console
+// must be pinned to usb-jtag. A clean baremetal exit shows up as the
+// semihost EBREAK with the PC inside the flash window; a crash would print
+// a Guru Meditation dump instead.
+func runS31XIPImage(t *testing.T, emu, imgPath string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, emu,
+		"--chip", "esp32s31", "--firmware", imgPath,
+		"--timeout", "15s", "--console", "usb-jtag")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("esp-emu failed: %v\n%s", err, s31OutputTail(buf.String()))
+	}
+	out := buf.String()
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "fatal error" || strings.HasPrefix(line, "fatal error:") || strings.HasPrefix(line, "panic:") {
+			t.Fatalf("emulator runtime failure: %s\n%s", line, s31OutputTail(out))
+		}
+	}
+	if !strings.Contains(out, "Loaded app from partition") {
+		t.Fatalf("bootloader did not load the app\n%s", s31OutputTail(out))
+	}
+	if !strings.Contains(out, "EBREAK at PC=0x4") {
+		t.Fatalf("application did not exit cleanly through the semihost EBREAK\n%s", s31OutputTail(out))
+	}
+}
 
 // TestS31ReflectSmoke runs the reflect fixtures the S31 baremetal target must
 // execute under esp-emu, then asserts the linked image keeps the SRAM-only
@@ -75,6 +225,10 @@ func findEspEmu() (string, bool) {
 // metadata disabled; that metadata alone pushes the reflect image past the
 // SRAM budget.
 func buildS31ELF(t *testing.T, pkg, dir string) string {
+	return buildS31ELFWithTarget(t, "esp32s31-basic", pkg, dir)
+}
+
+func buildS31ELFWithTarget(t *testing.T, target, pkg, dir string) string {
 	t.Helper()
 	elfPath := filepath.Join(dir, "s31.elf")
 	old, had := os.LookupEnv("LLGO_FUNCINFO")
@@ -89,7 +243,7 @@ func buildS31ELF(t *testing.T, pkg, dir string) string {
 		}
 	}()
 	conf := build.NewDefaultConf(build.ModeBuild)
-	conf.Target = "esp32s31-basic"
+	conf.Target = target
 	conf.OutFile = elfPath
 	if _, err := build.Do([]string{pkg}, conf); err != nil {
 		t.Fatalf("build %s failed: %v", pkg, err)
