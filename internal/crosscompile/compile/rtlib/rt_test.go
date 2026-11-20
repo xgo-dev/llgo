@@ -43,6 +43,7 @@ func TestPlatformSpecifiedFiles(t *testing.T) {
 		expected int // Number of expected files
 	}{
 		{"riscv32-unknown-elf", 5},
+		{"riscv32-esp-elf", 5},
 		{"riscv64-unknown-elf", 27},
 		{"arm-none-eabi", 19},
 		{"avr-unknown-elf", 6},

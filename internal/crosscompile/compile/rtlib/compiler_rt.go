@@ -6,7 +6,16 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
+	"github.com/xgo-dev/llgo/internal/env"
 )
+
+// espAtomicRiscv32File is LLGo's vendored __atomic_* fallback for riscv32-esp
+// targets (RV32IMC, no A extension). It ships with the llgo root, like
+// targets/*.ld, because it is repo source rather than part of the downloaded
+// compiler-rt tree.
+func espAtomicRiscv32File() string {
+	return filepath.Join(env.LLGoROOT(), "internal", "crosscompile", "rtlib", "atomic_esp_rv32.c")
+}
 
 func platformSpecifiedFiles(builtinsDir, target string) []string {
 	switch {
@@ -17,9 +26,14 @@ func platformSpecifiedFiles(builtinsDir, target string) []string {
 			filepath.Join(builtinsDir, "riscv", "save.S"),
 			filepath.Join(builtinsDir, "riscv", "restore.S"),
 		}
-		// Only add atomic.c for non-ESP targets (ESP doesn't support A extension)
+		// compiler-rt's atomic.c is excluded for ESP targets: its spinlocks
+		// deadlock when an interrupt interrupts a holder. The ESP rtlib
+		// links LLGo's vendored interrupt-masked implementation instead; its
+		// symbols are weak so llgo's Go runtime wins when both link.
 		if target != "riscv32-esp-elf" {
 			files = append(files, filepath.Join(builtinsDir, "atomic.c"))
+		} else {
+			files = append(files, espAtomicRiscv32File())
 		}
 		return files
 	case strings.Contains(target, "riscv64"):

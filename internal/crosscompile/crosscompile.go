@@ -1176,6 +1176,7 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	}
 	var libcIncludeDir []string
 	var compiledLibraryKey string
+	var rtLibraryKey string
 	if config.Libc != "" || config.RTLib != "" {
 		var compilerKey string
 		compilerKey, err = compilerCacheKey(export.CC)
@@ -1183,6 +1184,18 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 			return
 		}
 		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
+		if config.RTLib != "" {
+			// The rtlib archive identity must cover its source-file list:
+			// the compile step only stats the archive, so a changed file
+			// list would otherwise keep serving a stale archive.
+			var rtGroups [][]string
+			rtGroups, err = rtlibCacheKeyGroups(cacheDir(), config.RTLib, target)
+			if err != nil {
+				return
+			}
+			rtKeyGroups := append([][]string{ccflags, ldflags}, rtGroups...)
+			rtLibraryKey = compiledLibraryCacheKey(compilerKey, rtKeyGroups...)
+		}
 	}
 	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
 	if slices.Contains(config.BuildTags, "baremetal") && strings.HasPrefix(config.LLVMTarget, "riscv32") {
@@ -1225,7 +1238,7 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, compiledLibraryKey)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, target, rtLibraryKey)
 		if err != nil {
 			return
 		}

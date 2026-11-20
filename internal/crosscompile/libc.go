@@ -102,31 +102,54 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu, compiledLibrary
 	return outputDir, compileConfig, nil
 }
 
+// rtCompileConfigByName builds the rtlib compile configuration by name.
+// Pure path construction: it never downloads or compiles.
+func rtCompileConfigByName(baseDir, rtName, target string) (config compile.LibConfig, compileConfig compile.CompileConfig, err error) {
+	switch rtName {
+	case "compiler-rt":
+		config = rtlib.GetCompilerRTConfig()
+		sourceDir := filepath.Join(baseDir, config.String())
+		compileConfig = rtlib.GetCompilerRTCompileConfig(sourceDir, target)
+	default:
+		err = fmt.Errorf("unsupported rt: %s", rtName)
+	}
+	return
+}
+
+// rtlibCacheKeyGroups returns the rtlib source-file list as cache-key flag
+// groups. The archive identity must cover the file list: the compile step
+// only stats the archive, so a changed file list would otherwise keep
+// serving a stale archive.
+func rtlibCacheKeyGroups(baseDir, rtName, target string) ([][]string, error) {
+	_, compileConfig, err := rtCompileConfigByName(baseDir, rtName, target)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([][]string, 0, len(compileConfig.Groups))
+	for _, group := range compileConfig.Groups {
+		groups = append(groups, group.Files)
+	}
+	return groups, nil
+}
+
 // getRTCompileConfigByName retrieves runtime library compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
-func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string) (outputDir string, cfg compile.CompileConfig, err error) {
+func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string) (outputDir string, compileConfig compile.CompileConfig, err error) {
 	if rtName == "" {
 		err = fmt.Errorf("rt name cannot be empty")
 		return
 	}
-	var sourceDir string
-	var config compile.LibConfig
-	var compileConfig compile.CompileConfig
-
-	switch rtName {
-	case "compiler-rt":
-		config = rtlib.GetCompilerRTConfig()
-		sourceDir = filepath.Join(baseDir, config.String())
-		compileConfig = rtlib.GetCompilerRTCompileConfig(sourceDir, target)
-	default:
-		err = fmt.Errorf("unsupported rt: %s", rtName)
+	config, compileConfig, err := rtCompileConfigByName(baseDir, rtName, target)
+	if err != nil {
 		return
 	}
+
 	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey)
 	if needSkipDownload {
-		return outputDir, compileConfig, err
+		return
 	}
 
+	sourceDir := filepath.Join(baseDir, config.String())
 	if err = checkDownloadAndExtractLib(config.Url, sourceDir, config.ResourceSubDir); err != nil {
 		return
 	}

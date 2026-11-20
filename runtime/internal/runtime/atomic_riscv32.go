@@ -3,82 +3,204 @@
 package runtime
 
 import (
+	"unsafe"
+
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-// RV32IMC (ESP32-C3/S31) has no A extension, so LLVM lowers atomic operations
-// to the sized __atomic_*_4 libcalls. compiler-rt's atomic.c cannot serve this
-// target: its spinlocks are themselves built on compare-exchange, which would
-// recurse into the same libcall. Provide the 4-byte builtins with GCC's
-// calling conventions (values by value, load returns the value) and
-// single-hart semantics: plain loads and stores, and RMW sequences that
-// complete without safepoints. ISR-driven preemption between the load and
-// store of an RMW sequence is not covered, matching the rest of this target's
-// baseline scheduler guarantees.
+// RV32IMC (ESP32-C3/S31) has no A extension, so LLVM lowers every atomic
+// operation to the __atomic_* libcalls collected here. compiler-rt's atomic.c
+// cannot serve this target: it is excluded from the ESP rtlib, and its
+// spinlocks would deadlock when an interrupt interrupts a holder. All RMW
+// paths below therefore run with interrupts masked through the CSR helpers
+// in _wrap/atomic_riscv32.c. Single-hart semantics: with interrupts masked,
+// each RMW sequence is atomic against interrupt handlers on this hart;
+// plain sized loads and stores are single RV32 instructions and need no
+// masking. Nothing here protects against other harts (this runtime is
+// single-hart) or non-maskable interrupts, matching the rest of this
+// target's baseline scheduler guarantees.
 
-func atomicCas32(p *uint32, old, new uint32) bool {
-	if cur := *p; cur == old {
-		*p = new
-		return true
-	}
-	return false
+//go:linkname llgoAtomicIrqSave C.llgoAtomicIrqSave
+func llgoAtomicIrqSave() uint32
+
+//go:linkname llgoAtomicIrqRestore C.llgoAtomicIrqRestore
+func llgoAtomicIrqRestore(saved uint32)
+
+func atomicCopyBytes(dst, src *byte, size uint32) {
+	c.Memmove(unsafe.Pointer(dst), unsafe.Pointer(src), uintptr(size))
 }
 
-// 8-byte atomics on RV32 need a lock. One static word is enough for this
-// target: the scheduler is single-hart, and the lock is only held across the
-// inline RMW sequence, never across a call that could reach the same code.
-var atomicLock8 uint32
-
-func atomicLock8Acquire() {
-	for !atomicCas32(&atomicLock8, 0, 1) {
-	}
+func atomicEqualBytes(a, b *byte, size uint32) bool {
+	return c.Memcmp(unsafe.Pointer(a), unsafe.Pointer(b), uintptr(size)) == 0
 }
 
-func atomicLock8Release() {
-	atomicLock8 = 0
+func atomicRmw32(p *uint32, val uint32, op func(old, val uint32) uint32) uint32 {
+	saved := llgoAtomicIrqSave()
+	old := *p
+	*p = op(old, val)
+	llgoAtomicIrqRestore(saved)
+	return old
 }
 
+// 64-bit accesses are two RV32 instructions; every path masks interrupts so
+// an interrupt handler cannot observe or interleave a torn value.
 func atomicLoad64(p *uint64) uint64 {
-	atomicLock8Acquire()
+	saved := llgoAtomicIrqSave()
 	v := *p
-	atomicLock8Release()
+	llgoAtomicIrqRestore(saved)
 	return v
 }
 
 func atomicStore64(p *uint64, v uint64) {
-	atomicLock8Acquire()
+	saved := llgoAtomicIrqSave()
 	*p = v
-	atomicLock8Release()
+	llgoAtomicIrqRestore(saved)
 }
 
 func atomicRmw64(p *uint64, val uint64, op func(old, val uint64) uint64) uint64 {
-	atomicLock8Acquire()
+	saved := llgoAtomicIrqSave()
 	old := *p
 	*p = op(old, val)
-	atomicLock8Release()
+	llgoAtomicIrqRestore(saved)
 	return old
 }
 
-func atomicCas64(p *uint64, expected *uint64, desired uint64) bool {
-	atomicLock8Acquire()
-	ok := false
-	if *p == *expected {
+func atomicRmw8(p *uint8, val uint8, op func(old, val uint8) uint8) uint8 {
+	saved := llgoAtomicIrqSave()
+	old := *p
+	*p = op(old, val)
+	llgoAtomicIrqRestore(saved)
+	return old
+}
+
+func atomicRmw16(p *uint16, val uint16, op func(old, val uint16) uint16) uint16 {
+	saved := llgoAtomicIrqSave()
+	old := *p
+	*p = op(old, val)
+	llgoAtomicIrqRestore(saved)
+	return old
+}
+
+// Sized libcalls. LLVM AtomicExpand passes the success and failure memory
+// models positionally; single-hart masking makes the models indistinguishable
+// here, so they are accepted and ignored.
+
+//export __atomic_load_1
+func __atomic_load_1(p *uint8, _ c.Int) uint8 {
+	return *p
+}
+
+//export __atomic_store_1
+func __atomic_store_1(p *uint8, val uint8, _ c.Int) {
+	*p = val
+}
+
+//export __atomic_exchange_1
+func __atomic_exchange_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(_, val uint8) uint8 { return val })
+}
+
+//export __atomic_compare_exchange_1
+func __atomic_compare_exchange_1(p *uint8, expected *uint8, desired uint8, _, _ c.Int) bool {
+	saved := llgoAtomicIrqSave()
+	cur := *p
+	ok := cur == *expected
+	if ok {
 		*p = desired
-		ok = true
 	} else {
-		*expected = *p
+		*expected = cur
 	}
-	atomicLock8Release()
+	llgoAtomicIrqRestore(saved)
 	return ok
 }
 
-func atomicRmw32(p *uint32, val uint32, op func(old, val uint32) uint32) uint32 {
-	for {
-		old := *p
-		if atomicCas32(p, old, op(old, val)) {
-			return old
-		}
+//export __atomic_fetch_add_1
+func __atomic_fetch_add_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return old + val })
+}
+
+//export __atomic_fetch_sub_1
+func __atomic_fetch_sub_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return old - val })
+}
+
+//export __atomic_fetch_and_1
+func __atomic_fetch_and_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return old & val })
+}
+
+//export __atomic_fetch_or_1
+func __atomic_fetch_or_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return old | val })
+}
+
+//export __atomic_fetch_xor_1
+func __atomic_fetch_xor_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return old ^ val })
+}
+
+//export __atomic_fetch_nand_1
+func __atomic_fetch_nand_1(p *uint8, val uint8, _ c.Int) uint8 {
+	return atomicRmw8(p, val, func(old, val uint8) uint8 { return ^(old & val) })
+}
+
+//export __atomic_load_2
+func __atomic_load_2(p *uint16, _ c.Int) uint16 {
+	return *p
+}
+
+//export __atomic_store_2
+func __atomic_store_2(p *uint16, val uint16, _ c.Int) {
+	*p = val
+}
+
+//export __atomic_exchange_2
+func __atomic_exchange_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(_, val uint16) uint16 { return val })
+}
+
+//export __atomic_compare_exchange_2
+func __atomic_compare_exchange_2(p *uint16, expected *uint16, desired uint16, _, _ c.Int) bool {
+	saved := llgoAtomicIrqSave()
+	cur := *p
+	ok := cur == *expected
+	if ok {
+		*p = desired
+	} else {
+		*expected = cur
 	}
+	llgoAtomicIrqRestore(saved)
+	return ok
+}
+
+//export __atomic_fetch_add_2
+func __atomic_fetch_add_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return old + val })
+}
+
+//export __atomic_fetch_sub_2
+func __atomic_fetch_sub_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return old - val })
+}
+
+//export __atomic_fetch_and_2
+func __atomic_fetch_and_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return old & val })
+}
+
+//export __atomic_fetch_or_2
+func __atomic_fetch_or_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return old | val })
+}
+
+//export __atomic_fetch_xor_2
+func __atomic_fetch_xor_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return old ^ val })
+}
+
+//export __atomic_fetch_nand_2
+func __atomic_fetch_nand_2(p *uint16, val uint16, _ c.Int) uint16 {
+	return atomicRmw16(p, val, func(old, val uint16) uint16 { return ^(old & val) })
 }
 
 //export __atomic_load_4
@@ -97,12 +219,17 @@ func __atomic_exchange_4(p *uint32, val uint32, _ c.Int) uint32 {
 }
 
 //export __atomic_compare_exchange_4
-func __atomic_compare_exchange_4(p *uint32, expected *uint32, desired uint32, _ c.Int, _, _ c.Int) bool {
-	if atomicCas32(p, *expected, desired) {
-		return true
+func __atomic_compare_exchange_4(p *uint32, expected *uint32, desired uint32, _, _ c.Int) bool {
+	saved := llgoAtomicIrqSave()
+	cur := *p
+	ok := cur == *expected
+	if ok {
+		*p = desired
+	} else {
+		*expected = cur
 	}
-	*expected = *p
-	return false
+	llgoAtomicIrqRestore(saved)
+	return ok
 }
 
 //export __atomic_fetch_add_4
@@ -151,8 +278,17 @@ func __atomic_exchange_8(p *uint64, val uint64, _ c.Int) uint64 {
 }
 
 //export __atomic_compare_exchange_8
-func __atomic_compare_exchange_8(p *uint64, expected *uint64, desired uint64, _ c.Int, _, _ c.Int) bool {
-	return atomicCas64(p, expected, desired)
+func __atomic_compare_exchange_8(p *uint64, expected *uint64, desired uint64, _, _ c.Int) bool {
+	saved := llgoAtomicIrqSave()
+	cur := *p
+	ok := cur == *expected
+	if ok {
+		*p = desired
+	} else {
+		*expected = cur
+	}
+	llgoAtomicIrqRestore(saved)
+	return ok
 }
 
 //export __atomic_fetch_add_8
@@ -183,4 +319,49 @@ func __atomic_fetch_xor_8(p *uint64, val uint64, _ c.Int) uint64 {
 //export __atomic_fetch_nand_8
 func __atomic_fetch_nand_8(p *uint64, val uint64, _ c.Int) uint64 {
 	return atomicRmw64(p, val, func(old, val uint64) uint64 { return ^(old & val) })
+}
+
+// Size-generalized libcalls. Clang's frontend emits these for atomic
+// operations whose size is not a power-of-two word size, passing the size as
+// the first argument; the CAS form takes no weak flag. Buffers are caller
+// allocated and naturally aligned for the object being moved.
+
+//export __atomic_load
+func __atomic_load(size uint32, src, dst *byte, _ c.Int) {
+	saved := llgoAtomicIrqSave()
+	atomicCopyBytes(dst, src, size)
+	llgoAtomicIrqRestore(saved)
+}
+
+//export __atomic_store
+func __atomic_store(size uint32, dst, src *byte, _ c.Int) {
+	saved := llgoAtomicIrqSave()
+	atomicCopyBytes(dst, src, size)
+	llgoAtomicIrqRestore(saved)
+}
+
+//export __atomic_exchange
+func __atomic_exchange(size uint32, obj, desired, ret *byte, _ c.Int) {
+	saved := llgoAtomicIrqSave()
+	atomicCopyBytes(ret, obj, size)
+	atomicCopyBytes(obj, desired, size)
+	llgoAtomicIrqRestore(saved)
+}
+
+//export __atomic_compare_exchange
+func __atomic_compare_exchange(size uint32, obj, expected, desired *byte, _, _ c.Int) bool {
+	saved := llgoAtomicIrqSave()
+	ok := atomicEqualBytes(obj, expected, size)
+	if ok {
+		atomicCopyBytes(obj, desired, size)
+	} else {
+		atomicCopyBytes(expected, obj, size)
+	}
+	llgoAtomicIrqRestore(saved)
+	return ok
+}
+
+//export __atomic_clear
+func __atomic_clear(p *byte, _ c.Int) {
+	*p = 0
 }
