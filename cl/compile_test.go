@@ -85,19 +85,12 @@ var embedTargetConfigs = []embedTargetConfig{
 		ignoreByDir: map[string][]string{
 			"./_testgo": {
 				"./_testgo/abimethod",     // llgo panic: unsatisfied import internal/runtime/sys
-				"./_testgo/arith-divrem",  // embedded int64 min/-1 division returns 0 instead of Go's defined minInt result
 				"./_testgo/cgobasic",      // fast fail: build constraints exclude all Go files (cgo)
 				"./_testgo/cgocfiles",     // fast fail: build constraints exclude all Go files (cgo)
 				"./_testgo/cgodefer",      // fast fail: build constraints exclude all Go files (cgo)
 				"./_testgo/chan",          // timeout: emulator did not auto-exit
-				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
-				"./_testgo/defer4",        // unexpected output: got "fatal error", expected "recover: panic message"
 				"./_testgo/goroutine",     // channel synchronization prints fatal error despite successful emulator exit
-				"./_testgo/indexerr",      // unexpected output: len(dst)=12, len(src)=0 (got "fatal error")
-				"./_testgo/makeslice",     // unexpected output: len(dst)=23, len(src)=0 (got "fatal error\\nmust error")
-				"./_testgo/mapindirect",   // ld.lld: error: undefined symbol: __atomic_fetch_or_4
 				"./_testgo/reflect",       // llgo panic: unsatisfied import internal/runtime/sys
-				"./_testgo/reflectconv",   // llgo panic: unsatisfied import internal/sync
 				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/repeatedfault", // baremetal cannot recover native hardware faults
@@ -107,17 +100,14 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/select",        // timeout: emulator did not auto-exit
 			},
 			"./_testlibc": {
-				"./_testlibc/argv",    // timeout: emulator panic (Load access fault), no auto-exit
-				"./_testlibc/atomic",  // link error: ld.lld: error: undefined symbol: __atomic_store
-				"./_testlibc/complex", // link error: ld.lld: error: undefined symbol: cabsf
-				"./_testlibc/cppabi",  // C++ standard headers are unavailable in the baremetal sysroot
-				"./_testlibc/once",    // fast fail: build constraints exclude all Go files (pthread/sync)
-				"./_testlibc/setjmp",  // link error: ld.lld: error: undefined symbol: stderr
+				"./_testlibc/atomic", // output mismatch: baremetal i64 varargs lowering breaks printf("%ld") (fixture itself links)
+				"./_testlibc/cppabi", // C++ standard headers are unavailable in the baremetal sysroot
+				"./_testlibc/once",   // fast fail: build constraints exclude all Go files (pthread/sync)
+				"./_testlibc/setjmp", // link error: ld.lld: error: undefined symbol: stderr
 			},
 			"./_testrt": {
 				"./_testrt/asmfull",  // compile/asm error: unrecognized instruction mnemonic
 				"./_testrt/linkname", // unexpected output: line order mismatch ("hello" appears first)
-				"./_testrt/makemap",  // link error: ld.lld: error: undefined symbol: __atomic_fetch_or_4
 				"./_testrt/struct",   // fast fail: build constraints exclude all Go files
 				"./_testrt/tpfunc",   // unexpected output: type size mismatch (got 8 4 4, expected 16 8 8)
 				"./_testrt/typalias", // fast fail: build constraints exclude all Go files
