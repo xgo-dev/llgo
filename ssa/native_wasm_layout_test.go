@@ -61,6 +61,10 @@ type Pointers [2]*byte
 				raw := pkg.Scope().Lookup(name).Type()
 				checkHostLayout(t, prog, sizes, raw, 8, 4, nil)
 				checkHostLayout(t, prog, sizes, types.NewArray(raw, 2), 16, 4, nil)
+				ptr := prog.Pointer(prog.Type(raw, GoDecl))
+				if width := prog.SizeOf(prog.Index(ptr)); width != 4 {
+					t.Fatalf("element through pointer to %s occupies %d bytes, want 4", name, width)
+				}
 				if size := prog.SizeOf(prog.Type(raw, CDecl)); size != 8 {
 					t.Fatalf("%s C storage size = %d, want 8", name, size)
 				}

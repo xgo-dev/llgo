@@ -255,16 +255,26 @@ func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
 func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")
-	fn := pkg.NewFunc("example.com/p.storeLoad", NoArgsNoRet, CDecl)
-	b := fn.MakeBody(1)
 	ptr := prog.Pointer(prog.Byte())
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, nil, "pointer", ptr.RawType())),
+		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32])), false)
+	fn := pkg.NewFunc("example.com/p.storeLoad", sig, CDecl)
+	b := fn.MakeBody(1)
 	value := pkg.NewVarEx("example.com/p.target", ptr)
 	global := pkg.NewVarEx("example.com/p.value", prog.Pointer(ptr))
 	global.Init(value.Expr)
 	slot := b.Alloc(ptr, false)
 	b.Store(slot, value.Expr)
 	b.Load(slot)
-	b.Return()
+	// A dynamic pointer must keep its low word and clear its high word;
+	// constant globals alone do not exercise the runtime storage conversion.
+	pointer := fn.Param(0).impl
+	stored := b.toStorageValue(ptr, pointer)
+	high := b.impl.CreateExtractValue(stored, 1, "")
+	changed := llvm.CreateICmp(b.impl, llvm.IntNE, b.fromStorageValue(ptr, stored), pointer)
+	changed = b.impl.CreateZExt(changed, prog.tyInt32(), "")
+	b.Return(Expr{b.impl.CreateOr(high, changed, ""), prog.Uint32()})
 
 	ir := pkg.Module().String()
 	for _, want := range []string{
@@ -284,6 +294,14 @@ func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	}
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("invalid J32 pointer-storage module: %v\n%s", err, ir)
+	}
+	options := llvm.NewPassBuilderOptions()
+	defer options.Dispose()
+	if err := pkg.Module().RunPasses("function(instcombine)", prog.TargetMachine(), options); err != nil {
+		t.Fatal(err)
+	}
+	if ret := fn.impl.EntryBasicBlock().LastInstruction(); ret.InstructionOpcode() != llvm.Ret || !ret.Operand(0).IsNull() {
+		t.Fatalf("dynamic pointer storage changed the low word or retained a nonzero high word:\n%s", fn.impl)
 	}
 }
 

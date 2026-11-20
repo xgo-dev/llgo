@@ -107,7 +107,7 @@ func (f Function) finishWasmSliceParams() {
 }
 
 func (p Program) needsWidePointerStorage(t Type) bool {
-	if p.GoWordSize() <= p.PointerSize() || p.isNativeStorage(t) {
+	if !p.usesWideGoStorage() || p.isNativeStorage(t) {
 		return false
 	}
 	switch t.kind {
@@ -119,27 +119,25 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 }
 
 func (p Program) isNativeStorage(t Type) bool {
-	native, ok := p.nativeStorage[t]
-	return ok && native == t
+	return t != nil && p.nativeStorage[t] == t
 }
 
 func (p Program) withNativeStorage(t Type) Type {
 	if t == nil || !p.usesWideGoStorage() {
 		return t
 	}
-	if native, ok := p.nativeStorage[t]; ok {
-		return native
+	if view := p.nativeStorage[t]; view != nil {
+		return view
 	}
-	clone := *t
-	clone.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
-	ret := &clone
-	p.nativeStorage[t] = ret
-	p.nativeStorage[ret] = ret
-	return ret
+	view := *t
+	view.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
+	p.nativeStorage[t] = &view
+	p.nativeStorage[&view] = &view
+	return &view
 }
 
 func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.Type {
-	if p.GoWordSize() <= p.PointerSize() {
+	if !p.usesWideGoStorage() {
 		return fallback
 	}
 	switch t := types.Unalias(raw).Underlying().(type) {
@@ -237,10 +235,10 @@ func (b Builder) fitLLVMResult(value llvm.Value, logical Type) llvm.Value {
 }
 
 func (p Program) withoutNativeStorage(t Type) Type {
-	if !p.isNativeStorage(t) {
-		return t
+	if p.isNativeStorage(t) {
+		return p.rawType(t.raw.Type)
 	}
-	return p.rawType(t.raw.Type)
+	return t
 }
 
 func (p Program) childStorageType(parent Type, child types.Type) Type {
@@ -248,10 +246,18 @@ func (p Program) childStorageType(parent Type, child types.Type) Type {
 	if !p.usesWideGoStorage() {
 		return t
 	}
-	if hasHostLayout(parent.raw.Type) {
-		return t
+	// A record's declaration chooses the width of its fields. Referencing an
+	// ordinary Go record from C still uses the layout built by toLLVMFields.
+	native := p.isNativeStorage(parent)
+	switch parent.kind {
+	case vkStruct:
+		native = p.hasLegacyNativeTypeLayout(parent.raw.Type)
+	case vkArray:
+		// Named native arrays keep their physical element type even when
+		// reached through an ordinary Go record or pointer.
+		native = parent.ll.ElementType() != p.storageType(t)
 	}
-	if p.isNativeStorage(parent) || p.hasLegacyNativeTypeLayout(parent.raw.Type) || p.hasLegacyNativeTypeLayout(child) {
+	if native {
 		return p.withNativeStorage(t)
 	}
 	return t
@@ -306,10 +312,7 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 	}
 	if b.Prog.needsWidePointerStorage(t) {
 		storage := b.Prog.widePointerStorageType()
-		parts := storage.StructElementTypes()
-		stored := llvm.Undef(storage)
-		stored = b.impl.CreateInsertValue(stored, value, 0, "")
-		return b.impl.CreateInsertValue(stored, llvm.ConstNull(parts[1]), 1, "")
+		return b.impl.CreateInsertValue(llvm.ConstNull(storage), value, 0, "")
 	}
 	return b.fitLLVMValue(value, b.Prog.withoutNativeStorage(t), t.ll)
 }
@@ -407,7 +410,7 @@ func (b Builder) fromAtomicStorageValue(t Type, value llvm.Value) llvm.Value {
 // indices, but the WebAssembly backend can otherwise leave an i64 address on a
 // memory32 load at -O0 instead of inserting i32.wrap_i64.
 func (b Builder) physicalPointerIndex(index Expr) Expr {
-	if b.Prog.GoWordSize() <= b.Prog.PointerSize() {
+	if !b.Prog.usesWideGoStorage() {
 		return index
 	}
 	physical := llvmIntType(b.Prog.ctx, b.Prog.PointerSize())
