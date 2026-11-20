@@ -104,11 +104,14 @@ fi
 # LLGoFiles and go:linkname bypass the native-only Go cgo frontend. Execute
 # narrow C arguments, ellipsis calls and native function values on every profile.
 variadic_package="${repo_root}/test/llgoext"
+export_abi_package="${repo_root}/test/llgoext/wasmexportabi"
 for target in emscripten emscripten-memory64 wasi; do
 	"${llgo_cmd}" test -target "${target}" -emulator -v -count=1 -timeout=90s \
 		-run '^(TestLinkname.*CVariadicCall|TestLinknameNarrowC)' "${variadic_package}"
+	"${llgo_cmd}" test -target "${target}" -emulator -O0 -v -count=1 -timeout=90s "${export_abi_package}"
 done
 GOOS=js GOARCH=wasm "${llgo_cmd}" test -emulator -v -count=1 -timeout=90s \
 	-run '^(TestLinkname.*CVariadicCall|TestLinknameNarrowC)' "${variadic_package}"
+GOOS=js GOARCH=wasm "${llgo_cmd}" test -emulator -O0 -v -count=1 -timeout=90s "${export_abi_package}"
 
 echo "WebAssembly target profile checks passed"

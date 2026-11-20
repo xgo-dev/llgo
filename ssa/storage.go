@@ -75,6 +75,8 @@ func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.
 		if t.Kind() == types.Uintptr {
 			return llvmIntType(p.ctx, p.PointerSize())
 		}
+	case *types.Slice:
+		return p.nativeWasmSliceType()
 	case *types.Array:
 		elem := p.rawType(t.Elem())
 		return llvm.ArrayType(p.nativeStorageLLVMType(t.Elem(), elem.ll), int(t.Len()))
@@ -82,14 +84,18 @@ func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.
 	return fallback
 }
 
+// A C GoSlice has a native data pointer and two Go-sized lengths. In
+// Memory32 the gap before len is C padding, not part of the pointer.
+func (p Program) nativeWasmSliceType() llvm.Type {
+	return p.ctx.StructType([]llvm.Type{p.tyVoidPtr(), p.tyInt(), p.tyInt()}, false)
+}
+
 func (b Builder) logicalValue(v Expr) Expr {
 	t := b.Prog.withoutNativeStorage(v.Type)
 	if t == v.Type {
 		return v
 	}
-	if v.impl.Type() != t.ll {
-		v.impl = castInt(b, v.impl, v.Type, t)
-	}
+	v.impl = b.fitLLVMValue(v.impl, v.Type, t.ll)
 	v.Type = t
 	return v
 }
@@ -109,6 +115,25 @@ func (b Builder) fitLLVMValue(value llvm.Value, source Type, target llvm.Type) l
 		return result
 	}
 	logical := b.Prog.withoutNativeStorage(source)
+	if logical.kind == vkSlice && b.Prog.usesWideGoStorage() {
+		native := b.Prog.nativeWasmSliceType()
+		switch {
+		case value.Type() == native && target == logical.ll:
+			// Rebuild the Go pointer slot from the address alone. C may leave
+			// the alignment padding uninitialized or copy unrelated bits there.
+			return b.aggregateValue(logical,
+				b.impl.CreateExtractValue(value, 0, ""),
+				b.impl.CreateExtractValue(value, 1, ""),
+				b.impl.CreateExtractValue(value, 2, "")).impl
+		case value.Type() == logical.ll && target == native:
+			result := llvm.Undef(native)
+			for i := 0; i < 3; i++ {
+				field := b.getField(Expr{value, logical}, i)
+				result = b.impl.CreateInsertValue(result, field.impl, i, "")
+			}
+			return result
+		}
+	}
 	if logical.kind == vkSIMD {
 		storage := b.Prog.storageType(logical)
 		if value.Type() == logical.ll && target == storage {
