@@ -3,6 +3,7 @@
 package wasmexportabi
 
 import (
+	"runtime"
 	"testing"
 	"unsafe"
 )
@@ -107,6 +108,29 @@ func TestWasmHostHeaderAliases(t *testing.T) {
 	}
 	if after := *(*uintptr)(unsafe.Pointer(&items[0].Text)); after != raw {
 		t.Fatal("reading or copying the C global rewrote the original prefix")
+	}
+}
+
+//go:noinline
+func copyAcrossGC(dst, src *[256]string) {
+	snapshot := *src
+	clear(src[:])
+	runtime.Gosched()
+	runtime.GC()
+	*dst = snapshot
+}
+
+func TestWasmHeaderSnapshotAcrossGC(t *testing.T) {
+	var src, dst [256]string // Exactly 4 KiB in the Wasm Go data model.
+	for i := range src {
+		src[i] = string([]byte{byte(i), 42})
+	}
+	// The captured value is the only owner of the strings during collection.
+	copyAcrossGC(&dst, &src)
+	for i, s := range dst {
+		if src[i] != "" || len(s) != 2 || s[0] != byte(i) || s[1] != 42 {
+			t.Fatalf("lost the pre-GC string at index %d", i)
+		}
 	}
 }
 

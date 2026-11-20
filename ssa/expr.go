@@ -103,7 +103,7 @@ func (v Expr) memoryInstruction() llvm.Value {
 			!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil():
 			instr = instr.Operand(0)
 		case !instr.IsALoadInst().IsNil() && instr.HasMetadata() &&
-			!instr.Metadata(instr.Type().Context().MDKindID(wasmHeaderSnapshotMD)).IsNil():
+			!instr.Metadata(instr.Type().Context().MDKindID(llabi.HeaderSnapshotMD)).IsNil():
 			// A large header snapshot reloads a private slot after clearing its
 			// padding. Memory flags apply to the original source access.
 			slot := instr.Operand(0)

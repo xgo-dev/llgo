@@ -1342,6 +1342,13 @@ func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
 	return ret
 }
 
+// A copy onto itself keeps the original storage, including any native padding.
+func (b Builder) clearWasmCopiedHeaders(elem llvm.Type, dst, src, count llvm.Value) {
+	distinct := llvm.CreateICmp(b.impl, llvm.IntNE, dst, src)
+	count = llvm.CreateSelect(b.impl, distinct, count, llvm.ConstNull(count.Type()))
+	b.clearWasmHeaderRange(elem, dst, count)
+}
+
 func (b Builder) copySlice(dst, src Expr) Expr {
 	elem := b.Prog.Elem(dst.Type)
 	size := b.Prog.Val(int(b.Prog.SizeOf(elem)))

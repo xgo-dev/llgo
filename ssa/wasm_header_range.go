@@ -2,12 +2,7 @@ package ssa
 
 import "github.com/xgo-dev/llvm"
 
-// A copy onto itself keeps the original storage, including any native padding.
-func (b Builder) clearWasmCopiedHeaders(elem llvm.Type, dst, src, count llvm.Value) {
-	distinct := llvm.CreateICmp(b.impl, llvm.IntNE, dst, src)
-	count = llvm.CreateSelect(b.impl, distinct, count, llvm.ConstNull(count.Type()))
-	b.clearWasmHeaderRange(elem, dst, count)
-}
+const maxInlineWasmHeaders = 8
 
 // clearWasmHeaderRange clears only the padding in a copied range. A source
 // slice can alias C memory even after it has passed through ordinary Go code.

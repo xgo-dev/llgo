@@ -23,6 +23,10 @@ const (
 	// at most this many pointer-sized words and still be SSAable.
 	MaxSSAValueWords = 4
 
+	// HeaderSnapshotMD marks a reload after the frontend has copied a value
+	// and cleared its Wasm header padding in private storage.
+	HeaderSnapshotMD = "llgo.header.snapshot"
+
 	runtimeAllocU        = env.LLGoRuntimePkg + "/internal/runtime.AllocU"
 	runtimeAllocUAligned = env.LLGoRuntimePkg + "/internal/runtime.AllocUAligned"
 )
@@ -193,12 +197,18 @@ func (l largeAggregateLowerer) isLargeCopy(typ llvm.Type) bool {
 func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 	var calls []llvm.Value
 	var funcs []llvm.Value
+	var headerLoads []llvm.Value
+	headerMD := m.Context().MDKindID(HeaderSnapshotMD)
 	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if fn.IntrinsicID() == 0 && l.isLargeAggregate(fn.GlobalValueType().ReturnType()) {
 			funcs = append(funcs, fn)
 		}
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for instr := bb.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
+				if l.wasm && !instr.IsALoadInst().IsNil() && instr.HasMetadata() && !instr.Metadata(headerMD).IsNil() &&
+					!instr.Operand(0).IsACallInst().IsNil() {
+					headerLoads = append(headerLoads, instr)
+				}
 				if call := instr.IsACallInst(); !call.IsNil() &&
 					call.CalledValue().IntrinsicID() == 0 &&
 					l.isLargeAggregate(call.CalledFunctionType().ReturnType()) {
@@ -206,6 +216,9 @@ func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 				}
 			}
 		}
+	}
+	for _, load := range headerLoads {
+		l.reuseHeaderSnapshot(m.Context(), load)
 	}
 	for _, call := range calls {
 		l.transformCall(m, call)
@@ -217,6 +230,59 @@ func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 	if l.roots {
 		l.publishRoots(m)
 	}
+}
+
+// A heap-backed header snapshot is private to this evaluation. It already
+// contains the immutable value that delayed stores and projections need.
+// Stack-backed header loads reuse a mutable slot and cannot take this path.
+func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.Value) {
+	slot := load.Operand(0)
+	if name := slot.CalledValue().Name(); name != runtimeAllocU && name != runtimeAllocUAligned {
+		return
+	}
+	stores, extracts, ok := l.aggregateUsers(load)
+	if !ok {
+		return
+	}
+	if len(stores) == 1 && len(extracts) == 0 && llvm.NextInstruction(load) == stores[0] {
+		if !stores[0].IsVolatile() {
+			forwardHeaderSnapshot(load, stores[0], slot)
+		}
+		return
+	}
+	l.allocations = append(l.allocations, slot)
+	l.rewriteMemoryUsers(ctx, load, slot, load.Type(), stores, extracts)
+}
+
+// For an immediate assignment, copy directly to the final destination and
+// clear its padding there. Keep volatile accesses on their original storage.
+func forwardHeaderSnapshot(load, store, slot llvm.Value) {
+	clear := llvm.PrevInstruction(load)
+	if clear.IsNil() || clear.IsACallInst().IsNil() || clear.Operand(0) != slot {
+		return
+	}
+	fill := llvm.PrevInstruction(clear)
+	if fill.IsNil() || fill.IsAStoreInst().IsNil() || fill.Operand(1) != slot {
+		return
+	}
+	src := fill.Operand(0)
+	if src.IsALoadInst().IsNil() || src.IsVolatile() {
+		return
+	}
+	for use := slot.FirstUse(); !use.IsNil(); use = use.NextUse() {
+		switch use.User() {
+		case fill, clear, load:
+		default:
+			return
+		}
+	}
+	dst := store.Operand(1)
+	fill.SetOperand(1, dst)
+	fill.SetAlignment(store.Alignment())
+	clear.SetOperand(0, dst)
+	store.EraseFromParentAsInstruction()
+	load.EraseFromParentAsInstruction()
+	slot.EraseFromParentAsInstruction()
 }
 
 // transformStoredLoads prevents a large aggregate load from reaching

@@ -334,12 +334,11 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 // another package. A typed load canonicalizes its value without writing back
 // into the source or depending on the pointer retaining its storage view.
 func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Value {
-	const maxInlineHeaders = 8
 	count := 0
 	var scratch llvm.Value
 	if b.Prog.usesWideGoStorage() {
-		count = b.Prog.wasmHeaderCount(logical.ll, maxInlineHeaders+1)
-		if count > maxInlineHeaders {
+		count = b.Prog.wasmHeaderCount(logical.ll, maxInlineWasmHeaders+1)
+		if count > maxInlineWasmHeaders {
 			scratch = b.wasmHeaderSnapshotStorage(logical)
 		}
 	}
@@ -350,26 +349,24 @@ func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Va
 	switch {
 	case count == 0:
 		return value
-	case count <= maxInlineHeaders:
+	case count <= maxInlineWasmHeaders:
 		return b.Prog.clearWasmABIPadding(b.impl, value)
 	default:
 		b.impl.CreateStore(value, scratch)
 		b.clearWasmHeaderRange(logical.ll, scratch, b.Prog.IntVal(1, b.Prog.Int()).impl)
 		result := llvm.CreateLoad(b.impl, logical.ll, scratch)
 		ctx := b.Prog.ctx
-		result.SetMetadata(ctx.MDKindID(wasmHeaderSnapshotMD), ctx.MDNode(nil))
+		result.SetMetadata(ctx.MDKindID(llabi.HeaderSnapshotMD), ctx.MDNode(nil))
 		return result
 	}
 }
 
-const wasmHeaderSnapshotMD = "llgo.header.snapshot"
-
 func (b Builder) wasmHeaderSnapshotStorage(typ Type) llvm.Value {
 	size := b.Prog.SizeOf(typ)
 	if size >= llabi.MinAggregateCopySize {
-		// ABI lowering can allocate while materializing the subsequent reload
-		// at this size. Give it a scanned heap source to root. Allocate before
-		// reading the original, while its owner is still live.
+		// ABI lowering can use this private scanned snapshot for delayed
+		// consumers or forward an immediate copy to its destination.
+		// Allocate before reading the original while its owner is live.
 		return b.AllocU(typ).impl
 	}
 	// A snapshot lives only through the range helper's scalar stores and its

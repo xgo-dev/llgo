@@ -4,6 +4,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
@@ -80,6 +81,78 @@ func TestWasmHostLayoutHeaderLoads(t *testing.T) {
 		}
 		checkNativeStringZeroResults(t, pkg, observers...)
 	})
+}
+
+func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
+	for _, delayed := range []bool{false, true} {
+		prog := newJ32Program(t)
+		setTestRuntime(t, prog)
+		pkg := prog.NewPackage("p", "example.com/p")
+		array := types.NewArray(types.Typ[types.String], 256)
+		ptr := types.NewPointer(array)
+		params := types.NewTuple(types.NewParam(token.NoPos, nil, "src", ptr), types.NewParam(token.NoPos, nil, "dst", ptr))
+		fn := pkg.NewFunc("copyHeaders", types.NewSignatureType(nil, nil, nil, params, nil, false), GoDecl)
+		b := fn.MakeBody(1)
+		src, dst := fn.Param(0), fn.Param(1)
+		value := b.Load(src).SetVolatile(delayed)
+		if delayed {
+			// An intervening call can collect and overwrite the source.
+			sig := llvm.FunctionType(prog.ctx.VoidType(), []llvm.Type{src.impl.Type()}, false)
+			mutate := llvm.AddFunction(pkg.mod, "mutate", sig)
+			b.impl.CreateCall(sig, mutate, []llvm.Value{src.impl}, "")
+		}
+		b.Store(dst, value)
+		if delayed {
+			last := b.impl.CreateExtractValue(value.impl, 255, "")
+			b.impl.CreateStore(last, dst.impl)
+		}
+		b.Return()
+		b.EndBuild()
+		b.Dispose()
+		cfg := llabi.AggregateLoweringConfig{GoWordSize: prog.GoWordSize(), GCRoots: true, Wasm: true}
+		llabi.LowerLargeAggregates(prog.TargetData(), pkg.mod, cfg)
+		llabi.LowerAggregateCopies(prog.TargetData(), pkg.mod, cfg)
+		if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+
+		var slot, clear, move, copy, field llvm.Value
+		allocs := 0
+		for block := fn.impl.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+			for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if !inst.IsAGetElementPtrInst().IsNil() && !slot.IsNil() && inst.Operand(0) == slot {
+					field = inst
+				}
+				if inst.IsACallInst().IsNil() {
+					continue
+				}
+				name := inst.CalledValue().Name()
+				switch {
+				case strings.HasSuffix(name, ".AllocU"):
+					allocs++
+					slot = inst
+				case strings.HasPrefix(name, "__llgo_clear_header_range"):
+					clear = inst
+				case strings.HasPrefix(name, "llvm.memmove"):
+					move = inst
+				case strings.HasPrefix(name, "llvm.memcpy"):
+					copy = inst
+				}
+			}
+		}
+		if move.IsNil() || move.Operand(1) != src.impl || clear.IsNil() {
+			t.Fatalf("missing source read or padding normalization:\n%s", fn.impl.String())
+		}
+		if delayed {
+			if allocs != 1 || move.Operand(0) != slot || move.Operand(3).ZExtValue() != 1 ||
+				clear.Operand(0) != slot || copy.IsNil() || copy.Operand(1) != slot || copy.Operand(0) != dst.impl ||
+				field.IsNil() || field.Operand(2).ZExtValue() != 255 || !strings.Contains(fn.impl.String(), "gcroot.entry") {
+				t.Fatalf("delayed assignment must retain one rooted, normalized snapshot:\n%s", fn.impl.String())
+			}
+		} else if allocs != 0 || move.Operand(0) != dst.impl || clear.Operand(0) != dst.impl || !copy.IsNil() {
+			t.Fatalf("immediate assignment must normalize in the destination:\n%s", fn.impl.String())
+		}
+	}
 }
 
 // A typed aggregate load must also work through a plain Go pointer. Count
