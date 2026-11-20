@@ -10,6 +10,7 @@ import (
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/binaryspecialize"
 	"github.com/xgo-dev/llgo/internal/build/jsonspecialize"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -41,6 +42,23 @@ func sizeCodecBuild(conf *Config, frontend cl.Options) bool {
 		conf.BuildMode == BuildModeExe && conf.Mode != ModeGen && conf.Coverage == nil &&
 		conf.ModuleHook == nil && !frontend.Debug && !frontend.DebuggerFrames &&
 		!conf.LTOPlugin.Enabled() && !frontendCacheEnabled(conf) && len(conf.SourceOverlay) == 0
+}
+
+// The decoder helpers are a fixed build profile. Final-link initialization
+// pruning still requires the normal proof for the selected target.
+func typedJSONSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend) &&
+		(embeddedSizePruningConfig(conf, target, frontend) ||
+			wasiSizePruningConfig(conf, target, frontend) ||
+			hostedValueFormatSupport(conf, target, frontend) ||
+			linuxSizeCodecBuild(conf, target, frontend))
+}
+
+func linuxSizeCodecBuild(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
+	return conf.Target == "" && conf.Goos == "linux" &&
+		(conf.Goarch == "amd64" || conf.Goarch == "arm64") &&
+		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
+		conf.LinkOptions.ExternalLinkerFlags == "" && sizeCodecBuild(conf, frontend)
 }
 
 func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, rewrite func([]*packages.Package, *packages.Package, *packages.Package) ([]*packages.Package, error), description string) (map[*types.Package]bool, error) {

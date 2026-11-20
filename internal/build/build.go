@@ -905,9 +905,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
-	sourceTargetTags := export.BuildTags
+	sourceTargetTags := slices.Clone(export.BuildTags)
 	if embeddedSizePruningConfig(conf, export, frontendOptions) {
-		sourceTargetTags = append(slices.Clone(sourceTargetTags), "llgo.size.embedded")
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.embedded")
+	}
+	if typedJSONSupport(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:           conf.Goos,
@@ -1170,7 +1173,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		if ctx.valueFormatPlan != nil || len(ctx.jsonCodecPackages) != 0 {
 			// Resolve the rewrite before collecting initializer and feature usage.
-			configureWasmRuntimeFree(ctx)
+			configureRuntimeFree(ctx)
 			asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, true)
 			formatInputs := configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			configureCodecInits(ctx, formatInputs)
@@ -1209,7 +1212,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
-		configureWasmRuntimeFree(ctx)
+		configureRuntimeFree(ctx)
 		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, false)
 		configureUnusedGlobalInits(ctx, asmRoots)
 	}
@@ -1629,13 +1632,16 @@ func goCompatibleWasmRunner(conf *Config) string {
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	return &context{
-		prog:                 ctx.prog,
-		mode:                 ctx.mode,
-		buildConf:            ctx.buildConf,
-		crossCompile:         ctx.crossCompile,
-		commands:             ctx.commands,
-		pclnExternal:         plan.pclnExternal,
-		wasmClosedProgram:    ctx.wasmClosedProgram,
+		prog:         ctx.prog,
+		mode:         ctx.mode,
+		buildConf:    ctx.buildConf,
+		crossCompile: ctx.crossCompile,
+		commands:     ctx.commands,
+		pclnExternal: plan.pclnExternal,
+
+		wasmClosedProgram:     ctx.wasmClosedProgram,
+		embeddedClosedProgram: ctx.embeddedClosedProgram,
+
 		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
 		linkRuntimeSites:     &plan.runtimeSites,
 		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
@@ -2014,9 +2020,10 @@ type context struct {
 	codecInitDrops       map[string]bool
 	wasmRuntimeFree      bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
-	wasiSizeRoots        []string
+	sizePruningRoots     []string
 
 	embeddedClosedProgram bool
+	embeddedRuntimeFree   bool
 
 	cTransformer *cabi.Transformer
 
@@ -2801,7 +2808,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 	// Even a leaf export needs the runtime for foreign-thread registration.
 	needRuntime = needRuntime || len(cExports) != 0
-	if !needRuntime && !needPyInit && len(linkArgs) == 0 {
+	if (!needRuntime || ctx.embeddedRuntimeFree) && !needPyInit && len(linkArgs) == 0 {
 		configureEmbeddedPrintf(ctx, linkedOrder)
 	}
 
@@ -2838,9 +2845,13 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	packageInits = slices.DeleteFunc(packageInits, func(name string) bool {
 		return ctx.codecInitDrops[name]
 	})
+	if ctx.embeddedRuntimeFree && needRuntime && !slices.Contains(ctx.crossCompile.BuildTags, "llgo.baremetal.cstdio") {
+		// The builtin printer uses the console streams opened by clite.
+		packageInits = append([]string{env.LLGoRuntimePkg + "/internal/clite.init"}, packageInits...)
+	}
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
-		rtInit:         needRuntime && !ctx.wasmRuntimeFree,
+		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.embeddedRuntimeFree,
 		pyInit:         needPyInit,
 		abiInit:        needAbiInit,
 		packageInits:   packageInits,
@@ -2889,12 +2900,11 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
-		trimMethods := canPruneWasmTypeMetadata(ctx)
+		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram
 		var roots []string
-		if ctx.buildConf.wasiReleaseDCE {
-			// Entry thunks are generated outside package compilation. Record
-			// their references, including WASI worker entry calls.
-			roots = appendModuleDeclarationRoots(slices.Clone(ctx.wasiSizeRoots), entryPkg.LPkg.Module())
+		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram {
+			// Entry thunks are generated outside package compilation.
+			roots = appendModuleDeclarationRoots(slices.Clone(ctx.sizePruningRoots), entryPkg.LPkg.Module())
 		}
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
 			return nil, err

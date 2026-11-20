@@ -19,7 +19,7 @@ import (
 // A closed program with no Go allocation, panic, callbacks or scheduler use
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
-func configureWasmRuntimeFree(ctx *context) {
+func configureRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
@@ -27,12 +27,16 @@ func configureWasmRuntimeFree(ctx *context) {
 		return
 	}
 	conf := ctx.buildConf
+	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
-		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
+		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
 		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !embedded && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
+		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -121,7 +125,14 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
-	enableWasmRuntimeFree(ctx)
+	if embedded {
+		ctx.embeddedRuntimeFree = true
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free bare-metal program")
+		}
+	} else {
+		enableWasmRuntimeFree(ctx)
+	}
 }
 
 func enableWasmRuntimeFree(ctx *context) {

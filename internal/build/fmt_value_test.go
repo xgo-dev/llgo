@@ -372,3 +372,20 @@ func TestNativeFormatImports(t *testing.T) {
 		})
 	}
 }
+
+func TestTypedJSONSupport(t *testing.T) {
+	conf := Config{Goos: "linux", Goarch: "amd64", Mode: ModeBuild, BuildMode: BuildModeExe,
+		OptLevel: optlevel.Oz, LTO: lto.Full, DeadcodeDrop: true, DisableGoGlobalDCE: true}
+	if got := typedJSONSupport(&conf, crosscompile.Export{}, cl.Options{}); got != buildenv.Dev {
+		t.Fatalf("Linux typed decoder enabled = %v", got)
+	}
+	conf.LinkOptions.ExternalLinkerFlags = "foreign.o"
+	if typedJSONSupport(&conf, crosscompile.Export{}, cl.Options{}) {
+		t.Fatal("external link input enabled the typed decoder")
+	}
+	conf.LinkOptions.ExternalLinkerFlags = ""
+	conf.Goos, conf.Goarch = "darwin", "arm64"
+	if got := typedJSONSupport(&conf, crosscompile.Export{}, cl.Options{}); got != buildenv.Dev {
+		t.Fatalf("Darwin typed decoder enabled = %v", got)
+	}
+}

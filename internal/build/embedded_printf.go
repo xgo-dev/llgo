@@ -18,8 +18,8 @@ const espPrintfFloatRoot = "--undefined=_printf_float"
 
 // The stock ESP32-C3 newlib is built with nano formatted I/O. Its printf
 // implementation can omit the floating-point backend if every Go call site
-// has a known integer-only format. Apply this only to C-only links with no
-// foreign objects or linker overrides.
+// has a known integer-only format. Apply this to closed links whose
+// Go startup and formatting paths have no floating-point use.
 func configureEmbeddedPrintf(ctx *context, linkedOrder []*aPackage) {
 	conf := ctx.buildConf
 	if (conf.Target != "esp32c3-basic" && conf.Target != "esp32c3-flash") || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full ||

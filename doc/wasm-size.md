@@ -48,7 +48,11 @@ retain the standard encoder. The verbose diagnostic is
 When the entry has no other JSON uses and the JSON initializers only build
 private state, the compiler omits those calls from the executable's startup.
 Explicit blank imports and other JSON consumers retain initialization. The
-standard-library archives are shared across both cases.
+standard-library archives are shared across both cases. The same build profile
+can lower supported `encoding/json.Unmarshal` calls to typed decoders on closed
+WASI, Emscripten, macOS arm64, Linux amd64/arm64 and bare-metal builds. This path
+uses the v2-backed legacy API, enabled by default in Go 1.27 or with
+`GOEXPERIMENT=jsonv2` in Go 1.26. Unknown native references keep codec startup.
 
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi

@@ -250,7 +250,7 @@ func TestWasiSizePruningRetainsEntryAndAssemblyRoots(t *testing.T) {
 	dep := &aPackage{Package: &packages.Package{PkgPath: src.Path()}, LPkg: src, Meta: packageMeta}
 	app := &packages.Package{ID: "app", PkgPath: "example.com/app", ExportFile: filepath.Join(t.TempDir(), "app")}
 	ctx := &context{
-		prog: prog, wasmClosedProgram: true, wasiSizeRoots: []string{"example.com/dep.fromAsm"},
+		prog: prog, wasmClosedProgram: true, sizePruningRoots: []string{"example.com/dep.fromAsm"},
 		buildConf: &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm",
 			OptLevel: optlevel.Oz, GenLL: true, wasiReleaseDCE: true},
 		crossCompile: crosscompile.Export{CC: "clang", CCFLAGS: []string{"-target", "wasm32-unknown-wasip1"}},

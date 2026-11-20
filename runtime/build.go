@@ -107,6 +107,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/bytealg":               {},
 	"internal/chacha8rand":           {},
 	"internal/cpu":                   {},
+	"internal/poll":                  {},
 	"internal/runtime/atomic":        {},
 	"internal/runtime/maps":          {},
 	"internal/runtime/syscall":       {},

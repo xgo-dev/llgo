@@ -167,7 +167,7 @@ func configureWasiReleaseDCE(ctx *context, in *linkPruningInputs) {
 		}
 	}
 	slices.Sort(in.roots)
-	ctx.wasiSizeRoots = slices.Compact(in.roots)
+	ctx.sizePruningRoots = slices.Compact(in.roots)
 	conf.wasiReleaseDCE = true
 	ctx.prog.EnableDeadcodeDrop(true)
 	if conf.Verbose || conf.PrintCommands {

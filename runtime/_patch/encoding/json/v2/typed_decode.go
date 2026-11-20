@@ -1,4 +1,4 @@
-//go:build llgo && baremetal && llgo.baremetal.stdio && llgo.size.embedded && goexperiment.jsonv2 && go1.26
+//go:build llgo && llgo.size.json && goexperiment.jsonv2 && go1.26
 
 package json
 

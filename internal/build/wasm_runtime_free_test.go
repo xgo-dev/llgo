@@ -1,6 +1,8 @@
 package build
 
 import (
+	buildenv "github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"go/ast"
 	"go/constant"
 	"go/parser"
@@ -120,6 +122,12 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 		{"coverage hooks", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Coverage = &CoverageConfig{} }, false},
 		{"multiple roots", func(_ *testing.T, c *context, _ *aPackage) { c.initial = append(c.initial, c.initial[0]) }, false},
 		{"debugger", func(_ *testing.T, c *context, _ *aPackage) { c.frontendOptions.DebuggerFrames = true }, false},
+		{"embedded startup", func(_ *testing.T, c *context, _ *aPackage) {
+			c.buildConf.Goos, c.buildConf.Goarch, c.buildConf.Target = "linux", "arm", "cortex-m-mps2"
+			c.buildConf.OptLevel, c.buildConf.LTO = optlevel.Oz, lto.Full
+			c.buildConf.DeadcodeDrop, c.buildConf.DisableGoGlobalDCE = true, true
+			c.crossCompile.ExtraFiles = embeddedBootFiles(c.buildConf.Target)
+		}, buildenv.Dev},
 		{"named WASI target", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Target = "wasi" }, true},
 		{"custom target", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Target = "custom-wasi.json" }, false},
 		{"target native input", func(_ *testing.T, c *context, _ *aPackage) { c.crossCompile.ExtraFiles = []string{"entry.c"} }, false},
@@ -192,7 +200,13 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.Os}}
 			ctx.frontendOptions.ShadowStack = true
 			test.change(t, ctx, pkg)
-			configureWasmRuntimeFree(ctx)
+			configureRuntimeFree(ctx)
+			if ctx.buildConf.Target == "cortex-m-mps2" {
+				if ctx.embeddedRuntimeFree != test.want || ctx.wasmRuntimeFree || !ctx.frontendOptions.ShadowStack {
+					t.Fatal("bare-metal startup proof changed WASI state or retained startup")
+				}
+				return
+			}
 			if ctx.wasmRuntimeFree != test.want {
 				t.Fatalf("runtime-free = %v, want %v", ctx.wasmRuntimeFree, test.want)
 			}

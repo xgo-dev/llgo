@@ -50,7 +50,9 @@ func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend
 // use the same checks for unknown native code and assembly as WASI.
 func configureFormattingAndInits(ctx *context, goroot string, inputs *linkPruningInputs) *linkPruningInputs {
 	formatInputs := inputs
-	if formatInputs == nil && hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
+	if formatInputs == nil &&
+		(hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) ||
+			(len(ctx.jsonCodecPackages) != 0 && linuxSizeCodecBuild(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions))) {
 		formatInputs = &linkPruningInputs{goroot: goroot, nativeFormat: ctx.buildConf.Goarch != "wasm"}
 		if ctx.buildConf.Goarch != "wasm" {
 			if opaque := opaqueGlobalInitPackage(ctx, make(map[string]bool), formatInputs); opaque != "" {

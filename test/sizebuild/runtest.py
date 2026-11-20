@@ -95,6 +95,12 @@ def reflect_method_size_probe(llgo, wasmer, directory, env):
         raise RuntimeError(f"reflect method values under WASI Full LTO: {actual!r}")
 
 
+def legacy_json_uses_v2(env):
+    imports = command(["go", "list", "-f", "{{range .Imports}}{{println .}}{{end}}",
+                       "encoding/json"], env, stdout_only=True)
+    return "encoding/json/v2" in imports.splitlines()
+
+
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
     binary_marker = "llgo: specialize fixed-size binary encoding"
     json_marker = "llgo: specialize statically typed JSON codec"
@@ -104,6 +110,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         ("json-static", "typed JSON encoding ok", json_marker, True),
         ("json-mixed", "generic JSON encoding ok", json_marker, False),
     ]
+    if legacy_json_uses_v2(env):
+        fixture = "json-typed-decode"
+        expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
+        fixtures.append((fixture, expected, json_marker, True))
     if target != "wasi":
         fixtures.append(("wasm-fmt-map", "wasi default value formatting ok",
                          "llgo: specialize default value formatting", True))
@@ -151,31 +161,42 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 
 
 
-def embedded_typed_json_probe(llgo, directory, env, target, flags):
-    package = "./internal/build/testdata/json-typed-decode"
-    expected = command(["go", "run", package], env)
-    imports = command(["go", "list", "-f", "{{range .Imports}}{{println .}}{{end}}",
-                       "encoding/json"], env, stdout_only=True)
+def embedded_output_probe(llgo, directory, env, target, flags, package, expected):
     if target == "esp32c3-flash":
         result = subprocess.run([str(llgo), "run", f"-target={target}", "-emulator",
                                  *flags, "-compiler-verbose", package], cwd=ROOT, env=env,
                                 capture_output=True, text=True, timeout=120)
-        log = result.stderr
         boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", result.stdout, re.MULTILINE)
         if result.returncode or boot is None or result.stdout[boot.end():] != expected:
-            raise RuntimeError(f"{target}: typed JSON output differs from Go\n{result.stdout}{result.stderr}")
-    else:
-        output = directory / "json-typed-decode.elf"
-        log = command([str(llgo), "build", f"-target={target}", *flags, "-compiler-verbose",
-                       "-o", str(output), package], env)
-        actual = command(["qemu-system-arm", "-machine", "mps2-an385", "-semihosting",
-                          "-nographic", "-kernel", str(output)], env, timeout=120)
-        if actual != expected:
-            raise RuntimeError(f"{target}: typed JSON output differs from Go\n{actual}")
+            raise RuntimeError(f"{target} {package}: output mismatch\n{result.stdout}{result.stderr}")
+        return result.stderr
+    output = directory / "embedded-probe.elf"
+    log = command([str(llgo), "build", f"-target={target}", *flags, "-compiler-verbose",
+                   "-o", str(output), package], env)
+    actual = command(["qemu-system-arm", "-machine", "mps2-an385", "-semihosting",
+                      "-nographic", "-kernel", str(output)], env, timeout=120)
+    if actual != expected:
+        raise RuntimeError(f"{target} {package}: output mismatch\n{actual}")
+    return log
+
+
+def embedded_size_probes(llgo, directory, env, target, flags):
+    package = "./internal/build/testdata/json-typed-decode"
+    expected = command(["go", "run", package], env)
+    log = embedded_output_probe(llgo, directory, env, target, flags, package, expected)
     marker = "llgo: omit unused JSON package initialization"
-    if "encoding/json/v2" in imports.splitlines() and marker not in log:
+    if legacy_json_uses_v2(env) and marker not in log:
         raise RuntimeError(f"{target}: typed decoder kept the generic JSON initialization\n{log}")
     print(f"{target} typed JSON output and error parity passed", flush=True)
+
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/println", "Hello, world\n")
+    if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
+        raise RuntimeError(f"{target}: allocation-free println kept runtime startup\n{log}")
+    embedded_output_probe(llgo, directory, env, target, flags,
+                          "./internal/build/testdata/embedded-link-parity",
+                          "redirected\nembedded output and reflection ok\n")
+    print(f"{target} startup, console and reflective metadata passed", flush=True)
 
 
 def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-basic"):
@@ -212,7 +233,7 @@ def main():
             full_lto_codec_probe(llgo, directory, env, "native", [], "")
             return
         if args.target == "cortex-m-mps2":
-            embedded_typed_json_probe(llgo, directory, env, "cortex-m-mps2",
+            embedded_size_probes(llgo, directory, env, "cortex-m-mps2",
                                       ["-Oz", "-deadcodedrop", "-globaldce=false", "-lto=full"])
             return
         if args.target == "esp32c3":
@@ -237,7 +258,7 @@ def main():
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", flags)
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", ["-Oz"],
                              target="esp32c3-flash")
-            embedded_typed_json_probe(llgo, directory, env, "esp32c3-flash", flags)
+            embedded_size_probes(llgo, directory, env, "esp32c3-flash", flags)
             if args.esp32c3_go_root:
                 sample = directory / "fmtprintf"
                 sample.mkdir()

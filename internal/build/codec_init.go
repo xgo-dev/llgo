@@ -16,6 +16,9 @@ import (
 )
 
 func configureCodecInits(ctx *context, inputs *linkPruningInputs) {
+	if inputs != nil && inputs.opaqueAsmPkg != "" && (ctx.buildConf.Verbose || ctx.buildConf.PrintCommands) {
+		fmt.Fprintf(os.Stderr, "llgo: retain codec initialization: opaque assembly in %s\n", inputs.opaqueAsmPkg)
+	}
 	if len(ctx.initial) != 1 || inputs == nil || inputs.opaqueAsmPkg != "" ||
 		(ctx.buildConf.Goarch == "wasm" && !ctx.wasmClosedProgram) {
 		return
@@ -60,7 +63,7 @@ func configureCodecInits(ctx *context, inputs *linkPruningInputs) {
 func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *packages.Package) map[string]bool {
 	typedDecode, hasOtherUse := entryJSONUses(entry)
 	if slices.ContainsFunc(inputs.roots, jsonspecialize.ImplementationSymbol) || hasOtherUse ||
-		(typedDecode && !ctx.embeddedClosedProgram) {
+		(typedDecode && !ctx.embeddedClosedProgram && !ctx.wasmClosedProgram && !inputs.nativeFormat) {
 		return nil
 	}
 	trusted := make(map[*types.Package]bool)

@@ -15,8 +15,9 @@ and preserves formatter caller identity and panic/recover during thread startup.
 It also verifies that the standalone value formatter handles compound values
 and reports that it was selected. The codec probe uses
 `-deadcodedrop -globaldce=false` with Full LTO. It checks fixed-size and mixed
-`encoding/binary` calls on WASI, Emscripten and macOS arm64. Emscripten needs
-Node with `LLGO_WASM_WORKERS=1`; `--browser` also runs the probe in Chrome.
+`encoding/binary` calls on WASI, Emscripten and macOS arm64. When the standard
+library uses the v2-backed legacy JSON API, the probe also compares typed JSON
+decoding and error behavior with Go. Emscripten needs Node with `LLGO_WASM_WORKERS=1`; `--browser` also runs the probe in Chrome.
 WASI requires Wasmer (`wasmer`, or `WASMER=/path/to/wasmer`) with threads and
 standard exception handling. It builds and
 runs C printf and println with off/full/ThinLTO and fmt.Printf with full LTO, first forcing
@@ -35,7 +36,9 @@ and the same source and `/tmp` volumes as the main WASI acceptance runner.
 
 The ESP32-C3 lane checks C-only `-deadcodedrop` firmware compilation before and
 after cache reuse, then runs C printf and a Full LTO Go `fmt.Printf` build in QEMU.
-It also runs `fmt.Printf` with `-Oz` on the SPI flash layout.
+It also runs `fmt.Printf` with `-Oz` on the SPI flash layout. The SPI flash
+and Cortex-M3 lanes verify allocation-free `println`, stdout and deadline
+behavior, reflective fields and methods, and codec output in QEMU.
 Pass `--esp32c3-go-root` for each additional Go toolchain to run the `fmt.Printf`
 probe against its standard library.
 

@@ -23,6 +23,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
@@ -70,6 +71,10 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 	}
 	ctx.wasmClosedProgram = wasm
 	ctx.embeddedClosedProgram = embedded
+	if embedded {
+		slices.Sort(asmRoots.roots)
+		ctx.sizePruningRoots = slices.Compact(asmRoots.roots)
+	}
 	configureValueFormats(ctx, asmRoots)
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
