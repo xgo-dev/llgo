@@ -107,6 +107,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     json_marker = "llgo: specialize statically typed JSON codec"
     init_marker = "llgo: omit unused JSON package initialization"
     linux_native = target == "native" and platform.system() == "Linux"
+    linux_amd64 = linux_native and platform.machine() == "x86_64"
+    mac_arm64 = target == "native" and platform.system() == "Darwin" and platform.machine() == "arm64"
     fixtures = [
         ("binary-fixed", "fixed binary codec ok", binary_marker, True),
         ("binary-mixed", "generic binary codec ok", binary_marker, False),
@@ -122,9 +124,13 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             fixture = "json-init-linked"
             expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
             fixtures.append((fixture, expected, init_marker, False))
-    if target != "wasi" and not linux_native:
+    if target != "wasi" and (not linux_native or linux_amd64):
         fixtures.append(("wasm-fmt-map", "wasi default value formatting ok",
                          "llgo: specialize default value formatting", True))
+    if linux_amd64 or mac_arm64:
+        fixture = "native-link-parity"
+        expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
+        fixtures.append((fixture, expected, "llgo: prune native type metadata", True))
     for fixture, expected, marker, specialized in fixtures:
         artifact = directory / f"{target}-{fixture}{suffix}"
         flags = ["-target", target] if target != "native" else []
@@ -133,7 +139,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                        "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
         if (marker in log) != specialized:
             raise RuntimeError(f"{target} {fixture}: incorrect specialization policy\n{log}")
-        if linux_native and platform.machine() == "x86_64" and on_v2 and fixture in ("json-static", "json-typed-decode"):
+        if linux_amd64 and on_v2 and fixture in ("json-static", "json-typed-decode"):
             if init_marker not in log:
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
         actual = command([*runner, str(artifact)], env, timeout=90)

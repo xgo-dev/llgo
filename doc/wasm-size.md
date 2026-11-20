@@ -32,8 +32,10 @@ types. A `retain generic fmt` diagnostic identifies open link inputs,
 foreign entry points, unknown native input, or a reachable general formatter.
 
 Development LLGo builds also specialize typed value formatting on closed
-Emscripten J32/J64 and macOS arm64 programs with
-`-Oz -lto=full -deadcodedrop -globaldce=false`. This configuration can replace
+Emscripten J32/J64, macOS arm64, and supported Linux programs with
+`-Oz -lto=full -deadcodedrop -globaldce=false`. Native links can prune type
+metadata using the same reachability proof as WASI, with assembly references
+and native entry points included in the analysis. This configuration can replace
 `encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
 layouts and standard byte orders. Mixed or dynamic uses retain the standard
 codec. With `-x`, selected codecs report
@@ -55,6 +57,8 @@ uses the v2-backed legacy API, enabled by default in Go 1.27 or with
 `GOEXPERIMENT=jsonv2` in Go 1.26. Unknown native references keep codec startup.
 Linux amd64 size builds use Go's software span scanner for the standard
 runtime package. LLGo's collector is selected independently.
+Allocation profile counters use zero-initialized storage, and their size
+classes are computed from each bucket's index.
 
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi

@@ -228,6 +228,9 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			switch {
 			case tc.native && buildenv.Dev:
 				configureFormattingAndInits(ctx, "", nil)
+				if ctx.nativeClosedProgram != !tc.foreignLink {
+					t.Fatalf("native metadata pruning enabled = %v", ctx.nativeClosedProgram)
+				}
 			case tc.foreignLink:
 				if opaque := opaqueGlobalInitPackage(ctx, make(map[string]bool), &linkPruningInputs{nativeFormat: true}); opaque == "" {
 					t.Error("external linker input must make hosted inputs opaque")
@@ -308,7 +311,9 @@ func TestHostedValueFormatSupport(t *testing.T) {
 		want   bool
 	}{
 		{name: "darwin arm64", want: true},
-		{name: "linux amd64", change: func(c *Config, _ *crosscompile.Export) { c.Goos, c.Goarch = "linux", "amd64" }},
+		{name: "linux amd64", want: true, change: func(c *Config, _ *crosscompile.Export) { c.Goos, c.Goarch = "linux", "amd64" }},
+		{name: "linux arm64", want: true, change: func(c *Config, _ *crosscompile.Export) { c.Goos = "linux" }},
+		{name: "disabled specialization", change: func(c *Config, _ *crosscompile.Export) { c.disableSizeSpecialization = true }},
 		{name: "shared library", change: func(c *Config, _ *crosscompile.Export) { c.BuildMode = BuildModeCShared }},
 		{name: "ordinary build", change: func(c *Config, _ *crosscompile.Export) { c.DeadcodeDrop = false }},
 		{name: "thin LTO", change: func(c *Config, _ *crosscompile.Export) { c.LTO = lto.Thin }},

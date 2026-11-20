@@ -912,7 +912,8 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if typedJSONSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
-	if linuxSizeCodecBuild(conf, export, frontendOptions) {
+	if linuxSizeCodecBuild(conf, export, frontendOptions) ||
+		conf.Goos == "darwin" && hostedValueFormatSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.native")
 	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
@@ -1217,7 +1218,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if !preparedInitializers {
 		configureRuntimeFree(ctx)
 		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, false)
-		configureUnusedGlobalInits(ctx, asmRoots)
+		configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
@@ -1644,6 +1645,8 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 
 		wasmClosedProgram:     ctx.wasmClosedProgram,
 		embeddedClosedProgram: ctx.embeddedClosedProgram,
+		nativeClosedProgram:   ctx.nativeClosedProgram,
+		sizePruningRoots:      ctx.sizePruningRoots,
 
 		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
 		linkRuntimeSites:     &plan.runtimeSites,
@@ -2026,6 +2029,7 @@ type context struct {
 	sizePruningRoots     []string
 
 	embeddedClosedProgram bool
+	nativeClosedProgram   bool
 	embeddedRuntimeFree   bool
 
 	cTransformer *cabi.Transformer
@@ -2903,11 +2907,14 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
-		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram
+		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram || ctx.nativeClosedProgram
 		var roots []string
-		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram {
+		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram || ctx.nativeClosedProgram {
 			// Entry thunks are generated outside package compilation.
 			roots = appendModuleDeclarationRoots(slices.Clone(ctx.sizePruningRoots), entryPkg.LPkg.Module())
+		}
+		if ctx.nativeClosedProgram && (ctx.buildConf.Verbose || ctx.buildConf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: prune native type metadata")
 		}
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
 			return nil, err

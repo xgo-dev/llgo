@@ -31,7 +31,7 @@ func prepareValueFormatSupport(conf *Config, target crosscompile.Export, fronten
 // Hosted targets use the same typed functions. Require the size-link flags
 // under which removing the general formatter has been validated.
 func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
+	if conf.disableSizeSpecialization || (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.OptLevel != optlevel.Oz || conf.BuildMode != BuildModeExe ||
 		conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() ||
 		conf.LinkOptions.ExternalLinker != "" || len(target.ExtraFiles) != 0 ||
@@ -43,16 +43,17 @@ func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend
 			(target.WasmProfile == crosscompile.WasmProfileJ32 || target.WasmProfile == crosscompile.WasmProfileJ64) &&
 			conf.WasmOpt == WasmOptSize
 	}
-	return conf.Target == "" && conf.Goos == "darwin" && conf.Goarch == "arm64"
+	return (conf.Target == "" && conf.Goos == "darwin" && conf.Goarch == "arm64") ||
+		linuxSizeCodecBuild(conf, target, frontend)
 }
 
 // Resolve typed rewrites before init and caller accounting. For hosted targets
 // use the same checks for unknown native code and assembly as WASI.
 func configureFormattingAndInits(ctx *context, goroot string, inputs *linkPruningInputs) *linkPruningInputs {
 	formatInputs := inputs
-	if formatInputs == nil &&
-		(hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) ||
-			(len(ctx.jsonCodecPackages) != 0 && linuxSizeCodecBuild(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions))) {
+	hosted := hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
+	linuxCodec := len(ctx.jsonCodecPackages) != 0 && linuxSizeCodecBuild(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
+	if formatInputs == nil && (hosted || linuxCodec) {
 		formatInputs = &linkPruningInputs{goroot: goroot, nativeFormat: ctx.buildConf.Goarch != "wasm"}
 		if ctx.buildConf.Goarch != "wasm" {
 			if opaque := opaqueGlobalInitPackage(ctx, make(map[string]bool), formatInputs); opaque != "" {
@@ -60,6 +61,13 @@ func configureFormattingAndInits(ctx *context, goroot string, inputs *linkPrunin
 					fmt.Fprintf(os.Stderr, "llgo: retain generic fmt: unknown native input in %s\n", opaque)
 				}
 				formatInputs = nil
+			}
+			if hosted && formatInputs != nil && formatInputs.opaqueAsmPkg == "" &&
+				ctx.frontend == nil && len(ctx.initial) == 1 && !hasOpaqueFormatExports(ctx, goroot) {
+				ctx.nativeClosedProgram = true
+				slices.Sort(formatInputs.roots)
+				formatInputs.roots = slices.Compact(formatInputs.roots)
+				ctx.sizePruningRoots = formatInputs.roots
 			}
 		}
 	}
@@ -72,6 +80,20 @@ func configureFormattingAndInits(ctx *context, goroot string, inputs *linkPrunin
 		configureValueFormats(ctx, formatInputs)
 	}
 	return formatInputs
+}
+
+func hasOpaqueFormatExports(ctx *context, goroot string) bool {
+	for _, pkg := range ctx.pkgByID {
+		if _, opaque := formatExportRoots(ctx.progSSA, nil, pkg.Package, goroot); opaque {
+			return true
+		}
+		if pkg.AltPkg != nil {
+			if _, opaque := formatExportRoots(ctx.progSSA, nil, pkg.AltPkg.Package, goroot); opaque {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Darwin's runtime and syscall packages use these system libraries without
