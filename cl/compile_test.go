@@ -18,6 +18,7 @@ package cl_test
 
 import (
 	"context"
+	"errors"
 	"go/token"
 	"go/types"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiniu/x/test"
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
@@ -61,7 +63,11 @@ type embedTestSuite struct {
 }
 
 type embedTargetConfig struct {
-	target      string
+	target string
+	// espEmu, when set, runs the whole suite through esp-emu when the
+	// emulator is available; hosts without it fall back to the target json
+	// emulator (espressif QEMU on the Linux CI runners).
+	espEmu      *espEmuTarget
 	ignoreByDir map[string][]string
 }
 
@@ -75,6 +81,7 @@ var embedTestSuites = []embedTestSuite{
 var embedTargetConfigs = []embedTargetConfig{
 	{
 		target: "esp32c3-basic",
+		espEmu: &esp32c3BasicTarget,
 		ignoreByDir: map[string][]string{
 			"./_testgo": {
 				"./_testgo/abimethod",     // llgo panic: unsatisfied import internal/runtime/sys
@@ -190,6 +197,104 @@ func runEmbedTargetSuite(t *testing.T, target, relDir string, ignore []string) {
 		cltest.WithOutputFilter(cltest.FilterEmulatorOutput),
 		cltest.WithIRCheck(false),
 	)
+}
+
+// runEmbedTargetSuiteEspEmu drives one target's embed suites through esp-emu.
+// The fixture harness cannot inject a runner into the target json emulator
+// command, so each fixture is linked with ModeBuild, converted to an ESP
+// flash image and booted directly. Fixture discovery and the expect.txt
+// comparison mirror cltest.RunAndTestFromDir with the IR and metadata checks
+// the embed suite leaves disabled.
+func runEmbedTargetSuiteEspEmu(t *testing.T, targetConf embedTargetConfig, emu string) {
+	t.Helper()
+	tgt := *targetConf.espEmu
+	rootDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal("Getwd failed:", err)
+	}
+	for _, suite := range embedTestSuites {
+		t.Run(suite.name, func(t *testing.T) {
+			ignore := make(map[string]struct{}, len(targetConf.ignoreByDir[suite.relDir]))
+			for _, item := range targetConf.ignoreByDir[suite.relDir] {
+				ignore[item] = struct{}{}
+			}
+			dir := filepath.Join(rootDir, suite.relDir)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal("ReadDir failed:", err)
+			}
+			for _, entry := range entries {
+				name := entry.Name()
+				if !entry.IsDir() || strings.HasPrefix(name, "_") {
+					continue
+				}
+				pkgDir := filepath.Join(dir, name)
+				rel, err := filepath.Rel(rootDir, pkgDir)
+				if err != nil {
+					t.Fatal("Rel failed:", err)
+				}
+				relPkg := "./" + filepath.ToSlash(rel)
+				if _, ok := ignore[relPkg]; ok {
+					t.Run(name, func(t *testing.T) {
+						t.Skip("skip platform-specific fixture")
+					})
+					continue
+				}
+				t.Run(name, func(t *testing.T) {
+					runEspEmuFixture(t, tgt, emu, pkgDir, relPkg)
+				})
+			}
+		})
+	}
+}
+
+// runEspEmuFixture links one fixture for the target, boots it under esp-emu
+// and compares the filtered output with expect.txt. Fixtures without a
+// runnable golden stay with the IR suites, like the shared harness.
+func runEspEmuFixture(t *testing.T, tgt espEmuTarget, emu, pkgDir, relPkg string) {
+	t.Helper()
+	_, expected, err := cltest.ReadGolden(filepath.Join(pkgDir, "expect.txt"))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return
+	case err != nil:
+		t.Fatal("ReadFile failed:", err)
+	case isGoldenMarker(string(expected), "; ir-only"):
+		return
+	}
+	elfPath := buildESPEmuELF(t, tgt, relPkg, t.TempDir())
+	var raw string
+	if _, err := os.Stat(elfPath); err == nil {
+		raw = runEspEmuFirmware(t, emu, tgt, elfPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	// else: a library fixture links no executable; the shared harness also
+	// runs nothing and compares empty output.
+	if isGoldenMarker(string(expected), ";") {
+		// Run-only golden: execution itself is the assertion, and the raw
+		// fatal/panic scan in runEspEmuFirmware already rejected runtime traps.
+		return
+	}
+	filtered := filterEspEmuOutput(cltest.FilterEmulatorOutput(raw))
+	if test.Diff(t, filepath.Join(pkgDir, "expect.txt.new"),
+		normalizeGoldenOutput(filtered), normalizeGoldenOutput(string(expected))) {
+		t.Fatal("unexpected output")
+	}
+}
+
+// isGoldenMarker reports whether the golden file content is exactly the
+// marker, allowing one final newline. cltest keeps this logic private.
+func isGoldenMarker(data, marker string) bool {
+	data = strings.ReplaceAll(data, "\r\n", "\n")
+	data = strings.ReplaceAll(data, "\r", "\n")
+	return strings.TrimSuffix(data, "\n") == marker
+}
+
+// normalizeGoldenOutput makes comparisons independent of checkout newlines,
+// mirroring the shared harness.
+func normalizeGoldenOutput(s string) []byte {
+	return []byte(strings.ReplaceAll(s, "\r\n", "\n"))
 }
 
 func TestRunAndTestFromTestgo(t *testing.T) {
@@ -764,6 +869,17 @@ func TestRunEmbedEmulator(t *testing.T) {
 	for _, targetConf := range embedTargetConfigs {
 		targetConf := targetConf
 		t.Run(targetConf.target, func(t *testing.T) {
+			if targetConf.espEmu != nil {
+				if emu, ok := findEspEmu(); ok {
+					runEmbedTargetSuiteEspEmu(t, targetConf, emu)
+					return
+				}
+				if runtime.GOOS == "darwin" {
+					// espressif QEMU publishes no darwin payload, so the
+					// target json emulator cannot run here either.
+					t.Skip("neither esp-emu nor espressif QEMU is available; set ESP_EMU to run the suite")
+				}
+			}
 			for _, suite := range embedTestSuites {
 				suite := suite
 				t.Run(suite.name, func(t *testing.T) {

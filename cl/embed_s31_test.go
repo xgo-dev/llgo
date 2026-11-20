@@ -2,6 +2,7 @@ package cl_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"debug/elf"
@@ -9,7 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,15 +21,44 @@ import (
 	"github.com/xgo-dev/llgo/internal/firmware"
 )
 
-// The ESP32-S31 baremetal target maps one 512 KiB DIRAM window for code and
-// data, and esp-emu boots the app image from flash offset 0x2000. The flash
-// (XIP) variant boots through the ESP-IDF second-stage bootloader instead.
-const (
-	s31SRAMStart = 0x2f000000
-	s31SRAMEnd   = 0x2f080000
-	s31FlashOff  = 0x2000
-	s31ChipID    = 0x0020
+// espEmuTarget describes one baremetal ESP target esp-emu boots from a
+// ROM-loaded SRAM app image. The XIP flash targets boot through the ESP-IDF
+// second-stage bootloader instead and keep their own helpers below.
+type espEmuTarget struct {
+	target     string      // llgo target name, e.g. "esp32c3-basic"
+	emuArg     string      // esp-emu --chip value
+	imageID    uint16      // chip id recorded in the ESP image header
+	flashOff   int         // app image offset inside the merged flash dump
+	ramWindows [][2]uint64 // physical RAM windows an allocated section may occupy
+}
 
+var (
+	// The ESP32-C3 boots the app image from flash offset 0x0. Its 400 KiB
+	// SRAM maps as two disjoint windows: the data bus sees the low 256 KiB
+	// and the instruction bus maps the 256 KiB directly above it, below the
+	// 16 KiB ICACHE (targets/esp32c3.memory.ld).
+	esp32c3BasicTarget = espEmuTarget{
+		target:  "esp32c3-basic",
+		emuArg:  "esp32c3",
+		imageID: 0x0005,
+		ramWindows: [][2]uint64{
+			{0x3fc80000, 0x3fca0000},
+			{0x403a0000, 0x403e0000},
+		},
+	}
+	// The ESP32-S31 baremetal target maps one 512 KiB DIRAM window for code
+	// and data, and esp-emu boots the app image from flash offset 0x2000.
+	esp32s31BasicTarget = espEmuTarget{
+		target:     "esp32s31-basic",
+		emuArg:     "esp32s31",
+		imageID:    0x0020,
+		flashOff:   0x2000,
+		ramWindows: [][2]uint64{{0x2f000000, 0x2f080000}},
+	}
+)
+
+// The flash (XIP) variant boots through the ESP-IDF second-stage bootloader.
+const (
 	s31XIPWindowBase    = 0x40000000
 	s31XIPBootloaderOff = 0x2000
 	s31XIPPartitionOff  = 0x8000
@@ -160,20 +191,20 @@ func runS31XIPImage(t *testing.T, emu, imgPath string) {
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("esp-emu failed: %v\n%s", err, s31OutputTail(buf.String()))
+		t.Fatalf("esp-emu failed: %v\n%s", err, espOutputTail(buf.String()))
 	}
 	out := buf.String()
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "fatal error" || strings.HasPrefix(line, "fatal error:") || strings.HasPrefix(line, "panic:") {
-			t.Fatalf("emulator runtime failure: %s\n%s", line, s31OutputTail(out))
+			t.Fatalf("emulator runtime failure: %s\n%s", line, espOutputTail(out))
 		}
 	}
 	if !strings.Contains(out, "Loaded app from partition") {
-		t.Fatalf("bootloader did not load the app\n%s", s31OutputTail(out))
+		t.Fatalf("bootloader did not load the app\n%s", espOutputTail(out))
 	}
 	if !strings.Contains(out, "EBREAK at PC=0x4") {
-		t.Fatalf("application did not exit cleanly through the semihost EBREAK\n%s", s31OutputTail(out))
+		t.Fatalf("application did not exit cleanly through the semihost EBREAK\n%s", espOutputTail(out))
 	}
 }
 
@@ -188,10 +219,10 @@ func TestS31ReflectSmoke(t *testing.T) {
 		t.Skip("esp-emu is not available; set ESP_EMU to the emulator path")
 	}
 
-	reflectElf := buildS31ELF(t, "./_testgo/reflect", t.TempDir())
-	assertS31SRAMLayout(t, reflectElf)
+	reflectElf := buildESPEmuELF(t, esp32s31BasicTarget, "./_testgo/reflect", t.TempDir())
+	assertESPRAMLayout(t, esp32s31BasicTarget, reflectElf)
 	assertS31CacheSyncWrap(t, reflectElf)
-	runS31Image(t, emu, reflectElf, []string{
+	runESPEmuImage(t, emu, esp32s31BasicTarget, reflectElf, []string{
 		"call.slice 9 6", "call.func", "101", "call.closure", "201", "call.method", "202",
 	})
 
@@ -204,8 +235,8 @@ func TestS31ReflectSmoke(t *testing.T) {
 		{pkg: "./_testrt/ptrtothislazy", want: []string{"ok"}},
 	} {
 		t.Run(filepath.Base(tc.pkg), func(t *testing.T) {
-			elfPath := buildS31ELF(t, tc.pkg, t.TempDir())
-			runS31Image(t, emu, elfPath, tc.want)
+			elfPath := buildESPEmuELF(t, esp32s31BasicTarget, tc.pkg, t.TempDir())
+			runESPEmuImage(t, emu, esp32s31BasicTarget, elfPath, tc.want)
 		})
 	}
 }
@@ -221,27 +252,21 @@ func findEspEmu() (string, bool) {
 	return p, err == nil
 }
 
-// buildS31ELF builds pkg for the esp32s31-basic target with function-info
-// metadata disabled; that metadata alone pushes the reflect image past the
-// SRAM budget.
-func buildS31ELF(t *testing.T, pkg, dir string) string {
-	return buildS31ELFWithTarget(t, "esp32s31-basic", pkg, dir)
+// buildESPEmuELF builds pkg for an esp-emu target. Target builds default to
+// no embedded function-info tables, which keeps the SRAM-only images inside
+// the S31 budget.
+func buildESPEmuELF(t *testing.T, tgt espEmuTarget, pkg, dir string) string {
+	return buildTargetELF(t, tgt.target, pkg, dir)
 }
 
+// buildS31ELFWithTarget builds pkg for the named esp32s31 target.
 func buildS31ELFWithTarget(t *testing.T, target, pkg, dir string) string {
+	return buildTargetELF(t, target, pkg, dir)
+}
+
+func buildTargetELF(t *testing.T, target, pkg, dir string) string {
 	t.Helper()
-	elfPath := filepath.Join(dir, "s31.elf")
-	old, had := os.LookupEnv("LLGO_FUNCINFO")
-	if err := os.Setenv("LLGO_FUNCINFO", "0"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if had {
-			_ = os.Setenv("LLGO_FUNCINFO", old)
-		} else {
-			_ = os.Unsetenv("LLGO_FUNCINFO")
-		}
-	}()
+	elfPath := filepath.Join(dir, "app.elf")
 	conf := build.NewDefaultConf(build.ModeBuild)
 	conf.Target = target
 	conf.OutFile = elfPath
@@ -251,21 +276,21 @@ func buildS31ELFWithTarget(t *testing.T, target, pkg, dir string) string {
 	return elfPath
 }
 
-type s31Segment struct {
+type espSegment struct {
 	addr uint32
 	data []byte
 }
 
-// parseS31Image returns the entry point, the flashable segments and every
+// parseESPImage returns the entry point, the flashable segments and every
 // allocated section range of the linked ELF.
-func parseS31Image(t *testing.T, elfPath string) (uint32, []s31Segment, [][2]uint64) {
+func parseESPImage(t *testing.T, elfPath string) (uint32, []espSegment, [][2]uint64) {
 	t.Helper()
 	f, err := elf.Open(elfPath)
 	if err != nil {
 		t.Fatalf("open %s: %v", elfPath, err)
 	}
 	defer f.Close()
-	var segs []s31Segment
+	var segs []espSegment
 	var ranges [][2]uint64
 	for _, s := range f.Sections {
 		if s.Size == 0 || s.Flags&elf.SHF_ALLOC == 0 {
@@ -275,7 +300,7 @@ func parseS31Image(t *testing.T, elfPath string) (uint32, []s31Segment, [][2]uin
 		switch s.Type {
 		case elf.SHT_PROGBITS, elf.SHT_INIT_ARRAY, elf.SHT_PREINIT_ARRAY, elf.SHT_FINI_ARRAY:
 		default:
-			// NOBITS sections occupy SRAM but are not flashed.
+			// NOBITS sections occupy RAM but are not flashed.
 			continue
 		}
 		data, err := s.Data()
@@ -285,22 +310,32 @@ func parseS31Image(t *testing.T, elfPath string) (uint32, []s31Segment, [][2]uin
 		for len(data)%4 != 0 {
 			data = append(data, 0)
 		}
-		segs = append(segs, s31Segment{addr: uint32(s.Addr), data: data})
+		segs = append(segs, espSegment{addr: uint32(s.Addr), data: data})
 	}
-	sort.Slice(segs, func(i, j int) bool { return segs[i].addr < segs[j].addr })
+	slices.SortFunc(segs, func(a, b espSegment) int { return cmp.Compare(a.addr, b.addr) })
 	return uint32(f.Entry), segs, ranges
 }
 
-// assertS31SRAMLayout verifies that the whole allocated footprint stays inside
-// the single DIRAM window without section overlaps and that the heap markers
-// are consistent with the linker script.
-func assertS31SRAMLayout(t *testing.T, elfPath string) {
+// assertESPRAMLayout verifies that the whole allocated footprint stays
+// inside the target's physical RAM windows without section overlaps and that
+// the heap markers are consistent with the linker script.
+func assertESPRAMLayout(t *testing.T, tgt espEmuTarget, elfPath string) {
 	t.Helper()
-	_, _, ranges := parseS31Image(t, elfPath)
-	sort.Slice(ranges, func(i, j int) bool { return ranges[i][0] < ranges[j][0] })
+	_, _, ranges := parseESPImage(t, elfPath)
+	slices.SortFunc(ranges, func(a, b [2]uint64) int { return cmp.Compare(a[0], b[0]) })
+	inWindow := func(addr uint64) ([2]uint64, bool) {
+		for _, w := range tgt.ramWindows {
+			if addr >= w[0] && addr < w[1] {
+				return w, true
+			}
+		}
+		return [2]uint64{}, false
+	}
 	for i, r := range ranges {
-		if r[0] < s31SRAMStart || r[1] > s31SRAMEnd {
-			t.Fatalf("section [%#x, %#x) escapes the S31 SRAM window", r[0], r[1])
+		_, startOK := inWindow(r[0])
+		_, endOK := inWindow(r[1] - 1)
+		if !startOK || !endOK {
+			t.Fatalf("section [%#x, %#x) escapes the %s RAM windows", r[0], r[1], tgt.target)
 		}
 		if i > 0 && r[0] < ranges[i-1][1] {
 			t.Fatalf("section [%#x, %#x) overlaps a section ending at %#x", r[0], r[1], ranges[i-1][1])
@@ -322,12 +357,18 @@ func assertS31SRAMLayout(t *testing.T, elfPath string) {
 	}
 	heapStart, okStart := syms["_heapStart"]
 	heapEnd, okEnd := syms["_heapEnd"]
-	if !okStart || !okEnd || heapStart >= heapEnd || heapEnd > s31SRAMEnd {
+	if !okStart || !okEnd || heapStart >= heapEnd {
 		t.Fatalf("heap markers inconsistent: _heapStart=%#x(%v) _heapEnd=%#x(%v)",
 			heapStart, okStart, heapEnd, okEnd)
 	}
-	if stack, ok := syms["__stack"]; ok && (stack <= s31SRAMStart || stack > s31SRAMEnd) {
-		t.Fatalf("__stack=%#x escapes the S31 SRAM window", stack)
+	heapWindow, ok := inWindow(heapStart)
+	if !ok || heapEnd > heapWindow[1] {
+		t.Fatalf("heap [%#x, %#x) escapes the %s RAM windows", heapStart, heapEnd, tgt.target)
+	}
+	if stack, ok := syms["__stack"]; ok {
+		if _, inside := inWindow(stack); !inside {
+			t.Fatalf("__stack=%#x escapes the %s RAM windows", stack, tgt.target)
+		}
 	}
 }
 
@@ -371,12 +412,12 @@ func assertS31CacheSyncWrap(t *testing.T, elfPath string) {
 	t.Fatal("__wrap___clear_cache is outside any PROGBITS section")
 }
 
-// buildS31FlashImage writes the ESP image format esp-emu loads: a v1 image
-// with chip id 0x0020 and an appended SHA-256, merged into a 4 MiB flash dump
-// at the S31 boot offset.
-func buildS31FlashImage(t *testing.T, elfPath, imgPath string) {
+// buildESPEmuFlashImage writes the ESP image format esp-emu loads: a v1
+// image with the target's chip id and an appended SHA-256, merged into a
+// 4 MiB flash dump at the target's boot offset.
+func buildESPEmuFlashImage(t *testing.T, tgt espEmuTarget, elfPath, imgPath string) {
 	t.Helper()
-	entry, segs, _ := parseS31Image(t, elfPath)
+	entry, segs, _ := parseESPImage(t, elfPath)
 	csum := byte(0xEF)
 	for _, sg := range segs {
 		for _, b := range sg.data {
@@ -387,7 +428,7 @@ func buildS31FlashImage(t *testing.T, elfPath, imgPath string) {
 	hdr := []byte{0xE9, byte(len(segs)), 2, 0x1F}
 	hdr = binary.LittleEndian.AppendUint32(hdr, entry)
 	hdr = append(hdr, 0xEE, 0, 0, 0)
-	hdr = binary.LittleEndian.AppendUint16(hdr, s31ChipID)
+	hdr = binary.LittleEndian.AppendUint16(hdr, tgt.imageID)
 	hdr = append(hdr, 0)
 	hdr = append(hdr, make([]byte, 8)...)
 	hdr = append(hdr, 1)
@@ -405,47 +446,70 @@ func buildS31FlashImage(t *testing.T, elfPath, imgPath string) {
 	img.Write(sum[:])
 
 	flash := make([]byte, 4*1024*1024)
-	copy(flash[s31FlashOff:], img.Bytes())
+	copy(flash[tgt.flashOff:], img.Bytes())
 	if err := os.WriteFile(imgPath, flash, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// runS31Image boots the ELF under esp-emu, rejects the baremetal runtime's
-// fatal/panic output in the raw stream and requires the wanted markers in the
-// filtered output.
-func runS31Image(t *testing.T, emu, elfPath string, want []string) {
+// runEspEmuFirmware images the ELF and boots it under esp-emu. It rejects
+// the baremetal runtime's fatal/panic output in the raw stream and returns
+// the unfiltered output for the caller's assertions.
+func runEspEmuFirmware(t *testing.T, emu string, tgt espEmuTarget, elfPath string) string {
 	t.Helper()
 	imgPath := filepath.Join(t.TempDir(), "flash.bin")
-	buildS31FlashImage(t, elfPath, imgPath)
+	buildESPEmuFlashImage(t, tgt, elfPath, imgPath)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, emu, "--chip", "esp32s31", "--firmware", imgPath, "--timeout", "15s")
+	cmd := exec.CommandContext(ctx, emu, "--chip", tgt.emuArg, "--firmware", imgPath, "--timeout", "15s")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("esp-emu failed: %v\n%s", err, s31OutputTail(buf.String()))
+		t.Fatalf("esp-emu failed: %v\n%s", err, espOutputTail(buf.String()))
 	}
-	// The raw scan mirrors the bare-metal guard in the shared embed suite:
-	// emulators can exit successfully after a runtime trap, so the unfiltered
-	// output is checked before any filter can discard diagnostics.
-	for _, line := range strings.Split(buf.String(), "\n") {
+	// Emulators can exit successfully after a runtime trap, so the unfiltered
+	// output is checked before any filter can discard diagnostics. The same
+	// guard backs the shared embed suite.
+	for line := range strings.SplitSeq(buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "fatal error" || strings.HasPrefix(line, "fatal error:") || strings.HasPrefix(line, "panic:") {
-			t.Fatalf("emulator runtime failure: %s\n%s", line, s31OutputTail(buf.String()))
+			t.Fatalf("emulator runtime failure: %s\n%s", line, espOutputTail(buf.String()))
 		}
 	}
-	filtered := cltest.FilterEmulatorOutput(buf.String())
+	return buf.String()
+}
+
+// runESPEmuImage boots the ELF under esp-emu and requires the wanted
+// markers in the filtered output.
+func runESPEmuImage(t *testing.T, emu string, tgt espEmuTarget, elfPath string, want []string) {
+	t.Helper()
+	filtered := cltest.FilterEmulatorOutput(runEspEmuFirmware(t, emu, tgt, elfPath))
 	for _, w := range want {
 		if !strings.Contains(filtered, w) {
-			t.Fatalf("missing output marker %q\n%s", w, s31OutputTail(filtered))
+			t.Fatalf("missing output marker %q\n%s", w, espOutputTail(filtered))
 		}
 	}
 }
 
-func s31OutputTail(s string) string {
+// espEmuLogLine matches the emulator's own log lines. esp-emu reports the
+// semihost exit after the guest output while QEMU stays silent, so suite
+// comparisons must not see them.
+var espEmuLogLine = regexp.MustCompile(`^\[(INFO|WARN|ERROR|DEBUG|TRACE)\s`)
+
+// filterEspEmuOutput strips esp-emu's log lines from filtered app output.
+func filterEspEmuOutput(output string) string {
+	var kept []string
+	for line := range strings.SplitSeq(output, "\n") {
+		if !espEmuLogLine.MatchString(line) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+func espOutputTail(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	if len(lines) > 20 {
 		lines = lines[len(lines)-20:]
