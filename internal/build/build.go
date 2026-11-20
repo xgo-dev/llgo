@@ -3881,6 +3881,7 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	}
 	mod.SetDataLayout(ctx.prog.DataLayout())
 	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	limitEmscriptenSetjmpInlining(ctx, mod)
 	pbo := gllvm.NewPassBuilderOptions()
 	defer pbo.Dispose()
 	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {

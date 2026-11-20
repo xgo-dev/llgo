@@ -50,6 +50,8 @@ pass.
 With DCE, the final link can call a proven synchronous executable directly
 and omit its scheduler and Asyncify. The direct entry initializes the Go
 runtime and reuses package archives.
+The JavaScript SjLj profile preserves call boundaries in frames that use
+`setjmp` to limit duplicate unwind checks after LLVM inlining.
 
 Closed Emscripten size builds can omit the setup of unreferenced Go standard
 files. The final link selects the setup to omit from the cached `os` archive.

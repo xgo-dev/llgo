@@ -131,6 +131,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     if target.startswith("emscripten"):
         fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
                          standard_file_marker, False))
+        fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
     if linux_amd64 or mac_arm64:
         fixture = "native-link-parity"
         expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
