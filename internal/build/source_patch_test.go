@@ -549,24 +549,29 @@ func TestBaremetalARMSourcePatchAssembly(t *testing.T) {
 			target := sourcePatchBuildContext{goos: "linux", goarch: "arm", goversion: test.goversion}
 			path := filepath.Join(goroot, "src", filepath.FromSlash(test.pkg), test.filename)
 			mustWriteFile(t, path, "TEXT ·unused(SB),$0\n")
-			for _, baremetal := range []bool{false, true} {
-				target.buildFlags = []string{"-tags=llgo"}
-				if baremetal {
-					target.buildFlags = []string{"-tags=llgo,baremetal,llgo.baremetal.stdio"}
-				}
+			for _, tags := range []struct {
+				flags, targetTags []string
+				baremetal         bool
+			}{
+				{[]string{"-tags=llgo"}, nil, false},
+				{[]string{"-tags=llgo,baremetal,llgo.baremetal.stdio"}, nil, true},
+				{[]string{"-tags=llgo"}, []string{"baremetal", "llgo.baremetal.stdio"}, true},
+			} {
+				target.buildFlags, target.targetTags = tags.flags, tags.targetTags
 				_, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), goroot, test.pkg, target)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, replaced := overlay[path]; replaced != baremetal {
-					t.Fatalf("assembly replaced = %v with baremetal = %v", replaced, baremetal)
+				if _, replaced := overlay[path]; replaced != tags.baremetal {
+					t.Fatalf("assembly replaced = %v with tags %+v", replaced, tags)
 				}
-				if baremetal {
+				if tags.baremetal {
 					ctx := &context{
-						conf:        &packages.Config{BuildFlags: target.buildFlags},
-						buildConf:   &Config{Goarch: "arm"},
-						patchFiles:  map[string][]string{test.pkg: files},
-						sfilesCache: map[string][]string{test.pkg: {path}},
+						conf:         &packages.Config{BuildFlags: target.buildFlags},
+						buildConf:    &Config{Goarch: "arm"},
+						crossCompile: crosscompile.Export{BuildTags: target.targetTags},
+						patchFiles:   map[string][]string{test.pkg: files},
+						sfilesCache:  map[string][]string{test.pkg: {path}},
 					}
 					planned, err := compiledPkgSFiles(ctx, &packages.Package{ID: test.pkg, PkgPath: test.pkg})
 					if err != nil || len(planned) != 0 {

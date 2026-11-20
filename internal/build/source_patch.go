@@ -37,6 +37,7 @@ type sourcePatchBuildContext struct {
 	goversion  string
 	toolTags   []string
 	buildFlags []string
+	targetTags []string
 	cgoEnabled *bool
 }
 
@@ -306,7 +307,7 @@ func newSourcePatchMatchContext(goroot string, ctx sourcePatchBuildContext) (bui
 	if ctx.goarch != "" {
 		buildCtx.GOARCH = ctx.goarch
 	}
-	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.buildFlags)
+	buildCtx.BuildTags = sourcePatchBuildTags(ctx.buildFlags, ctx.targetTags)
 	if ctx.cgoEnabled != nil {
 		buildCtx.CgoEnabled = *ctx.cgoEnabled
 	}
@@ -321,6 +322,11 @@ func newSourcePatchMatchContext(goroot string, ctx sourcePatchBuildContext) (bui
 		buildCtx.ReleaseTags = releaseTags
 	}
 	return buildCtx, nil
+}
+
+// sourcePatchBuildTags is shared by the overlay and the assembly planner.
+func sourcePatchBuildTags(buildFlags, targetTags []string) []string {
+	return append(parseSourcePatchBuildTags(buildFlags), targetTags...)
 }
 
 func parseSourcePatchBuildTags(buildFlags []string) []string {

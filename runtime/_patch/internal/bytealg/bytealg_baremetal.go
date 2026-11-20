@@ -28,7 +28,18 @@ func comparePortable[T ~[]byte | ~string](a, b T) int {
 
 func Compare(a, b []byte) int       { return comparePortable(a, b) }
 func CompareString(a, b string) int { return comparePortable(a, b) }
-func Equal(a, b []byte) bool        { return string(a) == string(b) }
+
+func Equal(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, c := range a {
+		if c != b[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func countBytePortable[T ~[]byte | ~string](s T, c byte) int {
 	n := 0

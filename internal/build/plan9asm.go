@@ -43,10 +43,11 @@ func compilePkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Package, verbo
 // that must account for references outside Go SSA.
 func compiledPkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 	if len(ctx.patchFiles[pkg.PkgPath]) != 0 {
-		var tags []string
+		var buildFlags []string
 		if ctx.conf != nil {
-			tags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+			buildFlags = ctx.conf.BuildFlags
 		}
+		tags := sourcePatchBuildTags(buildFlags, ctx.crossCompile.BuildTags)
 		if llruntime.SourcePatchReplacesAsm(pkg.PkgPath, ctx.buildConf.Goarch, tags) {
 			return nil, nil
 		}

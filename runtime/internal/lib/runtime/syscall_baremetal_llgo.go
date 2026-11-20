@@ -1,4 +1,4 @@
-//go:build linux && baremetal && llgo.baremetal.stdio
+//go:build linux && arm && baremetal && llgo.baremetal.stdio
 
 package runtime
 
@@ -21,8 +21,8 @@ func syscall_runtime_syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, in
 	return r, int32(errno)
 }
 
-// The bare-metal stdlib uses the Linux/ARM syscall ABI. Both layouts of
-// internal/runtime/syscall and the public syscall wrappers share this console.
+// This console dispatches Linux/ARM syscall numbers because the bare-metal
+// stdlib selects GOARCH=arm, including on ESP32-C3 with a RISC-V LLVM target.
 func llgoBaremetalSyscall6(trap, fd, buf, size, _, _, _ uintptr) (uintptr, uintptr, uintptr) {
 	const (
 		armRead  = 3
