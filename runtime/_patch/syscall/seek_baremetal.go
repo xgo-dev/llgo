@@ -1,4 +1,4 @@
-//go:build llgo && baremetal && linux && arm && llgo.baremetal.stdio && go1.27
+//go:build llgo && baremetal && linux && arm && llgo.baremetal.stdio
 
 package syscall
 

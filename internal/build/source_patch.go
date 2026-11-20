@@ -61,7 +61,16 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 }
 
 func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath string, ctx sourcePatchBuildContext) (bool, map[string][]byte, []string, error) {
-	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(pkgPath))
+	patchPath := pkgPath
+	// Go 1.23 moved these packages out of runtime without changing the
+	// interfaces used by the bare-metal source patches.
+	switch pkgPath {
+	case "runtime/internal/atomic":
+		patchPath = "internal/runtime/atomic"
+	case "runtime/internal/syscall":
+		patchPath = "internal/runtime/syscall"
+	}
+	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(patchPath))
 	entries, err := os.ReadDir(patchDir)
 	if err != nil {
 		if os.IsNotExist(err) {

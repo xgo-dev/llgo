@@ -506,4 +506,12 @@ jobs:
             bash .github/workflows/test_demo.sh
 
       - name: Test ESP32-C3 size builds and emulator output
-        run: python3 test/sizebuild/runtest.py --target=esp32c3
+        run: |
+          source dev/go_toolchain.sh
+          roots=()
+          for release in 1.20 1.24; do
+            version="$(llgo_resolve_go_version "$PWD" "$release")"
+            goroot="$(llgo_go_root "$version")"
+            roots+=(--esp32c3-go-root "$goroot")
+          done
+          python3 test/sizebuild/runtest.py --target=esp32c3 "${roots[@]}"

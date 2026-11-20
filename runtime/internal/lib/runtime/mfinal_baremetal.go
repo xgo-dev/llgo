@@ -1,4 +1,4 @@
-//go:build baremetal && !nogc && llgo.baremetal.stdio && go1.27
+//go:build baremetal && !nogc && llgo.baremetal.stdio
 
 package runtime
 

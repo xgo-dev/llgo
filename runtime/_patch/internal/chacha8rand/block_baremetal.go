@@ -1,4 +1,4 @@
-//go:build llgo && baremetal && go1.27
+//go:build llgo && baremetal
 
 package chacha8rand
 

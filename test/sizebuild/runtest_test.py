@@ -3,7 +3,7 @@ import subprocess
 import sys
 import unittest
 
-from runtest import ROOT, command, controlled_environment, has_go127_release_tag
+from runtest import ROOT, command, controlled_environment
 
 
 class EnvironmentTest(unittest.TestCase):
@@ -35,16 +35,6 @@ class CommandTest(unittest.TestCase):
         self.assertIn("timed out after 1s", str(error))
         self.assertIn("\nstdout-before-timeout\nstderr-before-timeout\n", str(error))
         self.assertIsInstance(error.__cause__, subprocess.TimeoutExpired)
-
-
-class GoReleaseTagTest(unittest.TestCase):
-    def test_go127_release_tag(self):
-        for version in ("go1.27", "go1.27.3\n", "go1.28rc1", "devel go1.28-deadbeef", "go2.0"):
-            with self.subTest(version=version):
-                self.assertTrue(has_go127_release_tag(version))
-        for version in ("go1.20.14", "go1.26.5", "unknown"):
-            with self.subTest(version=version):
-                self.assertFalse(has_go127_release_tag(version))
 
 
 if __name__ == "__main__":

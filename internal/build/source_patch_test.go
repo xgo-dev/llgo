@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"go/version"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -535,24 +534,27 @@ func TestCompilePkgSFilesSkipsSourcePatchedAssembly(t *testing.T) {
 }
 
 func TestBaremetalARMSourcePatchAssembly(t *testing.T) {
-	if version.Lang(runtime.Version()) != "go1.27" {
-		t.Skip("requires the Go 1.27 ARM standard-library layout")
-	}
-	goroot := runtime.GOROOT()
-	for pkg, filename := range map[string]string{
-		"internal/bytealg":               "compare_arm.s",
-		"internal/chacha8rand":           "chacha8_stub.s",
-		"internal/runtime/syscall/linux": "asm_linux_arm.s",
+	for _, test := range []struct {
+		pkg, filename, goversion string
+	}{
+		{"runtime/internal/atomic", "atomic_arm.s", "go1.20"},
+		{"runtime/internal/syscall", "asm_linux_arm.s", "go1.20"},
+		{"internal/bytealg", "compare_arm.s", "go1.20"},
+		{"internal/chacha8rand", "chacha8_stub.s", "go1.22"},
+		{"internal/runtime/syscall", "asm_linux_arm.s", "go1.23"},
+		{"internal/runtime/syscall/linux", "asm_linux_arm.s", "go1.26"},
 	} {
-		t.Run(pkg, func(t *testing.T) {
-			target := sourcePatchBuildContext{goos: "linux", goarch: "arm", goversion: runtime.Version()}
-			path := filepath.Join(goroot, "src", filepath.FromSlash(pkg), filename)
+		t.Run(test.pkg, func(t *testing.T) {
+			goroot := t.TempDir()
+			target := sourcePatchBuildContext{goos: "linux", goarch: "arm", goversion: test.goversion}
+			path := filepath.Join(goroot, "src", filepath.FromSlash(test.pkg), test.filename)
+			mustWriteFile(t, path, "TEXT ·unused(SB),$0\n")
 			for _, baremetal := range []bool{false, true} {
 				target.buildFlags = []string{"-tags=llgo"}
 				if baremetal {
 					target.buildFlags = []string{"-tags=llgo,baremetal,llgo.baremetal.stdio"}
 				}
-				_, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), goroot, pkg, target)
+				_, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), goroot, test.pkg, target)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -563,10 +565,10 @@ func TestBaremetalARMSourcePatchAssembly(t *testing.T) {
 					ctx := &context{
 						conf:        &packages.Config{BuildFlags: target.buildFlags},
 						buildConf:   &Config{Goarch: "arm"},
-						patchFiles:  map[string][]string{pkg: files},
-						sfilesCache: map[string][]string{pkg: {path}},
+						patchFiles:  map[string][]string{test.pkg: files},
+						sfilesCache: map[string][]string{test.pkg: {path}},
 					}
-					planned, err := compiledPkgSFiles(ctx, &packages.Package{ID: pkg, PkgPath: pkg})
+					planned, err := compiledPkgSFiles(ctx, &packages.Package{ID: test.pkg, PkgPath: test.pkg})
 					if err != nil || len(planned) != 0 {
 						t.Fatalf("source-patched assembly planned = %v, error = %v", planned, err)
 					}
