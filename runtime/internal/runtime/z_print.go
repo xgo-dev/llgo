@@ -33,39 +33,6 @@ func PrintBool(v bool) {
 	c.Fputs(boolCStr(v), c.Stderr)
 }
 
-func PrintUint(v uint64) {
-	printDecimal(v, false)
-}
-
-func PrintInt(v int64) {
-	u := uint64(v)
-	negative := v < 0
-	if negative {
-		u = 0 - u
-	}
-	printDecimal(u, negative)
-}
-
-func printDecimal(v uint64, negative bool) {
-	// uint64 needs at most 20 digits. Use stack storage explicitly because
-	// printing is also used on panic paths and before runtime initialization.
-	buf := c.Alloca(21)
-	i := uintptr(21)
-	for {
-		i--
-		*(*byte)(unsafe.Add(buf, i)) = '0' + byte(v%10)
-		v /= 10
-		if v == 0 {
-			break
-		}
-	}
-	if negative {
-		i--
-		*(*byte)(unsafe.Add(buf, i)) = '-'
-	}
-	c.Fwrite(unsafe.Add(buf, i), 1, 21-i, c.Stderr)
-}
-
 func PrintFloat(v float64) {
 	c.Fputs(c.AllocaCStr(formatFloat(v)), c.Stderr)
 }
