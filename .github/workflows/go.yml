@@ -508,9 +508,14 @@ jobs:
       - name: Test ESP32-C3 size builds and emulator output
         run: |
           source dev/go_toolchain.sh
+          current="$(go env GOVERSION)"
+          read -r -a releases <<< "$(llgo_supported_go_releases)"
           roots=()
-          for release in 1.20 1.24; do
+          for release in "${releases[@]}"; do
             version="$(llgo_resolve_go_version "$PWD" "$release")"
+            if [[ "go$version" == "$current" ]]; then
+              continue
+            fi
             goroot="$(llgo_go_root "$version")"
             roots+=(--esp32c3-go-root "$goroot")
           done
