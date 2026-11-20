@@ -3,6 +3,7 @@
 package json
 
 import (
+	"encoding/json/internal/jsonopts"
 	"encoding/json/internal/jsonwire"
 	"encoding/json/jsontext"
 	"errors"
@@ -12,8 +13,8 @@ import (
 	"unsafe"
 )
 
-func LlgoReadTyped[T any](data []byte, dst *T, decode func(*jsontext.Decoder, *T) error, options Options) error {
-	dec := export.GetBufferedDecoder(data, options)
+func LlgoReadTyped[T any](data []byte, dst *T, decode func(*jsontext.Decoder, *T) error) error {
+	dec := export.GetBufferedDecoder(data, &jsonopts.DefaultOptionsV1)
 	defer export.PutBufferedDecoder(dec)
 	state := export.Decoder(dec)
 	// Validate before mutating the destination, including trailing input.

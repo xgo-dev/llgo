@@ -45,7 +45,7 @@ func exercise(input string) {
 		case *json.UnmarshalTypeError:
 			println(e.Value, e.Offset, e.Struct, e.Field)
 		case *json.SyntaxError:
-			println(e.Offset)
+			println(e.Error(), e.Offset)
 		}
 	}
 	if dst.Ptr != nil {

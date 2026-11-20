@@ -208,3 +208,43 @@ func address(v ssa.Value) ssa.Value {
 	}
 	return nil
 }
+
+// StatelessTokenizerHandle checks the standard library's internal tokenizer
+// handle. The typed path can use its zero value when the link omits init.
+func StatelessTokenizerHandle(pkg *types.Package) bool {
+	handle, ok := pkg.Scope().Lookup("export").(*types.Var)
+	if !ok {
+		return false
+	}
+	typ, ok := handle.Type().Underlying().(*types.Struct)
+	return ok && typ.NumFields() == 0
+}
+
+// TypedDecodeErrorObject accepts the public error types and the operations
+// that inspect their payload without using the generic codec registry.
+func TypedDecodeErrorObject(obj types.Object) bool {
+	for _, name := range []string{"SyntaxError", "UnmarshalTypeError", "InvalidUnmarshalError"} {
+		errorType, ok := obj.Pkg().Scope().Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		if obj == errorType {
+			return true
+		}
+		if fields, ok := errorType.Type().Underlying().(*types.Struct); ok {
+			for field := range fields.Fields() {
+				if field == obj {
+					return true
+				}
+			}
+		}
+		if named, ok := errorType.Type().(*types.Named); ok && (obj.Name() == "Error" || obj.Name() == "Unwrap") {
+			for method := range named.Methods() {
+				if method == obj {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

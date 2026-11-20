@@ -119,3 +119,22 @@ func TestJSONV2Initializers(t *testing.T) {
 		}
 	}
 }
+
+func TestStatelessTokenizerHandle(t *testing.T) {
+	pkg := types.NewPackage("encoding/json/v2", "json")
+	if StatelessTokenizerHandle(pkg) {
+		t.Fatal("accepted missing tokenizer handle")
+	}
+	typ := types.NewStruct(nil, nil)
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "export", typ))
+	if !StatelessTokenizerHandle(pkg) {
+		t.Fatal("rejected zero-sized tokenizer handle")
+	}
+	pkg = types.NewPackage("encoding/json/v2", "json")
+	state := types.NewField(token.NoPos, pkg, "state", types.Typ[types.Int], false)
+	typ = types.NewStruct([]*types.Var{state}, nil)
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "export", typ))
+	if StatelessTokenizerHandle(pkg) {
+		t.Fatal("accepted a tokenizer handle that requires state")
+	}
+}

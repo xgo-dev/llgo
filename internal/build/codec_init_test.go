@@ -1,6 +1,7 @@
 package build
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 	"path/filepath"
@@ -139,6 +140,55 @@ func external()
 			}
 			if calls[codecInit] == test.wantDrop || !calls[otherInit] {
 				t.Fatalf("initializer calls: JSON=%v, io=%v", calls[codecInit], calls[otherInit])
+			}
+		})
+	}
+}
+
+func TestEntryJSONUses(t *testing.T) {
+	legacy := types.NewPackage("encoding/json", "json")
+	modern := types.NewPackage("encoding/json/v2", "json")
+	tokenizer := types.NewPackage("encoding/json/jsontext", "jsontext")
+	entry := types.NewPackage("entry", "main")
+
+	syntaxOffset := types.NewField(token.NoPos, legacy, "Offset", types.Typ[types.Int64], false)
+	legacy.Scope().Insert(types.NewTypeName(token.NoPos, legacy, "SyntaxError",
+		types.NewStruct([]*types.Var{syntaxOffset}, nil)))
+	typed := types.NewFunc(token.NoPos, legacy, "LlgoDecodeTyped", nil)
+	integer := types.NewFunc(token.NoPos, modern, "LlgoReadInt", nil)
+	generic := types.NewFunc(token.NoPos, legacy, "Unmarshal", nil)
+	decoder := types.NewTypeName(token.NoPos, tokenizer, "Decoder", nil)
+
+	for _, tc := range []struct {
+		name        string
+		references  []types.Object
+		blankImport bool
+		wantTyped   bool
+		wantOther   bool
+	}{
+		{name: "encode only"},
+		{name: "typed decode", references: []types.Object{typed, integer, syntaxOffset, decoder}, wantTyped: true},
+		{name: "error fields without typed decoding", references: []types.Object{syntaxOffset}, wantOther: true},
+		{name: "generic decoding", references: []types.Object{typed, generic}, wantTyped: true, wantOther: true},
+		{name: "explicit side effects", blankImport: true, wantOther: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := &ast.File{Name: ast.NewIdent("main")}
+			info := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
+			for _, obj := range tc.references {
+				id := ast.NewIdent(obj.Name())
+				info.Uses[id] = obj
+				file.Decls = append(file.Decls, &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{
+					&ast.ValueSpec{Names: []*ast.Ident{ast.NewIdent("_")}, Values: []ast.Expr{id}},
+				}})
+			}
+			if tc.blankImport {
+				file.Imports = []*ast.ImportSpec{{Name: ast.NewIdent("_"), Path: &ast.BasicLit{Kind: token.STRING, Value: `"encoding/json"`}}}
+			}
+			pkg := &packages.Package{Types: entry, TypesInfo: info, Syntax: []*ast.File{file}}
+			gotTyped, gotOther := entryJSONUses(pkg)
+			if gotTyped != tc.wantTyped || gotOther != tc.wantOther {
+				t.Fatalf("typed = %v, other = %v, want %v, %v", gotTyped, gotOther, tc.wantTyped, tc.wantOther)
 			}
 		})
 	}

@@ -154,21 +154,27 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 def embedded_typed_json_probe(llgo, directory, env, target, flags):
     package = "./internal/build/testdata/json-typed-decode"
     expected = command(["go", "run", package], env)
+    imports = command(["go", "list", "-f", "{{range .Imports}}{{println .}}{{end}}",
+                       "encoding/json"], env, stdout_only=True)
     if target == "esp32c3-flash":
         result = subprocess.run([str(llgo), "run", f"-target={target}", "-emulator",
-                                 *flags, package], cwd=ROOT, env=env,
+                                 *flags, "-compiler-verbose", package], cwd=ROOT, env=env,
                                 capture_output=True, text=True, timeout=120)
+        log = result.stderr
         boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", result.stdout, re.MULTILINE)
         if result.returncode or boot is None or result.stdout[boot.end():] != expected:
             raise RuntimeError(f"{target}: typed JSON output differs from Go\n{result.stdout}{result.stderr}")
     else:
         output = directory / "json-typed-decode.elf"
-        command([str(llgo), "build", f"-target={target}", *flags,
-                 "-o", str(output), package], env)
+        log = command([str(llgo), "build", f"-target={target}", *flags, "-compiler-verbose",
+                       "-o", str(output), package], env)
         actual = command(["qemu-system-arm", "-machine", "mps2-an385", "-semihosting",
                           "-nographic", "-kernel", str(output)], env, timeout=120)
         if actual != expected:
             raise RuntimeError(f"{target}: typed JSON output differs from Go\n{actual}")
+    marker = "llgo: omit unused JSON package initialization"
+    if "encoding/json/v2" in imports.splitlines() and marker not in log:
+        raise RuntimeError(f"{target}: typed decoder kept the generic JSON initialization\n{log}")
     print(f"{target} typed JSON output and error parity passed", flush=True)
 
 

@@ -58,7 +58,9 @@ func configureCodecInits(ctx *context, inputs *linkPruningInputs) {
 // Remove a codec's private initialization only when the specialized entry
 // has no remaining use of that state. Preserve all other packages' order.
 func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *packages.Package) map[string]bool {
-	if slices.ContainsFunc(inputs.roots, jsonspecialize.ImplementationSymbol) || entryReferencesJSON(entry) {
+	typedDecode, hasOtherUse := entryJSONUses(entry)
+	if slices.ContainsFunc(inputs.roots, jsonspecialize.ImplementationSymbol) || hasOtherUse ||
+		(typedDecode && !ctx.embeddedClosedProgram) {
 		return nil
 	}
 	trusted := make(map[*types.Package]bool)
@@ -72,11 +74,20 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 			if pkg.AltPkg != nil {
 				return nil
 			}
-			members = append(members, pkg)
+			if !typedDecode || genericJSONInit(pkg.PkgPath) {
+				members = append(members, pkg)
+			} else {
+				for _, dep := range effectiveDependencies(pkg) {
+					if genericJSONInit(dep.PkgPath) {
+						return nil
+					}
+				}
+			}
 			continue
 		}
 		for _, dep := range effectiveDependencies(pkg) {
-			if jsonspecialize.IsImplementation(dep.PkgPath) && (pkg.Package != entry || dep.PkgPath != "encoding/json") {
+			if jsonspecialize.IsImplementation(dep.PkgPath) && (pkg.Package != entry ||
+				dep.PkgPath != "encoding/json" && !(typedDecode && (dep.PkgPath == "encoding/json/v2" || dep.PkgPath == "encoding/json/jsontext"))) {
 				return nil
 			}
 		}
@@ -88,6 +99,9 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 	skip := make(map[string]bool, len(members))
 	for _, pkg := range members {
 		ssaPkg := ctx.progSSA.Package(pkg.Types)
+		if typedDecode && pkg.PkgPath == "encoding/json/v2" && !jsonspecialize.StatelessTokenizerHandle(pkg.Types) {
+			return nil
+		}
 		if ssaPkg == nil || !jsonspecialize.DiscardableInit(ssaPkg.Func("init"),
 			func(p *types.Package) bool {
 				return trusted[p] || p.Path() == "github.com/xgo-dev/llgo/runtime/internal/lib/reflect"
@@ -99,28 +113,57 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 	return skip
 }
 
-func entryReferencesJSON(entry *packages.Package) bool {
+func genericJSONInit(path string) bool {
+	return path == "encoding/json" || path == "encoding/json/v2"
+}
+
+func entryJSONUses(entry *packages.Package) (typedDecode, hasOtherUse bool) {
+	var typedSupport bool
 	for _, file := range entry.Syntax {
 		for _, imp := range file.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
 			if jsonspecialize.IsImplementation(path) && imp.Name != nil && imp.Name.Name == "_" {
+				return typedDecode, true
+			}
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			id, ok := node.(*ast.Ident)
+			if !ok {
 				return true
 			}
-		}
-		found := false
-		ast.Inspect(file, func(node ast.Node) bool {
-			if id, ok := node.(*ast.Ident); ok {
-				if obj := entry.TypesInfo.Uses[id]; obj != nil && obj.Pkg() != nil && jsonspecialize.IsImplementation(obj.Pkg().Path()) {
-					found = true
-				}
+			obj := entry.TypesInfo.Uses[id]
+			if obj == nil || obj.Pkg() == nil || !jsonspecialize.IsImplementation(obj.Pkg().Path()) {
+				return true
 			}
-			return !found
+			_, isFunction := obj.(*types.Func)
+			switch obj.Pkg().Path() {
+			case "encoding/json":
+				if isFunction && obj.Name() == "LlgoDecodeTyped" {
+					typedDecode = true
+					return true
+				}
+				if jsonspecialize.TypedDecodeErrorObject(obj) {
+					typedSupport = true
+					return true
+				}
+			case "encoding/json/v2":
+				if isFunction {
+					switch obj.Name() {
+					case "LlgoReadBool", "LlgoReadString", "LlgoReadInt", "LlgoReadUint", "LlgoBadToken", "LlgoRecoverable":
+						typedSupport = true
+						return true
+					}
+				}
+			case "encoding/json/jsontext":
+				// The tokenizer and its dependency initializers are kept.
+				typedSupport = true
+				return true
+			}
+			hasOtherUse = true
+			return false
 		})
-		if found {
-			return true
-		}
 	}
-	return false
+	return typedDecode, hasOtherUse || typedSupport && !typedDecode
 }
 
 func hasJSONLinkname(files []*ast.File) bool {
