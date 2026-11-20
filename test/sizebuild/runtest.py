@@ -132,6 +132,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
                          standard_file_marker, False))
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
+        fixtures.append(("wasm-callback", "wasm callback-only wake ok",
+                         "llgo: omit Emscripten scheduler", False))
     if linux_amd64 or mac_arm64:
         fixture = "native-link-parity"
         expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
@@ -159,6 +161,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         if target.startswith("emscripten") and fixture == "wasm-standard-files":
             if "llgo: omit Emscripten scheduler" in log:
                 raise RuntimeError(f"{target}: suspending filesystem operations lost the scheduler")
+            command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
+                     str(artifact)], env, timeout=90)
         if target == "emscripten" and fixture == "wasm-standard-files":
             result = subprocess.run([runner[0], "--import", str(ROOT / "test/sizebuild/wasm-invalid-fs-flag.mjs"),
                                      *runner[1:], str(artifact)], cwd=ROOT, env=env, timeout=90,

@@ -53,6 +53,14 @@ runtime and reuses package archives.
 The JavaScript SjLj profile preserves call boundaries in frames that use
 `setjmp` to limit duplicate unwind checks after LLVM inlining.
 
+Named Emscripten size executables with DCE and Full LTO also try Closure's
+SIMPLE optimization at final link. SIMPLE preserves property names used by
+host code through `Module.FS` and other runtime exports. Emscripten's default
+optimizer handles builds where Closure is unavailable or fails. Builds with
+explicit linker or Closure settings follow the selected driver configuration.
+The Wasm manifest records a successful automatic invocation as
+`js_minifier: "closure-simple"`.
+
 Closed Emscripten size builds can omit the setup of unreferenced Go standard
 files. The final link selects the setup to omit from the cached `os` archive.
 Code that uses or reassigns a standard stream keeps its initialization.

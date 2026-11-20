@@ -2112,7 +2112,9 @@ type context struct {
 	linkRuntimeSites *bool
 
 	// effectiveLinkArgs records the actual driver invocation for the Wasm manifest.
-	effectiveLinkArgs []string
+	effectiveLinkArgs      []string
+	wasmJSMinifier         string
+	skipEmscriptenMinifier bool
 
 	buildTrace *buildTracer
 
@@ -3342,10 +3344,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
 	cmd.Verbose = printCmds
-	if needsWasmFinalization(ctx.buildConf) {
-		ctx.effectiveLinkArgs = cmd.LinkArguments(buildArgs...)
-	}
-	if err := cmd.Link(buildArgs...); err != nil {
+	if err := linkWithOptionalClosure(ctx, cmd, linkOutput, buildArgs); err != nil {
 		if len(ltoObjectArgs) != 0 {
 			_ = os.RemoveAll(filepath.Dir(ltoObjectArgs[len(ltoObjectArgs)-1]))
 		}
