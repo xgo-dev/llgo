@@ -99,6 +99,8 @@ var sourcePatchPkgs = map[string]struct{}{
 	"crypto/internal/fips140/aes":    {},
 	"crypto/internal/constanttime":   {},
 	"crypto/internal/sysrand":        {},
+	"encoding/json":                  {},
+	"encoding/json/v2":               {},
 	"fmt":                            {},
 	"go/build":                       {},
 	"go/importer":                    {},

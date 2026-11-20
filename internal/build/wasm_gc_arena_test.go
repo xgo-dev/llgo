@@ -54,6 +54,7 @@ const blocksPerStateByte = 4
 const wasmPageSize = uintptr(65536)
 var bytesPerBlock = uintptr(32)
 var endBlock, arenaStart, arenaSize uintptr
+const maxHeapSegments = 128
 var segmentedHeap = true
 var stopped, resumed, grown int
 var stopAllowed bool

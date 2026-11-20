@@ -905,13 +905,17 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	sourceTargetTags := export.BuildTags
+	if embeddedSizePruningConfig(conf, export, frontendOptions) {
+		sourceTargetTags = append(slices.Clone(sourceTargetTags), "llgo.size.embedded")
+	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:           conf.Goos,
 		goarch:         conf.Goarch,
 		goversion:      sourcePatchGoVersion,
 		toolTags:       sourceGo.toolTags,
 		buildFlags:     cfg.BuildFlags,
-		targetTags:     export.BuildTags,
+		targetTags:     sourceTargetTags,
 		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
 		cgoEnabled:     &sourceCgoEnabled,
 	})
@@ -1062,7 +1066,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	var jsonCodecPackages map[*types.Package]bool
 	if codec := dedup.Check("encoding/json"); codec != nil {
-		jsonCodecPackages, err = specializeJSONMarshals(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		jsonCodecPackages, err = specializeJSONCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}
@@ -1167,7 +1171,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if ctx.valueFormatPlan != nil || len(ctx.jsonCodecPackages) != 0 {
 			// Resolve the rewrite before collecting initializer and feature usage.
 			configureWasmRuntimeFree(ctx)
-			asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT, true)
+			asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, true)
 			formatInputs := configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			configureCodecInits(ctx, formatInputs)
 			preparedInitializers = true
@@ -1206,7 +1210,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
 		configureWasmRuntimeFree(ctx)
-		asmRoots = ctx.wasiSizePruningInputs(sourcePatchGOROOT, false)
+		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, false)
 		configureUnusedGlobalInits(ctx, asmRoots)
 	}
 	configureWasiReleaseDCE(ctx, asmRoots)
@@ -2012,6 +2016,8 @@ type context struct {
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots        []string
 
+	embeddedClosedProgram bool
+
 	cTransformer *cabi.Transformer
 
 	testFail bool
@@ -2795,6 +2801,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 	// Even a leaf export needs the runtime for foreign-thread registration.
 	needRuntime = needRuntime || len(cExports) != 0
+	if !needRuntime && !needPyInit && len(linkArgs) == 0 {
+		configureEmbeddedPrintf(ctx, linkedOrder)
+	}
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
 	if needRuntime || needPyInit || ctx.buildConf.Target == "" {

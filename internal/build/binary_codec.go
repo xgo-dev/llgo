@@ -23,8 +23,8 @@ func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, st
 		}, "fixed-size binary encoding")
 }
 
-func specializeJSONMarshals(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
-	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, jsonspecialize.Rewrite, "statically typed JSON encoding")
+func specializeJSONCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
+	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, jsonspecialize.Rewrite, "statically typed JSON codec")
 }
 
 // The binary accessor belongs to a fixed compiler profile and is installed

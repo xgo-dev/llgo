@@ -178,11 +178,11 @@ func TestPlanJSONFallback(t *testing.T) {
 			}
 			dep := pkg.Imports()[0]
 			planned := &packages.Package{Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Imports: map[string]*packages.Package{"encoding/json": {Types: dep}}}
-			_, got := planPackage(planned, dep)
+			_, got := planPackage(planned, dep, false)
 			if got != tc.want {
 				t.Fatalf("accepted = %v, want %v", got, tc.want)
 			}
-			if _, ok := planPackage(planned, types.NewPackage(dep.Path(), dep.Name())); ok {
+			if _, ok := planPackage(planned, types.NewPackage(dep.Path(), dep.Name()), false); ok {
 				t.Fatal("accepted a different type universe for encoding/json")
 			}
 		})

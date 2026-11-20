@@ -24,7 +24,7 @@ func canSpecializeFormats(ctx *context) bool {
 }
 
 func prepareValueFormatSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return (wasiSizePruningConfig(conf, target, frontend) || hostedValueFormatSupport(conf, target, frontend)) &&
+	return (wasiSizePruningConfig(conf, target, frontend) || hostedValueFormatSupport(conf, target, frontend) || embeddedSizePruningConfig(conf, target, frontend)) &&
 		conf.ltoMode() != lto.Thin && !conf.LTOPlugin.Enabled() && !frontendCacheEnabled(conf)
 }
 
@@ -48,8 +48,8 @@ func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend
 
 // Resolve typed rewrites before init and caller accounting. For hosted targets
 // use the same checks for unknown native code and assembly as WASI.
-func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPruningInputs) *linkPruningInputs {
-	formatInputs := wasiInputs
+func configureFormattingAndInits(ctx *context, goroot string, inputs *linkPruningInputs) *linkPruningInputs {
+	formatInputs := inputs
 	if formatInputs == nil && hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
 		formatInputs = &linkPruningInputs{goroot: goroot, nativeFormat: ctx.buildConf.Goarch != "wasm"}
 		if ctx.buildConf.Goarch != "wasm" {
@@ -62,7 +62,13 @@ func configureFormattingAndInits(ctx *context, goroot string, wasiInputs *linkPr
 		}
 	}
 	configureUnusedGlobalInits(ctx, formatInputs)
-	configureValueFormats(ctx, formatInputs)
+	if embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
+		if !ctx.embeddedClosedProgram {
+			return nil
+		}
+	} else {
+		configureValueFormats(ctx, formatInputs)
+	}
 	return formatInputs
 }
 

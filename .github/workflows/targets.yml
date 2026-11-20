@@ -110,6 +110,7 @@ jobs:
         run: |
           output="$(LLGO_ROOT="$PWD" llgo run -target=cortex-m-mps2 -emulator -Oz ./benchmark/binary_size/fmtprintf)"
           test "$output" = 'Hello, world'
+          python3 test/sizebuild/runtest.py --target=cortex-m-mps2
       # Separate steps keep both backends observable and run LLDB even when
       # the GDB acceptance test fails, as the former fail-fast:false matrix did.
       - name: Test GDB preloaded and explicit-download Cortex-M sessions

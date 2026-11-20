@@ -97,7 +97,7 @@ def reflect_method_size_probe(llgo, wasmer, directory, env):
 
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
     binary_marker = "llgo: specialize fixed-size binary encoding"
-    json_marker = "llgo: specialize statically typed JSON encoding"
+    json_marker = "llgo: specialize statically typed JSON codec"
     fixtures = [
         ("binary-fixed", "fixed binary codec ok", binary_marker, True),
         ("binary-mixed", "generic binary codec ok", binary_marker, False),
@@ -151,6 +151,27 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 
 
 
+def embedded_typed_json_probe(llgo, directory, env, target, flags):
+    package = "./internal/build/testdata/json-typed-decode"
+    expected = command(["go", "run", package], env)
+    if target == "esp32c3-flash":
+        result = subprocess.run([str(llgo), "run", f"-target={target}", "-emulator",
+                                 *flags, package], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=120)
+        boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", result.stdout, re.MULTILINE)
+        if result.returncode or boot is None or result.stdout[boot.end():] != expected:
+            raise RuntimeError(f"{target}: typed JSON output differs from Go\n{result.stdout}{result.stderr}")
+    else:
+        output = directory / "json-typed-decode.elf"
+        command([str(llgo), "build", f"-target={target}", *flags,
+                 "-o", str(output), package], env)
+        actual = command(["qemu-system-arm", "-machine", "mps2-an385", "-semihosting",
+                          "-nographic", "-kernel", str(output)], env, timeout=120)
+        if actual != expected:
+            raise RuntimeError(f"{target}: typed JSON output differs from Go\n{actual}")
+    print(f"{target} typed JSON output and error parity passed", flush=True)
+
+
 def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-basic"):
     output = command([str(llgo), "run", f"-target={target}", "-emulator",
                       *flags, package], env, stdout_only=True, cwd=cwd)
@@ -163,7 +184,7 @@ def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-bas
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3"), required=True)
+    parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3", "cortex-m-mps2"), required=True)
     parser.add_argument("--browser", action="store_true", help="also run Emscripten products in Chrome")
     parser.add_argument("--esp32c3-go-root", type=pathlib.Path, action="append", default=[],
                         help="also run fmt with this Go standard library")
@@ -183,6 +204,10 @@ def main():
             return
         if args.target == "native":
             full_lto_codec_probe(llgo, directory, env, "native", [], "")
+            return
+        if args.target == "cortex-m-mps2":
+            embedded_typed_json_probe(llgo, directory, env, "cortex-m-mps2",
+                                      ["-Oz", "-deadcodedrop", "-globaldce=false", "-lto=full"])
             return
         if args.target == "esp32c3":
             # This entry never builds the Go runtime. Its preloaded runtime
@@ -206,6 +231,7 @@ def main():
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", flags)
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", ["-Oz"],
                              target="esp32c3-flash")
+            embedded_typed_json_probe(llgo, directory, env, "esp32c3-flash", flags)
             if args.esp32c3_go_root:
                 sample = directory / "fmtprintf"
                 sample.mkdir()

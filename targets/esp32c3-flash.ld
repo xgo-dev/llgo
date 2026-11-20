@@ -32,10 +32,44 @@ SECTIONS
         _iram_end = .;
     } > iram_seg
 
-    /* Reserve space at the start of flash for the ROM-loadable SRAM image.
-     * Instruction and data windows share the same physical flash offsets.
+    /* IRAM and DRAM alias the same SRAM. Skip the boot code's storage. */
+    .dram0.dummy (NOLOAD) : { . += _iram_end - _iram_start; } > dram_seg
+    .stack (NOLOAD) : ALIGN(16)
+    {
+        _stack_end = .;
+        . += 16K;
+        __stack = .;
+    } > dram_seg
+
+    .data :
+    {
+        _data_start = .;
+        *(.data .data.* .data1 .gnu.linkonce.d.* .dram*)
+        SORT(CONSTRUCTORS)
+    } > dram_seg
+    .sdata :
+    {
+        PROVIDE(__global_pointer$ = . + 0x800);
+        *(.srodata .srodata.* .sdata .sdata.* .gnu.linkonce.s.*)
+        _edata = .;
+        PROVIDE(edata = .);
+    } > dram_seg
+    .bss (NOLOAD) :
+    {
+        __bss_start = .;
+        *(.dynsbss .sbss .sbss.* .gnu.linkonce.sb.* .scommon)
+        *(.dynbss .bss .bss.* .gnu.linkonce.b.* COMMON)
+        . = ALIGN(4);
+        _end = .;
+        PROVIDE(end = .);
+    } > dram_seg
+
+    /* Keep the checksummed ROM image before the first XIP section. Leave
+     * room for its segment headers, alignment, checksum and digest. The boot
+     * code maps physical flash offsets at 64 KiB intervals.
      */
-    .flash.text (ORIGIN(irom_seg) + 256K) :
+    _flash_image_end = ALIGN(SIZEOF(.iram) + SIZEOF(.data) + SIZEOF(.sdata) + 1K, 64K);
+    .flash.text (ORIGIN(irom_seg) + _flash_image_end) :
     {
         *(.text .text.* .stub .gnu.linkonce.t.*)
         KEEP(*(.fini))
@@ -79,38 +113,6 @@ SECTIONS
         KEEP(*(.fini_array .dtors))
         PROVIDE_HIDDEN(__fini_array_end = .);
     } > drom_seg
-
-    /* IRAM and DRAM alias the same SRAM. Skip the boot code's storage. */
-    .dram0.dummy (NOLOAD) : { . += _iram_end - _iram_start; } > dram_seg
-    .stack (NOLOAD) : ALIGN(16)
-    {
-        _stack_end = .;
-        . += 16K;
-        __stack = .;
-    } > dram_seg
-
-    .data :
-    {
-        _data_start = .;
-        *(.data .data.* .data1 .gnu.linkonce.d.* .dram*)
-        SORT(CONSTRUCTORS)
-    } > dram_seg
-    .sdata :
-    {
-        PROVIDE(__global_pointer$ = . + 0x800);
-        *(.srodata .srodata.* .sdata .sdata.* .gnu.linkonce.s.*)
-        _edata = .;
-        PROVIDE(edata = .);
-    } > dram_seg
-    .bss (NOLOAD) :
-    {
-        __bss_start = .;
-        *(.dynsbss .sbss .sbss.* .gnu.linkonce.sb.* .scommon)
-        *(.dynbss .bss .bss.* .gnu.linkonce.b.* COMMON)
-        . = ALIGN(4);
-        _end = .;
-        PROVIDE(end = .);
-    } > dram_seg
 
     /DISCARD/ : { *(.note.GNU-stack .gnu_debuglink .gnu.lto_*) }
 }

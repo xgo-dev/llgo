@@ -3,5 +3,6 @@
 package tinygogc
 
 const segmentedHeap = false
+const maxHeapSegments = 1
 
 func newHeapSegment(minimum uintptr) (uintptr, uintptr) { return 0, 0 }

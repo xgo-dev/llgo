@@ -46,8 +46,11 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 		ctx.frontend.buildAll()
 	}
 	ctx.wasmClosedProgram = false
+	ctx.embeddedClosedProgram = false
 	ctx.frontendOptions.UnusedGlobalInits = nil
-	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.buildConf.Goarch != "wasm" {
+	embedded := asmRoots != nil && embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
+	wasm := ctx.buildConf.Goarch == "wasm"
+	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || !wasm && !embedded {
 		return
 	}
 	if ctx.buildConf.OptLevel == optlevel.O0 {
@@ -62,7 +65,11 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 	}
 	// Both pruning passes require this proof, even when no initializer plan
 	// is produced. Its representation is independent of the initializer plan.
-	ctx.wasmClosedProgram = true
+	if embedded && asmRoots.opaqueAsmPkg != "" {
+		return
+	}
+	ctx.wasmClosedProgram = wasm
+	ctx.embeddedClosedProgram = embedded
 	configureValueFormats(ctx, asmRoots)
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.

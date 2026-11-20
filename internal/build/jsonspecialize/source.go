@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/build/typesynth"
@@ -20,18 +21,38 @@ type emitter struct {
 	strconv     string
 	sort        string
 	appendQuote string
+	decoders    map[*shape]string
+	jsonText    string
+	jsonV2      string
+	stringsPkg  string
 }
 
-func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg *packages.Package) error {
-	e := &emitter{pkg: p.pkg.Types, encoders: make(map[*shape]string)}
+func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg, jsonPkg, stringsPkg *packages.Package) error {
+	e := &emitter{pkg: p.pkg.Types, encoders: make(map[*shape]string), decoders: make(map[*shape]string)}
 	quote, intAlias, sortAlias, utf8Alias := e.name(), e.name(), e.name(), e.name()
 	e.strconv, e.sort, e.appendQuote = intAlias, sortAlias+".Strings", quote
 	if sortPkg.PkgPath == "slices" {
 		e.sort = sortAlias + ".Sort"
 	}
+	var jsonAlias string
+	if slices.ContainsFunc(p.calls, func(site callSite) bool { return site.decode }) {
+		jsonAlias = e.name()
+		e.jsonText, e.jsonV2, e.stringsPkg = e.name(), e.name(), e.name()
+	}
 	wrappers := make(map[*shape]string)
+	decodeWrappers := make(map[*shape]string)
 	for _, site := range p.calls {
 		s := site.shape
+		if site.decode {
+			if decodeWrappers[s] == "" {
+				fn := e.emitDecode(s)
+				name := e.name()
+				decodeWrappers[s] = name
+				fmt.Fprintf(&e.body, "func %s(data []byte,v *%s) error { return %s.LlgoDecodeTyped(data,v,%s) }\n",
+					name, e.alias(s.typ), jsonAlias, fn)
+			}
+			continue
+		}
 		if wrappers[s] != "" {
 			continue
 		}
@@ -55,8 +76,12 @@ func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg *packages.P
 	for _, item := range []struct {
 		pkg   *packages.Package
 		alias string
-	}{{utf8Pkg, utf8Alias}, {strconvPkg, intAlias}, {sortPkg, sortAlias}} {
-		if strings.Contains(e.body.String(), item.alias+".") {
+	}{
+		{utf8Pkg, utf8Alias}, {strconvPkg, intAlias}, {sortPkg, sortAlias},
+		{jsonPkg, jsonAlias}, {jsonPkg.Imports["encoding/json/jsontext"], e.jsonText},
+		{jsonPkg.Imports["encoding/json/v2"], e.jsonV2}, {stringsPkg, e.stringsPkg},
+	} {
+		if item.alias != "" && strings.Contains(e.body.String(), item.alias+".") {
 			fmt.Fprintf(&source, "import %s %q\n", item.alias, item.pkg.PkgPath)
 			imports[item.pkg.PkgPath] = item.pkg.Types
 			p.pkg.Imports[item.pkg.PkgPath] = item.pkg
@@ -68,6 +93,9 @@ func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg *packages.P
 	}
 	for _, site := range p.calls {
 		name := wrappers[site.shape]
+		if site.decode {
+			name = decodeWrappers[site.shape]
+		}
 		fn := p.pkg.Types.Scope().Lookup(name).(*types.Func)
 		old := site.call.Fun
 		id := &ast.Ident{Name: name, NamePos: old.Pos()}
