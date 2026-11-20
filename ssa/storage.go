@@ -36,37 +36,41 @@ func (p Program) usesWideGoStorage() bool {
 }
 
 // Go's widened data slot and C's native pointer followed by padding occupy
-// the same bytes in a by-value GoSlice. Keep their LLVM prototypes identical
+// the same bytes in GoString and GoSlice. Keep their LLVM prototypes identical
 // so a noncapturing Go callback can retain its code address.
-func (p Program) hasWasmSlicePadding(t llvm.Type) bool {
-	if !p.usesWideGoStorage() || p.rtSliceTy.IsNil() {
+func (p Program) isWasmABIPaddedHeader(t llvm.Type) bool {
+	return t == p.rtStringTy || t == p.rtSliceTy
+}
+
+func (p Program) hasWasmABIPadding(t llvm.Type) bool {
+	if !p.usesWideGoStorage() {
 		return false
 	}
-	if t == p.rtSliceTy {
+	if p.isWasmABIPaddedHeader(t) {
 		return true
 	}
 	switch t.TypeKind() {
 	case llvm.StructTypeKind:
-		return slices.ContainsFunc(t.StructElementTypes(), p.hasWasmSlicePadding)
+		return slices.ContainsFunc(t.StructElementTypes(), p.hasWasmABIPadding)
 	case llvm.ArrayTypeKind:
-		return t.ArrayLength() > 0 && p.hasWasmSlicePadding(t.ElementType())
+		return t.ArrayLength() > 0 && p.hasWasmABIPadding(t.ElementType())
 	}
 	return false
 }
 
-// clearWasmSlicePadding discards C's padding while keeping the pointer and
-// both Go-sized bounds. Nested aggregate fields use the same representation.
-func (p Program) clearWasmSlicePadding(b llvm.Builder, value llvm.Value) llvm.Value {
+// clearWasmABIPadding zeroes the high word of each string or slice data slot.
+func (p Program) clearWasmABIPadding(b llvm.Builder, value llvm.Value) llvm.Value {
 	t := value.Type()
-	if t == p.rtSliceTy {
+	if p.isWasmABIPaddedHeader(t) {
 		slot := b.CreateExtractValue(value, 0, "")
-		slot = b.CreateInsertValue(slot, llvm.ConstNull(p.tyInt32()), 1, "")
+		highWord := slot.Type().StructElementTypes()[1]
+		slot = b.CreateInsertValue(slot, llvm.ConstNull(highWord), 1, "")
 		return b.CreateInsertValue(value, slot, 0, "")
 	}
 	result := value
 	update := func(i int) {
 		field := b.CreateExtractValue(value, i, "")
-		result = b.CreateInsertValue(result, p.clearWasmSlicePadding(b, field), i, "")
+		result = b.CreateInsertValue(result, p.clearWasmABIPadding(b, field), i, "")
 	}
 	if t.TypeKind() == llvm.ArrayTypeKind {
 		for i := 0; i < t.ArrayLength(); i++ {
@@ -74,7 +78,7 @@ func (p Program) clearWasmSlicePadding(b llvm.Builder, value llvm.Value) llvm.Va
 		}
 	} else {
 		for i, field := range t.StructElementTypes() {
-			if p.hasWasmSlicePadding(field) {
+			if p.hasWasmABIPadding(field) {
 				update(i)
 			}
 		}
@@ -96,7 +100,7 @@ func (f Function) finishWasmSliceParams() {
 		b := f.entryAllocaBuilder()
 		placeholder := b.CreatePHI(param.Type(), "")
 		param.ReplaceAllUsesWith(placeholder)
-		value := f.Prog.clearWasmSlicePadding(b, param)
+		value := f.Prog.clearWasmABIPadding(b, param)
 		placeholder.ReplaceAllUsesWith(value)
 		placeholder.EraseFromParentAsInstruction()
 	}
@@ -312,8 +316,8 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 
 func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 	if value.Type() == b.Prog.withoutNativeStorage(t).ll {
-		if b.Prog.isNativeStorage(t) && b.Prog.hasWasmSlicePadding(value.Type()) {
-			return b.Prog.clearWasmSlicePadding(b.impl, value)
+		if b.Prog.isNativeStorage(t) && b.Prog.hasWasmABIPadding(value.Type()) {
+			return b.Prog.clearWasmABIPadding(b.impl, value)
 		}
 		return value
 	}
@@ -421,4 +425,25 @@ func (b Builder) physicalPointerIndex(index Expr) Expr {
 	t.ll = physical
 	index.Type = &t
 	return index
+}
+
+// The legacy call adapter only converts signatures containing native slices.
+func (p Program) hasWasmSlicePadding(t llvm.Type) bool {
+	if !p.usesWideGoStorage() || p.rtSliceTy.IsNil() {
+		return false
+	}
+	if t == p.rtSliceTy {
+		return true
+	}
+	switch t.TypeKind() {
+	case llvm.StructTypeKind:
+		for _, field := range t.StructElementTypes() {
+			if p.hasWasmSlicePadding(field) {
+				return true
+			}
+		}
+	case llvm.ArrayTypeKind:
+		return t.ArrayLength() > 0 && p.hasWasmSlicePadding(t.ElementType())
+	}
+	return false
 }

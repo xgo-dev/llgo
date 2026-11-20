@@ -1723,7 +1723,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 	if ret.Type != b.Prog.Void() {
 		ret.impl = b.fitLLVMResult(call, ret.Type)
 		if b.Prog.isWasm32NativeCall(fn) && b.Prog.hasWasmSlicePadding(ret.impl.Type()) {
-			ret.impl = b.Prog.clearWasmSlicePadding(b.impl, ret.impl)
+			ret.impl = b.Prog.clearWasmABIPadding(b.impl, ret.impl)
 		}
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
