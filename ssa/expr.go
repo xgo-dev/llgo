@@ -2106,44 +2106,20 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 			}
 		}
 	case "append":
-		if len(args) == 2 {
-			src := args[0]
-			if src.kind == vkSlice {
-				elem := args[1]
-				switch elem.kind {
-				case vkSlice:
-					etSize := b.Prog.SizeOf(b.Prog.Elem(elem.Type))
-					ret.Type = src.Type
-					ret.impl = b.appendSlice(src, b.SliceData(elem), b.SliceLen(elem), etSize).impl
-					return
-				case vkString:
-					etSize := b.Prog.SizeOf(b.Prog.Byte())
-					ret.Type = src.Type
-					ret.impl = b.InlineCall(b.Pkg.rtFunc("SliceAppend"),
-						src, b.StringData(elem), b.StringLen(elem), b.Prog.Val(int(etSize)), b.Prog.BoolVal(false)).impl
-					return
-				default:
-					etSize := b.Prog.SizeOf(elem.Type)
-					ret.Type = src.Type
-					ret.impl = b.appendSlice(src, elem, b.Const(constant.MakeInt64(1), b.Prog.Int()), etSize).impl
-					return
-				}
+		if len(args) == 2 && args[0].kind == vkSlice {
+			dst, src := args[0], args[1]
+			switch src.kind {
+			case vkSlice:
+				return b.appendSlice(dst, b.SliceData(src), b.SliceLen(src), b.Prog.SizeOf(b.Prog.Elem(src.Type)))
+			case vkString:
+				return b.appendSlice(dst, b.StringData(src), b.StringLen(src), b.Prog.SizeOf(b.Prog.Byte()))
+			default:
+				return b.appendSlice(dst, src, b.Prog.Val(1), b.Prog.SizeOf(src.Type))
 			}
 		}
 	case "copy":
-		if len(args) == 2 {
-			dst := args[0]
-			if dst.kind == vkSlice {
-				src := args[1]
-				prog := b.Prog
-				etSize := prog.Val(int(prog.SizeOf(prog.Elem(dst.Type))))
-				switch src.kind {
-				case vkSlice:
-					return b.InlineCall(b.Pkg.rtFunc("SliceCopy"), dst, b.SliceData(src), b.SliceLen(src), etSize)
-				case vkString:
-					return b.InlineCall(b.Pkg.rtFunc("SliceCopy"), dst, b.StringData(src), b.StringLen(src), etSize)
-				}
-			}
+		if len(args) == 2 && args[0].kind == vkSlice && (args[1].kind == vkSlice || args[1].kind == vkString) {
+			return b.copySlice(args[0], args[1])
 		}
 	case "close":
 		if len(args) == 1 {

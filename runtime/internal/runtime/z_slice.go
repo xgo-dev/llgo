@@ -107,7 +107,8 @@ func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int
 	if etSize == 0 {
 		return src
 	}
-	c.Memcpy(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
+	// An in-capacity append may take its arguments from the same backing array.
+	c.Memmove(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
 	return src
 }
 

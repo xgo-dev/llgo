@@ -3,6 +3,7 @@
 package wasmexportabi
 
 import (
+	"structs"
 	"unsafe"
 )
 
@@ -45,6 +46,25 @@ type Mixed struct {
 	Text string
 	Data []byte
 }
+
+type hostRecord struct {
+	_ structs.HostLayout
+	Mixed
+	Word uintptr
+	Rows [1][2]Mixed
+}
+
+//go:linkname hostGlobal C.llgo_test_host_global
+var hostGlobal hostRecord
+
+//go:linkname plainGlobal C.llgo_test_plain_global
+var plainGlobal struct {
+	Mixed
+	Word uintptr
+}
+
+//go:linkname dirtyHostHeaders C.llgo_test_dirty_host_headers
+func dirtyHostHeaders() *string
 
 //export llgo_test_go_mixed
 func goMixed(m Mixed) Mixed {
