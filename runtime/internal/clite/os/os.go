@@ -56,9 +56,6 @@ type (
 	StatT = syscall.Stat_t
 )
 
-//go:linkname Errno C.cliteErrno
-func Errno() c.Int
-
 //go:linkname Umask C.umask
 func Umask(cmask ModeT) ModeT
 
@@ -110,9 +107,6 @@ func Chroot(path *c.Char) c.Int
 
 //go:linkname Environ C.environ
 var Environ **c.Char
-
-//go:linkname Getenv C.getenv
-func Getenv(name *c.Char) *c.Char
 
 //go:linkname Setenv C.setenv
 func Setenv(name *c.Char, value *c.Char, overwrite c.Int) c.Int

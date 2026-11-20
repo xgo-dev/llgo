@@ -1,4 +1,4 @@
-//go:build !darwin && !windows
+//go:build !darwin && !windows && !baremetal
 
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.

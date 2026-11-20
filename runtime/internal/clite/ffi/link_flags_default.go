@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !wasm && !tinygo.riscv32
 
 package ffi
 

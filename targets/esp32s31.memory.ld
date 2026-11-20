@@ -23,4 +23,4 @@ MEMORY
 
 REGION_ALIAS("iram_seg", sram_seg);
 REGION_ALIAS("dram_seg", sram_seg);
-INCLUDE "targets/esp32-riscv.app.elf.ld";
+INCLUDE "targets/esp32s31.app.elf.ld";

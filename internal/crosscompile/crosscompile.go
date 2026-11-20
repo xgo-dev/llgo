@@ -1185,6 +1185,13 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
 	}
 	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
+	if slices.Contains(config.BuildTags, "baremetal") && strings.HasPrefix(config.LLVMTarget, "riscv32") {
+		// reflect's native call bridge links the vendored riscv32 libffi
+		// (runtime/internal/clite/ffi/riscv32) through ffi's "link: -lffi".
+		if root := env.LLGoROOT(); root != "" {
+			ldflags = append(ldflags, "-L", filepath.Join(root, "runtime", "internal", "clite", "ffi", "riscv32"))
+		}
+	}
 
 	if config.Libc != "" {
 		var outputDir string

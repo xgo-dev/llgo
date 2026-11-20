@@ -91,7 +91,7 @@ func NumGoroutine() int {
 	return llrt.NumGoroutine()
 }
 
-const funcForPCCacheSets = 1024
+const funcForPCCacheSets = funcForPCCacheSetCapacity
 const funcForPCCacheWays = 4
 
 // Cache immutable Func pointers as single atomic words. The queried pc lives
