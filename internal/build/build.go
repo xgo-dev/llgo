@@ -730,6 +730,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	if embeddedPrintfFloatProfile(conf, export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), espPrintfFloatTag)
+	}
 	if emscriptenSchedulerProofProfile(conf, &export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
 	}
@@ -2765,6 +2768,7 @@ type mainLinkPlan struct {
 
 	emscriptenUseLibcAllocator bool
 	directWasmAllocator        bool
+	embeddedPrintfFloatMarker  string
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -2785,6 +2789,7 @@ type mainLinkPreparation struct {
 
 	emscriptenUseLibcAllocator bool
 	emscriptenCollectorArchive string
+	probeEmbeddedPrintfFloat   bool
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2871,9 +2876,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 	// Even a leaf export needs the runtime for foreign-thread registration.
 	needRuntime = needRuntime || len(cExports) != 0
-	if (!needRuntime || ctx.embeddedRuntimeFree) && !needPyInit && len(linkArgs) == 0 {
-		configureEmbeddedPrintf(ctx, linkedOrder)
-	}
+	probeEmbeddedPrintfFloat := len(cExports) == 0 && !needPyInit && len(linkArgs) == 0 &&
+		configureEmbeddedPrintf(ctx, linkedOrder, needRuntime, rtLinkArgs)
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
 	linkRuntime := needRuntime || needPyInit || ctx.buildConf.Target == ""
@@ -2947,6 +2951,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 
 		emscriptenUseLibcAllocator: ctx.emscriptenDirectMain && !linkRuntime,
 		emscriptenCollectorArchive: collectorArchive,
+		probeEmbeddedPrintfFloat:   probeEmbeddedPrintfFloat,
 	}, nil
 }
 
@@ -2961,6 +2966,18 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	ctx.darwinHiddenGlobals = nil
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
+	var embeddedPrintfFloatMarker string
+	if slices.Contains(ctx.crossCompile.BuildTags, espPrintfFloatTag) {
+		if preparation.probeEmbeddedPrintfFloat {
+			var err error
+			embeddedPrintfFloatMarker, err = buildEmbeddedPrintfFloatMarker(ctx, entryPkg.ExportFile)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			defineEmbeddedPrintfFloatMarker(entryPkg.LPkg)
+		}
+	}
 	cExports := preparation.gen.cExports
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
@@ -3036,6 +3053,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 
 		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
 		directWasmAllocator:        directWasmAllocator,
+		embeddedPrintfFloatMarker:  embeddedPrintfFloatMarker,
 	}, nil
 }
 
@@ -3049,7 +3067,11 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return err
 	}
 	defer cleanupWasmLinkOutput(linkOutput, driverOut)
-	if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
+	if plan.embeddedPrintfFloatMarker != "" {
+		if err := linkEmbeddedPrintfFloat(ctx, plan, linkOutput, verbose); err != nil {
+			return err
+		}
+	} else if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
 		return err
 	}
 	if err := pruneEmbeddedPCLN(ctx, plan, linkOutput, verbose); err != nil {

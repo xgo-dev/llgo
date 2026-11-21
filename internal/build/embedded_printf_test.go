@@ -56,7 +56,7 @@ func (*Format) Printf(...any) {}
 			ctx := &context{
 				prog: prog, progSSA: ssaPkg.Prog, initial: []*packages.Package{pkg},
 				buildConf:    &Config{Target: "esp32c3-basic", BuildMode: BuildModeExe, OptLevel: optlevel.Oz, LTO: lto.Full, PrintCommands: true},
-				crossCompile: crosscompile.Export{LDFLAGS: []string{"--gc-sections", espPrintfFloatRoot}},
+				crossCompile: crosscompile.Export{Libc: "newlib-esp32", LDFLAGS: []string{"--gc-sections", espPrintfFloatRoot}},
 			}
 			if test.custom {
 				ctx.buildConf.LinkOptions.ExternalLinkerFlags = "-lfmt"
@@ -66,7 +66,7 @@ func (*Format) Printf(...any) {}
 				archive.SSA = nil
 				archive.AltPkg = &packages.Cached{Package: pkg, Types: ssaPkg.Pkg}
 			}
-			configureEmbeddedPrintf(ctx, []*aPackage{archive})
+			configureEmbeddedPrintf(ctx, []*aPackage{archive}, false, nil)
 			if got := slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot); got != test.keep {
 				t.Fatalf("keep float root = %v, want %v", got, test.keep)
 			}
@@ -87,5 +87,45 @@ func TestIntegerPrintfFormat(t *testing.T) {
 		if integerPrintfFormat(format) {
 			t.Errorf("unknown or floating format %q accepted", format)
 		}
+	}
+}
+
+func TestEmbeddedPrintfFloatRuntimeReference(t *testing.T) {
+	for _, key := range []string{"LDFLAGS", "CFLAGS", "CCFLAGS", "CGO_CFLAGS", "CGO_LDFLAGS"} {
+		t.Setenv(key, "")
+	}
+	for _, tc := range []struct {
+		name, reference string
+		args            []string
+		runtimeFree     bool
+		keep, probe     bool
+	}{
+		{name: "float reference", reference: "C." + espPrintfFloatMarker, args: []string{"--wrap=malloc"}, keep: true, probe: true},
+		{name: "older runtime", keep: true},
+		{name: "different symbol", reference: "C.other", keep: true},
+		{name: "allocator only", runtimeFree: true, args: []string{"--wrap=calloc"}},
+		{name: "extra runtime library", reference: "C." + espPrintfFloatMarker, args: []string{"-lextra"}, keep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			main := buildWasmReflectTestProgram(t, "package main; func main() {}")
+			prog := llssa.NewProgram(&llssa.Target{GOARCH: "riscv32"})
+			defer prog.Dispose()
+			if tc.reference != "" {
+				prog.SetLinkname(llssa.PkgRuntime+".requirePrintfFloat", tc.reference)
+			}
+			pkg := &packages.Package{Name: "main", PkgPath: "main", Types: main.Pkg}
+			ctx := &context{
+				prog: prog, progSSA: main.Prog, initial: []*packages.Package{pkg},
+				buildConf:           &Config{Target: "esp32c3-basic", BuildMode: BuildModeExe, OptLevel: optlevel.Oz, LTO: lto.Full},
+				crossCompile:        crosscompile.Export{Libc: "newlib-esp32", LDFLAGS: []string{espPrintfFloatRoot}},
+				embeddedRuntimeFree: tc.runtimeFree,
+			}
+			if probe := configureEmbeddedPrintf(ctx, []*aPackage{{Package: pkg, SSA: main}}, true, tc.args); probe != tc.probe {
+				t.Fatalf("try float-free link = %v, want %v", probe, tc.probe)
+			}
+			if got := slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot); got != tc.keep {
+				t.Fatalf("keep float root = %v, want %v", got, tc.keep)
+			}
+		})
 	}
 }

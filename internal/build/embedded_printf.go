@@ -1,42 +1,76 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
 	"go/constant"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-const espPrintfFloatRoot = "--undefined=_printf_float"
+const (
+	espPrintfFloatRoot   = "--undefined=_printf_float"
+	espPrintfFloatTag    = "llgo.esp32c3.printf_float"
+	espPrintfFloatMarker = "__llgo_esp32c3_requires_printf_float"
+)
 
-// The stock ESP32-C3 newlib is built with nano formatted I/O. Its printf
-// implementation can omit the floating-point backend if every Go call site
-// has a known integer-only format. Apply this to closed links whose
-// Go startup and formatting paths have no floating-point use.
-func configureEmbeddedPrintf(ctx *context, linkedOrder []*aPackage) {
+// Every program built with this profile shares the same runtime archive.
+// The only program-dependent choice is whether to force libc's weak float
+// formatter into the final link.
+func embeddedPrintfFloatProfile(conf *Config, target crosscompile.Export) bool {
+	return (conf.Target == "esp32c3-basic" || conf.Target == "esp32c3-flash") &&
+		conf.OptLevel == optlevel.Oz && conf.ltoMode() == lto.Full &&
+		target.Libc == "newlib-esp32" && slices.Contains(target.LDFLAGS, espPrintfFloatRoot)
+}
+
+// Retain the forced root for application C calls that may need floating-point
+// formatting. When Go needs a runtime, probe whether LTO can discard its
+// floating-point marker before omitting the root.
+func configureEmbeddedPrintf(ctx *context, linkedOrder []*aPackage, needRuntime bool, runtimeLinkArgs []string) (probe bool) {
 	conf := ctx.buildConf
-	if (conf.Target != "esp32c3-basic" && conf.Target != "esp32c3-flash") || conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full ||
-		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.frontend != nil || len(ctx.initial) != 1 ||
+	if !embeddedPrintfFloatProfile(conf, ctx.crossCompile) || conf.BuildMode != BuildModeExe ||
+		ctx.mode == ModeGen || ctx.frontend != nil || len(ctx.initial) != 1 ||
 		conf.ModuleHook != nil || conf.LTOPlugin.Enabled() || conf.Coverage != nil || len(conf.SourceOverlay) != 0 ||
-		!slices.Equal(ctx.crossCompile.ExtraFiles, embeddedBootFiles(conf.Target)) || conf.LinkOptions.ExternalLinker != "" || conf.LinkOptions.ExternalLinkerFlags != "" ||
-		!slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot) {
-		return
+		!slices.Equal(ctx.crossCompile.ExtraFiles, embeddedBootFiles(conf.Target)) ||
+		conf.LinkOptions.ExternalLinker != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return false
+	}
+	if needRuntime {
+		// The stock collector only redirects allocation. Other runtime link
+		// arguments may link libraries whose format strings we cannot inspect.
+		for _, arg := range runtimeLinkArgs {
+			switch arg {
+			case "--wrap=malloc", "--wrap=realloc", "--wrap=calloc":
+			default:
+				return false
+			}
+		}
+		if !ctx.embeddedRuntimeFree {
+			symbol, ok := ctx.prog.Linkname(llssa.PkgRuntime + ".requirePrintfFloat")
+			if !ok || symbol != "C."+espPrintfFloatMarker {
+				return false
+			}
+		}
 	}
 	for _, name := range []string{"LDFLAGS", "CCFLAGS", "CFLAGS", "CGO_CFLAGS", "CGO_LDFLAGS"} {
 		if os.Getenv(name) != "" || ctx.commands.lookup(name) != "" {
-			return
+			return false
 		}
 	}
 	opaqueAssembly := &linkPruningInputs{}
-	if opaqueGlobalInitPackage(ctx, make(map[string]bool), opaqueAssembly) != "" || opaqueAssembly.opaqueAsmPkg != "" {
-		return
+	if opaqueGlobalInitPackage(ctx, make(map[string]bool), opaqueAssembly) != "" ||
+		opaqueAssembly.opaqueAsmPkg != "" || slices.ContainsFunc(opaqueAssembly.roots, isPrintfSymbol) {
+		return false
 	}
 	extern := func(fn *ssa.Function) string {
 		if fn.Pkg == nil {
@@ -60,14 +94,71 @@ func configureEmbeddedPrintf(ctx *context, linkedOrder []*aPackage) {
 		}
 	}
 	if needsEmbeddedPrintfFloat(ssautil.AllFunctions(ctx.progSSA), linked, extern) {
-		return
+		return false
 	}
-	ctx.crossCompile.LDFLAGS = slices.DeleteFunc(slices.Clone(ctx.crossCompile.LDFLAGS), func(flag string) bool {
-		return flag == espPrintfFloatRoot
-	})
+	if needRuntime && !ctx.embeddedRuntimeFree {
+		return true
+	}
+	omitEmbeddedPrintfFloatRoot(&ctx.crossCompile)
 	if conf.PrintCommands || conf.Verbose {
 		fmt.Fprintln(os.Stderr, "llgo: omit unused ESP32-C3 floating-point printf")
 	}
+	return false
+}
+
+func omitEmbeddedPrintfFloatRoot(target *crosscompile.Export) {
+	target.LDFLAGS = slices.DeleteFunc(slices.Clone(target.LDFLAGS), func(flag string) bool {
+		return flag == espPrintfFloatRoot
+	})
+}
+
+func defineEmbeddedPrintfFloatMarker(pkg llssa.Package) {
+	fn := pkg.NewFunc(espPrintfFloatMarker, llssa.NoArgsNoRet, llssa.CDecl)
+	pkg.Module().NamedFunction(espPrintfFloatMarker).SetVisibility(llvm.HiddenVisibility)
+	fn.MakeBody(1).Return()
+}
+
+func buildEmbeddedPrintfFloatMarker(ctx *context, exportFile string) (string, error) {
+	pkg := ctx.prog.NewPackage("", "esp32c3.printf.float")
+	defer pkg.Module().Dispose()
+	defineEmbeddedPrintfFloatMarker(pkg)
+	return exportObject(ctx, "esp32c3_printf_float", exportFile+"-printf-float", pkg)
+}
+
+// Keep speculative output out of the destination until the reduced link
+// succeeds. Both links consume the exact same application and runtime archives.
+func linkEmbeddedPrintfFloat(ctx *context, plan *mainLinkPlan, output string, verbose bool) error {
+	dir := filepath.Dir(output)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	probeDir, err := os.MkdirTemp(dir, ".llgo-printf-float-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(probeDir)
+	probeOutput := filepath.Join(probeDir, filepath.Base(output))
+	probe := *ctx
+	omitEmbeddedPrintfFloatRoot(&probe.crossCompile)
+	var diagnostics bytes.Buffer
+	probe.linkDiagnostics = &diagnostics
+	if err := linkObjFiles(&probe, probeOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
+		if !bytes.Contains(diagnostics.Bytes(), []byte("undefined symbol: "+espPrintfFloatMarker)) {
+			_, _ = diagnostics.WriteTo(os.Stderr)
+			return err
+		}
+		if ctx.shouldPrintCommands(verbose) {
+			fmt.Fprintln(os.Stderr, "llgo: retain ESP32-C3 floating-point printf for Go builtin printing")
+		}
+		inputs := slices.Concat([]string{plan.embeddedPrintfFloatMarker}, plan.linkInputs)
+		return linkObjFiles(ctx, output, inputs, plan.linkArgs, verbose)
+	}
+	_, _ = diagnostics.WriteTo(os.Stderr)
+	if ctx.shouldPrintCommands(verbose) {
+		fmt.Fprintln(os.Stderr, "llgo: omit unused ESP32-C3 floating-point printf")
+	}
+	ctx.crossCompile.LDFLAGS = probe.crossCompile.LDFLAGS
+	return os.Rename(probeOutput, output)
 }
 
 func needsEmbeddedPrintfFloat(functions map[*ssa.Function]bool, linked map[*ssa.Package]bool, extern func(*ssa.Function) string) bool {

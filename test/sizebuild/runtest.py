@@ -326,6 +326,19 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "./benchmark/binary_size/fmtprintf", "Hello, world\n")
     if stdout_marker not in log:
         raise RuntimeError(f"{target}: closed literal stdout kept the standard file writer\n{log}")
+    if target == "esp32c3-flash":
+        omit_float = "llgo: omit unused ESP32-C3 floating-point printf"
+        if omit_float not in log:
+            raise RuntimeError(f"{target}: literal stdout retained the newlib float formatter\n{log}")
+        package = "./internal/build/testdata/embedded-printf-go-float"
+        expected = command(["go", "run", package], env)
+        output = embedded_output_probe(llgo, directory, env, target, flags, package, expected)
+        if "llgo: retain ESP32-C3 floating-point printf for Go builtin printing" not in output:
+            raise RuntimeError(f"{target}: builtin float printing did not require the full link\n{output}")
+        output = embedded_output_probe(llgo, directory, env, target, flags,
+                                       "./internal/build/testdata/embedded-printf-c-float", "C float 1.25\n")
+        if omit_float in output:
+            raise RuntimeError(f"{target}: dynamic C format dropped float support\n{output}")
     log = embedded_output_probe(llgo, directory, env, target, flags,
                                 "./internal/build/testdata/embedded-link-parity",
                                 "redirected\nembedded output and reflection ok\n")

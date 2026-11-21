@@ -36,6 +36,7 @@ func formatSpecialFloat(v float64) (string, bool) {
 }
 
 func formatFloatWithC(v float64, format *c.Char) string {
+	requirePrintfFloat()
 	var buf [64]byte
 	c.Snprintf((*c.Char)(unsafe.Pointer(&buf[0])), uintptr(len(buf)), format, v)
 	return c.GoString((*c.Char)(unsafe.Pointer(&buf[0])))
