@@ -67,7 +67,7 @@ func needsRuntimeMainFrame(ctx *context) bool {
 }
 
 func needsWasmRuntimeScheduler(ctx *context) bool {
-	if ctx.buildConf.BuildMode != BuildModeExe {
+	if ctx.emscriptenDirectMain || ctx.buildConf.BuildMode != BuildModeExe {
 		return false
 	}
 	if ctx.crossCompile.WasmPostLink.Asyncify {
@@ -137,6 +137,9 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 	// TODO(lijie): workaround for syscall patch
 	defineWeakNoArgStub(mainPkg, "syscall.init")
+	if emscriptenSchedulerProofEnabled(ctx) && !ctx.probeEmscriptenScheduler {
+		defineEmscriptenSchedulerMarker(mainPkg)
+	}
 
 	var pyInit llssa.Function
 	var pyFinalize llssa.Function
@@ -233,7 +236,11 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	if wasmRuntimeScheduler {
 		defineWasmMainTask(mainPkg, startPCLN, packageInits, mainInit, mainMain)
 		startPCLN = nil
-		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+		if ctx.probeEmscriptenScheduler {
+			wasmRunMain = mainPkg.NewFunc(emscriptenMainDispatch, llssa.NoArgsNoRet, llssa.CDecl)
+		} else {
+			wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+		}
 	}
 	var coverageExit llssa.Function
 	if ctx.buildConf.Coverage != nil {
@@ -646,8 +653,8 @@ func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInit
 		[]types.Type{types.Typ[types.UnsafePointer]},
 		[]types.Type{types.Typ[types.UnsafePointer]},
 	)
-	fn := pkg.NewFunc("__llgo_wasm_main", sig, llssa.CDecl)
-	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
+	fn := pkg.NewFunc(wasmMainTaskSymbol, sig, llssa.CDecl)
+	fnVal := pkg.Module().NamedFunction(wasmMainTaskSymbol)
 	fnVal.SetVisibility(llvm.HiddenVisibility)
 	b := fn.MakeBody(1)
 	if startPCLN != nil {

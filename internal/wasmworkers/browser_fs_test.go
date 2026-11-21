@@ -6,11 +6,20 @@ import (
 )
 
 func TestBrowserFSProxyContract(t *testing.T) {
+	testBrowserFS(t, "browser_fs_test.mjs")
+}
+
+func TestBrowserFSSnapshotContract(t *testing.T) {
+	testBrowserFS(t, "browser_fs_snapshot_test.mjs")
+}
+
+func testBrowserFS(t *testing.T, script string) {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
-	if out, err := exec.Command(node, "browser_fs_test.mjs").CombinedOutput(); err != nil {
-		t.Fatalf("browser filesystem proxy: %v\n%s", err, out)
+	if out, err := exec.Command(node, script).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v\n%s", script, err, out)
 	}
 }

@@ -186,7 +186,7 @@ func typehashImpl(t *_type, p unsafe.Pointer, h uintptr) uintptr {
 	case abi.Struct:
 		s := (*structtype)(unsafe.Pointer(t))
 		for _, f := range s.Fields {
-			if f.Name_ == "_" {
+			if f.Blank() {
 				continue
 			}
 			h = typehashImpl(f.Typ, add(p, f.Offset), h)
@@ -303,7 +303,7 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 
 func structFieldsHaveCheapMismatch(fields []structfield, p, q unsafe.Pointer) bool {
 	for _, ft := range fields {
-		if ft.Name_ == "_" {
+		if ft.Blank() {
 			continue
 		}
 		pi := add(p, ft.Offset)
@@ -348,7 +348,7 @@ func typeEqualMayPanic(t *_type) bool {
 	case abi.Struct:
 		x := (*structtype)(unsafe.Pointer(t))
 		for _, ft := range x.Fields {
-			if ft.Name_ != "_" && typeEqualMayPanic(ft.Typ) {
+			if !ft.Blank() && typeEqualMayPanic(ft.Typ) {
 				return true
 			}
 		}
@@ -364,7 +364,7 @@ func structequal(p, q unsafe.Pointer) bool {
 	fields := x.Fields
 	segmentStart := 0
 	for i, ft := range fields {
-		if ft.Name_ == "_" {
+		if ft.Blank() {
 			continue
 		}
 		if !typeEqualMayPanic(ft.Typ) {
@@ -374,7 +374,7 @@ func structequal(p, q unsafe.Pointer) bool {
 			return false
 		}
 		for _, ft := range fields[segmentStart : i+1] {
-			if ft.Name_ == "_" {
+			if ft.Blank() {
 				continue
 			}
 			pi := add(p, ft.Offset)
@@ -389,7 +389,7 @@ func structequal(p, q unsafe.Pointer) bool {
 		return false
 	}
 	for _, ft := range fields[segmentStart:] {
-		if ft.Name_ == "_" {
+		if ft.Blank() {
 			continue
 		}
 		pi := add(p, ft.Offset)

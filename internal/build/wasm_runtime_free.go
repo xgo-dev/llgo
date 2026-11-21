@@ -8,10 +8,13 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -19,7 +22,9 @@ import (
 // A closed program with no Go allocation, panic, callbacks or scheduler use
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
-func configureWasmRuntimeFree(ctx *context) {
+// Emscripten uses the same proof to omit runtime startup and the scheduler at
+// final link. The instrumentation in cached archives keeps its usual ABI.
+func configureRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
@@ -27,12 +32,17 @@ func configureWasmRuntimeFree(ctx *context) {
 		return
 	}
 	conf := ctx.buildConf
+	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
+	directMain := canUseEmscriptenDirectMain(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
-		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
+		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
+		ctx.frontendOptions.DebuggerFrames || (!directMain && needsWasmRuntimeScheduler(ctx)) ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !embedded && !directMain && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
+		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -121,7 +131,63 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
-	enableWasmRuntimeFree(ctx)
+	if directMain {
+		ctx.emscriptenDirectMain = true
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: omit Emscripten scheduler for a synchronous executable")
+		}
+	} else if embedded {
+		ctx.embeddedRuntimeFree = true
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free bare-metal program")
+		}
+	} else {
+		enableWasmRuntimeFree(ctx)
+	}
+}
+
+// Native inputs and externally selected flags can introduce suspending calls
+// that have no Go SSA body. Use the fixed Emscripten executable profiles.
+func canUseEmscriptenDirectMain(ctx *context) bool {
+	conf, target := ctx.buildConf, ctx.crossCompile
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, ctx.frontendOptions) &&
+		conf.DebugArtifactMode == DebugArtifactNone && conf.Goos == "js" && conf.Goarch == "wasm" &&
+		(conf.Target == "emscripten" || conf.Target == "emscripten-memory64") &&
+		target.WasmProvider == crosscompile.WasmProviderEmscripten && slices.Contains(target.LDFLAGS, "-sASYNCIFY=1") &&
+		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
+		!slices.Contains(target.BuildTags, "llgo.wasm.workers") && !slices.Contains(tags, "llgo.wasm.workers") &&
+		!slices.Contains(tags, wasmReflectLibffiTag) &&
+		os.Getenv("EMCC_CFLAGS") == "" && ctx.commands.lookup("EMCC_CFLAGS") == ""
+}
+
+// Apply the startup proof to the final link only. Package manifests use the
+// original profile, so synchronous and suspending programs can share archives.
+func configureEmscriptenDirectLink(target *crosscompile.Export) {
+	flags := slices.Clone(target.LDFLAGS)
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == "--pre-js" && filepath.Base(flags[i+1]) == emscriptenAsyncifyExportsJS {
+			flags = slices.Delete(flags, i, i+2)
+			break
+		}
+	}
+	target.LDFLAGS = slices.DeleteFunc(flags, func(flag string) bool {
+		return strings.HasPrefix(flag, "-sASYNCIFY")
+	})
+	target.WasmPostLink.Asyncify = false
+}
+
+func configureEmscriptenLibcAllocator(target *crosscompile.Export) {
+	if i := slices.Index(target.LDFLAGS, "-sMALLOC=none"); i >= 0 {
+		target.LDFLAGS = slices.Clone(target.LDFLAGS)
+		target.LDFLAGS[i] = "-sMALLOC=emmalloc"
+	}
+}
+
+// Only the executable's own package can omit its polls and caller frames.
+// Dependencies still compile with the fixed runtime profile.
+func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {
+	return ctx.emscriptenDirectMain && pkgExists(ctx.initial, pkg)
 }
 
 func enableWasmRuntimeFree(ctx *context) {

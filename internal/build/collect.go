@@ -19,6 +19,7 @@ package build
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/meta"
@@ -242,6 +244,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 	m.pkg.PkgPath = p.PkgPath
 	m.pkg.PkgID = p.ID
+	m.pkg.EmscriptenRuntimeFree = isEmscriptenRuntimeFreeEntry(c, p)
 	m.pkg.GoVersion = c.buildConf.GoVersion
 	if m.pkg.GoVersion == "" && p.Module != nil {
 		m.pkg.GoVersion = p.Module.GoVersion
@@ -249,6 +252,23 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if c.frontend != nil {
 		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
 	}
+	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
+	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
+	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
+	for _, groups := range pkg.guardedInitializers {
+		for _, group := range groups {
+			m.pkg.InitializerGuards = append(m.pkg.InitializerGuards, cl.InitializerGuardName(group.Global))
+		}
+	}
+	slices.Sort(m.pkg.InitializerGuards)
+	if m.pkg.SpecializeBinary || m.pkg.SpecializeJSON {
+		m.pkg.CodecInitDrops = slices.Sorted(maps.Keys(c.codecInitDrops))
+	}
+	if plan := c.stdout; plan != nil && plan.selected != nil && plan.entry.Pkg == p.Types {
+		m.pkg.StdoutWriter = plan.selected.Name()
+	}
+	m.pkg.GeneratedValueFormat = c.valueFormatFunctions[p.Types] != nil
+	m.pkg.SpecializeValueFormat = c.valueFormatPackages[p.Types] || pkg.AltPkg != nil && c.valueFormatPackages[pkg.AltPkg.Types]
 	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
 	if pkg.AltPkg != nil && c.progSSA != nil {
 		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)

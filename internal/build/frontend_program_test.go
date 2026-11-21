@@ -213,7 +213,7 @@ func TestFrontendProgramRestoresWasmFeatureDecisions(t *testing.T) {
 	f.ctx.frontendOptions.ShadowStack = true
 	configureWasmReflectBridges(f.ctx)
 	configureWasmFuncInfoEntries(f.ctx)
-	configureWasmRuntimeFree(f.ctx)
+	configureRuntimeFree(f.ctx)
 	if !target.WasmReflectBridges || !target.WasmFuncInfoEntries || !f.ctx.wasmRuntimeFree || f.ctx.frontendOptions.ShadowStack {
 		t.Fatal("cached Wasm features changed")
 	}

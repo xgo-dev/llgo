@@ -104,3 +104,26 @@ func TestPanicRecoverAndCaller(t *testing.T) {
 	}
 	panic("wasm-test-panic")
 }
+
+type valueMethodReceiver struct{ result int }
+
+func (v valueMethodReceiver) Result() int { return v.result }
+
+//go:noinline
+func invokeValueMethod(v interface{ Result() int }) int { return v.Result() }
+
+func TestNilValueMethodReceiver(t *testing.T) {
+	if got := invokeValueMethod(&valueMethodReceiver{42}); got != 42 {
+		t.Fatalf("non-nil receiver returned %d", got)
+	}
+	defer func() {
+		v := recover()
+		err, ok := v.(error)
+		pkg := reflect.TypeOf(valueMethodReceiver{}).PkgPath()
+		want := "value method " + pkg + ".valueMethodReceiver.Result called using nil *valueMethodReceiver pointer"
+		if !ok || err.Error() != want {
+			t.Fatalf("recover = %v, want %q", v, want)
+		}
+	}()
+	invokeValueMethod((*valueMethodReceiver)(nil))
+}

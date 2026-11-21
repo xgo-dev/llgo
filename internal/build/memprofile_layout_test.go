@@ -3,6 +3,7 @@ package build
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,10 +53,29 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 				t.Fatalf("memory profile buckets are not an array: %s", array.String())
 			}
 			bucket := array.ElementType()
-			offset := td.ElementOffset(bucket, 1)
+			if bucket.TypeKind() != llvm.StructTypeKind {
+				t.Fatalf("memory profile bucket is not a struct: %s", bucket.String())
+			}
+			fields := bucket.StructElementTypes()
+			if len(fields) != 1 || fields[0].TypeKind() != llvm.ArrayTypeKind {
+				t.Fatalf("memory profile bucket has no counter shard array: %s", bucket.String())
+			}
+			shard := fields[0].ElementType()
+			if shard.TypeKind() != llvm.StructTypeKind {
+				t.Fatalf("memory profile shard is not a struct: %s", shard.String())
+			}
+			index := slices.IndexFunc(shard.StructElementTypes(), func(field llvm.Type) bool {
+				return field.TypeKind() == llvm.IntegerTypeKind && field.IntTypeWidth() == 64
+			})
+			if index < 0 {
+				t.Fatalf("memory profile shard has no 64-bit counter: %s", shard.String())
+			}
+			offset := td.ElementOffset(bucket, 0) + td.ElementOffset(shard, index)
 			stride := td.TypeAllocSize(bucket)
-			if buckets.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
-				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", buckets.Alignment(), offset, stride)
+			shardStride := td.TypeAllocSize(shard)
+			if buckets.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 || shardStride%8 != 0 {
+				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, bucket stride=%d, shard stride=%d",
+					buckets.Alignment(), offset, stride, shardStride)
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.

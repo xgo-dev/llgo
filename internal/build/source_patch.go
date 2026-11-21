@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -32,13 +33,16 @@ func cloneOverlay(src map[string][]byte) map[string][]byte {
 }
 
 type sourcePatchBuildContext struct {
-	goos       string
-	goarch     string
-	goversion  string
-	toolTags   []string
-	buildFlags []string
-	targetTags []string
-	cgoEnabled *bool
+	goos           string
+	goarch         string
+	goversion      string
+	toolTags       []string
+	buildFlags     []string
+	targetTags     []string
+	builtinFormats bool
+	deferErrorType bool
+	fsSnapshot     []byte
+	cgoEnabled     *bool
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
@@ -54,6 +58,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 		}
 		out = next
 		pkgFiles[pkgPath] = files
+	}
+	if ctx.deferErrorType {
+		if path, source := deferredErrorTypeSource(goroot, base); source != nil {
+			if out == nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+			}
+			out[path] = source
+			cacheFile := filepath.Join(filepath.Dir(path), errorTypeCacheFile)
+			out[cacheFile] = []byte(errorTypeCacheSource)
+			pkgFiles["errors"] = append(pkgFiles["errors"], cacheFile)
+		}
 	}
 	if out == nil {
 		return base, nil, nil
@@ -126,12 +144,20 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		return io.NopCloser(strings.NewReader("package sourcepatch\n")), nil
 	}
 
+	var fsSnapshot []byte
+	fsSource := filepath.Join(srcDir, "fs_js.go")
+	if pkgPath == "syscall" && base[fsSource] == nil {
+		fsSnapshot = ctx.fsSnapshot
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if name == wasmFSSnapshotPatch && fsSnapshot == nil {
 			continue
 		}
 		match, err := buildCtx.MatchFile(patchDir, name)
@@ -266,12 +292,53 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		}
 	}
 
+	if _, selected := patchSrcs[wasiEnvironmentPatch]; pkgPath == "syscall" && selected {
+		file := filepath.Join(srcDir, "env_unix.go")
+		var patched []byte
+		if slices.Contains(ctx.targetTags, "llgo.size.wasi") && base[file] == nil {
+			if source, err := readOverlay(file); err == nil {
+				patched = rewriteWASIGetenv(source)
+			}
+		}
+		if patched == nil {
+			delete(patchSrcs, wasiEnvironmentPatch)
+		} else {
+			ensureOverlay()
+			out[file] = patched
+		}
+	}
+	if pkgPath == "syscall" && slices.Contains(ctx.targetTags, "llgo.size.wasi") {
+		file := filepath.Join(srcDir, "fs_wasip1.go")
+		if source, err := readOverlay(file); err == nil && base[file] == nil {
+			if patched := rewriteWASIPathState(source); patched != nil {
+				ensureOverlay()
+				out[file] = patched
+				changed = true
+			}
+		}
+	}
 	for name, src := range patchSrcs {
 		target := filepath.Join(srcDir, "z_llgo_patch_"+name)
 		ensureOverlay()
 		out[target] = src.data
 		files = append(files, src.filename)
 		changed = true
+	}
+	if fsSnapshot != nil {
+		if _, ok := patchSrcs[wasmFSSnapshotPatch]; ok {
+			out[fsSource] = fsSnapshot
+		}
+	}
+	if pkgPath == "fmt" && ctx.builtinFormats {
+		printFile := filepath.Join(srcDir, "print.go")
+		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
+			if generated := fmtspecialize.BuiltinFormatSource(source); len(generated) != 0 {
+				ensureOverlay()
+				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
+				out[target] = generated
+				files = append(files, target)
+			}
+		}
 	}
 	return changed, out, files, nil
 }

@@ -15,11 +15,118 @@ uses an explicit feature allowlist; only J64 enables memory64, and WASI retains 
 optimization defaults and `-Os` retain their existing pipeline. Generation, libraries
 and firmware conversions continue to use their normal compiler optimization.
 
+Closed WASI executables built with explicit `-Oz` also use Go reachability
+pruning with LTO off or with `-lto=full`. ThinLTO, external LTO passes,
+opaque native inputs and unknown host exports keep conservative linking.
+Coverage, logical debugger frames and frontend-cache builds also keep the
+conservative path. Output-only linker diagnostics such as
+`LDFLAGS=-Wl,--print-map` use the same reachability analysis. With `-x` or
+`-compiler-verbose`, look for `enable closed-program WASI size pruning`
+or a `retain WASI code and metadata` diagnostic. The shared check reports
+opaque inputs with `retain global initializers: native inputs in …`. Builds
+outside the eligible configuration skip the release pruning check.
+The compiler can specialize default formatting for concrete values, including
+direct value methods it can prove cannot panic. It can also reuse Go's format
+parser with a scalar-only dispatcher when all arguments have known builtin
+types. A `retain generic fmt` diagnostic identifies open link inputs,
+foreign entry points, unknown native input, or a reachable general formatter.
+
+Development LLGo builds also specialize typed value formatting on closed
+Emscripten J32/J64, macOS arm64, and supported Linux programs with
+`-Oz -lto=full -deadcodedrop -globaldce=false`. Native links can prune type
+metadata using the same reachability proof as WASI, with assembly references
+and native entry points included in the analysis. Native and firmware size
+builds can also omit static map construction in standard-library leaf
+packages when the program has no reachable use of the map. This
+configuration can replace
+`encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
+layouts and standard byte orders. Mixed or dynamic uses retain the standard
+codec. With `-x`, selected codecs report
+`llgo: specialize fixed-size binary encoding`.
+
+Emscripten Full LTO size builds repeat Binaryen size passes while the
+deployment module shrinks. Embedded and external DWARF profiles use a single
+pass.
+With DCE, the final link can call a proven allocation-free and synchronous
+executable directly. The direct entry skips Go runtime startup, its scheduler
+and Asyncify. The executable package also omits its caller frames and polls.
+When the link needs no Go runtime objects, Emscripten provides the allocator
+used by C and the host API. Small console writes use stack storage. A final
+link without the collector can still use these runtime helpers when all their
+live references resolve. Dependency archives keep their normal code.
+For other closed single-worker size builds, Full LTO can prove that the
+scheduler is unused even when the program needs Go runtime initialization.
+The final link first tries direct execution with unresolved scheduler markers.
+If the linker still needs a marker or another Asyncify dependency, LLGo links
+with the normal scheduler using the same archives.
+The JavaScript SjLj profile preserves call boundaries in frames that use
+`setjmp` to limit duplicate unwind checks after LLVM inlining.
+
+The linear Wasm collector attaches finalizer and cleanup hooks on first
+registration. The single-worker timer scheduler likewise attaches its hooks
+when a real timer is first started or reset. Full LTO can discard each
+implementation when its registration is unreachable.
+
+Named Emscripten size executables with DCE and Full LTO also try Closure's
+SIMPLE optimization at final link. SIMPLE preserves property names used by
+host code through `Module.FS` and other runtime exports. Emscripten's default
+optimizer handles builds where Closure is unavailable or fails. Builds with
+explicit linker or Closure settings follow the selected driver configuration.
+The Wasm manifest records a successful automatic invocation as
+`js_minifier: "closure-simple"`.
+
+Closed Emscripten size builds can omit the setup of unreferenced Go standard
+files. The final link selects the setup to omit from the cached `os` archive.
+Code that uses or reassigns a standard stream keeps its initialization.
+Single-worker Full LTO size builds with supported Go sources read host
+filesystem properties during initialization and create Go JavaScript handles
+on first use.
+
+Closed WASI, Emscripten, native and firmware Full LTO size links can also
+omit unused standard-library slice literals, literal errors, constant
+interface values and static callbacks stored in structs or wrapped by a
+verified constructor such as `sync.OnceValue`. Reachability is rechecked
+without the proven unused callbacks to release data pulled in through
+indirect calls.
+Slice tables remain initialized when reachable code can access their backing
+data through another variable or symbol. Literal errors use the same checks
+on initializer references after verifying the selected `errors.New`
+implementation. The final link chooses the initializers to keep from the
+shared package archives.
+
+Wasm value-method wrappers precompute nil receiver panic messages when the
+compiler knows both names. Caller instrumentation reconstructs strings from
+the original compiler literals using their known data pointers and lengths.
+
+With DCE and Full LTO, size builds can defer the private reflection lookup
+in `errors` to the concrete-target check in `errors.As`, which caches the
+descriptor on first use. Programs that only construct or compare errors can
+release that reflection code at link time.
+
+In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
+`encoding/json.Marshal` calls to typed encoders. Closed shapes can use
+integers, booleans, strings, pointers, arrays, slices, structs and string-keyed
+maps. Custom marshalers, dynamic inputs and other reachable codec operations
+retain the standard encoder. The verbose diagnostic is
+`specialize statically typed JSON encoding`.
+When the entry has no other JSON uses and the JSON initializers only build
+private state, the compiler omits those calls from the executable's startup.
+Explicit blank imports and other JSON consumers retain initialization. The
+standard-library archives are shared across both cases. The same build profile
+can lower supported `encoding/json.Unmarshal` calls to typed decoders on closed
+WASI, Emscripten, macOS arm64, Linux amd64/arm64 and bare-metal builds. This path
+uses the v2-backed legacy API, enabled by default in Go 1.27 or with
+`GOEXPERIMENT=jsonv2` in Go 1.26. Unknown native references keep codec startup.
+Linux amd64 size builds use Go's software span scanner for the standard
+runtime package. LLGo's collector is selected independently.
+Allocation profile counters use zero-initialized storage, and their size
+classes are computed from each bucket's index.
+
 Ordinary Wasm builds reuse already-required backing-allocation roots for
 pointer and slice views, preserving cold-path publication points. Loads, phi
 nodes and allocating conversions keep independent roots. Frame bookkeeping
-stays inline to avoid extra calls. Development DCE can also introduce owner
-roots and, at `-Oz`, outline frame bookkeeping.
+stays inline to avoid extra calls in ordinary builds. Go reachability pruning
+can introduce owner roots and outline frame bookkeeping at `-Oz`.
 
 Wasm type descriptors use fixed-size equality/hash helpers for regular-memory
 values and direct hashers for scalar keys. Padded structs, blank fields and

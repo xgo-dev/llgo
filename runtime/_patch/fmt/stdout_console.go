@@ -1,4 +1,4 @@
-//go:build llgo && wasip1 && !llgo.wasm.debugger
+//go:build llgo && ((wasip1 && !llgo.wasm.debugger) || llgo.size.native || (linux && baremetal && llgo.baremetal.stdio && llgo.size.embedded))
 
 package fmt
 

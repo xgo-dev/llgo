@@ -1,4 +1,4 @@
-//go:build !llgo || !wasm || llgo.wasm.emscripten.memory64
+//go:build !llgo || !wasm || (llgo.wasm.emscripten.memory64 && !wasip1 && (!js || llgo.wasm.reflect.libffi))
 
 package reflect
 

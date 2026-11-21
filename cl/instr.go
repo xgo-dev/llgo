@@ -31,6 +31,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
+	"github.com/xgo-dev/llgo/runtime/abi"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -2756,6 +2757,13 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		fn := cv.Name()
 		if fn == "ssa:wrapnilchk" {
 			ptr := p.compileValue(b, args[0])
+			if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
+				receiver, receiverOK := constStr(args[1])
+				method, methodOK := constStr(args[2])
+				if receiverOK && methodOK {
+					return b.WrapNilCheckText(ptr, b.Str(abi.NilReceiverPanicMessage(receiver, method)))
+				}
+			}
 			recvType := p.compileValue(b, args[1])
 			methodName := p.compileValue(b, args[2])
 			ret = b.WrapNilCheck(ptr, recvType, methodName)
