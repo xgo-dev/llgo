@@ -6,7 +6,6 @@ import (
 	"internal/poll"
 	"io"
 	"strconv"
-	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -24,8 +23,6 @@ func llgoWriteClosedStdout(s string) (int, error) {
 	return llgoClosedStdout.WriteString(s)
 }
 
-var llgoStdoutMu sync.Mutex
-
 const llgoStdoutMaxWrite = 1 << 30
 
 // Only the closed executable's literal output calls can reach this writer.
@@ -34,9 +31,9 @@ const llgoStdoutMaxWrite = 1 << 30
 // limits, retry, partial write, and error behavior of File.WriteString.
 func llgoWriteStdoutDescriptor(s string) (int, error) {
 	data := unsafe.Slice(unsafe.StringData(s), len(s))
-	llgoStdoutMu.Lock()
+	llgoStdoutLock()
 	written, err, invalidCount := llgoWriteStdoutLocked(data)
-	llgoStdoutMu.Unlock()
+	llgoStdoutUnlock()
 	if invalidCount != 0 {
 		size := len(data) - written
 		if size > llgoStdoutMaxWrite {
