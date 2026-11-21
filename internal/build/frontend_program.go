@@ -20,12 +20,12 @@ type frontendProgramFeatures struct{ ReflectBridges, FuncInfoEntries bool }
 // These decisions depend on the complete program, unlike generic function
 // effects. Keep their identity and storage separate from package contracts.
 type frontendProgramExport struct {
-	Version             int
-	Input               string
-	Features            frontendProgramFeatures
-	Initials            map[string]frontendProgramFeatures
-	RuntimeFree, Closed bool
-	Inits               map[string]cl.GlobalInitExport
+	Version                          int
+	Input                            string
+	Features                         frontendProgramFeatures
+	Initials                         map[string]frontendProgramFeatures
+	RuntimeFree, Closed, MinimalHost bool
+	Inits                            map[string]cl.GlobalInitExport
 }
 
 func (f *frontendCache) programKey(mode ssa.BuilderMode) string {
@@ -61,12 +61,12 @@ func (f *frontendCache) programKey(mode ssa.BuilderMode) string {
 	}
 	sort.Strings(roots)
 	data, err := json.Marshal(struct {
-		Version                               int
-		Mode                                  ssa.BuilderMode
-		Inputs, Roots                         []string
-		Link, EnvironmentLink, CommandLink    string
-		Asyncify, DebuggerFrames, ShadowStack bool
-	}{frontendExportVersion, mode, inputs, roots, f.ctx.buildConf.LinkOptions.ExternalLinkerFlags, os.Getenv("LDFLAGS"), f.ctx.commands.lookup("LDFLAGS"), f.ctx.crossCompile.WasmPostLink.Asyncify, f.ctx.frontendOptions.DebuggerFrames, f.ctx.frontendOptions.ShadowStack})
+		Version                                                     int
+		Mode                                                        ssa.BuilderMode
+		Inputs, Roots                                               []string
+		Link, EnvironmentLink, CommandLink                          string
+		Asyncify, DebuggerFrames, ShadowStack, MinimalHostCandidate bool
+	}{frontendExportVersion, mode, inputs, roots, f.ctx.buildConf.LinkOptions.ExternalLinkerFlags, os.Getenv("LDFLAGS"), f.ctx.commands.lookup("LDFLAGS"), f.ctx.crossCompile.WasmPostLink.Asyncify, f.ctx.frontendOptions.DebuggerFrames, f.ctx.frontendOptions.ShadowStack, canUseMinimalEmscriptenHost(f.ctx)})
 	if err != nil {
 		return ""
 	}
@@ -131,7 +131,7 @@ func (f *frontendCache) captureProgram() {
 	}
 	record := &frontendProgramExport{Version: frontendExportVersion, Input: f.programInput,
 		Features: frontendProgramFeatures{f.ctx.prog.Target().WasmReflectBridges, f.ctx.prog.Target().WasmFuncInfoEntries},
-		Initials: make(map[string]frontendProgramFeatures), RuntimeFree: f.ctx.wasmRuntimeFree, Closed: f.ctx.wasmClosedProgram, Inits: make(map[string]cl.GlobalInitExport)}
+		Initials: make(map[string]frontendProgramFeatures), RuntimeFree: f.ctx.wasmRuntimeFree, Closed: f.ctx.wasmClosedProgram, MinimalHost: f.ctx.buildConf.wasmMinimalHostSelected, Inits: make(map[string]cl.GlobalInitExport)}
 	if f.program != nil {
 		record.Initials = f.program.Initials
 	} else {

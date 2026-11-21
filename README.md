@@ -77,6 +77,18 @@ These checks remain enabled in optimized builds: checking each stack-pointer
 update adds code and execution overhead, but a return-time cookie check alone
 cannot prevent a goroutine from overwriting adjacent memory.
 
+For a smaller browser artifact, use `-wasm-minimal-host` with a named
+Emscripten executable, for example:
+
+```sh
+llgo build -target=emscripten -Oz -lto=full -ldflags=-s -wasm-minimal-host -o app.mjs .
+```
+
+When LLGo proves the program can run without allocation, scheduling, or
+filesystem support, it uses a synchronous host without the filesystem sidecar.
+Programs with workers, callbacks, unproven requirements, or compiler and
+linker overrides use the full host. The size-build manifest sets
+`minimal_host: true` when LLGo selects the reduced host.
 
 ## C/C++ support
 

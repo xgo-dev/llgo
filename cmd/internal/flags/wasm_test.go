@@ -67,3 +67,19 @@ func TestPortableSizeAndGoStripFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestWasmMinimalHostFlag(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		fs := flag.NewFlagSet("wasm", flag.ContinueOnError)
+		AddBuildFlags(fs)
+		if enabled {
+			if err := fs.Parse([]string{"-wasm-minimal-host"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		conf := &build.Config{}
+		if err := UpdateConfig(conf); err != nil || conf.WasmMinimalHost != enabled {
+			t.Fatalf("minimal host = %v, err=%v, want %v", conf.WasmMinimalHost, err, enabled)
+		}
+	}
+}

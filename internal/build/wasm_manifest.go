@@ -65,6 +65,7 @@ type wasmManifest struct {
 	Provider        string                 `json:"provider"`
 	PointerBits     int                    `json:"pointer_bits"`
 	PCLN            string                 `json:"pclntab"`
+	MinimalHost     bool                   `json:"minimal_host,omitempty"`
 	Optimization    WasmOptMode            `json:"optimization"`
 	Strip           WasmStripMode          `json:"strip"`
 	Features        []string               `json:"features"`
@@ -149,7 +150,7 @@ func writeWasmManifest(ctx *context, dir, module string, moduleData []byte, name
 		CompilerGo: runtime.Version(), Go: ctx.sourceGoVersion(), LLVM: gllvm.Version,
 		LinkDriver: ctx.crossCompile.CC, DriverVersion: ctx.getLLVMVersion(),
 		Target: conf.Target, Profile: string(ctx.crossCompile.WasmProfile), Provider: string(ctx.crossCompile.WasmProvider),
-		PointerBits: int(conf.debugPointerSize) * 8, PCLN: conf.PCLNMode.String(), Optimization: conf.WasmOpt,
+		PointerBits: int(conf.debugPointerSize) * 8, PCLN: conf.PCLNMode.String(), MinimalHost: conf.wasmMinimalHostSelected, Optimization: conf.WasmOpt,
 		Strip: conf.WasmStrip, Tool: tool, Args: args, LinkFlags: linkFlags, InputBytes: before,
 		AllowedFeatures: wasmFinalFeatures(&ctx.crossCompile)}
 	if m.LinkDriver != "" {

@@ -23,9 +23,11 @@ import (
 )
 
 var WasmStrip string
+var WasmMinimalHost bool
 
 func addWasmFinalFlags(fs *flag.FlagSet) {
 	WasmStrip = ""
+	fs.BoolVar(&WasmMinimalHost, "wasm-minimal-host", false, "Reduce the Emscripten host for proven runtime-free executables")
 	add := func(name, usage string, dst *string, values ...string) {
 		fs.Func(name, usage, func(value string) error {
 			if !slices.Contains(values, value) {

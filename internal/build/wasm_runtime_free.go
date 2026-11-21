@@ -21,18 +21,25 @@ import (
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
 func configureWasmRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if ctx.frontend.program.MinimalHost {
+			selectMinimalEmscriptenHost(ctx)
+		}
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
 		}
 		return
 	}
 	conf := ctx.buildConf
+	minimalHost := canUseMinimalEmscriptenHost(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
 		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
+		len(ctx.crossCompile.ExtraFiles) != 0 || ctx.frontendOptions.DebuggerFrames ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !minimalHost && (ctx.prog.Target().WasmProvider != "wasi" ||
+		(conf.Target != "" && conf.Target != "wasi") || needsWasmRuntimeScheduler(ctx)) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -121,6 +128,9 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
+	if minimalHost {
+		selectMinimalEmscriptenHost(ctx)
+	}
 	enableWasmRuntimeFree(ctx)
 }
 
@@ -130,7 +140,7 @@ func enableWasmRuntimeFree(ctx *context) {
 	ctx.frontendOptions.ShadowStack = false
 	ctx.prog.EnableGCRoots(false)
 	ctx.prog.EnableCooperativeSafepoints(false)
-	if conf.Verbose || conf.PrintCommands {
+	if !conf.wasmMinimalHostSelected && (conf.Verbose || conf.PrintCommands) {
 		fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free WASI program")
 	}
 }
