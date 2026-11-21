@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -12,46 +13,125 @@ import (
 )
 
 func TestWasmSparseHeaderStorageCodegen(t *testing.T) {
-	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2} {
-		t.Run(level.String(), func(t *testing.T) {
-			conf := build.NewDefaultConf(build.ModeGen)
-			conf.Goos, conf.Goarch, conf.OptLevel = "wasip1", "wasm", level
-			pkgs, err := build.Do([]string{"./_testdata/wasmstring/strings.go"}, conf)
-			if err != nil {
-				t.Fatal(err)
-			}
-			pkg := pkgs[0].LPkg
-			defer pkg.Prog.Dispose()
-			mod := pkg.Module()
-			options := llvm.NewPassBuilderOptions()
-			defer options.Dispose()
-			options.SetVerifyEach(true)
-			if err := mod.RunPasses("default<"+level.String()+">", pkg.Prog.TargetMachine(), options); err != nil {
-				t.Fatal(err)
-			}
-			asm, err := pkg.Prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer asm.Dispose()
-			text := string(asm.Bytes())
-			for _, name := range []string{"CopySparseStorage", "ReceiveSparseStorage"} {
-				start := strings.Index(text, name+":")
-				if start < 0 {
-					t.Fatalf("missing %s", name)
+	for _, gc := range []struct{ name, tags string }{{"gc", ""}, {"nogc", "nogc"}} {
+		for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2} {
+			t.Run(gc.name+"/"+level.String(), func(t *testing.T) {
+				conf := build.NewDefaultConf(build.ModeGen)
+				conf.Goos, conf.Goarch, conf.OptLevel = "wasip1", "wasm", level
+				conf.Tags = gc.tags
+				if level != optlevel.O0 {
+					// ModeGen skips optimization. Run the allocation pass at its real
+					// position, before C ABI and copy lowering, rather than letting a
+					// later heap2stack pass hide a redundant header snapshot.
+					conf.ModuleHook = func(pkg build.Package) {
+						if pkg.Name != "main" {
+							return
+						}
+						prog, mod := pkg.LPkg.Prog, pkg.LPkg.Module()
+						llabi.LowerLargeAggregates(prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+							GoWordSize: prog.GoWordSize(), GCRoots: prog.GCRootsEnabled(), Wasm: true,
+						})
+						if err := heap2stack.Run(mod, prog.TargetMachine()); err != nil {
+							t.Fatal(err)
+						}
+					}
 				}
-				body := text[start:]
-				end := strings.Index(body, "end_function")
-				if end < 0 {
-					t.Fatalf("missing end of %s", name)
+				pkgs, err := build.Do([]string{"./_testdata/wasmstring/strings.go"}, conf)
+				if err != nil {
+					t.Fatal(err)
 				}
-				// An insertvalue around the aggregate load prevents copy lowering.
-				// Channel reads are volatile, so even O2 cannot undo that expansion.
-				if lines := strings.Count(body[:end], "\n"); lines > 512 {
-					t.Errorf("%s expanded a sparse header copy to %d assembly lines", name, lines)
+				pkg := pkgs[0].LPkg
+				defer pkg.Prog.Dispose()
+				mod := pkg.Module()
+				options := llvm.NewPassBuilderOptions()
+				defer options.Dispose()
+				options.SetVerifyEach(true)
+				if err := mod.RunPasses("default<"+level.String()+">", pkg.Prog.TargetMachine(), options); err != nil {
+					t.Fatal(err)
 				}
-			}
-		})
+				copyFn := mod.NamedFunction("CopySparseStorage")
+				if copyFn.IsNil() {
+					t.Fatal("missing CopySparseStorage")
+				}
+				allocations, copies := 0, 0
+				var copyBlock llvm.BasicBlock
+				var clear llvm.Value
+				var guards [2]llvm.Value // dst, src
+				var nonNilBlocks [2]llvm.BasicBlock
+				for bb := copyFn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+					for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+						if !inst.IsACallInst().IsNil() {
+							name := inst.CalledValue().Name()
+							switch {
+							case name == ssa.PkgRuntime+".AllocU", name == ssa.PkgRuntime+".AllocUAligned":
+								allocations++
+							case strings.HasPrefix(name, "__llgo_clear_header_range"):
+								clear = inst
+								if inst.Operand(0) != copyFn.Param(0) || copies != 1 || copyBlock != bb {
+									t.Errorf("padding clear must follow the copy and only write dst: %s", inst.String())
+								}
+							case strings.HasPrefix(name, "llvm.memcpy."), strings.HasPrefix(name, "llvm.memmove."):
+								copies++
+								copyBlock = bb
+								if inst.Operand(0) != copyFn.Param(0) || inst.Operand(1) != copyFn.Param(1) ||
+									inst.Operand(2).IsAConstantInt().IsNil() || inst.Operand(2).ZExtValue() != 4096*8+16 {
+									t.Errorf("copy must transfer the whole value directly from src to dst: %s", inst.String())
+								}
+							}
+						}
+						if inst.IsAICmpInst().IsNil() || !inst.Operand(1).IsNull() {
+							continue
+						}
+						for i := range guards {
+							branch := bb.LastInstruction()
+							if inst.Operand(0) != copyFn.Param(i) || branch.IsABranchInst().IsNil() ||
+								branch.SuccessorsCount() != 2 || branch.Operand(0) != inst {
+								continue
+							}
+							switch inst.IntPredicate() {
+							case llvm.IntEQ:
+								guards[i], nonNilBlocks[i] = inst, branch.Successor(1)
+							case llvm.IntNE:
+								guards[i], nonNilBlocks[i] = inst, branch.Successor(0)
+							}
+						}
+					}
+				}
+				if allocations != 0 || copies != 1 {
+					t.Errorf("ordinary copy has %d allocations and %d copies, want 0 and 1:\n%s", allocations, copies, copyFn.String())
+				}
+				if level == optlevel.O0 && clear.IsNil() {
+					t.Errorf("ordinary copy lost its padding clear:\n%s", copyFn.String())
+				}
+				if guards[0].IsNil() || guards[1].IsNil() {
+					t.Errorf("ordinary copy lost a source or destination nil check:\n%s", copyFn.String())
+				} else if nonNilBlocks[1] != guards[0].InstructionParent() || nonNilBlocks[0] != copyBlock {
+					t.Errorf("copy must follow both nil checks, with src checked before dst:\n%s", copyFn.String())
+				}
+				asm, err := pkg.Prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer asm.Dispose()
+				text := string(asm.Bytes())
+				for _, name := range []string{"CopySparseStorage", "ReceiveSparseStorage"} {
+					start := strings.Index(text, name+":")
+					if start < 0 {
+						t.Fatalf("missing %s", name)
+					}
+					body := text[start:]
+					end := strings.Index(body, "end_function")
+					if end < 0 {
+						t.Fatalf("missing end of %s", name)
+					}
+					// An insertvalue around the aggregate load prevents copy lowering.
+					// Channel reads are volatile, so even O2 cannot undo that expansion.
+					if lines := strings.Count(body[:end], "\n"); lines > 512 {
+						t.Errorf("%s expanded a sparse header copy to %d assembly lines", name, lines)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -127,6 +207,7 @@ func TestWasmStringBoundaryPadding(t *testing.T) {
 	// Check behavior rather than a particular insertvalue/mask sequence.
 	// Both native directions must preserve every data field while clearing
 	// only string and slice padding. Typed loads leave the source bytes intact.
+	checks = append(checks, "CheckSparseStorage")
 	for _, name := range checks {
 		fn := mod.NamedFunction(name)
 		if fn.IsNil() {

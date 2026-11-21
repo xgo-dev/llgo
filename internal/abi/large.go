@@ -226,6 +226,8 @@ func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 	for _, fn := range funcs {
 		l.transformFunc(m, fn)
 	}
+	// Function replacement invalidates the CFG cached during header forwarding.
+	l.bbPreds = nil
 	l.transformStoredLoads(m)
 	if l.roots {
 		l.publishRoots(m)
@@ -244,45 +246,88 @@ func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.
 	if !ok {
 		return
 	}
-	if len(stores) == 1 && len(extracts) == 0 && llvm.NextInstruction(load) == stores[0] {
-		if !stores[0].IsVolatile() {
-			forwardHeaderSnapshot(load, stores[0], slot)
-		}
+	if len(stores) == 1 && len(extracts) == 0 && !stores[0].IsVolatile() &&
+		l.forwardHeaderSnapshot(ctx, load, stores[0], slot) {
 		return
 	}
 	l.allocations = append(l.allocations, slot)
 	l.rewriteMemoryUsers(ctx, load, slot, load.Type(), stores, extracts)
 }
 
-// For an immediate assignment, copy directly to the final destination and
-// clear its padding there. Keep volatile accesses on their original storage.
-func forwardHeaderSnapshot(load, store, slot llvm.Value) {
+// Copy directly at the final store when only pure instructions and branches
+// separate it from the snapshot. In particular, keep destination nil checks
+// before both the copy and padding clear. Volatile reads retain their snapshot.
+func (l *largeAggregateLowerer) forwardHeaderSnapshot(ctx llvm.Context, load, store, slot llvm.Value) bool {
+	// HeaderSnapshotMD identifies this frontend-generated fill/clear/reload
+	// sequence; the clear helper only writes header padding in its first arg.
 	clear := llvm.PrevInstruction(load)
 	if clear.IsNil() || clear.IsACallInst().IsNil() || clear.Operand(0) != slot {
-		return
+		return false
 	}
 	fill := llvm.PrevInstruction(clear)
 	if fill.IsNil() || fill.IsAStoreInst().IsNil() || fill.Operand(1) != slot {
-		return
+		return false
 	}
 	src := fill.Operand(0)
-	if src.IsALoadInst().IsNil() || src.IsVolatile() {
-		return
+	if src.IsALoadInst().IsNil() || src.IsVolatile() || llvm.NextInstruction(src) != fill || !hasSingleUse(src, fill) {
+		return false
 	}
 	for use := slot.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		switch use.User() {
 		case fill, clear, load:
 		default:
-			return
+			return false
 		}
+	}
+	if !l.canSinkHeaderSnapshot(load, store) {
+		return false
 	}
 	dst := store.Operand(1)
 	fill.SetOperand(1, dst)
 	fill.SetAlignment(store.Alignment())
 	clear.SetOperand(0, dst)
+	b := ctx.NewBuilder()
+	defer b.Dispose()
+	b.SetInsertPointBefore(store)
+	for _, inst := range []llvm.Value{src, fill, clear} {
+		inst.RemoveFromParentAsInstruction()
+		b.Insert(inst)
+	}
 	store.EraseFromParentAsInstruction()
 	load.EraseFromParentAsInstruction()
 	slot.EraseFromParentAsInstruction()
+	return true
+}
+
+// A single predecessor chain excludes joins and repeated stores without a
+// fresh load. Calls on side exits, such as a failed nil check, do not interfere.
+func (l *largeAggregateLowerer) canSinkHeaderSnapshot(load, store llvm.Value) bool {
+	l.ensureCFG(load.InstructionParent().Parent())
+	block := store.InstructionParent()
+	seen := map[llvm.BasicBlock]bool{block: true}
+	for inst := llvm.PrevInstruction(store); ; inst = llvm.PrevInstruction(inst) {
+		if inst == load {
+			return true
+		}
+		if inst.IsNil() {
+			preds := l.bbPreds[l.bbIndex[block]]
+			if len(preds) != 1 || seen[l.bbs[preds[0]]] {
+				return false
+			}
+			block = l.bbs[preds[0]]
+			seen[block] = true
+			inst = block.LastInstruction()
+		}
+		// Reject all memory accesses, calls and synchronization, including
+		// paths that could change the source or execute this store twice.
+		switch inst.InstructionOpcode() {
+		case llvm.GetElementPtr, llvm.ICmp, llvm.FCmp, llvm.PHI, llvm.Select, llvm.Br:
+		default:
+			if inst.IsABinaryOperator().IsNil() && inst.IsACastInst().IsNil() {
+				return false
+			}
+		}
+	}
 }
 
 // transformStoredLoads prevents a large aggregate load from reaching

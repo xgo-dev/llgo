@@ -30,6 +30,15 @@ type SparseStorage struct {
 //export CopySparseStorage
 func CopySparseStorage(dst, src *SparseStorage) { *dst = *src }
 
+//export CheckSparseStorage
+func CheckSparseStorage() bool {
+	var value SparseStorage
+	value.Data[0], value.Data[len(value.Data)-1] = 11, 29
+	*(*[2]uint64)(unsafe.Pointer(&value.Text)) = [2]uint64{0xa5a5a5a500001000, 7}
+	CopySparseStorage(&value, &value)
+	return value.Data[0] == 11 && value.Data[len(value.Data)-1] == 29 && validString(&value.Text, 0x1000, 7)
+}
+
 //export ReceiveSparseStorage
 func ReceiveSparseStorage(dst *SparseStorage, ch <-chan SparseStorage) { *dst = <-ch }
 

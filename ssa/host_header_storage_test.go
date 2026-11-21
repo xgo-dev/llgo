@@ -86,9 +86,11 @@ func TestWasmHostLayoutHeaderLoads(t *testing.T) {
 func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 	for _, tc := range []struct{ volatile, delayed, sparse bool }{
 		{},
+		{delayed: true},
 		{volatile: true},
 		{volatile: true, delayed: true},
 		{sparse: true},
+		{delayed: true, sparse: true},
 		{volatile: true, sparse: true},
 		{volatile: true, delayed: true, sparse: true},
 	} {
@@ -165,10 +167,10 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 		if read.IsNil() || !strings.HasPrefix(read.CalledValue().Name(), "llvm.memmove") || write.IsNil() || clear.IsNil() {
 			t.Fatalf("missing source read, destination write or padding normalization:\n%s", fn.impl)
 		}
-		if tc.volatile {
-			if allocs != 1 || read.Operand(0) != slot || read.Operand(3).ZExtValue() != 1 ||
+		if tc.volatile || tc.delayed {
+			if allocs != 1 || read.Operand(0) != slot || (read.Operand(3).ZExtValue() != 0) != tc.volatile ||
 				clear.Operand(0) != slot || write.Operand(1) != slot || write.Operand(3).ZExtValue() != 0 {
-				t.Fatalf("only the original source read should be volatile:\n%s", fn.impl)
+				t.Fatalf("snapshot must retain the source read and its volatility:\n%s", fn.impl)
 			}
 			if tc.delayed && (!strings.HasPrefix(write.CalledValue().Name(), "llvm.memcpy") || field.IsNil() ||
 				field.Operand(2).ZExtValue() != uint64(lastHeader) || !strings.Contains(fn.impl.String(), "gcroot.entry")) {
