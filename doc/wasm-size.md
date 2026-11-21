@@ -90,6 +90,10 @@ on initializer references after verifying the selected `errors.New`
 implementation. The final link chooses the initializers to keep from the
 shared package archives.
 
+Wasm value-method wrappers precompute nil receiver panic messages when the
+compiler knows both names. Caller instrumentation reconstructs strings from
+the original compiler literals using their known data pointers and lengths.
+
 With DCE and Full LTO, size builds can defer the private reflection lookup
 in `errors` to the concrete-target check in `errors.As`, which caches the
 descriptor on first use. Programs that only construct or compare errors can

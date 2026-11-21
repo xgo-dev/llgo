@@ -95,36 +95,14 @@ func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
 
 func PanicWrapNilPointer(b bool, recvType, methodName string) {
 	if b {
-		recvType = panicWrapRecvType(recvType)
-		panic(plainError("value method " + recvType + "." + methodName + " called using nil *" + panicWrapTypeName(recvType) + " pointer"))
+		panic(plainError(abi.NilReceiverPanicMessage(recvType, methodName)))
 	}
 }
 
-func panicWrapRecvType(recvType string) string {
-	const commandLineArguments = "command-line-arguments."
-	if len(recvType) > len(commandLineArguments) && recvType[:len(commandLineArguments)] == commandLineArguments {
-		return "main." + recvType[len(commandLineArguments):]
+func PanicWrapNilPointerText(b bool, text string) {
+	if b {
+		panic(plainError(text))
 	}
-	return recvType
-}
-
-func panicWrapTypeName(recvType string) string {
-	depth := 0
-	for i := len(recvType) - 1; i >= 0; i-- {
-		switch recvType[i] {
-		case ']':
-			depth++
-		case '[':
-			if depth > 0 {
-				depth--
-			}
-		case '.':
-			if depth == 0 {
-				return recvType[i+1:]
-			}
-		}
-	}
-	return recvType
 }
 
 func PanicTypeAssertionError(msg string) {
