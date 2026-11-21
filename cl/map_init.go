@@ -36,28 +36,34 @@ func OptionalSliceInitializers(fn *ssa.Function) (groups []OptionalInitializer) 
 	for _, block := range fn.Blocks {
 		for i, instr := range block.Instrs {
 			store, ok := instr.(*ssa.Store)
-			if !ok {
-				continue
-			}
-			global, _ := store.Addr.(*ssa.Global)
-			value, _ := store.Val.(*ssa.Slice)
-			if global == nil || global.Pkg != fn.Pkg || value == nil ||
-				value.Low != nil || value.High != nil || value.Max != nil {
-				continue
-			}
-			alloc, _ := value.X.(*ssa.Alloc)
-			if alloc == nil || alloc.Block() != block {
-				continue
-			}
-			array, ok := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
-			start := slices.Index(block.Instrs[:i], ssa.Instruction(alloc))
-			if ok && start >= 0 && literalSliceStores(block.Instrs[start+1:i], alloc, array, value) &&
-				InitializerHasLocalUses(block.Instrs[start:i+1]) {
-				groups = append(groups, OptionalInitializer{First: alloc, Store: store, Global: global})
+			if ok {
+				if start := optionalSliceInitializerStart(block, i, store); start >= 0 {
+					groups = append(groups, OptionalInitializer{First: block.Instrs[start], Store: store, Global: store.Addr.(*ssa.Global)})
+				}
 			}
 		}
 	}
 	return groups
+}
+
+func optionalSliceInitializerStart(block *ssa.BasicBlock, i int, store *ssa.Store) int {
+	global, _ := store.Addr.(*ssa.Global)
+	value, _ := store.Val.(*ssa.Slice)
+	if global == nil || global.Pkg != block.Parent().Pkg || value == nil ||
+		value.Low != nil || value.High != nil || value.Max != nil {
+		return -1
+	}
+	alloc, _ := value.X.(*ssa.Alloc)
+	if alloc == nil || alloc.Block() != block {
+		return -1
+	}
+	array, ok := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+	start := slices.Index(block.Instrs[:i], ssa.Instruction(alloc))
+	if ok && start >= 0 && literalSliceStores(block.Instrs[start+1:i], alloc, array, value) &&
+		InitializerHasLocalUses(block.Instrs[start:i+1]) {
+		return start
+	}
+	return -1
 }
 
 func literalSliceStores(instrs []ssa.Instruction, alloc *ssa.Alloc, array *types.Array, result *ssa.Slice) bool {

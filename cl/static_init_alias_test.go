@@ -35,7 +35,9 @@ var Second = First
 			pkg := buildSSAPackage(t, `package foo
 type record struct { value int }
 var base = &record{1}
-`+test.source)
+`+test.source+`
+var Table = []*record{Second, nil, base}
+`)
 			p := newMapInitContext(t)
 			p.collectStaticGlobalInits(pkg)
 			base := pkg.Members["base"].(*ssa.Global)
@@ -53,6 +55,34 @@ var base = &record{1}
 					t.Errorf("%s points to a different backing object", name)
 				}
 			}
+			table := pkg.Members["Table"].(*ssa.Global)
+			_, folded := p.staticGlobalInits[table]
+			if folded != test.folded {
+				t.Errorf("static pointer slice = %v, want %v", folded, test.folded)
+			}
 		})
+	}
+}
+
+func TestStaticPointerSliceFallbacks(t *testing.T) {
+	pkg := buildSSAPackage(t, `package foo
+type record struct { value int }
+var base = &record{1}
+var absent *record
+var fallback = []*record{base, absent}
+var large = []*record{65536: base}
+var scalar = 17
+var numbers = []int{scalar}
+var constant = []*record{nil}
+`)
+	p := newMapInitContext(t)
+	p.collectStaticGlobalInits(pkg)
+	for _, name := range []string{"fallback", "large", "numbers"} {
+		if _, folded := p.staticGlobalInits[pkg.Members[name].(*ssa.Global)]; folded {
+			t.Errorf("unexpected static initializer for %s", name)
+		}
+	}
+	if _, folded := p.staticGlobalInits[pkg.Members["constant"].(*ssa.Global)]; !folded {
+		t.Error("existing constant slice fold was lost")
 	}
 }

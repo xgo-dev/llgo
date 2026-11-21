@@ -210,13 +210,14 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 			p.staticInitStores[store.store] = none{}
 		}
 	}
-	p.collectStaticPointerCopies(initFn, globals)
+	p.collectStaticGlobalCopies(initFn, globals)
 }
 
-// A copy of an already initialized package pointer can share its static
-// backing object. Only examine the straight-line variable initializers before
-// any call that can observe the destination or mutate the source.
-func (p *context) collectStaticPointerCopies(init *ssa.Function, globals map[*ssa.Global]none) {
+// Copies of already initialized package pointers can share their static
+// backing objects, including when stored in a slice literal. Only examine
+// the straight-line initializers before any call can observe the destination
+// or mutate a source.
+func (p *context) collectStaticGlobalCopies(init *ssa.Function, globals map[*ssa.Global]none) {
 	if len(p.staticGlobalInits) == 0 || len(init.Blocks) != 3 {
 		return
 	}
@@ -246,7 +247,7 @@ func (p *context) collectStaticPointerCopies(init *ssa.Function, globals map[*ss
 	available := make(map[*ssa.Global]llssa.Expr)
 	loads := make(map[*ssa.UnOp]llssa.Expr)
 	var operands []*ssa.Value
-	for _, instr := range body.Instrs {
+	for i, instr := range body.Instrs {
 		if _, ok := instr.(ssa.CallInstruction); ok {
 			return
 		}
@@ -269,6 +270,9 @@ func (p *context) collectStaticPointerCopies(init *ssa.Function, globals map[*ss
 			}
 			ptr := dest.Type().(*types.Pointer)
 			if _, ok := ptr.Elem().Underlying().(*types.Pointer); !ok {
+				if _, slice := ptr.Elem().Underlying().(*types.Slice); slice {
+					p.foldStaticPointerSlice(dest, store, i, loads)
+				}
 				break
 			}
 			if value, ok := p.staticGlobalInits[dest]; ok {
@@ -299,6 +303,51 @@ func (p *context) collectStaticPointerCopies(init *ssa.Function, globals map[*ss
 				}
 			}
 		}
+	}
+}
+
+func (p *context) foldStaticPointerSlice(dest *ssa.Global, store *ssa.Store, i int, loads map[*ssa.UnOp]llssa.Expr) {
+	if _, folded := p.staticGlobalInits[dest]; folded {
+		return
+	}
+	block := store.Block()
+	start := optionalSliceInitializerStart(block, i, store)
+	if start < 0 {
+		return
+	}
+	slice := store.Val.(*ssa.Slice)
+	alloc := slice.X.(*ssa.Alloc)
+	array := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+	elem := array.Elem()
+	if _, ok := elem.Underlying().(*types.Pointer); !ok || !staticInitBoundedArraySizeAllowed(array) {
+		return
+	}
+	zero := p.prog.Zero(p.type_(elem, llssa.GoDecl))
+	values := make([]llssa.Expr, int(array.Len()))
+	for i := range values {
+		values[i] = zero
+	}
+	for _, instr := range block.Instrs[start:i] {
+		element, ok := instr.(*ssa.Store)
+		if !ok {
+			continue
+		}
+		index, _ := staticInitConstIndex(element.Addr.(*ssa.IndexAddr).Index)
+		if c, ok := element.Val.(*ssa.Const); ok && c.IsNil() {
+			values[index] = zero
+			continue
+		}
+		load, _ := element.Val.(*ssa.UnOp)
+		value, ok := loads[load]
+		if !ok || !types.Identical(load.Type(), elem) {
+			return
+		}
+		values[index] = value
+	}
+	typ := p.type_(slice.Type(), llssa.GoDecl)
+	p.staticGlobalInits[dest] = p.pkg.ConstSlice(p.globalFullName(dest)+"$data", typ, values)
+	for _, instr := range block.Instrs[start : i+1] {
+		p.staticInitInstrs[instr] = none{}
 	}
 }
 
