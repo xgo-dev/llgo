@@ -92,10 +92,10 @@ func SetFinalizer(obj any, finalizer any) {
 	if ft.Variadic() {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String() + " because dotdotdot")
 	}
-	if len(ft.In) != 1 {
+	if ft.InCount != 1 {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
-	argFFIType, interfaceTypeOrItab, ok := prepareFinalizerArgument(objFace._type, ft.In[0])
+	argFFIType, interfaceTypeOrItab, ok := prepareFinalizerArgument(objFace._type, ft.In()[0])
 	if !ok {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}

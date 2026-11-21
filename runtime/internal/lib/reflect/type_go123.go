@@ -294,15 +294,15 @@ func canRangeFunc(t *abi.Type) bool {
 		return false
 	}
 	f := t.FuncType()
-	if len(f.In) != 1 || len(f.Out) != 0 {
+	if f.InCount != 1 || f.OutCount != 0 {
 		return false
 	}
-	y := f.In[0]
+	y := f.In()[0]
 	if y.Kind() != abi.Func {
 		return false
 	}
 	yield := y.FuncType()
-	return len(yield.In) == 1 && len(yield.Out) == 1 && yield.Out[0].Kind() == abi.Bool
+	return yield.InCount == 1 && yield.OutCount == 1 && yield.Out()[0].Kind() == abi.Bool
 }
 
 func (t *rtype) CanSeq2() bool {
@@ -322,13 +322,13 @@ func canRangeFunc2(t *abi.Type) bool {
 		return false
 	}
 	f := t.FuncType()
-	if len(f.In) != 1 || len(f.Out) != 0 {
+	if f.InCount != 1 || f.OutCount != 0 {
 		return false
 	}
-	y := f.In[0]
+	y := f.In()[0]
 	if y.Kind() != abi.Func {
 		return false
 	}
 	yield := y.FuncType()
-	return len(yield.In) == 2 && len(yield.Out) == 1 && yield.Out[0].Kind() == abi.Bool
+	return yield.InCount == 2 && yield.OutCount == 1 && yield.Out()[0].Kind() == abi.Bool
 }

@@ -351,16 +351,18 @@ func identicalFuncType(T, V *abi.Type) bool {
 	}
 	t := T.FuncType()
 	v := V.FuncType()
-	if t.Variadic() != v.Variadic() || len(t.In) != len(v.In) || len(t.Out) != len(v.Out) {
+	if t.Variadic() != v.Variadic() || t.InCount != v.InCount || t.OutCount != v.OutCount {
 		return false
 	}
-	for i := range t.In {
-		if t.In[i] != v.In[i] {
+	tIn, vIn := t.In(), v.In()
+	for i := range tIn {
+		if tIn[i] != vIn[i] {
 			return false
 		}
 	}
-	for i := range t.Out {
-		if t.Out[i] != v.Out[i] {
+	tOut, vOut := t.Out(), v.Out()
+	for i := range tOut {
+		if tOut[i] != vOut[i] {
 			return false
 		}
 	}

@@ -16,10 +16,11 @@ func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, _ *abi.Type, receive
 		env = *receiver
 	}
 	args := make([]unsafe.Pointer, len(in))
+	params := ft.In()
 	for i, arg := range in {
-		args[i] = toFFIArg(arg, ft.In[i])
+		args[i] = toFFIArg(arg, params[i])
 	}
-	tout := toRuntimeTypes(ft.Out)
+	tout := toRuntimeTypes(ft.Out())
 	results := make([]unsafe.Pointer, len(tout))
 	out := make([]Value, len(tout))
 	for i, typ := range tout {
@@ -71,7 +72,7 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	data := &wasmMakeFuncData{
 		callback: c.Func(wasmMakeFuncInvoke),
 		data: funcData{
-			ftyp: ft, tout: toRuntimeTypes(ft.Out), fn: fn, nin: len(ft.In),
+			ftyp: ft, tout: toRuntimeTypes(ft.Out()), fn: fn, nin: ft.InCount,
 			recoverFrom: code, recoverTo: recoverTo,
 		},
 	}
@@ -87,7 +88,7 @@ func wasmMakeFuncInvoke(env unsafe.Pointer, args, results *unsafe.Pointer) {
 	fd := &(*wasmMakeFuncData)(env).data
 	argv := unsafe.Slice(args, fd.nin)
 	ins := make([]Value, fd.nin)
-	for i, typ := range fd.ftyp.In {
+	for i, typ := range fd.ftyp.In() {
 		ins[i] = makeFuncArgValue(argv[i], typ)
 	}
 	out := validateMakeFuncResults(fd.call(ins), fd.ftyp, fd.tout)

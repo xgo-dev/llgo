@@ -2398,7 +2398,8 @@ func (v Value) call(op string, in []Value) []Value {
 	}
 
 	isSlice := op == "CallSlice"
-	n := len(ft.In)
+	params := ft.In()
+	n := len(params)
 	isVariadic := ft.Variadic()
 	if isSlice {
 		if !isVariadic {
@@ -2427,15 +2428,15 @@ func (v Value) call(op string, in []Value) []Value {
 		}
 	}
 	for i := 0; i < n; i++ {
-		if xt, targ := in[i].Type(), ft.In[i]; !xt.AssignableTo(toPublicType(targ)) {
+		if xt, targ := in[i].Type(), params[i]; !xt.AssignableTo(toPublicType(targ)) {
 			panic("reflect: " + op + " using " + xt.String() + " as type " + stringFor(targ))
 		}
 	}
 	if !isSlice && isVariadic {
 		// prepare slice for remaining values
 		m := len(in) - n
-		slice := MakeSlice(toRType(ft.In[n]), m, m)
-		elem := toPublicType(ft.In[n].Elem()) // FIXME cast to slice type and Elem()
+		slice := MakeSlice(toRType(params[n]), m, m)
+		elem := toPublicType(params[n].Elem()) // FIXME cast to slice type and Elem()
 		for i := 0; i < m; i++ {
 			x := in[n+i]
 			if xt := x.Type(); !xt.AssignableTo(elem) {
@@ -2450,7 +2451,7 @@ func (v Value) call(op string, in []Value) []Value {
 	}
 
 	nin := len(in)
-	if nin != len(ft.In) {
+	if nin != ft.InCount {
 		panic("reflect.Value.Call: wrong argument count")
 	}
 	return callProvider(ft, fn, env, receiverType, receiver, in)

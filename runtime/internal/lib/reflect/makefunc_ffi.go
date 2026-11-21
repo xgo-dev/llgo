@@ -15,7 +15,7 @@ func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe
 	if baremetalReflection {
 		panic("reflect: dynamic calls require a function call provider")
 	}
-	sig, err := toFFISig(ftyp.In, ftyp.Out)
+	sig, err := toFFISig(ftyp.In(), ftyp.Out())
 	if err != nil {
 		panic(err)
 	}
@@ -23,13 +23,13 @@ func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe
 	userdata := &funcData{
 		ftyp:        ftyp,
 		fn:          fn,
-		nin:         len(ftyp.In),
-		tout:        toRuntimeTypes(ftyp.Out),
+		nin:         ftyp.InCount,
+		tout:        toRuntimeTypes(ftyp.Out()),
 		recoverFrom: ffiClosure.Fn,
 		recoverTo:   recoverTo,
 	}
 
-	if err := ffiClosure.Bind(sig, makeFuncCallback(len(ftyp.Out)), unsafe.Pointer(userdata)); err != nil {
+	if err := ffiClosure.Bind(sig, makeFuncCallback(ftyp.OutCount), unsafe.Pointer(userdata)); err != nil {
 		panic("libffi error: " + err.Error())
 	}
 	// Keep the executable closure, signature graph, and callback state alive.
@@ -72,7 +72,7 @@ func bindn(cif *ffi.Signature, ret unsafe.Pointer, args *unsafe.Pointer, userdat
 func makeFuncFFIArgs(fd *funcData, args *unsafe.Pointer) []Value {
 	ins := make([]Value, fd.nin)
 	var physical uintptr
-	for i, typ := range fd.ftyp.In {
+	for i, typ := range fd.ftyp.In() {
 		if omitFFIArg(typ) {
 			// The logical argument still exists even when the callable ABI
 			// omits it. Do not read a libffi argument slot for an empty value.

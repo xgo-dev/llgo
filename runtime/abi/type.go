@@ -278,6 +278,32 @@ func (p *FuncType) Variadic() bool {
 	return p.TFlag&TFlagVariadic != 0
 }
 
+// In and Out expose the two parts of the immutable signature table. The
+// compiler and reflect.FuncOf allocate both parts consecutively.
+func (p *FuncType) In() []*Type {
+	if p.InCount == 0 {
+		return nil
+	}
+	return signatureSlice(p.Types, p.InCount)
+}
+
+func (p *FuncType) Out() []*Type {
+	if p.OutCount == 0 {
+		return nil
+	}
+	first := (**Type)(unsafe.Add(unsafe.Pointer(p.Types), uintptr(p.InCount)*unsafe.Sizeof(p.Types)))
+	return signatureSlice(first, p.OutCount)
+}
+
+func signatureSlice(data **Type, count int) []*Type {
+	header := struct {
+		data **Type
+		len  int
+		cap  int
+	}{data, count, count}
+	return *(*[]*Type)(unsafe.Pointer(&header))
+}
+
 type StructField struct {
 	Name_  *byte   // encoded name and optional tag
 	Typ    *Type   // type of field

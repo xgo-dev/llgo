@@ -172,8 +172,9 @@ func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, receiverType *abi.Ty
 		ffiArgs = append(ffiArgs, ffi.TypePointer)
 		args = append(args, unsafe.Pointer(&env))
 	}
+	params := ft.In()
 	for i, arg := range in {
-		typ := ft.In[i]
+		typ := params[i]
 		if omitFFIArg(typ) {
 			continue
 		}
@@ -187,7 +188,7 @@ func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, receiverType *abi.Ty
 		args = append(args, toFFIArg(arg, typ))
 	}
 
-	sig, err := ffi.NewSignature(toFFIRetType(ft.Out), ffiArgs...)
+	sig, err := ffi.NewSignature(toFFIRetType(ft.Out()), ffiArgs...)
 	if err != nil {
 		panic(err)
 	}
@@ -198,7 +199,7 @@ func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, receiverType *abi.Ty
 	}
 
 	ffi.CallWithEnv(sig, fn, env, ret, args...)
-	tout := toRuntimeTypes(ft.Out)
+	tout := toRuntimeTypes(ft.Out())
 	switch n := len(tout); n {
 	case 0:
 	case 1:

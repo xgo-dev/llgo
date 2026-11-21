@@ -294,13 +294,13 @@ func (t *rtype) Method(i int) (m Method) {
 	m.Name = p.Name()
 	fl := flag(Func)
 	ft := p.Mtyp_
-	in := make([]Type, 0, 1+len(ft.In))
+	in := make([]Type, 0, 1+ft.InCount)
 	in = append(in, t)
-	for _, arg := range ft.In {
+	for _, arg := range ft.In() {
 		in = append(in, toRType(arg))
 	}
-	out := make([]Type, 0, len(ft.Out))
-	for _, ret := range ft.Out {
+	out := make([]Type, 0, ft.OutCount)
+	for _, ret := range ft.Out() {
 		out = append(out, toRType(ret))
 	}
 	mt := FuncOf(in, out, ft.Variadic())
@@ -479,7 +479,7 @@ func (t *rtype) In(i int) Type {
 		panic("reflect: In of non-func type " + t.String())
 	}
 	tt := (*abi.FuncType)(unsafe.Pointer(t))
-	return toPublicType(tt.In[i])
+	return toPublicType(tt.In()[i])
 }
 
 func (t *rtype) NumIn() int {
@@ -487,7 +487,7 @@ func (t *rtype) NumIn() int {
 		panic("reflect: NumIn of non-func type " + t.String())
 	}
 	tt := (*abi.FuncType)(unsafe.Pointer(t))
-	return len(tt.In)
+	return tt.InCount
 }
 
 func (t *rtype) NumOut() int {
@@ -495,7 +495,7 @@ func (t *rtype) NumOut() int {
 		panic("reflect: NumOut of non-func type " + t.String())
 	}
 	tt := (*abi.FuncType)(unsafe.Pointer(t))
-	return len(tt.Out)
+	return tt.OutCount
 }
 
 func (t *rtype) Out(i int) Type {
@@ -503,7 +503,7 @@ func (t *rtype) Out(i int) Type {
 		panic("reflect: Out of non-func type " + t.String())
 	}
 	tt := (*abi.FuncType)(unsafe.Pointer(t))
-	return toPublicType(tt.Out[i])
+	return toPublicType(tt.Out()[i])
 }
 
 func publicTypeDescriptor(typ *abi.Type) *abi.Type {
@@ -1204,18 +1204,20 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		if T.HasNativeLayout() != V.HasNativeLayout() || T.IsStdcall() != V.IsStdcall() {
 			return false
 		}
-		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
+		if t.OutCount != v.OutCount || t.InCount != v.InCount {
 			return false
 		}
 		// Compiled signatures can refer to physical named closures. FuncOf
 		// receives their public descriptors through the Type interface.
-		for i := 0; i < len(t.In); i++ {
-			if !haveIdenticalType(publicTypeDescriptor(t.In[i]), publicTypeDescriptor(v.In[i]), cmpTags) {
+		tIn, vIn := t.In(), v.In()
+		for i := range tIn {
+			if !haveIdenticalType(publicTypeDescriptor(tIn[i]), publicTypeDescriptor(vIn[i]), cmpTags) {
 				return false
 			}
 		}
-		for i := 0; i < len(t.Out); i++ {
-			if !haveIdenticalType(publicTypeDescriptor(t.Out[i]), publicTypeDescriptor(v.Out[i]), cmpTags) {
+		tOut, vOut := t.Out(), v.Out()
+		for i := range tOut {
+			if !haveIdenticalType(publicTypeDescriptor(tOut[i]), publicTypeDescriptor(vOut[i]), cmpTags) {
 				return false
 			}
 		}
@@ -1427,14 +1429,15 @@ func FuncOf(in, out []Type, variadic bool) Type {
 	ft := &funcType{}
 	*ft = *prototype
 	resetWasmFuncBridge(ft)
-	ft.In = make([]*abi.Type, len(in))
-	ft.Out = make([]*abi.Type, len(out))
+	params := make([]*abi.Type, len(in)+len(out))
+	ft.Types = unsafe.SliceData(params)
+	ft.InCount, ft.OutCount = len(in), len(out)
 
 	// Build a hash and minimally populate ft.
 	var hash uint32
 	for i, in := range in {
 		t := in.(*rtype)
-		ft.In[i] = &t.t
+		params[i] = &t.t
 		hash = fnv1(hash, byte(t.t.Hash>>24), byte(t.t.Hash>>16), byte(t.t.Hash>>8), byte(t.t.Hash))
 	}
 	if variadic {
@@ -1443,7 +1446,7 @@ func FuncOf(in, out []Type, variadic bool) Type {
 	hash = fnv1(hash, '.')
 	for i, out := range out {
 		t := out.(*rtype)
-		ft.Out[i] = &t.t
+		params[len(in)+i] = &t.t
 		hash = fnv1(hash, byte(t.t.Hash>>24), byte(t.t.Hash>>16), byte(t.t.Hash>>8), byte(t.t.Hash))
 	}
 
@@ -1496,11 +1499,11 @@ func stringFor(t *abi.Type) string {
 func funcStr(ft *funcType) string {
 	repr := make([]byte, 0, 64)
 	repr = append(repr, "func("...)
-	for i, t := range ft.In {
+	for i, t := range ft.In() {
 		if i > 0 {
 			repr = append(repr, ", "...)
 		}
-		if ft.Variadic() && i == len(ft.In)-1 {
+		if ft.Variadic() && i == ft.InCount-1 {
 			repr = append(repr, "..."...)
 			repr = append(repr, stringFor((*sliceType)(unsafe.Pointer(t)).Elem)...)
 		} else {
@@ -1508,7 +1511,7 @@ func funcStr(ft *funcType) string {
 		}
 	}
 	repr = append(repr, ')')
-	out := ft.Out
+	out := ft.Out()
 	if len(out) == 1 {
 		repr = append(repr, ' ')
 	} else if len(out) > 1 {
@@ -2653,7 +2656,7 @@ func eqTypes(s1, s2 []*abi.Type) bool {
 func findFunc(in, out []*abi.Type, variadic bool) *abi.FuncType {
 	for _, typ := range typelist {
 		if typ.Kind() == abi.Func {
-			if ft := typ.FuncType(); ft.Variadic() == variadic && eqTypes(ft.In, in) && eqTypes(ft.Out, out) {
+			if ft := typ.FuncType(); ft.Variadic() == variadic && eqTypes(ft.In(), in) && eqTypes(ft.Out(), out) {
 				return ft
 			}
 		}

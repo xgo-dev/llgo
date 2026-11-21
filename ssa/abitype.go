@@ -391,35 +391,33 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Valu
 	})
 }
 
-func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
+func (b Builder) abiSignatureTypes(t *types.Signature, name string) llvm.Value {
 	prog := b.Prog
-	n := t.Len()
+	in, out := t.Params(), t.Results()
+	n := in.Len() + out.Len()
 	if n == 0 {
-		return prog.Nil(prog.rtType("Slice")).impl
+		return llvm.ConstNull(prog.AbiTypePtr().ll)
 	}
 	g := b.Pkg.VarOf(name)
 	if g == nil {
-		fields := make([]llvm.Value, n)
-		for i := 0; i < n; i++ {
-			fields[i] = b.abiType(abi.PublicType(t.At(i).Type())).impl
-		}
 		ft := prog.AbiTypePtr()
-		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
-		for i, field := range fields {
-			fields[i] = prog.toStorageConstant(ft, field)
+		fields := make([]llvm.Value, n)
+		index := 0
+		for _, tuple := range []*types.Tuple{in, out} {
+			for i := 0; i < tuple.Len(); i++ {
+				field := b.abiType(abi.PublicType(tuple.At(i).Type())).impl
+				fields[index] = prog.toStorageConstant(ft, field)
+				index++
+			}
 		}
+		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
 		data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 		g = b.Pkg.doNewVar(name, prog.Pointer(atyp))
 		g.Init(data)
 		g.impl.SetGlobalConstant(true)
 		b.Pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
 	}
-	size := uint64(n)
-	return prog.constStructValue(prog.rtType("Slice"), []llvm.Value{
-		g.impl,
-		prog.IntVal(size, prog.Int()).impl,
-		prog.IntVal(size, prog.Int()).impl,
-	})
+	return g.impl
 }
 
 func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value) (fields []llvm.Value) {
@@ -476,8 +474,9 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 	case *types.Signature:
 		name, _ := prog.abi.TypeName(t)
 		fields = []llvm.Value{
-			b.abiTuples(t.Params(), name+"$in"),
-			b.abiTuples(t.Results(), name+"$out"),
+			b.abiSignatureTypes(t, name+"$params"),
+			prog.IntVal(uint64(t.Params().Len()), prog.Int()).impl,
+			prog.IntVal(uint64(t.Results().Len()), prog.Int()).impl,
 		}
 		if prog.target.usesWasmReflectBridges() {
 			bridges := pkg.wasmReflectBridge(t)

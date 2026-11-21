@@ -223,7 +223,7 @@ func (t rtype) In(i int) Type {
 	if tt == nil {
 		panic("reflect: In of non-func type")
 	}
-	return toType(tt.In[i])
+	return toType(tt.In()[i])
 }
 
 func (t rtype) Key() Type {
@@ -255,7 +255,7 @@ func (t rtype) NumIn() int {
 	if tt == nil {
 		panic("reflect: NumIn of non-func type")
 	}
-	return len(tt.In)
+	return tt.InCount
 }
 
 func (t rtype) NumOut() int {
@@ -263,7 +263,7 @@ func (t rtype) NumOut() int {
 	if tt == nil {
 		panic("reflect: NumOut of non-func type")
 	}
-	return len(tt.Out)
+	return tt.OutCount
 }
 
 func (t rtype) Out(i int) Type {
@@ -271,7 +271,7 @@ func (t rtype) Out(i int) Type {
 	if tt == nil {
 		panic("reflect: Out of non-func type")
 	}
-	return toType(tt.Out[i])
+	return toType(tt.Out()[i])
 }
 
 // add returns p+x.
@@ -388,16 +388,18 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 	case abi.Func:
 		t := (*funcType)(unsafe.Pointer(T))
 		v := (*funcType)(unsafe.Pointer(V))
-		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
+		if t.OutCount != v.OutCount || t.InCount != v.InCount {
 			return false
 		}
-		for i := 0; i < len(t.In); i++ {
-			if !haveIdenticalType(t.In[i], v.In[i], cmpTags) {
+		tIn, vIn := t.In(), v.In()
+		for i := range tIn {
+			if !haveIdenticalType(tIn[i], vIn[i], cmpTags) {
 				return false
 			}
 		}
-		for i := 0; i < len(t.Out); i++ {
-			if !haveIdenticalType(t.Out[i], v.Out[i], cmpTags) {
+		tOut, vOut := t.Out(), v.Out()
+		for i := range tOut {
+			if !haveIdenticalType(tOut[i], vOut[i], cmpTags) {
 				return false
 			}
 		}
