@@ -1,4 +1,4 @@
-//go:build llgo && ((wasip1 && llgo.size.wasi) || ((darwin || linux) && llgo.size.native))
+//go:build llgo && ((wasip1 && llgo.size.wasi) || ((darwin || linux) && llgo.size.native) || (linux && baremetal && llgo.baremetal.stdio && llgo.size.embedded))
 
 package syscall
 

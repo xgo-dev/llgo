@@ -44,5 +44,15 @@ func main() {
 	if boxed.(interface{ Read() int }).Read() != 17 {
 		panic("bad reflected field update")
 	}
+	const key = "LLGO_EMBEDDED_TEST_ENV"
+	if err := os.Setenv(key, "hello"); err != nil || os.Getenv(key) != "hello" {
+		panic("could not set embedded environment")
+	}
+	if err := os.Unsetenv(key); err != nil {
+		panic("could not unset embedded environment")
+	}
+	if _, found := os.LookupEnv(key); found {
+		panic("embedded environment retained deleted key")
+	}
 	println("embedded output and reflection ok")
 }

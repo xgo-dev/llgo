@@ -1,4 +1,4 @@
-//go:build !llgo || !wasm || (!wasip1 && (!js || llgo.wasm.reflect.libffi))
+//go:build (!llgo || !wasm || (!wasip1 && (!js || llgo.wasm.reflect.libffi))) && !(baremetal && llgo.baremetal.stdio && !wasm)
 
 package reflect
 

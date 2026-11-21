@@ -52,6 +52,8 @@ func configureReadOnlyEnvironment(ctx *context, p *ssa.Package, result *rta.Resu
 		target := "native"
 		if ctx.buildConf.Goos == "wasip1" {
 			target = "WASI"
+		} else if ctx.embeddedClosedProgram {
+			target = "bare-metal"
 		}
 		fmt.Fprintf(os.Stderr, "llgo: specialize %s read-only environment\n", target)
 		if _, indexed := result.Reachable[p.Func("llgoLoadIndexedEnvironment")]; indexed {

@@ -92,7 +92,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 	}
 	var environment *ssa.Package
-	if wasi || native {
+	if wasi || native || embedded {
 		environment = environmentSyscallPackage(ctx.progSSA)
 	}
 	if len(candidates) == 0 && environment == nil && darwinOS == nil {
