@@ -21,6 +21,8 @@ import (
 	"go/types"
 	"sync"
 	"sync/atomic"
+
+	"github.com/xgo-dev/llgo/internal/directive"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -30,6 +32,7 @@ import (
 type packageSyntaxData struct {
 	mu                    sync.RWMutex
 	hasNativeTypeMetadata atomic.Bool
+	variables             map[*types.Package]packageVariables
 	linknames             map[string]string
 	wasmImports           map[string]wasmImport
 	exports               map[string]string
@@ -43,6 +46,7 @@ type packageSyntaxData struct {
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
+		variables:            make(map[*types.Package]packageVariables),
 		linknames:            make(map[string]string),
 		wasmImports:          make(map[string]wasmImport),
 		exports:              make(map[string]string),
@@ -101,4 +105,56 @@ func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
 	background, ok := p.typeCallConvs[name]
 	p.mu.RUnlock()
 	return background, ok
+}
+
+type packageVariables struct {
+	records     directive.Variables
+	hasCompiler bool
+}
+
+// SetPackageVariables publishes immutable records for one source view before
+// backend workers start. Package identity prevents cross-test/patch leakage.
+func (p Program) SetPackageVariables(pkg *types.Package, vars directive.Variables) {
+	hasCompilerVariables := false
+	for _, rec := range vars {
+		if rec.Kind != directive.OrdinaryVariable {
+			hasCompilerVariables = true
+			break
+		}
+	}
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.variables[pkg] = packageVariables{vars, hasCompilerVariables}
+	p.packageSyntax.mu.Unlock()
+}
+
+// MayUseCompilerVariables reports whether checked source can name a compiler
+// variable. Include direct imports (also dot imports), not just declarations in
+// pkg. Transitive imports cannot expose another package's variable declaration.
+func (p Program) MayUseCompilerVariables(pkg *types.Package) bool {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	if p.packageSyntax.variables[pkg].hasCompiler {
+		return true
+	}
+	for _, imp := range pkg.Imports() {
+		if p.packageSyntax.variables[imp].hasCompiler {
+			return true
+		}
+	}
+	return false
+}
+
+func (p Program) PackageVariables(pkg *types.Package) directive.Variables {
+	p.packageSyntax.mu.RLock()
+	vars := p.packageSyntax.variables[pkg].records
+	p.packageSyntax.mu.RUnlock()
+	return vars
+}
+
+// VariableDirective only accepts package-level declaration objects.
+func (p Program) VariableDirective(v *types.Var) directive.Variable {
+	if v == nil || v.Pkg() == nil || v.Pkg().Scope().Lookup(v.Name()) != v {
+		return directive.Variable{}
+	}
+	return p.PackageVariables(v.Pkg())[v.Name()]
 }
