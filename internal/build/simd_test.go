@@ -392,6 +392,11 @@ func pack(out *[16]uint32, a *[16]uint32, m uint16) {
 func expand(out *[16]uint32, a *[16]uint32, m uint16) {
  archsimd.LoadUint32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
 }
+//go:noinline
+func fused(out,a,b,c *[16]float32) {
+ x,y,z := archsimd.LoadFloat32x16Array(a),archsimd.LoadFloat32x16Array(b),archsimd.LoadFloat32x16Array(c)
+ x.MulAddEvenSubOdd(y,z).StoreArray(out)
+}
 func main() {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0600); err != nil {
@@ -425,7 +430,7 @@ func main() {}
 				assertSIMDBaselineAssembly(t, asm)
 				return
 			}
-			for _, mnemonic := range []string{"vpsadbw", "vpmaddubsw", "vpcompressd", "vpexpandd"} {
+			for _, mnemonic := range []string{"vpsadbw", "vpmaddubsw", "vpcompressd", "vpexpandd", `vfmaddsub(132|213|231)ps`} {
 				if !regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(asm) {
 					t.Errorf("missing 512-bit %s in %s output", mnemonic, level)
 				}
