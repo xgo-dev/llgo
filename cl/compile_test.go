@@ -130,7 +130,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/binpkg",
 			},
 			"./_testlibc": {
-				"./_testlibc/atomic", // output mismatch: baremetal i64 varargs lowering breaks printf("%ld") (fixture itself links)
+				"./_testlibc/atomic", // output mismatch: baremetal newlib printf is the nano variant, which has no %lld support (fixture itself links; llgo's i64 vararg lowering is verified correct)
 				"./_testlibc/cppabi", // C++ standard headers are unavailable in the baremetal sysroot
 				"./_testlibc/once",   // fast fail: build constraints exclude all Go files (pthread/sync)
 				"./_testlibc/setjmp", // link error: ld.lld: error: undefined symbol: stderr
@@ -188,7 +188,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/stackover",
 			},
 			"./_testlibc": {
-				"./_testlibc/atomic",  // unexpected output
+				"./_testlibc/atomic",  // output mismatch: baremetal newlib nano printf has no %lld support
 				"./_testlibc/complex", // baremetal libc does not provide cabsf
 				"./_testlibc/cppabi",  // C++ standard headers are unavailable in the baremetal sysroot
 				"./_testlibc/once",    // panic: cannot build SSA for packages
