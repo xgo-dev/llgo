@@ -30,7 +30,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	conf := ctx.buildConf
 	hosted := hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions)
 	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
-	if (!hosted && !embedded && !wasiGuardedStaticData(ctx)) ||
+	wasi := wasiGuardedStaticData(ctx)
+	if (!hosted && !embedded && !wasi) ||
 		ctx.progSSA == nil || ctx.frontend != nil || len(conf.SourceOverlay) != 0 {
 		return
 	}
@@ -38,6 +39,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	constructors := findLiteralConstructors(ctx, goroot)
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
+	var wasiStandardFiles []cl.OptionalInitializer
 	for _, pkg := range ctx.pkgByID {
 		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
 			continue
@@ -48,8 +50,14 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 		var groups []cl.OptionalInitializer
 		switch {
-		case wasm && hosted && pkg.PkgPath == "os":
+		case wasm && (hosted || wasi) && pkg.PkgPath == "os":
 			groups = optionalStandardFileInitializers(source.Func("init"))
+			if wasi {
+				if len(groups) != 3 {
+					continue
+				}
+				wasiStandardFiles = groups
+			}
 		case hasStaticDataValues(pkg.Package):
 			groups = optionalStaticContainers(source.Func("init"), !wasm)
 		default:
@@ -140,6 +148,16 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	// indirect calls. Recheck after removing the already proven-unused edges.
 	if len(callbackInitializers) != 0 {
 		maps.Copy(unused, unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers))
+	}
+	// Drop the WASI startup group together. Keeping a single standard file
+	// can retain the shared descriptor construction path.
+	if slices.ContainsFunc(wasiStandardFiles, func(group cl.OptionalInitializer) bool {
+		_, ok := unused[group.Global]
+		return !ok
+	}) {
+		for _, group := range wasiStandardFiles {
+			delete(unused, group.Global)
+		}
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, otherCount int
 	for global, group := range unused {

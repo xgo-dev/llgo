@@ -7,10 +7,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// On js/wasm, NewFile for the standard descriptors neither probes the host
-// nor enables nonblocking mode. It constructs a descriptor wrapper and
-// registers cleanup. An unread and unmodified global keeps that wrapper
-// rooted for the lifetime of the executable, so its cleanup never runs.
+// NewFile constructs a wrapper and registers cleanup. WASI also reads the
+// descriptor flags, and LLGo's WASI poll stub declines the registration.
+// An unread and unmodified global roots the wrapper for the lifetime of the
+// executable, so its cleanup never runs.
 func optionalStandardFileInitializers(init *ssa.Function) (groups []cl.OptionalInitializer) {
 	if init == nil || init.Synthetic != "package initializer" {
 		return nil

@@ -153,6 +153,21 @@ var OtherCall = other(1, "/dev/stdout")
 	if groups := optionalStandardFileInitializers(ssapkg.Func("NewFile")); len(groups) != 0 {
 		t.Fatalf("matched initialization in an ordinary function: %v", groups)
 	}
+	goroot := t.TempDir()
+	pkg.Dir = filepath.Join(goroot, "src", "os")
+	archive := &aPackage{Package: pkg}
+	ctx := &context{
+		progSSA: prog, pkgByID: map[string]*aPackage{"os": archive}, wasmClosedProgram: true,
+		crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32},
+		buildConf: &Config{
+			Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
+			LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true,
+		},
+	}
+	configureOptionalInitializers(ctx, goroot, &linkPruningInputs{})
+	if len(archive.guardedInitializers) != 0 {
+		t.Fatal("WASI requires the full standard descriptor initializers")
+	}
 }
 
 func TestOptionalInitializersStaticSlices(t *testing.T) {
@@ -218,7 +233,7 @@ var Table = []*struct{ N int }{Element}
 	}
 }
 
-func TestOptionalInitializersBrowserBoundaries(t *testing.T) {
+func TestOptionalInitializersWasmBoundaries(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("browser size profile requires DCE")
 	}
@@ -226,7 +241,9 @@ func TestOptionalInitializersBrowserBoundaries(t *testing.T) {
 	osPkg := checkFormatTestPackage(t, prog.Fset, "os", `package os
 type File struct{}
 func NewFile(uintptr, string) *File { return new(File) }
+var Stdin = NewFile(0, "/dev/stdin")
 var Stdout = NewFile(1, "/dev/stdout")
+var Stderr = NewFile(2, "/dev/stderr")
 `, types.Config{})
 	entry := checkFormatTestPackage(t, prog.Fset, "main", "package main; func main() {}", types.Config{})
 	prog.CreatePackage(osPkg.Types, osPkg.Syntax, osPkg.TypesInfo, true)
@@ -237,26 +254,37 @@ var Stdout = NewFile(1, "/dev/stdout")
 	osPkg.Dir = filepath.Join(goroot, "src", "os")
 	backend := llssa.NewProgram(&llssa.Target{GOOS: "js", GOARCH: "wasm"})
 	defer backend.Dispose()
+	all := []string{"_llgo_init_var.os.Stderr", "_llgo_init_var.os.Stdin", "_llgo_init_var.os.Stdout"}
 	for _, tc := range []struct {
 		name    string
 		inputs  *linkPruningInputs
 		closed  bool
-		wantOff bool
+		wasi    bool
+		wantOff []string
 	}{
-		{name: "closed", inputs: &linkPruningInputs{}, closed: true, wantOff: true},
+		{name: "closed", inputs: &linkPruningInputs{}, closed: true, wantOff: all},
 		{name: "open", inputs: &linkPruningInputs{}},
 		{name: "unknown inputs", closed: true},
 		{name: "opaque assembly", inputs: &linkPruningInputs{opaqueAsmPkg: "unknown"}, closed: true},
-		{name: "assembly reads stdout", inputs: &linkPruningInputs{roots: []string{"os.Stdout"}}, closed: true},
+		{name: "assembly reads stdout", inputs: &linkPruningInputs{roots: []string{"os.Stdout"}}, closed: true, wantOff: all[:2]},
+		{name: "wasi closed", inputs: &linkPruningInputs{}, closed: true, wasi: true, wantOff: all},
+		{name: "wasi open", inputs: &linkPruningInputs{}, wasi: true},
+		{name: "wasi assembly reads stdout", inputs: &linkPruningInputs{roots: []string{"os.Stdout"}}, closed: true, wasi: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := &aPackage{Package: osPkg}
+			goos := "js"
+			profile := crosscompile.Export{WasmProvider: crosscompile.WasmProviderEmscripten, WasmProfile: crosscompile.WasmProfileJ32}
+			if tc.wasi {
+				goos = "wasip1"
+				profile = crosscompile.Export{WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32}
+			}
 			ctx := &context{
 				prog: backend, progSSA: prog, initial: []*packages.Package{entry},
 				pkgByID: map[string]*aPackage{"os": archive}, wasmClosedProgram: tc.closed,
-				crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderEmscripten, WasmProfile: crosscompile.WasmProfileJ32},
+				crossCompile: profile,
 				buildConf: &Config{
-					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm", WasmOpt: WasmOptSize,
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: goos, Goarch: "wasm", WasmOpt: WasmOptSize,
 					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true,
 				},
 			}
@@ -264,12 +292,8 @@ var Stdout = NewFile(1, "/dev/stdout")
 			if len(archive.guardedInitializers) != 1 {
 				t.Fatal("archive must provide the same initializer guard in every link")
 			}
-			var want []string
-			if tc.wantOff {
-				want = []string{"_llgo_init_var.os.Stdout"}
-			}
-			if !slices.Equal(ctx.initializerGuardsOff, want) {
-				t.Fatalf("link guards disabled = %v, want %v", ctx.initializerGuardsOff, want)
+			if !slices.Equal(ctx.initializerGuardsOff, tc.wantOff) {
+				t.Fatalf("link guards disabled = %v, want %v", ctx.initializerGuardsOff, tc.wantOff)
 			}
 		})
 	}

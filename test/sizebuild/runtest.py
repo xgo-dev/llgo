@@ -129,9 +129,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     if target != "wasi" and (not linux_native or linux_amd64):
         fixtures.append(("wasm-fmt-map", "wasi default value formatting ok",
                          "llgo: specialize default value formatting", True))
-    if target.startswith("emscripten"):
+    if target == "wasi" or target.startswith("emscripten"):
         fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
                          standard_file_marker, False))
+    if target.startswith("emscripten"):
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
                          "llgo: omit Emscripten scheduler", False))
@@ -153,7 +154,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         if linux_amd64 and on_v2 and fixture in ("json-static", "json-typed-decode"):
             if init_marker not in log:
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
-        actual = command([*runner, str(artifact)], env, timeout=90)
+        run = [*runner]
+        if target == "wasi" and fixture == "wasm-standard-files":
+            run.extend([f"--volume={directory}:/tmp", "--env=TMPDIR=/tmp"])
+        actual = command([*run, str(artifact)], env, timeout=90)
         expected_output = expected
         if fixture == "json-static":
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
@@ -254,6 +258,8 @@ def wasi_specialization_probe(llgo, directory, env, runner):
                        "-o", str(artifact), fixture], env)
         if (marker in log) != want:
             raise RuntimeError(f"{case}: unexpected size specialization policy\n{log}")
+        if case == "fmt-dynamic" and "llgo: omit unused standard file initializers (3)" not in log:
+            raise RuntimeError(f"{case}: retained unused WASI standard files\n{log}")
         variants = ([], ["%[2]*.[3]*[1]f", "%w", "%p"]) if case == "fmt-dynamic" else ([],)
         for args in variants:
             expected = command(["go", "run", fixture, *args], env)
