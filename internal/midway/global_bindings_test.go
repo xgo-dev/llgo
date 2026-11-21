@@ -53,7 +53,7 @@ var (
 		t.Fatal(err)
 	}
 	for _, name := range []string{"text", "bytes"} {
-		for _, suffix := range []string{"", suffix(0), suffix(128), suffix(256)} {
+		for _, suffix := range []string{"", suffix(0), suffix(128), suffix(256), suffix(512)} {
 			data, ok := embedded[name+suffix]
 			if !ok || len(data.Files) != 1 || string(data.Files[0].Data) != "embedded data" {
 				t.Errorf("missing embedded contents for %s: %+v", name+suffix, data)

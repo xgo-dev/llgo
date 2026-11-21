@@ -63,7 +63,7 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 						t.Fatalf("missing variant %s", name)
 					}
 				}
-				for _, name := range []string{"main.sum@simd256", "main.makeBlock@simd256"} {
+				for _, name := range []string{"main.sum@simd256", "main.makeBlock@simd256", "main.sum@simd512", "main.makeBlock@simd512"} {
 					fn := mod.NamedFunction(name)
 					if target.arch == "amd64" {
 						if fn.IsNil() || fn.BasicBlocksCount() == 0 {

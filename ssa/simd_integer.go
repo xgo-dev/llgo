@@ -17,17 +17,21 @@ func simdIntegerConstant(typ llvm.Type, value uint64) llvm.Value {
 	return llvm.ConstVector(values, false)
 }
 
-func (b Builder) simdRotate(op SIMDOp, x, count Expr) Expr {
+func (b Builder) simdFunnel(op SIMDOp, x, y, count Expr) Expr {
 	// Funnel shifts reduce the count modulo the lane width, including zero.
 	// The initial truncation preserves that modulo for each power-of-two width.
-	distance := b.impl.CreateTrunc(count.impl, x.ll.ElementType(), "")
-	v := b.impl.CreateInsertElement(llvm.Undef(x.ll), distance, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
-	distance = b.simdSplatLane0(Expr{v, x.Type}).impl
+	distance := count.impl
+	if distance.Type().TypeKind() != llvm.VectorTypeKind {
+		distance = b.impl.CreateTrunc(distance, x.ll.ElementType(), "")
+		v := b.impl.CreateInsertElement(llvm.Undef(x.ll), distance, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
+		distance = b.simdSplatLane0(Expr{v, x.Type}).impl
+	}
 	name := "llvm.fshl"
-	if op == SIMDRotateAllRight {
+	if op == SIMDRotateAllRight || op == SIMDRotateRight || op == SIMDFunnelRight {
+		x, y = y, x
 		name = "llvm.fshr"
 	}
-	value := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, x.impl, distance}, "")
+	value := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, y.impl, distance}, "")
 	return Expr{value, x.Type}
 }
 
@@ -83,4 +87,24 @@ func (b Builder) simdIntegerIntrinsic(op SIMDOp, x, y Expr) Expr {
 	}
 	value := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID(prefix+name), []llvm.Value{x.impl, y.impl}, "")
 	return Expr{value, x.Type}
+}
+
+// Evaluate the three-input truth table as a tree of bitwise multiplexers.
+// Constant truth tables fold down to the Boolean expression they encode.
+func (b Builder) simdTernaryLogic(x, table, y, z Expr) Expr {
+	var values [8]llvm.Value
+	for i := range values {
+		bit := b.impl.CreateAnd(table.impl, llvm.ConstInt(table.ll, 1<<i, false), "")
+		set := llvm.CreateICmp(b.impl, llvm.IntNE, bit, llvm.ConstNull(table.ll))
+		values[i] = b.impl.CreateSelect(set, llvm.ConstAllOnes(x.ll), llvm.ConstNull(x.ll), "")
+	}
+	n := len(values)
+	for _, selector := range []Expr{z, y, x} {
+		n /= 2
+		for i := 0; i < n; i++ {
+			diff := b.impl.CreateXor(values[2*i], values[2*i+1], "")
+			values[i] = b.impl.CreateXor(values[2*i], b.impl.CreateAnd(selector.impl, diff, ""), "")
+		}
+	}
+	return Expr{values[0], x.Type}
 }

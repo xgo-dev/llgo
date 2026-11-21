@@ -28,6 +28,13 @@ const (
 	simdCompare
 	simdToMask
 	simdTernary
+	simdMaskedBlend
+	simdMaskedUnary
+	simdFunnelVector
+	simdFunnelScalar
+	simdTernaryTable
+	simdMaskedSplat
+	simdTwoSourcePermute
 	simdMaskFromBits
 	simdMaskToBits
 	simdScalarShift
@@ -35,6 +42,8 @@ const (
 	simdSignedVector
 	simdConvert
 	simdWidenBinary
+	simdDotMixed
+	simdSad
 	simdCarrylessSelector
 	simdStoreMasked
 	simdIntegerResize
@@ -44,6 +53,9 @@ const (
 	simdPairSelector
 	simdPairHalfSelectors
 	simdScalarSelector
+	simdAESRound
+	simdGaloisAffine
+	simdByteImmediate
 	simdBool
 	simdConcatShift
 )
@@ -99,6 +111,7 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "bitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
 	{"numeric", "BitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
 	{"numeric", "bitSelectNot"}:                 {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
+	{"numeric", "blendMasked"}:                  {llssa.SIMDBlend, simdMaskedBlend, types.IsInteger},
 	{"numeric", "blend"}:                        {llssa.SIMDBlend, simdTernary, types.IsInteger},
 	{"mask", "And"}:                             {llssa.SIMDAnd, simdBinary, 0},
 	{"mask", "Or"}:                              {llssa.SIMDOr, simdBinary, 0},
@@ -114,8 +127,12 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "SubSaturated"}:                 {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
 	{"numeric", "Min"}:                          {llssa.SIMDMin, simdBinary, 0},
 	{"numeric", "LookupOrZero"}:                 {llssa.SIMDLookupOrZero, simdBinary, types.IsInteger},
+	{"numeric", "PermuteOrZeroGrouped"}:         {llssa.SIMDPermuteOrZeroGrouped, simdSignedVector, types.IsInteger},
+	{"numeric", "ConcatPermute"}:                {llssa.SIMDConcatPermute, simdTwoSourcePermute, 0},
+	{"numeric", "Compress"}:                     {llssa.SIMDCompress, simdMaskedUnary, 0},
+	{"numeric", "Expand"}:                       {llssa.SIMDExpand, simdMaskedUnary, 0},
 	{"numeric", "PermuteOrZero"}:                {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
-	{"numeric", "Permute"}:                      {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
+	{"numeric", "Permute"}:                      {llssa.SIMDPermute, simdUnsignedVector, 0},
 	{"numeric", "Max"}:                          {llssa.SIMDMax, simdBinary, 0},
 	{"numeric", "GetLo"}:                        {llssa.SIMDGetLo, simdHalf, 0},
 	{"numeric", "GetHi"}:                        {llssa.SIMDGetHi, simdHalf, 0},
@@ -142,21 +159,64 @@ var simdOperations = map[simdKey]simdOperation{
 
 	{"numeric", "ConvertLo2ToFloat64"}: {llssa.SIMDConvertLo, simdConvertLo, 0},
 
-	{"numeric", "ConcatAddPairs"}:           {llssa.SIMDConcatAddPairs, simdBinary, 0},
-	{"numeric", "ConcatAddPairsGrouped"}:    {llssa.SIMDConcatAddPairsGrouped, simdBinary, 0},
-	{"numeric", "ConcatSubPairs"}:           {llssa.SIMDConcatSubPairs, simdBinary, 0},
-	{"numeric", "ConcatSubPairsGrouped"}:    {llssa.SIMDConcatSubPairsGrouped, simdBinary, 0},
-	{"numeric", "Average"}:                  {llssa.SIMDAverage, simdBinary, types.IsInteger},
-	{"numeric", "MulAdd"}:                   {llssa.SIMDFMA, simdTernary, types.IsFloat},
-	{"numeric", "LeadingZeros"}:             {llssa.SIMDLeadingZeros, simdUnary, types.IsInteger},
-	{"numeric", "LeadingSignBits"}:          {llssa.SIMDLeadingSignBits, simdUnary, types.IsInteger},
-	{"numeric", "MulWidenHi"}:               {llssa.SIMDMulWidenHi, simdWidenBinary, types.IsInteger},
-	{"numeric", "MulWidenLo"}:               {llssa.SIMDMulWidenLo, simdWidenBinary, types.IsInteger},
-	{"numeric", "RotateAllLeft"}:            {llssa.SIMDRotateAllLeft, simdScalarShift, types.IsInteger},
-	{"numeric", "RotateAllRight"}:           {llssa.SIMDRotateAllRight, simdScalarShift, types.IsInteger},
-	{"numeric", "StoreArrayMasked"}:         {llssa.SIMDStoreMasked, simdStoreMasked, 0},
-	{"numeric", "carrylessMultiply"}:        {llssa.SIMDCarrylessMultiply, simdCarrylessSelector, types.IsUnsigned},
-	{"numeric", "carrylessMultiplyWidenLo"}: {llssa.SIMDCarrylessMultiplyLo, simdBinary, types.IsUnsigned},
+	{"numeric", "ConcatAddPairs"}:                    {llssa.SIMDConcatAddPairs, simdBinary, 0},
+	{"numeric", "ConcatAddPairsGrouped"}:             {llssa.SIMDConcatAddPairsGrouped, simdBinary, 0},
+	{"numeric", "ConcatSubPairs"}:                    {llssa.SIMDConcatSubPairs, simdBinary, 0},
+	{"numeric", "ConcatSubPairsGrouped"}:             {llssa.SIMDConcatSubPairsGrouped, simdBinary, 0},
+	{"numeric", "Average"}:                           {llssa.SIMDAverage, simdBinary, types.IsInteger},
+	{"numeric", "MulSign"}:                           {llssa.SIMDMulSign, simdBinary, types.IsInteger},
+	{"numeric", "MulHigh"}:                           {llssa.SIMDMulHigh, simdBinary, types.IsInteger},
+	{"numeric", "MulWidenEven"}:                      {llssa.SIMDMulWidenEven, simdWidenBinary, types.IsInteger},
+	{"numeric", "DotProductPairs"}:                   {llssa.SIMDDotProductPairs, simdWidenBinary, types.IsInteger},
+	{"numeric", "DotProductPairsSaturated"}:          {llssa.SIMDDotProductPairsSaturated, simdDotMixed, types.IsUnsigned},
+	{"numeric", "SumOf8AbsDiff"}:                     {llssa.SIMDSumOf8AbsDiff, simdSad, types.IsUnsigned},
+	{"numeric", "AddOddSubEven"}:                     {llssa.SIMDAddOddSubEven, simdBinary, types.IsFloat},
+	{"numeric", "MulAddEvenSubOdd"}:                  {llssa.SIMDMulAddEvenSubOdd, simdTernary, types.IsFloat},
+	{"numeric", "MulAddOddSubEven"}:                  {llssa.SIMDMulAddOddSubEven, simdTernary, types.IsFloat},
+	{"numeric", "ConcatAddPairsSaturated"}:           {llssa.SIMDConcatAddPairsSaturated, simdBinary, types.IsInteger},
+	{"numeric", "ConcatAddPairsSaturatedGrouped"}:    {llssa.SIMDConcatAddPairsSaturatedGrouped, simdBinary, types.IsInteger},
+	{"numeric", "ConcatSubPairsSaturated"}:           {llssa.SIMDConcatSubPairsSaturated, simdBinary, types.IsInteger},
+	{"numeric", "ConcatSubPairsSaturatedGrouped"}:    {llssa.SIMDConcatSubPairsSaturatedGrouped, simdBinary, types.IsInteger},
+	{"numeric", "Reciprocal"}:                        {llssa.SIMDReciprocal, simdUnary, types.IsFloat},
+	{"numeric", "ReciprocalSqrt"}:                    {llssa.SIMDReciprocalSqrt, simdUnary, types.IsFloat},
+	{"numeric", "Scale"}:                             {llssa.SIMDScale, simdBinary, types.IsFloat},
+	{"numeric", "CeilScaled"}:                        {llssa.SIMDCeilScaled, simdByteImmediate, types.IsFloat},
+	{"numeric", "CeilScaledResidue"}:                 {llssa.SIMDCeilScaledResidue, simdByteImmediate, types.IsFloat},
+	{"numeric", "FloorScaled"}:                       {llssa.SIMDFloorScaled, simdByteImmediate, types.IsFloat},
+	{"numeric", "FloorScaledResidue"}:                {llssa.SIMDFloorScaledResidue, simdByteImmediate, types.IsFloat},
+	{"numeric", "RoundScaled"}:                       {llssa.SIMDRoundScaled, simdByteImmediate, types.IsFloat},
+	{"numeric", "RoundScaledResidue"}:                {llssa.SIMDRoundScaledResidue, simdByteImmediate, types.IsFloat},
+	{"numeric", "TruncScaled"}:                       {llssa.SIMDTruncScaled, simdByteImmediate, types.IsFloat},
+	{"numeric", "TruncScaledResidue"}:                {llssa.SIMDTruncScaledResidue, simdByteImmediate, types.IsFloat},
+	{"numeric", "AESEncryptLastRound"}:               {llssa.SIMDAESEncryptLastRound, simdAESRound, types.IsUnsigned},
+	{"numeric", "AESEncryptOneRound"}:                {llssa.SIMDAESEncryptOneRound, simdAESRound, types.IsUnsigned},
+	{"numeric", "AESDecryptLastRound"}:               {llssa.SIMDAESDecryptLastRound, simdAESRound, types.IsUnsigned},
+	{"numeric", "AESDecryptOneRound"}:                {llssa.SIMDAESDecryptOneRound, simdAESRound, types.IsUnsigned},
+	{"numeric", "AESInvMixColumns"}:                  {llssa.SIMDAESInvMixColumns, simdUnary, types.IsUnsigned},
+	{"numeric", "AESRoundKeyGenAssist"}:              {llssa.SIMDAESRoundKeyGenAssist, simdByteImmediate, types.IsUnsigned},
+	{"numeric", "SHA1FourRounds"}:                    {llssa.SIMDSHA1FourRounds, simdCarrylessSelector, types.IsUnsigned},
+	{"numeric", "SHA1Message1"}:                      {llssa.SIMDSHA1Message1, simdBinary, types.IsUnsigned},
+	{"numeric", "SHA1Message2"}:                      {llssa.SIMDSHA1Message2, simdBinary, types.IsUnsigned},
+	{"numeric", "SHA1NextE"}:                         {llssa.SIMDSHA1NextE, simdBinary, types.IsUnsigned},
+	{"numeric", "SHA256Message1"}:                    {llssa.SIMDSHA256Message1, simdBinary, types.IsUnsigned},
+	{"numeric", "SHA256Message2"}:                    {llssa.SIMDSHA256Message2, simdBinary, types.IsUnsigned},
+	{"numeric", "SHA256TwoRounds"}:                   {llssa.SIMDSHA256TwoRounds, simdTernary, types.IsUnsigned},
+	{"numeric", "GaloisFieldMul"}:                    {llssa.SIMDGaloisFieldMul, simdBinary, types.IsUnsigned},
+	{"numeric", "GaloisFieldAffineTransform"}:        {llssa.SIMDGaloisFieldAffineTransform, simdGaloisAffine, types.IsUnsigned},
+	{"numeric", "GaloisFieldAffineTransformInverse"}: {llssa.SIMDGaloisFieldAffineTransformInverse, simdGaloisAffine, types.IsUnsigned},
+	{"numeric", "MulAdd"}:                            {llssa.SIMDFMA, simdTernary, types.IsFloat},
+	{"numeric", "LeadingZeros"}:                      {llssa.SIMDLeadingZeros, simdUnary, types.IsInteger},
+	{"numeric", "LeadingSignBits"}:                   {llssa.SIMDLeadingSignBits, simdUnary, types.IsInteger},
+	{"numeric", "MulWidenHi"}:                        {llssa.SIMDMulWidenHi, simdWidenBinary, types.IsInteger},
+	{"numeric", "MulWidenLo"}:                        {llssa.SIMDMulWidenLo, simdWidenBinary, types.IsInteger},
+	{"numeric", "RotateLeft"}:                        {llssa.SIMDRotateLeft, simdBinary, types.IsInteger},
+	{"numeric", "RotateRight"}:                       {llssa.SIMDRotateRight, simdBinary, types.IsInteger},
+	{"numeric", "tern"}:                              {llssa.SIMDTernaryLogic, simdTernaryTable, types.IsInteger},
+	{"numeric", "RotateAllLeft"}:                     {llssa.SIMDRotateAllLeft, simdScalarShift, types.IsInteger},
+	{"numeric", "RotateAllRight"}:                    {llssa.SIMDRotateAllRight, simdScalarShift, types.IsInteger},
+	{"numeric", "StoreArrayMasked"}:                  {llssa.SIMDStoreMasked, simdStoreMasked, 0},
+	{"numeric", "carrylessMultiply"}:                 {llssa.SIMDCarrylessMultiply, simdCarrylessSelector, types.IsUnsigned},
+	{"numeric", "carrylessMultiplyWidenLo"}:          {llssa.SIMDCarrylessMultiplyLo, simdBinary, types.IsUnsigned},
 }
 
 // These registrations share lowering but retain exact declaration names and
@@ -199,19 +259,53 @@ func init() {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
-	for _, lanes := range []int{2, 4, 8, 16, 32} {
+	for _, bits := range []int{16, 32, 64} {
+		for _, direction := range []struct {
+			name string
+			op   llssa.SIMDOp
+		}{{"Left", llssa.SIMDFunnelLeft}, {"Right", llssa.SIMDFunnelRight}} {
+			name := direction.name + "ConcatMod" + fmt.Sprint(bits)
+			simdOperations[simdKey{"numeric", "Shift" + name}] = simdOperation{direction.op, simdFunnelVector, types.IsInteger}
+			simdOperations[simdKey{"numeric", "ShiftAll" + name}] = simdOperation{direction.op, simdFunnelScalar, types.IsInteger}
+		}
+	}
+	for _, lanes := range []int{2, 4, 8, 16, 32, 64} {
+		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%dMasked", lanes)}] = simdOperation{llssa.SIMDSplatMasked, simdMaskedSplat, 0}
 		simdOperations[simdKey{"numeric", fmt.Sprintf("broadcast1To%d", lanes)}] = simdOperation{llssa.SIMDSplatLane0, simdSplat, 0}
 	}
-	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4"} {
+	for _, name := range []string{"Int8x32", "Uint8x32", "Int16x16", "Uint16x16", "Int32x8", "Uint32x8", "Int64x4", "Uint64x4", "Float32x8", "Float64x4",
+		"Int8x64", "Uint8x64", "Int16x32", "Uint16x32", "Int32x16", "Uint32x16", "Int64x8", "Uint64x8", "Float32x16", "Float64x8"} {
 		simdOperations[simdKey{"", "Load" + name + "Array"}] = simdOperation{llssa.SIMDLoad, simdLoad, 0}
 		simdOperations[simdKey{"", "Broadcast" + name}] = simdOperation{llssa.SIMDBroadcast, simdBroadcast, 0}
 	}
-	for _, name := range []string{"Mask8x32", "Mask16x16", "Mask32x8", "Mask64x4"} {
+	for _, name := range []string{"Mask8x32", "Mask16x16", "Mask32x8", "Mask64x4", "Mask8x64", "Mask16x32", "Mask32x16", "Mask64x8"} {
 		simdOperations[simdKey{"", name + "FromBits"}] = simdOperation{llssa.SIMDMaskFromBits, simdMaskFromBits, 0}
 	}
-	for _, name := range []string{"ToInt8x32", "ToInt16x16", "ToInt32x8", "ToInt64x4"} {
+	for _, name := range []string{"ToInt8x32", "ToInt16x16", "ToInt32x8", "ToInt64x4", "ToInt8x64", "ToInt16x32", "ToInt32x16", "ToInt64x8"} {
 		simdOperations[simdKey{"mask", name}] = simdOperation{llssa.SIMDBitcast, simdBitcast, 0}
 	}
+}
+
+// Go's amd64 partial-load helpers mask an ordinary full-array load. LLVM
+// needs the mask on the load itself so inactive lanes never access memory.
+func simdPartialLoadType(f *ssa.Function, arch string) types.Type {
+	obj, ok := f.Object().(*types.Func)
+	if arch != "amd64" || !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" ||
+		!strings.HasSuffix(obj.Name(), "Part") || !types.Identical(obj.Type(), f.Signature) {
+		return nil
+	}
+	sig := f.Signature
+	if sig.Recv() != nil || sig.Params().Len() != 1 || sig.Results().Len() != 2 ||
+		!types.Identical(sig.Results().At(1).Type(), types.Typ[types.Int]) {
+		return nil
+	}
+	result := sig.Results().At(0).Type()
+	lanes, ok := llssa.SIMDNumericShape(result)
+	if !ok || !types.Identical(sig.Params().At(0).Type(), types.NewSlice(lanes.Elem())) ||
+		obj.Name() != "Load"+types.Unalias(result).(*types.Named).Obj().Name()+"Part" {
+		return nil
+	}
+	return result
 }
 
 // Resolve only declared official operations, never synthetic wrapper names.
@@ -269,6 +363,9 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 			desc = simdOperation{llssa.SIMDIntegerMulAdd, simdTernary, types.IsInteger}
 		}
 	}
+	if llssa.SIMDX86Special(desc.op) && arch != "amd64" {
+		return fallback()
+	}
 	switch desc.op {
 	case llssa.SIMDShiftSaturated, llssa.SIMDReduceSum, llssa.SIMDReduceMin, llssa.SIMDReduceMax:
 		if arch != "arm64" {
@@ -291,9 +388,15 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 			return fallback()
 		}
 	}
-	if desc.signature == simdSplat {
+	if desc.signature == simdFunnelVector || desc.signature == simdFunnelScalar {
+		lanes, _ := llssa.SIMDNumericShape(vector)
+		if !strings.HasSuffix(key.name, fmt.Sprint(simdVectorBits(vector)/lanes.Len())) {
+			return fallback()
+		}
+	}
+	if desc.signature == simdSplat || desc.signature == simdMaskedSplat {
 		shape, _ := llssa.SIMDNumericShape(sig.Results().At(0).Type())
-		if key.name != fmt.Sprintf("broadcast1To%d", shape.Len()) {
+		if strings.TrimSuffix(key.name, "Masked") != fmt.Sprintf("broadcast1To%d", shape.Len()) {
 			return fallback()
 		}
 	}
@@ -332,11 +435,21 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	if !ok {
 		return false
 	}
+	switch d.op {
+	case llssa.SIMDAESRoundKeyGenAssist, llssa.SIMDAESInvMixColumns, llssa.SIMDSHA1FourRounds, llssa.SIMDSHA1Message1, llssa.SIMDSHA1Message2, llssa.SIMDSHA1NextE, llssa.SIMDSHA256Message1, llssa.SIMDSHA256Message2, llssa.SIMDSHA256TwoRounds:
+		if lanes.Len() != 4 || !types.Identical(lanes.Elem(), types.Typ[types.Uint32]) {
+			return false
+		}
+	case llssa.SIMDGaloisFieldMul:
+		if !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
+			return false
+		}
+	}
 	// Check operation-specific widths before the general wide-operation gate,
 	// so malformed plain and grouped declarations use the same shape validation.
 	switch d.op {
 	case llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped:
-		if simdVectorBits(vector) != 256 {
+		if simdVectorBits(vector) < 256 {
 			return false
 		}
 	case llssa.SIMDInterleaveLo, llssa.SIMDInterleaveHi,
@@ -347,10 +460,11 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	}
 	// Extending type recognition must not silently enable width-specific
 	// handlers, or cross-width conversions with different lane semantics.
-	wide := simdVectorBits(vector) == 256
+	width := simdVectorBits(vector)
+	wide := width > 128
 	for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
 		for i := 0; i < tuple.Len(); i++ {
-			wide = wide || simdVectorBits(tuple.At(i).Type()) == 256
+			wide = wide || simdVectorBits(tuple.At(i).Type()) > 128
 		}
 	}
 	if wide && !d.supportsWide() {
@@ -373,10 +487,31 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdAESRound, simdGaloisAffine:
+		n := 1
+		elem := types.Uint32
+		if d.signature == simdGaloisAffine {
+			n = 2
+			elem = types.Uint64
+		}
+		if sig.Params().Len() != n || !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
+			return false
+		}
+		t := sig.Params().At(0).Type()
+		shape, ok := llssa.SIMDNumericShape(t)
+		if !ok || simdVectorBits(t) != width || !types.Identical(shape.Elem(), types.Typ[elem]) {
+			return false
+		}
+		params = []types.Type{t}
+		if n == 2 {
+			params = append(params, types.Typ[types.Uint8])
+		}
+	case simdByteImmediate:
+		params = []types.Type{types.Typ[types.Uint8]}
 	case simdConcatShift:
 		n := int64(16)
 		if d.op == llssa.SIMDConcatShiftBytesGrouped {
-			n = 32
+			n = max(32, width/8)
 		}
 		if lanes.Len() != n || !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
 			return false
@@ -388,7 +523,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		bits, elemBits := int64(128), int64(16)
 		switch d.op {
 		case llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped:
-			bits = 256
+			bits = max(256, width)
 		}
 		if d.op == llssa.SIMDPermuteScalars || d.op == llssa.SIMDPermuteScalarsGrouped {
 			elemBits = 32
@@ -400,7 +535,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	case simdPairSelector:
 		bits := int64(128)
 		if d.op == llssa.SIMDConcatSelectedGrouped {
-			bits = 256
+			bits = max(256, width)
 		}
 		elemBits := simdVectorBits(vector) / lanes.Len()
 		if simdVectorBits(vector) != bits || elemBits != 32 && elemBits != 64 {
@@ -412,7 +547,18 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		params = []types.Type{types.Typ[types.Uint8], types.Typ[types.Uint8], vector}
-	case simdSplat:
+	case simdSplat, simdMaskedSplat:
+		if d.signature == simdMaskedSplat {
+			if sig.Params().Len() != 1 {
+				return false
+			}
+			typ := sig.Params().At(0).Type()
+			shape, ok := llssa.SIMDMaskShape(typ)
+			if !ok || shape.Len() != lanes.Len() || simdVectorBits(typ) != width {
+				return false
+			}
+			params = []types.Type{typ}
+		}
 		if sig.Results().Len() != 1 {
 			return false
 		}
@@ -422,7 +568,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 	case simdHalf:
-		if simdVectorBits(vector) != 256 || sig.Results().Len() != 1 {
+		if width < 256 || sig.Results().Len() != 1 {
 			return false
 		}
 		var half types.Type
@@ -437,7 +583,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			params = []types.Type{half}
 		}
 		shape, ok := llssa.SIMDNumericShape(half)
-		if !ok || simdVectorBits(half) != 128 || !types.Identical(shape.Elem(), lanes.Elem()) {
+		if !ok || 2*simdVectorBits(half) != width || !types.Identical(shape.Elem(), lanes.Elem()) {
 			return false
 		}
 	case simdScalarShift:
@@ -474,7 +620,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		case llssa.SIMDSaturateConcat, llssa.SIMDSaturateConcatGrouped:
 			bits := int64(128)
 			if d.op == llssa.SIMDSaturateConcatGrouped {
-				bits = 256
+				bits = max(256, width)
 			}
 			if simdVectorBits(vector) != bits || simdVectorBits(result) != bits || shape.Len() != lanes.Len()*2 || from&types.IsUnsigned != 0 {
 				return false
@@ -494,13 +640,35 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 				return false
 			}
 		}
+	case simdSad, simdDotMixed:
+		if sig.Results().Len() != 1 || sig.Params().Len() != 1 || !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
+			return false
+		}
+		result = sig.Results().At(0).Type()
+		out, ok := llssa.SIMDNumericShape(result)
+		if !ok || simdVectorBits(result) != width {
+			return false
+		}
+		if d.signature == simdSad {
+			if !types.Identical(out.Elem(), types.Typ[types.Uint64]) {
+				return false
+			}
+			params = []types.Type{vector}
+		} else {
+			y := sig.Params().At(0).Type()
+			ys, ok := llssa.SIMDNumericShape(y)
+			if !ok || ys.Len() != lanes.Len() || !types.Identical(ys.Elem(), types.Typ[types.Int8]) || !types.Identical(out.Elem(), types.Typ[types.Int16]) {
+				return false
+			}
+			params = []types.Type{y}
+		}
 	case simdWidenBinary:
 		if sig.Results().Len() != 1 {
 			return false
 		}
 		result = sig.Results().At(0).Type()
 		widened, ok := llssa.SIMDNumericShape(result)
-		if !ok || widened.Len()*2 != lanes.Len() {
+		if !ok || simdVectorBits(result) != width || widened.Len()*2 != lanes.Len() {
 			return false
 		}
 		from := lanes.Elem().Underlying().(*types.Basic).Info()
@@ -519,20 +687,27 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			return false
 		}
 		params, result = []types.Type{types.NewPointer(lanes), maskType}, nil
-	case simdUnsignedVector, simdSignedVector:
-		if sig.Params().Len() != 1 {
+	case simdTernaryTable:
+		params = []types.Type{types.Typ[types.Uint8], vector, vector}
+	case simdFunnelScalar:
+		params = []types.Type{vector, types.Typ[types.Uint64]}
+	case simdFunnelVector, simdTwoSourcePermute, simdUnsignedVector, simdSignedVector:
+		if d.signature == simdTwoSourcePermute || d.signature == simdFunnelVector {
+			params = []types.Type{vector}
+		}
+		if sig.Params().Len() != len(params)+1 {
 			return false
 		}
-		counts := sig.Params().At(0).Type()
+		counts := sig.Params().At(len(params)).Type()
 		shape, ok := llssa.SIMDNumericShape(counts)
-		if !ok || shape.Len() != lanes.Len() {
+		if !ok || shape.Len() != lanes.Len() || simdVectorBits(counts) != width {
 			return false
 		}
 		info := shape.Elem().Underlying().(*types.Basic).Info()
-		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature == simdUnsignedVector) {
+		if info&types.IsInteger == 0 || (info&types.IsUnsigned != 0) != (d.signature != simdSignedVector) {
 			return false
 		}
-		params = []types.Type{counts}
+		params = append(params, counts)
 	case simdMaskFromBits, simdMaskToBits:
 		if _, ok := llssa.SIMDMaskShape(vector); !ok {
 			return false
@@ -542,6 +717,8 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 			bits = types.Typ[types.Uint16]
 		} else if lanes.Len() == 32 {
 			bits = types.Typ[types.Uint32]
+		} else if lanes.Len() == 64 {
+			bits = types.Typ[types.Uint64]
 		}
 		if d.signature == simdMaskFromBits {
 			params = []types.Type{bits}
@@ -560,6 +737,19 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 		if d.signature == simdCompare {
 			params = []types.Type{vector}
 		}
+	case simdMaskedBlend, simdMaskedUnary:
+		if d.signature == simdMaskedBlend {
+			params = []types.Type{vector}
+		}
+		if sig.Params().Len() != len(params)+1 {
+			return false
+		}
+		maskType := sig.Params().At(len(params)).Type()
+		mask, ok := llssa.SIMDMaskShape(maskType)
+		if !ok || mask.Len() != lanes.Len() || simdVectorBits(maskType) != width {
+			return false
+		}
+		params = append(params, maskType)
 	case simdTernary:
 		params = []types.Type{vector, vector}
 	case simdBitcast, simdConvert, simdConvertLo:
@@ -645,8 +835,11 @@ func simdVectorBits(typ types.Type) int64 {
 // Width-changing operations validate their lane counts and element sizes
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
+	if llssa.SIMDX86Special(d.op) {
+		return true
+	}
 	switch d.op {
-	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDMulSign, llssa.SIMDMulHigh, llssa.SIMDMulWidenEven, llssa.SIMDDotProductPairs, llssa.SIMDDotProductPairsSaturated, llssa.SIMDSumOf8AbsDiff, llssa.SIMDAddOddSubEven, llssa.SIMDMulAddEvenSubOdd, llssa.SIMDMulAddOddSubEven, llssa.SIMDConcatAddPairsSaturated, llssa.SIMDConcatAddPairsSaturatedGrouped, llssa.SIMDConcatSubPairsSaturated, llssa.SIMDConcatSubPairsSaturatedGrouped, llssa.SIMDFunnelLeft, llssa.SIMDFunnelRight, llssa.SIMDRotateLeft, llssa.SIMDRotateRight, llssa.SIMDTernaryLogic, llssa.SIMDSplatMasked, llssa.SIMDCompress, llssa.SIMDExpand, llssa.SIMDConcatPermute, llssa.SIMDPermute, llssa.SIMDPermuteOrZeroGrouped, llssa.SIMDShiftRight, llssa.SIMDShiftLeft, llssa.SIMDLeadingZeros, llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,

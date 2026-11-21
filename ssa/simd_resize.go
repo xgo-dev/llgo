@@ -64,7 +64,7 @@ func (b Builder) simdIntegerResize(op SIMDOp, result Type, args []Expr) Expr {
 	for i := range mask {
 		index := i
 		if op == SIMDSaturateConcatGrouped {
-			group := x.ll.VectorSize() / 2
+			group := 16 / int(b.Prog.td.TypeAllocSize(x.ll.ElementType()))
 			index = (i/(2*group))*group + i%group + ((i/group)%2)*x.ll.VectorSize()
 		} else if op != SIMDSaturateConcat && i >= x.ll.VectorSize() {
 			index = x.ll.VectorSize()

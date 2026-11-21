@@ -23,7 +23,7 @@ const (
 // Keep selectable widths in sync with runtime/_patch/simd/selection_llgo.go.
 func targetWidths(arch string) []int {
 	if arch == "amd64" {
-		return []int{0, fallbackWidth, 256}
+		return []int{0, fallbackWidth, 256, 512}
 	}
 	return []int{0, fallbackWidth}
 }

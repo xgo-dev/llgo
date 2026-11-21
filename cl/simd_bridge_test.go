@@ -69,7 +69,7 @@ func TestSIMDPortableBridgeClosure(t *testing.T) {
 	for _, target := range []struct {
 		arch string
 		bits int
-	}{{"amd64", 128}, {"amd64", 256}, {"arm64", 128}, {"wasm", 128}} {
+	}{{"amd64", 128}, {"amd64", 256}, {"amd64", 512}, {"arm64", 128}, {"wasm", 128}} {
 		arch := target.arch
 		t.Run(fmt.Sprintf("%s/%d", arch, target.bits), func(t *testing.T) {
 			goos := "linux"

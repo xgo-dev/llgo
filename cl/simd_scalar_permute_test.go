@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"strings"
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -60,8 +61,12 @@ func TestSIMDScalarPermuteDeclarations(t *testing.T) {
 		}
 	}
 	for name := range wants {
-		if counts[name] != 2 {
-			t.Errorf("%s: checked %d declarations, want 2", name, counts[name])
+		want := 2
+		if strings.HasSuffix(name, "Grouped") {
+			want = 4
+		}
+		if counts[name] != want {
+			t.Errorf("%s: checked %d declarations, want %d", name, counts[name], want)
 		}
 	}
 }

@@ -9,10 +9,7 @@ export GOEXPERIMENT=simd
 arch=$(go env GOARCH)
 case "$arch" in
   amd64)
-    # This profile qualifies 128/256-bit operations. Upstream mixed-width tests
-    # also contain 512-bit branches, which LLGo does not implement yet.
     export GOAMD64=v1
-    export GODEBUG="${GODEBUG:+$GODEBUG,}cpu.avx512f=off"
     ;;
   arm64) ;;
   *) echo "Upstream archsimd: no qualified profile for $arch"; exit 0 ;;

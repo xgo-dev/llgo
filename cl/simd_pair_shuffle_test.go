@@ -56,7 +56,7 @@ func TestSIMDPairShuffleDeclarations(t *testing.T) {
 			}
 		}
 	}
-	for name, count := range map[string]int{"concatSelectedConstant": 6, "concatSelectedConstantGrouped": 6, "ConcatPermute128Scalars": 10} {
+	for name, count := range map[string]int{"concatSelectedConstant": 6, "concatSelectedConstantGrouped": 12, "ConcatPermute128Scalars": 10} {
 		if counts[name] != count {
 			t.Errorf("%s: checked %d declarations, want %d", name, counts[name], count)
 		}
