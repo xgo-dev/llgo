@@ -132,25 +132,29 @@ func supported(fn llvm.Value) bool {
 	return true
 }
 
-// Run preserves baseline entries and creates AVX2 implementations of supported
-// SIMD128 functions. It runs after aggregate and target ABI lowering, before
-// target optimization, including in O0 and ModeGen builds. baseline is the
-// resolved compile-time GOAMD64 level, never a host environment read. Running
-// it again is harmless.
+// Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
+// and specializes AVX2 entries and guarded SIMD work. It runs after ABI
+// lowering and before target optimization, including in O0 and ModeGen builds.
+// Processed entries and guarded implementations can pass through Run again.
 func Run(mod llvm.Module, baseline string) error {
-	if err := runAVX2(mod, baseline); err != nil {
-		return err
-	}
-	return runGuardedFeatures(mod)
-}
-func runAVX2(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
-	if baseline != "" && baseline != "v1" && baseline != "v2" && baseline != "v3" && baseline != "v4" {
+	switch baseline {
+	case "v3", "v4":
+		foldBaselineQueries(mod, baseline)
+	case "", "v1", "v2":
+		if err := runAVX2(mod); err != nil {
+			return err
+		}
+	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
+	return runGuardedFeatures(mod)
+}
+
+func runAVX2(mod llvm.Module) error {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
 	roots := make(map[llvm.Value]llvm.Value)
@@ -164,15 +168,6 @@ func runAVX2(mod llvm.Module, baseline string) error {
 				roots[call.InstructionParent().Parent()] = fn
 			}
 		}
-	}
-	if baseline == "v3" || baseline == "v4" {
-		// The official CPU policy does not allow GODEBUG to disable features
-		// required by GOAMD64. No version selection or extra helper entry is
-		// needed once AVX2 is already part of the compile-time contract.
-		for fn := range roots {
-			specialize(mod.Context(), fn, nil, true)
-		}
-		return nil
 	}
 	var originals []llvm.Value
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {

@@ -18,6 +18,7 @@ type x86Predicate struct {
 	features string
 }
 
+// Bit positions match runtime/_patch/internal/cpu/{init,archsimd_go127}_llgo.go.
 var x86Predicates = []x86Predicate{
 	{"AVX2", 2, "+avx,+avx2"}, {"AVX", 4, "+avx"},
 	{"AVXAES", 8, "+avx,+aes"}, {"VAES", 16, "+avx,+vaes"},
@@ -45,6 +46,37 @@ var predicateBits = func() map[string]uint64 {
 	}
 	return m
 }()
+
+// internal/cpu excludes these baseline features from GODEBUG overrides.
+func foldBaselineQueries(mod llvm.Module, baseline string) {
+	var calls []llvm.Value
+	parents := make(map[llvm.Value]bool)
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		switch checkedQuery(fn) {
+		case "x86.avx", AVX2Query, "x86.fma":
+		case "x86.avx512":
+			if baseline != "v4" {
+				continue
+			}
+		default:
+			continue
+		}
+		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
+			call := use.User()
+			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
+				calls = append(calls, call)
+				parents[call.InstructionParent().Parent()] = true
+			}
+		}
+	}
+	for _, call := range calls {
+		call.ReplaceAllUsesWith(llvm.ConstInt(mod.Context().Int1Type(), 1, false))
+		call.EraseFromParentAsInstruction()
+	}
+	for fn := range parents {
+		simplifyGuards(fn)
+	}
+}
 
 // positiveGuard returns predicates established on the given branch edge.
 // LLVM commonly represents Go's negated query as xor i1 %query, true.
@@ -262,7 +294,19 @@ func runGuardedFeatures(mod llvm.Module) error {
 	if global := mod.NamedValue(featureSymbol); !global.IsNil() && (global.IsAGlobalVariable().IsNil() || global.GlobalValueType() != ctx.Int64Type()) {
 		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
-	source := newSourceInfo(mod)
+	// Stage private bodies until every name needed by the simplified call
+	// graph is known. A collision can be discovered in a recursive callee.
+	var copies []struct{ original, body llvm.Value }
+	newBody := func(fn llvm.Value, name string) llvm.Value {
+		v := fn.CloneFunction()
+		v.SetName(name)
+		v.SetLinkage(llvm.InternalLinkage)
+		v.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
+		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
+		v.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
+		copies = append(copies, struct{ original, body llvm.Value }{fn, v})
+		return v
+	}
 	clones := make(map[guardKey]llvm.Value)
 	// Materialize all copies before replacing any public entry. Local helper
 	// copies are shared by callers with identical proven predicates. Across a
@@ -277,11 +321,8 @@ func runGuardedFeatures(mod llvm.Module) error {
 		if !mod.NamedValue(name).IsNil() {
 			return llvm.Value{}, fmt.Errorf("SIMD FMV symbol collision: %s", name)
 		}
-		v := fn.CloneFunction()
-		v.SetName(name)
-		v.SetLinkage(llvm.InternalLinkage)
+		v := newBody(fn, name)
 		clones[key] = v
-		source.clone(fn, v)
 		features := stringAttribute(fn, "target-features")
 		for _, p := range x86Predicates {
 			if mask&p.bit != 0 {
@@ -292,8 +333,6 @@ func runGuardedFeatures(mod llvm.Module) error {
 			}
 		}
 		v.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
-		v.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
-		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		var fold []llvm.Value
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
@@ -327,16 +366,19 @@ func runGuardedFeatures(mod llvm.Module) error {
 		for _, mask := range root.masks {
 			v, err := specializeLocal(root.fn, mask)
 			if err != nil {
+				for _, copy := range copies {
+					copy.body.ReplaceAllUsesWith(llvm.Undef(copy.body.Type()))
+					copy.body.EraseFromParentAsFunction()
+				}
 				return err
 			}
 			root.choices = append(root.choices, dispatchChoice{mask, v})
 		}
-		base := root.fn.CloneFunction()
-		base.SetName(root.fn.Name() + symbolPrefix + "guard_base")
-		base.SetLinkage(llvm.InternalLinkage)
-		base.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
-		source.clone(root.fn, base)
-		root.base = base
+		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
+	}
+	source := newSourceInfo(mod)
+	for _, copy := range copies {
+		source.clone(copy.original, copy.body)
 	}
 	for _, root := range roots {
 		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))

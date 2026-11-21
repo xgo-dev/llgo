@@ -189,3 +189,146 @@ exit:
 		t.Fatal("unguarded helper calls a specialized entry")
 	}
 }
+
+func TestGuaranteedGuardPredicates(t *testing.T) {
+	// A non-baseline query must stay observable even in the widest variant.
+	const ir = `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare i1 @avx() "llgo.cpu.query"="x86.avx"
+declare i1 @sha() "llgo.cpu.query"="x86.sha"
+define i1 @root(ptr %p) {
+ %a = call i1 @avx()
+ %b = call i1 @fma()
+ %c = call i1 @wide()
+ %ab = and i1 %a, %b
+ %ok = and i1 %ab, %c
+ br i1 %ok, label %fast, label %exit
+fast:
+ %x = load <16 x float>, ptr %p
+ %y = fneg <16 x float> %x
+ store <16 x float> %y, ptr %p
+ br label %exit
+exit:
+ %s = call i1 @sha()
+ ret i1 %s
+}`
+	for _, level := range []string{"v3", "v4"} {
+		t.Run(level, func(t *testing.T) {
+			m := parseModule(t, ir)
+			if err := Run(m, level); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			all := m.String()
+			if strings.Contains(all, "call i1 @fma(") || strings.Contains(all, "call i1 @avx(") || !strings.Contains(all, "call i1 @sha(") {
+				t.Fatal(all)
+			}
+			hasSlot := !m.NamedGlobal("root" + slotSuffix).IsNil()
+			if hasSlot != (level == "v3") || strings.Contains(all, "call i1 @wide(") != (level == "v3") {
+				t.Fatal(all)
+			}
+			if err := Run(m, level); err != nil || all != m.String() {
+				t.Fatalf("repeat: %v\n%s", err, m.String())
+			}
+		})
+	}
+}
+
+func TestMixedAVX2GuardHelper(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+define void @kernel(ptr %p) "llgo.fmv.avx2-entry" {
+ %x = load <16 x i32>, ptr %p
+ %y = add <16 x i32> %x, %x
+ store <16 x i32> %y, ptr %p
+ ret void
+}
+define void @root(ptr %p) {
+ %a = call i1 @avx2()
+ br i1 %a, label %check, label %exit
+check:
+ %b = call i1 @wide()
+ br i1 %b, label %fast, label %exit
+fast:
+ call void @kernel(ptr %p)
+ br label %exit
+exit:
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	suffix := variantSuffix + guardSuffix(predicateBits["x86.avx512"])
+	body, kernel := m.NamedFunction("root"+suffix), m.NamedFunction("kernel"+suffix)
+	if body.IsNil() || kernel.IsNil() || !strings.Contains(body.String(), "call void @kernel"+suffix+"(") || !strings.Contains(stringAttribute(kernel, "target-features"), "+avx512f") {
+		t.Fatal(m.String())
+	}
+}
+
+func TestGuardHelperCollisionLeavesModuleIntact(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+define void @helper(ptr %p) {
+ %x = load <16 x float>, ptr %p
+ %y = fneg <16 x float> %x
+ store <16 x float> %y, ptr %p
+ ret void
+}
+define void @root(ptr %p) {
+ %c = call i1 @wide()
+ br i1 %c, label %yes, label %no
+yes:
+ call void @helper(ptr %p)
+ br label %no
+no:
+ ret void
+}
+@helper.__llgo_fmv_guard_avx512 = global i8 0
+`)
+	before := m.String()
+	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "helper.__llgo_fmv_guard_avx512") {
+		t.Fatalf("collision: %v", err)
+	}
+	if m.String() != before {
+		t.Fatalf("partial transformation:\n%s", m.String())
+	}
+}
+
+func TestOptionalGuardAtV4(t *testing.T) {
+	ir := strings.ReplaceAll(guardedVectorFixture, `"x86.fma"`, `"x86.avx512vnni"`)
+	m := parseModule(t, ir)
+	if err := Run(m, "v4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	v := m.NamedFunction("root.__llgo_fmv_guard_avx512vnni")
+	if v.IsNil() || m.NamedGlobal("root"+slotSuffix).IsNil() || !strings.Contains(stringAttribute(v, "target-features"), "+avx512vnni") {
+		t.Fatal(m.String())
+	}
+}
+
+func TestGuardBodyEntryAttributes(t *testing.T) {
+	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
+	m := parseModule(t, ir)
+	if err := runGuardedFeatures(m); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"guard_avx512_fma", "guard_base"} {
+		v := m.NamedFunction("root" + symbolPrefix + suffix)
+		if v.IsNil() || hasAttribute(v, EntryAttribute) || hasAttribute(v, InlineEntryAttribute) {
+			t.Fatal(m.String())
+		}
+	}
+}

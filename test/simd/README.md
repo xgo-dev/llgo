@@ -290,7 +290,7 @@ AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
 and indirect calls retain the original entry. Other guarded feature combinations
-use the local specializations described below.
+use [local guarded specializations](#guarded-x86-feature-combinations).
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
 including when nested in arrays and structs. The compiler validates the bridge
@@ -502,7 +502,17 @@ On AMD64 the compiler also recognizes positive branches on the official
 proven on every incoming path. When a guarded block performs vector work,
 a resolver can select an implementation with those target features. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
-Other CPU queries continue to read their effective values.
+GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
+the AVX512 predicate. LLGo folds these queries before generating guarded
+versions. Optional predicates continue to read the effective CPU state.
+
+On v1/v2, a function that queries both AVX2 and a wider feature can pass
+through the public AVX2 dispatcher and then a local guarded dispatcher.
+The wider clone specializes direct calls to the local AVX2 helper body.
+For independent guarded regions the resolver selects one of the observed
+feature combinations. Other regions keep their runtime checks. Helpers
+are shared by function and proven mask; distinct masks can produce separate
+copies even when the generated helper instructions coincide.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls
