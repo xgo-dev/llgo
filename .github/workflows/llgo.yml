@@ -833,6 +833,9 @@ jobs:
         run: go test ./cmd/internal/gdb -run '^TestGDBIntegration$' -count=1 -v
 
   cross-compile:
+    permissions:
+      contents: read
+      id-token: write
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     # Allow the threaded-runtime, LTO and size-build suites to finish on a cold cache.
@@ -959,8 +962,27 @@ jobs:
       - name: Test WASI size-build LTO regressions (Wasmer)
         shell: bash
         run: |
+          set -euo pipefail
           python3 -m unittest discover -s test/sizebuild -p '*_test.py'
-          python3 test/sizebuild/runtest.py --target=wasi
+          cover_dir="$RUNNER_TEMP/llgo-wasi-size-cover"
+          mkdir -p "$cover_dir"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=wasi --llgo "$cover_dir/llgo"
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-wasi-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+
+      - name: Upload WASI size coverage to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: "11.3.1"
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-dev-wasi-size.txt
+          flags: dev-lto-wasi
+          disable_search: true
 
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
