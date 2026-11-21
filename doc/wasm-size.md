@@ -84,9 +84,10 @@ on first use.
 
 Closed WASI, Emscripten, native and firmware Full LTO size links can also
 omit unused standard-library slice literals, literal errors, constant
-interface values and struct literals that store a static callback.
-Reachability is rechecked without the proven unused callbacks to release
-data pulled in through indirect calls.
+interface values and static callbacks stored in structs or wrapped by a
+verified constructor such as `sync.OnceValue`. Reachability is rechecked
+without the proven unused callbacks to release data pulled in through
+indirect calls.
 Slice tables remain initialized when reachable code can access their backing
 data through another variable or symbol. Literal errors use the same checks
 on initializer references after verifying the selected `errors.New`

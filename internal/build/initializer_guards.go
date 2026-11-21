@@ -35,7 +35,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	wasm := conf.Goarch == "wasm"
-	errorConstructor := literalErrorConstructor(ctx, goroot)
+	constructors := findLiteralConstructors(ctx, goroot)
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
 	for _, pkg := range ctx.pkgByID {
@@ -53,7 +53,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		case hasStaticDataValues(pkg.Package):
 			groups = optionalStaticContainers(source.Func("init"), !wasm)
 		default:
-			groups = optionalLiteralInitializers(source.Func("init"), errorConstructor)
+			groups = optionalLiteralInitializers(source.Func("init"), constructors)
 		}
 		if len(groups) == 0 {
 			continue
@@ -92,11 +92,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 	}
 	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, assembly)
-	var keepErrorConstructors bool
-	if errorConstructor != nil {
-		const symbol = "errors.New"
-		_, aliased := ctx.prog.Linkname(symbol)
-		keepErrorConstructors = aliased || ctx.prog.HasLinknameTarget(symbol) || slices.Contains(assembly, symbol)
+	isSymbolRoot := func(name string) bool {
+		_, aliased := ctx.prog.Linkname(name)
+		return aliased || ctx.prog.HasLinknameTarget(name) || slices.Contains(assembly, name)
 	}
 	// A literal slice can keep a shared object alive even when nobody reads
 	// the slice. Allow omission only when the owner's data is private to its
@@ -106,17 +104,26 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		for _, member := range owner.Members {
 			if global, ok := member.(*ssa.Global); ok {
 				name := llssa.FullName(owner.Pkg, global.Name())
-				if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) || slices.Contains(assembly, name) {
+				if isSymbolRoot(name) {
 					observedData[owner] = true
 				}
 			}
 		}
 	}
-	for global := range candidates {
+	for global, group := range candidates {
 		name := llssa.FullName(global.Pkg.Pkg, global.Name())
-		if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) ||
-			blankImports[global.Pkg.Pkg.Path()] || slices.Contains(assembly, name) {
+		if isSymbolRoot(name) || blankImports[global.Pkg.Pkg.Path()] {
 			delete(candidates, global)
+			continue
+		}
+		if call, ok := group.Store.Val.(*ssa.Call); ok {
+			// A symbol reference can reach or replace the selected constructor.
+			callee := call.Common().StaticCallee()
+			origin := initializerFunctionOrigin(callee)
+			if isSymbolRoot(llssa.FullName(origin.Pkg.Pkg, origin.Name())) ||
+				origin != callee && isSymbolRoot(llssa.FullName(origin.Pkg.Pkg, callee.Name())) {
+				delete(candidates, global)
+			}
 		}
 	}
 	if len(roots) == 0 || len(candidates) == 0 {
@@ -125,7 +132,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	unused := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
 	var callbackInitializers []cl.OptionalInitializer
 	for _, group := range unused {
-		if _, ok := group.Store.Val.(*ssa.UnOp); ok {
+		if initializerStoresCallback(group.Store.Val) {
 			callbackInitializers = append(callbackInitializers, group)
 		}
 	}
@@ -138,13 +145,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	for global, group := range unused {
 		store := group.Store
 		call, _ := store.Val.(*ssa.Call)
-		errorValue := call != nil && errorConstructor != nil && call.Common().StaticCallee() == errorConstructor
+		errorValue := call != nil && constructors.newError != nil && call.Common().StaticCallee() == constructors.newError
 		_, interfaceValue := store.Val.(*ssa.MakeInterface)
-		_, callbackValue := store.Val.(*ssa.UnOp)
 		_, sliceValue := store.Val.(*ssa.Slice)
-		if errorValue && keepErrorConstructors {
-			continue
-		}
 		ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, cl.InitializerGuardName(global))
 		switch {
 		case sliceValue:
@@ -153,7 +156,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			errorCount++
 		case interfaceValue:
 			interfaceCount++
-		case callbackValue:
+		case initializerStoresCallback(store.Val):
 			callbackCount++
 		default:
 			otherCount++
@@ -181,6 +184,17 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, otherCount)
 		}
 	}
+}
+
+func initializerStoresCallback(value ssa.Value) bool {
+	switch value := value.(type) {
+	case *ssa.UnOp:
+		return true
+	case *ssa.Call:
+		_, ok := value.Type().Underlying().(*types.Signature)
+		return ok
+	}
+	return false
 }
 
 func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
