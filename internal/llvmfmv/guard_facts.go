@@ -31,6 +31,7 @@ type guardOutcome struct {
 
 type guardFacts struct {
 	queries map[llvm.Value]uint64
+	helpers map[llvm.Value][2]guardFact
 	cache   map[guardOutcome]guardFact
 	// Facts established on block entry without inspecting PHIs. Keeping this
 	// phase separate prevents a loop-carried boolean from proving itself.
@@ -59,6 +60,12 @@ func (g *guardFacts) eval(v llvm.Value, taken bool) guardFact {
 	}
 	switch v.InstructionOpcode() {
 	case llvm.Call:
+		if facts, ok := g.helpers[v.CalledValue()]; ok {
+			if taken {
+				return facts[1]
+			}
+			return facts[0]
+		}
 		if taken {
 			return guardFact{bits: g.queries[v.CalledValue()]}
 		}
@@ -119,8 +126,8 @@ func (g *guardFacts) eval(v llvm.Value, taken bool) guardFact {
 
 // Intersect edge facts at joins. Compute PHI-independent facts first; then a
 // materialized short-circuit result can use the facts on its incoming paths.
-func guardBlocks(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlock]uint64 {
-	g := guardFacts{queries: queries, cache: make(map[guardOutcome]guardFact)}
+func guardBlocks(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llvm.Value][2]guardFact) (map[llvm.BasicBlock]uint64, *guardFacts) {
+	g := guardFacts{queries: queries, helpers: helpers, cache: make(map[guardOutcome]guardFact)}
 	walk := func() map[llvm.BasicBlock]uint64 {
 		entry := fn.EntryBasicBlock()
 		known := map[llvm.BasicBlock]uint64{entry: 0}
@@ -159,8 +166,12 @@ func guardBlocks(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlo
 			g.simple = &simple
 			g.incoming = first
 			g.cache = make(map[guardOutcome]guardFact)
-			return walk()
+			return walk(), &g
 		}
 	}
-	return first
+	simple := g
+	g.simple = &simple
+	g.incoming = first
+	g.cache = make(map[guardOutcome]guardFact)
+	return first, &g
 }

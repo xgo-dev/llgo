@@ -149,3 +149,31 @@ func TestSIMDSavedGuard(t *testing.T) {
 		}
 	}
 }
+
+//go:noinline
+func allowWide(count *int, enabled bool) bool {
+	*count++
+	return enabled && archsimd.X86.AVX512()
+}
+
+//go:noinline
+func viaPredicateHelper(dst, src *[16]int32, count *int, enabled bool) {
+	if allowWide(count, enabled) {
+		doubleSIMD512Kernel(dst, src)
+	}
+}
+
+func TestSIMDPredicateHelper(t *testing.T) {
+	var count int
+	for i, enabled := range []bool{true, false, true} {
+		in, dst := [16]int32{-2, 9}, [16]int32{11}
+		want := dst
+		if enabled && archsimd.X86.AVX512() {
+			want = [16]int32{-4, 18}
+		}
+		viaPredicateHelper(&dst, &in, &count, enabled)
+		if count != i+1 || dst != want {
+			t.Fatalf("enabled=%t: count %d, dst %v; want %d, %v", enabled, count, dst, i+1, want)
+		}
+	}
+}

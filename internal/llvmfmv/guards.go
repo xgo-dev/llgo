@@ -170,8 +170,8 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds) map[llvm.
 
 // guardContexts intersects known true predicates at joins to identify which
 // positive guards protect vector work in this function.
-func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool) []uint64 {
-	known := guardBlocks(fn, queries)
+func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llvm.Value][2]guardFact, work map[llvm.Value]bool) []uint64 {
+	known, _ := guardBlocks(fn, queries, helpers)
 	sets := map[uint64]bool{}
 	for block, mask := range known {
 		if mask == 0 {
@@ -300,13 +300,14 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		avx2.commit(mod)
 		return nil
 	}
+	helpers := guardHelpers(candidates, queries, avx2)
 	work := guardedWork(candidates, &folds)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
 			continue
 		}
-		masks := guardContexts(folds.view(fn), queries, work)
+		masks := guardContexts(folds.view(fn), queries, helpers, work)
 		if len(masks) == 0 {
 			continue
 		}

@@ -57,3 +57,61 @@ func TestMaterializedGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestPredicateHelperOutcomes(t *testing.T) {
+	const ir = `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare void @observe()
+define internal i1 @disabled(i1 %enabled) {
+ call void @observe()
+ %q = call i1 @wide()
+ %ok = and i1 %q,%enabled
+ %no = xor i1 %ok,true
+ ret i1 %no
+}
+define internal i1 @check(i1 %enabled) {
+ %a = call i1 @disabled(i1 %enabled)
+ ret i1 %a
+}
+define void @root(ptr %p,i1 %flag) {
+ %no = call i1 @check(i1 %flag)
+ br i1 %no,label %exit,label %yes
+yes:
+ %x = load <16 x i32>,ptr %p
+ %n = add <16 x i32> %x,%x
+ store <16 x i32> %n,ptr %p
+ br label %exit
+exit: ret void
+}`
+	for _, tc := range []struct {
+		name, from, to string
+		want           bool
+	}{
+		{"two levels", "", "", true},
+		{"alternative", "and i1 %q,%enabled", "or i1 %q,%enabled", false},
+		{"replaceable", "define internal i1 @disabled", "define weak i1 @disabled", false},
+		{"wrong edge", "label %exit,label %yes", "label %yes,label %exit", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := ir
+			if tc.from != "" {
+				src = strings.Replace(src, tc.from, tc.to, 1)
+			}
+			m := parseModule(t, src)
+			if err := Run(m, "v1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			fn := m.NamedFunction("root.__llgo_fmv_guard_avx512")
+			if tc.want == fn.IsNil() {
+				t.Fatal(m.String())
+			}
+			if tc.want && !strings.Contains(fn.String(), "call i1 @check") {
+				t.Fatal("lost observable helper call", fn.String())
+			}
+		})
+	}
+}

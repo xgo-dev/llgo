@@ -486,6 +486,12 @@ func packed(o,a *[16]uint32, m uint16) {
  if archsimd.X86.AVX512() { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
 }
 //go:noinline
+func allowsWide(enabled bool) bool { return enabled && archsimd.X86.AVX512() }
+//go:noinline
+func wrapped(o,a *[16]uint32, m uint16, enabled bool) {
+ if allowsWide(enabled) { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
+}
+//go:noinline
 func saved(o,a *[16]uint32, m uint16, enabled bool) {
  ok := archsimd.X86.AVX512() && enabled
  if ok { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
@@ -518,7 +524,7 @@ func main() {}
 		level, guard string
 		ops          map[string]string
 	}{
-		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "saved": "vpcompressd", "sad": "vpsadbw"}},
+		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "saved": "vpcompressd", "wrapped": "vpcompressd", "sad": "vpsadbw"}},
 		{"v4", "avx512vbmi2", map[string]string{"bytes": "vpcompressb", "words": "vpexpandw"}},
 	} {
 		t.Run(tc.level, func(t *testing.T) {

@@ -531,3 +531,8 @@ A saved boolean guard carries the same feature evidence as an immediate
 branch. For example, a true `ready := archsimd.X86.AVX512() && enabled`
 proves AVX-512, while `AVX512() || enabled` does not. Joins retain only
 predicates proven on every feasible incoming path.
+
+A direct call to a locally defined boolean helper can also establish a feature
+on one return outcome. The caller keeps the call, including side effects and
+any independent conditions. Declarations, indirect calls and weak definitions
+do not provide evidence about the CPU.
