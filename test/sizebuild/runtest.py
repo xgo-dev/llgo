@@ -222,6 +222,13 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         if target.startswith("emscripten") and fixture == "wasm-standard-files":
             if "llgo: omit Emscripten scheduler" in log:
                 raise RuntimeError(f"{target}: suspending filesystem operations lost the scheduler")
+            manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
+            source_size = (ROOT / "targets" / "wasm_fs.js").stat().st_size
+            if not artifact.read_text(encoding="utf-8").startswith('import "./wasm_fs.js";'):
+                raise RuntimeError(f"{target}: filesystem loader lost the shared host")
+            if not any(entry["path"] == "wasm_fs.js" and entry["role"] == "deployment"
+                       and 0 < entry["bytes"] < source_size for entry in manifest["artifacts"]):
+                raise RuntimeError(f"{target}: minified shared host missing from the deployment manifest")
             command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
                      str(artifact)], env, timeout=90)
         if target == "emscripten" and fixture == "wasm-standard-files":
@@ -238,8 +245,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
 
 def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
     marker = "llgo: omit Emscripten scheduler for a synchronous executable"
+    startup_dir = directory / f"{target}-startup"
+    startup_dir.mkdir()
     for fixture in ("cprintf", "println"):
-        artifact = directory / f"{target}-{fixture}.mjs"
+        artifact = startup_dir / f"{fixture}.mjs"
         log = command([str(llgo), "build", f"-target={target}", "-Oz", "-lto=full", "-deadcodedrop",
                        "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
                        "-o", str(artifact), f"./benchmark/binary_size/{fixture}"], env)
@@ -248,12 +257,11 @@ def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
         manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
         if "-sMALLOC=emmalloc" not in manifest["link_flags"]:
             raise RuntimeError(f"{target} {fixture}: allocation-free entry retained the Go allocator")
-        if not artifact.read_text(encoding="utf-8").startswith('import "./wasm_fs.js";'):
-            raise RuntimeError(f"{target} {fixture}: optimized loader did not reuse the filesystem host")
-        source_size = (ROOT / "targets" / "wasm_fs.js").stat().st_size
-        if not any(entry["path"] == "wasm_fs.js" and entry["role"] == "deployment"
-                   and 0 < entry["bytes"] < source_size for entry in manifest["artifacts"]):
-            raise RuntimeError(f"{target} {fixture}: minified shared host missing from the deployment manifest")
+        if ("wasm_fs.js" in artifact.read_text(encoding="utf-8")
+                or artifact.with_name("wasm_fs.js").exists()
+                or any(entry["path"] == "wasm_fs.js" for entry in manifest["artifacts"])
+                or any(line.startswith("llgo: artifact ") and "wasm_fs.js" in line for line in log.splitlines())):
+            raise RuntimeError(f"{target} {fixture}: allocation-free entry retained the Go filesystem host")
         command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
                  str(artifact)], env, timeout=90)
         expected = "Hello, world"

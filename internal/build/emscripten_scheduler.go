@@ -147,7 +147,7 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		configureEmscriptenDirectLink(&probe.crossCompile)
 		feature := "scheduler"
 		if plan.directWasmAllocator {
-			configureEmscriptenLibcAllocator(&probe.crossCompile)
+			configureEmscriptenLibcLink(probe)
 			feature = "Go allocator"
 		}
 		probe.crossCompile.LDFLAGS = append(probe.crossCompile.LDFLAGS, "-sERROR_ON_UNDEFINED_SYMBOLS=1")

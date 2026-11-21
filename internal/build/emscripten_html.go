@@ -28,7 +28,10 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 )
 
-const wasmFSScriptName = "wasm_fs.js"
+const (
+	wasmFSScriptName        = "wasm_fs.js"
+	emscriptenBrowserFSRoot = "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS"
+)
 
 func emscriptenBrowserHostExt(output string) string {
 	switch filepath.Ext(output) {
@@ -83,6 +86,34 @@ func configureEmscriptenESMHost(ctx *context, output string) {
 	}
 }
 
+// A link that requires only the libc allocator has no Go startup or
+// filesystem calls. Keep the public Emscripten Module.FS export.
+// A speculative link must still reject unresolved imports.
+func configureEmscriptenLibcLink(ctx *context) {
+	original := ctx.crossCompile.LDFLAGS
+	flags := make([]string, 0, len(original))
+	for i := 0; i < len(original); i++ {
+		flag := original[i]
+		switch flag {
+		case "-sMALLOC=none":
+			flag = "-sMALLOC=emmalloc"
+		case emscriptenBrowserFSRoot:
+			continue
+		case "--pre-js", "--js-library":
+			if i+1 < len(original) {
+				switch filepath.Base(original[i+1]) {
+				case wasmFSScriptName, "browser_fs.js", "browser_fs_snapshot.js":
+					i++
+					continue
+				}
+			}
+		}
+		flags = append(flags, flag)
+	}
+	ctx.crossCompile.LDFLAGS = flags
+	ctx.omitEmscriptenBrowserHost = true
+}
+
 func publishEmscriptenBrowserHost(ctx *context, output string, verbose bool) error {
 	return publishEmscriptenBrowserHostFrom(ctx, output, verbose, env.LLGoROOT())
 }
@@ -121,6 +152,9 @@ func publishEmscriptenBrowserHostFrom(ctx *context, output string, verbose bool,
 	if ctx == nil || !needsEmscriptenBrowserHost(ctx.buildConf, output) {
 		return nil
 	}
+	if ctx.omitEmscriptenBrowserHost {
+		return checkEmscriptenBrowserHostCollision(output)
+	}
 	if root == "" {
 		return fmt.Errorf("copy %s: LLGO_ROOT is not set", wasmFSScriptName)
 	}
@@ -138,7 +172,7 @@ func emscriptenBrowserHostSidecar(output string) string {
 	return filepath.Join(filepath.Dir(output), wasmFSScriptName)
 }
 
-func installEmscriptenBrowserHost(src, output string) error {
+func checkEmscriptenBrowserHostCollision(output string) error {
 	dst := emscriptenBrowserHostSidecar(output)
 	same, err := sameFilePath(output, dst)
 	if err != nil {
@@ -147,6 +181,14 @@ func installEmscriptenBrowserHost(src, output string) error {
 	if same {
 		return fmt.Errorf("copy %s: output %s collides with the browser host sidecar", wasmFSScriptName, output)
 	}
+	return nil
+}
+
+func installEmscriptenBrowserHost(src, output string) error {
+	if err := checkEmscriptenBrowserHostCollision(output); err != nil {
+		return err
+	}
+	dst := emscriptenBrowserHostSidecar(output)
 	source, err := os.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)

@@ -139,6 +139,8 @@ type OutFmtDetails struct {
 
 	WasmManifest string // Final Wasm artifact manifest
 
+	omitEmscriptenBrowserHost bool
+
 	wasmSizeNames    map[uint32]string // Function indexes from the final module before stripping
 	wasmSizeNamesErr error             // Optional name metadata parse failure
 	tempDir          string            // LLGo-owned directory removed with implicit test outputs
@@ -1558,6 +1560,7 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 		if err := executeMainLink(linkCtx, plan, verbose); err != nil {
 			return err
 		}
+		link.outFmts.omitEmscriptenBrowserHost = linkCtx.omitEmscriptenBrowserHost
 		if err := finalizeRuntimePCLN(linkCtx, link.outFmts, verbose); err != nil {
 			return err
 		}
@@ -1675,11 +1678,8 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	target := ctx.crossCompile
 	if ctx.emscriptenDirectMain {
 		configureEmscriptenDirectLink(&target)
-		if plan.emscriptenUseLibcAllocator {
-			configureEmscriptenLibcAllocator(&target)
-		}
 	}
-	return &context{
+	link := &context{
 		prog:         ctx.prog,
 		mode:         ctx.mode,
 		buildConf:    ctx.buildConf,
@@ -1699,6 +1699,10 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
 		goVersion:            ctx.goVersion,
 	}
+	if ctx.emscriptenDirectMain && plan.emscriptenUseLibcAllocator {
+		configureEmscriptenLibcLink(link)
+	}
+	return link
 }
 
 func namedTargetUsesEmulatorPath(conf *Config) bool {
@@ -1860,10 +1864,10 @@ func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworker
 	}
 	if conf.Goos == "js" && export.WasmProvider == crosscompile.WasmProviderEmscripten {
 		export.LDFLAGS = append(export.LDFLAGS,
-			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "wasm_fs.js"),
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", wasmFSScriptName),
 			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs.js"),
 			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs_snapshot.js"),
-			"-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS",
+			emscriptenBrowserFSRoot,
 		)
 	}
 	if !config.Enabled() {
@@ -2078,6 +2082,8 @@ type context struct {
 	emscriptenDirectMain bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
+
+	omitEmscriptenBrowserHost bool // runtime-free link excludes the Go filesystem bridge
 
 	embeddedClosedProgram bool
 	nativeClosedProgram   bool
@@ -3070,6 +3076,9 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return errors.New("missing main link plan")
 	}
 	driverOut := emscriptenDriverOutput(ctx.buildConf, plan.outputPath)
+	if ctx.omitEmscriptenBrowserHost && filepath.Base(driverOut) == wasmFSScriptName {
+		return fmt.Errorf("output %s collides with the browser host sidecar", driverOut)
+	}
 	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, driverOut)
 	if err != nil {
 		return err

@@ -321,6 +321,7 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		return err
 	}
 	out.WasmManifest = filepath.Join(filepath.Dir(out.Out), manifestName)
+	out.omitEmscriptenBrowserHost = ctx.omitEmscriptenBrowserHost
 	out.wasmSizeNames = sizeNames
 	out.wasmSizeNamesErr = sizeNamesErr
 	return nil

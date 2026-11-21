@@ -185,13 +185,6 @@ func configureEmscriptenDirectLink(target *crosscompile.Export) {
 	target.WasmPostLink.Asyncify = false
 }
 
-func configureEmscriptenLibcAllocator(target *crosscompile.Export) {
-	if i := slices.Index(target.LDFLAGS, "-sMALLOC=none"); i >= 0 {
-		target.LDFLAGS = slices.Clone(target.LDFLAGS)
-		target.LDFLAGS[i] = "-sMALLOC=emmalloc"
-	}
-}
-
 // Only the executable's own package can omit its polls and caller frames.
 // Dependencies still compile with the fixed runtime profile.
 func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {

@@ -130,7 +130,7 @@ func TestEmscriptenSchedulerCollectorFallback(t *testing.T) {
 			Target: "emscripten", WasmStrip: WasmStripAll, DebugArtifactMode: DebugArtifactNone, PCLNMode: PCLNNone},
 		crossCompile: crosscompile.Export{
 			WasmProvider: crosscompile.WasmProviderEmscripten, CC: os.Args[0],
-			LDFLAGS: []string{"-sMALLOC=none"},
+			LDFLAGS: []string{"-sMALLOC=none", emscriptenBrowserFSRoot},
 		},
 	}
 	plan := &mainLinkPlan{
@@ -141,20 +141,25 @@ func TestEmscriptenSchedulerCollectorFallback(t *testing.T) {
 		t.Fatalf("collector fallback failed: %p %q %v", result, stage, err)
 	}
 	if !slices.Contains(result.effectiveLinkArgs, "-sMALLOC=none") ||
-		slices.Contains(result.effectiveLinkArgs, "-sMALLOC=emmalloc") {
+		slices.Contains(result.effectiveLinkArgs, "-sMALLOC=emmalloc") ||
+		!slices.Contains(result.effectiveLinkArgs, emscriptenBrowserFSRoot) || result.omitEmscriptenBrowserHost {
 		t.Fatalf("fallback allocator flags = %q", result.effectiveLinkArgs)
 	}
 }
 
 func TestEmscriptenSchedulerLibcAllocatorFlags(t *testing.T) {
+	shared := []string{"--pre-js", "foo.js", "-sEXPORTED_RUNTIME_METHODS=FS"}
+	browserHost := []string{"--pre-js", wasmFSScriptName, "--js-library", "browser_fs.js",
+		"--js-library", "browser_fs_snapshot.js", emscriptenBrowserFSRoot}
+	flags := slices.Concat([]string{"-sASYNCIFY=1", "-sMALLOC=none"}, shared, browserHost)
 	ctx := &context{emscriptenDirectMain: true, crossCompile: crosscompile.Export{
-		LDFLAGS: []string{"-sASYNCIFY=1", "-sMALLOC=none"},
+		LDFLAGS: slices.Clone(flags),
 	}}
 	normal := newLinkExecutionContext(ctx, &mainLinkPlan{})
 	libc := newLinkExecutionContext(ctx, &mainLinkPlan{emscriptenUseLibcAllocator: true})
-	if !slices.Equal(normal.crossCompile.LDFLAGS, []string{"-sMALLOC=none"}) ||
-		!slices.Equal(libc.crossCompile.LDFLAGS, []string{"-sMALLOC=emmalloc"}) ||
-		!slices.Equal(ctx.crossCompile.LDFLAGS, []string{"-sASYNCIFY=1", "-sMALLOC=none"}) {
+	if !slices.Equal(normal.crossCompile.LDFLAGS, flags[1:]) || normal.omitEmscriptenBrowserHost ||
+		!slices.Equal(libc.crossCompile.LDFLAGS, slices.Concat([]string{"-sMALLOC=emmalloc"}, shared)) ||
+		!libc.omitEmscriptenBrowserHost || !slices.Equal(ctx.crossCompile.LDFLAGS, flags) {
 		t.Fatal("allocator selection changed the profile or selected the wrong link flags")
 	}
 }

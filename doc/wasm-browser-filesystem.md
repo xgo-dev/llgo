@@ -8,6 +8,10 @@ worker pool. Size-optimized single-worker ES modules can import the shared
 copy of `targets/wasm_fs.js`. The sidecar/attach API also supports embedding and
 custom loaders.
 
+In closed size-optimized executables that can omit Go runtime startup and use
+the Emscripten allocator, the build omits the Go filesystem bridge and sidecar.
+The loader still exposes the Emscripten `Module.FS` API.
+
 In a browser, Go file operations use the Emscripten runtime thread's `Module.FS`.
 Files, file descriptors, and cwd are shared by Go goroutines on different
 workers and by C code in the same module. This is Emscripten's virtual

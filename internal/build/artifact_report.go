@@ -127,7 +127,7 @@ func CollectArtifacts(conf *Config, out *OutFmtDetails) ([]Artifact, error) {
 	}
 	// Use the same ownership rule as publication. needsGoJSLoader infers the
 	// GoJS provider for untargeted GOOS=js GOARCH=wasm builds.
-	if driverOut := emscriptenDriverOutput(conf, out.Out); needsEmscriptenBrowserHost(conf, driverOut) {
+	if driverOut := emscriptenDriverOutput(conf, out.Out); !out.omitEmscriptenBrowserHost && needsEmscriptenBrowserHost(conf, driverOut) {
 		if err := add(ArtifactRoleDeployment, "javascript", emscriptenBrowserHostSidecar(driverOut)); err != nil {
 			return nil, err
 		}
