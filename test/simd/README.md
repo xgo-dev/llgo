@@ -47,8 +47,8 @@ counts, every byte lookup index, element-aligned addresses, short slices,
 nil arrays, exhaustive byte/word resize inputs, saturation boundaries at every
 integer width, and values crossing interfaces, tuples, closures, package calls,
 defer/recover, goroutines, and scheduling. The hex-encoding workload checks
-all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
-It is a correctness workload, not a performance benchmark.
+all tail lengths, unaligned input, output sentinels, and buffers through 1 MiB
+plus a tail against `encoding/hex`.
 
 Go helper bodies are compiled normally. Remaining bodyless intrinsic
 implementations panic with their symbol name; `unimplemented_llgo_test.go`
@@ -66,6 +66,43 @@ so those cases use scalar references under LLGo at the v1 baseline. LLVM
 verification and O0/O2 code generation cover Linux/Windows amd64, ARM64, and
 WASM, including callable intrinsic definitions. This does not add wider-vector
 ABIs or instructions absent from an architecture's Go API.
+
+## SIMD workloads on WebAssembly
+
+Two bounded workloads run in the existing native and Wasm behavior suites:
+
+- `TestPortableDot*` in `portable/workload_test.go` exercises a portable
+  `simd.Float32s` dot product, partial loads, and a final lane reduction. It
+  checks empty/short/unaligned inputs, all vector tails, and 128/384/768-dimensional
+  query scoring against 32 candidates. Exactly representable inputs use exact
+  float64 reference results; non-exact products use a rounding-error bound.
+  The portable matrix also runs these cases with `GODEBUG=simd=0`.
+- `TestSIMDHexWorkload` in `workload_test.go` exercises `archsimd` byte lookup,
+  shifts and masks, then interleaves the encoded digits with scalar stores.
+  Its scalar reference is `encoding/hex`. Portable emulation does not disable
+  these explicit architecture intrinsics.
+
+`BenchmarkSIMDDot` and `BenchmarkSIMDHex` provide scalar and SIMD cases with
+checked results. Wasm CI runs them with `-benchtime=1x` alongside the behavior
+tests: official Go on Wasmtime, LLGo WASI at O0/O2, and GoJS/Emscripten/Memory64
+at O2 with off/Thin/Full LTO. The portable WASI and JavaScript emulation runs
+also execute the dot benchmark. One iteration is an execution smoke test;
+its timings are diagnostic and have no performance pass/fail threshold.
+
+For a focused local run (with a compatible Wasm SIMD runtime installed):
+
+```sh
+GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm go test -exec=wasmtime \
+  -v -run 'Test(SIMDHexWorkload|PortableDot)' \
+  -bench '^BenchmarkSIMD(Dot|Hex)$' -benchtime=1x ./test/simd ./test/simd/portable
+GOEXPERIMENT=simd GOOS=js GOARCH=wasm llgo test -O2 -emulator \
+  -v -pclntab=none -run 'Test(SIMDHexWorkload|PortableDot)' \
+  -bench '^BenchmarkSIMD(Dot|Hex)$' -benchtime=1x ./test/simd ./test/simd/portable
+```
+
+For performance investigation, use longer repeated runs in the same engine
+and retain scalar results as well as SIMD results. These workload checks do
+not establish browser rendering performance or an end-to-end search speedup.
 
 ## Native archsimd storage alignment
 
