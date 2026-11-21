@@ -44,6 +44,10 @@ import (
 // baremetalFiberContext is one fiber's suspended execution state. sp must
 // stay the first field: llgoFiberSwap publishes the suspended frame address
 // through it, and the collector scans a parked stack from sp to stackHi.
+// stackLo/stackHi double as the stack-overflow guard's bounds: the swap's
+// asm reads stackLo at offset 4, checks the canary word at the stack floor and
+// compares the live sp against stackLo before pushing its own frame. A zero
+// stackLo (no configured bounds) skips the guard.
 type baremetalFiberContext struct {
 	sp      uintptr
 	stackLo uintptr
@@ -63,13 +67,44 @@ const (
 // Fiber stacks for Gs that no configured size covers (see SetPthreadStackSize
 // and the target's default-stack-size): the build side always injects a
 // non-zero floor for fiber targets, so this fallback only covers targets that
-// resolve without one. Goroutine fibers have no overflow guard — a deep
-// recursion or large frame silently corrupts the adjacent heap block; keep
-// frame sizes conservative or pass an explicit stack size.
+// resolve without one. Fiber stacks are guarded at every cooperative swap:
+// llgoFiberSwap fatals with "goroutine stack overflow" when the outgoing
+// fiber's sp crossed its stack floor or the floor canary is smashed. The
+// guard is checkpoint-granular (see _wrap/context_riscv32.c), so keep frame
+// sizes conservative or pass an explicit stack size regardless.
 const (
 	defaultBaremetalGoroutineStack = 8 << 10
 	defaultBaremetalMainStack      = 16 << 10
 )
+
+// fiberStackCanary marks the floor word of every guarded fiber stack (the
+// word at stackLo). tinygogc zeroes fresh stacks, so any other value proves
+// that a frame wrote at or below the floor since the last swap - including
+// excursions whose sp recovered before the next yield, which the sp bound
+// alone would miss. Value chosen nonzero and away from zero-fill; the C
+// mirror in _wrap/context_riscv32.c must stay in sync.
+const fiberStackCanary = uintptr(0x5afec0de)
+
+// fiberMinStackSize floors explicit stack sizes so the swap guard's math
+// always holds. The guard margin (68: 64-byte swap frame + 4-byte canary
+// word, see llgoFiberGuardMargin in _wrap/context_riscv32.c) plus the
+// initial swap frame (64) must fit above the floor even after the 16-byte
+// alignment round-down of the top shaves up to 15 bytes: 68+64+15 = 147 is
+// the bare correctness minimum. The floor keeps 61 bytes of entry-stub
+// working room beyond that, so a fresh fiber can at least enter its entry
+// stub before any further use is judged on its merits. A stack this small
+// still fatals at its first real yield - every usable goroutine stack comes
+// from the target's default-stack-size floor (2048); this only guards
+// against tiny explicit -goroutine-stack-size values.
+const fiberMinStackSize = 208
+
+// TODO: the swap-point guard above is checkpoint-granular like TinyGo's
+// task.Pause canary; catching overflow at every function entry instead would
+// need a compiler pass in cl/ (llgo.stackSave gives the SP, and
+// prepareCooperativeSafepoints shows where per-function instrumentation
+// hooks in) plus a per-G bounds fast path. Left undone: it touches every
+// function's hot path and roughly doubles the prologue cost for a guard the
+// swap checkpoint already provides.
 
 // The packed live-G state mirrors proc_atomic.go. Baremetal transitions are
 // plain reads and writes: cooperative scheduling keeps every G state change
@@ -164,6 +199,14 @@ func initBaremetalScheduler(gp *g) {
 	setpstatus(pp, _Prunning)
 	pp.m = mp
 	gp.m = mp
+	// Guard the bootstrap stack the scheduler runs on: publish its
+	// linker-provided bounds in the system context and mark its floor word,
+	// so the swap guard covers scheduler code the same way it covers G
+	// fibers. crt0 has long left the bootstrap stack by the time Go code
+	// runs, so the floor word is free to hold the canary.
+	baremetalSched.system.stackLo = uintptr(unsafe.Pointer(&baremetalStackEnd))
+	baremetalSched.system.stackHi = uintptr(unsafe.Pointer(&baremetalStackTop))
+	*(*uintptr)(unsafe.Pointer(&baremetalStackEnd)) = fiberStackCanary
 	systemG := &baremetalSched.systemG
 	systemG.atomicstatus = _Grunning
 	systemG.m = mp
@@ -258,8 +301,12 @@ func initBaremetalFiber(gp *g, entry unsafe.Pointer, arg unsafe.Pointer, stackSi
 	if stackSize == 0 {
 		stackSize = defaultBaremetalGoroutineStack
 	}
-	if stackSize < fiberFrameSize+64 {
-		stackSize = fiberFrameSize + 64
+	// Keep the stack large enough for the guard's math (see
+	// fiberMinStackSize): top-64 must stay above stackLo+68 even in the
+	// worst alignment case, or the first swap out would false-fatal and
+	// park the initial frame on the canary word.
+	if stackSize < fiberMinStackSize {
+		stackSize = fiberMinStackSize
 	}
 	stack := AllocRoot(stackSize)
 	if stack == nil {
@@ -271,6 +318,8 @@ func initBaremetalFiber(gp *g, entry unsafe.Pointer, arg unsafe.Pointer, stackSi
 	// preserve it for every later switch.
 	top := (ctx.stackLo + stackSize) &^ 15
 	ctx.stackHi = top
+	// Mark the stack floor for the swap guard (see fiberStackCanary).
+	*(*uintptr)(stack) = fiberStackCanary
 	frame := unsafe.Pointer(top - fiberFrameSize)
 	*(*uintptr)(unsafe.Add(frame, fiberFrameRAOff)) = uintptr(entry)
 	*(*uintptr)(unsafe.Add(frame, fiberFrameArgOff)) = uintptr(arg)

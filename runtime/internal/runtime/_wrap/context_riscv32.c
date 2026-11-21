@@ -33,7 +33,57 @@
  * (proc_fiber_baremetal.go). The address helpers hand their entry points to
  * the scheduler without exposing Go func-value representation, and keep the
  * exported symbols referenced so --gc-sections cannot drop them.
+ *
+ * Stack-overflow guard
+ *
+ * A fiber stack is one contiguous tinygogc allocation (Alloc returns a single
+ * run of blocks inside one heap segment), bounded by the stackLo/stackHi
+ * fields of its baremetalFiberContext. The Go side stores those bounds per
+ * fiber (and the bootstrap scheduler bounds in the system context) and marks
+ * the floor word of every stack with fiberStackCanary (proc_fiber_baremetal.go).
+ * Before pushing its own 64-byte frame, llgoFiberSwap checks the outgoing
+ * context: the canary word at from->stackLo (offset 0 of the stack) must be
+ * intact and the live sp must leave room for the swap frame above stackLo.
+ * This mirrors TinyGo, whose task.Pause validates a stack canary at exactly
+ * the cooperative switch point and reports "goroutine stack overflow"; a
+ * function-prologue SP check would need a compiler pass that llgo's cl/
+ * pipeline does not have (see the TODO in proc_fiber_baremetal.go).
+ *
+ * Consequences of that checkpoint granularity, shared with TinyGo's Pause
+ * semantics: writes below the floor are detected at the next yield, after
+ * they happened - the guard bounds the damage to at most one call frame of
+ * overshoot (the deepest Go frame below stackLo plus the swap frame), and
+ * it stops the program deterministically instead of letting it keep running
+ * on a smashed stack. A fiber whose sp recovered before the yield is caught
+ * by the canary. A recursion that never yields is not caught.
  */
+
+/* fiberStackCanary: floor-word magic shared with proc_fiber_baremetal.go.
+ * The allocator zeroes new stacks, so any other value at the floor word
+ * proves a write crossed the stack floor. The stringize indirection keeps
+ * the literal in one place; the assembler takes the bare hex digits. */
+#define llgoFiberStr2(x) #x
+#define llgoFiberStr(x) llgoFiberStr2(x)
+#define llgoFiberStackCanary 0x5afec0de
+
+/* fiberGuardMargin: the live sp must leave this much room above stackLo.
+ * 64 bytes hold the swap frame, 4 bytes hold the canary word: requiring
+ * sp >= stackLo+68 means the frame base (sp-64) lands at or above
+ * stackLo+4, so no swap-frame slot can clobber the canary, and the saved
+ * from->sp stays strictly above stackLo, keeping the parked stack inside
+ * the collector's ctx.stackLo < ctx.sp scan window. Do not shave this to
+ * 64: sp == stackLo+64 parks the frame base exactly on the floor, where
+ * the ra slot silently overwrites the canary. */
+#define llgoFiberGuardMargin 68
+
+/* The device file (targets/device/esp) provides _write and the linked libc
+ * archive provides exit and stdio; they are declared directly so this wrapper
+ * stays freestanding like its sibling riscv32 files. All ilp32 slots are 32
+ * bits, so the return/size type mismatches with newlib's prototypes are
+ * harmless and the results are ignored. */
+extern int _write(int fd, const void *buf, unsigned int len);
+extern int fflush(void *streams);
+extern void exit(int status) __attribute__((noreturn));
 
 extern void *llgoFiberGoStart(void *arg);
 extern void *llgoFiberMainStart(void *arg);
@@ -50,7 +100,26 @@ void *llgoFiberMainStartAddr(void)
 
 __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *toSp)
 {
+    /* A naked function takes basic asm only, so the canary constant reaches
+     * the assembler as a stringized literal instead of an asm operand. */
     __asm__ volatile(
+        // Stack-overflow guard. baremetalFiberContext lays out sp at offset
+        // 0, stackLo at 4, stackHi at 8 (proc_fiber_baremetal.go). A context
+        // with stackLo == 0 has no configured bounds; skip the guard for it.
+        "lw t0, 4(a0)\n"
+        "beqz t0, 1f\n"
+        // Canary: the floor word of the outgoing fiber's stack must hold the
+        // magic. A mismatch means a frame wrote at or below the floor since
+        // the last switch, even if sp has since recovered.
+        "lw t1, 0(t0)\n"
+        "li t2, " llgoFiberStr(llgoFiberStackCanary) "\n"
+        "bne t1, t2, 2f\n"
+        // SP bound: the 64-byte swap frame below must stay clear of the
+        // canary word (see fiberGuardMargin): frame base = sp-64 must be
+        // >= stackLo+4, i.e. sp >= stackLo+68.
+        "addi t0, t0, " llgoFiberStr(llgoFiberGuardMargin) "\n"
+        "bltu sp, t0, 2f\n"
+        "1:\n"
         "addi sp, sp, -64\n"
         "sw ra, 0(sp)\n"
         "sw s0, 4(sp)\n"
@@ -83,5 +152,35 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
         "lw s11, 48(sp)\n"
         "lw a0, 52(sp)\n"
         "addi sp, sp, 64\n"
-        "ret\n");
+        "ret\n"
+        // Overflow: the outgoing fiber's stack is gone, so run the handler on
+        // the target context's saved stack. The G -> scheduler swaps - the
+        // only direction that can overflow - land on the 16 KiB bootstrap
+        // stack, far above the handler's small frame. The scheduler -> G
+        // direction would land on the target G's parked stack, which is only
+        // reachable if the bootstrap stack itself overflowed first; that
+        // fallback is accepted because the scheduler loop is flat code with
+        // no recursion, so its own stack staying healthy is a build-in
+        // assumption, not a runtime guarantee.
+        "2:\n"
+        "lw sp, 0(a1)\n"
+        "call llgoFiberStackOverflow\n");
+}
+
+/* Terminal path of the swap guard: report the overflow through the same
+ * console the runtime's print path drains (the device file's _write) and exit
+ * through newlib's semihosting exit, which esp-emu and QEMU intercept. There
+ * is no traceback: emu images link no function-info tables, and resuming a
+ * fiber whose stack already crossed its floor cannot unwind reliably.
+ *
+ * fflush(0) drains newlib's stdio buffers first: println output sits in a
+ * full buffer on these targets (the emulated console is not a tty), so an
+ * unbuffered _write without the flush would land the fatal line ahead of
+ * already-printed program output. */
+void llgoFiberStackOverflow(void)
+{
+    static const char msg[] = "fatal error: goroutine stack overflow\n";
+    fflush(0);
+    _write(2, msg, sizeof msg - 1);
+    exit(2);
 }

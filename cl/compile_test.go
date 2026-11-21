@@ -107,6 +107,11 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/timerafter",
 				"./_testgo/timertick",
 				"./_testgo/timerfunc",
+				// stackover ends in the runtime's stack-overflow fatal, which the
+				// emu firmware runner rejects; TestFiberStackGuardEmu runs it
+				// with a fatal-tolerant runner instead. stacksafe stays here and
+				// joins the auto-walk like every other fixture.
+				"./_testgo/stackover",
 				// stdlib fixtures that exceed what the C3-basic budget allows:
 				// hexpkg/fmtall/osfile overflow the 256 KiB IRAM at link time;
 				// bufiopkg/iopkg link but leave no runtime heap (out of memory);
@@ -178,6 +183,9 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/gosched",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/struczero",     // timeout: emulator did not auto-exit
 				"./_testgo/wakefan",       // xtensa keeps the pthread scheduler: no goroutines
+				// xtensa keeps the pthread scheduler: no fiber swap guard runs here.
+				"./_testgo/stacksafe",
+				"./_testgo/stackover",
 			},
 			"./_testlibc": {
 				"./_testlibc/atomic",  // unexpected output
@@ -356,6 +364,10 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/timerafter",
 		"./_testgo/timertick",
 		"./_testgo/timerfunc",
+		// The stack-guard fixtures need the fiber scheduler's swap-point
+		// guard: hosted stacks grow, and stackover would run away.
+		"./_testgo/stacksafe",
+		"./_testgo/stackover",
 		"./_testgo/gotask",
 		"./_testgo/hexpkg",
 		"./_testgo/fmtall",
