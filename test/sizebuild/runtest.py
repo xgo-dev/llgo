@@ -158,7 +158,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         artifact = directory / f"{target}-{fixture}{suffix}"
         flags = ["-target", target] if target != "native" else []
         wasi_stdout = target == "wasi" and fixture == "wasm-literal-stdout"
-        if wasi_stdout:
+        wasi_readonly_env = target == "wasi" and fixture == "wasm-environment-readonly"
+        if wasi_stdout or wasi_readonly_env:
             flags.extend(["-size", "-size-format=json"])
         log = command([str(llgo), "build", *flags, "-Oz", "-lto=full", "-deadcodedrop",
                        "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
@@ -173,6 +174,9 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         run = [*runner]
         if fixture.startswith("wasm-environment-"):
             run.append("--env=LLGO_WASI_TEST_ENV=old=value")
+        if target == "wasi" and fixture.startswith("wasm-environment-"):
+            if ("llgo: index the WASI environment without a Go map" in log) != wasi_readonly_env:
+                raise RuntimeError(f"{target} {fixture}: incorrect read-only environment index policy\n{log}")
         if target == "wasi" and fixture in ("wasm-literal-stdout", "wasm-literal-stdout-and-file",
                                              "wasm-environment-readonly", "wasm-environment-mutable"):
             if ("llgo: omit unobserved WASI environment snapshot" in log) != wasi_stdout:
@@ -192,11 +196,12 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
         if actual.strip() != expected_output:
             raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
-        if wasi_stdout:
+        if wasi_stdout or wasi_readonly_env:
             # The size report precedes stderr, where verbose diagnostics appear.
             report, _ = json.JSONDecoder().raw_decode(log)
             memory = report["wasm"]["memories"][0]
-            command([env.get("NODE", "node"), str(ROOT / "test/sizebuild/wasi-stdout-host.mjs"),
+            probe = "wasi-stdout-host.mjs" if wasi_stdout else "wasi-environment-host.mjs"
+            command([env.get("NODE", "node"), str(ROOT / "test/sizebuild" / probe),
                      str(artifact), str(memory["initial_bytes"]), str(memory["maximum_bytes"])], env, timeout=90)
         if target.startswith("emscripten") and fixture == "wasm-standard-files":
             if "llgo: omit Emscripten scheduler" in log:

@@ -18,12 +18,21 @@ import (
 func TestOptionalInitializersWASIEnvironmentSnapshot(t *testing.T) {
 	const source = `package syscall
 var llgoMutableEnvironment, llgoEnvironmentNeeded, llgoWASIPathStateNeeded bool
-var envs = llgoLoadEnvironment()
+var envs = llgoLoadIndexedEnvironment()
+var llgoEnvironmentSlots []uint32
 var copyenv = llgoEnvironmentCopier()
 var cwd string
 var preopens []string
 func llgoLoadEnvironment() []string { return nil }
-func llgoEnvironmentCopier() func() { llgoCopyEnvironmentIndex(); return nil }
+func llgoLoadIndexedEnvironment() []string {
+	entries := llgoLoadEnvironment()
+	llgoEnvironmentSlots = []uint32{1}
+	return entries
+}
+func llgoEnvironmentCopier() func() {
+	if llgoEnvironmentNeeded && llgoMutableEnvironment { return llgoCopyEnvironmentIndex }
+	return nil
+}
 func llgoCopyEnvironmentIndex() { println(len(envs)) }
 func init() { if llgoWASIPathStateNeeded { cwd = Getenv("PWD") } }
 func Getenv(key string) string { return envs[0] }
@@ -43,6 +52,7 @@ func Write() {}
 		{name: "startup getter", body: "syscall.Write()", extra: `func init() { println(Getenv("PWD")) }`},
 		{name: "cwd", body: "println(syscall.Getwd())"},
 		{name: "assembly observer", body: "syscall.Write()", symbol: "syscall.envs"},
+		{name: "index observer", body: "syscall.Write()", symbol: "syscall.llgoEnvironmentSlots"},
 		{name: "linked getter", body: "syscall.Write()", symbol: "syscall.Getenv"},
 		{name: "initializer root", body: "syscall.Write()", symbol: "syscall.llgoLoadEnvironment"},
 		{name: "possible reflection", body: "syscall.Write()", mayReflect: true},
@@ -76,6 +86,7 @@ func TestOptionalInitializersWASIEnvironment(t *testing.T) {
 		{name: "clear", body: `syscall.Getenv("key"); syscall.Clearenv()`},
 		{name: "enumerate", body: `syscall.Getenv("key"); syscall.Environ()`},
 		{name: "assembly observation", body: `syscall.Getenv("key")`, symbol: "syscall.envs"},
+		{name: "linked writer", body: `syscall.Getenv("key")`, symbol: "syscall.Setenv"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -111,7 +122,7 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated := string(rewriteWASIGetenv(source))
-	for _, fragment := range []string{"llgoLoadEnvironment()", "return llgoGetenvWithoutLock(key)", "func llgoGetenvWithLock(", "envLock.RLock()", "defer envLock.RUnlock()"} {
+	for _, fragment := range []string{"llgoLoadIndexedEnvironment()", "return llgoGetenvIndexed(key)", "func llgoGetenvWithLock(", "envLock.RLock()", "defer envLock.RUnlock()"} {
 		if !strings.Contains(updated, fragment) {
 			t.Fatalf("rewritten Getenv missing %q", fragment)
 		}
@@ -119,7 +130,7 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 	if strings.Contains(string(source), "var copyenv = sync.OnceFunc(func() {") {
 		for _, fragment := range []string{
 			"var copyenv = llgoEnvironmentCopier()",
-			"llgoCopyEnvironmentIndex()\n\t\treturn nil",
+			"if !llgoEnvironmentNeeded || !llgoMutableEnvironment",
 			"return sync.OnceFunc(llgoCopyEnvironmentIndex)",
 			"func llgoGetenvWithLock(key string) (value string, found bool) {\n\tcopyenv()",
 		} {
@@ -139,6 +150,10 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 		if patched := string(rewriteWASIGetenv([]byte(input))); !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
 			t.Fatal("moved the environment initialization past a different Getenv entry")
 		}
+	}
+	if strings.Contains(string(source), "envOnce.Do(copyenv)") &&
+		!strings.Contains(updated, "func llgoGetenvWithLock(key string) (value string, found bool) {\n\tenvOnce.Do(copyenv)") {
+		t.Fatal("legacy locked Getenv lost its lazy initialization")
 	}
 	for _, unsupported := range []string{"other package", "map[string]string", "differentLock.RLock"} {
 		input := "package invalid"
@@ -172,5 +187,34 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 				t.Fatalf("environment patch installed = %v, want %v", installed, tc.want)
 			}
 		})
+	}
+}
+
+func TestOptionalInitializersWASIEnvironmentLegacySource(t *testing.T) {
+	const source = `package syscall
+import "sync"
+var envs []string = runtime_envs()
+var env map[string]int
+var envOnce sync.Once
+var envLock sync.RWMutex
+func copyenv() {}
+func Getenv(key string) (string, bool) {
+	envOnce.Do(copyenv)
+	envLock.RLock()
+	defer envLock.RUnlock()
+	return "", false
+}`
+	indexed := string(rewriteWASIGetenv([]byte(source)))
+	if !strings.Contains(indexed, "envs []string = llgoLoadIndexedEnvironment()") ||
+		!strings.Contains(indexed, "return llgoGetenvIndexed(key)") ||
+		!strings.Contains(indexed, "func llgoGetenvWithLock(key string) (string, bool) {\n\tenvOnce.Do(copyenv)") {
+		t.Fatalf("legacy indexed lookup lost its mutable fallback:\n%s", indexed)
+	}
+	other := strings.Replace(source, "envOnce.Do(copyenv)", "envOnce.Do(other)", 1)
+	fallback := string(rewriteWASIGetenv([]byte(other)))
+	if !strings.Contains(fallback, "envs []string = llgoLoadEnvironment()") ||
+		!strings.Contains(fallback, "return llgoGetenvWithoutLock(key)") ||
+		!strings.Contains(fallback, "envOnce.Do(other)") {
+		t.Fatalf("unrecognized initialization changed:\n%s", fallback)
 	}
 }
