@@ -66,6 +66,19 @@ func printDecimal(v uint64, negative bool) {
 	c.Fwrite(unsafe.Add(buf, i), 1, 21-i, c.Stderr)
 }
 
+func formatSpecialFloat(v float64) (string, bool) {
+	switch {
+	case v != v:
+		return "NaN", true
+	case v+v == v && v != 0 && v > 0:
+		return "+Inf", true
+	case v+v == v && v != 0:
+		return "-Inf", true
+	default:
+		return "", false
+	}
+}
+
 func PrintFloat(v float64) {
 	c.Fputs(c.AllocaCStr(formatFloat(v)), c.Stderr)
 }

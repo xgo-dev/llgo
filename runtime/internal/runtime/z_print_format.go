@@ -1,3 +1,5 @@
+//go:build !llgo || !llgo.esp32c3.printf_float
+
 /*
  * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -22,21 +24,7 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-func formatSpecialFloat(v float64) (string, bool) {
-	switch {
-	case v != v:
-		return "NaN", true
-	case v+v == v && v != 0 && v > 0:
-		return "+Inf", true
-	case v+v == v && v != 0:
-		return "-Inf", true
-	default:
-		return "", false
-	}
-}
-
 func formatFloatWithC(v float64, format *c.Char) string {
-	requirePrintfFloat()
 	var buf [64]byte
 	c.Snprintf((*c.Char)(unsafe.Pointer(&buf[0])), uintptr(len(buf)), format, v)
 	return c.GoString((*c.Char)(unsafe.Pointer(&buf[0])))
