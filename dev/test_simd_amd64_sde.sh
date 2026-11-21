@@ -7,10 +7,10 @@ export GOEXPERIMENT=simd GOAMD64=v1
 output=$(mktemp -d)
 trap 'rm -rf "$output"' EXIT
 for compiler in go "$LLGO"; do
-  flags=()
-  if [[ "$compiler" != go ]]; then flags=(-O2); fi
+  build=("$compiler" test)
+  if [[ "$compiler" != go ]]; then build+=(-O2); fi
   for package in ./test/simd ./test/simd/portable ./test/std/simd simd/archsimd/internal/simd_test; do
-    "$compiler" test "${flags[@]}" -c -o "$output/test" "$package"
+    "${build[@]}" -c -o "$output/test" "$package"
     filter=.
     if [[ "$package" == ./test/simd ]]; then filter='^TestSIMD512'; fi
     GODEBUG="${GODEBUG:+$GODEBUG,}simd=512" "$SDE" -spr -- "$output/test" -test.count=1 -test.timeout="${SDE_TIMEOUT:-60m}" -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
