@@ -12,7 +12,7 @@ import (
 
 const useWasmReflectBridges = true
 
-func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefix []unsafe.Pointer, in []Value) []Value {
+func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method, native bool, prefix []unsafe.Pointer, in []Value) []Value {
 	if method {
 		env = *(*unsafe.Pointer)(prefix[0])
 	}
@@ -34,12 +34,11 @@ func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefi
 			panic("reflect: missing WebAssembly call bridge for " + stringFor(&ft.Type))
 		}
 		entry := closure{fn: code}
-		call := *(*func(unsafe.Pointer, unsafe.Pointer, bool, *unsafe.Pointer, *unsafe.Pointer))(unsafe.Pointer(&entry))
-		call(fn, env, method || env != nil, unsafe.SliceData(args), unsafe.SliceData(results))
+		call := *(*func(unsafe.Pointer, unsafe.Pointer, bool, bool, *unsafe.Pointer, *unsafe.Pointer))(unsafe.Pointer(&entry))
+		call(fn, env, method || env != nil, native, unsafe.SliceData(args), unsafe.SliceData(results))
 	}
 	for i, typ := range tout {
-		out[i] = NewAt(toType(typ), results[i]).Elem()
-		resolveIndirectValue(&out[i], typ)
+		out[i] = valueFromCallResult(results[i], typ)
 	}
 	return out
 }

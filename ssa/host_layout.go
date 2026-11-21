@@ -138,8 +138,27 @@ func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	return p.hostNestedLayout(t)
 }
 
+// nativeFuncAliasABI distinguishes one-word function aliases from the public
+// Go signature, which can also be used as the code field of a Go closure.
+func (p Program) nativeFuncAliasABI(alias *types.Alias) string {
+	if _, ok := types.Unalias(alias).(*types.Signature); !ok {
+		return ""
+	}
+	switch p.nativeTypeDirective(alias) {
+	case CDecl:
+		return "cdecl"
+	case Stdcall:
+		return "stdcall"
+	}
+	return ""
+}
+
 // hasNativeTypeDirective preserves declarations on aliases before unaliasing.
 func (p Program) hasNativeTypeDirective(t types.Type) bool {
+	return p.nativeTypeDirective(t) != ccUnknown
+}
+
+func (p Program) nativeTypeDirective(t types.Type) CallConv {
 	for {
 		var obj *types.TypeName
 		switch n := t.(type) {
@@ -150,12 +169,12 @@ func (p Program) hasNativeTypeDirective(t types.Type) bool {
 		}
 		if obj != nil {
 			if cc, ok := p.packageTypeCallConv(typeNameLinkname(obj)); ok && isNativeCallConv(cc) {
-				return true
+				return cc
 			}
 		}
 		alias, ok := t.(*types.Alias)
 		if !ok {
-			return false
+			return ccUnknown
 		}
 		t = alias.Rhs()
 	}

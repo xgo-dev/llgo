@@ -240,3 +240,21 @@ GoString llgo_test_generic_source(Box arg) {
 int32_t llgo_test_match_generic(GoString (*f)(Box)) {
     return f == llgo_test_generic_source;
 }
+
+typedef struct { struct { const char *data; uint32_t tag; } slot; int64_t len; } TaggedText;
+
+static GoString reflect_text(uintptr_t word) {
+    GoString s = {word == 515 ? "word" : "fail", 4};
+    if ((uint64_t)word == UINT64_C(0x10000000203)) s.p = "wide";
+    dirty_string_padding(&s);
+    return s;
+}
+
+static TaggedText reflect_tagged(uintptr_t word) {
+    return (TaggedText){{"word", word == 515 ? UINT32_C(0x12345678) : 0}, 4};
+}
+
+typedef GoString (*ReflectText)(uintptr_t);
+typedef TaggedText (*ReflectTagged)(uintptr_t);
+ReflectText llgo_test_reflect_text(void) { return reflect_text; }
+ReflectTagged llgo_test_reflect_tagged(void) { return reflect_tagged; }

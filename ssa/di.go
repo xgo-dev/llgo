@@ -195,7 +195,7 @@ type DIType = *aDIType
 
 func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 	var typ llvm.Metadata
-	switch t := ty.RawType().(type) {
+	switch t := types.Unalias(ty.RawType()).(type) {
 	case *types.Basic:
 		if t.Kind() == types.UnsafePointer {
 			typ = b.di.CreatePointerType(llvm.DIPointerType{
@@ -260,7 +260,7 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 	case *types.Struct:
 		return b.createStructType(name, ty, pos)
 	case *types.Signature:
-		return b.createFuncPtrType(name, ty, pos)
+		return b.createFuncPtrType(name, t, pos)
 	case *types.Array:
 		return b.createArrayType(ty, t.Len())
 	case *types.Chan:
@@ -775,8 +775,7 @@ func (b diBuilder) createTupleType(name string, ty Type, pos token.Position) DIT
 	})
 }
 
-func (b diBuilder) createFuncPtrType(name string, ty Type, pos token.Position) DIType {
-	sig := ty.RawType().(*types.Signature)
+func (b diBuilder) createFuncPtrType(name string, sig *types.Signature, pos token.Position) DIType {
 	params := make([]llvm.Metadata, sig.Params().Len()+1)
 	if results := sig.Results(); results.Len() != 0 {
 		params[0] = b.diType(b.prog.rawType(results), pos).ll

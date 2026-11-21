@@ -112,10 +112,7 @@ func ffiResultField(aggregate *ffi.Type, index int, offset uintptr) (field *ffi.
 }
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
-	kind := typ.Kind()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
+	typ, kind := funcElem(typ)
 	v.typ_ = typ
 	v.flag = flag(kind)
 	if typ.IfaceIndir() {
@@ -255,13 +252,13 @@ func makeMethodValue(op string, v Value) Value {
 	// userdata owns the receiver state. Pointing a hidden-env funcval directly
 	// at Ifn would be invalid because Ifn expects the receiver as an ordinary
 	// first ABI argument.
-	_, _, recoverTo := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
+	_, ft, recoverTo := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
 	method := v
 	callOp := "Call"
-	if method.Type().(*rtype).t.FuncType().Variadic() {
+	if ft.Variadic() {
 		callOp = "CallSlice"
 	}
-	ret := makeFunc(v.Type(), func(args []Value) []Value {
+	ret := makeFunc(toType(&ft.Type), func(args []Value) []Value {
 		return method.call(callOp, args)
 	}, recoverTo)
 	// Cause panic if method is not appropriate.

@@ -25,6 +25,24 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+// wasmCallShape records the physical prototypes and the Go frame layout.
+// Keep C integer extensions last to preserve cross-package adapter names.
+func (p Program) wasmCallShape(goSig, nativeSig *types.Signature, goType, nativeType llvm.Type) (string, bool) {
+	var shape strings.Builder
+	p.appendWasmLLVMTypeShape(&shape, goType)
+	if nativeType != goType {
+		shape.WriteByte('/')
+		p.appendWasmLLVMTypeShape(&shape, nativeType)
+	}
+	shape.WriteByte('/')
+	p.appendWasmTupleRootShape(&shape, goSig.Params())
+	// Reflection supplies a distinct destination slot for each result.
+	shape.WriteByte('/')
+	p.appendWasmTupleRootShape(&shape, goSig.Results())
+	hasAttrs := p.appendNativeIntegerAttrShape(&shape, nativeSig, nativeType)
+	return shape.String(), hasAttrs
+}
+
 func (p Program) appendWasmLLVMTypeShape(shape *strings.Builder, typ llvm.Type) {
 	switch typ.TypeKind() {
 	case llvm.VoidTypeKind:

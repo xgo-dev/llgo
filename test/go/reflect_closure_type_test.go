@@ -154,6 +154,181 @@ func TestReflectClosureArrayOfSliceOf(t *testing.T) {
 	}
 }
 
+type reflectCallbackArg struct{ Words [7]uint32 }
+
+//llgo:cdecl
+type reflectCallbackAlias = func(reflectCallbackArg) int64
+
+func reflectCallbackWord(arg reflectCallbackArg) int64 { return int64(arg.Words[0]) }
+
+func TestReflectArrayOfNativeCallback(t *testing.T) {
+	src := reflect.ValueOf([2]reflectCallbackAlias{nil, reflectCallbackWord})
+	typ := reflect.ArrayOf(src.Len(), src.Type().Elem())
+	if typ != src.Type() {
+		t.Errorf("ArrayOf returned a different descriptor for %v", src.Type())
+	}
+	dst := reflect.New(typ).Elem()
+	dst.Set(src)
+	got, ok := dst.Interface().([2]reflectCallbackAlias)
+	if !ok {
+		t.Fatal("rebuilt array failed its original type assertion")
+	}
+	arg := reflectCallbackArg{Words: [7]uint32{42}}
+	if got[0] != nil || got[1] == nil || got[1](arg) != 42 {
+		t.Fatal("rebuilt array lost its callback")
+	}
+}
+
+func TestReflectCallbackContainerElements(t *testing.T) {
+	// Only the native containers are declared. Looking up the ordinary
+	// signature must still produce storage that can hold a capturing closure.
+	n := int64(42)
+	fn := reflect.ValueOf(func(reflectCallbackArg) int64 { return n })
+	key := reflect.ValueOf(1)
+	check := func(native reflect.Type, build func(reflect.Type) reflect.Type) reflect.Type {
+		t.Helper()
+		if build(native.Elem()) != native {
+			t.Errorf("rebuilding %v lost its type identity", native)
+		}
+		typ := build(fn.Type())
+		if typ.Elem() != fn.Type() {
+			t.Fatalf("%v selected the native callback element for a Go closure", typ)
+		}
+		return typ
+	}
+	array := check(reflect.TypeOf([2]reflectCallbackAlias{}), func(e reflect.Type) reflect.Type { return reflect.ArrayOf(2, e) })
+	slice := check(reflect.TypeOf([]reflectCallbackAlias{}), reflect.SliceOf)
+	mapType := check(reflect.TypeOf(map[int]reflectCallbackAlias{}), func(e reflect.Type) reflect.Type { return reflect.MapOf(key.Type(), e) })
+	a := reflect.New(array).Elem()
+	s := reflect.MakeSlice(slice, 2, 2)
+	m := reflect.MakeMap(mapType)
+	a.Index(1).Set(fn)
+	s.Index(1).Set(fn)
+	m.SetMapIndex(key, fn)
+	for _, v := range []reflect.Value{a.Index(1), s.Index(1), m.MapIndex(key)} {
+		if got := v.Interface().(func(reflectCallbackArg) int64)(reflectCallbackArg{}); got != n {
+			t.Fatalf("stored closure returned %d, want %d", got, n)
+		}
+	}
+}
+
+func TestReflectHigherOrderClosureContainers(t *testing.T) {
+	captured := int64(41)
+	arg := reflectCallbackArg{Words: [7]uint32{42}}
+	parameter := func(callback reflectCallbackAlias) int64 { return captured + callback(arg) }
+	result := func() reflectCallbackAlias {
+		if captured == 42 {
+			return reflectCallbackWord
+		}
+		return nil
+	}
+	captured++
+	t.Run("parameter", func(t *testing.T) {
+		checkReflectHigherOrderContainers(t, parameter, func(_ *testing.T, fn func(reflectCallbackAlias) int64) int64 {
+			return fn(reflectCallbackWord)
+		}, 84)
+	})
+	t.Run("result", func(t *testing.T) {
+		checkReflectHigherOrderContainers(t, result, func(t *testing.T, fn func() reflectCallbackAlias) int64 {
+			callback := fn()
+			if callback == nil {
+				t.Fatal("stored closure returned a nil callback")
+			}
+			return callback(arg)
+		}, 42)
+	})
+}
+
+func checkReflectHigherOrderContainers[F any](t *testing.T, fn F, call func(*testing.T, F) int64, want int64) {
+	t.Helper()
+	var zero F
+	for _, value := range []struct {
+		name string
+		fn   F
+	}{{"nil", zero}, {"captured", fn}} {
+		t.Run(value.name, func(t *testing.T) {
+			for _, container := range []struct {
+				name   string
+				source any
+				build  func(reflect.Type) reflect.Type
+				read   func(any) F
+			}{
+				{"array", [2]F{zero, value.fn}, func(e reflect.Type) reflect.Type { return reflect.ArrayOf(2, e) },
+					func(v any) F { return v.([2]F)[1] }},
+				{"slice", []F{zero, value.fn}, reflect.SliceOf,
+					func(v any) F { return v.([]F)[1] }},
+				{"map", map[int]F{1: value.fn}, func(e reflect.Type) reflect.Type { return reflect.MapOf(reflect.TypeOf(0), e) },
+					func(v any) F { return v.(map[int]F)[1] }},
+			} {
+				t.Run(container.name, func(t *testing.T) {
+					source := reflect.ValueOf(container.source)
+					for _, element := range []struct {
+						name string
+						typ  reflect.Type
+					}{{"TypeOf", reflect.TypeOf(value.fn)}, {"Elem", source.Type().Elem()}} {
+						t.Run(element.name, func(t *testing.T) {
+							typ := container.build(element.typ)
+							if typ != source.Type() {
+								t.Fatalf("rebuilt %v lost its canonical type identity", source.Type())
+							}
+							dst := reflect.New(typ).Elem()
+							dst.Set(source)
+							if dst.Kind() == reflect.Map {
+								dst.SetMapIndex(reflect.ValueOf(1), reflect.ValueOf(value.fn))
+							} else {
+								dst.Index(1).Set(reflect.ValueOf(value.fn))
+							}
+							stored := container.read(dst.Interface())
+							if value.name == "nil" {
+								if !reflect.ValueOf(stored).IsNil() {
+									t.Fatal("rebuilt container lost its nil function")
+								}
+							} else if got := call(t, stored); got != want {
+								t.Fatalf("stored closure returned %d, want %d", got, want)
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestReflectHigherOrderContainerTypeSelection(t *testing.T) {
+	// Keep this signature distinct so its public containers do not become
+	// exact candidates for the fallback cases above.
+	fnType := reflect.TypeOf((func(reflectCallbackAlias, byte) int64)(nil))
+	for _, tc := range []struct {
+		name              string
+		qualified, public reflect.Type
+		build             func(reflect.Type) reflect.Type
+	}{
+		{"array", reflect.TypeOf([2]func(reflectCallbackAlias, byte) int64{}),
+			reflect.TypeOf([2]func(func(reflectCallbackArg) int64, byte) int64{}),
+			func(e reflect.Type) reflect.Type { return reflect.ArrayOf(2, e) }},
+		{"slice", reflect.TypeOf([]func(reflectCallbackAlias, byte) int64{}),
+			reflect.TypeOf([]func(func(reflectCallbackArg) int64, byte) int64{}), reflect.SliceOf},
+		{"map", reflect.TypeOf(map[int]func(reflectCallbackAlias, byte) int64{}),
+			reflect.TypeOf(map[int]func(func(reflectCallbackArg) int64, byte) int64{}),
+			func(e reflect.Type) reflect.Type { return reflect.MapOf(reflect.TypeOf(0), e) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, element := range []struct {
+				name      string
+				typ, want reflect.Type
+			}{
+				{"TypeOf", fnType, tc.public},
+				{"public Elem", tc.public.Elem(), tc.public},
+				{"qualified Elem", tc.qualified.Elem(), tc.qualified},
+			} {
+				if got := tc.build(element.typ); got != element.want {
+					t.Errorf("%s rebuilt %v with a different type identity", element.name, element.want)
+				}
+			}
+		})
+	}
+}
+
 func TestReflectClosureSliceClear(t *testing.T) {
 	left, right := 3, 4
 	slice := make([]func() int, 2)

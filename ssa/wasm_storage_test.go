@@ -92,6 +92,7 @@ func TestNativePointerOperationsReuseStorageViews(t *testing.T) {
 	closure := body.ChangeType(goType, entry.Expr)
 	value := prog.Zero(prog.rawType(arg.Type()))
 	useCallback := func() {
+		prog.canCallGoEntry(sig)
 		body.Call(callback, value)
 		body.ChangeType(goType, callback)
 		body.ChangeType(nativeType, entry.Expr)
