@@ -22,10 +22,14 @@ func (b Builder) simdAverage(x, y Expr) Expr {
 	return Expr{b.impl.CreateAdd(b.impl.CreateAdd(shared, half, ""), round, ""), x.Type}
 }
 
-func (b Builder) simdMulWidenLo(result Type, x, y Expr) Expr {
+func (b Builder) simdMulWiden(op SIMDOp, result Type, x, y Expr) Expr {
 	indices := make([]llvm.Value, result.ll.VectorSize())
+	offset := 0
+	if op == SIMDMulWidenHi {
+		offset = len(indices)
+	}
 	for i := range indices {
-		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
+		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(offset+i), false)
 	}
 	mask := llvm.ConstVector(indices, false)
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
@@ -128,4 +132,33 @@ func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 		return Expr{b.impl.CreateSub(a, c, ""), x.Type}
 	}
 	return Expr{b.impl.CreateAdd(a, c, ""), x.Type}
+}
+
+// The ARM64 reduction declarations place the scalar in lane zero and clear
+// the remaining lanes. The public Go wrappers read lane zero.
+func (b Builder) simdReduceLanes(op SIMDOp, x Expr) Expr {
+	name := "add"
+	if op != SIMDReduceSum {
+		info := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()
+		switch {
+		case info&types.IsFloat != 0:
+			if op == SIMDReduceMax {
+				name = "fmaximum"
+			} else {
+				name = "fminimum"
+			}
+		default:
+			name = "s"
+			if info&types.IsUnsigned != 0 {
+				name = "u"
+			}
+			if op == SIMDReduceMax {
+				name += "max"
+			} else {
+				name += "min"
+			}
+		}
+	}
+	scalar := b.impl.CreateIntrinsic(x.ll.ElementType(), llvm.LookupIntrinsicID("llvm.vector.reduce."+name), []llvm.Value{x.impl}, "")
+	return Expr{b.impl.CreateInsertElement(llvm.ConstNull(x.ll), scalar, llvm.ConstInt(b.Prog.tyInt32(), 0, false), ""), x.Type}
 }

@@ -293,8 +293,13 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				if fn := mod.NamedFunction("simd/archsimd.Int8x16.OnesCount"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
-					t.Fatal("missing explicit unsupported implementation")
+				if fn := mod.NamedFunction("simd/archsimd.Int8x16.OnesCount"); fn.IsNil() || !strings.Contains(fn.String(), "llvm.ctpop") {
+					t.Fatal("missing callable population count")
+				}
+				if target.arch == "amd64" {
+					if fn := mod.NamedFunction("simd/archsimd.Int8x16.MulSign"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+						t.Fatal("missing explicit unsupported implementation")
+					}
 				}
 				if fn := mod.NamedFunction("simd/archsimd.Uint8x16.ExtendLo8ToUint16"); fn.IsNil() || !strings.Contains(fn.String(), "zext <8 x i8>") {
 					t.Fatal("integer extension has no callable vector definition")
