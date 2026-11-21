@@ -682,8 +682,15 @@ func (v Value) FieldByIndexErr(index []int) (Value, error) {
 // It panics if v's Kind is not struct.
 func (v Value) FieldByName(name string) Value {
 	v.mustBe(Struct)
-	if f, ok := toRType(v.typ()).FieldByName(name); ok {
-		return v.FieldByIndex(f.Index)
+	t := (*structType)(unsafe.Pointer(v.typ()))
+	i, hasEmbeds := t.directFieldByName(name)
+	if i >= 0 {
+		return v.Field(i)
+	}
+	if hasEmbeds {
+		if _, path := t.fieldByNameFunc(func(s string) bool { return s == name }); path != nil {
+			return v.FieldByIndex(path)
+		}
 	}
 	return Value{}
 }
@@ -693,8 +700,9 @@ func (v Value) FieldByName(name string) Value {
 // It panics if v's Kind is not struct.
 // It returns the zero Value if no field was found.
 func (v Value) FieldByNameFunc(match func(string) bool) Value {
-	if f, ok := toRType(v.typ()).FieldByNameFunc(match); ok {
-		return v.FieldByIndex(f.Index)
+	t := toRType(v.typ()).structForFieldByNameFunc()
+	if _, path := t.fieldByNameFunc(match); path != nil {
+		return v.FieldByIndex(path)
 	}
 	return Value{}
 }
