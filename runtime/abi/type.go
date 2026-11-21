@@ -674,7 +674,10 @@ func (t *Type) NumMethod() int {
 		tt := (*InterfaceType)(unsafe.Pointer(t))
 		return len(tt.Methods)
 	}
-	return len(t.ExportedMethods())
+	if u := t.Uncommon(); u != nil {
+		return int(u.Xcount)
+	}
+	return 0
 }
 
 func (t *Type) GcSlice(begin, end uintptr) []byte {

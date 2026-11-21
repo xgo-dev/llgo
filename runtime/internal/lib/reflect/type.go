@@ -265,20 +265,16 @@ func (t *rtype) FieldAlign() int { return t.t.FieldAlign() }
 
 func (t *rtype) Kind() Kind { return Kind(t.t.Kind()) }
 
-func (t *rtype) exportedMethods() []abi.Method {
-	ut := t.uncommon()
-	if ut == nil {
+func exportedMethod(typ *abi.Type, i int) *abi.Method {
+	u := typ.Uncommon()
+	if u == nil || uint(i) >= uint(u.Xcount) {
 		return nil
 	}
-	return ut.ExportedMethods()
+	return u.Method(i)
 }
 
 func (t *rtype) NumMethod() int {
-	if t.Kind() == Interface {
-		tt := (*interfaceType)(unsafe.Pointer(t))
-		return tt.NumMethod()
-	}
-	return len(t.exportedMethods())
+	return t.t.NumMethod()
 }
 
 func (t *rtype) Method(i int) (m Method) {
@@ -286,11 +282,10 @@ func (t *rtype) Method(i int) (m Method) {
 		tt := (*interfaceType)(unsafe.Pointer(t))
 		return tt.Method(i)
 	}
-	methods := t.exportedMethods()
-	if i < 0 || i >= len(methods) {
+	p := exportedMethod(&t.t, i)
+	if p == nil {
 		panic("reflect: Method index out of range")
 	}
-	p := methods[i]
 	m.Name = p.Name()
 	fl := flag(Func)
 	ft := p.Mtyp_
@@ -318,36 +313,36 @@ func methodFuncValue(ft *abi.Type, fn unsafe.Pointer, fl flag) Value {
 	return Value{ct, c, fl | flagIndir}
 }
 
-func (t *rtype) MethodByName(name string) (m Method, ok bool) {
-	if t.Kind() == Interface {
-		tt := (*interfaceType)(unsafe.Pointer(t))
-		return tt.MethodByName(name)
-	}
-	ut := t.uncommon()
-	if ut == nil {
-		return Method{}, false
-	}
-
-	methods := ut.ExportedMethods()
-
-	// We are looking for the first index i where the string becomes >= s.
-	// This is a copy of sort.Search, with f(h) replaced by (t.nameOff(methods[h].name).name() >= name).
-	i, j := 0, len(methods)
-	for i < j {
-		h := int(uint(i+j) >> 1) // avoid overflow when computing h
-		// i ≤ h < j
-		if !(methods[h].Name() >= name) {
-			i = h + 1 // preserves f(i-1) == false
-		} else {
-			j = h // preserves f(j) == true
-		}
-	}
-	// i == j, f(i-1) == false, and f(j) (= f(i)) == true  =>  answer is i.
-	if i < len(methods) && name == methods[i].Name() {
+func (t *rtype) MethodByName(name string) (Method, bool) {
+	if i := t.methodIndexByName(name); i >= 0 {
 		return t.Method(i), true
 	}
-
 	return Method{}, false
+}
+
+// methodIndexByName can also be used by Value.MethodByName, which only
+// needs the method index to bind the receiver.
+func (t *rtype) methodIndexByName(name string) int {
+	if t.Kind() == Interface {
+		return (*interfaceType)(unsafe.Pointer(t)).methodIndexByName(name)
+	}
+	u := t.uncommon()
+	if u == nil {
+		return -1
+	}
+	i, j := 0, int(u.Xcount)
+	for i < j {
+		h := int(uint(i+j) >> 1)
+		if u.Method(h).Name() < name {
+			i = h + 1
+		} else {
+			j = h
+		}
+	}
+	if i < int(u.Xcount) && u.Method(i).Name() == name {
+		return i
+	}
+	return -1
 }
 
 func (t *rtype) PkgPath() string {
@@ -561,19 +556,13 @@ func (t *interfaceType) Method(i int) (m Method) {
 // NumMethod returns the number of interface methods in the type's method set.
 func (t *interfaceType) NumMethod() int { return len(t.Methods) }
 
-// MethodByName method with the given name in the type's method set.
-func (t *interfaceType) MethodByName(name string) (m Method, ok bool) {
-	if t == nil {
-		return
-	}
-	var p *abi.Imethod
+func (t *interfaceType) methodIndexByName(name string) int {
 	for i := range t.Methods {
-		p = &t.Methods[i]
-		if p.Name() == name {
-			return t.Method(i), true
+		if t.Methods[i].Name() == name {
+			return i
 		}
 	}
-	return
+	return -1
 }
 
 // A StructField describes a single field in a struct.
@@ -2075,7 +2064,8 @@ func StructOf(fields []StructField) Type {
 					if len(fields) > 1 {
 						panic("reflect: embedded type with methods not implemented if there is more than one field")
 					}
-					for _, m := range unt.Methods() {
+					for j := 0; j < int(unt.Mcount); j++ {
+						m := unt.Method(j)
 						if m.PkgPath() != "" {
 							// TODO(sbinet).
 							// Issue 15924.
@@ -2090,7 +2080,8 @@ func StructOf(fields []StructField) Type {
 					}
 				}
 				if unt := ptr.Elem.Uncommon(); unt != nil {
-					for _, m := range unt.Methods() {
+					for j := 0; j < int(unt.Mcount); j++ {
+						m := unt.Method(j)
 						if m.PkgPath() != "" {
 							// TODO(sbinet)
 							// Issue 15924.
@@ -2113,7 +2104,8 @@ func StructOf(fields []StructField) Type {
 					if len(fields) > 1 && ft.Kind_&abi.KindDirectIface != 0 {
 						panic("reflect: embedded type with methods not implemented for non-pointer type")
 					}
-					for _, m := range unt.Methods() {
+					for j := 0; j < int(unt.Mcount); j++ {
+						m := unt.Method(j)
 						if m.PkgPath() != "" {
 							// TODO(sbinet)
 							// Issue 15924.

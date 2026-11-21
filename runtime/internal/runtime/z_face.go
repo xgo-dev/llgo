@@ -231,9 +231,8 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 		// On J32 C pointer arrays have four-byte elements while itab function
 		// slots follow Go's eight-byte word model.
 		data := c.Advance(ptr, int(itabHdrSize))
-		mthds := u.Methods()
 		for i, m := range inter.Methods {
-			fn, matched := findMethod(mthds, m)
+			fn, matched := findMethod(u, m)
 			if !matched {
 				ret.fun[0] = 0
 				break
@@ -258,9 +257,10 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 // Returns (fn, matched) where:
 //   - fn: the function pointer (may be nil even when matched=true for promoted unexported methods)
 //   - matched: true if a method with matching name and type signature exists
-func findMethod(mthds []abi.Method, im abi.Imethod) (abi.Text, bool) {
+func findMethod(methods *abi.UncommonType, im abi.Imethod) (abi.Text, bool) {
 	imName := im.Name_
-	for _, m := range mthds {
+	for i := 0; i < int(methods.Mcount); i++ {
+		m := methods.Method(i)
 		mName := m.Name_
 		if mName >= imName {
 			if mName == imName && m.Mtyp_ == im.Typ_ {

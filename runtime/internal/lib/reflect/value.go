@@ -1675,11 +1675,10 @@ func (v Value) typeSlow() Type {
 		return toRType(&m.Typ_.Type)
 	}
 	// Method on concrete type.
-	ms := typ.ExportedMethods()
-	if uint(i) >= uint(len(ms)) {
+	m := exportedMethod(typ, i)
+	if m == nil {
 		panic("reflect: internal error: invalid method index")
 	}
-	m := ms[i]
 	return toRType(&m.Mtyp_.Type)
 }
 
@@ -2239,11 +2238,11 @@ func (v Value) MethodByName(name string) Value {
 	if v.flag&flagMethod != 0 {
 		return Value{}
 	}
-	m, ok := toRType(v.typ()).MethodByName(name)
-	if !ok {
+	i := toRType(v.typ()).methodIndexByName(name)
+	if i < 0 {
 		return Value{}
 	}
-	return v.Method(m.Index)
+	return v.Method(i)
 }
 
 // NumField returns the number of fields in the struct v.
@@ -2844,11 +2843,10 @@ func methodReceiver(op string, v Value, methodIndex int) (rcvrtype *abi.Type, t 
 		t = (*funcType)(unsafe.Pointer(m.Typ_))
 	} else {
 		rcvrtype = v.typ()
-		ms := v.typ().ExportedMethods()
-		if uint(i) >= uint(len(ms)) {
+		m := exportedMethod(rcvrtype, i)
+		if m == nil {
 			panic("reflect: internal error: invalid method index")
 		}
-		m := ms[i]
 		if !abi.IsExported(m.Name()) {
 			panic("reflect: " + op + " of unexported method")
 		}
