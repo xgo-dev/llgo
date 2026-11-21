@@ -208,6 +208,10 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		return err
 	}
 	defer os.RemoveAll(dir)
+	ctx, dir, err = linkStagedWasm(ctx, plan, out.Out, dir, verbose)
+	if err != nil {
+		return err
+	}
 	staged := *out
 	staged.Out = filepath.Join(dir, filepath.Base(out.Out))
 	if out.DWARF != "" {
@@ -215,11 +219,6 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 	}
 	if out.PCLN != "" {
 		staged.PCLN = filepath.Join(dir, filepath.Base(out.PCLN))
-	}
-	localPlan := *plan
-	localPlan.outputPath = staged.Out
-	if err := executeMainLink(ctx, &localPlan, verbose); err != nil {
-		return err
 	}
 	module := debugWasmModulePath(ctx.buildConf, staged.Out)
 	before, err := os.Stat(module)

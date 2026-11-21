@@ -25,6 +25,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -729,6 +730,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	if emscriptenSchedulerProofProfile(conf, &export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
+	}
 	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
 	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
@@ -1239,6 +1243,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
+	ctx.probeEmscriptenScheduler = canProbeEmscriptenScheduler(ctx, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -2112,9 +2117,11 @@ type context struct {
 	linkRuntimeSites *bool
 
 	// effectiveLinkArgs records the actual driver invocation for the Wasm manifest.
-	effectiveLinkArgs      []string
-	wasmJSMinifier         string
-	skipEmscriptenMinifier bool
+	effectiveLinkArgs        []string
+	wasmJSMinifier           string
+	skipEmscriptenMinifier   bool
+	probeEmscriptenScheduler bool
+	linkDiagnostics          io.Writer
 
 	buildTrace *buildTracer
 
@@ -2739,6 +2746,7 @@ type mainLinkPlan struct {
 	runtimeSites         bool
 	outputPath           string
 	linkInputs           []string
+	directWasmInputs     []string
 	linkArgs             []string
 	pclnExternal         *pclnmap.Data
 	embeddedPCLN         *pclnmap.Data
@@ -2973,6 +2981,15 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	}
 	linkInputs = append(linkInputs, extraObjFiles...)
 	linkInputs = append(linkInputs, preparation.archiveInputs...)
+	var directWasmInputs []string
+	if ctx.probeEmscriptenScheduler {
+		normal, direct, err := buildEmscriptenDispatch(ctx, entryPkg.ExportFile)
+		if err != nil {
+			return nil, err
+		}
+		directWasmInputs = slices.Concat([]string{entryObjFile, direct}, linkInputs[1:])
+		linkInputs = slices.Concat([]string{entryObjFile, normal}, linkInputs[1:])
+	}
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
 	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
 
@@ -2980,6 +2997,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		runtimeSites:         shouldEmitRuntimeSites(ctx),
 		outputPath:           outputPath,
 		linkInputs:           linkInputs,
+		directWasmInputs:     directWasmInputs,
 		linkArgs:             preparation.linkArgs,
 		pclnExternal:         ctx.pclnExternal,
 		embeddedPCLN:         ctx.pclnEmbedded,
@@ -3335,6 +3353,9 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	}
 
 	cmd := ctx.linker()
+	if ctx.linkDiagnostics != nil {
+		cmd.Stderr = ctx.linkDiagnostics
+	}
 	ltoObjectArgs, err := darwinLTOObjectArgs(ctx, app, cmd, buildArgs)
 	if err != nil {
 		return fmt.Errorf("retain Darwin LTO debug object: %w", err)

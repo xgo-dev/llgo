@@ -50,6 +50,11 @@ pass.
 With DCE, the final link can call a proven allocation-free and synchronous
 executable directly. The direct entry skips Go runtime startup, its scheduler
 and Asyncify. It reuses package archives and preserves the Emscripten host API.
+For other closed single-worker size builds, Full LTO can prove that the
+scheduler is unused even when the program needs Go runtime initialization.
+The final link first tries direct execution with unresolved scheduler markers.
+If the linker still needs a marker or another Asyncify dependency, LLGo links
+with the normal scheduler using the same archives.
 The JavaScript SjLj profile preserves call boundaries in frames that use
 `setjmp` to limit duplicate unwind checks after LLVM inlining.
 

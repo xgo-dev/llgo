@@ -2,6 +2,7 @@
 """Build the size proposal's existing regression cases with a dev LLGo."""
 
 import argparse
+import json
 import os
 import pathlib
 import platform
@@ -192,6 +193,46 @@ def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
             command([runner[0], str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact), expected],
                     env, timeout=90)
         print(f"{target} Full LTO {fixture} used direct entry", flush=True)
+
+    # Both variants use the same standard-library archives. The channel
+    # variant needs the scheduler even though it prints the same result.
+    for concurrent in (False, True):
+        source = directory / f"{target}-scheduler-{concurrent}.go"
+        source.write_text(f"""package main
+import "encoding/binary"
+type reading struct {{ Tick uint32; Seen [2]uint16 }}
+//go:noinline
+func report(value reading) {{
+    var buf [8]byte
+    if _, err := binary.Encode(buf[:], binary.LittleEndian, value); err != nil {{ panic(err) }}
+    var result reading
+    if _, err := binary.Decode(buf[:], binary.LittleEndian, &result); err != nil {{ panic(err) }}
+    tick := result.Tick
+    if {str(concurrent).lower()} {{
+        ch := make(chan uint32)
+        go func() {{ ch <- tick }}()
+        tick = <-ch
+    }}
+    println(tick)
+}}
+func main() {{ report(reading{{Tick: 42}}) }}
+""", encoding="utf-8")
+        artifact = source.with_suffix(".mjs")
+        log = command([str(llgo), "build", f"-target={target}", "-Oz", "-lto=full", "-deadcodedrop",
+                       "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(artifact), str(source)], env)
+        verb = "retain" if concurrent else "omit"
+        if f"llgo: {verb} Emscripten scheduler after link reachability check" not in log:
+            raise RuntimeError(f"{target}: expected to {verb} the scheduler\n{log[-3000:]}")
+        manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
+        if ("-sASYNCIFY=1" in manifest["link_flags"]) != concurrent:
+            raise RuntimeError(f"{target}: manifest records the wrong link variant")
+        if command([*runner, str(artifact)], env, timeout=90).strip() != "42":
+            raise RuntimeError(f"{target}: scheduler link probe changed the result")
+        if browser:
+            command([runner[0], str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact), "42"],
+                    env, timeout=90)
+    print(f"{target} Full LTO scheduler link selection and fallback passed", flush=True)
 
 
 def wasi_specialization_probe(llgo, directory, env, runner):

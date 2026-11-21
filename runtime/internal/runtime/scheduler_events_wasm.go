@@ -17,12 +17,18 @@ var (
 // scheduler. The hook dispatches queued external events on ordinary Gs and
 // coordinates return from synchronous JS events after runnable Go work drains.
 func RegisterWasmCallbackPoll(poll func()) {
+	if wasmSchedulerProof && poll != nil {
+		requireWasmScheduler()
+	}
 	wasmCallbackPollHook = poll
 }
 
 // RegisterWasmTimerHooks connects the Go-derived timer heap on first use.
 // Programs without timers can drop the timer implementation at link time.
 func RegisterWasmTimerHooks(poll func(), wait func() (uint64, bool)) {
+	if wasmSchedulerProof && (poll != nil || wait != nil) {
+		requireWasmScheduler()
+	}
 	wasmPollTimersHook = poll
 	wasmTimerWaitHook = wait
 }
