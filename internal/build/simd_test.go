@@ -381,6 +381,19 @@ func sad(out *[8]uint64, a,b *[64]uint8) {
  archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(out)
 }
 //go:noinline
+func sad32(out *[4]uint64, a,b *[32]uint8) {
+ archsimd.LoadUint8x32Array(a).SumOf8AbsDiff(archsimd.LoadUint8x32Array(b)).StoreArray(out)
+}
+//go:noinline
+func expandSum(out,a,b *[16]uint32, m uint16) {
+ x := archsimd.LoadUint32x16Array(a).Add(archsimd.LoadUint32x16Array(b))
+ x.Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func expandFloat(out,a *[16]float32, m uint16) {
+ archsimd.LoadFloat32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
 func dot(out *[32]int16, a *[64]uint8, b *[64]int8) {
  archsimd.LoadUint8x64Array(a).DotProductPairsSaturated(archsimd.LoadInt8x64Array(b)).StoreArray(out)
 }
@@ -406,7 +419,7 @@ func main() {}
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, level := range []string{"v1", "v4"} {
+	for _, level := range []string{"v1", "v3", "v4"} {
 		t.Run(level, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", level, "simd"
@@ -414,34 +427,52 @@ func main() {}
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog := pkgs[0].LPkg.Prog
-			defer prog.Dispose()
-			mod := pkgs[0].LPkg.Module()
-			mod.SetTarget(prog.Target().Spec().Triple)
-			opts := llvm.NewPassBuilderOptions()
-			defer opts.Dispose()
-			opts.SetVerifyEach(true)
-			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
-				t.Fatal(err)
-			}
-			buf, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer buf.Dispose()
-			asm := string(buf.Bytes())
-			if level == "v1" {
-				assertSIMDBaselineAssembly(t, asm)
-				if !regexp.MustCompile(`(?m)^\s*psadbw\s+[^\n]*%xmm`).MatchString(asm) {
-					t.Error("missing baseline SSE2 SAD")
+			defer pkgs[0].LPkg.Prog.Dispose()
+			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, asm string) {
+				body := func(name string) string {
+					t.Helper()
+					match := regexp.MustCompile(`(?ms)^main\.` + name + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
+					if match == nil {
+						t.Fatalf("missing assembly for %s", name)
+					}
+					return match[1]
 				}
-				return
-			}
-			for _, mnemonic := range []string{"vpsadbw", "vpmaddubsw", "vpcompressd", "vpexpandd", `vfmaddsub(132|213|231)ps`} {
-				if !regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(asm) {
-					t.Errorf("missing 512-bit %s in %s output", mnemonic, level)
+				if level == "v1" {
+					assertSIMDBaselineAssembly(t, asm)
+					if !regexp.MustCompile(`(?m)^\s*psadbw\s+[^\n]*%xmm`).MatchString(asm) {
+						t.Error("missing baseline SSE2 SAD")
+					}
+					return
 				}
-			}
+				checkSAD := func(name, reg string, count int) {
+					t.Helper()
+					fn := body(name)
+					wide := regexp.MustCompile(`vpsadbw\s+[^\n]*` + reg)
+					if strings.Count(fn, "vpsadbw") != count || len(wide.FindAllString(fn, -1)) != count {
+						t.Errorf("expected %d %s SAD in %s:\n%s", count, reg, name, fn)
+					}
+				}
+				checkSAD("sad32", "%ymm", 1)
+				if level == "v4" {
+					checkSAD("sad", "%zmm", 1)
+				} else {
+					checkSAD("sad", "%ymm", 2)
+				}
+				if level != "v4" || !strings.HasSuffix(t.Name(), "/O2") {
+					return
+				}
+				for _, tc := range []struct{ name, pattern string }{{"expandSum", `vpexpandd\s+%zmm`}, {"expandFloat", `vexpandps\s+\(%r\w+\),\s*%zmm`}} {
+					fn := body(tc.name)
+					if !regexp.MustCompile(tc.pattern).MatchString(fn) || strings.Contains(fn, "(%rsp)") || strings.Contains(fn, "(%rbp)") {
+						t.Errorf("expected stack-free packed expand in %s:\n%s", tc.name, fn)
+					}
+				}
+				for _, mnemonic := range []string{"vpmaddubsw", "vpcompressd", "vpexpandd", `vfmaddsub(132|213|231)ps`} {
+					if !regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(asm) {
+						t.Errorf("missing 512-bit %s", mnemonic)
+					}
+				}
+			})
 		})
 	}
 }
