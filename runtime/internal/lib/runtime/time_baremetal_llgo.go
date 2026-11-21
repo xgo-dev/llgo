@@ -1,4 +1,8 @@
-//go:build baremetal && go1.23
+//go:build baremetal && go1.23 && (!llgo || !tinygo.riscv32 || nogc)
+
+// The llgo RV32 fiber-scheduler baremetal targets (llgo && baremetal &&
+// tinygo.riscv32 && !nogc) compile time_fiber_baremetal_llgo.go instead: a
+// real cycle-clock nanotime and a scheduler-parked time.Sleep.
 
 package runtime
 

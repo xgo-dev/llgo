@@ -1,19 +1,5 @@
 //go:build llgo && baremetal && tinygo.riscv32 && !nogc
 
-package runtime
-
-// The baremetal fiber backend multiplexes every G onto one hart with a
-// cooperative scheduler, mirroring proc_wasm.go: NewProc appends a fresh G to
-// the run queue, parking swaps the current G out on its own fiber stack, and
-// the scheduler loop in RunMain resumes queued Gs until only deadlocked
-// waiters remain. There is no preemption, timer or SMP support; goroutines
-// yield through channel operations, runtime.Gosched or exit.
-//
-// Goroutine-local storage degenerates on this backend the same way it does on
-// single-worker wasm: local_context_baremetal.go keeps one bootstrap context
-// global, and fibers share it while swapped in. No generated GLS package
-// block exists for baremetal, so there is nothing per-G to swap or release.
-
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
  *
@@ -29,6 +15,23 @@ package runtime
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+package runtime
+
+// The baremetal fiber backend multiplexes every G onto one hart with a
+// cooperative scheduler, mirroring proc_wasm.go: NewProc appends a fresh G to
+// the run queue, parking swaps the current G out on its own fiber stack, and
+// the scheduler loop in RunMain resumes queued Gs until only deadlocked
+// waiters remain. time.Sleep parks through the sleeper list in
+// sleep_fiber_baremetal.go; the scheduler busy-polls its deadlines when the
+// run queue runs dry. There is no preemption, timer-interrupt delivery or
+// SMP support; goroutines yield through channel operations, runtime.Gosched,
+// sleep expiry or exit.
+//
+// Goroutine-local storage degenerates on this backend the same way it does on
+// single-worker wasm: local_context_baremetal.go keeps one bootstrap context
+// global, and fibers share it while swapped in. No generated GLS package
+// block exists for baremetal, so there is nothing per-G to swap or release.
 
 import (
 	"unsafe"
@@ -204,7 +207,16 @@ func RunMain() {
 				}
 			}
 		}
+		// Wake due sleepers before picking the next G: a runnable G that
+		// immediately requeues itself (runtime.Gosched) must not starve an
+		// expired sleeper parked behind it in the FIFO run queue.
+		baremetalWakeSleepers()
 		gp = baremetalSched.runq.Pop()
+		if gp == nil && baremetalSleepWait() {
+			// The wait woke at least one sleeper, and goready queued it
+			// before any other G could run: the queue is non-empty again.
+			gp = baremetalSched.runq.Pop()
+		}
 		if gp == nil {
 			_, mainExited := gState()
 			if mainExited {

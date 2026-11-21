@@ -1439,11 +1439,12 @@ func TestWasmStandardRuntimeBackendSelection(t *testing.T) {
 	}
 }
 
-// TestBaremetalSyncBackendSelection pins the sync backend file set for every
-// target combination: the fiber scheduler compiles the fiber-backed
-// semaphore and pool, while nogc, non-llgo, xtensa, wasip1 and hosted builds
-// keep their existing backends — the pthread fallback whose pthread_once is
-// a libnosys stub only on the fiber targets, or the wasm wait queues.
+// TestBaremetalSyncBackendSelection pins the sync and time backend file sets
+// for every target combination: the fiber scheduler compiles the fiber-backed
+// semaphore, pool and time hooks, while nogc, non-llgo, xtensa, wasip1 and
+// hosted builds keep their existing backends — the pthread fallback whose
+// pthread_once is a libnosys stub only on the fiber targets, or the wasm wait
+// queues.
 func TestBaremetalSyncBackendSelection(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	for _, test := range []struct {
@@ -1532,6 +1533,47 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 			want:         []string{"sema_wasm_llgo.go", "sema_waitgroup_go125_wasm_llgo.go"},
 			omit:         []string{"sema_waitgroup_go124_wasm_llgo.go"},
 		},
+		{
+			// The fiber targets run the cycle-clock time hooks: a scheduler-
+			// parked time.Sleep and a real monotonic nanotime.
+			name: "riscv32 baremetal fiber time hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			want: []string{"time_fiber_baremetal_llgo.go"},
+			omit: []string{"time_baremetal_llgo.go"},
+		},
+		{
+			// Before go1.23 the baremetal time hooks are the legacy timer
+			// stubs; the fiber hooks require the go1.23+ timer shape.
+			name: "pre-go1.23 baremetal keeps legacy timer hooks", goos: "linux", goarch: "arm",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			releaseMinor: 22,
+			want:         []string{"time_baremetal_legacy_llgo.go"},
+			omit:         []string{"time_baremetal_llgo.go", "time_fiber_baremetal_llgo.go"},
+		},
+		{
+			// Every other baremetal combination keeps the degenerate time
+			// hooks (zero wall clock, no-op Sleep, constant nanotime).
+			name: "riscv32 baremetal nogc keeps degenerate time hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			want: []string{"time_baremetal_llgo.go"},
+			omit: []string{"time_fiber_baremetal_llgo.go"},
+		},
+		{
+			name: "xtensa baremetal keeps degenerate time hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.xtensa", "esp32"},
+			want: []string{"time_baremetal_llgo.go"},
+			omit: []string{"time_fiber_baremetal_llgo.go"},
+		},
+		{
+			name: "hosted darwin keeps degenerate baremetal time hooks out", goos: "darwin", goarch: "arm64",
+			tags: []string{"llgo"},
+			omit: []string{"time_baremetal_llgo.go", "time_fiber_baremetal_llgo.go"},
+		},
+		{
+			name: "wasm keeps degenerate baremetal time hooks out", goos: "js", goarch: "wasm",
+			tags: []string{"llgo"},
+			omit: []string{"time_baremetal_llgo.go", "time_fiber_baremetal_llgo.go"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := gobuild.Default
@@ -1546,6 +1588,86 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 				ctx.ReleaseTags = tags
 			}
 			pkg, err := ctx.ImportDir(runtimeDir, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := make(map[string]bool, len(pkg.GoFiles))
+			for _, name := range pkg.GoFiles {
+				selected[filepath.Base(name)] = true
+			}
+			for _, name := range test.want {
+				if !selected[name] {
+					t.Errorf("%s was not selected; GoFiles=%v", name, pkg.GoFiles)
+				}
+			}
+			for _, name := range test.omit {
+				if selected[name] {
+					t.Errorf("%s was unexpectedly selected", name)
+				}
+			}
+		})
+	}
+
+	// The cycle clock's calibration files live in internal/runtime, one ring
+	// per chip next to the clock and sleeper implementations. Selecting the
+	// file is the BaremetalCycleClock gate: esp32s31 = true (esp-emu models
+	// its cycle CSR), esp32c3/default = false (no emulated clock), and the
+	// whole ring disappears under nogc.
+	coreDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime")
+	for _, test := range []struct {
+		name, goos, goarch string
+		tags               []string
+		want, omit         []string
+	}{
+		{
+			name: "esp32s31 clock ring with live cycle clock", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
+			want: []string{
+				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"z_clock_files_fiber.go", "z_clock_freq_esp32s31.go",
+			},
+			omit: []string{
+				"z_clock_files_default.go", "z_clock_freq_esp32c3.go", "z_clock_freq_default.go",
+			},
+		},
+		{
+			name: "esp32c3 clock ring gates the CSR feed off", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			want: []string{
+				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"z_clock_files_fiber.go", "z_clock_freq_esp32c3.go",
+			},
+			omit: []string{
+				"z_clock_files_default.go", "z_clock_freq_esp32s31.go", "z_clock_freq_default.go",
+			},
+		},
+		{
+			name: "generic riscv32 fiber takes default clock ring", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: []string{
+				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"z_clock_files_fiber.go", "z_clock_freq_default.go",
+			},
+			omit: []string{
+				"z_clock_files_default.go", "z_clock_freq_esp32c3.go", "z_clock_freq_esp32s31.go",
+			},
+		},
+		{
+			name: "nogc compiles no cycle clock", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			want: []string{"z_clock_files_default.go"},
+			omit: []string{
+				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go", "z_clock_files_fiber.go",
+				"z_clock_freq_default.go", "z_clock_freq_esp32c3.go", "z_clock_freq_esp32s31.go",
+			},
+		},
+	} {
+		t.Run("clock/"+test.name, func(t *testing.T) {
+			ctx := gobuild.Default
+			ctx.GOOS = test.goos
+			ctx.GOARCH = test.goarch
+			ctx.BuildTags = test.tags
+			pkg, err := ctx.ImportDir(coreDir, 0)
 			if err != nil {
 				t.Fatal(err)
 			}

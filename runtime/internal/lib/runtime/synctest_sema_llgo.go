@@ -58,9 +58,9 @@ func semaAcquireWaitGroup(addr *uint32, durable bool) {
 	synctestSemaMu.Unlock()
 }
 
-func semaRelease(addr *uint32) {
+func semaRelease(addr *uint32, handoff bool) {
 	if rt.CurrentSynctestBubble() == nil && !rt.SynctestActive() {
-		semaReleaseNative(addr)
+		semaReleaseNative(addr, handoff)
 		return
 	}
 	synctestSemaOnce.Do(initSynctestSema)
@@ -74,5 +74,5 @@ func semaRelease(addr *uint32) {
 	}
 	// Keep publication under the registration lock: a waiter must either
 	// consume an existing token, or be made active before a new token appears.
-	semaReleaseNative(addr)
+	semaReleaseNative(addr, handoff)
 }

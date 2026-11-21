@@ -70,7 +70,8 @@ func semaAcquire(addr *uint32) {
 	}
 }
 
-func semaReleaseNative(addr *uint32) {
+func semaReleaseNative(addr *uint32, handoff bool) {
+	_ = handoff // the host scheduler orders wakeups; handoff needs no yield
 	latomic.AddUint32(addr, 1)
 	st := getSemaState(addr)
 	st.mu.Lock()

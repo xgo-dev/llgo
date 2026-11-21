@@ -97,6 +97,11 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
+				// esp-emu's esp32c3 model implements no clock source, so the time
+				// fixtures cannot run under emulation (real C3 hardware has the
+				// cycle CSR; the S31 emu suite covers them instead).
+				"./_testgo/timesleep",
+				"./_testgo/sleepgoroutine",
 				// stdlib fixtures that exceed what the C3-basic budget allows:
 				// hexpkg/fmtall/osfile overflow the 256 KiB IRAM at link time;
 				// bufiopkg/iopkg link but leave no runtime heap (out of memory);
@@ -336,6 +341,11 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/synconce",
 		"./_testgo/syncpoolret",
 		"./_testgo/syncgcfight",
+		// mutexstarve imports "sync" like syncpkg above; its long critical
+		// sections push waiters past the starvation threshold on every backend.
+		"./_testgo/mutexstarve",
+		"./_testgo/timesleep",
+		"./_testgo/sleepgoroutine",
 		"./_testgo/gotask",
 		"./_testgo/hexpkg",
 		"./_testgo/fmtall",

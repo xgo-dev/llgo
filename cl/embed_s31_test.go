@@ -292,17 +292,47 @@ func TestS31ReflectSmoke(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		pkg  string
-		want []string
+		pkg    string
+		want   []string
+		golden bool
 	}{
 		{pkg: "./_testgo/reflectmkfn"},
 		{pkg: "./_testrt/reflectclosureenv", want: []string{"ok"}},
 		{pkg: "./_testrt/ptrtothislazy", want: []string{"ok"}},
+		// The time and starvation fixtures exercise the cycle-clock paths end
+		// to end: scheduler parking, deadline wake, goroutine round trips and
+		// the handoff yield. They compare the full golden like
+		// TestS31XIPFmtConsole, which turns wake and release order into a
+		// hard assertion instead of a marker scan.
+		{pkg: "./_testgo/timesleep", golden: true},
+		{pkg: "./_testgo/sleepgoroutine", golden: true},
+		{pkg: "./_testgo/mutexstarve", golden: true},
 	} {
 		t.Run(filepath.Base(tc.pkg), func(t *testing.T) {
 			elfPath := buildESPEmuELF(t, esp32s31BasicTarget, tc.pkg, t.TempDir())
+			if tc.golden {
+				runESPEmuGolden(t, emu, esp32s31BasicTarget, elfPath, filepath.Join(tc.pkg, "expect.txt"))
+				return
+			}
 			runESPEmuImage(t, emu, esp32s31BasicTarget, elfPath, tc.want)
 		})
+	}
+}
+
+// runESPEmuGolden boots the ELF under esp-emu and compares the filtered app
+// output with the named expect.txt, the full-golden flow of
+// TestS31XIPFmtConsole applied to the SRAM target.
+func runESPEmuGolden(t *testing.T, emu string, tgt espEmuTarget, elfPath, golden string) {
+	t.Helper()
+	raw := runEspEmuFirmware(t, emu, tgt, elfPath)
+	_, expected, err := cltest.ReadGolden(golden)
+	if err != nil {
+		t.Fatal("ReadGolden failed:", err)
+	}
+	filtered := filterEspEmuOutput(cltest.FilterEmulatorOutput(raw))
+	if test.Diff(t, filepath.Join(filepath.Dir(golden), "expect.txt.new"),
+		normalizeGoldenOutput(filtered), normalizeGoldenOutput(string(expected))) {
+		t.Fatal("unexpected output")
 	}
 }
 

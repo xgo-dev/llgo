@@ -176,14 +176,12 @@ func semaAcquire(addr *uint32) {
 // semaReleaseNative wakes one queued waiter, handing the token directly, or
 // publishes it on the counter for the next fast-path acquirer. Same single-
 // hart invariants as semaAcquire: the queue pop and the wake publish cannot
-// interleave with another release.
-//
-// TODO: once the baremetal runtime grows a real nanotime, the mutex starvation
-// path starts calling release with handoff=true; like the wasm backend, that
-// must yield the hart (llruntime.Gosched) after Ready so the woken waiter
-// runs before the releaser can reacquire. Today runtimeNano is constant zero,
-// starvation never triggers, and dropping handoff stays correct.
-func semaReleaseNative(addr *uint32) {
+// interleave with another release. With handoff set — the mutex starvation
+// path, reachable now that the sync nanotime feed runs on targets with a
+// proven clock (see BaremetalSchedNanoTime) — the releaser yields the hart
+// after Ready so the woken waiter re-acquires before the releaser can, the
+// same contract sema_wasm_single_llgo.go serves with llruntime.Gosched.
+func semaReleaseNative(addr *uint32, handoff bool) {
 	key := uintptr(unsafe.Pointer(addr))
 	if q := semaQueues.Get(key); q != nil {
 		if w := q.pop(); w != nil {
@@ -192,6 +190,9 @@ func semaReleaseNative(addr *uint32) {
 			}
 			w.synctest.Wake()
 			w.waiter.Ready()
+			if handoff {
+				llruntime.Gosched()
+			}
 			return
 		}
 	}
@@ -236,12 +237,12 @@ func poll_runtime_Semacquire(addr *uint32) {
 
 //go:linkname sync_runtime_Semrelease sync.runtime_Semrelease
 func sync_runtime_Semrelease(addr *uint32, handoff bool, _ int) {
-	semaRelease(addr)
+	semaRelease(addr, handoff)
 }
 
 //go:linkname poll_runtime_Semrelease internal/poll.runtime_Semrelease
 func poll_runtime_Semrelease(addr *uint32) {
-	semaRelease(addr)
+	semaRelease(addr, false)
 }
 
 //go:linkname sync_runtime_SemacquireWaitGroup sync.runtime_SemacquireWaitGroup
@@ -268,17 +269,20 @@ func runtime_SemacquireMutex(addr *uint32, _ bool, _ int) {
 	semaAcquire(addr)
 }
 
-func runtime_Semrelease(addr *uint32, _ bool, _ int) {
-	semaRelease(addr)
+func runtime_Semrelease(addr *uint32, handoff bool, _ int) {
+	semaRelease(addr, handoff)
 }
 
 func runtime_canSpin(int) bool { return false }
 func runtime_doSpin()          {}
 
-// runtime_nanotime feeds the mutex starvation threshold; the baremetal clock
-// reads zero, which just keeps every waiter on the normal (non-starving)
-// path, exactly as the pthread fallback does today.
-func runtime_nanotime() int64 { return runtimeNano() }
+// runtime_nanotime feeds the mutex starvation threshold. BaremetalSchedNano-
+// Time returns the cycle clock on targets whose emulated regression suite
+// can execute the CSR read (esp32s31) and zero elsewhere, so starvation
+// mode — and the handoff yield in semaReleaseNative — activates exactly
+// where the clock is proven, and every waiter stays on the normal
+// (non-starving) path otherwise, as before this clock existed.
+func runtime_nanotime() int64 { return llruntime.BaremetalSchedNanoTime() }
 
 //go:linkname sync_runtime_canSpin sync.runtime_canSpin
 func sync_runtime_canSpin(i int) bool { return runtime_canSpin(i) }
