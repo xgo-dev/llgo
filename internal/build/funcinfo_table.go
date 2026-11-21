@@ -263,9 +263,12 @@ const (
 )
 
 func hostedCompactPCLNProfile(conf *Config) bool {
-	return conf.PCLNMode == PCLNEmbedded && conf.BuildMode == BuildModeExe && conf.Target == "" &&
-		(conf.Goos == "linux" || conf.Goos == "darwin") && (conf.Goarch == "amd64" || conf.Goarch == "arm64") &&
-		conf.OptLevel == optlevel.Oz && conf.ltoMode() == lto.Full
+	if conf.PCLNMode != PCLNEmbedded || conf.BuildMode != BuildModeExe ||
+		conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full {
+		return false
+	}
+	return conf.Goarch == "wasm" || conf.Target == "" &&
+		(conf.Goos == "linux" || conf.Goos == "darwin") && (conf.Goarch == "amd64" || conf.Goarch == "arm64")
 }
 
 // Use the same layouts on the initial link and after pruning. The sidecar

@@ -144,6 +144,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     if target == "wasi" or target.startswith("emscripten"):
         fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
                          standard_file_marker, False))
+        fixtures.append(("wasm-pclntab", "pcln-ok", None, False))
     if target == "wasi":
         fixtures.append(("wasm-literal-stdout", "literal %\nstdout count and path error ok",
                          stdout_marker, True))
@@ -173,7 +174,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         log = command([str(llgo), "build", *flags, "-Oz", "-lto=full", "-deadcodedrop",
                        "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
                        "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
-        if (marker in log) != specialized:
+        if marker is not None and (marker in log) != specialized:
             raise RuntimeError(f"{target} {fixture}: incorrect specialization policy\n{log}")
         if target.startswith("emscripten") and fixture == "wasm-fmt-map" and standard_file_marker not in log:
             raise RuntimeError(f"{target}: unused standard files retained\n{log}")
