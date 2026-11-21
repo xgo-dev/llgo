@@ -431,13 +431,13 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		for i := range t.Fields {
 			tf := &t.Fields[i]
 			vf := &v.Fields[i]
-			if tf.Name_ != vf.Name_ {
+			if tf.Name() != vf.Name() {
 				return false
 			}
 			if !haveIdenticalType(tf.Typ, vf.Typ, cmpTags) {
 				return false
 			}
-			if cmpTags && tf.Tag_ != vf.Tag_ {
+			if cmpTags && tf.Tag() != vf.Tag() {
 				return false
 			}
 			if tf.Offset != vf.Offset {

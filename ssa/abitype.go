@@ -296,17 +296,6 @@ func (b Builder) abiMapBucket(t *types.Map, bucket types.Type) Expr {
 	return Expr{g.impl, prog.AbiTypePtr()}
 }
 
-/*
-type StructField struct {
-	Name_  string  // name is always non-empty
-	Typ    *Type   // type of field
-	Offset uintptr // byte offset of field
-
-	Tag_      string
-	Embedded_ bool
-}
-*/
-
 func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 	prog := b.Prog
 	n := t.NumFields()
@@ -321,13 +310,12 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 		for i := 0; i < n; i++ {
 			f := t.Field(i)
 			var values []llvm.Value
-			values = append(values, b.Str(f.Name()).impl)
+			encoded := rabi.EncodeStructFieldName(f.Name(), t.Tag(i), f.Embedded())
+			values = append(values, b.Pkg.createGlobalStr(encoded))
 			// Keep the storage descriptor for Go closures. Reflect exposes the
 			// signature when the field's public type is requested.
 			values = append(values, b.abiType(f.Type()).impl)
 			values = append(values, prog.IntVal(uint64(offsets[i]), prog.Uintptr()).impl)
-			values = append(values, b.Str(t.Tag(i)).impl)
-			values = append(values, prog.BoolVal(f.Embedded()).impl)
 			fields[i] = prog.constStructValue(ft, values)
 		}
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))

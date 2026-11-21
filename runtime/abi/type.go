@@ -279,22 +279,9 @@ func (p *FuncType) Variadic() bool {
 }
 
 type StructField struct {
-	Name_  string  // name is always non-empty
+	Name_  *byte   // encoded name and optional tag
 	Typ    *Type   // type of field
 	Offset uintptr // byte offset of field
-
-	Tag_      string
-	Embedded_ bool
-}
-
-// Embedded reports whether the field is embedded.
-func (f *StructField) Embedded() bool {
-	return f.Embedded_
-}
-
-// Exported reports whether the field is exported.
-func (f *StructField) Exported() bool {
-	return IsExported(f.Name_)
 }
 
 type StructType struct {

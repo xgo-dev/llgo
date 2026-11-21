@@ -692,12 +692,12 @@ func (t *structType) field(i int) (f StructField) {
 	}
 	p := &t.Fields[i]
 	f.Type = toPublicType(p.Typ)
-	f.Name = p.Name_
+	f.Name = p.Name()
 	f.Anonymous = p.Embedded()
-	if !abi.IsExported(p.Name_) {
+	if !p.Exported() {
 		f.PkgPath = t.PkgPath_
 	}
-	if tag := p.Tag_; tag != "" {
+	if tag := p.Tag(); tag != "" {
 		f.Tag = StructTag(tag)
 	}
 	f.Offset = p.Offset
@@ -803,7 +803,7 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 			for i := range t.Fields {
 				f := &t.Fields[i]
 				// Find name and (for embedded field) type for field f.
-				fname := f.Name_
+				fname := f.Name()
 				var ntyp *abi.Type
 				if f.Embedded() {
 					// Embedded field of type T or *T.
@@ -880,7 +880,7 @@ func (t *structType) directFieldByName(name string) (index int, hasEmbeds bool) 
 	}
 	for i := range t.Fields {
 		f := &t.Fields[i]
-		if f.Name_ == name {
+		if f.Name() == name {
 			return i, false
 		}
 		hasEmbeds = hasEmbeds || f.Embedded()
@@ -956,16 +956,7 @@ func toClosureType(typ *abi.FuncType) *abi.StructType {
 	t.Equal = ftyp.Equal
 	t.GCData = ftyp.GCData
 	t.Str_ = typ.Str_
-	t.Fields = []abi.StructField{
-		abi.StructField{
-			Name_: "$f",
-			Typ:   &ftyp.Type,
-		}, abi.StructField{
-			Name_:  "$data",
-			Typ:    unsafePointerType,
-			Offset: pointerSize,
-		},
-	}
+	t.Fields = closureFields(ftyp)
 	t.PkgPath_ = ""
 	if typ.TFlag&abi.TFlagExtraStar != 0 {
 		t.TFlag |= abi.TFlagExtraStar
@@ -1258,13 +1249,13 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		for i := range t.Fields {
 			tf := &t.Fields[i]
 			vf := &v.Fields[i]
-			if tf.Name_ != vf.Name_ {
+			if tf.Name() != vf.Name() {
 				return false
 			}
 			if !haveIdenticalType(tf.Typ, vf.Typ, cmpTags) {
 				return false
 			}
-			if cmpTags && tf.Tag_ != vf.Tag_ {
+			if cmpTags && tf.Tag() != vf.Tag() {
 				return false
 			}
 			if tf.Offset != vf.Offset {
@@ -2040,7 +2031,7 @@ func StructOf(fields []StructField) Type {
 		}
 
 		// Update string and hash
-		name := f.Name_
+		name := field.Name
 		hash = fnv1(hash, []byte(name)...)
 		if !f.Embedded() {
 			repr = append(repr, (" " + name)...)
@@ -2145,9 +2136,9 @@ func StructOf(fields []StructField) Type {
 
 		repr = append(repr, ' ')
 		repr = append(repr, stringFor(field.Type.common())...)
-		if f.Tag_ != "" {
-			hash = fnv1(hash, []byte(f.Tag_)...)
-			repr = append(repr, (" " + strconv.Quote(f.Tag_))...)
+		if tag := string(field.Tag); tag != "" {
+			hash = fnv1(hash, []byte(tag)...)
+			repr = append(repr, (" " + strconv.Quote(tag))...)
 		}
 		if i < len(fields)-1 {
 			repr = append(repr, ';')
@@ -2364,10 +2355,7 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 
 	closure := findClosure(ftyp)
 	if closure == nil {
-		fields := []abi.StructField{
-			{Name_: "$f", Typ: &ftyp.Type},
-			{Name_: "$data", Typ: unsafePointerType, Offset: pointerSize},
-		}
+		fields := closureFields(ftyp)
 		str := "struct { $f " + ftyp.String() + "; $data " + unsafePointerType.String() + " }"
 		// Preserve the existing ABI hash for the synthetic closure fields.
 		hash := fnv1(0, []byte("struct {$f")...)
@@ -2394,6 +2382,13 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 	return &publishClosureType(ftyp, closure).Type
 }
 
+func closureFields(ftyp *abi.FuncType) []abi.StructField {
+	return []abi.StructField{
+		abi.NewStructField("$f", &ftyp.Type, 0, "", false),
+		abi.NewStructField("$data", unsafePointerType, pointerSize, "", false),
+	}
+}
+
 func structStr(fields []abi.StructField) string {
 	repr := make([]byte, 0, 64)
 	repr = append(repr, "struct {"...)
@@ -2402,8 +2397,8 @@ func structStr(fields []abi.StructField) string {
 			repr = append(repr, ';')
 		}
 		repr = append(repr, ' ')
-		if !st.Embedded_ {
-			repr = append(repr, st.Name_...)
+		if !st.Embedded() {
+			repr = append(repr, st.Name()...)
 			repr = append(repr, ' ')
 		}
 		repr = append(repr, st.Typ.String()...)
@@ -2527,13 +2522,7 @@ func runtimeStructField(field StructField) (structField, string) {
 	}
 
 	//	resolveReflectType(field.Type.common()) // install in runtime
-	f := structField{
-		Name_:     field.Name,
-		Typ:       physicalType(field.Type.common()),
-		Tag_:      string(field.Tag),
-		Offset:    0,
-		Embedded_: field.Anonymous,
-	}
+	f := abi.NewStructField(field.Name, physicalType(field.Type.common()), 0, string(field.Tag), field.Anonymous)
 	return f, field.PkgPath
 }
 
@@ -2605,7 +2594,7 @@ func eqFields(s1, s2 []abi.StructField) bool {
 	}
 	for i := 0; i < n; i++ {
 		f1, f2 := s1[i], s2[i]
-		if f1.Name_ != f2.Name_ || f1.Embedded_ != f2.Embedded_ || f1.Typ != f2.Typ {
+		if f1.Name() != f2.Name() || f1.Embedded() != f2.Embedded() || f1.Typ != f2.Typ {
 			return false
 		}
 	}
