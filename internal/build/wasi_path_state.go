@@ -17,28 +17,35 @@ import (
 const wasiPathStateMember = "llgoWASIPathStateNeeded"
 const wasiPathStateGuard = "syscall." + wasiPathStateMember
 
-func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function, omitted []cl.OptionalInitializer, isSymbolRoot func(string) bool) {
-	guard, _ := p.Members[wasiPathStateMember].(*ssa.Global)
-	cwd, _ := p.Members["cwd"].(*ssa.Global)
-	preopens, _ := p.Members["preopens"].(*ssa.Global)
-	if guard == nil || cwd == nil || preopens == nil {
-		return
-	}
-	init := wasiPathStateInitializer(p, guard)
-	if init == nil {
-		return
-	}
-	for _, name := range []string{wasiPathStateGuard, "syscall." + init.Name(), "syscall.cwd", "syscall.preopens"} {
-		if isSymbolRoot(name) {
-			return
-		}
-	}
+func configureWASISyscallState(ctx *context, p *ssa.Package, roots []*ssa.Function, omitted []cl.OptionalInitializer, isSymbolRoot func(string) bool) {
 	// Recheck after stdout replacement and initializer pruning. Methods kept
 	// for possible reflection do not necessarily have a call from a root.
 	restore := omitInitializerEdges(omitted)
 	defer restore()
 	mayReflect := ctx.prog.Target().WasmReflectBridges
 	result := rta.Analyze(roots, !mayReflect)
+	pathInit := configureWASIPathState(ctx, p, roots, result, mayReflect, isSymbolRoot)
+	if !mayReflect {
+		configureWASIEnvironmentSnapshot(ctx, p, roots, result, pathInit, isSymbolRoot)
+	}
+}
+
+func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function, result *rta.Result, mayReflect bool, isSymbolRoot func(string) bool) *ssa.Function {
+	guard, _ := p.Members[wasiPathStateMember].(*ssa.Global)
+	cwd, _ := p.Members["cwd"].(*ssa.Global)
+	preopens, _ := p.Members["preopens"].(*ssa.Global)
+	if guard == nil || cwd == nil || preopens == nil {
+		return nil
+	}
+	init := wasiPathStateInitializer(p, guard)
+	if init == nil {
+		return nil
+	}
+	for _, name := range []string{wasiPathStateGuard, "syscall." + init.Name(), "syscall.cwd", "syscall.preopens"} {
+		if isSymbolRoot(name) {
+			return nil
+		}
+	}
 	for fn := range result.Reachable {
 		if fn == init {
 			continue
@@ -50,8 +57,8 @@ func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function,
 				}
 				for _, operand := range inst.Operands(nil) {
 					if (*operand == cwd || *operand == preopens) &&
-						(mayReflect || hasCallPath(result.CallGraph, roots, fn)) {
-						return
+						(mayReflect || hasCallPath(result.CallGraph, roots, fn, nil)) {
+						return nil
 					}
 				}
 			}
@@ -61,6 +68,7 @@ func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function,
 	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
 		fmt.Fprintln(os.Stderr, "llgo: omit unobserved WASI path state")
 	}
+	return init
 }
 
 func wasiPathStateInitializer(p *ssa.Package, guard *ssa.Global) *ssa.Function {

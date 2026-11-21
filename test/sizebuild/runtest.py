@@ -173,6 +173,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         run = [*runner]
         if fixture.startswith("wasm-environment-"):
             run.append("--env=LLGO_WASI_TEST_ENV=old=value")
+        if target == "wasi" and fixture in ("wasm-literal-stdout", "wasm-literal-stdout-and-file",
+                                             "wasm-environment-readonly", "wasm-environment-mutable"):
+            if ("llgo: omit unobserved WASI environment snapshot" in log) != wasi_stdout:
+                raise RuntimeError(f"{target} {fixture}: incorrect environment snapshot policy\n{log}")
         if target == "wasi" and fixture in ("wasm-literal-stdout", "wasm-literal-stdout-and-file", "wasm-standard-files"):
             if (descriptor_writer_marker in log) != (fixture == "wasm-literal-stdout"):
                 raise RuntimeError(f"{target} {fixture}: incorrect descriptor writer policy\n{log}")

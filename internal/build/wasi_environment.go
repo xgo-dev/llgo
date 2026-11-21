@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"os"
@@ -13,6 +14,7 @@ import (
 )
 
 const wasiEnvironmentGuard = "syscall.llgoMutableEnvironment"
+const wasiEnvironmentNeededGuard = "syscall.llgoEnvironmentNeeded"
 const wasiEnvironmentPatch = "getenv_wasip1.go"
 
 func wasiSyscallPackage(prog *ssa.Program) *ssa.Package {
@@ -49,6 +51,113 @@ func configureWASIEnvironment(ctx *context, p *ssa.Package, result *rta.Result, 
 	}
 }
 
+// A Go environment snapshot is only needed if code can observe its state.
+// libc's process environment does not depend on this copy.
+func configureWASIEnvironmentSnapshot(ctx *context, p *ssa.Package, roots []*ssa.Function, result *rta.Result, pathInit *ssa.Function, isSymbolRoot func(string) bool) {
+	load := p.Func("llgoLoadEnvironment")
+	snapshot, _ := p.Members["envs"].(*ssa.Global)
+	if p.Members["llgoEnvironmentNeeded"] == nil || load == nil || snapshot == nil {
+		return
+	}
+	for _, name := range []string{wasiEnvironmentNeededGuard, wasiEnvironmentGuard, "syscall.llgoLoadEnvironment",
+		"syscall.llgoEnvironmentCopier", "syscall.llgoCopyEnvironmentIndex", "syscall.llgoGetenvWithoutLock",
+		"syscall.llgoGetenvWithLock", "syscall.init", "syscall.Getenv", "syscall.Setenv", "syscall.Unsetenv",
+		"syscall.Environ", "syscall.Clearenv"} {
+		if isSymbolRoot(name) {
+			return
+		}
+	}
+	var state []*ssa.Global
+	for _, name := range []string{"envs", "env", "envLock", "envOnce", "copyenv"} {
+		if isSymbolRoot("syscall." + name) {
+			return
+		}
+		if global, ok := p.Members[name].(*ssa.Global); ok {
+			state = append(state, global)
+		}
+	}
+	ignored := wasiPathEnvironmentCall(p, pathInit)
+	copier := p.Func("llgoEnvironmentCopier")
+	copyenv, _ := p.Members["copyenv"].(*ssa.Global)
+	fillIndex := p.Func("llgoCopyEnvironmentIndex")
+	init := p.Func("init")
+	// The snapshot store and its eager index builder only initialize the
+	// table. Any other reachable reference can observe or modify it.
+	for fn := range result.Reachable {
+		if fn == fillIndex {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			for _, inst := range block.Instrs {
+				if _, debug := inst.(*ssa.DebugRef); debug {
+					continue
+				}
+				if store, ok := inst.(*ssa.Store); ok && fn == init {
+					if call, ok := store.Val.(*ssa.Call); ok {
+						callee := call.Common().StaticCallee()
+						if (store.Addr == snapshot && callee == load) ||
+							(store.Addr == copyenv && copier != nil && callee == copier) {
+							continue
+						}
+					}
+				}
+				for _, operand := range inst.Operands(nil) {
+					if global, ok := (*operand).(*ssa.Global); ok && slices.Contains(state, global) &&
+						hasCallPath(result.CallGraph, roots, fn, ignored) {
+						return
+					}
+				}
+			}
+		}
+	}
+	ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, wasiEnvironmentNeededGuard)
+	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
+		fmt.Fprintln(os.Stderr, "llgo: omit unobserved WASI environment snapshot")
+	}
+}
+
+// Ignore the PWD lookup only when the linker disables the path-state guard
+// and the guard's true branch dominates the call.
+func wasiPathEnvironmentCall(p *ssa.Package, init *ssa.Function) ssa.CallInstruction {
+	if init == nil {
+		return nil
+	}
+	guard, _ := p.Members[wasiPathStateMember].(*ssa.Global)
+	getenv := p.Func("Getenv")
+	if guard == nil || getenv == nil {
+		return nil
+	}
+	for _, block := range init.Blocks {
+		if len(block.Instrs) == 0 {
+			continue
+		}
+		branch, ok := block.Instrs[len(block.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		load, ok := branch.Cond.(*ssa.UnOp)
+		if !ok || load.Op != token.MUL || load.X != guard {
+			continue
+		}
+		for _, candidate := range init.Blocks {
+			if !block.Succs[0].Dominates(candidate) {
+				continue
+			}
+			for _, inst := range candidate.Instrs {
+				call, ok := inst.(*ssa.Call)
+				if !ok || call.Call.StaticCallee() != getenv || len(call.Call.Args) != 1 {
+					continue
+				}
+				if key, ok := call.Call.Args[0].(*ssa.Const); ok && key.Value != nil &&
+					key.Value.Kind() == constant.String && constant.StringVal(key.Value) == "PWD" {
+					return call
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func envIdent(expr ast.Expr, name string) bool {
 	id, ok := expr.(*ast.Ident)
 	return ok && id.Name == name
@@ -62,7 +171,8 @@ func rewriteWASIGetenv(source []byte) []byte {
 	if err != nil || file.Name.Name != "syscall" {
 		return nil
 	}
-	var hasIndex, hasEntries bool
+	var hasIndex bool
+	var snapshot *ast.CallExpr
 	var copyEnv *ast.CallExpr
 	for _, decl := range file.Decls {
 		vars, ok := decl.(*ast.GenDecl)
@@ -84,13 +194,19 @@ func rewriteWASIGetenv(source []byte) []byte {
 				hasIndex = ok && envIdent(index.Key, "string") && envIdent(index.Value, "int")
 			case "envs":
 				entries, ok := v.Type.(*ast.ArrayType)
-				hasEntries = ok && entries.Len == nil && envIdent(entries.Elt, "string")
+				if ok && entries.Len == nil && envIdent(entries.Elt, "string") && len(v.Values) == 1 {
+					if call, ok := v.Values[0].(*ast.CallExpr); ok && envIdent(call.Fun, "runtime_envs") && len(call.Args) == 0 {
+						snapshot = call
+					}
+				}
 			}
 		}
 	}
-	if !hasIndex || !hasEntries {
+	if !hasIndex || snapshot == nil {
 		return nil
 	}
+	snapshotStart := fset.Position(snapshot.Pos()).Offset
+	snapshotEnd := fset.Position(snapshot.End()).Offset
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Recv != nil || fn.Name.Name != "Getenv" || fn.Body == nil || len(fn.Type.Params.List) != 1 {
@@ -113,6 +229,9 @@ func rewriteWASIGetenv(source []byte) []byte {
 				continue
 			}
 			pos := fset.Position(stmt.Pos()).Offset
+			if snapshotEnd > pos || copyEnv != nil && snapshotEnd > fset.Position(copyEnv.Pos()).Offset {
+				return nil
+			}
 			prefix := source[:pos]
 			resultText := source[fset.Position(results.Pos()).Offset:fset.Position(results.End()).Offset]
 			key := param.Names[0].Name
@@ -124,7 +243,8 @@ func rewriteWASIGetenv(source []byte) []byte {
 					source[fset.Position(copyEnv.End()).Offset:pos])
 			}
 			branch := fmt.Sprintf("if !llgoMutableEnvironment { return llgoGetenvWithoutLock(%[1]s) }; return llgoGetenvWithLock(%[1]s)\n}\n\nfunc llgoGetenvWithLock(%[1]s string) %[2]s {\n\t", key, resultText)
-			return slices.Concat(prefix, []byte(branch), source[pos:])
+			return slices.Concat(prefix[:snapshotStart], []byte("llgoLoadEnvironment()"), prefix[snapshotEnd:],
+				[]byte(branch), source[pos:])
 		}
 	}
 	return nil
@@ -136,6 +256,9 @@ func rewriteWASIGetenv(source []byte) []byte {
 const wasiEnvironmentCopier = `llgoEnvironmentCopier()
 
 func llgoEnvironmentCopier() func() {
+	if !llgoEnvironmentNeeded {
+		return nil
+	}
 	if !llgoMutableEnvironment {
 		llgoCopyEnvironmentIndex()
 		return nil

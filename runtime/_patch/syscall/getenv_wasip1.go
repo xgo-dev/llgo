@@ -6,6 +6,17 @@ package syscall
 // the immutable lookup after proving that none of the environment writers run.
 var llgoMutableEnvironment bool
 
+// Closed links can omit the Go snapshot when no reachable code reads or
+// modifies it. The host environment remains available to the C runtime.
+var llgoEnvironmentNeeded bool
+
+func llgoLoadEnvironment() []string {
+	if llgoEnvironmentNeeded {
+		return runtime_envs()
+	}
+	return nil
+}
+
 func llgoGetenvWithoutLock(key string) (string, bool) {
 	if key == "" {
 		return "", false

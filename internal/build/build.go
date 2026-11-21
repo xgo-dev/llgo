@@ -3877,7 +3877,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
 	check(err)
 	if pkgPath == "syscall" {
-		for _, guard := range []string{wasiEnvironmentGuard, wasiPathStateGuard} {
+		for _, guard := range []string{wasiEnvironmentGuard, wasiEnvironmentNeededGuard, wasiPathStateGuard} {
 			if !ret.Module().NamedGlobal(guard).IsNil() {
 				cl.DefineInitializerGuard(ret, guard, true)
 			}

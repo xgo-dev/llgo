@@ -196,8 +196,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			delete(unused, group.Global)
 		}
 	}
-	if wasiSyscall != nil && wasiSyscall.Members[wasiPathStateMember] != nil {
-		configureWASIPathState(ctx, wasiSyscall, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+	if wasiSyscall != nil {
+		configureWASISyscallState(ctx, wasiSyscall, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int
 	for global, group := range unused {

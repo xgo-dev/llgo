@@ -75,7 +75,7 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 	updated, graph := analyze(writer == p.descriptor)
 	// A second writer is useful only when the link can drop the general
 	// descriptor write path. File writes elsewhere should share that path.
-	if writer == p.descriptor && hasCallPath(graph, roots, p.pollWrite) {
+	if writer == p.descriptor && hasCallPath(graph, roots, p.pollWrite, nil) {
 		writer = p.file
 		p.rewrite(writer)
 		updated, _ = analyze(false)
@@ -99,7 +99,7 @@ func (p *stdoutPlan) rewrite(writer *ssa.Function) {
 // RTA also scans every exported method of every boxed type, which can make
 // file methods reachable even in a link with no calls to them. Look for an
 // actual static or dynamic call path from a root when estimating link size.
-func hasCallPath(graph *callgraph.Graph, roots []*ssa.Function, target *ssa.Function) bool {
+func hasCallPath(graph *callgraph.Graph, roots []*ssa.Function, target *ssa.Function, omitted ssa.CallInstruction) bool {
 	entry := graph.Nodes[target]
 	if entry == nil {
 		return false
@@ -108,6 +108,9 @@ func hasCallPath(graph *callgraph.Graph, roots []*ssa.Function, target *ssa.Func
 	queue := []*callgraph.Node{entry}
 	for i := 0; i < len(queue); i++ {
 		for _, edge := range queue[i].In {
+			if omitted != nil && edge.Site == omitted {
+				continue
+			}
 			if !seen[edge.Caller] {
 				seen[edge.Caller] = true
 				queue = append(queue, edge.Caller)

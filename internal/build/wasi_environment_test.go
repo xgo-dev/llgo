@@ -5,13 +5,64 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 )
+
+func TestOptionalInitializersWASIEnvironmentSnapshot(t *testing.T) {
+	const source = `package syscall
+var llgoMutableEnvironment, llgoEnvironmentNeeded, llgoWASIPathStateNeeded bool
+var envs = llgoLoadEnvironment()
+var copyenv = llgoEnvironmentCopier()
+var cwd string
+var preopens []string
+func llgoLoadEnvironment() []string { return nil }
+func llgoEnvironmentCopier() func() { llgoCopyEnvironmentIndex(); return nil }
+func llgoCopyEnvironmentIndex() { println(len(envs)) }
+func init() { if llgoWASIPathStateNeeded { cwd = Getenv("PWD") } }
+func Getenv(key string) string { return envs[0] }
+func Getwd() string { return cwd }
+func Setenv() { envs = nil }
+func Environ() []string { return envs }
+func Write() {}
+`
+	for _, tc := range []struct {
+		name, body, symbol, extra string
+		wantDrop, mayReflect      bool
+	}{
+		{name: "unused", body: "syscall.Write()", wantDrop: true},
+		{name: "getter", body: `println(syscall.Getenv("KEY"))`},
+		{name: "setter", body: "syscall.Setenv()"},
+		{name: "enumeration", body: "println(len(syscall.Environ()))"},
+		{name: "startup getter", body: "syscall.Write()", extra: `func init() { println(Getenv("PWD")) }`},
+		{name: "cwd", body: "println(syscall.Getwd())"},
+		{name: "assembly observer", body: "syscall.Write()", symbol: "syscall.envs"},
+		{name: "linked getter", body: "syscall.Write()", symbol: "syscall.Getenv"},
+		{name: "initializer root", body: "syscall.Write()", symbol: "syscall.llgoLoadEnvironment"},
+		{name: "possible reflection", body: "syscall.Write()", mayReflect: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions|ssa.GlobalDebug)
+			p := buildFormatTestPackage(t, prog, "syscall", source+tc.extra, nil)
+			entry := buildFormatTestPackage(t, prog, "main", "package main\nimport \"syscall\"\nfunc main() {"+tc.body+"}", p.Pkg)
+			prog.Build()
+			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmReflectBridges: tc.mayReflect})
+			defer backend.Dispose()
+			ctx := &context{prog: backend, buildConf: &Config{Verbose: true}}
+			roots := []*ssa.Function{entry.Func("init"), entry.Func("main")}
+			configureWASISyscallState(ctx, p, roots, nil, func(name string) bool { return name == tc.symbol })
+			if got := slices.Contains(ctx.initializerGuardsOff, wasiEnvironmentNeededGuard); got != tc.wantDrop {
+				t.Fatalf("snapshot omitted = %v, want %v", got, tc.wantDrop)
+			}
+		})
+	}
+}
 
 func TestOptionalInitializersWASIEnvironment(t *testing.T) {
 	for _, tc := range []struct {
@@ -60,7 +111,7 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated := string(rewriteWASIGetenv(source))
-	for _, fragment := range []string{"return llgoGetenvWithoutLock(key)", "func llgoGetenvWithLock(", "envLock.RLock()", "defer envLock.RUnlock()"} {
+	for _, fragment := range []string{"llgoLoadEnvironment()", "return llgoGetenvWithoutLock(key)", "func llgoGetenvWithLock(", "envLock.RLock()", "defer envLock.RUnlock()"} {
 		if !strings.Contains(updated, fragment) {
 			t.Fatalf("rewritten Getenv missing %q", fragment)
 		}
