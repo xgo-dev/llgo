@@ -103,6 +103,43 @@ entry:
 	}
 }
 
+// A Wasm byval argument can supply both an entire value for a later store
+// and individual string pointers for GC roots. Leaving the whole load in SSA
+// can exceed the Wasm local-count limit at -O0.
+func TestLargeAggregateStoreWithRootProjection(t *testing.T) {
+	mod := parseAggregateIR(t, `
+%text = type { { ptr, i32 }, i64 }
+%record = type { [4097 x %text] }
+declare void @publish(ptr)
+define void @copy_and_publish(ptr %src, ptr %dst) {
+entry:
+  %value = load %record, ptr %src
+  %array = extractvalue %record %value, 0
+  %pointer = extractvalue [4097 x %text] %array, 3, 0, 0
+  call void @publish(ptr %pointer)
+  store %record %value, ptr %dst
+  ret void
+}`)
+	td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
+	defer td.Dispose()
+	cfg := AggregateLoweringConfig{GoWordSize: 8, Wasm: true}
+	LowerLargeAggregates(td, mod, cfg)
+	LowerAggregateCopies(td, mod, cfg)
+	fn := mod.NamedFunction("copy_and_publish")
+	body := fn.String()
+	for _, op := range []string{"load %record", "store %record", "load [4097 x", "store [4097 x"} {
+		if strings.Contains(body, op) {
+			t.Fatalf("whole aggregate still passes through SSA:\n%s", body)
+		}
+	}
+	if !strings.Contains(body, "@llvm.memcpy") {
+		t.Fatalf("missing the whole-record copy:\n%s", body)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLowerAggregateCopiesAllocUDebugLoc(t *testing.T) {
 	const testIR = `
 define void @copy(ptr %src, ptr %dst, ptr %other) !dbg !3 {
