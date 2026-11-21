@@ -855,7 +855,8 @@ func darwinSymbolEntries(ctx *context) bool {
 		ctx.buildConf.Goos == "darwin" && ctx.buildConf.BuildMode == BuildModeExe &&
 		ctx.buildConf.PCLNMode == PCLNEmbedded && ctx.buildConf.ltoEnabled() &&
 		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
-		shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) && os.Getenv("LLGO_PCLNPOST") != "0"
+		(shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) || hostedCompactPCLNProfile(ctx.buildConf)) &&
+		os.Getenv("LLGO_PCLNPOST") != "0"
 }
 
 func emitSymbolEntryReserve(mod llvm.Module, info siteSectionInfo, count int) {
@@ -893,10 +894,13 @@ var (
 // runtimeEntrySiteSectionInfo isolates the disposable Mach-O carrier only when
 // the linked image will actually pass through the embedded-executable rewrite.
 // Cross-package LTO inlining can then produce a page-scale duplicate tail worth
-// removing. External PCLN and library build modes do not run that rewrite, so
-// they keep the carrier in __DATA instead of paying for an unused __LLGO page.
+// removing. The compact symbol-only reservation is sized during the relink,
+// so it can share an existing __DATA page.
 func runtimeEntrySiteSectionInfo(ctx *context) siteSectionInfo {
 	if shouldCompactRuntimeMachOSites(ctx) {
+		if darwinSymbolEntries(ctx) && hostedCompactPCLNProfile(ctx.buildConf) {
+			return entrySiteSectionInfo
+		}
 		return compactEntrySiteSectionInfo
 	}
 	return entrySiteSectionInfo

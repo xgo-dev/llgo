@@ -69,13 +69,14 @@ not PCLN properties and must not introduce function-class-specific sections.
    - The compact table replaces the prefix of `llgo_funcinfo_entry`; if it
      does not fit, the binary is left unchanged and the runtime uses its
      first-use construction fallback.
-   - Embedded executable LTO Mach-O puts the entry carrier in a dedicated
-     `__LLGO` segment. Non-LTO, external-PCLN, c-shared, and c-archive Mach-O
-     keep it in `__DATA`: without a physical post-link compaction step, an
-     isolated carrier makes arm64 output pay for an otherwise-unused 16 KiB
-     file page. ELF links the carrier immediately before `.bss`, at the
-     file-backed tail of the final writable `PT_LOAD`. PC-line sites remain
-     outside the disposable range.
+   - Embedded executable LTO Mach-O normally puts the entry carrier in a
+     dedicated `__LLGO` segment. Full LTO size builds collect entry addresses
+     from the linked symbol catalog and size the reservation from live
+     entries during the metadata relink. Their carrier shares `__DATA` to
+     use space in the existing segment. Non-LTO, external-PCLN, c-shared, and
+     c-archive Mach-O also use `__DATA`. ELF links the carrier immediately
+     before `.bss`, at the file-backed tail of the final writable `PT_LOAD`.
+     PC-line sites remain outside the disposable range.
    - ELF compaction rejects an image with a program segment after the carrier;
      only non-loaded sections and the section-header table may be shifted.
    - After fixing Mach-O chained pointers, section sizes, load commands,
