@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/env"
@@ -54,6 +55,30 @@ func needsEmscriptenBrowserHost(conf *Config, output string) bool {
 	// GoJS uses wasm_exec.js / Node fs. Only named Emscripten targets need
 	// the Module.FS → Node-shaped fs sidecar.
 	return isEmscriptenNamedTarget(conf)
+}
+
+func configureEmscriptenESMHost(ctx *context, output string) {
+	conf, target := ctx.buildConf, &ctx.crossCompile
+	if filepath.Ext(output) != ".mjs" || !isEmscriptenNamedTarget(conf) ||
+		!hostedValueFormatSupport(conf, *target, ctx.frontendOptions) ||
+		conf.LinkOptions.ExternalLinkerFlags != "" || len(conf.SourceOverlay) != 0 ||
+		slices.Contains(target.BuildTags, "llgo.wasm.workers") ||
+		ctx.commands.lookup("EMCC_CFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" {
+		return
+	}
+	targets := filepath.Join(env.LLGoROOT(), "targets")
+	shim := filepath.Join(targets, wasmFSScriptName)
+	for i := 0; i+1 < len(target.LDFLAGS); i++ {
+		if target.LDFLAGS[i] == "--pre-js" && target.LDFLAGS[i+1] == shim {
+			// The host is already published with the loader. Import it as an
+			// ES module so applications can share one copy. Only the final
+			// link selects this arrangement, leaving archives reusable.
+			target.LDFLAGS = slices.Clone(target.LDFLAGS)
+			target.LDFLAGS[i] = "--extern-pre-js"
+			target.LDFLAGS[i+1] = filepath.Join(targets, "wasm_fs_import.mjs")
+			return
+		}
+	}
 }
 
 func publishEmscriptenBrowserHost(ctx *context, output string, verbose bool) error {

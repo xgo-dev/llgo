@@ -3074,6 +3074,7 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return err
 	}
 	defer cleanupWasmLinkOutput(linkOutput, driverOut)
+	configureEmscriptenESMHost(ctx, driverOut)
 	if plan.embeddedPrintfFloatMarker != "" {
 		if err := linkEmbeddedPrintfFloat(ctx, plan, linkOutput, verbose); err != nil {
 			return err

@@ -232,6 +232,10 @@ def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
         manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
         if "-sMALLOC=emmalloc" not in manifest["link_flags"]:
             raise RuntimeError(f"{target} {fixture}: allocation-free entry retained the Go allocator")
+        if not artifact.read_text(encoding="utf-8").startswith('import "./wasm_fs.js";'):
+            raise RuntimeError(f"{target} {fixture}: optimized loader did not reuse the filesystem host")
+        if not any(entry["path"] == "wasm_fs.js" and entry["role"] == "deployment" for entry in manifest["artifacts"]):
+            raise RuntimeError(f"{target} {fixture}: shared host missing from the deployment manifest")
         command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
                  str(artifact)], env, timeout=90)
         expected = "Hello, world"
