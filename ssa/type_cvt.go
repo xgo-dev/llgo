@@ -84,6 +84,16 @@ func (p Program) Type(typ types.Type, cc CallConv) Type {
 
 // FuncDecl converts a Go/C function declaration into raw type.
 func (p Program) FuncDecl(sig *types.Signature, cc CallConv) Type {
+	decl := p.funcDeclType(sig, cc)
+	if isNativeCallConv(cc) {
+		return p.withNativeStorage(&decl)
+	}
+	return &decl
+}
+
+// funcDeclType also serves prototype-only queries. Register a storage view only
+// when a caller actually needs a declaration Type.
+func (p Program) funcDeclType(sig *types.Signature, cc CallConv) aType {
 	if cc == Stdcall {
 		p.validateStdcallSignature(sig)
 	}
@@ -93,11 +103,7 @@ func (p Program) FuncDecl(sig *types.Signature, cc CallConv) Type {
 	} else if recv != nil { // even in C, we need to add ctx for method
 		sig = FuncAddCtx(recv, sig)
 	}
-	ret := &aType{p.toLLVMFuncBackground(sig, cc), rawType{sig}, vkFuncDecl}
-	if isNativeCallConv(cc) {
-		return p.withNativeStorage(ret)
-	}
-	return ret
+	return aType{p.toLLVMFuncBackground(sig, cc), rawType{sig}, vkFuncDecl}
 }
 
 // Closure creates a closture type for a function.

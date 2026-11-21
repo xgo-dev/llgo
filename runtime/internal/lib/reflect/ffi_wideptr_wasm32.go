@@ -19,6 +19,20 @@ var ffiTypeWideGoPointerWord = ffi.StructOf(
 	ffi.TypeUint32,
 )
 
+// A standalone callback is a Wasm pointer argument. In memory its enclosing
+// declaration selects a four-byte C slot or an eight-byte Go pointer word.
+var ffiTypeNativePointer = &ffi.Type{Size: 4, Alignment: 4, Type: ffi.TypePointer.Type}
+
+func ffiNativeFuncType(container *abi.Type) *ffi.Type {
+	if container == nil {
+		return ffi.TypePointer
+	}
+	if container.HasNativeLayout() {
+		return ffiTypeNativePointer
+	}
+	return ffiTypeWideGoPointerWord
+}
+
 func ffiWidenGoPointerStruct(ft *ffi.Type, typ *abi.Type) *ffi.Type {
 	if typ.Size_ != 8 || typ.Align_ != 8 || !ffiIsGoWidePointerLeaf(typ) {
 		return ft

@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bitcast"
 	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
@@ -74,7 +75,8 @@ type Value struct {
 	//	- flagMethod: v is a method value.
 	// If ifaceIndir(typ), code can assume that flagIndir is set.
 	//
-	// The remaining 22+ bits give a method number for method values.
+	// Two layout bits distinguish native callback storage from ordinary Go
+	// storage on Memory32. The remaining bits give method numbers.
 	// If flag.kind() != Func, code can assume that flagMethod is unset.
 	flag
 
@@ -88,15 +90,18 @@ type Value struct {
 type flag uintptr
 
 const (
-	flagKindWidth        = 5 // there are 27 kinds
-	flagKindMask    flag = 1<<flagKindWidth - 1
-	flagStickyRO    flag = 1 << 5
-	flagEmbedRO     flag = 1 << 6
-	flagIndir       flag = 1 << 7
-	flagAddr        flag = 1 << 8
-	flagMethod      flag = 1 << 9
-	flagMethodShift      = 10
-	flagRO          flag = flagStickyRO | flagEmbedRO
+	flagKindWidth           = 5 // there are 27 kinds
+	flagKindMask       flag = 1<<flagKindWidth - 1
+	flagStickyRO       flag = 1 << 5
+	flagEmbedRO        flag = 1 << 6
+	flagIndir          flag = 1 << 7
+	flagAddr           flag = 1 << 8
+	flagMethod         flag = 1 << 9
+	flagNarrowCallback flag = 1 << 10 // storage in a native record or array
+	flagWideCallback   flag = 1 << 11 // storage known to have full-width Go slots
+	flagCallbackSlot        = flagNarrowCallback | flagWideCallback
+	flagMethodShift         = 12
+	flagRO             flag = flagStickyRO | flagEmbedRO
 )
 
 func (f flag) kind() Kind {
@@ -117,6 +122,60 @@ func (v Value) typ() *abi.Type {
 	// escape types. noescape here help avoid unnecessary escape
 	// of v.
 	return (*abi.Type)(unsafe.Pointer(v.typ_))
+}
+
+// A named native callback can refer to a field in a C record. Even when
+// ordinary Go pointer slots are wider, only the native pointer belongs to it.
+//
+//llgo:cdecl
+type nativeFuncSlot struct{ entry unsafe.Pointer }
+
+const wideGoCallbackSlots = unsafe.Sizeof(nativeFuncSlot{}) < unsafe.Sizeof(uintptr(0))
+
+// A C record can embed an array of raw callback pointers. An ordinary Go
+// record with the same field type instead has full-width Go pointer slots.
+func nativeCallbackBytes(typ *abi.Type) uintptr {
+	size := unsafe.Sizeof(nativeFuncSlot{})
+	for typ.Kind() == abi.Array {
+		arr := typ.ArrayType()
+		size *= arr.Len
+		typ = arr.Elem
+	}
+	if typ.Kind() == abi.Func && typ.HasNativeLayout() {
+		return size
+	}
+	return 0
+}
+
+func callbackSlotFlag(typ *abi.Type, native bool) flag {
+	if !wideGoCallbackSlots || nativeCallbackBytes(typ) == 0 {
+		return 0
+	}
+	if native || typ.Kind() == abi.Array && typ.HasName() && typ.HasNativeLayout() {
+		return flagNarrowCallback
+	}
+	return flagWideCallback
+}
+
+func (v Value) callbackElement(typ *abi.Type) (uintptr, flag) {
+	if !wideGoCallbackSlots {
+		return typ.Size(), 0
+	}
+	slot := v.flag & flagCallbackSlot
+	if slot == 0 && v.kind() == Array && v.typ().HasName() && v.typ().HasNativeLayout() {
+		slot = callbackSlotFlag(typ, true)
+	}
+	if slot == flagNarrowCallback {
+		return nativeCallbackBytes(typ), slot
+	}
+	return typ.Size(), slot
+}
+
+func (v Value) narrowNativeFunc() bool {
+	// A separately boxed pointer may refer to a field in a C record. Only a
+	// known Go slot owns the padding above its native entry.
+	return wideGoCallbackSlots && v.flag&flagWideCallback == 0 && v.kind() == Func &&
+		v.typ().Kind() == abi.Func && v.typ().HasNativeLayout()
 }
 
 // pointer returns the underlying pointer represented by v.
@@ -388,7 +447,7 @@ func (v Value) Addr() Value {
 	}
 	// Preserve flagRO instead of using v.flag.ro() so that
 	// v.Addr().Elem() is equivalent to v (#32772)
-	fl := v.flag & flagRO
+	fl := v.flag & (flagRO | flagCallbackSlot)
 	return Value{ptrTo(v.typ()), v.ptr, fl | flag(Pointer)}
 }
 
@@ -583,14 +642,8 @@ func (v Value) Elem() Value {
 			return Value{}
 		}
 		tt := (*ptrType)(unsafe.Pointer(v.typ()))
-		typ := tt.Elem
-		fl := v.flag&flagRO | flagIndir | flagAddr
-		kind := typ.Kind()
-		if typ.IsClosure() {
-			kind = abi.Func
-		} else if kind == abi.Func {
-			typ = closureOf(typ.FuncType())
-		}
+		typ, kind := funcElem(tt.Elem)
+		fl := v.flag&(flagRO|flagCallbackSlot) | flagIndir | flagAddr
 		fl |= flag(kind)
 		return Value{typ, ptr, fl}
 	}
@@ -615,6 +668,7 @@ func (v Value) Field(i int) Value {
 	typ, kind := funcElem(field.Typ)
 	// Inherit permission bits from v, but clear flagEmbedRO.
 	fl := v.flag&(flagStickyRO|flagIndir|flagAddr) | flag(kind)
+	fl |= callbackSlotFlag(typ, tt.HasNativeLayout())
 	// Using an unexported field forces flagRO.
 	if !field.Exported() {
 		if field.Embedded() {
@@ -737,17 +791,12 @@ func (v Value) Float() float64 {
 
 var uint8Type = rtypeOf(uint8(0))
 
-// funcElem returns the in-memory type and public kind of a function-typed
-// value. Function values occupy LLGo's two-word closure.
+// funcElem returns the in-memory type and public kind of an element.
 func funcElem(typ *abi.Type) (*abi.Type, abi.Kind) {
-	kind := typ.Kind()
-	if kind == abi.Func {
-		return closureOf(typ.FuncType()), abi.Func
-	}
 	if typ.IsClosure() {
 		return typ, abi.Func
 	}
-	return typ, kind
+	return physicalType(typ), typ.Kind()
 }
 
 // Index returns v's i'th element.
@@ -763,8 +812,9 @@ func (v Value) Index(i int) Value {
 		}
 		tt := (*sliceType)(unsafe.Pointer(v.typ()))
 		typ, kind := funcElem(tt.Elem)
-		val := arrayAt(s.Data, i, typ.Size(), "i < s.Len")
-		fl := flagAddr | flagIndir | v.flag.ro() | flag(kind)
+		stride, slot := v.callbackElement(typ)
+		val := arrayAt(s.Data, i, stride, "i < s.Len")
+		fl := flagAddr | flagIndir | v.flag.ro() | flag(kind) | slot
 		return Value{typ, val, fl}
 
 	case String:
@@ -782,7 +832,9 @@ func (v Value) Index(i int) Value {
 			panic("reflect: array index out of range")
 		}
 		typ, kind := funcElem(tt.Elem)
-		offset := uintptr(i) * typ.Size()
+		stride, slot := v.callbackElement(typ)
+		fl := v.flag&(flagIndir|flagAddr) | v.flag.ro() | flag(kind) | slot
+		offset := uintptr(i) * stride
 
 		// Either flagIndir is set and v.ptr points at array,
 		// or flagIndir is not set and v.ptr is the actual array data.
@@ -790,7 +842,6 @@ func (v Value) Index(i int) Value {
 		// In the latter case, we must be doing Index(0), so offset = 0,
 		// so v.ptr + offset is still the correct address.
 		val := add(v.ptr, offset, "same as &v[i], i < tt.len")
-		fl := v.flag&(flagIndir|flagAddr) | v.flag.ro() | flag(kind) // bits same as overall array
 		return Value{typ, val, fl}
 	}
 	panic(&ValueError{"reflect.Value.Index", v.kind()})
@@ -1052,8 +1103,18 @@ func (v Value) SetZero() {
 	case Interface:
 		*(*[2]unsafe.Pointer)(v.ptr) = [2]unsafe.Pointer{}
 	case Chan, Func, Map, Pointer, UnsafePointer:
-		*(*unsafe.Pointer)(v.ptr) = nil
+		if v.narrowNativeFunc() {
+			(*nativeFuncSlot)(v.ptr).entry = nil
+		} else {
+			*(*unsafe.Pointer)(v.ptr) = nil
+		}
 	case Array, Struct:
+		if wideGoCallbackSlots && v.kind() == Array {
+			if size, slot := v.callbackElement(v.typ()); slot == flagNarrowCallback {
+				c.Memset(v.ptr, 0, size)
+				return
+			}
+		}
 		typedmemclr(v.typ(), v.ptr)
 	default:
 		// This should never happen, but will act as a safeguard for later,
@@ -1257,7 +1318,19 @@ func (v Value) Set(x Value) {
 	if v.kind() == Interface {
 		target = v.ptr
 	}
+	source := x
 	x = x.assignTo("reflect.Set", v.typ(), target)
+	if wideGoCallbackSlots && v.kind() == Array && v.setCallbackArray(source) {
+		return
+	}
+	if v.narrowNativeFunc() {
+		entry := x.ptr
+		if x.flag&flagIndir != 0 {
+			entry = (*nativeFuncSlot)(entry).entry
+		}
+		(*nativeFuncSlot)(v.ptr).entry = entry
+		return
+	}
 	if x.flag&flagIndir != 0 {
 		if x.ptr == unsafe.Pointer(&runtime.ZeroVal[0]) {
 			typedmemclr(v.typ(), v.ptr)
@@ -1267,6 +1340,40 @@ func (v Value) Set(x Value) {
 	} else {
 		*(*unsafe.Pointer)(v.ptr) = x.ptr
 	}
+}
+
+// setCallbackArray copies a packed C callback array, converting pointer slots
+// when the other array uses Go storage. Stage conversions before writing so
+// overlapping arrays retain the source entries.
+func (v Value) setCallbackArray(x Value) bool {
+	dstSize, dstSlot := v.callbackElement(v.typ())
+	srcSize, srcSlot := x.callbackElement(x.typ())
+	if dstSlot != flagNarrowCallback && srcSlot != flagNarrowCallback {
+		return false
+	}
+	src := x.ptr
+	if x.flag&flagIndir == 0 {
+		src = unsafe.Pointer(&x.ptr)
+	}
+	switch {
+	case dstSlot == srcSlot:
+		c.Memmove(v.ptr, src, dstSize)
+	case dstSlot == flagNarrowCallback:
+		n := dstSize / unsafe.Sizeof(nativeFuncSlot{})
+		packed := make([]nativeFuncSlot, n)
+		for i, entry := range unsafe.Slice((*unsafe.Pointer)(src), n) {
+			packed[i].entry = entry
+		}
+		copy(unsafe.Slice((*nativeFuncSlot)(v.ptr), n), packed)
+	default:
+		n := srcSize / unsafe.Sizeof(nativeFuncSlot{})
+		wide := make([]unsafe.Pointer, n)
+		for i, slot := range unsafe.Slice((*nativeFuncSlot)(src), n) {
+			wide[i] = slot.entry
+		}
+		copy(unsafe.Slice((*unsafe.Pointer)(v.ptr), n), wide)
+	}
+	return true
 }
 
 // SetBool sets v's underlying value.
@@ -1514,14 +1621,15 @@ func (v Value) Slice(i, j int) Value {
 	s := (*unsafeheaderSlice)(unsafe.Pointer(&x))
 	s.Len = j - i
 	s.Cap = cap - i
+	stride, slot := v.callbackElement(physicalType(typ.Elem))
 	if cap-i > 0 {
-		s.Data = arrayAt(base, i, physicalType(typ.Elem).Size(), "i < cap")
+		s.Data = arrayAt(base, i, stride, "i < cap")
 	} else {
 		// do not advance pointer, to avoid pointing beyond end of slice
 		s.Data = base
 	}
 
-	fl := v.flag.ro() | flagIndir | flag(Slice)
+	fl := v.flag.ro() | flagIndir | flag(Slice) | slot
 	return Value{typ.Common(), unsafe.Pointer(&x), fl}
 }
 
@@ -1566,14 +1674,15 @@ func (v Value) Slice3(i, j, k int) Value {
 	s := (*unsafeheaderSlice)(unsafe.Pointer(&x))
 	s.Len = j - i
 	s.Cap = k - i
+	stride, slot := v.callbackElement(physicalType(typ.Elem))
 	if k-i > 0 {
-		s.Data = arrayAt(base, i, physicalType(typ.Elem).Size(), "i < k <= cap")
+		s.Data = arrayAt(base, i, stride, "i < k <= cap")
 	} else {
 		// do not advance pointer, to avoid pointing beyond end of slice
 		s.Data = base
 	}
 
-	fl := v.flag.ro() | flagIndir | flag(Slice)
+	fl := v.flag.ro() | flagIndir | flag(Slice) | slot
 	return Value{typ.Common(), unsafe.Pointer(&x), fl}
 }
 
@@ -1624,7 +1733,7 @@ func (v Value) TrySend(x Value) bool {
 // Type returns v's type.
 func (v Value) Type() Type {
 	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
-		return (*rtype)(unsafe.Pointer(v.typ_)) // inline of toRType(v.typ()), for own inlining in inline test
+		return toRType(v.typ_.PublicFunc())
 	}
 	return v.typeSlow()
 }
@@ -1634,26 +1743,22 @@ func (v Value) typeSlow() Type {
 		panic(&ValueError{"reflect.Value.Type", Invalid})
 	}
 
-	typ := v.typ()
 	if v.flag&flagMethod == 0 {
-		// closure func
-		if v.typ_.IsClosure() {
-			return toRType(&v.closureFunc().Type)
-		}
-		return toRType(v.typ())
+		return toRType(v.closureFunc().Type.PublicFunc())
 	}
 
 	// Method value.
 	// v.typ describes the receiver, not the method type.
 	i := int(v.flag) >> flagMethodShift
-	if v.typ().Kind() == abi.Interface {
+	typ := v.typ()
+	if typ.Kind() == abi.Interface {
 		// Method on interface.
 		tt := (*interfaceType)(unsafe.Pointer(typ))
 		if uint(i) >= uint(len(tt.Methods)) {
 			panic("reflect: internal error: invalid method index")
 		}
 		m := &tt.Methods[i]
-		return toRType(&m.Typ_.Type)
+		return toPublicType(&m.Typ_.Type)
 	}
 	// Method on concrete type.
 	ms := typ.ExportedMethods()
@@ -1661,7 +1766,7 @@ func (v Value) typeSlow() Type {
 		panic("reflect: internal error: invalid method index")
 	}
 	m := ms[i]
-	return toRType(&m.Mtyp_.Type)
+	return toPublicType(&m.Mtyp_.Type)
 }
 
 // CanUint reports whether Uint can be used without panicking.
@@ -1993,17 +2098,14 @@ func New(typ Type) Value {
 	if typ == nil {
 		panic("reflect: New(nil)")
 	}
-	t := &typ.(*rtype).t
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
+	t := physicalType(&typ.(*rtype).t)
 	pt := ptrTo(t)
 	if ifaceIndir(pt) {
 		// This is a pointer to a not-in-heap type.
 		panic("reflect: New of type that may not be allocated in heap (possibly undefined cgo C type)")
 	}
 	ptr := unsafe_New(t)
-	fl := flag(Pointer)
+	fl := flag(Pointer) | callbackSlotFlag(t, false)
 	return Value{pt, ptr, fl}
 }
 
@@ -2011,11 +2113,8 @@ func New(typ Type) Value {
 // specified type, using p as that pointer.
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
-	t := typ.(*rtype)
-	if t.Kind() == Func {
-		t = toRType(closureOf(t.t.FuncType()))
-	}
-	return Value{t.ptrTo(), p, fl}
+	t := physicalType(&typ.(*rtype).t)
+	return Value{ptrTo(t), p, fl}
 }
 
 // assignTo returns a value v that can be assigned directly to dst.
@@ -2027,16 +2126,29 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	if v.flag&flagMethod != 0 {
 		v = makeMethodValue(context, v)
 	}
-	typ := v.typ()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
+	if v.narrowNativeFunc() && v.flag&flagIndir != 0 {
+		v.ptr = (*nativeFuncSlot)(v.ptr).entry
+		v.flag &^= flagIndir | flagAddr | flagNarrowCallback
 	}
-	assignDst := dst
-	if dst.Kind() == abi.Func {
-		// Function values use LLGo's closure struct as their physical
-		// representation. Compare against the same canonical closure type
-		// as the source value, while retaining dst for the returned Value.
-		assignDst = closureOf(dst.FuncType())
+	typ := physicalType(v.typ())
+	assignDst := physicalType(dst)
+
+	if typ.IsClosure() && assignDst.IsClosure() && typ != assignDst {
+		srcFunc := &v.closureFunc().Type
+		dstFunc := &toFuncType(assignDst.StructType()).Type
+		if srcFunc != dstFunc && srcFunc.PublicFunc() == dstFunc.PublicFunc() {
+			return v.adaptFuncFrame(assignDst, dstFunc)
+		}
+	}
+	if alias := assignDst.NativeFuncAlias(); alias != nil && typ.IsClosure() && alias.GoEntry != nil {
+		entry := (*closure)(v.ptr)
+		if entry.fn == alias.GoEntry {
+			return Value{dst, entry.env, flag(Func) | v.flag.ro()}
+		}
+	}
+	if alias := typ.NativeFuncAlias(); alias != nil && assignDst.IsClosure() &&
+		directlyAssignable(&toFuncType(assignDst.StructType()).Type, alias.Public) {
+		return v.nativeAliasClosure(assignDst, alias)
 	}
 
 	switch {
@@ -2046,6 +2158,17 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		fl := v.flag&(flagAddr|flagIndir) | v.flag.ro()
 		fl |= flag(dst.Kind())
 		return Value{dst, v.ptr, fl}
+
+	case dst.Kind() == abi.Func && dst.HasNativeLayout() && v.typ().IsClosure() &&
+		directlyAssignable(dst, v.Type().common()) && dst.FuncType().Variadic() == v.closureFunc().Variadic():
+		entry := (*closure)(v.ptr)
+		if entry.env != nil {
+			panic(context + ": C callback must not capture variables")
+		}
+		if entry.fn != nil && dst.TFlag&abi.TFlagDirectGoCallback == 0 {
+			panic(context + ": C callback with a different ABI must be a direct function reference")
+		}
+		return Value{dst, entry.fn, v.flag.ro() | flag(Func)}
 
 	case implements(assignDst, typ):
 		if v.Kind() == Interface && v.IsNil() {
@@ -2068,6 +2191,37 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 
 	// Failed.
 	panic(context + ": value of type " + stringFor(v.typ()) + " is not assignable to type " + stringFor(dst))
+}
+
+// The closure code and its environment use the physical parameter and result
+// frame. Moving a higher-order value between two different frames needs a
+// callable adapter even though reflection reports the same Go signature.
+func (v Value) adaptFuncFrame(dst, ft *abi.Type) Value {
+	if v.IsNil() {
+		return Value{dst, unsafe.Pointer(&closure{}), flag(Func) | flagIndir | v.flag.ro()}
+	}
+	if v.flag&flagAddr != 0 {
+		v = cvtDirect(v, toRType(v.typ()))
+	}
+	call := v.Call
+	if ft.FuncType().Variadic() {
+		call = v.CallSlice
+	}
+	result := MakeFunc(toType(ft), call)
+	result.flag |= v.flag.ro()
+	return result
+}
+
+func (v Value) nativeAliasClosure(dst *abi.Type, alias *abi.QualifiedFuncType) Value {
+	ft := &toFuncType(dst.StructType()).Type
+	if !haveIdenticalUnderlyingType(ft, &alias.FuncType.Type, true) {
+		return v.adaptFuncFrame(dst, ft)
+	}
+	c := &closure{fn: v.pointer()}
+	if alias.GoEntry != nil && c.fn != nil {
+		c.fn, c.env = alias.GoEntry, c.fn
+	}
+	return Value{dst, unsafe.Pointer(c), flag(Func) | flagIndir | v.flag.ro()}
 }
 
 // Convert returns the value v converted to type t.
@@ -2313,6 +2467,13 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	case abi.Chan:
 		return toFFIWordArg(v)
 	case abi.Func:
+		src := v.typ()
+		if src.IsClosure() {
+			src = src.StructType().Fields[0].Typ
+		}
+		if src.PublicFunc() != src || typ.PublicFunc() != typ {
+			v = v.assignTo("reflect.Call", physicalType(typ), nil)
+		}
 		if v.flag&flagIndir != 0 {
 			return v.ptr
 		}
@@ -2357,6 +2518,12 @@ var (
 )
 
 func toFFIType(typ *abi.Type) *ffi.Type {
+	return toFFITypeIn(typ, nil)
+}
+
+// container is the record or array whose declaration selects field storage.
+// A nil container describes a standalone argument or result.
+func toFFITypeIn(typ, container *abi.Type) *ffi.Type {
 	// Vector storage (including zero-length arrays and enclosing aggregates)
 	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
 	// descriptions cannot represent its vector calling convention. Check before
@@ -2372,10 +2539,18 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		return ffi.Typ[kind]
 	case abi.Array:
 		st := typ.ArrayType()
-		return ffi.ArrayOf(toFFIType(st.Elem), int(st.Len))
+		// An inline array inherits native element storage from an enclosing C
+		// record or array. A named native array selects it in any container.
+		if container == nil || !container.HasNativeLayout() {
+			container = typ
+		}
+		return ffi.ArrayOf(toFFITypeIn(st.Elem, container), int(st.Len))
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
+		if typ.HasNativeLayout() {
+			return ffiNativeFuncType(container)
+		}
 		return ffiTypeClosure
 	case abi.Interface:
 		return ffi.TypeInterface
@@ -2409,7 +2584,7 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		if fs.Typ.Size_ == 0 {
 			continue
 		}
-		fields = append(fields, toFFIType(fs.Typ))
+		fields = append(fields, toFFITypeIn(fs.Typ, typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
 	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
@@ -2496,12 +2671,20 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		ret  unsafe.Pointer
 		ioff int
 	)
-	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
+	method := v.flag&flagMethod != 0
+	var native bool
+	switch {
+	case method:
+		var rcvrtype *abi.Type
+		rcvrtype, ft, fn = methodReceiver(op, v, int(v.flag)>>flagMethodShift)
+		tin = append([]*abi.Type{rcvrtype}, ft.In...)
+		ioff = 1
+		var ptr unsafe.Pointer
+		storeRcvr(v, unsafe.Pointer(&ptr))
+		args = append(args, unsafe.Pointer(&ptr))
+	case v.typ_.IsClosure():
 		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
-		c := (*struct {
-			fn  unsafe.Pointer
-			env unsafe.Pointer
-		})(v.ptr)
+		c := (*closure)(v.ptr)
 		fn = c.fn
 		env = c.env
 		tin = ft.In
@@ -2510,26 +2693,15 @@ func (v Value) call(op string, in []Value) (out []Value) {
 			ioff = 1
 			args = append(args, unsafe.Pointer(&env))
 		}
-	} else {
-		if v.flag&flagMethod != 0 {
-			var (
-				rcvrtype *abi.Type
-			)
-			rcvrtype, ft, fn = methodReceiver(op, v, int(v.flag)>>flagMethodShift)
-			tin = append([]*abi.Type{rcvrtype}, ft.In...)
-			ioff = 1
-			var ptr unsafe.Pointer
-			storeRcvr(v, unsafe.Pointer(&ptr))
-			args = append(args, unsafe.Pointer(&ptr))
+	default:
+		native = true
+		if v.flag&flagIndir != 0 {
+			fn = *(*unsafe.Pointer)(v.ptr)
 		} else {
-			if v.flag&flagIndir != 0 {
-				fn = *(*unsafe.Pointer)(v.ptr)
-			} else {
-				fn = v.ptr
-			}
-			ft = v.typ_.FuncType()
-			tin = ft.In
+			fn = v.ptr
 		}
+		ft = v.typ_.FuncType()
+		tin = ft.In
 	}
 
 	if fn == nil {
@@ -2593,7 +2765,7 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		panic("reflect.Value.Call: wrong argument count")
 	}
 	if useWasmReflectBridges {
-		return callWasmBridge(ft, fn, env, v.flag&flagMethod != 0, args, in)
+		return callWasmBridge(ft, fn, env, method, native, args, in)
 	}
 
 	ffiArgs := make([]*ffi.Type, 0, len(tin)+4)
@@ -2655,9 +2827,7 @@ func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Va
 		}
 		ptr = storage
 	}
-	out := NewAt(toType(typ), ptr).Elem()
-	resolveIndirectValue(&out, typ)
-	return out
+	return valueFromCallResult(ptr, typ)
 }
 
 func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
@@ -2665,36 +2835,29 @@ func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
 	case 0:
 		return nil
 	case 1:
-		return []*abi.Type{toRuntimeType(typs[0])}
+		return []*abi.Type{physicalType(typs[0])}
 	default:
 		rets := make([]*abi.Type, n)
 		for i, typ := range typs {
-			rets[i] = toRuntimeType(typ)
+			rets[i] = physicalType(typ)
 		}
 		return rets
 	}
 }
 
-func toRuntimeType(typ *abi.Type) *abi.Type {
-	switch typ.Kind() {
-	case abi.Func:
-		return closureOf((*abi.FuncType)(unsafe.Pointer(typ)))
-	}
-	return typ
-}
-
-// resolveIndirectValue converts Value's indirect reference to direct based on abi.Type, clears flagIndir
-// It adjusts the Value's ptr (dereferences or truncates) and removes the flagIndir flag.
-func resolveIndirectValue(v *Value, typ *abi.Type) {
+func valueFromCallResult(ptr unsafe.Pointer, typ *abi.Type) Value {
+	v := NewAt(toType(typ), ptr).Elem()
+	// NewAt exposes the result slot as addressable while unpacking it. Call
+	// returns a value, even when its representation still points at that slot.
+	v.flag &^= flagAddr
 	if !typ.IsDirectIface() || v.flag&flagIndir == 0 {
-		return
+		return v
 	}
-	k := typ.Kind()
-	switch {
-	case k == abi.Float32:
+	switch typ.Kind() {
+	case abi.Float32:
 		fv := *(*float32)(v.ptr)
 		v.ptr = unsafe.Pointer(uintptr(bitcast.FromFloat32(fv)))
-	case k == abi.Float64:
+	case abi.Float64:
 		fv := *(*float64)(v.ptr)
 		v.ptr = unsafe.Pointer(uintptr(bitcast.FromFloat64(fv)))
 	default:
@@ -2706,7 +2869,8 @@ func resolveIndirectValue(v *Value, typ *abi.Type) {
 			v.ptr = *(*unsafe.Pointer)(v.ptr)
 		}
 	}
-	v.flag &= ^flagIndir
+	v.flag &^= flagIndir
+	return v
 }
 
 func truncate(addr unsafe.Pointer, bits uintptr) unsafe.Pointer {
@@ -3383,22 +3547,30 @@ func cvtDirect(v Value, typ Type) Value {
 	return Value{t, ptr, v.flag.ro() | f} // v.flag.ro()|f == f?
 }
 
-// convertOp: func copy
+// MakeFunc can give a closure a native public type. Keep its environment
+// when converting the value, including a conversion to its own type.
 func cvtFunc(v Value, typ Type) Value {
-	f := v.flag
-	t := typ.common()
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
+	dst := typ.common()
+	if v.typ().IsClosure() {
+		src := &v.closureFunc().Type
+		target := closureOf(dst.FuncType())
+		if src != dst && src.PublicFunc() == dst.PublicFunc() {
+			return v.adaptFuncFrame(target, dst)
+		}
+		return cvtDirect(v, toRType(target))
 	}
-	ptr := v.ptr
-	if f&flagAddr != 0 {
-		// indirect, mutable word - make a copy
-		c := unsafe_New(t)
-		typedmemmove(t, c, ptr)
-		ptr = c
-		f &^= flagAddr
+	alias := v.typ().NativeFuncAlias()
+	if alias != nil && dst == alias.Public {
+		return cvtDirect(v, toRType(v.typ()))
 	}
-	return Value{t, ptr, v.flag.ro() | f} // v.flag.ro()|f == f?
+	if dst.HasNativeLayout() {
+		return cvtDirect(v, typ)
+	}
+	target := closureOf(dst.FuncType())
+	if alias != nil {
+		return v.nativeAliasClosure(target, alias)
+	}
+	return v.adaptFuncFrame(target, dst)
 }
 
 // convertOp: concrete -> interface

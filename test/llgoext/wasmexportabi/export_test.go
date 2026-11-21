@@ -6,11 +6,13 @@ import (
 	"runtime"
 	"testing"
 	"unsafe"
+
+	"github.com/xgo-dev/llgo/test/llgoext/wasmexportabi/callback"
 )
 
 func TestWasmGoExports(t *testing.T) {
 	if got := callGoExports(); got != 0 {
-		t.Fatalf("C caller failed check %d (1: int, 2: uint, 3: slice)", got)
+		t.Fatalf("C caller failed check %d (1: int, 2: uint, 3: slice, 4: string)", got)
 	}
 
 	data := [5]byte{7, 8, 9, 10, 11}
@@ -22,11 +24,11 @@ func TestWasmGoExports(t *testing.T) {
 
 func TestWasmAggregateExports(t *testing.T) {
 	if callGoMixed() != 1 {
-		t.Fatal("Go export did not normalize the nested slice")
+		t.Fatal("Go export did not preserve the nested string and slice")
 	}
 	data := [5]byte{7, 8, 9, 10, 11}
 	got := cMixed(Mixed{Text: "wasm", Data: data[:3]})
-	if got.Text != "wasm" || len(got.Data) != 3 || cap(got.Data) != 4 ||
+	if got.Text != "wasm" || !stringPointerSlotOK(&got.Text) || len(got.Data) != 3 || cap(got.Data) != 4 ||
 		!slicePointerSlotOK(&got.Data) || &got.Data[0] != &data[1] {
 		t.Fatalf("unexpected mixed value returned by C: %+v", got)
 	}
@@ -178,6 +180,66 @@ func TestWasmOverlappingHeaderCopies(t *testing.T) {
 	}
 }
 
+func TestWasmLargeNativeResult(t *testing.T) {
+	got := cLargeResult()
+	for i := range got.text {
+		if got.text[i] != "wasm" || !stringPointerSlotOK(&got.text[i]) {
+			t.Fatalf("C result has an invalid string header at index %d", i)
+		}
+	}
+}
+
+func TestWasmLargeNativeParam(t *testing.T) {
+	if status := callLargeParam(); status < 0 {
+		t.Fatal("Go callee modified the C argument's padding")
+	} else if status > 0 {
+		t.Fatalf("Go callee received an invalid string header at index %d", status-1)
+	}
+}
+
+func TestWasmHeaderProjections(t *testing.T) {
+	if status := callHeaderProjections(); status != 0 {
+		t.Fatalf("C header projection check %d failed (1: argument, 2: result, 3: pointer slot, 4: source bytes)", status)
+	}
+}
+
+func TestWasmStringCallbacks(t *testing.T) {
+	for i, want := range []int32{'w', 'm'} {
+		if got := callStringReader(i != 0); got != want {
+			t.Errorf("string callback %d returned %d, want %d", i, got, want)
+		}
+	}
+	for _, tc := range []struct {
+		source func() string
+		want   int32
+	}{
+		{func() string { return "first" }, 'f'},
+		{func() string { return "second" }, 's'},
+	} {
+		if got := callGoStringSource(tc.source); got != tc.want {
+			t.Errorf("C called Go source and got %d, want %d", got, tc.want)
+		}
+	}
+}
+
+func TestWasmNativeCallbackRoundTrip(t *testing.T) {
+	for _, selection := range []int32{0, 1, -1} { // -1 returns nil from C.
+		if !roundTripSources(selection) {
+			t.Errorf("native callback address changed for selection %d", selection)
+		}
+	}
+}
+
+func TestWasmStringCallbackRejectsCapture(t *testing.T) {
+	defer func() {
+		got := recover()
+		if err, ok := got.(error); !ok || err.Error() != "runtime error: C callback must not capture variables" {
+			t.Errorf("converting a capturing callback to C panicked with %v", got)
+		}
+	}()
+	callback.MatchSources(-1, func() string { return t.Name() }, nil)
+}
+
 func TestWasmSliceCallbacks(t *testing.T) {
 	for _, second := range []bool{false, true} {
 		if !callCallbacks(second) {
@@ -188,5 +250,11 @@ func TestWasmSliceCallbacks(t *testing.T) {
 	got := callSliceFunc(cSlice, data[:3])
 	if len(got) != 3 || cap(got) != 4 || !slicePointerSlotOK(&got) || &got[0] != &data[1] {
 		t.Fatalf("unexpected slice from native function value: %v", got)
+	}
+}
+
+func TestWasmGenericCallbackRoundTrip(t *testing.T) {
+	if !callback.MatchGeneric(genericSource) {
+		t.Fatal("generic callback conversion lost the native function or its result")
 	}
 }

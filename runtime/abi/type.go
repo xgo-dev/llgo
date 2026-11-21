@@ -100,7 +100,10 @@ const (
 	// KindStdcall records the calling convention of a native function value.
 	// It is independent of the callback convention selected by NewCallback.
 	KindStdcall = 1 << 7
-	KindMask    = (1 << 5) - 1
+	// On a Go function, the same bit marks a signature with ABI-qualified
+	// function arguments or results and a public signature descriptor suffix.
+	KindFuncPublic = KindStdcall
+	KindMask       = (1 << 5) - 1
 )
 
 // String returns the name of k.
@@ -179,10 +182,14 @@ const (
 	// TFlagVariadic means a funcType with variadic parameters
 	TFlagVariadic TFlag = 1 << 4
 
-	// TFflagClosure means the structType is a closure
+	// TFlagClosure marks a struct descriptor for a Go closure.
 	TFlagClosure TFlag = 1 << 5
 
-	// TFlagNative means this named type has a legacy cdecl/stdcall
+	// On Func descriptors this kind-specific bit marks native signatures that
+	// can call an environment-free Go entry without an ABI adapter.
+	TFlagDirectGoCallback TFlag = TFlagClosure
+
+	// TFlagNative means this declaration has a legacy cdecl/stdcall
 	// storage and calling ABI. Go size and alignment queries may still
 	// report the ordinary Go layout. Unlabeled wrappers are not marked;
 	// consumers walk to this leaf.
@@ -428,12 +435,36 @@ func (t *Type) IsDirectIface() bool {
 
 // IsClosure reports whether t is closure struct
 func (t *Type) IsClosure() bool {
-	return t.TFlag&TFlagClosure != 0
+	return t.TFlag&TFlagClosure != 0 && t.Kind() == Struct
 }
 
 // HasNativeLayout reports whether t itself is marked with a legacy native ABI.
 func (t *Type) HasNativeLayout() bool {
 	return t.TFlag&TFlagNative != 0
+}
+
+// QualifiedFuncType adds the public Go signature to an ABI-qualified function
+// alias or a Go function whose frame contains such callbacks. GoEntry adapts
+// a native pointer in a Go funcval's environment when the entry ABI differs.
+type QualifiedFuncType struct {
+	FuncType
+	Public  *Type
+	GoEntry unsafe.Pointer
+}
+
+// PublicFunc returns the Go identity of an anonymous physical signature.
+func (t *Type) PublicFunc() *Type {
+	if t.Kind() == Func && !t.HasName() && (t.HasNativeLayout() || t.Kind_&KindFuncPublic != 0) {
+		return (*QualifiedFuncType)(unsafe.Pointer(t)).Public
+	}
+	return t
+}
+
+func (t *Type) NativeFuncAlias() *QualifiedFuncType {
+	if t.Kind() == Func && !t.HasName() && t.HasNativeLayout() {
+		return (*QualifiedFuncType)(unsafe.Pointer(t))
+	}
+	return nil
 }
 
 // IsStdcall reports whether a native function type uses the stdcall ABI.

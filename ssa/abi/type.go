@@ -9,10 +9,12 @@ import (
 )
 
 const (
-	TFlagUncommon   = abi.TFlagUncommon
-	TFlagNative     = abi.TFlagNative
-	KindDirectIface = abi.KindDirectIface
-	KindStdcall     = abi.KindStdcall
+	TFlagUncommon         = abi.TFlagUncommon
+	TFlagNative           = abi.TFlagNative
+	TFlagDirectGoCallback = abi.TFlagDirectGoCallback
+	KindDirectIface       = abi.KindDirectIface
+	KindStdcall           = abi.KindStdcall
+	KindFuncPublic        = abi.KindFuncPublic
 )
 
 func (b *Builder) MapBucket(t *types.Map) types.Type {

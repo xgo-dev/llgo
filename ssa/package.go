@@ -118,10 +118,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	ctx           llvm.Context
+	nativeAliases map[*types.Alias]Type
+	typs          typeutil.Map // rawType -> Type
+	sizes         types.Sizes  // provided by Go compiler
+	gocvt         goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -374,6 +375,7 @@ func NewProgram(target *Target) Program {
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
+	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI
 	return prog
 }
 
