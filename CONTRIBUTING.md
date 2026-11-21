@@ -19,7 +19,7 @@ pinned in `.go-version`, the lockfiles, and the
 
 Choose [mise](https://mise.jdx.dev/installing-mise.html) 2026.10.7 or newer, or
 [Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. Both
-provide Go and install LLVM/Clang/LLD 22, pkg-config, and native libraries
+provide Go and install LLVM/Clang/LLD 23, pkg-config, and native libraries
 from conda-forge. Configuration and lockfiles live in `dev/`.
 
 From the repository root, enter the mise environment:
@@ -129,10 +129,10 @@ below to install dependencies and build the checkout.
 ### Build dependencies
 
 - [Go 1.27](https://go.dev) for building LLGo; CI validates user packages separately with Go 1.20 through Go 1.27
-- [LLVM 22](https://llvm.org)
-- [Clang 22](https://clang.llvm.org)
-- [LLD 22](https://lld.llvm.org)
-- [LLDB](https://lldb.llvm.org) (LLVM 22 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
+- [LLVM 23](https://llvm.org)
+- [Clang 23](https://clang.llvm.org)
+- [LLD 23](https://lld.llvm.org)
+- [LLDB](https://lldb.llvm.org) (LLVM 23 packages on Linux/Windows; Xcode's Apple LLDB on macOS)
 - [pkg-config 0.29+](https://gitlab.freedesktop.org/pkg-config/pkg-config)
 - [bdwgc/libgc 8.2+](https://www.hboehm.info/gc/)
 - [libffi](https://sourceware.org/libffi/)
@@ -149,9 +149,9 @@ Python and target toolchains depend on the selected suites.
 
 ```sh
 brew update
-brew install llvm@22 lld@22 bdw-gc openssl cjson libffi libuv pkg-config
+brew install llvm@23 lld@23 bdw-gc openssl cjson libffi libuv pkg-config
 brew install python@3.12 # optional
-brew link --force --overwrite llvm@22 lld@22 libffi
+brew link --force --overwrite llvm@23 lld@23 libffi
 ./install.sh
 ```
 
@@ -170,9 +170,9 @@ llvm_key="$(mktemp)"
 trap 'rm -f "$llvm_key"' EXIT
 wget -4 --retry-on-host-error --tries=3 --timeout=15 --waitretry=2 -O "$llvm_key" https://apt.llvm.org/llvm-snapshot.gpg.key
 sudo install -m 0644 "$llvm_key" /usr/share/keyrings/llvm-snapshot.asc
-echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.asc] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.asc] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-23 main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt-get update
-sudo apt-get install -y llvm-22-dev clang-22 libclang-22-dev lld-22 lldb-22 libunwind-22-dev libc++-22-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
+sudo apt-get install -y llvm-23-dev clang-23 libclang-23-dev lld-23 lldb-23 libunwind-23-dev libc++-23-dev pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libcjson-dev libsqlite3-dev libuv1-dev
 sudo apt-get install -y python3-dev # optional
 ./install.sh
 
@@ -181,10 +181,10 @@ sudo apt-get install -y python3-dev # optional
 ### Alpine Linux
 
 ```sh
-apk add go llvm22-dev clang22-dev lld22 lldb pkgconf gc-dev libunwind-dev openssl-dev zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
+apk add go llvm23-dev clang23-dev lld23 lldb pkgconf gc-dev libunwind-dev openssl-dev zlib-dev libffi-dev cjson-dev sqlite-dev libuv-dev
 apk add python3-dev # optional
 apk add g++ # build only
-export LLVM_CONFIG=/usr/lib/llvm22/bin/llvm-config
+export LLVM_CONFIG=/usr/lib/llvm23/bin/llvm-config
 export CGO_CPPFLAGS="$($LLVM_CONFIG --cppflags)"
 export CGO_CXXFLAGS=-std=c++17
 export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
@@ -193,40 +193,40 @@ export CGO_LDFLAGS="$($LLVM_CONFIG --ldflags) $($LLVM_CONFIG --libs all)"
 
 ### Fedora Linux
 
-Fedora 44 and 45 provide LLVM 22.
+Fedora 45 provides LLVM 23.
 
 ```sh
 sudo dnf install -y llvm-devel clang-devel lld lldb libcxx-devel llvm-libunwind-devel \
   pkgconf-pkg-config gc-devel openssl-devel libffi-devel libuv-devel \
   cjson-devel sqlite-devel zlib-ng-compat-devel
-llvm-config --version # must report 22.x
+llvm-config --version # must report 23.x
 ./install.sh
 ```
 
 ### Windows
 
 Follow [WINDOWS.md](WINDOWS.md) for SDK/CRT and native libraries.
-For an MSYS2 `CLANG64` source build, install LLVM 22 and its pkg-config metadata:
+For an MSYS2 `CLANG64` source build, install LLVM 23 and its pkg-config metadata:
 
 ```sh
 pacman -S --needed \
   mingw-w64-clang-x86_64-{clang,llvm,llvm-tools,lld,lldb,compiler-rt,libc++,libunwind} \
   mingw-w64-clang-x86_64-{gc,libffi,libuv,openssl,cjson,sqlite3,zlib,pkgconf}
-test "$(llvm-config --version | cut -d. -f1)" = 22
+test "$(llvm-config --version | cut -d. -f1)" = 23
 pc_dir="$MINGW_PREFIX/lib/pkgconfig"
 mkdir -p "$pc_dir"
 printf '%s\n' \
-  'Name: LLVM 22' \
-  'Description: LLVM 22 host compiler and linker flags' \
+  'Name: LLVM 23' \
+  'Description: LLVM 23 host compiler and linker flags' \
   "Version: $(llvm-config --version)" \
   "Cflags: $(llvm-config --cflags)" \
   "Libs: $(llvm-config --ldflags --libs all --system-libs)" \
-  > "$pc_dir/llvm-22.pc"
+  > "$pc_dir/llvm-23.pc"
 ```
 
-MSVC source builds need the full LLVM 22 development archive. The
+MSVC source builds need the full LLVM 23 development archive. The
 [dependency setup action](.github/actions/setup-deps/action.yml) pins downloads
-and configures LLDB and `llvm-22.pc`.
+and configures LLDB and `llvm-23.pc`.
 
 ### Install a source checkout
 

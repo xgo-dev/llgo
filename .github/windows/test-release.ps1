@@ -186,8 +186,8 @@ func main() {
   }
   Assert-ReleaseESPPayload -Root $cached -GoArch $GoArch -Version $pins.release
   $manifest = Get-Content -LiteralPath (Join-Path $cached 'LLGO-LLVM-MANIFEST.txt')
-  if ($manifest -notcontains 'windows_llvm_link_mode=shared' -or $manifest -notcontains 'llvm_expected_version=22.1.4') {
-    throw 'The bundled ESP tools must use shared LLVM 22.1.4'
+  if ($manifest -notcontains 'windows_llvm_link_mode=shared' -or $manifest -notcontains "llvm_expected_version=$($pins.llvm_version)") {
+    throw "The bundled ESP tools must use shared LLVM $($pins.llvm_version)"
   }
   if (-not (Test-Path (Join-Path $cached 'LICENSE-LLVM.txt'))) { throw 'Bundled ESP tools are missing their license' }
   @{

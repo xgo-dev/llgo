@@ -60,6 +60,45 @@ def matrix_size(job):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_benchmark_base_uses_its_own_dependency_actions(self):
+        script = WORKFLOWS.parent / "scripts/prepare_benchmark_base.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / ".benchmark/base-source"
+            action = base / ".github/actions/setup-deps/action.yml"
+            action.parent.mkdir(parents=True)
+            action.write_text("uses: ./.github/actions/nested\nrun: bash .github/scripts/setup.sh\n"
+                              'script: .github\\windows\\setup.ps1\n'
+                              'temp: $env:RUNNER_TEMP\n')
+            module = base / "go.mod"
+            module.write_text("module example.test/base\n")
+            environment = root / "github-env"
+            result = subprocess.run([sys.executable, str(script), ".benchmark/base-source"],
+                                    cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, "GITHUB_ENV": str(environment),
+                                         "RUNNER_TEMP": str(root / "temp")})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(action.read_text(),
+                             "uses: ./.benchmark/base-source/.github/actions/nested\n"
+                             "run: bash .benchmark/base-source/.github/scripts/setup.sh\n"
+                             'script: .benchmark/base-source/.github\\windows\\setup.ps1\n'
+                             'temp: $env:LLGO_BENCHMARK_BASE_TEMP\n')
+            self.assertEqual(module.read_text(), "module example.test/base\n")
+            temporary = root / "temp/llgo-benchmark-base"
+            self.assertTrue(temporary.is_dir())
+            self.assertEqual(environment.read_text(), f"LLGO_BENCHMARK_BASE_TEMP={temporary}\n")
+        jobs = load("benchmark.yml")["jobs"]
+        for name in ("benchmark", "wasm-benchmark"):
+            job = jobs[name]
+            self.assertNotIn("GOFLAGS", job["env"])
+            steps = job["steps"]
+            names = [step.get("name") for step in steps]
+            self.assertLess(names.index("Install base dependencies"), names.index("Measure pull request base"))
+            self.assertLess(names.index("Measure pull request base"), names.index("Install dependencies"))
+            self.assertLess(names.index("Install dependencies"), names.index("Measure current revision"))
+            head = steps[names.index("Install dependencies")]
+            self.assertEqual(head["with"]["llvm-version"], "23")
+
     def test_macos_codecov_preserves_later_demo_environment(self):
         steps = load('llgo.yml')['jobs']['llgo']['steps']
         demo = next(i for i, step in enumerate(steps) if step.get('name') == 'Test demos')
@@ -91,13 +130,13 @@ class WorkflowContractTests(unittest.TestCase):
         license_file = 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt'
         license = next(item for item in package['contents'] if item['dst'] == '/usr/lib/llgo/' + license_file)
         self.assertEqual(license['src'], license_file)
-        for dependency in ('libllvm22 (>= 1:22.1)', 'llvm-22', 'clang-22', 'lld-22'):
+        for dependency in ('libllvm23 (>= 1:23.1)', 'llvm-23', 'clang-23', 'lld-23'):
             self.assertIn(dependency, package['overrides']['deb']['dependencies'])
-        for dependency in ('llvm-libs >= 22.1', 'llvm < 23', 'clang < 23', 'lld < 23'):
+        for dependency in ('llvm-libs >= 23.1', 'llvm < 24', 'clang < 24', 'lld < 24'):
             self.assertIn(dependency, package['overrides']['rpm']['dependencies'])
         for build in config['builds']:
             if build['id'].startswith('llgo-linux-'):
-                self.assertIn('-X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22', build['ldflags'])
+                self.assertIn('-X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-23', build['ldflags'])
         job = load('release-build.yml')['jobs']['test-artifacts']
         smoke = next(step for step in job['steps'] if step.get('name') == 'Test Hello World')
         self.assertEqual(smoke['env']['LLGO_BUILD_CACHE'], '0')
@@ -611,15 +650,15 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         self.assertNotIn("build-windows-x86-toolchains", jobs)
         self.assertFalse((WORKFLOWS.parent / "windows/build-x86-toolchains.sh").exists())
         pins = json.loads((WORKFLOWS.parents[1] / "internal/crosscompile/espressif.json").read_text())
-        self.assertRegex(pins["release"], r"^22\.1\.4_\d{8}$")
+        self.assertRegex(pins["release"], r"^23\.1\.6_\d{8}(?:\.\d+)?$")
         self.assertRegex(pins["producer_commit"], r"^[0-9a-f]{40}$")
-        self.assertRegex(pins["sdk"]["release"], r"^22\.1\.4_\d{8}$")
+        self.assertRegex(pins["sdk"]["release"], r"^23\.1\.6_\d{8}(?:\.\d+)?$")
         self.assertRegex(pins["sdk"]["producer_commit"], r"^[0-9a-f]{40}$")
-        self.assertEqual(pins["sdk"]["version"], "22.1.8")
-        self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-22.1.8-i686-w64-mingw32.tar.xz")
+        self.assertEqual(pins["sdk"]["version"], "23.1.6")
+        self.assertEqual(pins["sdk"]["asset"], "llvm-sdk-23.1.6-i686-w64-mingw32.tar.xz")
         self.assertRegex(pins["sdk"]["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(pins['sdk']['repository'], 'xgo-dev/espressif-llvm-project-prebuilt')
-        self.assertEqual(pins['llvm_version'], '22.1.4')
+        self.assertEqual(pins['llvm_version'], '23.1.6')
         self.assertEqual(set(pins["payloads"]), {
             'i686-w64-mingw32', 'x86_64-w64-mingw32', 'aarch64-w64-mingw32',
             'x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-linux-gnu', 'aarch64-linux-gnu'})

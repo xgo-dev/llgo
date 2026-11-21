@@ -49,14 +49,14 @@ jobs:
         # release. User-code compatibility is covered by LLGo's test matrix.
         include:
           - os: macos-latest
-            llvm: 22
+            llvm: 23
           - os: ubuntu-latest
-            llvm: 22
+            llvm: 23
           - os: windows-2022
-            llvm: 22
+            llvm: 23
             windows_abi: msvc
           - os: windows-2022
-            llvm: 22
+            llvm: 23
             windows_abi: mingw
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && fromJSON(needs.prepare.outputs.linux_large_runner) || matrix.os }}
     steps:
@@ -375,7 +375,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
-          llvm-version: 22
+          llvm-version: 23
 
       - name: Set up Go
         uses: ./.github/actions/setup-go
@@ -418,7 +418,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
-          llvm-version: 22
+          llvm-version: 23
 
       - name: Install embedded dependencies
         uses: ./.github/actions/setup-embed-deps
@@ -440,7 +440,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          llvm_config="$(command -v llvm-config || command -v llvm-config-22)"
+          llvm_config="$(command -v llvm-config || command -v llvm-config-23)"
           cmake -S ltoplugin -B ltoplugin/build \
             -DLLVM_DIR="$("${llvm_config}" --cmakedir)" \
             -DCMAKE_BUILD_TYPE=Release

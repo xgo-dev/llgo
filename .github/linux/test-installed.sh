@@ -20,15 +20,15 @@ test -f "$root/LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt"
 ldd "$root/bin/llgo" > loader.txt
 cat loader.txt
 if grep -q 'not found' loader.txt; then exit 1; fi
-grep -E 'libLLVM\.so\.22\.1 => /' loader.txt
+grep -E 'libLLVM\.so\.23\.1 => /' loader.txt
 # Debian installs versioned LLVM tools; Fedora provides unversioned commands.
-if command -v llvm-config-22 >/dev/null; then
-    LLVM_CONFIG=$(command -v llvm-config-22)
+if command -v llvm-config-23 >/dev/null; then
+    LLVM_CONFIG=$(command -v llvm-config-23)
     export LLVM_CONFIG
 fi
 llvm_config=${LLVM_CONFIG:-llvm-config}
-[[ "$("$llvm_config" --version)" == 22.* ]]
-[[ "$(llgo env LLGO_LLVM_VERSION)" == 22.* ]]
+[[ "$("$llvm_config" --version)" == 23.* ]]
+[[ "$(llgo env LLGO_LLVM_VERSION)" == 23.* ]]
 llvm_bin=$("$llvm_config" --bindir)
 "$llvm_bin/llvm-nm" --undefined-only --dynamic "$root/bin/llgo" > imports.txt
 if grep -q LLVMInitializeXtensa imports.txt; then exit 1; fi
