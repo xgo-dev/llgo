@@ -7,6 +7,33 @@ type receiver struct {
 	base int
 }
 
+//llgo:cdecl
+type nativeCallback func(int32) int32
+
+//llgo:cdecl
+type nativeCallbackFields struct {
+	F      nativeCallback
+	Marker uintptr
+}
+
+type goCallback func(int32) int32
+
+type goCallbackFields struct {
+	F      func(int32) int32
+	Marker uintptr
+}
+
+type goNamedCallbackFields struct {
+	F      goCallback
+	Marker uintptr
+}
+
+type nestedNativeCallbackFields struct {
+	Head  uintptr
+	Value nativeCallbackFields
+	Tail  uintptr
+}
+
 // CHECK-LABEL: define void @main.checkInt(%reflect.Value %0, %"{{.*}}Slice" %1){{.*}} {
 // CHECK-DAG: [[CHECK_RESULTS:%.*]] = call %"{{.*}}Slice" @reflect.Value.Call(%reflect.Value %0, %"{{.*}}Slice" %1)
 // CHECK-DAG: [[CHECK_RESULTS_PTR:%.*]] = extractvalue %"{{.*}}Slice" [[CHECK_RESULTS]], 0
@@ -285,5 +312,70 @@ func main() {
 	if got := reflect.ValueOf(makeFloatSum(10)).Call(floatArgs())[0].Float(); got != 55 {
 		panic(got)
 	}
+
+	// #2872: a native callback occupies one pointer. Describing it as a Go
+	// closure changes the aggregate ABI and shifts the following marker.
+	nativeCall := reflect.ValueOf(func(value nativeCallbackFields, marker uintptr) uintptr {
+		if value.Marker != 100 || marker != 37 {
+			return 0
+		}
+		if value.F != nil && value.F(2) != 3 {
+			return 0
+		}
+		return value.Marker + marker
+	})
+	native := nativeCallbackFields{Marker: 100}
+	println("native callback nil", nativeCall.Call([]reflect.Value{reflect.ValueOf(native), reflect.ValueOf(uintptr(37))})[0].Uint())
+	native.F = func(value int32) int32 { return value + 1 }
+	println("native callback field", nativeCall.Call([]reflect.Value{reflect.ValueOf(native), reflect.ValueOf(uintptr(37))})[0].Uint())
+	nativeMade := reflect.MakeFunc(nativeCall.Type(), func(args []reflect.Value) []reflect.Value {
+		value := args[0].Interface().(nativeCallbackFields)
+		return []reflect.Value{reflect.ValueOf(value.Marker + uintptr(args[1].Uint()))}
+	}).Interface().(func(nativeCallbackFields, uintptr) uintptr)
+	println("native callback MakeFunc", nativeMade(native, 37))
+	nestedCall := reflect.ValueOf(func(value nestedNativeCallbackFields, marker uintptr) uintptr {
+		if value.Head != 11 || value.Tail != 22 || value.Value.F(2) != 3 {
+			return 0
+		}
+		return value.Value.Marker + marker
+	})
+	println("native callback nested", nestedCall.Call([]reflect.Value{reflect.ValueOf(nestedNativeCallbackFields{11, native, 22}), reflect.ValueOf(uintptr(37))})[0].Uint())
+
+	// Go function fields retain both words, including a nil environment, and
+	// their public reflected types remain Func.
+	captured := int32(40)
+	callback := func(value int32) int32 { return captured + value }
+	goCall := reflect.ValueOf(func(value goCallbackFields, marker uintptr) uintptr {
+		return uintptr(value.F(2)) + value.Marker + marker
+	})
+	goValue := goCallbackFields{callback, 100}
+	println("go callback field", goCall.Call([]reflect.Value{reflect.ValueOf(goValue), reflect.ValueOf(uintptr(37))})[0].Uint())
+	goNoEnv := goCallbackFields{func(value int32) int32 { return value + 1 }, 100}
+	println("go callback nil env", goCall.Call([]reflect.Value{reflect.ValueOf(goNoEnv), reflect.ValueOf(uintptr(37))})[0].Uint())
+	namedCall := reflect.ValueOf(func(value goNamedCallbackFields, marker uintptr) uintptr {
+		return uintptr(value.F(2)) + value.Marker + marker
+	})
+	println("go named callback field", namedCall.Call([]reflect.Value{reflect.ValueOf(goNamedCallbackFields{goCallback(callback), 100}), reflect.ValueOf(uintptr(37))})[0].Uint())
+	goMade := reflect.MakeFunc(goCall.Type(), func(args []reflect.Value) []reflect.Value {
+		value := args[0].Interface().(goCallbackFields)
+		return []reflect.Value{reflect.ValueOf(uintptr(value.F(2)) + value.Marker + uintptr(args[1].Uint()))}
+	}).Interface().(func(goCallbackFields, uintptr) uintptr)
+	println("go callback field MakeFunc", goMade(goValue, 37))
+
+	// Parameter signatures still use the existing closure conversion, rather
+	// than the native function-pointer rule used for stored struct fields.
+	parameterCall := reflect.ValueOf(func(value func(int32) int32, marker uintptr) uintptr {
+		return uintptr(value(2)) + marker
+	})
+	println("go callback argument", parameterCall.Call([]reflect.Value{reflect.ValueOf(callback), reflect.ValueOf(uintptr(37))})[0].Uint())
+	parameterMade := reflect.MakeFunc(parameterCall.Type(), func(args []reflect.Value) []reflect.Value {
+		value := args[0].Interface().(func(int32) int32)
+		return []reflect.Value{reflect.ValueOf(uintptr(value(2)) + uintptr(args[1].Uint()))}
+	}).Interface().(func(func(int32) int32, uintptr) uintptr)
+	println("go callback MakeFunc", parameterMade(callback, 37))
+	println("function field kinds",
+		reflect.TypeOf(native).Field(0).Type.Kind() == reflect.Func,
+		reflect.TypeOf(goValue).Field(0).Type.Kind() == reflect.Func,
+		reflect.TypeOf(goNamedCallbackFields{}).Field(0).Type.Kind() == reflect.Func)
 	println("ok")
 }
