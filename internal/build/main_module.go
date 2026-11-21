@@ -506,24 +506,29 @@ type entryFunctions struct {
 }
 
 // defineEntryFunction creates the program's entry function. The name is
-// "main" for standard targets, or "__main_argc_argv" with hidden visibility
-// for WASM targets that don't require _start.
+// "main" for standard targets or a hidden libc entry for WASM commands.
 //
 // Controlled-thread Linux amd64/arm64 executables first enable the ownership
 // protocol and configure the collector, before any runtime/context allocation.
-// The entry stores argc/argv, optionally disables stdio buffering, and manages
-// the local context. Native PCLN builds run the common startup sequence through
+// The entry records argc/argv when provided and manages the local context and
+// stdio buffering. Native PCLN builds run the common startup sequence through
 // runtime.main; other builds run it inline. That sequence initializes Python,
 // the runtime stub/package, ABI types, and packages, calls main.main, and then
 // finalizes Python. The entry leaves the local context and returns 0.
 func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
 	entryName := processEntrySymbol
-	if isWasmTarget(ctx.buildConf.Goos) &&
+	sig := newEntrySignature(argvType.RawType())
+	// An allocation-free WASI command cannot observe argv. Use libc's
+	// zero-argument entry so its CRT can skip allocating and copying argv.
+	omitArgs := useMinimalWASIStartup(ctx)
+	if omitArgs {
+		entryName = "__main_void"
+		sig = newSignature(nil, []types.Type{types.Typ[types.Int32]})
+	} else if isWasmTarget(ctx.buildConf.Goos) &&
 		(!needStart(ctx) || ctx.crossCompile.WasmRuntime.RunMainTask) {
 		entryName = "__main_argc_argv"
 	}
-	sig := newEntrySignature(argvType.RawType())
 	fn := pkg.NewFunc(entryName, sig, llssa.CDecl)
 	fnVal := pkg.Module().NamedFunction(entryName)
 	if entryName != processEntrySymbol {
@@ -554,8 +559,10 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	if hasLocalContext {
 		localCtx, previousLocalCtx = b.EnterLocalContext()
 	}
-	b.Store(argcVar.Expr, fn.Param(0))
-	b.Store(argvVar.Expr, fn.Param(1))
+	if !omitArgs {
+		b.Store(argcVar.Expr, fn.Param(0))
+		b.Store(argvVar.Expr, fn.Param(1))
+	}
 	if IsStdioNobuf() {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
 	}

@@ -198,6 +198,12 @@ func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {
 	return ctx.emscriptenDirectMain && pkgExists(ctx.initial, pkg)
 }
 
+func useMinimalWASIStartup(ctx *context) bool {
+	// An external symbol map may derive its path from argv[0].
+	return ctx.wasmRuntimeFree && ctx.buildConf.PCLNMode != PCLNExternal &&
+		wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
+}
+
 func enableWasmRuntimeFree(ctx *context) {
 	conf := ctx.buildConf
 	ctx.wasmRuntimeFree = true

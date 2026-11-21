@@ -54,6 +54,15 @@ def runtime_free_cache_probe(llgo, wasmer, directory, env):
             raise RuntimeError(f"cached helper lost runtime or panic location: {result}")
     print("WASI runtime-free/full-runtime cache switching and stderr semantics passed", flush=True)
 
+    module = directory / "wasi-minimal-startup.wasm"
+    report = command([str(llgo), "build", "-target=wasi", "-Oz", "-deadcodedrop", "-globaldce=false",
+                      "-lto=full", "-debug-artifact=none", "-size", "-size-format=json",
+                      "-o", str(module), "./benchmark/binary_size/println"], env, stdout_only=True)
+    memory = json.loads(report)["wasm"]["memories"][0]
+    command([env.get("NODE", "node"), str(ROOT / "test/sizebuild/wasi-minimal-startup.mjs"),
+             str(module), str(memory["initial_bytes"]), str(memory["maximum_bytes"])], env, timeout=90)
+    print("WASI allocation-free startup and exported allocator passed", flush=True)
+
 
 def controlled_environment(source):
     env = dict(source, LLGO_ROOT=str(ROOT), LLGO_BUILD_CACHE="1")
