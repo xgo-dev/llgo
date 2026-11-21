@@ -145,6 +145,11 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		}
 		probe := newLinkExecutionContext(ctx, plan)
 		configureEmscriptenDirectLink(&probe.crossCompile)
+		feature := "scheduler"
+		if plan.directWasmAllocator {
+			configureEmscriptenLibcAllocator(&probe.crossCompile)
+			feature = "Go allocator"
+		}
 		probe.crossCompile.LDFLAGS = append(probe.crossCompile.LDFLAGS, "-sERROR_ON_UNDEFINED_SYMBOLS=1")
 		var diagnostics bytes.Buffer
 		probe.linkDiagnostics = &diagnostics
@@ -154,7 +159,7 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		if err := executeMainLink(probe, &attempt, verbose); err == nil {
 			_, _ = diagnostics.WriteTo(os.Stderr)
 			if ctx.shouldPrintCommands(verbose) {
-				fmt.Fprintln(os.Stderr, "llgo: omit Emscripten scheduler after link reachability check")
+				fmt.Fprintf(os.Stderr, "llgo: omit Emscripten %s after link reachability check\n", feature)
 			}
 			return probe, probeDir, nil
 		}
@@ -162,7 +167,7 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 			return ctx, dir, err
 		}
 		if ctx.shouldPrintCommands(verbose) {
-			fmt.Fprintln(os.Stderr, "llgo: retain Emscripten scheduler after link reachability check")
+			fmt.Fprintf(os.Stderr, "llgo: retain Emscripten %s after link reachability check\n", feature)
 		}
 	}
 	return ctx, dir, executeMainLink(ctx, &local, verbose)

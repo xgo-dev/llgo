@@ -51,7 +51,9 @@ With DCE, the final link can call a proven allocation-free and synchronous
 executable directly. The direct entry skips Go runtime startup, its scheduler
 and Asyncify. The executable package also omits its caller frames and polls.
 When the link needs no Go runtime objects, Emscripten provides the allocator
-used by C and the host API. Dependency archives keep their normal code.
+used by C and the host API. Small console writes use stack storage. A final
+link without the collector can still use these runtime helpers when all their
+live references resolve. Dependency archives keep their normal code.
 For other closed single-worker size builds, Full LTO can prove that the
 scheduler is unused even when the program needs Go runtime initialization.
 The final link first tries direct execution with unresolved scheduler markers.

@@ -18,4 +18,4 @@
 
 package emscripten
 
-const LLGoFiles = "_wrap/fiber.c"
+const LLGoFiles = "_wrap/fiber.c; _wrap/console.c"

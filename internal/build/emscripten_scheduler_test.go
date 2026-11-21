@@ -121,6 +121,31 @@ func TestEmscriptenSchedulerStageCreationError(t *testing.T) {
 	}
 }
 
+func TestEmscriptenSchedulerCollectorFallback(t *testing.T) {
+	t.Setenv("LLGO_TEST_FINAL_WASM", "1")
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "reject-direct-wasm")
+	dir := t.TempDir()
+	ctx := &context{
+		buildConf: &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm",
+			Target: "emscripten", WasmStrip: WasmStripAll, DebugArtifactMode: DebugArtifactNone, PCLNMode: PCLNNone},
+		crossCompile: crosscompile.Export{
+			WasmProvider: crosscompile.WasmProviderEmscripten, CC: os.Args[0],
+			LDFLAGS: []string{"-sMALLOC=none"},
+		},
+	}
+	plan := &mainLinkPlan{
+		linkInputs: []string{"normal.o"}, directWasmInputs: []string{"direct.o"}, directWasmAllocator: true,
+	}
+	result, stage, err := linkStagedWasm(ctx, plan, "app", dir, true)
+	if err != nil || result != ctx || stage != dir {
+		t.Fatalf("collector fallback failed: %p %q %v", result, stage, err)
+	}
+	if !slices.Contains(result.effectiveLinkArgs, "-sMALLOC=none") ||
+		slices.Contains(result.effectiveLinkArgs, "-sMALLOC=emmalloc") {
+		t.Fatalf("fallback allocator flags = %q", result.effectiveLinkArgs)
+	}
+}
+
 func TestEmscriptenSchedulerLibcAllocatorFlags(t *testing.T) {
 	ctx := &context{emscriptenDirectMain: true, crossCompile: crosscompile.Export{
 		LDFLAGS: []string{"-sASYNCIFY=1", "-sMALLOC=none"},

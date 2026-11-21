@@ -1663,9 +1663,7 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	if ctx.emscriptenDirectMain {
 		configureEmscriptenDirectLink(&target)
 		if plan.emscriptenUseLibcAllocator {
-			if i := slices.Index(target.LDFLAGS, "-sMALLOC=none"); i >= 0 {
-				target.LDFLAGS[i] = "-sMALLOC=emmalloc"
-			}
+			configureEmscriptenLibcAllocator(&target)
 		}
 	}
 	return &context{
@@ -2761,6 +2759,7 @@ type mainLinkPlan struct {
 	darwinHiddenGlobals  []string
 
 	emscriptenUseLibcAllocator bool
+	directWasmAllocator        bool
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -2780,6 +2779,7 @@ type mainLinkPreparation struct {
 	darwinHiddenGlobals  []string
 
 	emscriptenUseLibcAllocator bool
+	emscriptenCollectorArchive string
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2813,6 +2813,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	var linkArgs []string
 	var rtLinkInputs []string
 	var rtLinkArgs []string
+	var collectorArchive string
 	linkedOrder := mainLinkPackages(ctx, pkg, pkgs)
 
 	// packages.Visit with a post callback yields dependencies before importers.
@@ -2825,6 +2826,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 			rtLinkArgs = append(rtLinkArgs, aPkg.LinkArgs...)
 			if aPkg.ArchiveFile != "" {
 				rtLinkInputs = append(rtLinkInputs, aPkg.ArchiveFile)
+				if ctx.emscriptenDirectMain && p.PkgPath == llssa.PkgRuntime+"/tinygogc" {
+					collectorArchive = aPkg.ArchiveFile
+				}
 			}
 			continue
 		}
@@ -2937,6 +2941,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		darwinHiddenGlobals:  darwinSymbols.hiddenGlobals,
 
 		emscriptenUseLibcAllocator: ctx.emscriptenDirectMain && !linkRuntime,
+		emscriptenCollectorArchive: collectorArchive,
 	}, nil
 }
 
@@ -2994,6 +2999,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	linkInputs = append(linkInputs, extraObjFiles...)
 	linkInputs = append(linkInputs, preparation.archiveInputs...)
 	var directWasmInputs []string
+	directWasmAllocator := ctx.emscriptenDirectMain && !preparation.emscriptenUseLibcAllocator &&
+		needsWasmFinalization(ctx.buildConf) && preparation.emscriptenCollectorArchive != ""
 	if ctx.probeEmscriptenScheduler {
 		normal, direct, err := buildEmscriptenDispatch(ctx, entryPkg.ExportFile)
 		if err != nil {
@@ -3001,6 +3008,10 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		}
 		directWasmInputs = slices.Concat([]string{entryObjFile, direct}, linkInputs[1:])
 		linkInputs = slices.Concat([]string{entryObjFile, normal}, linkInputs[1:])
+	} else if directWasmAllocator {
+		directWasmInputs = slices.DeleteFunc(slices.Clone(linkInputs), func(input string) bool {
+			return input == preparation.emscriptenCollectorArchive
+		})
 	}
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
 	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
@@ -3019,6 +3030,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		darwinHiddenGlobals:  preparation.darwinHiddenGlobals,
 
 		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
+		directWasmAllocator:        directWasmAllocator,
 	}, nil
 }
 

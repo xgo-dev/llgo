@@ -185,12 +185,11 @@ def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
                        "-o", str(artifact), f"./benchmark/binary_size/{fixture}"], env)
         if marker not in log:
             raise RuntimeError(f"{target} {fixture}: direct entry absent\n{log}")
-        if fixture == "cprintf":
-            manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
-            if "-sMALLOC=emmalloc" not in manifest["link_flags"]:
-                raise RuntimeError(f"{target}: allocation-free C entry retained the Go allocator")
-            command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
-                     str(artifact)], env, timeout=90)
+        manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
+        if "-sMALLOC=emmalloc" not in manifest["link_flags"]:
+            raise RuntimeError(f"{target} {fixture}: allocation-free entry retained the Go allocator")
+        command([runner[0], str(ROOT / "test/sizebuild/wasm-filesystem-host-api.mjs"),
+                 str(artifact)], env, timeout=90)
         expected = "Hello, world"
         actual = command([*runner, str(artifact)], env, timeout=90)
         if actual.strip() != expected:
