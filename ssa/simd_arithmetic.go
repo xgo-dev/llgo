@@ -38,11 +38,11 @@ func (b Builder) simdMulWiden(op SIMDOp, result Type, x, y Expr) Expr {
 	mask := llvm.ConstVector(indices, false)
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
 	widen := func(v llvm.Value) llvm.Value {
-		lo := b.impl.CreateShuffleVector(v, llvm.Undef(v.Type()), mask, "")
+		half := b.impl.CreateShuffleVector(v, llvm.Undef(v.Type()), mask, "")
 		if unsigned {
-			return b.impl.CreateZExt(lo, result.ll, "")
+			return b.impl.CreateZExt(half, result.ll, "")
 		}
-		return b.impl.CreateSExt(lo, result.ll, "")
+		return b.impl.CreateSExt(half, result.ll, "")
 	}
 	return Expr{b.impl.CreateMul(widen(x.impl), widen(y.impl), ""), result}
 }

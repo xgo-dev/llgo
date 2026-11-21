@@ -12,7 +12,7 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-// Check every intrinsic declaration, including methods that upstream tests
+// Check every intrinsic declaration on the listed targets, including methods that upstream tests
 // reach only through architecture or CPU feature predicates.
 func TestSIMDCompleteDeclarations(t *testing.T) {
 	for _, target := range []struct{ os, arch string }{{"linux", "arm64"}, {"wasip1", "wasm"}} {

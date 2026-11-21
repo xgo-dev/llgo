@@ -1,8 +1,9 @@
 package ssa
 
 import (
-	"github.com/xgo-dev/llvm"
 	"go/types"
+
+	"github.com/xgo-dev/llvm"
 )
 
 func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
@@ -10,7 +11,9 @@ func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
 	negate := make([]llvm.Value, result.ll.VectorSize())
 	for i := range negate {
 		bit := uint64(i & 1)
-		// Go 1.27 selects VFMADDSUB for MulAddEvenSubOdd (subtract in lane zero).
+		// Go 1.27 emits VFMADDSUB for MulAddEvenSubOdd and ADDSUB for
+		// AddOddSubEven. Both subtract in even lanes. VFMSUBADD subtracts
+		// in odd lanes, reversing the parity in the two FMA doc comments.
 		if op != SIMDMulAddOddSubEven {
 			bit = 1 - bit
 		}
@@ -25,6 +28,31 @@ func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
 
 func (b Builder) simdIntegerProduct(op SIMDOp, result Type, x, y Expr) Expr {
 	n := x.ll.VectorSize()
+	if op == SIMDSumOf8AbsDiff || op == SIMDDotProductPairsSaturated {
+		// These byte operations have one instruction per supported width.
+		// Use only features guaranteed by the compilation target.
+		target := b.Prog.Target()
+		level := target.goArchitectureSetting(target.GOAMD64)
+		var sad, dot string
+		switch {
+		case n == 16:
+			sad = "llvm.x86.sse2.psad.bw"
+			if level == "v2" || level == "v3" || level == "v4" {
+				dot = "llvm.x86.ssse3.pmadd.ub.sw.128"
+			}
+		case n == 32 && (level == "v3" || level == "v4"):
+			sad, dot = "llvm.x86.avx2.psad.bw", "llvm.x86.avx2.pmadd.ub.sw"
+		case n == 64 && level == "v4":
+			sad, dot = "llvm.x86.avx512.psad.bw.512", "llvm.x86.avx512.pmaddubs.w.512"
+		}
+		name := sad
+		if op == SIMDDotProductPairsSaturated {
+			name = dot
+		}
+		if name != "" {
+			return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, y.impl}, ""), result}
+		}
+	}
 	switch op {
 	case SIMDMulSign:
 		zero := llvm.ConstNull(x.ll)

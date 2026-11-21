@@ -14,14 +14,19 @@ combinations exist; the families below do not imply identical APIs on every
 architecture.
 
 - Horizontal pairwise addition on amd64/arm64 and subtraction on amd64,
-  preserving integer wrapping and floating operand order.
+  including wrapping and saturating integer pairs. Grouped AMD64 operations
+  pair adjacent lanes separately in each 128-bit half.
+- AMD64 sign and high-half products, widening even-lane products, pair dot
+  products with optional saturation, sums of eight absolute byte differences,
+  and alternating add/subtract and fused multiply-add/subtract.
 - Array/slice loads and stores, broadcast, and lane extraction/insertion.
   AMD64 masked stores preserve disabled lanes without accessing their memory.
 - Add/subtract/multiply, floating divide, negation, absolute value, square root,
   rounding, fused native multiply-add, and target-specific floating min/max semantics.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
-  low-half multiplication, and carryless multiplication.
+  low- and high-half multiplication, and carryless multiplication. ARM64 also
+  supports leading-zero and leading-sign-bit counts.
 - Integer low/high-lane extension, truncating and saturating narrowing with zero-filled upper
   lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
   unsigned saturation follow each architecture's official declarations. The
@@ -50,11 +55,9 @@ defer/recover, goroutines, and scheduling. The hex-encoding workload checks
 all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
 It is a correctness workload, not a performance benchmark.
 
-Go helper bodies are compiled normally. Remaining bodyless intrinsic
-implementations panic with their symbol name; `unimplemented_llgo_test.go`
-checks direct, indirect, deferred, and linkname calls. SIMD reflection,
-general feature-combination FMV, and 512-bit vectors remain outside this stage.
-The initial amd64 SIMD256 coverage is described below.
+Go helper bodies are compiled normally. Every ARM64 and Wasm bodyless
+declaration has a lowering. The remaining AMD64 declarations raise a
+recoverable panic with their symbol name.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
 `SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
@@ -115,7 +118,7 @@ conversions, integer extension/truncation/saturation, grouped concatenating
 saturation and 256-bit floating rounding are also implemented. Shape checks
 preserve selected lanes, zero-filled upper lanes and 128-bit group order;
 invalid floating-to-integer inputs retain the architecture's defined results.
-Remaining target-specific operations and SIMD512 retain the recoverable panic.
+The same group boundaries apply to SIMD512.
 
 Wide Go parameters and results use an explicit memory carrier on amd64,
 including indirect calls, cross-package calls and multiple-result tuples.
@@ -151,13 +154,13 @@ GOEXPERIMENT=simd llgo run ./test/simd/testdata/upstream-simd256-recover
 Portable `simd` also generates and selects a 256-bit variant on amd64, using
 these bridge operations. By-value native C bindings using these wide `archsimd`
 types receive a diagnostic; explicit memory interfaces remain available.
-Native C vector ABI and SIMD512 need separate qualification.
+By-value `archsimd` values across native C boundaries require a separate ABI contract.
 
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,
 arm64, and wasm. The first type check identifies dependent declarations;
-Midway generates emulated and 128-bit variants, plus a 256-bit variant on
+Midway generates emulated and 128-bit variants, plus 256-bit and 512-bit variants on
 amd64, rewrites their references to the official `simd/internal/bridge`, and
 type-checks the result before Go SSA.
 Importers see both the original declarations and the specialized exports.
@@ -173,19 +176,14 @@ dependency order, and execute side effects once; multiple `init` functions
 retain their order. The loader avoids requesting unused gc export data, which
 would otherwise run the official compiler's own Midway before LLGo's checks.
 
-On amd64, selection follows Go's effective AVX/AVX2 and VPCLMULQDQ policy,
-with the maximum compiled width capped at 256. AVX2 without VPCLMULQDQ defaults
-to 128 bits; `GODEBUG=simd=+256` overrides that feature reduction. The implemented
-256-bit bridge operations remain baseline-safe, including carryless multiply.
-`GODEBUG=simd=0` selects emulation. When hardware is eligible, explicit widths
-above its supported maximum fail; with no eligible hardware, Go's initialization
-selects emulation before processing width requests. ARM64 and wasm retain their
-128-bit feature policy. CPU queries and LLVM's instruction-level FMV remain
-separate from this representation choice.
+On amd64 the upstream width selector uses effective AVX, AVX2, AVX512 and
+carryless-multiply flags. An explicit `+` bypasses the all-feature downgrade
+within the available hardware width. `GODEBUG=simd=0` selects emulation.
+ARM64 and Wasm retain their 128-bit feature policy.
 
-The native amd64 matrix exercises default, emulated, 128-bit and eligible
-256-bit selection at O0/O2 and Thin/Full LTO, including disabled CPU features
-and rejected width requests. Cross-package calls, indirect calls, global
+The native amd64 matrix exercises default, emulated and eligible explicit
+widths at O0/O2 and Thin/Full LTO, including CPU overrides and rejected width
+requests. Cross-package calls, indirect calls, global
 initialization and deferred recovery use the same selected representation.
 LLVM tests verify that ARM64 and Wasm do not acquire 256-bit variants.
 
@@ -207,7 +205,7 @@ The latter two cases produce source diagnostics. Midway also diagnoses
 or link directives targeting a known SIMD-dependent global: an external storage
 binding needs an ABI shared by all concrete representations. Embedded named
 strings and byte slices retain their contents in every generated variant.
-512-bit variants and general FMV are follow-up work.
+General feature-combination FMV is covered in the subsequent compiler stage.
 
 For the WASI portable matrix, including explicit guest emulation, run
 `LLGO=/path/to/llgo bash dev/test_portable_simd_wasi.sh`. It passes `GODEBUG`

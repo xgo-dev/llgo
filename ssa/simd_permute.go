@@ -85,6 +85,16 @@ func (b Builder) simdInterleave(op SIMDOp, x, y Expr) Expr {
 // the rank is at most n-1, including for all-true and all-false masks.
 func (b Builder) simdPack(op SIMDOp, x, mask Expr) Expr {
 	active := llvm.CreateICmp(b.impl, llvm.IntNE, mask.impl, llvm.ConstNull(mask.ll))
+	target := b.Prog.Target()
+	// v4 guarantees AVX512F and VL for dword and qword lanes. Byte
+	// and word compression needs VBMI2, which remains optional at v4.
+	if target.goArchitectureSetting(target.GOAMD64) == "v4" && b.Prog.td.TypeSizeInBits(x.ll.ElementType()) >= 32 {
+		name := "llvm.x86.avx512.mask.compress"
+		if op == SIMDExpand {
+			name = "llvm.x86.avx512.mask.expand"
+		}
+		return Expr{b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, llvm.ConstNull(x.ll), active}, ""), x.Type}
+	}
 	i32 := b.Prog.tyInt32()
 	rank := llvm.ConstNull(i32)
 	result := llvm.ConstNull(x.ll)
