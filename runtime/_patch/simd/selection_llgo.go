@@ -11,7 +11,7 @@ import "runtime"
 // logical vector even in emulation; zero is only the hardware eligibility result.
 // These widths must have variants in internal/midway.targetWidths.
 func checkMidwayWidth() {
-	supported := maxVectorSize == 128 || (runtime.GOARCH == "amd64" && maxVectorSize == 256)
+	supported := maxVectorSize == 128 || (runtime.GOARCH == "amd64" && (maxVectorSize == 256 || maxVectorSize == 512))
 	if !supported {
 		panic("LLGo portable SIMD selected an unsupported vector width")
 	}

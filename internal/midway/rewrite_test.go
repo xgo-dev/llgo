@@ -167,7 +167,7 @@ func Dot() Box[simd.Uint32s] { return Box[simd.Uint32s]{} }
 	for _, tc := range []struct {
 		name  string
 		value int64
-	}{{"Size@simd0", 32}, {"Size@simd128", 16}, {"Size@simd256", 32}, {"Next@simd0", 33}, {"Next@simd128", 17}, {"Next@simd256", 33}} {
+	}{{"Size@simd0", 32}, {"Size@simd128", 16}, {"Size@simd256", 32}, {"Next@simd0", 33}, {"Next@simd128", 17}, {"Next@simd256", 33}, {"Size@simd512", 64}, {"Next@simd512", 65}} {
 		obj := pkg.Scope().Lookup(tc.name).(*types.Const)
 		if got, _ := constant.Int64Val(obj.Val()); got != tc.value {
 			t.Errorf("%s = %d, want %d", tc.name, got, tc.value)

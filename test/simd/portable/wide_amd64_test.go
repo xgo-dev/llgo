@@ -13,7 +13,7 @@ import (
 func TestPortableRequestedWidth(t *testing.T) {
 	// With no eligible hardware upstream selects emulation before processing
 	// an explicit width. Otherwise every accepted request must select exactly it.
-	if !archsimd.X86.AVX() && !archsimd.X86.AVX2() {
+	if !archsimd.X86.AVX() && !archsimd.X86.AVX2() && !archsimd.X86.AVX512() {
 		return
 	}
 	request := ""
@@ -28,6 +28,8 @@ func TestPortableRequestedWidth(t *testing.T) {
 		want = 128
 	case "256":
 		want = 256
+	case "512":
+		want = 512
 	default:
 		return
 	}
@@ -51,5 +53,24 @@ func TestPortableArch256Conversion(t *testing.T) {
 	result.Store(out[:])
 	if out != input {
 		t.Fatalf("architecture round trip = %v, want %v", out, input)
+	}
+}
+
+func TestPortableArch512Conversion(t *testing.T) {
+	if simd.Emulated() || simd.VectorBitSize() != 512 {
+		t.Skip("requires 512-bit portable mode")
+	}
+	var in, out [16]uint32
+	for i := range in {
+		in[i] = uint32(i*i + 3)
+	}
+	x := simd.LoadUint32s(in[:])
+	arch, ok := x.ToArch().(archsimd.Uint32x16)
+	if !ok {
+		t.Fatal("512-bit ToArch did not return Uint32x16")
+	}
+	simd.Uint32sFromArch(arch).Store(out[:])
+	if out != in {
+		t.Fatalf("round trip = %v, want %v", out, in)
 	}
 }

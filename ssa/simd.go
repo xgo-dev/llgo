@@ -62,13 +62,36 @@ const (
 	SIMDLookupOrZero
 	SIMDPermuteOrZero
 	SIMDPermute
+	SIMDPermuteOrZeroGrouped
+	SIMDConcatPermute
+	SIMDCompress
+	SIMDExpand
 	SIMDAverage
 	SIMDFMA
+	SIMDMulSign
+	SIMDMulHigh
+	SIMDMulWidenEven
+	SIMDDotProductPairs
+	SIMDDotProductPairsSaturated
+	SIMDSumOf8AbsDiff
+	SIMDAddOddSubEven
+	SIMDMulAddEvenSubOdd
+	SIMDMulAddOddSubEven
+	SIMDConcatAddPairsSaturated
+	SIMDConcatAddPairsSaturatedGrouped
+	SIMDConcatSubPairsSaturated
+	SIMDConcatSubPairsSaturatedGrouped
 	SIMDMulWidenLo
 	SIMDLeadingZeros
 	SIMDLeadingSignBits
 	SIMDMulWidenHi
 	SIMDRotateAllLeft
+	SIMDRotateLeft
+	SIMDRotateRight
+	SIMDFunnelLeft
+	SIMDFunnelRight
+	SIMDTernaryLogic
+	SIMDSplatMasked
 	SIMDRotateAllRight
 	SIMDCarrylessMultiply
 	SIMDCarrylessMultiplyLo
@@ -117,6 +140,33 @@ const (
 	SIMDConcatShiftBytes
 	SIMDIsZero
 	SIMDIsNaN
+	SIMDReciprocal
+	SIMDReciprocalSqrt
+	SIMDScale
+	SIMDCeilScaled
+	SIMDCeilScaledResidue
+	SIMDFloorScaled
+	SIMDFloorScaledResidue
+	SIMDRoundScaled
+	SIMDRoundScaledResidue
+	SIMDTruncScaled
+	SIMDTruncScaledResidue
+	SIMDAESEncryptLastRound
+	SIMDAESEncryptOneRound
+	SIMDAESDecryptLastRound
+	SIMDAESDecryptOneRound
+	SIMDAESInvMixColumns
+	SIMDAESRoundKeyGenAssist
+	SIMDSHA1FourRounds
+	SIMDSHA1Message1
+	SIMDSHA1Message2
+	SIMDSHA1NextE
+	SIMDSHA256Message1
+	SIMDSHA256Message2
+	SIMDSHA256TwoRounds
+	SIMDGaloisFieldMul
+	SIMDGaloisFieldAffineTransform
+	SIMDGaloisFieldAffineTransformInverse
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -161,7 +211,7 @@ func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
 	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
 }
 
-// SIMDVectorShape validates numeric and mask SIMD128/256 storage.
+// SIMDVectorShape validates numeric and mask SIMD128/256/512 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 	named, ok := types.Unalias(typ).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
@@ -198,7 +248,7 @@ func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
 		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
 	}
 	width := lanes.Len() * bits
-	if named.Obj().Name() != expected || width != 128 && width != 256 {
+	if named.Obj().Name() != expected || width != 128 && width != 256 && width != 512 {
 		return nil, false
 	}
 	tag, ok := st.Field(0).Type().(*types.Named)
@@ -250,6 +300,9 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.Call(b.Pkg.rtFunc("PanicSIMDUnimplemented"), args...)
 	}
 	b.requireSIMDFeatures()
+	if SIMDX86Special(op) {
+		return b.simdX86Special(op, result, args)
+	}
 	if op == SIMDRound && b.Prog.Target().GOARCH == "amd64" {
 		return b.simdRoundEven(args[0])
 	}
@@ -291,13 +344,17 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdConcatPermute128(args[0], args[1], args[2], args[3])
 	case SIMDPermuteScalars, SIMDPermuteScalarsGrouped, SIMDPermuteScalarsHi, SIMDPermuteScalarsLo, SIMDPermuteScalarsHiGrouped, SIMDPermuteScalarsLoGrouped:
 		return b.simdPermuteScalars(op, args[0], args[1])
-	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped:
+	case SIMDConcatAddPairs, SIMDConcatAddPairsGrouped, SIMDConcatSubPairs, SIMDConcatSubPairsGrouped, SIMDConcatAddPairsSaturated, SIMDConcatSubPairsSaturated, SIMDConcatAddPairsSaturatedGrouped, SIMDConcatSubPairsSaturatedGrouped:
 		return b.simdConcatPairs(op, args[0], args[1])
 	case SIMDAverage:
 		return b.simdAverage(args[0], args[1])
+	case SIMDAddOddSubEven, SIMDMulAddEvenSubOdd, SIMDMulAddOddSubEven:
+		return b.simdAlternating(op, result, args)
+	case SIMDMulHigh, SIMDMulSign, SIMDDotProductPairs, SIMDDotProductPairsSaturated, SIMDSumOf8AbsDiff:
+		return b.simdIntegerProduct(op, result, args[0], args[1])
 	case SIMDFMA:
 		return b.simdFMA(result, args[0], args[1], args[2])
-	case SIMDMulWidenLo, SIMDMulWidenHi:
+	case SIMDMulWidenLo, SIMDMulWidenHi, SIMDMulWidenEven:
 		return b.simdMulWiden(op, result, args[0], args[1])
 	case SIMDLeadingZeros, SIMDLeadingSignBits:
 		x := args[0]
@@ -313,8 +370,12 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 			count = b.impl.CreateSub(count, simdIntegerConstant(x.ll, 1), "")
 		}
 		return Expr{count, result}
-	case SIMDRotateAllLeft, SIMDRotateAllRight:
-		return b.simdRotate(op, args[0], args[1])
+	case SIMDRotateAllLeft, SIMDRotateAllRight, SIMDRotateLeft, SIMDRotateRight:
+		return b.simdFunnel(op, args[0], args[0], args[1])
+	case SIMDFunnelLeft, SIMDFunnelRight:
+		return b.simdFunnel(op, args[0], args[1], args[2])
+	case SIMDTernaryLogic:
+		return b.simdTernaryLogic(args[0], args[1], args[2], args[3])
 	case SIMDCarrylessMultiply, SIMDCarrylessMultiplyLo:
 		x, y := args[0], args[len(args)-1]
 		selector := llvm.ConstInt(b.Prog.ctx.Int8Type(), 0, false)
@@ -324,8 +385,10 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdCarrylessMultiply(x, y, selector)
 	case SIMDStoreMasked:
 		return b.simdStoreMasked(args[0], args[1], args[2])
-	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermute:
-		return b.simdPermute(op, args[0], args[1])
+	case SIMDCompress, SIMDExpand:
+		return b.simdPack(op, args[0], args[1])
+	case SIMDLookupOrZero, SIMDPermuteOrZero, SIMDPermuteOrZeroGrouped, SIMDPermute, SIMDConcatPermute:
+		return b.simdPermute(op, args)
 	case SIMDExtend, SIMDExtendLo, SIMDExtendHi, SIMDSaturate, SIMDSaturateConcat, SIMDSaturateConcatGrouped, SIMDTruncate:
 		return b.simdIntegerResize(op, result, args)
 	case SIMDConvert, SIMDConvertLo:
@@ -384,9 +447,18 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 	case SIMDBroadcast:
 		v := b.impl.CreateInsertElement(llvm.Undef(result.ll), args[0].impl, llvm.ConstInt(b.Prog.tyInt32(), 0, false), "")
 		return b.simdSplatLane0(Expr{v, result})
-	case SIMDSplatLane0:
+	case SIMDSplatLane0, SIMDSplatMasked:
 		mask := llvm.ConstNull(llvm.VectorType(b.Prog.tyInt32(), result.ll.VectorSize()))
 		v := b.impl.CreateShuffleVector(args[0].impl, llvm.Undef(args[0].ll), mask, "")
+		if op == SIMDSplatMasked {
+			m := args[1]
+			pred := llvm.CreateICmp(b.impl, llvm.IntNE, m.impl, llvm.ConstNull(m.ll))
+			// A narrow input mask has no set bits above its last lane.
+			bits := b.impl.CreateBitCast(pred, b.Prog.ctx.IntType(m.ll.VectorSize()), "")
+			bits = b.impl.CreateZExt(bits, b.Prog.ctx.IntType(result.ll.VectorSize()), "")
+			pred = b.impl.CreateBitCast(bits, llvm.VectorType(b.Prog.ctx.Int1Type(), result.ll.VectorSize()), "")
+			v = b.impl.CreateSelect(pred, v, llvm.ConstNull(result.ll), "")
+		}
 		return Expr{v, result}
 	case SIMDGetLo, SIMDGetHi, SIMDSetLo, SIMDSetHi:
 		return b.simdHalf(op, result, args)

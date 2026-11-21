@@ -8,56 +8,23 @@ and the expected/actual case lists. The native SIMD CI step invokes this gate.
 A removed or renamed selected case fails the list comparison instead of silently
 reducing coverage. An amd64 host without AVX reports the upstream package's skip.
 
-The amd64 profile uses GOAMD64=v1 and `GODEBUG=cpu.avx512f=off` for **both**
-compilers: it qualifies 128/256-bit instructions, not SIMD512. Several upstream
-cases mix these widths in one function, so their 512-bit branches remain gated.
-The runtime derives its aggregate AVX512 flag after this feature override.
+The AMD64 gate uses GOAMD64=v1 and the caller's effective CPU features.
+Go 1.27.0 provides 184 AMD64 instruction tests. On an AVX2-only host some
+20 cases skip and four mixed-feature cases can pass without exercising
+their AVX512 assertions. On capable native hardware the same gate exercises
+the enabled paths. Run the complete instruction
+profile on Linux/amd64 with Intel SDE:
 
-Initial per-test audit (Go 1.27.0, each test in a separate process):
+```sh
+LLGO=/path/to/llgo SDE=/path/to/sde64 bash dev/test_simd_amd64_sde.sh
+```
 
-| Profile | Passed and enabled | Failed | Hardware-skipped | Empty hardware-gated bodies |
-| --- | ---: | ---: | ---: | ---: |
-| macOS ARM64, native | 72 | 15 | 0 | 0 |
-| Linux AMD64, Docker emulation on ARM64 | 125 | 35 | 20 | 4 |
+The Sapphire Rapids profile exercises all 184 cases and the portable 512-bit
+tests. The ARM64 list contains 87 cases. The compiler declaration tests
+independently check the bodyless intrinsics for AMD64, ARM64 and Wasm.
 
-These are top-level test outcomes, not counts of intrinsic implementations.
-A test can contain hardware-gated subcases. `TestFMA`, `TestTruncate`,
-`TestSaturate`, and `TestOnesCountAMD64` return PASS with no assertions when
-their AVX512 feature gates are false; they are excluded from the allowlist
-and counted separately from executed tests. Docker evidence does not qualify
-native x86 execution; the native CI jobs run the same selected tests.
-The allowlists contain only tests that actually passed; hardware skips are not
-promoted to passing coverage. Failure and skip inventories below are retained
-so later instruction work can expand the lists deliberately.
-
-The interleave/concatenation follow-up enables six ARM64 cases and three AMD64
-cases (`TestInterleaveLo`, `TestInterleaveHi`, `TestFlattenedTranspose`). The
-initial totals above remain the historical audit, not a recount after these
-additions.
-
-The conversion/resize follow-up enables `TestConvertARM64` and
-`TestTruncateARM64`, plus the AMD64 ceil/floor/trunc/round, conversion,
-extension and concatenating-saturation cases listed in the allowlist. The
-initial audit totals above are historical. AVX512-only tests with empty gated
-bodies remain excluded; LLGo's additional scalar-reference cases exercise
-128/256-bit narrowing without requiring AVX512 hardware.
-
-The pair-shuffle follow-up enables thirteen more AMD64 cases: 128/256-bit
-selection from two vectors, 128-bit-half selection, and the four 4x4/8x8
-transpose cases. `concatSelectedConstant`/`concatSelectedConstantGrouped`
-and `ConcatPermute128Scalars` cover both constant and variable selectors.
-The scalar-permute follow-up enables the six `TestPermuteScalars*` cases for
-128/256-bit dword and high/low word shuffles. Dynamic selectors use fixed
-shuffles and vector masks, retaining the untouched word half in each 128-bit
-group. The current allowlists contain 160 AMD64 cases and 87 ARM64 cases; these
-are enabled top-level tests, not counts of implemented intrinsics.
-
-All failing top-level cases from the initial ARM64 and AMD64 profiles are now
-enabled. The additions cover AMD64 predicates and AVX upper-register clearing,
-128-bit byte concatenation on both architectures and the grouped AMD64 form,
-and ARM64 reductions, saturating shifts, integer multiply-add and population
-count.
-
-## AMD64 hardware-gated cases
-
-Hardware-skipped: `TestShiftAllConcat`, `TestShiftConcat`, `TestPermute`, `TestConcatPermute`, `TestCompress`, `TestExpand`, `TestBitMaskFromBits`, `TestBitMaskFromBitsLoad`, `TestBitMaskToBitsStore`, `TestMergeFloat512`, `TestIfElseFloat512`, `TestMaskOpt512`, `TestLeadingZeros`, `TestConcatPermuteScalarsConstGroupedUint32x16`, `TestSelect2FromPairConstGroupedInt512`, `TestSelectTernOptInt32x16`, `TestMaskOr`, `TestPartInt64`, `TestOnesCount`, `TestCeilScaledResidue`.
+The SDE runner preserves caller-supplied CPU overrides in `GODEBUG` and
+requests `simd=512`. Its full-profile checks require all 184 cases to pass
+and portable SIMD to select 512 bits. Overrides that remove a required
+feature can therefore fail qualification. Set `SDE_TIMEOUT` to change the
+per-binary test timeout (default `60m`).

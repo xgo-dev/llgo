@@ -818,6 +818,16 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		b.Dispose()
 		return fn, nil, goFunc
 	}
+	if len(f.Blocks) != 0 {
+		if result := simdPartialLoadType(f, p.prog.Target().GOARCH); result != nil {
+			b := fn.MakeBody(1)
+			value, count := b.SIMDLoadPartial(p.prog.Type(result, llssa.GoDecl), fn.Param(0))
+			b.Return(value, count)
+			b.EndBuild()
+			b.Dispose()
+			return fn, nil, goFunc
+		}
+	}
 	if nblk := len(f.Blocks); nblk > 0 {
 		var childInits []func()
 		if len(f.AnonFuncs) > 0 {
