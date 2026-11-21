@@ -932,6 +932,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if typedJSONSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
+	if wasiGuardedStaticData(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.wasi")
+	}
 	if linuxSizeCodecBuild(conf, export, frontendOptions) ||
 		conf.Goos == "darwin" && hostedValueFormatSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.native")
@@ -1240,7 +1243,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
 		configureRuntimeFree(ctx)
-		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(ctx))
+		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(conf, export, frontendOptions))
 		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
@@ -2053,6 +2056,7 @@ type context struct {
 	staticByteArrays     map[string][]byte
 	formatRuntime        *packages.Cached
 	valueFormatPlan      *fmtspecialize.ValuePlan
+	wasiStdout           *wasiStdoutPlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	binaryCodecLibrary   *types.Package
@@ -4683,6 +4687,7 @@ func recordPackageSSAInstructions(ctx *context) error {
 	if scalarFormats && ctx.frontend == nil {
 		valueFormats = fmtspecialize.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
 	}
+	ctx.wasiStdout = newWASIStdoutPlan(ctx)
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
 		validateMaps = ctx.prog.VectorMapValidator()
@@ -4703,6 +4708,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 						valueFormats.Record(instruction, fn.Pkg)
 					}
 					fmtspecialize.RewriteCall(instruction, scalarFormats)
+					if plan := ctx.wasiStdout; plan != nil && plan.entry == fn.Pkg {
+						plan.record(instruction)
+					}
 				}
 			}
 			if fn.Pkg == nil {

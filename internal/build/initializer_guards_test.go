@@ -298,3 +298,87 @@ var Stderr = NewFile(2, "/dev/stderr")
 		})
 	}
 }
+
+func TestOptionalInitializersWASIStdout(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("WASI stdout specialization requires DCE")
+	}
+	for _, tc := range []struct {
+		name, body string
+		assembly   []string
+		want       bool
+	}{
+		{name: "literal", body: `fmt.Printf("hello")`, want: true},
+		{name: "deferred", body: `defer fmt.Printf("hello")`, want: true},
+		{name: "redirected", body: `os.Stdout = nil; fmt.Printf("hello")`},
+		{name: "other descriptor", body: `println(os.Stderr); fmt.Printf("hello")`},
+		{name: "assembly reference", body: `fmt.Printf("hello")`, assembly: []string{"os.Stdout"}},
+		{name: "no literal calls", body: `fmt.Printf(os.Dynamic())`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			imports := make(codecInitTestImporter)
+			goroot := t.TempDir()
+			pkgs := make(map[string]*aPackage)
+			add := func(path, source string) *packages.Package {
+				pkg := checkFormatTestPackage(t, prog.Fset, path, source, types.Config{
+					Importer: imports, DisableUnusedImportCheck: true,
+				})
+				pkg.Dir = filepath.Join(goroot, "src", path)
+				imports[path] = pkg.Types
+				pkgs[path] = &aPackage{Package: pkg}
+				prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+				return pkg
+			}
+			add("os", `package os
+type File struct{}
+func NewFile(uintptr, string) *File { return new(File) }
+var Stdin = NewFile(0, "/dev/stdin")
+var Stdout = NewFile(1, "/dev/stdout")
+var Stderr = NewFile(2, "/dev/stderr")
+func Dynamic() string { return "runtime format" }
+func llgoWriteClosedStdout(s string) (int, error) { println(s); return len(s), nil }
+`)
+			add("fmt", `package fmt
+import "os"
+func Printf(s string, a ...any) (int, error) { return llgoPrintfLiteral(s) }
+func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return len(s), nil }
+`)
+			entry := add("main", "package main; import (\"fmt\"; \"os\"); func main() {"+tc.body+"}")
+			prog.Build()
+			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			defer backend.Dispose()
+			ctx := &context{
+				prog: backend, progSSA: prog, initial: []*packages.Package{entry}, pkgByID: pkgs,
+				wasmClosedProgram: true,
+				crossCompile: crosscompile.Export{
+					WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32,
+				},
+				buildConf: &Config{
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
+					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true,
+				},
+			}
+			if err := recordPackageSSAInstructions(ctx); err != nil {
+				t.Fatal(err)
+			}
+			plan := ctx.wasiStdout
+			if plan == nil {
+				t.Fatal("missing stdout plan")
+			}
+			configureOptionalInitializers(ctx, goroot, &linkPruningInputs{roots: tc.assembly})
+			if plan.specialized != tc.want || (len(ctx.initializerGuardsOff) == 3) != tc.want {
+				t.Fatalf("specialized = %v, disabled guards = %v, want specialization %v", plan.specialized, ctx.initializerGuardsOff, tc.want)
+			}
+			callee := plan.regular
+			if tc.want {
+				callee = plan.direct
+			}
+			for _, call := range plan.calls {
+				if got := call.Common().StaticCallee(); got != callee {
+					t.Fatalf("callee = %v, want %v", got, callee)
+				}
+			}
+		})
+	}
+}

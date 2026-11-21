@@ -12,16 +12,15 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 )
 
-func wasiGuardedStaticData(ctx *context) bool {
-	conf := ctx.buildConf
-	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, ctx.frontendOptions) &&
-		wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
+func wasiGuardedStaticData(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend) && wasiSizePruningConfig(conf, target, frontend)
 }
 
 // Select unused initializers at the final link. Each package archive defines
@@ -30,7 +29,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	conf := ctx.buildConf
 	hosted := hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions)
 	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
-	wasi := wasiGuardedStaticData(ctx)
+	wasi := wasiGuardedStaticData(conf, ctx.crossCompile, ctx.frontendOptions)
 	if (!hosted && !embedded && !wasi) ||
 		ctx.progSSA == nil || ctx.frontend != nil || len(conf.SourceOverlay) != 0 {
 		return
@@ -138,6 +137,16 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	unused := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
+
+	if plan := ctx.wasiStdout; plan != nil && len(wasiStandardFiles) != 0 {
+		unused = plan.specialize(unused, candidates, wasiStandardFiles, func() map[*ssa.Global]cl.OptionalInitializer {
+			return unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
+		})
+		if plan.specialized && (conf.Verbose || conf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
+		}
+	}
+
 	var callbackInitializers []cl.OptionalInitializer
 	for _, group := range unused {
 		if initializerStoresCallback(group.Store.Val) {

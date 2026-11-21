@@ -108,6 +108,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     json_marker = "llgo: specialize statically typed JSON codec"
     init_marker = "llgo: omit unused JSON package initialization"
     standard_file_marker = "llgo: omit unused standard file initializers"
+    stdout_marker = "llgo: specialize closed literal stdout"
     linux_native = target == "native" and platform.system() == "Linux"
     linux_amd64 = linux_native and platform.machine() == "x86_64"
     mac_arm64 = target == "native" and platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -132,6 +133,9 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     if target == "wasi" or target.startswith("emscripten"):
         fixtures.append(("wasm-standard-files", "standard files and redirected stdout ok",
                          standard_file_marker, False))
+    if target == "wasi":
+        fixtures.append(("wasm-literal-stdout", "literal %\nstdout count and path error ok",
+                         stdout_marker, True))
     if target.startswith("emscripten"):
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
@@ -156,6 +160,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
         run = [*runner]
         if target == "wasi" and fixture == "wasm-standard-files":
+            if stdout_marker in log:
+                raise RuntimeError(f"{target}: stdout redirection was specialized\n{log}")
             run.extend([f"--volume={directory}:/tmp", "--env=TMPDIR=/tmp"])
         actual = command([*run, str(artifact)], env, timeout=90)
         expected_output = expected
