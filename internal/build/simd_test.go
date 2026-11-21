@@ -428,6 +428,9 @@ func main() {}
 			asm := string(buf.Bytes())
 			if level == "v1" {
 				assertSIMDBaselineAssembly(t, asm)
+				if !regexp.MustCompile(`(?m)^\s*psadbw\s+[^\n]*%xmm`).MatchString(asm) {
+					t.Error("missing baseline SSE2 SAD")
+				}
 				return
 			}
 			for _, mnemonic := range []string{"vpsadbw", "vpmaddubsw", "vpcompressd", "vpexpandd", `vfmaddsub(132|213|231)ps`} {

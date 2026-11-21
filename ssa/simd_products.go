@@ -54,26 +54,18 @@ func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
 
 func (b Builder) simdIntegerProduct(op SIMDOp, result Type, x, y Expr) Expr {
 	n := x.ll.VectorSize()
-	if op == SIMDSumOf8AbsDiff || op == SIMDDotProductPairsSaturated {
-		// These byte operations have one instruction per supported width.
-		// Use only features guaranteed by the compilation target.
+	if op == SIMDDotProductPairsSaturated {
+		// PMADDUBSW requires SSSE3 or a wider instruction set.
 		target := b.Prog.Target()
 		level := target.goArchitectureSetting(target.GOAMD64)
-		var sad, dot string
+		var name string
 		switch {
-		case n == 16:
-			sad = "llvm.x86.sse2.psad.bw"
-			if level == "v2" || level == "v3" || level == "v4" {
-				dot = "llvm.x86.ssse3.pmadd.ub.sw.128"
-			}
+		case n == 16 && (level == "v2" || level == "v3" || level == "v4"):
+			name = "llvm.x86.ssse3.pmadd.ub.sw.128"
 		case n == 32 && (level == "v3" || level == "v4"):
-			sad, dot = "llvm.x86.avx2.psad.bw", "llvm.x86.avx2.pmadd.ub.sw"
+			name = "llvm.x86.avx2.pmadd.ub.sw"
 		case n == 64 && level == "v4":
-			sad, dot = "llvm.x86.avx512.psad.bw.512", "llvm.x86.avx512.pmaddubs.w.512"
-		}
-		name := sad
-		if op == SIMDDotProductPairsSaturated {
-			name = dot
+			name = "llvm.x86.avx512.pmaddubs.w.512"
 		}
 		if name != "" {
 			return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID(name), []llvm.Value{x.impl, y.impl}, ""), result}
@@ -115,16 +107,19 @@ func (b Builder) simdIntegerProduct(op SIMDOp, result Type, x, y Expr) Expr {
 }
 
 func (b Builder) simdSumOf8AbsDiff(result Type, x, y Expr) Expr {
-	gt := llvm.CreateICmp(b.impl, llvm.IntUGT, x.impl, y.impl)
-	diff := b.impl.CreateSelect(gt, b.impl.CreateSub(x.impl, y.impl, ""), b.impl.CreateSub(y.impl, x.impl, ""), "")
-	sum := llvm.ConstNull(result.ll)
-	for lane := 0; lane < 8; lane++ {
-		mask := make([]llvm.Value, result.ll.VectorSize())
-		for i := range mask {
-			mask[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(8*i+lane), false)
+	// SSE2 is guaranteed on amd64. LLVM combines neighboring 128-bit SADs
+	// into a YMM or ZMM instruction when the physical body permits it.
+	bytes := llvm.VectorType(x.ll.ElementType(), 16)
+	pair := llvm.VectorType(result.ll.ElementType(), 2)
+	sum := llvm.Undef(result.ll)
+	for i := 0; i < x.ll.VectorSize(); i += 16 {
+		index := llvm.ConstInt(b.Prog.ctx.Int64Type(), uint64(i), false)
+		extract := func(v llvm.Value) llvm.Value {
+			return b.impl.CreateIntrinsic(bytes, llvm.LookupIntrinsicID("llvm.vector.extract"), []llvm.Value{v, index}, "")
 		}
-		group := b.impl.CreateShuffleVector(diff, llvm.Undef(x.ll), llvm.ConstVector(mask, false), "")
-		sum = b.impl.CreateAdd(sum, b.impl.CreateZExt(group, result.ll, ""), "")
+		sad := b.impl.CreateIntrinsic(pair, llvm.LookupIntrinsicID("llvm.x86.sse2.psad.bw"), []llvm.Value{extract(x.impl), extract(y.impl)}, "")
+		offset := llvm.ConstInt(index.Type(), uint64(i/8), false)
+		sum = b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.vector.insert"), []llvm.Value{sum, sad, offset}, "")
 	}
 	return Expr{sum, result}
 }
