@@ -1094,43 +1094,11 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		return Expr{b.simdFromStorage(x.impl, t), t}
 	}
 	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
-	if t.kind == vkClosure {
-		if b.needsStdcallFuncval(x) {
-			return b.stdcallFuncval(t, x)
-		}
-		if b.needsNativeFuncval(x) {
-			return b.nativeFuncval(t, x, llvm.CCallConv, "c")
-		}
-		if b.Prog.isStdcallType(x.raw.Type) {
-			return checkExpr(x, t.raw.Type, b)
-		}
-	}
 	if b.Prog.isStdcallType(t.raw.Type) && !b.Prog.isStdcallType(x.raw.Type) {
 		return b.stdcallCallback(t.raw.Type, x)
 	}
 	if t.kind == vkFuncPtr && x.kind == vkClosure {
-		sig := t.raw.Type.Underlying().(*types.Signature)
-		goSig := x.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
-		if b.Prog.toLLVMFunc(goSig) != b.Prog.funcDeclType(sig, CDecl).ll {
-			code, data := b.Field(x, 0), b.Field(x, 1)
-			if code.impl.IsNull() && data.impl.IsNull() {
-				return Expr{llvm.ConstNull(t.ll), t}
-			}
-			if code.impl.IsAFunction().IsNil() || !data.impl.IsNull() {
-				panic(nativeCallbackABIError)
-			}
-			return b.nativeCallback(t, Expr{code.impl, b.Prog.FuncDecl(goSig, GoDecl)}, CDecl, "c_callback")
-		}
-		if direct := x.impl.IsAFunction(); !direct.IsNil() {
-			return Expr{direct, t}
-		}
-		// A native callback has no slot for the Go closure environment.
-		code, data := b.Field(x, 0), b.Field(x, 1)
-		b.assertRuntimeError(
-			llvm.CreateICmp(b.impl, llvm.IntNE, data.impl, b.Prog.Nil(b.Prog.VoidPtr()).impl),
-			"C callback must not capture variables",
-		)
-		return Expr{code.impl, t}
+		return b.closureToNative(t, x)
 	}
 	if t.kind == vkFuncPtr && x.kind == vkFuncDecl {
 		sig := t.raw.Type.Underlying().(*types.Signature)
@@ -1619,8 +1587,8 @@ func (b Builder) InlineCall(fn Expr, args ...Expr) (ret Expr) {
 }
 
 // CanForwardVarargs checks the unlowered ABI of a direct variadic forwarding
-// call. The physical result must equal the logical Go result so Call cannot
-// insert a result conversion between the tail call and its return.
+// call. The physical result must match the Go result for the thunk to return
+// the call instruction directly.
 func (b Builder) CanForwardVarargs(fn Expr) bool {
 	if fn.kind != vkFuncDecl || !b.Func.hasVArg || fn.ll != b.Func.ll ||
 		fn.impl.FunctionCallConv() != b.Func.impl.FunctionCallConv() {
@@ -1638,8 +1606,8 @@ func (b Builder) CallForwardVarargs(fn Expr, args ...Expr) Expr {
 		panic(fmt.Sprintf("cannot forward C variadic arguments from %s to %s: incompatible ABI",
 			b.Func.Name(), fn.impl.Name()))
 	}
-	ret := b.Call(fn, args...)
-	// The preflight result check guarantees Call returns its raw instruction.
+	ret := b.emitFunctionCall(fn, args, fn.impl.FunctionCallConv())
+	// The thunk returns the native value directly to its native caller.
 	// LLVM's thunk attribute makes musttail forward the incoming ellipsis,
 	// including arguments that have no explicit operands in the call IR.
 	b.Func.impl.AddFunctionAttr(b.Prog.ctx.CreateStringAttribute("thunk", ""))
@@ -1658,25 +1626,21 @@ func (b Builder) CallForwardVarargs(fn Expr, args ...Expr) Expr {
 //	t2 = println(t0, t1)
 //	t4 = t3()
 func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
-	dbgInstrCall("Call", fn, args)
-	var kind = fn.kind
-	if kind == vkPyFuncRef {
-		return b.pyCall(fn, args)
+	if fn.kind == vkFuncPtr || fn.kind == vkFuncDecl {
+		return b.callFunction(fn, args, b.Prog.calleeCallConv(fn))
 	}
-	var ll llvm.Type
-	var data Expr
-	var sig *types.Signature
-	var raw = fn.raw.Type
-	switch kind {
+	dbgInstrCall("Call", fn, args)
+	switch fn.kind {
+	case vkPyFuncRef:
+		return b.pyCall(fn, args)
 	case vkClosure:
-		data = b.Field(fn, 1)
-		fn = b.Field(fn, 0)
-		sig = fn.raw.Type.(*types.Signature)
-		return b.callClosure(fn, data, sig, args)
+		data := b.Field(fn, 1)
+		code := b.Field(fn, 0)
+		return b.callClosure(code, data, code.raw.Type.(*types.Signature), args)
 	case vkIfaceMethod:
-		data = b.Field(fn, 1)
+		data := b.Field(fn, 1)
 		fn = b.Field(fn, 0)
-		sig = fn.raw.Type.(*types.Signature)
+		sig := fn.raw.Type.(*types.Signature)
 		recv := types.NewParam(token.NoPos, nil, "$recv", types.Typ[types.UnsafePointer])
 		entrySig := FuncAddCtx(recv, sig)
 		ret.Type = b.Prog.retType(sig)
@@ -1687,60 +1651,61 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 			llvmParamsEx(data, args, entrySig.Params(), b),
 		)
 		return ret
-	case vkFuncPtr:
-		sig = raw.Underlying().(*types.Signature)
-		ll = b.Prog.funcDeclType(sig, CDecl).ll
-	case vkFuncDecl:
-		sig = raw.(*types.Signature)
-		ll = fn.ll
 	case vkBuiltin:
-		bi := raw.(*builtinTy)
+		bi := fn.raw.Type.(*builtinTy)
 		return b.BuiltinCall(bi.name, args...)
 	default:
-		log.Panicf("unreachable: %d(%T), %v\n", kind, raw, fn.RawType())
+		panic(fmt.Sprintf("unreachable: %d(%T), %v", fn.kind, fn.raw.Type, fn.RawType()))
 	}
+}
+
+func (b Builder) callFunction(fn Expr, args []Expr, cc llvm.CallConv) Expr {
 	var reflectCheck ReflectMethodCheck
 	if b.Pkg.Path() != "reflect" {
 		reflectCheck = b.checkReflect(fn, args)
 	} else {
 		reflectCheck = reflectMethodWrapperCheck(b.Func.Name(), fn.Name())
 	}
-	ret.Type = b.Prog.retType(sig)
-	params := llvmParamsEx(data, args, sig.Params(), b)
-	physicalParams := ll.ParamTypes()
-	for i := range params {
-		if i < len(physicalParams) {
-			source := args[i]
-			if !data.IsNil() {
-				if i == 0 {
-					source = data
-				} else {
-					source = args[i-1]
-				}
-			}
-			params[i] = b.fitLLVMValue(params[i], source.Type, physicalParams[i])
-		}
-	}
-	call := llvm.CreateCall(b.impl, ll, fn.impl, params)
-	llvmattr.ApplyAllocatorCall(b.Prog.ctx, call, fn.impl, params, b.Prog.GCRootsEnabled())
-	b.setNativeIntegerCallAttrs(call, fn, sig, params)
-	b.setNativeCallConv(call, fn)
+	ret := b.emitFunctionCall(fn, args, cc)
 	if reflectCheck.Kind&ReflectMethodByName != 0 && reflectCheck.Name == "" {
-		nameArgIndex := len(args) - 1
-		if !data.IsNil() {
-			nameArgIndex++
-		}
-		b.MarkReflectValueMethodByNameCall(call, nameArgIndex)
+		b.MarkReflectValueMethodByNameCall(ret.impl, len(args)-1)
 	}
-	ret.impl = call
 	if ret.Type != b.Prog.Void() {
-		ret.impl = b.fitLLVMResult(call, ret.Type)
-		if b.Prog.isWasm32NativeCall(fn) && b.Prog.hasWasmSlicePadding(ret.impl.Type()) {
-			ret.impl = b.Prog.clearWasmABIPadding(b.impl, ret.impl)
+		if b.Prog.isWasm32NativeCall(fn) && b.Prog.hasWasmABIPadding(ret.impl.Type()) {
+			b.Func.wasmABIResults = append(b.Func.wasmABIResults, ret.impl)
 		}
+		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
 	}
 	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
-	return
+	return ret
+}
+
+// emitFunctionCall leaves the LLVM call as the result so a native varargs
+// thunk can tail-forward it directly, without Go result conversions.
+func (b Builder) emitFunctionCall(fn Expr, args []Expr, cc llvm.CallConv) Expr {
+	dbgInstrCall("Call", fn, args)
+	sig, ll := b.Prog.callSignature(fn)
+	resultType := b.Prog.retType(sig)
+	params := llvmParams(0, args, sig.Params(), b)
+	physicalParams := ll.ParamTypes()
+	for i := range min(len(params), len(physicalParams)) {
+		params[i] = b.fitLLVMValue(params[i], args[i].Type, physicalParams[i])
+	}
+	call := llvm.CreateCall(b.impl, ll, fn.impl, params)
+	call.SetInstructionCallConv(cc)
+	llvmattr.ApplyAllocatorCall(b.Prog.ctx, call, fn.impl, params, b.Prog.GCRootsEnabled())
+	b.setNativeIntegerCallAttrs(call, fn, sig, params)
+	return Expr{call, resultType}
+}
+
+// A declaration carries its physical prototype; a native function pointer
+// carries an opaque LLVM pointer and gets its prototype from the C signature.
+func (p Program) callSignature(fn Expr) (*types.Signature, llvm.Type) {
+	sig := fn.raw.Type.Underlying().(*types.Signature)
+	if fn.kind == vkFuncPtr {
+		return sig, p.funcDeclType(sig, CDecl).ll
+	}
+	return sig, fn.ll
 }
 
 func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {

@@ -183,14 +183,18 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
-func TestWasm32SliceBoundary(t *testing.T) {
+func TestWasm32HeaderBoundary(t *testing.T) {
+	t.Run("slice", func(t *testing.T) { testWasm32HeaderBoundary(t, types.NewSlice(types.Typ[types.Byte])) })
+	t.Run("string", func(t *testing.T) { testWasm32HeaderBoundary(t, types.Typ[types.String]) })
+}
+
+func testWasm32HeaderBoundary(t *testing.T, header types.Type) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
-	slice := types.NewSlice(types.Typ[types.Byte])
 	// Include both an ordinary Go record and an array in the by-value ABI.
 	record := types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, nil, "Slices", types.NewArray(slice, 2), false),
+		types.NewField(token.NoPos, nil, "Headers", types.NewArray(header, 2), false),
 	}, nil)
 	params := types.NewTuple(types.NewParam(token.NoPos, nil, "record", record))
 	high := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32]))
@@ -209,6 +213,7 @@ func TestWasm32SliceBoundary(t *testing.T) {
 		slot := b.impl.CreateExtractValue(part, 0, "")
 		b.Return(Expr{b.impl.CreateExtractValue(slot, 1, ""), prog.Uint32()})
 		b.EndBuild()
+		b.Dispose()
 	}
 	param := observe.Param(0)
 	returnHigh(observe.MakeBody(1), param)
@@ -223,12 +228,13 @@ func TestWasm32SliceBoundary(t *testing.T) {
 	}
 	opts := llvm.NewPassBuilderOptions()
 	defer opts.Dispose()
-	if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+	// Array normalization uses a range helper. Inline it before checking the high word.
+	if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
 		t.Fatal(err)
 	}
 	for _, fn := range []Function{observe, readCall, readGlobal} {
 		if value := fn.impl.EntryBasicBlock().LastInstruction().Operand(0); !value.IsNull() {
-			t.Errorf("nested slice retained its pointer high word: %s", fn.impl)
+			t.Errorf("nested %s retained its pointer high word: %s", header, fn.impl)
 		}
 	}
 }

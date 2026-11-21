@@ -114,14 +114,14 @@ func (p Program) isStdcallType(typ types.Type) bool {
 	return ok && background == Stdcall
 }
 
-func (b Builder) setNativeCallConv(call llvm.Value, fn Expr) {
-	callConv := llvm.CCallConv
+func (p Program) calleeCallConv(fn Expr) llvm.CallConv {
 	if direct := fn.impl.IsAFunction(); !direct.IsNil() {
-		callConv = direct.FunctionCallConv()
-	} else if b.Prog.isStdcallType(fn.raw.Type) {
-		callConv = b.Prog.stdcallCallConv()
+		return direct.FunctionCallConv()
 	}
-	call.SetInstructionCallConv(callConv)
+	if p.isStdcallType(fn.raw.Type) {
+		return p.stdcallCallConv()
+	}
+	return llvm.CCallConv
 }
 
 // stdcallCallback adapts a direct Go entry to the native stdcall boundary. It

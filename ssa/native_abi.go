@@ -1,6 +1,8 @@
 package ssa
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -154,39 +156,71 @@ func (p Program) isWasm32NativeCall(fn Expr) bool {
 // instead of changing calls through arbitrary Go values.
 func (b Builder) needsNativeFuncval(fn Expr) bool {
 	prog := b.Prog
-	if prog.isWasm32NativeCall(fn) {
-		sig := fn.raw.Type.Underlying().(*types.Signature)
-		native := fn.ll
-		if fn.kind == vkFuncPtr {
-			native = prog.funcDeclType(sig, CDecl).ll
-		}
-		if native != prog.funcDeclType(sig, GoDecl).ll || prog.hasWasmSlicePadding(native.ReturnType()) {
-			return true
-		}
-	}
-	if b.Prog.nativeIntegerExt == nativeIntegerNoExt {
+	if fn.kind != vkFuncPtr && fn.kind != vkFuncDecl {
 		return false
 	}
-	switch fn.kind {
-	case vkFuncPtr:
-		sig := fn.raw.Type.Underlying().(*types.Signature)
+	wasmNative := prog.isWasm32NativeCall(fn)
+	if !wasmNative && prog.nativeIntegerExt == nativeIntegerNoExt {
+		return false
+	}
+	sig, native := prog.callSignature(fn)
+	if wasmNative && (prog.hasWasmABIPadding(native.ReturnType()) || native != prog.funcDeclType(sig, GoDecl).ll) {
+		return true
+	}
+	if fn.kind == vkFuncPtr {
 		needed := false
-		b.Prog.nativeIntegerAttrs(sig, b.Prog.funcDeclType(sig, CDecl).ll, func(int, llvm.Attribute) {
-			needed = true
-		})
+		prog.nativeIntegerAttrs(sig, native, func(int, llvm.Attribute) { needed = true })
 		return needed
-	case vkFuncDecl:
-		if direct := fn.impl.IsAFunction(); !direct.IsNil() {
-			for i := range fn.ll.ParamTypes() {
-				for _, kind := range nativeIntegerAttributeKinds {
-					if !direct.GetEnumAttributeAtIndex(i+1, kind).IsNil() {
-						return true
-					}
+	}
+	if direct := fn.impl.IsAFunction(); !direct.IsNil() {
+		for i := range fn.ll.ParamTypes() {
+			for _, kind := range nativeIntegerAttributeKinds {
+				if !direct.GetEnumAttributeAtIndex(i+1, kind).IsNil() {
+					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+// closureToNative recovers the original C entry when a native funcval is
+// passed back as a callback. An ordinary Go callback must be environment-free.
+func (b Builder) closureToNative(dst Type, fn Expr) Expr {
+	nativeSig := dst.raw.Type.Underlying().(*types.Signature)
+	goSig := fn.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
+	prog := b.Prog
+	nativeType := prog.funcDeclType(nativeSig, CDecl).ll
+	sameABI := prog.toLLVMFunc(goSig) == nativeType
+	if sameABI && !fn.impl.IsAFunction().IsNil() {
+		return Expr{fn.impl, dst}
+	}
+	code, env := b.Field(fn, 0), b.Field(fn, 1)
+	if !sameABI {
+		if code.impl.IsNull() && env.impl.IsNull() {
+			return Expr{llvm.ConstNull(dst.ll), dst}
+		}
+		if code.impl.IsAFunction().IsNil() || !env.impl.IsNull() {
+			panic(nativeCallbackABIError)
+		}
+		return b.nativeCallback(dst, Expr{code.impl, prog.FuncDecl(goSig, GoDecl)}, CDecl, "c_callback")
+	}
+	if env.impl.IsNull() {
+		return Expr{code.impl, dst}
+	}
+
+	entry := code.impl
+	captured := llvm.CreateICmp(b.impl, llvm.IntNE, env.impl, llvm.ConstNull(env.impl.Type()))
+	if prog.hasWasmABIPadding(nativeType.ReturnType()) && !HasNameValist(nativeSig) {
+		// The adapter's environment is the native pointer itself. Compare the
+		// code address before accepting it: real closures also have an environment.
+		adapter := b.nativeFuncvalAdapter(goSig, nativeSig, llvm.CCallConv, "c", nativeType)
+		isAdapter := llvm.CreateICmp(b.impl, llvm.IntEQ, entry, adapter.impl)
+		entry = llvm.CreateSelect(b.impl, isAdapter, env.impl, entry)
+		captured = b.impl.CreateAnd(captured, b.impl.CreateNot(isAdapter, ""), "")
+	}
+	b.assertRuntimeError(captured, "C callback must not capture variables")
+	return Expr{entry, dst}
 }
 
 // nativeCallback gives a known Go entry a native prototype. A C callback has
@@ -206,24 +240,7 @@ func (b Builder) nativeCallback(dst Type, fn Expr, cc CallConv, abi string) Expr
 	if wrapper == nil {
 		wrapper = b.Pkg.NewFunc(name, sig, cc)
 		wrapper.impl.SetLinkage(llvm.InternalLinkage)
-		body := wrapper.MakeBody(1)
-		args := make([]Expr, sig.Params().Len())
-		for i := range args {
-			args[i] = wrapper.Param(i)
-		}
-		result := body.Call(fn, args...)
-		switch n := sig.Results().Len(); n {
-		case 0:
-			body.Return()
-		case 1:
-			body.Return(result)
-		default:
-			results := make([]Expr, n)
-			for i := range results {
-				results[i] = body.Extract(result, i)
-			}
-			body.Return(results...)
-		}
+		wrapper.buildAdapterBody(fn, direct.FunctionCallConv())
 	}
 	return Expr{wrapper.impl, dst}
 }
@@ -246,37 +263,81 @@ func (b Builder) nativeFuncval(dst Type, fn Expr, callConv llvm.CallConv, abi st
 	if HasNameValist(nativeSig) {
 		panic("C variadic functions require a native function pointer; use //llgo:cdecl")
 	}
-	wrapperName := b.Pkg.Path() + ".__llgo_" + abi + "_funcval$" + b.Prog.abi.FuncName(goSig)
-	wrapper := b.Pkg.FuncOf(wrapperName)
-	if wrapper == nil {
-		env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
-		wrapper = b.Pkg.NewEnvFunc(wrapperName, goSig, GoDecl, env, false)
-		wrapper.impl.SetLinkage(llvm.InternalLinkage)
-		body := wrapper.MakeBody(1)
-		args := make([]Expr, goSig.Params().Len())
-		for i := range args {
-			args[i] = wrapper.Param(i)
-		}
-		native := Expr{wrapper.Env().impl, b.Prog.rawType(nativeSig)}
-		result := body.Call(native, args...)
-		if callConv != llvm.CCallConv {
-			result.impl.SetInstructionCallConv(callConv)
-		}
-		switch n := goSig.Results().Len(); n {
-		case 0:
-			body.Return()
-		case 1:
-			body.Return(result)
-		default:
-			results := make([]Expr, n)
-			for i := range results {
-				results[i] = body.Extract(result, i)
-			}
-			body.Return(results...)
+	var sharedPrototype llvm.Type
+	if b.Prog.usesWideGoStorage() {
+		_, prototype := b.Prog.callSignature(fn)
+		if b.Prog.hasWasmABIPadding(prototype.ReturnType()) && prototype == b.Prog.toLLVMFunc(goSig) {
+			sharedPrototype = prototype
 		}
 	}
+	wrapper := b.nativeFuncvalAdapter(goSig, nativeSig, callConv, abi, sharedPrototype)
 
 	isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, fn.impl, llvm.ConstNull(fn.impl.Type()))
 	code := llvm.CreateSelect(b.impl, isNil, llvm.ConstNull(wrapper.impl.Type()), wrapper.impl)
 	return b.aggregateValue(dst, code, fn.impl)
+}
+
+// A padded result needs a Go entry even when the two prototypes match. Give
+// that entry one address across packages so closureToNative can recognize it.
+func (b Builder) nativeFuncvalAdapter(goSig, nativeSig *types.Signature, callConv llvm.CallConv, abi string, sharedPrototype llvm.Type) Function {
+	prefix := "__llgo_" + abi + "_funcval$"
+	var name string
+	if !sharedPrototype.IsNil() {
+		name = prefix + b.Prog.wasmNativeFuncvalKey(goSig, nativeSig, sharedPrototype)
+	} else {
+		name = b.Pkg.Path() + "." + prefix + b.Prog.abi.FuncName(goSig)
+	}
+	if wrapper := b.Pkg.FuncOf(name); wrapper != nil {
+		return wrapper
+	}
+	env := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
+	wrapper := b.Pkg.NewEnvFunc(name, goSig, GoDecl, env, false)
+	if !sharedPrototype.IsNil() {
+		b.Pkg.setODRLinkage(wrapper.impl, llvm.LinkOnceODRLinkage)
+		wrapper.impl.SetVisibility(llvm.HiddenVisibility)
+	} else {
+		wrapper.impl.SetLinkage(llvm.InternalLinkage)
+	}
+	native := Expr{wrapper.Env().impl, b.Prog.rawType(nativeSig)}
+	wrapper.buildAdapterBody(native, callConv)
+	return wrapper
+}
+
+// The shared adapter has the same physical Go and C prototype. Its linkage
+// identity must also describe header normalization, Go storage and C integer
+// extensions without depending on how different packages spell the types.
+func (p Program) wasmNativeFuncvalKey(goSig, nativeSig *types.Signature, prototype llvm.Type) string {
+	var shape strings.Builder
+	p.appendWasmLLVMTypeShape(&shape, prototype)
+	shape.WriteByte('/')
+	p.appendWasmTupleRootShape(&shape, goSig.Params())
+	shape.WriteByte('/')
+	p.appendWasmTupleRootShape(&shape, goSig.Results())
+	p.appendNativeIntegerAttrShape(&shape, nativeSig, prototype)
+	digest := sha256.Sum256([]byte(shape.String()))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+// buildAdapterBody forwards the wrapper's parameters to the Go or native callee.
+func (wrapper Function) buildAdapterBody(fn Expr, callConv llvm.CallConv) {
+	body := wrapper.MakeBody(1)
+	defer body.Dispose()
+	args := make([]Expr, len(wrapper.params))
+	for i := range args {
+		args[i] = wrapper.Param(i)
+	}
+	result := body.callFunction(fn, args, callConv)
+	switch n := wrapper.raw.Type.(*types.Signature).Results().Len(); n {
+	case 0:
+		body.Return()
+	case 1:
+		body.Return(result)
+	default:
+		results := make([]Expr, n)
+		for i := range results {
+			results[i] = body.Extract(result, i)
+		}
+		body.Return(results...)
+	}
+	body.EndBuild()
 }

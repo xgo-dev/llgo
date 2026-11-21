@@ -20,7 +20,7 @@ collection, arena ownership, and the reclamation limits of blocking C calls.
   - On Memory32, a typed Go load of a string or slice clears the high 32 bits of the data-pointer slot in the loaded value. Copying slice elements to a distinct destination also clears those bits, including for nested headers. The original bytes remain observable through `unsafe`.
   - Differences belong in address lowering, Go/C boundaries, libffi, memory accesses, and host glue; ordinary Go source does not require separate forks for these differences.
   - C types use `github.com/goplus/lib/c`; Go and C `int` need not have the same width. The compiler and boundary adapters perform the required checked width conversions.
-  - Generated C headers declare exported Go `int` and `uint` as `int64_t` and `uint64_t`. `GoSlice` uses a native C pointer and two `int64_t` fields, with size 24 and length/capacity at offsets 8 and 16. On Memory32, LLGo clears the high half of each incoming by-value Go slice's pointer slot, including slices nested in aggregates.
+  - Generated C headers declare exported Go `int` and `uint` as `int64_t` and `uint64_t`. `GoSlice` uses a native C pointer and two `int64_t` fields, with size 24 and length/capacity at offsets 8 and 16. On Memory32, LLGo clears the high half of the data-pointer slot for strings and slices passed by value from C, including headers nested in aggregates.
 
 - Host ABI:
 
@@ -157,7 +157,7 @@ R1 至 R3（包括 R2.1）已经合并，作为本提案已交付的基础继续
   - 在 Memory32 上，Go 按类型读取字符串或切片时，会将读取结果中数据指针槽的高 32 位清零。将切片元素复制到其他位置时，目标中的头部也按此规则处理，包括嵌套的字符串和切片。通过 `unsafe` 仍可读取源位置的原始字节。
   - 差异集中在地址 lowering、Go/C 边界、libffi、内存访问和 host glue，无须为这些差异分叉普通 Go 源码。
   - C 类型使用 `github.com/goplus/lib/c`；Go 与 C 的 `int` 不必同宽。编译器和边界适配器执行必要的带检查宽度转换。
-  - 生成的 C 头文件用 `int64_t` 和 `uint64_t` 声明导出的 Go `int` 和 `uint`。`GoSlice` 包含一个原生 C 指针和两个 `int64_t` 字段，大小为 24 字节，长度和容量的偏移分别为 8 和 16。在 Memory32 上，LLGo 会清零按值进入 Go 的 slice 指针槽高半部，包括嵌套在复合类型中的 slice。
+  - 生成的 C 头文件用 `int64_t` 和 `uint64_t` 声明导出的 Go `int` 和 `uint`。`GoSlice` 包含一个原生 C 指针和两个 `int64_t` 字段，大小为 24 字节，长度和容量的偏移分别为 8 和 16。在 Memory32 上，LLGo 会清零从 C 按值传入的字符串和切片的数据指针槽高半部，包括嵌套在复合类型中的头部。
 
 - Host ABI：
 
