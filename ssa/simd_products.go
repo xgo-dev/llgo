@@ -107,17 +107,31 @@ func (b Builder) simdIntegerProduct(op SIMDOp, result Type, x, y Expr) Expr {
 }
 
 func (b Builder) simdSumOf8AbsDiff(result Type, x, y Expr) Expr {
-	// SSE2 is guaranteed on amd64. LLVM combines neighboring 128-bit SADs
-	// into a YMM or ZMM instruction when the physical body permits it.
-	bytes := llvm.VectorType(x.ll.ElementType(), 16)
-	pair := llvm.VectorType(result.ll.ElementType(), 2)
+	// Select the widest guaranteed SAD even without IR optimization. Smaller
+	// chunks remain legal in the baseline body and can combine in FMV clones.
+	target := b.Prog.Target()
+	level := target.goArchitectureSetting(target.GOAMD64)
+	n := x.ll.VectorSize()
+	width, name := 16, "llvm.x86.sse2.psad.bw"
+	switch {
+	case n == 64 && level == "v4":
+		width, name = 64, "llvm.x86.avx512.psad.bw.512"
+	case n >= 32 && (level == "v3" || level == "v4"):
+		width, name = 32, "llvm.x86.avx2.psad.bw"
+	}
+	id := llvm.LookupIntrinsicID(name)
+	if width == n {
+		return Expr{b.impl.CreateIntrinsic(result.ll, id, []llvm.Value{x.impl, y.impl}, ""), result}
+	}
+	bytes := llvm.VectorType(x.ll.ElementType(), width)
+	pair := llvm.VectorType(result.ll.ElementType(), width/8)
 	sum := llvm.Undef(result.ll)
-	for i := 0; i < x.ll.VectorSize(); i += 16 {
+	for i := 0; i < n; i += width {
 		index := llvm.ConstInt(b.Prog.ctx.Int64Type(), uint64(i), false)
 		extract := func(v llvm.Value) llvm.Value {
 			return b.impl.CreateIntrinsic(bytes, llvm.LookupIntrinsicID("llvm.vector.extract"), []llvm.Value{v, index}, "")
 		}
-		sad := b.impl.CreateIntrinsic(pair, llvm.LookupIntrinsicID("llvm.x86.sse2.psad.bw"), []llvm.Value{extract(x.impl), extract(y.impl)}, "")
+		sad := b.impl.CreateIntrinsic(pair, id, []llvm.Value{extract(x.impl), extract(y.impl)}, "")
 		offset := llvm.ConstInt(index.Type(), uint64(i/8), false)
 		sum = b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.vector.insert"), []llvm.Value{sum, sad, offset}, "")
 	}

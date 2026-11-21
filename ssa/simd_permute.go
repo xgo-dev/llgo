@@ -93,6 +93,13 @@ func (b Builder) simdPack(op SIMDOp, x, mask Expr) Expr {
 		v := b.impl.CreateIntrinsic(mask.ll, llvm.LookupIntrinsicID("llvm.experimental.vector.compress"), []llvm.Value{bits, active, llvm.ConstNull(mask.ll)}, "")
 		return Expr{b.impl.CreateBitCast(v, x.ll, ""), x.Type}
 	}
+	// AVX512F/VL can expand 32- and 64-bit lanes directly from a register.
+	// The backend may also fold an input load into the same instruction.
+	target := b.Prog.Target()
+	if target.goArchitectureSetting(target.GOAMD64) == "v4" && b.Prog.td.TypeSizeInBits(x.ll.ElementType()) >= 32 {
+		v := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.x86.avx512.mask.expand"), []llvm.Value{x.impl, zero, active}, "")
+		return Expr{v, x.Type}
+	}
 	// Expand consumes consecutive elements of the input value. Use a private
 	// copy so a computed vector and a vector loaded from memory behave alike.
 	slot := llvm.CreateAlloca(b.Func.entryAllocaBuilder(), x.ll)
