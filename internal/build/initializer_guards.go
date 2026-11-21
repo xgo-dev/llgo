@@ -40,6 +40,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
 	var standardFiles []cl.OptionalInitializer
+	var darwinOS *ssa.Package
 	for _, pkg := range ctx.pkgByID {
 		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
 			continue
@@ -47,6 +48,10 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		source := ctx.progSSA.Package(pkg.Types)
 		if source == nil {
 			continue
+		}
+		if ctx.nativeClosedProgram && conf.Goos == "darwin" && pkg.PkgPath == "os" &&
+			source.Func(darwinExecutableCwdInitializer) != nil {
+			darwinOS = source
 		}
 		var groups []cl.OptionalInitializer
 		switch {
@@ -89,7 +94,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if wasi {
 		wasiSyscall = wasiSyscallPackage(ctx.progSSA)
 	}
-	if len(candidates) == 0 && wasiSyscall == nil {
+	if len(candidates) == 0 && wasiSyscall == nil && darwinOS == nil {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -198,6 +203,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	}
 	if wasiSyscall != nil {
 		configureWASISyscallState(ctx, wasiSyscall, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+	}
+	if darwinOS != nil && !blankImports["os"] {
+		configureDarwinExecutableCwd(ctx, darwinOS, roots, isSymbolRoot)
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int
 	for global, group := range unused {

@@ -3890,6 +3890,10 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		}
 	}
 
+	if pkgPath == "os" && !ret.Module().NamedGlobal(darwinExecutableCwdGuard).IsNil() {
+		cl.DefineInitializerGuard(ret, darwinExecutableCwdGuard, true)
+	}
+
 	aPkg.LPkg = ret
 	if !aPkg.CacheHit {
 		aPkg.Meta = ret.Meta
