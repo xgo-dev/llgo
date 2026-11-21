@@ -25,41 +25,19 @@ func (r *MemProfileRecord) Stack() []uintptr {
 	return r.Stack0[:]
 }
 
-type memProfileBucket struct {
-	size    uintptr
-	objects memProfileCounter
-}
+const (
+	memProfileMinSizeShift = 4
+	memProfileMaxSizeShift = 30
+	memProfileMaxSizeClass = uintptr(1) << memProfileMaxSizeShift
+)
 
-const memProfileMaxSizeClass = uintptr(1) << 30
+// Bucket i counts allocations rounded up to 2^(memProfileMinSizeShift+i).
+// The last bucket also counts larger allocations.
+// Keeping sizes out of this array lets its counters start in zero-fill storage.
+var memProfileBuckets [memProfileMaxSizeShift - memProfileMinSizeShift + 1]memProfileCounter
 
-var memProfileBuckets = [...]memProfileBucket{
-	{size: 16},
-	{size: 32},
-	{size: 64},
-	{size: 128},
-	{size: 256},
-	{size: 512},
-	{size: 1024},
-	{size: 2048},
-	{size: 4096},
-	{size: 8192},
-	{size: 16384},
-	{size: 32768},
-	{size: 65536},
-	{size: 131072},
-	{size: 262144},
-	{size: 524288},
-	{size: 1048576},
-	{size: 2097152},
-	{size: 4194304},
-	{size: 8388608},
-	{size: 16777216},
-	{size: 33554432},
-	{size: 67108864},
-	{size: 134217728},
-	{size: 268435456},
-	{size: 536870912},
-	{size: memProfileMaxSizeClass},
+func memProfileBucketSize(index int) uintptr {
+	return uintptr(1) << uint(memProfileMinSizeShift+index)
 }
 
 // Keep class selection and atomic updates out of allocator wrappers to limit
@@ -68,18 +46,18 @@ var memProfileBuckets = [...]memProfileBucket{
 //go:noinline
 func recordMemProfileAlloc(size uintptr) {
 	if size != 0 {
-		memProfileAddObject(&memProfileBuckets[memProfileBucketIndex(size)].objects)
+		memProfileAddObject(&memProfileBuckets[memProfileBucketIndex(size)])
 	}
 }
 
 func memProfileBucketIndex(size uintptr) int {
-	if size <= 16 {
+	if size <= 1<<memProfileMinSizeShift {
 		return 0
 	}
 	if size > memProfileMaxSizeClass {
 		return len(memProfileBuckets) - 1
 	}
-	x := uint64(size-1) >> 4
+	x := uint64(size-1) >> memProfileMinSizeShift
 	index := 1
 	if x>>16 != 0 {
 		x >>= 16
@@ -105,7 +83,7 @@ func memProfileBucketIndex(size uintptr) int {
 
 // memProfileSizeClass exposes the bucket mapping to the native profile tests.
 func memProfileSizeClass(size uintptr) uintptr {
-	return memProfileBuckets[memProfileBucketIndex(size)].size
+	return memProfileBucketSize(memProfileBucketIndex(size))
 }
 
 // MemProfileMallocs returns recorded managed-allocation events across all
@@ -114,14 +92,14 @@ func memProfileSizeClass(size uintptr) uintptr {
 func MemProfileMallocs() uint64 {
 	var total uint64
 	for i := range memProfileBuckets {
-		total += memProfileLoadObjects(&memProfileBuckets[i].objects)
+		total += memProfileLoadObjects(&memProfileBuckets[i])
 	}
 	return total
 }
 
 func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	for i := range memProfileBuckets {
-		if memProfileLoadObjects(&memProfileBuckets[i].objects) != 0 {
+		if memProfileLoadObjects(&memProfileBuckets[i]) != 0 {
 			n++
 		}
 	}
@@ -131,13 +109,13 @@ func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
 	j := 0
 	for i := range memProfileBuckets {
 		b := &memProfileBuckets[i]
-		objects := memProfileLoadObjects(&b.objects)
+		objects := memProfileLoadObjects(b)
 		if objects == 0 {
 			continue
 		}
 		p[j] = MemProfileRecord{
-			ObjectSize:   int64(b.size),
-			AllocBytes:   int64(uint64(b.size) * uint64(objects)),
+			ObjectSize:   int64(memProfileBucketSize(i)),
+			AllocBytes:   int64(uint64(memProfileBucketSize(i)) * uint64(objects)),
 			AllocObjects: int64(objects),
 		}
 		j++
