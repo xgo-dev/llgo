@@ -17,8 +17,7 @@ func TestWASIGCWaitsSuspendGoAcrossMutexReacquisition(t *testing.T) {
 	}
 	bin := filepath.Join(t.TempDir(), "wasi-gc-wait")
 	args := []string{"-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
-		"testdata/wasm-wasi-gc-wait/main.c",
-		"../../runtime/internal/runtime/_wrap/wasi_gc_world.c", "-o", bin}
+		"testdata/wasm-wasi-gc-wait/main.c", "-o", bin}
 	if out, err := exec.Command(clang, args...).CombinedOutput(); err != nil {
 		t.Fatalf("compile wait regression: %v\n%s", err, out)
 	}
