@@ -110,6 +110,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     standard_file_marker = "llgo: omit unused standard file initializers"
     stdout_marker = "llgo: specialize closed literal stdout"
     descriptor_writer_marker = "llgo: use the WASI stdout descriptor writer"
+    readonly_env_marker = "llgo: specialize WASI read-only environment"
     linux_native = target == "native" and platform.system() == "Linux"
     linux_amd64 = linux_native and platform.machine() == "x86_64"
     mac_arm64 = target == "native" and platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -139,6 +140,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                          stdout_marker, True))
         fixtures.append(("wasm-literal-stdout-and-file", "console and file writes ok",
                          stdout_marker, True))
+        fixtures.append(("wasm-environment-readonly", "read-only environment lookup ok",
+                         readonly_env_marker, True))
+        fixtures.append(("wasm-environment-mutable", "mutable environment lookup ok",
+                         readonly_env_marker, False))
     if target.startswith("emscripten"):
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
@@ -162,6 +167,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             if init_marker not in log:
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
         run = [*runner]
+        if fixture.startswith("wasm-environment-"):
+            run.append("--env=LLGO_WASI_TEST_ENV=old=value")
         if target == "wasi" and fixture in ("wasm-literal-stdout", "wasm-literal-stdout-and-file", "wasm-standard-files"):
             if (descriptor_writer_marker in log) != (fixture == "wasm-literal-stdout"):
                 raise RuntimeError(f"{target} {fixture}: incorrect descriptor writer policy\n{log}")

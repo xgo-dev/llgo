@@ -76,7 +76,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	if len(candidates) == 0 {
+	var environment *ssa.Package
+	if wasi {
+		environment = wasiEnvironmentPackage(ctx.progSSA)
+	}
+	if len(candidates) == 0 && environment == nil {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -134,14 +138,18 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	if len(roots) == 0 || len(candidates) == 0 {
+	if len(roots) == 0 {
 		return
 	}
-	unused, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
+	unused, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
+	if environment != nil {
+		configureWASIEnvironment(ctx, environment, reachable, isSymbolRoot)
+	}
 
 	if plan := ctx.wasiStdout; plan != nil && len(wasiStandardFiles) != 0 {
 		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
-			return unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
+			initializers, result := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
+			return initializers, result.CallGraph
 		}
 		// Reflection may keep file methods without an edge in the call graph.
 		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(wasiPollWriteSymbol)
@@ -233,7 +241,7 @@ func initializerStoresCallback(value ssa.Value) bool {
 }
 
 func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
-	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer, wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
+	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer, wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *rta.Result) {
 	if len(omitted) != 0 {
 		restore := omitInitializerEdges(omitted)
 		defer restore()
@@ -264,7 +272,7 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 		_, slice := group.Store.Val.(*ssa.Slice)
 		return slice && observedData[global.Pkg]
 	})
-	return unused, reachable.CallGraph
+	return unused, reachable
 }
 
 // The map and slice recognizers return disjoint ranges. Put them back in
