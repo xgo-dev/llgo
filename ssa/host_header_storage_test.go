@@ -227,7 +227,7 @@ func TestWasmHeaderSnapshotSourceAndStorage(t *testing.T) {
 	pkg := prog.NewPackage("p", "example.com/p")
 	stringSize := prog.SizeOf(prog.String())
 	threshold := int64(llabi.MinAggregateCopySize / stringSize)
-	lengths := []int64{8, 9, threshold - 1, 9, threshold}
+	lengths := []int64{1, 2, 8, 9, threshold - 1, 9, threshold}
 	params := make([]*types.Var, len(lengths))
 	for i, length := range lengths {
 		array := types.NewArray(types.Typ[types.String], length)
@@ -244,8 +244,8 @@ func TestWasmHeaderSnapshotSourceAndStorage(t *testing.T) {
 		if source.IsALoadInst().IsNil() || source.Operand(0) != src.impl || !source.IsVolatile() {
 			t.Fatalf("[%d]string lost its volatile source load:\n%s", n, fn.impl.String())
 		}
-		if n == 8 {
-			continue // Inlined headers have no scratch storage.
+		if n == 1 {
+			continue // A single string stays in SSA; larger arrays need copy lowering.
 		}
 		slot := value.impl.Operand(0)
 		if value.impl.IsVolatile() {

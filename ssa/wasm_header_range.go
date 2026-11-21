@@ -7,10 +7,15 @@ import (
 
 const maxInlineWasmHeaders = 8
 
-// Large values must remain eligible for aggregate-copy lowering even when
+// Values handled by aggregate-copy lowering must stay in memory even when
 // they contain few headers. Repacking them in SSA would scalarize the copy.
 func (p Program) needsWasmHeaderStorage(typ llvm.Type, count int) bool {
-	return count != 0 && (count > maxInlineWasmHeaders || p.td.TypeAllocSize(typ) >= llabi.MinAggregateCopySize)
+	if count == 0 {
+		return false
+	}
+	size := p.td.TypeAllocSize(typ)
+	return count > maxInlineWasmHeaders || size >= llabi.MinAggregateCopySize ||
+		typ.TypeKind() == llvm.ArrayTypeKind && llabi.ShouldLowerArrayCopy(typ.ArrayLength(), size, p.td.PointerSize())
 }
 
 // clearWasmHeaderRange clears only the padding in a copied range. A source

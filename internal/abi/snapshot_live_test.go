@@ -22,8 +22,13 @@ write:
 		name, prefix, tail          string
 		volatileSource, volatileDst bool
 		forward                     bool
+		stack, shared               bool
 	}{
 		{name: "checked destination", tail: checked, forward: true},
+		{name: "private stack", stack: true, tail: checked, forward: true},
+		{name: "volatile stack", stack: true, volatileSource: true, tail: checked},
+		{name: "delayed stack", stack: true, tail: "call void @mutate(ptr %src)\n" + checked},
+		{name: "shared stack", stack: true, shared: true, tail: "store %Headers zeroinitializer, ptr %slot\n" + checked},
 		{name: "unused branch", forward: true, tail: `
   br i1 %condition, label %write, label %exit
 write:
@@ -67,22 +72,30 @@ exit:
 			// The destination is deliberately defined after the original load.
 			storeIR := "%dst = getelementptr i8, ptr %base, i32 8\n" +
 				"store " + dstVolatile + " %Headers %value, ptr %dst, align 1"
+			allocation := "call ptr @\"" + runtimeAllocU + "\"(i64 4032)"
+			if tc.stack {
+				allocation = "alloca %Headers, align 8"
+			}
 			mod := parseAggregateIR(t, strings.NewReplacer(
 				"$alloc", runtimeAllocU, "$prefix", tc.prefix, "$volatile", sourceVolatile,
+				"$storage", allocation,
 				"$tail", strings.ReplaceAll(tc.tail, "$write", storeIR),
 			).Replace(`
-%Headers = type { [510 x i64], { ptr, i32 }, i64 }
+%Cell = type { [250 x i64], { ptr, i32 }, i64 }
+%Headers = type [2 x %Cell]
 declare ptr @"$alloc"(i64)
 declare void @mutate(ptr)
 declare void @panic()
 define void @clear_headers(ptr %slot) {
-  %high = getelementptr %Headers, ptr %slot, i32 0, i32 1, i32 1
+  %high = getelementptr %Headers, ptr %slot, i32 0, i32 0, i32 1, i32 1
   store i32 0, ptr %high, align 1
+  %second = getelementptr %Headers, ptr %slot, i32 0, i32 1, i32 1, i32 1
+  store i32 0, ptr %second, align 1
   ret void
 }
 define void @copy(ptr %src, ptr %base, ptr %root, i1 %condition) {
 entry:
-  %slot = call ptr @"$alloc"(i64 4096)
+  %slot = $storage
   $prefix
   %original = load $volatile %Headers, ptr %src, align 1
   store %Headers %original, ptr %slot, align 1
@@ -105,6 +118,9 @@ entry:
 			allocs, copies := 0, 0
 			for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 				for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if tc.stack && !inst.IsAAllocaInst().IsNil() && inst.Name() == "slot" {
+						slot = inst
+					}
 					if inst.IsACallInst().IsNil() {
 						continue
 					}
@@ -134,10 +150,19 @@ entry:
 					clear.Operand(0) != write.Operand(0) || llvm.NextInstruction(write) != clear {
 					t.Fatalf("copy and clear must follow the destination check:\n%s", fn.String())
 				}
-			} else if allocs != 1 || copies != 2 || read.Operand(0) != slot || clear.Operand(0) != slot ||
-				write.Operand(1) != slot || (read.Operand(3).ZExtValue() != 0) != tc.volatileSource ||
-				(write.Operand(3).ZExtValue() != 0) != tc.volatileDst {
-				t.Fatalf("unsafe forwarding must retain one immutable snapshot:\n%s", fn.String())
+			} else {
+				wantAllocs, wantCopies := 1, 2
+				if tc.stack {
+					wantAllocs = 0
+				}
+				if tc.shared {
+					wantCopies = 3 // Capture the value before mutable scratch is overwritten.
+				}
+				if allocs != wantAllocs || copies != wantCopies || read.Operand(0) != slot || clear.Operand(0) != slot ||
+					(write.Operand(1) == slot) == tc.shared || (read.Operand(3).ZExtValue() != 0) != tc.volatileSource ||
+					(write.Operand(3).ZExtValue() != 0) != tc.volatileDst {
+					t.Fatalf("unsafe forwarding must retain one immutable snapshot:\n%s", fn.String())
+				}
 			}
 		})
 	}
