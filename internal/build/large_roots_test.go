@@ -87,21 +87,21 @@ func TestLowerMainCExportModuleCopies(t *testing.T) {
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
 	for _, tc := range []struct {
-		name, goos, goarch string
-		target             *llssa.Target
+		name   string
+		target *llssa.Target
+		reuse  bool
 	}{
 		{
 			name:   "wasm",
-			goos:   "js",
-			goarch: "wasm",
+			reuse:  true,
 			target: &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
 		},
 		{
 			name:   "native",
-			goos:   "linux",
-			goarch: "amd64",
+			reuse:  true,
 			target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"},
 		},
+		{name: "native-copy", target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := llssa.NewProgram(tc.target)
@@ -112,8 +112,8 @@ func TestLowerMainCExportModuleCopies(t *testing.T) {
 			defineCExportWrappers(pkg, exports, nil)
 			ctx := &context{
 				prog:         prog,
-				buildConf:    &Config{Goos: tc.goos, Goarch: tc.goarch},
-				cTransformer: cabi.NewTransformer(prog, tc.target.Spec().Triple, "", true),
+				buildConf:    &Config{Goos: tc.target.GOOS, Goarch: tc.target.GOARCH},
+				cTransformer: cabi.NewTransformer(prog, tc.target.Spec().Triple, "", tc.reuse),
 			}
 			if changed, err := lowerMainCExportModule(ctx, pkg, nil); err != nil || changed {
 				t.Fatalf("empty C export module lowering = (%t, %v), want (false, nil)", changed, err)
@@ -125,13 +125,43 @@ func TestLowerMainCExportModuleCopies(t *testing.T) {
 			if !changed {
 				t.Fatal("C export module skipped lowering")
 			}
-			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+			mod := pkg.Module()
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			body := pkg.Module().NamedFunction("large_export").String()
-			if strings.Contains(body, "load [8192 x i8]") || strings.Contains(body, "store [8192 x i8]") ||
-				!strings.Contains(body, "@llvm.mem") {
-				t.Fatalf("C export wrapper retained a large aggregate copy:\n%s", body)
+			// Reusing the parameter home leaves its old alloca and load available
+			// to debug info until LLVM cleans up unused instructions.
+			opts := llvm.NewPassBuilderOptions()
+			defer opts.Dispose()
+			if err := mod.RunPasses("function(dce)", prog.TargetMachine(), opts); err != nil {
+				t.Fatal(err)
+			}
+			wrapper := mod.NamedFunction("large_export")
+			body := wrapper.String()
+			if strings.Contains(body, "load [8192 x i8]") || strings.Contains(body, "store [8192 x i8]") {
+				t.Fatalf("wrapper retained a whole-array load or store:\n%s", body)
+			}
+			impl := mod.NamedFunction("large.impl")
+			use := impl.FirstUse()
+			if use.IsNil() || !use.NextUse().IsNil() {
+				t.Fatalf("expected one call to the implementation:\n%s", body)
+			}
+			call := use.User()
+			byval := llvm.AttributeKindID("byval")
+			if call.IsACallInst().IsNil() || call.CalledValue() != impl || call.InstructionParent().Parent() != wrapper ||
+				wrapper.GetEnumAttributeAtIndex(1, byval).IsNil() || call.GetCallSiteEnumAttribute(1, byval).IsNil() {
+				t.Fatalf("wrapper must call the implementation by value:\n%s", body)
+			}
+			param := wrapper.Param(0)
+			if !tc.reuse {
+				if call.Operand(0) == param || !strings.Contains(body, "@llvm.memcpy.") || !strings.Contains(body, "i64 8192, i1 false") {
+					t.Fatalf("wrapper must copy the full array to separate storage:\n%s", body)
+				}
+				return
+			}
+			if call.Operand(0) != param || !param.FirstUse().NextUse().IsNil() ||
+				strings.Contains(body, "alloca") || strings.Contains(body, "@llvm.mem") {
+				t.Fatalf("wrapper must forward the incoming byval argument directly:\n%s", body)
 			}
 		})
 	}

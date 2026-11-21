@@ -626,6 +626,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// skip
 			continue
 		case AttrPointer:
+			byval := !nfn.GetEnumAttributeAtIndex(index+1, llvm.AttributeKindID("byval")).IsNil()
 			// void @fn(%typ %0)
 			// %1 = alloca %typ, align 8
 			// call void @llvm.memset(ptr %1, i8 0, i64 36, i1 false)
@@ -643,7 +644,12 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				if ti.ByValAlign != 0 {
 					storageAlign = ti.ByValAlign
 				}
-				p.reuseParamHome(fn.Param(i), params[index], nfn.EntryBasicBlock(), ti.Align, storageAlign)
+				init := p.reuseParamHome(fn.Param(i), params[index], nfn.EntryBasicBlock(), ti.Align, storageAlign)
+				// A private byval slot already contains the entry value. Writing
+				// it back after a call can scalarize the entire aggregate.
+				if byval && !init.IsNil() && !init.IsVolatile() && init.Ordering() == llvm.AtomicOrderingNotAtomic {
+					init.EraseFromParentAsInstruction()
+				}
 			}
 		case AttrWidthType:
 			storageType := ti.Type1
@@ -968,15 +974,15 @@ func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder
 
 // reuseParamHome replaces at most one local copy of param with storage. The
 // incoming ABI storage can stand in for one parameter home, but independent
-// copies must remain distinct objects.
-func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.BasicBlock, naturalAlign, storageAlign int) {
+// copies must remain distinct objects. Return the matching initializing store.
+func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.BasicBlock, naturalAlign, storageAlign int) llvm.Value {
 	// Debug declarations must keep referring to the authoritative aggregate
 	// storage after assignments. Replacing it with an indirect ABI parameter
 	// can make a debugger apply an extra dereference at O0. Optimized debug
 	// information uses value tracking and must not disable this optimization
 	// merely because native builds retain DWARF by default.
 	if !p.prog.DebugInfoOptimized() && !entry.Parent().Subprogram().IsNil() {
-		return
+		return llvm.Value{}
 	}
 	seen := make(map[llvm.Value]bool)
 	for instr := entry.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
@@ -989,30 +995,41 @@ func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.Basic
 			continue
 		}
 		seen[alloc] = true
-		if canReuseParamHome(alloc, store, entry, param.Type(), naturalAlign, storageAlign) {
-			replaceParamHomeUses(alloc, storage, store)
-			return
+		users := initializedParamHomeUsers(alloc, store, entry, param.Type(), naturalAlign, storageAlign)
+		if len(users) == 0 {
+			continue
 		}
+		for _, user := range users {
+			for i, n := 0, user.OperandsCount(); i < n; i++ {
+				if user.Operand(i) == alloc {
+					user.SetOperand(i, storage)
+				}
+			}
+		}
+		return store
 	}
+	return llvm.Value{}
 }
 
-func canReuseParamHome(alloc, initStore llvm.Value, entry llvm.BasicBlock, paramType llvm.Type, naturalAlign, storageAlign int) bool {
+// initializedParamHomeUsers returns uses to redirect once the alloca starts
+// holding the parameter. A proven home always includes its initializing store.
+func initializedParamHomeUsers(alloc, initStore llvm.Value, entry llvm.BasicBlock, paramType llvm.Type, naturalAlign, storageAlign int) []llvm.Value {
 	if alloc.InstructionParent() != entry || initStore.InstructionParent() != entry {
-		return false
+		return nil
 	}
 	if alloc.AllocatedType() != paramType {
-		return false
+		return nil
 	}
 	count := alloc.Operand(0).IsAConstantInt()
 	if count.IsNil() || count.ZExtValue() != 1 {
-		return false
+		return nil
 	}
 	allocAlign := alloc.Alignment()
 	if allocAlign == 0 {
 		allocAlign = naturalAlign
 	}
 	if storageAlign < allocAlign {
-		return false
+		return nil
 	}
 
 	// The initialization in the entry block dominates every later block. In
@@ -1020,49 +1037,27 @@ func canReuseParamHome(alloc, initStore llvm.Value, entry llvm.BasicBlock, param
 	// pointer that would keep referring to the old object nor observes the
 	// parameter value that begins at initStore.
 	prefix := make(map[llvm.Value]bool)
-	foundInit := false
-	for instr := llvm.NextInstruction(alloc); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
-		if instr == initStore {
-			foundInit = true
-			break
+	for instr := llvm.NextInstruction(alloc); instr != initStore; instr = llvm.NextInstruction(instr) {
+		if instr.IsNil() {
+			return nil
 		}
-		prefix[instr] = true
-	}
-	if !foundInit {
-		return false
-	}
-	for use := alloc.FirstUse(); !use.IsNil(); use = use.NextUse() {
-		user := use.User()
-		if prefix[user] && !isDirectMemset(user, alloc) {
-			return false
-		}
-	}
-	return true
-}
-
-func isDirectMemset(instr, ptr llvm.Value) bool {
-	call := instr.IsACallInst()
-	return !call.IsNil() && call.CalledValue().IntrinsicID() == llvm.LookupIntrinsicID("llvm.memset") && call.Operand(0) == ptr
-}
-
-func replaceParamHomeUses(alloc, storage, initStore llvm.Value) {
-	prefix := make(map[llvm.Value]bool)
-	for instr := llvm.NextInstruction(alloc); !instr.IsNil() && instr != initStore; instr = llvm.NextInstruction(instr) {
 		prefix[instr] = true
 	}
 	var users []llvm.Value
 	for use := alloc.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		user := use.User()
 		if prefix[user] {
+			if !isDirectMemset(user, alloc) {
+				return nil
+			}
 			continue
 		}
 		users = append(users, user)
 	}
-	for _, user := range users {
-		for i, n := 0, user.OperandsCount(); i < n; i++ {
-			if user.Operand(i) == alloc {
-				user.SetOperand(i, storage)
-			}
-		}
-	}
+	return users
+}
+
+func isDirectMemset(instr, ptr llvm.Value) bool {
+	call := instr.IsACallInst()
+	return !call.IsNil() && call.CalledValue().IntrinsicID() == llvm.LookupIntrinsicID("llvm.memset") && call.Operand(0) == ptr
 }
