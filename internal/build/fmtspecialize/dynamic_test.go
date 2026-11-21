@@ -22,12 +22,18 @@ func TestBuiltinFormatSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated := BuiltinFormatSource(data)
+	generated := BuiltinFormatSource(data, false)
 	file, err := parser.ParseFile(token.NewFileSet(), "builtin_format.go", generated, 0)
-	if err != nil || len(file.Decls) != 11 {
+	if err != nil || len(file.Decls) != 12 {
 		t.Fatalf("unexpected generated builtin formatter: %v", err)
 	}
 	text := string(generated)
+	if !strings.Contains(text, "//llgointernal:tls\nvar llgoBuiltinPrinter *pp") {
+		t.Fatal("hosted formatter lacks its thread-local printer")
+	}
+	if bytes.Contains(BuiltinFormatSource(data, true), []byte("//llgointernal:tls")) {
+		t.Fatal("bare-metal formatter requires thread-local storage")
+	}
 	for _, call := range []string{"p.printArg(", "p.printValue(", "p.handleMethods(", "p.badVerb(", "reflect.TypeOf("} {
 		if strings.Contains(text, call) {
 			t.Fatalf("builtin formatter still reaches %s", call)
@@ -39,10 +45,10 @@ func TestBuiltinFormatSource(t *testing.T) {
 	if got := strings.Count(text, "llgoKinds&"); got != int(types.String-types.Bool+1) {
 		t.Fatalf("builtin formatter guarded %d scalar printers", got)
 	}
-	if BuiltinFormatSource([]byte("package fmt\n")) != nil {
+	if BuiltinFormatSource([]byte("package fmt\n"), false) != nil {
 		t.Fatal("missing standard-library methods did not disable specialization")
 	}
-	if BuiltinFormatSource([]byte("package")) != nil {
+	if BuiltinFormatSource([]byte("package"), false) != nil {
 		t.Fatal("invalid standard-library source did not disable specialization")
 	}
 	for _, test := range []struct {
@@ -67,7 +73,7 @@ func TestBuiltinFormatSource(t *testing.T) {
 			if bytes.Equal(modified, data) {
 				t.Fatalf("standard-library source lacks %q", test.old)
 			}
-			if BuiltinFormatSource(modified) != nil {
+			if BuiltinFormatSource(modified, false) != nil {
 				t.Fatal("unsupported parser shape enabled specialization")
 			}
 		})

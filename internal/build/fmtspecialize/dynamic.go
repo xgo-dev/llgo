@@ -19,7 +19,7 @@ const allBuiltinKinds = (1 << (types.String - types.Bool + 1)) - 1
 // BuiltinFormatSource reuses the selected Go toolchain's parser and flag
 // handling. The generated parser dispatches only to builtin scalar printers.
 // A different print.go shape leaves ordinary fmt in use.
-func BuiltinFormatSource(source []byte) []byte {
+func BuiltinFormatSource(source []byte, baremetal bool) []byte {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "print.go", source, parser.SkipObjectResolution)
 	if err != nil {
@@ -98,12 +98,30 @@ func BuiltinFormatSource(source []byte) []byte {
 		}
 		out.WriteByte('\n')
 	}
-	out.WriteString(`
+	// As in fmt's pool, cap the retained buffer. A static per-thread slot
+	// lets the final link discard the dynamic Pool cache when it is unused.
+	// The selected bare-metal targets have one execution context.
+	if !baremetal {
+		out.WriteString("\n//llgointernal:tls\n")
+	}
+	out.WriteString(`var llgoBuiltinPrinter *pp
+
 func llgoSprintfBuiltins(format string, llgoKinds uint32, a ...any) string {
-	p := newPrinter()
+	slot := &llgoBuiltinPrinter
+	p := *slot
+	*slot = nil
+	if p == nil {
+		p = new(pp)
+	}
+	p.fmt.init(&p.buf)
 	llgoBuiltin_doPrintf(p, format, a, llgoKinds)
 	s := string(p.buf)
-	p.free()
+	buf := p.buf
+	if cap(buf) > 64*1024 {
+		buf = nil
+	}
+	*p = pp{buf: buf[:0]}
+	*slot = p
 	return s
 }
 `)

@@ -332,7 +332,8 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 	if pkgPath == "fmt" && ctx.builtinFormats {
 		printFile := filepath.Join(srcDir, "print.go")
 		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
-			if generated := fmtspecialize.BuiltinFormatSource(source); len(generated) != 0 {
+			baremetal := slices.Contains(sourcePatchBuildTags(ctx.buildFlags, ctx.targetTags), "baremetal")
+			if generated := fmtspecialize.BuiltinFormatSource(source, baremetal); len(generated) != 0 {
 				ensureOverlay()
 				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
 				out[target] = generated

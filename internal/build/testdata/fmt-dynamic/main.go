@@ -20,9 +20,14 @@ func main() {
 	if len(os.Args) > 1 {
 		formats = os.Args[1:]
 	}
+	// Keep the results live across subsequent calls that reuse the printer.
+	results := make([]string, 0, len(formats))
 	for _, format := range formats {
-		println(fmt.Sprintf(format, 42.125, 8, 2, complex(1, -2), "世界", true, uintptr(6),
+		results = append(results, fmt.Sprintf(format, 42.125, 8, 2, complex(1, -2), "世界", true, uintptr(6),
 			int8(-1), int16(-2), rune('界'), int64(-4), uint(5), byte(6), uint16(7), uint32(8),
 			uint64(9), float32(1.5), complex64(2-3i)))
+	}
+	for _, result := range results {
+		println(result)
 	}
 }
