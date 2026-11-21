@@ -154,6 +154,64 @@ func TestReflectClosureArrayOfSliceOf(t *testing.T) {
 	}
 }
 
+type reflectCallbackArg struct{ Words [7]uint32 }
+
+//llgo:cdecl
+type reflectCallbackAlias = func(reflectCallbackArg) int64
+
+func reflectCallbackWord(arg reflectCallbackArg) int64 { return int64(arg.Words[0]) }
+
+func TestReflectArrayOfNativeCallback(t *testing.T) {
+	src := reflect.ValueOf([2]reflectCallbackAlias{nil, reflectCallbackWord})
+	typ := reflect.ArrayOf(src.Len(), src.Type().Elem())
+	if typ != src.Type() {
+		t.Errorf("ArrayOf returned a different descriptor for %v", src.Type())
+	}
+	dst := reflect.New(typ).Elem()
+	dst.Set(src)
+	got, ok := dst.Interface().([2]reflectCallbackAlias)
+	if !ok {
+		t.Fatal("rebuilt array failed its original type assertion")
+	}
+	arg := reflectCallbackArg{Words: [7]uint32{42}}
+	if got[0] != nil || got[1] == nil || got[1](arg) != 42 {
+		t.Fatal("rebuilt array lost its callback")
+	}
+}
+
+func TestReflectCallbackContainerElements(t *testing.T) {
+	// Only the native containers are declared. Looking up the ordinary
+	// signature must still produce storage that can hold a capturing closure.
+	n := int64(42)
+	fn := reflect.ValueOf(func(reflectCallbackArg) int64 { return n })
+	key := reflect.ValueOf(1)
+	check := func(native reflect.Type, build func(reflect.Type) reflect.Type) reflect.Type {
+		t.Helper()
+		if build(native.Elem()) != native {
+			t.Errorf("rebuilding %v lost its type identity", native)
+		}
+		typ := build(fn.Type())
+		if typ.Elem() != fn.Type() {
+			t.Fatalf("%v selected the native callback element for a Go closure", typ)
+		}
+		return typ
+	}
+	array := check(reflect.TypeOf([2]reflectCallbackAlias{}), func(e reflect.Type) reflect.Type { return reflect.ArrayOf(2, e) })
+	slice := check(reflect.TypeOf([]reflectCallbackAlias{}), reflect.SliceOf)
+	mapType := check(reflect.TypeOf(map[int]reflectCallbackAlias{}), func(e reflect.Type) reflect.Type { return reflect.MapOf(key.Type(), e) })
+	a := reflect.New(array).Elem()
+	s := reflect.MakeSlice(slice, 2, 2)
+	m := reflect.MakeMap(mapType)
+	a.Index(1).Set(fn)
+	s.Index(1).Set(fn)
+	m.SetMapIndex(key, fn)
+	for _, v := range []reflect.Value{a.Index(1), s.Index(1), m.MapIndex(key)} {
+		if got := v.Interface().(func(reflectCallbackArg) int64)(reflectCallbackArg{}); got != n {
+			t.Fatalf("stored closure returned %d, want %d", got, n)
+		}
+	}
+}
+
 func TestReflectClosureSliceClear(t *testing.T) {
 	left, right := 3, 4
 	slice := make([]func() int, 2)

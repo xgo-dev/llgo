@@ -135,6 +135,8 @@ type Builder struct {
 	buf     []byte
 	PtrSize uintptr
 	Sizes   types.Sizes
+	// NativeFuncAliasABI reports the storage ABI of an alias to an unnamed function.
+	NativeFuncAliasABI func(*types.Alias) string
 }
 
 // New creates a new ABI type Builder.
@@ -195,7 +197,13 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 		}
 		return fmt.Sprintf("%s %s", s, elem), pub
 	case *types.Alias:
-		return b.TypeName(types.Unalias(t))
+		name, pub := b.TypeName(types.Unalias(t))
+		if b.NativeFuncAliasABI != nil {
+			if cc := b.NativeFuncAliasABI(t); cc != "" {
+				return name + "$" + cc, pub
+			}
+		}
+		return name, pub
 	}
 	log.Panicf("todo: %T\n", t)
 	return

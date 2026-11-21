@@ -304,7 +304,7 @@ func (t *rtype) Method(i int) (m Method) {
 		out = append(out, toRType(ret))
 	}
 	mt := FuncOf(in, out, ft.Variadic())
-	m.Type = mt
+	m.Type = toPublicType(mt.common())
 	m.Func = methodFuncValue(&mt.(*rtype).t, p.Tfn_, fl)
 	m.Index = i
 	return m
@@ -416,6 +416,8 @@ func elem(t *abi.Type) *abi.Type {
 }
 
 func (t *rtype) Elem() Type {
+	// Keep the element's calling convention so composite type constructors
+	// can distinguish native callback slots from Go closures.
 	return toType(elem(t.common()))
 }
 
@@ -511,13 +513,13 @@ func toPublicType(typ *abi.Type) Type {
 	if typ.IsClosure() {
 		typ = &toFuncType((*abi.StructType)(unsafe.Pointer(typ))).Type
 	}
-	return toType(typ)
+	return toType(typ.PublicFunc())
 }
 
-// physicalType is the in-memory layout of t. Function values occupy LLGo's
-// two-word closure; the public Kind remains Func via toPublicType.
+// physicalType maps a public function type to its in-memory representation.
+// Go functions carry a closure environment. Native functions are code pointers.
 func physicalType(t *abi.Type) *abi.Type {
-	if t != nil && t.Kind() == abi.Func {
+	if t != nil && t.Kind() == abi.Func && !t.HasNativeLayout() {
 		return closureOf(t.FuncType())
 	}
 	return t
@@ -550,7 +552,7 @@ func (t *interfaceType) Method(i int) (m Method) {
 	p := &t.Methods[i]
 	m.Name = p.Name()
 	m.PkgPath = p.PkgPath()
-	m.Type = toType(&p.Typ_.Type)
+	m.Type = toPublicType(&p.Typ_.Type)
 	m.Index = i
 	return
 }
@@ -861,14 +863,9 @@ func TypeOf(i any) Type {
 	if eface.typ == nil {
 		return nil
 	}
-	// check closure type
-	if eface.typ.IsClosure() {
-		ft := toFuncType(eface.typ.StructType())
-		return toType(&ft.Type)
-	}
 	// Noescape so this doesn't make i to escape. See the comment
 	// at Value.typ for why this is safe.
-	return toType((*abi.Type)(unsafe.Pointer(eface.typ)))
+	return toPublicType(eface.typ)
 }
 
 // TypeFor returns the [Type] that represents the type argument T.
@@ -1067,7 +1064,7 @@ func (t *rtype) ptrTo() *abi.Type {
 	// Normalize before either static lookup or caching so Addr, New, and
 	// PointerTo cannot synthesize competing descriptors for the same *T.
 	if at.Kind() == abi.Func && at.HasName() {
-		at = closureOf(at.FuncType())
+		at = physicalType(at)
 	} else if at.IsClosure() && !at.HasName() {
 		at = &toFuncType(at.StructType()).Type
 	}
@@ -1320,8 +1317,7 @@ func SliceOf(t Type) Type {
 	// Look in known types.
 	s := "[]" + stringFor(publicElem)
 	for _, tt := range typesByString(s) {
-		slice := (*sliceType)(unsafe.Pointer(tt))
-		if toPublicType(slice.Elem).common() == publicElem {
+		if toRType(tt).Elem() == t {
 			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
 			return ti.(Type)
 		}
@@ -1511,6 +1507,9 @@ func FuncOf(in, out []Type, variadic bool) Type {
 
 	str := funcStr(ft)
 	for _, tt := range typesByString(str) {
+		if alias := tt.NativeFuncAlias(); alias != nil {
+			tt = alias.Public
+		}
 		if haveIdenticalUnderlyingType(&ft.Type, tt, true) {
 			return addToCache(tt)
 		}
@@ -1574,13 +1573,7 @@ func MapOf(key, elem Type) Type {
 	}
 	ktyp := key.common()
 	publicElem := elem.common()
-	etyp := publicElem
-	if etyp.Kind() == abi.Func {
-		// Map bucket operations copy elements using the element descriptor.
-		// Use LLGo's physical two-word closure there; Elem converts it back
-		// to the public function type returned by this API.
-		etyp = closureOf(etyp.FuncType())
-	}
+	etyp := physicalType(publicElem)
 
 	if ktyp.Equal == nil {
 		panic("reflect.MapOf: invalid key type " + stringFor(ktyp))
@@ -1596,7 +1589,7 @@ func MapOf(key, elem Type) Type {
 	s := "map[" + stringFor(ktyp) + "]" + stringFor(publicElem)
 	for _, tt := range typesByString(s) {
 		mt := (*mapType)(unsafe.Pointer(tt))
-		if mt.Key == ktyp && toPublicType(mt.Elem).common() == publicElem {
+		if mt.Key == ktyp && toRType(tt).Elem() == elem {
 			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
 			return ti.(Type)
 		}
@@ -1835,8 +1828,7 @@ func ArrayOf(length int, elem Type) Type {
 	// Look in known types.
 	s := "[" + strconv.Itoa(length) + "]" + stringFor(publicElem)
 	for _, tt := range typesByString(s) {
-		array := (*arrayType)(unsafe.Pointer(tt))
-		if toPublicType(array.Elem).common() == publicElem {
+		if toRType(tt).Elem() == elem {
 			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
 			return ti.(Type)
 		}
@@ -2601,10 +2593,7 @@ func runtimeStructField(field StructField) (structField, string) {
 	}
 
 	//	resolveReflectType(field.Type.common()) // install in runtime
-	typ := field.Type.common()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
+	typ := physicalType(field.Type.common())
 	f := structField{
 		Name_:     field.Name,
 		Typ:       typ,

@@ -19,7 +19,6 @@ package ssa
 import (
 	"go/token"
 	"go/types"
-	"strings"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -30,21 +29,22 @@ type wasmReflectBridgePair struct {
 }
 
 // wasmReflectBridge returns package-local bridges shared by every function
-// type with the same lowered WebAssembly signature and GC-root extraction
-// shape. Signedness, names, and other source-only distinctions deliberately do
-// not create more code.
+// type with the same Go and native call conversions and reflection frame layout.
 func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
 	rawSig := p.Prog.gocvt.cvtFunc(sig, nil)
-	key := p.Prog.wasmReflectBridgeShape(rawSig)
+	goType := p.Prog.toLLVMFunc(rawSig)
+	nativeType := p.Prog.toLLVMFuncBackground(sig, CDecl)
+	key, hasAttrs := p.Prog.wasmCallShape(rawSig, sig, goType, nativeType)
 	if bridges, ok := p.wasmReflectBridges[key]; ok {
 		return bridges
 	}
 	if p.wasmReflectBridges == nil {
 		p.wasmReflectBridges = make(map[string]wasmReflectBridgePair)
 	}
+	nativeCall := nativeType != goType || p.Prog.hasWasmABIPadding(nativeType.ReturnType()) || hasAttrs
 	id := compactWasmBridgeID(len(p.wasmReflectBridges))
 	bridges := wasmReflectBridgePair{
-		call: p.newWasmReflectCallBridge(rawSig, "$c"+id),
+		call: p.newWasmReflectCallBridge(rawSig, sig, nativeCall, "$c"+id),
 		make: p.newWasmReflectMakeBridge(sig, "$m"+id),
 	}
 	p.wasmReflectBridges[key] = bridges
@@ -70,57 +70,64 @@ func compactWasmBridgeUint64(value uint64) string {
 	}
 }
 
-func (p Program) wasmReflectBridgeShape(sig *types.Signature) string {
-	var shape strings.Builder
-	p.appendWasmLLVMTypeShape(&shape, p.toLLVMFuncBackground(sig, CDecl))
-	shape.WriteByte('/')
-	for i := 0; i < sig.Params().Len(); i++ {
-		p.appendWasmRootShape(&shape, p.Type(sig.Params().At(i).Type(), CDecl))
-		shape.WriteByte(';')
-	}
-	return shape.String()
-}
-
-func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) Function {
+// newWasmReflectCallBridge adapts arrays of addresses to the exact lowered
+// Go signature, with an optional leading context for closures and methods.
+// Emit a separate raw C call only when its prototype or conversions differ.
+func (p Package) newWasmReflectCallBridge(goSig, nativeSig *types.Signature, nativeCall bool, name string) Function {
 	ptr := types.Typ[types.UnsafePointer]
 	ptrs := types.NewPointer(ptr)
 	params := types.NewTuple(
 		types.NewParam(token.NoPos, nil, "fn", ptr),
 		types.NewParam(token.NoPos, nil, "env", ptr),
 		types.NewParam(token.NoPos, nil, "prefix", types.Typ[types.Bool]),
+		types.NewParam(token.NoPos, nil, "native", types.Typ[types.Bool]),
 		types.NewParam(token.NoPos, nil, "args", ptrs),
 		types.NewParam(token.NoPos, nil, "results", ptrs),
 	)
-	fn := p.NewFunc(name, types.NewSignatureType(nil, nil, nil, params, nil, false), CDecl)
+	// reflect invokes this bridge through a Go funcval, including its bool arguments.
+	fn := p.NewFunc(name, types.NewSignatureType(nil, nil, nil, params, nil, false), GoDecl)
 	fn.impl.SetLinkage(llvm.InternalLinkage)
-	b := fn.MakeBody(3)
+	blocks := 3
+	if nativeCall {
+		blocks += 2
+	}
+	b := fn.MakeBody(blocks)
 	defer b.Dispose()
 	prog := p.Prog
-	args := make([]Expr, rawSig.Params().Len())
-	for i := range args {
-		typ := prog.Type(rawSig.Params().At(i).Type(), CDecl)
-		args[i] = b.Load(b.Convert(prog.Pointer(typ), b.wasmReflectSlot(fn.Param(3), i)))
-	}
-	b.If(fn.Param(2), fn.Block(1), fn.Block(2))
-	for _, prefix := range []bool{true, false} {
-		entrySig, callArgs, block := rawSig, args, 2
-		if prefix {
-			entrySig = FuncAddCtx(types.NewParam(token.NoPos, nil, "env", ptr), rawSig)
-			callArgs = append([]Expr{fn.Param(1)}, args...)
-			block = 1
+	loadArgs := func(sig *types.Signature) []Expr {
+		args := make([]Expr, sig.Params().Len())
+		for i := range args {
+			// Reflect supplies addresses into Go storage, including for a C
+			// callee whose physical uintptr parameter has to be narrowed later.
+			typ := prog.rawType(sig.Params().At(i).Type())
+			args[i] = b.Load(b.Convert(prog.Pointer(typ), b.wasmReflectSlot(fn.Param(4), i)))
 		}
-		b.SetBlock(fn.Block(block))
-		entry := Expr{fn.Param(0).impl, prog.FuncDecl(entrySig, CDecl)}
-		ret := b.Call(entry, callArgs...)
-		for i := 0; i < rawSig.Results().Len(); i++ {
+		return args
+	}
+	invoke := func(entry Type, args []Expr) {
+		ret := b.Call(Expr{fn.Param(0).impl, entry}, args...)
+		for i := 0; i < goSig.Results().Len(); i++ {
 			value := ret
-			if rawSig.Results().Len() > 1 {
+			if goSig.Results().Len() > 1 {
 				value = b.Extract(ret, i)
 			}
-			b.Store(b.Convert(prog.Pointer(value.Type), b.wasmReflectSlot(fn.Param(4), i)), value)
+			b.Store(b.Convert(prog.Pointer(value.Type), b.wasmReflectSlot(fn.Param(5), i)), value)
 		}
 		b.Return()
 	}
+	if nativeCall {
+		b.If(fn.Param(3), fn.Block(3), fn.Block(4))
+		b.SetBlock(fn.Block(3))
+		invoke(prog.rawType(nativeSig), loadArgs(nativeSig))
+		b.SetBlock(fn.Block(4))
+	}
+	args := loadArgs(goSig)
+	b.If(fn.Param(2), fn.Block(1), fn.Block(2))
+	b.SetBlock(fn.Block(1))
+	envSig := FuncAddCtx(types.NewParam(token.NoPos, nil, "env", ptr), goSig)
+	invoke(prog.FuncDecl(envSig, GoDecl), append([]Expr{fn.Param(1)}, args...))
+	b.SetBlock(fn.Block(2))
+	invoke(prog.FuncDecl(goSig, GoDecl), args)
 	b.EndBuild()
 	return fn
 }
@@ -187,7 +194,7 @@ func (b Builder) wasmReflectFrame(tuple *types.Tuple, value func(int) Expr) (Exp
 	}
 	slots := make([]Expr, tuple.Len())
 	for i := range slots {
-		typ := prog.Type(tuple.At(i).Type(), CDecl)
+		typ := prog.rawType(tuple.At(i).Type())
 		slots[i] = b.AllocaT(typ)
 		initial := prog.Nil(typ)
 		if value != nil {

@@ -184,6 +184,16 @@ func (b Builder) needsNativeFuncval(fn Expr) bool {
 	return false
 }
 
+// canCallGoEntry tells reflection when an environment-free Go function can
+// occupy this native callback slot without a compiler-generated adapter.
+func (p Program) canCallGoEntry(t types.Type) bool {
+	sig, ok := t.Underlying().(*types.Signature)
+	if !ok || sig.Variadic() || HasNameValist(sig) || p.isStdcallType(t) && p.stdcallCallConv() != llvm.CCallConv {
+		return false
+	}
+	return p.toLLVMFunc(p.gocvt.cvtFunc(sig, nil)) == p.funcDeclType(sig, CDecl).ll
+}
+
 // closureToNative recovers the original C entry when a native funcval is
 // passed back as a callback. An ordinary Go callback must be environment-free.
 func (b Builder) closureToNative(dst Type, fn Expr) Expr {
@@ -263,18 +273,20 @@ func (b Builder) nativeFuncval(dst Type, fn Expr, callConv llvm.CallConv, abi st
 	if HasNameValist(nativeSig) {
 		panic("C variadic functions require a native function pointer; use //llgo:cdecl")
 	}
-	var sharedPrototype llvm.Type
-	if b.Prog.usesWideGoStorage() {
-		_, prototype := b.Prog.callSignature(fn)
-		if b.Prog.hasWasmABIPadding(prototype.ReturnType()) && prototype == b.Prog.toLLVMFunc(goSig) {
-			sharedPrototype = prototype
-		}
-	}
-	wrapper := b.nativeFuncvalAdapter(goSig, nativeSig, callConv, abi, sharedPrototype)
+	wrapper := b.funcvalAdapterFor(fn, goSig, callConv, abi)
 
 	isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, fn.impl, llvm.ConstNull(fn.impl.Type()))
 	code := llvm.CreateSelect(b.impl, isNil, llvm.ConstNull(wrapper.impl.Type()), wrapper.impl)
 	return b.aggregateValue(dst, code, fn.impl)
+}
+
+func (b Builder) funcvalAdapterFor(fn Expr, goSig *types.Signature, callConv llvm.CallConv, abi string) Function {
+	nativeSig, prototype := b.Prog.callSignature(fn)
+	var sharedPrototype llvm.Type
+	if b.Prog.usesWideGoStorage() && b.Prog.hasWasmABIPadding(prototype.ReturnType()) && prototype == b.Prog.toLLVMFunc(goSig) {
+		sharedPrototype = prototype
+	}
+	return b.nativeFuncvalAdapter(goSig, nativeSig, callConv, abi, sharedPrototype)
 }
 
 // A padded result needs a Go entry even when the two prototypes match. Give
@@ -307,14 +319,8 @@ func (b Builder) nativeFuncvalAdapter(goSig, nativeSig *types.Signature, callCon
 // identity must also describe header normalization, Go storage and C integer
 // extensions without depending on how different packages spell the types.
 func (p Program) wasmNativeFuncvalKey(goSig, nativeSig *types.Signature, prototype llvm.Type) string {
-	var shape strings.Builder
-	p.appendWasmLLVMTypeShape(&shape, prototype)
-	shape.WriteByte('/')
-	p.appendWasmTupleRootShape(&shape, goSig.Params())
-	shape.WriteByte('/')
-	p.appendWasmTupleRootShape(&shape, goSig.Results())
-	p.appendNativeIntegerAttrShape(&shape, nativeSig, prototype)
-	digest := sha256.Sum256([]byte(shape.String()))
+	shape, _ := p.wasmCallShape(goSig, nativeSig, prototype, prototype)
+	digest := sha256.Sum256([]byte(shape))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 

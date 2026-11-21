@@ -106,12 +106,7 @@ func (p Program) validateStdcallType(typ types.Type) {
 }
 
 func (p Program) isStdcallType(typ types.Type) bool {
-	named, ok := types.Unalias(typ).(*types.Named)
-	if !ok {
-		return false
-	}
-	background, ok := p.packageTypeCallConv(namedLinkname(named))
-	return ok && background == Stdcall
+	return p.nativeTypeDirective(typ) == Stdcall
 }
 
 func (p Program) calleeCallConv(fn Expr) llvm.CallConv {
