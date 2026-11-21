@@ -157,6 +157,9 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     for fixture, expected, marker, specialized in fixtures:
         artifact = directory / f"{target}-{fixture}{suffix}"
         flags = ["-target", target] if target != "native" else []
+        wasi_stdout = target == "wasi" and fixture == "wasm-literal-stdout"
+        if wasi_stdout:
+            flags.extend(["-size", "-size-format=json"])
         log = command([str(llgo), "build", *flags, "-Oz", "-lto=full", "-deadcodedrop",
                        "-globaldce=false", "-debug-artifact=none", "-compiler-verbose",
                        "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
@@ -183,6 +186,12 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
         if actual.strip() != expected_output:
             raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
+        if wasi_stdout:
+            # The size report precedes stderr, where verbose diagnostics appear.
+            report, _ = json.JSONDecoder().raw_decode(log)
+            memory = report["wasm"]["memories"][0]
+            command([env.get("NODE", "node"), str(ROOT / "test/sizebuild/wasi-stdout-host.mjs"),
+                     str(artifact), str(memory["initial_bytes"]), str(memory["maximum_bytes"])], env, timeout=90)
         if target.startswith("emscripten") and fixture == "wasm-standard-files":
             if "llgo: omit Emscripten scheduler" in log:
                 raise RuntimeError(f"{target}: suspending filesystem operations lost the scheduler")
