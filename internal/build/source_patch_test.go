@@ -435,6 +435,48 @@ func TestArmBaremetalAtomicSourcePatchReplacesAsm(t *testing.T) {
 	}
 }
 
+// TestArmBaremetalSyscallLinuxSourcePatchSelection pins the Syscall6 answer
+// internal/runtime/syscall/linux gets for each arm build flavor: baremetal
+// images must select the C-library write bridge (the fmt console depends on
+// it), hosted arm images keep the portable ENOSYS replacement.
+func TestArmBaremetalSyscallLinuxSourcePatchSelection(t *testing.T) {
+	const pkgPath = "internal/runtime/syscall/linux"
+	if !llruntime.HasSourcePatchPkg(pkgPath) {
+		t.Fatal("internal/runtime/syscall/linux should be registered as a source patch package")
+	}
+	if !llruntime.SourcePatchReplacesAsmForGOARCH(pkgPath, "arm") {
+		t.Fatal("internal/runtime/syscall/linux ARM assembly should be replaceable by its source patch")
+	}
+
+	runtimeDir := env.LLGoRuntimeDir()
+	ctx := sourcePatchBuildContext{
+		goos:       "linux",
+		goarch:     "arm",
+		goversion:  runtime.Version(),
+		buildFlags: []string{"-tags=llgo,baremetal"},
+	}
+	changed, overlay, files, err := applySourcePatchForPkg(nil, nil, runtimeDir, runtime.GOROOT(), pkgPath, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || len(files) != 1 || filepath.Base(files[0]) != "syscall6_baremetal_arm.go" {
+		t.Fatalf("baremetal ARM patch files = %v, want [syscall6_baremetal_arm.go]", files)
+	}
+	asmFile := filepath.Join(runtime.GOROOT(), "src", "internal", "runtime", "syscall", "linux", "asm_linux_arm.s")
+	if got := string(overlay[asmFile]); got != "// replaced by LLGo source patch\n" {
+		t.Fatalf("overlay[%q] = %q, want assembly replacement", asmFile, got)
+	}
+
+	ctx.buildFlags = []string{"-tags=llgo"}
+	changed, _, files, err = applySourcePatchForPkg(nil, nil, runtimeDir, runtime.GOROOT(), pkgPath, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || len(files) != 1 || filepath.Base(files[0]) != "syscall6_arm.go" {
+		t.Fatalf("non-baremetal ARM patch files = %v, want [syscall6_arm.go]", files)
+	}
+}
+
 func TestUniqueSourcePatchUsesStdlibDependencyGraph(t *testing.T) {
 	const pkgPath = "unique"
 	if !llruntime.HasSourcePatchPkg(pkgPath) {

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiniu/x/test"
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/firmware"
@@ -101,6 +102,69 @@ func TestS31XIPReflectSmoke(t *testing.T) {
 	runS31XIPImage(t, emu, imgPath)
 }
 
+// TestS31XIPFmtConsole runs the fmtall golden fixture on the flash (XIP)
+// target. fmt reaches the USB-Serial/JTAG console through os.Stdout →
+// syscall.Write → internal/runtime/syscall/linux.Syscall6, whose baremetal
+// arm answer routes to the C library's write() — a path hexpkg and
+// reflectmkfn never exercise (builtin println and no output respectively),
+// which is why a broken fmt console went unnoticed until the first fmt XIP
+// run. The runtime golden pins the routing together with fmt's formatting.
+func TestS31XIPFmtConsole(t *testing.T) {
+	requireEmbedTest(t)
+	emu, ok := findEspEmu()
+	if !ok {
+		t.Skip("esp-emu is not available; set ESP_EMU to the emulator path")
+	}
+	bootloader := os.Getenv("LLGO_S31_XIP_BOOTLOADER")
+	parttable := os.Getenv("LLGO_S31_XIP_PARTTABLE")
+	if bootloader == "" || parttable == "" {
+		t.Skip("flash (XIP) boot assets not configured; set LLGO_S31_XIP_BOOTLOADER and LLGO_S31_XIP_PARTTABLE")
+	}
+
+	elfPath := buildS31ELFWithTarget(t, "esp32s31-flash", "./_testgo/fmtall", t.TempDir())
+	appImg := filepath.Join(t.TempDir(), "app.bin")
+	if err := firmware.ConvertFormats("esp32s31", "", map[string]string{
+		"out": elfPath,
+		"bin": appImg,
+	}); err != nil {
+		t.Fatalf("app image generation failed: %v", err)
+	}
+	assertS31XIPImage(t, appImg)
+
+	imgPath := filepath.Join(t.TempDir(), "flash.bin")
+	mergeS31XIPFlash(t, bootloader, parttable, appImg, imgPath)
+	raw := runS31XIPImage(t, emu, imgPath)
+
+	_, expected, err := cltest.ReadGolden(filepath.Join("_testgo/fmtall", "expect.txt"))
+	if err != nil {
+		t.Fatal("ReadGolden failed:", err)
+	}
+	filtered := s31XIPAppOutput(t, raw)
+	if test.Diff(t, filepath.Join("_testgo/fmtall", "expect.txt.new"),
+		normalizeGoldenOutput(filtered), normalizeGoldenOutput(string(expected))) {
+		t.Fatal("unexpected output")
+	}
+}
+
+// s31XIPAppOutput returns the application output from a merged-flash run:
+// everything after the bootloader's "Loaded app from partition" line with
+// CRLF line endings and emulator log lines removed. Besides log filtering,
+// cltest.FilterEmulatorOutput also carries the truncation semantics of
+// cutting everything up to and including the ROM's "entry 0x…" boot line;
+// in this XIP flow that line precedes the marker above, so the explicit
+// marker scan drives the cut.
+func s31XIPAppOutput(t *testing.T, raw string) string {
+	t.Helper()
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "Loaded app from partition") {
+			return filterEspEmuOutput(cltest.FilterEmulatorOutput(strings.Join(lines[i+1:], "\n")))
+		}
+	}
+	t.Fatalf("bootloader log marker not found\n%s", espOutputTail(raw))
+	return ""
+}
+
 // assertS31XIPImage checks the app image the bootloader will parse: the
 // writable segment first with the app descriptor at image offset 0x20,
 // exactly two mapped segments, and every mapped segment holding its data at
@@ -179,8 +243,8 @@ func mergeS31XIPFlash(t *testing.T, bootloader, parttable, appImg, imgPath strin
 // drives USB-Serial/JTAG outside the ROM console selector, so the console
 // must be pinned to usb-jtag. A clean baremetal exit shows up as the
 // semihost EBREAK with the PC inside the flash window; a crash would print
-// a Guru Meditation dump instead.
-func runS31XIPImage(t *testing.T, emu, imgPath string) {
+// a Guru Meditation dump instead. Returns the raw emulator output.
+func runS31XIPImage(t *testing.T, emu, imgPath string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -206,6 +270,7 @@ func runS31XIPImage(t *testing.T, emu, imgPath string) {
 	if !strings.Contains(out, "EBREAK at PC=0x4") {
 		t.Fatalf("application did not exit cleanly through the semihost EBREAK\n%s", espOutputTail(out))
 	}
+	return out
 }
 
 // TestS31ReflectSmoke runs the reflect fixtures the S31 baremetal target must
