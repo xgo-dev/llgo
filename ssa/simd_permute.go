@@ -87,8 +87,11 @@ func (b Builder) simdPack(op SIMDOp, x, mask Expr) Expr {
 	active := llvm.CreateICmp(b.impl, llvm.IntNE, mask.impl, llvm.ConstNull(mask.ll))
 	zero := llvm.ConstNull(x.ll)
 	if op == SIMDCompress {
-		v := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.experimental.vector.compress"), []llvm.Value{x.impl, active, zero}, "")
-		return Expr{v, x.Type}
+		// Compress moves lane bits. Integer carriers also let LLVM 22
+		// scalarize floating-point lanes on targets without packed compress.
+		bits := b.impl.CreateBitCast(x.impl, mask.ll, "")
+		v := b.impl.CreateIntrinsic(mask.ll, llvm.LookupIntrinsicID("llvm.experimental.vector.compress"), []llvm.Value{bits, active, llvm.ConstNull(mask.ll)}, "")
+		return Expr{b.impl.CreateBitCast(v, x.ll, ""), x.Type}
 	}
 	// Expand consumes consecutive elements of the input value. Use a private
 	// copy so a computed vector and a vector loaded from memory behave alike.
