@@ -981,31 +981,44 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 }
 
 func funcInfoIndexForSymbolID(symbolID uint64) uint32 {
-	if symbolID == 0 || runtimeFuncInfoSymbolIndex == nil || runtimeFuncInfoSymbolIndexCount == 0 {
+	count := runtimeFuncInfoSymbolIndexCount &^ runtimeFuncInfoShortIndexFlag
+	if symbolID == 0 || runtimeFuncInfoSymbolIndex == nil || count == 0 {
 		return 0
 	}
-	if runtimeFuncInfoSymbolIndexCount > runtimeFuncInfoCount || runtimeFuncInfoSymbolIndexCount > 1<<20 {
+	if count > runtimeFuncInfoCount || count > 1<<20 {
 		return 0
 	}
-	lo, hi := uintptr(0), runtimeFuncInfoSymbolIndexCount
-	size := unsafe.Sizeof(*runtimeFuncInfoSymbolIndex)
+	compact := runtimeFuncInfoSymbolIndexCount&runtimeFuncInfoShortIndexFlag != 0
+	stride := unsafe.Sizeof(*runtimeFuncInfoSymbolIndex)
+	if compact {
+		if count > 0xffff {
+			return 0
+		}
+		stride = unsafe.Sizeof(symbolID)
+	}
+	base := unsafe.Pointer(runtimeFuncInfoSymbolIndex)
+	lo, hi := uintptr(0), count
 	for lo < hi {
 		mid := (lo + hi) >> 1
-		rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), mid*size))
-		if rec.symbolID >= symbolID {
+		if *(*uint64)(unsafe.Add(base, mid*stride)) >= symbolID {
 			hi = mid
 		} else {
 			lo = mid + 1
 		}
 	}
-	if lo >= runtimeFuncInfoSymbolIndexCount {
+	if lo >= count || *(*uint64)(unsafe.Add(base, lo*stride)) != symbolID {
 		return 0
 	}
-	rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), lo*size))
-	if rec.symbolID != symbolID || rec.funcIndex == 0 || uintptr(rec.funcIndex) > runtimeFuncInfoCount {
+	var index uint32
+	if compact {
+		index = uint32(*(*uint16)(unsafe.Add(base, count*stride+lo*unsafe.Sizeof(uint16(0)))))
+	} else {
+		index = (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(base, lo*stride)).funcIndex
+	}
+	if uintptr(index) > runtimeFuncInfoCount {
 		return 0
 	}
-	return rec.funcIndex
+	return index
 }
 
 func sortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) {

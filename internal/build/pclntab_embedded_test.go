@@ -306,6 +306,36 @@ func TestEmbeddedFuncInfoTypes(t *testing.T) {
 	}
 }
 
+func TestEncodePackedFuncInfo(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	record := buildfuncinfo.EncodedRecord{SymbolPkg: 1, SymbolName: 2, NamePkg: 1, NameName: 2, FileRoot: 3, FileName: 4, Line: buildfuncinfo.EncodedLineWrapper | 17}
+	table := buildfuncinfo.Table{
+		Records:       []buildfuncinfo.EncodedRecord{record, record, record},
+		StringOffsets: make([]uint32, 5),
+	}
+	table.Records[1].NameName = 0 // a display-name override
+	packed, _, layout := encodeEmbeddedFuncInfo(ctx, table, true)
+	if layout&funcInfoPackedRecords == 0 {
+		t.Fatal("repeated file paths did not use the packed layout")
+	}
+	for _, want := range []string{
+		"[3 x { i16, i16, i8, i8, i16 }]",
+		"{ i16 1, i16 2, i8 0, i8 1, i16 -32751 }",
+		"{ i16 1, i16 2, i8 2, i8 1, i16 -32751 }",
+		"{ i16 3, i16 4 }",
+		"{ i16 1, i16 0 }",
+	} {
+		if !strings.Contains(packed.String(), want) {
+			t.Fatalf("packed funcinfo is missing %q: %s", want, packed)
+		}
+	}
+	table.Records[0].Line = 1 << 15
+	if _, _, layout := encodeEmbeddedFuncInfo(ctx, table, true); layout&funcInfoPackedRecords != 0 {
+		t.Fatal("packed layout accepted a source line that would truncate")
+	}
+}
+
 func TestRewriteEmbeddedPCLNIRCompactsFinalWidths(t *testing.T) {
 	ir, data := embeddedPCLNFixture(t)
 	path := filepath.Join(t.TempDir(), "entry.ll")

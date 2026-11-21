@@ -4,6 +4,8 @@ package runtime
 
 import "unsafe"
 
+const runtimeFuncInfoShortIndexFlag uintptr = 0
+
 func funcInfoAt(index uintptr, _ *runtimeFuncInfoRecord) *runtimeFuncInfoRecord {
 	return (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), index*unsafe.Sizeof(runtimeFuncInfoRecord{})))
 }

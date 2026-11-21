@@ -259,22 +259,19 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 	}
 	defer mod.Dispose()
 	layout := mod.NamedGlobal(funcInfoLayoutSymbol)
-	recordType, offsetType, layoutFlags := embeddedFuncInfoTypes(lc, data.Table, !layout.IsNil())
+	recordData, offsetType, layoutFlags := encodeEmbeddedFuncInfo(lc, data.Table, !layout.IsNil())
 	if !layout.IsNil() {
 		layout.SetInitializer(llvm.ConstInt(layout.GlobalValueType(), uint64(layoutFlags), false))
 	}
-	setArray := func(name string, elem llvm.Type, values func(llvm.Type) []llvm.Value) error {
+	setData := func(name string, initializer func(llvm.Type) llvm.Value) error {
 		old := mod.NamedGlobal(name)
 		if old.IsNil() {
 			return fmt.Errorf("embedded pclntab array %s is missing", name)
 		}
-		if elem.IsNil() {
-			elem = old.GlobalValueType().ElementType()
-		}
-		items := values(elem)
+		value := initializer(old.GlobalValueType())
 		old.SetName(name + ".unpruned")
-		array := llvm.AddGlobal(mod, llvm.ArrayType(elem, len(items)), name)
-		array.SetInitializer(llvm.ConstArray(elem, items))
+		array := llvm.AddGlobal(mod, value.Type(), name)
+		array.SetInitializer(value)
 		array.SetLinkage(llvm.PrivateLinkage)
 		array.SetGlobalConstant(true)
 		array.SetUnnamedAddr(true)
@@ -298,12 +295,6 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		elem   llvm.Type
 		values func(llvm.Type) []llvm.Value
 	}{
-		{funcInfoDataSymbol, recordType, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.Table.Records {
-				v = append(v, ints(t, uint64(r.SymbolPkg), uint64(r.SymbolName), uint64(r.NamePkg), uint64(r.NameName), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
-			}
-			return
-		}},
 		{pcLineDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, r := range data.Table.PCLines {
 				v = append(v, ints(t, r.ID, uint64(r.Func), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
@@ -328,31 +319,38 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 			}
 			return
 		}},
-		{funcInfoSymbolIndexDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.SymbolIndex {
-				v = append(v, ints(t, r.SymbolID, uint64(r.FuncIndex)))
-			}
-			return
-		}},
+	}
+	if err := setData(funcInfoDataSymbol, func(llvm.Type) llvm.Value { return recordData }); err != nil {
+		return err
 	}
 	for _, array := range arrays {
 		if array.name == pcLineDataSymbol && len(data.Table.PCLines) == 0 && mod.NamedGlobal(array.name).IsNil() {
 			continue
 		}
-		if err := setArray(array.name, array.elem, array.values); err != nil {
+		if err := setData(array.name, func(old llvm.Type) llvm.Value {
+			elem := array.elem
+			if elem.IsNil() {
+				elem = old.ElementType()
+			}
+			return llvm.ConstArray(elem, array.values(elem))
+		}); err != nil {
 			return err
 		}
 	}
-	for name, count := range map[string]int{
-		funcInfoCountSymbol: len(data.Table.Records), pcLineCountSymbol: len(data.Table.PCLines),
-		funcInfoStringCountSymbol: len(data.Table.StringOffsets), funcInfoSymbolIndexCountSymbol: len(data.SymbolIndex),
-		funcInfoHashMaskSymbol: max(0, len(data.Table.Hash)-1),
+	index, indexCount := encodeFuncInfoSymbolIndex(lc, data.SymbolIndex, len(data.Table.Records), !layout.IsNil())
+	if err := setData(funcInfoSymbolIndexDataSymbol, func(llvm.Type) llvm.Value { return index }); err != nil {
+		return err
+	}
+	for name, count := range map[string]uint64{
+		funcInfoCountSymbol: uint64(len(data.Table.Records)), pcLineCountSymbol: uint64(len(data.Table.PCLines)),
+		funcInfoStringCountSymbol: uint64(len(data.Table.StringOffsets)), funcInfoSymbolIndexCountSymbol: indexCount,
+		funcInfoHashMaskSymbol: uint64(max(0, len(data.Table.Hash)-1)),
 	} {
 		global := mod.NamedGlobal(name)
 		if global.IsNil() {
 			return fmt.Errorf("embedded pclntab count %s is missing", name)
 		}
-		global.SetInitializer(llvm.ConstInt(global.GlobalValueType(), uint64(count), false))
+		global.SetInitializer(llvm.ConstInt(global.GlobalValueType(), count, false))
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		return err
