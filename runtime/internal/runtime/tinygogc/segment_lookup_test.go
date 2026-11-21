@@ -24,7 +24,7 @@ func TestSegmentForAddress(t *testing.T) {
 	}
 	sorted := []*heapSegment{&arenas[1], &arenas[2], &arenas[0]}
 	copy(heapSegmentsByAddress[:], sorted)
-	for count := 0; count <= len(sorted); count++ {
+	for count := 0; count <= len(sorted) && count <= len(heapSegmentsByAddress); count++ {
 		heapSegmentCount = count
 		for address := uintptr(0); address <= 0x5100; address++ {
 			var want *heapSegment
