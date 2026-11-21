@@ -105,34 +105,6 @@ func (f *baselineFolds) commit() {
 	}
 }
 
-// positiveGuard returns predicates established on the given branch edge.
-// LLVM commonly represents Go's negated query as xor i1 %query, true.
-func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) uint64 {
-	if !cond.IsACallInst().IsNil() {
-		if taken {
-			return queries[cond.CalledValue()]
-		}
-		return 0
-	}
-	if cond.IsAInstruction().IsNil() {
-		return 0
-	}
-	switch cond.InstructionOpcode() {
-	case llvm.Xor:
-		for i := 0; i < 2; i++ {
-			c := cond.Operand(i).IsAConstantInt()
-			if !c.IsNil() && c.ZExtValue() == 1 {
-				return positiveGuard(cond.Operand(1-i), !taken, queries)
-			}
-		}
-	case llvm.And:
-		if taken {
-			return positiveGuard(cond.Operand(0), true, queries) | positiveGuard(cond.Operand(1), true, queries)
-		}
-	}
-	return 0
-}
-
 // directGuardCallee excludes indirect calls even when a function address also
 // appears as an ordinary argument to the same instruction.
 func directGuardCallee(inst llvm.Value) llvm.Value {
@@ -199,29 +171,7 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds) map[llvm.
 // guardContexts intersects known true predicates at joins to identify which
 // positive guards protect vector work in this function.
 func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool) []uint64 {
-	entry := fn.EntryBasicBlock()
-	known := map[llvm.BasicBlock]uint64{entry: 0}
-	queue := []llvm.BasicBlock{entry}
-	for len(queue) != 0 {
-		block := queue[0]
-		queue = queue[1:]
-		term := block.LastInstruction()
-		for i := 0; i < term.SuccessorsCount(); i++ {
-			mask := known[block]
-			if term.InstructionOpcode() == llvm.Br && term.SuccessorsCount() == 2 {
-				mask |= positiveGuard(term.Operand(0), i == 0, queries)
-			}
-			next := term.Successor(i)
-			if prior, ok := known[next]; ok {
-				mask &= prior
-				if mask == prior {
-					continue
-				}
-			}
-			known[next] = mask
-			queue = append(queue, next)
-		}
-	}
+	known := guardBlocks(fn, queries)
 	sets := map[uint64]bool{}
 	for block, mask := range known {
 		if mask == 0 {

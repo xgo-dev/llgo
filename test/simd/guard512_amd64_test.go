@@ -126,3 +126,26 @@ func TestSIMD512MixedGuard(t *testing.T) {
 		}
 	}
 }
+
+//go:noinline
+func savedGuard(dst, src *[16]int32, enabled bool) bool {
+	ready := archsimd.X86.AVX512() && enabled
+	if ready {
+		doubleSIMD512Kernel(dst, src)
+	}
+	return ready
+}
+
+func TestSIMDSavedGuard(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		in, dst := [16]int32{3, 5}, [16]int32{7}
+		want := dst
+		take := enabled && archsimd.X86.AVX512()
+		if take {
+			want = [16]int32{6, 10}
+		}
+		if got := savedGuard(&dst, &in, enabled); got != take || dst != want {
+			t.Fatalf("enabled=%t: path %t, result %v; want %t, %v", enabled, got, dst, take, want)
+		}
+	}
+}

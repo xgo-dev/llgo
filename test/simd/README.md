@@ -526,3 +526,8 @@ through dispatch. The baseline implementation serves calls before CPU feature
 publication. `TestSIMD512Guarded` exercises the runtime path, and
 `TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
 local helper calls and repeated execution of the LLVM transformation.
+
+A saved boolean guard carries the same feature evidence as an immediate
+branch. For example, a true `ready := archsimd.X86.AVX512() && enabled`
+proves AVX-512, while `AVX512() || enabled` does not. Joins retain only
+predicates proven on every feasible incoming path.
