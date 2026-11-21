@@ -23,8 +23,11 @@ write:
 		volatileSource, volatileDst bool
 		forward                     bool
 		stack, shared               bool
+		lowered                     bool
 	}{
 		{name: "checked destination", tail: checked, forward: true},
+		{name: "lowered fill", lowered: true, tail: checked, forward: true},
+		{name: "volatile lowered fill", lowered: true, volatileSource: true, tail: checked},
 		{name: "private stack", stack: true, tail: checked, forward: true},
 		{name: "volatile stack", stack: true, volatileSource: true, tail: checked},
 		{name: "delayed stack", stack: true, tail: "call void @mutate(ptr %src)\n" + checked},
@@ -76,8 +79,17 @@ exit:
 			if tc.stack {
 				allocation = "alloca %Headers, align 8"
 			}
+			fill := "%original = load " + sourceVolatile + " %Headers, ptr %src, align 1\n" +
+				"store %Headers %original, ptr %slot, align 1"
+			if tc.lowered {
+				volatile := "false"
+				if tc.volatileSource {
+					volatile = "true"
+				}
+				fill = "call void @llvm.memcpy.p0.p0.i32(ptr %slot, ptr %src, i32 4032, i1 " + volatile + ")"
+			}
 			mod := parseAggregateIR(t, strings.NewReplacer(
-				"$alloc", runtimeAllocU, "$prefix", tc.prefix, "$volatile", sourceVolatile,
+				"$alloc", runtimeAllocU, "$prefix", tc.prefix, "$fill", fill,
 				"$storage", allocation,
 				"$tail", strings.ReplaceAll(tc.tail, "$write", storeIR),
 			).Replace(`
@@ -86,6 +98,7 @@ exit:
 declare ptr @"$alloc"(i64)
 declare void @mutate(ptr)
 declare void @panic()
+declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)
 define void @clear_headers(ptr %slot) {
   %high = getelementptr %Headers, ptr %slot, i32 0, i32 0, i32 1, i32 1
   store i32 0, ptr %high, align 1
@@ -97,8 +110,7 @@ define void @copy(ptr %src, ptr %base, ptr %root, i1 %condition) {
 entry:
   %slot = $storage
   $prefix
-  %original = load $volatile %Headers, ptr %src, align 1
-  store %Headers %original, ptr %slot, align 1
+  $fill
   call void @clear_headers(ptr %slot)
   %value = load %Headers, ptr %slot, align 1, !llgo.header.snapshot !0
   $tail
@@ -108,6 +120,9 @@ entry:
 			td := llvm.NewTargetData("e-m:e-p:32:32-i64:64-n32:64-S128")
 			defer td.Dispose()
 			cfg := AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true}
+			if tc.lowered && LowerAggregateCopies(td, mod, cfg) == 0 {
+				t.Fatal("reusing a lowered header snapshot must report a change")
+			}
 			LowerLargeAggregates(td, mod, cfg)
 			LowerAggregateCopies(td, mod, cfg)
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
@@ -147,7 +162,8 @@ entry:
 			}
 			if tc.forward {
 				if allocs != 0 || copies != 1 || read != write || write.InstructionParent().AsValue().Name() != "write" ||
-					clear.Operand(0) != write.Operand(0) || llvm.NextInstruction(write) != clear {
+					clear.Operand(0) != write.Operand(0) || llvm.NextInstruction(write) != clear ||
+					!strings.HasPrefix(write.CalledValue().Name(), "llvm.memmove.") {
 					t.Fatalf("copy and clear must follow the destination check:\n%s", fn.String())
 				}
 			} else {

@@ -67,4 +67,29 @@ func CheckSparseArrayStorage() bool {
 		validString(&value[0].Text, 0x1000, 7) && validString(&value[1].Text, 0x2000, 9)
 }
 
+//go:linkname takeHeaderArray C.takeHeaderArray
+func takeHeaderArray([256]string)
+
+//go:linkname takeLargeHeaderArray C.takeLargeHeaderArray
+func takeLargeHeaderArray([4097]string)
+
+//go:linkname mutateHeaderArray C.mutateHeaderArray
+func mutateHeaderArray(*[256]string)
+
+//export PassHeaderArray
+func PassHeaderArray(src *[256]string) { takeHeaderArray(*src) }
+
+//export PassLargeHeaderArray
+func PassLargeHeaderArray(src *[4097]string) { takeLargeHeaderArray(*src) }
+
+//export ReturnHeaderArray
+func ReturnHeaderArray(src *[4097]string) [4097]string { return *src }
+
+//export PassHeaderArrayAfterMutation
+func PassHeaderArrayAfterMutation(src *[256]string) {
+	value := *src
+	mutateHeaderArray(src)
+	takeHeaderArray(value)
+}
+
 func main() {}
