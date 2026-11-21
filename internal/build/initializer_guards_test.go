@@ -306,10 +306,12 @@ func TestOptionalInitializersWASIStdout(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		assembly   []string
-		want       bool
+		writer     string
 	}{
-		{name: "literal", body: `fmt.Printf("hello")`, want: true},
-		{name: "deferred", body: `defer fmt.Printf("hello")`, want: true},
+		{name: "literal", body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "deferred", body: `defer fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "file writer", body: `os.WriteFile(); fmt.Printf("hello")`, writer: "llgoWriteClosedStdout"},
+		{name: "assembly file writer", body: `fmt.Printf("hello")`, assembly: []string{wasiPollWriteSymbol}, writer: "llgoWriteClosedStdout"},
 		{name: "redirected", body: `os.Stdout = nil; fmt.Printf("hello")`},
 		{name: "other descriptor", body: `println(os.Stderr); fmt.Printf("hello")`},
 		{name: "assembly reference", body: `fmt.Printf("hello")`, assembly: []string{"os.Stdout"}},
@@ -330,14 +332,21 @@ func TestOptionalInitializersWASIStdout(t *testing.T) {
 				prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
 				return pkg
 			}
+			add("internal/poll", `package poll
+type FD struct{}
+func (*FD) Write(s string) (int, error) { println(s); return len(s), nil }
+`)
 			add("os", `package os
+import "internal/poll"
 type File struct{}
 func NewFile(uintptr, string) *File { return new(File) }
 var Stdin = NewFile(0, "/dev/stdin")
 var Stdout = NewFile(1, "/dev/stdout")
 var Stderr = NewFile(2, "/dev/stderr")
 func Dynamic() string { return "runtime format" }
-func llgoWriteClosedStdout(s string) (int, error) { println(s); return len(s), nil }
+func WriteFile() { new(poll.FD).Write("file") }
+func llgoWriteClosedStdout(s string) (int, error) { return new(poll.FD).Write(s) }
+func llgoWriteStdoutDescriptor(s string) (int, error) { println(s); return len(s), nil }
 `)
 			add("fmt", `package fmt
 import "os"
@@ -356,7 +365,7 @@ func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return le
 				},
 				buildConf: &Config{
 					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
-					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true,
+					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true, Verbose: true,
 				},
 			}
 			if err := recordPackageSSAInstructions(ctx); err != nil {
@@ -367,12 +376,12 @@ func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return le
 				t.Fatal("missing stdout plan")
 			}
 			configureOptionalInitializers(ctx, goroot, &linkPruningInputs{roots: tc.assembly})
-			if plan.specialized != tc.want || (len(ctx.initializerGuardsOff) == 3) != tc.want {
-				t.Fatalf("specialized = %v, disabled guards = %v, want specialization %v", plan.specialized, ctx.initializerGuardsOff, tc.want)
-			}
 			callee := plan.regular
-			if tc.want {
-				callee = plan.direct
+			if tc.writer != "" {
+				callee = prog.ImportedPackage("os").Func(tc.writer)
+			}
+			if want := tc.writer != ""; (plan.selected != nil) != want || (len(ctx.initializerGuardsOff) == 3) != want {
+				t.Fatalf("selected = %v, disabled guards = %v, want specialization %v", plan.selected, ctx.initializerGuardsOff, want)
 			}
 			for _, call := range plan.calls {
 				if got := call.Common().StaticCallee(); got != callee {

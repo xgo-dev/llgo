@@ -190,7 +190,7 @@ type packageSection struct {
 	SpecializeBinary      bool              `yaml:"specialize_binary,omitempty"`
 	CodecInitDrops        []string          `yaml:"omit_codec_init,omitempty"`
 	SpecializeJSON        bool              `yaml:"specialize_json,omitempty"`
-	SpecializeWASIStdout  bool              `yaml:"specialize_wasi_stdout,omitempty"`
+	WASIStdoutWriter      string            `yaml:"wasi_stdout_writer,omitempty"`
 	SpecializeValueFormat bool              `yaml:"specialize_value_format,omitempty"`
 	PthreadStackSize      int64             `yaml:"pthread_stack_size,omitempty"`
 	PkgPath               string            `yaml:"pkg_path,omitempty"`
@@ -205,7 +205,7 @@ type packageSection struct {
 }
 
 func (s *packageSection) empty() bool {
-	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && len(s.InitializerGuards) == 0 && !s.EmscriptenRuntimeFree && !s.GeneratedValueFormat && !s.SpecializeValueFormat && !s.SpecializeWASIStdout && !s.BinaryCodecAccessor && !s.SpecializeBinary && len(s.CodecInitDrops) == 0 && !s.SpecializeJSON && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && len(s.InitializerGuards) == 0 && !s.EmscriptenRuntimeFree && !s.GeneratedValueFormat && !s.SpecializeValueFormat && s.WASIStdoutWriter == "" && !s.BinaryCodecAccessor && !s.SpecializeBinary && len(s.CodecInitDrops) == 0 && !s.SpecializeJSON && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 )
@@ -136,14 +137,18 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if len(roots) == 0 || len(candidates) == 0 {
 		return
 	}
-	unused := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
+	unused, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
 
 	if plan := ctx.wasiStdout; plan != nil && len(wasiStandardFiles) != 0 {
-		unused = plan.specialize(unused, candidates, wasiStandardFiles, func() map[*ssa.Global]cl.OptionalInitializer {
-			return unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
-		})
-		if plan.specialized && (conf.Verbose || conf.PrintCommands) {
+		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
+			return unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
+		}
+		unused = plan.specialize(unused, candidates, wasiStandardFiles, roots, isSymbolRoot(wasiPollWriteSymbol), analyze)
+		if plan.selected != nil && (conf.Verbose || conf.PrintCommands) {
 			fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
+			if plan.selected == plan.descriptor {
+				fmt.Fprintln(os.Stderr, "llgo: use the WASI stdout descriptor writer")
+			}
 		}
 	}
 
@@ -156,7 +161,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	// Address-taken callbacks can keep unrelated package data reachable through
 	// indirect calls. Recheck after removing the already proven-unused edges.
 	if len(callbackInitializers) != 0 {
-		maps.Copy(unused, unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers))
+		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers, false)
+		maps.Copy(unused, withoutCallbacks)
 	}
 	// Drop the WASI startup group together. Keeping a single standard file
 	// can retain the shared descriptor construction path.
@@ -225,14 +231,15 @@ func initializerStoresCallback(value ssa.Value) bool {
 }
 
 func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
-	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer) map[*ssa.Global]cl.OptionalInitializer {
+	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer, wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
 	if len(omitted) != 0 {
 		restore := omitInitializerEdges(omitted)
 		defer restore()
 	}
 	unused := maps.Clone(candidates)
 	observedData := maps.Clone(knownData)
-	for fn := range rta.Analyze(roots, false).Reachable {
+	reachable := rta.Analyze(roots, wantGraph)
+	for fn := range reachable.Reachable {
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instrs {
 				if _, debug := inst.(*ssa.DebugRef); debug {
@@ -255,7 +262,7 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 		_, slice := group.Store.Val.(*ssa.Slice)
 		return slice && observedData[global.Pkg]
 	})
-	return unused
+	return unused, reachable.CallGraph
 }
 
 // The map and slice recognizers return disjoint ranges. Put them back in
