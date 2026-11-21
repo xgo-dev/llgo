@@ -209,7 +209,7 @@ The native amd64 matrix exercises default, emulated and eligible explicit
 widths at O0/O2 and Thin/Full LTO, including CPU overrides and rejected width
 requests. Cross-package calls, indirect calls, global
 initialization and deferred recovery use the same selected representation.
-LLVM tests verify that ARM64 and Wasm do not acquire 256-bit variants.
+LLVM tests verify that ARM64 and Wasm omit both the 256-bit and 512-bit variants.
 
 `portable/` tests compare shared portable operations with the official Go
 toolchain and exercise LLGo's initialization and embedded-field contracts in
@@ -476,7 +476,8 @@ go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestE
 Generic LLVM legalization handles baseline operations. CPU-guarded leaves carry the features required by instruction-specific operations. The amd64 assembly check explicitly uses
 `GOAMD64=v1` and rejects AVX instructions. Tests needing official AVX512 APIs
 use separate LLGo-only scalar-reference cases when that hardware is not
-available; this does not qualify native AVX512 execution.
+available. On an AVX512 host the native gate exercises the enabled paths.
+For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
 
 Reference boundaries:
 

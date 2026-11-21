@@ -13,7 +13,7 @@ for compiler in go "$LLGO"; do
     "$compiler" test "${flags[@]}" -c -o "$output/test" "$package"
     filter=.
     if [[ "$package" == ./test/simd ]]; then filter='^TestSIMD512'; fi
-    GODEBUG=simd=512 "$SDE" -spr -- "$output/test" -test.count=1 -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
+    GODEBUG="${GODEBUG:+$GODEBUG,}simd=512" "$SDE" -spr -- "$output/test" -test.count=1 -test.timeout="${SDE_TIMEOUT:-60m}" -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
     cat "$output/result"
     if [[ "$package" == ./test/simd/portable ]]; then
       grep -q 'width=512 emulated=false AVX512=true' "$output/result"
