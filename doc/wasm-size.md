@@ -83,7 +83,9 @@ filesystem properties during initialization and create Go JavaScript handles
 on first use.
 
 Closed WASI and Emscripten size links can also omit unused standard-library
-slice literals, literal errors and interface values made from constants.
+slice literals, literal errors, constant interface values and struct literals
+that store a static callback. Reachability is rechecked without the proven
+unused callbacks to release data pulled in through indirect calls.
 Slice tables remain initialized when reachable code can access their backing
 data through another variable or symbol. Literal errors use the same checks
 on initializer references after verifying the selected `errors.New`

@@ -2,6 +2,7 @@ package build
 
 import (
 	"go/constant"
+	"go/token"
 	"go/types"
 
 	"github.com/xgo-dev/llgo/cl"
@@ -49,36 +50,59 @@ func isLiteralErrorConstructor(fn *ssa.Function) bool {
 		len(ret.Results) == 1 && ret.Results[0] == box
 }
 
-// optionalLiteralInitializers recognizes fresh literal errors and interface
-// boxes of constant values. Each value is published by exactly one store.
+// optionalLiteralInitializers recognizes fresh literal errors, constant
+// interface boxes and struct literals with a static callback. Each value is
+// published by exactly one store.
 func optionalLiteralInitializers(init, ctor *ssa.Function) (groups []cl.OptionalInitializer) {
 	if init == nil || init.Synthetic != "package initializer" {
 		return nil
 	}
 	for _, block := range init.Blocks {
-		previous := -1
+		var positions []int
 		for i, instr := range block.Instrs {
 			if _, debug := instr.(*ssa.DebugRef); debug {
 				continue
 			}
-			start := previous
-			previous = i
+			positions = append(positions, i)
 			store, ok := instr.(*ssa.Store)
-			if !ok || start < 0 {
-				continue
-			}
-			first, _ := store.Val.(ssa.Instruction)
-			if first != block.Instrs[start] {
+			if !ok || len(positions) < 2 {
 				continue
 			}
 			global, _ := store.Addr.(*ssa.Global)
-			if global != nil && global.Pkg == init.Pkg && discardableLiteralValue(store.Val, ctor) &&
-				cl.InitializerHasLocalUses(block.Instrs[start:i+1]) {
-				groups = append(groups, cl.OptionalInitializer{First: first, Store: store, Global: global})
+			if global == nil || global.Pkg != init.Pkg {
+				continue
+			}
+			start := positions[len(positions)-2]
+			if first, _ := store.Val.(ssa.Instruction); first != block.Instrs[start] || !discardableLiteralValue(store.Val, ctor) {
+				start = staticCallbackInitializerStart(store, block.Instrs, positions)
+			}
+			if start >= 0 && cl.InitializerHasLocalUses(block.Instrs[start:i+1]) {
+				groups = append(groups, cl.OptionalInitializer{First: block.Instrs[start], Store: store, Global: global})
 			}
 		}
 	}
 	return groups
+}
+
+// A zeroed local struct is filled with a noncapturing callback and copied
+// into the global. The callback is stored without running it.
+func staticCallbackInitializerStart(store *ssa.Store, instructions []ssa.Instruction, positions []int) int {
+	load, ok := store.Val.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL || len(positions) < 5 {
+		return -1
+	}
+	start := positions[len(positions)-5]
+	local, _ := instructions[start].(*ssa.Alloc)
+	field, _ := instructions[positions[len(positions)-4]].(*ssa.FieldAddr)
+	write, _ := instructions[positions[len(positions)-3]].(*ssa.Store)
+	if local == nil || local.Heap || field == nil || field.X != local || write == nil || write.Addr != field ||
+		load.X != local || load != instructions[positions[len(positions)-2]] {
+		return -1
+	}
+	if fn, ok := write.Val.(*ssa.Function); ok && len(fn.FreeVars) == 0 {
+		return start
+	}
+	return -1
 }
 
 func discardableLiteralValue(value ssa.Value, ctor *ssa.Function) bool {

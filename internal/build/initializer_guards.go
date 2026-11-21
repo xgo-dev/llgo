@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -37,7 +38,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if wasm {
 		errorConstructor = literalErrorConstructor(ctx, goroot)
 	}
-	candidates := make(map[*ssa.Global]*ssa.Store)
+	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
 	for _, pkg := range ctx.pkgByID {
 		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
@@ -68,7 +69,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		for _, group := range groups {
 			block := group.First.Block()
 			pkg.guardedInitializers[block] = append(pkg.guardedInitializers[block], group)
-			candidates[group.Global] = group.Store
+			candidates[group.Global] = group
 		}
 	}
 	if len(candidates) == 0 {
@@ -124,33 +125,25 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if len(roots) == 0 || len(candidates) == 0 {
 		return
 	}
-	for fn := range rta.Analyze(roots, false).Reachable {
-		for _, block := range fn.Blocks {
-			for _, inst := range block.Instrs {
-				if _, debug := inst.(*ssa.DebugRef); debug {
-					continue
-				}
-				for _, operand := range inst.Operands(nil) {
-					if global, ok := (*operand).(*ssa.Global); ok {
-						if sliceOwners[global.Pkg] && fn != global.Pkg.Func("init") {
-							observedData[global.Pkg] = true
-						}
-						if init, candidate := candidates[global]; candidate && init != inst {
-							delete(candidates, global)
-						}
-					}
-				}
-			}
+	unused := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
+	var callbackInitializers []cl.OptionalInitializer
+	for _, group := range unused {
+		if _, ok := group.Store.Val.(*ssa.UnOp); ok {
+			callbackInitializers = append(callbackInitializers, group)
 		}
 	}
-	var dataCount, errorCount, interfaceCount, otherCount int
-	for global, store := range candidates {
-		if observedData[global.Pkg] {
-			continue
-		}
+	// Address-taken callbacks can keep unrelated package data reachable through
+	// indirect calls. Recheck after removing the already proven-unused edges.
+	if len(callbackInitializers) != 0 {
+		maps.Copy(unused, unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers))
+	}
+	var dataCount, errorCount, interfaceCount, callbackCount, otherCount int
+	for global, group := range unused {
+		store := group.Store
 		call, _ := store.Val.(*ssa.Call)
 		errorValue := call != nil && errorConstructor != nil && call.Common().StaticCallee() == errorConstructor
 		_, interfaceValue := store.Val.(*ssa.MakeInterface)
+		_, callbackValue := store.Val.(*ssa.UnOp)
 		if errorValue && keepErrorConstructors {
 			continue
 		}
@@ -162,6 +155,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			errorCount++
 		case interfaceValue:
 			interfaceCount++
+		case callbackValue:
+			callbackCount++
 		default:
 			otherCount++
 		}
@@ -177,12 +172,81 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		if interfaceCount != 0 {
 			fmt.Fprintf(os.Stderr, "llgo: omit unused constant interface initializers (%d)\n", interfaceCount)
 		}
+		if callbackCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused static callback initializers (%d)\n", callbackCount)
+		}
 		if otherCount != 0 {
 			kind := "map"
 			if wasm {
 				kind = "standard file"
 			}
 			fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, otherCount)
+		}
+	}
+}
+
+func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
+	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer) map[*ssa.Global]cl.OptionalInitializer {
+	if len(omitted) != 0 {
+		restore := omitInitializerEdges(omitted)
+		defer restore()
+	}
+	unused := maps.Clone(candidates)
+	observedData := maps.Clone(knownData)
+	for fn := range rta.Analyze(roots, false).Reachable {
+		for _, block := range fn.Blocks {
+			for _, inst := range block.Instrs {
+				if _, debug := inst.(*ssa.DebugRef); debug {
+					continue
+				}
+				for _, operand := range inst.Operands(nil) {
+					if global, ok := (*operand).(*ssa.Global); ok {
+						if sliceOwners[global.Pkg] && fn != global.Pkg.Func("init") {
+							observedData[global.Pkg] = true
+						}
+						if init, candidate := unused[global]; candidate && init.Store != inst {
+							delete(unused, global)
+						}
+					}
+				}
+			}
+		}
+	}
+	maps.DeleteFunc(unused, func(global *ssa.Global, _ cl.OptionalInitializer) bool { return observedData[global.Pkg] })
+	return unused
+}
+
+// Hide initializer bodies from reachability only. The coordinator restores the
+// original SSA before package compilation, keeping archive contents reusable.
+func omitInitializerEdges(omitted []cl.OptionalInitializer) func() {
+	ends := make(map[*ssa.BasicBlock]map[ssa.Instruction]ssa.Instruction)
+	for _, group := range omitted {
+		block := group.First.Block()
+		if ends[block] == nil {
+			ends[block] = make(map[ssa.Instruction]ssa.Instruction)
+		}
+		ends[block][group.First] = group.Store
+	}
+	original := make(map[*ssa.BasicBlock][]ssa.Instruction, len(ends))
+	for block, groups := range ends {
+		original[block] = block.Instrs
+		kept := make([]ssa.Instruction, 0, len(block.Instrs))
+		var end ssa.Instruction
+		for _, inst := range block.Instrs {
+			if last := groups[inst]; last != nil {
+				end = last
+			}
+			if end == nil {
+				kept = append(kept, inst)
+			} else if end == inst {
+				end = nil
+			}
+		}
+		block.Instrs = kept
+	}
+	return func() {
+		for block, instructions := range original {
+			block.Instrs = instructions
 		}
 	}
 }

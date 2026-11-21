@@ -16,13 +16,13 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestOptionalInitializersLiteralErrors(t *testing.T) {
+func TestOptionalInitializersLiteralValues(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("Wasm size profile requires DCE")
 	}
 	for _, tt := range []struct {
-		name, constructor, rhs, entry string
-		alias, wantGuard, wantDrop    bool
+		name, constructor, rhs, entry                       string
+		alias, hasTable, wantGuard, wantDrop, wantTableDrop bool
 	}{
 		{name: "unused", wantGuard: true, wantDrop: true},
 		{name: "used", entry: "println(data.Sentinel.Error())", wantGuard: true},
@@ -32,6 +32,18 @@ func TestOptionalInitializersLiteralErrors(t *testing.T) {
 		{name: "dynamic input", rhs: "errors.New(text())"},
 		{name: "constant interface", rhs: "any(struct{ N int }{})", wantGuard: true, wantDrop: true},
 		{name: "live constant interface", rhs: "any(struct{ N int }{})", entry: "println(data.Sentinel != nil)", wantGuard: true},
+		{
+			name:  "unused callback cannot retain static data through an indirect call",
+			rhs:   "struct{ New func() }{func() { println(tables.Values[0]) }}",
+			entry: "invoke(func() {})", hasTable: true, wantGuard: true, wantDrop: true, wantTableDrop: true,
+		},
+		{
+			name: "live callback retains its static data", rhs: "struct{ New func() }{func() { println(tables.Values[0]) }}",
+			entry: "invoke(data.Sentinel.New)", hasTable: true, wantGuard: true,
+		},
+		{
+			name: "initializer calls a function", rhs: "struct{ New string }{text()}",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -59,8 +71,13 @@ func TestOptionalInitializersLiteralErrors(t *testing.T) {
 			if rhs == "" {
 				rhs = `errors.New("sentinel")`
 			}
-			add("data", "package data\nimport \"errors\"\nfunc text() string { return \"text\" }\nvar Sentinel = "+rhs)
-			entry := add("main", "package main\nimport \"data\"\nfunc main() { "+tt.entry+" }")
+			dataImports := "import \"errors\"\n"
+			if tt.hasTable {
+				add("tables", "package tables\nvar Values = []int{42}")
+				dataImports += "import \"tables\"\n"
+			}
+			add("data", "package data\n"+dataImports+"var Sentinel = "+rhs+"\nfunc text() string { return \"text\" }")
+			entry := add("main", "package main\nimport \"data\"\nfunc invoke(f func()) { f() }\nfunc main() { "+tt.entry+" }")
 			prog.Build()
 			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
 			defer backend.Dispose()
@@ -83,6 +100,9 @@ func TestOptionalInitializersLiteralErrors(t *testing.T) {
 			var want []string
 			if tt.wantDrop {
 				want = []string{"_llgo_init_var.data.Sentinel"}
+			}
+			if tt.wantTableDrop {
+				want = append(want, "_llgo_init_var.tables.Values")
 			}
 			if !slices.Equal(ctx.initializerGuardsOff, want) {
 				t.Fatalf("disabled guards = %v, want %v", ctx.initializerGuardsOff, want)
