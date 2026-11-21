@@ -304,14 +304,16 @@ func TestOptionalInitializersWASIStdout(t *testing.T) {
 		t.Skip("WASI stdout specialization requires DCE")
 	}
 	for _, tc := range []struct {
-		name, body string
-		assembly   []string
-		writer     string
+		name, body        string
+		assembly          []string
+		reflectiveMethods bool
+		writer            string
 	}{
 		{name: "literal", body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "deferred", body: `defer fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "file writer", body: `os.WriteFile(); fmt.Printf("hello")`, writer: "llgoWriteClosedStdout"},
 		{name: "assembly file writer", body: `fmt.Printf("hello")`, assembly: []string{wasiPollWriteSymbol}, writer: "llgoWriteClosedStdout"},
+		{name: "reflective file writer", body: `fmt.Printf("hello")`, reflectiveMethods: true, writer: "llgoWriteClosedStdout"},
 		{name: "redirected", body: `os.Stdout = nil; fmt.Printf("hello")`},
 		{name: "other descriptor", body: `println(os.Stderr); fmt.Printf("hello")`},
 		{name: "assembly reference", body: `fmt.Printf("hello")`, assembly: []string{"os.Stdout"}},
@@ -355,7 +357,7 @@ func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return le
 `)
 			entry := add("main", "package main; import (\"fmt\"; \"os\"); func main() {"+tc.body+"}")
 			prog.Build()
-			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmReflectBridges: tc.reflectiveMethods})
 			defer backend.Dispose()
 			ctx := &context{
 				prog: backend, progSSA: prog, initial: []*packages.Package{entry}, pkgByID: pkgs,

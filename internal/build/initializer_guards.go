@@ -143,7 +143,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
 			return unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
 		}
-		unused = plan.specialize(unused, candidates, wasiStandardFiles, roots, isSymbolRoot(wasiPollWriteSymbol), analyze)
+		// Reflection may keep file methods without an edge in the call graph.
+		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(wasiPollWriteSymbol)
+		unused = plan.specialize(unused, candidates, wasiStandardFiles, roots, keepFileWriter, analyze)
 		if plan.selected != nil && (conf.Verbose || conf.PrintCommands) {
 			fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
 			if plan.selected == plan.descriptor {

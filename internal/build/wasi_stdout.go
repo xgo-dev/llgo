@@ -54,7 +54,7 @@ func (p *wasiStdoutPlan) record(instruction ssa.Instruction) {
 }
 
 func (p *wasiStdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalInitializer, files []cl.OptionalInitializer,
-	roots []*ssa.Function, pollWriteRooted bool, analyze func(bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
+	roots []*ssa.Function, keepFileWriter bool, analyze func(bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
 	if len(p.calls) == 0 {
 		return unused
 	}
@@ -69,7 +69,7 @@ func (p *wasiStdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.Option
 	// The regular formatter reads os.Stdout. Remove those reads tentatively
 	// so the second pass can distinguish them from application observations.
 	writer := p.file
-	if p.descriptor != nil && p.pollWrite != nil && !pollWriteRooted {
+	if p.descriptor != nil && p.pollWrite != nil && !keepFileWriter {
 		writer = p.descriptor
 	}
 	p.rewrite(writer)
