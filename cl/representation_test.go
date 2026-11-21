@@ -225,7 +225,9 @@ func local() { type Local Copy; var _ Local }
 	info.Defs = nil
 	backend := prog.NewBackendProgram()
 	defer backend.Dispose()
-	for _, typ := range []types.Type{copyType, local} {
+	localName := local.(*types.Named).Obj()
+	instantiatedLocal := types.NewNamed(types.NewTypeName(localName.Pos(), pkg, localName.Name(), nil), local.Underlying(), nil)
+	for _, typ := range []types.Type{copyType, local, instantiatedLocal} {
 		if backend.RepresentationOf(typ).Origin != native {
 			t.Fatal("snapshot lost the origin after discarding source bindings")
 		}

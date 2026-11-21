@@ -168,3 +168,27 @@ func TestRepresentationRejectsInvalidAttributes(t *testing.T) {
 		t.Fatal("rejected attributes were partially published")
 	}
 }
+
+func TestRepresentationAdapterIsBackendLocal(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := types.NewPackage("p", "p")
+	native := types.NewNamed(types.NewTypeName(0, pkg, "Native", nil), types.Typ[types.Uint64], nil)
+	prog.SetTypeCallConv("p.Native", CDecl)
+	backend := prog.NewBackendProgram()
+	defer backend.Dispose()
+	other := prog.NewBackendProgram()
+	defer other.Dispose()
+	adapter := types.NewNamed(types.NewTypeName(0, pkg, "Copy[int]", nil), native.Underlying(), nil)
+	backend.CopyTypeRepresentation(adapter.Obj(), native)
+	alias := types.NewAlias(types.NewTypeName(0, pkg, "Alias", nil), adapter)
+	if backend.RepresentationOf(alias).Storage != NativeRepresentation {
+		t.Fatal("alias lost its backend adapter's representation")
+	}
+	if backend.RepresentationOf(adapter).Storage != NativeRepresentation || backend.gocvt.shouldConvertNamed(adapter) {
+		t.Fatal("backend adapter lost the resolved representation")
+	}
+	if prog.RepresentationOf(adapter).Storage != GoRepresentation || other.RepresentationOf(adapter).Storage != GoRepresentation {
+		t.Fatal("backend adapter mutated the shared frontend snapshot")
+	}
+}

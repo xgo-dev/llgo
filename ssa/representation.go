@@ -16,7 +16,10 @@
 
 package ssa
 
-import "go/types"
+import (
+	"go/token"
+	"go/types"
+)
 
 // StorageRepresentation describes how a source type stores values. It is
 // independent of the calling convention of a function accepting those values.
@@ -40,6 +43,20 @@ type TypeRepresentation struct {
 // layout queries while go/types is checking a package. It is never shared with
 // backend Programs. The frontend must publish a complete snapshot afterwards.
 type TypeRepresentationChecker func(*types.TypeName) TypeRepresentation
+
+// localTypeDeclaration identifies a checked declaration, independently of the
+// fresh TypeName allocated by SSA for each generic function instantiation.
+// Package identity separates rechecks; position separates shadowing scopes.
+// No source syntax or definition edges are retained in this index.
+type localTypeDeclaration struct {
+	pkg  *types.Package
+	pos  token.Pos
+	name string
+}
+
+func localDeclaration(obj *types.TypeName) localTypeDeclaration {
+	return localTypeDeclaration{obj.Pkg(), obj.Pos(), obj.Name()}
+}
 
 func representationObject(t types.Type) *types.TypeName {
 	switch t := t.(type) {
@@ -92,6 +109,9 @@ func (p *packageSyntaxData) setTypeRepresentation(obj *types.TypeName, rep TypeR
 		panic("ssa: cannot change a published type representation")
 	}
 	p.typeRepresentations[obj] = rep
+	if obj.Pkg() != nil && obj.Pos().IsValid() && obj.Parent() != nil && obj.Parent() != obj.Pkg().Scope() {
+		p.localTypeRepresentations[localDeclaration(obj)] = rep
+	}
 	if rep.Storage == NativeRepresentation {
 		p.hasNativeTypeMetadata.Store(true)
 	}
@@ -103,13 +123,16 @@ func (p *packageSyntaxData) setTypeRepresentation(obj *types.TypeName, rep TypeR
 func (p Program) SetTypeRepresentationChecker(pkg *types.Package, checker TypeRepresentationChecker) {
 	p.checkingRepresentationsMu.Lock()
 	defer p.checkingRepresentationsMu.Unlock()
+	p.packageSyntax.mu.Lock()
+	defer p.packageSyntax.mu.Unlock()
+	if _, complete := p.packageSyntax.completedTypePackages[pkg]; complete {
+		panic("ssa: cannot restart checking a completed type snapshot")
+	}
 	if p.checkingRepresentations == nil {
 		p.checkingRepresentations = make(map[*types.Package]TypeRepresentationChecker)
 	}
 	p.checkingRepresentations[pkg] = checker
-	p.packageSyntax.mu.Lock()
 	p.packageSyntax.checkingTypePackages[pkg] = struct{}{}
-	p.packageSyntax.mu.Unlock()
 }
 
 // PublishTypeRepresentations atomically freezes frontend attributes and drops
@@ -133,6 +156,7 @@ func (p Program) PublishTypeRepresentations(pkg *types.Package, reps map[*types.
 	for obj, rep := range reps {
 		p.packageSyntax.setTypeRepresentation(obj, rep)
 	}
+	p.packageSyntax.completedTypePackages[pkg] = struct{}{}
 	delete(p.packageSyntax.checkingTypePackages, pkg)
 	delete(p.checkingRepresentations, pkg)
 }
@@ -142,22 +166,44 @@ func (p Program) PublishTypeRepresentations(pkg *types.Package, reps map[*types.
 // instances read their origin declaration's attribute. Programmatic clients
 // may still register native roots using SetTypeCallConv.
 func (p Program) RepresentationOf(t types.Type) TypeRepresentation {
-	return p.packageSyntax.representationOf(t)
+	return p.gocvt.representationOf(t)
 }
 
-func (p *packageSyntaxData) representationOf(t types.Type) TypeRepresentation {
+// CopyTypeRepresentation transfers a resolved attribute to a fresh backend
+// type adapter (for example, a positionless generic-local ABI name). The copy
+// belongs to this Program's lowering state, not the shared frontend snapshot.
+func (p Program) CopyTypeRepresentation(dst *types.TypeName, src types.Type) {
+	rep := p.RepresentationOf(src)
+	validateTypeRepresentation(dst, rep)
+	if old, ok := p.gocvt.representations[dst]; ok && old != rep {
+		panic("ssa: cannot change a lowered type representation")
+	}
+	p.gocvt.representations[dst] = rep
+}
+
+func (p goTypes) representationOf(t types.Type) TypeRepresentation {
+	syntax := p.packageSyntax
 	for {
 		obj := representationObject(t)
 		if obj == nil {
 			return TypeRepresentation{}
 		}
-		p.mu.RLock()
-		_, checking := p.checkingTypePackages[obj.Pkg()]
-		rep, found := p.typeRepresentations[obj]
-		if !found {
-			rep = p.declaredRepresentation(obj)
+		if rep, found := p.representations[obj]; found {
+			return rep
 		}
-		p.mu.RUnlock()
+		syntax.mu.RLock()
+		_, checking := syntax.checkingTypePackages[obj.Pkg()]
+		rep, found := syntax.typeRepresentations[obj]
+		if !found && obj.Parent() == nil && obj.Pos().IsValid() {
+			// x/tools/go/ssa substitutes local Named/Alias types using a fresh
+			// object with the same declaration coordinates and no scope. Its
+			// Origin is fresh too, so pointer identity alone is insufficient.
+			rep, found = syntax.localTypeRepresentations[localDeclaration(obj)]
+		}
+		if !found {
+			rep = syntax.declaredRepresentation(obj)
+		}
+		syntax.mu.RUnlock()
 		if checking {
 			panic("ssa: type representation requested before frontend completion")
 		}
@@ -208,4 +254,14 @@ func (p Program) TypeRepresentationsPending(pkg *types.Package) bool {
 	defer p.packageSyntax.mu.RUnlock()
 	_, pending := p.packageSyntax.checkingTypePackages[pkg]
 	return pending
+}
+
+// TypeRepresentationsComplete also covers validated opaque imports. Such
+// packages have no native declarations under the current export contract and
+// do not need to reconstruct source bindings to establish Go representation.
+func (p Program) TypeRepresentationsComplete(pkg *types.Package) bool {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	_, complete := p.packageSyntax.completedTypePackages[pkg]
+	return complete
 }

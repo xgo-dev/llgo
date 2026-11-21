@@ -32,6 +32,16 @@ Generic instances read the attribute of their origin declaration. Independent
 same-shape declarations remain independent; Go identity and method sets do not
 change.
 
+SSA instantiation of function-local types creates fresh `TypeName` objects, even
+for `Named.Origin()`. The snapshot therefore also indexes checked local
+attributes by package identity, declaration position, and name. These stable
+declaration coordinates transfer attributes to SSA's scope-less copies,
+including ordinary Go attributes for local shadows of native package types.
+This indexes a known declaration; it does not infer representation from shared
+underlying structures or recover source bindings in the backend. When lowering
+renames these types to positionless ABI names, it explicitly copies the resolved
+attribute into Program-local adapter metadata; the shared snapshot stays immutable.
+
 The lifecycle has two phases:
 
 1. During source checking, a frontend resolver uses the checker's live
@@ -62,7 +72,9 @@ Neither shared `Underlying()` objects nor shared fields establish inheritance.
 Package export serialization is a later stage. Until it carries these attributes
 (including reachable private and generic origins), native packages retain the
 existing source-checking fallback; this change does not disable archive or SSA
-caching.
+caching. Validated opaque imports publish a completed default-Go snapshot;
+partial binding maps reconstructed from exports are never treated as live
+checker information.
 
 ## First-stage coverage
 

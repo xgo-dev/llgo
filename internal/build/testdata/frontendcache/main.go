@@ -15,6 +15,9 @@ type runner struct{ N int }
 func (r runner) Run(p *int) { *p += r.N }
 func crash(out *int)        { defer dep.Catch(out); panic("expected") }
 func main() {
+	if !nativederived.Local(1) || !nativederived.Local("second instance") {
+		panic("native generic local representation")
+	}
 	frame := struct {
 		Value    nativebase.Record
 		Sentinel uint64

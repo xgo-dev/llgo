@@ -170,6 +170,11 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 			}
 		}
 	}
+	// capture excludes every native declaration, including escaping local
+	// definitions. This validated opaque export therefore has only default Go
+	// attributes; its partial Info is not a source-checking result. Publish that
+	// fact before directive collection so it never attempts to rebind its RHSs.
+	l.ctx.prog.PublishTypeRepresentations(checked, nil)
 	l.selected[pkg.ID] = true
 	return true
 }

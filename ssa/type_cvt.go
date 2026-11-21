@@ -26,12 +26,13 @@ import (
 // -----------------------------------------------------------------------------
 
 type goTypes struct {
-	// typs and cvtneed are owned by the single lowering goroutine for one
+	// typs, cvtneed, and adapter attributes are owned by the lowering goroutine for one
 	// Program. packageSyntax is prepared before backend lowering and shared
 	// read-only by Programs with independent LLVM contexts.
-	typs          map[unsafe.Pointer]unsafe.Pointer
-	cvtneed       map[*types.Named]conversionRequirement
-	packageSyntax *packageSyntaxData
+	typs            map[unsafe.Pointer]unsafe.Pointer
+	cvtneed         map[*types.Named]conversionRequirement
+	packageSyntax   *packageSyntaxData
+	representations map[*types.TypeName]TypeRepresentation
 }
 
 func newGoTypes(syntax ...*packageSyntaxData) goTypes {
@@ -41,9 +42,10 @@ func newGoTypes(syntax ...*packageSyntaxData) goTypes {
 	}
 	typs := make(map[unsafe.Pointer]unsafe.Pointer)
 	return goTypes{
-		typs:          typs,
-		cvtneed:       make(map[*types.Named]conversionRequirement),
-		packageSyntax: packageSyntax,
+		typs:            typs,
+		cvtneed:         make(map[*types.Named]conversionRequirement),
+		packageSyntax:   packageSyntax,
+		representations: make(map[*types.TypeName]TypeRepresentation),
 	}
 }
 
@@ -177,11 +179,11 @@ func typeNameLinkname(obj *types.TypeName) string {
 }
 
 func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
-	return p.packageSyntax.representationOf(t).Storage != NativeRepresentation
+	return p.representationOf(t).Storage != NativeRepresentation
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	return p.packageSyntax.representationOf(t).Storage != NativeRepresentation
+	return p.representationOf(t).Storage != NativeRepresentation
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {

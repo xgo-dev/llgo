@@ -56,6 +56,9 @@ func newRepresentationResolver(prog llssa.Program, fset *token.FileSet, pkg *typ
 }
 
 func registerTypeRepresentations(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, info *types.Info) error {
+	if prog.TypeRepresentationsComplete(pkg) {
+		return nil
+	}
 	r := newRepresentationResolver(prog, fset, pkg, files, info)
 	if !r.hasDeclarations && !pkg.Complete() {
 		// Synthetic package owners used by SSA clients can have no source
