@@ -53,6 +53,11 @@ runtime and reuses package archives.
 The JavaScript SjLj profile preserves call boundaries in frames that use
 `setjmp` to limit duplicate unwind checks after LLVM inlining.
 
+The linear Wasm collector attaches finalizer and cleanup hooks on first
+registration. The single-worker timer scheduler likewise attaches its hooks
+when a real timer is first started or reset. Full LTO can discard each
+implementation when its registration is unreachable.
+
 Named Emscripten size executables with DCE and Full LTO also try Closure's
 SIMPLE optimization at final link. SIMPLE preserves property names used by
 host code through `Module.FS` and other runtime exports. Emscripten's default

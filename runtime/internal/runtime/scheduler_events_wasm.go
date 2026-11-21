@@ -20,9 +20,8 @@ func RegisterWasmCallbackPoll(poll func()) {
 	wasmCallbackPollHook = poll
 }
 
-// RegisterWasmTimerHooks connects the Go-derived timer heap when the standard
-// runtime package is linked. Programs that do not use timers keep the nil
-// hooks and remain linkable without pulling in timer state.
+// RegisterWasmTimerHooks connects the Go-derived timer heap on first use.
+// Programs without timers can drop the timer implementation at link time.
 func RegisterWasmTimerHooks(poll func(), wait func() (uint64, bool)) {
 	wasmPollTimersHook = poll
 	wasmTimerWaitHook = wait
@@ -54,10 +53,11 @@ func waitWasmRunq() *g {
 			wasmevent.Wait(wasmPCLNPollInterval)
 			continue
 		}
-		if wasmTimerWaitHook == nil {
-			return nil
+		var wait uint64
+		var active bool
+		if wasmTimerWaitHook != nil {
+			wait, active = wasmTimerWaitHook()
 		}
-		wait, active := wasmTimerWaitHook()
 		if !active {
 			// A registered Emscripten callback can publish runnable work even
 			// when the Go timer heap is empty. Yield for the longest host wait;
