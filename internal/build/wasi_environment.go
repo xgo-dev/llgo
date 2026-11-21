@@ -24,7 +24,8 @@ func wasiEnvironmentPackage(prog *ssa.Program) *ssa.Package {
 }
 
 func configureWASIEnvironment(ctx *context, p *ssa.Package, result *rta.Result, isSymbolRoot func(string) bool) {
-	for _, name := range []string{wasiEnvironmentGuard, "syscall.envs", "syscall.copyenv", "syscall.env", "syscall.envLock", "syscall.envOnce"} {
+	for _, name := range []string{wasiEnvironmentGuard, "syscall.envs", "syscall.copyenv", "syscall.env", "syscall.envLock", "syscall.envOnce",
+		"syscall.llgoEnvironmentCopier", "syscall.llgoCopyEnvironmentIndex"} {
 		if isSymbolRoot(name) {
 			return
 		}
@@ -59,6 +60,7 @@ func rewriteWASIGetenv(source []byte) []byte {
 		return nil
 	}
 	var hasIndex, hasEntries bool
+	var copyEnv *ast.CallExpr
 	for _, decl := range file.Decls {
 		vars, ok := decl.(*ast.GenDecl)
 		if !ok || vars.Tok != token.VAR {
@@ -70,6 +72,10 @@ func rewriteWASIGetenv(source []byte) []byte {
 				continue
 			}
 			switch v.Names[0].Name {
+			case "copyenv":
+				if !vars.Lparen.IsValid() && len(v.Values) == 1 {
+					copyEnv = wasiOnceEnvironmentCopy(v.Values[0])
+				}
 			case "env":
 				index, ok := v.Type.(*ast.MapType)
 				hasIndex = ok && envIdent(index.Key, "string") && envIdent(index.Value, "int")
@@ -104,13 +110,60 @@ func rewriteWASIGetenv(source []byte) []byte {
 				continue
 			}
 			pos := fset.Position(stmt.Pos()).Offset
+			prefix := source[:pos]
 			resultText := source[fset.Position(results.Pos()).Offset:fset.Position(results.End()).Offset]
 			key := param.Names[0].Name
+			if copyEnv != nil && copyEnv.End() < fn.Pos() && directEnvironmentCopy(fn.Body.List[0]) {
+				pos = fset.Position(fn.Body.List[0].Pos()).Offset
+				body := copyEnv.Args[0].(*ast.FuncLit).Body
+				prefix = slices.Concat(source[:fset.Position(copyEnv.Pos()).Offset], []byte(wasiEnvironmentCopier),
+					source[fset.Position(body.Pos()).Offset:fset.Position(body.End()).Offset],
+					source[fset.Position(copyEnv.End()).Offset:pos])
+			}
 			branch := fmt.Sprintf("if !llgoMutableEnvironment { return llgoGetenvWithoutLock(%[1]s) }; return llgoGetenvWithLock(%[1]s)\n}\n\nfunc llgoGetenvWithLock(%[1]s string) %[2]s {\n\t", key, resultText)
-			return slices.Concat(source[:pos], []byte(branch), source[pos:])
+			return slices.Concat(prefix, []byte(branch), source[pos:])
 		}
 	}
 	return nil
+}
+
+// Initialization still depends on envs through the original copier body.
+// For a closed read-only link, fill the index before publishing the snapshot
+// to callers. Mutable links keep the standard library's lazy OnceFunc path.
+const wasiEnvironmentCopier = `llgoEnvironmentCopier()
+
+func llgoEnvironmentCopier() func() {
+	if !llgoMutableEnvironment {
+		llgoCopyEnvironmentIndex()
+		return nil
+	}
+	return sync.OnceFunc(llgoCopyEnvironmentIndex)
+}
+
+func llgoCopyEnvironmentIndex() `
+
+func wasiOnceEnvironmentCopy(expr ast.Expr) *ast.CallExpr {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !envIdent(selector.X, "sync") || selector.Sel.Name != "OnceFunc" {
+		return nil
+	}
+	if fn, ok := call.Args[0].(*ast.FuncLit); ok && len(fn.Type.Params.List) == 0 && fn.Type.Results == nil {
+		return call
+	}
+	return nil
+}
+
+func directEnvironmentCopy(stmt ast.Stmt) bool {
+	expr, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := expr.X.(*ast.CallExpr)
+	return ok && envIdent(call.Fun, "copyenv") && len(call.Args) == 0
 }
 
 func envLockCall(call *ast.CallExpr, name string) bool {

@@ -7,6 +7,9 @@ package syscall
 var llgoMutableEnvironment bool
 
 func llgoGetenvWithoutLock(key string) (string, bool) {
+	if key == "" {
+		return "", false
+	}
 	i, ok := env[key]
 	if !ok {
 		return "", false

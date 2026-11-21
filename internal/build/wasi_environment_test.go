@@ -65,6 +65,30 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 			t.Fatalf("rewritten Getenv missing %q", fragment)
 		}
 	}
+	if strings.Contains(string(source), "var copyenv = sync.OnceFunc(func() {") {
+		for _, fragment := range []string{
+			"var copyenv = llgoEnvironmentCopier()",
+			"llgoCopyEnvironmentIndex()\n\t\treturn nil",
+			"return sync.OnceFunc(llgoCopyEnvironmentIndex)",
+			"func llgoGetenvWithLock(key string) (value string, found bool) {\n\tcopyenv()",
+		} {
+			if !strings.Contains(updated, fragment) {
+				t.Fatalf("rewritten OnceFunc environment missing %q", fragment)
+			}
+		}
+		for _, replacement := range []string{"existingCopier", "anotherOnce(func() {})", "sync.OnceFunc(copyEnvironment)"} {
+			input := strings.Replace(string(source), "var copyenv = sync.OnceFunc(func() {", "var copyenv = "+replacement+"\n\nvar unrelated = sync.OnceFunc(func() {", 1)
+			patched := string(rewriteWASIGetenv([]byte(input)))
+			if !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
+				t.Errorf("unexpected initializer rewrite with %s", replacement)
+			}
+		}
+		input := strings.Replace(string(source), "func Getenv(key string) (value string, found bool) {\n\tcopyenv()",
+			"func Getenv(key string) (value string, found bool) {\n\tif len(key) == 0 { return \"\", false }\n\tcopyenv()", 1)
+		if patched := string(rewriteWASIGetenv([]byte(input))); !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
+			t.Fatal("moved the environment initialization past a different Getenv entry")
+		}
+	}
 	for _, unsupported := range []string{"other package", "map[string]string", "differentLock.RLock"} {
 		input := "package invalid"
 		switch unsupported {
