@@ -1,4 +1,4 @@
-# Go 1.27.0: qualified AMD64 128/256-bit instruction tests.
+# Go 1.27.0: AMD64 instruction tests, including feature-gated AVX512 cases.
 TestAdd
 TestSub
 TestMax
@@ -161,3 +161,27 @@ TestIsNaN
 TestIsZero
 TestConcatShiftBytesRight
 TestClearAVXUpperBits
+TestBitMaskFromBits
+TestBitMaskFromBitsLoad
+TestBitMaskToBitsStore
+TestCeilScaledResidue
+TestCompress
+TestConcatPermute
+TestConcatPermuteScalarsConstGroupedUint32x16
+TestExpand
+TestFMA
+TestIfElseFloat512
+TestLeadingZeros
+TestMaskOpt512
+TestMaskOr
+TestMergeFloat512
+TestOnesCount
+TestOnesCountAMD64
+TestPartInt64
+TestPermute
+TestSaturate
+TestSelect2FromPairConstGroupedInt512
+TestSelectTernOptInt32x16
+TestShiftAllConcat
+TestShiftConcat
+TestTruncate

@@ -69,11 +69,14 @@ func testSIMDImports(t *testing.T) testImporter {
  type Uint32s [8]uint32
  type Uint32x4 [4]uint32
  type Uint32x8 [8]uint32
+ type Uint32x16 [16]uint32
  func (Uint32s) Len() int {return 8}
  func (Uint32x4) Len() int {return 4}
+ func (Uint32x16) Len() int {return 16}
  func (Uint32x8) Len() int {return 8}
  func BroadcastUint32s(uint32) Uint32s {return Uint32s{}}
  func BroadcastUint32x4(uint32) Uint32x4 {return Uint32x4{}}
+ func BroadcastUint32x16(uint32) Uint32x16 {return Uint32x16{}}
  func BroadcastUint32x8(uint32) Uint32x8 {return Uint32x8{}}
  func LLGoMidwayUnreachable(){panic("unspecialized")}
  type LLGoMidwayInt = int
