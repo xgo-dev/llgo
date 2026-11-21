@@ -17,6 +17,7 @@
 package build
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,6 +68,9 @@ func validateWasmFinalOptions(conf *Config, target *crosscompile.Export) error {
 	}
 	hostedExe := conf.BuildMode == BuildModeExe && conf.Mode != ModeGen &&
 		target.WasmProfile != crosscompile.WasmProfileNone && conf.OutFmts == (OutFmts{})
+	if conf.WasmMinimalHost && (!hostedExe || !isEmscriptenNamedTarget(conf) || target.WasmProvider != crosscompile.WasmProviderEmscripten) {
+		return fmt.Errorf("-wasm-minimal-host requires a named Emscripten executable")
+	}
 	if hostedExe {
 		// The aggressive cross-platform size level also optimizes the final
 		// Wasm executable. -Os and inferred target defaults retain their
@@ -308,9 +312,12 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 		remove = append(remove, filepath.Base(dwarfSidecarPath(module)))
 	}
 	driverOut := emscriptenDriverOutput(ctx.buildConf, staged.Out)
-	if needsEmscriptenBrowserHost(ctx.buildConf, driverOut) {
+	if ownsEmscriptenGlue(ctx.buildConf, driverOut) {
 		if stale := staleEmscriptenGluePath(driverOut); stale != "" {
 			remove = append(remove, filepath.Base(stale))
+		}
+		if ctx.buildConf.wasmMinimalHostSelected && ownsPreviousEmscriptenFS(filepath.Dir(out.Out), manifestName) {
+			remove = append(remove, wasmFSScriptName)
 		}
 	}
 	if err := publishWasmArtifacts(dir, filepath.Dir(out.Out), manifestName, remove, os.Rename); err != nil {
@@ -320,6 +327,37 @@ func finalizeWasmArtifacts(ctx *context, plan *mainLinkPlan, out *OutFmtDetails,
 	out.wasmSizeNames = sizeNames
 	out.wasmSizeNamesErr = sizeNamesErr
 	return nil
+}
+
+// The filesystem shim has a shared basename. Remove it only when the
+// replaced build declared it and no sibling manifest still uses it.
+func ownsPreviousEmscriptenFS(dir, manifestName string) bool {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	owned := false
+	for _, file := range files {
+		name := file.Name()
+		if file.IsDir() || !strings.HasSuffix(name, ".wasm-manifest.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		var manifest wasmManifest
+		if err != nil || json.Unmarshal(data, &manifest) != nil {
+			return false
+		}
+		for _, artifact := range manifest.Artifacts {
+			if artifact.Path != wasmFSScriptName {
+				continue
+			}
+			if name != manifestName {
+				return false
+			}
+			owned = true
+		}
+	}
+	return owned
 }
 
 func wasmManifestPath(module string) string {

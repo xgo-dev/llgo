@@ -21,18 +21,25 @@ import (
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
 func configureWasmRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
+		if ctx.frontend.program.MinimalHost {
+			selectSynchronousEmscriptenHost(ctx, ctx.frontend.program.RuntimeFree)
+		}
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
 		}
 		return
 	}
 	conf := ctx.buildConf
+	minimalHost := canUseMinimalEmscriptenHost(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
 		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
+		len(ctx.crossCompile.ExtraFiles) != 0 || ctx.frontendOptions.DebuggerFrames ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !minimalHost && (ctx.prog.Target().WasmProvider != "wasi" ||
+		(conf.Target != "" && conf.Target != "wasi") || needsWasmRuntimeScheduler(ctx)) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -52,7 +59,13 @@ func configureWasmRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	roots := wasmReflectRoots(ctx)
+	runtimeFree := wasmRuntimeFreeFunctions(roots, linkname, globalSafe)
+	closedCall := func(fn *ssa.Function) bool {
+		// The original SSA does not describe an alternate implementation.
+		return fn.Pkg != nil && ctx.patches[fn.Pkg.Pkg.Path()].Alt == nil && linkname(fn) == ""
+	}
+	if !runtimeFree && (!minimalHost || !ctx.prog.GCRootsEnabled() || !wasmSynchronousFunctions(roots, closedCall, globalSafe)) {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -79,6 +92,9 @@ func configureWasmRuntimeFree(ctx *context) {
 		for _, file := range pkg.Syntax {
 			for _, imp := range file.Imports {
 				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" {
+					return
+				}
+				if !runtimeFree && (imp.Path.Value == `"unsafe"` || imp.Path.Value == "`unsafe`") {
 					return
 				}
 			}
@@ -121,7 +137,24 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
-	enableWasmRuntimeFree(ctx)
+	if minimalHost {
+		selectSynchronousEmscriptenHost(ctx, runtimeFree)
+	}
+	if runtimeFree {
+		enableWasmRuntimeFree(ctx)
+	}
+}
+
+func selectSynchronousEmscriptenHost(ctx *context, runtimeFree bool) {
+	selectMinimalEmscriptenHost(ctx)
+	if runtimeFree {
+		return
+	}
+	// GC keeps the shadow stack but needs no scheduler polls.
+	ctx.prog.EnableCooperativeSafepoints(false)
+	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
+		fmt.Fprintln(os.Stderr, "llgo: keep GC with a synchronous Emscripten host")
+	}
 }
 
 func enableWasmRuntimeFree(ctx *context) {
@@ -130,7 +163,7 @@ func enableWasmRuntimeFree(ctx *context) {
 	ctx.frontendOptions.ShadowStack = false
 	ctx.prog.EnableGCRoots(false)
 	ctx.prog.EnableCooperativeSafepoints(false)
-	if conf.Verbose || conf.PrintCommands {
+	if !conf.wasmMinimalHostSelected && (conf.Verbose || conf.PrintCommands) {
 		fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free WASI program")
 	}
 }

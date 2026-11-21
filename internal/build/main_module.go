@@ -67,7 +67,7 @@ func needsRuntimeMainFrame(ctx *context) bool {
 }
 
 func needsWasmRuntimeScheduler(ctx *context) bool {
-	if ctx.buildConf.BuildMode != BuildModeExe {
+	if ctx.buildConf.BuildMode != BuildModeExe || ctx.buildConf.wasmMinimalHostSelected {
 		return false
 	}
 	if ctx.crossCompile.WasmPostLink.Asyncify {

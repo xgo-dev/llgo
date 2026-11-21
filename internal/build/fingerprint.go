@@ -132,6 +132,7 @@ type commonSection struct {
 	WasmReflectBridges   bool         `yaml:"WASM_REFLECT_BRIDGES,omitempty"`
 	WasmFuncInfoEntries  bool         `yaml:"WASM_FUNCINFO_ENTRIES,omitempty"`
 	WasmRuntimeFree      bool         `yaml:"WASM_RUNTIME_FREE,omitempty"`
+	WasmSynchronousGC    bool         `yaml:"WASM_SYNCHRONOUS_GC,omitempty"`
 	PlatformABI          string       `yaml:"PLATFORM_ABI,omitempty"`
 	ObjectFormat         string       `yaml:"OBJECT_FORMAT,omitempty"`
 	DriverFlavor         string       `yaml:"DRIVER_FLAVOR,omitempty"`
@@ -168,7 +169,7 @@ type commonSection struct {
 
 func (s *commonSection) empty() bool {
 	return !s.DispatchInlineBudget && s.EscapeAnalysisVersion == 0 && len(s.BuildTags) == 0 && s.Target == "" && s.TargetABI == "" && s.WasmProfile == "" && s.WasmProvider == "" &&
-		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
+		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && !s.WasmSynchronousGC && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
 		!s.GoGlobalDCE && !s.DeadcodeDrop && !s.EnableLTOPlugin && !s.EmitDWARF && !s.EmitCodeView && s.PCLNMode == "" &&

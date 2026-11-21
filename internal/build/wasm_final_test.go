@@ -947,3 +947,38 @@ func TestWasmSymbolStrippingPreservesExternalSourceMaps(t *testing.T) {
 		t.Fatalf("external -s -w=0 strip policy=%s", conf.WasmStrip)
 	}
 }
+
+func TestOwnsPreviousEmscriptenFS(t *testing.T) {
+	const app = "app.wasm-manifest.json"
+	const sibling = "other.wasm-manifest.json"
+	const owner = `{"artifacts":[{"path":"app.wasm"},{"path":"wasm_fs.js"}]}`
+	for _, test := range []struct {
+		name  string
+		files map[string]string
+		want  bool
+	}{
+		{"unrelated files", map[string]string{"wasm_fs.js": "custom source"}, false},
+		{"previous app", map[string]string{app: owner}, true},
+		{"unrelated app", map[string]string{app: owner, sibling: `{"artifacts":[{"path":"other.wasm"}]}`}, true},
+		{"shared shim", map[string]string{app: owner, sibling: owner}, false},
+		{"unreadable ownership", map[string]string{app: owner, sibling: "broken manifest"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "build[1]")
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range test.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := ownsPreviousEmscriptenFS(dir, app); got != test.want {
+				t.Fatalf("owns filesystem shim = %v, want %v", got, test.want)
+			}
+		})
+	}
+	if ownsPreviousEmscriptenFS(filepath.Join(t.TempDir(), "missing"), app) {
+		t.Fatal("missing output directory claims the filesystem shim")
+	}
+}
