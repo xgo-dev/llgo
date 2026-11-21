@@ -130,14 +130,15 @@ func TestScalarFormatsRequireKnownArgumentStorage(t *testing.T) {
 
 func TestSpecializeBuiltinDynamicFormat(t *testing.T) {
 	for _, test := range []struct {
-		name, operands string
-		wantBuiltin    bool
+		name, operands, otherOperands string
+		kinds                         []types.BasicKind
 	}{
-		{"builtin values", ", 17, 1.5, false, \"label\"", true},
-		{"empty arguments", "", false},
-		{"named value", ", named(3)", false},
-		{"interface value", ", value", false},
-		{"unsafe pointer", ", pointer", false},
+		{"builtin values", ", 17, 1.5, false, \"label\"", ", 18, byte(5), rune('界')",
+			[]types.BasicKind{types.Bool, types.Int, types.Float64, types.String, types.Uint8, types.Int32}},
+		{"empty arguments", "", "", nil},
+		{"named value", ", named(3)", ", 18", nil},
+		{"interface value", ", value", ", 18", nil},
+		{"unsafe pointer", ", pointer", ", 18", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -146,33 +147,48 @@ func TestSpecializeBuiltinDynamicFormat(t *testing.T) {
 type pp struct{}
 func (*pp) printArg(_ any) string { return "generic" }
 func Sprintf(format string, args ...any) string { return (&pp{}).printArg(args) }
-func llgoSprintfBuiltins(format string, args ...any) string { return format }
+func llgoSprintfBuiltins(format string, kinds uint32, args ...any) string { return format }
 `, nil)
 			main := buildFormatTestPackage(t, prog, "main", `package main
 import "fmt"
 import "unsafe"
 type named int
 func render(format string, value any, pointer unsafe.Pointer) string {
-	return fmt.Sprintf(format`+test.operands+`)
+	return fmt.Sprintf(format`+test.operands+`) + fmt.Sprintf(format`+test.otherOperands+`)
 }
 `, fmtPkg.Pkg)
 			prog.Build()
 			render := main.Func("render")
 			plan := fmtspecialize.NewValuePlan(prog, nil)
-			var formatted *ssa.Call
+			var formatted []*ssa.Call
 			for _, instr := range render.Blocks[0].Instrs {
 				if call, ok := instr.(*ssa.Call); ok && call.Common().StaticCallee() == fmtPkg.Func("Sprintf") {
-					formatted = call
+					formatted = append(formatted, call)
 					plan.Record(call, main)
 				}
 			}
-			if formatted == nil {
-				t.Fatal("missing Sprintf call")
+			if len(formatted) != 2 {
+				t.Fatalf("found %d Sprintf calls, want two", len(formatted))
 			}
 			plan.ApplyStandalone([]*ssa.Function{render})
-			gotBuiltin := formatted.Common().StaticCallee() == fmtPkg.Func("llgoSprintfBuiltins")
-			if gotBuiltin != test.wantBuiltin {
-				t.Fatalf("builtin formatter selected = %v, want %v", gotBuiltin, test.wantBuiltin)
+			var wantMask uint64
+			for _, kind := range test.kinds {
+				wantMask |= 1 << (kind - types.Bool)
+			}
+			for _, call := range formatted {
+				common := call.Common()
+				gotBuiltin := common.StaticCallee() == fmtPkg.Func("llgoSprintfBuiltins")
+				if gotBuiltin != (wantMask != 0) {
+					t.Fatalf("builtin formatter selected = %v, want %v", gotBuiltin, wantMask != 0)
+				}
+				if gotBuiltin {
+					mask := common.Args[1].(*ssa.Const)
+					if got, ok := constant.Uint64Val(mask.Value); !ok || got != wantMask {
+						t.Fatalf("builtin kind mask = %v, want %d", mask, wantMask)
+					}
+				} else if common.StaticCallee() != fmtPkg.Func("Sprintf") || len(common.Args) != 2 {
+					t.Fatalf("fallback did not restore call: %v", common)
+				}
 			}
 		})
 	}

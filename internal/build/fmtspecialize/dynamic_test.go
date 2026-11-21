@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"go/version"
 	"os"
 	"path/filepath"
@@ -35,6 +36,9 @@ func TestBuiltinFormatSource(t *testing.T) {
 	if got := strings.Count(text, "llgoBuiltin_typeName(arg)"); got != 3 {
 		t.Fatalf("builtin formatter rewrote %d type name lookups, want 3", got)
 	}
+	if got := strings.Count(text, "llgoKinds&"); got != int(types.String-types.Bool+1) {
+		t.Fatalf("builtin formatter guarded %d scalar printers", got)
+	}
 	if BuiltinFormatSource([]byte("package fmt\n")) != nil {
 		t.Fatal("missing standard-library methods did not disable specialization")
 	}
@@ -49,6 +53,9 @@ func TestBuiltinFormatSource(t *testing.T) {
 		{"changed pointer handling", "case 'p':\n\t\tp.fmtPointer", "case 'x':\n\t\tp.fmtPointer"},
 		{"combined type cases", "case bool:", "case bool, int:"},
 		{"missing scalar type", "case bool:", "case fmt.Stringer:"},
+		{"non-scalar case", "case bool:", "case error:"},
+		{"unknown scalar case", "case bool:", "case unknownBuiltin:"},
+		{"duplicate scalar alias", "case uint16:", "case byte:"},
 		{"changed bad verb guard", "case value.IsValid():", "case value.CanAddr():"},
 		{"reflective call from scalar helper", "func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) {",
 			"func (p *pp) fmtBool(arg any, value reflect.Value, v bool, verb rune) { p.printValue(value, verb, 0);"},

@@ -14,6 +14,8 @@ import (
 
 const builtinSprintf = "llgoSprintfBuiltins"
 
+const allBuiltinKinds = (1 << (types.String - types.Bool + 1)) - 1
+
 // BuiltinFormatSource reuses the selected Go toolchain's parser and flag
 // handling. The generated parser dispatches only to builtin scalar printers.
 // A different print.go shape leaves ordinary fmt in use.
@@ -57,6 +59,9 @@ func BuiltinFormatSource(source []byte) []byte {
 		fn := methods[name]
 		fn.Name.Name = renamed[name]
 		fn.Type.Params.List = append(fn.Recv.List, fn.Type.Params.List...)
+		fn.Type.Params.List = append(fn.Type.Params.List, &ast.Field{
+			Names: []*ast.Ident{ast.NewIdent("llgoKinds")}, Type: ast.NewIdent("uint32"),
+		})
 		fn.Recv = nil
 		unsupported := false
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -72,7 +77,7 @@ func BuiltinFormatSource(source []byte) []byte {
 				if sel, ok := node.Fun.(*ast.SelectorExpr); ok && identifier(sel.X, "p") {
 					if replacement, ok := renamed[sel.Sel.Name]; ok {
 						node.Fun = ast.NewIdent(replacement)
-						node.Args = append([]ast.Expr{sel.X}, node.Args...)
+						node.Args = append(append([]ast.Expr{sel.X}, node.Args...), ast.NewIdent("llgoKinds"))
 					}
 				}
 			case *ast.SelectorExpr:
@@ -94,9 +99,9 @@ func BuiltinFormatSource(source []byte) []byte {
 		out.WriteByte('\n')
 	}
 	out.WriteString(`
-func llgoSprintfBuiltins(format string, a ...any) string {
+func llgoSprintfBuiltins(format string, llgoKinds uint32, a ...any) string {
 	p := newPrinter()
-	llgoBuiltin_doPrintf(p, format, a)
+	llgoBuiltin_doPrintf(p, format, a, llgoKinds)
 	s := string(p.buf)
 	p.free()
 	return s
@@ -176,6 +181,7 @@ func restrictBuiltinPrintArg(fn *ast.FuncDecl) bool {
 		return false
 	}
 	var cases []ast.Stmt
+	var kinds uint32
 	for _, item := range typesSwitch.Body.List {
 		clause := item.(*ast.CaseClause)
 		if len(clause.List) == 0 {
@@ -184,15 +190,33 @@ func restrictBuiltinPrintArg(fn *ast.FuncDecl) bool {
 		if len(clause.List) != 1 {
 			return false
 		}
-		if id, ok := clause.List[0].(*ast.Ident); ok && builtinScalar(types.Universe.Lookup(id.Name)) {
+		mask := builtinTypeMask(clause.List[0])
+		if mask != 0 {
+			kinds |= mask
+			clause.Body = []ast.Stmt{guardBuiltinPrinter(mask, clause.Body)}
 			cases = append(cases, clause)
 		}
 	}
-	if len(cases) != 17 {
+	if kinds != allBuiltinKinds || len(cases) != int(types.String-types.Bool+1) {
 		return false
 	}
 	typesSwitch.Body.List = cases
 	return true
+}
+
+// A single mask is passed by all specialized calls in the executable, so
+// Full LTO can discard printers that its callers do not use.
+func guardBuiltinPrinter(mask uint32, body []ast.Stmt) *ast.IfStmt {
+	return &ast.IfStmt{
+		Cond: &ast.BinaryExpr{
+			X: &ast.BinaryExpr{
+				X: ast.NewIdent("llgoKinds"), Op: token.AND,
+				Y: &ast.BasicLit{Kind: token.INT, Value: fmt.Sprint(mask)},
+			},
+			Op: token.NEQ, Y: &ast.BasicLit{Kind: token.INT, Value: "0"},
+		},
+		Body: &ast.BlockStmt{List: body},
+	}
 }
 
 func restrictBuiltinBadVerb(fn *ast.FuncDecl) bool {
@@ -222,23 +246,37 @@ func restrictBuiltinBadVerb(fn *ast.FuncDecl) bool {
 	return false
 }
 
-func builtinScalar(obj types.Object) bool {
-	if obj == nil {
-		return false
+func builtinTypeMask(expr ast.Expr) uint32 {
+	id, ok := expr.(*ast.Ident)
+	if !ok {
+		return 0
 	}
-	basic, ok := types.Unalias(obj.Type()).(*types.Basic)
-	return ok && basic.Kind() >= types.Bool && basic.Kind() <= types.String
+	obj := types.Universe.Lookup(id.Name)
+	if obj == nil {
+		return 0
+	}
+	if basic, ok := types.Unalias(obj.Type()).(*types.Basic); ok {
+		return builtinKindMask(basic.Kind())
+	}
+	return 0
 }
 
-func builtinFormatOperands(call ssa.CallInstruction) bool {
+func builtinKindMask(kind types.BasicKind) uint32 {
+	if kind < types.Bool || kind > types.String {
+		return 0
+	}
+	return 1 << (kind - types.Bool)
+}
+
+func builtinFormatKinds(call ssa.CallInstruction) uint32 {
 	operands := scalarFormatOperands(call, call.Common().Args[1])
-	if len(operands) == 0 {
-		return false
-	}
+	var kinds uint32
 	for _, kind := range operands {
-		if kind < types.Bool || kind > types.String {
-			return false
+		mask := builtinKindMask(kind)
+		if mask == 0 {
+			return 0
 		}
+		kinds |= mask
 	}
-	return true
+	return kinds
 }

@@ -17,11 +17,12 @@ type ValuePlan struct {
 }
 
 type formatRewrite struct {
-	call     *ssa.Call
-	function *ssa.Function
-	input    ssa.Value
-	packed   []ssa.Instruction
-	saved    ssa.CallCommon
+	call         *ssa.Call
+	function     *ssa.Function
+	input        ssa.Value
+	builtinKinds uint32
+	packed       []ssa.Instruction
+	saved        ssa.CallCommon
 }
 
 // NewValuePlan tracks replacements for default-value formatting.
@@ -65,9 +66,11 @@ func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 		return
 	}
 	format, ok := common.Args[0].(*ssa.Const)
-	if !ok && plan.builtin != nil && builtinFormatOperands(call) {
-		plan.calls = append(plan.calls, formatRewrite{call: call, function: plan.builtin})
-		return
+	if !ok && plan.builtin != nil {
+		if kinds := builtinFormatKinds(call); kinds != 0 {
+			plan.calls = append(plan.calls, formatRewrite{call: call, function: plan.builtin, builtinKinds: kinds})
+			return
+		}
 	}
 	if plan.names[owner.Pkg] == nil || !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
 		return
@@ -154,6 +157,12 @@ func defaultFormatType(t types.Type, top bool, visiting map[types.Type]bool, met
 func (plan *ValuePlan) tentativeRewrite() (map[*ssa.BasicBlock][]ssa.Instruction, map[ssa.Instruction]bool) {
 	remove := make(map[ssa.Instruction]bool)
 	blocks := make(map[*ssa.BasicBlock][]ssa.Instruction)
+	// Keep the constant local to each executable package. Its callers pass
+	// the same value while fmt's archive stays reusable across executables.
+	kinds := make(map[*ssa.Package]uint32)
+	for _, rewrite := range plan.calls {
+		kinds[rewrite.call.Parent().Pkg] |= rewrite.builtinKinds
+	}
 	for i := range plan.calls {
 		rewrite := &plan.calls[i]
 		common := rewrite.call.Common()
@@ -161,6 +170,9 @@ func (plan *ValuePlan) tentativeRewrite() (map[*ssa.BasicBlock][]ssa.Instruction
 		common.Value = rewrite.function
 		if rewrite.input != nil {
 			common.Args = []ssa.Value{rewrite.input}
+		} else if rewrite.builtinKinds != 0 {
+			mask := ssa.NewConst(constant.MakeUint64(uint64(kinds[rewrite.call.Parent().Pkg])), types.Typ[types.Uint32])
+			common.Args = []ssa.Value{common.Args[0], mask, common.Args[1]}
 		}
 		for _, instruction := range rewrite.packed {
 			remove[instruction] = true
