@@ -36,7 +36,7 @@ func Lookup() int { return value.N }
 		name, source, entry string
 		asmRoot             string
 		open, linkname      bool
-		embedded            bool
+		embedded, wasi      bool
 		wantGuard, wantDrop bool
 		wantOrder           []string
 	}{
@@ -54,6 +54,10 @@ func Lookup() int { return value.N }
 		{name: "observable slice backing data keeps slices only", source: mixed, entry: `import "data"; func main() { println(data.Lookup()) }`, wantGuard: true, wantDrop: true, wantOrder: []string{"First", "Table", "Second"}},
 		{name: "closed firmware", embedded: true, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
 		{name: "open firmware", embedded: true, open: true, entry: `import "data"; func main() {}`, wantGuard: true},
+		{name: "closed WASI with independent init", wasi: true, source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "WASI lookup during init", wasi: true, source: data + `func init() { println(Lookup()) }`, entry: `import "data"; func main() {}`, wantGuard: true},
+		{name: "WASI assembly root", wasi: true, entry: `import "data"; func main() {}`, asmRoot: "data.Table", wantGuard: true},
+		{name: "open WASI", wasi: true, open: true, entry: `import "data"; func main() {}`, wantGuard: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -103,6 +107,15 @@ func Lookup() int { return value.N }
 				ctx.nativeClosedProgram = false
 				ctx.embeddedClosedProgram = !tc.open
 				inputs = &linkPruningInputs{goroot: goroot}
+			}
+			if tc.wasi {
+				ctx.buildConf.Goos, ctx.buildConf.Goarch = "wasip1", "wasm"
+				ctx.buildConf.WasmOpt = WasmOptSize
+				ctx.crossCompile.WasmProvider = crosscompile.WasmProviderWASI
+				ctx.crossCompile.WasmProfile = crosscompile.WasmProfileW32
+				ctx.nativeClosedProgram = false
+				ctx.wasmClosedProgram = !tc.open
+				inputs = &linkPruningInputs{goroot: goroot, roots: ctx.sizePruningRoots}
 			}
 			configureOptionalInitializers(ctx, goroot, inputs)
 			if got := len(pkgs["data"].guardedInitializers) != 0; got != tc.wantGuard {

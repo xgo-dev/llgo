@@ -62,9 +62,15 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 				groups = orderedOptionalInitializers(source.Func("init"), groups, optionalLiteralInitializers(source.Func("init"), constructors))
 			}
 		case hasStaticDataValues(pkg.Package):
-			groups = optionalStaticContainers(source.Func("init"), !wasm)
+			groups = optionalStaticContainers(source.Func("init"), !wasm || wasi)
 		default:
-			groups = optionalLiteralInitializers(source.Func("init"), constructors)
+			init := source.Func("init")
+			groups = optionalLiteralInitializers(init, constructors)
+			if wasi {
+				// A literal map can be guarded independently of the
+				// package's other initialization.
+				groups = orderedOptionalInitializers(init, cl.OptionalMapInitializers(init), groups)
+			}
 		}
 		if len(groups) == 0 {
 			continue
@@ -190,13 +196,14 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			delete(unused, group.Global)
 		}
 	}
-	var dataCount, errorCount, interfaceCount, callbackCount, otherCount int
+	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int
 	for global, group := range unused {
 		store := group.Store
 		call, _ := store.Val.(*ssa.Call)
 		errorValue := call != nil && constructors.newError != nil && call.Common().StaticCallee() == constructors.newError
 		_, interfaceValue := store.Val.(*ssa.MakeInterface)
 		_, sliceValue := store.Val.(*ssa.Slice)
+		_, mapValue := store.Val.(*ssa.MakeMap)
 		ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, cl.InitializerGuardName(global))
 		switch {
 		case sliceValue:
@@ -207,8 +214,10 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			interfaceCount++
 		case initializerStoresCallback(store.Val):
 			callbackCount++
+		case mapValue:
+			mapCount++
 		default:
-			otherCount++
+			filesCount++
 		}
 	}
 	slices.Sort(ctx.initializerGuardsOff)
@@ -225,12 +234,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		if callbackCount != 0 {
 			fmt.Fprintf(os.Stderr, "llgo: omit unused static callback initializers (%d)\n", callbackCount)
 		}
-		if otherCount != 0 {
-			kind := "map"
-			if wasm {
-				kind = "standard file"
-			}
-			fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, otherCount)
+		if mapCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused map initializers (%d)\n", mapCount)
+		}
+		if filesCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused standard file initializers (%d)\n", filesCount)
 		}
 	}
 }

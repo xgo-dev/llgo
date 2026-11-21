@@ -144,6 +144,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                          readonly_env_marker, True))
         fixtures.append(("wasm-environment-mutable", "mutable environment lookup ok",
                          readonly_env_marker, False))
+        fixtures.append(("native-map-init", "true true true", "llgo: omit unused map initializers", True))
     if target.startswith("emscripten"):
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
