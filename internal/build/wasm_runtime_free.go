@@ -62,7 +62,8 @@ func configureRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	runtimeFree, usesCPrintf := wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe)
+	if !runtimeFree {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -138,8 +139,15 @@ func configureRuntimeFree(ctx *context) {
 		}
 	} else if embedded {
 		ctx.embeddedRuntimeFree = true
+		// The ordinary stdio path shares buffering with C callers. Switch
+		// only when every reachable write is a Go builtin print.
+		ctx.embeddedDirectConsole = !usesCPrintf &&
+			slices.Contains(ctx.crossCompile.BuildTags, embeddedConsoleTag)
 		if conf.Verbose || conf.PrintCommands {
 			fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free bare-metal program")
+			if ctx.embeddedDirectConsole {
+				fmt.Fprintln(os.Stderr, "llgo: write bare-metal builtin output directly to the console")
+			}
 		}
 	} else {
 		enableWasmRuntimeFree(ctx)
@@ -201,9 +209,9 @@ func enableWasmRuntimeFree(ctx *context) {
 	}
 }
 
-func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) bool {
+func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) (runtimeFree, usesCPrintf bool) {
 	if len(roots) == 0 {
-		return false
+		return false, false
 	}
 	state := make(map[*ssa.Function]uint8)
 	var visit func(*ssa.Function) bool
@@ -285,6 +293,7 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 							if !ok || !args.IsNil() {
 								return false
 							}
+							usesCPrintf = true
 						default:
 							return false
 						}
@@ -301,10 +310,10 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 	}
 	for _, root := range roots {
 		if !visit(root) {
-			return false
+			return false, false
 		}
 	}
-	return true
+	return true, usesCPrintf
 }
 
 func runtimeFreeScalar(typ types.Type) bool {

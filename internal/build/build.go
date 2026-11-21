@@ -736,6 +736,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if embeddedPrintfFloatProfile(conf, export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), espPrintfFloatTag)
 	}
+	if embeddedConsoleProfile(conf, export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), embeddedConsoleTag)
+	}
 	if emscriptenSchedulerProofProfile(conf, &export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
 	}
@@ -2078,6 +2081,7 @@ type context struct {
 	embeddedClosedProgram bool
 	nativeClosedProgram   bool
 	embeddedRuntimeFree   bool
+	embeddedDirectConsole bool
 
 	cTransformer *cabi.Transformer
 
@@ -2916,7 +2920,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	packageInits = slices.DeleteFunc(packageInits, func(name string) bool {
 		return ctx.codecInitDrops[name]
 	})
-	if ctx.embeddedRuntimeFree && needRuntime && !slices.Contains(ctx.crossCompile.BuildTags, "llgo.baremetal.cstdio") {
+	if ctx.embeddedRuntimeFree && !ctx.embeddedDirectConsole && needRuntime && !slices.Contains(ctx.crossCompile.BuildTags, "llgo.baremetal.cstdio") {
 		// The builtin printer uses the console streams opened by clite.
 		packageInits = append([]string{env.LLGoRuntimePkg + "/internal/clite.init"}, packageInits...)
 	}

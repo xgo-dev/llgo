@@ -342,6 +342,14 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "./benchmark/binary_size/println", "Hello, world\n")
     if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
         raise RuntimeError(f"{target}: allocation-free println kept runtime startup\n{log}")
+    direct_console = "llgo: write bare-metal builtin output directly to the console"
+    if target == "esp32c3-flash":
+        if direct_console not in log:
+            raise RuntimeError(f"{target}: allocation-free println kept the stdio writer\n{log}")
+        log = embedded_output_probe(llgo, directory, env, target, flags,
+                                    "./benchmark/binary_size/cprintf", "Hello, world\n")
+        if direct_console in log:
+            raise RuntimeError(f"{target}: C printf selected the direct console writer\n{log}")
     stdout_marker = "llgo: specialize closed literal stdout"
     log = embedded_output_probe(llgo, directory, env, target, flags,
                                 "./benchmark/binary_size/fmtprintf", "Hello, world\n")

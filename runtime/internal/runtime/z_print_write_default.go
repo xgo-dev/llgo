@@ -1,4 +1,4 @@
-//go:build !windows && (!llgo || !js || !wasm || !llgo.wasm.emscripten)
+//go:build !windows && (!llgo || !js || !wasm || !llgo.wasm.emscripten) && !llgo.baremetal.directconsole
 
 package runtime
 

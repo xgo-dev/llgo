@@ -56,7 +56,7 @@ func TestWasmRuntimeFreeFunctions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, "package main; "+test.source)
 			roots := []*ssa.Function{pkg.Func("init"), pkg.Func("main")}
-			if got := wasmRuntimeFreeFunctions(roots, func(*ssa.Function) string { return "" }, func(*ssa.Global) bool { return true }); got != test.want {
+			if got, _ := wasmRuntimeFreeFunctions(roots, func(*ssa.Function) string { return "" }, func(*ssa.Global) bool { return true }); got != test.want {
 				t.Fatalf("runtime-free = %v, want %v", got, test.want)
 			}
 		})
@@ -87,17 +87,20 @@ func TestWasmRuntimeFreeNativeBoundaries(t *testing.T) {
 				}
 				return ""
 			}
-			got := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, linkname, func(*ssa.Global) bool { return true })
+			got, usesCPrintf := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, linkname, func(*ssa.Global) bool { return true })
 			if got != test.want {
 				t.Fatalf("runtime-free = %v, want %v", got, test.want)
 			}
+			if want := test.want && test.symbol == "C.printf"; usesCPrintf != want {
+				t.Fatalf("uses C printf = %v, want %v", usesCPrintf, want)
+			}
 		})
 	}
-	if wasmRuntimeFreeFunctions(nil, nil, nil) {
+	if accepted, _ := wasmRuntimeFreeFunctions(nil, nil, nil); accepted {
 		t.Fatal("missing roots accepted")
 	}
 	pkg := buildWasmReflectTestProgram(t, `package main; var n int; func main(){ println(n) }`)
-	if wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, nil, func(*ssa.Global) bool { return false }) {
+	if accepted, _ := wasmRuntimeFreeFunctions([]*ssa.Function{pkg.Func("main")}, nil, func(*ssa.Global) bool { return false }); accepted {
 		t.Fatal("foreign or owner-local global accepted")
 	}
 }
@@ -129,6 +132,13 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 			c.buildConf.OptLevel, c.buildConf.LTO = optlevel.Oz, lto.Full
 			c.buildConf.DeadcodeDrop, c.buildConf.DisableGoGlobalDCE = true, true
 			c.crossCompile.ExtraFiles = embeddedBootFiles(c.buildConf.Target)
+		}, buildenv.Dev},
+		{"ESP32-C3 direct console", func(_ *testing.T, c *context, _ *aPackage) {
+			c.buildConf.Goos, c.buildConf.Goarch, c.buildConf.Target = "linux", "riscv32", "esp32c3-flash"
+			c.buildConf.OptLevel, c.buildConf.LTO = optlevel.Oz, lto.Full
+			c.buildConf.DeadcodeDrop, c.buildConf.DisableGoGlobalDCE = true, true
+			c.crossCompile.ExtraFiles = embeddedBootFiles(c.buildConf.Target)
+			c.crossCompile.BuildTags = []string{embeddedConsoleTag}
 		}, buildenv.Dev},
 		{"named WASI target", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Target = "wasi" }, true},
 		{"custom target", func(_ *testing.T, c *context, _ *aPackage) { c.buildConf.Target = "custom-wasi.json" }, false},
@@ -236,9 +246,12 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				}
 				return
 			}
-			if ctx.buildConf.Target == "cortex-m-mps2" {
+			if ctx.buildConf.Target == "cortex-m-mps2" || ctx.buildConf.Target == "esp32c3-flash" {
 				if ctx.embeddedRuntimeFree != test.want || ctx.wasmRuntimeFree || !ctx.frontendOptions.ShadowStack {
 					t.Fatal("bare-metal startup proof changed WASI state or retained startup")
+				}
+				if want := test.want && ctx.buildConf.Target == "esp32c3-flash"; ctx.embeddedDirectConsole != want {
+					t.Fatalf("direct console = %v, want %v", ctx.embeddedDirectConsole, want)
 				}
 				return
 			}
