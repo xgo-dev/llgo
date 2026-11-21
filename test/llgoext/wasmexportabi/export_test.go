@@ -134,6 +134,38 @@ func TestWasmHeaderSnapshotAcrossGC(t *testing.T) {
 	}
 }
 
+type sparseStorage struct {
+	Data [512]uint64
+	Text string
+}
+
+//go:noinline
+func copySparseStorage(dst, src *sparseStorage) { *dst = *src }
+
+func TestWasmSparseHeaderStorage(t *testing.T) {
+	dirtyHostHeaders()
+	var src, dst sparseStorage
+	for i := range src.Data {
+		src.Data[i] = uint64(i)*0x100000001 + 7
+	}
+	// Preserve C's dirty header bytes until the typed aggregate load.
+	type rawString [unsafe.Sizeof("")]byte
+	raw := *(*rawString)(unsafe.Pointer(&hostGlobal.Text))
+	*(*rawString)(unsafe.Pointer(&src.Text)) = raw
+	copySparseStorage(&dst, &src)
+	ch := make(chan sparseStorage, 1)
+	ch <- src
+	received := <-ch
+	for _, value := range []*sparseStorage{&dst, &received} {
+		if value.Data != src.Data || value.Text != "wasm" || !stringPointerSlotOK(&value.Text) {
+			t.Fatal("sparse header copy changed data or retained pointer padding")
+		}
+	}
+	if *(*rawString)(unsafe.Pointer(&src.Text)) != raw {
+		t.Fatal("sparse header copy changed the source padding")
+	}
+}
+
 func TestWasmOverlappingHeaderCopies(t *testing.T) {
 	words := []string{"a", "b", "c"}
 	got := append(words[:1], words[:2]...)

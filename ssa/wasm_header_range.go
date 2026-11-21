@@ -1,8 +1,17 @@
 package ssa
 
-import "github.com/xgo-dev/llvm"
+import (
+	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llvm"
+)
 
 const maxInlineWasmHeaders = 8
+
+// Large values must remain eligible for aggregate-copy lowering even when
+// they contain few headers. Repacking them in SSA would scalarize the copy.
+func (p Program) needsWasmHeaderStorage(typ llvm.Type, count int) bool {
+	return count != 0 && (count > maxInlineWasmHeaders || p.td.TypeAllocSize(typ) >= llabi.MinAggregateCopySize)
+}
 
 // clearWasmHeaderRange clears only the padding in a copied range. A source
 // slice can alias C memory even after it has passed through ordinary Go code.

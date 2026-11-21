@@ -338,7 +338,7 @@ func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Va
 	var scratch llvm.Value
 	if b.Prog.usesWideGoStorage() {
 		count = b.Prog.wasmHeaderCount(logical.ll, maxInlineWasmHeaders+1)
-		if count > maxInlineWasmHeaders {
+		if b.Prog.needsWasmHeaderStorage(logical.ll, count) {
 			scratch = b.wasmHeaderSnapshotStorage(logical)
 		}
 	}
@@ -349,7 +349,7 @@ func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Va
 	switch {
 	case count == 0:
 		return value
-	case count <= maxInlineWasmHeaders:
+	case scratch.IsNil():
 		return b.Prog.clearWasmABIPadding(b.impl, value)
 	default:
 		b.impl.CreateStore(value, scratch)

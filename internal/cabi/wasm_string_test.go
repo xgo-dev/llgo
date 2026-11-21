@@ -1,13 +1,59 @@
 package cabi_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
+
+func TestWasmSparseHeaderStorageCodegen(t *testing.T) {
+	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2} {
+		t.Run(level.String(), func(t *testing.T) {
+			conf := build.NewDefaultConf(build.ModeGen)
+			conf.Goos, conf.Goarch, conf.OptLevel = "wasip1", "wasm", level
+			pkgs, err := build.Do([]string{"./_testdata/wasmstring/strings.go"}, conf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg := pkgs[0].LPkg
+			defer pkg.Prog.Dispose()
+			mod := pkg.Module()
+			options := llvm.NewPassBuilderOptions()
+			defer options.Dispose()
+			options.SetVerifyEach(true)
+			if err := mod.RunPasses("default<"+level.String()+">", pkg.Prog.TargetMachine(), options); err != nil {
+				t.Fatal(err)
+			}
+			asm, err := pkg.Prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer asm.Dispose()
+			text := string(asm.Bytes())
+			for _, name := range []string{"CopySparseStorage", "ReceiveSparseStorage"} {
+				start := strings.Index(text, name+":")
+				if start < 0 {
+					t.Fatalf("missing %s", name)
+				}
+				body := text[start:]
+				end := strings.Index(body, "end_function")
+				if end < 0 {
+					t.Fatalf("missing end of %s", name)
+				}
+				// An insertvalue around the aggregate load prevents copy lowering.
+				// Channel reads are volatile, so even O2 cannot undo that expansion.
+				if lines := strings.Count(body[:end], "\n"); lines > 512 {
+					t.Errorf("%s expanded a sparse header copy to %d assembly lines", name, lines)
+				}
+			}
+		})
+	}
+}
 
 func TestWasmStringBoundaryPadding(t *testing.T) {
 	conf := build.NewDefaultConf(build.ModeGen)

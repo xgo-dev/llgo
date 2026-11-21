@@ -84,16 +84,28 @@ func TestWasmHostLayoutHeaderLoads(t *testing.T) {
 }
 
 func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
-	for _, tc := range []struct{ volatile, delayed bool }{
+	for _, tc := range []struct{ volatile, delayed, sparse bool }{
 		{},
 		{volatile: true},
 		{volatile: true, delayed: true},
+		{sparse: true},
+		{volatile: true, sparse: true},
+		{volatile: true, delayed: true, sparse: true},
 	} {
 		prog := newJ32Program(t)
 		setTestRuntime(t, prog)
 		pkg := prog.NewPackage("p", "example.com/p")
-		array := types.NewArray(types.Typ[types.String], 256)
-		ptr := types.NewPointer(array)
+		var aggregate types.Type = types.NewArray(types.Typ[types.String], 256)
+		lastHeader := 255
+		if tc.sparse {
+			// One header still needs memory lowering at the 4 KiB boundary.
+			aggregate = types.NewStruct([]*types.Var{
+				types.NewField(token.NoPos, nil, "Data", types.NewArray(types.Typ[types.Uint64], 510), false),
+				types.NewField(token.NoPos, nil, "Text", types.Typ[types.String], false),
+			}, nil)
+			lastHeader = 1
+		}
+		ptr := types.NewPointer(aggregate)
 		params := types.NewTuple(types.NewParam(token.NoPos, nil, "src", ptr), types.NewParam(token.NoPos, nil, "dst", ptr))
 		fn := pkg.NewFunc("copyHeaders", types.NewSignatureType(nil, nil, nil, params, nil, false), GoDecl)
 		b := fn.MakeBody(1)
@@ -107,7 +119,7 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 		}
 		b.Store(dst, value)
 		if tc.delayed {
-			last := b.impl.CreateExtractValue(value.impl, 255, "")
+			last := b.impl.CreateExtractValue(value.impl, lastHeader, "")
 			b.impl.CreateStore(last, dst.impl)
 		}
 		b.Return()
@@ -159,7 +171,7 @@ func TestWasmHeaderSnapshotCopyLowering(t *testing.T) {
 				t.Fatalf("only the original source read should be volatile:\n%s", fn.impl)
 			}
 			if tc.delayed && (!strings.HasPrefix(write.CalledValue().Name(), "llvm.memcpy") || field.IsNil() ||
-				field.Operand(2).ZExtValue() != 255 || !strings.Contains(fn.impl.String(), "gcroot.entry")) {
+				field.Operand(2).ZExtValue() != uint64(lastHeader) || !strings.Contains(fn.impl.String(), "gcroot.entry")) {
 				t.Fatalf("delayed assignment must retain one rooted, normalized snapshot:\n%s", fn.impl)
 			}
 		} else if allocs != 0 || read != write || clear.Operand(0) != dst.impl {

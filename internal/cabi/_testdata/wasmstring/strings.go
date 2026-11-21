@@ -22,4 +22,15 @@ func ImportedGlobal() bool {
 	return validString(&s, 0x6000, 19)
 }
 
+type SparseStorage struct {
+	Data [4096]uint64
+	Text string
+}
+
+//export CopySparseStorage
+func CopySparseStorage(dst, src *SparseStorage) { *dst = *src }
+
+//export ReceiveSparseStorage
+func ReceiveSparseStorage(dst *SparseStorage, ch <-chan SparseStorage) { *dst = <-ch }
+
 func main() {}
