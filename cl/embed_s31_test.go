@@ -303,9 +303,14 @@ func TestS31ReflectSmoke(t *testing.T) {
 		// to end: scheduler parking, deadline wake, goroutine round trips and
 		// the handoff yield. They compare the full golden like
 		// TestS31XIPFmtConsole, which turns wake and release order into a
-		// hard assertion instead of a marker scan.
+		// hard assertion instead of a marker scan. The timer fixtures add the
+		// callback timer list on top of the sleeper list: deadline-ordered
+		// delivery, refire, reset and the goroutine-context callback.
 		{pkg: "./_testgo/timesleep", golden: true},
 		{pkg: "./_testgo/sleepgoroutine", golden: true},
+		{pkg: "./_testgo/timerafter", golden: true},
+		{pkg: "./_testgo/timertick", golden: true},
+		{pkg: "./_testgo/timerfunc", golden: true},
 		{pkg: "./_testgo/mutexstarve", golden: true},
 	} {
 		t.Run(filepath.Base(tc.pkg), func(t *testing.T) {

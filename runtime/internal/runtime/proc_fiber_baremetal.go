@@ -207,10 +207,13 @@ func RunMain() {
 				}
 			}
 		}
-		// Wake due sleepers before picking the next G: a runnable G that
-		// immediately requeues itself (runtime.Gosched) must not starve an
-		// expired sleeper parked behind it in the FIFO run queue.
+		// Wake due sleepers and dispatch due timers before picking the next
+		// G: a runnable G that immediately requeues itself (runtime.Gosched)
+		// must not starve an expired sleeper parked behind it in the FIFO run
+		// queue, and a due timer's delivery goroutine joins the same queue
+		// ahead of that pick.
 		baremetalWakeSleepers()
+		baremetalWakeTimers()
 		gp = baremetalSched.runq.Pop()
 		if gp == nil && baremetalSleepWait() {
 			// The wait woke at least one sleeper, and goready queued it

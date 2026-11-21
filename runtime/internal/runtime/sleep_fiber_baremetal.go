@@ -84,10 +84,12 @@ func baremetalSleepDeadline(ns int64) uint32 {
 	return riscv32Cycle() + uint32(uint64(ns)*uint64(baremetalCpuMHz)/1000)
 }
 
-// baremetalInsertSleeper links s into the deadline-ordered list, keeping the
-// earliest deadline at the head as a locality hint for baremetalSleepWait.
-// Ordering is an optimization only: waking never trusts the order (see
-// baremetalWakeSleepers).
+// baremetalInsertSleeper links s into the deadline-ordered list. The order
+// has no readers: baremetalSleepWait is a plain spin that never inspects
+// the head, and waking scans the whole list instead of trusting pairwise
+// deadline spread (see baremetalWakeSleepers). The ordered insert is kept
+// because it costs one comparison loop and leaves the earliest deadline at
+// the head for a future min-deadline wait.
 func baremetalInsertSleeper(s *baremetalSleeper) {
 	var prev *baremetalSleeper
 	for cur := baremetalSleepers; cur != nil && int32(s.deadline-cur.deadline) > 0; cur = cur.next {
@@ -137,15 +139,22 @@ func baremetalWakeSleepers() bool {
 }
 
 // baremetalSleepWait holds the scheduler until the earliest sleeper comes
-// due, reporting whether one was woken. It returns false with no sleepers so
-// the caller keeps its deadlock diagnosis. The wait is a plain spin: RV32
-// baremetal has no timer interrupt to park the hart on, and WFI would sleep
-// until an interrupt that never arrives.
+// due or a due timer can be dispatched, reporting whether either happened.
+// It returns false with neither sleepers nor timers so the caller keeps its
+// deadlock diagnosis — a pending timer counts as live work and must not
+// fatal. The wait is a plain spin: RV32 baremetal has no timer interrupt to
+// park the hart on, and WFI would sleep until an interrupt that never
+// arrives.
 func baremetalSleepWait() bool {
-	for baremetalSleepers != nil {
+	for {
 		if baremetalWakeSleepers() {
 			return true
 		}
+		if baremetalWakeTimers() {
+			return true
+		}
+		if baremetalSleepers == nil && baremetalTimers == nil {
+			return false
+		}
 	}
-	return false
 }

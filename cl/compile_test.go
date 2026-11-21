@@ -99,9 +99,14 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
 				// esp-emu's esp32c3 model implements no clock source, so the time
 				// fixtures cannot run under emulation (real C3 hardware has the
-				// cycle CSR; the S31 emu suite covers them instead).
+				// cycle CSR; the S31 emu suite covers them instead). The timer
+				// fixtures additionally rely on the callback timer list that
+				// only live-clock fiber targets register.
 				"./_testgo/timesleep",
 				"./_testgo/sleepgoroutine",
+				"./_testgo/timerafter",
+				"./_testgo/timertick",
+				"./_testgo/timerfunc",
 				// stdlib fixtures that exceed what the C3-basic budget allows:
 				// hexpkg/fmtall/osfile overflow the 256 KiB IRAM at link time;
 				// bufiopkg/iopkg link but leave no runtime heap (out of memory);
@@ -346,6 +351,11 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/mutexstarve",
 		"./_testgo/timesleep",
 		"./_testgo/sleepgoroutine",
+		// The timer fixtures import "time" like timepkg above; the embed
+		// emulator suites run them against the fiber scheduler.
+		"./_testgo/timerafter",
+		"./_testgo/timertick",
+		"./_testgo/timerfunc",
 		"./_testgo/gotask",
 		"./_testgo/hexpkg",
 		"./_testgo/fmtall",

@@ -28,21 +28,32 @@ import (
 // parks the current G on the scheduler's sleeper list until its cycle-domain
 // deadline expires (sleep_fiber_baremetal.go), and runtimeNano reads the
 // wrap-extended cycle clock where the target's regression path can execute
-// the CSR (see the comment on runtimeNano below). The timer plumbing below
-// stays minimal: a timer that has not already passed its deadline at
-// creation never fires, so time.After/Tick/Ticker remain unusable.
+// the CSR (see the comment on runtimeNano below).
 //
-// TODO: grow callback-timer delivery (a deadline-ordered timer list fed by
-// the scheduler loop next to the sleepers in internal/runtime) and route
-// startRuntimeTimer/resetRuntimeTimer through it.
+// Callback timers (time.After/NewTimer/NewTicker/AfterFunc) register on the
+// scheduler's deadline list when the target has a live clock
+// (BaremetalCycleClock: esp32s31); the scheduler loop delivers every due
+// callback on its own goroutine, the delivery context stdlib documents for
+// AfterFunc. Targets whose emulated regression path cannot execute the CSR
+// (esp32c3 and generic riscv32 — esp-emu models no clock for them) keep the
+// degenerate stub below: runtimeNano is constant zero there, so no list
+// could ever advance, only a timer already overdue at creation fires (and
+// only synchronously on the creating G), and live time.After/Tick/Ticker
+// timers never fire. TODO: read BaremetalNanoTime on esp32c3 too once
+// esp-emu models its clock, which unlocks the timer list there as well.
+//
+// The stub boolean results only report whether the record exists, because
+// the stub never delivers a pending timer: stopTimer/resetTimer cannot stop
+// or reschedule anything that is not already overdue. On live-clock targets
+// they follow the stdlib contract instead, keyed on list membership rather
+// than deadline passage: true means the record was still linked (whether or
+// not its deadline has passed — processing happens at the scheduler's wake
+// pass, not at the deadline) and was stopped or rescheduled; false means
+// the wake pass already unlinked it and queued the delivery goroutine, and
+// that queued callback still runs (a reset then re-registers the timer).
 
-// The timer stubs never deliver a pending timer, so their boolean results
-// only report whether the record exists: stopTimer/resetTimer cannot stop
-// or reschedule anything that is not already overdue. startRuntimeTimer
-// runs f synchronously on the creating G when the deadline has already
-// passed at creation, where the stdlib would deliver it from an independent
-// timer goroutine — good enough for the already-overdue degenerate case,
-// wrong for live timers (see the TODO above).
+// runtimeTimer is internal timer state for the fiber targets. It is not
+// required to match the Go runtime timer layout for go1.23+.
 type runtimeTimer struct {
 	pp       uintptr
 	when     int64
@@ -52,6 +63,10 @@ type runtimeTimer struct {
 	seq      uintptr
 	nextwhen int64
 	status   uint32
+	// timer is the scheduler-side record on live-clock targets; nil on the
+	// stub path. The record owns the deadline from here on — the scheduler
+	// unlinks and reinserts it as deadlines come due.
+	timer *llruntime.BaremetalTimer
 }
 
 type timeTimer struct {
@@ -64,13 +79,32 @@ func startRuntimeTimer(r *runtimeTimer) {
 	if r == nil || r.f == nil {
 		return
 	}
-	if r.period == 0 && r.when <= runtimeNano() {
-		r.f(r.arg, r.seq, runtimeNano())
+	if !llruntime.BaremetalCycleClock {
+		// Clock-less stub: only a deadline already passed at creation fires,
+		// synchronously on the creating G (where the stdlib would deliver it
+		// from an independent timer goroutine). Good enough for the
+		// degenerate case, wrong for live timers — documented above.
+		if r.period == 0 && r.when <= runtimeNano() {
+			r.f(r.arg, r.seq, runtimeNano())
+		}
+		return
 	}
+	r.timer = llruntime.BaremetalNewTimer(r.when, r.period, r.f, r.arg, r.seq)
 }
 
 func stopRuntimeTimer(r *runtimeTimer) bool {
-	return r != nil
+	if r == nil {
+		return false
+	}
+	if !llruntime.BaremetalCycleClock {
+		// The stub never delivers a pending timer, so nothing can be active:
+		// report that the record exists, the pre-timer-list behavior.
+		return true
+	}
+	if r.timer == nil {
+		return false
+	}
+	return llruntime.BaremetalStopTimer(r.timer)
 }
 
 func resetRuntimeTimer(r *runtimeTimer, when, period int64, f func(any, uintptr, int64), arg any, seq uintptr) bool {
@@ -82,8 +116,21 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, f func(any, uintptr,
 	r.f = f
 	r.arg = arg
 	r.seq = seq
-	startRuntimeTimer(r)
-	return true
+	if !llruntime.BaremetalCycleClock {
+		startRuntimeTimer(r)
+		return true
+	}
+	// Reset forwards only when/period: the record keeps its creation-time
+	// f/arg/seq. The Go 1.23+ stdlib Reset hook never changes them, and the
+	// scheduler side relies on that — a callback already dispatched for the
+	// old deadline reads its f/arg/seq snapshot off the record, so a future
+	// divergence that mutates them here must re-create the record instead of
+	// updating it in place.
+	if r.timer == nil {
+		r.timer = llruntime.BaremetalNewTimer(when, period, f, arg, seq)
+		return false
+	}
+	return llruntime.BaremetalResetTimer(r.timer, when, period)
 }
 
 //go:linkname time_now time.now

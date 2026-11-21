@@ -1624,6 +1624,7 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
 			want: []string{
 				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"timer_fiber_baremetal.go",
 				"z_clock_files_fiber.go", "z_clock_freq_esp32s31.go",
 			},
 			omit: []string{
@@ -1631,10 +1632,14 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 			},
 		},
 		{
+			// Same file ring as esp32s31, but the chip gate (BaremetalCycleClock
+			// = false) keeps the callback timer list empty: the time hooks stay
+			// on the degenerate stubs and only the sleeper path engages.
 			name: "esp32c3 clock ring gates the CSR feed off", goos: "linux", goarch: "arm",
 			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
 			want: []string{
 				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"timer_fiber_baremetal.go",
 				"z_clock_files_fiber.go", "z_clock_freq_esp32c3.go",
 			},
 			omit: []string{
@@ -1646,6 +1651,7 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
 			want: []string{
 				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go",
+				"timer_fiber_baremetal.go",
 				"z_clock_files_fiber.go", "z_clock_freq_default.go",
 			},
 			omit: []string{
@@ -1657,7 +1663,8 @@ func TestBaremetalSyncBackendSelection(t *testing.T) {
 			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
 			want: []string{"z_clock_files_default.go"},
 			omit: []string{
-				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go", "z_clock_files_fiber.go",
+				"clock_fiber_baremetal.go", "sleep_fiber_baremetal.go", "timer_fiber_baremetal.go",
+				"z_clock_files_fiber.go",
 				"z_clock_freq_default.go", "z_clock_freq_esp32c3.go", "z_clock_freq_esp32s31.go",
 			},
 		},
