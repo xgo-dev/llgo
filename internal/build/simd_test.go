@@ -393,6 +393,10 @@ func expand(out *[16]uint32, a *[16]uint32, m uint16) {
  archsimd.LoadUint32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
 }
 //go:noinline
+func floatPack(out, a *[4]float32, m uint8) {
+ archsimd.LoadFloat32x4Array(a).Compress(archsimd.Mask32x4FromBits(m)).StoreArray(out)
+}
+//go:noinline
 func fused(out,a,b,c *[16]float32) {
  x,y,z := archsimd.LoadFloat32x16Array(a),archsimd.LoadFloat32x16Array(b),archsimd.LoadFloat32x16Array(c)
  x.MulAddEvenSubOdd(y,z).StoreArray(out)
