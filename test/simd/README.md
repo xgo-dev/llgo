@@ -506,9 +506,10 @@ GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
 the AVX512 predicate. LLGo folds these queries before generating guarded
 versions. Optional predicates continue to read the effective CPU state.
 
-On v1/v2, a function that queries both AVX2 and a wider feature can pass
-through the public AVX2 dispatcher and then a local guarded dispatcher.
-The wider clone specializes direct calls to the local AVX2 helper body.
+On v1/v2, the public resolver for a mixed AVX2 and AVX512 guard selects
+the physical body from both predicates and caches it in one slot. Separately
+compiled AVX2 callers can still use the canonical AVX2 entry. The wider
+clone specializes direct calls to the local AVX2 helper body.
 For independent guarded regions the resolver selects one of the observed
 feature combinations. Other regions keep their runtime checks. Helpers
 are shared by function and proven mask; distinct masks can produce separate

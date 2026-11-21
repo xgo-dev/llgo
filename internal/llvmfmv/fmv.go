@@ -141,20 +141,23 @@ func Run(mod llvm.Module, baseline string) error {
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
+	var avx2 []dispatchSite
 	switch baseline {
 	case "v3", "v4":
 		foldBaselineQueries(mod, baseline)
 	case "", "v1", "v2":
-		if err := runAVX2(mod); err != nil {
+		var err error
+		avx2, err = runAVX2(mod)
+		if err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
-	return runGuardedFeatures(mod)
+	return runGuardedFeatures(mod, avx2)
 }
 
-func runAVX2(mod llvm.Module) error {
+func runAVX2(mod llvm.Module) ([]dispatchSite, error) {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
 	roots := make(map[llvm.Value]llvm.Value)
@@ -188,17 +191,17 @@ func runAVX2(mod llvm.Module) error {
 			name := fn.Name() + suffix
 			// Check all names before modifying any function in the module.
 			if !mod.NamedValue(name).IsNil() {
-				return fmt.Errorf("SIMD FMV symbol collision: %s", name)
+				return nil, fmt.Errorf("SIMD FMV symbol collision: %s", name)
 			}
 		}
 		originals = append(originals, fn)
 	}
 	if len(originals) == 0 {
-		return nil
+		return nil, nil
 	}
 	if mask := mod.NamedValue(featureSymbol); !mask.IsNil() &&
 		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
-		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
+		return nil, fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
 
 	ctx := mod.Context()
@@ -239,6 +242,7 @@ func runAVX2(mod llvm.Module) error {
 			baselines[fn] = baseline
 		}
 	}
+	var sites []dispatchSite
 	for _, fn := range originals {
 		if fn.IsDeclaration() {
 			continue
@@ -247,10 +251,10 @@ func runAVX2(mod llvm.Module) error {
 		specialize(ctx, variant, variants, true)
 		if baseline := baselines[fn]; !baseline.IsNil() {
 			specialize(ctx, baseline, baselines, false)
-			dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}})
+			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}}))
 		}
 	}
-	return nil
+	return sites, nil
 }
 
 func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Value, enabled bool) {
@@ -309,7 +313,24 @@ type dispatchChoice struct {
 	fn   llvm.Value
 }
 
-func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choices []dispatchChoice) {
+// The AVX2 resolver has one select between its two implementations. If
+// either gets further variants, select its physical body here as well.
+type dispatchSite struct {
+	features, selection, uninitializedCall llvm.Value
+}
+
+func selectDispatchBody(b llvm.Builder, features, baseline llvm.Value, choices []dispatchChoice) llvm.Value {
+	selected := baseline
+	for _, choice := range choices {
+		required := llvm.ConstInt(features.Type(), choice.bits, false)
+		enabled := b.CreateAnd(features, required, "")
+		check := b.CreateICmp(llvm.IntEQ, enabled, required, "")
+		selected = b.CreateSelect(check, choice.fn, selected, "selected")
+	}
+	return selected
+}
+
+func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choices []dispatchChoice) dispatchSite {
 	ctx := mod.Context()
 	resolver := fn.CloneFunction()
 	resolver.SetName(fn.Name() + resolverSuffix)
@@ -373,18 +394,13 @@ func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choi
 	call := tailReturn(b, resolver, baseline)
 	call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 	b.SetInsertPointAtEnd(selectImpl)
-	selected := baseline
-	for _, choice := range choices {
-		required := llvm.ConstInt(ctx.Int64Type(), choice.bits, false)
-		enabled := b.CreateAnd(features, required, "")
-		check := b.CreateICmp(llvm.IntEQ, enabled, required, "")
-		selected = b.CreateSelect(check, choice.fn, selected, "selected")
-	}
+	selected := selectDispatchBody(b, features, baseline, choices)
 	publish := b.CreateStore(selected, slot)
 	publish.SetAlignment(8)
 	publish.SetOrdering(llvm.AtomicOrderingMonotonic)
 	tailReturn(b, resolver, selected)
 	resolver.RemoveUnreachableBlocks()
+	return dispatchSite{features, selected, call}
 }
 
 func tailReturn(b llvm.Builder, fn, target llvm.Value) llvm.Value {

@@ -242,6 +242,7 @@ func TestMixedAVX2GuardHelper(t *testing.T) {
 	m := parseModule(t, `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare i1 @sha() "llgo.cpu.query"="x86.sha"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
 define void @kernel(ptr %p) "llgo.fmv.avx2-entry" {
  %x = load <16 x i32>, ptr %p
@@ -251,11 +252,17 @@ define void @kernel(ptr %p) "llgo.fmv.avx2-entry" {
 }
 define void @root(ptr %p) {
  %a = call i1 @avx2()
- br i1 %a, label %check, label %exit
+ br i1 %a, label %check, label %slowcheck
 check:
  %b = call i1 @wide()
  br i1 %b, label %fast, label %exit
 fast:
+ call void @kernel(ptr %p)
+ br label %exit
+slowcheck:
+ %s = call i1 @sha()
+ br i1 %s, label %slow, label %exit
+slow:
  call void @kernel(ptr %p)
  br label %exit
 exit:
@@ -272,6 +279,20 @@ exit:
 	if body.IsNil() || kernel.IsNil() || !strings.Contains(body.String(), "call void @kernel"+suffix+"(") || !strings.Contains(stringAttribute(kernel, "target-features"), "+avx512f") {
 		t.Fatal(m.String())
 	}
+	resolver := m.NamedFunction("root" + resolverSuffix).String()
+	if !strings.Contains(resolver, "ptr @root"+suffix+",") || strings.Contains(resolver, "ptr @root"+variantSuffix+",") {
+		t.Fatalf("public resolver points at a second dispatcher:\n%s", resolver)
+	}
+	base := "root" + baselineSuffix
+	if !strings.Contains(resolver, "ptr @"+base+guardSuffix(predicateBits["x86.sha"])+",") ||
+		!strings.Contains(resolver, "musttail call void @"+base+symbolPrefix+"guard_base(") {
+		t.Fatalf("baseline arm or pre-initialization call still dispatches:\n%s", resolver)
+	}
+	before := m.String()
+	if err := Run(m, "v1"); err != nil || m.String() != before {
+		t.Fatalf("repeat: %v\n%s", err, m.String())
+	}
+
 }
 
 func TestGuardHelperCollisionLeavesModuleIntact(t *testing.T) {
@@ -322,7 +343,7 @@ func TestOptionalGuardAtV4(t *testing.T) {
 func TestGuardBodyEntryAttributes(t *testing.T) {
 	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
-	if err := runGuardedFeatures(m); err != nil {
+	if err := runGuardedFeatures(m, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"guard_avx512_fma", "guard_base"} {

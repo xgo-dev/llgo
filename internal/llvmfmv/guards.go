@@ -243,7 +243,7 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(mod llvm.Module) error {
+func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
@@ -379,6 +379,30 @@ func runGuardedFeatures(mod llvm.Module) error {
 	source := newSourceInfo(mod)
 	for _, copy := range copies {
 		source.clone(copy.original, copy.body)
+	}
+	// Keep the canonical AVX2 entry callable from separately compiled code.
+	// For public calls, cache the physical target directly in the outer slot.
+	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
+	for i := range roots {
+		byFunction[roots[i].fn] = &roots[i]
+	}
+	builder := ctx.NewBuilder()
+	defer builder.Dispose()
+	for _, site := range avx2 {
+		builder.SetInsertPointBefore(site.selection)
+		// LLVM select operands are condition, true (AVX2), false (baseline).
+		for operand := 1; operand <= 2; operand++ {
+			root := byFunction[site.selection.Operand(operand)]
+			if root == nil {
+				continue
+			}
+			target := selectDispatchBody(builder, site.features, root.base, root.choices)
+			site.selection.SetOperand(operand, target)
+			if operand == 2 {
+				call := site.uninitializedCall
+				call.SetOperand(call.OperandsCount()-1, root.base)
+			}
+		}
 	}
 	for _, root := range roots {
 		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))

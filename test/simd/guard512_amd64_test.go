@@ -92,3 +92,37 @@ func TestSIMD512ScalarSignatureHelpers(t *testing.T) {
 		}
 	}
 }
+
+//go:noinline
+func mixedSIMD512(dst, src *[16]int32) int {
+	if archsimd.X86.AVX2() {
+		if archsimd.X86.AVX512() {
+			doubleSIMD512Helper(dst, src)
+			return 2
+		}
+		return 1
+	}
+	return 0
+}
+
+func TestSIMD512MixedGuard(t *testing.T) {
+	var src, dst, want [16]int32
+	for i := range src {
+		src[i] = int32(i - 9)
+	}
+	path := 0
+	if archsimd.X86.AVX2() {
+		path = 1
+		if archsimd.X86.AVX512() {
+			path = 2
+			for i, x := range src {
+				want[i] = x + x
+			}
+		}
+	}
+	for call := 0; call < 2; call++ {
+		if got := mixedSIMD512(&dst, &src); got != path || dst != want {
+			t.Fatalf("call %d: path %d, lanes %v; want path %d, lanes %v", call, got, dst, path, want)
+		}
+	}
+}
