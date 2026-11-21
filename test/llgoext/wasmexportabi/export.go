@@ -2,7 +2,10 @@
 
 package wasmexportabi
 
-import "unsafe"
+import (
+	"structs"
+	"unsafe"
+)
 
 const LLGoFiles = "_wrap/caller.c"
 
@@ -27,6 +30,11 @@ func slicePointerSlotOK(s *[]byte) bool {
 	return *(*uintptr)(unsafe.Pointer(s)) == uintptr(unsafe.Pointer(unsafe.SliceData(*s)))
 }
 
+//go:noinline
+func stringPointerSlotOK(s *string) bool {
+	return *(*uintptr)(unsafe.Pointer(s)) == uintptr(unsafe.Pointer(unsafe.StringData(*s)))
+}
+
 //go:linkname callGoExports C.llgo_test_call_go_exports
 func callGoExports() int32
 
@@ -38,6 +46,25 @@ type Mixed struct {
 	Text string
 	Data []byte
 }
+
+type hostRecord struct {
+	_ structs.HostLayout
+	Mixed
+	Word uintptr
+	Rows [1][2]Mixed
+}
+
+//go:linkname hostGlobal C.llgo_test_host_global
+var hostGlobal hostRecord
+
+//go:linkname plainGlobal C.llgo_test_plain_global
+var plainGlobal struct {
+	Mixed
+	Word uintptr
+}
+
+//go:linkname dirtyHostHeaders C.llgo_test_dirty_host_headers
+func dirtyHostHeaders() *string
 
 //export llgo_test_go_mixed
 func goMixed(m Mixed) Mixed {

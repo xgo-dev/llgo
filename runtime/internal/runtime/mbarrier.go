@@ -158,6 +158,9 @@ func Typedmemmove(typ *Type, dst, src unsafe.Pointer) {
 	// barrier, so at worst we've unnecessarily greyed the old
 	// pointer that was in src.
 	c.Memmove(dst, src, typ.Size_)
+	if wideGoHeaderSlots {
+		clearTypedHeaderRange(typ, dst, 1, typ.Size_)
+	}
 }
 
 // typedSliceCopy keeps only the minimal copy semantics needed by llgo reflect.Copy.
@@ -170,6 +173,9 @@ func typedSliceCopy(typ *_type, dstPtr unsafe.Pointer, dstLen int, srcPtr unsafe
 		return n
 	}
 	c.Memmove(dstPtr, srcPtr, uintptr(n)*typ.Size_)
+	if wideGoHeaderSlots {
+		clearTypedHeaderRange(typ, dstPtr, uintptr(n), typ.Size_)
+	}
 	return n
 }
 

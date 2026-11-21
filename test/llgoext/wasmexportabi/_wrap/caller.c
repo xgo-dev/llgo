@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 
 // The header tests independently check these declarations against LLGo's
@@ -39,6 +40,25 @@ GoSlice llgo_test_c_slice(GoSlice s) {
 typedef struct { const char *p; int64_t n; } GoString;
 typedef struct { GoString Text; GoSlice Data; } Mixed;
 extern Mixed llgo_test_go_mixed(Mixed m);
+
+static unsigned char host_bytes[5] = {7, 8, 9, 10, 11};
+struct { Mixed headers; uint64_t word; Mixed rows[1][2]; } llgo_test_host_global = {
+    .headers = {{"wasm", 4}, {host_bytes, 3, 5}}, .word = UINT64_C(0x123456789abcdef0)
+};
+struct { Mixed headers; uint64_t word; } llgo_test_plain_global;
+
+GoString *llgo_test_dirty_host_headers(void) {
+    Mixed *m = &llgo_test_host_global.headers;
+    memset((unsigned char *)&m->Text + sizeof(m->Text.p), 0xa5,
+           offsetof(GoString, n) - sizeof(m->Text.p));
+    memset((unsigned char *)&m->Data + sizeof(m->Data.data), 0xa5,
+           offsetof(GoSlice, len) - sizeof(m->Data.data));
+    memcpy(&llgo_test_host_global.rows[0][0], m, sizeof(*m));
+    memcpy(&llgo_test_host_global.rows[0][1], m, sizeof(*m));
+    memcpy(&llgo_test_plain_global.headers, m, sizeof(*m));
+    llgo_test_plain_global.word = llgo_test_host_global.word;
+    return &llgo_test_host_global.rows[0][1].Text;
+}
 
 static Mixed make_mixed(const char *text, void *data, int64_t len, int64_t cap) {
     Mixed m;
