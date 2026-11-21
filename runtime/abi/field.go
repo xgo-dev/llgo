@@ -87,7 +87,7 @@ func (f *StructField) nameData() (int, *byte) {
 
 func (f *StructField) Name() string {
 	size, p := f.nameData()
-	return unsafe.String(p, size)
+	return fieldString(p, size)
 }
 
 func (f *StructField) Tag() string {
@@ -96,7 +96,17 @@ func (f *StructField) Tag() string {
 	}
 	size, p := f.nameData()
 	tagSize, tag := readFieldLength((*byte)(unsafe.Add(unsafe.Pointer(p), size)))
-	return unsafe.String(tag, tagSize)
+	return fieldString(tag, tagSize)
+}
+
+// Both offsets and lengths come from descriptors produced by
+// EncodeStructFieldName. Use the runtime string layout for the resulting view.
+func fieldString(data *byte, size int) string {
+	header := struct {
+		data *byte
+		size int
+	}{data, size}
+	return *(*string)(unsafe.Pointer(&header))
 }
 
 func (f *StructField) Embedded() bool {
