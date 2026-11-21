@@ -45,6 +45,15 @@ func testFunctionMetadata() {
 	named := reflect.New(typ).Elem()
 	named.Set(base)
 	checkCall(named)
+	if named.Type() != typ || named.Addr().Type() != reflect.PointerTo(typ) {
+		panic("named function identity")
+	}
+	dynamic := reflect.MakeFunc(typ, func(in []reflect.Value) []reflect.Value {
+		return base.Call(in)
+	})
+	if yes, n := dynamic.Interface().(reflectedFunc)(7, "abc"); !yes || n != 10 || dynamic.Type() != typ {
+		panic("named MakeFunc identity")
+	}
 	method := named.MethodByName("Call").Call([]reflect.Value{reflect.ValueOf("hello")})
 	if !method[0].Bool() || method[1].Int() != 105 {
 		panic("named function method")

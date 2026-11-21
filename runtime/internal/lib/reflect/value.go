@@ -2358,7 +2358,7 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 }
 
 func (v Value) closureFunc() *abi.FuncType {
-	return toFuncType(v.typ_.StructType())
+	return v.typ_.StructType().PublicFuncType()
 }
 
 func (v Value) call(op string, in []Value) []Value {

@@ -406,11 +406,7 @@ func toRType(t *abi.Type) *rtype {
 func elem(t *abi.Type) *abi.Type {
 	et := t.Elem()
 	if et != nil {
-		if et.IsClosure() {
-			ft := toFuncType(et.StructType())
-			return &ft.Type
-		}
-		return et
+		return publicTypeDescriptor(et)
 	}
 	panic("reflect: Elem of invalid type " + stringFor(t))
 }
@@ -510,11 +506,15 @@ func (t *rtype) Out(i int) Type {
 	return toPublicType(tt.Out[i])
 }
 
-func toPublicType(typ *abi.Type) Type {
+func publicTypeDescriptor(typ *abi.Type) *abi.Type {
 	if typ.IsClosure() {
-		typ = &toFuncType((*abi.StructType)(unsafe.Pointer(typ))).Type
+		return &typ.StructType().PublicFuncType().Type
 	}
-	return toType(typ)
+	return typ
+}
+
+func toPublicType(typ *abi.Type) Type {
+	return toType(publicTypeDescriptor(typ))
 }
 
 // physicalType is the in-memory layout of t. Go function values use a
@@ -723,8 +723,40 @@ func (t *structType) FieldByIndex(index []int) (f StructField) {
 
 // A fieldScan represents an item on the fieldByNameFunc scan work list.
 type fieldScan struct {
-	typ   *structType
-	index []int
+	typ      *structType
+	index    []int
+	multiple bool
+}
+
+// One entry tracks both visited types and queued types. position is the
+// type's index in the queue for its first depth.
+type fieldVisit struct {
+	typ      *structType
+	depth    int
+	position int
+}
+
+func fieldVisitSlot(visits []fieldVisit, typ *structType) int {
+	h := uintptr(unsafe.Pointer(typ)) >> 3
+	h ^= h >> 11
+	h *= 0x9e3779b9
+	h ^= h >> 16
+	mask := len(visits) - 1
+	for slot := int(h) & mask; ; slot = (slot + 1) & mask {
+		if seen := visits[slot].typ; seen == nil || seen == typ {
+			return slot
+		}
+	}
+}
+
+func growFieldVisits(visits []fieldVisit) []fieldVisit {
+	expanded := make([]fieldVisit, 2*len(visits))
+	for _, visit := range visits {
+		if visit.typ != nil {
+			expanded[fieldVisitSlot(expanded, visit.typ)] = visit
+		}
+	}
+	return expanded
 }
 
 // FieldByNameFunc returns the struct field with a name that satisfies the
@@ -753,42 +785,21 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 	current := []fieldScan{}
 	next := []fieldScan{{typ: t}}
 
-	// nextCount records the number of times an embedded type has been
-	// encountered and considered for queueing in the 'next' slice.
-	// We only queue the first one, but we increment the count on each.
-	// If a struct type T can be reached more than once at a given depth level,
-	// then it annihilates itself and need not be considered at all when we
-	// process that next depth level.
-	var nextCount map[*structType]int
-
-	// visited records the structs that have been considered already.
-	// Embedded pointer fields can create cycles in the graph of
-	// reachable embedded types; visited avoids following those cycles.
-	// It also avoids duplicated effort: if we didn't find the field in an
-	// embedded type T at level 2, we won't find it in one at level 4 either.
-	visited := map[*structType]bool{}
+	// A type only participates at its shallowest depth. Remember its queue
+	// position so a second path at that depth can mark it as ambiguous.
+	var small [8]fieldVisit
+	visits := small[:]
+	visits[fieldVisitSlot(visits, t)] = fieldVisit{typ: t}
+	visitCount := 1
 	var owner *structType
 	var parentPath []int
 	var fieldIndex int
 
-	for len(next) > 0 {
+	for depth := 1; len(next) > 0; depth++ {
 		current, next = next, current[:0]
-		count := nextCount
-		nextCount = nil
 
-		// Process all the fields at this depth, now listed in 'current'.
-		// The loop queues embedded fields found in 'next', for processing during the next
-		// iteration. The multiplicity of the 'current' field counts is recorded
-		// in 'count'; the multiplicity of the 'next' field counts is recorded in 'nextCount'.
 		for _, scan := range current {
 			t := scan.typ
-			if visited[t] {
-				// We've looked through this type before, at a higher level.
-				// That higher level would shadow the lower level we're now at,
-				// so this one can't be useful to us. Ignore it.
-				continue
-			}
-			visited[t] = true
 			for i := range t.Fields {
 				f := &t.Fields[i]
 				// Find name and (for embedded field) type for field f.
@@ -805,7 +816,7 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 				// Does it match?
 				if match(fname) {
 					// Potential match
-					if count[t] > 1 || owner != nil {
+					if scan.multiple || owner != nil {
 						// Name appeared multiple times at this level: annihilate.
 						return nil, nil
 					}
@@ -820,21 +831,23 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 					continue
 				}
 				styp := (*structType)(unsafe.Pointer(ntyp))
-				if nextCount[styp] > 0 {
-					nextCount[styp] = 2 // exact multiple doesn't matter
+				slot := fieldVisitSlot(visits, styp)
+				if seen := visits[slot]; seen.typ != nil {
+					if seen.depth == depth {
+						next[seen.position].multiple = true
+					}
 					continue
 				}
-				if nextCount == nil {
-					nextCount = map[*structType]int{}
+				if visitCount == len(visits)/2 {
+					visits = growFieldVisits(visits)
+					slot = fieldVisitSlot(visits, styp)
 				}
-				nextCount[styp] = 1
-				if count[t] > 1 {
-					nextCount[styp] = 2 // exact multiple doesn't matter
-				}
-				var index []int
-				index = append(index, scan.index...)
-				index = append(index, i)
-				next = append(next, fieldScan{styp, index})
+				visits[slot] = fieldVisit{typ: styp, depth: depth, position: len(next)}
+				visitCount++
+				index := make([]int, len(scan.index)+1)
+				copy(index, scan.index)
+				index[len(scan.index)] = i
+				next = append(next, fieldScan{typ: styp, index: index, multiple: scan.multiple})
 			}
 		}
 		if owner != nil {
@@ -883,14 +896,9 @@ func TypeOf(i any) Type {
 	if eface.typ == nil {
 		return nil
 	}
-	// check closure type
-	if eface.typ.IsClosure() {
-		ft := toFuncType(eface.typ.StructType())
-		return toType(&ft.Type)
-	}
 	// Noescape so this doesn't make i to escape. See the comment
 	// at Value.typ for why this is safe.
-	return toType((*abi.Type)(unsafe.Pointer(eface.typ)))
+	return toPublicType((*abi.Type)(unsafe.Pointer(eface.typ)))
 }
 
 // TypeFor returns the [Type] that represents the type argument T.
@@ -900,94 +908,28 @@ func TypeFor[T any]() Type {
 	return toPublicType(abi.TypeFor[T]())
 }
 
-// Cache the physical closure for each public function type. Named closures
-// also need a reverse entry because their signature alone loses the name.
+// Cache physical closures synthesized by reflection. The compiler emits
+// both descriptors for defined Go function types.
 var functionTypes struct {
 	sync.Mutex
-	funcs    map[*abi.StructType]*abi.FuncType
 	closures map[*abi.FuncType]*abi.StructType
 }
 
-// publishFunctionTypes rechecks the indexes after constructing a candidate
-// outside the lock, so only the canonical pair can enter the cache.
-func publishFunctionTypes(ct *abi.StructType, ft *abi.FuncType) (*abi.StructType, *abi.FuncType) {
+func publishClosureType(ft *abi.FuncType, ct *abi.StructType) *abi.StructType {
 	functionTypes.Lock()
 	defer functionTypes.Unlock()
-	if existing := functionTypes.funcs[ct]; existing != nil {
-		return ct, existing
-	}
 	if existing := functionTypes.closures[ft]; existing != nil {
-		return existing, ft
-	}
-	if ft.HasName() {
-		if functionTypes.funcs == nil {
-			functionTypes.funcs = make(map[*abi.StructType]*abi.FuncType)
-		}
-		functionTypes.funcs[ct] = ft
+		return existing
 	}
 	if functionTypes.closures == nil {
 		functionTypes.closures = make(map[*abi.FuncType]*abi.StructType)
 	}
 	functionTypes.closures[ft] = ct
-	return ct, ft
-}
-
-func toFuncType(typ *abi.StructType) *abi.FuncType {
-	if !typ.HasName() {
-		return typ.Fields[0].Typ.FuncType()
-	}
-	functionTypes.Lock()
-	cached := functionTypes.funcs[typ]
-	functionTypes.Unlock()
-	if cached != nil {
-		return cached
-	}
-	size := unsafe.Sizeof(abi.FuncType{})
-	u := typ.Uncommon()
-	if u != nil {
-		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
-	}
-	ftyp := typ.Fields[0].Typ.FuncType()
-	ptr := runtime.AllocU(size)
-	t := (*abi.FuncType)(ptr)
-	t.Size_ = ftyp.Size_
-	t.PtrBytes = ftyp.PtrBytes
-	t.Hash = fnv1(typ.Hash, []byte("-funcType")...)
-	t.TFlag = ftyp.TFlag | abi.TFlagNamed
-	t.Align_ = ftyp.Align_
-	t.FieldAlign_ = ftyp.FieldAlign_
-	t.Kind_ = ftyp.Kind_
-	t.Equal = ftyp.Equal
-	t.GCData = ftyp.GCData
-	t.Str_ = typ.Str_
-	t.In = ftyp.In
-	t.Out = ftyp.Out
-	copyWasmFuncBridge(t, ftyp)
-	if typ.TFlag&abi.TFlagExtraStar != 0 {
-		t.TFlag |= abi.TFlagExtraStar
-	}
-	if u != nil {
-		t.TFlag |= abi.TFlagUncommon
-		tu := t.Uncommon()
-		tu.PkgPath_ = u.PkgPath_
-		tu.Mcount = u.Mcount
-		tu.Xcount = u.Xcount
-		tu.Moff = u.Moff
-		uptr := add(unsafe.Pointer(u), uintptr(u.Moff), "t.mcount > 0")
-		tptr := add(unsafe.Pointer(tu), uintptr(tu.Moff), "t.mcount > 0")
-
-		for i := 0; i < int(u.Mcount); i++ {
-			uelemPtr := add(uptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			telemPtr := add(tptr, uintptr(i)*unsafe.Sizeof(abi.Method{}), "accessing method element")
-			*(*abi.Method)(telemPtr) = *(*abi.Method)(uelemPtr)
-		}
-	}
-	_, canonical := publishFunctionTypes(typ, t)
-	return canonical
+	return ct
 }
 
 func toClosureType(typ *abi.FuncType) *abi.StructType {
-	size := unsafe.Sizeof(abi.StructType{})
+	size := unsafe.Sizeof(abi.NamedClosureType{})
 	u := typ.Uncommon()
 	if u != nil {
 		size += unsafe.Sizeof(abi.UncommonType{}) + uintptr(u.Mcount)*unsafe.Sizeof(abi.Method{})
@@ -1001,7 +943,9 @@ func toClosureType(typ *abi.FuncType) *abi.StructType {
 		}
 	}
 	ptr := runtime.AllocU(size)
-	t := (*abi.StructType)(ptr)
+	named := (*abi.NamedClosureType)(ptr)
+	named.PublicFunc = typ
+	t := &named.StructType
 	t.Size_ = ftyp.Size_
 	t.PtrBytes = ftyp.PtrBytes
 	t.Hash = fnv1(typ.Hash, []byte("-structType")...)
@@ -1095,7 +1039,7 @@ func (t *rtype) ptrTo() *abi.Type {
 	if at.Kind() == abi.Func && at.HasName() {
 		at = physicalType(at)
 	} else if at.IsClosure() && !at.HasName() {
-		at = &toFuncType(at.StructType()).Type
+		at = publicTypeDescriptor(at)
 	}
 	t = toRType(at)
 	if at.PtrToThis_ != nil {
@@ -1272,13 +1216,15 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
 			return false
 		}
+		// Compiled signatures can refer to physical named closures. FuncOf
+		// receives their public descriptors through the Type interface.
 		for i := 0; i < len(t.In); i++ {
-			if !haveIdenticalType(t.In[i], v.In[i], cmpTags) {
+			if !haveIdenticalType(publicTypeDescriptor(t.In[i]), publicTypeDescriptor(v.In[i]), cmpTags) {
 				return false
 			}
 		}
 		for i := 0; i < len(t.Out); i++ {
-			if !haveIdenticalType(t.Out[i], v.Out[i], cmpTags) {
+			if !haveIdenticalType(publicTypeDescriptor(t.Out[i]), publicTypeDescriptor(v.Out[i]), cmpTags) {
 				return false
 			}
 		}
@@ -2402,6 +2348,9 @@ const (
 
 // closureOf returns the internal closure type for a public function type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
+	if closure := ftyp.PhysicalClosure(); closure != nil {
+		return &closure.Type
+	}
 	functionTypes.Lock()
 	cached := functionTypes.closures[ftyp]
 	functionTypes.Unlock()
@@ -2410,8 +2359,7 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 	}
 	if ftyp.HasName() {
 		t := toClosureType(ftyp)
-		canonical, _ := publishFunctionTypes(t, ftyp)
-		return &canonical.Type
+		return &publishClosureType(ftyp, t).Type
 	}
 
 	closure := findClosure(ftyp)
@@ -2443,8 +2391,7 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 		closure = st
 	}
 
-	canonical, _ := publishFunctionTypes(closure, ftyp)
-	return &canonical.Type
+	return &publishClosureType(ftyp, closure).Type
 }
 
 func structStr(fields []abi.StructField) string {

@@ -26,6 +26,7 @@ import (
 	"strconv"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -94,6 +95,10 @@ func staticPtrToThis(t types.Type) (types.Type, bool) {
 }
 
 func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, global llvm.Value) (fields []llvm.Value) {
+	return b.abiCommonFieldsFor(t, nil, name, hasUncommon, global)
+}
+
+func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncommon bool, global llvm.Value) (fields []llvm.Value) {
 	prog := b.Prog
 	ab := prog.abi
 	// Size uintptr
@@ -105,7 +110,12 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	hash := binary.LittleEndian.Uint32(h[:4])
 	fields = append(fields, prog.IntVal(uint64(hash), prog.Uint32()).impl)
 	// TFlag uint8
+	display := t
 	tflag := ab.TFlag(t)
+	if closure != nil {
+		display = closure
+		tflag |= rabi.TFlagNamed
+	}
 	if hasUncommon {
 		tflag |= abi.TFlagUncommon
 	}
@@ -121,6 +131,9 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	fields = append(fields, fieldAlign)
 	// Kind uint8
 	kind := uint8(ab.Kind(t))
+	if closure != nil {
+		kind |= rabi.KindClosureFunc
+	}
 	if directIfaceType(t) {
 		kind |= uint8(abi.KindDirectIface)
 	}
@@ -160,7 +173,7 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, gl
 	// GCData     *byte
 	fields = append(fields, prog.Nil(prog.Pointer(prog.Byte())).impl)
 	// Str_       string
-	fields = append(fields, b.Str(ab.Str(t)).impl)
+	fields = append(fields, b.Str(ab.Str(display)).impl)
 	// PtrToThis_ *Type
 	ptr, static := staticPtrToThis(t)
 	if !static {
@@ -855,6 +868,13 @@ func (b Builder) abiType(t types.Type) Expr {
 				prog.constStructValue(prog.AbiType(), fields),
 			}, extendedFields...)
 		}
+		if sig := namedClosureSignature(t); sig != nil {
+			st := prog.rtType("structtype")
+			fields = []llvm.Value{
+				prog.constStructValue(st, fields),
+				b.abiClosureFuncType(t, sig, name, g.impl),
+			}
+		}
 		if hasUncommon {
 			fields = []llvm.Value{
 				prog.constStructValue(prog.Type(rt, GoDecl), fields),
@@ -881,6 +901,25 @@ func (b Builder) abiType(t types.Type) Expr {
 		b.recordAbiTypeFakeUses(g.impl)
 	}
 	return ret
+}
+
+// The public function descriptor links straight back to its storage type,
+// which owns the method table and the pointer-to-type metadata.
+func (b Builder) abiClosureFuncType(t types.Type, sig *types.Signature, name string, closure llvm.Value) llvm.Value {
+	prog, pkg := b.Prog, b.Pkg
+	name += "$reflectfunc"
+	wrapper := prog.rtType("closurefunctype")
+	g := pkg.doNewVar(name, prog.Pointer(wrapper))
+	common := b.abiCommonFieldsFor(sig, t, name, true, g.impl)
+	fields := append([]llvm.Value{prog.constStructValue(prog.AbiType(), common)},
+		b.abiExtendedFields(sig, name, g.impl)...)
+	g.impl.SetInitializer(prog.constStructValueAs(wrapper, g.impl.GlobalValueType(), []llvm.Value{
+		prog.constStructValue(prog.rtType("functype"), fields),
+		closure,
+	}))
+	g.impl.SetGlobalConstant(true)
+	pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
+	return g.impl
 }
 
 // AbiTypes snapshots the runtime type descriptors materialized by this
@@ -1016,8 +1055,21 @@ func (p Package) InitAbiTypes(fname string) Function {
 
 // Keep the descriptor selector and its audited literal domain in one place.
 func (p Program) rtNamedABI(t types.Type) *types.Named {
+	if namedClosureSignature(t) != nil {
+		return p.rtNamed("namedclosuretype")
+	}
 	return p.rtNamed(RuntimeSymbol(p.abi.RuntimeName(t),
 		"_type", "ptrtype", "slicetype", "functype", "interfacetype", "structtype",
 		"maptype", "arraytype", "chantype",
 	))
+}
+
+func namedClosureSignature(t types.Type) *types.Signature {
+	named, ok := types.Unalias(t).(*types.Named)
+	if ok {
+		if st, ok := named.Underlying().(*types.Struct); ok && IsClosure(st) {
+			return st.Field(0).Type().(*types.Signature)
+		}
+	}
+	return nil
 }
