@@ -25,11 +25,20 @@ var value = &struct{ N int }{N: 17}
 var Table = map[string]*struct{ N int }{"key":value}
 func Lookup() int { return Table["key"].N }
 `
+	const mixed = `package data
+var value = &struct{ N int }{N: 17}
+var First = []*struct{ N int }{value}
+var Table = map[string]*struct{ N int }{"key":value}
+var Second = []*struct{ N int }{value}
+func Lookup() int { return value.N }
+`
 	for _, tc := range []struct {
 		name, source, entry string
 		asmRoot             string
 		open, linkname      bool
+		embedded            bool
 		wantGuard, wantDrop bool
+		wantOrder           []string
 	}{
 		{name: "unused table", entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
 		{name: "lookup", entry: `import "data"; func main() { println(data.Lookup()) }`, wantGuard: true},
@@ -42,6 +51,9 @@ func Lookup() int { return Table["key"].N }
 		{name: "explicit initialization", source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`},
 		{name: "interface key", source: `package data; var Table = map[any]int{"key":17}`, entry: `import "data"; func main() {}`},
 		{name: "computed value", source: `package data; func n() int { return 17 }; var Table = map[string]int{"key":n()}`, entry: `import "data"; func main() {}`},
+		{name: "observable slice backing data keeps slices only", source: mixed, entry: `import "data"; func main() { println(data.Lookup()) }`, wantGuard: true, wantDrop: true, wantOrder: []string{"First", "Table", "Second"}},
+		{name: "closed firmware", embedded: true, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "open firmware", embedded: true, open: true, entry: `import "data"; func main() {}`, wantGuard: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -82,9 +94,30 @@ func Lookup() int { return Table["key"].N }
 			if tc.linkname {
 				backend.SetLinkname("other.lookup", "data.Lookup")
 			}
-			configureOptionalInitializers(ctx, goroot, nil)
+			var inputs *linkPruningInputs
+			if tc.embedded {
+				ctx.buildConf.Target = "cortex-m-mps2"
+				ctx.buildConf.Goos = "linux"
+				ctx.buildConf.Goarch = "arm"
+				ctx.crossCompile.ExtraFiles = embeddedBootFiles(ctx.buildConf.Target)
+				ctx.nativeClosedProgram = false
+				ctx.embeddedClosedProgram = !tc.open
+				inputs = &linkPruningInputs{goroot: goroot}
+			}
+			configureOptionalInitializers(ctx, goroot, inputs)
 			if got := len(pkgs["data"].guardedInitializers) != 0; got != tc.wantGuard {
 				t.Fatalf("archive guard = %v, want %v", got, tc.wantGuard)
+			}
+			if tc.wantOrder != nil {
+				var order []string
+				for _, block := range prog.Package(pkgs["data"].Types).Func("init").Blocks {
+					for _, group := range pkgs["data"].guardedInitializers[block] {
+						order = append(order, group.Global.Name())
+					}
+				}
+				if !slices.Equal(order, tc.wantOrder) {
+					t.Fatalf("guard order = %v, want %v", order, tc.wantOrder)
+				}
 			}
 			var want []string
 			if tc.wantDrop {

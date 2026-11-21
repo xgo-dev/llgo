@@ -35,10 +35,10 @@ Development LLGo builds also specialize typed value formatting on closed
 Emscripten J32/J64, macOS arm64, and supported Linux programs with
 `-Oz -lto=full -deadcodedrop -globaldce=false`. Native links can prune type
 metadata using the same reachability proof as WASI, with assembly references
-and native entry points included in the analysis. Native archives can guard
-static map construction in standard-library leaf packages. The final link
-can omit a map when its initializer accepts only static data and the program
-has no reachable use of the map. This configuration can replace
+and native entry points included in the analysis. Native and firmware size
+builds can also omit static map construction in standard-library leaf
+packages when the program has no reachable use of the map. This
+configuration can replace
 `encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
 layouts and standard byte orders. Mixed or dynamic uses retain the standard
 codec. With `-x`, selected codecs report
@@ -82,10 +82,11 @@ Single-worker Full LTO size builds with supported Go sources read host
 filesystem properties during initialization and create Go JavaScript handles
 on first use.
 
-Closed WASI and Emscripten size links can also omit unused standard-library
-slice literals, literal errors, constant interface values and struct literals
-that store a static callback. Reachability is rechecked without the proven
-unused callbacks to release data pulled in through indirect calls.
+Closed WASI, Emscripten, native and firmware Full LTO size links can also
+omit unused standard-library slice literals, literal errors, constant
+interface values and struct literals that store a static callback.
+Reachability is rechecked without the proven unused callbacks to release
+data pulled in through indirect calls.
 Slice tables remain initialized when reachable code can access their backing
 data through another variable or symbol. Literal errors use the same checks
 on initializer references after verifying the selected `errors.New`

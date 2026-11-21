@@ -29,15 +29,13 @@ func wasiGuardedStaticData(ctx *context) bool {
 func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPruningInputs) {
 	conf := ctx.buildConf
 	hosted := hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions)
-	if (!hosted && !wasiGuardedStaticData(ctx)) ||
+	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
+	if (!hosted && !embedded && !wasiGuardedStaticData(ctx)) ||
 		ctx.progSSA == nil || ctx.frontend != nil || len(conf.SourceOverlay) != 0 {
 		return
 	}
 	wasm := conf.Goarch == "wasm"
-	var errorConstructor *ssa.Function
-	if wasm {
-		errorConstructor = literalErrorConstructor(ctx, goroot)
-	}
+	errorConstructor := literalErrorConstructor(ctx, goroot)
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
 	for _, pkg := range ctx.pkgByID {
@@ -52,14 +50,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		switch {
 		case wasm && hosted && pkg.PkgPath == "os":
 			groups = optionalStandardFileInitializers(source.Func("init"))
-		case wasm && hasStaticDataValues(pkg.Package):
-			groups = cl.OptionalSliceInitializers(source.Func("init"))
-			if len(groups) != 0 {
-				sliceOwners[source] = true
-			}
-		case !wasm && hasStaticDataValues(pkg.Package):
-			groups = cl.OptionalMapInitializers(source.Func("init"))
-		case wasm:
+		case hasStaticDataValues(pkg.Package):
+			groups = optionalStaticContainers(source.Func("init"), !wasm)
+		default:
 			groups = optionalLiteralInitializers(source.Func("init"), errorConstructor)
 		}
 		if len(groups) == 0 {
@@ -70,14 +63,18 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			block := group.First.Block()
 			pkg.guardedInitializers[block] = append(pkg.guardedInitializers[block], group)
 			candidates[group.Global] = group
+			if _, slice := group.Store.Val.(*ssa.Slice); slice {
+				sliceOwners[source] = true
+			}
 		}
 	}
 	if len(candidates) == 0 {
 		return
 	}
 	assembly := ctx.sizePruningRoots
-	if wasm {
-		if !ctx.wasmClosedProgram || inputs == nil || inputs.opaqueAsmPkg != "" ||
+	if wasm || embedded {
+		closed := wasm && ctx.wasmClosedProgram || embedded && ctx.embeddedClosedProgram
+		if !closed || inputs == nil || inputs.opaqueAsmPkg != "" ||
 			len(ctx.initial) != 1 || hasOpaqueFormatExports(ctx, goroot) {
 			return
 		}
@@ -144,12 +141,13 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		errorValue := call != nil && errorConstructor != nil && call.Common().StaticCallee() == errorConstructor
 		_, interfaceValue := store.Val.(*ssa.MakeInterface)
 		_, callbackValue := store.Val.(*ssa.UnOp)
+		_, sliceValue := store.Val.(*ssa.Slice)
 		if errorValue && keepErrorConstructors {
 			continue
 		}
 		ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, cl.InitializerGuardName(global))
 		switch {
-		case sliceOwners[global.Pkg]:
+		case sliceValue:
 			dataCount++
 		case errorValue:
 			errorCount++
@@ -212,8 +210,37 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 			}
 		}
 	}
-	maps.DeleteFunc(unused, func(global *ssa.Global, _ cl.OptionalInitializer) bool { return observedData[global.Pkg] })
+	maps.DeleteFunc(unused, func(global *ssa.Global, group cl.OptionalInitializer) bool {
+		_, slice := group.Store.Val.(*ssa.Slice)
+		return slice && observedData[global.Pkg]
+	})
 	return unused
+}
+
+// The map and slice recognizers return disjoint ranges. Put them back in
+// instruction order so lowering can emit both kinds of guard in one block.
+func optionalStaticContainers(init *ssa.Function, includeMaps bool) []cl.OptionalInitializer {
+	sliceGroups := cl.OptionalSliceInitializers(init)
+	if !includeMaps {
+		return sliceGroups
+	}
+	mapGroups := cl.OptionalMapInitializers(init)
+	if len(mapGroups) == 0 || len(sliceGroups) == 0 {
+		return append(mapGroups, sliceGroups...)
+	}
+	starts := make(map[ssa.Instruction]cl.OptionalInitializer, len(mapGroups)+len(sliceGroups))
+	for _, group := range append(mapGroups, sliceGroups...) {
+		starts[group.First] = group
+	}
+	groups := make([]cl.OptionalInitializer, 0, len(starts))
+	for _, block := range init.Blocks {
+		for _, instr := range block.Instrs {
+			if group, ok := starts[instr]; ok {
+				groups = append(groups, group)
+			}
+		}
+	}
+	return groups
 }
 
 // Hide initializer bodies from reachability only. The coordinator restores the
