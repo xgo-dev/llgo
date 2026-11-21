@@ -849,6 +849,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	// Assigned before package loading invokes the preload callback.
 	var sourcePatchGOROOT string
+	dedup.SetTypeChecked(func(pkg *packages.Package) error {
+		return cl.CompleteTypeRepresentations(prog, cfg.Fset, pkg.Types, pkg.Syntax, pkg.TypesInfo)
+	})
 	dedup.SetPreload(func(pkg *packages.Package) {
 		if llruntime.SkipToBuild(pkg.PkgPath) {
 			return
@@ -858,7 +861,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		options := preloadOptions
 		options.AllowInternalDirectives = isStandardLibraryPackage(pkg, sourcePatchGOROOT)
-		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options); err != nil {
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options, pkg.TypesInfo); err != nil {
 			recordSyntaxErr(err)
 		}
 	})

@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/frontcache"
 	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	gopackages "golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -191,12 +192,13 @@ func TestFrontendCacheLoadsWasmProgramCertificate(t *testing.T) {
 }
 
 func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
-	f := frontendProgramFixture(t)
 	for _, tc := range []struct {
 		name, source string
 		want         bool
 	}{
 		{"plain", "var X int", true},
+		{"ordinary definition", "type Plain struct{ F func() }; type Copy Plain", true},
+		{"native definition", "//llgo:cdecl\ntype Native struct{ F func() }; type Copy Native", false},
 		{"generic function", "func F[T any](x T) T{return x}", false},
 		{"generic type", "type T[P any] struct{X P}", false},
 		{"generic alias", "type T[P any] = []P", false},
@@ -204,15 +206,20 @@ func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
 		{"missing source", "var X int", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := frontendProgramFixture(t)
 			file, err := parser.ParseFile(f.ctx.progSSA.Fset, "decl.go", "package dep\n"+tc.source, parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
-			checked, err := new(types.Config).Check("example/dep", f.ctx.progSSA.Fset, []*ast.File{file}, nil)
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object)}
+			checked, err := new(types.Config).Check("example/dep", f.ctx.progSSA.Fset, []*ast.File{file}, info)
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkg := &aPackage{Package: &packages.Package{ID: checked.Path(), PkgPath: checked.Path(), Name: checked.Name(), Types: checked, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
+			if err := cl.ParsePkgSyntaxWithOptions(f.ctx.prog, f.ctx.progSSA.Fset, checked, []*ast.File{file}, cl.Options{}, info); err != nil {
+				t.Fatal(err)
+			}
+			pkg := &aPackage{Package: &packages.Package{ID: checked.Path(), PkgPath: checked.Path(), Name: checked.Name(), Types: checked, TypesInfo: info, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
 			l := &frontendTypeLoader{ctx: f.ctx, keys: map[string]string{pkg.ID: "source"}, exports: make(map[string]*frontendTypeExport)}
 			if tc.name == "missing source" {
 				delete(l.keys, pkg.ID)
@@ -241,5 +248,53 @@ func writeFrontendRecord(t *testing.T, filename string, record any) {
 	}
 	if err := os.WriteFile(filename, wire, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type frontendNativeImporter struct{ pkg *types.Package }
+
+func (i frontendNativeImporter) Import(string) (*types.Package, error) { return i.pkg, nil }
+
+func TestFrontendTypeExportRetainsEscapingLocalNativeDefinition(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		name := "ordinary"
+		if native {
+			name = "native"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := frontendProgramFixture(t)
+			dep := types.NewPackage("example/native", "native")
+			record := types.NewNamed(types.NewTypeName(0, dep, "Record", nil), types.NewStruct([]*types.Var{
+				types.NewField(0, dep, "Callback", types.NewSignatureType(nil, nil, nil, nil, nil, false), false),
+				types.NewField(0, dep, "Tail", types.Typ[types.Uint64], false),
+			}, nil), nil)
+			dep.Scope().Insert(record.Obj())
+			dep.MarkComplete()
+			if native {
+				f.ctx.prog.SetTypeCallConv("example/native.Record", llssa.CDecl)
+			}
+			file, err := parser.ParseFile(f.ctx.progSSA.Fset, "local.go", `package consumer
+import "example/native"
+func Escape() any { type Local native.Record; return Local{} }
+`, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object)}
+			conf := &types.Config{Importer: frontendNativeImporter{dep}}
+			pkg, err := conf.Check("example/consumer", f.ctx.progSSA.Fset, []*ast.File{file}, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cl.ParsePkgSyntaxWithOptions(f.ctx.prog, f.ctx.progSSA.Fset, pkg, []*ast.File{file}, cl.Options{}, info); err != nil {
+				t.Fatal(err)
+			}
+			owner := &aPackage{Package: &packages.Package{ID: pkg.Path(), PkgPath: pkg.Path(), Name: pkg.Name(), Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Module: &gopackages.Module{}}}
+			loader := &frontendTypeLoader{ctx: f.ctx, keys: map[string]string{owner.ID: "source"}, exports: make(map[string]*frontendTypeExport)}
+			loader.capture(owner, &frontendExport{}, frontcache.NewTypes(nil))
+			if exported := loader.exports[owner.ID] != nil; exported == native {
+				t.Fatalf("opaque export=%v for %s escaping local definition", exported, name)
+			}
+		})
 	}
 }

@@ -29,11 +29,27 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 			preloads++
 		}
 	})
+	completed := make(map[*types.Package]bool)
+	dedup.SetTypeChecked(func(pkg *Package) error {
+		if !pkg.Types.Complete() {
+			t.Fatal("completion ran during checking")
+		}
+		completed[pkg.Types] = true
+		for _, dep := range pkg.Imports {
+			if dep.Name == "dep" && !completed[dep.Types] {
+				t.Fatal("imported dependency before completion")
+			}
+		}
+		return nil
+	})
 	dedup.SetRewrite(func(pkg *Package) (bool, error) {
 		if pkg.Name != "dep" {
 			return false, nil
 		}
 		original = pkg.Types
+		if !completed[original] {
+			t.Fatal("rewrite ran before completion")
+		}
 		if pkg.TypesInfo == nil || pkg.Types.Scope().Lookup("Value") == nil {
 			t.Fatal("rewrite ran before initial check")
 		}
@@ -53,7 +69,7 @@ func TestTypedRewriteBeforeImporters(t *testing.T) {
 		t.Fatalf("importer used stale type: %v", got)
 	}
 	dep := pkg.Imports["example.com/rewrite/dep"]
-	if dep.Types == original || preloads != 2 {
+	if dep.Types == original || preloads != 2 || !completed[dep.Types] {
 		t.Fatalf("recheck package=%p original=%p preloads=%d", dep.Types, original, preloads)
 	}
 	if dep.ExportFile != "" {
@@ -66,6 +82,7 @@ func TestTypedRewriteKeepsInitialErrors(t *testing.T) {
 	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/invalid\ngo 1.24\n")
 	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nvar X int = \"bad\"\n")
 	dedup := NewDeduper()
+	dedup.SetTypeChecked(func(*Package) error { t.Fatal("invalid input must not publish metadata"); return nil })
 	dedup.SetRewrite(func(*Package) (bool, error) { t.Fatal("rewrite must not repair invalid input"); return false, nil })
 	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
 	if err != nil {
@@ -578,5 +595,28 @@ func TestLLGoFilesAddImportGraph(t *testing.T) {
 	}
 	if extra.Imports[module+"/leaf"] != pkgs[0].Imports[module+"/leaf"] {
 		t.Fatal("patch import duplicated an existing package identity")
+	}
+}
+
+func TestTypeCompletionFailureIsNotCached(t *testing.T) {
+	for _, bodyless := range []bool{false, true} {
+		t.Run(strconv.FormatBool(bodyless), func(t *testing.T) {
+			dir := t.TempDir()
+			writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/completion\ngo 1.24\n")
+			source := "package main\nvar X int\n"
+			if bodyless {
+				source += "func External()\n"
+			}
+			writeLoadTestFile(t, filepath.Join(dir, "main.go"), source)
+			dedup := NewDeduper()
+			dedup.SetTypeChecked(func(*Package) error { return errors.New("incomplete type attributes") })
+			pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !pkgs[0].IllTyped || !packageErrorsContain(pkgs[0], "incomplete type attributes") || dedup.Check(pkgs[0].ID) != nil {
+				t.Fatalf("completion failure was lost or cached: %v", pkgs[0].Errors)
+			}
+		})
 	}
 }
