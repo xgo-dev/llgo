@@ -2371,14 +2371,11 @@ const (
 )
 
 var closureLookupCache struct {
-	sync.Mutex // Guards stores (but not loads) on m.
-
-	// m is a map[uint32][]*rtype keyed by the hash calculated in FuncOf.
-	// Elements of m are append-only and thus safe for concurrent reading.
-	m sync.Map
+	sync.Mutex // Protects lookup and canonical publication.
+	m          map[uint32][]*abi.Type
 }
 
-// Struct returns a struct type.
+// closureOf returns the internal closure type for a public function type.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
 	if ftyp.HasName() {
 		namedFuncTypes.Lock()
@@ -2442,21 +2439,18 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 	closureLookupCache.Lock()
 	defer closureLookupCache.Unlock()
 
-	// Look in cache.
-	if ts, ok := closureLookupCache.m.Load(hash); ok {
-		for _, t := range ts.([]*abi.Type) {
-			if haveIdenticalUnderlyingType(&st.Type, t, true) {
-				return t
-			}
+	bucket := closureLookupCache.m[hash]
+	for _, t := range bucket {
+		if haveIdenticalUnderlyingType(&st.Type, t, true) {
+			return t
 		}
 	}
 
 	addToCache := func(tt *abi.Type) *abi.Type {
-		var rts []*abi.Type
-		if rti, ok := closureLookupCache.m.Load(hash); ok {
-			rts = rti.([]*abi.Type)
+		if closureLookupCache.m == nil {
+			closureLookupCache.m = make(map[uint32][]*abi.Type)
 		}
-		closureLookupCache.m.Store(hash, append(rts, tt))
+		closureLookupCache.m[hash] = append(bucket, tt)
 		return tt
 	}
 

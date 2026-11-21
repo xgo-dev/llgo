@@ -99,6 +99,38 @@ func TestReflectClosurePointerTypeIdentity(t *testing.T) {
 	}
 }
 
+func TestReflectUnnamedFuncConcurrentPublication(t *testing.T) {
+	input := reflect.StructOf([]reflect.StructField{{Name: "ColdClosureArg", Type: reflect.TypeOf(0)}})
+	fn := reflect.FuncOf([]reflect.Type{input}, nil, false)
+	const workers = 32
+	start := make(chan struct{})
+	results := make(chan reflect.Type, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			<-start
+			v := reflect.New(fn)
+			if v.Elem().Type() != fn || !v.Elem().IsNil() {
+				results <- nil
+				return
+			}
+			results <- v.Type()
+		}()
+	}
+	close(start)
+	want := <-results
+	if want == nil {
+		t.Fatal("reflect.New did not create a zero function of the synthesized type")
+	}
+	for i := 1; i < workers; i++ {
+		if got := <-results; got != want {
+			t.Fatalf("concurrent function pointer = %v, want canonical %v", got, want)
+		}
+	}
+	if got := reflect.PointerTo(fn); got != want {
+		t.Fatalf("reflect.PointerTo = %v, want canonical %v", got, want)
+	}
+}
+
 func TestReflectClosureIndexSet(t *testing.T) {
 	left, right := 1, 2
 	var arr [2]func() int
