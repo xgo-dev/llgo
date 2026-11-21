@@ -39,7 +39,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	constructors := findLiteralConstructors(ctx, goroot)
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
-	var wasiStandardFiles []cl.OptionalInitializer
+	var standardFiles []cl.OptionalInitializer
 	for _, pkg := range ctx.pkgByID {
 		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
 			continue
@@ -50,13 +50,16 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 		var groups []cl.OptionalInitializer
 		switch {
-		case wasm && (hosted || wasi) && pkg.PkgPath == "os":
+		case (wasm && (hosted || wasi) || embedded) && pkg.PkgPath == "os":
 			groups = optionalStandardFileInitializers(source.Func("init"))
-			if wasi {
+			if wasi || embedded {
 				if len(groups) != 3 {
-					continue
+					groups = nil
 				}
-				wasiStandardFiles = groups
+				standardFiles = groups
+			}
+			if embedded {
+				groups = orderedOptionalInitializers(source.Func("init"), groups, optionalLiteralInitializers(source.Func("init"), constructors))
 			}
 		case hasStaticDataValues(pkg.Package):
 			groups = optionalStaticContainers(source.Func("init"), !wasm)
@@ -146,18 +149,21 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		configureWASIEnvironment(ctx, environment, reachable, isSymbolRoot)
 	}
 
-	if plan := ctx.wasiStdout; plan != nil && len(wasiStandardFiles) != 0 {
+	if plan := ctx.stdout; plan != nil && len(plan.calls) != 0 &&
+		slices.ContainsFunc(standardFiles, func(file cl.OptionalInitializer) bool {
+			return file.Global.Name() == "Stdout" && fixedStdoutDescriptor(file, reachable, isSymbolRoot)
+		}) {
 		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
 			initializers, result := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
 			return initializers, result.CallGraph
 		}
 		// Reflection may keep file methods without an edge in the call graph.
-		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(wasiPollWriteSymbol)
-		unused = plan.specialize(unused, candidates, wasiStandardFiles, roots, keepFileWriter, analyze)
+		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(pollWriteSymbol)
+		unused = plan.specialize(unused, candidates, standardFiles, roots, keepFileWriter, analyze)
 		if plan.selected != nil && (conf.Verbose || conf.PrintCommands) {
 			fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
 			if plan.selected == plan.descriptor {
-				fmt.Fprintln(os.Stderr, "llgo: use the WASI stdout descriptor writer")
+				fmt.Fprintln(os.Stderr, "llgo: use the stdout descriptor writer")
 			}
 		}
 	}
@@ -174,13 +180,13 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers, false)
 		maps.Copy(unused, withoutCallbacks)
 	}
-	// Drop the WASI startup group together. Keeping a single standard file
+	// Drop the standard file startup group together. Keeping a single standard file
 	// can retain the shared descriptor construction path.
-	if slices.ContainsFunc(wasiStandardFiles, func(group cl.OptionalInitializer) bool {
+	if slices.ContainsFunc(standardFiles, func(group cl.OptionalInitializer) bool {
 		_, ok := unused[group.Global]
 		return !ok
 	}) {
-		for _, group := range wasiStandardFiles {
+		for _, group := range standardFiles {
 			delete(unused, group.Global)
 		}
 	}
@@ -275,19 +281,23 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 	return unused, reachable
 }
 
-// The map and slice recognizers return disjoint ranges. Put them back in
-// instruction order so lowering can emit both kinds of guard in one block.
 func optionalStaticContainers(init *ssa.Function, includeMaps bool) []cl.OptionalInitializer {
 	sliceGroups := cl.OptionalSliceInitializers(init)
 	if !includeMaps {
 		return sliceGroups
 	}
 	mapGroups := cl.OptionalMapInitializers(init)
-	if len(mapGroups) == 0 || len(sliceGroups) == 0 {
-		return append(mapGroups, sliceGroups...)
+	return orderedOptionalInitializers(init, mapGroups, sliceGroups)
+}
+
+// The recognizers return disjoint ranges. Restore instruction order so
+// lowering can emit guards from both groups in a shared block.
+func orderedOptionalInitializers(init *ssa.Function, first, second []cl.OptionalInitializer) []cl.OptionalInitializer {
+	if len(first) == 0 || len(second) == 0 {
+		return append(first, second...)
 	}
-	starts := make(map[ssa.Instruction]cl.OptionalInitializer, len(mapGroups)+len(sliceGroups))
-	for _, group := range append(mapGroups, sliceGroups...) {
+	starts := make(map[ssa.Instruction]cl.OptionalInitializer, len(first)+len(second))
+	for _, group := range append(first, second...) {
 		starts[group.First] = group
 	}
 	groups := make([]cl.OptionalInitializer, 0, len(starts))

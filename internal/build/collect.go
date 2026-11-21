@@ -264,8 +264,8 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if m.pkg.SpecializeBinary || m.pkg.SpecializeJSON {
 		m.pkg.CodecInitDrops = slices.Sorted(maps.Keys(c.codecInitDrops))
 	}
-	if plan := c.wasiStdout; plan != nil && plan.selected != nil && plan.entry.Pkg == p.Types {
-		m.pkg.WASIStdoutWriter = plan.selected.Name()
+	if plan := c.stdout; plan != nil && plan.selected != nil && plan.entry.Pkg == p.Types {
+		m.pkg.StdoutWriter = plan.selected.Name()
 	}
 	m.pkg.GeneratedValueFormat = c.valueFormatFunctions[p.Types] != nil
 	m.pkg.SpecializeValueFormat = c.valueFormatPackages[p.Types] || pkg.AltPkg != nil && c.valueFormatPackages[pkg.AltPkg.Types]

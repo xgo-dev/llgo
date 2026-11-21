@@ -299,25 +299,32 @@ var Stderr = NewFile(2, "/dev/stderr")
 	}
 }
 
-func TestOptionalInitializersWASIStdout(t *testing.T) {
+func TestOptionalInitializersStdout(t *testing.T) {
 	if !buildenv.Dev {
-		t.Skip("WASI stdout specialization requires DCE")
+		t.Skip("stdout specialization requires DCE")
 	}
 	for _, tc := range []struct {
 		name, body        string
 		assembly          []string
 		reflectiveMethods bool
+		embedded          bool
 		writer            string
 	}{
 		{name: "literal", body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "deferred", body: `defer fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "file writer", body: `os.WriteFile(); fmt.Printf("hello")`, writer: "llgoWriteClosedStdout"},
-		{name: "assembly file writer", body: `fmt.Printf("hello")`, assembly: []string{wasiPollWriteSymbol}, writer: "llgoWriteClosedStdout"},
+		{name: "assembly file writer", body: `fmt.Printf("hello")`, assembly: []string{pollWriteSymbol}, writer: "llgoWriteClosedStdout"},
 		{name: "reflective file writer", body: `fmt.Printf("hello")`, reflectiveMethods: true, writer: "llgoWriteClosedStdout"},
 		{name: "redirected", body: `os.Stdout = nil; fmt.Printf("hello")`},
 		{name: "other descriptor", body: `println(os.Stderr); fmt.Printf("hello")`},
 		{name: "assembly reference", body: `fmt.Printf("hello")`, assembly: []string{"os.Stdout"}},
 		{name: "no literal calls", body: `fmt.Printf(os.Dynamic())`},
+		{name: "embedded literal", embedded: true, body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "embedded descriptor read", embedded: true, body: `println(syscall.Stdout); fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "embedded file writer", embedded: true, body: `os.WriteFile(); fmt.Printf("hello")`, writer: "llgoWriteClosedStdout"},
+		{name: "embedded descriptor write", embedded: true, body: `syscall.Stdout = 2; fmt.Printf("hello")`},
+		{name: "embedded descriptor escape", embedded: true, body: `fmt.Printf("hello"); save(&syscall.Stdout)`},
+		{name: "embedded descriptor symbol", embedded: true, body: `fmt.Printf("hello")`, assembly: []string{"syscall.Stdout"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -338,24 +345,36 @@ func TestOptionalInitializersWASIStdout(t *testing.T) {
 type FD struct{}
 func (*FD) Write(s string) (int, error) { println(s); return len(s), nil }
 `)
-			add("os", `package os
-import "internal/poll"
-type File struct{}
-func NewFile(uintptr, string) *File { return new(File) }
-var Stdin = NewFile(0, "/dev/stdin")
+			add("syscall", "package syscall; var Stdin, Stdout, Stderr = 0, 1, 2")
+			files := `var Stdin = NewFile(0, "/dev/stdin")
 var Stdout = NewFile(1, "/dev/stdout")
 var Stderr = NewFile(2, "/dev/stderr")
+`
+			if tc.embedded {
+				files = `var Stdin = NewFile(uintptr(syscall.Stdin), "/dev/stdin")
+var Stdout = NewFile(uintptr(syscall.Stdout), "/dev/stdout")
+var Stderr = NewFile(uintptr(syscall.Stderr), "/dev/stderr")
+`
+			}
+			add("os", `package os
+import ("internal/poll"; "syscall")
+type File struct{}
+func NewFile(uintptr, string) *File { return new(File) }
 func Dynamic() string { return "runtime format" }
-func WriteFile() { new(poll.FD).Write("file") }
 func llgoWriteClosedStdout(s string) (int, error) { return new(poll.FD).Write(s) }
+func WriteFile() { new(poll.FD).Write("file") }
 func llgoWriteStdoutDescriptor(s string) (int, error) { println(s); return len(s), nil }
-`)
+`+files)
 			add("fmt", `package fmt
 import "os"
 func Printf(s string, a ...any) (int, error) { return llgoPrintfLiteral(s) }
 func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return len(s), nil }
 `)
-			entry := add("main", "package main; import (\"fmt\"; \"os\"); func main() {"+tc.body+"}")
+			entry := add("main", `package main
+import ("fmt"; "os"; "syscall")
+var escaped *int
+func save(p *int) { escaped = p }
+func main() {`+tc.body+"}")
 			prog.Build()
 			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmReflectBridges: tc.reflectiveMethods})
 			defer backend.Dispose()
@@ -370,10 +389,15 @@ func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return le
 					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true, Verbose: true,
 				},
 			}
+			if tc.embedded {
+				ctx.buildConf.Goos, ctx.buildConf.Goarch, ctx.buildConf.Target = "linux", "arm", "cortex-m-mps2"
+				ctx.crossCompile = crosscompile.Export{ExtraFiles: embeddedBootFiles(ctx.buildConf.Target)}
+				ctx.wasmClosedProgram, ctx.embeddedClosedProgram = false, true
+			}
 			if err := recordPackageSSAInstructions(ctx); err != nil {
 				t.Fatal(err)
 			}
-			plan := ctx.wasiStdout
+			plan := ctx.stdout
 			if plan == nil {
 				t.Fatal("missing stdout plan")
 			}
@@ -382,8 +406,11 @@ func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return le
 			if tc.writer != "" {
 				callee = prog.ImportedPackage("os").Func(tc.writer)
 			}
-			if want := tc.writer != ""; (plan.selected != nil) != want || (len(ctx.initializerGuardsOff) == 3) != want {
-				t.Fatalf("selected = %v, disabled guards = %v, want specialization %v", plan.selected, ctx.initializerGuardsOff, want)
+			if want := tc.writer != ""; (plan.selected != nil) != want {
+				t.Fatalf("selected = %v, want specialization %v", plan.selected, want)
+			}
+			if tc.writer != "" && len(ctx.initializerGuardsOff) != 3 {
+				t.Fatalf("specialization kept standard file initializers: %v", ctx.initializerGuardsOff)
 			}
 			for _, call := range plan.calls {
 				if got := call.Common().StaticCallee(); got != callee {

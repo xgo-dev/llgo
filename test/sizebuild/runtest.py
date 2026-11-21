@@ -109,7 +109,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
     init_marker = "llgo: omit unused JSON package initialization"
     standard_file_marker = "llgo: omit unused standard file initializers"
     stdout_marker = "llgo: specialize closed literal stdout"
-    descriptor_writer_marker = "llgo: use the WASI stdout descriptor writer"
+    descriptor_writer_marker = "llgo: use the stdout descriptor writer"
     readonly_env_marker = "llgo: specialize WASI read-only environment"
     linux_native = target == "native" and platform.system() == "Linux"
     linux_amd64 = linux_native and platform.machine() == "x86_64"
@@ -321,9 +321,16 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "./benchmark/binary_size/println", "Hello, world\n")
     if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
         raise RuntimeError(f"{target}: allocation-free println kept runtime startup\n{log}")
-    embedded_output_probe(llgo, directory, env, target, flags,
-                          "./internal/build/testdata/embedded-link-parity",
-                          "redirected\nembedded output and reflection ok\n")
+    stdout_marker = "llgo: specialize closed literal stdout"
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/fmtprintf", "Hello, world\n")
+    if stdout_marker not in log:
+        raise RuntimeError(f"{target}: closed literal stdout kept the standard file writer\n{log}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./internal/build/testdata/embedded-link-parity",
+                                "redirected\nembedded output and reflection ok\n")
+    if stdout_marker in log:
+        raise RuntimeError(f"{target}: redirected stdout selected the descriptor writer\n{log}")
     print(f"{target} startup, console and reflective metadata passed", flush=True)
 
 

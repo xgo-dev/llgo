@@ -2056,7 +2056,7 @@ type context struct {
 	staticByteArrays     map[string][]byte
 	formatRuntime        *packages.Cached
 	valueFormatPlan      *fmtspecialize.ValuePlan
-	wasiStdout           *wasiStdoutPlan
+	stdout               *stdoutPlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	binaryCodecLibrary   *types.Package
@@ -4690,7 +4690,7 @@ func recordPackageSSAInstructions(ctx *context) error {
 	if scalarFormats && ctx.frontend == nil {
 		valueFormats = fmtspecialize.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
 	}
-	ctx.wasiStdout = newWASIStdoutPlan(ctx)
+	ctx.stdout = newStdoutPlan(ctx)
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
 		validateMaps = ctx.prog.VectorMapValidator()
@@ -4711,7 +4711,7 @@ func recordPackageSSAInstructions(ctx *context) error {
 						valueFormats.Record(instruction, fn.Pkg)
 					}
 					fmtspecialize.RewriteCall(instruction, scalarFormats)
-					if plan := ctx.wasiStdout; plan != nil && plan.entry == fn.Pkg {
+					if plan := ctx.stdout; plan != nil && plan.entry == fn.Pkg {
 						plan.record(instruction)
 					}
 				}

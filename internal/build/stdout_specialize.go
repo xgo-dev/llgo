@@ -8,20 +8,21 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-const wasiPollWriteSymbol = "internal/poll.(*FD).Write"
+const pollWriteSymbol = "internal/poll.(*FD).Write"
 
 // The descriptor alias lives in the standard library archive. Only calls in
 // the executable package change when a closed link proves it can use the alias.
-type wasiStdoutPlan struct {
+type stdoutPlan struct {
 	entry                     *ssa.Package
 	regular, file, descriptor *ssa.Function
 	pollWrite, selected       *ssa.Function
 	calls                     []ssa.CallInstruction
 }
 
-func newWASIStdoutPlan(ctx *context) *wasiStdoutPlan {
+func newStdoutPlan(ctx *context) *stdoutPlan {
 	if ctx.frontend != nil || len(ctx.initial) != 1 || ctx.initial[0].Name != "main" ||
-		!wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
+		!(wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) ||
+			embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)) {
 		return nil
 	}
 	entry := ctx.progSSA.Package(ctx.initial[0].Types)
@@ -32,10 +33,11 @@ func newWASIStdoutPlan(ctx *context) *wasiStdoutPlan {
 	}
 	regular := fmtPkg.Func("llgoPrintfLiteral")
 	file := osPkg.Func("llgoWriteClosedStdout")
+	descriptor := osPkg.Func("llgoWriteStdoutDescriptor")
 	if regular == nil || file == nil {
 		return nil
 	}
-	plan := &wasiStdoutPlan{entry: entry, regular: regular, file: file, descriptor: osPkg.Func("llgoWriteStdoutDescriptor")}
+	plan := &stdoutPlan{entry: entry, regular: regular, file: file, descriptor: descriptor}
 	if poll := ctx.progSSA.ImportedPackage("internal/poll"); poll != nil {
 		if fd := poll.Type("FD"); fd != nil {
 			methods := ctx.progSSA.MethodSets.MethodSet(types.NewPointer(fd.Type()))
@@ -47,17 +49,14 @@ func newWASIStdoutPlan(ctx *context) *wasiStdoutPlan {
 	return plan
 }
 
-func (p *wasiStdoutPlan) record(instruction ssa.Instruction) {
+func (p *stdoutPlan) record(instruction ssa.Instruction) {
 	if call, ok := instruction.(ssa.CallInstruction); ok && call.Common().StaticCallee() == p.regular {
 		p.calls = append(p.calls, call)
 	}
 }
 
-func (p *wasiStdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalInitializer, files []cl.OptionalInitializer,
+func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalInitializer, files []cl.OptionalInitializer,
 	roots []*ssa.Function, keepFileWriter bool, analyze func(bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
-	if len(p.calls) == 0 {
-		return unused
-	}
 	for _, file := range files {
 		if _, ok := candidates[file.Global]; !ok {
 			return unused
@@ -91,7 +90,7 @@ func (p *wasiStdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.Option
 	return updated
 }
 
-func (p *wasiStdoutPlan) rewrite(writer *ssa.Function) {
+func (p *stdoutPlan) rewrite(writer *ssa.Function) {
 	for _, call := range p.calls {
 		call.Common().Value = writer
 	}
