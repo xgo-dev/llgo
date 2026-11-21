@@ -14,14 +14,19 @@ combinations exist; the families below do not imply identical APIs on every
 architecture.
 
 - Horizontal pairwise addition on amd64/arm64 and subtraction on amd64,
-  preserving integer wrapping and floating operand order.
+  including wrapping and saturating integer pairs. Grouped AMD64 operations
+  pair adjacent lanes separately in each 128-bit half.
+- AMD64 sign and high-half products, widening even-lane products, pair dot
+  products with optional saturation, sums of eight absolute byte differences,
+  and alternating add/subtract and fused multiply-add/subtract.
 - Array/slice loads and stores, broadcast, and lane extraction/insertion.
   AMD64 masked stores preserve disabled lanes without accessing their memory.
 - Add/subtract/multiply, floating divide, negation, absolute value, square root,
   rounding, fused native multiply-add, and target-specific floating min/max semantics.
 - Integer bitwise operations, saturated add/subtract, min/max, uniform shifts,
   the applicable variable shifts, rounded averages, uniform rotates, widening
-  low-half multiplication, and carryless multiplication.
+  low- and high-half multiplication, and carryless multiplication. ARM64 also
+  supports leading-zero and leading-sign-bit counts.
 - Integer low/high-lane extension, truncating and saturating narrowing with zero-filled upper
   lanes, and AMD64 concatenating saturation. Sign/zero extension and signed or
   unsigned saturation follow each architecture's official declarations. The

@@ -301,6 +301,18 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 						t.Fatal("missing callable SHA implementation")
 					}
 				}
+				if target.arch == "arm64" {
+					fn := mod.NamedFunction("simd/archsimd.Int8x16.LeadingZeros")
+					if fn.IsNil() || !strings.Contains(fn.String(), "llvm.ctlz") {
+						t.Fatal("missing callable leading zero count")
+					}
+				}
+				if target.arch == "wasm" {
+					fn := mod.NamedFunction("simd/archsimd.Int8x16.MulWidenHi")
+					if fn.IsNil() || !strings.Contains(fn.String(), "shufflevector") || !strings.Contains(fn.String(), "<i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15>") {
+						t.Fatal("missing callable high-half widening multiply")
+					}
+				}
 				if fn := mod.NamedFunction("simd/archsimd.Uint8x16.ExtendLo8ToUint16"); fn.IsNil() || !strings.Contains(fn.String(), "zext <8 x i8>") {
 					t.Fatal("integer extension has no callable vector definition")
 				}
@@ -355,4 +367,69 @@ func main() { println(broadcast(1).GetElem(0)) }
 		return
 	}
 	t.Fatal("missing archsimd package")
+}
+
+func TestSIMDX86PackedInstructions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module packed\n\ngo 1.27\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const src = `package main
+import "simd/archsimd"
+//go:noinline
+func sad(out *[8]uint64, a,b *[64]uint8) {
+ archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(out)
+}
+//go:noinline
+func dot(out *[32]int16, a *[64]uint8, b *[64]int8) {
+ archsimd.LoadUint8x64Array(a).DotProductPairsSaturated(archsimd.LoadInt8x64Array(b)).StoreArray(out)
+}
+//go:noinline
+func pack(out *[16]uint32, a *[16]uint32, m uint16) {
+ archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func expand(out *[16]uint32, a *[16]uint32, m uint16) {
+ archsimd.LoadUint32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+func main() {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []string{"v1", "v4"} {
+		t.Run(level, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", level, "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := pkgs[0].LPkg.Prog
+			defer prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			mod.SetTarget(prog.Target().Spec().Triple)
+			opts := llvm.NewPassBuilderOptions()
+			defer opts.Dispose()
+			opts.SetVerifyEach(true)
+			if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
+				t.Fatal(err)
+			}
+			buf, err := prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer buf.Dispose()
+			asm := string(buf.Bytes())
+			if level == "v1" {
+				assertSIMDBaselineAssembly(t, asm)
+				return
+			}
+			for _, mnemonic := range []string{"vpsadbw", "vpmaddubsw", "vpcompressd", "vpexpandd"} {
+				if !regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(asm) {
+					t.Errorf("missing 512-bit %s in %s output", mnemonic, level)
+				}
+			}
+		})
+	}
 }
