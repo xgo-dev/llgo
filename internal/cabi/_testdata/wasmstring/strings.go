@@ -2,8 +2,87 @@ package main
 
 import "unsafe"
 
+type Lookalike struct {
+	Data *byte
+	Len  int64
+}
+
+type Envelope struct {
+	Prefix uint64
+	Text   string
+	Bytes  []byte
+	Record Lookalike
+}
+
+// Observe storage through pointers: a by-value string or Envelope parameter
+// would itself be normalized on entry and could hide a broken boundary.
 func validString(s *string, data uint64, length int) bool {
 	return *(*uint64)(unsafe.Pointer(s)) == data && len(*s) == length
+}
+
+func validEnvelope(v *Envelope, prefix uint64) bool {
+	return v.Prefix == prefix &&
+		*(*uint64)(unsafe.Pointer(&v.Text)) == 0x1000 && len(v.Text) == 7 &&
+		*(*uint64)(unsafe.Pointer(&v.Bytes)) == 0x5000 && len(v.Bytes) == 3 && cap(v.Bytes) == 8 &&
+		*(*uint64)(unsafe.Pointer(&v.Record)) == 0xdeadbeef00003000 &&
+		v.Record.Len == 23
+}
+
+//go:linkname foreignString C.foreignString
+func foreignString() string
+
+//go:linkname foreignStringAlternate C.foreignStringAlternate
+func foreignStringAlternate() string
+
+//go:linkname foreignEnvelope C.foreignEnvelope
+func foreignEnvelope() Envelope
+
+//go:linkname foreignEnvelopeAlternate C.foreignEnvelopeAlternate
+func foreignEnvelopeAlternate() Envelope
+
+//export ExportedString
+func ExportedString(s string) bool { return validString(&s, 0x1000, 7) }
+
+//export ExportedEnvelope
+func ExportedEnvelope(v Envelope) bool { return validEnvelope(&v, 11) }
+
+//export ImportedString
+func ImportedString() bool {
+	s := foreignString()
+	return validString(&s, 0x1000, 7)
+}
+
+//export ImportedEnvelope
+func ImportedEnvelope() bool {
+	v := foreignEnvelope()
+	return validEnvelope(&v, 11)
+}
+
+// Runtime selection forces a Go funcval call whose environment must retain
+// the selected native function pointer and whose result must retain its data.
+//
+//export ImportedStringFuncval
+func ImportedStringFuncval(alternate bool) bool {
+	f := foreignString
+	data, length := uint64(0x1000), 7
+	if alternate {
+		f = foreignStringAlternate
+		data, length = 0x4000, 17
+	}
+	s := f()
+	return validString(&s, data, length)
+}
+
+//export ImportedEnvelopeFuncval
+func ImportedEnvelopeFuncval(alternate bool) bool {
+	f := foreignEnvelope
+	prefix := uint64(11)
+	if alternate {
+		f = foreignEnvelopeAlternate
+		prefix = 37
+	}
+	v := f()
+	return validEnvelope(&v, prefix)
 }
 
 //export LocalStringStorage

@@ -17,10 +17,8 @@
 package ssa
 
 import (
-	"fmt"
 	"go/token"
 	"go/types"
-	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llvm"
@@ -74,7 +72,7 @@ func compactWasmBridgeUint64(value uint64) string {
 
 func (p Program) wasmReflectBridgeShape(sig *types.Signature) string {
 	var shape strings.Builder
-	appendWasmLLVMTypeShape(&shape, p.toLLVMFuncBackground(sig, CDecl))
+	p.appendWasmLLVMTypeShape(&shape, p.toLLVMFuncBackground(sig, CDecl))
 	shape.WriteByte('/')
 	for i := 0; i < sig.Params().Len(); i++ {
 		p.appendWasmRootShape(&shape, p.Type(sig.Params().At(i).Type(), CDecl))
@@ -83,116 +81,6 @@ func (p Program) wasmReflectBridgeShape(sig *types.Signature) string {
 	return shape.String()
 }
 
-func appendWasmLLVMTypeShape(shape *strings.Builder, typ llvm.Type) {
-	switch typ.TypeKind() {
-	case llvm.VoidTypeKind:
-		shape.WriteByte('v')
-	case llvm.FloatTypeKind:
-		shape.WriteByte('f')
-	case llvm.DoubleTypeKind:
-		shape.WriteByte('d')
-	case llvm.X86_FP80TypeKind:
-		shape.WriteString("x80")
-	case llvm.FP128TypeKind:
-		shape.WriteString("f128")
-	case llvm.PPC_FP128TypeKind:
-		shape.WriteString("p128")
-	case llvm.IntegerTypeKind:
-		shape.WriteByte('i')
-		shape.WriteString(strconv.Itoa(typ.IntTypeWidth()))
-	case llvm.FunctionTypeKind:
-		shape.WriteByte('(')
-		for _, param := range typ.ParamTypes() {
-			appendWasmLLVMTypeShape(shape, param)
-			shape.WriteByte(',')
-		}
-		if typ.IsFunctionVarArg() {
-			shape.WriteByte('*')
-		}
-		shape.WriteByte(')')
-		appendWasmLLVMTypeShape(shape, typ.ReturnType())
-	case llvm.StructTypeKind:
-		if typ.IsStructPacked() {
-			shape.WriteByte('<')
-		} else {
-			shape.WriteByte('{')
-		}
-		for _, elem := range typ.StructElementTypes() {
-			appendWasmLLVMTypeShape(shape, elem)
-			shape.WriteByte(',')
-		}
-		if typ.IsStructPacked() {
-			shape.WriteByte('>')
-		} else {
-			shape.WriteByte('}')
-		}
-	case llvm.ArrayTypeKind:
-		shape.WriteByte('[')
-		shape.WriteString(strconv.Itoa(typ.ArrayLength()))
-		shape.WriteByte(':')
-		appendWasmLLVMTypeShape(shape, typ.ElementType())
-		shape.WriteByte(']')
-	case llvm.PointerTypeKind:
-		shape.WriteByte('p')
-		shape.WriteString(strconv.Itoa(typ.PointerAddressSpace()))
-	case llvm.VectorTypeKind:
-		shape.WriteByte('V')
-		shape.WriteString(strconv.Itoa(typ.VectorSize()))
-		shape.WriteByte(':')
-		appendWasmLLVMTypeShape(shape, typ.ElementType())
-	default:
-		panic(fmt.Sprintf("ssa: unsupported LLVM type in WebAssembly reflection bridge: %v", typ.TypeKind()))
-	}
-}
-
-func (p Program) appendWasmRootShape(shape *strings.Builder, typ Type) {
-	switch typ.kind {
-	case vkPtr, vkMap, vkChan:
-		shape.WriteByte('r')
-	case vkString:
-		shape.WriteByte('s')
-		shape.WriteString("0r")
-	case vkSlice:
-		shape.WriteByte('l')
-		shape.WriteString("0r")
-	case vkEface, vkIface:
-		shape.WriteByte('i')
-		shape.WriteString("1r")
-	case vkClosure:
-		// Closures and interfaces are both two-word Wasm values with their
-		// second word rooted, but their first words use different function-table
-		// and linear-memory storage conversions.
-		shape.WriteByte('c')
-		shape.WriteString("1r")
-	case vkStruct, vkTuple:
-		shape.WriteByte('{')
-		var count int
-		switch raw := typ.raw.Type.Underlying().(type) {
-		case *types.Struct:
-			count = raw.NumFields()
-		case *types.Tuple:
-			count = raw.Len()
-		}
-		for i := 0; i < count; i++ {
-			p.appendWasmRootShape(shape, p.Field(typ, i))
-			shape.WriteByte(',')
-		}
-		shape.WriteByte('}')
-	case vkArray:
-		raw := typ.raw.Type.Underlying().(*types.Array)
-		shape.WriteByte('[')
-		shape.WriteString(strconv.FormatInt(raw.Len(), 10))
-		shape.WriteByte(':')
-		p.appendWasmRootShape(shape, p.Index(typ))
-		shape.WriteByte(']')
-	default:
-		shape.WriteByte('-')
-	}
-}
-
-// newWasmReflectCallBridge adapts arrays of addresses to the exact lowered
-// LLVM signature. A closure or interface method has an explicit environment
-// parameter, so both indirect-call forms are emitted.
 func (p Package) newWasmReflectCallBridge(rawSig *types.Signature, name string) Function {
 	ptr := types.Typ[types.UnsafePointer]
 	ptrs := types.NewPointer(ptr)

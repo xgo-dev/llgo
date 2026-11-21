@@ -5,6 +5,8 @@ package wasmexportabi
 import (
 	"structs"
 	"unsafe"
+
+	"github.com/xgo-dev/llgo/test/llgoext/wasmexportabi/callback"
 )
 
 const LLGoFiles = "_wrap/caller.c"
@@ -41,7 +43,7 @@ func callGoExports() int32
 //go:linkname cSlice C.llgo_test_c_slice
 func cSlice([]byte) []byte
 
-// Mixed exercises a slice nested inside a regular Go struct.
+// Mixed exercises a string and a slice nested inside a regular Go struct.
 type Mixed struct {
 	Text string
 	Data []byte
@@ -68,7 +70,7 @@ func dirtyHostHeaders() *string
 
 //export llgo_test_go_mixed
 func goMixed(m Mixed) Mixed {
-	if m.Text != "wasm" || !slicePointerSlotOK(&m.Data) {
+	if m.Text != "wasm" || !stringPointerSlotOK(&m.Text) || !slicePointerSlotOK(&m.Data) {
 		return Mixed{}
 	}
 	return Mixed{Text: m.Text, Data: goSlice(m.Data)}
@@ -129,3 +131,108 @@ func callCallbacks(second bool) bool {
 	}
 	return callbackByte == want && cCallSource(sliceSource(source)) == int32(want)
 }
+
+type largeText struct{ text [4097]string }
+
+//go:linkname cLargeResult C.llgo_test_large_result
+func cLargeResult() largeText
+
+//export llgo_test_go_large_param
+func goLargeParam(arg largeText) int32 {
+	for sample, want := range [...]string{"head", "body", "tail"} {
+		i := sample * (len(arg.text) - 1) / 2
+		if arg.text[i] != want || !stringPointerSlotOK(&arg.text[i]) {
+			return int32(i + 1)
+		}
+	}
+	return 0
+}
+
+//go:linkname callLargeParam C.llgo_test_call_large_param
+func callLargeParam() int32
+
+type projectionSlices struct{ Data [64][]byte }
+type projectionStrings struct{ Data [64]string }
+
+//export llgo_test_slice_len
+func projectionSliceLen(p projectionSlices) int { return len(p.Data[0]) }
+
+//export llgo_test_slice_cap
+func projectionSliceCap(p projectionSlices) int { return cap(p.Data[63]) }
+
+//export llgo_test_string_len
+func projectionStringLen(p projectionStrings) int { return len(p.Data[0]) }
+
+//go:linkname cProjectionSlices C.llgo_test_projection_slices
+func cProjectionSlices() projectionSlices
+
+//go:linkname cProjectionStrings C.llgo_test_projection_strings
+func cProjectionStrings() projectionStrings
+
+//export llgo_test_result_slice_len
+func resultSliceLen() int { return len(cProjectionSlices().Data[0]) }
+
+//export llgo_test_result_slice_cap
+func resultSliceCap() int { return cap(cProjectionSlices().Data[63]) }
+
+//export llgo_test_result_string_len
+func resultStringLen() int { return len(cProjectionStrings().Data[0]) }
+
+//export llgo_test_projection_slice_slot
+func projectionSliceSlot(p projectionSlices) uint64 {
+	return uint64(*(*uintptr)(unsafe.Pointer(&p.Data[0])))
+}
+
+//export llgo_test_projection_result_slot
+func projectionResultSlot() uint64 {
+	p := cProjectionStrings()
+	return uint64(*(*uintptr)(unsafe.Pointer(&p.Data[0])))
+}
+
+//go:linkname callHeaderProjections C.llgo_test_call_header_projections
+func callHeaderProjections() int32
+
+//llgo:cdecl
+type stringReader func(string) int32
+
+//go:linkname cReadString C.llgo_test_read_string
+func cReadString(stringReader) int32
+
+func callbackStringByte(s *string, i int) int32 {
+	if !stringPointerSlotOK(s) || *s != "wasm" {
+		return -1
+	}
+	return int32((*s)[i])
+}
+
+//export llgo_test_go_string
+func firstStringByte(s string) int32 { return callbackStringByte(&s, 0) }
+func lastStringByte(s string) int32  { return callbackStringByte(&s, 3) }
+
+//go:noinline
+func callStringReader(last bool) int32 {
+	read := firstStringByte
+	if last {
+		read = lastStringByte
+	}
+	return cReadString(stringReader(read))
+}
+
+//go:linkname cReadSource C.llgo_test_read_source
+func cReadSource(callback.StringSource) int32
+
+//go:noinline
+func callGoStringSource(f func() string) int32 { return cReadSource(callback.StringSource(f)) }
+
+//go:linkname cStringSource C.llgo_test_string_source
+func cStringSource(second int32) callback.StringSource
+
+//go:linkname cSliceSource C.llgo_test_slice_source
+func cSliceSource(second int32) callback.SliceSource
+
+func roundTripSources(second int32) bool {
+	return callback.MatchSources(second, cStringSource(second), cSliceSource(second))
+}
+
+//go:linkname genericSource C.llgo_test_generic_source
+func genericSource(callback.Box[func(left byte)]) string

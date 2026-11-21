@@ -283,8 +283,8 @@ func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.
 }
 
 func isPrivateHeaderSnapshot(load llvm.Value) bool {
-	// HeaderSnapshotMD identifies this frontend-generated fill/clear/reload
-	// sequence; the clear helper only writes header padding in its first arg.
+	// The caller identifies the header clear. Its first argument and the
+	// adjacent fill and reload must refer to the same private storage.
 	slot := load.Operand(0)
 	clear := llvm.PrevInstruction(load)
 	if clear.IsNil() || clear.IsACallInst().IsNil() || clear.Operand(0) != slot {
@@ -411,11 +411,19 @@ func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 	changed := l.reuseHeaderSnapshots(m)
 	var loads []llvm.Value
 	var zeroStores []llvm.Value
+	var nativeStores []llvm.Value
+	slotKind := m.Context().MDKindID(WasmBoundarySlotMD)
+	checkNativeResults := l.copyMinSize == 0 && l.roots && l.wasm
 	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for instr := bb.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
-				if store := instr.IsAStoreInst(); !store.IsNil() && store.Operand(0).IsNull() && l.isLargeCopy(store.Operand(0).Type()) {
-					zeroStores = append(zeroStores, store)
+				if store := instr.IsAStoreInst(); !store.IsNil() {
+					value := store.Operand(0)
+					if value.IsNull() && l.isLargeCopy(value.Type()) {
+						zeroStores = append(zeroStores, store)
+					} else if checkNativeResults && l.isWasmHeapResultStore(store, slotKind) {
+						nativeStores = append(nativeStores, store)
+					}
 				}
 				load := instr.IsALoadInst()
 				if !load.IsNil() && l.isLargeCopy(load.Type()) {
@@ -426,6 +434,7 @@ func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 			}
 		}
 	}
+	l.prepareWasmResultSlots(m, nativeStores)
 	for _, load := range loads {
 		l.transformStoredLoad(m, load)
 	}
@@ -522,6 +531,9 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	b.SetInsertPointBefore(call)
 
 	result := l.allocResult(m, ctx, b, retType, call.InstructionDebugLoc())
+	if slot := TakeWasmBoundarySlot(ctx, call); !slot.IsNil() {
+		l.useNativeResultStorage(ctx, slot, result)
+	}
 	params := make([]llvm.Value, 1, oldType.ParamTypesCount()+1)
 	params[0] = result
 	reflectMethodByName := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")

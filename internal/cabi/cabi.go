@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/abi"
 	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -626,7 +627,18 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// skip
 			continue
 		case AttrPointer:
+			// A byval argument is already private to this invocation. Clear its
+			// headers there, including in unoptimized builds with debug info.
 			byval := !nfn.GetEnumAttributeAtIndex(index+1, llvm.AttributeKindID("byval")).IsNil()
+			if byval && !ti.hasNativeLayoutConversion() {
+				if slot := abi.TakeWasmBoundarySlot(ctx, fn.Param(i)); !slot.IsNil() {
+					slot.ReplaceAllUsesWith(params[index])
+					slot.EraseFromParentAsInstruction()
+					b.SetInsertPointBefore(nfn.EntryBasicBlock().FirstInstruction())
+					index++
+					continue
+				}
+			}
 			// void @fn(%typ %0)
 			// %1 = alloca %typ, align 8
 			// call void @llvm.memset(ptr %1, i8 0, i64 36, i1 false)
@@ -776,9 +788,8 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	b := ctx.NewBuilder()
 	b.SetInsertPointBefore(call)
 
-	first := fn.EntryBasicBlock().FirstInstruction()
 	createAlloca := func(t llvm.Type) (ret llvm.Value) {
-		b.SetInsertPointBefore(first)
+		b.SetInsertPointBefore(fn.EntryBasicBlock().FirstInstruction())
 		ret = llvm.CreateAlloca(b, t)
 		b.SetInsertPointBefore(call)
 		return
@@ -876,9 +887,16 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 			instr = llvm.ConstNull(info.Return.Type)
 		}
 	case AttrPointer:
-		ret := createAlloca(info.Return.nativeType())
-		call := llvm.CreateCall(b, nft, nfn, append([]llvm.Value{ret}, nparams...))
-		updateCallAttr(call)
+		ret := abi.TakeWasmBoundarySlot(ctx, call)
+		if ret.IsNil() {
+			ret = createAlloca(info.Return.nativeType())
+		}
+		loweredCall := llvm.CreateCall(b, nft, nfn, append([]llvm.Value{ret}, nparams...))
+		updateCallAttr(loweredCall)
+		if call.FirstUse().IsNil() {
+			call.EraseFromParentAsInstruction()
+			return true
+		}
 		instr = aggregateFromNative(b, info.Return, b.CreateLoad(info.Return.nativeType(), ret, ""))
 	case AttrWidthType, AttrWidthType2:
 		ret := llvm.CreateCall(b, nft, nfn, nparams)

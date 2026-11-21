@@ -102,8 +102,9 @@ func TestCompactWasmBridgeID(t *testing.T) {
 }
 
 func TestWasmLLVMTypeShape(t *testing.T) {
-	ctx := llvm.NewContext()
-	defer ctx.Dispose()
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	defer prog.Dispose()
+	ctx := prog.ctx
 
 	tests := []struct {
 		name string
@@ -127,7 +128,7 @@ func TestWasmLLVMTypeShape(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var shape strings.Builder
-			appendWasmLLVMTypeShape(&shape, test.typ)
+			prog.appendWasmLLVMTypeShape(&shape, test.typ)
 			if got := shape.String(); got != test.want {
 				t.Fatalf("shape = %q, want %q", got, test.want)
 			}
@@ -139,7 +140,7 @@ func TestWasmLLVMTypeShape(t *testing.T) {
 				t.Fatal("unsupported LLVM type did not panic")
 			}
 		}()
-		appendWasmLLVMTypeShape(new(strings.Builder), ctx.LabelType())
+		prog.appendWasmLLVMTypeShape(new(strings.Builder), ctx.LabelType())
 	})
 }
 

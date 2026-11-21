@@ -10,12 +10,32 @@ const maxInlineWasmHeaders = 8
 // Values handled by aggregate-copy lowering must stay in memory even when
 // they contain few headers. Repacking them in SSA would scalarize the copy.
 func (p Program) needsWasmHeaderStorage(typ llvm.Type, count int) bool {
-	if count == 0 {
+	if count == 0 || p.isWasmABIPaddedHeader(typ) {
 		return false
 	}
-	size := p.td.TypeAllocSize(typ)
-	return count > maxInlineWasmHeaders || size >= llabi.MinAggregateCopySize ||
-		typ.TypeKind() == llvm.ArrayTypeKind && llabi.ShouldLowerArrayCopy(typ.ArrayLength(), size, p.td.PointerSize())
+	return count > maxInlineWasmHeaders || p.td.TypeAllocSize(typ) >= llabi.MinAggregateCopySize ||
+		p.containsWasmHeaderArrayCopy(typ)
+}
+
+// Rebuilding an outer value also rebuilds any array whose headers it contains.
+// Preserve those array copies through struct fields and single-element wrappers.
+func (p Program) containsWasmHeaderArrayCopy(typ llvm.Type) bool {
+	switch typ.TypeKind() {
+	case llvm.ArrayTypeKind:
+		length := typ.ArrayLength()
+		if length == 1 {
+			return p.containsWasmHeaderArrayCopy(typ.ElementType())
+		}
+		return llabi.ShouldLowerArrayCopy(length, p.td.TypeAllocSize(typ), p.td.PointerSize()) &&
+			p.hasWasmABIPadding(typ.ElementType())
+	case llvm.StructTypeKind:
+		for _, field := range typ.StructElementTypes() {
+			if p.containsWasmHeaderArrayCopy(field) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // clearWasmHeaderRange clears only the padding in a copied range. A source
