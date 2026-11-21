@@ -44,6 +44,8 @@ const (
 	simdPairSelector
 	simdPairHalfSelectors
 	simdScalarSelector
+	simdBool
+	simdConcatShift
 )
 
 type simdOperation struct {
@@ -56,60 +58,69 @@ type simdOperation struct {
 // recoverable failure. Adding an implementation replaces this fallback for that
 // operation; functions with Go bodies continue through normal compilation.
 var simdOperations = map[simdKey]simdOperation{
-	{"*", "*"}:                   {llssa.SIMDUnimplemented, simdUnsupported, 0},
-	{"numeric", "Add"}:           {llssa.SIMDAdd, simdBinary, 0},
-	{"numeric", "Sub"}:           {llssa.SIMDSub, simdBinary, 0},
-	{"numeric", "And"}:           {llssa.SIMDAnd, simdBinary, types.IsInteger},
-	{"numeric", "Or"}:            {llssa.SIMDOr, simdBinary, types.IsInteger},
-	{"numeric", "Xor"}:           {llssa.SIMDXor, simdBinary, types.IsInteger},
-	{"numeric", "GetElem"}:       {llssa.SIMDExtractLane, simdExtract, 0},
-	{"numeric", "SetElem"}:       {llssa.SIMDInsertLane, simdInsert, 0},
-	{"numeric", "StoreArray"}:    {llssa.SIMDStore, simdStore, 0},
-	{"numeric", "Mul"}:           {llssa.SIMDMul, simdBinary, 0},
-	{"numeric", "Div"}:           {llssa.SIMDDiv, simdBinary, types.IsFloat},
-	{"numeric", "AndNot"}:        {llssa.SIMDAndNot, simdBinary, types.IsInteger},
-	{"numeric", "OrNot"}:         {llssa.SIMDOrNot, simdBinary, types.IsInteger},
-	{"numeric", "Not"}:           {llssa.SIMDNot, simdUnary, types.IsInteger},
-	{"numeric", "Neg"}:           {llssa.SIMDNeg, simdUnary, 0},
-	{"numeric", "Abs"}:           {llssa.SIMDAbs, simdUnary, 0},
-	{"numeric", "Sqrt"}:          {llssa.SIMDSqrt, simdUnary, types.IsFloat},
-	{"numeric", "Ceil"}:          {llssa.SIMDCeil, simdUnary, types.IsFloat},
-	{"numeric", "Floor"}:         {llssa.SIMDFloor, simdUnary, types.IsFloat},
-	{"numeric", "Trunc"}:         {llssa.SIMDTrunc, simdUnary, types.IsFloat},
-	{"numeric", "Round"}:         {llssa.SIMDRound, simdUnary, types.IsFloat},
-	{"numeric", "Equal"}:         {llssa.SIMDEqual, simdCompare, 0},
-	{"numeric", "NotEqual"}:      {llssa.SIMDNotEqual, simdCompare, 0},
-	{"numeric", "Less"}:          {llssa.SIMDLess, simdCompare, 0},
-	{"numeric", "LessEqual"}:     {llssa.SIMDLessEqual, simdCompare, 0},
-	{"numeric", "Greater"}:       {llssa.SIMDGreater, simdCompare, 0},
-	{"numeric", "GreaterEqual"}:  {llssa.SIMDGreaterEqual, simdCompare, 0},
-	{"numeric", "ToMask"}:        {llssa.SIMDToMask, simdToMask, types.IsInteger},
-	{"numeric", "asMask"}:        {llssa.SIMDBitcast, simdToMask, types.IsInteger},
-	{"numeric", "bitSelect"}:     {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
-	{"numeric", "BitSelect"}:     {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
-	{"numeric", "bitSelectNot"}:  {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
-	{"numeric", "blend"}:         {llssa.SIMDBlend, simdTernary, types.IsInteger},
-	{"mask", "And"}:              {llssa.SIMDAnd, simdBinary, 0},
-	{"mask", "Or"}:               {llssa.SIMDOr, simdBinary, 0},
-	{"mask", "Xor"}:              {llssa.SIMDXor, simdBinary, 0},
-	{"mask", "AndNot"}:           {llssa.SIMDAndNot, simdBinary, 0},
-	{"mask", "Not"}:              {llssa.SIMDNot, simdUnary, 0},
-	{"numeric", "ShiftAllLeft"}:  {llssa.SIMDShiftAllLeft, simdScalarShift, types.IsInteger},
-	{"numeric", "ShiftAllRight"}: {llssa.SIMDShiftAllRight, simdScalarShift, types.IsInteger},
-	{"numeric", "ShiftLeft"}:     {llssa.SIMDShiftLeft, simdUnsignedVector, types.IsInteger},
-	{"numeric", "ShiftRight"}:    {llssa.SIMDShiftRight, simdUnsignedVector, types.IsInteger},
-	{"numeric", "Shift"}:         {llssa.SIMDShift, simdSignedVector, types.IsInteger},
-	{"numeric", "AddSaturated"}:  {llssa.SIMDAddSaturated, simdBinary, types.IsInteger},
-	{"numeric", "SubSaturated"}:  {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
-	{"numeric", "Min"}:           {llssa.SIMDMin, simdBinary, 0},
-	{"numeric", "LookupOrZero"}:  {llssa.SIMDLookupOrZero, simdBinary, types.IsInteger},
-	{"numeric", "PermuteOrZero"}: {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
-	{"numeric", "Permute"}:       {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
-	{"numeric", "Max"}:           {llssa.SIMDMax, simdBinary, 0},
-	{"numeric", "GetLo"}:         {llssa.SIMDGetLo, simdHalf, 0},
-	{"numeric", "GetHi"}:         {llssa.SIMDGetHi, simdHalf, 0},
-	{"numeric", "SetLo"}:         {llssa.SIMDSetLo, simdHalf, 0},
-	{"numeric", "SetHi"}:         {llssa.SIMDSetHi, simdHalf, 0},
+	{"*", "*"}:                                  {llssa.SIMDUnimplemented, simdUnsupported, 0},
+	{"numeric", "IsNaN"}:                        {llssa.SIMDIsNaN, simdToMask, types.IsFloat},
+	{"numeric", "IsZero"}:                       {llssa.SIMDIsZero, simdBool, types.IsInteger},
+	{"numeric", "ConcatShiftBytesRight"}:        {llssa.SIMDConcatShiftBytes, simdConcatShift, types.IsUnsigned},
+	{"numeric", "ConcatShiftBytesRightGrouped"}: {llssa.SIMDConcatShiftBytesGrouped, simdConcatShift, types.IsUnsigned},
+	{"numeric", "OnesCount"}:                    {llssa.SIMDOnesCount, simdUnary, types.IsInteger},
+	{"numeric", "ShiftSaturated"}:               {llssa.SIMDShiftSaturated, simdSignedVector, types.IsInteger},
+	{"numeric", "reduceSum"}:                    {llssa.SIMDReduceSum, simdUnary, types.IsInteger},
+	{"numeric", "reduceMin"}:                    {llssa.SIMDReduceMin, simdUnary, 0},
+	{"numeric", "reduceMax"}:                    {llssa.SIMDReduceMax, simdUnary, 0},
+	{"numeric", "Add"}:                          {llssa.SIMDAdd, simdBinary, 0},
+	{"numeric", "Sub"}:                          {llssa.SIMDSub, simdBinary, 0},
+	{"numeric", "And"}:                          {llssa.SIMDAnd, simdBinary, types.IsInteger},
+	{"numeric", "Or"}:                           {llssa.SIMDOr, simdBinary, types.IsInteger},
+	{"numeric", "Xor"}:                          {llssa.SIMDXor, simdBinary, types.IsInteger},
+	{"numeric", "GetElem"}:                      {llssa.SIMDExtractLane, simdExtract, 0},
+	{"numeric", "SetElem"}:                      {llssa.SIMDInsertLane, simdInsert, 0},
+	{"numeric", "StoreArray"}:                   {llssa.SIMDStore, simdStore, 0},
+	{"numeric", "Mul"}:                          {llssa.SIMDMul, simdBinary, 0},
+	{"numeric", "Div"}:                          {llssa.SIMDDiv, simdBinary, types.IsFloat},
+	{"numeric", "AndNot"}:                       {llssa.SIMDAndNot, simdBinary, types.IsInteger},
+	{"numeric", "OrNot"}:                        {llssa.SIMDOrNot, simdBinary, types.IsInteger},
+	{"numeric", "Not"}:                          {llssa.SIMDNot, simdUnary, types.IsInteger},
+	{"numeric", "Neg"}:                          {llssa.SIMDNeg, simdUnary, 0},
+	{"numeric", "Abs"}:                          {llssa.SIMDAbs, simdUnary, 0},
+	{"numeric", "Sqrt"}:                         {llssa.SIMDSqrt, simdUnary, types.IsFloat},
+	{"numeric", "Ceil"}:                         {llssa.SIMDCeil, simdUnary, types.IsFloat},
+	{"numeric", "Floor"}:                        {llssa.SIMDFloor, simdUnary, types.IsFloat},
+	{"numeric", "Trunc"}:                        {llssa.SIMDTrunc, simdUnary, types.IsFloat},
+	{"numeric", "Round"}:                        {llssa.SIMDRound, simdUnary, types.IsFloat},
+	{"numeric", "Equal"}:                        {llssa.SIMDEqual, simdCompare, 0},
+	{"numeric", "NotEqual"}:                     {llssa.SIMDNotEqual, simdCompare, 0},
+	{"numeric", "Less"}:                         {llssa.SIMDLess, simdCompare, 0},
+	{"numeric", "LessEqual"}:                    {llssa.SIMDLessEqual, simdCompare, 0},
+	{"numeric", "Greater"}:                      {llssa.SIMDGreater, simdCompare, 0},
+	{"numeric", "GreaterEqual"}:                 {llssa.SIMDGreaterEqual, simdCompare, 0},
+	{"numeric", "ToMask"}:                       {llssa.SIMDToMask, simdToMask, types.IsInteger},
+	{"numeric", "asMask"}:                       {llssa.SIMDBitcast, simdToMask, types.IsInteger},
+	{"numeric", "bitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
+	{"numeric", "BitSelect"}:                    {llssa.SIMDBitSelect, simdTernary, types.IsInteger},
+	{"numeric", "bitSelectNot"}:                 {llssa.SIMDBitSelectNot, simdTernary, types.IsInteger},
+	{"numeric", "blend"}:                        {llssa.SIMDBlend, simdTernary, types.IsInteger},
+	{"mask", "And"}:                             {llssa.SIMDAnd, simdBinary, 0},
+	{"mask", "Or"}:                              {llssa.SIMDOr, simdBinary, 0},
+	{"mask", "Xor"}:                             {llssa.SIMDXor, simdBinary, 0},
+	{"mask", "AndNot"}:                          {llssa.SIMDAndNot, simdBinary, 0},
+	{"mask", "Not"}:                             {llssa.SIMDNot, simdUnary, 0},
+	{"numeric", "ShiftAllLeft"}:                 {llssa.SIMDShiftAllLeft, simdScalarShift, types.IsInteger},
+	{"numeric", "ShiftAllRight"}:                {llssa.SIMDShiftAllRight, simdScalarShift, types.IsInteger},
+	{"numeric", "ShiftLeft"}:                    {llssa.SIMDShiftLeft, simdUnsignedVector, types.IsInteger},
+	{"numeric", "ShiftRight"}:                   {llssa.SIMDShiftRight, simdUnsignedVector, types.IsInteger},
+	{"numeric", "Shift"}:                        {llssa.SIMDShift, simdSignedVector, types.IsInteger},
+	{"numeric", "AddSaturated"}:                 {llssa.SIMDAddSaturated, simdBinary, types.IsInteger},
+	{"numeric", "SubSaturated"}:                 {llssa.SIMDSubSaturated, simdBinary, types.IsInteger},
+	{"numeric", "Min"}:                          {llssa.SIMDMin, simdBinary, 0},
+	{"numeric", "LookupOrZero"}:                 {llssa.SIMDLookupOrZero, simdBinary, types.IsInteger},
+	{"numeric", "PermuteOrZero"}:                {llssa.SIMDPermuteOrZero, simdSignedVector, types.IsInteger},
+	{"numeric", "Permute"}:                      {llssa.SIMDPermute, simdUnsignedVector, types.IsInteger},
+	{"numeric", "Max"}:                          {llssa.SIMDMax, simdBinary, 0},
+	{"numeric", "GetLo"}:                        {llssa.SIMDGetLo, simdHalf, 0},
+	{"numeric", "GetHi"}:                        {llssa.SIMDGetHi, simdHalf, 0},
+	{"numeric", "SetLo"}:                        {llssa.SIMDSetLo, simdHalf, 0},
+	{"numeric", "SetHi"}:                        {llssa.SIMDSetHi, simdHalf, 0},
 
 	{"numeric", "InterleaveLo"}:                  {llssa.SIMDInterleaveLo, simdBinary, types.IsInteger},
 	{"numeric", "InterleaveHi"}:                  {llssa.SIMDInterleaveHi, simdBinary, types.IsInteger},
@@ -137,6 +148,9 @@ var simdOperations = map[simdKey]simdOperation{
 	{"numeric", "ConcatSubPairsGrouped"}:    {llssa.SIMDConcatSubPairsGrouped, simdBinary, 0},
 	{"numeric", "Average"}:                  {llssa.SIMDAverage, simdBinary, types.IsInteger},
 	{"numeric", "MulAdd"}:                   {llssa.SIMDFMA, simdTernary, types.IsFloat},
+	{"numeric", "LeadingZeros"}:             {llssa.SIMDLeadingZeros, simdUnary, types.IsInteger},
+	{"numeric", "LeadingSignBits"}:          {llssa.SIMDLeadingSignBits, simdUnary, types.IsInteger},
+	{"numeric", "MulWidenHi"}:               {llssa.SIMDMulWidenHi, simdWidenBinary, types.IsInteger},
 	{"numeric", "MulWidenLo"}:               {llssa.SIMDMulWidenLo, simdWidenBinary, types.IsInteger},
 	{"numeric", "RotateAllLeft"}:            {llssa.SIMDRotateAllLeft, simdScalarShift, types.IsInteger},
 	{"numeric", "RotateAllRight"}:           {llssa.SIMDRotateAllRight, simdScalarShift, types.IsInteger},
@@ -228,6 +242,12 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	if isDecl && decl.Body != nil {
 		return simdOperation{}, false
 	}
+	if obj.Name() == "ClearAVXUpperBits" && sig.Recv() == nil && sig.Params().Len() == 0 && sig.Results().Len() == 0 && !sig.Variadic() {
+		if arch == "amd64" {
+			return simdOperation{op: llssa.SIMDClearAVXUpperBits}, true
+		}
+		return fallback()
+	}
 	key := simdKey{name: obj.Name()}
 	var vector types.Type
 	if recv := sig.Recv(); recv != nil {
@@ -243,6 +263,18 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 		vector = sig.Results().At(0).Type()
 	}
 	desc, ok := simdOperations[key]
+	if arch == "arm64" && key == (simdKey{"numeric", "MulAdd"}) {
+		lanes, _ := llssa.SIMDNumericShape(vector)
+		if lanes.Elem().Underlying().(*types.Basic).Info()&types.IsInteger != 0 && lanes.Len() >= 4 {
+			desc = simdOperation{llssa.SIMDIntegerMulAdd, simdTernary, types.IsInteger}
+		}
+	}
+	switch desc.op {
+	case llssa.SIMDShiftSaturated, llssa.SIMDReduceSum, llssa.SIMDReduceMin, llssa.SIMDReduceMax:
+		if arch != "arm64" {
+			return fallback()
+		}
+	}
 	if !ok || !desc.matches(sig, vector) {
 		return fallback()
 	}
@@ -341,6 +373,17 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 	var params []types.Type
 	result := vector
 	switch d.signature {
+	case simdConcatShift:
+		n := int64(16)
+		if d.op == llssa.SIMDConcatShiftBytesGrouped {
+			n = 32
+		}
+		if lanes.Len() != n || !types.Identical(lanes.Elem(), types.Typ[types.Uint8]) {
+			return false
+		}
+		params = []types.Type{vector, types.Typ[types.Uint64]}
+	case simdBool:
+		result = types.Typ[types.Bool]
 	case simdScalarSelector:
 		bits, elemBits := int64(128), int64(16)
 		switch d.op {
@@ -603,7 +646,7 @@ func simdVectorBits(typ types.Type) int64 {
 // explicitly rather than inheriting SIMD128 support by name.
 func (d simdOperation) supportsWide() bool {
 	switch d.op {
-	case llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
+	case llssa.SIMDIsNaN, llssa.SIMDIsZero, llssa.SIMDConcatShiftBytesGrouped, llssa.SIMDOnesCount, llssa.SIMDAdd, llssa.SIMDSub, llssa.SIMDMul, llssa.SIMDDiv,
 		llssa.SIMDInterleaveLoGrouped, llssa.SIMDInterleaveHiGrouped,
 		llssa.SIMDConcatSelectedGrouped, llssa.SIMDConcatPermute128,
 		llssa.SIMDPermuteScalarsGrouped, llssa.SIMDPermuteScalarsHiGrouped, llssa.SIMDPermuteScalarsLoGrouped,

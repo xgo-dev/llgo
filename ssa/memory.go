@@ -546,9 +546,7 @@ func (b Builder) Load(ptr Expr) Expr {
 		stored := llvm.CreateLoad(b.impl, b.Prog.tyInt(), ptr.impl)
 		return Expr{b.fromAtomicStorageValue(storageType, stored), telem}
 	}
-	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storageType), ptr.impl)
-	b.setGoAccessAlignment(stored, storageType)
-	return Expr{b.fromStorageValue(storageType, stored), telem}
+	return Expr{b.loadStorageValue(ptr.impl, storageType, telem), telem}
 }
 
 // Store stores val at the pointer ptr.

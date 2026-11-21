@@ -1342,14 +1342,49 @@ func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
 	return ret
 }
 
+// A copy onto itself keeps the original storage, including any native padding.
+func (b Builder) clearWasmCopiedHeaders(elem llvm.Type, dst, src, count llvm.Value) {
+	distinct := llvm.CreateICmp(b.impl, llvm.IntNE, dst, src)
+	count = llvm.CreateSelect(b.impl, distinct, count, llvm.ConstNull(count.Type()))
+	b.clearWasmHeaderRange(elem, dst, count)
+}
+
+func (b Builder) copySlice(dst, src Expr) Expr {
+	elem := b.Prog.Elem(dst.Type)
+	size := b.Prog.Val(int(b.Prog.SizeOf(elem)))
+	if src.kind == vkString {
+		return b.InlineCall(b.Pkg.rtFunc("SliceCopy"), dst, b.StringData(src), b.StringLen(src), size)
+	}
+	data := b.SliceData(src)
+	copied := b.InlineCall(b.Pkg.rtFunc("SliceCopy"), dst, data, b.SliceLen(src), size)
+	if b.Prog.hasWasmABIPadding(elem.ll) {
+		b.clearWasmCopiedHeaders(elem.ll, b.SliceData(dst).impl, data.impl, copied.impl)
+	}
+	return copied
+}
+
 // appendSlice selects aligned storage only for element types that need it.
 func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
+	elem := b.Prog.Elem(src.Type)
 	args := []Expr{src, data, count, b.Prog.Val(int(size))}
 	fn := "SliceAppend"
-	if alignment := b.Prog.AlignOf(b.Prog.Elem(src.Type)); alignment > uint64(b.Prog.GoWordSize()) {
+	if alignment := b.Prog.AlignOf(elem); alignment > uint64(b.Prog.GoWordSize()) {
 		fn += "Aligned"
 		args = append(args, b.Prog.IntVal(alignment, b.Prog.Int()))
 	}
-	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(b.Prog.Elem(src.Type).raw.Type)))
-	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
+	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(elem.raw.Type)))
+	result := b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
+	result.Type = src.Type
+	if b.Prog.hasWasmABIPadding(elem.ll) {
+		// Growth copies the old prefix too. With spare capacity only the
+		// appended elements were written, and the prefix may still alias C.
+		length, out := b.SliceLen(result).impl, b.SliceData(result).impl
+		relocated := llvm.CreateICmp(b.impl, llvm.IntNE, out, b.SliceData(src).impl)
+		start := llvm.CreateSelect(b.impl, relocated, llvm.ConstNull(length.Type()), b.SliceLen(src).impl)
+		index := llvm.CreateTrunc(b.impl, start, b.Prog.tyInt32())
+		addr := llvm.CreateInBoundsGEP(b.impl, elem.ll, out, []llvm.Value{index})
+		written := b.impl.CreateSub(length, start, "")
+		b.clearWasmCopiedHeaders(elem.ll, addr, data.impl, written)
+	}
+	return result
 }

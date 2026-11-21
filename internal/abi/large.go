@@ -23,6 +23,10 @@ const (
 	// at most this many pointer-sized words and still be SSAable.
 	MaxSSAValueWords = 4
 
+	// HeaderSnapshotMD marks a reload after the frontend has copied a value
+	// and cleared its Wasm header padding in private storage.
+	HeaderSnapshotMD = "llgo.header.snapshot"
+
 	runtimeAllocU        = env.LLGoRuntimePkg + "/internal/runtime.AllocU"
 	runtimeAllocUAligned = env.LLGoRuntimePkg + "/internal/runtime.AllocUAligned"
 )
@@ -219,6 +223,182 @@ func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 	}
 }
 
+// ABI lowering exposes call arguments and results as stores. Retry snapshot
+// reuse before each copy pass, including the pass after C ABI lowering.
+func (l *largeAggregateLowerer) reuseHeaderSnapshots(m llvm.Module) int {
+	if !l.wasm {
+		return 0
+	}
+	var loads []llvm.Value
+	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if !inst.IsALoadInst().IsNil() && isHeaderSnapshot(inst) {
+					loads = append(loads, inst)
+				}
+			}
+		}
+	}
+	changed := 0
+	for _, load := range loads {
+		if l.reuseHeaderSnapshot(m.Context(), load) {
+			changed++
+		}
+	}
+	return changed
+}
+
+func isHeaderSnapshot(load llvm.Value) bool {
+	return load.HasMetadata() && !load.Metadata(load.Type().Context().MDKindID(HeaderSnapshotMD)).IsNil()
+}
+
+// Heap snapshots are private to this evaluation. A stack slot is also usable
+// when it has only one fill/clear/reload; shared frontend scratch can be
+// overwritten by another load and must retain ordinary snapshot lowering.
+func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.Value) bool {
+	slot := load.Operand(0)
+	heap := !slot.IsACallInst().IsNil()
+	if heap {
+		if name := slot.CalledValue().Name(); name != runtimeAllocU && name != runtimeAllocUAligned {
+			return false
+		}
+	} else if slot.IsAAllocaInst().IsNil() || !isPrivateHeaderSnapshot(load) {
+		return false
+	}
+	stores, extracts, ok := l.aggregateUsers(load)
+	if !ok {
+		return false
+	}
+	if len(stores) == 1 && len(extracts) == 0 && !stores[0].IsVolatile() &&
+		l.forwardHeaderSnapshot(ctx, load, stores[0], slot) {
+		return true
+	}
+	if heap {
+		l.allocations = append(l.allocations, slot)
+	}
+	l.rewriteMemoryUsers(ctx, load, slot, load.Type(), stores, extracts)
+	return true
+}
+
+func isPrivateHeaderSnapshot(load llvm.Value) bool {
+	// HeaderSnapshotMD identifies this frontend-generated fill/clear/reload
+	// sequence; the clear helper only writes header padding in its first arg.
+	slot := load.Operand(0)
+	clear := llvm.PrevInstruction(load)
+	if clear.IsNil() || clear.IsACallInst().IsNil() || clear.Operand(0) != slot {
+		return false
+	}
+	fill := llvm.PrevInstruction(clear)
+	if fill.IsNil() {
+		return false
+	}
+	if !fill.IsAStoreInst().IsNil() {
+		if fill.Operand(1) != slot {
+			return false
+		}
+	} else if !isMemoryCopy(fill) || fill.Operand(0) != slot {
+		return false
+	}
+	for use := slot.FirstUse(); !use.IsNil(); use = use.NextUse() {
+		switch use.User() {
+		case fill, clear, load:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isMemoryCopy(inst llvm.Value) bool {
+	if inst.IsACallInst().IsNil() {
+		return false
+	}
+	id := inst.CalledValue().IntrinsicID()
+	return id == llvm.LookupIntrinsicID("llvm.memcpy") || id == llvm.LookupIntrinsicID("llvm.memmove")
+}
+
+// Copy directly at the final store when only pure instructions and branches
+// separate it from the snapshot. In particular, keep destination nil checks
+// before both the copy and padding clear. Volatile reads retain their snapshot.
+func (l *largeAggregateLowerer) forwardHeaderSnapshot(ctx llvm.Context, load, store, slot llvm.Value) bool {
+	if !isPrivateHeaderSnapshot(load) {
+		return false
+	}
+	clear := llvm.PrevInstruction(load)
+	fill := llvm.PrevInstruction(clear)
+	var src, read llvm.Value
+	if !fill.IsAStoreInst().IsNil() {
+		read = fill.Operand(0)
+		if read.IsALoadInst().IsNil() || read.IsVolatile() || llvm.NextInstruction(read) != fill || !hasSingleUse(read, fill) {
+			return false
+		}
+		src = read.Operand(0)
+	} else {
+		// A previous copy pass may already have lowered the snapshot fill.
+		if !fill.Operand(3).IsNull() || fill.Operand(2).IsAConstantInt().IsNil() ||
+			fill.Operand(2).ZExtValue() != l.td.TypeAllocSize(load.Type()) {
+			return false
+		}
+		src = fill.Operand(1)
+	}
+	if !l.canSinkHeaderSnapshot(load, store) {
+		return false
+	}
+	dst := store.Operand(1)
+	b := ctx.NewBuilder()
+	defer b.Dispose()
+	b.SetInsertPointBefore(store)
+	// The final destination can overlap the source even when the private
+	// snapshot fill used memcpy. Do not retain its non-aliasing assumptions.
+	copy := l.callMemmove(ctx, b, dst, src, load.Type())
+	copy.InstructionSetDebugLoc(fill.InstructionDebugLoc())
+	l.replaceTrackedUse(fill, copy)
+	clear.SetOperand(0, dst)
+	clear.RemoveFromParentAsInstruction()
+	b.Insert(clear)
+	fill.EraseFromParentAsInstruction()
+	if !read.IsNil() {
+		l.replaceTrackedUse(read, copy)
+		read.EraseFromParentAsInstruction()
+	}
+	l.replaceTrackedUse(store, copy)
+	store.EraseFromParentAsInstruction()
+	load.EraseFromParentAsInstruction()
+	slot.EraseFromParentAsInstruction()
+	return true
+}
+
+// A single predecessor chain excludes joins and repeated stores without a
+// fresh load. Calls on side exits, such as a failed nil check, do not interfere.
+func (l *largeAggregateLowerer) canSinkHeaderSnapshot(load, store llvm.Value) bool {
+	l.ensureCFG(load.InstructionParent().Parent())
+	block := store.InstructionParent()
+	seen := map[llvm.BasicBlock]bool{block: true}
+	for inst := llvm.PrevInstruction(store); ; inst = llvm.PrevInstruction(inst) {
+		if inst == load {
+			return true
+		}
+		if inst.IsNil() {
+			preds := l.bbPreds[l.bbIndex[block]]
+			if len(preds) != 1 || seen[l.bbs[preds[0]]] {
+				return false
+			}
+			block = l.bbs[preds[0]]
+			seen[block] = true
+			inst = block.LastInstruction()
+		}
+		// Reject all memory accesses, calls and synchronization, including
+		// paths that could change the source or execute this store twice.
+		switch inst.InstructionOpcode() {
+		case llvm.GetElementPtr, llvm.ICmp, llvm.FCmp, llvm.PHI, llvm.Select, llvm.Br:
+		default:
+			if inst.IsABinaryOperator().IsNil() && inst.IsACastInst().IsNil() {
+				return false
+			}
+		}
+	}
+}
+
 // transformStoredLoads prevents a large aggregate load from reaching
 // SelectionDAG as one enormous SSA value. Lower an adjacent load/store pair
 // directly to memmove. When the value is stored later or more than once,
@@ -226,6 +406,7 @@ func (l *largeAggregateLowerer) transformModule(m llvm.Module) {
 // load and copying that snapshot to every destination at the original sites.
 func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 	l.invalidateLive()
+	changed := l.reuseHeaderSnapshots(m)
 	var loads []llvm.Value
 	var zeroStores []llvm.Value
 	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
@@ -261,7 +442,7 @@ func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 		zero.InstructionSetDebugLoc(store.InstructionDebugLoc())
 		store.EraseFromParentAsInstruction()
 	}
-	return len(loads) + len(zeroStores)
+	return changed + len(loads) + len(zeroStores)
 }
 
 func (l largeAggregateLowerer) aggregateUsers(value llvm.Value) (stores, extracts []llvm.Value, ok bool) {
@@ -441,12 +622,22 @@ func (l largeAggregateLowerer) rewriteReturns(ctx llvm.Context, fn llvm.Value, r
 		if !load.IsNil() && !load.IsVolatile() && hasSingleUse(load, ret) {
 			// Copy at the original load so a later source mutation cannot change
 			// the already-evaluated return value (issue #1608).
-			b.SetInsertPointBefore(load)
-			l.callMemcpy(ctx, b, result, load.Operand(0), retType)
+			header := l.wasm && isHeaderSnapshot(load)
+			if header {
+				// Keep the normalized reload visible to snapshot reuse. Store at
+				// the original evaluation point, before return-side bookkeeping.
+				b.SetInsertPointBefore(llvm.NextInstruction(load))
+				b.CreateStore(load, result)
+			} else {
+				b.SetInsertPointBefore(load)
+				l.callMemcpy(ctx, b, result, load.Operand(0), retType)
+			}
 			b.SetInsertPointBefore(ret)
 			b.CreateRetVoid()
 			ret.EraseFromParentAsInstruction()
-			load.EraseFromParentAsInstruction()
+			if !header {
+				load.EraseFromParentAsInstruction()
+			}
 			continue
 		}
 		b.SetInsertPointBefore(ret)

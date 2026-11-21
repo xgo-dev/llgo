@@ -143,9 +143,7 @@ type aProgram struct {
 	// LLVM type is not a safe identity for this metadata.
 	structLayouts    typeutil.Map
 	hasStructLayouts bool
-	// nativeStorage caches transient Type views whose addressable storage is
-	// owned by a C/host ABI rather than by the Go data model. Canonical types
-	// map to their native view, while native views map to themselves.
+	// Canonical types and their native slot-width views map to the same view.
 	nativeStorage map[Type]Type
 	goWordSize    int
 	// Immutable target ABI alignments, safe to read during concurrent type checking.
@@ -339,14 +337,15 @@ func NewProgram(target *Target) Program {
 		ctx.Finalize()
 	*/
 	packageSyntax := newPackageSyntaxData()
-	goWordSize := td.PointerSize()
+	ptrSize := td.PointerSize()
+	goWordSize := ptrSize
 	if target.effectiveGOARCH() == "wasm" && target.WasmProfile != "" {
 		goWordSize = 8
 	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
 		target: target, td: td, tm: tm,
-		ptrSize: td.PointerSize(), goWordSize: goWordSize,
+		ptrSize: ptrSize, goWordSize: goWordSize,
 		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
@@ -361,7 +360,7 @@ func NewProgram(target *Target) Program {
 			prog.simdAlignments[i] = min(prog.simdAlignments[i], 16)
 		}
 	}
-	if goWordSize > prog.ptrSize {
+	if prog.usesWideGoStorage() {
 		prog.nativeStorage = make(map[Type]Type)
 	}
 	// Freeze scalar host layouts before concurrent source type checking.
@@ -1032,6 +1031,7 @@ type aPackage struct {
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
 	staticItabByType    map[staticItabKey]Expr
 	staticStringBacking map[llvm.Value]struct{}
+	wasmHeaderRanges    map[llvm.Type]llvm.Value
 
 	wasmReflectBridges map[string]wasmReflectBridgePair
 }

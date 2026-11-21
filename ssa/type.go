@@ -254,7 +254,7 @@ func (p Program) AlignOf(typ Type) uint64 {
 	if p.needsWidePointerStorage(typ) {
 		return uint64(p.GoWordSize())
 	}
-	if p.GoWordSize() > p.PointerSize() && !p.isNativeStorage(typ) {
+	if p.usesWideGoStorage() && !p.isNativeStorage(typ) {
 		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Array); ok {
 			return p.AlignOf(p.Index(typ))
 		}
@@ -295,10 +295,7 @@ func (p Program) Slice(typ Type) Type {
 
 func (p Program) Pointer(typ Type) Type {
 	ret := p.rawType(types.NewPointer(typ.raw.Type))
-	if !p.usesWideGoStorage() {
-		return ret
-	}
-	if p.isNativeStorage(typ) || p.hasLegacyNativeTypeLayout(typ.raw.Type) {
+	if p.isNativeStorage(typ) {
 		return p.withNativeStorage(ret)
 	}
 	return ret
@@ -312,6 +309,9 @@ func (p Program) Elem(typ Type) Type {
 }
 
 func (p Program) Index(typ Type) Type {
+	if typ.kind == vkPtr && p.usesWideGoStorage() {
+		typ = p.Elem(typ)
+	}
 	return p.childStorageType(typ, indexType(typ.raw.Type))
 }
 

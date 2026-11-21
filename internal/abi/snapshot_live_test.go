@@ -1,10 +1,188 @@
 package abi
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
 )
+
+func TestWasmHeaderSnapshotForwarding(t *testing.T) {
+	const checked = `
+  %nil = icmp eq ptr %base, null
+  br i1 %nil, label %panic, label %write
+panic:
+  call void @panic()
+  unreachable
+write:
+  $write
+  ret void
+`
+	for _, tc := range []struct {
+		name, prefix, tail          string
+		volatileSource, volatileDst bool
+		forward                     bool
+		stack, shared               bool
+		lowered                     bool
+	}{
+		{name: "checked destination", tail: checked, forward: true},
+		{name: "lowered fill", lowered: true, tail: checked, forward: true},
+		{name: "volatile lowered fill", lowered: true, volatileSource: true, tail: checked},
+		{name: "private stack", stack: true, tail: checked, forward: true},
+		{name: "volatile stack", stack: true, volatileSource: true, tail: checked},
+		{name: "delayed stack", stack: true, tail: "call void @mutate(ptr %src)\n" + checked},
+		{name: "shared stack", stack: true, shared: true, tail: "store %Headers zeroinitializer, ptr %slot\n" + checked},
+		{name: "unused branch", forward: true, tail: `
+  br i1 %condition, label %write, label %exit
+write:
+  $write
+  br label %exit
+exit:
+  ret void
+`},
+		{name: "source mutation", tail: "store i8 1, ptr %src\n" + checked},
+		{name: "intervening call", tail: "call void @mutate(ptr %src)\n" + checked},
+		{name: "volatile source", volatileSource: true, tail: checked},
+		{name: "volatile destination", volatileDst: true, tail: checked},
+		{name: "published snapshot", prefix: "store ptr %slot, ptr %root", tail: checked},
+		{name: "merged paths", tail: `
+  br i1 %condition, label %left, label %right
+left:
+  br label %write
+right:
+  br label %write
+write:
+  $write
+  ret void
+`},
+		{name: "repeated store", tail: `
+  br label %write
+write:
+  $write
+  br i1 %condition, label %write, label %exit
+exit:
+  ret void
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceVolatile, dstVolatile := "", ""
+			if tc.volatileSource {
+				sourceVolatile = "volatile"
+			}
+			if tc.volatileDst {
+				dstVolatile = "volatile"
+			}
+			// The destination is deliberately defined after the original load.
+			storeIR := "%dst = getelementptr i8, ptr %base, i32 8\n" +
+				"store " + dstVolatile + " %Headers %value, ptr %dst, align 1"
+			allocation := "call ptr @\"" + runtimeAllocU + "\"(i64 4032)"
+			if tc.stack {
+				allocation = "alloca %Headers, align 8"
+			}
+			fill := "%original = load " + sourceVolatile + " %Headers, ptr %src, align 1\n" +
+				"store %Headers %original, ptr %slot, align 1"
+			if tc.lowered {
+				volatile := "false"
+				if tc.volatileSource {
+					volatile = "true"
+				}
+				fill = "call void @llvm.memcpy.p0.p0.i32(ptr %slot, ptr %src, i32 4032, i1 " + volatile + ")"
+			}
+			mod := parseAggregateIR(t, strings.NewReplacer(
+				"$alloc", runtimeAllocU, "$prefix", tc.prefix, "$fill", fill,
+				"$storage", allocation,
+				"$tail", strings.ReplaceAll(tc.tail, "$write", storeIR),
+			).Replace(`
+%Cell = type { [250 x i64], { ptr, i32 }, i64 }
+%Headers = type [2 x %Cell]
+declare ptr @"$alloc"(i64)
+declare void @mutate(ptr)
+declare void @panic()
+declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)
+define void @clear_headers(ptr %slot) {
+  %high = getelementptr %Headers, ptr %slot, i32 0, i32 0, i32 1, i32 1
+  store i32 0, ptr %high, align 1
+  %second = getelementptr %Headers, ptr %slot, i32 0, i32 1, i32 1, i32 1
+  store i32 0, ptr %second, align 1
+  ret void
+}
+define void @copy(ptr %src, ptr %base, ptr %root, i1 %condition) {
+entry:
+  %slot = $storage
+  $prefix
+  $fill
+  call void @clear_headers(ptr %slot)
+  %value = load %Headers, ptr %slot, align 1, !llgo.header.snapshot !0
+  $tail
+}
+!0 = !{}
+`))
+			td := llvm.NewTargetData("e-m:e-p:32:32-i64:64-n32:64-S128")
+			defer td.Dispose()
+			cfg := AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true}
+			if tc.lowered && LowerAggregateCopies(td, mod, cfg) == 0 {
+				t.Fatal("reusing a lowered header snapshot must report a change")
+			}
+			LowerLargeAggregates(td, mod, cfg)
+			LowerAggregateCopies(td, mod, cfg)
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid forwarded snapshot: %v\n%s", err, mod.String())
+			}
+			fn := mod.NamedFunction("copy")
+			var slot, clear, read, write llvm.Value
+			allocs, copies := 0, 0
+			for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+				for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if tc.stack && !inst.IsAAllocaInst().IsNil() && inst.Name() == "slot" {
+						slot = inst
+					}
+					if inst.IsACallInst().IsNil() {
+						continue
+					}
+					name := inst.CalledValue().Name()
+					switch {
+					case name == runtimeAllocU:
+						allocs++
+						slot = inst
+					case name == "clear_headers":
+						clear = inst
+					case strings.HasPrefix(name, "llvm.memmove"), strings.HasPrefix(name, "llvm.memcpy"):
+						copies++
+						if inst.Operand(1) == fn.Param(0) {
+							read = inst
+						}
+						if inst.Operand(0).Name() == "dst" {
+							write = inst
+						}
+					}
+				}
+			}
+			if read.IsNil() || write.IsNil() || clear.IsNil() {
+				t.Fatalf("missing source read, destination write or header clear:\n%s", fn.String())
+			}
+			if tc.forward {
+				if allocs != 0 || copies != 1 || read != write || write.InstructionParent().AsValue().Name() != "write" ||
+					clear.Operand(0) != write.Operand(0) || llvm.NextInstruction(write) != clear ||
+					!strings.HasPrefix(write.CalledValue().Name(), "llvm.memmove.") {
+					t.Fatalf("copy and clear must follow the destination check:\n%s", fn.String())
+				}
+			} else {
+				wantAllocs, wantCopies := 1, 2
+				if tc.stack {
+					wantAllocs = 0
+				}
+				if tc.shared {
+					wantCopies = 3 // Capture the value before mutable scratch is overwritten.
+				}
+				if allocs != wantAllocs || copies != wantCopies || read.Operand(0) != slot || clear.Operand(0) != slot ||
+					(write.Operand(1) == slot) == tc.shared || (read.Operand(3).ZExtValue() != 0) != tc.volatileSource ||
+					(write.Operand(3).ZExtValue() != 0) != tc.volatileDst {
+					t.Fatalf("unsafe forwarding must retain one immutable snapshot:\n%s", fn.String())
+				}
+			}
+		})
+	}
+}
 
 func TestSnapshotLiveRegionLoopBoundary(t *testing.T) {
 	mod := parseAggregateIR(t, `

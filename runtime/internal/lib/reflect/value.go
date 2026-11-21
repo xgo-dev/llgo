@@ -1864,14 +1864,9 @@ func (v Value) grow(n int) {
 		panic("reflect.Value.Grow: slice overflow")
 	case oldLen+n > p.Cap:
 		t := physicalType(v.typ().Elem())
-		// The linknamed growslice must use the same ABI as runtime slice helpers.
-		// LLGo lowers slice-like values (data,len,cap) as 3 registers, while a
-		// plain 3-word struct may use a different calling convention.
-		// Reinterpret the header as a builtin slice so the call ABI matches.
-		sh := *(*[]byte)(unsafe.Pointer(p))
-		sh = growslice(sh, n, int(t.Size_), int(t.Align_), t.Pointers())
-		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&sh))
-		p.Len = oldLen // set oldLen back
+		src := *(*runtime.Slice)(unsafe.Pointer(p))
+		grown := runtime.ReflectGrowSlice(src, n, t)
+		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&grown))
 	}
 }
 
@@ -2164,12 +2159,6 @@ func typehash(t *abi.Type, p unsafe.Pointer, h uintptr) uintptr
 */
 func verifyNotInHeapPtr(p uintptr) bool {
 	return true
-}
-
-func growslice(src []byte, num, etSize, etAlign int, hasPointers bool) []byte {
-	rs := *(*runtime.Slice)(unsafe.Pointer(&src))
-	rs = runtime.GrowSliceAligned(rs, num, etSize, etAlign, hasPointers)
-	return *(*[]byte)(unsafe.Pointer(&rs))
 }
 
 // Dummy annotation marking that the value x escapes,

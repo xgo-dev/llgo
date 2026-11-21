@@ -65,6 +65,9 @@ const (
 	SIMDAverage
 	SIMDFMA
 	SIMDMulWidenLo
+	SIMDLeadingZeros
+	SIMDLeadingSignBits
+	SIMDMulWidenHi
 	SIMDRotateAllLeft
 	SIMDRotateAllRight
 	SIMDCarrylessMultiply
@@ -103,6 +106,17 @@ const (
 	SIMDPermuteScalarsLo
 	SIMDPermuteScalarsHiGrouped
 	SIMDPermuteScalarsLoGrouped
+	SIMDClearAVXUpperBits
+	SIMDReduceMax
+	SIMDReduceMin
+	SIMDReduceSum
+	SIMDShiftSaturated
+	SIMDOnesCount
+	SIMDIntegerMulAdd
+	SIMDConcatShiftBytesGrouped
+	SIMDConcatShiftBytes
+	SIMDIsZero
+	SIMDIsNaN
 )
 
 // simdTagIndex recognizes the official zero-sized alignment/noncomparability
@@ -244,6 +258,31 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return Expr{v, result}
 	}
 	switch op {
+	case SIMDConcatShiftBytes, SIMDConcatShiftBytesGrouped:
+		return b.simdConcatShiftBytes(args[0], args[1], args[2])
+	case SIMDClearAVXUpperBits:
+		return b.simdClearAVXUpperBits()
+	case SIMDIntegerMulAdd:
+		product := b.impl.CreateMul(args[0].impl, args[1].impl, "")
+		return Expr{b.impl.CreateAdd(product, args[2].impl, ""), result}
+	case SIMDOnesCount:
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.ctpop"), []llvm.Value{args[0].impl}, ""), result}
+	case SIMDShiftSaturated:
+		name := "llvm.aarch64.neon.sqshl"
+		if simdLanes(result.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0 {
+			name = "llvm.aarch64.neon.uqshl"
+		}
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID(name), []llvm.Value{args[0].impl, args[1].impl}, ""), result}
+	case SIMDReduceSum, SIMDReduceMin, SIMDReduceMax:
+		return b.simdReduceLanes(op, args[0])
+	case SIMDIsNaN:
+		x := args[0].impl
+		nan := b.impl.CreateFCmp(llvm.FloatUNO, x, x, "")
+		return Expr{b.impl.CreateSExt(nan, result.ll, ""), result}
+	case SIMDIsZero:
+		x := args[0]
+		zeros := llvm.CreateICmp(b.impl, llvm.IntEQ, x.impl, llvm.ConstNull(x.ll))
+		return Expr{b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.vector.reduce.and"), []llvm.Value{zeros}, ""), result}
 	case SIMDInterleaveLo, SIMDInterleaveHi, SIMDInterleaveLoGrouped, SIMDInterleaveHiGrouped, SIMDConcatEven, SIMDConcatOdd, SIMDInterleaveEven, SIMDInterleaveOdd:
 		return b.simdInterleave(op, args[0], args[1])
 	case SIMDConcatSelected, SIMDConcatSelectedGrouped:
@@ -258,8 +297,22 @@ func (b Builder) SIMD(op SIMDOp, result Type, args ...Expr) Expr {
 		return b.simdAverage(args[0], args[1])
 	case SIMDFMA:
 		return b.simdFMA(result, args[0], args[1], args[2])
-	case SIMDMulWidenLo:
-		return b.simdMulWidenLo(result, args[0], args[1])
+	case SIMDMulWidenLo, SIMDMulWidenHi:
+		return b.simdMulWiden(op, result, args[0], args[1])
+	case SIMDLeadingZeros, SIMDLeadingSignBits:
+		x := args[0]
+		bits := x.impl
+		if op == SIMDLeadingSignBits {
+			// Complement negative lanes before counting redundant sign bits.
+			shift := simdIntegerConstant(x.ll, uint64(x.ll.ElementType().IntTypeWidth()-1))
+			bits = b.impl.CreateXor(bits, b.impl.CreateAShr(bits, shift, ""), "")
+		}
+		zeroIsPoison := llvm.ConstInt(b.Prog.ctx.Int1Type(), 0, false)
+		count := b.impl.CreateIntrinsic(x.ll, llvm.LookupIntrinsicID("llvm.ctlz"), []llvm.Value{bits, zeroIsPoison}, "")
+		if op == SIMDLeadingSignBits {
+			count = b.impl.CreateSub(count, simdIntegerConstant(x.ll, 1), "")
+		}
+		return Expr{count, result}
 	case SIMDRotateAllLeft, SIMDRotateAllRight:
 		return b.simdRotate(op, args[0], args[1])
 	case SIMDCarrylessMultiply, SIMDCarrylessMultiplyLo:
@@ -485,7 +538,7 @@ func (b Builder) simdCheckedIndex(index Expr, limit int) llvm.Value {
 	b.Unreachable()
 	b.SetBlockEx(blocks[1], AtEnd, false)
 	b.blk.last = blocks[1].last
-	return b.impl.CreateZExt(index.impl, b.Prog.tyInt32(), "")
+	return b.impl.CreateIntCast(index.impl, b.Prog.tyInt32(), "")
 }
 
 // Lane indices are uint8 at the Go API boundary. Valid constants need no
