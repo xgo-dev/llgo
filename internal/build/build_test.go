@@ -1439,6 +1439,134 @@ func TestWasmStandardRuntimeBackendSelection(t *testing.T) {
 	}
 }
 
+// TestBaremetalSyncBackendSelection pins the sync backend file set for every
+// target combination: the fiber scheduler compiles the fiber-backed
+// semaphore and pool, while nogc, non-llgo, xtensa, wasip1 and hosted builds
+// keep their existing backends — the pthread fallback whose pthread_once is
+// a libnosys stub only on the fiber targets, or the wasm wait queues.
+func TestBaremetalSyncBackendSelection(t *testing.T) {
+	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
+	for _, test := range []struct {
+		name, goos, goarch string
+		tags               []string
+		releaseMinor       int // when nonzero, pin gobuild release tags at go1.<N>
+		want, omit         []string
+	}{
+		{
+			name: "riscv32 baremetal fiber", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			want: []string{
+				"sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go",
+				// The synctest semaphore wrapper and pool cleanup registration
+				// stay on the fiber targets and bind to the fiber backend.
+				"synctest_sema_llgo.go", "sync_runtime_llgo.go",
+			},
+			omit: []string{
+				"sema_llgo.go", "sema_cond_llgo.go", "sync_pool_llgo.go",
+				"sema_wasm_llgo.go", "sema_wasm_single_llgo.go", "sema_address_llgo.go",
+			},
+		},
+		{
+			name: "riscv32 baremetal fiber nogc", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			want: []string{"sema_llgo.go", "sema_cond_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go", "sema_wasm_llgo.go"},
+		},
+		{
+			name: "riscv32 baremetal without llgo", goos: "linux", goarch: "arm",
+			tags: []string{"baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: []string{"sema_llgo.go", "sema_cond_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			name: "xtensa baremetal keeps pthread fallback", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.xtensa", "esp32"},
+			want: []string{"sema_llgo.go", "sema_cond_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			name: "hosted darwin keeps pthread fallback", goos: "darwin", goarch: "arm64",
+			tags: []string{"llgo"},
+			want: []string{"sema_llgo.go", "sema_cond_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go", "sema_wasm_llgo.go"},
+		},
+		{
+			name: "hosted linux keeps pthread fallback", goos: "linux", goarch: "amd64",
+			tags: []string{"llgo"},
+			want: []string{"sema_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_cond_llgo.go", "sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			name: "wasm single worker keeps wasm backend", goos: "js", goarch: "wasm",
+			tags: []string{"llgo"},
+			want: []string{"sema_wasm_llgo.go", "sema_wasm_single_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_llgo.go", "sema_cond_llgo.go", "sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			// With wasi threads the pthread-backed sema and its address map stay
+			// selected and the wasm wait queues stay out.
+			name: "wasi threads keeps pthread fallback", goos: "wasip1", goarch: "wasm",
+			tags: []string{"llgo", "llgo.wasi_threads"},
+			want: []string{"sema_llgo.go", "sema_address_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_wasm_llgo.go", "sema_wasm_single_llgo.go", "sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			name: "wasip1 without threads keeps wasm backend", goos: "wasip1", goarch: "wasm",
+			tags: []string{"llgo"},
+			want: []string{"sema_wasm_llgo.go", "sema_wasm_single_llgo.go", "sync_pool_llgo.go"},
+			omit: []string{"sema_llgo.go", "sema_address_llgo.go", "sema_cond_llgo.go", "sema_baremetal_llgo.go", "sync_pool_baremetal_llgo.go"},
+		},
+		{
+			// go1.24 stdlib WaitGroup still waits through runtime_Semacquire; the
+			// dedicated WaitGroup semaphore hooks appear from go1.25.
+			name: "go1.24 keeps pre-waitgroup sema hooks", goos: "js", goarch: "wasm",
+			tags:         []string{"llgo"},
+			releaseMinor: 24,
+			want:         []string{"sema_wasm_llgo.go", "sema_waitgroup_go124_wasm_llgo.go"},
+			omit:         []string{"sema_waitgroup_go125_wasm_llgo.go"},
+		},
+		{
+			name: "go1.25 selects waitgroup sema hooks", goos: "js", goarch: "wasm",
+			tags:         []string{"llgo"},
+			releaseMinor: 25,
+			want:         []string{"sema_wasm_llgo.go", "sema_waitgroup_go125_wasm_llgo.go"},
+			omit:         []string{"sema_waitgroup_go124_wasm_llgo.go"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := gobuild.Default
+			ctx.GOOS = test.goos
+			ctx.GOARCH = test.goarch
+			ctx.BuildTags = test.tags
+			if test.releaseMinor != 0 {
+				tags := make([]string, 0, test.releaseMinor)
+				for minor := 1; minor <= test.releaseMinor; minor++ {
+					tags = append(tags, fmt.Sprintf("go1.%d", minor))
+				}
+				ctx.ReleaseTags = tags
+			}
+			pkg, err := ctx.ImportDir(runtimeDir, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := make(map[string]bool, len(pkg.GoFiles))
+			for _, name := range pkg.GoFiles {
+				selected[filepath.Base(name)] = true
+			}
+			for _, name := range test.want {
+				if !selected[name] {
+					t.Errorf("%s was not selected; GoFiles=%v", name, pkg.GoFiles)
+				}
+			}
+			for _, name := range test.omit {
+				if selected[name] {
+					t.Errorf("%s was unexpectedly selected", name)
+				}
+			}
+		})
+	}
+}
+
 func TestWindowsRuntimeSyscallVersionSelection(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	releaseTags := func(lastMinor int) []string {

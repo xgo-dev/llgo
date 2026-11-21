@@ -1,3 +1,9 @@
+//go:build !llgo || !baremetal || !tinygo.riscv32 || nogc
+
+// The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
+// && !nogc) compile sync_pool_baremetal_llgo.go instead: the psync.Once and
+// pthread TLS behind this file are libnosys stubs there.
+
 package runtime
 
 import (

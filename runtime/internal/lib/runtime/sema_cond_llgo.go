@@ -1,4 +1,8 @@
-//go:build darwin || (linux && baremetal)
+//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && baremetal && (!llgo || !tinygo.riscv32 || nogc))
+
+// The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
+// && !nogc) compile sema_baremetal_llgo.go instead: pthread_once and the
+// pthread condition behind this file are libnosys stubs there.
 
 package runtime
 

@@ -329,6 +329,13 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/heappkg",
 		"./_testgo/timepkg",
 		"./_testgo/syncpkg",
+		// The sync contention fixtures import "sync" like syncpkg above, and
+		// the embed emulator suites run them against the fiber scheduler.
+		"./_testgo/syncmutex",
+		"./_testgo/syncrwcond",
+		"./_testgo/synconce",
+		"./_testgo/syncpoolret",
+		"./_testgo/syncgcfight",
 		"./_testgo/gotask",
 		"./_testgo/hexpkg",
 		"./_testgo/fmtall",

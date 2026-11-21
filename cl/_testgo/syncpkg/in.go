@@ -1,8 +1,9 @@
 // Behavior regression fixture: runs on hosted and on the RV32 baremetal
-// scheduler; the golden output must stay identical on both. It only
-// exercises sync paths that never park a goroutine: every parking path
-// (contended Mutex, WaitGroup.Wait with outstanding Dones, Cond) needs a
-// fiber-backed semaphore, which the baremetal backends do not provide yet.
+// fiber scheduler; the golden output must stay identical on both. It only
+// exercises sync paths that never park a goroutine; the contended paths
+// (Mutex, WaitGroup.Wait with outstanding Dones, Cond) are covered by the
+// syncmutex/syncrwcond/synconce fixtures, which park through the
+// fiber-backed semaphore.
 package main
 
 import "sync"

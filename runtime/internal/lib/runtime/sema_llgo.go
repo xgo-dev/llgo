@@ -1,4 +1,8 @@
-//go:build darwin || linux || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)
+//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && (!baremetal || !llgo || !tinygo.riscv32 || nogc)) || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)
+
+// The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
+// && !nogc) compile sema_baremetal_llgo.go instead: the pthread condition and
+// psync.Once behind the notify list below are libnosys stubs there.
 
 package runtime
 
