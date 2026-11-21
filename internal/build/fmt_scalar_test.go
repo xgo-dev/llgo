@@ -128,7 +128,7 @@ func TestScalarFormatsRequireKnownArgumentStorage(t *testing.T) {
 	}
 }
 
-func TestSpecializeBuiltinDynamicFormat(t *testing.T) {
+func TestSpecializeScalarFormatsDynamicBuiltin(t *testing.T) {
 	for _, test := range []struct {
 		name, operands, otherOperands string
 		kinds                         []types.BasicKind
