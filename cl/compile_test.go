@@ -97,6 +97,22 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
+				// stdlib fixtures that exceed what the C3-basic budget allows:
+				// hexpkg/fmtall/osfile overflow the 256 KiB IRAM at link time;
+				// bufiopkg/iopkg link but leave no runtime heap (out of memory);
+				// jsonpkg is far beyond both limits.
+				"./_testgo/hexpkg",
+				"./_testgo/fmtall",
+				"./_testgo/osfile",
+				"./_testgo/bufiopkg",
+				"./_testgo/iopkg",
+				"./_testgo/jsonpkg",
+				// strings/bytes/errors/binary pull enough runtime state to exhaust
+				// the small C3 heap; they run on the 512 KiB S31 SRAM target.
+				"./_testgo/strpkg",
+				"./_testgo/errspkg",
+				"./_testgo/bytespkg",
+				"./_testgo/binpkg",
 			},
 			"./_testlibc": {
 				"./_testlibc/atomic", // output mismatch: baremetal i64 varargs lowering breaks printf("%ld") (fixture itself links)
@@ -296,6 +312,30 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 	ignore := []string{
 		"./_testgo/runextest",
 		"./_testgo/runtest",
+		// The fixtures below pull internal/bytealg (strings, strconv, sort,
+		// math, runtime, sync, fmt, ...), whose plan9asm translation crashes
+		// clang on darwin/arm64 (same preexisting failure as internal/build's
+		// TestTest). The embed emulator suites run them.
+		"./_testgo/strpkg",
+		"./_testgo/strcv",
+		"./_testgo/sortpkg",
+		"./_testgo/slicepkg",
+		"./_testgo/mapspkg",
+		"./_testgo/errspkg",
+		"./_testgo/bytespkg",
+		"./_testgo/mathpkg",
+		"./_testgo/randpkg",
+		"./_testgo/binpkg",
+		"./_testgo/heappkg",
+		"./_testgo/timepkg",
+		"./_testgo/syncpkg",
+		"./_testgo/gotask",
+		"./_testgo/hexpkg",
+		"./_testgo/fmtall",
+		"./_testgo/osfile",
+		"./_testgo/bufiopkg",
+		"./_testgo/iopkg",
+		"./_testgo/jsonpkg",
 		// gosched imports "runtime", which pulls internal/bytealg whose plan9asm
 		// translation crashes clang on darwin/arm64 (same preexisting failure as
 		// internal/build's TestTest). The embed emulator suites run it.
