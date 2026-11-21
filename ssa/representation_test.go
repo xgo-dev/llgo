@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRepresentationRequiresDefinitionProvenance(t *testing.T) {
+func TestRepresentationUsesResolvedAttributes(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
 	pkg := types.NewPackage("example.com/p", "p")
@@ -18,7 +18,7 @@ func TestRepresentationRequiresDefinitionProvenance(t *testing.T) {
 	copyType := types.NewNamed(types.NewTypeName(0, pkg, "Copy", nil), st, nil)
 	independent := types.NewNamed(types.NewTypeName(0, pkg, "Independent", nil), st, nil)
 	prog.SetTypeCallConv("example.com/p.Native", CDecl)
-	prog.SetTypeDefinition(copyType.Obj(), native)
+	prog.SetTypeRepresentation(copyType.Obj(), prog.RepresentationOf(native))
 	if got := prog.RepresentationOf(copyType); got.Storage != NativeRepresentation || got.Origin != native.Obj() {
 		t.Fatalf("derived representation = %+v", got)
 	}
@@ -39,26 +39,64 @@ func TestRepresentationRequiresDefinitionProvenance(t *testing.T) {
 	}
 }
 
-func TestRepresentationDoesNotCacheIncompleteSource(t *testing.T) {
+func TestRepresentationCheckingAndPublication(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
 	pkg := types.NewPackage("p", "p")
 	native := types.NewNamed(types.NewTypeName(0, pkg, "Native", nil), types.Typ[types.Uint64], nil)
 	copyType := types.NewNamed(types.NewTypeName(0, pkg, "Copy", nil), types.Typ[types.Uint64], nil)
 	prog.SetTypeCallConv("p.Native", CDecl)
-	var rhs types.Type
-	prog.SetTypeDefinitionSource(pkg, func(obj *types.TypeName) types.Type { return rhs })
-	if prog.RepresentationOf(copyType).Storage != GoRepresentation {
+	var bound bool
+	calls := 0
+	nativeRep := prog.DeclaredTypeRepresentation(native.Obj())
+	prog.SetTypeRepresentationChecker(pkg, func(obj *types.TypeName) TypeRepresentation {
+		calls++
+		if bound {
+			return nativeRep
+		}
+		return TypeRepresentation{}
+	})
+	if prog.sourceRepresentationOf(copyType).Storage != GoRepresentation {
 		t.Fatal("unresolved source is native")
 	}
-	rhs = native
-	if prog.RepresentationOf(copyType).Storage != NativeRepresentation {
-		t.Fatal("unresolved source result was cached")
+	bound = true
+	if prog.sourceRepresentationOf(copyType) != nativeRep {
+		t.Fatal("source sizes cached an incomplete binding")
 	}
-	rhs = copyType
-	if prog.RepresentationOf(copyType).Storage != GoRepresentation {
-		t.Fatal("cyclic source resolved to a native root")
+	for _, query := range []func(){
+		func() { prog.RepresentationOf(copyType) },
+		func() { prog.NewBackendProgram().Dispose() },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("backend accepted unfinished attributes")
+				}
+			}()
+			query()
+		}()
 	}
+	snapshot := map[*types.TypeName]TypeRepresentation{copyType.Obj(): nativeRep}
+	prog.PublishTypeRepresentations(pkg, snapshot)
+	// Neither the old callback nor the caller's mutable map may affect layout.
+	bound = false
+	snapshot[copyType.Obj()] = TypeRepresentation{}
+	backend := prog.NewBackendProgram()
+	defer backend.Dispose()
+	for _, p := range []Program{prog, backend} {
+		if p.RepresentationOf(copyType) != nativeRep || p.sourceRepresentationOf(copyType) != nativeRep {
+			t.Fatal("published attributes depend on checker state")
+		}
+	}
+	if calls != 2 || len(prog.checkingRepresentations) != 0 || len(backend.checkingRepresentations) != 0 {
+		t.Fatal("checker survived frontend completion")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("published representation was mutable")
+		}
+	}()
+	prog.SetTypeRepresentation(copyType.Obj(), TypeRepresentation{})
 }
 
 func TestDerivedNativeStorageAcrossTargets(t *testing.T) {
@@ -80,7 +118,7 @@ func TestDerivedNativeStorageAcrossTargets(t *testing.T) {
 			native := types.NewNamed(types.NewTypeName(0, pkg, "Native", nil), st, nil)
 			copyType := types.NewNamed(types.NewTypeName(0, pkg, "Copy", nil), st, nil)
 			prog.SetTypeCallConv("p.Native", CDecl)
-			prog.SetTypeDefinition(copyType.Obj(), native)
+			prog.SetTypeRepresentation(copyType.Obj(), prog.RepresentationOf(native))
 			a, b := prog.Type(native, GoDecl), prog.Type(copyType, GoDecl)
 			if prog.SizeOf(a) != prog.SizeOf(b) || prog.AlignOf(a) != prog.AlignOf(b) || prog.OffsetOf(a, 1) != prog.OffsetOf(b, 1) {
 				t.Fatalf("inherited layout differs: Native %d/%d/%d, Copy %d/%d/%d",
@@ -97,34 +135,36 @@ func TestDerivedNativeCallbackKeepsStdcallABI(t *testing.T) {
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	native := newStdcallType(prog, "p", "Callback", sig)
 	copyType := types.NewNamed(types.NewTypeName(0, native.Obj().Pkg(), "Copy", nil), sig, nil)
-	prog.SetTypeDefinition(copyType.Obj(), native)
+	prog.SetTypeRepresentation(copyType.Obj(), prog.RepresentationOf(native))
 	if !prog.isStdcallType(copyType) || prog.Type(copyType, GoDecl).kind != vkFuncPtr {
 		t.Fatal("derived native callback lost its pointer representation or invocation ABI")
 	}
 }
 
-func TestRepresentationRejectsIncompleteDefinitionRegistration(t *testing.T) {
+func TestRepresentationRejectsInvalidAttributes(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
 	obj := types.NewTypeName(0, types.NewPackage("p", "p"), "Copy", nil)
 	for _, tc := range []struct {
 		name string
 		obj  *types.TypeName
-		rhs  types.Type
+		rep  TypeRepresentation
 	}{
-		{"missing owner", nil, types.Typ[types.Int]},
-		{"missing RHS", obj, nil},
+		{"missing owner", nil, TypeRepresentation{}},
+		{"missing native origin", obj, TypeRepresentation{Storage: NativeRepresentation, NativeABI: CDecl}},
+		{"missing native ABI", obj, TypeRepresentation{Storage: NativeRepresentation, Origin: obj}},
+		{"Go storage with native ABI", obj, TypeRepresentation{NativeABI: CDecl}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
-				if got := recover(); got != "ssa: type definition requires an object and a RHS" {
-					t.Fatalf("invalid metadata accepted or wrong diagnostic: %v", got)
+				if got := recover(); got != "ssa: invalid type representation" {
+					t.Fatalf("invalid attributes accepted: %v", got)
 				}
 			}()
-			prog.SetTypeDefinition(tc.obj, tc.rhs)
+			prog.SetTypeRepresentation(tc.obj, tc.rep)
 		})
 	}
-	if len(prog.packageSyntax.typeDefinitions) != 0 {
-		t.Fatal("rejected metadata partially registered a definition")
+	if len(prog.packageSyntax.typeRepresentations) != 0 {
+		t.Fatal("rejected attributes were partially published")
 	}
 }

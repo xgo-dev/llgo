@@ -1035,6 +1035,13 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 		return nil
 	}
 	if prog.PackageSyntaxParsed(pkg) {
+		if pkg.Complete() && prog.TypeRepresentationsPending(pkg) {
+			var info *types.Info
+			if len(typeInfo) != 0 {
+				info = typeInfo[0]
+			}
+			return CompleteTypeRepresentations(prog, fset, pkg, files, info)
+		}
 		return nil
 	}
 	if err := validateInternalDirectives(fset, pkg.Path(), files, options.AllowInternalDirectives); err != nil {
@@ -1122,7 +1129,9 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 	if len(typeInfo) != 0 {
 		info = typeInfo[0]
 	}
-	registerTypeDefinitions(prog, fset, pkg, files, info)
+	if err := registerTypeRepresentations(prog, fset, pkg, files, info); err != nil {
+		return err
+	}
 	prog.MarkPackageSyntaxParsed(pkg)
 	return nil
 }

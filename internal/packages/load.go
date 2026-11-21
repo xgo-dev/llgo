@@ -91,6 +91,7 @@ type aDeduper struct {
 	checked     sync.Map
 	setpath     func(path string, name string) string
 	preload     func(pkg *packages.Package)
+	typeChecked func(pkg *packages.Package) error
 	prepare     func([]*Package, *Config) error
 	rewrite     func(*Package) (bool, error)
 	llgoFiles   map[string][]string
@@ -118,6 +119,11 @@ func (p Deduper) IsExported(id string) bool {
 func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
 	p.preload = fn
 }
+
+// SetTypeChecked installs a completion hook after each successful source check,
+// including the fresh check after a rewrite. Dependencies finish this phase
+// before importing packages are checked. Failed checks never publish metadata.
+func (p Deduper) SetTypeChecked(fn func(*Package) error) { p.typeChecked = fn }
 
 // SetPrepare installs a graph preprocessing hook before parsing/type checking.
 // The hook may add generated files and their imports (for example, coverage).
@@ -621,7 +627,19 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		GoVersion: pkgGoVersion,
 	}
 
-	typErr := types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+	check := func() error {
+		err := types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+		if err == nil && tc.dedup != nil && tc.dedup.typeChecked != nil {
+			err = tc.dedup.typeChecked(pkg)
+			if err != nil {
+				// Unlike checker errors, completion errors have not gone
+				// through Error. Retain them even alongside driver diagnostics.
+				appendError(err)
+			}
+		}
+		return err
+	}
+	typErr := check()
 	if typErr == nil && len(pkg.Errors) == 0 && tc.dedup != nil && tc.dedup.rewrite != nil {
 		changed, err := tc.dedup.rewrite(pkg)
 		if err != nil {
@@ -632,7 +650,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 			if tc.dedup.preload != nil {
 				tc.dedup.preload(pkg)
 			}
-			typErr = types.NewChecker(typeConf, fset, pkg.Types, pkg.TypesInfo).Files(pkg.Syntax)
+			typErr = check()
 		}
 	}
 	if typErr != nil && len(pkg.Errors) == 0 && len(pkg.Syntax) > 0 {

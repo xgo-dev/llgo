@@ -70,7 +70,7 @@ const Offset = unsafe.Offsetof(Record{}.U)
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog.SetTypeDefinition(pkg.Scope().Lookup("DerivedCallback").(*types.TypeName), pkg.Scope().Lookup("NativeCallback").Type())
+			prog.SetTypeRepresentation(pkg.Scope().Lookup("DerivedCallback").(*types.TypeName), prog.RepresentationOf(pkg.Scope().Lookup("NativeCallback").Type()))
 			if pkg.Scope().Lookup("Size").(*types.Const).Val().ExactString() != strconv.FormatInt(tc.size, 10) || pkg.Scope().Lookup("Offset").(*types.Const).Val().ExactString() != strconv.FormatInt(tc.offsets[4], 10) {
 				t.Fatal("checker constants do not use host layout")
 			}

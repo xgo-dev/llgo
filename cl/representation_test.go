@@ -1,7 +1,6 @@
 package cl
 
 import (
-	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/parser"
@@ -49,6 +48,9 @@ func checkRepresentationPackage(t *testing.T, prog llssa.Program, path, source s
 	if err := types.NewChecker(config, fset, pkg, info).Files(files); err != nil {
 		t.Fatal(err)
 	}
+	if err := CompleteTypeRepresentations(prog, fset, pkg, files, live); err != nil {
+		t.Fatal(err)
+	}
 	return pkg, info
 }
 
@@ -63,6 +65,8 @@ func TestNativeRepresentationFollowsBoundDefinitions(t *testing.T) {
 			defer prog.Dispose()
 			pkg, info := checkRepresentationPackage(t, prog, "example.com/native", `package native
 import "unsafe"
+const CopySize = unsafe.Sizeof(Copy{})
+type Bound [CopySize]byte
 //llgo:cdecl
 type Native struct { Fn func(); Tail uint64 }
 func (Native) Method() {}
@@ -83,7 +87,6 @@ type RecursiveCopy Recursive
 //llgo:cdecl
 type Callback func()
 type CallbackCopy Callback
-const CopySize = unsafe.Sizeof(Copy{})
 func local() {
  type Native struct { Fn func(); Tail uint64 }
  type LocalCopy Copy
@@ -111,7 +114,7 @@ func local() {
 			}
 			if liveInfo {
 				size, _ := constant.Int64Val(pkg.Scope().Lookup("CopySize").(*types.Const).Val())
-				if size != 16 {
+				if size != 16 || pkg.Scope().Lookup("Bound").Type().Underlying().(*types.Array).Len() != 16 {
 					t.Fatalf("source CopySize = %d, want 16", size)
 				}
 			}
@@ -184,21 +187,84 @@ func TestNativeRepresentationRejectsLostScope(t *testing.T) {
 	pkg.Scope().Insert(copyType.Obj())
 	pkg.MarkComplete()
 	prog.SetTypeCallConv(pkg.Path()+".Native", llssa.CDecl)
-	registerTypeDefinitions(prog, fset, pkg, []*ast.File{file}, nil)
-	func() {
-		defer func() {
-			failure := recover()
-			if failure == nil || !strings.Contains(fmt.Sprint(failure), "resolve representation of") || !strings.Contains(fmt.Sprint(failure), "no position") {
-				t.Fatalf("lost scope must fail closed, got %v", failure)
-			}
-		}()
-		prog.RepresentationOf(copyType)
-	}()
+	err = registerTypeRepresentations(prog, fset, pkg, []*ast.File{file}, nil)
+	if err == nil || !strings.Contains(err.Error(), "resolve representation of") || !strings.Contains(err.Error(), "no position") {
+		t.Fatalf("lost scope must fail before publication, got %v", err)
+	}
 	// A failed query must not poison later queries after scope restoration.
 	types.NewScope(pkg.Scope(), file.Pos(), file.End(), "restored file scope")
 	native := types.NewNamed(types.NewTypeName(0, pkg, "Native", nil), st, nil)
 	pkg.Scope().Insert(native.Obj())
+	if err := CompleteTypeRepresentations(prog, fset, pkg, []*ast.File{file}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if got := prog.RepresentationOf(copyType); got.Storage != llssa.NativeRepresentation || got.Origin != native.Obj() {
 		t.Fatalf("restored scope did not restore native provenance: %+v", got)
+	}
+}
+
+func TestNativeRepresentationSnapshotDropsCheckerBindings(t *testing.T) {
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	pkg, info := checkRepresentationPackage(t, prog, "example.com/frozen", `package frozen
+//llgo:cdecl
+type Native struct { Fn func(); Tail uint64 }
+type Copy Native
+func local() { type Local Copy; var _ Local }
+`, nil, true)
+	var local types.Type
+	for id, obj := range info.Defs {
+		if id.Name == "Local" {
+			local = obj.Type()
+		}
+	}
+	copyType := pkg.Scope().Lookup("Copy").Type()
+	native := pkg.Scope().Lookup("Native").(*types.TypeName)
+	// Replacing both maps catches any source callback retained by the backend.
+	info.Types = nil
+	info.Defs = nil
+	backend := prog.NewBackendProgram()
+	defer backend.Dispose()
+	for _, typ := range []types.Type{copyType, local} {
+		if backend.RepresentationOf(typ).Origin != native {
+			t.Fatal("snapshot lost the origin after discarding source bindings")
+		}
+		raw := backend.Type(typ, llssa.GoDecl)
+		if backend.SizeOf(raw) != 16 || backend.OffsetOf(raw, 1) != 8 {
+			t.Fatal("backend layout still depends on source bindings")
+		}
+	}
+}
+
+func TestNativeRepresentationCompletionRejectsMissingBindings(t *testing.T) {
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", `package p
+//llgo:cdecl
+type Native struct { F func() }
+type Copy Native`, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object)}
+	pkg, err := new(types.Config).Check("p", fset, []*ast.File{file}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := info.Types
+	info.Types = nil
+	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{}, info); err == nil || !strings.Contains(err.Error(), "missing RHS binding") {
+		t.Fatalf("incomplete snapshot accepted: %v", err)
+	}
+	if !prog.TypeRepresentationsPending(pkg) {
+		t.Fatal("failed completion published a partial snapshot")
+	}
+	info.Types = bindings
+	if err := CompleteTypeRepresentations(prog, fset, pkg, []*ast.File{file}, info); err != nil {
+		t.Fatal(err)
+	}
+	if prog.RepresentationOf(pkg.Scope().Lookup("Copy").Type()).Storage != llssa.NativeRepresentation {
+		t.Fatal("failed completion poisoned the retry")
 	}
 }

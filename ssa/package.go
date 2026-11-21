@@ -24,6 +24,7 @@ import (
 	"log"
 	"runtime"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/env"
@@ -118,6 +119,10 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
+	// Frontend-only callbacks, deliberately not shared with backend Programs.
+	checkingRepresentationsMu sync.RWMutex
+	checkingRepresentations   map[*types.Package]TypeRepresentationChecker
+
 	ctx   llvm.Context
 	typs  typeutil.Map // rawType -> Type
 	sizes types.Sizes  // provided by Go compiler
@@ -382,6 +387,13 @@ func NewProgram(target *Target) Program {
 // shared directly; callers must finish preparing them before backend Programs
 // are created and use them read-only afterwards.
 func (p Program) NewBackendProgram() Program {
+	p.packageSyntax.mu.RLock()
+	checking := len(p.packageSyntax.checkingTypePackages) != 0
+	p.packageSyntax.mu.RUnlock()
+	if checking {
+		panic("ssa: cannot create backend before frontend representation completion")
+	}
+
 	var target *Target
 	if p.target != nil {
 		targetCopy := *p.target
@@ -529,7 +541,7 @@ func (p Program) SetRuntime(runtime any) {
 // SetTypeCallConv registers a native representation root. For function values
 // it also selects the native callback ABI. Ordinary Go functions accepting the
 // type retain their own declaration ABI; new defined types inherit storage via
-// SetTypeDefinition or SetTypeDefinitionSource, not a copied calling convention.
+// resolved frontend attributes, not a copied calling convention.
 // The optional fields retain the legacy vector Offsetsof registration for
 // programmatic clients. Source loaders use SetNativeStructFields instead.
 // Neither registry establishes definition provenance or uniquely identifies

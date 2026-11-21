@@ -35,7 +35,7 @@ func (p *goProgram) vectorLayout(t types.Type, native bool) (sourceLayout, bool)
 		if !prog.containsVectorStorage(t) {
 			return sourceLayout{}, false
 		}
-		return p.vectorLayout(t.Underlying(), prog.hasNativeStructLayout(t))
+		return p.vectorLayout(t.Underlying(), hasHostLayout(t) || prog.sourceHasNativeTypeLayout(t))
 	case *types.Array:
 		// Element layout propagates SIMD alignment through arrays, including
 		// zero-length arrays and defined types.

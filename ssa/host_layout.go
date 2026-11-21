@@ -68,7 +68,7 @@ func (p *goProgram) hostLayout(t types.Type) (sourceLayout, bool) {
 		// Legacy directives keep their existing source-layout policy. Check
 		// only after finding a marker: native name lookup allocates, whereas
 		// ordinary size queries must remain allocation-free.
-		if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.RepresentationOf(raw).Storage == NativeRepresentation {
+		if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.sourceRepresentationOf(raw).Storage == NativeRepresentation {
 			return sourceLayout{}, false
 		}
 		fields := make([]*types.Var, t.NumFields())
@@ -84,7 +84,7 @@ func (p *goProgram) hostLayout(t types.Type) (sourceLayout, bool) {
 		return layout, true
 	case *types.Array:
 		if elem, ok := p.hostLayout(t.Elem()); ok {
-			if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.RepresentationOf(raw).Storage == NativeRepresentation {
+			if prog.packageSyntax.hasNativeTypeMetadata.Load() && prog.sourceRepresentationOf(raw).Storage == NativeRepresentation {
 				return sourceLayout{}, false
 			}
 			return arraySourceLayout(elem, t.Len()), true
@@ -107,7 +107,7 @@ func (p *goProgram) hostFieldsLayout(fields []*types.Var) (sourceLayout, []int64
 
 func (p *goProgram) hostFieldLayout(t types.Type, native bool) sourceLayout {
 	prog := Program(p)
-	native = native || prog.RepresentationOf(t).Storage == NativeRepresentation
+	native = native || prog.sourceRepresentationOf(t).Storage == NativeRepresentation
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		// Strings retain their Go aggregate representation. Numeric types
@@ -157,7 +157,7 @@ func (p *goProgram) hostNestedLayout(t types.Type) sourceLayout {
 // types during source checking. It is reachable only through HostLayout sizing.
 func (p *goProgram) hostNativeLayout(t types.Type, native bool) sourceLayout {
 	prog := Program(p)
-	native = native || prog.RepresentationOf(t).Storage == NativeRepresentation
+	native = native || prog.sourceRepresentationOf(t).Storage == NativeRepresentation
 	if l, ok := p.hostLayout(t); ok {
 		return l
 	}

@@ -61,7 +61,7 @@ func TestNativeCallbackTypeMetadata(t *testing.T) {
 					prog.SetTypeCallConv(pkg.Path()+"."+name, cc)
 				}
 				derived := types.NewNamed(types.NewTypeName(token.NoPos, typ.Obj().Pkg(), name+"Copy", nil), NoArgsNoRet, nil)
-				prog.SetTypeDefinition(derived.Obj(), typ)
+				prog.SetTypeRepresentation(derived.Obj(), prog.RepresentationOf(typ))
 				alias := types.NewAlias(types.NewTypeName(token.NoPos, typ.Obj().Pkg(), name+"Alias", nil), derived)
 				for _, value := range []types.Type{typ, derived, alias} {
 					fields := b.abiCommonFields(value, value.String(), false, llvm.Value{})

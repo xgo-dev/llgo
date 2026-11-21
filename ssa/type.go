@@ -180,14 +180,14 @@ retry:
 	switch t := typ.(type) {
 	case *types.Named:
 		prog := Program(unsafe.Pointer(p))
-		if prog.RepresentationOf(t).Storage == NativeRepresentation {
+		if prog.sourceRepresentationOf(t).Storage == NativeRepresentation {
 			return 0
 		}
 		typ = t.Underlying()
 		goto retry
 	case *types.Alias:
 		prog := Program(unsafe.Pointer(p))
-		if prog.RepresentationOf(t).Storage == NativeRepresentation {
+		if prog.sourceRepresentationOf(t).Storage == NativeRepresentation {
 			return 0
 		}
 		typ = t.Rhs()

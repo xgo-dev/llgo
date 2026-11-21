@@ -36,86 +36,176 @@ type TypeRepresentation struct {
 	Origin    *types.TypeName
 }
 
-// TypeDefinitionSource returns the bound declaration RHS of an object. A nil
-// result means that the RHS is not available yet, or is not a type definition.
-// During source checking it may read the checker's partial types.Info; after
-// checking it must support concurrent read-only queries from backend Programs.
-// It must not infer a declaration edge from shared underlying types or fields.
-type TypeDefinitionSource func(*types.TypeName) types.Type
+// TypeRepresentationChecker supplies provisional attributes exclusively to source
+// layout queries while go/types is checking a package. It is never shared with
+// backend Programs. The frontend must publish a complete snapshot afterwards.
+type TypeRepresentationChecker func(*types.TypeName) TypeRepresentation
 
-// SetTypeDefinition records an actual definition edge, for importers and
-// programmatic SSA clients. Register all edges before lowering any types.
-// This does not change Go type identity or copy the RHS type's method set.
-func (p Program) SetTypeDefinition(obj *types.TypeName, rhs types.Type) {
-	if obj == nil || rhs == nil {
-		panic("ssa: type definition requires an object and a RHS")
+func representationObject(t types.Type) *types.TypeName {
+	switch t := t.(type) {
+	case *types.Named:
+		return t.Origin().Obj()
+	case *types.Alias:
+		return t.Origin().Obj()
 	}
+	return nil
+}
+
+// DeclaredTypeRepresentation reads only the legacy native root directive. The
+// frontend uses it when resolving attributes; derived types do not acquire a
+// calling-convention registration of their own.
+func (p Program) DeclaredTypeRepresentation(obj *types.TypeName) TypeRepresentation {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	return p.packageSyntax.declaredRepresentation(obj)
+}
+
+func (p *packageSyntaxData) declaredRepresentation(obj *types.TypeName) TypeRepresentation {
+	if obj != nil && (obj.Parent() == nil || obj.Pkg() == nil || obj.Parent() == obj.Pkg().Scope()) {
+		if cc := p.typeCallConvs[typeNameLinkname(obj)]; isNativeCallConv(cc) {
+			return TypeRepresentation{NativeRepresentation, cc, obj}
+		}
+	}
+	return TypeRepresentation{}
+}
+
+// SetTypeRepresentation publishes a resolved attribute for a programmatic SSA
+// client. All attributes must be supplied before lowering; changing a published
+// attribute would invalidate layouts already derived from it.
+func (p Program) SetTypeRepresentation(obj *types.TypeName, rep TypeRepresentation) {
+	validateTypeRepresentation(obj, rep)
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.typeDefinitions[obj] = rhs
+	defer p.packageSyntax.mu.Unlock()
+	p.packageSyntax.setTypeRepresentation(obj, rep)
+}
+
+func validateTypeRepresentation(obj *types.TypeName, rep TypeRepresentation) {
+	if obj == nil || rep.Storage != GoRepresentation && rep.Storage != NativeRepresentation ||
+		rep.Storage == GoRepresentation && rep != (TypeRepresentation{}) ||
+		rep.Storage == NativeRepresentation && (rep.Origin == nil || !isNativeCallConv(rep.NativeABI)) {
+		panic("ssa: invalid type representation")
+	}
+}
+
+func (p *packageSyntaxData) setTypeRepresentation(obj *types.TypeName, rep TypeRepresentation) {
+	if old, ok := p.typeRepresentations[obj]; ok && old != rep {
+		panic("ssa: cannot change a published type representation")
+	}
+	p.typeRepresentations[obj] = rep
+	if rep.Storage == NativeRepresentation {
+		p.hasNativeTypeMetadata.Store(true)
+	}
+}
+
+// SetTypeRepresentationChecker starts the source-checking phase for pkg.
+// Source sizes can consult checker, but LLVM lowering cannot. Completion must
+// call PublishTypeRepresentations, even if the package has no native types.
+func (p Program) SetTypeRepresentationChecker(pkg *types.Package, checker TypeRepresentationChecker) {
+	p.checkingRepresentationsMu.Lock()
+	defer p.checkingRepresentationsMu.Unlock()
+	if p.checkingRepresentations == nil {
+		p.checkingRepresentations = make(map[*types.Package]TypeRepresentationChecker)
+	}
+	p.checkingRepresentations[pkg] = checker
+	p.packageSyntax.mu.Lock()
+	p.packageSyntax.checkingTypePackages[pkg] = struct{}{}
 	p.packageSyntax.mu.Unlock()
 }
 
-// SetTypeDefinitionSource supplies declaration provenance before type checking
-// has populated the package scope. Unknown RHS queries are never cached: a
-// later query must observe the checker completing the declaration.
-func (p Program) SetTypeDefinitionSource(pkg *types.Package, source TypeDefinitionSource) {
+// PublishTypeRepresentations atomically freezes frontend attributes and drops
+// the checker callback. Copy the map so the frontend cannot mutate the snapshot.
+func (p Program) PublishTypeRepresentations(pkg *types.Package, reps map[*types.TypeName]TypeRepresentation) {
+	for obj, rep := range reps {
+		validateTypeRepresentation(obj, rep)
+		if obj.Pkg() != pkg {
+			panic("ssa: type representation belongs to another package")
+		}
+	}
+	p.checkingRepresentationsMu.Lock()
+	defer p.checkingRepresentationsMu.Unlock()
 	p.packageSyntax.mu.Lock()
-	p.packageSyntax.typeDefinitionSources[pkg] = source
-	p.packageSyntax.mu.Unlock()
+	defer p.packageSyntax.mu.Unlock()
+	for obj, rep := range reps {
+		if old, ok := p.packageSyntax.typeRepresentations[obj]; ok && old != rep {
+			panic("ssa: cannot change a published type representation")
+		}
+	}
+	for obj, rep := range reps {
+		p.packageSyntax.setTypeRepresentation(obj, rep)
+	}
+	delete(p.packageSyntax.checkingTypePackages, pkg)
+	delete(p.checkingRepresentations, pkg)
 }
 
-// RepresentationOf follows definition edges, not Underlying(). In particular,
-// an independent structurally identical declaration does not inherit native
-// storage. Generic instances use their origin declaration's representation.
+// RepresentationOf reads resolved type attributes. It never traverses a
+// definition chain or queries syntax, types.Info, or a type checker. Generic
+// instances read their origin declaration's attribute. Programmatic clients
+// may still register native roots using SetTypeCallConv.
 func (p Program) RepresentationOf(t types.Type) TypeRepresentation {
 	return p.packageSyntax.representationOf(t)
 }
 
 func (p *packageSyntaxData) representationOf(t types.Type) TypeRepresentation {
-	if !p.hasNativeTypeMetadata.Load() {
-		return TypeRepresentation{}
-	}
-	var visited [8]*types.TypeName
-	seen := visited[:0]
 	for {
-		var obj *types.TypeName
-		var aliasRHS types.Type
-		switch t := t.(type) {
-		case *types.Named:
-			obj = t.Origin().Obj()
-		case *types.Alias:
-			obj, aliasRHS = t.Origin().Obj(), t.Rhs()
-		default:
+		obj := representationObject(t)
+		if obj == nil {
 			return TypeRepresentation{}
 		}
-		for _, previous := range seen {
-			if previous == obj {
-				// Invalid source cycles are diagnosed by the checker. Also keep
-				// incomplete or cyclic programmatic metadata queries finite.
-				return TypeRepresentation{}
-			}
-		}
-		seen = append(seen, obj)
-
 		p.mu.RLock()
-		rhs := p.typeDefinitions[obj]
-		source := p.typeDefinitionSources[obj.Pkg()]
-		var cc CallConv
-		// The legacy string API identifies package-level declarations only.
-		// A local type with the same spelling must not inherit that directive.
-		if obj.Parent() == nil || obj.Pkg() == nil || obj.Parent() == obj.Pkg().Scope() {
-			cc = p.typeCallConvs[typeNameLinkname(obj)]
+		_, checking := p.checkingTypePackages[obj.Pkg()]
+		rep, found := p.typeRepresentations[obj]
+		if !found {
+			rep = p.declaredRepresentation(obj)
 		}
 		p.mu.RUnlock()
-		if isNativeCallConv(cc) {
-			return TypeRepresentation{NativeRepresentation, cc, obj}
+		if checking {
+			panic("ssa: type representation requested before frontend completion")
 		}
-		if rhs == nil && source != nil {
-			rhs = source(obj)
+		if found || rep.Storage == NativeRepresentation {
+			return rep
 		}
-		if rhs == nil {
-			rhs = aliasRHS
+		// Programmatic aliases retain identity even without a frontend snapshot.
+		// This is alias unwrapping, not reconstruction of named definitions.
+		if alias, ok := t.(*types.Alias); ok {
+			t = alias.Rhs()
+			continue
 		}
-		t = rhs
+		return rep
 	}
+}
+
+// sourceRepresentationOf is the only bridge to provisional checker state.
+// Source layout must work during checking (e.g. array bounds using Sizeof).
+// Backend Programs have no checkingRepresentations and read the snapshot.
+func (p Program) sourceRepresentationOf(t types.Type) TypeRepresentation {
+	obj := representationObject(t)
+	if obj == nil {
+		return TypeRepresentation{}
+	}
+	p.checkingRepresentationsMu.RLock()
+	checker := p.checkingRepresentations[obj.Pkg()]
+	p.checkingRepresentationsMu.RUnlock()
+	if checker != nil {
+		return checker(obj)
+	}
+	return p.RepresentationOf(t)
+}
+
+func (p Program) sourceHasNativeTypeLayout(t types.Type) bool {
+	if p.sourceRepresentationOf(t).Storage == NativeRepresentation {
+		return true
+	}
+	if a, ok := types.Unalias(t).(*types.Array); ok {
+		return p.sourceHasNativeTypeLayout(a.Elem())
+	}
+	return false
+}
+
+// TypeRepresentationsPending reports whether a frontend still owns mutable
+// bindings for pkg. A pending package cannot be used by backend lowering.
+func (p Program) TypeRepresentationsPending(pkg *types.Package) bool {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	_, pending := p.packageSyntax.checkingTypePackages[pkg]
+	return pending
 }

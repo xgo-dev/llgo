@@ -1,7 +1,7 @@
 # Native representation and defined types
 
 This migration addresses [#2927](https://github.com/xgo-dev/llgo/issues/2927).
-The first stage implements definition provenance and inherited native storage.
+The first stage implements frontend type attributes and inherited native storage.
 It is not a complete resolution of native layout, conversion, or reflection
 consistency. The remaining stages below are required before closing the issue.
 
@@ -19,32 +19,50 @@ unrelated ordinary Go callback parameter retains its closure environment.
 
 The existing `SetTypeCallConv` API supplies native roots during this migration.
 Derived declarations do not acquire additional calling-convention registrations.
-Representation consumers use `RepresentationOf` instead of independently
+Backend representation consumers use `RepresentationOf` instead of independently
 looking up a new name in the calling-convention registry.
 
-## Definition provenance
+## Frontend attributes and checking lifecycle
 
-The source loader supplies its live `types.Info` to declaration collection before
-checking. A representation query follows the actual bound RHS type, including
-qualified imports, aliases, and generic instances. It does not cache an
-unavailable RHS. Instances query their origin declaration's representation.
-Local declarations are identified within their original package and lexical
-scope, so a local type that shadows a native package type remains ordinary Go.
+Definition provenance is frontend input, not a backend query mechanism. The
+frontend resolves native storage, callback ABI, and diagnostic origin into a
+`TypeRepresentation` for each declared type. `RepresentationOf` reads those
+attributes without walking named definition edges or accessing source bindings.
+Generic instances read the attribute of their origin declaration. Independent
+same-shape declarations remain independent; Go identity and method sets do not
+change.
 
-One-shot frontend clients that have discarded `types.Info` resolve named RHS
-expressions in the completed package's original scope using `types.CheckExpr`.
-That fallback is synchronized for backend readers, and a resolution error must
-not silently select Go storage. Programmatic clients and future importers can
-provide an explicit edge with `SetTypeDefinition`.
+The lifecycle has two phases:
 
-Backend Programs share this Go-owned provenance while retaining independent
-LLVM contexts and lowering caches. Source information must finish changing
-before backend lowering starts.
+1. During source checking, a frontend resolver uses the checker's live
+   `types.Info` for source size/alignment queries. This is needed for constants
+   and array bounds containing `unsafe.Sizeof`. An unavailable RHS is never
+   memoized as a completed attribute. Only source layout can use this resolver;
+   attempting backend lookup or creating a backend Program before completion
+   fails explicitly.
+2. After each successful check, including a recheck after source rewriting, the
+   frontend resolves all package and local type declarations and atomically
+   publishes their attributes. It then releases the provisional callback and
+   source references. Dependencies complete this phase before their importers
+   are checked. Backend Programs share only the published Go-owned metadata,
+   keeping independent LLVM contexts and layout caches.
 
-Neither shared `Underlying()` objects nor shared fields establish a definition
-edge. An independently declared type stays independent even if its structure is
-identical. Declaration positions in this implementation locate an AST RHS; they
-do not identify an enclosing struct from its fields.
+One-shot clients with already checked syntax resolve and publish attributes
+when collecting directives. If `types.Info` is unavailable, the frontend may
+use `types.CheckExpr` in the original lexical scope during this preparation
+step. Binding failures prevent publication; backend queries never retry source
+resolution. Clients collecting directives before checking should supply live
+`types.Info` and call `cl.CompleteTypeRepresentations` after a successful check.
+
+Programmatic SSA clients supply resolved attributes with
+`SetTypeRepresentation`; `SetTypeCallConv` remains the legacy API for native
+roots. Published attributes cannot be changed to invalidate an existing layout.
+Neither shared `Underlying()` objects nor shared fields establish inheritance.
+
+Package export serialization is a later stage. Until it carries these attributes
+(including reachable private and generic origins), native packages retain the
+existing source-checking fallback; this change does not disable archive or SSA
+caching.
 
 ## First-stage coverage
 
@@ -58,7 +76,7 @@ do not identify an enclosing struct from its fields.
   environment of ordinary Go closures.
 - Source tests cover transitive and cross-package definitions, aliases,
   parenthesized RHS types, generic templates/instances, recursion, local scopes,
-  method-set independence, and concurrent backend queries.
+  method-set independence, and concurrent backend queries after source bindings are discarded.
 - Executable tests in `test/llgoext/nativerepr` preserve an adjacent sentinel
   through pointer reads/writes and exercise ordinary Go closures accepting a
   derived native value, inherited callback invocation and clearing, and array
@@ -88,7 +106,7 @@ do not identify an enclosing struct from its fields.
    `abi.Func` alone cannot distinguish a code pointer from a Go closure. Keep
    unsupported native vector reflection calls explicitly rejected.
 5. Define versioned package representation metadata and cache fingerprints.
-   The current source loader can reconstruct declaration edges from source;
+   The current source loader can resolve type attributes from source;
    standard Go export data does not carry this LLGo protocol. Do not infer it
    from export-data object sharing or silently assume Go representation when
    required native metadata is missing. Include generic origins and reachable
