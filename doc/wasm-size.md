@@ -47,9 +47,9 @@ codec. With `-x`, selected codecs report
 Emscripten Full LTO size builds repeat Binaryen size passes while the
 deployment module shrinks. Embedded and external DWARF profiles use a single
 pass.
-With DCE, the final link can call a proven synchronous executable directly
-and omit its scheduler and Asyncify. The direct entry initializes the Go
-runtime and reuses package archives.
+With DCE, the final link can call a proven allocation-free and synchronous
+executable directly. The direct entry skips Go runtime startup, its scheduler
+and Asyncify. It reuses package archives and preserves the Emscripten host API.
 The JavaScript SjLj profile preserves call boundaries in frames that use
 `setjmp` to limit duplicate unwind checks after LLVM inlining.
 

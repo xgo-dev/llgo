@@ -2888,7 +2888,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
-		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.embeddedRuntimeFree,
+		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.embeddedRuntimeFree && !ctx.emscriptenDirectMain,
 		pyInit:         needPyInit,
 		abiInit:        needAbiInit,
 		packageInits:   packageInits,

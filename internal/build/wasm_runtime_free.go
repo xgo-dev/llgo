@@ -21,8 +21,8 @@ import (
 // A closed program with no Go allocation, panic, callbacks or scheduler use
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
-// Emscripten uses the same proof to omit the scheduler at final link while
-// preserving runtime initialization and the instrumentation in cached code.
+// Emscripten uses the same proof to omit runtime startup and the scheduler at
+// final link. The instrumentation in cached archives keeps its usual ABI.
 func configureRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.RuntimeFree {
