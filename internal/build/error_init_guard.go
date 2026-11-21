@@ -49,34 +49,48 @@ func isLiteralErrorConstructor(fn *ssa.Function) bool {
 		len(ret.Results) == 1 && ret.Results[0] == box
 }
 
-func optionalErrorInitializers(init, ctor *ssa.Function) (groups []cl.OptionalInitializer) {
-	if init == nil || ctor == nil || init.Synthetic != "package initializer" {
+// optionalLiteralInitializers recognizes fresh literal errors and interface
+// boxes of constant values. Each value is published by exactly one store.
+func optionalLiteralInitializers(init, ctor *ssa.Function) (groups []cl.OptionalInitializer) {
+	if init == nil || init.Synthetic != "package initializer" {
 		return nil
 	}
 	for _, block := range init.Blocks {
+		previous := -1
 		for i, instr := range block.Instrs {
-			call, ok := instr.(*ssa.Call)
-			if !ok || call.Common().StaticCallee() != ctor || len(call.Common().Args) != 1 {
+			if _, debug := instr.(*ssa.DebugRef); debug {
 				continue
 			}
-			text, _ := call.Common().Args[0].(*ssa.Const)
-			if text == nil || text.Value == nil || text.Value.Kind() != constant.String {
+			start := previous
+			previous = i
+			store, ok := instr.(*ssa.Store)
+			if !ok || start < 0 {
 				continue
 			}
-			for j := i + 1; j < len(block.Instrs); j++ {
-				if _, debug := block.Instrs[j].(*ssa.DebugRef); debug {
-					continue
-				}
-				store, ok := block.Instrs[j].(*ssa.Store)
-				if ok && store.Val == call {
-					if global, ok := store.Addr.(*ssa.Global); ok && global.Pkg == init.Pkg &&
-						cl.InitializerHasLocalUses(block.Instrs[i:j+1]) {
-						groups = append(groups, cl.OptionalInitializer{First: call, Store: store, Global: global})
-					}
-				}
-				break
+			first, _ := store.Val.(ssa.Instruction)
+			if first != block.Instrs[start] {
+				continue
+			}
+			global, _ := store.Addr.(*ssa.Global)
+			if global != nil && global.Pkg == init.Pkg && discardableLiteralValue(store.Val, ctor) &&
+				cl.InitializerHasLocalUses(block.Instrs[start:i+1]) {
+				groups = append(groups, cl.OptionalInitializer{First: first, Store: store, Global: global})
 			}
 		}
 	}
 	return groups
+}
+
+func discardableLiteralValue(value ssa.Value, ctor *ssa.Function) bool {
+	switch value := value.(type) {
+	case *ssa.Call:
+		if ctor != nil && value.Common().StaticCallee() == ctor && len(value.Common().Args) == 1 {
+			text, _ := value.Common().Args[0].(*ssa.Const)
+			return text != nil && text.Value != nil && text.Value.Kind() == constant.String
+		}
+	case *ssa.MakeInterface:
+		_, ok := value.X.(*ssa.Const)
+		return ok
+	}
+	return false
 }

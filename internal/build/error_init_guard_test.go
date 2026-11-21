@@ -30,6 +30,8 @@ func TestOptionalInitializersLiteralErrors(t *testing.T) {
 		{name: "constructor with side effects", constructor: "println(s); return &message{s}"},
 		{name: "constructor returns nil", constructor: "return nil"},
 		{name: "dynamic input", rhs: "errors.New(text())"},
+		{name: "constant interface", rhs: "any(struct{ N int }{})", wantGuard: true, wantDrop: true},
+		{name: "live constant interface", rhs: "any(struct{ N int }{})", entry: "println(data.Sentinel != nil)", wantGuard: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)

@@ -59,7 +59,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		case !wasm && hasStaticDataValues(pkg.Package):
 			groups = cl.OptionalMapInitializers(source.Func("init"))
 		case wasm:
-			groups = optionalErrorInitializers(source.Func("init"), errorConstructor)
+			groups = optionalLiteralInitializers(source.Func("init"), errorConstructor)
 		}
 		if len(groups) == 0 {
 			continue
@@ -143,13 +143,14 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	var dataCount, errorCount, otherCount int
+	var dataCount, errorCount, interfaceCount, otherCount int
 	for global, store := range candidates {
 		if observedData[global.Pkg] {
 			continue
 		}
 		call, _ := store.Val.(*ssa.Call)
 		errorValue := call != nil && errorConstructor != nil && call.Common().StaticCallee() == errorConstructor
+		_, interfaceValue := store.Val.(*ssa.MakeInterface)
 		if errorValue && keepErrorConstructors {
 			continue
 		}
@@ -159,6 +160,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			dataCount++
 		case errorValue:
 			errorCount++
+		case interfaceValue:
+			interfaceCount++
 		default:
 			otherCount++
 		}
@@ -170,6 +173,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 		if errorCount != 0 {
 			fmt.Fprintf(os.Stderr, "llgo: omit unused literal error initializers (%d)\n", errorCount)
+		}
+		if interfaceCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused constant interface initializers (%d)\n", interfaceCount)
 		}
 		if otherCount != 0 {
 			kind := "map"
