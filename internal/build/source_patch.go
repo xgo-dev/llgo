@@ -40,6 +40,7 @@ type sourcePatchBuildContext struct {
 	buildFlags     []string
 	targetTags     []string
 	builtinFormats bool
+	deferErrorType bool
 	fsSnapshot     []byte
 	cgoEnabled     *bool
 }
@@ -57,6 +58,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 		}
 		out = next
 		pkgFiles[pkgPath] = files
+	}
+	if ctx.deferErrorType {
+		if path, source := deferredErrorTypeSource(goroot, base); source != nil {
+			if out == nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+			}
+			out[path] = source
+			cacheFile := filepath.Join(filepath.Dir(path), errorTypeCacheFile)
+			out[cacheFile] = []byte(errorTypeCacheSource)
+			pkgFiles["errors"] = append(pkgFiles["errors"], cacheFile)
+		}
 	}
 	if out == nil {
 		return base, nil, nil

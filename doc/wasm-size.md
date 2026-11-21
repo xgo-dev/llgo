@@ -82,6 +82,11 @@ Single-worker Full LTO size builds with supported Go sources read host
 filesystem properties during initialization and create Go JavaScript handles
 on first use.
 
+With DCE and Full LTO, size builds can defer the private reflection lookup
+in `errors` to the concrete-target check in `errors.As`, which caches the
+descriptor on first use. Programs that only construct or compare errors can
+release that reflection code at link time.
+
 In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
 `encoding/json.Marshal` calls to typed encoders. Closed shapes can use
 integers, booleans, strings, pointers, arrays, slices, structs and string-keyed

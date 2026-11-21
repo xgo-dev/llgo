@@ -944,6 +944,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		buildFlags:     cfg.BuildFlags,
 		targetTags:     sourceTargetTags,
 		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
+		deferErrorType: !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions),
 		fsSnapshot:     fsSnapshot,
 		cgoEnabled:     &sourceCgoEnabled,
 	})
