@@ -1,4 +1,4 @@
-//go:build (!nogc || windows) && !(baremetal && llgo.baremetal.stdio)
+//go:build !wasm && (!nogc || windows) && !(baremetal && llgo.baremetal.stdio)
 
 package runtime
 

@@ -10,11 +10,10 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
-const useWasmReflectBridges = true
-
-func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefix []unsafe.Pointer, in []Value) []Value {
+func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, _ *abi.Type, receiver *unsafe.Pointer, in []Value) []Value {
+	method := receiver != nil
 	if method {
-		env = *(*unsafe.Pointer)(prefix[0])
+		env = *receiver
 	}
 	args := make([]unsafe.Pointer, len(in))
 	for i, arg := range in {
