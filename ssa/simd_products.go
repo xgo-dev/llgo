@@ -8,6 +8,32 @@ import (
 
 func (b Builder) simdAlternating(op SIMDOp, result Type, args []Expr) Expr {
 	addend := args[len(args)-1]
+	target := b.Prog.Target()
+	level := target.goArchitectureSetting(target.GOAMD64)
+	// LLVM recognizes a shuffle of alternating subtraction and addition as
+	// ADDSUB or FMADDSUB. Keep the single-FMA fallback on CPUs where a
+	// pair of vector FMAs could become two sets of scalar libcalls.
+	if level == "v4" || level == "v3" || (level == "v2" && op == SIMDAddOddSubEven) {
+		var sub, add llvm.Value
+		if op == SIMDAddOddSubEven {
+			sub = b.impl.CreateFSub(args[0].impl, addend.impl, "")
+			add = b.impl.CreateFAdd(args[0].impl, addend.impl, "")
+		} else {
+			fma := func(z llvm.Value) llvm.Value {
+				return b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.fma"), []llvm.Value{args[0].impl, args[1].impl, z}, "")
+			}
+			sub, add = fma(b.impl.CreateFNeg(addend.impl, "")), fma(addend.impl)
+		}
+		if op == SIMDMulAddOddSubEven {
+			sub, add = add, sub
+		}
+		n := result.ll.VectorSize()
+		mask := make([]llvm.Value, n)
+		for i := range mask {
+			mask[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(i+(i%2)*n), false)
+		}
+		return Expr{b.impl.CreateShuffleVector(sub, add, llvm.ConstVector(mask, false), ""), result}
+	}
 	negate := make([]llvm.Value, result.ll.VectorSize())
 	for i := range negate {
 		bit := uint64(i & 1)
