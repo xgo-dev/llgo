@@ -49,7 +49,9 @@ deployment module shrinks. Embedded and external DWARF profiles use a single
 pass.
 With DCE, the final link can call a proven allocation-free and synchronous
 executable directly. The direct entry skips Go runtime startup, its scheduler
-and Asyncify. It reuses package archives and preserves the Emscripten host API.
+and Asyncify. The executable package also omits its caller frames and polls.
+When the link needs no Go runtime objects, Emscripten provides the allocator
+used by C and the host API. Dependency archives keep their normal code.
 For other closed single-worker size builds, Full LTO can prove that the
 scheduler is unused even when the program needs Go runtime initialization.
 The final link first tries direct execution with unresolved scheduler markers.

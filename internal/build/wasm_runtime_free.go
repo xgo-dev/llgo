@@ -14,6 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -174,6 +175,12 @@ func configureEmscriptenDirectLink(target *crosscompile.Export) {
 		return strings.HasPrefix(flag, "-sASYNCIFY")
 	})
 	target.WasmPostLink.Asyncify = false
+}
+
+// Only the executable's own package can omit its polls and caller frames.
+// Dependencies still compile with the fixed runtime profile.
+func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {
+	return ctx.emscriptenDirectMain && pkgExists(ctx.initial, pkg)
 }
 
 func enableWasmRuntimeFree(ctx *context) {

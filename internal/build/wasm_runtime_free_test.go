@@ -224,6 +224,10 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				if ctx.wasmRuntimeFree || !ctx.frontendOptions.ShadowStack || !prog.GCRootsEnabled() || !prog.CooperativeSafepointsEnabled() {
 					t.Fatal("direct Emscripten entry changed dependency instrumentation")
 				}
+				if isEmscriptenRuntimeFreeEntry(ctx, pkg.Package) != test.want ||
+					isEmscriptenRuntimeFreeEntry(ctx, &packages.Package{PkgPath: "dep"}) {
+					t.Fatal("allocation-free lowering must apply only to the entry package")
+				}
 				if !slices.Equal(ctx.crossCompile.LDFLAGS, []string{"-sASYNCIFY=1", "--pre-js", emscriptenAsyncifyExportsJS, "-Oz"}) {
 					t.Fatal("direct Emscripten entry changed compiler flags")
 				}

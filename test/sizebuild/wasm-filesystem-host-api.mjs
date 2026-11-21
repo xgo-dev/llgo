@@ -4,6 +4,8 @@ import {pathToFileURL} from 'node:url';
 const {default: init} = await import(pathToFileURL(process.argv[2]));
 const module = await init({noInitialRun: true});
 assert.equal(typeof module.cwrap, 'function');
+const text = 'host allocator ABI';
+assert.equal(module.UTF8ToString(module.allocateUTF8(text)), text);
 const fs = module.FS;
 assert.ok(fs.filesystems.MEMFS);
 fs.mkdir('/llgo-host-api');

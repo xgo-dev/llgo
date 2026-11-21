@@ -111,3 +111,32 @@ func TestEmscriptenSchedulerLinkFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestEmscriptenSchedulerStageCreationError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	ctx := &context{}
+	plan := &mainLinkPlan{directWasmInputs: []string{"direct.o"}}
+	if out, stage, err := linkStagedWasm(ctx, plan, "app", dir, false); !os.IsNotExist(err) || out != ctx || stage != dir {
+		t.Fatalf("unexpected staging result: %p %q %v", out, stage, err)
+	}
+}
+
+func TestEmscriptenSchedulerLibcAllocatorFlags(t *testing.T) {
+	ctx := &context{emscriptenDirectMain: true, crossCompile: crosscompile.Export{
+		LDFLAGS: []string{"-sASYNCIFY=1", "-sMALLOC=none"},
+	}}
+	normal := newLinkExecutionContext(ctx, &mainLinkPlan{})
+	libc := newLinkExecutionContext(ctx, &mainLinkPlan{emscriptenUseLibcAllocator: true})
+	if !slices.Equal(normal.crossCompile.LDFLAGS, []string{"-sMALLOC=none"}) ||
+		!slices.Equal(libc.crossCompile.LDFLAGS, []string{"-sMALLOC=emmalloc"}) ||
+		!slices.Equal(ctx.crossCompile.LDFLAGS, []string{"-sASYNCIFY=1", "-sMALLOC=none"}) {
+		t.Fatal("allocator selection changed the profile or selected the wrong link flags")
+	}
+}
+
+func TestEmscriptenSchedulerEntryPackageFingerprint(t *testing.T) {
+	section := packageSection{EmscriptenRuntimeFree: true}
+	if section.empty() {
+		t.Fatal("allocation-free entry must participate in the archive fingerprint")
+	}
+}

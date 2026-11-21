@@ -244,6 +244,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 
 	m.pkg.PkgPath = p.PkgPath
 	m.pkg.PkgID = p.ID
+	m.pkg.EmscriptenRuntimeFree = isEmscriptenRuntimeFreeEntry(c, p)
 	m.pkg.GoVersion = c.buildConf.GoVersion
 	if m.pkg.GoVersion == "" && p.Module != nil {
 		m.pkg.GoVersion = p.Module.GoVersion

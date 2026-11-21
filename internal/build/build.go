@@ -1662,6 +1662,11 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	target := ctx.crossCompile
 	if ctx.emscriptenDirectMain {
 		configureEmscriptenDirectLink(&target)
+		if plan.emscriptenUseLibcAllocator {
+			if i := slices.Index(target.LDFLAGS, "-sMALLOC=none"); i >= 0 {
+				target.LDFLAGS[i] = "-sMALLOC=emmalloc"
+			}
+		}
 	}
 	return &context{
 		prog:         ctx.prog,
@@ -2754,6 +2759,8 @@ type mainLinkPlan struct {
 	entryTarget          llssa.Target
 	stripDarwinLTOLocals bool
 	darwinHiddenGlobals  []string
+
+	emscriptenUseLibcAllocator bool
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -2771,6 +2778,8 @@ type mainLinkPreparation struct {
 	gen                  genConfig
 	stripDarwinLTOLocals bool
 	darwinHiddenGlobals  []string
+
+	emscriptenUseLibcAllocator bool
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2804,7 +2813,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	var linkArgs []string
 	var rtLinkInputs []string
 	var rtLinkArgs []string
-	linkedOrder := linkedPackageClosure(ctx, pkg, pkgs)
+	linkedOrder := mainLinkPackages(ctx, pkg, pkgs)
 
 	// packages.Visit with a post callback yields dependencies before importers.
 	// Reverse that order so static archives are linked after the objects that use them.
@@ -2858,7 +2867,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
-	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+	linkRuntime := needRuntime || needPyInit || ctx.buildConf.Target == ""
+	if linkRuntime {
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
@@ -2925,6 +2935,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		gen:                  gen,
 		stripDarwinLTOLocals: darwinSymbols.stripLTOLocals,
 		darwinHiddenGlobals:  darwinSymbols.hiddenGlobals,
+
+		emscriptenUseLibcAllocator: ctx.emscriptenDirectMain && !linkRuntime,
 	}, nil
 }
 
@@ -3005,6 +3017,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		entryTarget:          *ctx.prog.Target(),
 		stripDarwinLTOLocals: preparation.stripDarwinLTOLocals,
 		darwinHiddenGlobals:  preparation.darwinHiddenGlobals,
+
+		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
 	}, nil
 }
 
@@ -3803,6 +3817,10 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 	options := ctx.frontendOptions
+	if isEmscriptenRuntimeFreeEntry(ctx, pkg) {
+		options.ShadowStack = false
+		options.DisableSafepoints = true
+	}
 	options.DeclarationsOnly = aPkg.frontendOpaque != nil
 	// Hosted //export entries use final-link wrappers to register foreign caller threads
 	// with the collector; Windows shared libraries also initialize lazily.

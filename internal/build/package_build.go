@@ -411,6 +411,7 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 
 		wasmClosedProgram:     ctx.wasmClosedProgram,
 		embeddedClosedProgram: ctx.embeddedClosedProgram,
+		emscriptenDirectMain:  ctx.emscriptenDirectMain,
 		sizePruningRoots:      ctx.sizePruningRoots,
 
 		cTransformer:    session.transformer,
