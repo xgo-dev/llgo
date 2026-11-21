@@ -289,16 +289,7 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 	if tab == nil {
 		return true
 	}
-	t := tab._type
-	eq := t.Equal
-	if eq == nil {
-		panic(errorString("comparing uncomparable type " + t.Str_))
-	}
-	if isDirectIface(t) {
-		// See comment in efaceeq.
-		return x == y
-	}
-	return eq(x, y)
+	return efaceeq(tab._type, x, y)
 }
 
 func structFieldsHaveCheapMismatch(fields []structfield, p, q unsafe.Pointer) bool {
@@ -360,43 +351,29 @@ func typeEqualMayPanic(t *_type) bool {
 
 //llgo:env
 func structequal(p, q unsafe.Pointer) bool {
-	x := (*structtype)(closureEnv())
-	fields := x.Fields
-	segmentStart := 0
-	for i, ft := range fields {
-		if ft.Blank() {
-			continue
+	fields := (*structtype)(closureEnv()).Fields
+	for len(fields) != 0 {
+		// Cheap comparisons can move ahead of full comparisons only
+		// until the first field whose equality may panic.
+		end := len(fields)
+		for i, ft := range fields {
+			if !ft.Blank() && typeEqualMayPanic(ft.Typ) {
+				end = i
+				break
+			}
 		}
-		if !typeEqualMayPanic(ft.Typ) {
-			continue
-		}
-		if structFieldsHaveCheapMismatch(fields[segmentStart:i], p, q) {
+		if structFieldsHaveCheapMismatch(fields[:end], p, q) {
 			return false
 		}
-		for _, ft := range fields[segmentStart : i+1] {
-			if ft.Blank() {
-				continue
-			}
-			pi := add(p, ft.Offset)
-			qi := add(q, ft.Offset)
-			if !ft.Typ.Equal(pi, qi) {
+		if end < len(fields) {
+			end++
+		}
+		for _, ft := range fields[:end] {
+			if !ft.Blank() && !ft.Typ.Equal(add(p, ft.Offset), add(q, ft.Offset)) {
 				return false
 			}
 		}
-		segmentStart = i + 1
-	}
-	if structFieldsHaveCheapMismatch(fields[segmentStart:], p, q) {
-		return false
-	}
-	for _, ft := range fields[segmentStart:] {
-		if ft.Blank() {
-			continue
-		}
-		pi := add(p, ft.Offset)
-		qi := add(q, ft.Offset)
-		if !ft.Typ.Equal(pi, qi) {
-			return false
-		}
+		fields = fields[end:]
 	}
 	return true
 }
