@@ -304,16 +304,16 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		}
 	}
 
-	if _, selected := patchSrcs[wasiEnvironmentPatch]; pkgPath == "syscall" && selected {
+	if _, selected := patchSrcs[environmentSizePatch]; pkgPath == "syscall" && selected {
 		file := filepath.Join(srcDir, "env_unix.go")
 		var patched []byte
-		if slices.Contains(ctx.targetTags, "llgo.size.wasi") && base[file] == nil {
+		if base[file] == nil {
 			if source, err := readOverlay(file); err == nil {
-				patched = rewriteWASIGetenv(source)
+				patched = rewriteEnvironmentLookup(source)
 			}
 		}
 		if patched == nil {
-			delete(patchSrcs, wasiEnvironmentPatch)
+			delete(patchSrcs, environmentSizePatch)
 		} else {
 			ensureOverlay()
 			out[file] = patched

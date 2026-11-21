@@ -57,7 +57,7 @@ func Box() any { return pathReader{} }
 			defer backend.Dispose()
 			ctx := &context{prog: backend, buildConf: &Config{Verbose: true}}
 			roots := []*ssa.Function{entry.Func("init"), entry.Func("main")}
-			configureWASISyscallState(ctx, wasiSyscallPackage(prog), roots, nil, func(name string) bool { return name == tc.symbol })
+			configureWASISyscallState(ctx, environmentSyscallPackage(prog), roots, nil, func(name string) bool { return name == tc.symbol })
 			if got := slices.Contains(ctx.initializerGuardsOff, wasiPathStateGuard); got != tc.wantDrop {
 				t.Fatalf("path state dropped = %v, want %v", got, tc.wantDrop)
 			}

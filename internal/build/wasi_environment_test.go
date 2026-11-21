@@ -105,8 +105,8 @@ func main() {`+tc.body+`}`, p.Pkg)
 			prog.Build()
 			ctx := &context{buildConf: &Config{Verbose: true}}
 			result := rta.Analyze([]*ssa.Function{entry.Func("main")}, false)
-			configureWASIEnvironment(ctx, wasiSyscallPackage(prog), result, func(name string) bool { return name == tc.symbol })
-			got := len(ctx.initializerGuardsOff) == 1 && ctx.initializerGuardsOff[0] == wasiEnvironmentGuard
+			configureReadOnlyEnvironment(ctx, environmentSyscallPackage(prog), result, func(name string) bool { return name == tc.symbol })
+			got := len(ctx.initializerGuardsOff) == 1 && ctx.initializerGuardsOff[0] == mutableEnvironmentGuard
 			if got != tc.want {
 				t.Fatalf("specialized = %v, want %v", got, tc.want)
 			}
@@ -121,7 +121,7 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := string(rewriteWASIGetenv(source))
+	updated := string(rewriteEnvironmentLookup(source))
 	for _, fragment := range []string{"llgoLoadIndexedEnvironment()", "return llgoGetenvIndexed(key)", "func llgoGetenvWithLock(", "envLock.RLock()", "defer envLock.RUnlock()"} {
 		if !strings.Contains(updated, fragment) {
 			t.Fatalf("rewritten Getenv missing %q", fragment)
@@ -140,14 +140,14 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 		}
 		for _, replacement := range []string{"existingCopier", "anotherOnce(func() {})", "sync.OnceFunc(copyEnvironment)"} {
 			input := strings.Replace(string(source), "var copyenv = sync.OnceFunc(func() {", "var copyenv = "+replacement+"\n\nvar unrelated = sync.OnceFunc(func() {", 1)
-			patched := string(rewriteWASIGetenv([]byte(input)))
+			patched := string(rewriteEnvironmentLookup([]byte(input)))
 			if !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
 				t.Errorf("unexpected initializer rewrite with %s", replacement)
 			}
 		}
 		input := strings.Replace(string(source), "func Getenv(key string) (value string, found bool) {\n\tcopyenv()",
 			"func Getenv(key string) (value string, found bool) {\n\tif len(key) == 0 { return \"\", false }\n\tcopyenv()", 1)
-		if patched := string(rewriteWASIGetenv([]byte(input))); !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
+		if patched := string(rewriteEnvironmentLookup([]byte(input))); !strings.Contains(patched, "return llgoGetenvWithoutLock(key)") || strings.Contains(patched, "llgoEnvironmentCopier") {
 			t.Fatal("moved the environment initialization past a different Getenv entry")
 		}
 	}
@@ -163,26 +163,34 @@ func TestOptionalInitializersWASIEnvironmentSource(t *testing.T) {
 		case "differentLock.RLock":
 			input = strings.Replace(string(source), "envLock.RLock", unsupported, 1)
 		}
-		if rewriteWASIGetenv([]byte(input)) != nil {
+		if rewriteEnvironmentLookup([]byte(input)) != nil {
 			t.Errorf("rewrote unsupported environment source %q", unsupported)
 		}
 	}
 	for _, tc := range []struct {
-		name string
-		base map[string][]byte
-		want bool
+		name, goos, goarch, tag string
+		base                    map[string][]byte
+		want                    bool
 	}{
-		{name: "size profile", want: true},
-		{name: "user overlay", base: map[string][]byte{name: source}},
+		{name: "WASI size profile", goos: "wasip1", goarch: "wasm", tag: "llgo.size.wasi", want: true},
+		{name: "macOS size profile", goos: "darwin", goarch: "arm64", tag: "llgo.size.native", want: true},
+		{name: "Linux size profile", goos: "linux", goarch: "amd64", tag: "llgo.size.native", want: true},
+		{name: "native ordinary profile", goos: "linux", goarch: "amd64"},
+		{name: "WASI user overlay", goos: "wasip1", goarch: "wasm", tag: "llgo.size.wasi", base: map[string][]byte{name: source}},
+		{name: "native user overlay", goos: "darwin", goarch: "arm64", tag: "llgo.size.native", base: map[string][]byte{name: source}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tags := []string{"llgo"}
+			if tc.tag != "" {
+				tags = append(tags, tc.tag)
+			}
 			_, overlay, _, err := applySourcePatchForPkg(tc.base, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), "syscall", sourcePatchBuildContext{
-				goos: "wasip1", goarch: "wasm", goversion: runtime.Version(), targetTags: []string{"llgo", "llgo.size.wasi"},
+				goos: tc.goos, goarch: tc.goarch, goversion: runtime.Version(), targetTags: tags,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, installed := overlay[filepath.Join(srcDir, "z_llgo_patch_"+wasiEnvironmentPatch)]
+			_, installed := overlay[filepath.Join(srcDir, "z_llgo_patch_"+environmentSizePatch)]
 			if installed != tc.want || strings.Contains(string(overlay[name]), "func llgoGetenvWithLock(") != tc.want {
 				t.Fatalf("environment patch installed = %v, want %v", installed, tc.want)
 			}
@@ -204,14 +212,14 @@ func Getenv(key string) (string, bool) {
 	defer envLock.RUnlock()
 	return "", false
 }`
-	indexed := string(rewriteWASIGetenv([]byte(source)))
+	indexed := string(rewriteEnvironmentLookup([]byte(source)))
 	if !strings.Contains(indexed, "envs []string = llgoLoadIndexedEnvironment()") ||
 		!strings.Contains(indexed, "return llgoGetenvIndexed(key)") ||
 		!strings.Contains(indexed, "func llgoGetenvWithLock(key string) (string, bool) {\n\tenvOnce.Do(copyenv)") {
 		t.Fatalf("legacy indexed lookup lost its mutable fallback:\n%s", indexed)
 	}
 	other := strings.Replace(source, "envOnce.Do(copyenv)", "envOnce.Do(other)", 1)
-	fallback := string(rewriteWASIGetenv([]byte(other)))
+	fallback := string(rewriteEnvironmentLookup([]byte(other)))
 	if !strings.Contains(fallback, "envs []string = llgoLoadEnvironment()") ||
 		!strings.Contains(fallback, "return llgoGetenvWithoutLock(key)") ||
 		!strings.Contains(fallback, "envOnce.Do(other)") {

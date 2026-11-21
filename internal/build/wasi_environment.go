@@ -13,11 +13,11 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-const wasiEnvironmentGuard = "syscall.llgoMutableEnvironment"
+const mutableEnvironmentGuard = "syscall.llgoMutableEnvironment"
 const wasiEnvironmentNeededGuard = "syscall.llgoEnvironmentNeeded"
-const wasiEnvironmentPatch = "getenv_wasip1.go"
+const environmentSizePatch = "getenv_size.go"
 
-func wasiSyscallPackage(prog *ssa.Program) *ssa.Package {
+func environmentSyscallPackage(prog *ssa.Program) *ssa.Package {
 	p := prog.ImportedPackage("syscall")
 	if p == nil || p.Members["llgoMutableEnvironment"] == nil && p.Members[wasiPathStateMember] == nil {
 		return nil
@@ -25,11 +25,11 @@ func wasiSyscallPackage(prog *ssa.Program) *ssa.Package {
 	return p
 }
 
-func configureWASIEnvironment(ctx *context, p *ssa.Package, result *rta.Result, isSymbolRoot func(string) bool) {
+func configureReadOnlyEnvironment(ctx *context, p *ssa.Package, result *rta.Result, isSymbolRoot func(string) bool) {
 	if p.Members["llgoMutableEnvironment"] == nil {
 		return
 	}
-	for _, name := range []string{wasiEnvironmentGuard, "syscall.envs", "syscall.copyenv", "syscall.env", "syscall.envLock", "syscall.envOnce",
+	for _, name := range []string{mutableEnvironmentGuard, "syscall.envs", "syscall.copyenv", "syscall.env", "syscall.envLock", "syscall.envOnce",
 		"syscall.llgoEnvironmentCopier", "syscall.llgoCopyEnvironmentIndex", "syscall.llgoEnvironmentSlots",
 		"syscall.llgoLoadIndexedEnvironment", "syscall.llgoIndexEnvironment", "syscall.llgoGetenvIndexed",
 		"syscall.llgoGetenvWithLock", "syscall.Environ", "syscall.Clearenv", "syscall.Setenv", "syscall.Unsetenv"} {
@@ -47,11 +47,15 @@ func configureWASIEnvironment(ctx *context, p *ssa.Package, result *rta.Result, 
 			return
 		}
 	}
-	ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, wasiEnvironmentGuard)
+	ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, mutableEnvironmentGuard)
 	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
-		fmt.Fprintln(os.Stderr, "llgo: specialize WASI read-only environment")
+		target := "native"
+		if ctx.buildConf.Goos == "wasip1" {
+			target = "WASI"
+		}
+		fmt.Fprintf(os.Stderr, "llgo: specialize %s read-only environment\n", target)
 		if _, indexed := result.Reachable[p.Func("llgoLoadIndexedEnvironment")]; indexed {
-			fmt.Fprintln(os.Stderr, "llgo: index the WASI environment without a Go map")
+			fmt.Fprintf(os.Stderr, "llgo: index the %s environment without a Go map\n", target)
 		}
 	}
 }
@@ -65,7 +69,7 @@ func configureWASIEnvironmentSnapshot(ctx *context, p *ssa.Package, roots []*ssa
 	if p.Members["llgoEnvironmentNeeded"] == nil || load == nil || snapshot == nil {
 		return
 	}
-	for _, name := range []string{wasiEnvironmentNeededGuard, wasiEnvironmentGuard, "syscall.llgoLoadEnvironment",
+	for _, name := range []string{wasiEnvironmentNeededGuard, mutableEnvironmentGuard, "syscall.llgoLoadEnvironment",
 		"syscall.llgoEnvironmentCopier", "syscall.llgoCopyEnvironmentIndex", "syscall.llgoGetenvWithoutLock",
 		"syscall.llgoLoadIndexedEnvironment", "syscall.llgoIndexEnvironment", "syscall.llgoGetenvIndexed",
 		"syscall.llgoGetenvWithLock", "syscall.init", "syscall.Getenv", "syscall.Setenv", "syscall.Unsetenv",
@@ -174,9 +178,9 @@ func envIdent(expr ast.Expr, name string) bool {
 	return ok && id.Name == name
 }
 
-// Select only the Unix environment table used by the supported WASI Go
+// Select only the Unix environment table used by the supported Go
 // toolchains. The lock continues to protect the ordinary stdlib lookup.
-func rewriteWASIGetenv(source []byte) []byte {
+func rewriteEnvironmentLookup(source []byte) []byte {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "env_unix.go", source, parser.SkipObjectResolution)
 	if err != nil || file.Name.Name != "syscall" {

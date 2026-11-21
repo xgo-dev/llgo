@@ -36,6 +36,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	wasm := conf.Goarch == "wasm"
+	native := hosted && !wasm
 	constructors := findLiteralConstructors(ctx, goroot)
 	candidates := make(map[*ssa.Global]cl.OptionalInitializer)
 	sliceOwners := make(map[*ssa.Package]bool)
@@ -55,15 +56,15 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 		var groups []cl.OptionalInitializer
 		switch {
-		case (wasm && (hosted || wasi) || embedded) && pkg.PkgPath == "os":
+		case (hosted || wasi || embedded) && pkg.PkgPath == "os":
 			groups = optionalStandardFileInitializers(source.Func("init"))
-			if wasi || embedded {
+			if wasi || embedded || native {
 				if len(groups) != 3 {
 					groups = nil
 				}
 				standardFiles = groups
 			}
-			if embedded {
+			if embedded || native {
 				groups = orderedOptionalInitializers(source.Func("init"), groups, optionalLiteralInitializers(source.Func("init"), constructors))
 			}
 		case hasStaticDataValues(pkg.Package):
@@ -90,11 +91,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	var wasiSyscall *ssa.Package
-	if wasi {
-		wasiSyscall = wasiSyscallPackage(ctx.progSSA)
+	var environment *ssa.Package
+	if wasi || native {
+		environment = environmentSyscallPackage(ctx.progSSA)
 	}
-	if len(candidates) == 0 && wasiSyscall == nil && darwinOS == nil {
+	if len(candidates) == 0 && environment == nil && darwinOS == nil {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -156,8 +157,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	unused, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
-	if wasiSyscall != nil {
-		configureWASIEnvironment(ctx, wasiSyscall, reachable, isSymbolRoot)
+	if environment != nil {
+		configureReadOnlyEnvironment(ctx, environment, reachable, isSymbolRoot)
 	}
 
 	if plan := ctx.stdout; plan != nil && len(plan.calls) != 0 &&
@@ -201,8 +202,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			delete(unused, group.Global)
 		}
 	}
-	if wasiSyscall != nil {
-		configureWASISyscallState(ctx, wasiSyscall, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+	if wasi && environment != nil {
+		configureWASISyscallState(ctx, environment, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
 	}
 	if darwinOS != nil && !blankImports["os"] {
 		configureDarwinExecutableCwd(ctx, darwinOS, roots, isSymbolRoot)

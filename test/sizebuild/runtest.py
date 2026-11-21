@@ -150,11 +150,13 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                          stdout_marker, True))
         fixtures.append(("wasm-literal-stdout-and-file", "console and file writes ok",
                          stdout_marker, True))
-        fixtures.append(("wasm-environment-readonly", "read-only environment lookup ok",
-                         readonly_env_marker, True))
-        fixtures.append(("wasm-environment-mutable", "mutable environment lookup ok",
-                         readonly_env_marker, False))
         fixtures.append(("native-map-init", "true true true", "llgo: omit unused map initializers", True))
+    if target == "wasi" or linux_amd64 or mac_arm64:
+        environment_marker = readonly_env_marker if target == "wasi" else "llgo: specialize native read-only environment"
+        fixtures.append(("wasm-environment-readonly", "read-only environment lookup ok",
+                         environment_marker, True))
+        fixtures.append(("wasm-environment-mutable", "mutable environment lookup ok",
+                         environment_marker, False))
     if target.startswith("emscripten"):
         fixtures.append(("wasm-once-panic", "once panic preserved", standard_file_marker, False))
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
@@ -182,8 +184,12 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             if init_marker not in log:
                 raise RuntimeError(f"{target} {fixture}: unused codec initialization retained\n{log}")
         run = [*runner]
+        run_env = env
         if fixture.startswith("wasm-environment-"):
-            run.append("--env=LLGO_WASI_TEST_ENV=old=value")
+            if target == "wasi":
+                run.append("--env=LLGO_WASI_TEST_ENV=old=value")
+            else:
+                run_env = dict(env, LLGO_WASI_TEST_ENV="old=value")
         if target == "wasi" and fixture.startswith("wasm-environment-"):
             if ("llgo: index the WASI environment without a Go map" in log) != wasi_readonly_env:
                 raise RuntimeError(f"{target} {fixture}: incorrect read-only environment index policy\n{log}")
@@ -200,7 +206,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                 if fixture == "wasm-standard-files" and stdout_marker in log:
                     raise RuntimeError(f"{target}: stdout redirection was specialized\n{log}")
                 run.extend([f"--volume={directory}:/tmp", "--env=TMPDIR=/tmp"])
-        actual = command([*run, str(artifact)], env, timeout=90)
+        actual = command([*run, str(artifact)], run_env, timeout=90)
         expected_output = expected
         if fixture == "json-static":
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()

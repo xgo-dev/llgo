@@ -9,8 +9,9 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// On WASI and bare metal, an unobserved standard File wrapper has no
-// observable initialization. These targets do not register it with a poller.
+// Find the standard File wrappers constructed from the inherited descriptors.
+// Native NewFile reads the descriptor's flags without changing them.
+// LLGo's native poll registration only records state for the wrapper.
 func optionalStandardFileInitializers(init *ssa.Function) (groups []cl.OptionalInitializer) {
 	if init == nil || init.Synthetic != "package initializer" {
 		return nil

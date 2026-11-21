@@ -1,8 +1,11 @@
-//go:build llgo && wasip1 && llgo.size.wasi
+//go:build llgo && ((wasip1 && llgo.size.wasi) || ((darwin || linux) && llgo.size.native))
 
 package syscall
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // The compiler gives this guard a weak true default. A closed link can use
 // the immutable lookup after proving that none of the environment writers run.
@@ -50,8 +53,11 @@ func llgoLoadIndexedEnvironment() []string {
 }
 
 func llgoIndexEnvironment(entries []string) []llgoEnvironmentSlot {
-	// Keep the table at most half full. Both the entry indices and key byte
-	// counts fit in uint32 because the entries already fit in wasm32 memory.
+	// Keep the table at most half full. WASI entries fit in 32-bit linear
+	// memory. Native snapshots with larger indices or keys use a scan.
+	if runtime.GOARCH != "wasm" && uint64(len(entries)) > 1<<32-1 {
+		return nil
+	}
 	size := 2
 	for size/2 < len(entries) {
 		size *= 2
@@ -61,6 +67,9 @@ func llgoIndexEnvironment(entries []string) []llgoEnvironmentSlot {
 		for sep := 0; sep < len(entry); sep++ {
 			if entry[sep] != '=' {
 				continue
+			}
+			if runtime.GOARCH != "wasm" && uint64(sep) >= 1<<32-1 {
+				return nil
 			}
 			if sep != 0 {
 				slot := llgoFindEnvironmentSlot(slots, entries, entry[:sep])
@@ -91,21 +100,17 @@ func llgoGetenvIndexed(key string) (string, bool) {
 	}
 	entries := envs
 	if len(entries) == 1 {
-		entry := entries[0]
-		if len(entry) > len(key) && entry[len(key)] == '=' && entry[:len(key)] == key {
-			// This is a possible match. Reject keys that include part of
-			// the value, just as the index does by storing the first '='.
-			for i := 0; i < len(key); i++ {
-				if key[i] == '=' {
-					return "", false
-				}
-			}
-			return entry[len(key)+1:], true
-		}
-		return "", false
+		return llgoLookupEnvironmentEntry(entries[0], key)
 	}
 	slots := llgoEnvironmentSlots
 	if len(slots) == 0 {
+		if runtime.GOARCH != "wasm" {
+			for _, entry := range entries {
+				if value, ok := llgoLookupEnvironmentEntry(entry, key); ok {
+					return value, true
+				}
+			}
+		}
 		return "", false
 	}
 	slot := slots[llgoFindEnvironmentSlot(slots, entries, key)]
@@ -113,6 +118,19 @@ func llgoGetenvIndexed(key string) (string, bool) {
 		return "", false
 	}
 	return entries[slot.index-1][slot.keySize+1:], true
+}
+
+func llgoLookupEnvironmentEntry(entry, key string) (string, bool) {
+	if len(entry) > len(key) && entry[len(key)] == '=' && entry[:len(key)] == key {
+		// A query must match exactly the prefix before the first '='.
+		for i := 0; i < len(key); i++ {
+			if key[i] == '=' {
+				return "", false
+			}
+		}
+		return entry[len(key)+1:], true
+	}
+	return "", false
 }
 
 // Use the same process-randomized hash as Go maps.
