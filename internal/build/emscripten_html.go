@@ -17,12 +17,14 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/tdewolff/minify/v2/js"
 	"github.com/xgo-dev/llgo/internal/env"
 )
 
@@ -145,7 +147,19 @@ func installEmscriptenBrowserHost(src, output string) error {
 	if same {
 		return fmt.Errorf("copy %s: output %s collides with the browser host sidecar", wasmFSScriptName, output)
 	}
-	if err := copyFileAtomic(src, dst); err != nil {
+	source, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
+	}
+	// Publish the same script for every profile so different applications
+	// can share the file and its manifest digest in one deployment directory.
+	// Retain the source when a custom shim uses syntax unknown to the minifier.
+	var compact bytes.Buffer
+	minifier := &js.Minifier{Version: 2020}
+	if err := minifier.Minify(nil, &compact, bytes.NewReader(source), nil); err == nil && compact.Len() < len(source) {
+		source = compact.Bytes()
+	}
+	if err := writeFileAtomic(dst, source); err != nil {
 		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
 	}
 	if filepath.Ext(output) != ".html" {

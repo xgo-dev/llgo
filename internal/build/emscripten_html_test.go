@@ -255,10 +255,13 @@ func TestInjectLLGoFSScriptErrors(t *testing.T) {
 	}
 }
 
+const browserHostTestSource = "globalThis.llgoAttachWasmFS = 1; // shim\n"
+const browserHostTestCompact = "globalThis.llgoAttachWasmFS=1"
+
 func TestInstallEmscriptenBrowserHost(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "wasm_fs.js")
-	if err := os.WriteFile(src, []byte("/* shim */\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(browserHostTestSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	htmlPath := filepath.Join(dir, "out", "main.html")
@@ -280,8 +283,8 @@ func TestInstallEmscriptenBrowserHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "/* shim */\n" {
-		t.Fatalf("copied wasm_fs.js = %q", data)
+	if string(data) != browserHostTestCompact {
+		t.Fatalf("published wasm_fs.js = %q", data)
 	}
 	got, err := os.ReadFile(htmlPath)
 	if err != nil {
@@ -295,7 +298,7 @@ func TestInstallEmscriptenBrowserHost(t *testing.T) {
 func TestInstallEmscriptenBrowserHostJS(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "wasm_fs.js")
-	if err := os.WriteFile(src, []byte("/* shim */\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(browserHostTestSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	jsPath := filepath.Join(dir, "out", "main.js")
@@ -312,8 +315,8 @@ func TestInstallEmscriptenBrowserHostJS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(copied) != "/* shim */\n" {
-		t.Fatalf("copied wasm_fs.js = %q", copied)
+	if string(copied) != browserHostTestCompact {
+		t.Fatalf("published wasm_fs.js = %q", copied)
 	}
 	got, err := os.ReadFile(jsPath)
 	if err != nil {
@@ -369,8 +372,8 @@ func TestInstallEmscriptenBrowserHostRejectsOutputCollision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(sidecar) != shim {
-		t.Fatalf("sidecar wasm_fs.js = %q, want shim", sidecar)
+	if len(sidecar) != 0 {
+		t.Fatalf("comment-only wasm_fs.js = %q", sidecar)
 	}
 	got, err = os.ReadFile(mjs)
 	if err != nil {

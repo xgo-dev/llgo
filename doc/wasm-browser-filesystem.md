@@ -4,8 +4,9 @@ Emscripten builds initialize the `syscall/js` filesystem host automatically.
 Both Memory32 and Memory64 work with the single-worker scheduler and the bounded
 worker pool. Size-optimized single-worker ES modules can import the shared
 `wasm_fs.js` from the same directory as the loader. Deploy all files marked
-`deployment` in the build manifest together. The sidecar/attach API also
-supports embedding and custom loaders.
+`deployment` in the build manifest together. The build publishes a minified
+copy of `targets/wasm_fs.js`. The sidecar/attach API also supports embedding and
+custom loaders.
 
 In a browser, Go file operations use the Emscripten runtime thread's `Module.FS`.
 Files, file descriptors, and cwd are shared by Go goroutines on different

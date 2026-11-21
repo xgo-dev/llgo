@@ -65,6 +65,8 @@ executables; development- and test-only modules are not included.
 | `github.com/goplus/cobra` | [Apache-2.0](LICENSES/Cobra-Apache-2.0.txt); compiled `pflag` package: [BSD-3-Clause](LICENSES/Cobra-pflag-BSD-3-Clause.txt) |
 | `github.com/mattn/go-tty` | [MIT](LICENSES/GoTTY-MIT.txt) |
 | `github.com/qiniu/x` | [Apache-2.0](LICENSES/Qiniu-X-Apache-2.0.txt) |
+| `github.com/tdewolff/minify/v2` | [MIT](LICENSES/Minify-MIT.txt) |
+| `github.com/tdewolff/parse/v2` | [MIT](LICENSES/Parse-MIT.txt) |
 | `github.com/xgo-dev/llvm` | [Apache-2.0 WITH LLVM-exception](LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt) |
 | `github.com/xgo-dev/plan9asm` | [Apache-2.0](LICENSES/XGo-Plan9Asm-Apache-2.0.txt) |
 | `go.bug.st/serial` | [BSD-3-Clause](LICENSES/Go-Serial-BSD-3-Clause.txt) |
