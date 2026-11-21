@@ -238,8 +238,7 @@ exit:
 	}
 }
 
-func TestMixedAVX2GuardHelper(t *testing.T) {
-	m := parseModule(t, `
+const mixedAVX2GuardFixture = `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 declare i1 @sha() "llgo.cpu.query"="x86.sha"
@@ -267,7 +266,10 @@ slow:
  br label %exit
 exit:
  ret void
-}`)
+}`
+
+func TestMixedAVX2GuardHelper(t *testing.T) {
+	m := parseModule(t, mixedAVX2GuardFixture)
 	if err := Run(m, "v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -350,6 +352,86 @@ func TestGuardBodyEntryAttributes(t *testing.T) {
 		v := m.NamedFunction("root" + symbolPrefix + suffix)
 		if v.IsNil() || hasAttribute(v, EntryAttribute) || hasAttribute(v, InlineEntryAttribute) {
 			t.Fatal(m.String())
+		}
+	}
+}
+
+func TestMixedGuardCollisionLeavesModuleIntact(t *testing.T) {
+	const collision = "kernel.__llgo_fmv_avx2.__llgo_fmv_guard_avx512"
+	m := parseModule(t, mixedAVX2GuardFixture+"\n@"+collision+" = global i8 0\n")
+	before := m.String()
+	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), collision) {
+		t.Fatalf("expected collision on %s, got %v", collision, err)
+	}
+	if got := m.String(); got != before {
+		t.Fatalf("mixed-pass collision changed module:\n%s", got)
+	}
+}
+
+func TestIndependentGuardResolver(t *testing.T) {
+	const ir = `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+define void @root(ptr %p, ptr %q) {
+ %a = call i1 @fma()
+ br i1 %a, label %first, label %next
+first:
+ %x = load <4 x float>, ptr %p
+ %nx = fneg <4 x float> %x
+ store <4 x float> %nx, ptr %p
+ br label %next
+next:
+ %b = call i1 @wide()
+ br i1 %b, label %second, label %exit
+second:
+ %y = load <16 x float>, ptr %q
+ %ny = fneg <16 x float> %y
+ store <16 x float> %ny, ptr %q
+ br label %exit
+exit:
+ ret void
+}`
+	for _, tc := range []struct {
+		bits   uint64
+		suffix string
+	}{
+		{0, "guard_base"}, {256, "guard_avx512"}, {512, "guard_fma"}, {768, "guard_avx512_fma"},
+	} {
+		m := parseModule(t, ir)
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		want := m.NamedFunction("root" + symbolPrefix + tc.suffix)
+		if want.IsNil() {
+			t.Fatalf("missing %s", tc.suffix)
+		}
+		if tc.bits == 768 {
+			body := want.String()
+			features := stringAttribute(want, "target-features")
+			if strings.Contains(body, "call i1") || !strings.Contains(body, "store <4 x float>") || !strings.Contains(body, "store <16 x float>") || !strings.Contains(features, "+fma") || !strings.Contains(features, "+avx512f") {
+				t.Fatal(body)
+			}
+		}
+		resolver := m.NamedFunction("root" + resolverSuffix)
+		// Substitute the published runtime mask and fold the actual select chain.
+		for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
+				inst.ReplaceAllUsesWith(llvm.ConstInt(inst.Type(), tc.bits|featureInitialized, false))
+				break
+			}
+		}
+		simplifyGuards(resolver)
+		published := false
+		for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
+					published = inst.Operand(0) == want
+				}
+			}
+		}
+		if !published {
+			t.Fatalf("mask %d did not cache %s:\n%s", tc.bits, want.Name(), resolver.String())
 		}
 	}
 }

@@ -141,23 +141,44 @@ func Run(mod llvm.Module, baseline string) error {
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
-	var avx2 []dispatchSite
+	var avx2 *avx2Plan
 	switch baseline {
 	case "v3", "v4":
 		foldBaselineQueries(mod, baseline)
 	case "", "v1", "v2":
 		var err error
-		avx2, err = runAVX2(mod)
+		avx2, err = stageAVX2(mod)
 		if err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
-	return runGuardedFeatures(mod, avx2)
+	if err := runGuardedFeatures(mod, avx2); err != nil {
+		if avx2 != nil {
+			for _, fn := range avx2.originals {
+				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
+					if !copy.IsNil() {
+						copy.ReplaceAllUsesWith(llvm.Undef(copy.Type()))
+						copy.EraseFromParentAsFunction()
+					}
+				}
+			}
+		}
+		return err
+	}
+	return nil
 }
 
-func runAVX2(mod llvm.Module) ([]dispatchSite, error) {
+// Stage private AVX2 bodies so the guard pass can discover collisions on the
+// simplified call graph before editing public entries or source metadata.
+type avx2Plan struct {
+	originals           []llvm.Value
+	variants, baselines map[llvm.Value]llvm.Value
+	origins             map[llvm.Value]llvm.Value
+}
+
+func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
 	roots := make(map[llvm.Value]llvm.Value)
@@ -205,12 +226,55 @@ func runAVX2(mod llvm.Module) ([]dispatchSite, error) {
 	}
 
 	ctx := mod.Context()
-	source := newSourceInfo(mod)
+	origins := make(map[llvm.Value]llvm.Value)
 	variants := make(map[llvm.Value]llvm.Value, len(originals))
 	baselines := make(map[llvm.Value]llvm.Value, len(roots))
 	for _, fn := range originals {
 		variant := fn.CloneFunction()
 		variant.SetName(fn.Name() + variantSuffix)
+		origins[variant] = fn
+		features := stringAttribute(fn, "target-features")
+		if features != "" {
+			features += ","
+		}
+		variant.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features+"+avx,+avx2"))
+		variant.RemoveStringAttributeAtIndex(-1, EntryAttribute)
+		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
+		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
+		variants[fn] = variant
+		if !roots[fn].IsNil() {
+			baseline := fn.CloneFunction()
+			baseline.SetName(fn.Name() + baselineSuffix)
+			baseline.SetLinkage(llvm.InternalLinkage)
+			baseline.RemoveStringAttributeAtIndex(-1, EntryAttribute)
+			baseline.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
+			baseline.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
+			origins[baseline] = fn
+			baselines[fn] = baseline
+		}
+	}
+	for _, fn := range originals {
+		if fn.IsDeclaration() {
+			continue
+		}
+		variant := variants[fn]
+		specialize(ctx, variant, variants, true)
+		if baseline := baselines[fn]; !baseline.IsNil() {
+			specialize(ctx, baseline, baselines, false)
+		}
+	}
+	return &avx2Plan{originals, variants, baselines, origins}, nil
+}
+
+func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
+	if p == nil {
+		return nil
+	}
+	source := newSourceInfo(mod)
+	var sites []dispatchSite
+	for _, fn := range p.originals {
+		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))
+		variant := p.variants[fn]
 		if !fn.IsDeclaration() {
 			// CloneFunction preserves linkage but drops COMDAT. Give the
 			// variant its own group so generic instances merge independently
@@ -222,39 +286,12 @@ func runAVX2(mod llvm.Module) ([]dispatchSite, error) {
 			}
 			source.clone(fn, variant)
 		}
-		features := stringAttribute(fn, "target-features")
-		if features != "" {
-			features += ","
-		}
-		variant.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features+"+avx,+avx2"))
-		variant.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
-		fn.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
-		variants[fn] = variant
-		if !roots[fn].IsNil() {
-			baseline := fn.CloneFunction()
-			baseline.SetName(fn.Name() + baselineSuffix)
-			baseline.SetLinkage(llvm.InternalLinkage)
-			baseline.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-			baseline.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
+		if baseline := p.baselines[fn]; !baseline.IsNil() {
 			source.clone(fn, baseline)
-			baselines[fn] = baseline
-		}
-	}
-	var sites []dispatchSite
-	for _, fn := range originals {
-		if fn.IsDeclaration() {
-			continue
-		}
-		variant := variants[fn]
-		specialize(ctx, variant, variants, true)
-		if baseline := baselines[fn]; !baseline.IsNil() {
-			specialize(ctx, baseline, baselines, false)
 			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}}))
 		}
 	}
-	return sites, nil
+	return sites
 }
 
 func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Value, enabled bool) {

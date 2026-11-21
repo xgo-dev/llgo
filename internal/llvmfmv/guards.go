@@ -170,9 +170,8 @@ func guardedWork(candidates map[llvm.Value]bool) map[llvm.Value]bool {
 	return work
 }
 
-// guardContexts intersects known true predicates at joins. This builds
-// versions for the positive guard combinations present in the CFG, without
-// enumerating the power set of the runtime feature bitmap.
+// guardContexts intersects known true predicates at joins to identify which
+// positive guards protect vector work in this function.
 func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool) []uint64 {
 	entry := fn.EntryBasicBlock()
 	known := map[llvm.BasicBlock]uint64{entry: 0}
@@ -209,6 +208,39 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.V
 			}
 		}
 	}
+	return dispatchMasks(sets)
+}
+
+// Independent guard sites may both execute. A matching union must follow its
+// subsets in the resolver so it can cache a body with every proven feature.
+func dispatchMasks(sets map[uint64]bool) []uint64 {
+	var all uint64
+	unions := []uint64{0}
+	seen := map[uint64]bool{0: true}
+	// Four independent predicates already yield fifteen nonempty combinations.
+	// Bound extra bodies for large roots, retaining their original CFG masks
+	// and a version for the machine on which every observed mask matches.
+	const maxUnions = 16
+	for mask := range sets {
+		all |= mask
+		if len(unions) > maxUnions {
+			continue
+		}
+		for _, prior := range unions {
+			union := prior | mask
+			if !seen[union] {
+				seen[union] = true
+				unions = append(unions, union)
+			}
+		}
+	}
+	if len(unions) <= maxUnions {
+		for _, mask := range unions[1:] {
+			sets[mask] = true
+		}
+	} else {
+		sets[all] = true
+	}
 	ordered := make([]uint64, 0, len(sets))
 	for mask := range sets {
 		ordered = append(ordered, mask)
@@ -243,7 +275,7 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
+func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
@@ -261,6 +293,10 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 			call := use.User()
 			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
 				parent := call.InstructionParent().Parent()
+				// An AVX2 root's staged baseline and variant now own its code.
+				if avx2 != nil && !avx2.baselines[parent].IsNil() {
+					continue
+				}
 				if !hasAttribute(parent, processed) && supported(parent) {
 					candidates[parent] = true
 				}
@@ -268,6 +304,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 		}
 	}
 	if len(candidates) == 0 {
+		avx2.commit(mod)
 		return nil
 	}
 	work := guardedWork(candidates)
@@ -288,6 +325,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 		roots = append(roots, guardRoot{fn: fn, masks: masks})
 	}
 	if len(roots) == 0 {
+		avx2.commit(mod)
 		return nil
 	}
 	ctx := mod.Context()
@@ -349,7 +387,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
-				if !work[target] || target.IsDeclaration() || !supported(target) {
+				if !work[target] || target.IsDeclaration() || !supported(target) || (avx2 != nil && !avx2.baselines[target].IsNil()) {
 					continue
 				}
 				callee, err := specializeLocal(target, mask)
@@ -376,9 +414,15 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}
+	sites := avx2.commit(mod)
 	source := newSourceInfo(mod)
 	for _, copy := range copies {
-		source.clone(copy.original, copy.body)
+		original := copy.original
+		// The copy predates publication of its AVX2 parent's new PC-site IDs.
+		if avx2 != nil && !avx2.origins[original].IsNil() {
+			original = avx2.origins[original]
+		}
+		source.clone(original, copy.body)
 	}
 	// Keep the canonical AVX2 entry callable from separately compiled code.
 	// For public calls, cache the physical target directly in the outer slot.
@@ -388,7 +432,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 []dispatchSite) error {
 	}
 	builder := ctx.NewBuilder()
 	defer builder.Dispose()
-	for _, site := range avx2 {
+	for _, site := range sites {
 		builder.SetInsertPointBefore(site.selection)
 		// LLVM select operands are condition, true (AVX2), false (baseline).
 		for operand := 1; operand <= 2; operand++ {

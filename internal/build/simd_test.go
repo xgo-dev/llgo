@@ -441,3 +441,64 @@ func main() {}
 		})
 	}
 }
+
+func TestSIMDGuardedPackedInstructions(t *testing.T) {
+	dir := t.TempDir()
+	const src = `package main
+import "simd/archsimd"
+//go:noinline
+func packed(o,a *[16]uint32, m uint16) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
+}
+//go:noinline
+func sad(o *[8]uint64, a,b *[64]uint8) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o) }
+}
+//go:noinline
+func bytes(o,a *[64]uint8, m uint64) {
+ if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint8x64Array(a).Compress(archsimd.Mask8x64FromBits(m)).StoreArray(o) }
+}
+//go:noinline
+func words(o,a *[32]uint16, m uint32) {
+ if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint16x32Array(a).Expand(archsimd.Mask16x32FromBits(m)).StoreArray(o) }
+}
+func main() {}
+`
+	for name, body := range map[string]string{"go.mod": "module guardedpacked\n\ngo 1.27\n", "main.go": src} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		level, guard string
+		ops          map[string]string
+	}{
+		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "sad": "vpsadbw"}},
+		{"v4", "avx512vbmi2", map[string]string{"bytes": "vpcompressb", "words": "vpexpandw"}},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", tc.level, "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, asm string) {
+				for fn, mnemonic := range tc.ops {
+					for _, suffix := range []string{tc.guard, "base"} {
+						symbol := "main." + fn + ".__llgo_fmv_guard_" + suffix
+						body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(symbol) + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
+						if body == nil {
+							t.Fatalf("missing assembly for %s", symbol)
+						}
+						packed := regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(body[1])
+						if packed != (suffix == tc.guard) {
+							t.Errorf("%s: unexpected instruction selection for %s:\n%s", symbol, mnemonic, body[1])
+						}
+					}
+				}
+			})
+		})
+	}
+}
