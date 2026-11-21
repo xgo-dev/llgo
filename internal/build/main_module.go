@@ -24,6 +24,7 @@
 package build
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
 	"slices"
@@ -75,6 +76,49 @@ func needsWasmRuntimeScheduler(ctx *context) bool {
 	}
 	return ctx.crossCompile.WasmProfile == crosscompile.WasmProfileJ32 ||
 		ctx.crossCompile.WasmProfile == crosscompile.WasmProfileJ64
+}
+
+// baremetalFiberTags reports whether the target/source tag combination is
+// one the fiber scheduler backend compiles for: baremetal RV32 without nogc.
+func baremetalFiberTags(export *crosscompile.Export, conf *Config) bool {
+	tags := export.BuildTags
+	if slices.Contains(tags, "nogc") || slices.Contains(splitSourcePatchBuildTags(conf.Tags), "nogc") {
+		return false
+	}
+	return slices.Contains(tags, "baremetal") && slices.Contains(tags, "tinygo.riscv32")
+}
+
+// needsBaremetalFiberScheduler reports whether the native entry must hand
+// package initialization and main.main to the baremetal fiber scheduler
+// (runtime.RunMain) instead of running them on the C startup stack. The
+// runtime backend compiles only for baremetal RV32 targets with the
+// conservative collector; nogc builds keep the legacy entry.
+func needsBaremetalFiberScheduler(ctx *context) bool {
+	return ctx.buildConf.BuildMode == BuildModeExe && baremetalFiberTags(&ctx.crossCompile, ctx.buildConf)
+}
+
+// fiberDefaultGoroutineStackSize injects the target default-stack-size for
+// baremetal fiber targets that have no explicit stack size, floored at the
+// 2048 bytes the RV32 targets configure.
+func fiberDefaultGoroutineStackSize(conf *Config, export *crosscompile.Export) uint64 {
+	if conf.BuildMode != BuildModeExe || !baremetalFiberTags(export, conf) {
+		return 0
+	}
+	stack := export.DefaultStackSize
+	if stack < 2048 {
+		stack = 2048
+	}
+	return stack
+}
+
+// validateBaremetalFiber rejects build modes the baremetal fiber scheduler
+// cannot serve, mirroring the wasm workers target gate: RunMain owns the
+// whole program, so a library on a fiber target has no scheduler contract.
+func validateBaremetalFiber(conf *Config, export *crosscompile.Export) error {
+	if conf.BuildMode == BuildModeExe || !baremetalFiberTags(export, conf) {
+		return nil
+	}
+	return fmt.Errorf("baremetal RV32 fiber targets do not support build mode %s", conf.BuildMode)
 }
 
 // genMainModule generates the main entry module for an llgo program.
@@ -146,8 +190,9 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	wasmRuntimeScheduler := needsWasmRuntimeScheduler(ctx)
+	baremetalFiberScheduler := needsBaremetalFiberScheduler(ctx)
 	var rtInit llssa.Function
-	if cfg.rtInit || wasmRuntimeScheduler {
+	if cfg.rtInit || wasmRuntimeScheduler || baremetalFiberScheduler {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
 	}
 	var processExit, stdioFlush llssa.Function
@@ -226,6 +271,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		defineCExportWrappers(mainPkg, cfg.cExports, nil)
 	}
 	var wasmRunMain llssa.Function
+	var baremetalRunMain llssa.Function
 	var startPCLN llssa.Function
 	if ctx.buildConf.PCLNLoad.startsAtEntry() {
 		startPCLN = declareNoArgFunc(mainPkg, rtPkgPath+".StartWasmPCLN")
@@ -234,6 +280,11 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		defineWasmMainTask(mainPkg, startPCLN, packageInits, mainInit, mainMain)
 		startPCLN = nil
 		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+	}
+	if baremetalFiberScheduler {
+		defineBaremetalMainTask(mainPkg, startPCLN, packageInits, mainInit, mainMain)
+		startPCLN = nil
+		baremetalRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunMain")
 	}
 	var coverageExit llssa.Function
 	if ctx.buildConf.Coverage != nil {
@@ -244,21 +295,22 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 			newSignature([]types.Type{types.Typ[types.Int]}, nil), llssa.GoDecl)
 	}
 	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
-		godebugInit:  godebugInit,
-		runtimeStub:  runtimeStub,
-		mainInit:     mainInit,
-		mainMain:     mainMain,
-		wasmRunMain:  wasmRunMain,
-		startPCLN:    startPCLN,
-		pyInit:       pyInit,
-		pyFinalize:   pyFinalize,
-		rtInit:       rtInit,
-		callbackInit: callbackInit,
-		processExit:  processExit,
-		stdioFlush:   stdioFlush,
-		coverageExit: coverageExit,
-		abiInit:      abiInit,
-		packageInits: packageInits,
+		godebugInit:      godebugInit,
+		runtimeStub:      runtimeStub,
+		mainInit:         mainInit,
+		mainMain:         mainMain,
+		wasmRunMain:      wasmRunMain,
+		baremetalRunMain: baremetalRunMain,
+		startPCLN:        startPCLN,
+		pyInit:           pyInit,
+		pyFinalize:       pyFinalize,
+		rtInit:           rtInit,
+		callbackInit:     callbackInit,
+		processExit:      processExit,
+		stdioFlush:       stdioFlush,
+		coverageExit:     coverageExit,
+		abiInit:          abiInit,
+		packageInits:     packageInits,
 	})
 
 	if needStart(ctx) && !ctx.crossCompile.WasmRuntime.RunMainTask {
@@ -474,21 +526,22 @@ func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
 }
 
 type entryFunctions struct {
-	godebugInit  llssa.Function
-	runtimeStub  llssa.Function
-	mainInit     llssa.Function
-	mainMain     llssa.Function
-	wasmRunMain  llssa.Function
-	startPCLN    llssa.Function
-	pyInit       llssa.Function
-	pyFinalize   llssa.Function
-	rtInit       llssa.Function
-	callbackInit llssa.Function
-	processExit  llssa.Function
-	stdioFlush   llssa.Function
-	coverageExit llssa.Function
-	abiInit      llssa.Function
-	packageInits []llssa.Function
+	godebugInit      llssa.Function
+	runtimeStub      llssa.Function
+	mainInit         llssa.Function
+	mainMain         llssa.Function
+	wasmRunMain      llssa.Function
+	baremetalRunMain llssa.Function
+	startPCLN        llssa.Function
+	pyInit           llssa.Function
+	pyFinalize       llssa.Function
+	rtInit           llssa.Function
+	callbackInit     llssa.Function
+	processExit      llssa.Function
+	stdioFlush       llssa.Function
+	coverageExit     llssa.Function
+	abiInit          llssa.Function
+	packageInits     []llssa.Function
 }
 
 // defineEntryFunction creates the program's entry function. The name is
@@ -536,6 +589,10 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	// user program has no TLS/GLS declarations. Root that state on the host
 	// entry stack before runtime.init and keep it installed while logical Go
 	// stacks are dispatched by RunWasmMain.
+	// baremetalRunMain is deliberately absent here: baremetal keeps its
+	// bootstrap local-context global (local_context_baremetal.go), which the
+	// fiber scheduler shares across Gs; entering another local context would
+	// shadow it for no benefit.
 	hasLocalContext := !ctx.wasmRuntimeFree && (prog.NeedsLocalContext() || fns.wasmRunMain != nil)
 	if hasLocalContext {
 		localCtx, previousLocalCtx = b.EnterLocalContext()
@@ -593,6 +650,8 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	}
 	if fns.wasmRunMain != nil {
 		b.Call(fns.wasmRunMain.Expr)
+	} else if fns.baremetalRunMain != nil {
+		b.Call(fns.baremetalRunMain.Expr)
 	} else {
 		for _, init := range fns.packageInits {
 			b.Call(init.Expr)
@@ -648,6 +707,30 @@ func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInit
 	)
 	fn := pkg.NewFunc("__llgo_wasm_main", sig, llssa.CDecl)
 	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
+	fnVal.SetVisibility(llvm.HiddenVisibility)
+	b := fn.MakeBody(1)
+	if startPCLN != nil {
+		b.Call(startPCLN.Expr)
+	}
+	for _, init := range packageInits {
+		b.Call(init.Expr)
+	}
+	b.Call(mainInit.Expr)
+	b.Call(mainMain.Expr)
+	b.Return(prog.Nil(prog.VoidPtr()))
+}
+
+// defineBaremetalMainTask mirrors defineWasmMainTask: the generated task runs
+// the startup sequence on the main G's fiber, called through the runtime's
+// linknamed baremetalMainTask.
+func defineBaremetalMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInits []llssa.Function, mainInit, mainMain llssa.Function) {
+	prog := pkg.Prog
+	sig := newSignature(
+		[]types.Type{types.Typ[types.UnsafePointer]},
+		[]types.Type{types.Typ[types.UnsafePointer]},
+	)
+	fn := pkg.NewFunc("__llgo_baremetal_main", sig, llssa.CDecl)
+	fnVal := pkg.Module().NamedFunction("__llgo_baremetal_main")
 	fnVal.SetVisibility(llvm.HiddenVisibility)
 	b := fn.MakeBody(1)
 	if startPCLN != nil {

@@ -53,6 +53,9 @@ type Export struct {
 	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)
 	ClangRoot      string   // Root directory of custom clang installation
 	ClangBinPath   string   // Path to clang binary directory
+	// DefaultStackSize is the target's default-stack-size, used by the
+	// baremetal fiber scheduler as its goroutine stack default.
+	DefaultStackSize uint64
 
 	LLVMTarget   string   // LLVM Target
 	TargetABI    string   // RISC-V Target ABI (e.g., "lp64", "lp64d")
@@ -1008,6 +1011,7 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	export.BuildTags = config.BuildTags
 	export.GOOS = config.GOOS
 	export.GOARCH = config.GOARCH
+	export.DefaultStackSize = config.DefaultStackSize
 	export.WasmProfile = wasmProfile
 	export.WasmProvider = wasmProvider
 	export.ExtraFiles = config.ExtraFiles

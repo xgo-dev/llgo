@@ -84,12 +84,12 @@ var embedTargetConfigs = []embedTargetConfig{
 		espEmu: &esp32c3BasicTarget,
 		ignoreByDir: map[string][]string{
 			"./_testgo": {
-				"./_testgo/abimethod",     // llgo panic: unsatisfied import internal/runtime/sys
-				"./_testgo/cgobasic",      // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/cgocfiles",     // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/cgodefer",      // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/chan",          // timeout: emulator did not auto-exit
-				"./_testgo/goroutine",     // channel synchronization prints fatal error despite successful emulator exit
+				"./_testgo/abimethod", // llgo panic: unsatisfied import internal/runtime/sys
+				"./_testgo/cgobasic",  // fast fail: build constraints exclude all Go files (cgo)
+				"./_testgo/cgocfiles", // fast fail: build constraints exclude all Go files (cgo)
+				"./_testgo/cgodefer",  // fast fail: build constraints exclude all Go files (cgo)
+				// chan, goroutine and select run on the RV32 baremetal fiber
+				// scheduler (cooperative single-hart goroutines, chan and select).
 				"./_testgo/reflect",       // text+rodata overflow the 256 KiB C3 IRAM at link time
 				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
@@ -97,7 +97,6 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
-				"./_testgo/select",        // timeout: emulator did not auto-exit
 			},
 			"./_testlibc": {
 				"./_testlibc/atomic", // output mismatch: baremetal i64 varargs lowering breaks printf("%ld") (fixture itself links)
@@ -130,10 +129,12 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/cgobasic",      // build constraints exclude cgo source on bare metal
 				"./_testgo/cgocfiles",     // host CGo errno/aggregate ABI; cgo source is excluded on bare metal
 				"./_testgo/cgodefer",      // panic: cannot build SSA for packages
+				"./_testgo/chanclose",     // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/chan",          // ESP32 channel goroutine exits with a fatal error
 				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
 				"./_testgo/defer4",        // runtime output: fatal error
 				"./_testgo/goroutine",     // ESP32 channel synchronization exits with a fatal error
+				"./_testgo/gcstack",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/indexerr",      // runtime output: fatal error
 				"./_testgo/invoke",        // unexpected output
 				"./_testgo/makeslice",     // runtime output: fatal error
@@ -148,7 +149,9 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
 				"./_testgo/select",        // timeout: emulator did not auto-exit
+				"./_testgo/gosched",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/struczero",     // timeout: emulator did not auto-exit
+				"./_testgo/wakefan",       // xtensa keeps the pthread scheduler: no goroutines
 			},
 			"./_testlibc": {
 				"./_testlibc/atomic",  // unexpected output
@@ -293,6 +296,10 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 	ignore := []string{
 		"./_testgo/runextest",
 		"./_testgo/runtest",
+		// gosched imports "runtime", which pulls internal/bytealg whose plan9asm
+		// translation crashes clang on darwin/arm64 (same preexisting failure as
+		// internal/build's TestTest). The embed emulator suites run it.
+		"./_testgo/gosched",
 	}
 	cltest.RunAndTestFromDir(t, "", "./_testgo", ignore)
 }

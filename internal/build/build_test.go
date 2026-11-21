@@ -1343,25 +1343,62 @@ func TestEmscriptenCTypeSourceSelection(t *testing.T) {
 func TestWasmRuntimeBackendSelection(t *testing.T) {
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime")
 	for _, test := range []struct {
-		name, goos string
-		tags       []string
-		want, omit []string
+		name, goos, goarch string
+		tags               []string
+		want, omit         []string
 	}{
 		{
-			name: "raw JS and Emscripten profiles", goos: "js", tags: []string{"llgo", "nogc"},
+			name: "raw JS and Emscripten profiles", goos: "js", goarch: "wasm", tags: []string{"llgo", "nogc"},
 			want: []string{"g_wasm.go", "os_wasm.go", "proc_wasm.go", "runqueue_wasm.go", "fatal_emscripten.go", "local_context_baremetal.go"},
 			omit: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 		},
 		{
-			name: "multi-worker WASI", goos: "wasip1", tags: []string{"llgo", "nogc", "llgo.wasi_threads"},
+			name: "multi-worker WASI", goos: "wasip1", goarch: "wasm", tags: []string{"llgo", "nogc", "llgo.wasi_threads"},
 			want: []string{"g_tls.go", "os_pthread.go", "proc_pthread.go", "fatal_default.go", "local_context_tls.go"},
 			omit: []string{"g_wasm.go", "os_wasm.go", "proc_wasip1.go", "runqueue_wasm.go", "fatal_wasip1.go", "local_context_baremetal.go"},
+		},
+		{
+			// The esp32c3/esp32s31 target configs resolve to GOOS=linux GOARCH=arm
+			// with the TinyGo-heritage target tags; the fiber scheduler owns it.
+			name: "riscv32 baremetal fiber", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: []string{
+				"proc_fiber_baremetal.go", "chan_sync_baremetal.go", "proc_baremetal.go",
+				"proc.go", "g_global.go", "z_baremetal.go",
+			},
+			omit: []string{
+				"proc_pthread.go", "os_pthread.go", "chan_sync_hosted.go", "chan_sync_darwin.go",
+				"proc_baremetal_count.go", "goexit_baremetal_pthread.go", "proc_wasm.go",
+			},
+		},
+		{
+			// nogc keeps the riscv32 target on the single-context pthread path;
+			// the fallback counting and Goexit files must cover this combination.
+			name: "riscv32 baremetal fiber nogc", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			want: []string{
+				"proc_pthread.go", "os_pthread.go", "chan_sync_hosted.go", "proc_baremetal.go",
+				"proc_baremetal_count.go", "goexit_baremetal_pthread.go", "g_global.go", "z_baremetal.go",
+			},
+			omit: []string{"proc_fiber_baremetal.go", "chan_sync_baremetal.go", "proc_wasm.go"},
+		},
+		{
+			// Without the llgo tag the plain-Go hosted selection must still
+			// compile: the fiber files stay out and the fallback files cover
+			// the baremetal-tagged build.
+			name: "riscv32 baremetal without llgo", goos: "linux", goarch: "arm",
+			tags: []string{"baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: []string{
+				"proc_pthread.go", "proc_baremetal.go", "proc_baremetal_count.go",
+				"goexit_baremetal_pthread.go", "g_global.go", "z_baremetal.go",
+			},
+			omit: []string{"proc_fiber_baremetal.go", "chan_sync_baremetal.go", "proc_wasm.go"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := gobuild.Default
 			ctx.GOOS = test.goos
-			ctx.GOARCH = "wasm"
+			ctx.GOARCH = test.goarch
 			ctx.BuildTags = test.tags
 			pkg, err := ctx.ImportDir(runtimeDir, 0)
 			if err != nil {

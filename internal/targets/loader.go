@@ -149,6 +149,9 @@ func (l *Loader) mergeConfig(dst, src *Config) {
 	if src.WasmStackSize != 0 {
 		dst.WasmStackSize = src.WasmStackSize
 	}
+	if src.DefaultStackSize != 0 {
+		dst.DefaultStackSize = src.DefaultStackSize
+	}
 	if src.Libc != "" {
 		dst.Libc = src.Libc
 	}

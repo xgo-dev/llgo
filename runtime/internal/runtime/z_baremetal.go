@@ -32,11 +32,9 @@ func Rethrow(link *Defer) {
 		if link != nil {
 			setjmp.Longjmp((*setjmp.JmpBuf)(link.Addr), 1)
 		}
-		// Bare-metal has one execution context and no goroutine-exit
-		// transition. Goexit still drains every defer through the longjmp
-		// path, then retains the backend's existing fatal termination here.
-		c.Printf(c.Str("fatal error\n"))
-		c.Exit(2)
+		// Every deferred function has run; the selected backend terminates
+		// this G (and, when it is main and no other G remains, the program).
+		goexitBaremetal(gp)
 	}
 	// The deferred call recovered the panic and the unwound activation is
 	// gone: returning lets the caller's recovery block resume normal

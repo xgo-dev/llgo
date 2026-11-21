@@ -20,9 +20,11 @@ package runtime
 
 import "unsafe"
 
-// Bare-metal targets do not necessarily provide the compiler-rt __atomic
-// helpers. Object addresses are sufficient as live G/M/P identifiers for the
-// current task backend and avoid adding libatomic solely for diagnostics.
+// Shared single-core G/M/P state helpers for baremetal backends. Object
+// addresses are sufficient as live identifiers for these backends and avoid
+// adding libatomic solely for diagnostics. Live-G counting lives in the
+// backend files: proc_baremetal_count.go for the single-context backends and
+// proc_fiber_baremetal.go for the cooperative fiber scheduler.
 func nextGoid(gp *g) uint64 {
 	return uint64(uintptr(unsafe.Pointer(gp)))
 }
@@ -33,23 +35,6 @@ func nextMid(mp *m) int64 {
 
 func nextPid(pp *p) int32 {
 	return int32((uintptr(unsafe.Pointer(pp)) >> 2) & 0x7fffffff)
-}
-
-func retainG() {
-}
-
-// Bare-metal has no atomic goroutine counter. Returning one remaining
-// goroutine intentionally disables native pthread main-Goexit deadlock
-// detection for this single-context backend.
-func releaseG() (remaining uint64, mainExited bool) {
-	return 1, false
-}
-
-// Bare-metal keeps its existing single-context behavior.
-func markMainExited() {}
-
-func gState() (count uint64, mainExited bool) {
-	return 1, false
 }
 
 // Each bare-metal G owns its status transitions in the current backend.

@@ -686,6 +686,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validatePCLNMode(conf); err != nil {
 		return nil, err
 	}
+	if err := validateBaremetalFiber(conf, &export); err != nil {
+		return nil, err
+	}
 	resolveTestPthreadStackSize(conf)
 	if err := validateWASIThreads(conf); err != nil {
 		return nil, err
@@ -820,6 +823,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.EnableCooperativeSafepoints(wasmGC || wasmWorkers.Enabled())
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
+	} else if stack := fiberDefaultGoroutineStackSize(conf, &export); stack > 0 {
+		// Baremetal fiber targets take their goroutine stack size from the
+		// target default-stack-size; an explicit stack size always wins.
+		prog.SetPthreadStackSize(stack)
 	}
 	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
 	prog.EnableCodeViewDebugInfo(emitCodeView)
@@ -2301,12 +2308,14 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 
 	// Cross builds still defer all runtime preparation until ordinary package
 	// results show it is needed; unused target runtimes must remain untouched.
+	// The baremetal fiber scheduler always links the runtime for RunMain, so
+	// its targets always build it.
 	if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
 		return nil, err
 	}
 	needRuntime, needPyInit := packageRuntimeNeeds(normalTasks)
 
-	if needRuntime || needPyInit {
+	if needRuntime || needPyInit || needsBaremetalFiberScheduler(ctx) {
 		if err := buildPackageGroup(ctx, runtimeTasks, verbose); err != nil {
 			return nil, err
 		}
@@ -2728,7 +2737,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	needRuntime = needRuntime || len(cExports) != 0
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
-	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+	// The baremetal fiber scheduler's RunMain lives in the runtime package, so
+	// its targets always link it.
+	if needRuntime || needPyInit || needsBaremetalFiberScheduler(ctx) || ctx.buildConf.Target == "" {
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
@@ -2747,7 +2758,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		// rather than by the presence of those archives on the link command.
 		// genMainModule supplies runtime.main/runtime.goexit records separately.
 		metadataOrder := linkedOrder
-		if !needRuntime && !needPyInit && !needsWasmRuntimeScheduler(ctx) && (ctx.prog == nil || !ctx.prog.NeedsLocalContext()) {
+		if !needRuntime && !needPyInit && !needsWasmRuntimeScheduler(ctx) && !needsBaremetalFiberScheduler(ctx) && (ctx.prog == nil || !ctx.prog.NeedsLocalContext()) {
 			metadataOrder = filterOutRuntimePkgs(linkedOrder)
 		}
 		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(metadataOrder), nil)

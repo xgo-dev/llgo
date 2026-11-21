@@ -67,13 +67,23 @@ func gcGrowMemory(oldHeapEnd uintptr) uintptr {
 	return oldHeapEnd
 }
 
+// StackRootsHook is installed by scheduler backends that own additional
+// execution stacks (the baremetal fiber scheduler). When set, it replaces the
+// default single-context stack scan and reports every mapped stack range
+// through the mark callback.
+var StackRootsHook func(mark func(start, end uintptr))
+
 func gcMarkReachable() {
+	if globalsStart < globalsEnd {
+		markRoots(globalsStart, globalsEnd)
+	}
+	if StackRootsHook != nil {
+		StackRootsHook(markRoots)
+		return
+	}
 	sp := uintptr(getsp())
 	if sp < stackTop {
 		markRoots(sp, stackTop)
-	}
-	if globalsStart < globalsEnd {
-		markRoots(globalsStart, globalsEnd)
 	}
 }
 
