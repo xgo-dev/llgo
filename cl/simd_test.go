@@ -107,7 +107,8 @@ func TestSIMDFMVQueryIdentity(t *testing.T) {
 		{"other package", "example/archsimd", "X86Features", "AVX2() bool", ""},
 		{"other receiver", "simd/archsimd", "OtherFeatures", "AVX2() bool", ""},
 		{"pointer receiver", "simd/archsimd", "*X86Features", "AVX2() bool", ""},
-		{"other query", "simd/archsimd", "X86Features", "AVX() bool", ""},
+		{"avx", "simd/archsimd", "X86Features", "AVX() bool", "x86.avx"},
+		{"unknown", "simd/archsimd", "X86Features", "Other() bool", ""},
 		{"argument", "simd/archsimd", "X86Features", "AVX2(int) bool", ""},
 		{"result", "simd/archsimd", "X86Features", "AVX2() int", ""},
 	} {
