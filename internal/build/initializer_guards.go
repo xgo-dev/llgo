@@ -17,16 +17,28 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+func wasiGuardedStaticData(ctx *context) bool {
+	conf := ctx.buildConf
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, ctx.frontendOptions) &&
+		wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
+}
+
 // Select unused initializers at the final link. Each package archive defines
 // the same guards for every executable in the selected size profile.
 func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPruningInputs) {
 	conf := ctx.buildConf
-	if !hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions) ||
+	hosted := hostedValueFormatSupport(conf, ctx.crossCompile, ctx.frontendOptions)
+	if (!hosted && !wasiGuardedStaticData(ctx)) ||
 		ctx.progSSA == nil || ctx.frontend != nil || len(conf.SourceOverlay) != 0 {
 		return
 	}
-	browser := conf.Goarch == "wasm"
+	wasm := conf.Goarch == "wasm"
+	var errorConstructor *ssa.Function
+	if wasm {
+		errorConstructor = literalErrorConstructor(ctx, goroot)
+	}
 	candidates := make(map[*ssa.Global]*ssa.Store)
+	sliceOwners := make(map[*ssa.Package]bool)
 	for _, pkg := range ctx.pkgByID {
 		if pkg.AltPkg != nil || !isStandardLibraryPackage(pkg.Package, goroot) {
 			continue
@@ -37,10 +49,17 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 		var groups []cl.OptionalInitializer
 		switch {
-		case browser && pkg.PkgPath == "os":
+		case wasm && hosted && pkg.PkgPath == "os":
 			groups = optionalStandardFileInitializers(source.Func("init"))
-		case !browser && hasStaticMapValues(pkg.Package):
+		case wasm && hasStaticDataValues(pkg.Package):
+			groups = cl.OptionalSliceInitializers(source.Func("init"))
+			if len(groups) != 0 {
+				sliceOwners[source] = true
+			}
+		case !wasm && hasStaticDataValues(pkg.Package):
 			groups = cl.OptionalMapInitializers(source.Func("init"))
+		case wasm:
+			groups = optionalErrorInitializers(source.Func("init"), errorConstructor)
 		}
 		if len(groups) == 0 {
 			continue
@@ -56,7 +75,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	assembly := ctx.sizePruningRoots
-	if browser {
+	if wasm {
 		if !ctx.wasmClosedProgram || inputs == nil || inputs.opaqueAsmPkg != "" ||
 			len(ctx.initial) != 1 || hasOpaqueFormatExports(ctx, goroot) {
 			return
@@ -75,6 +94,26 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		}
 	}
 	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, assembly)
+	var keepErrorConstructors bool
+	if errorConstructor != nil {
+		const symbol = "errors.New"
+		_, aliased := ctx.prog.Linkname(symbol)
+		keepErrorConstructors = aliased || ctx.prog.HasLinknameTarget(symbol) || slices.Contains(assembly, symbol)
+	}
+	// A literal slice can keep a shared object alive even when nobody reads
+	// the slice. Allow omission only when the owner's data is private to its
+	// variable initializers, including reads through another package or alias.
+	observedData := make(map[*ssa.Package]bool)
+	for owner := range sliceOwners {
+		for _, member := range owner.Members {
+			if global, ok := member.(*ssa.Global); ok {
+				name := llssa.FullName(owner.Pkg, global.Name())
+				if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) || slices.Contains(assembly, name) {
+					observedData[owner] = true
+				}
+			}
+		}
+	}
 	for global := range candidates {
 		name := llssa.FullName(global.Pkg.Pkg, global.Name())
 		if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) ||
@@ -93,6 +132,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 				}
 				for _, operand := range inst.Operands(nil) {
 					if global, ok := (*operand).(*ssa.Global); ok {
+						if sliceOwners[global.Pkg] && fn != global.Pkg.Func("init") {
+							observedData[global.Pkg] = true
+						}
 						if init, candidate := candidates[global]; candidate && init != inst {
 							delete(candidates, global)
 						}
@@ -101,22 +143,47 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	for global := range candidates {
+	var dataCount, errorCount, otherCount int
+	for global, store := range candidates {
+		if observedData[global.Pkg] {
+			continue
+		}
+		call, _ := store.Val.(*ssa.Call)
+		errorValue := call != nil && errorConstructor != nil && call.Common().StaticCallee() == errorConstructor
+		if errorValue && keepErrorConstructors {
+			continue
+		}
 		ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, cl.InitializerGuardName(global))
+		switch {
+		case sliceOwners[global.Pkg]:
+			dataCount++
+		case errorValue:
+			errorCount++
+		default:
+			otherCount++
+		}
 	}
 	slices.Sort(ctx.initializerGuardsOff)
-	if len(ctx.initializerGuardsOff) != 0 && (conf.Verbose || conf.PrintCommands) {
-		kind := "map"
-		if browser {
-			kind = "standard file"
+	if conf.Verbose || conf.PrintCommands {
+		if dataCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused static slice initializers (%d)\n", dataCount)
 		}
-		fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, len(ctx.initializerGuardsOff))
+		if errorCount != 0 {
+			fmt.Fprintf(os.Stderr, "llgo: omit unused literal error initializers (%d)\n", errorCount)
+		}
+		if otherCount != 0 {
+			kind := "map"
+			if wasm {
+				kind = "standard file"
+			}
+			fmt.Fprintf(os.Stderr, "llgo: omit unused %s initializers (%d)\n", kind, otherCount)
+		}
 	}
 }
 
-// Map elements must come from static data. A pointer to an object with an
-// observable lifetime, such as a registered finalizer, cannot be dropped.
-func hasStaticMapValues(pkg *packages.Package) bool {
+// Container elements must come from static data. A constructor could return
+// an object whose lifetime or initialization effects are observable.
+func hasStaticDataValues(pkg *packages.Package) bool {
 	if pkg.Types == nil || pkg.TypesInfo == nil || len(pkg.Types.Imports()) != 0 ||
 		len(pkg.OtherFiles) != 0 || len(pkg.EmbedFiles) != 0 || len(pkg.TypesInfo.InitOrder) == 0 {
 		return false

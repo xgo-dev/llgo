@@ -82,6 +82,13 @@ Single-worker Full LTO size builds with supported Go sources read host
 filesystem properties during initialization and create Go JavaScript handles
 on first use.
 
+Closed WASI and Emscripten size links can also omit unused standard-library
+slice literals and literal error values. Slice tables remain initialized when
+reachable code can access their backing data through another variable or
+symbol. Literal errors use the same checks on initializer references after
+verifying the selected `errors.New` implementation. The final link chooses the
+initializers to keep from the shared package archives.
+
 With DCE and Full LTO, size builds can defer the private reflection lookup
 in `errors` to the concrete-target check in `errors.As`, which caches the
 descriptor on first use. Programs that only construct or compare errors can

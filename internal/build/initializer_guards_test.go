@@ -122,6 +122,69 @@ var OtherCall = other(1, "/dev/stdout")
 	}
 }
 
+func TestOptionalInitializersStaticSlices(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("Wasm size profile requires DCE")
+	}
+	const data = `package data
+var Element = &struct{ N int }{N: 17}
+var Table = []*struct{ N int }{Element}
+`
+	for _, tt := range []struct {
+		name, entry, assembly string
+		linkAlias, wantDrop   bool
+	}{
+		{name: "unobserved", entry: "func main() {}", wantDrop: true},
+		{name: "table read", entry: "func main() { println(data.Table[0].N) }"},
+		{name: "other alias read", entry: "func main() { println(data.Element.N) }"},
+		{name: "init read", entry: "var external = data.Element; func main() {}"},
+		{name: "assembly alias", entry: "func main() {}", assembly: "data.Element"},
+		{name: "linkname alias", entry: "func main() {}", linkAlias: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			pkg := checkFormatTestPackage(t, prog.Fset, "data", data, types.Config{})
+			entry := checkFormatTestPackage(t, prog.Fset, "main", "package main\nimport \"data\"\n"+tt.entry,
+				types.Config{Importer: codecInitTestImporter{"data": pkg.Types}, DisableUnusedImportCheck: true})
+			prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+			prog.CreatePackage(entry.Types, entry.Syntax, entry.TypesInfo, true)
+			prog.Build()
+			root := t.TempDir()
+			pkg.Dir = filepath.Join(root, "src", "data")
+			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			defer backend.Dispose()
+			if tt.linkAlias {
+				backend.SetLinkname("other.element", "data.Element")
+			}
+			archive := &aPackage{Package: pkg}
+			ctx := &context{
+				prog: backend, progSSA: prog, initial: []*packages.Package{entry}, wasmClosedProgram: true,
+				pkgByID:      map[string]*aPackage{"data": archive},
+				crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32},
+				buildConf: &Config{
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
+					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true, Verbose: true,
+				},
+			}
+			inputs := &linkPruningInputs{goroot: root}
+			if tt.assembly != "" {
+				inputs.roots = []string{tt.assembly}
+			}
+			configureOptionalInitializers(ctx, root, inputs)
+			if len(archive.guardedInitializers) != 1 {
+				t.Fatal("archive must expose the same slice guard for every entry")
+			}
+			var want []string
+			if tt.wantDrop {
+				want = []string{"_llgo_init_var.data.Table"}
+			}
+			if !slices.Equal(ctx.initializerGuardsOff, want) {
+				t.Fatalf("disabled guards = %v, want %v", ctx.initializerGuardsOff, want)
+			}
+		})
+	}
+}
+
 func TestOptionalInitializersBrowserBoundaries(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("browser size profile requires DCE")

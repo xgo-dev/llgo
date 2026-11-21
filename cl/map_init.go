@@ -3,6 +3,7 @@ package cl
 import (
 	"go/token"
 	"go/types"
+	"slices"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -24,6 +25,69 @@ func OptionalMapInitializers(fn *ssa.Function) (groups []OptionalInitializer) {
 		}
 	}
 	return groups
+}
+
+// OptionalSliceInitializers recognizes literal slices whose backing arrays are
+// populated with constants or copies of other package variables.
+func OptionalSliceInitializers(fn *ssa.Function) (groups []OptionalInitializer) {
+	if fn == nil || fn.Synthetic != "package initializer" {
+		return nil
+	}
+	for _, block := range fn.Blocks {
+		for i, instr := range block.Instrs {
+			store, ok := instr.(*ssa.Store)
+			if !ok {
+				continue
+			}
+			global, _ := store.Addr.(*ssa.Global)
+			value, _ := store.Val.(*ssa.Slice)
+			if global == nil || global.Pkg != fn.Pkg || value == nil ||
+				value.Low != nil || value.High != nil || value.Max != nil {
+				continue
+			}
+			alloc, _ := value.X.(*ssa.Alloc)
+			if alloc == nil || alloc.Block() != block {
+				continue
+			}
+			array, ok := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+			start := slices.Index(block.Instrs[:i], ssa.Instruction(alloc))
+			if ok && start >= 0 && literalSliceStores(block.Instrs[start+1:i], alloc, array, value) &&
+				InitializerHasLocalUses(block.Instrs[start:i+1]) {
+				groups = append(groups, OptionalInitializer{First: alloc, Store: store, Global: global})
+			}
+		}
+	}
+	return groups
+}
+
+func literalSliceStores(instrs []ssa.Instruction, alloc *ssa.Alloc, array *types.Array, result *ssa.Slice) bool {
+	for _, instr := range instrs {
+		switch v := instr.(type) {
+		case *ssa.DebugRef:
+		case *ssa.UnOp:
+			g, ok := v.X.(*ssa.Global)
+			if !ok || g.Pkg != alloc.Parent().Pkg || v.Op != token.MUL {
+				return false
+			}
+		case *ssa.IndexAddr:
+			n, ok := staticInitConstIndex(v.Index)
+			if v.X != alloc || !ok || int64(n) >= array.Len() {
+				return false
+			}
+		case *ssa.Store:
+			addr, ok := v.Addr.(*ssa.IndexAddr)
+			if !ok || addr.X != alloc {
+				return false
+			}
+		case *ssa.Slice:
+			if v != result {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Accept a contiguous literal with no effects other than constructing the

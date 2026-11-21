@@ -1,0 +1,90 @@
+package build
+
+import (
+	"go/token"
+	"go/types"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/ssa"
+)
+
+func TestOptionalInitializersLiteralErrors(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("Wasm size profile requires DCE")
+	}
+	for _, tt := range []struct {
+		name, constructor, rhs, entry string
+		alias, wantGuard, wantDrop    bool
+	}{
+		{name: "unused", wantGuard: true, wantDrop: true},
+		{name: "used", entry: "println(data.Sentinel.Error())", wantGuard: true},
+		{name: "constructor alias", alias: true, wantGuard: true},
+		{name: "constructor with side effects", constructor: "println(s); return &message{s}"},
+		{name: "constructor returns nil", constructor: "return nil"},
+		{name: "dynamic input", rhs: "errors.New(text())"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			root := t.TempDir()
+			pkgs := make(map[string]*aPackage)
+			imports := make(codecInitTestImporter)
+			add := func(path, source string) *packages.Package {
+				pkg := checkFormatTestPackage(t, prog.Fset, path, source, types.Config{
+					Importer: imports, DisableUnusedImportCheck: true,
+				})
+				pkg.Dir = filepath.Join(root, "src", path)
+				pkgs[path] = &aPackage{Package: pkg}
+				imports[path] = pkg.Types
+				prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+				return pkg
+			}
+			constructor := tt.constructor
+			if constructor == "" {
+				constructor = "return &message{s}"
+			}
+			add("errors", "package errors\ntype message struct { text string }\n"+
+				"func (m *message) Error() string { return m.text }\n"+
+				"func New(s string) error { "+constructor+" }")
+			rhs := tt.rhs
+			if rhs == "" {
+				rhs = `errors.New("sentinel")`
+			}
+			add("data", "package data\nimport \"errors\"\nfunc text() string { return \"text\" }\nvar Sentinel = "+rhs)
+			entry := add("main", "package main\nimport \"data\"\nfunc main() { "+tt.entry+" }")
+			prog.Build()
+			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			defer backend.Dispose()
+			if tt.alias {
+				backend.SetLinkname("other.newError", "errors.New")
+			}
+			ctx := &context{
+				prog: backend, progSSA: prog, initial: []*packages.Package{entry},
+				pkgByID: pkgs, wasmClosedProgram: true,
+				crossCompile: crosscompile.Export{WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32},
+				buildConf: &Config{
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
+					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true, Verbose: true,
+				},
+			}
+			configureOptionalInitializers(ctx, root, &linkPruningInputs{goroot: root})
+			if got := len(pkgs["data"].guardedInitializers) != 0; got != tt.wantGuard {
+				t.Fatalf("archive guard = %v, want %v", got, tt.wantGuard)
+			}
+			var want []string
+			if tt.wantDrop {
+				want = []string{"_llgo_init_var.data.Sentinel"}
+			}
+			if !slices.Equal(ctx.initializerGuardsOff, want) {
+				t.Fatalf("disabled guards = %v, want %v", ctx.initializerGuardsOff, want)
+			}
+		})
+	}
+}

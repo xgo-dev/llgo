@@ -1240,7 +1240,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
 		configureRuntimeFree(ctx)
-		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, false)
+		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(ctx))
 		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
