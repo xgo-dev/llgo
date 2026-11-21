@@ -345,7 +345,7 @@ func TestOptionalGuardAtV4(t *testing.T) {
 func TestGuardBodyEntryAttributes(t *testing.T) {
 	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
-	if err := runGuardedFeatures(m, nil); err != nil {
+	if err := runGuardedFeatures(m, nil, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"guard_avx512_fma", "guard_base"} {
@@ -365,6 +365,53 @@ func TestMixedGuardCollisionLeavesModuleIntact(t *testing.T) {
 	}
 	if got := m.String(); got != before {
 		t.Fatalf("mixed-pass collision changed module:\n%s", got)
+	}
+}
+
+func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
+	const ir = `
+ target triple = "x86_64-unknown-linux-gnu"
+ declare i1 @sha() "llgo.cpu.query"="x86.sha"
+ declare i1 @fma() "llgo.cpu.query"="x86.fma"
+ define i1 @unrelated() {
+  %b = call i1 @fma()
+  ret i1 %b
+ }
+ define void @root(ptr %p) {
+  %s = call i1 @sha()
+  %b = call i1 @fma()
+  %both = and i1 %s, %b
+  br i1 %both, label %vector, label %out
+ vector:
+  %x = load <4 x i32>, ptr %p
+  %y = add <4 x i32> %x, %x
+  store <4 x i32> %y, ptr %p
+  br label %out
+ out:
+  ret void
+ }`
+	const collision = "root.__llgo_fmv_guard_sha"
+	for _, level := range []string{"v3", "v4"} {
+		t.Run(level, func(t *testing.T) {
+			m := parseModule(t, ir+"\n@"+collision+" = global i8 0\n")
+			before := m.String()
+			if err := Run(m, level); err == nil || !strings.Contains(err.Error(), collision) {
+				t.Fatalf("expected collision on %s, got %v", collision, err)
+			}
+			if got := m.String(); got != before {
+				t.Errorf("collision changed module:\n%s", got)
+			}
+			m.NamedGlobal(collision).EraseFromParentAsGlobal()
+			if err := Run(m, level); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			if m.NamedFunction(collision).IsNil() || !strings.Contains(m.NamedFunction("unrelated").String(), "ret i1 true") {
+				t.Fatal(m.String())
+			}
+		})
 	}
 }
 

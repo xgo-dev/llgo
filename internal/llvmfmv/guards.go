@@ -48,33 +48,60 @@ var predicateBits = func() map[string]uint64 {
 }()
 
 // internal/cpu excludes these baseline features from GODEBUG overrides.
-func foldBaselineQueries(mod llvm.Module, baseline string) {
-	var calls []llvm.Value
-	parents := make(map[llvm.Value]bool)
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		switch checkedQuery(fn) {
-		case "x86.avx", AVX2Query, "x86.fma":
-		case "x86.avx512":
-			if baseline != "v4" {
-				continue
-			}
-		default:
-			continue
-		}
-		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
-			call := use.User()
-			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
-				calls = append(calls, call)
-				parents[call.InstructionParent().Parent()] = true
-			}
-		}
+func guaranteedQuery(name, baseline string) bool {
+	if baseline != "v3" && baseline != "v4" {
+		return false
 	}
+	switch name {
+	case "x86.avx", AVX2Query, "x86.fma":
+		return true
+	case "x86.avx512":
+		return baseline == "v4"
+	}
+	return false
+}
+
+// Plan using the simplified CFG, but keep the original instructions intact
+// until every symbol needed by guarded specialization has been checked.
+// Only functions reached during guard discovery need a temporary body.
+type baselineFolds struct {
+	calls   map[llvm.Value][]llvm.Value
+	queries map[llvm.Value]bool
+	views   map[llvm.Value]llvm.Value
+}
+
+func foldTrue(fn llvm.Value, calls []llvm.Value) {
 	for _, call := range calls {
-		call.ReplaceAllUsesWith(llvm.ConstInt(mod.Context().Int1Type(), 1, false))
+		call.ReplaceAllUsesWith(llvm.ConstInt(call.Type(), 1, false))
 		call.EraseFromParentAsInstruction()
 	}
-	for fn := range parents {
-		simplifyGuards(fn)
+	simplifyGuards(fn)
+}
+
+func (f *baselineFolds) view(fn llvm.Value) llvm.Value {
+	if len(f.calls[fn]) == 0 {
+		return fn
+	}
+	if v := f.views[fn]; !v.IsNil() {
+		return v
+	}
+	v := fn.CloneFunction()
+	var calls []llvm.Value
+	for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsACallInst().IsNil() && f.queries[inst.CalledValue()] {
+				calls = append(calls, inst)
+			}
+		}
+	}
+	foldTrue(v, calls)
+	f.views[fn] = v
+	return v
+}
+
+func (f *baselineFolds) commit() {
+	for fn, calls := range f.calls {
+		foldTrue(fn, calls)
 	}
 }
 
@@ -118,9 +145,10 @@ func directGuardCallee(inst llvm.Value) llvm.Value {
 // Collect evidence of vector work along direct calls in this module. Start
 // from functions with a feature query and propagate back from SIMD operations
 // to their callers. The two walks handle cycles without relying on DFS order.
-func guardedWork(candidates map[llvm.Value]bool) map[llvm.Value]bool {
+func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds) map[llvm.Value]bool {
 	work := make(map[llvm.Value]bool)
 	seen := make(map[llvm.Value]bool)
+	callers := make(map[llvm.Value][]llvm.Value)
 	var visit []llvm.Value
 	for fn := range candidates {
 		visit = append(visit, fn)
@@ -138,13 +166,16 @@ func guardedWork(candidates map[llvm.Value]bool) map[llvm.Value]bool {
 		if fn.IsDeclaration() || !supported(fn) {
 			continue
 		}
-		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				if inst.Type().TypeKind() == llvm.VectorTypeKind {
 					work[fn] = true
 				}
-				if callee := directGuardCallee(inst); !callee.IsNil() && !seen[callee] {
-					visit = append(visit, callee)
+				if callee := directGuardCallee(inst); !callee.IsNil() {
+					callers[callee] = append(callers[callee], fn)
+					if !seen[callee] {
+						visit = append(visit, callee)
+					}
 				}
 			}
 		}
@@ -155,13 +186,8 @@ func guardedWork(candidates map[llvm.Value]bool) map[llvm.Value]bool {
 	for len(visit) != 0 {
 		fn := visit[len(visit)-1]
 		visit = visit[:len(visit)-1]
-		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
-			inst := use.User()
-			if directGuardCallee(inst) != fn {
-				continue
-			}
-			caller := inst.InstructionParent().Parent()
-			if seen[caller] && !work[caller] && supported(caller) {
+		for _, caller := range callers[fn] {
+			if !work[caller] {
 				work[caller] = true
 				visit = append(visit, caller)
 			}
@@ -275,24 +301,40 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
+func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
 	const processed = attributePrefix + "guarded"
+	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
+	defer func() {
+		for _, v := range folds.views {
+			v.EraseFromParentAsFunction()
+		}
+	}()
 	queries := make(map[llvm.Value]uint64)
 	candidates := make(map[llvm.Value]bool)
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		bit := predicateBits[checkedQuery(fn)]
-		if bit == 0 || bit == featureAVX2 {
+		name := checkedQuery(fn)
+		bit := predicateBits[name]
+		guaranteed := guaranteedQuery(name, baseline)
+		if bit == 0 || (bit == featureAVX2 && !guaranteed) {
 			continue
 		}
-		queries[fn] = bit
+		if guaranteed {
+			folds.queries[fn] = true
+		} else {
+			queries[fn] = bit
+		}
 		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
 			call := use.User()
 			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
 				parent := call.InstructionParent().Parent()
+				if guaranteed {
+					folds.calls[parent] = append(folds.calls[parent], call)
+					continue
+				}
 				// An AVX2 root's staged baseline and variant now own its code.
 				if avx2 != nil && !avx2.baselines[parent].IsNil() {
 					continue
@@ -304,16 +346,17 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 		}
 	}
 	if len(candidates) == 0 {
+		folds.commit()
 		avx2.commit(mod)
 		return nil
 	}
-	work := guardedWork(candidates)
+	work := guardedWork(candidates, &folds)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
 			continue
 		}
-		masks := guardContexts(fn, queries, work)
+		masks := guardContexts(folds.view(fn), queries, work)
 		if len(masks) == 0 {
 			continue
 		}
@@ -325,6 +368,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 		roots = append(roots, guardRoot{fn: fn, masks: masks})
 	}
 	if len(roots) == 0 {
+		folds.commit()
 		avx2.commit(mod)
 		return nil
 	}
@@ -336,7 +380,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 	// graph is known. A collision can be discovered in a recursive callee.
 	var copies []struct{ original, body llvm.Value }
 	newBody := func(fn llvm.Value, name string) llvm.Value {
-		v := fn.CloneFunction()
+		v := folds.view(fn).CloneFunction()
 		v.SetName(name)
 		v.SetLinkage(llvm.InternalLinkage)
 		v.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
@@ -379,11 +423,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 				}
 			}
 		}
-		for _, q := range fold {
-			q.ReplaceAllUsesWith(llvm.ConstInt(ctx.Int1Type(), 1, false))
-			q.EraseFromParentAsInstruction()
-		}
-		simplifyGuards(v)
+		foldTrue(v, fold)
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
@@ -414,6 +454,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan) error {
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}
+	folds.commit()
 	sites := avx2.commit(mod)
 	source := newSourceInfo(mod)
 	for _, copy := range copies {

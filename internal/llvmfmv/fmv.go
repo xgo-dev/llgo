@@ -144,7 +144,7 @@ func Run(mod llvm.Module, baseline string) error {
 	var avx2 *avx2Plan
 	switch baseline {
 	case "v3", "v4":
-		foldBaselineQueries(mod, baseline)
+		return runGuardedFeatures(mod, nil, baseline)
 	case "", "v1", "v2":
 		var err error
 		avx2, err = stageAVX2(mod)
@@ -154,7 +154,7 @@ func Run(mod llvm.Module, baseline string) error {
 	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
-	if err := runGuardedFeatures(mod, avx2); err != nil {
+	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
 		if avx2 != nil {
 			for _, fn := range avx2.originals {
 				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
