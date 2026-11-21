@@ -321,6 +321,7 @@ func TestOptionalInitializersStdout(t *testing.T) {
 		assembly          []string
 		reflectiveMethods bool
 		embedded          bool
+		native            bool
 		writer            string
 	}{
 		{name: "literal", body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
@@ -338,6 +339,10 @@ func TestOptionalInitializersStdout(t *testing.T) {
 		{name: "embedded descriptor write", embedded: true, body: `syscall.Stdout = 2; fmt.Printf("hello")`},
 		{name: "embedded descriptor escape", embedded: true, body: `fmt.Printf("hello"); save(&syscall.Stdout)`},
 		{name: "embedded descriptor symbol", embedded: true, body: `fmt.Printf("hello")`, assembly: []string{"syscall.Stdout"}},
+		{name: "native literal", native: true, body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "native file writer", native: true, body: `os.WriteFile(); fmt.Printf("hello")`},
+		{name: "native assembly file writer", native: true, body: `fmt.Printf("hello")`, assembly: []string{pollWriteSymbol}},
+		{name: "native descriptor escape", native: true, body: `fmt.Printf("hello"); save(&syscall.Stdout)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -363,21 +368,24 @@ func (*FD) Write(s string) (int, error) { println(s); return len(s), nil }
 var Stdout = NewFile(1, "/dev/stdout")
 var Stderr = NewFile(2, "/dev/stderr")
 `
-			if tc.embedded {
+			if tc.embedded || tc.native {
 				files = `var Stdin = NewFile(uintptr(syscall.Stdin), "/dev/stdin")
 var Stdout = NewFile(uintptr(syscall.Stdout), "/dev/stdout")
 var Stderr = NewFile(uintptr(syscall.Stderr), "/dev/stderr")
 `
+			}
+			var fileWriter string
+			if !tc.native {
+				fileWriter = `func llgoWriteClosedStdout(s string) (int, error) { return new(poll.FD).Write(s) }`
 			}
 			add("os", `package os
 import ("internal/poll"; "syscall")
 type File struct{}
 func NewFile(uintptr, string) *File { return new(File) }
 func Dynamic() string { return "runtime format" }
-func llgoWriteClosedStdout(s string) (int, error) { return new(poll.FD).Write(s) }
 func WriteFile() { new(poll.FD).Write("file") }
 func llgoWriteStdoutDescriptor(s string) (int, error) { println(s); return len(s), nil }
-`+files)
+`+files+fileWriter)
 			add("fmt", `package fmt
 import "os"
 func Printf(s string, a ...any) (int, error) { return llgoPrintfLiteral(s) }
@@ -389,7 +397,11 @@ var escaped *int
 func save(p *int) { escaped = p }
 func main() {`+tc.body+"}")
 			prog.Build()
-			backend := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmReflectBridges: tc.reflectiveMethods})
+			goos, goarch := "wasip1", "wasm"
+			if tc.native {
+				goos, goarch = "darwin", "arm64"
+			}
+			backend := llssa.NewProgram(&llssa.Target{GOOS: goos, GOARCH: goarch, WasmReflectBridges: tc.reflectiveMethods})
 			defer backend.Dispose()
 			ctx := &context{
 				prog: backend, progSSA: prog, initial: []*packages.Package{entry}, pkgByID: pkgs,
@@ -398,7 +410,7 @@ func main() {`+tc.body+"}")
 					WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32,
 				},
 				buildConf: &Config{
-					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", WasmOpt: WasmOptSize,
+					Mode: ModeBuild, BuildMode: BuildModeExe, Goos: goos, Goarch: goarch, WasmOpt: WasmOptSize,
 					LTO: lto.Full, OptLevel: optlevel.Oz, DeadcodeDrop: true, DisableGoGlobalDCE: true, Verbose: true,
 				},
 			}
@@ -406,6 +418,11 @@ func main() {`+tc.body+"}")
 				ctx.buildConf.Goos, ctx.buildConf.Goarch, ctx.buildConf.Target = "linux", "arm", "cortex-m-mps2"
 				ctx.crossCompile = crosscompile.Export{ExtraFiles: embeddedBootFiles(ctx.buildConf.Target)}
 				ctx.wasmClosedProgram, ctx.embeddedClosedProgram = false, true
+			}
+			if tc.native {
+				ctx.crossCompile = crosscompile.Export{}
+				ctx.wasmClosedProgram, ctx.nativeClosedProgram = false, true
+				ctx.sizePruningRoots = tc.assembly
 			}
 			if err := recordPackageSSAInstructions(ctx); err != nil {
 				t.Fatal(err)
@@ -422,8 +439,14 @@ func main() {`+tc.body+"}")
 			if want := tc.writer != ""; (plan.selected != nil) != want {
 				t.Fatalf("selected = %v, want specialization %v", plan.selected, want)
 			}
-			if tc.writer != "" && len(ctx.initializerGuardsOff) != 3 {
-				t.Fatalf("specialization kept standard file initializers: %v", ctx.initializerGuardsOff)
+			if tc.writer != "" {
+				want := 3
+				if tc.native {
+					want++
+				}
+				if len(ctx.initializerGuardsOff) != want {
+					t.Fatalf("specialization selected unexpected initializers: %v", ctx.initializerGuardsOff)
+				}
 			}
 			for _, call := range plan.calls {
 				if got := call.Common().StaticCallee(); got != callee {

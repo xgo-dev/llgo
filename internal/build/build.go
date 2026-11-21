@@ -3899,8 +3899,12 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		}
 	}
 
-	if pkgPath == "os" && !ret.Module().NamedGlobal(darwinExecutableCwdGuard).IsNil() {
-		cl.DefineInitializerGuard(ret, darwinExecutableCwdGuard, true)
+	if pkgPath == "os" {
+		for _, guard := range []string{darwinExecutableCwdGuard, stdoutPollInitGuard} {
+			if !ret.Module().NamedGlobal(guard).IsNil() {
+				cl.DefineInitializerGuard(ret, guard, true)
+			}
+		}
 	}
 
 	aPkg.LPkg = ret

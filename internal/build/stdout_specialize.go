@@ -8,7 +8,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-const pollWriteSymbol = "internal/poll.(*FD).Write"
+const (
+	pollWriteSymbol     = "internal/poll.(*FD).Write"
+	stdoutPollInitGuard = "os.llgoSkipStdoutPollInit"
+)
 
 // The descriptor alias lives in the standard library archive. Only calls in
 // the executable package change when a closed link proves it can use the alias.
@@ -22,7 +25,8 @@ type stdoutPlan struct {
 func newStdoutPlan(ctx *context) *stdoutPlan {
 	if ctx.frontend != nil || len(ctx.initial) != 1 || ctx.initial[0].Name != "main" ||
 		!(wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) ||
-			embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)) {
+			embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) ||
+			ctx.buildConf.Goarch != "wasm" && hostedValueFormatSupport(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)) {
 		return nil
 	}
 	entry := ctx.progSSA.Package(ctx.initial[0].Types)
@@ -34,7 +38,7 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 	regular := fmtPkg.Func("llgoPrintfLiteral")
 	file := osPkg.Func("llgoWriteClosedStdout")
 	descriptor := osPkg.Func("llgoWriteStdoutDescriptor")
-	if regular == nil || file == nil {
+	if regular == nil || file == nil && descriptor == nil {
 		return nil
 	}
 	plan := &stdoutPlan{entry: entry, regular: regular, file: file, descriptor: descriptor}
@@ -71,12 +75,19 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 	if p.descriptor != nil && p.pollWrite != nil && !keepFileWriter {
 		writer = p.descriptor
 	}
+	if writer == nil {
+		return unused
+	}
 	p.rewrite(writer)
 	updated, graph := analyze(writer == p.descriptor)
 	// A second writer is useful only when the link can drop the general
 	// descriptor write path. File writes elsewhere should share that path.
 	if writer == p.descriptor && hasCallPath(graph, roots, p.pollWrite, nil) {
 		writer = p.file
+		if writer == nil {
+			p.rewrite(p.regular)
+			return unused
+		}
 		p.rewrite(writer)
 		updated, _ = analyze(false)
 	}

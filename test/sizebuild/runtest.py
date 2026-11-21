@@ -8,6 +8,7 @@ import pathlib
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -112,6 +113,41 @@ def legacy_json_uses_v2(env):
     return "encoding/json/v2" in imports.splitlines()
 
 
+def native_stdout_pipe_probe(artifact, env):
+    rfd, wfd = os.pipe()
+    with os.fdopen(rfd, "rb") as reader, os.fdopen(wfd, "wb") as writer:
+        os.set_blocking(wfd, False)
+        filled = 0
+        for block in (b"x" * 4096, b"x"):
+            try:
+                while True:
+                    filled += os.write(wfd, block)
+            except BlockingIOError:
+                pass
+        with subprocess.Popen([str(artifact)], env=env, stdout=writer, stderr=subprocess.PIPE) as process:
+            writer.close()
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise RuntimeError("literal stdout returned while a nonblocking pipe was full")
+            reader.read(filled)
+            try:
+                _, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise
+        if process.returncode or reader.read() != b"literal %\n" or stderr != b"stdout count and path error ok\n":
+            raise RuntimeError("literal stdout did not resume after draining the pipe")
+    rfd, wfd = os.pipe()
+    os.close(rfd)
+    with os.fdopen(wfd, "wb") as writer:
+        result = subprocess.run([str(artifact)], env=env, stdout=writer, stderr=subprocess.PIPE, timeout=10)
+    if result.returncode != -signal.SIGPIPE:
+        raise RuntimeError(f"literal stdout did not preserve SIGPIPE: {result}")
+
+
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
     binary_marker = "llgo: specialize fixed-size binary encoding"
     json_marker = "llgo: specialize statically typed JSON codec"
@@ -162,6 +198,11 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         fixtures.append(("wasm-callback", "wasm callback-only wake ok",
                          "llgo: omit Emscripten scheduler", False))
     if linux_amd64 or mac_arm64:
+        fixtures.extend([
+            ("wasm-literal-stdout", "literal %\nstdout count and path error ok", stdout_marker, True),
+            ("wasm-literal-stdout-and-file", "console and file writes ok", stdout_marker, False),
+            ("wasm-standard-files", "standard files and redirected stdout ok", stdout_marker, False),
+        ])
         fixture = "native-link-parity"
         expected = command(["go", "run", f"./internal/build/testdata/{fixture}"], env).strip()
         fixtures.append((fixture, expected, "llgo: prune native type metadata", True))
@@ -212,6 +253,10 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
             expected_output = command(["go", "run", "./internal/build/testdata/json-static"], env).strip()
         if actual.strip() != expected_output:
             raise RuntimeError(f"{target} {fixture}: expected {expected_output!r}, got {actual!r}")
+        if (linux_amd64 or mac_arm64) and fixture == "wasm-literal-stdout":
+            if descriptor_writer_marker not in log:
+                raise RuntimeError(f"{target}: missing descriptor writer")
+            native_stdout_pipe_probe(artifact, env)
         if wasi_stdout or wasi_readonly_env:
             # The size report precedes stderr, where verbose diagnostics appear.
             report, _ = json.JSONDecoder().raw_decode(log)

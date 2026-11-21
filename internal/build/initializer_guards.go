@@ -172,10 +172,16 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		// Reflection may keep file methods without an edge in the call graph.
 		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(pollWriteSymbol)
 		unused = plan.specialize(unused, candidates, standardFiles, roots, keepFileWriter, analyze)
-		if plan.selected != nil && (conf.Verbose || conf.PrintCommands) {
-			fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
-			if plan.selected == plan.descriptor {
-				fmt.Fprintln(os.Stderr, "llgo: use the stdout descriptor writer")
+		if plan.selected != nil {
+			usesDescriptor := plan.selected == plan.descriptor
+			if native && usesDescriptor {
+				ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, stdoutPollInitGuard)
+			}
+			if conf.Verbose || conf.PrintCommands {
+				fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
+				if usesDescriptor {
+					fmt.Fprintln(os.Stderr, "llgo: use the stdout descriptor writer")
+				}
 			}
 		}
 	}

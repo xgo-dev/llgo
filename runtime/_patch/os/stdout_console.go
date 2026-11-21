@@ -1,34 +1,19 @@
-//go:build llgo && ((wasip1 && llgo.size.wasi) || (linux && baremetal && llgo.baremetal.stdio && llgo.size.embedded))
+//go:build llgo && ((wasip1 && llgo.size.wasi) || (linux && baremetal && llgo.baremetal.stdio && llgo.size.embedded) || ((darwin || (linux && !baremetal)) && llgo.size.native))
 
 package os
 
 import (
-	"internal/poll"
 	"io"
 	"strconv"
 	"syscall"
 	"unsafe"
 )
 
-// A closed link may use this wrapper when no code observes the standard
-// File globals and the target uses synchronous console I/O.
-// Keeping File.WriteString preserves write serialization and error handling.
-var llgoClosedStdout = File{&file{
-	pfd:         poll.FD{Sysfd: 1, IsStream: true, ZeroReadIsEOF: true},
-	name:        "/dev/stdout",
-	stdoutOrErr: true,
-}}
-
-func llgoWriteClosedStdout(s string) (int, error) {
-	return llgoClosedStdout.WriteString(s)
-}
-
 const llgoStdoutMaxWrite = 1 << 30
 
 // Only the closed executable's literal output calls can reach this writer.
-// The standard File wrappers are unobserved and the target never registers
-// these descriptors with a poller. Serialize writes and preserve the stream
-// limits, retry, partial write, and error behavior of File.WriteString.
+// The standard File wrappers are unobserved. Serialize writes and preserve
+// File.WriteString's stream limits, partial writes and errors.
 func llgoWriteStdoutDescriptor(s string) (int, error) {
 	data := unsafe.Slice(unsafe.StringData(s), len(s))
 	llgoStdoutLock()
@@ -42,6 +27,9 @@ func llgoWriteStdoutDescriptor(s string) (int, error) {
 		panic("invalid return from write: got " + strconv.Itoa(invalidCount) + " from a write of " + strconv.Itoa(size))
 	}
 	if err != nil {
+		if llgoStdoutNative {
+			llgoStdoutCheckError(err)
+		}
 		return written, &PathError{Op: "write", Path: "/dev/stdout", Err: err}
 	}
 	return written, nil
@@ -68,6 +56,9 @@ func llgoWriteStdoutLocked(data []byte) (int, error, int) {
 		}
 		if written == len(data) && err == nil {
 			return written, nil, 0
+		}
+		if llgoStdoutNative && err == syscall.EAGAIN && llgoStdoutWaitForSpace() {
+			continue
 		}
 		if err == nil && n == 0 {
 			err = io.ErrUnexpectedEOF
