@@ -582,15 +582,8 @@ func (v Value) Elem() Value {
 			return Value{}
 		}
 		tt := (*ptrType)(unsafe.Pointer(v.typ()))
-		typ := tt.Elem
-		fl := v.flag&flagRO | flagIndir | flagAddr
-		kind := typ.Kind()
-		if typ.IsClosure() {
-			kind = abi.Func
-		} else if kind == abi.Func {
-			typ = closureOf(typ.FuncType())
-		}
-		fl |= flag(kind)
+		typ, kind := funcElem(tt.Elem)
+		fl := v.flag&flagRO | flagIndir | flagAddr | flag(kind)
 		return Value{typ, ptr, fl}
 	}
 	panic(&ValueError{"reflect.Value.Elem", v.kind()})
@@ -611,9 +604,9 @@ func (v Value) Field(i int) Value {
 		panic("reflect: Field index out of range")
 	}
 	field := &tt.Fields[i]
-	typ, kind := funcElem(field.Typ)
+	typ := field.Typ
 	// Inherit permission bits from v, but clear flagEmbedRO.
-	fl := v.flag&(flagStickyRO|flagIndir|flagAddr) | flag(kind)
+	fl := v.flag&(flagStickyRO|flagIndir|flagAddr) | flag(physicalValueKind(typ))
 	// Using an unexported field forces flagRO.
 	if !field.Exported() {
 		if field.Embedded() {
@@ -641,11 +634,10 @@ func (v Value) FieldByIndex(index []int) Value {
 	v.mustBe(Struct)
 	for i, x := range index {
 		if i > 0 {
-			if v.Kind() == Pointer && v.typ().Elem().Kind() == abi.Struct {
-				if v.IsNil() {
-					panic("reflect: indirection through nil pointer to embedded struct")
-				}
-				v = v.Elem()
+			var nilElem *abi.Type
+			v, nilElem = v.derefStructField()
+			if nilElem != nil {
+				panic("reflect: indirection through nil pointer to embedded struct")
 			}
 		}
 		v = v.Field(x)
@@ -664,16 +656,36 @@ func (v Value) FieldByIndexErr(index []int) (Value, error) {
 	v.mustBe(Struct)
 	for i, x := range index {
 		if i > 0 {
-			if v.Kind() == Ptr && v.typ().Elem().Kind() == abi.Struct {
-				if v.IsNil() {
-					return Value{}, errors.New("reflect: indirection through nil pointer to embedded struct field " + nameFor(v.typ().Elem()))
-				}
-				v = v.Elem()
+			var nilElem *abi.Type
+			v, nilElem = v.derefStructField()
+			if nilElem != nil {
+				return Value{}, errors.New("reflect: indirection through nil pointer to embedded struct field " + nameFor(nilElem))
 			}
 		}
 		v = v.Field(x)
 	}
 	return v, nil
+}
+
+// derefStructField follows a pointer on a field index path. A nil pointer
+// returns its element type so the two callers can report the error separately.
+func (v Value) derefStructField() (Value, *abi.Type) {
+	if v.kind() != Pointer {
+		return v, nil
+	}
+	elem := v.typ().Elem()
+	if elem.Kind() != abi.Struct {
+		return v, nil
+	}
+	ptr := v.ptr
+	if v.flag&flagIndir != 0 {
+		ptr = *(*unsafe.Pointer)(ptr)
+	}
+	if ptr == nil {
+		return Value{}, elem
+	}
+	fl := v.flag&flagRO | flagIndir | flagAddr | flag(physicalValueKind(elem))
+	return Value{elem, ptr, fl}, nil
 }
 
 // FieldByName returns the struct field with the given name.
@@ -744,17 +756,17 @@ func (v Value) Float() float64 {
 
 var uint8Type = rtypeOf(uint8(0))
 
-// funcElem returns the in-memory type and public kind of a function-typed
-// value. Function values occupy LLGo's two-word closure.
+// funcElem accepts an element type whose descriptor may be a public signature.
 func funcElem(typ *abi.Type) (*abi.Type, abi.Kind) {
-	kind := typ.Kind()
-	if kind == abi.Func {
-		return closureOf(typ.FuncType()), abi.Func
-	}
+	typ = physicalType(typ)
+	return typ, physicalValueKind(typ)
+}
+
+func physicalValueKind(typ *abi.Type) abi.Kind {
 	if typ.IsClosure() {
-		return typ, abi.Func
+		return abi.Func
 	}
-	return typ, kind
+	return typ.Kind()
 }
 
 // Index returns v's i'th element.
@@ -2005,10 +2017,7 @@ func New(typ Type) Value {
 	if typ == nil {
 		panic("reflect: New(nil)")
 	}
-	t := &typ.(*rtype).t
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
+	t := physicalType(&typ.(*rtype).t)
 	pt := ptrTo(t)
 	if ifaceIndir(pt) {
 		// This is a pointer to a not-in-heap type.
@@ -2023,11 +2032,8 @@ func New(typ Type) Value {
 // specified type, using p as that pointer.
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
-	t := typ.(*rtype)
-	if t.Kind() == Func {
-		t = toRType(closureOf(t.t.FuncType()))
-	}
-	return Value{t.ptrTo(), p, fl}
+	t := physicalType(&typ.(*rtype).t)
+	return Value{ptrTo(t), p, fl}
 }
 
 // assignTo returns a value v that can be assigned directly to dst.
@@ -2039,17 +2045,8 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	if v.flag&flagMethod != 0 {
 		v = convertMethodValue(context, v)
 	}
-	typ := v.typ()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
-	assignDst := dst
-	if dst.Kind() == abi.Func {
-		// Function values use LLGo's closure struct as their physical
-		// representation. Compare against the same canonical closure type
-		// as the source value, while retaining dst for the returned Value.
-		assignDst = closureOf(dst.FuncType())
-	}
+	typ := physicalType(v.typ())
+	assignDst := physicalType(dst)
 
 	switch {
 	case directlyAssignable(assignDst, typ):

@@ -520,7 +520,7 @@ func toPublicType(typ *abi.Type) Type {
 // physicalType is the in-memory layout of t. Function values occupy LLGo's
 // two-word closure; the public Kind remains Func via toPublicType.
 func physicalType(t *abi.Type) *abi.Type {
-	if t != nil && t.Kind() == abi.Func {
+	if t != nil && t.Kind() == abi.Func && !t.HasNativeLayout() {
 		return closureOf(t.FuncType())
 	}
 	return t
@@ -816,7 +816,7 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 				// Queue embedded struct fields for processing with next level,
 				// but only if we haven't seen a match yet at this level and only
 				// if the embedded types haven't already been queued.
-				if owner != nil || ntyp == nil || ntyp.Kind() != abi.Struct {
+				if owner != nil || ntyp == nil || ntyp.Kind() != abi.Struct || ntyp.IsClosure() {
 					continue
 				}
 				styp := (*structType)(unsafe.Pointer(ntyp))
@@ -1093,7 +1093,7 @@ func (t *rtype) ptrTo() *abi.Type {
 	// Normalize before either static lookup or caching so Addr, New, and
 	// PointerTo cannot synthesize competing descriptors for the same *T.
 	if at.Kind() == abi.Func && at.HasName() {
-		at = closureOf(at.FuncType())
+		at = physicalType(at)
 	} else if at.IsClosure() && !at.HasName() {
 		at = &toFuncType(at.StructType()).Type
 	}
@@ -2194,7 +2194,8 @@ func StructOf(fields []StructField) Type {
 
 		hash = fnv1(hash, byte(ft.Hash>>24), byte(ft.Hash>>16), byte(ft.Hash>>8), byte(ft.Hash))
 
-		repr = append(repr, (" " + stringFor(ft))...)
+		repr = append(repr, ' ')
+		repr = append(repr, stringFor(field.Type.common())...)
 		if f.Tag_ != "" {
 			hash = fnv1(hash, []byte(f.Tag_)...)
 			repr = append(repr, (" " + strconv.Quote(f.Tag_))...)
@@ -2410,21 +2411,13 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 		return &canonical.Type
 	}
 
-	// The other field is always the same unsafe.Pointer. The function
-	// descriptor therefore identifies the entire unnamed closure layout.
-	fields := [2]abi.StructField{
-		{
-			Name_: "$f",
-			Typ:   &ftyp.Type,
-		}, {
-			Name_:  "$data",
-			Typ:    unsafePointerType,
-			Offset: pointerSize,
-		},
-	}
-	str := "struct { $f " + ftyp.String() + "; $data " + unsafePointerType.String() + " }"
-	closure := findClosure(str, &fields)
+	closure := findClosure(ftyp)
 	if closure == nil {
+		fields := []abi.StructField{
+			{Name_: "$f", Typ: &ftyp.Type},
+			{Name_: "$data", Typ: unsafePointerType, Offset: pointerSize},
+		}
+		str := "struct { $f " + ftyp.String() + "; $data " + unsafePointerType.String() + " }"
 		// Preserve the existing ABI hash for the synthetic closure fields.
 		hash := fnv1(0, []byte("struct {$f")...)
 		h := ftyp.Hash
@@ -2442,7 +2435,7 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 				FieldAlign_: pointerAlign,
 				Hash:        hash,
 			},
-			Fields: fields[:],
+			Fields: fields,
 		}
 		closure = st
 	}
@@ -2584,13 +2577,9 @@ func runtimeStructField(field StructField) (structField, string) {
 	}
 
 	//	resolveReflectType(field.Type.common()) // install in runtime
-	typ := field.Type.common()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
 	f := structField{
 		Name_:     field.Name,
-		Typ:       typ,
+		Typ:       physicalType(field.Type.common()),
 		Tag_:      string(field.Tag),
 		Offset:    0,
 		Embedded_: field.Anonymous,
@@ -2733,14 +2722,14 @@ func findFunc(in, out []*abi.Type, variadic bool) *abi.FuncType {
 	return nil
 }
 
-func findClosure(name string, fields *[2]abi.StructField) *abi.StructType {
+func findClosure(ftyp *abi.FuncType) *abi.StructType {
 	for _, typ := range typelist {
-		if typ.Kind() != abi.Struct || typ.TFlag&abi.TFlagExtraStar != 0 || typ.Str_ != name {
-			continue
-		}
-		st := typ.StructType()
-		if st.PkgPath_ == "" && len(st.Fields) == 2 && st.Fields[0] == fields[0] && st.Fields[1] == fields[1] {
-			return st
+		if typ.IsClosure() && !typ.HasName() {
+			st := typ.StructType()
+			// All unnamed Go closures of a signature share a storage layout.
+			if st.Fields[0].Typ == &ftyp.Type {
+				return st
+			}
 		}
 	}
 	return nil

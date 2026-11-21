@@ -23,6 +23,46 @@ type reflectClosureFieldHolder struct {
 
 type reflectNamedFunc func(int) bool
 
+func TestReflectClosureStructFields(t *testing.T) {
+	type fields = struct {
+		F     func(int) bool
+		Named reflectNamedFunc
+	}
+	offset := 3
+	original := fields{F: func(n int) bool { return n > offset }}
+	typ := reflect.TypeOf(original)
+	dynamic := reflect.StructOf([]reflect.StructField{typ.Field(0), typ.Field(1)})
+	if dynamic != typ {
+		t.Fatalf("StructOf = %v, want canonical %v", dynamic, typ)
+	}
+
+	type promoted struct{ *fields }
+	value := reflect.ValueOf(promoted{&original})
+	field := value.FieldByName("F")
+	if field.Type() != typ.Field(0).Type || !field.Interface().(func(int) bool)(offset+1) {
+		t.Fatalf("promoted function field = %v", field)
+	}
+	named := reflectNamedFunc(func(n int) bool { return n == offset })
+	field, err := value.FieldByIndexErr([]int{0, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	field.Set(reflect.ValueOf(named))
+	if !original.Named(offset) || original.Named(offset+1) {
+		t.Fatal("setting the named function field lost the closure")
+	}
+	zero := reflect.ValueOf(promoted{})
+	if field, err := zero.FieldByIndexErr([]int{0, 0}); err == nil || field.IsValid() {
+		t.Fatal("nil embedded pointer did not return an invalid value and an error")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("FieldByName through a nil embedded pointer did not panic")
+		}
+	}()
+	zero.FieldByName("F")
+}
+
 func TestReflectClosureNestedTypeString(t *testing.T) {
 	field := reflect.TypeOf(reflectClosureFieldHolder{}).Field(0).Type
 	if got, want := field.String(), "func(int) bool"; got != want {
