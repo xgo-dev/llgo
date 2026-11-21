@@ -2,6 +2,7 @@ package fmtspecialize
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -51,6 +52,7 @@ func BuiltinFormatSource(source []byte) []byte {
 	}
 	var out bytes.Buffer
 	out.WriteString("package fmt\nimport (\"reflect\"; \"unicode/utf8\")\n")
+	usesTypeName := false
 	for _, name := range names {
 		fn := methods[name]
 		fn.Name.Name = renamed[name]
@@ -60,6 +62,13 @@ func BuiltinFormatSource(source []byte) []byte {
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			switch node := node.(type) {
 			case *ast.CallExpr:
+				switch name {
+				case "badVerb", "printArg", "doPrintf":
+					if rewriteBuiltinTypeName(node) {
+						usesTypeName = true
+						return false
+					}
+				}
 				if sel, ok := node.Fun.(*ast.SelectorExpr); ok && identifier(sel.X, "p") {
 					if replacement, ok := renamed[sel.Sel.Name]; ok {
 						node.Fun = ast.NewIdent(replacement)
@@ -93,7 +102,39 @@ func llgoSprintfBuiltins(format string, a ...any) string {
 	return s
 }
 `)
+	if usesTypeName {
+		writeBuiltinTypeName(&out)
+	}
 	return out.Bytes()
+}
+
+// The builtin formatter is only selected when every operand is a builtin
+// scalar. This includes aliases: %T reports uint8 for byte and int32 for rune.
+func rewriteBuiltinTypeName(call *ast.CallExpr) bool {
+	method, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || method.Sel.Name != "String" || len(call.Args) != 0 {
+		return false
+	}
+	typeOf, ok := method.X.(*ast.CallExpr)
+	if !ok || len(typeOf.Args) != 1 || !identifier(typeOf.Args[0], "arg") {
+		return false
+	}
+	fn, ok := typeOf.Fun.(*ast.SelectorExpr)
+	if !ok || fn.Sel.Name != "TypeOf" || !identifier(fn.X, "reflect") {
+		return false
+	}
+	call.Fun = ast.NewIdent("llgoBuiltin_typeName")
+	call.Args = typeOf.Args
+	return true
+}
+
+func writeBuiltinTypeName(out *bytes.Buffer) {
+	out.WriteString("\nfunc llgoBuiltin_typeName(arg any) string {\n\tswitch arg.(type) {\n")
+	for kind := types.Bool; kind <= types.String; kind++ {
+		name := types.Typ[kind].Name()
+		fmt.Fprintf(out, "\tcase %s:\n\t\treturn %q\n", name, name)
+	}
+	out.WriteString("\t}\n\tpanic(\"fmt: unexpected builtin format argument\")\n}\n")
 }
 
 func identifier(node ast.Expr, name string) bool {

@@ -2,6 +2,7 @@ package fmtspecialize
 
 import (
 	"bytes"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/version"
@@ -22,14 +23,17 @@ func TestBuiltinFormatSource(t *testing.T) {
 	}
 	generated := BuiltinFormatSource(data)
 	file, err := parser.ParseFile(token.NewFileSet(), "builtin_format.go", generated, 0)
-	if err != nil || len(file.Decls) != 10 {
+	if err != nil || len(file.Decls) != 11 {
 		t.Fatalf("unexpected generated builtin formatter: %v", err)
 	}
 	text := string(generated)
-	for _, call := range []string{"p.printArg(", "p.printValue(", "p.handleMethods(", "p.badVerb("} {
+	for _, call := range []string{"p.printArg(", "p.printValue(", "p.handleMethods(", "p.badVerb(", "reflect.TypeOf("} {
 		if strings.Contains(text, call) {
 			t.Fatalf("builtin formatter still reaches %s", call)
 		}
+	}
+	if got := strings.Count(text, "llgoBuiltin_typeName(arg)"); got != 3 {
+		t.Fatalf("builtin formatter rewrote %d type name lookups, want 3", got)
 	}
 	if BuiltinFormatSource([]byte("package fmt\n")) != nil {
 		t.Fatal("missing standard-library methods did not disable specialization")
@@ -58,6 +62,32 @@ func TestBuiltinFormatSource(t *testing.T) {
 			}
 			if BuiltinFormatSource(modified) != nil {
 				t.Fatal("unsupported parser shape enabled specialization")
+			}
+		})
+	}
+}
+
+func TestRewriteBuiltinTypeName(t *testing.T) {
+	for _, test := range []struct {
+		expression string
+		want       bool
+	}{
+		{"reflect.TypeOf(arg).String()", true},
+		{"reflect.TypeOf(other).String()", false},
+		{"reflect.ValueOf(arg).String()", false},
+		{"format.String()", false},
+	} {
+		t.Run(test.expression, func(t *testing.T) {
+			expr, err := parser.ParseExpr(test.expression)
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := expr.(*ast.CallExpr)
+			if got := rewriteBuiltinTypeName(call); got != test.want {
+				t.Fatalf("rewrote call = %t, want %t", got, test.want)
+			}
+			if test.want && (!identifier(call.Fun, "llgoBuiltin_typeName") || len(call.Args) != 1 || !identifier(call.Args[0], "arg")) {
+				t.Fatalf("rewritten call = %#v", call)
 			}
 		})
 	}
