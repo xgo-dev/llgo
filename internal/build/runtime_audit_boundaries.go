@@ -106,6 +106,7 @@ type runtimeNativeOwner struct {
 // Sources include all platform implementations where selection happens in C
 // preprocessing or LLGoFiles. SDK entries are supplied by the target sysroot.
 var runtimeNativeOwners = []runtimeNativeOwner{
+	{"C.__llgo_funcinfo_layout", "Compiler-generated native pclntab record layout", "internal/build/funcinfo_table.go"},
 	{"C.__llgo_esp32c3_requires_printf_float", "Compiler-generated ESP32-C3 floating-point printf link marker", "internal/build/embedded_printf.go"},
 	{"C.llgo_wasm_debug_capture_pcs", "LLGo opt-in browser suspended-PC bridge", "runtime/internal/wasmdebugpc/_wrap/capture.c"},
 	{

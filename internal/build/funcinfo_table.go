@@ -17,6 +17,7 @@
 package build
 
 import (
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -24,6 +25,8 @@ import (
 	"github.com/xgo-dev/llvm"
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -33,6 +36,7 @@ import (
 const (
 	funcInfoTableSymbol             = "__llgo_funcinfo_table"
 	funcInfoCountSymbol             = "__llgo_funcinfo_count"
+	funcInfoLayoutSymbol            = "__llgo_funcinfo_layout"
 	funcInfoStringsSymbol           = "__llgo_funcinfo_strings"
 	funcInfoStringOffsetsSymbol     = "__llgo_funcinfo_string_offsets"
 	funcInfoStringCountSymbol       = "__llgo_funcinfo_string_count"
@@ -255,6 +259,38 @@ func readPCLineInfo(mod llvm.Module) []pcLineRecord {
 	return out
 }
 
+const hostedCompactPCLNTag = "llgo.pclntab.compact"
+
+const (
+	funcInfoShortIDs = 1 << iota
+	funcInfoShortOffsets
+)
+
+func hostedCompactPCLNProfile(conf *Config) bool {
+	return conf.PCLNMode == PCLNEmbedded && conf.BuildMode == BuildModeExe && conf.Target == "" &&
+		(conf.Goos == "linux" || conf.Goos == "darwin") && (conf.Goarch == "amd64" || conf.Goarch == "arm64") &&
+		conf.OptLevel == optlevel.Oz && conf.ltoMode() == lto.Full
+}
+
+// Use the same layouts on the initial link and after pruning. The sidecar
+// format continues to use the full-width records in buildfuncinfo.Table.
+func embeddedFuncInfoTypes(lc llvm.Context, table buildfuncinfo.Table, compact bool) (record, offset llvm.Type, layout uint8) {
+	id := lc.Int32Type()
+	offset = id
+	if compact {
+		if len(table.StringOffsets) <= math.MaxUint16+1 {
+			id = lc.Int16Type()
+			layout |= funcInfoShortIDs
+		}
+		if len(table.Strings) <= math.MaxUint16+1 {
+			offset = lc.Int16Type()
+			layout |= funcInfoShortOffsets
+		}
+	}
+	record = lc.StructType([]llvm.Type{id, id, id, id, id, id, lc.Int32Type()}, false)
+	return
+}
+
 func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
@@ -263,15 +299,6 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	i32Type := llvmCtx.Int32Type()
 	i64Type := llvmCtx.Int64Type()
 	countType := llvmCtx.IntType(ctx.prog.PointerSize() * 8)
-	recordType := llvmCtx.StructType([]llvm.Type{
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-	}, false)
 	pcLineRecordType := llvmCtx.StructType([]llvm.Type{
 		i64Type,
 		i32Type,
@@ -292,7 +319,14 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		i64Type,
 	}, false)
 
-	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(recordType, 0), funcInfoTableSymbol)
+	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoTableSymbol)
+	var layout llvm.Value
+	if hostedCompactPCLNProfile(ctx.buildConf) {
+		layout = llvm.AddGlobal(mod, i8Type, funcInfoLayoutSymbol)
+		layout.SetVisibility(llvm.HiddenVisibility)
+		layout.SetGlobalConstant(true)
+		layout.SetInitializer(llvm.ConstInt(i8Type, 0, false))
+	}
 	pcLinePtr := llvm.AddGlobal(mod, llvm.PointerType(pcLineRecordType, 0), pcLineTableSymbol)
 	pcSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteStartPtrSymbol)
 	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
@@ -383,15 +417,20 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		return
 	}
 
+	recordType, offsetType, layoutFlags := embeddedFuncInfoTypes(llvmCtx, encoded, !layout.IsNil())
+	if !layout.IsNil() {
+		layout.SetInitializer(llvm.ConstInt(i8Type, uint64(layoutFlags), false))
+	}
+	stringIDType := recordType.StructElementTypes()[0]
 	values := make([]llvm.Value, 0, len(encoded.Records))
 	for _, rec := range encoded.Records {
 		values = append(values, llvm.ConstNamedStruct(recordType, []llvm.Value{
-			llvm.ConstInt(i32Type, uint64(rec.SymbolPkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.SymbolName), false),
-			llvm.ConstInt(i32Type, uint64(rec.NamePkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.NameName), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileRoot), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileName), false),
+			llvm.ConstInt(stringIDType, uint64(rec.SymbolPkg), false),
+			llvm.ConstInt(stringIDType, uint64(rec.SymbolName), false),
+			llvm.ConstInt(stringIDType, uint64(rec.NamePkg), false),
+			llvm.ConstInt(stringIDType, uint64(rec.NameName), false),
+			llvm.ConstInt(stringIDType, uint64(rec.FileRoot), false),
+			llvm.ConstInt(stringIDType, uint64(rec.FileName), false),
 			llvm.ConstInt(i32Type, uint64(rec.Line), false),
 		}))
 	}
@@ -473,9 +512,9 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 
 	stringOffsetValues := make([]llvm.Value, 0, len(encoded.StringOffsets))
 	for _, off := range encoded.StringOffsets {
-		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(i32Type, uint64(off), false))
+		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(offsetType, uint64(off), false))
 	}
-	stringOffsetsArrayType := llvm.ArrayType(i32Type, len(stringOffsetValues))
+	stringOffsetsArrayType := llvm.ArrayType(offsetType, len(stringOffsetValues))
 	stringOffsetsData := llvm.AddGlobal(mod, stringOffsetsArrayType, funcInfoStringOffsetsDataSymbol)
 	stringOffsetsData.SetInitializer(llvm.ConstArray(i32Type, stringOffsetValues))
 	stringOffsetsData.SetLinkage(llvm.PrivateLinkage)

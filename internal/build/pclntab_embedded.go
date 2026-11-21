@@ -258,12 +258,19 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		return err
 	}
 	defer mod.Dispose()
-	setArray := func(name string, values func(llvm.Type) []llvm.Value) error {
+	layout := mod.NamedGlobal(funcInfoLayoutSymbol)
+	recordType, offsetType, layoutFlags := embeddedFuncInfoTypes(lc, data.Table, !layout.IsNil())
+	if !layout.IsNil() {
+		layout.SetInitializer(llvm.ConstInt(layout.GlobalValueType(), uint64(layoutFlags), false))
+	}
+	setArray := func(name string, elem llvm.Type, values func(llvm.Type) []llvm.Value) error {
 		old := mod.NamedGlobal(name)
 		if old.IsNil() {
 			return fmt.Errorf("embedded pclntab array %s is missing", name)
 		}
-		elem := old.GlobalValueType().ElementType()
+		if elem.IsNil() {
+			elem = old.GlobalValueType().ElementType()
+		}
 		items := values(elem)
 		old.SetName(name + ".unpruned")
 		array := llvm.AddGlobal(mod, llvm.ArrayType(elem, len(items)), name)
@@ -288,39 +295,40 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 	}
 	arrays := []struct {
 		name   string
+		elem   llvm.Type
 		values func(llvm.Type) []llvm.Value
 	}{
-		{funcInfoDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoDataSymbol, recordType, func(t llvm.Type) (v []llvm.Value) {
 			for _, r := range data.Table.Records {
 				v = append(v, ints(t, uint64(r.SymbolPkg), uint64(r.SymbolName), uint64(r.NamePkg), uint64(r.NameName), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
 			}
 			return
 		}},
-		{pcLineDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{pcLineDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, r := range data.Table.PCLines {
 				v = append(v, ints(t, r.ID, uint64(r.Func), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
 			}
 			return
 		}},
-		{funcInfoStringsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoStringsDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.Strings {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoStringOffsetsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoStringOffsetsDataSymbol, offsetType, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.StringOffsets {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoHashDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoHashDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.Hash {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoSymbolIndexDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoSymbolIndexDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, r := range data.SymbolIndex {
 				v = append(v, ints(t, r.SymbolID, uint64(r.FuncIndex)))
 			}
@@ -331,7 +339,7 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		if array.name == pcLineDataSymbol && len(data.Table.PCLines) == 0 && mod.NamedGlobal(array.name).IsNil() {
 			continue
 		}
-		if err := setArray(array.name, array.values); err != nil {
+		if err := setArray(array.name, array.elem, array.values); err != nil {
 			return err
 		}
 	}

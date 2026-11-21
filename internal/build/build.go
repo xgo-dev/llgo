@@ -730,6 +730,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validateWasmFinalOptions(conf, &export); err != nil {
 		return nil, err
 	}
+	if hostedCompactPCLNProfile(conf) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), hostedCompactPCLNTag)
+	}
 	if embeddedPrintfFloatProfile(conf, export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), espPrintfFloatTag)
 	}
