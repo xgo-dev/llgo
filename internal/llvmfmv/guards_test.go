@@ -435,3 +435,10 @@ exit:
 		}
 	}
 }
+
+func TestGuardCombinationBudget(t *testing.T) {
+	masks := dispatchMasks(map[uint64]bool{2: true, 4: true, 8: true, 16: true, 32: true})
+	if len(masks) != 6 || masks[len(masks)-1] != 62 {
+		t.Fatalf("expected five observed masks and their full union, got %v", masks)
+	}
+}

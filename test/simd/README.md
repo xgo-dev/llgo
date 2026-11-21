@@ -510,10 +510,11 @@ On v1/v2, the public resolver for a mixed AVX2 and AVX512 guard selects
 the physical body from both predicates and caches it in one slot. Separately
 compiled AVX2 callers can still use the canonical AVX2 entry. The wider
 clone specializes direct calls to the local AVX2 helper body.
-For independent guarded regions the resolver selects one of the observed
-feature combinations. Other regions keep their runtime checks. Helpers
-are shared by function and proven mask; distinct masks can produce separate
-copies even when the generated helper instructions coincide.
+For independent guarded regions, the resolver selects the union of matching
+masks when the function has up to 16 distinct unions (including the empty
+mask). Above that limit it keeps the original guard masks and their full
+union. Regions outside the selected mask retain their runtime checks. Local
+helpers share a copy for each distinct proven mask.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls
