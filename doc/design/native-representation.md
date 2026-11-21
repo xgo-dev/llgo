@@ -82,6 +82,8 @@ caching.
   derived native value, inherited callback invocation and clearing, and array
   element storage. The same tests run under the official Go compiler, which
   ignores the native directives.
+- Wasm32 executable tests cover derived native slice callbacks through multiple
+  definitions and aliases alongside the original callback ABI cases.
 - Target-layout tests compare inherited storage on amd64, arm64, Windows/386,
   and profiled wasm32. These are LLVM layout tests, not execution on all targets.
 

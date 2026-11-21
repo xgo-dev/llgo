@@ -180,8 +180,10 @@ func TestWasmOverlappingHeaderCopies(t *testing.T) {
 
 func TestWasmSliceCallbacks(t *testing.T) {
 	for _, second := range []bool{false, true} {
-		if !callCallbacks(second) {
-			t.Fatalf("C callback failed with second=%v", second)
+		for _, derived := range []bool{false, true} {
+			if !callCallbacks(second, derived) {
+				t.Fatalf("C callback failed with second=%v derived=%v", second, derived)
+			}
 		}
 	}
 	data := [5]byte{7, 8, 9, 10, 11}
