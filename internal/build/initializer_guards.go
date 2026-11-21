@@ -85,11 +85,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	var environment *ssa.Package
+	var wasiSyscall *ssa.Package
 	if wasi {
-		environment = wasiEnvironmentPackage(ctx.progSSA)
+		wasiSyscall = wasiSyscallPackage(ctx.progSSA)
 	}
-	if len(candidates) == 0 && environment == nil {
+	if len(candidates) == 0 && wasiSyscall == nil {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -151,8 +151,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	unused, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
-	if environment != nil {
-		configureWASIEnvironment(ctx, environment, reachable, isSymbolRoot)
+	if wasiSyscall != nil {
+		configureWASIEnvironment(ctx, wasiSyscall, reachable, isSymbolRoot)
 	}
 
 	if plan := ctx.stdout; plan != nil && len(plan.calls) != 0 &&
@@ -195,6 +195,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		for _, group := range standardFiles {
 			delete(unused, group.Global)
 		}
+	}
+	if wasiSyscall != nil && wasiSyscall.Members[wasiPathStateMember] != nil {
+		configureWASIPathState(ctx, wasiSyscall, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int
 	for global, group := range unused {

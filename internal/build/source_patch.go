@@ -307,6 +307,16 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			out[file] = patched
 		}
 	}
+	if pkgPath == "syscall" && slices.Contains(ctx.targetTags, "llgo.size.wasi") {
+		file := filepath.Join(srcDir, "fs_wasip1.go")
+		if source, err := readOverlay(file); err == nil && base[file] == nil {
+			if patched := rewriteWASIPathState(source); patched != nil {
+				ensureOverlay()
+				out[file] = patched
+				changed = true
+			}
+		}
+	}
 	for name, src := range patchSrcs {
 		target := filepath.Join(srcDir, "z_llgo_patch_"+name)
 		ensureOverlay()

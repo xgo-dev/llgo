@@ -43,7 +43,7 @@ func main() {`+tc.body+`}`, p.Pkg)
 			prog.Build()
 			ctx := &context{buildConf: &Config{Verbose: true}}
 			result := rta.Analyze([]*ssa.Function{entry.Func("main")}, false)
-			configureWASIEnvironment(ctx, wasiEnvironmentPackage(prog), result, func(name string) bool { return name == tc.symbol })
+			configureWASIEnvironment(ctx, wasiSyscallPackage(prog), result, func(name string) bool { return name == tc.symbol })
 			got := len(ctx.initializerGuardsOff) == 1 && ctx.initializerGuardsOff[0] == wasiEnvironmentGuard
 			if got != tc.want {
 				t.Fatalf("specialized = %v, want %v", got, tc.want)

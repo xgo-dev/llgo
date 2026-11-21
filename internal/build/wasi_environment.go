@@ -15,15 +15,18 @@ import (
 const wasiEnvironmentGuard = "syscall.llgoMutableEnvironment"
 const wasiEnvironmentPatch = "getenv_wasip1.go"
 
-func wasiEnvironmentPackage(prog *ssa.Program) *ssa.Package {
+func wasiSyscallPackage(prog *ssa.Program) *ssa.Package {
 	p := prog.ImportedPackage("syscall")
-	if p == nil || p.Members["llgoMutableEnvironment"] == nil {
+	if p == nil || p.Members["llgoMutableEnvironment"] == nil && p.Members[wasiPathStateMember] == nil {
 		return nil
 	}
 	return p
 }
 
 func configureWASIEnvironment(ctx *context, p *ssa.Package, result *rta.Result, isSymbolRoot func(string) bool) {
+	if p.Members["llgoMutableEnvironment"] == nil {
+		return
+	}
 	for _, name := range []string{wasiEnvironmentGuard, "syscall.envs", "syscall.copyenv", "syscall.env", "syscall.envLock", "syscall.envOnce",
 		"syscall.llgoEnvironmentCopier", "syscall.llgoCopyEnvironmentIndex"} {
 		if isSymbolRoot(name) {

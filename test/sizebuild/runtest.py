@@ -176,6 +176,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
         if target == "wasi" and fixture in ("wasm-literal-stdout", "wasm-literal-stdout-and-file", "wasm-standard-files"):
             if (descriptor_writer_marker in log) != (fixture == "wasm-literal-stdout"):
                 raise RuntimeError(f"{target} {fixture}: incorrect descriptor writer policy\n{log}")
+            if ("llgo: omit unobserved WASI path state" in log) != wasi_stdout:
+                raise RuntimeError(f"{target} {fixture}: incorrect path initialization policy\n{log}")
             if fixture in ("wasm-standard-files", "wasm-literal-stdout-and-file"):
                 if fixture == "wasm-standard-files" and stdout_marker in log:
                     raise RuntimeError(f"{target}: stdout redirection was specialized\n{log}")
