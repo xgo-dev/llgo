@@ -15,7 +15,7 @@ import (
 // Check every intrinsic declaration on the listed targets, including methods that upstream tests
 // reach only through architecture or CPU feature predicates.
 func TestSIMDCompleteDeclarations(t *testing.T) {
-	for _, target := range []struct{ os, arch string }{{"linux", "arm64"}, {"wasip1", "wasm"}} {
+	for _, target := range []struct{ os, arch string }{{"linux", "amd64"}, {"linux", "arm64"}, {"wasip1", "wasm"}} {
 		t.Run(target.arch, func(t *testing.T) {
 			pkgs, err := packages.Load(&packages.Config{Mode: packages.LoadAllSyntax, Env: append(os.Environ(), "GOOS="+target.os, "GOARCH="+target.arch, "GOEXPERIMENT=simd")}, "simd/archsimd")
 			if err != nil {

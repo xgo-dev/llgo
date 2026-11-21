@@ -55,9 +55,9 @@ defer/recover, goroutines, and scheduling. The hex-encoding workload checks
 all tail lengths, unaligned input, and output sentinels against `encoding/hex`.
 It is a correctness workload, not a performance benchmark.
 
-Go helper bodies are compiled normally. Every ARM64 and Wasm bodyless
-declaration has a lowering. The remaining AMD64 declarations raise a
-recoverable panic with their symbol name.
+Go helper bodies are compiled normally. The declaration test loads the selected
+Go toolchain's `simd/archsimd` source for each target and checks every bodyless
+declaration against the compiler's lowering table.
 
 The integer resize suite covers every applicable SIMD128 `ExtendLo`, `ExtendHi`,
 `SaturateTo`, and `SaturateTo*Concat` declaration. The conversion/resize suite
@@ -156,6 +156,30 @@ these bridge operations. By-value native C bindings using these wide `archsimd`
 types receive a diagnostic; explicit memory interfaces remain available.
 By-value `archsimd` values across native C boundaries require a separate ABI contract.
 
+## AMD64 SIMD512
+
+The compiler recognizes all ten numeric 512-bit types and four mask shapes.
+Their Go size, alignment and indirect call carriers follow the same rules as
+the 256-bit family. Grouped permutations and saturating packing operate within
+128-bit groups. Mask bitsets can carry up to 64 active lanes.
+
+The AMD64 implementation includes compression and expansion, vector and scalar
+funnel shifts, truth tables, widening products, cryptographic rounds and scaled
+floating-point operations. Instruction-specific leaves check the effective CPU
+predicate before loading their vector operands from caller-owned storage.
+`GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
+
+On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
+
+```sh
+LLGO=/path/to/llgo SDE=/path/to/sde64 bash dev/test_simd_amd64_sde.sh
+```
+
+The script compares the complete upstream instruction case list against each
+compiler's passing tests and checks the selected portable width. It runs on
+a host that can execute the built Linux binaries and find their runtime
+libraries. Use hardware runs for throughput measurements.
+
 ## Portable SIMD Midway
 
 With `GOEXPERIMENT=simd`, LLGo specializes portable `simd` source on amd64,
@@ -185,7 +209,7 @@ The native amd64 matrix exercises default, emulated and eligible explicit
 widths at O0/O2 and Thin/Full LTO, including CPU overrides and rejected width
 requests. Cross-package calls, indirect calls, global
 initialization and deferred recovery use the same selected representation.
-LLVM tests verify that ARM64 and Wasm do not acquire 256-bit variants.
+LLVM tests verify that ARM64 and Wasm omit both the 256-bit and 512-bit variants.
 
 `portable/` tests compare shared portable operations with the official Go
 toolchain and exercise LLGo's initialization and embedded-field contracts in
@@ -205,7 +229,7 @@ The latter two cases produce source diagnostics. Midway also diagnoses
 or link directives targeting a known SIMD-dependent global: an external storage
 binding needs an ABI shared by all concrete representations. Embedded named
 strings and byte slices retain their contents in every generated variant.
-General feature-combination FMV is covered in the subsequent compiler stage.
+The AVX2 function multiversioning policy is described below.
 
 For the WASI portable matrix, including explicit guest emulation, run
 `LLGO=/path/to/llgo bash dev/test_portable_simd_wasi.sh`. It passes `GODEBUG`
@@ -324,8 +348,7 @@ Vector results keep their native register ABI.
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
 other observable query results. In particular, the AVX and FMA queries remain
-dynamic when AVX2 is enabled. This does not implement portable `simd` width
-selection or 256/512-bit vector calling conventions.
+dynamic when AVX2 is enabled. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -450,11 +473,11 @@ queries with official Go and check the platform hooks:
 go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestEmscriptenSIMDCallBridge)' -count=1
 ```
 
-Generic LLVM legalization keeps the implemented native operations valid for
-the compilation baseline. The amd64 assembly check explicitly uses
+Generic LLVM legalization handles baseline operations. CPU-guarded leaves carry the features required by instruction-specific operations. The amd64 assembly check explicitly uses
 `GOAMD64=v1` and rejects AVX instructions. Tests needing official AVX512 APIs
 use separate LLGo-only scalar-reference cases when that hardware is not
-available; this does not qualify native AVX512 execution.
+available. On an AVX512 host the native gate exercises the enabled paths.
+For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
 
 Reference boundaries:
 
