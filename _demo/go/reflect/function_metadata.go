@@ -79,7 +79,16 @@ func testFunctionMetadata() {
 	}
 
 	cTyp := reflect.TypeOf((*reflectedCFunc)(nil)).Elem()
+	if base.Type().AssignableTo(cTyp) || base.CanConvert(cTyp) {
+		panic("Go closure is not a native function pointer")
+	}
 	cValue := reflect.New(cTyp).Elem()
-	cValue.Set(base)
+	cValue.Set(reflect.ValueOf(reflectedCFunc(reflectedBase)))
 	checkCall(cValue)
+
+	echo := reflect.ValueOf(func(fn reflectedCFunc) reflectedCFunc { return fn })
+	args := []reflect.Value{cValue}
+	checkCall(echo.Call(args)[0])
+	dynamicEcho := reflect.MakeFunc(echo.Type(), func(in []reflect.Value) []reflect.Value { return in })
+	checkCall(dynamicEcho.Call(args)[0])
 }

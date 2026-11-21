@@ -2472,22 +2472,14 @@ func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
 	case 0:
 		return nil
 	case 1:
-		return []*abi.Type{toRuntimeType(typs[0])}
+		return []*abi.Type{physicalType(typs[0])}
 	default:
 		rets := make([]*abi.Type, n)
 		for i, typ := range typs {
-			rets[i] = toRuntimeType(typ)
+			rets[i] = physicalType(typ)
 		}
 		return rets
 	}
-}
-
-func toRuntimeType(typ *abi.Type) *abi.Type {
-	switch typ.Kind() {
-	case abi.Func:
-		return closureOf((*abi.FuncType)(unsafe.Pointer(typ)))
-	}
-	return typ
 }
 
 // resolveIndirectValue converts Value's indirect reference to direct based on abi.Type, clears flagIndir
@@ -2956,7 +2948,10 @@ func convertOp(dst, src *abi.Type) func(Value, Type) Value {
 		}
 	case Func:
 		if dst.Kind() == abi.Func {
-			return cvtFunc
+			if haveIdenticalUnderlyingType(dst, src, false) {
+				return cvtFunc
+			}
+			return nil
 		}
 	}
 
@@ -3193,10 +3188,7 @@ func cvtDirect(v Value, typ Type) Value {
 // convertOp: func copy
 func cvtFunc(v Value, typ Type) Value {
 	f := v.flag
-	t := typ.common()
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
+	t := physicalType(typ.common())
 	ptr := v.ptr
 	if f&flagAddr != 0 {
 		// indirect, mutable word - make a copy

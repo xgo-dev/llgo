@@ -517,8 +517,8 @@ func toPublicType(typ *abi.Type) Type {
 	return toType(typ)
 }
 
-// physicalType is the in-memory layout of t. Function values occupy LLGo's
-// two-word closure; the public Kind remains Func via toPublicType.
+// physicalType is the in-memory layout of t. Go function values use a
+// two-word closure, while native function types describe a pointer.
 func physicalType(t *abi.Type) *abi.Type {
 	if t != nil && t.Kind() == abi.Func && !t.HasNativeLayout() {
 		return closureOf(t.FuncType())
@@ -1266,6 +1266,9 @@ func haveIdenticalUnderlyingType(T, V *abi.Type, cmpTags bool) bool {
 	case Func:
 		t := (*funcType)(unsafe.Pointer(T))
 		v := (*funcType)(unsafe.Pointer(V))
+		if T.HasNativeLayout() != V.HasNativeLayout() || T.IsStdcall() != V.IsStdcall() {
+			return false
+		}
 		if len(t.Out) != len(v.Out) || len(t.In) != len(v.In) {
 			return false
 		}

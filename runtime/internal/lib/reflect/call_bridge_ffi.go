@@ -56,6 +56,9 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
+		if typ.HasNativeLayout() {
+			return ffi.TypePointer
+		}
 		return ffiTypeClosure
 	case abi.Interface:
 		return ffi.TypeInterface

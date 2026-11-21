@@ -91,9 +91,7 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 	kind := typ.Kind()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
+	typ = physicalType(typ)
 	v.typ_ = typ
 	v.flag = flag(kind)
 	if typ.IfaceIndir() {
@@ -118,7 +116,7 @@ func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
 // the implementation retains them after the generated function returns.
 func makeFuncArgValue(ptr unsafe.Pointer, typ *abi.Type) Value {
 	v := ffiToValue(ptr, typ)
-	if v.flag&flagIndir == 0 || typ.Kind() == abi.Func {
+	if v.flag&flagIndir == 0 || v.typ_.IsClosure() {
 		return v
 	}
 	owned := unsafe_New(v.typ_)
