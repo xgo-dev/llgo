@@ -3,6 +3,8 @@ package gcroot
 import (
 	"testing"
 	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 type testFrameMap struct {
@@ -71,12 +73,56 @@ func TestRejectsInvalidContextOperations(t *testing.T) {
 	assertPanics(t, func() { Unregister(&ctx) })
 }
 
-func TestRejectsInvalidFrameMap(t *testing.T) {
-	m := frameMap{numRoots: 1, numMeta: 2}
-	entry := stackEntry{m: &m}
-	assertPanics(t, func() {
-		visitChain(unsafe.Pointer(&entry), func(*unsafe.Pointer, unsafe.Pointer) {})
+func TestVisitCompactFrameMaps(t *testing.T) {
+	direct := new(byte)
+	narrow := uint32(0x12345678)
+	wide := uint64(0x12345678abcdef01)
+
+	legacy := testStackEntry{
+		stackEntry: stackEntry{m: &frameMap{numRoots: 1}},
+		roots:      [2]unsafe.Pointer{unsafe.Pointer(direct)},
+	}
+	width32 := testStackEntry{
+		stackEntry: stackEntry{
+			next: &legacy.stackEntry,
+			m:    &frameMap{numRoots: 2, numMeta: abi.CompactGCRootMap | 1},
+		},
+		roots: [2]unsafe.Pointer{unsafe.Pointer(direct), unsafe.Pointer(&narrow)},
+	}
+	width64 := testStackEntry{
+		stackEntry: stackEntry{
+			next: &width32.stackEntry,
+			m:    &frameMap{numRoots: 1, numMeta: abi.CompactGCRootMap | abi.WideGCRootMap},
+		},
+		roots: [2]unsafe.Pointer{unsafe.Pointer(&wide)},
+	}
+
+	want := []uintptr{uintptr(wide), uintptr(unsafe.Pointer(direct)), uintptr(narrow), uintptr(unsafe.Pointer(direct))}
+	var got []uintptr
+	visitChain(unsafe.Pointer(&width64.stackEntry), func(root *unsafe.Pointer, meta unsafe.Pointer) {
+		got = append(got, RootValue(root, meta))
 	})
+	if len(got) != len(want) {
+		t.Fatalf("visited %d roots, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("root %d = %#x, want %#x", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRejectsInvalidFrameMap(t *testing.T) {
+	for _, m := range []*frameMap{
+		nil,
+		{numRoots: 1, numMeta: 2},
+		{numRoots: 1, numMeta: abi.CompactGCRootMap | 1},
+	} {
+		entry := stackEntry{m: m}
+		assertPanics(t, func() {
+			visitChain(unsafe.Pointer(&entry), func(*unsafe.Pointer, unsafe.Pointer) {})
+		})
+	}
 }
 
 func TestRestoreChain(t *testing.T) {

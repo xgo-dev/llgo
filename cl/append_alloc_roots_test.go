@@ -6,6 +6,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl/cltest"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 )
 
 func TestAppendTemporaryExplicitRoots(t *testing.T) {
@@ -17,7 +18,7 @@ func TestAppendTemporaryExplicitRoots(t *testing.T) {
 		if got := strings.Contains(ir, "runtime.AllocZ"); got {
 			t.Fatalf("%s: temporary heap allocation = %v:\n%s", elem, got, ir)
 		}
-		if elem == "*int" && !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+		if elem == "*int" && !ssatest.HasStackFieldRootMap(ir) {
 			t.Fatal("pointer append temporary lost field roots")
 		}
 	}

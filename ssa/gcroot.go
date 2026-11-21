@@ -22,6 +22,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -187,7 +188,13 @@ func (p Function) newGCRootMap(count int) llvm.Value {
 	prog := p.Prog
 	fields := []llvm.Type{prog.tyInt32(), prog.tyInt32()}
 	values := []llvm.Value{llvm.ConstInt(prog.tyInt32(), uint64(count), false), llvm.ConstInt(prog.tyInt32(), 0, false)}
-	if len(p.gcStackObjects) != 0 {
+	if direct := len(p.gcRootSlots); len(p.gcStackObjects) != 0 && uint64(direct) <= uint64(rabi.GCRootDirectMask) {
+		meta := rabi.CompactGCRootMap | uint32(direct)
+		if prog.PointerSize() == 8 {
+			meta |= rabi.WideGCRootMap
+		}
+		values[1] = llvm.ConstInt(prog.tyInt32(), uint64(meta), false)
+	} else if len(p.gcStackObjects) != 0 {
 		// Metadata is nil for value roots. A non-nil metadata byte gives the
 		// physical width of a pointer loaded from a registered stack field.
 		pointerType := prog.storageType(prog.VoidPtr())
