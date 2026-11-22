@@ -42,8 +42,9 @@ package main
 // structs use the bytewise zero helper without materializing the aggregate.
 // CHECK-LABEL: define void @"main.init#3"(){{.*}} {
 // CHECK: %[[ZERO_STRING:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"({{.*}}zeroinitializer, {{.*}}zeroinitializer)
-// CHECK: %[[ZERO_IFACE:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"({{.*}}zeroinitializer, {{.*}}zeroinitializer)
-// CHECK: call void @main.assert(i1 %{{[0-9]+}})
+// CHECK-NEXT: %[[ZERO_STRING_EQ:[0-9]+]] = and i1 true, %[[ZERO_STRING]]
+// CHECK-NEXT: %[[ZERO_STRUCT_EQ:[0-9]+]] = and i1 %[[ZERO_STRING_EQ]], true
+// CHECK-NEXT: call void @main.assert(i1 %[[ZERO_STRUCT_EQ]])
 // CHECK: extractvalue %main.T %{{[0-9]+}}, 0
 // CHECK: %[[STRUCT_STRING:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"
 // CHECK: %[[STRUCT_IFACE:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
