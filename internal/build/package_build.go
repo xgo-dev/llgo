@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -159,6 +160,20 @@ func preparePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) 
 		return nil, err
 	}
 	prepareSpan.done()
+	// Freeze availability after cache lookup and before starting any worker.
+	if ctx.buildConf.Goarch == "amd64" {
+		if ctx.registerProviders == nil {
+			ctx.registerProviders = make(map[string]llvmfmv.RegisterProvider)
+		}
+		for _, task := range tasks {
+			p := task.pkg
+			if p.CacheHit {
+				ctx.registerProviders[p.ID] = llvmfmv.RegisterProvider{Symbols: p.registerExports}
+			} else if !task.skip && !task.isLinkOnly() {
+				ctx.registerProviders[p.ID] = llvmfmv.RegisterProvider{Fresh: true}
+			}
+		}
+	}
 
 	isolated := make([]int, 0, len(tasks))
 	// Complete coordinator and patched work before starting ordinary workers:
@@ -391,6 +406,7 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 	// miss returns an error instead of mutating coordinator state concurrently.
 	return &context{
 		conf:              ctx.conf,
+		registerProviders: ctx.registerProviders,
 		progSSA:           ctx.progSSA,
 		prog:              session.prog,
 		dedup:             ctx.dedup,

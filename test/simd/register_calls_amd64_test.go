@@ -3,12 +3,10 @@
 package simd_test
 
 import (
+	"github.com/xgo-dev/llgo/test/simd/internal/regkernel"
 	"simd/archsimd"
 	"testing"
 )
-
-//go:noinline
-func sumWide(x, y archsimd.Uint32x16) archsimd.Uint32x16 { return x.Add(y) }
 
 // Nine live vectors also exercise the stack argument path in the register ABI.
 //
@@ -34,10 +32,27 @@ func TestSIMDWideRegisterCalls(t *testing.T) {
 	a, b := pairWide(x)
 	one := archsimd.BroadcastUint32x16(1)
 	y := sumNine(a, b, one, one, one, one, one, one, one)
-	sumWide(y, y).StoreArray(&out)
+	regkernel.Add512(y, y).StoreArray(&out)
 	for i, v := range out {
 		if want := 6*in[i] + 14; v != want {
 			t.Errorf("lane %d = %d, want %d", i, v, want)
+		}
+	}
+}
+
+func TestSIMDWideRegisterImport256(t *testing.T) {
+	if !archsimd.X86.AVX2() {
+		t.Skip("requires AVX2")
+	}
+	var x, y, out [8]uint32
+	for i := range x {
+		x[i] = uint32(i) + 13
+		y[i] = uint32(2*i) + 29
+	}
+	regkernel.Add256(archsimd.LoadUint32x8Array(&x), archsimd.LoadUint32x8Array(&y)).StoreArray(&out)
+	for i, v := range out {
+		if v != x[i]+y[i] {
+			t.Errorf("lane %d = %d", i, v)
 		}
 	}
 }

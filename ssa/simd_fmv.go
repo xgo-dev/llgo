@@ -1,6 +1,9 @@
 package ssa
 
-import "github.com/xgo-dev/llgo/internal/llvmfmv"
+import (
+	"github.com/xgo-dev/llgo/internal/llvmfmv"
+	"github.com/xgo-dev/llvm"
+)
 
 // MarkSIMDFMV records compiler-checked source identities for the early LLVM
 // transform. An available variant is a cross-package ABI promise: the defining
@@ -48,4 +51,15 @@ func (f Function) MarkMidwayWidth(width int) {
 		features = attr.GetStringValue() + "," + features
 	}
 	f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute("target-features", features))
+}
+
+// MarkRegisterOwner records the owner of an exported Go kernel with a known body.
+func (f Function) MarkRegisterOwner(owner string) {
+	ft := f.impl.GlobalValueType()
+	for _, t := range append(ft.ParamTypes(), ft.ReturnType()) {
+		if t.TypeKind() == llvm.VectorTypeKind && f.Prog.TargetData().TypeSizeInBits(t) > 128 {
+			f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute(llvmfmv.RegisterOwnerAttribute, owner))
+			return
+		}
+	}
 }

@@ -147,7 +147,7 @@ func registerShape(fn llvm.Value, ft llvm.Type) bool {
 	return true
 }
 
-func (s WideCalls) Promote(mod llvm.Module, baseline string) error {
+func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[string]RegisterProvider) error {
 	if len(s) == 0 {
 		return nil
 	}
@@ -165,7 +165,12 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string) error {
 				target, sig, ok := s.directTarget(call)
 				if ok && width >= sig.width {
 					entry, seen := entries[target]
-					if !seen && registerShape(target, sig.typ) {
+					if !seen && target.IsDeclaration() {
+						owner := stringAttribute(target, RegisterOwnerAttribute)
+						if owner != "" && providers[owner].provides(exportName(stringAttribute(target, wideOrigin), sig)) {
+							entry = importRegisterEntry(mod, target, sig)
+						}
+					} else if !seen && registerShape(target, sig.typ) {
 						name := target.Name() + sig.suffix()
 						if !mod.NamedValue(name).IsNil() {
 							return fmt.Errorf("SIMD register entry collision: %s", name)
@@ -192,7 +197,7 @@ func (s WideCalls) directTarget(call llvm.Value) (llvm.Value, wideSignature, boo
 		return llvm.Value{}, wideSignature{}, false
 	}
 	target := call.CalledValue().IsAFunction()
-	if target.IsNil() || target.IsDeclaration() || target.FunctionCallConv() != llvm.CCallConv ||
+	if target.IsNil() || target.FunctionCallConv() != llvm.CCallConv ||
 		call.InstructionCallConv() != target.FunctionCallConv() || call.CalledFunctionType() != target.GlobalValueType() || call.OperandsCount() != target.ParamsCount()+1 {
 		return llvm.Value{}, wideSignature{}, false
 	}
@@ -212,24 +217,15 @@ func makeRegisterEntry(mod llvm.Module, target llvm.Value, sig wideSignature, na
 	entry.CopyFunctionProperties(body)
 	entry.SetLinkage(llvm.InternalLinkage)
 	entry.SetComdat(llvm.Comdat{})
-	// vectorcall also carries wide operands in registers on Win64.
-	if strings.Contains(mod.Target(), "windows") {
-		entry.SetFunctionCallConv(llvm.CallConv(80))
-	}
-	ctx := mod.Context()
 	for _, attr := range target.GetFunctionAttributes() {
 		entry.AddFunctionAttr(attr)
 	}
 	entry.RemoveStringAttributeAtIndex(-1, wideOrigin)
 	entry.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-	features := strings.TrimPrefix(stringAttribute(target, "target-features")+",+avx,+avx2", ",")
-	if sig.width == 512 {
-		features += ",+avx512f"
-	}
-	entry.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
+	setRegisterABI(entry, sig, stringAttribute(target, "target-features"))
 	entry.SetSubprogram(body.Subprogram())
 	body.SetSubprogram(llvm.Metadata{})
-	b := ctx.NewBuilder()
+	b := mod.Context().NewBuilder()
 	defer b.Dispose()
 	offset := 0
 	if ft.ReturnType().TypeKind() == llvm.VectorTypeKind {

@@ -38,9 +38,10 @@ type depEntry struct {
 
 // manifestMetadata stores metadata produced during build but not part of the fingerprint.
 type manifestMetadata struct {
-	LinkArgs   []string `yaml:"link_args,omitempty"`
-	NeedRt     bool     `yaml:"need_rt,omitempty"`
-	NeedPyInit bool     `yaml:"need_py_init,omitempty"`
+	RegisterExports []string `yaml:"simd_register_exports,omitempty"`
+	LinkArgs        []string `yaml:"link_args,omitempty"`
+	NeedRt          bool     `yaml:"need_rt,omitempty"`
+	NeedPyInit      bool     `yaml:"need_py_init,omitempty"`
 }
 
 // manifestData is the structured representation of manifest content.

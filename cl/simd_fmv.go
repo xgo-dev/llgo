@@ -1,6 +1,7 @@
 package cl
 
 import (
+	"go/ast"
 	"go/types"
 	"strings"
 
@@ -34,6 +35,7 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	// Only Midway can introduce '@' in a checked Go declaration name. Do
 	// not infer a width from the LLVM symbol: linkname/export can choose it.
 	if width := midwayBodyWidth(source); width != 0 {
+		markRegisterOwner(fn, source)
 		fn.MarkMidwayWidth(width)
 		return
 	}
@@ -89,8 +91,31 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	if hasVector && !available {
 		_, available = lookupSIMD(source, "amd64")
 	}
+	if available && hasVector {
+		markRegisterOwner(fn, source)
+	}
 	// CPU queries are marked independently of vector signatures.
 	fn.MarkSIMDFMV(available && hasVector, simdCPUQuery(source))
+}
+
+func markRegisterOwner(fn llssa.Function, source *ssa.Function) {
+	obj, ok := source.Object().(*types.Func)
+	if !ok || obj.Pkg() == nil || !obj.Exported() || source.Signature.Recv() != nil || source.Signature.TypeParams().Len() != 0 || source.Origin() != nil {
+		return
+	}
+	owner := obj.Pkg().Path()
+	decl, ok := source.Syntax().(*ast.FuncDecl)
+	if !ok || decl.Body == nil || owner == "simd/archsimd" || owner == "simd/internal/bridge" || fn.Name() != owner+"."+obj.Name() {
+		return
+	}
+	if decl.Doc != nil {
+		for _, comment := range decl.Doc.List {
+			if strings.HasPrefix(comment.Text, "//llgo:") || strings.HasPrefix(comment.Text, "//go:linkname") || strings.HasPrefix(comment.Text, "//export ") {
+				return
+			}
+		}
+	}
+	fn.MarkRegisterOwner(owner)
 }
 
 // A closure inherits its lexical variant. For methods it is the generated
