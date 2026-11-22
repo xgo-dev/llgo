@@ -30,3 +30,32 @@ func TestSIMDConcatShiftImmediateByte(t *testing.T) {
 		}
 	}
 }
+
+func TestSIMDGroupedConcatShiftWindow(t *testing.T) {
+	if !archsimd.X86.AVX2() {
+		t.Skip("requires AVX2 for the gc control")
+	}
+	var hi, lo, out [32]byte
+	for i := range hi {
+		hi[i] = byte(100 + i)
+		lo[i] = byte(1 + i)
+	}
+	x, y := archsimd.LoadUint8x32Array(&hi), archsimd.LoadUint8x32Array(&lo)
+	for _, count := range []uint64{0, 1, 15, 16, 17, 31, 32, 255, 256, 257} {
+		x.ConcatShiftBytesRightGrouped(y, count).StoreArray(&out)
+		for i, v := range out {
+			base := i / 16 * 16
+			j := i%16 + int(uint8(count))
+			var want byte
+			switch {
+			case j < 16:
+				want = lo[base+j]
+			case j < 32:
+				want = hi[base+j-16]
+			}
+			if v != want {
+				t.Fatalf("shift %d lane %d = %d, want %d", count, i, v, want)
+			}
+		}
+	}
+}

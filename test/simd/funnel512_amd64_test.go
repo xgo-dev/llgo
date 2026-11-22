@@ -43,3 +43,34 @@ func TestSIMD512Funnel(t *testing.T) {
 		}
 	}
 }
+
+func TestSIMDFunnelComplements(t *testing.T) {
+	if runtime.Compiler != "llgo" && !archsimd.X86.AVX512VBMI2() {
+		t.Skip("requires AVX512VBMI2 in gc")
+	}
+	a, b := [8]uint32{}, [8]uint32{}
+	counts := [8]uint32{0, 1, 15, 31, 32, 33, 64, ^uint32(0)}
+	for i := range a {
+		a[i] = 0xfedcba98 ^ uint32(i*11)
+		b[i] = 0x1234567 + uint32(i*13)
+	}
+	x, y, c := archsimd.LoadUint32x8Array(&a), archsimd.LoadUint32x8Array(&b), archsimd.LoadUint32x8Array(&counts)
+	var right, rotate, left [8]uint32
+	x.ShiftRightConcatMod32(y, c).StoreArray(&right)
+	x.RotateRight(c).StoreArray(&rotate)
+	for i, k := range counts {
+		n := k & 31
+		if right[i] != a[i]>>n|b[i]<<(32-n) || rotate[i] != bits.RotateLeft32(a[i], -int(n)) {
+			t.Fatalf("count %d lane %d: right %#x rotate %#x", k, i, right[i], rotate[i])
+		}
+	}
+	for _, k := range counts {
+		x.ShiftAllLeftConcatMod32(y, uint64(k)).StoreArray(&left)
+		n := k & 31
+		for i, v := range left {
+			if v != a[i]<<n|b[i]>>(32-n) {
+				t.Fatalf("left shift %d lane %d: %#x", k, i, v)
+			}
+		}
+	}
+}

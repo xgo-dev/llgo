@@ -12,7 +12,7 @@ func init() {
 	Initialize(llgoCPUEnvironment())
 	// Publish once, after the official detector has applied GODEBUG. Bit zero
 	// distinguishes initialization from an initialized CPU with AVX2 disabled.
-	// Keep this layout in sync with internal/llvmfmv's feature bits.
+	// Keep this layout in sync with internal/llvmfmv/guards.go and the instruction requirements in ssa/simd_x86_special.go.
 	features := uint64(1)
 	if X86.HasAVX2 {
 		features |= 2

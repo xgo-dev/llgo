@@ -2,8 +2,9 @@ package ssa
 
 import (
 	"fmt"
-	"github.com/xgo-dev/llvm"
 	"strconv"
+
+	"github.com/xgo-dev/llvm"
 )
 
 // These operations have instruction-specific behavior, including the precision
@@ -85,9 +86,9 @@ func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features s
 	return "avx512.mask." + ins.name + precision + suffix, features, 256
 }
 
-// Keep every vector in caller-owned storage across the feature boundary. In
-// particular, a baseline caller and an AVX512 callee cannot share a wide
-// vector register ABI. The leaf loads only after the effective CPU check.
+// XMM-sized inputs and results use the same register class on both sides of
+// the feature check. Keep wider values in caller-owned storage so the leaf
+// never depends on agreement about optional YMM or ZMM call carriers.
 func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	ins := x86SIMDInstructions[op]
 	width := int(b.Prog.td.TypeSizeInBits(result.ll))
@@ -95,22 +96,47 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	b.Call(b.Pkg.rtFunc("SIMDRequireX86Features"), b.Prog.IntVal(required, b.Prog.Uint64()))
 	ctx := b.Prog.ctx
 	ptr := b.Prog.VoidPtr().ll
-	slots := []llvm.Value{llvm.CreateAlloca(b.Func.entryAllocaBuilder(), result.ll)}
-	params := []llvm.Type{ptr}
-	for _, arg := range args {
-		if arg.ll.TypeKind() != llvm.VectorTypeKind {
-			slots = append(slots, arg.impl)
-			params = append(params, arg.ll)
-			continue
-		}
-		storage := llvm.CreateAlloca(b.Func.entryAllocaBuilder(), arg.ll)
-		b.impl.CreateStore(arg.impl, storage)
-		slots = append(slots, storage)
+	mod := b.Pkg.Module()
+	intrinsic := mod.IntrinsicDeclaration(llvm.LookupIntrinsicID("llvm.x86."+name), nil)
+	it := intrinsic.GlobalValueType()
+	// Win64 passes XMM inputs indirectly under its ordinary calling convention.
+	registers := width == 128 && b.Prog.Target().GOOS != "windows"
+	ret := ctx.VoidType()
+	var slots []llvm.Value
+	var params []llvm.Type
+	if registers {
+		ret = it.ReturnType()
+	} else {
+		slots = append(slots, llvm.CreateAlloca(b.Func.entryAllocaBuilder(), result.ll))
 		params = append(params, ptr)
 	}
-	ft := llvm.FunctionType(ctx.VoidType(), params, false)
+	fixed := -1
 	symbol := fmt.Sprintf("__llgo_simd_%s_%d", name, ins.mode)
-	mod := b.Pkg.Module()
+	for _, arg := range args {
+		switch {
+		case arg.ll.TypeKind() != llvm.VectorTypeKind:
+			if k := arg.impl.IsAConstantInt(); !k.IsNil() && (ins.family == x86Round || ins.family == x86Residue || ins.family == x86SHA) {
+				mask := uint64(15)
+				if ins.family == x86SHA {
+					mask = 3
+				}
+				fixed = int(k.ZExtValue() & mask)
+				symbol += "_imm" + strconv.Itoa(fixed)
+				continue
+			}
+			slots = append(slots, arg.impl)
+			params = append(params, arg.ll)
+		case registers:
+			slots = append(slots, b.impl.CreateBitCast(arg.impl, ret, ""))
+			params = append(params, ret)
+		default:
+			storage := llvm.CreateAlloca(b.Func.entryAllocaBuilder(), arg.ll)
+			b.impl.CreateStore(arg.impl, storage)
+			slots = append(slots, storage)
+			params = append(params, ptr)
+		}
+	}
+	ft := llvm.FunctionType(ret, params, false)
 	leaf := mod.NamedFunction(symbol)
 	if leaf.IsNil() {
 		leaf = llvm.AddFunction(mod, symbol, ft)
@@ -120,25 +146,29 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 		builder := ctx.NewBuilder()
 		defer builder.Dispose()
 		builder.SetInsertPointAtEnd(ctx.AddBasicBlock(leaf, "entry"))
-		intrinsic := mod.IntrinsicDeclaration(llvm.LookupIntrinsicID("llvm.x86."+name), nil)
-		it := intrinsic.GlobalValueType()
 		var vectors []llvm.Value
 		var immediate llvm.Value
-		for i, arg := range args {
-			param := leaf.Param(i + 1)
-			if arg.ll.TypeKind() == llvm.VectorTypeKind {
-				// AES and GFNI encode vectors using a uniform lane type in LLVM.
+		first := 0
+		if !registers {
+			first = 1
+		}
+		for i := first; i < len(params); i++ {
+			param := leaf.Param(i)
+			switch params[i].TypeKind() {
+			case llvm.PointerTypeKind:
 				v := builder.CreateLoad(it.ReturnType(), param, "")
 				v.SetAlignment(1)
 				vectors = append(vectors, v)
-			} else {
+			case llvm.VectorTypeKind:
+				vectors = append(vectors, param)
+			default:
 				immediate = param
 			}
 		}
 		emit := func(k int) {
 			operands := append([]llvm.Value(nil), vectors...)
 			types := it.ParamTypes()
-			if !immediate.IsNil() {
+			if fixed >= 0 || !immediate.IsNil() {
 				if ins.family == x86Round || ins.family == x86Residue {
 					k = k<<4 | ins.mode
 				}
@@ -169,11 +199,17 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 				}
 				v = builder.CreateXor(v, builder.CreateBitCast(pattern, v.Type(), ""), "")
 			}
+			if registers {
+				builder.CreateRet(v)
+				return
+			}
 			store := builder.CreateStore(v, leaf.Param(0))
 			store.SetAlignment(1)
 			builder.CreateRetVoid()
 		}
-		if immediate.IsNil() || ins.family == x86GF || op == SIMDAESRoundKeyGenAssist {
+		if fixed >= 0 {
+			emit(fixed)
+		} else if immediate.IsNil() || ins.family == x86GF || op == SIMDAESRoundKeyGenAssist {
 			emit(0)
 		} else {
 			cases := 16
@@ -193,6 +229,9 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 			}
 		}
 	}
-	b.impl.CreateCall(ft, leaf, slots, "")
+	call := b.impl.CreateCall(ft, leaf, slots, "")
+	if registers {
+		return Expr{b.impl.CreateBitCast(call, result.ll, ""), result}
+	}
 	return Expr{b.impl.CreateLoad(result.ll, slots[0], ""), result}
 }

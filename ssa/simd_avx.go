@@ -26,12 +26,12 @@ func (b Builder) simdClearAVXUpperBits() Expr {
 	blocks := b.Func.MakeBlocks(2)
 	b.If(enabled, blocks[0], blocks[1])
 	b.SetBlock(blocks[0])
-	b.impl.CreateCall(functionType, leaf, nil, "")
+	call := b.impl.CreateCall(functionType, leaf, nil, "")
 	b.Jump(blocks[1])
 	b.SetBlockEx(blocks[1], AtEnd, false)
 	b.blk = logical
 	if logical.last == entry {
 		logical.last = blocks[1].last
 	}
-	return Expr{}
+	return Expr{call, b.Prog.Void()}
 }
