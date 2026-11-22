@@ -16,13 +16,16 @@ var llgoMutableEnvironment bool
 var llgoEnvironmentNeeded bool
 
 func llgoLoadEnvironment() []string {
-	if llgoEnvironmentNeeded {
+	if llgoEnvironmentNeeded && (!llgoUsePinnedProcess() || llgoMutableEnvironment) {
 		return runtime_envs()
 	}
 	return nil
 }
 
 func llgoGetenvWithoutLock(key string) (string, bool) {
+	if llgoUsePinnedProcess() {
+		return llgoLookupPinnedEnvironment(key)
+	}
 	if key == "" {
 		return "", false
 	}
@@ -42,7 +45,7 @@ type llgoEnvironmentSlot struct {
 var llgoEnvironmentSlots []llgoEnvironmentSlot
 
 func llgoLoadIndexedEnvironment() []string {
-	if !llgoEnvironmentNeeded {
+	if !llgoEnvironmentNeeded || llgoUsePinnedProcess() && !llgoMutableEnvironment {
 		return nil
 	}
 	entries := runtime_envs()
@@ -95,6 +98,9 @@ func llgoFindEnvironmentSlot(slots []llgoEnvironmentSlot, entries []string, key 
 }
 
 func llgoGetenvIndexed(key string) (string, bool) {
+	if llgoUsePinnedProcess() {
+		return llgoLookupPinnedEnvironment(key)
+	}
 	if key == "" {
 		return "", false
 	}

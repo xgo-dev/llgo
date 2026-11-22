@@ -65,7 +65,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 				}
 				standardFiles = groups
 			}
-			if embedded || native {
+			if embedded || native || wasi {
 				groups = orderedOptionalInitializers(init, groups, optionalLiteralInitializers(init, constructors))
 			}
 		case hasStaticDataValues(pkg.Package):

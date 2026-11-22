@@ -1268,6 +1268,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	configureEmbeddedStartup(ctx, sourcePatchGOROOT, formatInputs)
 	ctx.probeEmscriptenScheduler = canProbeEmscriptenScheduler(ctx, formatInputs)
 	ctx.probeWASIMutator = canProbeWASIMutator(ctx, formatInputs)
+	if ctx.probeWASIMutator {
+		ctx.wasiStartupGOROOT = sourcePatchGOROOT
+	}
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -2158,6 +2161,7 @@ type context struct {
 	skipEmscriptenMinifier   bool
 	probeEmscriptenScheduler bool
 	probeWASIMutator         bool
+	wasiStartupGOROOT        string
 	linkDiagnostics          io.Writer
 
 	buildTrace *buildTracer
@@ -2797,6 +2801,7 @@ type mainLinkPlan struct {
 	embeddedStartupEntry       string
 	embeddedPrintfFloatMarker  string
 	wasiMutatorSelection       string
+	wasiCompactEntry           string
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -3074,9 +3079,16 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 			return input == preparation.emscriptenCollectorArchive
 		})
 	}
-	var wasiMutatorSelection string
+	var wasiMutatorSelection, wasiCompactEntry string
 	if ctx.probeWASIMutator {
 		wasiMutatorSelection, err = buildWASIMutatorSelection(ctx, entryPkg.ExportFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if canProbeWASIProcessStartup(ctx) &&
+		ctx.pclnExternal == nil && !preparation.gen.pyInit && len(preparation.gen.cExports) == 0 {
+		wasiCompactEntry, err = buildCompactWASIEntry(ctx, pkg, preparation, verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -3102,6 +3114,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		embeddedStartupEntry:       embeddedStartupEntry,
 		embeddedPrintfFloatMarker:  embeddedPrintfFloatMarker,
 		wasiMutatorSelection:       wasiMutatorSelection,
+		wasiCompactEntry:           wasiCompactEntry,
 	}, nil
 }
 
@@ -3932,6 +3945,8 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	options.GuardedInitializers = aPkg.guardedInitializers
 	if embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
 		options.GuardPackageInitCalls = embeddedStartupPackages
+	} else if slices.Contains(ctx.crossCompile.BuildTags, wasiMutatorSelectionTag) {
+		options.GuardAllPackageInitCalls = true
 	}
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,

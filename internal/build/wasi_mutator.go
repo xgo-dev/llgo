@@ -119,7 +119,7 @@ func singleWASIMutator(path string) bool {
 	return hasStart
 }
 
-func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose bool) (*context, string, error) {
+func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose bool, compactEntry string) (*context, string, error) {
 	probeDir, err := os.MkdirTemp(dir, "wasi-mutator-*")
 	if err != nil {
 		return nil, "", err
@@ -127,7 +127,12 @@ func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose 
 	probe := newLinkExecutionContext(ctx, plan)
 	attempt := *plan
 	attempt.outputPath = filepath.Join(probeDir, filepath.Base(plan.outputPath))
-	attempt.linkInputs = slices.Concat(plan.linkInputs[:1], []string{plan.wasiMutatorSelection}, plan.linkInputs[1:])
+	entry := plan.linkInputs[0]
+	if compactEntry != "" {
+		entry = compactEntry
+		attempt.embeddedPCLN, attempt.entryIR = nil, ""
+	}
+	attempt.linkInputs = slices.Concat([]string{entry, plan.wasiMutatorSelection}, plan.linkInputs[1:])
 	var diagnostics bytes.Buffer
 	probe.linkDiagnostics = &diagnostics
 	allocator := filepath.Join(probeDir, "emmalloc.o")
@@ -151,6 +156,9 @@ func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose 
 	if err == nil && singleWASIMutator(attempt.outputPath) {
 		_, _ = diagnostics.WriteTo(os.Stderr)
 		if ctx.shouldPrintCommands(verbose) {
+			if compactEntry != "" {
+				fmt.Fprintln(os.Stderr, "llgo: select compact WASI startup")
+			}
 			fmt.Fprintln(os.Stderr, "llgo: link WASI collector for one mutator")
 			if smallAllocator {
 				fmt.Fprintln(os.Stderr, "llgo: use compact WASI libc allocator")
@@ -159,7 +167,11 @@ func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose 
 		return probe, probeDir, nil
 	}
 	if ctx.shouldPrintCommands(verbose) {
-		fmt.Fprintln(os.Stderr, "llgo: retain WASI concurrent collector")
+		if compactEntry != "" {
+			fmt.Fprintln(os.Stderr, "llgo: fall back to ordinary WASI startup")
+		} else {
+			fmt.Fprintln(os.Stderr, "llgo: retain WASI concurrent collector")
+		}
 	}
 	return nil, "", os.RemoveAll(probeDir)
 }

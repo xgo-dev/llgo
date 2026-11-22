@@ -8,7 +8,7 @@ import (
 
 const (
 	LLGoPackage = "link"
-	LLGoFiles   = "_wrap/debugtrap.c" + wasmFinalizerLLGoFiles + wasiThreadsTimerLLGoFiles
+	LLGoFiles   = "_wrap/debugtrap.c" + wasmFinalizerLLGoFiles + wasiThreadsTimerLLGoFiles + wasiPinnedProcessFiles
 )
 
 func c_maxprocs() int32 { return 1 }

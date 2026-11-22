@@ -162,12 +162,8 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	pt := prog.Pointer(telem)
 	switch t := x.raw.Type.Underlying().(type) {
 	case *types.Slice:
-		ptr := b.SliceData(x)
-		max := b.SliceLen(x)
-		idx = b.checkIndex(idx, max)
-		idx = b.physicalPointerIndex(idx)
-		indices := []llvm.Value{idx.impl}
-		return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), ptr.impl, indices), pt}
+		idx = b.checkIndex(idx, b.SliceLen(x))
+		return b.IndexSliceAddrInBounds(x, idx)
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
@@ -179,6 +175,15 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	}
 	indices := []llvm.Value{idx.impl}
 	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), x.impl, indices), pt}
+}
+
+func (b Builder) IndexSliceAddrInBounds(x, idx Expr) Expr {
+	prog := b.Prog
+	elem := prog.Index(x.Type)
+	ptr := b.SliceData(x)
+	idx = b.physicalPointerIndex(idx)
+	indices := []llvm.Value{idx.impl}
+	return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(elem), ptr.impl, indices), prog.Pointer(elem)}
 }
 
 func (b Builder) mapLitIndexAddr(x, idx Expr) Expr {

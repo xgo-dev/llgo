@@ -355,6 +355,7 @@ func isPointer(ptr uintptr) bool {
 //
 //go:noinline
 func Alloc(size uintptr) unsafe.Pointer {
+	requireManagedStartup()
 	if size == 0 {
 		return unsafe.Pointer(&zeroSizedAlloc)
 	}

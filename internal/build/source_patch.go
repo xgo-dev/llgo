@@ -85,6 +85,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 			pkgFiles["errors"] = append(pkgFiles["errors"], cacheFile)
 		}
 	}
+	if ctx.goos == "wasip1" && slices.Contains(ctx.targetTags, wasiMutatorSelectionTag) {
+		path := filepath.Join(goroot, "src", "internal", "testlog", "log.go")
+		if data, err := os.ReadFile(path); err == nil && base[path] == nil {
+			if rewritten := rewriteWASIStartupTestlog(data); rewritten != nil {
+				if out == nil {
+					out = cloneOverlay(base)
+				}
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+				out[path] = rewritten
+			}
+		}
+	}
 	if out == nil {
 		return base, nil, nil
 	}

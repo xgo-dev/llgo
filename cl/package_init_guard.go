@@ -16,8 +16,8 @@ func (p *context) compileGuardedPackageInit(b llssa.Builder, call *ssa.Call) boo
 	if call.Parent().Synthetic != "package initializer" || callee == nil || callee.Pkg == nil || callee.Synthetic != "package initializer" {
 		return false
 	}
-	path := callee.Pkg.Pkg.Path()
-	if !slices.Contains(p.options.GuardPackageInitCalls, path) {
+	path := llssa.PathOf(callee.Pkg.Pkg)
+	if !p.options.GuardAllPackageInitCalls && !slices.Contains(p.options.GuardPackageInitCalls, path) {
 		return false
 	}
 	guard := DefineInitializerGuard(p.pkg, PackageInitGuardName(path), true)

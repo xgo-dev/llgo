@@ -14,16 +14,25 @@ import "unsafe"
 //
 //go:noinline
 func PushCallerLocationFrameWasm(entry uintptr, nameData *byte, nameLen int, fileData *byte, fileLen, line int) int {
+	if !wasiCallerFrames {
+		return -1
+	}
 	return PushCallerLocationFrame(entry, wasmLiteralLocationString(nameData, nameLen), wasmLiteralLocationString(fileData, fileLen), line)
 }
 
 //go:noinline
 func RecordCallerLocationWasm(entry uintptr, nameData *byte, nameLen int, fileData *byte, fileLen, line int) {
+	if !wasiCallerFrames {
+		return
+	}
 	RecordCallerLocation(entry, wasmLiteralLocationString(nameData, nameLen), wasmLiteralLocationString(fileData, fileLen), line)
 }
 
 //go:noinline
 func RecordPanicLocationWasm(entry uintptr, nameData *byte, nameLen int, fileData *byte, fileLen, line int) {
+	if !wasiCallerFrames {
+		return
+	}
 	RecordPanicLocation(entry, wasmLiteralLocationString(nameData, nameLen), wasmLiteralLocationString(fileData, fileLen), line)
 }
 

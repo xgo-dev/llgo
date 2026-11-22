@@ -1,5 +1,7 @@
 package traceback
 
+import "unsafe"
+
 // The low bits have the same meaning as Go's runtime/runtime1.go.
 const (
 	Crash uint64 = 1 << iota
@@ -30,11 +32,12 @@ func Parse(level string, windows bool) uint64 {
 	// invalid values. Match Atoi's sign and native-int overflow checks too.
 	s := level
 	negative := false
+	start := 0
 	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
 		negative = s[0] == '-'
-		s = s[1:]
+		start = 1
 	}
-	if s == "" {
+	if len(s) == start {
 		return All
 	}
 	var n uint64
@@ -45,11 +48,18 @@ func Parse(level string, windows bool) uint64 {
 	if limit > 0xffffffff {
 		limit = 0xffffffff
 	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
+	data := unsafe.StringData(s)
+	if data == nil {
+		return All
+	}
+	// The loop bounds guard the read. Startup can parse this setting
+	// before ordinary panic handling is available.
+	for i := start; i < len(s); i++ {
+		ch := *(*byte)(unsafe.Add(unsafe.Pointer(data), i))
+		if ch < '0' || ch > '9' {
 			return All
 		}
-		d := uint64(s[i] - '0')
+		d := uint64(ch - '0')
 		if n > (limit-d)/10 {
 			return All
 		}

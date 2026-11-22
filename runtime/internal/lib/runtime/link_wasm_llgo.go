@@ -11,6 +11,9 @@ import (
 
 //go:linkname os_runtime_args os.runtime_args
 func os_runtime_args() []string {
+	if usePinnedProcess() {
+		return pinnedProcessArgs
+	}
 	argc := int(c.Argc)
 	if argc <= 0 || c.Argv == nil {
 		return nil

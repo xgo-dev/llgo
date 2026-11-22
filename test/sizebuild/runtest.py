@@ -118,6 +118,30 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
     print("WASI Full LTO preserved formatter callers, worker startup, and GC roots", flush=True)
 
 
+def wasi_compact_startup_probe(llgo, directory, env, runner):
+    cases = (
+        ("readonly", "", "println(len(os.Args), len(os.Getenv(\"LLGO_TEST_STARTUP\")))", "2 5", True),
+        ("sentinel", "", "println(len(os.Args), os.ErrNotExist == nil)", "2 false", False),
+        ("heap", "var escaped []byte", "escaped = make([]byte, len(os.Args)); println(len(escaped))", "2", False),
+    )
+    for name, decl, body, expected, compact in cases:
+        source = directory / f"wasi-startup-{name}.go"
+        source.write_text(f'package main\nimport "os"\n{decl}\nfunc main() {{ {body} }}\n')
+        artifact = source.with_suffix(".wasm")
+        log = command([str(llgo), "build", "-target=wasi", "-Oz", "-deadcodedrop",
+                       "-globaldce=false", "-lto=full", "-debug-artifact=none",
+                       "-compiler-verbose", "-o", str(artifact), str(source)], env)
+        if ("llgo: select compact WASI startup" in log) != compact:
+            raise RuntimeError(f"{name}: incorrect WASI startup selection\n{log}")
+        if compact and artifact.stat().st_size >= 24_000:
+            raise RuntimeError(f"{name}: compact startup grew to {artifact.stat().st_size} bytes")
+        actual = command([*runner, "--env", "LLGO_TEST_STARTUP=value", str(artifact), "--", "arg"],
+                         env, timeout=90).strip()
+        if actual != expected:
+            raise RuntimeError(f"{name}: expected {expected!r}, got {actual!r}")
+    print("WASI compact startup and ordinary fallback passed", flush=True)
+
+
 def reflect_size_probes(llgo, wasmer, directory, env):
     fixtures = (
         ("./test/wasm/reflect-method-value", "wasm reflect method values: 42 42 42 42 42"),
@@ -574,6 +598,7 @@ def main():
                        "--stack-size=1048576"]
         full_lto_codec_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")
         wasi_specialization_probe(llgo, directory, env, wasi_runner)
+        wasi_compact_startup_probe(llgo, directory, env, wasi_runner)
         cases = (("off", "cprintf"), ("off", "println"),
                  ("thin", "cprintf"), ("full", "cprintf"),
                  ("full", "println"), ("thin", "println"),

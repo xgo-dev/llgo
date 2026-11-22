@@ -835,6 +835,16 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 				return Expr{b.impl.CreateICmp(llvm.IntNE, dx, dy, ""), tret}
 			}
 		case vkIface, vkEface:
+			if (op == token.EQL || op == token.NEQ) && (x.impl.IsNull() || y.impl.IsNull()) {
+				// The first word is the itab or dynamic type. A typed nil
+				// payload is distinct from a nil interface.
+				if x.impl.IsNull() {
+					x = y
+				}
+				typeWord := b.faceItab(x.impl)
+				pred := boolPredOpToLLVM[op-predOpBase]
+				return Expr{llvm.CreateICmp(b.impl, pred, typeWord, llvm.ConstNull(typeWord.Type())), tret}
+			}
 			toEface := func(x Expr, emtpy bool) Expr {
 				if emtpy {
 					return x

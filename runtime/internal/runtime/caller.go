@@ -65,6 +65,9 @@ type callerLocationStore struct {
 }
 
 func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) int {
+	if !wasiCallerFrames {
+		return -1
+	}
 	var update unsafe.Pointer
 	if wasmDebuggerEnabled {
 		update = beginWasmCallerUpdate()
@@ -93,6 +96,9 @@ func PushCallerLocationFrame(entry uintptr, name, file string, startLine int) in
 }
 
 func PopCallerLocationFrame(mark int) {
+	if !wasiCallerFrames {
+		return
+	}
 	store := callerLocationStoreCurrent
 	if store == nil {
 		return
@@ -121,10 +127,16 @@ func PopCallerLocationFrame(mark int) {
 }
 
 func RecordCallerLocation(entry uintptr, name, file string, line int) {
+	if !wasiCallerFrames {
+		return
+	}
 	recordCallerLocation(entry, name, file, line, callerLocationMetadata{})
 }
 
 func RecordPanicLocation(entry uintptr, name, file string, line int) {
+	if !wasiCallerFrames {
+		return
+	}
 	recordCallerLocation(entry, name, file, line, callerLocationMetadata{})
 }
 

@@ -20,6 +20,8 @@ type startupEffects struct {
 	providers map[*ssa.Function]*ssa.Function
 	disabled  map[*ssa.Global]bool
 	sync      *ssa.Package
+
+	separateInitOrder bool
 }
 
 func (p *startupEffects) check(fn *ssa.Function) error {
@@ -147,6 +149,9 @@ func (p *startupEffects) instruction(fn *ssa.Function, inst ssa.Instruction) err
 		// The entry has a separate initializer list ordered by imports.
 		if callee != nil && callee.Pkg != nil && callee.Synthetic == "package initializer" &&
 			fn.Synthetic == "package initializer" && callee.Pkg != fn.Pkg && len(v.Call.Args) == 0 {
+			if p.separateInitOrder {
+				return nil
+			}
 			for _, dep := range fn.Pkg.Pkg.Imports() {
 				if dep == callee.Pkg.Pkg {
 					return nil
