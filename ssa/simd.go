@@ -610,7 +610,10 @@ func (b Builder) simdCheckedIndex(index Expr, limit int) llvm.Value {
 	b.Unreachable()
 	b.SetBlockEx(blocks[1], AtEnd, false)
 	b.blk.last = blocks[1].last
-	return b.impl.CreateIntCast(index.impl, b.Prog.tyInt32(), "")
+	if index.ll.IntTypeWidth() < 32 {
+		return b.impl.CreateZExt(index.impl, b.Prog.tyInt32(), "")
+	}
+	return b.impl.CreateTrunc(index.impl, b.Prog.tyInt32(), "")
 }
 
 // Lane indices are uint8 at the Go API boundary. Valid constants need no

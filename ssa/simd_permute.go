@@ -19,7 +19,7 @@ func (b Builder) simdPermute(op SIMDOp, args []Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
 	if op == SIMDPermuteOrZeroGrouped {
-		group = 16
+		group = 16 / int(b.Prog.td.TypeAllocSize(x.ll.ElementType()))
 	}
 	mask := llvm.ConstInt(indices.ll.ElementType(), uint64(group-1), false)
 	result := llvm.Undef(x.ll)

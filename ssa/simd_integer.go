@@ -19,7 +19,8 @@ func simdIntegerConstant(typ llvm.Type, value uint64) llvm.Value {
 
 func (b Builder) simdFunnel(op SIMDOp, x, y, count Expr) Expr {
 	// Funnel shifts reduce the count modulo the lane width, including zero.
-	// The initial truncation preserves that modulo for each power-of-two width.
+	// Scalar counts are truncated and splatted; vector counts are already per lane.
+	// fshr(y, x, n) supplies the high bits from y for the right-hand forms.
 	distance := count.impl
 	if distance.Type().TypeKind() != llvm.VectorTypeKind {
 		distance = b.impl.CreateTrunc(distance, x.ll.ElementType(), "")

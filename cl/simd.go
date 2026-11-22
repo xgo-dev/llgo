@@ -359,6 +359,7 @@ func lookupSIMD(fn *ssa.Function, arch string) (simdOperation, bool) {
 	desc, ok := simdOperations[key]
 	if arch == "arm64" && key == (simdKey{"numeric", "MulAdd"}) {
 		lanes, _ := llssa.SIMDNumericShape(vector)
+		// NEON integer MLA has no 64-bit lane form.
 		if lanes.Elem().Underlying().(*types.Basic).Info()&types.IsInteger != 0 && lanes.Len() >= 4 {
 			desc = simdOperation{llssa.SIMDIntegerMulAdd, simdTernary, types.IsInteger}
 		}

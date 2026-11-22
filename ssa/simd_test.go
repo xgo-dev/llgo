@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"math/bits"
 	"strings"
 	"testing"
 
@@ -146,5 +147,71 @@ func TestSIMDTagNativeAlignment(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Encode the eight possible (x,y,z) bit triples in adjacent bits. Across all
+// 256 immediates the result's low byte must reproduce the truth table itself.
+func TestSIMDTernaryTruthTablesAndMaskedWiden(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64", GOAMD64: "v1"})
+	defer prog.Dispose()
+	pkg := prog.NewPackage("p", "p")
+	fn := pkg.NewFunc("p.f", NoArgsNoRet, GoDecl)
+	b := fn.MakeBody(1)
+	lane := prog.ctx.Int32Type()
+	vec := func(words ...uint64) Expr {
+		cs := make([]llvm.Value, len(words))
+		for i, w := range words {
+			cs[i] = llvm.ConstInt(lane, w, false)
+		}
+		v := llvm.ConstVector(cs, false)
+		return Expr{v, &aType{ll: v.Type()}}
+	}
+	x, y, z := vec(0xf0, 0x0f), vec(0xcc, 0x33), vec(0xaa, 0x55)
+	for i := 0; i < 256; i++ {
+		imm := prog.IntVal(uint64(i), prog.rawType(types.Typ[types.Uint8]))
+		result := b.SIMD(SIMDTernaryLogic, x.Type, x, imm, y, z)
+		for laneIndex, want := range []byte{byte(i), bits.Reverse8(byte(i))} {
+			got := llvm.ConstExtractElement(result.impl, llvm.ConstInt(lane, uint64(laneIndex), false))
+			if byte(got.ZExtValue()) != want {
+				t.Fatalf("table %#x lane %d: %#x, want %#x", i, laneIndex, got.ZExtValue(), want)
+			}
+		}
+	}
+	x = vec(37, 11, 22, 33)
+	resultType := &aType{ll: llvm.VectorType(lane, 16)}
+	var stores []llvm.Value
+	for pattern := 0; pattern < 16; pattern++ {
+		words := make([]uint64, 4)
+		for i := range words {
+			if pattern&(1<<i) != 0 {
+				words[i] = 0xffffffff
+			}
+		}
+		out := b.SIMD(SIMDSplatMasked, resultType, x, vec(words...))
+		dst := llvm.AddGlobal(pkg.Module(), resultType.ll, fmt.Sprintf("mask%d", pattern))
+		store := b.impl.CreateStore(out.impl, dst)
+		store.SetVolatile(true)
+		stores = append(stores, store)
+	}
+	b.Return()
+	b.EndBuild()
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	if err := pkg.Module().RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for pattern, store := range stores {
+		v := store.Operand(0)
+		for i := 0; i < 16; i++ {
+			got := llvm.ConstExtractElement(v, llvm.ConstInt(lane, uint64(i), false))
+			want := uint64(0)
+			if pattern&(1<<i) != 0 {
+				want = 37
+			}
+			if got.IsAConstantInt().IsNil() || got.ZExtValue() != want {
+				t.Fatalf("mask %#x lane %d: %s, want %d", pattern, i, got.String(), want)
+			}
+		}
 	}
 }
