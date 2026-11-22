@@ -458,15 +458,14 @@ func TestBuildLTOPassPluginFlags(t *testing.T) {
 	}
 }
 
-func TestBuildLTOPassPluginRequiresFullLTO(t *testing.T) {
+func TestBuildLTOPassPluginRequiresLTO(t *testing.T) {
 	tests := [][]string{
 		{"-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so"},
-		{"-lto=thin", "-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so"},
 	}
 
 	for _, args := range tests {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			fs := flag.NewFlagSet("lto-pass-plugin-requires-fulllto", flag.ContinueOnError)
+			fs := flag.NewFlagSet("lto-pass-plugin-requires-lto", flag.ContinueOnError)
 			fs.SetOutput(new(bytes.Buffer))
 			AddBuildFlags(fs)
 			if err := fs.Parse(args); err != nil {

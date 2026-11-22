@@ -222,7 +222,7 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	}
 	AddOptLevelFlags(fs)
 	AddLTOFlag(fs)
-	fs.StringVar(&LTOPluginPath, "lto-pass-plugin", "", "Load an LLVM LTO pass plugin during full LTO (ELF lld or Mach-O ld64.lld)")
+	fs.StringVar(&LTOPluginPath, "lto-pass-plugin", "", "Load an LLVM LTO pass plugin during LTO (ELF lld or Mach-O ld64.lld)")
 	AddGlobalDCEFlag(fs)
 	addPCLNFlag(fs)
 	addWasmFinalFlags(fs)
@@ -438,8 +438,8 @@ func UpdateConfig(conf *build.Config) error {
 		conf.DebugArtifactModeSet = true
 	}
 	if LTOPluginPath != "" {
-		if conf.LTO != lto.Full {
-			return fmt.Errorf("lto pass plugin can only be enabled with full LTO (-lto=full)")
+		if !conf.LTO.Enabled() {
+			return fmt.Errorf("lto pass plugin requires -lto=thin or -lto=full")
 		}
 		conf.LTOPlugin = lto.PassPlugin{Path: LTOPluginPath}
 	}

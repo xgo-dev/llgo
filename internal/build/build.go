@@ -816,7 +816,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
+	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled() && conf.LTO == lto.Full)
 	prog.EnableCodeViewDebugInfo(emitCodeView)
 	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
 	prog.EnableFuncInfoMetadata(funcInfo)
@@ -3818,6 +3818,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		}
 	}
 
+	llvmfmv.RecordRegisterBaseline(ret.Module(), ctx.buildConf.Goarch, ctx.buildConf.GOAMD64)
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
@@ -3826,6 +3827,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
+	if ctx.buildConf.Goarch == "amd64" {
+		if err := llvmfmv.VerifyRegisterCalls(ret.Module()); err != nil {
+			return fmt.Errorf("%s: %w", pkgPath, err)
+		}
+	}
 	emitFuncInfoEntrySites(ctx, ret)
 	// ModeGen callers consume the in-memory LLVM module directly. They do not
 	// need cgo/link objects or a package archive for a later link step.

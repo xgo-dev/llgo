@@ -13,6 +13,10 @@ PassPluginLibraryInfo getLLGOLTOPluginInfo() {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, ModulePassManager &MPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
+                  if (Name == "llgo-verify-simd-registers") {
+                    llgo::addSIMDRegisterVerifier(MPM);
+                    return true;
+                  }
                   if (Name == llgo::LLGOInterfaceMethodTypeIDPassName) {
                     llgo::addLLGOInterfaceMethodTypeIDPass(MPM);
                     return true;
@@ -24,6 +28,12 @@ PassPluginLibraryInfo getLLGOLTOPluginInfo() {
                   return false;
                 });
 
+            PB.registerOptimizerLastEPCallback([](ModulePassManager &MPM,
+                                                  OptimizationLevel,
+                                                  ThinOrFullLTOPhase Phase) {
+              if (Phase == ThinOrFullLTOPhase::ThinLTOPostLink)
+                llgo::addSIMDRegisterVerifier(MPM);
+            });
             PB.registerFullLinkTimeOptimizationEarlyEPCallback(
                 [](ModulePassManager &MPM, OptimizationLevel) {
                   llgo::addLLGOPreGlobalDCEPipeline(MPM);
@@ -31,6 +41,7 @@ PassPluginLibraryInfo getLLGOLTOPluginInfo() {
             PB.registerFullLinkTimeOptimizationLastEPCallback(
                 [](ModulePassManager &MPM, OptimizationLevel) {
                   llgo::addLLGOTypeIDExportCleanupPass(MPM);
+                  llgo::addSIMDRegisterVerifier(MPM);
                 });
           }};
 }
