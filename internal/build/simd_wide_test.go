@@ -23,7 +23,7 @@ import "simd/archsimd"
 func arithmetic(x, y archsimd.Float32x8) archsimd.Float32x8 { return x.Add(y).Mul(x) }
 //go:noinline
 func guarded(x, y archsimd.Float32x8) archsimd.Float32x8 {
- if archsimd.X86.AVX2() { return arithmetic(x, y) }
+ if archsimd.X86.AVX2() { z := arithmetic(x, y); return arithmetic(z, z) }
  return x.Sub(y)
 }
 func indirect(f func(archsimd.Float32x8, archsimd.Float32x8) archsimd.Float32x8, x, y archsimd.Float32x8) archsimd.Float32x8 { return f(x, y) }
@@ -64,6 +64,14 @@ func main() {}
 						t.Fatalf("vector call carrier in %s", name)
 					}
 				}
+			}
+			regName := "main.arithmetic.__llgo_fmv_avx2.__llgo_fmv_reg256"
+			reg := mod.NamedFunction(regName)
+			if reg.IsNil() || reg.GlobalValueType().ReturnType().TypeKind() != llvm.VectorTypeKind || !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), regName) {
+				t.Fatalf("missing private register call: %s", mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String())
+			}
+			if strings.Contains(reg.String(), "load volatile") || strings.Contains(reg.String(), "store volatile") {
+				t.Fatalf("register entry still transfers values through pointers: %s", reg.String())
 			}
 			for _, name := range []string{"main.guarded", "main.guarded.__llgo_fmv_resolve"} {
 				body := mod.NamedFunction(name).String()
