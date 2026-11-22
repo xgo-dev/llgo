@@ -398,39 +398,16 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	// Stage private bodies until every name needed by the simplified call
 	// graph is known. A collision can be discovered in a recursive callee.
 	var copies []struct{ original, body llvm.Value }
-	newBody := func(fn llvm.Value, name string) llvm.Value {
+	newBody := func(fn llvm.Value, name string, mask uint64) llvm.Value {
 		v := folds.view(fn).CloneFunction()
 		v.SetName(name)
 		v.SetLinkage(llvm.InternalLinkage)
 		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		v.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 		copies = append(copies, struct{ original, body llvm.Value }{fn, v})
-		return v
-	}
-	clones := make(map[guardKey]llvm.Value)
-	// Materialize all copies before replacing any public entry. Local helper
-	// copies are shared by callers with identical proven predicates. Across a
-	// translation unit boundary, the ordinary Go carrier and entry remain valid.
-	var helperBudget int
-	var currentRoot llvm.Value
-	var specializeLocal func(llvm.Value, uint64) (llvm.Value, error)
-	specializeLocal = func(fn llvm.Value, mask uint64) (llvm.Value, error) {
-		key := guardKey{fn, mask}
-		if v, ok := clones[key]; ok {
-			return v, nil
+		if mask == 0 {
+			return v
 		}
-		if fn != currentRoot {
-			if helperBudget == 0 {
-				return fn, nil
-			}
-			helperBudget--
-		}
-		name := fn.Name() + guardSuffix(mask)
-		if !mod.NamedValue(name).IsNil() {
-			return llvm.Value{}, fmt.Errorf("SIMD FMV symbol collision: %s", name)
-		}
-		v := newBody(fn, name)
-		clones[key] = v
 		features := stringAttribute(fn, "target-features")
 		for _, p := range x86Predicates {
 			if mask&p.runtimeBit != 0 {
@@ -450,6 +427,42 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 			}
 		}
 		foldTrue(v, fold)
+		return v
+	}
+	clones := make(map[guardKey]llvm.Value)
+	// Materialize all copies before replacing any public entry. Local helper
+	// copies are shared by callers with identical proven predicates. Across a
+	// translation unit boundary, the ordinary Go carrier and entry remain valid.
+	var helperBudget int
+	var currentRoot llvm.Value
+	var specializeLocal func(llvm.Value, uint64) (llvm.Value, error)
+	specializeLocal = func(fn llvm.Value, mask uint64) (llvm.Value, error) {
+		key := guardKey{fn, mask}
+		if v, ok := clones[key]; ok {
+			return v, nil
+		}
+		// A promised AVX2 entry is already staged and folded. Use it for
+		// this exact mask, including when reached through a local helper.
+		var v llvm.Value
+		if avx2 != nil && mask == featureAVX2 {
+			v = avx2.variants[fn]
+		}
+		canonical := !v.IsNil()
+		if !canonical {
+			if fn != currentRoot {
+				if helperBudget == 0 {
+					return fn, nil
+				}
+				helperBudget--
+			}
+			name := fn.Name() + guardSuffix(mask)
+			if !mod.NamedValue(name).IsNil() {
+				return llvm.Value{}, fmt.Errorf("SIMD FMV symbol collision: %s", name)
+			}
+			v = newBody(fn, name, mask)
+		}
+		clones[key] = v
+
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
@@ -460,7 +473,10 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				if err != nil {
 					return llvm.Value{}, err
 				}
-				inst.SetOperand(inst.OperandsCount()-1, callee)
+				// Staged AVX2 callers are redirected together once all copies exist.
+				if !canonical {
+					inst.SetOperand(inst.OperandsCount()-1, callee)
+				}
 			}
 		}
 		return v, nil
@@ -483,7 +499,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 			}
 			root.choices[j] = dispatchChoice{mask, v}
 		}
-		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
+		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base", 0)
 	}
 	// Reuse existing local bodies in the canonical AVX2 call graph, including
 	// the externally callable AVX2 entries. Allocate no additional clones.

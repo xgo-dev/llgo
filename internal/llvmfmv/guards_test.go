@@ -547,10 +547,14 @@ func TestCanonicalAVX2EntrySharesGuardedKernel(t *testing.T) {
 	m := parseModule(t, `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-define void @kernel(ptr %p) noinline {
+define void @leaf(ptr %p) noinline "llgo.fmv.avx2-entry" {
  %v = load <8 x i32>, ptr %p
  %r = add <8 x i32> %v, %v
  store <8 x i32> %r, ptr %p
+ ret void
+}
+define void @kernel(ptr %p) noinline {
+ call void @leaf(ptr %p)
  ret void
 }
 define void @root(ptr %p) "llgo.fmv.avx2-entry" {
@@ -578,7 +582,7 @@ no:
 	guard := guardSuffix(featureAVX2)
 	for _, call := range []struct{ from, to string }{
 		{"root" + variantSuffix, "kernel" + guard},
-		{"root" + guard, "kernel" + guard},
+		{"kernel" + guard, "leaf" + variantSuffix},
 		{"caller" + variantSuffix, "root" + variantSuffix},
 		{"caller" + baselineSuffix, "root" + symbolPrefix + "guard_base"},
 	} {
@@ -587,8 +591,13 @@ no:
 			t.Fatalf("%s did not call %s directly:\n%s", call.from, call.to, m.String())
 		}
 	}
-	// An AVX2-only runtime snapshot selects the same kernel on either entry.
-	checkCachedGuard(t, m, featureAVX2, m.NamedFunction("root"+guard))
+	for _, name := range []string{"root", "leaf"} {
+		if !m.NamedFunction(name + guard).IsNil() {
+			t.Fatalf("duplicated canonical AVX2 implementation for %s", name)
+		}
+	}
+	// The public dispatcher caches the same implementation used across packages.
+	checkCachedGuard(t, m, featureAVX2, m.NamedFunction("root"+variantSuffix))
 }
 
 func TestGuardCombinationBudget(t *testing.T) {

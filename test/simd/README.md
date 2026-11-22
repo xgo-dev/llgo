@@ -502,8 +502,10 @@ Reference boundaries:
 
 On AMD64 the compiler also recognizes positive branches on the official
 `archsimd.X86` predicates. At control-flow joins it retains the predicates
-proven on every incoming path. When a guarded block performs vector work,
-a resolver can select an implementation with those target features. Nested
+proven on every incoming path. Guarded vector operations, LLVM intrinsics
+returning vectors, and direct calls to local SIMD helpers can select an
+implementation with those features. A call to an opaque function that returns
+a vector provides no local work to specialize. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
 GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
 the AVX512 predicate. LLGo folds these queries before generating guarded
@@ -511,7 +513,8 @@ versions. Optional predicates continue to read the effective CPU state.
 
 On v1/v2, the public resolver for a mixed AVX2 and AVX512 guard selects
 the physical body from both predicates and caches it in one slot. Separately
-compiled AVX2 callers can still use the canonical AVX2 entry. The wider
+compiled AVX2 callers can still use the canonical AVX2 entry. An AVX2-only
+guard reuses that entry when available. The wider
 clone specializes direct calls to the local AVX2 helper body.
 For independent guarded regions, the resolver selects the union of matching
 masks when the function has up to 16 distinct unions (including the empty
