@@ -112,3 +112,31 @@ func TestReflectPointerReceiverMethodFuncInvocation(t *testing.T) {
 		t.Fatalf("pointer receiver side effect = %d, want %d", got, want)
 	}
 }
+
+type itabMethodValue int
+
+func (v itabMethodValue) First() int   { return int(v) }
+func (v itabMethodValue) Ignored() int { return int(v) + 1 }
+func (v itabMethodValue) Last() int    { return int(v) + 2 }
+
+type itabMethods interface {
+	First() int
+	Last() int
+}
+
+//go:noinline
+func boxItabMethodValue(v int) any { return itabMethodValue(v) }
+
+func TestItabMultipleMethods(t *testing.T) {
+	boxed := boxItabMethodValue(41)
+	got, ok := boxed.(itabMethods)
+	if !ok || got.First() != 41 || got.Last() != 43 {
+		t.Fatalf("incorrect interface assertion or dispatch for %T", boxed)
+	}
+	if _, ok := boxed.(interface {
+		First() int
+		Last() string
+	}); ok {
+		t.Fatal("assertion matched a method of the wrong signature")
+	}
+}
