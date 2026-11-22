@@ -41,33 +41,35 @@ func TestLinkTimeRegisterVerifier(t *testing.T) {
 	}
 	clang, err := exec.LookPath("clang")
 	if err != nil {
-		t.Fatal(err)
+		t.Skip("clang unavailable")
 	}
 	linker, err := exec.LookPath("ld.lld")
 	if err != nil {
 		t.Skip("ELF lld unavailable")
 	}
 	for _, mode := range []string{"thin", "full"} {
-		for _, valid := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/valid=%t", mode, valid), func(t *testing.T) {
-				dir := t.TempDir()
-				input := filepath.Join(dir, "edge.ll")
-				bc := filepath.Join(dir, "edge.o")
-				attrs := ""
-				if valid {
-					attrs = `"target-features"="+avx512f"`
-				}
-				if err := os.WriteFile(input, []byte(fmt.Sprintf(registerEdgeFixture, attrs)), 0600); err != nil {
-					t.Fatal(err)
-				}
-				if output, err := exec.Command(clang, "--target=x86_64-unknown-linux-gnu", "-c", "-O0", "-flto="+mode, input, "-o", bc).CombinedOutput(); err != nil {
-					t.Fatalf("%v: %s", err, output)
-				}
-				out, err := exec.Command(linker, "--load-pass-plugin="+plugin, "-e", "start", bc, "-o", filepath.Join(dir, "result")).CombinedOutput()
-				if valid && err != nil || !valid && (err == nil || !strings.Contains(string(out), "requires 512-bit features")) {
-					t.Fatalf("link %v: %s", err, out)
-				}
-			})
+		for _, opt := range []string{"0", "2"} {
+			for _, valid := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/O%s/valid=%t", mode, opt, valid), func(t *testing.T) {
+					dir := t.TempDir()
+					input := filepath.Join(dir, "edge.ll")
+					bc := filepath.Join(dir, "edge.o")
+					attrs := ""
+					if valid {
+						attrs = `"target-features"="+avx512f"`
+					}
+					if err := os.WriteFile(input, []byte(fmt.Sprintf(registerEdgeFixture, attrs)), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if output, err := exec.Command(clang, "--target=x86_64-unknown-linux-gnu", "-c", "-O0", "-flto="+mode, input, "-o", bc).CombinedOutput(); err != nil {
+						t.Fatalf("%v: %s", err, output)
+					}
+					out, err := exec.Command(linker, "--lto-O"+opt, "--load-pass-plugin="+plugin, "-e", "start", bc, "-o", filepath.Join(dir, "result")).CombinedOutput()
+					if valid && err != nil || !valid && (err == nil || !strings.Contains(string(out), "requires 512-bit features")) {
+						t.Fatalf("link %v: %s", err, out)
+					}
+				})
+			}
 		}
 	}
 }

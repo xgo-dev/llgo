@@ -12,7 +12,7 @@ cmake -S ltoplugin -B ltoplugin/build \
 cmake --build ltoplugin/build
 ```
 
-Load the plugin when building with full or thin LTO on Linux/ELF or macOS/Mach-O:
+Load the plugin on Linux/ELF or macOS/Mach-O:
 
 ```sh
 llgo build -lto=full -lto-pass-plugin=/path/to/LLGOLTOPlugin.so ./...
@@ -49,6 +49,8 @@ The relevant LLVM 22 interfaces are
 [COFF options](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/lld/COFF/Options.td),
 and [MinGW options](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/lld/MinGW/Options.td).
 
-The SIMD register verifier checks direct calls after ThinLTO importing and at
-the end of full LTO. The standalone pass name is `llgo-verify-simd-registers`.
-The package backend also checks these calls after its optimization pipeline.
+ThinLTO uses the SIMD register verifier. The pre-GlobalDCE and type-ID
+cleanup passes require full LTO. The verifier checks direct calls after
+ThinLTO importing and during full LTO, including at O0. Its standalone pass
+name is `llgo-verify-simd-registers`. On amd64 the SIMD-enabled package
+backend also checks these calls after its optimization pipeline.

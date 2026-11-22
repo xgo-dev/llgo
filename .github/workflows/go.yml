@@ -446,6 +446,10 @@ jobs:
 
           echo "LLGO_LTO_PLUGIN=$GITHUB_WORKSPACE/ltoplugin/build/LLGOLTOPlugin.so" >> "$GITHUB_ENV"
 
+      - name: Check SIMD register calls in the ELF linker
+        if: runner.os == 'Linux'
+        run: go test -count=1 -run '^TestLinkTimeRegisterVerifier$' ./internal/llvmfmv
+
       - name: Run dev LTO GlobalDCE tests and demos with coverage
         run: |
           set -euo pipefail

@@ -4,6 +4,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Transforms/IPO/GlobalDCE.h"
 
 using namespace llvm;
 
@@ -27,6 +28,15 @@ PassPluginLibraryInfo getLLGOLTOPluginInfo() {
                   }
                   return false;
                 });
+
+            // LLVM 22 ends its ThinLTO O0 backend immediately after GlobalDCE,
+            // bypassing the optimizer-last extension point.
+            if (auto *PIC = PB.getPassInstrumentationCallbacks())
+              PIC->registerAfterPassCallback([](StringRef Name, Any IR,
+                                                const PreservedAnalyses &) {
+                if (Name == GlobalDCEPass::name())
+                  llgo::verifySIMDRegisterCalls(*any_cast<const Module *>(IR));
+              });
 
             PB.registerOptimizerLastEPCallback([](ModulePassManager &MPM,
                                                   OptimizationLevel,
