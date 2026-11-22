@@ -242,3 +242,61 @@ LLGO_NO_BUILTIN void *llgoMemcpy(void *dst, const void *src, size_t n)
 {
     return llgo_copy_forward(dst, src, n);
 }
+
+/* llgoMemset: byte head until the destination is word aligned, word fill
+ * with the replicated byte pattern, byte tail. Like the copy helpers it is
+ * pure computation with no libc or runtime dependencies, so it is safe in
+ * early init and interrupt contexts. */
+LLGO_NO_BUILTIN void *llgoMemset(void *dstp, int c, size_t n)
+{
+    uint8_t *dst = (uint8_t *)dstp;
+
+    if (n == 0u) {
+        return dstp;
+    }
+
+    uint32_t word = (uint8_t)c;
+    word |= word << 8;
+    word |= word << 16;
+
+    /* Byte head until dst is word aligned; at most three bytes. */
+    while (((uintptr_t)dst & (sizeof(uint32_t) - 1u)) != 0u) {
+        *dst++ = (uint8_t)c;
+        if (--n == 0u) {
+            return dstp;
+        }
+    }
+
+    uint32_t *w = (uint32_t *)dst;
+    while (n >= sizeof(uint32_t)) {
+        *w++ = word;
+        n -= sizeof(uint32_t);
+    }
+
+    dst = (uint8_t *)w;
+    while (n-- != 0u) {
+        *dst++ = (uint8_t)c;
+    }
+    return dstp;
+}
+
+/* The linker wraps the libc names (see z_wrap_symbols_riscv32.go) so that
+ * every reference to memcpy/memmove/memset - LLVM's loop-idiom lowering of
+ * Go copy and zero loops, plus newlib's own stdio and realloc internals -
+ * resolves to the word-block implementations above instead of newlib-esp32's
+ * byte loops. These entries only forward; no_builtin keeps LLVM from turning
+ * their forwarding bodies back into calls to the names being wrapped. */
+LLGO_NO_BUILTIN void *__wrap_memcpy(void *dst, const void *src, size_t n)
+{
+    return llgo_copy_forward(dst, src, n);
+}
+
+LLGO_NO_BUILTIN void *__wrap_memmove(void *dst, const void *src, size_t n)
+{
+    return llgoMemmove(dst, src, n);
+}
+
+LLGO_NO_BUILTIN void *__wrap_memset(void *dst, int c, size_t n)
+{
+    return llgoMemset(dst, c, n);
+}
