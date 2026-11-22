@@ -41,7 +41,10 @@ func ApplyAllocatorFunction(ctx llvm.Context, fn llvm.Value) {
 }
 
 // ApplyAllocatorCall records the extent of positive constant allocations.
-// Ordinary scanned and atomic allocations also return fresh storage.
+// Sizes above the signed maximum of the argument type are excluded.
+// Ordinary scanned and atomic allocations also return fresh storage. With
+// explicit GC roots, the collector cannot trace pointers in stack objects
+// introduced by heap-to-stack, so those calls must omit allockind.
 func ApplyAllocatorCall(ctx llvm.Context, call, callee llvm.Value, args []llvm.Value, gcRoots bool) {
 	if len(args) != 1 || callee.IsAFunction().IsNil() {
 		return

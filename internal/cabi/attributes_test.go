@@ -30,9 +30,9 @@ func TestABIAttributeTransport(t *testing.T) {
 			const ir = `
 %Large = type { i64, i64, i64, i64 }
 %Empty = type {}
-declare nonnull ptr @allocate(%Large, %Empty, i32, ptr returned) allocsize(2) nounwind
+declare nonnull ptr @allocate(%Large, %Empty, i32 range(i32 1, 64), ptr returned align 8) allocsize(2) nounwind
 declare ptr @allocate_count(%Large, %Empty, i32, i64) allocsize(2, 3) allockind("alloc,zeroed") "alloc-family"="test"
-declare %Large @produce(%Large, ptr readonly captures(none)) memory(none) nounwind willreturn
+declare %Large @produce(%Large, ptr readonly captures(none)) memory(none) nosync nounwind willreturn
 
 define i64 @writable_home(%Large %v) memory(none) {
   %home = alloca %Large, align 1
@@ -42,21 +42,26 @@ define i64 @writable_home(%Large %v) memory(none) {
   ret i64 %old
 }
 declare [8 x ptr] @capture(ptr captures(ret: address, provenance))
+declare %Large @sized_result(i64, i64) allocsize(0, 1)
+define %Large @forward_sized(i64 %n, i64 %m) allocsize(0, 1) {
+  %r = call %Large @sized_result(i64 %n, i64 %m) allocsize(0, 1)
+  ret %Large %r
+}
 define [8 x ptr] @forward_capture(ptr captures(ret: address, provenance) %p) {
   %r = call [8 x ptr] @capture(ptr captures(ret: address, provenance) %p)
   ret [8 x ptr] %r
 }
 
-define nonnull ptr @forward(%Large %v, %Empty %empty, i32 %n, ptr returned %p) allocsize(2) nounwind {
-  %r = call nonnull ptr @allocate(%Large %v, %Empty %empty, i32 %n, ptr returned %p) allocsize(2) nounwind
+define nonnull ptr @forward(%Large %v, %Empty %empty, i32 range(i32 1, 64) %n, ptr returned align 8 %p) allocsize(2) nounwind {
+  %r = call nonnull ptr @allocate(%Large %v, %Empty %empty, i32 range(i32 1, 64) %n, ptr returned align 8 %p) allocsize(2) nounwind
   ret ptr %r
 }
 define ptr @forward_count(%Large %v, %Empty %empty, i32 %size, i64 %count) allocsize(2, 3) {
   %r = call ptr @allocate_count(%Large %v, %Empty %empty, i32 %size, i64 %count) allocsize(2, 3) allockind("alloc,zeroed") "alloc-family"="test"
   ret ptr %r
 }
-define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none) nounwind willreturn {
-  %r = call %Large @produce(%Large %v, ptr readonly captures(none) %p) memory(none) nounwind willreturn
+define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none) nosync nounwind willreturn {
+  %r = call %Large @produce(%Large %v, ptr readonly captures(none) %p) memory(none) nosync nounwind willreturn
   ret %Large %r
 }
 `
@@ -89,6 +94,13 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 			if effects.GetEnumValue() != llvmattr.MemoryArgRead|llvmattr.MemoryArgWrite {
 				t.Fatalf("writable parameter home has wrong effects: %s", home.String())
 			}
+			sized := mod.NamedFunction("sized_result")
+			forward := mod.NamedFunction("forward_sized")
+			callSized := findAttributeCall(t, forward, "sized_result")
+			kind := llvm.AttributeKindID("allocsize")
+			if !sized.GetEnumFunctionAttribute(kind).IsNil() || !forward.GetEnumFunctionAttribute(kind).IsNil() || !callSized.GetCallSiteEnumAttribute(-1, kind).IsNil() {
+				t.Fatal("void sret function or call retained allocsize")
+			}
 			for _, name := range []string{"capture", "forward_capture"} {
 				fn := mod.NamedFunction(name)
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, 1, "sret")
@@ -117,6 +129,8 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 				if attr.GetEnumValue() != llvmattr.AllocSize(uint32(sizeIndex), llvmattr.AllocSizeNoCount) {
 					t.Fatalf("bad allocsize: %s", fn.String())
 				}
+				requireABIAttr(t, fn.GetEnumAttributeAtIndex, sizeIndex+1, "range")
+				requireABIAttr(t, fn.GetEnumAttributeAtIndex, len(types), "align")
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, len(types), "returned")
 				if name == "forward" {
 					call := findAttributeCall(t, fn, "allocate")
@@ -125,6 +139,8 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 					if requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "allocsize").GetEnumValue() != attr.GetEnumValue() {
 						t.Fatal("call allocsize differs")
 					}
+					requireABIAttr(t, call.GetCallSiteEnumAttribute, sizeIndex+1, "range")
+					requireABIAttr(t, call.GetCallSiteEnumAttribute, len(types), "align")
 					requireABIAttr(t, call.GetCallSiteEnumAttribute, len(types), "returned")
 				}
 			}
@@ -150,6 +166,7 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 			}
 			for _, name := range []string{"produce", "roundtrip"} {
 				fn := mod.NamedFunction(name)
+				requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "nosync")
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, 1, "sret")
 				last := len(fn.GlobalValueType().ParamTypes())
 				requireABIAttr(t, fn.GetEnumAttributeAtIndex, last, "readonly")
@@ -160,6 +177,7 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 				}
 				if name == "roundtrip" {
 					call := findAttributeCall(t, fn, "produce")
+					requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "nosync")
 					requireABIAttr(t, call.GetCallSiteEnumAttribute, last, "readonly")
 					requireABIAttr(t, call.GetCallSiteEnumAttribute, last, "captures")
 					if requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "memory").GetEnumValue() != llvmattr.MemoryArgRead|llvmattr.MemoryArgWrite {
@@ -207,8 +225,8 @@ func findAttributeCall(t *testing.T, fn llvm.Value, name string) llvm.Value {
 }
 
 // Exercise real runtime declarations rather than a synthetic ABI signature.
-// CStrDup keeps a pointer return while its String input is expanded or indirect;
-// StringFrom gains sret and must move the source pointer's readonly attribute.
+// CStrDup keeps a pointer return while its String input is expanded or indirect.
+// When StringFrom gains sret, readonly must follow its source pointer.
 func TestRuntimeABIAttributes(t *testing.T) {
 	llssa.Initialize(llssa.InitAllTargets | llssa.InitAllTargetInfos | llssa.InitAllTargetMCs | llssa.InitAllAsmPrinters)
 	rt, err := importer.ForCompiler(token.NewFileSet(), "source", nil).Import(llssa.PkgRuntime)
@@ -219,6 +237,7 @@ func TestRuntimeABIAttributes(t *testing.T) {
 		{GOOS: "linux", GOARCH: "amd64", LLVMTarget: "x86_64-unknown-linux-gnu"},
 		{GOOS: "darwin", GOARCH: "arm64", LLVMTarget: "aarch64-apple-darwin"},
 		{GOOS: "windows", GOARCH: "amd64", LLVMTarget: "x86_64-pc-windows-msvc"},
+		{GOOS: "windows", GOARCH: "386", LLVMTarget: "i686-pc-windows-msvc"},
 		{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasi"},
 	} {
 		t.Run(target.LLVMTarget, func(t *testing.T) {
@@ -255,8 +274,9 @@ func TestRuntimeABIAttributes(t *testing.T) {
 				fn := function(name)
 				attr := requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "memory")
 				want := llvmattr.MemoryRead
-				// These targets pass the two-word aggregates indirectly.
-				if target.GOOS == "windows" || target.GOARCH == "wasm" {
+				// Win64 and wasm pass these aggregates indirectly. Win32
+				// expands StringEqual's string arguments into scalars.
+				if target.GOARCH == "wasm" || target.GOOS == "windows" && (target.GOARCH == "amd64" || name == "Complex128Div") {
 					want |= llvmattr.MemoryArgWrite
 				}
 				if attr.GetEnumValue() != want {

@@ -17,6 +17,8 @@
 package cabi
 
 import (
+	"slices"
+
 	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
@@ -31,10 +33,18 @@ var callFunctionAttributeKinds = attributeKinds(
 )
 var closureEnvAttributeKinds = attributeKinds("nest", "swiftself")
 
-var valueAttributeKinds = attributeKinds(
-	"nonnull", "noalias", "noundef", "align", "dereferenceable", "dereferenceable_or_null",
-	"allocptr", "allocalign", "readonly", "writeonly", "captures", "nofree", "returned", "range",
-	"signext", "zeroext", "inreg", "sret", "byval",
+// The binding can only probe call-site attributes by kind. Restrict probes
+// for scalar integers and pointers to attributes LLVM accepts on those types.
+// Other types use the full list (e.g. align or range on vector elements).
+var (
+	commonValueKinds = attributeKinds("noundef", "nofree", "writeonly", "returned", "inreg", "swiftself")
+	intOnlyKinds     = attributeKinds("allocalign", "signext", "zeroext", "range")
+	ptrValueKinds    = slices.Concat(commonValueKinds, attributeKinds(
+		"nonnull", "noalias", "align", "dereferenceable", "dereferenceable_or_null",
+		"allocptr", "readonly", "captures", "sret", "byval", "nest",
+	))
+	intValueKinds = slices.Concat(commonValueKinds, intOnlyKinds)
+	allValueKinds = slices.Concat(ptrValueKinds, intOnlyKinds)
 )
 
 func attributeKinds(names ...string) []uint {
@@ -85,6 +95,9 @@ func remapFunctionAttribute(ctx llvm.Context, attr llvm.Attribute, info *FuncInf
 		}
 		return ctx.CreateEnumAttribute(memoryKind, effects)
 	case allocSizeKind:
+		if info.Return.Kind == AttrPointer {
+			return llvm.Attribute{} // The rewritten function returns void.
+		}
 		// allocsize uses zero-based indices, unlike LLVM attribute indices.
 		element, count := llvmattr.AllocSizeArgs(attr.GetEnumValue())
 		remap := func(index uint32) (uint32, bool) {
@@ -109,38 +122,24 @@ func remapFunctionAttribute(ctx llvm.Context, attr llvm.Attribute, info *FuncInf
 	return attr
 }
 
-// Value properties follow only an unchanged value. An aggregate's attributes
-// cannot be copied to one of its register pieces or to a new storage pointer.
-// The latter receives byval/sret from transformFuncType, never result noalias.
-func copyValueAttributes(info *FuncInfo, paramMap []int, variadicCount, newFixedCount int, get func(int, uint) llvm.Attribute, add func(int, llvm.Attribute)) {
-	copyIndex := func(oldIndex, newIndex int, kinds []uint) {
-		for _, kind := range kinds {
-			if kind == returnedKind && info.Return.Kind != AttrNone {
-				continue
-			}
-			attr := get(oldIndex, kind)
-			if attr.IsNil() || (info.Return.Kind == AttrPointer && !llvmattr.ValidOnSRetParameter(attr)) {
-				continue
-			}
-			add(newIndex, attr)
-		}
-	}
+// Register pieces and indirect storage receive only the closure ABI markers.
+// Semantic properties follow a value only when it survives lowering intact.
+func visitValueIndices(info *FuncInfo, paramMap []int, visit func(old, new int, ti *TypeInfo)) {
 	if info.Return.Kind == AttrNone {
-		copyIndex(0, 0, valueAttributeKinds)
+		visit(0, 0, info.Return)
 	}
-	for i, ti := range info.Params {
-		if paramMap[i] == 0 {
-			continue
-		}
-		copyIndex(i+1, paramMap[i], closureEnvAttributeKinds)
-		if ti.Kind == AttrNone {
-			copyIndex(i+1, paramMap[i], valueAttributeKinds)
+	for i, index := range paramMap {
+		if index != 0 {
+			visit(i+1, index, info.Params[i])
 		}
 	}
-	// Variadic operands are already promoted and are appended unchanged.
-	for i := 1; i <= variadicCount; i++ {
-		copyIndex(len(paramMap)+i, newFixedCount+i, valueAttributeKinds)
+}
+
+func keepValueAttribute(info *FuncInfo, kind uint, attr llvm.Attribute) bool {
+	if kind == returnedKind && info.Return.Kind != AttrNone {
+		return false
 	}
+	return info.Return.Kind != AttrPointer || llvmattr.ValidOnSRetParameter(attr)
 }
 
 func copyFunctionAttributes(ctx llvm.Context, from, to llvm.Value, info *FuncInfo, paramMap []int) {
@@ -149,7 +148,22 @@ func copyFunctionAttributes(ctx llvm.Context, from, to llvm.Value, info *FuncInf
 			to.AddAttributeAtIndex(-1, attr)
 		}
 	}
-	copyValueAttributes(info, paramMap, 0, 0, from.GetEnumAttributeAtIndex, to.AddAttributeAtIndex)
+	visitValueIndices(info, paramMap, func(old, new int, ti *TypeInfo) {
+		// Enumeration takes one query for an empty index, regardless of type.
+		kinds := allValueKinds
+		if ti.Kind != AttrNone {
+			kinds = closureEnvAttributeKinds
+		}
+		for _, attr := range from.GetAttributesAtIndex(old) {
+			if attr.IsString() {
+				continue
+			}
+			kind := uint(attr.GetEnumKind())
+			if slices.Contains(kinds, kind) && keepValueAttribute(info, kind, attr) {
+				to.AddAttributeAtIndex(new, attr)
+			}
+		}
+	})
 }
 
 func copyCallAttributes(ctx llvm.Context, from, to llvm.Value, info *FuncInfo, paramMap []int) {
@@ -165,6 +179,34 @@ func copyCallAttributes(ctx llvm.Context, from, to llvm.Value, info *FuncInfo, p
 	if family := from.GetCallSiteStringAttribute(-1, "alloc-family"); !family.IsNil() {
 		to.AddCallSiteAttribute(-1, family)
 	}
-	variadicCount := from.OperandsCount() - 1 - len(info.Params)
-	copyValueAttributes(info, paramMap, variadicCount, to.CalledFunctionType().ParamTypesCount(), from.GetCallSiteEnumAttribute, to.AddCallSiteAttribute)
+	copyIndex := func(old, new int, kinds []uint) {
+		for _, kind := range kinds {
+			attr := from.GetCallSiteEnumAttribute(old, kind)
+			if !attr.IsNil() && keepValueAttribute(info, kind, attr) {
+				to.AddCallSiteAttribute(new, attr)
+			}
+		}
+	}
+	visitValueIndices(info, paramMap, func(old, new int, ti *TypeInfo) {
+		if ti.Kind != AttrNone {
+			copyIndex(old, new, closureEnvAttributeKinds)
+			return
+		}
+		switch ti.Type.TypeKind() {
+		case llvm.IntegerTypeKind:
+			copyIndex(old, new, intValueKinds)
+		case llvm.PointerTypeKind:
+			copyIndex(old, new, ptrValueKinds)
+		default:
+			copyIndex(old, new, allValueKinds)
+		}
+	})
+	// The call operands after the fixed parameters are already promoted.
+	if info.Type.IsFunctionVarArg() {
+		fixed := len(paramMap)
+		shift := to.CalledFunctionType().ParamTypesCount() - fixed
+		for i, end := fixed+1, from.OperandsCount(); i < end; i++ {
+			copyIndex(i, i+shift, allValueKinds)
+		}
+	}
 }

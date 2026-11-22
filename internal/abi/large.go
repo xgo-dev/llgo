@@ -587,6 +587,7 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 }
 
 var (
+	largeAllocSizeKind    = int(llvm.AttributeKindID("allocsize"))
 	largeMemoryKind       = int(llvm.AttributeKindID("memory"))
 	largeSpeculatableKind = int(llvm.AttributeKindID("speculatable"))
 )
@@ -604,9 +605,10 @@ func (l *largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
 	for _, attr := range fn.GetFunctionAttributes() {
 		// The new sret store is observable, and large snapshots can add
 		// allocations and GC-root writes. Let LLVM infer the lowered effects.
+		// allocsize describes a returned allocation; the new function returns void.
 		if attr.IsEnum() {
 			switch attr.GetEnumKind() {
-			case largeMemoryKind, largeSpeculatableKind:
+			case largeAllocSizeKind, largeMemoryKind, largeSpeculatableKind:
 				continue
 			}
 		}
