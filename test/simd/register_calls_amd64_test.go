@@ -23,6 +23,7 @@ func pairWide(x archsimd.Uint32x16) (archsimd.Uint32x16, archsimd.Uint32x16) {
 func TestSIMDWideRegisterCalls(t *testing.T) {
 	if !archsimd.X86.AVX512() {
 		t.Skip("requires AVX512")
+		return
 	}
 	var in, out [16]uint32
 	for i := range in {
@@ -43,6 +44,7 @@ func TestSIMDWideRegisterCalls(t *testing.T) {
 func TestSIMDWideRegisterImport256(t *testing.T) {
 	if !archsimd.X86.AVX2() {
 		t.Skip("requires AVX2")
+		return
 	}
 	var x, y, out [8]uint32
 	for i := range x {
