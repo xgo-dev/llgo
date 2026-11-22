@@ -70,6 +70,14 @@ func main() {}
 			if reg.IsNil() || reg.GlobalValueType().ReturnType().TypeKind() != llvm.VectorTypeKind || !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), regName) {
 				t.Fatalf("missing private register call: %s", mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String())
 			}
+			for _, name := range []string{"main.guarded", "main.guarded.__llgo_fmv_baseline", "main.guarded.__llgo_fmv_query_avx2"} {
+				if strings.Contains(mod.NamedFunction(name).String(), regName) {
+					t.Fatalf("unproven call from %s", name)
+				}
+			}
+			if goos == "windows" && (reg.FunctionCallConv() != llvm.CallConv(80) || !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), "x86_vectorcallcc")) {
+				t.Fatal("expected vectorcall on both sides")
+			}
 			if strings.Contains(reg.String(), "load volatile") || strings.Contains(reg.String(), "store volatile") {
 				t.Fatalf("register entry still transfers values through pointers: %s", reg.String())
 			}
