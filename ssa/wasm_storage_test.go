@@ -76,6 +76,26 @@ func TestWasm32UsesGo64WordStorage(t *testing.T) {
 	}
 }
 
+func TestNativePointerCallsReuseStorageViews(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	global := pkg.NewVar("native_callback", types.NewPointer(NoArgsNoRet), CDecl)
+	body := pkg.NewFunc("example.com/p.call", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer body.Dispose()
+	callback := body.Load(global.Expr)
+	body.Call(callback)
+	before := len(prog.nativeStorage)
+	for range 32 {
+		body.Call(callback)
+	}
+	if after := len(prog.nativeStorage); after != before {
+		t.Errorf("repeated calls to the same native pointer grew storage views from %d to %d", before, after)
+	}
+	body.Return()
+	body.EndBuild()
+}
+
 func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
 	prog := newJ32Program(t)
 	word := prog.Uintptr()

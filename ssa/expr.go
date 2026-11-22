@@ -1111,7 +1111,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 	if t.kind == vkFuncPtr && x.kind == vkClosure {
 		sig := t.raw.Type.Underlying().(*types.Signature)
 		goSig := x.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
-		if b.Prog.toLLVMFunc(goSig) != b.Prog.FuncDecl(sig, CDecl).ll {
+		if b.Prog.toLLVMFunc(goSig) != b.Prog.funcDeclType(sig, CDecl).ll {
 			code, data := b.Field(x, 0), b.Field(x, 1)
 			if code.impl.IsNull() && data.impl.IsNull() {
 				return Expr{llvm.ConstNull(t.ll), t}
@@ -1134,7 +1134,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 	}
 	if t.kind == vkFuncPtr && x.kind == vkFuncDecl {
 		sig := t.raw.Type.Underlying().(*types.Signature)
-		if b.Prog.FuncDecl(sig, CDecl).ll != x.ll {
+		if b.Prog.funcDeclType(sig, CDecl).ll != x.ll {
 			return b.nativeCallback(t, x, CDecl, "c_callback")
 		}
 	}
@@ -1689,7 +1689,7 @@ func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
 		return ret
 	case vkFuncPtr:
 		sig = raw.Underlying().(*types.Signature)
-		ll = b.Prog.FuncDecl(sig, CDecl).ll
+		ll = b.Prog.funcDeclType(sig, CDecl).ll
 	case vkFuncDecl:
 		sig = raw.(*types.Signature)
 		ll = fn.ll
