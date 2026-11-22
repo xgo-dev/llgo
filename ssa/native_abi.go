@@ -158,9 +158,9 @@ func (b Builder) needsNativeFuncval(fn Expr) bool {
 		sig := fn.raw.Type.Underlying().(*types.Signature)
 		native := fn.ll
 		if fn.kind == vkFuncPtr {
-			native = prog.FuncDecl(sig, CDecl).ll
+			native = prog.funcDeclType(sig, CDecl).ll
 		}
-		if native != prog.FuncDecl(sig, GoDecl).ll || prog.hasWasmSlicePadding(native.ReturnType()) {
+		if native != prog.funcDeclType(sig, GoDecl).ll || prog.hasWasmSlicePadding(native.ReturnType()) {
 			return true
 		}
 	}
@@ -171,7 +171,7 @@ func (b Builder) needsNativeFuncval(fn Expr) bool {
 	case vkFuncPtr:
 		sig := fn.raw.Type.Underlying().(*types.Signature)
 		needed := false
-		b.Prog.nativeIntegerAttrs(sig, b.Prog.FuncDecl(sig, CDecl).ll, func(int, llvm.Attribute) {
+		b.Prog.nativeIntegerAttrs(sig, b.Prog.funcDeclType(sig, CDecl).ll, func(int, llvm.Attribute) {
 			needed = true
 		})
 		return needed
