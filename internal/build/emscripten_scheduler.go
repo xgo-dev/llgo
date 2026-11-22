@@ -138,6 +138,16 @@ func buildEmscriptenDispatch(ctx *context, exportFile string) (normal, direct st
 func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbose bool) (*context, string, error) {
 	local := *plan
 	local.outputPath = filepath.Join(dir, filepath.Base(output))
+	if plan.wasiMutatorSelection != "" {
+		probe, probeDir, err := probeWASIMutatorLink(ctx, &local, dir, verbose)
+		if err != nil {
+			return ctx, dir, err
+		}
+		if probe != nil {
+			return probe, probeDir, nil
+		}
+	}
+
 	if len(plan.directWasmInputs) != 0 {
 		probeDir, err := os.MkdirTemp(dir, "direct-*")
 		if err != nil {

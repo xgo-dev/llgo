@@ -4,3 +4,5 @@ package runtime
 
 func registerWasiGCThread()   {}
 func unregisterWasiGCThread() {}
+
+func wasiMainG() *g { return nil }

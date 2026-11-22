@@ -222,6 +222,10 @@ func Visit(visitor func(root *unsafe.Pointer, metadata unsafe.Pointer)) {
 	if visitor == nil {
 		return
 	}
+	if !concurrentWASIMutators() {
+		visitChain(CurrentChain(), visitor)
+		return
+	}
 	lockRegistry()
 	active := (*Context)(unsafe.Pointer(activeContext))
 	for ctx := contexts; ctx != nil; ctx = ctx.next {

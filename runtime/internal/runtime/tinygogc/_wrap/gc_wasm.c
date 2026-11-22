@@ -28,6 +28,8 @@ extern unsigned char __stop_llgo_gc_noscan __attribute__((weak));
 // linear memory as a Go heap and corrupting later libc allocations. Further
 // disjoint regions can be allocated as the Go heap grows.
 #define LLGO_WASI_GC_ARENA_SIZE (1u << 20)
+__attribute__((weak, visibility("hidden")))
+const unsigned char __llgo_wasi_gc_concurrent = 1;
 // These bounds describe only the first malloc-backed segment. Later arenas
 // have independent descriptors in tinygogc; they do not extend this region.
 static uintptr_t llgo_wasi_gc_arena_start;
@@ -77,6 +79,8 @@ uintptr_t llgo_gc_stack_top(void) {
 #if defined(__EMSCRIPTEN__)
 	return (uintptr_t)emscripten_stack_get_base();
 #elif defined(__wasi__) && defined(_REENTRANT)
+	if (!__llgo_wasi_gc_concurrent)
+		return (uintptr_t)&__stack_high;
 	// __stack_high belongs to the main thread. Every WASI pthread has its own
 	// stack, so the collector must obtain the current thread's upper bound.
 	pthread_attr_t attr;

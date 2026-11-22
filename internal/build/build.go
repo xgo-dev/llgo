@@ -1259,6 +1259,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
 	ctx.probeEmscriptenScheduler = canProbeEmscriptenScheduler(ctx, formatInputs)
+	ctx.probeWASIMutator = canProbeWASIMutator(ctx, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -2147,6 +2148,7 @@ type context struct {
 	wasmJSMinifier           string
 	skipEmscriptenMinifier   bool
 	probeEmscriptenScheduler bool
+	probeWASIMutator         bool
 	linkDiagnostics          io.Writer
 
 	buildTrace *buildTracer
@@ -2784,6 +2786,7 @@ type mainLinkPlan struct {
 	emscriptenUseLibcAllocator bool
 	directWasmAllocator        bool
 	embeddedPrintfFloatMarker  string
+	wasiMutatorSelection       string
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -3050,6 +3053,13 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 			return input == preparation.emscriptenCollectorArchive
 		})
 	}
+	var wasiMutatorSelection string
+	if ctx.probeWASIMutator {
+		wasiMutatorSelection, err = buildWASIMutatorSelection(ctx, entryPkg.ExportFile)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
 	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
 
@@ -3069,6 +3079,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
 		directWasmAllocator:        directWasmAllocator,
 		embeddedPrintfFloatMarker:  embeddedPrintfFloatMarker,
+		wasiMutatorSelection:       wasiMutatorSelection,
 	}, nil
 }
 
