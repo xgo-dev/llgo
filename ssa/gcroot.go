@@ -20,6 +20,7 @@ import (
 	"go/types"
 	"strconv"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	rabi "github.com/xgo-dev/llgo/runtime/abi"
@@ -87,9 +88,7 @@ func (p Function) buildGCRoots(count int) []Expr {
 
 	prog := p.Prog
 	rootValueType := prog.VoidPtr()
-	rootStorageType := rootValueType.ll
-	rootArrayType := llvm.ArrayType(rootStorageType, count)
-	frameType := prog.ctx.StructType([]llvm.Type{rootStorageType, rootStorageType, rootArrayType}, false)
+	frameType, rootArrayType := llabi.GCRootFrameTypes(prog.ctx, count)
 	originalEntry := entry.first
 	prologue := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.entry")
 	b.impl.SetInsertPointAtEnd(prologue)
@@ -386,8 +385,7 @@ func (p Function) gcRootHelper(push bool, count int) llvm.Value {
 	defer b.Dispose()
 	entry := prog.ctx.AddBasicBlock(fn, "entry")
 	b.impl.SetInsertPointAtEnd(entry)
-	stored := ptr.ll
-	frameType := prog.ctx.StructType([]llvm.Type{stored, stored, llvm.ArrayType(stored, 0)}, false)
+	frameType, _ := llabi.GCRootFrameTypes(prog.ctx, 0)
 	frame := fn.Param(0)
 	chain := Expr{p.gcRootChain(), prog.Pointer(ptr)}
 	current := b.Load(chain)
