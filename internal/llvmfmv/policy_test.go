@@ -210,24 +210,24 @@ func TestDispatcherInlineDebugIdentity(t *testing.T) {
 	mod := parseModule(t, `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-define float @root(float %x) "target-cpu"="x86-64" !dbg !4 {
+define <4 x float> @root(<4 x float> %x) "target-cpu"="x86-64" !dbg !4 {
   %ok = call i1 @avx2(), !dbg !5
   br i1 %ok, label %fast, label %slow, !dbg !5
 fast:
-  %y = fadd float %x, %x, !dbg !5
-  ret float %y, !dbg !5
+  %y = fadd <4 x float> %x, %x, !dbg !5
+  ret <4 x float> %y, !dbg !5
 slow:
-  ret float %x, !dbg !5
+  ret <4 x float> %x, !dbg !5
 }
-define float @middle(float %x) alwaysinline "target-cpu"="x86-64" !dbg !6 {
-  %v = call float @root(float %x), !dbg !7
-  %r = fmul float %v, %x, !dbg !7
-  ret float %r, !dbg !7
+define <4 x float> @middle(<4 x float> %x) alwaysinline "target-cpu"="x86-64" !dbg !6 {
+  %v = call <4 x float> @root(<4 x float> %x), !dbg !7
+  %r = fmul <4 x float> %v, %x, !dbg !7
+  ret <4 x float> %r, !dbg !7
 }
-define float @outer(float %x) noinline "target-cpu"="x86-64" !dbg !8 {
-  %v = call float @middle(float %x), !dbg !9
-  %r = fadd float %v, %x, !dbg !9
-  ret float %r, !dbg !9
+define <4 x float> @outer(<4 x float> %x) noinline "target-cpu"="x86-64" !dbg !8 {
+  %v = call <4 x float> @middle(<4 x float> %x), !dbg !9
+  %r = fadd <4 x float> %v, %x, !dbg !9
+  ret <4 x float> %r, !dbg !9
 }
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!10, !11}

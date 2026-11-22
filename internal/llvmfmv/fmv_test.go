@@ -145,6 +145,28 @@ func TestEarlySpecialization(t *testing.T) {
 	}
 }
 
+func TestAVX2QueryResultKeepsOrdinaryEntry(t *testing.T) {
+	for _, baseline := range []string{"v1", "v2"} {
+		t.Run(baseline, func(t *testing.T) {
+			mod := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+define i1 @ready() {
+  %ok = call i1 @avx2()
+  ret i1 %ok
+}
+`)
+			before := mod.String()
+			if err := Run(mod, baseline); err != nil {
+				t.Fatal(err)
+			}
+			if mod.String() != before {
+				t.Fatalf("plain AVX2 query acquired FMV state:\n%s", mod.String())
+			}
+		})
+	}
+}
+
 func TestOtherTargetUnchanged(t *testing.T) {
 	mod := parseModule(t, strings.Replace(fixture, "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", 1))
 	before := mod.String()
@@ -220,7 +242,9 @@ define fastcc void @root(ptr nonnull %p) {
   %ok = call fastcc i1 @avx2({} zeroinitializer)
   br i1 %ok, label %fast, label %fallback
 fast:
-  store i32 1, ptr %p
+  %x = load <4 x i32>, ptr %p
+  %y = add <4 x i32> %x, %x
+  store <4 x i32> %y, ptr %p
   ret void
 fallback:
   store i32 0, ptr %p
@@ -244,7 +268,7 @@ fallback:
 					t.Fatalf("dispatch lost receiver or call ABI %q:\n%s", want, root)
 				}
 			}
-			if strings.Contains(variant, "@avx2(") || strings.Contains(variant, "store i32 0") || !strings.Contains(variant, "store i32 1") {
+			if strings.Contains(variant, "@avx2(") || strings.Contains(variant, "store i32 0") || !strings.Contains(variant, "add <4 x i32>") {
 				t.Fatalf("zero-sized receiver query did not specialize:\n%s", variant)
 			}
 		})

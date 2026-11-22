@@ -352,7 +352,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		name := checkedQuery(fn)
 		bit := predicateBits[name]
 		guaranteed := guaranteedQuery(name, baseline)
-		if bit == 0 || (bit == featureAVX2 && !guaranteed) {
+		if bit == 0 {
 			continue
 		}
 		if guaranteed {

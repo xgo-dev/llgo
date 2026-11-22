@@ -274,9 +274,10 @@ upstream Go helper.
 
 ## CPU-guarded SIMD128 specialization
 
-On amd64, functions calling the official `archsimd.X86.AVX2` query get an
-AVX2 version for signatures containing scalars, pointers, slices, strings,
-arrays, structs, and multiple results, including nested SIMD128 values. The
+On amd64, a direct `archsimd.X86.AVX2()` guard over vector work or a call
+to a promised AVX2 entry can select an AVX2 version. A function that only
+returns the query result keeps its ordinary entry. Supported signatures include
+scalars, pointers, slices, strings, aggregates and multiple results. The
 original entry loads a cached implementation and tail-forwards to it. A separate resolver selects the baseline or AVX2 body from
 the immutable, post-`GODEBUG` CPU snapshot on first use. Before CPU initialization
 it tail-forwards to the baseline without caching. Function addresses retain the
@@ -297,9 +298,8 @@ including when nested in arrays and structs. The compiler validates the bridge
 identity and storage against the corresponding official archsimd type while
 retaining its aggregate ABI. This lets an AVX2 implementation call another
 package's specialized portable function without LTO. Emulated bridge types do
-not qualify as vector callees. A CPU-querying function can still specialize in
-either representation: `simd=0` does not imply that AVX2 is disabled, and a
-128-bit representation does not imply that AVX2 is enabled.
+not qualify as vector callees. The emulated path keeps ordinary CPU queries when it performs only scalar
+work. The selected portable width and the effective AVX2 query are independent.
 
 The transform is implemented in Go using the LLVM Go API. It discovers CPU
 queries, clones eligible functions, rewrites direct calls and creates dispatch

@@ -186,16 +186,30 @@ type avx2Plan struct {
 func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
-	roots := make(map[llvm.Value]llvm.Value)
+	queries := make(map[llvm.Value]uint64)
+	roots := make(map[llvm.Value]bool)
+	entries := make(map[llvm.Value]bool)
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if hasAttribute(fn, EntryAttribute) && supported(fn) {
+			entries[fn] = true
+		}
 		if !isQuery(fn) {
 			continue
 		}
+		queries[fn] = featureAVX2
 		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
 			call := use.User()
 			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
-				roots[call.InstructionParent().Parent()] = fn
+				roots[call.InstructionParent().Parent()] = true
 			}
+		}
+	}
+	// Only a direct guard over local vector work or a call to a promised AVX2
+	// entry needs canonical dispatch. Scalar-signature helper chains can use
+	// the ordinary guarded-feature pass and its bounded local clones.
+	for fn := range roots {
+		if !supported(fn) || len(guardContexts(fn, queries, entries)) == 0 {
+			delete(roots, fn)
 		}
 	}
 	var originals []llvm.Value
@@ -203,14 +217,11 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 		if hasAttribute(fn, doneAttribute) {
 			continue
 		}
-		if !hasAttribute(fn, EntryAttribute) && roots[fn].IsNil() {
-			continue
-		}
-		if !supported(fn) {
+		if !entries[fn] && !roots[fn] {
 			continue
 		}
 		suffixes := []string{variantSuffix}
-		if !roots[fn].IsNil() {
+		if roots[fn] {
 			suffixes = append(suffixes, baselineSuffix, resolverSuffix, slotSuffix)
 		}
 		for _, suffix := range suffixes {
@@ -247,7 +258,7 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
 		variants[fn] = variant
-		if !roots[fn].IsNil() {
+		if roots[fn] {
 			baseline := fn.CloneFunction()
 			baseline.SetName(fn.Name() + baselineSuffix)
 			baseline.SetLinkage(llvm.InternalLinkage)

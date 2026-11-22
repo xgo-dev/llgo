@@ -128,7 +128,14 @@ func TestGuardedSymbolCollision(t *testing.T) {
 // A Go helper taking array pointers may do SIMD work without a vector in its
 // signature. The guard must reach the actual computation through local calls.
 func TestGuardedScalarSignatureHelpers(t *testing.T) {
-	m := parseModule(t, `
+	for _, feature := range []string{"avx512", "avx2"} {
+		t.Run(feature, func(t *testing.T) { testGuardedScalarSignatureHelpers(t, feature) })
+	}
+}
+
+func testGuardedScalarSignatureHelpers(t *testing.T, feature string) {
+	t.Helper()
+	const ir = `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
 declare void @external(ptr)
@@ -163,14 +170,15 @@ work:
 exit:
  ret void
 }
-`)
+`
+	m := parseModule(t, strings.Replace(ir, "x86.avx512", "x86."+feature, 1))
 	if err := Run(m, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	const suffix = ".__llgo_fmv_guard_avx512"
+	suffix := ".__llgo_fmv_guard_" + feature
 	root, helper, kernel := m.NamedFunction("root"+suffix), m.NamedFunction("helper"+suffix), m.NamedFunction("kernel"+suffix)
 	if root.IsNil() || helper.IsNil() || kernel.IsNil() {
 		t.Fatalf("guard did not reach scalar-signature helper and kernel:\n%s", m.String())
@@ -183,11 +191,15 @@ exit:
 	if !strings.Contains(helper.String(), "call void @kernel"+suffix) || !strings.Contains(helper.String(), "call void @helper"+suffix) {
 		t.Fatal(helper.String())
 	}
-	if !m.NamedFunction("scalar"+suffix).IsNil() || !strings.Contains(stringAttribute(kernel, "target-features"), "+avx512f") {
+	if !m.NamedFunction("scalar"+suffix).IsNil() || !strings.Contains(stringAttribute(kernel, "target-features"), "+"+feature) {
 		t.Fatalf("incorrect specialization set:\n%s", m.String())
 	}
 	if strings.Contains(m.NamedFunction("helper").String(), suffix) {
 		t.Fatal("unguarded helper calls a specialized entry")
+	}
+	before := m.String()
+	if err := Run(m, "v1"); err != nil || m.String() != before {
+		t.Fatalf("repeated pass changed local guard: %v\n%s", err, m.String())
 	}
 }
 
