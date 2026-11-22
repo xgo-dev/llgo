@@ -1738,6 +1738,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:
+		if concrete := p.directReflectTypeFactory(v); concrete != nil {
+			ret = p.emitDirectReflectTypeFactory(b, v, concrete)
+			break
+		}
 		if src := freshNilAppendSource(v); src != nil {
 			ret = b.AppendFreshSliceToNil(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, src))
 			break

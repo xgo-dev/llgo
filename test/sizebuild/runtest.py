@@ -118,15 +118,19 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
     print("WASI Full LTO preserved formatter callers, worker startup, and GC roots", flush=True)
 
 
-def reflect_method_size_probe(llgo, wasmer, directory, env):
-    module = directory / "reflect-method-value.wasm"
-    command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
-             "-globaldce=false", "-debug-artifact=none",
-             "-o", str(module), "./test/wasm/reflect-method-value"], env)
-    actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
-                      "--stack-size=1048576", str(module)], env, timeout=90)
-    if actual.strip() != "wasm reflect method values: 42 42 42 42 42":
-        raise RuntimeError(f"reflect method values under WASI Full LTO: {actual!r}")
+def reflect_size_probes(llgo, wasmer, directory, env):
+    fixtures = (
+        ("./test/wasm/reflect-method-value", "wasm reflect method values: 42 42 42 42 42"),
+        ("./internal/build/testdata/wasm-reflect-type-queries", "reflect type queries passed"),
+    )
+    for fixture, expected in fixtures:
+        module = directory / f"{pathlib.Path(fixture).name}.wasm"
+        command([str(llgo), "build", "-target=wasi", "-Oz", "-lto=full",
+                 "-globaldce=false", "-debug-artifact=none", "-o", str(module), fixture], env)
+        actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
+                          "--stack-size=1048576", str(module)], env, timeout=90)
+        if actual.strip() != expected:
+            raise RuntimeError(f"{fixture} under WASI Full LTO: {actual!r}, expected {expected!r}")
 
 
 def legacy_json_uses_v2(env):
@@ -558,7 +562,7 @@ def main():
         env["RUST_LOG"] = "off"
         runtime_free_cache_probe(llgo, wasmer, directory, env)
         wasi_full_lto_size_probe(llgo, wasmer, directory, env)
-        reflect_method_size_probe(llgo, wasmer, directory, env)
+        reflect_size_probes(llgo, wasmer, directory, env)
         wasi_runner = [wasmer, "run", "--enable-exceptions", "--enable-simd",
                        "--stack-size=1048576"]
         full_lto_codec_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")

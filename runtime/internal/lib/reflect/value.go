@@ -373,7 +373,7 @@ func (v Value) Equal(u Value) bool {
 	case Func, Map, Slice:
 		break
 	}
-	panic("reflect.Value.Equal: values of type " + v.Type().String() + " are not comparable")
+	panic("reflect.Value.Equal: values of type " + v.typeRType().String() + " are not comparable")
 }
 
 // Addr returns a pointer value representing the address of v.
@@ -1616,7 +1616,7 @@ func (v Value) stringNonString() string {
 	}
 	// If you call String on a reflect.Value of other type, it's better to
 	// print something than to panic. Useful in debugging.
-	return "<" + v.Type().String() + " Value>"
+	return "<" + v.typeRType().String() + " Value>"
 }
 
 // TryRecv attempts to receive a value from the channel v but will not block.
@@ -1642,13 +1642,18 @@ func (v Value) TrySend(x Value) bool {
 
 // Type returns v's type.
 func (v Value) Type() Type {
+	return v.typeRType()
+}
+
+// Keep descriptor queries inside reflect from building the public Type interface.
+func (v Value) typeRType() *rtype {
 	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
 		return (*rtype)(unsafe.Pointer(v.typ_)) // inline of toRType(v.typ()), for own inlining in inline test
 	}
-	return v.typeSlow()
+	return v.typeRTypeSlow()
 }
 
-func (v Value) typeSlow() Type {
+func (v Value) typeRTypeSlow() *rtype {
 	if v.flag == 0 {
 		panic(&ValueError{"reflect.Value.Type", Invalid})
 	}

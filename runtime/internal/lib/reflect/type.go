@@ -871,14 +871,20 @@ func (t *structType) directFieldByName(name string) (index int, hasEmbeds bool) 
 // TypeOf returns the reflection Type that represents the dynamic type of i.
 // If i is a nil interface value, TypeOf returns nil.
 func TypeOf(i any) Type {
-	eface := *(*emptyInterface)(unsafe.Pointer(&i))
-	// check nil
-	if eface.typ == nil {
+	t := LLGoRTypeOf(i)
+	if t == nil {
 		return nil
 	}
-	// Noescape so this doesn't make i to escape. See the comment
-	// at Value.typ for why this is safe.
-	return toPublicType((*abi.Type)(unsafe.Pointer(eface.typ)))
+	return t
+}
+
+// LLGoRTypeOf is the compiler entry for concrete descriptor queries.
+func LLGoRTypeOf(i any) *rtype {
+	t := rtypeOf(i)
+	if t == nil {
+		return nil
+	}
+	return toRType(publicTypeDescriptor(t))
 }
 
 // TypeFor returns the [Type] that represents the type argument T.

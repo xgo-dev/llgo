@@ -2714,6 +2714,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 		return
 	}
 	if mthd := call.Method; mthd != nil {
+		if act == llssa.Call && ds == nil {
+			if direct, ok := p.tryDirectReflectTypeMethod(b, call); ok {
+				return direct
+			}
+		}
 		p.recordReflectValueMethodInvoke(call, mthd)
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
 		o := p.compileValue(b, cv)
