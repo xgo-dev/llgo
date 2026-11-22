@@ -78,6 +78,7 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
         ("wasm-fmt-literal-callers",
          "stdout captured before formatting\nliteral format caller parity passed"),
         ("wasm-wasi-thread-startup", "wasi thread startup ok"),
+        ("wasm-wasi-timer-startup", "timer result 42"),
         ("wasm-wasi-single-gc", "live stack and globals 89"),
         ("wasm-fmt-map", "wasi default value formatting ok"),
     )
@@ -92,9 +93,10 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
             raise RuntimeError(f"{fixture}: closed WASI build skipped value formatting specialization\n{log}")
         collector = {
             "wasm-wasi-single-gc": "link WASI collector for one mutator",
-            "wasm-wasi-thread-startup": "retain WASI concurrent collector",
+            "wasm-wasi-thread-startup": "retain WASI concurrent collector (reachable go statement)",
+            "wasm-wasi-timer-startup": "retain WASI concurrent collector",
         }.get(fixture)
-        if collector is not None and f"llgo: {collector}" not in log:
+        if collector is not None and f"llgo: {collector}" not in log.splitlines():
             raise RuntimeError(f"{fixture}: expected {collector!r}\n{log}")
         actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
                           "--stack-size=1048576", str(module)], env, timeout=90)

@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"fmt"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/sizereport"
 	"github.com/xgo-dev/llvm"
+	"golang.org/x/tools/go/ssa"
 )
 
 const (
@@ -34,10 +36,32 @@ func canProbeWASIMutator(ctx *context, inputs *linkPruningInputs) bool {
 		conf.LinkOptions.ExternalLinkerFlags != "" || os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" {
 		return false
 	}
+	application := make(map[*types.Package]bool)
 	for _, pkg := range ctx.pkgByID {
 		if !wasmSchedulerProbePackage(pkg.Package, inputs.goroot) ||
 			pkg.AltPkg != nil && !wasmSchedulerProbePackage(pkg.AltPkg.Package, inputs.goroot) {
 			return false
+		}
+		if !isStandardLibraryPackage(pkg.Package, inputs.goroot) && !isSchedulerRuntimePackage(pkg.Package) {
+			application[pkg.Types] = true
+		}
+	}
+	// Treat reachable go statements in application code as sufficient to
+	// retain the concurrent collector. The Go call graph can include library
+	// paths that LTO discards, so check library thread creation after linking.
+	for fn := range wasmProgramUseFor(ctx).reachable {
+		if fn.Pkg == nil || !application[fn.Pkg.Pkg] {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instrs {
+				if _, startsGoroutine := instr.(*ssa.Go); startsGoroutine {
+					if ctx.shouldPrintCommands(conf.Verbose) {
+						fmt.Fprintln(os.Stderr, "llgo: retain WASI concurrent collector (reachable go statement)")
+					}
+					return false
+				}
+			}
 		}
 	}
 	return true
