@@ -15,8 +15,10 @@ func wasiGCMStart(arg unsafe.Pointer) unsafe.Pointer { return mstart(arg) }
 //go:linkname wasiGCThreadStart C.llgo_wasi_gc_thread_start
 func wasiGCThreadStart(arg unsafe.Pointer) unsafe.Pointer
 
+const wasiSelectMainContext = gcroot.WASISelectableMutators
+
 func registerWasiGCThread() {
-	if !gcroot.WASIConcurrentMutators() || gcroot.CurrentThreadRegistered() {
+	if gcroot.WASISelectableMutators && !gcroot.WASIConcurrentMutators() || gcroot.CurrentThreadRegistered() {
 		return
 	}
 	wasiGCEnterBegin()
@@ -25,7 +27,7 @@ func registerWasiGCThread() {
 }
 
 func unregisterWasiGCThread() {
-	if !gcroot.WASIConcurrentMutators() || !gcroot.CurrentThreadRegistered() {
+	if gcroot.WASISelectableMutators && !gcroot.WASIConcurrentMutators() || !gcroot.CurrentThreadRegistered() {
 		return
 	}
 	wasiGCLeaveBegin()
@@ -40,7 +42,7 @@ func wasiGCStopTheWorld() bool { return wasiGCStop() != 0 }
 func wasiGCResumeWorld() { wasiGCResume() }
 
 func wasiGCSafepoint() {
-	if !gcroot.WASIConcurrentMutators() || !gcroot.CurrentThreadRegistered() || wasiGCPending() == 0 {
+	if gcroot.WASISelectableMutators && !gcroot.WASIConcurrentMutators() || !gcroot.CurrentThreadRegistered() || wasiGCPending() == 0 {
 		return
 	}
 	bottom := uintptr(wasiGCStackPointer())

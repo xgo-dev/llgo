@@ -222,7 +222,7 @@ func Visit(visitor func(root *unsafe.Pointer, metadata unsafe.Pointer)) {
 	if visitor == nil {
 		return
 	}
-	if !concurrentWASIMutators() {
+	if WASISelectableMutators && !WASIConcurrentMutators() {
 		visitChain(CurrentChain(), visitor)
 		return
 	}

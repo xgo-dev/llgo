@@ -8,10 +8,12 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/gcroot"
 )
 
-func gcStopWorld() bool { return !gcroot.WASIConcurrentMutators() || wasiStopWorld() }
+func gcStopWorld() bool {
+	return gcroot.WASISelectableMutators && !gcroot.WASIConcurrentMutators() || wasiStopWorld()
+}
 
 func gcResumeWorld() {
-	if gcroot.WASIConcurrentMutators() {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
 		wasiResumeWorld()
 	}
 }

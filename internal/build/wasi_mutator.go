@@ -7,18 +7,28 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/sizereport"
 	"github.com/xgo-dev/llvm"
 )
 
-const wasiConcurrentGC = "__llgo_wasi_gc_concurrent"
+const (
+	wasiConcurrentGC        = "__llgo_wasi_gc_concurrent"
+	wasiMutatorSelectionTag = "llgo.wasi.mutatorselect"
+)
+
+func wasiMutatorProfile(conf *Config, target crosscompile.Export, gc bool) bool {
+	return gc && wasiSizePruningConfig(conf, target, cl.Options{}) &&
+		conf.ltoMode() == lto.Full && conf.DebugArtifactMode == DebugArtifactNone &&
+		conf.PCLNMode != PCLNExternal && !conf.GenLL && !conf.CheckLLFiles
+}
 
 func canProbeWASIMutator(ctx *context, inputs *linkPruningInputs) bool {
 	conf := ctx.buildConf
-	if !wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions) ||
-		conf.ltoMode() != lto.Full || conf.DebugArtifactMode != DebugArtifactNone ||
-		conf.PCLNMode == PCLNExternal || conf.GenLL || conf.CheckLLFiles ||
+	if !slices.Contains(ctx.crossCompile.BuildTags, wasiMutatorSelectionTag) ||
+		!wasiSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions) ||
 		!ctx.wasmClosedProgram || ctx.wasmRuntimeFree || len(ctx.initial) != 1 ||
 		inputs == nil || inputs.opaqueAsmPkg != "" || len(conf.SourceOverlay) != 0 ||
 		conf.LinkOptions.ExternalLinkerFlags != "" || os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" {

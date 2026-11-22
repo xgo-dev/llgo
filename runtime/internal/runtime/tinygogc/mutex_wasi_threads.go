@@ -15,13 +15,13 @@ import (
 type mutex = sync.Mutex
 
 func lock(m *mutex) {
-	if gcroot.WASIConcurrentMutators() {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
 		wasiAllocatorLock(unsafe.Pointer(m))
 	}
 }
 
 func unlock(m *mutex) {
-	if gcroot.WASIConcurrentMutators() {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
 		m.Unlock()
 	}
 }
@@ -29,7 +29,7 @@ func unlock(m *mutex) {
 // An explicit GC must let a pending allocator acquire the mutex before it
 // returns, so a tight runtime.GC loop cannot starve allocating goroutines.
 func unlockForGC(m *mutex) {
-	if gcroot.WASIConcurrentMutators() {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
 		wasiAllocatorFinish(unsafe.Pointer(m))
 	}
 }

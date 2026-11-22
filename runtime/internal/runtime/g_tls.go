@@ -74,10 +74,12 @@ func getg() *g {
 	if gp := (*g)(unsafe.Pointer(currentG)); gp != nil {
 		return gp
 	}
-	if gp := wasiMainG(); gp != nil {
-		currentG = uintptr(unsafe.Pointer(gp))
-		attachTraceback(gp)
-		return gp
+	if wasiSelectMainContext {
+		if gp := wasiMainG(); gp != nil {
+			currentG = uintptr(unsafe.Pointer(gp))
+			attachTraceback(gp)
+			return gp
+		}
 	}
 	registerWasiGCThread()
 	gp := initRuntimeContext(allocRuntimeContext(), nil, _Grunning)

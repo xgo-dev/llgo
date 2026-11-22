@@ -68,13 +68,3 @@ func VisitThreadStacks(visitor func(bottom, top uintptr)) {
 	}
 	unlockRegistry()
 }
-
-// The wasi-libc ABI remains threaded. The final link can select just one
-// Go mutator when the executable has no supported way to start another.
-//
-//go:linkname wasiGCConcurrent C.__llgo_wasi_gc_concurrent
-var wasiGCConcurrent uint8
-
-func concurrentWASIMutators() bool { return wasiGCConcurrent != 0 }
-
-func WASIConcurrentMutators() bool { return concurrentWASIMutators() }

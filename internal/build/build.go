@@ -744,6 +744,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if emscriptenSchedulerProofProfile(conf, &export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
 	}
+	if wasiMutatorProfile(conf, export, wasmGC) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), wasiMutatorSelectionTag)
+		export.CCFLAGS = append(slices.Clone(export.CCFLAGS), "-DLLGO_WASI_MUTATOR_SELECTION")
+	}
 	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
 	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
