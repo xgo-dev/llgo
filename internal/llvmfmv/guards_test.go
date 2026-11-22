@@ -444,7 +444,7 @@ exit:
 		bits   uint64
 		suffix string
 	}{
-		{0, "guard_base"}, {256, "guard_avx512"}, {512, "guard_base"}, {516, "guard_fma"}, {768, "guard_avx512"}, {772, "guard_avx512_fma"},
+		{0, "guard_base"}, {256, "guard_base"}, {260, "guard_avx512"}, {512, "guard_base"}, {516, "guard_fma"}, {768, "guard_base"}, {772, "guard_avx512_fma"},
 	} {
 		m := parseModule(t, ir)
 		if err := Run(m, "v1"); err != nil {
@@ -461,26 +461,67 @@ exit:
 				t.Fatal(body)
 			}
 		}
-		resolver := m.NamedFunction("root" + resolverSuffix)
-		// Substitute the published runtime mask and fold the actual select chain.
-		for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
-				inst.ReplaceAllUsesWith(llvm.ConstInt(inst.Type(), tc.bits|featureInitialized, false))
-				break
+		checkCachedGuard(t, m, tc.bits, want)
+	}
+}
+
+func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value) {
+	t.Helper()
+	resolver := m.NamedFunction("root" + resolverSuffix)
+	// Substitute the published runtime mask and fold the actual select chain.
+	for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+		if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
+			inst.ReplaceAllUsesWith(llvm.ConstInt(inst.Type(), bits|featureInitialized, false))
+			break
+		}
+	}
+	simplifyGuards(resolver)
+	published := false
+	for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
+				published = inst.Operand(0) == want
 			}
 		}
-		simplifyGuards(resolver)
-		published := false
-		for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
-					published = inst.Operand(0) == want
+	}
+	if !published {
+		t.Fatalf("mask %d did not cache %s:\n%s", bits, want.Name(), resolver.String())
+	}
+}
+
+func TestGuardAVXPrerequisites(t *testing.T) {
+	for _, p := range x86Predicates {
+		if p.method == "AVX" || p.method == "AVX2" {
+			continue
+		}
+		t.Run(p.method, func(t *testing.T) {
+			for _, avx := range []uint64{0, featureAVX} {
+				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
+declare i1 @query() "llgo.cpu.query"="%s"
+define void @root(ptr %%p) {
+ %%q = call i1 @query()
+ br i1 %%q, label %%yes, label %%exit
+yes:
+ %%v = load <4 x i32>, ptr %%p
+ store <4 x i32> %%v, ptr %%p
+ br label %%exit
+exit:
+ ret void
+}`, X86Query(p.method)))
+				if err := Run(m, "v1"); err != nil {
+					t.Fatal(err)
 				}
+				base := m.NamedFunction("root" + symbolPrefix + "guard_base")
+				if !strings.Contains(base.String(), "call i1 @query()") {
+					t.Fatal("baseline lost the observable Go predicate")
+				}
+				want := base
+				if p.method == "SHA" || avx != 0 {
+					want = m.NamedFunction("root" + guardSuffix(p.bit))
+				}
+				checkCachedGuard(t, m, p.bit|avx, want)
 			}
-		}
-		if !published {
-			t.Fatalf("mask %d did not cache %s:\n%s", tc.bits, want.Name(), resolver.String())
-		}
+		})
 	}
 }
 
@@ -516,6 +557,35 @@ no: ret void
 	}
 }
 
+func TestGuardVectorReturningCalls(t *testing.T) {
+	for _, tc := range []struct {
+		callee      string
+		specializes bool
+	}{
+		{"opaque", false},
+		{"llvm.sqrt.v4f32", true},
+	} {
+		m := parseModule(t, strings.ReplaceAll(`target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare <4 x float> @callee(<4 x float>)
+define <4 x float> @root(<4 x float> %x) {
+ %q = call i1 @wide()
+ br i1 %q, label %yes, label %no
+yes:
+ %v = call <4 x float> @callee(<4 x float> %x)
+ ret <4 x float> %v
+no:
+ ret <4 x float> %x
+}`, "@callee", "@"+tc.callee))
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if got := !m.NamedGlobal("root" + slotSuffix).IsNil(); got != tc.specializes {
+			t.Errorf("%s: specialized = %t, want %t", tc.callee, got, tc.specializes)
+		}
+	}
+}
+
 func TestGuardBodyLimit(t *testing.T) {
 	observed := make(map[uint64]bool)
 	for i := 1; i <= 48; i++ {
@@ -528,10 +598,16 @@ func TestGuardBodyLimit(t *testing.T) {
 	var ir strings.Builder
 	ir.WriteString(`target triple = "x86_64-unknown-linux-gnu"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
 define void @root(ptr %p) {
  %q=call i1 @wide()
- br i1 %q,label %yes,label %no
+ br i1 %q,label %yes,label %next
 yes: call void @kernel0(ptr %p)
+ br label %next
+next:
+ %f=call i1 @fma()
+ br i1 %f,label %fmayes,label %no
+fmayes: call void @kernel0(ptr %p)
  br label %no
 no: ret void
 }
@@ -561,7 +637,11 @@ no: ret void
 	if count != maxGuardBodies {
 		t.Fatalf("created %d bodies, want %d", count, maxGuardBodies)
 	}
-	if !strings.Contains(m.NamedFunction("kernel60"+guardSuffix(256)).String(), "call void @kernel61(") {
+	union := guardSuffix(256 | 512)
+	if !strings.Contains(m.NamedFunction("root"+union).String(), "call void @kernel0"+union) {
+		t.Fatal("widest root did not get helper budget")
+	}
+	if !strings.Contains(m.NamedFunction("kernel58"+union).String(), "call void @kernel59(") {
 		t.Fatal("budget boundary did not preserve the ordinary call")
 	}
 }

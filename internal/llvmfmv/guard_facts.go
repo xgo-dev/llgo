@@ -160,18 +160,14 @@ func guardBlocks(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llvm.
 	}
 	first := walk()
 	// Only pay for the second walk if a branch expression actually used a PHI.
-	for key := range g.cache {
-		if !key.value.IsAPHINode().IsNil() {
-			simple := g
-			g.simple = &simple
-			g.incoming = first
-			g.cache = make(map[guardOutcome]guardFact)
-			return walk(), &g
-		}
-	}
 	simple := g
 	g.simple = &simple
 	g.incoming = first
 	g.cache = make(map[guardOutcome]guardFact)
+	for key := range simple.cache {
+		if !key.value.IsAPHINode().IsNil() {
+			return walk(), &g
+		}
+	}
 	return first, &g
 }
