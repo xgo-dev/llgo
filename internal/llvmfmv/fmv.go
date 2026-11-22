@@ -135,6 +135,7 @@ func supported(fn llvm.Value) bool {
 // Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
 // and specializes AVX2 entries and guarded SIMD work. It runs after ABI
 // lowering and before target optimization, including in O0 and ModeGen builds.
+// baseline is the resolved compilation target, independent of the host CPU.
 // Processed entries and guarded implementations can pass through Run again.
 func Run(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
@@ -157,17 +158,20 @@ func Run(mod llvm.Module, baseline string) error {
 	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
 		if avx2 != nil {
 			for _, fn := range avx2.originals {
-				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
-					if !copy.IsNil() {
-						copy.ReplaceAllUsesWith(llvm.Undef(copy.Type()))
-						copy.EraseFromParentAsFunction()
-					}
-				}
+				discardStagedBody(avx2.variants[fn])
+				discardStagedBody(avx2.baselines[fn])
 			}
 		}
 		return err
 	}
 	return nil
+}
+
+func discardStagedBody(body llvm.Value) {
+	if !body.IsNil() {
+		body.ReplaceAllUsesWith(llvm.Undef(body.Type()))
+		body.EraseFromParentAsFunction()
+	}
 }
 
 // Stage private AVX2 bodies so the guard pass can discover collisions on the
@@ -266,11 +270,13 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	return &avx2Plan{originals, variants, baselines, origins}, nil
 }
 
-func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
+func (p *avx2Plan) commit(mod llvm.Module, source *sourceInfo) []dispatchSite {
 	if p == nil {
 		return nil
 	}
-	source := newSourceInfo(mod)
+	if source == nil {
+		source = newSourceInfo(mod)
+	}
 	var sites []dispatchSite
 	for _, fn := range p.originals {
 		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))

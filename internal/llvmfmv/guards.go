@@ -117,7 +117,7 @@ func directGuardCallee(inst llvm.Value) llvm.Value {
 // Collect evidence of vector work along direct calls in this module. Start
 // from functions with a feature query and propagate back from SIMD operations
 // to their callers. The two walks handle cycles without relying on DFS order.
-func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds) map[llvm.Value]bool {
+func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan) map[llvm.Value]bool {
 	work := make(map[llvm.Value]bool)
 	seen := make(map[llvm.Value]bool)
 	callers := make(map[llvm.Value][]llvm.Value)
@@ -132,10 +132,7 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds) map[llvm.
 			continue
 		}
 		seen[fn] = true
-		if hasAttribute(fn, EntryAttribute) || strings.HasSuffix(fn.Name(), variantSuffix) {
-			work[fn] = true
-		}
-		if fn.IsDeclaration() || !supported(fn) {
+		if fn.IsDeclaration() || !supported(fn) || (avx2 != nil && !avx2.baselines[fn].IsNil()) {
 			continue
 		}
 		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
@@ -187,6 +184,11 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llv
 	return dispatchMasks(sets)
 }
 
+// Reserve room for a baseline body and a resolver as well as the roots and
+// local helpers. At exhaustion, calls through the existing ABI remain legal.
+const maxGuardBodies = 64
+const maxGuardChoices = 15
+
 // Independent guard sites may both execute. A matching union must follow its
 // subsets in the resolver so it can cache a body with every proven feature.
 func dispatchMasks(sets map[uint64]bool) []uint64 {
@@ -196,7 +198,7 @@ func dispatchMasks(sets map[uint64]bool) []uint64 {
 	// Four independent predicates already yield fifteen nonempty combinations.
 	// Bound extra bodies for large roots, retaining their original CFG masks
 	// and a version for the machine on which every observed mask matches.
-	const maxUnions = 16
+	const maxUnions = maxGuardChoices + 1
 	for mask := range sets {
 		all |= mask
 		if len(unions) > maxUnions {
@@ -226,8 +228,12 @@ func dispatchMasks(sets map[uint64]bool) []uint64 {
 		if a != b {
 			return a < b
 		}
+
 		return ordered[i] < ordered[j]
 	})
+	if len(ordered) > maxGuardChoices {
+		ordered = append(ordered[:maxGuardChoices-1], all)
+	}
 	return ordered
 }
 
@@ -297,11 +303,11 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	if len(candidates) == 0 {
 		folds.commit()
-		avx2.commit(mod)
+		avx2.commit(mod, nil)
 		return nil
 	}
 	helpers := guardHelpers(candidates, queries, avx2)
-	work := guardedWork(candidates, &folds)
+	work := guardedWork(candidates, &folds, avx2)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
@@ -320,7 +326,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	if len(roots) == 0 {
 		folds.commit()
-		avx2.commit(mod)
+		avx2.commit(mod, nil)
 		return nil
 	}
 	ctx := mod.Context()
@@ -344,11 +350,19 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	// Materialize all copies before replacing any public entry. Local helper
 	// copies are shared by callers with identical proven predicates. Across a
 	// translation unit boundary, the ordinary Go carrier and entry remain valid.
+	var helperBudget int
+	var currentRoot llvm.Value
 	var specializeLocal func(llvm.Value, uint64) (llvm.Value, error)
 	specializeLocal = func(fn llvm.Value, mask uint64) (llvm.Value, error) {
 		key := guardKey{fn, mask}
 		if v, ok := clones[key]; ok {
 			return v, nil
+		}
+		if fn != currentRoot {
+			if helperBudget == 0 {
+				return fn, nil
+			}
+			helperBudget--
 		}
 		name := fn.Name() + guardSuffix(mask)
 		if !mod.NamedValue(name).IsNil() {
@@ -378,7 +392,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
-				if !work[target] || target.IsDeclaration() || !supported(target) || (avx2 != nil && !avx2.baselines[target].IsNil()) {
+				if !work[target] {
 					continue
 				}
 				callee, err := specializeLocal(target, mask)
@@ -392,29 +406,36 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	for i := range roots {
 		root := &roots[i]
+		currentRoot = root.fn
+		helperBudget = maxGuardBodies - len(root.masks) - 2
 		for _, mask := range root.masks {
 			v, err := specializeLocal(root.fn, mask)
 			if err != nil {
-				for _, copy := range copies {
-					copy.body.ReplaceAllUsesWith(llvm.Undef(copy.body.Type()))
-					copy.body.EraseFromParentAsFunction()
+				for _, staged := range copies {
+					discardStagedBody(staged.body)
 				}
 				return err
 			}
-			root.choices = append(root.choices, dispatchChoice{mask, v})
+			required := mask
+			// The Go query remains observable independently after GODEBUG.
+			// An FMA implementation also needs AVX enabled for its body.
+			if mask&predicateBits["x86.fma"] != 0 {
+				required |= predicateBits["x86.avx"]
+			}
+			root.choices = append(root.choices, dispatchChoice{required, v})
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}
 	folds.commit()
-	sites := avx2.commit(mod)
 	source := newSourceInfo(mod)
-	for _, copy := range copies {
-		original := copy.original
+	sites := avx2.commit(mod, source)
+	for _, staged := range copies {
+		original := staged.original
 		// The copy predates publication of its AVX2 parent's new PC-site IDs.
 		if avx2 != nil && !avx2.origins[original].IsNil() {
 			original = avx2.origins[original]
 		}
-		source.clone(original, copy.body)
+		source.clone(original, staged.body)
 	}
 	// Keep the canonical AVX2 entry callable from separately compiled code.
 	// For public calls, cache the physical target directly in the outer slot.

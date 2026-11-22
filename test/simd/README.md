@@ -282,8 +282,8 @@ the immutable, post-`GODEBUG` CPU snapshot on first use. Before CPU initializati
 it tail-forwards to the baseline without caching. Function addresses retain the
 original entry. Both bodies fold the selected AVX2 query and remove dead branches
 even at O0, after call-boundary ABI lowering and before target optimization.
-GOAMD64=v3/v4 already require AVX2, so they fold the query without generating extra versions,
-a resolver, or a cache slot.
+GOAMD64=v3/v4 already require AVX2, so an AVX2 query alone needs no dispatcher. Optional
+predicates can still generate versions and a slot on these baselines.
 
 Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
@@ -347,8 +347,10 @@ Vector results keep their native register ABI.
 
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
-other observable query results. In particular, the AVX and FMA queries remain
-dynamic when AVX2 is enabled. Midway selects portable width independently.
+other observable query results. On v1/v2 the AVX and FMA queries remain
+dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. An optional FMA
+implementation requires both effective FMA and AVX; the fallback preserves
+the original query even when AVX has been independently disabled. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -512,8 +514,9 @@ compiled AVX2 callers can still use the canonical AVX2 entry. The wider
 clone specializes direct calls to the local AVX2 helper body.
 For independent guarded regions, the resolver selects the union of matching
 masks when the function has up to 16 distinct unions (including the empty
-mask). Above that limit it keeps the original guard masks and their full
-union. Regions outside the selected mask retain their runtime checks. Local
+mask). Above that limit it retains at most 14 observed masks and their full
+union. Each root can create at most 64 new bodies including helpers, its
+baseline and resolver; further callees keep their ordinary entry. Regions outside the selected mask retain their runtime checks. Local
 helpers share a copy for each distinct proven mask.
 
 Specializations follow direct calls through local helpers, including kernels

@@ -1,6 +1,7 @@
 package llvmfmv
 
 import (
+	"fmt"
 	"github.com/xgo-dev/llvm"
 	"strings"
 	"testing"
@@ -443,7 +444,7 @@ exit:
 		bits   uint64
 		suffix string
 	}{
-		{0, "guard_base"}, {256, "guard_avx512"}, {512, "guard_fma"}, {768, "guard_avx512_fma"},
+		{0, "guard_base"}, {256, "guard_avx512"}, {512, "guard_base"}, {516, "guard_fma"}, {768, "guard_avx512"}, {772, "guard_avx512_fma"},
 	} {
 		m := parseModule(t, ir)
 		if err := Run(m, "v1"); err != nil {
@@ -453,7 +454,7 @@ exit:
 		if want.IsNil() {
 			t.Fatalf("missing %s", tc.suffix)
 		}
-		if tc.bits == 768 {
+		if tc.bits == 772 {
 			body := want.String()
 			features := stringAttribute(want, "target-features")
 			if strings.Contains(body, "call i1") || !strings.Contains(body, "store <4 x float>") || !strings.Contains(body, "store <16 x float>") || !strings.Contains(features, "+fma") || !strings.Contains(features, "+avx512f") {
@@ -487,5 +488,80 @@ func TestGuardCombinationBudget(t *testing.T) {
 	masks := dispatchMasks(map[uint64]bool{2: true, 4: true, 8: true, 16: true, 32: true})
 	if len(masks) != 6 || masks[len(masks)-1] != 62 {
 		t.Fatalf("expected five observed masks and their full union, got %v", masks)
+	}
+}
+
+func TestOpaqueGuardedCallsKeepDirectEntry(t *testing.T) {
+	for _, callee := range []string{
+		`declare void @kernel(ptr) "llgo.fmv.avx2-entry"`,
+		`define void @kernel(ptr %p) "llgo.fmv.avx2-entry" { store i32 7,ptr %p
+ret void }`,
+	} {
+		m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+`+callee+`
+define void @root(ptr %p) {
+ %q=call i1 @wide()
+ br i1 %q,label %yes,label %no
+yes: call void @kernel(ptr %p)
+ br label %no
+no: ret void
+}`)
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if !m.NamedGlobal("root"+slotSuffix).IsNil() || !strings.Contains(m.NamedFunction("root").String(), "call void @kernel(") {
+			t.Fatal(m.String())
+		}
+	}
+}
+
+func TestGuardBodyLimit(t *testing.T) {
+	observed := make(map[uint64]bool)
+	for i := 1; i <= 48; i++ {
+		observed[uint64(i)<<1] = true
+	}
+	masks := dispatchMasks(observed)
+	if len(masks) != maxGuardChoices || masks[len(masks)-1] != 126 {
+		t.Fatal(masks)
+	}
+	var ir strings.Builder
+	ir.WriteString(`target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+define void @root(ptr %p) {
+ %q=call i1 @wide()
+ br i1 %q,label %yes,label %no
+yes: call void @kernel0(ptr %p)
+ br label %no
+no: ret void
+}
+`)
+	for i := 0; i < maxGuardBodies+4; i++ {
+		fmt.Fprintf(&ir, "define void @kernel%d(ptr %%p) {\n", i)
+		if i < maxGuardBodies+3 {
+			fmt.Fprintf(&ir, "call void @kernel%d(ptr %%p)\n", i+1)
+		} else {
+			ir.WriteString("%x = load <16 x i32>,ptr %p\nstore <16 x i32> %x,ptr %p\n")
+		}
+		ir.WriteString("ret void\n}\n")
+	}
+	m := parseModule(t, ir.String())
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for f := m.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+		if strings.Contains(f.Name(), symbolPrefix) {
+			count++
+		}
+	}
+	if count != maxGuardBodies {
+		t.Fatalf("created %d bodies, want %d", count, maxGuardBodies)
+	}
+	if !strings.Contains(m.NamedFunction("kernel60"+guardSuffix(256)).String(), "call void @kernel61(") {
+		t.Fatal("budget boundary did not preserve the ordinary call")
 	}
 }
