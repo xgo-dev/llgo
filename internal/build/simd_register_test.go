@@ -52,7 +52,7 @@ func main() { var p [16]uint32; chain(&p) }`,
 			}
 			fn := mod.NamedFunction("main.chain.__llgo_fmv_guard_avx512")
 			if fn.IsNil() || !strings.Contains(fn.String(), "kernel.Twice.__llgo_fmv_reg512_go") || strings.Count(fn.String(), ".__llgo_fmv_reg512(") != 2 {
-				t.Fatalf("missing two ZMM calls: %v", fn)
+				t.Fatalf("missing local or cross-package ZMM calls: %v", fn)
 			}
 			mod.SetTarget(pkg.Prog.Target().Spec().Triple)
 			mod.SetDataLayout(pkg.Prog.DataLayout())

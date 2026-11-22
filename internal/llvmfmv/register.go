@@ -1,6 +1,3 @@
-// Register entries are private implementations of the ordinary Go value ABI.
-// Record source types before opaque-pointer lowering, then select direct calls
-// only after FMV has established the caller's effective instruction set.
 package llvmfmv
 
 import (
@@ -9,6 +6,8 @@ import (
 
 	"github.com/xgo-dev/llvm"
 )
+
+const x86VectorCall llvm.CallConv = 80 // LLVM CallingConv::X86_VectorCall
 
 const wideOrigin = attributePrefix + "wide-origin"
 
@@ -152,11 +151,23 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 		return nil
 	}
 	entries := make(map[llvm.Value]llvm.Value)
+	// Reserve the register namespace before changing any call or metadata.
+	for target := mod.FirstFunction(); !target.IsNil(); target = llvm.NextFunction(target) {
+		if target.IsDeclaration() {
+			continue
+		}
+		if sig, ok := s[stringAttribute(target, wideOrigin)]; ok && !mod.NamedValue(target.Name()+sig.suffix()).IsNil() {
+			return fmt.Errorf("SIMD register entry collision: %s", target.Name()+sig.suffix())
+		}
+	}
 	var source *sourceInfo
 	// Newly appended entries may themselves call ordinary local kernels.
 	for caller := mod.FirstFunction(); !caller.IsNil(); caller = llvm.NextFunction(caller) {
+		if caller.IsDeclaration() {
+			continue
+		}
 		width := registerWidth(caller, baseline)
-		if caller.IsDeclaration() || width == 0 {
+		if width == 0 {
 			continue
 		}
 		for bb := caller.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
@@ -165,16 +176,22 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 				target, sig, ok := s.directTarget(call)
 				if ok && width >= sig.width {
 					entry, seen := entries[target]
-					if !seen && target.IsDeclaration() {
+					if !seen {
 						owner := stringAttribute(target, RegisterOwnerAttribute)
-						if owner != "" && providers[owner].provides(exportName(stringAttribute(target, wideOrigin), sig)) {
-							entry = importRegisterEntry(mod, target, sig)
+						exported := exportName(target.Name(), sig)
+						if owner != "" && providers[owner].provides(exported) {
+							if target.IsDeclaration() {
+								// An existing symbol may have an unrelated type or calling convention.
+								if mod.NamedValue(exported).IsNil() {
+									entry = importRegisterEntry(mod, target, sig)
+								}
+							} else {
+								entry = mod.NamedFunction(exported)
+							}
 						}
-					} else if !seen && registerShape(target, sig.typ) {
+					}
+					if !seen && entry.IsNil() && !target.IsDeclaration() && registerShape(target, sig.typ) {
 						name := target.Name() + sig.suffix()
-						if !mod.NamedValue(name).IsNil() {
-							return fmt.Errorf("SIMD register entry collision: %s", name)
-						}
 						if source == nil {
 							source = newSourceInfo(mod)
 						}
@@ -187,6 +204,14 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 				}
 				call = next
 			}
+		}
+	}
+	for f := mod.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+		if hasAttribute(f, RegisterOwnerAttribute) {
+			f.RemoveStringAttributeAtIndex(-1, RegisterOwnerAttribute)
+		}
+		if hasAttribute(f, wideOrigin) {
+			f.RemoveStringAttributeAtIndex(-1, wideOrigin)
 		}
 	}
 	return nil

@@ -284,12 +284,12 @@ upstream Go helper.
 On amd64, functions calling the official `archsimd.X86.AVX2` query get an
 AVX2 version for signatures containing scalars, pointers, slices, strings,
 arrays, structs, and multiple results, including nested SIMD128 values. The
-original entry loads a cached implementation and tail-forwards to it. A separate resolver selects the baseline or AVX2 body from
+original entry loads a cached implementation and tail-forwards to it. A separate resolver selects the implementation from
 the immutable, post-`GODEBUG` CPU snapshot on first use. If AVX2 remains
 observable while AVX is disabled, it caches a baseline-ISA implementation of
 the true AVX2 branch. Calls from that body use ordinary entries. Before CPU initialization
 it tail-forwards to the baseline without caching. Function addresses retain the
-original entry. Both bodies fold the selected AVX2 query and remove dead branches
+original entry. Each implementation folds the selected AVX2 query and remove dead branches
 even at O0, after call-boundary ABI lowering and before target optimization.
 GOAMD64=v3/v4 already require AVX2, so an AVX2 query alone needs no dispatcher. Optional
 predicates can still generate versions and a slot on these baselines.

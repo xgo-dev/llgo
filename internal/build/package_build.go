@@ -18,6 +18,7 @@ package build
 
 import (
 	"fmt"
+	"go/types"
 	"os"
 	"slices"
 	"sync"
@@ -136,13 +137,96 @@ func buildPackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) er
 	if len(tasks) == 0 {
 		return nil
 	}
-	isolated, err := preparePackageGroup(ctx, tasks, verbose)
-	if err != nil {
-		return err
+	simd := ctx.buildConf.Goarch == "amd64" && slices.Contains(ctx.buildConf.toolTags, "goexperiment.simd")
+	waves := [][]*packageBuildTask{tasks}
+	if simd {
+		waves = registerBuildWaves(tasks)
+		if ctx.registerProviders == nil {
+			ctx.registerProviders = make(map[string]llvmfmv.RegisterProvider)
+		}
 	}
-	return runBoundedPackageJobs(ctx.buildConf.parallelism(), isolated, func(index int) error {
-		return tracePackageBuild(ctx, tasks[index], verbose, true, true)
-	})
+	for _, wave := range waves {
+		isolated, err := preparePackageGroup(ctx, wave, verbose)
+		if err != nil {
+			return err
+		}
+		err = runBoundedPackageJobs(ctx.buildConf.parallelism(), isolated, func(index int) error {
+			return tracePackageBuild(ctx, wave[index], verbose, true, true)
+		})
+		if err != nil {
+			return err
+		}
+		// Publish only entries that this backend or its cached archive actually supplied.
+		if simd {
+			for _, task := range wave {
+				if len(task.pkg.registerExports) != 0 {
+					ctx.registerProviders[task.pkg.ID] = llvmfmv.RegisterProvider{Symbols: task.pkg.registerExports}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Only a dependency exposing vector arguments or results can provide a register
+// entry. All other backends can still run together, as in non-SIMD builds.
+func registerBuildWaves(tasks []*packageBuildTask) [][]*packageBuildTask {
+	providers := make(map[string]*packageBuildTask)
+	for _, task := range tasks {
+		p := task.pkg
+		if p.Types == nil || p.PkgPath == "simd/archsimd" || p.PkgPath == "simd/internal/bridge" {
+			continue
+		}
+		scope := p.Types.Scope()
+		for _, name := range scope.Names() {
+			f, ok := scope.Lookup(name).(*types.Func)
+			if !ok || !f.Exported() {
+				continue
+			}
+			sig := f.Signature()
+			if hasVectorType(sig.Params()) || hasVectorType(sig.Results()) {
+				providers[p.ID] = task
+				break
+			}
+		}
+	}
+	levels := make(map[*packageBuildTask]int)
+	var level func(*packageBuildTask) int
+	level = func(task *packageBuildTask) int {
+		if n, ok := levels[task]; ok {
+			return n
+		}
+		n := 0
+		for _, dep := range task.pkg.Imports {
+			if provider := providers[dep.ID]; provider != nil {
+				n = max(n, 1+level(provider))
+			}
+		}
+		levels[task] = n
+		return n
+	}
+	var waves [][]*packageBuildTask
+	for _, task := range tasks {
+		n := level(task)
+		for len(waves) <= n {
+			waves = append(waves, nil)
+		}
+		waves[n] = append(waves[n], task)
+	}
+	return waves
+}
+
+func hasVectorType(tuple *types.Tuple) bool {
+	for i := 0; i < tuple.Len(); i++ {
+		t, ok := types.Unalias(tuple.At(i).Type()).(*types.Named)
+		if ok && t.Obj().Pkg() != nil {
+			switch t.Obj().Pkg().Path() {
+			case "simd", "simd/archsimd", "simd/internal/bridge":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // preparePackageGroup completes coordinator-only preparation and package
@@ -160,21 +244,6 @@ func preparePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) 
 		return nil, err
 	}
 	prepareSpan.done()
-	// Freeze availability after cache lookup and before starting any worker.
-	if ctx.buildConf.Goarch == "amd64" {
-		if ctx.registerProviders == nil {
-			ctx.registerProviders = make(map[string]llvmfmv.RegisterProvider)
-		}
-		for _, task := range tasks {
-			p := task.pkg
-			if p.CacheHit {
-				ctx.registerProviders[p.ID] = llvmfmv.RegisterProvider{Symbols: p.registerExports}
-			} else if !task.skip && !task.isLinkOnly() {
-				ctx.registerProviders[p.ID] = llvmfmv.RegisterProvider{Fresh: true}
-			}
-		}
-	}
-
 	isolated := make([]int, 0, len(tasks))
 	// Complete coordinator and patched work before starting ordinary workers:
 	// patched lowering finalizes shared type scopes that other packages read.
