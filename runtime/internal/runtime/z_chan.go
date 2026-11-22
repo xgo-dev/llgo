@@ -206,7 +206,9 @@ func zeroChanRecv(v unsafe.Pointer, eltSize int) {
 
 func copyChanElem(dst, src unsafe.Pointer, eltSize int) {
 	if dst != nil && src != nil && eltSize > 0 {
-		c.Memcpy(dst, src, uintptr(eltSize))
+		// dst (ring buffer slot or user element) and src are always distinct
+		// allocations, so the word-block memcpy is safe here.
+		llgoMemcpy(dst, src, uintptr(eltSize))
 	}
 }
 

@@ -27,7 +27,9 @@ func llgoAtomicIrqSave() uint32
 func llgoAtomicIrqRestore(saved uint32)
 
 func atomicCopyBytes(dst, src *byte, size uint32) {
-	c.Memmove(unsafe.Pointer(dst), unsafe.Pointer(src), uintptr(size))
+	// Word-block memmove (z_memmove_riscv32.go); overlap-safe like the libc
+	// call it replaces, and it allocates nothing for use under irq-save.
+	llgoMemmove(unsafe.Pointer(dst), unsafe.Pointer(src), uintptr(size))
 }
 
 func atomicEqualBytes(a, b *byte, size uint32) bool {

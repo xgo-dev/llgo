@@ -481,7 +481,9 @@ func Realloc(ptr unsafe.Pointer, size uintptr) unsafe.Pointer {
 	}
 
 	newAlloc := Alloc(size)
-	c.Memcpy(newAlloc, ptr, oldSize)
+	// newAlloc is a fresh allocation and cannot overlap ptr, so the
+	// word-block memcpy is safe here.
+	llgoMemcpy(newAlloc, ptr, oldSize)
 	freeObject(ptr)
 
 	return newAlloc
@@ -811,7 +813,10 @@ func growHeap(minimum uintptr) bool {
 	if newMetadataSize < oldMetadataSize {
 		gcPanic(c.Str("gc: metadata shrank while growing heap"))
 	}
-	c.Memmove(metadataStart, oldMetadataStart, oldMetadataSize)
+	// The old and new metadata ranges can overlap when the heap grows in
+	// place, so this must stay a memmove. The word-block memmove allocates
+	// nothing and never yields, which the heap-growth path requires.
+	llgoMemmove(metadataStart, oldMetadataStart, oldMetadataSize)
 	c.Memset(unsafe.Add(metadataStart, oldMetadataSize), 0, newMetadataSize-oldMetadataSize)
 	return true
 }
