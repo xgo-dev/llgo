@@ -289,8 +289,8 @@ Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
-and indirect calls retain the original entry. Arbitrary feature
-combinations are not yet specialized.
+and indirect calls retain the original entry. Other guarded feature combinations
+use [local guarded specializations](#guarded-x86-feature-combinations).
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
 including when nested in arrays and structs. The compiler validates the bridge
@@ -494,3 +494,35 @@ Reference boundaries:
   currently hits duplicate symbols from the original/test package archives.
   This was reproduced without the CPU-initialization change. The dedicated
   CPU startup executables and target-hook tests pass independently.
+
+### Guarded x86 feature combinations
+
+On AMD64 the compiler also recognizes positive branches on the official
+`archsimd.X86` predicates. At control-flow joins it retains the predicates
+proven on every incoming path. When a guarded block performs vector work,
+a resolver can select an implementation with those target features. Nested
+AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
+GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
+the AVX512 predicate. LLGo folds these queries before generating guarded
+versions. Optional predicates continue to read the effective CPU state.
+
+On v1/v2, the public resolver for a mixed AVX2 and AVX512 guard selects
+the physical body from both predicates and caches it in one slot. Separately
+compiled AVX2 callers can still use the canonical AVX2 entry. The wider
+clone specializes direct calls to the local AVX2 helper body.
+For independent guarded regions, the resolver selects the union of matching
+masks when the function has up to 16 distinct unions (including the empty
+mask). Above that limit it keeps the original guard masks and their full
+union. Regions outside the selected mask retain their runtime checks. Local
+helpers share a copy for each distinct proven mask.
+
+Specializations follow direct calls through local helpers, including kernels
+that take array pointers and use vectors internally. Recursive helper calls
+reuse the same copy for a given feature combination. Indirect calls keep
+the ordinary entry.
+Calls to separately compiled functions can use their ordinary Go entries.
+The public function value and its wide argument/return carriers stay valid
+through dispatch. The baseline implementation serves calls before CPU feature
+publication. `TestSIMD512Guarded` exercises the runtime path, and
+`TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
+local helper calls and repeated execution of the LLVM transformation.

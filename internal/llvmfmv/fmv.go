@@ -42,29 +42,38 @@ func hasAttribute(fn llvm.Value, name string) bool {
 }
 
 func isQuery(fn llvm.Value) bool {
-	if fn.IsNil() || fn.IsAFunction().IsNil() || stringAttribute(fn, QueryAttribute) != AVX2Query {
-		return false
+	return checkedQuery(fn) == AVX2Query
+}
+func checkedQuery(fn llvm.Value) string {
+	if fn.IsNil() || fn.IsAFunction().IsNil() {
+		return ""
+	}
+	name := stringAttribute(fn, QueryAttribute)
+	if name == "" {
+		return ""
 	}
 	typ := fn.GlobalValueType()
 	ret := typ.ReturnType()
 	if ret.TypeKind() != llvm.IntegerTypeKind || ret.IntTypeWidth() != 1 || typ.IsFunctionVarArg() {
-		return false
+		return ""
 	}
 	params := typ.ParamTypes()
 	if len(params) == 0 {
-		return true
+		return name
 	}
 	if len(params) != 1 {
-		return false
+		return ""
 	}
 	// SysV may retain the empty receiver. Win64 lowers an empty aggregate
 	// to i32. The query attribute comes from the checked Go declaration.
 	param := params[0]
 	if param.TypeKind() == llvm.StructTypeKind && param.StructElementTypesCount() == 0 {
-		return true
+		return name
 	}
-	return strings.Contains(fn.GlobalParent().Target(), "windows") &&
-		param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32
+	if strings.Contains(fn.GlobalParent().Target(), "windows") && param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32 {
+		return name
+	}
+	return ""
 }
 
 // ABI lowering leaves register tuples and single-leaf aggregate wrappers on
@@ -123,19 +132,53 @@ func supported(fn llvm.Value) bool {
 	return true
 }
 
-// Run preserves baseline entries and creates AVX2 implementations of supported
-// SIMD128 functions. It runs after aggregate and target ABI lowering, before
-// target optimization, including in O0 and ModeGen builds. baseline is the
-// resolved compile-time GOAMD64 level, never a host environment read. Running
-// it again is harmless.
+// Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
+// and specializes AVX2 entries and guarded SIMD work. It runs after ABI
+// lowering and before target optimization, including in O0 and ModeGen builds.
+// Processed entries and guarded implementations can pass through Run again.
 func Run(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
-	if baseline != "" && baseline != "v1" && baseline != "v2" && baseline != "v3" && baseline != "v4" {
+	var avx2 *avx2Plan
+	switch baseline {
+	case "v3", "v4":
+		return runGuardedFeatures(mod, nil, baseline)
+	case "", "v1", "v2":
+		var err error
+		avx2, err = stageAVX2(mod)
+		if err != nil {
+			return err
+		}
+	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
+	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
+		if avx2 != nil {
+			for _, fn := range avx2.originals {
+				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
+					if !copy.IsNil() {
+						copy.ReplaceAllUsesWith(llvm.Undef(copy.Type()))
+						copy.EraseFromParentAsFunction()
+					}
+				}
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// Stage private AVX2 bodies so the guard pass can discover collisions on the
+// simplified call graph before editing public entries or source metadata.
+type avx2Plan struct {
+	originals           []llvm.Value
+	variants, baselines map[llvm.Value]llvm.Value
+	origins             map[llvm.Value]llvm.Value
+}
+
+func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
 	roots := make(map[llvm.Value]llvm.Value)
@@ -149,15 +192,6 @@ func Run(mod llvm.Module, baseline string) error {
 				roots[call.InstructionParent().Parent()] = fn
 			}
 		}
-	}
-	if baseline == "v3" || baseline == "v4" {
-		// The official CPU policy does not allow GODEBUG to disable features
-		// required by GOAMD64. No version selection or extra helper entry is
-		// needed once AVX2 is already part of the compile-time contract.
-		for fn := range roots {
-			specialize(mod.Context(), fn, nil, true)
-		}
-		return nil
 	}
 	var originals []llvm.Value
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
@@ -178,37 +212,27 @@ func Run(mod llvm.Module, baseline string) error {
 			name := fn.Name() + suffix
 			// Check all names before modifying any function in the module.
 			if !mod.NamedValue(name).IsNil() {
-				return fmt.Errorf("SIMD FMV symbol collision: %s", name)
+				return nil, fmt.Errorf("SIMD FMV symbol collision: %s", name)
 			}
 		}
 		originals = append(originals, fn)
 	}
 	if len(originals) == 0 {
-		return nil
+		return nil, nil
 	}
 	if mask := mod.NamedValue(featureSymbol); !mask.IsNil() &&
 		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
-		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
+		return nil, fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
 
 	ctx := mod.Context()
-	source := newSourceInfo(mod)
+	origins := make(map[llvm.Value]llvm.Value)
 	variants := make(map[llvm.Value]llvm.Value, len(originals))
 	baselines := make(map[llvm.Value]llvm.Value, len(roots))
 	for _, fn := range originals {
 		variant := fn.CloneFunction()
 		variant.SetName(fn.Name() + variantSuffix)
-		if !fn.IsDeclaration() {
-			// CloneFunction preserves linkage but drops COMDAT. Give the
-			// variant its own group so generic instances merge independently
-			// of their original definitions when linking COFF objects.
-			if original := fn.Comdat(); original.C != nil {
-				group := mod.Comdat(variant.Name())
-				group.SetSelectionKind(original.SelectionKind())
-				variant.SetComdat(group)
-			}
-			source.clone(fn, variant)
-		}
+		origins[variant] = fn
 		features := stringAttribute(fn, "target-features")
 		if features != "" {
 			features += ","
@@ -217,7 +241,6 @@ func Run(mod llvm.Module, baseline string) error {
 		variant.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
-		fn.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
 		variants[fn] = variant
 		if !roots[fn].IsNil() {
 			baseline := fn.CloneFunction()
@@ -225,7 +248,8 @@ func Run(mod llvm.Module, baseline string) error {
 			baseline.SetLinkage(llvm.InternalLinkage)
 			baseline.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 			baseline.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-			source.clone(fn, baseline)
+			baseline.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
+			origins[baseline] = fn
 			baselines[fn] = baseline
 		}
 	}
@@ -237,10 +261,37 @@ func Run(mod llvm.Module, baseline string) error {
 		specialize(ctx, variant, variants, true)
 		if baseline := baselines[fn]; !baseline.IsNil() {
 			specialize(ctx, baseline, baselines, false)
-			dispatch(mod, source, fn, baseline, variant)
 		}
 	}
-	return nil
+	return &avx2Plan{originals, variants, baselines, origins}, nil
+}
+
+func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
+	if p == nil {
+		return nil
+	}
+	source := newSourceInfo(mod)
+	var sites []dispatchSite
+	for _, fn := range p.originals {
+		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))
+		variant := p.variants[fn]
+		if !fn.IsDeclaration() {
+			// CloneFunction preserves linkage but drops COMDAT. Give the
+			// variant its own group so generic instances merge independently
+			// of their original definitions when linking COFF objects.
+			if original := fn.Comdat(); original.C != nil {
+				group := mod.Comdat(variant.Name())
+				group.SetSelectionKind(original.SelectionKind())
+				variant.SetComdat(group)
+			}
+			source.clone(fn, variant)
+		}
+		if baseline := p.baselines[fn]; !baseline.IsNil() {
+			source.clone(fn, baseline)
+			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}}))
+		}
+	}
+	return sites
 }
 
 func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Value, enabled bool) {
@@ -268,6 +319,10 @@ func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Va
 		query.ReplaceAllUsesWith(llvm.ConstInt(ctx.Int1Type(), bit, false))
 		query.EraseFromParentAsInstruction()
 	}
+	simplifyGuards(fn)
+}
+
+func simplifyGuards(fn llvm.Value) {
 	// Mandatory legality cleanup, even at O0. These are local LLVM IR utilities,
 	// not a registered pass or an optional optimization pipeline. Iterate for
 	// conditions propagated through PHIs and short-circuit boolean expressions.
@@ -290,7 +345,29 @@ func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Va
 	}
 }
 
-func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline, variant llvm.Value) {
+type dispatchChoice struct {
+	bits uint64
+	fn   llvm.Value
+}
+
+// The AVX2 resolver has one select between its two implementations. If
+// either gets further variants, select its physical body here as well.
+type dispatchSite struct {
+	features, selection, uninitializedCall llvm.Value
+}
+
+func selectDispatchBody(b llvm.Builder, features, baseline llvm.Value, choices []dispatchChoice) llvm.Value {
+	selected := baseline
+	for _, choice := range choices {
+		required := llvm.ConstInt(features.Type(), choice.bits, false)
+		enabled := b.CreateAnd(features, required, "")
+		check := b.CreateICmp(llvm.IntEQ, enabled, required, "")
+		selected = b.CreateSelect(check, choice.fn, selected, "selected")
+	}
+	return selected
+}
+
+func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choices []dispatchChoice) dispatchSite {
 	ctx := mod.Context()
 	resolver := fn.CloneFunction()
 	resolver.SetName(fn.Name() + resolverSuffix)
@@ -354,14 +431,13 @@ func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline, variant llvm.Va
 	call := tailReturn(b, resolver, baseline)
 	call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 	b.SetInsertPointAtEnd(selectImpl)
-	enabled := b.CreateAnd(features, llvm.ConstInt(ctx.Int64Type(), featureAVX2, false), "")
-	check := b.CreateICmp(llvm.IntNE, enabled, llvm.ConstInt(ctx.Int64Type(), 0, false), "")
-	selected := b.CreateSelect(check, variant, baseline, "selected")
+	selected := selectDispatchBody(b, features, baseline, choices)
 	publish := b.CreateStore(selected, slot)
 	publish.SetAlignment(8)
 	publish.SetOrdering(llvm.AtomicOrderingMonotonic)
 	tailReturn(b, resolver, selected)
 	resolver.RemoveUnreachableBlocks()
+	return dispatchSite{features, selected, call}
 }
 
 func tailReturn(b llvm.Builder, fn, target llvm.Value) llvm.Value {
