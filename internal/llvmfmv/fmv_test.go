@@ -145,6 +145,37 @@ func TestEarlySpecialization(t *testing.T) {
 	}
 }
 
+func checkUnversionedFunction(t *testing.T, mod llvm.Module, baseline, name string) {
+	t.Helper()
+	fn := mod.NamedFunction(name)
+	before := fn.String()
+	if err := Run(mod, baseline); err != nil {
+		t.Fatal(err)
+	}
+	if fn.String() != before || strings.Contains(mod.String(), symbolPrefix) || !mod.NamedGlobal(featureSymbol).IsNil() {
+		t.Fatalf("unexpected FMV changes to %s:\n%s", name, mod.String())
+	}
+	if mod.NamedMetadataNumOperands(moduleDone) != 1 {
+		t.Fatal("missing FMV completion marker")
+	}
+}
+
+func TestAVX2QueryResultKeepsOrdinaryEntry(t *testing.T) {
+	for _, baseline := range []string{"v1", "v2"} {
+		t.Run(baseline, func(t *testing.T) {
+			mod := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+define i1 @ready() {
+  %ok = call i1 @avx2()
+  ret i1 %ok
+}
+`)
+			checkUnversionedFunction(t, mod, baseline, "ready")
+		})
+	}
+}
+
 func TestOtherTargetUnchanged(t *testing.T) {
 	mod := parseModule(t, strings.Replace(fixture, "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", 1))
 	before := mod.String()
@@ -199,10 +230,7 @@ func TestUnsupportedSignaturesUnchanged(t *testing.T) {
 			mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 `+function)
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("unsupported ABI was changed: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "unsupported")
 		})
 	}
 }
@@ -220,7 +248,9 @@ define fastcc void @root(ptr nonnull %p) {
   %ok = call fastcc i1 @avx2({} zeroinitializer)
   br i1 %ok, label %fast, label %fallback
 fast:
-  store i32 1, ptr %p
+  %x = load <4 x i32>, ptr %p
+  %y = add <4 x i32> %x, %x
+  store <4 x i32> %y, ptr %p
   ret void
 fallback:
   store i32 0, ptr %p
@@ -244,7 +274,7 @@ fallback:
 					t.Fatalf("dispatch lost receiver or call ABI %q:\n%s", want, root)
 				}
 			}
-			if strings.Contains(variant, "@avx2(") || strings.Contains(variant, "store i32 0") || !strings.Contains(variant, "store i32 1") {
+			if strings.Contains(variant, "@avx2(") || strings.Contains(variant, "store i32 0") || !strings.Contains(variant, "add <4 x i32>") {
 				t.Fatalf("zero-sized receiver query did not specialize:\n%s", variant)
 			}
 		})
@@ -272,10 +302,7 @@ define void @root() {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("invalid CPU query established an AVX2 guard: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "root")
 		})
 	}
 }

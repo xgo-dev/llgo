@@ -67,7 +67,12 @@ func main() { println(sum(3)) }
 			if !strings.Contains(mod.NamedFunction("main.sum").String(), "simd.Emulated") {
 				t.Fatal("lost Midway scalar dispatch")
 			}
-			for _, name := range []string{"main.guarded@simd0", "main.guarded@simd128", "main.array@simd0", "main.array@simd128"} {
+			for _, name := range []string{"main.guarded@simd0", "main.array@simd0"} {
+				if !mod.NamedFunction(name+".__llgo_fmv_avx2").IsNil() || !strings.Contains(mod.NamedFunction(name).String(), "X86Features.AVX2") {
+					t.Fatalf("%s should retain its ordinary CPU query", name)
+				}
+			}
+			for _, name := range []string{"main.guarded@simd128", "main.array@simd128"} {
 				fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
 				if fast.IsNil() || fast.IsDeclaration() {
 					t.Fatalf("missing composed variant %s", name)

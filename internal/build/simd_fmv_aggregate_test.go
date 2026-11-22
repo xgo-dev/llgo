@@ -71,9 +71,12 @@ func main() {}
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			// These are FMV roots because they call the CPU query; pair and
-			// large have no SIMD values in their signatures.
-			for _, name := range []string{"main.guarded", "main.array", "main.pair", "main.one", "main.large"} {
+			for _, name := range []string{"main.pair", "main.large"} {
+				if !mod.NamedFunction(name+".__llgo_fmv_avx2").IsNil() || !strings.Contains(mod.NamedFunction(name).String(), "X86Features.AVX2") {
+					t.Fatalf("%s should retain its ordinary CPU query", name)
+				}
+			}
+			for _, name := range []string{"main.guarded", "main.array", "main.one"} {
 				fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
 				if fast.IsNil() {
 					t.Fatalf("function %s has no AVX2 implementation", name)
