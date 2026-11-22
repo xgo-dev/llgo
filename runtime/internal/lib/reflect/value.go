@@ -178,6 +178,43 @@ func (v Value) narrowNativeFunc() bool {
 		v.typ().Kind() == abi.Func && v.typ().HasNativeLayout()
 }
 
+// goValue gives packed callbacks the storage expected by their Go type.
+// A Go slice cannot retain a native callback stride, so materialize its full
+// capacity before exposing it outside reflection.
+func (v Value) goValue() Value {
+	if !wideGoCallbackSlots {
+		return v
+	}
+	switch v.kind() {
+	case Func:
+		if v.narrowNativeFunc() && v.flag&flagIndir != 0 {
+			v.ptr = (*nativeFuncSlot)(v.ptr).entry
+			v.flag &^= flagIndir | flagAddr | flagCallbackSlot
+		}
+	case Array:
+		if size, slot := v.callbackElement(v.typ()); slot == flagNarrowCallback && size != v.typ().Size() {
+			out := New(toType(v.typ())).Elem()
+			out.setCallbackArray(v)
+			out.flag = out.flag&^flagAddr | v.flag.ro()
+			return out
+		}
+	case Slice:
+		elem := physicalType(v.typ().Elem())
+		if size, slot := v.callbackElement(elem); slot == flagNarrowCallback && size != elem.Size() {
+			sh := (*unsafeheaderSlice)(v.ptr)
+			out := MakeSlice(toType(v.typ()), sh.Len, sh.Cap)
+			// Access checks belong to the caller; internal interface packing
+			// also handles values obtained from unexported fields.
+			src := v
+			src.flag &^= flagRO
+			copyElements(out.Slice(0, sh.Cap), src.Slice(0, sh.Cap), sh.Cap)
+			out.flag |= v.flag.ro()
+			return out
+		}
+	}
+	return v
+}
+
 // pointer returns the underlying pointer represented by v.
 // v.Kind() must be Pointer, Map, Chan, Func, or UnsafePointer
 // if v.Kind() == Pointer, the base type must not be not-in-heap.
@@ -208,9 +245,10 @@ func packEface(v Value) any {
 	return i
 }
 
-// packEfaceData is a helper that packs the data word as if v were stored in
-// an empty interface. Go 1.26's reflect.TypeAssert refers to it directly.
+// packEfaceData packs the data word of an empty interface for packEface and
+// TypeAssert, normalizing callback storage and copying addressable values.
 func packEfaceData(v Value) unsafe.Pointer {
+	v = v.goValue()
 	t := v.typ()
 	switch {
 	case t.IfaceIndir():
@@ -225,16 +263,16 @@ func packEfaceData(v Value) unsafe.Pointer {
 		}
 		return ptr
 	case v.flag&flagIndir != 0:
+		if wideGoCallbackSlots && t.Size() < unsafe.Sizeof(uintptr(0)) {
+			// A direct-interface native aggregate may own only a narrow slot.
+			var ptr unsafe.Pointer
+			c.Memcpy(unsafe.Pointer(&ptr), v.ptr, t.Size())
+			return ptr
+		}
 		return *(*unsafe.Pointer)(v.ptr)
 	default:
 		return v.ptr
 	}
-}
-
-// packIfaceValueIntoEmptyIface is used by Go 1.26's reflect.TypeAssert helpers
-// when reboxing a non-empty interface value into an empty interface.
-func packIfaceValueIntoEmptyIface(v Value) any {
-	return packEface(v)
 }
 
 // unpackEface converts the empty interface i to a Value.
@@ -1314,15 +1352,15 @@ func (v Value) send(x Value, nb bool) (selected bool) {
 func (v Value) Set(x Value) {
 	v.mustBeAssignable()
 	x.mustBeExported() // do not let unexported x leak
+	if wideGoCallbackSlots && v.kind() == Array && x.kind() == Array &&
+		directlyAssignable(v.typ(), x.typ()) && v.setCallbackArray(x) {
+		return
+	}
 	var target unsafe.Pointer
 	if v.kind() == Interface {
 		target = v.ptr
 	}
-	source := x
 	x = x.assignTo("reflect.Set", v.typ(), target)
-	if wideGoCallbackSlots && v.kind() == Array && v.setCallbackArray(source) {
-		return
-	}
 	if v.narrowNativeFunc() {
 		entry := x.ptr
 		if x.flag&flagIndir != 0 {
@@ -1965,6 +2003,7 @@ func (v Value) grow(n int) {
 func (v Value) extendSlice(n int) Value {
 	v.mustBeExported()
 	v.mustBe(Slice)
+	v = v.goValue()
 
 	// Shallow copy the slice header to avoid mutating the source slice.
 	sh := *(*unsafeheaderSlice)(v.ptr)
@@ -2033,8 +2072,9 @@ func Copy(dst, src Value) int {
 	src.mustBeExported()
 
 	de := physicalType(dst.typ().Elem())
+	var se *abi.Type
 	if !stringCopy {
-		se := physicalType(src.typ().Elem())
+		se = physicalType(src.typ().Elem())
 		typesMustMatch("reflect.Copy", toPublicType(de), toPublicType(se))
 	}
 
@@ -2048,6 +2088,9 @@ func Copy(dst, src Value) int {
 	}
 	if sk == Array {
 		ss.Data = src.ptr
+		if src.flag&flagIndir == 0 {
+			ss.Data = unsafe.Pointer(&src.ptr)
+		}
 		ss.Len = src.Len()
 		ss.Cap = ss.Len
 	} else if sk == Slice {
@@ -2059,7 +2102,38 @@ func Copy(dst, src Value) int {
 		ss.Cap = sh.Len
 	}
 
+	if wideGoCallbackSlots && !stringCopy {
+		dstSize, dstSlot := dst.callbackElement(de)
+		srcSize, srcSlot := src.callbackElement(se)
+		if dstSlot == flagNarrowCallback || srcSlot == flagNarrowCallback {
+			n := ds.Len
+			if n > ss.Len {
+				n = ss.Len
+			}
+			if n == 0 {
+				return 0
+			}
+			if de == se && dstSize == srcSize {
+				c.Memmove(ds.Data, ss.Data, uintptr(n)*dstSize)
+				return n
+			}
+			// Stage the source before converting layouts, preserving Copy's
+			// overlap semantics and Set's callback ABI adaptations.
+			tmp := MakeSlice(SliceOf(src.Type().Elem()), n, n)
+			copyElements(tmp, src, n)
+			copyElements(dst, tmp, n)
+			return n
+		}
+	}
 	return typedslicecopy(de, ds, ss)
+}
+
+// copyElements converts n elements with Set. The source and destination must
+// not overlap; callers either allocate the destination or stage the source.
+func copyElements(dst, src Value, n int) {
+	for i := 0; i < n; i++ {
+		dst.Index(i).Set(src.Index(i))
+	}
 }
 
 // Zero returns a Value representing the zero value for the specified type.
@@ -2126,10 +2200,7 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	if v.flag&flagMethod != 0 {
 		v = makeMethodValue(context, v)
 	}
-	if v.narrowNativeFunc() && v.flag&flagIndir != 0 {
-		v.ptr = (*nativeFuncSlot)(v.ptr).entry
-		v.flag &^= flagIndir | flagAddr | flagNarrowCallback
-	}
+	v = v.goValue()
 	typ := physicalType(v.typ())
 	assignDst := physicalType(dst)
 
@@ -2161,14 +2232,7 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 
 	case dst.Kind() == abi.Func && dst.HasNativeLayout() && v.typ().IsClosure() &&
 		directlyAssignable(dst, v.Type().common()) && dst.FuncType().Variadic() == v.closureFunc().Variadic():
-		entry := (*closure)(v.ptr)
-		if entry.env != nil {
-			panic(context + ": C callback must not capture variables")
-		}
-		if entry.fn != nil && dst.TFlag&abi.TFlagDirectGoCallback == 0 {
-			panic(context + ": C callback with a different ABI must be a direct function reference")
-		}
-		return Value{dst, entry.fn, v.flag.ro() | flag(Func)}
+		return v.nativeFuncValue(context, dst)
 
 	case implements(assignDst, typ):
 		if v.Kind() == Interface && v.IsNil() {
@@ -2191,6 +2255,25 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 
 	// Failed.
 	panic(context + ": value of type " + stringFor(v.typ()) + " is not assignable to type " + stringFor(dst))
+}
+
+// nativeFuncValue extracts a native entry, preserving alias adapters and
+// requiring an environment-free Go entry with the destination's physical ABI.
+func (v Value) nativeFuncValue(context string, dst *abi.Type) Value {
+	entry := (*closure)(v.ptr)
+	if alias := dst.NativeFuncAlias(); alias != nil && alias.GoEntry != nil && entry.fn == alias.GoEntry {
+		return Value{dst, entry.env, flag(Func) | v.flag.ro()}
+	}
+	if entry.env != nil {
+		panic(context + ": C callback must not capture variables")
+	}
+	src := v.closureFunc()
+	if entry.fn != nil && (dst.TFlag&abi.TFlagDirectGoCallback == 0 ||
+		dst.FuncType().Variadic() != src.Variadic() ||
+		!haveIdenticalUnderlyingType(dst, &src.Type, true)) {
+		panic(context + ": C callback with a different ABI must be a direct function reference")
+	}
+	return Value{dst, entry.fn, flag(Func) | v.flag.ro()}
 }
 
 // The closure code and its environment use the physical parameter and result
@@ -3550,9 +3633,13 @@ func cvtDirect(v Value, typ Type) Value {
 // MakeFunc can give a closure a native public type. Keep its environment
 // when converting the value, including a conversion to its own type.
 func cvtFunc(v Value, typ Type) Value {
+	v = v.goValue()
 	dst := typ.common()
 	if v.typ().IsClosure() {
 		src := &v.closureFunc().Type
+		if dst.HasNativeLayout() && !src.HasNativeLayout() {
+			return v.nativeFuncValue("reflect.Value.Convert", dst)
+		}
 		target := closureOf(dst.FuncType())
 		if src != dst && src.PublicFunc() == dst.PublicFunc() {
 			return v.adaptFuncFrame(target, dst)
@@ -3560,9 +3647,6 @@ func cvtFunc(v Value, typ Type) Value {
 		return cvtDirect(v, toRType(target))
 	}
 	alias := v.typ().NativeFuncAlias()
-	if alias != nil && dst == alias.Public {
-		return cvtDirect(v, toRType(v.typ()))
-	}
 	if dst.HasNativeLayout() {
 		return cvtDirect(v, typ)
 	}
@@ -3761,7 +3845,11 @@ func (v Value) Clear() {
 		}
 		st := (*sliceType)(unsafe.Pointer(v.typ()))
 		elem := physicalType(st.Elem)
-		step := elem.Size()
+		step, slot := v.callbackElement(elem)
+		if slot == flagNarrowCallback {
+			c.Memset(sh.Data, 0, uintptr(sh.Len)*step)
+			return
+		}
 		for i := 0; i < sh.Len; i++ {
 			typedmemclr(elem, unsafe.Add(sh.Data, uintptr(i)*step))
 		}

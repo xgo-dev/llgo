@@ -198,6 +198,59 @@ func TestWasmReflectConvertMadeNativeFunc(t *testing.T) {
 
 func nextCallbackValue(n int64) int64 { return n + 1 }
 
+func TestWasmReflectConvertGoCallback(t *testing.T) {
+	type goCallback func(int64) int64
+	typ := reflect.TypeFor[nativeInt64Callback]()
+	for _, tc := range []struct {
+		name    string
+		fn      any
+		wantNil bool
+	}{
+		{"direct", nextCallbackValue, false},
+		{"named", goCallback(nextCallbackValue), false},
+		{"nil", (func(int64) int64)(nil), true},
+		{"named nil", goCallback(nil), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := reflect.ValueOf(tc.fn).Convert(typ)
+			fn, ok := value.Interface().(nativeInt64Callback)
+			if !ok || value.Type() != typ || (fn == nil) != tc.wantNil {
+				t.Fatal("conversion lost the destination's native function representation")
+			}
+			if fn != nil && fn(41) != 42 {
+				t.Fatal("converted native callback returned the wrong result")
+			}
+		})
+	}
+	fn := nextCallbackValue
+	converted := reflect.ValueOf(&fn).Elem().Convert(typ)
+	fn = nil
+	if got := converted.Interface().(nativeInt64Callback)(41); got != 42 {
+		t.Fatalf("conversion retained the mutable source slot: got %d", got)
+	}
+}
+
+func TestWasmReflectConvertGoCallbackConstraints(t *testing.T) {
+	check := func(name string, fn any, typ reflect.Type, want string) {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if got := recover(); got != want {
+					t.Fatalf("conversion panicked with %v, want %q", got, want)
+				}
+			}()
+			reflect.ValueOf(fn).Convert(typ)
+		})
+	}
+	offset := int64(len(t.Name()))
+	check("capture", func(n int64) int64 { return n + offset }, reflect.TypeFor[nativeInt64Callback](),
+		"reflect.Value.Convert: C callback must not capture variables")
+	const incompatibleABI = "reflect.Value.Convert: C callback with a different ABI must be a direct function reference"
+	check("variadic", func(...byte) {}, reflect.TypeFor[sliceSink](), incompatibleABI)
+	if unsafe.Offsetof(reflectSlot{}.Tag) == 4 {
+		check("ABI", wordText, reflect.TypeFor[nativeWordText](), incompatibleABI)
+	}
+}
+
 func TestWasmReflectSetGoCallback(t *testing.T) {
 	var fn nativeInt64Callback
 	slot := reflect.ValueOf(&fn).Elem()
@@ -269,8 +322,29 @@ func TestWasmReflectNativeFuncAlias(t *testing.T) {
 	if slot.UnsafePointer() != native.UnsafePointer() {
 		t.Fatal("round trip through Go storage changed the native entry")
 	}
-	if got := native.Convert(typ).Call(args)[0].String(); got != "word" {
+	converted := native.Convert(typ)
+	if got := converted.Call(args)[0].String(); got != "word" {
 		t.Errorf("converted native callback returned %q", got)
+	}
+	if got := converted.Interface().(func(uintptr) string)(515); got != "word" {
+		t.Errorf("boxed Go callback returned %q", got)
+	}
+
+	// Elem preserves the raw alias descriptor, while TypeOf exposes its Go signature.
+	rawType := reflect.TypeOf([1]aliasWordText{}).Elem()
+	zero := reflect.Zero(rawType).Convert(typ)
+	if fn := zero.Interface().(func(uintptr) string); fn != nil {
+		t.Fatal("converting a nil alias produced a non-nil Go function")
+	}
+	for _, value := range []reflect.Value{converted, zero} {
+		roundTrip := value.Convert(rawType)
+		fn, ok := roundTrip.Interface().(aliasWordText)
+		if !ok || (fn == nil) != value.IsNil() {
+			t.Fatal("conversion back to the native alias lost its representation")
+		}
+		if fn != nil && (roundTrip.UnsafePointer() != native.UnsafePointer() || fn(515) != "word") {
+			t.Fatal("conversion back to the native alias lost its original entry")
+		}
 	}
 }
 
