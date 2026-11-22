@@ -46,6 +46,10 @@ func main() {
 	if !ok || method.Type.In(0) != t {
 		panic("returned Type lost method metadata")
 	}
+	// A method value needs the slow path in Value.Type.
+	if reflect.ValueOf(callback(nil)).Method(0).Type() != reflect.TypeFor[func()]() {
+		panic("bound method type")
+	}
 	checkNil()
 
 	dynamic := reflect.StructOf([]reflect.StructField{

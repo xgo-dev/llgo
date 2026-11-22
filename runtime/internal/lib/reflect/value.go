@@ -1642,15 +1642,31 @@ func (v Value) TrySend(x Value) bool {
 
 // Type returns v's type.
 func (v Value) Type() Type {
-	return v.typeRType()
+	if typ := v.typeRTypeFast(); typ != nil {
+		return typ
+	}
+	return v.typeSlow()
+}
+
+// The original Go Value.Type body may be inlined into callers before the
+// LLGo reflect implementation is selected. Keep its slow path ABI.
+func (v Value) typeSlow() Type {
+	return v.typeRTypeSlow()
 }
 
 // Keep descriptor queries inside reflect from building the public Type interface.
 func (v Value) typeRType() *rtype {
-	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
-		return (*rtype)(unsafe.Pointer(v.typ_)) // inline of toRType(v.typ()), for own inlining in inline test
+	if typ := v.typeRTypeFast(); typ != nil {
+		return typ
 	}
 	return v.typeRTypeSlow()
+}
+
+func (v Value) typeRTypeFast() *rtype {
+	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
+		return toRType(v.typ_)
+	}
+	return nil
 }
 
 func (v Value) typeRTypeSlow() *rtype {
