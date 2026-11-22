@@ -20,7 +20,7 @@ type x86Predicate struct {
 
 // Bit positions match runtime/_patch/internal/cpu/{init,archsimd_go127}_llgo.go.
 var x86Predicates = []x86Predicate{
-	{"AVX2", 2, "+avx,+avx2"}, {"AVX", 4, "+avx"},
+	{"AVX2", 2, "+avx,+avx2"}, {"AVX", featureAVX, "+avx"},
 	{"AVXAES", 8, "+avx,+aes"}, {"VAES", 16, "+avx,+vaes"},
 	{"AVX512VAES", 32, "+avx512f,+avx512vl,+vaes"}, {"AVX512GFNI", 64, "+avx512f,+gfni"},
 	{"SHA", 128, "+sha"}, {"AVX512", 256, "+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
@@ -29,6 +29,21 @@ var x86Predicates = []x86Predicate{
 	{"AVX512VNNI", 1 << 13, "+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, "+avx512f,+vpclmulqdq"},
 	{"AVX512VPOPCNTDQ", 1 << 15, "+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, "+avxvnni"},
 }
+
+// The Go predicates are independently observable after GODEBUG. A guarded
+// implementation using AVX or one of its extensions also requires effective AVX.
+var avxGuardPredicates = func() uint64 {
+	var mask uint64
+	for _, p := range x86Predicates {
+		for _, feature := range strings.Split(p.features, ",") {
+			if strings.HasPrefix(feature, "+avx") {
+				mask |= p.bit
+				break
+			}
+		}
+	}
+	return mask
+}()
 
 func X86Query(method string) string {
 	for _, p := range x86Predicates {
@@ -114,6 +129,20 @@ func directGuardCallee(inst llvm.Value) llvm.Value {
 	return inst.CalledValue().IsAFunction()
 }
 
+// An opaque call can return a vector without doing any local vector work.
+// LLVM intrinsics are lowered in the caller and can use its target features.
+func localVectorWork(inst llvm.Value) bool {
+	if inst.Type().TypeKind() != llvm.VectorTypeKind {
+		return false
+	}
+	switch inst.InstructionOpcode() {
+	case llvm.Call, llvm.Invoke:
+		callee := inst.CalledValue().IsAFunction()
+		return !callee.IsNil() && callee.IntrinsicID() != 0
+	}
+	return true
+}
+
 // Collect evidence of vector work along direct calls in this module. Start
 // from functions with a feature query and propagate back from SIMD operations
 // to their callers. The two walks handle cycles without relying on DFS order.
@@ -137,7 +166,7 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 		}
 		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if inst.Type().TypeKind() == llvm.VectorTypeKind {
+				if localVectorWork(inst) {
 					work[fn] = true
 				}
 				if callee := directGuardCallee(inst); !callee.IsNil() {
@@ -165,8 +194,8 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 	return work
 }
 
-// guardContexts intersects known true predicates at joins to identify which
-// positive guards protect vector work in this function.
+// guardContexts uses guardBlocks to find predicates proven at vector work,
+// including saved conditions, PHI edges and local predicate-helper results.
 func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llvm.Value][2]guardFact, work map[llvm.Value]bool) []uint64 {
 	known, _ := guardBlocks(fn, queries, helpers)
 	sets := map[uint64]bool{}
@@ -175,7 +204,7 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, helpers map[llv
 			continue
 		}
 		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if inst.Type().TypeKind() == llvm.VectorTypeKind || work[directGuardCallee(inst)] {
+			if localVectorWork(inst) || work[directGuardCallee(inst)] {
 				sets[mask] = true
 				break
 			}
@@ -196,8 +225,7 @@ func dispatchMasks(sets map[uint64]bool) []uint64 {
 	unions := []uint64{0}
 	seen := map[uint64]bool{0: true}
 	// Four independent predicates already yield fifteen nonempty combinations.
-	// Bound extra bodies for large roots, retaining their original CFG masks
-	// and a version for the machine on which every observed mask matches.
+	// Above the limit, keep up to fourteen observed masks and their full union.
 	const maxUnions = maxGuardChoices + 1
 	for mask := range sets {
 		all |= mask
@@ -408,7 +436,11 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		root := &roots[i]
 		currentRoot = root.fn
 		helperBudget = maxGuardBodies - len(root.masks) - 2
-		for _, mask := range root.masks {
+		// Allocate helper bodies to the widest choices first. Keep the resolver's
+		// select chain in ascending order so matching supersets still win.
+		root.choices = make([]dispatchChoice, len(root.masks))
+		for j := len(root.masks) - 1; j >= 0; j-- {
+			mask := root.masks[j]
 			v, err := specializeLocal(root.fn, mask)
 			if err != nil {
 				for _, staged := range copies {
@@ -417,12 +449,10 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				return err
 			}
 			required := mask
-			// The Go query remains observable independently after GODEBUG.
-			// An FMA implementation also needs AVX enabled for its body.
-			if mask&predicateBits["x86.fma"] != 0 {
-				required |= predicateBits["x86.avx"]
+			if mask&avxGuardPredicates != 0 {
+				required |= featureAVX
 			}
-			root.choices = append(root.choices, dispatchChoice{required, v})
+			root.choices[j] = dispatchChoice{required, v}
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}

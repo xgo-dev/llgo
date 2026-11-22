@@ -348,9 +348,10 @@ Vector results keep their native register ABI.
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
 other observable query results. On v1/v2 the AVX and FMA queries remain
-dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. An optional FMA
-implementation requires both effective FMA and AVX; the fallback preserves
-the original query even when AVX has been independently disabled. Midway selects portable width independently.
+dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. Guarded
+implementations with AVX target features require effective AVX in addition
+to their predicates. The fallback preserves the original query even when AVX
+has been independently disabled. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -516,7 +517,8 @@ For independent guarded regions, the resolver selects the union of matching
 masks when the function has up to 16 distinct unions (including the empty
 mask). Above that limit it retains at most 14 observed masks and their full
 union. Each root can create at most 64 new bodies including helpers, its
-baseline and resolver; further callees keep their ordinary entry. Regions outside the selected mask retain their runtime checks. Local
+baseline and resolver. Wider masks receive the helper budget first. Further
+callees keep their ordinary entry. Regions outside the selected mask retain their runtime checks. Local
 helpers share a copy for each distinct proven mask.
 
 Specializations follow direct calls through local helpers, including kernels
@@ -533,9 +535,11 @@ local helper calls and repeated execution of the LLVM transformation.
 A saved boolean guard carries the same feature evidence as an immediate
 branch. For example, a true `ready := archsimd.X86.AVX512() && enabled`
 proves AVX-512, while `AVX512() || enabled` does not. Joins retain only
-predicates proven on every feasible incoming path.
+predicates proven on every feasible incoming path. `TestSIMDSavedGuard` and
+`TestMaterializedGuards` cover the runtime and LLVM guard analysis.
 
 A direct call to a locally defined boolean helper can also establish a feature
 on one return outcome. The caller keeps the call, including side effects and
 any independent conditions. Declarations, indirect calls and weak definitions
-do not provide evidence about the CPU.
+do not provide evidence about the CPU. `TestSIMDPredicateHelper` and
+`TestPredicateHelperOutcomes` cover these calls and their inferred outcomes.

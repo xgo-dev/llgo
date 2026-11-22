@@ -28,6 +28,7 @@ const (
 	// Keep these bits in sync with runtime/_patch/internal/cpu/init_llgo.go.
 	featureInitialized = 1
 	featureAVX2        = 2
+	featureAVX         = 4
 )
 
 func stringAttribute(fn llvm.Value, name string) string {
