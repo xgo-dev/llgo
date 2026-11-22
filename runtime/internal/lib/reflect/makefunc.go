@@ -52,7 +52,7 @@ func makeFunc(typ Type, fn func(args []Value) (results []Value), recoverTo unsaf
 
 	t := typ.common()
 	ftyp := (*funcType)(unsafe.Pointer(t))
-	return makeProviderFunc(ftyp, fn, recoverTo)
+	return makeProviderFunc(ftyp, fn, recoverTo, nil)
 }
 
 // call crosses the provider's entry stub as a transparent wrapper. This mirrors

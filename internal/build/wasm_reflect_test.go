@@ -217,7 +217,7 @@ func TestProgramUsesWasmReflectBridges(t *testing.T) {
 	if programUsesWasmReflectBridges(nil, nil) {
 		t.Fatal("nil program may not require reflection bridges")
 	}
-	if isWasmReflectBridgeCall(nil) {
+	if isWasmReflectBridgeCall(nil, false) {
 		t.Fatal("nil call may not be a reflection bridge")
 	}
 	if got := ssaFunctionPackagePath(nil); got != "" {
@@ -288,8 +288,36 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 		})
 	}
 
-	if programMayCallWasmReflectBridgeIndirectly(nil) {
+	if programMayCallWasmReflectBridgeIndirectly(nil, false) {
 		t.Fatal("nil reachable set may not require bridges")
+	}
+}
+
+func TestWasmReflectNativeFuncAdapters(t *testing.T) {
+	const prefix = `package main; import "reflect"; type Plain = func(int) int; type Native = Plain; var v reflect.Value; func main() { `
+	for _, tc := range []struct {
+		expr string
+		want bool
+	}{
+		{`v.Set(v)`, true},
+		{`v.Convert(v.Type())`, true},
+		{`_, _ = reflect.TypeAssert[func(Plain) Plain](v)`, true},
+		{`_, _ = reflect.TypeAssert[int](v)`, false},
+		{`_ = v.Kind()`, false},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, prefix+tc.expr+"}")
+			use := analyzeWasmProgramUse(pkg.Prog, []*ssa.Function{pkg.Func("main")})
+			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+			defer prog.Dispose()
+			if use.usesWasmReflectBridges(prog.HasNativeFuncAliases()) {
+				t.Fatal("ordinary Go value operation enabled bridges")
+			}
+			prog.RegisterNativeAlias(pkg.Pkg, "Native")
+			if got := use.usesWasmReflectBridges(prog.HasNativeFuncAliases()); got != tc.want {
+				t.Errorf("native alias: bridges = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

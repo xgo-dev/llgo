@@ -59,9 +59,10 @@ func copyWasmFuncBridge(dst, src *abi.FuncType) {
 type wasmMakeFuncData struct {
 	callback unsafe.Pointer
 	data     funcData
+	origin   *Value
 }
 
-func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsafe.Pointer, origin *Value) Value {
 	code := ft.Make_
 	if code == nil {
 		// A FuncOf signature with dynamically created parameter types cannot
@@ -70,6 +71,7 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	}
 	data := &wasmMakeFuncData{
 		callback: c.Func(wasmMakeFuncInvoke),
+		origin:   origin,
 		data: funcData{
 			ftyp: ft, tout: toRuntimeTypes(ft.Out), fn: fn, nin: len(ft.In),
 			recoverFrom: code, recoverTo: recoverTo,
@@ -77,6 +79,13 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	}
 	fv := &closure{fn: code, env: unsafe.Pointer(data)}
 	return Value{closureOf(ft), unsafe.Pointer(fv), flagIndir | flag(Func)}
+}
+
+func providerNativeSource(ft *abi.FuncType, entry *closure) *Value {
+	if entry.fn != nil && entry.env != nil && (entry.fn == ft.Make_ || entry.fn == c.Func(wasmReflectOnly)) {
+		return (*wasmMakeFuncData)(entry.env).origin
+	}
+	return nil
 }
 
 func wasmReflectOnly() {

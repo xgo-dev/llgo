@@ -23,10 +23,12 @@ func TypeAssert[T any](v Value) (T, bool) {
 	if v.flag&flagMethod != 0 {
 		v = makeMethodValue("TypeAssert", v)
 	}
-	if v.kind() == Interface || v.kind() == Func {
-		// Generated functions also need the runtime's closure type matching.
-		out, ok := valueInterface(v, false).(T)
-		return out, ok
+	if v.kind() == Interface {
+		v = v.Elem()
+		if !v.IsValid() {
+			var zero T
+			return zero, false
+		}
 	}
 
 	typ := abi.TypeFor[T]()
@@ -42,8 +44,11 @@ func TypeAssert[T any](v Value) (T, bool) {
 		return zero, false
 	}
 	if typ != v.typ() {
-		var zero T
-		return zero, false
+		v = assertFunc(v, typ)
+		if !v.IsValid() {
+			var zero T
+			return zero, false
+		}
 	}
 
 	v = v.goValue()
@@ -55,4 +60,5 @@ func TypeAssert[T any](v Value) (T, bool) {
 
 // Implemented by LLGo's reflect replacement for its physical value layout.
 func (v Value) goValue() Value
+func assertFunc(v Value, typ *abi.Type) Value
 func packEfaceData(v Value) unsafe.Pointer

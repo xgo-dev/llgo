@@ -37,6 +37,7 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
+	nativeAliases         []nativeAliasDecl
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
@@ -94,6 +95,34 @@ func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
 	background, ok := p.packageSyntax.typeCallConvs[name]
 	p.packageSyntax.mu.RUnlock()
 	return background, ok
+}
+
+type nativeAliasDecl struct {
+	pkg  *types.Package
+	name string
+}
+
+// RegisterNativeAlias records a native type alias before its RHS has been type checked.
+func (p Program) RegisterNativeAlias(pkg *types.Package, name string) {
+	syntax := p.packageSyntax
+	syntax.mu.Lock()
+	syntax.nativeAliases = append(syntax.nativeAliases, nativeAliasDecl{pkg, name})
+	syntax.mu.Unlock()
+}
+
+// HasNativeFuncAliases reports whether reflection can see a native callback alias.
+func (p Program) HasNativeFuncAliases() bool {
+	syntax := p.packageSyntax
+	syntax.mu.RLock()
+	defer syntax.mu.RUnlock()
+	for _, alias := range syntax.nativeAliases {
+		if obj := alias.pkg.Scope().Lookup(alias.name); obj != nil {
+			if _, ok := types.Unalias(obj.Type()).(*types.Signature); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {

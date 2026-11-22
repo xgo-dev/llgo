@@ -275,6 +275,20 @@ func packEfaceData(v Value) unsafe.Pointer {
 	}
 }
 
+// assertFunc matches a concrete assertion whose descriptors differ. An
+// unqualified Go function needs a callable closure for a native alias entry.
+func assertFunc(v Value, dst *abi.Type) Value {
+	if dst.IsClosure() {
+		if v.typ().IsClosure() && runtime.MatchesClosure(dst, v.typ()) {
+			return v
+		}
+		if alias := v.typ().NativeFuncAlias(); alias != nil && toPublicType(dst) == v.Type() {
+			return v.goValue().nativeAliasClosure(dst, alias)
+		}
+	}
+	return Value{}
+}
+
 // unpackEface converts the empty interface i to a Value.
 func unpackEface(i any) Value {
 	e := (*emptyInterface)(unsafe.Pointer(&i))
@@ -1785,26 +1799,26 @@ func (v Value) typeSlow() Type {
 		return toRType(v.closureFunc().Type.PublicFunc())
 	}
 
-	// Method value.
-	// v.typ describes the receiver, not the method type.
+	ft, _ := methodSignature(v)
+	return toPublicType(&ft.Type)
+}
+
+func methodSignature(v Value) (*abi.FuncType, bool) {
 	i := int(v.flag) >> flagMethodShift
 	typ := v.typ()
 	if typ.Kind() == abi.Interface {
-		// Method on interface.
-		tt := (*interfaceType)(unsafe.Pointer(typ))
-		if uint(i) >= uint(len(tt.Methods)) {
+		methods := typ.InterfaceType().Methods
+		if uint(i) >= uint(len(methods)) {
 			panic("reflect: internal error: invalid method index")
 		}
-		m := &tt.Methods[i]
-		return toPublicType(&m.Typ_.Type)
+		m := &methods[i]
+		return m.Typ_, abi.IsExported(m.Name())
 	}
-	// Method on concrete type.
-	ms := typ.ExportedMethods()
-	if uint(i) >= uint(len(ms)) {
+	methods := typ.ExportedMethods()
+	if uint(i) >= uint(len(methods)) {
 		panic("reflect: internal error: invalid method index")
 	}
-	m := ms[i]
-	return toPublicType(&m.Mtyp_.Type)
+	return methods[i].Mtyp_, true
 }
 
 // CanUint reports whether Uint can be used without panicking.
@@ -1948,9 +1962,12 @@ func Indirect(v Value) Value {
 	return v.Elem()
 }
 
-func typesMustMatch(what string, t1, t2 Type) {
-	if t1 != t2 {
-		panic(what + ": " + t1.String() + " != " + t2.String())
+func mustMatchElementTypes(op string, dst, src *abi.Type) {
+	if dst == src {
+		return
+	}
+	if d, s := toPublicType(dst), toPublicType(src); d != s {
+		panic(op + ": " + d.String() + " != " + s.String())
 	}
 }
 
@@ -1994,25 +2011,20 @@ func (v Value) grow(n int) {
 	}
 }
 
-// extendSlice extends a slice by n elements.
-//
-// Unlike Value.grow, which modifies the slice in place and
-// does not change the length of the slice in place,
-// extendSlice returns a new slice value with the length
-// incremented by the number of specified elements.
+// extendSlice grows a copy of the slice header and returns it with the new length.
 func (v Value) extendSlice(n int) Value {
 	v.mustBeExported()
 	v.mustBe(Slice)
-	v = v.goValue()
+	if v.flag&flagNarrowCallback != 0 && n > v.Cap()-v.Len() {
+		// The new backing array uses Go slots. Within capacity, keep the native stride.
+		v = v.goValue()
+	}
 
-	// Shallow copy the slice header to avoid mutating the source slice.
 	sh := *(*unsafeheaderSlice)(v.ptr)
-	s := &sh
-	v.ptr = unsafe.Pointer(s)
-	v.flag = flagIndir | flag(Slice) // equivalent flag to MakeSlice
-
-	v.grow(n) // fine to treat as assignable since we allocate a new slice header
-	s.Len += n
+	v.ptr = unsafe.Pointer(&sh)
+	v.flag &^= flagAddr
+	v.grow(n)
+	sh.Len += n
 	return v
 }
 
@@ -2033,9 +2045,7 @@ func Append(s Value, x ...Value) Value {
 func AppendSlice(s, t Value) Value {
 	s.mustBe(Slice)
 	t.mustBe(Slice)
-	if s.typ().Elem() != t.typ().Elem() {
-		panic("reflect.AppendSlice: " + stringFor(s.typ().Elem()) + " != " + stringFor(t.typ().Elem()))
-	}
+	mustMatchElementTypes("reflect.AppendSlice", s.typ().Elem(), t.typ().Elem())
 	ns := s.Len()
 	nt := t.Len()
 	s = s.extendSlice(nt)
@@ -2075,7 +2085,7 @@ func Copy(dst, src Value) int {
 	var se *abi.Type
 	if !stringCopy {
 		se = physicalType(src.typ().Elem())
-		typesMustMatch("reflect.Copy", toPublicType(de), toPublicType(se))
+		mustMatchElementTypes("reflect.Copy", de, se)
 	}
 
 	var ds, ss unsafeheaderSlice
@@ -2102,10 +2112,10 @@ func Copy(dst, src Value) int {
 		ss.Cap = sh.Len
 	}
 
-	if wideGoCallbackSlots && !stringCopy {
+	if !stringCopy && (de != se || wideGoCallbackSlots) {
 		dstSize, dstSlot := dst.callbackElement(de)
 		srcSize, srcSlot := src.callbackElement(se)
-		if dstSlot == flagNarrowCallback || srcSlot == flagNarrowCallback {
+		if de != se || dstSlot == flagNarrowCallback || srcSlot == flagNarrowCallback {
 			n := ds.Len
 			if n > ss.Len {
 				n = ss.Len
@@ -2117,9 +2127,10 @@ func Copy(dst, src Value) int {
 				c.Memmove(ds.Data, ss.Data, uintptr(n)*dstSize)
 				return n
 			}
-			// Stage the source before converting layouts, preserving Copy's
-			// overlap semantics and Set's callback ABI adaptations.
-			tmp := MakeSlice(SliceOf(src.Type().Elem()), n, n)
+			// Native entries and Go closures can share a public type. Stage
+			// conversions before writing, in case the slices overlap or a
+			// closure cannot supply a native entry.
+			tmp := MakeSlice(SliceOf(dst.Type().Elem()), n, n)
 			copyElements(tmp, src, n)
 			copyElements(dst, tmp, n)
 			return n
@@ -2211,12 +2222,6 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 			return v.adaptFuncFrame(assignDst, dstFunc)
 		}
 	}
-	if alias := assignDst.NativeFuncAlias(); alias != nil && typ.IsClosure() && alias.GoEntry != nil {
-		entry := (*closure)(v.ptr)
-		if entry.fn == alias.GoEntry {
-			return Value{dst, entry.env, flag(Func) | v.flag.ro()}
-		}
-	}
 	if alias := typ.NativeFuncAlias(); alias != nil && assignDst.IsClosure() &&
 		directlyAssignable(&toFuncType(assignDst.StructType()).Type, alias.Public) {
 		return v.nativeAliasClosure(assignDst, alias)
@@ -2231,7 +2236,7 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		return Value{dst, v.ptr, fl}
 
 	case dst.Kind() == abi.Func && dst.HasNativeLayout() && v.typ().IsClosure() &&
-		directlyAssignable(dst, v.Type().common()) && dst.FuncType().Variadic() == v.closureFunc().Variadic():
+		assignableCallback(dst.FuncType(), v.closureFunc()):
 		return v.nativeFuncValue(context, dst)
 
 	case implements(assignDst, typ):
@@ -2257,23 +2262,63 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	panic(context + ": value of type " + stringFor(v.typ()) + " is not assignable to type " + stringFor(dst))
 }
 
-// nativeFuncValue extracts a native entry, preserving alias adapters and
-// requiring an environment-free Go entry with the destination's physical ABI.
-func (v Value) nativeFuncValue(context string, dst *abi.Type) Value {
-	entry := (*closure)(v.ptr)
-	if alias := dst.NativeFuncAlias(); alias != nil && alias.GoEntry != nil && entry.fn == alias.GoEntry {
-		return Value{dst, entry.env, flag(Func) | v.flag.ro()}
+// Assignment uses the Go types of the parameters and results, including
+// callbacks whose physical types differ in the native entry.
+func assignableCallback(dst, src *abi.FuncType) bool {
+	if dst == src {
+		return true
 	}
-	if entry.env != nil {
-		panic(context + ": C callback must not capture variables")
+	if dst.HasName() && src.HasName() || dst.Variadic() != src.Variadic() {
+		return false
+	}
+	same := func(a, b []*abi.Type) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i, t := range a {
+			if toPublicType(t) != toPublicType(b[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return same(dst.In, src.In) && same(dst.Out, src.Out)
+}
+
+func (v Value) nativeFuncValue(context string, dst *abi.Type) Value {
+	entry, why := nativeFuncEntry(v, dst)
+	if why != "" {
+		panic(context + ": " + why)
+	}
+	return Value{dst, entry, flag(Func) | v.flag.ro()}
+}
+
+// A closure can supply a native entry if it wraps that entry already, or
+// if its own code can be called with the destination ABI and no environment.
+func nativeFuncEntry(v Value, dst *abi.Type) (unsafe.Pointer, string) {
+	entry := (*closure)(v.ptr)
+	if entry.fn == nil {
+		return nil, ""
+	}
+	if alias := dst.NativeFuncAlias(); alias != nil && entry.fn == alias.GoEntry {
+		return entry.env, ""
 	}
 	src := v.closureFunc()
-	if entry.fn != nil && (dst.TFlag&abi.TFlagDirectGoCallback == 0 ||
-		dst.FuncType().Variadic() != src.Variadic() ||
-		!haveIdenticalUnderlyingType(dst, &src.Type, true)) {
-		panic(context + ": C callback with a different ABI must be a direct function reference")
+	if origin := providerNativeSource(src, entry); origin != nil && origin.typ().IsStdcall() == dst.IsStdcall() &&
+		haveIdenticalUnderlyingType(dst, origin.typ(), true) {
+		return origin.pointer(), ""
 	}
-	return Value{dst, entry.fn, flag(Func) | v.flag.ro()}
+	if entry.env != nil {
+		return nil, "C callback must not capture variables"
+	}
+	if !directGoCallback(dst, src) {
+		return nil, "C callback with a different ABI must be a direct function reference"
+	}
+	return entry.fn, ""
+}
+
+func directGoCallback(dst *abi.Type, src *abi.FuncType) bool {
+	return dst.TFlag&abi.TFlagDirectGoCallback != 0 && haveIdenticalUnderlyingType(dst, &src.Type, true)
 }
 
 // The closure code and its environment use the physical parameter and result
@@ -2283,14 +2328,22 @@ func (v Value) adaptFuncFrame(dst, ft *abi.Type) Value {
 	if v.IsNil() {
 		return Value{dst, unsafe.Pointer(&closure{}), flag(Func) | flagIndir | v.flag.ro()}
 	}
-	if v.flag&flagAddr != 0 {
-		v = cvtDirect(v, toRType(v.typ()))
+	var origin *Value
+	if v.typ().IsClosure() {
+		if v.flag&flagAddr != 0 {
+			v = cvtDirect(v, toRType(v.typ()))
+		}
+		origin = providerNativeSource(v.closureFunc(), (*closure)(v.ptr))
+	} else {
+		// Take a snapshot even when the original function is an addressable field.
+		v = Value{v.typ(), v.pointer(), flag(Func) | v.flag.ro()}
+		origin = &v
 	}
 	call := v.Call
 	if ft.FuncType().Variadic() {
 		call = v.CallSlice
 	}
-	result := MakeFunc(toType(ft), call)
+	result := makeProviderFunc(ft.FuncType(), call, ValueOf(call).UnsafePointer(), origin)
 	result.flag |= v.flag.ro()
 	return result
 }
@@ -2333,9 +2386,24 @@ func (v Value) CanConvert(t Type) bool {
 	if !vt.ConvertibleTo(t) {
 		return false
 	}
-	// Converting from slice to array or to pointer-to-array can panic
-	// depending on the value.
+	// A native callback conversion depends on the entry, and an array
+	// conversion depends on the length of the slice.
 	switch {
+	case vt.Kind() == Func && t.Kind() == Func && t.common().HasNativeLayout():
+		dst := t.common()
+		if v.flag&flagMethod != 0 {
+			// A bound method owns its receiver. Only libffi can close over
+			// that receiver behind an environment-free entry.
+			if baremetalReflection || v.typ().Kind() == abi.Interface && (*nonEmptyInterface)(v.ptr).itab == nil {
+				return false
+			}
+			ft, exported := methodSignature(v)
+			return exported && (ft.HasNativeLayout() || !useWasmReflectBridges && directGoCallback(dst, ft))
+		}
+		if v.typ().IsClosure() && !v.closureFunc().HasNativeLayout() {
+			_, why := nativeFuncEntry(v, dst)
+			return why == ""
+		}
 	case vt.Kind() == Slice && t.Kind() == Array:
 		if t.Len() > v.Len() {
 			return false

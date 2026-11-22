@@ -46,6 +46,9 @@ func TestReflectNativeCallbackConvertFrame(t *testing.T) {
 	if src.Type() != reflect.TypeFor[reflectBulkCallbackIdentity]() || dst == src.Type() {
 		t.Fatal("expected equal public signatures with distinct physical frames")
 	}
+	if src.CanConvert(dst) {
+		t.Fatal("CanConvert accepted a callback with an incompatible argument and result frame")
+	}
 	defer func() {
 		const want = "reflect.Value.Convert: C callback with a different ABI must be a direct function reference"
 		if got := recover(); got != want {
@@ -127,6 +130,49 @@ func TestReflectNativeCallbackCopy(t *testing.T) {
 	}
 }
 
+func TestReflectNativeCallbackAliasCopyAppend(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		move func(dst, src reflect.Value) int
+	}{
+		{"Copy", reflect.Copy},
+		{"AppendSlice", func(dst, src reflect.Value) int {
+			return reflect.AppendSlice(dst.Slice(0, 0), src.Slice(0, src.Len())).Len()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			native := [3]reflectBulkCallbackAlias{reflectBulkAdd7, nil, reflectBulkAdd11}
+			ordinary := make([]func(int32) int32, len(native))
+			a, s := reflect.ValueOf(&native).Elem(), reflect.ValueOf(ordinary)
+			if n := tc.move(s, a); n != 3 {
+				t.Fatalf("copied %d native callbacks to Go, want 3", n)
+			}
+			if ordinary[0] == nil || ordinary[0](5) != 12 || ordinary[1] != nil || ordinary[2] == nil || ordinary[2](5) != 16 {
+				t.Fatal("native callbacks lost their entries in Go function slots")
+			}
+			ordinary[0], ordinary[1], ordinary[2] = nil, reflectBulkAdd23, ordinary[0]
+			if n := tc.move(a, s); n != 3 {
+				t.Fatalf("copied %d Go callbacks to native slots, want 3", n)
+			}
+			for i, want := range []int32{0, 28, 12} {
+				checkReflectBulkCallback(t, i, native[i], want)
+			}
+
+			offset := int32(len(t.Name()))
+			ordinary[0], ordinary[1] = reflectBulkAdd7, func(v int32) int32 { return v + offset }
+			defer func() {
+				if recover() == nil {
+					t.Fatal("accepted a captured closure in a native callback slot")
+				}
+				if native[0] != nil {
+					t.Fatal("wrote the first callback before rejecting the second")
+				}
+			}()
+			tc.move(a, s)
+		})
+	}
+}
+
 func TestReflectNativeCallbackCopyOverlap(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -148,6 +194,35 @@ func TestReflectNativeCallbackCopyOverlap(t *testing.T) {
 			checkReflectBulkRecord(t, record, tc.want, 0x11223344)
 		})
 	}
+}
+
+func TestReflectNativeCallbackAppend(t *testing.T) {
+	const marker = 0x11223344
+	record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11, reflectBulkAdd23}, marker)
+	array := reflect.ValueOf(record).Elem().Field(1)
+	empty := array.Slice(0, 0)
+	if s := reflect.Append(empty); s.Pointer() != empty.Pointer() || s.Len() != 0 || s.Cap() != 3 {
+		t.Fatal("empty append changed the slice")
+	}
+
+	s := reflect.Append(empty, reflect.ValueOf(reflectBulkCallback(reflectBulkAdd23)))
+	checkReflectBulkRecord(t, record, [3]int32{28, 16, 28}, marker)
+	s = reflect.AppendSlice(s, array.Slice(0, 2))
+	if s.Pointer() != empty.Pointer() || s.Len() != 3 || empty.Len() != 0 {
+		t.Fatal("in-capacity append changed the backing array or the original length")
+	}
+	checkReflectBulkRecord(t, record, [3]int32{28, 28, 16}, marker)
+
+	grown := reflect.AppendSlice(s, s.Slice(1, 3))
+	callbacks := grown.Interface().([]reflectBulkCallback)
+	if grown.Pointer() == s.Pointer() || len(callbacks) != 5 {
+		t.Fatal("append past capacity did not grow the slice")
+	}
+	for i, want := range []int32{28, 28, 16, 28, 16} {
+		checkReflectBulkCallback(t, i, callbacks[i], want)
+	}
+	grown.Clear()
+	checkReflectBulkRecord(t, record, [3]int32{28, 28, 16}, marker)
 }
 
 func TestReflectNativeCallbackClear(t *testing.T) {
@@ -318,6 +393,36 @@ func TestReflectNativeCallbackFieldTypeAssert(t *testing.T) {
 	}
 }
 
+//llgo:cdecl
+type reflectAliasField struct {
+	Callback reflectBulkCallbackAlias
+	Marker   uint32
+}
+
+func TestReflectNativeAliasTypeAssert(t *testing.T) {
+	record := reflectAliasField{Callback: reflectBulkAdd7, Marker: 17}
+	field := reflect.ValueOf(&record).Elem().Field(0)
+	var boxed any = field.Interface()
+	for _, v := range []reflect.Value{field, reflect.ValueOf(&boxed).Elem()} {
+		fn, ok := reflect.TypeAssert[func(int32) int32](v)
+		if !ok || fn == nil || fn(5) != 12 {
+			t.Fatal("asserting a native alias as its Go signature lost the callback")
+		}
+	}
+	record.Callback = nil
+	if fn, ok := reflect.TypeAssert[func(int32) int32](field); !ok || fn != nil {
+		t.Fatal("asserting a nil native alias produced a callback")
+	}
+}
+
+func TestReflectHigherOrderAliasTypeAssert(t *testing.T) {
+	field := reflect.ValueOf(struct{ F reflectBulkCallbackIdentity }{reflectBulkNativeIdentity}).Field(0)
+	identity, ok := reflect.TypeAssert[func(func(int32) int32) func(int32) int32](field)
+	if !ok || identity == nil || identity(reflectBulkAdd7)(5) != 12 {
+		t.Fatal("asserting a higher-order native alias lost its callable Go frame")
+	}
+}
+
 func TestReflectNativeCallbackReadOnly(t *testing.T) {
 	wrapped := struct{ record reflectBulkSingleRecord }{reflectBulkSingleRecord{
 		Callback: reflectBulkAdd7, Callbacks: [1]reflectBulkCallback{reflectBulkAdd11},
@@ -356,5 +461,72 @@ func TestReflectNativeCallbackReadOnly(t *testing.T) {
 	slice.Clear()
 	if wrapped.record.Callbacks[0] != nil || wrapped.record.Callback(5) != 12 || wrapped.record.Tail != [2]uint32{0x11223344, 0x55667788} {
 		t.Fatal("Clear changed more than the callback slice")
+	}
+}
+
+//llgo:cdecl
+type reflectBulkNamedIdentity func(reflectBulkCallbackAlias) reflectBulkCallbackAlias
+
+func reflectBulkNativeIdentity(f reflectBulkCallbackAlias) reflectBulkCallbackAlias { return f }
+
+func TestReflectNativeCallbackRoundTrip(t *testing.T) {
+	holder := struct{ F reflectBulkCallbackIdentity }{reflectBulkNativeIdentity}
+	entry := reflect.ValueOf(&holder).Elem().Field(0)
+	want := entry.UnsafePointer()
+	public := entry.Convert(entry.Type())
+	holder.F = nil
+	// Copy the public closure into ordinary Go storage before converting back.
+	slot := reflect.New(public.Type()).Elem()
+	slot.Set(public)
+	raw := reflect.TypeOf([1]reflectBulkCallbackIdentity{}).Elem()
+	for _, v := range []reflect.Value{public, slot, reflect.ValueOf(slot.Interface())} {
+		for _, target := range []reflect.Type{raw, reflect.TypeFor[reflectBulkNamedIdentity]()} {
+			if !v.CanConvert(target) || v.Convert(target).UnsafePointer() != want {
+				t.Fatalf("conversion to %v lost the original native callback entry", target)
+			}
+			r := reflect.New(target).Elem()
+			r.Set(v)
+			if r.UnsafePointer() != want {
+				t.Fatalf("assignment to %v lost the original native callback entry", target)
+			}
+		}
+		entry.Set(v)
+		if entry.UnsafePointer() != want || holder.F(reflectBulkAdd7)(5) != 12 {
+			t.Fatal("assignment lost the original native callback")
+		}
+	}
+}
+
+func TestReflectCanConvertNativeCallback(t *testing.T) {
+	dst := reflect.TypeFor[reflectBulkCallback]()
+	n := int32(42)
+	if reflect.ValueOf(func(x int32) int32 { return x + n }).CanConvert(dst) {
+		t.Fatal("CanConvert accepted a captured closure as a native callback")
+	}
+	for _, f := range []func(int32) int32{nil, reflectBulkAdd7} {
+		v := reflect.ValueOf(f)
+		if !v.CanConvert(dst) || v.Convert(dst).IsNil() != (f == nil) {
+			t.Fatal("direct native callback conversion failed")
+		}
+	}
+}
+
+type reflectCallbackReceiver int32
+
+func (r reflectCallbackReceiver) Apply(v int32) int32 { return int32(r) + v }
+
+func TestReflectCanConvertCallbackMethod(t *testing.T) {
+	var receiver interface{ Apply(int32) int32 } = reflectCallbackReceiver(7)
+	m := reflect.ValueOf(&receiver).Elem().Method(0)
+	dst := reflect.TypeFor[reflectBulkCallback]()
+	if m.CanConvert(dst) {
+		out := m.Convert(dst).Call([]reflect.Value{reflect.ValueOf(int32(5))})
+		if out[0].Int() != 12 {
+			t.Fatal("converted method lost its receiver")
+		}
+	}
+	receiver = nil
+	if m.CanConvert(dst) {
+		t.Fatal("CanConvert accepted a method on a nil interface")
 	}
 }

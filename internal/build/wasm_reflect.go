@@ -45,7 +45,7 @@ func configureWasmReflectBridges(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		target.WasmReflectBridges = ctx.frontend.program.Features.ReflectBridges
 	} else {
-		target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges()
+		target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges(ctx.prog.HasNativeFuncAliases())
 	}
 }
 
@@ -191,16 +191,16 @@ func wasmReflectRoots(ctx *context) (roots []*ssa.Function) {
 }
 
 func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) bool {
-	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges()
+	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges(false)
 }
 
-func (use *wasmProgramUse) usesWasmReflectBridges() bool {
+func (use *wasmProgramUse) usesWasmReflectBridges(nativeAliases bool) bool {
 	if use == nil {
 		return false
 	}
 	if use.rooted {
 		for fn := range use.reachable {
-			if functionCallsWasmReflectBridge(fn) {
+			if functionCallsWasmReflectBridge(fn, nativeAliases) {
 				return true
 			}
 		}
@@ -208,17 +208,17 @@ func (use *wasmProgramUse) usesWasmReflectBridges() bool {
 		// reflect.Value values. Require an actual direct call above, or a
 		// plausible indirect function/interface call here, so ordinary value
 		// inspection (notably fmt) does not turn on every typed bridge.
-		return programMayCallWasmReflectBridgeIndirectly(use.reachable)
+		return programMayCallWasmReflectBridgeIndirectly(use.reachable, nativeAliases)
 	}
 	for fn := range use.all {
-		if functionCallsWasmReflectBridge(fn) {
+		if functionCallsWasmReflectBridge(fn, nativeAliases) {
 			return true
 		}
 	}
 	return false
 }
 
-func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }) bool {
+func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }, nativeAliases bool) bool {
 	var functionSignatures typeutil.Map
 	for fn := range reachable {
 		if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
@@ -227,12 +227,12 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 		// RTA creates thunks and bound wrappers only when a method is used as
 		// a function value. Plain pointer wrappers retain the original name.
 		if name, suffix, ok := strings.Cut(fn.Name(), "$"); ok {
-			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeSignature(name, fn.Signature) {
+			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeSignature(name, fn.Signature, nativeAliases) {
 				return true
 			}
 			continue
 		}
-		if isWasmReflectBridgeFunction(fn) && fn.Signature.Recv() == nil {
+		if isWasmReflectBridgeFunction(fn, nativeAliases) && fn.Signature.Recv() == nil {
 			functionSignatures.Set(fn.Signature, struct{}{})
 		}
 	}
@@ -247,7 +247,7 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 					continue
 				}
 				common := call.Common()
-				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeSignature(common.Method.Name(), common.Signature()) {
+				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeSignature(common.Method.Name(), common.Signature(), nativeAliases) {
 					return true
 				}
 				if !common.IsInvoke() && functionSignatures.At(common.Signature()) != nil {
@@ -259,14 +259,14 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 	return false
 }
 
-func functionCallsWasmReflectBridge(fn *ssa.Function) bool {
+func functionCallsWasmReflectBridge(fn *ssa.Function, nativeAliases bool) bool {
 	if fn == nil || ssaFunctionPackagePath(fn) == reflectPackagePath {
 		return false
 	}
 	for _, block := range fn.Blocks {
 		for _, instruction := range block.Instrs {
 			call, ok := instruction.(ssa.CallInstruction)
-			if ok && isWasmReflectBridgeCall(call.Common()) {
+			if ok && isWasmReflectBridgeCall(call.Common(), nativeAliases) {
 				return true
 			}
 		}
@@ -274,22 +274,35 @@ func functionCallsWasmReflectBridge(fn *ssa.Function) bool {
 	return false
 }
 
-func isWasmReflectBridgeCall(call *ssa.CallCommon) bool {
+func isWasmReflectBridgeCall(call *ssa.CallCommon, nativeAliases bool) bool {
 	if call == nil {
 		return false
 	}
-	return isWasmReflectBridgeFunction(call.StaticCallee())
+	return isWasmReflectBridgeFunction(call.StaticCallee(), nativeAliases)
 }
 
-func isWasmReflectBridgeFunction(fn *ssa.Function) bool {
+func isWasmReflectBridgeFunction(fn *ssa.Function, nativeAliases bool) bool {
 	if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
 		return false
 	}
-	return isWasmReflectBridgeSignature(fn.Name(), fn.Signature)
+	name := fn.Name()
+	if obj := fn.Object(); obj != nil && obj.Name() == "TypeAssert" {
+		name = obj.Name() // Instantiated SSA functions include type arguments in their name.
+	}
+	return isWasmReflectBridgeSignature(name, fn.Signature, nativeAliases)
 }
 
-func isWasmReflectBridgeSignature(name string, signature *types.Signature) bool {
+func isWasmReflectBridgeSignature(name string, signature *types.Signature, nativeAliases bool) bool {
 	switch name {
+	case "Set", "Convert", "SetMapIndex", "SetIterKey", "SetIterValue", "Send", "TrySend", "Select", "Append", "AppendSlice", "Copy":
+		// Each can adapt an assigned native alias to a callable Go frame.
+		return nativeAliases
+	case "TypeAssert":
+		if nativeAliases && signature != nil && signature.Results().Len() == 2 {
+			_, ok := signature.Results().At(0).Type().Underlying().(*types.Signature)
+			return ok
+		}
+		return false
 	case "Call", "CallSlice", "MakeFunc", "Seq", "Seq2":
 		// Indirect calls retain the conservative name-only match: an
 		// unrelated interface method can enable extra bridges, but cannot
@@ -321,6 +334,10 @@ func ssaFunctionPackagePath(fn *ssa.Function) string {
 		if pkg := obj.Pkg(); pkg != nil {
 			return pkg.Path()
 		}
+	}
+	if parent := fn.Parent(); parent != nil {
+		// A closure in an instantiated generic can lack its own package and object.
+		return ssaFunctionPackagePath(parent)
 	}
 	return ""
 }

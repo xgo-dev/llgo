@@ -90,6 +90,15 @@ func TestReflectTypeAssert(t *testing.T) {
 		if got, ok := reflect.TypeAssert[error](v); ok || got != nil {
 			t.Fatal("TypeAssert accepted an unimplemented interface")
 		}
+		fn := func() {}
+		value := reflect.ValueOf(&fn).Elem()
+		if n := testing.AllocsPerRun(100, func() {
+			if _, ok := reflect.TypeAssert[int](value); ok {
+				t.Fatal("TypeAssert accepted a function as an int")
+			}
+		}); n != 0 {
+			t.Errorf("failed function assertion allocated %g times per call", n)
+		}
 	})
 	t.Run("invalid", func(t *testing.T) {
 		defer func() {
