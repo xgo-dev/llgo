@@ -365,6 +365,28 @@ func TestTimerResetWakesEarlierDeadline(t *testing.T) {
 	}
 }
 
+func TestTimerStartWakesAfterStoppingHead(t *testing.T) {
+	head := time.NewTimer(2 * time.Second)
+	defer head.Stop()
+	// Give the scheduler time to enter the long wait and then remove its timer.
+	time.Sleep(10 * time.Millisecond)
+	if !head.Stop() {
+		t.Fatal("the long timer had already fired")
+	}
+
+	start := time.Now()
+	next := time.NewTimer(20 * time.Millisecond)
+	defer next.Stop()
+	select {
+	case <-next.C:
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("replacement timer did not wake the scheduler promptly: %v", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement timer did not fire")
+	}
+}
+
 func TestTimeJSONInterop(t *testing.T) {
 	payload := struct {
 		When time.Time     `json:"when"`
