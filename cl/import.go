@@ -1159,10 +1159,7 @@ func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package,
 	if cc.replacement != "" {
 		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.name, fset.Position(cc.pos), cc.replacement)
 	}
-	prog.SetTypeCallConv(pkg.Path()+"."+spec.Name.Name, toCallConv(cc.bg))
-	if spec.Assign.IsValid() {
-		prog.RegisterNativeAlias(pkg, spec.Name.Name)
-	}
+	prog.SetNativeTypeDecl(pkg, spec.Name.Name, toCallConv(cc.bg))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		var positions []token.Pos
 		for _, field := range st.Fields.List {

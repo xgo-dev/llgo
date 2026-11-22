@@ -37,7 +37,7 @@ type packageSyntaxData struct {
 	parsedPackages        map[*types.Package]struct{}
 	noInterface           map[string]none
 	typeCallConvs         map[string]CallConv
-	nativeAliases         []nativeAliasDecl
+	nativeTypes           []nativeTypeDecl
 	nativeStructFields    map[token.Pos]bool
 	nativeStructVars      map[*types.Var]bool
 }
@@ -97,32 +97,48 @@ func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
 	return background, ok
 }
 
-type nativeAliasDecl struct {
+type nativeTypeDecl struct {
 	pkg  *types.Package
 	name string
 }
 
-// RegisterNativeAlias records a native type alias before its RHS has been type checked.
-func (p Program) RegisterNativeAlias(pkg *types.Package, name string) {
+// SetNativeTypeDecl records a source declaration before its underlying type is known.
+func (p Program) SetNativeTypeDecl(pkg *types.Package, name string, cc CallConv) {
 	syntax := p.packageSyntax
 	syntax.mu.Lock()
-	syntax.nativeAliases = append(syntax.nativeAliases, nativeAliasDecl{pkg, name})
-	syntax.mu.Unlock()
+	defer syntax.mu.Unlock()
+	syntax.setTypeCallConv(pkg.Path()+"."+name, cc, nil)
+	syntax.nativeTypes = append(syntax.nativeTypes, nativeTypeDecl{pkg, name})
 }
 
-// HasNativeFuncAliases reports whether reflection can see a native callback alias.
-func (p Program) HasNativeFuncAliases() bool {
+// HasNativeFuncTypes reports whether a native callback can reach reflection.
+// With executable roots, RTA identifies the named function types. An alias can
+// share its Go identity with an ordinary signature, so keep aliases conservative.
+func (p Program) HasNativeFuncTypes(visible map[*types.TypeName]bool) bool {
 	syntax := p.packageSyntax
 	syntax.mu.RLock()
 	defer syntax.mu.RUnlock()
-	for _, alias := range syntax.nativeAliases {
-		if obj := alias.pkg.Scope().Lookup(alias.name); obj != nil {
-			if _, ok := types.Unalias(obj.Type()).(*types.Signature); ok {
-				return true
-			}
+	for _, decl := range syntax.nativeTypes {
+		obj, ok := decl.pkg.Scope().Lookup(decl.name).(*types.TypeName)
+		if !ok || visible != nil && !obj.IsAlias() && !visible[obj] {
+			continue
+		}
+		if _, ok := obj.Type().Underlying().(*types.Signature); ok {
+			return true
 		}
 	}
 	return false
+}
+
+// The caller holds p.mu while registering the declaration.
+func (p *packageSyntaxData) setTypeCallConv(name string, cc CallConv, fields []*types.Var) {
+	p.typeCallConvs[name] = cc
+	if isNativeCallConv(cc) {
+		if len(fields) != 0 {
+			p.nativeStructVars[fields[0]] = true
+		}
+		p.hasNativeTypeMetadata.Store(true)
+	}
 }
 
 func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {

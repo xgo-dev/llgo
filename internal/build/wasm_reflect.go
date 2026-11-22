@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -45,7 +46,7 @@ func configureWasmReflectBridges(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		target.WasmReflectBridges = ctx.frontend.program.Features.ReflectBridges
 	} else {
-		target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges(ctx.prog.HasNativeFuncAliases())
+		target.WasmReflectBridges = wasmReflectBridgeProvider(ctx) && wasmProgramUseFor(ctx).usesWasmReflectBridges(ctx.prog)
 	}
 }
 
@@ -81,9 +82,10 @@ func configureWasmFuncInfoEntries(ctx *context) {
 }
 
 type wasmProgramUse struct {
-	rooted    bool
-	reachable map[*ssa.Function]struct{ AddrTaken bool }
-	all       map[*ssa.Function]bool
+	rooted       bool
+	runtimeFuncs map[*types.TypeName]bool
+	reachable    map[*ssa.Function]struct{ AddrTaken bool }
+	all          map[*ssa.Function]bool
 }
 
 func wasmProgramUseFor(ctx *context) *wasmProgramUse {
@@ -102,7 +104,16 @@ func analyzeWasmProgramUse(prog *ssa.Program, roots []*ssa.Function) *wasmProgra
 		return use
 	}
 	if use.rooted {
-		use.reachable = rta.Analyze(roots, false).Reachable
+		result := rta.Analyze(roots, false)
+		use.reachable = result.Reachable
+		use.runtimeFuncs = make(map[*types.TypeName]bool)
+		result.RuntimeTypes.Iterate(func(t types.Type, _ any) {
+			if named, ok := types.Unalias(t).(*types.Named); ok {
+				if _, ok := named.Underlying().(*types.Signature); ok {
+					use.runtimeFuncs[named.Origin().Obj()] = true
+				}
+			}
+		})
 	} else {
 		use.all = ssautil.AllFunctions(prog)
 	}
@@ -135,7 +146,9 @@ func analyzeWasmInitialUse(prog *ssa.Program, pkg *types.Package) *wasmProgramUs
 		}
 	}
 	if len(roots) != 0 {
-		return analyzeWasmProgramUse(prog, roots)
+		use = analyzeWasmProgramUse(prog, roots)
+		// A library's callers may supply additional reflected types.
+		use.runtimeFuncs = nil
 	}
 	return use
 }
@@ -191,16 +204,17 @@ func wasmReflectRoots(ctx *context) (roots []*ssa.Function) {
 }
 
 func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) bool {
-	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges(false)
+	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges(nil)
 }
 
-func (use *wasmProgramUse) usesWasmReflectBridges(nativeAliases bool) bool {
+func (use *wasmProgramUse) usesWasmReflectBridges(prog llssa.Program) bool {
 	if use == nil {
 		return false
 	}
+	nativeCallbacks := prog != nil && prog.HasNativeFuncTypes(use.runtimeFuncs)
 	if use.rooted {
 		for fn := range use.reachable {
-			if functionCallsWasmReflectBridge(fn, nativeAliases) {
+			if functionCallsWasmReflectBridge(fn, nativeCallbacks) {
 				return true
 			}
 		}
@@ -208,17 +222,17 @@ func (use *wasmProgramUse) usesWasmReflectBridges(nativeAliases bool) bool {
 		// reflect.Value values. Require an actual direct call above, or a
 		// plausible indirect function/interface call here, so ordinary value
 		// inspection (notably fmt) does not turn on every typed bridge.
-		return programMayCallWasmReflectBridgeIndirectly(use.reachable, nativeAliases)
+		return programMayCallWasmReflectBridgeIndirectly(use.reachable, nativeCallbacks)
 	}
 	for fn := range use.all {
-		if functionCallsWasmReflectBridge(fn, nativeAliases) {
+		if functionCallsWasmReflectBridge(fn, nativeCallbacks) {
 			return true
 		}
 	}
 	return false
 }
 
-func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }, nativeAliases bool) bool {
+func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struct{ AddrTaken bool }, nativeCallbacks bool) bool {
 	var functionSignatures typeutil.Map
 	for fn := range reachable {
 		if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
@@ -227,12 +241,12 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 		// RTA creates thunks and bound wrappers only when a method is used as
 		// a function value. Plain pointer wrappers retain the original name.
 		if name, suffix, ok := strings.Cut(fn.Name(), "$"); ok {
-			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeSignature(name, fn.Signature, nativeAliases) {
+			if fn.Parent() == nil && suffix != "" && isWasmReflectBridgeSignature(name, fn.Signature, nativeCallbacks) {
 				return true
 			}
 			continue
 		}
-		if isWasmReflectBridgeFunction(fn, nativeAliases) && fn.Signature.Recv() == nil {
+		if isWasmReflectBridgeFunction(fn, nativeCallbacks) && fn.Signature.Recv() == nil {
 			functionSignatures.Set(fn.Signature, struct{}{})
 		}
 	}
@@ -247,7 +261,7 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 					continue
 				}
 				common := call.Common()
-				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeSignature(common.Method.Name(), common.Signature(), nativeAliases) {
+				if common.IsInvoke() && common.Method != nil && isWasmReflectBridgeSignature(common.Method.Name(), common.Signature(), nativeCallbacks) {
 					return true
 				}
 				if !common.IsInvoke() && functionSignatures.At(common.Signature()) != nil {
@@ -259,14 +273,14 @@ func programMayCallWasmReflectBridgeIndirectly(reachable map[*ssa.Function]struc
 	return false
 }
 
-func functionCallsWasmReflectBridge(fn *ssa.Function, nativeAliases bool) bool {
+func functionCallsWasmReflectBridge(fn *ssa.Function, nativeCallbacks bool) bool {
 	if fn == nil || ssaFunctionPackagePath(fn) == reflectPackagePath {
 		return false
 	}
 	for _, block := range fn.Blocks {
 		for _, instruction := range block.Instrs {
 			call, ok := instruction.(ssa.CallInstruction)
-			if ok && isWasmReflectBridgeCall(call.Common(), nativeAliases) {
+			if ok && isWasmReflectBridgeCall(call.Common(), nativeCallbacks) {
 				return true
 			}
 		}
@@ -274,14 +288,14 @@ func functionCallsWasmReflectBridge(fn *ssa.Function, nativeAliases bool) bool {
 	return false
 }
 
-func isWasmReflectBridgeCall(call *ssa.CallCommon, nativeAliases bool) bool {
+func isWasmReflectBridgeCall(call *ssa.CallCommon, nativeCallbacks bool) bool {
 	if call == nil {
 		return false
 	}
-	return isWasmReflectBridgeFunction(call.StaticCallee(), nativeAliases)
+	return isWasmReflectBridgeFunction(call.StaticCallee(), nativeCallbacks)
 }
 
-func isWasmReflectBridgeFunction(fn *ssa.Function, nativeAliases bool) bool {
+func isWasmReflectBridgeFunction(fn *ssa.Function, nativeCallbacks bool) bool {
 	if fn == nil || ssaFunctionPackagePath(fn) != reflectPackagePath {
 		return false
 	}
@@ -289,16 +303,16 @@ func isWasmReflectBridgeFunction(fn *ssa.Function, nativeAliases bool) bool {
 	if obj := fn.Object(); obj != nil && obj.Name() == "TypeAssert" {
 		name = obj.Name() // Instantiated SSA functions include type arguments in their name.
 	}
-	return isWasmReflectBridgeSignature(name, fn.Signature, nativeAliases)
+	return isWasmReflectBridgeSignature(name, fn.Signature, nativeCallbacks)
 }
 
-func isWasmReflectBridgeSignature(name string, signature *types.Signature, nativeAliases bool) bool {
+func isWasmReflectBridgeSignature(name string, signature *types.Signature, nativeCallbacks bool) bool {
 	switch name {
 	case "Set", "Convert", "SetMapIndex", "SetIterKey", "SetIterValue", "Send", "TrySend", "Select", "Append", "AppendSlice", "Copy":
-		// Each can adapt an assigned native alias to a callable Go frame.
-		return nativeAliases
+		// Each can adapt a native callback to a callable Go frame.
+		return nativeCallbacks
 	case "TypeAssert":
-		if nativeAliases && signature != nil && signature.Results().Len() == 2 {
+		if nativeCallbacks && signature != nil && signature.Results().Len() == 2 {
 			_, ok := signature.Results().At(0).Type().Underlying().(*types.Signature)
 			return ok
 		}

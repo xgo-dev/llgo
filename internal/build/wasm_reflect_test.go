@@ -294,28 +294,41 @@ func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
 }
 
 func TestWasmReflectNativeFuncAdapters(t *testing.T) {
-	const prefix = `package main; import "reflect"; type Plain = func(int) int; type Native = Plain; var v reflect.Value; func main() { `
+	const prefix = `package main; import "reflect"
+type Plain = func(int) int
+type Alias = Plain
+type Native Plain
+type Indirect = Native
+type Generic[T any] func(T) T
+type Record struct{ F Indirect }
+var v reflect.Value
+func main() { `
 	for _, tc := range []struct {
-		expr string
-		want bool
+		decl, expr string
+		want       bool
 	}{
-		{`v.Set(v)`, true},
-		{`v.Convert(v.Type())`, true},
-		{`_, _ = reflect.TypeAssert[func(Plain) Plain](v)`, true},
-		{`_, _ = reflect.TypeAssert[int](v)`, false},
-		{`_ = v.Kind()`, false},
+		{"Alias", `v.Set(v)`, true},
+		{"Alias", `v.Convert(v.Type())`, true},
+		{"Alias", `_, _ = reflect.TypeAssert[func(Plain) Plain](v)`, true},
+		{"Alias", `_, _ = reflect.TypeAssert[int](v)`, false},
+		{"Alias", `_ = v.Kind()`, false},
+		{"Native", `reflect.ValueOf(Native(nil)).Convert(v.Type())`, true},
+		{"Native", `reflect.ValueOf(Record{}).Field(0).Convert(v.Type())`, true},
+		{"Generic", `reflect.ValueOf(Generic[int](nil)).Convert(v.Type())`, true},
+		{"Native", `reflect.ValueOf(0).Convert(v.Type())`, false},
+		{"Record", `reflect.ValueOf(Record{}).Convert(v.Type())`, false},
 	} {
-		t.Run(tc.expr, func(t *testing.T) {
+		t.Run(tc.decl+"/"+tc.expr, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, prefix+tc.expr+"}")
 			use := analyzeWasmProgramUse(pkg.Prog, []*ssa.Function{pkg.Func("main")})
 			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
 			defer prog.Dispose()
-			if use.usesWasmReflectBridges(prog.HasNativeFuncAliases()) {
+			if use.usesWasmReflectBridges(prog) {
 				t.Fatal("ordinary Go value operation enabled bridges")
 			}
-			prog.RegisterNativeAlias(pkg.Pkg, "Native")
-			if got := use.usesWasmReflectBridges(prog.HasNativeFuncAliases()); got != tc.want {
-				t.Errorf("native alias: bridges = %v, want %v", got, tc.want)
+			prog.SetNativeTypeDecl(pkg.Pkg, tc.decl, llssa.CDecl)
+			if got := use.usesWasmReflectBridges(prog); got != tc.want {
+				t.Errorf("bridges = %v, want %v", got, tc.want)
 			}
 		})
 	}

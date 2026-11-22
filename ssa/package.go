@@ -536,15 +536,10 @@ func (p Program) SetRuntime(runtime any) {
 // type or source positions. Source loaders instead call SetNativeStructFields
 // before type checking. Synthetic structs must not reuse registered fields.
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.typeCallConvs[typFullName] = cc
-	if isNativeCallConv(cc) {
-		if len(fields) != 0 {
-			p.packageSyntax.nativeStructVars[fields[0]] = true
-		}
-		p.packageSyntax.hasNativeTypeMetadata.Store(true)
-	}
-	p.packageSyntax.mu.Unlock()
+	syntax := p.packageSyntax
+	syntax.mu.Lock()
+	syntax.setTypeCallConv(typFullName, cc, fields)
+	syntax.mu.Unlock()
 }
 
 func (p Program) SetLinkname(name, link string) {
