@@ -3,7 +3,7 @@
 package simd_test
 
 import (
-	"fmt"
+	"runtime"
 	"simd/archsimd"
 	"testing"
 )
@@ -13,8 +13,10 @@ func TestSIMDMissingInstructionFeature(t *testing.T) {
 		t.Skip("requires AVX512 disabled or unavailable")
 	}
 	defer func() {
-		if got := fmt.Sprint(recover()); got != "SIMD instruction requires an unavailable x86 CPU feature" {
-			t.Fatalf("unexpected panic: %s", got)
+		value := recover()
+		err, ok := value.(runtime.Error)
+		if !ok || err.Error() != "runtime error: SIMD instruction requires an unavailable x86 CPU feature" {
+			t.Fatalf("unexpected panic: %T %v", value, value)
 		}
 	}()
 	var output [4]float32
