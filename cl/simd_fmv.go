@@ -10,7 +10,7 @@ import (
 
 func simdCPUQuery(fn *ssa.Function) string {
 	obj, ok := fn.Object().(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" || obj.Name() != "AVX2" ||
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" ||
 		!types.Identical(obj.Type(), fn.Signature) {
 		return ""
 	}
@@ -23,7 +23,7 @@ func simdCPUQuery(fn *ssa.Function) string {
 	if !ok || recv.Obj().Pkg() != obj.Pkg() || recv.Obj().Name() != "X86Features" {
 		return ""
 	}
-	return llvmfmv.AVX2Query
+	return llvmfmv.X86Query(obj.Name())
 }
 
 func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
