@@ -596,7 +596,7 @@ func markRoots(start, end uintptr) {
 	}
 	for addr := start; addr <= end-gcScanWordSize; addr += gcScanWordSize {
 		root := loadGCScanWord(addr)
-		markRoot(addr, root)
+		markRoot(root)
 	}
 }
 
@@ -710,8 +710,8 @@ func finishMark() {
 	}
 }
 
-// mark a GC root at the address addr.
-func markRoot(addr, root uintptr) {
+// markRoot traces a pointer from a GC root.
+func markRoot(root uintptr) {
 	if isOnHeap(root) {
 		block := blockFromAddr(root)
 		if gcStateOf(block) == blockStateFree {

@@ -575,8 +575,8 @@ func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 	b.EndBuild()
 
 	ir := pkg.Module().String()
-	if !strings.Contains(ir, "[2 x { ptr, i32 }]") {
-		t.Fatalf("GC root frame must match the Go64 runtime layout:\n%s", ir)
+	if !strings.Contains(ir, "[2 x ptr]") {
+		t.Fatalf("GC root frame must use the physical pointer layout:\n%s", ir)
 	}
 	if !strings.Contains(ir, "@llvm_gc_root_chain = linkonce global { ptr, i32 }") {
 		t.Fatalf("GC root-chain storage must match the Go64 runtime global:\n%s", ir)

@@ -38,9 +38,31 @@ type frameMap struct {
 	numMeta  uint32
 }
 
+// The compiler builds frames from LLVM pointer slots. Wasm32 Go pointers
+// have wider Go storage, so these records use the physical C layout.
+//
+//llgo:cdecl
 type stackEntry struct {
 	next *stackEntry
 	m    *frameMap
+}
+
+//llgo:cdecl
+type rootSlot struct {
+	value unsafe.Pointer
+}
+
+// FrameLinks saves the physical frame header across a non-local return.
+func FrameLinks(frame unsafe.Pointer) (next, metadata unsafe.Pointer) {
+	entry := (*stackEntry)(frame)
+	return unsafe.Pointer(entry.next), unsafe.Pointer(entry.m)
+}
+
+// RestoreFrameLinks repairs the header of a frame replayed by WebAssembly SjLj.
+func RestoreFrameLinks(frame, next, metadata unsafe.Pointer) {
+	entry := (*stackEntry)(frame)
+	entry.next = (*stackEntry)(next)
+	entry.m = (*frameMap)(metadata)
 }
 
 var (
@@ -218,7 +240,7 @@ func Unregister(ctx *Context) {
 }
 
 // Visit calls visitor for every root slot in every registered context.
-func Visit(visitor func(root *unsafe.Pointer, metadata unsafe.Pointer)) {
+func Visit(visitor func(uintptr)) {
 	if visitor == nil {
 		return
 	}
@@ -247,14 +269,13 @@ func registeredLocked(want *Context) bool {
 	return false
 }
 
-// RootValue decodes a compiler root. Nil metadata means a direct pointer;
+// rootValue decodes a compiler root. Nil metadata means a direct pointer;
 // otherwise the root holds a stack-field address and metadata specifies the
 // physical pointer width. Go words in Wasm32 can be wider than C pointers.
-func RootValue(root *unsafe.Pointer, metadata unsafe.Pointer) uintptr {
+func rootValue(address unsafe.Pointer, metadata unsafe.Pointer) uintptr {
 	if metadata == nil {
-		return uintptr(*root)
+		return uintptr(address)
 	}
-	address := *root
 	switch *(*uint8)(metadata) {
 	case 4:
 		return uintptr(*(*uint32)(address))
@@ -270,7 +291,7 @@ var (
 	stackPointerWidth64 uint8 = 8
 )
 
-func visitChain(chain unsafe.Pointer, visitor func(*unsafe.Pointer, unsafe.Pointer)) {
+func visitChain(chain unsafe.Pointer, visitor func(uintptr)) {
 	const pointerSize = unsafe.Sizeof(uintptr(0))
 	for entry := (*stackEntry)(chain); entry != nil; entry = entry.next {
 		if entry.m == nil {
@@ -301,8 +322,8 @@ func visitChain(chain unsafe.Pointer, visitor func(*unsafe.Pointer, unsafe.Point
 			} else if i >= direct {
 				meta = unsafe.Pointer(fieldWidth)
 			}
-			root := (*unsafe.Pointer)(unsafe.Add(roots, uintptr(i)*pointerSize))
-			visitor(root, meta)
+			slot := (*rootSlot)(unsafe.Add(roots, uintptr(i)*unsafe.Sizeof(rootSlot{})))
+			visitor(rootValue(slot.value, meta))
 		}
 	}
 }

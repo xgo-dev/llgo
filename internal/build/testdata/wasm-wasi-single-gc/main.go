@@ -29,7 +29,24 @@ func snapshot() int {
 	return local.value + local.next.value + global.next.value
 }
 
+//go:noinline
+func recoverRoot() (value int) {
+	local := makeRoot()
+	defer func() {
+		if recover() != "restore compiler root frame" {
+			panic("panic value lost")
+		}
+		runtime.GC()
+		value = local.value + local.next.value
+	}()
+	runtime.GC()
+	panic("restore compiler root frame")
+}
+
 func main() {
 	global = makeRoot()
+	if recoverRoot() != 48 {
+		panic("root lost after recovery")
+	}
 	println("live stack and globals", snapshot())
 }
