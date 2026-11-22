@@ -11,6 +11,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 const testCompilerKey = "llvm-22.1.4-deadbeef"
@@ -266,6 +267,15 @@ func TestCompilerRTCompileConfigPaths(t *testing.T) {
 
 			// Check all files in the group
 			for _, file := range group.Files {
+				// LLGo-vendored platform files (the riscv32 atomic and 64-bit
+				// division shims) ship from the llgo root rather than the
+				// downloaded compiler-rt tree; they must exist on disk.
+				if strings.HasPrefix(file, env.LLGoROOT()) {
+					if _, err := os.Stat(file); err != nil {
+						t.Errorf("vendored file %q does not exist: %v", file, err)
+					}
+					continue
+				}
 				// Verify file path starts with baseDir
 				if !strings.HasPrefix(file, tt.baseDir) {
 					t.Errorf("File path %q should start with baseDir %q", file, tt.baseDir)
