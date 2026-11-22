@@ -118,11 +118,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx           llvm.Context
-	nativeAliases map[*types.Alias]Type
-	typs          typeutil.Map // rawType -> Type
-	sizes         types.Sizes  // provided by Go compiler
-	gocvt         goTypes
+	ctx      llvm.Context
+	funcPtrs map[types.Type]Type
+	typs     typeutil.Map // rawType -> Type
+	sizes    types.Sizes  // provided by Go compiler
+	gocvt    goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -345,7 +345,8 @@ func NewProgram(target *Target) Program {
 	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
-		target: target, td: td, tm: tm,
+		funcPtrs: make(map[types.Type]Type),
+		target:   target, td: td, tm: tm,
 		ptrSize: ptrSize, goWordSize: goWordSize,
 		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),

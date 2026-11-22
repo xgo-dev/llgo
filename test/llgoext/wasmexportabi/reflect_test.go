@@ -245,6 +245,8 @@ func TestWasmReflectConvertGoCallbackConstraints(t *testing.T) {
 	check("capture", func(n int64) int64 { return n + offset }, reflect.TypeFor[nativeInt64Callback](),
 		"reflect.Value.Convert: C callback must not capture variables")
 	const incompatibleABI = "reflect.Value.Convert: C callback with a different ABI must be a direct function reference"
+	check("higher order", func(f func(uintptr) string) func(uintptr) string { return f },
+		reflect.TypeOf([1]nativeAliasIdentity{}).Elem(), incompatibleABI)
 	check("variadic", func(...byte) {}, reflect.TypeFor[sliceSink](), incompatibleABI)
 	if unsafe.Offsetof(reflectSlot{}.Tag) == 4 {
 		check("ABI", wordText, reflect.TypeFor[nativeWordText](), incompatibleABI)

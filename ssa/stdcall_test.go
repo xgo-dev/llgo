@@ -139,9 +139,16 @@ func TestWasm32NativeAliasDescriptors(t *testing.T) {
 		t.Fatalf("native uintptr callback needs its public type and an ABI adapter: %s", scalar)
 	}
 
-	// Request the qualified frame before its public counterpart.
-	frame := b.abiType(unary(alias)).impl
-	public := b.abiType(unary(sig)).impl
+	plainSig, aliasSig := unary(sig), unary(alias)
+	for _, want := range []*types.Signature{plainSig, aliasSig} {
+		got := prog.rawType(want).RawType().(*types.Signature)
+		if prog.toLLVMFunc(got) != prog.toLLVMFunc(want) {
+			t.Fatalf("cached call prototype for %s uses %s", want, got)
+		}
+	}
+	// Request the qualified descriptor before its public counterpart.
+	frame := b.abiType(aliasSig).impl
+	public := b.abiType(plainSig).impl
 	if frame == public || frame.Initializer().Operand(1).Operand(0) != public {
 		t.Fatalf("higher-order callback has the wrong public type: %s", frame)
 	}

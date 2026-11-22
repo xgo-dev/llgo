@@ -376,17 +376,17 @@ func typeStringWithPkg(t types.Type) string {
 }
 
 func (p Program) rawType(raw types.Type) Type {
-	// go/types identity erases aliases. Keep a native function's physical type
-	// when the same unqualified signature has already been used as a Go code slot.
-	if alias, ok := raw.(*types.Alias); ok && p.nativeFuncAliasABI(alias) != "" {
-		if t := p.nativeAliases[alias]; t != nil {
+	// An opaque code pointer carries its call prototype in raw. Go identity
+	// erases native aliases, including those in a higher-order signature.
+	if sig, ok := types.Unalias(raw).(*types.Signature); ok {
+		if alias, ok := raw.(*types.Alias); ok && p.nativeFuncAliasABI(alias) == "" {
+			raw = sig
+		}
+		if t := p.funcPtrs[raw]; t != nil {
 			return t
 		}
-		if p.nativeAliases == nil {
-			p.nativeAliases = make(map[*types.Alias]Type)
-		}
-		t := &aType{p.tyVoidPtr(), rawType{alias}, vkFuncPtr}
-		p.nativeAliases[alias] = t
+		t := &aType{p.tyVoidPtr(), rawType{raw}, vkFuncPtr}
+		p.funcPtrs[raw] = t
 		return t
 	}
 	if v := p.typs.At(raw); v != nil {
