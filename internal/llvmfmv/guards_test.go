@@ -379,6 +379,13 @@ func TestMixedGuardCollisionLeavesModuleIntact(t *testing.T) {
 	if got := m.String(); got != before {
 		t.Fatalf("mixed-pass collision changed module:\n%s", got)
 	}
+	m.NamedGlobal(collision).EraseFromParentAsGlobal()
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if m.NamedFunction(collision).IsNil() || m.NamedMetadataNumOperands(moduleDone) != 1 {
+		t.Fatal("retry did not finish guarded specialization")
+	}
 }
 
 func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
@@ -456,7 +463,7 @@ exit:
 		bits   uint64
 		suffix string
 	}{
-		{0, "guard_base"}, {256, "guard_base"}, {260, "guard_avx512"}, {512, "guard_base"}, {516, "guard_fma"}, {768, "guard_base"}, {772, "guard_avx512_fma"},
+		{0, "guard_base"}, {256, "guard_avx512"}, {260, "guard_avx512"}, {512, "guard_fma"}, {516, "guard_fma"}, {768, "guard_avx512_fma"}, {772, "guard_avx512_fma"},
 	} {
 		m := parseModule(t, ir)
 		if err := Run(m, "v1"); err != nil {
@@ -501,13 +508,10 @@ func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value)
 	}
 }
 
-func TestGuardAVXPrerequisites(t *testing.T) {
+func TestGuardRuntimePredicates(t *testing.T) {
 	for _, p := range x86Predicates {
-		if p.method == "AVX" || p.method == "AVX2" {
-			continue
-		}
 		t.Run(p.method, func(t *testing.T) {
-			for _, avx := range []uint64{0, featureAVX} {
+			for _, published := range []uint64{0, featureAVX, p.runtimeBit} {
 				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
 declare i1 @query() "llgo.cpu.query"="%s"
 define void @root(ptr %%p) {
@@ -523,18 +527,68 @@ exit:
 				if err := Run(m, "v1"); err != nil {
 					t.Fatal(err)
 				}
-				base := m.NamedFunction("root" + symbolPrefix + "guard_base")
-				if !strings.Contains(base.String(), "call i1 @query()") {
+				base, fast := symbolPrefix+"guard_base", guardSuffix(p.runtimeBit)
+				if p.runtimeBit == featureAVX2 {
+					base, fast = baselineSuffix, variantSuffix
+				} else if !strings.Contains(m.NamedFunction("root"+base).String(), "call i1 @query()") {
 					t.Fatal("baseline lost the observable Go predicate")
 				}
-				want := base
-				if p.method == "SHA" || avx != 0 {
-					want = m.NamedFunction("root" + guardSuffix(p.bit))
+				want := m.NamedFunction("root" + base)
+				if published&p.runtimeBit != 0 {
+					want = m.NamedFunction("root" + fast)
 				}
-				checkCachedGuard(t, m, p.bit|avx, want)
+				checkCachedGuard(t, m, published, want)
 			}
 		})
 	}
+}
+
+func TestCanonicalAVX2EntrySharesGuardedKernel(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+define void @kernel(ptr %p) noinline {
+ %v = load <8 x i32>, ptr %p
+ %r = add <8 x i32> %v, %v
+ store <8 x i32> %r, ptr %p
+ ret void
+}
+define void @root(ptr %p) "llgo.fmv.avx2-entry" {
+ %q = call i1 @avx2()
+ br i1 %q, label %yes, label %exit
+yes:
+ call void @kernel(ptr %p)
+ br label %exit
+exit:
+ ret void
+}
+define void @caller(ptr %p) {
+ %q = call i1 @avx2()
+ br i1 %q, label %yes, label %no
+yes:
+ call void @root(ptr %p)
+ ret void
+no:
+ call void @root(ptr null)
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	guard := guardSuffix(featureAVX2)
+	for _, call := range []struct{ from, to string }{
+		{"root" + variantSuffix, "kernel" + guard},
+		{"root" + guard, "kernel" + guard},
+		{"caller" + variantSuffix, "root" + variantSuffix},
+		{"caller" + baselineSuffix, "root" + symbolPrefix + "guard_base"},
+	} {
+		fn := m.NamedFunction(call.from)
+		if fn.IsNil() || !strings.Contains(fn.String(), "call void @"+call.to+"(") {
+			t.Fatalf("%s did not call %s directly:\n%s", call.from, call.to, m.String())
+		}
+	}
+	// An AVX2-only runtime snapshot selects the same kernel on either entry.
+	checkCachedGuard(t, m, featureAVX2, m.NamedFunction("root"+guard))
 }
 
 func TestGuardCombinationBudget(t *testing.T) {

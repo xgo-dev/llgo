@@ -13,14 +13,16 @@ import (
 // describe instructions the CPU can execute. Implied capabilities never
 // establish the truth of another independently observable Go predicate.
 type x86Predicate struct {
-	method   string
-	bit      uint64
-	features string
+	method     string
+	runtimeBit uint64
+	features   string
 }
 
-// Bit positions match runtime/_patch/internal/cpu/{init,archsimd_go127}_llgo.go.
+// The runtime publishes one bit per effective Go predicate, including the
+// combined HasAVX && HasAES result for AVXAES. Keep the bits in sync with
+// runtime/_patch/internal/cpu/{init,archsimd_go127}_llgo.go.
 var x86Predicates = []x86Predicate{
-	{"AVX2", 2, "+avx,+avx2"}, {"AVX", featureAVX, "+avx"},
+	{"AVX2", featureAVX2, "+avx,+avx2"}, {"AVX", featureAVX, "+avx"},
 	{"AVXAES", 8, "+avx,+aes"}, {"VAES", 16, "+avx,+vaes"},
 	{"AVX512VAES", 32, "+avx512f,+avx512vl,+vaes"}, {"AVX512GFNI", 64, "+avx512f,+gfni"},
 	{"SHA", 128, "+sha"}, {"AVX512", 256, "+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
@@ -29,21 +31,6 @@ var x86Predicates = []x86Predicate{
 	{"AVX512VNNI", 1 << 13, "+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, "+avx512f,+vpclmulqdq"},
 	{"AVX512VPOPCNTDQ", 1 << 15, "+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, "+avxvnni"},
 }
-
-// The Go predicates are independently observable after GODEBUG. A guarded
-// implementation using AVX or one of its extensions also requires effective AVX.
-var avxGuardPredicates = func() uint64 {
-	var mask uint64
-	for _, p := range x86Predicates {
-		for _, feature := range strings.Split(p.features, ",") {
-			if strings.HasPrefix(feature, "+avx") {
-				mask |= p.bit
-				break
-			}
-		}
-	}
-	return mask
-}()
 
 func X86Query(method string) string {
 	for _, p := range x86Predicates {
@@ -57,7 +44,7 @@ func X86Query(method string) string {
 var predicateBits = func() map[string]uint64 {
 	m := make(map[string]uint64)
 	for _, p := range x86Predicates {
-		m[X86Query(p.method)] = p.bit
+		m[X86Query(p.method)] = p.runtimeBit
 	}
 	return m
 }()
@@ -327,7 +314,7 @@ type guardKey struct {
 func guardSuffix(mask uint64) string {
 	var names []string
 	for _, p := range x86Predicates {
-		if mask&p.bit != 0 {
+		if mask&p.runtimeBit != 0 {
 			names = append(names, strings.ToLower(p.method))
 		}
 	}
@@ -371,7 +358,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				if avx2 != nil && !avx2.baselines[parent].IsNil() {
 					continue
 				}
-				if !hasAttribute(parent, guardedAttribute) && supported(parent) {
+				if supported(parent) {
 					candidates[parent] = true
 				}
 			}
@@ -415,7 +402,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		v := folds.view(fn).CloneFunction()
 		v.SetName(name)
 		v.SetLinkage(llvm.InternalLinkage)
-		v.AddFunctionAttr(ctx.CreateStringAttribute(guardedAttribute, ""))
 		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		v.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 		copies = append(copies, struct{ original, body llvm.Value }{fn, v})
@@ -447,7 +433,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		clones[key] = v
 		features := stringAttribute(fn, "target-features")
 		for _, p := range x86Predicates {
-			if mask&p.bit != 0 {
+			if mask&p.runtimeBit != 0 {
 				if features != "" {
 					features += ","
 				}
@@ -495,13 +481,23 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				}
 				return err
 			}
-			required := mask
-			if mask&avxGuardPredicates != 0 {
-				required |= featureAVX
-			}
-			root.choices[j] = dispatchChoice{required, v}
+			root.choices[j] = dispatchChoice{mask, v}
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
+	}
+	// Reuse existing local bodies in the canonical AVX2 call graph, including
+	// the externally callable AVX2 entries. Allocate no additional clones.
+	if avx2 != nil {
+		for key, body := range clones {
+			if key.mask == featureAVX2 {
+				avx2.redirectStagedCalls(key.fn, body, avx2.variants)
+			}
+		}
+		for _, root := range roots {
+			if len(root.masks) == 1 && root.masks[0] == featureAVX2 {
+				avx2.redirectStagedCalls(root.fn, root.base, avx2.baselines)
+			}
+		}
 	}
 	folds.commit()
 	source := newSourceInfo(mod)
@@ -539,7 +535,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		}
 	}
 	for _, root := range roots {
-		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(guardedAttribute, ""))
 		dispatch(mod, source, root.fn, root.base, root.choices)
 	}
 	return nil

@@ -290,8 +290,8 @@ Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
-and indirect calls retain the original entry. Other guarded feature combinations
-use [local guarded specializations](#guarded-x86-feature-combinations).
+and indirect calls retain the original entry. AVX2 guards over scalar-signature local helpers and other guarded
+feature combinations use [local guarded specializations](#guarded-x86-feature-combinations).
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
 including when nested in arrays and structs. The compiler validates the bridge
@@ -348,10 +348,10 @@ Vector results keep their native register ABI.
 `GOAMD64` still controls the compilation baseline. The dispatcher observes
 the post-`GODEBUG=cpu.*` AVX2 query; instruction capability does not imply
 other observable query results. On v1/v2 the AVX and FMA queries remain
-dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. Guarded
-implementations with AVX target features require effective AVX in addition
-to their predicates. The fallback preserves the original query even when AVX
-has been independently disabled. Midway selects portable width independently.
+dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. A guarded implementation is selected by the effective
+Go predicates in its runtime mask. For example, VAES uses the VAES bit even
+when AVX has been independently disabled. AVXAES uses the combined AVX and
+AES result published by the runtime. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -528,10 +528,14 @@ the ordinary entry.
 Calls to separately compiled functions can use their ordinary Go entries.
 The public function value and its wide argument/return carriers stay valid
 through dispatch. The baseline implementation serves calls before CPU feature
-publication. `TestSIMD512Guarded` exercises the runtime path, and
+publication. `TestLazyDispatcherPolicy` checks that this call does not cache
+the baseline. `TestSIMD512ScalarSignatureHelpers` exercises the scalar fallback
+when AVX512 is unavailable. `TestSIMD512Guarded` checks the wide call on
+supported CPUs, and
 `TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
 local helper calls and repeated execution of the LLVM transformation.
 
+FMV processes each amd64 package module once, before target optimization.
 Guard specialization uses CPU queries visible directly in the branch condition.
 Saved booleans and predicate helpers follow ordinary Go control flow.
 `TestSIMDSavedGuard` and `TestSIMDPredicateHelper` check the results and

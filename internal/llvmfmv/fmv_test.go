@@ -145,6 +145,21 @@ func TestEarlySpecialization(t *testing.T) {
 	}
 }
 
+func checkUnversionedFunction(t *testing.T, mod llvm.Module, baseline, name string) {
+	t.Helper()
+	fn := mod.NamedFunction(name)
+	before := fn.String()
+	if err := Run(mod, baseline); err != nil {
+		t.Fatal(err)
+	}
+	if fn.String() != before || strings.Contains(mod.String(), symbolPrefix) || !mod.NamedGlobal(featureSymbol).IsNil() {
+		t.Fatalf("unexpected FMV changes to %s:\n%s", name, mod.String())
+	}
+	if mod.NamedMetadataNumOperands(moduleDone) != 1 {
+		t.Fatal("missing FMV completion marker")
+	}
+}
+
 func TestAVX2QueryResultKeepsOrdinaryEntry(t *testing.T) {
 	for _, baseline := range []string{"v1", "v2"} {
 		t.Run(baseline, func(t *testing.T) {
@@ -156,13 +171,7 @@ define i1 @ready() {
   ret i1 %ok
 }
 `)
-			before := mod.String()
-			if err := Run(mod, baseline); err != nil {
-				t.Fatal(err)
-			}
-			if mod.String() != before {
-				t.Fatalf("plain AVX2 query acquired FMV state:\n%s", mod.String())
-			}
+			checkUnversionedFunction(t, mod, baseline, "ready")
 		})
 	}
 }
@@ -221,10 +230,7 @@ func TestUnsupportedSignaturesUnchanged(t *testing.T) {
 			mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 `+function)
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("unsupported ABI was changed: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "unsupported")
 		})
 	}
 }
@@ -296,10 +302,7 @@ define void @root() {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("invalid CPU query established an AVX2 guard: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "root")
 		})
 	}
 }
