@@ -1907,23 +1907,24 @@ const (
 )
 
 type context struct {
-	conf           *packages.Config
-	progSSA        *ssa.Program
-	prog           llssa.Program
-	dedup          packages.Deduper
-	patches        cl.Patches
-	callerTracking *cl.CallerTracking
-	frontend       *frontendCache
-	fingerprinting map[string]bool
-	cacheDisabled  map[string]none
-	patchFiles     map[string][]string
-	initial        []*packages.Package
-	pkgs           map[*packages.Package]Package // cache for lookup
-	pkgByID        map[string]Package            // cache for lookup by pkg.ID
-	mode           Mode
-	nLibdir        int32
-	output         bool
-	passOpt        bool
+	registerProviders map[string]llvmfmv.RegisterProvider
+	conf              *packages.Config
+	progSSA           *ssa.Program
+	prog              llssa.Program
+	dedup             packages.Deduper
+	patches           cl.Patches
+	callerTracking    *cl.CallerTracking
+	frontend          *frontendCache
+	fingerprinting    map[string]bool
+	cacheDisabled     map[string]none
+	patchFiles        map[string][]string
+	initial           []*packages.Package
+	pkgs              map[*packages.Package]Package // cache for lookup
+	pkgByID           map[string]Package            // cache for lookup by pkg.ID
+	mode              Mode
+	nLibdir           int32
+	output            bool
+	passOpt           bool
 
 	buildConf         *Config
 	crossCompile      crosscompile.Export
@@ -3748,7 +3749,8 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	pkgPath := pkg.PkgPath
 	ret := aPkg.LPkg
 
-	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	skipABI := cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module())
+	ctx.cTransformer.SetSkipFuncs(skipABI)
 	// Finish call-boundary lowering before creating musttail dispatchers.
 	// They must forward the caller's ABI storage, not materialize aggregates
 	// in a forwarding frame that a tail transfer immediately releases.
@@ -3757,6 +3759,16 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		return err
 	}
 	wideCalls := llvmfmv.CaptureWideCalls(ret.Module(), ctx.buildConf.Goarch)
+	if len(wideCalls) != 0 {
+		names, err := wideCalls.Export(ret.Module(), pkgPath)
+		if err != nil {
+			return err
+		}
+		aPkg.registerExports = names
+		if len(names) != 0 {
+			ctx.cTransformer.SetSkipFuncs(append(skipABI, names...))
+		}
+	}
 	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
@@ -3764,8 +3776,15 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := llvmfmv.Run(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
 		return fmt.Errorf("%s: %w", pkgPath, err)
 	}
-	if err := wideCalls.Promote(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
-		return fmt.Errorf("%s: %w", pkgPath, err)
+	if len(wideCalls) != 0 {
+		imports := make(map[string]llvmfmv.RegisterProvider, len(pkg.Imports))
+		imports[pkgPath] = llvmfmv.RegisterProvider{Symbols: aPkg.registerExports}
+		for _, dep := range pkg.Imports {
+			imports[dep.PkgPath] = ctx.registerProviders[dep.ID]
+		}
+		if err := wideCalls.Promote(ret.Module(), ctx.buildConf.GOAMD64, imports); err != nil {
+			return fmt.Errorf("%s: %w", pkgPath, err)
+		}
 	}
 	if ctx.buildConf.Goos == "windows" {
 		pragmaSyntax := append([]*ast.File(nil), pkg.Syntax...)
@@ -4260,6 +4279,7 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 }
 
 type aPackage struct {
+	registerExports []string
 	*packages.Package
 	SSA    *ssa.Package
 	AltPkg *packages.Cached

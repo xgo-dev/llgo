@@ -1,0 +1,118 @@
+package llvmfmv
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/xgo-dev/llvm"
+)
+
+const RegisterOwnerAttribute = attributePrefix + "register-owner"
+
+// RegisterProvider describes the symbols emitted by a completed backend or archive.
+type RegisterProvider struct {
+	Symbols []string
+}
+
+func (p RegisterProvider) provides(name string) bool {
+	return slices.Contains(p.Symbols, name)
+}
+
+func exportName(original string, sig wideSignature) string {
+	return original + sig.suffix() + "_go"
+}
+
+func setRegisterABI(entry llvm.Value, sig wideSignature, features string) {
+	ctx := entry.GlobalParent().Context()
+	features = strings.TrimPrefix(features+",+avx,+avx2", ",")
+	if sig.width == 512 {
+		features += ",+avx512f"
+	}
+	entry.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
+	if strings.Contains(entry.GlobalParent().Target(), "windows") {
+		entry.SetFunctionCallConv(x86VectorCall)
+	}
+}
+
+// Export the original typed body before public Go calls acquire their pointer
+// carriers. Internal calls in the copy still go through normal ABI lowering.
+func (s WideCalls) Export(m llvm.Module, owner string) ([]string, error) {
+	var exported []string
+	var source *sourceInfo
+	for f := m.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+		sig, ok := s[f.Name()]
+		if !ok || f.IsDeclaration() || stringAttribute(f, RegisterOwnerAttribute) != owner || f.Linkage() != llvm.ExternalLinkage {
+			continue
+		}
+		name := exportName(f.Name(), sig)
+		if !m.NamedValue(name).IsNil() {
+			return nil, fmt.Errorf("SIMD register export collision: %s", name)
+		}
+		entry := f.CloneFunction()
+		entry.SetName(name)
+		for _, attr := range []string{EntryAttribute, InlineEntryAttribute, wideOrigin, RegisterOwnerAttribute} {
+			entry.RemoveStringAttributeAtIndex(-1, attr)
+		}
+		setRegisterABI(entry, sig, stringAttribute(f, "target-features"))
+		if source == nil {
+			source = newSourceInfo(m)
+		}
+		source.clone(f, entry)
+		exported = append(exported, name)
+	}
+	slices.Sort(exported)
+	return exported, nil
+}
+
+// FMV may already have redirected an external call to a specialized
+// declaration. The provider publishes a single register entry for its Go name.
+func selectRegisterExport(m llvm.Module, target llvm.Value, sig wideSignature, providers map[string]RegisterProvider, imported map[string]llvm.Value) llvm.Value {
+	owner := stringAttribute(target, RegisterOwnerAttribute)
+	origin := stringAttribute(target, wideOrigin)
+	name := exportName(origin, sig)
+	if owner == "" || !providers[owner].provides(name) {
+		return llvm.Value{}
+	}
+	if !target.IsDeclaration() {
+		if target.Name() == origin {
+			return m.NamedFunction(name)
+		}
+		return llvm.Value{}
+	}
+	if entry, ok := imported[name]; ok {
+		return entry
+	}
+	if !m.NamedValue(name).IsNil() {
+		return llvm.Value{}
+	}
+	entry := importRegisterEntry(m, target, sig)
+	imported[name] = entry
+	return entry
+}
+
+func importRegisterEntry(m llvm.Module, target llvm.Value, sig wideSignature) llvm.Value {
+	name := exportName(stringAttribute(target, wideOrigin), sig)
+	entry := m.NamedFunction(name)
+	if entry.IsNil() {
+		entry = llvm.AddFunction(m, name, sig.typ)
+		setRegisterABI(entry, sig, "")
+		offset := 0
+		if sig.typ.ReturnType().TypeKind() == llvm.VectorTypeKind {
+			offset = 1
+		}
+		for i, t := range sig.typ.ParamTypes() {
+			if t.TypeKind() != llvm.VectorTypeKind {
+				for _, attr := range target.GetAttributesAtIndex(i + offset + 1) {
+					entry.AddAttributeAtIndex(i+1, attr)
+				}
+			}
+		}
+		if offset == 0 {
+			for _, attr := range target.GetAttributesAtIndex(0) {
+				entry.AddAttributeAtIndex(0, attr)
+			}
+		}
+	}
+	return entry
+}
