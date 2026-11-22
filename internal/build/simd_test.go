@@ -486,22 +486,6 @@ func packed(o,a *[16]uint32, m uint16) {
  if archsimd.X86.AVX512() { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
 }
 //go:noinline
-func allowsWide(enabled bool) bool { return enabled && archsimd.X86.AVX512() }
-//go:noinline
-func wrapped(o,a *[16]uint32, m uint16, enabled bool) {
- if allowsWide(enabled) { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
-}
-//go:noinline
-func saved(o,a *[16]uint32, m uint16, enabled bool) {
- ok := archsimd.X86.AVX512() && enabled
- if ok { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
-}
-//go:noinline
-func alternative(o,a *[16]uint32, m uint16, enabled bool) {
- ok := archsimd.X86.AVX512() || enabled
- if ok { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
-}
-//go:noinline
 func sad(o *[8]uint64, a,b *[64]uint8) {
  if archsimd.X86.AVX512() { archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o) }
 }
@@ -524,7 +508,7 @@ func main() {}
 		level, guard string
 		ops          map[string]string
 	}{
-		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "saved": "vpcompressd", "wrapped": "vpcompressd", "sad": "vpsadbw"}},
+		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "sad": "vpsadbw"}},
 		{"v4", "avx512vbmi2", map[string]string{"bytes": "vpcompressb", "words": "vpexpandw"}},
 	} {
 		t.Run(tc.level, func(t *testing.T) {
@@ -536,9 +520,6 @@ func main() {}
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
 			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, asm string) {
-				if strings.Contains(asm, "main.alternative.__llgo_fmv_guard_avx512:") {
-					t.Fatal("an independent flag does not prove AVX512")
-				}
 				for fn, mnemonic := range tc.ops {
 					for _, suffix := range []string{tc.guard, "base"} {
 						symbol := "main." + fn + ".__llgo_fmv_guard_" + suffix

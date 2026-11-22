@@ -518,8 +518,8 @@ masks when the function has up to 16 distinct unions (including the empty
 mask). Above that limit it retains at most 14 observed masks and their full
 union. Each root can create at most 64 new bodies including helpers, its
 baseline and resolver. Wider masks receive the helper budget first. Further
-callees keep their ordinary entry. Regions outside the selected mask retain their runtime checks. Local
-helpers share a copy for each distinct proven mask.
+callees keep their ordinary entry. Regions outside the selected mask retain
+their runtime checks. Local helpers share a copy for each distinct proven mask.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls
@@ -532,14 +532,7 @@ publication. `TestSIMD512Guarded` exercises the runtime path, and
 `TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
 local helper calls and repeated execution of the LLVM transformation.
 
-A saved boolean guard carries the same feature evidence as an immediate
-branch. For example, a true `ready := archsimd.X86.AVX512() && enabled`
-proves AVX-512, while `AVX512() || enabled` does not. Joins retain only
-predicates proven on every feasible incoming path. `TestSIMDSavedGuard` and
-`TestMaterializedGuards` cover the runtime and LLVM guard analysis.
-
-A direct call to a locally defined boolean helper can also establish a feature
-on one return outcome. The caller keeps the call, including side effects and
-any independent conditions. Declarations, indirect calls and weak definitions
-do not provide evidence about the CPU. `TestSIMDPredicateHelper` and
-`TestPredicateHelperOutcomes` cover these calls and their inferred outcomes.
+Guard specialization uses CPU queries visible directly in the branch condition.
+Saved booleans and predicate helpers follow ordinary Go control flow.
+`TestSIMDSavedGuard` and `TestSIMDPredicateHelper` check the results and
+helper side effects independently of specialization.
