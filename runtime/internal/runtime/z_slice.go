@@ -225,6 +225,16 @@ func makeSliceMemory(len, cap, etSize int) uintptr {
 	return mem
 }
 
+// MakeSliceStackGuard is installed by scheduler backends whose goroutine
+// stacks are fixed-size fibers (the baremetal fiber scheduler). MakeSliceBuffer
+// runs it before trusting caller-owned stack storage, so a caller whose frame
+// already crossed the fiber floor fatals deterministically instead of
+// silently writing below it: the swap-point guard only checks at cooperative
+// yields, and a function whose non-escaping make overflowed never yields. It
+// stays nil on backends with growable or large stacks (hosted, wasm), making
+// the check a single nil comparison.
+var MakeSliceStackGuard func(mem uintptr, buffer unsafe.Pointer)
+
 // MakeSliceBuffer uses caller-owned aligned storage for a valid small make.
 // Fallbacks enter the original helper, preserving both its checks and the
 // existing heap allocation path for callers without an escape proof.
@@ -232,6 +242,9 @@ func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, buffe
 	if buffer != nil && len >= 0 && len <= cap && cap <= bufferCap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 		if !overflow && mem <= maxAlloc {
+			if MakeSliceStackGuard != nil {
+				MakeSliceStackGuard(mem, buffer)
+			}
 			c.Memset(buffer, 0, mem)
 			return Slice{buffer, len, cap}
 		}

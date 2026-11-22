@@ -85,6 +85,13 @@ const (
 // mirror in _wrap/context_riscv32.c must stay in sync.
 const fiberStackCanary = uintptr(0x5afec0de)
 
+// fiberStackGuardMargin mirrors llgoFiberGuardMargin in
+// _wrap/context_riscv32.c: the swap frame (64) plus the canary word (4) that
+// every future swap-out needs between the floor and the live sp. The
+// make-slice guard below uses the same bound so a backing array that would
+// reach the floor fatals before it can smash the canary.
+const fiberStackGuardMargin = fiberFrameSize + 4
+
 // fiberMinStackSize floors explicit stack sizes so the swap guard's math
 // always holds. The guard margin (68: 64-byte swap frame + 4-byte canary
 // word, see llgoFiberGuardMargin in _wrap/context_riscv32.c) plus the
@@ -147,6 +154,15 @@ var baremetalSched struct {
 //go:linkname fiberSwap C.llgoFiberSwap
 func fiberSwap(from, to *baremetalFiberContext)
 
+// fiberStackOverflow is the terminal path of the swap guard
+// (llgoFiberStackOverflow in _wrap/context_riscv32.c): it drains stdio, sends
+// the fatal line through the device _write and exits via semihosting. The
+// make-slice guard reuses it so both stack-overflow reporters print the same
+// line through the same channel.
+//
+//go:linkname fiberStackOverflow C.llgoFiberStackOverflow
+func fiberStackOverflow()
+
 //go:linkname fiberGStartAddr C.llgoFiberGStartAddr
 func fiberGStartAddr() unsafe.Pointer
 
@@ -190,6 +206,7 @@ func initBaremetalScheduler(gp *g) {
 		return
 	}
 	tinygogc.StackRootsHook = scanBaremetalStackRoots
+	MakeSliceStackGuard = baremetalMakeSliceStackGuard
 	mp := &baremetalSched.m
 	pp := &baremetalSched.p
 	mp.curg = gp
@@ -500,6 +517,47 @@ func (gp *g) RunqueueQueued() bool {
 
 func (gp *g) SetRunqueueQueued(queued bool) {
 	gp.context.platform.runqQueued = queued
+}
+
+// baremetalMakeSliceStackGuard runs before MakeSliceBuffer trusts
+// caller-owned stack storage. A function whose non-escaping make overflowed
+// the fiber never yields, so the swap-point guard never sees it; this
+// checkpoint turns that class of overflow into the same deterministic
+// "goroutine stack overflow" fatal the swap guard reports.
+func baremetalMakeSliceStackGuard(mem uintptr, buffer unsafe.Pointer) {
+	gp := getg()
+	if gp == nil {
+		return
+	}
+	if gp == &baremetalSched.systemG {
+		checkBaremetalFiberBounds(&baremetalSched.system, buffer)
+		return
+	}
+	if gp.context != nil {
+		checkBaremetalFiberBounds(&gp.context.platform.context, buffer)
+	}
+}
+
+// checkBaremetalFiberBounds fatals when the caller-owned buffer itself sits
+// below the guard margin. The buffer is an alloca inside the caller's frame,
+// so its safety depends only on where the buffer starts, not on the sp below
+// the checkpoint: a base under stackLo means the caller's frame already
+// crossed the fiber floor, and a base within the margin would write the
+// canary word and the swap-frame zone on the first Memset. A live sp below
+// the margin with a well-placed buffer is the doomed checkpoint the swap
+// guard reports at the next cooperative yield. Contexts without configured
+// bounds (the bootstrap G before its fiber exists) are skipped, mirroring
+// the stackLo == 0 bail-out in llgoFiberSwap.
+func checkBaremetalFiberBounds(fc *baremetalFiberContext, buffer unsafe.Pointer) {
+	if fc.stackLo == 0 {
+		return
+	}
+	buf := uintptr(unsafe.Pointer(buffer))
+	// The floor comparison first: a wrapped interior pointer would otherwise
+	// pass the margin subtraction below.
+	if buf < fc.stackLo || buf-fc.stackLo < fiberStackGuardMargin {
+		fiberStackOverflow()
+	}
 }
 
 // scanBaremetalStackRoots reports every mapped execution range to the

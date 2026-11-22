@@ -577,6 +577,28 @@ func (b Builder) MakeSliceStackCapacity(t Type, len, cap Expr, capacity int64) E
 	return b.makeSlice(t, len, cap, false, capacity)
 }
 
+// stackVarBudget bounds one stack-resident variable or make backing array.
+// Backends with fixed-size goroutine stacks (the baremetal fiber scheduler
+// receives the target default-stack-size through SetPthreadStackSize) cannot
+// absorb the hosted limits: an oversized alloca walks straight off the fiber
+// stack, and the swap-point guard only runs at cooperative yields, so the
+// corruption would stay silent. Fixed stacks therefore cap the budget at the
+// configured size minus the fiber overhead — a budget-exact array would
+// otherwise consume the whole stack before the guard margin, the entry chain
+// and the frame's fixed prologue fit — and overflow the eligibility check to
+// the heap helpers. Hosted and wasm targets keep each gate's historical limit.
+func (p Program) stackVarBudget(legacy uint64) uint64 {
+	stack := p.pthreadStackSize
+	if stack == 0 || stack >= legacy {
+		return legacy
+	}
+	if stack <= llabi.FiberStackOverhead {
+		// Nothing fits safely above the overhead; everything goes to the heap.
+		return 0
+	}
+	return stack - llabi.FiberStackOverhead
+}
+
 func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (ret Expr) {
 	dbgInstrf("MakeSlice %v, %v, %v\n", t.RawType(), len.impl, cap.impl)
 	prog := b.Prog
@@ -596,7 +618,7 @@ func (b Builder) makeSlice(t Type, len, cap Expr, heap bool, capacity int64) (re
 			capacity = int64(llabi.SmallStackBufferSize / prog.SizeOf(telem))
 		}
 	}
-	if !heap && capacity > 0 && prog.SizeOf(telem) <= llabi.MaxImplicitStackVarSize/uint64(capacity) {
+	if !heap && capacity > 0 && prog.SizeOf(telem) <= prog.stackVarBudget(llabi.MaxImplicitStackVarSize)/uint64(capacity) {
 		buffer := b.uninitializedStackSlot(prog.Type(types.NewArray(telem.RawType(), capacity), GoDecl))
 		args = append(args, prog.IntVal(prog.AlignOf(telem), prog.Int()), b.Convert(prog.VoidPtr(), buffer), prog.IntVal(uint64(capacity), prog.Int()), prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
 		fn += "Buffer"
@@ -683,7 +705,10 @@ func (p Program) MapStackStorage(t Type) (header, bucket Type) {
 	mt := t.RawType().Underlying().(*types.Map)
 	if p.AlignOf(p.rawType(mt.Key())) <= uint64(p.GoWordSize()) && p.AlignOf(p.rawType(mt.Elem())) <= uint64(p.GoWordSize()) {
 		bt := p.Type(abi.MapBucketType(mt, p.sizes), GoDecl)
-		if p.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
+		// The bucket is a caller-owned stack slot like a make backing array;
+		// keep it under the fixed-stack budget so a large-key/value map on a
+		// fiber target cannot reserve an alloca bigger than the stack.
+		if p.SizeOf(bt) <= p.stackVarBudget(llabi.MaxImplicitStackVarSize) {
 			bucket = bt
 		}
 	}

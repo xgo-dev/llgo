@@ -166,7 +166,10 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 	prog := b.Prog
 	pkg := b.Pkg
 	size := SizeOf(prog, elem)
-	if !heap && prog.SizeOf(elem) > llabi.MaxStackVarSize {
+	// The stack-variable gate shares the fixed-stack budget with make backing
+	// arrays: an alloca larger than the goroutine stack itself would overflow
+	// before any yield-point guard could run (see Program.stackVarBudget).
+	if !heap && prog.SizeOf(elem) > prog.stackVarBudget(llabi.MaxStackVarSize) {
 		heap = true
 	}
 	if heap {

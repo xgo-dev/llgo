@@ -2,7 +2,11 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"unsafe"
+
+	abi "github.com/xgo-dev/llgo/runtime/abi"
+)
 
 // Compile-time layout contracts for the fiber swap guard. The asm in
 // _wrap/context_riscv32.c hardcodes baremetalFiberContext's field offsets
@@ -38,4 +42,14 @@ var (
 	// round-down (15): 147.
 	_ [1 / fiberStackCanary]struct{}
 	_ [fiberMinStackSize - 147]struct{}
+
+	// The Go-side make-slice guard must mirror llgoFiberGuardMargin (68 =
+	// 64-byte swap frame + 4-byte canary word) in _wrap/context_riscv32.c.
+	_ [68 - fiberStackGuardMargin]struct{}
+	_ [fiberStackGuardMargin - 68]struct{}
+
+	// The compiler's fixed-stack budget (stack size minus abi.FiberStackOverhead)
+	// must leave at least the guard margin plus the initial swap frame above
+	// the floor, or a budget-exact array would park on the canary.
+	_ [abi.FiberStackOverhead - (fiberStackGuardMargin + fiberFrameSize)]struct{}
 )

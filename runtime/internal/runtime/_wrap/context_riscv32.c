@@ -66,6 +66,15 @@
 #define llgoFiberStr(x) llgoFiberStr2(x)
 #define llgoFiberStackCanary 0x5afec0de
 
+/* Fiber swap-frame geometry, mirrored by the Go constants in
+ * proc_fiber_baremetal.go (fiberFrameSize 64, fiberFrameRAOff 0,
+ * fiberFrameArgOff 52) and pinned by the compile-time assertions in
+ * fiber_guard_layout.go. The raw offsets in the asm below must stay equal to
+ * these macros; the static asserts fail the C build on any drift. */
+#define llgoFiberFrameSize 64
+#define llgoFiberFrameRAOff 0
+#define llgoFiberFrameArgOff 52
+
 /* fiberGuardMargin: the live sp must leave this much room above stackLo.
  * 64 bytes hold the swap frame, 4 bytes hold the canary word: requiring
  * sp >= stackLo+68 means the frame base (sp-64) lands at or above
@@ -74,7 +83,12 @@
  * the collector's ctx.stackLo < ctx.sp scan window. Do not shave this to
  * 64: sp == stackLo+64 parks the frame base exactly on the floor, where
  * the ra slot silently overwrites the canary. */
-#define llgoFiberGuardMargin 68
+#define llgoFiberGuardMargin (llgoFiberFrameSize + 4)
+
+_Static_assert(llgoFiberGuardMargin == 68, "swap guard margin must stay 64-byte frame + 4-byte canary");
+_Static_assert(llgoFiberFrameSize == 64, "swap frame must stay 64 bytes");
+_Static_assert(llgoFiberFrameRAOff == 0, "ra slot must stay at the swap frame base");
+_Static_assert(llgoFiberFrameArgOff == 52, "a0 argument slot must stay inside the swap frame");
 
 /* The device file (targets/device/esp) provides _write and the linked libc
  * archive provides exit and stdio; they are declared directly so this wrapper
