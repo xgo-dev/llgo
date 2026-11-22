@@ -107,6 +107,10 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/timerafter",
 				"./_testgo/timertick",
 				"./_testgo/timerfunc",
+				"./_testgo/time_after",
+				"./_testgo/time_tick",
+				"./_testgo/time_stop",
+				"./_testgo/time_gckeep",
 				// stackover ends in the runtime's stack-overflow fatal, which the
 				// emu firmware runner rejects; TestFiberStackGuardEmu runs it
 				// with a fatal-tolerant runner instead. stacksafe stays here and
@@ -187,6 +191,19 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/gosched",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/struczero",     // timeout: emulator did not auto-exit
 				"./_testgo/wakefan",       // xtensa keeps the pthread scheduler: no goroutines
+				// The xtensa target keeps the pthread scheduler's timer stub, which
+				// never delivers a live timer: these fixtures would park forever.
+				"./_testgo/timerafter",
+				"./_testgo/timertick",
+				"./_testgo/timerfunc",
+				"./_testgo/time_after",
+				"./_testgo/time_tick",
+				"./_testgo/time_stop",
+				"./_testgo/time_gckeep",
+				// The xtensa Sleep stub returns immediately, so timing-dependent
+				// output (ordering and relative durations) cannot match the golden.
+				"./_testgo/timesleep",
+				"./_testgo/sleepgoroutine",
 				// xtensa keeps the pthread scheduler: no fiber swap guard runs here.
 				"./_testgo/stacksafe",
 				"./_testgo/stackover",
@@ -368,6 +385,10 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/timerafter",
 		"./_testgo/timertick",
 		"./_testgo/timerfunc",
+		"./_testgo/time_after",
+		"./_testgo/time_tick",
+		"./_testgo/time_stop",
+		"./_testgo/time_gckeep",
 		// The stack-guard fixtures need the fiber scheduler's swap-point
 		// guard: hosted stacks grow, and stackover would run away.
 		"./_testgo/stacksafe",
