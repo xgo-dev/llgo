@@ -25,9 +25,9 @@ type namedFunc func(int) int
 // CHECK: call %{{.*}} @reflect.Value.Interface(%reflect.Value [[FUNC_RESULT]])
 
 // CHECK-LABEL: define void @main.functionPointers(){{.*}} {
-// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call ptr @"{{.*}}AllocAtomicU"(i64 8)
+// CHECK: [[CAPTURED_ENV:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}AllocAtomicU"(i64 8)
 // CHECK: [[CAPTURED_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.functionPointers$1", ptr undef }, ptr [[CAPTURED_ENV]], 1
-// CHECK-NEXT: [[CAPTURED_BOX:%[0-9]+]] = call ptr @"{{.*}}AllocU"(i64 16)
+// CHECK-NEXT: [[CAPTURED_BOX:%[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}AllocU"(i64 16)
 // CHECK-NEXT: store { ptr, ptr } [[CAPTURED_PAIR]], ptr [[CAPTURED_BOX]]
 // CHECK-NEXT: [[CAPTURED_EFACE:%[0-9]+]] = insertvalue %"{{.*}}eface" { ptr @{{.*}}, ptr undef }, ptr [[CAPTURED_BOX]], 1
 // CHECK-NEXT: [[CAPTURED_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(%"{{.*}}eface" [[CAPTURED_EFACE]])

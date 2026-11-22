@@ -2217,8 +2217,8 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	for _, want := range []string{
 		"define i64 @inner(ptr ",
 		"i64 %1)",
-		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64 8)`,
-		`declare nonnull ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64)`,
+		`call noalias dereferenceable(8) ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64 8)`,
+		`declare noundef nonnull ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64)`,
 		"insertvalue { ptr, ptr } { ptr @inner, ptr undef }",
 	} {
 		if !strings.Contains(ir, want) {

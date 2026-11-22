@@ -112,7 +112,7 @@ func makeWithFree(base int) Fn {
 // AMD64: call i64 [[WITH_FREE_CODE]](ptr nest [[WITH_FREE_ENV]], i64 2)
 // CHECK: call i64 @main.globalAdd(i64 1, i64 2)
 // A bound pointer method stores the receiver in the closure environment.
-// CHECK: [[S:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK: [[S:%.*]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[S_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S]], i32 0, i32 0
 // CHECK-NEXT: store i64 5, ptr [[S_FIELD]]
@@ -160,7 +160,7 @@ func makeWithFree(base int) Fn {
 // CHECK: [[BASE_ADDR:%[0-9]+]] = alloca i64
 // CHECK: store i64 %0, ptr [[BASE_ADDR]]
 // CHECK-NEXT: [[BASE_VALUE:%[0-9]+]] = load i64, ptr [[BASE_ADDR]]
-// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
+// CHECK-NEXT: [[WITH_FREE_ENV_OUT:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
 // CHECK-NEXT: store i64 [[BASE_VALUE]], ptr [[WITH_FREE_ENV_SLOT]]
 // CHECK-NEXT: [[WITH_FREE_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.makeWithFree$1", ptr undef }, ptr [[WITH_FREE_ENV_OUT]], 1

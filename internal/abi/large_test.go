@@ -1274,7 +1274,7 @@ attributes #1 = { noinline }
 
 	caller := mod.NamedFunction("caller").String()
 	for _, want := range []string{
-		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
+		`call noalias dereferenceable(65537) ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
 		"call void @callee(ptr sret([65537 x i8])",
 		`ptr "llgo.reflect.methodbyname.name"="1"`,
 		"call void @llvm.memcpy",
@@ -1313,6 +1313,9 @@ func TestLowerLargeAggregatePreservesClosureEnvAttribute(t *testing.T) {
 	const testIR = `
 %Large = type [65537 x i8]
 
+define %Large @identity(%Large returned %value) memory(none) speculatable { ret %Large %value }
+declare [8193 x ptr] @capture(ptr captures(ret: address, provenance))
+
 define %Large @callee(ptr nest %env) {
 entry:
   ret %Large zeroinitializer
@@ -1350,6 +1353,19 @@ entry:
 
 	LowerLargeAggregates(td, mod, AggregateLoweringConfig{})
 
+	capture := mod.NamedFunction("capture")
+	if !capture.GetEnumAttributeAtIndex(2, llvm.AttributeKindID("captures")).IsNil() {
+		t.Fatalf("large sret declaration retained return-only capture: %s", capture.String())
+	}
+	identity := mod.NamedFunction("identity")
+	for _, name := range []string{"memory", "speculatable"} {
+		if !identity.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil() {
+			t.Fatalf("large sret function retained %s: %s", name, identity.String())
+		}
+	}
+	if !identity.GetEnumAttributeAtIndex(2, llvm.AttributeKindID("returned")).IsNil() {
+		t.Fatalf("void sret function retained returned: %s", identity.String())
+	}
 	nest := llvm.AttributeKindID("nest")
 	callee := mod.NamedFunction("callee")
 	if attr := callee.GetEnumAttributeAtIndex(2, nest); attr.IsNil() {

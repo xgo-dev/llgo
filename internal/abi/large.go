@@ -586,6 +586,11 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	call.EraseFromParentAsInstruction()
 }
 
+var (
+	largeMemoryKind       = int(llvm.AttributeKindID("memory"))
+	largeSpeculatableKind = int(llvm.AttributeKindID("speculatable"))
+)
+
 func (l *largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
 	ctx := m.Context()
 	oldType := fn.GlobalValueType()
@@ -597,10 +602,21 @@ func (l *largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
 	nfn.CopyFunctionProperties(fn)
 	nfn.AddAttributeAtIndex(1, sretAttribute(ctx, retType))
 	for _, attr := range fn.GetFunctionAttributes() {
+		// The new sret store is observable, and large snapshots can add
+		// allocations and GC-root writes. Let LLVM infer the lowered effects.
+		if attr.IsEnum() {
+			switch attr.GetEnumKind() {
+			case largeMemoryKind, largeSpeculatableKind:
+				continue
+			}
+		}
 		nfn.AddFunctionAttr(attr)
 	}
 	for i := 0; i < oldType.ParamTypesCount(); i++ {
 		for _, attr := range fn.GetAttributesAtIndex(i + 1) {
+			if !llvmattr.ValidOnSRetParameter(attr) {
+				continue
+			}
 			nfn.AddAttributeAtIndex(i+2, attr)
 		}
 	}

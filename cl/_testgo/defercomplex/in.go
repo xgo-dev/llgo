@@ -12,7 +12,7 @@ package main
 // CHECK: @[[NESTED_TAIL:[0-9]+]] = private unnamed_addr constant [11 x i8] c"nested-tail"
 // CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
-// CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
+// CHECK: [[RESULT_SLOT:%[0-9]+]] = call noalias dereferenceable(24) ptr @"{{.*}}AllocZ"(i64 24)
 // CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
 // CHECK: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RECORD_ENV:%[0-9]+]], 1
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)

@@ -83,7 +83,7 @@ func main() {
 
 func toEface(i any) *eface {
 	// CHECK-LABEL: define ptr @main.toEface(%"{{.*}}eface" %{{[0-9]+}}){{.*}} {
-	// CHECK: [[TO_EFACE_ADDR:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+	// CHECK: [[TO_EFACE_ADDR:%[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 	// CHECK-NEXT: store %"{{.*}}eface" [[TO_EFACE_VALUE:%[0-9]+]], ptr [[TO_EFACE_ADDR]]
 	// CHECK-NEXT: ret ptr [[TO_EFACE_ADDR]]
 	return (*eface)(unsafe.Pointer(&i))

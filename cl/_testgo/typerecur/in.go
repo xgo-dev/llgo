@@ -30,7 +30,7 @@ func countState(c *counter) stateFn {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: %[[COUNTER_OBJ:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
+// CHECK: %[[COUNTER_OBJ:[0-9]+]] = call noalias dereferenceable(32) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 32)
 // CHECK: %[[MAX_SLOT:[0-9]+]] = getelementptr inbounds nuw %main.counter, ptr %[[COUNTER_OBJ]], i32 0, i32 1
 // CHECK-NEXT: %[[STATE_SLOT:[0-9]+]] = getelementptr inbounds nuw %main.counter, ptr %[[COUNTER_OBJ]], i32 0, i32 2
 // CHECK-NEXT: store i64 5, ptr %[[MAX_SLOT]]

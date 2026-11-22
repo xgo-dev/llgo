@@ -34,7 +34,7 @@ func info(m) string
 // CHECK: @[[THREE:[0-9]+]] = private unnamed_addr constant [2 x i8] c"3\00"
 // CHECK: @[[FOUR:[0-9]+]] = private unnamed_addr constant [2 x i8] c"4\00"
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[INFO_STORAGE:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
+// CHECK: [[INFO_STORAGE:%[0-9]+]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 16)
 // CHECK-NEXT: call void @"{{.*}}/cl/_testrt/linkname/linktarget.(*m).setInfo"(ptr [[INFO_STORAGE]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[HELLO]], i64 5 })
 // CHECK-NEXT: [[INFO_RECEIVER:%[0-9]+]] = load %main.m, ptr [[INFO_STORAGE]]
 // CHECK-NEXT: [[INFO:%[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.String" @"{{.*}}/cl/_testrt/linkname/linktarget.m.info"(%main.m [[INFO_RECEIVER]])

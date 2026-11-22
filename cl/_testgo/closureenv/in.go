@@ -20,7 +20,7 @@ package main
 // CHECK: [[ZSP_VALUE:%[0-9]+]] = alloca ptr
 // CHECK: store ptr %0, ptr [[ZSP_VALUE]]
 // CHECK-NEXT: [[ZSP_COPY:%[0-9]+]] = load ptr, ptr [[ZSP_VALUE]]
-// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
+// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call noalias dereferenceable(8) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
 // CHECK: store ptr [[ZSP_COPY]], ptr %{{[0-9]+}}
 // CHECK: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
 // CHECK-NEXT: ret { ptr, ptr } [[ZSP_CLOSURE]]
