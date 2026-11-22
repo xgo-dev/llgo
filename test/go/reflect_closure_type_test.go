@@ -343,12 +343,48 @@ func TestReflectHigherOrderContainerTypeSelection(t *testing.T) {
 	}
 }
 
+//llgo:cdecl
+type reflectAssignmentAlias = func(int64) int64
+
+func TestReflectHigherOrderNamedFuncAssignment(t *testing.T) {
+	type Named func(func(int64) int64) int64
+	named := reflect.TypeFor[Named]()
+	qualified := reflect.TypeFor[[]func(reflectAssignmentAlias) int64]().Elem()
+	for _, tc := range []struct {
+		name     string
+		src, dst reflect.Type
+	}{
+		{"named to qualified", named, qualified},
+		{"qualified to named", qualified, named},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.src.AssignableTo(tc.dst) {
+				t.Fatalf("%v must be assignable to %v", tc.src, tc.dst)
+			}
+			dst := reflect.New(tc.dst).Elem()
+			dst.Set(reflect.Zero(tc.src))
+			if !dst.IsNil() {
+				t.Fatal("assignment did not preserve a nil function")
+			}
+		})
+	}
+}
+
 func TestReflectHigherOrderFuncAssignmentMismatch(t *testing.T) {
 	type First func(reflectCallbackAlias) int64
 	type Second func(reflectCallbackAlias) int64
-	if reflect.TypeFor[First]().AssignableTo(reflect.TypeFor[Second]()) {
+	first, second := reflect.TypeFor[First](), reflect.TypeFor[Second]()
+	if first.AssignableTo(second) {
 		t.Fatal("distinct named function types are assignable")
 	}
+	t.Run("named Set", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Set accepted distinct named function types")
+			}
+		}()
+		reflect.New(second).Elem().Set(reflect.Zero(first))
+	})
 	variadic := reflect.TypeOf((func(reflectCallbackAlias, ...byte) int64)(nil))
 	slice := reflect.TypeOf((func(func(reflectCallbackArg) int64, []byte) int64)(nil))
 	if variadic.AssignableTo(slice) || slice.AssignableTo(variadic) {

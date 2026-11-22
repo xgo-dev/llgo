@@ -1148,7 +1148,9 @@ func (t *rtype) AssignableTo(u Type) bool {
 	}
 	// Set adapts Go closures with the same public signature across callback
 	// frames. A native function pointer needs a compatible entry of its own.
-	return !dst.HasNativeLayout() && !src.HasNativeLayout() && dst.PublicFunc() == src.PublicFunc()
+	return dst.Kind() == abi.Func && src.Kind() == abi.Func &&
+		!dst.HasNativeLayout() && !src.HasNativeLayout() &&
+		assignableCallback(dst.FuncType(), src.FuncType())
 }
 
 func (t *rtype) ConvertibleTo(u Type) bool {

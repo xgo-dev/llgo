@@ -447,6 +447,26 @@ func testReflectCallbackSlice(t *testing.T, box func(reflect.Value) ([]reflectBu
 			checkReflectBulkRecord(t, record, [3]int32{12, 0, 16}, 0x11223344)
 		})
 	}
+	t.Run("detached", func(t *testing.T) {
+		if unsafe.Sizeof(reflectNativeCallbackPair{}) == unsafe.Sizeof([2]reflectBulkCallback{}) {
+			t.Skip("C and Go callback slots have matching strides")
+		}
+		const marker = 0x11223344
+		record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11, reflectBulkAdd23}, marker)
+		array := reflect.ValueOf(record).Elem().Field(1)
+		boxed, ok := box(array.Slice(0, 2))
+		if !ok || len(boxed) != 2 || cap(boxed) != 3 {
+			t.Fatalf("boxed slice: assertion=%v len=%d cap=%d", ok, len(boxed), cap(boxed))
+		}
+		checkReflectBulkCallback(t, 1, boxed[1], 16)
+		boxed[0] = nil
+		checkReflectBulkRecord(t, record, [3]int32{12, 16, 28}, marker)
+		array.Index(1).SetZero()
+		for i, want := range []int32{0, 16, 28} {
+			checkReflectBulkCallback(t, i, boxed[:cap(boxed)][i], want)
+		}
+		checkReflectBulkRecord(t, record, [3]int32{12, 0, 28}, marker)
+	})
 }
 
 type reflectCallbackArrayCase struct {

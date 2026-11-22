@@ -2237,13 +2237,6 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	}
 
 	assignDst := physicalType(dst)
-	if typ.IsClosure() && assignDst.IsClosure() && typ != assignDst {
-		srcFunc := &toFuncType(typ.StructType()).Type
-		dstFunc := &toFuncType(assignDst.StructType()).Type
-		if srcFunc != dstFunc && srcFunc.PublicFunc() == dstFunc.PublicFunc() {
-			return v.adaptFuncFrame(assignDst, dstFunc)
-		}
-	}
 	if alias := typ.NativeFuncAlias(); alias != nil && assignDst.IsClosure() &&
 		directlyAssignable(&toFuncType(assignDst.StructType()).Type, alias.Public) {
 		return v.nativeAliasClosure(assignDst, alias)
@@ -2256,6 +2249,13 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 		fl := v.flag&(flagAddr|flagIndir) | v.flag.ro()
 		fl |= flag(dst.Kind())
 		return Value{dst, v.ptr, fl}
+
+	case typ.IsClosure() && assignDst.IsClosure():
+		srcFunc := toFuncType(typ.StructType())
+		dstFunc := toFuncType(assignDst.StructType())
+		if assignableCallback(dstFunc, srcFunc) {
+			return v.adaptFuncFrame(assignDst, &dstFunc.Type)
+		}
 
 	case dst.Kind() == abi.Func && dst.HasNativeLayout() && v.typ().IsClosure() &&
 		assignableCallback(dst.FuncType(), v.closureFunc()):
