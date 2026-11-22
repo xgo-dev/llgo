@@ -354,13 +354,6 @@ func TestReflectNativeCallbackArrayTransfer(t *testing.T) {
 		}
 		checkReflectBulkCallbacks(t, boxed, [3]int32{12, 0, 16})
 	})
-	t.Run("TypeAssert", func(t *testing.T) {
-		boxed, ok := reflect.TypeAssert[[3]reflectBulkCallback](array)
-		if !ok {
-			t.Fatal("asserted array lost its type identity")
-		}
-		checkReflectBulkCallbacks(t, boxed, [3]int32{12, 0, 16})
-	})
 	t.Run("map", func(t *testing.T) {
 		values := make(map[int][3]reflectBulkCallback)
 		reflect.ValueOf(values).SetMapIndex(reflect.ValueOf(1), array)
@@ -375,6 +368,29 @@ func TestReflectNativeCallbackArrayTransfer(t *testing.T) {
 }
 
 func TestReflectNativeCallbackSliceInterface(t *testing.T) {
+	t.Run("Interface", func(t *testing.T) {
+		testReflectCallbackSlice(t, func(v reflect.Value) ([]reflectBulkCallback, bool) {
+			boxed, ok := v.Interface().([]reflectBulkCallback)
+			return boxed, ok
+		})
+	})
+	t.Run("Set", func(t *testing.T) {
+		testReflectCallbackSlice(t, func(v reflect.Value) ([]reflectBulkCallback, bool) {
+			var boxed []reflectBulkCallback
+			reflect.ValueOf(&boxed).Elem().Set(v)
+			return boxed, true
+		})
+	})
+	t.Run("Append", func(t *testing.T) {
+		testReflectCallbackSlice(t, func(v reflect.Value) ([]reflectBulkCallback, bool) {
+			boxed, ok := reflect.Append(v).Interface().([]reflectBulkCallback)
+			return boxed, ok
+		})
+	})
+}
+
+func testReflectCallbackSlice(t *testing.T, box func(reflect.Value) ([]reflectBulkCallback, bool)) {
+	t.Helper()
 	record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, nil, reflectBulkAdd11}, 0x11223344)
 	array := reflect.ValueOf(record).Elem().Field(1)
 	for _, tc := range []struct {
@@ -389,46 +405,29 @@ func TestReflectNativeCallbackSliceInterface(t *testing.T) {
 		{"zero capacity", array.Slice3(3, 3, 3), 0, []int32{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			check := func(t *testing.T, boxed []reflectBulkCallback, ok bool) {
-				t.Helper()
-				if !ok || boxed == nil || len(boxed) != tc.length || cap(boxed) != len(tc.want) {
-					t.Fatalf("boxed slice: assertion=%v nil=%v len=%d cap=%d", ok, boxed == nil, len(boxed), cap(boxed))
-				}
-				for i, fn := range boxed[:cap(boxed)] {
-					checkReflectBulkCallback(t, i, fn, tc.want[i])
-				}
-				checkReflectBulkRecord(t, record, [3]int32{12, 0, 16}, 0x11223344)
+			boxed, ok := box(tc.value)
+			if !ok || boxed == nil || len(boxed) != tc.length || cap(boxed) != len(tc.want) {
+				t.Fatalf("boxed slice: assertion=%v nil=%v len=%d cap=%d", ok, boxed == nil, len(boxed), cap(boxed))
 			}
-			t.Run("Interface", func(t *testing.T) {
-				boxed, ok := tc.value.Interface().([]reflectBulkCallback)
-				check(t, boxed, ok)
-			})
-			t.Run("TypeAssert", func(t *testing.T) {
-				boxed, ok := reflect.TypeAssert[[]reflectBulkCallback](tc.value)
-				check(t, boxed, ok)
-			})
-			t.Run("Set", func(t *testing.T) {
-				var boxed []reflectBulkCallback
-				reflect.ValueOf(&boxed).Elem().Set(tc.value)
-				check(t, boxed, true)
-			})
-			t.Run("Append", func(t *testing.T) {
-				boxed, ok := reflect.Append(tc.value).Interface().([]reflectBulkCallback)
-				check(t, boxed, ok)
-			})
+			for i, fn := range boxed[:cap(boxed)] {
+				checkReflectBulkCallback(t, i, fn, tc.want[i])
+			}
+			checkReflectBulkRecord(t, record, [3]int32{12, 0, 16}, 0x11223344)
 		})
 	}
 }
 
-func TestReflectNativeCallbackSingleArray(t *testing.T) {
+type reflectCallbackArrayCase struct {
+	name  string
+	value reflect.Value
+	want  int32
+}
+
+func reflectCallbackSingleArrays() []reflectCallbackArrayCase {
 	native := reflectBulkNativeArray{reflectBulkAdd7}
 	plain := [1]reflectBulkCallback{reflectBulkAdd7}
 	record := reflectBulkSingleRecord{Callbacks: plain}
-	for _, tc := range []struct {
-		name  string
-		value reflect.Value
-		want  int32
-	}{
+	return []reflectCallbackArrayCase{
 		{"native value", reflect.ValueOf(native), 12},
 		{"native addressable", reflect.ValueOf(&native).Elem(), 12},
 		{"Go value", reflect.ValueOf(plain), 12},
@@ -437,7 +436,11 @@ func TestReflectNativeCallbackSingleArray(t *testing.T) {
 		{"field addressable", reflect.ValueOf(&record).Elem().Field(1), 12},
 		{"native nil", reflect.ValueOf(reflectBulkNativeArray{}), 0},
 		{"Go nil", reflect.ValueOf([1]reflectBulkCallback{}), 0},
-	} {
+	}
+}
+
+func TestReflectNativeCallbackSingleArray(t *testing.T) {
+	for _, tc := range reflectCallbackSingleArrays() {
 		t.Run(tc.name, func(t *testing.T) {
 			check := func(fn reflectBulkCallback, ok bool) {
 				t.Helper()
@@ -467,19 +470,21 @@ func TestReflectNativeCallbackSingleArray(t *testing.T) {
 			if recordDst.Callback == nil || recordDst.Callback(5) != 16 || recordDst.Tail != [2]uint32{0x11223344, 0x55667788} {
 				t.Fatal("Copy changed neighboring fields")
 			}
-			if tc.value.Type() == reflect.TypeOf(native) {
+			if tc.value.Type() == reflect.TypeFor[reflectBulkNativeArray]() {
 				boxed, ok := tc.value.Interface().(reflectBulkNativeArray)
-				check(boxed[0], ok)
-				boxed, ok = reflect.TypeAssert[reflectBulkNativeArray](tc.value)
 				check(boxed[0], ok)
 			} else {
 				boxed, ok := tc.value.Interface().([1]reflectBulkCallback)
 				check(boxed[0], ok)
-				boxed, ok = reflect.TypeAssert[[1]reflectBulkCallback](tc.value)
-				check(boxed[0], ok)
 			}
 		})
 	}
+}
+
+func reflectBulkCallbackSlots() []reflect.Value {
+	record := reflectBulkSingleRecord{Callback: reflectBulkAdd7, Callbacks: [1]reflectBulkCallback{reflectBulkAdd7}}
+	v := reflect.ValueOf(&record).Elem()
+	return []reflect.Value{v.Field(0), v.Field(1).Index(0)}
 }
 
 func TestReflectNativeCallbackSlotAddr(t *testing.T) {
@@ -488,10 +493,8 @@ func TestReflectNativeCallbackSlotAddr(t *testing.T) {
 	if !goAddr.CanInterface() || goAddr.Interface().(*reflectBulkCallback) != &ordinary {
 		t.Fatal("ordinary callback pointer did not share its Go slot")
 	}
-	record := reflectBulkSingleRecord{Callback: reflectBulkAdd7, Callbacks: [1]reflectBulkCallback{reflectBulkAdd7}}
-	v := reflect.ValueOf(&record).Elem()
 	typ := reflect.TypeFor[*reflectBulkCallback]()
-	for _, slot := range []reflect.Value{v.Field(0), v.Field(1).Index(0)} {
+	for _, slot := range reflectBulkCallbackSlots() {
 		addr := slot.Addr()
 		if addr.Type() != typ || !addr.CanConvert(typ) {
 			t.Fatal("callback slot lost its pointer type")
@@ -499,7 +502,7 @@ func TestReflectNativeCallbackSlotAddr(t *testing.T) {
 		same := addr.Convert(typ)
 		checkReflectBulkCallback(t, 0, same.Elem().Interface().(reflectBulkCallback), 12)
 		if unsafe.Sizeof(reflectBulkNativeArray{}) == unsafe.Sizeof([1]reflectBulkCallback{}) {
-			p, ok := reflect.TypeAssert[*reflectBulkCallback](same)
+			p, ok := same.Interface().(*reflectBulkCallback)
 			if !same.CanInterface() || !ok || reflect.ValueOf(p).Pointer() != addr.Pointer() {
 				t.Fatal("compatible callback pointer did not share the slot")
 			}
@@ -511,60 +514,9 @@ func TestReflectNativeCallbackSlotAddr(t *testing.T) {
 		}
 		const want = "reflect: cannot use a Go pointer to a packed callback"
 		expectSliceToArrayPanic(t, want, func() { same.Interface() })
-		expectSliceToArrayPanic(t, want, func() { reflect.TypeAssert[*reflectBulkCallback](addr) })
-		expectSliceToArrayPanic(t, want, func() { reflect.TypeAssert[int](addr) })
 		expectSliceToArrayPanic(t, want, func() { reflect.New(typ).Elem().Set(addr) })
 		expectSliceToArrayPanic(t, want, func() { addr.Convert(box) })
 		expectSliceToArrayPanic(t, want, func() { reflect.ValueOf(func(*reflectBulkCallback) {}).Call([]reflect.Value{addr}) })
-	}
-}
-
-func TestReflectNativeCallbackFieldTypeAssert(t *testing.T) {
-	for _, callback := range []reflectBulkCallback{nil, reflectBulkAdd7} {
-		record := reflectBulkSingleRecord{
-			Callback: callback, Callbacks: [1]reflectBulkCallback{reflectBulkAdd11},
-			Tail: [2]uint32{0x11223344, 0x55667788},
-		}
-		fn, ok := reflect.TypeAssert[reflectBulkCallback](reflect.ValueOf(&record).Elem().Field(0))
-		if !ok || (fn == nil) != (callback == nil) {
-			t.Fatalf("callback assertion=%v nil=%v, want nil=%v", ok, fn == nil, callback == nil)
-		}
-		if fn != nil && fn(5) != 12 {
-			t.Fatal("asserted callback lost its target")
-		}
-		if record.Callbacks[0](5) != 16 || record.Tail != [2]uint32{0x11223344, 0x55667788} {
-			t.Fatal("TypeAssert changed neighboring fields")
-		}
-	}
-}
-
-//llgo:cdecl
-type reflectAliasField struct {
-	Callback reflectBulkCallbackAlias
-	Marker   uint32
-}
-
-func TestReflectNativeAliasTypeAssert(t *testing.T) {
-	record := reflectAliasField{Callback: reflectBulkAdd7, Marker: 17}
-	field := reflect.ValueOf(&record).Elem().Field(0)
-	var boxed any = field.Interface()
-	for _, v := range []reflect.Value{field, reflect.ValueOf(&boxed).Elem()} {
-		fn, ok := reflect.TypeAssert[func(int32) int32](v)
-		if !ok || fn == nil || fn(5) != 12 {
-			t.Fatal("asserting a native alias as its Go signature lost the callback")
-		}
-	}
-	record.Callback = nil
-	if fn, ok := reflect.TypeAssert[func(int32) int32](field); !ok || fn != nil {
-		t.Fatal("asserting a nil native alias produced a callback")
-	}
-}
-
-func TestReflectHigherOrderAliasTypeAssert(t *testing.T) {
-	field := reflect.ValueOf(struct{ F reflectBulkCallbackIdentity }{reflectBulkNativeIdentity}).Field(0)
-	identity, ok := reflect.TypeAssert[func(func(int32) int32) func(int32) int32](field)
-	if !ok || identity == nil || identity(reflectBulkAdd7)(5) != 12 {
-		t.Fatal("asserting a higher-order native alias lost its callable Go frame")
 	}
 }
 
@@ -584,10 +536,6 @@ func TestReflectNativeCallbackReadOnly(t *testing.T) {
 		{"callback Interface", func() { callback.Interface() }},
 		{"array Interface", func() { array.Interface() }},
 		{"slice Interface", func() { slice.Interface() }},
-		{"callback TypeAssert", func() { reflect.TypeAssert[reflectBulkCallback](callback) }},
-		{"array TypeAssert", func() { reflect.TypeAssert[[1]reflectBulkCallback](array) }},
-		{"slice TypeAssert", func() { reflect.TypeAssert[[]reflectBulkCallback](slice) }},
-		{"mismatched TypeAssert", func() { reflect.TypeAssert[int](callback) }},
 		{"Copy from array", func() { reflect.Copy(ordinary, array) }},
 		{"Copy into array", func() { reflect.Copy(array, ordinary) }},
 		{"Copy from slice", func() { reflect.Copy(ordinary, slice) }},
