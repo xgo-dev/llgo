@@ -389,6 +389,38 @@ func TestReflectNativeCallbackSliceInterface(t *testing.T) {
 	})
 }
 
+func TestReflectNativeCallbackSliceWriteThrough(t *testing.T) {
+	slots := [3]reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11, reflectBulkAdd23}
+	check := func(t *testing.T, array reflect.Value) {
+		t.Helper()
+		window := array.Slice(1, 3)
+		boxed := window.Interface().([]reflectBulkCallback)
+		if reflect.ValueOf(boxed).Pointer() != window.Pointer() {
+			t.Fatal("boxing a slice with matching callback slots changed its backing array")
+		}
+		boxed[0] = nil
+		if !array.Index(1).IsNil() {
+			t.Fatal("boxed slice write did not reach the original array")
+		}
+		array.Index(2).SetZero()
+		if boxed[1] != nil {
+			t.Fatal("boxed slice did not see the write to the original array")
+		}
+	}
+	t.Run("Go array", func(t *testing.T) {
+		array := slots
+		check(t, reflect.ValueOf(&array).Elem())
+	})
+	t.Run("matching C slots", func(t *testing.T) {
+		if unsafe.Sizeof(reflectNativeCallbackPair{}) != unsafe.Sizeof([2]reflectBulkCallback{}) {
+			t.Skip("C and Go callback slots have different strides")
+		}
+		record := newReflectBulkRecord(slots, 17)
+		check(t, reflect.ValueOf(record).Elem().Field(1))
+		checkReflectBulkRecord(t, record, [3]int32{12, 0, 0}, 17)
+	})
+}
+
 func testReflectCallbackSlice(t *testing.T, box func(reflect.Value) ([]reflectBulkCallback, bool)) {
 	t.Helper()
 	record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, nil, reflectBulkAdd11}, 0x11223344)
