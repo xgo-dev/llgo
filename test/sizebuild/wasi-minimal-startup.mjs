@@ -5,8 +5,8 @@ import { WASI } from 'node:wasi';
 const [artifact, initialBytes, maximumBytes, mode] = process.argv.slice(2);
 const module = new WebAssembly.Module(fs.readFileSync(artifact));
 if (mode !== 'compact') {
-  assert.ok(!WebAssembly.Module.imports(module).some(({ name }) =>
-    name === 'args_get' || name === 'args_sizes_get'));
+  const startupImports = new Set(['args_get', 'args_sizes_get', 'clock_time_get', 'poll_oneoff']);
+  assert.ok(!WebAssembly.Module.imports(module).some(({ name }) => startupImports.has(name)));
   assert.ok(Number(initialBytes) < 16 * 1024 * 1024);
 }
 

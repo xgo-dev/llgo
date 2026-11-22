@@ -56,7 +56,7 @@ def runtime_free_cache_probe(llgo, wasmer, directory, env):
     print("WASI runtime-free/full-runtime cache switching and stderr semantics passed", flush=True)
 
     module = directory / "wasi-minimal-startup.wasm"
-    wasi_exported_allocator_probe(llgo, module, env, "./benchmark/binary_size/println")
+    wasi_exported_allocator_probe(llgo, module, env, "./internal/build/testdata/wasm-runtime-free")
     print("WASI allocation-free startup and exported allocator passed", flush=True)
 
 
