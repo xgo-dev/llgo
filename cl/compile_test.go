@@ -128,6 +128,10 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/errspkg",
 				"./_testgo/bytespkg",
 				"./_testgo/binpkg",
+				// reflectconv sat within a few hundred bytes of the IRAM ceiling;
+				// the vendored riscv32 memmove and 64-bit-division shims pushed it
+				// ~2.5 KiB over. It runs in the S31 emu smoke suite instead.
+				"./_testgo/reflectconv",
 			},
 			"./_testlibc": {
 				"./_testlibc/atomic", // output mismatch: baremetal newlib printf is the nano variant, which has no %lld support (fixture itself links; llgo's i64 vararg lowering is verified correct)

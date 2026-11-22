@@ -312,6 +312,12 @@ func TestS31ReflectSmoke(t *testing.T) {
 		{pkg: "./_testgo/timertick", golden: true},
 		{pkg: "./_testgo/timerfunc", golden: true},
 		{pkg: "./_testgo/mutexstarve", golden: true},
+		// Too close to the C3 IRAM ceiling to keep running there once the
+		// vendored memmove/division shims landed; the 512 KiB S31 SRAM has
+		// room, so the Value.Convert coverage stays on a baremetal target.
+		// The fixture is assert-based (panics on any mismatch) and prints
+		// nothing, so the plain run entry's clean-exit check is the assert.
+		{pkg: "./_testgo/reflectconv"},
 	} {
 		t.Run(filepath.Base(tc.pkg), func(t *testing.T) {
 			elfPath := buildESPEmuELF(t, esp32s31BasicTarget, tc.pkg, t.TempDir())
