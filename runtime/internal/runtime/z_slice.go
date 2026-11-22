@@ -107,7 +107,7 @@ func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int
 	if etSize == 0 {
 		return src
 	}
-	c.Memcpy(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
+	llgoMemcpy(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
 	return src
 }
 
@@ -140,7 +140,7 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 			c.Memset(unsafe.Add(p, copied), 0, mem-copied)
 		}
 		if oldLen != 0 {
-			c.Memcpy(p, src.data, uintptr(oldLen*etSize))
+			llgoMemcpy(p, src.data, uintptr(oldLen*etSize))
 		}
 		src.data = p
 		src.cap = newCap
@@ -191,7 +191,7 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 		n = num
 	}
 	if n > 0 {
-		c.Memmove(dst.data, data, uintptr(n*etSize))
+		llgoMemmove(dst.data, data, uintptr(n*etSize))
 	}
 	return n
 }
