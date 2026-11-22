@@ -214,7 +214,7 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 		}
 		suffixes := []string{variantSuffix}
 		if !roots[fn].IsNil() {
-			suffixes = append(suffixes, baselineSuffix, resolverSuffix, slotSuffix)
+			suffixes = append(suffixes, baselineSuffix, resolverSuffix, slotSuffix, queryOnlySuffix)
 		}
 		for _, suffix := range suffixes {
 			name := fn.Name() + suffix
@@ -274,14 +274,15 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	return &avx2Plan{originals, variants, baselines, origins}, nil
 }
 
-func (p *avx2Plan) commit(mod llvm.Module, source *sourceInfo) []dispatchSite {
+func (p *avx2Plan) commit(mod llvm.Module, source *sourceInfo, roots map[llvm.Value]*guardRoot) {
 	if p == nil {
-		return nil
+		return
 	}
 	if source == nil {
 		source = newSourceInfo(mod)
 	}
-	var sites []dispatchSite
+	builder := mod.Context().NewBuilder()
+	defer builder.Dispose()
 	for _, fn := range p.originals {
 		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))
 		variant := p.variants[fn]
@@ -298,10 +299,29 @@ func (p *avx2Plan) commit(mod llvm.Module, source *sourceInfo) []dispatchSite {
 		}
 		if baseline := p.baselines[fn]; !baseline.IsNil() {
 			source.clone(fn, baseline)
-			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}}))
+			// AVX2() can remain true after cpu.avx=off. Preserve the true
+			// branch at baseline ISA, including ordinary calls to other roots.
+			queryOnly := fn.CloneFunction()
+			queryOnly.SetName(fn.Name() + queryOnlySuffix)
+			queryOnly.SetLinkage(llvm.InternalLinkage)
+			queryOnly.AddFunctionAttr(mod.Context().CreateStringAttribute(attributePrefix+"guarded", ""))
+			queryOnly.RemoveStringAttributeAtIndex(-1, EntryAttribute)
+			queryOnly.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
+			specialize(mod.Context(), queryOnly, nil, true)
+			source.clone(fn, queryOnly)
+			site := dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, queryOnly}, {entryRequirements(featureAVX2), variant}})
+			builder.SetInsertPointBefore(site.selection)
+			if root := roots[variant]; root != nil {
+				site.selection.SetOperand(1, selectDispatchBody(builder, site.features, root.base, root.choices))
+			}
+			if root := roots[baseline]; root != nil {
+				querySelection := site.selection.Operand(2)
+				builder.SetInsertPointBefore(querySelection)
+				querySelection.SetOperand(2, selectDispatchBody(builder, site.features, root.base, root.choices))
+				site.uninitializedCall.SetOperand(site.uninitializedCall.OperandsCount()-1, root.base)
+			}
 		}
 	}
-	return sites
 }
 
 func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Value, enabled bool) {
@@ -355,13 +375,21 @@ func simplifyGuards(fn llvm.Value) {
 	}
 }
 
+func entryRequirements(predicates uint64) uint64 {
+	if predicates&avxGuardPredicates != 0 {
+		return predicates | featureAVX
+	}
+	return predicates
+}
+
+const queryOnlySuffix = symbolPrefix + "avx2_query"
+
 type dispatchChoice struct {
 	bits uint64
 	fn   llvm.Value
 }
 
-// The AVX2 resolver has one select between its two implementations. If
-// either gets further variants, select its physical body here as well.
+// Record the final select so mixed guarded roots can cache physical bodies.
 type dispatchSite struct {
 	features, selection, uninitializedCall llvm.Value
 }

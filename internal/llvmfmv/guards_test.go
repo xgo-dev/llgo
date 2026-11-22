@@ -645,3 +645,26 @@ no: ret void
 		t.Fatal("budget boundary did not preserve the ordinary call")
 	}
 }
+
+func TestAVX2QueryWithoutAVX(t *testing.T) {
+	const ir = `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @q() "llgo.cpu.query"="x86.avx2"
+define i1 @root() { %r = call i1 @q()
+ret i1 %r }`
+	for _, tc := range []struct {
+		bits   uint64
+		suffix string
+	}{
+		{0, baselineSuffix}, {featureAVX, baselineSuffix}, {featureAVX2, queryOnlySuffix}, {featureAVX2 | featureAVX, variantSuffix},
+	} {
+		m := parseModule(t, ir)
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		body := m.NamedFunction("root" + tc.suffix)
+		checkCachedGuard(t, m, tc.bits, body)
+		if tc.suffix == queryOnlySuffix && (!strings.Contains(body.String(), "ret i1 true") || strings.Contains(stringAttribute(body, "target-features"), "+avx")) {
+			t.Fatal(body.String())
+		}
+	}
+}

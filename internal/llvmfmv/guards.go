@@ -331,7 +331,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	if len(candidates) == 0 {
 		folds.commit()
-		avx2.commit(mod, nil)
+		avx2.commit(mod, nil, nil)
 		return nil
 	}
 	helpers := guardHelpers(candidates, queries, avx2)
@@ -354,7 +354,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	if len(roots) == 0 {
 		folds.commit()
-		avx2.commit(mod, nil)
+		avx2.commit(mod, nil, nil)
 		return nil
 	}
 	ctx := mod.Context()
@@ -448,17 +448,17 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				}
 				return err
 			}
-			required := mask
-			if mask&avxGuardPredicates != 0 {
-				required |= featureAVX
-			}
-			root.choices[j] = dispatchChoice{required, v}
+			root.choices[j] = dispatchChoice{entryRequirements(mask), v}
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}
 	folds.commit()
 	source := newSourceInfo(mod)
-	sites := avx2.commit(mod, source)
+	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
+	for i := range roots {
+		byFunction[roots[i].fn] = &roots[i]
+	}
+	avx2.commit(mod, source, byFunction)
 	for _, staged := range copies {
 		original := staged.original
 		// The copy predates publication of its AVX2 parent's new PC-site IDs.
@@ -466,30 +466,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 			original = avx2.origins[original]
 		}
 		source.clone(original, staged.body)
-	}
-	// Keep the canonical AVX2 entry callable from separately compiled code.
-	// For public calls, cache the physical target directly in the outer slot.
-	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
-	for i := range roots {
-		byFunction[roots[i].fn] = &roots[i]
-	}
-	builder := ctx.NewBuilder()
-	defer builder.Dispose()
-	for _, site := range sites {
-		builder.SetInsertPointBefore(site.selection)
-		// LLVM select operands are condition, true (AVX2), false (baseline).
-		for operand := 1; operand <= 2; operand++ {
-			root := byFunction[site.selection.Operand(operand)]
-			if root == nil {
-				continue
-			}
-			target := selectDispatchBody(builder, site.features, root.base, root.choices)
-			site.selection.SetOperand(operand, target)
-			if operand == 2 {
-				call := site.uninitializedCall
-				call.SetOperand(call.OperandsCount()-1, root.base)
-			}
-		}
 	}
 	for _, root := range roots {
 		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))

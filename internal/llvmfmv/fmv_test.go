@@ -106,7 +106,7 @@ func TestEarlySpecialization(t *testing.T) {
 	if strings.Contains(root, "@avx2(") || strings.Contains(baseline, "@avx2(") || !strings.Contains(baseline, "ret <4 x float> zeroinitializer") {
 		t.Fatalf("dispatcher or baseline retains an effective query:\n%s\n%s", root, baseline)
 	}
-	for _, want := range []string{"fmv.uninitialized:", "musttail call <4 x float> @root.__llgo_fmv_baseline", "store atomic ptr %selected, ptr @root.__llgo_fmv_slot monotonic"} {
+	for _, want := range []string{"fmv.uninitialized:", "musttail call <4 x float> @root.__llgo_fmv_baseline", "store atomic ptr %selected", "ptr @root.__llgo_fmv_slot monotonic"} {
 		if !strings.Contains(resolver, want) {
 			t.Errorf("resolver missing %q:\n%s", want, resolver)
 		}
