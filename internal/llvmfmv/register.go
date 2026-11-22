@@ -1,6 +1,3 @@
-// Register entries are private implementations of the ordinary Go value ABI.
-// Record source types before opaque-pointer lowering, then select direct calls
-// only after FMV has established the caller's effective instruction set.
 package llvmfmv
 
 import (
@@ -10,9 +7,14 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+const x86VectorCall llvm.CallConv = 80 // LLVM CallingConv::X86_VectorCall
+
 const wideOrigin = attributePrefix + "wide-origin"
 const registerSuffix = symbolPrefix + "reg256"
 
+// Register entries are private implementations of the ordinary Go value ABI.
+// Record source types before wide-vector ABI lowering, then select direct calls
+// only after FMV has established the caller's effective instruction set.
 type WideCalls map[string]llvm.Type
 
 func CaptureWideCalls(m llvm.Module, arch string) WideCalls {
@@ -132,6 +134,15 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string) error {
 		return nil
 	}
 	entries := make(map[llvm.Value]llvm.Value)
+	// Reserve the register namespace before changing any call or metadata.
+	for target := mod.FirstFunction(); !target.IsNil(); target = llvm.NextFunction(target) {
+		if target.IsDeclaration() {
+			continue
+		}
+		if _, ok := s[stringAttribute(target, wideOrigin)]; ok && !mod.NamedValue(target.Name()+registerSuffix).IsNil() {
+			return fmt.Errorf("SIMD register entry collision: %s", target.Name()+registerSuffix)
+		}
+	}
 	var source *sourceInfo
 	// Newly appended entries may themselves call ordinary local kernels.
 	for caller := mod.FirstFunction(); !caller.IsNil(); caller = llvm.NextFunction(caller) {
@@ -146,9 +157,6 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string) error {
 					entry, seen := entries[target]
 					if !seen && registerShape(target, ft) {
 						name := target.Name() + registerSuffix
-						if !mod.NamedValue(name).IsNil() {
-							return fmt.Errorf("SIMD register entry collision: %s", name)
-						}
 						if source == nil {
 							source = newSourceInfo(mod)
 						}
@@ -161,6 +169,11 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string) error {
 				}
 				call = next
 			}
+		}
+	}
+	for f := mod.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+		if hasAttribute(f, wideOrigin) {
+			f.RemoveStringAttributeAtIndex(-1, wideOrigin)
 		}
 	}
 	return nil
@@ -192,7 +205,7 @@ func makeRegisterEntry(mod llvm.Module, target llvm.Value, ft llvm.Type, name st
 	entry.SetComdat(llvm.Comdat{})
 	// vectorcall also carries wide operands in registers on Win64.
 	if strings.Contains(mod.Target(), "windows") {
-		entry.SetFunctionCallConv(llvm.CallConv(80))
+		entry.SetFunctionCallConv(x86VectorCall)
 	}
 	ctx := mod.Context()
 	for _, attr := range target.GetFunctionAttributes() {
