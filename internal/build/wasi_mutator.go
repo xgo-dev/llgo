@@ -10,6 +10,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/sizereport"
 	"github.com/xgo-dev/llvm"
@@ -19,6 +20,7 @@ import (
 const (
 	wasiConcurrentGC        = "__llgo_wasi_gc_concurrent"
 	wasiMutatorSelectionTag = "llgo.wasi.mutatorselect"
+	wasiSizeAllocatorLimit  = "-Wl,--max-memory=536870912"
 )
 
 func wasiMutatorProfile(conf *Config, target crosscompile.Export, gc bool) bool {
@@ -128,10 +130,31 @@ func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose 
 	attempt.linkInputs = slices.Concat(plan.linkInputs[:1], []string{plan.wasiMutatorSelection}, plan.linkInputs[1:])
 	var diagnostics bytes.Buffer
 	probe.linkDiagnostics = &diagnostics
-	if err := executeMainLink(probe, &attempt, verbose); err == nil && singleWASIMutator(attempt.outputPath) {
+	allocator := filepath.Join(probeDir, "emmalloc.o")
+	defer os.Remove(allocator)
+	smallAllocator := slices.Contains(probe.crossCompile.LDFLAGS, wasiSizeAllocatorLimit) &&
+		compileWASISizeAllocator(probe, allocator) == nil
+	if smallAllocator {
+		// wasm-ld extracts the libc allocator when it encounters -lc.
+		probe.crossCompile.LDFLAGS = slices.Concat([]string{allocator}, probe.crossCompile.LDFLAGS)
+	} else {
+		diagnostics.Reset()
+	}
+	err = executeMainLink(probe, &attempt, verbose)
+	if err != nil && smallAllocator {
+		probe = newLinkExecutionContext(ctx, plan)
+		diagnostics.Reset()
+		probe.linkDiagnostics = &diagnostics
+		smallAllocator = false
+		err = executeMainLink(probe, &attempt, verbose)
+	}
+	if err == nil && singleWASIMutator(attempt.outputPath) {
 		_, _ = diagnostics.WriteTo(os.Stderr)
 		if ctx.shouldPrintCommands(verbose) {
 			fmt.Fprintln(os.Stderr, "llgo: link WASI collector for one mutator")
+			if smallAllocator {
+				fmt.Fprintln(os.Stderr, "llgo: use compact WASI libc allocator")
+			}
 		}
 		return probe, probeDir, nil
 	}
@@ -139,4 +162,15 @@ func probeWASIMutatorLink(ctx *context, plan *mainLinkPlan, dir string, verbose 
 		fmt.Fprintln(os.Stderr, "llgo: retain WASI concurrent collector")
 	}
 	return nil, "", os.RemoveAll(probeDir)
+}
+
+// Keep the upstream allocator's region aliasing behavior under Clang
+// optimization. A separate object lets the executable select its allocator
+// without changing the runtime or application archives.
+func compileWASISizeAllocator(ctx *context, output string) error {
+	source := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime", "tinygogc", "_wasi_allocator", "emmalloc.c")
+	cmd := ctx.compiler()
+	cmd.Stderr = ctx.linkDiagnostics
+	return cmd.CompileWithoutLTO("-x", "c", "-Oz", "-g0", "-DNDEBUG",
+		"-fno-strict-aliasing", "-o", output, "-c", source)
 }

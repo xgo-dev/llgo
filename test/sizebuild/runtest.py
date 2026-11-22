@@ -56,13 +56,18 @@ def runtime_free_cache_probe(llgo, wasmer, directory, env):
     print("WASI runtime-free/full-runtime cache switching and stderr semantics passed", flush=True)
 
     module = directory / "wasi-minimal-startup.wasm"
+    wasi_exported_allocator_probe(llgo, module, env, "./benchmark/binary_size/println")
+    print("WASI allocation-free startup and exported allocator passed", flush=True)
+
+
+def wasi_exported_allocator_probe(llgo, module, env, fixture, *, compact=False):
     report = command([str(llgo), "build", "-target=wasi", "-Oz", "-deadcodedrop", "-globaldce=false",
                       "-lto=full", "-debug-artifact=none", "-size", "-size-format=json",
-                      "-o", str(module), "./benchmark/binary_size/println"], env, stdout_only=True)
+                      "-o", str(module), fixture], env, stdout_only=True)
     memory = json.loads(report)["wasm"]["memories"][0]
     command([env.get("NODE", "node"), str(ROOT / "test/sizebuild/wasi-minimal-startup.mjs"),
-             str(module), str(memory["initial_bytes"]), str(memory["maximum_bytes"])], env, timeout=90)
-    print("WASI allocation-free startup and exported allocator passed", flush=True)
+             str(module), str(memory["initial_bytes"]), str(memory["maximum_bytes"]),
+             *(["compact"] if compact else [])], env, timeout=90)
 
 
 def controlled_environment(source):
@@ -98,6 +103,14 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
         }.get(fixture)
         if collector is not None and f"llgo: {collector}" not in log.splitlines():
             raise RuntimeError(f"{fixture}: expected {collector!r}\n{log}")
+        compact_allocator = "llgo: use compact WASI libc allocator"
+        if fixture == "wasm-wasi-single-gc":
+            if compact_allocator not in log:
+                raise RuntimeError(f"{fixture}: compact allocator was not linked\n{log}")
+            wasi_exported_allocator_probe(llgo, module, env,
+                                          f"./internal/build/testdata/{fixture}", compact=True)
+        elif collector and compact_allocator in log:
+            raise RuntimeError(f"{fixture}: concurrent program changed libc allocator\n{log}")
         actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
                           "--stack-size=1048576", str(module)], env, timeout=90)
         if actual.strip() != expected:

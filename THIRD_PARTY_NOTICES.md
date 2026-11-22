@@ -123,6 +123,13 @@ retain the applicable license and copyright notices from the cached source;
 in particular, picolibc and ESP newlib use per-file notices collected by their
 upstream `COPYING` files.
 
+## WASI compact allocator
+
+The WASI size link can use emmalloc from the wasi-libc revision
+`574b88da481569b65a237cb80daf9a2d5aeaf82d` bundled with WASI SDK 25. The
+allocator is distributed under the MIT or University of Illinois/NCSA license.
+See `runtime/internal/runtime/tinygogc/_wasi_allocator/LICENSE`.
+
 ## External tools and system libraries
 
 BDWGC, OpenSSL, libffi, cJSON, SQLite, zlib, Python, Emscripten, QEMU,
