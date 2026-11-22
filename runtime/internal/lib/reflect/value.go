@@ -132,29 +132,31 @@ type nativeFuncSlot struct{ entry unsafe.Pointer }
 
 const wideGoCallbackSlots = unsafe.Sizeof(nativeFuncSlot{}) < unsafe.Sizeof(uintptr(0))
 
-// A C record can embed an array of raw callback pointers. An ordinary Go
-// record with the same field type instead has full-width Go pointer slots.
-func nativeCallbackBytes(typ *abi.Type) uintptr {
+// A C record or a native array anywhere in the element type packs callback
+// pointers. Ordinary Go arrays use full-width slots for those same callbacks.
+func callbackLayout(typ *abi.Type, native bool) (packedBytes uintptr, slot flag) {
+	if !wideGoCallbackSlots {
+		return 0, 0
+	}
 	size := unsafe.Sizeof(nativeFuncSlot{})
 	for typ.Kind() == abi.Array {
 		arr := typ.ArrayType()
+		native = native || typ.HasName() && typ.HasNativeLayout()
 		size *= arr.Len
 		typ = arr.Elem
 	}
-	if typ.Kind() == abi.Func && typ.HasNativeLayout() {
-		return size
+	if size == 0 || typ.Kind() != abi.Func || !typ.HasNativeLayout() {
+		return 0, 0
 	}
-	return 0
+	if native {
+		return size, flagNarrowCallback
+	}
+	return size, flagWideCallback
 }
 
 func callbackSlotFlag(typ *abi.Type, native bool) flag {
-	if !wideGoCallbackSlots || nativeCallbackBytes(typ) == 0 {
-		return 0
-	}
-	if native || typ.Kind() == abi.Array && typ.HasName() && typ.HasNativeLayout() {
-		return flagNarrowCallback
-	}
-	return flagWideCallback
+	_, slot := callbackLayout(typ, native)
+	return slot
 }
 
 func (v Value) callbackElement(typ *abi.Type) (uintptr, flag) {
@@ -162,11 +164,11 @@ func (v Value) callbackElement(typ *abi.Type) (uintptr, flag) {
 		return typ.Size(), 0
 	}
 	slot := v.flag & flagCallbackSlot
-	if slot == 0 && v.kind() == Array && v.typ().HasName() && v.typ().HasNativeLayout() {
-		slot = callbackSlotFlag(typ, true)
-	}
-	if slot == flagNarrowCallback {
-		return nativeCallbackBytes(typ), slot
+	if slot != flagWideCallback {
+		native := slot == flagNarrowCallback || v.kind() == Array && v.typ().HasName() && v.typ().HasNativeLayout()
+		if size, layout := callbackLayout(typ, native); layout == flagNarrowCallback {
+			return size, layout
+		}
 	}
 	return typ.Size(), slot
 }
@@ -178,6 +180,18 @@ func (v Value) narrowNativeFunc() bool {
 		v.typ().Kind() == abi.Func && v.typ().HasNativeLayout()
 }
 
+// Addr preserves the packed slot for Elem. A Go *Callback expects a full-width slot.
+func (v Value) pointsToPackedCallback() bool {
+	return wideGoCallbackSlots && v.flag&flagNarrowCallback != 0 &&
+		v.kind() == Pointer && v.typ().Elem().Kind() == abi.Func
+}
+
+func (v Value) mustNotPointToPackedCallback() {
+	if v.pointsToPackedCallback() {
+		panic("reflect: cannot use a Go pointer to a packed callback")
+	}
+}
+
 // goValue gives packed callbacks the storage expected by their Go type.
 // A Go slice cannot retain a native callback stride, so materialize its full
 // capacity before exposing it outside reflection.
@@ -186,6 +200,8 @@ func (v Value) goValue() Value {
 		return v
 	}
 	switch v.kind() {
+	case Pointer:
+		v.mustNotPointToPackedCallback()
 	case Func:
 		if v.narrowNativeFunc() && v.flag&flagIndir != 0 {
 			v.ptr = (*nativeFuncSlot)(v.ptr).entry
@@ -200,7 +216,7 @@ func (v Value) goValue() Value {
 		}
 	case Slice:
 		elem := physicalType(v.typ().Elem())
-		if size, slot := v.callbackElement(elem); slot == flagNarrowCallback && size != elem.Size() {
+		if v.flag&flagNarrowCallback != 0 && callbackSlotFlag(elem, false) == flagWideCallback {
 			sh := (*unsafeheaderSlice)(v.ptr)
 			out := MakeSlice(toType(v.typ()), sh.Len, sh.Cap)
 			// Access checks belong to the caller; internal interface packing
@@ -948,7 +964,7 @@ func (v Value) CanInterface() bool {
 	if v.flag == 0 {
 		panic(&ValueError{"reflect.Value.CanInterface", Invalid})
 	}
-	return v.flag&flagRO == 0
+	return v.flag&flagRO == 0 && !v.pointsToPackedCallback()
 }
 
 // Interface returns v's current value as an interface{}.
@@ -956,8 +972,8 @@ func (v Value) CanInterface() bool {
 //
 //	var i interface{} = (v's underlying value)
 //
-// It panics if the Value was obtained by accessing
-// unexported struct fields.
+// It panics if the Value was obtained by accessing unexported struct fields
+// or is a pointer to a callback slot narrower than its Go type requires.
 func (v Value) Interface() (i any) {
 	return valueInterface(v, true)
 }
@@ -2006,7 +2022,8 @@ func (v Value) grow(n int) {
 	case oldLen+n > p.Cap:
 		t := physicalType(v.typ().Elem())
 		src := *(*runtime.Slice)(unsafe.Pointer(p))
-		grown := runtime.ReflectGrowSlice(src, n, t)
+		stride, _ := v.callbackElement(t)
+		grown := runtime.ReflectGrowSlice(src, n, t, stride)
 		*p = *(*unsafeheaderSlice)(unsafe.Pointer(&grown))
 	}
 }
@@ -2376,6 +2393,9 @@ func (v Value) Convert(t Type) Value {
 	if op == nil {
 		panic("reflect.Value.Convert: value of type " + stringFor(v.typ()) + " cannot be converted to type " + t.String())
 	}
+	if t.common() != v.typ() {
+		v.mustNotPointToPackedCallback()
+	}
 	return op(v, t)
 }
 
@@ -2383,11 +2403,10 @@ func (v Value) Convert(t Type) Value {
 // If v.CanConvert(t) returns true then v.Convert(t) will not panic.
 func (v Value) CanConvert(t Type) bool {
 	vt := v.Type()
-	if !vt.ConvertibleTo(t) {
+	if !vt.ConvertibleTo(t) || vt != t && v.pointsToPackedCallback() {
 		return false
 	}
-	// A native callback conversion depends on the entry, and an array
-	// conversion depends on the length of the slice.
+	// Callback entries and slice backing storage impose value-level constraints.
 	switch {
 	case vt.Kind() == Func && t.Kind() == Func && t.common().HasNativeLayout():
 		dst := t.common()
@@ -2405,14 +2424,11 @@ func (v Value) CanConvert(t Type) bool {
 			return why == ""
 		}
 	case vt.Kind() == Slice && t.Kind() == Array:
-		if t.Len() > v.Len() {
-			return false
-		}
+		return t.Len() <= v.Len()
 	case vt.Kind() == Slice && t.Kind() == Pointer && t.Elem().Kind() == Array:
-		n := t.Elem().Len()
-		if n > v.Len() {
-			return false
-		}
+		array := t.common().Elem()
+		src, dst := sliceArrayCallbackSlots(v, array)
+		return array.Len() <= v.Len() && src == dst
 	}
 	return true
 }
@@ -2506,6 +2522,7 @@ func (v Value) Method(i int) Value {
 	if v.typ().Kind() == abi.Interface && v.IsNil() {
 		panic("reflect: Method on nil interface value")
 	}
+	v.mustNotPointToPackedCallback()
 	fl := v.flag.ro() | (v.flag & flagIndir)
 	fl |= flag(Func)
 	fl |= flag(i)<<flagMethodShift | flagMethod
@@ -2648,6 +2665,7 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	case abi.Map:
 		return toFFIWordArg(v)
 	case abi.Pointer:
+		v.mustNotPointToPackedCallback()
 		return toFFIWordArg(v)
 	case abi.Slice:
 		return v.ptr
@@ -3657,14 +3675,28 @@ func cvtStringRunes(v Value, t Type) Value {
 	return makeRunes(v.flag.ro(), []rune(v.String()), t)
 }
 
+// A slice can point into a packed C record. A Go array pointer must use
+// the same slots after it leaves reflection; an array value can copy them.
+func sliceArrayCallbackSlots(v Value, array *abi.Type) (src, dst flag) {
+	if !wideGoCallbackSlots || array.Len() == 0 {
+		return 0, 0
+	}
+	return callbackSlotFlag(array.Elem(), v.flag&flagNarrowCallback != 0), callbackSlotFlag(array, false)
+}
+
 // convertOp: []T -> *[N]T
 func cvtSliceArrayPtr(v Value, t Type) Value {
-	n := t.Elem().Len()
+	array := t.common().Elem()
+	n := array.Len()
 	if n > v.Len() {
 		panic("reflect: cannot convert slice with length " + itoa(v.Len()) + " to pointer to array with length " + itoa(n))
 	}
+	src, dst := sliceArrayCallbackSlots(v, array)
+	if src != dst {
+		panic("reflect: cannot convert slice to array pointer with a different callback layout")
+	}
 	h := (*unsafeheaderSlice)(v.ptr)
-	return Value{t.common(), h.Data, v.flag&^(flagIndir|flagAddr|flagKindMask) | flag(Pointer)}
+	return Value{t.common(), h.Data, v.flag.ro() | flag(Pointer) | dst}
 }
 
 // convertOp: []T -> [N]T
@@ -3675,12 +3707,14 @@ func cvtSliceArray(v Value, t Type) Value {
 	}
 	h := (*unsafeheaderSlice)(v.ptr)
 	typ := t.common()
-	ptr := h.Data
-	c := unsafe_New(typ)
-	typedmemmove(typ, c, ptr)
-	ptr = c
-
-	return Value{typ, ptr, v.flag&^(flagAddr|flagKindMask) | flag(Array)}
+	srcSlot, dstSlot := sliceArrayCallbackSlots(v, typ)
+	dst := Value{typ, unsafe_New(typ), flag(Array) | flagIndir | v.flag.ro() | dstSlot}
+	if srcSlot == flagNarrowCallback || dstSlot == flagNarrowCallback {
+		dst.setCallbackArray(Value{typ, h.Data, flag(Array) | flagIndir | srcSlot})
+	} else {
+		typedmemmove(typ, dst.ptr, h.Data)
+	}
+	return dst
 }
 
 // convertOp: direct copy

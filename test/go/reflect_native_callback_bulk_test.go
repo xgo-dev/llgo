@@ -5,6 +5,7 @@ package gotest
 import (
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 //llgo:cdecl
@@ -225,6 +226,113 @@ func TestReflectNativeCallbackAppend(t *testing.T) {
 	checkReflectBulkRecord(t, record, [3]int32{28, 28, 16}, marker)
 }
 
+//llgo:cdecl
+type reflectNativeCallbackPair [2]reflectBulkCallback
+
+func TestReflectNativeCallbackPairGrow(t *testing.T) {
+	rows := [4]reflectNativeCallbackPair{
+		{reflectBulkAdd7}, {reflectBulkAdd11}, {reflectBulkAdd23}, {reflectBulkAdd7},
+	}
+	s := rows[:1:2]
+	reflect.ValueOf(&s).Elem().Grow(2)
+	if len(s) != 1 || cap(s) < 3 {
+		t.Fatalf("Grow: len=%d cap=%d", len(s), cap(s))
+	}
+	s = s[:3]
+	checkReflectBulkCallback(t, 0, s[0][0], 12)
+	checkReflectBulkCallback(t, 1, s[1][0], 16)
+	checkReflectBulkCallback(t, 2, s[2][0], 0)
+
+	v := reflect.ValueOf(s)
+	reflect.Copy(v.Slice(2, 3), v.Slice(1, 2))
+	v.Slice(1, 2).Clear()
+	checkReflectBulkCallback(t, 0, s[0][0], 12)
+	checkReflectBulkCallback(t, 1, s[1][0], 0)
+	checkReflectBulkCallback(t, 2, s[2][0], 16)
+	checkReflectBulkCallback(t, 1, rows[1][0], 16)
+
+	full := reflect.ValueOf(&rows).Elem().Slice3(0, 2, 2)
+	appended := reflect.AppendSlice(full, v.Slice(2, 3)).Interface().([]reflectNativeCallbackPair)
+	for i, want := range []int32{12, 16, 16} {
+		checkReflectBulkCallback(t, i, appended[i][0], want)
+	}
+}
+
+func TestReflectNativeCallbackSliceToArray(t *testing.T) {
+	record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11}, 17)
+	field := reflect.ValueOf(record).Elem().Field(1)
+	type callbackSlice []reflectBulkCallback
+	packed := reflect.Append(field.Slice(0, 2)).Convert(reflect.TypeFor[callbackSlice]())
+	ordinary := []reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11}
+	different := unsafe.Sizeof(reflectNativeCallbackPair{}) != unsafe.Sizeof([2]reflectBulkCallback{})
+	for _, tc := range []struct {
+		name   string
+		src    reflect.Value
+		native bool
+	}{
+		{"record", packed, true},
+		{"Go slice", reflect.ValueOf(ordinary), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, dst := range []reflect.Type{reflect.TypeFor[*[2]reflectBulkCallback](), reflect.TypeFor[*reflectNativeCallbackPair]()} {
+				native := dst.Elem() == reflect.TypeFor[reflectNativeCallbackPair]()
+				snapshot := tc.src.Convert(dst.Elem())
+				checkReflectBulkCallback(t, 1, snapshot.Index(1).Interface().(reflectBulkCallback), 16)
+				switch a := snapshot.Interface().(type) {
+				case [2]reflectBulkCallback:
+					checkReflectBulkCallback(t, 1, a[1], 16)
+				case reflectNativeCallbackPair:
+					checkReflectBulkCallback(t, 1, a[1], 16)
+				default:
+					t.Fatalf("unexpected array snapshot %T", a)
+				}
+				if different && native != tc.native {
+					if tc.src.CanConvert(dst) {
+						t.Fatalf("CanConvert accepted incompatible storage for %v", dst)
+					}
+					expectSliceToArrayPanic(t, "reflect: cannot convert slice to array pointer with a different callback layout", func() { tc.src.Convert(dst) })
+					continue
+				}
+				if !tc.src.CanConvert(dst) {
+					t.Fatalf("CanConvert rejected compatible storage for %v", dst)
+				}
+				ptr := tc.src.Convert(dst)
+				if ptr.Pointer() != tc.src.Pointer() {
+					t.Fatal("array pointer did not share the slice")
+				}
+				switch a := ptr.Interface().(type) {
+				case *[2]reflectBulkCallback:
+					checkReflectBulkCallback(t, 1, a[1], 16)
+					a[1] = reflectBulkAdd23
+				case *reflectNativeCallbackPair:
+					checkReflectBulkCallback(t, 1, a[1], 16)
+					a[1] = reflectBulkAdd23
+				default:
+					t.Fatalf("unexpected array pointer %T", a)
+				}
+				checkReflectBulkCallback(t, 1, tc.src.Index(1).Interface().(reflectBulkCallback), 28)
+				tc.src.Index(1).Set(reflect.ValueOf(reflectBulkCallback(reflectBulkAdd11)))
+			}
+		})
+	}
+	zero := reflect.TypeFor[*[0]reflectBulkCallback]()
+	for _, s := range []reflect.Value{packed.Slice(0, 0), reflect.ValueOf([]reflectBulkCallback(nil))} {
+		if !s.CanConvert(zero) || s.Convert(zero).Pointer() != s.Pointer() {
+			t.Fatal("zero-length array pointer lost the slice pointer")
+		}
+	}
+	rows := []reflectNativeCallbackPair{{}, {reflectBulkAdd7, reflectBulkAdd11}}
+	last := reflect.ValueOf(rows).Slice(1, 2)
+	target := reflect.TypeFor[[1]reflectNativeCallbackPair]()
+	ptr := last.Convert(reflect.PointerTo(target))
+	if ptr.Interface().(*[1]reflectNativeCallbackPair) != (*[1]reflectNativeCallbackPair)(rows[1:]) {
+		t.Fatal("native array element lost its stride")
+	}
+	checkReflectBulkCallback(t, 1, ptr.Elem().Index(0).Index(1).Interface().(reflectBulkCallback), 16)
+	checkReflectBulkCallback(t, 1, last.Convert(target).Interface().([1]reflectNativeCallbackPair)[0][1], 16)
+	checkReflectBulkRecord(t, record, [3]int32{12, 16, 0}, 17)
+}
+
 func TestReflectNativeCallbackClear(t *testing.T) {
 	record := newReflectBulkRecord([3]reflectBulkCallback{reflectBulkAdd7, reflectBulkAdd11, reflectBulkAdd23}, 0x11223344)
 	array := reflect.ValueOf(record).Elem().Field(1)
@@ -371,6 +479,43 @@ func TestReflectNativeCallbackSingleArray(t *testing.T) {
 				check(boxed[0], ok)
 			}
 		})
+	}
+}
+
+func TestReflectNativeCallbackSlotAddr(t *testing.T) {
+	var ordinary reflectBulkCallback = reflectBulkAdd7
+	goAddr := reflect.ValueOf(&ordinary).Elem().Addr()
+	if !goAddr.CanInterface() || goAddr.Interface().(*reflectBulkCallback) != &ordinary {
+		t.Fatal("ordinary callback pointer did not share its Go slot")
+	}
+	record := reflectBulkSingleRecord{Callback: reflectBulkAdd7, Callbacks: [1]reflectBulkCallback{reflectBulkAdd7}}
+	v := reflect.ValueOf(&record).Elem()
+	typ := reflect.TypeFor[*reflectBulkCallback]()
+	for _, slot := range []reflect.Value{v.Field(0), v.Field(1).Index(0)} {
+		addr := slot.Addr()
+		if addr.Type() != typ || !addr.CanConvert(typ) {
+			t.Fatal("callback slot lost its pointer type")
+		}
+		same := addr.Convert(typ)
+		checkReflectBulkCallback(t, 0, same.Elem().Interface().(reflectBulkCallback), 12)
+		if unsafe.Sizeof(reflectBulkNativeArray{}) == unsafe.Sizeof([1]reflectBulkCallback{}) {
+			p, ok := reflect.TypeAssert[*reflectBulkCallback](same)
+			if !same.CanInterface() || !ok || reflect.ValueOf(p).Pointer() != addr.Pointer() {
+				t.Fatal("compatible callback pointer did not share the slot")
+			}
+			continue
+		}
+		box := reflect.TypeFor[any]()
+		if addr.CanInterface() || same.CanInterface() || addr.CanConvert(box) {
+			t.Fatal("packed callback address is exportable as a Go pointer")
+		}
+		const want = "reflect: cannot use a Go pointer to a packed callback"
+		expectSliceToArrayPanic(t, want, func() { same.Interface() })
+		expectSliceToArrayPanic(t, want, func() { reflect.TypeAssert[*reflectBulkCallback](addr) })
+		expectSliceToArrayPanic(t, want, func() { reflect.TypeAssert[int](addr) })
+		expectSliceToArrayPanic(t, want, func() { reflect.New(typ).Elem().Set(addr) })
+		expectSliceToArrayPanic(t, want, func() { addr.Convert(box) })
+		expectSliceToArrayPanic(t, want, func() { reflect.ValueOf(func(*reflectBulkCallback) {}).Call([]reflect.Value{addr}) })
 	}
 }
 

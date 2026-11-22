@@ -20,6 +20,7 @@ func TypeAssert[T any](v Value) (T, bool) {
 	if v.flag&flagRO != 0 {
 		panic("reflect.TypeAssert: cannot return value obtained from unexported field or method")
 	}
+	v.mustNotPointToPackedCallback()
 	if v.flag&flagMethod != 0 {
 		v = makeMethodValue("TypeAssert", v)
 	}
@@ -60,5 +61,6 @@ func TypeAssert[T any](v Value) (T, bool) {
 
 // Implemented by LLGo's reflect replacement for its physical value layout.
 func (v Value) goValue() Value
+func (v Value) mustNotPointToPackedCallback()
 func assertFunc(v Value, typ *abi.Type) Value
 func packEfaceData(v Value) unsafe.Pointer
