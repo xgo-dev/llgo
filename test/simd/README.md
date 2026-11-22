@@ -126,8 +126,15 @@ This carrier is fixed before FMV creates baseline/AVX2 bodies and tail-forwardin
 entries. Both implementations use the same pointer ABI; the selected body can
 use AVX2 internally without requiring AVX in its caller. Carrier loads/stores
 remain volatile so later argument/return promotion, including LTO, cannot
-silently recreate a feature-dependent YMM calling convention. This first stage
-does not introduce a separate register-vector ABI for calls between fast bodies.
+silently recreate a feature-dependent YMM calling convention.
+
+Eligible direct calls from a caller with proven AVX2 or AVX-512F use a register
+entry for simple 256/512-bit signatures. Other calls, including function values
+and aggregate results, retain their public ABI. Exported Go kernels can publish
+a companion across packages; the archive manifest records its availability.
+Win64 uses vectorcall on these entries. The compiler verifies direct register
+edges after package optimization. The optional ELF/Mach-O LTO plugin repeats
+the check after link-time optimization.
 
 Runtime tests cover scalar-reference arithmetic, distinct upper/lower halves,
 mask bitmaps, partial stores at a guard page, initialization, many arguments,

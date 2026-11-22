@@ -438,35 +438,38 @@ func TestBuildGoroutineStackSizeFlagsRejectNegative(t *testing.T) {
 }
 
 func TestBuildLTOPassPluginFlags(t *testing.T) {
-	fs := flag.NewFlagSet("lto-pass-plugin", flag.ContinueOnError)
-	fs.SetOutput(new(bytes.Buffer))
-	AddBuildFlags(fs)
-	args := []string{
-		"-lto=full",
-		"-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so",
-	}
-	if err := fs.Parse(args); err != nil {
-		t.Fatalf("Parse(%v) unexpected error: %v", args, err)
-	}
+	for _, mode := range []string{"full", "thin"} {
+		t.Run(mode, func(t *testing.T) {
+			fs := flag.NewFlagSet("lto-pass-plugin", flag.ContinueOnError)
+			fs.SetOutput(new(bytes.Buffer))
+			AddBuildFlags(fs)
+			args := []string{
+				"-lto=" + mode,
+				"-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so",
+			}
+			if err := fs.Parse(args); err != nil {
+				t.Fatalf("Parse(%v) unexpected error: %v", args, err)
+			}
 
-	conf := &build.Config{}
-	if err := UpdateConfig(conf); err != nil {
-		t.Fatalf("UpdateConfig error: %v", err)
-	}
-	if conf.LTOPlugin.Path != "/tmp/libLLGOLTOPlugin.so" {
-		t.Fatalf("conf.LTOPlugin.Path = %q", conf.LTOPlugin.Path)
+			conf := &build.Config{}
+			if err := UpdateConfig(conf); err != nil {
+				t.Fatalf("UpdateConfig error: %v", err)
+			}
+			if conf.LTOPlugin.Path != "/tmp/libLLGOLTOPlugin.so" {
+				t.Fatalf("conf.LTOPlugin.Path = %q", conf.LTOPlugin.Path)
+			}
+		})
 	}
 }
 
-func TestBuildLTOPassPluginRequiresFullLTO(t *testing.T) {
+func TestBuildLTOPassPluginRequiresLTO(t *testing.T) {
 	tests := [][]string{
 		{"-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so"},
-		{"-lto=thin", "-lto-pass-plugin=/tmp/libLLGOLTOPlugin.so"},
 	}
 
 	for _, args := range tests {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			fs := flag.NewFlagSet("lto-pass-plugin-requires-fulllto", flag.ContinueOnError)
+			fs := flag.NewFlagSet("lto-pass-plugin-requires-lto", flag.ContinueOnError)
 			fs.SetOutput(new(bytes.Buffer))
 			AddBuildFlags(fs)
 			if err := fs.Parse(args); err != nil {

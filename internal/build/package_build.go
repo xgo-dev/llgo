@@ -137,7 +137,7 @@ func buildPackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) er
 	if len(tasks) == 0 {
 		return nil
 	}
-	simd := ctx.buildConf.Goarch == "amd64" && slices.Contains(ctx.buildConf.toolTags, "goexperiment.simd")
+	simd := ctx.buildConf.useSIMDRegisterABI()
 	waves := [][]*packageBuildTask{tasks}
 	if simd {
 		waves = registerBuildWaves(tasks)

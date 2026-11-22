@@ -3,6 +3,7 @@ package llvmfmv
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llvm"
@@ -25,6 +26,7 @@ func exportName(original string, sig wideSignature) string {
 
 func setRegisterABI(entry llvm.Value, sig wideSignature, features string) {
 	ctx := entry.GlobalParent().Context()
+	entry.AddFunctionAttr(ctx.CreateStringAttribute(registerWidthAttribute, strconv.Itoa(sig.width)))
 	features = strings.TrimPrefix(features+",+avx,+avx2", ",")
 	if sig.width == 512 {
 		features += ",+avx512f"

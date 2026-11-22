@@ -13,6 +13,9 @@ void addLLGOInterfaceMethodTypeIDPass(llvm::ModulePassManager &MPM);
 void addLLGOReflectMethodByNamePass(llvm::ModulePassManager &MPM);
 void addLLGOTypeIDExportCleanupPass(llvm::ModulePassManager &MPM);
 
+void verifySIMDRegisterCalls(const llvm::Module &M);
+void addSIMDRegisterVerifier(llvm::ModulePassManager &MPM);
+
 inline void addLLGOPreGlobalDCEPipeline(llvm::ModulePassManager &MPM) {
   addLLGOInterfaceMethodTypeIDPass(MPM);
   addLLGOReflectMethodByNamePass(MPM);

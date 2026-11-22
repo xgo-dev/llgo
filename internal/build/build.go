@@ -292,6 +292,10 @@ type Config struct {
 
 type Rewrites map[string]string
 
+func (c *Config) useSIMDRegisterABI() bool {
+	return c.Goarch == "amd64" && slices.Contains(c.toolTags, "goexperiment.simd")
+}
+
 // clone returns an independent copy of c for use by a single build. Do
 // resolves defaults and target-specific values on this copy so callers can
 // safely reuse their input configuration after Do returns.
@@ -816,7 +820,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
 	}
-	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
+	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled() && conf.LTO == lto.Full)
 	prog.EnableCodeViewDebugInfo(emitCodeView)
 	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
 	prog.EnableFuncInfoMetadata(funcInfo)
@@ -3758,7 +3762,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
-	wideCalls := llvmfmv.CaptureWideCalls(ret.Module(), ctx.buildConf.Goarch)
+	var wideCalls llvmfmv.WideCalls
+	registerABI := ctx.buildConf.useSIMDRegisterABI()
+	if registerABI {
+		wideCalls = llvmfmv.CaptureWideCalls(ret.Module(), ctx.buildConf.Goarch)
+	}
 	if len(wideCalls) != 0 {
 		names, err := wideCalls.Export(ret.Module(), pkgPath)
 		if err != nil {
@@ -3819,6 +3827,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 		}
 	}
 
+	if registerABI {
+		llvmfmv.RecordRegisterBaseline(ret.Module(), ctx.buildConf.Goarch, ctx.buildConf.GOAMD64)
+	}
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
 		return err
@@ -3827,6 +3838,11 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	lowerEmscriptenSIMDCalls(ctx, ret.Module())
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
+	if registerABI {
+		if err := llvmfmv.VerifyRegisterCalls(ret.Module()); err != nil {
+			return fmt.Errorf("%s: %w", pkgPath, err)
+		}
+	}
 	emitFuncInfoEntrySites(ctx, ret)
 	// ModeGen callers consume the in-memory LLVM module directly. They do not
 	// need cgo/link objects or a package archive for a later link step.
