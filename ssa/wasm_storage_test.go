@@ -76,21 +76,34 @@ func TestWasm32UsesGo64WordStorage(t *testing.T) {
 	}
 }
 
-func TestNativePointerCallsReuseStorageViews(t *testing.T) {
+func TestNativePointerOperationsReuseStorageViews(t *testing.T) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
-	global := pkg.NewVar("native_callback", types.NewPointer(NoArgsNoRet), CDecl)
+	// A narrow integer also exercises the native integer-extension query.
+	arg := types.NewParam(token.NoPos, nil, "v", types.Typ[types.Int8])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(arg), nil, false)
+	global := pkg.NewVar("native_callback", types.NewPointer(sig), CDecl)
+	entry := pkg.NewFunc("example.com/p.entry", sig, GoDecl)
 	body := pkg.NewFunc("example.com/p.call", NoArgsNoRet, GoDecl).MakeBody(1)
 	defer body.Dispose()
 	callback := body.Load(global.Expr)
-	body.Call(callback)
+	goType, nativeType := prog.Type(sig, GoDecl), prog.rawType(sig)
+	closure := body.ChangeType(goType, entry.Expr)
+	value := prog.Zero(prog.rawType(arg.Type()))
+	useCallback := func() {
+		body.Call(callback, value)
+		body.ChangeType(goType, callback)
+		body.ChangeType(nativeType, entry.Expr)
+		body.ChangeType(nativeType, closure)
+	}
+	useCallback()
 	before := len(prog.nativeStorage)
 	for range 32 {
-		body.Call(callback)
+		useCallback()
 	}
 	if after := len(prog.nativeStorage); after != before {
-		t.Errorf("repeated calls to the same native pointer grew storage views from %d to %d", before, after)
+		t.Errorf("repeated uses of the same native pointer grew storage views from %d to %d", before, after)
 	}
 	body.Return()
 	body.EndBuild()
