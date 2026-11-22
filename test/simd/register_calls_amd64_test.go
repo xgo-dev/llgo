@@ -15,6 +15,8 @@ func sumNine(a, b, c, d, e, f, g, h, i archsimd.Uint32x16) archsimd.Uint32x16 {
 	return a.Add(b).Add(c).Add(d).Add(e).Add(f).Add(g).Add(h).Add(i)
 }
 
+// Keep the aggregate result on the public memory ABI.
+//
 //go:noinline
 func pairWide(x archsimd.Uint32x16) (archsimd.Uint32x16, archsimd.Uint32x16) {
 	return x, x.Add(x)
