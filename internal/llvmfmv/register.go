@@ -176,14 +176,22 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 				target, sig, ok := s.directTarget(call)
 				if ok && width >= sig.width {
 					entry, seen := entries[target]
-					if !seen && target.IsDeclaration() {
+					if !seen {
 						owner := stringAttribute(target, RegisterOwnerAttribute)
-						if owner != "" && providers[owner].provides(exportName(stringAttribute(target, wideOrigin), sig)) {
-							entry = importRegisterEntry(mod, target, sig)
+						exported := exportName(target.Name(), sig)
+						if owner != "" && providers[owner].provides(exported) {
+							if target.IsDeclaration() {
+								// An existing symbol may have an unrelated type or calling convention.
+								if mod.NamedValue(exported).IsNil() {
+									entry = importRegisterEntry(mod, target, sig)
+								}
+							} else {
+								entry = mod.NamedFunction(exported)
+							}
 						}
-					} else if !seen && registerShape(target, sig.typ) {
+					}
+					if !seen && entry.IsNil() && !target.IsDeclaration() && registerShape(target, sig.typ) {
 						name := target.Name() + sig.suffix()
-
 						if source == nil {
 							source = newSourceInfo(mod)
 						}
@@ -199,6 +207,9 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 		}
 	}
 	for f := mod.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+		if hasAttribute(f, RegisterOwnerAttribute) {
+			f.RemoveStringAttributeAtIndex(-1, RegisterOwnerAttribute)
+		}
 		if hasAttribute(f, wideOrigin) {
 			f.RemoveStringAttributeAtIndex(-1, wideOrigin)
 		}

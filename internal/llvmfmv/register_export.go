@@ -10,19 +10,13 @@ import (
 
 const RegisterOwnerAttribute = attributePrefix + "register-owner"
 
-// A fresh provider emits eligible Go definitions in this invocation. Cached
-// providers advertise the actual companion symbols in their archive manifest.
+// RegisterProvider describes the symbols emitted by a completed backend or archive.
 type RegisterProvider struct {
-	Fresh   bool
 	Symbols []string
 }
 
 func (p RegisterProvider) provides(name string) bool {
-	if p.Fresh {
-		return true
-	}
-	_, ok := slices.BinarySearch(p.Symbols, name)
-	return ok
+	return slices.Contains(p.Symbols, name)
 }
 
 func exportName(original string, sig wideSignature) string {
@@ -37,7 +31,7 @@ func setRegisterABI(entry llvm.Value, sig wideSignature, features string) {
 	}
 	entry.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
 	if strings.Contains(entry.GlobalParent().Target(), "windows") {
-		entry.SetFunctionCallConv(llvm.CallConv(80))
+		entry.SetFunctionCallConv(x86VectorCall)
 	}
 }
 

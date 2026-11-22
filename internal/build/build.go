@@ -3778,8 +3778,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	}
 	if len(wideCalls) != 0 {
 		imports := make(map[string]llvmfmv.RegisterProvider, len(pkg.Imports))
-		for path, dep := range pkg.Imports {
-			imports[path] = ctx.registerProviders[dep.ID]
+		imports[pkgPath] = llvmfmv.RegisterProvider{Symbols: aPkg.registerExports}
+		for _, dep := range pkg.Imports {
+			imports[dep.PkgPath] = ctx.registerProviders[dep.ID]
 		}
 		if err := wideCalls.Promote(ret.Module(), ctx.buildConf.GOAMD64, imports); err != nil {
 			return fmt.Errorf("%s: %w", pkgPath, err)

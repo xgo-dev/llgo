@@ -21,7 +21,6 @@ define void @root(ptr %out, ptr %in) "target-features"="+avx,+avx2" {
 	}{
 		{RegisterProvider{}, false},
 		{RegisterProvider{Symbols: []string{"other"}}, false},
-		{RegisterProvider{Fresh: true}, true},
 		{RegisterProvider{Symbols: []string{name}}, true},
 	} {
 		m := parseModule(t, ir)
