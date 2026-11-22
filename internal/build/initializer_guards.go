@@ -95,7 +95,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if wasi || native || embedded {
 		environment = environmentSyscallPackage(ctx.progSSA)
 	}
-	if len(candidates) == 0 && environment == nil && darwinOS == nil {
+	if len(candidates) == 0 && environment == nil && darwinOS == nil && !wasi {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -208,8 +208,14 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			delete(unused, group.Global)
 		}
 	}
-	if wasi && environment != nil {
-		configureWASISyscallState(ctx, environment, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+	if wasi {
+		if environment != nil {
+			configureWASISyscallState(ctx, environment, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+		}
+		ctx.wasiOmitArgs = canOmitWASIArgs(ctx, reachable, assembly, isSymbolRoot)
+		if ctx.wasiOmitArgs && (conf.Verbose || conf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: omit unobserved WASI arguments")
+		}
 	}
 	if darwinOS != nil && !blankImports["os"] {
 		configureDarwinExecutableCwd(ctx, darwinOS, roots, isSymbolRoot)

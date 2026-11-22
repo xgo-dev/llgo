@@ -519,9 +519,9 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	prog := pkg.Prog
 	entryName := processEntrySymbol
 	sig := newEntrySignature(argvType.RawType())
-	// An allocation-free WASI command cannot observe argv. Use libc's
-	// zero-argument entry so its CRT can skip allocating and copying argv.
-	omitArgs := useMinimalWASIStartup(ctx)
+	// Use libc's zero-argument entry only when the program cannot observe
+	// argv. Heap reservation is still handled by the runtime-free proof.
+	omitArgs := ctx.wasiOmitArgs || useMinimalWASIStartup(ctx)
 	if omitArgs {
 		entryName = "__main_void"
 		sig = newSignature(nil, []types.Type{types.Typ[types.Int32]})

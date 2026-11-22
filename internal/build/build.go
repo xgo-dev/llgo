@@ -2080,6 +2080,7 @@ type context struct {
 	initializerGuardsOff []string
 	wasmRuntimeFree      bool
 	emscriptenDirectMain bool
+	wasiOmitArgs         bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
 
