@@ -710,40 +710,33 @@ func (t *structType) FieldByIndex(index []int) (f StructField) {
 	return
 }
 
-// A fieldScan represents an item on the fieldByNameFunc scan work list.
+// A fieldScan records the incoming field so the winning index path can be
+// built after the search.
 type fieldScan struct {
 	typ      *structType
-	index    []int
+	parent   int
+	field    int
 	multiple bool
 }
 
-// One entry tracks both visited types and queued types. position is the
-// type's index in the queue for its first depth.
-type fieldVisit struct {
-	typ      *structType
-	depth    int
-	position int
-}
-
-func fieldVisitSlot(visits []fieldVisit, typ *structType) int {
+// Visits store one-based queue positions. The queue itself holds the types.
+func fieldVisitSlot(visits []int, queue []fieldScan, typ *structType) int {
 	h := uintptr(unsafe.Pointer(typ)) >> 3
 	h ^= h >> 11
 	h *= 0x9e3779b9
 	h ^= h >> 16
 	mask := len(visits) - 1
 	for slot := int(h) & mask; ; slot = (slot + 1) & mask {
-		if seen := visits[slot].typ; seen == nil || seen == typ {
+		if seen := visits[slot]; seen == 0 || queue[seen-1].typ == typ {
 			return slot
 		}
 	}
 }
 
-func growFieldVisits(visits []fieldVisit) []fieldVisit {
-	expanded := make([]fieldVisit, 2*len(visits))
-	for _, visit := range visits {
-		if visit.typ != nil {
-			expanded[fieldVisitSlot(expanded, visit.typ)] = visit
-		}
+func growFieldVisits(size int, queue []fieldScan) []int {
+	expanded := make([]int, size)
+	for pos, scan := range queue {
+		expanded[fieldVisitSlot(expanded, queue, scan.typ)] = pos + 1
 	}
 	return expanded
 }
@@ -768,26 +761,24 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 	// same depth, they annihilate each other and inhibit any possible match at a lower level.
 	// The algorithm is breadth first search, one depth level at a time.
 
-	// The current and next slices are work queues:
-	// current lists the fields to visit on this depth level,
-	// and next lists the fields on the next lower level.
-	current := []fieldScan{}
-	next := []fieldScan{{typ: t}}
+	// Retain earlier levels in the queue so each entry can refer back to its
+	// parent by index, even when append relocates the queue.
+	var work [8]fieldScan
+	queue := work[:1]
+	queue[0] = fieldScan{typ: t}
 
 	// A type only participates at its shallowest depth. Remember its queue
 	// position so a second path at that depth can mark it as ambiguous.
-	var small [8]fieldVisit
+	var small [8]int
 	visits := small[:]
-	visits[fieldVisitSlot(visits, t)] = fieldVisit{typ: t}
-	visitCount := 1
-	var owner *structType
-	var parentPath []int
-	var fieldIndex int
+	visits[fieldVisitSlot(visits, queue, t)] = 1
 
-	for depth := 1; len(next) > 0; depth++ {
-		current, next = next, current[:0]
+	for start, depth := 0, 0; start < len(queue); depth++ {
+		end := len(queue)
+		owner, fieldIndex := -1, 0
 
-		for _, scan := range current {
+		for position := start; position < end; position++ {
+			scan := queue[position]
 			t := scan.typ
 			for i := range t.Fields {
 				f := &t.Fields[i]
@@ -805,46 +796,46 @@ func (t *structType) fieldByNameFunc(match func(string) bool) (*structType, []in
 				// Does it match?
 				if match(fname) {
 					// Potential match
-					if scan.multiple || owner != nil {
+					if scan.multiple || owner >= 0 {
 						// Name appeared multiple times at this level: annihilate.
 						return nil, nil
 					}
-					owner, parentPath, fieldIndex = t, scan.index, i
+					owner, fieldIndex = position, i
 					continue
 				}
 
 				// Queue embedded struct fields for processing with next level,
 				// but only if we haven't seen a match yet at this level and only
 				// if the embedded types haven't already been queued.
-				if owner != nil || ntyp == nil || ntyp.Kind() != abi.Struct || ntyp.IsClosure() {
+				if owner >= 0 || ntyp == nil || ntyp.Kind() != abi.Struct || ntyp.IsClosure() {
 					continue
 				}
 				styp := (*structType)(unsafe.Pointer(ntyp))
-				slot := fieldVisitSlot(visits, styp)
-				if seen := visits[slot]; seen.typ != nil {
-					if seen.depth == depth {
-						next[seen.position].multiple = true
+				slot := fieldVisitSlot(visits, queue, styp)
+				if seen := visits[slot]; seen != 0 {
+					if pos := seen - 1; pos >= end {
+						queue[pos].multiple = true
 					}
 					continue
 				}
-				if visitCount == len(visits)/2 {
-					visits = growFieldVisits(visits)
-					slot = fieldVisitSlot(visits, styp)
+				if len(queue) == len(visits)/2 {
+					visits = growFieldVisits(2*len(visits), queue)
+					slot = fieldVisitSlot(visits, queue, styp)
 				}
-				visits[slot] = fieldVisit{typ: styp, depth: depth, position: len(next)}
-				visitCount++
-				index := make([]int, len(scan.index)+1)
-				copy(index, scan.index)
-				index[len(scan.index)] = i
-				next = append(next, fieldScan{typ: styp, index: index, multiple: scan.multiple})
+				visits[slot] = len(queue) + 1
+				queue = append(queue, fieldScan{typ: styp, parent: position, field: i, multiple: scan.multiple})
 			}
 		}
-		if owner != nil {
-			path := make([]int, len(parentPath)+1)
-			copy(path, parentPath)
-			path[len(parentPath)] = fieldIndex
-			return owner, path
+		if owner >= 0 {
+			path := make([]int, depth+1)
+			path[depth] = fieldIndex
+			for i, position := depth-1, owner; i >= 0; i-- {
+				scan := queue[position]
+				path[i], position = scan.field, scan.parent
+			}
+			return queue[owner].typ, path
 		}
+		start = end
 	}
 	return nil, nil
 }

@@ -215,3 +215,46 @@ func TestPromotedFieldByName(t *testing.T) {
 	}()
 	reflect.ValueOf(Outer{}).FieldByName("Number")
 }
+
+func TestPromotedFieldByNameTraversal(t *testing.T) {
+	type A struct{}
+	type B struct{}
+	type C struct{}
+	type D struct{}
+	type E struct{}
+	type F struct{}
+	type G struct{}
+	type H struct{}
+	type Cycle struct{ *Cycle }
+	type Leaf struct{ Number int }
+	type Left struct{ Leaf }
+	type Right struct{ Leaf }
+	type Branch struct{ Right }
+	type Wide struct {
+		A
+		B
+		C
+		D
+		E
+		F
+		G
+		H
+		*Cycle
+		Left
+	}
+
+	lookup := func(typ reflect.Type) (reflect.StructField, bool) {
+		return typ.FieldByNameFunc(func(name string) bool { return name == "Number" })
+	}
+	field, found := lookup(reflect.TypeOf(Wide{}))
+	if !found || len(field.Index) != 3 || field.Index[0] != 9 ||
+		field.Index[1] != 0 || field.Index[2] != 0 {
+		t.Fatalf("promoted field index = %v, found %v", field.Index, found)
+	}
+	if _, found := lookup(reflect.TypeOf(struct {
+		Wide
+		Branch
+	}{})); found {
+		t.Fatal("ambiguous field returned after queue growth")
+	}
+}
