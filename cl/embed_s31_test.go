@@ -311,6 +311,15 @@ func TestS31ReflectSmoke(t *testing.T) {
 		{pkg: "./_testgo/timerafter", golden: true},
 		{pkg: "./_testgo/timertick", golden: true},
 		{pkg: "./_testgo/timerfunc", golden: true},
+		// The time_* fixtures pin the user-visible timer semantics: deadline
+		// order with select's default arm (time_after), ticker stop (time_tick),
+		// NewTimer Stop/Reset return values and delivery (time_stop), and the
+		// collector's reachability of objects held only through the pending
+		// timer record (time_gckeep).
+		{pkg: "./_testgo/time_after", golden: true},
+		{pkg: "./_testgo/time_tick", golden: true},
+		{pkg: "./_testgo/time_stop", golden: true},
+		{pkg: "./_testgo/time_gckeep", golden: true},
 		{pkg: "./_testgo/mutexstarve", golden: true},
 		// Too close to the C3 IRAM ceiling to keep running there once the
 		// vendored memmove/division shims landed; the 512 KiB S31 SRAM has
