@@ -78,6 +78,7 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
         ("wasm-fmt-literal-callers",
          "stdout captured before formatting\nliteral format caller parity passed"),
         ("wasm-wasi-thread-startup", "wasi thread startup ok"),
+        ("wasm-wasi-single-gc", "live stack and globals 89"),
         ("wasm-fmt-map", "wasi default value formatting ok"),
     )
     for fixture, expected in cases:
@@ -89,11 +90,17 @@ def wasi_full_lto_size_probe(llgo, wasmer, directory, env):
             raise RuntimeError(f"{fixture}: WASI Full LTO skipped Go reachability pruning\n{log}")
         if fixture == "wasm-fmt-map" and "llgo: specialize default value formatting" not in log:
             raise RuntimeError(f"{fixture}: closed WASI build skipped value formatting specialization\n{log}")
+        collector = {
+            "wasm-wasi-single-gc": "link WASI collector for one mutator",
+            "wasm-wasi-thread-startup": "retain WASI concurrent collector",
+        }.get(fixture)
+        if collector is not None and f"llgo: {collector}" not in log:
+            raise RuntimeError(f"{fixture}: expected {collector!r}\n{log}")
         actual = command([wasmer, "run", "--enable-exceptions", "--enable-simd",
                           "--stack-size=1048576", str(module)], env, timeout=90)
         if actual.strip() != expected:
             raise RuntimeError(f"{fixture}: expected {expected!r}, got {actual!r}")
-    print("WASI Full LTO size pruning preserved formatter callers and worker startup", flush=True)
+    print("WASI Full LTO preserved formatter callers, worker startup, and GC roots", flush=True)
 
 
 def reflect_method_size_probe(llgo, wasmer, directory, env):
