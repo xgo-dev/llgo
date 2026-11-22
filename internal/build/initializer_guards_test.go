@@ -33,12 +33,12 @@ var Second = []*struct{ N int }{value}
 func Lookup() int { return value.N }
 `
 	for _, tc := range []struct {
-		name, source, entry string
-		asmRoot             string
-		open, linkname      bool
-		embedded, wasi      bool
-		wantGuard, wantDrop bool
-		wantOrder           []string
+		name, source, entry     string
+		asmRoot                 string
+		open, linkname          bool
+		embedded, wasi, browser bool
+		wantGuard, wantDrop     bool
+		wantOrder               []string
 	}{
 		{name: "unused table", entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
 		{name: "lookup", entry: `import "data"; func main() { println(data.Lookup()) }`, wantGuard: true},
@@ -48,16 +48,22 @@ func Lookup() int { return value.N }
 		{name: "assembly global", entry: `import "data"; func main() {}`, asmRoot: "data.Table", wantGuard: true},
 		{name: "assembly caller", entry: `import "data"; func main() {}`, asmRoot: "data.Lookup", wantGuard: true},
 		{name: "linkname caller", entry: `import "data"; func main() {}`, linkname: true, wantGuard: true},
-		{name: "explicit initialization", source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`},
+		{name: "independent initialization", source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "native lookup during init", source: data + `func init() { println(Lookup()) }`, entry: `import "data"; func main() {}`, wantGuard: true},
 		{name: "interface key", source: `package data; var Table = map[any]int{"key":17}`, entry: `import "data"; func main() {}`},
 		{name: "computed value", source: `package data; func n() int { return 17 }; var Table = map[string]int{"key":n()}`, entry: `import "data"; func main() {}`},
 		{name: "observable slice backing data keeps slices only", source: mixed, entry: `import "data"; func main() { println(data.Lookup()) }`, wantGuard: true, wantDrop: true, wantOrder: []string{"First", "Table", "Second"}},
 		{name: "closed firmware", embedded: true, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "firmware with independent init", embedded: true, source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "firmware lookup during init", embedded: true, source: data + `func init() { println(Lookup()) }`, entry: `import "data"; func main() {}`, wantGuard: true},
 		{name: "open firmware", embedded: true, open: true, entry: `import "data"; func main() {}`, wantGuard: true},
 		{name: "closed WASI with independent init", wasi: true, source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
 		{name: "WASI lookup during init", wasi: true, source: data + `func init() { println(Lookup()) }`, entry: `import "data"; func main() {}`, wantGuard: true},
 		{name: "WASI assembly root", wasi: true, entry: `import "data"; func main() {}`, asmRoot: "data.Table", wantGuard: true},
 		{name: "open WASI", wasi: true, open: true, entry: `import "data"; func main() {}`, wantGuard: true},
+		{name: "unused browser map", browser: true, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "browser with independent init", browser: true, source: data + `func init() { println("effect") }`, entry: `import "data"; func main() {}`, wantGuard: true, wantDrop: true},
+		{name: "browser lookup during init", browser: true, source: data + `func init() { println(Lookup()) }`, entry: `import "data"; func main() {}`, wantGuard: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
@@ -108,11 +114,16 @@ func Lookup() int { return value.N }
 				ctx.embeddedClosedProgram = !tc.open
 				inputs = &linkPruningInputs{goroot: goroot}
 			}
-			if tc.wasi {
-				ctx.buildConf.Goos, ctx.buildConf.Goarch = "wasip1", "wasm"
+			if tc.wasi || tc.browser {
+				ctx.buildConf.Goos, ctx.buildConf.Goarch = "js", "wasm"
 				ctx.buildConf.WasmOpt = WasmOptSize
-				ctx.crossCompile.WasmProvider = crosscompile.WasmProviderWASI
-				ctx.crossCompile.WasmProfile = crosscompile.WasmProfileW32
+				ctx.crossCompile.WasmProvider = crosscompile.WasmProviderEmscripten
+				ctx.crossCompile.WasmProfile = crosscompile.WasmProfileJ32
+				if tc.wasi {
+					ctx.buildConf.Goos = "wasip1"
+					ctx.crossCompile.WasmProvider = crosscompile.WasmProviderWASI
+					ctx.crossCompile.WasmProfile = crosscompile.WasmProfileW32
+				}
 				ctx.nativeClosedProgram = false
 				ctx.wasmClosedProgram = !tc.open
 				inputs = &linkPruningInputs{goroot: goroot, roots: ctx.sizePruningRoots}

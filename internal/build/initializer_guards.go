@@ -54,10 +54,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			source.Func(darwinExecutableCwdInitializer) != nil {
 			darwinOS = source
 		}
+		init := source.Func("init")
 		var groups []cl.OptionalInitializer
 		switch {
 		case (hosted || wasi || embedded) && pkg.PkgPath == "os":
-			groups = optionalStandardFileInitializers(source.Func("init"))
+			groups = optionalStandardFileInitializers(init)
 			if wasi || embedded || native {
 				if len(groups) != 3 {
 					groups = nil
@@ -65,19 +66,16 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 				standardFiles = groups
 			}
 			if embedded || native {
-				groups = orderedOptionalInitializers(source.Func("init"), groups, optionalLiteralInitializers(source.Func("init"), constructors))
+				groups = orderedOptionalInitializers(init, groups, optionalLiteralInitializers(init, constructors))
 			}
 		case hasStaticDataValues(pkg.Package):
-			groups = optionalStaticContainers(source.Func("init"), !wasm || wasi)
+			groups = cl.OptionalSliceInitializers(init)
 		default:
-			init := source.Func("init")
 			groups = optionalLiteralInitializers(init, constructors)
-			if wasi {
-				// A literal map can be guarded independently of the
-				// package's other initialization.
-				groups = orderedOptionalInitializers(init, cl.OptionalMapInitializers(init), groups)
-			}
 		}
+		// Literal maps can be guarded independently of the package's other
+		// initialization, including explicit init functions.
+		groups = orderedOptionalInitializers(init, cl.OptionalMapInitializers(init), groups)
 		if len(groups) == 0 {
 			continue
 		}
@@ -311,15 +309,6 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 		return slice && observedData[global.Pkg]
 	})
 	return unused, reachable
-}
-
-func optionalStaticContainers(init *ssa.Function, includeMaps bool) []cl.OptionalInitializer {
-	sliceGroups := cl.OptionalSliceInitializers(init)
-	if !includeMaps {
-		return sliceGroups
-	}
-	mapGroups := cl.OptionalMapInitializers(init)
-	return orderedOptionalInitializers(init, mapGroups, sliceGroups)
 }
 
 // The recognizers return disjoint ranges. Restore instruction order so
