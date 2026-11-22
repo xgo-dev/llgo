@@ -151,6 +151,7 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 		return nil
 	}
 	entries := make(map[llvm.Value]llvm.Value)
+	imported := make(map[string]llvm.Value)
 	// Reserve the register namespace before changing any call or metadata.
 	for target := mod.FirstFunction(); !target.IsNil(); target = llvm.NextFunction(target) {
 		if target.IsDeclaration() {
@@ -177,18 +178,7 @@ func (s WideCalls) Promote(mod llvm.Module, baseline string, providers map[strin
 				if ok && width >= sig.width {
 					entry, seen := entries[target]
 					if !seen {
-						owner := stringAttribute(target, RegisterOwnerAttribute)
-						exported := exportName(target.Name(), sig)
-						if owner != "" && providers[owner].provides(exported) {
-							if target.IsDeclaration() {
-								// An existing symbol may have an unrelated type or calling convention.
-								if mod.NamedValue(exported).IsNil() {
-									entry = importRegisterEntry(mod, target, sig)
-								}
-							} else {
-								entry = mod.NamedFunction(exported)
-							}
-						}
+						entry = selectRegisterExport(mod, target, sig, providers, imported)
 					}
 					if !seen && entry.IsNil() && !target.IsDeclaration() && registerShape(target, sig.typ) {
 						name := target.Name() + sig.suffix()

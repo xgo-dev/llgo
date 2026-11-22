@@ -67,6 +67,32 @@ func (s WideCalls) Export(m llvm.Module, owner string) ([]string, error) {
 	return exported, nil
 }
 
+// FMV may already have redirected an external call to a specialized
+// declaration. The provider publishes a single register entry for its Go name.
+func selectRegisterExport(m llvm.Module, target llvm.Value, sig wideSignature, providers map[string]RegisterProvider, imported map[string]llvm.Value) llvm.Value {
+	owner := stringAttribute(target, RegisterOwnerAttribute)
+	origin := stringAttribute(target, wideOrigin)
+	name := exportName(origin, sig)
+	if owner == "" || !providers[owner].provides(name) {
+		return llvm.Value{}
+	}
+	if !target.IsDeclaration() {
+		if target.Name() == origin {
+			return m.NamedFunction(name)
+		}
+		return llvm.Value{}
+	}
+	if entry, ok := imported[name]; ok {
+		return entry
+	}
+	if !m.NamedValue(name).IsNil() {
+		return llvm.Value{}
+	}
+	entry := importRegisterEntry(m, target, sig)
+	imported[name] = entry
+	return entry
+}
+
 func importRegisterEntry(m llvm.Module, target llvm.Value, sig wideSignature) llvm.Value {
 	name := exportName(stringAttribute(target, wideOrigin), sig)
 	entry := m.NamedFunction(name)
