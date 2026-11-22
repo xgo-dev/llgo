@@ -208,8 +208,8 @@ func addItab(i *Itab) *Itab {
 
 // NewItab returns a new itab.
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
 	}
 	if typ == nil {
 		return nil

@@ -18,14 +18,12 @@
 
 package runtime
 
-import c "github.com/xgo-dev/llgo/runtime/internal/clite"
-
 // Host builds and single-context targets share one process-wide current G.
 var currentG *g
 
 func getg() *g {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
 	}
 	if currentG == nil {
 		currentG = initRuntimeContext(new(runtimeContext), nil, _Grunning)

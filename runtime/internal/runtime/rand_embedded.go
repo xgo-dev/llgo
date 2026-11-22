@@ -5,6 +5,6 @@ package runtime
 import c "github.com/xgo-dev/llgo/runtime/internal/clite"
 
 func fastrand() uint32 {
-	c.RequireEmbeddedStartup()
+	RequireEmbeddedStartup()
 	return uint32(c.Rand())
 }

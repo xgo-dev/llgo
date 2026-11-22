@@ -9,14 +9,11 @@
 
 package runtime
 
-import (
-	c "github.com/xgo-dev/llgo/runtime/internal/clite"
-	"unsafe"
-)
+import "unsafe"
 
 func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
 	}
 	a, b := mix32(uint32(seed), uint32(4^hashkey[0]))
 	t := readUnaligned32(p)
@@ -28,8 +25,8 @@ func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
 }
 
 func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
 	}
 	a, b := mix32(uint32(seed), uint32(8^hashkey[0]))
 	a ^= readUnaligned32(p)
@@ -40,8 +37,8 @@ func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
 }
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
 	}
 	a, b := mix32(uint32(seed), uint32(s^hashkey[0]))
 	if s == 0 {

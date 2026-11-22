@@ -6,6 +6,7 @@ import (
 	_ "unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	rt "github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
 )
 
@@ -13,8 +14,8 @@ import (
 func c_rand() c.Int
 
 func fastrand() uint32 {
-	if c.EmbeddedStartupProof {
-		c.RequireEmbeddedStartup()
+	if rt.EmbeddedStartupProof {
+		rt.RequireEmbeddedStartup()
 	}
 	return uint32(c_rand())
 }

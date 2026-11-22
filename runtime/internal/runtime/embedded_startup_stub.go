@@ -1,6 +1,6 @@
 //go:build !llgo || !baremetal || !llgo.embedded.startup
 
-package c
+package runtime
 
 const EmbeddedStartupProof = false
 
