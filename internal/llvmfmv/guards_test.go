@@ -511,7 +511,7 @@ func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value)
 func TestGuardRuntimePredicates(t *testing.T) {
 	for _, p := range x86Predicates {
 		t.Run(p.method, func(t *testing.T) {
-			for _, published := range []uint64{0, featureAVX, p.runtimeBit} {
+			for _, published := range []uint64{0, featureAVX, p.runtimeBit, featureAVX | p.runtimeBit} {
 				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
 declare i1 @query() "llgo.cpu.query"="%s"
 define void @root(ptr %%p) {
