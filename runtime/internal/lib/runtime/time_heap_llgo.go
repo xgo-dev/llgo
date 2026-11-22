@@ -53,8 +53,8 @@ func ensureTimerScheduler() {
 }
 
 // wakeTimerSchedulerLocked only interrupts an active wait when the scheduler
-// must recheck the heap sooner. A removed deadline may still wake the worker,
-// but the waiter holds no reference to the timer or its callback.
+// must recheck the heap sooner. The waiter may finish a timed wait even if
+// that deadline has since been removed.
 func wakeTimerSchedulerLocked(when int64) {
 	if timerSchedulerWait == timerWaitIndefinitely ||
 		(timerSchedulerWait == timerWaitUntil && when < timerSchedulerWakeAt) {
@@ -101,8 +101,10 @@ func stopRuntimeTimer(r *runtimeTimer) bool {
 	wasActive := st != nil && st.active
 	if wasActive {
 		timerHeapRemove(st.heapIndex)
-		st.active = false
 		timerSchedulerMap.Delete(unsafe.Pointer(r))
+		// A parked scheduler can retain st conservatively on its stack.
+		// Release the timer and callback even if the scheduler stays asleep.
+		*st = timerState{heapIndex: -1}
 	}
 	timerSchedulerMu.Unlock()
 	return wasActive
