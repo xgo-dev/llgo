@@ -165,8 +165,10 @@ the 256-bit family. Grouped permutations and saturating packing operate within
 
 The AMD64 implementation includes compression and expansion, vector and scalar
 funnel shifts, truth tables, widening products, cryptographic rounds and scaled
-floating-point operations. Instruction-specific leaves check the effective CPU
-predicate before loading their vector operands from caller-owned storage.
+floating-point operations. The caller checks the effective CPU predicate before entering an instruction
+leaf. On non-Windows amd64, 128-bit operands use vector registers. Win64
+operands and wider vectors use caller-owned storage. Constant SHA and scaled
+rounding selectors are encoded in dedicated immediate leaves.
 `GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
 
 On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
@@ -476,7 +478,8 @@ go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestE
 ```
 
 Generic LLVM legalization handles baseline operations. CPU-guarded leaves carry the features required by instruction-specific operations. The amd64 assembly check explicitly uses
-`GOAMD64=v1` and rejects AVX instructions. Tests needing official AVX512 APIs
+`GOAMD64=v1` and rejects AVX in baseline functions. AVX2 clones and the
+selected `@simd256` and `@simd512` bodies are checked separately. Tests needing official AVX512 APIs
 use separate LLGo-only scalar-reference cases when that hardware is not
 available. On an AVX512 host the native gate exercises the enabled paths.
 For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
@@ -541,7 +544,9 @@ any independent conditions. Declarations, indirect calls and weak definitions
 do not provide evidence about the CPU.
 
 On amd64, the selected portable 256- and 512-bit function bodies enable AVX2
-and the Go AVX-512 core feature set respectively. An explicit width request
+and the Go AVX-512 core feature set respectively. Both use their wide entry
+directly across packages. Explicit AVX2 queries in those bodies still read
+the Go predicate on v1/v2. An explicit width request
 still goes through the ordinary Go width selector, including its hardware
 limit. Optional extensions such as VBMI2 remain independently guarded. The
 scalar dispatcher, emulation and 128-bit fallback do not inherit wide ISA

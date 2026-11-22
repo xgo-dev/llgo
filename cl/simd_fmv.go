@@ -35,6 +35,7 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	// not infer a width from the LLVM symbol: linkname/export can choose it.
 	if width := midwayBodyWidth(source); width != 0 {
 		fn.MarkMidwayWidth(width)
+		return
 	}
 	hasVector := false
 	sig := source.Signature

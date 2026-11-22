@@ -45,6 +45,14 @@ func TestSIMDAESRound(t *testing.T) {
 	}
 }
 
+//go:noinline
+func dynamicRound(x archsimd.Float32x4, precision uint8) (floor, ceil, trunc [4]float32) {
+	x.FloorScaled(precision).StoreArray(&floor)
+	x.CeilScaled(precision).StoreArray(&ceil)
+	x.TruncScaled(precision).StoreArray(&trunc)
+	return
+}
+
 func TestSIMDFixedAndDynamicRound(t *testing.T) {
 	if !archsimd.X86.AVX512() {
 		t.Skip("requires AVX512")
@@ -57,6 +65,16 @@ func TestSIMDFixedAndDynamicRound(t *testing.T) {
 	x.TruncScaled(242).StoreArray(&trunc)
 	if floor != [4]float32{3.25, -3.5, .5, -.75} || ceil != [4]float32{3.5, -3.25, .75, -.5} || trunc != [4]float32{3.25, -3.25, .5, -.5} {
 		t.Fatalf("floor %v, ceil %v, trunc %v", floor, ceil, trunc)
+	}
+	for _, precision := range []uint8{2, 18, 242} {
+		f, c, tr := dynamicRound(x, precision)
+		if f != floor || c != ceil || tr != trunc {
+			t.Fatalf("precision %d: floor %v, ceil %v, trunc %v", precision, f, c, tr)
+		}
+	}
+	f, c, tr := dynamicRound(x, 0)
+	if f != [4]float32{3, -4, 0, -1} || c != [4]float32{4, -3, 1, 0} || tr != [4]float32{3, -3, 0, 0} {
+		t.Fatalf("precision zero: floor %v, ceil %v, trunc %v", f, c, tr)
 	}
 }
 

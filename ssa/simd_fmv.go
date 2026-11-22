@@ -42,6 +42,7 @@ func (f Function) MarkMidwayWidth(width int) {
 	default:
 		return
 	}
+	f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute(llvmfmv.MidwayWideAttribute, ""))
 	attr := f.impl.GetStringAttributeAtIndex(-1, "target-features")
 	if !attr.IsNil() {
 		features = attr.GetStringValue() + "," + features

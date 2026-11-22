@@ -15,6 +15,7 @@ const (
 
 	// Shared with the frontend that emits the FMV attributes and CPU queries.
 	EntryAttribute       = attributePrefix + "avx2-entry"
+	MidwayWideAttribute  = attributePrefix + "midway-wide"
 	InlineEntryAttribute = attributePrefix + "inline-entry"
 	QueryAttribute       = "llgo.cpu.query"
 	AVX2Query            = "x86.avx2"
@@ -199,7 +200,9 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	}
 	var originals []llvm.Value
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if hasAttribute(fn, doneAttribute) {
+		// Midway already selected these AVX2-capable implementations. Keep
+		// explicit Go queries in them observable after independent CPU overrides.
+		if hasAttribute(fn, doneAttribute) || hasAttribute(fn, MidwayWideAttribute) {
 			continue
 		}
 		if !hasAttribute(fn, EntryAttribute) && roots[fn].IsNil() {

@@ -67,7 +67,7 @@ func main() { println(sum(3)) }
 			if !strings.Contains(mod.NamedFunction("main.sum").String(), "simd.Emulated") {
 				t.Fatal("lost Midway scalar dispatch")
 			}
-			for _, name := range []string{"main.guarded@simd0", "main.guarded@simd128", "main.array@simd0", "main.array@simd128", "main.guarded@simd256", "main.array@simd256"} {
+			for _, name := range []string{"main.guarded@simd0", "main.guarded@simd128", "main.array@simd0", "main.array@simd128"} {
 				fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
 				if fast.IsNil() || fast.IsDeclaration() {
 					t.Fatalf("missing composed variant %s", name)
@@ -78,17 +78,26 @@ func main() { println(sum(3)) }
 				assertAggregateTailForwarding(t, mod.NamedFunction(name))
 				assertAggregateTailForwarding(t, mod.NamedFunction(name+".__llgo_fmv_resolve"))
 			}
-			for _, width := range []string{"128", "256"} {
-				for _, name := range []string{"Compute", "Array"} {
-					if mod.NamedFunction("midwayfmv/kernel." + name + "@simd" + width + ".__llgo_fmv_avx2").IsNil() {
-						t.Fatalf("missing aggregate cross-package variant %s/%s", name, width)
-					}
-					if !mod.NamedFunction("midwayfmv/kernel." + name + "@simd0.__llgo_fmv_avx2").IsNil() {
-						t.Fatalf("emulated leaf unexpectedly eligible for FMV: %s", name)
-					}
+			for _, name := range []string{"Compute", "Array"} {
+				kernel := "midwayfmv/kernel." + name
+				if mod.NamedFunction(kernel+"@simd128.__llgo_fmv_avx2").IsNil() || !mod.NamedFunction(kernel+"@simd0.__llgo_fmv_avx2").IsNil() {
+					t.Fatalf("unexpected SIMD128 or emulated cross-package variants for %s", name)
 				}
-				if !strings.Contains(mod.NamedFunction("main.guarded@simd"+width+".__llgo_fmv_avx2").String(), "kernel.Compute@simd"+width+".__llgo_fmv_avx2") {
-					t.Fatalf("aggregate direct call did not specialize at width %s", width)
+			}
+			if !strings.Contains(mod.NamedFunction("main.guarded@simd128.__llgo_fmv_avx2").String(), "kernel.Compute@simd128.__llgo_fmv_avx2") {
+				t.Fatal("SIMD128 guarded call did not specialize")
+			}
+			for _, width := range []string{"256", "512"} {
+				for _, pair := range [][2]string{{"guarded", "Compute"}, {"array", "Array"}} {
+					name := "main." + pair[0] + "@simd" + width
+					kernel := "midwayfmv/kernel." + pair[1] + "@simd" + width
+					body := mod.NamedFunction(name)
+					if body.IsNil() || !strings.Contains(body.String(), kernel) || !strings.Contains(body.String(), "X86Features.AVX2") {
+						t.Fatalf("%s lost its direct wide call or Go predicate", name)
+					}
+					if !mod.NamedFunction(name+".__llgo_fmv_avx2").IsNil() || !mod.NamedFunction(name+".__llgo_fmv_resolve").IsNil() || !mod.NamedFunction(kernel+".__llgo_fmv_avx2").IsNil() {
+						t.Fatalf("unnecessary AVX2 dispatch for %s or %s", name, kernel)
+					}
 				}
 			}
 			kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
@@ -99,11 +108,16 @@ func main() { println(sum(3)) }
 			if err := llvm.VerifyModule(kernels[0].LPkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			for _, width := range []string{"128", "256"} {
+			for _, width := range []string{"128", "256", "512"} {
 				for _, name := range []string{"Compute", "Array"} {
-					fn := kernels[0].LPkg.Module().NamedFunction("midwayfmv/kernel." + name + "@simd" + width + ".__llgo_fmv_avx2")
+					symbol := "midwayfmv/kernel." + name + "@simd" + width
+					kmod := kernels[0].LPkg.Module()
+					fn, variant := kmod.NamedFunction(symbol), kmod.NamedFunction(symbol+".__llgo_fmv_avx2")
 					if fn.IsNil() || fn.IsDeclaration() {
-						t.Fatalf("missing aggregate cross-package definition %s/%s", name, width)
+						t.Fatalf("missing kernel definition %s", symbol)
+					}
+					if width == "128" && (variant.IsNil() || variant.IsDeclaration()) || width != "128" && !variant.IsNil() {
+						t.Fatalf("unexpected AVX2 variant for %s", symbol)
 					}
 				}
 			}
