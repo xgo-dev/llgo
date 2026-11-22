@@ -3756,11 +3756,15 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
+	wideCalls := llvmfmv.CaptureWideCalls(ret.Module(), ctx.buildConf.Goarch)
 	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
 	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
 	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
 	if err := llvmfmv.Run(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
+		return fmt.Errorf("%s: %w", pkgPath, err)
+	}
+	if err := wideCalls.Promote(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
 		return fmt.Errorf("%s: %w", pkgPath, err)
 	}
 	if ctx.buildConf.Goos == "windows" {

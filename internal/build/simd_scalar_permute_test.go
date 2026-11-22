@@ -126,7 +126,7 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 				assertSIMDBaselineAssembly(t, asm)
 				bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
 				indexedStack := regexp.MustCompile(`\([^\n)]*%(?:rsp|rbp),`)
-				baseline, avx2, constants := 0, 0, 0
+				baseline, avx2, registers, constants := 0, 0, 0, 0
 				shuffle := regexp.MustCompile(`\b(?:v?pshuf[a-z]+|v?shufps|vpermilps)\b`)
 				for _, body := range bodies {
 					if strings.Contains(body[1], "main.constant") && strings.HasSuffix(t.Name(), "/O2") {
@@ -138,7 +138,9 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 					if !strings.Contains(body[1], "main.scalar") {
 						continue
 					}
-					if strings.Contains(body[1], ".__llgo_fmv_avx2") {
+					if strings.Contains(body[1], ".__llgo_fmv_reg256") {
+						registers++
+					} else if strings.Contains(body[1], ".__llgo_fmv_avx2") {
 						avx2++
 					} else {
 						baseline++
@@ -152,6 +154,9 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 				}
 				if strings.HasSuffix(t.Name(), "/O2") && constants != 2*len(intrinsics) {
 					t.Fatalf("checked %d constant functions, want %d", constants, 2*len(intrinsics))
+				}
+				if registers != 6 {
+					t.Fatalf("checked %d register bodies, want six 256-bit permutations", registers)
 				}
 				if baseline != len(intrinsics) || avx2 != len(intrinsics) {
 					t.Fatalf("checked baseline=%d AVX2=%d functions, want %d each", baseline, avx2, len(intrinsics))
