@@ -76,6 +76,14 @@ func TestWasmBoundaryPaddingUses(t *testing.T) {
   %copy = load %Record, ptr %home
   %length = extractvalue %Record %copy, 0, 1, 1
 `, false},
+		{"private_lifetime", `
+  %home = alloca %Record
+  call void @llvm.lifetime.start(ptr %home)
+  store %Record %value, ptr %home
+  %copy = load %Record, ptr %home
+  %length = extractvalue %Record %copy, 0, 1, 1
+  call void @llvm.lifetime.end(ptr %home)
+`, false},
 		// Builder.Index can spill an array and address an element directly,
 		// without a leading zero index into the array's LLVM type.
 		{"private_array_element", `
@@ -116,6 +124,12 @@ func TestWasmBoundaryPaddingUses(t *testing.T) {
 		{"raw_padding_offset", home + `
   %paddingp = getelementptr i8, ptr %home, i32 4
   %padding = load i32, ptr %paddingp
+`, true},
+		{"private_memset", home + `
+  call void @llvm.memset.p0.i32(ptr %home, i8 0, i32 64, i1 false)
+`, false},
+		{"volatile_memset", home + `
+  call void @llvm.memset.p0.i32(ptr %home, i8 0, i32 64, i1 true)
 `, true},
 		{"volatile_load", home + `
   %lengthp = getelementptr %Record, ptr %home, i32 0, i32 0, i32 1, i32 1
@@ -167,6 +181,14 @@ func TestWasmBoundaryPaddingUses(t *testing.T) {
   %text = load %String, ptr %element
   %length = extractvalue %String %text, 1
 `, true},
+		// Keep nonzero base indices conservative, even when the address returns
+		// to the original allocation before a valid, length-only read.
+		{"nonzero_base_index", home + `
+  %next = getelementptr %Record, ptr %home, i32 1
+  %back = getelementptr %Record, ptr %next, i32 -1
+  %copy = load %Record, ptr %back
+  %length = extractvalue %Record %copy, 0, 1, 1
+`, true},
 		{"different_allocation_type", `
   %home = alloca [64 x i8]
   store %Record %value, ptr %home
@@ -196,6 +218,9 @@ declare void @word(i32)
 declare void @slot({ ptr, i32 })
 declare void @consume(%Record)
 declare void @escape(ptr)
+declare void @llvm.memset.p0.i32(ptr, i8, i32, i1 immarg)
+declare void @llvm.lifetime.start(ptr)
+declare void @llvm.lifetime.end(ptr)
 define void @observe(%Record %value, i64 %index, ptr %callback) {
 entry:
 ` + tc.body + "\n  ret void\n}\n"
