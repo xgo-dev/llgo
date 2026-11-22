@@ -1,6 +1,8 @@
 package build
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -125,6 +127,55 @@ func TestEmbeddedPrintfFloatRuntimeReference(t *testing.T) {
 			}
 			if got := slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot); got != tc.keep {
 				t.Fatalf("keep float root = %v, want %v", got, tc.keep)
+			}
+		})
+	}
+}
+
+func TestEmbeddedPrintfFloatSpeculativeLink(t *testing.T) {
+	for _, test := range []struct {
+		name, mode     string
+		linked, failed bool
+	}{
+		{name: "publish reduced link", mode: "write", linked: true},
+		{name: "runtime marker selects fallback", mode: "undefined:" + embeddedStartupMarker},
+		{name: "float marker selects fallback", mode: "undefined:" + espPrintfFloatMarker},
+		{name: "unexpected linker failure", mode: "fail", failed: true},
+		{name: "failed artifact publication", mode: "missing-output", failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LLGO_TEST_LINKER_HELPER", test.mode)
+			dir := t.TempDir()
+			output := filepath.Join(dir, "firmware.elf")
+			if err := os.WriteFile(output, []byte("previous firmware"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			plan := &mainLinkPlan{
+				embeddedStartupEntry:      "compact-entry.o",
+				embeddedPrintfFloatMarker: "float-marker.o",
+				linkInputs:                []string{"normal-entry.o", "packages.a"},
+			}
+			ctx := &context{
+				buildConf:    &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "linux", Goarch: "arm"},
+				crossCompile: crosscompile.Export{Linker: os.Args[0], LDFLAGS: []string{"retain", espPrintfFloatRoot}},
+			}
+			linked, err := linkCompactEmbeddedEntry(ctx, plan, output, true)
+			if linked != test.linked || (err != nil) != test.failed {
+				t.Fatalf("link result = (%t, %v), want linked=%t failed=%t", linked, err, test.linked, test.failed)
+			}
+			wantOutput := "previous firmware"
+			if linked {
+				wantOutput = "linked"
+			}
+			if got, err := os.ReadFile(output); err != nil || string(got) != wantOutput {
+				t.Fatalf("firmware output = (%q, %v), want %q", got, err, wantOutput)
+			}
+			if forceFloat := slices.Contains(ctx.crossCompile.LDFLAGS, espPrintfFloatRoot); forceFloat == linked {
+				t.Fatalf("float root retained=%t, linked=%t", forceFloat, linked)
+			}
+			files, err := os.ReadDir(dir)
+			if err != nil || len(files) != 1 {
+				t.Fatalf("link probe directory not removed: %v, %v", files, err)
 			}
 		})
 	}

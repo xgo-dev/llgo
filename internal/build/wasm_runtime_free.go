@@ -209,6 +209,11 @@ func enableWasmRuntimeFree(ctx *context) {
 }
 
 func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) (runtimeFree, usesCPrintf bool) {
+	return runtimeFreeFunctions(roots, linkname, globalSafe, nil, true)
+}
+
+func runtimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool,
+	acceptCall func(*ssa.Call) bool, allowPrint bool) (runtimeFree, usesCPrintf bool) {
 	if len(roots) == 0 {
 		return false, false
 	}
@@ -255,9 +260,12 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 						return false
 					}
 				case *ssa.Call:
+					if acceptCall != nil && acceptCall(instr) {
+						continue
+					}
 					call := instr.Common()
 					if builtin, ok := call.Value.(*ssa.Builtin); ok {
-						if builtin.Name() != "print" && builtin.Name() != "println" {
+						if !allowPrint || builtin.Name() != "print" && builtin.Name() != "println" {
 							return false
 						}
 						for _, arg := range call.Args {

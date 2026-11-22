@@ -61,6 +61,9 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
+	// GuardPackageInitCalls lists package initializers with a weak enabled
+	// default. A closed final link may override the default.
+	GuardPackageInitCalls []string
 	// GuardedInitializers emits weak defaults for selected package variables.
 	// The final link can override a default after proving the variable unused.
 	GuardedInitializers map[*ssa.BasicBlock][]OptionalInitializer
@@ -1738,6 +1741,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:
+		if len(p.options.GuardPackageInitCalls) != 0 && p.compileGuardedPackageInit(b, v) {
+			return
+		}
 		if concrete := p.directReflectTypeFactory(v); concrete != nil {
 			ret = p.emitDirectReflectTypeFactory(b, v, concrete)
 			break

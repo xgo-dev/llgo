@@ -10,6 +10,7 @@
 package runtime
 
 import (
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
@@ -24,6 +25,9 @@ const (
 )
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if c.EmbeddedStartupProof {
+		c.RequireEmbeddedStartup()
+	}
 	var a, b uintptr
 	seed ^= hashkey[0] ^ m1
 	switch {
@@ -70,11 +74,17 @@ func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
 }
 
 func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
+	if c.EmbeddedStartupProof {
+		c.RequireEmbeddedStartup()
+	}
 	a := r4(p)
 	return mix(m5^4, mix(a^m2, a^seed^hashkey[0]^m1))
 }
 
 func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
+	if c.EmbeddedStartupProof {
+		c.RequireEmbeddedStartup()
+	}
 	a := r8(p)
 	return mix(m5^8, mix(a^m2, a^seed^hashkey[0]^m1))
 }

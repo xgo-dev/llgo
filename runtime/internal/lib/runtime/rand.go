@@ -13,6 +13,9 @@ import (
 func c_rand() c.Int
 
 func fastrand() uint32 {
+	if c.EmbeddedStartupProof {
+		c.RequireEmbeddedStartup()
+	}
 	return uint32(c_rand())
 }
 

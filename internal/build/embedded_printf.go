@@ -125,40 +125,59 @@ func buildEmbeddedPrintfFloatMarker(ctx *context, exportFile string) (string, er
 	return exportObject(ctx, "esp32c3_printf_float", exportFile+"-printf-float", pkg)
 }
 
-// Keep speculative output out of the destination until the reduced link
-// succeeds. Both links consume the exact same application and runtime archives.
 func linkEmbeddedPrintfFloat(ctx *context, plan *mainLinkPlan, output string, verbose bool) error {
-	dir := filepath.Dir(output)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	probeDir, err := os.MkdirTemp(dir, ".llgo-printf-float-*")
+	linked, err := tryEmbeddedLink(ctx, plan, output, plan.linkInputs, true, verbose, espPrintfFloatMarker)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(probeDir)
-	probeOutput := filepath.Join(probeDir, filepath.Base(output))
-	probe := *ctx
-	omitEmbeddedPrintfFloatRoot(&probe.crossCompile)
+	if linked {
+		if ctx.shouldPrintCommands(verbose) {
+			fmt.Fprintln(os.Stderr, "llgo: omit unused ESP32-C3 floating-point printf")
+		}
+		return nil
+	}
+	if ctx.shouldPrintCommands(verbose) {
+		fmt.Fprintln(os.Stderr, "llgo: retain ESP32-C3 floating-point printf for Go builtin printing")
+	}
+	inputs := slices.Concat([]string{plan.embeddedPrintfFloatMarker}, plan.linkInputs)
+	return linkObjFiles(ctx, output, inputs, plan.linkArgs, verbose)
+}
+
+// A missing marker rejects the speculative link. Leave the caller's link
+// flags and output alone until the reduced link has succeeded.
+func tryEmbeddedLink(ctx *context, plan *mainLinkPlan, output string, inputs []string,
+	omitFloat, verbose bool, fallbackMarkers ...string) (bool, error) {
+	dir := filepath.Dir(output)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	temp, err := os.MkdirTemp(dir, ".llgo-embedded-link-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(temp)
+	pending := filepath.Join(temp, filepath.Base(output))
+	probe := newLinkExecutionContext(ctx, plan)
+	if omitFloat {
+		omitEmbeddedPrintfFloatRoot(&probe.crossCompile)
+	}
 	var diagnostics bytes.Buffer
 	probe.linkDiagnostics = &diagnostics
-	if err := linkObjFiles(&probe, probeOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
-		if !bytes.Contains(diagnostics.Bytes(), []byte("undefined symbol: "+espPrintfFloatMarker)) {
-			_, _ = diagnostics.WriteTo(os.Stderr)
-			return err
+	if err := linkObjFiles(probe, pending, inputs, plan.linkArgs, verbose); err != nil {
+		for _, marker := range fallbackMarkers {
+			if bytes.Contains(diagnostics.Bytes(), []byte("undefined symbol: "+marker)) {
+				return false, nil
+			}
 		}
-		if ctx.shouldPrintCommands(verbose) {
-			fmt.Fprintln(os.Stderr, "llgo: retain ESP32-C3 floating-point printf for Go builtin printing")
-		}
-		inputs := slices.Concat([]string{plan.embeddedPrintfFloatMarker}, plan.linkInputs)
-		return linkObjFiles(ctx, output, inputs, plan.linkArgs, verbose)
+		_, _ = diagnostics.WriteTo(os.Stderr)
+		return false, err
 	}
 	_, _ = diagnostics.WriteTo(os.Stderr)
-	if ctx.shouldPrintCommands(verbose) {
-		fmt.Fprintln(os.Stderr, "llgo: omit unused ESP32-C3 floating-point printf")
+	if err := os.Rename(pending, output); err != nil {
+		return false, err
 	}
 	ctx.crossCompile.LDFLAGS = probe.crossCompile.LDFLAGS
-	return os.Rename(probeOutput, output)
+	return true, nil
 }
 
 func needsEmbeddedPrintfFloat(functions map[*ssa.Function]bool, linked map[*ssa.Package]bool, extern func(*ssa.Function) string) bool {

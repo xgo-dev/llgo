@@ -456,6 +456,8 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "./benchmark/binary_size/fmtprintf", "Hello, world\n")
     if stdout_marker not in log:
         raise RuntimeError(f"{target}: closed literal stdout kept the standard file writer\n{log}")
+    if "llgo: select firmware console and passive startup" not in log:
+        raise RuntimeError(f"{target}: closed literal stdout retained full startup\n{log}")
     if target == "esp32c3-flash":
         omit_float = "llgo: omit unused ESP32-C3 floating-point printf"
         if omit_float not in log:
@@ -474,6 +476,11 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "redirected\nembedded output and reflection ok\n")
     if stdout_marker in log:
         raise RuntimeError(f"{target}: redirected stdout selected the descriptor writer\n{log}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./internal/build/testdata/embedded-printf-result",
+                                "first\nchecked\n")
+    if "llgo: select firmware console and passive startup" in log:
+        raise RuntimeError(f"{target}: discarded an observed fmt.Printf result\n{log}")
     print(f"{target} startup, console and reflective metadata passed", flush=True)
 
 

@@ -145,6 +145,10 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "link failed")
 			os.Exit(8)
 		}
+		if symbol, ok := strings.CutPrefix(mode, "undefined:"); ok {
+			fmt.Fprintln(os.Stderr, "undefined symbol:", symbol)
+			os.Exit(8)
+		}
 		if mode == "missing-output" {
 			os.Exit(0)
 		}

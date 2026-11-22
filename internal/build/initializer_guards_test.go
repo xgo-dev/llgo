@@ -334,6 +334,9 @@ func TestOptionalInitializersStdout(t *testing.T) {
 		embedded          bool
 		native            bool
 		writer            string
+		compact           bool
+		rawAlias          bool
+		externalFlags     bool
 	}{
 		{name: "literal", body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "deferred", body: `defer fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
@@ -344,7 +347,10 @@ func TestOptionalInitializersStdout(t *testing.T) {
 		{name: "other descriptor", body: `println(os.Stderr); fmt.Printf("hello")`},
 		{name: "assembly reference", body: `fmt.Printf("hello")`, assembly: []string{"os.Stdout"}},
 		{name: "no literal calls", body: `fmt.Printf(os.Dynamic())`},
-		{name: "embedded literal", embedded: true, body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "embedded literal", embedded: true, body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor", compact: true},
+		{name: "embedded observed result", embedded: true, body: `n, err := fmt.Printf("hello"); if err != nil || n != 5 { panic("failed") }`, writer: "llgoWriteStdoutDescriptor"},
+		{name: "embedded raw alias", embedded: true, rawAlias: true, body: `fmt.Printf("hello")`},
+		{name: "embedded linker flags", embedded: true, externalFlags: true, body: `fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "embedded descriptor read", embedded: true, body: `println(syscall.Stdout); fmt.Printf("hello")`, writer: "llgoWriteStdoutDescriptor"},
 		{name: "embedded file writer", embedded: true, body: `os.WriteFile(); fmt.Printf("hello")`, writer: "llgoWriteClosedStdout"},
 		{name: "embedded descriptor write", embedded: true, body: `syscall.Stdout = 2; fmt.Printf("hello")`},
@@ -396,17 +402,25 @@ func NewFile(uintptr, string) *File { return new(File) }
 func Dynamic() string { return "runtime format" }
 func WriteFile() { new(poll.FD).Write("file") }
 func llgoWriteStdoutDescriptor(s string) (int, error) { println(s); return len(s), nil }
+func llgoWriteStdoutDiscard(s string) (int, error) { return len(s), nil }
 `+files+fileWriter)
 			add("fmt", `package fmt
 import "os"
 func Printf(s string, a ...any) (int, error) { return llgoPrintfLiteral(s) }
 func llgoPrintfLiteral(s string) (int, error) { println(os.Stdout, s); return len(s), nil }
 `)
+			var rawAlias string
+			if tc.rawAlias {
+				rawAlias = "\n//go:linkname escaped syscall.Stdout\n"
+			}
 			entry := add("main", `package main
 import ("fmt"; "os"; "syscall")
 var escaped *int
 func save(p *int) { escaped = p }
-func main() {`+tc.body+"}")
+func main() {`+tc.body+"}"+rawAlias)
+			if tc.embedded {
+				entry.Dir = filepath.Join(goroot, "app")
+			}
 			prog.Build()
 			goos, goarch := "wasip1", "wasm"
 			if tc.native {
@@ -462,6 +476,15 @@ func main() {`+tc.body+"}")
 			for _, call := range plan.calls {
 				if got := call.Common().StaticCallee(); got != callee {
 					t.Fatalf("callee = %v, want %v", got, callee)
+				}
+			}
+			if tc.embedded {
+				if tc.externalFlags {
+					ctx.commands.environ = []string{"CCFLAGS=-DEXTERNAL"}
+				}
+				configureEmbeddedStartup(ctx, goroot, &linkPruningInputs{roots: tc.assembly})
+				if ctx.probeEmbeddedStartup != tc.compact {
+					t.Fatalf("compact startup=%t, want %t", ctx.probeEmbeddedStartup, tc.compact)
 				}
 			}
 		})

@@ -19,6 +19,7 @@ type stdoutPlan struct {
 	entry                     *ssa.Package
 	regular, file, descriptor *ssa.Function
 	pollWrite, selected       *ssa.Function
+	discard                   *ssa.Function
 	calls                     []ssa.CallInstruction
 }
 
@@ -41,7 +42,7 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 	if regular == nil || file == nil && descriptor == nil {
 		return nil
 	}
-	plan := &stdoutPlan{entry: entry, regular: regular, file: file, descriptor: descriptor}
+	plan := &stdoutPlan{entry: entry, regular: regular, file: file, descriptor: descriptor, discard: osPkg.Func("llgoWriteStdoutDiscard")}
 	if poll := ctx.progSSA.ImportedPackage("internal/poll"); poll != nil {
 		if fd := poll.Type("FD"); fd != nil {
 			methods := ctx.progSSA.MethodSets.MethodSet(types.NewPointer(fd.Type()))
