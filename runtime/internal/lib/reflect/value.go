@@ -2230,10 +2230,15 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 	}
 	v = v.goValue()
 	typ := physicalType(v.typ())
-	assignDst := physicalType(dst)
+	if v.ptr == nil && typ.IsClosure() {
+		// Zero can supply a direct nil. Use zeroed closure storage so
+		// assignment clears both the code and the environment.
+		v = Value{typ, unsafe.Pointer(&runtime.ZeroVal[0]), flag(Func) | flagIndir | v.flag.ro()}
+	}
 
+	assignDst := physicalType(dst)
 	if typ.IsClosure() && assignDst.IsClosure() && typ != assignDst {
-		srcFunc := &v.closureFunc().Type
+		srcFunc := &toFuncType(typ.StructType()).Type
 		dstFunc := &toFuncType(assignDst.StructType()).Type
 		if srcFunc != dstFunc && srcFunc.PublicFunc() == dstFunc.PublicFunc() {
 			return v.adaptFuncFrame(assignDst, dstFunc)

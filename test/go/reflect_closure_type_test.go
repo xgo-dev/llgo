@@ -356,6 +356,37 @@ func TestReflectHigherOrderFuncAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestReflectZeroFuncAssignment(t *testing.T) {
+	type namedFunc func()
+	n := 1
+	plain := func() { n++ }
+	named := namedFunc(plain)
+	public := func(f func(reflectCallbackArg) int64) int64 { return f(reflectCallbackArg{}) }
+	qualified := func(f reflectCallbackAlias) int64 { return f(reflectCallbackArg{}) }
+	qualifiedType := reflect.TypeOf([1]func(reflectCallbackAlias) int64{}).Elem()
+	for _, tc := range []struct {
+		name string
+		from reflect.Type
+		dst  any
+	}{
+		{"named to unnamed", reflect.TypeOf(named), &plain},
+		{"unnamed to named", reflect.TypeOf(plain), &named},
+		{"public to qualified", reflect.TypeOf(public), &qualified},
+		{"qualified to public", qualifiedType, &public},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := reflect.ValueOf(tc.dst).Elem()
+			if dst.IsNil() || !tc.from.AssignableTo(dst.Type()) {
+				t.Fatalf("expected an initialized destination assignable from %v", tc.from)
+			}
+			dst.Set(reflect.Zero(tc.from))
+			if !dst.IsNil() {
+				t.Fatal("assigning a zero function did not clear the destination")
+			}
+		})
+	}
+}
+
 func TestReflectClosureSliceClear(t *testing.T) {
 	left, right := 3, 4
 	slice := make([]func() int, 2)
