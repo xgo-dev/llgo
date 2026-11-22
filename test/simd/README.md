@@ -539,3 +539,10 @@ A direct call to a locally defined boolean helper can also establish a feature
 on one return outcome. The caller keeps the call, including side effects and
 any independent conditions. Declarations, indirect calls and weak definitions
 do not provide evidence about the CPU.
+
+On amd64, the selected portable 256- and 512-bit function bodies enable AVX2
+and the Go AVX-512 core feature set respectively. An explicit width request
+still goes through the ordinary Go width selector, including its hardware
+limit. Optional extensions such as VBMI2 remain independently guarded. The
+scalar dispatcher, emulation and 128-bit fallback do not inherit wide ISA
+requirements.

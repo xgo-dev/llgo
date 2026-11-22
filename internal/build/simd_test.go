@@ -263,7 +263,7 @@ func assertSIMDBaselineAssembly(t *testing.T, asm string) {
 	}
 	avx := regexp.MustCompile(`(?m)^\s+(?:v[a-z][a-z0-9]*|pclmul[a-z0-9]*)\s`)
 	for _, body := range bodies {
-		if !strings.Contains(body[1], ".__llgo_fmv_avx2") && avx.MatchString(body[2]) {
+		if !strings.Contains(body[1], ".__llgo_fmv_avx2") && !strings.Contains(body[1], "@simd256") && !strings.Contains(body[1], "@simd512") && avx.MatchString(body[2]) {
 			t.Fatalf("GOAMD64=v1 baseline %s emitted optional vector instructions:\n%s", body[1], body[2])
 		}
 	}

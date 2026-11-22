@@ -26,3 +26,25 @@ func (f Function) AllowSIMDDispatcherInlining() {
 		f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute(llvmfmv.InlineEntryAttribute, ""))
 	}
 }
+
+// MarkMidwayWidth records only the instruction set guaranteed by the
+// portable width selector. In particular simd=+512 does not imply VBMI2,
+// VNNI or carryless multiplication. The original entry stays at baseline.
+func (f Function) MarkMidwayWidth(width int) {
+	if f.Prog.Target().GOARCH != "amd64" {
+		return
+	}
+	features := "+avx,+avx2"
+	switch width {
+	case 256:
+	case 512:
+		features += ",+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"
+	default:
+		return
+	}
+	attr := f.impl.GetStringAttributeAtIndex(-1, "target-features")
+	if !attr.IsNil() {
+		features = attr.GetStringValue() + "," + features
+	}
+	f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute("target-features", features))
+}

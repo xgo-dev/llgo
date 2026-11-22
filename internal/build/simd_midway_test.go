@@ -5,6 +5,7 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -22,6 +23,7 @@ import "simd"
 type Block struct { V simd.Uint32s; N int }
 var global = makeBlock(3)
 func makeBlock(x uint32) Block { return Block{simd.BroadcastUint32s(x), 7} }
+//go:noinline
 func sum(xs []uint32) uint32 {
  v:=global.V
  for len(xs)>=v.Len() { v=v.Add(simd.LoadUint32s(xs)); xs=xs[v.Len():] }
@@ -93,6 +95,12 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 						t.Fatal(err)
 					}
 					if target.os == "linux" {
+						if level == "O2" {
+							body := regexp.MustCompile(`(?ms)^"main.sum@simd512":[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(string(asm.Bytes()))
+							if body == nil || !regexp.MustCompile(`vpaddd\s+[^\n]*%zmm`).MatchString(body[1]) {
+								t.Fatalf("missing ZMM integer add in portable 512-bit body: %v", body)
+							}
+						}
 						assertSIMDBaselineAssembly(t, string(asm.Bytes()))
 					}
 					asm.Dispose()

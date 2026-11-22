@@ -2,6 +2,7 @@ package cl
 
 import (
 	"go/types"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -29,6 +30,11 @@ func simdCPUQuery(fn *ssa.Function) string {
 func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	if fn == nil || p.prog.Target().GOARCH != "amd64" {
 		return
+	}
+	// Only Midway can introduce '@' in a checked Go declaration name. Do
+	// not infer a width from the LLVM symbol: linkname/export can choose it.
+	if width := midwayBodyWidth(source); width != 0 {
+		fn.MarkMidwayWidth(width)
 	}
 	hasVector := false
 	sig := source.Signature
@@ -84,6 +90,37 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 	}
 	// CPU queries are marked independently of vector signatures.
 	fn.MarkSIMDFMV(available && hasVector, simdCPUQuery(source))
+}
+
+// A closure inherits its lexical variant. For methods it is the generated
+// receiver type, not the (interface-visible) method name, that identifies it.
+func midwayBodyWidth(fn *ssa.Function) int {
+	for fn.Parent() != nil {
+		fn = fn.Parent()
+	}
+	obj, ok := fn.Object().(*types.Func)
+	if !ok || obj.Pkg() == nil {
+		return 0
+	}
+	name := obj.Origin().Name()
+	if recv := obj.Signature().Recv(); recv != nil {
+		t := types.Unalias(recv.Type())
+		if p, ok := t.(*types.Pointer); ok {
+			t = types.Unalias(p.Elem())
+		}
+		named, ok := t.(*types.Named)
+		if !ok {
+			return 0
+		}
+		name = named.Origin().Obj().Name()
+	}
+	switch {
+	case strings.HasSuffix(name, "@simd256"):
+		return 256
+	case strings.HasSuffix(name, "@simd512"):
+		return 512
+	}
+	return 0
 }
 
 // Midway's hardware representations are defined bridge types, not aliases of
