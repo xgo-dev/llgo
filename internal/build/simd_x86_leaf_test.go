@@ -54,9 +54,9 @@ func main(){}
 					t.Fatal("missing " + name)
 				}
 				caller := m.NamedFunction("main." + tc.fn).String()
-				guard := strings.Index(caller, "SIMDRequireX86Features")
+				guard := strings.Index(caller, ".CPUFeatures")
 				call := strings.Index(caller, name+"(")
-				if guard < 0 || call < guard {
+				if guard < 0 || call < guard || !strings.Contains(caller, "PanicSIMDX86Feature") || !strings.Contains(caller, "br i1") {
 					t.Fatal("missing checked call", caller)
 				}
 				if strings.Contains(leaf.String(), "switch ") != tc.dynamic {

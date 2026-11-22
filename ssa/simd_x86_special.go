@@ -93,7 +93,7 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	ins := x86SIMDInstructions[op]
 	width := int(b.Prog.td.TypeSizeInBits(result.ll))
 	name, features, required := ins.encoding(width, result.ll.ElementType().TypeKind() == llvm.FloatTypeKind)
-	b.Call(b.Pkg.rtFunc("SIMDRequireX86Features"), b.Prog.IntVal(required, b.Prog.Uint64()))
+	b.requireX86SIMD(required)
 	ctx := b.Prog.ctx
 	ptr := b.Prog.VoidPtr().ll
 	mod := b.Pkg.Module()
@@ -234,4 +234,27 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 		return Expr{b.impl.CreateBitCast(call, result.ll, ""), result}
 	}
 	return Expr{b.impl.CreateLoad(result.ll, slots[0], ""), result}
+}
+
+// Keep a missing feature recoverable, but avoid a runtime call on every
+// successful round of a SHA/AES kernel. CPUFeatures is initialized once by
+// internal/cpu after applying GODEBUG; it must not be a compile-time constant.
+func (b Builder) requireX86SIMD(bits uint64) {
+	t := b.Prog.Uint64()
+	g := b.Pkg.NewVarEx(PkgRuntime+".CPUFeatures", b.Prog.Pointer(t))
+	published := b.impl.CreateLoad(t.ll, g.impl, "")
+	required := llvm.ConstInt(t.ll, bits, false)
+	masked := b.impl.CreateAnd(published, required, "")
+	missing := llvm.CreateICmp(b.impl, llvm.IntNE, masked, required)
+	logical, entry := b.blk, b.impl.GetInsertBlock()
+	blocks := b.Func.MakeBlocks(2)
+	b.If(Expr{missing, b.Prog.Bool()}, blocks[0], blocks[1])
+	b.SetBlock(blocks[0])
+	b.Call(b.Pkg.rtFunc("PanicSIMDX86Feature"))
+	b.Unreachable()
+	b.SetBlockEx(blocks[1], AtEnd, false)
+	b.blk = logical
+	if logical.last == entry {
+		logical.last = blocks[1].last
+	}
 }
