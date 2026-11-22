@@ -367,6 +367,10 @@ func TestWasmReflectHigherOrderAlias(t *testing.T) {
 	if raw.Type() != expanded || reflect.TypeFor[aliasIdentity]() != expanded {
 		t.Fatal("higher-order function alias lost its Go type identity")
 	}
+	native := reflect.TypeOf([1]nativeAliasIdentity{}).Elem()
+	if expanded.AssignableTo(native) {
+		t.Fatal("ordinary function is assignable to a native pointer with a different frame")
+	}
 	callback := reflect.ValueOf(aliasTextEntry).Call(nil)[0]
 	out := raw.Call([]reflect.Value{callback})[0]
 	if out.UnsafePointer() != callback.UnsafePointer() || out.Interface().(aliasWordText)(515) != "word" {

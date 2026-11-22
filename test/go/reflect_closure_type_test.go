@@ -298,6 +298,10 @@ func TestReflectHigherOrderContainerTypeSelection(t *testing.T) {
 	// Keep this signature distinct so its public containers do not become
 	// exact candidates for the fallback cases above.
 	fnType := reflect.TypeOf((func(reflectCallbackAlias, byte) int64)(nil))
+	offset := int64(41)
+	public := reflect.ValueOf(func(f func(reflectCallbackArg) int64, b byte) int64 {
+		return offset + f(reflectCallbackArg{Words: [7]uint32{uint32(b)}})
+	})
 	for _, tc := range []struct {
 		name              string
 		qualified, public reflect.Type
@@ -313,6 +317,16 @@ func TestReflectHigherOrderContainerTypeSelection(t *testing.T) {
 			func(e reflect.Type) reflect.Type { return reflect.MapOf(reflect.TypeOf(0), e) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			elem := tc.qualified.Elem()
+			if !fnType.AssignableTo(elem) || !elem.AssignableTo(fnType) {
+				t.Errorf("function and %s element must be mutually assignable", tc.name)
+			}
+			slot := reflect.New(elem).Elem()
+			slot.Set(public)
+			fn := slot.Interface().(func(reflectCallbackAlias, byte) int64)
+			if got := fn(reflectCallbackWord, 1); got != 42 {
+				t.Fatalf("assigned function returned %d, want 42", got)
+			}
 			for _, element := range []struct {
 				name      string
 				typ, want reflect.Type
@@ -326,6 +340,19 @@ func TestReflectHigherOrderContainerTypeSelection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReflectHigherOrderFuncAssignmentMismatch(t *testing.T) {
+	type First func(reflectCallbackAlias) int64
+	type Second func(reflectCallbackAlias) int64
+	if reflect.TypeFor[First]().AssignableTo(reflect.TypeFor[Second]()) {
+		t.Fatal("distinct named function types are assignable")
+	}
+	variadic := reflect.TypeOf((func(reflectCallbackAlias, ...byte) int64)(nil))
+	slice := reflect.TypeOf((func(func(reflectCallbackArg) int64, []byte) int64)(nil))
+	if variadic.AssignableTo(slice) || slice.AssignableTo(variadic) {
+		t.Fatal("variadic and slice signatures are assignable")
 	}
 }
 

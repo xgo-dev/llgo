@@ -1142,8 +1142,13 @@ func (t *rtype) AssignableTo(u Type) bool {
 	if u == nil {
 		panic("reflect: nil type passed to Type.AssignableTo")
 	}
-	uu := u.common()
-	return directlyAssignable(uu, t.common()) || implements(uu, t.common())
+	dst, src := u.common(), t.common()
+	if directlyAssignable(dst, src) || implements(dst, src) {
+		return true
+	}
+	// Set adapts Go closures with the same public signature across callback
+	// frames. A native function pointer needs a compatible entry of its own.
+	return !dst.HasNativeLayout() && !src.HasNativeLayout() && dst.PublicFunc() == src.PublicFunc()
 }
 
 func (t *rtype) ConvertibleTo(u Type) bool {
