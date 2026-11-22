@@ -382,7 +382,7 @@ func entryRequirements(predicates uint64) uint64 {
 	return predicates
 }
 
-const queryOnlySuffix = symbolPrefix + "avx2_query"
+const queryOnlySuffix = symbolPrefix + "query_avx2"
 
 type dispatchChoice struct {
 	bits uint64
