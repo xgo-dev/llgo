@@ -37,14 +37,13 @@ type N struct {
 
 // unsafe.String checks its pointer/length pair before constructing the string.
 // A target may either retain the range predicate or fold it for this known-safe
-// global pointer. The target-width predicate itself is covered by ssa tests.
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 {{false|%[0-9]+}}, %"{{.*}}/runtime/internal/runtime.String" {{.*}})
-// CHECK: %[[STRING_EQ:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[CSTR:[0-9]+]], i64 3 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 3 })
-// CHECK: %[[STRING_NE:[0-9]+]] = xor i1 %[[STRING_EQ]], true
-// CHECK: br i1 %[[STRING_NE]]
+// global pointer. The hot path keeps only the guard branch; the never-returning
+// runtime call moves to a cold block (checked further down). The target-width
+// predicate itself is covered by ssa tests.
+// CHECK: br i1 {{false|%[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
 
 // unsafe.StringData starts from the same backing pointer.
-// CHECK: load i8, ptr @[[CSTR]]
+// CHECK: load i8, ptr @[[CSTR:[0-9]+]]
 
 // unsafe.Slice validates pointer/length overflow, then constructs a slice whose
 // data and length are the values consumed by ordinary bounds checks. The local
@@ -58,13 +57,41 @@ type N struct {
 // CHECK: %[[ARRAY_VALUE:[0-9]+]] = load [2 x i64], ptr %[[ARRAY_TMP]]
 // CHECK: store [2 x i64] %[[ARRAY_VALUE]], ptr %[[ARRAY]]
 // CHECK: %[[BASE:[0-9]+]] = getelementptr inbounds i64, ptr %[[ARRAY]], i64 0
+// The Slice guard branches on its folded predicate before the block-order
+// neighbors that follow.
+// CHECK: br i1 {{false|%[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// The remaining StringData loads may be printed in predecessor block order,
+// but must still use the captured string backing pointer.
+// CHECK: load i8, ptr getelementptr inbounds (i8, ptr @[[CSTR]], i64 2)
+// CHECK: load i8, ptr getelementptr inbounds (i8, ptr @[[CSTR]], i64 1)
+
+// unsafe.SliceData reads from the constructed slice data pointer.
+// CHECK: %[[SLICE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
+// CHECK: load i64, ptr %[[SLICE_DATA]]
+
+// CHECK: %[[DATA1:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 0
+// CHECK: %[[LEN1:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, 1
+// CHECK: %[[OOB1:[0-9]+]] = icmp uge i64 1, %[[LEN1]]
+// CHECK: br i1 %[[OOB1]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
+
+// unsafe.Add(nil, 1) remains a byte-wise pointer addition.
+// CHECK: icmp ne i64 ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64), 1
+
+// The String guard's cold block opens with the runtime call forced to constant
+// true, and the comparison body keeps its runtime StringEqual shape.
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 true, %"{{.*}}/runtime/internal/runtime.String" {{.*}})
+// CHECK: %[[STRING_EQ:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[CSTR]], i64 3 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @{{[0-9]+}}, i64 3 })
+// CHECK: %[[STRING_NE:[0-9]+]] = xor i1 %[[STRING_EQ]], true
+// CHECK: br i1 %[[STRING_NE]]
+
+// The Slice guard's dynamic predicate keeps the base pointer; LLVM may express
+// the same overflow check as base+15 < base or as 15 > max-base, depending on
+// target folding.
 // CHECK: %[[BASE_INT:[0-9]+]] = ptrtoint ptr %[[BASE]] to i64
-// LLVM may express the same overflow predicate as base+15 < base or as
-// 15 > max-base, depending on target folding.
 // CHECK: %[[SLICE_LIMIT:[0-9]+]] = {{add|sub}} i64 {{.*}}
 // CHECK: %[[SLICE_OVERFLOW:[0-9]+]] = {{icmp ult|icmp ugt}} i64 {{.*}}
 // CHECK: %[[SLICE_INVALID:[0-9]+]] = and i1 true, %[[SLICE_OVERFLOW]]
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 %[[SLICE_INVALID]], %"{{.*}}/runtime/internal/runtime.String" {{.*}})
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertRuntimeError"(i1 true, %"{{.*}}/runtime/internal/runtime.String" {{.*}})
 // CHECK: %[[SLICE_PTR:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" undef, ptr %[[BASE]], 0
 // CHECK: %[[SLICE_LEN:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE_PTR]], i64 2, 1
 // CHECK: %[[SLICE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE_LEN]], i64 2, 2
@@ -72,22 +99,6 @@ type N struct {
 // CHECK: %[[LEN0:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 1
 // CHECK: %[[OOB0:[0-9]+]] = icmp uge i64 0, %[[LEN0]]
 // CHECK: br i1 %[[OOB0]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
-// The remaining StringData loads may be printed in predecessor block order,
-// but must still use the captured string backing pointer.
-// CHECK: load i8, ptr getelementptr inbounds (i8, ptr @[[CSTR]], i64 2)
-// CHECK: load i8, ptr getelementptr inbounds (i8, ptr @[[CSTR]], i64 1)
-
-// unsafe.SliceData reads from the constructed slice data pointer.
-// CHECK: %[[SLICE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 0
-// CHECK: load i64, ptr %[[SLICE_DATA]]
-
-// CHECK: %[[DATA1:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 0
-// CHECK: %[[LEN1:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 1
-// CHECK: %[[OOB1:[0-9]+]] = icmp uge i64 1, %[[LEN1]]
-// CHECK: br i1 %[[OOB1]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
-
-// unsafe.Add(nil, 1) remains a byte-wise pointer addition.
-// CHECK: icmp ne i64 ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64), 1
 
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 0, i64 %[[LEN0]])
 // CHECK-NEXT: br label %{{_llgo_[0-9]+}}
@@ -99,7 +110,14 @@ type N struct {
 // A nil pointer with a zero, narrower length retains both folded safety checks
 // and returns a zero-length slice.
 // CHECK-LABEL: define %"{{.*}}Slice" @main.zeroSlice(){{.*}} {
-// CHECK-COUNT-4: call void @"{{.*}}AssertRuntimeError"(i1 false, %"{{.*}}String" {{.*}})
+// CHECK: br i1 false
+// CHECK: call void @"{{.*}}AssertRuntimeError"(i1 true, %"{{.*}}String" {{.*}})
+// CHECK: br i1 false
+// CHECK: call void @"{{.*}}AssertRuntimeError"(i1 true, %"{{.*}}String" {{.*}})
+// CHECK: br i1 false
+// CHECK: call void @"{{.*}}AssertRuntimeError"(i1 true, %"{{.*}}String" {{.*}})
+// CHECK: br i1 false
+// CHECK: call void @"{{.*}}AssertRuntimeError"(i1 true, %"{{.*}}String" {{.*}})
 // CHECK: ret %"{{.*}}Slice" zeroinitializer
 
 func main() {

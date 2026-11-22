@@ -548,6 +548,37 @@ func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
 	return ptr
 }
 
+// branchyAssert lowers a runtime assertion branchy like WrapNilCheck: the hot
+// path is compare-and-branch, and the panic call - first argument now the
+// constant true the helper re-tests - moves to a cold block that ends in a
+// formal return or self-loop per the frame-pointer target policy. The caller's
+// condition keeps its original meaning and stays usable after the guard: the
+// icmp dominates both blocks. Like WrapNilCheck there is no constant early-exit
+// (instcombine folds the branch away, so the generic form costs nothing), and
+// PanicSite stays unset because cl does not record panic sites at these
+// builtin positions, matching the original lowerings.
+func (b Builder) branchyAssert(check Expr, panicCall func()) {
+	blks := b.Func.MakeBlocks(2)
+	b.If(check, blks[0], blks[1])
+	b.SetBlockEx(blks[0], AtEnd, false)
+	panicCall()
+	if b.Prog.NeedsFramePointer() {
+		// The helper never returns. Keep a formal return so statically failing
+		// callers keep their return PCs inside this function, mirroring
+		// AssertNilDeref.
+		ret := b.Func.impl.GlobalValueType().ReturnType()
+		if ret.TypeKind() == llvm.VoidTypeKind {
+			b.impl.CreateRetVoid()
+		} else {
+			b.impl.CreateRet(llvm.Undef(ret))
+		}
+	} else {
+		b.Jump(blks[0])
+	}
+	b.SetBlockEx(blks[1], AtEnd, false)
+	b.blk.last = blks[1].last
+}
+
 // Load returns the value at the pointer ptr.
 func (b Builder) Load(ptr Expr) Expr {
 	dbgInstrf("Load %v\n", ptr.impl)
