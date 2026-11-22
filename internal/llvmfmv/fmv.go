@@ -19,12 +19,13 @@ const (
 	QueryAttribute       = "llgo.cpu.query"
 	AVX2Query            = "x86.avx2"
 
-	doneAttribute  = attributePrefix + "processed"
-	variantSuffix  = symbolPrefix + "avx2"
-	baselineSuffix = symbolPrefix + "baseline"
-	resolverSuffix = symbolPrefix + "resolve"
-	slotSuffix     = symbolPrefix + "slot"
-	featureSymbol  = "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures"
+	doneAttribute    = attributePrefix + "processed"
+	guardedAttribute = attributePrefix + "guarded"
+	variantSuffix    = symbolPrefix + "avx2"
+	baselineSuffix   = symbolPrefix + "baseline"
+	resolverSuffix   = symbolPrefix + "resolve"
+	slotSuffix       = symbolPrefix + "slot"
+	featureSymbol    = "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures"
 	// Keep these bits in sync with runtime/_patch/internal/cpu/init_llgo.go.
 	featureInitialized = 1
 	featureAVX2        = 2
@@ -208,7 +209,9 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// entry needs canonical dispatch. Scalar-signature helper chains can use
 	// the ordinary guarded-feature pass and its bounded local clones.
 	for fn := range roots {
-		if !supported(fn) || len(guardContexts(fn, queries, entries)) == 0 {
+		// Folding another predicate in a guarded body may expose an AVX2
+		// branch on a later run. That body already has a dispatch policy.
+		if hasAttribute(fn, guardedAttribute) || !supported(fn) || len(guardContexts(fn, queries, entries)) == 0 {
 			delete(roots, fn)
 		}
 	}

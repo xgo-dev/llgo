@@ -657,3 +657,37 @@ no: ret void
 		t.Fatal("budget boundary did not preserve the ordinary call")
 	}
 }
+
+func TestAVX2GuardExposedInSpecializedBody(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+define void @root(ptr %p) {
+ %f = call i1 @fma()
+ br i1 %f, label %first, label %check
+first:
+ %x = load volatile <4 x i32>, ptr %p
+ br label %check
+check:
+ %a = call i1 @avx2()
+ %enabled = select i1 %f, i1 %a, i1 false
+ br i1 %enabled, label %second, label %exit
+second:
+ %y = load volatile <4 x i32>, ptr %p
+ br label %exit
+exit:
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	fma := m.NamedFunction("root.__llgo_fmv_guard_fma")
+	if fma.IsNil() || !strings.Contains(fma.String(), "br i1 %a,") {
+		t.Fatalf("expected a direct AVX2 guard after folding FMA:\n%s", m.String())
+	}
+	before := m.String()
+	if err := Run(m, "v1"); err != nil || m.String() != before {
+		t.Fatalf("second pass changed the specialized body: %v\n%s", err, m.String())
+	}
+}

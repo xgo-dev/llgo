@@ -339,7 +339,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
-	const processed = attributePrefix + "guarded"
 	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
 	defer func() {
 		for _, v := range folds.views {
@@ -372,7 +371,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				if avx2 != nil && !avx2.baselines[parent].IsNil() {
 					continue
 				}
-				if !hasAttribute(parent, processed) && supported(parent) {
+				if !hasAttribute(parent, guardedAttribute) && supported(parent) {
 					candidates[parent] = true
 				}
 			}
@@ -416,7 +415,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		v := folds.view(fn).CloneFunction()
 		v.SetName(name)
 		v.SetLinkage(llvm.InternalLinkage)
-		v.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
+		v.AddFunctionAttr(ctx.CreateStringAttribute(guardedAttribute, ""))
 		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		v.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 		copies = append(copies, struct{ original, body llvm.Value }{fn, v})
@@ -540,7 +539,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		}
 	}
 	for _, root := range roots {
-		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(processed, ""))
+		root.fn.AddFunctionAttr(ctx.CreateStringAttribute(guardedAttribute, ""))
 		dispatch(mod, source, root.fn, root.base, root.choices)
 	}
 	return nil
