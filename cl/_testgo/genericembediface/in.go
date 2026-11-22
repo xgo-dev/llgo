@@ -77,7 +77,8 @@ func main() {
 // The pointer wrapper preserves the stream argument while forwarding to the value method.
 // CHECK-LABEL: define %"{{.*}}iface" @"main.(*server).ServerReflectionInfo"(ptr %0, %"{{.*}}iface" %1){{.*}} {
 // CHECK: [[SERVER_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}PanicWrapNilPointer"(i1 [[SERVER_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[SERVER_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: [[SERVER_DEREF_NIL:%.*]] = icmp eq ptr %0, null
 // CHECK: br i1 [[SERVER_DEREF_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}AssertNilDeref"(i1 true)
@@ -90,7 +91,8 @@ func main() {
 
 // CHECK-LABEL: define %"{{.*}}String" @"main.(*stream).Context"(ptr %0){{.*}} {
 // CHECK: [[STREAM_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}PanicWrapNilPointer"(i1 [[STREAM_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" { ptr [[CONTEXT]], i64 7 })
+// CHECK: br i1 [[STREAM_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" { ptr [[CONTEXT]], i64 7 })
 // CHECK: [[STREAM_DEREF_NIL:%.*]] = icmp eq ptr %0, null
 // CHECK: br i1 [[STREAM_DEREF_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}AssertNilDeref"(i1 true)

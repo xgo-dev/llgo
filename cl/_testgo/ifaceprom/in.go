@@ -100,13 +100,15 @@ func main() {
 
 // CHECK-LABEL: define i64 @"main.(*impl).one"(ptr %0){{.*}} {
 // CHECK: [[IMPL_ONE_NIL:%[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[IMPL_ONE_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[IMPL_ONE_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: [[IMPL_ONE_RESULT:%.*]] = call i64 @main.impl.one(%main.impl zeroinitializer)
 // CHECK: ret i64 [[IMPL_ONE_RESULT]]
 
 // CHECK-LABEL: define %"{{.*}}String" @"main.(*impl).two"(ptr %0){{.*}} {
 // CHECK: [[IMPL_TWO_NIL:%[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[IMPL_TWO_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[IMPL_TWO_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: [[IMPL_TWO_RESULT:%.*]] = call %"{{.*}}String" @main.impl.two(%main.impl zeroinitializer)
 // CHECK: ret %"{{.*}}String" [[IMPL_TWO_RESULT]]
 

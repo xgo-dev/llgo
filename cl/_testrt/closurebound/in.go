@@ -28,12 +28,14 @@ func main() {
 // Pointer receiver wrappers must guard nil before calling the value receiver.
 // CHECK-LABEL: define i64 @"main.(*demo1).encode"(ptr %0){{.*}} {
 // CHECK: %[[D1_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[D1_NIL]],{{.*}})
+// CHECK: br i1 %[[D1_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: call i64 @main.demo1.encode(%main.demo1 zeroinitializer)
 
 // CHECK-LABEL: define i64 @"main.(*demo2).encode"(ptr %0){{.*}} {
 // CHECK: %[[D2_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[D2_NIL]],{{.*}})
+// CHECK: br i1 %[[D2_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: call i64 @main.demo2.encode(%main.demo2 zeroinitializer)
 
 // The package-global method value stores both the selected bound wrapper and

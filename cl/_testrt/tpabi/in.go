@@ -89,6 +89,7 @@ func main() {
 // CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Info"(
 // CHECK-SAME: ptr %[[WRAPPED:[0-9]+]]){{.*}} {
 // CHECK: %[[ISNIL:[0-9]+]] = icmp eq ptr %[[WRAPPED]], null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[ISNIL]], {{.*}})
+// CHECK: br i1 %[[ISNIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, {{.*}})
 // CHECK: %[[LOADED:[0-9]+]] = load %"main.T[string,int]", ptr %[[WRAPPED]], align 8
 // CHECK: call void @"main.T[string,int].Info"(%"main.T[string,int]" %[[LOADED]])

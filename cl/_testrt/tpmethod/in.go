@@ -136,8 +136,9 @@ func main() {
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = icmp eq ptr %[[TMP0]], null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB16]], i64 56 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 3 })
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"main.Tuple[error]", ptr %[[TMP0]], align 8
+// CHECK-NEXT:   br i1 %[[TMP1]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB16]], i64 56 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 3 })
+// CHECK: %[[TMP2:[0-9]+]] = load %"main.Tuple[error]", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @"main.Tuple[error].Get"(%"main.Tuple[error]" %[[TMP2]])
 // CHECK-NEXT:   ret %"{{.*}}/runtime/internal/runtime.iface" %[[TMP3]]
 // CHECK-NEXT: }

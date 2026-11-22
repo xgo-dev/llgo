@@ -132,7 +132,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T_NIL]],{{.*}})
+// CHECK: br i1 %[[T_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T_VALUE:[0-9]+]] = load %main.T, ptr %0
 // CHECK: %[[T_RESULT:[0-9]+]] = call i64 @main.T.Invoke(%main.T %[[T_VALUE]])
 // CHECK: ret i64 %[[T_RESULT]]
@@ -143,7 +144,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T1).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T1_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T1_NIL]],{{.*}})
+// CHECK: br i1 %[[T1_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T1_VALUE:[0-9]+]] = load i64, ptr %0
 // CHECK: call i64 @main.T1.Invoke(i64 %[[T1_VALUE]])
 
@@ -153,7 +155,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T2).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T2_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T2_NIL]],{{.*}})
+// CHECK: br i1 %[[T2_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T2_VALUE:[0-9]+]] = load double, ptr %0
 // CHECK: call i64 @main.T2.Invoke(double %[[T2_VALUE]])
 
@@ -176,7 +179,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T4).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T4_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T4_NIL]],{{.*}})
+// CHECK: br i1 %[[T4_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T4_VALUE:[0-9]+]] = load [1 x i64], ptr %0
 // CHECK: call i64 @main.T4.Invoke([1 x i64] %[[T4_VALUE]])
 
@@ -189,7 +193,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T5).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T5_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T5_NIL]],{{.*}})
+// CHECK: br i1 %[[T5_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T5_VALUE:[0-9]+]] = load %main.T5, ptr %0
 // CHECK: call i64 @main.T5.Invoke(%main.T5 %[[T5_VALUE]])
 
@@ -202,7 +207,8 @@ type M interface {
 
 // CHECK-LABEL: define i64 @"main.(*T6).Invoke"(ptr %0){{.*}} {
 // CHECK: %[[T6_NIL:[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[T6_NIL]],{{.*}})
+// CHECK: br i1 %[[T6_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,{{.*}})
 // CHECK: %[[T6_LOADED:[0-9]+]] = load %main.T6, ptr %0
 // CHECK: call i64 @main.T6.Invoke(%main.T6 %[[T6_LOADED]])
 

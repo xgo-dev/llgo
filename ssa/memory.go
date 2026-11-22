@@ -517,7 +517,34 @@ func (b Builder) assertStaticNilDeref(ptr Expr) {
 
 func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
 	isNil := b.BinOp(token.EQL, ptr, b.Prog.Nil(ptr.Type))
-	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), isNil, recvType, methodName)
+	// Keep the taken path free of an opaque runtime call: loading the receiver
+	// type and method name strings for every call costs far more than the
+	// branch, and the unconditional helper call blocks tail-call optimization
+	// of generated method wrappers. The cold path reports the identical panic.
+	// Unlike AssertNilDeref there is no constant early-exit for statically
+	// non-nil pointers: instcombine folds the icmp and the branch away, so the
+	// generic form costs nothing. PanicSite stays unset because cl does not
+	// record panic sites at ssa:wrapnilchk builtin positions, matching the
+	// original lowering.
+	blks := b.Func.MakeBlocks(2)
+	b.If(isNil, blks[0], blks[1])
+	b.SetBlockEx(blks[0], AtEnd, false)
+	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), b.Prog.BoolVal(true), recvType, methodName)
+	if b.Prog.NeedsFramePointer() {
+		// The helper never returns. Keep a formal return so statically nil
+		// callers keep their return PCs inside this function, mirroring
+		// AssertNilDeref.
+		ret := b.Func.impl.GlobalValueType().ReturnType()
+		if ret.TypeKind() == llvm.VoidTypeKind {
+			b.impl.CreateRetVoid()
+		} else {
+			b.impl.CreateRet(llvm.Undef(ret))
+		}
+	} else {
+		b.Jump(blks[0])
+	}
+	b.SetBlockEx(blks[1], AtEnd, false)
+	b.blk.last = blks[1].last
 	return ptr
 }
 

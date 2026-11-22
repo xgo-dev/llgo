@@ -215,7 +215,8 @@ type I2 interface {
 
 // CHECK-LABEL: define i64 @"main.(*T).Demo1"(ptr %0){{.*}} {
 // CHECK: [[T_NIL:%[0-9]+]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[T_NIL]],
+// CHECK: br i1 [[T_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true,
 // CHECK: [[T_VALUE:%[0-9]+]] = load %main.T, ptr %0
 // CHECK: [[T_VALUE_RES:%[0-9]+]] = call i64 @main.T.Demo1(%main.T [[T_VALUE]])
 // CHECK: ret i64 [[T_VALUE_RES]]
