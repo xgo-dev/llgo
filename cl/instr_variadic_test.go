@@ -33,7 +33,7 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 				t.Fatal(err)
 			}
 			// C ellipsis arguments must be concrete scalar LLVM values, rather than a
-			// Go slice header. Ordinary Go variadic function values keep their slice ABI.
+			// Go slice header. Ordinary Go variadic calls pass a fixed slice parameter.
 			// Ignore target-specific attributes on the closure environment argument.
 			for _, test := range []struct {
 				name    string
@@ -41,7 +41,7 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 			}{
 				{"Call", `call i32 \(i32, \.\.\.\) %[^ (]+\(i32 %[^,)\n]+, i32 %[^,)\n]+, double %[^,)\n]+\)`},
 				{"Empty", `call i32 \(i32, \.\.\.\) %[^ (]+\(i32 %[^,)\n]+\)`},
-				{"Ordinary", `call i32 \(ptr, i32, \.\.\.\) %[^ (]+\(ptr [^,)\n]+, i32 %[^,)\n]+, %"[^"]*runtime\.Slice" %[^,)\n]+\)`},
+				{"Ordinary", `call i32 %[^ (]+\(ptr [^,)\n]+, i32 %[^,)\n]+, %"[^"]*runtime\.Slice" %[^,)\n]+\)`},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					text := mustNamedFunction(t, pkg.Module(), "foo."+test.name).String()

@@ -10,7 +10,7 @@ import (
 
 const useWasmReflectBridges = false
 
-func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method bool, prefix []unsafe.Pointer, in []Value) []Value {
+func callWasmBridge(ft *abi.FuncType, fn, env unsafe.Pointer, method, native bool, prefix []unsafe.Pointer, in []Value) []Value {
 	return nil
 }
 

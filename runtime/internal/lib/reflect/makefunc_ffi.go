@@ -9,7 +9,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 )
 
-func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe.Pointer, origin *Value) Value {
 	if baremetalReflection {
 		panic("reflect: dynamic calls require a function call provider")
 	}
@@ -31,18 +31,38 @@ func makeProviderFunc(ftyp *funcType, fn func([]Value) []Value, recoverTo unsafe
 		panic("libffi error: " + err.Error())
 	}
 	// Keep the executable closure, signature graph, and callback state alive.
-	keepMutex.Lock()
-	keepAlive = append(keepAlive, ffiClosure, sig, userdata)
-	keepMutex.Unlock()
+	ffiFuncs.Lock()
+	if ffiFuncs.byEntry == nil {
+		ffiFuncs.byEntry = make(map[unsafe.Pointer]ffiFunc)
+	}
+	ffiFuncs.byEntry[ffiClosure.Fn] = ffiFunc{ffiClosure, sig, userdata, origin}
+	ffiFuncs.Unlock()
 
 	fv := &closure{fn: ffiClosure.Fn}
 	return Value{closureOf(ftyp), unsafe.Pointer(fv), flagIndir | flag(Func)}
 }
 
-var (
-	keepMutex sync.Mutex
-	keepAlive []any
-)
+type ffiFunc struct {
+	closure *ffi.Closure
+	sig     *ffi.Signature
+	data    *funcData
+	origin  *Value
+}
+
+var ffiFuncs struct {
+	sync.RWMutex
+	byEntry map[unsafe.Pointer]ffiFunc
+}
+
+func providerNativeSource(_ *funcType, entry *closure) *Value {
+	if baremetalReflection || entry.env != nil {
+		return nil
+	}
+	ffiFuncs.RLock()
+	origin := ffiFuncs.byEntry[entry.fn].origin
+	ffiFuncs.RUnlock()
+	return origin
+}
 
 func bind0(_ *ffi.Signature, _ unsafe.Pointer, args *unsafe.Pointer, userdata unsafe.Pointer) {
 	fd := (*funcData)(userdata)

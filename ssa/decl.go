@@ -361,6 +361,8 @@ type aFunction struct {
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}
 
+	wasmABIResults []llvm.Value
+
 	gcRootFrame    Expr
 	gcRootPrev     Expr
 	gcRootSlots    []Expr

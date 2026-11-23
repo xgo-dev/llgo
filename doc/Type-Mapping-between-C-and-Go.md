@@ -27,3 +27,19 @@ Type Mapping between C and Go
 | func ptr (in parameter) | func | LLGo knows `func ptr` in C function parameters is `func ptr` not `closure` |
 | func ptr (in struct) | c.Pointer | C `func ptr` not Go `func()` |
 | struct | struct | |
+
+## Reflection of native callback slices
+
+A slice obtained with `reflect.Value.Slice` or `Slice3` from a native callback
+array retains the array's element stride while used through reflection. That
+stride can differ from an ordinary Go slice of the same callback type. For
+example, on WASI Memory32, callback slots in a `//llgo:cdecl` record or
+array occupy four bytes, while Go slice elements occupy eight bytes.
+
+When the strides differ, `Value.Interface`, `reflect.TypeAssert` (Go 1.25 and
+later), and `Value.Set` into a Go slice create a detached copy in Go storage.
+The copy preserves the slice's length and capacity, including the elements
+accessible by reslicing up to that capacity. Changes to the resulting Go slice
+do not affect the native record or array, and changes to the original do not
+affect the copy. When the strides match, these operations retain the shared
+backing array, so writes remain visible in both directions.

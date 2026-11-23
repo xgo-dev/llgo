@@ -137,7 +137,7 @@ func (f *frontendCache) captureProgram() {
 	} else {
 		for _, root := range f.ctx.initial {
 			use := analyzeWasmInitialUse(f.ctx.progSSA, root.Types)
-			record.Initials[root.ID] = frontendProgramFeatures{wasmReflectBridgeProvider(f.ctx) && use.usesWasmReflectBridges(), use.usesRuntimeFuncForPC()}
+			record.Initials[root.ID] = frontendProgramFeatures{wasmReflectBridgeProvider(f.ctx) && use.usesWasmReflectBridges(f.ctx.prog), use.usesRuntimeFuncForPC()}
 		}
 	}
 	for _, entry := range f.entries {

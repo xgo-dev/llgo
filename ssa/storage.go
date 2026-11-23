@@ -99,26 +99,6 @@ func (p Program) clearWasmABIPadding(b llvm.Builder, value llvm.Value) llvm.Valu
 	return result
 }
 
-func (f Function) finishWasmSliceParams() {
-	if !f.Prog.usesWideGoStorage() || f.env != nil {
-		return
-	}
-	// A C callback can call any environment-free Go entry. Rewrite each used
-	// parameter once, including values obtained before the body was built.
-	for i := range f.params {
-		param := f.impl.Param(i)
-		if param.FirstUse().IsNil() || !f.Prog.hasWasmSlicePadding(param.Type()) {
-			continue
-		}
-		b := f.entryAllocaBuilder()
-		placeholder := b.CreatePHI(param.Type(), "")
-		param.ReplaceAllUsesWith(placeholder)
-		value := f.Prog.clearWasmABIPadding(b, param)
-		placeholder.ReplaceAllUsesWith(value)
-		placeholder.EraseFromParentAsInstruction()
-	}
-}
-
 func (p Program) needsWidePointerStorage(t Type) bool {
 	if !p.usesWideGoStorage() || p.isNativeStorage(t) {
 		return false
@@ -493,25 +473,4 @@ func (b Builder) physicalPointerIndex(index Expr) Expr {
 	t.ll = physical
 	index.Type = &t
 	return index
-}
-
-// The legacy call adapter only converts signatures containing native slices.
-func (p Program) hasWasmSlicePadding(t llvm.Type) bool {
-	if !p.usesWideGoStorage() || p.rtSliceTy.IsNil() {
-		return false
-	}
-	if t == p.rtSliceTy {
-		return true
-	}
-	switch t.TypeKind() {
-	case llvm.StructTypeKind:
-		for _, field := range t.StructElementTypes() {
-			if p.hasWasmSlicePadding(field) {
-				return true
-			}
-		}
-	case llvm.ArrayTypeKind:
-		return t.ArrayLength() > 0 && p.hasWasmSlicePadding(t.ElementType())
-	}
-	return false
 }
