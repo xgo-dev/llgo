@@ -280,7 +280,7 @@ func TestRegisterFormatSupportErrors(t *testing.T) {
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.InstantiateGenerics)
 	prog.CreatePackage(types.Unsafe, nil, nil, true)
 	fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
-func Sprintf(_ string, args ...any) string { return "" }
+func Sprintf(format string, args ...any) string { return "" }
 `, nil)
 	runtime := buildFormatTestPackage(t, prog, calltemplate.RuntimePath, "package llgofmt", nil)
 	entry := checkFormatTestPackage(t, prog.Fset, "main", `package main
@@ -290,7 +290,8 @@ func main() { println(fmt.Sprintf("%v", 1)) }
 	entry.Imports = map[string]*packages.Package{"fmt": {ID: "fmt", PkgPath: "fmt", Types: fmtPkg.Pkg}}
 	other := checkFormatTestPackage(t, prog.Fset, "other", "package other", types.Config{})
 	ctx := &context{
-		progSSA: prog, buildConf: &Config{}, dedup: packages.NewDeduper(),
+		progSSA: prog, templateBindings: testFormatBindings(t, prog),
+		buildConf: &Config{}, dedup: packages.NewDeduper(),
 		pkgByID:       map[string]*aPackage{"fmt": {}},
 		formatRuntime: &packages.Cached{Types: runtime.Pkg},
 	}

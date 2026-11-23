@@ -430,6 +430,7 @@ func main() {`+tc.body+"}"+rawAlias)
 			defer backend.Dispose()
 			ctx := &context{
 				prog: backend, progSSA: prog, initial: []*packages.Package{entry}, pkgByID: pkgs,
+				templateBindings:  testFormatBindings(t, prog),
 				wasmClosedProgram: true,
 				crossCompile: crosscompile.Export{
 					WasmProvider: crosscompile.WasmProviderWASI, WasmProfile: crosscompile.WasmProfileW32,
