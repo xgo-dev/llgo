@@ -5,6 +5,7 @@ package tinygogc
 import _ "unsafe"
 
 const segmentedHeap = true
+const maxHeapSegments = 128
 
 func newHeapSegment(minimum uintptr) (uintptr, uintptr) {
 	// Begin with a small heap so explicit GC does not sweep 32 MiB for tiny

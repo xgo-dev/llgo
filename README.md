@@ -4,7 +4,7 @@ LLGo - A Go compiler based on LLVM
 [![Build Status](https://github.com/xgo-dev/llgo/actions/workflows/go.yml/badge.svg)](https://github.com/xgo-dev/llgo/actions/workflows/go.yml)
 [![GitHub release](https://img.shields.io/github/v/tag/xgo-dev/llgo.svg?label=release)](https://github.com/xgo-dev/llgo/releases)
 [![Coverage Status](https://codecov.io/gh/xgo-dev/llgo/branch/main/graph/badge.svg)](https://codecov.io/gh/xgo-dev/llgo)
-[![LLGo bindings](https://img.shields.io/badge/llarhub-LLGo_Bindings-brightgreen.svg)](https://github.com/xgo-dev/llgo/blob/main/doc/LLGo-Bindings.md)
+[![LLGo bindings](https://img.shields.io/badge/llarhub-LLGo_Bindings-brightgreen.svg)](doc/LLGo-Bindings.md)
 [![Benchmark](https://img.shields.io/badge/benchmark-LLGo_vs_Go-yellowgreen.svg)](https://llgo-test.github.io/benchmarks/)
 [![GoDoc](https://pkg.go.dev/badge/github.com/xgo-dev/llgo.svg)](https://pkg.go.dev/github.com/xgo-dev/llgo)
 [![XGo](https://img.shields.io/badge/project-XGo-blue.svg)](https://github.com/goplus/xgo)
@@ -67,6 +67,12 @@ The supported WebAssembly profiles combine a memory ABI with a host ABI.
 `GOOS=js GOARCH=wasm` and `GOOS=wasip1 GOARCH=wasm` select the Go-compatible
 JavaScript and WASI host contracts. See the [WebAssembly proposal](doc/wasm-proposal.md)
 for the compatibility contract and acceptance plan.
+
+With `-Oz -deadcodedrop -globaldce=false`, `-wasm-minimal-host` tries a
+synchronous Emscripten link without `Module.FS`. The collector remains available
+for allocating Go programs. File access, callbacks, worker builds and unknown
+inputs keep the regular host. The final link selects the host from the same
+package archives.
 
 WebAssembly goroutine stacks have fixed sizes. For deeply recursive workloads,
 set `-goroutine-stack-size=2MB` when building (the existing `-pthread-stack-size`

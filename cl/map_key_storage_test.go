@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -73,7 +74,7 @@ func stringBudget(s string,p [65536]byte) int { KeepAlive(p); sum:=0; for _,r:=r
 					t.Errorf("key field roots exceeded the remaining stack budget:\n%s", body)
 				}
 				body := llvmFunction(t, ir, "mapkeys.pointer")
-				if !strings.Contains(body, "gcroot.init") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+				if !strings.Contains(body, "gcroot.init") || !ssatest.HasStackFieldRootMap(ir) {
 					t.Fatalf("pointer-bearing key lost typed field roots:\n%s", body)
 				}
 			} else if body := llvmFunction(t, ir, "mapkeys.pointerBudget"); strings.Contains(body, "runtime.Alloc") {

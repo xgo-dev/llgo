@@ -140,6 +140,9 @@ func releaseGAndCheckDeadlock() {
 // Gosched asks the active backend to yield. WebAssembly backends re-queue the
 // current G and yield to their scheduler; pthread Gs rely on the host scheduler.
 func Gosched() {
+	if wasmSchedulerProof {
+		requireWasmScheduler()
+	}
 	goschedBackend()
 }
 

@@ -10,59 +10,70 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestLiteralFormat(t *testing.T) {
-	for _, format := range []string{"", "hello", "你好\x00世界", "%%", "a%%b%%%%c", "\xff%%"} {
-		got, ok := literalFormat(format)
-		if !ok || got != strings.ReplaceAll(format, "%%", "%") {
-			t.Fatalf("literalFormat(%q) = %q, %v", format, got, ok)
-		}
-	}
-	for _, format := range []string{"%", "%%%", "%s", "%[1]s", "%*s", "%.2f", "%5%", "%q", "%!"} {
-		if _, ok := literalFormat(format); ok {
-			t.Fatalf("accepted nonliteral format %q", format)
-		}
-	}
-}
-
 type literalFormatImporter struct{ pkg *types.Package }
 
-func (i literalFormatImporter) Import(string) (*types.Package, error) { return i.pkg, nil }
+func (i literalFormatImporter) Import(path string) (*types.Package, error) {
+	if path == "unsafe" {
+		return types.Unsafe, nil
+	}
+	return i.pkg, nil
+}
+
+func buildFormatTestPackage(t *testing.T, prog *ssa.Program, path, source string, imported *types.Package) *ssa.Package {
+	t.Helper()
+	pkg := checkFormatTestPackage(t, prog.Fset, path, source, types.Config{Importer: literalFormatImporter{imported}})
+	return prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+}
+
+func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source string, conf types.Config) *packages.Package {
+	t.Helper()
+	file, err := parser.ParseFile(fset, path+".go", source, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object),
+		Uses: make(map[*ast.Ident]types.Object), Implicits: make(map[ast.Node]types.Object),
+		Instances: make(map[*ast.Ident]types.Instance), Scopes: make(map[ast.Node]*types.Scope),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection), FileVersions: make(map[*ast.File]string),
+	}
+	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &packages.Package{
+		PkgPath: path, Name: pkg.Name(), Types: pkg, TypesInfo: info, Fset: fset,
+		TypesSizes: types.SizesFor("gc", "wasm"), Syntax: []*ast.File{file},
+	}
+}
 
 func literalFormatProgram(t *testing.T, helpers bool) *ssa.Package {
 	t.Helper()
 	fset := token.NewFileSet()
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-	build := func(path, source string, imported *types.Package) *ssa.Package {
-		file, err := parser.ParseFile(fset, path+".go", source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object), Scopes: make(map[ast.Node]*types.Scope)}
-		conf := &types.Config{Importer: literalFormatImporter{imported}}
-		pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return prog.CreatePackage(pkg, []*ast.File{file}, info, true)
-	}
 	fmtSource := `package fmt
 func Printf(s string, a ...any) (int, error) { return 0, nil }
 func Fprintf(w any, s string, a ...any) (int, error) { return 0, nil }
 func Sprintf(s string, a ...any) string { return s }
 func Sprint(a ...any) string { return "" }
+func Println(a ...any) (int, error) { return 0, nil }
+func Sprintln(a ...any) string { return "" }
 `
 	if helpers {
 		fmtSource += `
 func llgoPrintfLiteral(s string) (int, error) { return 0, nil }
 func llgoFprintfLiteral(w any, s string) (int, error) { return 0, nil }
 func llgoSprintfLiteral(s string) string { return s }
+func llgoPrintfScalars(s string, a ...any) (int, error) { return 0, nil }
+func llgoSprintfScalars(s string, a ...any) string { return s }
 `
 	}
-	fmtPkg := build("fmt", fmtSource, nil)
-	main := build("main", `package main
+	fmtPkg := buildFormatTestPackage(t, prog, "fmt", fmtSource, nil)
+	main := buildFormatTestPackage(t, prog, "main", `package main
 import "fmt"
 func literal() { fmt.Printf("hello%%") }
 func writer(w any) { fmt.Fprintf(w, "") }
@@ -75,6 +86,37 @@ func nilSpread() { fmt.Printf("literal", []any(nil)...) }
 func deferred() { defer fmt.Printf("literal") }
 func goroutine() { go fmt.Printf("literal") }
 func other() { _ = fmt.Sprint("literal") }
+type namedInt int
+func (namedInt) String() string { return "named" }
+type intAlias = int16
+func scalar(i intAlias, s string, t bool) string { return fmt.Sprintf("id=%04X %% name=%8s valid=%t", i, s, t) }
+func scalarPrint(n uint64) { fmt.Printf("%b %o %d %x", n, n, n, n) }
+func scalarDefer(s string) { defer fmt.Printf("%s", s) }
+func scalarGo(s string) { go fmt.Printf("%s", s) }
+func scalarLiteralSpread(s string) { fmt.Printf("%s", []any{s}...) }
+func scalarDefault(i int, s string, b bool) string { return fmt.Sprintf("%03v %5v %v", i, s, b) }
+func scalarBadDefault(f float64) { fmt.Printf("%v", f) }
+func scalarPrintln(i int, s string, b bool) { fmt.Println(i, s, b) }
+func scalarSprintln(s string) string { return fmt.Sprintln(s) }
+func scalarEmptyPrintln() { fmt.Println() }
+func scalarComplexPrintln(n float64) { fmt.Println(n) }
+func scalarSpread(a []any) { fmt.Printf("%d", a...) }
+func scalarInterface(a any) { fmt.Printf("%d", a) }
+func scalarNamed(n namedInt) { fmt.Printf("%d", n) }
+func scalarNil() { fmt.Printf("%s", nil) }
+func scalarTooFew(n int) { fmt.Printf("%d %d", n) }
+func scalarTooMany(n int) { fmt.Printf("%d", n, n) }
+func scalarBadType(n int) { fmt.Printf("%s", n) }
+func scalarBadBool(n int) { fmt.Printf("%t", n) }
+func scalarBadInt(s string) { fmt.Printf("%x", s) }
+func scalarTrailingPercent(n int) { fmt.Printf("%d%", n) }
+func scalarStar(n int) { fmt.Printf("%*d", n, n) }
+func scalarIndex(n int) { fmt.Printf("%[1]d", n) }
+func scalarPrecision(n int) { fmt.Printf("%.2d", n) }
+func scalarFlag(n int) { fmt.Printf("%+d", n) }
+func scalarLarge(n int) { fmt.Printf("%100d", n) }
+func scalarTruncated(n int) { fmt.Printf("%d %0", n) }
+func scalarWriter(w any) { fmt.Fprintf(w, "%d", 42) }
 func ordinary() {}
 func main() { ordinary(); println("ok") }
 `, fmtPkg.Pkg)

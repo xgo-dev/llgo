@@ -17,7 +17,11 @@
 // Package gcroot owns LLGo's per-G compiler root chains.
 package gcroot
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/abi"
+)
 
 // Context stores one suspended execution owner's compiler root chain.
 type Context struct {
@@ -34,9 +38,31 @@ type frameMap struct {
 	numMeta  uint32
 }
 
+// The compiler builds frames from LLVM pointer slots. Wasm32 Go pointers
+// have wider Go storage, so these records use the physical C layout.
+//
+//llgo:cdecl
 type stackEntry struct {
 	next *stackEntry
 	m    *frameMap
+}
+
+//llgo:cdecl
+type rootSlot struct {
+	value unsafe.Pointer
+}
+
+// FrameLinks saves the physical frame header across a non-local return.
+func FrameLinks(frame unsafe.Pointer) (next, metadata unsafe.Pointer) {
+	entry := (*stackEntry)(frame)
+	return unsafe.Pointer(entry.next), unsafe.Pointer(entry.m)
+}
+
+// RestoreFrameLinks repairs the header of a frame replayed by WebAssembly SjLj.
+func RestoreFrameLinks(frame, next, metadata unsafe.Pointer) {
+	entry := (*stackEntry)(frame)
+	entry.next = (*stackEntry)(next)
+	entry.m = (*frameMap)(metadata)
 }
 
 var (
@@ -214,8 +240,12 @@ func Unregister(ctx *Context) {
 }
 
 // Visit calls visitor for every root slot in every registered context.
-func Visit(visitor func(root *unsafe.Pointer, metadata unsafe.Pointer)) {
+func Visit(visitor func(uintptr)) {
 	if visitor == nil {
+		return
+	}
+	if WASISelectableMutators && !WASIConcurrentMutators() {
+		visitChain(CurrentChain(), visitor)
 		return
 	}
 	lockRegistry()
@@ -239,14 +269,13 @@ func registeredLocked(want *Context) bool {
 	return false
 }
 
-// RootValue decodes a compiler root. Nil metadata means a direct pointer;
+// rootValue decodes a compiler root. Nil metadata means a direct pointer;
 // otherwise the root holds a stack-field address and metadata specifies the
 // physical pointer width. Go words in Wasm32 can be wider than C pointers.
-func RootValue(root *unsafe.Pointer, metadata unsafe.Pointer) uintptr {
+func rootValue(address unsafe.Pointer, metadata unsafe.Pointer) uintptr {
 	if metadata == nil {
-		return uintptr(*root)
+		return uintptr(address)
 	}
-	address := *root
 	switch *(*uint8)(metadata) {
 	case 4:
 		return uintptr(*(*uint32)(address))
@@ -257,21 +286,44 @@ func RootValue(root *unsafe.Pointer, metadata unsafe.Pointer) uintptr {
 	}
 }
 
-func visitChain(chain unsafe.Pointer, visitor func(*unsafe.Pointer, unsafe.Pointer)) {
+var (
+	stackPointerWidth32 uint8 = 4
+	stackPointerWidth64 uint8 = 8
+)
+
+func visitChain(chain unsafe.Pointer, visitor func(uintptr)) {
 	const pointerSize = unsafe.Sizeof(uintptr(0))
 	for entry := (*stackEntry)(chain); entry != nil; entry = entry.next {
-		if entry.m == nil || entry.m.numMeta > entry.m.numRoots {
+		if entry.m == nil {
 			panic("gcroot: invalid compiler root frame")
 		}
+		count, metaWord := entry.m.numRoots, entry.m.numMeta
 		roots := unsafe.Add(unsafe.Pointer(entry), unsafe.Sizeof(stackEntry{}))
-		metadata := unsafe.Add(unsafe.Pointer(entry.m), unsafe.Sizeof(frameMap{}))
-		for i := uint32(0); i < entry.m.numRoots; i++ {
-			var meta unsafe.Pointer
-			if i < entry.m.numMeta {
-				meta = *(*unsafe.Pointer)(unsafe.Add(metadata, uintptr(i)*pointerSize))
+		direct := count
+		var fieldWidth *uint8
+		if metaWord&abi.CompactGCRootMap != 0 {
+			direct = metaWord & abi.GCRootDirectMask
+			if direct >= count {
+				panic("gcroot: invalid compiler root frame")
 			}
-			root := (*unsafe.Pointer)(unsafe.Add(roots, uintptr(i)*pointerSize))
-			visitor(root, meta)
+			fieldWidth = &stackPointerWidth32
+			if metaWord&abi.WideGCRootMap != 0 {
+				fieldWidth = &stackPointerWidth64
+			}
+			metaWord = 0
+		} else if metaWord > count {
+			panic("gcroot: invalid compiler root frame")
+		}
+		metadata := unsafe.Add(unsafe.Pointer(entry.m), unsafe.Sizeof(frameMap{}))
+		for i := uint32(0); i < count; i++ {
+			var meta unsafe.Pointer
+			if i < metaWord {
+				meta = *(*unsafe.Pointer)(unsafe.Add(metadata, uintptr(i)*pointerSize))
+			} else if i >= direct {
+				meta = unsafe.Pointer(fieldWidth)
+			}
+			slot := (*rootSlot)(unsafe.Add(roots, uintptr(i)*unsafe.Sizeof(rootSlot{})))
+			visitor(rootValue(slot.value, meta))
 		}
 	}
 }

@@ -84,10 +84,12 @@ stacks (`-stacksize`) and the Wasmer host stack (`--stack-size`).
 Explicit linker flags remain authoritative. An explicit `--initial-memory`,
 `--initial-heap`, or user response file suppresses the target's initial-memory
 default. Stack/maximum linker flags follow the existing driver argument order.
-Without a configured initial size, LLGo retains the 54 MiB initial heap
-budget in addition to static data and the process stack. The default process
-stack is 10 MiB and maximum memory is 512 MiB, including on the raw
-`GOOS=wasip1 GOARCH=wasm` path.
+Without a configured initial size, LLGo normally reserves a 54 MiB heap in
+addition to static data and the process stack. Under `-Oz` with DCE and Full
+LTO, executables proven allocation-free start through libc's zero-argument
+entry with no heap reservation. Exported `malloc` and `free` can still grow
+memory. The default process stack is 10 MiB and maximum memory is 512 MiB,
+including on the raw `GOOS=wasip1 GOARCH=wasm` path.
 
 Run `python3 dev/test_wasm_wasi_threads.py` for pthread/GC, EH, filesystem,
 run/test, selected standard-library, and GOROOT checks. Run

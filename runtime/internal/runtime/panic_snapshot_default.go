@@ -2,6 +2,8 @@
 
 package runtime
 
+const physicalCallerLookup = true
+
 func capturePanicCallerFrames(any) {}
 
 func panicCallerSnapshotAvailable() bool {

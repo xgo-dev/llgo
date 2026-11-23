@@ -20,7 +20,6 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
-	"github.com/xgo-dev/llgo/runtime/internal/clite/bitcast"
 )
 
 type errorString string
@@ -95,89 +94,99 @@ func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
 
 func PanicWrapNilPointer(b bool, recvType, methodName string) {
 	if b {
-		recvType = panicWrapRecvType(recvType)
-		panic(plainError("value method " + recvType + "." + methodName + " called using nil *" + panicWrapTypeName(recvType) + " pointer"))
+		panic(plainError(abi.NilReceiverPanicMessage(recvType, methodName)))
 	}
 }
 
-func panicWrapRecvType(recvType string) string {
-	const commandLineArguments = "command-line-arguments."
-	if len(recvType) > len(commandLineArguments) && recvType[:len(commandLineArguments)] == commandLineArguments {
-		return "main." + recvType[len(commandLineArguments):]
+func PanicWrapNilPointerText(b bool, text string) {
+	if b {
+		panic(plainError(text))
 	}
-	return recvType
-}
-
-func panicWrapTypeName(recvType string) string {
-	depth := 0
-	for i := len(recvType) - 1; i >= 0; i-- {
-		switch recvType[i] {
-		case ']':
-			depth++
-		case '[':
-			if depth > 0 {
-				depth--
-			}
-		case '.':
-			if depth == 0 {
-				return recvType[i+1:]
-			}
-		}
-	}
-	return recvType
 }
 
 func PanicTypeAssertionError(msg string) {
 	panic(typeAssertionErrorString(msg))
 }
 
-// printany prints an argument passed to panic.
-// If panic is called with a value that has a String or Error method,
-// it has already been converted into a string by preprintpanics.
+// printany prints a panic argument, including through Error and String methods.
+// Keep the floating-point type assertions so their descriptors are present
+// when the linker resolves the floating-point visibility predicates.
 func printany(i any) {
-	switch v := i.(type) {
-	case nil:
+	e := efaceOf(&i)
+	typ := e._type
+	if typ == nil {
 		print("nil")
-	case bool:
-		print(v)
-	case int:
-		print(v)
-	case int8:
-		print(v)
-	case int16:
-		print(v)
-	case int32:
-		print(v)
-	case int64:
-		print(v)
-	case uint:
-		print(v)
-	case uint8:
-		print(v)
-	case uint16:
-		print(v)
-	case uint32:
-		print(v)
-	case uint64:
-		print(v)
-	case uintptr:
-		print(v)
+		return
+	}
+	switch v := i.(type) {
 	case float32:
 		print(v)
+		return
 	case float64:
 		print(v)
+		return
 	case complex64:
 		print(v)
+		return
 	case complex128:
 		print(v)
-	case string:
-		print(v)
+		return
 	case error:
 		print(v.Error())
+		return
 	case interface{ String() string }:
 		print(v.String())
+		return
+	}
+
+	named := typ.TFlag&abi.TFlagUncommon != 0 // Predeclared scalars lack uncommon data.
+	kind := typ.Kind()
+	switch kind {
+	case abi.String:
+		s := *(*string)(e.data)
+		if named {
+			print(typ.Str_, `("`, s, `")`)
+		} else {
+			print(s)
+		}
+		return
+	case abi.Complex64:
+		if interfaceKindUsed(abi.Complex64) {
+			println(typ.Str_, *(*complex64)(e.data))
+		}
+		return
+	case abi.Complex128:
+		if interfaceKindUsed(abi.Complex128) {
+			println(typ.Str_, *(*complex128)(e.data))
+		}
+		return
 	default:
-		printanycustomtype(i)
+		if kind > abi.Float64 {
+			print("(", typ.String(), ") ", e.data)
+			return
+		}
+	}
+
+	if named {
+		// Scalar descriptors never use the abbreviated name for pointers.
+		print(typ.Str_, "(")
+	}
+	switch kind {
+	case abi.Bool:
+		print(*(*bool)(e.data))
+	case abi.Float32:
+		if interfaceKindUsed(abi.Float32) {
+			print(*(*float32)(e.data))
+		}
+	case abi.Float64:
+		if interfaceKindUsed(abi.Float64) {
+			print(*(*float64)(e.data))
+		}
+	default:
+		printPanicInteger(e.data, typ.Size_, kind <= abi.Int64)
+	}
+	if named {
+		print(")")
 	}
 }
 
@@ -190,58 +199,30 @@ func efaceOf(ep *any) *eface {
 //go:linkname interfaceKindUsed llgo.interfaceKindUsed
 func interfaceKindUsed(kind abi.Kind) bool
 
-func printanycustomtype(i any) {
-	e := efaceOf(&i)
-	typestring := e._type.String()
-
-	switch e._type.Kind() {
-	case abi.String:
-		print(typestring, `("`, *(*string)(e.data), `")`)
-	case abi.Bool:
-		if isDirectIface(e._type) {
-			print(typestring, "(", uintptr(e.data) != 0, ")")
-		} else {
-			print(typestring, "(", *(*bool)(e.data), ")")
-		}
-	case abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64:
-		if isDirectIface(e._type) {
-			print(typestring, "(", int64(uintptr(e.data)), ")")
-		} else {
-			print(typestring, "(", *(*int64)(e.data), ")")
-		}
-	case abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr:
-		if isDirectIface(e._type) {
-			print(typestring, "(", uint64(uintptr(e.data)), ")")
-		} else {
-			print(typestring, "(", *(*uint64)(e.data), ")")
-		}
-	case abi.Float32:
-		if interfaceKindUsed(abi.Float32) {
-			if isDirectIface(e._type) {
-				print(typestring, "(", bitcast.ToFloat32(int32(uintptr(e.data))), ")")
-			} else {
-				print(typestring, "(", *(*float32)(e.data), ")")
-			}
-		}
-	case abi.Float64:
-		if interfaceKindUsed(abi.Float64) {
-			if isDirectIface(e._type) {
-				print(typestring, "(", bitcast.ToFloat64(int64(uintptr(e.data))), ")")
-			} else {
-				print(typestring, "(", *(*float64)(e.data), ")")
-			}
-		}
-	case abi.Complex64:
-		if interfaceKindUsed(abi.Complex64) {
-			println(typestring, *(*complex64)(e.data))
-		}
-	case abi.Complex128:
-		if interfaceKindUsed(abi.Complex128) {
-			println(typestring, *(*complex128)(e.data))
-		}
+func printPanicInteger(data unsafe.Pointer, size uintptr, signed bool) {
+	var u uint64
+	switch size {
+	case 1:
+		u = uint64(*(*uint8)(data))
+	case 2:
+		u = uint64(*(*uint16)(data))
+	case 4:
+		u = uint64(*(*uint32)(data))
 	default:
-		print("(", typestring, ") ", e.data)
+		u = *(*uint64)(data)
 	}
+	// An integer box is exactly the size of its dynamic type. Sign extend
+	// from that width so narrow named integers keep their sign.
+	negative := false
+	if signed {
+		shift := 64 - size*8
+		v := int64(u<<shift) >> shift
+		negative = v < 0
+		if negative {
+			u = uint64(-v)
+		}
+	}
+	printDecimal(u, negative)
 }
 
 // PanicSIMDImmediate reports an invalid SIMD lane immediate.

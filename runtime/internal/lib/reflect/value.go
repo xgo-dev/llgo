@@ -27,7 +27,6 @@ import (
 
 	"github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/bitcast"
-	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
@@ -374,7 +373,7 @@ func (v Value) Equal(u Value) bool {
 	case Func, Map, Slice:
 		break
 	}
-	panic("reflect.Value.Equal: values of type " + v.Type().String() + " are not comparable")
+	panic("reflect.Value.Equal: values of type " + v.typeRType().String() + " are not comparable")
 }
 
 // Addr returns a pointer value representing the address of v.
@@ -583,15 +582,8 @@ func (v Value) Elem() Value {
 			return Value{}
 		}
 		tt := (*ptrType)(unsafe.Pointer(v.typ()))
-		typ := tt.Elem
-		fl := v.flag&flagRO | flagIndir | flagAddr
-		kind := typ.Kind()
-		if typ.IsClosure() {
-			kind = abi.Func
-		} else if kind == abi.Func {
-			typ = closureOf(typ.FuncType())
-		}
-		fl |= flag(kind)
+		typ, kind := funcElem(tt.Elem)
+		fl := v.flag&flagRO | flagIndir | flagAddr | flag(kind)
 		return Value{typ, ptr, fl}
 	}
 	panic(&ValueError{"reflect.Value.Elem", v.kind()})
@@ -612,9 +604,9 @@ func (v Value) Field(i int) Value {
 		panic("reflect: Field index out of range")
 	}
 	field := &tt.Fields[i]
-	typ, kind := funcElem(field.Typ)
+	typ := field.Typ
 	// Inherit permission bits from v, but clear flagEmbedRO.
-	fl := v.flag&(flagStickyRO|flagIndir|flagAddr) | flag(kind)
+	fl := v.flag&(flagStickyRO|flagIndir|flagAddr) | flag(physicalValueKind(typ))
 	// Using an unexported field forces flagRO.
 	if !field.Exported() {
 		if field.Embedded() {
@@ -642,11 +634,10 @@ func (v Value) FieldByIndex(index []int) Value {
 	v.mustBe(Struct)
 	for i, x := range index {
 		if i > 0 {
-			if v.Kind() == Pointer && v.typ().Elem().Kind() == abi.Struct {
-				if v.IsNil() {
-					panic("reflect: indirection through nil pointer to embedded struct")
-				}
-				v = v.Elem()
+			var nilElem *abi.Type
+			v, nilElem = v.derefStructField()
+			if nilElem != nil {
+				panic("reflect: indirection through nil pointer to embedded struct")
 			}
 		}
 		v = v.Field(x)
@@ -665,11 +656,10 @@ func (v Value) FieldByIndexErr(index []int) (Value, error) {
 	v.mustBe(Struct)
 	for i, x := range index {
 		if i > 0 {
-			if v.Kind() == Ptr && v.typ().Elem().Kind() == abi.Struct {
-				if v.IsNil() {
-					return Value{}, errors.New("reflect: indirection through nil pointer to embedded struct field " + nameFor(v.typ().Elem()))
-				}
-				v = v.Elem()
+			var nilElem *abi.Type
+			v, nilElem = v.derefStructField()
+			if nilElem != nil {
+				return Value{}, errors.New("reflect: indirection through nil pointer to embedded struct field " + nameFor(nilElem))
 			}
 		}
 		v = v.Field(x)
@@ -677,13 +667,41 @@ func (v Value) FieldByIndexErr(index []int) (Value, error) {
 	return v, nil
 }
 
+// derefStructField follows a pointer on a field index path. A nil pointer
+// returns its element type so the two callers can report the error separately.
+func (v Value) derefStructField() (Value, *abi.Type) {
+	if v.kind() != Pointer {
+		return v, nil
+	}
+	elem := v.typ().Elem()
+	if elem.Kind() != abi.Struct {
+		return v, nil
+	}
+	ptr := v.ptr
+	if v.flag&flagIndir != 0 {
+		ptr = *(*unsafe.Pointer)(ptr)
+	}
+	if ptr == nil {
+		return Value{}, elem
+	}
+	fl := v.flag&flagRO | flagIndir | flagAddr | flag(physicalValueKind(elem))
+	return Value{elem, ptr, fl}, nil
+}
+
 // FieldByName returns the struct field with the given name.
 // It returns the zero Value if no field was found.
 // It panics if v's Kind is not struct.
 func (v Value) FieldByName(name string) Value {
 	v.mustBe(Struct)
-	if f, ok := toRType(v.typ()).FieldByName(name); ok {
-		return v.FieldByIndex(f.Index)
+	t := (*structType)(unsafe.Pointer(v.typ()))
+	i, hasEmbeds := t.directFieldByName(name)
+	if i >= 0 {
+		return v.Field(i)
+	}
+	if hasEmbeds {
+		if _, path := t.fieldByNameFunc(func(s string) bool { return s == name }); path != nil {
+			return v.FieldByIndex(path)
+		}
 	}
 	return Value{}
 }
@@ -693,8 +711,9 @@ func (v Value) FieldByName(name string) Value {
 // It panics if v's Kind is not struct.
 // It returns the zero Value if no field was found.
 func (v Value) FieldByNameFunc(match func(string) bool) Value {
-	if f, ok := toRType(v.typ()).FieldByNameFunc(match); ok {
-		return v.FieldByIndex(f.Index)
+	t := toRType(v.typ()).structForFieldByNameFunc()
+	if _, path := t.fieldByNameFunc(match); path != nil {
+		return v.FieldByIndex(path)
 	}
 	return Value{}
 }
@@ -737,17 +756,17 @@ func (v Value) Float() float64 {
 
 var uint8Type = rtypeOf(uint8(0))
 
-// funcElem returns the in-memory type and public kind of a function-typed
-// value. Function values occupy LLGo's two-word closure.
+// funcElem accepts an element type whose descriptor may be a public signature.
 func funcElem(typ *abi.Type) (*abi.Type, abi.Kind) {
-	kind := typ.Kind()
-	if kind == abi.Func {
-		return closureOf(typ.FuncType()), abi.Func
-	}
+	typ = physicalType(typ)
+	return typ, physicalValueKind(typ)
+}
+
+func physicalValueKind(typ *abi.Type) abi.Kind {
 	if typ.IsClosure() {
-		return typ, abi.Func
+		return abi.Func
 	}
-	return typ, kind
+	return typ.Kind()
 }
 
 // Index returns v's i'th element.
@@ -870,7 +889,7 @@ func valueInterface(v Value, safe bool) any {
 		panic("reflect.Value.Interface: cannot return value obtained from unexported field or method")
 	}
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue("Interface", v)
+		v = convertMethodValue("Interface", v)
 	}
 
 	if v.kind() == Interface {
@@ -1597,7 +1616,7 @@ func (v Value) stringNonString() string {
 	}
 	// If you call String on a reflect.Value of other type, it's better to
 	// print something than to panic. Useful in debugging.
-	return "<" + v.Type().String() + " Value>"
+	return "<" + v.typeRType().String() + " Value>"
 }
 
 // TryRecv attempts to receive a value from the channel v but will not block.
@@ -1623,13 +1642,34 @@ func (v Value) TrySend(x Value) bool {
 
 // Type returns v's type.
 func (v Value) Type() Type {
-	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
-		return (*rtype)(unsafe.Pointer(v.typ_)) // inline of toRType(v.typ()), for own inlining in inline test
+	if typ := v.typeRTypeFast(); typ != nil {
+		return typ
 	}
 	return v.typeSlow()
 }
 
+// The original Go Value.Type body may be inlined into callers before the
+// LLGo reflect implementation is selected. Keep its slow path ABI.
 func (v Value) typeSlow() Type {
+	return v.typeRTypeSlow()
+}
+
+// Keep descriptor queries inside reflect from building the public Type interface.
+func (v Value) typeRType() *rtype {
+	if typ := v.typeRTypeFast(); typ != nil {
+		return typ
+	}
+	return v.typeRTypeSlow()
+}
+
+func (v Value) typeRTypeFast() *rtype {
+	if v.flag != 0 && v.flag&flagMethod == 0 && !v.typ_.IsClosure() {
+		return toRType(v.typ_)
+	}
+	return nil
+}
+
+func (v Value) typeRTypeSlow() *rtype {
 	if v.flag == 0 {
 		panic(&ValueError{"reflect.Value.Type", Invalid})
 	}
@@ -1656,11 +1696,10 @@ func (v Value) typeSlow() Type {
 		return toRType(&m.Typ_.Type)
 	}
 	// Method on concrete type.
-	ms := typ.ExportedMethods()
-	if uint(i) >= uint(len(ms)) {
+	m := exportedMethod(typ, i)
+	if m == nil {
 		panic("reflect: internal error: invalid method index")
 	}
-	m := ms[i]
 	return toRType(&m.Mtyp_.Type)
 }
 
@@ -1993,10 +2032,7 @@ func New(typ Type) Value {
 	if typ == nil {
 		panic("reflect: New(nil)")
 	}
-	t := &typ.(*rtype).t
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
+	t := physicalType(&typ.(*rtype).t)
 	pt := ptrTo(t)
 	if ifaceIndir(pt) {
 		// This is a pointer to a not-in-heap type.
@@ -2011,11 +2047,8 @@ func New(typ Type) Value {
 // specified type, using p as that pointer.
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Pointer)
-	t := typ.(*rtype)
-	if t.Kind() == Func {
-		t = toRType(closureOf(t.t.FuncType()))
-	}
-	return Value{t.ptrTo(), p, fl}
+	t := physicalType(&typ.(*rtype).t)
+	return Value{ptrTo(t), p, fl}
 }
 
 // assignTo returns a value v that can be assigned directly to dst.
@@ -2025,19 +2058,10 @@ func NewAt(typ Type, p unsafe.Pointer) Value {
 // target must be initialized memory (or nil).
 func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Value {
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue(context, v)
+		v = convertMethodValue(context, v)
 	}
-	typ := v.typ()
-	if typ.Kind() == abi.Func {
-		typ = closureOf(typ.FuncType())
-	}
-	assignDst := dst
-	if dst.Kind() == abi.Func {
-		// Function values use LLGo's closure struct as their physical
-		// representation. Compare against the same canonical closure type
-		// as the source value, while retaining dst for the returned Value.
-		assignDst = closureOf(dst.FuncType())
-	}
+	typ := physicalType(v.typ())
+	assignDst := physicalType(dst)
 
 	switch {
 	case directlyAssignable(assignDst, typ):
@@ -2075,7 +2099,7 @@ func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Va
 // of the value v to type t, or if converting v to type t panics, Convert panics.
 func (v Value) Convert(t Type) Value {
 	if v.flag&flagMethod != 0 {
-		v = makeMethodValue("Convert", v)
+		v = convertMethodValue("Convert", v)
 	}
 	var op func(Value, Type) Value
 	if kind := v.Kind(); kind == Func && kind == t.Kind() {
@@ -2204,6 +2228,7 @@ func (v Value) Method(i int) Value {
 	fl := v.flag.ro() | (v.flag & flagIndir)
 	fl |= flag(Func)
 	fl |= flag(i)<<flagMethodShift | flagMethod
+	enableMethodValueConversion()
 	return Value{v.typ(), v.ptr, fl}
 }
 
@@ -2234,11 +2259,11 @@ func (v Value) MethodByName(name string) Value {
 	if v.flag&flagMethod != 0 {
 		return Value{}
 	}
-	m, ok := toRType(v.typ()).MethodByName(name)
-	if !ok {
+	i := toRType(v.typ()).methodIndexByName(name)
+	if i < 0 {
 		return Value{}
 	}
-	return v.Method(m.Index)
+	return v.Method(i)
 }
 
 // NumField returns the number of fields in the struct v.
@@ -2352,149 +2377,19 @@ func toFFIArg(v Value, typ *abi.Type) unsafe.Pointer {
 	panic("reflect.toFFIArg unsupport type " + v.typ().String())
 }
 
-var (
-	ffiTypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)
-)
-
-func toFFIType(typ *abi.Type) *ffi.Type {
-	// Vector storage (including zero-length arrays and enclosing aggregates)
-	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
-	// descriptions cannot represent its vector calling convention. Check before
-	// skipping zero-sized fields; pointers and slice headers retain scalar ABI.
-	if typ.Align_ > 8 {
-		panic("reflect: libffi calls with vector storage are not supported")
-	}
-	kind := typ.Kind()
-	switch kind {
-	case abi.Bool, abi.Int, abi.Int8, abi.Int16, abi.Int32, abi.Int64,
-		abi.Uint, abi.Uint8, abi.Uint16, abi.Uint32, abi.Uint64, abi.Uintptr,
-		abi.Float32, abi.Float64, abi.Complex64, abi.Complex128:
-		return ffi.Typ[kind]
-	case abi.Array:
-		st := typ.ArrayType()
-		return ffi.ArrayOf(toFFIType(st.Elem), int(st.Len))
-	case abi.Chan:
-		return ffi.TypePointer
-	case abi.Func:
-		return ffiTypeClosure
-	case abi.Interface:
-		return ffi.TypeInterface
-	case abi.Map:
-		return ffi.TypePointer
-	case abi.Pointer:
-		return ffi.TypePointer
-	case abi.Slice:
-		return ffi.TypeSlice
-	case abi.String:
-		return ffi.TypeString
-	case abi.Struct:
-		if typ.IsClosure() {
-			return ffiTypeClosure
-		}
-		return ffiWidenGoPointerStruct(toFFIStructType(typ), typ)
-	case abi.UnsafePointer:
-		return ffi.TypePointer
-	}
-	panic("reflect.toFFIType unsupport type " + typ.String())
-}
-
-func toFFIStructType(typ *abi.Type) *ffi.Type {
-	st := typ.StructType()
-	fields := make([]*ffi.Type, 0, len(st.Fields))
-	var off uintptr
-	for _, fs := range st.Fields {
-		if fs.Offset > off {
-			fields, off = appendFFIPadding(fields, off, fs.Offset-off)
-		}
-		if fs.Typ.Size_ == 0 {
-			continue
-		}
-		fields = append(fields, toFFIType(fs.Typ))
-		off = fs.Offset + fs.Typ.Size_
-	}
-	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
-	// without changing llgo's callable ABI. HostLayout keeps that tail
-	// protection in LLVM storage, including in enclosing aggregates, so
-	// the FFI description must match Size_ wherever that padding is also
-	// part of the calling convention.
-	if off < typ.Size_ && structHasHostLayout(typ) && ffiHostLayoutTailPadding {
-		fields, off = appendFFIPadding(fields, off, typ.Size_-off)
-	}
-	return ffi.StructOf(fields...)
-}
-
-func appendFFIPadding(fields []*ffi.Type, off, size uintptr) ([]*ffi.Type, uintptr) {
-	for size > 0 {
-		switch {
-		case off%8 == 0 && size >= 8:
-			fields = append(fields, ffi.TypeUint64)
-			off += 8
-			size -= 8
-		case off%4 == 0 && size >= 4:
-			fields = append(fields, ffi.TypeUint32)
-			off += 4
-			size -= 4
-		case off%2 == 0 && size >= 2:
-			fields = append(fields, ffi.TypeUint16)
-			off += 2
-			size -= 2
-		default:
-			fields = append(fields, ffi.TypeUint8)
-			off++
-			size--
-		}
-	}
-	return fields, off
-}
-
-func omitFFIArg(typ *abi.Type) bool {
-	// Keep the vector-storage diagnostic in toFFIType, including for empty
-	// arrays with vector alignment.
-	return ffiSkipEmptyArgs && typ.Size_ == 0 && typ.Align_ <= 8
-}
-
-func toFFISig(tin, tout []*abi.Type) (*ffi.Signature, error) {
-	args := make([]*ffi.Type, 0, len(tin))
-	for _, in := range tin {
-		if omitFFIArg(in) {
-			continue
-		}
-		args = append(args, toFFIType(in))
-	}
-	return ffi.NewSignature(toFFIRetType(tout), args...)
-}
-
-func toFFIRetType(tout []*abi.Type) *ffi.Type {
-	switch n := len(tout); n {
-	case 0:
-		return ffi.TypeVoid
-	case 1:
-		return toFFIType(tout[0])
-	default:
-		fields := make([]*ffi.Type, n)
-		for i, out := range tout {
-			fields[i] = toFFIType(out)
-		}
-		return ffi.StructOf(fields...)
-	}
-}
-
 func (v Value) closureFunc() *abi.FuncType {
-	return toFuncType(v.typ_.StructType())
+	return v.typ_.StructType().PublicFuncType()
 }
 
-func (v Value) call(op string, in []Value) (out []Value) {
+func (v Value) call(op string, in []Value) []Value {
 	if baremetalReflection {
 		panic("reflect: dynamic calls require a function call provider")
 	}
 	var (
-		ft   *abi.FuncType
-		tin  []*abi.Type
-		args []unsafe.Pointer
-		fn   unsafe.Pointer
-		env  unsafe.Pointer
-		ret  unsafe.Pointer
-		ioff int
+		ft           *abi.FuncType
+		fn, env      unsafe.Pointer
+		receiverType *abi.Type
+		receiver     *unsafe.Pointer
 	)
 	if v.typ_.IsClosure() && v.flag&flagMethod == 0 {
 		ft = v.typ_.StructType().Fields[0].Typ.FuncType()
@@ -2504,32 +2399,18 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		})(v.ptr)
 		fn = c.fn
 		env = c.env
-		tin = ft.In
-		if env != nil && ffi.ClosureEnvExplicit {
-			tin = append([]*abi.Type{rtypeOf(unsafe.Pointer(nil))}, tin...)
-			ioff = 1
-			args = append(args, unsafe.Pointer(&env))
-		}
+	} else if v.flag&flagMethod != 0 {
+		receiverType, ft, fn = methodReceiver(op, v, int(v.flag)>>flagMethodShift)
+		var ptr unsafe.Pointer
+		storeRcvr(v, unsafe.Pointer(&ptr))
+		receiver = &ptr
 	} else {
-		if v.flag&flagMethod != 0 {
-			var (
-				rcvrtype *abi.Type
-			)
-			rcvrtype, ft, fn = methodReceiver(op, v, int(v.flag)>>flagMethodShift)
-			tin = append([]*abi.Type{rcvrtype}, ft.In...)
-			ioff = 1
-			var ptr unsafe.Pointer
-			storeRcvr(v, unsafe.Pointer(&ptr))
-			args = append(args, unsafe.Pointer(&ptr))
+		if v.flag&flagIndir != 0 {
+			fn = *(*unsafe.Pointer)(v.ptr)
 		} else {
-			if v.flag&flagIndir != 0 {
-				fn = *(*unsafe.Pointer)(v.ptr)
-			} else {
-				fn = v.ptr
-			}
-			ft = v.typ_.FuncType()
-			tin = ft.In
+			fn = v.ptr
 		}
+		ft = v.typ_.FuncType()
 	}
 
 	if fn == nil {
@@ -2537,7 +2418,8 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	}
 
 	isSlice := op == "CallSlice"
-	n := len(ft.In)
+	params := ft.In()
+	n := len(params)
 	isVariadic := ft.Variadic()
 	if isSlice {
 		if !isVariadic {
@@ -2566,15 +2448,15 @@ func (v Value) call(op string, in []Value) (out []Value) {
 		}
 	}
 	for i := 0; i < n; i++ {
-		if xt, targ := in[i].Type(), ft.In[i]; !xt.AssignableTo(toPublicType(targ)) {
+		if xt, targ := in[i].Type(), params[i]; !xt.AssignableTo(toPublicType(targ)) {
 			panic("reflect: " + op + " using " + xt.String() + " as type " + stringFor(targ))
 		}
 	}
 	if !isSlice && isVariadic {
 		// prepare slice for remaining values
 		m := len(in) - n
-		slice := MakeSlice(toRType(ft.In[n]), m, m)
-		elem := toPublicType(ft.In[n].Elem()) // FIXME cast to slice type and Elem()
+		slice := MakeSlice(toRType(params[n]), m, m)
+		elem := toPublicType(params[n].Elem()) // FIXME cast to slice type and Elem()
 		for i := 0; i < m; i++ {
 			x := in[n+i]
 			if xt := x.Type(); !xt.AssignableTo(elem) {
@@ -2589,75 +2471,10 @@ func (v Value) call(op string, in []Value) (out []Value) {
 	}
 
 	nin := len(in)
-	if nin != len(ft.In) {
+	if nin != ft.InCount {
 		panic("reflect.Value.Call: wrong argument count")
 	}
-	if useWasmReflectBridges {
-		return callWasmBridge(ft, fn, env, v.flag&flagMethod != 0, args, in)
-	}
-
-	ffiArgs := make([]*ffi.Type, 0, len(tin)+4)
-	for i := 0; i < ioff; i++ {
-		ffiArgs = append(ffiArgs, toFFIType(tin[i]))
-	}
-	for i, arg := range in {
-		typ := tin[ioff+i]
-		if omitFFIArg(typ) {
-			continue
-		}
-		if ffiCallSliceAsTriple && typ.Kind() == abi.Slice {
-			h := (*unsafeheaderSlice)(arg.ptr)
-			ffiArgs = append(ffiArgs, ffi.TypePointer, ffi.TypeInt, ffi.TypeInt)
-			args = append(args, unsafe.Pointer(&h.Data), unsafe.Pointer(&h.Len), unsafe.Pointer(&h.Cap))
-			continue
-		}
-		ffiArgs = append(ffiArgs, toFFIType(typ))
-		args = append(args, toFFIArg(arg, typ))
-	}
-
-	sig, err := ffi.NewSignature(toFFIRetType(ft.Out), ffiArgs...)
-	if err != nil {
-		panic(err)
-	}
-	if sig.ReturnType() != ffi.TypeVoid {
-		v := runtime.AllocZAligned(sig.ReturnType().ByteSize(), uintptr(sig.ReturnType().Alignment))
-		// libffi expects rvalue to point to the return value storage.
-		ret = v
-	}
-
-	ffi.CallWithEnv(sig, fn, env, ret, args...)
-	tout := toRuntimeTypes(ft.Out)
-	switch n := len(tout); n {
-	case 0:
-	case 1:
-		return []Value{valueFromFFIResult(ret, tout[0], sig.ReturnType())}
-	default:
-		out = make([]Value, n)
-		var off uintptr
-		for i, tout := range tout {
-			field, fieldOffset, next := ffiResultField(sig.ReturnType(), i, off)
-			out[i] = valueFromFFIResult(add(ret, fieldOffset, ""), tout, field)
-			off = next
-		}
-	}
-	return
-}
-
-func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Value {
-	if ffiType.ByteSize() != typ.Size_ || ffiType.Alignment < uint16(typ.Align_) {
-		storage := runtime.AllocZAligned(typ.Size_, uintptr(typ.Align_))
-		size := ffiType.ByteSize()
-		if typ.Size_ < size {
-			size = typ.Size_
-		}
-		if size != 0 {
-			memmove(storage, ptr, size)
-		}
-		ptr = storage
-	}
-	out := NewAt(toType(typ), ptr).Elem()
-	resolveIndirectValue(&out, typ)
-	return out
+	return callProvider(ft, fn, env, receiverType, receiver, in)
 }
 
 func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
@@ -2665,22 +2482,14 @@ func toRuntimeTypes(typs []*abi.Type) []*abi.Type {
 	case 0:
 		return nil
 	case 1:
-		return []*abi.Type{toRuntimeType(typs[0])}
+		return []*abi.Type{physicalType(typs[0])}
 	default:
 		rets := make([]*abi.Type, n)
 		for i, typ := range typs {
-			rets[i] = toRuntimeType(typ)
+			rets[i] = physicalType(typ)
 		}
 		return rets
 	}
-}
-
-func toRuntimeType(typ *abi.Type) *abi.Type {
-	switch typ.Kind() {
-	case abi.Func:
-		return closureOf((*abi.FuncType)(unsafe.Pointer(typ)))
-	}
-	return typ
 }
 
 // resolveIndirectValue converts Value's indirect reference to direct based on abi.Type, clears flagIndir
@@ -3055,11 +2864,10 @@ func methodReceiver(op string, v Value, methodIndex int) (rcvrtype *abi.Type, t 
 		t = (*funcType)(unsafe.Pointer(m.Typ_))
 	} else {
 		rcvrtype = v.typ()
-		ms := v.typ().ExportedMethods()
-		if uint(i) >= uint(len(ms)) {
+		m := exportedMethod(rcvrtype, i)
+		if m == nil {
 			panic("reflect: internal error: invalid method index")
 		}
-		m := ms[i]
 		if !abi.IsExported(m.Name()) {
 			panic("reflect: " + op + " of unexported method")
 		}
@@ -3149,7 +2957,10 @@ func convertOp(dst, src *abi.Type) func(Value, Type) Value {
 		}
 	case Func:
 		if dst.Kind() == abi.Func {
-			return cvtFunc
+			if haveIdenticalUnderlyingType(dst, src, false) {
+				return cvtFunc
+			}
+			return nil
 		}
 	}
 
@@ -3386,10 +3197,7 @@ func cvtDirect(v Value, typ Type) Value {
 // convertOp: func copy
 func cvtFunc(v Value, typ Type) Value {
 	f := v.flag
-	t := typ.common()
-	if t.Kind() == abi.Func {
-		t = closureOf(t.FuncType())
-	}
+	t := physicalType(typ.common())
 	ptr := v.ptr
 	if f&flagAddr != 0 {
 		// indirect, mutable word - make a copy

@@ -8,10 +8,14 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -19,7 +23,9 @@ import (
 // A closed program with no Go allocation, panic, callbacks or scheduler use
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
-func configureWasmRuntimeFree(ctx *context) {
+// Emscripten uses the same proof to omit runtime startup and the scheduler at
+// final link. The instrumentation in cached archives keeps its usual ABI.
+func configureRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
@@ -27,12 +33,17 @@ func configureWasmRuntimeFree(ctx *context) {
 		return
 	}
 	conf := ctx.buildConf
+	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
+	directMain := canUseEmscriptenDirectMain(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
-		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
+		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
+		ctx.frontendOptions.DebuggerFrames || (!directMain && needsWasmRuntimeScheduler(ctx)) ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !embedded && !directMain && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
+		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -52,7 +63,17 @@ func configureWasmRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	roots := wasmReflectRoots(ctx)
+	runtimeFree, usesCPrintf := wasmRuntimeFreeFunctions(roots, linkname, globalSafe)
+	minimalHost := directMain && conf.WasmMinimalHost && conf.PCLNMode != PCLNExternal &&
+		!conf.GenLL && !conf.CheckLLFiles
+	if minimalHost && !runtimeFree {
+		closedCall := func(fn *ssa.Function) bool {
+			return fn.Pkg != nil && ctx.patches[fn.Pkg.Pkg.Path()].Alt == nil && linkname(fn) == ""
+		}
+		minimalHost = ctx.prog.GCRootsEnabled() && wasmSynchronousFunctions(roots, closedCall, globalSafe)
+	}
+	if !runtimeFree && !minimalHost {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -78,7 +99,8 @@ func configureWasmRuntimeFree(ctx *context) {
 		}
 		for _, file := range pkg.Syntax {
 			for _, imp := range file.Imports {
-				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" {
+				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" ||
+					!runtimeFree && (imp.Path.Value == `"unsafe"` || imp.Path.Value == "`unsafe`") {
 					return
 				}
 			}
@@ -121,7 +143,80 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
-	enableWasmRuntimeFree(ctx)
+	ctx.emscriptenMinimalHost = minimalHost
+	if !runtimeFree {
+		return
+	}
+	if directMain {
+		ctx.emscriptenDirectMain = true
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: omit Emscripten scheduler for a synchronous executable")
+		}
+	} else if embedded {
+		ctx.embeddedRuntimeFree = true
+		// The ordinary stdio path shares buffering with C callers. Switch
+		// only when every reachable write is a Go builtin print.
+		ctx.embeddedDirectConsole = !usesCPrintf &&
+			slices.Contains(ctx.crossCompile.BuildTags, embeddedConsoleTag)
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free bare-metal program")
+			if ctx.embeddedDirectConsole {
+				fmt.Fprintln(os.Stderr, "llgo: write bare-metal builtin output directly to the console")
+			}
+		}
+	} else {
+		enableWasmRuntimeFree(ctx)
+	}
+}
+
+func emscriptenDirectSizeBuild(conf *Config, frontend cl.Options) bool {
+	return sizeCodecBuild(conf, frontend) || conf.WasmMinimalHost && closedSizeBuild(conf, frontend)
+}
+
+// Native inputs and externally selected flags can introduce suspending calls
+// that have no Go SSA body. Use the fixed Emscripten executable profiles.
+func canUseEmscriptenDirectMain(ctx *context) bool {
+	conf, target := ctx.buildConf, ctx.crossCompile
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	return !conf.disableSizeSpecialization && emscriptenDirectSizeBuild(conf, ctx.frontendOptions) &&
+		conf.DebugArtifactMode == DebugArtifactNone && conf.Goos == "js" && conf.Goarch == "wasm" &&
+		(conf.Target == "emscripten" || conf.Target == "emscripten-memory64") &&
+		target.WasmProvider == crosscompile.WasmProviderEmscripten && slices.Contains(target.LDFLAGS, "-sASYNCIFY=1") &&
+		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
+		!slices.Contains(target.BuildTags, "llgo.wasm.workers") && !slices.Contains(tags, "llgo.wasm.workers") &&
+		!slices.Contains(tags, wasmReflectLibffiTag) &&
+		os.Getenv("EMCC_CFLAGS") == "" && ctx.commands.lookup("EMCC_CFLAGS") == "" &&
+		(!conf.WasmMinimalHost || !conf.goGlobalDCEEnabled() && needsWasmFinalization(conf) &&
+			os.Getenv("CCFLAGS") == "" && ctx.commands.lookup("CCFLAGS") == "" &&
+			os.Getenv("CFLAGS") == "" && ctx.commands.lookup("CFLAGS") == "")
+}
+
+// Apply the startup proof to the final link only. Package manifests use the
+// original profile, so synchronous and suspending programs can share archives.
+func configureEmscriptenDirectLink(target *crosscompile.Export) {
+	flags := slices.Clone(target.LDFLAGS)
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == "--pre-js" && filepath.Base(flags[i+1]) == emscriptenAsyncifyExportsJS {
+			flags = slices.Delete(flags, i, i+2)
+			break
+		}
+	}
+	target.LDFLAGS = slices.DeleteFunc(flags, func(flag string) bool {
+		return strings.HasPrefix(flag, "-sASYNCIFY")
+	})
+	target.WasmPostLink.Asyncify = false
+}
+
+// Only the executable's own package can omit its polls and caller frames.
+// Dependencies still compile with the fixed runtime profile.
+func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {
+	return ctx.emscriptenDirectMain && pkgExists(ctx.initial, pkg)
+}
+
+func useMinimalWASIStartup(ctx *context) bool {
+	// An external symbol map may derive its path from argv[0].
+	return ctx.wasmRuntimeFree && ctx.buildConf.PCLNMode != PCLNExternal &&
+		wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
 }
 
 func enableWasmRuntimeFree(ctx *context) {
@@ -135,9 +230,14 @@ func enableWasmRuntimeFree(ctx *context) {
 	}
 }
 
-func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) bool {
+func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) (runtimeFree, usesCPrintf bool) {
+	return runtimeFreeFunctions(roots, linkname, globalSafe, nil, true)
+}
+
+func runtimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool,
+	acceptCall func(*ssa.Call) bool, allowPrint bool) (runtimeFree, usesCPrintf bool) {
 	if len(roots) == 0 {
-		return false
+		return false, false
 	}
 	state := make(map[*ssa.Function]uint8)
 	var visit func(*ssa.Function) bool
@@ -182,9 +282,12 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 						return false
 					}
 				case *ssa.Call:
+					if acceptCall != nil && acceptCall(instr) {
+						continue
+					}
 					call := instr.Common()
 					if builtin, ok := call.Value.(*ssa.Builtin); ok {
-						if builtin.Name() != "print" && builtin.Name() != "println" {
+						if !allowPrint || builtin.Name() != "print" && builtin.Name() != "println" {
 							return false
 						}
 						for _, arg := range call.Args {
@@ -219,6 +322,7 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 							if !ok || !args.IsNil() {
 								return false
 							}
+							usesCPrintf = true
 						default:
 							return false
 						}
@@ -235,10 +339,10 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 	}
 	for _, root := range roots {
 		if !visit(root) {
-			return false
+			return false, false
 		}
 	}
-	return true
+	return true, usesCPrintf
 }
 
 func runtimeFreeScalar(typ types.Type) bool {

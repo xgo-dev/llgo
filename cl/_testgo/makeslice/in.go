@@ -23,7 +23,8 @@ package main
 // CHECK-LABEL: define void @"main.init#3$1"(){{.*}} {
 // CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#3$1", ptr [[NEG_TOKEN:%[0-9]+]])
 // CHECK-NEXT: [[NEG_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[NEG_TOKEN]])
-// CHECK-NEXT: [[NEG_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[NEG_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: [[NEG_TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[NEG_RECOVER]], 0
+// CHECK-NEXT: [[NEG_MISSING:%[0-9]+]] = icmp eq ptr [[NEG_TYPE]], null
 // CHECK-NEXT: br i1 [[NEG_MISSING]], label %{{.*}}, label %{{.*}}
 // CHECK-LABEL: define void @"main.init#4"(){{.*}} {
 // CHECK: [[CAP_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.init#4$1")
@@ -33,7 +34,8 @@ package main
 // CHECK-LABEL: define void @"main.init#4$1"(){{.*}} {
 // CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#4$1", ptr [[CAP_TOKEN:%[0-9]+]])
 // CHECK-NEXT: [[CAP_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[CAP_TOKEN]])
-// CHECK-NEXT: [[CAP_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[CAP_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: [[CAP_TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[CAP_RECOVER]], 0
+// CHECK-NEXT: [[CAP_MISSING:%[0-9]+]] = icmp eq ptr [[CAP_TYPE]], null
 // CHECK-NEXT: br i1 [[CAP_MISSING]], label %{{.*}}, label %{{.*}}
 // CHECK-LABEL: define void @"main.init#5"(){{.*}} {
 // CHECK: [[OVERFLOW_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.init#5$1")
@@ -43,7 +45,8 @@ package main
 // CHECK-LABEL: define void @"main.init#5$1"(){{.*}} {
 // CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.init#5$1", ptr [[OVERFLOW_TOKEN:%[0-9]+]])
 // CHECK-NEXT: [[OVERFLOW_RECOVER:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[OVERFLOW_TOKEN]])
-// CHECK-NEXT: [[OVERFLOW_MISSING:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[OVERFLOW_RECOVER]], %"{{.*}}eface" zeroinitializer)
+// CHECK-NEXT: [[OVERFLOW_TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[OVERFLOW_RECOVER]], 0
+// CHECK-NEXT: [[OVERFLOW_MISSING:%[0-9]+]] = icmp eq ptr [[OVERFLOW_TYPE]], null
 // CHECK-NEXT: br i1 [[OVERFLOW_MISSING]], label %{{.*}}, label %{{.*}}
 
 func main() {

@@ -40,7 +40,7 @@ func TestWasmFinalizerCandidates(t *testing.T) {
 			delete(wanted, decl.Name.Name)
 			countFinalizerLoopVisits(decl)
 		case *ast.GenDecl:
-			if decl.Tok == token.IMPORT {
+			if decl.Tok != token.CONST && decl.Tok != token.TYPE {
 				continue
 			}
 		}
@@ -99,6 +99,8 @@ var heap []byte
 var states [endBlock]uint8
 var metadataReads int
 var registryReads int
+var finalizers, readyFinalizers *finalizerRecord
+var finalizerDependencyScan bool
 func gcStateOf(block uintptr) uint8 { metadataReads++; return states[block] }
 func gcAddressOf(block uintptr) uintptr { return uintptr(unsafe.Pointer(&heap[block*blockBytes])) }
 func blockFromAddr(addr uintptr) uintptr { return (addr - gcAddressOf(0)) / blockBytes }

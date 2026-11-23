@@ -22,6 +22,9 @@ package runtime
 var currentG *g
 
 func getg() *g {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	if currentG == nil {
 		currentG = initRuntimeContext(new(runtimeContext), nil, _Grunning)
 	}

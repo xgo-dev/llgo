@@ -67,6 +67,8 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 
 	wrapped := func(pkg *packages.Package) *aPackage { return &aPackage{Package: pkg} }
 	rootPkg := wrapped(root)
+	formatRuntime := &packages.Package{ID: "formatter", ExportFile: "formatter.a"}
+	rootPkg.formatRuntime = formatRuntime
 	rootPkg.AltPkg = &packages.Cached{Package: &packages.Package{
 		ID: "alt-root", Imports: map[string]*packages.Package{"alt-only": altOnly},
 	}}
@@ -77,7 +79,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	ctx := &context{
 		pkgs: map[*packages.Package]Package{
 			root: rootPkg, base: basePkg, altOnly: altPkg, unrelated: unrelatedPkg, runtimePkg: runtimeWrapped,
-			unrelatedDep: unrelatedDepPkg,
+			unrelatedDep: unrelatedDepPkg, formatRuntime: wrapped(formatRuntime),
 		},
 		pkgByID: map[string]Package{
 			"root": rootPkg, "base": basePkg, "alt-only": altPkg, "unrelated": unrelatedPkg, "runtime": runtimeWrapped,
@@ -89,7 +91,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	for i, pkg := range gotPkgs {
 		got[i] = pkg.ID
 	}
-	if want := []string{"alt-only", "base", "root", "runtime"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"alt-only", "base", "formatter", "root", "runtime"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("linkedPackageClosure = %v, want %v", got, want)
 	}
 }
@@ -103,6 +105,28 @@ func TestLinkedPackageClosureSkipsUnbuiltRuntime(t *testing.T) {
 	got := linkedPackageClosure(ctx, root, []Package{rootBuilt, runtimeLoaded})
 	if len(got) != 1 || got[0] != rootBuilt {
 		t.Fatalf("C-only link includes unbuilt runtime: %v", got)
+	}
+}
+
+func TestEmscriptenSchedulerRuntimeFreeLinkPackages(t *testing.T) {
+	root := &packages.Package{ID: "root", PkgPath: "root", ExportFile: "root.a"}
+	dep := &packages.Package{ID: "dep", PkgPath: "dep", ExportFile: "dep.a"}
+	runtimePkg := &packages.Package{ID: llssa.PkgRuntime, PkgPath: llssa.PkgRuntime, ExportFile: "runtime.a",
+		Imports: map[string]*packages.Package{"dep": dep}}
+	rootBuilt := &aPackage{Package: root, ArchiveFile: "root.a"}
+	depBuilt := &aPackage{Package: dep, ArchiveFile: "dep.a"}
+	depBuilt.NeedRt = true
+	runtimeBuilt := &aPackage{Package: runtimePkg, ArchiveFile: "runtime.a"}
+	ctx := &context{emscriptenDirectMain: true, pkgs: map[*packages.Package]Package{
+		root: rootBuilt, dep: depBuilt, runtimePkg: runtimeBuilt,
+	}}
+	built := []*aPackage{rootBuilt, depBuilt, runtimeBuilt}
+	if got := mainLinkPackages(ctx, root, built); !reflect.DeepEqual(got, []Package{rootBuilt}) {
+		t.Fatalf("preloaded runtime dependency made a C-only entry require Go: %v", got)
+	}
+	root.Imports = map[string]*packages.Package{"dep": dep}
+	if got := mainLinkPackages(ctx, root, built); !reflect.DeepEqual(got, []Package{depBuilt, rootBuilt, runtimeBuilt}) {
+		t.Fatalf("link dropped the Go runtime required by an application import: %v", got)
 	}
 }
 

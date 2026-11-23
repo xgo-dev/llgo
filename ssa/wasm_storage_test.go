@@ -183,6 +183,48 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
+func TestWasm32NativeIntegerRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		native  types.BasicKind
+		logical types.BasicKind
+		safe    bool
+	}{
+		{"signed", types.Int32, types.Int, true},
+		{"unsigned", types.Uint32, types.Uintptr, true},
+		{"zero-extended-to-signed", types.Uint32, types.Int, false},
+		{"sign-extended-to-unsigned", types.Int32, types.Uintptr, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := newJ32Program(t)
+			setTestRuntime(t, prog)
+			pkg := prog.NewPackage("p", "example.com/p")
+			native := types.Typ[tc.native]
+			param := types.NewParam(token.NoPos, nil, "word", native)
+			sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(param), types.NewTuple(param), false)
+			fn := pkg.NewFunc("roundTrip", sig, GoDecl)
+			b := fn.MakeBody(1)
+			in := b.Param(0)
+			word := prog.rawType(types.Typ[tc.logical])
+			wide := b.fitLLVMValue(in.impl, in.Type, word.ll)
+			out := b.fitLLVMValue(wide, word, in.ll)
+			if got := out == in.impl; got != tc.safe {
+				t.Fatalf("reused native operand = %v, want %v", got, tc.safe)
+			}
+			b.Return(Expr{out, in.Type})
+			b.EndBuild()
+
+			ir := pkg.Module().String()
+			if got := strings.Contains(ir, "AssertRuntimeError"); got == tc.safe {
+				t.Fatalf("unexpected checked-narrowing decision:\n%s", ir)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid native round-trip module: %v\n%s", err, ir)
+			}
+		})
+	}
+}
+
 func TestWasm32SliceBoundary(t *testing.T) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
@@ -608,8 +650,8 @@ func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 	b.EndBuild()
 
 	ir := pkg.Module().String()
-	if !strings.Contains(ir, "[2 x { ptr, i32 }]") {
-		t.Fatalf("GC root frame must match the Go64 runtime layout:\n%s", ir)
+	if !strings.Contains(ir, "[2 x ptr]") {
+		t.Fatalf("GC root frame must use the physical pointer layout:\n%s", ir)
 	}
 	if !strings.Contains(ir, "@llvm_gc_root_chain = linkonce global { ptr, i32 }") {
 		t.Fatalf("GC root-chain storage must match the Go64 runtime global:\n%s", ir)

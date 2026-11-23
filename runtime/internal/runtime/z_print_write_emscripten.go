@@ -11,7 +11,7 @@ import (
 const platformLLGoFiles = ""
 
 func PrintByte(v byte) {
-	emscripten.WriteStderr(unsafe.Pointer(&v), 1)
+	emscripten.WriteStderrByte(v)
 }
 
 func PrintString(s String) {
@@ -19,5 +19,5 @@ func PrintString(s String) {
 }
 
 func PrintString32(data unsafe.Pointer, size uint32) {
-	emscripten.WriteStderr(data, uintptr(size))
+	emscripten.WriteStderr32(data, size)
 }

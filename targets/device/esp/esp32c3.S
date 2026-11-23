@@ -29,12 +29,12 @@ call_start_cpu0:
     // Somehow, this also sets up IROM from flash. Not sure why, but it avoids
     // the need for another such call.
     // C equivalent:
-    //   Cache_Dbus_MMU_Set(MMU_ACCESS_FLASH, 0x3C00_0000, 0, 64, 128, 0)
+    //   Cache_Dbus_MMU_Set(MMU_ACCESS_FLASH, 0x3C00_0000, 0, 64, 64, 0)
     li a0, 0              // ext_ram: MMU_ACCESS_FLASH
     li a1, 0x3C000000     // vaddr: address in the data bus
     li a2, 0              // paddr: physical address in the flash chip
     li a3, 64             // psize: always 64 (kilobytes)
-    li a4, 128            // num: pages to be set (8192K / 64K = 128)
+    li a4, 64             // 4 MiB of flash at 64 KiB per page
     li a5, 0              // fixed
     call Cache_Dbus_MMU_Set
 

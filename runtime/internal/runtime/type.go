@@ -13,6 +13,8 @@ import (
 type _type = abi.Type
 type ptrtype = abi.PtrType
 type functype = abi.FuncType
+type namedclosuretype = abi.NamedClosureType
+type closurefunctype = abi.ClosureFuncType
 type slicetype = abi.SliceType
 type chantype = abi.ChanType
 type structfield = abi.StructField

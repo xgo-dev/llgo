@@ -17,15 +17,21 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/tdewolff/minify/v2/js"
 	"github.com/xgo-dev/llgo/internal/env"
 )
 
-const wasmFSScriptName = "wasm_fs.js"
+const (
+	wasmFSScriptName        = "wasm_fs.js"
+	emscriptenBrowserFSRoot = "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS"
+)
 
 func emscriptenBrowserHostExt(output string) string {
 	switch filepath.Ext(output) {
@@ -54,6 +60,73 @@ func needsEmscriptenBrowserHost(conf *Config, output string) bool {
 	// GoJS uses wasm_exec.js / Node fs. Only named Emscripten targets need
 	// the Module.FS → Node-shaped fs sidecar.
 	return isEmscriptenNamedTarget(conf)
+}
+
+func configureEmscriptenESMHost(ctx *context, output string) {
+	conf, target := ctx.buildConf, &ctx.crossCompile
+	if filepath.Ext(output) != ".mjs" || !isEmscriptenNamedTarget(conf) ||
+		!hostedValueFormatSupport(conf, *target, ctx.frontendOptions) ||
+		conf.LinkOptions.ExternalLinkerFlags != "" || len(conf.SourceOverlay) != 0 ||
+		slices.Contains(target.BuildTags, "llgo.wasm.workers") ||
+		ctx.commands.lookup("EMCC_CFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" {
+		return
+	}
+	targets := filepath.Join(env.LLGoROOT(), "targets")
+	shim := filepath.Join(targets, wasmFSScriptName)
+	for i := 0; i+1 < len(target.LDFLAGS); i++ {
+		if target.LDFLAGS[i] == "--pre-js" && target.LDFLAGS[i+1] == shim {
+			// The host is already published with the loader. Import it as an
+			// ES module so applications can share one copy. Only the final
+			// link selects this arrangement, leaving archives reusable.
+			target.LDFLAGS = slices.Clone(target.LDFLAGS)
+			target.LDFLAGS[i] = "--extern-pre-js"
+			target.LDFLAGS[i+1] = filepath.Join(targets, "wasm_fs_import.mjs")
+			return
+		}
+	}
+}
+
+// A link that requires only the libc allocator has no Go startup or
+// filesystem calls. Keep the public Emscripten Module.FS export.
+// A speculative link must still reject unresolved imports.
+func configureEmscriptenLibcLink(ctx *context) {
+	omitEmscriptenFSBridge(ctx)
+	for i, flag := range ctx.crossCompile.LDFLAGS {
+		if flag == "-sMALLOC=none" {
+			ctx.crossCompile.LDFLAGS[i] = "-sMALLOC=emmalloc"
+		}
+	}
+}
+
+func configureEmscriptenMinimalLink(ctx *context) {
+	omitEmscriptenFSBridge(ctx)
+	flags := slices.DeleteFunc(ctx.crossCompile.LDFLAGS, func(flag string) bool {
+		return strings.HasPrefix(flag, "-sEXPORTED_RUNTIME_METHODS=")
+	})
+	ctx.crossCompile.LDFLAGS = append(flags, "-sFILESYSTEM=0", "-sEXPORTED_RUNTIME_METHODS=ENV", "--closure", "1")
+}
+
+func omitEmscriptenFSBridge(ctx *context) {
+	original := ctx.crossCompile.LDFLAGS
+	flags := make([]string, 0, len(original))
+	for i := 0; i < len(original); i++ {
+		flag := original[i]
+		switch flag {
+		case emscriptenBrowserFSRoot:
+			continue
+		case "--pre-js", "--extern-pre-js", "--js-library":
+			if i+1 < len(original) {
+				switch filepath.Base(original[i+1]) {
+				case wasmFSScriptName, "wasm_fs_import.mjs", "browser_fs.js", "browser_fs_snapshot.js":
+					i++
+					continue
+				}
+			}
+		}
+		flags = append(flags, flag)
+	}
+	ctx.crossCompile.LDFLAGS = flags
+	ctx.omitEmscriptenBrowserHost = true
 }
 
 func publishEmscriptenBrowserHost(ctx *context, output string, verbose bool) error {
@@ -94,6 +167,9 @@ func publishEmscriptenBrowserHostFrom(ctx *context, output string, verbose bool,
 	if ctx == nil || !needsEmscriptenBrowserHost(ctx.buildConf, output) {
 		return nil
 	}
+	if ctx.omitEmscriptenBrowserHost {
+		return checkEmscriptenBrowserHostCollision(output)
+	}
 	if root == "" {
 		return fmt.Errorf("copy %s: LLGO_ROOT is not set", wasmFSScriptName)
 	}
@@ -111,7 +187,7 @@ func emscriptenBrowserHostSidecar(output string) string {
 	return filepath.Join(filepath.Dir(output), wasmFSScriptName)
 }
 
-func installEmscriptenBrowserHost(src, output string) error {
+func checkEmscriptenBrowserHostCollision(output string) error {
 	dst := emscriptenBrowserHostSidecar(output)
 	same, err := sameFilePath(output, dst)
 	if err != nil {
@@ -120,7 +196,27 @@ func installEmscriptenBrowserHost(src, output string) error {
 	if same {
 		return fmt.Errorf("copy %s: output %s collides with the browser host sidecar", wasmFSScriptName, output)
 	}
-	if err := copyFileAtomic(src, dst); err != nil {
+	return nil
+}
+
+func installEmscriptenBrowserHost(src, output string) error {
+	if err := checkEmscriptenBrowserHostCollision(output); err != nil {
+		return err
+	}
+	dst := emscriptenBrowserHostSidecar(output)
+	source, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
+	}
+	// Publish the same script for every profile so different applications
+	// can share the file and its manifest digest in one deployment directory.
+	// Retain the source when a custom shim uses syntax unknown to the minifier.
+	var compact bytes.Buffer
+	minifier := &js.Minifier{Version: 2020}
+	if err := minifier.Minify(nil, &compact, bytes.NewReader(source), nil); err == nil && compact.Len() < len(source) {
+		source = compact.Bytes()
+	}
+	if err := writeFileAtomic(dst, source); err != nil {
 		return fmt.Errorf("copy %s: %w", wasmFSScriptName, err)
 	}
 	if filepath.Ext(output) != ".html" {

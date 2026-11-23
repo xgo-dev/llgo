@@ -56,7 +56,7 @@ func main() { Read() }
 	ctx := &context{prog: prog, progSSA: pkg.Prog,
 		buildConf: &Config{BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", PrintCommands: true, Overlay: map[string][]byte{path: assembly}},
 		pkgByID:   map[string]*aPackage{"main": {Package: p, SSA: pkg}}}
-	inputs := &wasiSizePruningInputs{}
+	inputs := &linkPruningInputs{}
 	configureUnusedGlobalInits(ctx, inputs)
 	if names := ctx.frontendOptions.UnusedGlobalInits.Names(pkg); len(names) != 1 || names[0] != pkg.Var("Dead").String() {
 		t.Fatalf("pruned %v; assembly-referenced global must survive", names)

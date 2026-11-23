@@ -94,19 +94,19 @@ func TestGCRootReservationAndClosureContext(t *testing.T) {
 
 func TestThreadLocalGCRootFrameIR(t *testing.T) {
 	for _, tt := range []struct {
-		name, goos, triple, profile, chainType, frameType string
+		name, goos, triple, profile, chainType string
 	}{
-		{"J32", "js", "wasm32-unknown-emscripten", "j32", "{ ptr, i32 }", "{ ptr, i32 }"},
-		{"J64", "js", "wasm64-unknown-emscripten", "j64", "ptr", "ptr"},
-		{"W32", "wasip1", "wasm32-unknown-wasip1", "w32", "{ ptr, i32 }", "{ ptr, i32 }"},
+		{"J32", "js", "wasm32-unknown-emscripten", "j32", "{ ptr, i32 }"},
+		{"J64", "js", "wasm64-unknown-emscripten", "j64", "ptr"},
+		{"W32", "wasip1", "wasm32-unknown-wasip1", "w32", "{ ptr, i32 }"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			testThreadLocalGCRootFrameIR(t, tt.goos, tt.triple, tt.profile, tt.chainType, tt.frameType)
+			testThreadLocalGCRootFrameIR(t, tt.goos, tt.triple, tt.profile, tt.chainType)
 		})
 	}
 }
 
-func testThreadLocalGCRootFrameIR(t *testing.T, goos, triple, profile, chainType, frameType string) {
+func testThreadLocalGCRootFrameIR(t *testing.T, goos, triple, profile, chainType string) {
 	prog := ssatest.NewProgram(t, &ssa.Target{
 		GOOS: goos, GOARCH: "wasm", LLVMTarget: triple, WasmProfile: profile,
 	})
@@ -145,7 +145,7 @@ func testThreadLocalGCRootFrameIR(t *testing.T, goos, triple, profile, chainType
 		prog.SizeOf(prog.VoidPtr()) != prog.SizeOf(prog.Uintptr()) {
 		t.Fatalf("thread-local root chain must match the %s pointer storage:\n%s", profile, ir)
 	}
-	if !strings.Contains(ir, `[1 x `+frameType+`]`) {
+	if !strings.Contains(ir, `{ ptr, ptr, [1 x ptr] }`) {
 		t.Fatalf("thread-local root frame must match the %s pointer storage:\n%s", profile, ir)
 	}
 }

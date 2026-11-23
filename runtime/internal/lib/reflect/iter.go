@@ -115,7 +115,7 @@ func (v Value) Seq() iter.Seq[Value] {
 			}
 		}
 	}
-	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq[Value]")
+	panic("reflect: " + v.typeRType().String() + " cannot produce iter.Seq[Value]")
 }
 
 // Seq2 returns an iter.Seq2[Value, Value] that loops over the elements of v.
@@ -171,5 +171,5 @@ func (v Value) Seq2() iter.Seq2[Value, Value] {
 			}
 		}
 	}
-	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq2[Value, Value]")
+	panic("reflect: " + v.typeRType().String() + " cannot produce iter.Seq2[Value, Value]")
 }

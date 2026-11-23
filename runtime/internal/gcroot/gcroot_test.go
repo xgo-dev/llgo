@@ -3,6 +3,8 @@ package gcroot
 import (
 	"testing"
 	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
 type testFrameMap struct {
@@ -12,23 +14,26 @@ type testFrameMap struct {
 
 type testStackEntry struct {
 	stackEntry
-	roots [2]unsafe.Pointer
+	roots [2]rootSlot
 }
+
+var testDirectRoot byte
 
 func TestVisitAndSwitchContexts(t *testing.T) {
 	resetForTest()
 	t.Cleanup(resetForTest)
 
-	meta := unsafe.Pointer(uintptr(0x33))
-	firstValue := unsafe.Pointer(uintptr(0x11))
-	secondValue := unsafe.Pointer(uintptr(0x22))
+	field := uint32(0x11)
+	width := uint8(4)
+	direct := &testDirectRoot
+	firstValue, secondValue := uintptr(field), uintptr(unsafe.Pointer(direct))
 	m := testFrameMap{
 		frameMap: frameMap{numRoots: 2, numMeta: 1},
-		meta:     [1]unsafe.Pointer{meta},
+		meta:     [1]unsafe.Pointer{unsafe.Pointer(&width)},
 	}
 	entry := testStackEntry{
 		stackEntry: stackEntry{m: &m.frameMap},
-		roots:      [2]unsafe.Pointer{firstValue, secondValue},
+		roots:      [2]rootSlot{{value: unsafe.Pointer(&field)}, {value: unsafe.Pointer(direct)}},
 	}
 	currentRootChain = uintptr(unsafe.Pointer(&entry.stackEntry))
 
@@ -36,16 +41,12 @@ func TestVisitAndSwitchContexts(t *testing.T) {
 	RegisterActive(&first)
 	Register(&second)
 
-	var values, metadata []unsafe.Pointer
-	Visit(func(root *unsafe.Pointer, meta unsafe.Pointer) {
-		values = append(values, *root)
-		metadata = append(metadata, meta)
+	var values []uintptr
+	Visit(func(root uintptr) {
+		values = append(values, root)
 	})
 	if len(values) != 2 || values[0] != firstValue || values[1] != secondValue {
-		t.Fatalf("Visit values = %v, want [%p %p]", values, firstValue, secondValue)
-	}
-	if metadata[0] != meta || metadata[1] != nil {
-		t.Fatalf("Visit metadata = %v, want [%p nil]", metadata, meta)
+		t.Fatalf("Visit values = %v, want [%#x %#x]", values, firstValue, secondValue)
 	}
 
 	Switch(&second)
@@ -71,12 +72,68 @@ func TestRejectsInvalidContextOperations(t *testing.T) {
 	assertPanics(t, func() { Unregister(&ctx) })
 }
 
-func TestRejectsInvalidFrameMap(t *testing.T) {
-	m := frameMap{numRoots: 1, numMeta: 2}
-	entry := stackEntry{m: &m}
-	assertPanics(t, func() {
-		visitChain(unsafe.Pointer(&entry), func(*unsafe.Pointer, unsafe.Pointer) {})
+func TestVisitCompactFrameMaps(t *testing.T) {
+	direct := &testDirectRoot
+	narrow := uint32(0x12345678)
+	wide := uint64(0x12345678abcdef01)
+
+	legacy := testStackEntry{
+		stackEntry: stackEntry{m: &frameMap{numRoots: 1}},
+		roots:      [2]rootSlot{{value: unsafe.Pointer(direct)}},
+	}
+	width32 := testStackEntry{
+		stackEntry: stackEntry{
+			next: &legacy.stackEntry,
+			m:    &frameMap{numRoots: 2, numMeta: abi.CompactGCRootMap | 1},
+		},
+		roots: [2]rootSlot{{value: unsafe.Pointer(direct)}, {value: unsafe.Pointer(&narrow)}},
+	}
+	width64 := testStackEntry{
+		stackEntry: stackEntry{
+			next: &width32.stackEntry,
+			m:    &frameMap{numRoots: 1, numMeta: abi.CompactGCRootMap | abi.WideGCRootMap},
+		},
+		roots: [2]rootSlot{{value: unsafe.Pointer(&wide)}},
+	}
+
+	want := []uintptr{uintptr(wide), uintptr(unsafe.Pointer(direct)), uintptr(narrow), uintptr(unsafe.Pointer(direct))}
+	var got []uintptr
+	visitChain(unsafe.Pointer(&width64.stackEntry), func(root uintptr) {
+		got = append(got, root)
 	})
+	if len(got) != len(want) {
+		t.Fatalf("visited %d roots, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("root %d = %#x, want %#x", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRestoreFrameLinks(t *testing.T) {
+	prev := new(stackEntry)
+	metadata := &frameMap{numRoots: 2}
+	entry := &stackEntry{next: prev, m: metadata}
+	next, saved := FrameLinks(unsafe.Pointer(entry))
+	*entry = stackEntry{}
+	RestoreFrameLinks(unsafe.Pointer(entry), next, saved)
+	if entry.next != prev || entry.m != metadata {
+		t.Fatal("restored frame links differ from the saved header")
+	}
+}
+
+func TestRejectsInvalidFrameMap(t *testing.T) {
+	for _, m := range []*frameMap{
+		nil,
+		{numRoots: 1, numMeta: 2},
+		{numRoots: 1, numMeta: abi.CompactGCRootMap | 1},
+	} {
+		entry := stackEntry{m: m}
+		assertPanics(t, func() {
+			visitChain(unsafe.Pointer(&entry), func(uintptr) {})
+		})
+	}
 }
 
 func TestRestoreChain(t *testing.T) {

@@ -835,6 +835,16 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 				return Expr{b.impl.CreateICmp(llvm.IntNE, dx, dy, ""), tret}
 			}
 		case vkIface, vkEface:
+			if (op == token.EQL || op == token.NEQ) && (x.impl.IsNull() || y.impl.IsNull()) {
+				// The first word is the itab or dynamic type. A typed nil
+				// payload is distinct from a nil interface.
+				if x.impl.IsNull() {
+					x = y
+				}
+				typeWord := b.faceItab(x.impl)
+				pred := boolPredOpToLLVM[op-predOpBase]
+				return Expr{llvm.CreateICmp(b.impl, pred, typeWord, llvm.ConstNull(typeWord.Type())), tret}
+			}
 			toEface := func(x Expr, emtpy bool) Expr {
 				if emtpy {
 					return x
@@ -2263,9 +2273,12 @@ func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
 		case vkString:
 			if prog.target.GOARCH == "wasm" {
 				length := b.StringLen(arg)
-				if value := length.impl.IsAConstantInt(); !value.IsNil() && value.ZExtValue() <= math.MaxUint32 {
+				value := length.impl.IsAConstantInt()
+				// The bytes of a valid Wasm32 string fit in its physical address
+				// space, even though the Go length word has 64 bits.
+				if prog.PointerSize() == 4 || !value.IsNil() && value.ZExtValue() <= math.MaxUint32 {
 					b.InlineCall(b.Pkg.rtFunc("PrintString32"), b.Convert(prog.VoidPtr(), b.StringData(arg)),
-						prog.IntVal(value.ZExtValue(), prog.Uint32()))
+						b.Convert(prog.Uint32(), length))
 					continue
 				}
 			}

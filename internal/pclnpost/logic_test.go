@@ -28,6 +28,38 @@ func rec(pc, id uint64) []byte {
 	return b[:]
 }
 
+func TestLoadShortSymbolIndex(t *testing.T) {
+	const base = 0x1000
+	const firstID, secondID = 0x12345678abcdef, 0xffffabcd00987654
+	raw := make([]byte, 16+2*10)
+	binary.LittleEndian.PutUint64(raw, base+16)
+	binary.LittleEndian.PutUint64(raw[8:], ShortSymbolIndexFlag|2)
+	binary.LittleEndian.PutUint64(raw[16:], firstID)
+	binary.LittleEndian.PutUint64(raw[24:], secondID)
+	binary.LittleEndian.PutUint16(raw[32:], 123)
+	binary.LittleEndian.PutUint16(raw[34:], 65535)
+	entry := append(rec(0, metaRecordMagic), rec(base, 0)...)
+	entry = append(entry, rec(base+8, 0)...)
+	info := &binaryInfo{
+		format: "elf", raw: raw, entrySec: entry,
+		secs: []secInfo{{vmaddr: base, size: uint64(len(raw))}},
+	}
+	index, err := loadSymbolIndex("", info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := lookupSymIndex(index, firstID); !ok || got != 123 {
+		t.Fatalf("first symbol mapped to %d, found %v", got, ok)
+	}
+	if got, ok := lookupSymIndex(index, secondID); !ok || got != 65535 {
+		t.Fatalf("second symbol mapped to %d, found %v", got, ok)
+	}
+	binary.LittleEndian.PutUint64(raw[8:], ShortSymbolIndexFlag|65536)
+	if _, err := loadSymbolIndex("", info); err == nil {
+		t.Fatal("accepted a short index with more than 65535 records")
+	}
+}
+
 func TestParseRecordsELF(t *testing.T) {
 	info := &binaryInfo{format: "elf", textStart: 0x1000, textEnd: 0x2000}
 	sec := append(rec(0, 0), rec(0x1100, 7)...) // zero keep-alive skipped

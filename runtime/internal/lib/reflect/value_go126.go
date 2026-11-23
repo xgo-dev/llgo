@@ -39,11 +39,11 @@ func (v Value) abiTypeSlow() *abi.Type {
 		return &tt.Methods[i].Typ_.Type
 	}
 
-	ms := typ.ExportedMethods()
-	if uint(i) >= uint(len(ms)) {
+	m := exportedMethod(typ, i)
+	if m == nil {
 		panic("reflect: internal error: invalid method index")
 	}
-	return &ms[i].Mtyp_.Type
+	return &m.Mtyp_.Type
 }
 
 func (v Value) Fields() iter.Seq2[StructField, Value] {

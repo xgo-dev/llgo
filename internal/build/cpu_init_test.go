@@ -174,7 +174,13 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 					initialized = strings.Contains(fn.String(), "CPUEnvironment")
 				}
 			}
-			if !initialized {
+			if target.arch == "wasm" {
+				// The Wasm detector has no CPU options. Keep host environment
+				// reads out of its package initializer.
+				if initialized {
+					t.Fatal("Wasm CPU initialization reads process overrides")
+				}
+			} else if !initialized {
 				t.Fatal("CPU initialization does not apply process overrides")
 			}
 			var bridge string

@@ -7,8 +7,9 @@
 package syscall
 
 import (
-	"structs"
 	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/internal/structs"
 )
 
 func init() {
