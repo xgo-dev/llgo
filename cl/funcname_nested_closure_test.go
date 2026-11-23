@@ -90,7 +90,7 @@ func localType[T any]() any {
 `)
 
 	fn, local := firstGenericLocalNamed(t, ssapkg)
-	ctx := &context{goFn: fn}
+	ctx := &context{goFn: fn, prog: ssatest.NewProgram(t, nil)}
 	if !ctx.isGenericLocalType(local.Obj()) {
 		t.Fatalf("%s should be detected as a generic local type", local.Obj().Name())
 	}
@@ -182,7 +182,7 @@ func use() {
 		}
 		inner := outer.AnonFuncs[0]
 
-		ctx := &context{goFn: outer}
+		ctx := &context{goFn: outer, prog: ssatest.NewProgram(t, nil)}
 		patched := ctx.patchType(outer.Signature).(*types.Signature)
 		param := findLocalNamed(patched.Params().At(0).Type(), ssapkg.Pkg)
 		if param == nil {
@@ -247,7 +247,7 @@ func use() {
 }
 `)
 	fn, local := firstGenericLocalNamed(t, ssapkg)
-	ctx := &context{goFn: fn}
+	ctx := &context{goFn: fn, prog: ssatest.NewProgram(t, nil)}
 
 	if ctx.isGenericLocalType(nil) {
 		t.Fatal("nil object should not be a generic local type")

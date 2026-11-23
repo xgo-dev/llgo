@@ -97,6 +97,17 @@ func cCallSink(sliceSink)
 //go:linkname cCallSource C.llgo_test_call_source
 func cCallSource(sliceSource) int32
 
+type derivedSliceSink sliceSink
+type sliceSourceCopy sliceSource
+type sliceSourceAlias = sliceSourceCopy
+type derivedSliceSource sliceSourceAlias
+
+//go:linkname cCallDerivedSink C.llgo_test_call_sink
+func cCallDerivedSink(derivedSliceSink)
+
+//go:linkname cCallDerivedSource C.llgo_test_call_source
+func cCallDerivedSource(derivedSliceSource) int32
+
 var callbackByte byte
 var callbackData = [5]byte{7, 8, 9, 10, 11}
 
@@ -116,16 +127,23 @@ func firstSlice() []byte  { return callbackData[:3] }
 func secondSlice() []byte { return callbackData[1:4] }
 
 //go:noinline
-func callCallbacks(second bool) bool {
+func callCallbacks(second, derived bool) bool {
 	sink, source := readFirst, firstSlice
 	if second {
 		sink, source = readSecond, secondSlice
 	}
 	callbackByte = 0
-	cCallSink(sliceSink(sink))
+	if derived {
+		cCallDerivedSink(derivedSliceSink(sink))
+	} else {
+		cCallSink(sliceSink(sink))
+	}
 	want := byte(7)
 	if second {
 		want = 8
+	}
+	if derived {
+		return callbackByte == want && cCallDerivedSource(derivedSliceSource(source)) == int32(want)
 	}
 	return callbackByte == want && cCallSource(sliceSource(source)) == int32(want)
 }

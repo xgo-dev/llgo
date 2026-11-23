@@ -60,12 +60,17 @@ func TestNativeCallbackTypeMetadata(t *testing.T) {
 				if cc != GoDecl {
 					prog.SetTypeCallConv(pkg.Path()+"."+name, cc)
 				}
-				fields := b.abiCommonFields(typ, name, false, llvm.Value{})
-				flags, kind := fields[3].ZExtValue(), fields[6].ZExtValue()
-				if (flags&uint64(abi.TFlagNative) != 0) != (cc != GoDecl) ||
-					(kind&uint64(abi.KindStdcall) != 0) != (cc == Stdcall) ||
-					kind&uint64(abi.KindMask) != uint64(abi.Func) {
-					t.Fatalf("%s: flags=%#x kind=%#x", name, flags, kind)
+				derived := types.NewNamed(types.NewTypeName(token.NoPos, typ.Obj().Pkg(), name+"Copy", nil), NoArgsNoRet, nil)
+				prog.SetTypeRepresentation(derived.Obj(), prog.RepresentationOf(typ))
+				alias := types.NewAlias(types.NewTypeName(token.NoPos, typ.Obj().Pkg(), name+"Alias", nil), derived)
+				for _, value := range []types.Type{typ, derived, alias} {
+					fields := b.abiCommonFields(value, value.String(), false, llvm.Value{})
+					flags, kind := fields[3].ZExtValue(), fields[6].ZExtValue()
+					if (flags&uint64(abi.TFlagNative) != 0) != (cc != GoDecl) ||
+						(kind&uint64(abi.KindStdcall) != 0) != (cc == Stdcall) ||
+						kind&uint64(abi.KindMask) != uint64(abi.Func) {
+						t.Fatalf("%s: flags=%#x kind=%#x", value, flags, kind)
+					}
 				}
 			}
 			b.Return()

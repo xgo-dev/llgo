@@ -28,30 +28,38 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
-	mu                    sync.RWMutex
-	hasNativeTypeMetadata atomic.Bool
-	linknames             map[string]string
-	wasmImports           map[string]wasmImport
-	exports               map[string]string
-	closureEnvDirectives  map[closureEnvDirectiveKey]none
-	parsedPackages        map[*types.Package]struct{}
-	noInterface           map[string]none
-	typeCallConvs         map[string]CallConv
-	nativeStructFields    map[token.Pos]bool
-	nativeStructVars      map[*types.Var]bool
+	mu                       sync.RWMutex
+	hasNativeTypeMetadata    atomic.Bool
+	linknames                map[string]string
+	wasmImports              map[string]wasmImport
+	exports                  map[string]string
+	closureEnvDirectives     map[closureEnvDirectiveKey]none
+	parsedPackages           map[*types.Package]struct{}
+	noInterface              map[string]none
+	typeCallConvs            map[string]CallConv
+	typeRepresentations      map[*types.TypeName]TypeRepresentation
+	localTypeRepresentations map[localTypeDeclaration]TypeRepresentation
+	checkingTypePackages     map[*types.Package]struct{}
+	completedTypePackages    map[*types.Package]struct{}
+	nativeStructFields       map[token.Pos]bool
+	nativeStructVars         map[*types.Var]bool
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
 	return &packageSyntaxData{
-		linknames:            make(map[string]string),
-		wasmImports:          make(map[string]wasmImport),
-		exports:              make(map[string]string),
-		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
-		parsedPackages:       make(map[*types.Package]struct{}),
-		noInterface:          make(map[string]none),
-		typeCallConvs:        make(map[string]CallConv),
-		nativeStructFields:   make(map[token.Pos]bool),
-		nativeStructVars:     make(map[*types.Var]bool),
+		linknames:                make(map[string]string),
+		wasmImports:              make(map[string]wasmImport),
+		exports:                  make(map[string]string),
+		closureEnvDirectives:     make(map[closureEnvDirectiveKey]none),
+		parsedPackages:           make(map[*types.Package]struct{}),
+		noInterface:              make(map[string]none),
+		typeCallConvs:            make(map[string]CallConv),
+		typeRepresentations:      make(map[*types.TypeName]TypeRepresentation),
+		localTypeRepresentations: make(map[localTypeDeclaration]TypeRepresentation),
+		checkingTypePackages:     make(map[*types.Package]struct{}),
+		completedTypePackages:    make(map[*types.Package]struct{}),
+		nativeStructFields:       make(map[token.Pos]bool),
+		nativeStructVars:         make(map[*types.Var]bool),
 	}
 }
 

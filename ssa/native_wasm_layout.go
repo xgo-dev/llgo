@@ -14,14 +14,14 @@ func (p *goProgram) wasmNativeLayout(t types.Type) (sourceLayout, bool) {
 	case *types.Array:
 		// An array's own directive selects C slots. An ordinary Go array of
 		// native callbacks must retain the callbacks' Go storage width.
-		if _, named := types.Unalias(t).(*types.Named); named && prog.hasLegacyNativeTypeLayout(t) {
+		if _, named := types.Unalias(t).(*types.Named); named && prog.sourceHasNativeTypeLayout(t) {
 			return arraySourceLayout(p.wasmNativeFieldLayout(u.Elem()), u.Len()), true
 		}
 		if elem, ok := p.wasmNativeLayout(u.Elem()); ok {
 			return arraySourceLayout(elem, u.Len()), true
 		}
 	case *types.Struct:
-		native := prog.hasLegacyNativeTypeLayout(t)
+		native := prog.sourceHasNativeTypeLayout(t)
 		if !native && u.NumFields() > 0 {
 			native = prog.nativeFields([]*types.Var{u.Field(0)})
 		}

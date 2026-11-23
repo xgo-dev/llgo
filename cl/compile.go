@@ -3428,7 +3428,9 @@ func (p *context) patchLocalGenericNamed(t *types.Named) (*types.Named, bool) {
 	// Keep this detached object positionless so ABI naming does not append a
 	// loader-relative token.Pos that changes between package-cache processes.
 	obj := types.NewTypeName(token.NoPos, t.Obj().Pkg(), p.localNamedName(t, false), nil)
-	return types.NewNamed(obj, t.Underlying(), nil), true
+	patched := types.NewNamed(obj, t.Underlying(), nil)
+	p.prog.CopyTypeRepresentation(obj, t)
+	return patched, true
 }
 
 func isPatchedLocalGenericName(name string) bool {
