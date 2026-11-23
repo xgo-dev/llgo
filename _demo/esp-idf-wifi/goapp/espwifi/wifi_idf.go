@@ -39,6 +39,13 @@ func disconnect() int32
 //go:linkname getIP C.llgo_wifi_get_ip
 func getIP() uint32
 
+//go:linkname defaultSTA C.llgo_wifi_default_sta
+func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
+	pass *uint8, passMax int32, passLen *int32)
+
+//go:linkname finish C.llgo_wifi_finish
+func finish()
+
 //go:linkname poll C.llgo_wifi_poll
 func poll(kind *int32, aux *int32, ip *uint32) int32
 

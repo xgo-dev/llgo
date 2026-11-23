@@ -21,6 +21,11 @@ func scanFetch(out *ApInfo, max int32, count *int32) int32 {
 func connect() int32    { return errUnsupported }
 func disconnect() int32 { return errUnsupported }
 func getIP() uint32     { return 0 }
+func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
+	pass *uint8, passMax int32, passLen *int32) {
+	_, _, _, _, _, _ = ssid, ssidMax, ssidLen, pass, passMax, passLen
+}
+func finish() {}
 func poll(kind *int32, aux *int32, ip *uint32) int32 {
 	_, _, _ = kind, aux, ip
 	return 0

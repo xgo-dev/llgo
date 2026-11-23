@@ -25,6 +25,22 @@
 #include "esp_idf_version.h"
 #include "nvs_flash.h"
 
+/* Station credentials are compiled in from main/wifi_creds.h, a file kept
+ * out of version control (see wifi_creds.h.example). When the file is
+ * absent the defaults are empty and the Go program reports missing
+ * credentials instead of connecting somewhere random. */
+#if defined(__has_include)
+#if __has_include("wifi_creds.h")
+#include "wifi_creds.h"
+#endif
+#endif
+#ifndef LLGO_WIFI_SSID
+#define LLGO_WIFI_SSID ""
+#endif
+#ifndef LLGO_WIFI_PASS
+#define LLGO_WIFI_PASS ""
+#endif
+
 /* ---- event mailbox (single producer: event-loop task; single consumer: llgo main) ---- */
 
 enum { EV_NONE = 0, EV_STA_START = 1, EV_STA_CONNECTED = 2, EV_STA_DISCONNECTED = 3,
@@ -145,6 +161,31 @@ uint32_t llgo_wifi_get_ip(void)
         return 0;
     }
     return info.ip.addr;
+}
+
+/* Hand the compiled-in credentials to Go through the integer/pointer
+ * boundary; lengths are clamped to the Go-side buffers. */
+void llgo_wifi_default_sta(uint8_t *ssid, int32_t ssid_max, int32_t *ssid_len,
+                           uint8_t *pass, int32_t pass_max, int32_t *pass_len)
+{
+    const char *s = LLGO_WIFI_SSID;
+    const char *p = LLGO_WIFI_PASS;
+    int32_t sl = (int32_t)strlen(s);
+    int32_t pl = (int32_t)strlen(p);
+    if (sl > ssid_max) sl = ssid_max;
+    if (pl > pass_max) pl = pass_max;
+    memcpy(ssid, s, sl);
+    memcpy(pass, p, pl);
+    *ssid_len = sl;
+    *pass_len = pl;
+}
+
+/* Flush the C-side stdio before the program parks: pending buffered UART
+ * output must not race the halt path (a parked task never flushes). */
+void llgo_wifi_finish(void)
+{
+    fflush(stdout);
+    fflush(stderr);
 }
 
 /* Station credentials. Zero the config, copy ssid/pass, and pick the

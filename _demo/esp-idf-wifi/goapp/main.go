@@ -34,6 +34,7 @@ func produce(ch chan int, v int) {
 func fixStreams()
 
 func main() {
+	defer espwifi.Finish() // flush C stdio on every exit path
 	fixStreams()
 	println("[go] hello from llgo on FreeRTOS/ESP32-S31")
 
@@ -86,7 +87,13 @@ func main() {
 		println("[go] wifi FAIL events")
 		return
 	}
-	if e := espwifi.SetSTA("myssid", "mypassword"); e != 0 {
+	ssid, pass := espwifi.DefaultSTA() // compiled in via idfproj/main/wifi_creds.h
+	if ssid == "" {
+		println("[go] wifi: no credentials compiled in (idfproj/main/wifi_creds.h)")
+		println("[go] wifi FAIL no_creds")
+		return
+	}
+	if e := espwifi.SetSTA(ssid, pass); e != 0 {
 		println("[go] wifi set_sta err =", int(e), espwifi.ErrName(e))
 		println("[go] wifi FAIL set_sta")
 		return

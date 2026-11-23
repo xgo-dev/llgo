@@ -117,6 +117,22 @@ func Disconnect() int32 { return disconnect() }
 // acquired yet), reading esp_netif directly.
 func GetIP() uint32 { return getIP() }
 
+// DefaultSTA returns the credentials compiled into the firmware via
+// idfproj/main/wifi_creds.h (gitignored; see wifi_creds.h.example). Both
+// strings are empty when the firmware was built without that file.
+func DefaultSTA() (string, string) {
+	var ssid [32]byte
+	var pass [64]byte
+	var sl, pl int32
+	defaultSTA(&ssid[0], int32(len(ssid)), &sl, &pass[0], int32(len(pass)), &pl)
+	return string(ssid[:sl]), string(pass[:pl])
+}
+
+// Finish flushes the C-side stdio buffers. Defer it at the top of main:
+// once the firmware parks the main task, nothing will ever flush pending
+// UART output again.
+func Finish() { finish() }
+
 // IPString formats the address returned by GetIP / the GotIP event as a
 // dotted quad. The glue returns esp_netif's ip.addr: the four network-order
 // octets live in memory, and the little-endian RV32 load hands them to Go

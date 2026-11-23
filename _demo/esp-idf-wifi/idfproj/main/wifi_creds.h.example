@@ -1,0 +1,6 @@
+/* Copy this file to wifi_creds.h and fill in the station credentials
+ * before building; wifi_creds.h is gitignored and never committed. With
+ * empty strings the program reports "[go] wifi FAIL no_creds" and stops.
+ * (Under esp-emu the built-in soft AP defaults to myssid/mypassword.) */
+#define LLGO_WIFI_SSID ""
+#define LLGO_WIFI_PASS ""

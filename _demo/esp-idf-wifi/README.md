@@ -114,6 +114,16 @@ through the mailbox), and the DHCP wait. A wrong password ends in three
 `[go] wifi disconnect reason = 202` lines (auth fail) and
 `[go] wifi FAIL no_ap`.
 
+## Credentials
+
+Station credentials are compiled in from `idfproj/main/wifi_creds.h`, a
+file kept out of version control (`.gitignore` in the same directory;
+`wifi_creds.h.example` is the placeholder). The glue falls back to empty
+strings when the file is absent, and the program then reports
+`[go] wifi FAIL no_creds` instead of connecting anywhere. The Go side
+reads the values through `espwifi.DefaultSTA()` - nothing is hardcoded in
+committed code.
+
 ## Notes
 
 - The WiFi stack's tasks are pinned to CPU1
