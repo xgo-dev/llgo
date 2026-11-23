@@ -22,3 +22,18 @@ CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
 # scan/association bursts never compete with the llgo scheduler (main task
 # on CPU0) - see the wifi-pipeline design, risk R2.
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+
+# External PSRAM: the S31 die defaults to octal mode at 200 MHz; measured
+# 16 MiB present with ~157 MB/s sequential read. malloc may serve from it, but
+# allocations that must be DMA-visible or touched by IDF internals stay
+# internal, hence the 32 KiB reserve below. IGNORE_NOTFOUND keeps boards
+# without PSRAM chips bootable; llgo then keeps the Go heap in its static
+# window.
+CONFIG_SPIRAM=y
+# Also boot on boards that have no PSRAM fitted: IDF then reports zero
+# SPIRAM and llgo keeps the Go heap in its static window (see README).
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768

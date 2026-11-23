@@ -7,8 +7,22 @@
  * allocated from the llgo GC heap. When main returns, control comes back
  * here and the main task deletes itself.
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
+
+#include "esp_heap_caps.h"
+
+/* Budget the Go heap may take from PSRAM (runtime: tinygogc/gc_segment_idf.go).
+ * The collector takes segments from the SPIRAM heap once its static 256 KiB
+ * window is used up: (uintptr_t)-1, the default, lets it have 75% of the
+ * SPIRAM that is free when it first grows; 0 keeps the Go heap in the static
+ * window; any other value is a byte count. Without this definition the
+ * runtime's weak default (auto) applies. */
+#ifndef LLGO_GC_PSRAM_CAP
+#define LLGO_GC_PSRAM_CAP ((uintptr_t)-1)
+#endif
+uintptr_t llgo_gc_ext_heap_cap = LLGO_GC_PSRAM_CAP;
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -18,6 +32,17 @@ void app_main(void)
 {
     printf("[c] app_main: starting llgo runtime\n");
     (void)main(0, NULL);
+
+    /* Both allocators' ledgers, from the C side: the budget above, the bytes
+     * the collector reports having taken from SPIRAM (weak symbol, runtime:
+     * tinygogc/gc_segment_idf.go), and the two IDF pools. */
+    extern uintptr_t llgo_gc_ext_bytes __attribute__((weak));
+    uintptr_t ext = &llgo_gc_ext_bytes ? llgo_gc_ext_bytes : 0;
+    printf("[c] gc ext heap: cap = %u, bytes = %u | idf internal free = %u, psram free = %u\n",
+           (unsigned)llgo_gc_ext_heap_cap, (unsigned)ext,
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     printf("[c] app_main: llgo main returned, deleting main task\n");
     vTaskDelete(NULL);
 }

@@ -21,8 +21,9 @@
 set -euo pipefail
 
 LLGO_BIN="${1:-/tmp/llgo-idf}"
-LLGO_ROOT="${LLGO_ROOT:-/Users/ma6174/gopath/src/github.com/goplus/llgo}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# Default to the llgo checkout this demo lives in (_demo/esp-idf-wifi/idfproj/host).
+LLGO_ROOT="${LLGO_ROOT:-$(cd "$DIR/../../.." && pwd)}"
 MAIN="$DIR/../main"
 OUT="$MAIN/llgo_out.o"
 

@@ -52,6 +52,15 @@ func heapFree() uint32
 //go:linkname heapMin C.llgo_wifi_heap_min
 func heapMin() uint32
 
+//go:linkname setModeSTA C.llgo_wifi_set_mode_sta
+func setModeSTA() int32
+
+//go:linkname heapInternalFree C.llgo_wifi_heap_internal_free
+func heapInternalFree() uint32
+
+//go:linkname heapSpiramFree C.llgo_wifi_heap_spiram_free
+func heapSpiramFree() uint32
+
 //go:linkname poll C.llgo_wifi_poll
 func poll(kind *int32, aux *int32, ip *uint32) int32
 

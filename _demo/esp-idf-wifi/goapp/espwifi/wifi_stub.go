@@ -27,7 +27,13 @@ func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
 }
 func finish()          {}
 func heapFree() uint32 { return 0 }
-func heapMin() uint32  { return 0 }
+
+func setModeSTA() int32 { return 0 }
+
+func heapInternalFree() uint32 { return 0 }
+
+func heapSpiramFree() uint32 { return 0 }
+func heapMin() uint32        { return 0 }
 func poll(kind *int32, aux *int32, ip *uint32) int32 {
 	_, _, _ = kind, aux, ip
 	return 0

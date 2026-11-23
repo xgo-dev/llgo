@@ -64,6 +64,9 @@ func EventsRegister() int32 { return eventsRegister() }
 // side; the string never crosses into Go (integer-only boundary).
 func PrintVersion() int32 { return printVersion() }
 
+// SetModeSTA switches the driver to station mode without a target SSID.
+func SetModeSTA() int32 { return setModeSTA() }
+
 // Start calls esp_wifi_start; the asynchronous WIFI_EVENT_STA_START shows up
 // in the mailbox.
 func Start() int32 { return start() }
@@ -142,6 +145,12 @@ func HeapFree() uint32 { return heapFree() }
 // (esp_get_minimum_free_heap_size) - the watermark that catches transient
 // WiFi allocation bursts.
 func HeapMin() uint32 { return heapMin() }
+
+// HeapInternalFree returns free bytes in the internal-SRAM pool.
+func HeapInternalFree() uint32 { return heapInternalFree() }
+
+// HeapSpiramFree returns free bytes in the external PSRAM pool.
+func HeapSpiramFree() uint32 { return heapSpiramFree() }
 
 // IPString formats the address returned by GetIP / the GotIP event as a
 // dotted quad. The glue returns esp_netif's ip.addr: the four network-order

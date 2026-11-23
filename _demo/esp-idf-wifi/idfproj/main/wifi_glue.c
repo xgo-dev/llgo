@@ -22,6 +22,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "nvs_flash.h"
 
@@ -163,6 +164,15 @@ uint32_t llgo_wifi_get_ip(void)
     return info.ip.addr;
 }
 
+/* Switch the driver to station mode without configuring a target SSID.
+ * esp_wifi_set_config rejects an empty SSID (ESP_ERR_WIFI_SSID), so a
+ * scan-only run needs this instead of set_sta: the default mode is soft AP and
+ * STA_START never fires there. */
+int32_t llgo_wifi_set_mode_sta(void)
+{
+    return (int32_t)esp_wifi_set_mode(WIFI_MODE_STA);
+}
+
 /* Hand the compiled-in credentials to Go through the integer/pointer
  * boundary; lengths are clamped to the Go-side buffers. */
 void llgo_wifi_default_sta(uint8_t *ssid, int32_t ssid_max, int32_t *ssid_len,
@@ -170,14 +180,14 @@ void llgo_wifi_default_sta(uint8_t *ssid, int32_t ssid_max, int32_t *ssid_len,
 {
     const char *s = LLGO_WIFI_SSID;
     const char *p = LLGO_WIFI_PASS;
-    int32_t sl = (int32_t)strlen(s);
-    int32_t pl = (int32_t)strlen(p);
-    if (sl > ssid_max) sl = ssid_max;
-    if (pl > pass_max) pl = pass_max;
+    size_t s_cap = (ssid_max > 0) ? (size_t)ssid_max : 0;
+    size_t p_cap = (pass_max > 0) ? (size_t)pass_max : 0;
+    size_t sl = strnlen(s, s_cap);
+    size_t pl = strnlen(p, p_cap);
     memcpy(ssid, s, sl);
     memcpy(pass, p, pl);
-    *ssid_len = sl;
-    *pass_len = pl;
+    *ssid_len = (int32_t)sl;
+    *pass_len = (int32_t)pl;
 }
 
 /* Flush the C-side stdio before the program parks: pending buffered UART
@@ -189,10 +199,13 @@ void llgo_wifi_finish(void)
 }
 
 /* IDF heap watermarks. These describe the IDF allocator pool only: the
- * llgo GC heap is a static 256 KiB window in .dram0.bss below the IDF
- * heap's _heap_start (see host/llgo_syms.S) and never takes from this
- * pool, so a shrinking free heap means the WiFi stack (or IDF itself),
- * not the Go runtime. */
+ * llgo GC heap starts as a static 256 KiB window in .dram0.bss below the
+ * IDF heap's _heap_start (see host/llgo_syms.S), which never takes from this
+ * pool. With PSRAM enabled the collector additionally grows with segments
+ * from the SPIRAM pool (see the README section "PSRAM and the Go heap");
+ * that share shows in the psram figures and in llgo_gc_ext_bytes, never in the
+ * internal ones.
+ */
 uint32_t llgo_wifi_heap_free(void)
 {
     return (uint32_t)esp_get_free_heap_size();
@@ -201,6 +214,28 @@ uint32_t llgo_wifi_heap_free(void)
 uint32_t llgo_wifi_heap_min(void)
 {
     return (uint32_t)esp_get_minimum_free_heap_size();
+}
+
+/* Caps-scoped pools. With PSRAM enabled the IDF heap is split in two: internal
+ * SRAM (what esp_get_free_heap_size reports) and external PSRAM, which only
+ * appears in MALLOC_CAP_SPIRAM. Reporting both keeps the two layers apart. */
+uint32_t llgo_wifi_heap_internal_free(void)
+{
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
+uint32_t llgo_wifi_heap_spiram_free(void)
+{
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+}
+
+/* Lower 32 bits of the CPU cycle counter, for on-device benchmarks. It wraps
+ * every 17.9 s at 240 MHz, so callers time short intervals with differences. */
+uint32_t llgo_demo_rdcycle(void)
+{
+    uint32_t cycles;
+    __asm__ volatile ("csrr %0, cycle" : "=r"(cycles));
+    return cycles;
 }
 
 /* Station credentials. Zero the config, copy ssid/pass, and pick the
