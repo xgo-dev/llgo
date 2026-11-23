@@ -69,7 +69,7 @@ func TestPackagePCLNArchive(t *testing.T) {
 					}
 				}
 				// Mix the ordinary package object/bitcode and the always-native carrier.
-				buf, _, err := emitObjectToMemoryBuffer(ctx, src)
+				buf, _, err := emitObjectToMemoryBuffer(ctx.buildConf, prog, src.Module())
 				if err != nil {
 					t.Fatal(err)
 				}

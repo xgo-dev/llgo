@@ -58,7 +58,6 @@ import (
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
-	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
@@ -2820,6 +2819,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 			return nil, err
 		}
 	}
+	entryPkg.LPkg.ApplyTargetBaseline()
 	var entryIR string
 	if ctx.pclnEmbedded != nil {
 		// Retain Go-owned IR, never an LLVM module: native builds release their
@@ -3703,9 +3703,7 @@ func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) 
 	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
 		return false, nil
 	}
-	ctx.cTransformer.LowerWindowsVectorParams(mod)
-	ctx.cTransformer.LowerWideVectorCalls(mod)
-	ctx.cTransformer.TransformModule(pkg.Path(), mod)
+	ctx.cTransformer.LowerGoABI(pkg.Path(), mod)
 	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
 	// wrappers. Apply the same post-C-ABI copy pass as package modules.
 	lowerAggregateCopies(ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
@@ -3774,11 +3772,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
-	ctx.cTransformer.LowerWideVectorCalls(ret.Module())
-	ctx.cTransformer.LowerWindowsVectorParams(ret.Module())
-	ctx.cTransformer.TransformModule(ret.Path(), ret.Module())
+	ctx.cTransformer.LowerGoABI(ret.Path(), ret.Module())
 	ctx.cTransformer.SetSkipFuncs(nil)
-	if err := llvmfmv.Run(ret.Module(), ctx.buildConf.GOAMD64); err != nil {
+	if err := ret.SpecializeSIMD(); err != nil {
 		return fmt.Errorf("%s: %w", pkgPath, err)
 	}
 	if ctx.buildConf.Goos == "windows" {
@@ -3823,6 +3819,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
 	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
 	emitFuncInfoEntrySites(ctx, ret)
+	ret.ApplyTargetBaseline()
 	// ModeGen callers consume the in-memory LLVM module directly. They do not
 	// need cgo/link objects or a package archive for a later link step.
 	if ctx.mode == ModeGen {
@@ -3951,7 +3948,7 @@ func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg ll
 			return "", packageArchiveBuffer{}, err
 		}
 	}
-	buf, kind, err := emitObjectToMemoryBuffer(ctx, pkg)
+	buf, kind, err := emitObjectToMemoryBuffer(ctx.buildConf, ctx.prog, pkg.Module())
 	if err != nil {
 		return "", packageArchiveBuffer{}, err
 	}
@@ -4051,7 +4048,7 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 			return "", err
 		}
 	}
-	buf, kind, err := emitObjectToMemoryBuffer(ctx, pkg)
+	buf, kind, err := emitObjectToMemoryBuffer(ctx.buildConf, ctx.prog, pkg.Module())
 	if err != nil {
 		return "", err
 	}
@@ -4059,8 +4056,8 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	return writeObjectBufferToFile(ctx, pkgPath, exportFile, buf, kind)
 }
 
-func emitObjectToMemoryBuffer(ctx *context, pkg llssa.Package) (gllvm.MemoryBuffer, string, error) {
-	ltoMode := ctx.buildConf.ltoMode()
+func emitObjectToMemoryBuffer(conf *Config, prog llssa.Program, mod gllvm.Module) (gllvm.MemoryBuffer, string, error) {
+	ltoMode := conf.ltoMode()
 	var (
 		buf  gllvm.MemoryBuffer
 		err  error
@@ -4070,13 +4067,13 @@ func emitObjectToMemoryBuffer(ctx *context, pkg llssa.Package) (gllvm.MemoryBuff
 	case lto.Full:
 		// reference to https: //github.com/espressif/llvm-project/blob/04a1a3482ce3ee00b5bbec1ce852e58410e4b6ad/clang/lib/CodeGen/BackendUtil.cpp#L197
 		// Clang emit SplitLTOUnit for full lto bitcode except on darwin.
-		buf = gllvm.WriteFullLTOBitcodeToMemoryBuffer(pkg.Module(), ctx.buildConf.Goos != "darwin")
+		buf = gllvm.WriteFullLTOBitcodeToMemoryBuffer(mod, conf.Goos != "darwin")
 		kind = "in-memory LLVM full LTO bitcode emission"
 	case lto.Thin:
-		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(pkg.Module())
+		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
 		kind = "in-memory LLVM ThinLTO bitcode emission"
 	default:
-		buf, err = ctx.prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), gllvm.ObjectFile)
+		buf, err = prog.TargetMachine().EmitToMemoryBuffer(mod, gllvm.ObjectFile)
 		if err != nil {
 			return gllvm.MemoryBuffer{}, "", err
 		}

@@ -93,7 +93,7 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 						t.Fatal(err)
 					}
 					if target.os == "linux" {
-						assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+						assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
 					}
 					asm.Dispose()
 				}

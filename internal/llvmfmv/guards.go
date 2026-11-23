@@ -13,21 +13,22 @@ import (
 // describe instructions the CPU can execute. Implied capabilities never
 // establish the truth of another independently observable Go predicate.
 type x86Predicate struct {
-	method   string
-	bit      uint64
-	features string
+	method       string
+	runtimeBit   uint64
+	registerBits int // widest x86 register guaranteed by this predicate
+	features     string
 }
 
 // Bit positions match runtime/_patch/internal/cpu/{init,archsimd_go127}_llgo.go.
 var x86Predicates = []x86Predicate{
-	{"AVX2", 2, "+avx,+avx2"}, {"AVX", 4, "+avx"},
-	{"AVXAES", 8, "+avx,+aes"}, {"VAES", 16, "+avx,+vaes"},
-	{"AVX512VAES", 32, "+avx512f,+avx512vl,+vaes"}, {"AVX512GFNI", 64, "+avx512f,+gfni"},
-	{"SHA", 128, "+sha"}, {"AVX512", 256, "+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
-	{"FMA", 1 << 9, "+avx,+fma"}, {"AVX512BITALG", 1 << 10, "+avx512bitalg"},
-	{"AVX512VBMI", 1 << 11, "+avx512vbmi"}, {"AVX512VBMI2", 1 << 12, "+avx512vbmi2"},
-	{"AVX512VNNI", 1 << 13, "+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, "+avx512f,+vpclmulqdq"},
-	{"AVX512VPOPCNTDQ", 1 << 15, "+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, "+avxvnni"},
+	{"AVX2", featureAVX2, 256, "+avx,+avx2"}, {"AVX", featureAVX, 256, "+avx"},
+	{"AVXAES", 8, 256, "+avx,+aes"}, {"VAES", 16, 256, "+avx,+vaes"},
+	{"AVX512VAES", 32, 512, "+avx512f,+avx512vl,+vaes"}, {"AVX512GFNI", 64, 512, "+avx512f,+gfni"},
+	{"SHA", 128, 0, "+sha"}, {"AVX512", 256, 512, "+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
+	{"FMA", 1 << 9, 256, "+avx,+fma"}, {"AVX512BITALG", 1 << 10, 512, "+avx512f,+avx512bitalg"},
+	{"AVX512VBMI", 1 << 11, 512, "+avx512f,+avx512vbmi"}, {"AVX512VBMI2", 1 << 12, 512, "+avx512f,+avx512vbmi2"},
+	{"AVX512VNNI", 1 << 13, 512, "+avx512f,+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, 512, "+avx512f,+vpclmulqdq"},
+	{"AVX512VPOPCNTDQ", 1 << 15, 512, "+avx512f,+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, 256, "+avx,+avxvnni"},
 }
 
 func X86Query(method string) string {
@@ -42,7 +43,7 @@ func X86Query(method string) string {
 var predicateBits = func() map[string]uint64 {
 	m := make(map[string]uint64)
 	for _, p := range x86Predicates {
-		m[X86Query(p.method)] = p.bit
+		m[X86Query(p.method)] = p.runtimeBit
 	}
 	return m
 }()
@@ -294,18 +295,29 @@ type guardKey struct {
 func guardSuffix(mask uint64) string {
 	var names []string
 	for _, p := range x86Predicates {
-		if mask&p.bit != 0 {
+		if mask&p.runtimeBit != 0 {
 			names = append(names, strings.ToLower(p.method))
 		}
 	}
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error {
-	arch, _, _ := strings.Cut(mod.Target(), "-")
-	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
-		return nil
+// An AVX-512 extension can remain enabled after GODEBUG disables part of
+// the Go AVX512 bundle. A clone compiled for that extension can issue ZMM
+// calls, including from specialized helpers. Gate its entry on the bundle
+// without folding any additional source queries.
+func guardDispatchBits(mask uint64, baseline string) uint64 {
+	if baseline != "v4" {
+		for _, p := range x86Predicates {
+			if mask&p.runtimeBit != 0 && p.registerBits == 512 {
+				return mask | predicateBits[X86Query("AVX512")]
+			}
+		}
 	}
+	return mask
+}
+
+func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error {
 	const processed = attributePrefix + "guarded"
 	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
 	defer func() {
@@ -373,9 +385,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		return nil
 	}
 	ctx := mod.Context()
-	if global := mod.NamedValue(featureSymbol); !global.IsNil() && (global.IsAGlobalVariable().IsNil() || global.GlobalValueType() != ctx.Int64Type()) {
-		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
-	}
 	// Stage private bodies until every name needed by the simplified call
 	// graph is known. A collision can be discovered in a recursive callee.
 	var copies []struct{ original, body llvm.Value }
@@ -407,7 +416,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		clones[key] = v
 		features := stringAttribute(fn, "target-features")
 		for _, p := range x86Predicates {
-			if mask&p.bit != 0 {
+			if mask&p.runtimeBit != 0 {
 				if features != "" {
 					features += ","
 				}
@@ -450,7 +459,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				}
 				return err
 			}
-			root.choices = append(root.choices, dispatchChoice{mask, v})
+			root.choices = append(root.choices, dispatchChoice{bits: guardDispatchBits(mask, baseline), fn: v})
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}

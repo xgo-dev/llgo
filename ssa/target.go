@@ -263,3 +263,51 @@ func StripModuleTarget(ir string) string {
 }
 
 // -----------------------------------------------------------------------------
+
+// ApplyTargetBaseline records an explicit Go architecture level on definitions
+// before separate IR consumers (Clang, LTO and the pclntab relink) see them.
+func (pkg Package) ApplyTargetBaseline() {
+	t := pkg.Prog.Target()
+	if t.Target != "" {
+		return // named toolchains provide their own baseline
+	}
+	var cpu, features string
+	switch t.effectiveGOARCH() {
+	case "amd64":
+		if t.GOAMD64 == "" || t.GOAMD64 == "v1" {
+			return
+		}
+		cpu = t.Spec().CPU
+	case "arm64":
+		if t.GOARM64 == "" || t.GOARM64 == "v8.0" {
+			return
+		}
+		features = t.Spec().Features
+	default:
+		return
+	}
+	mod := pkg.Module()
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if fn.IsDeclaration() {
+			continue
+		}
+		if cpu != "" && fn.GetStringAttributeAtIndex(-1, "target-cpu").IsNil() {
+			fn.AddTargetDependentFunctionAttr("target-cpu", cpu)
+		}
+		if features != "" {
+			value := features
+			if local := fn.GetStringAttributeAtIndex(-1, "target-features"); !local.IsNil() {
+				// LLVM applies features in order. Preserve an operation's
+				// explicit overrides after the architecture baseline.
+				old := local.GetStringValue()
+				if old == features || strings.HasPrefix(old, features+",") {
+					continue
+				}
+				if old != "" {
+					value += "," + old
+				}
+			}
+			fn.AddTargetDependentFunctionAttr("target-features", value)
+		}
+	}
+}

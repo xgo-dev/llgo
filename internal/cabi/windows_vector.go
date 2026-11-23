@@ -2,13 +2,13 @@ package cabi
 
 import "github.com/xgo-dev/llvm"
 
-// LowerWindowsVectorParams exposes the native Win64 indirect vector-parameter
+// lowerWindowsVectorParams exposes the native Win64 indirect vector-parameter
 // ABI before FMV creates musttail forwarding functions. Otherwise LLVM's late
 // ABI lowering copies a vector into the forwarding function's own stack frame,
 // then passes a dangling pointer when the tail jump releases that frame.
 // Vector results still use XMM0. This does not lower aggregate parameters or
 // zero-sized CPU-query receivers; the subsequent aggregate ABI pass handles those.
-func (p *Transformer) LowerWindowsVectorParams(m llvm.Module) {
+func (p *Transformer) lowerWindowsVectorParams(m llvm.Module) {
 	if _, ok := p.sys.(*TypeInfoWindowsAmd64); !ok {
 		return
 	}

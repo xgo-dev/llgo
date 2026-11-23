@@ -113,36 +113,42 @@ func TestSIMDPairShufflePacked(t *testing.T) {
 		})
 	})
 	t.Run("Int32x8", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[int32](t, 8, 32, func(x, y []int32, selector uint8, out []int32) {
 			a, b := archsimd.LoadInt32x8Array((*[8]int32)(x)), archsimd.LoadInt32x8Array((*[8]int32)(y))
 			pairPackedInt32x8(a, selector, b).StoreArray((*[8]int32)(out))
 		})
 	})
 	t.Run("Uint32x8", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[uint32](t, 8, 32, func(x, y []uint32, selector uint8, out []uint32) {
 			a, b := archsimd.LoadUint32x8Array((*[8]uint32)(x)), archsimd.LoadUint32x8Array((*[8]uint32)(y))
 			pairPackedUint32x8(a, selector, b).StoreArray((*[8]uint32)(out))
 		})
 	})
 	t.Run("Float32x8", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[float32](t, 8, 32, func(x, y []float32, selector uint8, out []float32) {
 			a, b := archsimd.LoadFloat32x8Array((*[8]float32)(x)), archsimd.LoadFloat32x8Array((*[8]float32)(y))
 			pairPackedFloat32x8(a, selector, b).StoreArray((*[8]float32)(out))
 		})
 	})
 	t.Run("Int64x4", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[int64](t, 4, 64, func(x, y []int64, selector uint8, out []int64) {
 			a, b := archsimd.LoadInt64x4Array((*[4]int64)(x)), archsimd.LoadInt64x4Array((*[4]int64)(y))
 			pairPackedInt64x4(a, selector, b).StoreArray((*[4]int64)(out))
 		})
 	})
 	t.Run("Uint64x4", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[uint64](t, 4, 64, func(x, y []uint64, selector uint8, out []uint64) {
 			a, b := archsimd.LoadUint64x4Array((*[4]uint64)(x)), archsimd.LoadUint64x4Array((*[4]uint64)(y))
 			pairPackedUint64x4(a, selector, b).StoreArray((*[4]uint64)(out))
 		})
 	})
 	t.Run("Float64x4", func(t *testing.T) {
+		requireSIMD256(t)
 		testPairPacked[float64](t, 4, 64, func(x, y []float64, selector uint8, out []float64) {
 			a, b := archsimd.LoadFloat64x4Array((*[4]float64)(x)), archsimd.LoadFloat64x4Array((*[4]float64)(y))
 			pairPackedFloat64x4(a, selector, b).StoreArray((*[4]float64)(out))

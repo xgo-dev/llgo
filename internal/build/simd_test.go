@@ -237,7 +237,7 @@ func TestSIMD128LLVM(t *testing.T) {
 				t.Fatalf("missing %s in assembly", want)
 			}
 			if target.arch == "amd64" {
-				assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+				assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
 			}
 			if target.arch != "amd64" {
 				wantLookup := map[string]string{"arm64": "tbl", "wasm": "i8x16.swizzle"}[target.arch]
@@ -253,9 +253,9 @@ func TestSIMD128LLVM(t *testing.T) {
 	}
 }
 
-// Linux assembly marks each function explicitly. AVX is legal only inside the
-// guarded variants; check every baseline body, including unguarded helpers.
-func assertSIMDBaselineAssembly(t *testing.T, asm string) {
+// Check every Linux function compiled for the baseline, including scalar
+// dispatchers. Wide signatures and guarded variants declare their own ISA.
+func assertSIMDBaselineAssembly(t *testing.T, mod llvm.Module, asm string) {
 	t.Helper()
 	bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
 	if len(bodies) == 0 {
@@ -263,7 +263,14 @@ func assertSIMDBaselineAssembly(t *testing.T, asm string) {
 	}
 	avx := regexp.MustCompile(`(?m)^\s+(?:v[a-z][a-z0-9]*|pclmul[a-z0-9]*)\s`)
 	for _, body := range bodies {
-		if !strings.Contains(body[1], ".__llgo_fmv_avx2") && avx.MatchString(body[2]) {
+		fn := mod.NamedFunction(strings.Trim(body[1], "\""))
+		if !fn.IsNil() {
+			attr := fn.GetStringAttributeAtIndex(-1, "target-features")
+			if !attr.IsNil() && strings.Contains(attr.GetStringValue(), "+avx") {
+				continue
+			}
+		}
+		if avx.MatchString(body[2]) {
 			t.Fatalf("GOAMD64=v1 baseline %s emitted optional vector instructions:\n%s", body[1], body[2])
 		}
 	}
@@ -428,7 +435,7 @@ func main() {}
 				t.Fatal(err)
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
-			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, mod llvm.Module, asm string) {
 				body := func(name string) string {
 					t.Helper()
 					match := regexp.MustCompile(`(?ms)^main\.` + name + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
@@ -438,7 +445,7 @@ func main() {}
 					return match[1]
 				}
 				if level == "v1" {
-					assertSIMDBaselineAssembly(t, asm)
+					assertSIMDBaselineAssembly(t, mod, asm)
 					if !regexp.MustCompile(`(?m)^\s*psadbw\s+[^\n]*%xmm`).MatchString(asm) {
 						t.Error("missing baseline SSE2 SAD")
 					}
@@ -519,7 +526,7 @@ func main() {}
 				t.Fatal(err)
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
-			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 				for fn, mnemonic := range tc.ops {
 					for _, suffix := range []string{tc.guard, "base"} {
 						symbol := "main." + fn + ".__llgo_fmv_guard_" + suffix

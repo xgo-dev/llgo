@@ -20,12 +20,48 @@ func simd256Guard(x, y archsimd.Float32x8) archsimd.Float32x8 {
 }
 
 var simd256Entry = simd256Guard
-var simd256Initial = func() archsimd.Float32x8 {
-	if runtime.Compiler == "llgo" || archsimd.X86.AVX2() {
-		return simd256Guard(archsimd.BroadcastFloat32x8(2), archsimd.BroadcastFloat32x8(3))
+var simd256Initial [8]float32
+
+func init() {
+	if archsimd.X86.AVX2() {
+		simd256Guard(archsimd.BroadcastFloat32x8(2), archsimd.BroadcastFloat32x8(3)).StoreArray(&simd256Initial)
 	}
-	return archsimd.Float32x8{}
-}()
+}
+
+func TestSIMD256CallInit(t *testing.T) {
+	var want float32
+	if archsimd.X86.AVX2() {
+		want = 8
+	}
+	for i, got := range simd256Initial {
+		if got != want {
+			t.Fatalf("init lane %d = %g, want %g", i, got, want)
+		}
+	}
+}
+
+//go:noinline
+func simd256CrossPackageAVX512(out, x, y *[8]float32) {
+	if archsimd.X86.AVX512() {
+		a, b := archsimd.LoadFloat32x8Array(x), archsimd.LoadFloat32x8Array(y)
+		vectorcall.WideCompute(a, b).StoreArray(out)
+	}
+}
+
+func TestSIMD256CrossPackageAVX512(t *testing.T) {
+	if !archsimd.X86.AVX512() {
+		t.Skip("requires AVX512")
+	}
+	x := [8]float32{1, 2, 3, 4, 5, 6, 7, 8}
+	y := [8]float32{9, 8, 7, 6, 5, 4, 3, 2}
+	var out [8]float32
+	simd256CrossPackageAVX512(&out, &x, &y)
+	for i, got := range out {
+		if want := x[i]*y[i] + x[i]; got != want {
+			t.Fatalf("lane %d = %g, want %g", i, got, want)
+		}
+	}
+}
 
 //go:noinline
 func simd256Indirect(f func(archsimd.Float32x8, archsimd.Float32x8) archsimd.Float32x8, x, y archsimd.Float32x8) archsimd.Float32x8 {
@@ -40,18 +76,8 @@ func TestSIMD256Calls(t *testing.T) {
 		b[i] = float32(i)*3 + 1
 	}
 	x, y := archsimd.LoadFloat32x8Array(&a), archsimd.LoadFloat32x8Array(&b)
-	initial := float32(-1)
-	if archsimd.X86.AVX2() {
-		initial = 8
-	}
-	checkSIMD256Lanes(t, simd256Initial, func(int) float32 { return initial })
 	for _, fn := range []func(archsimd.Float32x8, archsimd.Float32x8) archsimd.Float32x8{simd256Guard, simd256Entry} {
-		checkSIMD256Lanes(t, simd256Indirect(fn, x, y), func(i int) float32 {
-			if archsimd.X86.AVX2() {
-				return a[i]*b[i] + a[i]
-			}
-			return a[i] - b[i]
-		})
+		checkSIMD256Lanes(t, simd256Indirect(fn, x, y), func(i int) float32 { return a[i]*b[i] + a[i] })
 	}
 	checkSIMD256Lanes(t, simd256Indirect(archsimd.Float32x8.Sub, x, y), func(i int) float32 { return a[i] - b[i] })
 	method := x.Sub

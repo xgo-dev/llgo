@@ -87,7 +87,7 @@ func main() {}
 					t.Fatal(err)
 				}
 				if goos == "linux" {
-					assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+					assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
 				}
 				asm.Dispose()
 			}

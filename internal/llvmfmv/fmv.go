@@ -27,6 +27,8 @@ const (
 	featureSymbol  = "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures"
 	// Keep these bits in sync with runtime/_patch/internal/cpu/init_llgo.go.
 	featureInitialized = 1
+	moduleDone         = "llgo.fmv.done"
+	featureAVX         = 4
 	featureAVX2        = 2
 )
 
@@ -64,20 +66,14 @@ func checkedQuery(fn llvm.Value) string {
 	if len(params) != 1 {
 		return ""
 	}
-	// SysV may retain the empty receiver. Win64 lowers an empty aggregate
-	// to i32. The query attribute comes from the checked Go declaration.
-	param := params[0]
-	if param.TypeKind() == llvm.StructTypeKind && param.StructElementTypesCount() == 0 {
-		return name
-	}
-	if strings.Contains(fn.GlobalParent().Target(), "windows") && param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32 {
+	if x86ABIFor(fn.GlobalParent()).queryReceiver(params[0]) {
 		return name
 	}
 	return ""
 }
 
 // ABI lowering leaves register tuples and single-leaf aggregate wrappers on
-// some targets. Their leaves must still satisfy the SIMD128 width boundary.
+// some targets. Their leaves must still satisfy the supported SIMD width boundary.
 func supportedType(typ llvm.Type) bool {
 	switch typ.TypeKind() {
 	case llvm.VoidTypeKind, llvm.IntegerTypeKind, llvm.PointerTypeKind,
@@ -109,7 +105,7 @@ func supportedType(typ llvm.Type) bool {
 		default:
 			return false
 		}
-		return typ.VectorSize() <= 128/width
+		return typ.VectorSize() <= 512/width
 	}
 	return false
 }
@@ -135,16 +131,24 @@ func supported(fn llvm.Value) bool {
 // Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
 // and specializes AVX2 entries and guarded SIMD work. It runs after ABI
 // lowering and before target optimization, including in O0 and ModeGen builds.
-// Processed entries and guarded implementations can pass through Run again.
+// A successful run marks the module after wide ABI lowering. Later calls
+// skip the module, including its generated dispatchers and implementations.
 func Run(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {
 		return nil
 	}
+	if mod.NamedMetadataNumOperands(moduleDone) != 0 {
+		return nil
+	}
+	if mask := mod.NamedValue(featureSymbol); !mask.IsNil() &&
+		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
+		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
+	}
 	var avx2 *avx2Plan
 	switch baseline {
 	case "v3", "v4":
-		return runGuardedFeatures(mod, nil, baseline)
+		// AVX2 is guaranteed. Only optional features need dispatch.
 	case "", "v1", "v2":
 		var err error
 		avx2, err = stageAVX2(mod)
@@ -167,6 +171,8 @@ func Run(mod llvm.Module, baseline string) error {
 		}
 		return err
 	}
+	applyWideABI(mod, baseline)
+	mod.AddNamedMetadataOperand(moduleDone, mod.Context().MDNode(nil))
 	return nil
 }
 
@@ -219,10 +225,6 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	}
 	if len(originals) == 0 {
 		return nil, nil
-	}
-	if mask := mod.NamedValue(featureSymbol); !mask.IsNil() &&
-		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
-		return nil, fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
 
 	ctx := mod.Context()
@@ -288,7 +290,7 @@ func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
 		}
 		if baseline := p.baselines[fn]; !baseline.IsNil() {
 			source.clone(fn, baseline)
-			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{featureAVX2, variant}}))
+			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{bits: featureAVX2, fn: variant}}))
 		}
 	}
 	return sites
@@ -346,8 +348,9 @@ func simplifyGuards(fn llvm.Value) {
 }
 
 type dispatchChoice struct {
-	bits uint64
-	fn   llvm.Value
+	bits   uint64
+	fn     llvm.Value
+	anyBit bool // alternative predicates can guarantee the same register width
 }
 
 // The AVX2 resolver has one select between its two implementations. If
@@ -361,7 +364,11 @@ func selectDispatchBody(b llvm.Builder, features, baseline llvm.Value, choices [
 	for _, choice := range choices {
 		required := llvm.ConstInt(features.Type(), choice.bits, false)
 		enabled := b.CreateAnd(features, required, "")
-		check := b.CreateICmp(llvm.IntEQ, enabled, required, "")
+		op, compare := llvm.IntEQ, required
+		if choice.anyBit {
+			op, compare = llvm.IntNE, llvm.ConstInt(features.Type(), 0, false)
+		}
+		check := b.CreateICmp(op, enabled, compare, "")
 		selected = b.CreateSelect(check, choice.fn, selected, "selected")
 	}
 	return selected
@@ -449,7 +456,7 @@ func tailReturn(b llvm.Builder, fn, target llvm.Value) llvm.Value {
 			call.AddCallSiteAttribute(index, attr)
 		}
 	}
-	call.SetTailCallKind(llvm.TailCallKindMustTail)
+	call.SetTailCallKind(x86ABIFor(fn.GlobalParent()).forwardingKind(fn))
 	if fn.GlobalValueType().ReturnType().TypeKind() == llvm.VoidTypeKind {
 		b.CreateRetVoid()
 	} else {

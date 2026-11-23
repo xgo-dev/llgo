@@ -103,9 +103,9 @@ func TestSIMDInterleaveLLVM(t *testing.T) {
 			if len(callers) != 1 {
 				t.Fatalf("expected one caller module, got %d", len(callers))
 			}
-			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, mod llvm.Module, asm string) {
 				if target.os == "linux" {
-					assertSIMDBaselineAssembly(t, asm)
+					assertSIMDBaselineAssembly(t, mod, asm)
 				}
 			})
 		})

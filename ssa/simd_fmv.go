@@ -2,6 +2,17 @@ package ssa
 
 import "github.com/xgo-dev/llgo/internal/llvmfmv"
 
+// SpecializeSIMD runs the guard specialization supported by this target.
+func (pkg Package) SpecializeSIMD() error {
+	target := pkg.Prog.Target()
+	switch target.effectiveGOARCH() {
+	case "amd64":
+		return llvmfmv.Run(pkg.Module(), target.GOAMD64)
+	default:
+		return nil
+	}
+}
+
 // MarkSIMDFMV records compiler-checked source identities for the early LLVM
 // transform. An available variant is a cross-package ABI promise: the defining
 // package emits it, and guarded callers may refer to it without LTO.

@@ -13,6 +13,22 @@ func IsDarwinTarget(triple string) bool {
 	return strings.Contains(triple, "apple") || strings.Contains(triple, "darwin") || strings.Contains(triple, "macosx")
 }
 
+// IsWindowsTarget recognizes native Windows and MinGW triples. Cygwin and
+// MSYS use a different ABI.
+func IsWindowsTarget(triple string) bool {
+	parts := strings.Split(strings.ToLower(triple), "-")
+	windows := false
+	for _, part := range parts[1:] {
+		switch {
+		case strings.Contains(part, "cygwin"), part == "cygnus", strings.Contains(part, "msys"):
+			return false
+		case part == "windows", part == "win32", strings.Contains(part, "mingw"):
+			windows = true
+		}
+	}
+	return windows
+}
+
 func GetTargetTriple(goos, goarch string) string {
 	return GetTargetTripleWithGOARM(goos, goarch, "")
 }
