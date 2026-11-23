@@ -8,6 +8,8 @@ package runtime
 import (
 	_ "unsafe"
 
+	"github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
@@ -26,14 +28,39 @@ type chanSignal struct {
 	cond     sync.Cond
 	notified uint32
 	sleeping bool
+	address  bool
 }
+
+const chanSignalLLGoFiles = "; _wrap/chan_sync_darwin.c"
+
+//go:linkname bindChanAddressWait C.llgo_bind_channel_address_wait
+func bindChanAddressWait() int32
+
+//go:linkname chanAddressWait C.llgo_channel_address_wait
+func chanAddressWait(notified *uint32) int32
+
+//go:linkname chanAddressWake C.llgo_channel_address_wake
+func chanAddressWake(notified *uint32) int32
 
 //go:linkname chanSignalSpinHint llgo.asm
 func chanSignalSpinHint(instruction string)
 
+var chanAddressWaitEnabled uint32
+
+func init() {
+	if bindChanAddressWait() != 0 {
+		atomic.Store(&chanAddressWaitEnabled, 1)
+	}
+}
+
 func (s *chanSignal) init() {
 	s.mutex.Init(nil)
-	s.cond.Init(nil)
+	// Keep the selection for the signal's lifetime, including signals
+	// initialized during early runtime startup.
+	s.address = atomic.Load(&chanAddressWaitEnabled) != 0
+	if !s.address {
+		s.cond.Init(nil)
+	}
 }
 func (s *chanSignal) lock()   { s.mutex.Lock() }
 func (s *chanSignal) unlock() { s.mutex.Unlock() }
@@ -60,10 +87,32 @@ func (s *chanSignal) park() {
 	// succeeds, so finish completes ready before the waiter can destroy/reuse us.
 	if atomic.Load(&s.notified) == 0 {
 		s.sleeping = true
-		s.cond.Wait(&s.mutex)
+		if s.address {
+			s.waitOnAddress()
+		} else {
+			s.cond.Wait(&s.mutex)
+		}
 		s.sleeping = false
 	}
 	TracebackWaiting(false)
+}
+
+func (s *chanSignal) waitOnAddress() {
+	// The kernel compares the notification word before sleeping. A wake
+	// between unlock and that comparison leaves the word visibly set.
+	s.unlock()
+	for atomic.Load(&s.notified) == 0 {
+		if chanAddressWait(&s.notified) < 0 {
+			switch syscall.Errno(os.Errno()) {
+			case syscall.EINTR, syscall.ENOMEM, syscall.EFAULT:
+				// Recheck the notification word before a transient retry.
+			default:
+				panic("channel address wait failed")
+			}
+		}
+	}
+	// The notifier must release the lock before this signal can be reused.
+	s.lock()
 }
 
 func (s *chanSignal) ready() {
@@ -71,12 +120,19 @@ func (s *chanSignal) ready() {
 	// only need the atomic publication; sleeping waiters also need a kernel wake.
 	atomic.Store(&s.notified, uint32(1))
 	if s.sleeping {
-		s.cond.Signal()
+		if !s.address {
+			s.cond.Signal()
+		} else if chanAddressWake(&s.notified) < 0 && syscall.Errno(os.Errno()) != syscall.ENOENT {
+			// A notifier may publish before the waiter enters the kernel.
+			panic("channel address wake failed")
+		}
 	}
 }
 
 func (s *chanSignal) destroy() {
-	s.cond.Destroy()
+	if !s.address {
+		s.cond.Destroy()
+	}
 	s.mutex.Destroy()
 }
 
