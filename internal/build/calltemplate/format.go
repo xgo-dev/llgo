@@ -132,60 +132,6 @@ func goFormatResult(name string, rule formatRule) string {
 	return ""
 }
 
-type formatPart struct {
-	text  string
-	raw   string
-	verb  byte
-	width int
-	zero  bool
-}
-
-// parseFormat accepts sequential operands, escaped percent signs, and literal
-// widths. It leaves argument selection, types and dialect checks to consumers.
-func parseFormat(text string) ([]formatPart, bool) {
-	var parts []formatPart
-	for i := 0; i < len(text); {
-		end := strings.IndexByte(text[i:], '%')
-		if end < 0 {
-			parts = append(parts, formatPart{text: text[i:]})
-			break
-		}
-		if end != 0 {
-			parts = append(parts, formatPart{text: text[i : i+end]})
-			i += end
-		}
-		start := i
-		i++
-		if i == len(text) {
-			return nil, false
-		}
-		if text[i] == '%' {
-			parts = append(parts, formatPart{text: "%", raw: "%%"})
-			i++
-			continue
-		}
-		part := formatPart{}
-		if text[i] == '0' {
-			part.zero = true
-			i++
-		}
-		for i < len(text) && '0' <= text[i] && text[i] <= '9' {
-			part.width = part.width*10 + int(text[i]-'0')
-			if part.width > 99 {
-				return nil, false
-			}
-			i++
-		}
-		if i >= len(text) || !(text[i] >= 'a' && text[i] <= 'z' || text[i] >= 'A' && text[i] <= 'Z') {
-			return nil, false
-		}
-		part.verb, part.raw = text[i], text[start:i+1]
-		parts = append(parts, part)
-		i++
-	}
-	return parts, true
-}
-
 func constantString(info *types.Info, expr ast.Expr) (string, bool) {
 	value := info.Types[expr].Value
 	if value == nil || value.Kind() != constant.String {

@@ -132,32 +132,26 @@ func formatValues(call ssa.CallInstruction, variadic ssa.Value) []*ssa.MakeInter
 }
 
 func scalarFormatString(format string, operands []types.BasicKind) (string, bool) {
+	parts, ok := ParseFormat(format)
+	if !ok {
+		return "", false
+	}
 	var resolved []byte
-	for i := 0; i < len(format); i++ {
-		if format[i] != '%' {
+	offset := 0
+	for _, part := range parts {
+		if part.Raw == "" {
+			offset += len(part.Text)
 			continue
 		}
-		i++
-		if i == len(format) {
-			return "", false
-		}
-		if format[i] == '%' {
+		offset += len(part.Raw)
+		if part.Verb == 0 {
 			continue
 		}
-		// Support optional zero padding and decimal widths through 99.
-		// Widths, flags and verbs outside this subset retain the normal path.
-		if format[i] == '0' {
-			i++
-		}
-		start := i
-		for i < len(format) && '0' <= format[i] && format[i] <= '9' {
-			i++
-		}
-		if i == len(format) || i-start > 2 || len(operands) == 0 {
+		if len(operands) == 0 {
 			return "", false
 		}
 		kind := operands[0]
-		switch format[i] {
+		switch part.Verb {
 		case 'v':
 			verb := scalarDefaultVerb(kind)
 			if verb == 0 {
@@ -166,7 +160,7 @@ func scalarFormatString(format string, operands []types.BasicKind) (string, bool
 			if resolved == nil {
 				resolved = []byte(format)
 			}
-			resolved[i] = verb
+			resolved[offset-1] = verb
 		case 's':
 			if kind != types.String {
 				return "", false

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/types/typeutil"
@@ -98,60 +99,29 @@ func planPackage(pkg *packages.Package, library *types.Package, decodeSupported 
 	if pkg.Types == nil || pkg.TypesInfo == nil || pkg.Imports["encoding/json"].Types != library {
 		return plan, false
 	}
-	info := pkg.TypesInfo
-	accepted := make(map[*ast.Ident]bool)
 	var known typeutil.Map
-	for _, file := range pkg.Syntax {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			id := calleeIdent(call.Fun)
-			fn, _ := info.Uses[id].(*types.Func)
-			if fn == nil || fn.Pkg() != library {
-				return true
-			}
-			var input types.Type
-			decode := fn.Name() == "Unmarshal"
-			switch {
-			case fn.Name() == "Marshal" && len(call.Args) == 1:
-				input = info.TypeOf(call.Args[0])
-			case decode && decodeSupported && len(call.Args) == 2:
-				// Preserve the type in InvalidUnmarshalError for named pointers.
-				dst := info.TypeOf(call.Args[1])
-				if dst != nil {
-					if ptr, ok := types.Unalias(dst).(*types.Pointer); ok {
-						input = ptr.Elem()
-					}
-				}
-			}
-			if input == nil || llssa.HasTypeParam(input) {
-				return true
-			}
-			if value := planShape(types.Default(input), &known); value != nil && (!decode || canDecode(value)) {
-				plan.calls = append(plan.calls, callSite{call: call, shape: value, decode: decode})
-				accepted[id] = true
-			}
-			return true
-		})
-	}
-	for id, obj := range info.Uses {
-		if obj.Pkg() != library {
-			continue
-		}
-		if fn, ok := obj.(*types.Func); ok {
-			switch fn.Name() {
-			case "Marshal", "Unmarshal":
-				if !accepted[id] {
-					return plan, false
-				}
-			case "MarshalIndent", "NewEncoder", "NewDecoder", "LlgoDecodeTyped":
-				// A dynamic codec still retains much of the same graph.
-				return plan, false
+	calls, closed := typesynth.PlanClosedCalls(pkg, library, jsonEntry, func(call *ast.CallExpr, name string) (callSite, bool) {
+		var input types.Type
+		decode := name == "Unmarshal"
+		switch {
+		case name == "Marshal" && len(call.Args) == 1:
+			input = pkg.TypesInfo.TypeOf(call.Args[0])
+		case decode && decodeSupported && len(call.Args) == 2:
+			// Preserve the type in InvalidUnmarshalError for named pointers.
+			if ptr, ok := types.Unalias(pkg.TypesInfo.TypeOf(call.Args[1])).(*types.Pointer); ok {
+				input = ptr.Elem()
 			}
 		}
+		if input == nil || llssa.HasTypeParam(input) {
+			return callSite{}, false
+		}
+		value := planShape(types.Default(input), &known)
+		return callSite{call: call, shape: value, decode: decode}, value != nil && (!decode || canDecode(value))
+	})
+	if !closed {
+		return plan, false
 	}
+	plan.calls = calls
 	if len(plan.calls) != 0 {
 		reserved := []string{"append", "byte", "error", "int64", "len", "make", "nil", "string", "uint64"}
 		if decodeSupported {
@@ -166,14 +136,12 @@ func planPackage(pkg *packages.Package, library *types.Package, decodeSupported 
 	return plan, true
 }
 
-func calleeIdent(expr ast.Expr) *ast.Ident {
-	switch expr := ast.Unparen(expr).(type) {
-	case *ast.Ident:
-		return expr
-	case *ast.SelectorExpr:
-		return expr.Sel
+func jsonEntry(name string) bool {
+	switch name {
+	case "Marshal", "Unmarshal", "MarshalIndent", "NewEncoder", "NewDecoder", "LlgoDecodeTyped":
+		return true
 	}
-	return nil
+	return false
 }
 
 func planShape(t types.Type, known *typeutil.Map) *shape {

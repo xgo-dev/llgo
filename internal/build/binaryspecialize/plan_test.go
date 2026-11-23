@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -181,7 +182,8 @@ func main() {}
 			continue
 		}
 		call := f.Body.List[0].(*ast.ExprStmt).X.(*ast.CallExpr)
-		plan, got := planCall(initial, call, calleeIdent(call.Fun).Name, initial.Imports["encoding/binary"].Types, math.MaxInt32)
+		fn, _ := typesynth.Callee(initial.TypesInfo, call.Fun)
+		plan, got := planCall(initial, call, fn.Name(), initial.Imports["encoding/binary"].Types, math.MaxInt32)
 		if want := strings.HasPrefix(f.Name.Name, "good"); got != want {
 			t.Errorf("%s: eligible = %v, want %v", f.Name, got, want)
 		}

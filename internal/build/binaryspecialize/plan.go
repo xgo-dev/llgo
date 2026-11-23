@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"math"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -79,30 +80,11 @@ func planPackage(pkg *packages.Package, library *types.Package) ([]rewrite, bool
 	if pkg.TypesSizes.Sizeof(types.Typ[types.Int]) == 4 {
 		maxWidth = math.MaxInt32
 	}
-	info := pkg.TypesInfo
-	accepted := make(map[*ast.Ident]bool)
-	var calls []rewrite
-	for _, file := range pkg.Syntax {
-		ast.Inspect(file, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok || call.Ellipsis.IsValid() {
-				return true
-			}
-			id := calleeIdent(call.Fun)
-			fn, _ := info.Uses[id].(*types.Func)
-			if fn != nil && fn.Pkg() == library && genericOperation(fn.Name()) {
-				if candidate, ok := planCall(pkg, call, fn.Name(), library, maxWidth); ok {
-					calls = append(calls, candidate)
-					accepted[id] = true
-				}
-			}
-			return true
-		})
-	}
-	for id, obj := range info.Uses {
-		if fn, ok := obj.(*types.Func); ok && fn.Pkg() == library && genericOperation(fn.Name()) && !accepted[id] {
-			return nil, false
-		}
+	calls, closed := typesynth.PlanClosedCalls(pkg, library, genericOperation, func(call *ast.CallExpr, op string) (rewrite, bool) {
+		return planCall(pkg, call, op, library, maxWidth)
+	})
+	if !closed {
+		return nil, false
 	}
 	if len(calls) != 0 && shadowsGeneratedBuiltins(pkg.Types) {
 		return nil, false
@@ -116,16 +98,6 @@ func genericOperation(name string) bool {
 		return true
 	}
 	return false
-}
-
-func calleeIdent(expr ast.Expr) *ast.Ident {
-	switch expr := ast.Unparen(expr).(type) {
-	case *ast.Ident:
-		return expr
-	case *ast.SelectorExpr:
-		return expr.Sel
-	}
-	return nil
 }
 
 func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *types.Package, maxWidth int64) (rewrite, bool) {
@@ -238,14 +210,15 @@ func standardByteOrder(typ types.Type, library *types.Package) bool {
 func nonNilPointer(info *types.Info, expr ast.Expr) bool {
 	switch expr := ast.Unparen(expr).(type) {
 	case *ast.UnaryExpr:
-		id := calleeIdent(expr.X)
+		_, id := typesynth.Callee(info, expr.X)
 		v, _ := info.Uses[id].(*types.Var)
 		// A variable's own address is non-nil. Selectors on pointer
 		// receivers can need evaluation and nil checks along the path.
 		_, local := ast.Unparen(expr.X).(*ast.Ident)
 		return expr.Op == token.AND && local && v != nil
 	case *ast.CallExpr:
-		fn, _ := info.Uses[calleeIdent(expr.Fun)].(*types.Builtin)
+		_, id := typesynth.Callee(info, expr.Fun)
+		fn, _ := info.Uses[id].(*types.Builtin)
 		return fn != nil && fn.Name() == "new"
 	}
 	return false

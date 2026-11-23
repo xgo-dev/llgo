@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/types/typeutil"
@@ -70,7 +71,7 @@ func TestRewriteJSONMarshal(t *testing.T) {
 					if !ok {
 						return true
 					}
-					f, _ := initial.TypesInfo.Uses[calleeIdent(c.Fun)].(*types.Func)
+					f, _ := typesynth.Callee(initial.TypesInfo, c.Fun)
 					if f == nil {
 						return true
 					}

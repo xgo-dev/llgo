@@ -243,6 +243,7 @@ func otherFmtUsers(pkgs []*packages.Package, entry, fmtPkg *packages.Package) bo
 func (r rules) rewrite(pkg, fmtPkg *packages.Package, protected map[*types.Func]bool, gofmt bool) ([]string, error) {
 	var changes []string
 	fmts := newFormatSource(pkg, fmtPkg)
+	cfmts := newCFormatSource(pkg, r.cstrings)
 	for _, file := range pkg.Syntax {
 		ast.Inspect(file, func(node ast.Node) bool {
 			if decl, ok := node.(*ast.FuncDecl); ok {
@@ -267,7 +268,7 @@ func (r rules) rewrite(pkg, fmtPkg *packages.Package, protected map[*types.Func]
 			}
 			if rule, ok := r.formats[base]; ok && pkg.Name == "main" {
 				if rule.c {
-					if foldCFormat(pkg.TypesInfo, call, rule, r.cstrings) {
+					if cfmts.fold(call, rule) {
 						changes = append(changes, changeKey(pkg, call, "cfmt", ""))
 					}
 				} else if gofmt {
@@ -287,17 +288,8 @@ func changeKey(pkg *packages.Package, call *ast.CallExpr, kind, target string) s
 }
 
 func calledFunc(info *types.Info, expr ast.Expr) *types.Func {
-	switch x := ast.Unparen(expr).(type) {
-	case *ast.Ident:
-		fn, _ := info.Uses[x].(*types.Func)
-		return fn
-	case *ast.SelectorExpr:
-		if info.Selections[x] == nil {
-			fn, _ := info.Uses[x.Sel].(*types.Func)
-			return fn
-		}
-	}
-	return nil
+	fn, _ := typesynth.Callee(info, expr)
+	return fn
 }
 
 func selectCandidate(info *types.Info, call *ast.CallExpr, base *types.Signature, list []candidate) (*candidate, types.Instance) {

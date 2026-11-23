@@ -45,7 +45,6 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
-	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
@@ -1099,48 +1098,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
-	// Register codec declarations before creating SSA packages.
-	var binaryCodecPackages map[*types.Package]bool
-	var binaryCodecLibrary *types.Package
-	if codec := dedup.Check("encoding/binary"); codec != nil {
-		shortBuffer, err := prepareBinaryCodecSupport(conf, frontendOptions, sourcePatchGOROOT, codec.Package)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
-		}
-		if shortBuffer != "" {
-			binaryCodecLibrary = codec.Types
-		}
-		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs, shortBuffer)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
-		}
-	}
-	var jsonCodecPackages map[*types.Package]bool
-	if codec := dedup.Check("encoding/json"); codec != nil {
-		jsonCodecPackages, err = specializeJSONCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
-		}
-	}
-
-	var callTemplates map[*types.Package][]string
-	if conf.OptLevel != optlevel.O0 && !frontendOptions.DebuggerFrames && !frontendCacheEnabled(conf) {
-		var stdFmt *packages.Package
-		if p := dedup.Check("fmt"); p != nil && isStandardLibraryPackage(p.Package, sourcePatchGOROOT) {
-			stdFmt = p.Package
-		}
-		formats := !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions)
-		callTemplates, err = calltemplate.Rewrite(initial, stdFmt, formats)
-		if err != nil {
-			return nil, err
-		}
-		if verbose || conf.PrintCommands {
-			for _, changes := range callTemplates {
-				for _, change := range changes {
-					fmt.Fprintln(os.Stderr, "llgo: apply call template", change)
-				}
-			}
-		}
+	templates, err := applySourceTemplates(conf, frontendOptions, sourcePatchGOROOT, dedup, initial, altPkgs, verbose || conf.PrintCommands)
+	if err != nil {
+		return nil, err
 	}
 
 	patches := make(cl.Patches, len(altPkgPaths))
@@ -1177,10 +1137,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		commands:            commands,
 		frontendOptions:     frontendOptions,
 		staticByteArrays:    altByteArrays,
-		binaryCodecLibrary:  binaryCodecLibrary,
-		binaryCodecPackages: binaryCodecPackages,
-		jsonCodecPackages:   jsonCodecPackages,
-		callTemplates:       callTemplates,
+		binaryCodecLibrary:  templates.binaryLibrary,
+		binaryCodecPackages: templates.binary,
+		jsonCodecPackages:   templates.json,
+		callTemplates:       templates.calls,
 		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:          buildTrace,
 		goVersion:           sourcePatchGoVersion,

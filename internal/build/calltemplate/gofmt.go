@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
@@ -53,7 +54,7 @@ func (s *formatSource) plan(call *ast.CallExpr, rule formatRule) {
 	if !ok {
 		return
 	}
-	parts, ok := parseFormat(text)
+	parts, ok := fmtspecialize.ParseFormat(text)
 	if !ok || len(parts) > 64 {
 		return
 	}
@@ -76,7 +77,7 @@ func (s *formatSource) plan(call *ast.CallExpr, rule formatRule) {
 	ops := make([]string, 0, len(operands))
 	for i := range parts {
 		part := &parts[i]
-		if part.verb == 0 {
+		if part.Verb == 0 {
 			continue
 		}
 		if len(ops) >= len(operands) {
@@ -119,34 +120,34 @@ func (s *formatSource) plan(call *ast.CallExpr, rule formatRule) {
 	s.calls = append(s.calls, formatCall{call, name})
 }
 
-func formatOperand(part *formatPart, arg *types.Basic) string {
+func formatOperand(part *fmtspecialize.FormatPart, arg *types.Basic) string {
 	switch {
 	case arg.Kind() == types.String:
-		if part.verb == 'v' {
-			part.verb = 's'
+		if part.Verb == 'v' {
+			part.Verb = 's'
 		}
-		if part.verb == 's' || part.verb == 'q' || part.verb == 'x' || part.verb == 'X' {
+		if part.Verb == 's' || part.Verb == 'q' || part.Verb == 'x' || part.Verb == 'X' {
 			return "String"
 		}
 	case arg.Kind() == types.Bool:
-		if part.verb == 'v' {
-			part.verb = 't'
+		if part.Verb == 'v' {
+			part.Verb = 't'
 		}
-		if part.verb == 't' {
+		if part.Verb == 't' {
 			return "Bool"
 		}
 	case arg.Info()&types.IsInteger != 0:
-		if part.verb == 'v' {
-			part.verb = 'd'
+		if part.Verb == 'v' {
+			part.Verb = 'd'
 		}
-		if strings.ContainsRune("dboxX", rune(part.verb)) {
+		if strings.ContainsRune("dboxX", rune(part.Verb)) {
 			return "Integer"
 		}
 	}
 	return ""
 }
 
-func (s *formatSource) emit(name string, rule formatRule, parts []formatPart, operands []*types.Basic, ops []string) {
+func (s *formatSource) emit(name string, rule formatRule, parts []fmtspecialize.FormatPart, operands []*types.Basic, ops []string) {
 	b := &s.body
 	fmt.Fprintf(b, "func %s(", name)
 	for i := 0; i < rule.args; i++ {
@@ -174,15 +175,15 @@ func (s *formatSource) emit(name string, rule formatRule, parts []formatPart, op
 	}
 	i := 0
 	for _, part := range parts {
-		if part.verb == 0 {
-			fmt.Fprintf(b, "out = append(out,%q...)\n", part.text)
+		if part.Verb == 0 {
+			fmt.Fprintf(b, "out = append(out,%q...)\n", part.Text)
 			continue
 		}
 		arg := fmt.Sprintf("x%d", i)
 		if ops[i] == "Integer" {
 			arg = fmt.Sprintf("uint64(%s), %t", arg, operands[i].Info()&types.IsUnsigned == 0)
 		}
-		fmt.Fprintf(b, "out = %s.LLGoTemplate%s(out,%s,%q,%d,%t)\n", s.alias, ops[i], arg, part.verb, part.width, part.zero)
+		fmt.Fprintf(b, "out = %s.LLGoTemplate%s(out,%s,%q,%d,%t)\n", s.alias, ops[i], arg, part.Verb, part.Width, part.Zero)
 		i++
 	}
 	switch rule.result {

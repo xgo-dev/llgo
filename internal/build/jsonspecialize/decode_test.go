@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
@@ -53,7 +54,7 @@ func TestRewriteJSONDecode(t *testing.T) {
 			if !ok {
 				return true
 			}
-			fn, _ := initial.TypesInfo.Uses[calleeIdent(call.Fun)].(*types.Func)
+			fn, _ := typesynth.Callee(initial.TypesInfo, call.Fun)
 			if fn == nil || len(call.Args) != 2 {
 				return true
 			}

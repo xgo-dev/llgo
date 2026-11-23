@@ -9,6 +9,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/build/binaryspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/build/jsonspecialize"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/directive"
@@ -17,15 +18,50 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
-func specializeBinaryCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, shortBuffer string) (map[*types.Package]bool, error) {
-	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs,
-		func(closure []*packages.Package, library, entry *packages.Package) ([]*packages.Package, error) {
-			return binaryspecialize.Rewrite(closure, library, entry, shortBuffer)
-		}, "fixed-size binary encoding")
+type sourceTemplates struct {
+	binaryLibrary *types.Package
+	binary        map[*types.Package]bool
+	json          map[*types.Package]bool
+	calls         map[*types.Package][]string
 }
 
-func specializeJSONCodecs(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package) (map[*types.Package]bool, error) {
-	return specializeSizeCodec(conf, frontend, goroot, stdlib, initial, runtimePkgs, jsonspecialize.Rewrite, "statically typed JSON codec")
+func applySourceTemplates(conf *Config, frontend cl.Options, goroot string, dedup packages.Deduper, initial, runtimePkgs []*packages.Package, verbose bool) (sourceTemplates, error) {
+	var result sourceTemplates
+	if conf.OptLevel == optlevel.O0 || frontend.DebuggerFrames || frontendCacheEnabled(conf) {
+		return result, nil
+	}
+	library := func(path string) *packages.Package {
+		p := dedup.Check(path)
+		if p == nil || p.TypesInfo == nil || !isStandardLibraryPackage(p.Package, goroot) {
+			return nil
+		}
+		return p.Package
+	}
+	formats := !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend)
+	if formats {
+		binary := library("encoding/binary")
+		shortBuffer, err := prepareBinaryCodecSupport(conf, frontend, goroot, binary)
+		if err != nil {
+			return result, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+		if shortBuffer != "" {
+			result.binaryLibrary = binary.Types
+		}
+		result.binary, result.json, err = rewriteClosedCodecs(initial, runtimePkgs, binary, library("encoding/json"), shortBuffer, verbose)
+		if err != nil {
+			return result, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+	calls, err := calltemplate.Rewrite(initial, library("fmt"), formats)
+	result.calls = calls
+	if verbose {
+		for _, changes := range calls {
+			for _, change := range changes {
+				fmt.Fprintln(os.Stderr, "llgo: apply call template", change)
+			}
+		}
+	}
+	return result, err
 }
 
 // The binary accessor belongs to a fixed compiler profile and is installed
@@ -61,45 +97,61 @@ func linuxSizeCodecBuild(conf *Config, target crosscompile.Export, frontend cl.O
 		conf.LinkOptions.ExternalLinkerFlags == "" && sizeCodecBuild(conf, frontend)
 }
 
-func specializeSizeCodec(conf *Config, frontend cl.Options, goroot string, stdlib *packages.Package, initial, runtimePkgs []*packages.Package, rewrite func([]*packages.Package, *packages.Package, *packages.Package) ([]*packages.Package, error), description string) (map[*types.Package]bool, error) {
-	if conf.disableSizeSpecialization || !sizeCodecBuild(conf, frontend) || len(initial) != 1 || initial[0].Name != "main" {
-		return nil, nil
-	}
-	if stdlib == nil || stdlib.TypesInfo == nil || !isStandardLibraryPackage(stdlib, goroot) {
-		return nil, nil
+// Both source codecs require a closed entry package. Resolve linker aliases
+// once before handing the same package graph to the codec emitters.
+func rewriteClosedCodecs(initial, runtimePkgs []*packages.Package, binary, json *packages.Package, shortBuffer string, verbose bool) (map[*types.Package]bool, map[*types.Package]bool, error) {
+	if len(initial) != 1 || initial[0].Name != "main" || binary == nil && json == nil {
+		return nil, nil, nil
 	}
 	var closure []*packages.Package
-	var aliased bool
+	aliases := make(map[string]bool)
 	packages.Visit(slices.Concat(initial, runtimePkgs), func(p *packages.Package) bool {
 		for _, f := range p.Syntax {
-			for _, group := range f.Comments {
-				for _, item := range directive.ParseGroup(group) {
-					if item.Name != "go:linkname" && item.Name != "llgo:link" {
-						continue
-					}
-					args := strings.Fields(item.Args)
-					for _, arg := range args {
-						aliased = aliased || strings.HasPrefix(arg, stdlib.PkgPath+".")
+			for _, comments := range f.Comments {
+				for _, item := range directive.ParseGroup(comments) {
+					if item.Name == "go:linkname" || item.Name == "llgo:link" {
+						for _, arg := range strings.Fields(item.Args) {
+							for _, path := range []string{"encoding/binary", "encoding/json"} {
+								if strings.HasPrefix(arg, path+".") {
+									aliases[path] = true
+								}
+							}
+						}
 					}
 				}
 			}
 		}
 		closure = append(closure, p)
-		return !aliased
+		return true
 	}, nil)
-	if aliased {
-		return nil, nil
+	var binaryPackages, jsonPackages map[*types.Package]bool
+	if binary != nil && !aliases[binary.PkgPath] {
+		changed, err := binaryspecialize.Rewrite(closure, binary, initial[0], shortBuffer)
+		if err != nil {
+			return nil, nil, err
+		}
+		binaryPackages = recordCodecRewrites(changed, "fixed-size binary encoding", verbose)
 	}
-	changed, err := rewrite(closure, stdlib, initial[0])
-	if err != nil || len(changed) == 0 {
-		return nil, err
+	if json != nil && !aliases[json.PkgPath] {
+		changed, err := jsonspecialize.Rewrite(closure, json, initial[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		jsonPackages = recordCodecRewrites(changed, "statically typed JSON codec", verbose)
+	}
+	return binaryPackages, jsonPackages, nil
+}
+
+func recordCodecRewrites(changed []*packages.Package, description string, verbose bool) map[*types.Package]bool {
+	if len(changed) == 0 {
+		return nil
 	}
 	rewritten := make(map[*types.Package]bool, len(changed))
 	for _, pkg := range changed {
 		rewritten[pkg.Types] = true
 	}
-	if conf.Verbose || conf.PrintCommands {
+	if verbose {
 		fmt.Fprintln(os.Stderr, "llgo: specialize "+description)
 	}
-	return rewritten, nil
+	return rewritten
 }

@@ -6,29 +6,57 @@ import (
 	"go/types"
 	"strconv"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
-func asCString(info *types.Info, expr ast.Expr, cstrings map[*types.Func]bool) (*ast.CallExpr, string, bool) {
+type cFormatSource struct {
+	info     *types.Info
+	cstrings map[*types.Func]bool
+	uses     map[string]int
+}
+
+func newCFormatSource(pkg *packages.Package, cstrings map[*types.Func]bool) cFormatSource {
+	s := cFormatSource{info: pkg.TypesInfo, cstrings: cstrings}
+	if pkg.Name != "main" || len(cstrings) == 0 {
+		return s
+	}
+	s.uses = make(map[string]int)
+	for _, file := range pkg.Syntax {
+		ast.Inspect(file, func(node ast.Node) bool {
+			if call, ok := node.(*ast.CallExpr); ok {
+				if _, text, ok := s.asCString(call); ok {
+					s.uses[text]++
+				}
+			}
+			return true
+		})
+	}
+	return s
+}
+
+func (s cFormatSource) asCString(expr ast.Expr) (*ast.CallExpr, string, bool) {
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 || !cstrings[calledFunc(info, call.Fun)] {
+	if !ok || len(call.Args) != 1 || !s.cstrings[calledFunc(s.info, call.Fun)] {
 		return nil, "", false
 	}
-	text, ok := constantString(info, call.Args[0])
+	text, ok := constantString(s.info, call.Args[0])
 	return call, text, ok
 }
 
 // Keep the same libc entry and fold only formats whose constant substitutions
 // preserve the observed byte stream. In particular this keeps snprintf's
 // truncation, return count and buffer ownership in libc.
-func foldCFormat(info *types.Info, call *ast.CallExpr, rule formatRule, cstrings map[*types.Func]bool) bool {
+func (s cFormatSource) fold(call *ast.CallExpr, rule formatRule) bool {
 	if len(call.Args) < rule.args {
 		return false
 	}
-	format, text, ok := asCString(info, call.Args[rule.format], cstrings)
+	format, text, ok := s.asCString(call.Args[rule.format])
 	if !ok || strings.ContainsRune(text, 0) {
 		return false
 	}
-	parts, ok := parseFormat(text)
+	parts, ok := fmtspecialize.ParseFormat(text)
 	if !ok {
 		return false
 	}
@@ -37,46 +65,49 @@ func foldCFormat(info *types.Info, call *ast.CallExpr, rule formatRule, cstrings
 	var result strings.Builder
 	changed := false
 	for _, part := range parts {
-		if part.verb == 0 {
-			if part.raw == "%%" {
-				result.WriteString(part.raw)
+		if part.Verb == 0 {
+			if part.Raw == "%%" {
+				result.WriteString(part.Raw)
 			} else {
-				result.WriteString(part.text)
+				result.WriteString(part.Text)
 			}
 			continue
 		}
-		if index >= len(call.Args) || !strings.ContainsRune("diouxXfFeEgGaAcsp", rune(part.verb)) {
+		if index >= len(call.Args) || !strings.ContainsRune("diouxXfFeEgGaAcsp", rune(part.Verb)) {
 			return false
 		}
 		arg := call.Args[index]
 		index++
-		value, ok := cConstant(info, arg, part, cstrings)
+		value, ok := s.constant(arg, part)
 		if !ok {
 			args = append(args, arg)
-			result.WriteString(part.raw)
+			result.WriteString(part.Raw)
 			continue
 		}
-		result.WriteString(strings.ReplaceAll(value, "%", "%%"))
+		result.WriteString(value)
 		changed = true
 	}
-	if !changed || index != len(call.Args) {
+	if !changed || index != len(call.Args) || s.uses[text] > 1 && result.Len() > len(text) {
 		return false
 	}
-	format.Args[0] = astString(info, format.Args[0], result.String())
+	format.Args[0] = astString(s.info, format.Args[0], result.String())
 	call.Args = args
 	return true
 }
 
-func cConstant(info *types.Info, arg ast.Expr, part formatPart, cstrings map[*types.Func]bool) (string, bool) {
-	if part.width != 0 || part.zero {
+func (s cFormatSource) constant(arg ast.Expr, part fmtspecialize.FormatPart) (string, bool) {
+	if part.Width != 0 || part.Zero {
 		return "", false
 	}
-	if part.verb == 's' {
-		_, text, ok := asCString(info, arg, cstrings)
-		text, _, _ = strings.Cut(text, "\x00")
-		return text, ok
+	if part.Verb == 's' {
+		_, text, ok := s.asCString(arg)
+		value, _, _ := strings.Cut(text, "\x00")
+		value = strings.ReplaceAll(value, "%", "%%")
+		// A shared literal is already deduplicated. Leave it in the
+		// argument list when expanding it would grow each format string.
+		return value, ok && (s.uses[text] < 2 || len(value) <= len(part.Raw))
 	}
-	tv := info.Types[arg]
+	tv := s.info.Types[arg]
 	if tv.Type == nil || tv.Value == nil || tv.Value.Kind() != constant.Int {
 		return "", false
 	}
@@ -84,7 +115,7 @@ func cConstant(info *types.Info, arg ast.Expr, part formatPart, cstrings map[*ty
 	if !ok {
 		return "", false
 	}
-	switch part.verb {
+	switch part.Verb {
 	case 'd', 'i':
 		if b.Kind() == types.Int32 {
 			value, ok := constant.Int64Val(tv.Value)
@@ -94,13 +125,13 @@ func cConstant(info *types.Info, arg ast.Expr, part formatPart, cstrings map[*ty
 		if b.Kind() == types.Uint32 {
 			value, ok := constant.Uint64Val(tv.Value)
 			base := 10
-			if part.verb == 'o' {
+			if part.Verb == 'o' {
 				base = 8
-			} else if part.verb == 'x' || part.verb == 'X' {
+			} else if part.Verb == 'x' || part.Verb == 'X' {
 				base = 16
 			}
 			text := strconv.FormatUint(value, base)
-			if part.verb == 'X' {
+			if part.Verb == 'X' {
 				text = strings.ToUpper(text)
 			}
 			return text, ok

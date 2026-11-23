@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -120,8 +121,11 @@ func main() {
 	F(nil, 0, str("%m %d"), int32(5))
 	F(nil, 0, str("%d"), 1)
 	F(nil, 0, str("%d:"), 1, 2)
+	F(nil, 0, str("left %s %04d"), str(shared), dynamic)
+	F(nil, 0, str("right %s %04d"), str(shared), dynamic)
 }
-var dynamic int32`)
+var dynamic int32
+const shared = "one literal to keep shared"`)
 	got, err := Rewrite([]*packages.Package{p}, nil, true)
 	if err != nil {
 		t.Fatal(err)
@@ -137,5 +141,39 @@ var dynamic int32`)
 	text, ok := constantString(p.TypesInfo, call.Args[2].(*ast.CallExpr).Args[0])
 	if !ok || text != "x%%:5 %% %d" {
 		t.Fatalf("specialized format = %q", text)
+	}
+}
+
+func TestGoFmtNamedFormatSlot(t *testing.T) {
+	p := checkedSource(t, `package fmt
+func Appendf(dst []byte, pattern string, values ...any) []byte
+func Fprintf(dst any, pattern int, values ...any) (int, error)
+func Printf(pattern string, values ...string) (int, error)
+func Unknown(pattern string, values ...any) string`)
+	for _, tc := range []struct {
+		name, roles, diagnostic string
+		trusted                 bool
+	}{
+		{"Appendf", "format=pattern args=values", "", true},
+		{"Appendf", "format=pattern args=values bogus=dst", "invalid format template binding", true},
+		{"Appendf", "format=pattern", "variadic argument parameter", true},
+		{"Appendf", "format=pattern args=values", "standard fmt entry", false},
+		{"Fprintf", "format=pattern args=values", "string format parameter", true},
+		{"Printf", "format=pattern args=values", "requires ...any", true},
+		{"Unknown", "format=pattern args=values", "unsupported gofmt output", true},
+	} {
+		t.Run(tc.name+"/"+tc.diagnostic, func(t *testing.T) {
+			fn := p.Types.Scope().Lookup(tc.name).(*types.Func)
+			rule, err := bindFormat(fn, directive.Directive{Name: "llgointernal:template:gofmt", Args: tc.roles}, nil, tc.trusted)
+			if tc.diagnostic != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
+					t.Fatalf("error = %v, want %q", err, tc.diagnostic)
+				}
+				return
+			}
+			if err != nil || rule.format != 1 || rule.args != 2 || rule.result != "append" {
+				t.Fatalf("bound Appendf rule = %+v, %v", rule, err)
+			}
+		})
 	}
 }
