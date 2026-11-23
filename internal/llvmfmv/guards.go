@@ -302,6 +302,21 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
+// An AVX-512 extension can remain enabled after GODEBUG disables part of
+// the Go AVX512 bundle. A clone compiled for that extension can issue ZMM
+// calls, including from specialized helpers. Gate its entry on the bundle
+// without folding any additional source queries.
+func guardDispatchBits(mask uint64, baseline string) uint64 {
+	if baseline != "v4" {
+		for _, p := range x86Predicates {
+			if mask&p.runtimeBit != 0 && p.registerBits == 512 {
+				return mask | predicateBits[X86Query("AVX512")]
+			}
+		}
+	}
+	return mask
+}
+
 func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error {
 	const processed = attributePrefix + "guarded"
 	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
@@ -444,7 +459,7 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 				}
 				return err
 			}
-			root.choices = append(root.choices, dispatchChoice{bits: mask, fn: v})
+			root.choices = append(root.choices, dispatchChoice{bits: guardDispatchBits(mask, baseline), fn: v})
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base")
 	}

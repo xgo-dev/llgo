@@ -61,6 +61,59 @@ scalar:
 	}
 }
 
+func TestGuardedZMMCallRequiresGoAVX512(t *testing.T) {
+	const ir = `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @vbmi2() "llgo.cpu.query"="x86.avx512vbmi2"
+declare i1 @opaque()
+declare void @wide(<16 x float>)
+define void @root(ptr %p) {
+ %ok = call i1 @QUERY()
+ br i1 %ok, label %yes, label %exit
+yes:
+ %v = load <16 x float>, ptr %p
+ call void @wide(<16 x float> %v)
+ br label %exit
+exit:
+ ret void
+}`
+	for _, query := range []string{"vbmi2", "opaque"} {
+		for _, bundle := range []bool{false, true} {
+			m := parseModule(t, strings.Replace(ir, "QUERY", query, 1))
+			if err := Run(m, "v1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			mask := featureAVX2 | predicateBits[X86Query("AVX512VBMI2")]
+			if bundle {
+				mask |= predicateBits[X86Query("AVX512")]
+			}
+			entry, suffix := "root", "width_base"
+			if query == "vbmi2" && !bundle {
+				base := m.NamedFunction(entry + symbolPrefix + "guard_base")
+				checkCachedGuard(t, m, mask, base)
+				entry = base.Name()
+			}
+			if bundle {
+				suffix = "zmm"
+				if query == "vbmi2" {
+					suffix = "guard_avx512vbmi2"
+				}
+			}
+			body := m.NamedFunction(entry + symbolPrefix + suffix)
+			if body.IsNil() {
+				t.Fatalf("missing %s %s", entry, suffix)
+			}
+			checkCachedBody(t, m, entry, mask, body)
+			code := body.String()
+			if strings.Contains(code, "call void @wide(") != bundle || strings.Contains(code, "@llvm.trap(") == bundle {
+				t.Fatal(code)
+			}
+		}
+	}
+}
+
 // The target attributes emitted for a predicate already guarantee its register
 // width. Its guarded body must not dispatch again just to obtain that width.
 func TestGuardRegisterFloor(t *testing.T) {
