@@ -415,7 +415,12 @@ func (c *TCPConn) Close() int32 {
 // SetDeadline sets the connection's I/O deadline to ms milliseconds from
 // now, or clears it with 0. Both Read and Write honor it until SetDeadline
 // changes it. ms < 0 is EINVAL. Returns 0 on success.
-func SetDeadline(c *TCPConn, ms int32) int32 {
+//
+// This is the method form: *TCPConn carries SetDeadline as a method (like
+// tls.TLSConn) so a structural interface such as pkg/esp/ws's Deadliner can
+// recognize it without importing this package. The package-level
+// SetDeadline below is the same operation kept for existing callers.
+func (c *TCPConn) SetDeadline(ms int32) int32 {
 	if c == nil || c.fd < 0 {
 		return ebadf
 	}
@@ -429,6 +434,15 @@ func SetDeadline(c *TCPConn, ms int32) int32 {
 	c.hasDeadline = true
 	c.deadlineMs = nowMs() + uint32(ms)
 	return 0
+}
+
+// SetDeadline sets the connection's I/O deadline (relative ms; 0 clears,
+// < 0 is EINVAL). It is the package-level form of TCPConn.SetDeadline,
+// kept for existing callers; the method form exists so structural
+// interfaces (pkg/esp/ws.Deadliner) can match *TCPConn without importing
+// this package.
+func SetDeadline(c *TCPConn, ms int32) int32 {
+	return c.SetDeadline(ms)
 }
 
 // pace waits one poll quantum (a select that yields the CPU) and reports

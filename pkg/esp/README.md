@@ -15,6 +15,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |
 | `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
 | `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial (VERIFY_NONE/REQUIRED), record read/write, close_notify, bounded quantum waits |
+| `pkg/esp/ws`   | — (no glue; pure Go RFC 6455 over a caller-supplied `net`/`tls` conn) | HTTP Upgrade handshake, masked frames, ping/pong, closing handshake; stdlib-free SHA-1/base64 |
 
 ## Package template
 
@@ -277,6 +278,102 @@ port), and the entry documents that dependency. For an emu acceptance
 run, start the host TLS peer first: `go run ./idfproj/host/tlssrv` (TLS
 echo on 127.0.0.1:9443, certs from `idfproj/host/gencert.sh`) — the NAT
 forwards the guest's 192.168.4.1:9443 to it.
+
+## pkg/esp/ws — RFC 6455 WebSocket client, pure Go, no glue
+
+`pkg/esp/ws` adds the WebSocket protocol on top of a transport the caller
+already dialed: `HandshakeURL(c, host, path, timeoutMs)` runs the HTTP
+Upgrade handshake over a `*net.TCPConn` (ws://) or a `*tls.TLSConn`
+(wss://), and the returned `WSConn` offers `ReadMessage`, `WriteMessage`,
+`Ping`, `Close(code)`, `SetDeadline`, `PongSeen`, `CloseCode` and
+`LastOpcode`. The package defines its own `Conn` interface
+(`Read/Write/Close` with the pkg/esp int32 signatures) - Go interfaces are
+structural, so the real transports satisfy it without the package
+importing them - plus the optional `Deadliner` interface
+(`SetDeadline(ms int32) int32`), which `*TCPConn` and `*TLSConn` both
+implement as methods. It imports NOTHING - not even `unsafe` - so it
+compiles unchanged on a host build, runs under `go test` with an
+in-memory transport, and contributes no C glue: a ws program links the
+net/tls glues it already needs and nothing else, and `make-artifact.sh`
+needs no new checklist entry.
+
+**Why it carries its own SHA-1 and base64 (the stdlib libffi gap,
+measured).** The handshake cannot exist without SHA-1 and base64 (the
+accept key is `base64(SHA-1(key + GUID))`), and the standard-library
+versions are unlinkable on esp32s31-idf: compiling a probe that imports
+any of `crypto/sha1`, `encoding/base64`, `bufio`, `io`, `bytes`,
+`strings` or `strconv` fails at the libffi LLGoFiles preprocessing step
+(`stdlib.h not found` - all of them reach `internal/reflectlite`, which
+llgo maps to its own reflect layer, which drags the libffi C glue into
+the build; the same gap that keeps fmt/reflect out of every pkg/esp
+package, now extended by measurement to the whole reflectlite-reachable
+stdlib surface). The ws package therefore implements RFC 3174 SHA-1 and
+RFC 4648 base64 itself (`hash.go`, ~200 lines), parses the handshake
+response with a hand-rolled buffered reader (no bufio), and formats its
+error names without strconv. `SHA1Sum`/`Base64StdEncode`/`Base64StdDecode`
+and `AcceptKey` are exported: on this target they are the only reachable
+SHA-1/base64 a pkg/esp program has, and the acceptance probe pins them
+against the FIPS 180-1 / RFC 6455 / RFC 4648 known values in the
+firmware log itself.
+
+**Deadlines are delegated, never invented.** The package has no clock
+and starts no goroutines. HandshakeURL applies `timeoutMs` through the
+transport's SetDeadline for the handshake and clears it afterwards; a
+transport without a SetDeadline method cannot bound the handshake and is
+rejected with `ErrNoDeadline`. With a session deadline set,
+`ReadMessage` returns ETIMEDOUT and `WriteMessage` a negative
+-ETIMEDOUT; without one, `ReadMessage` is a poll-style read (EAGAIN
+after one quantum) whose framing state machine resumes mid-header or
+mid-payload on the next call. Error codes use the 0x7D00 segment
+(`ErrHandshake`/`ErrNotWS`/`ErrAcceptKey`/`ErrTooBig`/`ErrProtocol`/
+`ErrPeerClosed`/`ErrConnDead`/`ErrNoDeadline`, named by `ws.ErrName`
+alongside the lwip errno table); transport failures pass through
+unchanged, and calls on a closed session return EBADF like the
+transports. A framing violation (masked server frame, RSV bits set,
+fragmented control frame) closes the session on the spot - a misaligned
+byte stream has no recovery, and no close frame is sent: answering with
+the RFC 6455 section 7.1.7 1002 close is a SHOULD the package
+deliberately skips, because a misaligned stream cannot promise a
+well-formed closing exchange.
+
+**Scope and randomness.** RFC 6455 baseline only: no subprotocols, no
+permessage-deflate (RSV bits are a protocol error), client frames always
+masked, one frame per ReadMessage (a fragmented message arrives as
+consecutive reads, `LastOpcode` reporting each fragment's opcode; a
+frame bigger than the caller's buffer is drained and reported as
+`ErrTooBig`, leaving the session usable). Pings are answered
+automatically inside the read path; a pong is reported as a `(0, 0)`
+ReadMessage event with `PongSeen()` true, so a ping/pong check never
+blocks on a data frame that never comes. Two receive-side waivers, both
+intentional and documented: text frames are NOT validated as UTF-8 (the
+RFC 6455 section 8.1 client MUST is waived - whoever sends `OpText`
+guarantees the bytes; use `OpBinary` for arbitrary bytes), and a peer's
+close status code is echoed verbatim even when it is outside the valid
+ranges (the strict answer would be a 1002; a code-less close is echoed
+as an empty payload, since a code below 1000 must never go on the wire).
+The client key and the
+per-frame mask keys come from an in-package xorshift64* PRNG -
+`Seed(s)` it once with the best entropy the board offers (uptime,
+ADC noise); unseeded it is deterministic: wire-valid and fine on the
+bench, predictable through an intermediary.
+
+**Memory and scheduling.** Measured on the acceptance build: a live
+plain session holds 388 bytes of Go heap (the `WSConn` struct itself is
+on the order of ~180 bytes of that, the 125-byte control/drain staging
+buffer included; the rest is the handshake's residual allocations), plus
+transient frame buffers, on top of whatever the transport holds
+(a plain TCP conn is negligible; a wss conn adds the ~24 KiB TLS ledger
+of the tls package). Post-close the transport returns everything. The
+bounded waits are the transports' C-level select quanta - the same
+scheduler property as net/tls: keep one session on one goroutine.
+
+**Integration and acceptance.** No glue to copy, no REQUIRES beyond
+what net/tls already bring. The demo probe (`[go] ws ...` in
+`_demo/esp-idf-wifi/goapp/main.go`) runs against
+`idfproj/host/wssrv` - a host peer that sniffs each connection and
+serves the raw echo, the TLS echo and both WebSocket endpoints on the
+same two ports (9000/9443), so one process backs the whole
+wifi->net->tls->ws acceptance chain.
 
 ## Adding a new peripheral
 

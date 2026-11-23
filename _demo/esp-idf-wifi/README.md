@@ -3,7 +3,7 @@
 A self-contained pipeline that drives the ESP-IDF `esp_wifi` stack from
 Go code compiled by llgo: setup → start → scan → connect → DHCP, with the
 acceptance run automated under esp-emu. The Go bindings live in the llgo
-repository (`pkg/esp/{wifi,gpio,i2c,i2s,net,tls}`), consumed through the
+repository (`pkg/esp/{wifi,gpio,i2c,i2s,net,tls,ws}`), consumed through the
 module require + replace in `go.mod`; this directory owns the acceptance program
 and the IDF project. The Go heap's growth into PSRAM that the acceptance
 program exercises is an llgo runtime feature, described under
@@ -17,7 +17,8 @@ esp-idf-wifi/
 │                           github.com/xgo-dev/llgo, the binding packages' home)
 ├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
 │                           + GPIO/I2C/I2S peripheral probes + TCP net probe
-│                           + TLS probe: VERIFY_NONE / VERIFY_REQUIRED / wrong-CA)
+│                           + TLS probe: VERIFY_NONE / VERIFY_REQUIRED / wrong-CA
+│                           + WebSocket probe: plain ws + wss permissive/strict)
 ├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
 │                           tinygogc externs in main.go, so `go build` links
 └── idfproj/                Minimal ESP-IDF project
@@ -34,11 +35,18 @@ esp-idf-wifi/
     │   ├── echosrv/          Host-side TCP echo peer for the net probe's emu
     │   │                     acceptance run (listens on 127.0.0.1:9000; the
     │   │                     emulator's NAT forwards 192.168.4.1:9000 to it)
-    │   └── tlssrv/           Host-side TLS echo peer for the tls probe (TCP
-    │                         + crypto/tls on 127.0.0.1:9443, cert/key from
-    │                         tlssrv/certs/, gitignored). Its log line
-    │                         "peer sent TLS close_notify" is the host-side
-    │                         close evidence.
+    │   ├── tlssrv/           Host-side TLS echo peer for the tls probe (TCP
+    │   │                     + crypto/tls on 127.0.0.1:9443, cert/key from
+    │   │                     tlssrv/certs/, gitignored). Its log line
+    │   │                     "peer sent TLS close_notify" is the host-side
+    │   │                     close evidence.
+    │   └── wssrv/            Host-side peer for the full acceptance run: one
+    │                         process serving the raw echo (9000), the TLS
+    │                         echo (9443) and the two WebSocket endpoints
+    │                         (ws://9000, wss://9443), sniffed per
+    │                         connection. Its "close handshake (close code
+    │                         1000)" log line is the host-side evidence for
+    │                         the WebSocket closing handshake.
     └── main/               The main component
         ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
         ├── app_main.c      app_main -> llgo entry; _write/_exit shims; Go
@@ -52,7 +60,7 @@ esp-idf-wifi/
 ```
 
 The Go binding packages themselves live in the llgo repo:
-`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net,tls}` - the wifi one grew
+`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net,tls,ws}` - the wifi one grew
 out of this demo's former `goapp/espwifi` directory (same API, same
 mailbox glue; see `pkg/esp/README.md` for the package template, the
 go↔C boundary rules and both glue integration recipes).
@@ -134,8 +142,9 @@ cp idfproj/main/wifi_creds.h.example idfproj/main/wifi_creds.h
 # 1. Go -> relocatable object (prints the remaining undefined symbols;
 #    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / llgo_net_* /
 #    llgo_tls_* / vTaskDelay / stdio must all be in that list - the script
-#    echoes the llgo_net_* and llgo_tls_* sets separately). It also syncs
-#    the pkg/esp/*/glue templates into main/ - run it before every idf.py
+#    echoes the llgo_net_* and llgo_tls_* sets separately; the ws package
+#    is pure Go and contributes no glue symbols). It also syncs the
+#    pkg/esp/*/glue templates into main/ - run it before every idf.py
 #    build.
 cd idfproj/host && ./make-artifact.sh /tmp/llgo-wifi
 
@@ -145,28 +154,50 @@ cd .. && docker run --rm -v "$PWD":/project -w /project \
     espressif/idf:latest bash -c \
     'idf.py set-target esp32s31 && idf.py build && idf.py merge-bin -o merged-binary.bin'
 
-# 3. Back at the demo root: host-side peers for the net and tls probes
-#    (echosrv echoes everything back until the firmware closes; tlssrv is
-#    the crypto/tls echo that terminates the tls probe's sessions). The
-#    firmware connects to the emulator's NAT gateway alias
-#    192.168.4.1:<port>, which lands on these listeners.
-cd .. && go run ./idfproj/host/echosrv 127.0.0.1:9000 &
-go run ./idfproj/host/tlssrv &
+# 3. Back at the demo root: host-side peer(s) for the probes. For a full
+#    run (net + tls + ws), wssrv alone covers everything: it sniffs each
+#    connection and serves the raw echo (9000), the TLS echo (9443) and
+#    the two WebSocket endpoints (ws://9000, wss://9443). wssrv is a
+#    deliberately lenient acceptance peer: it does not validate
+#    Sec-WebSocket-Version (the client always sends 13; a strict peer may
+#    reject a wrong version - recorded as a known peer property, see
+#    P6-NOTES). For a
+#    net/tls-only run the dedicated echosrv/tlssrv of the earlier phases
+#    work unchanged. The firmware connects to the emulator's NAT gateway
+#    alias 192.168.4.1:<port>, which lands on these listeners.
+cd .. && go run ./idfproj/host/wssrv &
+#    ... or, for a net/tls-only run:
+#      go run ./idfproj/host/echosrv 127.0.0.1:9000 &
+#      go run ./idfproj/host/tlssrv &
 
 # 4. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword;
 #    --psram-size matches the board's 16 MiB PSRAM, without it the Go heap
-#    cannot grow). The PASS gate exits as soon as both authmodes verified;
-#    a full-coverage run (net resolve + loopback + every heap mark) exits on
-#    "[go] wifi done" instead - the PASS-gate string kills the run before
-#    those best-effort items execute.
+#    cannot grow). The PASS gate exits as soon as the ws probe has verified
+#    all three sessions (which implies net and tls passed ahead of it); a
+#    full-coverage run (net resolve + loopback + every heap mark, plus the
+#    ws probe's post-close marks) exits on "[go] ws done" instead - the
+#    PASS-gate string kills the run before those trailing marks execute.
 while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
 ~/.local/bin/esp-emu --chip esp32s31 --firmware idfproj/build/merged-binary.bin \
     --console usb-jtag --timeout 150s --psram-size 16M \
     --wifi-ssid myssid --wifi-password mypassword \
-    --exit-on "[go] tls PASS"
-#    ... or: --exit-on "[go] wifi done"  (full coverage)
+    --exit-on "[go] ws PASS"
+#    ... or: --exit-on "[go] ws done"  (full coverage)
 rmdir /tmp/esp-emu.lock
-kill %1 %2   # echosrv, tlssrv
+kill %1   # wssrv (or %1 %2 %3 for the echosrv/tlssrv pair)
+
+# 4b. Recorded negative shapes (reproduction runs, NOT acceptance runs -
+#     both are expected to fail):
+#     - no WebSocket peer: replace wssrv with the echosrv/tlssrv pair
+#       (step 3's alt) and run with --exit-on "[go] ws done". The ws
+#       probe's GET lands on the raw echo, the plain session fails with
+#       WS_ERR_NOT_WEBSOCKET and "[go] ws FAIL plain"; PASS and done
+#       never print and the run ends at the 150 s timeout
+#       (logs/p6c-emu-negws.log in P6-NOTES).
+#     - no PSRAM: add --psram-size 0. net/tls/plain-ws pass, the wss
+#       handshake succeeds, and the first wss write fails with -132 (PSA
+#       AES context allocation under the tight heap - a known
+#       configuration limitation, see P6-NOTES; logs/p6c-emu-nopsram.log).
 ```
 
 Subnet note: the probe hardcodes the emulator's NAT addresses
@@ -231,15 +262,39 @@ Each dial writes a 256-byte pseudo-random pattern, reads the echo back in
 short reads, compares, and closes with a graceful TLS close_notify (the
 host side records it as "peer sent TLS close_notify" in the tlssrv log -
 an abrupt TCP close would instead show up as a connection-reset error).
-`[go] tls PASS` is the acceptance gate; without a compiled-in CA the
+`[go] tls PASS` is the tls probe's gate; without a compiled-in CA the
 VERIFY_REQUIRED phase reports SKIP and the probe ends at "[go] tls done"
-without printing PASS, so a `--exit-on "[go] tls PASS"` run in that shape
-times out at the 150 s limit instead of exiting (use
-`--exit-on "[go] tls done"`), the same convention as the scan-only wifi
-run. A FAIL line ends the probe without the done marker, so that shape
-also ends at the 150 s timeout - a missing "[go] tls done" means something
-real broke. The certificates are valid from 1970 so the guest's frozen
-epoch wall clock passes the validity check.
+without printing PASS, so a gate run in that shape times out at the 150 s
+limit instead of exiting (the overall acceptance gate is the ws probe's,
+see below), the same convention as the scan-only wifi run. A FAIL line
+ends the probe without the done marker, so that shape also ends at the
+150 s timeout - a missing "[go] tls done" means something real broke. The
+certificates are valid from 1970 so the guest's frozen epoch wall clock
+passes the validity check.
+
+After the tls probe, `wsProbe` runs `pkg/esp/ws` - the pure-Go RFC 6455
+client - over the transports the earlier probes already proved
+(`[go] ws ...` lines): first a crypto smoke of the in-package SHA-1 and
+base64 (`sha1("abc")`, the RFC 6455 section 1.3 accept-key example, RFC
+4648 vectors - the stdlib versions are unlinkable on this target), then
+three sessions, each handshake + 256-byte binary echo + ping/pong +
+closing handshake: `ws://192.168.4.1:9000/ws` over a plain TCP dial,
+`wss://192.168.4.1:9443/ws` with a VERIFY_NONE TLSDial, and the same with
+the compiled-in CA (VERIFY_REQUIRED, SKIP without a compiled-in CA).
+The VERIFY_REQUIRED session verifies the certificate chain only: the tls
+package pins no hostname (`set_hostname(NULL)`, its documented
+intentional exemption), so the acceptance cert's SAN of 127.0.0.1 never
+conflicts with the 192.168.4.1 the firmware dials - a hostname match
+would fail there, and that mismatch is by design. The
+sessions run strictly sequentially on one goroutine. `[go] ws PASS` is
+the overall acceptance gate: it fires only when all three sessions
+verified (net and tls have already passed ahead of it). The FAIL and
+SKIP conventions are the same as the tls probe's: a FAIL or a missing CA
+never prints PASS; the SKIP shape ends at "[go] ws done" (use
+`--exit-on "[go] ws done"` to capture it), a FAIL ends at the 150 s
+timeout. The host-side evidence for each closing handshake is the wssrv
+log line "close handshake (close code 1000)"; the echo and pong show up
+as "echoed 256 bytes" / the upgraded line in the same log.
 
 Without credentials the run is scan-only: after the scan, and with PSRAM
 enabled, the program keeps 6 MiB live in the Go heap with a collection
