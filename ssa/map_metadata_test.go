@@ -34,6 +34,15 @@ func TestWasmMapMetadata(t *testing.T) {
 		field("A", types.Typ[types.Uint8]), field("B", types.Typ[types.Uint16]),
 		field("C", types.Typ[types.Uint32]), field("P", types.NewPointer(types.Typ[types.Uint32])),
 	}, nil)
+	blankKey := types.NewStruct([]*types.Var{
+		field("A", types.Typ[types.Int64]), field("_", types.Typ[types.Uint64]), field("B", types.Typ[types.Int64]),
+	}, nil)
+	floatKey := types.NewStruct([]*types.Var{
+		field("A", types.Typ[types.Uint8]), field("F", types.Typ[types.Float64]),
+	}, nil)
+	aggregateKey := types.NewStruct([]*types.Var{
+		field("A", types.Typ[types.Uint8]), field("B", types.NewArray(types.Typ[types.Uint64], 1)),
+	}, nil)
 	namedString := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage("keys", "keys"), "Text", nil), types.Typ[types.String], nil)
 	keys := []struct {
 		typ  types.Type
@@ -61,6 +70,9 @@ func TestWasmMapMetadata(t *testing.T) {
 		{types.NewStruct([]*types.Var{field("A", types.Typ[types.Int64]), field("B", types.Typ[types.Uint64])}, nil), ".memhash128"},
 		{paddedKey, ".typehash"},
 		{mixedKey, ".typehash"},
+		{blankKey, ".typehash"},
+		{floatKey, ".typehash"},
+		{aggregateKey, ".typehash"},
 		{types.NewStruct([]*types.Var{field("_", types.Typ[types.Int64])}, nil), ".typehash"},
 		{types.NewArray(types.Typ[types.String], 2), ".typehash"},
 		{types.NewInterfaceType(nil, nil).Complete(), ".typehash"},
@@ -103,7 +115,7 @@ func TestWasmMapMetadata(t *testing.T) {
 						want = ".memhash32"
 					}
 				}
-				nativeScalar := tc.arch == "amd64" && (key.typ == paddedKey || key.typ == mixedKey)
+				nativeScalar := tc.arch == "amd64" && (key.typ == paddedKey || key.typ == mixedKey || key.typ == blankKey)
 				if nativeScalar {
 					keyName, _ := prog.abi.TypeName(key.typ)
 					want = "_llgo_hash." + keyName
