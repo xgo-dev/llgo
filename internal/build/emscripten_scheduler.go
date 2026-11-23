@@ -28,7 +28,7 @@ const (
 // Compile the same runtime for every executable in this profile. The link
 // supplies the marker when it supplies the normal scheduler.
 func emscriptenSchedulerProofProfile(conf *Config, target *crosscompile.Export) bool {
-	return isEmscriptenNamedTarget(conf) && sizeCodecBuild(conf, cl.Options{}) &&
+	return isEmscriptenNamedTarget(conf) && emscriptenDirectSizeBuild(conf, cl.Options{}) &&
 		conf.DebugArtifactMode == DebugArtifactNone && needsWasmFinalization(conf) && !conf.goGlobalDCEEnabled() &&
 		slices.Contains(target.LDFLAGS, "-sASYNCIFY=1") &&
 		!slices.Contains(target.BuildTags, "llgo.wasm.workers")
@@ -44,8 +44,16 @@ func canProbeEmscriptenScheduler(ctx *context, inputs *linkPruningInputs) bool {
 	if !slices.Contains(ctx.crossCompile.BuildTags, emscriptenSchedulerProofTag) ||
 		ctx.emscriptenDirectMain || !canUseEmscriptenDirectMain(ctx) ||
 		conf.PCLNMode == PCLNExternal || conf.GenLL || conf.CheckLLFiles ||
-		len(ctx.initial) != 1 || !ctx.wasmClosedProgram || inputs == nil || inputs.opaqueAsmPkg != "" ||
+		len(ctx.initial) != 1 ||
 		conf.LinkOptions.ExternalLinkerFlags != "" || os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" {
+		return false
+	}
+	// The opt-in path has already checked reachable SSA and rejected hidden
+	// inputs. The linker must still prove that the scheduler is unreachable.
+	if ctx.emscriptenMinimalHost {
+		return true
+	}
+	if !ctx.wasmClosedProgram || inputs == nil || inputs.opaqueAsmPkg != "" {
 		return false
 	}
 	// Unknown host entries can reenter Go, and foreign objects can suspend
@@ -148,11 +156,25 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		}
 	}
 
-	if len(plan.directWasmInputs) != 0 {
-		probeDir, err := os.MkdirTemp(dir, "direct-*")
-		if err != nil {
-			return ctx, dir, err
+	if ctx.emscriptenMinimalHost {
+		inputs := plan.directWasmInputs
+		if ctx.emscriptenDirectMain {
+			inputs = plan.linkInputs
 		}
+		if len(inputs) != 0 {
+			probe := newLinkExecutionContext(ctx, plan)
+			configureEmscriptenDirectLink(&probe.crossCompile)
+			configureEmscriptenMinimalLink(probe)
+			selected, probeDir, err := tryStagedEmscriptenLink(probe, &local, dir, inputs, "minimal host", verbose)
+			if err != nil {
+				return ctx, dir, err
+			}
+			if selected != nil {
+				return selected, probeDir, nil
+			}
+		}
+	}
+	if len(plan.directWasmInputs) != 0 {
 		probe := newLinkExecutionContext(ctx, plan)
 		configureEmscriptenDirectLink(&probe.crossCompile)
 		feature := "scheduler"
@@ -160,25 +182,44 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 			configureEmscriptenLibcLink(probe)
 			feature = "Go allocator"
 		}
-		probe.crossCompile.LDFLAGS = append(probe.crossCompile.LDFLAGS, "-sERROR_ON_UNDEFINED_SYMBOLS=1")
-		var diagnostics bytes.Buffer
-		probe.linkDiagnostics = &diagnostics
-		attempt := local
-		attempt.outputPath = filepath.Join(probeDir, filepath.Base(output))
-		attempt.linkInputs = plan.directWasmInputs
-		if err := executeMainLink(probe, &attempt, verbose); err == nil {
-			_, _ = diagnostics.WriteTo(os.Stderr)
-			if ctx.shouldPrintCommands(verbose) {
-				fmt.Fprintf(os.Stderr, "llgo: omit Emscripten %s after link reachability check\n", feature)
-			}
-			return probe, probeDir, nil
-		}
-		if err := os.RemoveAll(probeDir); err != nil {
+		selected, probeDir, err := tryStagedEmscriptenLink(probe, &local, dir, plan.directWasmInputs, feature, verbose)
+		if err != nil {
 			return ctx, dir, err
 		}
-		if ctx.shouldPrintCommands(verbose) {
-			fmt.Fprintf(os.Stderr, "llgo: retain Emscripten %s after link reachability check\n", feature)
+		if selected != nil {
+			return selected, probeDir, nil
 		}
 	}
 	return ctx, dir, executeMainLink(ctx, &local, verbose)
+}
+
+func tryStagedEmscriptenLink(probe *context, plan *mainLinkPlan, dir string, inputs []string, feature string, verbose bool) (*context, string, error) {
+	probeDir, err := os.MkdirTemp(dir, "direct-*")
+	if err != nil {
+		return nil, "", err
+	}
+	probe.crossCompile.LDFLAGS = append(probe.crossCompile.LDFLAGS, "-sERROR_ON_UNDEFINED_SYMBOLS=1")
+	var diagnostics bytes.Buffer
+	probe.linkDiagnostics = &diagnostics
+	attempt := *plan
+	attempt.outputPath = filepath.Join(probeDir, filepath.Base(plan.outputPath))
+	attempt.linkInputs = inputs
+	if err := executeMainLink(probe, &attempt, verbose); err == nil {
+		_, _ = diagnostics.WriteTo(os.Stderr)
+		if probe.shouldPrintCommands(verbose) {
+			if feature == "minimal host" {
+				fmt.Fprintln(os.Stderr, "llgo: select minimal Emscripten host")
+			} else {
+				fmt.Fprintf(os.Stderr, "llgo: omit Emscripten %s after link reachability check\n", feature)
+			}
+		}
+		return probe, probeDir, nil
+	}
+	if err := os.RemoveAll(probeDir); err != nil {
+		return nil, "", err
+	}
+	if probe.shouldPrintCommands(verbose) {
+		fmt.Fprintf(os.Stderr, "llgo: retain Emscripten %s after link reachability check\n", feature)
+	}
+	return nil, "", nil
 }

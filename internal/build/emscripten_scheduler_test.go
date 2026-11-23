@@ -31,6 +31,14 @@ func TestEmscriptenSchedulerProofProfile(t *testing.T) {
 	if emscriptenSchedulerProofProfile(&conf, &workers) {
 		t.Fatal("worker build enabled the proof")
 	}
+	conf.LTO = lto.Off
+	if emscriptenSchedulerProofProfile(&conf, &target) {
+		t.Fatal("ordinary DCE build enabled the scheduler probe")
+	}
+	conf.WasmMinimalHost = true
+	if !emscriptenSchedulerProofProfile(&conf, &target) {
+		t.Fatal("opt-in DCE build did not enable the scheduler probe")
+	}
 	conf.WasmOpt = WasmOptOff
 	if emscriptenSchedulerProofProfile(&conf, &target) {
 		t.Fatal("build without staged Wasm finalization enabled the proof")
@@ -168,5 +176,33 @@ func TestEmscriptenSchedulerEntryPackageFingerprint(t *testing.T) {
 	section := packageSection{EmscriptenRuntimeFree: true}
 	if section.empty() {
 		t.Fatal("allocation-free entry must participate in the archive fingerprint")
+	}
+}
+
+func TestEmscriptenMinimalHostLink(t *testing.T) {
+	t.Setenv("LLGO_TEST_FINAL_WASM", "1")
+	t.Setenv("LLGO_TEST_LINKER_HELPER", "write-wasm")
+	ctx := &context{
+		buildConf: &Config{Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm",
+			Target: "emscripten", WasmStrip: WasmStripAll, DebugArtifactMode: DebugArtifactNone, PCLNMode: PCLNNone},
+		crossCompile: crosscompile.Export{
+			WasmProvider: crosscompile.WasmProviderEmscripten, CC: os.Args[0],
+			LDFLAGS: []string{"-sASYNCIFY=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV",
+				"-sMALLOC=none", "--js-library", "browser_fs.js", emscriptenBrowserFSRoot},
+		},
+		emscriptenMinimalHost: true,
+	}
+	plan := &mainLinkPlan{linkInputs: []string{"normal.o"}, directWasmInputs: []string{"direct.o"}}
+	result, _, err := linkStagedWasm(ctx, plan, "app", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.omitEmscriptenBrowserHost ||
+		!slices.Contains(result.effectiveLinkArgs, "-sFILESYSTEM=0") ||
+		!slices.Contains(result.effectiveLinkArgs, "-sMALLOC=none") ||
+		slices.Contains(result.effectiveLinkArgs, "-sASYNCIFY=1") ||
+		slices.Contains(result.effectiveLinkArgs, "-sEXPORTED_RUNTIME_METHODS=FS,ENV") ||
+		slices.Contains(result.effectiveLinkArgs, "browser_fs.js") {
+		t.Fatalf("unexpected minimal host flags: %q", result.effectiveLinkArgs)
 	}
 }

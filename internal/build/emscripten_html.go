@@ -90,19 +90,34 @@ func configureEmscriptenESMHost(ctx *context, output string) {
 // filesystem calls. Keep the public Emscripten Module.FS export.
 // A speculative link must still reject unresolved imports.
 func configureEmscriptenLibcLink(ctx *context) {
+	omitEmscriptenFSBridge(ctx)
+	for i, flag := range ctx.crossCompile.LDFLAGS {
+		if flag == "-sMALLOC=none" {
+			ctx.crossCompile.LDFLAGS[i] = "-sMALLOC=emmalloc"
+		}
+	}
+}
+
+func configureEmscriptenMinimalLink(ctx *context) {
+	omitEmscriptenFSBridge(ctx)
+	flags := slices.DeleteFunc(ctx.crossCompile.LDFLAGS, func(flag string) bool {
+		return strings.HasPrefix(flag, "-sEXPORTED_RUNTIME_METHODS=")
+	})
+	ctx.crossCompile.LDFLAGS = append(flags, "-sFILESYSTEM=0", "-sEXPORTED_RUNTIME_METHODS=ENV", "--closure", "1")
+}
+
+func omitEmscriptenFSBridge(ctx *context) {
 	original := ctx.crossCompile.LDFLAGS
 	flags := make([]string, 0, len(original))
 	for i := 0; i < len(original); i++ {
 		flag := original[i]
 		switch flag {
-		case "-sMALLOC=none":
-			flag = "-sMALLOC=emmalloc"
 		case emscriptenBrowserFSRoot:
 			continue
-		case "--pre-js", "--js-library":
+		case "--pre-js", "--extern-pre-js", "--js-library":
 			if i+1 < len(original) {
 				switch filepath.Base(original[i+1]) {
-				case wasmFSScriptName, "browser_fs.js", "browser_fs_snapshot.js":
+				case wasmFSScriptName, "wasm_fs_import.mjs", "browser_fs.js", "browser_fs_snapshot.js":
 					i++
 					continue
 				}

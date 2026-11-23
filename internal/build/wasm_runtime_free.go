@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -62,8 +63,17 @@ func configureRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	runtimeFree, usesCPrintf := wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe)
-	if !runtimeFree {
+	roots := wasmReflectRoots(ctx)
+	runtimeFree, usesCPrintf := wasmRuntimeFreeFunctions(roots, linkname, globalSafe)
+	minimalHost := directMain && conf.WasmMinimalHost && conf.PCLNMode != PCLNExternal &&
+		!conf.GenLL && !conf.CheckLLFiles
+	if minimalHost && !runtimeFree {
+		closedCall := func(fn *ssa.Function) bool {
+			return fn.Pkg != nil && ctx.patches[fn.Pkg.Pkg.Path()].Alt == nil && linkname(fn) == ""
+		}
+		minimalHost = ctx.prog.GCRootsEnabled() && wasmSynchronousFunctions(roots, closedCall, globalSafe)
+	}
+	if !runtimeFree && !minimalHost {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -89,7 +99,8 @@ func configureRuntimeFree(ctx *context) {
 		}
 		for _, file := range pkg.Syntax {
 			for _, imp := range file.Imports {
-				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" {
+				if imp.Path.Value == `"C"` || imp.Path.Value == "`C`" ||
+					!runtimeFree && (imp.Path.Value == `"unsafe"` || imp.Path.Value == "`unsafe`") {
 					return
 				}
 			}
@@ -132,6 +143,10 @@ func configureRuntimeFree(ctx *context) {
 			return
 		}
 	}
+	ctx.emscriptenMinimalHost = minimalHost
+	if !runtimeFree {
+		return
+	}
 	if directMain {
 		ctx.emscriptenDirectMain = true
 		if conf.Verbose || conf.PrintCommands {
@@ -154,19 +169,26 @@ func configureRuntimeFree(ctx *context) {
 	}
 }
 
+func emscriptenDirectSizeBuild(conf *Config, frontend cl.Options) bool {
+	return sizeCodecBuild(conf, frontend) || conf.WasmMinimalHost && closedSizeBuild(conf, frontend)
+}
+
 // Native inputs and externally selected flags can introduce suspending calls
 // that have no Go SSA body. Use the fixed Emscripten executable profiles.
 func canUseEmscriptenDirectMain(ctx *context) bool {
 	conf, target := ctx.buildConf, ctx.crossCompile
 	tags := splitSourcePatchBuildTags(conf.Tags)
-	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, ctx.frontendOptions) &&
+	return !conf.disableSizeSpecialization && emscriptenDirectSizeBuild(conf, ctx.frontendOptions) &&
 		conf.DebugArtifactMode == DebugArtifactNone && conf.Goos == "js" && conf.Goarch == "wasm" &&
 		(conf.Target == "emscripten" || conf.Target == "emscripten-memory64") &&
 		target.WasmProvider == crosscompile.WasmProviderEmscripten && slices.Contains(target.LDFLAGS, "-sASYNCIFY=1") &&
 		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
 		!slices.Contains(target.BuildTags, "llgo.wasm.workers") && !slices.Contains(tags, "llgo.wasm.workers") &&
 		!slices.Contains(tags, wasmReflectLibffiTag) &&
-		os.Getenv("EMCC_CFLAGS") == "" && ctx.commands.lookup("EMCC_CFLAGS") == ""
+		os.Getenv("EMCC_CFLAGS") == "" && ctx.commands.lookup("EMCC_CFLAGS") == "" &&
+		(!conf.WasmMinimalHost || !conf.goGlobalDCEEnabled() && needsWasmFinalization(conf) &&
+			os.Getenv("CCFLAGS") == "" && ctx.commands.lookup("CCFLAGS") == "" &&
+			os.Getenv("CFLAGS") == "" && ctx.commands.lookup("CFLAGS") == "")
 }
 
 // Apply the startup proof to the final link only. Package manifests use the

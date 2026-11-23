@@ -426,6 +426,7 @@ func UpdateConfig(conf *build.Config) error {
 	if LTO.Specified {
 		conf.LTO = LTO.Mode
 	}
+	conf.WasmMinimalHost = WasmMinimalHost
 	if WasmStrip != "" {
 		conf.WasmStrip = build.WasmStripMode(WasmStrip)
 	}

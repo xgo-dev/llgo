@@ -68,6 +68,12 @@ The supported WebAssembly profiles combine a memory ABI with a host ABI.
 JavaScript and WASI host contracts. See the [WebAssembly proposal](doc/wasm-proposal.md)
 for the compatibility contract and acceptance plan.
 
+With `-Oz -deadcodedrop -globaldce=false`, `-wasm-minimal-host` tries a
+synchronous Emscripten link without `Module.FS`. The collector remains available
+for allocating Go programs. File access, callbacks, worker builds and unknown
+inputs keep the regular host. The final link selects the host from the same
+package archives.
+
 WebAssembly goroutine stacks have fixed sizes. For deeply recursive workloads,
 set `-goroutine-stack-size=2MB` when building (the existing `-pthread-stack-size`
 flag remains an alias). This sets both the goroutine stack and its Asyncify

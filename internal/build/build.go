@@ -165,6 +165,7 @@ type Config struct {
 	OptLevel                  optlevel.Level
 	WasmOpt                   WasmOptMode
 	WasmStrip                 WasmStripMode
+	WasmMinimalHost           bool
 	LTO                       lto.Mode
 	LTOPlugin                 lto.PassPlugin
 	BinPath                   string
@@ -1696,6 +1697,8 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		commands:     ctx.commands,
 		pclnExternal: plan.pclnExternal,
 
+		emscriptenDirectMain:  ctx.emscriptenDirectMain,
+		emscriptenMinimalHost: ctx.emscriptenMinimalHost,
 		wasmRuntimeFree:       ctx.wasmRuntimeFree,
 		wasmClosedProgram:     ctx.wasmClosedProgram,
 		embeddedClosedProgram: ctx.embeddedClosedProgram,
@@ -1870,6 +1873,10 @@ func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworker
 		export.LDFLAGS = append(export.LDFLAGS,
 			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", emscriptenAsyncifyExportsJS),
 		)
+	}
+	if export.WasmProvider == crosscompile.WasmProviderEmscripten || export.WasmProvider == crosscompile.WasmProviderGoJS {
+		export.LDFLAGS = append(export.LDFLAGS, "--js-library",
+			filepath.Join(env.LLGoROOT(), "targets", "emscripten-asyncify-state.js"))
 	}
 	if conf.Goos == "js" && export.WasmProvider == crosscompile.WasmProviderEmscripten {
 		export.LDFLAGS = append(export.LDFLAGS,
@@ -2093,6 +2100,7 @@ type context struct {
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
 
+	emscriptenMinimalHost     bool // reachable code permits the opt-in synchronous host
 	omitEmscriptenBrowserHost bool // runtime-free link excludes the Go filesystem bridge
 
 	embeddedClosedProgram bool

@@ -25,7 +25,7 @@ import (
 )
 
 func TestWasmFinalFlags(t *testing.T) {
-	for _, args := range [][]string{{}, {"-Oz", "-wasm-strip=debug"}, {"-Os", "-wasm-strip=all"}, {"-wasm-strip=none"}} {
+	for _, args := range [][]string{{}, {"-Oz", "-wasm-strip=debug", "-wasm-minimal-host"}, {"-Os", "-wasm-strip=all"}, {"-wasm-strip=none"}} {
 		fs := flag.NewFlagSet("wasm", flag.ContinueOnError)
 		AddBuildFlags(fs)
 		if err := fs.Parse(args); err != nil {
@@ -35,7 +35,7 @@ func TestWasmFinalFlags(t *testing.T) {
 		if err := UpdateConfig(conf); err != nil {
 			t.Fatal(err)
 		}
-		if conf.WasmOpt != "" || string(conf.WasmStrip) != WasmStrip {
+		if conf.WasmOpt != "" || string(conf.WasmStrip) != WasmStrip || conf.WasmMinimalHost != WasmMinimalHost {
 			t.Fatalf("config=%+v", conf)
 		}
 	}

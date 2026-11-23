@@ -314,6 +314,31 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                      expected, "single"], env, timeout=90)
         print(f"{target} Full LTO {fixture} passed", flush=True)
 
+def emscripten_minimal_host_probe(llgo, directory, env, target, runner, browser):
+    cases = (
+        ("wasm-synchronous-gc", "wasm synchronous GC ok", True),
+        ("wasm-standard-files", "standard files and redirected stdout ok", False),
+    )
+    for fixture, expected, minimal in cases:
+        folder = directory / f"{target}-minimal-{fixture}"
+        folder.mkdir()
+        artifact = folder / "app.mjs"
+        command([str(llgo), "build", f"-target={target}", "-Oz", "-lto=full",
+                 "-deadcodedrop", "-globaldce=false", "-debug-artifact=none",
+                 "-wasm-minimal-host", "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
+        manifest = json.loads(artifact.with_suffix(".wasm-manifest.json").read_text(encoding="utf-8"))
+        if ("-sFILESYSTEM=0" in manifest["link_flags"]) != minimal:
+            raise RuntimeError(f"{target} {fixture}: wrong filesystem link policy")
+        if artifact.with_name("wasm_fs.js").exists() == minimal:
+            raise RuntimeError(f"{target} {fixture}: wrong filesystem sidecar policy")
+        if command([*runner, str(artifact)], env, timeout=90).strip() != expected:
+            raise RuntimeError(f"{target} {fixture}: minimal-host request changed the result")
+        if browser:
+            command([runner[0], str(ROOT / "dev/test_wasm_browser.mjs"), str(artifact), expected],
+                    env, timeout=90)
+        print(f"{target} {fixture} passed with -wasm-minimal-host", flush=True)
+
+
 def emscripten_startup_probe(llgo, directory, env, target, runner, browser):
     marker = "llgo: omit Emscripten scheduler for a synchronous executable"
     startup_dir = directory / f"{target}-startup"
@@ -519,6 +544,7 @@ def main():
                 runner = [node, str(ROOT / "targets" / f"{target}-runner.mjs")]
                 full_lto_codec_probe(llgo, directory, env, target, runner, ".mjs", args.browser)
                 emscripten_startup_probe(llgo, directory, env, target, runner, args.browser)
+                emscripten_minimal_host_probe(llgo, directory, env, target, runner, args.browser)
             return
         if args.target == "native":
             full_lto_codec_probe(llgo, directory, env, "native", [], "")

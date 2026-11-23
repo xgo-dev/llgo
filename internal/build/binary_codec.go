@@ -38,7 +38,11 @@ func prepareBinaryCodecSupport(conf *Config, frontend cl.Options, goroot string,
 }
 
 func sizeCodecBuild(conf *Config, frontend cl.Options) bool {
-	return conf.OptLevel == optlevel.Oz && conf.ltoMode() == lto.Full && conf.deadcodeDropEnabled() &&
+	return conf.ltoMode() == lto.Full && closedSizeBuild(conf, frontend)
+}
+
+func closedSizeBuild(conf *Config, frontend cl.Options) bool {
+	return conf.OptLevel == optlevel.Oz && conf.deadcodeDropEnabled() &&
 		conf.BuildMode == BuildModeExe && conf.Mode != ModeGen && conf.Coverage == nil &&
 		conf.ModuleHook == nil && !frontend.Debug && !frontend.DebuggerFrames &&
 		!conf.LTOPlugin.Enabled() && !frontendCacheEnabled(conf) && len(conf.SourceOverlay) == 0
