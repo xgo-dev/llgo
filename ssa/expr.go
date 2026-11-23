@@ -1087,13 +1087,16 @@ func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
 //
 //	t1 = changetype *int <- IntPtr (t0)
 func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
+	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
+	if t.kind == vkIface && x.kind == vkIface && !types.Identical(t.RawType(), x.RawType()) {
+		return b.ChangeInterface(t, x)
+	}
 	if t.kind == vkSIMD {
 		if x.kind == vkSIMD {
 			return Expr{x.impl, t}
 		}
 		return Expr{b.simdFromStorage(x.impl, t), t}
 	}
-	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
 	if b.Prog.isStdcallType(t.raw.Type) && !b.Prog.isStdcallType(x.raw.Type) {
 		return b.stdcallCallback(t.raw.Type, x)
 	}

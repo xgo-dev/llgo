@@ -237,8 +237,7 @@ type M interface {
 // CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
 // CHECK: insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }
-// CHECK: %[[ASSERT_TYPE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"
-// CHECK: %[[ASSERT_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr %[[ASSERT_TYPE]])
+// CHECK: call %"{{.*}}iface" @"{{.*}}/runtime/internal/runtime.ConvertIface"(ptr @_llgo_main.I, %"{{.*}}iface" zeroinitializer, ptr @"_llgo_ifaceconv${{.*}}")
 
 // CHECK-LABEL: define i64 @"main.main$1"(){{.*}} {
 // CHECK: ret i64 400

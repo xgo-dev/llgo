@@ -206,6 +206,20 @@ func addItab(i *Itab) *Itab {
 	return i
 }
 
+// ConvertIface preserves the destination interface identity. The cache holds
+// one immutable itab, so readers observe its type and methods atomically.
+func ConvertIface(inter *interfacetype, src iface, cache *unsafe.Pointer) iface {
+	if src.tab == nil || src.tab.inter == inter {
+		return src
+	}
+	if tab := (*itab)(loadItabPointer(cache)); tab != nil && tab._type == src.tab._type {
+		return iface{tab, src.data}
+	}
+	tab := NewItab(inter, src.tab._type)
+	storeItabPointer(cache, unsafe.Pointer(tab))
+	return iface{tab, src.data}
+}
+
 // NewItab returns a new itab.
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {

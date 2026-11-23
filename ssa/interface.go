@@ -59,11 +59,13 @@ func (b Builder) newItab(tintf, typ Expr) Expr {
 }
 
 type staticItabKey struct {
-	intf     *types.Interface
+	intf     types.Type
 	concrete types.Type
 }
 
-func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf, typ Expr) (Expr, bool) {
+func (b Builder) staticItab(intf types.Type, concrete types.Type, tintf, typ Expr) (Expr, bool) {
+	intf = types.Unalias(intf)
+	rawIntf := intf.Underlying().(*types.Interface)
 	prog := b.Prog
 	if rawIntf.NumMethods() == 0 || concrete == nil {
 		return Expr{}, false
@@ -74,11 +76,11 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 		return Expr{}, false
 	}
 	rawIntf = rawIntf.Complete()
-	key := staticItabKey{rawIntf, concrete}
+	key := staticItabKey{intf, concrete}
 	if itab, ok := b.Pkg.staticItabByType[key]; ok {
 		return itab, true
 	}
-	intfName, _ := prog.abi.TypeName(rawIntf)
+	intfName, _ := prog.abi.TypeName(intf)
 	typeName, _ := prog.abi.TypeName(concrete)
 	sum := sha256.Sum256([]byte(intfName + "\x00" + typeName))
 	name := "_llgo_itab$" + base64.RawURLEncoding.EncodeToString(sum[:])
@@ -337,12 +339,16 @@ func (p Package) constantFingerprint(v llvm.Value) string {
 	return "(" + strings.Join(parts, ",") + ")"
 }
 
-func (b Builder) unsafeInterface(rawIntf *types.Interface, concrete types.Type, t Expr, data llvm.Value) llvm.Value {
+func (b Builder) unsafeInterface(intf types.Type, concrete types.Type, t Expr, data llvm.Value) llvm.Value {
+	intf = types.Unalias(intf)
+	rawIntf := intf.Underlying().(*types.Interface)
 	if rawIntf.Empty() {
 		return b.unsafeEface(t.impl, data)
 	}
-	tintf := b.abiType(rawIntf)
-	itab, ok := b.staticItab(rawIntf, concrete, tintf, t)
+	// Reflection uses the declared destination type when rebuilding an itab.
+	// Preserve named interface identity on compiler-generated paths as well.
+	tintf := b.abiType(intf)
+	itab, ok := b.staticItab(intf, concrete, tintf, t)
 	if ok && b.Prog.useRuntimeStaticItab() {
 		return b.unsafeIface(itab.impl, data)
 	}
@@ -492,22 +498,13 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 	}
 	if !directIfaceType(typ.raw.Type) {
 		if box, ok := b.staticIfaceBox(typ, x); ok {
-			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
+			return Expr{b.unsafeInterface(tinter.raw.Type, typ.raw.Type, tabi, box), tinter}
 		}
 		vptr := b.allocInterfaceBox(typ, heap)
 		b.Store(vptr, x)
-		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
+		return Expr{b.unsafeInterface(tinter.raw.Type, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
-	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
-	switch kind {
-	case abi.Indirect:
-		if box, ok := b.staticIfaceBox(typ, x); ok {
-			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
-		}
-		vptr := b.allocInterfaceBox(typ, heap)
-		b.Store(vptr, x)
-		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
-	}
+	_, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
 	value := x
 	if lvl > 0 {
 		for range lvl {
@@ -523,26 +520,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 			}
 		}
 	}
-	ximpl := value.impl
-	var u llvm.Value
-	switch kind {
-	case abi.Pointer:
-		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, ximpl), tinter}
-	case abi.Integer:
-		tu := prog.Uintptr()
-		u = llvm.CreateIntCast(b.impl, ximpl, tu.ll)
-	case abi.BitCast:
-		tu := prog.Uintptr()
-		if b.Prog.td.TypeAllocSize(typ.ll) < b.Prog.td.TypeAllocSize(tu.ll) {
-			u = llvm.CreateBitCast(b.impl, ximpl, prog.Uint32().ll)
-		} else {
-			u = llvm.CreateBitCast(b.impl, ximpl, tu.ll)
-		}
-	default:
-		panic("todo")
-	}
-	data := llvm.CreateIntToPtr(b.impl, u, prog.tyVoidPtr())
-	return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, data), tinter}
+	return Expr{b.unsafeInterface(tinter.raw.Type, typ.raw.Type, tabi, value.impl), tinter}
 }
 
 func (b Builder) allocInterfaceBox(typ Type, heap bool) Expr {
@@ -553,7 +531,6 @@ func (b Builder) allocInterfaceBox(typ Type, heap bool) Expr {
 }
 
 func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
-	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	prog := b.Prog
 	b.AssertNilDeref(ptr)
 
@@ -568,7 +545,7 @@ func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
 	dst := b.Convert(prog.VoidPtr(), vptr)
 	src := b.Convert(prog.VoidPtr(), ptr)
 	b.Call(b.Pkg.rtFunc("Typedmemmove"), tabi, dst, src)
-	return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
+	return Expr{b.unsafeInterface(tinter.raw.Type, typ.raw.Type, tabi, vptr.impl), tinter}
 }
 
 func (b Builder) recordUseIface(typ Type) {
@@ -701,9 +678,11 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 		eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
 		val = func() Expr { return x }
 	} else {
-		if rawIntf, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
+		if _, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
 			eq = b.InlineCall(b.Pkg.rtFunc("Implements"), tabi, tx)
-			val = func() Expr { return Expr{b.unsafeInterface(rawIntf, nil, tx, b.faceData(x.impl)), assertedTyp} }
+			val = func() Expr {
+				return Expr{b.unsafeInterface(assertedTyp.raw.Type, nil, tx, b.faceData(x.impl)), assertedTyp}
+			}
 		} else if assertedTyp.kind == vkClosure {
 			eq = b.InlineCall(b.Pkg.rtFunc("MatchesClosure"), tabi, tx)
 			val = func() Expr { return b.valFromData(assertedTyp, b.faceData(x.impl)) }
@@ -773,10 +752,22 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 //
 //	t1 = change interface interface{} <- I (t0)
 func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
-	rawIntf := typ.raw.Type.Underlying().(*types.Interface)
+	if types.Identical(typ.RawType(), x.RawType()) {
+		return Expr{x.impl, typ}
+	}
+	if x.kind == vkIface && !typ.RawType().Underlying().(*types.Interface).Empty() {
+		name, _ := b.Prog.abi.TypeName(typ.RawType())
+		sum := sha256.Sum256([]byte(name))
+		b.Pkg.ifaceConvCacheID++
+		cache := b.Pkg.NewVarEx("_llgo_ifaceconv$"+base64.RawURLEncoding.EncodeToString(sum[:])+"$"+strconv.FormatUint(b.Pkg.ifaceConvCacheID, 10), b.Prog.Pointer(b.Prog.VoidPtr()))
+		cache.InitNil()
+		cache.impl.SetLinkage(llvm.PrivateLinkage)
+		converted := b.Call(b.Pkg.rtFunc("ConvertIface"), b.abiType(typ.RawType()), x, cache.Expr)
+		return Expr{converted.impl, typ}
+	}
 	tabi := b.faceAbiType(x)
 	data := b.faceData(x.impl)
-	return Expr{b.unsafeInterface(rawIntf, nil, tabi, data), typ}
+	return Expr{b.unsafeInterface(typ.raw.Type, nil, tabi, data), typ}
 }
 
 // -----------------------------------------------------------------------------

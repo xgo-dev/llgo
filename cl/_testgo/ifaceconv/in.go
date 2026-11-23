@@ -121,11 +121,8 @@ func main() {
 // CHECK: [[NIL_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
 // CHECK: [[NIL_I2_OK:%.*]] = icmp ne ptr [[NIL_I2_TYPE]], null
 // CHECK: br i1 [[NIL_I2_OK]], label %{{.*}}, label %{{.*}}
-// Converting nil I2 to I1 derives the target itab from the nil dynamic type.
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: [[NIL_DYNAMIC_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: [[NIL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceconv.iface${{[-A-Za-z0-9_]+}}", ptr [[NIL_DYNAMIC_TYPE]])
+// Converting nil I2 to I1 uses the nil-preserving cached conversion helper.
+// CHECK: call %"{{.*}}iface" @"{{.*}}/runtime/internal/runtime.ConvertIface"(ptr @_llgo_main.I1, %"{{.*}}iface" zeroinitializer, ptr @"_llgo_ifaceconv${{.*}}")
 // C1 implements I0 and I1, but its dynamic type is tested against I2.
 // Zero-sized constants keep a runtime allocation: boxing them would mutate the shared sentinel.
 // CHECK: [[C1_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
@@ -172,7 +169,7 @@ func main() {
 // The successful C2-to-I2 assertion preserves C2's payload under a target itab.
 // CHECK: extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
 // CHECK: [[C2_I2_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
-// CHECK: [[C2_TARGET_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceconv.iface${{[-A-Za-z0-9_]+}}", ptr [[C2_I2_TYPE]])
+// CHECK: [[C2_TARGET_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
 // CHECK: [[C2_TARGET_IFACE_0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[C2_TARGET_ITAB]], 0
 // CHECK: [[C2_TARGET_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[C2_TARGET_IFACE_0]], ptr [[C2_I2_PAYLOAD]], 1
 // CHECK: insertvalue { %"{{.*}}iface", i1 } %{{.*}}, i1 true, 1
