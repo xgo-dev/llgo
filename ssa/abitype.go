@@ -139,9 +139,9 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, pu
 	case "":
 		equal = prog.Nil(prog.Type(equalFunc, GoDecl))
 	case "structequal", "arrayequal":
-		// Regular-memory values have no padding or special equality rules.
-		// A fixed-size helper avoids retaining field metadata for comparison.
 		if prog.target.effectiveGOARCH() == "wasm" && ab.IsRegularMemory(t) {
+			// Regular-memory values have no padding or special equality rules.
+			// A fixed-size helper avoids retaining field metadata for comparison.
 			equal = b.Pkg.regularMemoryEqual(uint64(ab.Size(t)))
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			typ := prog.Type(equal.raw.Type, GoDecl)
@@ -223,8 +223,9 @@ func (p Package) regularMemoryHash(size uint64) Expr {
 	return fn.Expr
 }
 
-// useScalarStructAlgorithm confines emitted code to small native structs
-// whose field operations are scalar and cannot panic. Padding is never read.
+// useScalarStructAlgorithm selects small non-regular-memory structs with Go
+// layout on 64-bit non-Wasm targets. Named fields must be integers or pointers.
+// The generated code ignores padding and blank fields.
 func (p Program) useScalarStructAlgorithm(t types.Type) bool {
 	strct, ok := t.Underlying().(*types.Struct)
 	if !ok || p.target.effectiveGOARCH() == "wasm" || p.GoWordSize() != 8 ||

@@ -4,6 +4,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,6 +27,13 @@ func TestWasmMapMetadata(t *testing.T) {
 	field := func(name string, typ types.Type) *types.Var {
 		return types.NewField(token.NoPos, nil, name, typ, false)
 	}
+	paddedKey := types.NewStruct([]*types.Var{
+		field("A", types.Typ[types.Byte]), field("B", types.Typ[types.Int64]),
+	}, nil)
+	mixedKey := types.NewStruct([]*types.Var{
+		field("A", types.Typ[types.Uint8]), field("B", types.Typ[types.Uint16]),
+		field("C", types.Typ[types.Uint32]), field("P", types.NewPointer(types.Typ[types.Uint32])),
+	}, nil)
 	namedString := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage("keys", "keys"), "Text", nil), types.Typ[types.String], nil)
 	keys := []struct {
 		typ  types.Type
@@ -51,7 +59,8 @@ func TestWasmMapMetadata(t *testing.T) {
 		{types.NewArray(types.Typ[types.Byte], 0), "_llgo_memhash.0"},
 		{types.NewStruct(nil, nil), "_llgo_memhash.0"},
 		{types.NewStruct([]*types.Var{field("A", types.Typ[types.Int64]), field("B", types.Typ[types.Uint64])}, nil), ".memhash128"},
-		{types.NewStruct([]*types.Var{field("A", types.Typ[types.Byte]), field("B", types.Typ[types.Int64])}, nil), ".typehash"},
+		{paddedKey, ".typehash"},
+		{mixedKey, ".typehash"},
 		{types.NewStruct([]*types.Var{field("_", types.Typ[types.Int64])}, nil), ".typehash"},
 		{types.NewArray(types.Typ[types.String], 2), ".typehash"},
 		{types.NewInterfaceType(nil, nil).Complete(), ".typehash"},
@@ -94,7 +103,18 @@ func TestWasmMapMetadata(t *testing.T) {
 						want = ".memhash32"
 					}
 				}
-				if !specialized {
+				nativeScalar := tc.arch == "amd64" && (key.typ == paddedKey || key.typ == mixedKey)
+				if nativeScalar {
+					keyName, _ := prog.abi.TypeName(key.typ)
+					want = "_llgo_hash." + keyName
+					keyGlobal := pkg.VarOf(keyName).impl
+					equal := keyGlobal.Initializer().Operand(0).Operand(7)
+					equalName := "_llgo_equal." + keyName
+					if !equal.Operand(1).IsNull() || equal.Operand(0).Name() != equalName ||
+						equal.Operand(0).IsDeclaration() || !containsLLVMValueNameSuffix(pkg.abiTypeFakeUseCache[keyGlobal], equalName) {
+						t.Fatalf("%s equality = %s, want reachable %s with no environment", key.typ, equal, equalName)
+					}
+				} else if !specialized {
 					want = ".typehash"
 				}
 				if !strings.HasSuffix(mapMetadataPointer(hasher.Operand(0)).Name(), want) {
@@ -126,6 +146,21 @@ func TestWasmMapMetadata(t *testing.T) {
 							t.Fatal("private bucket leaked into the reflection type list")
 						}
 					}
+				}
+			}
+			if tc.arch == "amd64" {
+				name, _ := prog.abi.TypeName(mixedKey)
+				var calls []string
+				for _, block := range pkg.FuncOf("_llgo_hash." + name).impl.BasicBlocks() {
+					for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+						if call := inst.IsACallInst(); !call.IsNil() {
+							_, width, _ := strings.Cut(call.CalledValue().Name(), ".memhash")
+							calls = append(calls, width)
+						}
+					}
+				}
+				if !slices.Equal(calls, []string{"8", "16", "32", "64"}) {
+					t.Fatalf("%s generated hash call widths = %v, want 8, 16, 32, 64", mixedKey, calls)
 				}
 			}
 			if specialized {
