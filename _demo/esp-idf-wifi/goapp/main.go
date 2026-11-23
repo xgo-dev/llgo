@@ -33,6 +33,12 @@ func produce(ch chan int, v int) {
 //go:linkname fixStreams C.llgoFixStreams
 func fixStreams()
 
+// heapMark prints the IDF heap watermarks at one pipeline stage.
+func heapMark(stage string) {
+	println("[go] wifi heap "+stage,
+		"free =", int(espwifi.HeapFree()), "min =", int(espwifi.HeapMin()))
+}
+
 func main() {
 	defer espwifi.Finish() // flush C stdio on every exit path
 	fixStreams()
@@ -70,9 +76,10 @@ func main() {
 		println("[go] unexpected tick delta:", delta)
 	}
 
-	// ---- WiFi pipeline (M0): C glue link check, one-shot setup, start and
-	// STA_START through the event mailbox. Scan (M1) and connect + DHCP
-	// (M2) extend this sequence.
+	// ---- WiFi pipeline. Heap marks bracket every stage on the IDF heap
+	// pool; the llgo GC heap is a separate static 256 KiB window and never
+	// appears in these numbers.
+	heapMark("baseline")
 	espwifi.PrintVersion()
 	println("[go] wifi: setup ...")
 	if e := espwifi.Setup(); e != 0 {
@@ -81,6 +88,7 @@ func main() {
 		return
 	}
 	println("[go] wifi setup err=0")
+	heapMark("init")
 
 	if e := espwifi.EventsRegister(); e != 0 {
 		println("[go] wifi events register err =", int(e), espwifi.ErrName(e))
@@ -105,6 +113,7 @@ func main() {
 	}
 	if ev, ok := espwifi.WaitEvent([]int32{espwifi.EvStaStart}, 300); ok {
 		println("[go] wifi STA_START")
+		heapMark("start")
 	} else {
 		println("[go] wifi: no STA_START in 3s, last event kind =", int(ev.Kind))
 		println("[go] wifi FAIL sta_start")
@@ -130,6 +139,7 @@ func main() {
 			"ch =", int(ap.Channel), "rssi =", int(ap.Rssi))
 	}
 	println("[go] wifi scan done")
+	heapMark("scan")
 
 	// Connect + DHCP (M2): esp_wifi_connect attempts once; a failed
 	// association/handshake arrives as EvStaDisconnected with a reason code.
@@ -166,6 +176,13 @@ func main() {
 	}
 	println("[go] wifi GOT_IP ip=" + espwifi.IPString(ip))
 	println("[go] wifi PASS ip=" + espwifi.IPString(ip))
+	heapMark("dhcp")
+
+	// Steady state: the WiFi stack keeps module-specific buffers parked
+	// while connected; give it 10 seconds and look again.
+	vTaskDelay(1000)
+	heapMark("steady+10s")
+	println("[go] wifi done")
 
 	println("[go] done")
 }

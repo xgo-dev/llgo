@@ -133,6 +133,16 @@ func DefaultSTA() (string, string) {
 // UART output again.
 func Finish() { finish() }
 
+// HeapFree returns the IDF heap pool's current free bytes
+// (esp_get_free_heap_size). It does not include the llgo GC heap, which is
+// a static 256 KiB window outside the IDF allocator.
+func HeapFree() uint32 { return heapFree() }
+
+// HeapMin returns the lowest point the IDF heap pool has ever reached
+// (esp_get_minimum_free_heap_size) - the watermark that catches transient
+// WiFi allocation bursts.
+func HeapMin() uint32 { return heapMin() }
+
 // IPString formats the address returned by GetIP / the GotIP event as a
 // dotted quad. The glue returns esp_netif's ip.addr: the four network-order
 // octets live in memory, and the little-endian RV32 load hands them to Go

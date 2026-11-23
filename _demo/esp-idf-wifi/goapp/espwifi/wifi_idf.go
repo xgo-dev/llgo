@@ -46,6 +46,12 @@ func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
 //go:linkname finish C.llgo_wifi_finish
 func finish()
 
+//go:linkname heapFree C.llgo_wifi_heap_free
+func heapFree() uint32
+
+//go:linkname heapMin C.llgo_wifi_heap_min
+func heapMin() uint32
+
 //go:linkname poll C.llgo_wifi_poll
 func poll(kind *int32, aux *int32, ip *uint32) int32
 

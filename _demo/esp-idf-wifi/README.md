@@ -124,6 +124,22 @@ strings when the file is absent, and the program then reports
 reads the values through `espwifi.DefaultSTA()` - nothing is hardcoded in
 committed code.
 
+## Memory: two non-overlapping layers
+
+- **llgo GC heap (tinygogc)**: a static 256 KiB window in `.dram0.bss`
+  (`host/llgo_syms.S`: 2 KiB runtime reserve + 262,144 bytes + 4 KiB
+  bootstrap-stack window). It sits below the IDF heap's `_heap_start` and
+  is never managed by the IDF allocator, so it never shows up in
+  `esp_get_free_heap_size()`.
+- **IDF heap pool**: everything `esp_get_free_heap_size()` /
+  `esp_get_minimum_free_heap_size()` report. The WiFi stack lives entirely
+  here (~50 KiB at init, ~55 KiB steady-state connected).
+
+`espwifi.HeapFree()`/`espwifi.HeapMin()` expose the watermarks; `main.go`
+prints them at every pipeline stage (`baseline`, `init`, `start`, `scan`,
+`dhcp`, `steady+10s`), so a shrinking IDF heap is attributable to the
+WiFi stack or IDF itself - never to the Go runtime.
+
 ## Notes
 
 - The WiFi stack's tasks are pinned to CPU1

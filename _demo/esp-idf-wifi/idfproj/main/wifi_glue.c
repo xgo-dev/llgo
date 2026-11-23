@@ -188,6 +188,21 @@ void llgo_wifi_finish(void)
     fflush(stderr);
 }
 
+/* IDF heap watermarks. These describe the IDF allocator pool only: the
+ * llgo GC heap is a static 256 KiB window in .dram0.bss below the IDF
+ * heap's _heap_start (see host/llgo_syms.S) and never takes from this
+ * pool, so a shrinking free heap means the WiFi stack (or IDF itself),
+ * not the Go runtime. */
+uint32_t llgo_wifi_heap_free(void)
+{
+    return (uint32_t)esp_get_free_heap_size();
+}
+
+uint32_t llgo_wifi_heap_min(void)
+{
+    return (uint32_t)esp_get_minimum_free_heap_size();
+}
+
 /* Station credentials. Zero the config, copy ssid/pass, and pick the
  * minimum matching authmode from the password length (empty password ->
  * open). Storage stays in RAM so the acceptance runs are self-contained. */
