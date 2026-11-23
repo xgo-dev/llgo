@@ -489,3 +489,27 @@ func TestGuardCombinationBudget(t *testing.T) {
 		t.Fatalf("expected five observed masks and their full union, got %v", masks)
 	}
 }
+
+func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value) {
+	t.Helper()
+	resolver := m.NamedFunction("root" + resolverSuffix)
+	// Substitute the published runtime mask and fold the actual select chain.
+	for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+		if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
+			inst.ReplaceAllUsesWith(llvm.ConstInt(inst.Type(), bits|featureInitialized, false))
+			break
+		}
+	}
+	simplifyGuards(resolver)
+	published := false
+	for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
+				published = inst.Operand(0) == want
+			}
+		}
+	}
+	if !published {
+		t.Fatalf("mask %d did not cache %s:\n%s", bits, want.Name(), resolver.String())
+	}
+}

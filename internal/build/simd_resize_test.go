@@ -113,7 +113,7 @@ func extendHighUnsigned(x archsimd.Uint16x8) archsimd.Uint32x4 { return x.Extend
 					t.Fatal(err)
 				}
 				if target.os == "linux" {
-					assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+					assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
 				}
 				asm.Dispose()
 			}

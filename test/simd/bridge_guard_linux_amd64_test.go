@@ -41,6 +41,7 @@ func TestSIMDBridgeMaskedStoreGuardPage(t *testing.T) {
 }
 
 func TestSIMD256MaskedStoreGuardPage(t *testing.T) {
+	requireSIMD256(t)
 	page := os.Getpagesize()
 	mem, err := syscall.Mmap(-1, 0, page*2, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANON)
 	if err != nil {

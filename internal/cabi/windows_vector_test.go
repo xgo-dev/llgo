@@ -46,7 +46,7 @@ define <4 x float> @forward(<4 x float> %x, ptr %indirect) {
 			prog := ssa.NewProgram(&ssa.Target{GOOS: goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			tr := NewTransformer(prog, "", "", true)
-			tr.LowerWindowsVectorParams(mod)
+			tr.lowerWindowsVectorParams(mod)
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}

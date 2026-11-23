@@ -120,9 +120,9 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 	if kernel.IsNil() || kernel.BasicBlocksCount() == 0 {
 		t.Fatal("cross-package specialized definition missing")
 	}
-	simdCodegenVariants(t, levels, pkgs, func(t *testing.T, asm string) {
+	simdCodegenVariants(t, levels, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 		if goos == "linux" && baseline == "v1" {
-			assertSIMDBaselineAssembly(t, asm)
+			assertSIMDBaselineAssembly(t, mod, asm)
 		}
 		if !strings.Contains(asm, "vaddps") {
 			t.Fatal("AVX2 version did not select AVX instructions")
@@ -133,7 +133,7 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 // The level selects only the LLVM pass pipeline. Generate and check the shared
 // input IR once, then read an independent bitcode copy for each pipeline so
 // code generation cannot mutate the input of the next case.
-func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check func(*testing.T, string)) {
+func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check func(*testing.T, llvm.Module, string)) {
 	t.Helper()
 	paths := make([]string, len(pkgs))
 	for i, pkg := range pkgs {
@@ -172,7 +172,7 @@ func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check 
 					t.Fatal(err)
 				}
 				defer asm.Dispose()
-				check(t, string(asm.Bytes()))
+				check(t, mod, string(asm.Bytes()))
 			}
 		})
 	}

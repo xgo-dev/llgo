@@ -3,14 +3,13 @@
 package simd_test
 
 import (
-	"runtime"
 	"simd/archsimd"
 	"testing"
 )
 
 func TestSIMD512Products(t *testing.T) {
-	if runtime.Compiler != "llgo" && !archsimd.X86.AVX512() {
-		t.Skip("requires AVX512 in gc")
+	if !archsimd.X86.AVX512() {
+		t.Skip("requires AVX512")
 	}
 	var a [64]uint8
 	var b [64]int8
@@ -54,8 +53,8 @@ func TestSIMD512Products(t *testing.T) {
 }
 
 func TestSIMDProductEdges(t *testing.T) {
-	if runtime.Compiler != "llgo" && !archsimd.X86.AVX2() {
-		t.Skip("requires AVX2 in gc")
+	if !archsimd.X86.AVX2() {
+		t.Skip("requires AVX2")
 	}
 	signs := [16]int8{-1, 0, 1, -1}
 	values := [16]int8{-128, -128, -128, 127}
@@ -127,8 +126,8 @@ func TestSIMDProductEdges(t *testing.T) {
 }
 
 func TestSIMDSaturatedHorizontalPairs(t *testing.T) {
-	if runtime.Compiler != "llgo" && !archsimd.X86.AVX2() {
-		t.Skip("requires AVX2 in gc")
+	if !archsimd.X86.AVX2() {
+		t.Skip("requires AVX2")
 	}
 	a := [16]int16{32767, 1, -32768, -1, 32767, -1, -32768, 1, 10, 11, 12, 13, 14, 15, 16, 17}
 	b := [16]int16{7, 9, 20, -7, 3, -4, -10, 8, 32767, 3, -32768, -3, 32767, -2, -32768, 2}

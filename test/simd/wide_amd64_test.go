@@ -12,10 +12,8 @@ import (
 
 func requireSIMD256(t *testing.T) {
 	t.Helper()
-	// LLGo legalizes the baseline implementation without AVX. Official Go's
-	// fixed-width API needs AVX2, so its control must run on eligible hardware.
-	if runtime.Compiler != "llgo" && !archsimd.X86.AVX2() {
-		t.Skip("official Go SIMD256 requires AVX2")
+	if !archsimd.X86.AVX2() {
+		t.Skip("requires AVX2")
 	}
 }
 

@@ -112,9 +112,9 @@ func halvesUint8x32Guarded(x,y archsimd.Uint8x32,lo,hi uint8) archsimd.Uint8x32 
 					}
 				}
 			}
-			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, mod llvm.Module, asm string) {
 				if goos == "linux" {
-					assertSIMDBaselineAssembly(t, asm)
+					assertSIMDBaselineAssembly(t, mod, asm)
 					bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
 					foundBaseline, foundAVX2 := false, false
 					byteLoad := regexp.MustCompile(`(?m)\bmovzbl\s+[^\n]*\([^\n]*%rsp`)

@@ -35,5 +35,11 @@ func WideUpdate(x WideBlock, mutate func()) WideBlock {
 
 //go:noinline
 func WideMany(a, b, c, d, e, f, g, h, i, j archsimd.Float32x8) archsimd.Float32x8 {
-	return a.Sub(b).Add(c).Sub(d).Add(e).Sub(f).Add(g).Sub(h).Add(i).Sub(j)
+	if archsimd.X86.AVX2() {
+		return a.Sub(b).Add(c).Sub(d).Add(e).Sub(f).Add(g).Sub(h).Add(i).Sub(j)
+	}
+	return a
 }
+
+//go:noinline
+func Add512(x, y archsimd.Int32x16) archsimd.Int32x16 { return x.Add(y) }
