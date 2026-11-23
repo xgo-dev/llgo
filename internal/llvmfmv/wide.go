@@ -6,9 +6,6 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// ABI capability published by runtime/_patch/internal/cpu, independent of Go predicates.
-const featureAVX512F = 1 << 17
-
 // A direct vector in the machine signature fixes the register width for both
 // definitions and calls, including calls through a Go function value. Ordinary
 // aggregate ABI lowering has already handled stack and indirect arguments.
@@ -127,14 +124,11 @@ func (a *wideABI) removeWiderCalls(fn llvm.Value, width int) {
 	fn.RemoveUnreachableBlocks()
 }
 
-// Different Go predicates can remain independently enabled after GODEBUG.
-// Any published predicate requiring this register file suffices for the ABI.
-func widthChoice(width int, fn llvm.Value) dispatchChoice {
-	// AVX-512F alone provides both YMM and ZMM, including on CPUs that
-	// lack the full set of extensions required by the Go AVX512 predicate.
-	bits := uint64(featureAVX512F)
+// Several independent Go predicates guarantee the registers for a YMM call.
+func ymmChoice(fn llvm.Value) dispatchChoice {
+	var bits uint64
 	for _, p := range x86Predicates {
-		if p.registerBits >= width {
+		if p.registerBits >= 256 {
 			bits |= p.runtimeBit
 		}
 	}
@@ -204,12 +198,13 @@ func (a *wideABI) lower(fn llvm.Value, baseline string) {
 		if zmm {
 			a.removeWiderCalls(v, 256)
 		}
-		choices = append(choices, widthChoice(256, v))
+		choices = append(choices, ymmChoice(v))
 	}
 	if zmm {
 		v := body("zmm")
 		enableWidth(v, 512)
-		choices = append(choices, widthChoice(512, v))
+		// Go requires its combined AVX512 feature for 512-bit vectors.
+		choices = append(choices, dispatchChoice{bits: predicateBits[X86Query("AVX512")], fn: v})
 	}
 	base := body("width_base")
 	a.removeWiderCalls(base, floor)

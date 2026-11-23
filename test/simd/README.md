@@ -121,9 +121,10 @@ invalid floating-to-integer inputs retain the architecture's defined results.
 The same group boundaries apply to SIMD512.
 
 On amd64, 256-bit and 512-bit Go vector parameters and results use the native
-vector types through package boundaries and function values. The signature
-requires AVX for YMM registers or AVX-512F for ZMM registers. Win64 uses
-vectorcall for these signatures. Ordinary aggregate and stack argument rules
+vector types through package boundaries and function values. LLVM uses AVX for YMM registers and AVX-512F for ZMM registers.
+Runtime dispatch to a 512-bit caller requires the Go `archsimd.X86.AVX512()`
+predicate (F, CD, BW, DQ and VL together). Win64 uses vectorcall for these
+signatures. Ordinary aggregate and stack argument rules
 still apply. Guard explicit wide calls with the corresponding Go CPU query.
 A scalar-signature caller can execute its scalar branch on a lower baseline.
 When it also calls a wider signature, FMV selects a body that can issue that

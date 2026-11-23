@@ -33,8 +33,8 @@ scalar:
 		{featureAVX, "ymm"},
 		{featureAVX2, "ymm"},
 		{predicateBits[X86Query("FMA")], "ymm"},
-		{featureAVX512F, "zmm"}, // AVX-512F without the composite Go AVX512 predicate.
-		{predicateBits[X86Query("AVX512VBMI2")], "zmm"},
+		{featureAVX2 | predicateBits[X86Query("AVX512VBMI2")], "ymm"},
+		{predicateBits[X86Query("AVX512")] | predicateBits[X86Query("AVX512VBMI2")], "zmm"},
 		{predicateBits[X86Query("AVX512")], "zmm"},
 	} {
 		mod := parseModule(t, ir)
