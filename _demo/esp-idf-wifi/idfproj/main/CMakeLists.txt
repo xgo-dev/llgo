@@ -6,16 +6,23 @@
 # component). This component only supplies the C shell, the extra linker
 # script and the link options.
 #
+# Glue sources: demo_glue.c is demo-local (checked in); the four package
+# glues are build inputs synced from the llgo repo's pkg/esp/*/glue
+# templates by host/make-artifact.sh (integration way 1 in pkg/esp/README.md)
+# and therefore gitignored.
+#
 # WHOLE_ARCHIVE is required: llgo_out.o is the LAST item on the link line,
 # and the ESP-IDF link has no --start-group, so each component archive is
 # scanned only against the undefined symbols known at its position. The
-# wifi glue (wifi_glue.c) is referenced solely from llgo_out.o; a plain
-# archive would never pull it, exactly like the llgo_syms.S providers that
-# therefore live inside llgo_out.o itself. Whole-archive keeps every glue
-# object in the link unconditionally.
-idf_component_register(SRCS app_main.c wifi_glue.c
+# glues are referenced solely from llgo_out.o; a plain archive would never
+# pull them, exactly like the llgo_syms.S providers that therefore live
+# inside llgo_out.o itself. Whole-archive keeps every glue object in the
+# link unconditionally.
+idf_component_register(SRCS app_main.c demo_glue.c wifi_glue.c gpio_glue.c
+                             i2c_glue.c i2s_glue.c
                        INCLUDE_DIRS "."
                        REQUIRES esp_wifi esp_netif esp_event nvs_flash
+                                esp_driver_gpio esp_driver_i2c esp_driver_i2s
                        WHOLE_ARCHIVE)
 
 # The llgo object must be a PUBLIC (interface) link item so CMake places it

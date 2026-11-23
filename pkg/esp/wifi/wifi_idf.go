@@ -5,7 +5,7 @@
 // idf_freertos.go (VTaskDelay). The symbols stay undefined in llgo_out.o by
 // design (host/make-artifact.sh lists them); the IDF component archive
 // provides the definitions at the final link.
-package espwifi
+package wifi
 
 import _ "unsafe" // for go:linkname
 

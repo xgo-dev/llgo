@@ -3,7 +3,11 @@
 // Host build (go build / go vet / gopls): the C glue only exists in the
 // ESP-IDF link environment, so every binding returns errUnsupported and
 // vTaskDelay is a no-op. Nothing here is meant to run on a host.
-package espwifi
+package wifi
+
+// errUnsupported is what every stub below returns: it lies between the real
+// esp_err ranges so it can never be mistaken for one.
+const errUnsupported = 0x7F00
 
 func setup() int32          { return errUnsupported }
 func eventsRegister() int32 { return errUnsupported }
@@ -28,7 +32,7 @@ func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
 func finish()          {}
 func heapFree() uint32 { return 0 }
 
-func setModeSTA() int32 { return 0 }
+func setModeSTA() int32 { return errUnsupported }
 
 func heapInternalFree() uint32 { return 0 }
 

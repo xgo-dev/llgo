@@ -9,7 +9,10 @@ package main
 import (
 	"unsafe"
 
-	"llgoidf/goapp/espwifi"
+	"github.com/xgo-dev/llgo/pkg/esp/gpio"
+	"github.com/xgo-dev/llgo/pkg/esp/i2c"
+	"github.com/xgo-dev/llgo/pkg/esp/i2s"
+	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
 
 // FreeRTOS kernel bindings. llgo emits an external reference to the C symbol
@@ -37,9 +40,9 @@ func fixStreams()
 // heapMark prints the IDF heap watermarks at one pipeline stage.
 func heapMark(stage string) {
 	println("[go] wifi heap "+stage,
-		"free =", int(espwifi.HeapFree()), "min =", int(espwifi.HeapMin()),
-		"| internal =", int(espwifi.HeapInternalFree()),
-		"| psram =", int(espwifi.HeapSpiramFree()))
+		"free =", int(wifi.HeapFree()), "min =", int(wifi.HeapMin()),
+		"| internal =", int(wifi.HeapInternalFree()),
+		"| psram =", int(wifi.HeapSpiramFree()))
 }
 
 // heapStats reports the collector's own view of the Go heap: usable data
@@ -115,7 +118,7 @@ func psramProbe() bool {
 		minSpiramFree = 256 << 10  // below this the collector keeps the static heap only
 		wantChecksum  = 0x16ca9dc5 // FNV-1a over the pattern, computed on the host
 	)
-	if free := espwifi.HeapSpiramFree(); free < minSpiramFree {
+	if free := wifi.HeapSpiramFree(); free < minSpiramFree {
 		println("[go] psram: external heap unavailable (spiram free =", int(free),
 			"), the Go heap stays in its static window")
 		return false
@@ -356,8 +359,135 @@ func wordReadBench() {
 	}
 }
 
+// ---- Peripheral probes (pkg/esp/gpio, pkg/esp/i2c, pkg/esp/i2s).
+//
+// Each probe prints one [go] periph line per call and must terminate on its
+// own: every driver path used here has a driver-side or emulator-side
+// timeout, so a missing peripheral model (esp-emu fidelity is only proven
+// for WiFi and PSRAM) surfaces as an esp_err code, not a hang. If a probe
+// ever does hang the emulator or the board, flip its switch below to false
+// - the remaining probes stay independent.
+const (
+	probeGPIO = true
+	probeI2C  = true
+	probeI2S  = true
+)
+
+func gpioProbe() {
+	p := gpio.Pin(4)
+	if e := p.SetDirection(gpio.Output, gpio.PullNone); e != 0 {
+		println("[go] periph gpio set_direction err =", int(e))
+		return
+	}
+	if e := p.SetLevel(true); e != 0 {
+		println("[go] periph gpio set_level(true) err =", int(e))
+		return
+	}
+	high := p.GetLevel()
+	if e := p.SetLevel(false); e != 0 {
+		println("[go] periph gpio set_level(false) err =", int(e))
+		return
+	}
+	low := p.GetLevel()
+	if e := p.Toggle(); e != 0 {
+		println("[go] periph gpio toggle err =", int(e))
+		return
+	}
+	toggled := p.GetLevel()
+	println("[go] periph gpio roundtrip high =", int(high),
+		"low =", int(low), "toggled =", int(toggled))
+	if high == 1 && low == 0 && toggled == 1 {
+		println("[go] periph gpio PASS")
+	} else {
+		println("[go] periph gpio FAIL (roundtrip mismatch)")
+	}
+}
+
+func i2cProbe() {
+	bus, e := i2c.NewBus(8, 9)
+	if e != 0 {
+		println("[go] periph i2c new_bus err =", int(e))
+		return
+	}
+	println("[go] periph i2c bus install ok")
+	// Address 0x50 with nothing attached. On hardware the transfer fails
+	// with an explicit error (NACK/timeout) within the 1 s driver timeout -
+	// never a hang and never a crash. The emulator does not model ACK/NACK,
+	// so there the same read reports err = 0 and a 0xFF byte; real transfers
+	// need real hardware.
+	dev, e := bus.Device(0x50, 100000)
+	if e != 0 {
+		println("[go] periph i2c add_device err =", int(e))
+		bus.Close()
+		return
+	}
+	var reg [1]byte
+	e = dev.Read(reg[:])
+	println("[go] periph i2c read err =", int(e), "byte =", int(reg[0]))
+	if e := dev.Close(); e != 0 {
+		println("[go] periph i2c rm_device err =", int(e))
+	}
+	if e := bus.Close(); e != 0 {
+		println("[go] periph i2c del_bus err =", int(e))
+		return
+	}
+	println("[go] periph i2c done")
+}
+
+func i2sProbe() {
+	ch, e := i2s.NewChannel(true)
+	if e != 0 {
+		println("[go] periph i2s alloc err =", int(e))
+		return
+	}
+	println("[go] periph i2s channel alloc ok")
+	// TX channel: bclk GPIO4, ws GPIO5, dout GPIO6, no mclk and no din.
+	if e := ch.InitStd(-1, 4, 5, 6, -1, i2s.Bits16, true, 44100); e != 0 {
+		println("[go] periph i2s init_std err =", int(e))
+		ch.Close()
+		return
+	}
+	println("[go] periph i2s std init ok")
+	if e := ch.Enable(); e != 0 {
+		println("[go] periph i2s enable err =", int(e))
+		ch.Close()
+		return
+	}
+	// One DMA-scale buffer of 16-bit stereo silence (256 frames = 1024 bytes).
+	silence := make([]byte, 1024)
+	n, e := ch.Write(silence)
+	println("[go] periph i2s write n =", n, "err =", int(e))
+	if e := ch.Disable(); e != 0 {
+		println("[go] periph i2s disable err =", int(e))
+	}
+	if e := ch.Close(); e != 0 {
+		println("[go] periph i2s del err =", int(e))
+		return
+	}
+	println("[go] periph i2s done")
+}
+
+func periphProbe() {
+	println("[go] periph: start")
+	if probeGPIO {
+		gpioProbe()
+	} else {
+		println("[go] periph gpio skipped (known to hang this target)")
+	}
+	if probeI2C {
+		i2cProbe()
+	} else {
+		println("[go] periph i2c skipped (known to hang this target)")
+	}
+	if probeI2S {
+		i2sProbe()
+	} else {
+		println("[go] periph i2s skipped (known to hang this target)")
+	}
+}
+
 func main() {
-	defer espwifi.Finish() // flush C stdio on every exit path
+	defer wifi.Finish() // flush C stdio on every exit path
 	fixStreams()
 	println("[go] hello from llgo on FreeRTOS/ESP32-S31")
 
@@ -397,22 +527,22 @@ func main() {
 	// pool; the llgo GC heap is a separate static 256 KiB window and never
 	// appears in these numbers.
 	heapMark("baseline")
-	espwifi.PrintVersion()
+	wifi.PrintVersion()
 	println("[go] wifi: setup ...")
-	if e := espwifi.Setup(); e != 0 {
-		println("[go] wifi setup err =", int(e), espwifi.ErrName(e))
+	if e := wifi.Setup(); e != 0 {
+		println("[go] wifi setup err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL setup")
 		return
 	}
 	println("[go] wifi setup err=0")
 	heapMark("init")
 
-	if e := espwifi.EventsRegister(); e != 0 {
-		println("[go] wifi events register err =", int(e), espwifi.ErrName(e))
+	if e := wifi.EventsRegister(); e != 0 {
+		println("[go] wifi events register err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL events")
 		return
 	}
-	ssid, pass := espwifi.DefaultSTA() // compiled in via idfproj/main/wifi_creds.h
+	ssid, pass := wifi.DefaultSTA() // compiled in via idfproj/main/wifi_creds.h
 	// An empty SSID means a scan-only run: the driver comes up and scans, but
 	// the station never associates, so no AP and no network traffic is
 	// involved. The memory ledger only needs the driver running.
@@ -424,22 +554,22 @@ func main() {
 	// AP. A scan-only run sets the mode alone, because configuring an empty
 	// SSID is rejected (ESP_ERR_WIFI_SSID).
 	if noCreds {
-		if e := espwifi.SetModeSTA(); e != 0 {
-			println("[go] wifi set_mode err =", int(e), espwifi.ErrName(e))
+		if e := wifi.SetModeSTA(); e != 0 {
+			println("[go] wifi set_mode err =", int(e), wifi.ErrName(e))
 			println("[go] wifi FAIL set_mode")
 			return
 		}
-	} else if e := espwifi.SetSTA(ssid, pass); e != 0 {
-		println("[go] wifi set_sta err =", int(e), espwifi.ErrName(e))
+	} else if e := wifi.SetSTA(ssid, pass); e != 0 {
+		println("[go] wifi set_sta err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL set_sta")
 		return
 	}
-	if e := espwifi.Start(); e != 0 {
-		println("[go] wifi start err =", int(e), espwifi.ErrName(e))
+	if e := wifi.Start(); e != 0 {
+		println("[go] wifi start err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL start")
 		return
 	}
-	if ev, ok := espwifi.WaitEvent([]int32{espwifi.EvStaStart}, 300); ok {
+	if ev, ok := wifi.WaitEvent([]int32{wifi.EvStaStart}, 300); ok {
 		println("[go] wifi STA_START")
 		heapMark("start")
 	} else {
@@ -449,14 +579,14 @@ func main() {
 	}
 
 	// Scan (M1): emu's built-in soft AP must show up in the list.
-	if e := espwifi.ScanStart(true); e != 0 {
-		println("[go] wifi scan err =", int(e), espwifi.ErrName(e))
+	if e := wifi.ScanStart(true); e != 0 {
+		println("[go] wifi scan err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL scan")
 		return
 	}
-	aps, e := espwifi.ScanFetch(20)
+	aps, e := wifi.ScanFetch(20)
 	if e != 0 {
-		println("[go] wifi scan_fetch err =", int(e), espwifi.ErrName(e))
+		println("[go] wifi scan_fetch err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL scan_fetch")
 		return
 	}
@@ -480,6 +610,7 @@ func main() {
 		fiberStackReport(psramTop)
 	}
 	wordReadBench()
+	periphProbe()
 	if noCreds {
 		println("[go] wifi: scan-only run complete, no association attempted")
 		return
@@ -489,13 +620,13 @@ func main() {
 	// association/handshake arrives as EvStaDisconnected with a reason code.
 	connected := false
 	for attempt := 1; attempt <= 3 && !connected; attempt++ {
-		if e := espwifi.Connect(); e != 0 {
-			println("[go] wifi connect err =", int(e), espwifi.ErrName(e))
+		if e := wifi.Connect(); e != 0 {
+			println("[go] wifi connect err =", int(e), wifi.ErrName(e))
 			println("[go] wifi FAIL connect")
 			return
 		}
-		ev, ok := espwifi.WaitEvent([]int32{espwifi.EvStaConnected, espwifi.EvStaDisconnected}, 300)
-		if ok && ev.Kind == espwifi.EvStaConnected {
+		ev, ok := wifi.WaitEvent([]int32{wifi.EvStaConnected, wifi.EvStaDisconnected}, 300)
+		if ok && ev.Kind == wifi.EvStaConnected {
 			connected = true
 			println("[go] wifi STA_CONNECTED")
 		} else {
@@ -509,17 +640,17 @@ func main() {
 
 	// DHCP: the GOT_IP event carries the address; GetIP polls esp_netif as
 	// the fallback read.
-	ev, _ := espwifi.WaitEvent([]int32{espwifi.EvGotIP}, 600)
+	ev, _ := wifi.WaitEvent([]int32{wifi.EvGotIP}, 600)
 	ip := ev.IP
 	if ip == 0 {
-		ip = espwifi.GetIP()
+		ip = wifi.GetIP()
 	}
 	if ip == 0 {
 		println("[go] wifi FAIL no_ip")
 		return
 	}
-	println("[go] wifi GOT_IP ip=" + espwifi.IPString(ip))
-	println("[go] wifi PASS ip=" + espwifi.IPString(ip))
+	println("[go] wifi GOT_IP ip=" + wifi.IPString(ip))
+	println("[go] wifi PASS ip=" + wifi.IPString(ip))
 	heapMark("dhcp")
 
 	// Steady state: the WiFi stack keeps module-specific buffers parked

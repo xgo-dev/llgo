@@ -2,35 +2,46 @@
 
 A self-contained pipeline that drives the ESP-IDF `esp_wifi` stack from
 Go code compiled by llgo: setup → start → scan → connect → DHCP, with the
-acceptance run automated under esp-emu. Nothing here modifies the llgo
-repository itself; the Go binding lives in this directory's own module.
-The Go heap's growth into PSRAM that the acceptance program exercises is an
-llgo runtime feature, described under
+acceptance run automated under esp-emu. The Go bindings live in the llgo
+repository (`pkg/esp/{wifi,gpio,i2c,i2s}`), consumed through the module
+require + replace in `go.mod`; this directory owns the acceptance program
+and the IDF project. The Go heap's growth into PSRAM that the acceptance
+program exercises is an llgo runtime feature, described under
 [PSRAM and the Go heap](#psram-and-the-go-heap).
 
 ## Layout
 
 ```
 esp-idf-wifi/
-├── go.mod                  Go module (module llgoidf)
-├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe)
-├── goapp/espwifi/          The Go binding package
-│   ├── wifi.go             Public API, mailbox wait helper, esp_err names
-│   ├── wifi_idf.go         //go:build llgo.idf - bodyless linkname externs
-│   └── wifi_stub.go        //go:build !llgo.idf - host-build stubs
+├── go.mod                  Go module (module llgoidf; requires + replaces
+│                           github.com/xgo-dev/llgo, the binding packages' home)
+├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
+│                           + GPIO/I2C/I2S peripheral probes)
+├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
+│                           tinygogc externs in main.go, so `go build` links
 └── idfproj/                Minimal ESP-IDF project
     ├── CMakeLists.txt
     ├── sdkconfig.defaults  8 KiB main task, 240 MHz, WiFi tasks on CPU1, PSRAM
     ├── host/               Host-side artifact pipeline (one command)
-    │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object
+    │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object;
+    │   │                     also syncs the pkg/esp/*/glue templates into main/
     │   └── llgo_syms.S       GC heap + bootstrap stack window providers
     └── main/               The main component
         ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
         ├── app_main.c      app_main -> llgo entry; _write/_exit shims; Go
         │                    heap PSRAM budget (llgo_gc_ext_heap_cap)
-        ├── wifi_glue.c     esp_wifi C glue (setup/config/events/mailbox)
+        ├── demo_glue.c     Demo-local glue (cycle counter for the benchmarks)
+        ├── *_glue.c        Package glues, synced from
+        │                    github.com/xgo-dev/llgo/pkg/esp/*/glue at build time
+        │                    (gitignored; boundary rules: pkg/esp/README.md)
         └── llgo_dram.ld    _globals_start/_globals_end for tinygogc
 ```
+
+The Go binding packages themselves live in the llgo repo:
+`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s}` - the wifi one grew
+out of this demo's former `goapp/espwifi` directory (same API, same
+mailbox glue; see `pkg/esp/README.md` for the package template, the
+go↔C boundary rules and both glue integration recipes).
 
 ## Architecture
 
@@ -57,8 +68,12 @@ The Go ↔ C boundary follows three rules:
    `WIFI_INIT_CONFIG_DEFAULT()` stays in C (it embeds Kconfig constants and
    function pointers Go cannot spell).
 
+The full discipline (handles as uintptr, linkname naming, the package
+template, both glue integration recipes, how to add a new peripheral) is
+fixed in [`pkg/esp/README.md`](../../pkg/esp/README.md).
+
 Every binding returns the raw `esp_err` code (0 = ESP_OK);
-`espwifi.ErrName` maps the codes this pipeline can hit to their IDF names.
+`wifi.ErrName` maps the codes this pipeline can hit to their IDF names.
 
 ### Why the main component is WHOLE_ARCHIVE
 
@@ -80,7 +95,9 @@ Prerequisites: llgo compiler (`/tmp/llgo-wifi` below), Docker image
 
 ```
 # 1. Go -> relocatable object (prints the remaining undefined symbols;
-#    llgo_wifi_* / vTaskDelay / stdio must all be in that list)
+#    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / vTaskDelay /
+#    stdio must all be in that list). The script also syncs the
+#    pkg/esp/*/glue templates into main/ - run it before every idf.py build.
 cd idfproj/host && ./make-artifact.sh /tmp/llgo-wifi
 
 # 2. IDF firmware (merge-bin takes -o relative to the build/ directory:
@@ -95,7 +112,7 @@ cd .. && docker run --rm -v "$PWD":/project -w /project \
 #    "deleting main task" instead.
 while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
 ~/.local/bin/esp-emu --chip esp32s31 --firmware build/merged-binary.bin \
-    --console uart0 --timeout 150s --psram-size 16M \
+    --console usb-jtag --timeout 150s --psram-size 16M \
     --wifi-ssid myssid --wifi-password mypassword \
     --exit-on "[go] wifi PASS"
 rmdir /tmp/esp-emu.lock
@@ -122,6 +139,16 @@ through the mailbox), and the DHCP wait. A wrong password ends in three
 `[go] wifi disconnect reason = 202` lines (auth fail) and
 `[go] wifi FAIL no_ap`.
 
+After the heap probes, the scan-only run exercises the three peripheral
+packages (`[go] periph ...` lines): a GPIO set→get→toggle round-trip on
+GPIO4, an I2C master bus install plus one read from an absent address (the
+emulator does not model ACK/NACK, so the read reports `err = 0` and a
+`0xFF` byte there; on hardware it fails with an explicit error within the
+1 s driver timeout), and an I2S TX channel
+alloc → std init → enable → one silence write. Each probe prints its own
+esp_err code; the `probeGPIO`/`probeI2C`/`probeI2S` switches in `main.go`
+skip a peripheral that hangs a given target.
+
 Without credentials the run is scan-only: after the scan, and with PSRAM
 enabled, the program keeps 6 MiB live in the Go heap with a collection
 after every block, verifies it, starts goroutines on top of it, and
@@ -141,20 +168,21 @@ returns:
 [go] bench word read internal (16 KiB at 2e000b04): 20487 cycles, 5 per word
 [go] bench word read psram (16 KiB at 50700c1c): 20487 cycles, 5 per word
 [go] wifi: scan-only run complete, no association attempted
-[c] gc ext heap: cap = 4294967295, bytes = 7340032 | idf internal free = 62055, psram free = 9434088
+[c] gc ext heap: cap = 4294967295, bytes = 7340032 | idf internal free = 57999, psram free = 9434088
 [c] app_main: llgo main returned, deleting main task
 ```
 
 ## Credentials
 
 Station credentials are compiled in from `idfproj/main/wifi_creds.h`, a
-file kept out of version control (`.gitignore` in the same directory;
+file kept out of version control (the `.gitignore` in `idfproj/` lists
+`wifi_creds.h`, which covers `idfproj/main/wifi_creds.h`;
 `wifi_creds.h.example` is the placeholder). The glue falls back to empty
 strings when the file is absent, and an empty SSID selects the scan-only
 run (`[go] wifi: scan-only, no credentials compiled in`): the driver is
 set to station mode, scans once, never configures or associates with an
 AP, and the program returns after the Go heap probe. The Go side reads
-the values through `espwifi.DefaultSTA()` - nothing is hardcoded in
+the values through `wifi.DefaultSTA()` - nothing is hardcoded in
 committed code.
 
 ## Memory: two non-overlapping layers
@@ -170,8 +198,8 @@ committed code.
   `esp_get_minimum_free_heap_size()` report. The WiFi stack lives entirely
   here (~50 KiB at init, ~55 KiB steady-state connected).
 
-`espwifi.HeapFree()`/`espwifi.HeapMin()` expose the watermarks and
-`espwifi.HeapInternalFree()`/`espwifi.HeapSpiramFree()` the two pools;
+`wifi.HeapFree()`/`wifi.HeapMin()` expose the watermarks and
+`wifi.HeapInternalFree()`/`wifi.HeapSpiramFree()` the two pools;
 `main.go` prints them at every pipeline stage (`baseline`, `init`,
 `start`, `scan`, before and after the PSRAM probe, `dhcp`,
 `steady+10s`), so a shrinking internal heap is attributable to the WiFi
@@ -217,13 +245,15 @@ in as a further heap segment (runtime:
   and the Go side prints the same number through `tinygogc.HeapStats()`
   (`[go] gc heap ... usable/reserved/segments | psram bytes = N (c side = N)`).
 
-Measured under esp-emu (16 MiB PSRAM, scan-only run, bytes):
+Measured under esp-emu (16 MiB PSRAM, scan-only run, bytes; the exact IDF
+internal figures drift run-to-run with the linked driver set — P5 measures
+58,135 after the scan vs P4's 62,055 before the peripheral drivers joined):
 
 | state                              | IDF internal free | IDF PSRAM free | Go heap reserved | segments | PSRAM taken |
 |------------------------------------|------------------:|---------------:|-----------------:|---------:|------------:|
-| after the scan, static window only |            62,055 |     16,774,132 |          262,144 |        1 |           0 |
-| 6 MiB live, automatic budget       |            62,055 |      9,434,088 |        7,602,144 |        4 |   7,340,032 |
-| 6 MiB live, budget 6.5 MiB         |            62,055 |      9,958,376 |        7,077,856 |        4 |   6,815,744 |
+| after the scan, static window only |            58,135 |     16,774,132 |          262,144 |        1 |           0 |
+| 6 MiB live, automatic budget       |            58,135 |      9,434,088 |        7,602,144 |        4 |   7,340,032 |
+| 6 MiB live, budget 6.5 MiB         |            58,135 |      9,958,376 |        7,077,856 |        4 |   6,815,744 |
 
 The internal IDF heap is untouched: the price of Go heap growth is paid
 from PSRAM only. With PSRAM disabled the run prints
@@ -260,9 +290,10 @@ Known limitations:
 - The IDF heap must absorb the WiFi allocations (~100-150 KiB) next to the
   static 256 KiB llgo GC heap; the glue prints the free heap before setup to
   make that budget visible.
-- Host builds of `goapp/espwifi` compile against `wifi_stub.go` (`go build`,
-  `go vet`, gopls); `goapp/main.go` itself is llgo-only because its FreeRTOS
-  linknames have no host stubs.
+- Host builds compile entirely against the stub side (`go build`, `go vet`,
+  gopls): `pkg/esp/*` through their `_stub.go` files, `goapp/main.go`
+  through `goapp/hosted.go`, whose push linknames define the FreeRTOS/C
+  externs inertly on the host.
 - `goapp/main.go` triggers collections through
   `//go:linkname gcCollect .../tinygogc.GC` instead of `runtime.GC()`: in
   an `esp32s31-idf` build `import "runtime"` drags in the runtime's

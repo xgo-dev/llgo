@@ -18,12 +18,16 @@
 #      ABI worlds while keeping every internal reference consistent.
 #
 # Usage: ./make-artifact.sh [path-to-llgo] (default /tmp/llgo-idf)
+#
+# Also syncs the pkg/esp/*/glue C templates into main/ (integration way 1
+# in pkg/esp/README.md): the Go program imports github.com/xgo-dev/llgo/pkg/esp
+# packages, whose llgo.idf externs resolve against these glues at the IDF
+# link. They are gitignored build inputs; this script must run before
+# `idf.py build` so CMake configure sees them.
 set -euo pipefail
 
 LLGO_BIN="${1:-/tmp/llgo-idf}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
-# Default to the llgo checkout this demo lives in (_demo/esp-idf-wifi/idfproj/host).
-LLGO_ROOT="${LLGO_ROOT:-$(cd "$DIR/../../.." && pwd)}"
 MAIN="$DIR/../main"
 OUT="$MAIN/llgo_out.o"
 
@@ -31,15 +35,41 @@ NM=nm
 OBJCOPY=objcopy
 CLANG=clang
 LLD=ld.lld
-if [[ -x "$HOME/Library/Caches/llgo/crosscompile/esp-clang-22.1.4_20261030-aarch64-apple-darwin/bin/clang" ]]; then
-    ESPBIN="$HOME/Library/Caches/llgo/crosscompile/esp-clang-22.1.4_20261030-aarch64-apple-darwin/bin"
-    CLANG="$ESPBIN/clang"
-    LLD="$ESPBIN/ld.lld"
-    NM="$ESPBIN/llvm-nm"
-    OBJCOPY="$ESPBIN/llvm-objcopy"
+# Prefer the esp-clang snapshot in the llgo toolchain cache (same compiler
+# family the llgo build used); both cache locations are probed, newest
+# snapshot wins. Without it, fall back to plain clang/llvm tools, but only
+# if that clang can actually target riscv32 - otherwise fail loudly here
+# instead of with a cryptic error three steps later.
+for CACHE in "$HOME/Library/Caches/llgo" "$HOME/.cache/llgo"; do
+    ESPCLANG=$(ls -d "$CACHE"/crosscompile/esp-clang-*/bin/clang 2>/dev/null | sort | tail -1)
+    if [[ -n "$ESPCLANG" && -x "$ESPCLANG" ]]; then
+        ESPBIN="$(dirname "$ESPCLANG")"
+        CLANG="$ESPBIN/clang"
+        LLD="$ESPBIN/ld.lld"
+        NM="$ESPBIN/llvm-nm"
+        OBJCOPY="$ESPBIN/llvm-objcopy"
+        break
+    fi
+done
+if ! echo 'int x;' | "$CLANG" -x c --target=riscv32-esp-elf -march=rv32imc_zicsr -c - -o /dev/null 2>/dev/null; then
+    echo "error: $CLANG cannot compile for riscv32-esp-elf" >&2
+    echo "       install the esp-clang toolchain (llgo's cache:"
+    echo "       ~/Library/Caches/llgo or ~/.cache/llgo, crosscompile/esp-clang-*)" >&2
+    echo "       or point CLANG/LLD/NM/OBJCOPY at a working llvm toolchain" >&2
+    exit 1
 fi
 
 cd "$DIR/../.."
+
+# 0. Sync the pkg/esp glue templates into the main component. REPO_ROOT is
+#    the llgo checkout this demo lives in, derived from this script's
+#    location (host -> idfproj -> esp-idf-wifi -> _demo -> repo root);
+#    override it via the environment when this project tree lives outside
+#    the checkout (working copies under an artifacts dir, release tarballs).
+REPO_ROOT="${REPO_ROOT:-$DIR/../../../..}"
+for g in wifi gpio i2c i2s; do
+    cp "$REPO_ROOT/pkg/esp/$g/glue/${g}_glue.c" "$MAIN/${g}_glue.c"
+done
 
 # 1. Go -> relocatable object.
 "$LLGO_BIN" build -target esp32s31-idf -o "$MAIN/llgo_tmp" ./goapp
@@ -81,6 +111,7 @@ print('patched EF_RISCV float ABI to single:', path)
 PYEOF
 
 rm -f "$MAIN/llgo_out.raw.o" "$MAIN/llgo_out.merged.o"
-echo "artifact written: $OUT ($(stat -f %z "$OUT") bytes)"
+SIZE=$(stat -f %z "$OUT" 2>/dev/null || stat -c %s "$OUT")
+echo "artifact written: $OUT ($SIZE bytes)"
 echo "undefined symbols remaining (all must resolve at the IDF link):"
 "$NM" -u "$OUT"

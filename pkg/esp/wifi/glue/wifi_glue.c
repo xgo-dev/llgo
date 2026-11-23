@@ -1,9 +1,15 @@
 /* Thin C glue between llgo-compiled Go code and the ESP-IDF esp_wifi stack.
  *
+ * This file is a TEMPLATE: copy it into your project's main component so the
+ * IDF build compiles it there (the llgo package never builds C code). Two
+ * integration recipes - copy-into-main or CMake-reference - and the boundary
+ * rules this glue implements are documented in pkg/esp/README.md.
+ *
  * Rules that keep the llgo fiber runtime safe on the other side of the
  * boundary:
  *   (1) integer-and-pointer-only signatures - no float values cross the
- *       Go<->C link (see host/make-artifact.sh step 4);
+ *       Go<->C link (see the _demo/esp-idf-wifi host/make-artifact.sh
+ *       step 4, which patches the relocatable's float ABI);
  *   (2) no large stack buffers. Go goroutines run on 8 KiB fiber stacks,
  *       so bulk data (scan records, ...) lives in static storage;
  *   (3) WIFI_INIT_CONFIG_DEFAULT() stays here: the macro embeds dozens of
@@ -14,7 +20,13 @@
  *       Handlers only copy into the mailbox below; Go polls it paced by
  *       vTaskDelay(10) = 100ms, which also keeps the idle tasks fed for
  *       the watchdog.
+ *
+ * Outside an ESP-IDF build the whole body compiles away, so stray globbing
+ * (hosted builds, IDE tasks, over-broad CMake file lists) stays harmless.
  */
+
+#if defined(ESP_PLATFORM)
+
 #include <string.h>
 #include <stdio.h>
 
@@ -27,9 +39,9 @@
 #include "nvs_flash.h"
 
 /* Station credentials are compiled in from main/wifi_creds.h, a file kept
- * out of version control (see wifi_creds.h.example). When the file is
- * absent the defaults are empty and the Go program reports missing
- * credentials instead of connecting somewhere random. */
+ * out of version control (see _demo/esp-idf-wifi/idfproj/main/
+ * wifi_creds.h.example). Define LLGO_WIFI_SSID/LLGO_WIFI_PASS instead, or
+ * leave both out for an empty default (scan-only runs). */
 #if defined(__has_include)
 #if __has_include("wifi_creds.h")
 #include "wifi_creds.h"
@@ -126,7 +138,10 @@ int32_t llgo_wifi_events_register(void)
     esp_err_t e = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                       lw_on_event, NULL, &inst);
     if (e != ESP_OK) return e;
-    return esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+    /* ESP_EVENT_ANY_ID here too: the GOT_IP/LOST_IP dispatch already happens
+     * by id inside lw_on_event, and registering the base alone keeps the two
+     * subscriptions symmetrical (and LOST_IP actually reachable). */
+    return esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
                                                lw_on_event, NULL, &inst);
 }
 
@@ -199,13 +214,10 @@ void llgo_wifi_finish(void)
 }
 
 /* IDF heap watermarks. These describe the IDF allocator pool only: the
- * llgo GC heap starts as a static 256 KiB window in .dram0.bss below the
- * IDF heap's _heap_start (see host/llgo_syms.S), which never takes from this
- * pool. With PSRAM enabled the collector additionally grows with segments
- * from the SPIRAM pool (see the README section "PSRAM and the Go heap");
- * that share shows in the psram figures and in llgo_gc_ext_bytes, never in the
- * internal ones.
- */
+ * llgo GC heap is a separate static window that never takes from this pool.
+ * With PSRAM enabled the collector additionally grows with segments from the
+ * SPIRAM pool; that share shows in the psram figure, never in the internal
+ * ones. */
 uint32_t llgo_wifi_heap_free(void)
 {
     return (uint32_t)esp_get_free_heap_size();
@@ -227,15 +239,6 @@ uint32_t llgo_wifi_heap_internal_free(void)
 uint32_t llgo_wifi_heap_spiram_free(void)
 {
     return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-}
-
-/* Lower 32 bits of the CPU cycle counter, for on-device benchmarks. It wraps
- * every 17.9 s at 240 MHz, so callers time short intervals with differences. */
-uint32_t llgo_demo_rdcycle(void)
-{
-    uint32_t cycles;
-    __asm__ volatile ("csrr %0, cycle" : "=r"(cycles));
-    return cycles;
 }
 
 /* Station credentials. Zero the config, copy ssid/pass, and pick the
@@ -303,3 +306,11 @@ int32_t llgo_wifi_poll(int32_t *kind, int32_t *aux, uint32_t *ip)
     }
     return 0;
 }
+
+#else /* !ESP_PLATFORM */
+
+/* Template guard: outside an ESP-IDF build this file compiles to an
+ * otherwise empty translation unit. */
+typedef int llgo_wifi_glue_not_in_idf_build;
+
+#endif /* ESP_PLATFORM */

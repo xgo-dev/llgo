@@ -36,8 +36,9 @@ _stack_top:
  *
  * On baremetal, clite opens its own streams at package init
  * (Fopen("/dev/stdout", "w")); under ESP-IDF that fopen fails, so the Go
- * print path would fwrite to a NULL FILE*. app_main.c calls this after the
- * Go package inits ran and before main.main prints anything; IDF's
+ * print path would fwrite to a NULL FILE*. goapp/main.go calls this
+ * (fixStreams) at the top of main, after the Go package inits ran and
+ * before main.main prints anything; IDF's
  * stdout/stderr/stdin FILE* globals are valid from startup on.
  */
     .text

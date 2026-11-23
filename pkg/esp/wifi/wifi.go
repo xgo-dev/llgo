@@ -1,14 +1,53 @@
-// Package espwifi binds llgo-compiled Go code to the ESP-IDF esp_wifi stack
-// through the thin C glue in idfproj/main/wifi_glue.c. The Go<->C boundary
-// is integer-and-pointer only (no float ABI mixing, see host/make-artifact.sh
-// step 4), every C call returns an esp_err code (0 = ESP_OK), and events
-// travel through a C-side mailbox that Go polls at vTaskDelay pacing instead
-// of callbacks: esp_event handlers run on the event-loop task, which must
-// never enter the single-task llgo fiber scheduler.
-package espwifi
+// Package wifi binds llgo-compiled Go code to the ESP-IDF esp_wifi stack.
+//
+// # Layout
+//
+// Every package under pkg/esp follows the same template (glue lives in a
+// subdirectory because the go tool rejects C sources inside a Go package):
+//
+//	wifi.go          public API, no build tag
+//	wifi_idf.go      //go:build llgo.idf - bodyless //go:linkname externs
+//	wifi_stub.go     //go:build !llgo.idf - host-build stubs (go vet/gopls)
+//	wifi_glue.c      glue/wifi_glue.c - ESP-IDF C glue template, compiled
+//	                 only under ESP_PLATFORM
+//
+// # Usage
+//
+// On the device (llgo build -target esp32s31-idf) the package talks to IDF
+// through the glue; on any other build the stubs return errUnsupported, so
+// `go build` / `go vet` / gopls all stay clean:
+//
+//	e := wifi.Setup()                    // NVS + netif + event loop + esp_wifi_init
+//	wifi.EventsRegister()
+//	wifi.SetModeSTA()                    // or wifi.SetSTA(ssid, pass)
+//	wifi.Start()
+//	ev, ok := wifi.WaitEvent([]int32{wifi.EvStaStart}, 300)
+//	wifi.ScanStart(true)
+//	aps, e := wifi.ScanFetch(20)
+//	for i := range aps { println(aps[i].SsidString()) }
+//
+// Every C call returns the raw esp_err code (0 = ESP_OK); wifi.ErrName maps
+// the codes this pipeline can hit to their IDF names.
+//
+// # Glue integration
+//
+// The C glue is a template: copy glue/wifi_glue.c into your project's main
+// component (WHOLE_ARCHIVE required - see pkg/esp/README.md for both
+// integration recipes and the boundary rules the glue must obey).
+//
+// # Events: mailbox, not callbacks
+//
+// esp_event handlers run on the event-loop task, which must never enter the
+// single-task llgo fiber scheduler. The glue therefore only copies events
+// into a C-side ring; Go polls it (Poll) paced by vTaskDelay(10) = 100 ms -
+// the wait helper is WaitEvent. Blocking driver calls (ScanStart) are safe:
+// they block on a driver semaphore, which yields the CPU.
+package wifi
 
 // Event kinds delivered by the C mailbox (see on_event in wifi_glue.c).
 const (
+	// EvNone is the zero-value sentinel, never delivered by Poll: a zero
+	// Event{} and a timed-out WaitEvent both carry this kind.
 	EvNone            = 0
 	EvStaStart        = 1
 	EvStaConnected    = 2
@@ -18,10 +57,6 @@ const (
 	EvLostIP          = 6
 	EvOverflow        = -1 // the mailbox overflowed; reported once by Poll
 )
-
-// errUnsupported is what the host-build stub (wifi_stub.go) returns: it lies
-// between the real esp_err ranges so it can never be mistaken for one.
-const errUnsupported = 0x7F00
 
 // Event is one mailbox slot: kind, aux (e.g. the STA_DISCONNECTED reason
 // code) and the raw network-order IP for EvGotIP.
@@ -57,7 +92,8 @@ func (a *ApInfo) SsidString() string {
 func Setup() int32 { return setup() }
 
 // EventsRegister hooks the glue's event handler into WIFI_EVENT (any id)
-// and IP_EVENT_STA_GOT_IP.
+// and IP_EVENT (any id, GOT_IP and LOST_IP are dispatched by id in the
+// handler).
 func EventsRegister() int32 { return eventsRegister() }
 
 // PrintVersion prints the IDF version and the current free heap from the C
@@ -84,8 +120,12 @@ func ScanStart(blocking bool) int32 {
 
 // ScanFetch takes the scan result list into a fresh slice (at most max
 // entries; the C glue holds at most 20) and also frees the driver's scan
-// memory. The second result is an esp_err code.
+// memory. A max of 0 or less returns an empty slice and polls nothing. The
+// second result is an esp_err code.
 func ScanFetch(max int32) ([]ApInfo, int32) {
+	if max <= 0 {
+		return []ApInfo{}, 0
+	}
 	if max > 20 {
 		max = 20
 	}
@@ -98,9 +138,15 @@ func ScanFetch(max int32) ([]ApInfo, int32) {
 }
 
 // SetSTA configures the station interface: mode STA, credentials, RAM
-// storage. The authmode threshold follows the password length (>=8 chars
-// means WPA2-PSK, otherwise open). Call it before Start.
+// storage. Credentials are bounded by the wifi_config_t field sizes: an
+// SSID longer than 32 or a password longer than 64 bytes returns
+// ESP_ERR_INVALID_ARG (0x102) before anything crosses into C. The authmode
+// threshold follows the password length (>=8 chars means WPA2-PSK,
+// otherwise open). Call it before Start.
 func SetSTA(ssid, pass string) int32 {
+	if len(ssid) > 32 || len(pass) > 64 {
+		return 0x102 // ESP_ERR_INVALID_ARG: does not fit wifi_config_t
+	}
 	var ssidBuf [32]byte
 	copy(ssidBuf[:], ssid)
 	var passBuf [64]byte
