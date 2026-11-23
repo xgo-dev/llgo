@@ -64,7 +64,9 @@ func (s *sourceInfo) cloneEntry(fn, variant llvm.Value) {
 	for _, fields := range s.functions[fn.Name()] {
 		mds := metadataFields(fields)
 		mds[1] = ctx.MDString(name)
-		s.mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode(mds))
+		row := ctx.MDNode(mds)
+		s.mod.AddNamedMetadataOperand("llgo.funcinfo", row)
+		s.functions[name] = append(s.functions[name], ctx.MetadataAsValue(row).MDNodeOperands())
 	}
 }
 

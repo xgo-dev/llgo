@@ -19,7 +19,7 @@ const (
 	QueryAttribute       = "llgo.cpu.query"
 	AVX2Query            = "x86.avx2"
 
-	doneAttribute  = attributePrefix + "processed"
+	moduleDone     = "llgo.fmv.done"
 	variantSuffix  = symbolPrefix + "avx2"
 	baselineSuffix = symbolPrefix + "baseline"
 	resolverSuffix = symbolPrefix + "resolve"
@@ -27,9 +27,8 @@ const (
 	featureSymbol  = "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures"
 	// Keep these bits in sync with runtime/_patch/internal/cpu/init_llgo.go.
 	featureInitialized = 1
-	moduleDone         = "llgo.fmv.done"
-	featureAVX         = 4
 	featureAVX2        = 2
+	featureAVX         = 4
 )
 
 func stringAttribute(fn llvm.Value, name string) string {
@@ -131,6 +130,7 @@ func supported(fn llvm.Value) bool {
 // Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
 // and specializes AVX2 entries and guarded SIMD work. It runs after ABI
 // lowering and before target optimization, including in O0 and ModeGen builds.
+// baseline is the resolved compilation target, independent of the host CPU.
 // A successful run marks the module after wide ABI lowering. Later calls
 // skip the module, including its generated dispatchers and implementations.
 func Run(mod llvm.Module, baseline string) error {
@@ -161,12 +161,8 @@ func Run(mod llvm.Module, baseline string) error {
 	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
 		if avx2 != nil {
 			for _, fn := range avx2.originals {
-				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
-					if !copy.IsNil() {
-						copy.ReplaceAllUsesWith(llvm.Undef(copy.Type()))
-						copy.EraseFromParentAsFunction()
-					}
-				}
+				discardStagedBody(avx2.variants[fn])
+				discardStagedBody(avx2.baselines[fn])
 			}
 		}
 		return err
@@ -174,6 +170,13 @@ func Run(mod llvm.Module, baseline string) error {
 	applyWideABI(mod, baseline)
 	mod.AddNamedMetadataOperand(moduleDone, mod.Context().MDNode(nil))
 	return nil
+}
+
+func discardStagedBody(body llvm.Value) {
+	if !body.IsNil() {
+		body.ReplaceAllUsesWith(llvm.Undef(body.Type()))
+		body.EraseFromParentAsFunction()
+	}
 }
 
 // Stage private AVX2 bodies so the guard pass can discover collisions on the
@@ -187,31 +190,39 @@ type avx2Plan struct {
 func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
-	roots := make(map[llvm.Value]llvm.Value)
+	queries := make(map[llvm.Value]uint64)
+	roots := make(map[llvm.Value]bool)
+	entries := make(map[llvm.Value]bool)
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if hasAttribute(fn, EntryAttribute) && supported(fn) {
+			entries[fn] = true
+		}
 		if !isQuery(fn) {
 			continue
 		}
+		queries[fn] = featureAVX2
 		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
 			call := use.User()
 			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
-				roots[call.InstructionParent().Parent()] = fn
+				roots[call.InstructionParent().Parent()] = true
 			}
+		}
+	}
+	// Only a direct guard over local vector work or a call to a promised AVX2
+	// entry needs canonical dispatch. Scalar-signature helper chains can use
+	// the ordinary guarded-feature pass and its bounded local clones.
+	for fn := range roots {
+		if !supported(fn) || len(guardContexts(fn, queries, entries)) == 0 {
+			delete(roots, fn)
 		}
 	}
 	var originals []llvm.Value
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if hasAttribute(fn, doneAttribute) {
-			continue
-		}
-		if !hasAttribute(fn, EntryAttribute) && roots[fn].IsNil() {
-			continue
-		}
-		if !supported(fn) {
+		if !entries[fn] && !roots[fn] {
 			continue
 		}
 		suffixes := []string{variantSuffix}
-		if !roots[fn].IsNil() {
+		if roots[fn] {
 			suffixes = append(suffixes, baselineSuffix, resolverSuffix, slotSuffix)
 		}
 		for _, suffix := range suffixes {
@@ -242,15 +253,13 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 		variant.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features+"+avx,+avx2"))
 		variant.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
 		variants[fn] = variant
-		if !roots[fn].IsNil() {
+		if roots[fn] {
 			baseline := fn.CloneFunction()
 			baseline.SetName(fn.Name() + baselineSuffix)
 			baseline.SetLinkage(llvm.InternalLinkage)
 			baseline.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 			baseline.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-			baseline.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
 			origins[baseline] = fn
 			baselines[fn] = baseline
 		}
@@ -268,14 +277,31 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	return &avx2Plan{originals, variants, baselines, origins}, nil
 }
 
-func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
+// Redirect only calls from the supplied set of staged implementations. A
+// function address used as an argument or a function value keeps its identity.
+func (p *avx2Plan) redirectStagedCalls(fn, target llvm.Value, staged map[llvm.Value]llvm.Value) {
+	for use := fn.FirstUse(); !use.IsNil(); {
+		next := use.NextUse()
+		call := use.User()
+		if directGuardCallee(call) == fn && call.OperandUse(call.OperandsCount()-1) == use {
+			caller := call.InstructionParent().Parent()
+			if staged[p.origins[caller]] == caller {
+				call.SetOperand(call.OperandsCount()-1, target)
+			}
+		}
+		use = next
+	}
+}
+
+func (p *avx2Plan) commit(mod llvm.Module, source *sourceInfo) []dispatchSite {
 	if p == nil {
 		return nil
 	}
-	source := newSourceInfo(mod)
+	if source == nil {
+		source = newSourceInfo(mod)
+	}
 	var sites []dispatchSite
 	for _, fn := range p.originals {
-		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))
 		variant := p.variants[fn]
 		if !fn.IsDeclaration() {
 			// CloneFunction preserves linkage but drops COMDAT. Give the

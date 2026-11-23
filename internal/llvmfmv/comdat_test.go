@@ -14,14 +14,14 @@ target triple = "x86_64-pc-windows-msvc"
 $generic = comdat `+selection+`
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 declare float @external(float) "llgo.fmv.avx2-entry"
-define linkonce float @generic(float %x) comdat {
+define linkonce <4 x float> @generic(<4 x float> %x) comdat {
  %enabled = call i1 @avx2()
  br i1 %enabled, label %fast, label %slow
 fast:
- %y = fadd float %x, %x
- ret float %y
+ %y = fadd <4 x float> %x, %x
+ ret <4 x float> %y
 slow:
- ret float %x
+ ret <4 x float> %x
 }
 define float @plain(float %x) "llgo.fmv.avx2-entry" {
  ret float %x
