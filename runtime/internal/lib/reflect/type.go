@@ -1155,6 +1155,11 @@ func directlyAssignable(T, V *abi.Type) bool {
 	if T.HasName() && V.HasName() || T.Kind() != V.Kind() {
 		return false
 	}
+	// A native callback entry and a Go closure have different storage, even
+	// when their reflected parameter and result types agree.
+	if T.Kind() == abi.Func && (T.HasNativeLayout() != V.HasNativeLayout() || T.IsStdcall() != V.IsStdcall()) {
+		return false
+	}
 
 	if T.Kind() == abi.Chan && specialChannelAssignability(T, V) {
 		return true

@@ -88,8 +88,8 @@ func testFunctionMetadata() {
 	}
 
 	cTyp := reflect.TypeOf((*reflectedCFunc)(nil)).Elem()
-	if base.Type().AssignableTo(cTyp) || base.CanConvert(cTyp) {
-		panic("Go closure is not a native function pointer")
+	if base.Type().AssignableTo(cTyp) || cTyp.AssignableTo(base.Type()) {
+		panic("Go closure and native function pointer are not directly assignable")
 	}
 	cValue := reflect.New(cTyp).Elem()
 	cValue.Set(reflect.ValueOf(reflectedCFunc(reflectedBase)))
