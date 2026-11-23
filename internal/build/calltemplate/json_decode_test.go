@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/typesynth"
-	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -42,10 +41,8 @@ func TestRewriteJSONDecode(t *testing.T) {
 	syntax := initial.Syntax
 	library := initial.Imports["encoding/json"]
 	addCodecPatch(t, library, "templates_llgo.go")
-	binding := codecBinding(t, library)
-	var closure []*packages.Package
-	packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
-	changed, err := rewriteJSON(closure, binding, initial)
+	used, err := templateRegistry(t, library).RewriteStructural(pkgs, nil)
+	changed := used.Providers[library.PkgPath]
 	if err != nil || !changed {
 		t.Fatalf("rewrite decoder: %t, %v", changed, err)
 	}
@@ -65,7 +62,7 @@ func TestRewriteJSONDecode(t *testing.T) {
 			}
 			if fn.Pkg() == initial.Types && strings.HasPrefix(fn.Name(), "__llgo_json_") {
 				decoded++
-				if _, ok := fn.Signature().Params().At(1).Type().(*types.Pointer); !ok {
+				if _, ok := types.Unalias(fn.Signature().Params().At(1).Type()).(*types.Pointer); !ok {
 					t.Error("decoder did not preserve the pointer type")
 				}
 			}

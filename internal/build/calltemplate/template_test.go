@@ -13,6 +13,10 @@ import (
 )
 
 func checkedSource(t *testing.T, text string) *packages.Package {
+	return checkedSourceWithImports(t, text, nil)
+}
+
+func checkedSourceWithImports(t *testing.T, text string, importer types.Importer) *packages.Package {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "test.go", text, parser.ParseComments)
@@ -20,16 +24,20 @@ func checkedSource(t *testing.T, text string) *packages.Package {
 		t.Fatal(err)
 	}
 	info := &types.Info{
-		Defs:      make(map[*ast.Ident]types.Object),
-		Uses:      make(map[*ast.Ident]types.Object),
-		Types:     make(map[ast.Expr]types.TypeAndValue),
-		Instances: make(map[*ast.Ident]types.Instance),
+		Defs:         make(map[*ast.Ident]types.Object),
+		Uses:         make(map[*ast.Ident]types.Object),
+		Types:        make(map[ast.Expr]types.TypeAndValue),
+		Instances:    make(map[*ast.Ident]types.Instance),
+		Implicits:    make(map[ast.Node]types.Object),
+		Scopes:       make(map[ast.Node]*types.Scope),
+		Selections:   make(map[*ast.SelectorExpr]*types.Selection),
+		FileVersions: make(map[*ast.File]string),
 	}
-	pkg, err := new(types.Config).Check("p", fset, []*ast.File{file}, info)
+	pkg, err := (&types.Config{Importer: importer}).Check(file.Name.Name, fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &packages.Package{PkgPath: "p", Name: pkg.Name(), Fset: fset, Types: pkg,
+	return &packages.Package{PkgPath: pkg.Path(), Name: pkg.Name(), Fset: fset, Types: pkg,
 		TypesInfo: info, Syntax: []*ast.File{file}}
 }
 

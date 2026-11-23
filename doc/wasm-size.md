@@ -42,7 +42,7 @@ configuration can replace
 `encoding/binary.Encode`, `Decode`, and `Size` with typed codecs for fixed-width
 layouts and standard byte orders. Mixed or dynamic uses retain the standard
 codec. With `-x`, selected codecs report
-`llgo: specialize fixed-size binary encoding`.
+`llgo: apply call template …:any:encoding/binary:…`.
 
 Emscripten Full LTO size builds repeat Binaryen size passes while the
 deployment module shrinks. Embedded and external DWARF profiles use a single

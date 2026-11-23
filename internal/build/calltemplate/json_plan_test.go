@@ -1,20 +1,18 @@
 package calltemplate
 
 import (
+	"errors"
 	"go/ast"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/typesynth"
-	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 func TestRewriteJSONMarshal(t *testing.T) {
@@ -33,30 +31,16 @@ func TestRewriteJSONMarshal(t *testing.T) {
 			initial := pkgs[0]
 			library := initial.Imports["encoding/json"]
 			addCodecPatch(t, library, "templates_llgo.go")
-			binding := codecBinding(t, library)
-			var closure []*packages.Package
-			packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
-			for _, exclude := range []func(*packages.Package) bool{
-				func(p *packages.Package) bool { return p.PkgPath == "strconv" },
-				func(p *packages.Package) bool { return p.PkgPath == "sort" || p.PkgPath == "slices" },
-				func(p *packages.Package) bool { return p == initial },
-			} {
-				incomplete := slices.DeleteFunc(slices.Clone(closure), exclude)
-				if changed, err := rewriteJSON(incomplete, binding, initial); changed || err != nil {
-					t.Fatalf("incomplete dependencies rewrote calls = %t, %v", changed, err)
-				}
-			}
+			registry := templateRegistry(t, library)
 			if v2 := library.Imports["encoding/json/v2"]; v2 != nil {
 				initial.Imports[v2.PkgPath] = v2
-				if changed, err := rewriteJSON(closure, binding, initial); changed || err != nil {
-					t.Fatalf("direct JSON v2 import rewrote calls = %t, %v", changed, err)
+				if used, err := registry.RewriteStructural(pkgs, nil); used.Providers[library.PkgPath] || err != nil {
+					t.Fatalf("direct JSON v2 import rewrote calls = %v, %v", used, err)
 				}
 				delete(initial.Imports, v2.PkgPath)
 			}
-			if changed, err := rewriteJSON(closure, binding, nil); changed || err != nil {
-				t.Fatalf("dependency rewrote calls = %t, %v", changed, err)
-			}
-			changed, err := rewriteJSON(closure, binding, initial)
+			used, err := registry.RewriteStructural(pkgs, nil)
+			changed := used.Providers[library.PkgPath]
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +119,11 @@ func TestMarshalShapeEligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var known typeutil.Map
+	initial := loadCodecInput(t, filepath.Join("..", "testdata", "json-static"))
+	library := initial.Imports["encoding/json"]
+	addCodecPatch(t, library, "templates_llgo.go")
+	rule := templateRegistry(t, library).structural[0].entries["Marshal"].body
+	deps := templateDeps(initial)
 	for _, tc := range []struct {
 		name string
 		want bool
@@ -143,48 +131,16 @@ func TestMarshalShapeEligibility(t *testing.T) {
 		{"basic", true}, {"named", true}, {"record", true}, {"array", true}, {"pointer", true},
 		{"text", false}, {"graph", false}, {"bytes", false}, {"duplicate", false},
 		{"tagged", false}, {"embedded", false}, {"floating", false}, {"dynamic", false}, {"wrongKey", false},
-		{"standardNumber", false}, {"unsupportedField", false}, {"invalidTag", false},
+		{"standardNumber", false}, {"unsupportedField", false}, {"invalidTag", false}, {"omittedOptionalFields", true},
 	} {
-		if got := planShape(pkg.Scope().Lookup(tc.name).Type(), &known) != nil; got != tc.want {
+		gen := newExpansion(initial, deps, "test")
+		ctx := expansionContext{g: gen, rule: rule}
+		_, err := ctx.Emit("encode", pkg.Scope().Lookup(tc.name).Type())
+		if err != nil && !errors.Is(err, errExpansionRejected) {
+			t.Fatal(err)
+		}
+		if got := err == nil; got != tc.want {
 			t.Errorf("%s: eligible %v, want %v", tc.name, got, tc.want)
 		}
-	}
-}
-
-func TestPlanJSONFallback(t *testing.T) {
-	const common = `package p
-		import "encoding/json"
-	`
-	for _, tc := range []struct {
-		name, source string
-		want         bool
-	}{
-		{"typed", "func encode() { _, _ = json.Marshal(struct{N int}{1}) }", true},
-		{"unknown type parameter", "func encode[T any](v T) { _, _ = json.Marshal(v) }", false},
-		{"shadowed builtin", "var append int; func encode() { _, _ = json.Marshal(1) }", false},
-		{"function value", "var encode = json.Marshal", false},
-		{"streaming", "var _ = json.NewEncoder; var _ = json.NewDecoder", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			files := token.NewFileSet()
-			file, err := parser.ParseFile(files, "p.go", common+tc.source, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Uses: make(map[*ast.Ident]types.Object)}
-			pkg, err := (&types.Config{Importer: importer.Default()}).Check("example/p", files, []*ast.File{file}, info)
-			if err != nil {
-				t.Fatal(err)
-			}
-			dep := pkg.Imports()[0]
-			planned := &packages.Package{Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Imports: map[string]*packages.Package{"encoding/json": {PkgPath: dep.Path(), Types: dep}}}
-			_, got := planJSONPackage(planned, &codecBindings{library: planned.Imports["encoding/json"], entries: map[string]string{"Marshal": "marshal", "NewEncoder": "fallback", "NewDecoder": "fallback"}}, false)
-			if got != tc.want {
-				t.Fatalf("accepted = %v, want %v", got, tc.want)
-			}
-			if _, ok := planJSONPackage(planned, &codecBindings{library: &packages.Package{PkgPath: dep.Path(), Types: types.NewPackage(dep.Path(), dep.Name())}}, false); ok {
-				t.Fatal("accepted a different type universe for encoding/json")
-			}
-		})
 	}
 }

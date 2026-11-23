@@ -175,8 +175,8 @@ def native_stdout_pipe_probe(artifact, env):
 
 
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
-    binary_marker = "llgo: specialize fixed-size binary encoding"
-    json_marker = "llgo: specialize statically typed JSON codec"
+    binary_marker = ":any:encoding/binary:"
+    json_marker = ":any:encoding/json:"
     init_marker = "llgo: omit unused JSON package initialization"
     standard_file_marker = "llgo: omit unused standard file initializers"
     stdout_marker = "llgo: specialize closed literal stdout"

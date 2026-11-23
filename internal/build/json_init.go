@@ -1,4 +1,4 @@
-package calltemplate
+package build
 
 import (
 	"go/constant"
@@ -9,18 +9,18 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func IsImplementation(path string) bool {
+func isJSONImplementation(path string) bool {
 	return path == "encoding/json" || strings.HasPrefix(path, "encoding/json/")
 }
 
-func ImplementationSymbol(name string) bool {
+func jsonImplementationSymbol(name string) bool {
 	return strings.HasPrefix(name, "encoding/json.") || strings.HasPrefix(name, "encoding/json/")
 }
 
-// DiscardableInit reports whether init initializes only private JSON state.
+// discardableJSONInit reports whether init initializes only private JSON state.
 // The linker must separately exclude any user of that state and keep the
 // initializers of dependencies outside the codec.
-func DiscardableInit(fn *ssa.Function, trusted func(*types.Package) bool) bool {
+func discardableJSONInit(fn *ssa.Function, trusted func(*types.Package) bool) bool {
 	p := initProof{trusted: trusted, checked: make(map[*ssa.Function]bool)}
 	return fn != nil && fn.Synthetic == "package initializer" && p.check(fn)
 }
@@ -32,7 +32,7 @@ type initProof struct {
 
 func (p *initProof) check(fn *ssa.Function) bool {
 	pkg := fn.Package()
-	if pkg == nil || !IsImplementation(pkg.Pkg.Path()) || !p.trusted(pkg.Pkg) || len(fn.Blocks) == 0 || p.checked[fn] {
+	if pkg == nil || !isJSONImplementation(pkg.Pkg.Path()) || !p.trusted(pkg.Pkg) || len(fn.Blocks) == 0 || p.checked[fn] {
 		return false
 	}
 	p.checked[fn] = true
@@ -85,7 +85,7 @@ func (p *initProof) instruction(fn *ssa.Function, instr ssa.Instruction, fullSli
 			if slice, ok := v.Val.(*ssa.Slice); ok && to == v.Addr {
 				_, fullSlices[to] = fullSlice(slice)
 			}
-			return IsImplementation(to.Pkg.Pkg.Path()) && p.trusted(to.Pkg.Pkg)
+			return isJSONImplementation(to.Pkg.Pkg.Path()) && p.trusted(to.Pkg.Pkg)
 		}
 	case *ssa.Call:
 		return p.call(fn, v.Common(), fullSlices, fullLoads)
@@ -209,9 +209,9 @@ func address(v ssa.Value) ssa.Value {
 	return nil
 }
 
-// StatelessTokenizerHandle checks the standard library's internal tokenizer
+// statelessJSONTokenizerHandle checks the standard library's internal tokenizer
 // handle. The typed path can use its zero value when the link omits init.
-func StatelessTokenizerHandle(pkg *types.Package) bool {
+func statelessJSONTokenizerHandle(pkg *types.Package) bool {
 	handle, ok := pkg.Scope().Lookup("export").(*types.Var)
 	if !ok {
 		return false
@@ -220,9 +220,9 @@ func StatelessTokenizerHandle(pkg *types.Package) bool {
 	return ok && typ.NumFields() == 0
 }
 
-// TypedDecodeErrorObject accepts the public error types and the operations
+// typedJSONDecodeErrorObject accepts the public error types and the operations
 // that inspect their payload without using the generic codec registry.
-func TypedDecodeErrorObject(obj types.Object) bool {
+func typedJSONDecodeErrorObject(obj types.Object) bool {
 	for _, name := range []string{"SyntaxError", "UnmarshalTypeError", "InvalidUnmarshalError"} {
 		errorType, ok := obj.Pkg().Scope().Lookup(name).(*types.TypeName)
 		if !ok {

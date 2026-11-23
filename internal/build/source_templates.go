@@ -15,7 +15,7 @@ import (
 )
 
 type sourceTemplates struct {
-	calltemplate.CodecUse
+	calltemplate.StructuralUse
 	calls map[*types.Package][]string
 }
 
@@ -46,19 +46,21 @@ func applySourceTemplates(conf *Config, frontend cl.Options, bindings *calltempl
 	var err error
 	formats := !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend)
 	if formats {
-		result.CodecUse, err = bindings.RewriteCodecs(initial, runtimePkgs)
+		result.StructuralUse, err = bindings.RewriteStructural(initial, runtimePkgs)
 		if err != nil {
 			return result, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}
 	}
 	result.calls, err = bindings.Rewrite(initial, formats)
+	if len(result.Changes) != 0 {
+		if result.calls == nil {
+			result.calls = make(map[*types.Package][]string)
+		}
+		pkg := result.Entry
+		result.calls[pkg] = append(result.calls[pkg], result.Changes...)
+		slices.Sort(result.calls[pkg])
+	}
 	if verbose {
-		if len(result.Binary) != 0 {
-			fmt.Fprintln(os.Stderr, "llgo: specialize fixed-size binary encoding")
-		}
-		if len(result.JSON) != 0 {
-			fmt.Fprintln(os.Stderr, "llgo: specialize statically typed JSON codec")
-		}
 		for _, changes := range result.calls {
 			for _, change := range changes {
 				fmt.Fprintln(os.Stderr, "llgo: apply call template", change)
@@ -66,6 +68,13 @@ func applySourceTemplates(conf *Config, frontend cl.Options, bindings *calltempl
 		}
 	}
 	return result, err
+}
+
+func (s sourceTemplates) jsonCallers() map[*types.Package]bool {
+	if !s.Providers["encoding/json"] {
+		return nil
+	}
+	return map[*types.Package]bool{s.Entry: true}
 }
 
 func sizeCodecBuild(conf *Config, frontend cl.Options) bool {

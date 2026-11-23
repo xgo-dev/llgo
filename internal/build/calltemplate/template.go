@@ -176,21 +176,32 @@ func (r rules) addCandidates(original *types.Func, text string) error {
 	}
 	for _, name := range ids {
 		fn, _ := original.Pkg().Scope().Lookup(name).(*types.Func)
-		if fn == nil || fn == original {
-			return fmt.Errorf("invalid llgo:template candidate %q", name)
-		}
-		s := fn.Signature()
-		if s.Recv() != nil || s.Variadic() || s.Params().Len() != sig.Params().Len() ||
-			!types.Identical(s.Results(), sig.Results()) {
-			return fmt.Errorf("candidate %s has an incompatible signature for %s", name, original.Name())
-		}
-		for i := 0; i < s.Params().Len(); i++ {
-			old, next := sig.Params().At(i).Type(), s.Params().At(i).Type()
-			if !types.Identical(old, next) && !types.IsInterface(old) {
-				return fmt.Errorf("candidate %s changes non-interface parameter %d", name, i+1)
-			}
+		if err := validateCandidate(original, fn, name); err != nil {
+			return err
 		}
 		r.candidates[original] = append(r.candidates[original], candidate{fn, when})
+	}
+	return nil
+}
+
+func validateCandidate(original, fn *types.Func, name string) error {
+	sig := original.Signature()
+	if sig.Recv() != nil || sig.TypeParams().Len() != 0 || sig.Variadic() {
+		return fmt.Errorf("llgo:template requires a non-variadic, non-generic function")
+	}
+	if fn == nil || fn == original {
+		return fmt.Errorf("invalid llgo:template candidate %q", name)
+	}
+	s := fn.Signature()
+	if s.Recv() != nil || s.Variadic() || s.Params().Len() != sig.Params().Len() ||
+		!types.Identical(s.Results(), sig.Results()) {
+		return fmt.Errorf("candidate %s has an incompatible signature for %s", name, original.Name())
+	}
+	for i := 0; i < s.Params().Len(); i++ {
+		old, next := sig.Params().At(i).Type(), s.Params().At(i).Type()
+		if !types.Identical(old, next) && !types.IsInterface(old) {
+			return fmt.Errorf("candidate %s changes non-interface parameter %d", name, i+1)
+		}
 	}
 	return nil
 }
@@ -299,12 +310,7 @@ func selectCandidate(info *types.Info, call *ast.CallExpr, base *types.Signature
 	if len(call.Args) != base.Params().Len() {
 		return nil, types.Instance{}
 	}
-	actual := make([]types.Type, len(call.Args))
-	for i, e := range call.Args {
-		if t := info.TypeOf(e); t != nil && !llssa.HasTypeParam(t) {
-			actual[i] = types.Default(t)
-		}
-	}
+	actual := actualTypes(info, call)
 	var matches []candidate
 	var instances []types.Instance
 	for _, c := range list {
@@ -330,6 +336,16 @@ func selectCandidate(info *types.Info, call *ast.CallExpr, base *types.Signature
 		}
 	}
 	return nil, types.Instance{}
+}
+
+func actualTypes(info *types.Info, call *ast.CallExpr) []types.Type {
+	actual := make([]types.Type, len(call.Args))
+	for i, e := range call.Args {
+		if t := info.TypeOf(e); t != nil && !llssa.HasTypeParam(t) {
+			actual[i] = types.Default(t)
+		}
+	}
+	return actual
 }
 
 func matchesGuard(actual, want constant.Value) bool {

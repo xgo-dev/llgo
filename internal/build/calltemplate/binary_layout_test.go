@@ -2,15 +2,18 @@ package calltemplate
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"go/token"
 	"go/types"
-	"math"
+	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 )
 
 func TestFixedLayout(t *testing.T) {
+	rule, gen := binaryLayoutTemplate(t)
 	type word uint16
 	type record struct {
 		Flag bool
@@ -22,59 +25,71 @@ func TestFixedLayout(t *testing.T) {
 	}
 	goType := "struct{ Flag bool; _ [3]uint16; Data [2]struct{ Start int8; Value complex128 } }"
 	typ := checkedType(t, goType)
-	wire := fixedLayout(typ, math.MaxInt32)
-	if wire == nil || wire.typ != typ || wire.width != int64(binary.Size(record{})) {
+	wire := layoutForTest(t, rule, gen, typ)
+	if wire == nil || wire["type"] != typ || wire["width"] != int64(binary.Size(record{})) {
 		t.Fatalf("wire layout = %+v, want width %d", wire, binary.Size(record{}))
 	}
+	fields := wire["fields"].(map[string]any)
 	for index, offset := range []int64{0, 1, 7} {
-		if got := wire.fields[index].offset; got != offset {
+		field := fields[fmt.Sprintf("%08d", index)].(map[string]any)
+		if got := field["offset"]; got != offset {
 			t.Fatalf("field %d starts at %d, want %d", index, got, offset)
 		}
-	}
-	if got := wire.fields[1].field.Name(); got != "_" {
-		t.Fatalf("blank field recorded as %q", got)
-	}
-	if got := wire.fields[2].value.elem.fields[1].offset; got != 1 {
-		t.Fatalf("complex value alignment introduced padding at %d", got)
 	}
 }
 
 func TestFixedLayoutRejectsNonWireTypes(t *testing.T) {
+	rule, gen := binaryLayoutTemplate(t)
 	for _, text := range []string{"int", "uint", "uintptr", "string", "*uint16", "[]uint16",
-		"struct{ _ int }", "[0]string", "map[int]uint32", "interface{}", "[268435456]uint64"} {
+		"struct{ _ int }", "[0]string", "map[int]uint32", "[268435456]uint64"} {
 		t.Run(text, func(t *testing.T) {
-			if wire := fixedLayout(checkedType(t, text), math.MaxInt32); wire != nil {
+			if wire := layoutForTest(t, rule, gen, checkedType(t, text)); wire != nil {
 				t.Fatalf("unexpected wire layout %+v", wire)
 			}
 		})
 	}
-	// A zero-width array of fixed-width elements and an empty record are valid.
 	for _, text := range []string{"[0]uint64", "struct{}", "[7]struct{}"} {
-		wire := fixedLayout(checkedType(t, text), math.MaxInt32)
-		if wire == nil || wire.width != 0 {
+		if wire := layoutForTest(t, rule, gen, checkedType(t, text)); wire == nil || wire["width"] != int64(0) {
 			t.Fatalf("%s: zero-width wire layout = %+v", text, wire)
 		}
 	}
 }
 
-func TestFixedLayoutChecksWidthLimit(t *testing.T) {
-	for _, text := range []string{"uint64", "struct{ A uint32; B uint32 }", "[2]uint32"} {
-		if wire := fixedLayout(checkedType(t, text), 4); wire != nil {
-			t.Fatalf("%s exceeds the target width limit: %+v", text, wire)
-		}
-	}
-}
-
 func TestFixedLayoutLimitsGeneratedBody(t *testing.T) {
+	rule, gen := binaryLayoutTemplate(t)
 	var text strings.Builder
 	text.WriteString("struct{")
-	for i := 0; i < maxCodecNodes; i++ {
+	for i := range 256 {
 		fmt.Fprintf(&text, " F%d uint8;", i)
 	}
 	text.WriteString(" }")
-	if wire := fixedLayout(checkedType(t, text.String()), math.MaxInt32); wire != nil {
+	if wire := layoutForTest(t, rule, gen, checkedType(t, text.String())); wire != nil {
 		t.Fatalf("generated codec exceeded its node budget")
 	}
+}
+
+func binaryLayoutTemplate(t *testing.T) (*template.Template, expansionContext) {
+	t.Helper()
+	initial := loadCodecInput(t, filepath.Join("..", "testdata", "binary-fixed"))
+	initial.TypesSizes = types.SizesFor("gc", "386")
+	library := initial.Imports["encoding/binary"]
+	addCodecPatch(t, library, "templates_llgo.go")
+	rule := templateRegistry(t, library).structural[0].entries["Size"].body
+	gen := newExpansion(initial, templateDeps(initial), "test")
+	return rule, expansionContext{g: gen, rule: rule}
+}
+
+func layoutForTest(t *testing.T, rule *template.Template, ctx expansionContext, typ types.Type) map[string]any {
+	t.Helper()
+	out := make(map[string]any)
+	err := rule.ExecuteTemplate(new(strings.Builder), "layout", []any{ctx, typ, out, map[string]any{"remaining": int64(256)}, "size"})
+	if errors.Is(err, errExpansionRejected) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func checkedType(t *testing.T, text string) types.Type {

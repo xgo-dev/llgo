@@ -11,22 +11,16 @@ import (
 
 // Bindings carries the trusted library templates from source through SSA.
 type Bindings struct {
-	formats map[*types.Func]formatRule
-	fmt     *packages.Package
-	value   *types.Func
-	codecs  []*codecBindings
+	formats    map[*types.Func]formatRule
+	fmt        *packages.Package
+	value      *types.Func
+	structural []*structuralBindings
 }
 
 // NeedsFormatRuntime reports whether a declared template can emit composite
 // formatters with calls to the shared formatting runtime.
 func (b *Bindings) NeedsFormatRuntime() bool {
 	return b != nil && b.value != nil && b.formats[b.value].composite
-}
-
-type codecBindings struct {
-	library *packages.Package
-	dialect string
-	entries map[string]string
 }
 
 // LoadBindings reads declarations shipped in the selected standard-library
@@ -45,7 +39,7 @@ func LoadBindings(roots []*packages.Package, trusted func(*packages.Package) boo
 }
 
 func (b *Bindings) loadPackage(pkg *packages.Package) error {
-	var codecs *codecBindings
+	var structural *structuralBindings
 	for _, file := range pkg.Syntax {
 		for _, group := range file.Comments {
 			for _, comment := range group.List {
@@ -56,10 +50,10 @@ func (b *Bindings) loadPackage(pkg *packages.Package) error {
 				if !ok || d.Name != "llgointernal:template:bind" {
 					continue
 				}
-				name, rest, ok := takeWord(d.Args)
+				name, rest, _ := takeWord(d.Args)
 				dialect, args, _ := takeWord(rest)
 				fn, _ := pkg.Types.Scope().Lookup(name).(*types.Func)
-				if !ok || fn == nil {
+				if fn == nil {
 					return fmt.Errorf("%s: invalid template entry %q", pkg.Fset.Position(d.Pos), name)
 				}
 				switch dialect {
@@ -79,26 +73,21 @@ func (b *Bindings) loadPackage(pkg *packages.Package) error {
 						}
 						b.value = fn
 					}
-				case "binary", "json":
-					op, err := bindCodec(fn.Signature(), dialect, args)
-					if err != nil {
+				case "any":
+					if structural == nil {
+						structural = &structuralBindings{library: pkg, entries: make(map[string]structuralRule)}
+					}
+					if err := structural.bind(fn, args); err != nil {
 						return fmt.Errorf("%s: %w", pkg.Fset.Position(d.Pos), err)
 					}
-					if codecs == nil {
-						codecs = &codecBindings{library: pkg, dialect: dialect, entries: make(map[string]string)}
-					}
-					if _, duplicate := codecs.entries[name]; duplicate || codecs.dialect != dialect {
-						return fmt.Errorf("%s: conflicting codec binding for %s", pkg.Fset.Position(d.Pos), name)
-					}
-					codecs.entries[name] = op
 				default:
 					return fmt.Errorf("%s: unknown template dialect %q", pkg.Fset.Position(d.Pos), dialect)
 				}
 			}
 		}
 	}
-	if codecs != nil {
-		b.codecs = append(b.codecs, codecs)
+	if structural != nil {
+		b.structural = append(b.structural, structural)
 	}
 	return nil
 }
@@ -121,49 +110,4 @@ func bindingOptions(args string) (map[string]string, error) {
 		opts[name] = value
 	}
 	return opts, nil
-}
-
-// Validate the operand roles used by the semantic generators. The emitter
-// retains the declaration's evaluation order and original result types.
-func bindCodec(sig *types.Signature, dialect, args string) (string, error) {
-	opts, err := bindingOptions(args)
-	if err != nil {
-		return "", err
-	}
-	op := opts["op"]
-	delete(opts, "op")
-	var roles []string
-	var results []types.Type
-	errorType := types.Universe.Lookup("error").Type()
-	bytesType := types.NewSlice(types.Typ[types.Byte])
-	switch dialect + "/" + op {
-	case "binary/fallback", "json/fallback":
-	case "binary/size":
-		roles, results = []string{"value"}, []types.Type{types.Typ[types.Int]}
-	case "binary/encode", "binary/decode":
-		roles, results = []string{"buffer", "order", "value"}, []types.Type{types.Typ[types.Int], errorType}
-	case "json/marshal":
-		roles, results = []string{"value"}, []types.Type{bytesType, errorType}
-	case "json/unmarshal":
-		roles, results = []string{"input", "value"}, []types.Type{errorType}
-	default:
-		return "", fmt.Errorf("unknown %s template operation %q", dialect, op)
-	}
-	if len(opts) != len(roles) || (op != "fallback" && (sig.Recv() != nil || sig.Variadic() ||
-		sig.Params().Len() != len(roles) || sig.Results().Len() != len(results))) {
-		return "", fmt.Errorf("invalid signature or roles for %s %s template", dialect, op)
-	}
-	for i, role := range roles {
-		p := sig.Params().At(i)
-		if p.Name() != opts[role] || (role == "value" && !types.IsInterface(p.Type())) ||
-			((role == "buffer" || role == "input") && !types.Identical(p.Type(), bytesType)) {
-			return "", fmt.Errorf("invalid %s role for %s %s template", role, dialect, op)
-		}
-	}
-	for i, result := range results {
-		if !types.Identical(sig.Results().At(i).Type(), result) {
-			return "", fmt.Errorf("invalid result type for %s %s template", dialect, op)
-		}
-	}
-	return op, nil
 }

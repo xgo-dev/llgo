@@ -69,8 +69,8 @@ func TestBinaryCodecSupport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (len(result.Binary) != 0) != tc.want {
-				t.Fatalf("rewritten = %d packages, want enabled %v", len(result.Binary), tc.want)
+			if got := result.Providers["encoding/binary"]; got != tc.want {
+				t.Fatalf("rewritten = %v, want %v", got, tc.want)
 			}
 		})
 	}

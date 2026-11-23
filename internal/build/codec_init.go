@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -62,7 +61,7 @@ func configureCodecInits(ctx *context, inputs *linkPruningInputs) {
 // has no remaining use of that state. Preserve all other packages' order.
 func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *packages.Package) map[string]bool {
 	typedDecode, hasOtherUse := entryJSONUses(entry)
-	if slices.ContainsFunc(inputs.roots, calltemplate.ImplementationSymbol) || hasOtherUse ||
+	if slices.ContainsFunc(inputs.roots, jsonImplementationSymbol) || hasOtherUse ||
 		(typedDecode && !ctx.embeddedClosedProgram && !ctx.wasmClosedProgram && !inputs.nativeFormat) {
 		return nil
 	}
@@ -73,7 +72,7 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 			return nil
 		}
 		trusted[pkg.Types] = isStandardLibraryPackage(pkg.Package, inputs.goroot)
-		if calltemplate.IsImplementation(pkg.PkgPath) {
+		if isJSONImplementation(pkg.PkgPath) {
 			if pkg.AltPkg != nil {
 				return nil
 			}
@@ -89,7 +88,7 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 			continue
 		}
 		for _, dep := range effectiveDependencies(pkg) {
-			if calltemplate.IsImplementation(dep.PkgPath) && (pkg.Package != entry ||
+			if isJSONImplementation(dep.PkgPath) && (pkg.Package != entry ||
 				dep.PkgPath != "encoding/json" && !(typedDecode && (dep.PkgPath == "encoding/json/v2" || dep.PkgPath == "encoding/json/jsontext"))) {
 				return nil
 			}
@@ -102,10 +101,10 @@ func findUnusedJSONInits(ctx *context, inputs *linkPruningInputs, entry *package
 	skip := make(map[string]bool, len(members))
 	for _, pkg := range members {
 		ssaPkg := ctx.progSSA.Package(pkg.Types)
-		if typedDecode && pkg.PkgPath == "encoding/json/v2" && !calltemplate.StatelessTokenizerHandle(pkg.Types) {
+		if typedDecode && pkg.PkgPath == "encoding/json/v2" && !statelessJSONTokenizerHandle(pkg.Types) {
 			return nil
 		}
-		if ssaPkg == nil || !calltemplate.DiscardableInit(ssaPkg.Func("init"),
+		if ssaPkg == nil || !discardableJSONInit(ssaPkg.Func("init"),
 			func(p *types.Package) bool {
 				return trusted[p] || p.Path() == "github.com/xgo-dev/llgo/runtime/internal/lib/reflect"
 			}) {
@@ -125,7 +124,7 @@ func entryJSONUses(entry *packages.Package) (typedDecode, hasOtherUse bool) {
 	for _, file := range entry.Syntax {
 		for _, imp := range file.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
-			if calltemplate.IsImplementation(path) && imp.Name != nil && imp.Name.Name == "_" {
+			if isJSONImplementation(path) && imp.Name != nil && imp.Name.Name == "_" {
 				return typedDecode, true
 			}
 		}
@@ -135,7 +134,7 @@ func entryJSONUses(entry *packages.Package) (typedDecode, hasOtherUse bool) {
 				return true
 			}
 			obj := entry.TypesInfo.Uses[id]
-			if obj == nil || obj.Pkg() == nil || !calltemplate.IsImplementation(obj.Pkg().Path()) {
+			if obj == nil || obj.Pkg() == nil || !isJSONImplementation(obj.Pkg().Path()) {
 				return true
 			}
 			_, isFunction := obj.(*types.Func)
@@ -145,7 +144,7 @@ func entryJSONUses(entry *packages.Package) (typedDecode, hasOtherUse bool) {
 					typedDecode = true
 					return true
 				}
-				if calltemplate.TypedDecodeErrorObject(obj) {
+				if typedJSONDecodeErrorObject(obj) {
 					typedSupport = true
 					return true
 				}
@@ -177,7 +176,7 @@ func hasJSONLinkname(files []*ast.File) bool {
 					continue
 				}
 				_, target := directive.ParseLinknameArgs(item.Args)
-				if calltemplate.ImplementationSymbol(target) {
+				if jsonImplementationSymbol(target) {
 					return true
 				}
 			}

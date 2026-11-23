@@ -34,14 +34,16 @@ The `fmt` source patch binds the standard entry points by name. LLGo derives the
 - C formatting folds C string literals and matching 32-bit integer constants into a constant format, with remaining operands forwarded using `__llgo_va_list`. A shared literal stays in the argument list when substituting it would duplicate its bytes. The original libc call handles output, truncation and return values. Positional arguments, dynamic widths and unsupported format syntax keep the original call.
 
 
-## Standard-library patches
+## Source-patch templates
 
-A patch can bind an existing package-level declaration without copying its Go body. The template engine validates the named roles against the selected toolchain. For example, the standard-library patches declare:
+A standard-library patch can bind a typed implementation to an existing declaration. The implementation's signature uses the same matching rules as `//llgo:template`. Format bindings also support a named format parameter and variadic argument list.
 
 ```go
+//llgointernal:template:bind Size any helper=llgoSize body=llgoSizeBody
+//llgointernal:template:bind Read any fallback
 //llgointernal:template:bind Appendf gofmt format=format args=a result=append
-//llgointernal:template:bind Size binary op=size value=v
-//llgointernal:template:bind Marshal json op=marshal value=v
 ```
 
-The codec generators inspect concrete types at compile time for binary wire layout and JSON fields, tags and methods. A codec falls back when the program still needs a generic entry point or has an unmodeled linker alias. Patch files are selected by the target and toolchain. Specialized callers keep their own generated code and cache records, so they can reuse the same patched library archive.
+An `any` body is a Go string constant interpreted at compile time using `text/template`. The engine creates a caller-local function with the selected signature and gives its arguments the names `a0`, `a1`, and so on. The body can inspect instantiated argument types, array lengths, field names and tags, and value or pointer method sets. It can emit shared typed helper functions and decline a call with `reject`. Generated source passes the ordinary Go type checker before it is bound to any call.
+
+In a Full LTO size build, a provider's bindings apply when all uses of its declared entries can be specialized in the executable package. An indirect call, a linker alias, or an entry marked `fallback` keeps the provider's generic implementation. The patch supplies the binary wire layout and JSON codec rules. The generated code and cache records belong to the executable package, so other clients can reuse the same patched library archive.

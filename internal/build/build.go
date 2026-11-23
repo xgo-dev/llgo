@@ -1132,26 +1132,25 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:      make(map[string]bool),
-		pkgs:                map[*packages.Package]Package{},
-		pkgByID:             map[string]Package{},
-		cacheManager:        newCacheManager(),
-		patchFiles:          llgoFiles,
-		output:              output,
-		passOpt:             passOpt,
-		buildConf:           conf,
-		crossCompile:        export,
-		commands:            commands,
-		frontendOptions:     frontendOptions,
-		staticByteArrays:    altByteArrays,
-		templateBindings:    bindings,
-		binaryCodecPackages: templates.Binary,
-		jsonCodecPackages:   templates.JSON,
-		callTemplates:       templates.calls,
-		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:          buildTrace,
-		goVersion:           sourcePatchGoVersion,
-		defaultGODEBUG:      defaultGODEBUG,
+		fingerprinting:    make(map[string]bool),
+		pkgs:              map[*packages.Package]Package{},
+		pkgByID:           map[string]Package{},
+		cacheManager:      newCacheManager(),
+		patchFiles:        llgoFiles,
+		output:            output,
+		passOpt:           passOpt,
+		buildConf:         conf,
+		crossCompile:      export,
+		commands:          commands,
+		frontendOptions:   frontendOptions,
+		staticByteArrays:  altByteArrays,
+		templateBindings:  bindings,
+		jsonCodecPackages: templates.jsonCallers(),
+		callTemplates:     templates.calls,
+		cTransformer:      cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:        buildTrace,
+		goVersion:         sourcePatchGoVersion,
+		defaultGODEBUG:    defaultGODEBUG,
 	}
 	if formatSupport {
 		ctx.formatRuntime = dedup.Check(calltemplate.RuntimePath)
@@ -2072,7 +2071,6 @@ type context struct {
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	templateBindings     *calltemplate.Bindings
-	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
 	callTemplates        map[*types.Package][]string
 	codecInitDrops       map[string]bool
