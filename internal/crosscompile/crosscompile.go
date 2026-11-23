@@ -1261,7 +1261,11 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, target, rtLibraryKey)
+		// The RT lib compile consumes the libc include flags, and its archive
+		// identity must also cover the rtlib source list (see rtlibCacheKeyGroups),
+		// so both feed the cache key.
+		rtKey := compiledLibraryCacheKey(rtLibraryKey, libcIncludeDir)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, target, rtKey)
 		if err != nil {
 			return
 		}

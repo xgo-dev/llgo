@@ -3,7 +3,7 @@
 // license that can be found in the LICENSES/Go-BSD-3-Clause.txt
 // file at this module root for license terms.
 
-//go:build arm
+//go:build arm && !(llgo && baremetal)
 
 package bytealg
 

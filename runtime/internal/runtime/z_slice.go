@@ -107,7 +107,9 @@ func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int
 	if etSize == 0 {
 		return src
 	}
-	llgoMemcpy(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
+	// An in-capacity append may take its arguments from the same backing
+	// array, so the copy must stay a memmove.
+	llgoMemmove(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
 	return src
 }
 
@@ -147,6 +149,20 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 	}
 	src.len = newLen
 	return src
+}
+
+// ReflectGrowSlice preserves the length and all elements in the old capacity.
+// The caller has checked that len+num exceeds cap.
+func ReflectGrowSlice(src Slice, num int, elem *Type) Slice {
+	oldLen := src.len
+	num -= src.cap - oldLen
+	src.len = src.cap
+	grown := GrowSliceAligned(src, num, int(elem.Size_), int(elem.Align_), elem.Pointers())
+	if wideGoHeaderSlots {
+		clearTypedHeaderRange(elem, grown.data, uintptr(src.len), elem.Size_)
+	}
+	grown.len = oldLen
+	return grown
 }
 
 // nextslicecap computes the next appropriate slice length.

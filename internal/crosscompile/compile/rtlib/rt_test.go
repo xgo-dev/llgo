@@ -46,6 +46,7 @@ func TestPlatformSpecifiedFiles(t *testing.T) {
 		{"riscv32-esp-elf", 5},
 		{"riscv64-unknown-elf", 27},
 		{"arm-none-eabi", 19},
+		{"thumbv7m-unknown-unknown-eabi", 19},
 		{"avr-unknown-elf", 6},
 		{"xtensa", 2},
 		{"x86_64-pc-windows", 0},

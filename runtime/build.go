@@ -79,6 +79,22 @@ func SourcePatchReplacesAsmForGOARCH(path, goarch string) bool {
 	return ok && (hasGoarch(goarchs, "*") || hasGoarch(goarchs, goarch))
 }
 
+// SourcePatchReplacesAsm checks the policy for an active source patch.
+func SourcePatchReplacesAsm(path, goarch string, tags []string) bool {
+	switch path {
+	case "internal/bytealg", "internal/chacha8rand",
+		"runtime/internal/syscall", "internal/runtime/syscall", "internal/runtime/syscall/linux":
+		for _, tag := range tags {
+			if tag == "baremetal" {
+				return true
+			}
+		}
+		return false
+	default:
+		return SourcePatchReplacesAsmForGOARCH(path, goarch)
+	}
+}
+
 var sourcePatchPkgs = map[string]struct{}{
 	"crypto/internal/fips140/aes":    {},
 	"crypto/internal/constanttime":   {},
@@ -87,17 +103,21 @@ var sourcePatchPkgs = map[string]struct{}{
 	"go/build":                       {},
 	"go/importer":                    {},
 	"internal/bytealg":               {},
-	"internal/cpu":                   {},
 	"internal/chacha8rand":           {},
+	"internal/cpu":                   {},
 	"internal/runtime/atomic":        {},
-	"internal/runtime/syscall/linux": {},
 	"internal/runtime/maps":          {},
 	"internal/runtime/sys":           {},
+	"internal/runtime/syscall":       {},
+	"internal/runtime/syscall/linux": {},
 	"internal/strconv":               {},
 	"internal/sync":                  {},
 	"iter":                           {},
 	"math/bits":                      {},
+	"os":                             {},
 	"runtime":                        {},
+	"runtime/internal/atomic":        {},
+	"runtime/internal/syscall":       {},
 	"runtime/metrics":                {},
 	"simd":                           {},
 	"simd/internal/bridge":           {},
@@ -112,9 +132,10 @@ var sourcePatchPkgs = map[string]struct{}{
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
 	"crypto/internal/fips140/aes":    {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
 	"internal/bytealg":               {"arm": {}},
-	"internal/runtime/syscall/linux": {"arm": {}},
-	"internal/runtime/atomic":        {"arm": {}},
 	"internal/chacha8rand":           {"*": {}},
+	"internal/runtime/atomic":        {"arm": {}},
+	"internal/runtime/syscall/linux": {"arm": {}},
+	"runtime/internal/atomic":        {"arm": {}},
 	"sync/atomic":                    {"*": {}},
 	"syscall":                        {"*": {}},
 }

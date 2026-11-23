@@ -1,4 +1,4 @@
-//go:build baremetal
+//go:build baremetal && !llgo.baremetal.stdio
 
 package runtime
 
@@ -20,5 +20,16 @@ func syscall_runtime_syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1 uintptr,
 	_, _, _ = trap, a1, a2
 	_, _, _ = a3, a4, a5
 	_ = a6
+	return 0, 38 // ENOSYS
+}
+
+func fcntl(fd int32, cmd int32, arg int32) (int32, int32) {
+	_, _, _ = fd, cmd, arg
+	return -1, 38 // ENOSYS
+}
+
+//go:linkname syscall_rawVforkSyscall syscall.rawVforkSyscall
+func syscall_rawVforkSyscall(trap, a1, a2, a3 uintptr) (r1 uintptr, err uintptr) {
+	_, _, _, _ = trap, a1, a2, a3
 	return 0, 38 // ENOSYS
 }

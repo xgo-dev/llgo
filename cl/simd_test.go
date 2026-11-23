@@ -107,7 +107,8 @@ func TestSIMDFMVQueryIdentity(t *testing.T) {
 		{"other package", "example/archsimd", "X86Features", "AVX2() bool", ""},
 		{"other receiver", "simd/archsimd", "OtherFeatures", "AVX2() bool", ""},
 		{"pointer receiver", "simd/archsimd", "*X86Features", "AVX2() bool", ""},
-		{"other query", "simd/archsimd", "X86Features", "AVX() bool", ""},
+		{"avx", "simd/archsimd", "X86Features", "AVX() bool", "x86.avx"},
+		{"unknown", "simd/archsimd", "X86Features", "Other() bool", ""},
 		{"argument", "simd/archsimd", "X86Features", "AVX2(int) bool", ""},
 		{"result", "simd/archsimd", "X86Features", "AVX2() int", ""},
 	} {
@@ -196,6 +197,35 @@ func TestSIMDOperationIdentity(t *testing.T) {
 	}
 }
 
+func TestSIMDPartialLoadSignature(t *testing.T) {
+	const source = `package archsimd
+type v128 struct { _ [0]func() }
+type Int32x4 struct { tag v128; vals [4]int32 }
+type Uint32x4 struct { tag v128; vals [4]uint32 }
+func LoadInt32x4Part([]int32) (Int32x4, int)
+func LoadUint32x4Part([]int32) (Uint32x4, int)
+`
+	fs := token.NewFileSet()
+	file, err := parser.ParseFile(fs, "partial.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := new(types.Config).Check("simd/archsimd", fs, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := ssa.NewProgram(fs, 0)
+	prog.CreatePackage(pkg, nil, nil, true)
+	valid := prog.FuncValue(pkg.Scope().Lookup("LoadInt32x4Part").(*types.Func))
+	if got := simdPartialLoadType(valid, "amd64"); got != valid.Signature.Results().At(0).Type() {
+		t.Fatalf("partial load result = %v, want Int32x4", got)
+	}
+	mismatch := prog.FuncValue(pkg.Scope().Lookup("LoadUint32x4Part").(*types.Func))
+	if got := simdPartialLoadType(mismatch, "amd64"); got != nil {
+		t.Fatalf("selected %v for a partial load with the wrong slice element type", got)
+	}
+}
+
 func TestSIMDBridgeOperationSignatures(t *testing.T) {
 	const declarations = `package archsimd
 type v128 struct { _ [0]func() }
@@ -211,6 +241,9 @@ type Mask64x2 struct { tag v128; vals [2]int64 }
 		name, receiver, method string
 		want                   llssa.SIMDOp
 	}{
+		{"masked blend", "Uint32x4", "blendMasked(Uint32x4, Mask32x4) Uint32x4", llssa.SIMDBlend},
+		{"blend missing mask", "Uint32x4", "blendMasked(Uint32x4) Uint32x4", llssa.SIMDUnimplemented},
+		{"blend different mask lanes", "Uint32x4", "blendMasked(Uint32x4, Mask64x2) Uint32x4", llssa.SIMDUnimplemented},
 		{"masked store", "Float32x4", "StoreArrayMasked(*[4]float32, Mask32x4)", llssa.SIMDStoreMasked},
 		{"missing mask", "Float32x4", "StoreArrayMasked(*[4]float32)", llssa.SIMDUnimplemented},
 		{"numeric mask", "Float32x4", "StoreArrayMasked(*[4]float32, Float32x4)", llssa.SIMDUnimplemented},

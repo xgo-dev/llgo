@@ -293,8 +293,25 @@ func TestSIMDIntrinsicDefinitions(t *testing.T) {
 				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 					t.Fatal(err)
 				}
-				if fn := mod.NamedFunction("simd/archsimd.Int8x16.OnesCount"); fn.IsNil() || !strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
-					t.Fatal("missing explicit unsupported implementation")
+				if fn := mod.NamedFunction("simd/archsimd.Int8x16.OnesCount"); fn.IsNil() || !strings.Contains(fn.String(), "llvm.ctpop") {
+					t.Fatal("missing callable population count")
+				}
+				if target.arch == "amd64" {
+					if fn := mod.NamedFunction("simd/archsimd.Uint32x4.SHA1Message1"); fn.IsNil() || strings.Contains(fn.String(), "PanicSIMDUnimplemented") {
+						t.Fatal("missing callable SHA implementation")
+					}
+				}
+				if target.arch == "arm64" {
+					fn := mod.NamedFunction("simd/archsimd.Int8x16.LeadingZeros")
+					if fn.IsNil() || !strings.Contains(fn.String(), "llvm.ctlz") {
+						t.Fatal("missing callable leading zero count")
+					}
+				}
+				if target.arch == "wasm" {
+					fn := mod.NamedFunction("simd/archsimd.Int8x16.MulWidenHi")
+					if fn.IsNil() || !strings.Contains(fn.String(), "shufflevector") || !strings.Contains(fn.String(), "<i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15>") {
+						t.Fatal("missing callable high-half widening multiply")
+					}
 				}
 				if fn := mod.NamedFunction("simd/archsimd.Uint8x16.ExtendLo8ToUint16"); fn.IsNil() || !strings.Contains(fn.String(), "zext <8 x i8>") {
 					t.Fatal("integer extension has no callable vector definition")
@@ -350,4 +367,173 @@ func main() { println(broadcast(1).GetElem(0)) }
 		return
 	}
 	t.Fatal("missing archsimd package")
+}
+
+func TestSIMDX86PackedInstructions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module packed\n\ngo 1.27\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const src = `package main
+import "simd/archsimd"
+//go:noinline
+func sad(out *[8]uint64, a,b *[64]uint8) {
+ archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(out)
+}
+//go:noinline
+func sad32(out *[4]uint64, a,b *[32]uint8) {
+ archsimd.LoadUint8x32Array(a).SumOf8AbsDiff(archsimd.LoadUint8x32Array(b)).StoreArray(out)
+}
+//go:noinline
+func expandSum(out,a,b *[16]uint32, m uint16) {
+ x := archsimd.LoadUint32x16Array(a).Add(archsimd.LoadUint32x16Array(b))
+ x.Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func expandFloat(out,a *[16]float32, m uint16) {
+ archsimd.LoadFloat32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func dot(out *[32]int16, a *[64]uint8, b *[64]int8) {
+ archsimd.LoadUint8x64Array(a).DotProductPairsSaturated(archsimd.LoadInt8x64Array(b)).StoreArray(out)
+}
+//go:noinline
+func pack(out *[16]uint32, a *[16]uint32, m uint16) {
+ archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func expand(out *[16]uint32, a *[16]uint32, m uint16) {
+ archsimd.LoadUint32x16Array(a).Expand(archsimd.Mask32x16FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func floatPack(out, a *[4]float32, m uint8) {
+ archsimd.LoadFloat32x4Array(a).Compress(archsimd.Mask32x4FromBits(m)).StoreArray(out)
+}
+//go:noinline
+func fused(out,a,b,c *[16]float32) {
+ x,y,z := archsimd.LoadFloat32x16Array(a),archsimd.LoadFloat32x16Array(b),archsimd.LoadFloat32x16Array(c)
+ x.MulAddEvenSubOdd(y,z).StoreArray(out)
+}
+func main() {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []string{"v1", "v3", "v4"} {
+		t.Run(level, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", level, "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, asm string) {
+				body := func(name string) string {
+					t.Helper()
+					match := regexp.MustCompile(`(?ms)^main\.` + name + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
+					if match == nil {
+						t.Fatalf("missing assembly for %s", name)
+					}
+					return match[1]
+				}
+				if level == "v1" {
+					assertSIMDBaselineAssembly(t, asm)
+					if !regexp.MustCompile(`(?m)^\s*psadbw\s+[^\n]*%xmm`).MatchString(asm) {
+						t.Error("missing baseline SSE2 SAD")
+					}
+					return
+				}
+				checkSAD := func(name, reg string, count int) {
+					t.Helper()
+					fn := body(name)
+					wide := regexp.MustCompile(`vpsadbw\s+[^\n]*` + reg)
+					if strings.Count(fn, "vpsadbw") != count || len(wide.FindAllString(fn, -1)) != count {
+						t.Errorf("expected %d %s SAD in %s:\n%s", count, reg, name, fn)
+					}
+				}
+				checkSAD("sad32", "%ymm", 1)
+				if level == "v4" {
+					checkSAD("sad", "%zmm", 1)
+				} else {
+					checkSAD("sad", "%ymm", 2)
+				}
+				if level != "v4" || !strings.HasSuffix(t.Name(), "/O2") {
+					return
+				}
+				for _, tc := range []struct{ name, pattern string }{{"expandSum", `vpexpandd\s+%zmm`}, {"expandFloat", `vexpandps\s+\(%r\w+\),\s*%zmm`}} {
+					fn := body(tc.name)
+					if !regexp.MustCompile(tc.pattern).MatchString(fn) || strings.Contains(fn, "(%rsp)") || strings.Contains(fn, "(%rbp)") {
+						t.Errorf("expected stack-free packed expand in %s:\n%s", tc.name, fn)
+					}
+				}
+				for _, mnemonic := range []string{"vpmaddubsw", "vpcompressd", "vpexpandd", `vfmaddsub(132|213|231)ps`} {
+					if !regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(asm) {
+						t.Errorf("missing 512-bit %s", mnemonic)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestSIMDGuardedPackedInstructions(t *testing.T) {
+	dir := t.TempDir()
+	const src = `package main
+import "simd/archsimd"
+//go:noinline
+func packed(o,a *[16]uint32, m uint16) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint32x16Array(a).Compress(archsimd.Mask32x16FromBits(m)).StoreArray(o) }
+}
+//go:noinline
+func sad(o *[8]uint64, a,b *[64]uint8) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o) }
+}
+//go:noinline
+func bytes(o,a *[64]uint8, m uint64) {
+ if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint8x64Array(a).Compress(archsimd.Mask8x64FromBits(m)).StoreArray(o) }
+}
+//go:noinline
+func words(o,a *[32]uint16, m uint32) {
+ if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint16x32Array(a).Expand(archsimd.Mask16x32FromBits(m)).StoreArray(o) }
+}
+func main() {}
+`
+	for name, body := range map[string]string{"go.mod": "module guardedpacked\n\ngo 1.27\n", "main.go": src} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		level, guard string
+		ops          map[string]string
+	}{
+		{"v1", "avx512", map[string]string{"packed": "vpcompressd", "sad": "vpsadbw"}},
+		{"v4", "avx512vbmi2", map[string]string{"bytes": "vpcompressb", "words": "vpexpandw"}},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", tc.level, "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, asm string) {
+				for fn, mnemonic := range tc.ops {
+					for _, suffix := range []string{tc.guard, "base"} {
+						symbol := "main." + fn + ".__llgo_fmv_guard_" + suffix
+						body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(symbol) + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
+						if body == nil {
+							t.Fatalf("missing assembly for %s", symbol)
+						}
+						packed := regexp.MustCompile(`(?m)^\s*` + mnemonic + `\s+[^\n]*%zmm`).MatchString(body[1])
+						if packed != (suffix == tc.guard) {
+							t.Errorf("%s: unexpected instruction selection for %s:\n%s", symbol, mnemonic, body[1])
+						}
+					}
+				}
+			})
+		})
+	}
 }

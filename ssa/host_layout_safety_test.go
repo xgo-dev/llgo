@@ -64,6 +64,9 @@ type Wire struct { _ structs.HostLayout; Addr uint32; Len uint32 }
 					if got := prog.SizeOf(field); got != uint64(tc.width) {
 						t.Fatalf("field storage size = %d, want %d", got, tc.width)
 					}
+					if pointee := prog.Elem(prog.Pointer(field)); prog.SizeOf(pointee) != uint64(tc.width) {
+						t.Fatalf("taking the field's address changed its storage size to %d", prog.SizeOf(pointee))
+					}
 					if prog.isNativeStorage(field) {
 						t.Fatal("ordinary Go field acquired native storage")
 					}

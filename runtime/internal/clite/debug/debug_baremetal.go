@@ -23,12 +23,8 @@ func Addrinfo(addr unsafe.Pointer, info *Info) c.Int {
 	panic("not implemented")
 }
 
-// Symbol resolves a C symbol name to its address. Baremetal images carry no
-// runtime symbol table, so every lookup reports "not found".
-func Symbol(name *c.Char) unsafe.Pointer {
-	_ = name
-	return nil
-}
+// Symbol lookup is unavailable on freestanding targets.
+func Symbol(_ *c.Char) unsafe.Pointer { return nil }
 
 type Frame struct {
 	PC     uintptr

@@ -94,7 +94,3 @@ func time_runtimeIsBubbled() bool {
 func timeSleep(ns int64) {
 	_ = ns
 }
-
-func runtimeNano() int64 {
-	return 0
-}

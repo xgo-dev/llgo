@@ -17,7 +17,10 @@ func init() {
 	if X86.HasAVX2 {
 		features |= 2
 	}
-	llgoCPUFeatures = features
+	if X86.HasAVX {
+		features |= 4
+	}
+	llgoCPUFeatures = features | llgoArchSIMDFeatures()
 }
 
 //go:linkname llgoCPUFeatures github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures

@@ -1,7 +1,7 @@
 # Vendored wasm64 libffi
 
 Prebuilt static archive for `-target emscripten-memory64` (Emscripten
-Memory64 / LP64). WASI keeps the C stub in `_wrap/libffi_wasm_stub.c`.
+Memory64 / LP64). WASI keeps the C stub in `_wrap/libffi_unavailable.c`.
 
 - Upstream: [libffi](https://sourceware.org/libffi/) 3.8.0 (`include/ffi.h`)
 - Target: `wasm64-unknown-emscripten` with `-sMEMORY64=1`

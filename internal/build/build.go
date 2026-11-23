@@ -904,6 +904,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		goversion:  sourcePatchGoVersion,
 		toolTags:   sourceGo.toolTags,
 		buildFlags: cfg.BuildFlags,
+		targetTags: export.BuildTags,
 		cgoEnabled: &sourceCgoEnabled,
 	})
 	if err != nil {

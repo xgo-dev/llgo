@@ -22,19 +22,27 @@ func (b Builder) simdAverage(x, y Expr) Expr {
 	return Expr{b.impl.CreateAdd(b.impl.CreateAdd(shared, half, ""), round, ""), x.Type}
 }
 
-func (b Builder) simdMulWidenLo(result Type, x, y Expr) Expr {
+func (b Builder) simdMulWiden(op SIMDOp, result Type, x, y Expr) Expr {
 	indices := make([]llvm.Value, result.ll.VectorSize())
+	offset := 0
+	if op == SIMDMulWidenHi {
+		offset = len(indices)
+	}
 	for i := range indices {
-		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(i), false)
+		index := offset + i
+		if op == SIMDMulWidenEven {
+			index = 2 * i
+		}
+		indices[i] = llvm.ConstInt(b.Prog.tyInt32(), uint64(index), false)
 	}
 	mask := llvm.ConstVector(indices, false)
 	unsigned := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsUnsigned != 0
 	widen := func(v llvm.Value) llvm.Value {
-		lo := b.impl.CreateShuffleVector(v, llvm.Undef(v.Type()), mask, "")
+		half := b.impl.CreateShuffleVector(v, llvm.Undef(v.Type()), mask, "")
 		if unsigned {
-			return b.impl.CreateZExt(lo, result.ll, "")
+			return b.impl.CreateZExt(half, result.ll, "")
 		}
-		return b.impl.CreateSExt(lo, result.ll, "")
+		return b.impl.CreateSExt(half, result.ll, "")
 	}
 	return Expr{b.impl.CreateMul(widen(x.impl), widen(y.impl), ""), result}
 }
@@ -100,7 +108,7 @@ func (b Builder) simdFMA(result Type, x, y, z Expr) Expr {
 func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	n := x.ll.VectorSize()
 	group := n
-	if op == SIMDConcatAddPairsGrouped || op == SIMDConcatSubPairsGrouped {
+	if op == SIMDConcatAddPairsGrouped || op == SIMDConcatSubPairsGrouped || op == SIMDConcatAddPairsSaturatedGrouped || op == SIMDConcatSubPairsSaturatedGrouped {
 		group /= 2
 	}
 	even, odd := make([]llvm.Value, n), make([]llvm.Value, n)
@@ -116,6 +124,12 @@ func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 	}
 	a := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(even, false), "")
 	c := b.impl.CreateShuffleVector(x.impl, y.impl, llvm.ConstVector(odd, false), "")
+	switch op {
+	case SIMDConcatAddPairsSaturated, SIMDConcatAddPairsSaturatedGrouped:
+		return b.simdIntegerIntrinsic(SIMDAddSaturated, Expr{a, x.Type}, Expr{c, x.Type})
+	case SIMDConcatSubPairsSaturated, SIMDConcatSubPairsSaturatedGrouped:
+		return b.simdIntegerIntrinsic(SIMDSubSaturated, Expr{a, x.Type}, Expr{c, x.Type})
+	}
 	subtract := op == SIMDConcatSubPairs || op == SIMDConcatSubPairsGrouped
 	if simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()&types.IsFloat != 0 {
 		if subtract {
@@ -128,4 +142,33 @@ func (b Builder) simdConcatPairs(op SIMDOp, x, y Expr) Expr {
 		return Expr{b.impl.CreateSub(a, c, ""), x.Type}
 	}
 	return Expr{b.impl.CreateAdd(a, c, ""), x.Type}
+}
+
+// The ARM64 reduction declarations place the scalar in lane zero and clear
+// the remaining lanes. The public Go wrappers read lane zero.
+func (b Builder) simdReduceLanes(op SIMDOp, x Expr) Expr {
+	name := "add"
+	if op != SIMDReduceSum {
+		info := simdLanes(x.RawType()).Elem().Underlying().(*types.Basic).Info()
+		switch {
+		case info&types.IsFloat != 0:
+			if op == SIMDReduceMax {
+				name = "fmaximum"
+			} else {
+				name = "fminimum"
+			}
+		default:
+			name = "s"
+			if info&types.IsUnsigned != 0 {
+				name = "u"
+			}
+			if op == SIMDReduceMax {
+				name += "max"
+			} else {
+				name += "min"
+			}
+		}
+	}
+	scalar := b.impl.CreateIntrinsic(x.ll.ElementType(), llvm.LookupIntrinsicID("llvm.vector.reduce."+name), []llvm.Value{x.impl}, "")
+	return Expr{b.impl.CreateInsertElement(llvm.ConstNull(x.ll), scalar, llvm.ConstInt(b.Prog.tyInt32(), 0, false), ""), x.Type}
 }

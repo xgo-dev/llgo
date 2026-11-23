@@ -2,7 +2,7 @@
 
 package runtime
 
-const GOARCH = `arm`
+const GOARCH = "arm"
 
 const Is386 = 0
 const IsAmd64 = 0

@@ -102,17 +102,6 @@ func cmpstring(x, y string) int {
 	return 0
 }
 
-func fcntl(fd int32, cmd int32, arg int32) (int32, int32) {
-	_, _, _ = fd, cmd, arg
-	return -1, 38 // ENOSYS
-}
-
-//go:linkname syscall_rawVforkSyscall syscall.rawVforkSyscall
-func syscall_rawVforkSyscall(trap, a1, a2, a3 uintptr) (r1 uintptr, err uintptr) {
-	_, _, _, _ = trap, a1, a2, a3
-	return 0, 38 // ENOSYS
-}
-
 //go:linkname syscall_seek syscall.seek
 func syscall_seek(fd int32, offset int64, whence int32) (newoffset int64, errno uintptr) {
 	_, _, _ = fd, offset, whence

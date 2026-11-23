@@ -39,10 +39,9 @@ jobs:
     # Individual Go test packages retain their existing timeout limits.
     # Native PCLN integration can relink each fixture; retain room for the
     # serial coverage suites and their upload on a cold Linux cache.
-    # Windows MSVC has reached 89 minutes after successful tests and coverage
-    # upload, then hit the 90-minute limit while saving the LLVM archive cache.
-    # Give that lane room for cold dependency setup and post-job cache saves.
-    timeout-minutes: ${{ matrix.windows_abi == 'msvc' && 120 || 90 }}
+    # Both Windows lanes have approached or hit the 90-minute limit after
+    # successful tests and coverage upload. Allow for cold caches and cleanup.
+    timeout-minutes: ${{ matrix.windows_abi != '' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -421,6 +420,9 @@ jobs:
         with:
           llvm-version: 22
 
+      - name: Install embedded dependencies
+        uses: ./.github/actions/setup-embed-deps
+
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
@@ -502,5 +504,18 @@ jobs:
           LLGO_DEMO_LLGORUN_FLAGS="-deadcodedrop" \
             bash .github/workflows/test_demo.sh
 
-      - name: Test C-only embedded deadcode-drop builds
-        run: python3 test/sizebuild/runtest.py --target=esp32c3
+      - name: Test ESP32-C3 size builds and emulator output
+        run: |
+          source dev/go_toolchain.sh
+          current="$(go env GOVERSION)"
+          read -r -a releases <<< "$(llgo_supported_go_releases)"
+          roots=()
+          for release in "${releases[@]}"; do
+            version="$(llgo_resolve_go_version "$PWD" "$release")"
+            if [[ "go$version" == "$current" ]]; then
+              continue
+            fi
+            goroot="$(llgo_go_root "$version")"
+            roots+=(--esp32c3-go-root "$goroot")
+          done
+          python3 test/sizebuild/runtest.py --target=esp32c3 "${roots[@]}"

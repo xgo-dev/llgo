@@ -76,6 +76,39 @@ func TestWasm32UsesGo64WordStorage(t *testing.T) {
 	}
 }
 
+func TestNativePointerOperationsReuseStorageViews(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	// A narrow integer also exercises the native integer-extension query.
+	arg := types.NewParam(token.NoPos, nil, "v", types.Typ[types.Int8])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(arg), nil, false)
+	global := pkg.NewVar("native_callback", types.NewPointer(sig), CDecl)
+	entry := pkg.NewFunc("example.com/p.entry", sig, GoDecl)
+	body := pkg.NewFunc("example.com/p.call", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer body.Dispose()
+	callback := body.Load(global.Expr)
+	goType, nativeType := prog.Type(sig, GoDecl), prog.rawType(sig)
+	closure := body.ChangeType(goType, entry.Expr)
+	value := prog.Zero(prog.rawType(arg.Type()))
+	useCallback := func() {
+		body.Call(callback, value)
+		body.ChangeType(goType, callback)
+		body.ChangeType(nativeType, entry.Expr)
+		body.ChangeType(nativeType, closure)
+	}
+	useCallback()
+	before := len(prog.nativeStorage)
+	for range 32 {
+		useCallback()
+	}
+	if after := len(prog.nativeStorage); after != before {
+		t.Errorf("repeated uses of the same native pointer grew storage views from %d to %d", before, after)
+	}
+	body.Return()
+	body.EndBuild()
+}
+
 func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
 	prog := newJ32Program(t)
 	word := prog.Uintptr()
@@ -150,6 +183,80 @@ func TestWasm32StorageIntegerConversions(t *testing.T) {
 	}
 }
 
+func TestWasm32SliceBoundary(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	slice := types.NewSlice(types.Typ[types.Byte])
+	// Include both an ordinary Go record and an array in the by-value ABI.
+	record := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "Slices", types.NewArray(slice, 2), false),
+	}, nil)
+	params := types.NewTuple(types.NewParam(token.NoPos, nil, "record", record))
+	high := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32]))
+	sig := types.NewSignatureType(nil, nil, nil, params, high, false)
+	if goABI, cABI := prog.FuncDecl(sig, GoDecl).ll, prog.FuncDecl(sig, CDecl).ll; goABI != cABI {
+		t.Fatalf("Go and C callbacks must share their ABI: %s vs %s", goABI, cABI)
+	}
+	observe := pkg.NewFunc("example.com/p.observe", sig, GoDecl)
+	native := pkg.NewFunc("nativeRecord", types.NewSignatureType(nil, nil, nil, nil, params, false), CDecl)
+	readCall := pkg.NewFunc("example.com/p.readCall", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	readGlobal := pkg.NewFunc("example.com/p.readGlobal", types.NewSignatureType(nil, nil, nil, nil, high, false), GoDecl)
+	global := pkg.NewVar("C.nativeRecord", types.NewPointer(record), CDecl)
+	returnHigh := func(b Builder, v Expr) {
+		array := b.impl.CreateExtractValue(v.impl, 0, "")
+		part := b.impl.CreateExtractValue(array, 1, "")
+		slot := b.impl.CreateExtractValue(part, 0, "")
+		b.Return(Expr{b.impl.CreateExtractValue(slot, 1, ""), prog.Uint32()})
+		b.EndBuild()
+	}
+	param := observe.Param(0)
+	returnHigh(observe.MakeBody(1), param)
+	b := readCall.MakeBody(1)
+	returnHigh(b, b.Call(native.Expr))
+	b = readGlobal.MakeBody(1)
+	returnHigh(b, b.Load(global.Expr))
+
+	mod := pkg.Module()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	opts := llvm.NewPassBuilderOptions()
+	defer opts.Dispose()
+	if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range []Function{observe, readCall, readGlobal} {
+		if value := fn.impl.EntryBasicBlock().LastInstruction().Operand(0); !value.IsNull() {
+			t.Errorf("nested slice retained its pointer high word: %s", fn.impl)
+		}
+	}
+}
+
+func TestWasm32NativeResultCallConv(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	word := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]))
+	sig := types.NewSignatureType(nil, nil, nil, nil, word, false)
+	native := pkg.NewFunc("nativeWord", sig, CDecl)
+	native.impl.SetFunctionCallConv(llvm.FastCallConv)
+	caller := pkg.NewFunc("example.com/p.caller", sig, GoDecl)
+	b := caller.MakeBody(1)
+	result := b.Call(native.Expr)
+	b.Return(result)
+	b.EndBuild()
+	if result.impl.InstructionOpcode() != llvm.ZExt {
+		t.Fatalf("native pointer-sized result was not widened: %s", result.impl)
+	}
+	if call := result.impl.Operand(0); call.IsACallInst().IsNil() || call.InstructionCallConv() != llvm.FastCallConv {
+		t.Fatalf("calling convention was not applied to the native call: %s", call)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")
@@ -181,16 +288,26 @@ func TestWasm32PhysicalPointerIndexBounds(t *testing.T) {
 func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	prog := newJ32Program(t)
 	pkg := prog.NewPackage("p", "example.com/p")
-	fn := pkg.NewFunc("example.com/p.storeLoad", NoArgsNoRet, CDecl)
-	b := fn.MakeBody(1)
 	ptr := prog.Pointer(prog.Byte())
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, nil, "pointer", ptr.RawType())),
+		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32])), false)
+	fn := pkg.NewFunc("example.com/p.storeLoad", sig, CDecl)
+	b := fn.MakeBody(1)
 	value := pkg.NewVarEx("example.com/p.target", ptr)
 	global := pkg.NewVarEx("example.com/p.value", prog.Pointer(ptr))
 	global.Init(value.Expr)
 	slot := b.Alloc(ptr, false)
 	b.Store(slot, value.Expr)
 	b.Load(slot)
-	b.Return()
+	// A dynamic pointer must keep its low word and clear its high word;
+	// constant globals alone do not exercise the runtime storage conversion.
+	pointer := fn.Param(0).impl
+	stored := b.toStorageValue(ptr, pointer)
+	high := b.impl.CreateExtractValue(stored, 1, "")
+	changed := llvm.CreateICmp(b.impl, llvm.IntNE, b.fromStorageValue(ptr, stored), pointer)
+	changed = b.impl.CreateZExt(changed, prog.tyInt32(), "")
+	b.Return(Expr{b.impl.CreateOr(high, changed, ""), prog.Uint32()})
 
 	ir := pkg.Module().String()
 	for _, want := range []string{
@@ -210,6 +327,14 @@ func TestWasm32PointerSlotsConvertAtMemoryBoundary(t *testing.T) {
 	}
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("invalid J32 pointer-storage module: %v\n%s", err, ir)
+	}
+	options := llvm.NewPassBuilderOptions()
+	defer options.Dispose()
+	if err := pkg.Module().RunPasses("function(instcombine)", prog.TargetMachine(), options); err != nil {
+		t.Fatal(err)
+	}
+	if ret := fn.impl.EntryBasicBlock().LastInstruction(); ret.InstructionOpcode() != llvm.Ret || !ret.Operand(0).IsNull() {
+		t.Fatalf("dynamic pointer storage changed the low word or retained a nonzero high word:\n%s", fn.impl)
 	}
 }
 

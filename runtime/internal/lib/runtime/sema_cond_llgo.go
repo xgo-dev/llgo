@@ -1,8 +1,10 @@
-//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && baremetal && (!llgo || !tinygo.riscv32 || nogc))
+//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && baremetal && (!llgo || !tinygo.riscv32 || nogc) && !llgo.singlecontext)
 
 // The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
 // && !nogc) compile sema_baremetal_llgo.go instead: pthread_once and the
-// pthread condition behind this file are libnosys stubs there.
+// pthread condition behind this file are libnosys stubs there. The
+// single-context Cortex-M runtime (llgo.singlecontext) compiles
+// sema_cortexqemu.go instead: it never parks.
 
 package runtime
 

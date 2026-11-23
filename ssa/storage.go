@@ -19,6 +19,7 @@ package ssa
 import (
 	"go/types"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -34,8 +35,92 @@ func (p Program) usesWideGoStorage() bool {
 	return p.goWordSize > p.ptrSize
 }
 
+// Go's widened data slot and C's native pointer followed by padding occupy
+// the same bytes in GoString and GoSlice. Keep their LLVM prototypes identical
+// so a noncapturing Go callback can retain its code address.
+func (p Program) isWasmABIPaddedHeader(t llvm.Type) bool {
+	return t == p.rtStringTy || t == p.rtSliceTy
+}
+
+func (p Program) hasWasmABIPadding(t llvm.Type) bool {
+	return p.usesWideGoStorage() && p.wasmHeaderCount(t, 1) != 0
+}
+
+// wasmHeaderCount counts string and slice headers up to limit. Inspect each
+// array element type once, irrespective of the array length.
+func (p Program) wasmHeaderCount(t llvm.Type, limit int) int {
+	if p.isWasmABIPaddedHeader(t) {
+		return 1
+	}
+	switch t.TypeKind() {
+	case llvm.ArrayTypeKind:
+		n := min(t.ArrayLength(), limit)
+		if n != 0 {
+			return min(limit, n*p.wasmHeaderCount(t.ElementType(), limit))
+		}
+	case llvm.StructTypeKind:
+		count := 0
+		for _, field := range t.StructElementTypes() {
+			count += p.wasmHeaderCount(field, limit-count)
+			if count == limit {
+				break
+			}
+		}
+		return count
+	}
+	return 0
+}
+
+// clearWasmABIPadding zeroes the high word of each string or slice data slot.
+func (p Program) clearWasmABIPadding(b llvm.Builder, value llvm.Value) llvm.Value {
+	t := value.Type()
+	if p.isWasmABIPaddedHeader(t) {
+		slot := b.CreateExtractValue(value, 0, "")
+		highWord := slot.Type().StructElementTypes()[1]
+		slot = b.CreateInsertValue(slot, llvm.ConstNull(highWord), 1, "")
+		return b.CreateInsertValue(value, slot, 0, "")
+	}
+	result := value
+	update := func(i int) {
+		field := b.CreateExtractValue(value, i, "")
+		result = b.CreateInsertValue(result, p.clearWasmABIPadding(b, field), i, "")
+	}
+	if t.TypeKind() == llvm.ArrayTypeKind {
+		for i := 0; i < t.ArrayLength(); i++ {
+			update(i)
+		}
+	} else {
+		for i, field := range t.StructElementTypes() {
+			if p.hasWasmABIPadding(field) {
+				update(i)
+			}
+		}
+	}
+	return result
+}
+
+func (f Function) finishWasmSliceParams() {
+	if !f.Prog.usesWideGoStorage() || f.env != nil {
+		return
+	}
+	// A C callback can call any environment-free Go entry. Rewrite each used
+	// parameter once, including values obtained before the body was built.
+	for i := range f.params {
+		param := f.impl.Param(i)
+		if param.FirstUse().IsNil() || !f.Prog.hasWasmSlicePadding(param.Type()) {
+			continue
+		}
+		b := f.entryAllocaBuilder()
+		placeholder := b.CreatePHI(param.Type(), "")
+		param.ReplaceAllUsesWith(placeholder)
+		value := f.Prog.clearWasmABIPadding(b, param)
+		placeholder.ReplaceAllUsesWith(value)
+		placeholder.EraseFromParentAsInstruction()
+	}
+}
+
 func (p Program) needsWidePointerStorage(t Type) bool {
-	if p.GoWordSize() <= p.PointerSize() || p.isNativeStorage(t) {
+	if !p.usesWideGoStorage() || p.isNativeStorage(t) {
 		return false
 	}
 	switch t.kind {
@@ -47,27 +132,25 @@ func (p Program) needsWidePointerStorage(t Type) bool {
 }
 
 func (p Program) isNativeStorage(t Type) bool {
-	native, ok := p.nativeStorage[t]
-	return ok && native == t
+	return t != nil && p.nativeStorage[t] == t
 }
 
 func (p Program) withNativeStorage(t Type) Type {
 	if t == nil || !p.usesWideGoStorage() {
 		return t
 	}
-	if native, ok := p.nativeStorage[t]; ok {
-		return native
+	if view := p.nativeStorage[t]; view != nil {
+		return view
 	}
-	clone := *t
-	clone.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
-	ret := &clone
-	p.nativeStorage[t] = ret
-	p.nativeStorage[ret] = ret
-	return ret
+	view := *t
+	view.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
+	p.nativeStorage[t] = &view
+	p.nativeStorage[&view] = &view
+	return &view
 }
 
 func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.Type {
-	if p.GoWordSize() <= p.PointerSize() {
+	if !p.usesWideGoStorage() {
 		return fallback
 	}
 	switch t := types.Unalias(raw).Underlying().(type) {
@@ -165,10 +248,10 @@ func (b Builder) fitLLVMResult(value llvm.Value, logical Type) llvm.Value {
 }
 
 func (p Program) withoutNativeStorage(t Type) Type {
-	if !p.isNativeStorage(t) {
-		return t
+	if p.isNativeStorage(t) {
+		return p.rawType(t.raw.Type)
 	}
-	return p.rawType(t.raw.Type)
+	return t
 }
 
 func (p Program) childStorageType(parent Type, child types.Type) Type {
@@ -176,10 +259,18 @@ func (p Program) childStorageType(parent Type, child types.Type) Type {
 	if !p.usesWideGoStorage() {
 		return t
 	}
-	if hasHostLayout(parent.raw.Type) {
-		return t
+	// A record's declaration chooses the width of its fields. Referencing an
+	// ordinary Go record from C still uses the layout built by toLLVMFields.
+	native := p.isNativeStorage(parent)
+	switch parent.kind {
+	case vkStruct:
+		native = p.hasLegacyNativeTypeLayout(parent.raw.Type)
+	case vkArray:
+		// Named native arrays keep their physical element type even when
+		// reached through an ordinary Go record or pointer.
+		native = parent.ll.ElementType() != p.storageType(t)
 	}
-	if p.isNativeStorage(parent) || p.hasLegacyNativeTypeLayout(parent.raw.Type) || p.hasLegacyNativeTypeLayout(child) {
+	if native {
 		return p.withNativeStorage(t)
 	}
 	return t
@@ -234,16 +325,69 @@ func (b Builder) toStorageValue(t Type, value llvm.Value) llvm.Value {
 	}
 	if b.Prog.needsWidePointerStorage(t) {
 		storage := b.Prog.widePointerStorageType()
-		parts := storage.StructElementTypes()
-		stored := llvm.Undef(storage)
-		stored = b.impl.CreateInsertValue(stored, value, 0, "")
-		return b.impl.CreateInsertValue(stored, llvm.ConstNull(parts[1]), 1, "")
+		return b.impl.CreateInsertValue(llvm.ConstNull(storage), value, 0, "")
 	}
 	return b.fitLLVMValue(value, b.Prog.withoutNativeStorage(t), t.ll)
 }
 
+// A Go pointer or slice can alias C memory after it has passed through
+// another package. A typed load canonicalizes its value without writing back
+// into the source or depending on the pointer retaining its storage view.
+func (b Builder) loadStorageValue(ptr llvm.Value, storage, logical Type) llvm.Value {
+	count := 0
+	var scratch llvm.Value
+	if b.Prog.usesWideGoStorage() {
+		count = b.Prog.wasmHeaderCount(logical.ll, maxInlineWasmHeaders+1)
+		if b.Prog.needsWasmHeaderStorage(logical.ll, count) {
+			scratch = b.wasmHeaderSnapshotStorage(logical)
+		}
+	}
+
+	stored := llvm.CreateLoad(b.impl, b.Prog.storageType(storage), ptr)
+	b.setGoAccessAlignment(stored, storage)
+	value := b.fromStorageValue(storage, stored)
+	switch {
+	case count == 0:
+		return value
+	case scratch.IsNil():
+		return b.Prog.clearWasmABIPadding(b.impl, value)
+	default:
+		b.impl.CreateStore(value, scratch)
+		b.clearWasmHeaderRange(logical.ll, scratch, b.Prog.IntVal(1, b.Prog.Int()).impl)
+		result := llvm.CreateLoad(b.impl, logical.ll, scratch)
+		ctx := b.Prog.ctx
+		result.SetMetadata(ctx.MDKindID(llabi.HeaderSnapshotMD), ctx.MDNode(nil))
+		return result
+	}
+}
+
+func (b Builder) wasmHeaderSnapshotStorage(typ Type) llvm.Value {
+	size := b.Prog.SizeOf(typ)
+	if size >= llabi.MinAggregateCopySize {
+		// ABI lowering can use this private scanned snapshot for delayed
+		// consumers or forward an immediate copy to its destination.
+		// Allocate before reading the original while its owner is live.
+		return b.AllocU(typ).impl
+	}
+	// A snapshot lives only through the range helper's scalar stores and its
+	// immediately following SSA load. All sites in this invocation can share
+	// a single slot. Recursion has its own frame and there is no safepoint.
+	slot := b.Func.wasmHeaderScratch
+	if slot.IsNil() {
+		slot = b.Func.entryAllocaBuilder().CreateArrayAlloca(b.Prog.tyInt8(), llvm.ConstInt(b.Prog.tyInt32(), size, false), "")
+		b.Func.wasmHeaderScratch = slot
+	} else if size > slot.Operand(0).ZExtValue() {
+		slot.SetOperand(0, llvm.ConstInt(b.Prog.tyInt32(), size, false))
+	}
+	if align := int(b.Prog.AlignOf(typ)); align > slot.Alignment() {
+		slot.SetAlignment(align)
+	}
+	return slot
+}
+
 func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
-	if value.Type() == b.Prog.withoutNativeStorage(t).ll {
+	logical := b.Prog.withoutNativeStorage(t)
+	if value.Type() == logical.ll {
 		return value
 	}
 	if t.kind == vkSIMD {
@@ -252,7 +396,6 @@ func (b Builder) fromStorageValue(t Type, value llvm.Value) llvm.Value {
 	if b.Prog.needsWidePointerStorage(t) {
 		return b.impl.CreateExtractValue(value, 0, "")
 	}
-	logical := b.Prog.withoutNativeStorage(t)
 	return b.fitLLVMValue(value, t, logical.ll)
 }
 
@@ -332,7 +475,7 @@ func (b Builder) fromAtomicStorageValue(t Type, value llvm.Value) llvm.Value {
 // indices, but the WebAssembly backend can otherwise leave an i64 address on a
 // memory32 load at -O0 instead of inserting i32.wrap_i64.
 func (b Builder) physicalPointerIndex(index Expr) Expr {
-	if b.Prog.GoWordSize() <= b.Prog.PointerSize() {
+	if !b.Prog.usesWideGoStorage() {
 		return index
 	}
 	physical := llvmIntType(b.Prog.ctx, b.Prog.PointerSize())
@@ -350,4 +493,25 @@ func (b Builder) physicalPointerIndex(index Expr) Expr {
 	t.ll = physical
 	index.Type = &t
 	return index
+}
+
+// The legacy call adapter only converts signatures containing native slices.
+func (p Program) hasWasmSlicePadding(t llvm.Type) bool {
+	if !p.usesWideGoStorage() || p.rtSliceTy.IsNil() {
+		return false
+	}
+	if t == p.rtSliceTy {
+		return true
+	}
+	switch t.TypeKind() {
+	case llvm.StructTypeKind:
+		for _, field := range t.StructElementTypes() {
+			if p.hasWasmSlicePadding(field) {
+				return true
+			}
+		}
+	case llvm.ArrayTypeKind:
+		return t.ArrayLength() > 0 && p.hasWasmSlicePadding(t.ElementType())
+	}
+	return false
 }
