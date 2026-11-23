@@ -6,7 +6,6 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"golang.org/x/tools/go/ssa"
 )
@@ -17,17 +16,22 @@ func TestSpecializeScalarFormats(t *testing.T) {
 		opt         optlevel.Level
 		helpers     bool
 		debugger    bool
+		unbound     bool
 		wantScalars bool
 	}{
 		{name: "size", opt: optlevel.Oz, helpers: true, wantScalars: true},
 		{name: "O2", opt: optlevel.O2, helpers: true},
 		{name: "missing helpers", opt: optlevel.Oz},
+		{name: "unbound standard library", opt: optlevel.Oz, helpers: true, unbound: true},
 		{name: "logical frames", opt: optlevel.Oz, helpers: true, debugger: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			pkg := literalFormatProgram(t, test.helpers)
-			ctx := &context{progSSA: pkg.Prog, buildConf: &Config{OptLevel: test.opt}}
+			ctx := &context{progSSA: pkg.Prog, templateBindings: testFormatBindings(t, pkg.Prog), buildConf: &Config{OptLevel: test.opt}}
+			if test.unbound {
+				ctx.templateBindings = nil
+			}
 			ctx.frontendOptions.DebuggerFrames = test.debugger
 			if err := recordPackageSSAInstructions(ctx); err != nil {
 				t.Fatal(err)
@@ -117,7 +121,7 @@ func TestScalarFormatsRequireKnownArgumentStorage(t *testing.T) {
 				array := slice.X.(*ssa.Alloc)
 				slot := (*array.Referrers())[0].(*ssa.IndexAddr)
 				change(slice, slot)
-				fmtspecialize.RewriteCall(call, true)
+				testFormatBindings(t, pkg.Prog).RewriteFormatCall(call, true)
 				if got := call.Common().StaticCallee().Name(); got != "Sprintf" {
 					t.Fatalf("specialized a call with %s: %s", name, got)
 				}
@@ -159,7 +163,7 @@ func render(format string, value any, pointer unsafe.Pointer) string {
 `, fmtPkg.Pkg)
 			prog.Build()
 			render := main.Func("render")
-			plan := fmtspecialize.NewValuePlan(prog, nil)
+			plan := testFormatBindings(t, prog).NewValuePlan(prog, nil)
 			var formatted []*ssa.Call
 			for _, instr := range render.Blocks[0].Instrs {
 				if call, ok := instr.(*ssa.Call); ok && call.Common().StaticCallee() == fmtPkg.Func("Sprintf") {

@@ -1,4 +1,4 @@
-package binaryspecialize
+package calltemplate
 
 import (
 	"encoding/binary"

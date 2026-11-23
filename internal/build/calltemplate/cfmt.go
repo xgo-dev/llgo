@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -56,7 +55,7 @@ func (s cFormatSource) fold(call *ast.CallExpr, rule formatRule) bool {
 	if !ok || strings.ContainsRune(text, 0) {
 		return false
 	}
-	parts, ok := fmtspecialize.ParseFormat(text)
+	parts, ok := ParseFormat(text)
 	if !ok {
 		return false
 	}
@@ -95,7 +94,7 @@ func (s cFormatSource) fold(call *ast.CallExpr, rule formatRule) bool {
 	return true
 }
 
-func (s cFormatSource) constant(arg ast.Expr, part fmtspecialize.FormatPart) (string, bool) {
+func (s cFormatSource) constant(arg ast.Expr, part FormatPart) (string, bool) {
 	if part.Width != 0 || part.Zero {
 		return "", false
 	}

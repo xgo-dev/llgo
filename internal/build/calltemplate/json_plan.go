@@ -1,5 +1,4 @@
-// Package jsonspecialize lowers statically typed encoding/json calls.
-package jsonspecialize
+package calltemplate
 
 import (
 	"go/ast"
@@ -38,17 +37,18 @@ type packagePlan struct {
 	calls []callSite
 }
 
-// Rewrite uses the compact path when all calls to the legacy codec can be
-// lowered. Keeping one codec avoids duplicating the standard implementation in
-// programs that still need dynamic reflection or custom JSON methods.
-func Rewrite(closure []*packages.Package, library, entry *packages.Package) ([]*packages.Package, error) {
+func rewriteJSON(closure []*packages.Package, b *codecBindings, entry *packages.Package) (bool, error) {
+	library := b.library
 	deps := make(map[string]*packages.Package)
 	for _, p := range closure {
+		if p != library && p.Imports["encoding/json/v2"] != nil {
+			return false, nil
+		}
 		deps[p.PkgPath] = p
 	}
 	for _, dep := range []string{"strconv", "unicode/utf8"} {
 		if deps[dep] == nil || deps[dep].Types == nil {
-			return nil, nil
+			return false, nil
 		}
 	}
 	sortPkg := deps["sort"]
@@ -56,55 +56,31 @@ func Rewrite(closure []*packages.Package, library, entry *packages.Package) ([]*
 		sortPkg = deps["slices"]
 	}
 	if sortPkg == nil || sortPkg.Types == nil {
-		return nil, nil
+		return false, nil
 	}
 	decodeSupported := library.Types.Scope().Lookup("LlgoDecodeTyped") != nil && deps["strings"] != nil
-	var plans []packagePlan
-	for _, pkg := range closure {
-		if pkg == library {
-			continue
-		}
-		if pkg.Imports["encoding/json/v2"] != nil {
-			return nil, nil
-		}
-		if pkg.Imports["encoding/json"] == nil {
-			continue
-		}
-		plan, ok := planPackage(pkg, library.Types, decodeSupported)
-		if !ok {
-			return nil, nil
-		}
-		if len(plan.calls) != 0 {
-			if pkg != entry {
-				return nil, nil
-			}
-			plans = append(plans, plan)
-		}
+	plan, ok := planClosedCodec(closure, b, entry, func(pkg *packages.Package) (packagePlan, bool, bool) {
+		plan, valid := planJSONPackage(pkg, b, decodeSupported)
+		return plan, len(plan.calls) != 0, valid
+	})
+	if !ok {
+		return false, nil
 	}
-	if len(plans) == 0 {
-		return nil, nil
-	}
-	var changed []*packages.Package
-	for _, plan := range plans {
-		if err := plan.apply(library.Imports["encoding/json/v2"] != nil, sortPkg, deps["strconv"], deps["unicode/utf8"], library, deps["strings"]); err != nil {
-			return nil, err
-		}
-		changed = append(changed, plan.pkg)
-	}
-	return changed, nil
+	return true, plan.apply(library.Imports["encoding/json/v2"] != nil, sortPkg, deps["strconv"], deps["unicode/utf8"], library, deps["strings"])
 }
 
-func planPackage(pkg *packages.Package, library *types.Package, decodeSupported bool) (packagePlan, bool) {
+func planJSONPackage(pkg *packages.Package, b *codecBindings, decodeSupported bool) (packagePlan, bool) {
 	plan := packagePlan{pkg: pkg}
-	if pkg.Types == nil || pkg.TypesInfo == nil || pkg.Imports["encoding/json"].Types != library {
+	if pkg.Types == nil || pkg.TypesInfo == nil || pkg.Imports[b.library.PkgPath] == nil || pkg.Imports[b.library.PkgPath].Types != b.library.Types {
 		return plan, false
 	}
 	var known typeutil.Map
-	calls, closed := typesynth.PlanClosedCalls(pkg, library, jsonEntry, func(call *ast.CallExpr, name string) (callSite, bool) {
+	calls, closed := typesynth.PlanClosedCalls(pkg, b.library.Types, b.hasEntry, func(call *ast.CallExpr, name string) (callSite, bool) {
 		var input types.Type
-		decode := name == "Unmarshal"
+		op := b.entries[name]
+		decode := op == "unmarshal"
 		switch {
-		case name == "Marshal" && len(call.Args) == 1:
+		case op == "marshal" && len(call.Args) == 1:
 			input = pkg.TypesInfo.TypeOf(call.Args[0])
 		case decode && decodeSupported && len(call.Args) == 2:
 			// Preserve the type in InvalidUnmarshalError for named pointers.
@@ -134,14 +110,6 @@ func planPackage(pkg *packages.Package, library *types.Package, decodeSupported 
 		}
 	}
 	return plan, true
-}
-
-func jsonEntry(name string) bool {
-	switch name {
-	case "Marshal", "Unmarshal", "MarshalIndent", "NewEncoder", "NewDecoder", "LlgoDecodeTyped":
-		return true
-	}
-	return false
 }
 
 func planShape(t types.Type, known *typeutil.Map) *shape {

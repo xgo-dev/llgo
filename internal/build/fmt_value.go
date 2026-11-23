@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
@@ -165,7 +165,7 @@ func configureValueFormats(ctx *context, in *linkPruningInputs) {
 			roots = append(roots, init)
 		}
 	}
-	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, in.roots)
+	roots = calltemplate.AppendSymbolRoots(ctx.progSSA, roots, in.roots)
 	ctx.valueFormatPackages = plan.ApplyStandalone(roots)
 	if len(ctx.valueFormatPackages) == 0 {
 		if verbose {
@@ -180,5 +180,5 @@ func configureValueFormats(ctx *context, in *linkPruningInputs) {
 
 func formatExportRoots(prog *ssa.Program, roots []*ssa.Function, pkg *packages.Package, goroot string) ([]*ssa.Function, bool) {
 	trusted := pkg != nil && (isStandardLibraryPackage(pkg, goroot) || pkg.Module != nil && pkg.Module.Path == env.LLGoRuntimePkg)
-	return fmtspecialize.AppendExportRoots(prog, roots, pkg, trusted)
+	return calltemplate.AppendExportRoots(prog, roots, pkg, trusted)
 }

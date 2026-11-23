@@ -1,4 +1,4 @@
-package jsonspecialize
+package calltemplate
 
 import (
 	"go/ast"
@@ -41,11 +41,13 @@ func TestRewriteJSONDecode(t *testing.T) {
 	initial := pkgs[0]
 	syntax := initial.Syntax
 	library := initial.Imports["encoding/json"]
+	addCodecPatch(t, library, "templates_llgo.go")
+	binding := codecBinding(t, library)
 	var closure []*packages.Package
 	packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
-	changed, err := Rewrite(closure, library, initial)
-	if err != nil || len(changed) != 1 || changed[0] != initial {
-		t.Fatalf("rewrite decoder: %d packages, %v", len(changed), err)
+	changed, err := rewriteJSON(closure, binding, initial)
+	if err != nil || !changed {
+		t.Fatalf("rewrite decoder: %t, %v", changed, err)
 	}
 	var decoded int
 	for _, file := range syntax {

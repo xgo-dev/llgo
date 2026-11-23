@@ -73,3 +73,5 @@ func llgoTypedSyntaxError(err error) error {
 	}
 	return &SyntaxError{Offset: syntax.ByteOffset, msg: message}
 }
+
+//llgointernal:template:bind LlgoDecodeTyped json op=fallback

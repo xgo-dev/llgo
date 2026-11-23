@@ -1,4 +1,4 @@
-package fmtspecialize
+package calltemplate
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ import (
 // RuntimePath is the shared runtime support for generated formatters.
 const RuntimePath = "github.com/xgo-dev/llgo/runtime/internal/llgofmt"
 
-type formatSource struct {
+type valueFormatSource struct {
 	owner   *types.Package
 	imports typesynth.Importer
 	types   typeutil.Map
@@ -33,7 +33,10 @@ type formatSource struct {
 
 // AddValueSource generates typed functions for concrete default-format operands.
 // The second result reports whether the generated file imports runtime support.
-func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map, bool, error) {
+func (b *Bindings) AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map, bool, error) {
+	if !b.NeedsFormatRuntime() || p.Imports[b.value.Pkg().Path()] == nil {
+		return nil, false, nil
+	}
 	for _, name := range []string{"append", "bool", "byte", "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64", "complex64",
 		"complex128", "string", "len", "real", "imag", "nil", "__llgo_fmt_runtime", "__llgo_fmt_unsafe"} {
@@ -41,7 +44,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 			return nil, false, nil
 		}
 	}
-	gen := &formatSource{
+	gen := &valueFormatSource{
 		owner: p.Types, imports: typesynth.Importer{RuntimePath: runtime, "unsafe": types.Unsafe},
 		sizes: p.TypesSizes, methods: valueMethods(p),
 	}
@@ -51,16 +54,8 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 			if !ok || len(call.Args) != 2 || call.Ellipsis.IsValid() {
 				return true
 			}
-			fun := ast.Unparen(call.Fun)
-			var name *ast.Ident
-			switch x := fun.(type) {
-			case *ast.Ident:
-				name = x
-			case *ast.SelectorExpr:
-				name = x.Sel
-			}
-			fn, _ := p.TypesInfo.Uses[name].(*types.Func)
-			if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "fmt" || fn.Name() != "Sprintf" {
+			fn, _ := typesynth.Callee(p.TypesInfo, call.Fun)
+			if fn != b.value {
 				return true
 			}
 			f := p.TypesInfo.Types[call.Args[0]].Value
@@ -99,7 +94,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 	return &gen.tops, usesRuntime, nil
 }
 
-func (g *formatSource) nextName() string {
+func (g *valueFormatSource) nextName() string {
 	for {
 		g.nextID++
 		name := fmt.Sprintf("__llgo_fmt_%d", g.nextID)
@@ -111,7 +106,7 @@ func (g *formatSource) nextName() string {
 
 // Bind a compiler-only name to the exact checked type, including local names
 // and unexported fields in types declared by a dependency.
-func (g *formatSource) typeName(t types.Type) string {
+func (g *valueFormatSource) typeName(t types.Type) string {
 	if name := g.types.At(t); name != nil {
 		return name.(string)
 	}
@@ -123,14 +118,14 @@ func (g *formatSource) typeName(t types.Type) string {
 	return name
 }
 
-func (g *formatSource) addTop(typ types.Type) {
+func (g *valueFormatSource) addTop(typ types.Type) {
 	name := g.nextName()
 	g.tops.Set(typ, name)
 	render := g.appendFunc(typ, true)
 	fmt.Fprintf(&g.funcs, "func %s(v %s) string { return string(%s(nil,v)) }\n", name, g.typeName(typ), render)
 }
 
-func (g *formatSource) appendFunc(typ types.Type, top bool) string {
+func (g *valueFormatSource) appendFunc(typ types.Type, top bool) string {
 	cache := &g.nested
 	if top {
 		cache = &g.top
@@ -189,7 +184,7 @@ func (g *formatSource) appendFunc(typ types.Type, top bool) string {
 	return name
 }
 
-func (g *formatSource) appendBasic(b *strings.Builder, kind types.BasicKind) {
+func (g *valueFormatSource) appendBasic(b *strings.Builder, kind types.BasicKind) {
 	switch kind {
 	case types.Bool:
 		b.WriteString("if v { return append(dst,\"true\"...) }; return append(dst,\"false\"...)\n")
@@ -212,16 +207,16 @@ func (g *formatSource) appendBasic(b *strings.Builder, kind types.BasicKind) {
 	}
 }
 
-func (g *formatSource) appendPointer(b *strings.Builder) {
+func (g *valueFormatSource) appendPointer(b *strings.Builder) {
 	b.WriteString("return __llgo_fmt_runtime.AppendPointer(dst,uintptr(__llgo_fmt_unsafe.Pointer(v)))\n")
 }
 
-func (g *formatSource) appendSequence(b *strings.Builder, elem types.Type) {
+func (g *valueFormatSource) appendSequence(b *strings.Builder, elem types.Type) {
 	fmt.Fprintf(b, "dst=append(dst,'[')\nfor i:=range v { if i!=0 { dst=append(dst,' ') }; dst=%s(dst,v[i]) }\nreturn append(dst,']')\n",
 		g.appendFunc(elem, false))
 }
 
-func (g *formatSource) compareFunc(typ types.Type) string {
+func (g *valueFormatSource) compareFunc(typ types.Type) string {
 	if name := g.compare.At(typ); name != nil {
 		return name.(string)
 	}
@@ -262,7 +257,7 @@ func (g *formatSource) compareFunc(typ types.Type) string {
 	return name
 }
 
-func (g *formatSource) selectField(value string, typ *types.Struct, field int) string {
+func (g *valueFormatSource) selectField(value string, typ *types.Struct, field int) string {
 	f := typ.Field(field)
 	if f.Exported() || f.Pkg() == g.owner {
 		return value + "." + f.Name()

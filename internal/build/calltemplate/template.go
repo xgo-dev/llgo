@@ -36,11 +36,17 @@ type rules struct {
 
 // Rewrite analyzes calls in each package from its syntax and the declarations
 // it imports. Each returned entry describes only rewrites in that package.
-func Rewrite(roots []*packages.Package, fmtPkg *packages.Package, formats bool) (map[*types.Package][]string, error) {
+func (b *Bindings) Rewrite(roots []*packages.Package, formats bool) (map[*types.Package][]string, error) {
 	r := rules{
 		candidates: make(map[*types.Func][]candidate),
 		formats:    make(map[*types.Func]formatRule),
 		cstrings:   make(map[*types.Func]bool),
+	}
+
+	if formats {
+		for fn, rule := range b.formats {
+			r.formats[fn] = rule
+		}
 	}
 	var pkgs []*packages.Package
 	var err error
@@ -49,7 +55,7 @@ func Rewrite(roots []*packages.Package, fmtPkg *packages.Package, formats bool) 
 			return false
 		}
 		if p.TypesInfo != nil && !p.IllTyped {
-			err = r.collect(p, formats, p == fmtPkg)
+			err = r.collect(p, formats, p == b.fmt)
 			pkgs = append(pkgs, p)
 		}
 		return err == nil
@@ -76,7 +82,7 @@ func Rewrite(roots []*packages.Package, fmtPkg *packages.Package, formats bool) 
 		if pkg.Types == nil || (!importsProvider(pkg, providers) && !(pkg.Name == "main" && len(r.formats) != 0)) {
 			continue
 		}
-		changes, err := r.rewrite(pkg, fmtPkg, protected, !otherFmtUsers(pkgs, pkg, fmtPkg))
+		changes, err := r.rewrite(pkg, b.fmt, protected, !otherFmtUsers(pkgs, pkg, b.fmt))
 		if err != nil {
 			return nil, err
 		}
@@ -143,9 +149,6 @@ func (r rules) collect(pkg *packages.Package, formats, trustedFmt bool) error {
 				}
 			}
 		}
-	}
-	if formats && trustedFmt {
-		r.addStandardFormats(pkg)
 	}
 	return nil
 }
@@ -271,7 +274,7 @@ func (r rules) rewrite(pkg, fmtPkg *packages.Package, protected map[*types.Func]
 					if cfmts.fold(call, rule) {
 						changes = append(changes, changeKey(pkg, call, "cfmt", ""))
 					}
-				} else if gofmt {
+				} else if gofmt && rule.format >= 0 {
 					fmts.plan(call, rule)
 				}
 			}

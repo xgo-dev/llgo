@@ -1,4 +1,4 @@
-package jsonspecialize
+package calltemplate
 
 import (
 	"encoding/json"

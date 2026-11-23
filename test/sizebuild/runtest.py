@@ -385,16 +385,18 @@ func main() {{ report(reading{{Tick: 42}}) }}
     print(f"{target} Full LTO scheduler link selection and fallback passed", flush=True)
 
 
-def call_template_probe(llgo, directory, env, runner):
+def call_template_probe(llgo, directory, env, target, runner, suffix):
     cases = (
         ("call-template", ":direct:", 4),
         ("format-template", ":gofmt:", 4),
+        ("format-template-fallback", ":gofmt:", 0),
         ("c-format-template", ":cfmt:", 2),
     )
     for fixture, kind, count in cases:
-        output = directory / f"{fixture}.wasm"
+        output = directory / f"template-{target}-{fixture}{suffix}"
         package = f"./internal/build/testdata/{fixture}"
-        log = command([str(llgo), "build", "-target=wasi", "-Oz", "-deadcodedrop",
+        target_flags = [] if target == "native" else [f"-target={target}"]
+        log = command([str(llgo), "build", *target_flags, "-Oz", "-deadcodedrop",
                        "-globaldce=false", "-lto=full", "-debug-artifact=none", "-compiler-verbose",
                        "-o", str(output), package], env)
         applied = [line for line in log.splitlines() if line.startswith("llgo: apply call template ")]
@@ -407,7 +409,7 @@ def call_template_probe(llgo, directory, env, runner):
         actual = command([*runner, str(output)], env, timeout=90).strip()
         if actual != expected:
             raise RuntimeError(f"{fixture}: expected {expected!r}, got {actual!r}")
-        print(f"WASI {fixture} call templates and output passed", flush=True)
+        print(f"{target} {fixture} call templates and output passed", flush=True)
 
 
 def wasi_specialization_probe(llgo, directory, env, runner):
@@ -547,6 +549,7 @@ def main():
             return
         if args.target == "native":
             full_lto_codec_probe(llgo, directory, env, "native", [], "")
+            call_template_probe(llgo, directory, env, "native", [], suffix)
             return
         if args.target == "cortex-m-mps2":
             embedded_size_probes(llgo, directory, env, "cortex-m-mps2",
@@ -599,7 +602,7 @@ def main():
                        "--stack-size=1048576"]
         full_lto_codec_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")
         wasi_specialization_probe(llgo, directory, env, wasi_runner)
-        call_template_probe(llgo, directory, env, wasi_runner)
+        call_template_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")
         cases = (("off", "cprintf"), ("off", "println"),
                  ("thin", "cprintf"), ("full", "cprintf"),
                  ("full", "println"), ("thin", "println"),

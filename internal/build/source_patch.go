@@ -16,7 +16,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
+	"github.com/xgo-dev/llgo/internal/directive"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -157,6 +158,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 	}
 
 	var fsSnapshot []byte
+	var formatSource string
 	fsSource := filepath.Join(srcDir, "fs_js.go")
 	if pkgPath == "syscall" && base[fsSource] == nil {
 		fsSnapshot = ctx.fsSnapshot
@@ -187,6 +189,12 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		directives, err := collectSourcePatchDirectives(src)
 		if err != nil {
 			return false, nil, nil, fmt.Errorf("parse source patch directives %s: %w", filename, err)
+		}
+		if directives.formatSource != "" {
+			if formatSource != "" {
+				return false, nil, nil, fmt.Errorf("multiple format template sources in %s", pkgPath)
+			}
+			formatSource = directives.formatSource
 		}
 		patchSrcs[name] = struct {
 			filename string
@@ -341,11 +349,11 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			out[fsSource] = fsSnapshot
 		}
 	}
-	if pkgPath == "fmt" && ctx.builtinFormats {
-		printFile := filepath.Join(srcDir, "print.go")
+	if formatSource != "" && ctx.builtinFormats {
+		printFile := filepath.Join(srcDir, formatSource)
 		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
 			baremetal := slices.Contains(sourcePatchBuildTags(ctx.buildFlags, ctx.targetTags), "baremetal")
-			if generated := fmtspecialize.BuiltinFormatSource(source, baremetal); len(generated) != 0 {
+			if generated := calltemplate.BuiltinFormatSource(source, baremetal); len(generated) != 0 {
 				ensureOverlay()
 				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
 				out[target] = generated
@@ -468,8 +476,9 @@ func packageStubSource(src []byte) ([]byte, error) {
 }
 
 type sourcePatchDirectives struct {
-	skipAll bool
-	skips   map[string]struct{}
+	skipAll      bool
+	skips        map[string]struct{}
+	formatSource string
 }
 
 func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
@@ -481,6 +490,15 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 	d := sourcePatchDirectives{skips: make(map[string]struct{})}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
+			if item, ok := directive.Parse(comment); ok && item.Name == "llgointernal:template:source" {
+				fields := strings.Fields(item.Args)
+				if len(fields) != 2 || fields[0] != "gofmt" || filepath.Base(fields[1]) != fields[1] ||
+					!strings.HasSuffix(fields[1], ".go") || d.formatSource != "" {
+					return sourcePatchDirectives{}, fmt.Errorf("invalid template source %q", item.Args)
+				}
+				d.formatSource = fields[1]
+				continue
+			}
 			line := strings.TrimSpace(comment.Text)
 			skipAll, names, ok := parseSourcePatchDirective(line)
 			if !ok {

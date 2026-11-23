@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	buildenv "github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
@@ -121,7 +121,7 @@ func TestSpecializeValueFormats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 			prog.CreatePackage(types.Unsafe, nil, nil, true)
-			runtime := buildFormatTestPackage(t, prog, fmtspecialize.RuntimePath, typedFormatTestRuntime, nil)
+			runtime := buildFormatTestPackage(t, prog, calltemplate.RuntimePath, typedFormatTestRuntime, nil)
 			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
 type record struct { hidden int }
 func NewRecord() record { return record{7} }
@@ -161,7 +161,7 @@ func main() { println(render()); ` + tc.main + ` }
 				Importer: literalFormatImporter{fmtPkg.Pkg}, GoVersion: tc.lang,
 			})
 			ctx := &context{
-				progSSA: prog, initial: []*packages.Package{entry},
+				progSSA: prog, templateBindings: testFormatBindings(t, prog), initial: []*packages.Package{entry},
 				pkgByID: map[string]*aPackage{"main": {Package: entry}},
 				buildConf: &Config{
 					OptLevel: optlevel.Oz, Goarch: "wasm", BuildMode: BuildModeExe, Verbose: true,
@@ -184,7 +184,7 @@ func init() { println(fmt.Sprintf("%#v", []int{1})) }
 			}
 			entry.Imports = map[string]*packages.Package{"fmt": {PkgPath: "fmt", Types: fmtPkg.Pkg}}
 			ctx.dedup = packages.NewDeduper()
-			runtimePackage := &packages.Package{ID: fmtspecialize.RuntimePath, PkgPath: fmtspecialize.RuntimePath, Types: runtime.Pkg}
+			runtimePackage := &packages.Package{ID: calltemplate.RuntimePath, PkgPath: calltemplate.RuntimePath, Types: runtime.Pkg}
 			if tc.native {
 				ctx.buildConf.Goarch = "arm64"
 				ctx.buildConf.Goos = "darwin"
@@ -282,7 +282,7 @@ func TestRegisterFormatSupportErrors(t *testing.T) {
 	fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
 func Sprintf(_ string, args ...any) string { return "" }
 `, nil)
-	runtime := buildFormatTestPackage(t, prog, fmtspecialize.RuntimePath, "package llgofmt", nil)
+	runtime := buildFormatTestPackage(t, prog, calltemplate.RuntimePath, "package llgofmt", nil)
 	entry := checkFormatTestPackage(t, prog.Fset, "main", `package main
 import "fmt"
 func main() { println(fmt.Sprintf("%v", 1)) }

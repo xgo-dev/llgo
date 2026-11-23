@@ -59,7 +59,7 @@ func use(v any) {
 	G([][]int{{1}}, [][]int{{2}})
 	H(1,2)
 }`)
-	got, err := Rewrite([]*packages.Package{pkg}, nil, false)
+	got, err := new(Bindings).Rewrite([]*packages.Package{pkg}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestTemplateRejectsInvalidDeclarations(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := checkedSource(t, "package p\n"+tc.src)
-			_, err := Rewrite([]*packages.Package{p}, nil, false)
+			_, err := new(Bindings).Rewrite([]*packages.Package{p}, false)
 			if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
 				t.Fatalf("error = %v, want %q", err, tc.diagnostic)
 			}
@@ -126,7 +126,7 @@ func main() {
 }
 var dynamic int32
 const shared = "one literal to keep shared"`)
-	got, err := Rewrite([]*packages.Package{p}, nil, true)
+	got, err := new(Bindings).Rewrite([]*packages.Package{p}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +149,12 @@ func TestGoFmtNamedFormatSlot(t *testing.T) {
 func Appendf(dst []byte, pattern string, values ...any) []byte
 func Fprintf(dst any, pattern int, values ...any) (int, error)
 func Printf(pattern string, values ...string) (int, error)
-func Unknown(pattern string, values ...any) string`)
+func Unknown(pattern string, values ...any) int`)
 	for _, tc := range []struct {
 		name, roles, diagnostic string
 		trusted                 bool
 	}{
+		{"Appendf", "format=pattern args=values result=append", "", true},
 		{"Appendf", "format=pattern args=values", "", true},
 		{"Appendf", "format=pattern args=values bogus=dst", "invalid format template binding", true},
 		{"Appendf", "format=pattern", "variadic argument parameter", true},

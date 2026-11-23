@@ -1,4 +1,4 @@
-package binaryspecialize
+package calltemplate
 
 import (
 	"go/ast"
@@ -24,47 +24,22 @@ type rewrite struct {
 	helper    string
 }
 
-// Rewrite specializes a program only when it accounts for all Go uses of
-// the generic encoding/binary operations. Mixed uses keep one implementation.
-func Rewrite(closure []*packages.Package, library, entry *packages.Package, shortBuffer string) ([]*packages.Package, error) {
-	var planned []packageRewrites
-	needsError := false
-	for _, pkg := range closure {
-		if pkg == library || pkg.Imports["encoding/binary"] == nil {
-			continue
-		}
-		if pkg.Imports["encoding/binary"].Types != library.Types || pkg.TypesInfo == nil {
-			return nil, nil
-		}
-		calls, ok := planPackage(pkg, library.Types)
-		if !ok {
-			return nil, nil
-		}
-		if len(calls) != 0 {
-			if pkg != entry {
-				return nil, nil
-			}
-			planned = append(planned, packageRewrites{pkg, calls})
-			for _, call := range calls {
-				needsError = needsError || call.op != "Size" && !call.unchecked
+func rewriteBinary(closure []*packages.Package, b *codecBindings, entry *packages.Package, shortBuffer string) (bool, error) {
+	calls, ok := planClosedCodec(closure, b, entry, func(pkg *packages.Package) ([]rewrite, bool, bool) {
+		calls, valid := planBinaryPackage(pkg, b)
+		return calls, len(calls) != 0, valid
+	})
+	if !ok {
+		return false, nil
+	}
+	if shortBuffer == "" {
+		for _, call := range calls {
+			if call.op != "size" && !call.unchecked {
+				return false, nil
 			}
 		}
 	}
-	if len(planned) == 0 {
-		return nil, nil
-	}
-
-	if needsError && shortBuffer == "" {
-		return nil, nil
-	}
-	var changed []*packages.Package
-	for _, group := range planned {
-		if err := group.apply(library, shortBuffer); err != nil {
-			return nil, err
-		}
-		changed = append(changed, group.pkg)
-	}
-	return changed, nil
+	return true, (packageRewrites{entry, calls}).apply(b.library, shortBuffer)
 }
 
 type packageRewrites struct {
@@ -72,7 +47,7 @@ type packageRewrites struct {
 	calls []rewrite
 }
 
-func planPackage(pkg *packages.Package, library *types.Package) ([]rewrite, bool) {
+func planBinaryPackage(pkg *packages.Package, b *codecBindings) ([]rewrite, bool) {
 	if pkg.Types == nil || pkg.TypesSizes == nil || len(pkg.Syntax) == 0 {
 		return nil, false
 	}
@@ -80,8 +55,8 @@ func planPackage(pkg *packages.Package, library *types.Package) ([]rewrite, bool
 	if pkg.TypesSizes.Sizeof(types.Typ[types.Int]) == 4 {
 		maxWidth = math.MaxInt32
 	}
-	calls, closed := typesynth.PlanClosedCalls(pkg, library, genericOperation, func(call *ast.CallExpr, op string) (rewrite, bool) {
-		return planCall(pkg, call, op, library, maxWidth)
+	calls, closed := typesynth.PlanClosedCalls(pkg, b.library.Types, b.hasEntry, func(call *ast.CallExpr, name string) (rewrite, bool) {
+		return planBinaryCall(pkg, call, b.entries[name], b.library.Types, maxWidth)
 	})
 	if !closed {
 		return nil, false
@@ -92,19 +67,11 @@ func planPackage(pkg *packages.Package, library *types.Package) ([]rewrite, bool
 	return calls, true
 }
 
-func genericOperation(name string) bool {
-	switch name {
-	case "Append", "Decode", "Encode", "Read", "Size", "Write":
-		return true
-	}
-	return false
-}
-
-func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *types.Package, maxWidth int64) (rewrite, bool) {
+func planBinaryCall(pkg *packages.Package, call *ast.CallExpr, op string, library *types.Package, maxWidth int64) (rewrite, bool) {
 	r := rewrite{call: call, op: op}
 	switch {
-	case op == "Size" && len(call.Args) == 1:
-	case (op == "Encode" || op == "Decode") && len(call.Args) == 3:
+	case op == "size" && len(call.Args) == 1:
+	case (op == "encode" || op == "decode") && len(call.Args) == 3:
 		r.order = pkg.TypesInfo.TypeOf(call.Args[1])
 		if !standardByteOrder(r.order, library) {
 			return r, false
@@ -119,7 +86,7 @@ func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *typ
 	}
 	value := r.input
 	if ptr, ok := value.Underlying().(*types.Pointer); ok {
-		if op != "Size" && !nonNilPointer(pkg.TypesInfo, operand) {
+		if op != "size" && !nonNilPointer(pkg.TypesInfo, operand) {
 			return r, false
 		}
 		r.ptr = true
@@ -128,7 +95,7 @@ func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *typ
 	if slice, ok := value.Underlying().(*types.Slice); ok {
 		r.slice = true
 		value = slice.Elem()
-	} else if op == "Decode" && !r.ptr {
+	} else if op == "decode" && !r.ptr {
 		return r, false
 	}
 	// Basic operands already have fast paths with distinct nil, overlap and
@@ -139,10 +106,10 @@ func planCall(pkg *packages.Package, call *ast.CallExpr, op string, library *typ
 		return r, false
 	}
 	r.wire = fixedLayout(value, maxWidth)
-	if r.wire == nil || op != "Size" && !canAccess(r.wire, pkg.Types, op == "Decode") {
+	if r.wire == nil || op != "size" && !canAccess(r.wire, pkg.Types, op == "decode") {
 		return r, false
 	}
-	if op != "Size" && !r.slice {
+	if op != "size" && !r.slice {
 		r.unchecked = r.wire.width == 0 || arraySliceLength(pkg.TypesInfo, call.Args[0]) >= r.wire.width
 	}
 	return r, true

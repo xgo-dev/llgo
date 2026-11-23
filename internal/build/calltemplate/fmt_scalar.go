@@ -1,4 +1,4 @@
-package fmtspecialize
+package calltemplate
 
 import (
 	"go/constant"
@@ -7,8 +7,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func specializeScalarFormat(call ssa.CallInstruction, callee *ssa.Function, format string) {
-	helper := callee.Pkg.Func("llgo" + callee.Name() + "Scalars")
+func specializeScalarFormat(call ssa.CallInstruction, helper *ssa.Function, format string) {
 	if helper == nil {
 		return
 	}
@@ -25,12 +24,7 @@ func specializeScalarFormat(call ssa.CallInstruction, callee *ssa.Function, form
 	}
 }
 
-func specializeScalarPrintln(call ssa.CallInstruction, callee *ssa.Function) {
-	helperName := "llgoPrintfScalars"
-	if callee.Name() == "Sprintln" {
-		helperName = "llgoSprintfScalars"
-	}
-	helper := callee.Pkg.Func(helperName)
+func specializeScalarPrintln(call ssa.CallInstruction, helper *ssa.Function) {
 	if helper == nil {
 		return
 	}

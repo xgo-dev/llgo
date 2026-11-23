@@ -99,6 +99,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"crypto/internal/fips140/aes":    {},
 	"crypto/internal/constanttime":   {},
 	"crypto/internal/sysrand":        {},
+	"encoding/binary":                {},
 	"encoding/json":                  {},
 	"encoding/json/v2":               {},
 	"fmt":                            {},

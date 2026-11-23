@@ -1,8 +1,8 @@
-// Package fmtspecialize lowers fmt calls whose format and operand types are known.
-package fmtspecialize
+package calltemplate
 
 import (
 	"go/constant"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
@@ -10,52 +10,47 @@ import (
 
 // Rewrite during the instruction-counting pass, before reachability analysis,
 // so a specialized format can release the general formatter and reflection.
-func RewriteCall(instruction ssa.Instruction, scalarFormats bool) {
+func (b *Bindings) RewriteFormatCall(instruction ssa.Instruction, scalarFormats bool) {
 	call, ok := instruction.(ssa.CallInstruction)
-	if !ok {
+	if b == nil || !ok {
 		return
 	}
 	common := call.Common()
 	callee := common.StaticCallee()
-	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg.Path() != "fmt" {
+	if callee == nil {
 		return
 	}
-	// An arbitrary Writer can inspect native or Wasm logical callers. Keep
-	// Fprintf until a helper can preserve its original frame identity.
-	switch callee.Name() {
-	case "Printf", "Sprintf":
-	case "Println", "Sprintln":
+	fn, _ := callee.Object().(*types.Func)
+	rule, ok := b.formats[fn]
+	if !ok || (rule.literal == "" && rule.scalar == "") || len(common.Args) != rule.args+1 {
+		return
+	}
+	if rule.format < 0 {
 		if scalarFormats {
-			specializeScalarPrintln(call, callee)
+			specializeScalarPrintln(call, callee.Pkg.Func(rule.scalar))
 		}
 		return
-	default:
-		return
 	}
-	if len(common.Args) != 2 {
-		return
-	}
-	format, ok := common.Args[0].(*ssa.Const)
+	format, ok := common.Args[rule.format].(*ssa.Const)
 	if !ok || format.Value == nil || format.Value.Kind() != constant.String {
 		return
 	}
-	if args, ok := common.Args[1].(*ssa.Const); !ok || !args.IsNil() {
-		if scalarFormats {
-			specializeScalarFormat(call, callee, constant.StringVal(format.Value))
+	if args, ok := common.Args[rule.args].(*ssa.Const); !ok || !args.IsNil() {
+		if scalarFormats && rule.scalar != "" {
+			specializeScalarFormat(call, callee.Pkg.Func(rule.scalar), constant.StringVal(format.Value))
 		}
 		return
 	}
 	text, ok := literalFormat(constant.StringVal(format.Value))
-	if !ok {
+	if !ok || rule.literal == "" {
 		return
 	}
-	helper := callee.Pkg.Func("llgo" + callee.Name() + "Literal")
+	helper := callee.Pkg.Func(rule.literal)
 	if helper == nil {
 		return
 	}
 	common.Value = helper
-	common.Args = common.Args[:1]
-	common.Args[0] = ssa.NewConst(constant.MakeString(text), format.Type())
+	common.Args = []ssa.Value{ssa.NewConst(constant.MakeString(text), format.Type())}
 }
 
 // Only %% is interpreted here. Verbs, indexes, width/precision and malformed

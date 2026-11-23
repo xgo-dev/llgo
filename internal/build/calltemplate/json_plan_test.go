@@ -1,4 +1,4 @@
-package jsonspecialize
+package calltemplate
 
 import (
 	"go/ast"
@@ -32,6 +32,8 @@ func TestRewriteJSONMarshal(t *testing.T) {
 			}
 			initial := pkgs[0]
 			library := initial.Imports["encoding/json"]
+			addCodecPatch(t, library, "templates_llgo.go")
+			binding := codecBinding(t, library)
 			var closure []*packages.Package
 			packages.Visit(pkgs, nil, func(p *packages.Package) { closure = append(closure, p) })
 			for _, exclude := range []func(*packages.Package) bool{
@@ -40,29 +42,26 @@ func TestRewriteJSONMarshal(t *testing.T) {
 				func(p *packages.Package) bool { return p == initial },
 			} {
 				incomplete := slices.DeleteFunc(slices.Clone(closure), exclude)
-				if changed, err := Rewrite(incomplete, library, initial); len(changed) != 0 || err != nil {
-					t.Fatalf("incomplete dependencies produced %d rewritten packages, %v", len(changed), err)
+				if changed, err := rewriteJSON(incomplete, binding, initial); changed || err != nil {
+					t.Fatalf("incomplete dependencies rewrote calls = %t, %v", changed, err)
 				}
 			}
 			if v2 := library.Imports["encoding/json/v2"]; v2 != nil {
 				initial.Imports[v2.PkgPath] = v2
-				if changed, err := Rewrite(closure, library, initial); len(changed) != 0 || err != nil {
-					t.Fatalf("direct JSON v2 import produced %d rewritten packages, %v", len(changed), err)
+				if changed, err := rewriteJSON(closure, binding, initial); changed || err != nil {
+					t.Fatalf("direct JSON v2 import rewrote calls = %t, %v", changed, err)
 				}
 				delete(initial.Imports, v2.PkgPath)
 			}
-			if changed, err := Rewrite(closure, library, nil); len(changed) != 0 || err != nil {
-				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
+			if changed, err := rewriteJSON(closure, binding, nil); changed || err != nil {
+				t.Fatalf("dependency rewrote calls = %t, %v", changed, err)
 			}
-			changed, err := Rewrite(closure, library, initial)
+			changed, err := rewriteJSON(closure, binding, initial)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(changed) > 1 || len(changed) == 1 && changed[0] != initial {
-				t.Fatal("only the executable package can be rewritten")
-			}
-			if (len(changed) != 0) != tc.rewrite {
-				t.Fatalf("changed %d packages, rewrite expected %v", len(changed), tc.rewrite)
+			if changed != tc.rewrite {
+				t.Fatalf("rewrite = %t, want %t", changed, tc.rewrite)
 			}
 			var generic, typed int
 			for _, file := range initial.Syntax {
@@ -178,12 +177,12 @@ func TestPlanJSONFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			dep := pkg.Imports()[0]
-			planned := &packages.Package{Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Imports: map[string]*packages.Package{"encoding/json": {Types: dep}}}
-			_, got := planPackage(planned, dep, false)
+			planned := &packages.Package{Types: pkg, TypesInfo: info, Syntax: []*ast.File{file}, Imports: map[string]*packages.Package{"encoding/json": {PkgPath: dep.Path(), Types: dep}}}
+			_, got := planJSONPackage(planned, &codecBindings{library: planned.Imports["encoding/json"], entries: map[string]string{"Marshal": "marshal", "NewEncoder": "fallback", "NewDecoder": "fallback"}}, false)
 			if got != tc.want {
 				t.Fatalf("accepted = %v, want %v", got, tc.want)
 			}
-			if _, ok := planPackage(planned, types.NewPackage(dep.Path(), dep.Name()), false); ok {
+			if _, ok := planJSONPackage(planned, &codecBindings{library: &packages.Package{PkgPath: dep.Path(), Types: types.NewPackage(dep.Path(), dep.Name())}}, false); ok {
 				t.Fatal("accepted a different type universe for encoding/json")
 			}
 		})

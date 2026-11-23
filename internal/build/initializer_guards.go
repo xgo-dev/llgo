@@ -11,7 +11,7 @@ import (
 	"strconv"
 
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -116,7 +116,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			roots = guardedInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports)
 		}
 	}
-	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, assembly)
+	roots = calltemplate.AppendSymbolRoots(ctx.progSSA, roots, assembly)
 	isSymbolRoot := func(name string) bool {
 		_, aliased := ctx.prog.Linkname(name)
 		return aliased || ctx.prog.HasLinknameTarget(name) || slices.Contains(assembly, name)

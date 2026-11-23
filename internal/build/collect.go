@@ -253,7 +253,6 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if c.frontend != nil {
 		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
 	}
-	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
 	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
 	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
 	m.pkg.CallTemplates = c.callTemplates[p.Types]

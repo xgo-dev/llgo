@@ -1,6 +1,4 @@
-// Package binaryspecialize models fixed-size encoding/binary operations using
-// the concrete operand types known to the compiler.
-package binaryspecialize
+package calltemplate
 
 import "go/types"
 

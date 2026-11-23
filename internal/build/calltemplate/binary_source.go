@@ -1,4 +1,4 @@
-package binaryspecialize
+package calltemplate
 
 import (
 	"fmt"
@@ -11,19 +11,18 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// AddShortBufferAccessor always provides the same declaration for this
-// compiler profile. It keeps the standard library's original error object.
-func AddShortBufferAccessor(pkg *packages.Package) (string, error) {
-	errVar, _ := pkg.Types.Scope().Lookup("errBufferTooSmall").(*types.Var)
-	if errVar == nil || !types.Identical(errVar.Type(), types.Universe.Lookup("error").Type()) {
-		return "", nil
+func shortBufferHelper(pkg *types.Package) string {
+	const name = "LLGoBinaryShortBuffer"
+	fn, _ := pkg.Scope().Lookup(name).(*types.Func)
+	if fn == nil {
+		return ""
 	}
-	name := "LLGoBinaryShortBuffer"
-	for pkg.Types.Scope().Lookup(name) != nil {
-		name += "_"
+	sig := fn.Signature()
+	if sig.Params().Len() != 0 || sig.Results().Len() != 1 ||
+		!types.Identical(sig.Results().At(0).Type(), types.Universe.Lookup("error").Type()) {
+		return ""
 	}
-	source := fmt.Sprintf("package binary\nfunc %s() error { return errBufferTooSmall }\n", name)
-	return name, typesynth.AddFile(pkg, "__llgo_binary_error.go", source, nil, "")
+	return name
 }
 
 type codecKey struct {
@@ -127,7 +126,7 @@ func (g *codecSource) emit(call rewrite, shortBuffer, mathAlias string) {
 	if call.slice {
 		size = fmt.Sprintf("len(%s)*%s", value, size)
 	}
-	if call.op == "Size" {
+	if call.op == "size" {
 		fmt.Fprintf(b, "func %s(v %s) int {\n", call.helper, g.typeName(call.input))
 		if call.ptr {
 			fmt.Fprintln(b, "if v==nil { return -1 }")
@@ -141,7 +140,7 @@ func (g *codecSource) emit(call rewrite, shortBuffer, mathAlias string) {
 	if !call.unchecked {
 		fmt.Fprintf(b, "if len(buf)<n { return 0,%s() }\n", shortBuffer)
 	}
-	decode := call.op == "Decode"
+	decode := call.op == "decode"
 	if call.slice && call.wire.width != 0 {
 		fmt.Fprintf(b, "for i:=range %s {\n", value)
 		g.field(call.wire, value+"[i]", fmt.Sprintf("(i*%d)", call.wire.width), mathAlias, decode)

@@ -1,4 +1,4 @@
-package binaryspecialize
+package calltemplate
 
 import (
 	"go/ast"
@@ -31,41 +31,37 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 			packages.Visit([]*packages.Package{initial}, nil, func(p *packages.Package) {
 				closure = append(closure, p)
 			})
-			shortBuffer, err := AddShortBufferAccessor(binary)
-			if err != nil {
-				t.Fatal(err)
-			}
+			addCodecPatch(t, binary, "templates_llgo.go", "templates_go123.go")
+			binding := codecBinding(t, binary)
+			shortBuffer := shortBufferHelper(binary.Types)
 			info := initial.TypesInfo
 			initial.TypesInfo = nil
-			if changed, err := Rewrite(closure, binary, initial, shortBuffer); len(changed) != 0 || err != nil {
-				t.Fatalf("missing types produced %d rewritten packages, %v", len(changed), err)
+			if changed, err := rewriteBinary(closure, binding, initial, shortBuffer); changed || err != nil {
+				t.Fatalf("missing types rewrote calls = %t, %v", changed, err)
 			}
 			initial.TypesInfo = info
-			if changed, err := Rewrite(closure, binary, nil, shortBuffer); len(changed) != 0 || err != nil {
-				t.Fatalf("dependency produced %d rewritten packages, %v", len(changed), err)
+			if changed, err := rewriteBinary(closure, binding, nil, shortBuffer); changed || err != nil {
+				t.Fatalf("dependency rewrote calls = %t, %v", changed, err)
 			}
-			if changed, err := Rewrite(closure, binary, initial, ""); len(changed) != 0 || err != nil {
-				t.Fatalf("missing short buffer error produced %d rewritten packages, %v", len(changed), err)
+			if changed, err := rewriteBinary(closure, binding, initial, ""); changed || err != nil {
+				t.Fatalf("missing short buffer error rewrote calls = %t, %v", changed, err)
 			}
 			if fixture.want {
 				// Floating-point wire conversion requires math from the same
 				// standard library. A missing dependency must be reported.
 				dep := binary.Imports["math"]
 				delete(binary.Imports, "math")
-				if _, err := Rewrite(closure, binary, initial, shortBuffer); err == nil {
+				if _, err := rewriteBinary(closure, binding, initial, shortBuffer); err == nil {
 					t.Fatal("generated binary codec accepted a missing math dependency")
 				}
 				binary.Imports["math"] = dep
 			}
-			changed, err := Rewrite(closure, binary, initial, shortBuffer)
+			changed, err := rewriteBinary(closure, binding, initial, shortBuffer)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(changed) > 1 || len(changed) == 1 && changed[0] != initial {
-				t.Fatal("only the executable package can be rewritten")
-			}
-			if got := len(changed) != 0; got != fixture.want {
-				t.Fatalf("rewrite = %v, want %v", got, fixture.want)
+			if changed != fixture.want {
+				t.Fatalf("rewrite = %v, want %v", changed, fixture.want)
 			}
 
 			prog, _ := ssautil.AllPackages([]*packages.Package{initial}, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
@@ -82,7 +78,7 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 							continue
 						}
 						callee := call.Common().StaticCallee()
-						if callee.Pkg != nil && callee.Pkg.Pkg == binary.Types && genericOperation(callee.Name()) {
+						if callee.Pkg != nil && callee.Pkg.Pkg == binary.Types && binding.hasEntry(callee.Name()) {
 							generic++
 						}
 						if callee.Pkg == f.Pkg && strings.HasPrefix(callee.Name(), "__llgo_binary_") {
@@ -107,25 +103,42 @@ func TestRewriteBinaryCodecs(t *testing.T) {
 }
 
 func TestShortBufferAccessorContract(t *testing.T) {
-	pkg := &packages.Package{Types: types.NewPackage("encoding/binary", "binary")}
-	if name, err := AddShortBufferAccessor(pkg); name != "" || err != nil {
-		t.Fatalf("missing short buffer sentinel returned %q, %v", name, err)
+	pkg := types.NewPackage("encoding/binary", "binary")
+	if name := shortBufferHelper(pkg); name != "" {
+		t.Fatalf("missing helper returned %q", name)
 	}
-	pkg.Types.Scope().Insert(types.NewVar(0, pkg.Types, "errBufferTooSmall", types.Typ[types.String]))
-	if name, err := AddShortBufferAccessor(pkg); name != "" || err != nil {
-		t.Fatalf("incompatible short buffer sentinel returned %q, %v", name, err)
+	bad := types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.String])), false)
+	pkg.Scope().Insert(types.NewFunc(0, pkg, "LLGoBinaryShortBuffer", bad))
+	if name := shortBufferHelper(pkg); name != "" {
+		t.Fatalf("incompatible helper returned %q", name)
 	}
+}
 
-	initial := loadCodecInput(t, filepath.Join("..", "testdata", "binary-fixed"))
-	binary := initial.Imports["encoding/binary"]
-	base, err := AddShortBufferAccessor(binary)
-	if err != nil || base == "" {
-		t.Fatalf("first short buffer accessor = %q, %v", base, err)
+func addCodecPatch(t *testing.T, library *packages.Package, files ...string) {
+	t.Helper()
+	for _, file := range files {
+		path := filepath.Join("..", "..", "..", "runtime", "_patch", library.PkgPath, file)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := typesynth.AddFile(library, file, string(data), nil, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
-	next, err := AddShortBufferAccessor(binary)
-	if err != nil || next == "" || next == base {
-		t.Fatalf("second short buffer accessor = %q, %v", next, err)
+}
+
+func codecBinding(t *testing.T, library *packages.Package) *codecBindings {
+	t.Helper()
+	registry, err := LoadBindings([]*packages.Package{library}, func(p *packages.Package) bool { return p == library })
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(registry.codecs) != 1 {
+		t.Fatalf("got %d declared codecs", len(registry.codecs))
+	}
+	return registry.codecs[0]
 }
 
 func TestBinaryCallEligibility(t *testing.T) {
@@ -183,7 +196,7 @@ func main() {}
 		}
 		call := f.Body.List[0].(*ast.ExprStmt).X.(*ast.CallExpr)
 		fn, _ := typesynth.Callee(initial.TypesInfo, call.Fun)
-		plan, got := planCall(initial, call, fn.Name(), initial.Imports["encoding/binary"].Types, math.MaxInt32)
+		plan, got := planBinaryCall(initial, call, strings.ToLower(fn.Name()), initial.Imports["encoding/binary"].Types, math.MaxInt32)
 		if want := strings.HasPrefix(f.Name.Name, "good"); got != want {
 			t.Errorf("%s: eligible = %v, want %v", f.Name, got, want)
 		}
@@ -191,7 +204,9 @@ func main() {}
 			t.Errorf("%s: unchecked = %v, want %v", f.Name, plan.unchecked, want)
 		}
 	}
-	if _, ok := planPackage(initial, initial.Imports["encoding/binary"].Types); ok {
+	library := initial.Imports["encoding/binary"]
+	addCodecPatch(t, library, "templates_llgo.go", "templates_go123.go")
+	if _, ok := planBinaryPackage(initial, codecBinding(t, library)); ok {
 		t.Fatal("mixed generic calls or shadowed builtins enabled binary specialization")
 	}
 }

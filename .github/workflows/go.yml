@@ -461,7 +461,7 @@ jobs:
 
           go test -tags=dev -timeout 5m -covermode=atomic \
             -coverprofile=coverage-dev-size-codecs.txt \
-            ./internal/build/binaryspecialize ./internal/build/fmtspecialize ./internal/build/jsonspecialize
+            ./internal/build/calltemplate
 
           native_cover="$(mktemp -d)"
           go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \

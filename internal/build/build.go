@@ -45,7 +45,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
@@ -947,6 +947,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if embeddedSizePruningConfig(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.embedded")
 	}
+	if !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.binary")
+	}
 	if typedJSONSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
@@ -1059,10 +1062,14 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
+	bindings, err := loadSourceBindings(conf, frontendOptions, sourcePatchGOROOT, initial)
+	if err != nil {
+		return nil, err
+	}
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
-	formatSupport := !conf.disableSizeSpecialization && dedup.Check("fmt") != nil && prepareValueFormatSupport(conf, export, frontendOptions)
+	formatSupport := !conf.disableSizeSpecialization && bindings.NeedsFormatRuntime() && prepareValueFormatSupport(conf, export, frontendOptions)
 	if formatSupport {
-		altPkgPaths = append(altPkgPaths, fmtspecialize.RuntimePath)
+		altPkgPaths = append(altPkgPaths, calltemplate.RuntimePath)
 	}
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
@@ -1098,7 +1105,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
-	templates, err := applySourceTemplates(conf, frontendOptions, sourcePatchGOROOT, dedup, initial, altPkgs, verbose || conf.PrintCommands)
+	templates, err := applySourceTemplates(conf, frontendOptions, bindings, initial, altPkgs, verbose || conf.PrintCommands)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,9 +1144,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		commands:            commands,
 		frontendOptions:     frontendOptions,
 		staticByteArrays:    altByteArrays,
-		binaryCodecLibrary:  templates.binaryLibrary,
-		binaryCodecPackages: templates.binary,
-		jsonCodecPackages:   templates.json,
+		templateBindings:    bindings,
+		binaryCodecPackages: templates.Binary,
+		jsonCodecPackages:   templates.JSON,
 		callTemplates:       templates.calls,
 		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:          buildTrace,
@@ -1147,7 +1154,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		defaultGODEBUG:      defaultGODEBUG,
 	}
 	if formatSupport {
-		ctx.formatRuntime = dedup.Check(fmtspecialize.RuntimePath)
+		ctx.formatRuntime = dedup.Check(calltemplate.RuntimePath)
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -2060,11 +2067,11 @@ type context struct {
 	frontendOptions      cl.Options
 	staticByteArrays     map[string][]byte
 	formatRuntime        *packages.Cached
-	valueFormatPlan      *fmtspecialize.ValuePlan
+	valueFormatPlan      *calltemplate.ValuePlan
 	stdout               *stdoutPlan
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
-	binaryCodecLibrary   *types.Package
+	templateBindings     *calltemplate.Bindings
 	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
 	callTemplates        map[*types.Package][]string
@@ -4767,9 +4774,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 	var total int64
 	formats := canSpecializeFormats(ctx)
 	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
-	var valueFormats *fmtspecialize.ValuePlan
+	var valueFormats *calltemplate.ValuePlan
 	if scalarFormats && ctx.frontend == nil {
-		valueFormats = fmtspecialize.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
+		valueFormats = ctx.templateBindings.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
 	}
 	ctx.stdout = newStdoutPlan(ctx)
 	var validateMaps func(types.Type) error
@@ -4791,7 +4798,7 @@ func recordPackageSSAInstructions(ctx *context) error {
 					if valueFormats != nil {
 						valueFormats.Record(instruction, fn.Pkg)
 					}
-					fmtspecialize.RewriteCall(instruction, scalarFormats)
+					ctx.templateBindings.RewriteFormatCall(instruction, scalarFormats)
 					if plan := ctx.stdout; plan != nil && plan.entry == fn.Pkg {
 						plan.record(instruction)
 					}

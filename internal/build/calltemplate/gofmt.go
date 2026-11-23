@@ -6,7 +6,6 @@ import (
 	"go/types"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/build/typesynth"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
@@ -54,7 +53,7 @@ func (s *formatSource) plan(call *ast.CallExpr, rule formatRule) {
 	if !ok {
 		return
 	}
-	parts, ok := fmtspecialize.ParseFormat(text)
+	parts, ok := ParseFormat(text)
 	if !ok || len(parts) > 64 {
 		return
 	}
@@ -120,7 +119,7 @@ func (s *formatSource) plan(call *ast.CallExpr, rule formatRule) {
 	s.calls = append(s.calls, formatCall{call, name})
 }
 
-func formatOperand(part *fmtspecialize.FormatPart, arg *types.Basic) string {
+func formatOperand(part *FormatPart, arg *types.Basic) string {
 	switch {
 	case arg.Kind() == types.String:
 		if part.Verb == 'v' {
@@ -147,7 +146,7 @@ func formatOperand(part *fmtspecialize.FormatPart, arg *types.Basic) string {
 	return ""
 }
 
-func (s *formatSource) emit(name string, rule formatRule, parts []fmtspecialize.FormatPart, operands []*types.Basic, ops []string) {
+func (s *formatSource) emit(name string, rule formatRule, parts []FormatPart, operands []*types.Basic, ops []string) {
 	b := &s.body
 	fmt.Fprintf(b, "func %s(", name)
 	for i := 0; i < rule.args; i++ {

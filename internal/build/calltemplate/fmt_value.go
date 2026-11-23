@@ -1,4 +1,4 @@
-package fmtspecialize
+package calltemplate
 
 import (
 	"go/constant"
@@ -26,12 +26,19 @@ type formatRewrite struct {
 }
 
 // NewValuePlan tracks replacements for default-value formatting.
-func NewValuePlan(prog *ssa.Program, names map[*types.Package]*typeutil.Map) *ValuePlan {
-	pkg := prog.ImportedPackage("fmt")
-	if pkg == nil || pkg.Func("Sprintf") == nil || len(names) == 0 && pkg.Func(builtinSprintf) == nil {
+func (b *Bindings) NewValuePlan(prog *ssa.Program, names map[*types.Package]*typeutil.Map) *ValuePlan {
+	if b == nil || b.value == nil {
 		return nil
 	}
-	return &ValuePlan{callee: pkg.Func("Sprintf"), builtin: pkg.Func(builtinSprintf), names: names}
+	pkg := prog.Package(b.value.Pkg())
+	if pkg == nil {
+		return nil
+	}
+	callee, builtin := pkg.Func(b.value.Name()), pkg.Func(b.formats[b.value].dynamic)
+	if callee == nil || len(names) == 0 && builtin == nil {
+		return nil
+	}
+	return &ValuePlan{callee: callee, builtin: builtin, names: names}
 }
 
 // HasCalls reports whether the plan found any eligible call sites.

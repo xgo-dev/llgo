@@ -1,6 +1,8 @@
 package build
 
 import (
+	"fmt"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"go/ast"
 	"go/constant"
 	"go/parser"
@@ -49,6 +51,43 @@ func checkFormatTestPackage(t *testing.T, fset *token.FileSet, path, source stri
 		PkgPath: path, Name: pkg.Name(), Types: pkg, TypesInfo: info, Fset: fset,
 		TypesSizes: types.SizesFor("gc", "wasm"), Syntax: []*ast.File{file},
 	}
+}
+
+func testFormatBindings(t *testing.T, prog *ssa.Program) *calltemplate.Bindings {
+	t.Helper()
+	pkg := prog.ImportedPackage("fmt").Pkg
+	fset := token.NewFileSet()
+	var source strings.Builder
+	source.WriteString("package fmt\n")
+	for _, name := range []string{"Printf", "Sprintf", "Println", "Sprintln"} {
+		fn, _ := pkg.Scope().Lookup(name).(*types.Func)
+		if fn == nil {
+			continue
+		}
+		p := fn.Signature().Params()
+		fmt.Fprintf(&source, "//llgointernal:template:bind %s gofmt args=%s", name, p.At(p.Len()-1).Name())
+		switch name {
+		case "Printf":
+			fmt.Fprintf(&source, " format=%s result=stdout literal=llgoPrintfLiteral scalar=llgoPrintfScalars", p.At(0).Name())
+		case "Sprintf":
+			fmt.Fprintf(&source, " format=%s result=string literal=llgoSprintfLiteral scalar=llgoSprintfScalars composite=true dynamic=llgoSprintfBuiltins", p.At(0).Name())
+		case "Println":
+			source.WriteString(" scalar=llgoPrintfScalars")
+		case "Sprintln":
+			source.WriteString(" scalar=llgoSprintfScalars")
+		}
+		source.WriteByte('\n')
+	}
+	file, err := parser.ParseFile(fset, "templates.go", source.String(), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := calltemplate.LoadBindings([]*packages.Package{{Types: pkg, PkgPath: "fmt", Fset: fset, Syntax: []*ast.File{file}}},
+		func(*packages.Package) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func literalFormatProgram(t *testing.T, helpers bool) *ssa.Package {
@@ -127,7 +166,7 @@ func main() { ordinary(); println("ok") }
 func TestSpecializeLiteralFormats(t *testing.T) {
 	for _, helpers := range []bool{false, true} {
 		pkg := literalFormatProgram(t, helpers)
-		recordPackageSSAInstructions(&context{progSSA: pkg.Prog,
+		recordPackageSSAInstructions(&context{progSSA: pkg.Prog, templateBindings: testFormatBindings(t, pkg.Prog),
 			buildConf: &Config{Goarch: "wasm", OptLevel: optlevel.O2}})
 		for name, want := range map[string]string{
 			"literal": "llgoPrintfLiteral", "writer": "Fprintf", "sprint": "llgoSprintfLiteral",
@@ -182,7 +221,7 @@ func TestSpecializeLiteralFormatsTargetPolicy(t *testing.T) {
 		{"wasm", optlevel.O2, ModeBuild, true, false},
 	} {
 		pkg := literalFormatProgram(t, true)
-		ctx := &context{progSSA: pkg.Prog, mode: test.mode, buildConf: &Config{Goarch: test.arch, OptLevel: test.opt}}
+		ctx := &context{progSSA: pkg.Prog, templateBindings: testFormatBindings(t, pkg.Prog), mode: test.mode, buildConf: &Config{Goarch: test.arch, OptLevel: test.opt}}
 		ctx.frontendOptions.DebuggerFrames = test.debugger
 		recordPackageSSAInstructions(ctx)
 		call := pkg.Func("literal").Blocks[0].Instrs[0].(*ssa.Call)
@@ -200,7 +239,7 @@ func TestLiteralWriterFrames(t *testing.T) {
 	for _, arch := range []string{"amd64", "wasm"} {
 		for _, opt := range []optlevel.Level{optlevel.O2, optlevel.Oz} {
 			pkg := literalFormatProgram(t, true)
-			recordPackageSSAInstructions(&context{progSSA: pkg.Prog,
+			recordPackageSSAInstructions(&context{progSSA: pkg.Prog, templateBindings: testFormatBindings(t, pkg.Prog),
 				buildConf: &Config{Goarch: arch, OptLevel: opt}})
 			call := pkg.Func("writer").Blocks[0].Instrs[0].(*ssa.Call)
 			if got := call.Common().StaticCallee().Name(); got != "Fprintf" {
