@@ -21,13 +21,19 @@
 #
 # REQUIRES lwip: pkg/esp/net's glue calls the lwip socket/netdb API
 # directly; esp_timer because the same glue reads esp_timer_get_time for
-# the Go-side deadline clock.
+# the Go-side deadline clock. mbedtls: pkg/esp/tls's glue drives the
+# mbedtls_ssl_* / mbedtls_x509_crt_* API directly (the PSA crypto runtime
+# comes with the same component and is initialized by IDF at startup).
+# esp_hw_support is kept defensively: the glue compiles against mbedtls/
+# psa headers only (the TRNG wiring behind psa_generate_random lives
+# inside IDF's mbedtls port), but the explicit REQUIRES documents that the
+# handshake's entropy path depends on that port's init chain.
 idf_component_register(SRCS app_main.c demo_glue.c wifi_glue.c gpio_glue.c
-                             i2c_glue.c i2s_glue.c net_glue.c
+                             i2c_glue.c i2s_glue.c net_glue.c tls_glue.c
                        INCLUDE_DIRS "."
                        REQUIRES esp_wifi esp_netif esp_event nvs_flash
                                 esp_driver_gpio esp_driver_i2c esp_driver_i2s
-                                lwip esp_timer
+                                lwip esp_timer mbedtls esp_hw_support
                        WHOLE_ARCHIVE)
 
 # The llgo object must be a PUBLIC (interface) link item so CMake places it

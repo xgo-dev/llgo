@@ -14,6 +14,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/i2c`  | `driver/i2c_master.h` (new driver) | master bus + device handles, write/read/write-read |
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |
 | `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
+| `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial (VERIFY_NONE/REQUIRED), record read/write, close_notify, bounded quantum waits |
 
 ## Package template
 
@@ -189,6 +190,93 @@ acceptance run, start the host-side peer first:
 emulator's user-mode NAT aliases its gateway address (192.168.4.1 in the
 default subnet) to the host, forwarding guest connections to the same
 port on the host's loopback.
+
+## pkg/esp/tls — TLS client sessions over the same bounded-quantum model
+
+`pkg/esp/tls` adds a record layer on top of a connected TCP socket:
+`TLSDial(ip, port, timeoutMs, caPEM)` connects, parses the optional CA PEM
+and handshakes as a client; `TLSConn.Read`/`Write`/`Close`/`SetDeadline`
+then speak plaintext. The glue inventory is deliberately thin:
+`llgo_tls_new` (config defaults, CA parse + authmode, BIO wiring,
+ssl_setup), `llgo_tls_handstep` (one `mbedtls_ssl_handshake_step`),
+`llgo_tls_read`/`llgo_tls_write` (one record attempt),
+`llgo_tls_close_notify`, `llgo_tls_free`. Each call is a single
+non-blocking attempt; the Go side drives the quantum loops over
+`llgo_net_poll` exactly like the net package — the WANT_READ/WANT_WRITE
+mbedtls reports map onto the same socket quanta. The shared socket/clock
+primitives (`llgo_net_socket`, `llgo_net_connect`, `llgo_net_poll`,
+`llgo_net_sock_error`, `llgo_net_shutdown`, `llgo_net_close`,
+`llgo_net_now_ms`) are declared by linkname in BOTH packages and defined
+once in `net_glue.c`: a TLS program links both glues, but the packages
+stay mutually dependency-free at the Go level (each adopts independently).
+
+**mbedtls 4.1 specifics** (IDF v6.3-dev): the SSL layer's randomness is
+PSA Crypto random (`psa_generate_random`), which IDF wires to the hardware
+TRNG (`esp_fill_random`) and initializes at startup — no `conf_rng`, and
+the ctr_drbg of older mbedtls is a private header in 4.1.1. VERIFY_REQUIRED
+requires an explicit `mbedtls_ssl_set_hostname` call or the handshake
+fails with `MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME`
+(-0x5D80); the glue opts out with `set_hostname(NULL)` — chain + validity
+are still checked, no CN/SAN matching happens (the API has no hostname
+parameter). `mbedtls_x509_crt_parse`'s PEM path needs the NUL terminator
+counted INSIDE the length, so the glue parses a heap copy. And the first
+`handshake_step` only advances HELLO_REQUEST → CLIENT_HELLO returning 0
+without network I/O — the glue wraps it so 0 always means "handshake over".
+
+**Error domain.** TLS-phase failures use the 0x7E00 segment
+(`HandshakeTimeout`/`CertVerifyFailed`/`CaParseFailed`/`WantPollExhausted`/
+`Handshake`/`PsaInitFailed`, named by `tls.ErrName`); the TCP phase surfaces
+lwip errnos exactly like `net.Dial`; failures inside mbedtls's own dial
+setup (config defaults, `ssl_setup`) and record-phase fatals pass the raw
+negative mbedtls code through. Read/Write honor the connection deadline
+with net.Conn semantics (EAGAIN poll-read without a deadline, ETIMEDOUT at
+expiry); TLS Write is all-or-nothing (no partial plaintext), so "nothing
+accepted" returns -EAGAIN and the caller retries the whole buffer. `Close`
+sends close_notify under a bounded 500 ms wait (`WantPollExhausted` if it
+cannot finish) and always releases the fd.
+
+**Memory.** One live TLS connection holds 24-25 KiB of internal SRAM at the
+default fragment lengths (IN 16 KiB + OUT 4 KiB buffers from
+`CONFIG_MBEDTLS_SSL_IN/OUT_CONTENT_LEN`, plus the ssl/config/CA state —
+all measured internal under esp-emu with SPIRAM enabled: the >16 KiB IN
+buffer still lands on the internal heap, PSRAM untouched); after Close
+everything returns and the free watermark recovers (four consecutive
+sessions recover to within 8 B, logs/p6bfix-soak.log). Measured on the demo
+probe's live-connection heap marks: WiFi steady-state internal free
+53,655 B → 28,819 B with the VERIFY_NONE session open (24,244 B held),
+27,723 B with VERIFY_REQUIRED (25,012 B held; the parsed CA adds the ~0.75
+KiB difference).
+That leaves ~28 KiB of headroom over the WiFi steady state, so the demo
+keeps the default fragment lengths; lowering
+`CONFIG_MBEDTLS_SSL_IN/OUT_CONTENT_LEN` would shrink this further at the
+price of record-size compatibility (Go's crypto/tls does not negotiate
+RFC 6066 max-fragment-length, so a shrunken IN buffer is only safe
+against peers that never send records larger than the buffer).
+
+**Scheduling.** Same architecture property as net: the quantum waits are
+C-level selects and give the llgo scheduler no yield point. Keep a TLS
+session on one goroutine, or hand control through channel operations.
+
+**Emulator fidelity (esp-emu 1.2.0, measured with a pure-C probe before
+the binding, logs p6b-shim-emu*).** Everything the TLS handshake needs is
+modeled: a full TLS 1.2 client handshake (TLS-ECDHE-RSA-AES128-GCM-SHA256)
+against a host crypto/tls peer passes with the IDF default hardware
+crypto accelerators enabled AND in a pure-software A/B config — no
+fidelity gap, no software fallback needed. `esp_random` returns non-zero
+values (the PSA random path is real), and the guest wall clock sits at
+the epoch (`time()` = 1): certificates must be valid from 1970, which the
+demo's gencert.sh does (`-not_before 19700101000000Z`, 100-year window).
+The demo acceptance re-verified the whole stack through the binding
+itself (`[go] tls ...`).
+
+**Integration.** The main component needs `REQUIRES mbedtls esp_hw_support`
+in addition to the net glue set (`lwip esp_timer`); `esp_hw_support` is a
+defensive REQUIRES - the glue compiles against mbedtls/psa headers only
+(the TRNG wiring behind `psa_generate_random` lives inside IDF's mbedtls
+port), and the entry documents that dependency. For an emu acceptance
+run, start the host TLS peer first: `go run ./idfproj/host/tlssrv` (TLS
+echo on 127.0.0.1:9443, certs from `idfproj/host/gencert.sh`) — the NAT
+forwards the guest's 192.168.4.1:9443 to it.
 
 ## Adding a new peripheral
 

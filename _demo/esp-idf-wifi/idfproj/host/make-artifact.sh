@@ -67,7 +67,7 @@ cd "$DIR/../.."
 #    override it via the environment when this project tree lives outside
 #    the checkout (working copies under an artifacts dir, release tarballs).
 REPO_ROOT="${REPO_ROOT:-$DIR/../../../..}"
-for g in wifi gpio i2c i2s net; do
+for g in wifi gpio i2c i2s net tls; do
     cp "$REPO_ROOT/pkg/esp/$g/glue/${g}_glue.c" "$MAIN/${g}_glue.c"
 done
 
@@ -116,7 +116,9 @@ echo "artifact written: $OUT ($SIZE bytes)"
 echo "undefined symbols remaining (all must resolve at the IDF link):"
 "$NM" -u "$OUT"
 # Link-checklist echo: every package glue symbol must appear above. A
-# missing llgo_net_* means the Go program (or a synced glue) drifted from
-# the package set this script wires into the IDF build.
+# missing llgo_net_* / llgo_tls_* means the Go program (or a synced glue)
+# drifted from the package set this script wires into the IDF build.
 echo "llgo_net_* glue symbols (must all be in the list above):"
 "$NM" -u "$OUT" | grep 'llgo_net_' || echo "NONE - goapp does not import pkg/esp/net?"
+echo "llgo_tls_* glue symbols (must all be in the list above):"
+"$NM" -u "$OUT" | grep 'llgo_tls_' || echo "NONE - goapp does not import pkg/esp/tls?"

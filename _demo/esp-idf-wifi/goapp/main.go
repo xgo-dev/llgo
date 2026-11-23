@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/i2c"
 	"github.com/xgo-dev/llgo/pkg/esp/i2s"
 	"github.com/xgo-dev/llgo/pkg/esp/net"
+	"github.com/xgo-dev/llgo/pkg/esp/tls"
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
 
@@ -373,6 +374,7 @@ const (
 	probeI2C  = true
 	probeI2S  = true
 	probeNet  = true
+	probeTLS  = true
 )
 
 func gpioProbe() {
@@ -486,6 +488,176 @@ func periphProbe() {
 	} else {
 		println("[go] periph i2s skipped (known to hang this target)")
 	}
+}
+
+// compiledCAPEM reads the acceptance CA (or the negative-test CA) that
+// idfproj/host/gencert.sh generated into main/tls_ca.h / tls_ca_wrong.h,
+// which demo_glue.c exposes. An empty result means "not compiled in": the
+// probe reports SKIP for the VERIFY_REQUIRED phase, exactly like the
+// scan-only wifi run. The buffer lives on the Go heap (a 2 KiB stack buffer
+// would violate the fiber-stack discipline).
+//
+//go:linkname demoTLSCA C.llgo_demo_tls_ca
+func demoTLSCA(buf *byte, cap int32, outLen *int32)
+
+//go:linkname demoTLSCAWrong C.llgo_demo_tls_ca_wrong
+func demoTLSCAWrong(buf *byte, cap int32, outLen *int32)
+
+func compiledCAPEM(buf *byte, outLen *int32, wrong bool) []byte {
+	if wrong {
+		demoTLSCAWrong(buf, int32(2048), outLen)
+	} else {
+		demoTLSCA(buf, int32(2048), outLen)
+	}
+	if *outLen <= 0 {
+		return nil
+	}
+	return unsafe.Slice(buf, *outLen)
+}
+
+// tlsRound exercises one live TLS session: write the 256-byte pattern, read
+// the echo back in short reads, compare, and close with a graceful
+// close_notify (whose host-side evidence is the tlssrv log line "peer sent
+// TLS close_notify"). Reports the outcome as a [go] tls line; returns
+// whether the round verified.
+func tlsRound(c *tls.TLSConn, tag string) bool {
+	const patternLen = 256
+	var msg [patternLen]byte
+	s := uint32(0x12345678)
+	for i := range msg {
+		s = s*1664525 + 1013904223
+		msg[i] = byte(s >> 24)
+	}
+	if e := c.SetDeadline(5000); e != 0 {
+		println("[go] tls", tag, "set_deadline err =", int(e), tls.ErrName(e))
+		return false
+	}
+	if w := c.Write(msg[:]); w != patternLen {
+		println("[go] tls", tag, "write n =", int(w), "want", patternLen)
+		return false
+	}
+	var got [patternLen]byte
+	total := int32(0)
+	for total < patternLen {
+		n, e := c.Read(got[total:])
+		if n > 0 {
+			total += n
+			continue
+		}
+		if e != 0 {
+			println("[go] tls", tag, "read err =", int(e), tls.ErrName(e), "at", int(total))
+		} else {
+			println("[go] tls", tag, "read peer closed at", int(total))
+		}
+		break
+	}
+	mismatches := 0
+	for i := int32(0); i < total; i++ {
+		if got[i] != msg[i] {
+			mismatches++
+		}
+	}
+	if e := c.Close(); e != 0 {
+		println("[go] tls", tag, "close report =", int(e), tls.ErrName(e))
+	}
+	if total == patternLen && mismatches == 0 {
+		println("[go] tls", tag, "echo", int(total), "/", patternLen, "bytes verified")
+		return true
+	}
+	println("[go] tls", tag, "echo got", int(total), "/", patternLen,
+		"bytes, mismatches =", int(mismatches))
+	return false
+}
+
+// tlsProbe exercises pkg/esp/tls end to end over the emulator's NAT against
+// idfproj/host/tlssrv (TLS echo on 127.0.0.1:9443, forwarded as
+// 192.168.4.1:9443). Phases:
+//
+//  1. VERIFY_NONE dial + 256-byte echo + close_notify - the deterministic
+//     core ("[go] tls none ...");
+//  2. VERIFY_REQUIRED dial with the compiled-in CA, same exchange
+//     ("[go] tls required ..."); SKIPped when no CA was compiled in (run
+//     idfproj/host/gencert.sh), like the scan-only wifi run;
+//  3. negative test: a dial with a CA that signed nothing must be rejected
+//     with CertVerifyFailed ("[go] tls bad-ca ...").
+//
+// "[go] tls PASS" fires only when phase 1 passed AND phase 2 ran and passed
+// - that is the emu acceptance gate (--exit-on). Without a compiled-in CA
+// phase 2 is SKIPped and the probe ends at "[go] tls done" - PASS is never
+// printed, so a gate run in that shape cannot exit green by accident (it
+// runs to the emu's 150 s timeout instead); use --exit-on "[go] tls done"
+// for the run that reports the SKIP, same convention as the scan-only wifi
+// run. A FAIL path ends the probe without the done marker, so it ends at
+// the timeout too. Every wait
+// is bounded (20 ms quanta under deadlines), so a missing peer surfaces as
+// an error code, never a hang; probeTLS is the contingency switch.
+func tlsProbe() {
+	println("[go] tls: start")
+	heapMark("tls-baseline")
+
+	t0 := rdcycle()
+	c, e := tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, nil)
+	if e != 0 {
+		println("[go] tls none dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL dial-none")
+		return
+	}
+	println("[go] tls none dial ok in", int((rdcycle()-t0)/240000), "ms")
+	// Live-connection mark: the buffers + handshake state are held right
+	// now (this is the "does the default MFL hit the internal-heap red
+	// line" number). tlsRound closes before the next mark, so the free
+	// column between marks is post-close - only the live marks show the
+	// held footprint.
+	heapMark("tls-none-live")
+	if !tlsRound(c, "none") {
+		println("[go] tls FAIL none")
+		return
+	}
+	heapMark("tls-none")
+
+	caBuf := make([]byte, 2048)
+	wrongBuf := make([]byte, 2048)
+	var caLen, wrongLen int32
+	ca := compiledCAPEM(&caBuf[0], &caLen, false)
+	caWrong := compiledCAPEM(&wrongBuf[0], &wrongLen, true)
+	if ca == nil {
+		println("[go] tls required SKIP: no CA compiled in (run idfproj/host/gencert.sh)")
+		println("[go] tls done")
+		return
+	}
+	t0 = rdcycle()
+	c, e = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, ca)
+	if e != 0 {
+		println("[go] tls required dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL dial-required")
+		return
+	}
+	println("[go] tls required dial ok in", int((rdcycle()-t0)/240000), "ms")
+	heapMark("tls-required-live")
+	if !tlsRound(c, "required") {
+		println("[go] tls FAIL required")
+		return
+	}
+	heapMark("tls-required")
+
+	// Negative test: a CA that signed nothing must not authenticate the
+	// peer. The dial fails inside the handshake with CertVerifyFailed;
+	// any other outcome (success, or a different error) is a FAIL.
+	if caWrong == nil {
+		println("[go] tls bad-ca SKIP: no wrong CA compiled in")
+	} else {
+		c, e = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, caWrong)
+		if e == tls.CertVerifyFailed {
+			println("[go] tls bad-ca correctly rejected (", int(e), tls.ErrName(e), ")")
+		} else {
+			println("[go] tls bad-ca dial err =", int(e), tls.ErrName(e))
+			println("[go] tls FAIL bad-ca (want CertVerifyFailed)")
+			return
+		}
+		heapMark("tls-badca")
+	}
+	println("[go] tls PASS")
+	println("[go] tls done")
 }
 
 // netProbe exercises pkg/esp/net end to end over the emulator's NAT. After
@@ -820,6 +992,15 @@ func main() {
 		netProbe()
 	} else {
 		println("[go] net skipped (probeNet switch off; every net path is deadline-bounded)")
+	}
+
+	// TLS on top of lwip: both authmodes plus the wrong-CA negative test
+	// against the host tlssrv. tlsProbe needs no extra scheduling care
+	// beyond what net already documents (all waits quantum-bounded).
+	if probeTLS {
+		tlsProbe()
+	} else {
+		println("[go] tls skipped (probeTLS switch off; every tls path is deadline-bounded)")
 	}
 
 	println("[go] wifi done")

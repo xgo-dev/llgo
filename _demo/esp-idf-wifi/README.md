@@ -3,8 +3,8 @@
 A self-contained pipeline that drives the ESP-IDF `esp_wifi` stack from
 Go code compiled by llgo: setup → start → scan → connect → DHCP, with the
 acceptance run automated under esp-emu. The Go bindings live in the llgo
-repository (`pkg/esp/{wifi,gpio,i2c,i2s,net}`), consumed through the module
-require + replace in `go.mod`; this directory owns the acceptance program
+repository (`pkg/esp/{wifi,gpio,i2c,i2s,net,tls}`), consumed through the
+module require + replace in `go.mod`; this directory owns the acceptance program
 and the IDF project. The Go heap's growth into PSRAM that the acceptance
 program exercises is an llgo runtime feature, described under
 [PSRAM and the Go heap](#psram-and-the-go-heap).
@@ -16,7 +16,8 @@ esp-idf-wifi/
 ├── go.mod                  Go module (module llgoidf; requires + replaces
 │                           github.com/xgo-dev/llgo, the binding packages' home)
 ├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
-│                           + GPIO/I2C/I2S peripheral probes + TCP net probe)
+│                           + GPIO/I2C/I2S peripheral probes + TCP net probe
+│                           + TLS probe: VERIFY_NONE / VERIFY_REQUIRED / wrong-CA)
 ├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
 │                           tinygogc externs in main.go, so `go build` links
 └── idfproj/                Minimal ESP-IDF project
@@ -25,15 +26,25 @@ esp-idf-wifi/
     ├── host/               Host-side artifact pipeline (one command)
     │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object;
     │   │                     also syncs the pkg/esp/*/glue templates into main/
+    │   ├── gencert.sh        Local PKI for the TLS probe: 100-year CA + server
+    │   │                     cert (valid from 1970 - the guest has no wall
+    │   │                     clock), wrong-CA for the negative test; writes
+    │   │                     main/tls_ca.h + main/tls_ca_wrong.h (gitignored)
     │   ├── llgo_syms.S       GC heap + bootstrap stack window providers
-    │   └── echosrv/          Host-side TCP echo peer for the net probe's emu
-    │                         acceptance run (listens on 127.0.0.1:9000; the
-    │                         emulator's NAT forwards 192.168.4.1:9000 to it)
+    │   ├── echosrv/          Host-side TCP echo peer for the net probe's emu
+    │   │                     acceptance run (listens on 127.0.0.1:9000; the
+    │   │                     emulator's NAT forwards 192.168.4.1:9000 to it)
+    │   └── tlssrv/           Host-side TLS echo peer for the tls probe (TCP
+    │                         + crypto/tls on 127.0.0.1:9443, cert/key from
+    │                         tlssrv/certs/, gitignored). Its log line
+    │                         "peer sent TLS close_notify" is the host-side
+    │                         close evidence.
     └── main/               The main component
         ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
         ├── app_main.c      app_main -> llgo entry; _write/_exit shims; Go
         │                    heap PSRAM budget (llgo_gc_ext_heap_cap)
-        ├── demo_glue.c     Demo-local glue (cycle counter for the benchmarks)
+        ├── demo_glue.c     Demo-local glue (cycle counter for the benchmarks,
+│                            CA PEM accessors for the tls probe)
         ├── *_glue.c        Package glues, synced from
         │                    github.com/xgo-dev/llgo/pkg/esp/*/glue at build time
         │                    (gitignored; boundary rules: pkg/esp/README.md)
@@ -41,7 +52,7 @@ esp-idf-wifi/
 ```
 
 The Go binding packages themselves live in the llgo repo:
-`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net}` - the wifi one grew
+`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net,tls}` - the wifi one grew
 out of this demo's former `goapp/espwifi` directory (same API, same
 mailbox glue; see `pkg/esp/README.md` for the package template, the
 go↔C boundary rules and both glue integration recipes).
@@ -95,7 +106,8 @@ pulled `libfreertos.a` in a later archive round.)
 
 Prerequisites: llgo compiler (`/tmp/llgo-wifi` below), Docker image
 `espressif/idf:latest`, `esp-emu` v1.2.0 on the host (the first release
-with the user-mode NAT the net probe relies on).
+with the user-mode NAT the net probe relies on), and `openssl` on PATH
+(for `gencert.sh`).
 
 ```
 # 0. Station credentials: copy the placeholder and fill in myssid/mypassword
@@ -106,11 +118,25 @@ with the user-mode NAT the net probe relies on).
 cp idfproj/main/wifi_creds.h.example idfproj/main/wifi_creds.h
 #    ... edit in myssid / mypassword ...
 
+# 0b. TLS probe PKI: generate the local CA + server cert (100-year validity,
+#     valid from 1970 because the guest has no wall clock), the wrong-CA for
+#     the negative test, and the two headers the demo glue compiles in.
+#     Without this step the firmware still builds, but the tls probe reports
+#     "required SKIP: no CA compiled in" and stops at "[go] tls done" -
+#     "[go] tls PASS" is never printed, so a --exit-on "[go] tls PASS"
+#     acceptance in that shape runs to the 150 s timeout (use --exit-on
+#     "[go] tls done" for the run that reports the SKIP). Rerunning
+#     gencert.sh rewrites the two headers: rerun make-artifact.sh and
+#     idf.py build afterwards, or the firmware keeps verifying against the
+#     stale compiled-in CA.
+./idfproj/host/gencert.sh
+
 # 1. Go -> relocatable object (prints the remaining undefined symbols;
 #    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / llgo_net_* /
-#    vTaskDelay / stdio must all be in that list - the script echoes the
-#    llgo_net_* set separately). It also syncs the pkg/esp/*/glue templates
-#    into main/ - run it before every idf.py build.
+#    llgo_tls_* / vTaskDelay / stdio must all be in that list - the script
+#    echoes the llgo_net_* and llgo_tls_* sets separately). It also syncs
+#    the pkg/esp/*/glue templates into main/ - run it before every idf.py
+#    build.
 cd idfproj/host && ./make-artifact.sh /tmp/llgo-wifi
 
 # 2. IDF firmware (merge-bin takes -o relative to the build/ directory:
@@ -119,26 +145,28 @@ cd .. && docker run --rm -v "$PWD":/project -w /project \
     espressif/idf:latest bash -c \
     'idf.py set-target esp32s31 && idf.py build && idf.py merge-bin -o merged-binary.bin'
 
-# 3. Back at the demo root: host-side echo peer for the net probe (echoes
-#    everything back until the firmware closes; see idfproj/host/echosrv).
-#    The firmware connects to the emulator's NAT gateway alias
-#    192.168.4.1:9000, which lands on this listener.
+# 3. Back at the demo root: host-side peers for the net and tls probes
+#    (echosrv echoes everything back until the firmware closes; tlssrv is
+#    the crypto/tls echo that terminates the tls probe's sessions). The
+#    firmware connects to the emulator's NAT gateway alias
+#    192.168.4.1:<port>, which lands on these listeners.
 cd .. && go run ./idfproj/host/echosrv 127.0.0.1:9000 &
+go run ./idfproj/host/tlssrv &
 
 # 4. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword;
 #    --psram-size matches the board's 16 MiB PSRAM, without it the Go heap
-#    cannot grow). The PASS gate exits as soon as the net echo verifies;
-#    a full-coverage run (resolve + loopback + every heap mark) exits on
+#    cannot grow). The PASS gate exits as soon as both authmodes verified;
+#    a full-coverage run (net resolve + loopback + every heap mark) exits on
 #    "[go] wifi done" instead - the PASS-gate string kills the run before
 #    those best-effort items execute.
 while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
-~/.local/bin/esp-emu --chip esp32s31 --firmware build/merged-binary.bin \
+~/.local/bin/esp-emu --chip esp32s31 --firmware idfproj/build/merged-binary.bin \
     --console usb-jtag --timeout 150s --psram-size 16M \
     --wifi-ssid myssid --wifi-password mypassword \
-    --exit-on "[go] net PASS"
+    --exit-on "[go] tls PASS"
 #    ... or: --exit-on "[go] wifi done"  (full coverage)
 rmdir /tmp/esp-emu.lock
-kill %1   # echosrv
+kill %1 %2   # echosrv, tlssrv
 ```
 
 Subnet note: the probe hardcodes the emulator's NAT addresses
@@ -193,6 +221,25 @@ and a strictly sequential loopback Listen/Accept self-connect on
 deadlines), so a missing peer surfaces as an errno, never a hang; see
 `pkg/esp/README.md` for the bounded-quantum model and the scheduling
 note that keeps this probe on one goroutine.
+
+After the net probe, `tlsProbe` runs the same NAT path one layer up
+against `idfproj/host/tlssrv` (`[go] tls ...` lines): a VERIFY_NONE dial
+(192.168.4.1:9443, no CA), a VERIFY_REQUIRED dial with the CA PEM that
+`gencert.sh` compiled into the firmware, and a negative dial with a CA
+that signed nothing - which must fail with the certificate-verify error.
+Each dial writes a 256-byte pseudo-random pattern, reads the echo back in
+short reads, compares, and closes with a graceful TLS close_notify (the
+host side records it as "peer sent TLS close_notify" in the tlssrv log -
+an abrupt TCP close would instead show up as a connection-reset error).
+`[go] tls PASS` is the acceptance gate; without a compiled-in CA the
+VERIFY_REQUIRED phase reports SKIP and the probe ends at "[go] tls done"
+without printing PASS, so a `--exit-on "[go] tls PASS"` run in that shape
+times out at the 150 s limit instead of exiting (use
+`--exit-on "[go] tls done"`), the same convention as the scan-only wifi
+run. A FAIL line ends the probe without the done marker, so that shape
+also ends at the 150 s timeout - a missing "[go] tls done" means something
+real broke. The certificates are valid from 1970 so the guest's frozen
+epoch wall clock passes the validity check.
 
 Without credentials the run is scan-only: after the scan, and with PSRAM
 enabled, the program keeps 6 MiB live in the Go heap with a collection

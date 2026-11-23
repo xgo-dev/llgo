@@ -25,6 +25,16 @@ func stubVTaskDelay(ticks uint32) { _ = ticks }
 //go:linkname stubRdcycle C.llgo_demo_rdcycle
 func stubRdcycle() uint32 { return 0 }
 
+//go:linkname stubDemoTLSCA C.llgo_demo_tls_ca
+func stubDemoTLSCA(buf *byte, cap int32, outLen *int32) {
+	_, _, _ = buf, cap, outLen
+}
+
+//go:linkname stubDemoTLSCAWrong C.llgo_demo_tls_ca_wrong
+func stubDemoTLSCAWrong(buf *byte, cap int32, outLen *int32) {
+	_, _, _ = buf, cap, outLen
+}
+
 //go:linkname stubHeapCapsMalloc C.heap_caps_malloc
 func stubHeapCapsMalloc(size, caps uint32) unsafe.Pointer {
 	_, _ = size, caps
