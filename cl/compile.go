@@ -63,8 +63,7 @@ var (
 type Options struct {
 	// GuardPackageInitCalls lists package initializers with a weak enabled
 	// default. A closed final link may override the default.
-	GuardPackageInitCalls    []string
-	GuardAllPackageInitCalls bool
+	GuardPackageInitCalls []string
 	// GuardedInitializers emits weak defaults for selected package variables.
 	// The final link can override a default after proving the variable unused.
 	GuardedInitializers map[*ssa.BasicBlock][]OptionalInitializer
@@ -1742,7 +1741,7 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:
-		if (p.options.GuardAllPackageInitCalls || len(p.options.GuardPackageInitCalls) != 0) && p.compileGuardedPackageInit(b, v) {
+		if len(p.options.GuardPackageInitCalls) != 0 && p.compileGuardedPackageInit(b, v) {
 			return
 		}
 		if concrete := p.directReflectTypeFactory(v); concrete != nil {
@@ -1982,10 +1981,6 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		}
 		x := p.compileValue(b, vx)
 		idx := p.compileValue(b, v.Index)
-		if p.prog.Target().GOARCH == "wasm" && rangeSliceIndexInBounds(v) {
-			ret = b.IndexSliceAddrInBounds(x, idx)
-			break
-		}
 		p.recordPanicSite(b, v.Pos())
 		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
 			p.emitNilDerefBaseCheck(b, vx)
@@ -2483,8 +2478,7 @@ func (p *context) needsRecoverableNilGuard(addr ssa.Value) bool {
 		return false
 	}
 	if p.prog.Target().GOARCH == "wasm" {
-		index, ok := addr.(*ssa.IndexAddr)
-		return !ok || !rangeSliceIndexInBounds(index)
+		return true
 	}
 	if index, ok := addr.(*ssa.IndexAddr); ok {
 		if _, slice := types.Unalias(index.X.Type()).Underlying().(*types.Slice); slice {

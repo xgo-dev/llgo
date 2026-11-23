@@ -116,7 +116,10 @@ standard-library archives are shared across both cases. The same build profile
 can lower supported `encoding/json.Unmarshal` calls to typed decoders on closed
 WASI, Emscripten, macOS arm64, Linux amd64/arm64 and bare-metal builds. This path
 uses the v2-backed legacy API, enabled by default in Go 1.27 or with
-`GOEXPERIMENT=jsonv2` in Go 1.26. Unknown native references keep codec startup.
+`GOEXPERIMENT=jsonv2` in Go 1.26. The overlay uses the v2 implementation's
+`export.GetBufferedDecoder` and `jsonopts.DefaultOptionsV1`. Keep those
+contracts in sync when updating the supported Go sources. Unknown native
+references keep codec startup.
 Linux amd64 size builds use Go's software span scanner for the standard
 runtime package. LLGo's collector is selected independently.
 Allocation profile counters use zero-initialized storage, and their size

@@ -39,6 +39,16 @@ func main() {
 	if got := fmt.Sprintf("%v", &aggregate); got != "&{[(1-2i) (-3+4i)] [true false]}" {
 		panic(got)
 	}
+	negativeZero := math.Copysign(0, -1)
+	complexEdges := [4]complex128{
+		complex(0, negativeZero),
+		complex(negativeZero, 0),
+		complex(math.NaN(), math.Inf(1)),
+		complex(math.Inf(-1), math.NaN()),
+	}
+	if got := fmt.Sprintf("%v", complexEdges); got != "[(0-0i) (-0+0i) (NaN+Infi) (-Inf+NaNi)]" {
+		panic(got)
+	}
 	nanMap := map[float64]string{math.NaN(): "nan", -1: "negative", 2: "positive"}
 	if got := fmt.Sprintf("%v", nanMap); got != "map[NaN:nan -1:negative 2:positive]" {
 		panic(got)

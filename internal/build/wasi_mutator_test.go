@@ -64,7 +64,7 @@ func TestSingleWASIMutatorProof(t *testing.T) {
 
 func TestWASIMutatorProbeCannotStage(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "missing")
-	if _, _, err := probeWASIMutatorLink(&context{}, &mainLinkPlan{}, dir, false, ""); !os.IsNotExist(err) {
+	if _, _, err := probeWASIMutatorLink(&context{}, &mainLinkPlan{}, dir, false); !os.IsNotExist(err) {
 		t.Fatalf("probe staging error = %v, want a missing directory error", err)
 	}
 }

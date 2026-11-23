@@ -47,8 +47,6 @@ type genConfig struct {
 	funcInfo       []funcInfoRecord
 	pcLineInfo     []pcLineRecord
 	cExports       []cExport
-
-	compactWASIStartup *wasiStartupDiagnostics
 }
 
 type cExport struct {
@@ -139,10 +137,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		LPkg: mainPkg,
 	}
 
-	var runtimeStub llssa.Function
-	if cfg.compactWASIStartup == nil {
-		runtimeStub = defineWeakNoArgStub(mainPkg, "runtime.init")
-	}
+	runtimeStub := defineWeakNoArgStub(mainPkg, "runtime.init")
 	var godebugInit llssa.Function
 	if _, ok := cfg.abiSymbols["runtime.godebugDefault"]; ok && cfg.defaultGODEBUG != "" {
 		godebugInit = defineDefaultGODEBUGInit(mainPkg, cfg.defaultGODEBUG)
@@ -278,8 +273,6 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		coverageExit: coverageExit,
 		abiInit:      abiInit,
 		packageInits: packageInits,
-
-		compactWASIStartup: cfg.compactWASIStartup,
 	})
 
 	if needStart(ctx) && !ctx.crossCompile.WasmRuntime.RunMainTask {
@@ -510,8 +503,6 @@ type entryFunctions struct {
 	coverageExit llssa.Function
 	abiInit      llssa.Function
 	packageInits []llssa.Function
-
-	compactWASIStartup *wasiStartupDiagnostics
 }
 
 // defineEntryFunction creates the program's entry function. The name is
@@ -530,7 +521,7 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	sig := newEntrySignature(argvType.RawType())
 	// Use libc's zero-argument entry only when the program cannot observe
 	// argv. Heap reservation is still handled by the runtime-free proof.
-	omitArgs := fns.compactWASIStartup == nil && (ctx.wasiOmitArgs || useMinimalWASIStartup(ctx))
+	omitArgs := ctx.wasiOmitArgs || useMinimalWASIStartup(ctx)
 	if omitArgs {
 		entryName = "__main_void"
 		sig = newSignature(nil, []types.Type{types.Typ[types.Int32]})
@@ -564,37 +555,13 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	// user program has no TLS/GLS declarations. Root that state on the host
 	// entry stack before runtime.init and keep it installed while logical Go
 	// stacks are dispatched by RunWasmMain.
-	hasLocalContext := !ctx.wasmRuntimeFree && fns.compactWASIStartup == nil && (prog.NeedsLocalContext() || fns.wasmRunMain != nil)
+	hasLocalContext := !ctx.wasmRuntimeFree && (prog.NeedsLocalContext() || fns.wasmRunMain != nil)
 	if hasLocalContext {
 		localCtx, previousLocalCtx = b.EnterLocalContext()
 	}
 	if !omitArgs {
 		b.Store(argcVar.Expr, fn.Param(0))
 		b.Store(argvVar.Expr, fn.Param(1))
-	}
-	if slices.Contains(ctx.crossCompile.BuildTags, wasiMutatorSelectionTag) && ctx.buildConf.BuildMode == BuildModeExe {
-		flag := pkg.NewVarEx("__llgo_wasi_ordinary_startup", prog.Pointer(prog.Bool()))
-		flag.Init(prog.BoolVal(fns.compactWASIStartup == nil))
-		global := pkg.Module().NamedGlobal("__llgo_wasi_ordinary_startup")
-		global.SetGlobalConstant(true)
-		global.SetVisibility(llvm.HiddenVisibility)
-	}
-	if fns.compactWASIStartup == nil && slices.Contains(ctx.crossCompile.BuildTags, wasiMutatorSelectionTag) {
-		marker := pkg.NewFunc("__llgo_wasi_requires_managed_startup", llssa.NoArgsNoRet, llssa.CDecl)
-		pkg.Module().NamedFunction("__llgo_wasi_requires_managed_startup").SetVisibility(llvm.HiddenVisibility)
-		marker.MakeBody(1).Return()
-	}
-	if sites := fns.compactWASIStartup; sites != nil {
-		rawPointer := types.Typ[types.UnsafePointer]
-		startup := pkg.NewFunc("llgo_wasi_compact_startup",
-			newSignature([]types.Type{types.Typ[types.Int32], argvType.RawType(), rawPointer,
-				prog.CStr().RawType(), prog.CStr().RawType(), rawPointer, types.Typ[types.Uint32]}, nil), llssa.CDecl)
-		parse := pkg.NewFunc(llssa.PkgRuntime+".WASIStartupTraceback",
-			newSignature([]types.Type{types.NewPointer(types.Typ[types.Byte]), types.Typ[types.Uint32]}, []types.Type{types.Typ[types.Uint32]}), llssa.GoDecl)
-		table := pkg.NewVarEx("syscall.errorstr", prog.Pointer(prog.Type(sites.errnoTable, llssa.GoDecl)))
-		b.Call(startup.Expr, fn.Param(0), fn.Param(1), b.Convert(prog.VoidPtr(), parse.Expr),
-			b.CStr(sites.prestat), b.CStr(sites.prestatName), b.Convert(prog.VoidPtr(), table.Expr),
-			prog.IntVal(uint64(sites.errnoTable.Len()), prog.Uint32()))
 	}
 	if IsStdioNobuf() {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
@@ -641,9 +608,7 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	if fns.abiInit != nil {
 		b.Call(fns.abiInit.Expr)
 	}
-	if fns.runtimeStub != nil {
-		b.Call(fns.runtimeStub.Expr)
-	}
+	b.Call(fns.runtimeStub.Expr)
 	if fns.startPCLN != nil {
 		b.Call(fns.startPCLN.Expr)
 	}

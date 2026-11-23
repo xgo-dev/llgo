@@ -17,7 +17,12 @@ import (
 // Track changed globals through passive initializers that still run. An
 // effectful initializer must never observe a value the compact link omits.
 func checkStartupReads(ctx *context, effect *startupEffects, dropped map[*ssa.Package]bool) bool {
-	replaced := replacedStartupPackages(ctx)
+	replaced := make(map[*ssa.Package]*ssa.Package)
+	for _, entry := range ctx.pkgByID {
+		if entry.AltPkg != nil && cl.PatchSkipsOriginalPackage(entry.AltPkg.Syntax) {
+			replaced[ctx.progSSA.Package(entry.Types)] = ctx.progSSA.Package(entry.AltPkg.Types)
+		}
+	}
 	bySymbol := startupImplementations(ctx, replaced)
 	roots := make([]*ssa.Function, 0, len(effect.trusted))
 	for _, pkg := range ctx.progSSA.AllPackages() {
@@ -27,7 +32,14 @@ func checkStartupReads(ctx *context, effect *startupEffects, dropped map[*ssa.Pa
 			}
 		}
 	}
-	calls := startupIndirectCalls(roots)
+	calls := make(map[ssa.CallInstruction][]*ssa.Function)
+	for _, node := range rta.Analyze(roots, true).CallGraph.Nodes {
+		for _, edge := range node.Out {
+			if edge.Site != nil && edge.Site.Common().StaticCallee() == nil {
+				calls[edge.Site] = append(calls[edge.Site], edge.Callee.Func)
+			}
+		}
+	}
 	type effects struct {
 		passive bool
 		reads   map[*ssa.Global]bool
@@ -43,7 +55,7 @@ func checkStartupReads(ctx *context, effect *startupEffects, dropped map[*ssa.Pa
 		if fn == nil {
 			continue
 		}
-		reads, writes := scanStartupGlobals(fn, ctx, bySymbol, calls, replaced, nil)
+		reads, writes := scanStartupGlobals(fn, ctx, bySymbol, calls, replaced)
 		if dropped[pkg] {
 			maps.Copy(changedGlobals, writes)
 			continue
@@ -98,34 +110,12 @@ func startupObserves(reads, changed map[*ssa.Global]bool) bool {
 	return false
 }
 
-func replacedStartupPackages(ctx *context) map[*ssa.Package]*ssa.Package {
-	replaced := make(map[*ssa.Package]*ssa.Package)
-	for _, entry := range ctx.pkgByID {
-		if entry.AltPkg != nil && cl.PatchSkipsOriginalPackage(entry.AltPkg.Syntax) {
-			replaced[ctx.progSSA.Package(entry.Types)] = ctx.progSSA.Package(entry.AltPkg.Types)
-		}
-	}
-	return replaced
-}
-
-func startupIndirectCalls(roots []*ssa.Function) map[ssa.CallInstruction][]*ssa.Function {
-	calls := make(map[ssa.CallInstruction][]*ssa.Function)
-	for _, node := range rta.Analyze(roots, true).CallGraph.Nodes {
-		for _, edge := range node.Out {
-			if edge.Site != nil && edge.Site.Common().StaticCallee() == nil {
-				calls[edge.Site] = append(calls[edge.Site], edge.Callee.Func)
-			}
-		}
-	}
-	return calls
-}
-
-func scanStartupGlobals(fn *ssa.Function, ctx *context, bySymbol map[string][]*ssa.Function, dynamic map[ssa.CallInstruction][]*ssa.Function, replaced map[*ssa.Package]*ssa.Package, leaves map[*ssa.Function]bool) (reads, writes map[*ssa.Global]bool) {
+func scanStartupGlobals(fn *ssa.Function, ctx *context, bySymbol map[string][]*ssa.Function, dynamic map[ssa.CallInstruction][]*ssa.Function, replaced map[*ssa.Package]*ssa.Package) (reads, writes map[*ssa.Global]bool) {
 	reads, writes = make(map[*ssa.Global]bool), make(map[*ssa.Global]bool)
 	seen := make(map[*ssa.Function]bool)
 	var visit func(*ssa.Function)
 	visit = func(f *ssa.Function) {
-		if f == nil || seen[f] || leaves[f] {
+		if f == nil || seen[f] {
 			return
 		}
 		seen[f] = true
