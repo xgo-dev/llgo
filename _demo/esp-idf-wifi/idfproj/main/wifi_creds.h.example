@@ -1,6 +1,9 @@
 /* Copy this file to wifi_creds.h and fill in the station credentials
  * before building; wifi_creds.h is gitignored and never committed. With
- * empty strings the program reports "[go] wifi FAIL no_creds" and stops.
+ * empty strings (or without the file) the program runs scan-only: it
+ * scans once, runs the heap and peripheral probes and returns without
+ * associating ("[go] wifi: scan-only, no credentials compiled in") - no
+ * net probe, and no [go] net PASS line to exit an emu acceptance on.
  * (Under esp-emu the built-in soft AP defaults to myssid/mypassword.) */
 #define LLGO_WIFI_SSID ""
 #define LLGO_WIFI_PASS ""

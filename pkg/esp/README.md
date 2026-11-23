@@ -13,6 +13,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/gpio` | `driver/gpio.h` | direction config, level set/get, toggle |
 | `pkg/esp/i2c`  | `driver/i2c_master.h` (new driver) | master bus + device handles, write/read/write-read |
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |
+| `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
 
 ## Package template
 
@@ -132,6 +133,63 @@ the link unconditionally (see the CMakeLists comment in
 Either way the templates' `#if defined(ESP_PLATFORM)` guard makes them
 harmless if they ever leak into a non-IDF build.
 
+## pkg/esp/net — TCP sockets under the bounded-quantum model
+
+`pkg/esp/net` exposes lwip's TCP sockets (`Dial`, `Listen`, `Accept`,
+`Read`, `Write`, `Close`, `Resolve` for names, `SetDeadline` for a
+connection-wide deadline) over a glue whose inventory is deliberately
+thin: `llgo_net_socket`, `llgo_net_connect`, `llgo_net_poll`,
+`llgo_net_sock_error`, `llgo_net_recv`, `llgo_net_send`,
+`llgo_net_shutdown`, `llgo_net_close`, `llgo_net_bind_listen`,
+`llgo_net_accept`, `llgo_net_resolve`, `llgo_net_now_ms`. Every socket it creates is marked
+`O_NONBLOCK` at birth (`fcntl` in the glue), because llgo's fiber scheduler
+is single-task and one blocking C call would freeze the whole Go scheduler.
+
+**The quantum loop.** Each operation is a Go-side retry loop: one
+non-blocking syscall attempt, then a 20 ms wait in `llgo_net_poll` (a
+`lwip_select` wrapper kept for reuse) — a wait that parks the FreeRTOS task
+on lwip's select semaphore, which yields the CPU and keeps the idle tasks
+(and the watchdog) fed — then a deadline check. Timeouts are accurate to
+within one quantum. Deadlines come from the call (`Dial`/`Accept`
+`timeoutMs`, `<= 0` rejected with EINVAL) or from the connection
+(`SetDeadline`, relative ms, 0 = none; with none set, a `Read` gives up
+after one quantum with EAGAIN and a `Write` returns a short count). There
+is no unbounded wait in the path except the single documented freeze,
+`Resolve` on a real name: lwip's DNS client waits on its own timers
+(dotted-quad literals return instantly, parsed before DNS is consulted).
+
+**Error domain.** Errors are lwip errno values (0 = success), not
+`esp_err` — that is what lwip's socket layer sets — and `Resolve` returns
+the netdb `h_errno` family (200–213). Mind the numbering: the ESP-IDF
+build compiles picolibc's `errno.h`, whose values above 103 differ from
+Linux (`ETIMEDOUT` = 116, `EINPROGRESS` = 119, `ENOTCONN` = 128; `net.ErrName`
+knows them, and the shim probe printed the firmware's own values to pin
+the table). A negative return from `Write` is `-errno`.
+
+**Scheduling.** The quantum waits are C-level: lwip_select gives the llgo
+scheduler no cooperative yield, so goroutines do not interleave while one
+of them sits in a net wait - the same scheduler architecture property the
+wifi package's vTaskDelay pacing has, and now measured under esp-emu: a
+dial goroutine and an accept main, each bounded to 3 s, ran strictly
+serially (the accept main consumed its whole 3026 ms window and timed out;
+the starved dial goroutine finished its connect in 0 ms once the accept
+side reached a channel join). The watchdog stays fed; the pattern to avoid
+is two fibers spinning toward each other (a dial in one goroutine, the
+accept in another). Keep a session on one goroutine, or hand control
+through channel operations, which are real yields; the demo's loopback
+probe runs strictly sequentially (dial → accept → exchange), which also
+matches the protocol — the handshake completes into the listener's backlog
+before Accept runs.
+
+**Integration.** Same two recipes as every package here; the main
+component needs `REQUIRES lwip esp_timer` (the glue reads
+`esp_timer_get_time` for the Go-side deadline clock). For an emu
+acceptance run, start the host-side peer first:
+`go run ./idfproj/host/echosrv` (TCP echo on 127.0.0.1:9000) — the
+emulator's user-mode NAT aliases its gateway address (192.168.4.1 in the
+default subnet) to the host, forwarding guest connections to the same
+port on the host's loopback.
+
 ## Adding a new peripheral
 
 Template checklist (0.5–3 days per driver, dominated by emu/device
@@ -157,8 +215,9 @@ validation):
 
 The emulator models WiFi (softAP) and PSRAM faithfully; peripheral
 fidelity is documented by the acceptance probe in
-`_demo/esp-idf-wifi/goapp/main.go` (`[go] periph ...` console lines).
-Measured on S31, 16 MiB PSRAM variant (2026-11):
+`_demo/esp-idf-wifi/goapp/main.go` (`[go] periph ...` console lines, and
+`[go] net ...` for the network items below). Measured on S31, 16 MiB
+PSRAM variant (2026-11):
 
 - **GPIO**: modeled. Output direction + set→get→toggle round-trip passes
   (`gpio.Pin(4)`).
@@ -173,12 +232,47 @@ Measured on S31, 16 MiB PSRAM variant (2026-11):
 - **I2S**: modeled. TX channel alloc, std (Philips) init, enable and a
   1024-byte write all succeed.
 
-No probe hangs or crashes the emulator; the probe switches
-(`probeGPIO`/`probeI2C`/`probeI2S` consts in `main.go`) exist only as a
-contingency for a target where one does, and the whole run is bounded:
+### Network (lwip sockets)
+
+Measured first with a pure-C shim probe over the emulator's NAT
+(workflow: host echo server on 127.0.0.1:9000, firmware dials the
+gateway alias 192.168.4.1:9000), then re-verified through
+`pkg/esp/net` itself in the Go acceptance probe (`[go] net ...`):
+
+- **WiFi association + DHCP**: modeled; the station acquires 192.168.4.2
+  from the emulator's softAP/NAT. The earlier scan-only acceptance runs
+  never exercised this path; the network work was the first to need it.
+- **`fcntl` O_NONBLOCK**: modeled; `F_GETFL`/`F_SETFL` round-trips.
+- **Short `select`**: modeled; a 50 ms select returns 0 after 59 ms.
+- **`SO_RCVTIMEO`**: modeled; a blocking recv returns EAGAIN (11) after
+  49 ms with a 50 ms timeout. The package does not need it (the primary
+  model is non-blocking + select quanta) but it works as a fallback.
+- **Loopback (127.0.0.1)**: modeled (IDF enables `LWIP_NETIF_LOOPBACK`),
+  against a loopback-bound listener, a wildcard (`INADDR_ANY`) listener,
+  and via the station's own address (192.168.4.2); full
+  connect/accept/echo round-trips.
+- **DNS**: dotted-quad literals resolve instantly (lwip parses them
+  before consulting DNS); `localhost` resolves through the emulator's
+  DNS proxy to 127.0.0.1 in <1 ms.
+- **NAT to host**: modeled; a guest connection to 192.168.4.1:9000
+  forwards to the host's 127.0.0.1:9000 and echoes (the Go acceptance
+  run verifies 256 pseudo-random bytes both ways, `echoed 256 bytes`
+  on the echosrv log as the host-side cross-evidence).
+- **errno numbering**: picolibc's, not Linux's — the C probe printed
+  `ECONNRESET=104 ECONNREFUSED=111 ETIMEDOUT=116 EINPROGRESS=119
+  EALREADY=120 EISCONN=127 ENOTCONN=128 EADDRINUSE=112 ENETUNREACH=114
+  ENOBUFS=105`, and lwip's `h_errno` family is 200–213
+  (`HOST_NOT_FOUND=210`, `TRY_AGAIN=213`).
+- **Scheduler note**: a net quantum wait is a C-level select; llgo
+  fibers do not interleave inside it (see the net section above). Not an
+  emulator fidelity gap — the same holds on hardware.
+
+No probe hangs or crashes the emulator, and the whole run is bounded:
 every driver path used by the probes has a driver-side or emulator-side
-timeout, so a missing peripheral model surfaces as an esp_err code, never
-a hang.
+timeout, so a missing peripheral model surfaces as an esp_err code (a
+missing network peer as an errno) — never a hang. The probe switches
+(`probeGPIO`/`probeI2C`/`probeI2S`/`probeNet` consts in `main.go`) exist
+only as a contingency for a target where one does.
 
 Two non-peripheral notes from the same run: the default single-app
 partition (1 MiB) overflows once the I2C/I2S driver code joins the link

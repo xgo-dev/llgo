@@ -3,7 +3,7 @@
 A self-contained pipeline that drives the ESP-IDF `esp_wifi` stack from
 Go code compiled by llgo: setup → start → scan → connect → DHCP, with the
 acceptance run automated under esp-emu. The Go bindings live in the llgo
-repository (`pkg/esp/{wifi,gpio,i2c,i2s}`), consumed through the module
+repository (`pkg/esp/{wifi,gpio,i2c,i2s,net}`), consumed through the module
 require + replace in `go.mod`; this directory owns the acceptance program
 and the IDF project. The Go heap's growth into PSRAM that the acceptance
 program exercises is an llgo runtime feature, described under
@@ -16,7 +16,7 @@ esp-idf-wifi/
 ├── go.mod                  Go module (module llgoidf; requires + replaces
 │                           github.com/xgo-dev/llgo, the binding packages' home)
 ├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
-│                           + GPIO/I2C/I2S peripheral probes)
+│                           + GPIO/I2C/I2S peripheral probes + TCP net probe)
 ├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
 │                           tinygogc externs in main.go, so `go build` links
 └── idfproj/                Minimal ESP-IDF project
@@ -25,7 +25,10 @@ esp-idf-wifi/
     ├── host/               Host-side artifact pipeline (one command)
     │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object;
     │   │                     also syncs the pkg/esp/*/glue templates into main/
-    │   └── llgo_syms.S       GC heap + bootstrap stack window providers
+    │   ├── llgo_syms.S       GC heap + bootstrap stack window providers
+    │   └── echosrv/          Host-side TCP echo peer for the net probe's emu
+    │                         acceptance run (listens on 127.0.0.1:9000; the
+    │                         emulator's NAT forwards 192.168.4.1:9000 to it)
     └── main/               The main component
         ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
         ├── app_main.c      app_main -> llgo entry; _write/_exit shims; Go
@@ -38,7 +41,7 @@ esp-idf-wifi/
 ```
 
 The Go binding packages themselves live in the llgo repo:
-`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s}` - the wifi one grew
+`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net}` - the wifi one grew
 out of this demo's former `goapp/espwifi` directory (same API, same
 mailbox glue; see `pkg/esp/README.md` for the package template, the
 go↔C boundary rules and both glue integration recipes).
@@ -91,13 +94,23 @@ pulled `libfreertos.a` in a later archive round.)
 ## Build and run
 
 Prerequisites: llgo compiler (`/tmp/llgo-wifi` below), Docker image
-`espressif/idf:latest`, `esp-emu` on the host.
+`espressif/idf:latest`, `esp-emu` v1.2.0 on the host (the first release
+with the user-mode NAT the net probe relies on).
 
 ```
+# 0. Station credentials: copy the placeholder and fill in myssid/mypassword
+#    (the emulator's built-in soft AP). Without this file the glue compiles
+#    empty strings and the run stays scan-only: it never associates, so a
+#    --exit-on "[go] net PASS" acceptance would run to the 150 s timeout
+#    instead of exiting.
+cp idfproj/main/wifi_creds.h.example idfproj/main/wifi_creds.h
+#    ... edit in myssid / mypassword ...
+
 # 1. Go -> relocatable object (prints the remaining undefined symbols;
-#    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / vTaskDelay /
-#    stdio must all be in that list). The script also syncs the
-#    pkg/esp/*/glue templates into main/ - run it before every idf.py build.
+#    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / llgo_net_* /
+#    vTaskDelay / stdio must all be in that list - the script echoes the
+#    llgo_net_* set separately). It also syncs the pkg/esp/*/glue templates
+#    into main/ - run it before every idf.py build.
 cd idfproj/host && ./make-artifact.sh /tmp/llgo-wifi
 
 # 2. IDF firmware (merge-bin takes -o relative to the build/ directory:
@@ -106,17 +119,36 @@ cd .. && docker run --rm -v "$PWD":/project -w /project \
     espressif/idf:latest bash -c \
     'idf.py set-target esp32s31 && idf.py build && idf.py merge-bin -o merged-binary.bin'
 
-# 3. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword;
+# 3. Back at the demo root: host-side echo peer for the net probe (echoes
+#    everything back until the firmware closes; see idfproj/host/echosrv).
+#    The firmware connects to the emulator's NAT gateway alias
+#    192.168.4.1:9000, which lands on this listener.
+cd .. && go run ./idfproj/host/echosrv 127.0.0.1:9000 &
+
+# 4. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword;
 #    --psram-size matches the board's 16 MiB PSRAM, without it the Go heap
-#    cannot grow). A scan-only run prints no PASS line: exit on
-#    "deleting main task" instead.
+#    cannot grow). The PASS gate exits as soon as the net echo verifies;
+#    a full-coverage run (resolve + loopback + every heap mark) exits on
+#    "[go] wifi done" instead - the PASS-gate string kills the run before
+#    those best-effort items execute.
 while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
 ~/.local/bin/esp-emu --chip esp32s31 --firmware build/merged-binary.bin \
     --console usb-jtag --timeout 150s --psram-size 16M \
     --wifi-ssid myssid --wifi-password mypassword \
-    --exit-on "[go] wifi PASS"
+    --exit-on "[go] net PASS"
+#    ... or: --exit-on "[go] wifi done"  (full coverage)
 rmdir /tmp/esp-emu.lock
+kill %1   # echosrv
 ```
+
+Subnet note: the probe hardcodes the emulator's NAT addresses
+(192.168.4.1 gateway alias, station 192.168.4.2), which are esp-emu's
+defaults. esp-emu v1.2.0 prints a startup WARN that a future release
+changes the default subnet to 10.0.2.0/24 (`the emulator's network
+defaults to 192.168.4.0/24 ... a future release changes the default to
+10.0.2.0/24. Add net=192.168.4.0/24 to --net to keep it, or
+net=10.0.2.0/24 to switch now`); if that lands, pass
+`--net 192.168.4.0/24` or the probe's hardcoded addresses stop matching.
 
 Expected console output (interleaved with the IDF boot log):
 
@@ -148,6 +180,19 @@ emulator does not model ACK/NACK, so the read reports `err = 0` and a
 alloc → std init → enable → one silence write. Each probe prints its own
 esp_err code; the `probeGPIO`/`probeI2C`/`probeI2S` switches in `main.go`
 skip a peripheral that hangs a given target.
+
+After the association (the net probe needs the DHCP lease), `netProbe`
+exercises `pkg/esp/net` over the emulator's NAT (`[go] net ...` lines):
+it dials the NAT gateway alias 192.168.4.1:9000 - which the emulator
+forwards to the host's 127.0.0.1:9000, i.e. the echosrv above - writes a
+256-byte pseudo-random pattern, reads it back and compares; that echo is
+the `[go] net PASS` gate and the acceptance exit marker. Two best-effort
+items follow: `Resolve("localhost")` through the emulator's DNS proxy,
+and a strictly sequential loopback Listen/Accept self-connect on
+127.0.0.1. Every wait is bounded (20 ms select quanta under explicit
+deadlines), so a missing peer surfaces as an errno, never a hang; see
+`pkg/esp/README.md` for the bounded-quantum model and the scheduling
+note that keeps this probe on one goroutine.
 
 Without credentials the run is scan-only: after the scan, and with PSRAM
 enabled, the program keeps 6 MiB live in the Go heap with a collection

@@ -12,6 +12,7 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/gpio"
 	"github.com/xgo-dev/llgo/pkg/esp/i2c"
 	"github.com/xgo-dev/llgo/pkg/esp/i2s"
+	"github.com/xgo-dev/llgo/pkg/esp/net"
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
 
@@ -371,6 +372,7 @@ const (
 	probeGPIO = true
 	probeI2C  = true
 	probeI2S  = true
+	probeNet  = true
 )
 
 func gpioProbe() {
@@ -484,6 +486,160 @@ func periphProbe() {
 	} else {
 		println("[go] periph i2s skipped (known to hang this target)")
 	}
+}
+
+// netProbe exercises pkg/esp/net end to end over the emulator's NAT. After
+// the association above the station owns 192.168.4.2 and the emulator
+// aliases its gateway address 192.168.4.1 to the host machine, forwarding
+// each guest connection to the same port on the host's loopback - which is
+// where idfproj/host/echosrv listens (go run ./idfproj/host/echosrv).
+//
+// The 256-byte pattern echo through that NAT is the PASS gate ([go] net
+// PASS). Resolve is best-effort: a failed lookup reports SKIP. The loopback
+// self-connect is best-effort up to the handshake - a failed Listen or Dial
+// reports SKIP - but once Dial has succeeded into the listener's backlog, a
+// failed Accept or a broken round-trip reports FAIL: with the loopback path
+// already proven good, that would be a bug in the socket stack, not a
+// missing environment feature. Every wait goes through the bounded-quantum
+// model, so a missing peer surfaces as an errno, never a hang. Like the
+// peripheral probes above, this one must terminate on its own; probeNet is
+// the contingency switch.
+func netProbe() {
+	println("[go] net: start")
+	heapMark("net-baseline")
+
+	// 256 bytes of LCG pseudo-random pattern: an echo cannot pass by
+	// accident, and the generator needs no imports.
+	const patternLen = 256
+	var msg [patternLen]byte
+	s := uint32(0x9E3779B9)
+	for i := range msg {
+		s = s*1664525 + 1013904223
+		msg[i] = byte(s >> 24)
+	}
+
+	t0 := rdcycle()
+	// 192.168.4.1 is the esp-emu NAT gateway alias for the host (the
+	// firmware itself is 192.168.4.2); on real hardware this would be the AP
+	// side's address.
+	c, e := net.Dial(net.IPv4(192, 168, 4, 1), 9000, 10000)
+	if e != 0 {
+		println("[go] net dial err =", int(e), net.ErrName(e))
+		println("[go] net FAIL dial")
+		return
+	}
+	println("[go] net dial ok in", int((rdcycle()-t0)/240000), "ms")
+
+	if e := net.SetDeadline(c, 5000); e != 0 {
+		println("[go] net set_deadline err =", int(e), net.ErrName(e))
+		println("[go] net FAIL deadline")
+		c.Close()
+		return
+	}
+	if w := c.Write(msg[:]); w != patternLen {
+		println("[go] net write n =", int(w), "want", patternLen)
+		println("[go] net FAIL write")
+		c.Close()
+		return
+	}
+	var got [patternLen]byte
+	total := int32(0)
+	for total < patternLen {
+		n, e := c.Read(got[total:])
+		if n > 0 {
+			total += n
+			continue
+		}
+		if e != 0 {
+			println("[go] net read err =", int(e), net.ErrName(e), "at", int(total))
+		} else {
+			println("[go] net read peer closed at", int(total))
+		}
+		break
+	}
+	mismatches := 0
+	for i := int32(0); i < total; i++ {
+		if got[i] != msg[i] {
+			mismatches++
+		}
+	}
+	c.Close()
+	if total == patternLen && mismatches == 0 {
+		println("[go] net echo", int(total), "/", patternLen, "bytes verified")
+		println("[go] net PASS")
+	} else {
+		println("[go] net echo got", int(total), "/", patternLen,
+			"bytes, mismatches =", int(mismatches))
+		println("[go] net FAIL echo")
+		return
+	}
+	heapMark("net-echo")
+
+	// Best-effort: name resolution through the emulator's DNS proxy. The
+	// dotted-quad path is instant; this checks the localhost lookup.
+	t0 = rdcycle()
+	ip, e := net.Resolve("localhost")
+	if e != 0 {
+		println("[go] net resolve localhost err =", int(e), net.ErrName(e), "- SKIP")
+	} else {
+		println("[go] net resolve localhost =", wifi.IPString(ip),
+			"in", int((rdcycle()-t0)/240000), "ms")
+	}
+
+	// Best-effort: loopback Listen/Accept self-connect (127.0.0.1 works in
+	// the emulator because IDF enables LWIP_NETIF_LOOPBACK). Kept strictly
+	// sequential on one goroutine: a quantum wait is a C-level select that
+	// gives the llgo scheduler no yield point, so a concurrent shape cannot
+	// interleave. Measured under esp-emu (dial goroutine + accept main,
+	// 3 s windows each): the accept main ran its whole 3026 ms window alone
+	// and timed out, and the dial goroutine - starved the whole time - only
+	// ran once the accept side reached a channel join, completing its
+	// connect in 0 ms. Sequential also matches the protocol: the handshake
+	// completes into the listener's backlog before Accept, so the concurrent
+	// form would add nothing but a guaranteed 3 s serialization stall.
+	ln, e := net.Listen(9001)
+	if e != 0 {
+		println("[go] net listen 9001 err =", int(e), net.ErrName(e), "- SKIP")
+		return
+	}
+	cc, de := net.Dial(net.IPv4(127, 0, 0, 1), 9001, 3000)
+	if de != 0 {
+		println("[go] net loopback SKIP: dial err =", int(de), net.ErrName(de))
+		ln.Close()
+		return
+	}
+	lc, ae := ln.Accept(3000)
+	if ae != 0 {
+		println("[go] net loopback FAIL: accept err =", int(ae), net.ErrName(ae))
+		cc.Close()
+		ln.Close()
+		return
+	}
+	net.SetDeadline(cc, 3000)
+	net.SetDeadline(lc, 3000)
+	var one, atAccept, back [1]byte
+	one[0] = 0x5A
+	ok := cc.Write(one[:]) == 1
+	if ok {
+		n, re := lc.Read(atAccept[:])
+		ok = n == 1 && re == 0 && atAccept[0] == 0x5A
+	}
+	if ok {
+		ok = lc.Write(atAccept[:]) == 1
+	}
+	if ok {
+		n, re := cc.Read(back[:])
+		ok = n == 1 && re == 0 && back[0] == 0x5A
+	}
+	cc.Close()
+	lc.Close()
+	ln.Close()
+	if ok {
+		println("[go] net loopback self-connect PASS")
+	} else {
+		println("[go] net loopback FAIL")
+	}
+	heapMark("net-loopback")
 }
 
 func main() {
@@ -657,6 +813,15 @@ func main() {
 	// while connected; give it 10 seconds and look again.
 	vTaskDelay(1000)
 	heapMark("steady+10s")
+
+	// TCP over lwip: NAT dial + echo is the PASS gate; resolve and the
+	// loopback self-connect are best-effort extras.
+	if probeNet {
+		netProbe()
+	} else {
+		println("[go] net skipped (probeNet switch off; every net path is deadline-bounded)")
+	}
+
 	println("[go] wifi done")
 
 	println("[go] done")
