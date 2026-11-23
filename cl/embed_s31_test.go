@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"debug/elf"
 	"encoding/binary"
+	"fmt"
+	gobuild "go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,8 +21,208 @@ import (
 	"github.com/qiniu/x/test"
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
 )
+
+// TestBaremetalWallTimeHookSelection pins the wall-clock wiring for every
+// target combination, in the style of internal/build's sync/time backend
+// matrix: the RV32 fiber-scheduler baremetal targets compile the cycle-clock
+// time hooks (real wall+mono in time.Now, live SetWallTime) and carry the
+// wall anchor in internal/runtime's clock file, while nogc, xtensa, non-llgo
+// and pre-go1.23 baremetal builds keep their degenerate hooks (epoch-zero
+// wall, no-op SetWallTime), and hosted and wasm keep their OS clock with the
+// documented no-op. Every selected hook file must declare SetWallTime so the
+// runtime/wallclock package's linkname pull links on every combination.
+func TestBaremetalWallTimeHookSelection(t *testing.T) {
+	libDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
+	for _, test := range []struct {
+		name, goos, goarch string
+		tags               []string
+		releaseMinor       int // when nonzero, pin gobuild release tags at go1.<N>
+		want               string
+		omit               []string
+	}{
+		{
+			// The live-clock fiber target: real wall+mono in time.Now and a
+			// SetWallTime that re-anchors the wall clock.
+			name: "esp32s31 fiber takes live wall clock hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
+			want: "time_fiber_baremetal_llgo.go",
+			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// Same hooks for the esp32c3 and generic fiber targets: the file
+			// compiles, but the chip gate (BaremetalCycleClock=false) keeps
+			// time.Now at the zero instant and SetWallTime a no-op there.
+			name: "esp32c3 fiber compiles wall hooks behind the chip gate", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			want: "time_fiber_baremetal_llgo.go",
+			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			name: "generic riscv32 fiber compiles wall hooks behind the chip gate", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: "time_fiber_baremetal_llgo.go",
+			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// nogc drops the whole fiber scheduler, wall clock included.
+			name: "riscv32 baremetal nogc keeps degenerate wall hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			want: "time_baremetal_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// xtensa keeps the pthread fallback scheduler and degenerate hooks.
+			name: "xtensa baremetal keeps degenerate wall hooks", goos: "linux", goarch: "arm",
+			tags: []string{"llgo", "baremetal", "tinygo.xtensa", "esp32"},
+			want: "time_baremetal_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// Non-llgo baremetal keeps the degenerate hooks too.
+			name: "riscv32 baremetal without llgo keeps degenerate wall hooks", goos: "linux", goarch: "arm",
+			tags: []string{"baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			want: "time_baremetal_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// Before go1.23 the baremetal wall hooks are the legacy stubs.
+			name: "pre-go1.23 baremetal keeps legacy wall hooks", goos: "linux", goarch: "arm",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
+			releaseMinor: 22,
+			want:         "time_baremetal_legacy_llgo.go",
+			omit:         []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_heap_common_llgo.go"},
+		},
+		{
+			// Hosted keeps its OS clock; the baremetal hook files stay out.
+			name: "hosted darwin keeps OS clock wall hooks", goos: "darwin", goarch: "arm64",
+			tags: []string{"llgo"},
+			want: "time_heap_common_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+		},
+		{
+			name: "hosted linux keeps OS clock wall hooks", goos: "linux", goarch: "amd64",
+			tags: []string{"llgo"},
+			want: "time_heap_common_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+		},
+		{
+			name: "wasm keeps OS clock wall hooks", goos: "js", goarch: "wasm",
+			tags: []string{"llgo"},
+			want: "time_heap_common_llgo.go",
+			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := gobuild.Default
+			ctx.GOOS = test.goos
+			ctx.GOARCH = test.goarch
+			ctx.BuildTags = test.tags
+			if test.releaseMinor != 0 {
+				tags := make([]string, 0, test.releaseMinor)
+				for minor := 1; minor <= test.releaseMinor; minor++ {
+					tags = append(tags, fmt.Sprintf("go1.%d", minor))
+				}
+				ctx.ReleaseTags = tags
+			}
+			pkg, err := ctx.ImportDir(libDir, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := make(map[string]bool, len(pkg.GoFiles))
+			for _, name := range pkg.GoFiles {
+				selected[filepath.Base(name)] = true
+			}
+			if !selected[test.want] {
+				t.Errorf("%s was not selected; GoFiles=%v", test.want, pkg.GoFiles)
+			}
+			for _, name := range test.omit {
+				if selected[name] {
+					t.Errorf("%s was unexpectedly selected", name)
+				}
+			}
+			// The wallclock package's linkname pull must resolve on every
+			// combination: the selected hook file declares the def-side
+			// runtime.SetWallTime rename.
+			src, err := os.ReadFile(filepath.Join(libDir, test.want))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(src), "//go:linkname SetWallTime runtime.SetWallTime") {
+				t.Errorf("%s lost the runtime.SetWallTime linkname", test.want)
+			}
+		})
+	}
+
+	// The wall anchor itself lives in internal/runtime's clock file, compiled
+	// only for the fiber targets: nogc drops the file, and with it the clock
+	// ring, exactly like the sync/time matrix in internal/build pins.
+	coreDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime")
+	for _, test := range []struct {
+		name         string
+		tags         []string
+		wantClockSrc bool
+	}{
+		{
+			name:         "esp32s31 compiles the wall anchor",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
+			wantClockSrc: true,
+		},
+		{
+			name:         "esp32c3 compiles the wall anchor behind the chip gate",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			wantClockSrc: true,
+		},
+		{
+			name:         "generic riscv32 compiles the wall anchor behind the chip gate",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			wantClockSrc: true,
+		},
+		{
+			name:         "nogc drops the wall anchor",
+			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			wantClockSrc: false,
+		},
+	} {
+		t.Run("clock/"+test.name, func(t *testing.T) {
+			ctx := gobuild.Default
+			ctx.GOOS = "linux"
+			ctx.GOARCH = "arm"
+			ctx.BuildTags = test.tags
+			pkg, err := ctx.ImportDir(coreDir, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := slices.ContainsFunc(pkg.GoFiles, func(name string) bool {
+				return filepath.Base(name) == "clock_fiber_baremetal.go"
+			})
+			if selected != test.wantClockSrc {
+				t.Errorf("clock_fiber_baremetal.go selected=%v, want %v; GoFiles=%v", selected, test.wantClockSrc, pkg.GoFiles)
+			}
+		})
+	}
+
+	// The public API package must stay buildable by the upstream toolchain:
+	// user code (and every fixture's export-data build) type-checks it with
+	// gc, which knows nothing about the runtime.SetWallTime implementation.
+	t.Run("wallclock package builds under gc", func(t *testing.T) {
+		pkgDir := filepath.Join(env.LLGoRuntimeDir(), "wallclock")
+		cmd := exec.Command("go", "build", "./...")
+		cmd.Dir = pkgDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("gc build of runtime/wallclock failed: %v\n%s", err, out)
+		}
+		src, err := os.ReadFile(filepath.Join(pkgDir, "wallclock.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(src), "//go:linkname setWallTime runtime.SetWallTime") {
+			t.Error("wallclock.go lost the runtime.SetWallTime pull declaration")
+		}
+	})
+}
 
 // espEmuTarget describes one baremetal ESP target esp-emu boots from a
 // ROM-loaded SRAM app image. The XIP flash targets boot through the ESP-IDF
@@ -320,6 +522,14 @@ func TestS31ReflectSmoke(t *testing.T) {
 		{pkg: "./_testgo/time_tick", golden: true},
 		{pkg: "./_testgo/time_stop", golden: true},
 		{pkg: "./_testgo/time_gckeep", golden: true},
+		// time_wall pins the settable wall clock: SetWallTime re-anchors the
+		// RTC-less wall domain while time.Since and sleep lengths stay on the
+		// monotonic cycle domain. Its assertions are backend-agnostic relations
+		// (field ranges, wall advance, Since isolation), so the golden would
+		// be reusable on hosted too, where SetWallTime is a documented no-op
+		// in front of the real OS clock. Hosted does not run this fixture
+		// today (see the ignore list in compile_test.go).
+		{pkg: "./_testgo/time_wall", golden: true},
 		{pkg: "./_testgo/mutexstarve", golden: true},
 		// Too close to the C3 IRAM ceiling to keep running there once the
 		// vendored memmove/division shims landed; the 512 KiB S31 SRAM has

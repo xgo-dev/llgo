@@ -135,9 +135,44 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, f func(any, uintptr,
 
 //go:linkname time_now time.now
 func time_now() (sec int64, nsec int32, mono int64) {
-	// Baremetal has no RTC: the wall clock stays at the zero instant, so
-	// time.Now carries no meaningful absolute time.
-	return 0, 0, 0
+	if !llruntime.BaremetalCycleClock {
+		// Clock-less chip gate (esp32c3, generic riscv32): esp-emu's models
+		// implement no clock, so time.Now keeps the pre-wall behavior — the
+		// zero instant with no monotonic reading — and SetWallTime stays a
+		// no-op.
+		return 0, 0, 0
+	}
+	// Baremetal has no RTC: the wall clock starts at the Unix epoch and is
+	// re-anchored by SetWallTime. Wall and monotonic come from one cycle-
+	// clock sample and share the cycle rate; only the anchor the wall adds
+	// on top ever moves, so time.Since and every timer keep the stdlib
+	// monotonic contract (walls may jump, monotonic never goes backwards)
+	// while the wall segment jumps as SetWallTime commands.
+	wall, mono := llruntime.BaremetalWallNow()
+	sec = wall / 1e9
+	nsec = int32(wall % 1e9)
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	return sec, nsec, mono
+}
+
+// SetWallTime sets the baremetal wall clock to the given Unix time in
+// nanoseconds; subsequent time.Now calls read the wall segment from that
+// instant onward, at the cycle clock's rate. time.Since, timers and sleeps
+// stay on the monotonic domain and are unaffected. On targets whose chip
+// gate keeps the cycle clock off (esp32c3, generic riscv32) time.Now carries
+// no wall or monotonic reading at all, and the call is a no-op.
+//
+// The def-side linkname renames the symbol to runtime.SetWallTime so the
+// runtime/wallclock package's pull declaration links here.
+//
+//go:linkname SetWallTime runtime.SetWallTime
+func SetWallTime(now int64) {
+	if llruntime.BaremetalCycleClock {
+		llruntime.BaremetalSetWallTime(now)
+	}
 }
 
 //go:linkname time_runtimeNow time.runtimeNow

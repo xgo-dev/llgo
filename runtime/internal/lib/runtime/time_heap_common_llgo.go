@@ -144,6 +144,20 @@ func time_runtimeNow() (sec int64, nsec int32, mono int64) {
 	return time_now()
 }
 
+// SetWallTime is a documented no-op on hosted and Wasm targets. These
+// targets already read a real OS clock: re-anchoring it inside the runtime
+// would desynchronize every honest reading for the rest of the process (and
+// nothing ever un-sets it), so the call deliberately does nothing. Only the
+// baremetal fiber targets — which have no RTC and start the wall clock at
+// the Unix epoch — honor the anchor. The time_wall fixture asserts only
+// backend-agnostic relations (field ranges, wall advance, Since isolation),
+// so its golden output does not depend on whether the anchor moved.
+// The def-side linkname renames the symbol to runtime.SetWallTime for the
+// runtime/wallclock package's pull declaration.
+//
+//go:linkname SetWallTime runtime.SetWallTime
+func SetWallTime(now int64) {}
+
 //go:linkname time_runtimeNano time.runtimeNano
 func time_runtimeNano() int64 {
 	return synctestNano()

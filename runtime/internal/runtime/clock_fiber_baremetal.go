@@ -67,14 +67,48 @@ func baremetalCycles() uint64 {
 // esp-emu's instruction-rate cycle advance, so absolute wall-clock duration
 // is stretched under emulation while ordering and ratios stay exact.
 //
-// User visibility is narrower than the name suggests: time.Now and time.Since
-// stay pinned to the zero instant everywhere (time_now carries no monotonic
-// reading), so the clock only surfaces through the gated runtimeNano hook
-// (time package init, timer deadline arithmetic, fips mono) and the mutex
-// starvation feed; time.Sleep keeps its own cycle-domain deadlines and never
-// calls this. See runtimeNano in lib/runtime for the per-target gate.
+// It feeds every monotonic consumer: time.Now's monotonic segment,
+// time.Since, timer deadline arithmetic, fips mono and the mutex starvation
+// feed. The wall segment of time.Now carries the same rate but its own epoch
+// anchor (see baremetalWallBase); time.Sleep keeps its own cycle-domain
+// deadlines and never calls this. See runtimeNano in lib/runtime for the
+// per-target gate.
 func BaremetalNanoTime() int64 {
 	return int64(baremetalCycles() * 1000 / uint64(baremetalCpuMHz))
+}
+
+// baremetalWallBase anchors the wall clock: the Unix-nanosecond reading the
+// wall domain reports when the monotonic reading is zero. Baremetal has no
+// RTC, so the anchor starts at zero and every wall reading is anchor + mono
+// — the wall advances at the cycle clock's rate until SetWallTime moves the
+// anchor alone. A scalar package global: it sits in the .data/.bss globals
+// region the conservative collector sweeps as roots (see the reachability
+// note on baremetalTimers) and holds no pointer words, so nothing beyond
+// static allocation is needed to keep it valid.
+var baremetalWallBase int64
+
+// BaremetalWallNow returns one consistent snapshot: wall is the wall clock
+// in nanoseconds since the Unix epoch (anchor plus the current mono
+// reading), mono is the wrap-extended cycle-domain reading the wall was
+// derived from. Both come from a single cycle sample, so time.Now's two
+// segments never straddle a SetWallTime re-anchor on the single-hart
+// scheduler.
+func BaremetalWallNow() (wall int64, mono int64) {
+	mono = BaremetalNanoTime()
+	return baremetalWallBase + mono, mono
+}
+
+// BaremetalSetWallTime re-anchors the wall clock so it reads now (Unix
+// nanoseconds) at the current instant. The wall segment may jump forward or
+// backward freely — the stdlib wall-clock contract — while every monotonic
+// consumer (time.Since, timer deadlines, sleep deadlines, the mutex
+// starvation feed) keeps reading the untouched cycle domain.
+//
+// Single-hart cooperative scheduler: the anchor is a plain scalar and a
+// caller never yields inside the read-modify-write, so wall readings cannot
+// tear here. A hypothetical SMP port would have to make the anchor atomic.
+func BaremetalSetWallTime(now int64) {
+	baremetalWallBase = now - BaremetalNanoTime()
 }
 
 // BaremetalSchedNanoTime feeds the mutex starvation threshold. It reads the

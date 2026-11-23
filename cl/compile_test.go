@@ -111,6 +111,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/time_tick",
 				"./_testgo/time_stop",
 				"./_testgo/time_gckeep",
+				"./_testgo/time_wall",
 				// stackover ends in the runtime's stack-overflow fatal, which the
 				// emu firmware runner rejects; TestFiberStackGuardEmu runs it
 				// with a fatal-tolerant runner instead. stacksafe stays here and
@@ -204,6 +205,7 @@ var embedTargetConfigs = []embedTargetConfig{
 				// output (ordering and relative durations) cannot match the golden.
 				"./_testgo/timesleep",
 				"./_testgo/sleepgoroutine",
+				"./_testgo/time_wall",
 				// xtensa keeps the pthread scheduler: no fiber swap guard runs here.
 				"./_testgo/stacksafe",
 				"./_testgo/stackover",
@@ -389,6 +391,10 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		"./_testgo/time_tick",
 		"./_testgo/time_stop",
 		"./_testgo/time_gckeep",
+		// time_wall imports "time" (plus the runtime/wallclock API package)
+		// like timepkg above; the embed emulator suites run it against the
+		// fiber scheduler.
+		"./_testgo/time_wall",
 		// The stack-guard fixtures need the fiber scheduler's swap-point
 		// guard: hosted stacks grow, and stackover would run away.
 		"./_testgo/stacksafe",

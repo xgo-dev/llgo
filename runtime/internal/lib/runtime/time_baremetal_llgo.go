@@ -60,6 +60,15 @@ func time_now() (sec int64, nsec int32, mono int64) {
 	return 0, 0, 0
 }
 
+// SetWallTime is a no-op: these targets have no clock the runtime reads, so
+// time.Now keeps reporting the zero instant with no monotonic reading. The
+// API exists everywhere so programs written against the fiber targets stay
+// linkable; the def-side linkname renames the symbol to runtime.SetWallTime
+// for the runtime/wallclock package's pull declaration.
+//
+//go:linkname SetWallTime runtime.SetWallTime
+func SetWallTime(now int64) {}
+
 //go:linkname time_runtimeNow time.runtimeNow
 func time_runtimeNow() (sec int64, nsec int32, mono int64) {
 	return time_now()
