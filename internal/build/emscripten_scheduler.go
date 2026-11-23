@@ -157,15 +157,21 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 	}
 
 	if ctx.emscriptenMinimalHost {
+		if plan.directWasmAllocator {
+			selected, probeDir, err := tryMinimalEmscriptenLink(ctx, &local, dir, plan.directWasmInputs, true, verbose)
+			if err != nil {
+				return ctx, dir, err
+			}
+			if selected != nil {
+				return selected, probeDir, nil
+			}
+		}
 		inputs := plan.directWasmInputs
 		if ctx.emscriptenDirectMain {
 			inputs = plan.linkInputs
 		}
 		if len(inputs) != 0 {
-			probe := newLinkExecutionContext(ctx, plan)
-			configureEmscriptenDirectLink(&probe.crossCompile)
-			configureEmscriptenMinimalLink(probe)
-			selected, probeDir, err := tryStagedEmscriptenLink(probe, &local, dir, inputs, "minimal host", verbose)
+			selected, probeDir, err := tryMinimalEmscriptenLink(ctx, &local, dir, inputs, false, verbose)
 			if err != nil {
 				return ctx, dir, err
 			}
@@ -191,6 +197,16 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		}
 	}
 	return ctx, dir, executeMainLink(ctx, &local, verbose)
+}
+
+func tryMinimalEmscriptenLink(ctx *context, plan *mainLinkPlan, dir string, inputs []string, libcAllocator, verbose bool) (*context, string, error) {
+	probe := newLinkExecutionContext(ctx, plan)
+	configureEmscriptenDirectLink(&probe.crossCompile)
+	if libcAllocator {
+		configureEmscriptenLibcLink(probe)
+	}
+	configureEmscriptenMinimalLink(probe)
+	return tryStagedEmscriptenLink(probe, plan, dir, inputs, "minimal host", verbose)
 }
 
 func tryStagedEmscriptenLink(probe *context, plan *mainLinkPlan, dir string, inputs []string, feature string, verbose bool) (*context, string, error) {
