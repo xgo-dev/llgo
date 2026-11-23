@@ -35,16 +35,18 @@ The `fmt` source patch binds the standard entry points by name. LLGo derives the
 
 ## Source-patch templates
 
-A source patch can declare a template on a bodyless function to attach the directive to the selected standard-library declaration. For example, the binary patch uses the ordinary typed template syntax.
+A bodyless declaration in a source patch attaches the directive to the selected standard-library implementation. The candidates are ordinary Go functions with typed implementations. For example, the JSON patch uses the same boolean encoder as the standard library.
 
 ```go
-//llgo:template llgoSize
-func Size(v any) int
+//llgo:template llgoMarshalBool
+func Marshal(v any) ([]byte, error)
 
-func llgoSize[T any](v T) int { return Size(v) }
+func llgoMarshalBool(v bool) ([]byte, error) {
+	return strconv.AppendBool(nil, v), nil
+}
 ```
 
-The binary and JSON patches supply compile-time Go generators for their structural candidates. The compiler selects candidates using their typed signatures, and the generators inspect concrete Go types and emit type-checked helpers. These generators run for Full LTO size builds when all uses of the provider's entries are supported in the executable. Unsupported shapes, indirect calls and linker aliases keep the original implementations. Only the executable cache records the generated helpers.
+In Full LTO size builds, the existing whole-program codecs run first so that closed programs can drop generic initialization. The ordinary call matcher can then specialize remaining calls to exact built-in types, including calls in packages with mixed static and dynamic inputs. Only the caller's cache key records its selection.
 
 Go formatting uses the format directive directly on the function. A patch can forward that directive in the same way.
 

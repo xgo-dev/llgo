@@ -311,7 +311,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 					return false, nil, nil, fmt.Errorf("filter stdlib source file %s: %w", filename, err)
 				}
 			}
-			if sourcePatchMayContainSkip(filtered, templateEntries) {
+			if base[filename] == nil && sourcePatchMayContainSkip(filtered, templateEntries) {
 				annotated, applied, err := annotateSourceTemplates(filtered, templates)
 				if err != nil {
 					return false, nil, nil, fmt.Errorf("annotate stdlib source file %s: %w", filename, err)

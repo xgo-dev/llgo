@@ -1,4 +1,4 @@
-package compile
+package jsonspecialize
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 func canDecode(s *shape) bool {
 	for _, t := range []types.Type{s.typ, types.NewPointer(s.typ)} {
 		methods := types.NewMethodSet(t)
-		for i := 0; i < methods.Len(); i++ {
+		for i := range methods.Len() {
 			switch methods.At(i).Obj().Name() {
 			case "UnmarshalJSON", "UnmarshalJSONFrom", "UnmarshalText":
 				return false

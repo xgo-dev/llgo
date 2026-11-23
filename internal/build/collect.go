@@ -253,6 +253,9 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if c.frontend != nil {
 		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
 	}
+	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
+	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
+	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
 	m.pkg.CallTemplates = c.callTemplates[p.Types]
 	for _, groups := range pkg.guardedInitializers {
 		for _, group := range groups {
@@ -260,7 +263,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 		}
 	}
 	slices.Sort(m.pkg.InitializerGuards)
-	if c.jsonCodecPackages[p.Types] {
+	if m.pkg.SpecializeBinary || m.pkg.SpecializeJSON {
 		m.pkg.CodecInitDrops = slices.Sorted(maps.Keys(c.codecInitDrops))
 	}
 	if plan := c.stdout; plan != nil && plan.selected != nil && plan.entry.Pkg == p.Types {

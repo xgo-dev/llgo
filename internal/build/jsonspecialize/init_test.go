@@ -1,4 +1,4 @@
-package build
+package jsonspecialize
 
 import (
 	"go/ast"
@@ -46,10 +46,10 @@ func TestDiscardableJSONInit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := discardableJSONInit(ssaPkg.Func("init"), func(*types.Package) bool { return true }); got != tc.want {
+			if got := DiscardableInit(ssaPkg.Func("init"), func(*types.Package) bool { return true }); got != tc.want {
 				t.Fatalf("discardable = %v, want %v", got, tc.want)
 			}
-			if discardableJSONInit(ssaPkg.Func("init"), func(*types.Package) bool { return false }) {
+			if DiscardableInit(ssaPkg.Func("init"), func(*types.Package) bool { return false }) {
 				t.Fatal("accepted untrusted source")
 			}
 		})
@@ -112,8 +112,8 @@ func TestJSONV2Initializers(t *testing.T) {
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
 	for _, pkg := range prog.AllPackages() {
-		if isJSONImplementation(pkg.Pkg.Path()) {
-			if !discardableJSONInit(pkg.Func("init"), func(*types.Package) bool { return true }) {
+		if IsImplementation(pkg.Pkg.Path()) {
+			if !DiscardableInit(pkg.Func("init"), func(*types.Package) bool { return true }) {
 				t.Errorf("could not verify %s initialization", pkg.Pkg.Path())
 			}
 		}
@@ -122,19 +122,19 @@ func TestJSONV2Initializers(t *testing.T) {
 
 func TestStatelessTokenizerHandle(t *testing.T) {
 	pkg := types.NewPackage("encoding/json/v2", "json")
-	if statelessJSONTokenizerHandle(pkg) {
+	if StatelessTokenizerHandle(pkg) {
 		t.Fatal("accepted missing tokenizer handle")
 	}
 	typ := types.NewStruct(nil, nil)
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "export", typ))
-	if !statelessJSONTokenizerHandle(pkg) {
+	if !StatelessTokenizerHandle(pkg) {
 		t.Fatal("rejected zero-sized tokenizer handle")
 	}
 	pkg = types.NewPackage("encoding/json/v2", "json")
 	state := types.NewField(token.NoPos, pkg, "state", types.Typ[types.Int], false)
 	typ = types.NewStruct([]*types.Var{state}, nil)
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "export", typ))
-	if statelessJSONTokenizerHandle(pkg) {
+	if StatelessTokenizerHandle(pkg) {
 		t.Fatal("accepted a tokenizer handle that requires state")
 	}
 }

@@ -1,7 +1,8 @@
-package compile
+package binaryspecialize
 
 import (
 	"fmt"
+	"go/ast"
 	"go/token"
 	"go/types"
 	"strings"
@@ -11,18 +12,19 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-func shortBufferHelper(pkg *types.Package) string {
-	const name = "LLGoBinaryShortBuffer"
-	fn, _ := pkg.Scope().Lookup(name).(*types.Func)
-	if fn == nil {
-		return ""
+// AddShortBufferAccessor always provides the same declaration for this
+// compiler profile. It keeps the standard library's original error object.
+func AddShortBufferAccessor(pkg *packages.Package) (string, error) {
+	errVar, _ := pkg.Types.Scope().Lookup("errBufferTooSmall").(*types.Var)
+	if errVar == nil || !types.Identical(errVar.Type(), types.Universe.Lookup("error").Type()) {
+		return "", nil
 	}
-	sig := fn.Signature()
-	if sig.Params().Len() != 0 || sig.Results().Len() != 1 ||
-		!types.Identical(sig.Results().At(0).Type(), types.Universe.Lookup("error").Type()) {
-		return ""
+	name := "LLGoBinaryShortBuffer"
+	for pkg.Types.Scope().Lookup(name) != nil {
+		name += "_"
 	}
-	return name
+	source := fmt.Sprintf("package binary\nfunc %s() error { return errBufferTooSmall }\n", name)
+	return name, typesynth.AddFile(pkg, "__llgo_binary_error.go", source, nil, "")
 }
 
 type codecKey struct {
@@ -88,8 +90,14 @@ func (p packageRewrites) apply(library *packages.Package, shortBuffer string) er
 		return err
 	}
 	for _, call := range p.calls {
+		old := call.call.Fun
 		fn := p.pkg.Types.Scope().Lookup(call.helper).(*types.Func)
-		typesynth.BindCall(p.pkg.TypesInfo, call.call, fn, types.Instance{Type: fn.Type()})
+		id := &ast.Ident{Name: call.helper, NamePos: old.Pos()}
+		tv := p.pkg.TypesInfo.Types[ast.Unparen(old)]
+		tv.Type = fn.Type()
+		p.pkg.TypesInfo.Uses[id] = fn
+		p.pkg.TypesInfo.Types[id] = tv
+		call.call.Fun = id
 	}
 	return nil
 }
@@ -126,7 +134,7 @@ func (g *codecSource) emit(call rewrite, shortBuffer, mathAlias string) {
 	if call.slice {
 		size = fmt.Sprintf("len(%s)*%s", value, size)
 	}
-	if call.op == "size" {
+	if call.op == "Size" {
 		fmt.Fprintf(b, "func %s(v %s) int {\n", call.helper, g.typeName(call.input))
 		if call.ptr {
 			fmt.Fprintln(b, "if v==nil { return -1 }")
@@ -140,7 +148,7 @@ func (g *codecSource) emit(call rewrite, shortBuffer, mathAlias string) {
 	if !call.unchecked {
 		fmt.Fprintf(b, "if len(buf)<n { return 0,%s() }\n", shortBuffer)
 	}
-	decode := call.op == "decode"
+	decode := call.op == "Decode"
 	if call.slice && call.wire.width != 0 {
 		fmt.Fprintf(b, "for i:=range %s {\n", value)
 		g.field(call.wire, value+"[i]", fmt.Sprintf("(i*%d)", call.wire.width), mathAlias, decode)

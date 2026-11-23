@@ -1,4 +1,6 @@
-package compile
+// Package binaryspecialize models fixed-size encoding/binary operations using
+// the concrete operand types known to the compiler.
+package binaryspecialize
 
 import "go/types"
 

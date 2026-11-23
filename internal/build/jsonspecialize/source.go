@@ -1,8 +1,9 @@
-package compile
+package jsonspecialize
 
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
 	"go/token"
 	"go/types"
 	"slices"
@@ -96,7 +97,13 @@ func (p packagePlan) apply(jsonV2 bool, sortPkg, strconvPkg, utf8Pkg, jsonPkg, s
 			name = decodeWrappers[site.shape]
 		}
 		fn := p.pkg.Types.Scope().Lookup(name).(*types.Func)
-		typesynth.BindCall(p.pkg.TypesInfo, site.call, fn, types.Instance{Type: fn.Type()})
+		old := site.call.Fun
+		id := &ast.Ident{Name: name, NamePos: old.Pos()}
+		tv := p.pkg.TypesInfo.Types[ast.Unparen(old)]
+		tv.Type = fn.Type()
+		p.pkg.TypesInfo.Uses[id] = fn
+		p.pkg.TypesInfo.Types[id] = tv
+		site.call.Fun = id
 	}
 	return nil
 }

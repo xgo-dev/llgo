@@ -1,6 +1,7 @@
 package build
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -37,7 +38,7 @@ func TestSourcePatchBuiltinFormatter(t *testing.T) {
 	}{
 		{name: "ordinary build"},
 		{name: "size build", enabled: true, want: true},
-		{name: "user source overlay", enabled: true, base: map[string][]byte{filepath.Join(srcDir, "print.go"): []byte("package fmt")}},
+		{name: "user source overlay", enabled: true, base: map[string][]byte{filepath.Join(srcDir, "print.go"): []byte("package fmt\nfunc Printf(format string, a ...any) (int, error) { return len(format), nil }\n")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, overlay, files, err := applySourcePatchForPkg(test.base, nil, env.LLGoRuntimeDir(), goroot, "fmt", sourcePatchBuildContext{
@@ -52,6 +53,9 @@ func TestSourcePatchBuiltinFormatter(t *testing.T) {
 			}
 			if installed := len(overlay[generated]) != 0; installed != test.want {
 				t.Fatalf("generated formatter in overlay = %v, want %v", installed, test.want)
+			}
+			if file := filepath.Join(srcDir, "print.go"); test.base[file] != nil && !bytes.Equal(overlay[file], test.base[file]) {
+				t.Fatal("template annotations changed the user overlay")
 			}
 		})
 	}

@@ -175,8 +175,8 @@ def native_stdout_pipe_probe(artifact, env):
 
 
 def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=False):
-    binary_marker = ":any:encoding/binary:"
-    json_marker = ":any:encoding/json:"
+    binary_marker = "llgo: specialize fixed-size binary encoding"
+    json_marker = "llgo: specialize statically typed JSON codec"
     init_marker = "llgo: omit unused JSON package initialization"
     standard_file_marker = "llgo: omit unused standard file initializers"
     stdout_marker = "llgo: specialize closed literal stdout"
@@ -388,6 +388,7 @@ func main() {{ report(reading{{Tick: 42}}) }}
 def call_template_probe(llgo, directory, env, target, runner, suffix):
     cases = (
         ("call-template", ":direct:", 4),
+        ("stdlib-call-template", ":direct:", 6),
         ("format-template", ":gofmt:", 4),
         ("format-template-fallback", ":gofmt:", 0),
         ("c-format-template", ":cfmt:", 2),

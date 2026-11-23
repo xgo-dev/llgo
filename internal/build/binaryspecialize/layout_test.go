@@ -1,4 +1,4 @@
-package compile
+package binaryspecialize
 
 import (
 	"encoding/binary"

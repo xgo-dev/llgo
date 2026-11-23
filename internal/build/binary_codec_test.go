@@ -8,10 +8,8 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/buildenv"
-	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -23,31 +21,16 @@ func TestBinaryCodecSupport(t *testing.T) {
 		thin    bool
 		overlay bool
 		alias   bool
-		unbound bool
 		want    bool
 	}{
 		{name: "closed Go inputs", want: buildenv.Dev},
 		{name: "Thin LTO", thin: true},
 		{name: "source overlay", overlay: true},
 		{name: "binary linker alias", alias: true},
-		{name: "unbound standard library", unbound: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, overlay, files, err := applySourcePatchForPkg(nil, nil, env.LLGoRuntimeDir(), runtime.GOROOT(), "encoding/binary", sourcePatchBuildContext{
-				goos: runtime.GOOS, goarch: runtime.GOARCH, goversion: runtime.Version(),
-				buildFlags: []string{"-tags=llgo,llgo.size.binary"},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
 			cfg := gopackages.Config{Mode: gopackages.LoadAllSyntax, Dir: filepath.Join("testdata", "binary-fixed")}
-			dedup := packages.NewDeduper()
-			if tc.unbound {
-				overlay = nil
-			} else {
-				dedup.SetLLGoFiles(map[string][]string{"encoding/binary": files})
-			}
-			initial, err := packages.LoadExWithSourceOverlay(dedup, nil, &cfg, "", overlay, ".")
+			initial, err := gopackages.Load(&cfg, ".")
 			if err != nil || len(initial) != 1 || gopackages.PrintErrors(initial) != 0 {
 				t.Fatalf("load binary fixture: %v", err)
 			}
@@ -63,16 +46,17 @@ func TestBinaryCodecSupport(t *testing.T) {
 					List: []*ast.Comment{{Text: "//go:linkname nativePacket encoding/binary.Encode"}},
 				})
 			}
-			bindings, err := loadSourceBindings(&conf, cl.Options{}, runtime.GOROOT(), initial)
+			library := initial[0].Imports["encoding/binary"]
+			shortBuffer, err := prepareBinaryCodecSupport(&conf, cl.Options{}, runtime.GOROOT(), library)
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := applySourceTemplates(&conf, cl.Options{}, bindings, initial, nil, false)
+			changed, err := specializeBinaryCodecs(&conf, cl.Options{}, runtime.GOROOT(), library, initial, nil, shortBuffer)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := result.Providers["encoding/binary"]; got != tc.want {
-				t.Fatalf("rewritten = %v, want %v", got, tc.want)
+			if (len(changed) != 0) != tc.want {
+				t.Fatalf("rewritten = %d packages, want enabled %v", len(changed), tc.want)
 			}
 		})
 	}

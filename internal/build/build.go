@@ -947,9 +947,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if embeddedSizePruningConfig(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.embedded")
 	}
-	if !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions) {
-		sourceTargetTags = append(sourceTargetTags, "llgo.size.binary")
-	}
 	if typedJSONSupport(conf, export, frontendOptions) {
 		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
 	}
@@ -1105,7 +1102,31 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
-	templates, err := applySourceTemplates(conf, frontendOptions, bindings, initial, altPkgs, verbose || conf.PrintCommands)
+	// Register codec declarations before creating SSA packages.
+	var binaryCodecPackages map[*types.Package]bool
+	var binaryCodecLibrary *types.Package
+	if codec := dedup.Check("encoding/binary"); codec != nil {
+		shortBuffer, err := prepareBinaryCodecSupport(conf, frontendOptions, sourcePatchGOROOT, codec.Package)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+		if shortBuffer != "" {
+			binaryCodecLibrary = codec.Types
+		}
+		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs, shortBuffer)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+	var jsonCodecPackages map[*types.Package]bool
+	if codec := dedup.Check("encoding/json"); codec != nil {
+		jsonCodecPackages, err = specializeJSONCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+
+	callTemplates, err := applySourceTemplates(conf, frontendOptions, bindings, initial, verbose || conf.PrintCommands)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,25 +1153,27 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:    make(map[string]bool),
-		pkgs:              map[*packages.Package]Package{},
-		pkgByID:           map[string]Package{},
-		cacheManager:      newCacheManager(),
-		patchFiles:        llgoFiles,
-		output:            output,
-		passOpt:           passOpt,
-		buildConf:         conf,
-		crossCompile:      export,
-		commands:          commands,
-		frontendOptions:   frontendOptions,
-		staticByteArrays:  altByteArrays,
-		templateBindings:  bindings,
-		jsonCodecPackages: templates.jsonCallers(),
-		callTemplates:     templates.calls,
-		cTransformer:      cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:        buildTrace,
-		goVersion:         sourcePatchGoVersion,
-		defaultGODEBUG:    defaultGODEBUG,
+		fingerprinting:      make(map[string]bool),
+		pkgs:                map[*packages.Package]Package{},
+		pkgByID:             map[string]Package{},
+		cacheManager:        newCacheManager(),
+		patchFiles:          llgoFiles,
+		output:              output,
+		passOpt:             passOpt,
+		buildConf:           conf,
+		crossCompile:        export,
+		commands:            commands,
+		frontendOptions:     frontendOptions,
+		staticByteArrays:    altByteArrays,
+		templateBindings:    bindings,
+		binaryCodecLibrary:  binaryCodecLibrary,
+		binaryCodecPackages: binaryCodecPackages,
+		jsonCodecPackages:   jsonCodecPackages,
+		callTemplates:       callTemplates,
+		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:          buildTrace,
+		goVersion:           sourcePatchGoVersion,
+		defaultGODEBUG:      defaultGODEBUG,
 	}
 	if formatSupport {
 		ctx.formatRuntime = dedup.Check(calltemplate.RuntimePath)
@@ -2071,6 +2094,8 @@ type context struct {
 	valueFormatFunctions map[*types.Package]*typeutil.Map
 	valueFormatPackages  map[*types.Package]bool
 	templateBindings     *calltemplate.Bindings
+	binaryCodecLibrary   *types.Package
+	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
 	callTemplates        map[*types.Package][]string
 	codecInitDrops       map[string]bool

@@ -1,4 +1,5 @@
-package compile
+// Package jsonspecialize lowers statically typed encoding/json calls.
+package jsonspecialize
 
 import (
 	"go/ast"
@@ -7,7 +8,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/types/typeutil"
@@ -37,22 +37,17 @@ type packagePlan struct {
 	calls []callSite
 }
 
-var Generator = calltemplate.Generator{
-	Package:           "encoding/json",
-	FallbackEntries:   []string{"MarshalIndent", "NewEncoder", "NewDecoder", "LlgoDecodeTyped"},
-	ConflictingImport: "encoding/json/v2",
-	Apply:             rewriteJSON,
-}
-
-func rewriteJSON(input calltemplate.Generation) (bool, error) {
-	entry, library := input.Entry, input.Library
+// Rewrite uses the compact path when all calls to the legacy codec can be
+// lowered. Keeping one codec avoids duplicating the standard implementation in
+// programs that still need dynamic reflection or custom JSON methods.
+func Rewrite(closure []*packages.Package, library, entry *packages.Package) ([]*packages.Package, error) {
 	deps := make(map[string]*packages.Package)
-	for _, pkg := range input.Packages {
-		deps[pkg.PkgPath] = pkg
+	for _, p := range closure {
+		deps[p.PkgPath] = p
 	}
 	for _, dep := range []string{"strconv", "unicode/utf8"} {
 		if deps[dep] == nil || deps[dep].Types == nil {
-			return false, nil
+			return nil, nil
 		}
 	}
 	sortPkg := deps["sort"]
@@ -60,40 +55,102 @@ func rewriteJSON(input calltemplate.Generation) (bool, error) {
 		sortPkg = deps["slices"]
 	}
 	if sortPkg == nil || sortPkg.Types == nil {
-		return false, nil
+		return nil, nil
 	}
 	decodeSupported := library.Types.Scope().Lookup("LlgoDecodeTyped") != nil && deps["strings"] != nil
-	plan, ok := planJSONPackage(entry, input.Calls, decodeSupported)
-	if !ok {
-		return false, nil
+	var plans []packagePlan
+	for _, pkg := range closure {
+		if pkg == library {
+			continue
+		}
+		if pkg.Imports["encoding/json/v2"] != nil {
+			return nil, nil
+		}
+		if pkg.Imports["encoding/json"] == nil {
+			continue
+		}
+		plan, ok := planPackage(pkg, library.Types, decodeSupported)
+		if !ok {
+			return nil, nil
+		}
+		if len(plan.calls) != 0 {
+			if pkg != entry {
+				return nil, nil
+			}
+			plans = append(plans, plan)
+		}
 	}
-	return true, plan.apply(library.Imports["encoding/json/v2"] != nil, sortPkg, deps["strconv"], deps["unicode/utf8"], library, deps["strings"])
+	if len(plans) == 0 {
+		return nil, nil
+	}
+	var changed []*packages.Package
+	for _, plan := range plans {
+		if err := plan.apply(library.Imports["encoding/json/v2"] != nil, sortPkg, deps["strconv"], deps["unicode/utf8"], library, deps["strings"]); err != nil {
+			return nil, err
+		}
+		changed = append(changed, plan.pkg)
+	}
+	return changed, nil
 }
 
-func planJSONPackage(pkg *packages.Package, calls []calltemplate.GeneratedCall, decodeSupported bool) (packagePlan, bool) {
+func planPackage(pkg *packages.Package, library *types.Package, decodeSupported bool) (packagePlan, bool) {
 	plan := packagePlan{pkg: pkg}
+	if pkg.Types == nil || pkg.TypesInfo == nil || pkg.Imports["encoding/json"].Types != library {
+		return plan, false
+	}
+	info := pkg.TypesInfo
+	accepted := make(map[*ast.Ident]bool)
 	var known typeutil.Map
-	for _, c := range calls {
-		var input types.Type
-		call := c.Call
-		decode := c.Candidate.Name() == "llgoUnmarshal"
-		switch {
-		case c.Candidate.Name() == "llgoMarshal" && len(call.Args) == 1:
-			input = pkg.TypesInfo.TypeOf(call.Args[0])
-		case decode && decodeSupported && len(call.Args) == 2:
-			// Preserve the type in InvalidUnmarshalError for named pointers.
-			if ptr, ok := types.Unalias(pkg.TypesInfo.TypeOf(call.Args[1])).(*types.Pointer); ok {
-				input = ptr.Elem()
+	for _, file := range pkg.Syntax {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id := calleeIdent(call.Fun)
+			fn, _ := info.Uses[id].(*types.Func)
+			if fn == nil || fn.Pkg() != library {
+				return true
+			}
+			var input types.Type
+			decode := fn.Name() == "Unmarshal"
+			switch {
+			case fn.Name() == "Marshal" && len(call.Args) == 1:
+				input = info.TypeOf(call.Args[0])
+			case decode && decodeSupported && len(call.Args) == 2:
+				// Preserve the type in InvalidUnmarshalError for named pointers.
+				dst := info.TypeOf(call.Args[1])
+				if dst != nil {
+					if ptr, ok := types.Unalias(dst).(*types.Pointer); ok {
+						input = ptr.Elem()
+					}
+				}
+			}
+			if input == nil || llssa.HasTypeParam(input) {
+				return true
+			}
+			if value := planShape(types.Default(input), &known); value != nil && (!decode || canDecode(value)) {
+				plan.calls = append(plan.calls, callSite{call: call, shape: value, decode: decode})
+				accepted[id] = true
+			}
+			return true
+		})
+	}
+	for id, obj := range info.Uses {
+		if obj.Pkg() != library {
+			continue
+		}
+		if fn, ok := obj.(*types.Func); ok {
+			switch fn.Name() {
+			case "Marshal", "Unmarshal":
+				if !accepted[id] {
+					return plan, false
+				}
+			case "MarshalIndent", "NewEncoder", "NewDecoder", "LlgoDecodeTyped":
+				// A dynamic codec still retains much of the same graph.
+				return plan, false
 			}
 		}
-		if input == nil || llssa.HasTypeParam(input) {
-			return plan, false
-		}
-		value := planShape(types.Default(input), &known)
-		if value == nil || decode && !canDecode(value) {
-			return plan, false
-		}
-		plan.calls = append(plan.calls, callSite{call, value, decode})
 	}
 	if len(plan.calls) != 0 {
 		reserved := []string{"append", "byte", "error", "int64", "len", "make", "nil", "string", "uint64"}
@@ -107,6 +164,16 @@ func planJSONPackage(pkg *packages.Package, calls []calltemplate.GeneratedCall, 
 		}
 	}
 	return plan, true
+}
+
+func calleeIdent(expr ast.Expr) *ast.Ident {
+	switch expr := ast.Unparen(expr).(type) {
+	case *ast.Ident:
+		return expr
+	case *ast.SelectorExpr:
+		return expr.Sel
+	}
+	return nil
 }
 
 func planShape(t types.Type, known *typeutil.Map) *shape {
@@ -155,7 +222,7 @@ func planShape(t types.Type, known *typeutil.Map) *shape {
 		s.elem = planShape(base.Elem(), known)
 	case *types.Struct:
 		names := make(map[string]bool)
-		for i := 0; i < base.NumFields(); i++ {
+		for i := range base.NumFields() {
 			member := base.Field(i)
 			tag := reflect.StructTag(base.Tag(i)).Get("json")
 			if tag == "-" {

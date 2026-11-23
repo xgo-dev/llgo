@@ -12,10 +12,9 @@ import (
 
 // Bindings carries the trusted library templates from source through SSA.
 type Bindings struct {
-	formats   map[*types.Func]formatRule
-	fmt       *packages.Package
-	value     *types.Func
-	generated []generatorBinding
+	formats map[*types.Func]formatRule
+	fmt     *packages.Package
+	value   *types.Func
 }
 
 // NeedsFormatRuntime reports whether a declared template can emit composite
@@ -27,24 +26,12 @@ func (b *Bindings) NeedsFormatRuntime() bool {
 // LoadBindings reads declarations shipped in the selected standard-library
 // patches. Keeping the bindings alongside helpers avoids copies of upstream
 // declarations and leaves the original Go implementation available.
-func LoadBindings(roots []*packages.Package, trusted func(*packages.Package) bool, generators ...Generator) (*Bindings, error) {
+func LoadBindings(roots []*packages.Package, trusted func(*packages.Package) bool) (*Bindings, error) {
 	b := &Bindings{formats: make(map[*types.Func]formatRule)}
 	var err error
 	packages.Visit(roots, func(pkg *packages.Package) bool {
-		if err != nil || pkg.Types == nil {
-			return false
-		}
-		allowed := trusted(pkg)
-		if allowed {
+		if err == nil && pkg.Types != nil && trusted(pkg) {
 			err = b.loadPackage(pkg)
-		}
-		if err == nil && pkg.TypesInfo != nil {
-			for _, g := range generators {
-				if g.Package == pkg.PkgPath {
-					err = b.loadGenerator(pkg, g, allowed)
-					break
-				}
-			}
 		}
 		return err == nil
 	}, nil)
@@ -82,17 +69,6 @@ func (b *Bindings) loadPackage(pkg *packages.Package) error {
 				}
 			}
 		}
-	}
-	return nil
-}
-
-func (b *Bindings) loadGenerator(pkg *packages.Package, generator Generator, allowed bool) error {
-	r := rules{candidates: make(map[*types.Func][]candidate)}
-	if err := r.collect(pkg, false, false); err != nil {
-		return err
-	}
-	if len(r.candidates) != 0 {
-		b.generated = append(b.generated, generatorBinding{pkg, generator, r.candidates, allowed})
 	}
 	return nil
 }
