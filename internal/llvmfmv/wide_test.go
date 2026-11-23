@@ -55,6 +55,21 @@ scalar:
 	}
 }
 
+// The target attributes emitted for a predicate already guarantee its register
+// width. Its guarded body must not dispatch again just to obtain that width.
+func TestGuardRegisterFloor(t *testing.T) {
+	mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+define void @guard() { ret void }
+`)
+	fn := mod.NamedFunction("guard")
+	for _, p := range x86Predicates {
+		fn.AddTargetDependentFunctionAttr("target-features", p.features)
+		if got := targetWidth(fn, "v1"); got != p.registerBits {
+			t.Errorf("%s: target width %d, want %d", p.method, got, p.registerBits)
+		}
+	}
+}
+
 func TestWideStackForwarding(t *testing.T) {
 	const ir = `
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"

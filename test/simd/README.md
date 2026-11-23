@@ -143,8 +143,8 @@ word saturation boundaries, NaNs and signed zeros, invalid floating conversions,
 single-rounding/subnormal FMA cases, and all four carryless lane selectors.
 
 Official Go controls require AVX2. Its mask bitmap constructors and some other
-256-bit operations require AVX512. Tests that call those APIs check the
-relevant CPU predicate.
+256-bit operations require AVX512. The LLGo-only bridge and integer multiply
+tests exercise their 256-bit implementations on AVX2 hosts.
 Go 1.27.0 also restores only XMM0 on a recovered SIMD256 return, losing the
 upper half. LLGo keeps an executable recovery regression; the official failing
 control is retained separately (run on an AVX2-capable amd64 target):
@@ -533,4 +533,4 @@ the baseline. `TestSIMD512ScalarSignatureHelpers` exercises the scalar fallback
 when AVX512 is unavailable. `TestSIMD512Guarded` checks the wide call on
 supported CPUs, and
 `TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
-local helper calls and repeated execution of the LLVM transformation.
+local helper calls and that a second call to the pass leaves a completed module unchanged.

@@ -131,7 +131,8 @@ func supported(fn llvm.Value) bool {
 // Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
 // and specializes AVX2 entries and guarded SIMD work. It runs after ABI
 // lowering and before target optimization, including in O0 and ModeGen builds.
-// Mark the module after both guard lowering and wide ABI lowering succeed.
+// A successful run marks the module after wide ABI lowering. Later calls
+// skip the module, including its generated dispatchers and implementations.
 func Run(mod llvm.Module, baseline string) error {
 	arch, _, _ := strings.Cut(mod.Target(), "-")
 	if arch != "x86_64" && arch != "amd64" && arch != "x86_64h" {

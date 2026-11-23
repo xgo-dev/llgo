@@ -69,9 +69,7 @@ func simd256Indirect(f func(archsimd.Float32x8, archsimd.Float32x8) archsimd.Flo
 }
 
 func TestSIMD256Calls(t *testing.T) {
-	if !archsimd.X86.AVX2() {
-		t.Skip("requires AVX2")
-	}
+	requireSIMD256(t)
 	var a, b [8]float32
 	for i := range a {
 		a[i] = float32(i) + 2
@@ -134,9 +132,7 @@ func TestSIMD256Calls(t *testing.T) {
 }
 
 func TestSIMD256ClosuresAndScheduling(t *testing.T) {
-	if !archsimd.X86.AVX2() {
-		t.Skip("requires AVX2")
-	}
+	requireSIMD256(t)
 	x, y := archsimd.BroadcastFloat32x8(9), archsimd.BroadcastFloat32x8(2)
 	t.Run("closure", func(t *testing.T) {
 		closure := func(v archsimd.Float32x8) archsimd.Float32x8 { runtime.Gosched(); return x.Sub(v) }

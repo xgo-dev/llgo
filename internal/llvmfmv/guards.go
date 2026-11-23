@@ -25,10 +25,10 @@ var x86Predicates = []x86Predicate{
 	{"AVXAES", 8, 256, "+avx,+aes"}, {"VAES", 16, 256, "+avx,+vaes"},
 	{"AVX512VAES", 32, 512, "+avx512f,+avx512vl,+vaes"}, {"AVX512GFNI", 64, 512, "+avx512f,+gfni"},
 	{"SHA", 128, 0, "+sha"}, {"AVX512", 256, 512, "+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
-	{"FMA", 1 << 9, 256, "+avx,+fma"}, {"AVX512BITALG", 1 << 10, 512, "+avx512bitalg"},
-	{"AVX512VBMI", 1 << 11, 512, "+avx512vbmi"}, {"AVX512VBMI2", 1 << 12, 512, "+avx512vbmi2"},
-	{"AVX512VNNI", 1 << 13, 512, "+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, 512, "+avx512f,+vpclmulqdq"},
-	{"AVX512VPOPCNTDQ", 1 << 15, 512, "+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, 256, "+avxvnni"},
+	{"FMA", 1 << 9, 256, "+avx,+fma"}, {"AVX512BITALG", 1 << 10, 512, "+avx512f,+avx512bitalg"},
+	{"AVX512VBMI", 1 << 11, 512, "+avx512f,+avx512vbmi"}, {"AVX512VBMI2", 1 << 12, 512, "+avx512f,+avx512vbmi2"},
+	{"AVX512VNNI", 1 << 13, 512, "+avx512f,+avx512vnni"}, {"AVX512VPCLMULQDQ", 1 << 14, 512, "+avx512f,+vpclmulqdq"},
+	{"AVX512VPOPCNTDQ", 1 << 15, 512, "+avx512f,+avx512vpopcntdq"}, {"AVXVNNI", 1 << 16, 256, "+avx,+avxvnni"},
 }
 
 func X86Query(method string) string {
