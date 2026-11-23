@@ -1105,14 +1105,27 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		// double.
 		ccflags = append(ccflags, "-mdouble=64")
 	case "riscv32":
-		// Check llvm-target to distinguish ESP RISC-V chips from others
-		// ESP series (riscv32-esp-elf) only supports RV32IMC (no A/D/F extensions)
-		// Other RISC-V32 targets support RV32IMAC (with A extension)
-		if config.LLVMTarget == "riscv32-esp-elf" {
-			ccflags = append(ccflags, "-march=rv32imc")
-		} else {
-			ccflags = append(ccflags, "-march=rv32imac")
+		// Check llvm-target to distinguish ESP RISC-V chips from others. ESP
+		// series (riscv32-esp-elf) defaults to RV32IMC (no A/D/F extensions);
+		// other RISC-V32 targets default to RV32IMAC (with A extension). A
+		// target whose cflags carry an explicit -march= (e.g. the hard-float
+		// esp32s31-f variant, rv32imafc) overrides the default: target json
+		// inheritance appends child cflags after the parent's, so the last
+		// -march= is the effective one.
+		march := ""
+		for _, flag := range config.CFlags {
+			if strings.HasPrefix(flag, "-march=") {
+				march = strings.TrimPrefix(flag, "-march=")
+			}
 		}
+		if march == "" {
+			if config.LLVMTarget == "riscv32-esp-elf" {
+				march = "rv32imc"
+			} else {
+				march = "rv32imac"
+			}
+		}
+		ccflags = append(ccflags, "-march="+march)
 		ccflags = append(ccflags, "-fforce-enable-int128")
 	case "riscv64":
 		ccflags = append(ccflags, "-march=rv64gc")
@@ -1204,9 +1217,15 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
 	if slices.Contains(config.BuildTags, "baremetal") && strings.HasPrefix(config.LLVMTarget, "riscv32") {
 		// reflect's native call bridge links the vendored riscv32 libffi
-		// (runtime/internal/clite/ffi/riscv32) through ffi's "link: -lffi".
+		// through ffi's "link: -lffi": the ilp32 soft-float archive under
+		// riscv32, or the ilp32f hard-float archive under riscv32-f for
+		// hard-float targets (the linker rejects mixing the two ABIs).
+		ffiDir := "riscv32"
+		if config.TargetABI == "ilp32f" {
+			ffiDir = "riscv32-f"
+		}
 		if root := env.LLGoROOT(); root != "" {
-			ldflags = append(ldflags, "-L", filepath.Join(root, "runtime", "internal", "clite", "ffi", "riscv32"))
+			ldflags = append(ldflags, "-L", filepath.Join(root, "runtime", "internal", "clite", "ffi", ffiDir))
 		}
 	}
 

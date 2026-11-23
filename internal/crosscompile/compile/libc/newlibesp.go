@@ -55,7 +55,16 @@ func getNewlibESP32ConfigRISCV(baseDir, target string) compile.CompileConfig {
 		"-I" + libcDir,
 	}
 
+	// The riscv fenv.h that defines FE_RMODE_MASK (and the other RISC-V
+	// rounding/exception macros) lives under libc/machine/riscv; upstream
+	// multilib installs overlay it over libc/include/sys/fenv.h, which this
+	// source build reproduces by putting the directory ahead of the -isystem
+	// libc include. Without it, hard-float builds fail compiling the
+	// __riscv_flen fenv code paths (e.g. libm/machine/riscv/fesetround.c).
+	// Soft-float builds preprocess those paths out, so the extra -I is inert
+	// for them.
 	libmCommonCFlags := []string{
+		"-I" + filepath.Join(libcDir, "machine", "riscv"),
 		"-DHAVE_CONFIG_H",
 		"-D_LIBC",
 		"-DHAVE_NANOSLEEP",

@@ -100,6 +100,16 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu, compiledLibrary
 		return
 	}
 
+	if config.Name == "newlib-esp32" {
+		// The RISC-V setjmp.S float block needs a source-level fixup before
+		// any hard-float target can assemble it with the LLVM integrated
+		// assembler (see newlibsetjmp.go). Soft-float targets are unaffected:
+		// the block is preprocessed out for them either way.
+		if err = patchNewlibRVSetjmp(sourceDir); err != nil {
+			return
+		}
+	}
+
 	return outputDir, compileConfig, nil
 }
 
