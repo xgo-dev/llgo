@@ -12,8 +12,11 @@
  *   - divisor high half == 0 and dividend high half == 0: one hardware
  *     divu/remu pair. This keeps the small-operand fast path that programs
  *     like the pi1000 spigot bench live on.
- *   - divisor high half == 0 (64/32): Knuth base-2^16 quotient digits, each
- *     estimated with one hardware 32/32 division. 32-bit arithmetic only.
+ *   - divisor high half == 0 and divisor < 2^16: three hardware divu, exact
+ *     base-2^16 digits, no normalization.
+ *   - divisor high half == 0 and divisor >= 2^16 (64/32): Knuth base-2^16
+ *     quotient digits, each estimated with one hardware 32/32 division.
+ *     32-bit arithmetic only.
  *   - divisor full 64 bits: Knuth Algorithm D at base 2^16 over half-digit
  *     arrays (Hacker's Delight fig. 10-1), two hardware 32/32 divisions.
  *
@@ -227,11 +230,30 @@ static inline __attribute__((always_inline)) u64 llgo_udivmod64(u64 n, u64 d, u6
             out.h.hi = 0;
             return out.v;
         }
-        if (dv == 1) {
+        if (dv < 0x10000u) {
+            /* The divisor is a single base-2^16 digit, so every quotient
+             * digit is exact: the running remainder stays below dv and hence
+             * fits one digit. The whole 64/32 division is three hardware
+             * divisions with no divisor normalization and no correction loop,
+             * roughly half the work of the normalized path below. This is the
+             * shape of 64-bit quantities divided by small divisors (hashing,
+             * unit conversion, fixed-point scaling); a unit divisor falls out
+             * of the same arithmetic. */
+            u32 q1 = un.h.hi / dv;
+            u32 r = un.h.hi - q1 * dv;
+            u32 t = (r << 16) | (un.h.lo >> 16);
+            u32 q2 = t / dv;
+            r = t - q2 * dv;
+            t = (r << 16) | (un.h.lo & 0xFFFFu);
+            u32 q3 = t / dv;
             if (rp) {
-                *rp = 0;
+                out.h.lo = t - q3 * dv;
+                out.h.hi = 0;
+                *rp = out.v;
             }
-            return n;
+            out.h.lo = (q2 << 16) | q3;
+            out.h.hi = q1;
+            return out.v;
         }
         /* 64/32: one hardware division for the top quotient word, then a
          * normalized 32-bit-digit step for the bottom word. Shifting the
