@@ -87,9 +87,9 @@ cd .. && docker run --rm -v "$PWD":/project -w /project \
 # 3. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword)
 while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
 ~/.local/bin/esp-emu --chip esp32s31 --firmware build/llgo_flash.bin \
-    --console uart0 --timeout 60s \
+    --console uart0 --timeout 90s \
     --wifi-ssid myssid --wifi-password mypassword \
-    --exit-on "[go] wifi STA_START"
+    --exit-on "[go] wifi PASS"
 rmdir /tmp/esp-emu.lock
 ```
 
@@ -99,12 +99,20 @@ Expected console output (interleaved with the IDF boot log):
 [c] wifi glue: IDF v6.3-dev-..., free heap ... bytes
 [go] wifi setup err=0
 [go] wifi STA_START
-[go] done
+[go] wifi scan n = 1
+[go] wifi ap ssid=myssid ch = 1 rssi = -30
+[go] wifi scan done
+[go] wifi STA_CONNECTED
+[go] wifi GOT_IP ip=192.168.4.2
+[go] wifi PASS ip=192.168.4.2
 ```
 
-The Go sequence in `main.go` runs the acceptance stages: setup, event
-mailbox, station config (`myssid`/`mypassword`), start, STA_START. Scan and
-connect/DHCP stages extend the same sequence.
+`main.go` runs the whole acceptance sequence: one-shot setup, event mailbox,
+station config (`myssid`/`mypassword`), start, blocking scan with the AP list
+print, connect with up to three attempts (disconnect reason codes arrive
+through the mailbox), and the DHCP wait. A wrong password ends in three
+`[go] wifi disconnect reason = 202` lines (auth fail) and
+`[go] wifi FAIL no_ap`.
 
 ## Notes
 
