@@ -92,6 +92,46 @@ func TestWasmReflectBridgeShapeDeduplication(t *testing.T) {
 	}
 }
 
+func TestWasmReflectBridgeHeaderResults(t *testing.T) {
+	testWasmStringProfiles(t, "reflect", func(t *testing.T, prog Program, pkg Package) {
+		goPkg := types.NewPackage(pkg.Path(), "p")
+		field := func(name string, typ types.Type) *types.Var {
+			return types.NewField(token.NoPos, goPkg, name, typ, false)
+		}
+		slotFields := []*types.Var{
+			field("Data", types.NewPointer(types.Typ[types.Byte])),
+			field("Tag", types.Typ[types.Uint32]),
+		}
+		slot := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Slot", nil), types.NewStruct(slotFields, nil), nil)
+		prog.SetTypeCallConv(pkg.Path()+".Slot", CDecl)
+		callBridge := func(results ...types.Type) Function {
+			params := make([]*types.Var, len(results))
+			for i, result := range results {
+				params[i] = types.NewParam(token.NoPos, nil, "", result)
+			}
+			return pkg.wasmReflectBridge(types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(params...), false)).call
+		}
+		for _, header := range []types.Type{types.Typ[types.String], types.NewSlice(types.Typ[types.Byte])} {
+			fields := []*types.Var{field("Slot", slot), field("Len", types.Typ[types.Int64])}
+			if _, slice := header.(*types.Slice); slice {
+				fields = append(fields, field("Cap", types.Typ[types.Int64]))
+			}
+			// Slot.Tag occupies exactly the bytes a header bridge clears.
+			record := types.NewStruct(fields, nil)
+			if callBridge(header) == callBridge(record) {
+				t.Errorf("%s shares a result bridge with a record containing a live Tag field", header)
+			}
+			headers, records := types.NewArray(header, 2), types.NewArray(record, 2)
+			if callBridge(headers, records) == callBridge(records, headers) {
+				t.Errorf("%s bridge ignored the position of nested result headers", header)
+			}
+		}
+		if err := llvm.VerifyModule(pkg.mod, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestCompactWasmBridgeID(t *testing.T) {
 	tests := map[int]string{0: "a", 25: "z", 26: "A", 61: "9", 62: "aa", 63: "ab", 123: "a9", 124: "ba"}
 	for value, expected := range tests {
@@ -102,8 +142,9 @@ func TestCompactWasmBridgeID(t *testing.T) {
 }
 
 func TestWasmLLVMTypeShape(t *testing.T) {
-	ctx := llvm.NewContext()
-	defer ctx.Dispose()
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	defer prog.Dispose()
+	ctx := prog.ctx
 
 	tests := []struct {
 		name string
@@ -127,7 +168,7 @@ func TestWasmLLVMTypeShape(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var shape strings.Builder
-			appendWasmLLVMTypeShape(&shape, test.typ)
+			prog.appendWasmLLVMTypeShape(&shape, test.typ)
 			if got := shape.String(); got != test.want {
 				t.Fatalf("shape = %q, want %q", got, test.want)
 			}
@@ -139,7 +180,7 @@ func TestWasmLLVMTypeShape(t *testing.T) {
 				t.Fatal("unsupported LLVM type did not panic")
 			}
 		}()
-		appendWasmLLVMTypeShape(new(strings.Builder), ctx.LabelType())
+		prog.appendWasmLLVMTypeShape(new(strings.Builder), ctx.LabelType())
 	})
 }
 

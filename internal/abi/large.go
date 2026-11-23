@@ -2,6 +2,8 @@
 package abi
 
 import (
+	"slices"
+
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llvm"
@@ -265,7 +267,7 @@ func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.
 	} else if slot.IsAAllocaInst().IsNil() || !isPrivateHeaderSnapshot(load) {
 		return false
 	}
-	stores, extracts, ok := l.aggregateUsers(load)
+	stores, extracts, ok := l.aggregateUsers(load, true)
 	if !ok {
 		return false
 	}
@@ -276,13 +278,13 @@ func (l *largeAggregateLowerer) reuseHeaderSnapshot(ctx llvm.Context, load llvm.
 	if heap {
 		l.allocations = append(l.allocations, slot)
 	}
-	l.rewriteMemoryUsers(ctx, load, slot, load.Type(), stores, extracts)
+	l.rewriteMemoryUsers(ctx, load, slot, l.td.ABITypeAlignment(load.Type()), stores, extracts)
 	return true
 }
 
 func isPrivateHeaderSnapshot(load llvm.Value) bool {
-	// HeaderSnapshotMD identifies this frontend-generated fill/clear/reload
-	// sequence; the clear helper only writes header padding in its first arg.
+	// The caller identifies the header clear. Its first argument and the
+	// adjacent fill and reload must refer to the same private storage.
 	slot := load.Operand(0)
 	clear := llvm.PrevInstruction(load)
 	if clear.IsNil() || clear.IsACallInst().IsNil() || clear.Operand(0) != slot {
@@ -409,21 +411,30 @@ func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 	changed := l.reuseHeaderSnapshots(m)
 	var loads []llvm.Value
 	var zeroStores []llvm.Value
+	var nativeStores []llvm.Value
+	slotKind := m.Context().MDKindID(WasmBoundarySlotMD)
+	checkNativeResults := l.copyMinSize == 0 && l.roots && l.wasm
 	for fn := m.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for instr := bb.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
-				if store := instr.IsAStoreInst(); !store.IsNil() && store.Operand(0).IsNull() && l.isLargeCopy(store.Operand(0).Type()) {
-					zeroStores = append(zeroStores, store)
+				if store := instr.IsAStoreInst(); !store.IsNil() {
+					value := store.Operand(0)
+					if value.IsNull() && l.isLargeCopy(value.Type()) {
+						zeroStores = append(zeroStores, store)
+					} else if checkNativeResults && l.isWasmHeapResultStore(store, slotKind) {
+						nativeStores = append(nativeStores, store)
+					}
 				}
 				load := instr.IsALoadInst()
 				if !load.IsNil() && l.isLargeCopy(load.Type()) {
-					if _, _, ok := l.aggregateUsers(load); ok {
+					if _, _, ok := l.aggregateUsers(load, false); ok {
 						loads = append(loads, load)
 					}
 				}
 			}
 		}
 	}
+	l.prepareWasmResultSlots(m, nativeStores)
 	for _, load := range loads {
 		l.transformStoredLoad(m, load)
 	}
@@ -445,22 +456,32 @@ func (l *largeAggregateLowerer) transformStoredLoads(m llvm.Module) int {
 	return changed + len(loads) + len(zeroStores)
 }
 
-func (l largeAggregateLowerer) aggregateUsers(value llvm.Value) (stores, extracts []llvm.Value, ok bool) {
+// Keep oversized projections of ordinary loads in SSA so LLVM can discard
+// unused fields. A whole-value store needs the complete aggregate, and
+// private storage already holds a stable copy.
+func (l largeAggregateLowerer) aggregateUsers(value llvm.Value, privateStorage bool) (stores, extracts []llvm.Value, ok bool) {
 	for use := value.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		user := use.User()
 		if store := user.IsAStoreInst(); !store.IsNil() && store.Operand(0) == value {
 			stores = append(stores, store)
-		} else if extract := user.IsAExtractValueInst(); !extract.IsNil() && !l.isLargeAggregate(extract.Type()) {
+		} else if extract := user.IsAExtractValueInst(); !extract.IsNil() {
 			extracts = append(extracts, extract)
 		} else {
 			return nil, nil, false
+		}
+	}
+	if !privateStorage && len(stores) == 0 {
+		for _, extract := range extracts {
+			if l.isLargeAggregate(extract.Type()) {
+				return nil, nil, false
+			}
 		}
 	}
 	return stores, extracts, len(stores)+len(extracts) != 0
 }
 
 func (l *largeAggregateLowerer) transformStoredLoad(m llvm.Module, load llvm.Value) {
-	stores, extracts, ok := l.aggregateUsers(load)
+	stores, extracts, ok := l.aggregateUsers(load, false)
 	if !ok {
 		return
 	}
@@ -480,10 +501,7 @@ func (l *largeAggregateLowerer) transformStoredLoad(m llvm.Module, load llvm.Val
 		load.EraseFromParentAsInstruction()
 		return
 	}
-	uses := make([]llvm.Value, 0, len(stores)+len(extracts))
-	uses = append(uses, stores...)
-	uses = append(uses, extracts...)
-	snapshot, heap := l.allocSnapshot(m, ctx, b, typ, load.InstructionDebugLoc(), load, uses)
+	snapshot, heap := l.allocSnapshot(m, ctx, b, load, typ, stores, extracts)
 	b.SetInsertPointBefore(load)
 	if heap {
 		// Heap snapshots are a new safepoint absent from the frontend root plan.
@@ -497,9 +515,8 @@ func (l *largeAggregateLowerer) transformStoredLoad(m llvm.Module, load llvm.Val
 	setCopyVolatile(ctx, copy, load.IsVolatile())
 	copy.InstructionSetDebugLoc(load.InstructionDebugLoc())
 	l.replaceTrackedUse(load, copy)
-	newUses := l.rewriteMemoryUsers(ctx, load, snapshot, typ, stores, extracts)
+	newUses := l.rewriteMemoryUsers(ctx, load, snapshot, l.td.ABITypeAlignment(typ), stores, extracts)
 	if !heap {
-		l.recordStackSnapshotUses(snapshot, copy, newUses)
 		l.markSnapshotLifetimeEnd(ctx, snapshot, copy, newUses)
 	}
 }
@@ -514,6 +531,9 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	b.SetInsertPointBefore(call)
 
 	result := l.allocResult(m, ctx, b, retType, call.InstructionDebugLoc())
+	if slot := TakeWasmBoundarySlot(ctx, call); !slot.IsNil() {
+		l.useNativeResultStorage(ctx, slot, result)
+	}
 	params := make([]llvm.Value, 1, oldType.ParamTypesCount()+1)
 	params[0] = result
 	reflectMethodByName := call.GetCallSiteStringAttribute(-1, "llgo.reflect.methodbyname")
@@ -538,11 +558,13 @@ func (l *largeAggregateLowerer) transformCall(m llvm.Module, call llvm.Value) {
 	newCall.SetInstructionCallConv(call.InstructionCallConv())
 	newCall.InstructionSetDebugLoc(call.InstructionDebugLoc())
 
-	value := b.CreateLoad(retType, result, "")
-	value.InstructionSetDebugLoc(call.InstructionDebugLoc())
-	call.ReplaceAllUsesWith(value)
+	if !call.FirstUse().IsNil() {
+		value := b.CreateLoad(retType, result, "")
+		value.InstructionSetDebugLoc(call.InstructionDebugLoc())
+		call.ReplaceAllUsesWith(value)
+		l.rewriteStoredResult(ctx, value, l.td.ABITypeAlignment(retType))
+	}
 	call.EraseFromParentAsInstruction()
-	l.rewriteStoredResult(ctx, value, result, retType)
 }
 
 func (l *largeAggregateLowerer) transformFunc(m llvm.Module, fn llvm.Value) {
@@ -647,18 +669,23 @@ func (l largeAggregateLowerer) rewriteReturns(ctx llvm.Context, fn llvm.Value, r
 	}
 }
 
-func (l *largeAggregateLowerer) rewriteStoredResult(ctx llvm.Context, value, result llvm.Value, typ llvm.Type) {
-	stores, extracts, ok := l.aggregateUsers(value)
+func (l *largeAggregateLowerer) rewriteStoredResult(ctx llvm.Context, value llvm.Value, alignment int) {
+	stores, extracts, ok := l.aggregateUsers(value, true)
 	if !ok && !value.FirstUse().IsNil() {
 		return
 	}
-	l.rewriteMemoryUsers(ctx, value, result, typ, stores, extracts)
+	for _, use := range l.rewriteMemoryUsers(ctx, value, value.Operand(0), alignment, stores, extracts) {
+		if !use.IsALoadInst().IsNil() && l.td.TypeAllocSize(use.Type()) >= MinAggregateCopySize {
+			l.rewriteStoredResult(ctx, use, use.Alignment())
+		}
+	}
 }
 
 // Root publication extracts pointer members from aggregate SSA values. Rewrite
 // those projections as loads from the same immutable snapshot as its stores;
 // leaving even one aggregate use expands the entire value in SelectionDAG.
-func (l *largeAggregateLowerer) rewriteMemoryUsers(ctx llvm.Context, value, result llvm.Value, typ llvm.Type, stores, extracts []llvm.Value) []llvm.Value {
+func (l *largeAggregateLowerer) rewriteMemoryUsers(ctx llvm.Context, value, result llvm.Value, baseAlignment int, stores, extracts []llvm.Value) []llvm.Value {
+	typ := value.Type()
 	b := ctx.NewBuilder()
 	defer b.Dispose()
 	uses := make([]llvm.Value, 0, len(stores)+len(extracts))
@@ -688,8 +715,8 @@ func (l *largeAggregateLowerer) rewriteMemoryUsers(ctx llvm.Context, value, resu
 		}
 		field := b.CreateInBoundsGEP(typ, result, indices, "")
 		projected := b.CreateLoad(extract.Type(), field, "")
-		// Packed fields can have less alignment than their own ABI type.
-		align := l.td.ABITypeAlignment(typ)
+		// A packed ancestor can reduce the alignment of this base address.
+		align := baseAlignment
 		for offset%uint64(align) != 0 {
 			align /= 2
 		}
@@ -704,9 +731,9 @@ func (l *largeAggregateLowerer) rewriteMemoryUsers(ctx llvm.Context, value, resu
 	return uses
 }
 
-// replaceTrackedUse keeps ancestor snapshot ranges pointed at the instruction
-// that replaced a deleted store or extract. Later rounds otherwise treat a
-// still-live slot as free when block layout differs from execution order.
+// replaceTrackedUse updates both the snapshot being rewritten and earlier
+// snapshots whose live ranges include the replaced instruction. A stale
+// range can make a live slot appear free when block and execution order differ.
 func (l *largeAggregateLowerer) replaceTrackedUse(old, neu llvm.Value) {
 	if old.IsNil() || neu.IsNil() {
 		return
@@ -735,13 +762,13 @@ func setCopyVolatile(ctx llvm.Context, copy llvm.Value, volatile bool) {
 	}
 }
 
-func (l *largeAggregateLowerer) allocSnapshot(m llvm.Module, ctx llvm.Context, b llvm.Builder, typ llvm.Type, loc llvm.Metadata, load llvm.Value, uses []llvm.Value) (llvm.Value, bool) {
+func (l *largeAggregateLowerer) allocSnapshot(m llvm.Module, ctx llvm.Context, b llvm.Builder, load llvm.Value, typ llvm.Type, stores, extracts []llvm.Value) (llvm.Value, bool) {
 	if l.td.TypeAllocSize(typ) >= MinAggregateCopySize {
-		return l.allocResult(m, ctx, b, typ, loc), true
+		return l.allocResult(m, ctx, b, typ, load.InstructionDebugLoc()), true
 	}
 	fn := load.InstructionParent().Parent()
 	l.ensureCFG(fn)
-	newRange := snapshotRange{start: load, uses: uses}
+	newRange := snapshotRange{start: load, uses: slices.Concat(stores, extracts)}
 	for i := range l.stackSlots {
 		slot := &l.stackSlots[i]
 		if slot.fn != fn || slot.typ != typ {
@@ -761,17 +788,6 @@ func (l *largeAggregateLowerer) allocSnapshot(m llvm.Module, ctx llvm.Context, b
 		ranges: []snapshotRange{newRange},
 	})
 	return ptr, false
-}
-
-func (l *largeAggregateLowerer) recordStackSnapshotUses(snapshot, start llvm.Value, uses []llvm.Value) {
-	for i := range l.stackSlots {
-		slot := &l.stackSlots[i]
-		if slot.ptr != snapshot || len(slot.ranges) == 0 {
-			continue
-		}
-		slot.ranges[len(slot.ranges)-1] = snapshotRange{start: start, uses: uses}
-		return
-	}
 }
 
 func (l *largeAggregateLowerer) markSnapshotLifetimeEnd(ctx llvm.Context, snapshot, start llvm.Value, uses []llvm.Value) {

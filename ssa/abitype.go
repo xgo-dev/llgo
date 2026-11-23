@@ -94,11 +94,11 @@ func staticPtrToThis(t types.Type) (types.Type, bool) {
 	return ptr, types.NewMethodSet(ptr).Len() != 0
 }
 
-func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, global llvm.Value) (fields []llvm.Value) {
-	return b.abiCommonFieldsFor(t, nil, name, hasUncommon, global)
+func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, publicSig *types.Signature, global llvm.Value) []llvm.Value {
+	return b.abiCommonFieldsFor(t, nil, name, hasUncommon, publicSig, global)
 }
 
-func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncommon bool, global llvm.Value) (fields []llvm.Value) {
+func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncommon bool, publicSig *types.Signature, global llvm.Value) (fields []llvm.Value) {
 	prog := b.Prog
 	ab := prog.abi
 	// Size uintptr
@@ -114,13 +114,16 @@ func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncom
 	tflag := ab.TFlag(t)
 	if closure != nil {
 		display = closure
-		tflag |= rabi.TFlagNamed
+		tflag |= rabi.TFlagNamed | rabi.TFlagClosureFunc
 	}
 	if hasUncommon {
 		tflag |= abi.TFlagUncommon
 	}
 	if prog.hasLegacyNativeTypeLayout(t) || prog.hasNativeTypeDirective(t) {
 		tflag |= abi.TFlagNative
+		if prog.canCallGoEntry(t) {
+			tflag |= abi.TFlagDirectGoCallback
+		}
 	}
 	fields = append(fields, prog.IntVal(uint64(tflag), prog.Byte()).impl)
 	// Align uint8
@@ -131,14 +134,13 @@ func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncom
 	fields = append(fields, fieldAlign)
 	// Kind uint8
 	kind := uint8(ab.Kind(t))
-	if closure != nil {
-		kind |= rabi.KindClosureFunc
-	}
 	if directIfaceType(t) {
 		kind |= uint8(abi.KindDirectIface)
 	}
 	if prog.isStdcallType(t) {
 		kind |= uint8(abi.KindStdcall)
+	} else if publicSig != nil && tflag&abi.TFlagNative == 0 {
+		kind |= uint8(abi.KindFuncPublic)
 	}
 	fields = append(fields, prog.IntVal(uint64(kind), prog.Byte()).impl)
 	// Equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -604,44 +606,20 @@ func reflectPkgPath(pkg *types.Package) string {
 	return abi.PathOf(pkg)
 }
 
-func (b Builder) abiUncommonMethodSet(t types.Type) (mset *types.MethodSet, ok bool) {
-	prog := b.Prog
-	switch t := types.Unalias(t).(type) {
-	case *types.Named:
-		if _, b := t.Underlying().(*types.Interface); b {
-			return &types.MethodSet{}, true
-		}
-		mset := types.NewMethodSet(t)
-		if mset.Len() != 0 {
-			if prog.compileMethods != nil {
-				prog.compileMethods(b.Pkg, t)
-			}
-		}
-		return mset, true
-	case *types.Struct, *types.Pointer:
-		if mset := types.NewMethodSet(t); mset.Len() != 0 {
-			if prog.compileMethods != nil {
-				prog.compileMethods(b.Pkg, t)
-			}
-			return mset, true
-		}
-	}
-	return
-}
-
-func abiUncommonMethodSetForDeclaration(t types.Type) (mset *types.MethodSet, ok bool) {
+// A named type needs an uncommon descriptor even when its method set is empty.
+func abiUncommonMethodSet(t types.Type) *types.MethodSet {
 	switch t := types.Unalias(t).(type) {
 	case *types.Named:
 		if _, isInterface := t.Underlying().(*types.Interface); isInterface {
-			return &types.MethodSet{}, true
+			return &types.MethodSet{}
 		}
-		return types.NewMethodSet(t), true
+		return types.NewMethodSet(t)
 	case *types.Struct, *types.Pointer:
 		if mset := types.NewMethodSet(t); mset.Len() != 0 {
-			return mset, true
+			return mset
 		}
 	}
-	return
+	return nil
 }
 
 /*
@@ -748,6 +726,9 @@ func (b Builder) abiMethodFuncs(t types.Type, m *types.Selection) (ifn, tfn llvm
 }
 
 func (b Builder) abiInterfaceMethods(mset *types.MethodSet) []*types.Selection {
+	if mset == nil {
+		return nil
+	}
 	n := mset.Len()
 	methods := make([]*types.Selection, 0, n)
 	for i := 0; i < n; i++ {
@@ -828,26 +809,16 @@ func (b Builder) abiType(t types.Type) Expr {
 			t = prog.patchType(t)
 		}
 		b.recordTypeChildren(name, t)
-		mset, hasUncommon := b.abiUncommonMethodSet(t)
-		var methods []*types.Selection
-		if hasUncommon {
-			methods = b.abiInterfaceMethods(mset)
+		mset := abiUncommonMethodSet(t)
+		if mset != nil && mset.Len() != 0 && prog.compileMethods != nil {
+			prog.compileMethods(pkg, types.Unalias(t))
 		}
-		methodCount := len(methods)
+		methods := b.abiInterfaceMethods(mset)
 		rt := prog.rtNamedABI(t)
-		var typ types.Type = rt
-		if hasUncommon {
-			ut := prog.rtNamed("uncommonType")
-			mt := prog.rtNamed("Method")
-			structFields := []*types.Var{
-				types.NewVar(token.NoPos, nil, "T", rt),
-				types.NewVar(token.NoPos, nil, "U", ut),
-				types.NewVar(token.NoPos, nil, "M", types.NewArray(mt, int64(methodCount))),
-			}
-			typ = types.NewStruct(structFields, nil)
-		}
+		publicSig := prog.publicReflectFunc(t)
+		typ := prog.abiDescriptorType(rt, publicSig, mset != nil, len(methods))
 		g = pkg.doNewVar(name, prog.Type(types.NewPointer(typ), GoDecl))
-		commonFields := b.abiCommonFields(t, name, hasUncommon, g.impl)
+		commonFields := b.abiCommonFields(t, name, mset != nil, publicSig, g.impl)
 		extendedFields := b.abiExtendedFields(t, name, g.impl)
 		fields := commonFields
 		if len(extendedFields) != 0 {
@@ -862,7 +833,28 @@ func (b Builder) abiType(t types.Type) Expr {
 				b.abiClosureFuncType(t, sig, name, g.impl),
 			}
 		}
-		if hasUncommon {
+		if publicSig != nil {
+			public := b.abiType(publicSig)
+			entry := llvm.ConstNull(prog.tyVoidPtr())
+			if alias, ok := t.(*types.Alias); ok && prog.nativeFuncAliasABI(alias) != "" {
+				sig := types.Unalias(alias).(*types.Signature)
+				fn := Expr{entry, prog.rawType(alias)}
+				cc, spelling := llvm.CCallConv, "c"
+				if prog.isStdcallType(alias) {
+					cc, spelling = prog.stdcallCallConv(), "stdcall"
+				}
+				if !HasNameValist(sig) && (cc != llvm.CCallConv || b.needsNativeFuncval(fn)) {
+					entry = b.funcvalAdapterFor(fn, prog.gocvt.cvtFunc(sig, nil), cc, spelling).impl
+					pkg.recordAbiTypeFakeUse(g.impl, entry)
+				}
+			}
+			fields = []llvm.Value{prog.constStructValue(prog.Type(rt, GoDecl), fields), public.impl, entry}
+			if mb := pkg.metaBuilder; mb != nil {
+				publicName, _ := prog.abi.TypeName(publicSig)
+				mb.AddTypeChild(mb.Sym(name), mb.Sym(publicName))
+			}
+		}
+		if mset != nil {
 			fields = []llvm.Value{
 				prog.constStructValue(prog.Type(rt, GoDecl), fields),
 				b.abiUncommonType(t, methods),
@@ -897,7 +889,7 @@ func (b Builder) abiClosureFuncType(t types.Type, sig *types.Signature, name str
 	name += "$reflectfunc"
 	wrapper := prog.rtType("closurefunctype")
 	g := pkg.doNewVar(name, prog.Pointer(wrapper))
-	common := b.abiCommonFieldsFor(sig, t, name, true, g.impl)
+	common := b.abiCommonFieldsFor(sig, t, name, true, nil, g.impl)
 	fields := append([]llvm.Value{prog.constStructValue(prog.AbiType(), common)},
 		b.abiExtendedFields(sig, name, g.impl)...)
 	g.impl.SetInitializer(prog.constStructValueAs(wrapper, g.impl.GlobalValueType(), []llvm.Value{
@@ -942,22 +934,10 @@ func (p Package) RegisterAbiTypes(infos []AbiTypeInfo) {
 		}
 
 		t := info.Raw
-		mset, hasUncommon := abiUncommonMethodSetForDeclaration(t)
-		var methods []*types.Selection
-		if hasUncommon {
-			methods = builder.abiInterfaceMethods(mset)
-		}
+		mset := abiUncommonMethodSet(t)
+		methods := builder.abiInterfaceMethods(mset)
 		rt := p.Prog.rtNamedABI(t)
-		var typ types.Type = rt
-		if hasUncommon {
-			ut := p.Prog.rtNamed("uncommonType")
-			mt := p.Prog.rtNamed("Method")
-			typ = types.NewStruct([]*types.Var{
-				types.NewVar(token.NoPos, nil, "T", rt),
-				types.NewVar(token.NoPos, nil, "U", ut),
-				types.NewVar(token.NoPos, nil, "M", types.NewArray(mt, int64(len(methods)))),
-			}, nil)
-		}
+		typ := p.Prog.abiDescriptorType(rt, p.Prog.publicReflectFunc(t), mset != nil, len(methods))
 		p.Prog.abiSymbol[info.Name] = &AbiSymbol{
 			Name:    info.Name,
 			PkgPath: p.Path(),
@@ -1059,4 +1039,66 @@ func namedClosureSignature(t types.Type) *types.Signature {
 		}
 	}
 	return nil
+}
+
+// abiDescriptorType selects the runtime layout shared by definitions and imported declarations.
+func (p Program) abiDescriptorType(rt *types.Named, public *types.Signature, hasUncommon bool, methodCount int) types.Type {
+	if hasUncommon {
+		return types.NewStruct([]*types.Var{
+			types.NewVar(token.NoPos, nil, "T", rt),
+			types.NewVar(token.NoPos, nil, "U", p.rtNamed("uncommonType")),
+			types.NewVar(token.NoPos, nil, "M", types.NewArray(p.rtNamed("Method"), int64(methodCount))),
+		}, nil)
+	}
+	if public != nil {
+		return p.rtNamed("qualifiedFuncType")
+	}
+	return rt
+}
+
+// publicReflectFunc returns a source signature only when its ABI descriptor
+// differs from the signature obtained by expanding Go function aliases.
+func (p Program) publicReflectFunc(t types.Type) *types.Signature {
+	sig, ok := types.Unalias(t).(*types.Signature)
+	if !ok {
+		return nil
+	}
+	public := p.publicReflectSignature(sig)
+	if public != sig {
+		return public
+	}
+	if alias, ok := t.(*types.Alias); ok && p.nativeFuncAliasABI(alias) != "" {
+		return public
+	}
+	return nil
+}
+
+func (p Program) publicReflectSignature(sig *types.Signature) *types.Signature {
+	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
+		return sig
+	}
+	project := func(t *types.Tuple) *types.Tuple {
+		var vars []*types.Var
+		for i := 0; i < t.Len(); i++ {
+			v := t.At(i)
+			if public := p.publicReflectFunc(abi.PublicType(v.Type())); public != nil {
+				if vars == nil {
+					vars = make([]*types.Var, t.Len())
+					for j := range vars {
+						vars[j] = t.At(j)
+					}
+				}
+				vars[i] = types.NewParam(v.Pos(), v.Pkg(), v.Name(), public)
+			}
+		}
+		if vars != nil {
+			return types.NewTuple(vars...)
+		}
+		return t
+	}
+	in, out := project(sig.Params()), project(sig.Results())
+	if in == sig.Params() && out == sig.Results() {
+		return sig
+	}
+	return types.NewSignatureType(nil, nil, nil, in, out, sig.Variadic())
 }

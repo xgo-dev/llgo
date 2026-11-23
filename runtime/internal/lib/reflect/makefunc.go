@@ -52,7 +52,7 @@ func makeFunc(typ Type, fn func(args []Value) (results []Value), recoverTo unsaf
 
 	t := typ.common()
 	ftyp := (*funcType)(unsafe.Pointer(t))
-	return makeProviderFunc(ftyp, fn, recoverTo)
+	return makeProviderFunc(ftyp, fn, recoverTo, nil)
 }
 
 // call crosses the provider's entry stub as a transparent wrapper. This mirrors
@@ -90,8 +90,7 @@ func storeMakeFuncResult(ret unsafe.Pointer, v Value, typ *abi.Type) {
 }
 
 func ffiToValue(ptr unsafe.Pointer, typ *abi.Type) (v Value) {
-	kind := typ.Kind()
-	typ = physicalType(typ)
+	typ, kind := funcElem(typ)
 	v.typ_ = typ
 	v.flag = flag(kind)
 	if typ.IfaceIndir() {
@@ -248,13 +247,13 @@ func makeMethodValue(op string, v Value) Value {
 	// userdata owns the receiver state. Pointing a hidden-env funcval directly
 	// at Ifn would be invalid because Ifn expects the receiver as an ordinary
 	// first ABI argument.
-	_, _, recoverTo := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
+	_, ft, recoverTo := methodReceiver(op, rcvr, int(v.flag)>>flagMethodShift)
 	method := v
 	callOp := "Call"
-	if method.Type().(*rtype).t.FuncType().Variadic() {
+	if ft.Variadic() {
 		callOp = "CallSlice"
 	}
-	ret := makeFunc(v.Type(), func(args []Value) []Value {
+	ret := makeFunc(toType(&ft.Type), func(args []Value) []Value {
 		return method.call(callOp, args)
 	}, recoverTo)
 	// Cause panic if method is not appropriate.

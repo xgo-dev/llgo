@@ -30,6 +30,8 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
+const useWasmReflectBridges = false
+
 func resetWasmFuncBridge(ft *abi.FuncType) {}
 
 func copyWasmFuncBridge(dst, src *abi.FuncType) {}
@@ -37,6 +39,12 @@ func copyWasmFuncBridge(dst, src *abi.FuncType) {}
 var ffiTypeClosure = ffi.StructOf(ffi.TypePointer, ffi.TypePointer)
 
 func toFFIType(typ *abi.Type) *ffi.Type {
+	return toFFITypeIn(typ, nil)
+}
+
+// container is the record or array whose declaration selects field storage.
+// A nil container describes a standalone argument or result.
+func toFFITypeIn(typ, container *abi.Type) *ffi.Type {
 	// Vector storage (including zero-length arrays and enclosing aggregates)
 	// has alignment above the ordinary Go maximum of 8. libffi's scalar/struct
 	// descriptions cannot represent its vector calling convention. Check before
@@ -52,12 +60,17 @@ func toFFIType(typ *abi.Type) *ffi.Type {
 		return ffi.Typ[kind]
 	case abi.Array:
 		st := typ.ArrayType()
-		return ffi.ArrayOf(toFFIType(st.Elem), int(st.Len))
+		// An inline array inherits native element storage from an enclosing C
+		// record or array. A named native array selects it in any container.
+		if container == nil || !container.HasNativeLayout() {
+			container = typ
+		}
+		return ffi.ArrayOf(toFFITypeIn(st.Elem, container), int(st.Len))
 	case abi.Chan:
 		return ffi.TypePointer
 	case abi.Func:
 		if typ.HasNativeLayout() {
-			return ffi.TypePointer
+			return ffiNativeFuncType(container)
 		}
 		return ffiTypeClosure
 	case abi.Interface:
@@ -92,7 +105,7 @@ func toFFIStructType(typ *abi.Type) *ffi.Type {
 		if fs.Typ.Size_ == 0 {
 			continue
 		}
-		fields = append(fields, toFFIType(fs.Typ))
+		fields = append(fields, toFFITypeIn(fs.Typ, typ))
 		off = fs.Offset + fs.Typ.Size_
 	}
 	// Ordinary trailing zero-sized fields can enlarge the Go-visible size
@@ -162,7 +175,7 @@ func toFFIRetType(tout []*abi.Type) *ffi.Type {
 	}
 }
 
-func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, receiverType *abi.Type, receiver *unsafe.Pointer, in []Value) (out []Value) {
+func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, receiverType *abi.Type, receiver *unsafe.Pointer, _ bool, in []Value) (out []Value) {
 	ffiArgs := make([]*ffi.Type, 0, len(in)+4)
 	var args []unsafe.Pointer
 	if receiver != nil {
@@ -228,7 +241,5 @@ func valueFromFFIResult(ptr unsafe.Pointer, typ *abi.Type, ffiType *ffi.Type) Va
 		}
 		ptr = storage
 	}
-	out := NewAt(toType(typ), ptr).Elem()
-	resolveIndirectValue(&out, typ)
-	return out
+	return valueFromCallResult(ptr, typ)
 }

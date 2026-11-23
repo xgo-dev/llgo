@@ -109,6 +109,7 @@ def main():
                         expected_exits=(1, 2), args=("nil",))
             for fixture, marker in (
                 ("interface-domain", "wasm interface domain passed"),
+                ("reflect-native-convert", "wasm named native conversion passed"),
                 ("reflect-method-value", "wasm reflect method values: 42 42 42 42 42"),
                 ("reflect-method-alias", "wasm reflect method aliases: 42 42"),
                 ("reflect-method-alias/named", "wasm named method aliases: 42 42"),

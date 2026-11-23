@@ -76,6 +76,40 @@ func TestWasm32UsesGo64WordStorage(t *testing.T) {
 	}
 }
 
+func TestNativePointerOperationsReuseStorageViews(t *testing.T) {
+	prog := newJ32Program(t)
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	// A narrow integer also exercises the native integer-extension query.
+	arg := types.NewParam(token.NoPos, nil, "v", types.Typ[types.Int8])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(arg), nil, false)
+	global := pkg.NewVar("native_callback", types.NewPointer(sig), CDecl)
+	entry := pkg.NewFunc("example.com/p.entry", sig, GoDecl)
+	body := pkg.NewFunc("example.com/p.call", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer body.Dispose()
+	callback := body.Load(global.Expr)
+	goType, nativeType := prog.Type(sig, GoDecl), prog.rawType(sig)
+	closure := body.ChangeType(goType, entry.Expr)
+	value := prog.Zero(prog.rawType(arg.Type()))
+	useCallback := func() {
+		prog.canCallGoEntry(sig)
+		body.Call(callback, value)
+		body.ChangeType(goType, callback)
+		body.ChangeType(nativeType, entry.Expr)
+		body.ChangeType(nativeType, closure)
+	}
+	useCallback()
+	before := len(prog.nativeStorage)
+	for range 32 {
+		useCallback()
+	}
+	if after := len(prog.nativeStorage); after != before {
+		t.Errorf("repeated uses of the same native pointer grew storage views from %d to %d", before, after)
+	}
+	body.Return()
+	body.EndBuild()
+}
+
 func TestNativeStorageViewsAreCachedAndWasmOnly(t *testing.T) {
 	prog := newJ32Program(t)
 	word := prog.Uintptr()
@@ -192,14 +226,18 @@ func TestWasm32NativeIntegerRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWasm32SliceBoundary(t *testing.T) {
+func TestWasm32HeaderBoundary(t *testing.T) {
+	t.Run("slice", func(t *testing.T) { testWasm32HeaderBoundary(t, types.NewSlice(types.Typ[types.Byte])) })
+	t.Run("string", func(t *testing.T) { testWasm32HeaderBoundary(t, types.Typ[types.String]) })
+}
+
+func testWasm32HeaderBoundary(t *testing.T, header types.Type) {
 	prog := newJ32Program(t)
 	setTestRuntime(t, prog)
 	pkg := prog.NewPackage("p", "example.com/p")
-	slice := types.NewSlice(types.Typ[types.Byte])
 	// Include both an ordinary Go record and an array in the by-value ABI.
 	record := types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, nil, "Slices", types.NewArray(slice, 2), false),
+		types.NewField(token.NoPos, nil, "Headers", types.NewArray(header, 2), false),
 	}, nil)
 	params := types.NewTuple(types.NewParam(token.NoPos, nil, "record", record))
 	high := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uint32]))
@@ -218,6 +256,7 @@ func TestWasm32SliceBoundary(t *testing.T) {
 		slot := b.impl.CreateExtractValue(part, 0, "")
 		b.Return(Expr{b.impl.CreateExtractValue(slot, 1, ""), prog.Uint32()})
 		b.EndBuild()
+		b.Dispose()
 	}
 	param := observe.Param(0)
 	returnHigh(observe.MakeBody(1), param)
@@ -232,12 +271,13 @@ func TestWasm32SliceBoundary(t *testing.T) {
 	}
 	opts := llvm.NewPassBuilderOptions()
 	defer opts.Dispose()
-	if err := mod.RunPasses("function(instcombine)", prog.TargetMachine(), opts); err != nil {
+	// Array normalization uses a range helper. Inline it before checking the high word.
+	if err := mod.RunPasses("default<O2>", prog.TargetMachine(), opts); err != nil {
 		t.Fatal(err)
 	}
 	for _, fn := range []Function{observe, readCall, readGlobal} {
 		if value := fn.impl.EntryBasicBlock().LastInstruction().Operand(0); !value.IsNull() {
-			t.Errorf("nested slice retained its pointer high word: %s", fn.impl)
+			t.Errorf("nested %s retained its pointer high word: %s", header, fn.impl)
 		}
 	}
 }

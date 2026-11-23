@@ -119,10 +119,11 @@ func Initialize(flags InitFlags) {
 // -----------------------------------------------------------------------------
 
 type aProgram struct {
-	ctx   llvm.Context
-	typs  typeutil.Map // rawType -> Type
-	sizes types.Sizes  // provided by Go compiler
-	gocvt goTypes
+	ctx      llvm.Context
+	funcPtrs map[types.Type]Type
+	typs     typeutil.Map // rawType -> Type
+	sizes    types.Sizes  // provided by Go compiler
+	gocvt    goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -345,7 +346,8 @@ func NewProgram(target *Target) Program {
 	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
-		target: target, td: td, tm: tm,
+		funcPtrs: make(map[types.Type]Type),
+		target:   target, td: td, tm: tm,
 		ptrSize: ptrSize, goWordSize: goWordSize,
 		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
@@ -375,6 +377,7 @@ func NewProgram(target *Target) Program {
 	}
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
+	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI
 	return prog
 }
 
@@ -534,15 +537,10 @@ func (p Program) SetRuntime(runtime any) {
 // type or source positions. Source loaders instead call SetNativeStructFields
 // before type checking. Synthetic structs must not reuse registered fields.
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
-	p.packageSyntax.mu.Lock()
-	p.packageSyntax.typeCallConvs[typFullName] = cc
-	if isNativeCallConv(cc) {
-		if len(fields) != 0 {
-			p.packageSyntax.nativeStructVars[fields[0]] = true
-		}
-		p.packageSyntax.hasNativeTypeMetadata.Store(true)
-	}
-	p.packageSyntax.mu.Unlock()
+	syntax := p.packageSyntax
+	syntax.mu.Lock()
+	syntax.setTypeCallConv(typFullName, cc, fields)
+	syntax.mu.Unlock()
 }
 
 func (p Program) SetLinkname(name, link string) {

@@ -10,7 +10,9 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime"
 )
 
-func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, _ *abi.Type, receiver *unsafe.Pointer, in []Value) []Value {
+const useWasmReflectBridges = true
+
+func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, _ *abi.Type, receiver *unsafe.Pointer, native bool, in []Value) []Value {
 	method := receiver != nil
 	if method {
 		env = *receiver
@@ -34,12 +36,11 @@ func callProvider(ft *abi.FuncType, fn, env unsafe.Pointer, _ *abi.Type, receive
 			panic("reflect: missing WebAssembly call bridge for " + stringFor(&ft.Type))
 		}
 		entry := closure{fn: code}
-		call := *(*func(unsafe.Pointer, unsafe.Pointer, bool, *unsafe.Pointer, *unsafe.Pointer))(unsafe.Pointer(&entry))
-		call(fn, env, method || env != nil, unsafe.SliceData(args), unsafe.SliceData(results))
+		call := *(*func(unsafe.Pointer, unsafe.Pointer, bool, bool, *unsafe.Pointer, *unsafe.Pointer))(unsafe.Pointer(&entry))
+		call(fn, env, method || env != nil, native, unsafe.SliceData(args), unsafe.SliceData(results))
 	}
 	for i, typ := range tout {
-		out[i] = NewAt(toType(typ), results[i]).Elem()
-		resolveIndirectValue(&out[i], typ)
+		out[i] = valueFromCallResult(results[i], typ)
 	}
 	return out
 }
@@ -60,9 +61,10 @@ func copyWasmFuncBridge(dst, src *abi.FuncType) {
 type wasmMakeFuncData struct {
 	callback unsafe.Pointer
 	data     funcData
+	origin   *Value
 }
 
-func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsafe.Pointer) Value {
+func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsafe.Pointer, origin *Value) Value {
 	code := ft.Make_
 	if code == nil {
 		// A FuncOf signature with dynamically created parameter types cannot
@@ -71,6 +73,7 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	}
 	data := &wasmMakeFuncData{
 		callback: c.Func(wasmMakeFuncInvoke),
+		origin:   origin,
 		data: funcData{
 			ftyp: ft, tout: toRuntimeTypes(ft.Out()), fn: fn, nin: ft.InCount,
 			recoverFrom: code, recoverTo: recoverTo,
@@ -78,6 +81,13 @@ func makeProviderFunc(ft *abi.FuncType, fn func([]Value) []Value, recoverTo unsa
 	}
 	fv := &closure{fn: code, env: unsafe.Pointer(data)}
 	return Value{closureOf(ft), unsafe.Pointer(fv), flagIndir | flag(Func)}
+}
+
+func providerNativeSource(ft *abi.FuncType, entry *closure) *Value {
+	if entry.fn != nil && entry.env != nil && (entry.fn == ft.Make_ || entry.fn == c.Func(wasmReflectOnly)) {
+		return (*wasmMakeFuncData)(entry.env).origin
+	}
+	return nil
 }
 
 func wasmReflectOnly() {

@@ -15,6 +15,7 @@ type ptrtype = abi.PtrType
 type functype = abi.FuncType
 type namedclosuretype = abi.NamedClosureType
 type closurefunctype = abi.ClosureFuncType
+type qualifiedFuncType = abi.QualifiedFuncType
 type slicetype = abi.SliceType
 type chantype = abi.ChanType
 type structfield = abi.StructField

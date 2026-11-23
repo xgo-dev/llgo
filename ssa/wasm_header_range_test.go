@@ -11,6 +11,7 @@ func TestWasmHeaderStoragePolicy(t *testing.T) {
 	setTestRuntime(t, prog)
 	text, word := prog.String().ll, prog.ctx.Int64Type()
 	cell := prog.ctx.StructType([]llvm.Type{llvm.ArrayType(word, 250), text}, false)
+	rows := llvm.ArrayType(cell, 2)
 	for _, tc := range []struct {
 		name    string
 		typ     llvm.Type
@@ -25,7 +26,10 @@ func TestWasmHeaderStoragePolicy(t *testing.T) {
 		{"two_headers", llvm.ArrayType(text, 2), true},
 		{"small_struct", prog.ctx.StructType([]llvm.Type{text, text}, false), false},
 		{"single_sparse_element", llvm.ArrayType(cell, 1), false},
-		{"sparse_array_4032", llvm.ArrayType(cell, 2), true},
+		{"sparse_array_4032", rows, true},
+		{"struct_of_sparse_array", prog.ctx.StructType([]llvm.Type{rows, word}, false), true},
+		{"single_array_of_sparse_array", llvm.ArrayType(rows, 1), true},
+		{"header_with_plain_array", cell, false},
 		{"large_struct", prog.ctx.StructType([]llvm.Type{llvm.ArrayType(word, 510), text}, false), true},
 		{"many_headers", prog.ctx.StructType([]llvm.Type{llvm.ArrayType(text, 9)}, false), true},
 		{"no_headers", llvm.ArrayType(word, 1024), false},

@@ -103,6 +103,96 @@ entry:
 	}
 }
 
+func TestDiscardedWasmBoundaryResult(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		scanned bool
+		observe string
+	}{
+		{name: "private"},
+		{name: "scanned", scanned: true},
+		{name: "address_used", observe: "call void @observe(ptr %slot)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := parseAggregateIR(t, `
+%strings = type { [256 x { { ptr, i32 }, i64 }] }
+declare %strings @native()
+declare void @__llgo_clear_header_range_strings(ptr, i32)
+declare void @observe(ptr)
+define void @caller() {
+  %slot = alloca %strings
+  %result = call %strings @native()
+  store %strings %result, ptr %slot, !llgo.wasm.boundary.slot !0
+  call void @__llgo_clear_header_range_strings(ptr %slot, i32 1)
+  %unused = load %strings, ptr %slot
+  `+tc.observe+`
+  ret void
+}
+!0 = !{}`)
+			fn := mod.NamedFunction("caller")
+			entry := fn.FirstBasicBlock()
+			slot := entry.FirstInstruction()
+			call := llvm.NextInstruction(slot)
+			var reused llvm.Value
+			if tc.scanned {
+				td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
+				defer td.Dispose()
+				LowerLargeAggregates(td, mod, AggregateLoweringConfig{GoWordSize: 8, GCRoots: true, Wasm: true})
+			} else {
+				reused = TakeWasmBoundarySlot(mod.Context(), call)
+			}
+			if tc.observe != "" {
+				body := fn.String()
+				if reused != slot || !strings.Contains(body, tc.observe) || !strings.Contains(body, "@__llgo_clear_header_range_strings(ptr %slot,") {
+					t.Fatalf("the clear and observer must share the returned result slot:\n%s", body)
+				}
+			} else if !reused.IsNil() || entry.FirstInstruction() != call || llvm.NextInstruction(call) != entry.LastInstruction() {
+				t.Fatalf("discarding the result should leave only the native call and return:\n%s", fn)
+			}
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// A Wasm byval argument can supply both an entire value for a later store
+// and individual string pointers for GC roots. Leaving the whole load in SSA
+// can exceed the Wasm local-count limit at -O0.
+func TestLargeAggregateStoreWithRootProjection(t *testing.T) {
+	mod := parseAggregateIR(t, `
+%text = type { { ptr, i32 }, i64 }
+%record = type { [4097 x %text] }
+declare void @publish(ptr)
+define void @copy_and_publish(ptr %src, ptr %dst) {
+entry:
+  %value = load %record, ptr %src
+  %array = extractvalue %record %value, 0
+  %pointer = extractvalue [4097 x %text] %array, 3, 0, 0
+  call void @publish(ptr %pointer)
+  store %record %value, ptr %dst
+  ret void
+}`)
+	td := llvm.NewTargetData("e-p:32:32-i64:64-n32:64-S128")
+	defer td.Dispose()
+	cfg := AggregateLoweringConfig{GoWordSize: 8, Wasm: true}
+	LowerLargeAggregates(td, mod, cfg)
+	LowerAggregateCopies(td, mod, cfg)
+	fn := mod.NamedFunction("copy_and_publish")
+	body := fn.String()
+	for _, op := range []string{"load %record", "store %record", "load [4097 x", "store [4097 x"} {
+		if strings.Contains(body, op) {
+			t.Fatalf("whole aggregate still passes through SSA:\n%s", body)
+		}
+	}
+	if !strings.Contains(body, "@llvm.memcpy") {
+		t.Fatalf("missing the whole-record copy:\n%s", body)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLowerAggregateCopiesAllocUDebugLoc(t *testing.T) {
 	const testIR = `
 define void @copy(ptr %src, ptr %dst, ptr %other) !dbg !3 {

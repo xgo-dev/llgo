@@ -165,3 +165,37 @@ func TestNativeFunctionPointerStore(t *testing.T) {
 		}
 	}
 }
+
+func TestWasmSharedNativeFuncvalAdapters(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("p", "example.com/p")
+	body := pkg.NewFunc("use", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer body.Dispose()
+	entry := func(name string, parameter types.BasicKind) llvm.Value {
+		param := types.NewParam(token.NoPos, nil, "", types.Typ[parameter])
+		result := types.NewParam(token.NoPos, nil, "", types.Typ[types.String])
+		sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(param), types.NewTuple(result), false)
+		native := pkg.NewFunc(name, sig, CDecl)
+		dst := prog.Type(sig, GoDecl)
+		fn := body.ChangeType(dst, native.Expr)
+
+		// A repeated conversion reuses the wrapper and its native type views.
+		views := len(prog.nativeStorage)
+		again := body.ChangeType(dst, native.Expr)
+		if body.Field(again, 0).impl != body.Field(fn, 0).impl || len(prog.nativeStorage) != views {
+			t.Fatalf("repeated %s conversion created a new wrapper or storage view", name)
+		}
+		return body.Field(fn, 0).impl
+	}
+	// These calls have identical LLVM prototypes but different argument extension.
+	if entry("signed", types.Int8) == entry("unsigned", types.Uint8) {
+		t.Fatal("signed and unsigned native calls share a padded-result adapter")
+	}
+	body.Return()
+	body.EndBuild()
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}

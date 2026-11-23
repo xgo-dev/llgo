@@ -7,6 +7,10 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/ffi"
 )
 
+func ffiNativeFuncType(_ *abi.Type) *ffi.Type {
+	return ffi.TypePointer
+}
+
 func ffiWidenGoPointerStruct(ft *ffi.Type, _ *abi.Type) *ffi.Type {
 	return ft
 }

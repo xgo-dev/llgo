@@ -186,6 +186,10 @@ func TestClosurePublicFuncType(t *testing.T) {
 	if got, want := typeString(b, outer), "func(func(int) bool)"; got != want {
 		t.Fatalf("closure parameter string = %q, want %q", got, want)
 	}
+	raw := types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", inner)), nil, false)
+	if b.FuncName(outer) != b.FuncName(raw) {
+		t.Fatal("runtime function type identity depends on the physical closure representation")
+	}
 }
 
 type T int
