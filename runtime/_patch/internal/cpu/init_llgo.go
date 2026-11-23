@@ -20,6 +20,9 @@ func init() {
 	if X86.HasAVX {
 		features |= 4
 	}
+	if X86.HasAVX512F {
+		features |= 1 << 17 // YMM/ZMM register ABI, independent of archsimd.X86.AVX512().
+	}
 	llgoCPUFeatures = features | llgoArchSIMDFeatures()
 }
 
