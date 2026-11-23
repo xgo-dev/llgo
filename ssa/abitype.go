@@ -146,6 +146,11 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, pu
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
 			typ := prog.Type(equal.raw.Type, GoDecl)
 			equal = checkExpr(equal, typ.raw.Type, b)
+		} else if prog.useScalarStructAlgorithm(t) {
+			typeName, _ := ab.TypeName(t)
+			equal = b.Pkg.scalarStructEqual(t, typeName)
+			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
+			equal = checkExpr(equal, prog.Type(equalFunc, GoDecl).raw.Type, b)
 		} else {
 			equal = b.Pkg.rtEnvFunc(RuntimeSymbol(name, "structequal", "arrayequal"))
 			b.Pkg.recordAbiTypeFakeUse(global, equal.impl)
@@ -218,6 +223,82 @@ func (p Package) regularMemoryHash(size uint64) Expr {
 	return fn.Expr
 }
 
+// useScalarStructAlgorithm confines emitted code to small native structs
+// whose field operations are scalar and cannot panic. Padding is never read.
+func (p Program) useScalarStructAlgorithm(t types.Type) bool {
+	strct, ok := t.Underlying().(*types.Struct)
+	if !ok || p.target.effectiveGOARCH() == "wasm" || p.GoWordSize() != 8 ||
+		strct.NumFields() < 2 || !CanInlineStructEqual(strct, uint64(p.abi.Size(t)), p.GoWordSize()) ||
+		p.abi.IsRegularMemory(t) || p.hasLegacyNativeTypeLayout(t) || p.hasNativeTypeDirective(t) {
+		return false
+	}
+	for field := range strct.Fields() {
+		if field.Name() == "_" {
+			continue
+		}
+		switch typ := field.Type().Underlying().(type) {
+		case *types.Pointer:
+		case *types.Basic:
+			if typ.Info()&types.IsInteger == 0 && typ.Kind() != types.UnsafePointer {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (p Package) scalarStructEqual(t types.Type, typeName string) Expr {
+	name := "_llgo_equal." + typeName
+	fn := p.FuncOf(name)
+	if fn == nil {
+		fn = p.NewFunc(name, equalFunc, GoDecl)
+		p.setODRLinkage(fn.impl, llvm.WeakODRLinkage)
+		b := fn.MakeBody(1)
+		defer b.Dispose()
+		ptr := p.Prog.Pointer(p.Prog.Type(t, GoDecl))
+		left, right := b.PtrCast(ptr, fn.Param(0)), b.PtrCast(ptr, fn.Param(1))
+		result := p.Prog.BoolVal(true)
+		strct := t.Underlying().(*types.Struct)
+		for i := range strct.NumFields() {
+			field := strct.Field(i)
+			if field.Name() != "_" {
+				x, y := b.Load(b.FieldAddr(left, i)), b.Load(b.FieldAddr(right, i))
+				result = b.BinOp(token.AND, result, b.BinOp(token.EQL, x, y))
+			}
+		}
+		b.Return(result)
+		b.EndBuild()
+	}
+	return fn.Expr
+}
+
+func (p Package) scalarStructHash(t types.Type, typeName string) Expr {
+	name := "_llgo_hash." + typeName
+	fn := p.FuncOf(name)
+	if fn == nil {
+		fn = p.NewFunc(name, hashFunc, GoDecl)
+		p.setODRLinkage(fn.impl, llvm.WeakODRLinkage)
+		b := fn.MakeBody(1)
+		defer b.Dispose()
+		ptr := b.PtrCast(p.Prog.Pointer(p.Prog.Type(t, GoDecl)), fn.Param(0))
+		result := fn.Param(1)
+		strct := t.Underlying().(*types.Struct)
+		for i := range strct.NumFields() {
+			field := strct.Field(i)
+			if field.Name() != "_" {
+				// Match the generic hash used for this key through reflection.
+				hash := p.regularMemoryHash(uint64(p.Prog.abi.Size(field.Type())))
+				result = b.Call(hash, b.PtrCast(p.Prog.VoidPtr(), b.FieldAddr(ptr, i)), result)
+			}
+		}
+		b.Return(result)
+		b.EndBuild()
+	}
+	return fn.Expr
+}
+
 func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
 	prog, pkg := b.Prog, b.Pkg
 	var hash Expr
@@ -242,6 +323,9 @@ func (b Builder) abiMapHasher(key types.Type, global llvm.Value) Expr {
 				hash = pkg.rtFunc(RuntimeSymbol(name, "strhash", "f32hash", "f64hash", "c64hash", "c128hash"))
 			}
 		}
+	} else if prog.useScalarStructAlgorithm(key) {
+		name, _ := prog.abi.TypeName(key)
+		hash = pkg.scalarStructHash(key, name)
 	}
 	if !hash.IsNil() {
 		pkg.recordAbiTypeFakeUse(global, hash.impl)
