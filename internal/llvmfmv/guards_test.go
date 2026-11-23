@@ -766,3 +766,56 @@ exit:
 		t.Fatalf("second pass changed the specialized body: %v\n%s", err, m.String())
 	}
 }
+
+// A canonical AVX2 caller cannot choose the best body of a multi-feature root.
+func TestAVX2CallerPreservesWiderGuardChoice(t *testing.T) {
+	m := parseModule(t, `
+target triple = "x86_64-unknown-linux-gnu"
+declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+define void @kernel(ptr %p) {
+ %v = load <8 x i32>, ptr %p
+ %r = add <8 x i32> %v, %v
+ store <8 x i32> %r, ptr %p
+ ret void
+}
+define void @root(ptr %p) {
+ %a = call i1 @avx2()
+ br i1 %a, label %x, label %next
+x:
+ call void @kernel(ptr %p)
+ br label %next
+next:
+ %w = call i1 @wide()
+ br i1 %w, label %y, label %done
+y:
+ %v = load <16 x i32>, ptr %p
+ %r = add <16 x i32> %v, %v
+ store <16 x i32> %r, ptr %p
+ br label %done
+done:
+ ret void
+}
+define <4 x i32> @caller(<4 x i32> %v, ptr %p) {
+ %a = call i1 @avx2()
+ br i1 %a, label %yes, label %no
+yes:
+ %r = add <4 x i32> %v, %v
+ call void @root(ptr %p)
+ ret <4 x i32> %r
+no:
+ ret <4 x i32> %v
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	caller := m.NamedFunction("caller" + variantSuffix)
+	if caller.IsNil() || !strings.Contains(caller.String(), "call void @root(ptr") {
+		t.Fatalf("AVX2 caller bypassed root dispatch:\n%s", m.String())
+	}
+	both := m.NamedFunction("root" + symbolPrefix + "guard_avx2_avx512")
+	if both.IsNil() {
+		t.Fatal("missing combined guard body")
+	}
+	checkCachedGuard(t, m, featureAVX2|predicateBits[X86Query("AVX512")], both)
+}

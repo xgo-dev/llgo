@@ -294,8 +294,11 @@ Direct calls from specialized code to eligible SIMD128 functions use matching
 AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
-and indirect calls retain the original entry. AVX2 guards over scalar-signature local helpers and other guarded
-feature combinations use [local guarded specializations](#guarded-x86-feature-combinations).
+and indirect calls retain the original entry. The guard pass can specialize a
+scalar-signature local helper when it visits that call. A canonical AVX2 body
+can still call an ordinary helper. Calls from that body to a guard root with
+additional feature choices go through the root's dispatcher.
+See [local guarded specializations](#guarded-x86-feature-combinations).
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
 including when nested in arrays and structs. The compiler validates the bridge
@@ -526,8 +529,10 @@ clone specializes direct calls to the local AVX2 helper body.
 For independent guarded regions, the resolver selects the union of matching
 masks when the function has up to 16 distinct unions (including the empty
 mask). Above that limit it retains at most 14 observed masks and their full
-union. Each root can create at most 64 new bodies including helpers, its
-baseline and resolver. Wider masks receive the helper budget first. Further
+union. Each root processed by the guard pass has a budget of 64 new bodies,
+including its helpers, baseline and resolver. A staged canonical AVX2 variant
+and its baseline may each contain another guard and receive separate budgets.
+The canonical AVX2 plan accounts for its own bodies outside these budgets. Wider masks receive the helper budget first. Further
 callees keep their ordinary entry. Regions outside the selected mask retain
 their runtime checks. Local helpers share a copy for each distinct proven mask.
 

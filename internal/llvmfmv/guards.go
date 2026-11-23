@@ -307,6 +307,11 @@ type guardRoot struct {
 	masks    []uint64
 	choices  []dispatchChoice
 }
+
+func (r *guardRoot) avx2Only() bool {
+	return len(r.masks) == 1 && r.masks[0] == featureAVX2
+}
+
 type guardKey struct {
 	fn   llvm.Value
 	mask uint64
@@ -510,16 +515,22 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base", 0)
 	}
+	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
+	for i := range roots {
+		byFunction[roots[i].fn] = &roots[i]
+	}
 	// Reuse existing local bodies in the canonical AVX2 call graph, including
 	// the externally callable AVX2 entries. Allocate no additional clones.
 	if avx2 != nil {
 		for key, body := range clones {
-			if key.mask == featureAVX2 {
+			// A root with other choices must select its own best body.
+			root := byFunction[key.fn]
+			if key.mask == featureAVX2 && (root == nil || root.avx2Only()) {
 				avx2.redirectStagedCalls(key.fn, body, avx2.variants)
 			}
 		}
 		for _, root := range roots {
-			if len(root.masks) == 1 && root.masks[0] == featureAVX2 {
+			if root.avx2Only() {
 				avx2.redirectStagedCalls(root.fn, root.base, avx2.baselines)
 			}
 		}
@@ -537,10 +548,6 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 	}
 	// Keep the canonical AVX2 entry callable from separately compiled code.
 	// For public calls, cache the physical target directly in the outer slot.
-	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
-	for i := range roots {
-		byFunction[roots[i].fn] = &roots[i]
-	}
 	builder := ctx.NewBuilder()
 	defer builder.Dispose()
 	for _, site := range sites {
