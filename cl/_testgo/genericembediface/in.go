@@ -50,8 +50,13 @@ func main() {
 // CHECK: [[H_STREAM_FIELD:%.*]] = getelementptr inbounds nuw %"{{.*}}GenericServerStream[main.Request,main.Response]", ptr [[H_GENERIC_STREAM]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" %1, ptr [[H_STREAM_FIELD]]
 // CHECK: [[H_STREAM_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[H_GENERIC_STREAM]], 1
-// CHECK: [[H_SERVER_DATA:%.*]] = call ptr @"{{.*}}IfacePtrDataBuffer"(%"{{.*}}iface" [[H_REF_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[H_SERVER_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[H_REF_IFACE]], 0
+// CHECK: [[H_SERVER_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[H_REF_IFACE]], 0
+// CHECK: [[H_SERVER_ITAB_NIL:%.*]] = icmp eq ptr [[H_SERVER_ITAB]], null
+// CHECK: br i1 [[H_SERVER_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr [[H_DYN_TYPE]], ptr @_llgo_main.ReflectionServer)
+// CHECK-NEXT: unreachable
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[H_SERVER_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[H_REF_IFACE]], 1
 // CHECK: [[H_METHOD_SLOT:%.*]] = getelementptr ptr, ptr [[H_SERVER_ITAB]], i64 3
 // CHECK: [[H_METHOD:%.*]] = load ptr, ptr [[H_METHOD_SLOT]]
 // CHECK: [[H_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[H_METHOD]], 0
@@ -60,8 +65,6 @@ func main() {
 // CHECK: [[H_CALL_FN:%.*]] = extractvalue { ptr, ptr } [[H_CALL]], 0
 // CHECK: [[H_RESULT:%.*]] = call %"{{.*}}iface" [[H_CALL_FN]](ptr [[H_CALL_DATA]], %"{{.*}}iface" [[H_STREAM_IFACE]])
 // CHECK: ret %"{{.*}}iface" [[H_RESULT]]
-// CHECK: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr [[H_DYN_TYPE]], ptr @_llgo_main.ReflectionServer)
-// CHECK-NEXT: unreachable
 
 // main supplies the value implementations of ReflectionServer and ServerStream.
 // Zero-sized constants stay AllocU: boxing them would mutate the shared sentinel.
@@ -104,8 +107,11 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}String" @"{{.*}}/streamlib.(*GenericServerStream[main.Request,main.Response]).Context"(ptr %0){{.*}} {
 // CHECK: [[GP_FIELD:%.*]] = getelementptr inbounds nuw %"{{.*}}GenericServerStream[main.Request,main.Response]", ptr %0, i32 0, i32 0
 // CHECK: [[GP_IFACE:%.*]] = load %"{{.*}}iface", ptr [[GP_FIELD]]
-// CHECK: [[GP_DATA:%.*]] = call ptr @"{{.*}}IfacePtrDataBuffer"(%"{{.*}}iface" [[GP_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[GP_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[GP_IFACE]], 0
+// CHECK: [[GP_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[GP_IFACE]], 0
+// CHECK: [[GP_ITAB_NIL:%.*]] = icmp eq ptr [[GP_ITAB]], null
+// CHECK: br i1 [[GP_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[GP_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[GP_IFACE]], 1
 // CHECK: [[GP_SLOT:%.*]] = getelementptr ptr, ptr [[GP_ITAB]], i64 3
 // CHECK: [[GP_METHOD:%.*]] = load ptr, ptr [[GP_SLOT]]
 // CHECK: [[GP_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[GP_METHOD]], 0
@@ -121,8 +127,11 @@ func main() {
 // CHECK-LABEL: define linkonce %"{{.*}}String" @"{{.*}}/streamlib.GenericServerStream[main.Request,main.Response].Context"(%"{{.*}}GenericServerStream[main.Request,main.Response]" %0){{.*}} {
 // CHECK: [[GV_FIELD:%.*]] = getelementptr inbounds nuw %"{{.*}}GenericServerStream[main.Request,main.Response]", ptr {{%.*}}, i32 0, i32 0
 // CHECK: [[GV_IFACE:%.*]] = load %"{{.*}}iface", ptr [[GV_FIELD]]
-// CHECK: [[GV_DATA:%.*]] = call ptr @"{{.*}}IfacePtrDataBuffer"(%"{{.*}}iface" [[GV_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[GV_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[GV_IFACE]], 0
+// CHECK: [[GV_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[GV_IFACE]], 0
+// CHECK: [[GV_ITAB_NIL:%.*]] = icmp eq ptr [[GV_ITAB]], null
+// CHECK: br i1 [[GV_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[GV_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[GV_IFACE]], 1
 // CHECK: [[GV_SLOT:%.*]] = getelementptr ptr, ptr [[GV_ITAB]], i64 3
 // CHECK: [[GV_METHOD:%.*]] = load ptr, ptr [[GV_SLOT]]
 // CHECK: [[GV_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[GV_METHOD]], 0

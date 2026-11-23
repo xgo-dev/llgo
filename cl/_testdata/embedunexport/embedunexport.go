@@ -40,7 +40,11 @@ func NewBase(name string) *Base {
 
 // Use calls the unexported method through interface
 // CHECK-LABEL: define void @"{{.*}}.Use"(%"{{.*}}.iface" %0){{.*}} {
-// CHECK: %[[OBJ_DATA:[0-9]+]] = call ptr @"{{.*}}.IfacePtrDataBuffer"(%"{{.*}}.iface" %0, ptr %{{[0-9]+}})
+// CHECK: %[[OBJ_TAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
+// CHECK: %[[OBJ_NIL:[0-9]+]] = icmp eq ptr %[[OBJ_TAB]], null
+// CHECK: br i1 %[[OBJ_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: %[[OBJ_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 1
 // CHECK: insertvalue { ptr, ptr } %{{[0-9]+}}, ptr %[[OBJ_DATA]], 1
 func Use(obj Object) {
 	obj.setName("modified")

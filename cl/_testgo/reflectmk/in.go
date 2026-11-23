@@ -83,34 +83,66 @@ func methodByName(name string) {
 // Recover the element Type from *Point and reuse that exact interface for all
 // constructor inputs.
 // CHECK-DAG: %[[PTR_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.TypeOf(%"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.Point", ptr null })
-// CHECK-DAG: %[[PTR_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[PTR_TYPE]], ptr %{{[0-9]+}})
+// CHECK: %[[PTR_TAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[PTR_TYPE]], 0
+// CHECK: %[[PTR_NIL:[0-9]+]] = icmp eq ptr %[[PTR_TAB]], null
+// CHECK: br i1 %[[PTR_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: %[[PTR_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[PTR_TYPE]], 1
 // CHECK-DAG: %[[RT:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" %{{[0-9]+}}(ptr %{{[0-9]+}})
 
 // Each constructed type must be queried and compared back to RT. This proves
 // more than the presence of seven reflect helper calls.
 // CHECK-DAG: %[[ARRAY_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.ArrayOf(i64 1, %"{{.*}}/runtime/internal/runtime.iface" %[[RT]])
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[ARRAY_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[ARRAY_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[ARRAY_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: %[[CHAN_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.ChanOf(i64 2, %"{{.*}}/runtime/internal/runtime.iface" %[[RT]])
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[CHAN_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[CHAN_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[CHAN_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: store %"{{.*}}/runtime/internal/runtime.iface" %[[RT]], ptr %{{[0-9]+}}
 // CHECK-DAG: store %"{{.*}}/runtime/internal/runtime.iface" %[[RT]], ptr %{{[0-9]+}}
 // CHECK-DAG: %[[FUNC_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.FuncOf(%"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, i1 false)
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[FUNC_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[FUNC_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[FUNC_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: %[[MAP_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.MapOf(%"{{.*}}/runtime/internal/runtime.iface" %[[RT]], %"{{.*}}/runtime/internal/runtime.iface" %[[RT]])
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[MAP_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[MAP_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[MAP_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: %[[PTR_TO_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.PointerTo(%"{{.*}}/runtime/internal/runtime.iface" %[[RT]])
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[PTR_TO_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[PTR_TO_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[PTR_TO_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: %[[SLICE_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.SliceOf(%"{{.*}}/runtime/internal/runtime.iface" %[[RT]])
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[SLICE_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[SLICE_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[SLICE_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 // CHECK-DAG: store %"{{.*}}/runtime/internal/runtime.iface" %[[RT]], ptr %{{[0-9]+}}
 // CHECK-DAG: %[[STRUCT_TYPE:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @reflect.StructOf(%"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}})
-// CHECK-DAG: call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[STRUCT_TYPE]], ptr %{{[0-9]+}})
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[STRUCT_TYPE]], 0
+// CHECK-DAG: icmp eq ptr %{{[0-9]+}}, null
+// CHECK-DAG: br i1 %{{[0-9]+}}, label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK-DAG: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK-DAG: extractvalue {{.*}}/runtime/internal/runtime.iface %[[STRUCT_TYPE]], 1
 // CHECK-DAG: call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"
 
 // Type.Method's returned Method is stored and its Name field is what reaches

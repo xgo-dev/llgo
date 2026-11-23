@@ -59,8 +59,11 @@ func composite(v CompositeForward) Composite { return v }
 				t.Fatalf("composite forwarder lost conservative cleanup:\n%s", composite)
 			}
 			ordinary := llvmFunction(t, ir, "forwardtail.ordinary")
-			if !strings.Contains(ordinary, "IfacePtrDataBuffer") {
-				t.Fatalf("ordinary calls lost their borrowed receiver:\n%s", ordinary)
+			if strings.Contains(ordinary, "IfacePtrDataBuffer") {
+				t.Fatalf("ordinary calls must forward the raw data word, not a buffered receiver:\n%s", ordinary)
+			}
+			if !strings.Contains(ordinary, "extractvalue %\"github.com/xgo-dev/llgo/runtime/internal/runtime.iface\" %0, 1") {
+				t.Fatalf("ordinary calls lost the raw data-word receiver:\n%s", ordinary)
 			}
 		})
 	}

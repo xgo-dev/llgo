@@ -37,8 +37,11 @@ func main() {
 // run resolves Reset once, stores its code+receiver pair as the defer payload,
 // then invokes exactly that payload from cleanup under a recover frame.
 // CHECK-LABEL: define void @main.run(%"{{.*}}iface" %0){{.*}} {
-// CHECK: [[RESET_RECEIVER:%.*]] = call ptr @"{{.*}}IfacePtrData"(%"{{.*}}iface" %0)
-// CHECK-NEXT: [[RESET_ITAB:%.*]] = extractvalue %"{{.*}}iface" %0, 0
+// CHECK: [[RESET_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
+// CHECK: [[RESET_ITAB_NIL:%.*]] = icmp eq ptr [[RESET_ITAB]], null
+// CHECK: br i1 [[RESET_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[RESET_RECEIVER:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 1
 // CHECK-NEXT: [[RESET_SLOT:%.*]] = getelementptr ptr, ptr [[RESET_ITAB]], i64 3
 // CHECK-NEXT: [[RESET_METHOD:%.*]] = load ptr, ptr [[RESET_SLOT]]
 // CHECK-NEXT: [[RESET_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[RESET_METHOD]], 0

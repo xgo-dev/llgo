@@ -191,8 +191,11 @@ func makeWithFree(base int) Fn {
 // AMD64-LABEL: define i64 @"main.interface{Add(int) int}.Add$bound"(ptr nest %0, i64 %1){{.*}} {
 // CHECK: [[BOUND_IFACE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}iface" } [[BOUND_IFACE_ENV]], 0
-// CHECK: [[BOUND_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_IFACE]])
-// CHECK: [[BOUND_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_IFACE]], 0
+// CHECK: [[BOUND_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_IFACE]], 0
+// CHECK: [[BOUND_ITAB_NIL:%.*]] = icmp eq ptr [[BOUND_ITAB]], null
+// CHECK: br i1 [[BOUND_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[BOUND_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_IFACE]], 1
 // CHECK: [[BOUND_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ITAB]], i64 3
 // CHECK: [[BOUND_CODE:%.*]] = load ptr, ptr [[BOUND_SLOT]]
 // CHECK: [[BOUND_PAIR_CODE:%.*]] = insertvalue { ptr, ptr } undef, ptr [[BOUND_CODE]], 0

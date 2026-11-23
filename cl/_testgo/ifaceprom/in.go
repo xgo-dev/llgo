@@ -65,8 +65,11 @@ func main() {
 // CHECK: store %main.S %0, ptr [[S_ONE_ADDR]]
 // CHECK-NEXT: [[S_ONE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S_ONE_ADDR]], i32 0, i32 0
 // CHECK-NEXT: [[S_ONE_IFACE:%[0-9]+]] = load %"{{.*}}iface", ptr [[S_ONE_FIELD]]
-// CHECK: [[S_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[S_ONE_IFACE]])
-// CHECK: [[S_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[S_ONE_IFACE]], 0
+// CHECK: [[S_ONE_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[S_ONE_IFACE]], 0
+// CHECK: [[S_ONE_ITAB_NIL:%.*]] = icmp eq ptr [[S_ONE_ITAB]], null
+// CHECK: br i1 [[S_ONE_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[S_ONE_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[S_ONE_IFACE]], 1
 // CHECK: [[S_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[S_ONE_ITAB]], i64 3
 // CHECK: [[S_ONE_CODE:%.*]] = load ptr, ptr [[S_ONE_SLOT]]
 // CHECK: [[S_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_ONE_CODE]], 0
@@ -81,8 +84,11 @@ func main() {
 // CHECK: store %main.S %0, ptr [[S_TWO_ADDR]]
 // CHECK-NEXT: [[S_TWO_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S_TWO_ADDR]], i32 0, i32 0
 // CHECK-NEXT: [[S_TWO_IFACE:%[0-9]+]] = load %"{{.*}}iface", ptr [[S_TWO_FIELD]]
-// CHECK: [[S_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[S_TWO_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[S_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[S_TWO_IFACE]], 0
+// CHECK: [[S_TWO_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[S_TWO_IFACE]], 0
+// CHECK: [[S_TWO_ITAB_NIL:%.*]] = icmp eq ptr [[S_TWO_ITAB]], null
+// CHECK: br i1 [[S_TWO_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[S_TWO_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[S_TWO_IFACE]], 1
 // CHECK: [[S_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[S_TWO_ITAB]], i64 4
 // CHECK: [[S_TWO_CODE:%.*]] = load ptr, ptr [[S_TWO_SLOT]]
 // CHECK: [[S_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[S_TWO_CODE]], 0
@@ -120,31 +126,17 @@ func main() {
 // CHECK: store %"{{.*}}iface" [[MAIN_IFACE]], ptr [[S_IFACE_FIELD:%.*]]
 // Direct s.I.one uses slot 3 and compares that call result with 1.
 // CHECK: [[DIRECT_ONE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
-// CHECK: [[DIRECT_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[DIRECT_ONE_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[DIRECT_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[DIRECT_ONE_IFACE]], 0
-// CHECK: [[DIRECT_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[DIRECT_ONE_ITAB]], i64 3
-// CHECK: [[DIRECT_ONE_CODE:%.*]] = load ptr, ptr [[DIRECT_ONE_SLOT]]
-// CHECK: [[DIRECT_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[DIRECT_ONE_CODE]], 0
-// CHECK: [[DIRECT_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[DIRECT_ONE_PAIR_0]], ptr [[DIRECT_ONE_DATA]], 1
-// CHECK: [[DIRECT_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 1
-// CHECK: [[DIRECT_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 0
-// CHECK: [[DIRECT_ONE_RESULT:%.*]] = call i64 [[DIRECT_ONE_CALL_CODE]](ptr [[DIRECT_ONE_CALL_DATA]])
-// CHECK: [[DIRECT_ONE_BAD:%.*]] = icmp ne i64 [[DIRECT_ONE_RESULT]], 1
-// CHECK: br i1 [[DIRECT_ONE_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[DIRECT_ONE_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[DIRECT_ONE_IFACE]], 0
+// CHECK: [[DIRECT_ONE_ITAB_NIL:%.*]] = icmp eq ptr [[DIRECT_ONE_ITAB]], null
+// CHECK: br i1 [[DIRECT_ONE_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+
 // Promoted s.one extracts the embedded interface and still uses slot 3.
 // CHECK: [[PROMOTED_ONE_S:%.*]] = load %main.S, ptr %{{.*}}
 // CHECK: [[PROMOTED_ONE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_ONE_S]], 0
-// CHECK: [[PROMOTED_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[PROMOTED_ONE_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[PROMOTED_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[PROMOTED_ONE_IFACE]], 0
-// CHECK: [[PROMOTED_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[PROMOTED_ONE_ITAB]], i64 3
-// CHECK: [[PROMOTED_ONE_CODE:%.*]] = load ptr, ptr [[PROMOTED_ONE_SLOT]]
-// CHECK: [[PROMOTED_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PROMOTED_ONE_CODE]], 0
-// CHECK: [[PROMOTED_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[PROMOTED_ONE_PAIR_0]], ptr [[PROMOTED_ONE_DATA]], 1
-// CHECK: [[PROMOTED_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 1
-// CHECK: [[PROMOTED_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 0
-// CHECK: [[PROMOTED_ONE_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CALL_CODE]](ptr [[PROMOTED_ONE_CALL_DATA]])
-// CHECK: [[PROMOTED_ONE_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_RESULT]], 1
-// CHECK: br i1 [[PROMOTED_ONE_BAD]], label %{{.*}}, label %{{.*}}
+// CHECK: [[PROMOTED_ONE_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[PROMOTED_ONE_IFACE]], 0
+// CHECK: [[PROMOTED_ONE_ITAB_NIL:%.*]] = icmp eq ptr [[PROMOTED_ONE_ITAB]], null
+// CHECK: br i1 [[PROMOTED_ONE_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+
 // Both one method values first validate and retain their originating interfaces.
 // CHECK: [[ONE_CLOSURE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
 // CHECK: [[ONE_CLOSURE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[ONE_CLOSURE_IFACE]])
@@ -155,10 +147,71 @@ func main() {
 // CHECK: [[PROMOTED_ONE_CLOSURE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]])
 // CHECK: [[PROMOTED_ONE_CLOSURE_OK:%.*]] = icmp ne ptr [[PROMOTED_ONE_CLOSURE_TYPE]], null
 // CHECK: br i1 [[PROMOTED_ONE_CLOSURE_OK]], label %{{.*}}, label %{{.*}}
+
 // Direct and promoted two calls both use slot 4 and compare the returned string with "two".
 // CHECK: [[DIRECT_TWO_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
-// CHECK: [[DIRECT_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[DIRECT_TWO_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[DIRECT_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[DIRECT_TWO_IFACE]], 0
+// CHECK: [[DIRECT_TWO_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[DIRECT_TWO_IFACE]], 0
+// CHECK: [[DIRECT_TWO_ITAB_NIL:%.*]] = icmp eq ptr [[DIRECT_TWO_ITAB]], null
+// CHECK: br i1 [[DIRECT_TWO_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+
+// CHECK: [[PROMOTED_TWO_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_TWO_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_S]], 0
+// CHECK: [[PROMOTED_TWO_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[PROMOTED_TWO_IFACE]], 0
+// CHECK: [[PROMOTED_TWO_ITAB_NIL:%.*]] = icmp eq ptr [[PROMOTED_TWO_ITAB]], null
+// CHECK: br i1 [[PROMOTED_TWO_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+
+// CHECK: [[TWO_CLOSURE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[TWO_CLOSURE_IFACE]])
+
+// CHECK: [[PROMOTED_TWO_CLOSURE_S:%.*]] = load %main.S, ptr %{{.*}}
+// CHECK: [[PROMOTED_TWO_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_CLOSURE_S]], 0
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]])
+
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[DIRECT_ONE_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[DIRECT_ONE_IFACE]], 1
+// CHECK: [[DIRECT_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[DIRECT_ONE_ITAB]], i64 3
+// CHECK: [[DIRECT_ONE_CODE:%.*]] = load ptr, ptr [[DIRECT_ONE_SLOT]]
+// CHECK: [[DIRECT_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[DIRECT_ONE_CODE]], 0
+// CHECK: [[DIRECT_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[DIRECT_ONE_PAIR_0]], ptr [[DIRECT_ONE_DATA]], 1
+// CHECK: [[DIRECT_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 1
+// CHECK: [[DIRECT_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[DIRECT_ONE_PAIR]], 0
+// CHECK: [[DIRECT_ONE_RESULT:%.*]] = call i64 [[DIRECT_ONE_CALL_CODE]](ptr [[DIRECT_ONE_CALL_DATA]])
+// CHECK: [[DIRECT_ONE_BAD:%.*]] = icmp ne i64 [[DIRECT_ONE_RESULT]], 1
+// CHECK: br i1 [[DIRECT_ONE_BAD]], label %{{.*}}, label %{{.*}}
+
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[PROMOTED_ONE_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[PROMOTED_ONE_IFACE]], 1
+// CHECK: [[PROMOTED_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[PROMOTED_ONE_ITAB]], i64 3
+// CHECK: [[PROMOTED_ONE_CODE:%.*]] = load ptr, ptr [[PROMOTED_ONE_SLOT]]
+// CHECK: [[PROMOTED_ONE_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PROMOTED_ONE_CODE]], 0
+// CHECK: [[PROMOTED_ONE_PAIR:%.*]] = insertvalue { ptr, ptr } [[PROMOTED_ONE_PAIR_0]], ptr [[PROMOTED_ONE_DATA]], 1
+// CHECK: [[PROMOTED_ONE_CALL_DATA:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 1
+// CHECK: [[PROMOTED_ONE_CALL_CODE:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_PAIR]], 0
+// CHECK: [[PROMOTED_ONE_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CALL_CODE]](ptr [[PROMOTED_ONE_CALL_DATA]])
+// CHECK: [[PROMOTED_ONE_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_RESULT]], 1
+// CHECK: br i1 [[PROMOTED_ONE_BAD]], label %{{.*}}, label %{{.*}}
+
+// The four late closure paths store those same interfaces into their bound environments.
+// CHECK: store %"{{.*}}iface" [[ONE_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr [[ONE_BOUND_ENV:%.*]], 1
+// CHECK: [[ONE_BOUND_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 1
+// CHECK: [[ONE_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 0
+// CHECK: [[ONE_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[ONE_BOUND_CODE_RAW]])
+// ARM64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr swiftself [[ONE_BOUND_CALL_ENV]])
+// AMD64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr nest [[ONE_BOUND_CALL_ENV]])
+// CHECK: [[ONE_BOUND_BAD:%.*]] = icmp ne i64 [[ONE_BOUND_RESULT]], 1
+
+// CHECK: store %"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]], ptr %{{.*}}
+// CHECK: [[PROMOTED_ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %{{.*}}, 1
+// CHECK: [[PROMOTED_ONE_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 1
+// CHECK: [[PROMOTED_ONE_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 0
+// CHECK: [[PROMOTED_ONE_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_ONE_CODE_RAW]])
+// ARM64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr swiftself [[PROMOTED_ONE_BOUND_ENV]])
+// AMD64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr nest [[PROMOTED_ONE_BOUND_ENV]])
+// CHECK: [[PROMOTED_ONE_BOUND_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_BOUND_RESULT]], 1
+
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[DIRECT_TWO_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[DIRECT_TWO_IFACE]], 1
 // CHECK: [[DIRECT_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[DIRECT_TWO_ITAB]], i64 4
 // CHECK: [[DIRECT_TWO_CODE:%.*]] = load ptr, ptr [[DIRECT_TWO_SLOT]]
 // CHECK: [[DIRECT_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[DIRECT_TWO_CODE]], 0
@@ -169,10 +222,9 @@ func main() {
 // CHECK: [[DIRECT_TWO_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[DIRECT_TWO_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
 // CHECK: [[DIRECT_TWO_BAD:%.*]] = xor i1 [[DIRECT_TWO_EQ]], true
 // CHECK: br i1 [[DIRECT_TWO_BAD]], label %{{.*}}, label %{{.*}}
-// CHECK: [[PROMOTED_TWO_S:%.*]] = load %main.S, ptr %{{.*}}
-// CHECK: [[PROMOTED_TWO_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_S]], 0
-// CHECK: [[PROMOTED_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[PROMOTED_TWO_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[PROMOTED_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[PROMOTED_TWO_IFACE]], 0
+
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[PROMOTED_TWO_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[PROMOTED_TWO_IFACE]], 1
 // CHECK: [[PROMOTED_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[PROMOTED_TWO_ITAB]], i64 4
 // CHECK: [[PROMOTED_TWO_CODE:%.*]] = load ptr, ptr [[PROMOTED_TWO_SLOT]]
 // CHECK: [[PROMOTED_TWO_PAIR_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PROMOTED_TWO_CODE]], 0
@@ -183,28 +235,7 @@ func main() {
 // CHECK: [[PROMOTED_TWO_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[PROMOTED_TWO_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
 // CHECK: [[PROMOTED_TWO_BAD:%.*]] = xor i1 [[PROMOTED_TWO_EQ]], true
 // CHECK: br i1 [[PROMOTED_TWO_BAD]], label %{{.*}}, label %{{.*}}
-// CHECK: [[TWO_CLOSURE_IFACE:%.*]] = load %"{{.*}}iface", ptr %{{.*}}
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[TWO_CLOSURE_IFACE]])
-// CHECK: [[PROMOTED_TWO_CLOSURE_S:%.*]] = load %main.S, ptr %{{.*}}
-// CHECK: [[PROMOTED_TWO_CLOSURE_IFACE:%.*]] = extractvalue %main.S [[PROMOTED_TWO_CLOSURE_S]], 0
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]])
-// The four late closure paths store those same interfaces into their bound environments.
-// CHECK: store %"{{.*}}iface" [[ONE_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr [[ONE_BOUND_ENV:%.*]], 1
-// CHECK: [[ONE_BOUND_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 1
-// CHECK: [[ONE_BOUND_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[ONE_BOUND]], 0
-// CHECK: [[ONE_BOUND_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[ONE_BOUND_CODE_RAW]])
-// ARM64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr swiftself [[ONE_BOUND_CALL_ENV]])
-// AMD64: [[ONE_BOUND_RESULT:%.*]] = call i64 [[ONE_BOUND_CODE]](ptr nest [[ONE_BOUND_CALL_ENV]])
-// CHECK: [[ONE_BOUND_BAD:%.*]] = icmp ne i64 [[ONE_BOUND_RESULT]], 1
-// CHECK: store %"{{.*}}iface" [[PROMOTED_ONE_CLOSURE_IFACE]], ptr %{{.*}}
-// CHECK: [[PROMOTED_ONE_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.one$bound", ptr undef }, ptr %{{.*}}, 1
-// CHECK: [[PROMOTED_ONE_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 1
-// CHECK: [[PROMOTED_ONE_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_ONE_BOUND]], 0
-// CHECK: [[PROMOTED_ONE_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PROMOTED_ONE_CODE_RAW]])
-// ARM64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr swiftself [[PROMOTED_ONE_BOUND_ENV]])
-// AMD64: [[PROMOTED_ONE_BOUND_RESULT:%.*]] = call i64 [[PROMOTED_ONE_CODE]](ptr nest [[PROMOTED_ONE_BOUND_ENV]])
-// CHECK: [[PROMOTED_ONE_BOUND_BAD:%.*]] = icmp ne i64 [[PROMOTED_ONE_BOUND_RESULT]], 1
+
 // CHECK: store %"{{.*}}iface" [[TWO_CLOSURE_IFACE]], ptr %{{.*}}
 // CHECK: [[TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
 // CHECK: [[TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[TWO_BOUND]], 1
@@ -213,6 +244,7 @@ func main() {
 // ARM64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[TWO_BOUND_CODE]](ptr swiftself [[TWO_BOUND_ENV]])
 // AMD64: [[TWO_BOUND_RESULT:%.*]] = call %"{{.*}}String" [[TWO_BOUND_CODE]](ptr nest [[TWO_BOUND_ENV]])
 // CHECK: [[TWO_BOUND_EQ:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.StringEqual"(%"{{.*}}String" [[TWO_BOUND_RESULT]], %"{{.*}}String" { ptr @{{.*}}, i64 3 })
+
 // CHECK: store %"{{.*}}iface" [[PROMOTED_TWO_CLOSURE_IFACE]], ptr %{{.*}}
 // CHECK: [[PROMOTED_TWO_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.I.two$bound", ptr undef }, ptr %{{.*}}, 1
 // CHECK: [[PROMOTED_TWO_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[PROMOTED_TWO_BOUND]], 1
@@ -226,8 +258,11 @@ func main() {
 // AMD64-LABEL: define i64 @"main.I.one$bound"(ptr nest %0){{.*}} {
 // CHECK: [[BOUND_ONE_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_ONE_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_ONE_ENV]], 0
-// CHECK: [[BOUND_ONE_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}iface" [[BOUND_ONE_IFACE]])
-// CHECK: [[BOUND_ONE_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_ONE_IFACE]], 0
+// CHECK: [[BOUND_ONE_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_ONE_IFACE]], 0
+// CHECK: [[BOUND_ONE_ITAB_NIL:%.*]] = icmp eq ptr [[BOUND_ONE_ITAB]], null
+// CHECK: br i1 [[BOUND_ONE_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[BOUND_ONE_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_ONE_IFACE]], 1
 // CHECK: [[BOUND_ONE_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_ONE_ITAB]], i64 3
 // CHECK: [[BOUND_ONE_CODE:%.*]] = load ptr, ptr [[BOUND_ONE_SLOT]]
 // CHECK-NEXT: [[BOUND_ONE_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[BOUND_ONE_CODE]], 0
@@ -244,8 +279,11 @@ func main() {
 // AMD64-LABEL: define %"{{.*}}/runtime/internal/runtime.String" @"main.I.two$bound"(ptr nest %0){{.*}} {
 // CHECK: [[BOUND_TWO_ENV:%[0-9]+]] = load { %"{{.*}}iface" }, ptr %0
 // CHECK: [[BOUND_TWO_IFACE:%.*]] = extractvalue { %"{{.*}}iface" } [[BOUND_TWO_ENV]], 0
-// CHECK: [[BOUND_TWO_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}iface" [[BOUND_TWO_IFACE]], ptr %{{[0-9]+}})
-// CHECK: [[BOUND_TWO_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[BOUND_TWO_IFACE]], 0
+// CHECK: [[BOUND_TWO_ITAB:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_TWO_IFACE]], 0
+// CHECK: [[BOUND_TWO_ITAB_NIL:%.*]] = icmp eq ptr [[BOUND_TWO_ITAB]], null
+// CHECK: br i1 [[BOUND_TWO_ITAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[BOUND_TWO_DATA:%.*]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[BOUND_TWO_IFACE]], 1
 // CHECK: [[BOUND_TWO_SLOT:%.*]] = getelementptr ptr, ptr [[BOUND_TWO_ITAB]], i64 4
 // CHECK: [[BOUND_TWO_CODE:%.*]] = load ptr, ptr [[BOUND_TWO_SLOT]]
 // CHECK-NEXT: [[BOUND_TWO_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[BOUND_TWO_CODE]], 0

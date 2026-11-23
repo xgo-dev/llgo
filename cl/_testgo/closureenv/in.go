@@ -40,7 +40,11 @@ package main
 // AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest
 // CHECK: [[IB_ENV:%[0-9]+]] = load { %"{{.*}}/runtime/internal/runtime.iface" }, ptr %{{[0-9]+}}
 // CHECK-NEXT: [[IB_IFACE:%[0-9]+]] = extractvalue { %"{{.*}}/runtime/internal/runtime.iface" } [[IB_ENV]], 0
-// CHECK-NEXT: [[IB_DATA:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrData"(%"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]])
+// CHECK: [[IB_TAB:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], 0
+// CHECK: [[IB_NIL:%[0-9]+]] = icmp eq ptr [[IB_TAB]], null
+// CHECK: br i1 [[IB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: [[IB_DATA:%[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" [[IB_IFACE]], 1
 // CHECK: [[IB_METHOD:%[0-9]+]] = load ptr, ptr %{{[0-9]+}}
 // CHECK: [[IB_PAIR0:%[0-9]+]] = insertvalue { ptr, ptr } undef, ptr [[IB_METHOD]], 0
 // CHECK-NEXT: [[IB_PAIR:%[0-9]+]] = insertvalue { ptr, ptr } [[IB_PAIR0]], ptr [[IB_DATA]], 1

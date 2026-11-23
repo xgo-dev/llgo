@@ -2724,14 +2724,16 @@ func truncate(addr unsafe.Pointer, bits uintptr) unsafe.Pointer {
 
 // v is a method receiver. Store at p the word which is used to
 // encode that receiver at the start of the argument list.
-// Reflect uses the "interface" calling convention for
-// methods, which always uses one word to record the receiver.
+// Interface method entries take the raw interface data word as their
+// receiver argument (see runtime.NewItab), so the word is forwarded as-is;
+// concrete-type methods keep the one-word-receiver wrapper, which expects a
+// pointer to the receiver value.
 func storeRcvr(v Value, p unsafe.Pointer) {
 	t := v.typ()
 	if t.Kind() == abi.Interface {
 		// the interface data word becomes the receiver word
 		iface := (*nonEmptyInterface)(v.ptr)
-		*(*unsafe.Pointer)(p) = ifacePtrData(iface)
+		*(*unsafe.Pointer)(p) = iface.word
 	} else if v.flag&flagIndir != 0 {
 		if ifaceIndir(t) {
 			*(*unsafe.Pointer)(p) = v.ptr
@@ -2749,13 +2751,6 @@ func storeRcvr(v Value, p unsafe.Pointer) {
 			*(*unsafe.Pointer)(p) = v.ptr
 		}
 	}
-}
-
-func ifacePtrData(i *nonEmptyInterface) unsafe.Pointer {
-	if runtime.DirectIfaceData(i.itab.typ) {
-		return unsafe.Pointer(&i.word)
-	}
-	return i.word
 }
 
 var stringType = rtypeOf("")

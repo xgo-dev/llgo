@@ -213,8 +213,11 @@ type M interface {
 // CHECK: call i64 @main.T6.Invoke(%main.T6 %[[T6_LOADED]])
 
 // CHECK-LABEL: define void @main.invoke(%"{{.*}}/runtime/internal/runtime.iface" %0){{.*}} {
-// CHECK: %[[INVOKE_DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %0, ptr %{{[0-9]+}})
 // CHECK: %[[INVOKE_TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 0
+// CHECK: %[[INVOKE_TYPE_NIL:[0-9]+]] = icmp eq ptr %[[INVOKE_TYPE]], null
+// CHECK: br i1 %[[INVOKE_TYPE_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: %[[INVOKE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %0, 1
 // CHECK: %[[INVOKE_SLOT:[0-9]+]] = getelementptr ptr, ptr %[[INVOKE_TYPE]], i64 3
 // CHECK: %[[INVOKE_METHOD:[0-9]+]] = load ptr, ptr %[[INVOKE_SLOT]]
 // CHECK: %[[INVOKE_PAIR0:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[INVOKE_METHOD]], 0

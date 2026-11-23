@@ -16,13 +16,15 @@ _llgo_iface$anEWstLioBmxcO9rxTXClbAzDIEQLw2tApwq0mcSt88$imethods:
 _llgo_itab$NL8p7q7SARa64DvUmDjl_oDf37OvD-BZTHhiszlZVZ8:
     _llgo_iface$anEWstLioBmxcO9rxTXClbAzDIEQLw2tApwq0mcSt88
     _llgo_main.T
-    main.(*T).M
+    main.T.M$dfn
 _llgo_main.T:
     *_llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
 main.(*T).M:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
     github.com/xgo-dev/llgo/runtime/internal/runtime.PanicWrapNilPointer
+    main.T.M
+main.T.M$dfn:
     main.T.M
 main.init:
     main.init$guard
@@ -31,7 +33,7 @@ main.main:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.use
 main.use:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 
 [UseIface]
 main.main:

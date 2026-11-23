@@ -71,14 +71,16 @@ func main() {
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP0:[0-9]+]] = alloca ptr, align 8
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.iface" @main.ReadFile(%"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB0]], i64 7 })
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], ptr %[[TMP0]])
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 0
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr ptr, ptr %[[TMP3]], i64 3
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 0
+// CHECK-NEXT:   %[[TMP2_NIL:[0-9]+]] = icmp eq ptr %[[TMP2]], null
+// CHECK-NEXT:   br i1 %[[TMP2_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 1
+// CHECK-NEXT:   %[[TMP4:[0-9]+]] = getelementptr ptr, ptr %[[TMP2]], i64 3
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = load ptr, ptr %[[TMP4]], align 8
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP5]], 0
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP6]], ptr %[[TMP2]], 1
+// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP6]], ptr %[[TMP3]], 1
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 1
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = extractvalue { ptr, ptr } %[[TMP7]], 0
 // CHECK-NEXT:   call void %[[TMP9]](ptr %[[TMP8]], { ptr, ptr } { ptr @"main.main$1", ptr null })

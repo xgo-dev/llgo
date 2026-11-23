@@ -39,7 +39,7 @@ main.main:
     llvm.memset.p0.i64
     main.useInt
 main.useInt:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 
 [UseIface]
 main.main:
