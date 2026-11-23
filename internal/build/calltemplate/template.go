@@ -67,6 +67,11 @@ func (b *Bindings) Rewrite(roots []*packages.Package, formats bool) (map[*types.
 	// selecting that candidate recursively.
 	protected := make(map[*types.Func]bool)
 	providers := make(map[*types.Package]bool)
+	for _, group := range b.generated {
+		for fn := range group.candidates {
+			delete(r.candidates, fn)
+		}
+	}
 	for fn, candidates := range r.candidates {
 		providers[fn.Pkg()] = true
 		protected[fn] = true

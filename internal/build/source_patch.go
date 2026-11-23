@@ -127,11 +127,13 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		out       = current
 		changed   bool
 		patchSrcs = make(map[string]struct {
-			filename string
-			data     []byte
+			filename  string
+			data      []byte
+			forwarded bool
 		})
-		skipAll bool
-		skips   = make(map[string]struct{})
+		skipAll   bool
+		skips     = make(map[string]struct{})
+		templates = make(map[string][]string)
 	)
 	readOverlay := func(filename string) ([]byte, error) {
 		if out != nil {
@@ -197,11 +199,16 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			formatSource = directives.formatSource
 		}
 		patchSrcs[name] = struct {
-			filename string
-			data     []byte
+			filename  string
+			data      []byte
+			forwarded bool
 		}{
 			filename,
-			buildInjectedSourcePatchFile(filename, src),
+			buildInjectedSourcePatchFile(filename, sourceWithoutTemplateStubs(src, directives.templateSpans)),
+			len(directives.templateSpans) != 0,
+		}
+		for name, docs := range directives.templates {
+			templates[name] = append(templates[name], docs...)
 		}
 		if directives.skipAll {
 			skipAll = true
@@ -246,6 +253,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 	}
 
 	var files []string
+	templateEntries := templateNames(templates)
 	if skipAll {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {
@@ -275,7 +283,7 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			out[filename] = stub
 			changed = true
 		}
-	} else if len(skips) != 0 {
+	} else if len(skips) != 0 || len(templates) != 0 {
 		for _, entry := range srcEntries {
 			if entry.IsDir() {
 				continue
@@ -296,12 +304,19 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			if err != nil {
 				return false, nil, nil, fmt.Errorf("read stdlib source file %s: %w", filename, err)
 			}
-			if !sourcePatchMayContainSkip(src, skips) {
-				continue
+			filtered, changedFile := src, false
+			if sourcePatchMayContainSkip(src, skips) {
+				filtered, changedFile, err = filterSourcePatchFile(src, skips)
+				if err != nil {
+					return false, nil, nil, fmt.Errorf("filter stdlib source file %s: %w", filename, err)
+				}
 			}
-			filtered, changedFile, err := filterSourcePatchFile(src, skips)
-			if err != nil {
-				return false, nil, nil, fmt.Errorf("filter stdlib source file %s: %w", filename, err)
+			if sourcePatchMayContainSkip(filtered, templateEntries) {
+				annotated, applied, err := annotateSourceTemplates(filtered, templates)
+				if err != nil {
+					return false, nil, nil, fmt.Errorf("annotate stdlib source file %s: %w", filename, err)
+				}
+				filtered, changedFile = annotated, changedFile || applied
 			}
 			if !changedFile {
 				continue
@@ -339,9 +354,20 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 	}
 	for name, src := range patchSrcs {
 		target := filepath.Join(srcDir, "z_llgo_patch_"+name)
+		if sourcePatchMayContainSkip(src.data, templateEntries) {
+			annotated, applied, err := annotateSourceTemplates(src.data, templates)
+			if err != nil {
+				return false, nil, nil, fmt.Errorf("annotate source patch %s: %w", src.filename, err)
+			}
+			src.data, src.forwarded = annotated, src.forwarded || applied
+		}
 		ensureOverlay()
 		out[target] = src.data
-		files = append(files, src.filename)
+		if src.forwarded {
+			files = append(files, target)
+		} else {
+			files = append(files, src.filename)
+		}
 		changed = true
 	}
 	if fsSnapshot != nil {
@@ -476,9 +502,11 @@ func packageStubSource(src []byte) ([]byte, error) {
 }
 
 type sourcePatchDirectives struct {
-	skipAll      bool
-	skips        map[string]struct{}
-	formatSource string
+	skipAll       bool
+	skips         map[string]struct{}
+	formatSource  string
+	templates     map[string][]string
+	templateSpans []sourcePatchSpan
 }
 
 func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
@@ -487,7 +515,7 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 	if err != nil {
 		return sourcePatchDirectives{}, err
 	}
-	d := sourcePatchDirectives{skips: make(map[string]struct{})}
+	d := sourcePatchDirectives{skips: make(map[string]struct{}), templates: make(map[string][]string)}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
 			if item, ok := directive.Parse(comment); ok && item.Name == "llgointernal:template:source" {
@@ -513,6 +541,14 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 		}
 	}
 	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body == nil && fn.Recv == nil {
+			if docs := templateDocs(fn.Doc); len(docs) != 0 {
+				name := fn.Name.Name
+				d.templates[name] = append(d.templates[name], docs...)
+				d.templateSpans = append(d.templateSpans, nodeAndCommentsSpans(fset.File(fn.Pos()), fn)...)
+				continue
+			}
+		}
 		for _, name := range declPatchKeys(decl) {
 			d.skips[name] = struct{}{}
 		}

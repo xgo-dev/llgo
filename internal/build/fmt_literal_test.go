@@ -65,7 +65,7 @@ func testFormatBindings(t *testing.T, prog *ssa.Program) *calltemplate.Bindings 
 			continue
 		}
 		p := fn.Signature().Params()
-		fmt.Fprintf(&source, "//llgointernal:template:bind %s gofmt args=%s", name, p.At(p.Len()-1).Name())
+		fmt.Fprintf(&source, "//llgointernal:template:gofmt args=%s", p.At(p.Len()-1).Name())
 		switch name {
 		case "Printf":
 			fmt.Fprintf(&source, " format=%s result=stdout literal=llgoPrintfLiteral scalar=llgoPrintfScalars", p.At(0).Name())
@@ -76,7 +76,7 @@ func testFormatBindings(t *testing.T, prog *ssa.Program) *calltemplate.Bindings 
 		case "Sprintln":
 			source.WriteString(" scalar=llgoSprintfScalars")
 		}
-		source.WriteByte('\n')
+		fmt.Fprintf(&source, "\nfunc %s%s\n", name, strings.TrimPrefix(fn.Signature().String(), "func"))
 	}
 	file, err := parser.ParseFile(fset, "templates.go", source.String(), parser.ParseComments)
 	if err != nil {

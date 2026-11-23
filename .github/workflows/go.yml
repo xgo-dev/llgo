@@ -454,22 +454,24 @@ jobs:
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
-            -coverpkg=./ssa,./internal/build/...,./internal/crosscompile,./cmd/internal/flags,./internal/cabi \
-            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports|BuiltinFormatSource|DiscardableJSONInit|JSONExportGuard|JSONV2Initializers|RewriteBinaryCodecs|RewriteJSONMarshal|RewriteJSONDecode|ConfigureCodecInits|DeferredErrorType|EntryJSONUses|StatelessTokenizerHandle|TypedJSONSupport|EmbeddedPrintfFloat|IntegerPrintfFormat|EmbeddedSizePruningConfig|SpecializeScalarFormats|ScalarFormatsRequireKnownArgumentStorage|ConfigureWasmRuntimeFree|CanOmitWASIArgs|WasmFSSnapshot|EmscriptenMinifierDriver|EmscriptenScheduler|OptionalInitializers|ConfigureDarwinExecutableCwd|DarwinSymbol|SymbolEntryReservation|SharedSymbolEntryReservation)' \
+            -coverpkg=./ssa,./internal/build/...,./internal/crosscompile,./cmd/internal/flags,./internal/cabi,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile \
+            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports|BuiltinFormatSource|DiscardableJSONInit|JSONExportGuard|JSONV2Initializers|RewriteJSONTemplates|ConfigureCodecInits|DeferredErrorType|EntryJSONUses|StatelessTokenizerHandle|TypedJSONSupport|EmbeddedPrintfFloat|IntegerPrintfFormat|EmbeddedSizePruningConfig|SpecializeScalarFormats|ScalarFormatsRequireKnownArgumentStorage|ConfigureWasmRuntimeFree|CanOmitWASIArgs|WasmFSSnapshot|EmscriptenMinifierDriver|EmscriptenScheduler|OptionalInitializers|ConfigureDarwinExecutableCwd|DarwinSymbol|SymbolEntryReservation|SharedSymbolEntryReservation)' \
             ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 5m -covermode=atomic \
             -coverprofile=coverage-dev-size-codecs.txt \
-            ./internal/build/calltemplate
+            ./internal/build/calltemplate \
+            github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile \
+            github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile
 
           native_cover="$(mktemp -d)"
-          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile \
             -o "$native_cover/llgo" ./cmd/llgo
           echo "LLGO_SIZE_COVER_BIN=$native_cover/llgo" >> "$GITHUB_ENV"
           GOCOVERDIR="$native_cover" python3 test/sizebuild/runtest.py --target=native --llgo "$native_cover/llgo"
           go tool covdata textfmt -i="$native_cover" -o=coverage-dev-native-size.txt \
-            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
@@ -513,7 +515,7 @@ jobs:
           esp_cover="$(mktemp -d)"
           GOCOVERDIR="$esp_cover" python3 test/sizebuild/runtest.py --target=esp32c3 --llgo "$LLGO_SIZE_COVER_BIN" "${roots[@]}"
           go tool covdata textfmt -i="$esp_cover" -o=coverage-dev-esp32c3-size.txt \
-            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile
 
       - name: Upload dev LTO GlobalDCE coverage reports to Codecov
         continue-on-error: true

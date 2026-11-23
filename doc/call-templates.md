@@ -33,17 +33,22 @@ The `fmt` source patch binds the standard entry points by name. LLGo derives the
 - Go formatting uses the constant format and static operand types to emit typed calls for `Printf`, `Sprintf`, `Appendf`, and `Fprintf` with a standard `*os.File`. It supports sequential boolean, integer and string operands, escaped percent signs, literal width and zero padding. Calls using dynamic formats, custom formatting methods or unsupported verbs keep the existing path.
 - C formatting folds C string literals and matching 32-bit integer constants into a constant format, with remaining operands forwarded using `__llgo_va_list`. A shared literal stays in the argument list when substituting it would duplicate its bytes. The original libc call handles output, truncation and return values. Positional arguments, dynamic widths and unsupported format syntax keep the original call.
 
-
 ## Source-patch templates
 
-A standard-library patch can bind a typed implementation to an existing declaration. The implementation's signature uses the same matching rules as `//llgo:template`. Format bindings also support a named format parameter and variadic argument list.
+A source patch can declare a template on a bodyless function to attach the directive to the selected standard-library declaration. For example, the binary patch uses the ordinary typed template syntax.
 
 ```go
-//llgointernal:template:bind Size any helper=llgoSize body=llgoSizeBody
-//llgointernal:template:bind Read any fallback
-//llgointernal:template:bind Appendf gofmt format=format args=a result=append
+//llgo:template llgoSize
+func Size(v any) int
+
+func llgoSize[T any](v T) int { return Size(v) }
 ```
 
-An `any` body is a Go string constant interpreted at compile time using `text/template`. The engine creates a caller-local function with the selected signature and gives its arguments the names `a0`, `a1`, and so on. The body can inspect instantiated argument types, array lengths, field names and tags, and value or pointer method sets. It can emit shared typed helper functions and decline a call with `reject`. Generated source passes the ordinary Go type checker before it is bound to any call.
+The binary and JSON patches supply compile-time Go generators for their structural candidates. The compiler selects candidates using their typed signatures, and the generators inspect concrete Go types and emit type-checked helpers. These generators run for Full LTO size builds when all uses of the provider's entries are supported in the executable. Unsupported shapes, indirect calls and linker aliases keep the original implementations. Only the executable cache records the generated helpers.
 
-In a Full LTO size build, a provider's bindings apply when all uses of its declared entries can be specialized in the executable package. An indirect call, a linker alias, or an entry marked `fallback` keeps the provider's generic implementation. The patch supplies the binary wire layout and JSON codec rules. The generated code and cache records belong to the executable package, so other clients can reuse the same patched library archive.
+Go formatting uses the format directive directly on the function. A patch can forward that directive in the same way.
+
+```go
+//llgointernal:template:gofmt format=format args=a result=append
+func Appendf(b []byte, format string, a ...any) []byte
+```

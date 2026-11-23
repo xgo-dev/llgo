@@ -42,7 +42,9 @@ func TestBinaryCodecSupport(t *testing.T) {
 			}
 			cfg := gopackages.Config{Mode: gopackages.LoadAllSyntax, Dir: filepath.Join("testdata", "binary-fixed")}
 			dedup := packages.NewDeduper()
-			if !tc.unbound {
+			if tc.unbound {
+				overlay = nil
+			} else {
 				dedup.SetLLGoFiles(map[string][]string{"encoding/binary": files})
 			}
 			initial, err := packages.LoadExWithSourceOverlay(dedup, nil, &cfg, "", overlay, ".")

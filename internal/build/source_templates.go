@@ -12,10 +12,12 @@ import (
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
+	binarytemplate "github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile"
+	jsontemplate "github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile"
 )
 
 type sourceTemplates struct {
-	calltemplate.StructuralUse
+	calltemplate.GeneratedUse
 	calls map[*types.Package][]string
 }
 
@@ -35,7 +37,7 @@ func loadSourceBindings(conf *Config, frontend cl.Options, goroot string, initia
 			}
 		}
 		return true
-	})
+	}, binarytemplate.Generator, jsontemplate.Generator)
 }
 
 func applySourceTemplates(conf *Config, frontend cl.Options, bindings *calltemplate.Bindings, initial, runtimePkgs []*packages.Package, verbose bool) (sourceTemplates, error) {
@@ -46,7 +48,7 @@ func applySourceTemplates(conf *Config, frontend cl.Options, bindings *calltempl
 	var err error
 	formats := !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend)
 	if formats {
-		result.StructuralUse, err = bindings.RewriteStructural(initial, runtimePkgs)
+		result.GeneratedUse, err = bindings.RewriteGenerated(initial, runtimePkgs)
 		if err != nil {
 			return result, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
 		}

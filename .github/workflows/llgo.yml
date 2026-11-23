@@ -966,11 +966,11 @@ jobs:
           python3 -m unittest discover -s test/sizebuild -p '*_test.py'
           cover_dir="$RUNNER_TEMP/llgo-wasi-size-cover"
           mkdir -p "$cover_dir"
-          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile \
             -o "$cover_dir/llgo" ./cmd/llgo
           GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=wasi --llgo "$cover_dir/llgo"
           go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-wasi-size.txt \
-            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile
 
       - name: Upload WASI size coverage to Codecov
         continue-on-error: true
@@ -1281,11 +1281,11 @@ jobs:
           python3 test/wasm/optimization/test.py --browser
           cover_dir="$RUNNER_TEMP/llgo-wasm-size-cover"
           mkdir -p "$cover_dir"
-          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile \
             -o "$cover_dir/llgo" ./cmd/llgo
           GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=emscripten --browser --llgo "$cover_dir/llgo"
           go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-emscripten-size.txt \
-            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...,github.com/xgo-dev/llgo/runtime/_patch/encoding/binary/compile,github.com/xgo-dev/llgo/runtime/_patch/encoding/json/compile
 
       - name: Upload Emscripten size coverage to Codecov
         if: matrix.suite == 'optimization'

@@ -1,4 +1,4 @@
-package calltemplate
+package compile
 
 import (
 	"go/ast"
