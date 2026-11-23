@@ -6,6 +6,13 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
+// cdecl gives the struct the native C layout, so unsafe.Sizeof reports the
+// target's 4-byte pointer width even where Go widens stored pointers to
+// 8-byte slots (Memory32). Pairing it with unsafe.Sizeof(uintptr(0)) drives
+// wideGoHeaderSlots below and the low/offset math in clearTypedHeaderRange.
+// It is the only cdecl on a struct in the tree — do not remove it, or the
+// widened-slot detection silently stops firing.
+//
 //llgo:cdecl
 type nativePointerSlot struct{ ptr unsafe.Pointer }
 

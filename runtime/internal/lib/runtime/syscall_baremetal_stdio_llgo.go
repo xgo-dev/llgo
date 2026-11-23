@@ -1,4 +1,4 @@
-//go:build linux && arm && baremetal && llgo.baremetal.stdio
+//go:build baremetal && llgo.baremetal.stdio
 
 package runtime
 

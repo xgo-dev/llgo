@@ -132,6 +132,10 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 		}
 		var p unsafe.Pointer
 		if hasPointers {
+			// Fresh AllocZ storage is zeroed by every collector, so the newly
+			// exposed slots — including the high words of widened pointer slots
+			// — need no clearTypedHeaderRange pass; only copies into existing
+			// memory do (Typedmemmove, typedSliceCopy, ReflectGrowSlice).
 			p = AllocZAligned(mem, uintptr(etAlign))
 		} else {
 			p = AllocAtomicUAligned(mem, uintptr(etAlign))

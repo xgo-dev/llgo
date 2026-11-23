@@ -8,7 +8,11 @@ import (
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
+	"go/ast"
 	gobuild "go/build"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +27,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
+	"golang.org/x/tools/go/gcexportdata"
 )
 
 // TestBaremetalWallTimeHookSelection pins the wall-clock wiring for every
@@ -33,86 +38,94 @@ import (
 // and pre-go1.23 baremetal builds keep their degenerate hooks (epoch-zero
 // wall, no-op SetWallTime), and hosted and wasm keep their OS clock with the
 // documented no-op. Every selected hook file must declare SetWallTime so the
-// runtime/wallclock package's linkname pull links on every combination.
+// runtime/wallclock package's linkname pull links on every combination, and
+// every combination must type-check: file-selection checks cannot see a
+// missing package-level provider (any selected file may name a symbol no
+// selected file defines), which is exactly how a hook file can pass while
+// its build fails at link time.
 func TestBaremetalWallTimeHookSelection(t *testing.T) {
 	libDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	for _, test := range []struct {
 		name, goos, goarch string
 		tags               []string
 		releaseMinor       int // when nonzero, pin gobuild release tags at go1.<N>
-		want               string
+		wantFiles          []string
 		omit               []string
 	}{
 		{
 			// The live-clock fiber target: real wall+mono in time.Now and a
 			// SetWallTime that re-anchors the wall clock.
 			name: "esp32s31 fiber takes live wall clock hooks", goos: "linux", goarch: "arm",
-			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
-			want: "time_fiber_baremetal_llgo.go",
-			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
+			wantFiles: []string{"time_fiber_baremetal_llgo.go"},
+			omit:      []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			// Same hooks for the esp32c3 and generic fiber targets: the file
 			// compiles, but the chip gate (BaremetalCycleClock=false) keeps
 			// time.Now at the zero instant and SetWallTime a no-op there.
 			name: "esp32c3 fiber compiles wall hooks behind the chip gate", goos: "linux", goarch: "arm",
-			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
-			want: "time_fiber_baremetal_llgo.go",
-			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32c3", "esp"},
+			wantFiles: []string{"time_fiber_baremetal_llgo.go"},
+			omit:      []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			name: "generic riscv32 fiber compiles wall hooks behind the chip gate", goos: "linux", goarch: "arm",
-			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
-			want: "time_fiber_baremetal_llgo.go",
-			omit: []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			wantFiles: []string{"time_fiber_baremetal_llgo.go"},
+			omit:      []string{"time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			// nogc drops the whole fiber scheduler, wall clock included.
 			name: "riscv32 baremetal nogc keeps degenerate wall hooks", goos: "linux", goarch: "arm",
-			tags: []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
-			want: "time_baremetal_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "nogc"},
+			wantFiles: []string{"time_baremetal_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			// xtensa keeps the pthread fallback scheduler and degenerate hooks.
+			// The xtensa tag matches the real target chain (targets/xtensa.json).
 			name: "xtensa baremetal keeps degenerate wall hooks", goos: "linux", goarch: "arm",
-			tags: []string{"llgo", "baremetal", "tinygo.xtensa", "esp32"},
-			want: "time_baremetal_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"llgo", "baremetal", "tinygo.xtensa", "xtensa", "esp32"},
+			wantFiles: []string{"time_baremetal_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			// Non-llgo baremetal keeps the degenerate hooks too.
 			name: "riscv32 baremetal without llgo keeps degenerate wall hooks", goos: "linux", goarch: "arm",
-			tags: []string{"baremetal", "tinygo.riscv", "tinygo.riscv32"},
-			want: "time_baremetal_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
+			tags:      []string{"baremetal", "tinygo.riscv", "tinygo.riscv32"},
+			wantFiles: []string{"time_baremetal_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_legacy_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
-			// Before go1.23 the baremetal wall hooks are the legacy stubs.
+			// Before go1.23 the baremetal wall hooks are the legacy stubs, and
+			// nanotime comes from the matching legacy provider.
 			name: "pre-go1.23 baremetal keeps legacy wall hooks", goos: "linux", goarch: "arm",
 			tags:         []string{"llgo", "baremetal", "tinygo.riscv", "tinygo.riscv32", "esp32s31", "esp"},
 			releaseMinor: 22,
-			want:         "time_baremetal_legacy_llgo.go",
+			wantFiles:    []string{"time_baremetal_legacy_llgo.go", "nanotime_baremetal_legacy_llgo.go"},
 			omit:         []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_heap_common_llgo.go"},
 		},
 		{
 			// Hosted keeps its OS clock; the baremetal hook files stay out.
 			name: "hosted darwin keeps OS clock wall hooks", goos: "darwin", goarch: "arm64",
-			tags: []string{"llgo"},
-			want: "time_heap_common_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+			tags:      []string{"llgo"},
+			wantFiles: []string{"time_heap_common_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
 		},
 		{
 			name: "hosted linux keeps OS clock wall hooks", goos: "linux", goarch: "amd64",
-			tags: []string{"llgo"},
-			want: "time_heap_common_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+			tags:      []string{"llgo"},
+			wantFiles: []string{"time_heap_common_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
 		},
 		{
 			name: "wasm keeps OS clock wall hooks", goos: "js", goarch: "wasm",
-			tags: []string{"llgo"},
-			want: "time_heap_common_llgo.go",
-			omit: []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
+			// llgo.wasm.gc.linear is the real wasm build's GC tag; without it
+			// the package has no Alloc provider and cannot link.
+			tags:      []string{"llgo", "llgo.wasm.gc.linear"},
+			wantFiles: []string{"time_heap_common_llgo.go"},
+			omit:      []string{"time_fiber_baremetal_llgo.go", "time_baremetal_llgo.go", "time_baremetal_legacy_llgo.go"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -135,8 +148,13 @@ func TestBaremetalWallTimeHookSelection(t *testing.T) {
 			for _, name := range pkg.GoFiles {
 				selected[filepath.Base(name)] = true
 			}
-			if !selected[test.want] {
-				t.Errorf("%s was not selected; GoFiles=%v", test.want, pkg.GoFiles)
+			if !selected[test.wantFiles[0]] {
+				t.Errorf("%s was not selected; GoFiles=%v", test.wantFiles[0], pkg.GoFiles)
+			}
+			for _, name := range test.wantFiles[1:] {
+				if !selected[name] {
+					t.Errorf("%s was not selected; GoFiles=%v", name, pkg.GoFiles)
+				}
 			}
 			for _, name := range test.omit {
 				if selected[name] {
@@ -146,13 +164,17 @@ func TestBaremetalWallTimeHookSelection(t *testing.T) {
 			// The wallclock package's linkname pull must resolve on every
 			// combination: the selected hook file declares the def-side
 			// runtime.SetWallTime rename.
-			src, err := os.ReadFile(filepath.Join(libDir, test.want))
+			src, err := os.ReadFile(filepath.Join(libDir, test.wantFiles[0]))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(string(src), "//go:linkname SetWallTime runtime.SetWallTime") {
-				t.Errorf("%s lost the runtime.SetWallTime linkname", test.want)
+				t.Errorf("%s lost the runtime.SetWallTime linkname", test.wantFiles[0])
 			}
+			// And the selection must compile: the checks above pass for any
+			// file that gobuild picks, even when it calls a hook no selected
+			// file provides, which only surfaces at link time.
+			typecheckRuntimeSelection(t, ctx, libDir)
 		})
 	}
 
@@ -222,6 +244,95 @@ func TestBaremetalWallTimeHookSelection(t *testing.T) {
 			t.Error("wallclock.go lost the runtime.SetWallTime pull declaration")
 		}
 	})
+}
+
+// runtimePkgPath is lib/runtime's import path inside the runtime module.
+const runtimePkgPath = "github.com/xgo-dev/llgo/runtime/internal/lib/runtime"
+
+// typecheckRuntimeSelection type-checks the lib/runtime files go/build
+// selects under ctx, resolving the package's dependencies from gc export
+// data built with the real toolchain. Those dependencies keep the
+// toolchain's go1.x release tags rather than ctx.ReleaseTags — only go1.26+
+// dependency files are affected, and the check targets lib/runtime's own
+// symbol set — so every package-level name the selection uses must come
+// from the selection itself or from a real import, exactly what a link
+// needs and what file-selection checks cannot see.
+func typecheckRuntimeSelection(t *testing.T, ctx gobuild.Context, libDir string) {
+	t.Helper()
+	pkg, err := ctx.ImportDir(libDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "list", "-e", "-export", "-deps",
+		"-tags", strings.Join(ctx.BuildTags, ","),
+		"-f", "{{.ImportPath}}\t{{.Export}}",
+		"./internal/lib/runtime")
+	cmd.Dir = env.LLGoRuntimeDir()
+	cmd.Env = append(os.Environ(),
+		"GOOS="+ctx.GOOS, "GOARCH="+ctx.GOARCH, "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -export failed: %v\n%s", err, out)
+	}
+	fset := token.NewFileSet()
+	imports := exportImporter{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		path, file, ok := strings.Cut(line, "\t")
+		if !ok || file == "" || path == "unsafe" || path == runtimePkgPath {
+			continue
+		}
+		f, err := os.Open(file)
+		if err != nil {
+			t.Fatalf("open export data for %s: %v", path, err)
+		}
+		archive, err := gcexportdata.NewReader(f)
+		if err != nil {
+			f.Close()
+			t.Fatalf("archive %s: %v", path, err)
+		}
+		_, err = gcexportdata.Read(archive, fset, imports, path)
+		f.Close()
+		if err != nil {
+			t.Fatalf("read export data for %s: %v", path, err)
+		}
+	}
+	var files []*ast.File
+	for _, name := range pkg.GoFiles {
+		f, err := parser.ParseFile(fset, filepath.Join(libDir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	conf := types.Config{
+		Importer: imports,
+	}
+	var errs []error
+	conf.Error = func(err error) { errs = append(errs, err) }
+	err = types.NewChecker(&conf, fset, types.NewPackage(runtimePkgPath, "runtime"), nil).Files(files)
+	if len(errs) == 0 {
+		if err != nil {
+			t.Errorf("selection does not type-check: %v", err)
+		}
+		return
+	}
+	for _, err := range errs {
+		t.Errorf("selection does not type-check: %v", err)
+	}
+}
+
+// exportImporter resolves lib/runtime's imports from the export data the
+// go list call in typecheckRuntimeSelection produced.
+type exportImporter map[string]*types.Package
+
+func (m exportImporter) Import(path string) (*types.Package, error) {
+	if path == "unsafe" {
+		return types.Unsafe, nil
+	}
+	if p, ok := m[path]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("no export data for %s", path)
 }
 
 // espEmuTarget describes one baremetal ESP target esp-emu boots from a

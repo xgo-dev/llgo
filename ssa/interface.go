@@ -176,8 +176,10 @@ func (p Package) cacheStaticItab(key staticItabKey, itab Expr) {
 // itabFunEntry returns the itab fun-slot entry for (concrete, method) under
 // the data-word calling convention: the entry receives the raw interface data
 // word as its first argument instead of a pointer to an addressable copy. It
-// mirrors runtime.NewItab's DirectIfaceData(typ) ? Tfn : Ifn selection so
-// static and dynamic itabs expose one ABI to callers and to reflection.
+// mirrors runtime.NewItab's DirectIfaceData(typ) ? Tfn : Ifn selection (the
+// final branch below) so static and dynamic itabs expose one ABI to callers
+// and to reflection. The two pointer-receiver guards above are ssa-only: the
+// dynamic side folds them into DirectIfaceData's non-pointer rule.
 func (b Builder) itabFunEntry(concrete types.Type, m *types.Selection, ifn, tfn llvm.Value) llvm.Value {
 	declaredRecv := m.Obj().(*types.Func).Type().(*types.Signature).Recv()
 	if _, ok := types.Unalias(declaredRecv.Type()).(*types.Pointer); ok {
