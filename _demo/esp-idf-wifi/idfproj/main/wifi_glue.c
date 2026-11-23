@@ -126,6 +126,27 @@ int32_t llgo_wifi_start(void)
     return esp_wifi_start();
 }
 
+int32_t llgo_wifi_connect(void)
+{
+    return esp_wifi_connect();
+}
+
+int32_t llgo_wifi_disconnect(void)
+{
+    return esp_wifi_disconnect();
+}
+
+/* Station IP in network byte order, 0 = nothing acquired yet. */
+uint32_t llgo_wifi_get_ip(void)
+{
+    esp_netif_ip_info_t info;
+    memset(&info, 0, sizeof info);
+    if (s_sta_netif == NULL || esp_netif_get_ip_info(s_sta_netif, &info) != ESP_OK) {
+        return 0;
+    }
+    return info.ip.addr;
+}
+
 /* Station credentials. Zero the config, copy ssid/pass, and pick the
  * minimum matching authmode from the password length (empty password ->
  * open). Storage stays in RAM so the acceptance runs are self-contained. */

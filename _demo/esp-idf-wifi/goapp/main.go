@@ -124,5 +124,41 @@ func main() {
 	}
 	println("[go] wifi scan done")
 
+	// Connect + DHCP (M2): esp_wifi_connect attempts once; a failed
+	// association/handshake arrives as EvStaDisconnected with a reason code.
+	connected := false
+	for attempt := 1; attempt <= 3 && !connected; attempt++ {
+		if e := espwifi.Connect(); e != 0 {
+			println("[go] wifi connect err =", int(e), espwifi.ErrName(e))
+			println("[go] wifi FAIL connect")
+			return
+		}
+		ev, ok := espwifi.WaitEvent([]int32{espwifi.EvStaConnected, espwifi.EvStaDisconnected}, 300)
+		if ok && ev.Kind == espwifi.EvStaConnected {
+			connected = true
+			println("[go] wifi STA_CONNECTED")
+		} else {
+			println("[go] wifi disconnect reason =", int(ev.Aux), "attempt =", attempt)
+		}
+	}
+	if !connected {
+		println("[go] wifi FAIL no_ap")
+		return
+	}
+
+	// DHCP: the GOT_IP event carries the address; GetIP polls esp_netif as
+	// the fallback read.
+	ev, _ := espwifi.WaitEvent([]int32{espwifi.EvGotIP}, 600)
+	ip := ev.IP
+	if ip == 0 {
+		ip = espwifi.GetIP()
+	}
+	if ip == 0 {
+		println("[go] wifi FAIL no_ip")
+		return
+	}
+	println("[go] wifi GOT_IP ip=" + espwifi.IPString(ip))
+	println("[go] wifi PASS ip=" + espwifi.IPString(ip))
+
 	println("[go] done")
 }

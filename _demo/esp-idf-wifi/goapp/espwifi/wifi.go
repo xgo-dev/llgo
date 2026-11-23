@@ -105,6 +105,44 @@ func SetSTA(ssid, pass string) int32 {
 	return setSTA(&ssidBuf[0], int32(len(ssid)), &passBuf[0], int32(len(pass)))
 }
 
+// Connect calls esp_wifi_connect: a single attempt. Association or
+// handshake failures arrive as EvStaDisconnected with a reason code; the
+// application retries (see the loop in main.go).
+func Connect() int32 { return connect() }
+
+// Disconnect calls esp_wifi_disconnect.
+func Disconnect() int32 { return disconnect() }
+
+// GetIP returns the station IP in network byte order (0 = nothing
+// acquired yet), reading esp_netif directly.
+func GetIP() uint32 { return getIP() }
+
+// IPString formats the address returned by GetIP / the GotIP event as a
+// dotted quad. The glue returns esp_netif's ip.addr: the four network-order
+// octets live in memory, and the little-endian RV32 load hands them to Go
+// as [b0, b1, b2, b3] in the low-to-high bytes of the uint32.
+func IPString(ip uint32) string {
+	const digits = "0123456789"
+	b := [4]byte{uint8(ip), uint8(ip >> 8), uint8(ip >> 16), uint8(ip >> 24)}
+	s := ""
+	for i, v := range b {
+		if i > 0 {
+			s += "."
+		}
+		if v >= 100 {
+			s += string(digits[v/100])
+			s += string(digits[v/10%10])
+			s += string(digits[v%10])
+		} else if v >= 10 {
+			s += string(digits[v/10])
+			s += string(digits[v%10])
+		} else {
+			s += string(digits[v])
+		}
+	}
+	return s
+}
+
 // Poll pops one mailbox slot into ev: 1 = event delivered, 0 = empty. If the
 // queue ever overflowed, a single EvOverflow slot is reported first.
 func Poll(ev *Event) int32 { return poll(&ev.Kind, &ev.Aux, &ev.IP) }

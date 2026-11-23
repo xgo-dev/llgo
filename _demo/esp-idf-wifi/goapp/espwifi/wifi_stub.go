@@ -18,6 +18,9 @@ func scanFetch(out *ApInfo, max int32, count *int32) int32 {
 	_, _, _ = out, max, count
 	return errUnsupported
 }
+func connect() int32    { return errUnsupported }
+func disconnect() int32 { return errUnsupported }
+func getIP() uint32     { return 0 }
 func poll(kind *int32, aux *int32, ip *uint32) int32 {
 	_, _, _ = kind, aux, ip
 	return 0

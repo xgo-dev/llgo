@@ -30,6 +30,15 @@ func scanStart(blocking int32) int32
 //go:linkname scanFetch C.llgo_wifi_scan_fetch
 func scanFetch(out *ApInfo, max int32, count *int32) int32
 
+//go:linkname connect C.llgo_wifi_connect
+func connect() int32
+
+//go:linkname disconnect C.llgo_wifi_disconnect
+func disconnect() int32
+
+//go:linkname getIP C.llgo_wifi_get_ip
+func getIP() uint32
+
 //go:linkname poll C.llgo_wifi_poll
 func poll(kind *int32, aux *int32, ip *uint32) int32
 
