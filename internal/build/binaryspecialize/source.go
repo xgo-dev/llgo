@@ -2,7 +2,6 @@ package binaryspecialize
 
 import (
 	"fmt"
-	"go/ast"
 	"go/token"
 	"go/types"
 	"strings"
@@ -90,14 +89,8 @@ func (p packageRewrites) apply(library *packages.Package, shortBuffer string) er
 		return err
 	}
 	for _, call := range p.calls {
-		old := call.call.Fun
 		fn := p.pkg.Types.Scope().Lookup(call.helper).(*types.Func)
-		id := &ast.Ident{Name: call.helper, NamePos: old.Pos()}
-		tv := p.pkg.TypesInfo.Types[ast.Unparen(old)]
-		tv.Type = fn.Type()
-		p.pkg.TypesInfo.Uses[id] = fn
-		p.pkg.TypesInfo.Types[id] = tv
-		call.call.Fun = id
+		typesynth.BindCall(p.pkg.TypesInfo, call.call, fn, types.Instance{Type: fn.Type()})
 	}
 	return nil
 }

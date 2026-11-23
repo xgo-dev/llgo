@@ -53,3 +53,18 @@ func AddFile(p *packages.Package, name, source string, imports Importer, minLang
 	p.Syntax = append(p.Syntax, file)
 	return nil
 }
+
+// BindCall installs a checked function reference for the normal SSA builder.
+func BindCall(info *types.Info, call *ast.CallExpr, fn *types.Func, inst types.Instance) {
+	id := &ast.Ident{Name: fn.Name(), NamePos: call.Fun.Pos()}
+	tv := info.Types[ast.Unparen(call.Fun)]
+	tv.Type = inst.Type
+	info.Uses[id], info.Types[id] = fn, tv
+	if inst.TypeArgs != nil {
+		if info.Instances == nil {
+			info.Instances = make(map[*ast.Ident]types.Instance)
+		}
+		info.Instances[id] = inst
+	}
+	call.Fun = id
+}

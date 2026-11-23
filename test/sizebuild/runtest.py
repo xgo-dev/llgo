@@ -385,6 +385,31 @@ func main() {{ report(reading{{Tick: 42}}) }}
     print(f"{target} Full LTO scheduler link selection and fallback passed", flush=True)
 
 
+def call_template_probe(llgo, directory, env, runner):
+    cases = (
+        ("call-template", ":direct:", 4),
+        ("format-template", ":gofmt:", 4),
+        ("c-format-template", ":cfmt:", 2),
+    )
+    for fixture, kind, count in cases:
+        output = directory / f"{fixture}.wasm"
+        package = f"./internal/build/testdata/{fixture}"
+        log = command([str(llgo), "build", "-target=wasi", "-Oz", "-deadcodedrop",
+                       "-globaldce=false", "-lto=full", "-debug-artifact=none", "-compiler-verbose",
+                       "-o", str(output), package], env)
+        applied = [line for line in log.splitlines() if line.startswith("llgo: apply call template ")]
+        if len(applied) != count or any(kind not in line for line in applied):
+            raise RuntimeError(f"{fixture}: unexpected call template selection {applied!r}")
+        if fixture == "c-format-template":
+            expected = "10 p%=-7\n5 12/ff"
+        else:
+            expected = command(["go", "run", package], env).strip()
+        actual = command([*runner, str(output)], env, timeout=90).strip()
+        if actual != expected:
+            raise RuntimeError(f"{fixture}: expected {expected!r}, got {actual!r}")
+        print(f"WASI {fixture} call templates and output passed", flush=True)
+
+
 def wasi_specialization_probe(llgo, directory, env, runner):
     for case, marker, want in (
         ("fmt-dynamic", "llgo: specialize default value formatting", True),
@@ -574,6 +599,7 @@ def main():
                        "--stack-size=1048576"]
         full_lto_codec_probe(llgo, directory, env, "wasi", wasi_runner, ".wasm")
         wasi_specialization_probe(llgo, directory, env, wasi_runner)
+        call_template_probe(llgo, directory, env, wasi_runner)
         cases = (("off", "cprintf"), ("off", "println"),
                  ("thin", "cprintf"), ("full", "cprintf"),
                  ("full", "println"), ("thin", "println"),

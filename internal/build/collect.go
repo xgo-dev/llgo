@@ -256,6 +256,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	m.pkg.BinaryCodecAccessor = c.binaryCodecLibrary == p.Types
 	m.pkg.SpecializeBinary = c.binaryCodecPackages[p.Types]
 	m.pkg.SpecializeJSON = c.jsonCodecPackages[p.Types]
+	m.pkg.CallTemplates = c.callTemplates[p.Types]
 	for _, groups := range pkg.guardedInitializers {
 		for _, group := range groups {
 			m.pkg.InitializerGuards = append(m.pkg.InitializerGuards, cl.InitializerGuardName(group.Global))

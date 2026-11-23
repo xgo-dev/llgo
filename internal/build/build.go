@@ -45,6 +45,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/build/calltemplate"
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
@@ -1122,6 +1123,26 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 	}
 
+	var callTemplates map[*types.Package][]string
+	if conf.OptLevel != optlevel.O0 && !frontendOptions.DebuggerFrames && !frontendCacheEnabled(conf) {
+		var stdFmt *packages.Package
+		if p := dedup.Check("fmt"); p != nil && isStandardLibraryPackage(p.Package, sourcePatchGOROOT) {
+			stdFmt = p.Package
+		}
+		formats := !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions)
+		callTemplates, err = calltemplate.Rewrite(initial, stdFmt, formats)
+		if err != nil {
+			return nil, err
+		}
+		if verbose || conf.PrintCommands {
+			for _, changes := range callTemplates {
+				for _, change := range changes {
+					fmt.Fprintln(os.Stderr, "llgo: apply call template", change)
+				}
+			}
+		}
+	}
+
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
@@ -1159,6 +1180,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		binaryCodecLibrary:  binaryCodecLibrary,
 		binaryCodecPackages: binaryCodecPackages,
 		jsonCodecPackages:   jsonCodecPackages,
+		callTemplates:       callTemplates,
 		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:          buildTrace,
 		goVersion:           sourcePatchGoVersion,
@@ -2085,6 +2107,7 @@ type context struct {
 	binaryCodecLibrary   *types.Package
 	binaryCodecPackages  map[*types.Package]bool
 	jsonCodecPackages    map[*types.Package]bool
+	callTemplates        map[*types.Package][]string
 	codecInitDrops       map[string]bool
 	initializerGuardsOff []string
 	wasmRuntimeFree      bool
