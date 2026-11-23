@@ -29,3 +29,8 @@ requests `simd=512`. Its full-profile checks require all 184 cases to pass
 and portable SIMD to select 512 bits. Overrides that remove a required
 feature can therefore fail qualification. Set `SDE_TIMEOUT` to change the
 per-binary test timeout (default `60m`).
+
+The WASI SIMD CI step runs all 73 Go 1.27.0 upstream instruction tests with
+official Go under Wasmtime and LLGo O2 under the pinned threaded Wasmer. Run
+`LLGO=/path/to/llgo bash dev/test_upstream_simd_wasi.sh` to check each run against
+the committed list of expected test names.
