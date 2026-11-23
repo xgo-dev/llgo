@@ -104,5 +104,25 @@ func main() {
 		return
 	}
 
+	// Scan (M1): emu's built-in soft AP must show up in the list.
+	if e := espwifi.ScanStart(true); e != 0 {
+		println("[go] wifi scan err =", int(e), espwifi.ErrName(e))
+		println("[go] wifi FAIL scan")
+		return
+	}
+	aps, e := espwifi.ScanFetch(20)
+	if e != 0 {
+		println("[go] wifi scan_fetch err =", int(e), espwifi.ErrName(e))
+		println("[go] wifi FAIL scan_fetch")
+		return
+	}
+	println("[go] wifi scan n =", len(aps))
+	for i := range aps {
+		ap := &aps[i]
+		println("[go] wifi ap ssid=" + ap.SsidString(),
+			"ch =", int(ap.Channel), "rssi =", int(ap.Rssi))
+	}
+	println("[go] wifi scan done")
+
 	println("[go] done")
 }

@@ -38,6 +38,21 @@ static volatile uint32_t s_wr, s_rd, s_dropped;
 
 static esp_netif_t *s_sta_netif;
 
+/* Scan records live here, not on the stack: Go goroutines run on 8 KiB
+ * fiber stacks and esp_wifi_scan_get_ap_records walks a deep call chain. */
+#define LW_MAX_APS 20
+static wifi_ap_record_t s_records[LW_MAX_APS];
+
+/* Flat scan-record form handed to Go: scalar and fixed-size-array fields
+ * only, no IDF bitfields or nested structs cross the boundary. */
+typedef struct {
+    uint8_t bssid[6];
+    uint8_t ssid[33];
+    uint8_t channel;
+    int8_t rssi;
+    int32_t authmode;
+} llgo_ap_info_t;
+
 static void lw_push(int32_t kind, int32_t aux, uint32_t ip)
 {
     uint32_t w = s_wr;
@@ -130,6 +145,33 @@ int32_t llgo_wifi_set_sta(const uint8_t *ssid, int32_t ssid_len,
     e = esp_wifi_set_config(WIFI_IF_STA, &c);
     if (e != ESP_OK) return e;
     return esp_wifi_set_storage(WIFI_STORAGE_RAM);
+}
+
+/* Blocking scan with the default config (NULL): active scan on all
+ * channels. The call blocks on a driver semaphore, which yields the CPU,
+ * so the frozen llgo scheduler is safe here. */
+int32_t llgo_wifi_scan(int32_t blocking)
+{
+    return esp_wifi_scan_start(NULL, blocking != 0);
+}
+
+/* Take the scan result list (which also frees the driver's memory) and
+ * marshal it into the flat Go-side form. */
+int32_t llgo_wifi_scan_fetch(llgo_ap_info_t *out, int32_t max, int32_t *count)
+{
+    if (max > LW_MAX_APS) max = LW_MAX_APS;
+    uint16_t n = (uint16_t)max;
+    esp_err_t e = esp_wifi_scan_get_ap_records(&n, s_records);
+    if (e != ESP_OK) return e;
+    for (uint16_t i = 0; i < n; i++) {
+        memcpy(out[i].bssid, s_records[i].bssid, 6);
+        memcpy(out[i].ssid, s_records[i].ssid, 33);
+        out[i].channel = s_records[i].primary;
+        out[i].rssi = s_records[i].rssi;
+        out[i].authmode = (int32_t)s_records[i].authmode;
+    }
+    *count = n;
+    return ESP_OK;
 }
 
 /* Pop one mailbox slot: 1 = event, 0 = empty, one EV_OVERFLOW slot first if

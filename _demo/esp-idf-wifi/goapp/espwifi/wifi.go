@@ -31,6 +31,26 @@ type Event struct {
 	IP   uint32
 }
 
+// ApInfo is the flat scan-record form marshalled by wifi_glue.c; the IDF
+// wifi_ap_record_t (bitfields, nested structs) never crosses into Go.
+type ApInfo struct {
+	Bssid    [6]uint8
+	Ssid     [33]uint8 // NUL-terminated
+	Channel  uint8
+	Rssi     int8
+	AuthMode int32
+}
+
+// SsidString returns the AP's SSID with the trailing NUL stripped.
+func (a *ApInfo) SsidString() string {
+	for i, c := range a.Ssid {
+		if c == 0 {
+			return string(a.Ssid[:i])
+		}
+	}
+	return string(a.Ssid[:])
+}
+
 // Setup performs the one-shot WiFi bring-up: NVS init (erase + retry on the
 // fresh-flash error codes), netif init, default event loop, default STA
 // netif and esp_wifi_init. WIFI_INIT_CONFIG_DEFAULT() stays in C.
@@ -47,6 +67,32 @@ func PrintVersion() int32 { return printVersion() }
 // Start calls esp_wifi_start; the asynchronous WIFI_EVENT_STA_START shows up
 // in the mailbox.
 func Start() int32 { return start() }
+
+// ScanStart calls esp_wifi_scan_start(NULL, blocking). A blocking scan
+// freezes the llgo scheduler for the scan duration (well under a second on
+// emu); the WIFI_EVENT_SCAN_DONE event still lands in the mailbox.
+func ScanStart(blocking bool) int32 {
+	b := int32(0)
+	if blocking {
+		b = 1
+	}
+	return scanStart(b)
+}
+
+// ScanFetch takes the scan result list into a fresh slice (at most max
+// entries; the C glue holds at most 20) and also frees the driver's scan
+// memory. The second result is an esp_err code.
+func ScanFetch(max int32) ([]ApInfo, int32) {
+	if max > 20 {
+		max = 20
+	}
+	buf := make([]ApInfo, max)
+	var n int32
+	if e := scanFetch(&buf[0], max, &n); e != 0 {
+		return nil, e
+	}
+	return buf[:n], 0
+}
 
 // SetSTA configures the station interface: mode STA, credentials, RAM
 // storage. The authmode threshold follows the password length (>=8 chars

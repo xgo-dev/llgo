@@ -13,6 +13,11 @@ func setSTA(ssid *uint8, ssidLen int32, pass *uint8, passLen int32) int32 {
 	_, _, _, _ = ssid, ssidLen, pass, passLen
 	return errUnsupported
 }
+func scanStart(blocking int32) int32 { _ = blocking; return errUnsupported }
+func scanFetch(out *ApInfo, max int32, count *int32) int32 {
+	_, _, _ = out, max, count
+	return errUnsupported
+}
 func poll(kind *int32, aux *int32, ip *uint32) int32 {
 	_, _, _ = kind, aux, ip
 	return 0

@@ -24,6 +24,12 @@ func start() int32
 //go:linkname setSTA C.llgo_wifi_set_sta
 func setSTA(ssid *uint8, ssidLen int32, pass *uint8, passLen int32) int32
 
+//go:linkname scanStart C.llgo_wifi_scan
+func scanStart(blocking int32) int32
+
+//go:linkname scanFetch C.llgo_wifi_scan_fetch
+func scanFetch(out *ApInfo, max int32, count *int32) int32
+
 //go:linkname poll C.llgo_wifi_poll
 func poll(kind *int32, aux *int32, ip *uint32) int32
 
