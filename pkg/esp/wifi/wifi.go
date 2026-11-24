@@ -31,6 +31,33 @@
 // wifi.ErrName names the codes this pipeline can hit with their IDF
 // names).
 //
+// # Access point
+//
+// The same stack serves the soft AP: SetAP describes the network
+// (SSID/passphrase/channel/hidden/station limit/auth mode), Start brings it
+// up, and the AP's own DHCP server leases 192.168.4.x addresses to clients
+// with no Go code in the path:
+//
+//	err := wifi.SetAP(wifi.APConfig{SSID: "llgo-ap", Password: "llgoappass",
+//		Channel: 6, MaxSTA: 2, AuthMode: wifi.AuthWPA2PSK})
+//	wifi.Start()
+//	ap := wifi.Subscribe(wifi.EvAPStart)
+//	ap.Next(3000)
+//	ip, err := wifi.GetAPIP()        // 192.168.4.1
+//	sts, err := wifi.APStations()    // MAC + RSSI + leased IP per client
+//
+// SetModeAPSTA runs both interfaces at once; SetAP and SetSTA then
+// configure them without undoing each other (see SetAP for the ordering
+// rule). Stop ends an AP episode without tearing the driver down.
+//
+// The AP side of the mailbox adds five event kinds (EvAPStart, EvAPStop,
+// EvAPStaConnected, EvAPStaDisconnected, EvAPStaIPAssigned). The three that
+// are about a client carry its MAC in the Event itself, the two that come from
+// an association or a departure carry its AID as well, and the lease event
+// carries the address. The station-side semantics are untouched:
+// EvStaDisconnected still means the *station* lost its AP, so the
+// auto-reconnect machine never reacts to a soft-AP client leaving.
+//
 // # Glue integration
 //
 // The C glue is a template: copy glue/wifi_glue.c into your project's main
@@ -100,6 +127,15 @@ func errOf(code int32) error {
 // the transports' ErrTimeout carries the lwip ETIMEDOUT value instead.)
 var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
 
+// ErrGlueABI reports a glue/binding contract mismatch: the wifi_glue.c a
+// firmware links was written for a different version of this package. The C
+// symbols keep their names across versions, so a stale copy would not fail the
+// link - it would silently answer with zeros for the fields it does not know
+// (the soft-AP client's MAC and AID, for instance). Setup compares the glue's
+// version with glueABIVersion and refuses to run on a mismatch, so the failure
+// arrives as one named error instead of as empty data minutes later.
+var ErrGlueABI = &esperr.Error{Code: 0x7F01, Name: ErrName(0x7F01)}
+
 // Event kinds delivered by the C mailbox (see on_event in wifi_glue.c).
 const (
 	// EvNone is the zero-value sentinel, never delivered by Poll: a zero
@@ -111,19 +147,45 @@ const (
 	EvScanDone        = 4
 	EvGotIP           = 5
 	EvLostIP          = 6
-	EvOverflow        = -1 // the mailbox overflowed; reported once by Poll
+
+	// Access-point kinds. They share the mailbox and the fan-out with the
+	// station kinds above and never alias them: a client associating with
+	// the soft AP is EvAPStaConnected, not EvStaConnected, so the station
+	// half of a program (and the auto-reconnect machine) sees exactly what
+	// it saw before.
+	EvAPStart           = 7  // the soft AP came up (WIFI_EVENT_AP_START)
+	EvAPStop            = 8  // the soft AP stopped (WIFI_EVENT_AP_STOP)
+	EvAPStaConnected    = 9  // a client associated: MAC + AID
+	EvAPStaDisconnected = 10 // a client left: MAC + AID, reason code in Aux
+	EvAPStaIPAssigned   = 11 // the AP's DHCP server leased it an IP: MAC + IP
+
+	EvOverflow = -1 // the mailbox overflowed; reported once by Poll
 )
 
 // EventKind identifies one mailbox event kind; it aliases int32 so the Ev*
 // constants below pass directly as Subscribe arguments.
 type EventKind = int32
 
-// Event is one mailbox slot: kind, aux (e.g. the STA_DISCONNECTED reason
-// code) and the raw network-order IP for EvGotIP.
+// Event is one mailbox slot.
 type Event struct {
 	Kind int32
-	Aux  int32
-	IP   uint32
+	// Aux is the driver's reason code: the STA_DISCONNECTED reason for
+	// EvStaDisconnected, the AP_STADISCONNECTED reason for
+	// EvAPStaDisconnected, 0 elsewhere.
+	Aux int32
+	// IP is the raw network-order address: the station's for EvGotIP, the
+	// client's leased address for EvAPStaIPAssigned (0 elsewhere). Format
+	// it with IPString.
+	IP uint32
+	// MAC is the soft AP client the event is about (EV_AP_STA*); all zero
+	// for the station kinds. It rides in the event rather than in a
+	// follow-up query because a client can associate and leave between any
+	// two queries - APStations reports who is here *now*, the event
+	// reports who came or went.
+	MAC [6]uint8
+	// AID is the association id the soft AP assigned the client
+	// (EV_AP_STA*), 0 elsewhere.
+	AID uint16
 }
 
 // Pacing and buffer bounds of the subscriber model.
@@ -208,12 +270,18 @@ func (s *Subscription) Close() {
 // Next waits up to timeoutMs for the subscription's next event. It returns
 // (event, nil) when one arrived and (zero Event, ErrTimeout) when the bound
 // passed with nothing (a non-positive timeout makes a single non-blocking
-// check, reported the same way on a miss). Like WaitEvent, the wait is
-// bounded and paced by the poller's pollQuantumMs quanta: a timeout may
-// overshoot by one quantum and sub-quantum bounds are not honored. Each
-// idle iteration yields with runtime.Gosched so the poller (and any other
-// runnable goroutine) keeps its scheduling slice - no C-level call is held
-// across the wait, which would freeze the whole llgo scheduler.
+// check, reported the same way on a miss).
+//
+// The bound is wall clock, one pollQuantumMs quantum at a time: every idle
+// iteration parks the FreeRTOS task in vTaskDelay (which is also what feeds
+// the idle task and the watchdog) instead of spinning on Gosched. A timeout
+// can therefore overshoot by up to a quantum - because the sleep is a whole
+// quantum, sub-quantum bounds are not honored - and undershoot by up to a
+// tick's phase (the sleep lands on the next tick boundary, so a quantum is
+// 90..100 ms in practice). An event that arrives during a sleep is seen on
+// the next pass, so delivery latency is up to one quantum plus the poller's
+// own pass. No C-level call is held across a scheduling point, so other
+// goroutines keep running.
 func (s *Subscription) Next(timeoutMs int32) (Event, error) {
 	for ms := int32(0); ms < timeoutMs; ms += pollQuantumMs {
 		select {
@@ -222,6 +290,7 @@ func (s *Subscription) Next(timeoutMs int32) (Event, error) {
 		default:
 		}
 		gosched()
+		vTaskDelay(pollQuantumMs / tickMs)
 	}
 	select {
 	case ev := <-s.ch:
@@ -306,10 +375,22 @@ func (a *ApInfo) SsidString() string {
 	return string(a.Ssid[:])
 }
 
+// glueABIVersion is the contract version this package speaks; the C glue
+// reports the version it implements (llgo_wifi_glue_abi). It changes whenever a
+// Go-facing signature or field set does.
+const glueABIVersion = 2
+
 // Setup performs the one-shot WiFi bring-up: NVS init (erase + retry on the
 // fresh-flash error codes), netif init, default event loop, default STA
-// netif and esp_wifi_init. WIFI_INIT_CONFIG_DEFAULT() stays in C.
-func Setup() error { return errOf(setup()) }
+// netif and esp_wifi_init. WIFI_INIT_CONFIG_DEFAULT() stays in C. The first
+// thing it checks is that the glue speaks this package's contract - a mismatch
+// is ErrGlueABI and nothing else runs.
+func Setup() error {
+	if v := glueABI(); v != glueABIVersion {
+		return ErrGlueABI
+	}
+	return errOf(setup())
+}
 
 // EventsRegister hooks the glue's event handler into WIFI_EVENT (any id)
 // and IP_EVENT (any id, GOT_IP and LOST_IP are dispatched by id in the
@@ -320,12 +401,42 @@ func EventsRegister() error { return errOf(eventsRegister()) }
 // side; the string never crosses into Go (integer-only boundary).
 func PrintVersion() error { return errOf(printVersion()) }
 
-// SetModeSTA switches the driver to station mode without a target SSID.
-func SetModeSTA() error { return errOf(setModeSTA()) }
+// Driver modes handed to esp_wifi_set_mode. The numbers are IDF's
+// wifi_mode_t values, passed through unchanged.
+const (
+	modeSTA   = 1
+	modeAP    = 2
+	modeAPSTA = 3
+)
 
-// Start calls esp_wifi_start; the asynchronous WIFI_EVENT_STA_START shows up
-// in the mailbox.
+// SetModeSTA switches the driver to station mode without a target SSID.
+// A mode chosen here is explicit: SetSTA and SetAP no longer change it (see
+// SetAP for the APSTA ordering rule).
+func SetModeSTA() error { return errOf(setMode(modeSTA)) }
+
+// SetModeAP switches the driver to soft-AP mode without a configuration
+// (SetAP alone already selects AP mode; this pins it when both interfaces
+// are configured).
+func SetModeAP() error { return errOf(setMode(modeAP)) }
+
+// SetModeAPSTA switches the driver to AP + station mode: the soft AP serves
+// clients while the station associates elsewhere. Configure the two
+// interfaces with SetAP and SetSTA; neither changes an explicitly chosen
+// mode.
+func SetModeAPSTA() error { return errOf(setMode(modeAPSTA)) }
+
+// Start calls esp_wifi_start for whatever mode is configured. The
+// asynchronous WIFI_EVENT_STA_START or WIFI_EVENT_AP_START shows up in the
+// mailbox (EvStaStart / EvAPStart); an APSTA start delivers both.
 func Start() error { return errOf(start()) }
+
+// Stop calls esp_wifi_stop. For an AP that ends beaconing: the pending
+// WIFI_EVENT_AP_STOP arrives as EvAPStop and the driver releases its
+// AP-mode buffers. The AP netif and its static address survive (GetAPIP
+// still answers), and there is no Deinit counterpart - the package keeps
+// its one-shot Setup model, so a program that wants the radio again calls
+// Start after reconfiguring.
+func Stop() error { return errOf(stop()) }
 
 // ScanStart calls esp_wifi_scan_start(NULL, blocking). A blocking scan
 // freezes the llgo scheduler for the scan duration (well under a second on
@@ -415,6 +526,10 @@ func Scan(opts ScanOptions) ([]ScanResult, error) {
 // ESP_ERR_INVALID_ARG (0x102) before anything crosses into C. The authmode
 // threshold follows the password length (>=8 chars means WPA2-PSK,
 // otherwise open). Call it before Start.
+//
+// Mode: if no mode was chosen explicitly this selects STA (or keeps APSTA
+// when SetAP already configured the AP); after SetModeSTA/SetModeAP/SetModeAPSTA
+// it configures the station interface and leaves the mode alone.
 func SetSTA(ssid, pass string) error {
 	if len(ssid) > 32 || len(pass) > 64 {
 		return errOf(0x102) // ESP_ERR_INVALID_ARG: does not fit wifi_config_t
@@ -424,6 +539,264 @@ func SetSTA(ssid, pass string) error {
 	var passBuf [64]byte
 	copy(passBuf[:], pass)
 	return errOf(setSTA(&ssidBuf[0], int32(len(ssid)), &passBuf[0], int32(len(pass))))
+}
+
+// AuthMode is the security mode of the soft AP. The numbers are IDF's
+// wifi_auth_mode_t values verbatim, so a mode this package does not name still
+// reads back correctly from GetAPConfig; SetAP accepts only the four below and
+// reports the rest (WEP, WPA, enterprise, WAPI, OWE) as ESP_ERR_INVALID_ARG
+// before the call.
+type AuthMode int32
+
+const (
+	// AuthOpen serves an open network: APConfig.Password must be empty.
+	AuthOpen AuthMode = 0
+	// AuthWPA2PSK is WPA2-PSK (AES/CCMP): the mode every client of this
+	// generation joins, esp-emu's own station included.
+	AuthWPA2PSK AuthMode = 3
+	// AuthWPA3PSK is WPA3-SAE, which requires protected management
+	// frames - clients without PMF cannot join.
+	AuthWPA3PSK AuthMode = 6
+	// AuthWPA2WPA3PSK is the WPA2/WPA3 transition mode: PSK and SAE are
+	// both offered and PMF is capable rather than required.
+	AuthWPA2WPA3PSK AuthMode = 7
+)
+
+const (
+	// DefaultMaxSTA is the station limit SetAP applies when
+	// APConfig.MaxSTA is 0 - the IDF soft AP's own default (4).
+	DefaultMaxSTA = 4
+
+	// MaxAPStations is the package's upper bound for APConfig.MaxSTA and
+	// for the length of an APStations result: IDF's ESP_WIFI_MAX_CONN_NUM
+	// on this package's target chip (15 on the S31). A chip with a smaller
+	// limit - the C2 has 4 - is handled by the glue: it rejects a larger
+	// MaxSTA with ESP_ERR_INVALID_ARG and APStations sizes itself from
+	// llgo_wifi_max_sta, so it never returns more records than the driver
+	// can hold.
+	MaxAPStations = 15
+)
+
+// APConfig is the soft-AP configuration SetAP applies. Where a field has a
+// driver default, the zero value selects it: an SSID alone is a working open
+// network, and SSID + Password + AuthWPA2PSK a working WPA2 one.
+type APConfig struct {
+	// SSID is the network name: 1..32 bytes. Empty is
+	// ESP_ERR_WIFI_SSID (0x300A), longer than 32 ESP_ERR_INVALID_ARG
+	// (0x102) - both before anything crosses into C.
+	SSID string
+
+	// Password is the WPA2 passphrase: empty for AuthOpen, otherwise
+	// 8..63 bytes (WPA2 requires 8; 63 is the driver's soft-AP maximum,
+	// one byte less than the station-side buffer). A length that does not
+	// fit is ESP_ERR_INVALID_ARG (0x102, the same "does not fit" code
+	// SetSTA uses); a password of usable length that the auth mode cannot
+	// use - or a mode that needs one and has none - is ESP_ERR_WIFI_PASSWORD
+	// (0x300B).
+	Password string
+
+	// Channel is the 2.4 GHz channel, 1..14. 0 means 1: the package never
+	// leaves channel selection to the driver, so a firmware's channel is
+	// the same in every run.
+	Channel uint8
+
+	// Hidden stops beaconing the SSID. Clients that already know the name
+	// still join; a scanner shows nothing.
+	Hidden bool
+
+	// MaxSTA caps associated stations, 1..MaxAPStations. 0 means
+	// DefaultMaxSTA. The driver reserves nothing per slot up front
+	// (measured: 2 and 4 cost the same at Start), so the limit neither
+	// saves nor costs memory until clients attach; it is the admission
+	// control.
+	MaxSTA int
+
+	// AuthMode is the security mode. A password with AuthOpen is rejected
+	// (0x300B) instead of being silently ignored.
+	AuthMode AuthMode
+}
+
+// SetAP configures the soft AP: name, passphrase, channel, hidden flag,
+// station limit and auth mode, hands the config to the driver for the AP
+// interface (WIFI_IF_AP) and - unless a mode was already chosen explicitly -
+// switches the driver to AP mode, the same one-call shape as SetSTA.
+//
+// # Ordering with the mode setters
+//
+// SetModeSTA, SetModeAP and SetModeAPSTA choose the driver mode explicitly,
+// and from then on neither SetSTA nor SetAP changes it again. An APSTA
+// program therefore configures both interfaces without one call undoing the
+// other:
+//
+//	wifi.SetModeAPSTA()
+//	wifi.SetAP(apCfg)       // AP interface, mode stays APSTA
+//	wifi.SetSTA(ssid, pass) // station interface, mode stays APSTA
+//	wifi.Start()
+//
+// Without an explicit mode, SetAP means AP and SetSTA means STA (the
+// pre-AP default), so the two single-interface recipes keep working
+// unchanged.
+//
+// # What it creates
+//
+// The AP netif - the interface the soft-AP DHCP server runs on, holding the
+// default address 192.168.4.1 - is created here, lazily and once. That is
+// why most of AP mode's fixed RAM cost shows up in heap marks taken after
+// this call, and the rest after Start; Setup itself stays station-sized.
+//
+// Call it before Start. Errors: the validation codes above, then the
+// driver's own (ESP_ERR_WIFI_MODE 0x3005 when the explicitly chosen mode has
+// no AP interface, ESP_ERR_WIFI_PASSWORD, ESP_ERR_WIFI_SSID, ...).
+func SetAP(cfg APConfig) error {
+	if len(cfg.SSID) > 32 {
+		return errOf(0x102) // ESP_ERR_INVALID_ARG: does not fit wifi_ap_config_t
+	}
+	if len(cfg.SSID) == 0 {
+		return errOf(0x300A) // ESP_ERR_WIFI_SSID: the driver rejects an empty SSID
+	}
+	if len(cfg.Password) > 63 {
+		return errOf(0x102) // ESP_ERR_INVALID_ARG: the AP passphrase is at most 63
+	}
+	if n := len(cfg.Password); n != 0 && n < 8 {
+		return errOf(0x300B) // ESP_ERR_WIFI_PASSWORD: WPA2 needs 8 or more
+	}
+	switch cfg.AuthMode {
+	case AuthOpen:
+		if len(cfg.Password) != 0 {
+			return errOf(0x300B) // ESP_ERR_WIFI_PASSWORD: a password needs an auth mode
+		}
+	case AuthWPA2PSK, AuthWPA3PSK, AuthWPA2WPA3PSK:
+		if len(cfg.Password) < 8 {
+			return errOf(0x300B) // ESP_ERR_WIFI_PASSWORD
+		}
+	default:
+		return errOf(0x102) // ESP_ERR_INVALID_ARG: no soft AP serves this mode
+	}
+	if cfg.Channel > 14 {
+		return errOf(0x102) // ESP_ERR_INVALID_ARG: 2.4 GHz only
+	}
+	if cfg.MaxSTA < 0 || cfg.MaxSTA > MaxAPStations {
+		return errOf(0x102) // ESP_ERR_INVALID_ARG
+	}
+	channel := cfg.Channel
+	if channel == 0 {
+		channel = 1
+	}
+	maxSTA := cfg.MaxSTA
+	if maxSTA == 0 {
+		maxSTA = DefaultMaxSTA
+	}
+	hidden := int32(0)
+	if cfg.Hidden {
+		hidden = 1
+	}
+	var ssidBuf [32]byte
+	copy(ssidBuf[:], cfg.SSID)
+	var passBuf [64]byte
+	copy(passBuf[:], cfg.Password)
+	return errOf(setAP(&ssidBuf[0], int32(len(cfg.SSID)),
+		&passBuf[0], int32(len(cfg.Password)),
+		int32(channel), hidden, int32(maxSTA), int32(cfg.AuthMode)))
+}
+
+// GetAPConfig reads the soft-AP configuration back out of the driver
+// (esp_wifi_get_config on WIFI_IF_AP) - the answer to "did the channel and
+// the auth mode actually take effect", as opposed to "did the call return
+// zero". Password is never marshalled back and stays empty.
+//
+// Errors: the driver's. ESP_ERR_WIFI_MODE (0x3005) when the chosen mode has
+// no AP interface, or when SetAP never ran (no AP netif exists).
+func GetAPConfig() (APConfig, error) {
+	var ssid [32]byte
+	var ssidLen, channel, hidden, maxSTA, authMode int32
+	if e := getAPConfig(&ssid[0], int32(len(ssid)), &ssidLen,
+		&channel, &hidden, &maxSTA, &authMode); e != 0 {
+		return APConfig{}, errOf(e)
+	}
+	return APConfig{
+		SSID:     string(ssid[:ssidLen]),
+		Channel:  uint8(channel),
+		Hidden:   hidden != 0,
+		MaxSTA:   int(maxSTA),
+		AuthMode: AuthMode(authMode),
+	}, nil
+}
+
+// GetAPIP returns the soft AP's own address in network byte order -
+// 192.168.4.1 with the IDF defaults - taken from the AP netif. The address
+// is static and assigned when SetAP creates the netif, so it is available
+// before Start; format it with IPString.
+//
+// Errors: ESP_ERR_WIFI_MODE (0x3005) when no AP netif exists (SetAP never
+// ran) or the netif read fails.
+func GetAPIP() (uint32, error) {
+	var ip uint32
+	if e := getAPIP(&ip); e != 0 {
+		return 0, errOf(e)
+	}
+	return ip, nil
+}
+
+// Station is one client associated with the soft AP: its MAC, its average
+// RSSI, and the IPv4 address the AP's DHCP server leased it (0 until a lease
+// exists). The driver's station-list API reports exactly these three; the
+// association id exists only in the association event, which carries it in
+// Event.AID.
+type Station struct {
+	MAC  [6]uint8
+	RSSI int8
+	IP   uint32
+}
+
+// MACString formats the station's MAC as aa:bb:cc:dd:ee:ff.
+func (s Station) MACString() string {
+	const digits = "0123456789abcdef"
+	buf := make([]byte, 0, 17)
+	for i, b := range s.MAC {
+		if i > 0 {
+			buf = append(buf, ':')
+		}
+		buf = append(buf, digits[b>>4], digits[b&0xF])
+	}
+	return string(buf)
+}
+
+// APStations lists the clients currently associated with the soft AP:
+// esp_wifi_ap_get_sta_list for MAC and RSSI, plus the address the AP's DHCP
+// server leased to each (read from the DHCP server's own lease records, or
+// from the ARP cache for a client that has not renewed). Nothing in this
+// package implements DHCP - the IDF soft AP's built-in server hands out the
+// 192.168.4.x leases and this call reads them back.
+//
+// An empty (non-nil) slice means nobody is associated; the slice holds at
+// most MaxAPStations records. Errors: the driver's, e.g. ESP_ERR_WIFI_MODE
+// (0x3005) while the mode has no AP interface.
+func APStations() ([]Station, error) {
+	max := int(maxSTA()) // the chip's ESP_WIFI_MAX_CONN_NUM
+	if max <= 0 || max > MaxAPStations {
+		max = MaxAPStations
+	}
+	buf := make([]Station, max)
+	var n int32
+	if e := apStaList(&buf[0], int32(max), &n); e != 0 {
+		return nil, errOf(e)
+	}
+	return buf[:n], nil
+}
+
+// DeauthStation deauthenticates the client with this MAC. esp_wifi_deauth_sta
+// takes an association id and the station list carries none, so the glue asks
+// the driver for it (esp_wifi_ap_get_sta_aid) and passes it on - there is no
+// bookkeeping on this side, and no AID is ever guessed.
+//
+// The driver's own codes come back unchanged: ESP_ERR_NOT_FOUND (0x105) when
+// no station with this MAC is associated, ESP_ERR_WIFI_MODE (0x3005) while the
+// mode has no AP interface. The departure itself arrives in the mailbox as
+// EvAPStaDisconnected with the MAC and the reason code, like any client that
+// left on its own. There is no deauthenticate-everyone form (the driver's
+// aid=0 wildcard stays unused): loop over APStations.
+func DeauthStation(mac [6]uint8) error {
+	return errOf(deauthSta(&mac[0]))
 }
 
 // Connect calls esp_wifi_connect: a single attempt. Association or
@@ -520,7 +893,9 @@ func IPString(ip uint32) string {
 // collides with the subscriber poller once any Subscribe has happened - the
 // two sides silently steal each other's events. Use Subscribe and
 // Subscription.Next; keep direct Poll only in programs that never Subscribe.
-func Poll(ev *Event) int32 { return poll(&ev.Kind, &ev.Aux, &ev.IP) }
+func Poll(ev *Event) int32 {
+	return poll(&ev.Kind, &ev.Aux, &ev.IP, &ev.MAC[0], &ev.AID)
+}
 
 // waitEvent is the shared body of WaitEvent and WaitEventMs: poll the
 // mailbox until one of the wanted kinds arrives or timeoutMs elapses. Each
@@ -581,6 +956,8 @@ func ErrName(code int32) string {
 		return "ESP_ERR_INVALID_ARG"
 	case 0x103:
 		return "ESP_ERR_INVALID_STATE"
+	case 0x105:
+		return "ESP_ERR_NOT_FOUND"
 	case 0x107:
 		return "ESP_ERR_TIMEOUT"
 	case 0x110D:
@@ -591,6 +968,10 @@ func ErrName(code int32) string {
 		return "ESP_ERR_WIFI_NOT_INIT"
 	case 0x3002:
 		return "ESP_ERR_WIFI_NOT_STARTED"
+	case 0x3003:
+		return "ESP_ERR_WIFI_NOT_STOPPED"
+	case 0x3004:
+		return "ESP_ERR_WIFI_IF"
 	case 0x3005:
 		return "ESP_ERR_WIFI_MODE"
 	case 0x3006:
@@ -605,6 +986,8 @@ func ErrName(code int32) string {
 		return "ESP_ERR_WIFI_TIMEOUT"
 	case 0x3015:
 		return "ESP_ERR_WIFI_NOT_ASSOC"
+	case 0x7F01:
+		return "LLGO_ERR_GLUE_ABI"
 	}
 	return "esp_err 0x" + hex6(uint32(code))
 }

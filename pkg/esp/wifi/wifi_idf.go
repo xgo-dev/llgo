@@ -9,6 +9,9 @@ package wifi
 
 import _ "unsafe" // for go:linkname
 
+//go:linkname glueABI C.llgo_wifi_glue_abi
+func glueABI() int32
+
 //go:linkname setup C.llgo_wifi_setup
 func setup() int32
 
@@ -21,8 +24,22 @@ func printVersion() int32
 //go:linkname start C.llgo_wifi_start
 func start() int32
 
+//go:linkname stop C.llgo_wifi_stop
+func stop() int32
+
+//go:linkname setMode C.llgo_wifi_set_mode
+func setMode(mode int32) int32
+
 //go:linkname setSTA C.llgo_wifi_set_sta
 func setSTA(ssid *uint8, ssidLen int32, pass *uint8, passLen int32) int32
+
+//go:linkname setAP C.llgo_wifi_set_ap
+func setAP(ssid *uint8, ssidLen int32, pass *uint8, passLen int32,
+	channel int32, hidden int32, maxSTA int32, authMode int32) int32
+
+//go:linkname getAPConfig C.llgo_wifi_get_ap_config
+func getAPConfig(ssid *uint8, ssidMax int32, ssidLen *int32,
+	channel *int32, hidden *int32, maxSTA *int32, authMode *int32) int32
 
 //go:linkname scanStart C.llgo_wifi_scan
 func scanStart(blocking int32) int32
@@ -39,6 +56,18 @@ func disconnect() int32
 //go:linkname getIP C.llgo_wifi_get_ip
 func getIP() uint32
 
+//go:linkname getAPIP C.llgo_wifi_get_ap_ip
+func getAPIP(ip *uint32) int32
+
+//go:linkname apStaList C.llgo_wifi_ap_sta_list
+func apStaList(out *Station, max int32, count *int32) int32
+
+//go:linkname maxSTA C.llgo_wifi_max_sta
+func maxSTA() int32
+
+//go:linkname deauthSta C.llgo_wifi_deauth_sta
+func deauthSta(mac *uint8) int32
+
 //go:linkname defaultSTA C.llgo_wifi_default_sta
 func defaultSTA(ssid *uint8, ssidMax int32, ssidLen *int32,
 	pass *uint8, passMax int32, passLen *int32)
@@ -52,9 +81,6 @@ func heapFree() uint32
 //go:linkname heapMin C.llgo_wifi_heap_min
 func heapMin() uint32
 
-//go:linkname setModeSTA C.llgo_wifi_set_mode_sta
-func setModeSTA() int32
-
 //go:linkname heapInternalFree C.llgo_wifi_heap_internal_free
 func heapInternalFree() uint32
 
@@ -62,7 +88,7 @@ func heapInternalFree() uint32
 func heapSpiramFree() uint32
 
 //go:linkname poll C.llgo_wifi_poll
-func poll(kind *int32, aux *int32, ip *uint32) int32
+func poll(kind *int32, aux *int32, ip *uint32, mac *uint8, aid *uint16) int32
 
 // vTaskDelay yields the CPU for ticks. Every Go polling loop must call it:
 // a busy loop starves the idle tasks and trips the task watchdog.
