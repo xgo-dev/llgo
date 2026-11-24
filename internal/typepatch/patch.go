@@ -37,7 +37,7 @@ func markPatched(pkg *types.Package) {
 	}
 }
 
-// IsPatched reports whether pkg has been merged into a replacement package via Merge.
+// IsPatched reports whether pkg has been passed to Merge.
 func IsPatched(pkg *types.Package) bool {
 	if pkg == nil {
 		return false

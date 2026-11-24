@@ -775,17 +775,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		return fn, nil, goFunc
 	}
 	isCgo := isCgoExternSymbol(f)
-	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() && p.inlineImports[f] == 0 {
-		goName := fn.Name()
-		if pkgTypes != nil {
-			goName = funcName(pkgTypes, f, false)
-		}
-		pos := p.funcInfoPosition(f)
-		if p.prog.Target().GOOS == "windows" && isRecoverTransparentWrapper(f) {
-			pkg.EmitFuncInfoFlags(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column, llssa.FuncInfoFlagWrapper)
-		} else {
-			pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column)
-		}
+	if (len(f.Blocks) != 0 || simdDecl) && p.inlineImports[f] == 0 {
+		p.emitFuncInfo(pkg, pkgTypes, f, fn)
 	}
 	if simdDecl {
 		// Keep the defining entry visible to external linkname aliases, while
@@ -999,6 +990,22 @@ func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
 		}
 	}
 	return p.goProg.Fset.Position(f.Pos())
+}
+
+func (p *context) emitFuncInfo(pkg llssa.Package, pkgTypes *types.Package, f *ssa.Function, fn llssa.Function) {
+	if !p.prog.FuncInfoMetadataEnabled() {
+		return
+	}
+	goName := fn.Name()
+	if pkgTypes != nil {
+		goName = funcName(pkgTypes, f, false)
+	}
+	pos := p.funcInfoPosition(f)
+	if p.prog.Target().GOOS == "windows" && isRecoverTransparentWrapper(f) {
+		pkg.EmitFuncInfoFlags(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column, llssa.FuncInfoFlagWrapper)
+	} else {
+		pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column)
+	}
 }
 
 func (p *context) funcInfoPosition(f *ssa.Function) token.Position {
@@ -3373,8 +3380,8 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 			return t, true
 		}
 		o := typ.Obj()
-		if pkg := o.Pkg(); typepatch.IsPatched(pkg) {
-			if patch, ok := p.patches[pkg.Path()]; ok {
+		if pkg := o.Pkg(); pkg != nil {
+			if patch, ok := p.patches[pkg.Path()]; ok && typepatch.IsPatched(pkg) {
 				if obj := patch.Types.Scope().Lookup(o.Name()); obj != nil {
 					raw := p.prog.Type(instantiate(obj.Type(), typ), llssa.GoDecl).RawType()
 					return raw, typ != raw

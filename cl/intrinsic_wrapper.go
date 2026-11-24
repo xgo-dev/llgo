@@ -44,8 +44,8 @@ func (w wrapperParam) Parent() *ssa.Function         { return nil }
 func (w wrapperParam) Referrers() *[]ssa.Instruction { return nil }
 func (w wrapperParam) Pos() token.Pos                { return w.pos }
 
-// compileIntrinsicWrapper emits a linkonce_odr addressable Go function wrapper
-// for an LLVM intrinsic or LLGo instruction binding when used as a function value.
+// compileIntrinsicWrapper emits a linkonce (LinkOnceAny) addressable Go function
+// wrapper for an LLVM intrinsic or LLGo instruction binding when used as a function value.
 func (p *context) compileIntrinsicWrapper(v *ssa.Function) llssa.Function {
 	if fn := p.funcs[v]; fn != nil {
 		return fn
@@ -68,10 +68,19 @@ func (p *context) compileIntrinsicWrapper(v *ssa.Function) llssa.Function {
 		return p.patchType(v.Signature).(*types.Signature)
 	}()
 	fn := p.pkg.NewFuncEx(name, sig, llssa.GoDecl, false, true)
+	noInlineDirective := hasNoInlineDirective(v)
+	if disableInline || noInlineDirective {
+		fn.Inline(llssa.NoInline)
+	}
+	if noInlineDirective {
+		fn.DisableTailCalls()
+	}
 	p.funcs[v] = fn
 	if p.options.DeclarationsOnly {
 		return fn
 	}
+	p.emitFuncInfo(p.pkg, pkgTypes, v, fn)
+	dbgEnabled := p.options.Debug
 	p.inits = append(p.inits, func() {
 		oldFn := p.fn
 		oldGoFn := p.goFn
@@ -89,7 +98,15 @@ func (p *context) compileIntrinsicWrapper(v *ssa.Function) llssa.Function {
 		}()
 
 		b := fn.MakeBody(1)
-		defer b.EndBuild()
+		defer func() {
+			b.EndBuild()
+			b.Dispose()
+		}()
+		if dbgEnabled {
+			pos := p.goProg.Fset.Position(v.Pos())
+			bodyPos := p.getFuncBodyPos(v)
+			b.DebugFunction(fn, debugFunctionScope(v), pos, bodyPos)
+		}
 
 		hasValist := llssa.HasNameValist(v.Signature)
 		var args []ssa.Value
