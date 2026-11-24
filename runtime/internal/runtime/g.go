@@ -25,14 +25,6 @@ func SetPanicOnFault(in bool) (out bool) {
 	return out
 }
 
-// ThreadDeferSlot returns the current goroutine's defer chain slot.
-// Address the field directly through getg() so targets where getg() may return
-// nil (such as llgo.wasm.workers) retain the standard nil-dereference check
-// instead of returning a non-nil field offset.
-func ThreadDeferSlot() **Defer {
-	return &getg().defer_
-}
-
 // SetThreadDefer associates the current goroutine with the given defer chain.
 func SetThreadDefer(head *Defer) {
 	getg().defer_ = head
