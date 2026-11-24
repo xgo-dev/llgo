@@ -124,10 +124,11 @@ func TestForwardedCallbackCaptureAllocations(t *testing.T) {
 			t.Fatal("unexpected callback read length")
 		}
 	}
+	const calls = 4096
 	measure := func(fn func(*forwardedCallbackHost) int) uint64 {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
-		for range 4096 {
+		for range calls {
 			if fn(h) != 1 {
 				t.Fatal("unexpected callback read length")
 			}
@@ -137,9 +138,13 @@ func TestForwardedCallbackCaptureAllocations(t *testing.T) {
 	}
 	directAllocs := measure(forwardedCallbackDirectRead)
 	wrappedAllocs := measure(forwardedCallbackWrappedRead)
-	// Both variants allocate one caller record per invocation; forwarding must
-	// not additionally heap-allocate the callback's captured result locals.
+	// Both variants allocate one caller record per invocation; neither path
+	// may additionally heap-allocate the callback's captured result locals.
+	const maxAllocs = calls + 64
+	if directAllocs > maxAllocs || wrappedAllocs > maxAllocs {
+		t.Fatalf("callback captures heap-allocated: direct=%d wrapped=%d (max %d for %d calls)", directAllocs, wrappedAllocs, maxAllocs, calls)
+	}
 	if wrappedAllocs > directAllocs+64 {
-		t.Fatalf("forwarded callback allocated %d objects vs %d direct for 4096 calls", wrappedAllocs, directAllocs)
+		t.Fatalf("forwarded callback allocated %d objects vs %d direct for %d calls", wrappedAllocs, directAllocs, calls)
 	}
 }

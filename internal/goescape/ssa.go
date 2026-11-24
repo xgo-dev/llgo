@@ -551,12 +551,7 @@ func (f *functionAnalysis) call(site ssa.CallInstruction, call *ssa.CallCommon) 
 		// A directly called function parameter exports the invocation effect;
 		// its caller can compose the actual callback's capture summary. Other
 		// unresolved values still need conservative capture publication here.
-		switch call.Value.(type) {
-		case *ssa.Parameter, *ssa.FreeVar:
-			if call.IsInvoke() {
-				f.flow(f.sink("unknown call"), call.Value, 1)
-			}
-		default:
+		if call.IsInvoke() || !isDirectCallbackParam(call.Value) {
 			f.flow(f.sink("unknown call"), call.Value, 1)
 		}
 		if call.IsInvoke() {

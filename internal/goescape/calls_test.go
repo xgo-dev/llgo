@@ -20,6 +20,7 @@ func TestResolvedCallsAndCallbackCaptures(t *testing.T) {
 		{"function phi", `func a(*int){};func b(*int){};func f(x int,c bool){fn:=a;if c{fn=b};fn(&x)}`, false},
 		{"unknown function phi", `func a(*int){};func f(x int,c bool,u func(*int)){fn:=a;if c{fn=u};fn(&x)}`, true},
 		{"callback borrow", `func run(fn func()){fn()};func f(x int)int{run(func(){x++});return x}`, false},
+		{"callback converted signature", `type F func();func run(fn F){(func())(fn)()};func f(x int)int{run(func(){x++});return x}`, false},
 		{"callback publication", `var sink *int;func run(fn func()){fn()};func f(x int){run(func(){sink=&x})}`, true},
 		{"callback result publication", `var sink *int;func run(fn func()*int){sink=fn()};func f(x int){run(func()*int{return &x})}`, true},
 		{"callback goroutine", `func run(fn func()){go fn()};func f(x int){run(func(){x++})}`, true},
