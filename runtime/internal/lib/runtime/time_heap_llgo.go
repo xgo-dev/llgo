@@ -164,7 +164,7 @@ func timerSchedulerLoop() {
 		now := runtimeNano()
 		if wait := timerSchedulerWaitDuration(st.r.when, now); wait > 0 {
 			timerSchedulerWait = timerWaitUntil
-			timerSchedulerWakeAt = st.r.when
+			timerSchedulerWakeAt = now + wait
 			timerSchedulerTimedWait(wait)
 			timerSchedulerWait = timerNotWaiting
 			continue

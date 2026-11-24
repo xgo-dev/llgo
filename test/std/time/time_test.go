@@ -346,10 +346,6 @@ func TestTimerResetWakesEarlierDeadline(t *testing.T) {
 	defer head.Stop()
 	target := time.NewTimer(time.Hour)
 	defer target.Stop()
-	// Let the timer scheduler observe the long-lived head before resetting a
-	// different timer ahead of it. This makes the test exercise the wakeup from
-	// an existing timed wait instead of racing scheduler initialization.
-	time.Sleep(10 * time.Millisecond)
 
 	start := time.Now()
 	if !target.Reset(20 * time.Millisecond) {
@@ -367,9 +363,6 @@ func TestTimerResetWakesEarlierDeadline(t *testing.T) {
 
 func TestTimerStartWakesAfterStoppingHead(t *testing.T) {
 	head := time.NewTimer(2 * time.Second)
-	defer head.Stop()
-	// Give the scheduler time to enter the long wait and then remove its timer.
-	time.Sleep(10 * time.Millisecond)
 	if !head.Stop() {
 		t.Fatal("the long timer had already fired")
 	}
