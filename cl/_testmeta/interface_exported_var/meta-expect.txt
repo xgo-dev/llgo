@@ -41,6 +41,9 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
 []_llgo_uint8:
     _llgo_uint8
+_llgo_encoding/binary.ByteOrder:
+    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_encoding/binary.littleEndian:
     *_llgo_encoding/binary.littleEndian
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
@@ -108,9 +111,6 @@ _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out
 _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
     _llgo_string
-_llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw:
-    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods
-    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods:
     _llgo_func$ICfGJV9Kp4o-2SMi1iuyC9xBBX1c5utHD63uVbyrfEc
     _llgo_func$YjgNCugJxKXYLk39KOJyRyLtvcHU1d7KRz4inhHdVgg
@@ -119,9 +119,9 @@ _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw$imethods:
     _llgo_func$mBhSCdZCFK2IHVQVA73dFmon0gMcig2Q387khsbzmm8
     _llgo_func$mjkdaEUHPtpOYlUrWGfnskhhvdyc7k9Fk-vwWj3VftE
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
-_llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik:
+_llgo_itab$SfWC8WE2CxieOrLQ3XNa2NFICKyYDYplkapLgtP4z0k:
+    _llgo_encoding/binary.ByteOrder
     _llgo_encoding/binary.littleEndian
-    _llgo_iface$J1wM-rGcIPemx5jloXBmH7pUzUCSqpgNkOdb0QIFTxw
     encoding/binary.(*littleEndian).PutUint16
     encoding/binary.(*littleEndian).PutUint32
     encoding/binary.(*littleEndian).PutUint64
@@ -144,7 +144,7 @@ main.init:
     main.init$guard
 main.main:
     _llgo_encoding/binary.littleEndian
-    _llgo_itab$vggDeT47dwPKM_RcBnGpsdpFFhF_4t_0ENclFcOmnik
+    _llgo_itab$SfWC8WE2CxieOrLQ3XNa2NFICKyYDYplkapLgtP4z0k
     encoding/binary.LittleEndian
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer

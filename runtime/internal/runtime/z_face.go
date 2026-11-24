@@ -206,6 +206,23 @@ func addItab(i *Itab) *Itab {
 	return i
 }
 
+// ConvertIface preserves the destination interface identity. The cache holds
+// one immutable itab, so readers observe its type and methods atomically.
+func ConvertIface(inter *interfacetype, src iface, cache *unsafe.Pointer) iface {
+	if src.tab == nil {
+		return src
+	}
+	if tab := (*itab)(loadItabPointer(cache)); tab != nil && tab._type == src.tab._type {
+		return iface{tab, src.data}
+	}
+	if src.tab.inter == inter {
+		return src
+	}
+	tab := NewItab(inter, src.tab._type)
+	storeItabPointer(cache, unsafe.Pointer(tab))
+	return iface{tab, src.data}
+}
+
 // NewItab returns a new itab.
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {
@@ -490,6 +507,27 @@ func assertE2I(inter *interfacetype, t *_type) *itab {
 
 func IfaceE2I(inter *interfacetype, e eface, dst *iface) {
 	*dst = iface{assertE2I(inter, e._type), e.data}
+}
+
+// AssertIface checks whether typ implements inter and caches successful itabs
+// for repeated type assertions at the same conversion site.
+//
+//go:nosplit
+func AssertIface(inter *interfacetype, typ *_type, cache *unsafe.Pointer) (*itab, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	if tab := (*itab)(loadItabPointer(cache)); tab != nil && tab._type == typ {
+		return tab, tab.fun[0] != 0
+	}
+	tab := NewItab(inter, typ)
+	// Cache failed assertions too. NewItab does not retain an itab whose
+	// method table is incomplete, so repeated failures would allocate again.
+	storeItabPointer(cache, unsafe.Pointer(tab))
+	if tab.fun[0] == 0 {
+		return nil, false
+	}
+	return tab, true
 }
 
 func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {

@@ -588,6 +588,60 @@ func TestBuildAndCheckSymbolsFromTestltoLTOPluginAggregateABI(t *testing.T) {
 	}
 }
 
+func TestLTOPluginKnownItabPlainLoad(t *testing.T) {
+	conf := testltoLTOPluginConf(t, build.ModeGen)
+	const input = `
+target datalayout = "e-p:64:64-i64:64-n8:16:32:64-S128"
+@interface.I = constant i8 0
+@type.A = constant i8 0
+@_llgo_itab$A = weak_odr constant { ptr, ptr, i32, [1 x ptr] } { ptr @interface.I, ptr @type.A, i32 0, [1 x ptr] [ptr @A.M] }, !llgo.static.itab.slot !0
+declare ptr @runtime.NewItab(ptr, ptr)
+define void @A.M() { ret void }
+define void @entry(ptr %dynamic) {
+  %known = call ptr @runtime.NewItab(ptr @interface.I, ptr @type.A)
+  %slot = getelementptr i8, ptr %known, i64 24
+  %fn = load ptr, ptr %slot
+  call void %fn()
+  %unknown.slot = getelementptr i8, ptr %dynamic, i64 24
+  %unknown.fn = load ptr, ptr %unknown.slot
+  call void %unknown.fn()
+  ret void
+}
+!0 = !{i64 24, !"go.method.M:func()"}
+`
+	for _, tt := range []struct {
+		name, old, replacement string
+		direct                 bool
+	}{
+		{"known", "", "", true},
+		{"unknown_type", "ptr @type.A)", "ptr %dynamic)", false},
+		{"unmarked_slot", "i64 24\n  %fn", "i64 16\n  %fn", false},
+		{"volatile", "%fn = load ptr", "%fn = load volatile ptr", false},
+		{"atomic", "%fn = load ptr, ptr %slot", "%fn = load atomic ptr, ptr %slot acquire, align 8", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ir := input
+			if tt.old != "" {
+				ir = strings.Replace(ir, tt.old, tt.replacement, 1)
+			}
+			opt := filepath.Join(llvmenv.New("").BinDir(), "opt")
+			cmd := exec.Command(opt, "-load-pass-plugin="+conf.LTOPlugin.Path,
+				"-passes=llgo-lto-pre-globaldce", "-verify-each", "-S", "-o", "-")
+			cmd.Stdin = strings.NewReader(ir)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("plain itab load pass: %v\n%s", err, out)
+			}
+			if got := strings.Contains(string(out), "call void @A.M()"); got != tt.direct {
+				t.Fatalf("direct known call = %v, want %v\n%s", got, tt.direct, out)
+			}
+			if !strings.Contains(string(out), "call void %unknown.fn()") {
+				t.Fatalf("dynamic call was changed\n%s", out)
+			}
+		})
+	}
+}
+
 func TestLTOPluginAggregateStaticItabDevirt(t *testing.T) {
 	conf := testltoLTOPluginConf(t, build.ModeGen)
 	const input = `

@@ -1028,6 +1028,7 @@ type aPackage struct {
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
 	staticItabByType    map[staticItabKey]Expr
+	ifaceConvCacheID    uint64
 	staticStringBacking map[llvm.Value]struct{}
 	wasmHeaderRanges    map[llvm.Type]llvm.Value
 

@@ -96,6 +96,7 @@ func (b Builder) EndBuild() {
 	b.preserveNilCheckCondition()
 	b.Func.disposeAllocaBuilder()
 	b.finishSIMDFeatures()
+	b.Func.interfaceConcreteTypes = nil
 }
 
 // Dispose disposes of the builder.

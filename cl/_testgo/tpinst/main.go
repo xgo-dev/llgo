@@ -61,9 +61,10 @@ func (pt *M[T]) value() T {
 // CHECK: %[[FLOAT_BAD:[0-9]+]] = fcmp une double %[[FLOAT_RESULT]], 1.001000e+02
 // CHECK: br i1 %[[FLOAT_BAD]]
 // CHECK: %[[INT_TYPE:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %[[INT_IFACE]])
-// CHECK: %[[IMPLEMENTS:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @"{{.*}}/cl/_testgo/tpinst.iface${{[-A-Za-z0-9_]+}}", ptr %[[INT_TYPE]])
+// CHECK: %[[ASSERT:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.AssertIface"(ptr @"{{.*}}/cl/_testgo/tpinst.iface${{[-A-Za-z0-9_]+}}", ptr %[[INT_TYPE]], ptr {{.*}})
+// CHECK: %[[IMPLEMENTS:[0-9]+]] = extractvalue { ptr, i1 } %[[ASSERT]], 1
 // CHECK: br i1 %[[IMPLEMENTS]]
-// CHECK: %[[PRIVATE_ITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/tpinst.iface${{[-A-Za-z0-9_]+}}", ptr %[[INT_TYPE]])
+// CHECK: %[[PRIVATE_ITAB:[0-9]+]] = extractvalue { ptr, i1 } %[[ASSERT]], 0
 
 // CHECK-LABEL: define linkonce i64 @"main.(*M[int]).Value"(ptr %0){{.*}} {
 // CHECK: [[INT_VALUE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"main.M[int]", ptr %0, i32 0, i32 0

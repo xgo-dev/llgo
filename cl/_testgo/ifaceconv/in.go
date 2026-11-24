@@ -121,11 +121,8 @@ func main() {
 // CHECK: [[NIL_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
 // CHECK: [[NIL_I2_OK:%.*]] = icmp ne ptr [[NIL_I2_TYPE]], null
 // CHECK: br i1 [[NIL_I2_OK]], label %{{.*}}, label %{{.*}}
-// Converting nil I2 to I1 derives the target itab from the nil dynamic type.
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: [[NIL_DYNAMIC_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
-// CHECK: [[NIL_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceconv.iface${{[-A-Za-z0-9_]+}}", ptr [[NIL_DYNAMIC_TYPE]])
+// Converting nil I2 to I1 uses the nil-preserving cached conversion helper.
+// CHECK: call %"{{.*}}iface" @"{{.*}}/runtime/internal/runtime.ConvertIface"(ptr @_llgo_main.I1, %"{{.*}}iface" zeroinitializer, ptr @"_llgo_ifaceconv${{.*}}")
 // C1 implements I0 and I1, but its dynamic type is tested against I2.
 // Zero-sized constants keep a runtime allocation: boxing them would mutate the shared sentinel.
 // CHECK: [[C1_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
@@ -153,26 +150,28 @@ func main() {
 // CHECK: [[C2_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
 // CHECK: [[C2_IS_I2:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
 // CHECK: br i1 [[C2_IS_I2]], label %{{.*}}, label %{{.*}}
-// The final conversions rebuild an eface from the same C1 payload before nil comparison.
+// The known I1-to-empty conversion uses C1 directly, while equality's
+// dynamic I1-to-empty path still reads the source interface type.
 // CHECK: [[FINAL_C1_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[FINAL_C1_DATA:%.*]], 1
+// CHECK: [[FINAL_I1_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 1
+// CHECK: [[FINAL_I1_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.C1, ptr undef }, ptr [[FINAL_I1_PAYLOAD]], 1
+// CHECK: [[I1_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_I1_EFACE]], %"{{.*}}eface" zeroinitializer)
+// CHECK: br i1 [[I1_IS_NIL]], label %{{.*}}, label %{{.*}}
 // CHECK: [[FINAL_C1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[FINAL_C1_IFACE]])
 // CHECK: [[FINAL_C1_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 1
 // CHECK: [[FINAL_EFACE_0:%.*]] = insertvalue %"{{.*}}eface" undef, ptr [[FINAL_C1_TYPE]], 0
 // CHECK: [[FINAL_EFACE:%.*]] = insertvalue %"{{.*}}eface" [[FINAL_EFACE_0]], ptr [[FINAL_C1_PAYLOAD]], 1
-// CHECK: [[I0_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_EFACE]], %"{{.*}}eface" zeroinitializer)
+// CHECK: [[NIL_I0_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" zeroinitializer)
+// CHECK: [[NIL_I0_EFACE_0:%.*]] = insertvalue %"{{.*}}eface" undef, ptr [[NIL_I0_TYPE]], 0
+// CHECK: [[NIL_I0_EFACE:%.*]] = insertvalue %"{{.*}}eface" [[NIL_I0_EFACE_0]], ptr null, 1
+// CHECK: [[I0_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_EFACE]], %"{{.*}}eface" [[NIL_I0_EFACE]])
 // CHECK: br i1 [[I0_IS_NIL]], label %{{.*}}, label %{{.*}}
-// CHECK: [[FINAL_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[FINAL_C1_IFACE]])
-// CHECK: [[FINAL_I1_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 1
-// CHECK: [[FINAL_I1_EFACE_0:%.*]] = insertvalue %"{{.*}}eface" undef, ptr [[FINAL_I1_TYPE]], 0
-// CHECK: [[FINAL_I1_EFACE:%.*]] = insertvalue %"{{.*}}eface" [[FINAL_I1_EFACE_0]], ptr [[FINAL_I1_PAYLOAD]], 1
-// CHECK: [[I1_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_I1_EFACE]], %"{{.*}}eface" %{{.*}})
-// CHECK: br i1 [[I1_IS_NIL]], label %{{.*}}, label %{{.*}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr @{{.*}}, i64 4 })
 // CHECK: ret void
 // The successful C2-to-I2 assertion preserves C2's payload under a target itab.
 // CHECK: extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
 // CHECK: [[C2_I2_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
-// CHECK: [[C2_TARGET_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @"{{.*}}/cl/_testgo/ifaceconv.iface${{[-A-Za-z0-9_]+}}", ptr [[C2_I2_TYPE]])
+// CHECK: [[C2_TARGET_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
 // CHECK: [[C2_TARGET_IFACE_0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[C2_TARGET_ITAB]], 0
 // CHECK: [[C2_TARGET_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[C2_TARGET_IFACE_0]], ptr [[C2_I2_PAYLOAD]], 1
 // CHECK: insertvalue { %"{{.*}}iface", i1 } %{{.*}}, i1 true, 1

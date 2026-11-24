@@ -8,16 +8,16 @@ _llgo_main.T:
 *_llgo_main.T:
     _llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
-_llgo_itab$TICI59jcV6ebL9aVnDFuh3BidBlv40EGYDQe8VdVmdQ:
+_llgo_itab$ucu5I3v7U20yUE8ZqwfIFnN7znOysoccAVOaCJ8VGMU:
+    _llgo_main.I
     _llgo_main.T
-    github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo
     main.(*T).m
+_llgo_main.I:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_main.T:
     *_llgo_main.T
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
-github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo:
-    github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods
-    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 github.com/xgo-dev/llgo/cl/_testmeta/interface_unexported.iface$SE5y-KS93u1u9p1qAf9LRB1hncS44rJIq27_JZbIQVo$imethods:
     _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac
 main.(*T).m:
@@ -27,7 +27,7 @@ main.(*T).m:
 main.init:
     main.init$guard
 main.main:
-    _llgo_itab$TICI59jcV6ebL9aVnDFuh3BidBlv40EGYDQe8VdVmdQ
+    _llgo_itab$ucu5I3v7U20yUE8ZqwfIFnN7znOysoccAVOaCJ8VGMU
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.use
 main.use:

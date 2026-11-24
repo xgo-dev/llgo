@@ -219,9 +219,6 @@ _llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods:
     _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
 _llgo_iface$kr1iSWwMezh0B9LdQN0MhEZUNZvBlHPhlst95jAyxE0$imethods:
     _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
-_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods
-    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
 _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods:
     _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
 _llgo_int:
@@ -236,9 +233,9 @@ _llgo_io.Reader:
 _llgo_io.Writer:
     _llgo_iface$kr1iSWwMezh0B9LdQN0MhEZUNZvBlHPhlst95jAyxE0$imethods
     github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
-_llgo_itab$rDYHFzHM8ToJeVDHQNMl4dlq5ed22GhfgKkd01126as:
+_llgo_itab$7_EIDOzkMrQdzFNarSNnlV2doW3zoG7UQxbKsYT5syc:
     *_llgo_bytes.Buffer
-    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    _llgo_io.Reader
     bytes.(*Buffer).Read
 _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
@@ -253,7 +250,7 @@ main.init:
     io.init
     main.init$guard
 main.main:
-    _llgo_itab$rDYHFzHM8ToJeVDHQNMl4dlq5ed22GhfgKkd01126as
+    _llgo_itab$7_EIDOzkMrQdzFNarSNnlV2doW3zoG7UQxbKsYT5syc
     bytes.NewBuffer
     github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
 

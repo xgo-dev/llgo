@@ -889,6 +889,21 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	if got := len(pkg.staticItabByType); got != 1 {
 		t.Fatalf("static itab cache has %d entries, want 1", got)
 	}
+	for _, name := range []string{"I", "J"} {
+		named := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, name, nil), intf, nil)
+		itab, ok := b.staticItab(named, concrete, b.abiType(named), tcon)
+		if !ok || itab.impl == itab1.impl {
+			t.Fatalf("named interface %s reused the underlying interface itab", name)
+		}
+		alias := types.NewAlias(types.NewTypeName(token.NoPos, pkgTypes, name+"Alias", nil), named)
+		aliased, ok := b.staticItab(alias, concrete, b.abiType(named), tcon)
+		if !ok || aliased.impl != itab.impl {
+			t.Fatalf("alias of %s did not reuse its target itab", name)
+		}
+	}
+	if got := len(pkg.staticItabByType); got != 3 {
+		t.Fatalf("static itab cache has %d entries, want 3", got)
+	}
 	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
 	b.EndBuild()
 

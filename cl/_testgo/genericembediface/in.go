@@ -40,10 +40,11 @@ func main() {
 // BidiStreamingServer, and invokes ServerReflectionInfo through the asserted itab.
 // CHECK-LABEL: define %"{{.*}}/runtime/internal/runtime.iface" @main.handler(%"{{.*}}/runtime/internal/runtime.eface" %0, %"{{.*}}/runtime/internal/runtime.iface" %1){{.*}} {
 // CHECK: [[H_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" %0, 0
-// CHECK: [[H_IMPLEMENTS:%.*]] = call i1 @"{{.*}}Implements"(ptr @_llgo_main.ReflectionServer, ptr [[H_DYN_TYPE]])
+// CHECK: [[H_ASSERT:%.*]] = call { ptr, i1 } @"{{.*}}AssertIface"(ptr @_llgo_main.ReflectionServer, ptr [[H_DYN_TYPE]], ptr {{.*}})
+// CHECK: [[H_IMPLEMENTS:%.*]] = extractvalue { ptr, i1 } [[H_ASSERT]], 1
 // CHECK: br i1 [[H_IMPLEMENTS]], label %{{.*}}, label %{{.*}}
+// CHECK: [[H_REF_ITAB:%.*]] = extractvalue { ptr, i1 } [[H_ASSERT]], 0
 // CHECK: [[H_DYN_DATA:%.*]] = extractvalue %"{{.*}}eface" %0, 1
-// CHECK: [[H_REF_ITAB:%.*]] = call ptr @"{{.*}}NewItab"(ptr @"_llgo_iface${{[-A-Za-z0-9_]+}}", ptr [[H_DYN_TYPE]])
 // CHECK: [[H_REF_IFACE0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[H_REF_ITAB]], 0
 // CHECK: [[H_REF_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[H_REF_IFACE0]], ptr [[H_DYN_DATA]], 1
 // CHECK: [[H_GENERIC_STREAM:%.*]] = call ptr @"{{.*}}AllocZ"(i64 16)
