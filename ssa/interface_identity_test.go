@@ -143,6 +143,14 @@ func testChangeTypeNamedInterfaceIdentity(t *testing.T, target *Target) {
 	empty := types.NewInterfaceType(nil, nil).Complete()
 	known = knownBuilder.ChangeInterface(prog.Type(empty, GoDecl), known)
 	known = knownBuilder.ChangeInterface(prog.Type(dst, GoDecl), known)
+	selected := Expr{knownBuilder.impl.CreateSelect(prog.Val(true).impl, known.impl, known.impl, ""), known.Type}
+	selected = knownBuilder.ChangeInterface(prog.Type(src, GoDecl), selected)
+	if !types.Identical(knownBuilder.knownInterfaceConcreteType(selected.impl), types.NewPointer(concrete)) {
+		t.Fatal("select propagation lost the known concrete type")
+	}
+	if got := cacheCount(); got != 2 {
+		t.Fatalf("select propagation allocated a cache: got %d, want 2", got)
+	}
 	if !types.Identical(knownBuilder.Func.interfaceConcreteTypes[known.impl], types.NewPointer(concrete)) {
 		t.Fatal("conversion chain lost the known concrete type")
 	}

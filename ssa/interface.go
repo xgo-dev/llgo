@@ -759,13 +759,54 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 // Example printed form:
 //
 //	t1 = change interface interface{} <- I (t0)
+func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
+	known := b.Func.interfaceConcreteTypes
+	if len(known) == 0 {
+		return nil
+	}
+	var visit func(llvm.Value, map[llvm.Value]bool) types.Type
+	visit = func(value llvm.Value, seen map[llvm.Value]bool) types.Type {
+		if knownType := known[value]; knownType != nil {
+			return knownType
+		}
+		if seen[value] {
+			return nil
+		}
+		seen[value] = true
+		if value.IsABitCastInst().C != nil {
+			return visit(value.Operand(0), seen)
+		}
+		if value.IsASelectInst().C != nil && value.OperandsCount() == 3 {
+			left := visit(value.Operand(1), seen)
+			right := visit(value.Operand(2), seen)
+			if left != nil && right != nil && types.Identical(left, right) {
+				return left
+			}
+			return nil
+		}
+		if value.IsAPHINode().C != nil && value.IncomingCount() != 0 {
+			var result types.Type
+			for i := 0; i < value.IncomingCount(); i++ {
+				incoming := visit(value.IncomingValue(i), seen)
+				if incoming == nil || (result != nil && !types.Identical(result, incoming)) {
+					return nil
+				}
+				result = incoming
+			}
+			return result
+		}
+		return nil
+	}
+	return visit(value, make(map[llvm.Value]bool))
+}
+
 func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
 	if types.Identical(typ.RawType(), x.RawType()) {
 		return Expr{x.impl, typ}
 	}
 	// Only values constructed with a proven concrete type bypass the cache.
-	// Loads, parameters and control-flow merges retain the dynamic path.
-	if concrete := b.Func.interfaceConcreteTypes[x.impl]; concrete != nil {
+	// Loads, parameters and mixed control-flow merges retain the dynamic path.
+	if concrete := b.knownInterfaceConcreteType(x.impl); concrete != nil {
 		return Expr{b.unsafeInterface(typ.RawType(), concrete, b.abiType(concrete), b.faceData(x.impl)), typ}
 	}
 	if x.kind == vkIface && !typ.RawType().Underlying().(*types.Interface).Empty() {
