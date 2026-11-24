@@ -61,20 +61,6 @@ func TestCleanMainPkgRemovesSidecars(t *testing.T) {
 
 func TestCleanPackageExportsAndListErrors(t *testing.T) {
 	dir := t.TempDir()
-	export := filepath.Join(dir, "package.a")
-	write := func(file string) {
-		t.Helper()
-		if err := os.WriteFile(file, []byte("artifact"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(export + ".ll")
-	if err := cleanPkgs([]*packages.Package{{PkgPath: "example.com/p", ExportFile: export}, {PkgPath: "synthetic"}}, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(export + ".ll"); !os.IsNotExist(err) {
-		t.Fatal("did not remove the LLGo export artifact")
-	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/clean\ngo 1.24\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

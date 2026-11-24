@@ -213,11 +213,15 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	driverCfg.Mode = (origMode &^ (NeedTypes | NeedTypesSizes | NeedTypesInfo | NeedSyntax)) | NeedCompiledGoFiles | NeedImports | NeedName | NeedFiles
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
-		// Only ask cmd/go to invoke gc (NeedExportFile) when the caller passes
-		// diagnostic/compiler -gcflags (e.g. "llgo tool compile -e/-std" or
-		// frontend diagnostic tests) and no typed rewrite owns the package
-		// source. Ordinary LLGo builds and debug -N/-l builds do not read gc
-		// export data.
+		// Callers that explicitly include NeedExportFile in origMode keep their
+		// contract (preserved in driverCfg.Mode above). Otherwise, only ask
+		// cmd/go to invoke gc (NeedExportFile) when diagnostic/compiler
+		// -gcflags are present in BuildFlags or GOFLAGS from cfg.Env/process
+		// env (e.g. "llgo tool compile -e/-std" or frontend diagnostic tests)
+		// and no typed rewrite owns the package source. Ordinary LLGo builds
+		// and debug -N/-l builds do not read gc export data.
+		// Note: persisted `go env -w GOFLAGS` is intentionally not queried via
+		// a subprocess here to avoid adding an extra `go env` spawn per load.
 		if (dedup == nil || dedup.rewrite == nil) && needsGCExportFlags(driverCfg.BuildFlags, driverCfg.Env) {
 			driverCfg.Mode |= NeedExportFile
 		}

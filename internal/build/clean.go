@@ -66,7 +66,7 @@ func Clean(patterns []string, conf *Config) error {
 		return err
 	}
 
-	err = errors.Join(cleanPkgs(initial, conf.Verbose), cleanCachedLLFiles(initial, conf.Verbose))
+	err = cleanCachedLLFiles(initial, conf.Verbose)
 
 	for _, pkg := range initial {
 		if pkg.Name == "main" {
@@ -102,18 +102,6 @@ func removeArtifactDirectory(dir string, verbose bool) error {
 		return fmt.Errorf("clean %s: %w", dir, err)
 	}
 	return nil
-}
-
-func cleanPkgs(initial []*packages.Package, verbose bool) error {
-	var err error
-	packages.Visit(initial, nil, func(p *packages.Package) {
-		if p.ExportFile == "" {
-			return
-		}
-		file := p.ExportFile + ".ll"
-		err = errors.Join(err, removeFile(file, verbose))
-	})
-	return err
 }
 
 // cleanCachedLLFiles removes per-package debug IR files emitted by -gen-llfiles

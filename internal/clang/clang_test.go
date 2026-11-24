@@ -846,8 +846,8 @@ func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
 		t.Fatalf("Compile with isolated empty PATH = %v, want exec.ErrNotFound", err)
 	}
 
-	// Relative PATH entries must resolve against Cmd.Dir (not process cwd) and
-	// launch via an absolute executable path.
+	// Relative PATH entries must be rejected with exec.ErrDot by default
+	// (matching Go 1.19+ os/exec.LookPath / CVE-2022-30580).
 	workDir := t.TempDir()
 	relBin := filepath.Join(workDir, "tool-bin")
 	if err := os.MkdirAll(relBin, 0o755); err != nil {
@@ -858,18 +858,29 @@ func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(relBin, "fake-clang"), []byte(relScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("GODEBUG", "")
 	relCmd := New("fake-clang", Config{})
 	relCmd.Dir = workDir
 	relCmd.Env = []string{"PATH=tool-bin"}
+	if got, err := ResolveExecutable("fake-clang", relCmd.Dir, relCmd.Env); !errors.Is(err, exec.ErrDot) {
+		t.Fatalf("ResolveExecutable(relative PATH without execerrdot=0) = (%q, %v), want exec.ErrDot", got, err)
+	}
+	if err := relCmd.Compile("-v"); !errors.Is(err, exec.ErrDot) {
+		t.Fatalf("Compile(relative PATH without execerrdot=0) = %v, want exec.ErrDot", err)
+	}
+
+	// With GODEBUG=execerrdot=0 explicitly set, relative PATH entries anchor to
+	// Cmd.Dir (not process cwd) and launch via an absolute executable path.
+	relCmd.Env = []string{"PATH=tool-bin", "GODEBUG=execerrdot=0"}
 	resolved, err := ResolveExecutable("fake-clang", relCmd.Dir, relCmd.Env)
 	if err != nil {
-		t.Fatalf("ResolveExecutable(relative PATH) failed: %v", err)
+		t.Fatalf("ResolveExecutable(relative PATH, execerrdot=0) failed: %v", err)
 	}
 	if !filepath.IsAbs(resolved) || filepath.Clean(resolved) != filepath.Join(relBin, "fake-clang") {
 		t.Fatalf("ResolveExecutable = %q, want %q", resolved, filepath.Join(relBin, "fake-clang"))
 	}
 	if err := relCmd.Compile("-v"); err != nil {
-		t.Fatalf("Compile with relative Cmd.Env PATH anchored to Cmd.Dir failed: %v", err)
+		t.Fatalf("Compile with relative Cmd.Env PATH and execerrdot=0 failed: %v", err)
 	}
 	gotRel, err := os.ReadFile(relMarker)
 	if err != nil || string(gotRel) != "rel-ok" {
@@ -877,12 +888,12 @@ func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
 	}
 
 	// Empty PATH entries (e.g. trailing/leading separator) must be skipped and
-	// never implicitly search Cmd.Dir.
+	// never implicitly search Cmd.Dir, even when execerrdot=0.
 	if err := os.WriteFile(filepath.Join(workDir, "fake-clang"), []byte("#!/bin/sh\nexit 99\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	trailingPath := t.TempDir() + string(os.PathListSeparator)
-	if got, err := ResolveExecutable("fake-clang", workDir, []string{"PATH=" + trailingPath}); !errors.Is(err, exec.ErrNotFound) {
+	if got, err := ResolveExecutable("fake-clang", workDir, []string{"PATH=" + trailingPath, "GODEBUG=execerrdot=0"}); !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("ResolveExecutable(trailing empty PATH) = (%q, %v), want exec.ErrNotFound", got, err)
 	}
 }

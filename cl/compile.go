@@ -235,6 +235,7 @@ type context struct {
 	implicitDeferResults []llssa.Expr
 
 	patches          Patches
+	patchedPkgCache  map[*types.Package]bool
 	blkInfos         []blocks.Info
 	srcLines         map[string][]string
 	addrOfFieldAddrs map[token.Pos]none
@@ -3356,6 +3357,17 @@ func (p *context) type_(typ types.Type, cc llssa.CallConv) llssa.Type {
 	return p.prog.Type(p.patchType(typ), cc)
 }
 
+func (p *context) isPatchedPkg(pkg *types.Package) bool {
+	if p.patchedPkgCache == nil {
+		p.patchedPkgCache = make(map[*types.Package]bool, len(p.patches))
+	} else if patched, ok := p.patchedPkgCache[pkg]; ok {
+		return patched
+	}
+	patched := typepatch.IsPatched(pkg)
+	p.patchedPkgCache[pkg] = patched
+	return patched
+}
+
 func (p *context) patchType(typ types.Type) (r types.Type) {
 	r, _ = p._patchType(typ)
 	return
@@ -3417,7 +3429,7 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 		}
 		o := typ.Obj()
 		if pkg := o.Pkg(); pkg != nil {
-			if patch, ok := p.patches[pkg.Path()]; ok && typepatch.IsPatched(pkg) {
+			if patch, ok := p.patches[pkg.Path()]; ok && pkg != patch.Types && p.isPatchedPkg(pkg) {
 				if obj := patch.Types.Scope().Lookup(o.Name()); obj != nil {
 					raw := p.prog.Type(instantiate(obj.Type(), typ), llssa.GoDecl).RawType()
 					return raw, typ != raw

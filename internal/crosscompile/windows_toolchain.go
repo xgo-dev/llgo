@@ -280,7 +280,7 @@ func goarchForTargetTriple(target string) (string, error) {
 func probeNativeTool(command []string, input NativeToolchainInput) (toolIdentity, error) {
 	exe, err := clang.ResolveExecutable(command[0], input.Dir, input.Environ)
 	if err != nil {
-		return toolIdentity{}, fmt.Errorf("read target triple: %w", err)
+		return toolIdentity{}, fmt.Errorf("resolve native tool %q: %w", command[0], err)
 	}
 	run := func(arg string) ([]byte, error) {
 		args := make([]string, 0, len(command))

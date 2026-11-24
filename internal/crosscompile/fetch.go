@@ -298,7 +298,7 @@ func fileSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-const downloadIdleTimeout = 60 * time.Second
+var downloadIdleTimeout = 60 * time.Second
 
 func newDownloadHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -335,8 +335,8 @@ func downloadFile(url, filepath string) error {
 	}
 	defer out.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -349,9 +349,14 @@ func downloadFile(url, filepath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
-	timer := time.AfterFunc(downloadIdleTimeout, cancel)
+	timer := time.AfterFunc(downloadIdleTimeout, func() {
+		cancel(fmt.Errorf("download %s: no data for %v", url, downloadIdleTimeout))
+	})
 	defer timer.Stop()
 	_, err = io.Copy(out, &idleTimeoutReader{r: resp.Body, timer: timer, timeout: downloadIdleTimeout})
+	if err != nil && ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
 	return err
 }
 

@@ -51,6 +51,9 @@ func (e commandEnv) configure(cmd *exec.Cmd) *exec.Cmd {
 				cmd.Path = cmd.Args[0]
 				cmd.Err = err
 			} else if resolved != cmd.Args[0] {
+				// Clear only a stale lookup error from exec.Command's ambient-PATH
+				// probe once ResolveExecutable succeeded against e.environ (which
+				// already enforces exec.ErrDot for relative PATH entries).
 				cmd.Path = resolved
 				cmd.Err = nil
 			}

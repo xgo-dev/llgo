@@ -3,6 +3,7 @@ package crosscompile
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -511,7 +512,8 @@ esac
 		t.Fatalf("probeNativeTool = %+v, want %+v", got, want)
 	}
 
-	// Relative PATH entry in input.Environ must anchor to input.Dir, not process cwd.
+	// Relative PATH entry in input.Environ must be rejected with exec.ErrDot by
+	// default and report "resolve native tool" rather than "read target triple".
 	workDir := t.TempDir()
 	relBin := filepath.Join(workDir, "tool-bin")
 	if err := os.MkdirAll(relBin, 0o755); err != nil {
@@ -520,12 +522,22 @@ esac
 	if err := os.WriteFile(filepath.Join(relBin, "clang"), []byte(goodScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	gotRel, err := probeNativeTool([]string{"clang"}, NativeToolchainInput{
+	t.Setenv("GODEBUG", "")
+	_, err = probeNativeTool([]string{"clang"}, NativeToolchainInput{
 		Dir:     workDir,
 		Environ: []string{"PATH=tool-bin"},
 	})
+	if err == nil || !errors.Is(err, exec.ErrDot) || !strings.Contains(err.Error(), `resolve native tool "clang"`) {
+		t.Fatalf("probeNativeTool(relative PATH without execerrdot=0) = %v, want resolve native tool wrapping exec.ErrDot", err)
+	}
+
+	// With GODEBUG=execerrdot=0 explicitly set, relative PATH anchors to input.Dir.
+	gotRel, err := probeNativeTool([]string{"clang"}, NativeToolchainInput{
+		Dir:     workDir,
+		Environ: []string{"PATH=tool-bin", "GODEBUG=execerrdot=0"},
+	})
 	if err != nil {
-		t.Fatalf("probeNativeTool with relative input.Environ PATH failed: %v", err)
+		t.Fatalf("probeNativeTool with relative input.Environ PATH and execerrdot=0 failed: %v", err)
 	}
 	if gotRel != want {
 		t.Fatalf("probeNativeTool(relative PATH) = %+v, want %+v", gotRel, want)

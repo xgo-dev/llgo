@@ -1409,3 +1409,31 @@ func verifyExtraction(t *testing.T, destDir string) {
 		t.Errorf("Nested file content mismatch. Got: %s", content)
 	}
 }
+
+func TestDownloadFileIdleTimeoutCause(t *testing.T) {
+	origTimeout := downloadIdleTimeout
+	downloadIdleTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { downloadIdleTimeout = origTimeout })
+
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+	}))
+	defer func() {
+		close(unblock)
+		srv.Close()
+	}()
+
+	err := downloadFile(srv.URL, filepath.Join(t.TempDir(), "stalled.bin"))
+	if err == nil || !strings.Contains(err.Error(), srv.URL) || !strings.Contains(err.Error(), "no data for") {
+		t.Fatalf("downloadFile(stalled) = %v, want idle timeout cause containing URL", err)
+	}
+}

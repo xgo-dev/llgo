@@ -87,8 +87,8 @@ func VariantOnly() int { return 99 }
 	}
 
 	// Lowering the prepared primary package must skip typepatch.Merge:
-	// patch.Types.Scope() must keep the exact same pointer and patch.Types
-	// itself must not be passed to Merge as oldTypes.
+	// patch.Types itself must not be passed to Merge as oldTypes (sanity check:
+	// its Scope pointer also remains intact).
 	scopeBefore := prepared.Types.Scope()
 	llprog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer llprog.Dispose()

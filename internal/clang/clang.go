@@ -260,9 +260,12 @@ func (c *Cmd) getenv(key string) string {
 // otherwise resolves bare names against the process-wide PATH prior to
 // applying cmd.Env.
 //
-// Relative PATH entries are anchored to dir (or the process working directory
-// when dir is empty) and converted to absolute paths before execution so
-// commands with cmd.Dir set always launch the intended binary.
+// Matching Go 1.19+ os/exec.LookPath (CVE-2022-30580), executables found via
+// relative PATH entries return an error wrapping exec.ErrDot unless
+// GODEBUG=execerrdot=0 is set in environ (or the process environment when
+// GODEBUG is absent from environ), in which case relative PATH entries are
+// anchored to dir (or the process working directory when dir is empty) and
+// converted to absolute paths before execution.
 //
 // When environ is nil, has no PATH entry, or name already contains a path
 // separator, name is returned unchanged.
@@ -275,13 +278,26 @@ func ResolveExecutable(name, dir string, environ []string) (string, error) {
 		return name, nil
 	}
 	pathExtVal, _ := lookupEnvSlice(environ, "PATHEXT")
-	if resolved := lookupExecutableInPath(name, dir, pathVal, pathExtVal); resolved != "" {
-		return resolved, nil
-	}
-	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	allowRel := execErrDotDisabled(environ)
+	return lookupExecutableInPath(name, dir, pathVal, pathExtVal, allowRel)
 }
 
-func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string) string {
+func execErrDotDisabled(environ []string) bool {
+	godebug, ok := lookupEnvSlice(environ, "GODEBUG")
+	if !ok {
+		godebug = os.Getenv("GODEBUG")
+	}
+	disabled := false
+	for _, entry := range strings.Split(godebug, ",") {
+		k, v, hasEq := strings.Cut(entry, "=")
+		if hasEq && k == "execerrdot" {
+			disabled = v == "0"
+		}
+	}
+	return disabled
+}
+
+func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string, allowRel bool) (string, error) {
 	exts := []string{""}
 	if runtime.GOOS == "windows" {
 		exts = windowsPathExts(name, pathExtEnv)
@@ -290,22 +306,27 @@ func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string) string {
 		if entry == "" {
 			continue
 		}
-		if !filepath.IsAbs(entry) {
+		isRel := !filepath.IsAbs(entry)
+		dir := entry
+		if isRel {
 			if baseDir != "" {
-				entry = filepath.Join(baseDir, entry)
+				dir = filepath.Join(baseDir, dir)
 			}
-			if abs, err := filepath.Abs(entry); err == nil {
-				entry = abs
+			if abs, err := filepath.Abs(dir); err == nil {
+				dir = abs
 			}
 		}
 		for _, ext := range exts {
-			candidate := filepath.Join(entry, name+ext)
+			candidate := filepath.Join(dir, name+ext)
 			if isExecutableFile(candidate) {
-				return candidate
+				if isRel && !allowRel {
+					return "", &exec.Error{Name: name, Err: exec.ErrDot}
+				}
+				return candidate, nil
 			}
 		}
 	}
-	return ""
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
 func windowsPathExts(name, pathExtEnv string) []string {
