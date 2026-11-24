@@ -43,6 +43,9 @@ func llgoFileIsAssembly(ctx *context, args []string, path string) bool {
 // owner. Go's runtime/cgo is mixed: gcc_* uses GCC/Clang, the other files use
 // the Go assembler. Extension case alone cannot distinguish those languages.
 func cgoAssemblyInputs(ctx *context, pkg *packages.Package, explicit []llgoFileInput) ([]llgoFileInput, error) {
+	if cgoDisabled(ctx.commands) {
+		return nil, nil
+	}
 	selected := selectedSFiles(pkg.OtherFiles)
 	if len(selected) == 0 {
 		return nil, nil

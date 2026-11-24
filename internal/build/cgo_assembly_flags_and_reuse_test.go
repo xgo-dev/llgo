@@ -1,7 +1,11 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,6 +129,7 @@ func main() {
 
 	runLLGo := func(name string, extraEnv ...string) string {
 		t.Helper()
+		t.Setenv("GOWORK", "off")
 		t.Setenv("LLGO_BUILD_CACHE", "on")
 		t.Setenv("CGO_ENABLED", "1")
 		for _, kv := range []string{"CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS"} {
@@ -318,5 +323,345 @@ ASM_SYM:
 	movl $TEST_CONST, %eax
 	ret
 `
+	}
+}
+
+func TestCgoCompilationFlagsPreservesGroupOrder(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	preambles := []cgoPreamble{{goFile: goFile}}
+	decls := []cgoDecl{
+		{cppflags: []string{"-DREVIEW_VALUE=20", "-DCPP_DECL=1"}},
+		{cflags: []string{"-DC_DECL=1"}},
+		{cxxflags: []string{"-DCXX_DECL=1"}},
+		{ldflags: []string{"-ldecl"}},
+	}
+	commands := commandEnv{
+		dir: dir,
+		environ: []string{
+			"CGO_CPPFLAGS=-DREVIEW_VALUE=10 -DCPP_ENV=1",
+			"CGO_CFLAGS=-DREVIEW_VALUE=30 -DC_ENV=1",
+			"CGO_CXXFLAGS=-DREVIEW_VALUE=35 -DCXX_ENV=1",
+			"CGO_LDFLAGS=-lenv",
+		},
+	}
+	cflags, cxxflags, ldflags, err := cgoCompilationFlags(commands, preambles, decls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incFlag := "-I" + dir + string(filepath.Separator)
+	wantC := []string{
+		"-DREVIEW_VALUE=10", "-DCPP_ENV=1",
+		"-DREVIEW_VALUE=20", "-DCPP_DECL=1",
+		"-DREVIEW_VALUE=30", "-DC_ENV=1",
+		"-DC_DECL=1",
+		incFlag,
+	}
+	wantCXX := []string{
+		"-DREVIEW_VALUE=10", "-DCPP_ENV=1",
+		"-DREVIEW_VALUE=20", "-DCPP_DECL=1",
+		"-DREVIEW_VALUE=35", "-DCXX_ENV=1",
+		"-DCXX_DECL=1",
+		incFlag,
+	}
+	wantLD := []string{"-lenv", "-ldecl"}
+	if !reflect.DeepEqual(cflags, wantC) {
+		t.Fatalf("cflags = %#v, want %#v", cflags, wantC)
+	}
+	if !reflect.DeepEqual(cxxflags, wantCXX) {
+		t.Fatalf("cxxflags = %#v, want %#v", cxxflags, wantCXX)
+	}
+	if !reflect.DeepEqual(ldflags, wantLD) {
+		t.Fatalf("ldflags = %#v, want %#v", ldflags, wantLD)
+	}
+}
+
+func TestCgoAssemblyFlagPrecedenceMatchesGo(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("native cgo assembly execution test targets darwin/linux")
+	}
+	if runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64" {
+		t.Skip("native cgo assembly fixture covers arm64/amd64")
+	}
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not found")
+	}
+
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+	writeFile := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("go.mod", "module example.com/cgoprecedence\n\ngo 1.24\n")
+	writeFile("const_asm.S", strings.ReplaceAll(cgoConstTestAssembly(), "TEST_CONST", "REVIEW_VALUE"))
+	writeFile("main.go", `package main
+
+/*
+#cgo CPPFLAGS: -DREVIEW_VALUE=20
+extern int asm_const(void);
+*/
+import "C"
+import "fmt"
+
+func main() {
+	fmt.Println(int(C.asm_const()))
+}
+`)
+
+	runGo := func(extraEnv ...string) string {
+		t.Helper()
+		cmd := exec.Command("go", "run", ".")
+		cmd.Dir = dir
+		base := []string{"CGO_ENABLED=1", "GOWORK=off", "CGO_CPPFLAGS=", "CGO_CFLAGS=", "CGO_CXXFLAGS=", "CGO_LDFLAGS="}
+		cmd.Env = withEnv(os.Environ(), append(base, extraEnv...)...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go run (%v) failed: %v\nstdout:\n%s\nstderr:\n%s", extraEnv, err, stdout.String(), stderr.String())
+		}
+		return strings.TrimSpace(stdout.String())
+	}
+
+	runLLGo := func(name string, extraEnv ...string) string {
+		t.Helper()
+		t.Setenv("GOWORK", "off")
+		t.Setenv("LLGO_BUILD_CACHE", "on")
+		t.Setenv("CGO_ENABLED", "1")
+		for _, kv := range []string{"CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS"} {
+			t.Setenv(kv, "")
+		}
+		for _, kv := range extraEnv {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				t.Fatalf("invalid env %q", kv)
+			}
+			t.Setenv(k, v)
+		}
+		outBin := filepath.Join(t.TempDir(), name)
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
+
+		_, err = Do([]string{"."}, &Config{
+			Mode:    ModeBuild,
+			OutFile: outBin,
+			Goos:    runtime.GOOS,
+			Goarch:  runtime.GOARCH,
+		})
+		if err != nil {
+			t.Fatalf("llgo build (%v) failed: %v", extraEnv, err)
+		}
+		out, err := exec.Command(outBin).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %s (%v) failed: %v\n%s", outBin, extraEnv, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	cases := []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{name: "directive-cppflags-only", want: "20"},
+		{name: "cgo-cflags-overrides-directive-cppflags", env: []string{"CGO_CFLAGS=-DREVIEW_VALUE=30"}, want: "30"},
+		{name: "directive-cppflags-overrides-env-cppflags", env: []string{"CGO_CPPFLAGS=-DREVIEW_VALUE=40"}, want: "20"},
+		{name: "return-to-directive-cppflags-only", want: "20"},
+	}
+	for _, tc := range cases {
+		gotGo := runGo(tc.env...)
+		gotLLGo := runLLGo(tc.name, tc.env...)
+		if gotGo != tc.want || gotLLGo != tc.want {
+			t.Fatalf("%s (%v): go=%q llgo=%q, want both %q", tc.name, tc.env, gotGo, gotLLGo, tc.want)
+		}
+	}
+}
+
+func TestPureGoAndDisabledCgoIgnoreCgoEnvFlags(t *testing.T) {
+	t.Run("PureGoPackageWithCGO_LDFLAGS", func(t *testing.T) {
+		ctx, pkg := assemblyLanguageTestFixture(t, "example.com/purego", false, false)
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, pkg.GoFiles[0], nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg.Fset = fset
+		pkg.Syntax = []*ast.File{file}
+		aPkg := &aPackage{Package: pkg}
+
+		baseManifest := newManifestBuilder()
+		ctx.collectEnvInputs(baseManifest)
+		if err := ctx.collectPackageInputs(baseManifest, aPkg); err != nil {
+			t.Fatal(err)
+		}
+		baseFP := baseManifest.Fingerprint()
+
+		ctx.commands.environ = withEnv(ctx.commands.environ,
+			"CGO_ENABLED=1",
+			"CGO_CPPFLAGS=-DUNUSED=1",
+			"CGO_CFLAGS=-DUNUSED=2",
+			"CGO_LDFLAGS=-lnonexistent_llgo_test_lib",
+		)
+		llfiles, ldflags, err := buildCgo(ctx, aPkg, pkg.Syntax, nil, false)
+		if err != nil {
+			t.Fatalf("buildCgo(pure Go) failed: %v", err)
+		}
+		if len(llfiles) != 0 || len(ldflags) != 0 {
+			t.Fatalf("buildCgo(pure Go) = (%v, %v), want empty", llfiles, ldflags)
+		}
+		flagManifest := newManifestBuilder()
+		ctx.collectEnvInputs(flagManifest)
+		if err := ctx.collectPackageInputs(flagManifest, aPkg); err != nil {
+			t.Fatal(err)
+		}
+		if len(flagManifest.pkg.CgoEnvFlags) != 0 {
+			t.Fatalf("pure Go package recorded CgoEnvFlags = %v, want empty", flagManifest.pkg.CgoEnvFlags)
+		}
+		if flagManifest.Fingerprint() != baseFP {
+			t.Fatal("pure Go fingerprint changed when CGO_* env flags were set")
+		}
+	})
+
+	t.Run("CgoDisabledIgnoresAllCgoInputsAndFlags", func(t *testing.T) {
+		ctx, pkg := assemblyLanguageTestFixture(t, "example.com/cgopkg", true, false)
+		asm := assemblyLanguageTestWrite(t, pkg.Dir, "const_asm.S", cgoConstTestAssembly())
+		pkg.OtherFiles = []string{asm}
+		ctx.commands.environ = withEnv(ctx.commands.environ,
+			"CGO_ENABLED=0",
+			"CGO_CPPFLAGS=-DTEST_CONST=30",
+			"CGO_LDFLAGS=-lnonexistent_llgo_test_lib",
+		)
+		if inputs, err := cgoAssemblyInputs(ctx, pkg, nil); err != nil || len(inputs) != 0 {
+			t.Fatalf("cgoAssemblyInputs(CGO_ENABLED=0) = (%v, %v), want empty", inputs, err)
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), pkg.GoFiles[0], nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg.Fset = token.NewFileSet()
+		pkg.Syntax = []*ast.File{file}
+		if llfiles, ldflags, err := buildCgo(ctx, &aPackage{Package: pkg}, pkg.Syntax, nil, false); err != nil || len(llfiles) != 0 || len(ldflags) != 0 {
+			t.Fatalf("buildCgo(CGO_ENABLED=0) = (%v, %v, %v), want empty", llfiles, ldflags, err)
+		}
+		m := newManifestBuilder()
+		ctx.collectEnvInputs(m)
+		if err := ctx.collectPackageInputs(m, &aPackage{Package: pkg}); err != nil {
+			t.Fatal(err)
+		}
+		if len(m.pkg.CgoEnvFlags) != 0 {
+			t.Fatalf("CGO_ENABLED=0 recorded CgoEnvFlags = %v, want empty", m.pkg.CgoEnvFlags)
+		}
+	})
+}
+
+func TestPureGoBuildIgnoresCgoLdflags(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("native execution test targets darwin/linux")
+	}
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/purego42\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(42)\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cgoEnabled := range []string{"0", "1"} {
+		t.Run("CGO_ENABLED="+cgoEnabled, func(t *testing.T) {
+			goCmd := exec.Command("go", "run", ".")
+			goCmd.Dir = dir
+			goCmd.Env = withEnv(os.Environ(),
+				"GOWORK=off",
+				"CGO_ENABLED="+cgoEnabled,
+				"CGO_LDFLAGS=-lnonexistent_llgo_review_lib",
+			)
+			goOut, err := goCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("go run failed: %v\n%s", err, goOut)
+			}
+			if got := strings.TrimSpace(string(goOut)); got != "42" {
+				t.Fatalf("go run output = %q, want \"42\"", got)
+			}
+
+			t.Setenv("GOWORK", "off")
+			t.Setenv("LLGO_BUILD_CACHE", "on")
+			t.Setenv("CGO_ENABLED", cgoEnabled)
+			t.Setenv("CGO_LDFLAGS", "-lnonexistent_llgo_review_lib")
+			outBin := filepath.Join(t.TempDir(), "purego42")
+			origDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(dir); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.Chdir(origDir) }()
+
+			if _, err := Do([]string{"."}, &Config{
+				Mode:    ModeBuild,
+				OutFile: outBin,
+				Goos:    runtime.GOOS,
+				Goarch:  runtime.GOARCH,
+			}); err != nil {
+				t.Fatalf("llgo build (CGO_ENABLED=%s, bad CGO_LDFLAGS) failed: %v", cgoEnabled, err)
+			}
+			out, err := exec.Command(outBin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run %s failed: %v\n%s", outBin, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != "42" {
+				t.Fatalf("llgo output = %q, want \"42\"", got)
+			}
+		})
+	}
+}
+
+func TestDigestNativeAssemblyObjectCleansTempOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not found")
+	}
+	for _, retain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retain=%v", retain), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("TMPDIR", tmpDir)
+			srcDir := t.TempDir()
+			badAsm := assemblyLanguageTestWrite(t, srcDir, "broken.S", ".llgo_invalid_directive_for_cleanup_test\n")
+			ctx := &context{
+				mode:      ModeBuild,
+				buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+				commands:  commandEnv{dir: srcDir, environ: os.Environ()},
+			}
+			_, obj, err := digestNativeAssemblyObject(ctx, badAsm, nil, retain)
+			if err == nil {
+				t.Fatal("digestNativeAssemblyObject unexpectedly succeeded on invalid assembly")
+			}
+			if obj != "" {
+				t.Fatalf("digestNativeAssemblyObject returned object path %q on error, want empty", obj)
+			}
+			leftovers, globErr := filepath.Glob(filepath.Join(tmpDir, "llgofile-*.o"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
+			if len(leftovers) != 0 {
+				t.Fatalf("failed digestNativeAssemblyObject leaked temporary objects: %v", leftovers)
+			}
+		})
 	}
 }

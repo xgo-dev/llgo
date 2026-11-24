@@ -194,13 +194,14 @@ type packageSection struct {
 	OtherFiles       []fileDigest      `yaml:"other_files,omitempty"`
 	Plan9AsmFiles    []plan9AsmDigest  `yaml:"plan9asm_files,omitempty"`
 	LLGoFiles        []llgoFileDigest  `yaml:"llgo_files,omitempty"`
+	CgoEnvFlags      orderedStringMap  `yaml:"cgo_env_flags,omitempty"`
 	RewriteVars      orderedStringMap  `yaml:"rewrite_vars,omitempty"`
 }
 
 func (s *packageSection) empty() bool {
 	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
-		len(s.OtherFiles) == 0 && len(s.Plan9AsmFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
+		len(s.OtherFiles) == 0 && len(s.Plan9AsmFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.CgoEnvFlags) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }
 
 // manifestBuilder builds manifest text with sorted sections.
@@ -429,7 +430,7 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 // When retain is true (build-scoped), keep the compiled object for clFile to
 // reuse on a cache miss; cleanupNativeAsmObjects removes it when the build ends.
 func digestNativeAssemblyObject(ctx *context, source string, args []string, retain bool) (hash, object string, err error) {
-	object, err = genLLGoFileOutput(source, ".o")
+	tmpObj, err := genLLGoFileOutput(source, ".o")
 	if err != nil {
 		return "", "", fmt.Errorf("create assembly fingerprint object for %s: %w", source, err)
 	}
@@ -437,26 +438,29 @@ func digestNativeAssemblyObject(ctx *context, source string, args []string, reta
 		if retain && err == nil {
 			return
 		}
-		if cleanupErr := os.Remove(object); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
-			err = errors.Join(err, fmt.Errorf("remove assembly fingerprint object %s: %w", object, cleanupErr))
+		if cleanupErr := os.Remove(tmpObj); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove assembly fingerprint object %s: %w", tmpObj, cleanupErr))
 		}
 		object = ""
 	}()
 	command := ctx.compilerForSource(source)
 	command.Stdout = io.Discard
-	compileArgs := append(slices.Clone(args), "-c", source, "-o", object)
+	compileArgs := append(slices.Clone(args), "-c", source, "-o", tmpObj)
 	if err := command.Compile(compileArgs...); err != nil {
 		return "", "", fmt.Errorf("compile assembly fingerprint %s: %w", source, err)
 	}
-	info, err := os.Stat(object)
+	info, err := os.Stat(tmpObj)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return "", "", fmt.Errorf("missing or empty assembly fingerprint object for %s: %v", source, err)
 	}
-	hash, err = digestFile(object)
+	hash, err = digestFile(tmpObj)
 	if err != nil {
 		return "", "", err
 	}
-	return hash, object, nil
+	if retain {
+		return hash, tmpObj, nil
+	}
+	return hash, "", nil
 }
 
 // digestFiles calculates digests for multiple files.

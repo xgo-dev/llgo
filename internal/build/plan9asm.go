@@ -526,7 +526,9 @@ func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {
 				native[filepath.Clean(input.path)] = true
 			}
 		}
-		paths = slices.DeleteFunc(paths, func(path string) bool { return native[filepath.Clean(path)] })
+		paths = slices.DeleteFunc(paths, func(path string) bool {
+			return native[filepath.Clean(path)] || strings.HasSuffix(path, ".S")
+		})
 	}
 
 	// internal/chacha8rand has highly optimized arch asm on amd64/arm64.
