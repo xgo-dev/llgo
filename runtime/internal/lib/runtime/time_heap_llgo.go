@@ -178,8 +178,10 @@ func timerSchedulerLoop() {
 			st.r.when = timerNextWhen(when, period, now)
 			timerHeapAdd(st)
 		} else {
-			st.active = false
 			timerSchedulerMap.Delete(unsafe.Pointer(st.r))
+			// The scheduler uses the callback snapshot after unlocking.
+			// Release the references in st before it can park again.
+			*st = timerState{heapIndex: -1}
 		}
 
 		delay := now - when

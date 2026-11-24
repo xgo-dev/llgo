@@ -36,14 +36,20 @@ func TestNativeTimerSchedulerParkedDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	const observer = `
+var timerProbeHead *timerState
+
 //go:linkname timerSchedulerProbe timerprobe.wait
-func timerSchedulerProbe() (wakeAt, headWhen int64) {
+func timerSchedulerProbe() (wakeAt, headWhen int64, released bool) {
 	timerSchedulerMu.Lock()
 	if timerSchedulerWait == timerWaitUntil {
 		wakeAt = timerSchedulerWakeAt
 		if len(timerSchedulerHeap) > 0 {
-			headWhen = timerSchedulerHeap[0].r.when
+			timerProbeHead = timerSchedulerHeap[0]
+			headWhen = timerProbeHead.r.when
 		}
+	}
+	if st := timerProbeHead; st != nil {
+		released = st.r == nil && st.callback.f == nil && st.callback.arg == nil
 	}
 	timerSchedulerMu.Unlock()
 	return
@@ -59,32 +65,47 @@ import (
 )
 
 //go:linkname timerWait timerprobe.wait
-func timerWait() (wakeAt, headWhen int64)
+func timerWait() (wakeAt, headWhen int64, released bool)
+
+func waitForParkedHead() (int64, int64) {
+	for {
+		if wakeAt, headWhen, _ := timerWait(); headWhen != 0 {
+			return wakeAt, headWhen
+		}
+		runtime.Gosched()
+	}
+}
 
 func main() {
 	head := time.NewTimer(48*time.Hour)
-	var wakeAt, headWhen int64
-	for headWhen == 0 {
-		wakeAt, headWhen = timerWait()
-		runtime.Gosched()
-	}
+	wakeAt, headWhen := waitForParkedHead()
 	if remaining := time.Duration(headWhen - wakeAt); remaining < 23*time.Hour || remaining > 24*time.Hour {
 		panic("scheduler did not record the capped wait deadline")
 	}
 
 	later := time.NewTimer(36*time.Hour)
-	if got, _ := timerWait(); got != wakeAt {
+	if got, _, _ := timerWait(); got != wakeAt {
 		panic("a deadline after the capped wake time interrupted the wait")
 	}
 	if !head.Stop() || !later.Stop() {
 		panic("long timers fired early")
 	}
-	if got, deadline := timerWait(); got != wakeAt || deadline != 0 {
-		panic("stopping the timers changed the parked deadline")
+	if got, deadline, released := timerWait(); got != wakeAt || deadline != 0 || !released {
+		panic("stopping the timers changed the parked deadline or retained references")
 	}
 
 	next := time.NewTimer(0)
 	<-next.C
+
+	firing := time.NewTimer(time.Hour)
+	waitForParkedHead()
+	if !firing.Reset(0) {
+		panic("reset did not find the parked timer")
+	}
+	<-firing.C
+	if _, _, released := timerWait(); !released {
+		panic("fired one-shot timer retained references")
+	}
 }
 `
 	if err := os.WriteFile(probe, []byte(program), 0600); err != nil {
