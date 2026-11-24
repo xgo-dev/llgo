@@ -1118,7 +1118,7 @@ func main() {
 		println("[go] wifi FAIL start")
 		return
 	}
-	if ev, ok := wifi.WaitEvent([]int32{wifi.EvStaStart}, 300); ok {
+	if ev, ok := wifi.Subscribe(wifi.EvStaStart).Next(3000); ok {
 		println("[go] wifi STA_START")
 		heapMark("start")
 	} else {
@@ -1127,16 +1127,13 @@ func main() {
 		return
 	}
 
-	// Scan (M1): emu's built-in soft AP must show up in the list.
-	if e := wifi.ScanStart(true); e != 0 {
+	// Scan (M1): emu's built-in soft AP must show up in the list. The Scan
+	// wrapper subscribes to SCAN_DONE, starts the scan non-blocking, waits
+	// and fetches; the scheduler stays live throughout.
+	aps, e := wifi.Scan(wifi.ScanOptions{})
+	if e != 0 {
 		println("[go] wifi scan err =", int(e), wifi.ErrName(e))
 		println("[go] wifi FAIL scan")
-		return
-	}
-	aps, e := wifi.ScanFetch(20)
-	if e != 0 {
-		println("[go] wifi scan_fetch err =", int(e), wifi.ErrName(e))
-		println("[go] wifi FAIL scan_fetch")
 		return
 	}
 	println("[go] wifi scan n =", len(aps))
@@ -1167,6 +1164,7 @@ func main() {
 
 	// Connect + DHCP (M2): esp_wifi_connect attempts once; a failed
 	// association/handshake arrives as EvStaDisconnected with a reason code.
+	connEvents := wifi.Subscribe(wifi.EvStaConnected, wifi.EvStaDisconnected)
 	connected := false
 	for attempt := 1; attempt <= 3 && !connected; attempt++ {
 		if e := wifi.Connect(); e != 0 {
@@ -1174,7 +1172,7 @@ func main() {
 			println("[go] wifi FAIL connect")
 			return
 		}
-		ev, ok := wifi.WaitEvent([]int32{wifi.EvStaConnected, wifi.EvStaDisconnected}, 300)
+		ev, ok := connEvents.Next(3000)
 		if ok && ev.Kind == wifi.EvStaConnected {
 			connected = true
 			println("[go] wifi STA_CONNECTED")
@@ -1189,7 +1187,8 @@ func main() {
 
 	// DHCP: the GOT_IP event carries the address; GetIP polls esp_netif as
 	// the fallback read.
-	ev, _ := wifi.WaitEvent([]int32{wifi.EvGotIP}, 600)
+	gotIP := wifi.Subscribe(wifi.EvGotIP)
+	ev, _ := gotIP.Next(6000)
 	ip := ev.IP
 	if ip == 0 {
 		ip = wifi.GetIP()
@@ -1201,6 +1200,32 @@ func main() {
 	println("[go] wifi GOT_IP ip=" + wifi.IPString(ip))
 	println("[go] wifi PASS ip=" + wifi.IPString(ip))
 	heapMark("dhcp")
+
+	// Subscriber fan-out: two EvGotIP subscriptions must each receive their
+	// own copy of the same mailbox event, which a station disconnect +
+	// reconnect regenerates (the soft AP re-runs DHCP). subDisc only absorbs
+	// the disconnect event so the reconnect starts from a settled state.
+	subDisc := wifi.Subscribe(wifi.EvStaDisconnected)
+	subA := wifi.Subscribe(wifi.EvGotIP)
+	subB := wifi.Subscribe(wifi.EvGotIP)
+	if e := wifi.Disconnect(); e != 0 {
+		println("[go] wifi sub fanout FAIL disconnect err =", int(e), wifi.ErrName(e))
+	} else {
+		subDisc.Next(3000)
+		if e := wifi.Connect(); e != 0 {
+			println("[go] wifi sub fanout FAIL connect err =", int(e), wifi.ErrName(e))
+		} else {
+			evA, okA := subA.Next(15000)
+			evB, okB := subB.Next(15000)
+			if okA && okB && evA.Kind == wifi.EvGotIP && evB.Kind == wifi.EvGotIP &&
+				evA.IP != 0 && evA.IP == evB.IP {
+				println("[go] wifi sub fanout ok ip=" + wifi.IPString(evA.IP))
+			} else {
+				println("[go] wifi sub fanout FAIL gotip sub1 kind =", int(evA.Kind),
+					"sub2 kind =", int(evB.Kind))
+			}
+		}
+	}
 
 	// Steady state: the WiFi stack keeps module-specific buffers parked
 	// while connected; give it 10 seconds and look again.

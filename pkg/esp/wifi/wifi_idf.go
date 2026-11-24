@@ -69,3 +69,12 @@ func poll(kind *int32, aux *int32, ip *uint32) int32
 //
 //go:linkname vTaskDelay C.vTaskDelay
 func vTaskDelay(ticks uint32)
+
+// gosched hands the fiber scheduler to the next runnable goroutine (the
+// runtime's runtime.Gosched, reached by linkname like the demo's HeapStats
+// hook so the runtime package is not imported - importing it would pull its
+// finalizer/reflect machinery into the image). The subscriber poller yields
+// through it between quanta so other goroutines keep running.
+//
+//go:linkname gosched github.com/xgo-dev/llgo/runtime/internal/runtime.Gosched
+func gosched()

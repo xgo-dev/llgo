@@ -19,11 +19,11 @@
 //
 //	e := wifi.Setup()                    // NVS + netif + event loop + esp_wifi_init
 //	wifi.EventsRegister()
-//	wifi.SetModeSTA()                    // or wifi.SetSTA(ssid, pass)
+//	wifi.SetSTA(ssid, pass)
 //	wifi.Start()
-//	ev, ok := wifi.WaitEvent([]int32{wifi.EvStaStart}, 300)
-//	wifi.ScanStart(true)
-//	aps, e := wifi.ScanFetch(20)
+//	staStart := wifi.Subscribe(wifi.EvStaStart)
+//	ev, ok := staStart.Next(3000)
+//	aps, e := wifi.Scan(wifi.ScanOptions{}) // subscribe + non-blocking start + fetch
 //	for i := range aps { println(aps[i].SsidString()) }
 //
 // Every C call returns the raw esp_err code (0 = ESP_OK); wifi.ErrName maps
@@ -42,7 +42,35 @@
 // into a C-side ring; Go polls it (Poll) paced by vTaskDelay(10) = 100 ms -
 // the wait helper is WaitEvent. Blocking driver calls (ScanStart) are safe:
 // they block on a driver semaphore, which yields the CPU.
+//
+// # Subscribers: one poller, many consumers
+//
+// The C ring is a single-consumer mailbox, but applications usually have
+// more than one goroutine interested in events. Subscribe lazily starts the
+// package's one poller goroutine and fans every polled event out to all
+// matching subscriptions; Subscription.Next is a bounded wait with the same
+// semantics as WaitEvent. The poller keeps the WaitEvent discipline that
+// the llgo scheduler requires on this target: every wait is a bounded
+// quantum (vTaskDelay(10) = 100 ms, which yields the FreeRTOS task and feeds
+// the idle task and watchdog) plus a runtime.Gosched hand-off, so no
+// goroutine ever holds the single-task scheduler across an unbounded or
+// long C-level wait. Direct Poll/WaitEvent use and Subscribe are mutually
+// exclusive: whoever touched the mailbox first owns it, and the loser
+// silently steals (or loses) events. Because the poller alternates with
+// other goroutines at Go-level scheduling points, a goroutine parked on a
+// channel receive that nobody will serve can starve while the poller keeps
+// its quanta - the same single-consumer-era caveat WaitEvent always had;
+// wait with Next (bounded) instead.
+//
+// # Scan
+//
+// Scan strings the scan state machine together - subscribe to EvScanDone,
+// start the scan non-blocking, wait, fetch - and ScanFetch reports an
+// over-limit request instead of silently clamping it.
 package wifi
+
+// The subscriber model's runtime hook (gosched) is a //go:linkname extern
+// declared in wifi_idf.go / wifi_stub.go, so this file needs no imports.
 
 // Event kinds delivered by the C mailbox (see on_event in wifi_glue.c).
 const (
@@ -58,12 +86,175 @@ const (
 	EvOverflow        = -1 // the mailbox overflowed; reported once by Poll
 )
 
+// EventKind identifies one mailbox event kind; it aliases int32 so the Ev*
+// constants below pass directly as Subscribe arguments.
+type EventKind = int32
+
 // Event is one mailbox slot: kind, aux (e.g. the STA_DISCONNECTED reason
 // code) and the raw network-order IP for EvGotIP.
 type Event struct {
 	Kind int32
 	Aux  int32
 	IP   uint32
+}
+
+// Pacing and buffer bounds of the subscriber model.
+const (
+	// pollQuantumMs is the pacing quantum shared by the event poller and
+	// every bounded wait in this package: one vTaskDelay(10) = 100 ms at
+	// the IDF's default 100 Hz tick, the same cadence WaitEvent always had.
+	pollQuantumMs = 100
+
+	// tickMs is the assumed FreeRTOS tick period (configTICK_RATE_HZ = 100).
+	tickMs = 10
+
+	// subQueueLen is the per-subscription event buffer. The poller drops
+	// events for a subscriber whose buffer is full instead of blocking the
+	// fan-out for everyone; a subscriber keeps up by polling Next.
+	subQueueLen = 8
+
+	// MaxScanResults is the number of scan records the C glue holds (and
+	// therefore the most ScanFetch can ever return).
+	MaxScanResults = 20
+
+	// DefaultScanTimeoutMs bounds Scan's wait for the scan-done event when
+	// ScanOptions.TimeoutMs is not set. A scan that has not finished within
+	// it is not going to.
+	DefaultScanTimeoutMs = 10000
+)
+
+// Subscription receives a copy of every mailbox event whose kind it asked
+// for (EvOverflow is broadcast to all subscribers). Create one with
+// Subscribe, consume it with Next, retire it with Close. A Subscription is
+// single-consumer: exactly one goroutine calls Next on it.
+type Subscription struct {
+	kinds []EventKind
+	ch    chan Event
+}
+
+// subscribers is the poller's fan-out list. The llgo scheduler is
+// cooperative (all goroutines multiplex one FreeRTOS task and only switch
+// at blocking calls), so plain slices are race-free here as long as no
+// function yields between reading a slice and acting on it - which
+// Subscribe, Close and dispatch all honor.
+var subscribers []*Subscription
+
+// pollerStarted gates the lazy start of the single poller goroutine.
+var pollerStarted bool
+
+// Subscribe starts the package's single poller goroutine (once, lazily) and
+// returns a subscription that will receive a copy of every subsequent
+// mailbox event matching one of kinds. An empty kinds list matches every
+// kind. Events already sitting in the mailbox are not retroactively
+// delivered; subscribe before the operation whose events you need.
+//
+// After the first Subscribe the poller owns the C mailbox: Poll and
+// WaitEvent (both deprecated) must not be called anywhere in the program -
+// each side would silently steal the other's events.
+func Subscribe(kinds ...EventKind) *Subscription {
+	s := &Subscription{kinds: kinds, ch: make(chan Event, subQueueLen)}
+	subscribers = append(subscribers, s)
+	if !pollerStarted {
+		pollerStarted = true
+		go pollEvents()
+	}
+	return s
+}
+
+// Close unsubscribes: the poller stops delivering to s, and events already
+// buffered stay readable through Next. Closing twice is harmless. A
+// subscription that is never closed keeps its buffered events alive until
+// the program ends.
+func (s *Subscription) Close() {
+	for i, e := range subscribers {
+		if e == s {
+			last := len(subscribers) - 1
+			subscribers[i] = subscribers[last]
+			subscribers[last] = nil
+			subscribers = subscribers[:last]
+			return
+		}
+	}
+}
+
+// Next waits up to timeoutMs for the subscription's next event and reports
+// whether one arrived. Like WaitEvent, the wait is bounded and paced by the
+// poller's pollQuantumMs quanta: a timeout may overshoot by one quantum and
+// sub-quantum bounds are not honored. A non-positive timeout makes a single
+// non-blocking check. Each idle iteration yields with runtime.Gosched so the
+// poller (and any other runnable goroutine) keeps its scheduling slice - no
+// C-level call is held across the wait, which would freeze the whole llgo
+// scheduler.
+func (s *Subscription) Next(timeoutMs int32) (Event, bool) {
+	for ms := int32(0); ms < timeoutMs; ms += pollQuantumMs {
+		select {
+		case ev := <-s.ch:
+			return ev, true
+		default:
+		}
+		gosched()
+	}
+	select {
+	case ev := <-s.ch:
+		return ev, true
+	default:
+		return Event{}, false
+	}
+}
+
+// pollEvents is the package's single mailbox consumer: drain whatever the
+// C ring holds, fan each event out to the subscribers, hand the rest of the
+// quantum to other goroutines (Gosched), then rest the CPU for one quantum
+// (vTaskDelay - a real FreeRTOS yield that also feeds the idle task and the
+// watchdog). The loop never holds a C-level wait across a scheduling point:
+// vTaskDelay bounds its own freeze to pollQuantumMs and Gosched hands the
+// scheduler away, so other goroutines regain control at least once per
+// quantum - the same bounded-wait discipline WaitEvent has always used.
+func pollEvents() {
+	for {
+		for {
+			var ev Event
+			if Poll(&ev) != 1 {
+				break
+			}
+			dispatch(ev)
+		}
+		gosched()
+		vTaskDelay(pollQuantumMs / tickMs)
+	}
+}
+
+// dispatch hands ev to every subscriber whose filter matches, without ever
+// blocking: a subscriber that has not drained its buffer in time loses the
+// event (documented at subQueueLen). Iterating the subscribers slice
+// directly is safe under the cooperative scheduler: Subscribe/Close only
+// run when the poller is parked in a blocking call, never mid-loop.
+func dispatch(ev Event) {
+	for _, s := range subscribers {
+		if s.delivers(ev.Kind) {
+			select {
+			case s.ch <- ev:
+			default:
+			}
+		}
+	}
+}
+
+// delivers reports whether events of kind go to s. An empty filter matches
+// every kind; the mailbox's global overflow report matches all of them.
+func (s *Subscription) delivers(kind EventKind) bool {
+	if kind == EvOverflow {
+		return true
+	}
+	if len(s.kinds) == 0 {
+		return true
+	}
+	for _, k := range s.kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // ApInfo is the flat scan-record form marshalled by wifi_glue.c; the IDF
@@ -119,22 +310,70 @@ func ScanStart(blocking bool) int32 {
 }
 
 // ScanFetch takes the scan result list into a fresh slice (at most max
-// entries; the C glue holds at most 20) and also frees the driver's scan
-// memory. A max of 0 or less returns an empty slice and polls nothing. The
-// second result is an esp_err code.
+// entries; the C glue holds at most MaxScanResults) and also frees the
+// driver's scan memory. A max of 0 or less returns an empty slice and polls
+// nothing. Asking for more than MaxScanResults is reported rather than
+// clamped away: the fetch still runs at MaxScanResults, and the second
+// result is ESP_ERR_INVALID_ARG (0x102) together with the fetched prefix.
 func ScanFetch(max int32) ([]ApInfo, int32) {
 	if max <= 0 {
 		return []ApInfo{}, 0
 	}
-	if max > 20 {
-		max = 20
+	over := int32(0)
+	if max > MaxScanResults {
+		max = MaxScanResults
+		over = 0x102 // ESP_ERR_INVALID_ARG: the glue cannot hold more
 	}
 	buf := make([]ApInfo, max)
 	var n int32
 	if e := scanFetch(&buf[0], max, &n); e != 0 {
 		return nil, e
 	}
-	return buf[:n], 0
+	return buf[:n], over
+}
+
+// ScanResult is one scan record - the flat ApInfo wire form under the name
+// that describes what a Scan call returns.
+type ScanResult = ApInfo
+
+// ScanOptions bounds a Scan call.
+type ScanOptions struct {
+	// Max caps the fetched records. The C glue holds at most
+	// MaxScanResults; 0 or less means MaxScanResults.
+	Max int32
+
+	// TimeoutMs bounds the wait for the scan-done event. 0 or less means
+	// DefaultScanTimeoutMs.
+	TimeoutMs int32
+}
+
+// Scan runs one scan and returns its records, stringing the state machine
+// together that the raw API leaves to the caller: subscribe to EvScanDone,
+// ScanStart(false) (the scheduler stays live, unlike a blocking scan), wait
+// for SCAN_DONE, ScanFetch. The second result is an esp_err code:
+// ScanStart's code when the scan could not start, ESP_ERR_TIMEOUT (0x107)
+// when no SCAN_DONE arrived within the bound, and ScanFetch's code
+// otherwise (including the over-limit report from above). Events that race
+// the scan for kinds nobody subscribes to are dropped; keep your own
+// subscriptions for those. The scan-done subscription is closed on return.
+func Scan(opts ScanOptions) ([]ScanResult, int32) {
+	max := opts.Max
+	if max <= 0 {
+		max = MaxScanResults
+	}
+	timeoutMs := opts.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultScanTimeoutMs
+	}
+	sub := Subscribe(EvScanDone)
+	defer sub.Close()
+	if e := ScanStart(false); e != 0 {
+		return nil, e
+	}
+	if ev, ok := sub.Next(timeoutMs); !ok || ev.Kind != EvScanDone {
+		return nil, 0x107 // ESP_ERR_TIMEOUT: no SCAN_DONE within the bound
+	}
+	return ScanFetch(max)
 }
 
 // SetSTA configures the station interface: mode STA, credentials, RAM
@@ -226,16 +465,22 @@ func IPString(ip uint32) string {
 
 // Poll pops one mailbox slot into ev: 1 = event delivered, 0 = empty. If the
 // queue ever overflowed, a single EvOverflow slot is reported first.
+//
+// Deprecated: Poll makes its caller the mailbox's single consumer, which
+// collides with the subscriber poller once any Subscribe has happened - the
+// two sides silently steal each other's events. Use Subscribe and
+// Subscription.Next; keep direct Poll only in programs that never Subscribe.
 func Poll(ev *Event) int32 { return poll(&ev.Kind, &ev.Aux, &ev.IP) }
 
-// WaitEvent polls the mailbox until one of the wanted kinds arrives or
-// timeoutTicks elapse. Each retry sleeps vTaskDelay(10) = 100ms; a busy poll
-// without the delay would starve the idle tasks and trip the watchdog.
-// Unmatched events are consumed and the last one is returned on timeout as a
-// best-effort diagnostic.
-func WaitEvent(want []int32, timeoutTicks uint32) (Event, bool) {
+// waitEvent is the shared body of WaitEvent and WaitEventMs: poll the
+// mailbox until one of the wanted kinds arrives or timeoutMs elapses. Each
+// retry sleeps vTaskDelay(10) = 100ms; a busy poll without the delay would
+// starve the idle tasks and trip the watchdog. Unmatched events are
+// consumed and the last one is returned on timeout as a best-effort
+// diagnostic.
+func waitEvent(want []int32, timeoutMs int32) (Event, bool) {
 	var last Event
-	for t := uint32(0); t < timeoutTicks; t += 10 {
+	for ms := int32(0); ms < timeoutMs; ms += pollQuantumMs {
 		var ev Event
 		if Poll(&ev) == 1 {
 			last = ev
@@ -245,9 +490,32 @@ func WaitEvent(want []int32, timeoutTicks uint32) (Event, bool) {
 				}
 			}
 		}
-		vTaskDelay(10)
+		vTaskDelay(pollQuantumMs / tickMs)
 	}
 	return last, false
+}
+
+// WaitEvent polls the mailbox until one of the wanted kinds arrives or
+// timeoutTicks elapse; the unit is the scheduler tick (10 ms at the IDF's
+// default 100 Hz), so bounds that are not multiples of 10 overshoot to the
+// next 100 ms quantum.
+//
+// Deprecated: WaitEvent blocks the scheduler in vTaskDelay and makes its
+// caller the mailbox's single consumer - mutually exclusive with Subscribe
+// (the two sides silently steal each other's events), and only one
+// goroutine may call it. Use Subscribe and Subscription.Next; keep
+// WaitEvent only in programs that never Subscribe.
+func WaitEvent(want []int32, timeoutTicks uint32) (Event, bool) {
+	return waitEvent(want, int32(timeoutTicks)*tickMs)
+}
+
+// WaitEventMs is WaitEvent with the bound in milliseconds instead of
+// scheduler ticks: Next(3000)-style bounds line up directly.
+//
+// Deprecated: the same single-consumer caveat as WaitEvent applies - mutually
+// exclusive with Subscribe. Use Subscribe and Subscription.Next.
+func WaitEventMs(want []int32, timeoutMs int32) (Event, bool) {
+	return waitEvent(want, timeoutMs)
 }
 
 // ErrName maps the esp_err codes this pipeline can hit to their IDF names.
