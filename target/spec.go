@@ -128,7 +128,9 @@ type Spec struct {
 	TargetABI    string // optional ABI name (e.g., "lp64d", "ilp32")
 
 	// Resolved ABI / codegen parameters populated by ResolveSpec.
-	Triple           string
+	Triple           string // backend LLVM triple used with host LLVM
+	PhysicalTriple   string // physical target triple (prefers LLVMTarget when set, else Triple)
+	ArchLevel        string // resolved Go architecture level (e.g. "v1".."v4", "sse2", "softfloat", "5".."7", "v8.0".."v9.5")
 	CPU              string
 	Features         string
 	WordSize         int  // logical Go int/uintptr word size in bytes (4 or 8)
@@ -139,6 +141,16 @@ type Spec struct {
 	BigEndian        bool
 }
 
+// ArchSetting returns the effective Go architecture environment setting (such
+// as GO386, GOAMD64, GOARM, or GOARM64) for a target. Named target profiles
+// define their own CPU/feature baseline and therefore ignore Go arch settings.
+func ArchSetting(targetName, value string) string {
+	if targetName != "" {
+		return ""
+	}
+	return value
+}
+
 // UsesWideGoStorage reports whether Go pointers/words are stored in wider slots
 // than physical native pointers (e.g. wasm32 hosted profiles where Go word=8, ptr=4).
 func (s Spec) UsesWideGoStorage() bool {
@@ -147,6 +159,18 @@ func (s Spec) UsesWideGoStorage() bool {
 
 // ResolveSpec fills in derived LLVM triple, CPU, target features, word/pointer
 // widths, alignment rules, and endianness in pure Go.
+//
+// Behavioral contracts:
+//   - Parse errors in GO386, GOAMD64, GOARM, and GOARM64 are intentionally
+//     swallowed and fall back to each resolver's documented Go default. Callers
+//     that require strict validation should invoke Resolve386, ResolveAMD64,
+//     ParseARM, or ParseARM64 beforehand.
+//   - When Name is non-empty (a named target profile), GO386, GOAMD64, GOARM,
+//     and GOARM64 are ignored via ArchSetting.
+//   - Triple keeps the GOOS/GOARCH-derived backend triple for non-Wasm named
+//     targets (because external cross-compilers may support targets such as
+//     Xtensa that host LLVM does not register). PhysicalTriple always prefers
+//     LLVMTarget when provided and falls back to Triple otherwise.
 func ResolveSpec(in Spec) Spec {
 	s := in
 	if s.GOOS == "" {
@@ -155,29 +179,30 @@ func ResolveSpec(in Spec) Spec {
 	if s.GOARCH == "" {
 		s.GOARCH = runtime.GOARCH
 	}
-	archSetting := func(v string) string {
-		if s.Name != "" {
-			return ""
-		}
-		return v
-	}
-	goarm := archSetting(s.GOARM)
+	goarm := ArchSetting(s.Name, s.GOARM)
 	s.Triple = TripleWithGOARM(s.GOOS, s.GOARCH, goarm)
 	if s.LLVMTarget != "" && (s.Name == "" || s.WasmProfile != "") {
 		s.Triple = s.LLVMTarget
+	}
+	if s.LLVMTarget != "" {
+		s.PhysicalTriple = s.LLVMTarget
+	} else {
+		s.PhysicalTriple = s.Triple
 	}
 
 	switch s.GOARCH {
 	case "386":
 		s.CPU = "pentium4"
-		go386, _ := Resolve386(archSetting(s.GO386))
+		go386, _ := Resolve386(ArchSetting(s.Name, s.GO386))
+		s.ArchLevel = go386
 		if go386 == "softfloat" {
 			s.Features = "+cx8,+fxsr,+mmx,+soft-float,-sse,-sse2,-x87"
 		} else {
 			s.Features = "+cx8,+fxsr,+mmx,+sse,+sse2,+x87"
 		}
 	case "amd64":
-		goamd64, _ := ResolveAMD64(archSetting(s.GOAMD64))
+		goamd64, _ := ResolveAMD64(ArchSetting(s.Name, s.GOAMD64))
+		s.ArchLevel = goamd64
 		s.CPU = "x86-64"
 		if goamd64 != "v1" {
 			s.CPU += "-" + goamd64
@@ -186,6 +211,7 @@ func ResolveSpec(in Spec) Spec {
 	case "arm":
 		s.CPU = "generic"
 		arm, _ := ParseARM(goarm)
+		s.ArchLevel = arm.Version
 		switch arm.Version {
 		case "5":
 			if arm.SoftFloat {
@@ -203,7 +229,8 @@ func ResolveSpec(in Spec) Spec {
 		}
 	case "arm64":
 		s.CPU = "generic"
-		arm64, _ := ParseARM64(archSetting(s.GOARM64))
+		arm64, _ := ParseARM64(ArchSetting(s.Name, s.GOARM64))
+		s.ArchLevel = arm64.Version
 		archFeature := arm64.Version + "a"
 		if arm64.Version == "v9.0" {
 			archFeature = "v9a"

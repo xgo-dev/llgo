@@ -9,8 +9,12 @@ import (
 
 func TestResolveSpecHostedTargets(t *testing.T) {
 	amd64 := ResolveSpec(Spec{GOOS: "linux", GOARCH: "amd64", GOAMD64: "v3"})
-	if amd64.Triple != "x86_64-unknown-linux-gnu" || amd64.CPU != "x86-64-v3" || amd64.WordSize != 8 || amd64.PtrSize != 8 {
+	if amd64.Triple != "x86_64-unknown-linux-gnu" || amd64.PhysicalTriple != amd64.Triple || amd64.ArchLevel != "v3" || amd64.CPU != "x86-64-v3" || amd64.WordSize != 8 || amd64.PtrSize != 8 {
 		t.Fatalf("linux/amd64 spec = %+v", amd64)
+	}
+	namedAMD64 := ResolveSpec(Spec{Name: "custom", GOOS: "linux", GOARCH: "amd64", GOAMD64: "v4"})
+	if namedAMD64.ArchLevel != "v1" || namedAMD64.CPU != "x86-64" {
+		t.Fatalf("named target should ignore GOAMD64, got %+v", namedAMD64)
 	}
 	darwinArm := ResolveSpec(Spec{GOOS: "darwin", GOARCH: "arm64"})
 	if !IsDarwinTriple(darwinArm.Triple) || darwinArm.Triple != "arm64-apple-macosx" || strings.Contains(darwinArm.Features, "-fmv") {
@@ -38,7 +42,7 @@ func TestLoaderSecurityAndInheritance(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("base", `{"goos":"linux","goarch":"arm","cpu":"cortex-m0","build-tags":["a"]}`)
+	write("base", `{"goos":"linux","goarch":"arm","llvm-target":"thumbv7m-none-eabi","cpu":"cortex-m0","build-tags":["a"]}`)
 	write("child", `{"inherits":["base"],"build-tags":["b"]}`)
 	write("cyc-a", `{"inherits":["cyc-b"]}`)
 	write("cyc-b", `{"inherits":["cyc-a"]}`)
@@ -51,7 +55,8 @@ func TestLoaderSecurityAndInheritance(t *testing.T) {
 	if cfg.GOOS != "linux" || cfg.GOARCH != "arm" || cfg.CPU != "cortex-m0" || len(cfg.BuildTags) != 2 {
 		t.Fatalf("resolved child = %+v", cfg)
 	}
-	if spec := cfg.ToSpec(); spec.CPU != "cortex-m0" || spec.WordSize != 4 {
+	if spec := cfg.ToSpec(); spec.CPU != "cortex-m0" || spec.WordSize != 4 ||
+		spec.Triple != "armv7-unknown-linux-gnueabihf" || spec.PhysicalTriple != "thumbv7m-none-eabi" {
 		t.Fatalf("child.ToSpec() = %+v", spec)
 	}
 	for _, bad := range []string{"", ".", "..", "../escape", `a\b`, "/etc/passwd"} {

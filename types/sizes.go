@@ -187,12 +187,56 @@ func (s *Sizes) PtrOffsets(t Type) []int64 {
 
 // PtrDataSize returns the prefix size in bytes containing all GC-traced
 // pointers in t (matching Go's runtime/abi.Type.PtrBytes contract).
+// It runs in O(type depth) without materializing the full pointer offset slice.
 func (s *Sizes) PtrDataSize(t Type) int64 {
-	offsets := s.PtrOffsets(t)
-	if len(offsets) == 0 {
+	if t == nil || !t.HasPtrData() {
 		return 0
 	}
-	return offsets[len(offsets)-1] + int64(s.Spec.WordSize)
+	word := int64(s.Spec.WordSize)
+	switch u := t.Underlying().(type) {
+	case *Basic:
+		if u.Kind == gotypes.UnsafePointer && u.PtrKind == GoPtr {
+			return word
+		}
+		return 0
+	case *Pointer:
+		if u.Kind == GoPtr {
+			return word
+		}
+		return 0
+	case *Func:
+		if u.CallConv == GoDecl {
+			return word
+		}
+		return 0
+	case *Closure:
+		// {codePtr, envPtr}: envPtr sits at offset word and spans [word, 2*word).
+		return 2 * word
+	case *String, *Slice, *Map, *Chan:
+		return word
+	case *Interface:
+		return 2 * word
+	case *Array:
+		if u.Len <= 0 {
+			return 0
+		}
+		elemPtrBytes := s.PtrDataSize(u.Elem)
+		if elemPtrBytes == 0 {
+			return 0
+		}
+		es, ea := s.layout(u.Elem, false)
+		return (u.Len-1)*alignUp(es, ea) + elemPtrBytes
+	case *Struct:
+		_, _, offs := s.structLayout(u)
+		for i := len(u.Fields) - 1; i >= 0; i-- {
+			if fp := s.PtrDataSize(u.Fields[i].Type); fp > 0 {
+				return offs[i] + fp
+			}
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 func (s *Sizes) appendPtrOffsets(t Type, base int64, out *[]int64) {
@@ -223,10 +267,27 @@ func (s *Sizes) appendPtrOffsets(t Type, base int64, out *[]int64) {
 	case *Map, *Chan:
 		*out = append(*out, base)
 	case *Array:
+		if u.Len <= 0 || !u.Elem.HasPtrData() {
+			return
+		}
+		var elemOffs []int64
+		s.appendPtrOffsets(u.Elem, 0, &elemOffs)
+		if len(elemOffs) == 0 {
+			return
+		}
 		es, ea := s.layout(u.Elem, false)
 		stride := alignUp(es, ea)
+		need := int64(len(elemOffs)) * u.Len
+		if need > 0 && int64(cap(*out)-len(*out)) < need {
+			grown := make([]int64, len(*out), len(*out)+int(need))
+			copy(grown, *out)
+			*out = grown
+		}
 		for i := int64(0); i < u.Len; i++ {
-			s.appendPtrOffsets(u.Elem, base+i*stride, out)
+			off := base + i*stride
+			for _, eo := range elemOffs {
+				*out = append(*out, off+eo)
+			}
 		}
 	case *Struct:
 		_, _, offs := s.structLayout(u)

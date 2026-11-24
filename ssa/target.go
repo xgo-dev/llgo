@@ -152,12 +152,13 @@ type TargetSpec struct {
 }
 
 func (p *Target) goArchitectureSetting(value string) string {
-	if p.Target != "" {
-		return ""
-	}
-	return value
+	return target.ArchSetting(p.Target, value)
 }
 
+// Spec resolves the backend LLVM triple, CPU, and feature list.
+// Build validates Go arch settings before constructing Target; Spec also
+// accepts hand-built Targets and relies on target.ResolveSpec's documented
+// Go-default fallback when invalid settings cannot return an error here.
 func (p *Target) Spec() (spec TargetSpec) {
 	resolved := target.ResolveSpec(target.Spec{
 		GOOS:         p.GOOS,

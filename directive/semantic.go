@@ -188,8 +188,14 @@ type WasmImport struct {
 	Pos    token.Pos
 }
 
-// ParseWasmImport extracts the last //go:wasmimport directive in doc, if any.
-func ParseWasmImport(doc *ast.CommentGroup) (WasmImport, bool) {
+// ParseWasmImport inspects the last //go:wasmimport directive in doc.
+//
+// Mirroring the compiler frontend, the last //go:wasmimport directive always
+// wins even if it is malformed:
+//   - Absent: returns (WasmImport{}, false, nil).
+//   - Valid: returns (WasmImport{...}, true, nil).
+//   - Malformed: returns (WasmImport{Pos: pos}, true, err).
+func ParseWasmImport(doc *ast.CommentGroup) (WasmImport, bool, error) {
 	directives := ParseGroup(doc)
 	for i := len(directives) - 1; i >= 0; i-- {
 		d := directives[i]
@@ -197,11 +203,12 @@ func ParseWasmImport(doc *ast.CommentGroup) (WasmImport, bool) {
 			continue
 		}
 		fields := strings.Fields(d.Args)
-		if len(fields) == 2 {
-			return WasmImport{Module: fields[0], Name: fields[1], Pos: d.Pos}, true
+		if len(fields) != 2 {
+			return WasmImport{Pos: d.Pos}, true, fmt.Errorf("//go:wasmimport expects 2 arguments (module name), got %d", len(fields))
 		}
+		return WasmImport{Module: fields[0], Name: fields[1], Pos: d.Pos}, true, nil
 	}
-	return WasmImport{}, false
+	return WasmImport{}, false, nil
 }
 
 // ParseExport extracts a //export <name> directive from doc.
@@ -259,29 +266,26 @@ const (
 	PkgLinkExtern
 )
 
-// ParsePackageKind parses the string value of an LLGoPackage constant.
+// ParsePackageKind parses the string value of an LLGoPackage constant,
+// matching the compiler's package classification rules verbatim.
 func ParsePackageKind(v string) (PackageKind, string) {
-	if pos := strings.IndexByte(v, ':'); pos > 0 {
-		kind, param := v[:pos], strings.TrimSpace(v[pos+1:])
-		switch kind {
-		case "link":
-			return PkgLinkExtern, param
-		case "decl":
-			return PkgDeclOnly, param
-		case "py":
-			return PkgPyModule, param
-		case "llgo":
-			return PkgLinkIR, param
-		}
-	}
 	switch v {
+	case "link":
+		return PkgLinkIR, ""
 	case "decl":
 		return PkgDeclOnly, ""
 	case "noinit":
 		return PkgNoInit, ""
 	default:
-		return PkgLLGo, v
+		if strings.HasPrefix(v, "link:") { // "link: <libpath>"
+			return PkgLinkExtern, v[5:]
+		} else if strings.HasPrefix(v, "py.") { // "py.<module>"
+			return PkgPyModule, v[3:]
+		} else if strings.HasPrefix(v, "decl:") { // "decl: <param>"
+			return PkgDeclOnly, v[5:]
+		}
 	}
+	return PkgLLGo, ""
 }
 
 // PackageKindFromScope inspects a package scope for an LLGoPackage constant.

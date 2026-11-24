@@ -29,7 +29,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/xgo-dev/llgo/cl/ssawrap"
-	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/locality"
@@ -116,25 +116,8 @@ func PkgSkipsInit(kind int) bool {
 // decl: a package that only contains declarations
 // noinit: a package that does not need to be initialized
 func pkgKind(v string) (int, string) {
-	switch v {
-	case "link":
-		return PkgLinkIR, ""
-	case "decl":
-		return PkgDeclOnly, ""
-	case "noinit":
-		return PkgNoInit, ""
-	default:
-		// case "link:bc":
-		//	return PkgLinkBitCode
-		if strings.HasPrefix(v, "link:") { // "link: <libpath>"
-			return PkgLinkExtern, v[5:]
-		} else if strings.HasPrefix(v, "py.") { // "py.<module>"
-			return PkgPyModule, v[3:]
-		} else if strings.HasPrefix(v, "decl:") { // "decl: <param>"
-			return PkgDeclOnly, v[5:]
-		}
-	}
-	return PkgLLGo, ""
+	kind, param := directive.ParsePackageKind(v)
+	return int(kind), param
 }
 
 func pkgKindByScope(scope *types.Scope) (int, string) {

@@ -26,21 +26,30 @@ import (
 
 // Config represents a complete target configuration after inheritance resolution.
 type Config struct {
+	// Target identification
 	Name string `json:"-"`
 
+	// LLVM configuration
 	LLVMTarget string `json:"llvm-target"`
 	CPU        string `json:"cpu"`
 	Features   string `json:"features"`
 
-	BuildTags         []string `json:"build-tags"`
-	GOOS              string   `json:"goos"`
-	GOARCH            string   `json:"goarch"`
-	WasmProfile       string   `json:"wasm-profile"`
-	WasmProvider      string   `json:"wasm-provider"`
-	WasmInitialMemory uint64   `json:"wasm-initial-memory"`
-	WasmMaxMemory     uint64   `json:"wasm-max-memory"`
-	WasmStackSize     uint64   `json:"wasm-stack-size"`
+	// Build configuration
+	BuildTags []string `json:"build-tags"`
+	GOOS      string   `json:"goos"`
+	GOARCH    string   `json:"goarch"`
+	// WasmProfile identifies the memory/host ABI pair. WasmProvider selects the
+	// concrete host implementation without creating another source profile.
+	WasmProfile  string `json:"wasm-profile"`
+	WasmProvider string `json:"wasm-provider"`
+	// WASI linear-memory and process-stack budgets, in bytes. Zero inherits
+	// the parent's value or keeps the toolchain default. These are link-only
+	// settings; WasmStackSize does not change goroutine/pthread stack sizes.
+	WasmInitialMemory uint64 `json:"wasm-initial-memory"`
+	WasmMaxMemory     uint64 `json:"wasm-max-memory"`
+	WasmStackSize     uint64 `json:"wasm-stack-size"`
 
+	// Compiler and linker configuration
 	Libc         string   `json:"libc"`
 	RTLib        string   `json:"rtlib"`
 	Linker       string   `json:"linker"`
@@ -49,29 +58,38 @@ type Config struct {
 	LDFlags      []string `json:"ldflags"`
 	ExtraFiles   []string `json:"extra-files"`
 
+	// Code generation configuration
 	CodeModel       string `json:"code-model"`
 	TargetABI       string `json:"target-abi"`
 	RelocationModel string `json:"relocation-model"`
 
+	// Binary and firmware configuration
 	BinaryFormat string `json:"binary-format"`
-	UF2FamilyID  string `json:"uf2-family-id"`
+	// UF2 configuration
+	UF2FamilyID string `json:"uf2-family-id"`
 
-	FlashMethod       string `json:"flash-method"`
-	FlashCommand      string `json:"flash-command"`
+	// Flash and deployment configuration
+	FlashMethod       string `json:"flash-method"`  // values: command, openocd, msd
+	FlashCommand      string `json:"flash-command"` // used when FlashMethod == "command"
 	Flash1200BpsReset string `json:"flash-1200-bps-reset"`
 
-	Serial     string   `json:"serial"`
-	SerialPort []string `json:"serial-port"`
+	// Serial configuration
+	Serial     string   `json:"serial"`      // Serial communication type (e.g., "usb")
+	SerialPort []string `json:"serial-port"` // Serial port identifiers (e.g., vendor:product IDs)
 
+	// Mass storage device configuration
 	MSDVolumeName   []string `json:"msd-volume-name"`
 	MSDFirmwareName string   `json:"msd-firmware-name"`
 
+	// Device-specific configuration
 	RP2040BootPatch bool `json:"rp2040-boot-patch"`
 
+	// Debug and emulation configuration
 	Emulator    string   `json:"emulator"`
 	DebugServer string   `json:"debug-server"`
 	GDB         []string `json:"gdb"`
 
+	// OpenOCD configuration
 	OpenOCDInterface string `json:"openocd-interface"`
 	OpenOCDTransport string `json:"openocd-transport"`
 	OpenOCDTarget    string `json:"openocd-target"`
@@ -97,6 +115,11 @@ func (c *Config) FormatDetail() string {
 }
 
 // ToSpec derives a resolved pure-Go Spec from this JSON target Config.
+//
+// Matching ssa.Target.Spec, Spec.Triple keeps the GOOS/GOARCH-derived backend
+// triple for non-Wasm named embedded targets (because external cross-compilers
+// may target architectures such as Xtensa that the host LLVM library does not
+// register), while Spec.PhysicalTriple preserves Config.LLVMTarget when set.
 func (c *Config) ToSpec() Spec {
 	spec := ResolveSpec(Spec{
 		Name:         c.Name,

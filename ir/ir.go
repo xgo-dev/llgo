@@ -23,8 +23,9 @@
 // (Alloc with NoScan, WriteBarrier, Safepoint, GCRoot, KeepAlive), and Go
 // exception/concurrency primitives (Defer, RunDefers, Panic, Recover, Go).
 //
-// It has zero CGo, LLVM, or x/tools dependencies and is safe for third-party
-// library consumption and persistent build-cache serialization.
+// It has zero CGo, LLVM, or x/tools dependencies and is designed for
+// third-party library consumption. PackageSummary provides deterministic JSON
+// serialization for persistent build caches.
 package ir
 
 import (

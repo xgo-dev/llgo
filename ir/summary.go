@@ -25,12 +25,19 @@ import (
 // pure-Go IR Package. It is designed to be persisted alongside cached archives
 // so incremental builds can run whole-program call-graph, DCE, and link
 // planning on cache hits without materializing LLVM modules.
+//
+// DirectCalls records statically named targets of CallDirect instructions.
+// ClosureRefs records function symbols referenced by MakeClosure instructions
+// (including closures later invoked via CallClosure, Go, or Defer). Dynamic
+// callees passed as arbitrary SSA values to CallClosure, CallCFunc, Go, or
+// Defer are not statically enumerated here.
 type PackageSummary struct {
 	Path            string            `json:"path"`
 	TargetTriple    string            `json:"target_triple"`
 	Exports         map[string]string `json:"exports,omitempty"`
 	DefinedFuncs    []string          `json:"defined_funcs,omitempty"`
 	DirectCalls     []string          `json:"direct_calls,omitempty"`
+	ClosureRefs     []string          `json:"closure_refs,omitempty"`
 	InterfaceCalls  []string          `json:"interface_calls,omitempty"`
 	HasSafepoints   bool              `json:"has_safepoints,omitempty"`
 	HasWriteBarrier bool              `json:"has_write_barrier,omitempty"`
@@ -49,6 +56,7 @@ func Summarize(pkg *Package) PackageSummary {
 		}
 	}
 	directSet := make(map[string]struct{})
+	closureSet := make(map[string]struct{})
 	ifaceSet := make(map[string]struct{})
 	for _, fn := range pkg.Funcs {
 		if !fn.IsDeclaration() {
@@ -60,7 +68,7 @@ func Summarize(pkg *Package) PackageSummary {
 				case *CallDirect:
 					directSet[ins.Callee] = struct{}{}
 				case *MakeClosure:
-					directSet[ins.FnName] = struct{}{}
+					closureSet[ins.FnName] = struct{}{}
 				case *CallInterface:
 					ifaceSet[ins.Method] = struct{}{}
 				case *Safepoint:
@@ -76,6 +84,10 @@ func Summarize(pkg *Package) PackageSummary {
 		s.DirectCalls = append(s.DirectCalls, name)
 	}
 	sort.Strings(s.DirectCalls)
+	for name := range closureSet {
+		s.ClosureRefs = append(s.ClosureRefs, name)
+	}
+	sort.Strings(s.ClosureRefs)
 	for name := range ifaceSet {
 		s.InterfaceCalls = append(s.InterfaceCalls, name)
 	}

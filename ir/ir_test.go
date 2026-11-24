@@ -73,7 +73,10 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	if !reflect.DeepEqual(sum, roundTrip) {
 		t.Fatalf("summary round-trip mismatch: got %+v, want %+v", roundTrip, sum)
 	}
-	if !sum.HasSafepoints || !sum.HasWriteBarrier || !reflect.DeepEqual(sum.InterfaceCalls, []string{"Read"}) {
+	if !sum.HasSafepoints || !sum.HasWriteBarrier ||
+		!reflect.DeepEqual(sum.DirectCalls, []string{"C.puts"}) ||
+		!reflect.DeepEqual(sum.ClosureRefs, []string{"example.com/demo.helper"}) ||
+		!reflect.DeepEqual(sum.InterfaceCalls, []string{"Read"}) {
 		t.Fatalf("unexpected summary: %+v", sum)
 	}
 }
@@ -105,6 +108,27 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "GoPtr") {
 			t.Fatalf("got %v, want GoPtr write barrier error", err)
+		}
+	})
+
+	t.Run("untyped operands rejected without panic", func(t *testing.T) {
+		pkg := NewPackage("p", "p", spec)
+		fn := pkg.NewFunc("p.f", voidSig)
+		b := NewBuilder(fn.NewBlock("entry"))
+		voidCall := b.CallDirect("C.nop", lltypes.CDecl, nil)
+		b.WriteBarrier(voidCall, b.Const(i64, "0"), BarrierStore)
+		b.Return()
+		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "untyped operand") {
+			t.Fatalf("got %v, want untyped operand error", err)
+		}
+
+		pkg2 := NewPackage("p", "p", spec)
+		fn2 := pkg2.NewFunc("p.f", voidSig)
+		b2 := NewBuilder(fn2.NewBlock("entry"))
+		b2.CallClosure(b2.Const(nil, "bad"), nil)
+		b2.Return()
+		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "untyped operand") {
+			t.Fatalf("got %v, want untyped operand error", err)
 		}
 	})
 

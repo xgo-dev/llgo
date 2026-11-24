@@ -82,7 +82,10 @@ func VerifyFunc(fn *Func) error {
 			}
 			for _, op := range ins.Operands() {
 				if op == nil {
-					return fmt.Errorf("ir: %s.%s: nil operand in %q", fn.Name, blk.Label, ins)
+					return fmt.Errorf("ir: %s.%s: nil operand in %T", fn.Name, blk.Label, ins)
+				}
+				if op.Type() == nil {
+					return fmt.Errorf("ir: %s.%s: untyped operand %q in %T", fn.Name, blk.Label, op.Name(), ins)
 				}
 			}
 			if err := verifyInstr(fn, blk, ins); err != nil {
@@ -103,13 +106,21 @@ func verifyInstr(fn *Func, blk *Block, ins Instr) error {
 			return fmt.Errorf("ir: %s.%s: alloc.noscan on GC-pointer-bearing type %s", fn.Name, blk.Label, ins.Elem)
 		}
 	case *WriteBarrier:
-		ptr, ok := ins.Dst.Type().Underlying().(*lltypes.Pointer)
+		dstType := ins.Dst.Type()
+		if dstType == nil {
+			return fmt.Errorf("ir: %s.%s: write barrier destination has nil type", fn.Name, blk.Label)
+		}
+		ptr, ok := dstType.Underlying().(*lltypes.Pointer)
 		if !ok || ptr.Kind != lltypes.GoPtr {
-			return fmt.Errorf("ir: %s.%s: write barrier destination %s must be a GoPtr", fn.Name, blk.Label, ins.Dst.Type())
+			return fmt.Errorf("ir: %s.%s: write barrier destination %s must be a GoPtr", fn.Name, blk.Label, dstType)
 		}
 	case *CallClosure:
-		if _, ok := ins.Closure.Type().Underlying().(*lltypes.Closure); !ok {
-			return fmt.Errorf("ir: %s.%s: call.closure callee %s is not a Closure", fn.Name, blk.Label, ins.Closure.Type())
+		cloType := ins.Closure.Type()
+		if cloType == nil {
+			return fmt.Errorf("ir: %s.%s: call.closure callee has nil type", fn.Name, blk.Label)
+		}
+		if _, ok := cloType.Underlying().(*lltypes.Closure); !ok {
+			return fmt.Errorf("ir: %s.%s: call.closure callee %s is not a Closure", fn.Name, blk.Label, cloType)
 		}
 	case *CallCFunc:
 		if !ins.CallConv.IsNative() {

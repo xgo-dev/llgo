@@ -138,4 +138,25 @@ type GoStruct struct {
 	if nativePtr.HasPtrData() || win386.PtrDataSize(nativePtr) != 0 {
 		t.Fatal("NativePtr must not report GC pointer data")
 	}
+
+	// PtrDataSize on huge arrays runs in O(depth) without materializing offsets.
+	amd64 := NewSizes(target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}))
+	elem := &Struct{
+		Fields: []*Field{
+			{Name: "p", Type: &Pointer{Elem: &Basic{Kind: gotypes.Int64}, Kind: GoPtr}},
+			{Name: "n", Type: &Basic{Kind: gotypes.Int64}},
+		},
+	}
+	hugeArr := &Array{Elem: elem, Len: 1 << 20}
+	wantPtrBytes := ((int64(1)<<20)-1)*16 + 8
+	if got := amd64.PtrDataSize(hugeArr); got != wantPtrBytes {
+		t.Fatalf("PtrDataSize([1<<20]struct{p *int64; n int64}) = %d, want %d", got, wantPtrBytes)
+	}
+	smallArr := &Array{Elem: elem, Len: 3}
+	if got := amd64.PtrOffsets(smallArr); !reflect.DeepEqual(got, []int64{0, 16, 32}) {
+		t.Fatalf("PtrOffsets([3]struct) = %v, want [0 16 32]", got)
+	}
+	if got := amd64.PtrDataSize(smallArr); got != 40 {
+		t.Fatalf("PtrDataSize([3]struct) = %d, want 40", got)
+	}
 }

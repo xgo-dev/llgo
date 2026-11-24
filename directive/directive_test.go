@@ -85,9 +85,16 @@ func TestParseSemanticHelpers(t *testing.T) {
 	if len(links) != 2 || links[0].Target != "C.foo" || links[1].Target != "llvm.ctpop" {
 		t.Fatalf("ParseLinks = %+v", links)
 	}
-	wi, ok := ParseWasmImport(doc)
-	if !ok || wi.Module != "env" || wi.Name != "write" {
-		t.Fatalf("ParseWasmImport = %+v, %v", wi, ok)
+	wi, ok, err := ParseWasmImport(doc)
+	if err != nil || !ok || wi.Module != "env" || wi.Name != "write" {
+		t.Fatalf("ParseWasmImport = %+v, %v, %v", wi, ok, err)
+	}
+	if _, ok, err := ParseWasmImport(commentGroup("// ordinary comment")); ok || err != nil {
+		t.Fatalf("absent ParseWasmImport = (%v, %v), want (false, nil)", ok, err)
+	}
+	// Last //go:wasmimport wins even when malformed, overriding earlier valid entries.
+	if _, ok, err := ParseWasmImport(commentGroup("//go:wasmimport env write", "//go:wasmimport onlyone")); !ok || err == nil {
+		t.Fatalf("malformed-last ParseWasmImport = (%v, %v), want (true, non-nil err)", ok, err)
 	}
 	if exp, _, ok := ParseExport(doc); !ok || exp != "Exported" {
 		t.Fatalf("ParseExport = %q, %v", exp, ok)
@@ -102,12 +109,34 @@ func TestParseSemanticHelpers(t *testing.T) {
 }
 
 func TestPackageKindAndFilesFromScope(t *testing.T) {
+	cases := []struct {
+		in    string
+		kind  PackageKind
+		param string
+	}{
+		{"link", PkgLinkIR, ""},
+		{"decl", PkgDeclOnly, ""},
+		{"noinit", PkgNoInit, ""},
+		{"link: hello.a", PkgLinkExtern, " hello.a"},
+		{"py.numpy", PkgPyModule, "numpy"},
+		{"decl: test.ll", PkgDeclOnly, " test.ll"},
+		{"", PkgLLGo, ""},
+		{"llgo:ignored", PkgLLGo, ""},
+		{"custom", PkgLLGo, ""},
+	}
+	for _, tc := range cases {
+		kind, param := ParsePackageKind(tc.in)
+		if kind != tc.kind || param != tc.param {
+			t.Errorf("ParsePackageKind(%q) = (%v, %q), want (%v, %q)", tc.in, kind, param, tc.kind, tc.param)
+		}
+	}
+
 	pkg := types.NewPackage("example.com/c", "c")
 	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoPackage", types.Typ[types.UntypedString], constant.MakeString("link: -lfoo")))
 	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoFiles", types.Typ[types.UntypedString], constant.MakeString("a.c; b.c")))
 
 	kind, param := PackageKindFromScope(pkg.Scope())
-	if kind != PkgLinkExtern || param != "-lfoo" {
+	if kind != PkgLinkExtern || param != " -lfoo" {
 		t.Fatalf("PackageKindFromScope = (%v, %q)", kind, param)
 	}
 	files, ok := LLGoFiles(pkg.Scope())
