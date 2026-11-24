@@ -2083,7 +2083,16 @@ type backendSession struct {
 }
 
 func (c *context) newBackendSession() backendSession {
-	prog := c.prog.NewBackendProgram()
+	return c.newBackendSessionWithOptLevel(optlevel.Unset)
+}
+
+func (c *context) newBackendSessionWithOptLevel(level optlevel.Level) backendSession {
+	var prog llssa.Program
+	if level.IsValid() {
+		prog = c.prog.NewBackendProgramWithOptLevel(level)
+	} else {
+		prog = c.prog.NewBackendProgram()
+	}
 	return backendSession{
 		prog: prog,
 		transformer: cabi.NewTransformer(

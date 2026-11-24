@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -333,8 +334,30 @@ func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
 	return false, nil
 }
 
+// isolatedPackageOptLevel bounds peak LLVM optimizer/codegen RAM for outlier
+// monolithic packages (>=500k Go SSA instructions) during non-LTO native builds.
+// Running LLVM's whole-module CGSCC/inliner pipeline on a >1M-SSA module can
+// exceed 9 GB RSS in a single worker; falling back to -O0 for that isolated
+// package cuts peak memory roughly in half without affecting normal packages.
+func (ctx *context) isolatedPackageOptLevel(task *packageBuildTask) optlevel.Level {
+	if ctx.buildConf == nil {
+		return optlevel.Unset
+	}
+	if task != nil && task.estimatedBackendCost() >= exclusiveIsolatedPackageSSACost &&
+		!ctx.buildConf.ltoEnabled() && ctx.buildConf.Goarch != "wasm" {
+		return optlevel.O0
+	}
+	return ctx.buildConf.OptLevel
+}
+
 func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool) error {
-	session := ctx.newBackendSession()
+	optLevel := ctx.isolatedPackageOptLevel(task)
+	var session backendSession
+	if optLevel.IsValid() && ctx.buildConf != nil && optLevel != ctx.buildConf.OptLevel {
+		session = ctx.newBackendSessionWithOptLevel(optLevel)
+	} else {
+		session = ctx.newBackendSession()
+	}
 	owned := true
 	defer func() {
 		if owned {
@@ -343,6 +366,11 @@ func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool)
 		}
 	}()
 	backendCtx := ctx.newBackendTask(session)
+	if optLevel.IsValid() && ctx.buildConf != nil && optLevel != ctx.buildConf.OptLevel {
+		confCopy := *ctx.buildConf
+		confCopy.OptLevel = optLevel
+		backendCtx.buildConf = &confCopy
+	}
 
 	if err := buildPkg(backendCtx, task.pkg, verbose); err != nil {
 		return err

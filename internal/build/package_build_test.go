@@ -33,6 +33,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
@@ -896,5 +897,21 @@ func TestPreparePackageBuildsSerializesHeavyIsolatedPackages(t *testing.T) {
 	}
 	if !heavyCached.isolated || !heavyCached.parallel {
 		t.Fatalf("heavy cached task = (isolated=%v, parallel=%v), want (true, true)", heavyCached.isolated, heavyCached.parallel)
+	}
+
+	ctx.buildConf.OptLevel = optlevel.Os
+	ctx.buildConf.Goarch = "amd64"
+	if got := ctx.isolatedPackageOptLevel(normal); got != optlevel.Os {
+		t.Fatalf("normal opt level = %v, want Os", got)
+	}
+	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.O0 {
+		t.Fatalf("heavy uncached opt level = %v, want O0", got)
+	}
+	if got := ctx.isolatedPackageOptLevel(heavyCached); got != optlevel.Os {
+		t.Fatalf("heavy cached opt level = %v, want Os", got)
+	}
+	ctx.buildConf.Goarch = "wasm"
+	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.Os {
+		t.Fatalf("wasm heavy opt level = %v, want Os", got)
 	}
 }
