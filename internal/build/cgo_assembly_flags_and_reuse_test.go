@@ -120,11 +120,13 @@ func main() {
 		cmd := exec.Command("go", "run", ".")
 		cmd.Dir = dir
 		cmd.Env = withEnv(os.Environ(), append([]string{"CGO_ENABLED=1", "GOWORK=off"}, extraEnv...)...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("go run (%v) failed: %v\n%s", extraEnv, err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go run (%v) failed: %v\nstdout:\n%s\nstderr:\n%s", extraEnv, err, stdout.String(), stderr.String())
 		}
-		return strings.TrimSpace(string(out))
+		return strings.TrimSpace(stdout.String())
 	}
 
 	runLLGo := func(name string, extraEnv ...string) string {
@@ -307,6 +309,9 @@ func cgoConstTestAssembly() string {
 ASM_SYM:
 	mov w0, #TEST_CONST
 	ret
+#if defined(__linux__) && defined(__ELF__)
+.section .note.GNU-stack,"",@progbits
+#endif
 `
 	default:
 		return `#ifndef TEST_CONST
@@ -322,6 +327,9 @@ ASM_SYM:
 ASM_SYM:
 	movl $TEST_CONST, %eax
 	ret
+#if defined(__linux__) && defined(__ELF__)
+.section .note.GNU-stack,"",@progbits
+#endif
 `
 	}
 }

@@ -853,3 +853,48 @@ func TestBuildPackagePropagatesArchiveFailure(t *testing.T) {
 		t.Fatalf("failed package produced an executable: %v", err)
 	}
 }
+
+func TestPreparePackageBuildsSerializesHeavyIsolatedPackages(t *testing.T) {
+	ctx := &context{
+		mode:          ModeBuild,
+		buildConf:     &Config{BuildMode: BuildModeExe},
+		patches:       cl.Patches{},
+		sfilesCache:   map[string][]string{},
+		plan9asmReady: true,
+	}
+	makeTask := func(path string, cost int64, cacheHit bool) *packageBuildTask {
+		pkg := &aPackage{
+			Package: &packages.Package{
+				ID:      path,
+				PkgPath: path,
+				Types:   types.NewPackage(path, "p"),
+			},
+			CacheHit:        cacheHit,
+			ssaInstructions: cost,
+		}
+		ctx.sfilesCache[pkg.Package.ID] = nil
+		return newPackageBuildTask(pkg)
+	}
+
+	normal := makeTask("example.com/normal", exclusiveIsolatedPackageSSACost-1, false)
+	heavyUncached := makeTask("example.com/heavy", exclusiveIsolatedPackageSSACost, false)
+	heavyCached := makeTask("example.com/heavy-cached", exclusiveIsolatedPackageSSACost*3, true)
+	for _, task := range []*packageBuildTask{normal, heavyUncached, heavyCached} {
+		coordinator, err := ctx.packageRequiresCoordinator(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.isolated = !coordinator
+		_, patched := ctx.patches[task.pkg.PkgPath]
+		task.parallel = task.isolated && !patched && task.estimatedBackendCost() < exclusiveIsolatedPackageSSACost
+	}
+	if !normal.isolated || !normal.parallel {
+		t.Fatalf("normal task = (isolated=%v, parallel=%v), want (true, true)", normal.isolated, normal.parallel)
+	}
+	if !heavyUncached.isolated || heavyUncached.parallel {
+		t.Fatalf("heavy uncached task = (isolated=%v, parallel=%v), want (true, false)", heavyUncached.isolated, heavyUncached.parallel)
+	}
+	if !heavyCached.isolated || !heavyCached.parallel {
+		t.Fatalf("heavy cached task = (isolated=%v, parallel=%v), want (true, true)", heavyCached.isolated, heavyCached.parallel)
+	}
+}

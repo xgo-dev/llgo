@@ -19,6 +19,7 @@ package build
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"slices"
 	"sync"
 
@@ -26,6 +27,13 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
+
+// exclusiveIsolatedPackageSSACost is the estimated SSA instruction threshold
+// above which an isolated package runs exclusively before the parallel worker
+// pool. Outlier packages (e.g. >500k SSA instructions) allocate multi-gigabyte
+// LLVM optimization working sets; overlapping them with other heavy LLVM
+// workers can exhaust runner RAM.
+const exclusiveIsolatedPackageSSACost = 500_000
 
 // packageLinkSnapshot is the LLVM-free part of an isolated package needed by
 // later root link plans. Keeping it on aPackage lets the package worker destroy
@@ -122,8 +130,10 @@ func preparePackageBuilds(ctx *context, tasks []*packageBuildTask, verbose bool)
 		_, patched := ctx.patches[task.pkg.PkgPath]
 		// typepatch.Merge still updates the shared patch.Types scope while a
 		// package is lowered. Keep patched packages isolated from the coordinator
-		// Program, but do not execute two such merges concurrently.
-		task.parallel = task.isolated && !patched
+		// Program, but do not execute two such merges concurrently. Also keep
+		// outlier multi-hundred-thousand-SSA packages exclusive so their large
+		// LLVM working sets do not stack with other parallel backend workers.
+		task.parallel = task.isolated && !patched && task.estimatedBackendCost() < exclusiveIsolatedPackageSSACost
 	}
 	return nil
 }
@@ -171,6 +181,9 @@ func preparePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) 
 			isolated = append(isolated, i)
 			continue
 		}
+		if task.isolated && task.estimatedBackendCost() >= exclusiveIsolatedPackageSSACost {
+			debug.FreeOSMemory()
+		}
 		if err := tracePackageBuild(ctx, task, verbose, task.isolated, false); err != nil {
 			return nil, err
 		}
@@ -187,7 +200,11 @@ func tracePackageBuild(ctx *context, task *packageBuildTask, verbose, isolated, 
 		traceSpan = ctx.buildTrace.startWorker("backend+publish", task.pkg.PkgPath)
 	} else {
 		if isolated {
-			class = "patched"
+			if _, patched := ctx.patches[task.pkg.PkgPath]; patched {
+				class = "patched"
+			} else {
+				class = "exclusive"
+			}
 		}
 		traceSpan = ctx.buildTrace.startPackageCoordinator("backend+publish", task.pkg.PkgPath)
 	}
@@ -229,6 +246,9 @@ func buildPackage(ctx *context, task *packageBuildTask, verbose, isolated bool) 
 		(ctx.mode == ModeBuild || ctx.mode == ModeTest && len(ctx.initial) == 1) {
 		ctx.snapshotBackendPackage(task.pkg)
 		ctx.disposeBackendPackage(task.pkg)
+		if task.estimatedBackendCost() >= exclusiveIsolatedPackageSSACost {
+			debug.FreeOSMemory()
+		}
 	}
 	return nil
 }
