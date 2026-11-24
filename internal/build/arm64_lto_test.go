@@ -1,89 +1,93 @@
+//go:build !llgo
+
 package build
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
 
-func TestDarwinARM64LTOFeatures(t *testing.T) {
+func TestDarwinARM64AtomicLTOBitcode(t *testing.T) {
 	llssa.Initialize(llssa.InitAll)
-	const triple = "arm64-apple-macosx11.0.0"
-	backend, err := llvm.GetTargetFromTriple(triple)
-	if err != nil {
-		t.Fatal(err)
-	}
-	machine := backend.CreateTargetMachine(triple, "generic", "", llvm.CodeGenLevelDefault, llvm.RelocPIC, llvm.CodeModelDefault)
-	defer machine.Dispose()
+	linkTarget := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64", GOARM64: "v8.0"})
+	defer linkTarget.Dispose()
 
-	for _, test := range []struct {
-		name   string
-		goos   string
-		goarm  string
-		lto    bool
-		want   string
-		opcode string
-	}{
-		{"baseline", "darwin", "v8.0", true, "", "ldaxr"},
-		{"no LTO", "darwin", "v8.0,lse", false, "", "ldaxr"},
-		{"other OS", "linux", "v8.0,lse", true, "", "ldaxr"},
-		{"explicit LSE", "darwin", "v8.0,lse", true, "+neon,+lse", "ldaddal"},
-		{"implied LSE", "darwin", "v8.1,lse", true, "+v8.1a,+neon,+lse", "ldaddal"},
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"go.mod": "module atomiclto\n\ngo 1.26\n",
+		"atomic.go": `package atomiclto
+import "sync/atomic"
+func Add(p *uint64, v uint64) uint64 { return atomic.AddUint64(p, v) }
+func SwapIf(p *uint64, old, next uint64) bool { return atomic.CompareAndSwapUint64(p, old, next) }
+`,
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			lc := llvm.NewContext()
-			defer lc.Dispose()
-			mod := lc.NewModule("features")
-			defer mod.Dispose()
-			mod.SetTarget(triple)
-			fnType := llvm.FunctionType(lc.Int64Type(), []llvm.Type{llvm.PointerType(lc.Int64Type(), 0)}, false)
-			fn := llvm.AddFunction(mod, "increment", fnType)
-			guarded := llvm.AddFunction(mod, "guarded", fnType)
-			declaration := llvm.AddFunction(mod, "declaration", fnType)
-			builder := lc.NewBuilder()
-			for _, def := range []llvm.Value{fn, guarded} {
-				builder.SetInsertPointAtEnd(lc.AddBasicBlock(def, "entry"))
-				result := builder.CreateAtomicRMW(llvm.AtomicRMWBinOpAdd, def.Param(0),
-					llvm.ConstInt(lc.Int64Type(), 1, false), llvm.AtomicOrderingSequentiallyConsistent, false)
-				builder.CreateRet(result)
-			}
-			builder.Dispose()
-
-			const attrName = "target-features"
-			guarded.AddFunctionAttr(lc.CreateStringAttribute(attrName, "+aes,-lse"))
-			target := &llssa.Target{GOOS: test.goos, GOARCH: "arm64", GOARM64: test.goarm}
-			applyDarwinARM64LTOFeatures(test.lto, target, mod)
-			features := func(fn llvm.Value) string {
-				if attr := fn.GetStringAttributeAtIndex(-1, attrName); !attr.IsNil() {
-					return attr.GetStringValue()
-				}
-				return ""
-			}
-			if got := features(fn); got != test.want {
-				t.Fatalf("target-features = %q, want %q", got, test.want)
-			}
-			if got := features(guarded); !strings.HasSuffix(got, "+aes,-lse") || strings.Contains(got, "+lse") {
-				t.Fatalf("feature override lost: %q", got)
-			}
-			if got := features(declaration); got != "" {
-				t.Fatalf("declaration carries target features: %q", got)
-			}
-			before := mod.String()
-			applyDarwinARM64LTOFeatures(test.lto, target, mod)
-			if mod.String() != before {
-				t.Fatal("applying the target features twice changed the module")
-			}
-			asm, err := machine.EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, isa := range []struct {
+		level string
+		lse   bool
+	}{
+		{"v8.0", false},
+		{"v8.0,lse", true},
+		{"v8.1", true},
+	} {
+		t.Run(isa.level, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOARM64 = "darwin", "arm64", isa.level
+			conf.OptLevel = optlevel.O3
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer asm.Dispose()
-			text := string(asm.Bytes())
-			body, _, _ := strings.Cut(text, "_guarded:")
-			if !strings.Contains(body, test.opcode) {
-				t.Fatalf("want %s in increment:\n%s", test.opcode, text)
+			pkg := pkgs[0].LPkg
+			defer pkg.Prog.Dispose()
+			mod := pkg.Module()
+
+			// Read bitcode with a generic link target, as the Darwin linker
+			// can create a target machine without the source GOARM64 setting.
+			for _, mode := range []lto.Mode{lto.Full, lto.Thin} {
+				t.Run(mode.String(), func(t *testing.T) {
+					conf.LTO = mode
+					buf, _, err := emitObjectToMemoryBuffer(conf, pkg.Prog, mod)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer buf.Dispose()
+					path := filepath.Join(t.TempDir(), "atomic.bc")
+					if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+						t.Fatal(err)
+					}
+					linked, err := mod.Context().ParseBitcodeFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer linked.Dispose()
+					asm, err := linkTarget.TargetMachine().EmitToMemoryBuffer(linked, llvm.AssemblyFile)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer asm.Dispose()
+					code := string(asm.Bytes())
+					for _, op := range []string{"ldaddal", "casal"} {
+						if strings.Contains(code, "\t"+op+"\t") != isa.lse {
+							t.Fatalf("unexpected %s for %s:\n%s", op, isa.level, code)
+						}
+					}
+					for _, op := range []string{"ldaxr", "stlxr"} {
+						if strings.Contains(code, "\t"+op+"\t") == isa.lse {
+							t.Fatalf("unexpected %s for %s:\n%s", op, isa.level, code)
+						}
+					}
+				})
 			}
 		})
 	}
