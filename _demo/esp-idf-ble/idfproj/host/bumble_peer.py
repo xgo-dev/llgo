@@ -4,15 +4,29 @@
 esp-emu intercepts the firmware's HCI transport and forwards it to a Bumble
 "virtual controller" over TCP (--ble-hci tcp:host:port). This script hosts
 that controller plus a second Bumble controller on the same LocalLink whose
-host advertises as a connectable peripheral, so the emulated ESP32-S31 (a BLE
-central in these probes) can find it by scanning and connect to it.
+host advertises as a connectable peripheral with a GATT server, so the
+emulated ESP32-S31 (a BLE central in these probes) can find it by scanning,
+connect to it and use its attributes.
 
 Layout:
 
     [ emulated S31 NimBLE host ] --HCI/TCP--> emu-controller  ~LocalLink~
                                                                  |
                                               peer-controller ---+-- peer host
-                                              (advertising peripheral)
+                                              (advertising peripheral + GATT
+                                               server: echo, notify, 128-bit)
+
+The GATT server is what the GATT-client stages exercise:
+
+    0xFFF0  echo service (16-bit)
+      0xFFF1  read | write | write-without-response  - the echo value: a write
+              stores the bytes and, if the notify characteristic is subscribed,
+              pushes them back as a notification
+      0xFFF2  notify - one notification per echo write, carrying exactly the
+              bytes the central wrote (so the probe's log shows firmware input,
+              not a peer constant)
+    6c6c676f-1111-2222-3344-556677889900  128-bit service, one 128-bit
+      ...889901  read | write echo characteristic (same behaviour)
 
 Run first, then start esp-emu with --ble-hci tcp:127.0.0.1:9544:
     python3 bumble_peer.py [--port 9544] [--address C0:FF:EE:00:00:01]
@@ -26,6 +40,15 @@ import sys
 DEFAULT_PORT = 9544
 DEFAULT_ADDRESS = "C0:FF:EE:00:00:01"
 DEFAULT_NAME = "llgo-peer"
+
+# The attribute table the probe's golden refers to. The 16-bit ones exercise
+# the assigned-number path, the 128-bit pair the vendor path; both are echoed,
+# so every value in the log comes from the firmware under test.
+ECHO_SERVICE_UUID = "FFF0"
+ECHO_CHR_UUID = "FFF1"
+NOTIFY_CHR_UUID = "FFF2"
+WIDE_SERVICE_UUID = "6c6c676f-1111-2222-3344-556677889900"
+WIDE_CHR_UUID = "6c6c676f-1111-2222-3344-556677889901"
 
 
 def patch_controller(Controller, hci):
@@ -83,6 +106,42 @@ def patch_controller(Controller, hci):
         Controller.on_hci_read_rssi_command = read_rssi
 
 
+def make_echo_characteristic(gatt, uuid, notify_holder):
+    """A read/write echo characteristic.
+
+    A write stores the value and pushes the same bytes as a notification on the
+    notify characteristic (when the central has subscribed), so the acceptance
+    log carries the central's own bytes back into the central's subscription -
+    the shortest end-to-end evidence that write, notify and the CCCD all worked.
+    """
+
+    class Echo:  # noqa: D401 - a tiny state holder
+        value = bytes()
+
+    async def on_write(connection, value):
+        Echo.value = bytes(value)
+        print(f"[peer] echo write uuid={uuid} len={len(Echo.value)} "
+              f"value={Echo.value!r}", flush=True)
+        notify_chr = notify_holder.get("chr")
+        if notify_chr is not None:
+            try:
+                await notify_holder["device"].notify_subscribers(notify_chr, Echo.value)
+            except Exception as exc:  # a notification to nobody is not a failure
+                print(f"[peer] notify failed: {exc}", flush=True)
+
+    def on_read(connection):
+        return Echo.value
+
+    return gatt.Characteristic(
+        uuid,
+        gatt.Characteristic.Properties.READ
+        | gatt.Characteristic.Properties.WRITE
+        | gatt.Characteristic.Properties.WRITE_WITHOUT_RESPONSE,
+        gatt.Characteristic.Permissions.READABLE | gatt.Characteristic.Permissions.WRITEABLE,
+        value=gatt.AttributeValue(read=on_read, write=on_write),
+    )
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -95,7 +154,7 @@ async def main() -> int:
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
 
-    from bumble import hci
+    from bumble import gatt, hci
     from bumble.controller import Controller
     from bumble.device import Device
     from bumble.host import Host
@@ -155,11 +214,52 @@ async def main() -> int:
     peer = Device(name=args.name, address=hci.Address(args.address), host=peer_host)
     await peer.power_on()
 
+    # ---- GATT server ----
+    notify_holder = {"device": peer}
+    notify_chr = gatt.Characteristic(
+        NOTIFY_CHR_UUID,
+        gatt.Characteristic.Properties.NOTIFY,
+        gatt.Characteristic.Permissions.READABLE,
+        value=bytes(),
+    )
+    notify_holder["chr"] = notify_chr
+    echo_chr = make_echo_characteristic(gatt, ECHO_CHR_UUID, notify_holder)
+    wide_chr = make_echo_characteristic(gatt, WIDE_CHR_UUID, notify_holder)
+    peer.add_services(
+        [
+            gatt.Service(
+                ECHO_SERVICE_UUID,
+                [echo_chr, notify_chr],
+            ),
+            gatt.Service(
+                WIDE_SERVICE_UUID,
+                [wide_chr],
+            ),
+        ]
+    )
+    print(f"[peer] gatt server: echo {ECHO_CHR_UUID} (handle "
+          f"0x{echo_chr.handle:04X}), notify {NOTIFY_CHR_UUID} (handle "
+          f"0x{notify_chr.handle:04X}, cccd 0x{notify_chr.handle + 1:04X}), "
+          f"128-bit {WIDE_CHR_UUID} (handle 0x{wide_chr.handle:04X})", flush=True)
+
+    def on_subscription(bearer, notify_enabled, indicate_enabled):
+        print(f"[peer] subscription handle=0x{notify_chr.handle:04X} "
+              f"notify={int(notify_enabled)} indicate={int(indicate_enabled)}", flush=True)
+
+    notify_chr.on(notify_chr.EVENT_SUBSCRIPTION, on_subscription)
+
     connected = asyncio.Event()
 
     def on_connection(connection):
         print(f"[peer] central connected handle={connection.handle} "
-              f"peer={connection.peer_address}", flush=True)
+              f"peer={connection.peer_address} mtu={connection.att_mtu}", flush=True)
+        # The central's MTU exchange request arrives after its connect
+        # completes, so hooking the update here is in time.
+        connection.on(
+            connection.EVENT_CONNECTION_ATT_MTU_UPDATE,
+            lambda: print(f"[peer] mtu update handle={connection.handle} "
+                          f"mtu={connection.att_mtu}", flush=True),
+        )
 
     def on_disconnection(reason):
         print(f"[peer] central disconnected reason=0x{reason:02x}", flush=True)
@@ -193,8 +293,9 @@ async def main() -> int:
     try:
         await asyncio.wait_for(connected.wait(), timeout=args.timeout)
         print("[peer] PASS: a central connected", flush=True)
-        # Stay up so the central side can disconnect on its own and the
-        # emulator's HCI stream never sees the transport vanish mid-run.
+        # Stay up so the central side can run its GATT procedures and
+        # disconnect on its own, and the emulator's HCI stream never sees the
+        # transport vanish mid-run.
         await asyncio.sleep(max(args.timeout - 10, 5))
     except asyncio.TimeoutError:
         print(f"[peer] FAIL: no connection within {args.timeout}s", flush=True)

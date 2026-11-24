@@ -1,6 +1,7 @@
 // Package ble binds llgo-compiled Go code to the ESP-IDF NimBLE host as a BLE
-// central: bring-up, scanning, connecting, disconnecting, and the stack's
-// asynchronous results as a fan-out event mailbox.
+// central: bring-up, scanning, connecting, disconnecting, the GATT client
+// (discovery, read, write, notifications), and the stack's asynchronous
+// results as a fan-out event mailbox.
 //
 // # Layout
 //
@@ -23,7 +24,15 @@
 //	stopErr := ble.StopScan()
 //	op, err = ble.Connect(peer, ble.ConnectOptions{TimeoutMs: 5000})
 //	ev, err = sub.Next(5000)                      // EvConnect: ConnID or status
-//	disErr := ble.Disconnect(ev.ConnID)
+//	conn := ev.ConnID
+//	svcs, err := ble.Services(conn)               // GATT discovery
+//	chars, err := ble.Characteristics(conn, svcs[0].UUID)
+//	v, err := ble.Read(conn, chars[0])
+//	err = ble.Write(conn, chars[0], []byte("hi"))
+//	nsub, err := ble.SubscribeChar(conn, chars[1]) // CCCD on
+//	ev, err = nsub.Next(5000)                      // EvNotify: the payload
+//	unsubErr := ble.Unsubscribe(nsub)             // CCCD off
+//	disErr := ble.Disconnect(conn)
 //	ev, err = sub.Next(5000)                      // EvDisconnect: reason
 //
 // Control calls never block: StartScan/Connect/Disconnect hand their command
@@ -33,16 +42,60 @@
 // error means "the command could not even be submitted" (not ready, queue
 // full, BLE not in this firmware), never a forged result.
 //
+// The GATT calls (Services, Characteristics, Read, Write, SubscribeChar,
+// Unsubscribe, MTU) are the synchronous half of the same mechanism: each one
+// submits its procedure to the host task and then waits, bounded by
+// GattTimeoutMs, for the mailbox record that completes it. They are the shape
+// a GATT client wants (a discovered list, a value, a status) and they keep the
+// task discipline: no NimBLE procedure ever runs on the goroutine that asked
+// for it.
+//
 // # Why a mailbox, not callbacks
 //
 // NimBLE runs its reset/sync/GAP callbacks on the host task, and the llgo
 // fiber scheduler is single-task global state: an entry into Go from a second
-// FreeRTOS task would corrupt it. The glue copies every result into two
-// bounded C-side rings (control events in one, scan results in the other, so
-// a scan flood can never displace a connect/disconnect), and one poller
+// FreeRTOS task would corrupt it. The glue copies every result into three
+// bounded C-side rings (control results in one, notifications in a second,
+// scan results in a third, so neither a scan flood nor a notification storm
+// can displace a connect/disconnect or a GATT result), and one poller
 // goroutine drains them and fans them out to every subscription - a slow
 // consumer loses its own events, never anyone else's. Overflow is reported
 // once as EvOverflow carrying the dropped count.
+//
+// # GATT client
+//
+// One GATT procedure runs at a time (NimBLE's ATT bearer carries one
+// outstanding request anyway, and this package's guard reports ErrBusy instead
+// of letting two procedures overwrite each other's result):
+//
+//	Services           discover all primary services (16 records max - a peer
+//	                   with more ends the discovery with BLE_HS_EMSGSIZE)
+//	Characteristics    discover a service's characteristics (32 records max)
+//	Read               ATT Read Request
+//	Write              ATT Write Request or Write Command, chosen from the
+//	                   characteristic's properties (WriteWithResponse and
+//	                   WriteWithoutResponse pick one explicitly)
+//	SubscribeChar      write the characteristic's client configuration (CCCD)
+//	                   and start delivering its notifications
+//	MTU                the negotiated ATT MTU
+//
+// Discovery results live in the glue's fixed tables, not in the mailbox: a
+// table is deterministic (a record is either there or the discovery ends with
+// a status saying why it is not), while a ring can drop. The mailbox carries
+// what is unsolicited: notifications and indications arrive as EvNotify with
+// the payload copied out of the ATT mbuf, the same three-ring discipline the
+// scan path uses (a notification flood cannot displace a control result).
+//
+// A call that returns ErrTimeout leaves the stack's procedure running: NimBLE
+// ends an unanswered one after its own 30 s unresponsive limit, which also
+// terminates the connection, and until then the next GATT call is refused with
+// BLE_HS_EALREADY (ErrStatus(StatusEALREADY)) rather than queued behind it.
+//
+// A characteristic's CCCD is written at value handle + 1, the layout the GATT
+// specification mandates for a characteristic that notifies or indicates.
+// Subscribing delivers through the ordinary fan-out: the returned
+// *Subscription filters the machine to that connection and value handle, and a
+// plain Subscribe(EvNotify) sees every notification of every characteristic.
 //
 // # Scheduling
 //
@@ -75,7 +128,9 @@
 //	               raw value, ErrStatus() rebuilds the error value.
 //	Go domain      0x7Bxx - this package's own conditions: ErrTimeout (a
 //	               bounded wait found nothing), ErrNotReady (Init not done or
-//	               no host sync), ErrUnsupported.
+//	               no host sync), ErrBusy (a GATT procedure is in flight),
+//	               ErrBadUUID/ErrBadValue/ErrBadProperty (an argument this
+//	               package refuses), ErrNotFound, ErrTooLong, ErrUnsupported.
 //
 // The offset matters: NimBLE's status 0x02 (BLE_HS_EALREADY) and an HCI error
 // 0x02 are different conditions in different namespaces, and an esp_err 0x02
@@ -84,11 +139,12 @@
 //
 // # Scope
 //
-// This is the central half of GAP only: scanning (legacy discovery), connect,
-// cancel, disconnect. No GATT client (discovery, read, write, notifications)
-// and no peripheral role - those are separate stages; the glue's
-// mailbox has the shape they need (a control tier for results a state machine
-// depends on, a payload tier with a bounded copy).
+// This is the central role: GAP scanning (legacy discovery), connect, cancel,
+// disconnect, and the GATT client. No peripheral role, no pairing/bonding, no
+// service discovery beyond primary services and their characteristics, no
+// descriptor discovery, no long read/write - those are separate stages; the
+// glue's mailbox has the shape they need (a control tier for results a state
+// machine depends on, payload tiers with a bounded copy).
 package ble
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"
@@ -97,11 +153,17 @@ import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 // below 0x8000) into this package's code space. See the error model above.
 const NimbleBase = 0x8000
 
-// The Go-domain codes: conditions this package detects itself, above the
+// The Go-domain codes: conditions this package detects itself, below the
 // esperr meta segment (0x7Cxx) and below the tag stubs use (0x7F00).
 const (
 	codeTimeout     = 0x7B01
 	codeNotReady    = 0x7B02
+	codeBadUUID     = 0x7B03
+	codeBadValue    = 0x7B04
+	codeBusy        = 0x7B05
+	codeBadProperty = 0x7B06
+	codeNotFound    = 0x7B07
+	codeTooLong     = 0x7B08
 	codeUnsupported = 0x7F00
 )
 
@@ -119,6 +181,37 @@ var ErrNotReady = &esperr.Error{Code: codeNotReady, Name: "BLE_ERR_NOT_READY"}
 // glue reports ESP_ERR_NOT_SUPPORTED and the package renders it in this
 // package's code space, where it can never be mistaken for a real status.
 var ErrUnsupported = &esperr.Error{Code: codeUnsupported, Name: "BLE_ERR_UNSUPPORTED"}
+
+// ErrBadUUID reports a UUID value this package cannot use: a text form that is
+// neither four hex digits nor the 36-character 128-bit form, or a zero UUID
+// where a service or characteristic UUID is required.
+var ErrBadUUID = &esperr.Error{Code: codeBadUUID, Name: "BLE_ERR_BAD_UUID"}
+
+// ErrBadValue reports a caller-side argument this package refuses before
+// submitting anything: a zero value handle in a Characteristic, or a nil
+// Subscription.
+var ErrBadValue = &esperr.Error{Code: codeBadValue, Name: "BLE_ERR_BAD_VALUE"}
+
+// ErrBusy reports that another GATT procedure is still in flight. The ATT
+// bearer carries one outstanding request per connection, and this package's
+// result slots are single, so a second procedure is refused instead of being
+// queued behind the first.
+var ErrBusy = &esperr.Error{Code: codeBusy, Name: "BLE_ERR_BUSY"}
+
+// ErrBadProperty reports a characteristic whose properties do not allow the
+// requested operation: write on a characteristic that declares neither write
+// nor write-without-response, or a subscription on one that declares neither
+// notify nor indicate.
+var ErrBadProperty = &esperr.Error{Code: codeBadProperty, Name: "BLE_ERR_BAD_PROPERTY"}
+
+// ErrNotFound reports a service that the last discovery did not report: a
+// Characteristics call takes a UUID that Services returned for that same
+// connection.
+var ErrNotFound = &esperr.Error{Code: codeNotFound, Name: "BLE_ERR_NOT_FOUND"}
+
+// ErrTooLong reports a payload larger than one event or one ATT write carries
+// (MaxData bytes). The value is refused rather than truncated.
+var ErrTooLong = &esperr.Error{Code: codeTooLong, Name: "BLE_ERR_TOO_LONG"}
 
 // espErr wraps a raw esp_err code (0 = nil) - the esp domain of this package.
 func espErr(code int32) error {
@@ -168,6 +261,7 @@ func Status(err error) int32 {
 const (
 	StatusEALREADY    = 0x02 // a procedure of that kind is already running
 	StatusEINVAL      = 0x03 // bad parameter
+	StatusEMSGSIZE    = 0x04 // a result is larger than one event carries
 	StatusENOMEM      = 0x06 // out of memory
 	StatusENOENT      = 0x05 // no such entry (also: stale ConnID)
 	StatusENOTCONN    = 0x07 // not connected
@@ -218,9 +312,37 @@ const (
 	// submitted command either produces its natural event or this one.
 	EvError = 7
 
+	// EvDiscDone reports that a service or characteristic discovery finished:
+	// OpID is the operation, Status the stack's result (0 = the records are in
+	// the glue's table, anything else the reason it stopped).
+	EvDiscDone = 8
+
+	// EvReadDone reports a read's result: OpID the operation, Status the ATT or
+	// host status and, on success, the value in Data[:DataLen].
+	EvReadDone = 9
+
+	// EvWriteDone reports a write's result - a value write or the client
+	// configuration write of SubscribeChar/Unsubscribe: OpID the operation,
+	// Status the result. A write-without-response is never acknowledged on the
+	// wire, so its Status reports the submission only.
+	EvWriteDone = 10
+
+	// EvNotify is one server-pushed notification or indication: ConnID the
+	// connection, AttHandle the characteristic's value handle, DataLen/Data the
+	// payload and Indication 1 for an indication (the host confirms it) or 0
+	// for a notification.
+	EvNotify = 11
+
+	// EvMtu reports a negotiated ATT MTU: ConnID the connection, Status the MTU
+	// value (see Event.MTU). The glue asks for the exchange right after a
+	// connection comes up.
+	EvMtu = 12
+
 	// EvOverflow reports mailbox loss: Status is the number of records dropped
-	// since the last report. Control records are dropped only when the control
-	// ring is full, which takes a program that stops consuming events.
+	// since the last report (a record that did not fit its ring, or a
+	// notification payload larger than MaxData). Control records are dropped
+	// only when the control ring is full, which takes a program that stops
+	// consuming events.
 	EvOverflow = -1
 )
 
@@ -269,6 +391,42 @@ const (
 	// scan flood cannot hold the scheduler: the batch ends with a Gosched and
 	// one tick of rest.
 	maxPollBatch = 32
+
+	// MaxData is the largest ATT payload one mailbox record carries - a
+	// notification or indication, or a read value - and the largest value
+	// Write accepts.
+	//
+	// The bound is the goroutine stack, not the ATT MTU. Every record travels
+	// through a channel and through the non-blocking receive select of
+	// Subscription.Next, and those frames hold several copies of it; on this
+	// target goroutines run on 2 KiB fiber stacks (targets/esp32s31-idf.json
+	// default-stack-size), so a record much larger than this one overflows the
+	// stack instead of being delivered - measured under esp-emu: a 316-byte
+	// record (MaxData 253) aborted the firmware during Init, the 188-byte one
+	// this constant gives runs the whole GATT acceptance. A program that builds
+	// with a larger goroutine stack (llgo build -goroutine-stack-size) can
+	// raise MaxData and the glue's BW_DATA_MAX together.
+	//
+	// What happens to a payload that does not fit is uniform and never silent:
+	// a notification or indication longer than MaxData is dropped whole by the
+	// glue (never truncated) and counted in the mailbox's overflow report, and
+	// a read that returns more reports BLE_HS_EMSGSIZE (ErrStatus(StatusEMSGSIZE)). At
+	// the ATT MTU of 256 the glue negotiates, a peer may push 253 bytes, so a
+	// talkative characteristic with large values needs a larger stack and a
+	// larger MaxData.
+	MaxData = 128
+
+	// MaxServices and MaxCharacteristics bound the glue's discovery tables: a
+	// service or characteristic discovery stops with BLE_HS_EMSGSIZE when the
+	// peer has more, instead of silently dropping records.
+	MaxServices        = 16
+	MaxCharacteristics = 32
+
+	// GattTimeoutMs bounds a GATT call's wait for its completion record:
+	// NimBLE's own unresponsive-procedure timeout, so a peer that stops
+	// answering normally ends in the stack's ETIMEOUT status (and the stack
+	// tearing the connection down) rather than in a Go-side timeout.
+	GattTimeoutMs = 30000
 )
 
 // Peer is the advertiser to connect to: the address a scan result reported
@@ -315,6 +473,195 @@ type ConnectOptions struct {
 	TimeoutMs int32
 }
 
+// UUID is a GATT UUID: a 16-bit Bluetooth SIG value or a 128-bit vendor value.
+// UUID is comparable, so == is the equality test:
+//
+//	if chr.UUID == ble.UUID16(0x2a00) { ... }
+//
+// A 128-bit UUID whose first 32 bits are zero and whose remaining 96 bits are
+// the Bluetooth base UUID is the same UUID as its 16-bit alias (Core Vol 3,
+// Part B 2.5.1), and this type holds it as that alias: ParseUUID of
+// "0000180d-0000-1000-8000-00805f9b34fb" yields UUID16(0x180d) and String
+// prints "180d". Keeping one value for both spellings is what makes a
+// discovery result compare equal however the peer wrote the UUID on the wire.
+type UUID struct {
+	// v holds the UUID little-endian, the byte order the ATT PDU and the stack
+	// use; for a 16-bit UUID only v[0:2] are meaningful.
+	v [16]uint8
+	// n is the width in bytes: 2 or 16, and 0 for the zero UUID.
+	n uint8
+}
+
+// baseTailLE is the Bluetooth base UUID's lower 96 bits in the little-endian
+// order UUID.v uses: text form "0000xxxx-0000-1000-8000-00805f9b34fb" read
+// right to left.
+var baseTailLE = [12]uint8{0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00}
+
+// UUID16 returns the 16-bit UUID v, a Bluetooth SIG assigned value.
+func UUID16(v uint16) UUID { return UUID{v: [16]uint8{uint8(v), uint8(v >> 8)}, n: 2} }
+
+// UUID128 returns a 128-bit UUID from b in canonical text order: b[0] is the
+// most significant octet, the first byte of the printed form. A Bluetooth
+// base-form value collapses to its 16-bit alias - the two are one UUID.
+func UUID128(b [16]uint8) UUID {
+	var u UUID
+	for i := 0; i < 16; i++ {
+		u.v[15-i] = b[i]
+	}
+	u.n = 16
+	return u.alias()
+}
+
+// alias collapses a Bluetooth base-form 128-bit UUID to its 16-bit alias. A
+// 32-bit alias (upper 96 bits zero, the value in the top 32 bits) whose upper
+// half is not zero stays 128-bit: this type has no 32-bit form.
+func (u UUID) alias() UUID {
+	if u.n != 16 {
+		return u
+	}
+	for i := 0; i < 12; i++ {
+		if u.v[i] != baseTailLE[i] {
+			return u
+		}
+	}
+	if u.v[14] != 0 || u.v[15] != 0 {
+		return u
+	}
+	return UUID16(uint16(u.v[12]) | uint16(u.v[13])<<8)
+}
+
+// Len reports the UUID's width in bytes: 2 for a 16-bit UUID, 16 for a 128-bit
+// one and 0 for the zero UUID.
+func (u UUID) Len() int { return int(u.n) }
+
+// IsZero reports the zero UUID, which no attribute carries: an unset or
+// rejected UUID value reads as zero.
+func (u UUID) IsZero() bool { return u.n == 0 }
+
+// String renders the UUID in canonical text form: four lowercase hex digits for
+// a 16-bit UUID ("180d"), the dashed 36-character form for a 128-bit one. The
+// zero UUID renders as the empty string, and ParseUUID(String()) returns the
+// same value.
+func (u UUID) String() string {
+	switch u.n {
+	case 2:
+		return hex4(uint16(u.v[0]) | uint16(u.v[1])<<8)
+	case 16:
+	default:
+		return ""
+	}
+	var out [36]byte
+	j := 0
+	for i := 0; i < 16; i++ {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			out[j] = '-'
+			j++
+		}
+		b := u.v[15-i]
+		out[j] = hexDigits[b>>4]
+		out[j+1] = hexDigits[b&0xF]
+		j += 2
+	}
+	return string(out[:])
+}
+
+// ParseUUID parses a UUID in either canonical text form: four hex digits
+// ("180d", also accepted with a "0x" prefix) for a 16-bit UUID, or the 36-
+// character dashed form ("6c6c676f-1111-2222-3344-556677889900", also accepted
+// undashed) for a 128-bit one. Case does not matter, and a Bluetooth base-form
+// 128-bit UUID parses to its 16-bit alias. Anything else is ErrBadUUID.
+func ParseUUID(s string) (UUID, error) {
+	if len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+		s = s[2:]
+	}
+	if len(s) == 4 {
+		v, ok := hex16(s)
+		if !ok {
+			return UUID{}, ErrBadUUID
+		}
+		return UUID16(v), nil
+	}
+	dashed := len(s) == 36
+	if len(s) != 32 && !dashed {
+		return UUID{}, ErrBadUUID
+	}
+	var b [16]uint8
+	i := 0
+	for j := 0; j < 16; j++ {
+		if dashed && (j == 4 || j == 6 || j == 8 || j == 10) {
+			if s[i] != '-' {
+				return UUID{}, ErrBadUUID
+			}
+			i++
+		}
+		hi, ok1 := hexDigit(s[i])
+		lo, ok2 := hexDigit(s[i+1])
+		if !ok1 || !ok2 {
+			return UUID{}, ErrBadUUID
+		}
+		b[j] = hi<<4 | lo
+		i += 2
+	}
+	return UUID128(b), nil
+}
+
+// uuidFromWire builds a UUID from the glue's record form: n bytes (2 or 16)
+// little-endian, as the ATT PDU carried them.
+func uuidFromWire(b *[16]uint8, n uint8) UUID {
+	switch n {
+	case 2:
+		return UUID16(uint16(b[0]) | uint16(b[1])<<8)
+	case 16:
+		return UUID{v: *b, n: 16}.alias()
+	}
+	return UUID{}
+}
+
+// Service is one GATT service a discovery reported. Services are primary
+// services: the discovery procedure this package runs does not report
+// secondary ones.
+type Service struct {
+	// UUID is the service's UUID.
+	UUID UUID
+	// Handle is the service declaration's handle, End the last handle the
+	// service owns. Characteristics searches that range.
+	Handle uint16
+	End    uint16
+}
+
+// Characteristic is one GATT characteristic a discovery reported.
+type Characteristic struct {
+	UUID UUID
+	// DeclHandle is the characteristic declaration's handle, ValueHandle the
+	// handle of its value - what Read and Write address, and what the
+	// notifications of SubscribeChar carry.
+	DeclHandle  uint16
+	ValueHandle uint16
+	// Properties is the ATT property bitmask (the Prop* constants).
+	Properties uint8
+}
+
+// The ATT characteristic property bits, as the peer declares them.
+const (
+	PropBroadcast  = 0x01 // the value can be broadcast in an advertisement
+	PropRead       = 0x02 // readable with a read request
+	PropWriteNoRsp = 0x04 // writable with a write command (unacknowledged)
+	PropWrite      = 0x08 // writable with a write request (acknowledged)
+	PropNotify     = 0x10 // pushes notifications
+	PropIndicate   = 0x20 // pushes indications (each one acknowledged)
+	PropAuthSigned = 0x40 // accepts authenticated signed writes
+	PropExtProps   = 0x80 // has extended properties
+)
+
+// CanRead reports whether the peer declares the read property.
+func (c Characteristic) CanRead() bool { return c.Properties&PropRead != 0 }
+
+// CanWrite reports whether the peer declares write or write-without-response.
+func (c Characteristic) CanWrite() bool { return c.Properties&(PropWrite|PropWriteNoRsp) != 0 }
+
+// CanNotify reports whether the peer declares notify or indicate.
+func (c Characteristic) CanNotify() bool { return c.Properties&(PropNotify|PropIndicate) != 0 }
+
 // Event is one mailbox record. The fields are meaningful per kind (see the
 // Ev* constants); everything a kind does not use is zero.
 type Event struct {
@@ -327,6 +674,21 @@ type Event struct {
 	Rssi     int8
 	AdvLen   uint8
 	Adv      [MaxAdvData]uint8
+
+	// AttHandle is the characteristic value handle an EvNotify came from (0 for
+	// every other kind).
+	AttHandle uint16
+
+	// DataLen is the payload length this event carries and Data the payload: a
+	// notification or indication (EvNotify) or a read value (EvReadDone). The
+	// glue copies it out of the ATT mbuf, so it is detached from the stack; it
+	// is never longer than MaxData.
+	DataLen uint8
+
+	// Indication reports an indication rather than a notification (EvNotify).
+	Indication uint8
+
+	Data [MaxData]uint8
 }
 
 // AdvData returns the advertising payload this event carries, as a slice over
@@ -338,13 +700,35 @@ func (e *Event) AdvData() []uint8 { return e.Adv[:e.AdvLen] }
 // Peer returns the advertiser address as a connectable Peer.
 func (e *Event) Peer() Peer { return Peer{Addr: e.Addr, AddrType: e.AddrType} }
 
+// DataBytes returns the payload this event carries, as a slice over the event's
+// own array (see DataLen): a notification or indication for EvNotify, the value
+// for EvReadDone.
+func (e *Event) DataBytes() []uint8 { return e.Data[:e.DataLen] }
+
+// MTU returns the ATT MTU an EvMtu event reports.
+func (e *Event) MTU() int { return int(e.Status) }
+
 // Subscription receives a copy of every mailbox event whose kind it asked for
 // (EvOverflow goes to everyone). Create one with Subscribe, consume it with
 // Next, retire it with Close. A Subscription is single-consumer: exactly one
 // goroutine calls Next on it.
+//
+// A characteristic subscription (SubscribeChar) is the same type with a
+// narrower filter: it delivers that characteristic's notifications only, so a
+// program that watches one notify characteristic does not have to sort the
+// mailbox itself.
 type Subscription struct {
 	kinds []EventKind
 	ch    chan Event
+	// notif is non-nil for a characteristic subscription: the fan-out then
+	// delivers only EvNotify records of that connection and value handle.
+	notif *notifTarget
+}
+
+// notifTarget is the filter of a characteristic subscription.
+type notifTarget struct {
+	conn   ConnID
+	handle uint16
 }
 
 // subscribers is the poller's fan-out list. The llgo scheduler is cooperative
@@ -370,12 +754,17 @@ var opSeq uint32
 // the sync event.
 func Subscribe(kinds ...EventKind) *Subscription {
 	s := &Subscription{kinds: kinds, ch: make(chan Event, SubQueueLen)}
+	join(s)
+	return s
+}
+
+// join adds s to the fan-out and starts the poller on first use.
+func join(s *Subscription) {
 	subscribers = append(subscribers, s)
 	if !pollerStarted {
 		pollerStarted = true
 		go pollEvents()
 	}
-	return s
 }
 
 // Close unsubscribes: the poller stops delivering to s, and events already
@@ -454,7 +843,7 @@ func pollEvents() {
 // poller is parked in a blocking call, never mid-loop.
 func dispatch(ev Event) {
 	for _, s := range subscribers {
-		if s.delivers(ev.Kind) {
+		if s.delivers(&ev) {
 			select {
 			case s.ch <- ev:
 			default:
@@ -463,17 +852,21 @@ func dispatch(ev Event) {
 	}
 }
 
-// delivers reports whether events of kind go to s. An empty filter matches
-// every kind; the mailbox's global overflow report matches all of them.
-func (s *Subscription) delivers(kind EventKind) bool {
-	if kind == EvOverflow {
+// delivers reports whether ev goes to s. A characteristic subscription takes
+// that characteristic's notifications; a kind filter takes its kinds (an empty
+// one takes every kind). The mailbox's global overflow report goes to everyone.
+func (s *Subscription) delivers(ev *Event) bool {
+	if ev.Kind == EvOverflow {
 		return true
+	}
+	if s.notif != nil {
+		return ev.Kind == EvNotify && ev.ConnID == s.notif.conn && ev.AttHandle == s.notif.handle
 	}
 	if len(s.kinds) == 0 {
 		return true
 	}
 	for _, k := range s.kinds {
-		if k == kind {
+		if k == EventKind(ev.Kind) {
 			return true
 		}
 	}
@@ -632,6 +1025,341 @@ func Disconnect(id ConnID) error {
 	return nimbleErr(disconnect(uint32(id)))
 }
 
+// ---- GATT client ----
+
+// gattBusy serializes this package's GATT procedures. The llgo scheduler is
+// cooperative, so a plain flag is race-free: a caller only observes it between
+// its own scheduling points, and the one goroutine that set it is parked in the
+// mailbox wait. NimBLE's ATT bearer carries one outstanding request per
+// connection anyway, and the glue's result slots are single - a second
+// procedure would overwrite the first one's discovery table or read buffer.
+var gattBusy bool
+
+// gattBegin takes the GATT guard: ErrNotReady outside a live stack, ErrBusy
+// while another procedure is in flight.
+func gattBegin() error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	if gattBusy {
+		return ErrBusy
+	}
+	gattBusy = true
+	return nil
+}
+
+// gattEnd releases the guard.
+func gattEnd() { gattBusy = false }
+
+// waitOp waits up to GattTimeoutMs for the mailbox record that completes op,
+// ignoring records that belong to something else (another kind, another
+// operation). What it ignores is this waiter's own fan-out copy: dispatch
+// hands every subscriber an independent copy, so a record dropped here is
+// lost to no one else - a global report like EvOverflow still reaches every
+// other subscriber independently. It reports ErrTimeout when the bound passes.
+func waitOp(sub *Subscription, op OpID) (Event, error) {
+	deadline := int32(nowMs()) + GattTimeoutMs
+	for {
+		left := deadline - int32(nowMs())
+		if left <= 0 {
+			return Event{}, ErrTimeout
+		}
+		ev, err := sub.Next(left)
+		if err != nil {
+			return Event{}, err
+		}
+		if ev.OpID == op {
+			return ev, nil
+		}
+	}
+}
+
+// Services discovers the peer's primary services and returns them. Each call
+// re-runs the discovery, so the result is a snapshot of the peer's attribute
+// table at that moment; MaxServices records are the most the glue keeps (a peer
+// with more ends the discovery with BLE_HS_EMSGSIZE rather than losing records
+// silently).
+func Services(conn ConnID) ([]Service, error) {
+	if err := gattBegin(); err != nil {
+		return nil, err
+	}
+	defer gattEnd()
+	op := nextOp()
+	sub := Subscribe(EvDiscDone, EvError)
+	defer sub.Close()
+	if e := nimbleErr(discSvcs(uint32(conn), uint32(op))); e != nil {
+		return nil, e
+	}
+	ev, err := waitOp(sub, op)
+	if err != nil {
+		return nil, err
+	}
+	if ev.Status != 0 {
+		return nil, nimbleErr(ev.Status)
+	}
+	n := int(svcCount(uint32(conn)))
+	out := make([]Service, 0, n)
+	for i := 0; i < n; i++ {
+		var r svcRec
+		if svcAt(uint32(conn), int32(i), &r) != 1 {
+			break
+		}
+		out = append(out, Service{UUID: uuidFromWire(&r.UUID, r.UUIDLen), Handle: r.Start, End: r.End})
+	}
+	return out, nil
+}
+
+// Characteristics discovers the characteristics of the service svc, which must
+// be one that Services reported for this connection (ErrNotFound otherwise -
+// the discovery ranges over the service's handle range, so that range has to
+// come from a real discovery). MaxCharacteristics records are the most the glue
+// keeps; a peer with more ends the discovery with BLE_HS_EMSGSIZE.
+func Characteristics(conn ConnID, svc UUID) ([]Characteristic, error) {
+	if svc.IsZero() {
+		return nil, ErrBadUUID
+	}
+	if err := gattBegin(); err != nil {
+		return nil, err
+	}
+	defer gattEnd()
+	var rng Service
+	found := false
+	n := int(svcCount(uint32(conn)))
+	for i := 0; i < n; i++ {
+		var r svcRec
+		if svcAt(uint32(conn), int32(i), &r) != 1 {
+			break
+		}
+		if uuidFromWire(&r.UUID, r.UUIDLen) == svc {
+			rng, found = Service{UUID: svc, Handle: r.Start, End: r.End}, true
+			break
+		}
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	op := nextOp()
+	sub := Subscribe(EvDiscDone, EvError)
+	defer sub.Close()
+	if e := nimbleErr(discChrs(uint32(conn), rng.Handle, rng.End, uint32(op))); e != nil {
+		return nil, e
+	}
+	ev, err := waitOp(sub, op)
+	if err != nil {
+		return nil, err
+	}
+	if ev.Status != 0 {
+		return nil, nimbleErr(ev.Status)
+	}
+	m := int(chrCount(uint32(conn)))
+	out := make([]Characteristic, 0, m)
+	for i := 0; i < m; i++ {
+		var r chrRec
+		if chrAt(uint32(conn), int32(i), &r) != 1 {
+			break
+		}
+		out = append(out, Characteristic{
+			UUID:        uuidFromWire(&r.UUID, r.UUIDLen),
+			DeclHandle:  r.Def,
+			ValueHandle: r.Value,
+			Properties:  r.Properties,
+		})
+	}
+	return out, nil
+}
+
+// Read reads chr's value with an ATT Read Request. The result is at most
+// MaxData bytes: a read response carries ATT MTU - 1 bytes, so a longer value
+// is truncated by the peer (a long read is a later stage).
+func Read(conn ConnID, chr Characteristic) ([]byte, error) {
+	if chr.ValueHandle == 0 {
+		return nil, ErrBadValue
+	}
+	if err := gattBegin(); err != nil {
+		return nil, err
+	}
+	defer gattEnd()
+	op := nextOp()
+	sub := Subscribe(EvReadDone, EvError)
+	defer sub.Close()
+	if e := nimbleErr(readAttr(uint32(conn), chr.ValueHandle, uint32(op))); e != nil {
+		return nil, e
+	}
+	ev, err := waitOp(sub, op)
+	if err != nil {
+		return nil, err
+	}
+	if ev.Status != 0 {
+		return nil, nimbleErr(ev.Status)
+	}
+	out := make([]byte, ev.DataLen)
+	copy(out, ev.Data[:ev.DataLen])
+	return out, nil
+}
+
+// Write writes data to chr with the ATT procedure the characteristic's
+// properties allow: write-with-response when the peer declares write, else
+// write-without-response. The acknowledged form wins when a peer declares both,
+// because it is the only one that reports a peer-side failure. A characteristic
+// that declares neither is ErrBadProperty; more than MaxData bytes is
+// ErrTooLong.
+func Write(conn ConnID, chr Characteristic, data []byte) error {
+	if chr.ValueHandle == 0 {
+		return ErrBadValue
+	}
+	switch {
+	case chr.Properties&PropWrite != 0:
+		return writeValue(conn, chr.ValueHandle, data, writeWithResponse)
+	case chr.Properties&PropWriteNoRsp != 0:
+		return writeValue(conn, chr.ValueHandle, data, writeWithoutResponse)
+	}
+	return ErrBadProperty
+}
+
+// WriteWithResponse writes data with an ATT Write Request: the peer
+// acknowledges it, so a failure (an ATT error response, a lost link) is
+// reported here. It does not consult the characteristic's properties.
+func WriteWithResponse(conn ConnID, chr Characteristic, data []byte) error {
+	return writeValue(conn, chr.ValueHandle, data, writeWithResponse)
+}
+
+// WriteWithoutResponse writes data with an ATT Write Command: the peer does not
+// acknowledge it, so the returned error can only report a submission failure
+// (queue full, no such connection). It does not consult the characteristic's
+// properties; a peer that cannot take the write answers with nothing, and the
+// next operation that needs a response is where the mismatch surfaces.
+func WriteWithoutResponse(conn ConnID, chr Characteristic, data []byte) error {
+	return writeValue(conn, chr.ValueHandle, data, writeWithoutResponse)
+}
+
+// writeMode selects the ATT write procedure the glue submits.
+type writeMode int32
+
+const (
+	writeWithResponse    writeMode = 1 // ATT Write Request
+	writeWithoutResponse writeMode = 2 // ATT Write Command
+)
+
+// writeValue submits one write and waits for its completion record.
+func writeValue(conn ConnID, handle uint16, data []byte, mode writeMode) error {
+	if handle == 0 {
+		return ErrBadValue
+	}
+	if len(data) > MaxData {
+		return ErrTooLong
+	}
+	if err := gattBegin(); err != nil {
+		return err
+	}
+	defer gattEnd()
+	var p *uint8
+	if len(data) > 0 {
+		p = &data[0]
+	}
+	op := nextOp()
+	sub := Subscribe(EvWriteDone, EvError)
+	defer sub.Close()
+	if e := nimbleErr(writeAttr(uint32(conn), handle, p, int32(len(data)), int32(mode), uint32(op))); e != nil {
+		return e
+	}
+	ev, err := waitOp(sub, op)
+	if err != nil {
+		return err
+	}
+	return nimbleErr(ev.Status)
+}
+
+// SubscribeChar switches a characteristic's notifications (or indications, when
+// that is all it declares) on - it writes the client characteristic
+// configuration descriptor at value handle + 1 - and returns a subscription
+// that receives them. Consume it with Next, retire it with Unsubscribe.
+//
+// Delivery is the ordinary mailbox fan-out: the subscription is filtered to
+// this connection and value handle, and a plain Subscribe(EvNotify) sees every
+// notification of every characteristic. Notifications are not queued by the
+// peer: one that arrives while this subscription's buffer is full is dropped
+// for this subscriber (and reported in the mailbox's overflow count).
+func SubscribeChar(conn ConnID, chr Characteristic) (*Subscription, error) {
+	if chr.ValueHandle == 0 {
+		return nil, ErrBadValue
+	}
+	var cccd uint16
+	switch {
+	case chr.Properties&PropNotify != 0:
+		cccd = 1
+	case chr.Properties&PropIndicate != 0:
+		cccd = 2
+	default:
+		return nil, ErrBadProperty
+	}
+	// Register before the CCCD write: the peer may push a notification as soon
+	// as it sees the write, and a subscription created afterwards would lose
+	// that first packet. A refused write retires it again.
+	s := &Subscription{
+		ch:    make(chan Event, SubQueueLen),
+		notif: &notifTarget{conn: conn, handle: chr.ValueHandle},
+	}
+	join(s)
+	value := [2]uint8{uint8(cccd), uint8(cccd >> 8)}
+	if err := writeValue(conn, chr.ValueHandle+1, value[:], writeWithResponse); err != nil {
+		s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// Unsubscribe retires a subscription. A characteristic subscription has its
+// client configuration switched off at the peer first (one write, so a peer
+// that refuses or is gone reports it), then leaves the fan-out; a plain mailbox
+// subscription is only removed from the fan-out, exactly like Close. Events
+// already buffered stay readable through Next either way.
+func Unsubscribe(s *Subscription) error {
+	if s == nil {
+		return ErrBadValue
+	}
+	var err error
+	if s.notif != nil {
+		var off [2]uint8 // 0x0000: notifications and indications off
+		err = writeValue(s.notif.conn, s.notif.handle+1, off[:], writeWithResponse)
+	}
+	s.Close()
+	return err
+}
+
+// MTU reports the ATT MTU in effect on the connection: what the exchange the
+// glue requests right after a connection comes up negotiated (EvMtu reports the
+// same value as it happens). Before that exchange completes it is the ATT
+// default, 23, which is what a notification payload of 20 bytes implies.
+func MTU(conn ConnID) (int, error) {
+	if !Ready() {
+		return 0, ErrNotReady
+	}
+	var mtu int32
+	if e := nimbleErr(mtuGet(uint32(conn), &mtu)); e != nil {
+		return 0, e
+	}
+	return int(mtu), nil
+}
+
+// svcRec and chrRec mirror the glue's discovery records byte for byte
+// (llgo_ble_svc_t / llgo_ble_chr_t in glue/ble_glue_nimble.c, whose
+// _Static_asserts pin the offsets): the UUID travels as a width plus 16
+// little-endian bytes.
+type svcRec struct {
+	UUIDLen uint8
+	UUID    [16]uint8
+	Start   uint16
+	End     uint16
+}
+
+type chrRec struct {
+	UUIDLen    uint8
+	UUID       [16]uint8
+	Properties uint8
+	Value      uint16
+	Def        uint16
+}
+
 // nextOp hands out the next operation id (never 0).
 func nextOp() OpID {
 	opSeq++
@@ -709,6 +1437,18 @@ func ErrName(code int32) string {
 		return "BLE_ERR_TIMEOUT"
 	case codeNotReady:
 		return "BLE_ERR_NOT_READY"
+	case codeBadUUID:
+		return "BLE_ERR_BAD_UUID"
+	case codeBadValue:
+		return "BLE_ERR_BAD_VALUE"
+	case codeBusy:
+		return "BLE_ERR_BUSY"
+	case codeBadProperty:
+		return "BLE_ERR_BAD_PROPERTY"
+	case codeNotFound:
+		return "BLE_ERR_NOT_FOUND"
+	case codeTooLong:
+		return "BLE_ERR_TOO_LONG"
 	case codeUnsupported:
 		return "BLE_ERR_UNSUPPORTED"
 	}
@@ -748,6 +1488,8 @@ func nimbleName(status int32) string {
 		return "BLE_HS_ETIMEOUT"
 	case 0x0E:
 		return "BLE_HS_EDONE"
+	case 0x0F:
+		return "BLE_HS_EBUSY"
 	}
 	if status >= 0x0200 { // HCI namespace: BLE_HS_ERR_HCI_BASE | HCI error code
 		switch status & 0xFF {
@@ -783,6 +1525,43 @@ func nimbleName(status int32) string {
 		return "ATT 0x" + hex2(uint8(status))
 	}
 	return "nimble 0x" + hex6(uint32(status))
+}
+
+// hexDigits is the lowercase hex alphabet: the canonical UUID and address
+// spelling (hex2 below uppercases only the ATT status rendering).
+const hexDigits = "0123456789abcdef"
+
+// hexDigit decodes one lowercase or uppercase hex digit.
+func hexDigit(c uint8) (uint8, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// hex16 decodes exactly four hex digits.
+func hex16(s string) (uint16, bool) {
+	var v uint16
+	for i := 0; i < 4; i++ {
+		d, ok := hexDigit(s[i])
+		if !ok {
+			return 0, false
+		}
+		v = v<<4 | uint16(d)
+	}
+	return v, true
+}
+
+// hex4 formats a 16-bit value as four lowercase hex digits.
+func hex4(v uint16) string {
+	return string([]byte{
+		hexDigits[v>>12&0xF], hexDigits[v>>8&0xF], hexDigits[v>>4&0xF], hexDigits[v&0xF],
+	})
 }
 
 // hex2 formats the low byte as two hex digits.

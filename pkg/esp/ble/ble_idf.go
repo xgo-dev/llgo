@@ -45,6 +45,41 @@ func disconnect(connID uint32) int32
 //go:linkname backendName C.llgo_ble_backend_name
 func backendName(buf *uint8, n int32) int32
 
+// ---- GATT client ----
+//
+// Same contract as the GAP commands: a control call returns 0 when the
+// procedure was submitted to the host task and a NimBLE status when it was not,
+// and the outcome arrives through the mailbox. The record accessors and the MTU
+// query are plain reads of a table the host task filled and of a stack value
+// NimBLE locks internally.
+
+//go:linkname discSvcs C.llgo_ble_disc_svcs
+func discSvcs(connID, opID uint32) int32
+
+//go:linkname discChrs C.llgo_ble_disc_chrs
+func discChrs(connID uint32, startHandle, endHandle uint16, opID uint32) int32
+
+//go:linkname readAttr C.llgo_ble_read
+func readAttr(connID uint32, handle uint16, opID uint32) int32
+
+//go:linkname writeAttr C.llgo_ble_write
+func writeAttr(connID uint32, handle uint16, data *uint8, n, mode int32, opID uint32) int32
+
+//go:linkname svcCount C.llgo_ble_svc_count
+func svcCount(connID uint32) int32
+
+//go:linkname svcAt C.llgo_ble_svc_at
+func svcAt(connID uint32, idx int32, out *svcRec) int32
+
+//go:linkname chrCount C.llgo_ble_chr_count
+func chrCount(connID uint32) int32
+
+//go:linkname chrAt C.llgo_ble_chr_at
+func chrAt(connID uint32, idx int32, out *chrRec) int32
+
+//go:linkname mtuGet C.llgo_ble_mtu
+func mtuGet(connID uint32, out *int32) int32
+
 // vTaskDelay yields the CPU for ticks. The poller rests one tick per pass: a
 // busy loop would starve the idle tasks and trip the task watchdog.
 //

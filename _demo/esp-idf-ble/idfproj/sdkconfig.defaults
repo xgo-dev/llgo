@@ -46,15 +46,21 @@ CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
 # has to be validated on silicon before it becomes a default.
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
-# Central-only stage: a BLE central scans (observer role) and connects
-# (central role). The peripheral and broadcaster roles, and the GATT server,
-# come back with the peripheral/GATT stages; leaving them out keeps the host
-# pools smaller.
+# Central-only stage: a BLE central scans (observer role), connects (central
+# role) and runs the GATT client (discovery, read, write, notifications). The
+# peripheral and broadcaster roles and the GATT server come back with the
+# peripheral stage; leaving them out keeps the host pools smaller.
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=y
 CONFIG_BT_NIMBLE_GATT_SERVER=n
+
+# The ATT MTU the glue exchanges on every connection (ble.go's MTU docs and
+# MaxData reasoning quote 256): declared here so it does not depend on the
+# IDF default, which is an implementation detail of the framework version.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
 
 # One connection at a time: the stage's scope, and the smallest connection
 # pool. Multi-connection behavior is a pending hardware item.

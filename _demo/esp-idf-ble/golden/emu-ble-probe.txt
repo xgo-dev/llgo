@@ -1,6 +1,6 @@
-# Golden for the BLE central probe ([go] ble ...) of _demo/esp-idf-ble,
-# captured from an acceptance run (esp-emu v1.2.0, esp32s31, 16 MiB PSRAM,
-# host peer idfproj/host/bumble_peer.py on 127.0.0.1:9556).
+# Golden for the BLE central + GATT client probe ([go] ble ...) of
+# _demo/esp-idf-ble, captured from an acceptance run (esp-emu v1.2.0, esp32s31,
+# 16 MiB PSRAM, host peer idfproj/host/bumble_peer.py on 127.0.0.1:9544).
 #
 # Scope: every [go] ble line the probe prints. The [c] lines (the glue's own
 # address/free-heap report and the heap marks) are not part of the golden: the
@@ -8,27 +8,60 @@
 # reports the address the host-side Bumble controller presents.
 #
 # Floater rule. Everything a `*` replaces is a value that comes from the peer
-# script or from the controller, not from the firmware under test:
+# script, from the controller, or from the peer's attribute table, not from the
+# firmware under test:
 #
-#   addr=      the host peer's advertised address (bumble_peer.py --address)
-#   addrtype=  that address's type (1 = random static for the default script)
-#   rssi=      the RSSI the Bumble link synthesizes for every report (-50)
-#   conn=      the ConnID: the controller's connection handle (1 for the first
-#              connection on a Bumble LocalLink) packed with this package's
-#              generation counter, i.e. (generation << 16) | handle
-#   reason=    the HCI disconnection reason the peer caused (531 = 0x213, a
-#              peer-initiated disconnect tagged with NimBLE's HCI base)
+#   addr=, addrtype=, rssi=   the host peer's advertised address, its type
+#                             (1 = random static) and the RSSI the Bumble link
+#                             synthesizes (-50)
+#   conn=                     the ConnID: the controller's connection handle (1
+#                             for the first connection on a Bumble LocalLink)
+#                             packed with this package's generation counter,
+#                             i.e. (generation << 16) | handle
+#   reason=                   the HCI disconnection reason the peer caused (531
+#                             = 0x213, a peer-initiated disconnect tagged with
+#                             NimBLE's HCI base)
+#   mtu=                      the ATT MTU the exchange negotiated: min of the
+#                             firmware's preferred 256 and the peer's 517
+#   count=, chrs=             how many services the peer's attribute table has
+#                             (Bumble's GAP and GATT services plus the two the
+#                             script adds) and how many characteristics each
+#                             discovered service carries
+#   uuid=, handle=, end=,     the peer script's UUIDs and its attribute
+#   props=                    handles/property bits, which follow from the order
+#                             the script registers its services in
+#   read len=                 the echo characteristic's initial value, which is
+#                             empty in the peer script
 #
-# Everything else is exact, including the operation ids: they come from the
-# probe's own monotonic counter, so a fixed phase order fixes them (scan 1,
-# the cancelled scan 1 -> second scan 2, StopScan burns 3, Connect 4).
+# Everything else is exact, and each of those values was produced by the
+# firmware:
 #
-# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
-# in CR/LF: strip the CR before comparing):
-#   grep -E '^\[go\] ble' <emu log> | tr -d '\r' \
-#     | sed -E 's/(addr=)[^ ]+/\1*/; s/(addrtype=)[^ ]+/\1*/;
-#               s/(rssi=)[^ ]+/\1*/; s/(conn=)[^ ]+/\1*/;
-#               s/(reason=)[^ ]+/\1*/' \
+#   op=                       the probe's own monotonic operation counter, fixed
+#                             by the phase order (scan 1, cancelled scan 1 ->
+#                             second scan 2, StopScan burns 3, Connect 4)
+#   advlen=11                 the peer's 9-byte name plus its AD header
+#   read=1 write=1 notify=0   Characteristic.CanRead/CanWrite/CanNotify applied
+#                             to the discovered property bits
+#   mode=1, mode=2            the ATT write procedure Write selected from those
+#                             properties (1 = write request, acknowledged); a
+#                             with-response write can only complete through the
+#                             peer's ATT Write Response. mode=2 is the ATT write
+#                             command WriteWithoutResponse asked for explicitly,
+#                             which the read-back proves the peer applied
+#   data=ping-0x, u128        exactly the bytes the probe wrote: the echo
+#                             characteristic stores them and the peer pushes the
+#                             same bytes back as a notification, so both the
+#                             read-back and the notification payload are
+#                             firmware input returning to the firmware
+#   n=1, n=2 / ind=0          notification order and "a notification, not an
+#                             indication"
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end in
+# CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] ble' <emu log> | tr -d '\r' | sed -E \
+#     -e 's/(addr|addrtype|rssi|conn|reason|mtu)=[^ ]+/\1=*/g' \
+#     -e 's/(count|chrs|handle|uuid|props|end)=[^ ]+/\1=*/g' \
+#     -e 's/(read len)=[0-9]+/\1=*/' \
 #     | diff - <this file, comments excluded>
 # A diff means the central's behavior changed: the golden only grows by
 # appending a phase, never by editing an existing line.
@@ -41,6 +74,28 @@
 [go] ble scan stop ok
 [go] ble connect start op=4
 [go] ble connect ok conn=*
+[go] ble mtu=*
+[go] ble services count=*
+[go] ble echo svc uuid=* handle=* end=*
+[go] ble wide svc uuid=* handle=* end=*
+[go] ble echo chrs=*
+[go] ble echo chr uuid=* handle=* props=* read=1 write=1 notify=0
+[go] ble echo chr uuid=* handle=* props=* read=0 write=0 notify=1
+[go] ble read len=*
+[go] ble write mode=1 len=7
+[go] ble read back len=7 data=ping-00
+[go] ble subscribe ok handle=*
+[go] ble write mode=1 len=7
+[go] ble notify n=1 handle=* ind=0 len=7 data=ping-01
+[go] ble write mode=1 len=7
+[go] ble notify n=2 handle=* ind=0 len=7 data=ping-02
+[go] ble unsubscribe ok
+[go] ble write nrsp mode=2 len=5
+[go] ble read back nrsp len=5 data=norsp
+[go] ble wide chrs=*
+[go] ble wide chr uuid=* handle=* props=*
+[go] ble wide write mode=1 len=4
+[go] ble wide read back len=4 data=u128
 [go] ble disconnect done reason=*
 [go] ble PASS
 [go] ble deinit ok
