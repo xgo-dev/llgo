@@ -89,7 +89,7 @@ func main() {
 // CHECK: call i32 (ptr, ...) @printf(ptr %[[DIRECTFMT2]], i64 200, ptr @{{[0-9]+}})
 // CHECK: %[[EBOX:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" { ptr @"*_llgo_main.CFmt", ptr undef }, ptr %{{[0-9]+}}, 1
 // CHECK: %[[TYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
-// CHECK: call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.IFmt, ptr %[[TYPE]])
+// CHECK: %[[ASSERT:[0-9]+]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.AssertIface"(ptr @_llgo_main.IFmt, ptr %[[TYPE]], ptr {{.*}})
 // CHECK: %[[SETDATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE:[0-9]+]], ptr %{{[0-9]+}})
 // CHECK: %[[SETVTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[DYNIFACE]], 0
 // CHECK: %[[SETSLOT:[0-9]+]] = getelementptr ptr, ptr %[[SETVTAB]], i64 4
@@ -108,7 +108,7 @@ func main() {
 // CHECK: %[[PRINTENV:[0-9]+]] = extractvalue { ptr, ptr } %[[PRINTPAIR]], 1
 // CHECK: %[[PRINTCALL:[0-9]+]] = extractvalue { ptr, ptr } %[[PRINTPAIR]], 0
 // CHECK: call i32 (ptr, ...) %[[PRINTCALL]](ptr %[[PRINTENV]], ptr @{{[0-9]+}}, i64 100, i64 200)
-// CHECK: %[[NEWITAB:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr {{.*}}, ptr %[[TYPE]])
+// CHECK: %[[NEWITAB:[0-9]+]] = extractvalue { ptr, i1 } %[[ASSERT]], 0
 // CHECK: %[[NEWIFACE0:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" undef, ptr %[[NEWITAB]], 0
 // CHECK: %[[NEWIFACE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.iface" %[[NEWIFACE0]], ptr %{{[0-9]+}}, 1
 // CHECK: insertvalue { %"{{.*}}/runtime/internal/runtime.iface", i1 } undef, %"{{.*}}/runtime/internal/runtime.iface" %[[NEWIFACE]], 0

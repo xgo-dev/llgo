@@ -2,6 +2,7 @@ package ssa
 
 import (
 	"bytes"
+	"fmt"
 	"go/importer"
 	"go/token"
 	"go/types"
@@ -111,23 +112,25 @@ func testChangeTypeNamedInterfaceIdentity(t *testing.T, target *Target) {
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	for _, commaOK := range []bool{false, true} {
-		name := "Assert"
-		results := types.NewTuple(types.NewVar(token.NoPos, nil, "", dst))
-		if commaOK {
-			name += "OK"
-			results = types.NewTuple(types.NewVar(token.NoPos, nil, "", dst), types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]))
+	for index, target := range []types.Type{dst, types.NewInterfaceType(nil, nil).Complete(), types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Empty", nil), types.NewInterfaceType(nil, nil).Complete(), nil)} {
+		for _, commaOK := range []bool{false, true} {
+			name := fmt.Sprintf("Assert%d", index)
+			results := types.NewTuple(types.NewVar(token.NoPos, nil, "", target))
+			if commaOK {
+				name += "OK"
+				results = types.NewTuple(types.NewVar(token.NoPos, nil, "", target), types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]))
+			}
+			fn := pkg.NewFunc(name, types.NewSignatureType(nil, nil, nil,
+				types.NewTuple(types.NewVar(token.NoPos, nil, "value", src)), results, false), GoDecl)
+			b := fn.MakeBody(1)
+			asserted := b.TypeAssert(fn.Param(0), prog.Type(target, GoDecl), commaOK)
+			if commaOK {
+				b.Return(b.Extract(asserted, 0), b.Extract(asserted, 1))
+			} else {
+				b.Return(asserted)
+			}
+			b.EndBuild()
 		}
-		fn := pkg.NewFunc(name, types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(types.NewVar(token.NoPos, nil, "value", src)), results, false), GoDecl)
-		b := fn.MakeBody(1)
-		asserted := b.TypeAssert(fn.Param(0), prog.Type(dst, GoDecl), commaOK)
-		if commaOK {
-			b.Return(b.Extract(asserted, 0), b.Extract(asserted, 1))
-		} else {
-			b.Return(asserted)
-		}
-		b.EndBuild()
 	}
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)

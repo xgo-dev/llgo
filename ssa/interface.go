@@ -686,7 +686,12 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 		eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
 		val = func() Expr { return x }
 	} else {
-		if _, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
+		if intf, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok && intf.Empty() {
+			eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
+			val = func() Expr {
+				return Expr{b.unsafeEface(tx.impl, b.faceData(x.impl)), assertedTyp}
+			}
+		} else if ok {
 			b.Pkg.ifaceConvCacheID++
 			hash := sha256.Sum256([]byte(b.Pkg.Path() + "\x00" + assertedTyp.raw.Type.String()))
 			cache := b.Pkg.NewVarEx("_llgo_ifaceassert$"+base64.RawURLEncoding.EncodeToString(hash[:])+"$"+strconv.FormatUint(b.Pkg.ifaceConvCacheID, 10), b.Prog.Pointer(b.Prog.VoidPtr()))
