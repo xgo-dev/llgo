@@ -165,15 +165,23 @@ func validateNativeTailTransfer(fn asm.Func, sig asm.FuncSig) (int, error) {
 	if len(flags) != 3 {
 		return 0, fmt.Errorf("malformed TEXT directive: %s", fn.Instrs[0].Raw)
 	}
-	seenFlags := map[string]bool{}
+	var flagBits uint64
 	for _, flag := range strings.Split(flags[1], "|") {
 		flag = strings.TrimSpace(flag)
-		if flag != "NOSPLIT" && flag != "NOFRAME" {
-			return 0, fmt.Errorf("unsupported TEXT flag %q", flag)
+		switch flag {
+		case "NOSPLIT":
+			flagBits |= 4
+		case "NOFRAME":
+			flagBits |= 512
+		default:
+			bits, err := strconv.ParseUint(flag, 0, 64)
+			if err != nil || bits & ^uint64(4|512) != 0 {
+				return 0, fmt.Errorf("unsupported TEXT flag %q", flag)
+			}
+			flagBits |= bits
 		}
-		seenFlags[flag] = true
 	}
-	if !seenFlags["NOSPLIT"] || !seenFlags["NOFRAME"] {
+	if flagBits != 4|512 {
 		return 0, fmt.Errorf("requires NOSPLIT|NOFRAME")
 	}
 	for i, param := range sig.Frame.Params {
@@ -191,7 +199,7 @@ func validateNativeTailTransfer(fn asm.Func, sig asm.FuncSig) (int, error) {
 			if arg.Kind == asm.OpFP && (ins.Op != "MOVD" || i != 0 || stackTouched || arg.FPOffset < 0 || arg.FPOffset%8 != 0 || arg.FPOffset >= int64(argc*8)) {
 				return 0, fmt.Errorf("unsupported ABI0 frame access: %s", ins.Raw)
 			}
-			if arg.Kind == asm.OpReg && arg.Reg == "SP" || arg.Kind == asm.OpMem && arg.Mem.Base == "SP" {
+			if arg.Kind == asm.OpReg && (arg.Reg == "SP" || arg.Reg == "RSP") || arg.Kind == asm.OpMem && (arg.Mem.Base == "SP" || arg.Mem.Base == "RSP") {
 				stackTouched = true
 			}
 		}
@@ -223,6 +231,10 @@ func emitNativeTailAssembly(fn asm.Func, reg int, goos string) (string, error) {
 		}
 		fmt.Fprintf(&source, "%s %s\n", ins.Op, strings.Join(args, ", "))
 	}
+	// Anchor labels immediately preceding the terminal transfer. Core keeps
+	// pending labels only when followed by an instruction. Replace this RET
+	// with the validated branch after emission, preserving instruction width.
+	source.WriteString("RET\n")
 	code, _, err := asm.TranslateNativeSource([]byte(source.String()), asm.NativeOptions{GOOS: goos, GOARCH: "arm64"})
 	if err != nil {
 		return "", err
@@ -231,8 +243,12 @@ func emitNativeTailAssembly(fn asm.Func, reg int, goos string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The terminal transfer is the physical bridge boundary itself.
-	return fmt.Sprintf("%sbr x%d\n", assembly, reg), nil
+	lines := strings.Split(strings.TrimSpace(assembly), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[len(lines)-1]) != "ret" {
+		return "", fmt.Errorf("native tail emitter lost its return anchor")
+	}
+	lines[len(lines)-1] = fmt.Sprintf("br x%d", reg)
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func replaceNativeTailEntry(mod llvm.Module, sig asm.FuncSig, goos, assembly string) error {

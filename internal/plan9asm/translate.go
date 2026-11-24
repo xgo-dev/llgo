@@ -33,12 +33,23 @@ type ModuleTranslation struct {
 }
 
 type TranslateOptions struct {
+	// NativeBDWGC keeps foreign stack switches outside BDWGC's active scan.
+	NativeBDWGC    bool
 	AnnotateSource bool
-	// NativeBDWGC keeps foreign stack switches outside BDWGC's active stack
-	// scan. Foreign code must return before calling managed Go code.
-	NativeBDWGC bool
-	GOARM       string
-	GOAMD64     string
+	GOROOT         string
+	Overlay        map[string][]byte
+	GO386          string
+	GOARM          string
+	GOAMD64        string
+	GOARM64        string
+	// Environment is the compiler invocation's selected source-tool environment.
+	Environment []string
+	// ToolTags is the actual selected Go SDK's resolved feature-tag snapshot.
+	// Experiments become assembler macros only for its registered package roles.
+	ToolTags []string
+	// SourcePreprocessed is for internal compiler callers retaining the exact
+	// output of PreprocessSourceForPkg. Target and ABI checks still apply.
+	SourcePreprocessed bool
 	// X87Mode controls explicit 386 x87 assembly lowering. The zero value uses
 	// the Go-compatible hardware lowering.
 	X87Mode extplan9asm.X87Mode
@@ -138,6 +149,9 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		ManualSig:      manualSig,
 	})
 	if err != nil {
+		if tr != nil {
+			tr.Module.Dispose()
+		}
 		return nil, err
 	}
 

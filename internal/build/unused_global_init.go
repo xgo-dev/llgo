@@ -200,7 +200,7 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		if err != nil {
 			return false
 		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
+		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx))
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue

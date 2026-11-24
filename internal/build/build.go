@@ -285,8 +285,9 @@ type Config struct {
 	coverageProfileInitialized bool
 
 	// Resolved once per invocation, independently of the Go version that built LLGo.
-	sourceGoVersion string
-	toolTags        []string
+	sourceGoVersion    string
+	sourceGoExperiment string
+	toolTags           []string
 	// Preserve inferred optimization levels when invocations are cloned.
 	// Only explicit -Oz requests the optional final optimizer.
 	optLevelDefaulted bool
@@ -874,6 +875,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
 	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
+	if conf.sourceGoVersion == "" {
+		conf.sourceGoExperiment = sourceGo.originalExperiment
+	}
 	conf.sourceGoVersion = sourceGo.GOVERSION
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
@@ -2990,7 +2994,13 @@ func packageCExportDeclarations(pkg llssa.Package) []cExport {
 			continue
 		}
 		var sig *types.Signature
-		if fn := pkg.FuncOf(goName); fn != nil {
+		fn := pkg.FuncOf(goName)
+		if fn == nil {
+			// Runtime-owned/direct exports retain the same compiler export
+			// mapping but register their actual entry under the C name.
+			fn = pkg.FuncOf(cName)
+		}
+		if fn != nil {
 			sig, _ = fn.RawType().(*types.Signature)
 		}
 		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig})

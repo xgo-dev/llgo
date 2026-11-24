@@ -3,6 +3,7 @@ package build
 import (
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
@@ -21,7 +22,7 @@ func TestPlan9AsmTranslateOptions(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := plan9asmTranslateOptions(&test.conf, nil)
+			got := plan9asmTranslateOptions(&context{buildConf: &test.conf})
 			if got.GOARM != test.conf.GOARM {
 				t.Fatalf("GOARM = %q, want %q", got.GOARM, test.conf.GOARM)
 			}
@@ -59,14 +60,14 @@ func TestPlan9AsmNativeCollectorSelection(t *testing.T) {
 		{"other architecture", Config{Goos: "linux", Goarch: "amd64"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := plan9asmTranslateOptions(&tc.conf, nil).NativeBDWGC; got != tc.want {
+			if got := plan9asmTranslateOptions(&context{buildConf: &tc.conf}).NativeBDWGC; got != tc.want {
 				t.Fatalf("NativeBDWGC = %t, want %t", got, tc.want)
 			}
 		})
 	}
 	for _, tag := range []string{"nogc", "baremetal"} {
 		conf := Config{Goos: "linux", Goarch: "arm64", Target: "custom"}
-		if plan9asmTranslateOptions(&conf, []string{tag}).NativeBDWGC {
+		if plan9asmTranslateOptions(&context{buildConf: &conf, crossCompile: crosscompile.Export{BuildTags: []string{tag}}}).NativeBDWGC {
 			t.Fatalf("target tag %s acquired a BDWGC dependency", tag)
 		}
 	}

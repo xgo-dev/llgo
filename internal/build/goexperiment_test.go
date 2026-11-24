@@ -54,6 +54,12 @@ func TestResolveGOEXPERIMENT(t *testing.T) {
 			}
 			commands.environ = cfg.apply(commands.environ)
 			roundTrip := mustResolveSourceGo(t, commands, "")
+			if roundTrip.originalExperiment != cfg.GOEXPERIMENT {
+				t.Fatal("canonical command lost its independently observed experiment spelling")
+			}
+			// Source ownership retains the original spelling independently of
+			// the canonical effective configuration/cache identity below.
+			roundTrip.originalExperiment = cfg.originalExperiment
 			if !reflect.DeepEqual(cfg, roundTrip) {
 				t.Fatalf("effective configuration changed after canonicalization:\n%+v\n%+v", cfg, roundTrip)
 			}
@@ -151,6 +157,10 @@ func TestGOEXPERIMENTSnapshotFromGOENV(t *testing.T) {
 			}
 			commands.environ = cfg.apply(commands.environ)
 			after := mustResolveSourceGo(t, commands, "")
+			if cfg.originalExperiment != initial || after.originalExperiment != cfg.GOEXPERIMENT {
+				t.Fatal("lost actual GOENV setting or pinned canonical command setting")
+			}
+			after.originalExperiment = cfg.originalExperiment
 			if !reflect.DeepEqual(cfg, after) {
 				t.Fatalf("GOENV mutation changed the pinned source configuration:\n%+v\n%+v", cfg, after)
 			}

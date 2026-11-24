@@ -15,11 +15,20 @@ import (
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
-func plan9asmTranslateOptions(conf *Config, targetTags []string) llplan9asm.TranslateOptions {
-	opt := llplan9asm.TranslateOptions{GOARM: conf.GOARM, GOAMD64: conf.GOAMD64}
+func plan9asmTranslateOptions(ctx *context) llplan9asm.TranslateOptions {
+	conf := ctx.buildConf
+	opt := llplan9asm.TranslateOptions{
+		GOROOT: ctx.commands.lookup("GOROOT"), Overlay: conf.Overlay,
+		GO386: conf.GO386, GOARM: conf.GOARM, GOAMD64: conf.GOAMD64, GOARM64: conf.GOARM64,
+		ToolTags:    conf.toolTags,
+		Environment: ctx.commands.environ,
+	}
+	if conf.sourceGoVersion != "" {
+		opt.Environment = withEnv(opt.Environment, "GOEXPERIMENT="+conf.sourceGoExperiment)
+	}
+	targetTags := ctx.crossCompile.BuildTags
 	tags := splitSourcePatchBuildTags(conf.Tags)
-	opt.NativeBDWGC = conf.Goarch == "arm64" &&
-		(conf.Goos == "darwin" || conf.Goos == "linux") &&
+	opt.NativeBDWGC = conf.Goarch == "arm64" && (conf.Goos == "darwin" || conf.Goos == "linux") &&
 		!slices.Contains(tags, "nogc") && !slices.Contains(tags, "baremetal") &&
 		!slices.Contains(targetTags, "nogc") && !slices.Contains(targetTags, "baremetal")
 	if conf.Goarch == "386" && conf.GO386 == "softfloat" {
@@ -101,7 +110,7 @@ func compileSelectedPkgSFiles(ctx *context, aPkg *aPackage, pkg *packages.Packag
 				return nil, fmt.Errorf("%s: native assembly %s: %w", pkg.PkgPath, sfile, err)
 			}
 		} else {
-			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
+			tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx))
 			if err != nil {
 				// Some stdlib .s files are comment-only placeholders (e.g. internal/cpu/cpu.s).
 				// Skip those silently.
@@ -332,7 +341,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		if err != nil {
 			return nil, fmt.Errorf("%s: read %s: %w", pkg.PkgPath, sfile, err)
 		}
-		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
+		tr, err := llplan9asm.TranslateSourceForPkgWithOptions(pkg, sfile, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx))
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue
