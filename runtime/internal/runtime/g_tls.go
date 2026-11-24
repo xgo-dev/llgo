@@ -77,6 +77,11 @@ func getg() *g {
 	return initForeignG()
 }
 
+// initForeignG lazily bootstraps a lifecycle-managed G for threads without an
+// installed G (both the initial main thread before runtime ownership and
+// foreign C threads, matching setAutoG). Keep it //go:noinline so getg stays
+// small enough for the common currentG TLS-load fast path to inline under LTO.
+//
 //go:noinline
 func initForeignG() *g {
 	registerWasiGCThread()
