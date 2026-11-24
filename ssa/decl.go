@@ -358,8 +358,7 @@ type aFunction struct {
 	env      Type
 	hasVArg  bool
 
-	interfaceConcreteTypes     map[llvm.Value]types.Type
-	interfaceDataConcreteTypes map[llvm.Value]types.Type
+	interfaceConcreteTypes map[llvm.Value]types.Type
 
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}

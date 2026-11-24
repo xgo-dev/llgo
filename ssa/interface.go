@@ -345,11 +345,7 @@ func (b Builder) unsafeInterface(intf types.Type, concrete types.Type, t Expr, d
 			if b.Func.interfaceConcreteTypes == nil {
 				b.Func.interfaceConcreteTypes = make(map[llvm.Value]types.Type)
 			}
-			if b.Func.interfaceDataConcreteTypes == nil {
-				b.Func.interfaceDataConcreteTypes = make(map[llvm.Value]types.Type)
-			}
 			b.Func.interfaceConcreteTypes[ret] = concrete
-			b.Func.interfaceDataConcreteTypes[data] = concrete
 		}()
 	}
 	intf = types.Unalias(intf)
@@ -770,8 +766,7 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 //	t1 = change interface interface{} <- I (t0)
 func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 	known := b.Func.interfaceConcreteTypes
-	dataKnown := b.Func.interfaceDataConcreteTypes
-	if len(known) == 0 && len(dataKnown) == 0 {
+	if len(known) == 0 {
 		return nil
 	}
 	var visit func(llvm.Value, map[llvm.Value]bool) types.Type
@@ -779,14 +774,17 @@ func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 		if knownType := known[value]; knownType != nil {
 			return knownType
 		}
-		if knownType := dataKnown[value]; knownType != nil {
-			return knownType
-		}
 		if seen[value] {
 			return nil
 		}
+		if value.IsAInstruction().C == nil {
+			return nil
+		}
 		seen[value] = true
+		defer delete(seen, value)
 		switch value.InstructionOpcode() {
+		// Aggregate reconstruction needs proof of both type and data words.
+		// A shared data pointer alone cannot establish the dynamic type.
 		case llvm.BitCast:
 			return visit(value.Operand(0), seen)
 		case llvm.Select:
@@ -799,21 +797,6 @@ func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 				return left
 			}
 			return nil
-		case llvm.ExtractValue:
-			indices := value.Indices()
-			if len(indices) == 1 && indices[0] == 1 {
-				return visit(value.Operand(0), seen)
-			}
-		case llvm.InsertValue:
-			indices := value.Indices()
-			if len(indices) == 1 {
-				if indices[0] == 1 {
-					return visit(value.Operand(1), seen)
-				}
-				if indices[0] == 0 {
-					return visit(value.Operand(0), seen)
-				}
-			}
 		}
 		if value.InstructionOpcode() == llvm.PHI && value.IncomingCount() != 0 {
 			var result types.Type
