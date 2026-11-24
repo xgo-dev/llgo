@@ -17,12 +17,14 @@
 package build
 
 import (
+	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -384,6 +386,165 @@ func TestPreparePackageBuildsKeepsPatchesIsolatedAndSerial(t *testing.T) {
 	}
 	if !normalTask.isolated || !normalTask.parallel {
 		t.Fatalf("normal execution = isolated %v, parallel %v; want true, true", normalTask.isolated, normalTask.parallel)
+	}
+}
+
+func TestPreparePackageBuildsEnablesParallelForPreparedPatches(t *testing.T) {
+	t.Setenv(llgoBuildCache, "off")
+	fset := token.NewFileSet()
+	parseCheck := func(path, src string) (*types.Package, *ast.File, *types.Info) {
+		t.Helper()
+		file, err := parser.ParseFile(fset, path+".go", src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Implicits:  make(map[ast.Node]types.Object),
+			Scopes:     make(map[ast.Node]*types.Scope),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		}
+		pkg, err := (&types.Config{}).Check(path, fset, []*ast.File{file}, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg, file, info
+	}
+
+	origTypes, origFile, origInfo := parseCheck("example.com/patched", "package patched\nfunc Keep() int { return 1 }\n")
+	altTypes, altFile, altInfo := parseCheck("example.com/patched", "package patched\nfunc Alt() int { return 2 }\n")
+	testVariantTypes, testVariantFile, testVariantInfo := parseCheck("example.com/patched", "package patched\nfunc Keep() int { return 1 }\n")
+
+	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
+	origSSA := prog.CreatePackage(origTypes, []*ast.File{origFile}, origInfo, true)
+	altSSA := prog.CreatePackage(altTypes, []*ast.File{altFile}, altInfo, true)
+	testVariantSSA := prog.CreatePackage(testVariantTypes, []*ast.File{testVariantFile}, testVariantInfo, true)
+	prog.Build()
+
+	primary := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/patched",
+			PkgPath: "example.com/patched",
+			Syntax:  []*ast.File{origFile},
+			Types:   origTypes,
+		},
+		SSA:    origSSA,
+		AltPkg: &packages.Cached{Package: &packages.Package{Syntax: []*ast.File{altFile}}},
+	}
+	variant := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/patched [example.com/patched.test]",
+			PkgPath: "example.com/patched",
+			Syntax:  []*ast.File{testVariantFile},
+			Types:   testVariantTypes,
+		},
+		SSA:    testVariantSSA,
+		AltPkg: &packages.Cached{Package: &packages.Package{Syntax: []*ast.File{altFile}}},
+	}
+	ctx := &context{
+		mode:        ModeBuild,
+		buildConf:   &Config{BuildMode: BuildModeExe},
+		patches:     cl.Patches{"example.com/patched": {Alt: altSSA, Types: altTypes}},
+		sfilesCache: make(map[string][]string),
+	}
+	primaryTask := &packageBuildTask{pkg: primary}
+	variantTask := &packageBuildTask{pkg: variant}
+	if err := preparePackageBuilds(ctx, []*packageBuildTask{primaryTask, variantTask}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !ctx.patches["example.com/patched"].Prepared {
+		t.Fatal("expected patch to be prepared upfront")
+	}
+	if !primaryTask.isolated || !primaryTask.parallel {
+		t.Fatalf("prepared patched task = isolated %v, parallel %v; want true, true", primaryTask.isolated, primaryTask.parallel)
+	}
+	if !variantTask.isolated || variantTask.parallel {
+		t.Fatalf("secondary test-variant patched task = isolated %v, parallel %v; want true, false", variantTask.isolated, variantTask.parallel)
+	}
+}
+
+func TestParallelBuildWithPatchedStdlibPackages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping full parallel stdlib build in short mode")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "off")
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module example.com/parpatch\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"fmt"
+	"os"
+	"reflect"
+	"sync"
+)
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var got string
+	go func() {
+		defer wg.Done()
+		got = reflect.TypeOf(42).String()
+	}()
+	wg.Wait()
+	_, _ = os.Stat(".")
+	fmt.Println(got)
+}
+`
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outBin := filepath.Join(t.TempDir(), "parpatch")
+	tracePath := filepath.Join(t.TempDir(), "trace.json")
+	conf := NewDefaultConf(ModeBuild)
+	conf.ForceRebuild = true
+	conf.BuildParallelism = 4
+	conf.BuildTrace = tracePath
+	conf.PCLNMode = PCLNNone
+	conf.OutFile = outBin
+
+	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: srcDir}); err != nil {
+		t.Fatalf("parallel build with patched stdlib packages failed: %v", err)
+	}
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("read build trace: %v", err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatalf("parse build trace: %v", err)
+	}
+	classes := make(map[string]any)
+	for _, ev := range events {
+		if ev.Phase == "X" && strings.HasPrefix(ev.Name, "backend+publish ") {
+			pkg := strings.TrimPrefix(ev.Name, "backend+publish ")
+			classes[pkg] = ev.Args["class"]
+		}
+	}
+	for _, pkg := range []string{"reflect", "sync", "os"} {
+		if got := classes[pkg]; got != "isolated" {
+			t.Errorf("patched stdlib package %q backend class = %v, want %q", pkg, got, "isolated")
+		}
+	}
+
+	out, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run %s: %v\n%s", outBin, err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "int" {
+		t.Fatalf("output = %q, want %q", got, "int")
 	}
 }
 
