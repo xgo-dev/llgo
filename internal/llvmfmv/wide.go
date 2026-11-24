@@ -203,7 +203,7 @@ func (a *wideABI) lower(fn llvm.Value, baseline string) {
 	if zmm {
 		v := body("zmm")
 		enableWidth(v, 512)
-		// Go requires its combined AVX512 feature for 512-bit vectors.
+		// Without a sufficient register floor, select ZMM using the Go AVX512 query.
 		choices = append(choices, dispatchChoice{bits: predicateBits[X86Query("AVX512")], fn: v})
 	}
 	base := body("width_base")

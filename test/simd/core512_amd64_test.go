@@ -52,6 +52,33 @@ func TestSIMD512Core(t *testing.T) {
 	}
 }
 
+//go:noinline
+func vbmi2WideCall(dst, src *[16]int32) bool {
+	if archsimd.X86.AVX512VBMI2() {
+		x := archsimd.LoadInt32x16Array(src)
+		vectorcall.Add512(x, x).StoreArray(dst)
+		return archsimd.X86.AVX512()
+	}
+	return false
+}
+
+func TestSIMD512VBMI2WideCall(t *testing.T) {
+	var src, dst, want [16]int32
+	for i := range src {
+		src[i] = int32(7*i + 1)
+	}
+	if archsimd.X86.AVX512VBMI2() {
+		for i, x := range src {
+			want[i] = 2 * x
+		}
+	}
+	bundle := vbmi2WideCall(&dst, &src)
+	if bundle != (archsimd.X86.AVX512VBMI2() && archsimd.X86.AVX512()) || dst != want {
+		t.Fatalf("AVX512=%t VBMI2=%t: got bundle=%t lanes=%v, want lanes=%v",
+			archsimd.X86.AVX512(), archsimd.X86.AVX512VBMI2(), bundle, dst, want)
+	}
+}
+
 // Nine live vectors also exercise the stack argument path in the register ABI.
 //
 //go:noinline

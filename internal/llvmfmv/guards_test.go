@@ -486,12 +486,7 @@ exit:
 
 func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value) {
 	t.Helper()
-	checkCachedBody(t, m, "root", bits, want)
-}
-
-func checkCachedBody(t *testing.T, m llvm.Module, entry string, bits uint64, want llvm.Value) {
-	t.Helper()
-	resolver := m.NamedFunction(entry + resolverSuffix)
+	resolver := m.NamedFunction("root" + resolverSuffix)
 	// Substitute the published runtime mask and fold the actual select chain.
 	for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 		if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
@@ -503,7 +498,7 @@ func checkCachedBody(t *testing.T, m llvm.Module, entry string, bits uint64, wan
 	published := false
 	for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal(entry+slotSuffix) {
+			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
 				published = inst.Operand(0) == want
 			}
 		}
@@ -516,13 +511,8 @@ func checkCachedBody(t *testing.T, m llvm.Module, entry string, bits uint64, wan
 func TestGuardRuntimePredicates(t *testing.T) {
 	for _, p := range x86Predicates {
 		t.Run(p.method, func(t *testing.T) {
-			required := p.runtimeBit
-			masks := []uint64{0, featureAVX, p.runtimeBit, featureAVX | p.runtimeBit}
-			if p.registerBits == 512 {
-				bundle := predicateBits[X86Query("AVX512")]
-				required |= bundle
-				masks = append(masks, bundle, required)
-			}
+			bundle := predicateBits[X86Query("AVX512")]
+			masks := []uint64{0, featureAVX, p.runtimeBit, featureAVX | p.runtimeBit, bundle, bundle | p.runtimeBit}
 			for _, published := range masks {
 				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
 declare i1 @query() "llgo.cpu.query"="%s"
@@ -546,7 +536,7 @@ exit:
 					t.Fatal("baseline lost the observable Go predicate")
 				}
 				want := m.NamedFunction("root" + base)
-				if published&required == required {
+				if published&p.runtimeBit != 0 {
 					want = m.NamedFunction("root" + fast)
 				}
 				checkCachedGuard(t, m, published, want)

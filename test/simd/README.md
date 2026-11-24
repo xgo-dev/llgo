@@ -360,7 +360,10 @@ other observable query results. On v1/v2 the AVX and FMA queries remain
 dynamic when AVX2 is enabled. At v3/v4 both are guaranteed. A guarded implementation is selected by the effective
 Go predicates in its runtime mask. For example, VAES uses the VAES bit even
 when AVX has been independently disabled. AVXAES uses the combined AVX and
-AES result published by the runtime. Midway selects portable width independently.
+AES result published by the runtime. A direct VBMI2 guard enables a 512-bit
+register call even when a CPU override disables the AVX512 bundle. An explicit
+AVX512 query in that body still observes its own runtime bit. Midway selects
+portable width independently.
 
 Run the native matrix with:
 

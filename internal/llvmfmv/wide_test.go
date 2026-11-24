@@ -61,7 +61,7 @@ scalar:
 	}
 }
 
-func TestGuardedZMMCallRequiresGoAVX512(t *testing.T) {
+func TestZMMCallDispatch(t *testing.T) {
 	const ir = `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @vbmi2() "llgo.cpu.query"="x86.avx512vbmi2"
 declare i1 @opaque()
@@ -76,39 +76,39 @@ yes:
 exit:
  ret void
 }`
-	for _, query := range []string{"vbmi2", "opaque"} {
-		for _, bundle := range []bool{false, true} {
-			m := parseModule(t, strings.Replace(ir, "QUERY", query, 1))
-			if err := Run(m, "v1"); err != nil {
-				t.Fatal(err)
+	ext := predicateBits[X86Query("AVX512VBMI2")]
+	bundle := predicateBits[X86Query("AVX512")]
+	for _, tc := range []struct {
+		query  string
+		mask   uint64
+		suffix string
+	}{
+		{"vbmi2", ext, "guard_avx512vbmi2"},
+		{"vbmi2", ext | bundle, "guard_avx512vbmi2"},
+		{"vbmi2", bundle, "guard_base"},
+		{"opaque", ext, "width_base"},
+		{"opaque", bundle, "zmm"},
+	} {
+		m := parseModule(t, strings.Replace(ir, "QUERY", tc.query, 1))
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+		body := m.NamedFunction("root" + symbolPrefix + tc.suffix)
+		if body.IsNil() {
+			t.Fatalf("missing %s", tc.suffix)
+		}
+		checkCachedGuard(t, m, tc.mask, body)
+		switch tc.suffix {
+		case "width_base":
+			if !strings.Contains(body.String(), "@llvm.trap(") {
+				t.Fatal(body.String())
 			}
-			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-				t.Fatal(err)
-			}
-			mask := featureAVX2 | predicateBits[X86Query("AVX512VBMI2")]
-			if bundle {
-				mask |= predicateBits[X86Query("AVX512")]
-			}
-			entry, suffix := "root", "width_base"
-			if query == "vbmi2" && !bundle {
-				base := m.NamedFunction(entry + symbolPrefix + "guard_base")
-				checkCachedGuard(t, m, mask, base)
-				entry = base.Name()
-			}
-			if bundle {
-				suffix = "zmm"
-				if query == "vbmi2" {
-					suffix = "guard_avx512vbmi2"
-				}
-			}
-			body := m.NamedFunction(entry + symbolPrefix + suffix)
-			if body.IsNil() {
-				t.Fatalf("missing %s %s", entry, suffix)
-			}
-			checkCachedBody(t, m, entry, mask, body)
-			code := body.String()
-			if strings.Contains(code, "call void @wide(") != bundle || strings.Contains(code, "@llvm.trap(") == bundle {
-				t.Fatal(code)
+		case "guard_avx512vbmi2", "zmm":
+			if !strings.Contains(body.String(), "call void @wide(") {
+				t.Fatal(body.String())
 			}
 		}
 	}
