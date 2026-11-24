@@ -91,6 +91,10 @@ jobs:
           (cd _demo/go && LLGO_BUILD_CACHE=off llgo run ./stdlib)
           (cd _demo/c && LLGO_BUILD_CACHE=off llgo run ./hello)
 
+      - name: Check linked Darwin ARM64 atomic instructions with stage 2
+        if: runner.os == 'macOS' && runner.arch == 'ARM64'
+        run: bash dev/test_darwin_arm64_lto.sh
+
   llgo:
     permissions:
       contents: read
