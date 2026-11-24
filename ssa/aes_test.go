@@ -54,7 +54,7 @@ func TestAESMachineCode(t *testing.T) {
 			)
 			sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
 			var first Function
-			for op := AESEncryptRound; op <= AESXORBlock; op++ {
+			for op := AESEncryptRound; op <= AESHashLast; op++ {
 				fn := pkg.NewFunc(fmt.Sprintf("aes_op_%d", op), sig, CDecl)
 				b := fn.MakeBody(1)
 				b.AESRound(op, fn.Param(0), fn.Param(1), fn.Param(2))

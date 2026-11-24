@@ -9,11 +9,14 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"unsafe"
 
-func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
+	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
+)
+
+func memhash32Val(t uint32, seed uintptr) uintptr {
 	a, b := mix32(uint32(seed), uint32(4^hashkey[0]))
-	t := readUnaligned32(p)
 	a ^= t
 	b ^= t
 	a, b = mix32(a, b)
@@ -21,16 +24,32 @@ func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
 	return uintptr(a ^ b)
 }
 
-func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
+func memhash64Val(v uint64, seed uintptr) uintptr {
 	a, b := mix32(uint32(seed), uint32(8^hashkey[0]))
-	a ^= readUnaligned32(p)
-	b ^= readUnaligned32(add(p, 4))
+	if goarch.BigEndian {
+		a ^= uint32(v >> 32)
+		b ^= uint32(v)
+	} else {
+		a ^= uint32(v)
+		b ^= uint32(v >> 32)
+	}
 	a, b = mix32(a, b)
 	a, b = mix32(a, b)
 	return uintptr(a ^ b)
 }
 
+func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
+	return memhash32Val(readUnaligned32(p), seed)
+}
+
+func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
+	return memhash64Val(readUnaligned64(p), seed)
+}
+
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if useAeshash && s > 16 {
+		return memhashAES(p, seed, s)
+	}
 	a, b := mix32(uint32(seed), uint32(s^hashkey[0]))
 	if s == 0 {
 		return uintptr(a ^ b)

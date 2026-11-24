@@ -19,6 +19,10 @@ const (
 	AESInverseMixKey
 	AESXORKey
 	AESXORBlock
+	// Raw native byte-order encrypt rounds for non-cryptographic AES hashing
+	// (no big-endian uint32 key-schedule byte swap).
+	AESHashRound
+	AESHashLast
 )
 
 // AESAlloca reserves fixed-size, pointer-free AES state in the entry block.
@@ -141,9 +145,10 @@ func (b Builder) aesPPC(name string, a, c llvm.Value) llvm.Value {
 }
 
 // AESRound operates on unaligned byte buffers. Only the round-key operand (or
-// both operands for InverseMixKey) uses the generic uint32 schedule layout.
+// both operands for InverseMixKey) uses the generic uint32 schedule layout,
+// except AESXORBlock, AESHashRound, and AESHashLast which consume raw bytes.
 func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
-	if op > AESXORBlock {
+	if op > AESHashLast {
 		panic("aesRound: invalid operation")
 	}
 	for _, arg := range []Expr{dst, src, key} {
@@ -162,7 +167,7 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 	if op != AESInverseMixKey {
 		k = b.impl.CreateLoad(vec, key.impl, "")
 		k.SetAlignment(1)
-		if op != AESXORBlock {
+		if op != AESXORBlock && op != AESHashRound && op != AESHashLast {
 			k = b.aesKeyBytes(k)
 		}
 	}
@@ -177,9 +182,9 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 				prefix = "llvm.arm.neon."
 			}
 			switch op {
-			case AESEncryptRound, AESEncryptLast:
+			case AESEncryptRound, AESEncryptLast, AESHashRound, AESHashLast:
 				value = b.aesIntrinsic(prefix+"aese", vec, state, k)
-				if op == AESEncryptRound {
+				if op == AESEncryptRound || op == AESHashRound {
 					value = b.aesIntrinsic(prefix+"aesmc", vec, value)
 				}
 			case AESDecryptRound, AESDecryptLast:
@@ -194,7 +199,7 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 			words := llvm.VectorType(b.Prog.ctx.Int64Type(), 2)
 			state = b.impl.CreateBitCast(state, words, "")
 			k = b.impl.CreateBitCast(k, words, "")
-			name := []string{"aesenc", "aesenclast", "aesdec", "aesdeclast", "aesimc"}[op]
+			name := []string{"aesenc", "aesenclast", "aesdec", "aesdeclast", "aesimc", "", "", "aesenc", "aesenc"}[op]
 			if op == AESInverseMixKey {
 				value = b.aesIntrinsic("llvm.x86.aesni."+name, words, state)
 			} else {
@@ -203,8 +208,12 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 			value = b.impl.CreateBitCast(value, vec, "")
 		case "ppc64", "ppc64le":
 			switch op {
-			case AESEncryptRound, AESEncryptLast, AESDecryptLast:
-				name := map[AESOp]string{AESEncryptRound: "vcipher", AESEncryptLast: "vcipherlast", AESDecryptLast: "vncipherlast"}[op]
+			case AESEncryptRound, AESEncryptLast, AESDecryptLast, AESHashRound, AESHashLast:
+				name := map[AESOp]string{
+					AESEncryptRound: "vcipher", AESEncryptLast: "vcipherlast",
+					AESDecryptLast: "vncipherlast",
+					AESHashRound:   "vcipher", AESHashLast: "vcipherlast",
+				}[op]
 				value = b.aesPPC(name, state, k)
 			case AESDecryptRound:
 				// VNCIPHER mixes the round key before InvMixColumns. Our generic
@@ -215,7 +224,7 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 				value = b.aesPPC("vncipher", value, llvm.ConstNull(vec))
 			}
 		case "riscv64":
-			name := []string{"aes64esm", "aes64es", "aes64dsm", "aes64ds", "aes64im"}[op]
+			name := []string{"aes64esm", "aes64es", "aes64dsm", "aes64ds", "aes64im", "", "", "aes64esm", "aes64es"}[op]
 			value = b.aesRISCV(name, state)
 			if op != AESInverseMixKey {
 				value = b.impl.CreateXor(value, k, "")
