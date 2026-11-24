@@ -102,16 +102,32 @@ static int llgo_tls_bio_recv(void *ctx, unsigned char *buf, size_t len)
 }
 
 /* Allocate and set up the TLS client session for an already-connected
- * non-blocking socket: defaults, optional CA parse + VERIFY_REQUIRED (else
- * VERIFY_NONE), BIO wiring, ssl_setup. The CA PEM must be copied before
- * parsing: mbedtls's PEM path requires a NUL terminator (x509_crt_parse
- * detects PEM by checking buf[buflen-1] == '\0') and the Go slice is not
- * terminated. Returns 0 with *out_ctx set, TLS_ERR_CA_PARSE (0x7E03) for an
- * unusable CA, TLS_ERR_PSA_INIT (0x7E06) if PSA Crypto does not start, or a
- * negative mbedtls code for the remaining setup failures (passed through
+ * non-blocking socket. ca_pem is the trust anchor PEM (parsed when
+ * VERIFY_REQUIRED applies, see below); host/host_len carry the SNI and
+ * peer-identity hostname as one opaque byte string (copied, NUL terminated
+ * here - mbedtls's own copy keeps it for the SNI extension and the CN/SAN
+ * match); verify_none != 0 selects MBEDTLS_SSL_VERIFY_NONE (the
+ * InsecureSkipVerify path); min_version is the wire version to floor the
+ * negotiation at (0 = the mbedtls default, else 0x0303 TLS 1.2 / 0x0304
+ * TLS 1.3 - mbedtls_ssl_protocol_version IS the wire version). The
+ * fail-closed rule lives on both sides: the Go Dial rejects a verify
+ * config with no trust anchor before any bytes hit the network, and this
+ * glue still refuses a VERIFY_REQUIRED setup without a parsed CA
+ * (TLS_ERR_NO_ROOT_CAS, 0x7E07) - the dangerous combination must not
+ * exist in either language.
+ *
+ * The CA PEM must be copied before parsing: mbedtls's PEM path requires a
+ * NUL terminator (x509_crt_parse detects PEM by checking
+ * buf[buflen-1] == '\0') and the Go slice is not terminated. Returns 0
+ * with *out_ctx set, TLS_ERR_CA_PARSE (0x7E03) for an unusable CA,
+ * TLS_ERR_NO_ROOT_CAS (0x7E07) for the CA-less VERIFY_REQUIRED case,
+ * TLS_ERR_PSA_INIT (0x7E06) if PSA Crypto does not start, or a negative
+ * mbedtls code for the remaining setup failures (passed through
  * unchanged - only tls.go's handshake loop maps unmapped codes to
  * TLS_ERR_HANDSHAKE). */
 int32_t llgo_tls_new(int32_t fd, const uint8_t *ca_pem, int32_t ca_len,
+                     const uint8_t *host, int32_t host_len,
+                     int32_t verify_none, int32_t min_version,
                      uintptr_t *out_ctx)
 {
     if (psa_crypto_init() != PSA_SUCCESS) {
@@ -136,7 +152,30 @@ int32_t llgo_tls_new(int32_t fd, const uint8_t *ca_pem, int32_t ca_len,
         free(c);
         return ret;
     }
-    if (ca_pem != NULL && ca_len > 0) {
+    if (min_version != 0) {
+        /* The enum's values ARE the wire versions (0x0303/0x0304), so the
+         * Go constant passes through as-is; tls.go validates the value
+         * and rejects everything but 0/0x0303/0x0304 as EINVAL. */
+        mbedtls_ssl_conf_min_tls_version(
+            &c->conf, (mbedtls_ssl_protocol_version)min_version);
+    }
+    int authmode;
+    if (verify_none != 0) {
+        /* InsecureSkipVerify: the peer's certificate is still retained in
+         * the session (llgo_tls_peer_cert can export it) but nothing is
+         * verified - the stdlib contract. A RootCAs passed alongside is
+         * ignored (tls.go does not forward one). */
+        authmode = MBEDTLS_SSL_VERIFY_NONE;
+    } else {
+        if (ca_pem == NULL || ca_len <= 0) {
+            mbedtls_ssl_free(&c->ssl);
+            mbedtls_ssl_config_free(&c->conf);
+            free(c);
+            return 0x7E07; /* TLS_ERR_NO_ROOT_CAS - fail closed */
+        }
+        authmode = MBEDTLS_SSL_VERIFY_REQUIRED;
+    }
+    if (authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
         char *pem = malloc((size_t)ca_len + 1);
         if (pem == NULL) {
             mbedtls_ssl_free(&c->ssl);
@@ -162,20 +201,43 @@ int32_t llgo_tls_new(int32_t fd, const uint8_t *ca_pem, int32_t ca_len,
             return 0x7E03; /* TLS_ERR_CA_PARSE */
         }
         mbedtls_ssl_conf_ca_chain(&c->conf, &c->ca, NULL);
-        mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-    } else {
-        mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_NONE);
     }
+    mbedtls_ssl_conf_authmode(&c->conf, authmode);
     mbedtls_ssl_set_bio(&c->ssl, c, llgo_tls_bio_send, llgo_tls_bio_recv,
                         NULL);
-    /* Explicitly opt out of hostname verification: mbedtls 4.x refuses a
-     * VERIFY_REQUIRED handshake on a client that never called
-     * mbedtls_ssl_set_hostname (CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME,
-     * -0x5D80) unless the caller shows intent - the documented way is a
-     * set_hostname call with NULL, which keeps chain + validity checks and
-     * only drops the CN/SAN match. This package's API has no hostname
-     * parameter, so the caller's identity check is its trust in the CA. */
-    mbedtls_ssl_set_hostname(&c->ssl, NULL);
+    /* The hostname drives two things: the SNI extension and the peer
+     * identity check (CN/SAN match) that VERIFY_REQUIRED demands in
+     * mbedtls 4.x. With one, the handshake runs full verification - a
+     * wrong or missing SAN ends it with X509_CERT_VERIFY_FAILED. Without
+     * one (the deprecated TLSDial path), set_hostname(NULL) is the
+     * explicit opt-out mbedtls requires before it allows a
+     * VERIFY_REQUIRED handshake on a client without a hostname
+     * (CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME, -0x5D80): chain +
+     * validity are still checked, the CN/SAN match is dropped, and the
+     * caller's identity check is its trust in the CA. */
+    if (host != NULL && host_len > 0) {
+        char *name = malloc((size_t)host_len + 1);
+        if (name == NULL) {
+            mbedtls_x509_crt_free(&c->ca);
+            mbedtls_ssl_free(&c->ssl);
+            mbedtls_ssl_config_free(&c->conf);
+            free(c);
+            return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+        }
+        memcpy(name, host, (size_t)host_len);
+        name[host_len] = '\0';
+        ret = mbedtls_ssl_set_hostname(&c->ssl, name);
+        free(name);
+        if (ret != 0) {
+            mbedtls_x509_crt_free(&c->ca);
+            mbedtls_ssl_free(&c->ssl);
+            mbedtls_ssl_config_free(&c->conf);
+            free(c);
+            return ret;
+        }
+    } else {
+        mbedtls_ssl_set_hostname(&c->ssl, NULL);
+    }
     if ((ret = mbedtls_ssl_setup(&c->ssl, &c->conf)) != 0) {
         mbedtls_x509_crt_free(&c->ca);
         mbedtls_ssl_free(&c->ssl);
@@ -184,6 +246,64 @@ int32_t llgo_tls_new(int32_t fd, const uint8_t *ca_pem, int32_t ca_len,
         return ret;
     }
     *out_ctx = (uintptr_t)c;
+    return 0;
+}
+
+/* Connection state after the handshake, for ConnectionState (tls.go).
+ * Both strings are static mbedtls storage owned by the ssl context: valid
+ * until llgo_tls_free, never NULL post-handshake - the Go side copies them
+ * into Go strings before any further use. */
+const char *llgo_tls_version(uintptr_t ctx)
+{
+    llgo_tls_ctx_t *c = (llgo_tls_ctx_t *)ctx;
+    if (c == NULL) {
+        return NULL;
+    }
+    return mbedtls_ssl_get_version(&c->ssl);
+}
+
+const char *llgo_tls_ciphersuite(uintptr_t ctx)
+{
+    llgo_tls_ctx_t *c = (llgo_tls_ctx_t *)ctx;
+    if (c == NULL) {
+        return NULL;
+    }
+    return mbedtls_ssl_get_ciphersuite(&c->ssl);
+}
+
+/* The peer certificate's DER encoding. buf == NULL is the size query: 0
+ * with *out_len = the byte count. Otherwise the encoding is copied into
+ * buf (cap bytes) and *out_len says how many bytes went in. Returns
+ * TLS_ERR_NO_PEER_CERT (0x7E08) when the session carries no peer
+ * certificate - the handshake is not over, the peer sent none, or the IDF
+ * build has MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n (its default: mbedtls
+ * releases the certificate right after verification and
+ * mbedtls_ssl_get_peer_cert returns NULL; the demo's sdkconfig.defaults
+ * turns the option on for the acceptance run). mbedtls
+ * retains only the peer's LEAF certificate (the rest of the chain was
+ * verified and released), so one certificate is all there is to export;
+ * it is stored regardless of authmode, so a VERIFY_NONE session can still
+ * be audited / pinned through it. */
+int32_t llgo_tls_peer_cert(uintptr_t ctx, uint8_t *buf, int32_t cap,
+                           int32_t *out_len)
+{
+    llgo_tls_ctx_t *c = (llgo_tls_ctx_t *)ctx;
+    if (c == NULL) {
+        return 0x7E08; /* TLS_ERR_NO_PEER_CERT */
+    }
+    const mbedtls_x509_crt *crt = mbedtls_ssl_get_peer_cert(&c->ssl);
+    if (crt == NULL) {
+        return 0x7E08; /* TLS_ERR_NO_PEER_CERT */
+    }
+    if (buf == NULL) {
+        *out_len = (int32_t)crt->raw.len;
+        return 0;
+    }
+    if (cap < (int32_t)crt->raw.len) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    memcpy(buf, crt->raw.p, crt->raw.len);
+    *out_len = (int32_t)crt->raw.len;
     return 0;
 }
 

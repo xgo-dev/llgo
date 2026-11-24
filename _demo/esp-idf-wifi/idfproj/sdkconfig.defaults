@@ -43,3 +43,13 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ConnectionState.PeerCerts (pkg/esp/tls): IDF's mbedtls Kconfig defaults to
+# dropping the peer certificate right after verification (~4 kB heap saved
+# per session), which leaves mbedtls_ssl_get_peer_cert returning NULL. The
+# tls probe's acceptance prints nothing about the certificate if it is not
+# kept - enable the option so the exported DER is real. Projects that do
+# not need pinning/auditing can leave it off; tls.State then reports the
+# negotiated version/cipher with an empty PeerCerts (documented in
+# pkg/esp/README.md).
+CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=y

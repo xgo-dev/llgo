@@ -18,6 +18,7 @@ esp-idf-wifi/
 ├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
 │                           + GPIO/I2C/I2S peripheral probes + TCP net probe
 │                           + TLS probe: VERIFY_NONE / VERIFY_REQUIRED / wrong-CA
+│                           / SNI Config+Dial directions
 │                           + WebSocket probe: plain ws + wss permissive/strict)
 ├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
 │                           tinygogc externs in main.go, so `go build` links
@@ -271,6 +272,21 @@ ends the probe without the done marker, so that shape also ends at the
 150 s timeout - a missing "[go] tls done" means something real broke. The
 certificates are valid from 1970 so the guest's frozen epoch wall clock
 passes the validity check.
+
+After the tls probe's legacy phases (VERIFY_NONE, VERIFY_REQUIRED,
+wrong-CA rejection - all through the deprecated `TLSDial`, byte-identical
+prints), `tlsProbe` runs the SNI probes through the `Config`+`Dial` path
+(`[go] tls sni ...` / `[go] tls skip ...` lines): the firmware dials the
+NAT alias 192.168.4.1:9443 while naming the service behind it in
+`Config.ServerName` (the cert's SAN DNS:localhost - gencert.sh also puts
+IP:127.0.0.1 there for hosted clients), and the four acceptance
+directions must all hold: correct name + CA passes (with a quiet echo
+round and a `ConnectionState` check: version, cipher suite and the peer
+certificate's DER exported), wrong name rejected, wrong CA rejected,
+InsecureSkipVerify passes. `[go] tls PASS` now only fires when the legacy
+phases AND the four SNI directions are right - the gate covers the
+identity checks that catch the MITM a same-CA certificate would otherwise
+slip through.
 
 After the tls probe, `wsProbe` runs `pkg/esp/ws` - the pure-Go RFC 6455
 client - over the transports the earlier probes already proved

@@ -1,8 +1,8 @@
 // Package tls binds llgo-compiled Go code to the ESP-IDF mbedtls TLS stack
 // (mbedtls 4.1.1 in IDF v6.3-dev), giving a connected TCP socket (see the
-// net package) a record layer: TLSDial connects and handshakes, then the
-// connection exchanges plaintext through Read and Write while mbedtls
-// encrypts and authenticates every byte.
+// net package) a record layer: Dial connects, handshakes and verifies the
+// peer (Config), then the connection exchanges plaintext through Read and
+// Write while mbedtls encrypts and authenticates every byte.
 //
 // # Layout
 //
@@ -15,21 +15,34 @@
 //	glue/tls_glue.c ESP-IDF C glue template, compiled only under ESP_PLATFORM
 //
 // The package is deliberately dependency-free (only stdlib/unsafe): the TCP
-// primitives it needs (socket, connect, poll, shutdown, close, uptime clock)
-// are the C symbols net_glue.c already defines, declared here again by
-// linkname - so the glue set a TLS program links is tls_glue.c PLUS
-// net_glue.c, without the Go package importing pkg/esp/net.
+// primitives it needs (socket, connect, resolve, poll, shutdown, close,
+// uptime clock) are the C symbols net_glue.c already defines, declared here
+// again by linkname - so the glue set a TLS program links is tls_glue.c
+// PLUS net_glue.c, without the Go package importing pkg/esp/net.
 //
 // # Usage
 //
 // After the wifi package reports EvGotIP (and, on a host peer, that peer is
 // listening):
 //
-//	c, e := tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 10000, nil) // VERIFY_NONE
-//	c, e := tls.TLSDial(ip, port, 10000, caPEM)                     // VERIFY_REQUIRED
+//	c, e := tls.Dial("192.168.4.1:9443", 10000,
+//	    &tls.Config{ServerName: "device.internal", RootCAs: caPEM})
 //	w := c.Write(msg)
 //	n, e := c.Read(buf)
+//	st := c.State() // negotiated version, cipher suite, peer certificate DER
 //	e = c.Close()
+//
+// The ServerName is what the handshake verifies the server certificate
+// against (SNI + CN/SAN match) and may differ from the dial address - the
+// connection can target a NAT alias or load balancer while naming the
+// service behind it. Empty ServerName means the host part of addr is the
+// name.
+//
+// TLSDial(ip, port, timeoutMs, caPEM) is the pre-Config form, kept as a
+// deprecated alias: its caPEM==nil behavior is VERIFY_NONE and its
+// caPEM!=nil behavior verifies the chain and validity dates but NOT the
+// host name (no SNI, no CN/SAN match) - the caller's identity check is its
+// trust in the CA. New code should use Dial.
 //
 // # The bounded-quantum model (inherited from net)
 //
@@ -47,7 +60,7 @@
 //
 // # Deadlines
 //
-// TLSDial takes an explicit timeoutMs (<= 0 is rejected with EINVAL - the
+// Dial takes an explicit timeoutMs (<= 0 is rejected with EINVAL - the
 // model requires bounded waits) that bounds BOTH the TCP connect and the
 // handshake as one total budget. Read and Write honor the deadline set by
 // SetDeadline (relative ms; 0 = no deadline), with net.Conn semantics:
@@ -62,28 +75,54 @@
 // complete has consumed NOTHING and the caller retries the whole buffer -
 // there are no short positive writes in this package.
 //
-// # Certificates and authmode
+// # Certificates and host names
 //
-// TLSDial's caPEM parameter chooses the verification mode:
+// Dial's Config chooses the verification mode, mirroring crypto/tls:
 //
-//   - caPEM == nil: MBEDTLS_SSL_VERIFY_NONE. The handshake runs, the
-//     session key is still authenticated (an active MITM cannot read the
-//     traffic), but the peer's identity is not checked. This is the
-//     default for deterministic emulator acceptance runs.
-//   - caPEM != nil: the PEM is parsed (one x509_crt_parse call on a
-//     NUL-terminated copy - mbedtls's PEM path requires the terminator)
-//     and MBEDTLS_SSL_VERIFY_REQUIRED is set. The server chain must verify
-//     against that trust anchor, including validity dates; a failure ends
-//     the dial with CertVerifyFailed. The PEM may hold one CA certificate
-//     or a chain of concatenated PEM blocks (mbedtls parses them all; any
-//     failed member rejects the dial with CaParseFailed) - a single-CA PEM
-//     is the documented and tested path. Verification covers chain and
-//     validity only: the glue calls
-//     mbedtls_ssl_set_hostname(NULL) - the explicit opt-out the TLS layer
-//     demands before it allows certificate verification on a client
-//     without a hostname (MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_
-//     HOSTNAME) - so no CN/SAN matching happens; the caller's identity
-//     check is its trust in the CA.
+//   - RootCAs set (PEM): the trust anchor for MBEDTLS_SSL_VERIFY_REQUIRED.
+//     It may hold one CA certificate or a chain of concatenated PEM blocks
+//     (mbedtls parses them all; any failed member rejects the dial with
+//     CaParseFailed before any bytes hit the network) - a single-CA PEM is
+//     the documented and tested path. The server chain must verify against
+//     that anchor, including validity dates, AND the ServerName must match
+//     the certificate's CN/SAN entries (IP literals match IP SANs, names
+//     match dNSName SANs); either failure ends the dial with
+//     CertVerifyFailed.
+//   - InsecureSkipVerify: MBEDTLS_SSL_VERIFY_NONE - the handshake runs and
+//     the session key is still authenticated (an active MITM cannot read
+//     the traffic), but the peer's identity is not checked. A RootCAs set
+//     alongside is ignored, like crypto/tls.
+//   - Anything else - including the zero Config - is REJECTED with
+//     NoRootCAs before the dial touches the network. This is the
+//     fail-closed rule: a bare-metal target has no system trust store, so
+//     "no RootCAs given" cannot mean "use the system defaults"; it means
+//     the caller forgot the identity check, and silent VERIFY_NONE (the
+//     pre-Config default) would let a MITM holding any certificate of the
+//     pinned CA through. Saying InsecureSkipVerify=true must stay the one
+//     explicit way to dial without identity checking.
+//
+// MinVersion (VersionTLS12 / VersionTLS13; 0 = the mbedtls default) floors
+// the negotiated protocol version.
+//
+// The deprecated TLSDial keeps its two legacy modes unchanged: caPEM==nil
+// is VERIFY_NONE (today the SkipVerify shape; kept for the deterministic
+// emulator acceptance run), caPEM!=nil is VERIFY_REQUIRED against that CA
+// with NO host name check (the glue calls mbedtls_ssl_set_hostname(NULL),
+// the explicit opt-out mbedtls demands before it allows certificate
+// verification on a client without a hostname
+// (MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME, -0x5D80);
+// chain + validity are checked, the CN/SAN match is dropped). Its doc
+// carries the warning; it exists so existing callers keep compiling while
+// they migrate to Dial.
+//
+// ConnectionState reports what the session ended up with: Version and
+// CipherSuite as mbedtls's own names ("TLSv1.3", "TLS1-3-AES-128-GCM-
+// SHA256"), and PeerCerts with the peer certificate's DER encoding.
+// mbedtls retains only the peer's LEAF certificate (the rest of the chain
+// was verified and released), so PeerCerts holds one entry; it is stored
+// regardless of authmode, so a VERIFY_NONE session can still be audited or
+// pinned through it. State() copies everything out of mbedtls-owned memory,
+// so the result stays valid across Close.
 //
 // The RNG behind the handshake is PSA Crypto random: mbedtls 4.1 wires the
 // SSL layer to psa_generate_random and IDF v6.3-dev initializes PSA at
@@ -98,7 +137,8 @@
 // TLS-layer failures use a new segment at 0x7E00 (outside the lwip errno
 // range, the DNS h_errno range and the esp_err range), listed by ErrName:
 // HandshakeTimeout, CertVerifyFailed, CaParseFailed, WantPollExhausted,
-// Handshake, PsaInitFailed. Three conventions on top:
+// Handshake, PsaInitFailed, NoRootCAs, NoPeerCert. Three conventions on
+// top:
 //
 //   - TCP-phase failures (socket, connect) surface as the raw lwip errno,
 //     exactly as net.Dial returns them - ErrName names those values too.
@@ -141,6 +181,8 @@
 // primitives come from net_glue.c (REQUIRES lwip esp_timer).
 package tls
 
+import "unsafe" // cString scans and copies the mbedtls-owned state strings
+
 // The default poll quantum: how long every retry loop waits for the socket
 // between attempts. Same value the net package uses; one wait is long
 // enough to keep the watchdog fed and short enough that timeout accuracy
@@ -176,11 +218,13 @@ const (
 // TLS-layer error codes, the 0x7E00 segment. See ErrName for the names.
 const (
 	// HandshakeTimeout: the handshake was still only making WANT progress
-	// when TLSDial's total budget (timeoutMs) ran out. The TCP layer was
+	// when the dial's total budget (timeoutMs) ran out. The TCP layer was
 	// fine; the peer was too slow or the network too lossy.
 	HandshakeTimeout = 0x7E01
-	// CertVerifyFailed: VERIFY_REQUIRED (caPEM given) and the server chain
-	// failed x509 verification against that CA.
+	// CertVerifyFailed: VERIFY_REQUIRED and the server failed verification:
+	// the chain does not verify against the CA (validity included), or the
+	// ServerName does not match the certificate's CN/SAN entries. mbedtls
+	// reports both as X509_CERT_VERIFY_FAILED.
 	CertVerifyFailed = 0x7E02
 	// CaParseFailed: caPEM did not yield a usable certificate (hard parse
 	// error, or mbedtls reported a failed member in the PEM - any failed
@@ -201,7 +245,78 @@ const (
 	// the handshake has no random source. IDF initializes PSA at boot, so
 	// reaching this means the crypto subsystem itself is broken.
 	PsaInitFailed = 0x7E06
+	// NoRootCAs: the fail-closed dial. RootCAs was nil and InsecureSkipVerify
+	// false, so there is no way to authenticate the peer's identity - a
+	// bare-metal target has no system trust store to fall back on, and the
+	// pre-Config default (silent VERIFY_NONE) is exactly the hole a MITM
+	// with any certificate of the pinned CA would walk through. Raised
+	// before the dial touches the network; the glue carries the same
+	// refusal as a defense-in-depth check.
+	NoRootCAs = 0x7E07
+	// NoPeerCert: State() on a session that carries no peer certificate -
+	// the handshake is not over (or the conn is already closed), or the
+	// peer never sent one.
+	NoPeerCert = 0x7E08
 )
+
+// Protocol versions for Config.MinVersion. The values are the TLS wire
+// versions, which is both what crypto/tls's VersionTLS12/VersionTLS13 use
+// and what mbedtls's mbedtls_ssl_protocol_version enum uses - one number
+// serves all three.
+const (
+	VersionTLS12 uint16 = 0x0303
+	VersionTLS13 uint16 = 0x0304
+)
+
+// Config is the dial-time TLS policy, the crypto/tls.Config fields a
+// bare-metal client needs. The zero value dials NOTHING (NoRootCAs): a
+// bare-metal target has no system trust store, so verification without an
+// explicit trust anchor cannot succeed and must not silently degrade to
+// VERIFY_NONE - set RootCAs to verify, or InsecureSkipVerify to state
+// explicitly that identity checking is not wanted.
+type Config struct {
+	// ServerName is the host name the server certificate must match (the
+	// SNI extension carries it too). Empty means the host part of the
+	// addr passed to Dial. It exists separately from the dial address so
+	// a NAT alias or load balancer can be targeted while naming the
+	// service behind it - exactly this demo's acceptance shape: the
+	// firmware dials the NAT alias 192.168.4.1:9443 and names the service
+	// behind it.
+	ServerName string
+	// RootCAs is the PEM-encoded CA certificate (or chain of concatenated
+	// PEM blocks) to verify the server chain against. Parsed with the
+	// same x509_crt_parse path TLSDial uses; any failed member rejects the
+	// dial with CaParseFailed.
+	RootCAs []byte
+	// InsecureSkipVerify disables ALL peer identity checking
+	// (MBEDTLS_SSL_VERIFY_NONE): any certificate is accepted. RootCAs is
+	// ignored when this is set, like crypto/tls.
+	InsecureSkipVerify bool
+	// MinVersion floors the negotiated protocol version (0 = the mbedtls
+	// default; only VersionTLS12/VersionTLS13 are accepted, anything else
+	// is EINVAL).
+	MinVersion uint16
+}
+
+// ConnectionState describes one established TLS session, the
+// crypto/tls.ConnectionState fields a record-layer client can act on.
+// Version and CipherSuite are mbedtls's own names for what was negotiated
+// (e.g. "TLSv1.3", "TLS1-3-AES-128-GCM-SHA256"); PeerCerts holds the peer
+// certificate's DER encoding - mbedtls retains only the peer's leaf
+// certificate, so it has exactly one entry after a completed handshake
+// (stored regardless of authmode, so a VERIFY_NONE session can still be
+// audited or pinned). One project-side requirement: IDF's mbedtls Kconfig
+// defaults to MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n - the certificate is
+// released right after verification (~4 kB heap saved per session) and
+// PeerCerts comes back empty. Set CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=y
+// (the demo's sdkconfig.defaults does) to have State export the DER.
+// Everything is copied out of mbedtls-owned memory
+// at State() time and stays valid across Close.
+type ConnectionState struct {
+	Version     string
+	CipherSuite string
+	PeerCerts   [][]byte
+}
 
 // lwip errno values the TCP phase can surface, same values the net package
 // pins (picolibc numbering - see net.go for the Linux divergences). They
@@ -227,27 +342,86 @@ const (
 // stays a bounded call even against a vanished peer.
 const closeBudgetMs = 500
 
-// TLSDial connects a TCP socket to ip:port, then runs the TLS client
-// handshake, all within timeoutMs milliseconds (<= 0 is rejected with
-// EINVAL - the bounded-quantum model rejects waits without an explicit
-// deadline). ip is the in-memory network-order form net.IPv4 produces;
-// port is the host-order port number.
+// Dial connects a TCP socket to the host:port in addr, then runs the TLS
+// client handshake with cfg's verification policy, all within timeoutMs
+// milliseconds (<= 0 is rejected with EINVAL - the bounded-quantum model
+// rejects waits without an explicit deadline).
 //
-// caPEM selects the verification mode, see the package doc: nil means
-// VERIFY_NONE, otherwise the PEM must parse into a usable CA and
-// VERIFY_REQUIRED applies (a failed parse returns CaParseFailed before any
-// bytes hit the network, a failed verification CertVerifyFailed during the
-// handshake). Either way the returned TLSConn carries plaintext on Read and
-// Write.
+// addr is "host:port"; host is a dotted-quad IP (parsed by lwip, no DNS
+// involved) or a name (resolved through the lwip DNS client - the same
+// Resolve-freeze caveat the net package documents). cfg may be nil only in
+// combination with InsecureSkipVerify semantics - a nil cfg is the zero
+// Config and REJECTED with NoRootCAs (see the package doc's fail-closed
+// rule); there is no way to dial without naming a verification policy.
+// Empty cfg.ServerName means the addr host is the verified name.
 //
 // On every failure path the fd is closed and the C context freed before
-// TLSDial returns, so a failed dial leaks nothing. Errors: lwip errno from
-// the TCP phase (same as net.Dial), a 0x7E00 TLS code from the phases
-// above, or Handshake for unmapped mbedtls failures.
+// Dial returns, so a failed dial leaks nothing. Errors: EINVAL for a bad
+// addr or MinVersion, ENAMETOOLONG for a name over 255 bytes, NoRootCAs
+// for the missing trust anchor, the resolver's h_errno code for an
+// unresolvable name, a lwip errno from the TCP phase (same as net.Dial),
+// a 0x7E00 TLS code from the phases above, or Handshake for unmapped
+// mbedtls failures.
+func Dial(addr string, timeoutMs int32, cfg *Config) (*TLSConn, int32) {
+	if timeoutMs <= 0 {
+		return nil, einval
+	}
+	host, port, e := splitHostPort(addr)
+	if e != 0 {
+		return nil, e
+	}
+	var cfgv Config
+	if cfg != nil {
+		cfgv = *cfg
+	}
+	if cfgv.MinVersion != 0 && cfgv.MinVersion != VersionTLS12 && cfgv.MinVersion != VersionTLS13 {
+		return nil, einval
+	}
+	if cfgv.RootCAs == nil && !cfgv.InsecureSkipVerify {
+		return nil, NoRootCAs
+	}
+	serverName := host
+	if cfgv.ServerName != "" {
+		serverName = cfgv.ServerName
+	}
+	if len(serverName) > 255 {
+		return nil, enametoolong
+	}
+	ip, e := resolveHost(host)
+	if e != 0 {
+		return nil, e
+	}
+	return dialIP(ip, port, timeoutMs, serverName, cfgv.RootCAs,
+		cfgv.InsecureSkipVerify, cfgv.MinVersion)
+}
+
+// TLSDial is the pre-Config dial form, kept as a deprecated alias for
+// existing callers (the demo's ws probe included); new code should use
+// Dial.
+//
+// WARNING: neither mode verifies the server's host name, so neither is
+// proof against a MITM holding any certificate the CA signed - only
+// tls.Dial with a ServerName adds the identity check.
+//
+//   - caPEM == nil: VERIFY_NONE - the session key is authenticated, the
+//     peer's identity is not checked.
+//   - caPEM != nil: VERIFY_REQUIRED against that PEM (same parse rules
+//     and codes as Config.RootCAs), with mbedtls_ssl_set_hostname(NULL):
+//     the chain and validity dates are checked, the CN/SAN match is not.
 func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, int32) {
 	if timeoutMs <= 0 {
 		return nil, einval
 	}
+	return dialIP(ip, port, timeoutMs, "", caPEM, caPEM == nil, 0)
+}
+
+// dialIP is the whole dial pipeline both entry points share: TCP connect,
+// session setup, bounded handshake. hostname travels to the glue as the
+// SNI + identity name ("" keeps the deprecated set_hostname(NULL) opt-out);
+// insecure selects VERIFY_NONE; minVersion is a wire version or 0. deadline
+// starts here so TCP connect + handshake share one total budget.
+func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
+	ca []byte, insecure bool, minVersion uint16) (*TLSConn, int32) {
 	var fd int32
 	if e := netSocket(&fd); e != 0 {
 		return nil, e
@@ -284,20 +458,27 @@ func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, i
 		}
 	}
 
-	// TLS setup: config, CA parse, authmode, BIO, ssl_setup. caPEM == nil
-	// travels as a zero length, not a nil pointer - the boundary passes
-	// integer and pointer pairs, and a Go slice with no elements would
-	// pass a nil pointer either way.
+	// TLS setup: config, CA parse, authmode, hostname, BIO, ssl_setup. The
+	// strings travel as pointer/length pairs, a nil pointer for the empty
+	// cases - the boundary passes integer and pointer pairs, and a Go
+	// slice with no elements would pass a nil pointer either way.
 	var caPtr *byte
 	caLen := int32(0)
-	if len(caPEM) > 0 {
-		caPtr = &caPEM[0]
-		caLen = int32(len(caPEM))
+	if !insecure && len(ca) > 0 {
+		caPtr = &ca[0]
+		caLen = int32(len(ca))
+	}
+	var hostPtr *byte
+	hostLen := int32(0)
+	if hostname != "" {
+		hostPtr = unsafe.StringData(hostname) // read-only bytes, len-bound
+		hostLen = int32(len(hostname))
 	}
 	var h uintptr
-	if e := tlsNew(fd, caPtr, caLen, &h); e != 0 {
+	if e := tlsNew(fd, caPtr, caLen, hostPtr, hostLen,
+		boolToInt32(insecure), int32(minVersion), &h); e != 0 {
 		netClose(fd)
-		return nil, e // CaParseFailed or a raw negative mbedtls code (setup)
+		return nil, e // CaParseFailed, NoRootCAs or a raw negative mbedtls code (setup)
 	}
 
 	// Handshake by quanta: one handshake_step per loop, a poll quantum for
@@ -334,6 +515,81 @@ func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, i
 		netClose(fd)
 		return nil, Handshake
 	}
+}
+
+// splitHostPort splits "host:port" (the only address form this stack
+// speaks: IPv4 dotted quads and DNS names - no IPv6, no service names).
+// A second colon in the host is EINVAL rather than a resolve error, so a
+// misplaced IPv6 literal fails loudly at the call instead of inside the
+// resolver. port must be decimal 1..65535; host may be at most 255 bytes
+// (ENAMETOOLONG - the DNS name limit).
+func splitHostPort(addr string) (string, uint16, int32) {
+	i := -1
+	for j := len(addr) - 1; j >= 0; j-- {
+		if addr[j] == ':' {
+			i = j
+			break
+		}
+	}
+	if i <= 0 || i == len(addr)-1 {
+		return "", 0, einval
+	}
+	host := addr[:i]
+	for k := 0; k < len(host); k++ {
+		if host[k] == ':' {
+			return "", 0, einval
+		}
+	}
+	ps := addr[i+1:]
+	if len(ps) > 5 {
+		return "", 0, einval
+	}
+	port := 0
+	for k := 0; k < len(ps); k++ {
+		if ps[k] < '0' || ps[k] > '9' {
+			return "", 0, einval
+		}
+		port = port*10 + int(ps[k]-'0')
+	}
+	if port == 0 || port > 65535 {
+		return "", 0, einval
+	}
+	if len(host) > 255 {
+		return "", 0, enametoolong
+	}
+	return host, uint16(port), 0
+}
+
+// resolveHost maps a dotted-quad string or DNS name to the in-memory
+// network-order address form net.IPv4 produces, through the same
+// llgo_net_resolve primitive net.Resolve wraps: a dotted quad parses
+// inside lwip without touching DNS, a real name goes through the lwip DNS
+// client (which blocks the calling task on a driver semaphore and freezes
+// the llgo scheduler until lwip's own DNS timers finish - the net package
+// documents the caveat; prefer numeric IPs on time-critical paths).
+// Failures return the same h_errno-family codes as net.Resolve.
+func resolveHost(host string) (uint32, int32) {
+	if host == "" {
+		return 0, einval
+	}
+	if len(host) > 255 {
+		return 0, enametoolong
+	}
+	buf := make([]uint8, len(host))
+	copy(buf, host)
+	var ip uint32
+	if e := netResolve(&buf[0], int32(len(buf)), &ip); e != 0 {
+		return 0, e
+	}
+	return ip, 0
+}
+
+// boolToInt32 turns a Go bool into the int32 flag the C boundary carries.
+func boolToInt32(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Read reads up to len(p) bytes of decrypted plaintext and returns the
@@ -485,6 +741,33 @@ func (c *TLSConn) SetDeadline(ms int32) int32 {
 	return 0
 }
 
+// State reports the established session's negotiated parameters and the
+// peer certificate, for auditing and pinning: Version and CipherSuite as
+// mbedtls's names, PeerCerts with the peer's leaf certificate in DER form
+// (see ConnectionState). Everything is copied out of the mbedtls-owned
+// context at call time, so the result outlives the conn. On a nil or
+// closed conn - or a session whose handshake never completed - it returns
+// the zero ConnectionState (no panic, no error: the zero Version and the
+// empty PeerCerts already say "nothing to report").
+func (c *TLSConn) State() ConnectionState {
+	var st ConnectionState
+	if c == nil || c.fd < 0 {
+		return st
+	}
+	st.Version = cString(tlsVersion(c.h))
+	st.CipherSuite = cString(tlsCiphersuite(c.h))
+	var n int32
+	if e := tlsPeerCert(c.h, nil, 0, &n); e != 0 || n <= 0 {
+		return st // no peer cert (NoPeerCert): version/cipher still stand
+	}
+	der := make([]byte, n)
+	if e := tlsPeerCert(c.h, &der[0], n, &n); e != 0 {
+		return st
+	}
+	st.PeerCerts = [][]byte{der}
+	return st
+}
+
 // pace waits one poll quantum (a select that yields the CPU) and reports
 // how the bounded wait ended: 0 = retry the TLS attempt now, eagain = no
 // deadline is set and nothing became ready within the quantum, etimedout =
@@ -594,6 +877,10 @@ func ErrName(code int32) string {
 		return "TLS_ERR_HANDSHAKE"
 	case PsaInitFailed:
 		return "TLS_ERR_PSA_INIT"
+	case NoRootCAs:
+		return "TLS_ERR_NO_ROOT_CAS"
+	case NoPeerCert:
+		return "TLS_ERR_NO_PEER_CERT"
 	case 4:
 		return "EINTR"
 	case 5:
@@ -702,4 +989,19 @@ func hex(v uint32) string {
 		v >>= 4
 	}
 	return string(buf[i:])
+}
+
+// cString copies a NUL-terminated C string into a Go string (nil reads as
+// empty). The scan bounds itself to nothing but the terminator - the two
+// mbedtls-owned strings this feeds (get_version, get_ciphersuite) are
+// short static names, and State() runs only after a completed handshake.
+func cString(p *byte) string {
+	if p == nil {
+		return ""
+	}
+	n := int32(0)
+	for *(*byte)(unsafe.Add(unsafe.Pointer(p), n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice(p, n))
 }
