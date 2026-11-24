@@ -9,7 +9,7 @@ usable from Go with hours-scale effort instead of a porting project:
 
 | Package | IDF driver | Scope |
 |---------|-----------|-------|
-| `pkg/esp/wifi` | `esp_wifi` + `esp_netif` + `nvs_flash` | station bring-up, scan, connect, DHCP, heap watermarks |
+| `pkg/esp/wifi` | `esp_wifi` + `esp_netif` + `nvs_flash` | station bring-up, scan, connect, DHCP, auto-reconnect state machine, heap watermarks |
 | `pkg/esp/gpio` | `driver/gpio.h` | direction config, level set/get, toggle |
 | `pkg/esp/i2c`  | `driver/i2c_master.h` (new driver) | master bus + device handles, write/read/write-read |
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |

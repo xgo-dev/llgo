@@ -430,13 +430,14 @@ func wordReadBench() {
 // ever does hang the emulator or the board, flip its switch below to false
 // - the remaining probes stay independent.
 const (
-	probeGPIO = true
-	probeI2C  = true
-	probeI2S  = true
-	probeNet  = true
-	probeUDP  = true
-	probeTLS  = true
-	probeWS   = true
+	probeGPIO   = true
+	probeI2C    = true
+	probeI2S    = true
+	probeNet    = true
+	probeUDP    = true
+	probeTLS    = true
+	probeWS     = true
+	probeReconn = true
 )
 
 // level01 maps a GetLevel bool back to IDF's 0/1 for the probe's golden
@@ -1432,6 +1433,171 @@ func udpProbe() {
 	println("[go] net udp PASS")
 }
 
+// reconnProbe exercises pkg/esp/wifi's auto-reconnect state machine end to
+// end. An emulator cannot make its soft AP drop the station on its own, so
+// the probe drives every transition itself; the one IDF signal it cannot
+// fake (a router vanishing while the program idles) is reproduced by a
+// failed association - connecting to an SSID nobody serves delivers the
+// same unexpected EvStaDisconnected a lost router would, and from there the
+// machine's behavior is identical. Phases, strictly sequential on this
+// goroutine:
+//
+//  1. SetAutoReconnect(true) + a user Disconnect: the DISCONNECTED arrives
+//     (plain IDF event) but the machine must stay idle - nothing reconnects
+//     in the quiet window that follows;
+//  2. a manual Connect still associates while the machine is enabled, and
+//     its GOT_IP resets the backoff;
+//	3. a failed association (llgo-nosuchap SSID): the station is switched
+//	   over through an intentional Disconnect first (the driver refuses a
+//	   new target while associated - "disconnect before connecting to new
+//	   ap"), whose event the machine consumes without scheduling; then the
+//	   association fails and the machine - nobody else, this code makes no
+//	   Connect call in the window - drives the retries; a second
+//	   DISCONNECTED inside the window is its fingerprint;
+//  4. restoring the real credentials: the machine's next attempt associates
+//     and its GOT_IP ends the episode (backoff reset);
+//  5. SetAutoReconnect(false): a user disconnect now stays down, proving
+//     the off switch;
+//  6. a final manual Connect restores the association for the probes that
+//     follow.
+//
+// "[go] wifi reconn: PASS" fires only when every phase held. Every wait is
+// a bounded Next window, so a machine that never acts surfaces as a FAIL
+// line, never a hang. On real hardware the router-power-cycle variant of
+// phase 3 (AP gone mid-association) remains a pending verification item -
+// the emulator cannot inject it.
+func reconnProbe(ssid, pass string) {
+	println("[go] wifi reconn: start")
+	ev := wifi.Subscribe(wifi.EvStaDisconnected, wifi.EvStaConnected, wifi.EvGotIP)
+	defer ev.Close()
+
+	// waitKind consumes events until one of kind arrives or timeoutMs
+	// passes; intermediate events of other kinds are dropped.
+	waitKind := func(kind int32, timeoutMs int32) (wifi.Event, bool) {
+		for ms := int32(0); ms < timeoutMs; ms += 100 {
+			if e, err := ev.Next(100); err == nil {
+				if e.Kind == kind {
+					return e, true
+				}
+			}
+		}
+		return wifi.Event{}, false
+	}
+	// quiet reports whether no event of interest arrives within ms.
+	quiet := func(ms int32) bool {
+		for left := int32(0); left < ms; left += 100 {
+			if _, err := ev.Next(100); err == nil {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Phase 1: the machine is enabled, then the program disconnects on
+	// purpose - the disconnect event must not schedule a retry.
+	wifi.SetAutoReconnect(true)
+	println("[go] wifi reconn: enable phase=" + wifi.ReconnectState().String())
+	if wifi.Disconnect() != nil {
+		println("[go] wifi reconn: FAIL user-disconnect")
+		return
+	}
+	if _, ok := waitKind(wifi.EvStaDisconnected, 3000); !ok {
+		println("[go] wifi reconn: FAIL user-disconnect-event")
+		return
+	}
+	if !quiet(5000) || wifi.ReconnectState() != wifi.ReconnIdle {
+		println("[go] wifi reconn: FAIL suppress")
+		return
+	}
+	println("[go] wifi reconn: user disconnect suppressed")
+
+	// Phase 2: a manual reconnect still works with the machine enabled.
+	if wifi.Connect() != nil {
+		println("[go] wifi reconn: FAIL manual-connect")
+		return
+	}
+	if _, ok := waitKind(wifi.EvGotIP, 15000); !ok || wifi.ReconnectState() != wifi.ReconnIdle {
+		println("[go] wifi reconn: FAIL manual-reconnect")
+		return
+	}
+	println("[go] wifi reconn: manual reconnect ok")
+
+	// Phase 3: unexpected disconnection via a failed association. The
+	// driver rejects a new target while associated ("disconnect before
+	// connecting to new ap"), so the switch goes through an intentional
+	// Disconnect first - its event arms the flag and the machine consumes
+	// it without scheduling. From there the machine owns esp_wifi_connect.
+	if wifi.Disconnect() != nil {
+		println("[go] wifi reconn: FAIL phase3-disconnect")
+		return
+	}
+	if _, ok := waitKind(wifi.EvStaDisconnected, 3000); !ok {
+		println("[go] wifi reconn: FAIL phase3-disconnect-event")
+		return
+	}
+	if wifi.SetSTA("llgo-nosuchap-xyz", "nosuchpassword") != nil {
+		println("[go] wifi reconn: FAIL set-sta-bad")
+		return
+	}
+	if wifi.Connect() != nil {
+		println("[go] wifi reconn: FAIL bad-connect")
+		return
+	}
+	if _, ok := waitKind(wifi.EvStaDisconnected, 10000); !ok {
+		println("[go] wifi reconn: FAIL unexpected-disconnect")
+		return
+	}
+	// No Connect call from this code until phase 4: the next
+	// DISCONNECTED can only come from a machine-driven retry.
+	if _, ok := waitKind(wifi.EvStaDisconnected, 12000); !ok {
+		println("[go] wifi reconn: FAIL no-auto-retry")
+		return
+	}
+	println("[go] wifi reconn: auto retries observed")
+
+	// Phase 4: restore the real credentials; the machine's next attempt
+	// (still on its own backoff schedule) recovers and ends the episode.
+	if wifi.SetSTA(ssid, pass) != nil {
+		println("[go] wifi reconn: FAIL set-sta-good")
+		return
+	}
+	got, ok := waitKind(wifi.EvGotIP, 20000)
+	if !ok || got.IP == 0 {
+		println("[go] wifi reconn: FAIL auto-recover")
+		return
+	}
+	println("[go] wifi reconn: auto recovered ip=" + wifi.IPString(got.IP))
+
+	// Phase 5: switch the machine off; a user disconnect stays down.
+	wifi.SetAutoReconnect(false)
+	if wifi.Disconnect() != nil {
+		println("[go] wifi reconn: FAIL disable-disconnect")
+		return
+	}
+	if _, ok := waitKind(wifi.EvStaDisconnected, 3000); !ok {
+		println("[go] wifi reconn: FAIL disable-disconnect-event")
+		return
+	}
+	if !quiet(4000) || wifi.ReconnectState() != wifi.ReconnIdle {
+		println("[go] wifi reconn: FAIL disable-suppress")
+		return
+	}
+	println("[go] wifi reconn: disable stays down")
+
+	// Phase 6: restore the association the net/tls/ws probes expect.
+	if wifi.Connect() != nil {
+		println("[go] wifi reconn: FAIL restore-connect")
+		return
+	}
+	got, ok = waitKind(wifi.EvGotIP, 15000)
+	if !ok || got.IP == 0 {
+		println("[go] wifi reconn: FAIL restore-ip")
+		return
+	}
+	println("[go] wifi reconn: restored ip=" + wifi.IPString(got.IP))
+	println("[go] wifi reconn: PASS")
+}
+
 func main() {
 	defer wifi.Finish() // flush C stdio on every exit path
 	fixStreams()
@@ -1644,6 +1810,19 @@ func main() {
 		udpProbe()
 	} else {
 		println("[go] net udp skipped (probeUDP switch off; every net path is deadline-bounded)")
+	}
+
+	// WiFi auto-reconnect: cycles the association itself - user disconnect
+	// (suppressed), manual reconnect, a failed association the machine must
+	// retry on its own, recovery, then the off switch - and restores the
+	// association before the transport probes below. An emulator cannot
+	// make its soft AP drop the station on its own, so a driven failed
+	// association stands in for the router disappearing; see the probe's
+	// comment and README for the hardware item that stays unverified.
+	if probeReconn {
+		reconnProbe(ssid, pass)
+	} else {
+		println("[go] wifi reconn skipped (probeReconn switch off)")
 	}
 
 	// TLS on top of lwip: both authmodes plus the wrong-CA negative test

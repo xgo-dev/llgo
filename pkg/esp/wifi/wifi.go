@@ -69,6 +69,16 @@
 // Scan strings the scan state machine together - subscribe to EvScanDone,
 // start the scan non-blocking, wait, fetch - and ScanFetch reports an
 // over-limit request instead of silently clamping it.
+//
+// # Auto-reconnect
+//
+// SetAutoReconnect starts an optional state machine that reconnects the
+// station after an unexpected disconnection (1 s exponential backoff,
+// capped at 30 s, reset by GOT_IP). A Disconnect the program itself called
+// never triggers it. The machine adds no synthetic event kinds -
+// EvStaDisconnected / EvStaConnected / EvGotIP keep telling the whole story
+// through the regular fan-out - and ReconnectState names its phase (idle /
+// backoff / connecting). See reconnect.go for the full contract.
 package wifi
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"
@@ -418,11 +428,28 @@ func SetSTA(ssid, pass string) error {
 
 // Connect calls esp_wifi_connect: a single attempt. Association or
 // handshake failures arrive as EvStaDisconnected with a reason code; the
-// application retries (see the loop in main.go).
+// application retries (see the loop in main.go). While the auto-reconnect
+// state machine is enabled it owns this call - see SetAutoReconnect.
 func Connect() error { return errOf(connect()) }
 
-// Disconnect calls esp_wifi_disconnect.
-func Disconnect() error { return errOf(disconnect()) }
+// Disconnect calls esp_wifi_disconnect. While the auto-reconnect state
+// machine is enabled (SetAutoReconnect(true)), a program-initiated
+// disconnect counts as intentional: the flag is armed before the driver call
+// (the event cannot outrun it) and the matching EvStaDisconnected is
+// consumed without scheduling a retry. Only an unexpected disconnection -
+// an EvStaDisconnected the program did not ask for - starts the
+// backoff-and-retry sequence. If the driver call fails, no event will
+// arrive, so the flag is dropped again.
+func Disconnect() error {
+	if autoReconnect {
+		userDisconnect = true
+	}
+	err := errOf(disconnect())
+	if err != nil && autoReconnect {
+		userDisconnect = false
+	}
+	return err
+}
 
 // GetIP returns the station IP in network byte order (0 = nothing
 // acquired yet), reading esp_netif directly.

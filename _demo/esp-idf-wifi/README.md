@@ -254,6 +254,29 @@ deadlines), so a missing peer surfaces as an errno, never a hang; see
 `pkg/esp/README.md` for the bounded-quantum model and the scheduling
 note that keeps this probe on one goroutine.
 
+After the datagram probes, `reconnProbe` cycles the WiFi association
+itself (`[go] wifi reconn ...` lines) against `pkg/esp/wifi`'s
+auto-reconnect state machine (`SetAutoReconnect` / `ReconnectState`, see
+`pkg/esp/wifi/reconnect.go`): enable + user `Disconnect` (the machine
+must stay idle - an intentional disconnect never schedules a retry), a
+manual reconnect (its GOT_IP resets the backoff), then the unexpected
+disconnection shape - the station is pointed at an SSID nobody serves,
+the association fails, and the machine (nobody else calls `Connect` in
+that window) drives the esp_wifi_connect retries on its own 1 s→2 s→4 s
+backoff - then restoring the real credentials lets the machine's next
+attempt recover, and the off switch is proven by a final user disconnect
+that stays down. A last manual Connect restores the association for the
+transport probes that follow; `[go] wifi reconn: PASS` fires only when
+every phase held, and every phase is emu-runnable: the emulator cannot
+inject a router power loss, so a driven failed association stands in for
+the DISCONNECTED a lost router delivers - from the machine's point of
+view the two are the same event. The hardware-only variant (AP vanishing
+while the station sits associated) is a pending verification item, to be
+run on a real board with a real router; the emu run makes no claim about
+it. The machine emits no synthetic event kinds: DISCONNECTED / CONNECTED /
+GOT_IP keep telling the whole story through the regular fan-out, and
+`ReconnectState()` names the retry window itself.
+
 After the net probe, `tlsProbe` runs the same NAT path one layer up
 against `idfproj/host/tlssrv` (`[go] tls ...` lines): a VERIFY_NONE dial
 (192.168.4.1:9443, no CA), a VERIFY_REQUIRED dial with the CA PEM that
