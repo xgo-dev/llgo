@@ -1,4 +1,4 @@
-//go:build !wasm && !tinygo.riscv32 && !(baremetal && llgo.baremetal.stdio)
+//go:build !wasm && !tinygo.riscv32 && !baremetal
 
 package ffi
 

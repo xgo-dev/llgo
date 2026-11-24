@@ -96,6 +96,8 @@ func SourcePatchReplacesAsm(path, goarch string, tags []string) bool {
 }
 
 var sourcePatchPkgs = map[string]struct{}{
+	"crypto/internal/boring/sig":     {},
+	"crypto/internal/entropy/v1.0.0": {},
 	"crypto/internal/fips140/aes":    {},
 	"crypto/internal/constanttime":   {},
 	"crypto/internal/sysrand":        {},
@@ -130,6 +132,7 @@ var sourcePatchPkgs = map[string]struct{}{
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
+	"crypto/internal/boring/sig":     {"*": {}},
 	"crypto/internal/fips140/aes":    {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
 	"internal/bytealg":               {"arm": {}},
 	"internal/chacha8rand":           {"*": {}},

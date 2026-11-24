@@ -7,7 +7,16 @@
  */
 #include "../riscv32/include/ffi.h"
 
-#include <stdlib.h>
+/* malloc/free are declared by hand instead of via <stdlib.h>: this file is
+ * preprocessed on every target that links the runtime (the fingerprint
+ * collector digests LLGoFiles), including libc-less ones such as
+ * esp32s31-idf where no libc sysroot is configured on the llgo side. Both
+ * symbols resolve at link time (tinygogc heap wrap on baremetal SRAM, IDF
+ * newlib on esp32s31-idf). */
+#include <stddef.h>
+
+void *malloc(size_t size);
+void free(void *ptr);
 
 _Static_assert(FFI_DEFAULT_ABI == FFI_SYSV,
                "LLGo's riscv32 DefaultAbi constant is stale");

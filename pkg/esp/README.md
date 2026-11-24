@@ -297,24 +297,28 @@ in-memory transport, and contributes no C glue: a ws program links the
 net/tls glues it already needs and nothing else, and `make-artifact.sh`
 needs no new checklist entry.
 
-**Why it carries its own SHA-1 and base64 (the stdlib libffi gap,
-measured).** The handshake cannot exist without SHA-1 and base64 (the
-accept key is `base64(SHA-1(key + GUID))`), and the standard-library
-versions are unlinkable on esp32s31-idf: compiling a probe that imports
-any of `crypto/sha1`, `encoding/base64`, `bufio`, `io`, `bytes`,
-`strings` or `strconv` fails at the libffi LLGoFiles preprocessing step
-(`stdlib.h not found` - all of them reach `internal/reflectlite`, which
-llgo maps to its own reflect layer, which drags the libffi C glue into
-the build; the same gap that keeps fmt/reflect out of every pkg/esp
-package, now extended by measurement to the whole reflectlite-reachable
-stdlib surface). The ws package therefore implements RFC 3174 SHA-1 and
-RFC 4648 base64 itself (`hash.go`, ~200 lines), parses the handshake
-response with a hand-rolled buffered reader (no bufio), and formats its
+**Why it carries its own SHA-1 and base64 (image size, not availability).**
+The handshake cannot exist without SHA-1 and base64 (the accept key is
+`base64(SHA-1(key + GUID))`). When this section was written, the
+standard-library versions were unlinkable on esp32s31-idf - any probe
+importing `crypto/sha1`, `encoding/base64`, `bufio`, `io`, `bytes`,
+`strings` or `strconv` died at the libffi LLGoFiles preprocessing step
+(`stdlib.h not found`; all of them reach `internal/reflectlite`, which
+llgo maps to its own reflect layer, which dragged the libffi C glue into
+the build). That gap is fixed since - the glue is freestanding-header-only
+now and the FIPS entropy scratch buffer is patched to an embedded-friendly
+size - but the ws package keeps its own primitives anyway: importing
+`crypto/sha1` through the stdlib reflect machinery pulled a probe from
+~1.19 MB to 2.24 MB of app image, while `hash.go` (~200 lines) delivers
+the same handshake cryptography in a few hundred bytes. The package
+therefore implements RFC 3174 SHA-1 and RFC 4648 base64 itself
+(`hash.go`), parses the handshake response with a hand-rolled buffered
+reader (no bufio), and formats its
 error names without strconv. `SHA1Sum`/`Base64StdEncode`/`Base64StdDecode`
-and `AcceptKey` are exported: on this target they are the only reachable
-SHA-1/base64 a pkg/esp program has, and the acceptance probe pins them
-against the FIPS 180-1 / RFC 6455 / RFC 4648 known values in the
-firmware log itself.
+and `AcceptKey` are exported: a pkg/esp program on a lean target has a
+dependency-free SHA-1/base64 without paying the stdlib image cost, and
+the acceptance probe pins them against the FIPS 180-1 / RFC 6455 /
+RFC 4648 known values in the firmware log itself.
 
 **Deadlines are delegated, never invented.** The package has no clock
 and starts no goroutines. HandshakeURL applies `timeoutMs` through the

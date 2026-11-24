@@ -27,13 +27,14 @@
 // # Pure Go, no stdlib
 //
 // The package imports nothing - not even "unsafe". The handshake needs
-// SHA-1 and base64 (hash.go), and the standard library implementations are
-// unlinkable on esp32s31-idf: every stdlib package that reaches
-// internal/reflectlite (crypto/sha1, encoding/base64, bufio, io, bytes,
-// strings, strconv, ...) drags the libffi C glue into the build, and that
-// glue does not preprocess for this target (the same gap that keeps
-// fmt/reflect out of every pkg/esp package). hash.go therefore carries its
-// own RFC 3174 SHA-1 and RFC 4648 base64, and the handshake response is
+// SHA-1 and base64 (hash.go); the package keeps its own implementations
+// rather than pulling crypto/sha1 and encoding/base64 because the stdlib
+// versions drag megabytes of reflect machinery into the image for a
+// 20-byte digest (when this package was written they were not even
+// linkable on esp32s31-idf - a libffi preprocessing gap since fixed; see
+// hash.go for the full history and the image-size rationale). hash.go
+// therefore carries its own RFC 3174 SHA-1 and RFC 4648 base64, and the
+// handshake response is
 // parsed by a hand-rolled buffered reader over Conn - there is no bufio.
 // Being glue-free also means there is nothing to copy into the project's
 // main component: a ws program links the net and/or tls glues it already

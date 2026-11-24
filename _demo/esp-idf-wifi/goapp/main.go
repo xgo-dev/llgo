@@ -60,9 +60,10 @@ func heapMark(stage string) {
 func heapStats() (usable, reserved uintptr, segments int, external uintptr)
 
 // gcCollect runs a full collection now. It is tinygogc.GC, the function behind
-// gcCollect() on baremetal. The demo links it directly because importing the
-// runtime package drags libffi into the build (runtime/internal/lib/runtime/
-// mfinal_ffi.go), and its C sources do not compile for esp32s31-idf.
+// gcCollect() on baremetal. Kept as a direct linkname: importing the whole
+// runtime package for one function would pull its finalizer/reflect machinery
+// into the image (the libffi build gap that once forced this workaround is
+// fixed, but the image-size reason stands).
 //
 //go:linkname gcCollect github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.GC
 func gcCollect()
@@ -799,8 +800,8 @@ func wsSession(tag, hostport string, port uint16, caPEM []byte) bool {
 //
 //  0. crypto smoke: sha1("abc") (FIPS 180-1), the RFC 6455 section 1.3
 //     accept-key example and RFC 4648 base64 vectors against the in-package
-//     SHA-1/base64 (crypto/sha1 and encoding/base64 are unlinkable on this
-//     target - they reach the libffi gap - see the ws package doc);
+//     SHA-1/base64 (the package stays stdlib-free for image size - see the
+//     ws package doc);
 //  1. ws://192.168.4.1:9000/ws (plain TCP transport);
 //  2. wss://192.168.4.1:9443/ws with TLSDial VERIFY_NONE;
 //  3. wss://192.168.4.1:9443/ws with the compiled-in CA (VERIFY_REQUIRED);

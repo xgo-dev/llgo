@@ -1,35 +1,34 @@
 // In-package SHA-1 and base64 for the WebSocket handshake.
 //
-// The standard library is unlinkable on the esp32s31-idf target: every one
-// of crypto/sha1, encoding/base64, bufio, io, bytes and strings transitively
+// History and current rationale: when this package was written, the
+// standard library was unlinkable on the esp32s31-idf target - every one of
+// crypto/sha1, encoding/base64, bufio, io, bytes and strings transitively
 // reaches internal/reflectlite, which llgo maps to its own reflect layer,
-// which drags the libffi C glue into the build - and that glue does not
-// preprocess for this target on the host (the same libffi gap that keeps
-// fmt/reflect out of every pkg/esp package; measured, see P6-NOTES). The WS
-// handshake cannot exist without SHA-1 and base64 (RFC 6455 section 4.2.1
-// defines the accept key as base64(SHA-1(key + GUID))), so this file
-// carries the two primitives it needs, implementing exactly the required
-// profile and nothing more:
+// which dragged in libffi C glue that did not preprocess for this target
+// (fixed since: the glue is freestanding-header-only and the FIPS entropy
+// scratch buffer is patched to an embedded-friendly size). The package
+// keeps its own primitives anyway, for image-size and dependency reasons:
+// pulling crypto/sha1 through the stdlib reflect machinery costs megabytes
+// of image for a 20-byte digest, while these implementations are
+// allocation-light (SHA1Sum allocates nothing, the base64 encoder one
+// string) and table-free, so they sit comfortably in the few-KiB budget a
+// pkg/esp program has for the whole WebSocket stack. The WS handshake
+// cannot exist without SHA-1 and base64 (RFC 6455 section 4.2.1 defines
+// the accept key as base64(SHA-1(key + GUID))), so this file carries the
+// two primitives it needs, implementing exactly the required profile and
+// nothing more:
 //
-//   - SHA1Sum: the full RFC 3174 digest over one buffer. Exported because
-//     callers on this target cannot import crypto/sha1 either - for the
-//     same libffi gap - so this is also the only SHA-1 a pkg/esp program
-//     can reach.
+//   - SHA1Sum: the full RFC 3174 digest over one buffer. Exported so that
+//     a pkg/esp program on a lean target has a dependency-free SHA-1.
 //   - Base64StdEncode / Base64StdDecode: RFC 4648 standard alphabet
 //     (+/), with padding on encode and strict padding checks on decode.
-//
-// The implementations are allocation-light (SHA1Sum allocates nothing, the
-// base64 encoder one string) and table-free where practical, so they sit
-// comfortably in the few-KiB budget a pkg/esp program has for the whole
-// WebSocket stack.
 package ws
 
 // SHA1Sum returns the RFC 3174 SHA-1 digest of data. Allocation-free.
 //
-// Why an in-package hash: crypto/sha1 cannot be imported into an
-// esp32s31-idf program (it reaches the libffi C glue, which does not build
-// for this target - see the package doc), and the WebSocket accept key is
-// defined in terms of SHA-1, so the protocol layer needs it regardless.
+// The WebSocket accept key is defined in terms of SHA-1, so the protocol
+// layer needs it regardless; carrying it here keeps the package
+// dependency-free (see the file comment for the image-size rationale).
 func SHA1Sum(data []byte) [20]byte {
 	h0, h1, h2, h3, h4 := uint32(0x67452301), uint32(0xEFCDAB89),
 		uint32(0x98BADCFE), uint32(0x10325476), uint32(0xC3D2E1F0)
