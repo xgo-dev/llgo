@@ -8,11 +8,13 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-
-	"golang.org/x/tools/go/ssa"
 )
 
-const builtinSprintf = "llgoSprintfBuiltins"
+const (
+	builtinSprintf      = "llgoSprintfBuiltins"
+	builtinPrintf       = "llgoPrintfBuiltins"
+	BuiltinPrintfClosed = "llgoPrintfBuiltinsClosed"
+)
 
 const allBuiltinKinds = (1 << (types.String - types.Bool + 1)) - 1
 
@@ -53,7 +55,7 @@ func BuiltinFormatSource(source []byte, baremetal bool) []byte {
 		renamed[name] = "llgoBuiltin_" + name
 	}
 	var out bytes.Buffer
-	out.WriteString("package fmt\nimport (\"reflect\"; \"unicode/utf8\")\n")
+	out.WriteString("package fmt\nimport (\"os\"; \"reflect\"; \"unicode/utf8\")\n")
 	usesTypeName := false
 	for _, name := range names {
 		fn := methods[name]
@@ -106,7 +108,7 @@ func BuiltinFormatSource(source []byte, baremetal bool) []byte {
 	}
 	out.WriteString(`var llgoBuiltinPrinter *pp
 
-func llgoSprintfBuiltins(format string, llgoKinds uint32, a ...any) string {
+func llgoBeginBuiltinFormat(format string, llgoKinds uint32, a []any) *pp {
 	slot := &llgoBuiltinPrinter
 	p := *slot
 	*slot = nil
@@ -115,14 +117,38 @@ func llgoSprintfBuiltins(format string, llgoKinds uint32, a ...any) string {
 	}
 	p.fmt.init(&p.buf)
 	llgoBuiltin_doPrintf(p, format, a, llgoKinds)
-	s := string(p.buf)
+	return p
+}
+
+func llgoEndBuiltinFormat(p *pp) {
 	buf := p.buf
 	if cap(buf) > 64*1024 {
 		buf = nil
 	}
 	*p = pp{buf: buf[:0]}
-	*slot = p
+	llgoBuiltinPrinter = p
+}
+
+func llgoSprintfBuiltins(format string, llgoKinds uint32, a ...any) string {
+	p := llgoBeginBuiltinFormat(format, llgoKinds, a)
+	s := string(p.buf)
+	llgoEndBuiltinFormat(p)
 	return s
+}
+
+func llgoPrintfBuiltins(format string, llgoKinds uint32, a ...any) (int, error) {
+	out := os.Stdout
+	p := llgoBeginBuiltinFormat(format, llgoKinds, a)
+	n, err := out.Write(p.buf)
+	llgoEndBuiltinFormat(p)
+	return n, err
+}
+
+func llgoPrintfBuiltinsClosed(format string, llgoKinds uint32, write func([]byte) (int, error), a ...any) (int, error) {
+	p := llgoBeginBuiltinFormat(format, llgoKinds, a)
+	n, err := write(p.buf)
+	llgoEndBuiltinFormat(p)
+	return n, err
 }
 `)
 	if usesTypeName {
@@ -284,17 +310,4 @@ func builtinKindMask(kind types.BasicKind) uint32 {
 		return 0
 	}
 	return 1 << (kind - types.Bool)
-}
-
-func builtinFormatKinds(call ssa.CallInstruction) uint32 {
-	operands := scalarFormatOperands(call, call.Common().Args[1])
-	var kinds uint32
-	for _, kind := range operands {
-		mask := builtinKindMask(kind)
-		if mask == 0 {
-			return 0
-		}
-		kinds |= mask
-	}
-	return kinds
 }

@@ -18,5 +18,9 @@ func llgoWriteClosedStdout(s string) (int, error) {
 	return llgoClosedStdout.WriteString(s)
 }
 
+func llgoWriteClosedStdoutBytes(data []byte) (int, error) {
+	return llgoClosedStdout.Write(data)
+}
+
 func llgoStdoutWaitForSpace() bool { return false }
 func llgoStdoutCheckError(error)   {}

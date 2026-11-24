@@ -19,16 +19,27 @@ func main() {
 	stdout := os.Stdout
 	os.Stdout = f
 	n, err := fmt.Printf("captured %v", struct{ Destination string }{"stdout"})
-	os.Stdout = stdout
 	if n != len("captured {stdout}") || err != nil {
 		panic("incorrect write result")
+	}
+	if n, err := printCaptured(" %s", "value"); n != len(" value") || err != nil {
+		panic("incorrect redirected dynamic write result")
 	}
 	if err := f.Close(); err != nil {
 		panic(err)
 	}
+	if n, err := printCaptured(" %v", "closed"); n != 0 || err == nil {
+		panic("incorrect redirected dynamic write error")
+	}
+	os.Stdout = stdout
 	data, err := os.ReadFile(path)
-	if err != nil || string(data) != "captured {stdout}" {
+	if err != nil || string(data) != "captured {stdout} value" {
 		panic("stdout was not redirected")
 	}
 	fmt.Println("standard files and redirected stdout ok")
+}
+
+//go:noinline
+func printCaptured(format string, value any) (int, error) {
+	return fmt.Printf(format, value)
 }

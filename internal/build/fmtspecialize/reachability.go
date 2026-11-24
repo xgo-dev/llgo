@@ -17,6 +17,10 @@ func (plan *ValuePlan) ApplyStandalone(roots []*ssa.Function) map[*types.Package
 	if len(roots) == 0 {
 		return nil
 	}
+	plan.resolveBuiltinCalls(roots)
+	if len(plan.calls) == 0 {
+		return nil
+	}
 	return plan.apply(func() bool {
 		// A direct call path is sufficient to reject the rewrite. Mixed
 		// formatters commonly fail here without requiring whole-program RTA.

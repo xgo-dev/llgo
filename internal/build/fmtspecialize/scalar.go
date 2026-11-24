@@ -89,6 +89,21 @@ func formatOperands(call ssa.CallInstruction, variadic ssa.Value) []types.Type {
 }
 
 func formatValues(call ssa.CallInstruction, variadic ssa.Value) []*ssa.MakeInterface {
+	arguments := formatArguments(call, variadic)
+	boxes := make([]*ssa.MakeInterface, len(arguments))
+	for i, argument := range arguments {
+		box, ok := argument.(*ssa.MakeInterface)
+		if !ok {
+			return nil
+		}
+		boxes[i] = box
+	}
+	return boxes
+}
+
+// formatArguments recognizes the local variadic array assembled by SSA, with
+// each element initialized exactly once by the call's argument evaluation.
+func formatArguments(call ssa.CallInstruction, variadic ssa.Value) []ssa.Value {
 	args, ok := variadic.(*ssa.Slice)
 	if !ok || args.Low != nil || args.High != nil || args.Max != nil {
 		return nil
@@ -101,7 +116,7 @@ func formatValues(call ssa.CallInstruction, variadic ssa.Value) []*ssa.MakeInter
 		return nil
 	}
 	n := array.Type().(*types.Pointer).Elem().(*types.Array).Len()
-	operands := make([]*ssa.MakeInterface, n)
+	operands := make([]ssa.Value, n)
 	for _, ref := range *array.Referrers() {
 		if ref == args {
 			continue
@@ -122,11 +137,7 @@ func formatValues(call ssa.CallInstruction, variadic ssa.Value) []*ssa.MakeInter
 		if !ok || store.Addr != addr {
 			return nil
 		}
-		value, ok := store.Val.(*ssa.MakeInterface)
-		if !ok {
-			return nil
-		}
-		operands[i] = value
+		operands[i] = store.Val
 	}
 	return operands
 }

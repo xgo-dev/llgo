@@ -36,7 +36,7 @@ func configureEmbeddedStartup(ctx *context, goroot string, inputs *linkPruningIn
 	// points and raw symbol aliases. Compact startup also needs unobserved
 	// write results and an archive-independent runtime dependency check.
 	if !ctx.embeddedClosedProgram || inputs == nil || len(inputs.roots) != 0 ||
-		stdout == nil || stdout.selected == nil || stdout.selected != stdout.descriptor || stdout.discard == nil || conf.Mode != ModeBuild && conf.Mode != ModeRun ||
+		stdout == nil || len(stdout.builtinCalls) != 0 || stdout.selected == nil || stdout.selected != stdout.descriptor || stdout.discard == nil || conf.Mode != ModeBuild && conf.Mode != ModeRun ||
 		conf.Tags != "" || !embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions) {
 		return
 	}

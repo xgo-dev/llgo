@@ -173,6 +173,9 @@ func configureValueFormats(ctx *context, in *linkPruningInputs) {
 		}
 		return
 	}
+	if ctx.stdout != nil {
+		ctx.stdout.recordBuiltin(plan)
+	}
 	if verbose {
 		fmt.Fprintln(os.Stderr, "llgo: specialize default value formatting")
 	}

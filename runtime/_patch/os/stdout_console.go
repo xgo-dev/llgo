@@ -11,11 +11,14 @@ import (
 
 const llgoStdoutMaxWrite = 1 << 30
 
-// Only the closed executable's literal output calls can reach this writer.
+// Only the closed executable's specialized output calls can reach this writer.
 // The standard File wrappers are unobserved. Serialize writes and preserve
 // File.WriteString's stream limits, partial writes and errors.
 func llgoWriteStdoutDescriptor(s string) (int, error) {
-	data := unsafe.Slice(unsafe.StringData(s), len(s))
+	return llgoWriteStdoutDescriptorBytes(unsafe.Slice(unsafe.StringData(s), len(s)))
+}
+
+func llgoWriteStdoutDescriptorBytes(data []byte) (int, error) {
 	llgoStdoutLock()
 	written, err, invalidCount := llgoWriteStdoutLocked(data)
 	llgoStdoutUnlock()

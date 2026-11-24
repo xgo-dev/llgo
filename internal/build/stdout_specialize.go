@@ -4,6 +4,7 @@ import (
 	"go/types"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
@@ -16,11 +17,18 @@ const (
 // The descriptor alias lives in the standard library archive. Only calls in
 // the executable package change when a closed link proves it can use the alias.
 type stdoutPlan struct {
-	entry                            *ssa.Package
-	regular, typed, file, descriptor *ssa.Function
-	pollWrite, selected              *ssa.Function
-	discard                          *ssa.Function
-	calls                            []ssa.CallInstruction
+	entry                                     *ssa.Package
+	regular, typed, file, descriptor          *ssa.Function
+	pollWrite, selected                       *ssa.Function
+	discard                                   *ssa.Function
+	calls                                     []ssa.CallInstruction
+	builtinClosed, fileBytes, descriptorBytes *ssa.Function
+	builtinCalls                              []builtinStdoutCall
+}
+
+type builtinStdoutCall struct {
+	call     *ssa.Call
+	original ssa.CallCommon
 }
 
 func newStdoutPlan(ctx *context) *stdoutPlan {
@@ -43,6 +51,9 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 		return nil
 	}
 	plan := &stdoutPlan{entry: entry, regular: regular, typed: fmtPkg.Func("LlgoPrintfValue"), file: file, descriptor: descriptor, discard: osPkg.Func("llgoWriteStdoutDiscard")}
+	plan.builtinClosed = fmtPkg.Func(fmtspecialize.BuiltinPrintfClosed)
+	plan.fileBytes = osPkg.Func("llgoWriteClosedStdoutBytes")
+	plan.descriptorBytes = osPkg.Func("llgoWriteStdoutDescriptorBytes")
 	if poll := ctx.progSSA.ImportedPackage("internal/poll"); poll != nil {
 		if fd := poll.Type("FD"); fd != nil {
 			methods := ctx.progSSA.MethodSets.MethodSet(types.NewPointer(fd.Type()))
@@ -65,6 +76,15 @@ func (p *stdoutPlan) record(instruction ssa.Instruction) {
 	}
 }
 
+func (p *stdoutPlan) recordBuiltin(plan *fmtspecialize.ValuePlan) {
+	if p.builtinClosed == nil {
+		return
+	}
+	for _, call := range plan.BuiltinPrintfCalls(p.entry) {
+		p.builtinCalls = append(p.builtinCalls, builtinStdoutCall{call: call, original: *call.Common()})
+	}
+}
+
 func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalInitializer, files []cl.OptionalInitializer,
 	roots []*ssa.Function, keepFileWriter bool, analyze func(bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
 	for _, file := range files {
@@ -81,7 +101,7 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 	if p.descriptor != nil && p.pollWrite != nil && !keepFileWriter {
 		writer = p.descriptor
 	}
-	if writer == nil {
+	if !p.canUseWriter(writer) {
 		return unused
 	}
 	p.rewrite(writer)
@@ -90,7 +110,7 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 	// descriptor write path. File writes elsewhere should share that path.
 	if writer == p.descriptor && hasCallPath(graph, roots, p.pollWrite, nil) {
 		writer = p.file
-		if writer == nil {
+		if !p.canUseWriter(writer) {
 			p.rewrite(p.regular)
 			return unused
 		}
@@ -107,9 +127,33 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 	return updated
 }
 
+func (p *stdoutPlan) byteWriter(writer *ssa.Function) *ssa.Function {
+	if writer == p.descriptor {
+		return p.descriptorBytes
+	}
+	if writer == p.file {
+		return p.fileBytes
+	}
+	return nil
+}
+
+func (p *stdoutPlan) canUseWriter(writer *ssa.Function) bool {
+	return writer != nil && (len(p.builtinCalls) == 0 || p.byteWriter(writer) != nil)
+}
+
 func (p *stdoutPlan) rewrite(writer *ssa.Function) {
 	for _, call := range p.calls {
 		call.Common().Value = writer
+	}
+	byteWriter := p.byteWriter(writer)
+	for _, site := range p.builtinCalls {
+		common := site.call.Common()
+		*common = site.original
+		if byteWriter != nil {
+			args := site.original.Args
+			common.Value = p.builtinClosed
+			common.Args = []ssa.Value{args[0], args[1], byteWriter, args[2]}
+		}
 	}
 }
 

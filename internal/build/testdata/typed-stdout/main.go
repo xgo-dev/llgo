@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"syscall"
+)
 
 type reading struct {
 	Tick  int32
@@ -18,4 +21,22 @@ func main() {
 	if n != len("{17 [true false] lab}\n") || err != nil {
 		panic("incorrect typed Println result")
 	}
+	if n, err := printValue("%[1]g\n", 42.125); n != len("42.125\n") || err != nil {
+		panic("incorrect dynamic format write result")
+	}
+	if n, err := printValue("%v\n", "value"); n != len("value\n") || err != nil {
+		panic("incorrect dynamic operand write result")
+	}
+	if err := syscall.Close(1); err != nil {
+		panic(err)
+	}
+	if n, err := printValue("%s", "closed"); n != 0 || err == nil {
+		panic("incorrect dynamic write error")
+	}
+
+}
+
+//go:noinline
+func printValue(format string, value any) (int, error) {
+	return fmt.Printf(format, value)
 }

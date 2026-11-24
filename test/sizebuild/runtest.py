@@ -214,7 +214,7 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                          stdout_marker, True))
         fixtures.append(("native-map-init", "true true true", "llgo: omit unused map initializers", True))
     if target == "wasi" or linux_amd64 or mac_arm64:
-        fixtures.append(("typed-stdout", "% {17 [true false] lab} true\n{17 [true false] lab}",
+        fixtures.append(("typed-stdout", "% {17 [true false] lab} true\n{17 [true false] lab}\n42.125\nvalue",
                          "llgo: specialize default value formatting", True))
         environment_marker = readonly_env_marker if target == "wasi" else "llgo: specialize native read-only environment"
         fixtures.append(("wasm-environment-readonly", "read-only environment lookup ok",
@@ -247,6 +247,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                        "-o", str(artifact), f"./internal/build/testdata/{fixture}"], env)
         if marker is not None and (marker in log) != specialized:
             raise RuntimeError(f"{target} {fixture}: incorrect specialization policy\n{log}")
+        if fixture == "typed-stdout" and descriptor_writer_marker not in log:
+            raise RuntimeError(f"{target}: dynamic stdout kept the standard file writer\n{log}")
         if target.startswith("emscripten") and fixture == "wasm-fmt-map" and standard_file_marker not in log:
             raise RuntimeError(f"{target}: unused standard files retained\n{log}")
         if linux_amd64 and on_v2 and fixture in ("json-static", "json-typed-decode"):

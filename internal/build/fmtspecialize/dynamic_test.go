@@ -24,8 +24,13 @@ func TestBuiltinFormatSource(t *testing.T) {
 	}
 	generated := BuiltinFormatSource(data, false)
 	file, err := parser.ParseFile(token.NewFileSet(), "builtin_format.go", generated, 0)
-	if err != nil || len(file.Decls) != 12 {
+	if err != nil {
 		t.Fatalf("unexpected generated builtin formatter: %v", err)
+	}
+	for _, name := range []string{builtinSprintf, builtinPrintf, BuiltinPrintfClosed} {
+		if file.Scope.Lookup(name) == nil {
+			t.Fatalf("missing generated entry %s", name)
+		}
 	}
 	text := string(generated)
 	if !strings.Contains(text, "//llgointernal:tls\nvar llgoBuiltinPrinter *pp") {

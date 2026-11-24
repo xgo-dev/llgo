@@ -159,7 +159,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		configureReadOnlyEnvironment(ctx, environment, reachable, isSymbolRoot)
 	}
 
-	if plan := ctx.stdout; plan != nil && len(plan.calls) != 0 &&
+	if plan := ctx.stdout; plan != nil && (len(plan.calls) != 0 || len(plan.builtinCalls) != 0) &&
 		slices.ContainsFunc(standardFiles, func(file cl.OptionalInitializer) bool {
 			return file.Global.Name() == "Stdout" && fixedStdoutDescriptor(file, reachable, isSymbolRoot)
 		}) {

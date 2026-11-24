@@ -193,3 +193,66 @@ func render(format string, value any, pointer unsafe.Pointer) string {
 		})
 	}
 }
+
+func TestSpecializeScalarFormatsPrintfWithFiniteTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		extraRoot  bool
+		kinds      uint64
+	}{
+		{"dynamic format", `fmt.Printf(format, "value")`, false, 1 << (types.String - types.Bool)},
+		{"phi", `var v any = 1.25; if cond { v = "value" }; fmt.Printf(format, v)`, false,
+			1<<(types.String-types.Bool) | 1<<(types.Float64-types.Bool)},
+		{"private parameter", `if cond { render("value") } else { render(1.25) }`, false,
+			1<<(types.String-types.Bool) | 1<<(types.Float64-types.Bool)},
+		{"address taken", `f := []func(any){render}; f[0]("value")`, false, 0},
+		{"entry parameter", `render("value")`, true, 0},
+		{"unknown incoming branch", `var v any = "value"; if cond { v = input }; render(v)`, false, 0},
+		{"named scalar method", `render(label(1))`, false, 0},
+		{"mixed generic formatter", `render("value"); fmt.Printf("%v", input)`, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			fmtPkg := buildFormatTestPackage(t, prog, "fmt", `package fmt
+type pp struct{}
+func (*pp) printArg(_ any) string { return "generic" }
+func Sprintf(format string, args ...any) string { return (&pp{}).printArg(args) }
+func Printf(format string, args ...any) (int, error) { return len((&pp{}).printArg(args)), nil }
+func llgoPrintfBuiltins(format string, kinds uint32, args ...any) (int, error) { return len(format), nil }
+`, nil)
+			main := buildFormatTestPackage(t, prog, "main", `package main
+import "fmt"
+type label int
+func (label) String() string { return "label" }
+var cond bool
+var input any
+var format string
+func render(v any) { fmt.Printf("%v", v) }
+func main() { `+tc.body+` }
+`, fmtPkg.Pkg)
+			prog.Build()
+			plan := fmtspecialize.NewValuePlan(prog, nil)
+			for _, fn := range []*ssa.Function{main.Func("main"), main.Func("render")} {
+				for _, block := range fn.Blocks {
+					for _, inst := range block.Instrs {
+						plan.Record(inst, main)
+					}
+				}
+			}
+			roots := []*ssa.Function{main.Func("main")}
+			if tc.extraRoot {
+				roots = append(roots, main.Func("render"))
+			}
+			applied := plan.ApplyStandalone(roots)
+			if (len(applied) != 0) != (tc.kinds != 0) {
+				t.Fatalf("selected specialization for %v", applied)
+			}
+			for _, call := range plan.BuiltinPrintfCalls(main) {
+				mask, ok := constant.Uint64Val(call.Common().Args[1].(*ssa.Const).Value)
+				if !ok || mask != tc.kinds {
+					t.Fatalf("scalar mask = %#x, want %#x", mask, tc.kinds)
+				}
+			}
+		})
+	}
+}

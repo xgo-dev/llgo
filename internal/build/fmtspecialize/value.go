@@ -9,10 +9,13 @@ import (
 )
 
 type ValuePlan struct {
-	callee  *ssa.Function
-	builtin *ssa.Function
-	names   map[*types.Package]*ValueFunctions
-	calls   []formatRewrite
+	callee      *ssa.Function
+	builtin     *ssa.Function
+	printf      *ssa.Function
+	plainPrintf *ssa.Function
+	pending     []formatRewrite
+	names       map[*types.Package]*ValueFunctions
+	calls       []formatRewrite
 }
 
 type formatRewrite struct {
@@ -27,15 +30,16 @@ type formatRewrite struct {
 // NewValuePlan tracks replacements for default-value formatting.
 func NewValuePlan(prog *ssa.Program, names map[*types.Package]*ValueFunctions) *ValuePlan {
 	pkg := prog.ImportedPackage("fmt")
-	if pkg == nil || pkg.Func("Sprintf") == nil || len(names) == 0 && pkg.Func(builtinSprintf) == nil {
+	if pkg == nil || pkg.Func("Sprintf") == nil || len(names) == 0 && pkg.Func(builtinSprintf) == nil && pkg.Func(builtinPrintf) == nil {
 		return nil
 	}
-	return &ValuePlan{callee: pkg.Func("Sprintf"), builtin: pkg.Func(builtinSprintf), names: names}
+	return &ValuePlan{callee: pkg.Func("Sprintf"), builtin: pkg.Func(builtinSprintf),
+		printf: pkg.Func(builtinPrintf), plainPrintf: pkg.Func("Printf"), names: names}
 }
 
 // HasCalls reports whether the plan found any eligible call sites.
 func (plan *ValuePlan) HasCalls() bool {
-	return plan != nil && len(plan.calls) != 0
+	return plan != nil && (len(plan.calls) != 0 || len(plan.pending) != 0)
 }
 
 // isGenericFormatter identifies functions that keep the generic formatter.
@@ -68,15 +72,23 @@ func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 			return
 		}
 	}
-	if common.StaticCallee() != plan.callee || len(common.Args) != 2 {
+	callee := common.StaticCallee()
+	if len(common.Args) != 2 {
 		return
 	}
 	format, ok := common.Args[0].(*ssa.Const)
-	if !ok && plan.builtin != nil {
-		if kinds := builtinFormatKinds(call); kinds != 0 {
-			plan.calls = append(plan.calls, formatRewrite{call: call, function: plan.builtin, builtinKinds: kinds})
+	switch callee {
+	case plan.callee:
+		if plan.recordBuiltin(call, plan.builtin, ok) || !ok {
 			return
 		}
+	case plan.plainPrintf:
+		if callee != nil {
+			plan.recordBuiltin(call, plan.printf, ok)
+		}
+		return
+	default:
+		return
 	}
 	if functions == nil || !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
 		return
@@ -250,4 +262,17 @@ func (plan *ValuePlan) commit(remove map[ssa.Instruction]bool) map[*types.Packag
 		}
 	}
 	return owners
+}
+
+// BuiltinPrintfCalls appends the committed builtin calls in the entry package.
+func (plan *ValuePlan) BuiltinPrintfCalls(entry *ssa.Package) []*ssa.Call {
+	var calls []*ssa.Call
+	if plan.printf != nil {
+		for _, rewrite := range plan.calls {
+			if entry == rewrite.call.Parent().Pkg && rewrite.call.Common().StaticCallee() == plan.printf {
+				calls = append(calls, rewrite.call)
+			}
+		}
+	}
+	return calls
 }
