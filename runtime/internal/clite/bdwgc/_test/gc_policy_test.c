@@ -47,7 +47,8 @@ int main(int argc, char **argv)
 
     assert(llgo_gc_target_markers(NULL, NULL, NULL, 16) == 0);
     assert(llgo_gc_target_markers("1", NULL, NULL, 16) == 1);
-    assert(llgo_gc_target_markers("4", "", "", 16) == 4);
+    assert(llgo_gc_target_markers("4", "", NULL, 16) == 0);
+    assert(llgo_gc_target_markers("4", NULL, "", 16) == 4);
     assert(llgo_gc_target_markers("64", NULL, NULL, 16) == 16);
     assert(llgo_gc_target_markers("4", "8", NULL, 16) == 0);
     assert(llgo_gc_target_markers("4", NULL, "8", 16) == 0);

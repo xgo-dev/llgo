@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -58,11 +59,22 @@ static unsigned llgo_gc_cpu_count(void)
     SYSTEM_INFO info;
     GetSystemInfo(&info);
     return info.dwNumberOfProcessors == 0 ? 1u : (unsigned)info.dwNumberOfProcessors;
-#elif defined(_SC_NPROCESSORS_ONLN)
+#else
+#if defined(__linux__)
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+        int count = CPU_COUNT(&set);
+        if (count > 0)
+            return (unsigned)count;
+    }
+#endif
+#if defined(_SC_NPROCESSORS_ONLN)
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     return n > 0 ? (unsigned)n : 1u;
 #else
     return 1u;
+#endif
 #endif
 }
 
@@ -90,8 +102,9 @@ static unsigned llgo_gc_target_markers(const char *gomaxprocs,
                                        const char *gc_nprocs,
                                        unsigned cpu_count)
 {
-    if ((gc_markers != NULL && gc_markers[0] != '\0') ||
-        (gc_nprocs != NULL && gc_nprocs[0] != '\0'))
+    /* BDWGC checks GETENV("GC_MARKERS") != NULL (including an empty value,
+     * which triggers its own warning/default) and non-empty GC_NPROCS. */
+    if (gc_markers != NULL || (gc_nprocs != NULL && gc_nprocs[0] != '\0'))
         return 0;
     unsigned n = llgo_gc_parse_gomaxprocs(gomaxprocs);
     if (n == 0)

@@ -6,12 +6,6 @@ import _ "unsafe"
 
 const gcPolicyLLGoFiles = "; _wrap/gc_policy.c"
 
-// InitMarkers caps BDWGC parallel marker threads using GOMAXPROCS when neither
-// GC_MARKERS nor GC_NPROCS is set and GC_init has not yet run.
-//
-//go:linkname InitMarkers C.llgo_gc_init_markers
-func InitMarkers()
-
 // InitPolicy installs the native collector's allocation budget after GC_init.
 //
 //go:linkname InitPolicy C.llgo_gc_init_policy

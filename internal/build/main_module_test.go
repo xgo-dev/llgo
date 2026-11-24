@@ -945,6 +945,60 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 	)
 }
 
+func TestGenMainModuleBDWGCMarkersInit(t *testing.T) {
+	llvm.InitializeAllTargets()
+	t.Setenv(llgoStdioNobuf, "")
+	for _, tc := range []struct {
+		name       string
+		goos, arch string
+		mode       BuildMode
+		tags       string
+		targetTags []string
+		rtInit     bool
+		want       bool
+	}{
+		{"linux-exe", "linux", "amd64", BuildModeExe, "", nil, true, true},
+		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", nil, true, true},
+		{"windows-exe", "windows", "arm64", BuildModeExe, "", nil, true, true},
+		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", nil, true, true},
+		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", nil, true, true},
+		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", nil, true, true},
+		{"linux-allthreads", "linux", "amd64", BuildModeExe, "llgo.allthreads", nil, true, true},
+		{"nogc", "linux", "amd64", BuildModeExe, "nogc", nil, true, false},
+		{"baremetal-tag", "linux", "arm", BuildModeExe, "baremetal", nil, true, false},
+		{"baremetal-target", "linux", "arm", BuildModeExe, "", []string{"baremetal"}, true, false},
+		{"wasip1", "wasip1", "wasm", BuildModeExe, "", nil, true, false},
+		{"js-wasm", "js", "wasm", BuildModeExe, "", nil, true, false},
+		{"no-rtinit", "linux", "amd64", BuildModeExe, "", nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &context{
+				prog: llssa.NewProgram(nil),
+				buildConf: &Config{
+					BuildMode: tc.mode,
+					Goos:      tc.goos,
+					Goarch:    tc.arch,
+					Tags:      tc.tags,
+				},
+				crossCompile: crosscompile.Export{BuildTags: tc.targetTags},
+			}
+			defer ctx.prog.Dispose()
+			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
+			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: tc.rtInit}).LPkg.String()
+			got := strings.Contains(ir, "call void @llgo_gc_init_markers()")
+			if got != tc.want {
+				t.Fatalf("llgo_gc_init_markers emitted = %v, want %v:\n%s", got, tc.want, ir)
+			}
+			if tc.want {
+				assertInOrder(t, ir,
+					"call void @llgo_gc_init_markers()",
+					`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`,
+				)
+			}
+		})
+	}
+}
+
 func installLocalContextTestRuntime(prog llssa.Program) {
 	runtimePkg := types.NewPackage(llssa.PkgRuntime, "runtime")
 	contextName := types.NewTypeName(token.NoPos, runtimePkg, "LocalContext", nil)

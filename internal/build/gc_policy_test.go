@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,4 +121,79 @@ func TestBDWGCAllocationPolicy(t *testing.T) {
 			t.Fatalf("GOMAXPROCS=1 GC_NPROCS=2: GC_get_parallel() = %d, want %d", got, want)
 		}
 	})
+}
+
+func TestBDWGCMarkersEndToEnd(t *testing.T) {
+	if _, err := exec.LookPath("pkg-config"); err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("native GC e2e test requires pkg-config: %v", err)
+		}
+		t.Skipf("native GC e2e test requires pkg-config: %v", err)
+	}
+	if out, err := exec.Command("pkg-config", "--atleast-version=8.2.0", "bdw-gc").CombinedOutput(); err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("native GC e2e test requires BDWGC >= 8.2.0: %v\n%s", err, out)
+		}
+		t.Skipf("native GC e2e test requires BDWGC >= 8.2.0: %v\n%s", err, out)
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(source, []byte(`package main
+
+import _ "unsafe"
+
+//go:linkname gcGetParallel C.GC_get_parallel
+func gcGetParallel() int32
+
+func main() {
+	println(gcGetParallel())
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outFile := filepath.Join(dir, "markers")
+	if runtime.GOOS == "windows" {
+		outFile += ".exe"
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.OutFile = outFile
+	if _, err := Do([]string{source}, conf); err != nil {
+		t.Fatalf("build native markers probe: %v", err)
+	}
+	runProbe := func(overrides map[string]string) int {
+		t.Helper()
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, outFile)
+		var env []string
+		for _, kv := range os.Environ() {
+			key, _, _ := strings.Cut(kv, "=")
+			if strings.EqualFold(key, "GOMAXPROCS") ||
+				strings.EqualFold(key, "GC_MARKERS") ||
+				strings.EqualFold(key, "GC_NPROCS") {
+				continue
+			}
+			env = append(env, kv)
+		}
+		for k, v := range overrides {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("run markers probe %v: %v\n%s", overrides, err, out)
+		}
+		val, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			t.Fatalf("parse markers probe output %q: %v", string(out), err)
+		}
+		return val
+	}
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1"}); got != 0 {
+		t.Fatalf("compiled LLGo binary with GOMAXPROCS=1: GC_get_parallel() = %d, want 0", got)
+	}
+	want := runProbe(map[string]string{"GC_MARKERS": "2"})
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": "2"}); got != want {
+		t.Fatalf("compiled LLGo binary with GOMAXPROCS=1 GC_MARKERS=2: GC_get_parallel() = %d, want %d", got, want)
+	}
 }
