@@ -288,7 +288,7 @@ func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string) string {
 	}
 	for _, entry := range filepath.SplitList(pathEnv) {
 		if entry == "" {
-			entry = "."
+			continue
 		}
 		if !filepath.IsAbs(entry) {
 			if baseDir != "" {

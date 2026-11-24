@@ -875,6 +875,16 @@ func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
 	if err != nil || string(gotRel) != "rel-ok" {
 		t.Fatalf("expected rel-bin fake-clang to run, got %q, err=%v", gotRel, err)
 	}
+
+	// Empty PATH entries (e.g. trailing/leading separator) must be skipped and
+	// never implicitly search Cmd.Dir.
+	if err := os.WriteFile(filepath.Join(workDir, "fake-clang"), []byte("#!/bin/sh\nexit 99\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trailingPath := t.TempDir() + string(os.PathListSeparator)
+	if got, err := ResolveExecutable("fake-clang", workDir, []string{"PATH=" + trailingPath}); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("ResolveExecutable(trailing empty PATH) = (%q, %v), want exec.ErrNotFound", got, err)
+	}
 }
 
 // Benchmark tests
