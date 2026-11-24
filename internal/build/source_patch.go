@@ -32,17 +32,30 @@ func cloneOverlay(src map[string][]byte) map[string][]byte {
 }
 
 type sourcePatchBuildContext struct {
-	goos       string
-	goarch     string
-	goversion  string
-	toolTags   []string
-	buildFlags []string
-	targetTags []string
-	cgoEnabled *bool
+	goos           string
+	goarch         string
+	goversion      string
+	toolTags       []string
+	buildFlags     []string
+	targetTags     []string
+	deferErrorType bool
+	cgoEnabled     *bool
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
 	var out map[string][]byte
+	if ctx.goos == "darwin" && slices.Contains(ctx.targetTags, "llgo.size.native") {
+		path := filepath.Join(goroot, "src", "os", "executable_darwin.go")
+		if source, err := os.ReadFile(path); err == nil && base[path] == nil {
+			if updated := rewriteDarwinExecutableCwd(source); updated != nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+				out[path] = updated
+			}
+		}
+	}
 	pkgFiles := make(map[string][]string)
 	for _, pkgPath := range llruntime.SourcePatchPkgPaths() {
 		changed, next, files, err := applySourcePatchForPkg(base, out, runtimeDir, goroot, pkgPath, ctx)
@@ -54,6 +67,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 		}
 		out = next
 		pkgFiles[pkgPath] = files
+	}
+	if ctx.deferErrorType {
+		if path, source := deferredErrorTypeSource(goroot, base); source != nil {
+			if out == nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+			}
+			out[path] = source
+			cacheFile := filepath.Join(filepath.Dir(path), errorTypeCacheFile)
+			out[cacheFile] = []byte(errorTypeCacheSource)
+			pkgFiles["errors"] = append(pkgFiles["errors"], cacheFile)
+		}
 	}
 	if out == nil {
 		return base, nil, nil

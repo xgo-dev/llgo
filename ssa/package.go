@@ -22,6 +22,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"maps"
 	"runtime"
 	"strconv"
 	"unsafe"
@@ -553,6 +554,13 @@ func (p Program) Linkname(name string) (link string, ok bool) {
 	link, ok = p.packageSyntax.linknames[name]
 	p.packageSyntax.mu.RUnlock()
 	return
+}
+
+// Linknames returns a snapshot of registered source names and linker targets.
+func (p Program) Linknames() map[string]string {
+	p.packageSyntax.mu.RLock()
+	defer p.packageSyntax.mu.RUnlock()
+	return maps.Clone(p.packageSyntax.linknames)
 }
 
 // SetWasmImport records a //go:wasmimport directive before its declaration is

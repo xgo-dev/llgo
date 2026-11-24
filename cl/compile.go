@@ -61,6 +61,12 @@ var (
 
 // Options contains frontend behavior for one package compilation.
 type Options struct {
+	// GuardPackageInitCalls lists package initializers with a weak enabled
+	// default. A closed final link may override the default.
+	GuardPackageInitCalls []string
+	// GuardedInitializers emits weak defaults for selected package variables.
+	// The final link can override a default after proving the variable unused.
+	GuardedInitializers map[*ssa.BasicBlock][]OptionalInitializer
 	// EscapeAnalysis contains immutable storage decisions prepared before
 	// backend workers. Direct API callers may omit it to analyze their input.
 	EscapeAnalysis *goescape.Result
@@ -84,6 +90,7 @@ type Options struct {
 	// It does not apply to package C, which defines its exports directly.
 	CExportWrappers        bool
 	ShadowStack            bool
+	DisableSafepoints      bool
 	CompactCallerLocations bool
 	// DebuggerFrames retains logical stacks for every eligible function in
 	// opt-in Wasm debugger builds, including parked goroutines.
@@ -1291,7 +1298,16 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 	isCgoCfunc := isCgoCfunc(fnName)
 	isCgoC2 := isCgoC2func(fnName)
 	isCgoCmacro := isCgoCmacro(fnName)
+	initializers := p.options.GuardedInitializers[block]
+	var initEnd llssa.BasicBlock
 	for i, instr := range instrs {
+		if len(initializers) != 0 && instr == initializers[0].First {
+			body := fn.MakeBlock()
+			initEnd = fn.MakeBlock()
+			guard := DefineInitializerGuard(pkg, InitializerGuardName(initializers[0].Global), true)
+			b.If(b.Load(guard.Expr), body, initEnd)
+			b.SetBlock(body)
+		}
 		if p.isCooperativeSafepoint(instr) {
 			p.emitCooperativeSafepoint(b)
 		}
@@ -1341,6 +1357,11 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 			}
 		} else {
 			p.compileInstr(b, instr)
+			if len(initializers) != 0 && instr == initializers[0].Store {
+				b.Jump(initEnd)
+				b.SetBlock(initEnd)
+				initializers = initializers[1:]
+			}
 			// llgo.unreachable is an LLVM terminator. Go SSA still appends a
 			// synthetic Return for a direct tail call, so do not lower that
 			// Return into the already-terminated LLVM block. Restrict this to
@@ -1720,6 +1741,9 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	}
 	switch v := iv.(type) {
 	case *ssa.Call:
+		if len(p.options.GuardPackageInitCalls) != 0 && p.compileGuardedPackageInit(b, v) {
+			return
+		}
 		if src := freshNilAppendSource(v); src != nil {
 			ret = b.AppendFreshSliceToNil(p.type_(v.Type(), llssa.GoDecl), p.compileValue(b, src))
 			break

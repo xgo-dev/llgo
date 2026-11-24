@@ -210,6 +210,145 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 			p.staticInitStores[store.store] = none{}
 		}
 	}
+	p.collectStaticGlobalCopies(initFn, globals)
+}
+
+// Copies of already initialized package pointers can share their static
+// backing objects, including when stored in a slice literal. Only examine
+// the straight-line initializers before any call can observe the destination
+// or mutate a source.
+func (p *context) collectStaticGlobalCopies(init *ssa.Function, globals map[*ssa.Global]none) {
+	if len(p.staticGlobalInits) == 0 || len(init.Blocks) != 3 {
+		return
+	}
+	entry, body, done := init.Blocks[0], init.Blocks[1], init.Blocks[2]
+	if len(entry.Instrs) != 2 || len(entry.Succs) != 2 || len(body.Preds) != 1 || body.Preds[0] != entry ||
+		len(body.Succs) != 1 || body.Succs[0] != done || len(done.Succs) != 0 {
+		return
+	}
+	loadGuard, _ := entry.Instrs[0].(*ssa.UnOp)
+	branch, _ := entry.Instrs[1].(*ssa.If)
+	if loadGuard == nil || branch == nil || branch.Cond != loadGuard || loadGuard.Op != token.MUL {
+		return
+	}
+	if guard, ok := loadGuard.X.(*ssa.Global); !ok || guard.Name() != "init$guard" {
+		return
+	}
+	writes := make(map[*ssa.Global]int)
+	for _, block := range init.Blocks {
+		for _, instr := range block.Instrs {
+			if store, ok := instr.(*ssa.Store); ok {
+				writes[staticInitRootGlobal(store.Addr)]++
+			}
+		}
+	}
+
+	seen := make(map[*ssa.Global]bool)
+	available := make(map[*ssa.Global]llssa.Expr)
+	loads := make(map[*ssa.UnOp]llssa.Expr)
+	var operands []*ssa.Value
+	for i, instr := range body.Instrs {
+		if _, ok := instr.(ssa.CallInstruction); ok {
+			return
+		}
+		if _, ok := instr.(*ssa.DebugRef); ok {
+			continue
+		}
+		store, _ := instr.(*ssa.Store)
+		load, _ := instr.(*ssa.UnOp)
+		switch {
+		case load != nil && load.Op == token.MUL:
+			if source, _ := load.X.(*ssa.Global); source != nil {
+				if value, ok := available[source]; ok {
+					loads[load] = value
+				}
+			}
+		case store != nil:
+			dest, _ := store.Addr.(*ssa.Global)
+			if _, ok := globals[dest]; !ok || seen[dest] || writes[dest] != 1 {
+				break
+			}
+			ptr := dest.Type().(*types.Pointer)
+			if _, ok := ptr.Elem().Underlying().(*types.Pointer); !ok {
+				if _, slice := ptr.Elem().Underlying().(*types.Slice); slice {
+					p.foldStaticPointerSlice(dest, store, i, loads)
+				}
+				break
+			}
+			if value, ok := p.staticGlobalInits[dest]; ok {
+				available[dest] = value
+				break
+			}
+			aliasedLoad, _ := store.Val.(*ssa.UnOp)
+			if value, ok := loads[aliasedLoad]; ok && types.Identical(aliasedLoad.Type(), ptr.Elem()) {
+				p.staticGlobalInits[dest] = value
+				available[dest] = value
+				p.staticInitStores[store] = none{}
+				if singleNonDebugReferrer(aliasedLoad) == store {
+					p.staticInitInstrs[aliasedLoad] = none{}
+				}
+			}
+		}
+
+		operands = instr.Operands(operands[:0])
+		for _, operand := range operands {
+			if global, ok := (*operand).(*ssa.Global); ok {
+				seen[global] = true
+				// A direct load reads the variable but cannot modify its
+				// address. Any other use may expose it to a later store.
+				read := load != nil && load.Op == token.MUL
+				initialize := store != nil && store.Addr == global && writes[global] == 1
+				if !read && !initialize {
+					delete(available, global)
+				}
+			}
+		}
+	}
+}
+
+func (p *context) foldStaticPointerSlice(dest *ssa.Global, store *ssa.Store, i int, loads map[*ssa.UnOp]llssa.Expr) {
+	if _, folded := p.staticGlobalInits[dest]; folded {
+		return
+	}
+	block := store.Block()
+	start := optionalSliceInitializerStart(block, i, store)
+	if start < 0 {
+		return
+	}
+	slice := store.Val.(*ssa.Slice)
+	alloc := slice.X.(*ssa.Alloc)
+	array := alloc.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array)
+	elem := array.Elem()
+	if _, ok := elem.Underlying().(*types.Pointer); !ok || !staticInitBoundedArraySizeAllowed(array) {
+		return
+	}
+	zero := p.prog.Zero(p.type_(elem, llssa.GoDecl))
+	values := make([]llssa.Expr, int(array.Len()))
+	for i := range values {
+		values[i] = zero
+	}
+	for _, instr := range block.Instrs[start:i] {
+		element, ok := instr.(*ssa.Store)
+		if !ok {
+			continue
+		}
+		index, _ := staticInitConstIndex(element.Addr.(*ssa.IndexAddr).Index)
+		if c, ok := element.Val.(*ssa.Const); ok && c.IsNil() {
+			values[index] = zero
+			continue
+		}
+		load, _ := element.Val.(*ssa.UnOp)
+		value, ok := loads[load]
+		if !ok || !types.Identical(load.Type(), elem) {
+			return
+		}
+		values[index] = value
+	}
+	typ := p.type_(slice.Type(), llssa.GoDecl)
+	p.staticGlobalInits[dest] = p.pkg.ConstSlice(p.globalFullName(dest)+"$data", typ, values)
+	for _, instr := range block.Instrs[start : i+1] {
+		p.staticInitInstrs[instr] = none{}
+	}
 }
 
 func instructionConsumes(instr ssa.Instruction, val ssa.Value) bool {

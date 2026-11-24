@@ -70,9 +70,13 @@ type frontendCache struct {
 	program      *frontendProgramExport
 }
 
+func frontendCacheEnabled(conf *Config) bool {
+	return cacheEnabled() && isEnvOn(llgoEscapeCache, false) && !conf.ForceRebuild && conf.ModuleHook == nil &&
+		conf.Mode != ModeGen && conf.BuildMode == BuildModeExe && !conf.deadcodeDropEnabled() && conf.DependencyEscapeDiagnostics <= 0
+}
+
 func (c *context) newFrontendCache(entries []ssaBuildEntry, mode ssa.BuilderMode) *frontendCache {
-	if !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || c.buildConf.ForceRebuild || c.buildConf.ModuleHook != nil ||
-		c.mode == ModeGen || c.buildConf.BuildMode != BuildModeExe || c.buildConf.deadcodeDropEnabled() || c.buildConf.DependencyEscapeDiagnostics > 0 {
+	if !frontendCacheEnabled(c.buildConf) {
 		return nil
 	}
 	f := &frontendCache{ctx: c, entries: entries, keys: make(map[string]string), locals: make(map[string]string),

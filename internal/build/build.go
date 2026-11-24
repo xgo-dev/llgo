@@ -148,52 +148,53 @@ type OutFmtDetails struct {
 type ModuleHook func(pkg Package)
 
 type Config struct {
-	Goos               string
-	Goarch             string
-	GO386              string // 386 floating-point implementation: sse2 or softfloat
-	GOAMD64            string // amd64 microarchitecture level: v1 through v4
-	GOARM              string // arm architecture and floating-point implementation
-	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
-	GOEXPERIMENT       string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
-	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
-	OptLevel           optlevel.Level
-	WasmOpt            WasmOptMode
-	WasmStrip          WasmStripMode
-	LTO                lto.Mode
-	LTOPlugin          lto.PassPlugin
-	BinPath            string
-	AppExt             string  // ".exe" on Windows, empty on Unix
-	OutFile            string  // output file, or directory for ModeBuild package executables
-	OutFmts            OutFmts // Output format specifications (only for Target != "")
-	CompileOnly        bool    // compile test binary but do not run it (only valid for ModeTest)
-	RetainTestBinary   bool    // profiling keeps the test executable in the invocation directory
-	Emulator           bool    // run in emulator mode
-	Port               string  // target port for flashing
-	BaudRate           int     // baudrate for serial communication
-	RunArgs            []string
-	Exec               []string      // Explicit execution wrapper, before the artifact and RunArgs.
-	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
-	Mode               Mode
-	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
-	GenExpect          bool      // only valid for ModeCmpTest
-	Verbose            bool
-	PrintPackages      bool // print package paths after successful compilation
-	PrintCommands      bool
-	GenLL              bool // generate pkg .ll files
-	DeadcodeDrop       bool // enable Go dead code drop (development builds only)
-	CollectPackageMeta bool // collect package metadata without enabling dead code drop
-	CheckLLFiles       bool // check .ll files valid
-	CheckLinkArgs      bool // check linkargs valid
-	ForceEspClang      bool // force to use esp-clang
-	frontendSourceOnly bool
-	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
-	Tags               string
-	SizeReport         bool   // print size report after successful build
-	SizeFormat         string // size report format: text,json (default text)
-	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // content hash for the running compiler (development builds only)
-	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
-	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+	Goos                      string
+	Goarch                    string
+	GO386                     string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64                   string // amd64 microarchitecture level: v1 through v4
+	GOARM                     string // arm architecture and floating-point implementation
+	GOARM64                   string // arm64 ISA version and optional lse/crypto extensions
+	GOEXPERIMENT              string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
+	Target                    string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel                  optlevel.Level
+	WasmOpt                   WasmOptMode
+	WasmStrip                 WasmStripMode
+	LTO                       lto.Mode
+	LTOPlugin                 lto.PassPlugin
+	BinPath                   string
+	AppExt                    string  // ".exe" on Windows, empty on Unix
+	OutFile                   string  // output file, or directory for ModeBuild package executables
+	OutFmts                   OutFmts // Output format specifications (only for Target != "")
+	CompileOnly               bool    // compile test binary but do not run it (only valid for ModeTest)
+	RetainTestBinary          bool    // profiling keeps the test executable in the invocation directory
+	Emulator                  bool    // run in emulator mode
+	Port                      string  // target port for flashing
+	BaudRate                  int     // baudrate for serial communication
+	RunArgs                   []string
+	Exec                      []string      // Explicit execution wrapper, before the artifact and RunArgs.
+	RunnerTimeout             time.Duration // Host execution limit; zero disables it.
+	Mode                      Mode
+	BuildMode                 BuildMode // Build mode: exe, c-archive, c-shared
+	GenExpect                 bool      // only valid for ModeCmpTest
+	Verbose                   bool
+	PrintPackages             bool // print package paths after successful compilation
+	PrintCommands             bool
+	GenLL                     bool // generate pkg .ll files
+	DeadcodeDrop              bool // enable Go dead code drop (development builds only)
+	CollectPackageMeta        bool // collect package metadata without enabling dead code drop
+	CheckLLFiles              bool // check .ll files valid
+	CheckLinkArgs             bool // check linkargs valid
+	ForceEspClang             bool // force to use esp-clang
+	frontendSourceOnly        bool
+	disableSizeSpecialization bool
+	ForceRebuild              bool // force rebuilding of packages that are already up-to-date
+	Tags                      string
+	SizeReport                bool   // print size report after successful build
+	SizeFormat                string // size report format: text,json (default text)
+	SizeLevel                 string // size aggregation level: full,module,package (default module)
+	CompilerHash              string // content hash for the running compiler (development builds only)
+	GoVersion                 string // Go language version accepted by the frontend (for example, "go1.22")
+	NoErrorColumn             bool   // omit source columns from frontend diagnostics
 
 	EscapeDiagnostics           int // -m count for explicitly selected packages
 	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
@@ -890,14 +891,26 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	sourceTargetTags := slices.Clone(export.BuildTags)
+	if embeddedSizePruningConfig(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.embedded")
+	}
+	if wasiGuardedStaticData(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.wasi")
+	}
+	if linuxSizeCodecBuild(conf, export, frontendOptions) ||
+		conf.Goos == "darwin" && hostedValueFormatSupport(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.native")
+	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
-		goos:       conf.Goos,
-		goarch:     conf.Goarch,
-		goversion:  sourcePatchGoVersion,
-		toolTags:   sourceGo.toolTags,
-		buildFlags: cfg.BuildFlags,
-		targetTags: export.BuildTags,
-		cgoEnabled: &sourceCgoEnabled,
+		goos:           conf.Goos,
+		goarch:         conf.Goarch,
+		goversion:      sourcePatchGoVersion,
+		toolTags:       sourceGo.toolTags,
+		buildFlags:     cfg.BuildFlags,
+		targetTags:     sourceTargetTags,
+		deferErrorType: !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions),
+		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
 		return nil, err
@@ -1146,8 +1159,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	configureWasmRuntimeFree(ctx)
 
 	allPkgs := append([]*aPackage{}, pkgs...)
-	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
-	configureUnusedGlobalInits(ctx, asmRoots)
+	asmRoots := ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(conf, export, frontendOptions))
+	formatInputs := configureClosedLinkPruning(ctx, sourcePatchGOROOT, asmRoots)
+	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -1564,18 +1578,21 @@ func goCompatibleWasmRunner(conf *Config) string {
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	return &context{
-		prog:                 ctx.prog,
-		mode:                 ctx.mode,
-		buildConf:            ctx.buildConf,
-		crossCompile:         ctx.crossCompile,
-		commands:             ctx.commands,
-		pclnExternal:         plan.pclnExternal,
-		wasmClosedProgram:    ctx.wasmClosedProgram,
-		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
-		linkRuntimeSites:     &plan.runtimeSites,
-		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
-		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
-		goVersion:            ctx.goVersion,
+		prog:                  ctx.prog,
+		mode:                  ctx.mode,
+		buildConf:             ctx.buildConf,
+		crossCompile:          ctx.crossCompile,
+		commands:              ctx.commands,
+		pclnExternal:          plan.pclnExternal,
+		wasmClosedProgram:     ctx.wasmClosedProgram,
+		embeddedClosedProgram: ctx.embeddedClosedProgram,
+		nativeClosedProgram:   ctx.nativeClosedProgram,
+		sizePruningRoots:      ctx.sizePruningRoots,
+		frontendOptions:       cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
+		linkRuntimeSites:      &plan.runtimeSites,
+		stripDarwinLTOLocals:  plan.stripDarwinLTOLocals,
+		darwinHiddenGlobals:   plan.darwinHiddenGlobals,
+		goVersion:             ctx.goVersion,
 	}
 }
 
@@ -1934,14 +1951,17 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf         *Config
-	crossCompile      crosscompile.Export
-	commands          commandEnv
-	frontendOptions   cl.Options
-	staticByteArrays  map[string][]byte
-	wasmRuntimeFree   bool
-	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
-	wasiSizeRoots     []string
+	buildConf             *Config
+	crossCompile          crosscompile.Export
+	commands              commandEnv
+	frontendOptions       cl.Options
+	staticByteArrays      map[string][]byte
+	initializerGuardsOff  []string
+	wasmRuntimeFree       bool
+	wasmClosedProgram     bool // true when native inputs cannot introduce untracked Go references
+	sizePruningRoots      []string
+	embeddedClosedProgram bool
+	nativeClosedProgram   bool
 
 	cTransformer *cabi.Transformer
 
@@ -2806,14 +2826,20 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
 	}
+	for _, name := range ctx.initializerGuardsOff {
+		cl.DefineInitializerGuard(entryPkg.LPkg, name, false)
+	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
-		trimMethods := canPruneWasmTypeMetadata(ctx)
+		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram || ctx.nativeClosedProgram
 		var roots []string
-		if ctx.buildConf.wasiReleaseDCE {
+		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram || ctx.nativeClosedProgram {
 			// Entry thunks are generated outside package compilation. Record
 			// their references, including WASI worker entry calls.
-			roots = appendModuleDeclarationRoots(slices.Clone(ctx.wasiSizeRoots), entryPkg.LPkg.Module())
+			roots = appendModuleDeclarationRoots(slices.Clone(ctx.sizePruningRoots), entryPkg.LPkg.Module())
+		}
+		if ctx.nativeClosedProgram && (ctx.buildConf.Verbose || ctx.buildConf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: prune native type metadata")
 		}
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
 			return nil, err
@@ -3660,10 +3686,16 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
 	options.StaticByteArrays = aPkg.staticByteArrays
+	options.GuardedInitializers = aPkg.guardedInitializers
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
 	check(err)
+	if pkgPath == "os" {
+		if !ret.Module().NamedGlobal(darwinExecutableCwdGuard).IsNil() {
+			cl.DefineInitializerGuard(ret, darwinExecutableCwdGuard, true)
+		}
+	}
 
 	aPkg.LPkg = ret
 	if !aPkg.CacheHit {
@@ -4281,14 +4313,15 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs         []string
-	ObjFiles         []string               // file-backed archive members: .o or .ll
-	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
-	Meta             *meta.PackageMeta
-	rewriteVars      map[string]string
-	staticByteArrays map[string][]byte
-	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs            []string
+	ObjFiles            []string               // file-backed archive members: .o or .ll
+	ObjBuffers          []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile         string                 // archive file: .a (output of archiver, used for linking)
+	Meta                *meta.PackageMeta
+	rewriteVars         map[string]string
+	staticByteArrays    map[string][]byte
+	guardedInitializers map[*ssa.BasicBlock][]cl.OptionalInitializer
+	tempObjFiles        []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
