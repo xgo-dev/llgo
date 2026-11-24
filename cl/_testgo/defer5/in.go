@@ -15,7 +15,8 @@ package main
 func main() {
 	// The function installs one defer frame and preserves both the previous
 	// thread frame and the initial resume block used after longjmp.
-	// CHECK: [[OUTER_DEFER:%[0-9]+]] = call ptr @"{{.*}}.GetThreadDefer"()
+	// CHECK: [[DEFER_SLOT:%[0-9]+]] = call ptr @"{{.*}}.ThreadDeferSlot"()
+	// CHECK-NEXT: [[OUTER_DEFER:%[0-9]+]] = load ptr, ptr [[DEFER_SLOT]]
 	// CHECK-NEXT: [[DEFER_JMPBUF:%[0-9]+]] = alloca i8, i64 {{[0-9]+}}, align 1
 	// CHECK-NEXT: [[DEFER_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 	// CHECK: [[FRAME_BUF_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 0
@@ -24,7 +25,7 @@ func main() {
 	// CHECK-NEXT: store ptr [[OUTER_DEFER]], ptr [[FRAME_PREV_FIELD]]
 	// CHECK: [[FRAME_RESUME_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 3
 	// CHECK-NEXT: store ptr blockaddress(@main.main, %[[OUTER_RESUME:[A-Za-z0-9_]+]]), ptr [[FRAME_RESUME_FIELD]]
-	// CHECK-NEXT: call void @"{{.*}}.SetThreadDefer"(ptr [[DEFER_FRAME]])
+	// CHECK-NEXT: store ptr [[DEFER_FRAME]], ptr [[DEFER_SLOT]]
 	// CHECK: [[DEFER_STATE_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 1
 	// CHECK-NEXT: [[DEFER_RESUME_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 3
 	// CHECK-NEXT: [[DEFER_RETHROW_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 4
@@ -92,7 +93,7 @@ func main() {
 	// CHECK-NEXT: call void @"{{.*}}.PrintString"(%"{{.*}}.String" [[POP2_TEXT]])
 	// CHECK: [[DEFER_FRAME_VALUE:%[0-9]+]] = load %"{{.*}}.Defer", ptr [[DEFER_FRAME]]
 	// CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = extractvalue %"{{.*}}.Defer" [[DEFER_FRAME_VALUE]], 2
-	// CHECK-NEXT: call void @"{{.*}}.SetThreadDefer"(ptr [[PREVIOUS_DEFER]])
+	// CHECK-NEXT: store ptr [[PREVIOUS_DEFER]], ptr [[DEFER_SLOT]]
 	defer println("A")
 	defer func() {
 		if e := recover(); e != nil {

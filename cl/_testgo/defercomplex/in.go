@@ -16,10 +16,11 @@ package main
 // CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
 // CHECK: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RECORD_ENV:%[0-9]+]], 1
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)
-// CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK-NEXT: [[DEFER_SLOT:%[0-9]+]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = load ptr, ptr [[DEFER_SLOT]]
 // CHECK: [[DEFER_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREVIOUS_DEFER]], ptr %{{[0-9]+}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[DEFER_FRAME]])
+// CHECK: store ptr [[DEFER_FRAME]], ptr [[DEFER_SLOT]]
 // CHECK: [[DEFER_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[DEFER_FRAME]], i32 0, i32 5
 // CHECK: [[OUTER_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[EXIT_OUTER]], i64 10 }, i64 [[OUTER_I:%[0-9]+]])
 // CHECK: store { ptr, ptr } [[RECORD_FN]], ptr %{{[0-9]+}}
@@ -66,7 +67,7 @@ package main
 // AMD64-NEXT: call void [[RUN_TARGET]](ptr nest [[RUN_ENV]], %"{{.*}}String" [[RUN_LABEL]])
 // CHECK: [[SAVED_DEFER:%[0-9]+]] = load %"{{.*}}Defer", ptr [[DEFER_FRAME]]
 // CHECK-NEXT: [[RESTORED_DEFER:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[SAVED_DEFER]], 2
-// CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[RESTORED_DEFER]])
+// CHECK-NEXT: store ptr [[RESTORED_DEFER]], ptr [[DEFER_SLOT]]
 // ARM64-LABEL: define void @"main.complexOrder$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
 // AMD64-LABEL: define void @"main.complexOrder$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
 // CHECK: [[RECORD_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %0
