@@ -118,7 +118,7 @@ echo "undefined symbols remaining (all must resolve at the IDF link):"
 # Link-checklist echo: every package glue symbol must appear above. A
 # missing llgo_net_* / llgo_tls_* means the Go program (or a synced glue)
 # drifted from the package set this script wires into the IDF build.
-echo "llgo_net_* glue symbols (must all be in the list above):"
+echo "llgo_net_* glue symbols (TCP + UDP: the dgram set is llgo_net_dgram_socket / llgo_net_bind / llgo_net_sendto / llgo_net_recvfrom - must all be in the list above):"
 "$NM" -u "$OUT" | grep 'llgo_net_' || echo "NONE - goapp does not import pkg/esp/net?"
 echo "llgo_tls_* glue symbols (must all be in the list above):"
 "$NM" -u "$OUT" | grep 'llgo_tls_' || echo "NONE - goapp does not import pkg/esp/tls?"
