@@ -243,6 +243,97 @@ int32_t llgo_net_accept(int32_t fd, int32_t *out_conn_fd)
     return 0;
 }
 
+/* ---- UDP datagram primitives (udp.go) ----
+ * The same design rules as the TCP path above: non-blocking socket at
+ * birth, one syscall attempt per call, and the Go side drives the quantum
+ * retry loops over llgo_net_poll. UDP connect is a local PCB operation, so
+ * the TCP path's llgo_net_connect serves DialUDP unchanged (lwip returns
+ * immediately for SOCK_DGRAM - no EINPROGRESS, no SO_ERROR readback).
+ */
+
+/* Create a UDP (SOCK_DGRAM) socket with O_NONBLOCK already set, mirroring
+ * llgo_net_socket. */
+int32_t llgo_net_dgram_socket(int32_t *out_fd)
+{
+    int fd = lwip_socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        return errno;
+    }
+    int fl = lwip_fcntl(fd, F_GETFL, 0);
+    if (fl < 0) {
+        int e = errno;
+        lwip_close(fd);
+        return e;
+    }
+    if (lwip_fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
+        int e = errno;
+        lwip_close(fd);
+        return e;
+    }
+    *out_fd = fd;
+    return 0;
+}
+
+/* Bind the datagram socket to ip:port. ip is the network-order address
+ * word (0 = INADDR_ANY: every local IP), port the host-order port (0 =
+ * lwip picks an ephemeral one). No SO_REUSEADDR: UDP has no TIME_WAIT-ish
+ * lingering, so a closed PCB frees the port immediately. */
+int32_t llgo_net_bind(int32_t fd, uint32_t ip, int32_t port)
+{
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    sa.sin_addr.s_addr = ip;
+    if (lwip_bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        return errno;
+    }
+    return 0;
+}
+
+/* One sendto attempt: the whole datagram goes out or the call fails (a
+ * datagram socket never accepts part of a message). *out_n is what was
+ * sent (== len on success). */
+int32_t llgo_net_sendto(int32_t fd, const uint8_t *buf, int32_t len,
+                        uint32_t ip, int32_t port, int32_t *out_n)
+{
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    sa.sin_addr.s_addr = ip;
+    int n = lwip_sendto(fd, buf, (size_t)len, 0,
+                        (struct sockaddr *)&sa, sizeof(sa));
+    if (n < 0) {
+        return errno;
+    }
+    *out_n = n;
+    return 0;
+}
+
+/* One recvfrom attempt: drains one datagram into buf, truncated at len
+ * (the discarded tail is gone - POSIX recvfrom semantics, udp.go
+ * documents it as the truncation contract). The sender's address comes
+ * back in the same in-memory network-order word + host-order port the
+ * other primitives take. A zero-length datagram reports *out_n == 0 with
+ * a 0 return - UDP has no EOF, so udp.go reads that as an empty
+ * datagram, not a close. */
+int32_t llgo_net_recvfrom(int32_t fd, uint8_t *buf, int32_t len,
+                          uint32_t *out_ip, int32_t *out_port, int32_t *out_n)
+{
+    struct sockaddr_in sa;
+    socklen_t salen = sizeof(sa);
+    int n = lwip_recvfrom(fd, buf, (size_t)len, 0,
+                          (struct sockaddr *)&sa, &salen);
+    if (n < 0) {
+        return errno;
+    }
+    *out_ip = sa.sin_addr.s_addr;
+    *out_port = (int32_t)ntohs(sa.sin_port);
+    *out_n = n;
+    return 0;
+}
+
 /* Name resolution through lwip's DNS client. host is NOT NUL-terminated on
  * the Go side, so it is copied into a bounded stack buffer (DNS names are
  * at most 255 bytes; net.go rejects anything longer). Dotted-quad literals

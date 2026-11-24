@@ -1,0 +1,32 @@
+# Golden for the esp-emu network probes ([go] net ... / [go] net udp ...)
+# of _demo/esp-idf-wifi, captured from an acceptance run (esp-emu v1.2.0,
+# esp32s31-idf firmware, 16 MiB PSRAM, host peers echosrv on 127.0.0.1:9000
+# and udpsrv on 127.0.0.1:9002).
+#
+# Scope: every [go] net line the probes print except the heap marks
+# ([go] wifi heap ... lines carry IDF-heap byte counts that legitimately
+# vary between runs). The two "in <ms>" timings have measured 0 ms in
+# every recorded run (the NAT connect and the localhost resolve complete
+# within one emulated scheduler slice), so they are part of the golden;
+# if a run ever reports non-zero there, treat the run, not the golden,
+# as suspect before changing anything.
+#
+# Regression check: grep '^\[go\] net' <emu log> | grep -v 'heap ' and
+# byte-diff against this file.
+#
+# Discipline: udpProbe lines may only be APPENDED at the end of the udp
+# section; every other line must stay byte-identical. A diff means a
+# behavior change in the pre-existing TCP path or the new UDP path broke
+# the acceptance contract.
+[go] net: start
+[go] net dial ok in 0 ms
+[go] net echo 256 / 256 bytes verified
+[go] net PASS
+[go] net resolve localhost = 127.0.0.1 in 0 ms
+[go] net loopback self-connect PASS
+[go] net udp: start
+[go] net udp peer 192.168.4.1:9002
+[go] net udp round-trip ok n=128
+[go] net udp connected round-trip ok n=256
+[go] net udp loopback round-trip ok n=64
+[go] net udp PASS

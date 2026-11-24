@@ -50,6 +50,23 @@ func netBindListen(fd int32, port int32, backlog int32) int32 {
 	return errUnsupported
 }
 
+func netDgramSocket(fd *int32) int32 { _ = fd; return errUnsupported }
+
+func netBind(fd int32, ip uint32, port int32) int32 {
+	_, _, _ = fd, ip, port
+	return errUnsupported
+}
+
+func netSendTo(fd int32, buf *uint8, length int32, ip uint32, port int32, n *int32) int32 {
+	_, _, _, _, _, _ = fd, buf, length, ip, port, n
+	return errUnsupported
+}
+
+func netRecvFrom(fd int32, buf *uint8, length int32, ip *uint32, port *int32, n *int32) int32 {
+	_, _, _, _, _, _ = fd, buf, length, ip, port, n
+	return errUnsupported
+}
+
 func netAccept(fd int32, connFd *int32) int32 {
 	_, _ = fd, connFd
 	return errUnsupported

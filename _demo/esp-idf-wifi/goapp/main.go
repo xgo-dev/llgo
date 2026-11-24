@@ -114,6 +114,32 @@ func hex8(v uint32) string {
 	return string(s[:])
 }
 
+// dec32 formats v in decimal (negatives with a leading minus). println has
+// no number form without a separating space, and the udp probe's golden
+// lines pin the exact "n=128" shape, so the probe concatenates this in.
+func dec32(v int32) string {
+	neg := v < 0
+	x := uint32(v)
+	if neg {
+		x = -uint32(v)
+	}
+	if x == 0 {
+		return "0"
+	}
+	var buf [10]byte
+	i := len(buf)
+	for x > 0 {
+		i--
+		buf[i] = byte('0' + x%10)
+		x /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
 // psramProbe keeps a working set far larger than the static GC heap alive and
 // re-reads every byte of it, to show the heap growing into PSRAM segments.
 // Byte j of block i holds (i*7+j)&0xff, so a block read back from the wrong
@@ -380,6 +406,7 @@ const (
 	probeI2C  = true
 	probeI2S  = true
 	probeNet  = true
+	probeUDP  = true
 	probeTLS  = true
 	probeWS   = true
 )
@@ -1047,6 +1074,199 @@ func netProbe() {
 	heapMark("net-loopback")
 }
 
+// udpProbe exercises pkg/esp/net's UDP datagram sockets (UDPConn) end to
+// end over the same NAT path netProbe just proved, plus the guest loopback.
+// Three deadline-bounded round-trips, strictly sequential on this
+// goroutine (a quantum wait is a C-level select that gives the llgo
+// scheduler no yield point):
+//
+//  1. unconnected form against the host peer: WriteTo + ReadFrom to
+//     192.168.4.1:9002 - forwarded by the NAT to idfproj/host/udpsrv,
+//     which echoes each datagram back to its source;
+//  2. connected form against the same peer: DialUDP + Write + Read (one
+//     Read per datagram: a datagram socket has no partial reads, so the
+//     echo arrives as a single piece);
+//  3. loopback self-conversation: ListenUDP on 127.0.0.1:9003 (127.0.0.1
+//     works in the emulator because IDF enables LWIP_NETIF_LOOPBACK), a
+//     connected DialUDP into it, and the bound socket's ReadFrom/WriteTo
+//     answering - the UDP analog of netProbe's loopback self-connect.
+//
+// "[go] net udp PASS" is the probe's gate; every failure prints a
+// "[go] net udp FAIL ..." line and returns without PASS. Every wait is
+// deadline-bounded (20 ms quanta under explicit deadlines), so a missing
+// peer surfaces as an errno, never a hang; probeUDP is the contingency
+// switch, same convention as the other probes.
+func udpProbe() {
+	println("[go] net udp: start")
+	const (
+		hostLen     = 128 // phase 1: unconnected WriteTo/ReadFrom datagram
+		peerLen     = 256 // phase 2: connected Write/Read datagram
+		lbLen       = 64  // phase 3: loopback datagram
+		udpPort     = 9002
+		lbUdpPort   = 9003
+		udpDeadline = 5000
+	)
+	// lcg fills n bytes with the same pseudo-random generator netProbe
+	// uses; an echo cannot pass by accident, and it needs no imports.
+	lcg := func(seed uint32, n int32) []byte {
+		buf := make([]byte, n)
+		s := seed
+		for i := range buf {
+			s = s*1664525 + 1013904223
+			buf[i] = byte(s >> 24)
+		}
+		return buf
+	}
+	mism := func(a, b []byte) int {
+		m := 0
+		for i := range a {
+			if a[i] != b[i] {
+				m++
+			}
+		}
+		return m
+	}
+	deadline := func(c *net.UDPConn) bool {
+		if e := c.SetDeadline(udpDeadline); e != 0 {
+			println("[go] net udp set_deadline err =", int(e), net.ErrName(e))
+			return false
+		}
+		return true
+	}
+
+	// Phase 1: unconnected WriteTo/ReadFrom to the host peer. The NAT
+	// rewrites the echo's source back to 192.168.4.1:9002, so ReadFrom's
+	// sender address is deterministic and gets verified against it.
+	host := net.Addr{IP: net.IPv4(192, 168, 4, 1), Port: udpPort}
+	c, e := net.ListenUDP(nil)
+	if e != 0 {
+		println("[go] net udp listen err =", int(e), net.ErrName(e))
+		println("[go] net udp FAIL listen")
+		return
+	}
+	if !deadline(c) {
+		println("[go] net udp FAIL listen-deadline")
+		c.Close()
+		return
+	}
+	msg := lcg(0x51ED270B, hostLen)
+	if w, we := c.WriteTo(msg, host); we != 0 || w != hostLen {
+		println("[go] net udp write_to n =", int(w), "err =", int(we), net.ErrName(we))
+		println("[go] net udp FAIL write-to")
+		c.Close()
+		return
+	}
+	var got [hostLen]byte
+	n, from, re := c.ReadFrom(got[:])
+	if re != 0 || n != hostLen || mism(msg, got[:]) != 0 {
+		println("[go] net udp read_from n =", int(n), "err =", int(re), net.ErrName(re),
+			"peer =", from.String(), "mismatches =", mism(msg, got[:]))
+		println("[go] net udp FAIL read-from")
+		c.Close()
+		return
+	}
+	if from != host {
+		println("[go] net udp read_from peer =", from.String(), "want", host.String())
+		println("[go] net udp FAIL read-from-peer")
+		c.Close()
+		return
+	}
+	c.Close()
+	println("[go] net udp peer " + from.String())
+	println("[go] net udp round-trip ok n=" + dec32(n))
+
+	// Phase 2: connected DialUDP Write/Read to the same peer.
+	cc, e := net.DialUDP(nil, &host)
+	if e != 0 {
+		println("[go] net udp dial err =", int(e), net.ErrName(e))
+		println("[go] net udp FAIL dial")
+		return
+	}
+	if !deadline(cc) {
+		println("[go] net udp FAIL dial-deadline")
+		cc.Close()
+		return
+	}
+	msg2 := lcg(0x2545F491, peerLen)
+	if w := cc.Write(msg2); w != peerLen {
+		println("[go] net udp write n =", int(w), "want", peerLen)
+		println("[go] net udp FAIL write")
+		cc.Close()
+		return
+	}
+	var got2 [peerLen]byte
+	n2, e2 := cc.Read(got2[:])
+	if e2 != 0 || n2 != peerLen || mism(msg2, got2[:]) != 0 {
+		println("[go] net udp read n =", int(n2), "err =", int(e2), net.ErrName(e2),
+			"mismatches =", mism(msg2, got2[:]))
+		println("[go] net udp FAIL read")
+		cc.Close()
+		return
+	}
+	cc.Close()
+	println("[go] net udp connected round-trip ok n=" + dec32(n2))
+
+	// Phase 3: loopback self-conversation on 127.0.0.1. UDP has no
+	// accept: the bound socket ReadFrom's the datagram, sees the client's
+	// ephemeral port in the sender address, and WriteTo's the echo back.
+	lb := net.Addr{IP: net.IPv4(127, 0, 0, 1), Port: lbUdpPort}
+	srv, e := net.ListenUDP(&lb)
+	if e != 0 {
+		println("[go] net udp listen loopback err =", int(e), net.ErrName(e))
+		println("[go] net udp FAIL listen-loopback")
+		return
+	}
+	cli, e := net.DialUDP(nil, &lb)
+	if e != 0 {
+		println("[go] net udp dial loopback err =", int(e), net.ErrName(e))
+		println("[go] net udp FAIL dial-loopback")
+		srv.Close()
+		return
+	}
+	if !deadline(srv) || !deadline(cli) {
+		println("[go] net udp FAIL loopback-deadline")
+		cli.Close()
+		srv.Close()
+		return
+	}
+	msg3 := lcg(0x0B6675F1, lbLen)
+	if w := cli.Write(msg3); w != lbLen {
+		println("[go] net udp loopback write n =", int(w), "want", lbLen)
+		println("[go] net udp FAIL loopback-write")
+		cli.Close()
+		srv.Close()
+		return
+	}
+	var atSrv, back [lbLen]byte
+	n3, from3, e3 := srv.ReadFrom(atSrv[:])
+	if e3 != 0 || n3 != lbLen || mism(msg3, atSrv[:]) != 0 {
+		println("[go] net udp loopback read_from n =", int(n3), "err =", int(e3), net.ErrName(e3),
+			"mismatches =", mism(msg3, atSrv[:]))
+		println("[go] net udp FAIL loopback-read-from")
+		cli.Close()
+		srv.Close()
+		return
+	}
+	if w, we := srv.WriteTo(atSrv[:n3], from3); we != 0 || w != n3 {
+		println("[go] net udp loopback write_to n =", int(w), "err =", int(we), net.ErrName(we))
+		println("[go] net udp FAIL loopback-echo")
+		cli.Close()
+		srv.Close()
+		return
+	}
+	n4, e4 := cli.Read(back[:])
+	cli.Close()
+	srv.Close()
+	if e4 != 0 || n4 != lbLen || mism(msg3, back[:]) != 0 {
+		println("[go] net udp loopback read n =", int(n4), "err =", int(e4), net.ErrName(e4),
+			"mismatches =", mism(msg3, back[:]))
+		println("[go] net udp FAIL loopback-read")
+		return
+	}
+	println("[go] net udp loopback round-trip ok n=" + dec32(n4))
+	println("[go] net udp PASS")
+}
+
 func main() {
 	defer wifi.Finish() // flush C stdio on every exit path
 	fixStreams()
@@ -1225,6 +1445,15 @@ func main() {
 		netProbe()
 	} else {
 		println("[go] net skipped (probeNet switch off; every net path is deadline-bounded)")
+	}
+
+	// UDP over lwip: the datagram analog right after the TCP probe - NAT
+	// echo in both the unconnected and the connected form, plus the
+	// loopback self-conversation. Same bounded-wait discipline.
+	if probeUDP {
+		udpProbe()
+	} else {
+		println("[go] net udp skipped (probeUDP switch off; every net path is deadline-bounded)")
 	}
 
 	// TLS on top of lwip: both authmodes plus the wrong-CA negative test

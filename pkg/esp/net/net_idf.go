@@ -41,6 +41,18 @@ func netClose(fd int32) int32
 //go:linkname netBindListen C.llgo_net_bind_listen
 func netBindListen(fd int32, port int32, backlog int32) int32
 
+//go:linkname netDgramSocket C.llgo_net_dgram_socket
+func netDgramSocket(fd *int32) int32
+
+//go:linkname netBind C.llgo_net_bind
+func netBind(fd int32, ip uint32, port int32) int32
+
+//go:linkname netSendTo C.llgo_net_sendto
+func netSendTo(fd int32, buf *uint8, length int32, ip uint32, port int32, n *int32) int32
+
+//go:linkname netRecvFrom C.llgo_net_recvfrom
+func netRecvFrom(fd int32, buf *uint8, length int32, ip *uint32, port *int32, n *int32) int32
+
 //go:linkname netAccept C.llgo_net_accept
 func netAccept(fd int32, connFd *int32) int32
 
