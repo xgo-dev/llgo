@@ -75,8 +75,16 @@ done
 "$LLGO_BIN" build -target esp32s31-idf -o "$MAIN/llgo_tmp" ./goapp
 mv "$MAIN/llgo_tmp.elf" "$MAIN/llgo_out.raw.o"
 
-# 2. Assemble the runtime symbol providers and merge them in.
-"$CLANG" --target=riscv32-esp-elf -march=rv32imc_zicsr -c "$DIR/llgo_syms.S" -o "$DIR/llgo_syms.o"
+# 2. Assemble the runtime symbol providers and merge them in. The static GC
+#    window defaults to 64 KiB; the collector grows into PSRAM from there
+#    (tinygogc/gc_segment_idf.go), so the window only covers hot traffic on a
+#    PSRAM board. Raise LLGO_GC_WINDOW_KB for a PSRAM-less board whose live set
+#    does not fit 64 KiB.
+GC_WIN_KB="${LLGO_GC_WINDOW_KB:-64}"
+"$CLANG" --target=riscv32-esp-elf -march=rv32imc_zicsr \
+    -DLLGO_GC_WINDOW_BYTES=$((GC_WIN_KB * 1024)) \
+    -c "$DIR/llgo_syms.S" -o "$DIR/llgo_syms.o"
+echo "GC window: ${GC_WIN_KB} KiB"
 "$LLD" -r -m elf32lriscv "$MAIN/llgo_out.raw.o" "$DIR/llgo_syms.o" -o "$MAIN/llgo_out.merged.o"
 
 # 3. Rename the carried builtins away from libgcc/esp_libc names.
