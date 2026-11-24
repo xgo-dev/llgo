@@ -12,6 +12,30 @@ import (
 	"github.com/xgo-dev/llgo/target"
 )
 
+type testImporter struct {
+	base gotypes.Importer
+}
+
+func (ti testImporter) Import(path string) (*gotypes.Package, error) {
+	if path == "structs" {
+		pkg := gotypes.NewPackage("structs", "structs")
+		inner := gotypes.NewNamed(
+			gotypes.NewTypeName(token.NoPos, pkg, "hostLayout", nil),
+			gotypes.NewStruct(nil, nil),
+			nil,
+		)
+		hl := gotypes.NewNamed(
+			gotypes.NewTypeName(token.NoPos, pkg, "HostLayout", nil),
+			gotypes.NewStruct([]*gotypes.Var{gotypes.NewField(token.NoPos, pkg, "_", inner, false)}, nil),
+			nil,
+		)
+		pkg.Scope().Insert(hl.Obj())
+		pkg.MarkComplete()
+		return pkg, nil
+	}
+	return ti.base.Import(path)
+}
+
 func checkPkg(t *testing.T, src string) *gotypes.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -19,7 +43,7 @@ func checkPkg(t *testing.T, src string) *gotypes.Package {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := gotypes.Config{Importer: importer.Default()}
+	conf := gotypes.Config{Importer: testImporter{base: importer.Default()}}
 	pkg, err := conf.Check("example.com/sample", fset, []*ast.File{file}, nil)
 	if err != nil {
 		t.Fatal(err)

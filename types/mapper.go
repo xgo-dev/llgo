@@ -63,22 +63,24 @@ func (m *Mapper) lookupCallConv(t gotypes.Type) CallConv {
 	}
 	for {
 		var obj *gotypes.TypeName
-		switch n := t.(type) {
-		case *gotypes.Named:
+		var next gotypes.Type
+		var isAlias bool
+		if n, ok := t.(*gotypes.Named); ok {
 			obj = n.Obj()
-		case *gotypes.Alias:
-			obj = n.Obj()
+		} else if aObj, rhs, ok := aliasObjAndRhs(t); ok {
+			obj = aObj
+			next = rhs
+			isAlias = true
 		}
 		if obj != nil {
 			if cc, ok := m.lookup(typeNameKey(obj)); ok && cc.IsNative() {
 				return cc
 			}
 		}
-		alias, ok := t.(*gotypes.Alias)
-		if !ok {
+		if !isAlias || next == t {
 			return CallConvUnknown
 		}
-		t = alias.Rhs()
+		t = next
 	}
 }
 
@@ -97,11 +99,12 @@ func (m *Mapper) Map(t gotypes.Type, cc CallConv) Type {
 		return cached
 	}
 
-	switch u := t.(type) {
-	case *gotypes.Alias:
-		res := m.Map(u.Rhs(), cc)
+	if _, rhs, ok := aliasObjAndRhs(t); ok {
+		res := m.Map(rhs, cc)
 		m.cache[key] = res
 		return res
+	}
+	switch u := t.(type) {
 	case *gotypes.Named:
 		obj := u.Obj()
 		pkgPath := ""

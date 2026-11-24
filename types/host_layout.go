@@ -29,7 +29,7 @@ func IsHostLayoutMarker(t gotypes.Type) bool {
 	if !ok || st.NumFields() != 1 || st.Field(0).Name() != "_" {
 		return false
 	}
-	n, ok := gotypes.Unalias(st.Field(0).Type()).(*gotypes.Named)
+	n, ok := unaliasType(st.Field(0).Type()).(*gotypes.Named)
 	if !ok || n.Obj().Pkg() == nil ||
 		(n.Obj().Pkg().Path() != "structs" && n.Obj().Pkg().Path() != "github.com/xgo-dev/llgo/runtime/internal/structs") ||
 		n.Obj().Name() != "hostLayout" {

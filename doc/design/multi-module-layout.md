@@ -9,7 +9,7 @@ whole-program frontend and LLVM re-materialization on cache hits.
 ## Target Module Graph
 
 ```text
-github.com/xgo-dev/llgo              (root go.mod — lower Go baseline, e.g. go 1.24)
+github.com/xgo-dev/llgo              (root go.mod — low Go baseline: go 1.20)
 ├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
 ├── target/                          Pure-Go target triple, arch, and config model
 ├── types/                           Pure-Go LLGo type model (Closure, NativePtr, HostLayout, SIMD)
@@ -28,8 +28,9 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
 ### Module Invariants
 
 1. **Root `go.mod` (`github.com/xgo-dev/llgo`)**:
-   - Declares a conservative Go version (e.g., `go 1.24`) suitable for broad
-     library adoption.
+   - Declares `go 1.20` (matching `runtime/go.mod`) for maximum downstream
+     library compatibility; any Go 1.22+/1.23+ stdlib hooks (such as
+     `go/types.Alias`) are isolated behind `//go:build` files.
    - Contains **zero** `github.com/xgo-dev/llvm`, **zero** `golang.org/x/tools`,
      **zero** CGo dependencies, and **zero** `replace` directives.
    - Verified in CI by:
