@@ -9,8 +9,9 @@ import "unsafe"
 // are local to the worker that installed them.
 type FuncType struct {
 	Type
-	In    []*Type
-	Out   []*Type
-	Call_ unsafe.Pointer
-	Make_ unsafe.Pointer
+	Types    **Type // input types followed by output types
+	InCount  int
+	OutCount int
+	Call_    unsafe.Pointer
+	Make_    unsafe.Pointer
 }

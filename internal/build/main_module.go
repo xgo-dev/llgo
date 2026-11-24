@@ -67,7 +67,7 @@ func needsRuntimeMainFrame(ctx *context) bool {
 }
 
 func needsWasmRuntimeScheduler(ctx *context) bool {
-	if ctx.buildConf.BuildMode != BuildModeExe {
+	if ctx.emscriptenDirectMain || ctx.buildConf.BuildMode != BuildModeExe {
 		return false
 	}
 	if ctx.crossCompile.WasmPostLink.Asyncify {
@@ -99,6 +99,13 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	isarchive.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCArchive))
 	mainPkg.Module().NamedGlobal("runtime.islibrary").SetVisibility(llvm.HiddenVisibility)
 	mainPkg.Module().NamedGlobal("runtime.isarchive").SetVisibility(llvm.HiddenVisibility)
+	if slices.Contains(ctx.crossCompile.BuildTags, embeddedConsoleTag) {
+		flag := mainPkg.NewVarEx(embeddedConsoleFlag, prog.Pointer(prog.Bool()))
+		flag.Init(prog.BoolVal(ctx.embeddedDirectConsole))
+		value := mainPkg.Module().NamedGlobal(embeddedConsoleFlag)
+		value.SetGlobalConstant(true)
+		value.SetVisibility(llvm.HiddenVisibility)
+	}
 	funcInfo := cfg.funcInfo
 	if needsRuntimeMainFrame(ctx) {
 		// The native process entry is the physical frame below runtime.main,
@@ -137,6 +144,9 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 	// TODO(lijie): workaround for syscall patch
 	defineWeakNoArgStub(mainPkg, "syscall.init")
+	if emscriptenSchedulerProofEnabled(ctx) && !ctx.probeEmscriptenScheduler {
+		defineEmscriptenSchedulerMarker(mainPkg)
+	}
 
 	var pyInit llssa.Function
 	var pyFinalize llssa.Function
@@ -233,7 +243,11 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	if wasmRuntimeScheduler {
 		defineWasmMainTask(mainPkg, startPCLN, packageInits, mainInit, mainMain)
 		startPCLN = nil
-		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+		if ctx.probeEmscriptenScheduler {
+			wasmRunMain = mainPkg.NewFunc(emscriptenMainDispatch, llssa.NoArgsNoRet, llssa.CDecl)
+		} else {
+			wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
+		}
 	}
 	var coverageExit llssa.Function
 	if ctx.buildConf.Coverage != nil {
@@ -492,24 +506,29 @@ type entryFunctions struct {
 }
 
 // defineEntryFunction creates the program's entry function. The name is
-// "main" for standard targets, or "__main_argc_argv" with hidden visibility
-// for WASM targets that don't require _start.
+// "main" for standard targets or a hidden libc entry for WASM commands.
 //
 // Controlled-thread Linux amd64/arm64 executables first enable the ownership
 // protocol and configure the collector, before any runtime/context allocation.
-// The entry stores argc/argv, optionally disables stdio buffering, and manages
-// the local context. Native PCLN builds run the common startup sequence through
+// The entry records argc/argv when provided and manages the local context and
+// stdio buffering. Native PCLN builds run the common startup sequence through
 // runtime.main; other builds run it inline. That sequence initializes Python,
 // the runtime stub/package, ABI types, and packages, calls main.main, and then
 // finalizes Python. The entry leaves the local context and returns 0.
 func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
 	prog := pkg.Prog
 	entryName := processEntrySymbol
-	if isWasmTarget(ctx.buildConf.Goos) &&
+	sig := newEntrySignature(argvType.RawType())
+	// Use libc's zero-argument entry only when the program cannot observe
+	// argv. Heap reservation is still handled by the runtime-free proof.
+	omitArgs := ctx.wasiOmitArgs || useMinimalWASIStartup(ctx)
+	if omitArgs {
+		entryName = "__main_void"
+		sig = newSignature(nil, []types.Type{types.Typ[types.Int32]})
+	} else if isWasmTarget(ctx.buildConf.Goos) &&
 		(!needStart(ctx) || ctx.crossCompile.WasmRuntime.RunMainTask) {
 		entryName = "__main_argc_argv"
 	}
-	sig := newEntrySignature(argvType.RawType())
 	fn := pkg.NewFunc(entryName, sig, llssa.CDecl)
 	fnVal := pkg.Module().NamedFunction(entryName)
 	if entryName != processEntrySymbol {
@@ -540,8 +559,10 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 	if hasLocalContext {
 		localCtx, previousLocalCtx = b.EnterLocalContext()
 	}
-	b.Store(argcVar.Expr, fn.Param(0))
-	b.Store(argvVar.Expr, fn.Param(1))
+	if !omitArgs {
+		b.Store(argcVar.Expr, fn.Param(0))
+		b.Store(argvVar.Expr, fn.Param(1))
+	}
 	if IsStdioNobuf() {
 		emitStdioNobuf(b, pkg, ctx.buildConf.Goos)
 	}
@@ -646,8 +667,8 @@ func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInit
 		[]types.Type{types.Typ[types.UnsafePointer]},
 		[]types.Type{types.Typ[types.UnsafePointer]},
 	)
-	fn := pkg.NewFunc("__llgo_wasm_main", sig, llssa.CDecl)
-	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
+	fn := pkg.NewFunc(wasmMainTaskSymbol, sig, llssa.CDecl)
+	fnVal := pkg.Module().NamedFunction(wasmMainTaskSymbol)
 	fnVal.SetVisibility(llvm.HiddenVisibility)
 	b := fn.MakeBody(1)
 	if startPCLN != nil {

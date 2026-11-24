@@ -1,0 +1,9 @@
+{
+	"inherits": ["cortex-m3"],
+	"build-tags": ["qemu", "mps2_an385", "llgo.baremetal.stdio", "llgo.baremetal.cstdio", "llgo.singlecontext"],
+	"linkerscript": "targets/mps2-an385.ld",
+	"default-stack-size": 16384,
+	"extra-files": ["targets/cortex-m-qemu.s", "targets/cortex-m-qemu.c"],
+	"emulator": "qemu-system-arm -machine mps2-an385 -semihosting -nographic -kernel {}",
+	"debug-server": "qemu-system-arm -machine mps2-an385 -semihosting -nographic -serial null -monitor none -S -gdb {debug-stdio} -kernel {}"
+}

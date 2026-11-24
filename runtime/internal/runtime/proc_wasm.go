@@ -184,6 +184,9 @@ func releaseWasmOwnership(gp *g) {
 }
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
+	if wasmSchedulerProof {
+		requireWasmScheduler()
+	}
 	gp := newproc1(fn, arg, callergp)
 	if !initWasmFiber(gp, wasmcontext.Entry(wasmGStart), unsafe.Pointer(gp), stackSize) {
 		releaseG()
@@ -251,6 +254,9 @@ func goschedBackend() {
 }
 
 func gopark() {
+	if wasmSchedulerProof {
+		requireWasmScheduler()
+	}
 	gp := getg()
 	casgstatus(gp, _Grunning, _Gwaiting)
 	suspendWasmG(gp)

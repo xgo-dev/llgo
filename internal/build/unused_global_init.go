@@ -23,6 +23,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
@@ -36,7 +37,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
+func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if err := ctx.frontend.restoreInitializers(); err == nil {
 			return
@@ -46,8 +47,11 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 		ctx.frontend.buildAll()
 	}
 	ctx.wasmClosedProgram = false
+	ctx.embeddedClosedProgram = false
 	ctx.frontendOptions.UnusedGlobalInits = nil
-	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || ctx.buildConf.Goarch != "wasm" {
+	embedded := asmRoots != nil && embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
+	wasm := ctx.buildConf.Goarch == "wasm"
+	if ctx.buildConf.BuildMode != BuildModeExe || ctx.mode == ModeGen || !wasm && !embedded {
 		return
 	}
 	if ctx.buildConf.OptLevel == optlevel.O0 {
@@ -62,7 +66,16 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 	}
 	// Both pruning passes require this proof, even when no initializer plan
 	// is produced. Its representation is independent of the initializer plan.
-	ctx.wasmClosedProgram = true
+	if embedded && asmRoots.opaqueAsmPkg != "" {
+		return
+	}
+	ctx.wasmClosedProgram = wasm
+	ctx.embeddedClosedProgram = embedded
+	if embedded {
+		slices.Sort(asmRoots.roots)
+		ctx.sizePruningRoots = slices.Compact(asmRoots.roots)
+	}
+	configureValueFormats(ctx, asmRoots)
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
 	inspect := func(pkg *types.Package, files []*ast.File) {
@@ -112,10 +125,10 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 // Native objects can reference Go globals without a Go SSA operand. Runtime
 // providers use declared linknames; user-supplied objects require a future
 // linker-summary join, so retain all initializers in their presence.
-func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *wasiSizePruningInputs) string {
+func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *linkPruningInputs) string {
 	// Arbitrary linker arguments can add objects or force exported symbols.
 	// Permit output-only diagnostics and backend caches used by LTO/size jobs.
-	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
+	for _, flags := range []string{os.Getenv("LDFLAGS"), ctx.commands.lookup("LDFLAGS"), ctx.buildConf.LinkOptions.ExternalLinkerFlags} {
 		for _, flag := range safesplit.SplitPkgConfigFlags(flags) {
 			// Clang splits -Wl on every comma; a diagnostic option can be
 			// followed by an export, forced root or native object.
@@ -181,7 +194,8 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *w
 				}
 			}
 		}
-		if flags, imports := collectGoCgoPragmas(pkg.Syntax); len(flags) != 0 || len(imports) != 0 {
+		flags, imports := collectGoCgoPragmas(pkg.Syntax)
+		if (len(flags) != 0 || len(imports) != 0) && !allowsNativeFormatImports(ctx, asmRoots, pkg, flags, imports) {
 			return pkg.PkgPath
 		}
 	}
@@ -190,32 +204,46 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *w
 
 // Translated assembly exposes its global references in LLVM IR, including
 // cross-package references. Unsupported or opaque inputs retain all Go inits.
-func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool, asmRoots *wasiSizePruningInputs) bool {
+func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exported map[string]bool, asmRoots *linkPruningInputs) bool {
 	files, err := compiledPkgSFiles(ctx, pkg)
 	if err != nil {
 		return false
 	}
 	for _, path := range files {
-		src, err := llplan9asm.ReadFileWithOverlay(ctx.buildConf.Overlay, path)
+		mod, err := translatePruningAssembly(ctx, pkg, path)
 		if err != nil {
 			return false
 		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx.buildConf, ctx.crossCompile.BuildTags))
-		if err != nil {
-			if strings.Contains(err.Error(), "no TEXT directive found") {
-				continue
-			}
-			return false
+		if mod.IsNil() {
+			continue
 		}
-		for global := tr.Module.FirstGlobal(); !global.IsNil(); global = gllvm.NextGlobal(global) {
+		for global := mod.FirstGlobal(); !global.IsNil(); global = gllvm.NextGlobal(global) {
 			exported[global.Name()] = true
 		}
 		if asmRoots != nil {
-			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, tr.Module)
+			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, mod)
 		}
-		tr.Module.Dispose()
+		mod.Dispose()
 	}
 	return true
+}
+
+// translatePruningAssembly returns an empty module for placeholder files
+// skipped by the Plan 9 assembly compiler.
+func translatePruningAssembly(ctx *context, pkg *packages.Package, path string) (gllvm.Module, error) {
+	conf := ctx.buildConf
+	src, err := llplan9asm.ReadFileWithOverlay(conf.Overlay, path)
+	if err != nil {
+		return gllvm.Module{}, err
+	}
+	tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, conf.Goos, conf.Goarch, plan9asmTranslateOptions(conf, ctx.crossCompile.BuildTags))
+	if err != nil {
+		if strings.Contains(err.Error(), "no TEXT directive found") {
+			return gllvm.Module{}, nil
+		}
+		return gllvm.Module{}, err
+	}
+	return tr.Module, nil
 }
 
 // canPruneWasmTypeMetadata shares the closed-program boundary with initializer

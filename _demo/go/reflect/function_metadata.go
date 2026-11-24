@@ -45,6 +45,15 @@ func testFunctionMetadata() {
 	named := reflect.New(typ).Elem()
 	named.Set(base)
 	checkCall(named)
+	if named.Type() != typ || named.Addr().Type() != reflect.PointerTo(typ) {
+		panic("named function identity")
+	}
+	dynamic := reflect.MakeFunc(typ, func(in []reflect.Value) []reflect.Value {
+		return base.Call(in)
+	})
+	if yes, n := dynamic.Interface().(reflectedFunc)(7, "abc"); !yes || n != 10 || dynamic.Type() != typ {
+		panic("named MakeFunc identity")
+	}
 	method := named.MethodByName("Call").Call([]reflect.Value{reflect.ValueOf("hello")})
 	if !method[0].Bool() || method[1].Int() != 105 {
 		panic("named function method")
@@ -79,7 +88,16 @@ func testFunctionMetadata() {
 	}
 
 	cTyp := reflect.TypeOf((*reflectedCFunc)(nil)).Elem()
+	if base.Type().AssignableTo(cTyp) || cTyp.AssignableTo(base.Type()) {
+		panic("Go closure and native function pointer are not directly assignable")
+	}
 	cValue := reflect.New(cTyp).Elem()
-	cValue.Set(base)
+	cValue.Set(reflect.ValueOf(reflectedCFunc(reflectedBase)))
 	checkCall(cValue)
+
+	echo := reflect.ValueOf(func(fn reflectedCFunc) reflectedCFunc { return fn })
+	args := []reflect.Value{cValue}
+	checkCall(echo.Call(args)[0])
+	dynamicEcho := reflect.MakeFunc(echo.Type(), func(in []reflect.Value) []reflect.Value { return in })
+	checkCall(dynamicEcho.Call(args)[0])
 }

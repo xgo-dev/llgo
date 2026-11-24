@@ -9,14 +9,11 @@ import (
 	"github.com/xgo-dev/llgo/runtime/abi"
 )
 
-// A public TypeOf already materializes the forward mapping. Exercise the
-// reverse cache's cold construction path directly, without that precondition.
+// A compiler-emitted named function type already has a closure descriptor.
+// Use a synthetic signature to exercise cold construction in the reverse cache.
 //
 //go:linkname reflectCacheClosureOf reflect.closureOf
 func reflectCacheClosureOf(*abi.FuncType) *abi.Type
-
-//go:linkname reflectCacheToFuncType reflect.toFuncType
-func reflectCacheToFuncType(*abi.StructType) *abi.FuncType
 
 func TestReflectNamedFuncReverseConcurrentPublication(t *testing.T) {
 	for round := 0; round < 20; round++ {
@@ -31,7 +28,7 @@ func TestReflectNamedFuncReverseConcurrentPublication(t *testing.T) {
 			go func() {
 				<-start
 				ct := reflectCacheClosureOf(ft)
-				if reflectCacheToFuncType(ct.StructType()) != ft {
+				if ct.StructType().PublicFuncType() != ft {
 					results <- nil
 					return
 				}

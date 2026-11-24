@@ -4,7 +4,7 @@ LLGo - A Go compiler based on LLVM
 [![Build Status](https://github.com/xgo-dev/llgo/actions/workflows/go.yml/badge.svg)](https://github.com/xgo-dev/llgo/actions/workflows/go.yml)
 [![GitHub release](https://img.shields.io/github/v/tag/xgo-dev/llgo.svg?label=release)](https://github.com/xgo-dev/llgo/releases)
 [![Coverage Status](https://codecov.io/gh/xgo-dev/llgo/branch/main/graph/badge.svg)](https://codecov.io/gh/xgo-dev/llgo)
-[![LLGo bindings](https://img.shields.io/badge/llarhub-LLGo_Bindings-brightgreen.svg)](https://github.com/xgo-dev/llgo/blob/main/doc/LLGo-Bindings.md)
+[![LLGo bindings](https://img.shields.io/badge/llarhub-LLGo_Bindings-brightgreen.svg)](doc/LLGo-Bindings.md)
 [![Benchmark](https://img.shields.io/badge/benchmark-LLGo_vs_Go-yellowgreen.svg)](https://llgo-test.github.io/benchmarks/)
 [![GoDoc](https://pkg.go.dev/badge/github.com/xgo-dev/llgo.svg)](https://pkg.go.dev/github.com/xgo-dev/llgo)
 [![XGo](https://img.shields.io/badge/project-XGo-blue.svg)](https://github.com/goplus/xgo)

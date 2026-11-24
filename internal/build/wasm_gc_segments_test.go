@@ -80,6 +80,7 @@ const (
  wordsPerBlock = 4
  bytesPerBlock = wordsPerBlock * unsafe.Sizeof(uintptr(0))
 )
+const maxHeapSegments = 128
 var segmentedHeap = true
 var endBlock uintptr
 var gcFrees, gcFreedBlocks uint64

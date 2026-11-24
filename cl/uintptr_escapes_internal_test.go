@@ -32,9 +32,9 @@ func caller() { two(uintptr(source()), laterArgument()) }
 		profile, goos, triple, rootArray, rootStore string
 		pointerSize                                 int
 	}{
-		{"j32", "js", "wasm32-unknown-emscripten", "[1 x { ptr, i32 }]", "store i64 ", 4},
+		{"j32", "js", "wasm32-unknown-emscripten", "[1 x ptr]", "store ptr ", 4},
 		{"j64", "js", "wasm64-unknown-emscripten", "[1 x ptr]", "store ptr ", 8},
-		{"w32", "wasip1", "wasm32-unknown-wasip1", "[1 x { ptr, i32 }]", "store i64 ", 4},
+		{"w32", "wasip1", "wasm32-unknown-wasip1", "[1 x ptr]", "store ptr ", 4},
 	} {
 		t.Run(tc.profile, func(t *testing.T) {
 			ssaPkg, files := buildCallerFrameSSAPackage(t, "roots", src)

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && (!llgo || !baremetal || !llgo.embedded.startup)
 
 package runtime
 

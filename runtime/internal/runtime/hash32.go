@@ -12,6 +12,9 @@ package runtime
 import "unsafe"
 
 func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a, b := mix32(uint32(seed), uint32(4^hashkey[0]))
 	t := readUnaligned32(p)
 	a ^= t
@@ -22,6 +25,9 @@ func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
 }
 
 func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a, b := mix32(uint32(seed), uint32(8^hashkey[0]))
 	a ^= readUnaligned32(p)
 	b ^= readUnaligned32(add(p, 4))
@@ -31,6 +37,9 @@ func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
 }
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a, b := mix32(uint32(seed), uint32(s^hashkey[0]))
 	if s == 0 {
 		return uintptr(a ^ b)

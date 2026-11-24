@@ -27,7 +27,7 @@ import (
 func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
 	p.safepointEntry = false
 	p.safepoints = nil
-	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
+	if p.options.DisableSafepoints || !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
 		isCgo || hasFuncDirective(fn, "go:nosplit") {
 		return
 	}

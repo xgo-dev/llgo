@@ -22,15 +22,12 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-func boolCStr(v bool) *c.Char {
-	if v {
-		return c.Str("true")
-	}
-	return c.Str("false")
-}
-
 func PrintBool(v bool) {
-	c.Fputs(boolCStr(v), c.Stderr)
+	text := "false"
+	if v {
+		text = "true"
+	}
+	printScalarBytes(unsafe.Pointer(unsafe.StringData(text)), uint32(len(text)))
 }
 
 func PrintUint(v uint64) {
@@ -50,7 +47,8 @@ func printDecimal(v uint64, negative bool) {
 	// uint64 needs at most 20 digits. Use stack storage explicitly because
 	// printing is also used on panic paths and before runtime initialization.
 	buf := c.Alloca(21)
-	i := uintptr(21)
+	// Keep the bounded write count within the native size_t range on Wasm32.
+	i := uint32(21)
 	for {
 		i--
 		*(*byte)(unsafe.Add(buf, i)) = '0' + byte(v%10)
@@ -63,7 +61,20 @@ func printDecimal(v uint64, negative bool) {
 		i--
 		*(*byte)(unsafe.Add(buf, i)) = '-'
 	}
-	c.Fwrite(unsafe.Add(buf, i), 1, 21-i, c.Stderr)
+	printScalarBytes(unsafe.Add(buf, i), 21-i)
+}
+
+func formatSpecialFloat(v float64) (string, bool) {
+	switch {
+	case v != v:
+		return "NaN", true
+	case v+v == v && v != 0 && v > 0:
+		return "+Inf", true
+	case v+v == v && v != 0:
+		return "-Inf", true
+	default:
+		return "", false
+	}
 }
 
 func PrintFloat(v float64) {
@@ -85,7 +96,7 @@ func PrintPointer(p unsafe.Pointer) {
 
 func printHex(v uint64, prefix bool) {
 	buf := c.Alloca(18) // 16 digits and an optional 0x prefix.
-	i := uintptr(18)
+	i := uint32(18)
 	for {
 		i--
 		digit := byte(v & 15)
@@ -105,7 +116,7 @@ func printHex(v uint64, prefix bool) {
 		*(*byte)(unsafe.Add(buf, i)) = '0'
 		*(*byte)(unsafe.Add(buf, i+1)) = 'x'
 	}
-	c.Fwrite(unsafe.Add(buf, i), 1, 18-i, c.Stderr)
+	c.Fwrite(unsafe.Add(buf, i), 1, uintptr(18-i), c.Stderr)
 }
 
 func PrintSlice(s Slice) {

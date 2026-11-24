@@ -297,7 +297,7 @@ jobs:
       - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/gcroot ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:
@@ -454,9 +454,22 @@ jobs:
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
-            -run '^TestDevLTOGlobalDCE' \
-            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+            -coverpkg=./ssa,./internal/build/...,./internal/crosscompile,./cmd/internal/flags,./internal/cabi \
+            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports|BuiltinFormatSource|DiscardableJSONInit|JSONV2Initializers|RewriteBinaryCodecs|RewriteJSONMarshal|RewriteJSONDecode|ConfigureCodecInits|DeferredErrorType|EntryJSONUses|StatelessTokenizerHandle|TypedJSONSupport|EmbeddedPrintfFloat|IntegerPrintfFormat|EmbeddedSizePruningConfig|SpecializeScalarFormats|ScalarFormatsRequireKnownArgumentStorage|ConfigureWasmRuntimeFree|CanOmitWASIArgs|WasmFSSnapshot|EmscriptenMinifierDriver|EmscriptenScheduler|OptionalInitializers|ConfigureDarwinExecutableCwd|DarwinSymbol|SymbolEntryReservation|SharedSymbolEntryReservation)' \
+            ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
+
+          go test -tags=dev -timeout 5m -covermode=atomic \
+            -coverprofile=coverage-dev-size-codecs.txt \
+            ./internal/build/binaryspecialize ./internal/build/fmtspecialize ./internal/build/jsonspecialize
+
+          native_cover="$(mktemp -d)"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$native_cover/llgo" ./cmd/llgo
+          echo "LLGO_SIZE_COVER_BIN=$native_cover/llgo" >> "$GITHUB_ENV"
+          GOCOVERDIR="$native_cover" python3 test/sizebuild/runtest.py --target=native --llgo "$native_cover/llgo"
+          go tool covdata textfmt -i="$native_cover" -o=coverage-dev-native-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
@@ -482,30 +495,9 @@ jobs:
           LLGO_DEMO_LLGORUN_FLAGS="-lto=full -globaldce" \
             bash .github/workflows/test_demo.sh
 
-      - name: Upload dev LTO GlobalDCE coverage reports to Codecov
-        continue-on-error: true
-        uses: codecov/codecov-action@v7
-        with:
-          use_pypi: true
-          version: "11.3.1"
-          token: ${{secrets.CODECOV_TOKEN}}
-          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-dev-globaldce-unit.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
-          flags: dev-lto-globaldce
-          disable_search: true
-
-      # Tests deletion of unreachable Go methods.
-      # See https://github.com/xgo-dev/llgo/issues/1853.
-      - name: Run Go method drop tests
-        run: go test -tags=dev -timeout 30m -run '^TestBuildAndCheckSymbolsFromTestdrop$' ./cl
-
-      - name: Run Go deadcode-drop demos
-        run: |
-          LLGO_DEMO_LLGORUN_FLAGS="-deadcodedrop" \
-            bash .github/workflows/test_demo.sh
-
       - name: Test ESP32-C3 size builds and emulator output
         run: |
+          set -euo pipefail
           source dev/go_toolchain.sh
           current="$(go env GOVERSION)"
           read -r -a releases <<< "$(llgo_supported_go_releases)"
@@ -518,4 +510,29 @@ jobs:
             goroot="$(llgo_go_root "$version")"
             roots+=(--esp32c3-go-root "$goroot")
           done
-          python3 test/sizebuild/runtest.py --target=esp32c3 "${roots[@]}"
+          esp_cover="$(mktemp -d)"
+          GOCOVERDIR="$esp_cover" python3 test/sizebuild/runtest.py --target=esp32c3 --llgo "$LLGO_SIZE_COVER_BIN" "${roots[@]}"
+          go tool covdata textfmt -i="$esp_cover" -o=coverage-dev-esp32c3-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+
+      - name: Upload dev LTO GlobalDCE coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: "11.3.1"
+          token: ${{secrets.CODECOV_TOKEN}}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-dev-globaldce-unit.txt,coverage-dev-size-codecs.txt,coverage-dev-native-size.txt,coverage-dev-esp32c3-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
+          flags: dev-lto-globaldce
+          disable_search: true
+
+      # Tests deletion of unreachable Go methods.
+      # See https://github.com/xgo-dev/llgo/issues/1853.
+      - name: Run Go method drop tests
+        run: go test -tags=dev -timeout 30m -run '^TestBuildAndCheckSymbolsFromTestdrop$' ./cl
+
+      - name: Run Go deadcode-drop demos
+        run: |
+          LLGO_DEMO_LLGORUN_FLAGS="-deadcodedrop" \
+            bash .github/workflows/test_demo.sh

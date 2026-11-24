@@ -1,13 +1,15 @@
 package ssa
 
 import (
-	"github.com/goplus/gogen/packages"
+	"fmt"
 	"go/token"
 	"go/types"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/goplus/gogen/packages"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -54,7 +56,11 @@ func TestTypedStackRootStorageLayouts(t *testing.T) {
 				t.Fatalf("%v\n%s", err, pkg.String())
 			}
 			ir := pkg.String()
-			if !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") || !strings.Contains(ir, "i32 4, i32 4") {
+			metadata := rabi.CompactGCRootMap | 1
+			if tc.profile == "j64" {
+				metadata |= rabi.WideGCRootMap
+			}
+			if !strings.Contains(ir, fmt.Sprintf("i32 4, i32 %d", int32(metadata))) {
 				t.Fatalf("missing typed map:\n%s", ir)
 			}
 			// A managed alloca and all field initialization must dominate the

@@ -1,10 +1,18 @@
 // Browser syscall/js hosts share the Emscripten runtime thread's FS, including
 // C's file descriptors and cwd. Never create a separate MEMFS on each worker.
+// A single worker attaches FS directly and needs no proxy dependencies.
 addToLibrary({
-  $llgoBrowserFS__deps: ['llgo_browser_fs_call', 'llgo_browser_fs_result', '$stringToUTF8', '$lengthBytesUTF8', '$UTF8ToString', 'llgo_browser_fs_malloc', 'llgo_browser_fs_free', '$FS'],
+  $llgoBrowserFS__deps: [
+    '$FS',
+#if PTHREADS
+    'llgo_browser_fs_call', 'llgo_browser_fs_result', '$stringToUTF8', '$lengthBytesUTF8', '$UTF8ToString',
+    'llgo_browser_fs_malloc', 'llgo_browser_fs_free',
+#endif
+  ],
   $llgoBrowserFS__postset: 'llgoBrowserFS.install();',
   $llgoBrowserFS: {
     installed: false,
+#if PTHREADS
     methods: {
       fs: ['write', 'writeSync', 'read', 'open', 'close', 'fsync', 'stat', 'lstat', 'fstat',
            'mkdir', 'unlink', 'rmdir', 'rename', 'truncate', 'ftruncate', 'chmod', 'fchmod',
@@ -75,6 +83,7 @@ addToLibrary({
         if (payload) _llgo_browser_fs_free(payload);
       }
     },
+#endif
     install() {
       if (llgoBrowserFS.installed) return;
       llgoBrowserFS.installed = true;
@@ -111,6 +120,7 @@ addToLibrary({
     },
   },
 
+#if PTHREADS
   // Allocate response storage on the requesting worker. Allocating on the
   // browser main thread can contend on the shared allocator, where Atomics.wait
   // is forbidden. Keep only JS strings here between the two proxy calls.
@@ -168,4 +178,5 @@ addToLibrary({
     llgoBrowserFSResponses[request] = text;
     return lengthBytesUTF8(text) + 1;
   },
+#endif
 });

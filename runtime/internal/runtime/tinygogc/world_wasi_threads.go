@@ -2,11 +2,21 @@
 
 package tinygogc
 
-import _ "unsafe"
+import (
+	_ "unsafe"
 
-func gcStopWorld() bool { return wasiStopWorld() }
+	"github.com/xgo-dev/llgo/runtime/internal/gcroot"
+)
 
-func gcResumeWorld() { wasiResumeWorld() }
+func gcStopWorld() bool {
+	return gcroot.WASISelectableMutators && !gcroot.WASIConcurrentMutators() || wasiStopWorld()
+}
+
+func gcResumeWorld() {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
+		wasiResumeWorld()
+	}
+}
 
 //go:linkname wasiStopWorld github.com/xgo-dev/llgo/runtime/internal/runtime.wasiGCStopTheWorld
 func wasiStopWorld() bool

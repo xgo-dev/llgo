@@ -13,9 +13,13 @@
 - `-port <port>` - Target port for flashing, testing, or monitoring
 - `-baudrate <rate>` - Baudrate for serial communication (default: 115200)
 
-For `esp32` and `esp32c3-basic`, `-emulator` uses an existing QEMU on `PATH` when it supports the requested ESP machine. On macOS/Linux amd64 and arm64, LLGo otherwise downloads a checksum-verified Espressif QEMU release and reuses it from the user cache: `llgo/crosscompile/esp-qemu-<version>/<host>/<architecture>` under `~/Library/Caches` on macOS or `$XDG_CACHE_HOME` (default `~/.cache`) on Linux. Ordinary builds do not download QEMU.
+For `esp32` and the ESP32-C3 targets, `-emulator` uses an existing QEMU on `PATH` when it supports the requested ESP machine. On macOS/Linux amd64 and arm64, LLGo otherwise downloads a checksum-verified Espressif QEMU release and reuses it from the user cache: `llgo/crosscompile/esp-qemu-<version>/<host>/<architecture>` under `~/Library/Caches` on macOS or `$XDG_CACHE_HOME` (default `~/.cache`) on Linux. Ordinary builds do not download QEMU.
 
 For an offline or custom installation, put your Espressif QEMU `bin` directory first on `PATH`, or specify an executable path in a custom target's `emulator` field. Other host platforms keep using the configured executable through `PATH`.
+
+- `esp32c3-flash` places code and read-only data in memory-mapped SPI flash on ESP32-C3 devices with at least 4 MiB of flash. Use `llgo run -target=esp32c3-flash -emulator` with Espressif QEMU.
+- `xiao-esp32c3-flash` uses the same layout with the XIAO's USB serial console. Use `llgo build -target=xiao-esp32c3-flash -obin` to produce the image for flash offset `0x0`.
+- `cortex-m-mps2` runs on QEMU's Cortex-M3 `mps2-an385`, with separate 4 MiB code and data banks. `cortex-m-qemu` targets the LM3S6965 board with 256 KiB of Flash and 64 KiB of SRAM.
 
 ## Commands
 

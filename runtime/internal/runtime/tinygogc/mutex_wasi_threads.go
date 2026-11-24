@@ -5,6 +5,7 @@ package tinygogc
 import (
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/runtime/internal/gcroot"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 )
 
@@ -13,13 +14,25 @@ import (
 // while waiting in C, letting the collector stop allocation waiters.
 type mutex = sync.Mutex
 
-func lock(m *mutex) { wasiAllocatorLock(unsafe.Pointer(m)) }
+func lock(m *mutex) {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
+		wasiAllocatorLock(unsafe.Pointer(m))
+	}
+}
 
-func unlock(m *mutex) { m.Unlock() }
+func unlock(m *mutex) {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
+		m.Unlock()
+	}
+}
 
 // An explicit GC must let a pending allocator acquire the mutex before it
 // returns, so a tight runtime.GC loop cannot starve allocating goroutines.
-func unlockForGC(m *mutex) { wasiAllocatorFinish(unsafe.Pointer(m)) }
+func unlockForGC(m *mutex) {
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
+		wasiAllocatorFinish(unsafe.Pointer(m))
+	}
+}
 
 //go:linkname wasiAllocatorLock github.com/xgo-dev/llgo/runtime/internal/runtime.wasiGCAllocatorLock
 func wasiAllocatorLock(m unsafe.Pointer)

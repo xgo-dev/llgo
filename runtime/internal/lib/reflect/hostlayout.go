@@ -22,7 +22,7 @@ func isHostLayoutMarker(t Type) bool {
 	// The public Field method allocates its Index slice. Inspect the immutable
 	// descriptor directly so the StructOf pre-scan does not allocate.
 	f := &st.Fields[0]
-	return f.Name_ == "_" && f.Typ == hostLayoutPrivateMarker
+	return f.Typ == hostLayoutPrivateMarker && f.Blank()
 }
 
 // structHasHostLayout reports whether typ's compiler layout includes a
