@@ -108,19 +108,36 @@ func (f *baselineFolds) commit() {
 	}
 }
 
+type guardFacts struct {
+	common uint64 // every bit is known true
+	zmm    uint64 // at least one of these ZMM guards is known true, or zero
+}
+
+func (a guardFacts) and(b guardFacts) guardFacts {
+	return guardFacts{common: a.common | b.common, zmm: a.zmm | b.zmm}
+}
+
+// At a join only common predicates can be folded. Alternate paths can still
+// establish the same register width with different effective Go predicates.
+func (a guardFacts) or(b guardFacts) guardFacts {
+	f := guardFacts{common: a.common & b.common}
+	if a.zmm != 0 && b.zmm != 0 {
+		f.zmm = a.zmm | b.zmm
+	}
+	return f
+}
+
 // positiveGuard returns predicates established on the given branch edge.
 // LLVM commonly represents Go's negated query as xor i1 %query, true.
-func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) uint64 {
-	if !cond.IsACallInst().IsNil() {
-		if taken {
-			return queries[cond.CalledValue()]
-		}
-		return 0
+func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) guardFacts {
+	if !cond.IsACallInst().IsNil() && taken {
+		mask := queries[cond.CalledValue()]
+		return guardFacts{common: mask, zmm: mask & zmmPredicates}
 	}
 	if cond.IsAInstruction().IsNil() {
-		return 0
+		return guardFacts{}
 	}
-	switch cond.InstructionOpcode() {
+	switch op := cond.InstructionOpcode(); op {
 	case llvm.Xor:
 		for i := 0; i < 2; i++ {
 			c := cond.Operand(i).IsAConstantInt()
@@ -128,12 +145,16 @@ func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) u
 				return positiveGuard(cond.Operand(1-i), !taken, queries)
 			}
 		}
-	case llvm.And:
-		if taken {
-			return positiveGuard(cond.Operand(0), true, queries) | positiveGuard(cond.Operand(1), true, queries)
+	case llvm.And, llvm.Or:
+		a := positiveGuard(cond.Operand(0), taken, queries)
+		b := positiveGuard(cond.Operand(1), taken, queries)
+		// Both operands are true for a taken AND, or false for an untaken OR.
+		if (op == llvm.And) == taken {
+			return a.and(b)
 		}
+		return a.or(b)
 	}
-	return 0
+	return guardFacts{}
 }
 
 // directGuardCallee excludes indirect calls even when a function address also
@@ -145,24 +166,24 @@ func directGuardCallee(inst llvm.Value) llvm.Value {
 	return inst.CalledValue().IsAFunction()
 }
 
-// An opaque call can return a vector without doing any local vector work.
-// LLVM intrinsics are lowered in the caller and can use its target features.
-func localVectorWork(inst llvm.Value) bool {
-	if inst.Type().TypeKind() != llvm.VectorTypeKind {
-		return false
-	}
+// A wide register argument or result is SIMD work at the call site, even
+// when the operand is a constant or the callee is indirect or external.
+func (a *wideABI) localVectorWork(inst llvm.Value) bool {
 	switch inst.InstructionOpcode() {
 	case llvm.Call, llvm.Invoke:
+		if a.callWidth(inst) != 0 {
+			return true
+		}
 		callee := inst.CalledValue().IsAFunction()
-		return !callee.IsNil() && callee.IntrinsicID() != 0
+		return inst.Type().TypeKind() == llvm.VectorTypeKind && !callee.IsNil() && callee.IntrinsicID() != 0
 	}
-	return true
+	return inst.Type().TypeKind() == llvm.VectorTypeKind
 }
 
 // Collect evidence of vector work along direct calls in this module. Start
 // from functions with a feature query and propagate back from SIMD operations
 // to their callers. The two walks handle cycles without relying on DFS order.
-func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan) map[llvm.Value]bool {
+func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan, abi *wideABI) map[llvm.Value]bool {
 	work := make(map[llvm.Value]bool)
 	seen := make(map[llvm.Value]bool)
 	callers := make(map[llvm.Value][]llvm.Value)
@@ -182,7 +203,7 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 		}
 		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if localVectorWork(inst) {
+				if abi.localVectorWork(inst) {
 					work[fn] = true
 				}
 				if callee := directGuardCallee(inst); !callee.IsNil() {
@@ -210,40 +231,50 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 	return work
 }
 
-// guardContexts intersects known true predicates at joins to identify which
-// positive guards protect vector work in this function.
-func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool) []uint64 {
+// Keep common Go predicates at joins. For a ZMM call, A() || B() can also
+// establish the register width when either predicate independently supplies it.
+func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool, abi *wideABI) []uint64 {
 	entry := fn.EntryBasicBlock()
-	known := map[llvm.BasicBlock]uint64{entry: 0}
+	known := map[llvm.BasicBlock]guardFacts{entry: {}}
 	queue := []llvm.BasicBlock{entry}
 	for len(queue) != 0 {
 		block := queue[0]
 		queue = queue[1:]
 		term := block.LastInstruction()
 		for i := 0; i < term.SuccessorsCount(); i++ {
-			mask := known[block]
+			f := known[block]
 			if term.InstructionOpcode() == llvm.Br && term.SuccessorsCount() == 2 {
-				mask |= positiveGuard(term.Operand(0), i == 0, queries)
+				f = f.and(positiveGuard(term.Operand(0), i == 0, queries))
 			}
 			next := term.Successor(i)
 			if prior, ok := known[next]; ok {
-				mask &= prior
-				if mask == prior {
+				f = f.or(prior)
+				if f == prior {
 					continue
 				}
 			}
-			known[next] = mask
+			known[next] = f
 			queue = append(queue, next)
 		}
 	}
 	sets := map[uint64]bool{}
-	for block, mask := range known {
-		if mask == 0 {
+	for block, f := range known {
+		if f.common == 0 && f.zmm == 0 {
 			continue
 		}
 		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if localVectorWork(inst) || work[directGuardCallee(inst)] {
-				sets[mask] = true
+			if abi.localVectorWork(inst) || work[directGuardCallee(inst)] {
+				if f.common != 0 {
+					sets[f.common] = true
+				}
+				if f.zmm != 0 && f.common&zmmPredicates == 0 {
+					// Select each alternative by its own effective query.
+					for _, p := range x86Predicates {
+						if f.zmm&p.runtimeBit != 0 {
+							sets[f.common|p.runtimeBit] = true
+						}
+					}
+				}
 				break
 			}
 		}
@@ -327,7 +358,8 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error {
+func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
+	mod := abi.mod
 	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
 	defer func() {
 		for _, v := range folds.views {
@@ -371,13 +403,13 @@ func runGuardedFeatures(mod llvm.Module, avx2 *avx2Plan, baseline string) error 
 		avx2.commit(mod, nil)
 		return nil
 	}
-	work := guardedWork(candidates, &folds, avx2)
+	work := guardedWork(candidates, &folds, avx2, abi)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
 			continue
 		}
-		masks := guardContexts(folds.view(fn), queries, work)
+		masks := guardContexts(folds.view(fn), queries, work, abi)
 		if len(masks) == 0 {
 			continue
 		}

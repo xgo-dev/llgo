@@ -145,20 +145,22 @@ func Run(mod llvm.Module, baseline string) error {
 		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
 		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
+	abi := newWideABI(mod)
+	defer abi.data.Dispose()
 	var avx2 *avx2Plan
 	switch baseline {
 	case "v3", "v4":
 		// AVX2 is guaranteed. Only optional features need dispatch.
 	case "", "v1", "v2":
 		var err error
-		avx2, err = stageAVX2(mod)
+		avx2, err = stageAVX2(abi)
 		if err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
-	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
+	if err := runGuardedFeatures(abi, avx2, baseline); err != nil {
 		if avx2 != nil {
 			for _, fn := range avx2.originals {
 				discardStagedBody(avx2.variants[fn])
@@ -167,7 +169,7 @@ func Run(mod llvm.Module, baseline string) error {
 		}
 		return err
 	}
-	applyWideABI(mod, baseline)
+	abi.lowerModule(baseline)
 	mod.AddNamedMetadataOperand(moduleDone, mod.Context().MDNode(nil))
 	return nil
 }
@@ -187,7 +189,8 @@ type avx2Plan struct {
 	origins             map[llvm.Value]llvm.Value
 }
 
-func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
+func stageAVX2(abi *wideABI) (*avx2Plan, error) {
+	mod := abi.mod
 	// Discover roots from direct uses of trusted queries. Ordinary packages
 	// without SIMD must not pay for a scan of every instruction in the module.
 	queries := make(map[llvm.Value]uint64)
@@ -212,7 +215,7 @@ func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
 	// entry needs canonical dispatch. Scalar-signature helper chains can use
 	// the ordinary guarded-feature pass and its bounded local clones.
 	for fn := range roots {
-		if !supported(fn) || len(guardContexts(fn, queries, entries)) == 0 {
+		if !supported(fn) || len(guardContexts(fn, queries, entries, abi)) == 0 {
 			delete(roots, fn)
 		}
 	}

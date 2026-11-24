@@ -517,8 +517,11 @@ On AMD64 the compiler also recognizes positive branches on the official
 `archsimd.X86` predicates. At control-flow joins it retains the predicates
 proven on every incoming path. Guarded vector operations, LLVM intrinsics
 returning vectors, and direct calls to local SIMD helpers can select an
-implementation with those features. A call to an opaque function that returns
-a vector provides no local work to specialize. Nested
+implementation with those features. A 256- or 512-bit register argument or
+result also counts as work at the call site, including external and indirect
+calls. If every path to the call checks a predicate that supplies ZMM registers
+(for example, `AVX512() || AVX512VBMI2()`), either effective predicate can
+select a wide implementation. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
 GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
 the AVX512 predicate. LLGo folds these queries before generating guarded

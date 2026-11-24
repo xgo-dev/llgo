@@ -79,6 +79,35 @@ func TestSIMD512VBMI2WideCall(t *testing.T) {
 	}
 }
 
+//go:noinline
+func eitherGuard512(dst *[16]int32, enabled bool, makeVector func() archsimd.Int32x16) {
+	if archsimd.X86.AVX512() || archsimd.X86.AVX512VBMI2() {
+		if enabled {
+			makeVector().StoreArray(dst)
+		}
+	}
+}
+
+func TestSIMD512EitherGuardWideCall(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		var dst, want [16]int32
+		var calls, wantCalls int
+		eitherGuard512(&dst, enabled, func() archsimd.Int32x16 {
+			calls++
+			return archsimd.BroadcastInt32x16(13)
+		})
+		if enabled && (archsimd.X86.AVX512() || archsimd.X86.AVX512VBMI2()) {
+			wantCalls = 1
+			for i := range want {
+				want[i] = 13
+			}
+		}
+		if dst != want || calls != wantCalls {
+			t.Fatalf("enabled=%t: got %v and %d calls, want %v and %d", enabled, dst, calls, want, wantCalls)
+		}
+	}
+}
+
 // Nine live vectors also exercise the stack argument path in the register ABI.
 //
 //go:noinline

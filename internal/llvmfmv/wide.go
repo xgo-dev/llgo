@@ -56,21 +56,22 @@ func (a *wideABI) valueWidth(t llvm.Type) int {
 	return 0
 }
 
-func wideCall(inst llvm.Value) bool {
+func (a *wideABI) callWidth(inst llvm.Value) int {
 	if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
-		return false
+		return 0
 	}
 	callee := inst.CalledValue()
-	return callee.IsAInlineAsm().IsNil() && (callee.IsAFunction().IsNil() || callee.IntrinsicID() == 0)
+	if !callee.IsAInlineAsm().IsNil() || (!callee.IsAFunction().IsNil() && callee.IntrinsicID() != 0) {
+		return 0
+	}
+	return a.signature(inst.CalledFunctionType())
 }
 
 func (a *wideABI) calls(fn llvm.Value, visit func(llvm.Value, int)) {
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if wideCall(inst) {
-				if width := a.signature(inst.CalledFunctionType()); width != 0 {
-					visit(inst, width)
-				}
+			if width := a.callWidth(inst); width != 0 {
+				visit(inst, width)
 			}
 		}
 	}
@@ -124,23 +125,30 @@ func (a *wideABI) removeWiderCalls(fn llvm.Value, width int) {
 	fn.RemoveUnreachableBlocks()
 }
 
-// Several independent Go predicates guarantee the registers for a YMM call.
-func ymmChoice(fn llvm.Value) dispatchChoice {
+func registerPredicateBits(width int) uint64 {
 	var bits uint64
 	for _, p := range x86Predicates {
-		if p.registerBits >= 256 {
+		if p.registerBits >= width {
 			bits |= p.runtimeBit
 		}
 	}
-	return dispatchChoice{bits: bits, fn: fn, anyBit: true}
+	return bits
 }
 
-func applyWideABI(mod llvm.Module, baseline string) {
-	a := wideABI{
+var (
+	ymmPredicates = registerPredicateBits(256)
+	zmmPredicates = registerPredicateBits(512)
+)
+
+func newWideABI(mod llvm.Module) *wideABI {
+	return &wideABI{
 		mod: mod, widths: make(map[llvm.Type]int),
 		data: llvm.NewTargetData(mod.DataLayout()), abi: x86ABIFor(mod),
 	}
-	defer a.data.Dispose()
+}
+
+func (a *wideABI) lowerModule(baseline string) {
+	mod := a.mod
 	// Clones and dispatchers created below already have the finalized call ABI.
 	last := mod.LastFunction()
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
@@ -198,7 +206,7 @@ func (a *wideABI) lower(fn llvm.Value, baseline string) {
 		if zmm {
 			a.removeWiderCalls(v, 256)
 		}
-		choices = append(choices, ymmChoice(v))
+		choices = append(choices, dispatchChoice{bits: ymmPredicates, fn: v, anyBit: true})
 	}
 	if zmm {
 		v := body("zmm")

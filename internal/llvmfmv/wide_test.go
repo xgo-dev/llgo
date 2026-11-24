@@ -70,8 +70,7 @@ define void @root(ptr %p) {
  %ok = call i1 @QUERY()
  br i1 %ok, label %yes, label %exit
 yes:
- %v = load <16 x float>, ptr %p
- call void @wide(<16 x float> %v)
+ call void @wide(<16 x float> zeroinitializer)
  br label %exit
 exit:
  ret void

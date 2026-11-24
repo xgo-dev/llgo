@@ -109,6 +109,21 @@ func TestGuardedVectorConjunction(t *testing.T) {
 	}
 }
 
+func TestGuardedVectorDisjunction(t *testing.T) {
+	ir := strings.Replace(guardedVectorFixture, "and i1", "or i1", 1)
+	ir = strings.Replace(ir, `"x86.fma"`, `"x86.avx512vbmi2"`, 1)
+	m := parseModule(t, ir)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	ext := predicateBits[X86Query("AVX512VBMI2")]
+	body := m.NamedFunction("root" + guardSuffix(ext))
+	if body.IsNil() || !m.NamedGlobal("unrelated"+slotSuffix).IsNil() {
+		t.Fatal(m.String())
+	}
+	checkCachedGuard(t, m, ext, body)
+}
+
 func TestGuardedSymbolCollision(t *testing.T) {
 	for _, symbol := range []string{
 		"root.__llgo_fmv_guard_base",
@@ -358,7 +373,9 @@ func TestOptionalGuardAtV4(t *testing.T) {
 func TestGuardBodyEntryAttributes(t *testing.T) {
 	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
-	if err := runGuardedFeatures(m, nil, "v1"); err != nil {
+	abi := newWideABI(m)
+	defer abi.data.Dispose()
+	if err := runGuardedFeatures(abi, nil, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"guard_avx512_fma", "guard_base"} {
