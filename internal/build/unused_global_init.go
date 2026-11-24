@@ -195,12 +195,14 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 	if err != nil {
 		return false
 	}
-	for _, path := range files {
-		src, err := llplan9asm.ReadFileWithOverlay(ctx.buildConf.Overlay, path)
-		if err != nil {
-			return false
-		}
-		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, path, src, ctx.buildConf.Goos, ctx.buildConf.Goarch, plan9asmTranslateOptions(ctx))
+	sources, err := captureSelectedPlan9Asm(ctx, pkg, files)
+	if err != nil {
+		return false
+	}
+	opt := plan9asmTranslateOptions(ctx)
+	opt.SourcePreprocessed = true
+	for _, input := range sources {
+		tr, err := llplan9asm.TranslateSourceModuleForPkgWithOptions(pkg, input.path, input.source, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
 		if err != nil {
 			if strings.Contains(err.Error(), "no TEXT directive found") {
 				continue
@@ -211,7 +213,7 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 			exported[global.Name()] = true
 		}
 		if asmRoots != nil {
-			asmRoots.collectAsmReferences(pkg, path, ctx.buildConf, tr.Module)
+			asmRoots.collectAsmReferences(pkg, input.path, ctx.buildConf, tr.Module)
 		}
 		tr.Module.Dispose()
 	}

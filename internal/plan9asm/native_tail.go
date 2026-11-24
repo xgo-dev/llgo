@@ -2,10 +2,13 @@ package plan9asm
 
 import (
 	"fmt"
+	"go/types"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/packages"
+	llssaabi "github.com/xgo-dev/llgo/ssa/abi"
 	llvm "github.com/xgo-dev/llvm"
 	asm "github.com/xgo-dev/plan9asm"
 )
@@ -13,13 +16,107 @@ import (
 var nativeTailLabels = regexp.MustCompile(`\bLnative_(?:func_0|0_label_[0-9]+)\b`)
 var nativeTailPseudoSP = regexp.MustCompile(`\bSP\b`)
 
+// Native stack-switch regions belong to LLGo's physical bridge, not the
+// Core's virtual register translator. Validate their source and real Go ABI
+// before excluding them from typed lowering; source bytes remain unchanged.
+func nativeTailSignatures(pkg *packages.Package, src []byte, resolve func(string) string, goos, goarch string) (map[string]asm.FuncSig, bool, error) {
+	result := make(map[string]asm.FuncSig)
+	if goarch != "arm64" || !asm.SupportsNativeTarget(goos, goarch) {
+		return result, false, nil
+	}
+	file, err := asm.Parse(asm.ArchARM64, string(src))
+	if err != nil {
+		return nil, false, err
+	}
+	onlyPhysical := true
+	prefix := llssaabi.PathOf(pkg.Types) + "."
+	for _, fn := range file.Funcs {
+		name := resolve(fn.Sym)
+		if !shouldKeepResolvedFunc(pkg.PkgPath, goos, goarch, name) {
+			continue
+		}
+		if !hasIndirectTailTransfer(fn.Instrs) {
+			onlyPhysical = false
+			continue
+		}
+		local, ok := strings.CutPrefix(name, prefix)
+		if !ok {
+			onlyPhysical = false
+			continue
+		}
+		decl, ok := pkg.Types.Scope().Lookup(local).(*types.Func)
+		if !ok {
+			onlyPhysical = false
+			continue
+		}
+		sig, err := asm.DeriveGoFuncABI0Signature(name, decl, goarch, types.SizesFor("gc", goarch))
+		if err != nil {
+			return nil, false, err
+		}
+		if _, err := validateNativeTailTransfer(fn, sig); err != nil {
+			return nil, false, fmt.Errorf("native tail transfer %s: %w", name, err)
+		}
+		result[name] = sig
+	}
+	return result, onlyPhysical && len(result) > 0 && len(file.Data) == 0 && len(file.Globl) == 0 && len(file.UnlinkedPrelude) == 0, nil
+}
+
+func declareNativeTailEntries(tr *asm.GoModuleTranslation, sigs map[string]asm.FuncSig, src []byte, resolve func(string) string) error {
+	if len(sigs) == 0 {
+		return nil
+	}
+	file, err := asm.Parse(asm.ArchARM64, string(src))
+	if err != nil {
+		return err
+	}
+	ctx := tr.Module.Context()
+	for _, fn := range file.Funcs {
+		name := resolve(fn.Sym)
+		sig, ok := sigs[name]
+		if !ok {
+			continue
+		}
+		params := make([]llvm.Type, len(sig.Args))
+		for i, typ := range sig.Args {
+			if typ == asm.Ptr {
+				params[i] = llvm.PointerType(ctx.Int8Type(), 0)
+			} else {
+				params[i] = ctx.Int64Type()
+			}
+		}
+		ft := llvm.FunctionType(ctx.VoidType(), params, false)
+		entry := tr.Module.NamedFunction(name)
+		if entry.IsNil() {
+			// Core retains DATA relocations to filtered functions as external
+			// address placeholders. Bind them to this proven callable entry.
+			placeholder := tr.Module.NamedGlobal(name)
+			if !placeholder.IsNil() {
+				if !placeholder.IsDeclaration() {
+					return fmt.Errorf("native tail transfer %s: defined data conflicts with callable entry", name)
+				}
+				placeholder.SetName(name + "$address")
+			}
+			entry = llvm.AddFunction(tr.Module, name, ft)
+			if !placeholder.IsNil() {
+				placeholder.ReplaceAllUsesWith(entry)
+				placeholder.EraseFromParentAsGlobal()
+			}
+		} else if entry.GlobalValueType() != ft || !entry.IsDeclaration() {
+			return fmt.Errorf("native tail transfer %s: conflicting LLVM entry", name)
+		}
+		tr.Signatures[name] = sig
+		tr.Functions = append(tr.Functions, asm.GoFunction{TextSymbol: fn.Sym, ResolvedSymbol: name})
+	}
+	return nil
+}
+
 // lowerNativeTailTransfers preserves physical register and stack semantics at
 // an indirect assembly tail transfer. The typed translator's virtual registers
 // cannot describe code that changes SP and returns through a saved native LR.
 // Keep a normal LLVM entry/epilogue around one indivisible native asm region:
 // LLVM saves its callee-saved registers, and the region supplies the ABI0 frame.
 // Guest code must restore the entry FP/SP before returning through the saved LR.
-func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.FuncSig, resolve func(string) string, goos, goarch string, bdwgc bool) error {
+func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.FuncSig, resolve func(string) string, goos, goarch string, bdwgc bool, physical map[string]asm.FuncSig) error {
 	if goarch != "arm64" || !asm.SupportsNativeTarget(goos, goarch) {
 		return nil
 	}
@@ -37,7 +134,8 @@ func lowerNativeTailTransfers(mod llvm.Module, src []byte, sigs map[string]asm.F
 		// The Go binder can deliberately filter TEXT bodies (for example a
 		// syscall entry supplied by the runtime). Do not lower those again.
 		entry := mod.NamedFunction(name)
-		if entry.IsNil() || entry.IsDeclaration() {
+		_, claimed := physical[name]
+		if entry.IsNil() || entry.IsDeclaration() && !claimed {
 			continue
 		}
 		sig, ok := sigs[name]

@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func llFuncBody(ll, fnSig string) string {
@@ -24,33 +22,18 @@ func llFuncBody(ll, fnSig string) string {
 }
 
 func TestPlan9AsmIndexByteStringReturnsResult(t *testing.T) {
-	if runtime.GOARCH != "arm64" {
-		t.Skip("host is not arm64")
-	}
 	goroot := runtime.GOROOT()
 	if goroot == "" {
-		t.Skip("GOROOT not available")
+		t.Fatal("GOROOT not available")
 	}
-
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedTypesInfo | packages.NeedImports,
-		Env:  os.Environ(),
-	}
-	pkgs, err := packages.LoadEx(nil, nil, cfg, "internal/bytealg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pkgs) != 1 || pkgs[0].Types == nil {
-		t.Fatalf("load internal/bytealg: got %d pkgs, types=%v", len(pkgs), pkgs[0].Types)
-	}
-	pkg := pkgs[0]
+	pkg := loadStdlibInternalBytealgForTarget(t, "linux", "arm64")
 
 	sfile := filepath.Join(goroot, "src", "internal", "bytealg", "indexbyte_arm64.s")
 	source, err := os.ReadFile(sfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := TranslateFileForPkgWithOptions(pkg, sfile, runtime.GOOS, "arm64", nil, TranslateOptions{AnnotateSource: true})
+	tr, err := TranslateFileForPkgWithOptions(pkg, sfile, "linux", "arm64", nil, TranslateOptions{AnnotateSource: true, GOROOT: goroot})
 	if err != nil {
 		t.Fatal(err)
 	}
