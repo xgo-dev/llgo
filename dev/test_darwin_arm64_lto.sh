@@ -13,7 +13,7 @@ check_instructions() {
     local assembly
     assembly=$(llvm-objdump --disassemble-symbols="$symbols.$symbol" "$work_dir/atomic.test")
     for instruction in "$@"; do
-        if ! grep -Eq "[[:space:]]$instruction[[:space:]]" <<< "$assembly"; then
+        if ! grep -Eq "[[:space:]]${instruction}[[:space:]]" <<< "$assembly"; then
             printf 'Expected %s in %s\n%s\n' "$instruction" "$symbol" "$assembly" >&2
             return 1
         fi
