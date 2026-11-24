@@ -9,6 +9,7 @@ package main
 import (
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/gpio"
 	"github.com/xgo-dev/llgo/pkg/esp/i2c"
 	"github.com/xgo-dev/llgo/pkg/esp/i2s"
@@ -17,10 +18,6 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 	"github.com/xgo-dev/llgo/pkg/esp/ws"
 )
-
-// lwip ETIMEDOUT (picolibc numbering, the value the net/tls transports
-// report when a deadline passes).
-const etimedout = 116
 
 // FreeRTOS kernel bindings. llgo emits an external reference to the C symbol
 // and the ESP-IDF link environment resolves it against FreeRTOS.
@@ -117,7 +114,7 @@ func hex8(v uint32) string {
 // dec32 formats v in decimal (negatives with a leading minus). println has
 // no number form without a separating space, and the udp probe's golden
 // lines pin the exact "n=128" shape, so the probe concatenates this in.
-func dec32(v int32) string {
+func dec32(v int) string {
 	neg := v < 0
 	x := uint32(v)
 	if neg {
@@ -138,6 +135,37 @@ func dec32(v int32) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// errCode extracts the esp pipeline code an error carries, 0 for nil - the
+// same number the pre-error API printed ("err = 0").
+func errCode(err error) int32 {
+	if err == nil {
+		return 0
+	}
+	if e, ok := err.(*esperr.Error); ok {
+		return e.Code
+	}
+	return -1
+}
+
+// errText formats an esp error as "<decimal code> <name>", exactly the two
+// tokens the pre-error probes printed side by side via int(e) and
+// tls.ErrName(e) ("32258 TLS_ERR_CERT_VERIFY"), so the acceptance-golden
+// diagnostic lines stay byte-identical. Errors without a name (the
+// peripheral esp_err wrappers) render as the bare code; a non-esp error
+// degrades to its own Error() text.
+func errText(err error) string {
+	if e, ok := err.(*esperr.Error); ok {
+		if e.Name != "" {
+			return dec32(int(e.Code)) + " " + e.Name
+		}
+		return dec32(int(e.Code))
+	}
+	if err == nil {
+		return "0"
+	}
+	return err.Error()
 }
 
 // psramProbe keeps a working set far larger than the static GC heap alive and
@@ -422,22 +450,22 @@ func level01(b bool) int {
 
 func gpioProbe() {
 	p := gpio.Pin(4)
-	if e := p.SetDirection(gpio.Output, gpio.PullNone); e != 0 {
-		println("[go] periph gpio set_direction err =", int(e))
+	if err := p.SetDirection(gpio.Output, gpio.PullNone); err != nil {
+		println("[go] periph gpio set_direction err =", errCode(err))
 		return
 	}
-	if e := p.SetLevel(true); e != 0 {
-		println("[go] periph gpio set_level(true) err =", int(e))
+	if err := p.SetLevel(true); err != nil {
+		println("[go] periph gpio set_level(true) err =", errCode(err))
 		return
 	}
 	high := p.GetLevel()
-	if e := p.SetLevel(false); e != 0 {
-		println("[go] periph gpio set_level(false) err =", int(e))
+	if err := p.SetLevel(false); err != nil {
+		println("[go] periph gpio set_level(false) err =", errCode(err))
 		return
 	}
 	low := p.GetLevel()
-	if e := p.Toggle(); e != 0 {
-		println("[go] periph gpio toggle err =", int(e))
+	if err := p.Toggle(); err != nil {
+		println("[go] periph gpio toggle err =", errCode(err))
 		return
 	}
 	toggled := p.GetLevel()
@@ -451,9 +479,9 @@ func gpioProbe() {
 }
 
 func i2cProbe() {
-	bus, e := i2c.NewBus(8, 9)
-	if e != 0 {
-		println("[go] periph i2c new_bus err =", int(e))
+	bus, err := i2c.NewBus(8, 9)
+	if err != nil {
+		println("[go] periph i2c new_bus err =", errCode(err))
 		return
 	}
 	println("[go] periph i2c bus install ok")
@@ -462,56 +490,56 @@ func i2cProbe() {
 	// never a hang and never a crash. The emulator does not model ACK/NACK,
 	// so there the same read reports err = 0 and a 0xFF byte; real transfers
 	// need real hardware.
-	dev, e := bus.Device(0x50, 100000)
-	if e != 0 {
-		println("[go] periph i2c add_device err =", int(e))
+	dev, err := bus.Device(0x50, 100000)
+	if err != nil {
+		println("[go] periph i2c add_device err =", errCode(err))
 		bus.Close()
 		return
 	}
 	var reg [1]byte
-	e = dev.Read(reg[:])
-	println("[go] periph i2c read err =", int(e), "byte =", int(reg[0]))
-	if e := dev.Close(); e != 0 {
-		println("[go] periph i2c rm_device err =", int(e))
+	err = dev.Read(reg[:])
+	println("[go] periph i2c read err =", errCode(err), "byte =", int(reg[0]))
+	if err := dev.Close(); err != nil {
+		println("[go] periph i2c rm_device err =", errCode(err))
 	}
-	if e := bus.Close(); e != 0 {
-		println("[go] periph i2c del_bus err =", int(e))
+	if err := bus.Close(); err != nil {
+		println("[go] periph i2c del_bus err =", errCode(err))
 		return
 	}
 	println("[go] periph i2c done")
 }
 
 func i2sProbe() {
-	ch, e := i2s.NewChannel(true)
-	if e != 0 {
-		println("[go] periph i2s alloc err =", int(e))
+	ch, err := i2s.NewChannel(true)
+	if err != nil {
+		println("[go] periph i2s alloc err =", errCode(err))
 		return
 	}
 	println("[go] periph i2s channel alloc ok")
 	// TX channel: bclk GPIO4, ws GPIO5, dout GPIO6, no mclk and no din.
-	if e := ch.ConfigureStd(i2s.StdConfig{
+	if err := ch.ConfigureStd(i2s.StdConfig{
 		MCLK: -1, BCLK: 4, WS: 5, DOUT: 6, DIN: -1,
 		Bits: i2s.Bits16, Stereo: true, SampleRate: 44100,
-	}); e != 0 {
-		println("[go] periph i2s init_std err =", int(e))
+	}); err != nil {
+		println("[go] periph i2s init_std err =", errCode(err))
 		ch.Close()
 		return
 	}
 	println("[go] periph i2s std init ok")
-	if e := ch.Enable(); e != 0 {
-		println("[go] periph i2s enable err =", int(e))
+	if err := ch.Enable(); err != nil {
+		println("[go] periph i2s enable err =", errCode(err))
 		ch.Close()
 		return
 	}
 	// One DMA-scale buffer of 16-bit stereo silence (256 frames = 1024 bytes).
 	silence := make([]byte, 1024)
-	n, e := ch.Write(silence)
-	println("[go] periph i2s write n =", n, "err =", int(e))
-	if e := ch.Disable(); e != 0 {
-		println("[go] periph i2s disable err =", int(e))
+	n, werr := ch.Write(silence)
+	println("[go] periph i2s write n =", n, "err =", errCode(werr))
+	if err := ch.Disable(); err != nil {
+		println("[go] periph i2s disable err =", errCode(err))
 	}
-	if e := ch.Close(); e != 0 {
-		println("[go] periph i2s del err =", int(e))
+	if err := ch.Close(); err != nil {
+		println("[go] periph i2s del err =", errCode(err))
 		return
 	}
 	println("[go] periph i2s done")
@@ -574,44 +602,44 @@ func tlsRound(c *tls.TLSConn, tag string) bool {
 		s = s*1664525 + 1013904223
 		msg[i] = byte(s >> 24)
 	}
-	if e := c.SetDeadline(5000); e != 0 {
-		println("[go] tls", tag, "set_deadline err =", int(e), tls.ErrName(e))
+	if err := c.SetDeadline(5000); err != nil {
+		println("[go] tls", tag, "set_deadline err =", errText(err))
 		return false
 	}
-	if w := c.Write(msg[:]); w != patternLen {
-		println("[go] tls", tag, "write n =", int(w), "want", patternLen)
+	if w, werr := c.Write(msg[:]); werr != nil || w != patternLen {
+		println("[go] tls", tag, "write n =", w, "want", patternLen)
 		return false
 	}
 	var got [patternLen]byte
-	total := int32(0)
+	total := 0
 	for total < patternLen {
-		n, e := c.Read(got[total:])
+		n, rerr := c.Read(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		if e != 0 {
-			println("[go] tls", tag, "read err =", int(e), tls.ErrName(e), "at", int(total))
+		if rerr != nil && rerr != esperr.ErrEOF {
+			println("[go] tls", tag, "read err =", errText(rerr), "at", total)
 		} else {
-			println("[go] tls", tag, "read peer closed at", int(total))
+			println("[go] tls", tag, "read peer closed at", total)
 		}
 		break
 	}
 	mismatches := 0
-	for i := int32(0); i < total; i++ {
+	for i := 0; i < total; i++ {
 		if got[i] != msg[i] {
 			mismatches++
 		}
 	}
-	if e := c.Close(); e != 0 {
-		println("[go] tls", tag, "close report =", int(e), tls.ErrName(e))
+	if err := c.Close(); err != nil {
+		println("[go] tls", tag, "close report =", errText(err))
 	}
 	if total == patternLen && mismatches == 0 {
-		println("[go] tls", tag, "echo", int(total), "/", patternLen, "bytes verified")
+		println("[go] tls", tag, "echo", total, "/", patternLen, "bytes verified")
 		return true
 	}
-	println("[go] tls", tag, "echo got", int(total), "/", patternLen,
-		"bytes, mismatches =", int(mismatches))
+	println("[go] tls", tag, "echo got", total, "/", patternLen,
+		"bytes, mismatches =", mismatches)
 	return false
 }
 
@@ -649,9 +677,9 @@ func tlsProbe() {
 	heapMark("tls-baseline")
 
 	t0 := rdcycle()
-	c, e := tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, nil)
-	if e != 0 {
-		println("[go] tls none dial err =", int(e), tls.ErrName(e))
+	c, err := tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, nil)
+	if err != nil {
+		println("[go] tls none dial err =", errText(err))
 		println("[go] tls FAIL dial-none")
 		return
 	}
@@ -679,9 +707,9 @@ func tlsProbe() {
 		return
 	}
 	t0 = rdcycle()
-	c, e = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, ca)
-	if e != 0 {
-		println("[go] tls required dial err =", int(e), tls.ErrName(e))
+	c, err = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, ca)
+	if err != nil {
+		println("[go] tls required dial err =", errText(err))
 		println("[go] tls FAIL dial-required")
 		return
 	}
@@ -699,11 +727,11 @@ func tlsProbe() {
 	if caWrong == nil {
 		println("[go] tls bad-ca SKIP: no wrong CA compiled in")
 	} else {
-		c, e = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, caWrong)
-		if e == tls.CertVerifyFailed {
-			println("[go] tls bad-ca correctly rejected (", int(e), tls.ErrName(e), ")")
+		c, err = tls.TLSDial(net.IPv4(192, 168, 4, 1), 9443, 15000, caWrong)
+		if err == tls.ErrCertVerifyFailed {
+			println("[go] tls bad-ca correctly rejected (", errText(err), ")")
 		} else {
-			println("[go] tls bad-ca dial err =", int(e), tls.ErrName(e))
+			println("[go] tls bad-ca dial err =", errText(err))
 			println("[go] tls FAIL bad-ca (want CertVerifyFailed)")
 			return
 		}
@@ -725,13 +753,13 @@ func tlsProbe() {
 	// session. ConnectionState is read while the session is live (State on
 	// a closed conn legitimately reports nothing), then the quiet echo
 	// round proves the session usable and closes it.
-	c, e = tls.Dial(natPeer, 15000, &tls.Config{
+	c, err = tls.Dial(natPeer, 15000, &tls.Config{
 		ServerName: "localhost",
 		RootCAs:    ca,
 		MinVersion: tls.VersionTLS12,
 	})
-	if e != 0 {
-		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+	if err != nil {
+		println("[go] tls sni dial err =", errText(err))
 		println("[go] tls FAIL sni-ok")
 		return
 	}
@@ -748,31 +776,31 @@ func tlsProbe() {
 
 	// Wrong name, right CA: the handshake must refuse the peer - this is
 	// the MITM shape TLSDial would have accepted (any cert of this CA).
-	c, e = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "nope.llgo.test", RootCAs: ca})
-	if e == tls.CertVerifyFailed {
-		println("[go] tls sni reject-host (", int(e), tls.ErrName(e), ")")
+	c, err = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "nope.llgo.test", RootCAs: ca})
+	if err == tls.ErrCertVerifyFailed {
+		println("[go] tls sni reject-host (", errText(err), ")")
 	} else {
-		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+		println("[go] tls sni dial err =", errText(err))
 		println("[go] tls FAIL reject-host (want CertVerifyFailed)")
 		return
 	}
 
 	// Right name, wrong CA: the chain cannot be built to the anchor that
 	// signed nothing.
-	c, e = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "localhost", RootCAs: caWrong})
-	if e == tls.CertVerifyFailed {
-		println("[go] tls sni reject-ca (", int(e), tls.ErrName(e), ")")
+	c, err = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "localhost", RootCAs: caWrong})
+	if err == tls.ErrCertVerifyFailed {
+		println("[go] tls sni reject-ca (", errText(err), ")")
 	} else {
-		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+		println("[go] tls sni dial err =", errText(err))
 		println("[go] tls FAIL reject-ca (want CertVerifyFailed)")
 		return
 	}
 
 	// Explicit skip: no identity checking, session still fully usable
 	// (same live-State + quiet-round order as the sni-ok probe).
-	c, e = tls.Dial(natPeer, 15000, &tls.Config{InsecureSkipVerify: true})
-	if e != 0 {
-		println("[go] tls skip dial err =", int(e), tls.ErrName(e))
+	c, err = tls.Dial(natPeer, 15000, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		println("[go] tls skip dial err =", errText(err))
 		println("[go] tls FAIL skip-ok")
 		return
 	}
@@ -804,23 +832,23 @@ func tlsRoundQuiet(c *tls.TLSConn) bool {
 		msg[i] = byte(s >> 24)
 	}
 	defer c.Close()
-	if e := c.SetDeadline(5000); e != 0 {
+	if err := c.SetDeadline(5000); err != nil {
 		return false
 	}
-	if w := c.Write(msg[:]); w != patternLen {
+	if w, werr := c.Write(msg[:]); werr != nil || w != patternLen {
 		return false
 	}
 	var got [patternLen]byte
-	total := int32(0)
+	total := 0
 	for total < patternLen {
 		n, _ := c.Read(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		return false // peer closed early (n == 0, e == 0) or a real error
+		return false // peer closed early (0, io.EOF) or a real error
 	}
-	for i := int32(0); i < total; i++ {
+	for i := 0; i < total; i++ {
 		if got[i] != msg[i] {
 			return false
 		}
@@ -852,32 +880,32 @@ func wsRound(w *ws.WSConn, tag string, seed uint32) bool {
 		s = s*1664525 + 1013904223
 		msg[i] = byte(s >> 24)
 	}
-	if e := w.SetDeadline(5000); e != 0 {
-		println("[go] ws", tag, "set_deadline err =", int(e), ws.ErrName(e))
+	if err := w.SetDeadline(5000); err != nil {
+		println("[go] ws", tag, "set_deadline err =", errText(err))
 		return false
 	}
-	if r := w.WriteMessage(msg[:], ws.OpBinary); r != patternLen {
-		println("[go] ws", tag, "write r =", int(r), "want", patternLen)
+	if r, werr := w.WriteMessage(msg[:], ws.OpBinary); werr != nil || r != patternLen {
+		println("[go] ws", tag, "write r =", r, "want", patternLen)
 		w.Close(1002)
 		return false
 	}
 	var got [patternLen]byte
-	total := int32(0)
+	total := 0
 	for total < patternLen {
-		n, e := w.ReadMessage(got[total:])
+		n, rerr := w.ReadMessage(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		if e != 0 {
-			println("[go] ws", tag, "read err =", int(e), ws.ErrName(e), "at", int(total))
+		if rerr != nil && rerr != esperr.ErrEOF {
+			println("[go] ws", tag, "read err =", errText(rerr), "at", total)
 		} else {
 			println("[go] ws", tag, "control/zero-length event during echo read")
 		}
 		break
 	}
 	mismatches := 0
-	for i := int32(0); i < total; i++ {
+	for i := 0; i < total; i++ {
 		if got[i] != msg[i] {
 			mismatches++
 		}
@@ -890,19 +918,19 @@ func wsRound(w *ws.WSConn, tag string, seed uint32) bool {
 		}
 	}
 	if ok {
-		println("[go] ws", tag, "echo", int(total), "/", patternLen, "bytes verified")
+		println("[go] ws", tag, "echo", total, "/", patternLen, "bytes verified")
 	} else {
-		println("[go] ws", tag, "echo got", int(total), "/", patternLen,
-			"bytes, mismatches =", int(mismatches))
+		println("[go] ws", tag, "echo got", total, "/", patternLen,
+			"bytes, mismatches =", mismatches)
 		w.Close(1002)
 		return false
 	}
 
 	// Ping/pong: the pong is consumed by the read path and reported as a
-	// (0, 0) event with PongSeen() true - pump until it shows up or the
+	// (0, nil) event with PongSeen() true - pump until it shows up or the
 	// deadline (2 s) cuts the wait.
-	if e := w.Ping(); e != 0 {
-		println("[go] ws", tag, "ping err =", int(e), ws.ErrName(e))
+	if err := w.Ping(); err != nil {
+		println("[go] ws", tag, "ping err =", errText(err))
 		w.Close(1002)
 		return false
 	}
@@ -910,8 +938,8 @@ func wsRound(w *ws.WSConn, tag string, seed uint32) bool {
 	sawPong := false
 	var scratch [8]byte
 	for i := 0; i < 100 && !sawPong; i++ {
-		if _, e := w.ReadMessage(scratch[:]); e != 0 && e != etimedout {
-			println("[go] ws", tag, "pong wait err =", int(e), ws.ErrName(e))
+		if _, rerr := w.ReadMessage(scratch[:]); rerr != nil && rerr != ws.ErrTimeout {
+			println("[go] ws", tag, "pong wait err =", errText(rerr))
 			w.Close(1002)
 			return false
 		}
@@ -926,10 +954,10 @@ func wsRound(w *ws.WSConn, tag string, seed uint32) bool {
 	}
 
 	// Closing handshake: the deadline bounds the wait for the peer's echo
-	// (0 = graceful); wssrv logs the code as the host-side evidence.
+	// (nil = graceful); wssrv logs the code as the host-side evidence.
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		println("[go] ws", tag, "close report =", int(e), ws.ErrName(e))
+	if err := w.Close(1000); err != nil {
+		println("[go] ws", tag, "close report =", errText(err))
 		return false
 	}
 	println("[go] ws", tag, "close ok (peer code", int(w.CloseCode()), ")")
@@ -941,19 +969,19 @@ func wsRound(w *ws.WSConn, tag string, seed uint32) bool {
 func wsSession(tag, hostport string, port uint16, caPEM []byte) bool {
 	t0 := rdcycle()
 	var c ws.Conn
-	var e int32
+	var derr error
 	if caPEM == nil && port == 9000 {
-		c, e = net.Dial(net.IPv4(192, 168, 4, 1), port, 10000)
+		c, derr = net.Dial(net.IPv4(192, 168, 4, 1), port, 10000)
 	} else {
-		c, e = tls.TLSDial(net.IPv4(192, 168, 4, 1), port, 15000, caPEM)
+		c, derr = tls.TLSDial(net.IPv4(192, 168, 4, 1), port, 15000, caPEM)
 	}
-	if e != 0 {
-		println("[go] ws", tag, "dial err =", int(e), ws.ErrName(e))
+	if derr != nil {
+		println("[go] ws", tag, "dial err =", errText(derr))
 		return false
 	}
-	w, e := ws.HandshakeURL(c, hostport, "/ws", 5000)
-	if e != 0 {
-		println("[go] ws", tag, "handshake err =", int(e), ws.ErrName(e))
+	w, err := ws.HandshakeURL(c, hostport, "/ws", 5000)
+	if err != nil {
+		println("[go] ws", tag, "handshake err =", errText(err))
 		return false
 	}
 	println("[go] ws", tag, "handshake ok in", int((rdcycle()-t0)/240000), "ms")
@@ -1011,8 +1039,8 @@ func wsProbe() {
 	}
 	println("[go] ws accept-key ok (RFC 6455 example)")
 	enc := ws.Base64StdEncode([]byte("foobar"))
-	dec, de := ws.Base64StdDecode("Zm9vYg==")
-	if enc != "Zm9vYmFy" || de != 0 || len(dec) != 4 || string(dec) != "foob" {
+	dec, derr := ws.Base64StdDecode("Zm9vYg==")
+	if enc != "Zm9vYmFy" || derr != nil || len(dec) != 4 || string(dec) != "foob" {
 		println("[go] ws base64 MISMATCH", enc)
 		println("[go] ws FAIL crypto-smoke")
 		return
@@ -1086,54 +1114,54 @@ func netProbe() {
 	// 192.168.4.1 is the esp-emu NAT gateway alias for the host (the
 	// firmware itself is 192.168.4.2); on real hardware this would be the AP
 	// side's address.
-	c, e := net.Dial(net.IPv4(192, 168, 4, 1), 9000, 10000)
-	if e != 0 {
-		println("[go] net dial err =", int(e), net.ErrName(e))
+	c, err := net.Dial(net.IPv4(192, 168, 4, 1), 9000, 10000)
+	if err != nil {
+		println("[go] net dial err =", errText(err))
 		println("[go] net FAIL dial")
 		return
 	}
 	println("[go] net dial ok in", int((rdcycle()-t0)/240000), "ms")
 
-	if e := net.SetDeadline(c, 5000); e != 0 {
-		println("[go] net set_deadline err =", int(e), net.ErrName(e))
+	if err := c.SetDeadline(5000); err != nil {
+		println("[go] net set_deadline err =", errText(err))
 		println("[go] net FAIL deadline")
 		c.Close()
 		return
 	}
-	if w := c.Write(msg[:]); w != patternLen {
-		println("[go] net write n =", int(w), "want", patternLen)
+	if w, werr := c.Write(msg[:]); werr != nil || w != patternLen {
+		println("[go] net write n =", w, "want", patternLen)
 		println("[go] net FAIL write")
 		c.Close()
 		return
 	}
 	var got [patternLen]byte
-	total := int32(0)
+	total := 0
 	for total < patternLen {
-		n, e := c.Read(got[total:])
+		n, rerr := c.Read(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		if e != 0 {
-			println("[go] net read err =", int(e), net.ErrName(e), "at", int(total))
+		if rerr != nil && rerr != esperr.ErrEOF {
+			println("[go] net read err =", errText(rerr), "at", total)
 		} else {
-			println("[go] net read peer closed at", int(total))
+			println("[go] net read peer closed at", total)
 		}
 		break
 	}
 	mismatches := 0
-	for i := int32(0); i < total; i++ {
+	for i := 0; i < total; i++ {
 		if got[i] != msg[i] {
 			mismatches++
 		}
 	}
 	c.Close()
 	if total == patternLen && mismatches == 0 {
-		println("[go] net echo", int(total), "/", patternLen, "bytes verified")
+		println("[go] net echo", total, "/", patternLen, "bytes verified")
 		println("[go] net PASS")
 	} else {
-		println("[go] net echo got", int(total), "/", patternLen,
-			"bytes, mismatches =", int(mismatches))
+		println("[go] net echo got", total, "/", patternLen,
+			"bytes, mismatches =", mismatches)
 		println("[go] net FAIL echo")
 		return
 	}
@@ -1142,9 +1170,9 @@ func netProbe() {
 	// Best-effort: name resolution through the emulator's DNS proxy. The
 	// dotted-quad path is instant; this checks the localhost lookup.
 	t0 = rdcycle()
-	ip, e := net.Resolve("localhost")
-	if e != 0 {
-		println("[go] net resolve localhost err =", int(e), net.ErrName(e), "- SKIP")
+	ip, rerr := net.Resolve("localhost")
+	if rerr != nil {
+		println("[go] net resolve localhost err =", errText(rerr), "- SKIP")
 	} else {
 		println("[go] net resolve localhost =", wifi.IPString(ip),
 			"in", int((rdcycle()-t0)/240000), "ms")
@@ -1161,39 +1189,44 @@ func netProbe() {
 	// connect in 0 ms. Sequential also matches the protocol: the handshake
 	// completes into the listener's backlog before Accept, so the concurrent
 	// form would add nothing but a guaranteed 3 s serialization stall.
-	ln, e := net.Listen(9001)
-	if e != 0 {
-		println("[go] net listen 9001 err =", int(e), net.ErrName(e), "- SKIP")
+	ln, lerr := net.Listen(9001)
+	if lerr != nil {
+		println("[go] net listen 9001 err =", errText(lerr), "- SKIP")
 		return
 	}
-	cc, de := net.Dial(net.IPv4(127, 0, 0, 1), 9001, 3000)
-	if de != 0 {
-		println("[go] net loopback SKIP: dial err =", int(de), net.ErrName(de))
+	cc, derr := net.Dial(net.IPv4(127, 0, 0, 1), 9001, 3000)
+	if derr != nil {
+		println("[go] net loopback SKIP: dial err =", errText(derr))
 		ln.Close()
 		return
 	}
-	lc, ae := ln.Accept(3000)
-	if ae != 0 {
-		println("[go] net loopback FAIL: accept err =", int(ae), net.ErrName(ae))
+	ln.SetDeadline(3000)
+	lc, aerr := ln.Accept()
+	if aerr != nil {
+		println("[go] net loopback FAIL: accept err =", errText(aerr))
 		cc.Close()
 		ln.Close()
 		return
 	}
-	net.SetDeadline(cc, 3000)
-	net.SetDeadline(lc, 3000)
+	cc.SetDeadline(3000)
+	lc.SetDeadline(3000)
 	var one, atAccept, back [1]byte
 	one[0] = 0x5A
-	ok := cc.Write(one[:]) == 1
-	if ok {
-		n, re := lc.Read(atAccept[:])
-		ok = n == 1 && re == 0 && atAccept[0] == 0x5A
+	ok := false
+	if w, werr := cc.Write(one[:]); werr == nil {
+		ok = w == 1
 	}
 	if ok {
-		ok = lc.Write(atAccept[:]) == 1
+		n, rerr := lc.Read(atAccept[:])
+		ok = n == 1 && rerr == nil && atAccept[0] == 0x5A
 	}
 	if ok {
-		n, re := cc.Read(back[:])
-		ok = n == 1 && re == 0 && back[0] == 0x5A
+		w, werr := lc.Write(atAccept[:])
+		ok = werr == nil && w == 1
+	}
+	if ok {
+		n, rerr := cc.Read(back[:])
+		ok = n == 1 && rerr == nil && back[0] == 0x5A
 	}
 	cc.Close()
 	lc.Close()
@@ -1259,8 +1292,8 @@ func udpProbe() {
 		return m
 	}
 	deadline := func(c *net.UDPConn) bool {
-		if e := c.SetDeadline(udpDeadline); e != 0 {
-			println("[go] net udp set_deadline err =", int(e), net.ErrName(e))
+		if err := c.SetDeadline(udpDeadline); err != nil {
+			println("[go] net udp set_deadline err =", errText(err))
 			return false
 		}
 		return true
@@ -1270,9 +1303,9 @@ func udpProbe() {
 	// rewrites the echo's source back to 192.168.4.1:9002, so ReadFrom's
 	// sender address is deterministic and gets verified against it.
 	host := net.Addr{IP: net.IPv4(192, 168, 4, 1), Port: udpPort}
-	c, e := net.ListenUDP(nil)
-	if e != 0 {
-		println("[go] net udp listen err =", int(e), net.ErrName(e))
+	c, err := net.ListenUDP(nil)
+	if err != nil {
+		println("[go] net udp listen err =", errText(err))
 		println("[go] net udp FAIL listen")
 		return
 	}
@@ -1282,16 +1315,16 @@ func udpProbe() {
 		return
 	}
 	msg := lcg(0x51ED270B, hostLen)
-	if w, we := c.WriteTo(msg, host); we != 0 || w != hostLen {
-		println("[go] net udp write_to n =", int(w), "err =", int(we), net.ErrName(we))
+	if w, werr := c.WriteTo(msg, host); werr != nil || w != hostLen {
+		println("[go] net udp write_to n =", w, "err =", errText(werr))
 		println("[go] net udp FAIL write-to")
 		c.Close()
 		return
 	}
 	var got [hostLen]byte
-	n, from, re := c.ReadFrom(got[:])
-	if re != 0 || n != hostLen || mism(msg, got[:]) != 0 {
-		println("[go] net udp read_from n =", int(n), "err =", int(re), net.ErrName(re),
+	n, from, rerr := c.ReadFrom(got[:])
+	if rerr != nil || n != hostLen || mism(msg, got[:]) != 0 {
+		println("[go] net udp read_from n =", n, "err =", errText(rerr),
 			"peer =", from.String(), "mismatches =", mism(msg, got[:]))
 		println("[go] net udp FAIL read-from")
 		c.Close()
@@ -1308,9 +1341,9 @@ func udpProbe() {
 	println("[go] net udp round-trip ok n=" + dec32(n))
 
 	// Phase 2: connected DialUDP Write/Read to the same peer.
-	cc, e := net.DialUDP(nil, &host)
-	if e != 0 {
-		println("[go] net udp dial err =", int(e), net.ErrName(e))
+	cc, derr := net.DialUDP(nil, &host)
+	if derr != nil {
+		println("[go] net udp dial err =", errText(derr))
 		println("[go] net udp FAIL dial")
 		return
 	}
@@ -1320,16 +1353,16 @@ func udpProbe() {
 		return
 	}
 	msg2 := lcg(0x2545F491, peerLen)
-	if w := cc.Write(msg2); w != peerLen {
-		println("[go] net udp write n =", int(w), "want", peerLen)
+	if w, werr := cc.Write(msg2); werr != nil || w != peerLen {
+		println("[go] net udp write n =", w, "want", peerLen)
 		println("[go] net udp FAIL write")
 		cc.Close()
 		return
 	}
 	var got2 [peerLen]byte
-	n2, e2 := cc.Read(got2[:])
-	if e2 != 0 || n2 != peerLen || mism(msg2, got2[:]) != 0 {
-		println("[go] net udp read n =", int(n2), "err =", int(e2), net.ErrName(e2),
+	n2, rerr2 := cc.Read(got2[:])
+	if rerr2 != nil || n2 != peerLen || mism(msg2, got2[:]) != 0 {
+		println("[go] net udp read n =", n2, "err =", errText(rerr2),
 			"mismatches =", mism(msg2, got2[:]))
 		println("[go] net udp FAIL read")
 		cc.Close()
@@ -1342,15 +1375,15 @@ func udpProbe() {
 	// accept: the bound socket ReadFrom's the datagram, sees the client's
 	// ephemeral port in the sender address, and WriteTo's the echo back.
 	lb := net.Addr{IP: net.IPv4(127, 0, 0, 1), Port: lbUdpPort}
-	srv, e := net.ListenUDP(&lb)
-	if e != 0 {
-		println("[go] net udp listen loopback err =", int(e), net.ErrName(e))
+	srv, serr := net.ListenUDP(&lb)
+	if serr != nil {
+		println("[go] net udp listen loopback err =", errText(serr))
 		println("[go] net udp FAIL listen-loopback")
 		return
 	}
-	cli, e := net.DialUDP(nil, &lb)
-	if e != 0 {
-		println("[go] net udp dial loopback err =", int(e), net.ErrName(e))
+	cli, cerr := net.DialUDP(nil, &lb)
+	if cerr != nil {
+		println("[go] net udp dial loopback err =", errText(cerr))
 		println("[go] net udp FAIL dial-loopback")
 		srv.Close()
 		return
@@ -1362,35 +1395,35 @@ func udpProbe() {
 		return
 	}
 	msg3 := lcg(0x0B6675F1, lbLen)
-	if w := cli.Write(msg3); w != lbLen {
-		println("[go] net udp loopback write n =", int(w), "want", lbLen)
+	if w, werr := cli.Write(msg3); werr != nil || w != lbLen {
+		println("[go] net udp loopback write n =", w, "want", lbLen)
 		println("[go] net udp FAIL loopback-write")
 		cli.Close()
 		srv.Close()
 		return
 	}
 	var atSrv, back [lbLen]byte
-	n3, from3, e3 := srv.ReadFrom(atSrv[:])
-	if e3 != 0 || n3 != lbLen || mism(msg3, atSrv[:]) != 0 {
-		println("[go] net udp loopback read_from n =", int(n3), "err =", int(e3), net.ErrName(e3),
+	n3, from3, rerr3 := srv.ReadFrom(atSrv[:])
+	if rerr3 != nil || n3 != lbLen || mism(msg3, atSrv[:]) != 0 {
+		println("[go] net udp loopback read_from n =", n3, "err =", errText(rerr3),
 			"mismatches =", mism(msg3, atSrv[:]))
 		println("[go] net udp FAIL loopback-read-from")
 		cli.Close()
 		srv.Close()
 		return
 	}
-	if w, we := srv.WriteTo(atSrv[:n3], from3); we != 0 || w != n3 {
-		println("[go] net udp loopback write_to n =", int(w), "err =", int(we), net.ErrName(we))
+	if w, werr := srv.WriteTo(atSrv[:n3], from3); werr != nil || w != n3 {
+		println("[go] net udp loopback write_to n =", w, "err =", errText(werr))
 		println("[go] net udp FAIL loopback-echo")
 		cli.Close()
 		srv.Close()
 		return
 	}
-	n4, e4 := cli.Read(back[:])
+	n4, rerr4 := cli.Read(back[:])
 	cli.Close()
 	srv.Close()
-	if e4 != 0 || n4 != lbLen || mism(msg3, back[:]) != 0 {
-		println("[go] net udp loopback read n =", int(n4), "err =", int(e4), net.ErrName(e4),
+	if rerr4 != nil || n4 != lbLen || mism(msg3, back[:]) != 0 {
+		println("[go] net udp loopback read n =", n4, "err =", errText(rerr4),
 			"mismatches =", mism(msg3, back[:]))
 		println("[go] net udp FAIL loopback-read")
 		return
@@ -1442,16 +1475,16 @@ func main() {
 	heapMark("baseline")
 	wifi.PrintVersion()
 	println("[go] wifi: setup ...")
-	if e := wifi.Setup(); e != 0 {
-		println("[go] wifi setup err =", int(e), wifi.ErrName(e))
+	if err := wifi.Setup(); err != nil {
+		println("[go] wifi setup err =", errText(err))
 		println("[go] wifi FAIL setup")
 		return
 	}
 	println("[go] wifi setup err=0")
 	heapMark("init")
 
-	if e := wifi.EventsRegister(); e != 0 {
-		println("[go] wifi events register err =", int(e), wifi.ErrName(e))
+	if err := wifi.EventsRegister(); err != nil {
+		println("[go] wifi events register err =", errText(err))
 		println("[go] wifi FAIL events")
 		return
 	}
@@ -1467,26 +1500,26 @@ func main() {
 	// AP. A scan-only run sets the mode alone, because configuring an empty
 	// SSID is rejected (ESP_ERR_WIFI_SSID).
 	if noCreds {
-		if e := wifi.SetModeSTA(); e != 0 {
-			println("[go] wifi set_mode err =", int(e), wifi.ErrName(e))
+		if err := wifi.SetModeSTA(); err != nil {
+			println("[go] wifi set_mode err =", errText(err))
 			println("[go] wifi FAIL set_mode")
 			return
 		}
-	} else if e := wifi.SetSTA(ssid, pass); e != 0 {
-		println("[go] wifi set_sta err =", int(e), wifi.ErrName(e))
+	} else if err := wifi.SetSTA(ssid, pass); err != nil {
+		println("[go] wifi set_sta err =", errText(err))
 		println("[go] wifi FAIL set_sta")
 		return
 	}
-	if e := wifi.Start(); e != 0 {
-		println("[go] wifi start err =", int(e), wifi.ErrName(e))
+	if err := wifi.Start(); err != nil {
+		println("[go] wifi start err =", errText(err))
 		println("[go] wifi FAIL start")
 		return
 	}
-	if ev, ok := wifi.Subscribe(wifi.EvStaStart).Next(3000); ok {
+	if _, err := wifi.Subscribe(wifi.EvStaStart).Next(3000); err == nil {
 		println("[go] wifi STA_START")
 		heapMark("start")
 	} else {
-		println("[go] wifi: no STA_START in 3s, last event kind =", int(ev.Kind))
+		println("[go] wifi: no STA_START in 3s")
 		println("[go] wifi FAIL sta_start")
 		return
 	}
@@ -1494,9 +1527,9 @@ func main() {
 	// Scan (M1): emu's built-in soft AP must show up in the list. The Scan
 	// wrapper subscribes to SCAN_DONE, starts the scan non-blocking, waits
 	// and fetches; the scheduler stays live throughout.
-	aps, e := wifi.Scan(wifi.ScanOptions{})
-	if e != 0 {
-		println("[go] wifi scan err =", int(e), wifi.ErrName(e))
+	aps, err := wifi.Scan(wifi.ScanOptions{})
+	if err != nil {
+		println("[go] wifi scan err =", errText(err))
 		println("[go] wifi FAIL scan")
 		return
 	}
@@ -1531,13 +1564,13 @@ func main() {
 	connEvents := wifi.Subscribe(wifi.EvStaConnected, wifi.EvStaDisconnected)
 	connected := false
 	for attempt := 1; attempt <= 3 && !connected; attempt++ {
-		if e := wifi.Connect(); e != 0 {
-			println("[go] wifi connect err =", int(e), wifi.ErrName(e))
+		if err := wifi.Connect(); err != nil {
+			println("[go] wifi connect err =", errText(err))
 			println("[go] wifi FAIL connect")
 			return
 		}
-		ev, ok := connEvents.Next(3000)
-		if ok && ev.Kind == wifi.EvStaConnected {
+		ev, nerr := connEvents.Next(3000)
+		if nerr == nil && ev.Kind == wifi.EvStaConnected {
 			connected = true
 			println("[go] wifi STA_CONNECTED")
 		} else {
@@ -1572,16 +1605,16 @@ func main() {
 	subDisc := wifi.Subscribe(wifi.EvStaDisconnected)
 	subA := wifi.Subscribe(wifi.EvGotIP)
 	subB := wifi.Subscribe(wifi.EvGotIP)
-	if e := wifi.Disconnect(); e != 0 {
-		println("[go] wifi sub fanout FAIL disconnect err =", int(e), wifi.ErrName(e))
+	if err := wifi.Disconnect(); err != nil {
+		println("[go] wifi sub fanout FAIL disconnect err =", errText(err))
 	} else {
 		subDisc.Next(3000)
-		if e := wifi.Connect(); e != 0 {
-			println("[go] wifi sub fanout FAIL connect err =", int(e), wifi.ErrName(e))
+		if err := wifi.Connect(); err != nil {
+			println("[go] wifi sub fanout FAIL connect err =", errText(err))
 		} else {
-			evA, okA := subA.Next(15000)
-			evB, okB := subB.Next(15000)
-			if okA && okB && evA.Kind == wifi.EvGotIP && evB.Kind == wifi.EvGotIP &&
+			evA, errA := subA.Next(15000)
+			evB, errB := subB.Next(15000)
+			if errA == nil && errB == nil && evA.Kind == wifi.EvGotIP && evB.Kind == wifi.EvGotIP &&
 				evA.IP != 0 && evA.IP == evB.IP {
 				println("[go] wifi sub fanout ok ip=" + wifi.IPString(evA.IP))
 			} else {

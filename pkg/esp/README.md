@@ -47,8 +47,58 @@ the `_stub.go` file keeps the package compiling. Stubs return
 can never be mistaken for one; `vTaskDelay`-style no-ops return plain zero
 values.
 
-Packages under pkg/esp are kept dependency-free (only stdlib/`unsafe`), so
-each glue file can be adopted independently.
+Packages under pkg/esp are kept dependency-free (no third-party code, no
+`fmt`/`strconv`; the transports additionally avoid everything stdlib but
+`io`/`unsafe`), so each glue file can be adopted independently. The one
+intra-family import every package may take is `pkg/esp/esperr` - the
+shared error base, pure Go, no glue, no build tags.
+
+## Error model
+
+Every pkg/esp package reports failures as Go `error` values of the shared
+`pkg/esp/esperr` type:
+
+```go
+type Error struct {
+    Code int32  // the raw pipeline code (lwip errno, h_errno, negative
+                // mbedtls code, esp_err, or an internal 0x7Dxx/0x7Exx value)
+    Name string // the ErrName rendering, filled by the producing package
+}
+```
+
+`Error()` renders `"NAME (CODE)"`; the code stays inspectable, so old
+code that matched numbers (or named them through `net.ErrName`,
+`tls.ErrName`, `ws.ErrName`, `wifi.ErrName`) keeps working. `errors.Is`
+matches by pipeline code: the three transport sentinels
+
+```go
+esperr.ErrClosed     // code EBADF 9   - a second Close, or a call on a closed conn
+esperr.ErrTimeout    // code ETIMEDOUT 116 - a deadline passed
+esperr.ErrWouldBlock // code EAGAIN 11 - poll-style give-up without a deadline
+```
+
+are re-exported by `net`, `tls` and `ws`, and an `*esperr.Error` built
+from the raw errno satisfies `errors.Is` against them with no wrapping
+step. `net`/`tls` `Read` signal an orderly peer close with `esperr.ErrEOF`
+(the family's io.EOF counterpart, kept in-family because the stdlib `io`
+package drags the errors/reflect machinery into the bare-metal image;
+UDP has no EOF - `(0, nil)` there is a zero-length datagram). I/O shapes
+follow stdlib: `Read(p) (int, error)`,
+`Write(p) (int, error)` with partial writes reporting `(n, err)` (the
+pre-error model's `-ETIMEDOUT`-discards-the-count behavior is gone), and
+`Close` is idempotent (`ErrClosed`, no more raw EBADF).
+
+Deliberate deviations, documented on each package: deadlines stay relative
+milliseconds (`SetDeadline(ms int32)`, not `time.Time` - never validated
+on the bare-metal target and unneeded by the bounded-quantum model);
+`Listener.Accept` without a `SetDeadline` is a poll-style call that gives
+up after one quantum with `ErrWouldBlock`; `tls.Write` stays
+all-or-nothing (record-layer property). The peripheral and wifi drivers
+wrap plain esp_err values (Name empty or from `wifi.ErrName`; the esp_err
+family keeps its own timeout code `0x107`, surfaced as `wifi.ErrTimeout`).
+The `0x7Dxx` (ws) and `0x7Exx` (tls) code segments are internal now:
+callers match on the sentinel errors (`ws.ErrProtocol`,
+`tls.ErrCertVerifyFailed`, ...), each carrying its code for diagnostics.
 
 ## Go ↔ C boundary rules
 
@@ -60,10 +110,13 @@ They are contract, not style.
    FPU (ilp32f), and the artifact pipeline patches the object's float-ABI
    flag precisely because the boundary stays integer-only (see
    `_demo/esp-idf-wifi/idfproj/host/make-artifact.sh` step 4).
-2. **Errors are raw `esp_err` codes as `int32`.** 0 = ESP_OK. No Go error
-   wrapping at the boundary; mapping codes to names is a separate helper
-   (`wifi.ErrName` pattern). IDF's `esp_err_t` is `int` — the glue
-   signature is `int32_t` and the value passes through unmodified.
+2. **Errors cross as raw codes; the Go API wraps them.** The C glue
+   signatures return `int32_t` codes unchanged (`esp_err_t` is `int`, lwip
+   sets errnos, mbedtls returns negative codes) - mapping codes to names is
+   a separate helper (`wifi.ErrName` pattern). The Go API converts at the
+   boundary: every package returns the shared `pkg/esp/esperr` error value
+   (`*esperr.Error{Code, Name}`), `nil` for success. See "Error model"
+   below.
 3. **No C→Go callbacks.** esp_event handlers, driver ISR callbacks and the
    like run on their own FreeRTOS tasks. The llgo fiber scheduler is
    single-task global state: an entry from a second FreeRTOS task into Go
@@ -160,13 +213,16 @@ is no unbounded wait in the path except the single documented freeze,
 `Resolve` on a real name: lwip's DNS client waits on its own timers
 (dotted-quad literals return instantly, parsed before DNS is consulted).
 
-**Error domain.** Errors are lwip errno values (0 = success), not
-`esp_err` — that is what lwip's socket layer sets — and `Resolve` returns
-the netdb `h_errno` family (200–213). Mind the numbering: the ESP-IDF
-build compiles picolibc's `errno.h`, whose values above 103 differ from
-Linux (`ETIMEDOUT` = 116, `EINPROGRESS` = 119, `ENOTCONN` = 128; `net.ErrName`
-knows them, and the shim probe printed the firmware's own values to pin
-the table). A negative return from `Write` is `-errno`.
+**Error domain.** Errors are esperr values carrying lwip errnos (0 wraps
+to nil) - not esp_err, since that is what lwip's socket layer sets - and
+`Resolve` returns the netdb `h_errno` family (200–213). Mind the numbering:
+the ESP-IDF build compiles picolibc's `errno.h`, whose values above 103
+differ from Linux (`ETIMEDOUT` = 116, `EINPROGRESS` = 119, `ENOTCONN` = 128;
+`net.ErrName` knows them, and the shim probe printed the firmware's own
+values to pin the table). The transport sentinels (`ErrClosed`,
+`ErrTimeout`, `ErrWouldBlock`) are re-exported here; Read reports an
+orderly peer close as `io.EOF`, and Write reports partial progress as
+`(n, err)` instead of the old negative-errno single value.
 
 **Scheduling.** The quantum waits are C-level: lwip_select gives the llgo
 scheduler no cooperative yield, so goroutines do not interleave while one
@@ -239,23 +295,25 @@ hostname travels the same way. And the first
 `handshake_step` only advances HELLO_REQUEST → CLIENT_HELLO returning 0
 without network I/O — the glue wraps it so 0 always means "handshake over".
 
-**Error domain.** TLS-phase failures use the 0x7E00 segment
-(`HandshakeTimeout`/`CertVerifyFailed`/`CaParseFailed`/`WantPollExhausted`/
-`Handshake`/`PsaInitFailed`/`NoRootCAs`/`NoPeerCert`, named by
-`tls.ErrName`); the TCP phase surfaces
-lwip errnos exactly like `net.Dial`; failures inside mbedtls's own dial
-setup (config defaults, `ssl_setup`) and record-phase fatals pass the raw
-negative mbedtls code through. The fail-closed dial rule: `RootCAs` nil
-with `InsecureSkipVerify` false is rejected with `NoRootCAs` before any
-bytes hit the network (bare metal has no system trust store to fall back
-on - verification without an explicit anchor cannot succeed and must not
-silently degrade to VERIFY_NONE); the glue refuses the same combination
-defensively. Read/Write honor the connection deadline
-with net.Conn semantics (EAGAIN poll-read without a deadline, ETIMEDOUT at
-expiry); TLS Write is all-or-nothing (no partial plaintext), so "nothing
-accepted" returns -EAGAIN and the caller retries the whole buffer. `Close`
-sends close_notify under a bounded 500 ms wait (`WantPollExhausted` if it
-cannot finish) and always releases the fd.
+**Error domain.** TLS-phase failures are sentinel esperr errors
+(`ErrHandshakeTimeout`/`ErrCertVerifyFailed`/`ErrCaParseFailed`/
+`ErrWantPollExhausted`/`ErrHandshake`/`ErrPsaInitFailed`/`ErrNoRootCAs`/
+`ErrNoPeerCert`; the underlying 0x7E00 codes are internal, named by
+`tls.ErrName`); the TCP phase surfaces lwip errnos exactly like
+`net.Dial`; failures inside mbedtls's own dial setup (config defaults,
+`ssl_setup`) and record-phase fatals carry the raw negative mbedtls code.
+The fail-closed dial rule: `RootCAs` nil with `InsecureSkipVerify` false
+is rejected with `ErrNoRootCAs` before any bytes hit the network (bare
+metal has no system trust store to fall back on - verification without an
+explicit anchor cannot succeed and must not silently degrade to
+VERIFY_NONE); the glue refuses the same combination defensively.
+Read/Write honor the connection deadline with net.Conn semantics
+(ErrWouldBlock poll-read without a deadline, ErrTimeout at expiry, io.EOF
+at an orderly session end); TLS Write is all-or-nothing (no partial
+plaintext), so "nothing accepted" returns (0, ErrWouldBlock) and the
+caller retries the whole buffer. `Close` sends close_notify under a
+bounded 500 ms wait (`ErrWantPollExhausted` if it cannot finish), always
+releases the fd, and is idempotent (`ErrClosed`).
 
 **Memory.** One live TLS connection holds 24-25 KiB of internal SRAM at the
 default fragment lengths (IN 16 KiB + OUT 4 KiB buffers from
@@ -308,11 +366,12 @@ Upgrade handshake over a `*net.TCPConn` (ws://) or a `*tls.TLSConn`
 (wss://), and the returned `WSConn` offers `ReadMessage`, `WriteMessage`,
 `Ping`, `Close(code)`, `SetDeadline`, `PongSeen`, `CloseCode` and
 `LastOpcode`. The package defines its own `Conn` interface
-(`Read/Write/Close` with the pkg/esp int32 signatures) - Go interfaces are
-structural, so the real transports satisfy it without the package
+(`Read/Write/Close` in the family's `(int, error)` shapes) - Go interfaces
+are structural, so the real transports satisfy it without the package
 importing them - plus the optional `Deadliner` interface
-(`SetDeadline(ms int32) int32`), which `*TCPConn` and `*TLSConn` both
-implement as methods. It imports NOTHING - not even `unsafe` - so it
+(`SetDeadline(ms int32) error`), which `*TCPConn` and `*TLSConn` both
+implement as methods. It imports NOTHING but the family's shared error
+base `pkg/esp/esperr` (no stdlib at all), so it
 compiles unchanged on a host build, runs under `go test` with an
 in-memory transport, and contributes no C glue: a ws program links the
 net/tls glues it already needs and nothing else, and `make-artifact.sh`
@@ -346,14 +405,15 @@ and starts no goroutines. HandshakeURL applies `timeoutMs` through the
 transport's SetDeadline for the handshake and clears it afterwards; a
 transport without a SetDeadline method cannot bound the handshake and is
 rejected with `ErrNoDeadline`. With a session deadline set,
-`ReadMessage` returns ETIMEDOUT and `WriteMessage` a negative
--ETIMEDOUT; without one, `ReadMessage` is a poll-style read (EAGAIN
+`ReadMessage` reports `ErrTimeout` and `WriteMessage` (0, `ErrTimeout`);
+without one, `ReadMessage` is a poll-style read (`ErrWouldBlock`
 after one quantum) whose framing state machine resumes mid-header or
-mid-payload on the next call. Error codes use the 0x7D00 segment
+mid-payload on the next call. Errors are sentinel esperr values
 (`ErrHandshake`/`ErrNotWS`/`ErrAcceptKey`/`ErrTooBig`/`ErrProtocol`/
-`ErrPeerClosed`/`ErrConnDead`/`ErrNoDeadline`, named by `ws.ErrName`
+`ErrPeerClosed`/`ErrConnDead`/`ErrNoDeadline`, each carrying its internal
+0x7D00-segment code, named by `ws.ErrName`
 alongside the lwip errno table); transport failures pass through
-unchanged, and calls on a closed session return EBADF like the
+unchanged, and calls on a closed session report ErrClosed like the
 transports. A framing violation (masked server frame, RSV bits set,
 fragmented control frame) closes the session on the spot - a misaligned
 byte stream has no recovery, and no close frame is sent: answering with
@@ -367,7 +427,7 @@ masked, one frame per ReadMessage (a fragmented message arrives as
 consecutive reads, `LastOpcode` reporting each fragment's opcode; a
 frame bigger than the caller's buffer is drained and reported as
 `ErrTooBig`, leaving the session usable). Pings are answered
-automatically inside the read path; a pong is reported as a `(0, 0)`
+automatically inside the read path; a pong is reported as a `(0, nil)`
 ReadMessage event with `PongSeen()` true, so a ping/pong check never
 blocks on a data frame that never comes. Two receive-side waivers, both
 intentional and documented: text frames are NOT validated as UTF-8 (the

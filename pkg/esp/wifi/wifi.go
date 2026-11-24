@@ -17,17 +17,19 @@
 // through the glue; on any other build the stubs return errUnsupported, so
 // `go build` / `go vet` / gopls all stay clean:
 //
-//	e := wifi.Setup()                    // NVS + netif + event loop + esp_wifi_init
+//	err := wifi.Setup()                  // NVS + netif + event loop + esp_wifi_init
 //	wifi.EventsRegister()
 //	wifi.SetSTA(ssid, pass)
 //	wifi.Start()
 //	staStart := wifi.Subscribe(wifi.EvStaStart)
-//	ev, ok := staStart.Next(3000)
-//	aps, e := wifi.Scan(wifi.ScanOptions{}) // subscribe + non-blocking start + fetch
+//	ev, err := staStart.Next(3000)
+//	aps, err := wifi.Scan(wifi.ScanOptions{}) // subscribe + non-blocking start + fetch
 //	for i := range aps { println(aps[i].SsidString()) }
 //
-// Every C call returns the raw esp_err code (0 = ESP_OK); wifi.ErrName maps
-// the codes this pipeline can hit to their IDF names.
+// Every driver result comes back as the family's shared error value:
+// nil = ESP_OK, and the error carries the raw esp_err code (inspectable;
+// wifi.ErrName names the codes this pipeline can hit with their IDF
+// names).
 //
 // # Glue integration
 //
@@ -69,8 +71,24 @@
 // over-limit request instead of silently clamping it.
 package wifi
 
-// The subscriber model's runtime hook (gosched) is a //go:linkname extern
-// declared in wifi_idf.go / wifi_stub.go, so this file needs no imports.
+import "github.com/xgo-dev/llgo/pkg/esp/esperr"
+
+// errOf wraps a raw esp_err code as the error value this package returns
+// (nil for ESP_OK), named through ErrName so a printed error reads like
+// the pre-error ErrName output.
+func errOf(code int32) error {
+	if code == 0 {
+		return nil
+	}
+	return &esperr.Error{Code: code, Name: ErrName(code)}
+}
+
+// ErrTimeout reports a bounded wifi wait that found nothing:
+// ESP_ERR_TIMEOUT (0x107) - Scan with no SCAN_DONE event inside
+// ScanOptions.TimeoutMs, or a Subscription.Next that saw no event inside
+// its bound. (The esp_err family keeps its own code for the condition;
+// the transports' ErrTimeout carries the lwip ETIMEDOUT value instead.)
+var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
 
 // Event kinds delivered by the C mailbox (see on_event in wifi_glue.c).
 const (
@@ -177,28 +195,29 @@ func (s *Subscription) Close() {
 	}
 }
 
-// Next waits up to timeoutMs for the subscription's next event and reports
-// whether one arrived. Like WaitEvent, the wait is bounded and paced by the
-// poller's pollQuantumMs quanta: a timeout may overshoot by one quantum and
-// sub-quantum bounds are not honored. A non-positive timeout makes a single
-// non-blocking check. Each idle iteration yields with runtime.Gosched so the
-// poller (and any other runnable goroutine) keeps its scheduling slice - no
-// C-level call is held across the wait, which would freeze the whole llgo
-// scheduler.
-func (s *Subscription) Next(timeoutMs int32) (Event, bool) {
+// Next waits up to timeoutMs for the subscription's next event. It returns
+// (event, nil) when one arrived and (zero Event, ErrTimeout) when the bound
+// passed with nothing (a non-positive timeout makes a single non-blocking
+// check, reported the same way on a miss). Like WaitEvent, the wait is
+// bounded and paced by the poller's pollQuantumMs quanta: a timeout may
+// overshoot by one quantum and sub-quantum bounds are not honored. Each
+// idle iteration yields with runtime.Gosched so the poller (and any other
+// runnable goroutine) keeps its scheduling slice - no C-level call is held
+// across the wait, which would freeze the whole llgo scheduler.
+func (s *Subscription) Next(timeoutMs int32) (Event, error) {
 	for ms := int32(0); ms < timeoutMs; ms += pollQuantumMs {
 		select {
 		case ev := <-s.ch:
-			return ev, true
+			return ev, nil
 		default:
 		}
 		gosched()
 	}
 	select {
 	case ev := <-s.ch:
-		return ev, true
+		return ev, nil
 	default:
-		return Event{}, false
+		return Event{}, ErrTimeout
 	}
 }
 
@@ -280,44 +299,45 @@ func (a *ApInfo) SsidString() string {
 // Setup performs the one-shot WiFi bring-up: NVS init (erase + retry on the
 // fresh-flash error codes), netif init, default event loop, default STA
 // netif and esp_wifi_init. WIFI_INIT_CONFIG_DEFAULT() stays in C.
-func Setup() int32 { return setup() }
+func Setup() error { return errOf(setup()) }
 
 // EventsRegister hooks the glue's event handler into WIFI_EVENT (any id)
 // and IP_EVENT (any id, GOT_IP and LOST_IP are dispatched by id in the
 // handler).
-func EventsRegister() int32 { return eventsRegister() }
+func EventsRegister() error { return errOf(eventsRegister()) }
 
 // PrintVersion prints the IDF version and the current free heap from the C
 // side; the string never crosses into Go (integer-only boundary).
-func PrintVersion() int32 { return printVersion() }
+func PrintVersion() error { return errOf(printVersion()) }
 
 // SetModeSTA switches the driver to station mode without a target SSID.
-func SetModeSTA() int32 { return setModeSTA() }
+func SetModeSTA() error { return errOf(setModeSTA()) }
 
 // Start calls esp_wifi_start; the asynchronous WIFI_EVENT_STA_START shows up
 // in the mailbox.
-func Start() int32 { return start() }
+func Start() error { return errOf(start()) }
 
 // ScanStart calls esp_wifi_scan_start(NULL, blocking). A blocking scan
 // freezes the llgo scheduler for the scan duration (well under a second on
 // emu); the WIFI_EVENT_SCAN_DONE event still lands in the mailbox.
-func ScanStart(blocking bool) int32 {
+func ScanStart(blocking bool) error {
 	b := int32(0)
 	if blocking {
 		b = 1
 	}
-	return scanStart(b)
+	return errOf(scanStart(b))
 }
 
 // ScanFetch takes the scan result list into a fresh slice (at most max
 // entries; the C glue holds at most MaxScanResults) and also frees the
 // driver's scan memory. A max of 0 or less returns an empty slice and polls
 // nothing. Asking for more than MaxScanResults is reported rather than
-// clamped away: the fetch still runs at MaxScanResults, and the second
-// result is ESP_ERR_INVALID_ARG (0x102) together with the fetched prefix.
-func ScanFetch(max int32) ([]ApInfo, int32) {
+// clamped away: the fetch still runs at MaxScanResults, and the error is
+// ESP_ERR_INVALID_ARG (0x102) alongside the fetched prefix (both results
+// are set - the slice is usable, the error says it was clamped).
+func ScanFetch(max int32) ([]ApInfo, error) {
 	if max <= 0 {
-		return []ApInfo{}, 0
+		return []ApInfo{}, nil
 	}
 	over := int32(0)
 	if max > MaxScanResults {
@@ -327,9 +347,12 @@ func ScanFetch(max int32) ([]ApInfo, int32) {
 	buf := make([]ApInfo, max)
 	var n int32
 	if e := scanFetch(&buf[0], max, &n); e != 0 {
-		return nil, e
+		return nil, errOf(e)
 	}
-	return buf[:n], over
+	if over != 0 {
+		return buf[:n], errOf(over)
+	}
+	return buf[:n], nil
 }
 
 // ScanResult is one scan record - the flat ApInfo wire form under the name
@@ -350,13 +373,13 @@ type ScanOptions struct {
 // Scan runs one scan and returns its records, stringing the state machine
 // together that the raw API leaves to the caller: subscribe to EvScanDone,
 // ScanStart(false) (the scheduler stays live, unlike a blocking scan), wait
-// for SCAN_DONE, ScanFetch. The second result is an esp_err code:
-// ScanStart's code when the scan could not start, ESP_ERR_TIMEOUT (0x107)
-// when no SCAN_DONE arrived within the bound, and ScanFetch's code
-// otherwise (including the over-limit report from above). Events that race
-// the scan for kinds nobody subscribes to are dropped; keep your own
-// subscriptions for those. The scan-done subscription is closed on return.
-func Scan(opts ScanOptions) ([]ScanResult, int32) {
+// for SCAN_DONE, ScanFetch. Errors: ScanStart's when the scan could not
+// start, ErrTimeout (ESP_ERR_TIMEOUT, 0x107) when no SCAN_DONE arrived
+// within the bound, and ScanFetch's otherwise (including the over-limit
+// report from above). Events that race the scan for kinds nobody
+// subscribes to are dropped; keep your own subscriptions for those. The
+// scan-done subscription is closed on return.
+func Scan(opts ScanOptions) ([]ScanResult, error) {
 	max := opts.Max
 	if max <= 0 {
 		max = MaxScanResults
@@ -367,11 +390,11 @@ func Scan(opts ScanOptions) ([]ScanResult, int32) {
 	}
 	sub := Subscribe(EvScanDone)
 	defer sub.Close()
-	if e := ScanStart(false); e != 0 {
-		return nil, e
+	if err := ScanStart(false); err != nil {
+		return nil, err
 	}
-	if ev, ok := sub.Next(timeoutMs); !ok || ev.Kind != EvScanDone {
-		return nil, 0x107 // ESP_ERR_TIMEOUT: no SCAN_DONE within the bound
+	if ev, err := sub.Next(timeoutMs); err != nil || ev.Kind != EvScanDone {
+		return nil, ErrTimeout // no SCAN_DONE within the bound
 	}
 	return ScanFetch(max)
 }
@@ -382,24 +405,24 @@ func Scan(opts ScanOptions) ([]ScanResult, int32) {
 // ESP_ERR_INVALID_ARG (0x102) before anything crosses into C. The authmode
 // threshold follows the password length (>=8 chars means WPA2-PSK,
 // otherwise open). Call it before Start.
-func SetSTA(ssid, pass string) int32 {
+func SetSTA(ssid, pass string) error {
 	if len(ssid) > 32 || len(pass) > 64 {
-		return 0x102 // ESP_ERR_INVALID_ARG: does not fit wifi_config_t
+		return errOf(0x102) // ESP_ERR_INVALID_ARG: does not fit wifi_config_t
 	}
 	var ssidBuf [32]byte
 	copy(ssidBuf[:], ssid)
 	var passBuf [64]byte
 	copy(passBuf[:], pass)
-	return setSTA(&ssidBuf[0], int32(len(ssid)), &passBuf[0], int32(len(pass)))
+	return errOf(setSTA(&ssidBuf[0], int32(len(ssid)), &passBuf[0], int32(len(pass))))
 }
 
 // Connect calls esp_wifi_connect: a single attempt. Association or
 // handshake failures arrive as EvStaDisconnected with a reason code; the
 // application retries (see the loop in main.go).
-func Connect() int32 { return connect() }
+func Connect() error { return errOf(connect()) }
 
 // Disconnect calls esp_wifi_disconnect.
-func Disconnect() int32 { return disconnect() }
+func Disconnect() error { return errOf(disconnect()) }
 
 // GetIP returns the station IP in network byte order (0 = nothing
 // acquired yet), reading esp_netif directly.

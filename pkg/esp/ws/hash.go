@@ -146,12 +146,12 @@ func Base64StdEncode(src []byte) string {
 
 // Base64StdDecode decodes a standard-alphabet base64 string (padding
 // required: the length must be a multiple of 4 and '=' may only close the
-// final group). It returns the decoded bytes, or nil with einval (22, the
-// errno family) when the input is not well-formed: wrong length, a
-// character outside the alphabet, or padding in the wrong place.
-func Base64StdDecode(s string) ([]byte, int32) {
+// final group). It returns the decoded bytes, or nil with an EINVAL error
+// when the input is not well-formed: wrong length, a character outside the
+// alphabet, or padding in the wrong place.
+func Base64StdDecode(s string) ([]byte, error) {
 	if len(s)%4 != 0 {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	pad := 0
 	if len(s) > 0 {
@@ -162,7 +162,7 @@ func Base64StdDecode(s string) ([]byte, int32) {
 			pad++
 		}
 		if pad > 0 && s[len(s)-pad-1] == '=' { // "x===" or "=="
-			return nil, einval
+			return nil, errOf(einval)
 		}
 	}
 	dst := make([]byte, len(s)/4*3-pad)
@@ -177,7 +177,7 @@ func Base64StdDecode(s string) ([]byte, int32) {
 		for i := si; i < lim; i++ {
 			b := b64Value(s[i])
 			if b < 0 {
-				return nil, einval
+				return nil, errOf(einval)
 			}
 			v = v<<6 | uint32(b)
 			n++
@@ -197,10 +197,10 @@ func Base64StdDecode(s string) ([]byte, int32) {
 			dst[di+0] = byte(v >> 16)
 			di++
 		default: // n < 2: a "==" group carries no bytes
-			return nil, einval
+			return nil, errOf(einval)
 		}
 	}
-	return dst, 0
+	return dst, nil
 }
 
 // b64Value maps one base64 character to its 6-bit value, or -1.

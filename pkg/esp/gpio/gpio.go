@@ -3,8 +3,9 @@
 // It follows the pkg/esp package template (see the package wifi docs and
 // pkg/esp/README.md): wifi-style three-file Go split plus a thin C glue
 // template. Most IDF GPIO calls are synchronous register writes, so there
-// is no mailbox here - every function maps to one glue call that returns
-// the raw esp_err code (0 = ESP_OK).
+// is no mailbox here - every function maps to one glue call whose esp_err
+// result is wrapped as the family's shared error value (nil = ESP_OK, the
+// code stays inspectable on the error).
 //
 // # Usage
 //
@@ -23,6 +24,19 @@
 // Copy glue/gpio_glue.c into your project's main component (WHOLE_ARCHIVE
 // required); see pkg/esp/README.md for the two integration recipes.
 package gpio
+
+import "github.com/xgo-dev/llgo/pkg/esp/esperr"
+
+// errOf wraps a raw esp_err code as the error value this package returns
+// (nil for ESP_OK). The Name stays empty - the esp_err naming table lives
+// in the wifi package - but the code itself is the stable, inspectable
+// identifier.
+func errOf(code int32) error {
+	if code == 0 {
+		return nil
+	}
+	return &esperr.Error{Code: code}
+}
 
 // Mode selects a pin's direction.
 type Mode uint32
@@ -53,17 +67,17 @@ type Pin int32
 // SetDirection configures the pin: direction mode plus pull resistors.
 // It is the pinMode equivalent; the glue runs gpio_config followed by
 // gpio_set_direction.
-func (p Pin) SetDirection(m Mode, pull Pull) int32 {
-	return setDirection(int32(p), int32(m), int32(pull))
+func (p Pin) SetDirection(m Mode, pull Pull) error {
+	return errOf(setDirection(int32(p), int32(m), int32(pull)))
 }
 
-// SetLevel drives an output pin high or low. Returns the esp_err code.
-func (p Pin) SetLevel(high bool) int32 {
+// SetLevel drives an output pin high or low.
+func (p Pin) SetLevel(high bool) error {
 	lvl := int32(0)
 	if high {
 		lvl = 1
 	}
-	return setLevel(int32(p), lvl)
+	return errOf(setLevel(int32(p), lvl))
 }
 
 // GetLevel reads the pin's input path: true = high, false = low (the
@@ -73,7 +87,7 @@ func (p Pin) GetLevel() bool {
 	return getLevel(int32(p)) != 0
 }
 
-// Toggle inverts an output pin's level. Returns the esp_err code.
-func (p Pin) Toggle() int32 {
-	return toggle(int32(p))
+// Toggle inverts an output pin's level.
+func (p Pin) Toggle() error {
+	return errOf(toggle(int32(p)))
 }

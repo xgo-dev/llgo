@@ -14,8 +14,8 @@
 // discarded by lwip (plain POSIX recvfrom semantics - there is no way to
 // read the tail afterwards). Size receive buffers at or above the largest
 // datagram the peer may send. A zero-length datagram is reported as
-// n == 0 with err == 0 and the sender's address; UDP has no EOF, so that
-// combination is a real (empty) datagram here, not a close.
+// (0, addr, nil) from ReadFrom and (0, nil) from Read - UDP has no EOF, so
+// that shape is a real (empty) datagram here, never a close.
 //
 // # The connected form
 //
@@ -38,15 +38,17 @@
 //
 // # Errors and deadlines
 //
-// Errors are the same raw lwip errnos as the TCP side (0 = success; see
-// ErrName). Methods that return a separate err (ReadFrom, WriteTo) carry
-// the errno there, non-negative; the single-value Write reports -errno, the
-// TCPConn.Write convention. Deadlines are UDPConn.SetDeadline's relative
-// milliseconds, identical in shape to TCPConn's: 0 clears, < 0 is EINVAL,
-// and expiry reports ETIMEDOUT. Without a deadline a receive gives up after
-// one quantum with EAGAIN (a poll-style read) and a send returns after one
-// quantum of no progress with EAGAIN in err (Write: -EAGAIN) - every wait
-// stays bounded, the package-wide contract.
+// Errors are Go error values of the shared esperr type carrying the same
+// raw lwip errnos as the TCP side (named by ErrName). The transport
+// sentinels apply unchanged: ErrWouldBlock for the poll-style read without
+// a deadline, ErrTimeout on deadline expiry, ErrClosed for calls on a
+// closed or nil socket - Close is idempotent. Deadlines are
+// UDPConn.SetDeadline's relative milliseconds, identical in shape to
+// TCPConn's: 0 clears, < 0 is EINVAL, and expiry reports ErrTimeout.
+// Without a deadline a receive gives up after one quantum with
+// ErrWouldBlock (a poll-style read) and a send reports (0, ErrWouldBlock)
+// after one quantum of no progress - every wait stays bounded, the
+// package-wide contract.
 package net
 
 // Addr is a UDP endpoint in the package's address convention: IP is the
@@ -107,12 +109,12 @@ func (a Addr) String() string {
 
 // UDPConn is a UDP datagram socket, bound to a local address by ListenUDP
 // and optionally fixed to a remote peer by DialUDP. Internals mirror
-// TCPConn (an fd plus the deadline bookkeeping) plus the one-shot
-// ECONNREFUSED swallow flag the connected form needs.
+// TCPConn (an fd plus the shared socketDeadline bookkeeping) plus the
+// one-shot ECONNREFUSED swallow flag the connected form needs.
 type UDPConn struct {
-	fd          int32
-	deadlineMs  uint32 // absolute uptime-ms deadline, meaningful when hasDeadline
-	hasDeadline bool
+	fd int32
+	socketDeadline
+
 	// swallowRefused is set by DialUDP: the first ECONNREFUSED a receive
 	// sees on the connected socket is an asynchronous leftover from an
 	// earlier send, not a current-read error, and is absorbed once.
@@ -124,10 +126,10 @@ type UDPConn struct {
 // the wildcard covers every local IP: the station address and, with
 // LWIP_NETIF_LOOPBACK, 127.0.0.1). The socket is non-blocking from birth
 // and its deadline starts unset.
-func ListenUDP(laddr *Addr) (*UDPConn, int32) {
+func ListenUDP(laddr *Addr) (*UDPConn, error) {
 	var fd int32
 	if e := netDgramSocket(&fd); e != 0 {
-		return nil, e
+		return nil, errOf(e)
 	}
 	ip, port := uint32(0), int32(0) // 0/0: wildcard address, ephemeral port
 	if laddr != nil {
@@ -135,9 +137,9 @@ func ListenUDP(laddr *Addr) (*UDPConn, int32) {
 	}
 	if e := netBind(fd, ip, port); e != 0 {
 		netClose(fd)
-		return nil, e
+		return nil, errOf(e)
 	}
-	return &UDPConn{fd: fd}, 0
+	return &UDPConn{fd: fd}, nil
 }
 
 // DialUDP opens a connected UDP socket: bound locally to laddr (nil = the
@@ -148,43 +150,43 @@ func ListenUDP(laddr *Addr) (*UDPConn, int32) {
 // the network: a peer that is down only shows up when a datagram's ICMP
 // refusal comes back (as the swallowed ECONNREFUSED, see the package doc).
 // The deadline starts unset, like every socket this package hands out.
-func DialUDP(laddr, raddr *Addr) (*UDPConn, int32) {
+func DialUDP(laddr, raddr *Addr) (*UDPConn, error) {
 	if raddr == nil {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	c, e := ListenUDP(laddr)
-	if e != 0 {
+	if e != nil {
 		return nil, e
 	}
 	if e := netConnect(c.fd, raddr.IP, int32(raddr.Port)); e != 0 {
 		c.Close()
-		return nil, e
+		return nil, errOf(e)
 	}
 	c.swallowRefused = true
-	return c, 0
+	return c, nil
 }
 
 // ReadFrom receives one datagram into p and reports the sender's address.
 // The datagram is truncated at len(p) (the discarded tail is gone - size p
-// for the peer's largest datagram, see the package doc). It returns the
-// byte count, the sender, and an errno:
+// for the peer's largest datagram, see the package doc). The outcomes:
 //
-//	n > 0, err == 0     a datagram of n bytes arrived
-//	n == 0, err == 0    a zero-length datagram arrived (UDP has no EOF)
-//	n == 0, err == 11   no deadline set and nothing arrived within one
-//	                    quantum (EAGAIN) - a poll-style read
-//	n == 0, err == 116  a deadline was set and passed with no datagram
-//	                    (ETIMEDOUT)
+//	n > 0, sender, nil  a datagram of n bytes arrived
+//	0, sender, nil      a zero-length datagram arrived (UDP has no EOF)
+//	0, Addr{}, ErrWouldBlock
+//	                    no deadline set and nothing arrived within one
+//	                    quantum - a poll-style read
+//	0, Addr{}, ErrTimeout
+//	                    a deadline was set and passed with no datagram
 //
 // A zero-length p is a no-op success (a zero-size receive cannot store
 // even the smallest datagram, and recvfrom with a NULL buffer is not a
 // call this package makes).
-func (c *UDPConn) ReadFrom(p []byte) (int32, Addr, int32) {
+func (c *UDPConn) ReadFrom(p []byte) (int, Addr, error) {
 	if c == nil || c.fd < 0 {
-		return 0, Addr{}, ebadf
+		return 0, Addr{}, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0, Addr{}, 0
+		return 0, Addr{}, nil
 	}
 	for {
 		var n int32
@@ -192,170 +194,145 @@ func (c *UDPConn) ReadFrom(p []byte) (int32, Addr, int32) {
 		var port int32
 		e := netRecvFrom(c.fd, &p[0], int32(len(p)), &ip, &port, &n)
 		if e == 0 {
-			return n, Addr{IP: ip, Port: uint16(port)}, 0
+			return int(n), Addr{IP: ip, Port: uint16(port)}, nil
 		}
 		if e != eagain {
-			return 0, Addr{}, e
+			return 0, Addr{}, errOf(e)
 		}
 		if pe := c.pace(false); pe != 0 {
-			return 0, Addr{}, pe
+			return 0, Addr{}, errOf(pe)
 		}
 	}
 }
 
 // WriteTo sends p as one datagram to addr, retrying past EAGAIN the same
 // way TCPConn.Write retries: with a deadline set, until the deadline passes
-// (then (0, ETIMEDOUT)); without one, one quantum, then (0, EAGAIN). The
-// datagram is atomic - it either goes out whole or not at all, so success
-// returns (len(p), 0) and there is no short positive send to resume; any
-// other err is the errno (e.g. ENOBUFS 105 when lwip has run out of
-// buffers, ENETUNREACH 114 before the station has an IP). A zero-length p
-// is a no-op success like on the TCP side.
-func (c *UDPConn) WriteTo(p []byte, addr Addr) (int32, int32) {
+// (then (0, ErrTimeout)); without one, one quantum, then (0,
+// ErrWouldBlock). The datagram is atomic - it either goes out whole or not
+// at all, so success returns (len(p), nil) and there is no short positive
+// send to resume; any other err carries the errno (e.g. ENOBUFS 105 when
+// lwip has run out of buffers, ENETUNREACH 114 before the station has an
+// IP). A zero-length p is a no-op success like on the TCP side.
+func (c *UDPConn) WriteTo(p []byte, addr Addr) (int, error) {
 	if c == nil || c.fd < 0 {
-		return 0, ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0, 0
+		return 0, nil
 	}
 	for {
 		var n int32
 		e := netSendTo(c.fd, &p[0], int32(len(p)), addr.IP, int32(addr.Port), &n)
 		if e == 0 {
-			return n, 0
+			return int(n), nil
 		}
 		if e != eagain {
-			return 0, e
+			return 0, errOf(e)
 		}
 		if pe := c.pace(true); pe != 0 {
-			return 0, pe
+			return 0, errOf(pe)
 		}
 	}
 }
 
 // Read receives one datagram from the connected peer and returns the count
-// plus an errno - the TCPConn.Read shapes, except there is no close
-// sentinel (UDP has no stream end; n == 0 with err == 0 is a zero-length
-// datagram). Connected form only: an unconnected socket reports ENOTCONN
-// (128). The first asynchronous ECONNREFUSED (111) is swallowed - see the
-// package doc - so a datagram the peer refused earlier cannot mask a
-// datagram that is waiting now.
-func (c *UDPConn) Read(p []byte) (int32, int32) {
+// plus an error - the TCPConn.Read shapes, except there is no stream-end
+// sentinel (UDP has no EOF; (0, nil) is a zero-length datagram). Connected
+// form only: an unconnected socket reports ENOTCONN (128). The first
+// asynchronous ECONNREFUSED (111) is swallowed - see the package doc - so
+// a datagram the peer refused earlier cannot mask a datagram that is
+// waiting now.
+func (c *UDPConn) Read(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return 0, ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0, 0
+		return 0, nil
 	}
 	for {
 		var n int32
 		e := netRecv(c.fd, &p[0], int32(len(p)), &n)
 		if e == 0 {
-			return n, 0
+			return int(n), nil
 		}
 		if e == econnrefused && c.swallowRefused {
 			c.swallowRefused = false
 			e = eagain // asynchronous leftover: fall into the wait path
 		}
 		if e != eagain {
-			return 0, e
+			return 0, errOf(e)
 		}
 		if pe := c.pace(false); pe != 0 {
-			return 0, pe
+			return 0, errOf(pe)
 		}
 	}
 }
 
-// Write sends p as one datagram to the connected peer and reports len(p)
-// on success or a negative errno otherwise - the TCPConn.Write convention
-// (with a deadline: -ETIMEDOUT when it passes; without: -EAGAIN after one
-// quantum of no progress). Datagrams are atomic, so like TCP there is no
-// short positive return, and a non-negative-but-short value never happens
-// on the UDP path. Connected form only (ENOTCONN otherwise; use WriteTo).
-func (c *UDPConn) Write(p []byte) int32 {
+// Write sends p as one datagram to the connected peer and reports
+// (len(p), nil) on success - the TCPConn.Write convention (with a
+// deadline: (0, ErrTimeout) when it passes; without: (0, ErrWouldBlock)
+// after one quantum of no progress). Datagrams are atomic, so like TCP
+// there is no short positive send to resume. Connected form only (ENOTCONN
+// otherwise; use WriteTo).
+func (c *UDPConn) Write(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return -ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0
+		return 0, nil
 	}
 	for {
 		var n int32
 		e := netSend(c.fd, &p[0], int32(len(p)), &n)
 		if e == 0 {
-			return n
+			return int(n), nil
 		}
 		if e != eagain {
-			return -e
+			return 0, errOf(e)
 		}
 		if pe := c.pace(true); pe != 0 {
-			if pe == etimedout {
-				return -etimedout
-			}
-			return -pe
+			return 0, errOf(pe)
 		}
 	}
 }
 
 // Close releases the socket. UDP has no directions, so unlike TCPConn no
 // shutdown is issued - lwip frees the PCB on the spot and can never be
-// held open by the peer. A second Close, or any call on a nil conn, is the
-// defensive no-op returning EBADF (9), exactly like the TCP side.
-func (c *UDPConn) Close() int32 {
+// held open by the peer. Close is idempotent: a second Close, or any call
+// on a nil conn, reports ErrClosed exactly like the TCP side.
+func (c *UDPConn) Close() error {
 	if c == nil || c.fd < 0 {
-		return ebadf
+		return ErrClosed
 	}
 	fd := c.fd
 	c.fd = -1
-	return netClose(fd)
+	return errOf(netClose(fd))
 }
 
 // SetDeadline sets the connection's I/O deadline to ms milliseconds from
 // now, or clears it with 0; ms < 0 is EINVAL. Both the receive and the
 // send paths honor it until SetDeadline changes it. Method form with the
 // same semantics as TCPConn.SetDeadline (relative ms; the wrap-safe
-// absolute bookkeeping lives in the same fields).
-func (c *UDPConn) SetDeadline(ms int32) int32 {
+// absolute bookkeeping lives in the shared socketDeadline fields).
+func (c *UDPConn) SetDeadline(ms int32) error {
 	if c == nil || c.fd < 0 {
-		return ebadf
+		return ErrClosed
 	}
 	if ms < 0 {
-		return einval
+		return errOf(einval)
 	}
 	if ms == 0 {
 		c.hasDeadline = false
-		return 0
+		return nil
 	}
 	c.hasDeadline = true
 	c.deadlineMs = nowMs() + uint32(ms)
-	return 0
+	return nil
 }
 
-// pace is UDPConn's copy of the TCPConn wait: one poll quantum (a select
-// that yields the CPU), then 0 = retry the syscall now, eagain = no
-// deadline is set and nothing became ready within the quantum, etimedout =
-// the deadline passed. A select failure surfaces as its errno - the
-// caller's next syscall would report the same dead socket anyway. The body
-// is deliberately a duplicate rather than a shared helper: it keeps the
-// TCPConn layout byte-for-byte untouched (Phase 1 is additive only) and
-// the method dissolves back into TCPConn.pace when Phase 2 unifies the
-// error model.
+// pace is UDPConn's view of the shared quantum wait; see socketDeadline.
 func (c *UDPConn) pace(wantWrite bool) int32 {
-	w := int32(0)
-	if wantWrite {
-		w = 1
-	}
-	var ready int32
-	if e := netPoll(c.fd, w, quantumMs, &ready); e != 0 {
-		return e
-	}
-	if c.hasDeadline && past(c.deadlineMs) {
-		return etimedout
-	}
-	if ready == 0 && !c.hasDeadline {
-		return eagain
-	}
-	return 0
+	return c.socketDeadline.pace(c.fd, wantWrite)
 }
 
 // Compile-time checks: *UDPConn carries the same core method set as

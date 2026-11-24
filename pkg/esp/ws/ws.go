@@ -7,13 +7,14 @@
 //
 // # Dependency inversion
 //
-// The package does NOT import pkg/esp/net or pkg/esp/tls. The transport is
-// the local interface
+// The package does NOT import pkg/esp/net or pkg/esp/tls (its only import
+// is the family's shared error base pkg/esp/esperr, which carries no glue
+// and no stdlib weight). The transport is the local interface
 //
 //	type Conn interface {
-//	    Read(p []byte) (n int32, err int32)
-//	    Write(p []byte) int32
-//	    Close() int32
+//	    Read(p []byte) (n int, err error)
+//	    Write(p []byte) (n int, err error)
+//	    Close() error
 //	}
 //
 // whose method set is exactly what *net.TCPConn and *tls.TLSConn already
@@ -21,7 +22,7 @@
 // satisfies ws.Conn). The caller dials first - net.Dial for ws://,
 // tls.TLSDial for wss:// - and hands the connection to HandshakeURL. To
 // enforce deadlines the transport additionally needs a SetDeadline(ms
-// int32) int32 method (interface Deadliner below); both real transports
+// int32) error method (interface Deadliner below); both real transports
 // have one.
 //
 // # Pure Go, no stdlib
@@ -53,15 +54,15 @@
 //     cannot bound the handshake, so it is rejected up front with
 //     ErrNoDeadline.
 //   - WSConn.SetDeadline forwards to the transport; with a deadline set,
-//     ReadMessage returns ETIMEDOUT (116) and WriteMessage a negative
-//     -ETIMEDOUT when it passes - the net.Conn semantics of the transport.
-//     Without a deadline, ReadMessage is a poll-style read: (0, eagain)
-//     after one quantum with nothing arrived, and it can resume mid-frame
-//     on the next call (the framing state machine keeps its progress).
+//     ReadMessage reports ErrTimeout and WriteMessage (0, ErrTimeout) when
+//     it passes - the net.Conn semantics of the transport. Without a
+//     deadline, ReadMessage is a poll-style read: (0, ErrWouldBlock) after
+//     one quantum with nothing arrived, and it can resume mid-frame on the
+//     next call (the framing state machine keeps its progress).
 //     WriteMessage without a deadline loops over the transport's short
-//     writes; a quantum-long stall aborts the call with -eagain leaving a
-//     partial frame on the wire - the connection must then be closed. Set
-//     a deadline for anything but a controlled loopback peer.
+//     writes; a quantum-long stall aborts the call with (0, ErrWouldBlock),
+//     leaving a partial frame on the wire - the connection must then be
+//     closed. Set a deadline for anything but a controlled loopback peer.
 //
 // # Scheduling
 //
@@ -116,25 +117,28 @@
 // acceptance runs, but predictable to an intermediary - seed it when the
 // path leaves the bench.
 //
-// # Error codes
+// # Error model
 //
-// WS-layer failures use the 0x7D00 segment, outside the lwip errno range,
-// the DNS h_errno range, the esp_err range and the tls 0x7E00 segment
-// (ErrName lists them). Three conventions on top, matching the transport
-// packages:
+// WS-layer failures are sentinel error values of the shared esperr type:
+// ErrHandshake, ErrNotWS, ErrAcceptKey, ErrTooBig, ErrProtocol,
+// ErrPeerClosed, ErrConnDead and ErrNoDeadline, each carrying its internal
+// 0x7D00-segment code (outside the lwip errno range, the DNS h_errno
+// range, the esp_err range and the tls 0x7E00 segment; ErrName names the
+// codes). Three conventions on top, matching the transport packages:
 //
 //   - Transport failures pass through unchanged: ReadMessage returns the
-//     raw code (lwip errno like ETIMEDOUT/EAGAIN, or the raw negative
-//     mbedtls code of a wss record failure), WriteMessage returns the
-//     negated code (its success value is the payload length, like
-//     TCPConn.Write's, so failures are negative). A transport EOF without
-//     a close frame - the RFC's abnormal closure - becomes ErrConnDead.
-//   - Calls on a nil, closed or failed-out connection return EBADF (9),
-//     the net/tls defensive value.
-//   - Close reports the fate of the graceful part: 0 when the peer echoed
-//     the close frame, the wait's error (eagain/etimedout) when it did not
-//     answer within the connection deadline - the underlying transport is
-//     ALWAYS released, whatever the report (tls.Close's pattern).
+//     transport's own error (an lwip-errno esperr.Error like
+//     ErrTimeout/ErrWouldBlock, or the raw negative mbedtls code of a wss
+//     record failure); WriteMessage returns (0, err). A transport EOF
+//     without a close frame - the RFC's abnormal closure - becomes
+//     ErrConnDead.
+//   - Calls on a nil, closed or failed-out connection report ErrClosed
+//     (code EBADF 9), the net/tls defensive value.
+//   - Close reports the fate of the graceful part: nil when the peer
+//     echoed the close frame, the wait's error (ErrWouldBlock/ErrTimeout)
+//     when it did not answer within the connection deadline - the
+//     underlying transport is ALWAYS released, whatever the report
+//     (tls.Close's pattern).
 //
 // # Ownership
 //
@@ -144,6 +148,8 @@
 // closes the underlying transport exactly once, and every later call on
 // the WSConn is a defensive EBADF.
 package ws
+
+import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 
 // WebSocket opcodes (RFC 6455 section 5.2).
 const (
@@ -155,56 +161,114 @@ const (
 	OpPong   = 0xA // keepalive answer (reported via PongSeen)
 )
 
-// WS-layer error codes, the 0x7D00 segment. See ErrName and the package
-// doc's error-codes section.
+// WS-layer error codes, the internal 0x7D00 segment. Callers match on the
+// sentinel errors below; the values themselves stay inside this package
+// (ErrName's table and the sentinels).
 const (
+	wsErrHandshake  = 0x7D01
+	wsErrNotWS      = 0x7D02
+	wsErrAcceptKey  = 0x7D03
+	wsErrTooBig     = 0x7D04
+	wsErrProtocol   = 0x7D05
+	wsErrPeerClosed = 0x7D06
+	wsErrConnDead   = 0x7D07
+	wsErrNoDeadline = 0x7D08
+)
+
+// WS-layer failure sentinels. See the package doc's error-model section.
+var (
 	// ErrHandshake: the peer's response was not a usable HTTP/1.x upgrade
 	// response - malformed status line, a header bigger than the 512-byte
 	// response window, garbage after the header, or a missing required
 	// header. (A 101 with wrong Upgrade/Connection headers is ErrNotWS.)
-	ErrHandshake = 0x7D01
+	ErrHandshake = &esperr.Error{Code: wsErrHandshake, Name: "WS_ERR_HANDSHAKE"}
 	// ErrNotWS: the response is HTTP but not a WebSocket upgrade - the
 	// status is not "101", or Upgrade/Connection do not carry the required
 	// tokens (websocket / upgrade). The classic shape when the far end is
 	// not a WebSocket server (a plain echo, a proxy, an error page).
-	ErrNotWS = 0x7D02
+	ErrNotWS = &esperr.Error{Code: wsErrNotWS, Name: "WS_ERR_NOT_WEBSOCKET"}
 	// ErrAcceptKey: Sec-WebSocket-Accept did not equal
 	// base64(SHA-1(key + GUID)) for the key we sent - either the peer is
 	// broken or something in between answered.
-	ErrAcceptKey = 0x7D03
+	ErrAcceptKey = &esperr.Error{Code: wsErrAcceptKey, Name: "WS_ERR_ACCEPT_KEY"}
 	// ErrTooBig: a data frame did not fit the caller's ReadMessage buffer.
 	// The frame was drained, so the connection stays usable; the message
 	// content is lost.
-	ErrTooBig = 0x7D04
+	ErrTooBig = &esperr.Error{Code: wsErrTooBig, Name: "WS_ERR_FRAME_TOO_BIG"}
 	// ErrProtocol: the peer violated the framing rules - a masked
 	// server-to-client frame, RSV bits set (an extension we did not
 	// negotiate), a fragmented or oversize control frame, an unknown
 	// opcode. A violation means the byte stream is misaligned, so the
 	// session is dead on the spot: the transport is released before the
-	// code is reported (every later call is EBADF). No close frame is sent
-	// on the way out - a deliberate deviation from the RFC 6455 section
-	// 7.1.7 SHOULD to answer a protocol error with a 1002 close: a
-	// misaligned stream cannot promise a well-formed closing exchange.
-	ErrProtocol = 0x7D05
+	// error is reported (every later call reports ErrClosed). No close
+	// frame is sent on the way out - a deliberate deviation from the
+	// RFC 6455 section 7.1.7 SHOULD to answer a protocol error with a 1002
+	// close: a misaligned stream cannot promise a well-formed closing
+	// exchange.
+	ErrProtocol = &esperr.Error{Code: wsErrProtocol, Name: "WS_ERR_PROTOCOL"}
 	// ErrPeerClosed: the orderly end of a session, not a failure - the
 	// peer sent a close frame, we echoed it, the transport is closed.
 	// CloseCode carries the peer's code (1000 normal, 1001 going away,
-	// ...). Close() reports 0 for this same event when WE initiated.
-	ErrPeerClosed = 0x7D06
+	// ...). Close() reports nil for this same event when WE initiated.
+	ErrPeerClosed = &esperr.Error{Code: wsErrPeerClosed, Name: "WS_ERR_PEER_CLOSED"}
 	// ErrConnDead: the underlying transport closed (or failed) without a
 	// WebSocket close frame - the RFC's abnormal closure. The transport is
 	// already gone; just stop using the WSConn.
-	ErrConnDead = 0x7D07
+	ErrConnDead = &esperr.Error{Code: wsErrConnDead, Name: "WS_ERR_CONN_DEAD"}
 	// ErrNoDeadline: the transport has no SetDeadline method, so the
 	// bounded-wait model cannot be honored - HandshakeURL refuses to run
 	// unbounded (its timeoutMs cannot be enforced) and WSConn.SetDeadline
 	// has nothing to forward to.
-	ErrNoDeadline = 0x7D08
+	ErrNoDeadline = &esperr.Error{Code: wsErrNoDeadline, Name: "WS_ERR_NO_DEADLINE"}
 )
+
+// The transport error sentinels, re-exported from the shared esperr base
+// so callers can stay inside this package's namespace.
+var (
+	ErrClosed     = esperr.ErrClosed
+	ErrTimeout    = esperr.ErrTimeout
+	ErrWouldBlock = esperr.ErrWouldBlock
+	ErrEOF        = esperr.ErrEOF
+)
+
+// errOf converts a pipeline code to the error the API returns (nil for 0).
+// The sentinel codes map to their sentinel values; anything else (an lwip
+// errno passed through from a transport-shaped code path) becomes an
+// *esperr.Error named through ErrName.
+func errOf(code int32) error {
+	switch code {
+	case 0:
+		return nil
+	case ebadf:
+		return ErrClosed
+	case eagain:
+		return ErrWouldBlock
+	case etimedout:
+		return ErrTimeout
+	case wsErrHandshake:
+		return ErrHandshake
+	case wsErrNotWS:
+		return ErrNotWS
+	case wsErrAcceptKey:
+		return ErrAcceptKey
+	case wsErrTooBig:
+		return ErrTooBig
+	case wsErrProtocol:
+		return ErrProtocol
+	case wsErrPeerClosed:
+		return ErrPeerClosed
+	case wsErrConnDead:
+		return ErrConnDead
+	case wsErrNoDeadline:
+		return ErrNoDeadline
+	}
+	return &esperr.Error{Code: code, Name: ErrName(code)}
+}
 
 // lwip errno values this package acts on, same values the net package pins
 // (picolibc numbering; net.go lists the Linux divergences). They are
-// redeclared because the ws package imports nothing - not even pkg/esp/net.
+// redeclared because the ws package imports no sibling transport package -
+// not even pkg/esp/net.
 const (
 	ebadf     = 9   // call on a nil, closed or failed-out connection
 	eagain    = 11  // poll-style read: nothing within one quantum
@@ -221,23 +285,23 @@ const handshakeBufSize = 512
 
 // Conn is the transport interface: the method set *net.TCPConn and
 // *tls.TLSConn already expose (structural match, no import). Read follows
-// the net.Conn contract of the pkg/esp family: n bytes read with err == 0,
-// n == 0 with err == 0 meaning the stream closed cleanly, n == 0 with
-// err == eagain meaning "nothing in one quantum" when no deadline is set,
-// n == 0 with err == etimedout when a deadline passed. Write writes the
-// whole buffer and returns its length, or a negative code.
+// the net.Conn contract of the pkg/esp family: n bytes read with a nil
+// error, (0, io.EOF) meaning the stream closed cleanly, (0,
+// ErrWouldBlock) meaning "nothing in one quantum" when no deadline is set,
+// (0, ErrTimeout) when a deadline passed. Write writes p and returns how
+// many bytes were accepted plus an error - the io.Writer convention.
 type Conn interface {
-	Read(p []byte) (n int32, err int32)
-	Write(p []byte) int32
-	Close() int32
+	Read(p []byte) (n int, err error)
+	Write(p []byte) (n int, err error)
+	Close() error
 }
 
 // Deadliner is the optional transport deadline interface: SetDeadline(ms
-// int32) int32 with net's semantics (relative ms from now, 0 clears, < 0
-// einval). HandshakeURL requires it (the handshake budget must be
+// int32) error with net's semantics (relative ms from now, 0 clears, < 0
+// EINVAL). HandshakeURL requires it (the handshake budget must be
 // enforceable); *net.TCPConn and *tls.TLSConn both satisfy it.
 type Deadliner interface {
-	SetDeadline(ms int32) int32
+	SetDeadline(ms int32) error
 }
 
 // WSConn is one WebSocket session over a caller-supplied transport. All
@@ -328,24 +392,24 @@ func AcceptKey(clientKey []byte) string {
 // failure it is closed before returning; on success the returned WSConn
 // owns it (and the handshake deadline is cleared again, so the caller's
 // SetDeadline decides the session's pacing).
-func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, int32) {
+func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, error) {
 	if c == nil {
-		return nil, ebadf
+		return nil, ErrClosed
 	}
 	if timeoutMs <= 0 {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	dl, ok := c.(Deadliner)
 	if !ok || dl == nil {
 		return nil, ErrNoDeadline
 	}
-	if e := dl.SetDeadline(timeoutMs); e != 0 {
-		return nil, e
+	if err := dl.SetDeadline(timeoutMs); err != nil {
+		return nil, err
 	}
-	fail := func(code int32) (*WSConn, int32) {
+	fail := func(err error) (*WSConn, error) {
 		dl.SetDeadline(0)
 		c.Close()
-		return nil, code
+		return nil, err
 	}
 
 	// Request line and required headers. The key is 16 PRNG bytes,
@@ -359,14 +423,14 @@ func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, int32) {
 		"Sec-WebSocket-Key: " + Base64StdEncode(key[:]) + "\r\n" +
 		"Sec-WebSocket-Version: 13\r\n\r\n"
 	rb := []byte(req)
-	total := int32(0)
-	for total < int32(len(rb)) {
-		r := c.Write(rb[total:])
-		if r < 0 {
-			return fail(r)
+	total := 0
+	for total < len(rb) {
+		r, werr := c.Write(rb[total:])
+		if werr != nil {
+			return fail(werr)
 		}
 		if r == 0 {
-			return fail(-eagain)
+			return fail(ErrWouldBlock) // a whole-quantum stall
 		}
 		total += r
 	}
@@ -378,9 +442,9 @@ func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, int32) {
 	var resp [handshakeBufSize]byte
 	n, scanned := int32(0), int32(0)
 	for {
-		m, e := c.Read(resp[n:])
+		m, rerr := c.Read(resp[n:])
 		if m > 0 {
-			n += m
+			n += int32(m)
 			if headerEnd(resp[:n], &scanned) {
 				break
 			}
@@ -389,19 +453,19 @@ func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, int32) {
 			}
 			continue
 		}
-		if e == 0 {
-			return fail(ErrConnDead)
+		if rerr == nil || rerr == ErrEOF {
+			return fail(ErrConnDead) // transport closed without a response
 		}
-		return fail(e)
+		return fail(rerr)
 	}
 	if n != scanned { // bytes after the header: server spoke first
 		return fail(ErrHandshake)
 	}
-	if e := parseResponse(resp[:scanned], Base64StdEncode(key[:])); e != 0 {
-		return fail(e)
+	if err := parseResponse(resp[:scanned], Base64StdEncode(key[:])); err != nil {
+		return fail(err)
 	}
 	dl.SetDeadline(0)
-	return &WSConn{c: c, dl: dl, inHdr: true, rneed: 2}, 0
+	return &WSConn{c: c, dl: dl, inHdr: true, rneed: 2}, nil
 }
 
 // headerEnd reports whether resp[:n] now contains the CRLFCRLF that ends
@@ -438,7 +502,7 @@ func headerEnd(resp []byte, scanned *int32) bool {
 // Sec-WebSocket-Accept equal to the expected accept value. A duplicate
 // required header is a failure (the response window is 512 bytes; any real
 // server's response fits easily).
-func parseResponse(resp []byte, keyB64 string) int32 {
+func parseResponse(resp []byte, keyB64 string) error {
 	lineEnd := indexCRLF(resp, 0)
 	if lineEnd < 0 {
 		return ErrHandshake
@@ -500,7 +564,7 @@ func parseResponse(resp []byte, keyB64 string) int32 {
 	if !accept {
 		return ErrAcceptKey
 	}
-	return 0
+	return nil
 }
 
 // indexCRLF finds the next "\r\n" in p at or after from, or -1.
@@ -608,37 +672,35 @@ func hasTokenFold(value []byte, tok string) bool {
 
 // ReadMessage receives the next frame. One call returns one event:
 //
-//	n > 0, err == 0            n payload bytes of a data frame (a frame
-//	                           bigger than len(p) is drained and reported
-//	                           as ErrTooBig - the connection stays usable)
-//	n == 0, err == 0           a pong control frame was consumed
-//	                           (PongSeen is now true) or a zero-length
-//	                           data frame arrived - call again
-//	n == 0, err == ErrPeerClosed
-//	                           the peer completed the closing handshake;
-//	                           the transport is closed, CloseCode has the
-//	                           peer's code. The orderly session end, not
-//	                           a failure.
-//	n == 0, err == eagain      poll mode (no deadline): nothing within one
-//	                           quantum; retry with the SAME buffer - the
-//	                           call resumes mid-header or mid-payload
-//	n == 0, err == etimedout   the connection deadline passed
-//	otherwise                  ErrTooBig/ErrProtocol (see the constants),
-//	                           ErrConnDead (transport closed without a
-//	                           close frame), or the raw transport error
-//	                           (lwip errno, or the negative mbedtls code
-//	                           of a wss record failure)
+//	n > 0, nil          n payload bytes of a data frame (a frame bigger
+//	                    than len(p) is drained and reported as ErrTooBig -
+//	                    the connection stays usable)
+//	0, nil              a pong control frame was consumed (PongSeen is now
+//	                    true) or a zero-length data frame arrived - call
+//	                    again
+//	0, ErrPeerClosed    the peer completed the closing handshake; the
+//	                    transport is closed, CloseCode has the peer's
+//	                    code. The orderly session end, not a failure.
+//	0, ErrWouldBlock    poll mode (no deadline): nothing within one
+//	                    quantum; retry with the SAME buffer - the call
+//	                    resumes mid-header or mid-payload
+//	0, ErrTimeout       the connection deadline passed
+//	otherwise           ErrTooBig/ErrProtocol (see the sentinels),
+//	                    ErrConnDead (transport closed without a close
+//	                    frame), or the raw transport error (an lwip-errno
+//	                    esperr.Error, or the negative mbedtls code of a
+//	                    wss record failure)
 //
 // Pings are answered automatically inside the call; a pong is never
 // delivered as data. ErrProtocol leaves the session closed (the framing is
 // misaligned; there is no recovery).
-func (w *WSConn) ReadMessage(p []byte) (int32, int32) {
+func (w *WSConn) ReadMessage(p []byte) (int, error) {
 	if w == nil || w.closed {
-		return 0, ebadf
+		return 0, ErrClosed
 	}
 	for {
 		if w.inHdr {
-			if e := w.readHeader(); e != 0 {
+			if e := w.readHeader(); e != nil {
 				return 0, e
 			}
 			switch w.fop {
@@ -646,7 +708,7 @@ func (w *WSConn) ReadMessage(p []byte) (int32, int32) {
 				w.lastOp = w.fop
 				if w.flen == 0 { // zero-length data frame
 					w.resetHeader()
-					return 0, 0
+					return 0, nil
 				}
 			case OpPing, OpPong, OpClose:
 				// control: payload staged into w.ctrl below
@@ -657,11 +719,11 @@ func (w *WSConn) ReadMessage(p []byte) (int32, int32) {
 		if w.fgot == w.flen { // this frame's payload is complete
 			switch w.fop {
 			case OpPing, OpPong, OpClose:
-				if e := w.controlEvent(); e != 0 {
+				if e := w.controlEvent(); e != nil {
 					return 0, e
 				}
 				if w.fop == OpPong {
-					return 0, 0 // the pong event the caller pumps for
+					return 0, nil // the pong event the caller pumps for
 				}
 				continue // ping answered automatically; keep reading
 			}
@@ -671,7 +733,7 @@ func (w *WSConn) ReadMessage(p []byte) (int32, int32) {
 			if drained {
 				return 0, ErrTooBig // frame drained; the connection stays usable
 			}
-			return n, 0
+			return int(n), nil
 		}
 		// One read attempt into the payload's destination: the caller's
 		// buffer when the frame fits, the control/drain staging otherwise
@@ -684,17 +746,17 @@ func (w *WSConn) ReadMessage(p []byte) (int32, int32) {
 		if w.fop != OpPing && w.fop != OpPong && w.fop != OpClose && w.flen <= int32(len(p)) {
 			dst = p[w.fgot:w.flen]
 		}
-		n, e := w.c.Read(dst)
+		n, rerr := w.c.Read(dst)
 		if n > 0 {
-			w.fgot += n
+			w.fgot += int32(n)
 			// Short reads are the transport's normal shape (TCP delivers
 			// what the segment carried); keep accumulating the frame.
 			continue
 		}
-		if e == 0 {
+		if rerr == nil || rerr == ErrEOF {
 			return 0, ErrConnDead // transport closed mid-frame
 		}
-		return 0, e // eagain / etimedout / transport error, progress kept
+		return 0, rerr // would-block / timeout / transport error, progress kept
 	}
 }
 
@@ -710,18 +772,18 @@ func (w *WSConn) resetHeader() {
 // controlEvent dispatches a completed control frame (payload in
 // w.ctrl[:flen]) and re-arms the header state. Data frames never come
 // here.
-func (w *WSConn) controlEvent() int32 {
+func (w *WSConn) controlEvent() error {
 	switch w.fop {
 	case OpPing:
 		payload := w.ctrl[:w.flen]
 		w.resetHeader()
-		if e := w.writeFrame(OpPong, payload); e < 0 {
-			return e
+		if err := w.writeFrame(OpPong, payload); err != nil {
+			return err
 		}
 	case OpPong:
 		w.pongSeen = true
 		w.resetHeader()
-		return 0 // the one control event reported to the caller
+		return nil // the one control event reported to the caller
 	case OpClose:
 		code := uint16(0)
 		if w.flen >= 2 {
@@ -746,18 +808,18 @@ func (w *WSConn) controlEvent() int32 {
 		w.c.Close()
 		return ErrPeerClosed
 	}
-	return 0
+	return nil
 }
 
 // readHeader accumulates and decodes the next frame header across poll-mode
 // retries. Server-to-client frames must not be masked (a masked one is
 // ErrProtocol), RSV bits must be clear (no extensions negotiated), control
 // frames must be unfragmented and at most 125 bytes.
-func (w *WSConn) readHeader() int32 {
+func (w *WSConn) readHeader() error {
 	for w.rhave < w.rneed {
 		n, e := w.c.Read(w.rbuf[w.rhave:w.rneed])
 		if n > 0 {
-			w.rhave += n
+			w.rhave += int32(n)
 			if w.rhave == 2 && w.rneed == 2 {
 				if w.rbuf[1]&0x80 != 0 {
 					return w.fatal(ErrProtocol) // server frames carry no mask
@@ -771,7 +833,7 @@ func (w *WSConn) readHeader() int32 {
 			}
 			continue
 		}
-		if e == 0 {
+		if e == nil || e == ErrEOF {
 			return ErrConnDead
 		}
 		return e
@@ -810,7 +872,7 @@ func (w *WSConn) readHeader() int32 {
 	w.flen = length
 	w.inHdr = false
 	w.fgot = 0
-	return 0
+	return nil
 }
 
 // fatal marks the session dead and releases the transport: a framing
@@ -819,44 +881,44 @@ func (w *WSConn) readHeader() int32 {
 // No close frame is sent (the RFC 6455 section 7.1.7 SHOULD to answer
 // with 1002 is deliberately not followed): a misaligned stream cannot
 // promise a well-formed closing exchange.
-func (w *WSConn) fatal(code int32) int32 {
+func (w *WSConn) fatal(err error) error {
 	w.closed = true
 	w.c.Close()
-	return code
+	return err
 }
 
 // WriteMessage sends one data frame with the given opcode (OpText or
-// OpBinary; anything else is -einval - control frames have their own
-// methods). The frame is built masked (the RFC requires client masking)
-// and pushed whole; like the transports, it returns len(p) on success and
-// a negative code on failure:
+// OpBinary; anything else is an EINVAL error - control frames have their
+// own methods). The frame is built masked (the RFC requires client
+// masking) and pushed whole; it returns (len(p), nil) on success and
+// (0, err) on failure - the frame is all-or-nothing up to the transport:
 //
-//	-len(p) shaped values      never: with a deadline set the transport
-//	                           hands over the whole frame or fails, and
-//	                           without one a quantum-long stall fails with
-//	                           -eagain leaving a PARTIAL frame on the wire
-//	-eagain                    no deadline set and the transport stalled
-//	                           for one quantum: the connection must be
-//	                           closed (a partial frame is already sent)
-//	-116 (-ETIMEDOUT)          the deadline passed; nothing went out
-//	other negative             transport failure (negated lwip errno, or
-//	                           the raw negative mbedtls code over wss)
-func (w *WSConn) WriteMessage(p []byte, opcode uint8) int32 {
+//	0, ErrWouldBlock   no deadline set and the transport stalled for one
+//	                   quantum: the connection must be closed (a partial
+//	                   frame is already on the wire)
+//	0, ErrTimeout      the deadline passed; nothing went out
+//	0, err             transport failure (an lwip-errno esperr.Error, or
+//	                   the raw negative mbedtls code over wss)
+func (w *WSConn) WriteMessage(p []byte, opcode uint8) (int, error) {
 	if w == nil || w.closed {
-		return -ebadf
+		return 0, ErrClosed
 	}
 	if opcode != OpText && opcode != OpBinary {
-		return -einval
+		return 0, errOf(einval)
 	}
-	return w.writeFrame(opcode, p)
+	if err := w.writeFrame(opcode, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // writeFrame builds and sends one masked client frame (any opcode). It
-// returns the payload length on success - 0 for empty payloads, which is
-// what Ping() and the close handshake surface - or a negative code.
-func (w *WSConn) writeFrame(opcode uint8, payload []byte) int32 {
-	n := int32(len(payload))
-	hdr := int32(2)
+// returns nil once the whole frame is out - 0-length payloads included,
+// which is what Ping() and the close handshake surface - or the transport
+// error / ErrWouldBlock (the quantum stall; see WriteMessage).
+func (w *WSConn) writeFrame(opcode uint8, payload []byte) error {
+	n := len(payload)
+	hdr := 2
 	switch {
 	case n < 126:
 	case n <= 0xFFFF:
@@ -884,29 +946,28 @@ func (w *WSConn) writeFrame(opcode uint8, payload []byte) int32 {
 	copy(buf[hdr:], mask[:])
 	copy(buf[hdr+4:], payload)
 	for i := range payload {
-		buf[int(hdr)+4+i] ^= mask[i&3]
+		buf[hdr+4+i] ^= mask[i&3]
 	}
-	total := int32(0)
-	for total < int32(len(buf)) {
-		r := w.c.Write(buf[total:])
-		if r < 0 {
-			return r
+	total := 0
+	for total < len(buf) {
+		r, err := w.c.Write(buf[total:])
+		if err != nil {
+			return err
 		}
 		if r == 0 {
-			return -eagain
+			return ErrWouldBlock
 		}
 		total += r
 	}
-	return n
+	return nil
 }
 
-// Ping sends an empty ping frame and returns 0, or a negative code on
-// failure (same contract as WriteMessage). The peer's pong is reported by
-// the next ReadMessage as a (0, 0) event with PongSeen() true - pump
-// ReadMessage until PongSeen() to wait for it.
-func (w *WSConn) Ping() int32 {
+// Ping sends an empty ping frame; the error contract is WriteMessage's.
+// The peer's pong is reported by the next ReadMessage as a (0, nil) event
+// with PongSeen() true - pump ReadMessage until PongSeen() to wait for it.
+func (w *WSConn) Ping() error {
 	if w == nil || w.closed {
-		return -ebadf
+		return ErrClosed
 	}
 	return w.writeFrame(OpPing, nil)
 }
@@ -919,37 +980,37 @@ func (w *WSConn) Ping() int32 {
 // for a bounded Close; without a deadline one quantum of silence is
 // enough. The transport is closed exactly once, whatever the report:
 //
-//	0            graceful: the peer echoed the close frame (CloseCode now
-//	             carries it)
-//	eagain       no deadline and the peer stayed silent for one quantum
-//	etimedout    the deadline passed without the peer's close frame
-//	negative     the close frame itself could not be sent
+//	nil              graceful: the peer echoed the close frame (CloseCode
+//	                 now carries it)
+//	ErrWouldBlock    no deadline and the peer stayed silent for one quantum
+//	ErrTimeout       the deadline passed without the peer's close frame
+//	other err        the close frame itself could not be sent
 //
-// A second Close, or any call on a closed WSConn, is EBADF (9).
-func (w *WSConn) Close(code uint16) int32 {
+// A second Close, or any call on a closed WSConn, reports ErrClosed.
+func (w *WSConn) Close(code uint16) error {
 	if w == nil || w.closed {
-		return ebadf
+		return ErrClosed
 	}
 	var pl [2]byte
 	pl[0] = byte(code >> 8)
 	pl[1] = byte(code)
-	e := w.writeFrame(OpClose, pl[:])
+	err := w.writeFrame(OpClose, pl[:])
 	w.closeSent = true
-	if e < 0 { // the close frame never went out: just release the transport
+	if err != nil { // the close frame never went out: just release the transport
 		w.closed = true
 		w.c.Close()
-		return e
+		return err
 	}
 	// Wait for the peer's close frame. Data frames that arrive on the way
 	// are drained (ReadMessage(nil) always takes the drain path); pongs
 	// and pings are consumed as usual.
-	var report int32 = eagain
+	var report error = ErrWouldBlock
 	for {
 		_, re := w.ReadMessage(nil)
 		if re == ErrPeerClosed {
-			return 0
+			return nil
 		}
-		if re != 0 {
+		if re != nil {
 			report = re
 			break
 		}
@@ -963,12 +1024,12 @@ func (w *WSConn) Close(code uint16) int32 {
 // (0 clears it) by forwarding to the transport, so ReadMessage and
 // WriteMessage honor it exactly like the transport's own Read/Write. ms <
 // 0 is EINVAL. A transport without SetDeadline reports ErrNoDeadline.
-func (w *WSConn) SetDeadline(ms int32) int32 {
+func (w *WSConn) SetDeadline(ms int32) error {
 	if w == nil || w.closed {
-		return ebadf
+		return ErrClosed
 	}
 	if ms < 0 {
-		return einval
+		return errOf(einval)
 	}
 	if w.dl == nil {
 		return ErrNoDeadline
@@ -1022,21 +1083,21 @@ func ErrName(code int32) string {
 	}
 	name := ""
 	switch code {
-	case ErrHandshake:
+	case wsErrHandshake:
 		name = "WS_ERR_HANDSHAKE"
-	case ErrNotWS:
+	case wsErrNotWS:
 		name = "WS_ERR_NOT_WEBSOCKET"
-	case ErrAcceptKey:
+	case wsErrAcceptKey:
 		name = "WS_ERR_ACCEPT_KEY"
-	case ErrTooBig:
+	case wsErrTooBig:
 		name = "WS_ERR_FRAME_TOO_BIG"
-	case ErrProtocol:
+	case wsErrProtocol:
 		name = "WS_ERR_PROTOCOL"
-	case ErrPeerClosed:
+	case wsErrPeerClosed:
 		name = "WS_ERR_PEER_CLOSED"
-	case ErrConnDead:
+	case wsErrConnDead:
 		name = "WS_ERR_CONN_DEAD"
-	case ErrNoDeadline:
+	case wsErrNoDeadline:
 		name = "WS_ERR_NO_DEADLINE"
 	default:
 		name = errnoName(code)

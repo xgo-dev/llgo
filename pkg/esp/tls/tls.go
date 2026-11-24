@@ -25,12 +25,13 @@
 // After the wifi package reports EvGotIP (and, on a host peer, that peer is
 // listening):
 //
-//	c, e := tls.Dial("192.168.4.1:9443", 10000,
+//	c, err := tls.Dial("192.168.4.1:9443", 10000,
 //	    &tls.Config{ServerName: "device.internal", RootCAs: caPEM})
-//	w := c.Write(msg)
-//	n, e := c.Read(buf)
+//	if err != nil { ... }
+//	n, err := c.Write(msg)
+//	n, err = c.Read(buf)
 //	st := c.State() // negotiated version, cipher suite, peer certificate DER
-//	e = c.Close()
+//	err = c.Close()
 //
 // The ServerName is what the handshake verifies the server certificate
 // against (SNI + CN/SAN match) and may differ from the dial address - the
@@ -64,10 +65,16 @@
 // model requires bounded waits) that bounds BOTH the TCP connect and the
 // handshake as one total budget. Read and Write honor the deadline set by
 // SetDeadline (relative ms; 0 = no deadline), with net.Conn semantics:
-// with no deadline a Read gives up after one quantum with EAGAIN and a
-// Write returns a "nothing accepted" signal (-EAGAIN) as soon as one
-// quantum passes without progress; with a deadline both retry until it
-// passes (Read reports ETIMEDOUT, Write -ETIMEDOUT).
+// with no deadline a Read gives up after one quantum with ErrWouldBlock
+// and a Write reports (0, ErrWouldBlock) as soon as one quantum passes
+// without progress; with a deadline both retry until it passes (Read then
+// reports ErrTimeout, Write (0, ErrTimeout)).
+//
+// Deadlines are relative milliseconds - NOT stdlib's time.Time, a
+// deliberate deviation (time.Time has never been validated on the
+// bare-metal target and the bounded-quantum model does not need
+// wall-clock arithmetic); everything else follows the io.Reader/io.Writer
+// and net.Conn conventions.
 //
 // One semantic difference from raw TCP, inherent to TLS: Write accepts a
 // buffer all-or-nothing. mbedtls encrypts the whole plaintext into one
@@ -132,16 +139,18 @@
 // values, so emulated handshakes are reproducible (fine for acceptance;
 // on hardware this is a real TRNG).
 //
-// # Error codes
+// # Error model
 //
-// TLS-layer failures use a new segment at 0x7E00 (outside the lwip errno
-// range, the DNS h_errno range and the esp_err range), listed by ErrName:
-// HandshakeTimeout, CertVerifyFailed, CaParseFailed, WantPollExhausted,
-// Handshake, PsaInitFailed, NoRootCAs, NoPeerCert. Three conventions on
-// top:
+// Errors are Go error values of the shared pkg/esp/esperr type: Code is
+// the raw pipeline code, Name its ErrName rendering. The handshake-phase
+// and dial-policy failures have first-class sentinels - errors.Is can
+// tell CertVerifyFailed (chain or CN/SAN mismatch), CaParseFailed,
+// HandshakeTimeout, NoRootCAs, Handshake and friends apart from each
+// other and from the transport sentinels ErrClosed/ErrTimeout/
+// ErrWouldBlock. Three pass-through conventions on top, matching net:
 //
 //   - TCP-phase failures (socket, connect) surface as the raw lwip errno,
-//     exactly as net.Dial returns them - ErrName names those values too.
+//     exactly as net.Dial reports them - ErrName names those values too.
 //   - Dial failures inside mbedtls's own setup (config defaults, ssl_setup,
 //     the rest of the glue's llgo_tls_new) pass through the raw negative
 //     mbedtls code; the only 0x7E00 codes that phase produces are its own
@@ -151,17 +160,23 @@
 //   - Record-phase failures after the handshake surface as the raw
 //     negative mbedtls code (e.g. -0x7780 fatal alert); mbedtls treats
 //     such an error as fatal for the session, and so should the caller.
-//     ErrName names the common ones.
+//     ErrName names the common ones. An orderly session end is ErrEOF
+//     (close_notify arrived, or the TCP stream closed cleanly without
+//     one) - the family's io.EOF counterpart, matching net.Conn.
+//
+// The 0x7E00 segment itself is now internal: the values live only inside
+// this package (ErrName's table and the sentinel definitions); callers
+// match on the sentinel errors.
 //
 // # Ownership
 //
 // The glue allocates one C-side context per connection (the mbedtls state:
 // ssl context, ssl config, parsed CA) and hands it to Go as an opaque
 // handle stored in a uintptr field - so the GC never scans it as a
-// pointer. Close frees the context and the fd exactly once; a second
-// Close, or any call on a nil or closed conn, is a defensive no-op
-// returning EBADF. A failed TLSDial frees everything before returning, so
-// a failed dial leaks nothing.
+// pointer. Close frees the context and the fd exactly once and is
+// idempotent: a second Close, or any call on a nil or closed conn, reports
+// ErrClosed. A failed dial frees everything before returning, so a failed
+// dial leaks nothing.
 //
 // # Scheduling
 //
@@ -181,7 +196,11 @@
 // primitives come from net_glue.c (REQUIRES lwip esp_timer).
 package tls
 
-import "unsafe" // cString scans and copies the mbedtls-owned state strings
+import (
+	"unsafe" // cString scans and copies the mbedtls-owned state strings
+
+	"github.com/xgo-dev/llgo/pkg/esp/esperr"
+)
 
 // The default poll quantum: how long every retry loop waits for the socket
 // between attempts. Same value the net package uses; one wait is long
@@ -215,49 +234,121 @@ const (
 	mbErrCertVerifyFailed = -0x2700 // server chain failed x509 verification
 )
 
-// TLS-layer error codes, the 0x7E00 segment. See ErrName for the names.
+// TLS-layer error codes, the internal 0x7E00 segment (outside the lwip
+// errno range, the DNS h_errno range and the esp_err range). Callers match
+// on the sentinel errors below; the values themselves stay inside this
+// package (ErrName's table and the sentinels).
 const (
-	// HandshakeTimeout: the handshake was still only making WANT progress
+	tlsHandshakeTimeout  = 0x7E01
+	tlsCertVerifyFailed  = 0x7E02
+	tlsCaParseFailed     = 0x7E03
+	tlsWantPollExhausted = 0x7E04
+	tlsHandshakeFailure  = 0x7E05
+	tlsPsaInitFailed     = 0x7E06
+	tlsNoRootCAs         = 0x7E07
+	tlsNoPeerCert        = 0x7E08
+)
+
+// Handshake-phase and dial-policy failures as sentinel errors: errors.Is
+// tells the classes apart (CertVerifyFailed covers both the chain-verify
+// failure and the ServerName CN/SAN mismatch; mbedtls reports both as
+// X509_CERT_VERIFY_FAILED). See the package doc's error-model section for
+// the pass-through conventions (lwip errnos from the TCP phase, raw
+// negative mbedtls codes from the setup and record phases).
+var (
+	// ErrHandshakeTimeout: the handshake was still only making WANT progress
 	// when the dial's total budget (timeoutMs) ran out. The TCP layer was
 	// fine; the peer was too slow or the network too lossy.
-	HandshakeTimeout = 0x7E01
-	// CertVerifyFailed: VERIFY_REQUIRED and the server failed verification:
-	// the chain does not verify against the CA (validity included), or the
-	// ServerName does not match the certificate's CN/SAN entries. mbedtls
-	// reports both as X509_CERT_VERIFY_FAILED.
-	CertVerifyFailed = 0x7E02
-	// CaParseFailed: caPEM did not yield a usable certificate (hard parse
-	// error, or mbedtls reported a failed member in the PEM - any failed
-	// member rejects the whole parameter).
-	CaParseFailed = 0x7E03
-	// WantPollExhausted: Close's bounded close_notify wait ended before the
-	// peer exchange completed. The fd and the context are released
-	// regardless - Close never fails to clean up; the code only reports
+	ErrHandshakeTimeout = &esperr.Error{Code: tlsHandshakeTimeout,
+		Name: ErrName(tlsHandshakeTimeout)}
+	// ErrCertVerifyFailed: VERIFY_REQUIRED and the server failed
+	// verification: the chain does not verify against the CA (validity
+	// included), or the ServerName does not match the certificate's CN/SAN
+	// entries.
+	ErrCertVerifyFailed = &esperr.Error{Code: tlsCertVerifyFailed,
+		Name: ErrName(tlsCertVerifyFailed)}
+	// ErrCaParseFailed: the CA PEM did not yield a usable certificate (hard
+	// parse error, or mbedtls reported a failed member in the PEM - any
+	// failed member rejects the whole parameter).
+	ErrCaParseFailed = &esperr.Error{Code: tlsCaParseFailed,
+		Name: ErrName(tlsCaParseFailed)}
+	// ErrWantPollExhausted: Close's bounded close_notify wait ended before
+	// the peer exchange completed. The fd and the context are released
+	// regardless - Close never fails to clean up; the error only reports
 	// that the graceful part did not finish.
-	WantPollExhausted = 0x7E04
-	// Handshake: any other fatal mbedtls error during the handshake
+	ErrWantPollExhausted = &esperr.Error{Code: tlsWantPollExhausted,
+		Name: ErrName(tlsWantPollExhausted)}
+	// ErrHandshake: any other fatal mbedtls error during the handshake
 	// (protocol failure, alert from the peer, out of memory) - the dial
 	// loop maps codes its table does not act on to this one. The setup
 	// phase never produces it: there the raw negative mbedtls code is
-	// passed through (see the error-codes section above).
-	Handshake = 0x7E05
-	// PsaInitFailed: the glue's defensive psa_crypto_init call failed -
+	// passed through (see the error-model section above).
+	ErrHandshake = &esperr.Error{Code: tlsHandshakeFailure,
+		Name: ErrName(tlsHandshakeFailure)}
+	// ErrPsaInitFailed: the glue's defensive psa_crypto_init call failed -
 	// the handshake has no random source. IDF initializes PSA at boot, so
 	// reaching this means the crypto subsystem itself is broken.
-	PsaInitFailed = 0x7E06
-	// NoRootCAs: the fail-closed dial. RootCAs was nil and InsecureSkipVerify
-	// false, so there is no way to authenticate the peer's identity - a
-	// bare-metal target has no system trust store to fall back on, and the
-	// pre-Config default (silent VERIFY_NONE) is exactly the hole a MITM
-	// with any certificate of the pinned CA would walk through. Raised
-	// before the dial touches the network; the glue carries the same
-	// refusal as a defense-in-depth check.
-	NoRootCAs = 0x7E07
-	// NoPeerCert: State() on a session that carries no peer certificate -
-	// the handshake is not over (or the conn is already closed), or the
-	// peer never sent one.
-	NoPeerCert = 0x7E08
+	ErrPsaInitFailed = &esperr.Error{Code: tlsPsaInitFailed,
+		Name: ErrName(tlsPsaInitFailed)}
+	// ErrNoRootCAs: the fail-closed dial. RootCAs was nil and
+	// InsecureSkipVerify false, so there is no way to authenticate the
+	// peer's identity - a bare-metal target has no system trust store to
+	// fall back on, and the pre-Config default (silent VERIFY_NONE) is
+	// exactly the hole a MITM with any certificate of the pinned CA would
+	// walk through. Raised before the dial touches the network; the glue
+	// carries the same refusal as a defense-in-depth check.
+	ErrNoRootCAs = &esperr.Error{Code: tlsNoRootCAs,
+		Name: ErrName(tlsNoRootCAs)}
+	// ErrNoPeerCert: State() on a session that carries no peer certificate
+	// - the handshake is not over (or the conn is already closed), or the
+	// peer never sent one. (State reports the zero ConnectionState rather
+	// than the error; the sentinel exists so the code stays nameable.)
+	ErrNoPeerCert = &esperr.Error{Code: tlsNoPeerCert,
+		Name: ErrName(tlsNoPeerCert)}
 )
+
+// The transport error sentinels, re-exported from the shared esperr base
+// so callers can stay inside this package's namespace.
+var (
+	ErrClosed     = esperr.ErrClosed
+	ErrTimeout    = esperr.ErrTimeout
+	ErrWouldBlock = esperr.ErrWouldBlock
+	ErrEOF        = esperr.ErrEOF
+)
+
+// errOf converts a pipeline code to the error the API returns (nil for 0).
+// The sentinel codes map to their sentinel values; anything else (lwip
+// errnos, negative mbedtls codes) becomes an *esperr.Error named through
+// ErrName.
+func errOf(code int32) error {
+	switch code {
+	case 0:
+		return nil
+	case ebadf:
+		return ErrClosed
+	case eagain:
+		return ErrWouldBlock
+	case etimedout:
+		return ErrTimeout
+	case tlsHandshakeTimeout:
+		return ErrHandshakeTimeout
+	case tlsCertVerifyFailed:
+		return ErrCertVerifyFailed
+	case tlsCaParseFailed:
+		return ErrCaParseFailed
+	case tlsWantPollExhausted:
+		return ErrWantPollExhausted
+	case tlsHandshakeFailure:
+		return ErrHandshake
+	case tlsPsaInitFailed:
+		return ErrPsaInitFailed
+	case tlsNoRootCAs:
+		return ErrNoRootCAs
+	case tlsNoPeerCert:
+		return ErrNoPeerCert
+	}
+	return &esperr.Error{Code: code, Name: ErrName(code)}
+}
 
 // Protocol versions for Config.MinVersion. The values are the TLS wire
 // versions, which is both what crypto/tls's VersionTLS12/VersionTLS13 use
@@ -357,39 +448,39 @@ const closeBudgetMs = 500
 //
 // On every failure path the fd is closed and the C context freed before
 // Dial returns, so a failed dial leaks nothing. Errors: EINVAL for a bad
-// addr or MinVersion, ENAMETOOLONG for a name over 255 bytes, NoRootCAs
-// for the missing trust anchor, the resolver's h_errno code for an
+// addr or MinVersion, ENAMETOOLONG for a name over 255 bytes, ErrNoRootCAs
+// for the missing trust anchor, the resolver's h_errno error for an
 // unresolvable name, a lwip errno from the TCP phase (same as net.Dial),
-// a 0x7E00 TLS code from the phases above, or Handshake for unmapped
-// mbedtls failures.
-func Dial(addr string, timeoutMs int32, cfg *Config) (*TLSConn, int32) {
+// one of the 0x7E00-class sentinels from the phases above, or
+// ErrHandshake for unmapped mbedtls failures.
+func Dial(addr string, timeoutMs int32, cfg *Config) (*TLSConn, error) {
 	if timeoutMs <= 0 {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	host, port, e := splitHostPort(addr)
 	if e != 0 {
-		return nil, e
+		return nil, errOf(e)
 	}
 	var cfgv Config
 	if cfg != nil {
 		cfgv = *cfg
 	}
 	if cfgv.MinVersion != 0 && cfgv.MinVersion != VersionTLS12 && cfgv.MinVersion != VersionTLS13 {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	if cfgv.RootCAs == nil && !cfgv.InsecureSkipVerify {
-		return nil, NoRootCAs
+		return nil, ErrNoRootCAs
 	}
 	serverName := host
 	if cfgv.ServerName != "" {
 		serverName = cfgv.ServerName
 	}
 	if len(serverName) > 255 {
-		return nil, enametoolong
+		return nil, errOf(enametoolong)
 	}
 	ip, e := resolveHost(host)
 	if e != 0 {
-		return nil, e
+		return nil, errOf(e)
 	}
 	return dialIP(ip, port, timeoutMs, serverName, cfgv.RootCAs,
 		cfgv.InsecureSkipVerify, cfgv.MinVersion)
@@ -408,9 +499,12 @@ func Dial(addr string, timeoutMs int32, cfg *Config) (*TLSConn, int32) {
 //   - caPEM != nil: VERIFY_REQUIRED against that PEM (same parse rules
 //     and codes as Config.RootCAs), with mbedtls_ssl_set_hostname(NULL):
 //     the chain and validity dates are checked, the CN/SAN match is not.
-func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, int32) {
+//
+// Deprecated: use Dial with a Config (ServerName + RootCAs, or
+// InsecureSkipVerify for the VERIFY_NONE shape).
+func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, error) {
 	if timeoutMs <= 0 {
-		return nil, einval
+		return nil, errOf(einval)
 	}
 	return dialIP(ip, port, timeoutMs, "", caPEM, caPEM == nil, 0)
 }
@@ -421,15 +515,15 @@ func TLSDial(ip uint32, port uint16, timeoutMs int32, caPEM []byte) (*TLSConn, i
 // insecure selects VERIFY_NONE; minVersion is a wire version or 0. deadline
 // starts here so TCP connect + handshake share one total budget.
 func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
-	ca []byte, insecure bool, minVersion uint16) (*TLSConn, int32) {
+	ca []byte, insecure bool, minVersion uint16) (*TLSConn, error) {
 	var fd int32
 	if e := netSocket(&fd); e != 0 {
-		return nil, e
+		return nil, errOf(e)
 	}
 	e := netConnect(fd, ip, int32(port))
 	if e != 0 && e != einprogress && e != ealready {
 		netClose(fd)
-		return nil, e
+		return nil, errOf(e)
 	}
 	deadline := nowMs() + uint32(timeoutMs)
 	if e != 0 { // connect in flight: select for writability, then SO_ERROR
@@ -437,23 +531,23 @@ func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
 			var ready int32
 			if pe := netPoll(fd, 1, quantumMs, &ready); pe != 0 {
 				netClose(fd)
-				return nil, pe
+				return nil, errOf(pe)
 			}
 			if ready == 1 {
 				var soErr int32
 				if se := netSockError(fd, &soErr); se != 0 {
 					netClose(fd)
-					return nil, se
+					return nil, errOf(se)
 				}
 				if soErr == 0 {
 					break
 				}
 				netClose(fd)
-				return nil, soErr
+				return nil, errOf(soErr)
 			}
 			if past(deadline) {
 				netClose(fd)
-				return nil, etimedout
+				return nil, ErrTimeout
 			}
 		}
 	}
@@ -478,7 +572,7 @@ func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
 	if e := tlsNew(fd, caPtr, caLen, hostPtr, hostLen,
 		boolToInt32(insecure), int32(minVersion), &h); e != 0 {
 		netClose(fd)
-		return nil, e // CaParseFailed, NoRootCAs or a raw negative mbedtls code (setup)
+		return nil, errOf(e) // ErrCaParseFailed, ErrNoRootCAs or a raw negative mbedtls code (setup)
 	}
 
 	// Handshake by quanta: one handshake_step per loop, a poll quantum for
@@ -486,7 +580,7 @@ func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
 	for {
 		r := tlsHandstep(h)
 		if r == 0 {
-			return &TLSConn{h: h, fd: fd}, 0
+			return &TLSConn{h: h, fd: fd}, nil
 		}
 		if r == mbErrWantRead || r == mbErrWantWrite {
 			var ready int32
@@ -497,23 +591,23 @@ func dialIP(ip uint32, port uint16, timeoutMs int32, hostname string,
 			if pe := netPoll(fd, w, quantumMs, &ready); pe != 0 {
 				tlsFree(h)
 				netClose(fd)
-				return nil, pe
+				return nil, errOf(pe)
 			}
 			if past(deadline) {
 				tlsFree(h)
 				netClose(fd)
-				return nil, HandshakeTimeout
+				return nil, ErrHandshakeTimeout
 			}
 			continue
 		}
 		if r == mbErrCertVerifyFailed {
 			tlsFree(h)
 			netClose(fd)
-			return nil, CertVerifyFailed
+			return nil, ErrCertVerifyFailed
 		}
 		tlsFree(h)
 		netClose(fd)
-		return nil, Handshake
+		return nil, ErrHandshake
 	}
 }
 
@@ -593,96 +687,98 @@ func boolToInt32(b bool) int32 {
 }
 
 // Read reads up to len(p) bytes of decrypted plaintext and returns the
-// count plus an error code. Reads are short: one call returns what fits
+// count plus an error. Reads are short: one call returns what fits
 // the caller's buffer from the record mbedtls holds; the caller loops until
-// it has what it needs. The sentinel combinations:
+// it has what it needs. The outcomes:
 //
-//	n > 0, err == 0     n bytes of plaintext arrived
-//	n == 0, err == 0    the peer closed the session in order: TLS
+//	n > 0, nil          n bytes of plaintext arrived
+//	0, ErrEOF           the peer closed the session in order: TLS
 //	                    close_notify arrived (or the TCP stream closed
 //	                    cleanly without one)
-//	n == 0, err == 11   no deadline set and nothing arrived within one
-//	                    quantum (EAGAIN) - a poll-style read
-//	n == 0, err == 116  a deadline was set and passed with no data
-//	                    (ETIMEDOUT)
+//	0, ErrWouldBlock    no deadline set and nothing arrived within one
+//	                    quantum - a poll-style read
+//	0, ErrTimeout       a deadline was set and passed with no data
 //
 // Any other error is the raw negative mbedtls code (a fatal session error;
 // see ErrName for the common names). A zero-length p is a no-op success
 // (it would otherwise be indistinguishable from a peer close).
-func (c *TLSConn) Read(p []byte) (int32, int32) {
+func (c *TLSConn) Read(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return 0, ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0, 0
+		return 0, nil
 	}
 	for {
 		var n int32
 		e := tlsRead(c.h, &p[0], int32(len(p)), &n)
 		if e == 0 {
-			return n, 0
+			if n == 0 {
+				return 0, ErrEOF
+			}
+			return int(n), nil
 		}
 		if e == mbErrPeerCloseNotify || e == mbErrConnEOF {
-			return 0, 0
+			return 0, ErrEOF
 		}
 		if e == mbErrWantRead || e == mbErrWantWrite {
 			if pe := c.pace(e == mbErrWantWrite); pe != 0 {
-				return 0, pe
+				return 0, errOf(pe)
 			}
 			continue
 		}
-		return 0, e
+		return 0, errOf(e)
 	}
 }
 
-// Write submits the whole buffer for encryption and returns len(p) on
-// success. mbedtls accepts plaintext all-or-nothing (one record, no
-// partial plaintext), so the failure contract is simpler than TCP's:
+// Write submits the whole buffer for encryption and returns (len(p), nil)
+// on success. mbedtls accepts plaintext all-or-nothing (one record, no
+// partial plaintext), so the failure contract is simpler than TCP's -
+// every failure consumes NOTHING and the caller retries the whole buffer:
 //
-//	>= len(p)          the buffer is encrypted and handed to the socket
+//	len(p), nil        the buffer is encrypted and handed to the socket
 //	                   (mbedtls may still be retrying the record's bytes
 //	                   inside its own BIO loop on later calls)
-//	-11 (-EAGAIN)      no deadline set and one quantum passed without
-//	                   progress; NOTHING was consumed, retry the whole
-//	                   buffer later
-//	-116 (-ETIMEDOUT)  a deadline was set and passed; nothing was consumed
-//	other negative     the poll reported a socket error (negated lwip
-//	                   errno) or a raw fatal mbedtls code - the session
-//	                   is unusable either way
-func (c *TLSConn) Write(p []byte) int32 {
+//	0, ErrWouldBlock   no deadline set and one quantum passed without
+//	                   progress; retry the whole buffer later
+//	0, ErrTimeout      a deadline was set and passed
+//	0, err             the poll reported a socket error (lwip errno) or a
+//	                   raw fatal mbedtls code - the session is unusable
+//	                   either way
+func (c *TLSConn) Write(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return -ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0
+		return 0, nil
 	}
 	for {
 		var n int32
 		e := tlsWrite(c.h, &p[0], int32(len(p)), &n)
 		if e == 0 {
-			return n // the whole buffer, or nothing on the error paths below
+			return int(n), nil // the whole buffer, or nothing on the error paths below
 		}
 		if e == mbErrWantRead || e == mbErrWantWrite {
 			if pe := c.pace(e == mbErrWantWrite); pe != 0 {
-				return -pe // nothing accepted: caller retries all of p
+				return 0, errOf(pe) // nothing accepted: caller retries all of p
 			}
 			continue
 		}
-		return e
+		return 0, errOf(e)
 	}
 }
 
 // Close ends the session: it tries to send the TLS close notification
-// within a bounded 500 ms wait (WantPollExhausted if the wait ends first),
-// then frees the C context and shuts the TCP socket down in both
-// directions - the fd is ALWAYS released, whatever the report. A second
-// Close on the same conn is a no-op returning EBADF (9), as is any call on
-// a closed or nil conn. mbedtls treats a failed close_notify as
+// within a bounded 500 ms wait (ErrWantPollExhausted if the wait ends
+// first), then frees the C context and shuts the TCP socket down in both
+// directions - the fd is ALWAYS released, whatever the report. Close is
+// idempotent: a second Close on the same conn (or any call on a closed or
+// nil conn) reports ErrClosed. mbedtls treats a failed close_notify as
 // recoverable (the session is over either way); the TCP shutdown means a
 // stalled peer can never hold the close open.
-func (c *TLSConn) Close() int32 {
+func (c *TLSConn) Close() error {
 	if c == nil || c.fd < 0 {
-		return ebadf
+		return ErrClosed
 	}
 	fd := c.fd
 	h := c.h
@@ -706,7 +802,7 @@ func (c *TLSConn) Close() int32 {
 				break
 			}
 			if past(deadline) {
-				report = WantPollExhausted
+				report = tlsWantPollExhausted
 				break
 			}
 			continue
@@ -717,28 +813,28 @@ func (c *TLSConn) Close() int32 {
 	tlsFree(h)
 	netShutdown(fd, shutRdwr)
 	if e := netClose(fd); e != 0 && report == 0 {
-		return e
+		return errOf(e)
 	}
-	return report
+	return errOf(report)
 }
 
 // SetDeadline sets the session's I/O deadline to ms milliseconds from now,
 // or clears it with 0. Both Read and Write honor it until SetDeadline
-// changes it. ms < 0 is EINVAL. Returns 0 on success.
-func (c *TLSConn) SetDeadline(ms int32) int32 {
+// changes it. ms < 0 is EINVAL.
+func (c *TLSConn) SetDeadline(ms int32) error {
 	if c == nil || c.fd < 0 {
-		return ebadf
+		return ErrClosed
 	}
 	if ms < 0 {
-		return einval
+		return errOf(einval)
 	}
 	if ms == 0 {
 		c.hasDeadline = false
-		return 0
+		return nil
 	}
 	c.hasDeadline = true
 	c.deadlineMs = nowMs() + uint32(ms)
-	return 0
+	return nil
 }
 
 // State reports the established session's negotiated parameters and the
@@ -865,21 +961,21 @@ func ErrName(code int32) string {
 	switch code {
 	case 0:
 		return "OK"
-	case HandshakeTimeout:
+	case tlsHandshakeTimeout:
 		return "TLS_ERR_HANDSHAKE_TIMEOUT"
-	case CertVerifyFailed:
+	case tlsCertVerifyFailed:
 		return "TLS_ERR_CERT_VERIFY"
-	case CaParseFailed:
+	case tlsCaParseFailed:
 		return "TLS_ERR_CA_PARSE"
-	case WantPollExhausted:
+	case tlsWantPollExhausted:
 		return "TLS_ERR_WANT_POLL_EXHAUSTED"
-	case Handshake:
+	case tlsHandshakeFailure:
 		return "TLS_ERR_HANDSHAKE"
-	case PsaInitFailed:
+	case tlsPsaInitFailed:
 		return "TLS_ERR_PSA_INIT"
-	case NoRootCAs:
+	case tlsNoRootCAs:
 		return "TLS_ERR_NO_ROOT_CAS"
-	case NoPeerCert:
+	case tlsNoPeerCert:
 		return "TLS_ERR_NO_PEER_CERT"
 	case 4:
 		return "EINTR"

@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/net"
 	"github.com/xgo-dev/llgo/pkg/esp/tls"
 )
@@ -25,8 +27,8 @@ var (
 // The tests run hosted (go test): they exercise the framing state machine,
 // the handshake parser and the closing handshake against a hand-rolled
 // RFC 6455 server over an in-memory transport that mimics the pkg/esp
-// contracts (int32 counts, EAGAIN poll reads without a deadline, ETIMEDOUT
-// with one, all-or-nothing writes).
+// contracts ((int, error) io-shaped reads/writes, ErrWouldBlock poll reads
+// without a deadline, ErrTimeout with one, all-or-nothing writes).
 
 // mempipe is an in-memory ws.Conn/Deadliner: everything written to one end
 // becomes readable at the other. Without a deadline, a Read with no data
@@ -56,9 +58,9 @@ func newPipePair(chunkReads bool) (*mempipe, *mempipe) {
 	return a, b
 }
 
-func (m *mempipe) Read(p []byte) (int32, int32) {
+func (m *mempipe) Read(p []byte) (int, error) {
 	if m == nil || len(p) == 0 {
-		return 0, 0
+		return 0, nil
 	}
 	m.mu.Lock()
 	dms := m.deadlineMs
@@ -81,38 +83,38 @@ func (m *mempipe) Read(p []byte) (int32, int32) {
 			copy(p, m.rbuf[:n])
 			m.rbuf = m.rbuf[n:]
 			m.mu.Unlock()
-			return int32(n), 0
+			return n, nil
 		}
 		m.mu.Unlock()
 		if m.closed && m.peer.closed {
-			return 0, 0 // orderly stream close
+			return 0, ErrEOF // orderly stream close
 		}
 		if dms > 0 {
 			if !time.Now().Before(dl) {
-				return 0, etimedout
+				return 0, ErrTimeout
 			}
 			time.Sleep(200 * time.Microsecond)
 			continue
 		}
 		if time.Now().After(spin) {
-			return 0, eagain
+			return 0, ErrWouldBlock
 		}
 		time.Sleep(100 * time.Microsecond)
 	}
 }
 
-func (m *mempipe) Write(p []byte) int32 {
+func (m *mempipe) Write(p []byte) (int, error) {
 	if m == nil {
-		return -ebadf
+		return 0, ErrClosed
 	}
 	if len(p) == 0 {
-		return 0
+		return 0, nil
 	}
 	if m.zeroOnce {
 		m.mu.Lock()
 		m.zeroOnce = false
 		m.mu.Unlock()
-		return 0 // one quantum-long stall: nothing accepted
+		return 0, nil // one quantum-long stall: nothing accepted
 	}
 	n := len(p)
 	if m.maxWrite > 0 && n > m.maxWrite {
@@ -121,34 +123,34 @@ func (m *mempipe) Write(p []byte) int32 {
 	m.mu.Lock()
 	m.peer.rbuf = append(m.peer.rbuf, p[:n]...)
 	m.mu.Unlock()
-	return int32(n)
+	return n, nil
 }
 
-func (m *mempipe) Close() int32 {
+func (m *mempipe) Close() error {
 	if m == nil {
-		return ebadf
+		return ErrClosed
 	}
 	m.mu.Lock()
 	already := m.closed
 	m.closed = true
 	m.mu.Unlock()
 	if already {
-		return ebadf
+		return ErrClosed
 	}
-	return 0
+	return nil
 }
 
-func (m *mempipe) SetDeadline(ms int32) int32 {
+func (m *mempipe) SetDeadline(ms int32) error {
 	if m == nil {
-		return ebadf
+		return ErrClosed
 	}
 	if ms < 0 {
-		return einval
+		return errOf(einval)
 	}
 	m.mu.Lock()
 	m.deadlineMs = ms
 	m.mu.Unlock()
-	return 0
+	return nil
 }
 
 // ---- RFC 6455 server side (test peer) ----
@@ -215,9 +217,9 @@ func (s *testServer) run(denyUpgrade, wrongAccept, maskReply bool) {
 	var req [1024]byte
 	n, scanned := 0, 0
 	for {
-		m, e := s.conn.Read(req[n:])
+		m, rerr := s.conn.Read(req[n:])
 		if m > 0 {
-			n += int(m)
+			n += m
 			if idx := headerEndOf(req[:n], scanned); idx >= 0 {
 				scanned = idx
 				break
@@ -232,8 +234,8 @@ func (s *testServer) run(denyUpgrade, wrongAccept, maskReply bool) {
 			}
 			continue
 		}
-		if e != 0 && e != eagain {
-			s.t.Errorf("server: read request err %d", e)
+		if rerr != nil && rerr != ErrWouldBlock {
+			s.t.Errorf("server: read request err %v", rerr)
 			return
 		}
 		time.Sleep(200 * time.Microsecond)
@@ -276,8 +278,8 @@ func (s *testServer) run(denyUpgrade, wrongAccept, maskReply bool) {
 		"Upgrade: websocket\r\n" +
 		"Connection: Upgrade\r\n" +
 		"Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
-	if e := s.conn.Write([]byte(resp)); e <= 0 {
-		s.t.Errorf("server write response: %d", e)
+	if _, err := s.conn.Write([]byte(resp)); err != nil {
+		s.t.Errorf("server write response: %v", err)
 		return
 	}
 	if denyUpgrade || wrongAccept {
@@ -325,13 +327,13 @@ func (s *testServer) readExact(n int) []byte {
 			s.t.Errorf("server: timeout reading %d bytes (got %d)", n, got)
 			return buf[:got]
 		}
-		nn, e := s.conn.Read(buf[got:])
+		nn, rerr := s.conn.Read(buf[got:])
 		if nn > 0 {
-			got += int(nn)
+			got += nn
 			continue
 		}
-		if e != 0 && e != eagain {
-			s.t.Errorf("server: read err %d at %d/%d", e, got, n)
+		if rerr != nil && rerr != ErrWouldBlock {
+			s.t.Errorf("server: read err %v at %d/%d", rerr, got, n)
 			return buf[:got]
 		}
 		time.Sleep(200 * time.Microsecond)
@@ -379,8 +381,8 @@ func (s *testServer) writeFrame(op byte, payload []byte) {
 		n := len(payload)
 		frame = append([]byte{0x80 | op, 126, byte(n >> 8), byte(n)}, payload...)
 	}
-	if e := s.conn.Write(frame); e <= 0 {
-		s.t.Errorf("server write frame: %d", e)
+	if _, err := s.conn.Write(frame); err != nil {
+		s.t.Errorf("server write frame: %v", err)
 	}
 }
 
@@ -391,8 +393,8 @@ func (s *testServer) writeFrameMasked(op byte, payload []byte) {
 	for i := range payload {
 		frame = append(frame, payload[i]^byte(1+(i%4)))
 	}
-	if e := s.conn.Write(frame); e <= 0 {
-		s.t.Errorf("server write masked frame: %d", e)
+	if _, err := s.conn.Write(frame); err != nil {
+		s.t.Errorf("server write masked frame: %v", err)
 	}
 }
 
@@ -443,9 +445,9 @@ func (s *testServer) frameLoop(maskReply bool) {
 
 func dial(t *testing.T, srv *testServer, timeoutMs int32) *WSConn {
 	t.Helper()
-	w, e := HandshakeURL(srv.client, "192.168.4.1:9000", "/ws", timeoutMs)
-	if e != 0 {
-		t.Fatalf("HandshakeURL err %d (%s)", e, ErrName(e))
+	w, err := HandshakeURL(srv.client, "192.168.4.1:9000", "/ws", timeoutMs)
+	if err != nil {
+		t.Fatalf("HandshakeURL err %v", err)
 	}
 	if !srv.upgraded {
 		t.Fatalf("server did not upgrade")
@@ -462,18 +464,18 @@ func TestHandshakeAndEchoBinary(t *testing.T) {
 	for i := range msg {
 		msg[i] = byte(i * 7)
 	}
-	if n := w.WriteMessage(msg, OpBinary); n != int32(len(msg)) {
-		t.Fatalf("WriteMessage n=%d want %d", n, len(msg))
+	if n, err := w.WriteMessage(msg, OpBinary); err != nil || n != len(msg) {
+		t.Fatalf("WriteMessage n=%d err=%v want %d", n, err, len(msg))
 	}
 	got := make([]byte, len(msg))
-	total := int32(0)
-	for total < int32(len(msg)) {
-		n, e := w.ReadMessage(got[total:])
+	total := 0
+	for total < len(msg) {
+		n, rerr := w.ReadMessage(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		t.Fatalf("ReadMessage n=%d err=%d (%s)", n, e, ErrName(e))
+		t.Fatalf("ReadMessage n=%d err=%v", n, rerr)
 	}
 	for i := range msg {
 		if got[i] != msg[i] {
@@ -484,8 +486,8 @@ func TestHandshakeAndEchoBinary(t *testing.T) {
 		t.Fatalf("LastOpcode=%d want OpBinary", w.LastOpcode())
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d (%s)", e, ErrName(e))
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 	if w.CloseCode() != 1000 {
 		t.Fatalf("CloseCode=%d want 1000", w.CloseCode())
@@ -493,8 +495,8 @@ func TestHandshakeAndEchoBinary(t *testing.T) {
 	if cc := srv.closeCode(); cc != 1000 {
 		t.Fatalf("server saw close code %d", cc)
 	}
-	if e := w.Close(1000); e != ebadf {
-		t.Fatalf("second Close = %d, want EBADF", e)
+	if err := w.Close(1000); err != ErrClosed {
+		t.Fatalf("second Close = %v, want ErrClosed", err)
 	}
 }
 
@@ -504,13 +506,13 @@ func TestEchoText(t *testing.T) {
 	w := dial(t, srv, 5000)
 
 	msg := []byte("hello over llgo-ws")
-	if n := w.WriteMessage(msg, OpText); n != int32(len(msg)) {
-		t.Fatalf("WriteMessage n=%d", n)
+	if n, err := w.WriteMessage(msg, OpText); err != nil || n != len(msg) {
+		t.Fatalf("WriteMessage n=%d err=%v", n, err)
 	}
 	got := make([]byte, len(msg))
-	n, e := w.ReadMessage(got)
-	if n != int32(len(msg)) || e != 0 {
-		t.Fatalf("ReadMessage n=%d err=%d", n, e)
+	n, rerr := w.ReadMessage(got)
+	if n != len(msg) || rerr != nil {
+		t.Fatalf("ReadMessage n=%d err=%v", n, rerr)
 	}
 	if string(got) != string(msg) {
 		t.Fatalf("echo mismatch: %q", got)
@@ -519,8 +521,8 @@ func TestEchoText(t *testing.T) {
 		t.Fatalf("LastOpcode=%d want OpText", w.LastOpcode())
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -529,16 +531,15 @@ func TestPingPong(t *testing.T) {
 	srv := startServer(t, b, false, false, false)
 	w := dial(t, srv, 5000)
 
-	if e := w.Ping(); e != 0 {
-		t.Fatalf("Ping err %d", e)
+	if err := w.Ping(); err != nil {
+		t.Fatalf("Ping err %v", err)
 	}
 	w.SetDeadline(2000)
 	sawPong := false
 	var scratch [8]byte
 	for i := 0; i < 100 && !sawPong; i++ {
-		_, e := w.ReadMessage(scratch[:])
-		if e != 0 && e != etimedout {
-			t.Fatalf("ReadMessage err %d (%s)", e, ErrName(e))
+		if _, rerr := w.ReadMessage(scratch[:]); rerr != nil && rerr != ErrTimeout {
+			t.Fatalf("ReadMessage err %v", rerr)
 		}
 		sawPong = w.PongSeen()
 	}
@@ -546,8 +547,8 @@ func TestPingPong(t *testing.T) {
 		t.Fatalf("pong never reported")
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -563,14 +564,14 @@ func TestServerPingAutoAnswer(t *testing.T) {
 	srv.writeFrame(0x2, msg)
 
 	got := make([]byte, len(msg))
-	total := int32(0)
-	for total < int32(len(msg)) {
-		n, e := w.ReadMessage(got[total:])
+	total := 0
+	for total < len(msg) {
+		n, rerr := w.ReadMessage(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		t.Fatalf("ReadMessage n=%d err=%d (%s)", n, e, ErrName(e))
+		t.Fatalf("ReadMessage n=%d err=%v", n, rerr)
 	}
 	if string(got) != string(msg) {
 		t.Fatalf("post-ping echo mismatch: %q", got)
@@ -592,24 +593,24 @@ func TestServerPingAutoAnswer(t *testing.T) {
 		t.Fatalf("auto-pong payload %q, want echoed ping payload", autoPong)
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
 func TestHandshakeNotWS(t *testing.T) {
 	_, b := newPipePair(false)
 	srv := startServer(t, b, true, false, false) // replies "200 OK"
-	if _, e := HandshakeURL(srv.client, "h", "/ws", 5000); e != ErrNotWS {
-		t.Fatalf("err=%d (%s), want ErrNotWS", e, ErrName(e))
+	if _, err := HandshakeURL(srv.client, "h", "/ws", 5000); !errors.Is(err, ErrNotWS) {
+		t.Fatalf("err=%v, want ErrNotWS", err)
 	}
 }
 
 func TestHandshakeBadAccept(t *testing.T) {
 	_, b := newPipePair(false)
 	srv := startServer(t, b, false, true, false) // wrong Sec-WebSocket-Accept
-	if _, e := HandshakeURL(srv.client, "h", "/ws", 5000); e != ErrAcceptKey {
-		t.Fatalf("err=%d (%s), want ErrAcceptKey", e, ErrName(e))
+	if _, err := HandshakeURL(srv.client, "h", "/ws", 5000); !errors.Is(err, ErrAcceptKey) {
+		t.Fatalf("err=%v, want ErrAcceptKey", err)
 	}
 }
 
@@ -617,18 +618,18 @@ func TestMaskingRequired(t *testing.T) {
 	_, b := newPipePair(false)
 	srv := startServer(t, b, false, false, true) // server masks its reply
 	w := dial(t, srv, 5000)
-	if n := w.WriteMessage([]byte("trigger"), OpText); n != 7 {
-		t.Fatalf("WriteMessage n=%d", n)
+	if n, err := w.WriteMessage([]byte("trigger"), OpText); err != nil || n != 7 {
+		t.Fatalf("WriteMessage n=%d err=%v", n, err)
 	}
 	var buf [8]byte
-	if _, e := w.ReadMessage(buf[:]); e != ErrProtocol {
-		t.Fatalf("err=%d (%s), want ErrProtocol", e, ErrName(e))
+	if _, rerr := w.ReadMessage(buf[:]); !errors.Is(rerr, ErrProtocol) {
+		t.Fatalf("err=%v, want ErrProtocol", rerr)
 	}
 	// The protocol violation killed the session on the spot (framing is
 	// misaligned - there is no recovery): the transport is already
-	// released and every later call is EBADF.
-	if e := w.Close(1002); e != ebadf {
-		t.Fatalf("Close after protocol error: %d (%s), want EBADF", e, ErrName(e))
+	// released and every later call reports ErrClosed.
+	if err := w.Close(1002); err != ErrClosed {
+		t.Fatalf("Close after protocol error: %v, want ErrClosed", err)
 	}
 }
 
@@ -640,30 +641,30 @@ func TestFragmentedMessage(t *testing.T) {
 	// A fragmented text message, written raw: two fragments delivered as
 	// two reads (per-frame delivery, FIN not reassembled - the documented
 	// behavior).
-	if e := srv.conn.Write([]byte{0x01, 0x03, 'f', 'o', 'o'}); e <= 0 {
-		t.Fatalf("write fragment1: %d", e)
+	if _, err := srv.conn.Write([]byte{0x01, 0x03, 'f', 'o', 'o'}); err != nil {
+		t.Fatalf("write fragment1: %v", err)
 	}
-	if e := srv.conn.Write([]byte{0x80, 0x03, 'b', 'a', 'r'}); e <= 0 {
-		t.Fatalf("write fragment2: %d", e)
+	if _, err := srv.conn.Write([]byte{0x80, 0x03, 'b', 'a', 'r'}); err != nil {
+		t.Fatalf("write fragment2: %v", err)
 	}
 	var part [3]byte
-	n, e := w.ReadMessage(part[:])
-	if n != 3 || e != 0 || string(part[:]) != "foo" {
-		t.Fatalf("fragment1 n=%d err=%d %q", n, e, part[:])
+	n, rerr := w.ReadMessage(part[:])
+	if n != 3 || rerr != nil || string(part[:]) != "foo" {
+		t.Fatalf("fragment1 n=%d err=%v %q", n, rerr, part[:])
 	}
 	if w.LastOpcode() != OpText {
 		t.Fatalf("fragment1 opcode %d", w.LastOpcode())
 	}
-	n, e = w.ReadMessage(part[:])
-	if n != 3 || e != 0 || string(part[:]) != "bar" {
-		t.Fatalf("fragment2 n=%d err=%d %q", n, e, part[:])
+	n, rerr = w.ReadMessage(part[:])
+	if n != 3 || rerr != nil || string(part[:]) != "bar" {
+		t.Fatalf("fragment2 n=%d err=%v %q", n, rerr, part[:])
 	}
 	if w.LastOpcode() != OpCont {
 		t.Fatalf("fragment2 opcode %d, want OpCont", w.LastOpcode())
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -681,16 +682,16 @@ func TestFrameTooBigDrains(t *testing.T) {
 	srv.writeFrame(0x2, small)
 
 	buf := make([]byte, 64)
-	if _, e := w.ReadMessage(buf); e != ErrTooBig {
-		t.Fatalf("err=%d (%s), want ErrTooBig", e, ErrName(e))
+	if _, rerr := w.ReadMessage(buf); !errors.Is(rerr, ErrTooBig) {
+		t.Fatalf("err=%v, want ErrTooBig", rerr)
 	}
-	n, e := w.ReadMessage(buf)
-	if e != 0 || string(buf[:n]) != "tiny" {
-		t.Fatalf("post-drain read n=%d err=%d %q", n, e, buf[:n])
+	n, rerr := w.ReadMessage(buf)
+	if rerr != nil || string(buf[:n]) != "tiny" {
+		t.Fatalf("post-drain read n=%d err=%v %q", n, rerr, buf[:n])
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -699,20 +700,20 @@ func TestPollModeEAGAIN(t *testing.T) {
 	srv := startServer(t, b, false, false, false)
 	w := dial(t, srv, 5000)
 
-	// No deadline: a read with nothing queued must come back as eagain
-	// promptly, and a later read must still frame correctly.
+	// No deadline: a read with nothing queued must come back as
+	// ErrWouldBlock promptly, and a later read must still frame correctly.
 	var buf [8]byte
-	if _, e := w.ReadMessage(buf[:]); e != eagain {
-		t.Fatalf("poll read err=%d, want eagain", e)
+	if _, rerr := w.ReadMessage(buf[:]); !errors.Is(rerr, ErrWouldBlock) {
+		t.Fatalf("poll read err=%v, want ErrWouldBlock", rerr)
 	}
 	srv.writeFrame(0x1, []byte("lazy"))
-	n, e := w.ReadMessage(buf[:])
-	if e != 0 || string(buf[:n]) != "lazy" {
-		t.Fatalf("post-poll read n=%d err=%d %q", n, e, buf[:n])
+	n, rerr := w.ReadMessage(buf[:])
+	if rerr != nil || string(buf[:n]) != "lazy" {
+		t.Fatalf("post-poll read n=%d err=%v %q", n, rerr, buf[:n])
 	}
 	w.SetDeadline(2000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d", e)
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -725,18 +726,18 @@ func TestByteAtATimeTransport(t *testing.T) {
 	for i := range msg {
 		msg[i] = byte(i ^ 0x5A)
 	}
-	if n := w.WriteMessage(msg, OpBinary); n != int32(len(msg)) {
-		t.Fatalf("WriteMessage n=%d", n)
+	if n, err := w.WriteMessage(msg, OpBinary); err != nil || n != len(msg) {
+		t.Fatalf("WriteMessage n=%d err=%v", n, err)
 	}
 	got := make([]byte, len(msg))
-	total := int32(0)
-	for total < int32(len(msg)) {
-		n, e := w.ReadMessage(got[total:])
+	total := 0
+	for total < len(msg) {
+		n, rerr := w.ReadMessage(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		t.Fatalf("ReadMessage n=%d err=%d at %d", n, e, total)
+		t.Fatalf("ReadMessage n=%d err=%v at %d", n, rerr, total)
 	}
 	for i := range msg {
 		if got[i] != msg[i] {
@@ -744,25 +745,25 @@ func TestByteAtATimeTransport(t *testing.T) {
 		}
 	}
 	w.SetDeadline(5000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d (%s)", e, ErrName(e))
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
 func TestHandshakeArgumentChecks(t *testing.T) {
 	a, _ := newPipePair(false)
-	if _, e := HandshakeURL(a, "h", "/ws", 0); e != einval {
-		t.Fatalf("timeoutMs=0: %d, want EINVAL", e)
+	if _, err := HandshakeURL(a, "h", "/ws", 0); esperr.Code(err) != einval {
+		t.Fatalf("timeoutMs=0: %v, want EINVAL", err)
 	}
-	if _, e := HandshakeURL(nil, "h", "/ws", 1000); e != ebadf {
-		t.Fatalf("nil conn: %d, want EBADF", e)
+	if _, err := HandshakeURL(nil, "h", "/ws", 1000); err != ErrClosed {
+		t.Fatalf("nil conn: %v, want ErrClosed", err)
 	}
 	// A transport with only Read/Write/Close cannot bound the handshake.
 	type connOnly struct {
 		Conn
 	}
-	if _, e := HandshakeURL(connOnly{a}, "h", "/ws", 1000); e != ErrNoDeadline {
-		t.Fatalf("no-deadline conn: %d (%s), want ErrNoDeadline", e, ErrName(e))
+	if _, err := HandshakeURL(connOnly{a}, "h", "/ws", 1000); !errors.Is(err, ErrNoDeadline) {
+		t.Fatalf("no-deadline conn: %v, want ErrNoDeadline", err)
 	}
 }
 
@@ -775,14 +776,14 @@ func TestPeerInitiatedClose(t *testing.T) {
 	// ErrPeerClosed with the code, and the transport must be released.
 	srv.writeFrame(0x8, []byte{0x03, 0xE9}) // 1001 going away
 	var buf [8]byte
-	if _, e := w.ReadMessage(buf[:]); e != ErrPeerClosed {
-		t.Fatalf("err=%d (%s), want ErrPeerClosed", e, ErrName(e))
+	if _, rerr := w.ReadMessage(buf[:]); !errors.Is(rerr, ErrPeerClosed) {
+		t.Fatalf("err=%v, want ErrPeerClosed", rerr)
 	}
 	if w.CloseCode() != 1001 {
 		t.Fatalf("CloseCode=%d, want 1001", w.CloseCode())
 	}
-	if e := w.Close(1000); e != ebadf {
-		t.Fatalf("Close after peer close = %d, want EBADF", e)
+	if err := w.Close(1000); err != ErrClosed {
+		t.Fatalf("Close after peer close = %v, want ErrClosed", err)
 	}
 }
 
@@ -796,8 +797,8 @@ func TestPeerCloseNoCode(t *testing.T) {
 
 	srv.writeFrame(0x8, nil)
 	var buf [8]byte
-	if _, e := w.ReadMessage(buf[:]); e != ErrPeerClosed {
-		t.Fatalf("err=%d (%s), want ErrPeerClosed", e, ErrName(e))
+	if _, rerr := w.ReadMessage(buf[:]); !errors.Is(rerr, ErrPeerClosed) {
+		t.Fatalf("err=%v, want ErrPeerClosed", rerr)
 	}
 	if w.CloseCode() != 0 {
 		t.Fatalf("CloseCode=%d, want 0 (the peer sent none)", w.CloseCode())
@@ -833,18 +834,18 @@ func TestShortWriteTransport(t *testing.T) {
 	for i := range msg {
 		msg[i] = byte(i ^ 0xA5)
 	}
-	if n := w.WriteMessage(msg, OpBinary); n != int32(len(msg)) {
-		t.Fatalf("WriteMessage n=%d want %d", n, len(msg))
+	if n, err := w.WriteMessage(msg, OpBinary); err != nil || n != len(msg) {
+		t.Fatalf("WriteMessage n=%d err=%v want %d", n, err, len(msg))
 	}
 	got := make([]byte, len(msg))
-	total := int32(0)
-	for total < int32(len(msg)) {
-		n, e := w.ReadMessage(got[total:])
+	total := 0
+	for total < len(msg) {
+		n, rerr := w.ReadMessage(got[total:])
 		if n > 0 {
 			total += n
 			continue
 		}
-		t.Fatalf("ReadMessage n=%d err=%d (%s) at %d", n, e, ErrName(e), total)
+		t.Fatalf("ReadMessage n=%d err=%v at %d", n, rerr, total)
 	}
 	for i := range msg {
 		if got[i] != msg[i] {
@@ -852,8 +853,8 @@ func TestShortWriteTransport(t *testing.T) {
 		}
 	}
 	w.SetDeadline(5000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close err %d (%s)", e, ErrName(e))
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close err %v", err)
 	}
 }
 
@@ -867,19 +868,19 @@ func TestWriteStall(t *testing.T) {
 	w := dial(t, srv, 5000)
 
 	srv.client.zeroOnce = true
-	if e := w.WriteMessage([]byte("stall"), OpText); e != -eagain {
-		t.Fatalf("WriteMessage = %d, want -EAGAIN", e)
+	if _, err := w.WriteMessage([]byte("stall"), OpText); !errors.Is(err, ErrWouldBlock) {
+		t.Fatalf("WriteMessage = %v, want ErrWouldBlock", err)
 	}
 	// Nothing of the stalled frame went out (the stall was the frame's
 	// first write), so the close frame arrives on a clean stream and the
 	// closing handshake completes; the release is verified by the second
-	// Close reporting EBADF.
+	// Close reporting ErrClosed.
 	w.SetDeadline(5000)
-	if e := w.Close(1000); e != 0 {
-		t.Fatalf("Close after stall = %d (%s), want 0", e, ErrName(e))
+	if err := w.Close(1000); err != nil {
+		t.Fatalf("Close after stall = %v, want nil", err)
 	}
-	if e := w.Close(1000); e != ebadf {
-		t.Fatalf("second Close = %d, want EBADF", e)
+	if err := w.Close(1000); err != ErrClosed {
+		t.Fatalf("second Close = %v, want ErrClosed", err)
 	}
 }
 
@@ -889,14 +890,14 @@ func TestWriteStall(t *testing.T) {
 func TestHandshakeWriteStall(t *testing.T) {
 	a, _ := newPipePair(false)
 	a.zeroOnce = true
-	if _, e := HandshakeURL(a, "h", "/ws", 5000); e != -eagain {
-		t.Fatalf("HandshakeURL = %d (%s), want -EAGAIN", e, ErrName(e))
+	if _, err := HandshakeURL(a, "h", "/ws", 5000); !errors.Is(err, ErrWouldBlock) {
+		t.Fatalf("HandshakeURL = %v, want ErrWouldBlock", err)
 	}
-	if e := a.Close(); e != ebadf {
-		t.Fatalf("Close after failed handshake = %d, want EBADF", e)
+	if err := a.Close(); err != ErrClosed {
+		t.Fatalf("Close after failed handshake = %v, want ErrClosed", err)
 	}
-	if e := a.peer.Close(); e != 0 { // the peer end was never ws's to close
-		t.Fatalf("peer end Close = %d, want 0", e)
+	if err := a.peer.Close(); err != nil { // the peer end was never ws's to close
+		t.Fatalf("peer end Close = %v, want nil", err)
 	}
 }
 
@@ -933,19 +934,19 @@ func TestSha1AndBase64Vectors(t *testing.T) {
 		if got := Base64StdEncode([]byte(c.in)); got != c.out {
 			t.Fatalf("encode(%q) = %q, want %q", c.in, got, c.out)
 		}
-		dec, e := Base64StdDecode(c.out)
-		if e != 0 || string(dec) != c.in {
-			t.Fatalf("decode(%q) = %q, %d; want %q", c.out, dec, e, c.in)
+		dec, derr := Base64StdDecode(c.out)
+		if derr != nil || string(dec) != c.in {
+			t.Fatalf("decode(%q) = %q, %v; want %q", c.out, dec, derr, c.in)
 		}
 	}
-	if _, e := Base64StdDecode("Zm9vYg"); e != einval { // length % 4 != 0
-		t.Fatalf("bad length: %d", e)
+	if _, err := Base64StdDecode("Zm9vYg"); esperr.Code(err) != einval { // length % 4 != 0
+		t.Fatalf("bad length: %v", err)
 	}
-	if _, e := Base64StdDecode("Zm9vY*=="); e != einval { // bad character
-		t.Fatalf("bad char: %d", e)
+	if _, err := Base64StdDecode("Zm9vY*=="); esperr.Code(err) != einval { // bad character
+		t.Fatalf("bad char: %v", err)
 	}
-	if _, e := Base64StdDecode("Z=g="); e != einval { // misplaced padding
-		t.Fatalf("misplaced pad: %d", e)
+	if _, err := Base64StdDecode("Z=g="); esperr.Code(err) != einval { // misplaced padding
+		t.Fatalf("misplaced pad: %v", err)
 	}
 }
 
@@ -987,8 +988,8 @@ func TestErrName(t *testing.T) {
 		want string
 	}{
 		{0, "OK"},
-		{ErrNotWS, "WS_ERR_NOT_WEBSOCKET"},
-		{ErrPeerClosed, "WS_ERR_PEER_CLOSED"},
+		{wsErrNotWS, "WS_ERR_NOT_WEBSOCKET"},
+		{wsErrPeerClosed, "WS_ERR_PEER_CLOSED"},
 		{eagain, "EAGAIN"},
 		{etimedout, "ETIMEDOUT"},
 		{-eagain, "-EAGAIN"},
@@ -999,6 +1000,39 @@ func TestErrName(t *testing.T) {
 		if got := ErrName(c.code); got != c.want {
 			t.Errorf("ErrName(%d) = %q, want %q", c.code, got, c.want)
 		}
+	}
+}
+
+// TestSentinelErrors pins the esperr error-model contract: the sentinels
+// match by pipeline code through errors.Is, and esperr.Code extracts the
+// code a value carries (including from a sibling package's sentinel).
+func TestSentinelErrors(t *testing.T) {
+	// A plain esperr.Error built from the raw errno satisfies errors.Is
+	// against the sentinel that carries the same code.
+	if !errors.Is(&esperr.Error{Code: eagain, Name: "EAGAIN"}, ErrWouldBlock) {
+		t.Errorf("errors.Is(raw EAGAIN, ErrWouldBlock) = false")
+	}
+	if !errors.Is(ErrTimeout, esperr.ErrTimeout) {
+		t.Errorf("errors.Is(ErrTimeout, esperr.ErrTimeout) = false")
+	}
+	if errors.Is(ErrWouldBlock, ErrTimeout) {
+		t.Errorf("ErrWouldBlock matched ErrTimeout")
+	}
+	if esperr.Code(ErrClosed) != ebadf {
+		t.Errorf("esperr.Code(ErrClosed) = %d, want EBADF", esperr.Code(ErrClosed))
+	}
+	// The tls package's handshake sentinel is a plain esperr.Error: errors.Is
+	// works across packages without any wiring, and its code is the internal
+	// 0x7E02 segment value.
+	if !errors.Is(tls.ErrCertVerifyFailed, &esperr.Error{Code: tls.ErrCertVerifyFailed.Code}) {
+		t.Errorf("errors.Is(tls.ErrCertVerifyFailed, same-code Error) = false")
+	}
+	if tls.ErrCertVerifyFailed.Error() != "TLS_ERR_CERT_VERIFY (32258)" {
+		t.Errorf("tls.ErrCertVerifyFailed.Error() = %q", tls.ErrCertVerifyFailed.Error())
+	}
+	// ErrName still names the sentinel's code (the diagnostic path).
+	if got := ErrName(wsErrProtocol); got != "WS_ERR_PROTOCOL" {
+		t.Errorf("ErrName(wsErrProtocol) = %q", got)
 	}
 }
 
