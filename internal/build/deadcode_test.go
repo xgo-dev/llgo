@@ -4,11 +4,14 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	"go/importer"
+	"go/token"
 	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -66,6 +69,91 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 	}
 	if err := llvm.VerifyModule(entryPkg.LPkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("cross-context strong type override produced invalid entry module: %v\n%s", err, out)
+	}
+}
+
+func TestDCEMethodTypeMetadataLookupAndGlobalDCEOverride(t *testing.T) {
+	llssa.Initialize(llssa.InitAll)
+	rtPkg, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcProg := llssa.NewProgram(nil)
+	defer srcProg.Dispose()
+	srcProg.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	srcProg.SetRuntime(rtPkg)
+	srcProg.EnableGoGlobalDCE(true)
+	srcProg.EnableDeadcodeDrop(true)
+
+	goPkg := types.NewPackage("example.com/vfe", "vfe")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "T", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "t", named)
+	sig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "Live", sig))
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "dead", sig))
+	emptyIntf := types.NewInterfaceType(nil, nil).Complete()
+
+	srcPkg := srcProg.NewPackage("vfe", "example.com/vfe")
+	fn := srcPkg.NewFunc("use", llssa.NoArgsNoRet, llssa.GoDecl)
+	b := fn.MakeBody(1)
+	b.MakeInterface(srcProg.Type(emptyIntf, llssa.GoDecl), srcProg.Zero(srcProg.Type(named, llssa.GoDecl)))
+	b.Return()
+	b.EndBuild()
+	b.Dispose()
+
+	var globalName string
+	for k := range srcPkg.MethodTypeMetadata() {
+		globalName = k
+		break
+	}
+	if globalName == "" {
+		t.Fatal("expected ABI type descriptor metadata to be recorded")
+	}
+
+	lookup := dceMethodTypeMetadataLookup([]Package{
+		nil,
+		&aPackage{Package: &packages.Package{PkgPath: "empty"}},
+		&aPackage{Package: &packages.Package{PkgPath: "example.com/vfe"}, LPkg: srcPkg},
+	})
+	got, ok := lookup(globalName)
+	if !ok || len(got.Entries) == 0 {
+		t.Fatalf("lookup(%q) = (%+v, %v), want non-empty metadata", globalName, got, ok)
+	}
+	if _, ok := lookup("nonexistent_type"); ok {
+		t.Fatal("lookup(nonexistent_type) = true, want false")
+	}
+
+	// Verify applyDeadcodeDropOverrides fails loudly when GoGlobalDCE is active
+	// on entryPkg but the source module lacks recorded VFE metadata.
+	ctx := &context{
+		prog: llssa.NewProgram(nil),
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+		},
+	}
+	defer ctx.prog.Dispose()
+	ctx.prog.EnableGoGlobalDCE(true)
+
+	noMetaProg := llssa.NewProgram(nil)
+	defer noMetaProg.Dispose()
+	noMetaPkg := noMetaProg.NewPackage("pkg", "pkg")
+	addMethodTypeGlobal(noMetaPkg.Module(), "_llgo_pkg.T")
+	pkgMeta := buildDeadcodeMeta(t)
+	defer pkgMeta.Close()
+	srcAPkg := &aPackage{
+		Package: &packages.Package{PkgPath: "pkg"},
+		LPkg:    noMetaPkg,
+		Meta:    pkgMeta,
+	}
+	entryPkg := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "pkg",
+		ExportFile: "pkg.a",
+	}, &genConfig{})
+	if err := applyDeadcodeDropOverrides([]Package{srcAPkg}, entryPkg, false, false, false); err == nil || !strings.Contains(err.Error(), "missing VFE type metadata") {
+		t.Fatalf("applyDeadcodeDropOverrides() with GoGlobalDCE and missing VFE metadata = %v, want fail-loud error", err)
 	}
 }
 
