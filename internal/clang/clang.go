@@ -234,14 +234,16 @@ func (c *Cmd) getenv(key string) string {
 	if c.Env == nil {
 		return os.Getenv(key)
 	}
-	prefix := key + "="
-	val := ""
-	for _, entry := range c.Env {
-		if strings.HasPrefix(entry, prefix) {
-			val = entry[len(prefix):]
+	for i := len(c.Env) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(c.Env[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || (runtime.GOOS == "windows" && strings.EqualFold(k, key)) {
+			return v
 		}
 	}
-	return val
+	return ""
 }
 
 // mergeCompilerFlags merges environment CCFLAGS/CFLAGS with config flags.

@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -297,17 +298,34 @@ func fileSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-var downloadHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
+const downloadIdleTimeout = 60 * time.Second
+
+func newDownloadHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.ExpectContinueTimeout = 1 * time.Second
+	return &http.Client{Transport: transport}
+}
+
+var downloadHTTPClient = newDownloadHTTPClient()
+
+type idleTimeoutReader struct {
+	r       io.Reader
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
 }
 
 func downloadFile(url, filepath string) error {
@@ -316,7 +334,14 @@ func downloadFile(url, filepath string) error {
 		return err
 	}
 	defer out.Close()
-	resp, err := downloadHTTPClient.Get(url)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := downloadHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -324,7 +349,9 @@ func downloadFile(url, filepath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
-	_, err = io.Copy(out, resp.Body)
+	timer := time.AfterFunc(downloadIdleTimeout, cancel)
+	defer timer.Stop()
+	_, err = io.Copy(out, &idleTimeoutReader{r: resp.Body, timer: timer, timeout: downloadIdleTimeout})
 	return err
 }
 

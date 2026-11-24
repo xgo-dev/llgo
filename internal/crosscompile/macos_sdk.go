@@ -150,14 +150,9 @@ type macOSSDKCacheKey struct {
 	home         string
 }
 
-type macOSSDKCacheEntry struct {
-	sdk macOSSDK
-	err error
-}
-
 var (
 	macOSSDKCacheMu sync.Mutex
-	macOSSDKCache   = map[macOSSDKCacheKey]macOSSDKCacheEntry{}
+	macOSSDKCache   = map[macOSSDKCacheKey]macOSSDK{}
 )
 
 func getMacOSSDK() (macOSSDK, error) {
@@ -175,7 +170,7 @@ func getMacOSSDK() (macOSSDK, error) {
 		macOSSDKCacheMu.Lock()
 		if cached, ok := macOSSDKCache[key]; ok {
 			macOSSDKCacheMu.Unlock()
-			return cached.sdk, cached.err
+			return cached, nil
 		}
 		macOSSDKCacheMu.Unlock()
 	}
@@ -193,7 +188,7 @@ func getMacOSSDK() (macOSSDK, error) {
 
 	if cacheable && err == nil {
 		macOSSDKCacheMu.Lock()
-		macOSSDKCache[key] = macOSSDKCacheEntry{sdk: sdk, err: err}
+		macOSSDKCache[key] = sdk
 		macOSSDKCacheMu.Unlock()
 	}
 	return sdk, err

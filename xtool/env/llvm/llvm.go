@@ -89,15 +89,23 @@ var (
 	binDirCache   = map[binDirCacheKey]string{}
 )
 
-// New creates a new [Env] instance.
+// New creates a new [Env] instance. Successful --bindir lookups are memoized
+// per resolved llvm-config executable (keyed by path, mtime, and size).
 func New(llvmConfigBin string) *Env {
 	if llvmConfigBin == "" {
 		llvmConfigBin = defaultLLVMConfigBin()
 	}
 
-	if info, err := os.Stat(llvmConfigBin); err == nil && !info.IsDir() {
+	resolved := llvmConfigBin
+	if !strings.ContainsAny(resolved, `/\`) {
+		if found, err := exec.LookPath(resolved); err == nil {
+			resolved = found
+		}
+	}
+
+	if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
 		key := binDirCacheKey{
-			bin:     llvmConfigBin,
+			bin:     resolved,
 			modTime: info.ModTime().UnixNano(),
 			size:    info.Size(),
 		}
@@ -108,10 +116,7 @@ func New(llvmConfigBin string) *Env {
 		}
 		binDirCacheMu.Unlock()
 
-		// Note that an empty binDir is acceptable. In this case, LLVM
-		// executables are assumed to be in PATH.
-		binDir, err := exec.Command(llvmConfigBin, "--bindir").Output()
-		trimmed := strings.TrimSpace(string(binDir))
+		trimmed, err := queryBinDir(resolved)
 		if err == nil && trimmed != "" {
 			binDirCacheMu.Lock()
 			binDirCache[key] = trimmed
@@ -120,10 +125,15 @@ func New(llvmConfigBin string) *Env {
 		return &Env{binDir: trimmed}
 	}
 
-	// Note that an empty binDir is acceptable. In this case, LLVM
-	// executables are assumed to be in PATH.
-	binDir, _ := exec.Command(llvmConfigBin, "--bindir").Output()
-	return &Env{binDir: strings.TrimSpace(string(binDir))}
+	trimmed, _ := queryBinDir(llvmConfigBin)
+	return &Env{binDir: trimmed}
+}
+
+// queryBinDir runs llvm-config --bindir. An empty result is acceptable; in that
+// case LLVM executables are assumed to be in PATH.
+func queryBinDir(llvmConfigBin string) (string, error) {
+	out, err := exec.Command(llvmConfigBin, "--bindir").Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 // BinDir returns the directory containing LLVM executables. An empty string

@@ -2345,8 +2345,8 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 		return err
 	}
 	if pkg.ExportFile == "" {
-		// Source transforms do not consume gc export data. Use the LLGo
-		// fingerprint as the backend output identity in those metadata loads.
+		// Ordinary builds do not request gc export data (NeedExportFile).
+		// Derive the backend output identity from the LLGo cache fingerprint.
 		paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, aPkg.Fingerprint)
 		if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 			return err

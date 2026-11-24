@@ -124,8 +124,14 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		// particular, native Wasm SjLj objects cannot reuse JS SjLj objects.
 		envVars = append(envVars, "EMCC_CFLAGS")
 	}
+	lookupEnv := func(name string) string {
+		if c.commands.environ != nil {
+			return c.commands.lookup(name)
+		}
+		return os.Getenv(name)
+	}
 	for _, envVar := range envVars {
-		if v := os.Getenv(envVar); v != "" {
+		if v := lookupEnv(envVar); v != "" {
 			m.env.Vars = m.env.Vars.Add(envVar, v)
 		}
 	}
@@ -205,6 +211,9 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	}
 	if len(c.crossCompile.CFLAGS) > 0 {
 		m.common.CFlags = append([]string(nil), c.crossCompile.CFLAGS...)
+	}
+	if len(c.crossCompile.LDFLAGS) > 0 {
+		m.common.LDFlags = append([]string(nil), c.crossCompile.LDFLAGS...)
 	}
 	if c.crossCompile.Linker != "" {
 		m.common.Linker = c.crossCompile.Linker

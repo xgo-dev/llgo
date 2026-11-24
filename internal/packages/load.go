@@ -214,10 +214,11 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
 		// Only ask cmd/go to invoke gc (NeedExportFile) when the caller passes
-		// explicit -gcflags (e.g. "llgo tool compile -e/-std" or frontend
-		// diagnostic tests) and no typed rewrite owns the package source.
-		// Ordinary LLGo builds do not read gc export data.
-		if (dedup == nil || dedup.rewrite == nil) && hasNonEmptyGCFlags(driverCfg.BuildFlags) {
+		// diagnostic/compiler -gcflags (e.g. "llgo tool compile -e/-std" or
+		// frontend diagnostic tests) and no typed rewrite owns the package
+		// source. Ordinary LLGo builds and debug -N/-l builds do not read gc
+		// export data.
+		if (dedup == nil || dedup.rewrite == nil) && needsGCExportFlags(driverCfg.BuildFlags, driverCfg.Env) {
 			driverCfg.Mode |= NeedExportFile
 		}
 	}
@@ -271,7 +272,67 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	return initial, nil
 }
 
-func hasNonEmptyGCFlags(flags []string) bool {
+func needsGCExportFlags(buildFlags, env []string) bool {
+	if gcFlagsRequireExport(buildFlags) {
+		return true
+	}
+	goflags := lookupEnv(env, "GOFLAGS")
+	if strings.TrimSpace(goflags) == "" {
+		return false
+	}
+	return gcFlagsRequireExport(splitGoFlags(goflags))
+}
+
+func lookupEnv(env []string, key string) string {
+	if env == nil {
+		return os.Getenv(key)
+	}
+	for i := len(env) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(env[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || (runtime.GOOS == "windows" && strings.EqualFold(k, key)) {
+			return v
+		}
+	}
+	return ""
+}
+
+func splitGoFlags(s string) []string {
+	var fields []string
+	var cur strings.Builder
+	var quote rune
+	inToken := false
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+			inToken = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			if inToken {
+				fields = append(fields, cur.String())
+				cur.Reset()
+				inToken = false
+			}
+		default:
+			cur.WriteRune(r)
+			inToken = true
+		}
+	}
+	if inToken {
+		fields = append(fields, cur.String())
+	}
+	return fields
+}
+
+func gcFlagsRequireExport(flags []string) bool {
 	for i := 0; i < len(flags); i++ {
 		arg := flags[i]
 		var val string
@@ -285,14 +346,35 @@ func hasNonEmptyGCFlags(flags []string) bool {
 		} else {
 			continue
 		}
-		if _, rest, ok := strings.Cut(val, "="); ok {
+		// Strip a leading "pattern=" prefix only when the prefix is a package
+		// pattern (never starts with '-' and contains no spaces), so compiler
+		// flags like "-d=..." are preserved intact.
+		if prefix, rest, ok := strings.Cut(val, "="); ok && prefix != "" && !strings.HasPrefix(prefix, "-") && !strings.ContainsAny(prefix, " \t") {
 			val = rest
 		}
-		if strings.TrimSpace(val) != "" {
+		for _, tok := range splitGoFlags(val) {
+			if tok == "" || isNonExportGCFlag(tok) {
+				continue
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// isNonExportGCFlag reports compiler flags that LLGo handles natively (such as
+// debug optimization/inlining toggles -N and -l) and that never require host
+// gc export compilation.
+func isNonExportGCFlag(tok string) bool {
+	trimmed := strings.TrimPrefix(tok, "--")
+	if trimmed == tok {
+		trimmed = strings.TrimPrefix(tok, "-")
+	}
+	if trimmed == tok {
+		return false
+	}
+	name, _, _ := strings.Cut(trimmed, "=")
+	return name == "N" || name == "l"
 }
 
 // The metadata driver sees the original files, while LLGo also typechecks

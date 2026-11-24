@@ -48,7 +48,7 @@ func Clean(patterns []string, conf *Config) error {
 		tags += "," + conf.Tags
 	}
 	cfg := &packages.Config{
-		Mode:       packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles,
+		Mode:       packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports,
 		BuildFlags: []string{"-tags=" + tags},
 	}
 	if conf.GoFlagsParsed {
@@ -66,7 +66,7 @@ func Clean(patterns []string, conf *Config) error {
 		return err
 	}
 
-	err = cleanPkgs(initial, conf.Verbose)
+	err = errors.Join(cleanPkgs(initial, conf.Verbose), cleanCachedLLFiles(initial, conf.Verbose))
 
 	for _, pkg := range initial {
 		if pkg.Name == "main" {
@@ -112,6 +112,47 @@ func cleanPkgs(initial []*packages.Package, verbose bool) error {
 		}
 		file := p.ExportFile + ".ll"
 		err = errors.Join(err, removeFile(file, verbose))
+	})
+	return err
+}
+
+// cleanCachedLLFiles removes per-package debug IR files emitted by -gen-llfiles
+// under the LLGo build cache (<cache>/build/<target>/<pkg>/*.a.backend*.ll),
+// preserving cached archives and manifests.
+func cleanCachedLLFiles(initial []*packages.Package, verbose bool) error {
+	cm := newCacheManager()
+	entries, readErr := os.ReadDir(cm.root)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return nil
+		}
+		return fmt.Errorf("read build cache dir %s: %w", cm.root, readErr)
+	}
+	var targetDirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			targetDirs = append(targetDirs, entry.Name())
+		}
+	}
+	if len(targetDirs) == 0 {
+		return nil
+	}
+	var err error
+	packages.Visit(initial, nil, func(p *packages.Package) {
+		if p.PkgPath == "" {
+			return
+		}
+		for _, targetDir := range targetDirs {
+			pkgDir := cm.packageDir(targetDir, p.PkgPath)
+			matches, globErr := filepath.Glob(filepath.Join(pkgDir, "*.a.backend*.ll"))
+			if globErr != nil {
+				err = errors.Join(err, globErr)
+				continue
+			}
+			for _, file := range matches {
+				err = errors.Join(err, removeFile(file, verbose))
+			}
+		}
 	})
 	return err
 }

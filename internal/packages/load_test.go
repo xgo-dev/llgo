@@ -606,4 +606,54 @@ func TestLoadExSkipsExportFileWithoutGCFlags(t *testing.T) {
 	if pkgs[0].ExportFile != "" {
 		t.Fatalf("empty -gcflags populated ExportFile %q", pkgs[0].ExportFile)
 	}
+
+	// Debug optimization/inlining toggles (-N -l) do not read gc export data.
+	cfg.BuildFlags = []string{"-gcflags=all=-N -l"}
+	pkgs, err = LoadEx(nil, nil, cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].ExportFile != "" {
+		t.Fatalf("debug -gcflags=all=-N -l populated ExportFile %q", pkgs[0].ExportFile)
+	}
+
+	// GOFLAGS=-gcflags=all=-e in cfg.Env must still trigger gc export data.
+	cfg.BuildFlags = nil
+	baseEnv := cfg.Env
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
+	cfg.Env = append(append([]string(nil), baseEnv...), "GOFLAGS=-gcflags=all=-e")
+	pkgs, err = LoadEx(nil, nil, cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].ExportFile == "" {
+		t.Fatalf("GOFLAGS=-gcflags=all=-e did not request gc ExportFile: %+v", pkgs)
+	}
+}
+
+func TestNeedsGCExportFlagsParsing(t *testing.T) {
+	tests := []struct {
+		name       string
+		buildFlags []string
+		env        []string
+		want       bool
+	}{
+		{name: "none", want: false},
+		{name: "empty gcflags", buildFlags: []string{"-gcflags="}, want: false},
+		{name: "debug all=-N -l", buildFlags: []string{"-gcflags=all=-N -l"}, want: false},
+		{name: "debug env GOFLAGS", env: []string{"GOFLAGS=-gcflags='all=-N -l'"}, want: false},
+		{name: "diagnostic -e", buildFlags: []string{"-gcflags=all=-e"}, want: true},
+		{name: "diagnostic via GOFLAGS", env: []string{"GOFLAGS=-gcflags=all=-e"}, want: true},
+		{name: "unpatterned -d=", buildFlags: []string{"-gcflags=-d="}, want: true},
+		{name: "unpatterned -d=checkptr", buildFlags: []string{"-gcflags=-d=checkptr"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := needsGCExportFlags(tt.buildFlags, tt.env); got != tt.want {
+				t.Fatalf("needsGCExportFlags(%v, %v) = %v, want %v", tt.buildFlags, tt.env, got, tt.want)
+			}
+		})
+	}
 }
