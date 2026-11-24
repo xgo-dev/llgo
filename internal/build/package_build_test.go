@@ -17,6 +17,7 @@
 package build
 
 import (
+	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -465,6 +466,9 @@ func TestPreparePackageBuildsEnablesParallelForPreparedPatches(t *testing.T) {
 }
 
 func TestParallelBuildWithPatchedStdlibPackages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping full parallel stdlib build in short mode")
+	}
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -503,15 +507,38 @@ func main() {
 	}
 
 	outBin := filepath.Join(t.TempDir(), "parpatch")
+	tracePath := filepath.Join(t.TempDir(), "trace.json")
 	conf := NewDefaultConf(ModeBuild)
 	conf.ForceRebuild = true
 	conf.BuildParallelism = 4
+	conf.BuildTrace = tracePath
 	conf.PCLNMode = PCLNNone
 	conf.OutFile = outBin
 
 	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: srcDir}); err != nil {
 		t.Fatalf("parallel build with patched stdlib packages failed: %v", err)
 	}
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("read build trace: %v", err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatalf("parse build trace: %v", err)
+	}
+	classes := make(map[string]any)
+	for _, ev := range events {
+		if ev.Phase == "X" && strings.HasPrefix(ev.Name, "backend+publish ") {
+			pkg := strings.TrimPrefix(ev.Name, "backend+publish ")
+			classes[pkg] = ev.Args["class"]
+		}
+	}
+	for _, pkg := range []string{"reflect", "sync", "os"} {
+		if got := classes[pkg]; got != "isolated" {
+			t.Errorf("patched stdlib package %q backend class = %v, want %q", pkg, got, "isolated")
+		}
+	}
+
 	out, err := exec.Command(outBin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run %s: %v\n%s", outBin, err, out)

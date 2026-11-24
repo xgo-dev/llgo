@@ -171,8 +171,10 @@ func preparePackageGroup(ctx *context, tasks []*packageBuildTask, verbose bool) 
 	prepareSpan.done()
 
 	isolated := make([]int, 0, len(tasks))
-	// Complete coordinator and patched work before starting ordinary workers:
-	// patched lowering finalizes shared type scopes that other packages read.
+	// Complete coordinator-only tasks before starting workers. Prepared patches
+	// have already finalized shared type scopes in preparePackageBuilds and run
+	// on parallel workers; only unprepared patches and secondary test variants
+	// sharing a PkgPath still run serially here before workers read patch.Types.
 	for i, task := range tasks {
 		if task.skip {
 			continue

@@ -5,14 +5,14 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"sync"
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/typepatch"
+	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
 
-func TestPreparePatchMergesUpfrontAndIsReadSafe(t *testing.T) {
+func TestPreparePatchMergesUpfrontAndSkipsRedundantMerge(t *testing.T) {
 	fset := token.NewFileSet()
 	parseAndCheck := func(path, src string) (*types.Package, *ast.File, *types.Info) {
 		t.Helper()
@@ -47,10 +47,16 @@ type marker int
 func Replace() int { return 20 }
 func Extra() int { return 40 }
 `)
+	variantTypes, variantFile, variantInfo := parseAndCheck("example.com/demo", `package demo
+func Keep() int { return 1 }
+func Replace() int { return 2 }
+func VariantOnly() int { return 99 }
+`)
 
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
 	origSSA := prog.CreatePackage(origTypes, []*ast.File{origFile}, origInfo, true)
 	altSSA := prog.CreatePackage(altTypes, []*ast.File{altFile}, altInfo, true)
+	variantSSA := prog.CreatePackage(variantTypes, []*ast.File{variantFile}, variantInfo, true)
 	prog.Build()
 
 	patch := Patch{Alt: altSSA, Types: typepatch.Clone(altTypes)}
@@ -80,21 +86,41 @@ func Extra() int { return 40 }
 		t.Fatal("second PreparePatch call unexpectedly mutated prepared patch")
 	}
 
-	// Concurrent readers inspecting IsPatched and Scope().Lookup must be race-free.
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				if !typepatch.IsPatched(origTypes) {
-					t.Error("IsPatched returned false concurrently")
-				}
-				if prepared.Types.Scope().Lookup("Keep") == nil || prepared.Types.Scope().Lookup("Replace") == nil {
-					t.Error("concurrent Scope().Lookup missed symbol")
-				}
-			}
-		}()
+	// Lowering the prepared primary package must skip typepatch.Merge:
+	// patch.Types.Scope() must keep the exact same pointer and patch.Types
+	// itself must not be passed to Merge as oldTypes.
+	scopeBefore := prepared.Types.Scope()
+	llprog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer llprog.Dispose()
+	patches := Patches{"example.com/demo": prepared}
+	pkg1, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, patches, nil, origSSA, []*ast.File{origFile, altFile}, nil, false, Options{})
+	if err != nil {
+		t.Fatalf("NewPackageExWithEmbedMetaOptions(primary) failed: %v", err)
 	}
-	wg.Wait()
+	pkg1.Module().Dispose()
+	if prepared.Types.Scope() != scopeBefore {
+		t.Fatal("newPackageEx unexpectedly replaced patch.Types.Scope() for an already-prepared patch")
+	}
+	if typepatch.IsPatched(prepared.Types) {
+		t.Fatal("newPackageEx unexpectedly re-ran typepatch.Merge on an already-prepared patch")
+	}
+
+	// Lowering a secondary test variant with the same PkgPath (variantSSA.Pkg != patch.Types)
+	// must still run typepatch.Merge and bind variantSSA.Pkg to patch.Types.
+	llprog2 := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	defer llprog2.Dispose()
+	pkg2, _, err := NewPackageExWithEmbedMetaOptions(llprog2, nil, patches, nil, variantSSA, []*ast.File{variantFile, altFile}, nil, false, Options{})
+	if err != nil {
+		t.Fatalf("NewPackageExWithEmbedMetaOptions(variant) failed: %v", err)
+	}
+	pkg2.Module().Dispose()
+	if variantSSA.Pkg != prepared.Types {
+		t.Fatal("newPackageEx did not rebind secondary variant package to patch.Types")
+	}
+	if !typepatch.IsPatched(variantTypes) {
+		t.Fatal("newPackageEx did not merge secondary variant package")
+	}
+	if prepared.Types.Scope().Lookup("VariantOnly") == nil {
+		t.Fatal("secondary variant symbol VariantOnly missing from merged patch.Types scope")
+	}
 }

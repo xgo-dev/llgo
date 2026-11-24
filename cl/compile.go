@@ -3073,6 +3073,11 @@ type Patch struct {
 // and //llgo:skipall directives in files and rebinds pkg.Pkg and patch.Alt.Pkg
 // upfront. Calling PreparePatch serially before launching isolated package
 // workers keeps patched type scopes read-only during concurrent lowering.
+//
+// Scheduler invariant: any package sharing the same PkgPath whose ssa.Package
+// still has pkg.Pkg != patch.Types (such as a secondary test variant) will
+// re-run typepatch.Merge inside newPackageEx and must finish serially before
+// concurrent workers begin reading patch.Types.
 func PreparePatch(patch Patch, pkg *ssa.Package, files []*ast.File) Patch {
 	if patch.Prepared || patch.Alt == nil || patch.Types == nil || pkg == nil || pkg.Pkg == nil {
 		return patch
@@ -3155,6 +3160,10 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 	needsPatchMerge := false
 	if hasPatch {
 		pkgTypes = patch.Types
+		// Secondary test variants sharing a PkgPath still have pkg.Pkg != patch.Types
+		// even after PreparePatch. Their re-merge mutates patch.Types and is only
+		// race-free because the build scheduler finishes all serial tasks in
+		// preparePackageGroup before launching worker goroutines.
 		needsPatchMerge = !patch.Prepared || pkg.Pkg != pkgTypes || patch.Alt.Pkg != pkgTypes
 		if needsPatchMerge {
 			pkg.Pkg = pkgTypes

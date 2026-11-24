@@ -34,7 +34,7 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
    - Verified in CI by:
      ```bash
      GOWORK=off CGO_ENABLED=0 go test ./...
-     GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ir | grep -E 'llvm|x/tools' # must be empty
+     ! GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ir | grep -qE 'llvm|x/tools'
      ```
 2. **Compiler `cmd/go.mod` (`github.com/xgo-dev/llgo/cmd`)**:
    - Declares the latest Go toolchain version matching `.go-version` so
@@ -69,8 +69,9 @@ cross-PR merge conflicts:
    - `.github/workflows/*.yml`: run `GOWORK=off CGO_ENABLED=0 go test ./...` at
      the repo root to guard pure-Go library hygiene, and run compiler/LLVM test
      matrices with `go.work` enabled (or `cd cmd && go test ./...`).
-   - `.github/scripts/test_pixi_env.py`: validate `dev/pixi.toml` Go version
-     range against `cmd/go.mod` and `.go-version`.
+   - Update the Pixi Go-version check script (`.github/scripts/test_pixi_env.py`,
+     introduced in PR #3218, or add one as part of the cutover) to validate
+     `dev/pixi.toml` against `cmd/go.mod` and `.go-version`.
 4. **Verify end-to-end**:
    - `GOWORK=off CGO_ENABLED=0 go test ./directive/... ./target/... ./types/... ./ir/...`
    - `cd cmd && go build ./llgo && go test ./...`
