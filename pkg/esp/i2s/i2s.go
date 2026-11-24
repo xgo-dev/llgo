@@ -10,7 +10,10 @@
 // # Usage
 //
 //	ch, e := i2s.NewChannel(true)                      // TX; false = RX
-//	e = ch.InitStd(-1, 4, 5, 6, -1, i2s.Bits16, true, 44100)
+//	e = ch.ConfigureStd(i2s.StdConfig{
+//		MCLK: -1, BCLK: 4, WS: 5, DOUT: 6, DIN: -1,
+//		Bits: i2s.Bits16, Stereo: true, SampleRate: 44100,
+//	})
 //	  // pins mclk,bclk,ws,dout,din (-1 = unused), 16-bit stereo, 44.1 kHz
 //	e = ch.Enable()
 //	n, e := ch.Write(samples)                          // len(samples) bytes
@@ -72,23 +75,55 @@ func txBool(tx bool) int32 {
 	return 0
 }
 
-// InitStd configures the channel for standard (Philips) format: the
+// StdConfig describes a standard (Philips) format setup for ConfigureStd.
+type StdConfig struct {
+	// MCLK is the master clock pin; -1 when the DAC/codec needs no master
+	// clock.
+	MCLK Pin
+	// BCLK is the bit clock pin.
+	BCLK Pin
+	// WS is the word-select (left/right clock) pin.
+	WS Pin
+	// DOUT is the serial data out pin (TX); pass -1 for RX-only setups.
+	DOUT Pin
+	// DIN is the serial data in pin (RX); pass -1 for TX-only setups.
+	DIN Pin
+	// Bits is the sample width: Bits16 or Bits32.
+	Bits uint32
+	// Stereo selects two interleaved slots over one (mono).
+	Stereo bool
+	// SampleRate is the sample rate per slot, in Hz.
+	SampleRate int32
+}
+
+// ConfigureStd configures the channel for standard (Philips) format: the
 // Philips slot defaults (I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG), the 256x
-// MCLK multiple and the clock source stay in the C glue. Pins: mclk may be
-// -1 when the DAC/codec needs no master clock; dout is TX-only, din
-// RX-only - pass -1 for the one that is unused. bits is Bits16 or Bits32,
-// stereo selects two interleaved slots over one (mono), sampleRateHz is
-// the sample rate per slot.
-func (c *Channel) InitStd(mclk, bclk, ws, dout, din Pin, bits uint32, stereo bool, sampleRateHz int32) int32 {
+// MCLK multiple and the clock source stay in the C glue. Pins: MCLK may be
+// -1 when the DAC/codec needs no master clock; DOUT is TX-only, DIN
+// RX-only - pass -1 for the one that is unused. Bits is Bits16 or Bits32,
+// Stereo selects two interleaved slots over one (mono), SampleRate is the
+// sample rate per slot.
+func (c *Channel) ConfigureStd(cfg StdConfig) int32 {
 	if c == nil || c.handle == 0 {
 		return ErrInvalidArg
 	}
-	mode := int32(0)
-	if stereo {
-		mode = 1
+	slots := int32(0)
+	if cfg.Stereo {
+		slots = 1
 	}
-	return initStd(c.handle, int32(mclk), int32(bclk), int32(ws),
-		int32(dout), int32(din), int32(bits), mode, sampleRateHz)
+	return initStd(c.handle, int32(cfg.MCLK), int32(cfg.BCLK), int32(cfg.WS),
+		int32(cfg.DOUT), int32(cfg.DIN), int32(cfg.Bits), slots, cfg.SampleRate)
+}
+
+// InitStd is the positional-argument form of ConfigureStd, kept so
+// existing callers keep compiling.
+//
+// Deprecated: use ConfigureStd with a StdConfig.
+func (c *Channel) InitStd(mclk, bclk, ws, dout, din Pin, bits uint32, stereo bool, sampleRateHz int32) int32 {
+	return c.ConfigureStd(StdConfig{
+		MCLK: mclk, BCLK: bclk, WS: ws, DOUT: dout, DIN: din,
+		Bits: bits, Stereo: stereo, SampleRate: sampleRateHz,
+	})
 }
 
 // Enable starts the channel's DMA and clocks (i2s_channel_enable).

@@ -11,7 +11,7 @@
 //	p := gpio.Pin(4)
 //	if e := p.SetDirection(gpio.Output, gpio.PullNone); e != 0 { ... }
 //	p.SetLevel(true)
-//	level := p.GetLevel() // 0/1
+//	high := p.GetLevel() // bool: true = high, false = low
 //	p.Toggle()
 //
 // Output pins are configured as INPUT_OUTPUT so GetLevel reads back what
@@ -66,10 +66,11 @@ func (p Pin) SetLevel(high bool) int32 {
 	return setLevel(int32(p), lvl)
 }
 
-// GetLevel reads the pin's input path: 1 = high, 0 = low. gpio_get_level
-// cannot fail, so there is no error result.
-func (p Pin) GetLevel() int32 {
-	return getLevel(int32(p))
+// GetLevel reads the pin's input path: true = high, false = low (the
+// gpio_get_level 0/1, mapped to bool the way the IDF semantic reads).
+// gpio_get_level cannot fail, so there is no error result.
+func (p Pin) GetLevel() bool {
+	return getLevel(int32(p)) != 0
 }
 
 // Toggle inverts an output pin's level. Returns the esp_err code.

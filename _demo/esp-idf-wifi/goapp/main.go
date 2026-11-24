@@ -384,6 +384,15 @@ const (
 	probeWS   = true
 )
 
+// level01 maps a GetLevel bool back to IDF's 0/1 for the probe's golden
+// output line ("high = 1 low = 0 toggled = 1").
+func level01(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func gpioProbe() {
 	p := gpio.Pin(4)
 	if e := p.SetDirection(gpio.Output, gpio.PullNone); e != 0 {
@@ -405,9 +414,9 @@ func gpioProbe() {
 		return
 	}
 	toggled := p.GetLevel()
-	println("[go] periph gpio roundtrip high =", int(high),
-		"low =", int(low), "toggled =", int(toggled))
-	if high == 1 && low == 0 && toggled == 1 {
+	println("[go] periph gpio roundtrip high =", level01(high),
+		"low =", level01(low), "toggled =", level01(toggled))
+	if high && !low && toggled {
 		println("[go] periph gpio PASS")
 	} else {
 		println("[go] periph gpio FAIL (roundtrip mismatch)")
@@ -453,7 +462,10 @@ func i2sProbe() {
 	}
 	println("[go] periph i2s channel alloc ok")
 	// TX channel: bclk GPIO4, ws GPIO5, dout GPIO6, no mclk and no din.
-	if e := ch.InitStd(-1, 4, 5, 6, -1, i2s.Bits16, true, 44100); e != 0 {
+	if e := ch.ConfigureStd(i2s.StdConfig{
+		MCLK: -1, BCLK: 4, WS: 5, DOUT: 6, DIN: -1,
+		Bits: i2s.Bits16, Stereo: true, SampleRate: 44100,
+	}); e != 0 {
 		println("[go] periph i2s init_std err =", int(e))
 		ch.Close()
 		return
