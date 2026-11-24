@@ -30,8 +30,8 @@ func TestRuntimeAuditBoundedSelectors(t *testing.T) {
 				"runtime/internal/runtime/base.go": "package runtime\nfunc Present() {}",
 				// Include the real declaration shape so ParseFile resolves the
 				// unqualified call to its package-level function object.
-				"ssa/use.go": "package ssa\nfunc RuntimeSymbol(name string, candidates ...string) string { return name }\nfunc use() { p.rtFunc(" + tc.expression + ") }",
-				"cl/use.go":  "package cl",
+				"internal/llvmgen/use.go": "package llvmgen\nfunc RuntimeSymbol(name string, candidates ...string) string { return name }\nfunc use() { p.rtFunc(" + tc.expression + ") }",
+				"cl/use.go":               "package cl",
 			} {
 				path = filepath.Join(filepath.Dir(a.runtimeDir), path)
 				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -58,7 +58,7 @@ func TestRuntimeAuditBoundedSelectors(t *testing.T) {
 func TestRuntimeAuditQualifiedSelector(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "cl.go", `package cl
-import low "github.com/xgo-dev/llgo/ssa"
+import low "github.com/xgo-dev/llgo/internal/llvmgen"
 var choice = low.RuntimeSymbol(name, "One", "Two")
 `, 0)
 	if err != nil {
@@ -93,11 +93,11 @@ func TestRuntimeAuditForwarderMustBeTransparent(t *testing.T) {
 			receiver = "Program"
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), "package.go",
-			"package ssa\nfunc (p "+receiver+") "+tc.method+"(name string) Expr {"+tc.body+"}", 0)
+			"package llvmgen\nfunc (p "+receiver+") "+tc.method+"(name string) Expr {"+tc.body+"}", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := runtimeAuditForwarders("ssa", "package.go", file)
+		got := runtimeAuditForwarders("internal/llvmgen", "package.go", file)
 		if (len(got) == 1) != tc.transparent {
 			t.Fatalf("incorrect forwarding classification for %s %s: %v", tc.method, tc.body, got)
 		}
@@ -106,12 +106,12 @@ func TestRuntimeAuditForwarderMustBeTransparent(t *testing.T) {
 
 func TestRuntimeAuditRejectsShadowedSelector(t *testing.T) {
 	for _, src := range []string{
-		`package ssa; func use() { RuntimeSymbol := other; _ = RuntimeSymbol(name, "Known") }`,
-		`package ssa; func RuntimeSymbol(name string, candidates ...string) string { return name }; func use() { RuntimeSymbol := other; _ = RuntimeSymbol(name, "Known") }`,
-		`package ssa; var RuntimeSymbol = other; func use() { _ = RuntimeSymbol(name, "Known") }`,
-		`package ssa; func use(RuntimeSymbol func(string, ...string) string) { _ = RuntimeSymbol(name, "Known") }`,
-		`package ssa; type T struct{}; func (RuntimeSymbol T) use() { _ = RuntimeSymbol(name, "Known") }`,
-		`package cl; import low "github.com/xgo-dev/llgo/ssa"; func use() { low := other; _ = low.RuntimeSymbol(name, "Known") }`,
+		`package llvmgen; func use() { RuntimeSymbol := other; _ = RuntimeSymbol(name, "Known") }`,
+		`package llvmgen; func RuntimeSymbol(name string, candidates ...string) string { return name }; func use() { RuntimeSymbol := other; _ = RuntimeSymbol(name, "Known") }`,
+		`package llvmgen; var RuntimeSymbol = other; func use() { _ = RuntimeSymbol(name, "Known") }`,
+		`package llvmgen; func use(RuntimeSymbol func(string, ...string) string) { _ = RuntimeSymbol(name, "Known") }`,
+		`package llvmgen; type T struct{}; func (RuntimeSymbol T) use() { _ = RuntimeSymbol(name, "Known") }`,
+		`package cl; import low "github.com/xgo-dev/llgo/internal/llvmgen"; func use() { low := other; _ = low.RuntimeSymbol(name, "Known") }`,
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "shadow.go", src, 0)
 		if err != nil {

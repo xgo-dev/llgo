@@ -9,7 +9,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/cabi"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/packages"
 )

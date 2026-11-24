@@ -22,7 +22,7 @@ import (
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/gcrootplan"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 

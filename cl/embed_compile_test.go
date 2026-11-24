@@ -14,7 +14,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )

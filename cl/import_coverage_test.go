@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestLinknameParsersAgree(t *testing.T) {

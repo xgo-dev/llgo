@@ -10,8 +10,8 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/locality"
 	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
-	llssa "github.com/xgo-dev/llgo/ssa"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 

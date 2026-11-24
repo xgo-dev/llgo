@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func linkedAliasReceiverCases(t *testing.T, test func(*testing.T, string, string)) {

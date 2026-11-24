@@ -326,8 +326,8 @@ func TestRuntimeAuditUpgradeDiagnostics(t *testing.T) {
 		{"legacy-coverage", "", "", ""},
 		{"dot-import", "go/src/consumer/use.go", "package consumer\nimport . \"runtime\"\nfunc use() { NewHook() }", "cannot resolve dot import"},
 		{"new-stdlib-hook", "go/src/consumer/use.go", "package consumer\nimport \"runtime\"\nfunc use() { runtime.NewHook() }", "missing"},
-		{"new-compiler-hook", "ssa/use.go", "package ssa\nfunc use() { p.rtFunc(\"NewHook\") }", "missing"},
-		{"new-compiler-type", "ssa/use.go", "package ssa\nfunc use() { p.rtType(\"NewType\") }", "missing"},
+		{"new-compiler-hook", "internal/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtFunc(\"NewHook\") }", "missing"},
+		{"new-compiler-type", "internal/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtType(\"NewType\") }", "missing"},
 		{"new-compiler-declaration", "cl/use.go", "package cl\nfunc use() { p.runtimeFunc(\"NewHook\", signature) }", "missing"},
 		{"changed-upstream-helper", "go/src/runtime/utf8.go", "package runtime\nfunc encoderune(p []int, r rune) int { return 0 }", "unreviewed helper"},
 		{"malformed-patch", "runtime/_patch/sync/bad.go", "package sync\nfunc (", "parse source patch directives"},
@@ -373,7 +373,7 @@ func encoderune(p []byte, r rune) int { return 0 }
 			write("runtime/internal/runtime/utf8_index_go127.go", "package runtime\nfunc decoderune(s string, k uint) (r rune, pos uint)\n")
 			write("runtime/internal/lib/runtime/crash_fd_go123.go", "package runtime\nfunc setCrashFD(fd uintptr) uintptr\n")
 			write("go/src/sync/base.go", "package sync\n")
-			write("ssa/use.go", "package ssa\nfunc use() { p.rtFunc(\"countrunes\"); p.rtFunc(name) }\n")
+			write("internal/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtFunc(\"countrunes\"); p.rtFunc(name) }\n")
 			write("cl/use.go", "package cl\n")
 			goVersion := "go1.27.0"
 			if test.name == "legacy-coverage" {

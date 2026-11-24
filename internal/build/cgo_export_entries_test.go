@@ -6,7 +6,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/filecheck"
 	"github.com/xgo-dev/llgo/internal/littest"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 

@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestRuntimeSourceVersionSelection(t *testing.T) {

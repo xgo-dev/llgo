@@ -69,12 +69,12 @@ import (
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
-	"github.com/xgo-dev/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/xgo-dev/llgo/runtime"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type Mode int

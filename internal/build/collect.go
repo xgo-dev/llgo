@@ -31,7 +31,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	gopackages "golang.org/x/tools/go/packages"
 )
 

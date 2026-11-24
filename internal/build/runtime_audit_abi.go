@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // Layouts are measured from the selected sources, using gc's target sizes for

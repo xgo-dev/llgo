@@ -11,9 +11,9 @@ import (
 
 	gpackages "github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/internal/typepatch"
-	llssa "github.com/xgo-dev/llgo/ssa"
-	"github.com/xgo-dev/llgo/ssa/abi"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 

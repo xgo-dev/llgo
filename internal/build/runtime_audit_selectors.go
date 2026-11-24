@@ -29,7 +29,7 @@ func runtimeAuditCandidates(file *ast.File, expr ast.Expr) ([]string, bool) {
 	checked := false
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
-		checked = file.Name.Name == "ssa" && fun.Name == "RuntimeSymbol"
+		checked = file.Name.Name == "llvmgen" && fun.Name == "RuntimeSymbol"
 		if checked && fun.Obj != nil {
 			// ParseFile resolves a same-file package function, but leaves
 			// cross-file declarations unresolved. Both denote the helper;
@@ -39,10 +39,10 @@ func runtimeAuditCandidates(file *ast.File, expr ast.Expr) ([]string, bool) {
 	case *ast.SelectorExpr:
 		if recv, ok := fun.X.(*ast.Ident); ok && fun.Sel.Name == "RuntimeSymbol" && recv.Obj == nil {
 			for _, imp := range file.Imports {
-				if imp.Path.Value != `"github.com/xgo-dev/llgo/ssa"` {
+				if imp.Path.Value != `"github.com/xgo-dev/llgo/internal/llvmgen"` {
 					continue
 				}
-				name := "ssa"
+				name := "llvmgen"
 				if imp.Name != nil {
 					name = imp.Name.Name
 				}
@@ -69,7 +69,7 @@ func runtimeAuditCandidates(file *ast.File, expr ast.Expr) ([]string, bool) {
 // by name: extra statements or computed arguments must be audited normally.
 func runtimeAuditForwarders(pkg, filename string, file *ast.File) map[*ast.CallExpr]string {
 	out := make(map[*ast.CallExpr]string)
-	if pkg != "ssa" || filename != "package.go" {
+	if pkg != "internal/llvmgen" || filename != "package.go" {
 		return out
 	}
 	for _, decl := range file.Decls {

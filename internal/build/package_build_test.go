@@ -34,7 +34,7 @@ import (
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 

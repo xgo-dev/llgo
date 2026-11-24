@@ -12,7 +12,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestConfigureWasmReflectLibffi(t *testing.T) {

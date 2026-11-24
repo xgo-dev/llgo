@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/internal/cabi"
-	"github.com/xgo-dev/llgo/ssa"
+	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 

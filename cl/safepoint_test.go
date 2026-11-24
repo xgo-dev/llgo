@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestCompileCooperativeSafepoints(t *testing.T) {

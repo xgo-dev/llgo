@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 

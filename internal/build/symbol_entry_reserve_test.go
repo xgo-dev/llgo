@@ -8,7 +8,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 )
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/debuginfo"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 

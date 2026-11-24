@@ -33,7 +33,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/buildtags"
 	llclang "github.com/xgo-dev/llgo/internal/clang"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	"github.com/xgo-dev/llgo/xtool/safesplit"
 )

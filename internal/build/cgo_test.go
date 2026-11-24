@@ -16,7 +16,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/cabi"
 	llclang "github.com/xgo-dev/llgo/internal/clang"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	gllvm "github.com/xgo-dev/llvm"
 )
 

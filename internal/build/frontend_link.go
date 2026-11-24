@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/frontcache"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type frontendABIType struct {

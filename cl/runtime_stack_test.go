@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
 

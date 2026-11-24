@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestApplyEmbedInits_NoInitAndMissingGlobal(t *testing.T) {

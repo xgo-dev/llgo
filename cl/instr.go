@@ -31,7 +31,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 var asmRegisterRegex = regexp.MustCompile(`\{[a-zA-Z]+\}`)

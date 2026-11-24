@@ -17,7 +17,7 @@
 package cl
 
 import (
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"go/types"
 
 	"golang.org/x/tools/go/ssa"

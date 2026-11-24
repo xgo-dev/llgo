@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestNewBackendSessionCreatesIndependentLLVMState(t *testing.T) {

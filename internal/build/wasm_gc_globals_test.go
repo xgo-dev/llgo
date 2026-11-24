@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/ssa"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
 

@@ -45,11 +45,11 @@ import (
 	"github.com/xgo-dev/llgo/internal/littest"
 	"github.com/xgo-dev/llgo/internal/llgen"
 	"github.com/xgo-dev/llgo/internal/mockable"
-	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func init() {

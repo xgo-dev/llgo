@@ -16,7 +16,6 @@ github.com/xgo-dev/llgo              (root go.mod — low Go baseline: go 1.20)
 ├── types/                           Pure-Go LLGo type model, Sizes (+ GoSizes), GC bitmaps
 │   └── typeutil/                    (planned) type-map & method-set helpers (mirrors x/tools/go/types/typeutil)
 ├── ssa/                             Pure-Go mid-level SSA IR & verifier (mirrors x/tools/go/ssa)
-│   │                                [staged at ir/ during PRs 4–6; promoted atomically in PR 7]
 │   └── ssautil/                     (planned) SSA inspection & walk helpers (mirrors x/tools/go/ssa/ssautil)
 ├── exportdata/                      (planned) compact binary codec for types.Package, PackageSummary,
 │                                    LinkSnapshot & PCLN (mirrors x/tools/go/gcexportdata)
@@ -33,7 +32,7 @@ github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, e.g. g
 └── internal/                        Compiler internals & CLI subcommands:
     ├── build/                       Build driver, cache orchestration, linking
     ├── cl/                          Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa)
-    ├── llvmgen/                     Relocated legacy CGo/LLVM codegen (formerly root ssa/)
+    ├── llvmgen/                     CGo/LLVM codegen backend (relocated from root ssa/ into internal/llvmgen/)
     └── ...                          CABI, debuggers, binary tools, etc.
 
 go.work                              Coordinates `.`, `./cmd`, and `./runtime` in local dev & CI
@@ -41,10 +40,10 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
 
 ### Package Taxonomy Mapping (`golang.org/x/tools` ↔ `llgo`)
 
-| `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role & Staging |
+| `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
 | `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Physical/ABI type model (`Closure`, `Func`, `Pointer` with `GoPtr`/`NativePtr`, `HostLayout`, `SIMDVec`), `Sizes` + `GoSizes`, GC pointer bitmaps |
-| `x/tools/go/ssa` + `ssautil` | `llgo/ssa` *(+ `llgo/ssa/ssautil`)* | Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction`, `Value`). Staged at `ir/` during PRs 4–6; promoted atomically to `ssa/` in PR 7 |
+| `x/tools/go/ssa` + `ssautil` | `llgo/ssa` *(+ `llgo/ssa/ssautil`)* | Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction`, `Value`) |
 | `x/tools/go/gcexportdata` | `llgo/exportdata` | Compact binary package export codec (`types.Package`, `PackageSummary`, `LinkSnapshot`, `PCLN`) |
 | `x/tools/go/analysis` + `callgraph` | `llgo/analysis/{callgraph,escape,deadcode,inline}` | Reusable pure-Go analysis passes consuming `types`, `ssa`, and `exportdata` |
 | *(LLGo-specific)* | `llgo/directive`, `llgo/target` | Directive parsing & target/ABI spec model |
@@ -60,9 +59,9 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
    - Verified in CI by:
      ```bash
      GOWORK=off CGO_ENABLED=0 go test ./...
-     ! GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ir | grep -qE 'llvm|x/tools'
+     ! GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ssa | grep -qE 'llvm|x/tools'
      ```
-     *(After PR 7 promotes `ir/` → `ssa/` and adds `exportdata/` + `analysis/`,
+     *(After PR 7 moves compiler packages into `cmd/` and adds `exportdata/` + `analysis/`,
      the same check covers `./...` across the entire root module.)*
 2. **Compiler `cmd/go.mod` (`github.com/xgo-dev/llgo/cmd`)**:
    - Declares the latest Go toolchain version matching `.go-version` so
@@ -119,17 +118,16 @@ cached package `.a`:
 
 ## Atomic Cutover Checklist (PR 7)
 
-Perform the physical package relocation and `ir/` → `ssa/` promotion in a single
-dedicated PR once PRs 1–6 of #3215 have merged to `main`, avoiding wide
-cross-PR merge conflicts:
+Perform the physical module split in a single dedicated PR once PRs 1–6 of
+#3215 have merged to `main`, avoiding wide cross-PR merge conflicts:
 
-1. **Relocate LLVM/`x/tools`-dependent compiler packages & promote `ir/` → `ssa/`**:
-   - Move legacy CGo/LLVM `ssa/` → `cmd/internal/llvmgen` (and `cl/`,
-     `internal/`, `xtool/`, `chore/` into `cmd/internal/...`, or a sibling
-     `codegen/llvm` module if an embeddable LLVM backend API is desired).
-   - Promote pure-Go `ir/` → `ssa/` (with `ssa/ssautil`) atomically in the root
-     module so `github.com/xgo-dev/llgo/ssa` becomes the canonical pure-Go
-     mid-level SSA IR package matching `golang.org/x/tools/go/ssa`.
+1. **Relocate LLVM/`x/tools`-dependent compiler packages into `cmd/`**:
+   - Move `cl/`, `internal/` (including `internal/llvmgen/`), `xtool/`, and
+     `chore/` into `cmd/internal/...` (or a sibling `codegen/llvm` module if an
+     embeddable LLVM backend API is desired).
+   - Root pure-Go packages (`directive/`, `target/`, `types/`, `ssa/`,
+     `exportdata/`, `analysis/`) remain in `github.com/xgo-dev/llgo` without
+     import-path changes.
    - Update internal import paths accordingly.
 2. **Create `cmd/go.mod` and `go.work`**:
    - Move compiler dependencies and `replace` directives from root `go.mod` into

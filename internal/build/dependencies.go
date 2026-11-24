@@ -20,7 +20,7 @@ import (
 	"sort"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // effectiveDependencies returns every package whose source contributes to an

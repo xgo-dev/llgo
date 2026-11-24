@@ -224,9 +224,9 @@ jobs:
           }
 
           run_compiler_suites() {
-            # cl owns the compiler fixtures and measures calls into ssa.
+            # cl owns the compiler fixtures and measures calls into internal/llvmgen.
             python .github/scripts/run_go_tests.py compiler "${go_test[@]}" -timeout 45m \
-              -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
+              -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/llvmgen \
               -coverprofile="coverage-compiler.txt" -covermode=set \
               -bench '^BenchmarkGo126' -benchtime=1x ./cl
             python .github/scripts/run_go_tests.py language "${go_test[@]}" -timeout 45m ./test/go
@@ -455,25 +455,25 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
             -run '^TestDevLTOGlobalDCE' \
-            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+            ./internal/llvmgen ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/internal/llvmgen,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-cl.txt \
             -run '^TestRunAndTestFromTestlto/globaldce_' \
             ./cl
           go tool cover -func=coverage-dev-lto-globaldce-cl.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/internal/llvmgen,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-symbols.txt \
             -run '^TestBuildAndCheckSymbolsFromTestlto/globaldce_' \
             ./cl
           go tool cover -func=coverage-dev-lto-globaldce-symbols.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/internal/llvmgen,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
             -run 'LTOPlugin' \
             ./cl

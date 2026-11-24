@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	"github.com/xgo-dev/llgo/ssa/abi"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	llvm "github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )

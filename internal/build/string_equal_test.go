@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestStringEqualWordUsesStackMemory(t *testing.T) {

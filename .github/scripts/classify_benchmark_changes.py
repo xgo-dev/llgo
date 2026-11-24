@@ -41,7 +41,7 @@ TEST_DIRS = {
     "runtime/_test",
     "runtime/_patch/_test",
     "runtime/internal/test",
-    "ssa/ssatest",
+    "internal/llvmgen/ssatest",
 }
 
 COMPILER_DIRS = {
@@ -59,10 +59,13 @@ COMPILER_DIRS = {
     "cmd/internal/run",
     "cmd/internal/test",
     "cmd/internal/version",
+    "directive",
     "internal",
     "ltoplugin",
     "ssa",
+    "target",
     "targets",
+    "types",
     "xtool",
 }
 

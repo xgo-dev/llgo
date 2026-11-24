@@ -24,7 +24,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/plan9asm"
 	llruntime "github.com/xgo-dev/llgo/runtime"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // RuntimeOwnership is a source inventory, before LLVM optimization or linking.
@@ -628,7 +628,7 @@ func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 			}
 		}
 	}
-	for _, pkg := range []string{"ssa", "cl"} {
+	for _, pkg := range []string{"internal/llvmgen", "cl"} {
 		dir := filepath.Join(filepath.Dir(a.runtimeDir), pkg)
 		entries, err := os.ReadDir(dir)
 		if err != nil {

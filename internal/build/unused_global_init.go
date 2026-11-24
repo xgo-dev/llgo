@@ -30,7 +30,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/xtool/safesplit"
 	gllvm "github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"

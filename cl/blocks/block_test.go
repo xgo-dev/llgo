@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type graphCase struct {

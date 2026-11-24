@@ -13,7 +13,7 @@ import (
 	"weak"
 
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	xpackages "golang.org/x/tools/go/packages"
 )
 

@@ -1,0 +1,2381 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"bytes"
+	"fmt"
+	"go/constant"
+	"go/token"
+	"go/types"
+	"log"
+	"math"
+
+	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/llvmattr"
+	"github.com/xgo-dev/llvm"
+)
+
+type AtomicOrdering = llvm.AtomicOrdering
+
+const (
+	OrderingNotAtomic      = llvm.AtomicOrderingNotAtomic
+	OrderingUnordered      = llvm.AtomicOrderingUnordered
+	OrderingMonotonic      = llvm.AtomicOrderingMonotonic
+	OrderingAcquire        = llvm.AtomicOrderingAcquire
+	OrderingRelease        = llvm.AtomicOrderingRelease
+	OrderingAcquireRelease = llvm.AtomicOrderingAcquireRelease
+	OrderingSeqConsistent  = llvm.AtomicOrderingSequentiallyConsistent
+)
+
+// -----------------------------------------------------------------------------
+
+type Expr struct {
+	impl llvm.Value
+	Type
+}
+
+var Nil Expr // Zero value is a nil Expr
+
+// IsNil checks if the expression is nil or not.
+func (v Expr) IsNil() bool {
+	return v.Type == nil
+}
+
+// SetOrdering sets the ordering of the atomic operation. The caller must
+// provide eight-byte alignment for 64-bit atomic loads and stores.
+func (v Expr) SetOrdering(ordering AtomicOrdering) Expr {
+	inst := v.memoryInstruction()
+	inst.SetOrdering(ordering)
+	if ordering != OrderingNotAtomic {
+		// Load and Store start with the ordinary Go pointer guarantee, which
+		// can be only four bytes on 32-bit targets. Atomic i64 accesses have
+		// a stronger alignment contract, independent of that ordinary layout.
+		var typ llvm.Type
+		if !inst.IsALoadInst().IsNil() {
+			typ = inst.Type()
+		} else if !inst.IsAStoreInst().IsNil() {
+			typ = inst.Operand(0).Type()
+		}
+		if !typ.IsNil() && typ.TypeKind() == llvm.IntegerTypeKind && typ.IntTypeWidth() == 64 && inst.Alignment() < 8 {
+			inst.SetAlignment(8)
+		}
+	}
+	return v
+}
+
+// SetVolatile marks a load or store as volatile.
+func (v Expr) SetVolatile(volatile bool) Expr {
+	v.memoryInstruction().SetVolatile(volatile)
+	return v
+}
+
+// memoryInstruction returns the underlying load or atomic instruction when a
+// storage-width conversion represents its logical Go value to callers.
+func (v Expr) memoryInstruction() llvm.Value {
+	instr := v.impl
+	// Follow scalar conversions and aggregate repacking back to the load.
+	// Skip constant fields inserted while repacking an aggregate.
+	for {
+		switch {
+		case !instr.IsAInsertValueInst().IsNil() || !instr.IsAInsertElementInst().IsNil():
+			if part := instr.Operand(1); !part.IsConstant() {
+				instr = part
+			} else {
+				instr = instr.Operand(0)
+			}
+		case !instr.IsAExtractValueInst().IsNil() || !instr.IsAExtractElementInst().IsNil(),
+			!instr.IsAIntToPtrInst().IsNil() || !instr.IsATruncInst().IsNil(),
+			!instr.IsAZExtInst().IsNil() || !instr.IsASExtInst().IsNil():
+			instr = instr.Operand(0)
+		case !instr.IsALoadInst().IsNil() && instr.HasMetadata() &&
+			!instr.Metadata(instr.Type().Context().MDKindID(llabi.HeaderSnapshotMD)).IsNil():
+			// A large header snapshot reloads a private slot after clearing its
+			// padding. Memory flags apply to the original source access.
+			slot := instr.Operand(0)
+			store := llvm.PrevInstruction(instr)
+			for !store.IsNil() && (store.IsAStoreInst().IsNil() || store.Operand(1) != slot) {
+				store = llvm.PrevInstruction(store)
+			}
+			if store.IsNil() {
+				panic("ssa: missing header snapshot source")
+			}
+			instr = store.Operand(0)
+		default:
+			return instr
+		}
+	}
+}
+
+func (v Expr) SetName(alias string) Expr {
+	v.impl.SetName(alias)
+	return v
+}
+
+func (v Expr) Name() string {
+	return v.impl.Name()
+}
+
+// -----------------------------------------------------------------------------
+
+type builtinTy struct {
+	name string
+}
+
+func (p builtinTy) Underlying() types.Type {
+	panic("don't call")
+}
+
+func (p builtinTy) String() string {
+	return "builtinTy"
+}
+
+// Builtin returns a builtin function expression.
+func Builtin(name string) Expr {
+	tbi := &aType{raw: rawType{&builtinTy{name}}, kind: vkBuiltin}
+	return Expr{Type: tbi}
+}
+
+// -----------------------------------------------------------------------------
+
+type pyVarTy struct {
+	mod  Expr
+	name string
+}
+
+func (p pyVarTy) Underlying() types.Type {
+	panic("don't call")
+}
+
+func (p pyVarTy) String() string {
+	return "pyVar"
+}
+
+func pyVarExpr(mod Expr, name string) Expr {
+	tvar := &aType{raw: rawType{&pyVarTy{mod, name}}, kind: vkPyVarRef}
+	return Expr{Type: tvar}
+}
+
+// -----------------------------------------------------------------------------
+
+// Zero returns a zero constant expression.
+func (p Program) Zero(t Type) Expr {
+	if t.kind == vkSIMD {
+		return Expr{llvm.ConstNull(t.ll), t}
+	}
+	var ret llvm.Value
+	switch u := t.raw.Type.Underlying().(type) {
+	case *types.Basic:
+		kind := u.Kind()
+		switch {
+		case kind >= types.Bool && kind <= types.Uintptr:
+			ret = llvm.ConstInt(t.ll, 0, false)
+		case kind == types.String:
+			ret = p.Zero(p.rtType("String")).impl
+		case kind == types.UnsafePointer:
+			ret = llvm.ConstPointerNull(p.tyVoidPtr())
+		case kind == types.Float64:
+			ret = llvm.ConstFloat(p.Float64().ll, 0)
+		case kind == types.Float32:
+			ret = llvm.ConstFloat(p.Float32().ll, 0)
+		case kind == types.Complex64:
+			v := llvm.ConstFloat(p.Float32().ll, 0)
+			ret = p.ctx.ConstStruct([]llvm.Value{v, v}, false)
+		case kind == types.Complex128:
+			v := llvm.ConstFloat(p.Float64().ll, 0)
+			ret = p.ctx.ConstStruct([]llvm.Value{v, v}, false)
+		default:
+			panic("todo")
+		}
+	case *types.Pointer, *types.Signature, *types.Chan:
+		return Expr{llvm.ConstNull(t.ll), t}
+	case *types.Struct:
+		n := u.NumFields()
+		flds := make([]llvm.Value, n)
+		for i := 0; i < n; i++ {
+			flds[i] = p.Zero(p.rawType(u.Field(i).Type())).impl
+		}
+		ret = p.constStructValue(t, flds)
+	case *types.Slice:
+		ret = p.Zero(p.rtType("Slice")).impl
+	case *types.Array:
+		ret = llvm.ConstNull(t.ll)
+	case *types.Interface:
+		var name string
+		if u.Empty() {
+			name = "Eface"
+		} else {
+			name = "Iface"
+		}
+		ret = p.Zero(p.rtType(RuntimeSymbol(name, "Eface", "Iface"))).impl
+	case *types.Map:
+		ret = p.Zero(p.Pointer(p.rtType("Map"))).impl
+	case *types.Tuple:
+		n := u.Len()
+		flds := make([]llvm.Value, n)
+		for i := 0; i < n; i++ {
+			flds[i] = p.Zero(p.rawType(u.At(i).Type())).impl
+		}
+		ret = p.constStructValue(t, flds)
+	default:
+		log.Panicln("todo:", u)
+	}
+	return Expr{ret, t}
+}
+
+// Nil returns a null constant expression. t should be a pointer type.
+func (p Program) Nil(t Type) Expr {
+	return Expr{llvm.ConstNull(t.ll), t}
+}
+
+// BoolVal returns a boolean constant expression.
+func (p Program) BoolVal(v bool) Expr {
+	t := p.Bool()
+	var bv uint64
+	if v {
+		bv = 1
+	}
+	ret := llvm.ConstInt(t.ll, bv, v)
+	return Expr{ret, t}
+}
+
+// IntVal returns an integer constant expression.
+func (p Program) IntVal(v uint64, t Type) Expr {
+	ret := llvm.ConstInt(t.ll, v, false)
+	return Expr{ret, t}
+}
+
+// FloatVal returns a float constant expression.
+func (p Program) FloatVal(v float64, t Type) Expr {
+	ret := llvm.ConstFloat(t.ll, v)
+	return Expr{ret, t}
+}
+
+// ComplexVal returns a complex constant expression.
+func (p Program) ComplexVal(v complex128, t Type) Expr {
+	flt := p.Field(t, 0)
+	re := p.FloatVal(real(v), flt)
+	im := p.FloatVal(imag(v), flt)
+	return Expr{p.ctx.ConstStruct([]llvm.Value{re.impl, im.impl}, false), t}
+}
+
+// Val returns a constant expression.
+func (p Program) Val(v interface{}) Expr {
+	switch v := v.(type) {
+	case int:
+		return p.IntVal(uint64(v), p.Int())
+	case uintptr:
+		return p.IntVal(uint64(v), p.Uintptr())
+	case bool:
+		return p.BoolVal(v)
+	case float64:
+		t := p.Float64()
+		ret := llvm.ConstFloat(t.ll, v)
+		return Expr{ret, t}
+	}
+	panic("todo")
+}
+
+// Const returns a constant expression.
+func (b Builder) Const(v constant.Value, typ Type) Expr {
+	prog := b.Prog
+	if v == nil {
+		return prog.Nil(typ)
+	}
+	raw := typ.raw.Type
+	switch t := raw.Underlying().(type) {
+	case *types.Basic:
+		kind := t.Kind()
+		switch {
+		case kind == types.Bool:
+			return Expr{prog.BoolVal(constant.BoolVal(v)).impl, typ}
+		case kind >= types.Int && kind <= types.Int64:
+			if v, exact := constant.Int64Val(constant.ToInt(v)); exact {
+				return prog.IntVal(uint64(v), typ)
+			}
+		case kind >= types.Uint && kind <= types.Uintptr:
+			if v, exact := constant.Uint64Val(constant.ToInt(v)); exact {
+				return prog.IntVal(v, typ)
+			}
+		case kind == types.Float64 || kind == types.Float32:
+			v, _ := constant.Float64Val(constant.ToFloat(v))
+			return prog.FloatVal(v, typ)
+		case kind == types.String:
+			return Expr{b.Str(constant.StringVal(v)).impl, typ}
+		case kind == types.Complex128 || kind == types.Complex64:
+			v = constant.ToComplex(v)
+			re, _ := constant.Float64Val(constant.Real(v))
+			im, _ := constant.Float64Val(constant.Imag(v))
+			return prog.ComplexVal(complex(re, im), typ)
+		case kind == types.UnsafePointer:
+			if v, exact := constant.Uint64Val(v); exact {
+				return Expr{llvm.ConstIntToPtr(llvm.ConstInt(prog.Uintptr().ll, v, false), typ.ll), typ}
+			}
+		}
+	}
+	panic(fmt.Sprintf("unsupported Const: %v, %v", v, raw))
+}
+
+// CStr returns a c-style string constant expression.
+func (b Builder) CStr(v string) Expr {
+	return Expr{llvm.CreateGlobalStringPtr(b.impl, v), b.Prog.CStr()}
+}
+
+// CString returns a c-style string
+func (b Builder) CString(v Expr) Expr {
+	fn := b.Pkg.rtFunc("CString")
+	return b.Call(fn, v)
+}
+
+// CBytes returns a c-style bytes
+func (b Builder) CBytes(v Expr) Expr {
+	fn := b.Pkg.rtFunc("CBytes")
+	return b.Call(fn, v)
+}
+
+// InlineAsm generates inline assembly instruction
+func (b Builder) InlineAsm(instruction string) {
+	dbgInstrf("InlineAsm %s\n", instruction)
+
+	typ := llvm.FunctionType(b.Prog.tyVoid(), nil, false)
+	asm := llvm.InlineAsm(typ, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
+	b.impl.CreateCall(typ, asm, nil, "")
+}
+
+// InlineAsmNoDebug emits inline assembly without attaching the builder's
+// current source location. The builder location itself is left unchanged.
+func (b Builder) InlineAsmNoDebug(instruction string) {
+	dbgInstrf("InlineAsm %s\n", instruction)
+
+	typ := llvm.FunctionType(b.Prog.tyVoid(), nil, false)
+	asm := llvm.InlineAsm(typ, instruction, "", true, false, llvm.InlineAsmDialectATT, false)
+	call := b.impl.CreateCall(typ, asm, nil, "")
+	call.InstructionSetDebugLoc(llvm.Metadata{})
+}
+
+func (b Builder) InlineAsmFull(instruction, constraints string, retType Type, exprs []Expr) Expr {
+	typs := make([]llvm.Type, len(exprs))
+	vals := make([]llvm.Value, len(exprs))
+	for i, expr := range exprs {
+		typs[i], vals[i] = expr.Type.ll, expr.impl
+	}
+
+	ftype := llvm.FunctionType(retType.ll, typs, false)
+	asm := llvm.InlineAsm(ftype, instruction, constraints, true, false, llvm.InlineAsmDialectATT, false)
+	return Expr{b.impl.CreateCall(ftype, asm, vals, ""), retType}
+}
+
+// KeepAlive keeps both interface words live for conservative GC scanning.
+// The data word may point to a stack object containing further pointers;
+// declare memory access explicitly so its fields must remain materialized.
+// This compiler barrier does not emit a hardware memory fence.
+func (b Builder) KeepAlive(x Expr) Expr {
+	if x.kind != vkEface {
+		panic("keepAlive(any): invalid argument type")
+	}
+	values := []llvm.Value{
+		b.impl.CreateExtractValue(x.impl, 0, ""),
+		b.impl.CreateExtractValue(x.impl, 1, ""),
+	}
+	typ := llvm.FunctionType(b.Prog.tyVoid(), []llvm.Type{values[0].Type(), values[1].Type()}, false)
+	asm := llvm.InlineAsm(typ, "", "X,X,~{memory}", true, false, llvm.InlineAsmDialectATT, false)
+	return Expr{b.impl.CreateCall(typ, asm, values, ""), b.Prog.Void()}
+}
+
+// GoString returns a Go string
+func (b Builder) GoString(v Expr) Expr {
+	fn := b.Pkg.rtFunc("GoString")
+	return b.Call(fn, v)
+}
+
+// GoStringN returns a Go string
+func (b Builder) GoStringN(v Expr, n Expr) Expr {
+	fn := b.Pkg.rtFunc("GoStringN")
+	return b.Call(fn, v, n)
+}
+
+// GoBytes returns a Go bytes
+func (b Builder) GoBytes(v Expr, n Expr) (ret Expr) {
+	fn := b.Pkg.rtFunc("GoBytes")
+	return b.Call(fn, v, n)
+}
+
+// CMalloc returns a c-style pointer
+func (b Builder) CMalloc(n Expr) Expr {
+	return b.malloc(n)
+}
+
+// Str returns a Go string constant expression.
+func (b Builder) Str(v string) Expr {
+	prog := b.Prog
+	data := b.Pkg.createGlobalStr(v)
+	size := llvm.ConstInt(prog.tyInt(), uint64(len(v)), false)
+	return b.aggregateValue(prog.String(), data, size)
+}
+
+// unsafeString(data *byte, size int) string
+func (b Builder) unsafeString(data, size llvm.Value) Expr {
+	prog := b.Prog
+	return b.aggregateValue(prog.String(), data, size)
+}
+
+// unsafeSlice(data *T, size, cap int) []T
+func (b Builder) unsafeSlice(data Expr, size, cap llvm.Value) Expr {
+	prog := b.Prog
+	tslice := prog.Slice(prog.Elem(data.Type))
+	return b.aggregateValue(tslice, data.impl, size, cap)
+}
+
+func (b Builder) checkedUnsafeString(data, size Expr) Expr {
+	size = b.FitIntSize(size)
+	b.checkUnsafeBuiltinBounds("unsafe.String", data, size, 1)
+	return b.unsafeString(data.impl, size.impl)
+}
+
+func (b Builder) checkedUnsafeSlice(data, size Expr) Expr {
+	prog := b.Prog
+	size = b.FitIntSize(size)
+	elemSize := prog.SizeOf(prog.Elem(data.Type))
+	b.checkUnsafeBuiltinBounds("unsafe.Slice", data, size, elemSize)
+	return b.unsafeSlice(data, size.impl, size.impl)
+}
+
+func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize uint64) {
+	prog := b.Prog
+	zero := llvm.ConstInt(size.ll, 0, false)
+	isNegative := llvm.CreateICmp(b.impl, llvm.IntSLT, size.impl, zero)
+	b.assertRuntimeError(isNegative, name+": len out of range")
+
+	isNonZero := llvm.CreateICmp(b.impl, llvm.IntNE, size.impl, zero)
+	isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, data.impl, llvm.ConstPointerNull(data.impl.Type()))
+	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNil, isNonZero), name+": nil pointer with non-zero length")
+
+	if elemSize == 0 {
+		return
+	}
+
+	uptr := prog.Uintptr()
+	length := castUintptr(b, size.impl, size.Type, uptr)
+	maxAddr := ^uint64(0)
+	if bits := uint(prog.PointerSize() * 8); bits < 64 {
+		maxAddr = (uint64(1) << bits) - 1
+	}
+	maxLen := llvm.ConstInt(uptr.ll, maxAddr/elemSize, false)
+	lenTooLarge := llvm.CreateICmp(b.impl, llvm.IntUGT, length, maxLen)
+	b.assertRuntimeError(lenTooLarge, name+": len out of range")
+
+	byteSize := length
+	if elemSize != 1 {
+		byteSize = b.impl.CreateMul(length, llvm.ConstInt(uptr.ll, elemSize, false), "")
+	}
+	lastOffset := b.impl.CreateSub(byteSize, llvm.ConstInt(uptr.ll, 1, false), "")
+	addr := llvm.CreatePtrToInt(b.impl, data.impl, uptr.ll)
+	// The semantic uintptr may be wider than the physical address space (for
+	// example J32 stores Go words in i64 over wasm32 memory). An addition in
+	// that wider integer does not wrap at the real pointer boundary, so compare
+	// the final offset with the remaining physical address range directly.
+	remaining := b.impl.CreateSub(llvm.ConstInt(uptr.ll, maxAddr, false), addr, "")
+	exceedsAddressSpace := llvm.CreateICmp(b.impl, llvm.IntUGT, lastOffset, remaining)
+	b.assertRuntimeError(llvm.CreateAnd(b.impl, isNonZero, exceedsAddressSpace), name+": len out of range")
+}
+
+func (b Builder) assertRuntimeError(check llvm.Value, msg string) {
+	b.InlineCall(b.Pkg.rtFunc("AssertRuntimeError"), Expr{check, b.Prog.Bool()}, b.Str(msg))
+}
+
+// -----------------------------------------------------------------------------
+
+const (
+	mathOpBase = token.ADD
+	mathOpLast = token.REM
+)
+
+var mathOpToLLVM = []llvm.Opcode{
+	int(token.ADD-mathOpBase)<<2 | vkSigned:   llvm.Add,
+	int(token.ADD-mathOpBase)<<2 | vkUnsigned: llvm.Add,
+	int(token.ADD-mathOpBase)<<2 | vkFloat:    llvm.FAdd,
+
+	int(token.SUB-mathOpBase)<<2 | vkSigned:   llvm.Sub,
+	int(token.SUB-mathOpBase)<<2 | vkUnsigned: llvm.Sub,
+	int(token.SUB-mathOpBase)<<2 | vkFloat:    llvm.FSub,
+
+	int(token.MUL-mathOpBase)<<2 | vkSigned:   llvm.Mul,
+	int(token.MUL-mathOpBase)<<2 | vkUnsigned: llvm.Mul,
+	int(token.MUL-mathOpBase)<<2 | vkFloat:    llvm.FMul,
+
+	int(token.QUO-mathOpBase)<<2 | vkSigned:   llvm.SDiv,
+	int(token.QUO-mathOpBase)<<2 | vkUnsigned: llvm.UDiv,
+	int(token.QUO-mathOpBase)<<2 | vkFloat:    llvm.FDiv,
+
+	int(token.REM-mathOpBase)<<2 | vkSigned:   llvm.SRem,
+	int(token.REM-mathOpBase)<<2 | vkUnsigned: llvm.URem,
+	int(token.REM-mathOpBase)<<2 | vkFloat:    llvm.FRem,
+}
+
+func mathOpIdx(op token.Token, x valueKind) int {
+	return int(op-mathOpBase)<<2 | x
+}
+
+// ADD SUB MUL QUO REM          + - * / %
+func isMathOp(op token.Token) bool {
+	return op >= mathOpBase && op <= mathOpLast
+}
+
+const (
+	logicOpBase = token.AND
+	logicOpLast = token.AND_NOT
+)
+
+var logicOpToLLVM = []llvm.Opcode{
+	token.AND - logicOpBase: llvm.And,
+	token.OR - logicOpBase:  llvm.Or,
+	token.XOR - logicOpBase: llvm.Xor,
+	token.SHL - logicOpBase: llvm.Shl,
+	token.SHR - logicOpBase: llvm.AShr, // Arithmetic Shift Right
+}
+
+// AND OR XOR SHL SHR AND_NOT   & | ^ << >> &^
+func isLogicOp(op token.Token) bool {
+	return op >= logicOpBase && op <= logicOpLast
+}
+
+const (
+	predOpBase = token.EQL
+	predOpLast = token.GEQ
+)
+
+var intPredOpToLLVM = []llvm.IntPredicate{
+	token.EQL - predOpBase: llvm.IntEQ,
+	token.NEQ - predOpBase: llvm.IntNE,
+	token.LSS - predOpBase: llvm.IntSLT,
+	token.LEQ - predOpBase: llvm.IntSLE,
+	token.GTR - predOpBase: llvm.IntSGT,
+	token.GEQ - predOpBase: llvm.IntSGE,
+}
+
+var uintPredOpToLLVM = []llvm.IntPredicate{
+	token.EQL - predOpBase: llvm.IntEQ,
+	token.NEQ - predOpBase: llvm.IntNE,
+	token.LSS - predOpBase: llvm.IntULT,
+	token.LEQ - predOpBase: llvm.IntULE,
+	token.GTR - predOpBase: llvm.IntUGT,
+	token.GEQ - predOpBase: llvm.IntUGE,
+}
+
+var floatPredOpToLLVM = []llvm.FloatPredicate{
+	token.EQL - predOpBase: llvm.FloatOEQ,
+	token.NEQ - predOpBase: llvm.FloatUNE,
+	token.LSS - predOpBase: llvm.FloatOLT,
+	token.LEQ - predOpBase: llvm.FloatOLE,
+	token.GTR - predOpBase: llvm.FloatOGT,
+	token.GEQ - predOpBase: llvm.FloatOGE,
+}
+
+var boolPredOpToLLVM = []llvm.IntPredicate{
+	token.EQL - predOpBase: llvm.IntEQ,
+	token.NEQ - predOpBase: llvm.IntNE,
+}
+
+// EQL NEQ LSS LEQ GTR GEQ      == != < <= > >=
+func isPredOp(op token.Token) bool {
+	return op >= predOpBase && op <= predOpLast
+}
+
+// The BinOp instruction yields the result of binary operation (x op y).
+// op can be:
+// ADD SUB MUL QUO REM          + - * / %
+// AND OR XOR SHL SHR AND_NOT   & | ^ << >> &^
+// EQL NEQ LSS LEQ GTR GEQ      == != < <= > >=
+func (b Builder) BinOp(op token.Token, x, y Expr) Expr {
+	return b.BinOpEx(op, x, y, true)
+}
+
+func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
+	dbgInstrf("BinOp %d, %v, %v\n", op, x.impl, y.impl)
+	switch {
+	case isMathOp(op): // op: + - * / %
+		kind := x.kind
+		switch kind {
+		case vkString:
+			if op == token.ADD {
+				if !heap {
+					return Expr{b.InlineCall(b.Pkg.rtFunc("StringCatBuffer"), x, y, b.stringStackBuffer()).impl, x.Type}
+				}
+				return Expr{b.InlineCall(b.Pkg.rtFunc("StringCat"), x, y).impl, x.Type}
+			}
+		case vkComplex:
+			xr, xi := b.impl.CreateExtractValue(x.impl, 0, ""), b.impl.CreateExtractValue(x.impl, 1, "")
+			yr, yi := b.impl.CreateExtractValue(y.impl, 0, ""), b.impl.CreateExtractValue(y.impl, 1, "")
+			switch op {
+			case token.ADD:
+				r := llvm.CreateBinOp(b.impl, llvm.FAdd, xr, yr)
+				i := llvm.CreateBinOp(b.impl, llvm.FAdd, xi, yi)
+				return b.aggregateValue(x.Type, r, i)
+			case token.SUB:
+				r := llvm.CreateBinOp(b.impl, llvm.FSub, xr, yr)
+				i := llvm.CreateBinOp(b.impl, llvm.FSub, xi, yi)
+				return b.aggregateValue(x.Type, r, i)
+			case token.MUL:
+				r := llvm.CreateBinOp(b.impl, llvm.FSub,
+					llvm.CreateBinOp(b.impl, llvm.FMul, xr, yr),
+					llvm.CreateBinOp(b.impl, llvm.FMul, xi, yi),
+				)
+				i := llvm.CreateBinOp(b.impl, llvm.FAdd,
+					llvm.CreateBinOp(b.impl, llvm.FMul, xr, yi),
+					llvm.CreateBinOp(b.impl, llvm.FMul, xi, yr),
+				)
+				return b.aggregateValue(x.Type, r, i)
+			case token.QUO:
+				x128 := b.Convert(b.Prog.Complex128(), x)
+				y128 := b.Convert(b.Prog.Complex128(), y)
+				ret := b.InlineCall(b.Pkg.rtFunc("Complex128Div"), x128, y128)
+				return b.Convert(x.Type, ret)
+			}
+		default:
+			idx := mathOpIdx(op, kind)
+			if llop := mathOpToLLVM[idx]; llop != 0 {
+				// Go requires integer division/modulo by zero to panic.
+				// LLVM's integer div/rem are undefined on zero divisor, so
+				// we insert an explicit runtime check here and lower through a
+				// safe non-zero divisor so targets like x86 don't trap first.
+				// safeY carries the zero-safe divisor into the signed overflow
+				// lowering below when both guards are needed.
+				var safeY llvm.Value
+				if (op == token.QUO || op == token.REM) && (kind == vkSigned || kind == vkUnsigned) {
+					needsCheck := true
+					if rv := y.impl.IsAConstantInt(); !rv.IsNil() {
+						needsCheck = rv.ZExtValue() == 0
+					}
+					if needsCheck {
+						zero := llvm.ConstInt(y.ll, 0, false)
+						isZero := llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, zero)
+						check := Expr{isZero, b.Prog.Bool()}
+						b.InlineCall(b.Pkg.rtFunc("AssertDivideByZero"), check)
+						safeY = llvm.CreateSelect(b.impl, isZero, llvm.ConstInt(y.ll, 1, false), y.impl)
+					}
+				}
+				// On x86/x86_64, signed div/rem of minInt by -1 traps even
+				// though Go defines it to produce quotient=minInt and
+				// remainder=0. Lower through safe operands and select the
+				// Go-defined result for that overflow case.
+				needsOverflowCheck := false
+				if (op == token.QUO || op == token.REM) && kind == vkSigned {
+					needsOverflowCheck = true
+					if rv := y.impl.IsAConstantInt(); !rv.IsNil() {
+						needsOverflowCheck = rv.SExtValue() == -1
+					}
+				}
+				var minIntVal uint64
+				if needsOverflowCheck {
+					bits := b.Prog.SizeOf(x.Type) * 8
+					if bits == 0 || bits > 64 {
+						panic("unexpected integer bit width")
+					}
+					minIntVal = uint64(1) << (bits - 1)
+					if rv := x.impl.IsAConstantInt(); !rv.IsNil() {
+						needsOverflowCheck = rv.ZExtValue() == minIntVal
+					}
+				}
+				if needsOverflowCheck {
+					minInt := llvm.ConstInt(x.ll, minIntVal, false)
+					negOne := llvm.ConstAllOnes(y.ll)
+					isMinInt := llvm.CreateICmp(b.impl, llvm.IntEQ, x.impl, minInt)
+					isNegOne := llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, negOne)
+					overflow := llvm.CreateAnd(b.impl, isMinInt, isNegOne)
+
+					safeX := llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(x.ll, 0, false), x.impl)
+					if safeY.IsNil() {
+						safeY = y.impl
+					}
+					safeY = llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(y.ll, 1, false), safeY)
+					v := llvm.CreateBinOp(b.impl, llop, safeX, safeY)
+					if op == token.QUO {
+						v = llvm.CreateSelect(b.impl, overflow, x.impl, v)
+					} else {
+						v = llvm.CreateSelect(b.impl, overflow, llvm.ConstInt(x.ll, 0, false), v)
+					}
+					return Expr{v, x.Type}
+				}
+				if !safeY.IsNil() {
+					return Expr{llvm.CreateBinOp(b.impl, llop, x.impl, safeY), x.Type}
+				}
+				return Expr{llvm.CreateBinOp(b.impl, llop, x.impl, y.impl), x.Type}
+			}
+		}
+	case isLogicOp(op): // op: & | ^ << >> &^
+		switch op {
+		case token.AND_NOT:
+			return Expr{llvm.CreateAnd(b.impl, x.impl, llvm.CreateNot(b.impl, y.impl)), x.Type}
+		case token.SHL, token.SHR:
+			if needsNegativeCheck(y) {
+				zero := llvm.ConstInt(y.ll, 0, false)
+				check := Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, y.impl, zero), b.Prog.Bool()}
+				b.InlineCall(b.Pkg.rtFunc("AssertNegativeShift"), check)
+			}
+			xsize, ysize := b.Prog.SizeOf(x.Type), b.Prog.SizeOf(y.Type)
+			// Compare before narrowing the count: on 386, a count of 1<<32
+			// would truncate to zero and be treated as a zero-width shift.
+			overflows := llvm.CreateICmp(b.impl, llvm.IntUGE, y.impl, llvm.ConstInt(y.ll, xsize*8, false))
+			if xsize != ysize {
+				y = b.Convert(x.Type, y)
+			}
+			xzero := llvm.ConstInt(x.ll, 0, false)
+			if op == token.SHL {
+				rhs := llvm.CreateShl(b.impl, x.impl, y.impl)
+				return Expr{llvm.CreateSelect(b.impl, overflows, xzero, rhs), x.Type}
+			} else {
+				if x.kind == vkSigned {
+					rhs := llvm.CreateSelect(b.impl, overflows, llvm.ConstInt(y.ll, 8*xsize-1, false), y.impl)
+					return Expr{llvm.CreateAShr(b.impl, x.impl, rhs), x.Type}
+				} else {
+					rsh := llvm.CreateLShr(b.impl, x.impl, y.impl)
+					return Expr{llvm.CreateSelect(b.impl, overflows, xzero, rsh), x.Type}
+				}
+			}
+		default:
+			llop := logicOpToLLVM[op-logicOpBase]
+			return Expr{llvm.CreateBinOp(b.impl, llop, x.impl, y.impl), x.Type}
+		}
+	case isPredOp(op): // op: == != < <= > >=
+		prog := b.Prog
+		tret := prog.Bool()
+		kind := x.kind
+		switch kind {
+		case vkSigned:
+			pred := intPredOpToLLVM[op-predOpBase]
+			return Expr{llvm.CreateICmp(b.impl, pred, x.impl, y.impl), tret}
+		case vkUnsigned, vkPtr:
+			pred := uintPredOpToLLVM[op-predOpBase]
+			return Expr{llvm.CreateICmp(b.impl, pred, x.impl, y.impl), tret}
+		case vkFloat:
+			pred := floatPredOpToLLVM[op-predOpBase]
+			return Expr{llvm.CreateFCmp(b.impl, pred, x.impl, y.impl), tret}
+		case vkBool:
+			pred := boolPredOpToLLVM[op-predOpBase]
+			return Expr{llvm.CreateICmp(b.impl, pred, x.impl, y.impl), tret}
+		case vkComplex:
+			switch op {
+			case token.EQL:
+				xr, xi := b.impl.CreateExtractValue(x.impl, 0, ""), b.impl.CreateExtractValue(x.impl, 1, "")
+				yr, yi := b.impl.CreateExtractValue(y.impl, 0, ""), b.impl.CreateExtractValue(y.impl, 1, "")
+				return Expr{llvm.CreateAnd(b.impl,
+					llvm.CreateFCmp(b.impl, llvm.FloatOEQ, xr, yr),
+					llvm.CreateFCmp(b.impl, llvm.FloatOEQ, xi, yi),
+				), tret}
+			case token.NEQ:
+				xr, xi := b.impl.CreateExtractValue(x.impl, 0, ""), b.impl.CreateExtractValue(x.impl, 1, "")
+				yr, yi := b.impl.CreateExtractValue(y.impl, 0, ""), b.impl.CreateExtractValue(y.impl, 1, "")
+				return Expr{b.impl.CreateOr(
+					llvm.CreateFCmp(b.impl, llvm.FloatUNE, xr, yr),
+					llvm.CreateFCmp(b.impl, llvm.FloatUNE, xi, yi),
+					"",
+				), tret}
+			}
+		case vkString:
+			switch op {
+			case token.EQL:
+				return b.InlineCall(b.Pkg.rtFunc("StringEqual"), x, y)
+			case token.NEQ:
+				ret := b.InlineCall(b.Pkg.rtFunc("StringEqual"), x, y)
+				ret.impl = llvm.CreateNot(b.impl, ret.impl)
+				return ret
+			case token.LSS:
+				return b.InlineCall(b.Pkg.rtFunc("StringLess"), x, y)
+			case token.LEQ:
+				ret := b.InlineCall(b.Pkg.rtFunc("StringLess"), y, x)
+				ret.impl = llvm.CreateNot(b.impl, ret.impl)
+				return ret
+			case token.GTR:
+				return b.InlineCall(b.Pkg.rtFunc("StringLess"), y, x)
+			case token.GEQ:
+				ret := b.InlineCall(b.Pkg.rtFunc("StringLess"), x, y)
+				ret.impl = llvm.CreateNot(b.impl, ret.impl)
+				return ret
+			}
+		case vkClosure, vkIfaceMethod:
+			x = b.Field(x, 0)
+			if y.kind == vkClosure || y.kind == vkIfaceMethod {
+				y = b.Field(y, 0)
+			}
+			fallthrough
+		case vkFuncPtr, vkFuncDecl, vkChan, vkMap:
+			if y.kind == vkClosure || y.kind == vkIfaceMethod {
+				y = b.Field(y, 0)
+			}
+			switch op {
+			case token.EQL, token.NEQ:
+				pred := uintPredOpToLLVM[op-predOpBase]
+				return Expr{llvm.CreateICmp(b.impl, pred, x.impl, y.impl), tret}
+			}
+		case vkArray:
+			return b.arrayBinOp(op, x, y, Nil, Nil)
+		case vkStruct:
+			return b.StructBinOp(op, x, y, Nil, Nil)
+		case vkSlice:
+			dx := b.getField(x, 0).impl
+			dy := b.getField(y, 0).impl
+			switch op {
+			case token.EQL:
+				return Expr{b.impl.CreateICmp(llvm.IntEQ, dx, dy, ""), tret}
+			case token.NEQ:
+				return Expr{b.impl.CreateICmp(llvm.IntNE, dx, dy, ""), tret}
+			}
+		case vkIface, vkEface:
+			toEface := func(x Expr, emtpy bool) Expr {
+				if emtpy {
+					return x
+				}
+				return Expr{b.unsafeEface(b.faceAbiType(x).impl, b.faceData(x.impl)), prog.rtType("Eface")}
+			}
+			switch op {
+			case token.EQL:
+				return b.InlineCall(b.Pkg.rtFunc("EfaceEqual"), toEface(x, x.kind == vkEface), toEface(y, y.kind == vkEface))
+			case token.NEQ:
+				ret := b.InlineCall(b.Pkg.rtFunc("EfaceEqual"), toEface(x, x.kind == vkEface), toEface(y, y.kind == vkEface))
+				ret.impl = llvm.CreateNot(b.impl, ret.impl)
+				return ret
+			}
+		}
+	}
+	panic("todo")
+}
+
+// CanInlineStructEqual reports whether direct field comparisons keep the
+// module compact. It uses a four-field budget similar to array comparisons,
+// plus a size cap because struct fields can themselves be large aggregates.
+func CanInlineStructEqual(t *types.Struct, size uint64, pointerSize int) bool {
+	return t.NumFields() <= 4 && size <= uint64(4*pointerSize)
+}
+
+// StructBinOp compares two struct values while allowing the frontend to reuse
+// an operand address when it has proved that doing so preserves value semantics.
+// Non-regular structs remain field-wise so their semantic comparisons preserve
+// the established ordering and panic behavior; source addresses are used only
+// for regular-memory structs.
+func (b Builder) StructBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
+	if x.kind != vkStruct || y.kind != vkStruct {
+		panic("StructBinOp requires struct operands")
+	}
+	if op != token.EQL && op != token.NEQ {
+		panic("StructBinOp requires an equality operator")
+	}
+	prog := b.Prog
+	tret := prog.Bool()
+	typ := x.raw.Type.Underlying().(*types.Struct)
+	size := uint64(prog.abi.Size(typ))
+	regular := prog.abi.IsRegularMemory(typ)
+	if !regular || CanInlineStructEqual(typ, size, prog.GoWordSize()) {
+		ret := prog.BoolVal(true)
+		for i, n := 0, typ.NumFields(); i < n; i++ {
+			if typ.Field(i).Name() == "_" {
+				continue
+			}
+			fx := b.getField(x, i)
+			fy := b.getField(y, i)
+			r := b.BinOp(token.EQL, fx, fy)
+			ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
+		}
+		if op == token.NEQ {
+			ret.impl = llvm.CreateNot(b.impl, ret.impl)
+		}
+		return ret
+	}
+
+	zeroX := xaddr.IsNil() && !x.impl.IsAConstantAggregateZero().IsNil()
+	zeroY := yaddr.IsNil() && !y.impl.IsAConstantAggregateZero().IsNil()
+	if zeroX && !yaddr.IsNil() || zeroY && !xaddr.IsNil() {
+		addr := xaddr
+		if zeroX {
+			addr = yaddr
+		}
+		addr = b.PtrCast(prog.VoidPtr(), addr)
+		ret := b.Call(b.Pkg.rtFunc("memequalzero"), addr, prog.IntVal(prog.SizeOf(x.Type), prog.Uintptr()))
+		if op == token.NEQ {
+			ret.impl = llvm.CreateNot(b.impl, ret.impl)
+		}
+		return ret
+	}
+
+	var sp Expr
+	if xaddr.IsNil() || yaddr.IsNil() {
+		sp = b.StackSave()
+	}
+	if xaddr.IsNil() {
+		xaddr = b.toPtr(x)
+	} else {
+		xaddr = b.PtrCast(prog.VoidPtr(), xaddr)
+	}
+	if yaddr.IsNil() {
+		yaddr = b.toPtr(y)
+	} else {
+		yaddr = b.PtrCast(prog.VoidPtr(), yaddr)
+	}
+	ret := b.Call(b.Pkg.rtFunc("memequal"), xaddr, yaddr, prog.IntVal(prog.SizeOf(x.Type), prog.Uintptr()))
+	if !sp.IsNil() {
+		b.StackRestore(sp)
+	}
+	if op == token.NEQ {
+		ret.impl = llvm.CreateNot(b.impl, ret.impl)
+	}
+	return ret
+}
+
+// CanInlineArrayEqual reports whether comparing an array element by element is
+// cheaper than calling its equality algorithm. A single element is always
+// safe to inline. For simple elements, use cmd/compile's four-element budget,
+// but not its size-based allowance: this builder emits element-wise compares
+// rather than merging adjacent loads into wider compares.
+func CanInlineArrayEqual(t *types.Array) bool {
+	n := t.Len()
+	if n <= 1 {
+		return true
+	}
+	basic, ok := t.Elem().Underlying().(*types.Basic)
+	if !ok || basic.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat|types.IsComplex) == 0 {
+		return false
+	}
+	return n <= 4
+}
+
+// ArrayBinOp compares two array values while reusing their backing addresses
+// when the frontend has proved that those addresses still hold the loaded
+// values. A nil address falls back to a value-preserving temporary.
+func (b Builder) ArrayBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
+	if x.kind != vkArray || y.kind != vkArray {
+		panic("ArrayBinOp requires array operands")
+	}
+	if op != token.EQL && op != token.NEQ {
+		panic("ArrayBinOp requires an equality operator")
+	}
+	return b.arrayBinOp(op, x, y, xaddr, yaddr)
+}
+
+func (b Builder) arrayBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
+	prog := b.Prog
+	tret := prog.Bool()
+	typ := x.raw.Type.Underlying().(*types.Array)
+	if CanInlineArrayEqual(typ) {
+		elem := prog.Elem(x.Type)
+		ret := prog.BoolVal(true)
+		for i, n := 0, int(typ.Len()); i < n; i++ {
+			fx := b.impl.CreateExtractValue(x.impl, i, "")
+			fy := b.impl.CreateExtractValue(y.impl, i, "")
+			r := b.BinOp(token.EQL, Expr{fx, elem}, Expr{fy, elem})
+			ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
+		}
+		if op == token.NEQ {
+			ret.impl = llvm.CreateNot(b.impl, ret.impl)
+		}
+		return ret
+	}
+	ret := b.callArrayEqual(x, y, xaddr, yaddr, typ)
+	if op == token.NEQ {
+		ret.impl = llvm.CreateNot(b.impl, ret.impl)
+	}
+	return ret
+}
+
+func (b Builder) callArrayEqual(x, y, xaddr, yaddr Expr, t *types.Array) Expr {
+	prog := b.Prog
+	var sp Expr
+	if xaddr.IsNil() || yaddr.IsNil() {
+		sp = b.StackSave()
+	}
+	if xaddr.IsNil() {
+		xaddr = b.toPtr(x)
+	} else {
+		xaddr = b.PtrCast(prog.VoidPtr(), xaddr)
+	}
+	if yaddr.IsNil() {
+		yaddr = b.toPtr(y)
+	} else {
+		yaddr = b.PtrCast(prog.VoidPtr(), yaddr)
+	}
+	var ret Expr
+	if prog.abi.IsRegularMemory(t) {
+		ret = b.Call(b.Pkg.rtFunc("memequal"), xaddr, yaddr, prog.IntVal(prog.SizeOf(x.Type), prog.Uintptr()))
+	} else {
+		equal := b.Pkg.rtEnvFunc("arrayequal")
+		equal = b.aggregateValue(prog.Type(equalFunc, GoDecl), equal.impl, b.abiType(x.raw.Type).impl)
+		ret = b.Call(equal, xaddr, yaddr)
+	}
+	if !sp.IsNil() {
+		b.StackRestore(sp)
+	}
+	return ret
+}
+
+// The UnOp instruction yields the result of (op x).
+// ARROW is channel receive.
+// MUL is pointer indirection (load).
+// XOR is bitwise complement.
+// SUB is negation.
+// NOT is logical negation.
+func (b Builder) UnOp(op token.Token, x Expr) (ret Expr) {
+	dbgInstrf("UnOp %v, %v\n", op, x.impl)
+	switch op {
+	case token.MUL:
+		return b.Load(x)
+	case token.SUB:
+		switch t := x.raw.Type.Underlying().(type) {
+		case *types.Basic:
+			ret.Type = x.Type
+			if t.Info()&types.IsInteger != 0 {
+				ret.impl = llvm.CreateNeg(b.impl, x.impl)
+			} else if t.Info()&types.IsFloat != 0 {
+				ret.impl = llvm.CreateFNeg(b.impl, x.impl)
+			} else if t.Info()&types.IsComplex != 0 {
+				r := b.impl.CreateExtractValue(x.impl, 0, "")
+				i := b.impl.CreateExtractValue(x.impl, 1, "")
+				return b.aggregateValue(x.Type, llvm.CreateFNeg(b.impl, r), llvm.CreateFNeg(b.impl, i))
+			} else {
+				panic("todo")
+			}
+		default:
+			panic("unreachable")
+		}
+	case token.NOT:
+		ret.Type = x.Type
+		ret.impl = llvm.CreateNot(b.impl, x.impl)
+	case token.XOR:
+		ret.Type = x.Type
+		ret.impl = llvm.CreateXor(b.impl, x.impl, llvm.ConstInt(x.Type.ll, ^uint64(0), false))
+	case token.ARROW:
+		panic("todo")
+	}
+	return
+}
+
+// -----------------------------------------------------------------------------
+
+// The ChangeType instruction applies to X a value-preserving type
+// change to Type().
+//
+// Type changes are permitted:
+//   - between a named type and its underlying type.
+//   - between two named types of the same underlying type.
+//   - between (possibly named) pointers to identical base types.
+//   - from a bidirectional channel to a read- or write-channel,
+//     optionally adding/removing a name.
+//   - between a type (t) and an instance of the type (tσ), i.e.
+//     Type() == σ(X.Type()) (or X.Type()== σ(Type())) where
+//     σ is the type substitution of Parent().TypeParams by
+//     Parent().TypeArgs.
+//
+// Type changes preserve values, with range checks when explicit native storage
+// narrows an element at its ABI boundary.
+//
+// Type changes may to be to or from a type parameter (or both). All
+// types in the type set of X.Type() have a value-preserving type
+// change to all types in the type set of Type().
+//
+// Example printed form:
+//
+//	t1 = changetype *int <- IntPtr (t0)
+func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
+	if t.kind == vkSIMD {
+		if x.kind == vkSIMD {
+			return Expr{x.impl, t}
+		}
+		return Expr{b.simdFromStorage(x.impl, t), t}
+	}
+	dbgInstrf("ChangeType %v, %v\n", t.RawType(), x.impl)
+	if b.Prog.isStdcallType(t.raw.Type) && !b.Prog.isStdcallType(x.raw.Type) {
+		return b.stdcallCallback(t.raw.Type, x)
+	}
+	if t.kind == vkFuncPtr && x.kind == vkClosure {
+		return b.closureToNative(t, x)
+	}
+	if t.kind == vkFuncPtr && x.kind == vkFuncDecl {
+		sig := t.raw.Type.Underlying().(*types.Signature)
+		if b.Prog.funcDeclType(sig, CDecl).ll != x.ll {
+			return b.nativeCallback(t, x, CDecl, "c_callback")
+		}
+	}
+	if t.kind == vkClosure {
+		switch x.kind {
+		case vkFuncDecl, vkFuncPtr:
+			ret.impl = checkExpr(x, t.raw.Type, b).impl
+		case vkClosure:
+			// TODO(xsw): change type should be a noop instruction
+			convType := func() Expr {
+				r := b.AllocaT(t)
+				b.Store(r, x)
+				return b.Load(r)
+			}
+			convNamedType := func() Expr {
+				agg := llvm.Undef(t.ll)
+				for i := range t.ll.StructElementTypes() {
+					field := b.impl.CreateExtractValue(x.impl, i, "")
+					agg = b.impl.CreateInsertValue(agg, field, i, "")
+				}
+				return Expr{agg, t}
+			}
+			switch t.RawType().(type) {
+			case *types.Named:
+				switch x.RawType().(type) {
+				case *types.Struct:
+					return convType()
+				case *types.Named:
+					if !types.Identical(x.RawType(), t.RawType()) {
+						return convNamedType()
+					}
+				}
+			case *types.Struct:
+				if _, ok := x.RawType().(*types.Named); ok {
+					return convType()
+				}
+			}
+			fallthrough
+		default:
+			ret.impl = x.impl
+		}
+	} else if t.kind == vkArray && x.kind == vkArray && x.impl.Type() != t.ll {
+		// Go type identity does not imply identical native storage on Memory32.
+		// Convert logical elements before fitting each destination storage slot.
+		sourceElem := b.Prog.Index(x.Type)
+		sourceLogical := b.Prog.withoutNativeStorage(sourceElem)
+		targetElem := b.Prog.withoutNativeStorage(b.Prog.Index(t))
+		ret.impl = llvm.Undef(t.ll)
+		for i, n := 0, t.ll.ArrayLength(); i < n; i++ {
+			part := b.impl.CreateExtractValue(x.impl, i, "")
+			value := Expr{b.fromStorageValue(sourceElem, part), sourceLogical}
+			value = b.ChangeType(targetElem, value)
+			part = b.fitLLVMValue(value.impl, targetElem, t.ll.ElementType())
+			ret.impl = b.impl.CreateInsertValue(ret.impl, part, i, "")
+		}
+	} else if t.kind == vkStruct {
+		xt := types.Unalias(x.RawType()).Underlying().(*types.Struct)
+		fields := make([]llvm.Value, xt.NumFields())
+		for i := 0; i < xt.NumFields(); i++ {
+			fields[i] = b.getField(x, i).impl
+		}
+		ret.impl = b.aggregateValue(t, fields...).impl
+	} else {
+		if x.impl.Type().String() == t.ll.String() {
+			ret.impl = x.impl
+		} else {
+			ptr := b.AllocaT(t)
+			b.Store(ptr, x)
+			ret.impl = b.Load(ptr).impl
+		}
+	}
+	ret.Type = t
+	return
+}
+
+// The Convert instruction yields the conversion of value X to type
+// Type().  One or both of those types is basic (but possibly named).
+//
+// A conversion may change the value and representation of its operand.
+// Conversions are permitted:
+//   - between real numeric types.
+//   - between complex numeric types.
+//   - between string and []byte or []rune.
+//   - between pointers and unsafe.Pointer.
+//   - between unsafe.Pointer and uintptr.
+//   - from (Unicode) integer to (UTF-8) string.
+//
+// A conversion may imply a type name change also.
+//
+// Conversions may to be to or from a type parameter. All types in
+// the type set of X.Type() can be converted to all types in the type
+// set of Type().
+//
+// This operation cannot fail dynamically.
+//
+// Conversions of untyped string/number/bool constants to a specific
+// representation are eliminated during SSA construction.
+//
+// Example printed form:
+//
+//	t1 = convert []byte <- string (t0)
+func (b Builder) Convert(t Type, x Expr) (ret Expr) {
+	return b.ConvertEx(t, x, true)
+}
+
+func (b Builder) ConvertEx(t Type, x Expr, heap bool) (ret Expr) {
+	dbgInstrf("Convert %v <- %v\n", t.RawType(), x.RawType())
+	dst := t.raw.Type
+	ret.Type = b.Prog.rawType(dst)
+	switch typ := dst.Underlying().(type) {
+	case *types.Basic:
+		switch typ.Kind() {
+		case types.Uintptr:
+			ret.impl = castUintptr(b, x.impl, x.Type, t)
+			return
+		case types.UnsafePointer:
+			ret.impl = castPtr(b.impl, x.impl, t.ll)
+			return
+		case types.String:
+			switch xtyp := x.RawType().Underlying().(type) {
+			case *types.Slice:
+				if etyp, ok := xtyp.Elem().Underlying().(*types.Basic); ok {
+					switch etyp.Kind() {
+					case types.Byte:
+						if !heap {
+							ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromBytesBuffer"), x, b.stringStackBuffer()).impl
+							return
+						}
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromBytes"), x).impl
+						return
+					case types.Rune:
+						if !heap {
+							ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromRunesBuffer"), x, b.stringStackBuffer()).impl
+							return
+						}
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringFromRunes"), x).impl
+						return
+					}
+				}
+			case *types.Basic:
+				if xtyp.Info()&types.IsInteger == 0 {
+					panic("unreachable: string conversion from non-integer basic type")
+				}
+				srcType := x.Type
+				var arg Expr
+				var fn string
+				if xtyp.Info()&types.IsUnsigned != 0 {
+					arg.Type = b.Prog.Uint64()
+					fn = "StringFromUint64"
+				} else {
+					arg.Type = b.Prog.Int64()
+					fn = "StringFromInt64"
+				}
+				arg.impl = x.impl
+				if arg.impl.Type() != arg.Type.ll {
+					arg.impl = castInt(b, x.impl, srcType, arg.Type)
+				}
+				if !heap {
+					fn += "Buffer"
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64Buffer", "StringFromUint64Buffer")), arg, b.stringStackBuffer()).impl
+				} else {
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc(RuntimeSymbol(fn, "StringFromInt64", "StringFromUint64")), arg).impl
+				}
+				return
+			}
+		case types.Complex128:
+			switch xtyp := x.RawType().Underlying().(type) {
+			case *types.Basic:
+				if xtyp.Kind() == types.Complex64 {
+					r := b.impl.CreateExtractValue(x.impl, 0, "")
+					i := b.impl.CreateExtractValue(x.impl, 1, "")
+					r = castFloat(b, r, b.Prog.Float64())
+					i = castFloat(b, i, b.Prog.Float64())
+					ret.impl = b.aggregateValue(t, r, i).impl
+					return
+				}
+			}
+		}
+		switch xtyp := x.RawType().Underlying().(type) {
+		case *types.Basic:
+			if typ.Info()&types.IsInteger != 0 {
+				// int <- int/float
+				if xtyp.Info()&types.IsInteger != 0 {
+					ret.impl = castInt(b, x.impl, x.Type, t)
+					return
+				} else if xtyp.Info()&types.IsFloat != 0 {
+					ret.impl = castFloatToInt(b, x.impl, t)
+					return
+				}
+			} else if typ.Info()&types.IsFloat != 0 {
+				// float <- int/float
+				if xtyp.Info()&types.IsInteger != 0 {
+					if xtyp.Info()&types.IsUnsigned != 0 {
+						ret.impl = llvm.CreateUIToFP(b.impl, x.impl, t.ll)
+					} else {
+						ret.impl = llvm.CreateSIToFP(b.impl, x.impl, t.ll)
+					}
+					return
+				} else if xtyp.Info()&types.IsFloat != 0 {
+					ret.impl = castFloat(b, x.impl, t)
+					return
+				}
+			}
+		}
+		if x.kind == vkComplex && t.kind == vkComplex {
+			ft := b.Prog.Float64()
+			if t.raw.Type.Underlying().(*types.Basic).Kind() == types.Complex64 {
+				ft = b.Prog.Float32()
+			}
+			r := b.impl.CreateExtractValue(x.impl, 0, "")
+			i := b.impl.CreateExtractValue(x.impl, 1, "")
+			ret.impl = b.Complex(Expr{castFloat(b, r, ft), ft}, Expr{castFloat(b, i, ft), ft}).impl
+			return
+		}
+	case *types.Pointer:
+		ret.impl = castPtr(b.impl, x.impl, t.ll)
+		return
+	case *types.Slice:
+		if x.kind == vkString {
+			if etyp, ok := typ.Elem().Underlying().(*types.Basic); ok {
+				switch etyp.Kind() {
+				case types.Byte:
+					if !heap {
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToBytesBuffer"), x, b.stringStackBuffer()).impl
+						return
+					}
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToBytes"), x).impl
+					return
+				case types.Rune:
+					if !heap {
+						buffer := b.uninitializedStackSlot(b.Prog.Type(types.NewArray(types.Typ[types.Rune], llabi.SmallStackBufferSize), GoDecl))
+						ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToRunesBuffer"), x, buffer).impl
+						return
+					}
+					ret.impl = b.InlineCall(b.Func.Pkg.rtFunc("StringToRunes"), x).impl
+					return
+				}
+			}
+		}
+	}
+	if types.Identical(dst.Underlying(), x.RawType().Underlying()) {
+		return b.ChangeType(t, x)
+	}
+	panic("todo")
+}
+
+func castUintptr(b Builder, x llvm.Value, xtyp Type, typ Type) llvm.Value {
+	if x.Type().TypeKind() == llvm.PointerTypeKind {
+		return llvm.CreatePtrToInt(b.impl, x, typ.ll)
+	}
+	if xtyp.kind == vkFloat {
+		return castFloatToInt(b, x, typ)
+	}
+	return castInt(b, x, xtyp, typ)
+}
+
+func castInt(b Builder, x llvm.Value, xtyp Type, typ Type) llvm.Value {
+	xsize := b.Prog.td.TypeAllocSize(x.Type())
+	size := b.Prog.td.TypeAllocSize(typ.ll)
+	if xsize > size {
+		return llvm.CreateTrunc(b.impl, x, typ.ll)
+	} else if xtyp.kind == vkUnsigned {
+		// Source is unsigned, use zero extension
+		return llvm.CreateZExt(b.impl, x, typ.ll)
+	} else {
+		// Source is signed, use sign extension
+		return llvm.CreateSExt(b.impl, x, typ.ll)
+	}
+}
+
+func castFloatToInt(b Builder, x llvm.Value, typ Type) llvm.Value {
+	dstSize := b.Prog.td.TypeAllocSize(typ.ll)
+	target := b.Prog.Target()
+	saturating := target.SaturatingFloatToInt
+	// The converthash mode saturates every float-to-integer conversion. Keep
+	// the target-specific legacy lowering when that mode is not enabled.
+	if target.effectiveGOARCH() == "amd64" && !saturating {
+		return castFloatToIntAMD64(b, x, typ, dstSize)
+	}
+	if target.effectiveGOARCH() == "386" && !saturating {
+		return castFloatToInt386(b, x, typ, dstSize)
+	}
+	if typ.kind == vkUnsigned {
+		if dstSize < 4 {
+			// Narrow unsigned conversions truncate the saturated signed i32,
+			// matching Go's wide-conversion-then-truncation behavior.
+			tmp := castFloatToSignedInt(b, x, b.Prog.Int32())
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		if dstSize == 4 && !saturating {
+			tmp := castFloatToSignedInt(b, x, b.Prog.Int64())
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return castFloatToUnsignedInt(b, x, typ)
+	}
+	if dstSize < 8 {
+		tmp := castFloatToSignedInt(b, x, b.Prog.Int32())
+		if dstSize < 4 {
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return tmp
+	}
+	return castFloatToSignedInt(b, x, typ)
+}
+
+// castFloatToIntAMD64 reproduces gc's legacy SSE conversion semantics without
+// exposing LLVM fptosi/fptoui to out-of-range inputs (which would be poison).
+// Signed CVTT conversions return the minimum integer for NaN or overflow;
+// unsigned 8/16/32-bit conversions truncate a wider signed conversion, while
+// uint64 uses gc's split-at-2^63 sequence.
+func castFloatToIntAMD64(b Builder, x llvm.Value, typ Type, dstSize uint64) llvm.Value {
+	if typ.kind == vkUnsigned {
+		if dstSize < 4 {
+			tmp := castFloatToSignedIntX86(b, x, b.Prog.Int32(), 32)
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		if dstSize == 4 {
+			tmp := castFloatToSignedIntX86(b, x, b.Prog.Int64(), 64)
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+
+		cutoff := llvm.ConstFloat(x.Type(), floatPow2(63))
+		high := llvm.CreateFCmp(b.impl, llvm.FloatOGE, x, cutoff)
+		adjusted := b.impl.CreateFSub(x, cutoff, "")
+		input := llvm.CreateSelect(b.impl, high, adjusted, x)
+		ret := castFloatToSignedIntX86(b, input, b.Prog.Int64(), 64)
+		highBit := llvm.ConstInt(typ.ll, uint64(1)<<63, false)
+		zero := llvm.ConstNull(typ.ll)
+		return b.impl.CreateOr(ret, llvm.CreateSelect(b.impl, high, highBit, zero), "")
+	}
+	if dstSize < 8 {
+		tmp := castFloatToSignedIntX86(b, x, b.Prog.Int32(), 32)
+		if dstSize < 4 {
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return tmp
+	}
+	return castFloatToSignedIntX86(b, x, typ, 64)
+}
+
+// castFloatToInt386 mirrors gc's 386 split: the native CVTT instruction
+// handles signed 32-bit conversions. Unsigned words truncate a signed 64-bit
+// x87 conversion; 64-bit results use the software conversion from runtime/vlrt.go.
+func castFloatToInt386(b Builder, x llvm.Value, typ Type, dstSize uint64) llvm.Value {
+	if dstSize < 4 || (typ.kind != vkUnsigned && dstSize == 4) {
+		tmp := castFloatToSignedIntX86(b, x, b.Prog.Int32(), 32)
+		if dstSize < 4 {
+			return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+		}
+		return tmp
+	}
+
+	if dstSize == 4 {
+		// gc's runtime.float64touint32 uses x87 FISTP to signed i64 and
+		// returns its low word. NaN and signed-i64 overflow produce the
+		// integer-indefinite value, whose low word is zero. The software
+		// uint64 conversion instead wraps some of these out-of-range inputs.
+		tmp := castFloatToSignedIntX86(b, x, b.Prog.Int64(), 64)
+		return llvm.CreateTrunc(b.impl, tmp, typ.ll)
+	}
+
+	input := x
+	if b.Prog.td.TypeAllocSize(x.Type()) == 4 {
+		input = llvm.CreateFPExt(b.impl, x, b.Prog.Float64().ll)
+	}
+	fn := "Float64ToInt64"
+	if typ.kind == vkUnsigned {
+		fn = "Float64ToUint64"
+	}
+	return b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "Float64ToInt64", "Float64ToUint64")), Expr{input, b.Prog.Float64()}).impl
+}
+
+func castFloatToSignedIntX86(b Builder, x llvm.Value, typ Type, bits uint64) llvm.Value {
+	bound := floatPow2(bits - 1)
+	lower := llvm.ConstFloat(x.Type(), -bound)
+	upper := llvm.ConstFloat(x.Type(), bound)
+	tooLow := llvm.CreateFCmp(b.impl, llvm.FloatOLT, x, lower)
+	tooHigh := llvm.CreateFCmp(b.impl, llvm.FloatOGE, x, upper)
+	isNaN := llvm.CreateFCmp(b.impl, llvm.FloatUNO, x, x)
+	invalid := b.impl.CreateOr(tooLow, tooHigh, "")
+	invalid = b.impl.CreateOr(invalid, isNaN, "")
+	safe := llvm.CreateSelect(b.impl, invalid, llvm.ConstNull(x.Type()), x)
+	ret := llvm.CreateFPToSI(b.impl, safe, typ.ll)
+	minInt := llvm.ConstInt(typ.ll, uint64(1)<<(bits-1), false)
+	return llvm.CreateSelect(b.impl, invalid, minInt, ret)
+}
+
+// Saturating conversions clamp low/high values and map NaN to zero, unlike
+// the legacy x86 CVTT path above.
+func castFloatToSignedInt(b Builder, x llvm.Value, typ Type) llvm.Value {
+	return b.impl.CreateIntrinsic(typ.ll, llvm.LookupIntrinsicID("llvm.fptosi.sat"), []llvm.Value{x}, "")
+}
+
+func castFloatToUnsignedInt(b Builder, x llvm.Value, typ Type) llvm.Value {
+	return b.impl.CreateIntrinsic(typ.ll, llvm.LookupIntrinsicID("llvm.fptoui.sat"), []llvm.Value{x}, "")
+}
+
+func floatPow2(bits uint64) float64 {
+	if bits == 64 {
+		return 18446744073709551616
+	}
+	return float64(uint64(1) << bits)
+}
+
+func castFloat(b Builder, x llvm.Value, typ Type) llvm.Value {
+	xsize := b.Prog.td.TypeAllocSize(x.Type())
+	size := b.Prog.td.TypeAllocSize(typ.ll)
+	if xsize > size {
+		return llvm.CreateFPTrunc(b.impl, x, typ.ll)
+	} else {
+		return llvm.CreateFPExt(b.impl, x, typ.ll)
+	}
+}
+
+func castPtr(b llvm.Builder, x llvm.Value, t llvm.Type) llvm.Value {
+	if x.Type().TypeKind() == llvm.PointerTypeKind {
+		return llvm.CreatePointerCast(b, x, t)
+	}
+	return llvm.CreateIntToPtr(b, x, t)
+}
+
+// BitCast reinterprets x using t without changing its bits.
+func (b Builder) BitCast(t Type, x Expr) Expr {
+	return Expr{llvm.CreateBitCast(b.impl, x.impl, t.ll), t}
+}
+
+// PtrCast converts a pointer/integer expression to a pointer type.
+func (b Builder) PtrCast(t Type, x Expr) Expr {
+	return Expr{castPtr(b.impl, x.impl, t.ll), t}
+}
+
+// -----------------------------------------------------------------------------
+
+// The MakeClosure instruction yields a closure value whose code is
+// Fn and whose free variables' values are supplied by Bindings.
+//
+// Type() returns a (possibly named) *types.Signature.
+//
+// Example printed form:
+//
+//	t0 = make closure anon@1.2 [x y z]
+//	t1 = make closure bound$(main.I).add [i]
+func (b Builder) MakeClosure(fn Expr, bindings []Expr) Expr {
+	return b.MakeClosureEx(fn, bindings, true)
+}
+
+// MakeClosureEx permits stack storage only when the caller has proved that
+// the closure is invoked synchronously and never retained.
+func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
+	dbgInstrf("MakeClosure %v, %v\n", fn, bindings)
+	prog := b.Prog
+	sig := fn.raw.Type.(*types.Signature)
+	data := prog.Nil(prog.VoidPtr()).impl
+	if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
+		tctx := prog.Elem(entry.EnvType())
+		rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
+		if len(bindings) != rawCtx.NumFields() {
+			panic("ssa: closure environment binding count mismatch")
+		}
+		if prog.SizeOf(tctx) == 0 {
+			// A required environment must remain distinguishable from a no-env
+			// entry. Heap zero-sized allocations use the module-wide non-nil
+			// sentinel.
+			data = b.Alloc(tctx, true).impl
+		} else if !heap {
+			data = b.Alloc(tctx, false).impl
+			b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
+		} else {
+			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+		}
+	} else if len(bindings) != 0 {
+		panic("ssa: closure bindings supplied to a no-env function")
+	}
+	return b.aggregateValue(prog.Closure(sig), fn.impl, data)
+}
+
+// -----------------------------------------------------------------------------
+
+// TODO(xsw): make inline call
+func (b Builder) InlineCall(fn Expr, args ...Expr) (ret Expr) {
+	return b.Call(fn, args...)
+}
+
+// CanForwardVarargs checks the unlowered ABI of a direct variadic forwarding
+// call. The physical result must match the Go result for the thunk to return
+// the call instruction directly.
+func (b Builder) CanForwardVarargs(fn Expr) bool {
+	if fn.kind != vkFuncDecl || !b.Func.hasVArg || fn.ll != b.Func.ll ||
+		fn.impl.FunctionCallConv() != b.Func.impl.FunctionCallConv() {
+		return false
+	}
+	sig := fn.raw.Type.(*types.Signature)
+	return fn.ll.ReturnType() == b.Prog.retType(sig).ll
+}
+
+// CallForwardVarargs forwards a variadic thunk's incoming ellipsis unchanged.
+// CanForwardVarargs must hold, the caller must return the result immediately,
+// and later ABI lowering must preserve the call and return without rewrites.
+func (b Builder) CallForwardVarargs(fn Expr, args ...Expr) Expr {
+	if !b.CanForwardVarargs(fn) {
+		panic(fmt.Sprintf("cannot forward C variadic arguments from %s to %s: incompatible ABI",
+			b.Func.Name(), fn.impl.Name()))
+	}
+	ret := b.emitFunctionCall(fn, args, fn.impl.FunctionCallConv())
+	// The thunk returns the native value directly to its native caller.
+	// LLVM's thunk attribute makes musttail forward the incoming ellipsis,
+	// including arguments that have no explicit operands in the call IR.
+	b.Func.impl.AddFunctionAttr(b.Prog.ctx.CreateStringAttribute("thunk", ""))
+	ret.impl.SetTailCallKind(llvm.TailCallKindMustTail)
+	return ret
+}
+
+// The Call instruction represents a function call.
+//
+// The Call instruction yields the function result if there is exactly
+// one.  Otherwise it returns a tuple, the components of which are
+// accessed via Extract.
+//
+// Example printed form:
+//
+//	t2 = println(t0, t1)
+//	t4 = t3()
+func (b Builder) Call(fn Expr, args ...Expr) (ret Expr) {
+	if fn.kind == vkFuncPtr || fn.kind == vkFuncDecl {
+		return b.callFunction(fn, args, b.Prog.calleeCallConv(fn))
+	}
+	dbgInstrCall("Call", fn, args)
+	switch fn.kind {
+	case vkPyFuncRef:
+		return b.pyCall(fn, args)
+	case vkClosure:
+		data := b.Field(fn, 1)
+		code := b.Field(fn, 0)
+		return b.callClosure(code, data, code.raw.Type.(*types.Signature), args)
+	case vkIfaceMethod:
+		data := b.Field(fn, 1)
+		fn = b.Field(fn, 0)
+		sig := fn.raw.Type.(*types.Signature)
+		recv := types.NewParam(token.NoPos, nil, "$recv", types.Typ[types.UnsafePointer])
+		entrySig := FuncAddCtx(recv, sig)
+		ret.Type = b.Prog.retType(sig)
+		ret.impl = llvm.CreateCall(
+			b.impl,
+			b.Prog.toLLVMFunc(entrySig),
+			fn.impl,
+			llvmParamsEx(data, args, entrySig.Params(), b),
+		)
+		return ret
+	case vkBuiltin:
+		bi := fn.raw.Type.(*builtinTy)
+		return b.BuiltinCall(bi.name, args...)
+	default:
+		panic(fmt.Sprintf("unreachable: %d(%T), %v", fn.kind, fn.raw.Type, fn.RawType()))
+	}
+}
+
+func (b Builder) callFunction(fn Expr, args []Expr, cc llvm.CallConv) Expr {
+	var reflectCheck ReflectMethodCheck
+	if b.Pkg.Path() != "reflect" {
+		reflectCheck = b.checkReflect(fn, args)
+	} else {
+		reflectCheck = reflectMethodWrapperCheck(b.Func.Name(), fn.Name())
+	}
+	ret := b.emitFunctionCall(fn, args, cc)
+	if reflectCheck.Kind&ReflectMethodByName != 0 && reflectCheck.Name == "" {
+		b.MarkReflectValueMethodByNameCall(ret.impl, len(args)-1)
+	}
+	if ret.Type != b.Prog.Void() {
+		if b.Prog.isWasm32NativeCall(fn) && b.Prog.hasWasmABIPadding(ret.impl.Type()) {
+			b.Func.wasmABIResults = append(b.Func.wasmABIResults, ret.impl)
+		}
+		ret.impl = b.fitLLVMResult(ret.impl, ret.Type)
+	}
+	b.EmitReflectValueMethodCheckedLoad(ret, reflectCheck)
+	return ret
+}
+
+// emitFunctionCall leaves the LLVM call as the result so a native varargs
+// thunk can tail-forward it directly, without Go result conversions.
+func (b Builder) emitFunctionCall(fn Expr, args []Expr, cc llvm.CallConv) Expr {
+	dbgInstrCall("Call", fn, args)
+	sig, ll := b.Prog.callSignature(fn)
+	resultType := b.Prog.retType(sig)
+	params := llvmParams(0, args, sig.Params(), b)
+	physicalParams := ll.ParamTypes()
+	for i := range min(len(params), len(physicalParams)) {
+		params[i] = b.fitLLVMValue(params[i], args[i].Type, physicalParams[i])
+	}
+	call := llvm.CreateCall(b.impl, ll, fn.impl, params)
+	call.SetInstructionCallConv(cc)
+	llvmattr.ApplyAllocatorCall(b.Prog.ctx, call, fn.impl, params, b.Prog.GCRootsEnabled())
+	b.setNativeIntegerCallAttrs(call, fn, sig, params)
+	return Expr{call, resultType}
+}
+
+// A declaration carries its physical prototype; a native function pointer
+// carries an opaque LLVM pointer and gets its prototype from the C signature.
+func (p Program) callSignature(fn Expr) (*types.Signature, llvm.Type) {
+	sig := fn.raw.Type.Underlying().(*types.Signature)
+	if fn.kind == vkFuncPtr {
+		return sig, p.funcDeclType(sig, CDecl).ll
+	}
+	return sig, fn.ll
+}
+
+func (b Builder) callClosure(fn, data Expr, sig *types.Signature, args []Expr) (ret Expr) {
+	prog := b.Prog
+	ret.Type = prog.retType(sig)
+	if (prog.target.GOARCH == "wasm" && !IsRuntimeSupportPackage(b.Pkg.Path())) ||
+		sig.Results().Len() == 1 && prog.SizeOf(ret.Type) == 0 {
+		// A null table entry traps outside Go's recover path on WebAssembly.
+		b.AssertNilDeref(fn)
+	}
+
+	// Convert arguments once before splitting the dynamic call edge. Conversion
+	// may itself emit code and must not be duplicated into both successors.
+	params := llvmParams(0, args, sig.Params(), b)
+	envParams := make([]llvm.Value, len(params)+1)
+	envParams[0] = data.impl
+	copy(envParams[1:], params)
+
+	noEnvType := prog.toLLVMFunc(sig)
+	envParam := types.NewParam(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
+	envSig := FuncAddCtx(envParam, sig)
+	envType := prog.toLLVMFunc(envSig)
+
+	// A known code pointer uses the entry metadata directly. This preserves the
+	// exact prototype and avoids the identity barrier needed by dynamic native
+	// funcval calls.
+	if direct := fn.impl.IsAFunction(); !direct.IsNil() {
+		entry := b.Pkg.FuncOf(direct.Name())
+		if entry == nil || !entry.NeedsEnv() {
+			ret.impl = llvm.CreateCall(b.impl, noEnvType, fn.impl, params)
+			return
+		}
+		ret.impl = llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+		prog.markClosureEnvCall(ret.impl, 0)
+		return
+	}
+
+	// On native hidden-context ABIs, the environment occupies a dedicated
+	// register even when it is nil. Ordinary Go and C entries simply ignore
+	// that register, so every dynamic funcval call can use the same hot path.
+	// Explicit-context targets cannot do this: their environment is an
+	// ordinary leading ABI argument and pure C entries do not accept it.
+	if prog.closureEnvABI() != closureEnvExplicit {
+		// The env and no-env LLVM prototypes intentionally differ even though the
+		// native machine ABI reserves a register for the hidden environment. Hide
+		// the dynamic code pointer's identity before the call so optimization cannot
+		// devirtualize a no-env target under the env-bearing IR prototype.
+		fn = b.hideClosureCodeIdentity(fn)
+		ret.impl = llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+		prog.markClosureEnvCall(ret.impl, 0)
+		return
+	}
+
+	logicalBlock := b.blk
+	entryBlock := b.impl.GetInsertBlock()
+	blks := b.Func.MakeBlocks(3)
+	hasEnv := Expr{
+		llvm.CreateICmp(b.impl, llvm.IntNE, data.impl, prog.Nil(prog.VoidPtr()).impl),
+		prog.Bool(),
+	}
+	b.If(hasEnv, blks[0], blks[1])
+
+	b.SetBlockEx(blks[0], AtEnd, false)
+	envCall := llvm.CreateCall(b.impl, envType, fn.impl, envParams)
+	prog.markClosureEnvCall(envCall, 0)
+	b.Jump(blks[2])
+
+	b.SetBlockEx(blks[1], AtEnd, false)
+	noEnvCall := llvm.CreateCall(b.impl, noEnvType, fn.impl, params)
+	b.Jump(blks[2])
+
+	b.SetBlockEx(blks[2], AtEnd, false)
+	if sig.Results().Len() != 0 {
+		phi := b.Phi(ret.Type)
+		phi.impl.AddIncoming(
+			[]llvm.Value{envCall, noEnvCall},
+			[]llvm.BasicBlock{blks[0].last, blks[1].last},
+		)
+		ret.impl = phi.impl
+	}
+
+	// The extra LLVM blocks are an implementation detail inside the current Go
+	// SSA block. Only explicit-context targets retain this split; native hidden
+	// context has the uniform dynamic call edge above.
+	// A closure call may itself be emitted while another lowering helper has
+	// temporarily selected a synthetic LLVM predecessor with SetBlockEx(...,
+	// false). Only replace the logical Go block's tail when this split started
+	// at that tail; otherwise the enclosing helper owns the eventual merge.
+	if logicalBlock.last == entryBlock {
+		logicalBlock.last = blks[2].last
+	}
+	return
+}
+
+const (
+	ReflectArrayOf = 1 << iota
+	ReflectChanOf
+	ReflectFuncOf
+	ReflectMapOf
+	ReflectPointerTo
+	ReflectSliceOf
+	ReflectStructOf
+	ReflectMethodByIndex
+	ReflectMethodByName
+	ReflectMethodDynamic
+	ReflectTypeMethodByIndex
+	ReflectTypeMethodByName
+	ReflectTypeMethodDynamic
+
+	reflectTypeMethodMask = ReflectTypeMethodByIndex | ReflectTypeMethodByName | ReflectTypeMethodDynamic
+	ReflectMethodMask     = ReflectMethodByIndex | ReflectMethodByName | ReflectMethodDynamic | reflectTypeMethodMask
+)
+
+// Interface dispatch reaches the pointer wrapper instead of a direct Value
+// lookup. Put its capability check in that wrapper, so unreachable wrappers
+// do not retain methods and ordinary user-defined lookups gain no assumptions
+// about the reflect.Value they return. This does not request global ABI init.
+func reflectMethodWrapperCheck(caller, callee string) ReflectMethodCheck {
+	switch {
+	case caller == "reflect.(*Value).Method" && callee == "reflect.Value.Method":
+		return ReflectMethodCheck{Kind: ReflectMethodDynamic}
+	case caller == "reflect.(*Value).MethodByName" && callee == "reflect.Value.MethodByName":
+		return ReflectMethodCheck{Kind: ReflectMethodDynamic | ReflectMethodByName}
+	default:
+		return ReflectMethodCheck{}
+	}
+}
+
+func (b Builder) checkReflect(fn Expr, args []Expr) (check ReflectMethodCheck) {
+	pkg := b.Pkg
+	reflectKind := 0
+	switch fn.Name() {
+	case "reflect.ArrayOf":
+		reflectKind = ReflectArrayOf
+	case "reflect.ChanOf":
+		reflectKind = ReflectChanOf
+	case "reflect.FuncOf":
+		reflectKind = ReflectFuncOf
+	case "reflect.MapOf":
+		reflectKind = ReflectMapOf
+	case "reflect.New", "reflect.NewAt", "reflect.PointerTo", "reflect.PtrTo", "reflect.Value.Addr":
+		reflectKind = ReflectPointerTo
+	case "reflect.SliceOf", "reflect.SliceAt", "reflect.Value.Slice":
+		reflectKind = ReflectSliceOf
+	case "reflect.StructOf":
+		reflectKind = ReflectStructOf
+	case "reflect.Value.Method":
+		if len(args) == 2 {
+			if v, ok := extractConstInt(args[1].impl); ok {
+				pkg.RecordReflectMethodByIndex(b.Func.Name(), v)
+				reflectKind = ReflectMethodByIndex
+				break
+			}
+			reflectKind = ReflectMethodDynamic
+			pkg.MarkReflectMethod(b.Func.Name())
+		}
+	case "reflect.Value.MethodByName":
+		if len(args) == 2 {
+			if v, ok := extractConstString(args[1].impl); ok {
+				pkg.RecordReflectMethodByName(b.Func.Name(), v)
+				reflectKind = ReflectMethodByName
+				check.Name = v
+				break
+			}
+			reflectKind = ReflectMethodDynamic | ReflectMethodByName
+			pkg.MarkReflectMethod(b.Func.Name())
+		}
+	}
+	pkg.NeedAbiInit |= reflectKind
+	check.Kind = reflectKind
+	return
+}
+
+func (p Package) RecordReflectMethodByIndex(funcName string, index int) {
+	if p.MethodByIndex == nil {
+		p.MethodByIndex = make(map[int]none)
+	}
+	p.MethodByIndex[index] = none{}
+	p.MarkReflectMethod(funcName)
+}
+
+func (p Package) RecordReflectMethodByName(funcName, name string) {
+	if p.MethodByName == nil {
+		p.MethodByName = make(map[string]none)
+	}
+	p.MethodByName[name] = none{}
+	if mb := p.metaBuilder; mb != nil {
+		mb.AddNamedMethodUse(mb.Sym(funcName), name)
+	}
+}
+
+func (p Package) MarkReflectMethod(funcName string) {
+	if mb := p.metaBuilder; mb != nil {
+		mb.MarkReflect(mb.Sym(funcName))
+	}
+}
+
+func extractConstInt(v llvm.Value) (r int, ok bool) {
+	if rv := v.IsAConstantInt(); !rv.IsNil() {
+		return int(rv.SExtValue()), true
+	}
+	return
+}
+
+func extractConstString(v llvm.Value) (str string, ok bool) {
+	if st := v.IsAConstantStruct(); !st.IsNil() {
+		data := st.Operand(0)
+		for {
+			if global := data.IsAGlobalVariable(); !global.IsNil() {
+				data = global
+				break
+			}
+			if data.OperandsCount() == 0 ||
+				(data.IsAConstantStruct().IsNil() && data.IsAConstantExpr().IsNil()) {
+				return "", false
+			}
+			// Wide Memory32 Go pointer storage and constant pointer casts both
+			// retain the actual string global as their first operand.
+			data = data.Operand(0)
+		}
+		if init := data.Initializer(); !init.IsNil() {
+			return init.ConstGetAsString(), true
+		}
+	}
+	return
+}
+
+func logCall(da string, fn Expr, args []Expr) {
+	if fn == Nil || fn.kind == vkBuiltin {
+		return
+	}
+	var b bytes.Buffer
+	name := fn.impl.Name()
+	if name == "" {
+		name = "closure"
+	}
+	fmt.Fprint(&b, da, " ", fn.kind, " ", fn.raw.Type, " ", name)
+	sep := ": "
+	for _, arg := range args {
+		fmt.Fprint(&b, sep, arg.impl)
+		sep = ", "
+	}
+	log.Println(b.String())
+}
+
+func dbgInstrCall(da string, fn Expr, args []Expr) {
+	if debugInstr {
+		logCall(da, fn, args)
+	}
+}
+
+type DoAction int
+
+const (
+	Call DoAction = iota
+	Go
+	DeferAlways // defer statement executes always
+	DeferInCond // defer statement executes in a conditional block
+	DeferInLoop // defer statement executes in a loop block
+)
+
+// Do call a function with an action.
+func (b Builder) Do(da DoAction, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) (ret Expr) {
+	switch da {
+	case Call:
+		return buildCall(b, fn, args...)
+	case Go:
+		b.Go(fn, buildCall, args...)
+	default:
+		b.Defer(da, fn, buildCall, args...)
+	}
+	return
+}
+
+// compareSelect performs a series of comparisons and selections based on the
+// given comparison op. It's used to implement operations like min and max.
+//
+// The function iterates through the provided expressions, comparing each with
+// the current result using the specified comparison op. It selects the
+// appropriate value based on the comparison.
+func (b Builder) compareSelect(op token.Token, x Expr, y ...Expr) Expr {
+	ret := x
+	if x.kind == vkFloat {
+		for _, v := range y {
+			ret.impl = b.floatMinMax(op, ret.impl, v.impl)
+		}
+		return ret
+	}
+	for _, v := range y {
+		cond := b.BinOp(op, ret, v)
+		sel := llvm.CreateSelect(b.impl, cond.impl, ret.impl, v.impl)
+		ret = Expr{sel, ret.Type}
+	}
+	return ret
+}
+
+// SelectValue chooses between two values based on the condition.
+func (b Builder) SelectValue(cond Expr, a Expr, bExpr Expr) Expr {
+	sel := llvm.CreateSelect(b.impl, cond.impl, a.impl, bExpr.impl)
+	return Expr{sel, a.Type}
+}
+
+// The SliceToArrayPointer instruction yields the conversion of slice X to
+// array pointer.
+//
+// Pos() returns the ast.CallExpr.Lparen, if the instruction arose
+// from an explicit conversion in the source.
+//
+// Conversion may to be to or from a type parameter. All types in
+// the type set of X.Type() must be a slice types that can be converted to
+// all types in the type set of Type() which must all be pointer to array
+// types.
+//
+// This operation can fail dynamically if the length of the slice is less
+// than the length of the array.
+//
+// Example printed form:
+//
+//	t1 = slice to array pointer *[4]byte <- []byte (t0)
+func (b Builder) SliceToArrayPointer(x Expr, typ Type) (ret Expr) {
+	ret.Type = typ
+	if !b.Prog.disableBoundsChecks {
+		max := b.Prog.IntVal(uint64(typ.RawType().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array).Len()), b.Prog.Int())
+		failed := Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, b.SliceLen(x).impl, max.impl), b.Prog.Bool()}
+		b.IfThen(failed, func() {
+			b.InlineCall(b.Pkg.rtFunc("PanicSliceConvert"), max, b.SliceLen(x))
+		})
+	}
+	ret.impl = b.SliceData(x).impl
+	return
+}
+
+// A Builtin represents a specific use of a built-in function, e.g. len.
+//
+// Builtins are immutable values.  Builtins do not have addresses.
+//
+// `fn` indicates the function: one of the built-in functions from the
+// Go spec (excluding "make" and "new").
+func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
+	switch fn {
+	case "len":
+		if len(args) == 1 {
+			arg := args[0]
+			switch arg.kind {
+			case vkSlice:
+				return b.SliceLen(arg)
+			case vkString:
+				return b.StringLen(arg)
+			case vkChan:
+				return b.InlineCall(b.Pkg.rtFunc("ChanLen"), arg)
+			case vkMap:
+				return b.InlineCall(b.Pkg.rtFunc("MapLen"), arg)
+			}
+		}
+	case "cap":
+		if len(args) == 1 {
+			arg := args[0]
+			switch arg.kind {
+			case vkSlice:
+				return b.SliceCap(arg)
+			case vkChan:
+				return b.InlineCall(b.Pkg.rtFunc("ChanCap"), arg)
+			}
+		}
+	case "append":
+		if len(args) == 2 && args[0].kind == vkSlice {
+			dst, src := args[0], args[1]
+			switch src.kind {
+			case vkSlice:
+				return b.appendSlice(dst, b.SliceData(src), b.SliceLen(src), b.Prog.SizeOf(b.Prog.Elem(src.Type)))
+			case vkString:
+				return b.appendSlice(dst, b.StringData(src), b.StringLen(src), b.Prog.SizeOf(b.Prog.Byte()))
+			default:
+				return b.appendSlice(dst, src, b.Prog.Val(1), b.Prog.SizeOf(src.Type))
+			}
+		}
+	case "copy":
+		if len(args) == 2 && args[0].kind == vkSlice && (args[1].kind == vkSlice || args[1].kind == vkString) {
+			return b.copySlice(args[0], args[1])
+		}
+	case "close":
+		if len(args) == 1 {
+			arg := args[0]
+			switch arg.kind {
+			case vkChan:
+				return b.InlineCall(b.Pkg.rtFunc("ChanClose"), arg)
+			}
+		}
+	case "recover":
+		return b.Recover()
+	case "ssa:deferstack":
+		return b.DeferStack()
+	case "print", "println":
+		return b.PrintEx(fn == "println", args...)
+	case "complex":
+		return b.Complex(args[0], args[1])
+	case "real":
+		return b.getField(args[0], 0)
+	case "imag":
+		return b.getField(args[0], 1)
+	case "String": // unsafe.String
+		return b.checkedUnsafeString(args[0], args[1])
+	case "Slice": // unsafe.Slice
+		return b.checkedUnsafeSlice(args[0], args[1])
+	case "StringData":
+		return b.StringData(args[0]) // TODO(xsw): check return type
+	case "SliceData":
+		return b.SliceData(args[0]) // TODO(xsw): check return type
+	case "delete":
+		if len(args) == 2 && args[0].kind == vkMap {
+			m := args[0]
+			t := b.abiType(m.raw.Type)
+			kind := mapKeyFastKind(b.Prog, m.raw.Type)
+			arg := b.mapKeyAccessArg(m, args[1], kind)
+			b.Call(b.Pkg.rtFunc(RuntimeSymbol(kind.deleteName(), "MapDelete", "MapDeleteFast32", "MapDeleteFast64", "MapDeleteFastStr")), t, m, arg)
+			return
+		}
+	case "clear":
+		if len(args) == 1 {
+			arg := args[0]
+			switch arg.kind {
+			case vkMap:
+				m := arg
+				t := b.abiType(m.raw.Type)
+				b.Call(b.Pkg.rtFunc("MapClear"), t, m)
+				return
+			case vkSlice:
+				s := arg
+				t := b.abiType(s.raw.Type)
+				b.Call(b.Pkg.rtFunc("SliceClear"), t, s)
+				return
+			}
+		}
+	case "min":
+		if len(args) > 0 {
+			return b.compareSelect(token.LSS, args[0], args[1:]...)
+		}
+	case "max":
+		if len(args) > 0 {
+			return b.compareSelect(token.GTR, args[0], args[1:]...)
+		}
+	case "Add":
+		return b.Advance(args[0], args[1])
+	case "Sizeof":
+		// instance of generic function
+		return b.Prog.IntVal(b.Prog.SizeOf(args[0].Type), b.Prog.Uintptr())
+	case "Alignof":
+		// instance of generic function
+		return b.Prog.Val(int(b.Prog.AlignOf(args[0].Type)))
+	case "Offsetof":
+		// instance of generic function
+		if load := args[0].impl.IsALoadInst(); !load.IsNil() {
+			if gep := load.Operand(0).IsAGetElementPtrInst(); !gep.IsNil() {
+				typ := gep.GEPSourceElementType()
+				offset := gep.Operand(2).IsAConstantInt()
+				if typ.TypeKind() == llvm.StructTypeKind && !offset.IsNil() {
+					return b.Prog.Val(int(b.Prog.td.ElementOffset(typ, int(offset.SExtValue()))))
+				}
+			}
+		}
+		panic("invalid argument for unsafe.Offsetof: must be a selector expression")
+	case "panic":
+		b.Panic(args[0])
+		return
+	}
+
+	panic("todo: " + fn)
+}
+
+func (p Program) tyPrintf() *types.Signature {
+	if p.printfTy == nil {
+		pchar := types.NewPointer(types.Typ[types.Int8])
+		params := types.NewTuple(types.NewVar(0, nil, "format", pchar), VArg())
+		rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32]))
+		p.printfTy = types.NewSignatureType(nil, nil, nil, params, rets, true)
+	}
+	return p.printfTy
+}
+
+func (b Builder) Printf(fmt string, args ...Expr) Expr {
+	fn := b.Pkg.cFunc("printf", b.Prog.tyPrintf())
+	return b.Call(fn, append([]Expr{b.CStr(fmt)}, args...)...)
+}
+
+// Println prints the arguments to stderr, followed by a newline.
+func (b Builder) Println(args ...Expr) (ret Expr) {
+	return b.PrintEx(true, args...)
+}
+
+// PrintEx prints the arguments to stderr.
+func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
+	prog := b.Prog
+	ret.Type = prog.Void()
+	for i, arg := range args {
+		if ln && i > 0 {
+			b.InlineCall(b.Pkg.rtFunc("PrintByte"), prog.IntVal(' ', prog.Byte()))
+		}
+		var fn string
+		typ := arg.Type
+		switch arg.kind {
+		case vkBool:
+			fn = "PrintBool"
+		case vkSigned:
+			fn = "PrintInt"
+			typ = prog.Int64()
+		case vkUnsigned:
+			fn = "PrintUint"
+			typ = prog.Uint64()
+		case vkFloat:
+			fn = "PrintFloat"
+			typ = prog.Float64()
+		case vkSlice:
+			fn = "PrintSlice"
+		case vkClosure:
+			arg = b.Field(arg, 0)
+			fallthrough
+		case vkPtr, vkFuncPtr, vkFuncDecl:
+			fn = "PrintPointer"
+			typ = prog.VoidPtr()
+		case vkString:
+			if prog.target.GOARCH == "wasm" {
+				length := b.StringLen(arg)
+				if value := length.impl.IsAConstantInt(); !value.IsNil() && value.ZExtValue() <= math.MaxUint32 {
+					b.InlineCall(b.Pkg.rtFunc("PrintString32"), b.Convert(prog.VoidPtr(), b.StringData(arg)),
+						prog.IntVal(value.ZExtValue(), prog.Uint32()))
+					continue
+				}
+			}
+			fn = "PrintString"
+		case vkEface:
+			fn = "PrintEface"
+		case vkIface:
+			fn = "PrintIface"
+		case vkComplex:
+			fn = "PrintComplex"
+			typ = prog.Complex128()
+		case vkChan:
+			fn = "PrintPointer"
+			typ = prog.VoidPtr()
+		case vkMap:
+			fn = "PrintPointer"
+			typ = prog.VoidPtr()
+		default:
+			panic(fmt.Errorf("illegal types for operand: print %v", arg.RawType()))
+		}
+		if typ != arg.Type {
+			arg = b.Convert(typ, arg)
+		}
+		b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn,
+			"PrintBool", "PrintInt", "PrintUint", "PrintFloat", "PrintSlice", "PrintPointer",
+			"PrintString", "PrintEface", "PrintIface", "PrintComplex",
+		)), arg)
+	}
+	if ln {
+		b.InlineCall(b.Pkg.rtFunc("PrintByte"), prog.IntVal('\n', prog.Byte()))
+	}
+	return
+}
+
+// -----------------------------------------------------------------------------
+
+func checkExpr(v Expr, t types.Type, b Builder) Expr {
+	if st, ok := t.Underlying().(*types.Struct); ok && IsClosure(st) {
+		tclosure := b.Prog.rawType(t)
+		if b.needsStdcallFuncval(v) {
+			return b.stdcallFuncval(tclosure, v)
+		}
+		if b.needsNativeFuncval(v) {
+			return b.nativeFuncval(tclosure, v, llvm.CCallConv, "c")
+		}
+		if v.kind == vkClosure {
+			return v
+		}
+		prog := b.Prog
+		fnType := prog.Field(tclosure, 0)
+		if v.Type != fnType {
+			// This is a Go code slot, rather than a native callback boundary.
+			// Native entries requiring adaptation were handled above.
+			if v.Type.kind == vkFuncDecl {
+				v = Expr{v.impl, fnType}
+			} else if v.Type.kind == vkFuncPtr {
+				v = b.ChangeType(fnType, v)
+			} else {
+				v = b.Convert(fnType, v)
+			}
+		}
+		data := prog.Nil(prog.VoidPtr())
+		return b.aggregateValue(tclosure, v.impl, data.impl)
+	}
+	if v.kind == vkClosure {
+		if _, ok := t.Underlying().(*types.Signature); ok {
+			// Assignment destinations are already lowered raw types. A raw
+			// signature is a native pointer, not a two-word Go function value.
+			if dst := b.Prog.rawType(t); dst.kind == vkFuncPtr {
+				return b.ChangeType(dst, v)
+			}
+		}
+	}
+	if v.kind == vkFuncDecl {
+		if _, ok := t.Underlying().(*types.Signature); ok {
+			// Raw signatures are native pointer destinations. Alias identity
+			// can otherwise bypass ChangeType via the Identical check below.
+			return b.ChangeType(b.Prog.rawType(t), v)
+		}
+	}
+	if types.Identical(v.raw.Type, t) || !types.AssignableTo(v.raw.Type, t) {
+		return v
+	}
+	if b.Prog.isStdcallType(t) {
+		return b.stdcallCallback(t, v)
+	}
+	dst := b.Prog.Type(t, GoDecl)
+	// Range and assignment lowering can produce a value whose source type is
+	// assignable but not identical to the destination, so preserve the value
+	// while retagging it with the destination runtime type.
+	if _, ok := t.Underlying().(*types.Interface); ok {
+		if _, srcIsInterface := v.raw.Type.Underlying().(*types.Interface); srcIsInterface {
+			return b.ChangeInterface(dst, v)
+		}
+		return b.MakeInterface(dst, v)
+	}
+	return b.ChangeType(dst, v)
+}
+
+func needsNegativeCheck(x Expr) bool {
+	if x.kind == vkSigned {
+		if rv := x.impl.IsAConstantInt(); !rv.IsNil() && rv.SExtValue() >= 0 {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func llvmParamsEx(data Expr, vals []Expr, params *types.Tuple, b Builder) (ret []llvm.Value) {
+	if data.IsNil() {
+		return llvmParams(0, vals, params, b)
+	}
+	ret = llvmParams(1, vals, params, b)
+	ret[0] = data.impl
+	return
+}
+
+func llvmParams(base int, vals []Expr, params *types.Tuple, b Builder) (ret []llvm.Value) {
+	n := params.Len()
+	if n > 0 {
+		ret = make([]llvm.Value, len(vals)+base)
+		for idx, v := range vals {
+			i := base + idx
+			if i < n {
+				v = checkExpr(v, params.At(i).Type(), b)
+			}
+			ret[i] = v.impl
+		}
+	}
+	return
+}
+
+func llvmFields(vals []Expr, t *types.Struct, b Builder) (ret []llvm.Value) {
+	n := t.NumFields()
+	if n > 0 {
+		ret = make([]llvm.Value, len(vals))
+		for i, v := range vals {
+			if i < n {
+				v = checkExpr(v, t.Field(i).Type(), b)
+			}
+			ret[i] = v.impl
+		}
+	}
+	return
+}
+
+// -----------------------------------------------------------------------------

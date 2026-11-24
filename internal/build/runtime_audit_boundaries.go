@@ -114,11 +114,11 @@ C.clock_gettime_nsec_np`,
 		``,
 	},
 	{"stdcall.GetSystemDirectoryA", "Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64", ""},
-	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "ssa/eh.go"},
+	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "internal/llvmgen/eh.go"},
 	{
 		`C.setjmp C.longjmp`,
 		"compiler-selected Windows CRT/context entry; these logical names are not direct CRT calls",
-		`ssa/eh.go runtime/internal/runtime/_wrap/setjmp_windows_amd64.c
+		`internal/llvmgen/eh.go runtime/internal/runtime/_wrap/setjmp_windows_amd64.c
 runtime/internal/runtime/_wrap/setjmp_windows_arm64.c`,
 	},
 	{"C.__llgo_wasm_main", "compiler-generated Wasm scheduler entry", "internal/build/main_module.go"},

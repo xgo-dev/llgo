@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/ssa"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
