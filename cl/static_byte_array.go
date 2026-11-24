@@ -153,6 +153,18 @@ func SkipNamesRetainingInit(altFiles []*ast.File) map[string]bool {
 }
 
 func patchSkipNames(files []*ast.File) (map[string]bool, bool) {
+	skips, skipall := collectPatchSkips(files)
+	if len(skips) == 0 && !skipall {
+		return nil, false
+	}
+	names := make(map[string]bool, len(skips))
+	for name := range skips {
+		names[name] = true
+	}
+	return names, skipall
+}
+
+func collectPatchSkips(files []*ast.File) (map[string]none, bool) {
 	ctx := &context{skips: make(map[string]none)}
 	for _, file := range files {
 		if file == nil {
@@ -175,14 +187,7 @@ func patchSkipNames(files []*ast.File) (map[string]bool, bool) {
 			}
 		}
 	}
-	if len(ctx.skips) == 0 && !ctx.skipall {
-		return nil, false
-	}
-	names := make(map[string]bool, len(ctx.skips))
-	for name := range ctx.skips {
-		names[name] = true
-	}
-	return names, ctx.skipall
+	return ctx.skips, ctx.skipall
 }
 
 func dropStaticByteArrayInit(info *types.Info, v *types.Var) {

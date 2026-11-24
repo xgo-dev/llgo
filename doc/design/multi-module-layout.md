@@ -1,0 +1,77 @@
+# Multi-Module Layout Cutover Blueprint (Proposal #3215)
+
+This document records the concrete cutover plan for separating LLGo's pure-Go
+library surface from the LLVM/CGo compiler CLI so third-party Go consumers can
+import LLGo packages without pulling in LLVM, CGo, `replace` directives, or the
+bleeding-edge Go toolchain version required by `golang.org/x/tools/go/ssa`.
+
+## Target Module Graph
+
+```text
+github.com/xgo-dev/llgo              (root go.mod — lower Go baseline, e.g. go 1.24)
+├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
+├── target/                          Pure-Go target triple, arch, and config model
+├── types/                           Pure-Go LLGo type model (Closure, NativePtr, HostLayout, SIMD)
+├── ir/                              Pure-Go mid-level SSA IR, verifier, and package summary codec
+└── runtime/go.mod                   (existing separate module, unchanged)
+
+github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, e.g. go 1.27+)
+├── llgo/                            CLI entrypoint (`llgo`)
+├── llgen/                           IR generation tool
+├── internal/                        CLI subcommands and compiler-internal packages
+└── compiler/ (or cmd/internal/...)  x/tools + LLVM lowering (`cl`, `ssa`, `internal/build`, ...)
+
+go.work                              Coordinates `.`, `./cmd`, and `./runtime` in local dev & CI
+```
+
+### Module Invariants
+
+1. **Root `go.mod` (`github.com/xgo-dev/llgo`)**:
+   - Declares a conservative Go version (e.g., `go 1.24`) suitable for broad
+     library adoption.
+   - Contains **zero** `github.com/xgo-dev/llvm`, **zero** `golang.org/x/tools`,
+     **zero** CGo dependencies, and **zero** `replace` directives.
+   - Verified in CI by:
+     ```bash
+     GOWORK=off CGO_ENABLED=0 go test ./...
+     GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ir | grep -E 'llvm|x/tools' # must be empty
+     ```
+2. **Compiler `cmd/go.mod` (`github.com/xgo-dev/llgo/cmd`)**:
+   - Declares the latest Go toolchain version matching `.go-version` so
+     `golang.org/x/tools/go/ssa` parses the latest Go language syntax.
+   - Holds `github.com/xgo-dev/llvm`, `golang.org/x/tools` (and any temporary
+     `replace` directive while awaiting upstream `x/tools` fixes), and requires
+     `github.com/xgo-dev/llgo` and `github.com/xgo-dev/llgo/runtime`.
+3. **Workspace (`go.work`)**:
+   - Lists `use ( . ./cmd ./runtime )` so contributors run tests seamlessly
+     across all three modules without manual `replace` edits.
+
+## Atomic Cutover Checklist
+
+Perform the physical package relocation in a single dedicated PR once the
+prerequisite Phase 0–3 PRs (#3216–#3221) have merged to `main`, avoiding wide
+cross-PR merge conflicts:
+
+1. **Relocate LLVM/`x/tools`-dependent compiler packages** (`cl/`, `ssa/`,
+   `internal/`, `xtool/`, `chore/`) into the compiler module (`cmd/` or a
+   sibling `compiler/` module if an embeddable compiler API is desired alongside
+   `cmd/`). Update internal import paths accordingly.
+2. **Create `cmd/go.mod` and `go.work`**:
+   - Move compiler dependencies and `replace` directives from root `go.mod` into
+     `cmd/go.mod`.
+   - Lower root `go.mod` `go` directive and prune root `go.sum` with
+     `GOWORK=off go mod tidy`.
+3. **Update release, install, and CI touchpoints**:
+   - `.goreleaser.yaml`: set `dir: cmd` and `main: ./llgo` (updating `-X`
+     ldflags paths to match relocated `env` and `xtool/env/llvm` package paths).
+   - `install.sh` / `install.ps1`: update source-install commands to build from
+     `./cmd` (or `go install github.com/xgo-dev/llgo/cmd/llgo@<version>`).
+   - `.github/workflows/*.yml`: run `GOWORK=off CGO_ENABLED=0 go test ./...` at
+     the repo root to guard pure-Go library hygiene, and run compiler/LLVM test
+     matrices with `go.work` enabled (or `cd cmd && go test ./...`).
+   - `.github/scripts/test_pixi_env.py`: validate `dev/pixi.toml` Go version
+     range against `cmd/go.mod` and `.go-version`.
+4. **Verify end-to-end**:
+   - `GOWORK=off CGO_ENABLED=0 go test ./directive/... ./target/... ./types/... ./ir/...`
+   - `cd cmd && go build ./llgo && go test ./...`
+   - Full CI matrix across Linux, macOS, and Windows (MSVC/MinGW).

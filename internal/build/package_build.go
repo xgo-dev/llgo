@@ -119,11 +119,21 @@ func preparePackageBuilds(ctx *context, tasks []*packageBuildTask, verbose bool)
 			return err
 		}
 		task.isolated = !coordinator
-		_, patched := ctx.patches[task.pkg.PkgPath]
-		// typepatch.Merge still updates the shared patch.Types scope while a
-		// package is lowered. Keep patched packages isolated from the coordinator
-		// Program, but do not execute two such merges concurrently.
-		task.parallel = task.isolated && !patched
+		patch, patched := ctx.patches[task.pkg.PkgPath]
+		if patched && !patch.Prepared && task.pkg.SSA != nil && patch.Alt != nil && patch.Types != nil {
+			syntax := task.pkg.Syntax
+			if altPkg := task.pkg.AltPkg; altPkg != nil {
+				syntax = append(slices.Clone(syntax), altPkg.Syntax...)
+			}
+			patch = cl.PreparePatch(patch, task.pkg.SSA, syntax)
+			ctx.patches[task.pkg.PkgPath] = patch
+		}
+		// Once PreparePatch has merged patch.Types and rebound SSA package
+		// pointers serially above, patched type scopes are read-only and safe
+		// for concurrent isolated backend lowering. Keep unprepared patches or
+		// secondary test-variant packages sharing the same PkgPath serial.
+		preparedForTask := patch.Prepared && task.pkg.SSA != nil && task.pkg.SSA.Pkg == patch.Types
+		task.parallel = task.isolated && (!patched || preparedForTask)
 	}
 	return nil
 }
