@@ -17,93 +17,69 @@
 package typepatch
 
 import (
-	"go/token"
 	"go/types"
-	"unsafe"
+	"runtime"
+	"sync"
+	"weak"
 )
 
-type typesPackage struct {
-	path      string
-	name      string
-	scope     *types.Scope
-	imports   []*types.Package
-	complete  bool
-	fake      bool   // scope lookup errors are silently dropped if package is fake (internal use only)
-	cgo       bool   // uses of this package will be rewritten into uses of declarations from _cgo_gotypes.go
-	goVersion string // minimum Go version required for package (by Config.GoVersion, typically from go.mod)
+var patchedPkgs sync.Map // map[weak.Pointer[types.Package]]struct{}
+
+func markPatched(pkg *types.Package) {
+	if pkg == nil {
+		return
+	}
+	wp := weak.Make(pkg)
+	if _, loaded := patchedPkgs.LoadOrStore(wp, struct{}{}); !loaded {
+		runtime.AddCleanup(pkg, func(key weak.Pointer[types.Package]) {
+			patchedPkgs.Delete(key)
+		}, wp)
+	}
 }
 
-type typesScope struct {
-	parent   *types.Scope
-	children []*types.Scope
-	number   int
-	elems    map[string]types.Object // TODO(xsw): ensure offset of elems
-	pos, end token.Pos
-	comment  string
-	isFunc   bool
-}
-
-const (
-	tagPatched = 0x17
-)
-
+// IsPatched reports whether pkg has been merged into a replacement package via Merge.
 func IsPatched(pkg *types.Package) bool {
 	if pkg == nil {
 		return false
 	}
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	return *(*uint8)(unsafe.Pointer(&p.complete)) == tagPatched
+	_, ok := patchedPkgs.Load(weak.Make(pkg))
+	return ok
 }
 
-func setPatched(pkg *types.Package) {
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	*(*uint8)(unsafe.Pointer(&p.complete)) = tagPatched
-}
-
-func setScope(pkg *types.Package, scope *types.Scope) {
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	p.scope = scope
-}
-
-func getElems(scope *types.Scope) map[string]types.Object {
-	s := (*typesScope)(unsafe.Pointer(scope))
-	return s.elems
-}
-
-func setElems(scope *types.Scope, elems map[string]types.Object) {
-	s := (*typesScope)(unsafe.Pointer(scope))
-	s.elems = elems
-}
-
+// Clone returns a shallow package copy with an independent package scope
+// containing the same declarations as alt. Existing objects keep their original
+// Parent scope.
 func Clone(alt *types.Package) *types.Package {
-	ret := *alt
-	return &ret
+	if alt == nil {
+		return nil
+	}
+	ret := types.NewPackage(alt.Path(), alt.Name())
+	ret.SetImports(alt.Imports())
+	dst := ret.Scope()
+	src := alt.Scope()
+	for _, name := range src.Names() {
+		dst.Insert(src.Lookup(name))
+	}
+	if alt.Complete() {
+		ret.MarkComplete()
+	}
+	return ret
 }
 
+// Merge marks pkg as patched and copies non-skipped, non-conflicting objects
+// from pkg's scope into alt's scope without altering each object's Parent.
 func Merge(alt, pkg *types.Package, skips map[string]struct{}, skipall bool) {
-	setPatched(pkg)
-	if skipall {
+	markPatched(pkg)
+	if skipall || alt == nil || pkg == nil {
 		return
 	}
-
-	scope := *alt.Scope()
-	old := getElems(&scope)
-	elems := make(map[string]types.Object, len(old))
-
-	for name, o := range old {
-		elems[name] = o
-	}
-
-	setElems(&scope, elems)
-	setScope(alt, &scope)
-
-	for name, o := range getElems(pkg.Scope()) {
-		if _, ok := elems[name]; ok {
-			continue
-		}
+	dst := alt.Scope()
+	src := pkg.Scope()
+	for _, name := range src.Names() {
 		if _, ok := skips[name]; ok {
 			continue
 		}
-		elems[name] = o
+		// Scope.Insert preserves existing alt declarations and keeps obj.Parent intact.
+		dst.Insert(src.Lookup(name))
 	}
 }

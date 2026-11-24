@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"go/types"
 
-	"github.com/xgo-dev/llgo/cl/ssawrap"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -72,10 +71,14 @@ func (p *context) callLLVMIntrinsic(b llssa.Builder, act llssa.DoAction, fn *ssa
 	}
 	ret, err := b.CallLLVMIntrinsic(d, p.compileValues(b, call.Args, kind)...)
 	if err != nil {
-		if p.goFn != nil && p.goFn.Synthetic == ssawrap.CallWrapper {
+		if p.inIntrinsicWrapper {
 			err = fmt.Errorf("cannot use LLVM intrinsic as a function value: %w", err)
 		}
-		p.llvmIntrinsicError(call.Pos(), fn, err)
+		pos := call.Pos()
+		if !pos.IsValid() {
+			pos = fn.Pos()
+		}
+		p.llvmIntrinsicError(pos, fn, err)
 	}
 	return ret
 }

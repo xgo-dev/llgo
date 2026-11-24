@@ -31,7 +31,6 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl/blocks"
-	"github.com/xgo-dev/llgo/cl/ssawrap"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
@@ -244,9 +243,10 @@ type context struct {
 	phis      []func()
 	initAfter func()
 
-	state   pkgState
-	inCFunc bool
-	skipall bool
+	state              pkgState
+	inCFunc            bool
+	inIntrinsicWrapper bool
+	skipall            bool
 
 	cgoCalled  bool
 	cgoArgs    []llssa.Expr
@@ -566,9 +566,6 @@ func (p *context) elidedZeroSizedFreeVar(b llssa.Builder, freeVar *ssa.FreeVar) 
 }
 
 func isCgoExternSymbol(f *ssa.Function) bool {
-	if f.Synthetic == ssawrap.CallWrapper {
-		return false
-	}
 	name := f.Name()
 	return isCgoCfunc(name) || isCgoCmacro(name) || isCgoC2func(name)
 }
@@ -2721,7 +2718,7 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 
 func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
-	if v.Pkg == p.goPkg || v.Pkg == nil || v.Synthetic == ssawrap.CallWrapper {
+	if v.Pkg == p.goPkg || v.Pkg == nil {
 		// function in this package
 		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
 		if kind != ignoredFunc {
@@ -2743,21 +2740,15 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 				return b.Param(idx)
 			}
 		}
+	case wrapperParam:
+		return b.Param(v.index)
 	case *ssa.Function:
 		_, _, ftype := p.funcName(v)
-		original := v
 		if ftype == llvmIntrinsic || ftype == llgoInstr {
-			if fn := p.funcs[v]; fn != nil {
-				return fn.Expr
-			}
-			v = ssawrap.MakeCallWrapper(p.goProg, v)
-			p.markLinkOnce(v)
+			return p.compileIntrinsicWrapper(v).Expr
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
 		if aFn != nil {
-			if v != original {
-				p.funcs[original] = aFn
-			}
 			return aFn.Expr
 		}
 		return pyFn.Expr
@@ -3042,6 +3033,10 @@ func (p *context) compileVArg(ret []llssa.Expr, b llssa.Builder, v ssa.Value) []
 		}
 	case *ssa.Parameter:
 		if llssa.HasNameValist(v.Parent().Signature) {
+			return ret
+		}
+	case wrapperParam:
+		if v.hasValist {
 			return ret
 		}
 	}

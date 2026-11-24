@@ -28,7 +28,6 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/xgo-dev/llgo/cl/ssawrap"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
@@ -847,13 +846,6 @@ func extractTrampolineCName(name string) string {
 }
 
 func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
-	if fn.Synthetic == ssawrap.CallWrapper {
-		pkg := p.goTyps
-		if fn.Pkg != nil {
-			pkg = fn.Pkg.Pkg
-		}
-		return pkg, funcName(pkg, fn, false), goFunc
-	}
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {

@@ -187,6 +187,28 @@ func notInit(instr llvm.Value) bool {
 
 // -----------------------------------------------------------------------------
 
+// HasTerminator reports whether the builder's current basic block already ends
+// with a terminator instruction.
+func (b Builder) HasTerminator() bool {
+	if b.impl.IsNil() {
+		return false
+	}
+	blk := b.impl.GetInsertBlock()
+	if blk.IsNil() {
+		return false
+	}
+	last := blk.LastInstruction()
+	if last.IsNil() {
+		return false
+	}
+	switch last.InstructionOpcode() {
+	case llvm.Ret, llvm.Br, llvm.Switch, llvm.IndirectBr, llvm.Invoke, llvm.Unreachable, llvm.Resume:
+		return true
+	default:
+		return false
+	}
+}
+
 // Return emits a return instruction.
 func (b Builder) Return(results ...Expr) {
 	dbgInstrReturn(results)
