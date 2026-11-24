@@ -43,6 +43,35 @@ func digestPackagePlan9Asm(ctx *context, pkg *aPackage, files []string) ([]plan9
 	return digests, nil
 }
 
+type plan9AsmSourceKey struct {
+	pkgID string
+	path  string
+}
+
+// preprocessPlan9AsmForPkg expands a Plan 9 assembly source once per build
+// context so fingerprinting, unused-global analysis, signature discovery, and
+// translation share the exact same expanded source.
+func preprocessPlan9AsmForPkg(ctx *context, pkg *packages.Package, file string, opt llplan9asm.TranslateOptions) ([]byte, error) {
+	pkgKey := pkg.ID
+	if pkgKey == "" {
+		pkgKey = pkg.PkgPath
+	}
+	key := plan9AsmSourceKey{pkgID: pkgKey, path: file}
+	if ctx != nil && ctx.plan9AsmSources != nil {
+		if cached, ok := ctx.plan9AsmSources.Load(key); ok {
+			return cached.([]byte), nil
+		}
+	}
+	src, err := llplan9asm.PreprocessFileForPkg(pkg, file, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
+	if err != nil {
+		return nil, err
+	}
+	if ctx != nil && ctx.plan9AsmSources != nil {
+		ctx.plan9AsmSources.Store(key, src)
+	}
+	return src, nil
+}
+
 func digestPlan9AsmFiles(ctx *context, pkg *packages.Package, files []string) ([]plan9AsmDigest, error) {
 	if len(files) == 0 {
 		return nil, nil
@@ -66,7 +95,7 @@ func digestPlan9AsmFiles(ctx *context, pkg *packages.Package, files []string) ([
 	digests := make([]plan9AsmDigest, 0, len(files))
 	opt := plan9asmTranslateOptions(ctx)
 	for _, file := range files {
-		src, err := llplan9asm.PreprocessFileForPkg(pkg, file, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
+		src, err := preprocessPlan9AsmForPkg(ctx, pkg, file, opt)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}

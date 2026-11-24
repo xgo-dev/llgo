@@ -80,7 +80,10 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	if err != nil {
 		return
 	}
-	cflags, cxxflags, ldflags := cgoCompilationFlags(preambles, cdecls)
+	cflags, cxxflags, ldflags, err := cgoCompilationFlags(ctx.commands, preambles, cdecls)
+	if err != nil {
+		return
+	}
 	for _, src := range srcFiles {
 		args := slices.Clone(cflags)
 		if src.isCXX {
@@ -402,8 +405,27 @@ func cgoBuildContext(ctx *context) build.Context {
 	return buildCtx
 }
 
-func cgoCompilationFlags(preambles []cgoPreamble, decls []cgoDecl) (cflags, cxxflags, ldflags []string) {
-	cflags, cxxflags, ldflags = collectCgoFlags(decls)
+func cgoCompilationFlags(commands commandEnv, preambles []cgoPreamble, decls []cgoDecl) (cflags, cxxflags, ldflags []string, err error) {
+	envCPPFLAGS, err := splitCgoEnvFlags(commands, "CGO_CPPFLAGS")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	envCFLAGS, err := splitCgoEnvFlags(commands, "CGO_CFLAGS")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	envCXXFLAGS, err := splitCgoEnvFlags(commands, "CGO_CXXFLAGS")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	envLDFLAGS, err := splitCgoEnvFlags(commands, "CGO_LDFLAGS")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	declCFlags, declCXXFlags, declLDFlags := collectCgoFlags(decls)
+	cflags = slices.Concat(envCPPFLAGS, envCFLAGS, declCFlags)
+	cxxflags = slices.Concat(envCXXFLAGS, declCXXFlags)
+	ldflags = slices.Concat(envLDFLAGS, declLDFlags)
 	incDirs := make(map[string]none)
 	for _, preamble := range preambles {
 		dir, _ := filepath.Split(preamble.goFile)
@@ -412,7 +434,50 @@ func cgoCompilationFlags(preambles []cgoPreamble, decls []cgoDecl) (cflags, cxxf
 			cflags = append(cflags, "-I"+dir)
 		}
 	}
-	return
+	return cflags, cxxflags, ldflags, nil
+}
+
+// splitCgoEnvFlags matches cmd/go's quoted.Split for CGO_CPPFLAGS/CGO_CFLAGS/
+// CGO_CXXFLAGS/CGO_LDFLAGS: whitespace-separated fields with single or double
+// quoted segments and no backslash unescaping.
+func splitCgoEnvFlags(commands commandEnv, key string) ([]string, error) {
+	s := commands.lookup(key)
+	if s == "" {
+		return nil, nil
+	}
+	isSpace := func(c byte) bool {
+		return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+	}
+	var fields []string
+	for len(s) > 0 {
+		for len(s) > 0 && isSpace(s[0]) {
+			s = s[1:]
+		}
+		if len(s) == 0 {
+			break
+		}
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			s = s[1:]
+			i := 0
+			for i < len(s) && s[i] != quote {
+				i++
+			}
+			if i >= len(s) {
+				return nil, fmt.Errorf("parse %s: unterminated %c string", key, quote)
+			}
+			fields = append(fields, s[:i])
+			s = s[i+1:]
+			continue
+		}
+		i := 0
+		for i < len(s) && !isSpace(s[i]) {
+			i++
+		}
+		fields = append(fields, s[:i])
+		s = s[i:]
+	}
+	return fields, nil
 }
 
 func parseCgoFilePreambles(commands commandEnv, buildCtx *build.Context, fset *token.FileSet, files []*ast.File, importPath string) (preambles []cgoPreamble, decls []cgoDecl, err error) {

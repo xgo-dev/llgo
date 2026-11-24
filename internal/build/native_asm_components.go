@@ -10,7 +10,6 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
@@ -37,7 +36,7 @@ func captureSelectedPlan9Asm(ctx *context, pkg *packages.Package, files []string
 	sources := make([]plan9AsmSource, 0, len(files))
 	opt := plan9asmTranslateOptions(ctx)
 	for _, path := range files {
-		source, err := llplan9asm.PreprocessFileForPkg(pkg, path, ctx.buildConf.Goos, ctx.buildConf.Goarch, opt)
+		source, err := preprocessPlan9AsmForPkg(ctx, pkg, path, opt)
 		if err != nil {
 			return nil, fmt.Errorf("%s: preprocess %s: %w", pkg.PkgPath, path, err)
 		}

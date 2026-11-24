@@ -416,6 +416,8 @@ func (ctx *context) newBackendTask(session backendSession) *context {
 		sfilesFrozen:      true,
 		llgoFilesCache:    ctx.llgoFilesCache,
 		llgoFilesFrozen:   true,
+		nativeAsmObjects:  ctx.nativeAsmObjects,
+		plan9AsmSources:   ctx.plan9AsmSources,
 		plan9asmReady:     true,
 		plan9asmMode:      ctx.plan9asmMode,
 		plan9asmPkgs:      ctx.plan9asmPkgs,

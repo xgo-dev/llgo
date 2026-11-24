@@ -72,7 +72,10 @@ func cgoAssemblyInputs(ctx *context, pkg *packages.Package, explicit []llgoFileI
 	if err != nil {
 		return nil, err
 	}
-	cflags, _, _ := cgoCompilationFlags(preambles, decls)
+	cflags, _, _, err := cgoCompilationFlags(ctx.commands, preambles, decls)
+	if err != nil {
+		return nil, err
+	}
 	// GCC's package assembly also needs the package include directory when
 	// there is no preamble (notably GAS .include in an unpreprocessed .s).
 	if pkg.Dir != "" && !slices.Contains(cflags, "-I"+pkg.Dir) {

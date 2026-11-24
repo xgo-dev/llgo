@@ -377,10 +377,15 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 		contentHash, ok := ctx.llgoFileHashCache[cacheKey]
 		if !ok {
 			if objectFingerprint {
+				var compiledObj string
 				var err error
-				contentHash, err = digestNativeAssemblyObject(ctx, input.path, compilerArgs)
+				retain := ctx.nativeAsmObjects != nil
+				contentHash, compiledObj, err = digestNativeAssemblyObject(ctx, input.path, compilerArgs, retain)
 				if err != nil {
 					return nil, err
+				}
+				if retain && compiledObj != "" {
+					ctx.nativeAsmObjects[cacheKey] = compiledObj
 				}
 			} else {
 				hash := sha256.New()
@@ -421,28 +426,37 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 
 // -E does not preprocess raw .s, and preprocessor depfiles omit GAS .include.
 // Hash a real object under the same source language/flags as clFile instead.
-// The temporary object is evidence for the key, never a cached compile result.
-func digestNativeAssemblyObject(ctx *context, source string, args []string) (hash string, err error) {
-	object, err := genLLGoFileOutput(source, ".o")
+// When retain is true (build-scoped), keep the compiled object for clFile to
+// reuse on a cache miss; cleanupNativeAsmObjects removes it when the build ends.
+func digestNativeAssemblyObject(ctx *context, source string, args []string, retain bool) (hash, object string, err error) {
+	object, err = genLLGoFileOutput(source, ".o")
 	if err != nil {
-		return "", fmt.Errorf("create assembly fingerprint object for %s: %w", source, err)
+		return "", "", fmt.Errorf("create assembly fingerprint object for %s: %w", source, err)
 	}
 	defer func() {
+		if retain && err == nil {
+			return
+		}
 		if cleanupErr := os.Remove(object); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
 			err = errors.Join(err, fmt.Errorf("remove assembly fingerprint object %s: %w", object, cleanupErr))
 		}
+		object = ""
 	}()
 	command := ctx.compilerForSource(source)
 	command.Stdout = io.Discard
 	compileArgs := append(slices.Clone(args), "-c", source, "-o", object)
 	if err := command.Compile(compileArgs...); err != nil {
-		return "", fmt.Errorf("compile assembly fingerprint %s: %w", source, err)
+		return "", "", fmt.Errorf("compile assembly fingerprint %s: %w", source, err)
 	}
 	info, err := os.Stat(object)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return "", fmt.Errorf("missing or empty assembly fingerprint object for %s: %v", source, err)
+		return "", "", fmt.Errorf("missing or empty assembly fingerprint object for %s: %v", source, err)
 	}
-	return digestFile(object)
+	hash, err = digestFile(object)
+	if err != nil {
+		return "", "", err
+	}
+	return hash, object, nil
 }
 
 // digestFiles calculates digests for multiple files.

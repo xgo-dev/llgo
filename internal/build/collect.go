@@ -127,6 +127,14 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 			m.env.Vars = m.env.Vars.Add(envVar, v)
 		}
 	}
+	// Effective cgo environment flags affect C/C++/assembly compilation and
+	// linking; record non-empty values from the build command environment so
+	// cache fingerprints stay aligned with compilation.
+	for _, cgoVar := range []string{"CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS"} {
+		if v := c.commands.lookup(cgoVar); v != "" {
+			m.env.Vars = m.env.Vars.Add(cgoVar, v)
+		}
+	}
 	if effectivePCLNMode(c.buildConf) != PCLNNone {
 		// Record the effective value so equivalent spellings (unset, 1,
 		// true, on) share a cache entry.

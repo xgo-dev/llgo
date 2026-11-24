@@ -1066,9 +1066,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		buildTrace:       buildTrace,
 		goVersion:        sourcePatchGoVersion,
 		defaultGODEBUG:   defaultGODEBUG,
+		nativeAsmObjects: make(map[llgoFileHashKey]string),
+		plan9AsmSources:  &sync.Map{},
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	defer ctx.cleanupNativeAsmObjects()
 	// Isolated backends use independent LLVM contexts. Keep Programs needed by
 	// whole-program consumers alive through deadcode analysis and strong ABI type
 	// override emission, then release them on every normal, error, or panic path.
@@ -1966,6 +1969,8 @@ type context struct {
 	llgoFilesCache    map[*packages.Package][]llgoFileInput
 	llgoFilesFrozen   bool
 	llgoFileHashCache map[llgoFileHashKey]string
+	nativeAsmObjects  map[llgoFileHashKey]string // build-scoped compiled native assembly .o; owned by coordinator
+	plan9AsmSources   *sync.Map                  // build-scoped preprocessed Plan 9 .s cache: plan9AsmSourceKey -> []byte
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce  sync.Once
@@ -4956,7 +4961,8 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 	// Native assembly has no LLVM IR representation. GenLL still compiles
 	// its real object, but must not publish an empty .ll from ignored flags.
 	printCmds := ctx.shouldPrintCommands(verbose)
-	if ctx.buildConf.GenLL && !llgoFileIsAssembly(ctx, args, cFile) {
+	isAsm := llgoFileIsAssembly(ctx, args, cFile)
+	if ctx.buildConf.GenLL && !isAsm {
 		llFile, err := genLLGoFileOutput(cFile, ".ll")
 		if err != nil {
 			return "", fmt.Errorf("create temporary LLVM IR output for %s: %w", cFile, err)
@@ -4980,6 +4986,21 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 		}
 	}
 
+	// Reuse the native assembly object already compiled during cache
+	// fingerprinting in this build instead of invoking clang a second time.
+	if isAsm && ctx.nativeAsmObjects != nil {
+		cacheKey := llgoFileHashKey{
+			path:         cFile,
+			compilerArgs: strings.Join(args, "\x00"),
+		}
+		if cachedObj, ok := ctx.nativeAsmObjects[cacheKey]; ok {
+			objFile, err := reuseCompiledObject(cFile, cachedObj)
+			if err == nil {
+				return objFile, nil
+			}
+		}
+	}
+
 	// Always compile to .o for linking
 	objFile, err := genLLGoFileOutput(cFile, ".o")
 	if err != nil {
@@ -4996,6 +5017,35 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 		return "", fmt.Errorf("compile %s: %w", cFile, err)
 	}
 	return objFile, nil
+}
+
+func reuseCompiledObject(source, cachedObj string) (string, error) {
+	if info, err := os.Stat(cachedObj); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return "", fmt.Errorf("cached object unavailable: %v", err)
+	}
+	objFile, err := genLLGoFileOutput(source, ".o")
+	if err != nil {
+		return "", err
+	}
+	// Create a package-owned temp path so per-package cleanup can remove it
+	// without invalidating the build-scoped cached object for other packages.
+	if err := os.Remove(objFile); err == nil {
+		if linkErr := os.Link(cachedObj, objFile); linkErr == nil {
+			return objFile, nil
+		}
+	}
+	if err := copyFileAtomic(cachedObj, objFile); err != nil {
+		_ = os.Remove(objFile)
+		return "", err
+	}
+	return objFile, nil
+}
+
+func (c *context) cleanupNativeAsmObjects() {
+	for key, path := range c.nativeAsmObjects {
+		_ = os.Remove(path)
+		delete(c.nativeAsmObjects, key)
+	}
 }
 
 // llgoFileCompilerArgs returns the source-specific arguments shared by the
