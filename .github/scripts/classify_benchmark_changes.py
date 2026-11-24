@@ -52,7 +52,6 @@ COMPILER_DIRS = {
     "cmd/internal/compile",
     "cmd/internal/flags",
     "cmd/internal/get",
-    "cmd/internal/help",
     "cmd/internal/install",
     "cmd/internal/lldb",
     "cmd/internal/monitor",

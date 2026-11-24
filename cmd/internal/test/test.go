@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 // llgo test
@@ -138,6 +139,7 @@ func runCmd(cmd *base.Command, args []string) {
 		}
 	}
 
+	llvm.SetupPath()
 	pkgArgs := cmd.Flag.Args()
 	_, err = build.Do(pkgArgs, conf)
 	if err != nil {

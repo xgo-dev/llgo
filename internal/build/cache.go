@@ -160,8 +160,8 @@ func writeManifest(path string, content string) error {
 		return fmt.Errorf("close manifest: %w", err)
 	}
 
-	// Atomic rename
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	// Atomic rename (Windows-safe replaceFile fallback)
+	if err := replaceFile(tmp.Name(), path); err != nil {
 		os.Remove(tmp.Name())
 		return fmt.Errorf("publish manifest: %w", err)
 	}
@@ -202,7 +202,7 @@ func writeMeta(path string, pm *meta.PackageMeta) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close meta: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := replaceFile(tmpName, path); err != nil {
 		return fmt.Errorf("publish meta: %w", err)
 	}
 

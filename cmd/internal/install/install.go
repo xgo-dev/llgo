@@ -27,6 +27,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 // llgo install
@@ -73,6 +74,7 @@ func runCmd(cmd *base.Command, args []string) {
 		mockable.Exit(1)
 	}
 
+	llvm.SetupPath()
 	args = cmd.Flag.Args()
 	_, err := build.Do(args, conf)
 	if err != nil {

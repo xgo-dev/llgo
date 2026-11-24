@@ -37,6 +37,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 // Cmd is the llgo debug command.
@@ -140,6 +141,7 @@ func run(packageArgs, debuggerArgs []string, opts options, stdin io.Reader, stdo
 	if err := opts.validate(); err != nil {
 		return err
 	}
+	llvm.SetupPath()
 
 	conf := build.NewDefaultConf(build.ModeBuild)
 	if err := flags.UpdateConfig(conf); err != nil {

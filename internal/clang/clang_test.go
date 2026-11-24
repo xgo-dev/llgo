@@ -18,6 +18,7 @@ package clang
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -806,6 +807,83 @@ func TestFlagMergingScenarios(t *testing.T) {
 				t.Errorf("mergeLinkerFlags() = %v, want %v", linkFlags, tt.expectLink)
 			}
 		})
+	}
+}
+
+func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell scripts")
+	}
+	badDir := t.TempDir()
+	goodDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	if err := os.WriteFile(filepath.Join(badDir, "fake-clang"), []byte("#!/bin/sh\nexit 97\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goodScript := "#!/bin/sh\nprintf ok > \"" + marker + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(goodDir, "fake-clang"), []byte(goodScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put the failing fake-clang first in the process-wide PATH.
+	t.Setenv("PATH", badDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Cmd.Env puts goodDir first: exec must resolve against Cmd.Env PATH, not os.Getenv("PATH").
+	cmd := New("fake-clang", Config{})
+	cmd.Env = []string{"PATH=" + goodDir + string(os.PathListSeparator) + badDir}
+	if err := cmd.Compile("-v"); err != nil {
+		t.Fatalf("Compile with Cmd.Env PATH failed (likely ran bad process-PATH binary): %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil || string(got) != "ok" {
+		t.Fatalf("expected goodDir fake-clang to run, got %q, err=%v", got, err)
+	}
+
+	// Cmd.Env with an empty PATH must not fall back to process PATH.
+	emptyCmd := New("fake-clang", Config{})
+	emptyCmd.Env = []string{"PATH=" + t.TempDir()}
+	if err := emptyCmd.Compile("-v"); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("Compile with isolated empty PATH = %v, want exec.ErrNotFound", err)
+	}
+
+	// Relative PATH entries must resolve against Cmd.Dir (not process cwd) and
+	// launch via an absolute executable path.
+	workDir := t.TempDir()
+	relBin := filepath.Join(workDir, "tool-bin")
+	if err := os.MkdirAll(relBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relMarker := filepath.Join(t.TempDir(), "rel-ran")
+	relScript := "#!/bin/sh\nprintf rel-ok > \"" + relMarker + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(relBin, "fake-clang"), []byte(relScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relCmd := New("fake-clang", Config{})
+	relCmd.Dir = workDir
+	relCmd.Env = []string{"PATH=tool-bin"}
+	resolved, err := ResolveExecutable("fake-clang", relCmd.Dir, relCmd.Env)
+	if err != nil {
+		t.Fatalf("ResolveExecutable(relative PATH) failed: %v", err)
+	}
+	if !filepath.IsAbs(resolved) || filepath.Clean(resolved) != filepath.Join(relBin, "fake-clang") {
+		t.Fatalf("ResolveExecutable = %q, want %q", resolved, filepath.Join(relBin, "fake-clang"))
+	}
+	if err := relCmd.Compile("-v"); err != nil {
+		t.Fatalf("Compile with relative Cmd.Env PATH anchored to Cmd.Dir failed: %v", err)
+	}
+	gotRel, err := os.ReadFile(relMarker)
+	if err != nil || string(gotRel) != "rel-ok" {
+		t.Fatalf("expected rel-bin fake-clang to run, got %q, err=%v", gotRel, err)
+	}
+
+	// Empty PATH entries (e.g. trailing/leading separator) must be skipped and
+	// never implicitly search Cmd.Dir.
+	if err := os.WriteFile(filepath.Join(workDir, "fake-clang"), []byte("#!/bin/sh\nexit 99\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trailingPath := t.TempDir() + string(os.PathListSeparator)
+	if got, err := ResolveExecutable("fake-clang", workDir, []string{"PATH=" + trailingPath}); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("ResolveExecutable(trailing empty PATH) = (%q, %v), want exec.ErrNotFound", got, err)
 	}
 }
 

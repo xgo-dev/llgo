@@ -2,11 +2,14 @@ package build
 
 import (
 	"go/version"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/clang"
 )
 
 // Invocation contains the explicit inputs used by one build. An empty Dir
@@ -40,21 +43,52 @@ type commandEnv struct {
 
 func (e commandEnv) configure(cmd *exec.Cmd) *exec.Cmd {
 	cmd.Dir = e.dir
-	cmd.Env = slices.Clone(e.environ)
+	if e.environ != nil {
+		cmd.Env = slices.Clone(e.environ)
+		if len(cmd.Args) > 0 && !strings.ContainsAny(cmd.Args[0], `/\`) {
+			resolved, err := clang.ResolveExecutable(cmd.Args[0], e.dir, e.environ)
+			if err != nil {
+				cmd.Path = cmd.Args[0]
+				cmd.Err = err
+			} else if resolved != cmd.Args[0] {
+				cmd.Path = resolved
+				cmd.Err = nil
+			}
+		}
+	}
 	return cmd
 }
 
-func (e commandEnv) lookup(name string) string {
+func (e commandEnv) lookPath(name string) (string, error) {
+	if e.environ == nil || strings.ContainsAny(name, `/\`) {
+		return exec.LookPath(name)
+	}
+	resolved, err := clang.ResolveExecutable(name, e.dir, e.environ)
+	if err != nil {
+		return "", err
+	}
+	if resolved == name {
+		return exec.LookPath(name)
+	}
+	return resolved, nil
+}
+
+func (e commandEnv) lookupOK(name string) (string, bool) {
 	for i := len(e.environ) - 1; i >= 0; i-- {
 		key, value, ok := strings.Cut(e.environ[i], "=")
 		if !ok {
 			continue
 		}
 		if key == name || runtime.GOOS == "windows" && strings.EqualFold(key, name) {
-			return value
+			return value, true
 		}
 	}
-	return ""
+	return "", false
+}
+
+func (e commandEnv) lookup(name string) string {
+	v, _ := e.lookupOK(name)
+	return v
 }
 
 func resolveOutputs(dir string, out *OutFmtDetails) {
@@ -103,4 +137,59 @@ func withResolvedGoToolchain(environ []string, goversion string) []string {
 		return environ
 	}
 	return withEnv(environ, "GOTOOLCHAIN="+goversion)
+}
+
+// withLLVMPath returns a copy of environ whose PATH begins with binDir,
+// moving any later duplicate to the front so the LLVM installation selected
+// for this invocation takes precedence over ambient PATH entries. It never
+// mutates the process environment.
+func withLLVMPath(environ []string, binDir string) []string {
+	if binDir == "" {
+		return environ
+	}
+	isPathKey := func(k string) bool {
+		return k == "PATH" || (runtime.GOOS == "windows" && strings.EqualFold(k, "PATH"))
+	}
+	sameDir := func(a, b string) bool {
+		a, b = filepath.Clean(a), filepath.Clean(b)
+		if runtime.GOOS == "windows" {
+			return strings.EqualFold(a, b)
+		}
+		return a == b
+	}
+	pathKey := "PATH"
+	pathVal := ""
+	for i := len(environ) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(environ[i], "=")
+		if !ok {
+			continue
+		}
+		if isPathKey(k) {
+			pathKey = k
+			pathVal = v
+			break
+		}
+	}
+	dirs := filepath.SplitList(pathVal)
+	if len(dirs) > 0 && sameDir(dirs[0], binDir) {
+		return environ
+	}
+	filtered := make([]string, 0, len(dirs)+1)
+	filtered = append(filtered, binDir)
+	for _, dir := range dirs {
+		if dir != "" && sameDir(dir, binDir) {
+			continue
+		}
+		filtered = append(filtered, dir)
+	}
+	newPath := strings.Join(filtered, string(os.PathListSeparator))
+	ret := make([]string, 0, len(environ)+1)
+	for _, entry := range environ {
+		k, _, ok := strings.Cut(entry, "=")
+		if !ok || isPathKey(k) {
+			continue
+		}
+		ret = append(ret, entry)
+	}
+	return append(ret, pathKey+"="+newPath)
 }

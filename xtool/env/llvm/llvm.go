@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/xtool/clang"
@@ -77,18 +78,62 @@ type Env struct {
 	binDir string
 }
 
-// New creates a new [Env] instance.
+type binDirCacheKey struct {
+	bin     string
+	modTime int64
+	size    int64
+}
+
+var (
+	binDirCacheMu sync.Mutex
+	binDirCache   = map[binDirCacheKey]string{}
+)
+
+// New creates a new [Env] instance. Successful --bindir lookups are memoized
+// per resolved llvm-config executable (keyed by path, mtime, and size).
 func New(llvmConfigBin string) *Env {
 	if llvmConfigBin == "" {
 		llvmConfigBin = defaultLLVMConfigBin()
 	}
 
-	// Note that an empty binDir is acceptable. In this case, LLVM
-	// executables are assumed to be in PATH.
-	binDir, _ := exec.Command(llvmConfigBin, "--bindir").Output()
+	resolved := llvmConfigBin
+	if !strings.ContainsAny(resolved, `/\`) {
+		if found, err := exec.LookPath(resolved); err == nil {
+			resolved = found
+		}
+	}
 
-	e := &Env{binDir: strings.TrimSpace(string(binDir))}
-	return e
+	if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+		key := binDirCacheKey{
+			bin:     resolved,
+			modTime: info.ModTime().UnixNano(),
+			size:    info.Size(),
+		}
+		binDirCacheMu.Lock()
+		if cached, ok := binDirCache[key]; ok {
+			binDirCacheMu.Unlock()
+			return &Env{binDir: cached}
+		}
+		binDirCacheMu.Unlock()
+
+		trimmed, err := queryBinDir(resolved)
+		if err == nil && trimmed != "" {
+			binDirCacheMu.Lock()
+			binDirCache[key] = trimmed
+			binDirCacheMu.Unlock()
+		}
+		return &Env{binDir: trimmed}
+	}
+
+	trimmed, _ := queryBinDir(llvmConfigBin)
+	return &Env{binDir: trimmed}
+}
+
+// queryBinDir runs llvm-config --bindir. An empty result is acceptable; in that
+// case LLVM executables are assumed to be in PATH.
+func queryBinDir(llvmConfigBin string) (string, error) {
+	out, err := exec.Command(llvmConfigBin, "--bindir").Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 // BinDir returns the directory containing LLVM executables. An empty string

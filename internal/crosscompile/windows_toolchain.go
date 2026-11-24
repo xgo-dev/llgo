@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/clang"
 )
 
 // NativeToolchainInput contains Go-compatible native compiler command
@@ -276,11 +278,15 @@ func goarchForTargetTriple(target string) (string, error) {
 }
 
 func probeNativeTool(command []string, input NativeToolchainInput) (toolIdentity, error) {
+	exe, err := clang.ResolveExecutable(command[0], input.Dir, input.Environ)
+	if err != nil {
+		return toolIdentity{}, fmt.Errorf("read target triple: %w", err)
+	}
 	run := func(arg string) ([]byte, error) {
 		args := make([]string, 0, len(command))
 		args = append(args, command[1:]...)
 		args = append(args, arg)
-		cmd := exec.Command(command[0], args...)
+		cmd := exec.Command(exe, args...)
 		cmd.Dir = input.Dir
 		if input.Environ != nil {
 			cmd.Env = input.Environ
