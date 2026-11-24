@@ -20,8 +20,6 @@ package runtime
 
 import _ "unsafe"
 
-const windowsSyscallMaxArgs = 42
-
 // windowsSyscall matches the argument block used by Go's Windows stdcall
 // bridge. Keeping the variable-width call in one native thunk avoids inventing
 // fixed-arity variants of syscall.SyscallN.
@@ -49,7 +47,7 @@ func syscall_syscalln(fn, n uintptr, args ...uintptr) (r1, r2, err uintptr) {
 	if n > uintptr(len(args)) {
 		panic("syscall: n > len(args)")
 	}
-	if n > windowsSyscallMaxArgs {
+	if windowsSyscallMaxArgs != 0 && n > windowsSyscallMaxArgs {
 		panic("runtime: SyscallN has too many arguments")
 	}
 
