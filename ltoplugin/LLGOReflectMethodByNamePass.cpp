@@ -171,9 +171,8 @@ bool isRuntimeStringCat(CallBase *CB) {
   if (!CB)
     return false;
   Function *Callee = CB->getCalledFunction();
-  return Callee &&
-         (Callee->getName().ends_with(RuntimeStringCatSuffix) ||
-          Callee->getName().ends_with(RuntimeStringCatBufferSuffix));
+  return Callee && (Callee->getName().ends_with(RuntimeStringCatSuffix) ||
+                    Callee->getName().ends_with(RuntimeStringCatBufferSuffix));
 }
 
 unsigned runtimeStringSliceBoundsArgs(CallBase *CB) {
@@ -274,8 +273,7 @@ bool hasOnlyReadUses(User *U, SmallPtrSetImpl<User *> &Seen,
     if (!Load->isSimple())
       return false;
     if (!FollowGlobalPointerLoads || !Load->getType()->isPointerTy() ||
-        !isa<GlobalVariable>(
-            Load->getPointerOperand()->stripPointerCasts()))
+        !isa<GlobalVariable>(Load->getPointerOperand()->stripPointerCasts()))
       return true;
     for (User *Next : Load->users()) {
       if (!hasOnlyReadUses(Next, Seen, false))
@@ -600,15 +598,15 @@ bool collectIndexConstants(Value *Index, SmallVectorImpl<Constant *> &Constants,
   return true;
 }
 
-std::optional<uint64_t>
-firstIndexArrayBound(ArrayRef<Constant *> Bases, Type *ElemTy,
-                     const DataLayout &DL) {
+std::optional<uint64_t> firstIndexArrayBound(ArrayRef<Constant *> Bases,
+                                             Type *ElemTy,
+                                             const DataLayout &DL) {
   std::optional<uint64_t> Bound;
   for (Constant *Base : Bases) {
     int64_t Offset = 0;
     Value *Root = GetPointerBaseWithConstantOffset(Base, Offset, DL);
-    auto *GV = Root ? dyn_cast<GlobalVariable>(Root->stripPointerCasts())
-                    : nullptr;
+    auto *GV =
+        Root ? dyn_cast<GlobalVariable>(Root->stripPointerCasts()) : nullptr;
     auto *ArrayTy = GV ? dyn_cast<ArrayType>(GV->getValueType()) : nullptr;
     if (!ArrayTy || ArrayTy->getElementType() != ElemTy || Offset != 0)
       return std::nullopt;
@@ -920,7 +918,8 @@ bool collectStringSetFromFunctionStringArg(Value *Ptr, Value *Len,
       return false;
     Value *CallPtr = CB->getArgOperand(PtrArgNo);
     Value *CallLen = CB->getArgOperand(LenArgNo);
-    if (!CallPtr->getType()->isPointerTy() || !CallLen->getType()->isIntegerTy())
+    if (!CallPtr->getType()->isPointerTy() ||
+        !CallLen->getType()->isIntegerTy())
       return false;
     if (!collectStringSet(CallPtr, CallLen, DL, Names, Depth + 1))
       return false;
@@ -964,13 +963,14 @@ bool collectStringSetFromFunctionStringValueArg(
 // names remains visible to the MethodByName refinement without depending on
 // the inliner. Unknown or recursive return flows still fail closed through the
 // existing depth bound.
-bool collectStringSetFromDirectCallReturn(
-    CallBase *CB, const DataLayout &DL,
-    SmallVectorImpl<std::string> &Names, unsigned Depth) {
+bool collectStringSetFromDirectCallReturn(CallBase *CB, const DataLayout &DL,
+                                          SmallVectorImpl<std::string> &Names,
+                                          unsigned Depth) {
   if (!CB)
     return false;
 
-  auto *Callee = dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+  auto *Callee =
+      dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
   if (!Callee || Callee->isDeclaration())
     return false;
 
@@ -1273,7 +1273,12 @@ std::optional<uint64_t> checkedLoadOffset(CallBase *CheckedLoad) {
   return Offset->getZExtValue();
 }
 
-Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indices,
+using StaticItabIndex =
+    DenseMap<const Value *, DenseMap<const Value *, GlobalVariable *>>;
+
+Constant *collectStaticItabArgumentTarget(const StaticItabIndex &Index,
+                                          Argument *Arg,
+                                          ArrayRef<unsigned> Indices,
                                           uint64_t PointerOffset,
                                           uint64_t LoadOffset, StringRef TypeID,
                                           const DataLayout &DL);
@@ -1286,11 +1291,8 @@ bool isNewItabCall(CallBase *CB) {
   return Callee && Callee->getName().ends_with("runtime.NewItab");
 }
 
-GlobalVariable *findStaticItabTemplate(Module &M, CallBase *NewItab) {
-  if (!isNewItabCall(NewItab) || NewItab->arg_size() < 2)
-    return nullptr;
-  Value *Interface = NewItab->getArgOperand(0)->stripPointerCasts();
-  Value *Concrete = NewItab->getArgOperand(1)->stripPointerCasts();
+StaticItabIndex buildStaticItabIndex(Module &M) {
+  StaticItabIndex Index;
   for (GlobalVariable &GV : M.globals()) {
     if (!GV.getName().starts_with("_llgo_itab$") ||
         !canReadGlobalInitializer(&GV))
@@ -1300,24 +1302,40 @@ GlobalVariable *findStaticItabTemplate(Module &M, CallBase *NewItab) {
     Constant *TemplateConcrete = Init->getAggregateElement(1u);
     if (!TemplateInterface || !TemplateConcrete)
       continue;
-    if (TemplateInterface->stripPointerCasts() == Interface &&
-        TemplateConcrete->stripPointerCasts() == Concrete)
-      return &GV;
+    Value *Interface = TemplateInterface->stripPointerCasts();
+    Value *Concrete = TemplateConcrete->stripPointerCasts();
+    // Weak ODR duplicates have the same key. Keeping the first immutable
+    // template gives the same result as the previous linear scan.
+    Index[Interface].try_emplace(Concrete, &GV);
   }
-  return nullptr;
+  return Index;
 }
 
-std::optional<StaticItabSlot> resolveNewItabSlot(Module &M, CallBase *NewItab,
-                                                 uint64_t Offset,
-                                                 StringRef TypeID,
-                                                 const DataLayout &DL) {
-  GlobalVariable *Template = findStaticItabTemplate(M, NewItab);
+GlobalVariable *findStaticItabTemplate(const StaticItabIndex &Index,
+                                       CallBase *NewItab) {
+  if (!isNewItabCall(NewItab) || NewItab->arg_size() < 2)
+    return nullptr;
+  Value *Interface = NewItab->getArgOperand(0)->stripPointerCasts();
+  Value *Concrete = NewItab->getArgOperand(1)->stripPointerCasts();
+  auto It = Index.find(Interface);
+  if (It == Index.end())
+    return nullptr;
+  auto Itab = It->second.find(Concrete);
+  return Itab == It->second.end() ? nullptr : Itab->second;
+}
+
+std::optional<StaticItabSlot>
+resolveNewItabSlot(const StaticItabIndex &Index, CallBase *NewItab,
+                   uint64_t Offset, StringRef TypeID, const DataLayout &DL) {
+  GlobalVariable *Template = findStaticItabTemplate(Index, NewItab);
   if (!Template)
     return std::nullopt;
   return resolveStaticItabSlot(Template, Offset, TypeID, DL);
 }
 
-Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indices,
+Constant *collectStaticItabArgumentTarget(const StaticItabIndex &Index,
+                                          Argument *Arg,
+                                          ArrayRef<unsigned> Indices,
                                           uint64_t PointerOffset,
                                           uint64_t LoadOffset, StringRef TypeID,
                                           const DataLayout &DL) {
@@ -1345,8 +1363,8 @@ Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indi
     CallBase *NewItab = nullptr;
     if (!Slot) {
       NewItab = dyn_cast<CallBase>(Actual->stripPointerCasts());
-      Slot = resolveNewItabSlot(*F->getParent(), NewItab,
-                                PointerOffset + LoadOffset, TypeID, DL);
+      Slot = resolveNewItabSlot(Index, NewItab, PointerOffset + LoadOffset,
+                                TypeID, DL);
     }
     if (!Slot)
       return nullptr;
@@ -1365,6 +1383,7 @@ Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indi
 // Resolve only immutable method slots proven by a matching itab template;
 // header fields and dynamic interface tables must retain their loads.
 bool devirtualizeKnownItabLoads(Module &M, const DataLayout &DL) {
+  StaticItabIndex Index = buildStaticItabIndex(M);
   SmallVector<std::pair<LoadInst *, Constant *>, 16> Replacements;
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
@@ -1375,9 +1394,9 @@ bool devirtualizeKnownItabLoads(Module &M, const DataLayout &DL) {
         int64_t Offset = 0;
         Value *Base = GetPointerBaseWithConstantOffset(
             Load->getPointerOperand(), Offset, DL);
-        auto *Call = Base ? dyn_cast<CallBase>(Base->stripPointerCasts())
-                          : nullptr;
-        auto *Template = findStaticItabTemplate(M, Call);
+        auto *Call =
+            Base ? dyn_cast<CallBase>(Base->stripPointerCasts()) : nullptr;
+        auto *Template = findStaticItabTemplate(Index, Call);
         if (!Template || Offset < 0)
           continue;
         SmallVector<MDNode *, 4> Slots;
@@ -1388,8 +1407,8 @@ bool devirtualizeKnownItabLoads(Module &M, const DataLayout &DL) {
           auto *ID = dyn_cast<MDString>(Slot->getOperand(1));
           if (!ID)
             continue;
-          auto Target = resolveStaticItabSlot(Template, Offset,
-                                             ID->getString(), DL);
+          auto Target =
+              resolveStaticItabSlot(Template, Offset, ID->getString(), DL);
           if (Target && Target->Target->getType() == Load->getType()) {
             Replacements.push_back({Load, Target->Target});
             break;
@@ -1406,6 +1425,7 @@ bool devirtualizeKnownItabLoads(Module &M, const DataLayout &DL) {
 }
 
 bool devirtualizeStaticItabCalls(Module &M, const DataLayout &DL) {
+  StaticItabIndex Index = buildStaticItabIndex(M);
   struct Replacement {
     CallBase *CheckedLoad;
     Constant *Target;
@@ -1466,14 +1486,14 @@ bool devirtualizeStaticItabCalls(Module &M, const DataLayout &DL) {
           }
           if (Arg) {
             Target = collectStaticItabArgumentTarget(
-                Arg, Indices, static_cast<uint64_t>(PointerOffset), *LoadOffset,
-                *TypeID, DL);
+                Index, Arg, Indices, static_cast<uint64_t>(PointerOffset),
+                *LoadOffset, *TypeID, DL);
           } else if (auto *NewItab =
                          Base ? dyn_cast<CallBase>(Base->stripPointerCasts())
                               : nullptr) {
             auto Slot =
                 PointerOffset >= 0
-                    ? resolveNewItabSlot(M, NewItab,
+                    ? resolveNewItabSlot(Index, NewItab,
                                          static_cast<uint64_t>(PointerOffset) +
                                              *LoadOffset,
                                          *TypeID, DL)
