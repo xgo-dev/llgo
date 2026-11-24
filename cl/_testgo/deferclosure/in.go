@@ -20,7 +20,7 @@ package main
 // CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
 // The captured 42 is stored in the closure environment before the function pair is deferred.
 // CHECK: [[VALUE_CAPTURE:%.*]] = alloca i64
-// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 false)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 true)
 // CHECK: store volatile i64 42, ptr [[VALUE_CAPTURE]]
 // CHECK: [[VALUE_COPY:%.*]] = load i64, ptr [[VALUE_CAPTURE]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_ENV:%[0-9]+]], i8 0, i64 8, i1 false)
