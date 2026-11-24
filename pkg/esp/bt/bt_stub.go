@@ -42,6 +42,20 @@ func sppRead(handle uint32, dst *uint8, cap int32) int32 {
 	return 0
 }
 
+func a2dpEnable(bclk, ws, dout, dmaDesc, dmaFrames int32) int32 {
+	_, _, _, _, _ = bclk, ws, dout, dmaDesc, dmaFrames
+	return codeUnsupport
+}
+func a2dpDisable() int32               { return codeUnsupport }
+func a2dpVolumeSet(volume int32) int32 { _ = volume; return codeUnsupport }
+
+// a2dpStats reports all-zero counters: honestly an empty audio path, the
+// same shape as the stub's empty rings and record tables.
+func a2dpStats(total, written, dropped *uint32) int32 {
+	*total, *written, *dropped = 0, 0, 0
+	return 0
+}
+
 func poll(kind *int32, status *int32, handle *uint32, aux *int32, addr *uint8) int32 {
 	_, _, _, _, _ = kind, status, handle, aux, addr
 	return 0

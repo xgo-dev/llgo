@@ -47,6 +47,20 @@ func sppWrite(handle uint32, data *uint8, n int32) int32
 //go:linkname sppRead C.llgo_bt_spp_read
 func sppRead(handle uint32, dst *uint8, cap int32) int32
 
+// ---- A2DP sink (audio profile) ----
+
+//go:linkname a2dpEnable C.llgo_bt_a2dp_enable
+func a2dpEnable(bclk, ws, dout, dmaDesc, dmaFrames int32) int32
+
+//go:linkname a2dpDisable C.llgo_bt_a2dp_disable
+func a2dpDisable() int32
+
+//go:linkname a2dpVolumeSet C.llgo_bt_a2dp_volume_set
+func a2dpVolumeSet(volume int32) int32
+
+//go:linkname a2dpStats C.llgo_bt_a2dp_stats
+func a2dpStats(total, written, dropped *uint32) int32
+
 // ---- mailbox ----
 
 //go:linkname poll C.llgo_bt_poll

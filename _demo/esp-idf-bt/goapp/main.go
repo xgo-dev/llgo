@@ -45,6 +45,11 @@ const (
 	// records plus the link's own latency.
 	ioWaitMs = 5000
 
+	// stepWaitMs is the bound of one event wait inside the A2DP phase's
+	// polling loops (the SPP phase waits through SPPAccept/Read's own
+	// bounds instead).
+	stepWaitMs = 500
+
 	// totalBytes is the payload the peer sends: 25 records of 512 bytes
 	// (bumble_classic_peer.py run_spp).
 	totalBytes = 25 * 512
@@ -113,11 +118,10 @@ func main() {
 	}
 
 	// Subscribe before Init: every lifecycle event of the run then has a
-	// reader from the first moment, and the profile's own confirmations
-	// (which SPPListen waits through the same mailbox) are never lost.
-	sub := bt.Subscribe(bt.EvSPPInit, bt.EvSPPListen, bt.EvSPPConnOpen,
-		bt.EvSPPConnClose, bt.EvSPPCong, bt.EvSPPStop, bt.EvSPPUninit,
-		bt.EvACLDisconnect)
+	// reader from the first moment, and the profiles' own confirmations
+	// (which SPPListen waits through the same mailbox) are never lost. The
+	// probe takes the catch-all: it watches every kind of both profiles.
+	sub := bt.Subscribe()
 	defer sub.Close()
 
 	if err := bt.Init(); err != nil {
@@ -209,11 +213,92 @@ func main() {
 		" tx=" + dec32(uint32(tx)) + " pat=ok")
 	println("[go] bt peer closed eof")
 	heapMark("echo")
+
+	// ---- A2DP sink phase ----
+	//
+	// The same boot serves the audio profile next: the SPP peer has left
+	// (its ACL drop is in the mailbox), so the A2DP peer pages into a quiet
+	// link. Enable wires the decoded-PCM path to I2S pins 4/5/6; a phone
+	// then connects, negotiates SBC and streams - the audio itself never
+	// enters Go, the probe only watches the control-plane events and the
+	// byte counters until the peer drops the link.
+	if err := bt.A2DPEnable(bt.A2DPConfig{BclkPin: 4, WsPin: 5, DoutPin: 6,
+		DmaDescNum: 12, DmaFrameNum: 511}); err != nil {
+		println("[go] bt a2dp enable err=" + errText(err))
+		fail("a2dp enable")
+		return
+	}
+	println("[go] bt a2dp enable ok")
+	heapMark("a2dp on")
+
+	connected := false
+	cfg := false
+	rate, chans := int32(0), int32(0)
+	for i := 0; i < 120 && (!connected || !cfg); i++ { // 60 s to page + stream up
+		ev, err := sub.Next(stepWaitMs)
+		if err != nil {
+			continue
+		}
+		switch ev.Kind {
+		case int32(bt.EvA2DPConnected):
+			connected = true
+			println("[go] bt a2dp connected addr=" + ev.AddrString())
+		case int32(bt.EvA2DPAudioCfg):
+			cfg = true
+			rate, chans = ev.Aux, ev.Status
+			println("[go] bt a2dp cfg rate=" + dec32(uint32(rate)) +
+				" ch=" + dec32(uint32(chans)))
+		}
+	}
+	if !connected || !cfg {
+		fail("a2dp stream up")
+		return
+	}
+	heapMark("a2dp cfg")
+
+	// Stream until the peer drops the link (its script pumps the whole file
+	// and disconnects). The counters are the audio path's telemetry: the
+	// source's media clock feeds total, the local audio clock consumes
+	// written, and dropped is what a full ring swallowed.
+	gone := false
+	for i := 0; i < 600 && !gone; i++ { // 300 s of streaming budget
+		ev, err := sub.Next(stepWaitMs)
+		if err != nil {
+			continue
+		}
+		if ev.Kind == int32(bt.EvA2DPDisconnected) {
+			gone = true
+			println("[go] bt a2dp disconnected rsn=" + dec32(uint32(ev.Status)))
+		}
+	}
+	if !gone {
+		fail("a2dp stream end")
+		return
+	}
+	total, written, dropped := bt.A2DPStats()
+	println("[go] bt a2dp stats total=" + dec32(total) +
+		" written=" + dec32(written) + " dropped=" + dec32(dropped))
+	// The gate is a ratio, not a non-zero check: the source's full-speed
+	// pump still leaves the I2S path with well over half the PCM in the emu
+	// (the fixed audio clock consumes it as fast as it is produced), so a
+	// wedged pump (a few bytes written) or an all-drop run fails here.
+	if total == 0 || written < total/2 {
+		fail("a2dp starved")
+		return
+	}
+	println("[go] bt a2dp stream ok")
+	heapMark("a2dp eof")
+
 	println("[go] bt PASS")
 
 	// Shutdown, after the gate so a teardown failure cannot hide the
-	// acceptance result: the profile deinit closes what is left of the
-	// connection, the stack powers down, and the rings reset.
+	// acceptance result: the profiles deinit closes what is left of the
+	// connections, the stack powers down, and the rings reset.
+	if err := bt.A2DPDisable(); err != nil {
+		println("[go] bt a2dp disable err=" + errText(err))
+		return
+	}
+	println("[go] bt a2dp disable ok")
 	if err := bt.Deinit(); err != nil {
 		println("[go] bt deinit err=" + errText(err))
 		return

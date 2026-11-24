@@ -72,6 +72,13 @@ CONFIG_BT_CLASSIC_ENABLED and CONFIG_BT_SPP_ENABLED in sdkconfig.defaults \
 (see _demo/esp-idf-bt/idfproj/sdkconfig.defaults)"
 #endif
 
+/* The A2DP sister glue (bt_glue_a2dp.c, same main component) shares this
+ * file's ctrl ring publisher and ready flag; its audio path joins the same
+ * lifecycle - Deinit tears it down with the stack, before the host goes
+ * away (see bt_teardown below). */
+extern volatile int32_t s_ready;
+extern int32_t bt_a2dp_teardown(void);
+
 /* Glue contract version: the Go package checks llgo_bt_glue_abi before any
  * control call and refuses a mismatch (BT_ERR_GLUE_ABI). Bump together with
  * bt.go's glueABIVersion when a signature or a mailbox kind changes. */
@@ -114,9 +121,12 @@ static volatile uint32_t s_data_drop; /* producer-owned counter */
 static uint32_t s_drop_seen_ctrl;
 static uint32_t s_drop_seen_data;
 
-/* ctrl_push publishes one lifecycle event. BTC task context. */
-static void ctrl_push(int32_t kind, int32_t status, uint32_t handle,
-                      int32_t aux, const uint8_t *addr)
+/* ctrl_push publishes one lifecycle event. BTC task context. Non-static on
+ * purpose: the a2dp sister glue (bt_glue_a2dp.c, same main component)
+ * publishes its profile events through this one ring - one mailbox, one
+ * poller, one set of drop counters. */
+void ctrl_push(int32_t kind, int32_t status, uint32_t handle,
+               int32_t aux, const uint8_t *addr)
 {
     uint32_t head = s_ctrl_head;
     uint32_t next = (head + 1) % CTRL_SLOTS;
@@ -246,7 +256,8 @@ static void gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 
 /* ---- lifecycle ---- */
 
-static volatile int32_t s_ready;
+/* Non-static: the a2dp sister glue gates its control calls on it too. */
+volatile int32_t s_ready;
 static StaticSemaphore_t s_uninit_sem_buf;
 
 /* Bring-up stage bookkeeping. Init can fail between stages, and without a
@@ -279,6 +290,10 @@ static int32_t bt_teardown(void)
                  * down cleanly without the confirmation */
             }
             s_spp_up = 0;
+        }
+        if ((err = bt_a2dp_teardown()) != ESP_OK && first == ESP_OK) {
+            first = err; /* wedged pump: report, and let the caller retry
+                          * Deinit - the channel and pump stay alive */
         }
         /* Bluedroid auto-closes an idle ACL about five seconds after its
          * last profile drops, and a disconnect completion racing

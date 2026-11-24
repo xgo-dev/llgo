@@ -8,6 +8,10 @@ emulator on tcp-server:_:9544, then a second Bumble device on the same link
 connects to the firmware over BR/EDR and drives one profile:
 
   a2dp FILE.sbc   stream SBC to an A2DP sink        (a2dp_sink_stream)
+  spp+a2dp FILE   the llgo demo's whole acceptance: SPP payload round first,
+                  then a fresh page for the A2DP stream (one process, because
+                  the emulator's HCI bridge is a single TCP connection - a
+                  second process cannot take the controller over mid-run)
   spp             RFCOMM SPP client, send data      (bt_spp_acceptor)
   l2cap [PSM]     L2CAP client, send data           (bt_l2cap_server)
   hid             HID host, count input reports     (bt_hid_mouse_device)
@@ -23,8 +27,9 @@ Bumble's virtual controller covers far less of BR/EDR than Bluedroid uses; the
 Controller patches below fill each gap and say why.
 
 llgo demo copy (this tree's host/): one delta against esp-emulator's
-tools/bumble_classic_peer.py, marked DELTA in run_spp - after the SPP run the
-peer disconnects its ACL before the process exits. The firmware side can never
+tools/bumble_classic_peer.py: the ACL is dropped before the process exits
+(the DELTA in main), and the demo's acceptance runs through the spp+a2dp
+combo script. The firmware side can never
 observe this process vanishing (the emulator's bridge just drops the TCP and
 nothing tells the emulated baseband its peer is gone), so an exit without the
 disconnect leaves the ACL "up" in the firmware forever, and Bluedroid's
@@ -56,7 +61,7 @@ if os.environ.get("BUMBLE_DEBUG"):
     for _mod in ("avdtp", "l2cap", "rfcomm", "hfp", "controller"):
         logging.getLogger(f"bumble.{_mod}").setLevel(logging.DEBUG)
 
-PROFILES = ("a2dp", "spp", "l2cap", "hid", "hfp")
+PROFILES = ("a2dp", "spp", "spp+a2dp", "l2cap", "hid", "hfp")
 EMU_ADDR = "00:11:22:33:44:55"
 
 
@@ -265,14 +270,6 @@ async def run_spp(dev, conn):
         await asyncio.sleep(0.2)
     await dlc.disconnect()
     print("[+] RFCOMM DLC closed", flush=True)
-    # DELTA (llgo demo copy): a well-behaved classic client drops the ACL
-    # before leaving: the firmware side never sees the virtual controller
-    # process exit, so without this the link would stay "up" in its baseband
-    # forever (no API can force it down: Bluedroid's esp_bluedroid_disable
-    # tears the host apart under an open ACL and aborts/hangs on the
-    # controller's answer).
-    await conn.disconnect()
-    print("[+] ACL disconnected", flush=True)
 
 
 async def run_l2cap(dev, conn, psm):
@@ -387,12 +384,26 @@ async def main():
         await run_a2dp(dev, conn, rest[0])
     elif profile == "spp":
         await run_spp(dev, conn)
+    elif profile == "spp+a2dp":
+        await run_spp(dev, conn)
+        await conn.disconnect()
+        print("[+] ACL disconnected (spp round)", flush=True)
+        await asyncio.sleep(2)
+        conn = await dev.connect(EMU_ADDR, transport=hci.PhysicalTransport.BR_EDR)
+        print("[+] ACL connected (a2dp round)", flush=True)
+        await run_a2dp(dev, conn, rest[0])
     elif profile == "l2cap":
         await run_l2cap(dev, conn, int(rest[0], 0) if rest else 0x1001)
     elif profile == "hfp":
         await run_hfp(dev, conn)
     elif profile == "hid":
         await run_hid(hid_host)
+    # DELTA (llgo demo copy): a well-behaved classic client drops the ACL
+    # before leaving: the firmware side never sees this process vanish, and
+    # Bluedroid cannot tear down under an open ACL (its disable path aborts
+    # or hangs on the controller's answer to a link that outlived the host).
+    await conn.disconnect()
+    print("[+] ACL disconnected", flush=True)
     print(f"BUMBLE_{profile.upper()}_PASS", flush=True)
     await asyncio.sleep(2)
 

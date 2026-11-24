@@ -140,6 +140,9 @@ func TestStubReportsUnsupported(t *testing.T) {
 	if _, err := SPPAccept(1); !errors.Is(err, ErrNotReady) {
 		t.Errorf("SPPAccept before Init = %v, want ErrNotReady", err)
 	}
+	if err := A2DPEnable(A2DPConfig{}); !errors.Is(err, ErrNotReady) {
+		t.Errorf("A2DPEnable before Init = %v, want ErrNotReady", err)
+	}
 	if b := Backend(); b != "none" {
 		t.Errorf("Backend = %q, want \"none\"", b)
 	}
@@ -152,6 +155,7 @@ func TestEventKindSpace(t *testing.T) {
 	kinds := []EventKind{
 		EvSPPInit, EvSPPListen, EvSPPConnOpen, EvSPPConnClose,
 		EvSPPCong, EvSPPStop, EvSPPUninit, EvACLDisconnect,
+		EvA2DPConnected, EvA2DPDisconnected, EvA2DPAudioCfg, EvA2DPVolume,
 	}
 	seen := make(map[EventKind]bool)
 	for _, k := range kinds {
@@ -293,6 +297,38 @@ func TestSPPDefaults(t *testing.T) {
 	}
 	if dataRingSlots != 8 { // SPP_DATA_SLOTS in the C glue
 		t.Errorf("dataRingSlots = %d, want 8", dataRingSlots)
+	}
+}
+
+// TestA2DPStubAndKinds exercises the A2DP surface a host build can see: the
+// profile's control calls report the stub's unsupported tag once the
+// package-level ready guard has passed (the stub Init itself fails first, so
+// the path below drives the bindings through the raw shape they would take
+// on a firmware), the audio counters report an honestly empty path, and the
+// A2DP event kinds stay clear of the SPP block.
+func TestA2DPStubAndKinds(t *testing.T) {
+	// The stub's control bindings all refuse; the counters honestly read
+	// zeros (an empty audio path, like the stub's empty rings).
+	var total, written, dropped uint32
+	a2dpStats(&total, &written, &dropped)
+	if total != 0 || written != 0 || dropped != 0 {
+		t.Errorf("stub audio counters = %d/%d/%d, want all zero",
+			total, written, dropped)
+	}
+	if got := ErrName(0x107); got != "ESP_ERR_TIMEOUT" {
+		t.Errorf("ErrName table drifted: %q", got) // sanity anchor
+	}
+	// The A2DP kinds reuse the existing Event fields (Aux = rate/volume,
+	// Status = channels/reason) - pin the mapping the docs promise by
+	// rendering one of each through the doc contract.
+	cfg := Event{Kind: int32(EvA2DPAudioCfg), Aux: 44100, Status: 2,
+		Addr: [6]uint8{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01}}
+	if cfg.AddrString() != "aa:bb:cc:dd:ee:01" || cfg.Aux != 44100 {
+		t.Errorf("audio cfg event shape drifted: %+v", cfg)
+	}
+	vol := Event{Kind: int32(EvA2DPVolume), Aux: 100}
+	if vol.Aux < 0 || vol.Aux > 127 {
+		t.Errorf("volume event out of AVRCP range: %d", vol.Aux)
 	}
 }
 

@@ -19,11 +19,12 @@
 #
 # Usage: ./make-artifact.sh [path-to-llgo] (default /tmp/llgo-idf)
 #
-# Also syncs pkg/esp/bt/glue/bt_glue_bluedroid.c into main/ (integration way 1
-# in pkg/esp/README.md): the Go program imports github.com/xgo-dev/llgo/pkg/esp/bt,
-# whose llgo.idf externs resolve against that glue at the IDF link. It is a
-# gitignored build input; this script must run before `idf.py build` so CMake
-# configure sees it.
+# Also syncs the pkg/esp/bt glue templates into main/ (integration way 1 in
+# pkg/esp/README.md): the Go program imports github.com/xgo-dev/llgo/pkg/esp/bt,
+# whose llgo.idf externs resolve against bt_glue_bluedroid.c and the A2DP
+# sister glue bt_glue_a2dp.c at the IDF link. They are gitignored build
+# inputs; this script must run before `idf.py build` so CMake configure sees
+# them.
 set -euo pipefail
 
 LLGO_BIN="${1:-/tmp/llgo-idf}"
@@ -72,6 +73,10 @@ REPO_ROOT="${REPO_ROOT:-$DIR/../../../..}"
 # a compile error naming the sdkconfig.defaults lines, so a mismatch fails
 # at build time with a readable message.
 cp "$REPO_ROOT/pkg/esp/bt/glue/bt_glue_bluedroid.c" "$MAIN/bt_glue.c"
+# The A2DP sister glue joins the same main component: it shares the ctrl
+# ring publisher and the ready flag with bt_glue.c (declared non-static for
+# exactly this pair) and adds the audio path. Gitignored like bt_glue.c.
+cp "$REPO_ROOT/pkg/esp/bt/glue/bt_glue_a2dp.c" "$MAIN/a2dp_glue.c"
 
 # 1. Go -> relocatable object.
 "$LLGO_BIN" build -target esp32s31-idf -o "$MAIN/llgo_tmp" ./goapp

@@ -17,7 +17,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial with SNI/host verification (Config: RootCAs/InsecureSkipVerify/MinVersion; deprecated VERIFY_NONE/REQUIRED TLSDial), record read/write, ConnectionState, close_notify, bounded quantum waits |
 | `pkg/esp/ws`   | — (no glue; pure Go RFC 6455 over a caller-supplied `net`/`tls` conn) | HTTP Upgrade handshake, masked frames, ping/pong, closing handshake; stdlib-free SHA-1/base64 |
 | `pkg/esp/ble`  | NimBLE host (`host/ble_gap.h`, `nimble_port.h`), or Bluedroid (`esp_bt.h` + `esp_gap_ble_api.h` + `esp_gattc_api.h`) | BLE **central**: bring-up and sync, scan, connect, cancel, disconnect; GATT client (service/characteristic discovery, read, write, CCCD subscribe, notifications, MTU); three-tier event mailbox, generation-tagged Operation/Connection ids. Two interchangeable C glues behind the same ABI (`ble_glue_nimble.c` / `ble_glue_bluedroid.c`), selected by the firmware's sdkconfig |
-| `pkg/esp/bt`   | Bluedroid Classic (`esp_spp_api.h`, SPP over RFCOMM) | Classic Bluetooth bring-up (BTDM controller + Bluedroid host), device name/discoverability, SPP server (listen/accept one serial connection), `SPPConn.Read/Write/Close`, event mailbox with fan-out subscriptions; A2DP reserved |
+| `pkg/esp/bt`   | Bluedroid Classic (`esp_spp_api.h` SPP over RFCOMM; `esp_a2dp_api.h` A2DP sink) | Classic Bluetooth bring-up (BTDM controller + Bluedroid host), device name/discoverability, SPP server (listen/accept one serial connection), `SPPConn.Read/Write/Close`, A2DP **sink** with the decoded-PCM audio path kept entirely in C glue (BTC callback → SPSC ring → pump task → I2S; Go does the control plane only), event mailbox with fan-out subscriptions |
 
 ## Package template
 
@@ -103,7 +103,7 @@ packages' meanings:
 
 | Segment | Package | Values |
 |---------|---------|--------|
-| `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` reserved for A2DP/HFP profiles) |
+| `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` = the A2DP domain; `0x7800+` reserved for HFP) |
 | `0x7Bxx` | `ble` | `ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`, `ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong` |
 | `0x7C01` | `esperr` | the meta error (a wrapper with no pipeline code) |
 | `0x7Dxx` | `ws` | `ErrProtocol`, `ErrClosed`… |
@@ -707,7 +707,7 @@ partition (1 MiB) overflows once the I2C/I2S driver code joins the link
 IDLE0 - the task-watchdog warnings in the console log are the same
 baseline noise as before the peripherals were added.
 
-## pkg/esp/bt — Classic Bluetooth (SPP) over the Bluedroid host
+## pkg/esp/bt — Classic Bluetooth (SPP + A2DP sink) over the Bluedroid host
 
 `pkg/esp/bt` brings up the BTDM controller and the Bluedroid host for
 **Classic Bluetooth**: `Init` / `Deinit` / `Ready` / `Backend()`, `SetName`,
@@ -724,8 +724,8 @@ fan-out mailbox shape the ble package uses. `Read` reports a peer close as
 `esperr.ErrEOF` after the buffered bytes are drained first; `Write` shards
 payloads to the RFCOMM MTU (990 B) and honors the stack's congestion
 signal (`EvSPPCong` edges retry a `NO_MEM` write, deadline-bounded). The
-package's own sentinel codes live in the 0x76xx segment (`0x7700+`
-reserved for A2DP/HFP).
+package's own sentinel codes live in the 0x76xx segment (`0x7700+` = the
+A2DP domain, `0x7800+` reserved for HFP).
 
 **SPP data bypasses the mailbox.** The control ring carries lifecycle
 events only (8 slots, ~192 B records); serial data lives in its own ring of
@@ -751,5 +751,32 @@ component (`REQUIRES bt esp_timer nvs_flash`) with
 switch). `_demo/esp-idf-bt` is the worked example, including the vendored
 `bumble_classic_peer.py` the emulator pairs against (SDP browse, RFCOMM
 DLC, a payload echo, then a deliberate ACL disconnect so `Deinit` has
-something finishable to wait for). A2DP sink - the decoded-PCM path with
-glue-direct I2S output - is the next profile on this base.
+something finishable to wait for).
+
+**A2DP sink — the audio path never enters Go.** `A2DPEnable(A2DPConfig{pins,
+DMA sizes})` starts the sink profile and the AVRCP TG/CT pair and brings up
+an I2S std TX channel on the given pins. From there the decoded audio flows
+entirely inside the glue: the BTC task's data callback (the IDF stack
+decodes SBC internally - the callback receives PCM S16 with the sample
+tate and channel count negotiated in the AUDIO_CFG event) copies into a
+32 KiB SPSC ring and wakes a dedicated pump task, which reconfigures the
+I2S clock/slots on a codec change and writes the DMA queue. The callback
+path never blocks - a full ring drops the whole block and counts it
+(`A2DPStats()` exposes total/written/dropped) - because blocking the BTC
+task stalls the whole Bluedroid host. Go only drives the control plane:
+enable/disable, absolute volume over AVRCP CT (`A2DPSetVolume`, the
+peer-side volume arrives as `EvA2DPVolume`), the four event kinds
+(EvA2DPConnected/Disconnected/AudioCfg/Volume = 9..12, reusing the existing
+`Event` fields: Aux carries the sample rate, the channel count or the 0..127
+volume; the AUDIO_CFG event may arrive before EvA2DPConnected - the BTC
+queue order - and `AudioCfg` pins both values). The glue lives in a
+sister file, `glue/bt_glue_a2dp.c`, next to `bt_glue_bluedroid.c`: the two
+share the mailbox (`ctrl_push`, `s_ready`) and the lifecycle (the A2DP
+profile-down joins the common teardown handshake), so a project copying
+the bt glues copies both (copying one is a loud link error, not silent
+breakage). Needs `CONFIG_BT_A2DP_ENABLE=y`. The emulator run drives the
+real path end to end (a Bumble AVDTP peer streams SBC; the probe pins the
+decoded byte count exactly - 3,525,120 bytes = 44.1 kHz × 2 ch × 2 B ×
+20 s) - the radio-level audio qualities (listening quality, clock-drift
+glitches over long playbacks, AVRCP volume round-trips) stay physical-board
+items.

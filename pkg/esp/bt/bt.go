@@ -1,8 +1,10 @@
 // Package bt binds llgo-compiled Go code to the ESP-IDF Bluedroid classic
-// Bluetooth stack: lifecycle control plus an SPP (Serial Port Profile) server
-// data channel. A2DP and other classic profiles are future work - the
-// lifecycle and event plumbing below are shared by every profile, so adding
-// one means new API functions plus new mailbox kinds, not a redesign.
+// Bluetooth stack: lifecycle control, an SPP (Serial Port Profile) server
+// data channel, and an A2DP sink whose decoded-PCM audio path runs entirely
+// in C (the stack's own SBC decoder feeds an I2S TX channel; see A2DPEnable).
+// The lifecycle and event plumbing below are shared by every profile, so
+// further profiles mean new API functions plus new mailbox kinds, not a
+// redesign.
 //
 // # Layout
 //
@@ -13,8 +15,14 @@
 //	bt_idf.go           //go:build llgo.idf - bodyless //go:linkname externs
 //	bt_stub.go          //go:build !llgo.idf - host-build stubs (go vet/gopls)
 //	bt_test.go          host-build tests (stub honesty, error spaces)
-//	glue/bt_glue_bluedroid.c - ESP-IDF C glue template, compiled only
-//	                    under ESP_PLATFORM
+//	glue/bt_glue_bluedroid.c - ESP-IDF C glue template for the stack
+//	                    lifecycle, SPP and the shared ctrl ring (compiled
+//	                    only under ESP_PLATFORM)
+//	glue/bt_glue_a2dp.c - the A2DP sink sister glue: audio path
+//	                    (PCM ring + pump task + I2S TX) and the profile's
+//	                    control calls; shares the ctrl ring publisher and
+//	                    the ready flag with the sibling (both templates get
+//	                    copied into the project's main component)
 //
 // # Usage
 //
@@ -76,12 +84,14 @@
 // once the bytes are queued in the TX buffer, which is earlier than on-air:
 // the stack drains to the peer at RFCOMM speed afterwards.
 //
-// # A2DP reservation
+// # Profiles and the shared plumbing
 //
-// The ctrl-ring kinds are the profile-shared vocabulary; a future A2DP
-// package would add its own GlueC file sharing the same Init/Deinit/Ready and
-// its own event kinds (0x77/0x78 internal error segments are reserved for
-// audio-profile packages). Nothing here needs to change shape to host it.
+// The ctrl-ring kinds are the profile-shared vocabulary: SPP owns 1..8 and
+// the A2DP sink (same package, glue/bt_glue_a2dp.c) owns 9..12; the
+// internal error segment 0x77xx belongs to the A2DP domain (0x78 stays
+// reserved for further classic-audio profiles, like an HFP stage). A new
+// profile adds API functions, glue cases and kinds - the lifecycle, the
+// mailbox and the fan-out below do not change shape.
 //
 // # Glue integration
 //
@@ -97,16 +107,20 @@ import (
 // ---- error domain ----
 //
 // The package's own conditions live in the internal segment 0x76xx (esperr
-// meta 0x7Cxx and ble 0x7Bxx are taken; 0x77/0x78 stay reserved for the
-// future classic-audio profile packages, 0x7D/0x7E for ws/tls, 0x7F00 is the
-// stub tag). Raw esp_err codes, esp_bt_status_t and esp_spp_status_t values
-// pass through unchanged and are named by ErrName.
+// meta 0x7Cxx and ble 0x7Bxx are taken; 0x7D/0x7E for ws/tls, 0x7F00 is the
+// stub tag). The classic-audio profile that shares this package has its own
+// segment: 0x77xx is A2DP's. Raw esp_err codes, esp_bt_status_t and
+// esp_spp_status_t values pass through unchanged and are named by ErrName.
 const (
 	codeGlueABI   = 0x7601
 	codeNotReady  = 0x7602
 	codeBusy      = 0x7603
 	codeTimeout   = 0x107 // ESP_ERR_TIMEOUT, the esp_err domain
 	codeUnsupport = 0x7F00
+
+	// 0x77xx is the A2DP domain's internal segment (this package hosts the
+	// classic-audio profile); no sentinel needs it yet - the profile's
+	// control calls surface the stack's own ESP_ERR_* codes.
 )
 
 var (
@@ -202,8 +216,8 @@ const glueABIVersion = 1
 // ---- events ----
 //
 // EventKind values are the ctrl-ring kinds. They are the profile-shared
-// vocabulary: a future A2DP package adds its own values without renumbering
-// these.
+// vocabulary: SPP owns 1..8, the A2DP sink 9..12; a further profile
+// continues after them without renumbering anything.
 type EventKind int32
 
 const (
@@ -245,6 +259,27 @@ const (
 	// HCI range 0x100+; ErrName names the common ones). An SPP
 	// EvSPPConnClose always accompanies or follows it.
 	EvACLDisconnect EventKind = 8
+
+	// The A2DP kinds. The audio stream itself never crosses into Go - the
+	// glue pipes the decoded PCM straight into I2S (see A2DPEnable) - so
+	// these are control-plane records only, and they reuse the Event's
+	// existing fields instead of growing the struct:
+	EvA2DPConnected EventKind = 9
+	// EvA2DPDisconnected reports the A2DP transport tore down: Addr is the
+	// peer, Status the reason (0 = normal local/remote disconnect, 1 =
+	// abnormal link loss), Handle the connection handle.
+	EvA2DPDisconnected EventKind = 10
+	// EvA2DPAudioCfg reports the negotiated SBC codec config: Aux is the
+	// sample rate in Hz, Status the channel count (1 or 2), Addr the peer.
+	// The glue re-clocks the I2S channel to match before the next PCM
+	// chunk plays; the event exists so a control plane can log/report what
+	// the analog path now runs (A2DP has no get-config API - this event is
+	// the only source).
+	EvA2DPAudioCfg EventKind = 11
+	// EvA2DPVolume reports a volume in Aux (0..127): either the phone's
+	// absolute-volume command arrived (AVRCP TG side) or the peer confirmed
+	// our own A2DPSetVolume (CT response).
+	EvA2DPVolume EventKind = 12
 )
 
 // Event is one ctrl-ring record. The fields are meaningful per kind (see the
@@ -262,8 +297,9 @@ type Event struct {
 	Handle uint32
 	// Aux carries the kind's secondary value: the SCN for
 	// EvSPPListen/EvSPPStop, 1 for a peer-initiated EvSPPConnClose, the
-	// TX-drain edge for EvSPPCong, and the SPP data-ring drop count for
-	// EvOverflow.
+	// TX-drain edge for EvSPPCong, the SPP data-ring drop count for
+	// EvOverflow, the sample rate in Hz for EvA2DPAudioCfg, and the
+	// 0..127 volume for EvA2DPVolume.
 	Aux int32
 	// Addr is the peer's BD address for the kinds that carry one
 	// (EvSPPConnOpen, EvACLDisconnect), in Bluedroid's storage order:
@@ -868,6 +904,87 @@ func (c *SPPConn) drain() {
 			return
 		}
 	}
+}
+
+// ---- A2DP sink (audio profile) ----
+//
+// The audio path never enters Go. The stack decodes SBC to PCM (S16 LE) and
+// the glue pipes it into an I2S standard-mode TX channel on dedicated pins:
+// BTC data callback -> static PCM ring -> glue pump task -> DMA. Go's surface
+// is the control plane only - bring-up with pin assignment, and the counters
+// that make audio loss visible (the realtime path drops whole chunks rather
+// than ever blocking the BT tasks; see A2DPStats).
+
+// A2DPConfig describes the analog audio endpoint A2DPEnable creates.
+type A2DPConfig struct {
+	// BclkPin, WsPin, DoutPin are the GPIO numbers of the I2S standard-mode
+	// TX bit clock, word select and data-out pins (the DAC/codec side).
+	// MCLK is not driven; DIN is unused.
+	BclkPin int
+	WsPin   int
+	DoutPin int
+	// DmaDescNum and DmaFrameNum size the TX DMA ring (descriptors x frames
+	// of one stereo S16 sample) - the jitter absorber between the BT clock
+	// feeding PCM and the local audio clock consuming it. Zero picks the
+	// driver defaults (6 x 240 frames ≈ 32 ms at 44.1 kHz); a serious
+	// loudspeaker path wants tens of milliseconds more, e.g. 12 x 511
+	// (≈ 139 ms). The static PCM ring on top adds ~186 ms at 44.1 kHz.
+	DmaDescNum  int
+	DmaFrameNum int
+}
+
+// A2DPEnable brings the A2DP sink profile up and wires its decoded-PCM
+// output to the I2S pins in cfg: profile init, the data callback into the
+// glue's audio path, AVRCP TG/CT init (volume commands), and the audio pump
+// task. It must be called after Init (the stack bring-up) and may run next
+// to an SPP server - the two profiles share one stack, one ctrl ring and
+// one poller. Playback begins when a phone connects and pushes a stream;
+// the negotiated codec config arrives as EvA2DPAudioCfg and the glue
+// re-clocks I2S on its own. A2DPEnable on a firmware built without
+// CONFIG_BT_A2DP_ENABLE reports ESP_ERR_NOT_SUPPORTED.
+func A2DPEnable(cfg A2DPConfig) error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	return errOf(a2dpEnable(int32(cfg.BclkPin), int32(cfg.WsPin),
+		int32(cfg.DoutPin), int32(cfg.DmaDescNum), int32(cfg.DmaFrameNum)))
+}
+
+// A2DPDisable tears the profile and its audio path down (closes any A2DP
+// connection, stops the pump, deletes the I2S channel, zeroes the counters).
+func A2DPDisable() error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	return errOf(a2dpDisable())
+}
+
+// A2DPSetVolume pushes an absolute volume (0..127) to the connected phone's
+// AVRCP controller. Fire-and-forget: the value the peer confirms arrives
+// later as an EvA2DPVolume record. Reports ErrNotReady before Init and
+// ESP_ERR_INVALID_STATE when the profile is not enabled (A2DPEnable has not
+// run) or there is no A2DP connection to address.
+func A2DPSetVolume(volume uint8) error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	return errOf(a2dpVolumeSet(int32(volume)))
+}
+
+// A2DPStats reports the audio path's byte counters since A2DPEnable (or the
+// last A2DPDisable): total PCM the stack handed over, written the bytes the
+// pump fed into I2S, and dropped the bytes lost to a full ring. The three
+// values are snapshots taken at slightly different moments (two BTC-side
+// counters and one pump-side counter), so total does not have to equal
+// written + dropped for any single read - small skews are the read's own
+// race, not lost audio; the same read races the counter resets at
+// A2DPDisable, which can shift a value by one in-flight chunk. On a healthy
+// link written tracks total within the ring's water depth; a steadily
+// growing dropped means the source outruns the speaker path (or the pump
+// starved). Treat the numbers as flow telemetry, not as an audio meter.
+func A2DPStats() (total, written, dropped uint32) {
+	a2dpStats(&total, &written, &dropped)
+	return total, written, dropped
 }
 
 // ---- error rendering ----

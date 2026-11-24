@@ -6,9 +6,9 @@
 # This component supplies the C shell, the demo glue, the extra linker script
 # and the link options.
 #
-# Glue sources: demo_glue.c is demo-local (checked in); bt_glue.c is a
-# build-time copy of the pkg/esp/bt glue template, synced from the llgo repo's
-# pkg/esp/bt/glue/bt_glue_bluedroid.c by host/make-artifact.sh (integration
+# Glue sources: demo_glue.c is demo-local (checked in); bt_glue.c and
+# a2dp_glue.c are build-time copies of the pkg/esp/bt glue templates, synced
+# from the llgo repo's pkg/esp/bt/glue/ by host/make-artifact.sh (integration
 # way 1 in pkg/esp/README.md) and therefore gitignored.
 #
 # WHOLE_ARCHIVE is required: llgo_out.o is the LAST item on the link line, and
@@ -20,13 +20,14 @@
 # unconditionally.
 #
 # REQUIRES bt: pkg/esp/bt's glue drives the Bluedroid host API (esp_bt*,
-# esp_bt_gap_*, esp_spp_*) directly. esp_timer: the glue reads
-# esp_timer_get_time for the Go-side deadline clock. nvs_flash: the stack
-# persists its config (link keys) there, and the glue initializes the
-# partition (never formats it).
-idf_component_register(SRCS app_main.c demo_glue.c bt_glue.c
+# esp_bt_gap_*, esp_spp_*, esp_a2d_*, esp_avrc_*) directly. esp_timer: the
+# glue reads esp_timer_get_time for the Go-side deadline clock. nvs_flash:
+# the stack persists its config (link keys) there, and the glue initializes
+# the partition (never formats it). esp_driver_i2s: the A2DP glue's decoded
+# PCM lands in an I2S standard-mode TX channel.
+idf_component_register(SRCS app_main.c demo_glue.c bt_glue.c a2dp_glue.c
                        INCLUDE_DIRS "."
-                       REQUIRES bt esp_timer nvs_flash
+                       REQUIRES bt esp_timer nvs_flash esp_driver_i2s
                        WHOLE_ARCHIVE)
 
 # The llgo object must be a PUBLIC (interface) link item so CMake places it as
