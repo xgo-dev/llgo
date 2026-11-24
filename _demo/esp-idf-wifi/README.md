@@ -24,7 +24,7 @@ esp-idf-wifi/
 │                           tinygogc externs in main.go, so `go build` links
 └── idfproj/                Minimal ESP-IDF project
     ├── CMakeLists.txt
-    ├── sdkconfig.defaults  8 KiB main task, 240 MHz, WiFi tasks on CPU1, PSRAM
+    ├── sdkconfig.defaults  8 KiB main task, 240 MHz, Go on CPU1 / radio on CPU0, PSRAM
     ├── host/               Host-side artifact pipeline (one command)
     │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object;
     │   │                     also syncs the pkg/esp/*/glue templates into main/
@@ -470,9 +470,17 @@ Known limitations:
 
 ## Notes
 
-- The WiFi stack's tasks are pinned to CPU1
-  (`CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1`) so scan/association bursts never
-  compete with the llgo scheduler on CPU0.
+- **Multi-core layout (TinyGo-style hardware isolation)**: the llgo scheduler
+  and all Go code run on **CPU1** (`CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1`), the
+  radio stack on **CPU0** - WiFi tasks (`CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0`),
+  lwip's tcpip task (`CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0`; its IDF default is
+  no affinity), BT and esp_timer (CPU0 by default). Scan/association bursts,
+  protocol timers and the interrupts that follow the radio tasks never preempt
+  the Go control loop, which is exactly the Core0-wireless / Core1-control
+  split multi-core embedded runtimes advertise - achieved with plain FreeRTOS
+  task affinity while the Go scheduler itself stays a single cooperative task
+  (a Go-visible `LockCore` API or true two-core scheduling would be separate
+  projects).
 - The IDF heap must absorb the WiFi allocations (~100-150 KiB) next to the
   static 256 KiB llgo GC heap; the glue prints the free heap before setup to
   make that budget visible.

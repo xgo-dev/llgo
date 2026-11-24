@@ -18,10 +18,17 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
 
-# The WiFi stack runs its own high-priority tasks; pin them to CPU1 so
-# scan/association bursts never compete with the llgo scheduler (main task
-# on CPU0) - see the wifi-pipeline design, risk R2.
-CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+# Multi-core layout (TinyGo-style hardware isolation): the llgo scheduler and
+# all Go code run on CPU1; the radio stack (WiFi tasks, lwip tcpip, BT, and
+# esp_timer, which default to CPU0) stays on CPU0. Scan/association bursts,
+# protocol timers and the radio interrupts that follow their tasks never
+# preempt the Go control loop. The scheduler itself is unchanged - still one
+# cooperative task; the isolation is FreeRTOS task affinity, not a second
+# scheduler. (A Go-visible LockCore API and true two-core scheduling are
+# separate, larger projects.)
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 
 # External PSRAM: the S31 die defaults to octal mode at 200 MHz; measured
 # 16 MiB present with ~157 MB/s sequential read. malloc may serve from it, but

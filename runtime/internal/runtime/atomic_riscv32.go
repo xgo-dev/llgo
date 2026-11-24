@@ -8,8 +8,11 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-// RV32IMC (ESP32-C3/S31) has no A extension, so LLVM lowers every atomic
-// operation to the __atomic_* libcalls collected here. compiler-rt's atomic.c
+// The llgo riscv32 targets do not enable the RISC-V A extension in their
+// -march (the S31 hardware does implement zaamo/zalrsc - IDF compiles it
+// with rv32imafc_..._zaamo_zalrsc - but the llgo target keeps -a off to
+// share the C3 code paths), so LLVM lowers every atomic operation to the
+// __atomic_* libcalls collected here. compiler-rt's atomic.c
 // cannot serve this target: it is excluded from the ESP rtlib, and its
 // spinlocks would deadlock when an interrupt interrupts a holder. All RMW
 // paths below therefore run with interrupts masked through the CSR helpers
