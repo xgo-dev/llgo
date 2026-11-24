@@ -153,19 +153,17 @@ func main() {
 // CHECK: [[C2_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
 // CHECK: [[C2_IS_I2:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
 // CHECK: br i1 [[C2_IS_I2]], label %{{.*}}, label %{{.*}}
-// The final conversions rebuild an eface from the same C1 payload before nil comparison.
+// The final nil comparisons read the type word of an eface and the itab of an iface.
 // CHECK: [[FINAL_C1_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[FINAL_C1_DATA:%.*]], 1
 // CHECK: [[FINAL_C1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[FINAL_C1_IFACE]])
 // CHECK: [[FINAL_C1_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 1
 // CHECK: [[FINAL_EFACE_0:%.*]] = insertvalue %"{{.*}}eface" undef, ptr [[FINAL_C1_TYPE]], 0
 // CHECK: [[FINAL_EFACE:%.*]] = insertvalue %"{{.*}}eface" [[FINAL_EFACE_0]], ptr [[FINAL_C1_PAYLOAD]], 1
-// CHECK: [[I0_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_EFACE]], %"{{.*}}eface" zeroinitializer)
+// CHECK: [[FINAL_TYPE_WORD:%.*]] = extractvalue %"{{.*}}eface" [[FINAL_EFACE]], 0
+// CHECK: [[I0_IS_NIL:%.*]] = icmp eq ptr [[FINAL_TYPE_WORD]], null
 // CHECK: br i1 [[I0_IS_NIL]], label %{{.*}}, label %{{.*}}
-// CHECK: [[FINAL_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[FINAL_C1_IFACE]])
-// CHECK: [[FINAL_I1_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 1
-// CHECK: [[FINAL_I1_EFACE_0:%.*]] = insertvalue %"{{.*}}eface" undef, ptr [[FINAL_I1_TYPE]], 0
-// CHECK: [[FINAL_I1_EFACE:%.*]] = insertvalue %"{{.*}}eface" [[FINAL_I1_EFACE_0]], ptr [[FINAL_I1_PAYLOAD]], 1
-// CHECK: [[I1_IS_NIL:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}eface" [[FINAL_I1_EFACE]], %"{{.*}}eface" %{{.*}})
+// CHECK: [[FINAL_ITAB:%.*]] = extractvalue %"{{.*}}iface" [[FINAL_C1_IFACE]], 0
+// CHECK: [[I1_IS_NIL:%.*]] = icmp eq ptr [[FINAL_ITAB]], null
 // CHECK: br i1 [[I1_IS_NIL]], label %{{.*}}, label %{{.*}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" { ptr @{{.*}}, i64 4 })
 // CHECK: ret void

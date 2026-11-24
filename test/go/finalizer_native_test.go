@@ -69,3 +69,17 @@ func TestRuntimeSetFinalizerNativeCancel(t *testing.T) {
 	default:
 	}
 }
+
+func TestRuntimeSetFinalizerDirectErrorResult(t *testing.T) {
+	finalized := make(chan int, 1)
+	registerFinalizerForTest(func() {
+		p := &nativeFinalizerObject{value: 40, finalized: finalized}
+		registerBoxedFinalizer(p, nativePointerFinalizer(func(p *nativeFinalizerObject) { p.finalize() }))
+		runtime.SetFinalizer(p, func(p *nativeFinalizerObject) error {
+			finalized <- p.value + 2
+			return nil
+		})
+		runtime.KeepAlive(p)
+	})
+	waitForFinalizerValue(t, finalized, 42)
+}

@@ -1796,13 +1796,20 @@ func TestLinkOptionsOmitDWARFPreservesPclntab(t *testing.T) {
 	}
 	t.Setenv(llgoFuncInfo, "1")
 
-	tests := []struct {
+	type linkCase struct {
 		name    string
 		options LinkOptions
-	}{
+		level   optlevel.Level
+		lto     lto.Mode
+	}
+	tests := []linkCase{
 		{name: "w", options: LinkOptions{DWARF: DWARFOmit}},
 		{name: "s", options: LinkOptions{OmitSymbolTable: true}},
 		{name: "s_w_false", options: LinkOptions{OmitSymbolTable: true, DWARF: DWARFPreserve}},
+	}
+	if runtime.GOOS == "darwin" {
+		t.Setenv("LLGO_PCLNPOST", "1")
+		tests = append(tests, linkCase{name: "s_oz_full", options: LinkOptions{OmitSymbolTable: true}, level: optlevel.Oz, lto: lto.Full})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1811,6 +1818,8 @@ func TestLinkOptionsOmitDWARFPreservesPclntab(t *testing.T) {
 				Mode:        ModeBuild,
 				OutFile:     binPath,
 				LinkOptions: tt.options,
+				OptLevel:    tt.level,
+				LTO:         tt.lto,
 			}
 			if _, err := Do([]string{"./testdata/ldflagsstrip"}, cfg); err != nil {
 				t.Fatalf("ModeBuild with LinkOptions %+v failed: %v", tt.options, err)
@@ -1821,6 +1830,16 @@ func TestLinkOptionsOmitDWARFPreservesPclntab(t *testing.T) {
 			if runtime.GOOS == "darwin" {
 				if out, err := exec.Command("codesign", "--verify", "--verbose=4", binPath).CombinedOutput(); err != nil {
 					t.Fatalf("codesign verification with LinkOptions %+v: %v\n%s", tt.options, err, out)
+				}
+			}
+			if tt.level == optlevel.Oz {
+				file, err := macho.Open(binPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer file.Close()
+				if section := file.Section("__llgo_fie"); section == nil || section.Seg != "__DATA" {
+					t.Fatal("compact entry table does not share __DATA")
 				}
 			}
 		})

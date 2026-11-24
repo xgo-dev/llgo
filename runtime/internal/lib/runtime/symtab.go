@@ -356,13 +356,8 @@ func funcInfoCString(id uint32) *c.Char {
 		uintptr(id) >= runtimeFuncInfoStringCount {
 		return nil
 	}
-	off := *(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStringOffsets), uintptr(id)*unsafe.Sizeof(*runtimeFuncInfoStringOffsets)))
+	off := funcInfoStringOffset(uintptr(id))
 	return (*c.Char)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStrings), uintptr(off)))
-}
-
-func funcInfoAt(i uintptr) *runtimeFuncInfoRecord {
-	size := unsafe.Sizeof(*runtimeFuncInfoTable)
-	return (*runtimeFuncInfoRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoTable), i*size))
 }
 
 func pcLineAt(i uintptr) *runtimePCLineRecord {
@@ -465,8 +460,9 @@ func funcInfoJoinFile(rootID, nameID uint32) string {
 
 func maxFuncInfoSymbolLen() int {
 	maxLen := 0
+	var record runtimeFuncInfoRecord
 	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-		fn := funcInfoAt(i)
+		fn := funcInfoAt(i, &record)
 		if n := funcInfoNameLen(fn.symbolPkg, fn.symbolName); n > maxLen {
 			maxLen = n
 		}
@@ -504,7 +500,7 @@ func funcInfoFileName(fn *runtimeFuncInfoRecord) string {
 	return funcInfoJoinFile(fn.fileRoot, fn.fileName)
 }
 
-func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
+func funcInfoForSymbol(symbol string, record *runtimeFuncInfoRecord) *runtimeFuncInfoRecord {
 	if symbol == "" || runtimeFuncInfoTable == nil || runtimeFuncInfoCount == 0 {
 		return nil
 	}
@@ -519,7 +515,7 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 				return nil
 			}
 			if uintptr(idx) <= runtimeFuncInfoCount {
-				rec := funcInfoAt(uintptr(idx) - 1)
+				rec := funcInfoAt(uintptr(idx)-1, record)
 				if funcInfoSymbolEqual(rec, symbol) {
 					return rec
 				}
@@ -529,7 +525,7 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 		return nil
 	}
 	for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-		rec := funcInfoAt(i)
+		rec := funcInfoAt(i, record)
 		if funcInfoSymbolEqual(rec, symbol) {
 			return rec
 		}
@@ -537,16 +533,13 @@ func funcInfoForSymbol(symbol string) *runtimeFuncInfoRecord {
 	return nil
 }
 
-func funcInfoForRuntimeSymbol(symbol string) *runtimeFuncInfoRecord {
-	return funcInfoForSymbol(symbol)
-}
-
 func applyFuncInfo(sym *pcSymbol, rawFunction string) {
-	rec := funcInfoForRuntimeSymbol(rawFunction)
+	var scratch runtimeFuncInfoRecord
+	rec := funcInfoForSymbol(rawFunction, &scratch)
 	if rec == nil {
 		public := publicFunctionName(rawFunction)
 		if public != rawFunction {
-			rec = funcInfoForRuntimeSymbol(public)
+			rec = funcInfoForSymbol(public, &scratch)
 		}
 	}
 	if rec == nil {
@@ -887,8 +880,9 @@ func initRuntimeFuncPCFramesOnce() {
 		entryBase := unsafe.Pointer(&entries[0])
 		nframes := 0
 		symbolBuf = make([]byte, 0, maxFuncInfoSymbolLen()+1)
+		var record runtimeFuncInfoRecord
 		for i := uintptr(0); i < runtimeFuncInfoCount; i++ {
-			fn := funcInfoAt(i)
+			fn := funcInfoAt(i, &record)
 			pc := symbolPCFuncInfoName(symbolBuf, fn.symbolPkg, fn.symbolName)
 			if pc == 0 {
 				continue
@@ -987,31 +981,44 @@ func appendRuntimeFuncInfoEntryFrames(frames []runtimeFuncPCFrame, entries []uin
 }
 
 func funcInfoIndexForSymbolID(symbolID uint64) uint32 {
-	if symbolID == 0 || runtimeFuncInfoSymbolIndex == nil || runtimeFuncInfoSymbolIndexCount == 0 {
+	count := runtimeFuncInfoSymbolIndexCount &^ runtimeFuncInfoShortIndexFlag
+	if symbolID == 0 || runtimeFuncInfoSymbolIndex == nil || count == 0 {
 		return 0
 	}
-	if runtimeFuncInfoSymbolIndexCount > runtimeFuncInfoCount || runtimeFuncInfoSymbolIndexCount > 1<<20 {
+	if count > runtimeFuncInfoCount || count > 1<<20 {
 		return 0
 	}
-	lo, hi := uintptr(0), runtimeFuncInfoSymbolIndexCount
-	size := unsafe.Sizeof(*runtimeFuncInfoSymbolIndex)
+	compact := runtimeFuncInfoSymbolIndexCount&runtimeFuncInfoShortIndexFlag != 0
+	stride := unsafe.Sizeof(*runtimeFuncInfoSymbolIndex)
+	if compact {
+		if count > 0xffff {
+			return 0
+		}
+		stride = unsafe.Sizeof(symbolID)
+	}
+	base := unsafe.Pointer(runtimeFuncInfoSymbolIndex)
+	lo, hi := uintptr(0), count
 	for lo < hi {
 		mid := (lo + hi) >> 1
-		rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), mid*size))
-		if rec.symbolID >= symbolID {
+		if *(*uint64)(unsafe.Add(base, mid*stride)) >= symbolID {
 			hi = mid
 		} else {
 			lo = mid + 1
 		}
 	}
-	if lo >= runtimeFuncInfoSymbolIndexCount {
+	if lo >= count || *(*uint64)(unsafe.Add(base, lo*stride)) != symbolID {
 		return 0
 	}
-	rec := (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoSymbolIndex), lo*size))
-	if rec.symbolID != symbolID || rec.funcIndex == 0 || uintptr(rec.funcIndex) > runtimeFuncInfoCount {
+	var index uint32
+	if compact {
+		index = uint32(*(*uint16)(unsafe.Add(base, count*stride+lo*unsafe.Sizeof(uint16(0)))))
+	} else {
+		index = (*runtimeFuncInfoSymbolIndexRecord)(unsafe.Add(base, lo*stride)).funcIndex
+	}
+	if uintptr(index) > runtimeFuncInfoCount {
 		return 0
 	}
-	return rec.funcIndex
+	return index
 }
 
 func sortRuntimeFuncPCFrames(frames []runtimeFuncPCFrame) {
@@ -1428,13 +1435,11 @@ func init() {
 		touch(unsafe.Pointer(&runtimeFuncPCIndex.buckets[0]),
 			uintptr(n)*unsafe.Sizeof(runtimePCFindBucket{}))
 	}
-	touch(unsafe.Pointer(runtimeFuncInfoTable),
-		runtimeFuncInfoCount*unsafe.Sizeof(runtimeFuncInfoRecord{}))
+	touch(unsafe.Pointer(runtimeFuncInfoTable), runtimeFuncInfoCount*funcInfoRecordSize())
 	touch(unsafe.Pointer(runtimeFuncInfoStringOffsets),
-		runtimeFuncInfoStringCount*unsafe.Sizeof(uint32(0)))
+		runtimeFuncInfoStringCount*funcInfoStringOffsetSize())
 	if runtimeFuncInfoStrings != nil && runtimeFuncInfoStringCount > 0 {
-		last := uintptr(*(*uint32)(unsafe.Add(unsafe.Pointer(runtimeFuncInfoStringOffsets),
-			(runtimeFuncInfoStringCount-1)*unsafe.Sizeof(uint32(0)))))
+		last := uintptr(funcInfoStringOffset(runtimeFuncInfoStringCount - 1))
 		lastStr := funcInfoCString(uint32(runtimeFuncInfoStringCount - 1))
 		touch(unsafe.Pointer(runtimeFuncInfoStrings), last+uintptr(cStringLen(lastStr))+1)
 	}
@@ -1547,7 +1552,8 @@ func pcSymbolForFuncInfoIndex(pc, entry uintptr, funcIndex uint32) (pcSymbol, bo
 	if funcIndex == 0 || uintptr(funcIndex) > runtimeFuncInfoCount {
 		return pcSymbol{}, false
 	}
-	fn := funcInfoAt(uintptr(funcIndex) - 1)
+	var scratch runtimeFuncInfoRecord
+	fn := funcInfoAt(uintptr(funcIndex)-1, &scratch)
 	line := int(fn.line)
 	startLine := line
 	if GOOS == "windows" {
@@ -1668,6 +1674,7 @@ func initRuntimePCLineFramesOnce() {
 	funcCacheBase := unsafe.Pointer(&funcCache[0])
 	funcCacheSize := unsafe.Sizeof(funcCache[0])
 	fileCache := make(map[uint64]string)
+	var scratch runtimeFuncInfoRecord
 	for i := uintptr(0); i < nsite; i++ {
 		site := (*runtimePCSiteRecord)(unsafe.Pointer(start + i*size))
 		if site == nil || site.id == 0 || site.pc == 0 {
@@ -1678,7 +1685,7 @@ func initRuntimePCLineFramesOnce() {
 			continue
 		}
 		pc := site.pc
-		fn := funcInfoAt(uintptr(rec.funcIndex) - 1)
+		fn := funcInfoAt(uintptr(rec.funcIndex)-1, &scratch)
 		fc := (*pcLineFuncInfo)(unsafe.Add(funcCacheBase, uintptr(rec.funcIndex)*funcCacheSize))
 		if !fc.resolved {
 			fc.entry = funcEntryForIndex(rec.funcIndex)

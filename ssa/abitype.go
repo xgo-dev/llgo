@@ -26,6 +26,7 @@ import (
 	"strconv"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -93,7 +94,11 @@ func staticPtrToThis(t types.Type) (types.Type, bool) {
 	return ptr, types.NewMethodSet(ptr).Len() != 0
 }
 
-func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, publicSig *types.Signature, global llvm.Value) (fields []llvm.Value) {
+func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, publicSig *types.Signature, global llvm.Value) []llvm.Value {
+	return b.abiCommonFieldsFor(t, nil, name, hasUncommon, publicSig, global)
+}
+
+func (b Builder) abiCommonFieldsFor(t, closure types.Type, name string, hasUncommon bool, publicSig *types.Signature, global llvm.Value) (fields []llvm.Value) {
 	prog := b.Prog
 	ab := prog.abi
 	// Size uintptr
@@ -105,7 +110,12 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, pu
 	hash := binary.LittleEndian.Uint32(h[:4])
 	fields = append(fields, prog.IntVal(uint64(hash), prog.Uint32()).impl)
 	// TFlag uint8
+	display := t
 	tflag := ab.TFlag(t)
+	if closure != nil {
+		display = closure
+		tflag |= rabi.TFlagNamed | rabi.TFlagClosureFunc
+	}
 	if hasUncommon {
 		tflag |= abi.TFlagUncommon
 	}
@@ -165,7 +175,7 @@ func (b Builder) abiCommonFields(t types.Type, name string, hasUncommon bool, pu
 	// GCData     *byte
 	fields = append(fields, prog.Nil(prog.Pointer(prog.Byte())).impl)
 	// Str_       string
-	fields = append(fields, b.Str(ab.Str(t)).impl)
+	fields = append(fields, b.Str(ab.Str(display)).impl)
 	// PtrToThis_ *Type
 	ptr, static := staticPtrToThis(t)
 	if !static {
@@ -288,17 +298,6 @@ func (b Builder) abiMapBucket(t *types.Map, bucket types.Type) Expr {
 	return Expr{g.impl, prog.AbiTypePtr()}
 }
 
-/*
-type StructField struct {
-	Name_  string  // name is always non-empty
-	Typ    *Type   // type of field
-	Offset uintptr // byte offset of field
-
-	Tag_      string
-	Embedded_ bool
-}
-*/
-
 func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 	prog := b.Prog
 	n := t.NumFields()
@@ -313,11 +312,12 @@ func (b Builder) abiStructFields(t *types.Struct, name string) llvm.Value {
 		for i := 0; i < n; i++ {
 			f := t.Field(i)
 			var values []llvm.Value
-			values = append(values, b.Str(f.Name()).impl)
-			values = append(values, b.abiType(abi.PublicType(f.Type())).impl)
+			encoded := rabi.EncodeStructFieldName(f.Name(), t.Tag(i), f.Embedded())
+			values = append(values, b.Pkg.createGlobalStr(encoded))
+			// Keep the storage descriptor for Go closures. Reflect exposes the
+			// signature when the field's public type is requested.
+			values = append(values, b.abiType(f.Type()).impl)
 			values = append(values, prog.IntVal(uint64(offsets[i]), prog.Uintptr()).impl)
-			values = append(values, b.Str(t.Tag(i)).impl)
-			values = append(values, prog.BoolVal(f.Embedded()).impl)
 			fields[i] = prog.constStructValue(ft, values)
 		}
 		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
@@ -393,35 +393,33 @@ func (b Builder) abiInterfaceImethods(t *types.Interface, name string) llvm.Valu
 	})
 }
 
-func (b Builder) abiTuples(t *types.Tuple, name string) llvm.Value {
+func (b Builder) abiSignatureTypes(t *types.Signature, name string) llvm.Value {
 	prog := b.Prog
-	n := t.Len()
+	in, out := t.Params(), t.Results()
+	n := in.Len() + out.Len()
 	if n == 0 {
-		return prog.Nil(prog.rtType("Slice")).impl
+		return llvm.ConstNull(prog.AbiTypePtr().ll)
 	}
 	g := b.Pkg.VarOf(name)
 	if g == nil {
-		fields := make([]llvm.Value, n)
-		for i := 0; i < n; i++ {
-			fields[i] = b.abiType(abi.PublicType(t.At(i).Type())).impl
-		}
 		ft := prog.AbiTypePtr()
-		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
-		for i, field := range fields {
-			fields[i] = prog.toStorageConstant(ft, field)
+		fields := make([]llvm.Value, n)
+		index := 0
+		for _, tuple := range []*types.Tuple{in, out} {
+			for i := 0; i < tuple.Len(); i++ {
+				field := b.abiType(abi.PublicType(tuple.At(i).Type())).impl
+				fields[index] = prog.toStorageConstant(ft, field)
+				index++
+			}
 		}
+		atyp := prog.rawType(types.NewArray(ft.RawType(), int64(n)))
 		data := Expr{llvm.ConstArray(prog.storageType(ft), fields), atyp}
 		g = b.Pkg.doNewVar(name, prog.Pointer(atyp))
 		g.Init(data)
 		g.impl.SetGlobalConstant(true)
 		b.Pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
 	}
-	size := uint64(n)
-	return prog.constStructValue(prog.rtType("Slice"), []llvm.Value{
-		g.impl,
-		prog.IntVal(size, prog.Int()).impl,
-		prog.IntVal(size, prog.Int()).impl,
-	})
+	return g.impl
 }
 
 func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value) (fields []llvm.Value) {
@@ -478,8 +476,9 @@ func (b Builder) abiExtendedFields(t types.Type, name string, global llvm.Value)
 	case *types.Signature:
 		name, _ := prog.abi.TypeName(t)
 		fields = []llvm.Value{
-			b.abiTuples(t.Params(), name+"$in"),
-			b.abiTuples(t.Results(), name+"$out"),
+			b.abiSignatureTypes(t, name+"$params"),
+			prog.IntVal(uint64(t.Params().Len()), prog.Int()).impl,
+			prog.IntVal(uint64(t.Results().Len()), prog.Int()).impl,
 		}
 		if prog.target.usesWasmReflectBridges() {
 			bridges := pkg.wasmReflectBridge(t)
@@ -560,7 +559,7 @@ func (b Builder) structuralTypeChildren(t types.Type) []types.Type {
 	case *types.Struct:
 		children := make([]types.Type, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
-			children = append(children, abi.PublicType(t.Field(i).Type()))
+			children = append(children, t.Field(i).Type())
 		}
 		return children
 	case *types.Named:
@@ -827,6 +826,13 @@ func (b Builder) abiType(t types.Type) Expr {
 				prog.constStructValue(prog.AbiType(), fields),
 			}, extendedFields...)
 		}
+		if sig := namedClosureSignature(t); sig != nil {
+			st := prog.rtType("structtype")
+			fields = []llvm.Value{
+				prog.constStructValue(st, fields),
+				b.abiClosureFuncType(t, sig, name, g.impl),
+			}
+		}
 		if publicSig != nil {
 			public := b.abiType(publicSig)
 			entry := llvm.ConstNull(prog.tyVoidPtr())
@@ -874,6 +880,25 @@ func (b Builder) abiType(t types.Type) Expr {
 		b.recordAbiTypeFakeUses(g.impl)
 	}
 	return ret
+}
+
+// The public function descriptor links straight back to its storage type,
+// which owns the method table and the pointer-to-type metadata.
+func (b Builder) abiClosureFuncType(t types.Type, sig *types.Signature, name string, closure llvm.Value) llvm.Value {
+	prog, pkg := b.Prog, b.Pkg
+	name += "$reflectfunc"
+	wrapper := prog.rtType("closurefunctype")
+	g := pkg.doNewVar(name, prog.Pointer(wrapper))
+	common := b.abiCommonFieldsFor(sig, t, name, true, nil, g.impl)
+	fields := append([]llvm.Value{prog.constStructValue(prog.AbiType(), common)},
+		b.abiExtendedFields(sig, name, g.impl)...)
+	g.impl.SetInitializer(prog.constStructValueAs(wrapper, g.impl.GlobalValueType(), []llvm.Value{
+		prog.constStructValue(prog.rtType("functype"), fields),
+		closure,
+	}))
+	g.impl.SetGlobalConstant(true)
+	pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
+	return g.impl
 }
 
 // AbiTypes snapshots the runtime type descriptors materialized by this
@@ -997,10 +1022,23 @@ func (p Package) InitAbiTypes(fname string) Function {
 
 // Keep the descriptor selector and its audited literal domain in one place.
 func (p Program) rtNamedABI(t types.Type) *types.Named {
+	if namedClosureSignature(t) != nil {
+		return p.rtNamed("namedclosuretype")
+	}
 	return p.rtNamed(RuntimeSymbol(p.abi.RuntimeName(t),
 		"_type", "ptrtype", "slicetype", "functype", "interfacetype", "structtype",
 		"maptype", "arraytype", "chantype",
 	))
+}
+
+func namedClosureSignature(t types.Type) *types.Signature {
+	named, ok := types.Unalias(t).(*types.Named)
+	if ok {
+		if st, ok := named.Underlying().(*types.Struct); ok && IsClosure(st) {
+			return st.Field(0).Type().(*types.Signature)
+		}
+	}
+	return nil
 }
 
 // abiDescriptorType selects the runtime layout shared by definitions and imported declarations.

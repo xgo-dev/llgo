@@ -19,6 +19,7 @@ package ssatest
 import (
 	"go/token"
 	"go/types"
+	"regexp"
 	"testing"
 
 	"github.com/goplus/gogen/packages"
@@ -55,4 +56,12 @@ func Assert(t *testing.T, p ssa.Package, expected string) {
 	if v := p.String(); ssa.StripModuleTarget(v) != expected {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
 	}
+}
+
+var stackFieldRootMap = regexp.MustCompile(`(?m)^@".*\$gcmap" = .*constant \{ i32, i32 \} \{ i32 [0-9]+, i32 -[0-9]+ \}`)
+
+// HasStackFieldRootMap reports whether IR contains a root map with stack
+// field addresses. LLVM prints the compact-map flag as a negative word.
+func HasStackFieldRootMap(ir string) bool {
+	return stackFieldRootMap.MatchString(ir)
 }

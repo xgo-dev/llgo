@@ -30,7 +30,7 @@ const (
 )
 
 type finalizerEntry struct {
-	fn          any
+	fn          eface          // _type is nil for a compiler-proven Go closure
 	sig         *ffi.Signature // retains the conservatively allocated return-type graph
 	argTypes    []*ffi.Type    // owns the backing storage referenced by sig.ArgTypes
 	retSize     uintptr
@@ -52,6 +52,7 @@ var finalizerState struct {
 	m          map[uintptr]*finalizerEntry
 	head       *finalizerEntry
 	tail       *finalizerEntry
+	invoke     func(*finalizerEntry, bool) // installed by generic registrations under registryMu
 }
 
 func initFinalizerState() {
@@ -79,24 +80,7 @@ func SetFinalizer(obj any, finalizer any) {
 		throw("runtime.SetFinalizer: first argument is nil")
 	}
 
-	// Aligned allocations may expose an interior pointer. BDWGC requires
-	// registration on the allocation base, but Go callbacks must receive
-	// the original logical object address.
-	base := bdwgc.Base(objPtr)
-	if base == nil {
-		base = objPtr
-	}
-	finalizerState.once.Do(initFinalizerState)
-	key := hideFinalizerPtr(objPtr)
-
-	finalizerState.registryMu.Lock()
-	if old := finalizerState.m[key]; old != nil {
-		atomic.Store(&old.state, finalizerStopped)
-		delete(finalizerState.m, key)
-		restoreFinalizer(base, old)
-	}
-	finalizerState.registryMu.Unlock()
-
+	base, key := clearFinalizer(objPtr, callFinalizer)
 	finalizerFace := (*eface)(unsafe.Pointer(&finalizer))
 	if finalizerFace._type == nil {
 		return
@@ -108,10 +92,10 @@ func SetFinalizer(obj any, finalizer any) {
 	if ft.Variadic() {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String() + " because dotdotdot")
 	}
-	if len(ft.In) != 1 {
+	if ft.InCount != 1 {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
-	argFFIType, interfaceTypeOrItab, ok := prepareFinalizerArgument(objFace._type, ft.In[0])
+	argFFIType, interfaceTypeOrItab, ok := prepareFinalizerArgument(objFace._type, ft.In()[0])
 	if !ok {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
@@ -119,13 +103,58 @@ func SetFinalizer(obj any, finalizer any) {
 	explicitEnv := c.env != nil && ffi.ClosureEnvExplicit
 	sig, argTypes, retSize := newFinalizerFFISignature(ft, explicitEnv, argFFIType)
 	entry := &finalizerEntry{
-		fn: finalizer, sig: sig, argTypes: argTypes, explicitEnv: explicitEnv,
-		retSize: retSize, key: key, offset: uintptr(objPtr) - uintptr(base),
+		fn: *finalizerFace, sig: sig, argTypes: argTypes, explicitEnv: explicitEnv,
+		retSize: retSize,
 	}
 	if interfaceTypeOrItab != nil {
 		entry.state = finalizerInterfaceState
 		entry.arg = unsafe.Pointer(&finalizerInterfaceArg{typeOrItab: interfaceTypeOrItab})
 	}
+	registerFinalizer(base, objPtr, key, entry)
+	KeepAlive(obj)
+}
+
+// llgoSetFinalizerPointer takes the data box of an exact Go closure selected
+// by the compiler. A nil box clears the finalizer. The compiler emits only
+// void and error results for this native entry point.
+func llgoSetFinalizerPointer(objPtr, fn unsafe.Pointer, resultSize uintptr) {
+	if objPtr == nil {
+		throw("runtime.SetFinalizer: first argument is nil")
+	}
+	base, key := clearFinalizer(objPtr, nil)
+	if fn != nil {
+		entry := &finalizerEntry{fn: eface{data: fn}, retSize: resultSize}
+		registerFinalizer(base, objPtr, key, entry)
+	}
+	KeepAlive(objPtr)
+}
+
+func clearFinalizer(objPtr unsafe.Pointer, invoke func(*finalizerEntry, bool)) (base unsafe.Pointer, key uintptr) {
+	// Register on the allocation base, but pass the original logical object
+	// address to the finalizer for aligned allocations.
+	base = bdwgc.Base(objPtr)
+	if base == nil {
+		base = objPtr
+	}
+	finalizerState.once.Do(initFinalizerState)
+	key = hideFinalizerPtr(objPtr)
+	finalizerState.registryMu.Lock()
+	if invoke != nil && finalizerState.invoke == nil {
+		finalizerState.invoke = invoke
+	}
+	if old := finalizerState.m[key]; old != nil {
+		atomic.Store(&old.state, finalizerStopped)
+		delete(finalizerState.m, key)
+		restoreFinalizer(base, old)
+	}
+	finalizerState.registryMu.Unlock()
+	return
+}
+
+func registerFinalizer(base, objPtr unsafe.Pointer, key uintptr, entry *finalizerEntry) {
+	entry.key = key
+	entry.offset = uintptr(objPtr) - uintptr(base)
+
 	var oldFn bdwgc.FinalizerFunc
 	var oldCb unsafe.Pointer
 	bdwgc.RegisterFinalizer(base, setFinalizerCallback, unsafe.Pointer(entry), &oldFn, &oldCb)
@@ -171,7 +200,7 @@ func finalizerFuncType(t *abi.Type) *abi.FuncType {
 }
 
 func callFinalizer(entry *finalizerEntry, hasInterfaceArg bool) {
-	face := (*eface)(unsafe.Pointer(&entry.fn))
+	face := &entry.fn
 	c := decodeCallback(face)
 	var ret unsafe.Pointer
 	if entry.retSize != 0 {
@@ -261,6 +290,7 @@ func runFinalizers(started chan struct{}) {
 		// A later SetFinalizer may already have installed a replacement entry
 		// for the same object key; do not delete that newer entry.
 		finalizerState.registryMu.Lock()
+		invoke := finalizerState.invoke
 		if finalizerState.m[entry.key] == entry {
 			delete(finalizerState.m, entry.key)
 		}
@@ -269,7 +299,13 @@ func runFinalizers(started chan struct{}) {
 		state := atomic.Load(&entry.state)
 		if state != finalizerStopped {
 			llruntime.MarkUserGoroutine()
-			callFinalizer(entry, state == finalizerInterfaceState)
+			if entry.fn._type != nil {
+				invoke(entry, state == finalizerInterfaceState)
+			} else if entry.retSize == 0 {
+				(*(*func(unsafe.Pointer))(entry.fn.data))(entry.arg)
+			} else {
+				_ = (*(*func(unsafe.Pointer) error)(entry.fn.data))(entry.arg)
+			}
 			llruntime.MarkSystemGoroutine()
 		}
 		// A finalizerEntry is registered and dequeued at most once, so no

@@ -927,7 +927,7 @@ func (l *largeAggregateLowerer) publishRoots(m llvm.Module) {
 		frame := NewGCRootFrame(m, fn, len(values), l.td.PointerSize(), l.goWordSize, l.wasm)
 		for i, root := range values {
 			b.SetInsertPointBefore(root.before)
-			frame.StorePointer(b, frame.Slots[i], root.value)
+			b.CreateStore(root.value, frame.Slots[i])
 		}
 		PopGCRootFrame(m, fn, frame)
 	}

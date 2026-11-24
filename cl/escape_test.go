@@ -10,6 +10,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/goescape"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -101,7 +102,7 @@ func promoted(p *int) *int { return borrow(&p) }
 			t.Errorf("%s must retain heap storage:\n%s", name, body)
 		}
 	}
-	if body := llvmFunction(t, ir, "placement.promoted"); strings.Contains(body, "runtime.Alloc") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+	if body := llvmFunction(t, ir, "placement.promoted"); strings.Contains(body, "runtime.Alloc") || !ssatest.HasStackFieldRootMap(ir) {
 		t.Errorf("promoted stack fields lost typed roots:\n%s", body)
 	}
 	if body := llvmFunction(t, ir, "placement.local"); strings.Contains(body, "runtime.Alloc") {

@@ -17,6 +17,7 @@
 package build
 
 import (
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -24,6 +25,8 @@ import (
 	"github.com/xgo-dev/llvm"
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -33,6 +36,7 @@ import (
 const (
 	funcInfoTableSymbol             = "__llgo_funcinfo_table"
 	funcInfoCountSymbol             = "__llgo_funcinfo_count"
+	funcInfoLayoutSymbol            = "__llgo_funcinfo_layout"
 	funcInfoStringsSymbol           = "__llgo_funcinfo_strings"
 	funcInfoStringOffsetsSymbol     = "__llgo_funcinfo_string_offsets"
 	funcInfoStringCountSymbol       = "__llgo_funcinfo_string_count"
@@ -75,11 +79,6 @@ type pcLineRecord struct {
 	file   string
 	line   uint32
 	column uint32
-}
-
-type funcInfoSymbolIndexRecord struct {
-	symbolID  uint64
-	funcIndex uint32
 }
 
 func collectFuncInfo(pkgs []Package) []funcInfoRecord {
@@ -140,7 +139,7 @@ func collectPCLineInfo(pkgs []Package) []pcLineRecord {
 	return out
 }
 
-func collectFuncInfoSymbolIndexRecords(records []funcInfoRecord) []funcInfoSymbolIndexRecord {
+func collectFuncInfoSymbolIndexRecords(records []funcInfoRecord) []pclnmap.SymbolIndexEntry {
 	if len(records) == 0 {
 		return nil
 	}
@@ -160,15 +159,15 @@ func collectFuncInfoSymbolIndexRecords(records []funcInfoRecord) []funcInfoSymbo
 	if len(seen) == 0 {
 		return nil
 	}
-	out := make([]funcInfoSymbolIndexRecord, 0, len(seen))
+	out := make([]pclnmap.SymbolIndexEntry, 0, len(seen))
 	for id, idx := range seen {
 		if id == 0 || idx == 0 {
 			continue
 		}
-		out = append(out, funcInfoSymbolIndexRecord{symbolID: id, funcIndex: idx})
+		out = append(out, pclnmap.SymbolIndexEntry{SymbolID: id, FuncIndex: idx})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].symbolID < out[j].symbolID
+		return out[i].SymbolID < out[j].SymbolID
 	})
 	return out
 }
@@ -255,6 +254,122 @@ func readPCLineInfo(mod llvm.Module) []pcLineRecord {
 	return out
 }
 
+const hostedCompactPCLNTag = "llgo.pclntab.compact"
+
+const (
+	funcInfoShortIDs = 1 << iota
+	funcInfoShortOffsets
+	funcInfoPackedRecords
+)
+
+func hostedCompactPCLNProfile(conf *Config) bool {
+	if conf.PCLNMode != PCLNEmbedded || conf.BuildMode != BuildModeExe ||
+		conf.OptLevel != optlevel.Oz || conf.ltoMode() != lto.Full {
+		return false
+	}
+	return conf.Goarch == "wasm" || conf.Target == "" &&
+		(conf.Goos == "linux" || conf.Goos == "darwin") && (conf.Goarch == "amd64" || conf.Goarch == "arm64")
+}
+
+// Use the same layouts on the initial link and after pruning. The sidecar
+// format continues to use the full-width records in buildfuncinfo.Table.
+func embeddedFuncInfoTypes(lc llvm.Context, table buildfuncinfo.Table, compact bool) (record, offset llvm.Type, layout uint8) {
+	id := lc.Int32Type()
+	offset = id
+	if compact {
+		if len(table.StringOffsets) <= math.MaxUint16+1 {
+			id = lc.Int16Type()
+			layout |= funcInfoShortIDs
+		}
+		if len(table.Strings) <= math.MaxUint16+1 {
+			offset = lc.Int16Type()
+			layout |= funcInfoShortOffsets
+		}
+	}
+	record = lc.StructType([]llvm.Type{id, id, id, id, id, id, lc.Int32Type()}, false)
+	return
+}
+
+func encodeEmbeddedFuncInfo(lc llvm.Context, table buildfuncinfo.Table, compact bool) (data llvm.Value, offset llvm.Type, layout uint8) {
+	recordType, offset, layout := embeddedFuncInfoTypes(lc, table, compact)
+	if layout&funcInfoShortIDs != 0 {
+		if records := encodePackedFuncInfo(lc, table.Records); !records.IsNil() {
+			return records, offset, layout | funcInfoPackedRecords
+		}
+	}
+	idType := recordType.StructElementTypes()[0]
+	values := make([]llvm.Value, len(table.Records))
+	for i, rec := range table.Records {
+		values[i] = llvm.ConstNamedStruct(recordType, []llvm.Value{
+			llvm.ConstInt(idType, uint64(rec.SymbolPkg), false),
+			llvm.ConstInt(idType, uint64(rec.SymbolName), false),
+			llvm.ConstInt(idType, uint64(rec.NamePkg), false),
+			llvm.ConstInt(idType, uint64(rec.NameName), false),
+			llvm.ConstInt(idType, uint64(rec.FileRoot), false),
+			llvm.ConstInt(idType, uint64(rec.FileName), false),
+			llvm.ConstInt(lc.Int32Type(), uint64(rec.Line), false),
+		})
+	}
+	return llvm.ConstArray(recordType, values), offset, layout
+}
+
+// Packed records store the symbol directly and index a small dictionary of
+// file paths and display-name overrides. The aligned dictionary trails the
+// records in the same global. Layouts that cannot use it keep all fields inline.
+func encodePackedFuncInfo(lc llvm.Context, records []buildfuncinfo.EncodedRecord) llvm.Value {
+	type stringPair struct{ first, second uint32 }
+	pairs := []stringPair{{}} // zero means the display name is the symbol
+	pairIDs := make(map[stringPair]int)
+	intern := func(pair stringPair) int {
+		if id, ok := pairIDs[pair]; ok {
+			return id
+		}
+		id := len(pairs)
+		pairIDs[pair] = id
+		pairs = append(pairs, pair)
+		return id
+	}
+	i8, i16 := lc.Int8Type(), lc.Int16Type()
+	rowType := lc.StructType([]llvm.Type{i16, i16, i8, i8, i16}, false)
+	values := make([]llvm.Value, len(records))
+	for i, rec := range records {
+		line := rec.Line & buildfuncinfo.EncodedLineMask
+		if line > math.MaxInt16 {
+			return llvm.Value{}
+		}
+		if rec.Line&buildfuncinfo.EncodedLineWrapper != 0 {
+			line |= 1 << 15
+		}
+		file := intern(stringPair{rec.FileRoot, rec.FileName})
+		name := 0
+		if rec.NamePkg != rec.SymbolPkg || rec.NameName != rec.SymbolName {
+			name = intern(stringPair{rec.NamePkg, rec.NameName})
+		}
+		if len(pairs) > math.MaxUint8+1 {
+			return llvm.Value{}
+		}
+		values[i] = llvm.ConstNamedStruct(rowType, []llvm.Value{
+			llvm.ConstInt(i16, uint64(rec.SymbolPkg), false),
+			llvm.ConstInt(i16, uint64(rec.SymbolName), false),
+			llvm.ConstInt(i8, uint64(name), false),
+			llvm.ConstInt(i8, uint64(file), false),
+			llvm.ConstInt(i16, uint64(line), false),
+		})
+	}
+	if len(pairs)*4 >= len(records)*8 {
+		return llvm.Value{}
+	}
+	pairType := lc.StructType([]llvm.Type{i16, i16}, false)
+	dict := make([]llvm.Value, len(pairs))
+	for i, pair := range pairs {
+		dict[i] = llvm.ConstNamedStruct(pairType, []llvm.Value{
+			llvm.ConstInt(i16, uint64(pair.first), false),
+			llvm.ConstInt(i16, uint64(pair.second), false),
+		})
+	}
+	return lc.ConstStruct([]llvm.Value{llvm.ConstArray(rowType, values), llvm.ConstArray(pairType, dict)}, false)
+}
+
 func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
@@ -263,24 +378,11 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	i32Type := llvmCtx.Int32Type()
 	i64Type := llvmCtx.Int64Type()
 	countType := llvmCtx.IntType(ctx.prog.PointerSize() * 8)
-	recordType := llvmCtx.StructType([]llvm.Type{
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-		i32Type,
-	}, false)
 	pcLineRecordType := llvmCtx.StructType([]llvm.Type{
 		i64Type,
 		i32Type,
 		i32Type,
 		i32Type,
-		i32Type,
-	}, false)
-	symbolIndexRecordType := llvmCtx.StructType([]llvm.Type{
-		i64Type,
 		i32Type,
 	}, false)
 	funcEntryRecordType := llvmCtx.StructType([]llvm.Type{
@@ -292,7 +394,14 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		i64Type,
 	}, false)
 
-	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(recordType, 0), funcInfoTableSymbol)
+	tablePtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoTableSymbol)
+	var layout llvm.Value
+	if hostedCompactPCLNProfile(ctx.buildConf) {
+		layout = llvm.AddGlobal(mod, i8Type, funcInfoLayoutSymbol)
+		layout.SetVisibility(llvm.HiddenVisibility)
+		layout.SetGlobalConstant(true)
+		layout.SetInitializer(llvm.ConstInt(i8Type, 0, false))
+	}
 	pcLinePtr := llvm.AddGlobal(mod, llvm.PointerType(pcLineRecordType, 0), pcLineTableSymbol)
 	pcSiteStartPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteStartPtrSymbol)
 	pcSiteEndPtr := llvm.AddGlobal(mod, llvm.PointerType(pcSiteRecordType, 0), pcSiteEndPtrSymbol)
@@ -302,7 +411,7 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	stringOffsetsPtr := llvm.AddGlobal(mod, llvm.PointerType(i32Type, 0), funcInfoStringOffsetsSymbol)
 	stringCount := llvm.AddGlobal(mod, countType, funcInfoStringCountSymbol)
 	hashPtr := llvm.AddGlobal(mod, llvm.PointerType(i16Type, 0), funcInfoHashSymbol)
-	symbolIndexPtr := llvm.AddGlobal(mod, llvm.PointerType(symbolIndexRecordType, 0), funcInfoSymbolIndexSymbol)
+	symbolIndexPtr := llvm.AddGlobal(mod, llvm.PointerType(i8Type, 0), funcInfoSymbolIndexSymbol)
 	count := llvm.AddGlobal(mod, countType, funcInfoCountSymbol)
 	symbolIndexCount := llvm.AddGlobal(mod, countType, funcInfoSymbolIndexCountSymbol)
 	// ELF metadata records contain absolute addresses for these two globals.
@@ -383,21 +492,12 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 		return
 	}
 
-	values := make([]llvm.Value, 0, len(encoded.Records))
-	for _, rec := range encoded.Records {
-		values = append(values, llvm.ConstNamedStruct(recordType, []llvm.Value{
-			llvm.ConstInt(i32Type, uint64(rec.SymbolPkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.SymbolName), false),
-			llvm.ConstInt(i32Type, uint64(rec.NamePkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.NameName), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileRoot), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileName), false),
-			llvm.ConstInt(i32Type, uint64(rec.Line), false),
-		}))
+	recordData, offsetType, layoutFlags := encodeEmbeddedFuncInfo(llvmCtx, encoded, !layout.IsNil())
+	if !layout.IsNil() {
+		layout.SetInitializer(llvm.ConstInt(i8Type, uint64(layoutFlags), false))
 	}
-	arrayType := llvm.ArrayType(recordType, len(values))
-	data := llvm.AddGlobal(mod, arrayType, funcInfoDataSymbol)
-	data.SetInitializer(llvm.ConstArray(recordType, values))
+	data := llvm.AddGlobal(mod, recordData.Type(), funcInfoDataSymbol)
+	data.SetInitializer(recordData)
 	data.SetLinkage(llvm.PrivateLinkage)
 	data.SetGlobalConstant(true)
 	data.SetUnnamedAddr(true)
@@ -473,20 +573,17 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 
 	stringOffsetValues := make([]llvm.Value, 0, len(encoded.StringOffsets))
 	for _, off := range encoded.StringOffsets {
-		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(i32Type, uint64(off), false))
+		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(offsetType, uint64(off), false))
 	}
-	stringOffsetsArrayType := llvm.ArrayType(i32Type, len(stringOffsetValues))
+	stringOffsetsArrayType := llvm.ArrayType(offsetType, len(stringOffsetValues))
 	stringOffsetsData := llvm.AddGlobal(mod, stringOffsetsArrayType, funcInfoStringOffsetsDataSymbol)
-	stringOffsetsData.SetInitializer(llvm.ConstArray(i32Type, stringOffsetValues))
+	stringOffsetsData.SetInitializer(llvm.ConstArray(offsetType, stringOffsetValues))
 	stringOffsetsData.SetLinkage(llvm.PrivateLinkage)
 	stringOffsetsData.SetGlobalConstant(true)
 	stringOffsetsData.SetUnnamedAddr(true)
 	stringOffsetsData.SetAlignment(4)
 
-	tablePtr.SetInitializer(llvm.ConstInBoundsGEP(arrayType, data, []llvm.Value{
-		llvm.ConstInt(countType, 0, false),
-		llvm.ConstInt(countType, 0, false),
-	}))
+	tablePtr.SetInitializer(data)
 	stringsPtr.SetInitializer(llvm.ConstInBoundsGEP(stringArrayType, stringData, []llvm.Value{
 		llvm.ConstInt(countType, 0, false),
 		llvm.ConstInt(countType, 0, false),
@@ -519,33 +616,45 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	}
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
 	symbolIndexRecords := collectFuncInfoSymbolIndexRecords(records)
-	symbolIndexValues := make([]llvm.Value, 0, len(symbolIndexRecords))
-	for _, rec := range symbolIndexRecords {
-		if rec.funcIndex == 0 || int(rec.funcIndex) > len(encoded.Records) {
-			continue
-		}
-		symbolIndexValues = append(symbolIndexValues, llvm.ConstNamedStruct(symbolIndexRecordType, []llvm.Value{
-			llvm.ConstInt(i64Type, rec.symbolID, false),
-			llvm.ConstInt(i32Type, uint64(rec.funcIndex), false),
-		}))
-	}
-	if len(symbolIndexValues) == 0 {
+	if len(symbolIndexRecords) == 0 {
 		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
-	} else {
-		symbolIndexArrayType := llvm.ArrayType(symbolIndexRecordType, len(symbolIndexValues))
-		symbolIndexData := llvm.AddGlobal(mod, symbolIndexArrayType, funcInfoSymbolIndexDataSymbol)
-		symbolIndexData.SetInitializer(llvm.ConstArray(symbolIndexRecordType, symbolIndexValues))
-		symbolIndexData.SetLinkage(llvm.PrivateLinkage)
-		symbolIndexData.SetGlobalConstant(true)
-		symbolIndexData.SetUnnamedAddr(true)
-		symbolIndexData.SetAlignment(8)
-		symbolIndexPtr.SetInitializer(llvm.ConstInBoundsGEP(symbolIndexArrayType, symbolIndexData, []llvm.Value{
-			llvm.ConstInt(countType, 0, false),
-			llvm.ConstInt(countType, 0, false),
-		}))
-		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, uint64(len(symbolIndexValues)), false))
+		return
 	}
+	data, encodedCount := encodeFuncInfoSymbolIndex(llvmCtx, symbolIndexRecords, len(encoded.Records), !layout.IsNil())
+	symbolIndexData := llvm.AddGlobal(mod, data.Type(), funcInfoSymbolIndexDataSymbol)
+	symbolIndexData.SetInitializer(data)
+	symbolIndexData.SetLinkage(llvm.PrivateLinkage)
+	symbolIndexData.SetGlobalConstant(true)
+	symbolIndexData.SetUnnamedAddr(true)
+	symbolIndexData.SetAlignment(8)
+	symbolIndexPtr.SetInitializer(symbolIndexData)
+	symbolIndexCount.SetInitializer(llvm.ConstInt(countType, encodedCount, false))
+}
+
+func encodeFuncInfoSymbolIndex(ctx llvm.Context, records []pclnmap.SymbolIndexEntry, funcCount int, compact bool) (llvm.Value, uint64) {
+	i64 := ctx.Int64Type()
+	count := uint64(len(records))
+	if compact && count != 0 && funcCount <= math.MaxUint16 {
+		i16 := ctx.Int16Type()
+		ids := make([]llvm.Value, len(records))
+		indexes := make([]llvm.Value, len(records))
+		for i, rec := range records {
+			ids[i] = llvm.ConstInt(i64, rec.SymbolID, false)
+			indexes[i] = llvm.ConstInt(i16, uint64(rec.FuncIndex), false)
+		}
+		return ctx.ConstStruct([]llvm.Value{llvm.ConstArray(i64, ids), llvm.ConstArray(i16, indexes)}, false), count | pclnpost.ShortSymbolIndexFlag
+	}
+	i32 := ctx.Int32Type()
+	recordType := ctx.StructType([]llvm.Type{i64, i32}, false)
+	values := make([]llvm.Value, len(records))
+	for i, rec := range records {
+		values[i] = llvm.ConstNamedStruct(recordType, []llvm.Value{
+			llvm.ConstInt(i64, rec.SymbolID, false),
+			llvm.ConstInt(i32, uint64(rec.FuncIndex), false),
+		})
+	}
+	return llvm.ConstArray(recordType, values), count
 }
 
 type externalFuncInfoGlobals struct {
@@ -580,16 +689,9 @@ func initExternalFuncInfoGlobals(g externalFuncInfoGlobals, countType llvm.Type)
 }
 
 func funcInfoPCLNData(ctx *context, records []funcInfoRecord, encoded buildfuncinfo.Table) *pclnmap.Data {
-	symbolRecords := collectFuncInfoSymbolIndexRecords(records)
-	symbolIndex := make([]pclnmap.SymbolIndexEntry, 0, len(symbolRecords))
-	for _, rec := range symbolRecords {
-		if rec.funcIndex != 0 && int(rec.funcIndex) <= len(encoded.Records) {
-			symbolIndex = append(symbolIndex, pclnmap.SymbolIndexEntry{SymbolID: rec.symbolID, FuncIndex: rec.funcIndex})
-		}
-	}
 	return &pclnmap.Data{
 		GOOS: ctx.buildConf.Goos, GOARCH: ctx.buildConf.Goarch,
-		PointerSize: ctx.prog.PointerSize(), Table: encoded, SymbolIndex: symbolIndex,
+		PointerSize: ctx.prog.PointerSize(), Table: encoded, SymbolIndex: collectFuncInfoSymbolIndexRecords(records),
 	}
 }
 
@@ -753,7 +855,8 @@ func darwinSymbolEntries(ctx *context) bool {
 		ctx.buildConf.Goos == "darwin" && ctx.buildConf.BuildMode == BuildModeExe &&
 		ctx.buildConf.PCLNMode == PCLNEmbedded && ctx.buildConf.ltoEnabled() &&
 		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
-		shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) && os.Getenv("LLGO_PCLNPOST") != "0"
+		(shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) || hostedCompactPCLNProfile(ctx.buildConf)) &&
+		os.Getenv("LLGO_PCLNPOST") != "0"
 }
 
 func emitSymbolEntryReserve(mod llvm.Module, info siteSectionInfo, count int) {
@@ -791,10 +894,13 @@ var (
 // runtimeEntrySiteSectionInfo isolates the disposable Mach-O carrier only when
 // the linked image will actually pass through the embedded-executable rewrite.
 // Cross-package LTO inlining can then produce a page-scale duplicate tail worth
-// removing. External PCLN and library build modes do not run that rewrite, so
-// they keep the carrier in __DATA instead of paying for an unused __LLGO page.
+// removing. The compact symbol-only reservation is sized during the relink,
+// so it can share an existing __DATA page.
 func runtimeEntrySiteSectionInfo(ctx *context) siteSectionInfo {
 	if shouldCompactRuntimeMachOSites(ctx) {
+		if darwinSymbolEntries(ctx) && hostedCompactPCLNProfile(ctx.buildConf) {
+			return entrySiteSectionInfo
+		}
 		return compactEntrySiteSectionInfo
 	}
 	return entrySiteSectionInfo
