@@ -1,0 +1,47 @@
+# Golden for the BLE central probe ([go] ble ...) of _demo/esp-idf-ble,
+# captured from an acceptance run (esp-emu v1.2.0, esp32s31, 16 MiB PSRAM,
+# host peer idfproj/host/bumble_peer.py on 127.0.0.1:9556).
+#
+# Scope: every [go] ble line the probe prints. The [c] lines (the glue's own
+# address/free-heap report and the heap marks) are not part of the golden: the
+# heap byte counts legitimately vary between runs, and the "own address" line
+# reports the address the host-side Bumble controller presents.
+#
+# Floater rule. Everything a `*` replaces is a value that comes from the peer
+# script or from the controller, not from the firmware under test:
+#
+#   addr=      the host peer's advertised address (bumble_peer.py --address)
+#   addrtype=  that address's type (1 = random static for the default script)
+#   rssi=      the RSSI the Bumble link synthesizes for every report (-50)
+#   conn=      the ConnID: the controller's connection handle (1 for the first
+#              connection on a Bumble LocalLink) packed with this package's
+#              generation counter, i.e. (generation << 16) | handle
+#   reason=    the HCI disconnection reason the peer caused (531 = 0x213, a
+#              peer-initiated disconnect tagged with NimBLE's HCI base)
+#
+# Everything else is exact, including the operation ids: they come from the
+# probe's own monotonic counter, so a fixed phase order fixes them (scan 1,
+# the cancelled scan 1 -> second scan 2, StopScan burns 3, Connect 4).
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] ble' <emu log> | tr -d '\r' \
+#     | sed -E 's/(addr=)[^ ]+/\1*/; s/(addrtype=)[^ ]+/\1*/;
+#               s/(rssi=)[^ ]+/\1*/; s/(conn=)[^ ]+/\1*/;
+#               s/(reason=)[^ ]+/\1*/' \
+#     | diff - <this file, comments excluded>
+# A diff means the central's behavior changed: the golden only grows by
+# appending a phase, never by editing an existing line.
+[go] ble: start
+[go] ble backend = nimble
+[go] ble init ok
+[go] ble scan cancel ok op=1
+[go] ble scan start op=2
+[go] ble scan found name=llgo-peer addr=* addrtype=* rssi=* advlen=11
+[go] ble scan stop ok
+[go] ble connect start op=4
+[go] ble connect ok conn=*
+[go] ble disconnect done reason=*
+[go] ble PASS
+[go] ble deinit ok
+[go] ble done

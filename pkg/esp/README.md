@@ -16,6 +16,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
 | `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial with SNI/host verification (Config: RootCAs/InsecureSkipVerify/MinVersion; deprecated VERIFY_NONE/REQUIRED TLSDial), record read/write, ConnectionState, close_notify, bounded quantum waits |
 | `pkg/esp/ws`   | — (no glue; pure Go RFC 6455 over a caller-supplied `net`/`tls` conn) | HTTP Upgrade handshake, masked frames, ping/pong, closing handshake; stdlib-free SHA-1/base64 |
+| `pkg/esp/ble`  | NimBLE host (`host/ble_gap.h`, `nimble_port.h`) | BLE **central**: bring-up and sync, scan, connect, cancel, disconnect; two-tier event mailbox, generation-tagged Operation/Connection ids |
 
 ## Package template
 
@@ -124,7 +125,11 @@ They are contract, not style.
 4. **Async events go through a mailbox.** The C side copies events into a
    ring (`wifi_glue.c`'s 16-slot SPSC queue) and Go polls it paced by
    `vTaskDelay(10)` = 100 ms — the delay also keeps the idle tasks fed for
-   the watchdog. Overflow drops the newest event and is reported once.
+   the watchdog. Overflow drops the newest event and is reported once. The
+   ble package refines that shape instead of copying the pacing: two rings
+   (control results vs scan payload), a bounded batch per pass, one real
+   tick of rest, and wait deadlines measured in milliseconds (see its
+   section).
    Synchronous driver calls that block on a driver semaphore (a WiFi scan,
    an I2C transfer timeout) are safe: they yield the CPU.
 5. **No large stack buffers in glue.** Go goroutines run on 8 KiB fiber
@@ -459,6 +464,93 @@ what net/tls already bring. The demo probe (`[go] ws ...` in
 serves the raw echo, the TLS echo and both WebSocket endpoints on the
 same two ports (9000/9443), so one process backs the whole
 wifi->net->tls->ws acceptance chain.
+
+## pkg/esp/ble — NimBLE BLE central (scan / connect / disconnect)
+
+`pkg/esp/ble` exposes the NimBLE host as a BLE **central**: `Init` (controller
+init + BLE enable + host init in one `nimble_port_init` call, the host task,
+and the wait for the stack's sync event), `Ready`, `Deinit`, `StartScan` /
+`StopScan` (legacy discovery: interval, window, passive, duplicate filter,
+optional duration), `Connect` (bounded by the controller's own attempt
+timeout), `Cancel` and `Disconnect`. `Subscribe`/`Subscription.Next` deliver
+the stack's asynchronous results. GATT client work, the peripheral role and
+pairing are later stages; `_demo/esp-idf-ble` drives the whole P-A surface
+under esp-emu.
+
+**Control calls never block.** Each command is queued and executed on the
+NimBLE host task through the host's own event queue (`ble_npl_eventq_put` on
+`ble_hs_evq_get()`), so no GAP call ever runs on the goroutine that issued it
+and the llgo scheduler is never held across a driver wait. The Go side gets an
+`OpID` back immediately; the outcome - success, a refusal, or a controller
+result - arrives as an event. A returned error therefore only means "could not
+even be submitted" (`ErrNotReady`, a full command queue), never a forged
+result.
+
+**Two-tier mailbox.** Scan results are the only high-rate events, so they get
+their own ring (16 slots of address, type, RSSI and a bounded 31-byte payload
+copy - the legacy maximum); sync, reset, scan-done, connect, disconnect and
+command rejections travel in an 8-slot control ring that a scan flood cannot
+starve. Both are single-producer (the host task) single-consumer (the poller),
+overflow drops the newest record and is reported once as `EvOverflow` with the
+dropped count. One poller goroutine drains up to 32 records per pass, hands the
+scheduler away, then rests exactly one FreeRTOS tick, and fans every record out
+to all matching subscriptions - a slow subscriber loses its own events, never
+anyone else's. A bounded `Next` measures its deadline in milliseconds against
+the glue's timer (accuracy one tick), not in quanta.
+
+**Generation-tagged ids.** `OpID` comes from a monotonic counter and is never
+reused, so a late completion from an earlier scan or connect cannot be
+mistaken for the current one. `ConnID` packs the controller's HCI connection
+handle with a generation counter (`(generation << 16) | handle`), because
+handles are reused: a `ConnID` from a previous connection is refused with
+`StatusENOENT` instead of addressing whatever that handle became.
+
+**Three error spaces.** `esperr.Error.Code` stays inspectable and `errors.Is`
+matches by code, so the package deliberately separates them: the esp domain
+(raw esp_err, below 0x4000 - `Init`/`Deinit`), the nimble domain
+(`NimbleBase` 0x8000 | status - every BLE_HS_*, ATT 0x1xx, HCI 0x2xx and L2CAP
+0x3xx status as the stack reports it; `Status` extracts the raw value and
+`ErrStatus` rebuilds the error value), and this package's own 0x7Bxx codes
+(`ErrTimeout`, `ErrNotReady`, `ErrUnsupported`). NimBLE's host status 0x02
+(`BLE_HS_EALREADY`), an HCI error 0x02 and an esp_err 0x02 are three different
+conditions, and the tag is what keeps them apart.
+
+**Lifecycle is blocking, and that matters.** `Init` and `Deinit` are the only
+calls that hold the scheduler: `nimble_port_init` brings the controller up, and
+`nimble_port_stop` waits for the host task to service the stop (it must not run
+on the host task itself). One measured trap is worth keeping: on this chip
+NimBLE's `ble_npl_event` wraps `btdm_osal_event` (`nimble_npl_os.h`), so every
+initialized event holds one element of the controller's `s_btdm_osal_ev_pool`.
+The glue's command event is returned with `ble_npl_event_deinit` before
+`nimble_port_deinit` - left out, `esp_bt_controller_disable` asserts in
+`btdm_osal_elem_mempool_deinit`, which under esp-emu shows up as an abort right
+after the last print of the program.
+
+**Unsupported paths are honest.** A host build returns `ErrUnsupported` from
+every call. A firmware compiled without the NimBLE host still links a program
+that imports this package (the glue's other branch defines every symbol) and
+reports `ESP_ERR_NOT_SUPPORTED`, surfaced as `ErrUnsupported` - verified under
+emp-emu with a `CONFIG_BT_ENABLED=n` build of the demo.
+
+**Integration.** The main component needs `REQUIRES bt esp_timer nvs_flash`
+(NimBLE headers, the deadline clock, and the bond store's partition, which the
+glue initializes but never formats). `_demo/esp-idf-ble` is the worked example,
+including the host-side Bumble peripheral that gives the emulator something to
+discover.
+
+**Verification status.** Covered under esp-emu 1.2.0 (the emulator intercepts
+the S31 BTDM HCI transport through the ELF and forwards it to a Bumble virtual
+controller): controller init/enable, host sync, discovery, connect, terminate,
+the mailbox and fan-out, and clean shutdown, all driven by
+`_demo/esp-idf-ble`'s probe. **Not** covered and claimed now: the radio itself
+(RF calibration, real RSSI, channel map, coexistence), pairing/bonding, MTU and
+data-length exchange, more than one connection, notifications, flash/cache
+operations concurrent with BLE activity, and controller event-pool behavior
+under real interrupt load. Two measured emulator gaps narrow what the run can
+say: an unanswered connect attempt never times out there (the virtual
+controller does not model the controller-side connect-duration limit), and the
+host peer must advertise legacy-only, so extended advertising and its 1650-byte
+payloads are out of reach.
 
 ## Adding a new peripheral
 
