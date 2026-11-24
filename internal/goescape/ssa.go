@@ -607,7 +607,11 @@ func (f *functionAnalysis) callTarget(target callTarget, results []*location) {
 		}
 		f.effect(&f.g.mutator, arg, p.Mutator)
 		f.effect(&f.g.callee, arg, p.Callee)
-		if p.Callee != 0 && (p.Callee != 1 || !f.callback(arg)) {
+		// Forwarding a function parameter or free variable to a callee that
+		// only invokes it exports the invocation effect to our caller, just as
+		// a direct call of that parameter does above; the caller composes the
+		// actual callback's capture summary.
+		if p.Callee != 0 && (p.Callee != 1 || (!isDirectCallbackParam(arg) && !f.callback(arg))) {
 			f.flow(&f.g.heap, arg, int(p.Callee))
 		}
 		for j, effect := range p.Results {

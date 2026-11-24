@@ -47,3 +47,99 @@ func TestUnsafeLocalViewsAllocations(t *testing.T) {
 		t.Fatalf("10000 local unsafe views allocated %d objects", n)
 	}
 }
+
+type forwardedCallbackCaller struct {
+	active bool
+	owner  *forwardedCallbackHost
+}
+
+type forwardedCallbackHost struct {
+	calls uint64
+	read  func(*forwardedCallbackCaller) ([]byte, bool, error)
+}
+
+func (h *forwardedCallbackHost) expire(c *forwardedCallbackCaller) {
+	c.active = false
+	h.calls++
+}
+
+func (h *forwardedCallbackHost) direct(fn func(*forwardedCallbackCaller) (*[]byte, error)) (*[]byte, error) {
+	c := &forwardedCallbackCaller{active: true, owner: h}
+	defer h.expire(c)
+	return fn(c)
+}
+
+func (h *forwardedCallbackHost) wrapped(fn func(*forwardedCallbackCaller) (*[]byte, error)) (*[]byte, error) {
+	return h.invoke(&forwardedCallbackCaller{active: true, owner: h}, fn)
+}
+
+func (h *forwardedCallbackHost) invoke(c *forwardedCallbackCaller, fn func(*forwardedCallbackCaller) (*[]byte, error)) (*[]byte, error) {
+	defer h.expire(c)
+	return fn(c)
+}
+
+//go:noinline
+func forwardedCallbackDirectRead(h *forwardedCallbackHost) int {
+	var result []byte
+	var ready bool
+	_, err := h.direct(func(c *forwardedCallbackCaller) (*[]byte, error) {
+		var err error
+		result, ready, err = h.read(c)
+		return nil, err
+	})
+	if err != nil || !ready {
+		panic("unexpected direct result")
+	}
+	return len(result)
+}
+
+//go:noinline
+func forwardedCallbackWrappedRead(h *forwardedCallbackHost) int {
+	var result []byte
+	var ready bool
+	_, err := h.wrapped(func(c *forwardedCallbackCaller) (*[]byte, error) {
+		var err error
+		result, ready, err = h.read(c)
+		return nil, err
+	})
+	if err != nil || !ready {
+		panic("unexpected wrapped result")
+	}
+	return len(result)
+}
+
+var forwardedCallbackPayload = [1]byte{7}
+
+func TestForwardedCallbackCaptureAllocations(t *testing.T) {
+	h := &forwardedCallbackHost{
+		read: func(c *forwardedCallbackCaller) ([]byte, bool, error) {
+			if !c.active || c.owner == nil {
+				panic("expired caller")
+			}
+			return forwardedCallbackPayload[:], true, nil
+		},
+	}
+	for range 64 {
+		if forwardedCallbackDirectRead(h) != 1 || forwardedCallbackWrappedRead(h) != 1 {
+			t.Fatal("unexpected callback read length")
+		}
+	}
+	measure := func(fn func(*forwardedCallbackHost) int) uint64 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for range 4096 {
+			if fn(h) != 1 {
+				t.Fatal("unexpected callback read length")
+			}
+		}
+		runtime.ReadMemStats(&after)
+		return after.Mallocs - before.Mallocs
+	}
+	directAllocs := measure(forwardedCallbackDirectRead)
+	wrappedAllocs := measure(forwardedCallbackWrappedRead)
+	// Both variants allocate one caller record per invocation; forwarding must
+	// not additionally heap-allocate the callback's captured result locals.
+	if wrappedAllocs > directAllocs+64 {
+		t.Fatalf("forwarded callback allocated %d objects vs %d direct for 4096 calls", wrappedAllocs, directAllocs)
+	}
+}
