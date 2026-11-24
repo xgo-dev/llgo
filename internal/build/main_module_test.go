@@ -948,28 +948,33 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 func TestGenMainModuleBDWGCMarkersInit(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
+	if usesNativeBDWGC(nil) || usesNativeBDWGC(&context{}) {
+		t.Fatal("usesNativeBDWGC must return false for nil context or buildConf")
+	}
 	for _, tc := range []struct {
 		name       string
 		goos, arch string
 		mode       BuildMode
 		tags       string
+		buildFlags []string
 		targetTags []string
 		rtInit     bool
 		want       bool
 	}{
-		{"linux-exe", "linux", "amd64", BuildModeExe, "", nil, true, true},
-		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", nil, true, true},
-		{"windows-exe", "windows", "arm64", BuildModeExe, "", nil, true, true},
-		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", nil, true, true},
-		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", nil, true, true},
-		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", nil, true, true},
-		{"linux-allthreads", "linux", "amd64", BuildModeExe, "llgo.allthreads", nil, true, true},
-		{"nogc", "linux", "amd64", BuildModeExe, "nogc", nil, true, false},
-		{"baremetal-tag", "linux", "arm", BuildModeExe, "baremetal", nil, true, false},
-		{"baremetal-target", "linux", "arm", BuildModeExe, "", []string{"baremetal"}, true, false},
-		{"wasip1", "wasip1", "wasm", BuildModeExe, "", nil, true, false},
-		{"js-wasm", "js", "wasm", BuildModeExe, "", nil, true, false},
-		{"no-rtinit", "linux", "amd64", BuildModeExe, "", nil, false, false},
+		{"linux-exe", "linux", "amd64", BuildModeExe, "", nil, nil, true, true},
+		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", nil, nil, true, true},
+		{"windows-exe", "windows", "arm64", BuildModeExe, "", nil, nil, true, true},
+		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", nil, nil, true, true},
+		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", nil, nil, true, true},
+		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", nil, nil, true, true},
+		{"linux-allthreads", "linux", "amd64", BuildModeExe, "llgo.allthreads", nil, nil, true, true},
+		{"nogc", "linux", "amd64", BuildModeExe, "nogc", nil, nil, true, false},
+		{"nogc-buildflag", "linux", "amd64", BuildModeExe, "", []string{"-tags=nogc"}, nil, true, false},
+		{"baremetal-tag", "linux", "arm", BuildModeExe, "baremetal", nil, nil, true, false},
+		{"baremetal-target", "linux", "arm", BuildModeExe, "", nil, []string{"baremetal"}, true, false},
+		{"wasip1", "wasip1", "wasm", BuildModeExe, "", nil, nil, true, false},
+		{"js-wasm", "js", "wasm", BuildModeExe, "", nil, nil, true, false},
+		{"no-rtinit", "linux", "amd64", BuildModeExe, "", nil, nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := &context{
@@ -981,6 +986,9 @@ func TestGenMainModuleBDWGCMarkersInit(t *testing.T) {
 					Tags:      tc.tags,
 				},
 				crossCompile: crosscompile.Export{BuildTags: tc.targetTags},
+			}
+			if len(tc.buildFlags) != 0 {
+				ctx.conf = &packages.Config{BuildFlags: tc.buildFlags}
 			}
 			defer ctx.prog.Dispose()
 			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
