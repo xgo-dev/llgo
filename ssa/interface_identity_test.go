@@ -145,6 +145,14 @@ func testChangeTypeNamedInterfaceIdentity(t *testing.T, target *Target) {
 	known = knownBuilder.ChangeInterface(prog.Type(dst, GoDecl), known)
 	selected := Expr{knownBuilder.impl.CreateSelect(prog.Val(true).impl, known.impl, known.impl, ""), known.Type}
 	selected = knownBuilder.ChangeInterface(prog.Type(src, GoDecl), selected)
+	packed := knownBuilder.Aggregate(known.Type, knownBuilder.Extract(known, 0), knownBuilder.Extract(known, 1))
+	packed = knownBuilder.ChangeInterface(prog.Type(src, GoDecl), packed)
+	if !types.Identical(knownBuilder.knownInterfaceConcreteType(packed.impl), types.NewPointer(concrete)) {
+		t.Fatal("insert/extract propagation lost the known concrete type")
+	}
+	if got := cacheCount(); got != 2 {
+		t.Fatalf("aggregate propagation allocated a cache: got %d, want 2", got)
+	}
 	if !types.Identical(knownBuilder.knownInterfaceConcreteType(selected.impl), types.NewPointer(concrete)) {
 		t.Fatal("select propagation lost the known concrete type")
 	}

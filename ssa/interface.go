@@ -345,7 +345,11 @@ func (b Builder) unsafeInterface(intf types.Type, concrete types.Type, t Expr, d
 			if b.Func.interfaceConcreteTypes == nil {
 				b.Func.interfaceConcreteTypes = make(map[llvm.Value]types.Type)
 			}
+			if b.Func.interfaceDataConcreteTypes == nil {
+				b.Func.interfaceDataConcreteTypes = make(map[llvm.Value]types.Type)
+			}
 			b.Func.interfaceConcreteTypes[ret] = concrete
+			b.Func.interfaceDataConcreteTypes[data] = concrete
 		}()
 	}
 	intf = types.Unalias(intf)
@@ -687,9 +691,14 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 		val = func() Expr { return x }
 	} else {
 		if _, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
-			eq = b.InlineCall(b.Pkg.rtFunc("Implements"), tabi, tx)
+			b.Pkg.ifaceConvCacheID++
+			hash := sha256.Sum256([]byte(b.Pkg.Path() + "\x00" + assertedTyp.raw.Type.String()))
+			cache := b.Pkg.NewVarEx("_llgo_ifaceassert$"+base64.RawURLEncoding.EncodeToString(hash[:])+"$"+strconv.FormatUint(b.Pkg.ifaceConvCacheID, 10), b.Prog.Pointer(b.Prog.VoidPtr()))
+			cache.InitNil()
+			result := b.Call(b.Pkg.rtFunc("AssertIface"), tabi, tx, cache.Expr)
+			eq = b.Extract(result, 1)
 			val = func() Expr {
-				return Expr{b.unsafeInterface(assertedTyp.raw.Type, nil, tx, b.faceData(x.impl)), assertedTyp}
+				return Expr{b.unsafeIface(b.Extract(result, 0).impl, b.faceData(x.impl)), assertedTyp}
 			}
 		} else if assertedTyp.kind == vkClosure {
 			eq = b.InlineCall(b.Pkg.rtFunc("MatchesClosure"), tabi, tx)
@@ -761,7 +770,8 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 //	t1 = change interface interface{} <- I (t0)
 func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 	known := b.Func.interfaceConcreteTypes
-	if len(known) == 0 {
+	dataKnown := b.Func.interfaceDataConcreteTypes
+	if len(known) == 0 && len(dataKnown) == 0 {
 		return nil
 	}
 	var visit func(llvm.Value, map[llvm.Value]bool) types.Type
@@ -769,22 +779,43 @@ func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 		if knownType := known[value]; knownType != nil {
 			return knownType
 		}
+		if knownType := dataKnown[value]; knownType != nil {
+			return knownType
+		}
 		if seen[value] {
 			return nil
 		}
 		seen[value] = true
-		if value.IsABitCastInst().C != nil {
+		switch value.InstructionOpcode() {
+		case llvm.BitCast:
 			return visit(value.Operand(0), seen)
-		}
-		if value.IsASelectInst().C != nil && value.OperandsCount() == 3 {
+		case llvm.Select:
+			if value.OperandsCount() != 3 {
+				return nil
+			}
 			left := visit(value.Operand(1), seen)
 			right := visit(value.Operand(2), seen)
 			if left != nil && right != nil && types.Identical(left, right) {
 				return left
 			}
 			return nil
+		case llvm.ExtractValue:
+			indices := value.Indices()
+			if len(indices) == 1 && indices[0] == 1 {
+				return visit(value.Operand(0), seen)
+			}
+		case llvm.InsertValue:
+			indices := value.Indices()
+			if len(indices) == 1 {
+				if indices[0] == 1 {
+					return visit(value.Operand(1), seen)
+				}
+				if indices[0] == 0 {
+					return visit(value.Operand(0), seen)
+				}
+			}
 		}
-		if value.IsAPHINode().C != nil && value.IncomingCount() != 0 {
+		if value.InstructionOpcode() == llvm.PHI && value.IncomingCount() != 0 {
 			var result types.Type
 			for i := 0; i < value.IncomingCount(); i++ {
 				incoming := visit(value.IncomingValue(i), seen)
