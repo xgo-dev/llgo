@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${LLGO_ROOT:?enter the development environment with 'pixi shell --manifest-path dev/pixi.toml'}"
+: "${LLGO_ROOT:?enter the development environment with 'pixi shell --locked --manifest-path dev/pixi.toml'}"
 test "${GOFLAGS:-}" = '-tags=byollvm'
 go_version="$(go env GOVERSION)"
 required_go_version="go$(cat "$LLGO_ROOT/.go-version")"

@@ -12,14 +12,14 @@ cd llgo
 ```
 
 Run commands from the repository root unless shown otherwise. Use the versions
-pinned in `.go-version`, the lockfiles, and the
+pinned in `.go-version`, the lockfile (`dev/pixi.lock`), and the
 [dependency setup action](.github/actions/setup-deps/action.yml).
 
 ## Development environments
 
 Use [Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. It
 provides Go and installs LLVM/Clang/LLD 22, pkg-config, and native libraries
-from conda-forge in a single unified prefix. Configuration and lockfiles live in
+from conda-forge in a single unified prefix. Configuration and lockfile live in
 `dev/`.
 
 From the repository root, enter the Pixi environment:

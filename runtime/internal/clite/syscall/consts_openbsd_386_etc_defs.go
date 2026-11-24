@@ -3,7 +3,7 @@
 // Platform definitions extracted from Go's stdlib syscall package
 // (see LICENSES/Go-BSD-3-Clause.txt).
 
-//go:build openbsd && (386 || amd64 || arm || arm64 || mips64 || ppc64 || riscv64)
+//go:build openbsd && (386 || amd64 || arm || arm64 || mips64)
 
 package syscall
 
@@ -18,5 +18,8 @@ const (
 	FD_CLOEXEC = 0x1
 	O_CLOEXEC  = 0x10000
 	O_NONBLOCK = 0x4
+	S_IFMT     = 0xf000
+	S_IFREG    = 0x8000
+	S_IFDIR    = 0x4000
 	SIGPROF    = Signal(0x1b)
 )

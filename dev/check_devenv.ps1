@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 if (-not $env:LLGO_ROOT) {
-  throw "Enter the development environment with 'pixi shell --manifest-path dev/pixi.toml'."
+  throw "Enter the development environment with 'pixi shell --locked --manifest-path dev/pixi.toml'."
 }
 if ($env:GOFLAGS -ne '-tags=byollvm') { throw 'GOFLAGS must enable byollvm' }
 $goVersion = (go env GOVERSION) -replace '\.\d+$', ''
