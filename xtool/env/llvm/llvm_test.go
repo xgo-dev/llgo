@@ -52,3 +52,31 @@ func TestSetupPathIgnoresMissingBinDir(t *testing.T) {
 		t.Fatalf("PATH changed from %q to %q without an LLVM bin directory", before, got)
 	}
 }
+
+func TestNewCachesBinDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a shell script")
+	}
+
+	binDir := t.TempDir()
+	countFile := filepath.Join(t.TempDir(), "count")
+	llvmConfig := filepath.Join(t.TempDir(), "llvm-config")
+	script := "#!/bin/sh\nprintf 'x' >> \"" + countFile + "\"\nprintf '%s\\n' \"" + binDir + "\"\n"
+	if err := os.WriteFile(llvmConfig, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := New(llvmConfig).BinDir(); got != binDir {
+		t.Fatalf("first BinDir = %q, want %q", got, binDir)
+	}
+	if got := New(llvmConfig).BinDir(); got != binDir {
+		t.Fatalf("second BinDir = %q, want %q", got, binDir)
+	}
+	data, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 1 {
+		t.Fatalf("llvm-config invoked %d times, want 1", len(data))
+	}
+}

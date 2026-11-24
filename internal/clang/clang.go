@@ -230,17 +230,31 @@ func findLibrary(baseDir string, dirs []string, name string) string {
 	return ""
 }
 
+func (c *Cmd) getenv(key string) string {
+	if c.Env == nil {
+		return os.Getenv(key)
+	}
+	prefix := key + "="
+	val := ""
+	for _, entry := range c.Env {
+		if strings.HasPrefix(entry, prefix) {
+			val = entry[len(prefix):]
+		}
+	}
+	return val
+}
+
 // mergeCompilerFlags merges environment CCFLAGS/CFLAGS with config flags.
 func (c *Cmd) mergeCompilerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment CFLAGS
-	if envCFlags := os.Getenv("CFLAGS"); envCFlags != "" {
+	if envCFlags := c.getenv("CFLAGS"); envCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCFlags)...)
 	}
 
@@ -258,12 +272,12 @@ func (c *Cmd) mergeLinkerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS (for linker)
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment LDFLAGS
-	if envLDFlags := os.Getenv("LDFLAGS"); envLDFlags != "" {
+	if envLDFlags := c.getenv("LDFLAGS"); envLDFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envLDFlags)...)
 	}
 

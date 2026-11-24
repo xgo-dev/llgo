@@ -48,7 +48,7 @@ func Clean(patterns []string, conf *Config) error {
 		tags += "," + conf.Tags
 	}
 	cfg := &packages.Config{
-		Mode:       loadSyntax | packages.NeedExportFile,
+		Mode:       packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles,
 		BuildFlags: []string{"-tags=" + tags},
 	}
 	if conf.GoFlagsParsed {

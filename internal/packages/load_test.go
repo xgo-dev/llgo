@@ -580,3 +580,30 @@ func TestLLGoFilesAddImportGraph(t *testing.T) {
 		t.Fatal("patch import duplicated an existing package identity")
 	}
 }
+
+func TestLoadExSkipsExportFileWithoutGCFlags(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/noexport\ngo 1.24\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package noexport\nvar Value = 1\n")
+
+	cfg := loadTestConfig(dir)
+	pkgs, err := LoadEx(nil, nil, cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].IllTyped {
+		t.Fatalf("unexpected load result: %+v", pkgs)
+	}
+	if pkgs[0].ExportFile != "" {
+		t.Fatalf("ordinary LoadEx populated ExportFile %q without NeedExportFile or -gcflags", pkgs[0].ExportFile)
+	}
+
+	cfg.BuildFlags = []string{"-gcflags="}
+	pkgs, err = LoadEx(nil, nil, cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].ExportFile != "" {
+		t.Fatalf("empty -gcflags populated ExportFile %q", pkgs[0].ExportFile)
+	}
+}

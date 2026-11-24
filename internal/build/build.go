@@ -71,6 +71,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
+	xllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
 	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/xgo-dev/llgo/runtime"
@@ -554,6 +555,7 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 // Build executes one build invocation.
 func Build(inv Invocation) ([]Package, error) {
+	xllvm.SetupPath()
 	var plan initialBuildPlan
 	defer func() {
 		if plan.sourceOverlayFile != "" {
@@ -769,7 +771,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		goBuildFlags = append(goBuildFlags, "-overlay="+overlayFile)
 	}
 	cfg := &packages.Config{
-		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule,
 		BuildFlags: goBuildFlags,
 		Dir:        dir,
 		Fset:       token.NewFileSet(),
@@ -877,7 +879,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.sourceGoVersion = sourceGo.GOVERSION
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
-		cfg.Mode &^= packages.NeedExportFile
 		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
 			return rewritePortableSIMD(pkg, conf.Goarch)
 		})
@@ -3794,7 +3795,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)
 	if ctx.mode != ModeGen {
-		if aPkg.AltPkg == nil || llruntime.HasAdditiveAltPkg(pkgPath) {
+		if aPkg.AltPkg == nil {
 			asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds)
 			if err != nil {
 				return err

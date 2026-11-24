@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/xtool/clang"
@@ -77,18 +78,52 @@ type Env struct {
 	binDir string
 }
 
+type binDirCacheKey struct {
+	bin     string
+	modTime int64
+	size    int64
+}
+
+var (
+	binDirCacheMu sync.Mutex
+	binDirCache   = map[binDirCacheKey]string{}
+)
+
 // New creates a new [Env] instance.
 func New(llvmConfigBin string) *Env {
 	if llvmConfigBin == "" {
 		llvmConfigBin = defaultLLVMConfigBin()
 	}
 
+	if info, err := os.Stat(llvmConfigBin); err == nil && !info.IsDir() {
+		key := binDirCacheKey{
+			bin:     llvmConfigBin,
+			modTime: info.ModTime().UnixNano(),
+			size:    info.Size(),
+		}
+		binDirCacheMu.Lock()
+		if cached, ok := binDirCache[key]; ok {
+			binDirCacheMu.Unlock()
+			return &Env{binDir: cached}
+		}
+		binDirCacheMu.Unlock()
+
+		// Note that an empty binDir is acceptable. In this case, LLVM
+		// executables are assumed to be in PATH.
+		binDir, err := exec.Command(llvmConfigBin, "--bindir").Output()
+		trimmed := strings.TrimSpace(string(binDir))
+		if err == nil && trimmed != "" {
+			binDirCacheMu.Lock()
+			binDirCache[key] = trimmed
+			binDirCacheMu.Unlock()
+		}
+		return &Env{binDir: trimmed}
+	}
+
 	// Note that an empty binDir is acceptable. In this case, LLVM
 	// executables are assumed to be in PATH.
 	binDir, _ := exec.Command(llvmConfigBin, "--bindir").Output()
-
-	e := &Env{binDir: strings.TrimSpace(string(binDir))}
-	return e
+	return &Env{binDir: strings.TrimSpace(string(binDir))}
 }
 
 // BinDir returns the directory containing LLVM executables. An empty string

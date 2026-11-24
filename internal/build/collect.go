@@ -72,7 +72,7 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	}
 
 	pkg.Manifest = m.Build()
-	pkg.Fingerprint = m.Fingerprint()
+	pkg.Fingerprint = hashManifestContent(pkg.Manifest)
 	return nil
 }
 
@@ -116,6 +116,8 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoWasmWorkers,
 		llgoStdioNobuf,
 		llgoFullRpath,
+		"CCFLAGS",
+		"CFLAGS",
 	}
 	if c.buildConf.Goos == "js" && c.buildConf.Goarch == "wasm" {
 		// emcc consumes this for both LLVM IR codegen and linking. In
@@ -203,9 +205,6 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	}
 	if len(c.crossCompile.CFLAGS) > 0 {
 		m.common.CFlags = append([]string(nil), c.crossCompile.CFLAGS...)
-	}
-	if len(c.crossCompile.LDFLAGS) > 0 {
-		m.common.LDFlags = append([]string(nil), c.crossCompile.LDFLAGS...)
 	}
 	if c.crossCompile.Linker != "" {
 		m.common.Linker = c.crossCompile.Linker

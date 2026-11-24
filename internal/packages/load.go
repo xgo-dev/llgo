@@ -213,11 +213,11 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	driverCfg.Mode = (origMode &^ (NeedTypes | NeedTypesSizes | NeedTypesInfo | NeedSyntax)) | NeedCompiledGoFiles | NeedImports | NeedName | NeedFiles
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
-		// A typed source transform owns compilation of the original source.
-		// Do not ask cmd/go to compile it into unused export data first: that
-		// would apply the other compiler's Midway before our initial check.
-		// Explicit export-data requests and ordinary loads keep their contract.
-		if dedup == nil || dedup.rewrite == nil {
+		// Only ask cmd/go to invoke gc (NeedExportFile) when the caller passes
+		// explicit -gcflags (e.g. "llgo tool compile -e/-std" or frontend
+		// diagnostic tests) and no typed rewrite owns the package source.
+		// Ordinary LLGo builds do not read gc export data.
+		if (dedup == nil || dedup.rewrite == nil) && hasNonEmptyGCFlags(driverCfg.BuildFlags) {
 			driverCfg.Mode |= NeedExportFile
 		}
 	}
@@ -269,6 +269,30 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	}
 
 	return initial, nil
+}
+
+func hasNonEmptyGCFlags(flags []string) bool {
+	for i := 0; i < len(flags); i++ {
+		arg := flags[i]
+		var val string
+		if v, ok := strings.CutPrefix(arg, "-gcflags="); ok {
+			val = v
+		} else if v, ok := strings.CutPrefix(arg, "--gcflags="); ok {
+			val = v
+		} else if (arg == "-gcflags" || arg == "--gcflags") && i+1 < len(flags) {
+			i++
+			val = flags[i]
+		} else {
+			continue
+		}
+		if _, rest, ok := strings.Cut(val, "="); ok {
+			val = rest
+		}
+		if strings.TrimSpace(val) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // The metadata driver sees the original files, while LLGo also typechecks

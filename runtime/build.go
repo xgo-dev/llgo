@@ -2,15 +2,7 @@ package runtime
 
 import "sort"
 
-type altPkgMode uint8
-
-const (
-	altPkgReplace altPkgMode = iota + 1
-	altPkgAdditive
-)
-
 type altPkgSpec struct {
-	mode    altPkgMode
 	goarchs map[string]struct{}
 }
 
@@ -43,21 +35,12 @@ func HasAltPkgForGOARCH(path, goarch string) bool {
 	return ok && spec.enabledFor(goarch)
 }
 
-func HasAdditiveAltPkg(path string) bool {
-	return altPkgs[path].mode == altPkgAdditive
-}
-
-func HasAdditiveAltPkgForGOARCH(path, goarch string) bool {
-	spec, ok := altPkgs[path]
-	return ok && spec.mode == altPkgAdditive && spec.enabledFor(goarch)
-}
-
 var altPkgs = map[string]altPkgSpec{
-	"internal/abi":         {mode: altPkgReplace},
-	"internal/reflectlite": {mode: altPkgReplace},
-	"reflect":              {mode: altPkgReplace},
-	"runtime":              {mode: altPkgReplace},
-	"syscall/js":           {mode: altPkgReplace},
+	"internal/abi":         {},
+	"internal/reflectlite": {},
+	"reflect":              {},
+	"runtime":              {},
+	"syscall/js":           {},
 }
 
 func HasSourcePatchPkg(path string) bool {

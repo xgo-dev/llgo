@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/xgo-dev/llgo/internal/env"
 )
@@ -295,13 +297,26 @@ func fileSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+var downloadHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	},
+}
+
 func downloadFile(url, filepath string) error {
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	resp, err := http.Get(url)
+	resp, err := downloadHTTPClient.Get(url)
 	if err != nil {
 		return err
 	}
