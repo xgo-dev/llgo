@@ -3150,7 +3150,7 @@ func TestDeadcodeDropEnabled(t *testing.T) {
 	}{
 		{name: "not requested", conf: &Config{LTO: lto.Off}, want: false},
 		{name: "requested", conf: &Config{DeadcodeDrop: true, LTO: lto.Off}, want: buildenv.Dev},
-		{name: "disabled by go global dce", conf: &Config{DeadcodeDrop: true, LTO: lto.Full}, want: false},
+		{name: "composable with go global dce", conf: &Config{DeadcodeDrop: true, LTO: lto.Full}, want: buildenv.Dev},
 		{name: "enabled when go global dce disabled", conf: &Config{DeadcodeDrop: true, LTO: lto.Full, DisableGoGlobalDCE: true}, want: buildenv.Dev},
 	}
 

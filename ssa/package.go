@@ -1026,6 +1026,7 @@ type aPackage struct {
 	llvmUsedValues []llvm.Value
 
 	abiTypeFakeUseCache map[llvm.Value][]llvm.Value
+	methodTypeMeta      map[string]MethodTypeMeta
 	ifaceBoxByValue     map[llvm.Value]llvm.Value
 	staticItabByType    map[staticItabKey]Expr
 	staticStringBacking map[llvm.Value]struct{}
@@ -1060,6 +1061,22 @@ func (p Package) SetExport(name, export string) {
 
 func (p Package) ExportFuncs() map[string]string {
 	return p.export
+}
+
+func (p Package) recordMethodTypeMetadata(name string, meta MethodTypeMeta) {
+	if len(meta.Entries) == 0 || name == "" {
+		return
+	}
+	if p.methodTypeMeta == nil {
+		p.methodTypeMeta = make(map[string]MethodTypeMeta)
+	}
+	p.methodTypeMeta[name] = meta
+}
+
+// MethodTypeMetadata returns the LLVM VFE metadata (!vcall_visibility and !type
+// entries) attached to ABI type descriptors emitted in this package.
+func (p Package) MethodTypeMetadata() map[string]MethodTypeMeta {
+	return p.methodTypeMeta
 }
 
 func (p Package) isPreservedName(name string) bool {

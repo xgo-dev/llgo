@@ -2,10 +2,15 @@ package build
 
 import (
 	"go/types"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -352,5 +357,107 @@ func TestInterfacePredicatesRequireClosedProgram(t *testing.T) {
 		if (value == 0) != closed {
 			t.Fatalf("closed=%v: predicate=%d", closed, value)
 		}
+	}
+}
+
+func TestComposableDeadcodeDropAndFullLTO(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop and full-LTO Go GlobalDCE require a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", repoRoot)
+
+	srcDir := t.TempDir()
+	goMod := "module example.com/composable\n\ngo 1.24\n"
+	mainGo := `package main
+
+import (
+	"fmt"
+	"reflect"
+)
+
+type Worker interface {
+	Run() int
+	UnusedIface() int
+}
+
+type Task struct{ v int }
+
+func (t Task) Run() int         { return t.v + 1 }
+func (t Task) UnusedIface() int { return t.v + 2 }
+func (t Task) DeadDirect() int  { return t.v + 3 }
+
+type Refl struct{ v int }
+
+func (r Refl) LiveRefl() int { return r.v * 10 }
+func (r Refl) DeadRefl() int { return r.v * 20 }
+
+//go:noinline
+func pickName(flag bool) string {
+	if flag {
+		return "LiveRefl"
+	}
+	return "LiveRefl"
+}
+
+//go:noinline
+func callWorker(w Worker) int {
+	return w.Run()
+}
+
+func main() {
+	var w Worker = Task{v: 41}
+	rv := reflect.ValueOf(Refl{v: 3}).MethodByName(pickName(true)).Call(nil)[0].Int()
+	fmt.Printf("%d:%d\n", callWorker(w), rv)
+}
+`
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		plugin string
+	}{
+		{name: "full_lto"},
+	}
+	if plugin := os.Getenv("LLGO_LTO_PLUGIN"); plugin != "" {
+		cases = append(cases, struct {
+			name   string
+			plugin string
+		}{name: "full_lto_plugin", plugin: plugin})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outBin := filepath.Join(t.TempDir(), "composable")
+			conf := NewDefaultConf(ModeBuild)
+			conf.DeadcodeDrop = true
+			conf.LTO = lto.Full
+			if tc.plugin != "" {
+				conf.LTOPlugin = lto.PassPlugin{Path: tc.plugin}
+			}
+			conf.PCLNMode = PCLNNone
+			conf.OutFile = outBin
+			if !conf.deadcodeDropEnabled() || !conf.goGlobalDCEEnabled() {
+				t.Fatalf("expected both deadcodeDrop (%v) and goGlobalDCE (%v) to be enabled", conf.deadcodeDropEnabled(), conf.goGlobalDCEEnabled())
+			}
+
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: srcDir}); err != nil {
+				t.Fatalf("composable deadcode+full-LTO build failed: %v", err)
+			}
+			out, err := exec.Command(outBin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run %s: %v\n%s", outBin, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != "42:30" {
+				t.Fatalf("output = %q, want %q", got, "42:30")
+			}
+		})
 	}
 }

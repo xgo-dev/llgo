@@ -43,6 +43,21 @@ type ReflectMethodCheck struct {
 	Name string
 }
 
+// MethodTypeMetadataEntry describes one LLVM !type attachment on an ABI type
+// descriptor global.
+type MethodTypeMetadataEntry struct {
+	Offset uint64
+	TypeID string
+}
+
+// MethodTypeMeta records LLVM VFE metadata (!vcall_visibility and !type
+// entries) attached to an ABI type descriptor global so link-time passes
+// such as dcepass can preserve it when emitting strong type overrides.
+type MethodTypeMeta struct {
+	VCallVisibility uint64
+	Entries         []MethodTypeMetadataEntry
+}
+
 func methodCapabilitySig(sig *types.Signature) string {
 	canon := types.NewSignatureType(nil, nil, nil, methodCapabilityTuple(sig.Params()), methodCapabilityTuple(sig.Results()), sig.Variadic())
 	return types.TypeString(canon, func(pkg *types.Package) string {
@@ -346,9 +361,9 @@ func (p Function) recordFakeUse(v llvm.Value) {
 	p.fakeUses = append(p.fakeUses, v)
 }
 
-func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods []*types.Selection) {
+func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods []*types.Selection) MethodTypeMeta {
 	if len(methods) == 0 {
-		return
+		return MethodTypeMeta{}
 	}
 	p.setVCallVisibilityMetadata(global, vcallVisibilityLinkageUnit)
 	mt := p.rtNamed("Method")
@@ -357,16 +372,25 @@ func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods
 	ifnOffset := p.OffsetOf(methodType, abiMethodIFnFieldIndex)
 	tfnOffset := p.OffsetOf(methodType, abiMethodTFnFieldIndex)
 	methodStride := p.SizeOf(methodType)
+	entries := make([]MethodTypeMetadataEntry, 0, len(methods)*5)
+	addEntry := func(offset uint64, typeID string) {
+		p.addTypeMetadata(global, offset, typeID)
+		entries = append(entries, MethodTypeMetadataEntry{Offset: offset, TypeID: typeID})
+	}
 	for i, sel := range methods {
 		baseOffset := methodArrayOffset + uint64(i)*methodStride
-		p.addTypeMetadata(global, baseOffset+ifnOffset, methodCapabilityKey(sel.Obj().(*types.Func)))
+		addEntry(baseOffset+ifnOffset, methodCapabilityKey(sel.Obj().(*types.Func)))
 		if sel.Obj().Exported() {
 			name := sel.Obj().Name()
-			p.addTypeMetadata(global, baseOffset+ifnOffset, reflectValueMethodTypeID)
-			p.addTypeMetadata(global, baseOffset+ifnOffset, reflectValueMethodNameTypeID(name))
-			p.addTypeMetadata(global, baseOffset+tfnOffset, reflectTypeMethodTypeID)
-			p.addTypeMetadata(global, baseOffset+tfnOffset, reflectTypeMethodNameTypeID(name))
+			addEntry(baseOffset+ifnOffset, reflectValueMethodTypeID)
+			addEntry(baseOffset+ifnOffset, reflectValueMethodNameTypeID(name))
+			addEntry(baseOffset+tfnOffset, reflectTypeMethodTypeID)
+			addEntry(baseOffset+tfnOffset, reflectTypeMethodNameTypeID(name))
 		}
+	}
+	return MethodTypeMeta{
+		VCallVisibility: vcallVisibilityLinkageUnit,
+		Entries:         entries,
 	}
 }
 

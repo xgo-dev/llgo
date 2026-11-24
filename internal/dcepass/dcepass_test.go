@@ -658,3 +658,87 @@ func TestEmitInterfaceUseOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestEmitStrongTypeOverridesPreservesVFEMetadata(t *testing.T) {
+	srcCtx := llvm.NewContext()
+	defer srcCtx.Dispose()
+	dstCtx := llvm.NewContext()
+	defer dstCtx.Dispose()
+
+	src := parseModule(t, &srcCtx, filepath.Join("testdata", "method_slots", "in.ll"))
+	defer src.Dispose()
+
+	typeMeta := map[string]GlobalTypeMetadata{
+		taskTypeName: {
+			VCallVisibility: 1,
+			Entries: []TypeMetadataEntry{
+				{Offset: 88, TypeID: "go.method.Drop:func()"},
+				{Offset: 128, TypeID: "go.method.Run:func()"},
+				{Offset: 128, TypeID: "go.method.value.reflect"},
+				{Offset: 128, TypeID: "go.method.value.reflect.Run"},
+			},
+		},
+	}
+
+	t.Run("non-compacted preserves VFE metadata", func(t *testing.T) {
+		dst := dstCtx.NewModule("dst-vfe")
+		defer dst.Dispose()
+		live := map[string][]int{
+			taskTypeName:    {1},
+			ptrTaskTypeName: {1},
+		}
+		EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{src}, live, typeMeta, nil, false)
+		if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+			t.Fatalf("verify failed: %v\n%s", err, dst.String())
+		}
+		ir := dst.String()
+		for _, want := range []string{
+			"!vcall_visibility",
+			"!type",
+			`!"go.method.Drop:func()"`,
+			`!"go.method.Run:func()"`,
+			`!"go.method.value.reflect.Run"`,
+		} {
+			if !strings.Contains(ir, want) {
+				t.Fatalf("strong override missing %s:\n%s", want, ir)
+			}
+		}
+		roundTripCtx := llvm.NewContext()
+		defer roundTripCtx.Dispose()
+		roundTripPath := filepath.Join(t.TempDir(), "override.ll")
+		if err := os.WriteFile(roundTripPath, []byte(ir), 0600); err != nil {
+			t.Fatal(err)
+		}
+		rt := parseModule(t, &roundTripCtx, roundTripPath)
+		rt.Dispose()
+	})
+
+	t.Run("compacted zero-method override omits VFE metadata", func(t *testing.T) {
+		text := `
+%"github.com/xgo-dev/llgo/runtime/abi.UncommonType" = type { { ptr, i64 }, i16, i16, i32 }
+%"github.com/xgo-dev/llgo/runtime/abi.Method" = type { { ptr, i64 }, ptr, ptr, ptr }
+@_llgo_main.Task = weak_odr constant { i64, %"github.com/xgo-dev/llgo/runtime/abi.UncommonType", [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] } {
+  i64 42,
+  %"github.com/xgo-dev/llgo/runtime/abi.UncommonType" { { ptr, i64 } zeroinitializer, i16 1, i16 1, i32 24 },
+  [1 x %"github.com/xgo-dev/llgo/runtime/abi.Method"] [ %"github.com/xgo-dev/llgo/runtime/abi.Method" { { ptr, i64 } zeroinitializer, ptr null, ptr @drop, ptr @drop } ]
+}
+declare void @drop()
+`
+		p := filepath.Join(t.TempDir(), "compact.ll")
+		if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		compactSrc := parseModule(t, &srcCtx, p)
+		defer compactSrc.Dispose()
+		dst := dstCtx.NewModule("dst-compact")
+		defer dst.Dispose()
+		EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{compactSrc}, nil, typeMeta, func(string) bool { return true }, false)
+		if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
+			t.Fatalf("verify failed: %v\n%s", err, dst.String())
+		}
+		ir := dst.String()
+		if strings.Contains(ir, "!vcall_visibility") || strings.Contains(ir, "!type") {
+			t.Fatalf("compacted zero-method override should not carry VFE metadata:\n%s", ir)
+		}
+	})
+}

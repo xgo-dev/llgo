@@ -19,6 +19,8 @@ add_llvm_pass_plugin(LLGOLTOPlugin
   LLGOLTOPlugin.cpp
   LLGOInterfaceMethodTypeIDPass.cpp
   LLGOReflectMethodByNamePass.cpp
+  LLGOReflectStringAnalysis.cpp
+  LLGOStaticItabDevirt.cpp
   LLGOTypeIDExportCleanupPass.cpp
 )
 

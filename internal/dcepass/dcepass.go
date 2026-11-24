@@ -117,6 +117,20 @@ func trimRegularTypeFields(value llvm.Value) (llvm.Value, bool) {
 	return constStructOfType(value.Type(), fields), true
 }
 
+// TypeMetadataEntry describes one LLVM !type attachment on an ABI type global.
+type TypeMetadataEntry struct {
+	Offset uint64
+	TypeID string
+}
+
+// GlobalTypeMetadata carries LLVM VFE metadata (!vcall_visibility and !type
+// entries) to preserve on strong ABI type overrides so LLVM Full-LTO and
+// GlobalDCE can refine surviving live method slots after Go-side deadcode drop.
+type GlobalTypeMetadata struct {
+	VCallVisibility uint64
+	Entries         []TypeMetadataEntry
+}
+
 // EmitStrongTypeOverrides emits method-pruned strong ABI type symbols into dst.
 // srcMods contains the original package modules. For each constant ABI type
 // global with a method array, it creates a same-name strong global in dst and
@@ -124,8 +138,17 @@ func trimRegularTypeFields(value llvm.Value) (llvm.Value, bool) {
 // dropMetadata can remove method storage for types proven invisible to
 // interfaces and reflection; nil preserves them. verbose logs removed slots.
 func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, dropMetadata func(string) bool, verbose bool) {
+	EmitStrongTypeOverridesWithMetadata(dst, srcMods, liveSlots, nil, dropMetadata, verbose)
+}
+
+// EmitStrongTypeOverridesWithMetadata behaves like EmitStrongTypeOverrides and
+// additionally preserves LLVM VFE metadata (!vcall_visibility and !type) from
+// typeMeta on non-compacted strong overrides so Go-side deadcode drop composes
+// cleanly with LLVM Full-LTO GlobalDCE and LTO plugins.
+func EmitStrongTypeOverridesWithMetadata(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, typeMeta map[string]GlobalTypeMetadata, dropMetadata func(string) bool, verbose bool) {
 	emitted := make(map[string]bool)
 	emitter := newOverrideEmitter(dst)
+	emitter.typeMeta = typeMeta
 	type override struct {
 		src, dst, methods llvm.Value
 		elem              llvm.Type
@@ -185,9 +208,10 @@ func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots m
 }
 
 type overrideEmitter struct {
-	dst    llvm.Module
-	values map[llvm.Value]llvm.Value
-	types  map[llvm.Type]llvm.Type
+	dst      llvm.Module
+	values   map[llvm.Value]llvm.Value
+	types    map[llvm.Type]llvm.Type
+	typeMeta map[string]GlobalTypeMetadata
 }
 
 func newOverrideEmitter(dst llvm.Module) *overrideEmitter {
@@ -255,6 +279,34 @@ func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Val
 	dstType.SetGlobalConstant(true)
 	dstType.SetLinkage(llvm.ExternalLinkage)
 	copyGlobalAttrs(dstType, srcType)
+	e.attachTypeMetadata(dstType, srcType)
+}
+
+// attachTypeMetadata re-emits !vcall_visibility and !type metadata on dstType
+// in dst's LLVM Context so strong overrides stay visible to LLVM Full-LTO VFE
+// and LTO plugin passes. In-place overrides (dstType == srcType) already carry
+// their metadata and are left untouched.
+func (e *overrideEmitter) attachTypeMetadata(dstType, srcType llvm.Value) {
+	if len(e.typeMeta) == 0 || dstType.C == srcType.C {
+		return
+	}
+	meta, ok := e.typeMeta[srcType.Name()]
+	if !ok || len(meta.Entries) == 0 {
+		return
+	}
+	ctx := e.dst.Context()
+	i64 := ctx.Int64Type()
+	visKind := ctx.MDKindID("vcall_visibility")
+	dstType.AddMetadata(visKind, ctx.MDNode([]llvm.Metadata{
+		llvm.ConstInt(i64, meta.VCallVisibility, false).ConstantAsMetadata(),
+	}))
+	typeKind := ctx.MDKindID("type")
+	for _, entry := range meta.Entries {
+		dstType.AddMetadata(typeKind, ctx.MDNode([]llvm.Metadata{
+			llvm.ConstInt(i64, entry.Offset, false).ConstantAsMetadata(),
+			ctx.MDString(entry.TypeID),
+		}))
+	}
 }
 
 func methodPointerName(v llvm.Value) string {
