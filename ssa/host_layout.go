@@ -1,33 +1,20 @@
 package ssa
 
-import "go/types"
+import (
+	"go/types"
+
+	lltypes "github.com/xgo-dev/llgo/types"
+)
 
 // isHostLayoutMarker recognizes the private identity retained by aliases and
 // defined types of structs.HostLayout. Do not recursively search arbitrary
 // structs: HostLayout deliberately does not propagate across struct boundaries.
 func isHostLayoutMarker(t types.Type) bool {
-	st, ok := t.Underlying().(*types.Struct)
-	if !ok || st.NumFields() != 1 || st.Field(0).Name() != "_" {
-		return false
-	}
-	n, ok := types.Unalias(st.Field(0).Type()).(*types.Named)
-	if !ok || n.Obj().Pkg() == nil || (n.Obj().Pkg().Path() != "structs" && n.Obj().Pkg().Path() != "github.com/xgo-dev/llgo/runtime/internal/structs") || n.Obj().Name() != "hostLayout" {
-		return false
-	}
-	body, ok := n.Underlying().(*types.Struct)
-	return ok && body.NumFields() == 0
+	return lltypes.IsHostLayoutMarker(t)
 }
 
 func hasHostLayout(t types.Type) bool {
-	st, ok := t.Underlying().(*types.Struct)
-	if ok {
-		for i := 0; i < st.NumFields(); i++ {
-			if isHostLayoutMarker(st.Field(i).Type()) {
-				return true
-			}
-		}
-	}
-	return false
+	return lltypes.HasHostLayout(t)
 }
 
 func hasHostMarkerField(fields []*types.Var) bool {
@@ -40,18 +27,7 @@ func hasHostMarkerField(fields []*types.Var) bool {
 }
 
 func containsHostLayout(t types.Type) bool {
-	switch t := t.Underlying().(type) {
-	case *types.Struct:
-		for i := 0; i < t.NumFields(); i++ {
-			f := t.Field(i).Type()
-			if isHostLayoutMarker(f) || containsHostLayout(f) {
-				return true
-			}
-		}
-	case *types.Array:
-		return containsHostLayout(t.Elem())
-	}
-	return false
+	return lltypes.ContainsHostLayout(t)
 }
 
 // hostLayout computes source sizes without materializing LLVM named types.

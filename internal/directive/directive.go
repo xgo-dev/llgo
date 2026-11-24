@@ -14,78 +14,29 @@
  * limitations under the License.
  */
 
-// Package directive parses Go and LLGo source directives without assigning
-// feature-specific semantics to them.
+// Package directive delegates to the public pure-Go github.com/xgo-dev/llgo/directive package.
 package directive
 
 import (
 	"go/ast"
-	"go/token"
-	"strings"
+
+	pub "github.com/xgo-dev/llgo/directive"
 )
 
 // Directive is one normalized Go or LLGo source directive.
-type Directive struct {
-	Name string
-	Args string
-	Raw  string
-	Pos  token.Pos
-}
+type Directive = pub.Directive
 
 // Parse normalizes comment when it uses a supported directive spelling.
 func Parse(comment *ast.Comment) (Directive, bool) {
-	if comment == nil {
-		return Directive{}, false
-	}
-	raw := comment.Text
-	var namespace, body string
-	switch {
-	case strings.HasPrefix(raw, "//go:"):
-		namespace, body = "go:", raw[len("//go:"):]
-	case strings.HasPrefix(raw, "//llgointernal:"):
-		namespace, body = "llgointernal:", raw[len("//llgointernal:"):]
-	case strings.HasPrefix(raw, "//llgo:"):
-		namespace, body = "llgo:", raw[len("//llgo:"):]
-	case strings.HasPrefix(raw, "// llgo:"):
-		namespace, body = "llgo:", raw[len("// llgo:"):]
-	case strings.HasPrefix(raw, "//export "):
-		return Directive{Name: "export", Args: strings.TrimSpace(raw[len("//export "):]), Raw: raw, Pos: comment.Pos()}, true
-	default:
-		return Directive{}, false
-	}
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return Directive{}, false
-	}
-	name, args := body, ""
-	if idx := strings.IndexAny(body, " \t"); idx >= 0 {
-		name, args = body[:idx], strings.TrimSpace(body[idx+1:])
-	}
-	return Directive{Name: namespace + name, Args: args, Raw: raw, Pos: comment.Pos()}, true
+	return pub.Parse(comment)
 }
 
 // ParseGroup returns all normalized directives in doc in source order.
 func ParseGroup(doc *ast.CommentGroup) []Directive {
-	if doc == nil {
-		return nil
-	}
-	ret := make([]Directive, 0, len(doc.List))
-	for _, comment := range doc.List {
-		if parsed, ok := Parse(comment); ok {
-			ret = append(ret, parsed)
-		}
-	}
-	return ret
+	return pub.ParseGroup(doc)
 }
 
-// ParseLinknameArgs splits a local symbol from its link target. A single-name
-// go:linkname annotation has no target. Keep target whitespace normalization
-// identical in declaration collection and legacy imports.
+// ParseLinknameArgs splits a local symbol from its link target.
 func ParseLinknameArgs(args string) (local, target string) {
-	fields := strings.Fields(args)
-	if len(fields) != 0 {
-		local = fields[0]
-		target = strings.Join(fields[1:], " ")
-	}
-	return
+	return pub.ParseLinknameArgs(args)
 }

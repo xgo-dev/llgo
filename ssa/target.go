@@ -20,9 +20,8 @@ import (
 	"runtime"
 	"strings"
 
-	archcfg "github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -160,93 +159,23 @@ func (p *Target) goArchitectureSetting(value string) string {
 }
 
 func (p *Target) Spec() (spec TargetSpec) {
-	// Configure based on GOOS/GOARCH environment variables (falling back to
-	// runtime.GOOS/runtime.GOARCH), and generate a LLVM target based on it.
-	goarch := p.effectiveGOARCH()
-	goos := p.effectiveGOOS()
-	goarm := p.goArchitectureSetting(p.GOARM)
-	spec.Triple = intllvm.GetTargetTripleWithGOARM(goos, goarch, goarm)
-	// A native toolchain profile can select a physical ABI triple that differs
-	// from the GOOS/GOARCH default (for example Windows GNU instead of MSVC).
-	// Named embedded targets keep their existing backend triple here: their
-	// external compiler may support a target such as Xtensa that the host LLVM
-	// library used to build LLGo does not register.
-	if p.LLVMTarget != "" && (p.Target == "" || p.WasmProfile != "") {
-		spec.Triple = p.LLVMTarget
+	resolved := target.ResolveSpec(target.Spec{
+		GOOS:         p.GOOS,
+		GOARCH:       p.GOARCH,
+		GO386:        p.GO386,
+		GOAMD64:      p.GOAMD64,
+		GOARM:        p.GOARM,
+		GOARM64:      p.GOARM64,
+		Name:         p.Target,
+		LLVMTarget:   p.LLVMTarget,
+		WasmProfile:  p.WasmProfile,
+		WasmProvider: p.WasmProvider,
+	})
+	return TargetSpec{
+		Triple:   resolved.Triple,
+		CPU:      resolved.CPU,
+		Features: resolved.Features,
 	}
-	// Build validates these settings before constructing Target. Spec also
-	// accepts hand-built Targets, so it intentionally uses each resolver's
-	// documented Go-default fallback when its error cannot be returned here.
-	switch goarch {
-	case "386":
-		spec.CPU = "pentium4"
-		go386, _ := archcfg.Resolve386(p.goArchitectureSetting(p.GO386))
-		if go386 == "softfloat" {
-			spec.Features = "+cx8,+fxsr,+mmx,+soft-float,-sse,-sse2,-x87"
-		} else {
-			spec.Features = "+cx8,+fxsr,+mmx,+sse,+sse2,+x87"
-		}
-	case "amd64":
-		goamd64, _ := archcfg.ResolveAMD64(p.goArchitectureSetting(p.GOAMD64))
-		spec.CPU = "x86-64"
-		if goamd64 != "v1" {
-			spec.CPU += "-" + goamd64
-		}
-		spec.Features = "+cx8,+fxsr,+mmx,+sse,+sse2,+x87"
-	case "arm":
-		spec.CPU = "generic"
-		arm, _ := archcfg.ParseARM(goarm)
-		switch arm.Version {
-		case "5":
-			if arm.SoftFloat {
-				spec.Features = "+armv5t,+strict-align,-aes,-bf16,-d32,-dotprod,-fp-armv8,-fp-armv8d16,-fp-armv8d16sp,-fp-armv8sp,-fp16,-fp16fml,-fp64,-fpregs,-fullfp16,-mve.fp,-neon,-sha2,-thumb-mode,-vfp2,-vfp2sp,-vfp3,-vfp3d16,-vfp3d16sp,-vfp3sp,-vfp4,-vfp4d16,-vfp4d16sp,-vfp4sp"
-			} else {
-				// GOARM=5,hardfloat explicitly enables VFPv2 without also
-				// carrying contradictory disable tokens for the same features.
-				spec.Features = "+armv5t,+strict-align,-aes,-bf16,-d32,-dotprod,-fp-armv8,-fp-armv8d16,-fp-armv8d16sp,-fp-armv8sp,-fp16,-fp16fml,+fp64,+fpregs,-fullfp16,-mve.fp,-neon,-sha2,-thumb-mode,+vfp2,+vfp2sp,-vfp3,-vfp3d16,-vfp3d16sp,-vfp3sp,-vfp4,-vfp4d16,-vfp4d16sp,-vfp4sp"
-			}
-		case "6":
-			spec.Features = "+armv6,+dsp,+fp64,+strict-align,+vfp2,+vfp2sp,-aes,-d32,-fp-armv8,-fp-armv8d16,-fp-armv8d16sp,-fp-armv8sp,-fp16,-fp16fml,-fullfp16,-neon,-sha2,-thumb-mode,-vfp3,-vfp3d16,-vfp3d16sp,-vfp3sp,-vfp4,-vfp4d16,-vfp4d16sp,-vfp4sp"
-		case "7":
-			spec.Features = "+armv7-a,+d32,+dsp,+fp64,+neon,+vfp2,+vfp2sp,+vfp3,+vfp3d16,+vfp3d16sp,+vfp3sp,-aes,-fp-armv8,-fp-armv8d16,-fp-armv8d16sp,-fp-armv8sp,-fp16,-fp16fml,-fullfp16,-sha2,-thumb-mode,-vfp4,-vfp4d16,-vfp4d16sp,-vfp4sp"
-		}
-		if arm.SoftFloat {
-			spec.Features += ",+soft-float"
-		}
-	case "arm64":
-		spec.CPU = "generic"
-		arm64, _ := archcfg.ParseARM64(p.goArchitectureSetting(p.GOARM64))
-		archFeature := arm64.Version + "a"
-		if arm64.Version == "v9.0" {
-			archFeature = "v9a"
-		}
-		features := make([]string, 0, 5)
-		if arm64.Version != "v8.0" {
-			features = append(features, "+"+archFeature)
-		}
-		features = append(features, "+neon")
-		if arm64.LSE {
-			features = append(features, "+lse")
-		}
-		if arm64.Crypto {
-			features = append(features, "+crypto")
-		}
-		if goos != "darwin" { // windows, linux
-			features = append(features, "-fmv")
-		}
-		spec.Features = strings.Join(features, ",")
-	case "riscv64":
-		if p.Target == "" {
-			// Hosted Go/RISC-V uses the RV64GC, LP64D ABI. Keep optional
-			// scalar crypto extensions confined to their guarded functions.
-			spec.CPU = "generic-rv64"
-			spec.Features = "+m,+a,+f,+d,+c,+zicsr,+zifencei"
-		}
-	case "wasm":
-		spec.CPU = "generic"
-		spec.Features = "+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext"
-	}
-	return
 }
 
 func StripModuleTarget(ir string) string {
