@@ -2,6 +2,7 @@ package build
 
 import (
 	"go/version"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -103,4 +104,48 @@ func withResolvedGoToolchain(environ []string, goversion string) []string {
 		return environ
 	}
 	return withEnv(environ, "GOTOOLCHAIN="+goversion)
+}
+
+// withLLVMPath returns a copy of environ whose PATH begins with binDir unless
+// binDir is empty or already present. It never mutates the process environment.
+func withLLVMPath(environ []string, binDir string) []string {
+	if binDir == "" {
+		return environ
+	}
+	isPathKey := func(k string) bool {
+		return k == "PATH" || (runtime.GOOS == "windows" && strings.EqualFold(k, "PATH"))
+	}
+	pathKey := "PATH"
+	pathVal := ""
+	for i := len(environ) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(environ[i], "=")
+		if !ok {
+			continue
+		}
+		if isPathKey(k) {
+			pathKey = k
+			pathVal = v
+			break
+		}
+	}
+	cleanBin := filepath.Clean(binDir)
+	for _, dir := range filepath.SplitList(pathVal) {
+		cleanDir := filepath.Clean(dir)
+		if cleanDir == cleanBin || (runtime.GOOS == "windows" && strings.EqualFold(cleanDir, cleanBin)) {
+			return environ
+		}
+	}
+	newPath := binDir
+	if pathVal != "" {
+		newPath += string(os.PathListSeparator) + pathVal
+	}
+	ret := make([]string, 0, len(environ)+1)
+	for _, entry := range environ {
+		k, _, ok := strings.Cut(entry, "=")
+		if !ok || isPathKey(k) {
+			continue
+		}
+		ret = append(ret, entry)
+	}
+	return append(ret, pathKey+"="+newPath)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/mockable"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 // Cmd implements the compiler action used by GOROOT/test. Its option names
@@ -171,6 +172,7 @@ func runCmd(_ *base.Command, args []string) {
 	if opts.noOpt.value != 0 || opts.noInline.value != 0 {
 		conf.OptLevel = optlevel.O0
 	}
+	llvm.SetupPath()
 	pkgs, err := build.Do(files, conf)
 	if len(pkgs) != 0 && pkgs[0].LPkg != nil {
 		pkgs[0].LPkg.Prog.Dispose()

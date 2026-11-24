@@ -555,7 +555,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 // Build executes one build invocation.
 func Build(inv Invocation) ([]Package, error) {
-	xllvm.SetupPath()
 	var plan initialBuildPlan
 	defer func() {
 		if plan.sourceOverlayFile != "" {
@@ -613,7 +612,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			return nil, err
 		}
 	}
-	environ := os.Environ()
+	environ := withLLVMPath(os.Environ(), xllvm.New("").BinDir())
 	conf, err := resolveBuildConfig(inv.Config)
 	if err != nil {
 		return nil, err
@@ -3421,6 +3420,9 @@ func (c *context) archiver() string {
 	}
 	if c.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF ||
 		c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
+		if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
+			return llvmAr
+		}
 		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
 			return llvmAr
 		}
@@ -3441,10 +3443,28 @@ func (c *context) archiveMerger() (string, error) {
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
+	if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
+		return llvmAr, nil
+	}
 	if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
+}
+
+func llvmBinTool(name string) string {
+	binDir := xllvm.New("").BinDir()
+	if binDir == "" {
+		return ""
+	}
+	candidate := filepath.Join(binDir, name)
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(candidate), ".exe") {
+		candidate += ".exe"
+	}
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate
+	}
+	return ""
 }
 
 // Both GoJS and the named Emscripten targets build C/C++ through emcc. That

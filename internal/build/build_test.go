@@ -470,6 +470,25 @@ func TestInvocationUsesExplicitWorkingDirectory(t *testing.T) {
 	pkgs[0].LPkg.Prog.Dispose()
 }
 
+func TestWithLLVMPathPrependsWithoutMutatingProcessEnv(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "base")
+	llvmDir := filepath.Join(t.TempDir(), "llvm", "bin")
+	orig := []string{"FOO=bar", "PATH=" + baseDir}
+	updated := withLLVMPath(orig, llvmDir)
+	want := llvmDir + string(os.PathListSeparator) + baseDir
+	if got := (commandEnv{environ: updated}).lookup("PATH"); got != want {
+		t.Fatalf("withLLVMPath PATH = %q, want %q", got, want)
+	}
+	// Original slice is untouched and duplicate binDir is a no-op.
+	if got := (commandEnv{environ: orig}).lookup("PATH"); got != baseDir {
+		t.Fatalf("original environ mutated: %q", got)
+	}
+	dedup := withLLVMPath(updated, llvmDir)
+	if got := (commandEnv{environ: dedup}).lookup("PATH"); got != want {
+		t.Fatalf("duplicate withLLVMPath PATH = %q, want %q", got, want)
+	}
+}
+
 func TestBuildUsesSyntheticPythonPackage(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/pythonfixture\n\ngo 1.24\n"), 0o644); err != nil {
