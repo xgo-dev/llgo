@@ -66,3 +66,24 @@ func BenchmarkNamedInterfaceConversion(b *testing.B) {
 		}
 	})
 }
+
+func TestKnownInterfaceConversion(t *testing.T) {
+	var source conversionSource = conversionA(7)
+	var target conversionTarget = source
+	if target.Value() != 7 || any(target) != any(source) {
+		t.Fatal("known value conversion changed its dynamic value")
+	}
+	if got := (map[conversionTarget]int{target: 1})[conversionA(7)]; got != 1 {
+		t.Fatal("known value conversion used the wrong interface identity")
+	}
+	var nilSource conversionSource = (*conversionPointer)(nil)
+	var nilTarget conversionTarget = nilSource
+	if nilTarget == nil || any(nilTarget) != any((*conversionPointer)(nil)) || nilTarget.Value() != 11 {
+		t.Fatal("known typed nil conversion changed the value or method dispatch")
+	}
+	var empty any = source
+	asserted := empty.(conversionTarget)
+	if asserted.Value() != 7 {
+		t.Fatal("known value assertion failed")
+	}
+}

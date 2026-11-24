@@ -1361,6 +1361,50 @@ Constant *collectStaticItabArgumentTarget(Argument *Arg, ArrayRef<unsigned> Indi
   return SawCall ? Target : nullptr;
 }
 
+// Ordinary interface calls use plain loads when GlobalDCE is disabled.
+// Resolve only immutable method slots proven by a matching itab template;
+// header fields and dynamic interface tables must retain their loads.
+bool devirtualizeKnownItabLoads(Module &M, const DataLayout &DL) {
+  SmallVector<std::pair<LoadInst *, Constant *>, 16> Replacements;
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        auto *Load = dyn_cast<LoadInst>(&I);
+        if (!Load || !Load->isSimple() || !Load->getType()->isPointerTy())
+          continue;
+        int64_t Offset = 0;
+        Value *Base = GetPointerBaseWithConstantOffset(
+            Load->getPointerOperand(), Offset, DL);
+        auto *Call = Base ? dyn_cast<CallBase>(Base->stripPointerCasts())
+                          : nullptr;
+        auto *Template = findStaticItabTemplate(M, Call);
+        if (!Template || Offset < 0)
+          continue;
+        SmallVector<MDNode *, 4> Slots;
+        Template->getMetadata(StaticItabSlotMetadata, Slots);
+        for (MDNode *Slot : Slots) {
+          if (Slot->getNumOperands() < 2)
+            continue;
+          auto *ID = dyn_cast<MDString>(Slot->getOperand(1));
+          if (!ID)
+            continue;
+          auto Target = resolveStaticItabSlot(Template, Offset,
+                                             ID->getString(), DL);
+          if (Target && Target->Target->getType() == Load->getType()) {
+            Replacements.push_back({Load, Target->Target});
+            break;
+          }
+        }
+      }
+    }
+  }
+  for (auto [Load, Target] : Replacements) {
+    Load->replaceAllUsesWith(Target);
+    Load->eraseFromParent();
+  }
+  return !Replacements.empty();
+}
+
 bool devirtualizeStaticItabCalls(Module &M, const DataLayout &DL) {
   struct Replacement {
     CallBase *CheckedLoad;
@@ -2066,7 +2110,8 @@ class LLGOLTOPreGlobalDCEPass : public PassInfoMixin<LLGOLTOPreGlobalDCEPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     const DataLayout &DL = M.getDataLayout();
-    bool Changed = devirtualizeStaticItabCalls(M, DL);
+    bool Changed = devirtualizeKnownItabLoads(M, DL);
+    Changed |= devirtualizeStaticItabCalls(M, DL);
     Changed |= eraseStaticItabTemplatePreservation(M);
     Changed |= eraseUnobservedReflectTypeMethodFuncs(M, DL);
 

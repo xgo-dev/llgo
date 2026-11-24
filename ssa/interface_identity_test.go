@@ -132,6 +132,31 @@ func testChangeTypeNamedInterfaceIdentity(t *testing.T, target *Target) {
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
+	concrete := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Concrete", nil), types.Typ[types.Int], nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", types.NewPointer(concrete))
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", types.NewSignatureType(recv, nil, nil, nil, nil, false)))
+	knownFn := pkg.NewFunc("Known", types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", dst)), false), GoDecl)
+	knownBuilder := knownFn.MakeBody(1)
+	known := knownBuilder.MakeInterface(prog.Type(src, GoDecl), prog.Zero(prog.Type(types.NewPointer(concrete), GoDecl)))
+	known = knownBuilder.ChangeType(prog.Type(dst, GoDecl), known)
+	empty := types.NewInterfaceType(nil, nil).Complete()
+	known = knownBuilder.ChangeInterface(prog.Type(empty, GoDecl), known)
+	known = knownBuilder.ChangeInterface(prog.Type(dst, GoDecl), known)
+	if !types.Identical(knownBuilder.Func.interfaceConcreteTypes[known.impl], types.NewPointer(concrete)) {
+		t.Fatal("conversion chain lost the known concrete type")
+	}
+	if got := cacheCount(); got != 2 {
+		t.Fatalf("known concrete conversions allocated a cache: got %d, want 2", got)
+	}
+	knownBuilder.Return(known)
+	knownBuilder.EndBuild()
+	if strings.Contains(knownFn.impl.String(), "ConvertIface") || strings.Contains(knownFn.impl.String(), "IfaceType") {
+		t.Fatalf("known concrete conversion used dynamic lookup:\n%s", knownFn.impl.String())
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
 	ir := pkg.String()
 	name, _ := prog.abi.TypeName(dst)
 	if !strings.Contains(ir, "ConvertIface\"(ptr @\""+name+"\",") || !strings.Contains(ir, "_llgo_ifaceconv$") {

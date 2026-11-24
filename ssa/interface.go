@@ -339,7 +339,15 @@ func (p Package) constantFingerprint(v llvm.Value) string {
 	return "(" + strings.Join(parts, ",") + ")"
 }
 
-func (b Builder) unsafeInterface(intf types.Type, concrete types.Type, t Expr, data llvm.Value) llvm.Value {
+func (b Builder) unsafeInterface(intf types.Type, concrete types.Type, t Expr, data llvm.Value) (ret llvm.Value) {
+	if concrete != nil {
+		defer func() {
+			if b.Func.interfaceConcreteTypes == nil {
+				b.Func.interfaceConcreteTypes = make(map[llvm.Value]types.Type)
+			}
+			b.Func.interfaceConcreteTypes[ret] = concrete
+		}()
+	}
 	intf = types.Unalias(intf)
 	rawIntf := intf.Underlying().(*types.Interface)
 	if rawIntf.Empty() {
@@ -754,6 +762,11 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
 	if types.Identical(typ.RawType(), x.RawType()) {
 		return Expr{x.impl, typ}
+	}
+	// Only values constructed with a proven concrete type bypass the cache.
+	// Loads, parameters and control-flow merges retain the dynamic path.
+	if concrete := b.Func.interfaceConcreteTypes[x.impl]; concrete != nil {
+		return Expr{b.unsafeInterface(typ.RawType(), concrete, b.abiType(concrete), b.faceData(x.impl)), typ}
 	}
 	if x.kind == vkIface && !typ.RawType().Underlying().(*types.Interface).Empty() {
 		name, _ := b.Prog.abi.TypeName(typ.RawType())
