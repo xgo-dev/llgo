@@ -1,0 +1,48 @@
+# Golden for the SPP server probe ([go] bt ...) of _demo/esp-idf-bt,
+# captured from an acceptance run (esp-emu v1.2.0, esp32s31, 16 MiB PSRAM,
+# host peer = bumble_classic_peer.py spp on 127.0.0.1:9544).
+#
+# Scope: every [go] bt line the probe prints. The [c] lines (the heap marks
+# and app_main's own reports) are not part of the golden: the heap byte counts
+# legitimately vary between runs.
+#
+# Everything in this golden is exact - there is no floater: the acceptance
+# peer pins its virtual controller's BR/EDR address (AA:BB:CC:DD:EE:01), and
+# the firmware renders it in Bluedroid's storage order (most-significant
+# octet first), so the accept line's addr= value is deterministic and doubles
+# as the render-direction regression pin (a flipped render used to print
+# 01:ee:dd:cc:bb:aa). The values were produced by the firmware:
+#
+#   backend = bluedroid       the glue's backend report: this demo links the
+#                             Bluedroid classic glue
+#   scn=1                     the SPPOptions zero value's RFCOMM server channel
+#                             (bt.DefaultSCN), the channel the probe listens on
+#                             and the peer discovers through SDP
+#   rx=12800 tx=12800         the peer's payload (25 x 512 bytes) received in
+#                             full and echoed in full
+#   pat=ok                    every received byte matched the peer's pattern at
+#                             its stream position (byte i = 0x30 + ((i/512)%10)),
+#                             independent of how RFCOMM framed the records
+#   peer closed eof           the stream ended with the family's EOF condition,
+#                             i.e. the firmware saw the peer-initiated close as
+#                             an orderly end of the byte stream
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end in
+# CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] bt' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the SPP server's behavior changed: the golden only grows by
+# appending a phase, never by editing an existing line.
+[go] bt: start
+[go] bt backend = bluedroid
+[go] bt init ok
+[go] bt name ok
+[go] bt discoverable ok
+[go] bt spp listen scn=1
+[go] bt accept wait
+[go] bt accept ok addr=aa:bb:cc:dd:ee:01
+[go] bt echo rx=12800 tx=12800 pat=ok
+[go] bt peer closed eof
+[go] bt PASS
+[go] bt deinit ok
+[go] bt done

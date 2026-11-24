@@ -9,14 +9,15 @@ usable from Go with hours-scale effort instead of a porting project:
 
 | Package | IDF driver | Scope |
 |---------|-----------|-------|
-| `pkg/esp/wifi` | `esp_wifi` + `esp_netif` + `nvs_flash` | station bring-up, scan, connect, DHCP, auto-reconnect state machine, heap watermarks |
+| `pkg/esp/wifi` | `esp_wifi` + `esp_netif` + `nvs_flash` | station and soft-AP bring-up (STA / AP / APSTA), scan, connect, DHCP client and server, AP station list + deauth, auto-reconnect state machine, heap watermarks |
 | `pkg/esp/gpio` | `driver/gpio.h` | direction config, level set/get, toggle |
 | `pkg/esp/i2c`  | `driver/i2c_master.h` (new driver) | master bus + device handles, write/read/write-read |
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |
 | `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
 | `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial with SNI/host verification (Config: RootCAs/InsecureSkipVerify/MinVersion; deprecated VERIFY_NONE/REQUIRED TLSDial), record read/write, ConnectionState, close_notify, bounded quantum waits |
 | `pkg/esp/ws`   | — (no glue; pure Go RFC 6455 over a caller-supplied `net`/`tls` conn) | HTTP Upgrade handshake, masked frames, ping/pong, closing handshake; stdlib-free SHA-1/base64 |
-| `pkg/esp/ble`  | NimBLE host (`host/ble_gap.h`, `nimble_port.h`) | BLE **central**: bring-up and sync, scan, connect, cancel, disconnect; two-tier event mailbox, generation-tagged Operation/Connection ids |
+| `pkg/esp/ble`  | NimBLE host (`host/ble_gap.h`, `nimble_port.h`), or Bluedroid (`esp_bt.h` + `esp_gap_ble_api.h` + `esp_gattc_api.h`) | BLE **central**: bring-up and sync, scan, connect, cancel, disconnect; GATT client (service/characteristic discovery, read, write, CCCD subscribe, notifications, MTU); three-tier event mailbox, generation-tagged Operation/Connection ids. Two interchangeable C glues behind the same ABI (`ble_glue_nimble.c` / `ble_glue_bluedroid.c`), selected by the firmware's sdkconfig |
+| `pkg/esp/bt`   | Bluedroid Classic (`esp_spp_api.h`, SPP over RFCOMM) | Classic Bluetooth bring-up (BTDM controller + Bluedroid host), device name/discoverability, SPP server (listen/accept one serial connection), `SPPConn.Read/Write/Close`, event mailbox with fan-out subscriptions; A2DP reserved |
 
 ## Package template
 
@@ -97,9 +98,17 @@ up after one quantum with `ErrWouldBlock`; `tls.Write` stays
 all-or-nothing (record-layer property). The peripheral and wifi drivers
 wrap plain esp_err values (Name empty or from `wifi.ErrName`; the esp_err
 family keeps its own timeout code `0x107`, surfaced as `wifi.ErrTimeout`).
-The `0x7Dxx` (ws) and `0x7Exx` (tls) code segments are internal now:
-callers match on the sentinel errors (`ws.ErrProtocol`,
-`tls.ErrCertVerifyFailed`, ...), each carrying its code for diagnostics.
+Internal code segments, one per package so `errors.Is` can never mix two
+packages' meanings:
+
+| Segment | Package | Values |
+|---------|---------|--------|
+| `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` reserved for A2DP/HFP profiles) |
+| `0x7Bxx` | `ble` | `ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`, `ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong` |
+| `0x7C01` | `esperr` | the meta error (a wrapper with no pipeline code) |
+| `0x7Dxx` | `ws` | `ErrProtocol`, `ErrClosed`… |
+| `0x7Exx` | `tls` | `ErrCertVerifyFailed`, `ErrHandshake`… |
+| `0x7Fxx` | stubs & glue contracts | `0x7F00` = the shared `errUnsupported` every `_stub.go` reports; `0x7F01` = `wifi.ErrGlueABI` (glue/binding version mismatch) |
 
 ## Go ↔ C boundary rules
 
@@ -126,17 +135,20 @@ They are contract, not style.
    ring (`wifi_glue.c`'s 16-slot SPSC queue) and Go polls it paced by
    `vTaskDelay(10)` = 100 ms — the delay also keeps the idle tasks fed for
    the watchdog. Overflow drops the newest event and is reported once. The
-   ble package refines that shape instead of copying the pacing: two rings
-   (control results vs scan payload), a bounded batch per pass, one real
-   tick of rest, and wait deadlines measured in milliseconds (see its
-   section).
+   ble package refines that shape instead of copying the pacing: three
+   rings (control results vs notifications vs scan payload), a bounded
+   batch per pass, one real tick of rest, and wait deadlines measured in
+   milliseconds (see its section).
    Synchronous driver calls that block on a driver semaphore (a WiFi scan,
    an I2C transfer timeout) are safe: they yield the CPU.
-5. **No large stack buffers in glue.** Go goroutines run on 8 KiB fiber
-   stacks. Bulk data (scan records, DMA-size sample buffers) lives in
-   static storage on the C side or flows through Go heap slices whose
-   first element is passed as a pointer; small config structs built inside
-   one glue function are fine.
+5. **No large stack buffers in glue.** Goroutines run on small fiber stacks
+   (2 KiB on this target, `default-stack-size` in the target JSON; the main
+   fiber gets 4×). Bulk data (scan records, station lists, DMA-size sample
+   buffers) lives in static storage on the C side or flows through Go heap
+   slices whose first element is passed as a pointer; small config structs
+   built inside one glue function are fine. Record structs that fan out
+   through Go channels must stay small for the same reason - see the ble
+   package's payload bound.
 6. **IDF macros and config structs stay in C.**
    `WIFI_INIT_CONFIG_DEFAULT()`, `I2S_CHANNEL_DEFAULT_CONFIG()`,
    `I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG()`, `gpio_config_t` and friends
@@ -465,38 +477,82 @@ serves the raw echo, the TLS echo and both WebSocket endpoints on the
 same two ports (9000/9443), so one process backs the whole
 wifi->net->tls->ws acceptance chain.
 
-## pkg/esp/ble — NimBLE BLE central (scan / connect / disconnect)
+## pkg/esp/ble — BLE central with a GATT client, two interchangeable host stacks
 
-`pkg/esp/ble` exposes the NimBLE host as a BLE **central**: `Init` (controller
-init + BLE enable + host init in one `nimble_port_init` call, the host task,
+`pkg/esp/ble` exposes a BLE **central** over a host stack chosen at firmware
+build time: `Init` (controller init + BLE enable + host init, the host task,
 and the wait for the stack's sync event), `Ready`, `Deinit`, `StartScan` /
 `StopScan` (legacy discovery: interval, window, passive, duplicate filter,
 optional duration), `Connect` (bounded by the controller's own attempt
-timeout), `Cancel` and `Disconnect`. `Subscribe`/`Subscription.Next` deliver
-the stack's asynchronous results. GATT client work, the peripheral role and
-pairing are later stages; `_demo/esp-idf-ble` drives the whole P-A surface
-under esp-emu.
+timeout), `Cancel` and `Disconnect`. `Subscribe` / `Subscription.Next`
+deliver the stack's asynchronous results. On top of the connection sits a
+GATT client: `Services` / `Characteristics` (16- and 128-bit UUIDs,
+normalized to the Bluetooth base form so both spellings of the same UUID
+compare equal), `Read`, `Write` (with response or not, chosen from the
+characteristic's properties or picked explicitly), `SubscribeChar` /
+`Unsubscribe` (write the CCCD, deliver notifications through the ordinary
+fan-out) and `MTU` (the glue requests the exchange right after a connection
+comes up). `_demo/esp-idf-ble` drives the whole surface under esp-emu
+against a Bumble GATT server.
+
+**The Go API is backend-neutral; the sdkconfig picks the stack.** IDF ships
+two mutually exclusive BLE hosts and a firmware selects exactly one
+(`choice BT_HOST`). The package compiles against a single C ABI - the 21
+`llgo_ble_*` symbols, the 188-byte event record, the three-ring mailbox and
+every event kind - and two glue files implement it:
+`glue/ble_glue_nimble.c` (NimBLE) and `glue/ble_glue_bluedroid.c`
+(Bluedroid; Classic Bluetooth needs Bluedroid, so BLE-only Bluedroid
+firmware keeps the door open for a later `pkg/esp/bt` profile in the same
+image). The project copies ONE glue into its main component; each file's
+first `#if` turns "configured the other stack" into a compile-time `#error`
+naming the right file. No Go build tags: the Go build runs before the IDF
+configuration exists, so two switches could only drift apart. Semantic
+differences (Bluedroid's synchronous `esp_bluedroid_enable`, its folded
+discovery model, NO_RSP as a write type rather than a separate call, MSB-first
+BD addresses, no per-procedure error callbacks on disconnect) are absorbed
+inside the glue; `ble.go` is unchanged between backends, and `Backend()`
+reports which one is linked. Both backends pass the same demo golden under
+esp-emu (the parity runs against the NimBLE baseline golden are in the
+demo's README).
 
 **Control calls never block.** Each command is queued and executed on the
 NimBLE host task through the host's own event queue (`ble_npl_eventq_put` on
-`ble_hs_evq_get()`), so no GAP call ever runs on the goroutine that issued it
-and the llgo scheduler is never held across a driver wait. The Go side gets an
-`OpID` back immediately; the outcome - success, a refusal, or a controller
-result - arrives as an event. A returned error therefore only means "could not
-even be submitted" (`ErrNotReady`, a full command queue), never a forged
-result.
+`ble_hs_evq_get()`), so no GAP or GATT call ever runs on the goroutine that
+issued it and the llgo scheduler is never held across a driver wait. The Go
+side gets an `OpID` back immediately; the outcome - success, a refusal, or a
+controller result - arrives as an event. A returned error therefore only
+means "could not even be submitted" (`ErrNotReady`, a full command queue;
+`ErrBusy`, another GATT procedure still in flight - the ATT bearer carries
+one outstanding request anyway), never a forged result. GATT calls are
+synchronous for the caller: each submits, then waits (bounded by
+`GattTimeoutMs`) for the mailbox record that completes its `OpID`.
 
-**Two-tier mailbox.** Scan results are the only high-rate events, so they get
-their own ring (16 slots of address, type, RSSI and a bounded 31-byte payload
-copy - the legacy maximum); sync, reset, scan-done, connect, disconnect and
-command rejections travel in an 8-slot control ring that a scan flood cannot
-starve. Both are single-producer (the host task) single-consumer (the poller),
-overflow drops the newest record and is reported once as `EvOverflow` with the
-dropped count. One poller goroutine drains up to 32 records per pass, hands the
-scheduler away, then rests exactly one FreeRTOS tick, and fans every record out
-to all matching subscriptions - a slow subscriber loses its own events, never
-anyone else's. A bounded `Next` measures its deadline in milliseconds against
-the glue's timer (accuracy one tick), not in quanta.
+**Three-tier mailbox.** Events split by rate and size. The 8-slot control
+ring carries sync, reset, scan-done, connect, disconnect, command
+rejections and the GATT completions (discovery status, read values, write
+status, the negotiated MTU). The 8-slot notification ring carries
+server-pushed notifications and indications - 134 bytes per slot, payload
+bounded by `MaxData` = 128 bytes, the largest record that fits the
+target's 2 KiB goroutine fiber stacks across every hop a fan-out record
+takes (a notification larger than `MaxData` is dropped whole and counted,
+never truncated; a read larger than that reports `BLE_HS_EMSGSIZE` - raise
+`-goroutine-stack-size` and the glue's `BW_DATA_MAX` together to lift it).
+The 16-slot scan ring carries scan results (address, type, RSSI, bounded
+31-byte legacy payload). All three are single-producer (the host task)
+single-consumer (the poller); ring indices are published with C11
+`__atomic` release stores and consumed with acquire loads, so the records
+stay intact regardless of core assignment or compiler reordering. A flood
+in one tier cannot starve another. Overflow drops the newest record and is
+reported once as `EvOverflow` with the dropped count. One poller goroutine
+drains up to 32 records per pass, hands the scheduler away, then rests
+exactly one FreeRTOS tick, and fans every record out to all matching
+subscriptions - a slow subscriber loses its own events, never anyone
+else's. A bounded `Next` measures its deadline in milliseconds against the
+glue's timer (accuracy one tick), not in quanta. Discovery results
+themselves are not mailbox traffic: they land in C-side fixed tables (16
+services / 32 characteristics, a peer with more ends the discovery with
+`BLE_HS_EMSGSIZE` rather than losing records silently) that the Go side
+copies out on completion.
 
 **Generation-tagged ids.** `OpID` comes from a monotonic counter and is never
 reused, so a late completion from an earlier scan or connect cannot be
@@ -511,9 +567,10 @@ matches by code, so the package deliberately separates them: the esp domain
 (`NimbleBase` 0x8000 | status - every BLE_HS_*, ATT 0x1xx, HCI 0x2xx and L2CAP
 0x3xx status as the stack reports it; `Status` extracts the raw value and
 `ErrStatus` rebuilds the error value), and this package's own 0x7Bxx codes
-(`ErrTimeout`, `ErrNotReady`, `ErrUnsupported`). NimBLE's host status 0x02
-(`BLE_HS_EALREADY`), an HCI error 0x02 and an esp_err 0x02 are three different
-conditions, and the tag is what keeps them apart.
+(`ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`,
+`ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong`). NimBLE's host
+status 0x02 (`BLE_HS_EALREADY`), an HCI error 0x02 and an esp_err 0x02 are
+three different conditions, and the tag is what keeps them apart.
 
 **Lifecycle is blocking, and that matters.** `Init` and `Deinit` are the only
 calls that hold the scheduler: `nimble_port_init` brings the controller up, and
@@ -540,11 +597,18 @@ discover.
 
 **Verification status.** Covered under esp-emu 1.2.0 (the emulator intercepts
 the S31 BTDM HCI transport through the ELF and forwards it to a Bumble virtual
-controller): controller init/enable, host sync, discovery, connect, terminate,
-the mailbox and fan-out, and clean shutdown, all driven by
-`_demo/esp-idf-ble`'s probe. **Not** covered and claimed now: the radio itself
-(RF calibration, real RSSI, channel map, coexistence), pairing/bonding, MTU and
-data-length exchange, more than one connection, notifications, flash/cache
+controller): controller init/enable, host sync, discovery, connect, GATT
+service/characteristic discovery, read, write with and without response,
+CCCD subscribe/unsubscribe, delivered notifications, the negotiated MTU,
+terminate, the mailbox and fan-out, and clean shutdown, all driven by
+`_demo/esp-idf-ble`'s probe with cross-checks against the peer's own logs
+(subscription state changes and written values seen by the Bumble server).
+**Not** covered and claimed now: the radio itself (RF calibration, real
+RSSI, channel map, coexistence), pairing/bonding, the indication path (the
+code shares the notification ring and the host sends the ATT confirmation,
+but the emu peer only notifies), payloads beyond `MaxData` (drop and count
+is implemented, never exercised with real oversized traffic), descriptor
+discovery, long read/write, more than one connection, flash/cache
 operations concurrent with BLE activity, and controller event-pool behavior
 under real interrupt load. Two measured emulator gaps narrow what the run can
 say: an unanswered connect attempt never times out there (the virtual
@@ -642,3 +706,50 @@ partition (1 MiB) overflows once the I2C/I2S driver code joins the link
 3.9375 MiB (0x3F0000) factory app; and the long PSRAM GC loop legitimately starves
 IDLE0 - the task-watchdog warnings in the console log are the same
 baseline noise as before the peripherals were added.
+
+## pkg/esp/bt — Classic Bluetooth (SPP) over the Bluedroid host
+
+`pkg/esp/bt` brings up the BTDM controller and the Bluedroid host for
+**Classic Bluetooth**: `Init` / `Deinit` / `Ready` / `Backend()`, `SetName`,
+`SetDiscoverable`, and an SPP server: `SPPListen(SPPOptions{SCN, Name})`
+registers the Serial Port Profile (SDP record + RFCOMM listener), and
+`SPPAccept(timeoutMs)` waits for the connection event and returns an
+`*SPPConn` with `Read(p, timeoutMs) / Write(p, timeoutMs) / Close()`,
+`Handle()` and `AddrString()` (Bluedroid order: most-significant octet
+first). After a connection closes the server keeps listening - the next
+`SPPAccept` catches the following peer. Events (`EvSPPInit`, `EvSPPListen`,
+`EvSPPConnOpen`, `EvSPPConnClose`, `EvSPPCong`, `EvSPPStop`, `EvUninit`,
+`EvACLDisconnect`, `EvOverflow`) arrive through the same Subscribe /
+fan-out mailbox shape the ble package uses. `Read` reports a peer close as
+`esperr.ErrEOF` after the buffered bytes are drained first; `Write` shards
+payloads to the RFCOMM MTU (990 B) and honors the stack's congestion
+signal (`EvSPPCong` edges retry a `NO_MEM` write, deadline-bounded). The
+package's own sentinel codes live in the 0x76xx segment (`0x7700+`
+reserved for A2DP/HFP).
+
+**SPP data bypasses the mailbox.** The control ring carries lifecycle
+events only (8 slots, ~192 B records); serial data lives in its own ring of
+8 x 1 KiB static slots handed over per-slot by a release/acquire `used`
+flag, and `Read` pulls it with one C call - kilobyte payloads never cross
+the 2 KiB goroutine fiber stacks or a channel.
+
+**Lifecycle includes a shutdown handshake.** Bluedroid's `esp_spp_deinit`
+only posts its stop request, and `esp_bluedroid_disable` tears down the
+host thread while ACL disconnects may still be completing - a disconnect
+event landing after that free aborts (`osi_thread_post` assert), and a dead
+peer hangs `disable` forever. The glue therefore owns the teardown: an
+UNINIT semaphore handshake with the BTC task, and an ACL-link counter
+(`EvACLDisconnect` decrements it) that `Deinit` waits on (bounded) before
+disabling the host. Measured whole-stack cost on the demo probe: the BT
+stack holds ~70.5 KB of internal SRAM while active (controller OSAL pools
+resist PSRAM placement); Go heap lives in PSRAM as usual.
+
+**Integration.** The main component needs the Bluedroid side of the `bt`
+component (`REQUIRES bt esp_timer nvs_flash`) with
+`CONFIG_BT_BLUEDROID_ENABLED=y`, `CONFIG_BT_CLASSIC_ENABLED=y` and
+`CONFIG_BT_SPP_ENABLED=y` (the glue's `#error` guards name the missing
+switch). `_demo/esp-idf-bt` is the worked example, including the vendored
+`bumble_classic_peer.py` the emulator pairs against (SDP browse, RFCOMM
+DLC, a payload echo, then a deliberate ACL disconnect so `Deinit` has
+something finishable to wait for). A2DP sink - the decoded-PCM path with
+glue-direct I2S output - is the next profile on this base.
