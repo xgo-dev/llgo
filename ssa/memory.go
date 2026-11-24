@@ -161,7 +161,17 @@ func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
 }
 
 // AllocEx allocates space for a variable of type elem with hoistToEntry control.
-func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
+func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) Expr {
+	return b.allocEx(elem, heap, hoistToEntry, false)
+}
+
+// AllocRecover places a local in the entry frame and zeroes it with a volatile
+// operation at its declaration so recovery sees the initialized storage.
+func (b Builder) AllocRecover(elem Type) Expr {
+	return b.allocEx(elem, false, true, true)
+}
+
+func (b Builder) allocEx(elem Type, heap, hoistToEntry, volatile bool) (ret Expr) {
 	dbgInstrf("Alloc %v, %v\n", elem.RawType(), heap)
 	prog := b.Prog
 	pkg := b.Pkg
@@ -198,7 +208,7 @@ func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) (ret Expr) {
 		}
 		prog.requireStorageAlignment(alloca, elem)
 		ret = Expr{alloca, prog.VoidPtr()}
-		ret.impl = b.zeroinit(ret, size).impl
+		b.memset(ret, prog.IntVal(0, prog.Byte()), size, prog.Val(volatile))
 		b.registerStackRoots(alloca, elem)
 	}
 	ret.Type = prog.Pointer(elem)
