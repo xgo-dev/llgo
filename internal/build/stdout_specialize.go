@@ -16,11 +16,11 @@ const (
 // The descriptor alias lives in the standard library archive. Only calls in
 // the executable package change when a closed link proves it can use the alias.
 type stdoutPlan struct {
-	entry                     *ssa.Package
-	regular, file, descriptor *ssa.Function
-	pollWrite, selected       *ssa.Function
-	discard                   *ssa.Function
-	calls                     []ssa.CallInstruction
+	entry                            *ssa.Package
+	regular, typed, file, descriptor *ssa.Function
+	pollWrite, selected              *ssa.Function
+	discard                          *ssa.Function
+	calls                            []ssa.CallInstruction
 }
 
 func newStdoutPlan(ctx *context) *stdoutPlan {
@@ -42,7 +42,7 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 	if regular == nil || file == nil && descriptor == nil {
 		return nil
 	}
-	plan := &stdoutPlan{entry: entry, regular: regular, file: file, descriptor: descriptor, discard: osPkg.Func("llgoWriteStdoutDiscard")}
+	plan := &stdoutPlan{entry: entry, regular: regular, typed: fmtPkg.Func("LlgoPrintfValue"), file: file, descriptor: descriptor, discard: osPkg.Func("llgoWriteStdoutDiscard")}
 	if poll := ctx.progSSA.ImportedPackage("internal/poll"); poll != nil {
 		if fd := poll.Type("FD"); fd != nil {
 			methods := ctx.progSSA.MethodSets.MethodSet(types.NewPointer(fd.Type()))
@@ -55,7 +55,12 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 }
 
 func (p *stdoutPlan) record(instruction ssa.Instruction) {
-	if call, ok := instruction.(ssa.CallInstruction); ok && call.Common().StaticCallee() == p.regular {
+	call, ok := instruction.(ssa.CallInstruction)
+	if !ok {
+		return
+	}
+	callee := call.Common().StaticCallee()
+	if callee != nil && (callee == p.regular || callee == p.typed) {
 		p.calls = append(p.calls, call)
 	}
 }

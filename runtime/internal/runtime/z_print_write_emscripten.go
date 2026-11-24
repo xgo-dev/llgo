@@ -21,3 +21,7 @@ func PrintString(s String) {
 func PrintString32(data unsafe.Pointer, size uint32) {
 	emscripten.WriteStderr32(data, size)
 }
+
+func printScalarBytes(data unsafe.Pointer, size uint32) {
+	PrintString32(data, size)
+}

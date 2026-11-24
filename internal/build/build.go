@@ -41,7 +41,6 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
-	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
@@ -2080,7 +2079,7 @@ type context struct {
 	formatRuntime        *packages.Cached
 	valueFormatPlan      *fmtspecialize.ValuePlan
 	stdout               *stdoutPlan
-	valueFormatFunctions map[*types.Package]*typeutil.Map
+	valueFormatFunctions map[*types.Package]*fmtspecialize.ValueFunctions
 	valueFormatPackages  map[*types.Package]bool
 	binaryCodecLibrary   *types.Package
 	binaryCodecPackages  map[*types.Package]bool

@@ -5,7 +5,6 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/packages"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 func (ctx *context) prepareValueFormatSource(p *packages.Package) (*packages.Package, error) {
@@ -19,7 +18,7 @@ func (ctx *context) prepareValueFormatSource(p *packages.Package) (*packages.Pac
 		return nil, err
 	}
 	if ctx.valueFormatFunctions == nil {
-		ctx.valueFormatFunctions = make(map[*types.Package]*typeutil.Map)
+		ctx.valueFormatFunctions = make(map[*types.Package]*fmtspecialize.ValueFunctions)
 	}
 	ctx.valueFormatFunctions[p.Types] = names
 	if usesRuntime {

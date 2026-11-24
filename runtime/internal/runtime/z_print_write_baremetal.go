@@ -34,3 +34,9 @@ func PrintString(s String) {
 	}
 	c.Fwrite(s.data, 1, uintptr(s.len), c.Stderr)
 }
+
+// The allocation-free startup leaves libc stdio unopened. Scalar formatting
+// must use the same console as PrintString and PrintByte in that mode.
+func printScalarBytes(data c.Pointer, size uint32) {
+	PrintString(String{data, int(size)})
+}

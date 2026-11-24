@@ -214,6 +214,8 @@ def full_lto_codec_probe(llgo, directory, env, target, runner, suffix, browser=F
                          stdout_marker, True))
         fixtures.append(("native-map-init", "true true true", "llgo: omit unused map initializers", True))
     if target == "wasi" or linux_amd64 or mac_arm64:
+        fixtures.append(("typed-stdout", "% {17 [true false] lab} true\n{17 [true false] lab}",
+                         "llgo: specialize default value formatting", True))
         environment_marker = readonly_env_marker if target == "wasi" else "llgo: specialize native read-only environment"
         fixtures.append(("wasm-environment-readonly", "read-only environment lookup ok",
                          environment_marker, True))
@@ -443,6 +445,12 @@ def embedded_size_probes(llgo, directory, env, target, flags):
                                 "./benchmark/binary_size/println", "Hello, world\n")
     if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
         raise RuntimeError(f"{target}: allocation-free println kept runtime startup\n{log}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/println-fields", "17 true false lab\n")
+    if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
+        raise RuntimeError(f"{target}: println of struct fields kept runtime startup\n{log}")
+    embedded_output_probe(llgo, directory, env, target, flags,
+                          "./benchmark/binary_size/fmtprintf-struct", "{17 [true false] lab}\n")
     direct_console = "llgo: write bare-metal builtin output directly to the console"
     if target == "esp32c3-flash":
         if direct_console not in log:

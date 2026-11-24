@@ -33,10 +33,10 @@ type formatSource struct {
 
 // AddValueSource generates typed functions for concrete default-format operands.
 // The second result reports whether the generated file imports runtime support.
-func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map, bool, error) {
+func AddValueSource(p *packages.Package, runtime *types.Package) (*ValueFunctions, bool, error) {
 	for _, name := range []string{"append", "bool", "byte", "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64", "complex64",
-		"complex128", "string", "len", "real", "imag", "nil", "__llgo_fmt_runtime", "__llgo_fmt_unsafe"} {
+		"complex128", "string", "len", "real", "imag", "nil", "error", "__llgo_fmt_runtime", "__llgo_fmt_unsafe", "__llgo_std_fmt"} {
 		if p.Types.Scope().Lookup(name) != nil {
 			return nil, false, nil
 		}
@@ -45,10 +45,14 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 		owner: p.Types, imports: typesynth.Importer{RuntimePath: runtime, "unsafe": types.Unsafe},
 		sizes: p.TypesSizes, methods: valueMethods(p),
 	}
+	stdout := make(map[token.Pos]string)
+	prints := make(map[string]*typeutil.Map)
+	fmtPkg := p.Imports["fmt"]
+	canWriteStdout := fmtPkg != nil && fmtPkg.Types != nil && fmtPkg.Types.Scope().Lookup("LlgoPrintfValue") != nil
 	for _, file := range p.Syntax {
 		ast.Inspect(file, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) != 2 || call.Ellipsis.IsValid() {
+			if !ok || call.Ellipsis.IsValid() {
 				return true
 			}
 			fun := ast.Unparen(call.Fun)
@@ -60,7 +64,16 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 				name = x.Sel
 			}
 			fn, _ := p.TypesInfo.Uses[name].(*types.Func)
-			if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "fmt" || fn.Name() != "Sprintf" {
+			if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "fmt" {
+				return true
+			}
+			if canWriteStdout && (fn.Name() == "Printf" || fn.Name() == "Println") {
+				if helper := gen.addStdout(p.TypesInfo, fn.Name(), call, prints); helper != "" {
+					stdout[call.Lparen] = helper
+				}
+				return true
+			}
+			if fn.Name() != "Sprintf" || len(call.Args) != 2 {
 				return true
 			}
 			f := p.TypesInfo.Types[call.Args[0]].Value
@@ -78,7 +91,7 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 			return true
 		})
 	}
-	if gen.tops.Len() == 0 {
+	if gen.tops.Len() == 0 && len(stdout) == 0 {
 		return nil, false, nil
 	}
 	var src strings.Builder
@@ -91,12 +104,16 @@ func AddValueSource(p *packages.Package, runtime *types.Package) (*typeutil.Map,
 	if strings.Contains(gen.funcs.String(), "__llgo_fmt_unsafe.") {
 		src.WriteString("import __llgo_fmt_unsafe \"unsafe\"\n")
 	}
+	if len(stdout) != 0 {
+		src.WriteString("import __llgo_std_fmt \"fmt\"\n")
+		gen.imports["fmt"] = fmtPkg.Types
+	}
 	src.WriteString(gen.funcs.String())
 	// Only the generated file requires the newer formatter language features.
 	if err := typesynth.AddFile(p, "__llgo_format.go", src.String(), gen.imports, "go1.21"); err != nil {
 		return nil, false, err
 	}
-	return &gen.tops, usesRuntime, nil
+	return &ValueFunctions{values: &gen.tops, stdout: stdout}, usesRuntime, nil
 }
 
 func (g *formatSource) nextName() string {

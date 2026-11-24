@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -233,17 +234,25 @@ func runtimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) st
 		for _, block := range fn.Blocks {
 			for _, instruction := range block.Instrs {
 				switch instr := instruction.(type) {
-				case *ssa.DebugRef, *ssa.Return, *ssa.Jump, *ssa.If, *ssa.Phi:
+				case *ssa.DebugRef, *ssa.Return, *ssa.Jump, *ssa.If, *ssa.Phi, *ssa.Field:
+				case *ssa.Index:
+					if !runtimeFreeArrayIndex(instr.X.Type(), instr.Index) {
+						return false
+					}
+				case *ssa.Alloc, *ssa.FieldAddr, *ssa.IndexAddr:
+					if !runtimeFreeLocalAddress(instr.(ssa.Value)) {
+						return false
+					}
 				case *ssa.UnOp:
 					if instr.Op == token.MUL {
-						if global, ok := instr.X.(*ssa.Global); !ok || !globalSafe(global) || !runtimeFreeScalar(instr.Type()) {
+						if !runtimeFreeAddress(instr.X, instr.Type(), globalSafe) {
 							return false
 						}
 					} else if instr.Op != token.NOT && instr.Op != token.SUB && instr.Op != token.XOR {
 						return false
 					}
 				case *ssa.Store:
-					if global, ok := instr.Addr.(*ssa.Global); !ok || !globalSafe(global) || !runtimeFreeScalar(instr.Val.Type()) {
+					if !runtimeFreeAddress(instr.Addr, instr.Val.Type(), globalSafe) {
 						return false
 					}
 				case *ssa.BinOp:
@@ -326,4 +335,62 @@ func runtimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) st
 func runtimeFreeScalar(typ types.Type) bool {
 	basic, ok := typ.Underlying().(*types.Basic)
 	return ok && basic.Info()&(types.IsInteger|types.IsBoolean|types.IsString) != 0
+}
+
+func runtimeFreeArrayIndex(t types.Type, index ssa.Value) bool {
+	array, ok := t.Underlying().(*types.Array)
+	n, known := index.(*ssa.Const)
+	if !ok || !known || n.Value == nil {
+		return false
+	}
+	i, exact := constant.Int64Val(n.Value)
+	return exact && i >= 0 && i < array.Len()
+}
+
+func runtimeFreeAddress(addr ssa.Value, elem types.Type, globalSafe func(*ssa.Global) bool) bool {
+	if global, ok := addr.(*ssa.Global); ok {
+		return globalSafe(global) && runtimeFreeScalar(elem)
+	}
+	return runtimeFreeLocalAddress(addr)
+}
+
+// Only direct projections of a small stack object are provably non-nil.
+// Variable indexes and addresses originating in parameters stay unproven.
+func runtimeFreeLocalAddress(addr ssa.Value) bool {
+	switch v := addr.(type) {
+	case *ssa.Alloc:
+		if v.Heap {
+			return false
+		}
+		elem := v.Type().(*types.Pointer).Elem()
+		if !runtimeFreeAggregate(elem) {
+			return false
+		}
+		// Bound the size with the widest supported pointer and alignment.
+		size := types.SizesFor("gc", "amd64").Sizeof(elem)
+		return size >= 0 && uint64(size) <= llabi.MaxStackVarSize
+	case *ssa.FieldAddr:
+		return runtimeFreeLocalAddress(v.X)
+	case *ssa.IndexAddr:
+		ptr, ok := v.X.Type().Underlying().(*types.Pointer)
+		return ok && runtimeFreeArrayIndex(ptr.Elem(), v.Index) && runtimeFreeLocalAddress(v.X)
+	default:
+		return false
+	}
+}
+
+func runtimeFreeAggregate(t types.Type) bool {
+	switch value := t.Underlying().(type) {
+	case *types.Array:
+		return runtimeFreeAggregate(value.Elem())
+	case *types.Struct:
+		for i := 0; i < value.NumFields(); i++ {
+			if !runtimeFreeAggregate(value.Field(i).Type()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return runtimeFreeScalar(t)
+	}
 }

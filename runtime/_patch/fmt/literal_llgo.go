@@ -14,3 +14,8 @@ func llgoPrintfLiteral(text string) (int, error) {
 func llgoSprintfLiteral(text string) string {
 	return text
 }
+
+// LlgoPrintfValue writes text that the compiler formatted from concrete values.
+func LlgoPrintfValue(text string) (int, error) {
+	return llgoPrintfLiteral(text)
+}

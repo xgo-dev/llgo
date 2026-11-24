@@ -51,6 +51,9 @@ func TestWasmRuntimeFreeFunctions(t *testing.T) {
 		{"recursion", `func main() { main() }`, false},
 		{"unknown external", `func external(); func main() { external() }`, false},
 		{"receive", `var c chan int; func main() { println(<-c) }`, false},
+		{"field from parameter", `func printField(r struct{ Number int }) { println(r.Number) }; func main() { printField(struct{ Number int }{}) }`, true},
+		{"fixed array element", `func printFirst(a [2]int) { println(a[0]) }; func main() { printFirst([2]int{}) }`, true},
+		{"dynamic array element", `func printAt(a [2]int, i int) { println(a[i]) }; func main() { printAt([2]int{}, 0) }`, false},
 		{"bounds", `var s []int; func main() { println(s[1]) }`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

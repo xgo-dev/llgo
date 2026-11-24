@@ -6,27 +6,26 @@ import (
 	"slices"
 
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 type ValuePlan struct {
 	callee  *ssa.Function
 	builtin *ssa.Function
-	names   map[*types.Package]*typeutil.Map
+	names   map[*types.Package]*ValueFunctions
 	calls   []formatRewrite
 }
 
 type formatRewrite struct {
 	call         *ssa.Call
 	function     *ssa.Function
-	input        ssa.Value
+	inputs       []ssa.Value
 	builtinKinds uint32
 	packed       []ssa.Instruction
 	saved        ssa.CallCommon
 }
 
 // NewValuePlan tracks replacements for default-value formatting.
-func NewValuePlan(prog *ssa.Program, names map[*types.Package]*typeutil.Map) *ValuePlan {
+func NewValuePlan(prog *ssa.Program, names map[*types.Package]*ValueFunctions) *ValuePlan {
 	pkg := prog.ImportedPackage("fmt")
 	if pkg == nil || pkg.Func("Sprintf") == nil || len(names) == 0 && pkg.Func(builtinSprintf) == nil {
 		return nil
@@ -62,6 +61,13 @@ func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 		return
 	}
 	common := call.Common()
+	functions := plan.names[owner.Pkg]
+	if callee := common.StaticCallee(); functions != nil && callee != nil && callee.Pkg == plan.callee.Pkg {
+		if name := functions.stdout[call.Pos()]; name != "" && (callee.Name() == "Printf" || callee.Name() == "Println") {
+			plan.recordTyped(call, owner.Func(name), formatValues(call, common.Args[len(common.Args)-1]))
+			return
+		}
+	}
 	if common.StaticCallee() != plan.callee || len(common.Args) != 2 {
 		return
 	}
@@ -72,34 +78,47 @@ func (plan *ValuePlan) Record(instruction ssa.Instruction, owner *ssa.Package) {
 			return
 		}
 	}
-	if plan.names[owner.Pkg] == nil || !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
+	if functions == nil || !ok || format.Value == nil || format.Value.Kind() != constant.String || constant.StringVal(format.Value) != "%v" {
 		return
 	}
 	values := formatValues(call, common.Args[1])
 	if len(values) != 1 || values[0] == nil {
 		return
 	}
-	box := values[0]
-	if refs := box.Referrers(); refs == nil || len(*refs) != 1 {
+	if name, ok := functions.values.At(values[0].X.Type()).(string); ok {
+		plan.recordTyped(call, owner.Func(name), values)
+	}
+}
+
+func (plan *ValuePlan) recordTyped(call *ssa.Call, helper *ssa.Function, operands []*ssa.MakeInterface) {
+	if helper == nil || len(operands) == 0 {
 		return
 	}
-	name, ok := plan.names[owner.Pkg].At(box.X.Type()).(string)
-	if !ok {
+	params := helper.Signature.Params()
+	if len(operands) != params.Len() {
 		return
 	}
-	helper := owner.Func(name)
-	if helper == nil {
-		return
-	}
-	varargs := common.Args[1].(*ssa.Slice)
+	args := call.Common().Args
+	varargs := args[len(args)-1].(*ssa.Slice)
 	array := varargs.X.(*ssa.Alloc)
-	packed := []ssa.Instruction{box, array, varargs}
+	packed := []ssa.Instruction{array, varargs}
+	inputs := make([]ssa.Value, len(operands))
+	for i, box := range operands {
+		if box == nil || !types.Identical(box.X.Type(), params.At(i).Type()) {
+			return
+		}
+		if refs := box.Referrers(); refs == nil || len(*refs) != 1 {
+			return
+		}
+		inputs[i] = box.X
+		packed = append(packed, box)
+	}
 	for _, ref := range *array.Referrers() {
 		if addr, ok := ref.(*ssa.IndexAddr); ok {
 			packed = append(packed, addr, (*addr.Referrers())[0])
 		}
 	}
-	plan.calls = append(plan.calls, formatRewrite{call: call, function: helper, input: box.X, packed: packed})
+	plan.calls = append(plan.calls, formatRewrite{call: call, function: helper, inputs: inputs, packed: packed})
 }
 
 func formatDereference(t types.Type) bool {
@@ -168,8 +187,8 @@ func (plan *ValuePlan) tentativeRewrite() (map[*ssa.BasicBlock][]ssa.Instruction
 		common := rewrite.call.Common()
 		rewrite.saved = *common
 		common.Value = rewrite.function
-		if rewrite.input != nil {
-			common.Args = []ssa.Value{rewrite.input}
+		if rewrite.inputs != nil {
+			common.Args = rewrite.inputs
 		} else if rewrite.builtinKinds != 0 {
 			mask := ssa.NewConst(constant.MakeUint64(uint64(kinds[rewrite.call.Parent().Pkg])), types.Typ[types.Uint32])
 			common.Args = []ssa.Value{common.Args[0], mask, common.Args[1]}
@@ -207,14 +226,16 @@ func (plan *ValuePlan) commit(remove map[ssa.Instruction]bool) map[*types.Packag
 	owners := make(map[*types.Package]bool)
 	for _, rewrite := range plan.calls {
 		owners[rewrite.call.Parent().Pkg.Pkg] = true
-		if rewrite.input == nil {
+		if rewrite.inputs == nil {
 			continue
 		}
 		for _, arg := range rewrite.saved.Args {
 			removeFormatRef(arg, rewrite.call)
 		}
-		if refs := rewrite.input.Referrers(); refs != nil {
-			*refs = append(*refs, rewrite.call)
+		for _, input := range rewrite.inputs {
+			if refs := input.Referrers(); refs != nil {
+				*refs = append(*refs, rewrite.call)
+			}
 		}
 	}
 	for instruction := range remove {

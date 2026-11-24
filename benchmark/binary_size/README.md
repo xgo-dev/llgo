@@ -101,8 +101,18 @@ passed as individual arguments. It accepts `%s`, `%t`, `%b`, `%d`, `%o`,
 `%x`, `%X` and `%v`, with optional zero padding and widths through 99.
 `Println` and `Sprintln` specialize the same scalar argument types.
 
-Dynamic formats, named argument types, floats, spread arguments, precision,
-other flags and `*` widths use the general formatter. `Fprintf` preserves
+The `fmtprintf-scalars`, `fmtprintf-struct` and `fmtprintln-struct` cases
+exercise typed default formatting, including floating-point and complex
+values, arrays and structs. The `println-scalars` and `println-fields` cases
+exercise builtin output with scalar operands and fields of a concrete struct.
+Compare the same source and output with Go and TinyGo for each target.
+
+Eligible closed size builds also use the concrete default-value renderer for
+constant `Printf` formats containing `%v`, `%%` and equivalent unmodified
+scalar verbs (`%d`, `%s`, `%t`, `%g`), and typed `Println` calls.
+Formatting methods, unresolved interfaces and spread arguments keep the
+general formatter. The scalar verb path continues to handle widths and flags
+in its supported subset. `Fprintf` preserves
 its caller identity for arbitrary Writers. Stdout calls use the current
 `os.Stdout` and preserve byte counts and errors. The literal and scalar
 specializations are disabled at `-O0` and with logical debugger frames.

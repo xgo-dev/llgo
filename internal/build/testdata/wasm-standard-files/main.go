@@ -18,16 +18,16 @@ func main() {
 
 	stdout := os.Stdout
 	os.Stdout = f
-	n, err := fmt.Printf("captured stdout")
+	n, err := fmt.Printf("captured %v", struct{ Destination string }{"stdout"})
 	os.Stdout = stdout
-	if n != len("captured stdout") || err != nil {
+	if n != len("captured {stdout}") || err != nil {
 		panic("incorrect write result")
 	}
 	if err := f.Close(); err != nil {
 		panic(err)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || string(data) != "captured stdout" {
+	if err != nil || string(data) != "captured {stdout}" {
 		panic("stdout was not redirected")
 	}
 	fmt.Println("standard files and redirected stdout ok")
