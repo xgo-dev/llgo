@@ -1,0 +1,22 @@
+// Copyright 2024 The XGo Authors (xgo.dev). All rights reserved.
+// Use of this source code is governed by the Apache License, Version 2.0.
+// Platform definitions extracted from Go's stdlib syscall package
+// (see LICENSES/Go-BSD-3-Clause.txt).
+
+//go:build solaris && amd64
+
+package syscall
+
+const (
+	EINTR      = Errno(0x4)
+	ENOTSUP    = Errno(0x30)
+	EPERM      = Errno(0x1)
+	F_GETFD    = 0x1
+	F_SETFD    = 0x2
+	F_GETFL    = 0x3
+	F_SETFL    = 0x4
+	FD_CLOEXEC = 0x1
+	O_CLOEXEC  = 0x800000
+	O_NONBLOCK = 0x80
+	SIGPROF    = Signal(0x1d)
+)

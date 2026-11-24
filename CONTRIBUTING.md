@@ -17,27 +17,19 @@ pinned in `.go-version`, the lockfiles, and the
 
 ## Development environments
 
-Choose [mise](https://mise.jdx.dev/installing-mise.html) 2026.10.7 or newer, or
-[Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. Both
-provide Go and install LLVM/Clang/LLD 22, pkg-config, and native libraries
-from conda-forge. Configuration and lockfiles live in `dev/`.
+Use [Pixi](https://pixi.prefix.dev/latest/installation/) 0.81.0 or newer. It
+provides Go and installs LLVM/Clang/LLD 22, pkg-config, and native libraries
+from conda-forge in a single unified prefix. Configuration and lockfiles live in
+`dev/`.
 
-From the repository root, enter the mise environment:
-
-```sh
-mise -C dev trust
-mise -C dev install --locked
-mise -C dev en
-```
-
-Or enter the Pixi environment:
+From the repository root, enter the Pixi environment:
 
 ```sh
 cd dev
 pixi shell --locked
 ```
 
-Both examples start the shell inside `dev/`. Return to the repository root:
+This starts the shell inside `dev/`. Return to the repository root:
 
 ```sh
 cd ..
@@ -53,9 +45,9 @@ amd64/arm64, macOS Intel/ARM64, and Windows amd64.
 macOS requires the Xcode Command Line Tools (`xcode-select --install`). Windows
 requires the Visual Studio C++ Build Tools with the Windows SDK and the
 x86-64 C++ toolchain. Python, LLDB, cJSON, and cross-compilers are optional and
-are not included in either environment.
+are not included in the environment.
 
-Run the shared checks from the repository root in either development shell:
+Run the shared checks from the repository root in the development shell:
 
 ```sh
 bash dev/check_devenv.sh
@@ -64,25 +56,16 @@ bash dev/check_devenv.sh
 On PowerShell, use `.\dev\check_devenv.ps1`. The checks build LLGo, run a
 compiled program, and exercise the native libraries.
 
-For a single command without entering a shell, use these commands from the
-repository root. mise runs inside `dev/`; Pixi uses the current directory:
+For a single command without entering a shell, run from the repository root:
 
 ```sh
-mise -C dev exec -- go run ../cmd/llgo version
 pixi run --manifest-path dev/pixi.toml --locked go run ./cmd/llgo version
 ```
 
-Both environments set `GOFLAGS=-tags=byollvm`; include `byollvm` when overriding
-`-tags`. Keep each host's mise/Pixi environment local to that host.
+The environment sets `GOFLAGS=-tags=byollvm`; include `byollvm` when overriding
+`-tags`. Keep each host's Pixi environment local to that host.
 
-To update mise dependencies, edit `dev/mise.toml` (or `.go-version` for Go):
-
-```sh
-mise -C dev lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64,windows-x64
-mise -C dev install --locked
-```
-
-For Pixi, edit `dev/pixi.toml` and update its lockfile:
+To update Pixi dependencies, edit `dev/pixi.toml` and update its lockfile:
 
 ```sh
 pixi update --manifest-path dev/pixi.toml
@@ -90,7 +73,7 @@ pixi install --manifest-path dev/pixi.toml --locked
 ```
 
 Keep Pixi's Go major/minor version aligned with `.go-version`. Run the shared
-checks in a new shell and commit configuration changes with their lockfiles.
+checks in a new shell and commit configuration changes with their lockfile.
 
 ## Linux containers
 
@@ -253,7 +236,7 @@ go build -o llgo ./cmd/llgo
 ```
 
 On PowerShell, use `$env:LLGO_ROOT = (Get-Location).Path` and `./llgo.exe`.
-The mise/Pixi environments set the checkout root. The Bash wrapper sets it
+The Pixi environment sets the checkout root. The Bash wrapper sets it
 and builds the compiler before running:
 
 ```sh
