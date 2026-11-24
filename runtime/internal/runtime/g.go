@@ -16,8 +16,6 @@
 
 package runtime
 
-import "unsafe"
-
 // SetPanicOnFault updates the fault behavior requested by the current
 // goroutine and reports its previous value.
 func SetPanicOnFault(in bool) (out bool) {
@@ -28,10 +26,11 @@ func SetPanicOnFault(in bool) (out bool) {
 }
 
 // ThreadDeferSlot returns the current goroutine's defer chain slot.
-// getg always returns a valid *g; compute the field address directly so
-// defer prologues do not emit a redundant nil check.
+// Address the field directly through getg() so targets where getg() may return
+// nil (such as llgo.wasm.workers) retain the standard nil-dereference check
+// instead of returning a non-nil field offset.
 func ThreadDeferSlot() **Defer {
-	return (**Defer)(unsafe.Add(unsafe.Pointer(getg()), unsafe.Offsetof(g{}.defer_)))
+	return &getg().defer_
 }
 
 // SetThreadDefer associates the current goroutine with the given defer chain.
