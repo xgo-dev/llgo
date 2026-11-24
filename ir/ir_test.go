@@ -30,8 +30,8 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 		Results:  []*lltypes.Var{{Type: i64}},
 	}
 
-	fn := pkg.NewFunc("example.com/demo.Entry", entrySig)
-	entry := fn.NewBlock("entry")
+	fn := pkg.NewFunction("example.com/demo.Entry", entrySig)
+	entry := fn.NewBasicBlock("entry")
 	b := NewBuilder(entry)
 
 	// NoScan stack/heap allocation for pointer-free int64
@@ -90,8 +90,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 	t.Run("noscan on pointer type", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.f", voidSig)
-		b := NewBuilder(fn.NewBlock("entry"))
+		fn := pkg.NewFunction("p.f", voidSig)
+		b := NewBuilder(fn.NewBasicBlock("entry"))
 		b.Alloc(goPtr, true, true)
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "alloc.noscan") {
@@ -101,8 +101,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 	t.Run("write barrier on native ptr", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.f", voidSig)
-		b := NewBuilder(fn.NewBlock("entry"))
+		fn := pkg.NewFunction("p.f", voidSig)
+		b := NewBuilder(fn.NewBasicBlock("entry"))
 		p := b.Const(nativePtr, "null")
 		b.WriteBarrier(p, b.Const(i64, "0"), BarrierStore)
 		b.Return()
@@ -113,8 +113,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 	t.Run("untyped operands rejected without panic", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.f", voidSig)
-		b := NewBuilder(fn.NewBlock("entry"))
+		fn := pkg.NewFunction("p.f", voidSig)
+		b := NewBuilder(fn.NewBasicBlock("entry"))
 		voidCall := b.CallDirect("C.nop", lltypes.CDecl, nil)
 		b.WriteBarrier(voidCall, b.Const(i64, "0"), BarrierStore)
 		b.Return()
@@ -123,8 +123,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		}
 
 		pkg2 := NewPackage("p", "p", spec)
-		fn2 := pkg2.NewFunc("p.f", voidSig)
-		b2 := NewBuilder(fn2.NewBlock("entry"))
+		fn2 := pkg2.NewFunction("p.f", voidSig)
+		b2 := NewBuilder(fn2.NewBasicBlock("entry"))
 		b2.CallClosure(b2.Const(nil, "bad"), nil)
 		b2.Return()
 		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "untyped operand") {
@@ -134,8 +134,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 	t.Run("missing terminator", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.f", voidSig)
-		b := NewBuilder(fn.NewBlock("entry"))
+		fn := pkg.NewFunction("p.f", voidSig)
+		b := NewBuilder(fn.NewBasicBlock("entry"))
 		b.BinOp(token.ADD, i64, b.Const(i64, "1"), b.Const(i64, "2"))
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "missing terminator") {
 			t.Fatalf("got %v, want missing terminator error", err)
@@ -150,11 +150,11 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			Results:  []*lltypes.Var{{Type: i64}},
 		}
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.select", sig)
-		entry := fn.NewBlock("entry")
-		thenBlk := fn.NewBlock("then")
-		elseBlk := fn.NewBlock("else")
-		merge := fn.NewBlock("merge")
+		fn := pkg.NewFunction("p.select", sig)
+		entry := fn.NewBasicBlock("entry")
+		thenBlk := fn.NewBasicBlock("then")
+		elseBlk := fn.NewBasicBlock("else")
+		merge := fn.NewBasicBlock("merge")
 
 		NewBuilder(entry).Branch(fn.Params[0], thenBlk, elseBlk)
 		NewBuilder(thenBlk).Jump(merge)
@@ -174,13 +174,13 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			Results:  []*lltypes.Var{{Type: i64}},
 		}
 		pkg := NewPackage("p", "p", spec)
-		other := pkg.NewFunc("p.other", sig)
-		otherEntry := other.NewBlock("entry")
+		other := pkg.NewFunction("p.other", sig)
+		otherEntry := other.NewBasicBlock("entry")
 		NewBuilder(otherEntry).Return(other.Params[0])
 
-		fn := pkg.NewFunc("p.bad", sig)
-		entry := fn.NewBlock("entry")
-		merge := fn.NewBlock("merge")
+		fn := pkg.NewFunction("p.bad", sig)
+		entry := fn.NewBasicBlock("entry")
+		merge := fn.NewBasicBlock("merge")
 		NewBuilder(entry).Jump(merge)
 		mb := NewBuilder(merge)
 		// Foreign block + foreign param.
@@ -192,11 +192,11 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 		// Valid local predecessor block, but foreign param value.
 		pkg2 := NewPackage("p", "p", spec)
-		other2 := pkg2.NewFunc("p.other", sig)
-		NewBuilder(other2.NewBlock("entry")).Return(other2.Params[0])
-		fn2 := pkg2.NewFunc("p.badparam", sig)
-		e2 := fn2.NewBlock("entry")
-		m2 := fn2.NewBlock("merge")
+		other2 := pkg2.NewFunction("p.other", sig)
+		NewBuilder(other2.NewBasicBlock("entry")).Return(other2.Params[0])
+		fn2 := pkg2.NewFunction("p.badparam", sig)
+		e2 := fn2.NewBasicBlock("entry")
+		m2 := fn2.NewBasicBlock("merge")
 		NewBuilder(e2).Jump(m2)
 		mb2 := NewBuilder(m2)
 		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: other2.Params[0]}))
@@ -206,12 +206,12 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 
 		// Valid local param, but foreign predecessor block.
 		pkg3 := NewPackage("p", "p", spec)
-		other3 := pkg3.NewFunc("p.other", sig)
-		oe3 := other3.NewBlock("entry")
+		other3 := pkg3.NewFunction("p.other", sig)
+		oe3 := other3.NewBasicBlock("entry")
 		NewBuilder(oe3).Return(other3.Params[0])
-		fn3 := pkg3.NewFunc("p.badpred", sig)
-		e3 := fn3.NewBlock("entry")
-		m3 := fn3.NewBlock("merge")
+		fn3 := pkg3.NewFunction("p.badpred", sig)
+		e3 := fn3.NewBasicBlock("entry")
+		m3 := fn3.NewBasicBlock("merge")
 		NewBuilder(e3).Jump(m3)
 		mb3 := NewBuilder(m3)
 		mb3.Return(mb3.Phi(i64, PhiEdge{Pred: oe3, Val: fn3.Params[0]}))
@@ -227,10 +227,10 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			Results:  []*lltypes.Var{{Type: i64}},
 		}
 		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunc("p.badcfg", sig)
-		entry := fn.NewBlock("entry")
-		dead := fn.NewBlock("dead")
-		merge := fn.NewBlock("merge")
+		fn := pkg.NewFunction("p.badcfg", sig)
+		entry := fn.NewBasicBlock("entry")
+		dead := fn.NewBasicBlock("dead")
+		merge := fn.NewBasicBlock("merge")
 		NewBuilder(entry).Jump(merge)
 		NewBuilder(dead).Return(fn.Params[0])
 		mb := NewBuilder(merge)
@@ -240,9 +240,9 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		}
 
 		pkg2 := NewPackage("p", "p", spec)
-		fn2 := pkg2.NewFunc("p.latephi", sig)
-		e2 := fn2.NewBlock("entry")
-		m2 := fn2.NewBlock("merge")
+		fn2 := pkg2.NewFunction("p.latephi", sig)
+		e2 := fn2.NewBasicBlock("entry")
+		m2 := fn2.NewBasicBlock("merge")
 		NewBuilder(e2).Jump(m2)
 		mb2 := NewBuilder(m2)
 		_ = mb2.BinOp(token.ADD, i64, fn2.Params[0], mb2.Const(i64, "1"))

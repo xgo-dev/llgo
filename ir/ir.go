@@ -16,16 +16,25 @@
 
 // Package ir defines LLGo's pure-Go, backend-independent mid-level SSA IR.
 //
-// Sitting between the Go frontend and codegen backends (e.g. LLVM), package ir
-// models LLGo-specific concepts as first-class instructions and types:
-// closures (MakeClosure/CallClosure), native C/Stdcall calls (CallCFunc),
-// explicit GoPtr vs NativePtr pointer conversions (PtrCast), GC hooks
-// (Alloc with NoScan, WriteBarrier, Safepoint, GCRoot, KeepAlive), and Go
-// exception/concurrency primitives (Defer, RunDefers, Panic, Recover, Go).
+// Following golang.org/x/tools/go/ssa conventions (Package, Function,
+// BasicBlock, Parameter, Instruction, Value), package ir sits between the Go
+// frontend and codegen backends (e.g. LLVM) and models LLGo-specific concepts
+// as first-class instructions and types: closures (MakeClosure/CallClosure),
+// native C/Stdcall calls (CallCFunc), explicit GoPtr vs NativePtr pointer
+// conversions (PtrCast), GC hooks (Alloc with NoScan, WriteBarrier, Safepoint,
+// GCRoot, KeepAlive), and Go exception/concurrency primitives (Defer,
+// RunDefers, Panic, Recover, Go).
 //
-// It has zero CGo, LLVM, or x/tools dependencies and is designed for
-// third-party library consumption. PackageSummary provides deterministic JSON
-// serialization for persistent build caches.
+// Staging path note (Proposal #3215): this package is staged at
+// github.com/xgo-dev/llgo/ir while the legacy CGo/LLVM package still occupies
+// the root ssa/ directory. During the multi-module cutover (PR 7), legacy ssa/
+// relocates to cmd/internal/llvmgen and this package is promoted atomically to
+// github.com/xgo-dev/llgo/ssa (mirroring golang.org/x/tools/go/ssa).
+//
+// It requires only Go 1.20+ with zero CGo, LLVM, or x/tools dependencies and
+// is designed for third-party library consumption. PackageSummary provides a
+// deterministic bootstrap summary representation; compact binary encoding lives
+// in the upcoming github.com/xgo-dev/llgo/exportdata package.
 package ir
 
 import (
@@ -38,10 +47,10 @@ import (
 	lltypes "github.com/xgo-dev/llgo/types"
 )
 
-// ValueID uniquely identifies an SSA value within a Func.
+// ValueID uniquely identifies an SSA value within a Function.
 type ValueID uint32
 
-// Package is the top-level compilation unit of LLGo mid-level IR.
+// Package is the top-level compilation unit of LLGo mid-level SSA IR.
 type Package struct {
 	Path    string
 	Name    string
@@ -50,7 +59,7 @@ type Package struct {
 	Imports []string
 	Exports map[string]string // go symbol -> exported C/Wasm symbol
 	Globals []*Global
-	Funcs   []*Func
+	Funcs   []*Function
 }
 
 // Global describes a package-level variable or constant symbol.
@@ -65,14 +74,14 @@ type Global struct {
 	HasPtrData bool
 }
 
-// Func describes a function or method in mid-level IR.
-type Func struct {
+// Function describes a function or method in mid-level SSA IR.
+type Function struct {
 	Pkg        *Package
 	Name       string
 	LinkName   string
 	Sig        *lltypes.Func
-	Params     []*Param
-	Blocks     []*Block
+	Params     []*Parameter
+	Blocks     []*BasicBlock
 	LinkOnce   bool
 	NoInline   bool
 	HasEnv     bool
@@ -83,20 +92,25 @@ type Func struct {
 }
 
 // IsDeclaration reports whether the function has no basic blocks.
-func (f *Func) IsDeclaration() bool {
+func (f *Function) IsDeclaration() bool {
 	return len(f.Blocks) == 0
 }
 
-// Block is a single basic block in a Func's CFG.
-type Block struct {
-	Func   *Func
+// BasicBlock is a single basic block in a Function's CFG.
+type BasicBlock struct {
+	Func   *Function
 	Index  int
 	Label  string
-	Instrs []Instr
+	Instrs []Instruction
+}
+
+// Parent returns the Function to which b belongs.
+func (b *BasicBlock) Parent() *Function {
+	return b.Func
 }
 
 // Terminator returns the block's final instruction if it is a Terminator.
-func (b *Block) Terminator() Terminator {
+func (b *BasicBlock) Terminator() Terminator {
 	if len(b.Instrs) == 0 {
 		return nil
 	}
@@ -104,8 +118,8 @@ func (b *Block) Terminator() Terminator {
 	return t
 }
 
-// Value is any typed SSA value usable as an operand (Param, Const, GlobalRef,
-// or value-producing Instr).
+// Value is any typed SSA value usable as an operand (Parameter, Const,
+// GlobalRef, or value-producing Instruction).
 type Value interface {
 	ID() ValueID
 	Type() lltypes.Type
@@ -113,10 +127,11 @@ type Value interface {
 	valMarker()
 }
 
-// Instr is an instruction inside a Block.
-type Instr interface {
-	Block() *Block
-	setBlock(*Block)
+// Instruction is an instruction inside a BasicBlock.
+type Instruction interface {
+	Block() *BasicBlock
+	Parent() *Function
+	setBlock(*BasicBlock)
 	Operands() []Value
 	String() string
 	instrMarker()
@@ -124,18 +139,24 @@ type Instr interface {
 
 // Terminator marks instructions that end a basic block.
 type Terminator interface {
-	Instr
-	Successors() []*Block
+	Instruction
+	Successors() []*BasicBlock
 	termMarker()
 }
 
 type baseInstr struct {
-	blk *Block
+	blk *BasicBlock
 }
 
-func (i *baseInstr) Block() *Block     { return i.blk }
-func (i *baseInstr) setBlock(b *Block) { i.blk = b }
-func (*baseInstr) instrMarker()        {}
+func (i *baseInstr) Block() *BasicBlock     { return i.blk }
+func (i *baseInstr) setBlock(b *BasicBlock) { i.blk = b }
+func (i *baseInstr) Parent() *Function {
+	if i.blk == nil {
+		return nil
+	}
+	return i.blk.Func
+}
+func (*baseInstr) instrMarker() {}
 
 type baseValue struct {
 	id  ValueID
@@ -147,14 +168,14 @@ func (v *baseValue) Type() lltypes.Type { return v.typ }
 func (v *baseValue) Name() string       { return fmt.Sprintf("v%d", v.id) }
 func (*baseValue) valMarker()           {}
 
-// Param is a formal function parameter.
-type Param struct {
+// Parameter is a formal function parameter.
+type Parameter struct {
 	baseValue
 	ParamName string
 	Index     int
 }
 
-func (p *Param) Name() string {
+func (p *Parameter) Name() string {
 	if p.ParamName != "" {
 		return fmt.Sprintf("%%%s", p.ParamName)
 	}
@@ -186,7 +207,7 @@ type Phi struct {
 
 // PhiEdge pairs a predecessor block with its incoming SSA value.
 type PhiEdge struct {
-	Pred *Block
+	Pred *BasicBlock
 	Val  Value
 }
 
@@ -544,10 +565,10 @@ type Panic struct {
 	Val Value
 }
 
-func (i *Panic) Operands() []Value    { return []Value{i.Val} }
-func (i *Panic) Successors() []*Block { return nil }
-func (i *Panic) termMarker()          {}
-func (i *Panic) String() string       { return fmt.Sprintf("panic %s", i.Val.Name()) }
+func (i *Panic) Operands() []Value         { return []Value{i.Val} }
+func (i *Panic) Successors() []*BasicBlock { return nil }
+func (i *Panic) termMarker()               {}
+func (i *Panic) String() string            { return fmt.Sprintf("panic %s", i.Val.Name()) }
 
 // Recover captures an active panic inside a deferred frame.
 type Recover struct {
@@ -561,38 +582,38 @@ func (i *Recover) String() string    { return fmt.Sprintf("%s = recover : %s", i
 // Jump unconditionally transfers control to Target.
 type Jump struct {
 	baseInstr
-	Target *Block
+	Target *BasicBlock
 }
 
-func (i *Jump) Operands() []Value    { return nil }
-func (i *Jump) Successors() []*Block { return []*Block{i.Target} }
-func (i *Jump) termMarker()          {}
-func (i *Jump) String() string       { return fmt.Sprintf("jump %s", i.Target.Label) }
+func (i *Jump) Operands() []Value         { return nil }
+func (i *Jump) Successors() []*BasicBlock { return []*BasicBlock{i.Target} }
+func (i *Jump) termMarker()               {}
+func (i *Jump) String() string            { return fmt.Sprintf("jump %s", i.Target.Label) }
 
 // Branch transfers control based on boolean Cond.
 type Branch struct {
 	baseInstr
 	Cond  Value
-	True  *Block
-	False *Block
+	True  *BasicBlock
+	False *BasicBlock
 }
 
-func (i *Branch) Operands() []Value    { return []Value{i.Cond} }
-func (i *Branch) Successors() []*Block { return []*Block{i.True, i.False} }
-func (i *Branch) termMarker()          {}
+func (i *Branch) Operands() []Value         { return []Value{i.Cond} }
+func (i *Branch) Successors() []*BasicBlock { return []*BasicBlock{i.True, i.False} }
+func (i *Branch) termMarker()               {}
 func (i *Branch) String() string {
 	return fmt.Sprintf("branch %s ? %s : %s", i.Cond.Name(), i.True.Label, i.False.Label)
 }
 
-// Return returns zero or more values from the current Func.
+// Return returns zero or more values from the current Function.
 type Return struct {
 	baseInstr
 	Results []Value
 }
 
-func (i *Return) Operands() []Value    { return i.Results }
-func (i *Return) Successors() []*Block { return nil }
-func (i *Return) termMarker()          {}
+func (i *Return) Operands() []Value         { return i.Results }
+func (i *Return) Successors() []*BasicBlock { return nil }
+func (i *Return) termMarker()               {}
 func (i *Return) String() string {
 	if len(i.Results) == 0 {
 		return "return"
@@ -605,10 +626,10 @@ type Unreachable struct {
 	baseInstr
 }
 
-func (i *Unreachable) Operands() []Value    { return nil }
-func (i *Unreachable) Successors() []*Block { return nil }
-func (i *Unreachable) termMarker()          {}
-func (i *Unreachable) String() string       { return "unreachable" }
+func (i *Unreachable) Operands() []Value         { return nil }
+func (i *Unreachable) Successors() []*BasicBlock { return nil }
+func (i *Unreachable) termMarker()               {}
+func (i *Unreachable) String() string            { return "unreachable" }
 
 func formatValues(vals []Value) string {
 	parts := make([]string, len(vals))

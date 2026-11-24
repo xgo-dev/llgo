@@ -48,9 +48,9 @@ func (p *Package) NewGlobal(name string, typ lltypes.Type) *Global {
 	return g
 }
 
-// NewFunc adds and returns a Func with formal parameters derived from sig.
-func (p *Package) NewFunc(name string, sig *lltypes.Func) *Func {
-	fn := &Func{
+// NewFunction adds and returns a Function with formal parameters derived from sig.
+func (p *Package) NewFunction(name string, sig *lltypes.Func) *Function {
+	fn := &Function{
 		Pkg:    p,
 		Name:   name,
 		Sig:    sig,
@@ -59,7 +59,7 @@ func (p *Package) NewFunc(name string, sig *lltypes.Func) *Func {
 	if sig != nil {
 		idx := 0
 		if sig.Recv != nil {
-			fn.Params = append(fn.Params, &Param{
+			fn.Params = append(fn.Params, &Parameter{
 				baseValue: baseValue{id: fn.allocID(), typ: sig.Recv.Type},
 				ParamName: sig.Recv.Name,
 				Index:     idx,
@@ -67,7 +67,7 @@ func (p *Package) NewFunc(name string, sig *lltypes.Func) *Func {
 			idx++
 		}
 		for _, param := range sig.Params {
-			fn.Params = append(fn.Params, &Param{
+			fn.Params = append(fn.Params, &Parameter{
 				baseValue: baseValue{id: fn.allocID(), typ: param.Type},
 				ParamName: param.Name,
 				Index:     idx,
@@ -79,40 +79,40 @@ func (p *Package) NewFunc(name string, sig *lltypes.Func) *Func {
 	return fn
 }
 
-func (f *Func) allocID() ValueID {
+func (f *Function) allocID() ValueID {
 	f.nextID++
 	return f.nextID
 }
 
-// NewBlock appends a new basic block to f.
-func (f *Func) NewBlock(label string) *Block {
+// NewBasicBlock appends a new basic block to f.
+func (f *Function) NewBasicBlock(label string) *BasicBlock {
 	idx := len(f.Blocks)
 	if label == "" {
 		label = fmt.Sprintf("bb%d", idx)
 	}
-	blk := &Block{Func: f, Index: idx, Label: label}
+	blk := &BasicBlock{Func: f, Index: idx, Label: label}
 	f.Blocks = append(f.Blocks, blk)
 	return blk
 }
 
-// Builder emits instructions into a Func's basic blocks.
+// Builder emits instructions into a Function's basic blocks.
 type Builder struct {
-	fn  *Func
-	blk *Block
+	fn  *Function
+	blk *BasicBlock
 }
 
 // NewBuilder creates a Builder positioned at blk.
-func NewBuilder(blk *Block) *Builder {
+func NewBuilder(blk *BasicBlock) *Builder {
 	return &Builder{fn: blk.Func, blk: blk}
 }
 
 // SetBlock positions the builder at the end of blk.
-func (b *Builder) SetBlock(blk *Block) {
+func (b *Builder) SetBlock(blk *BasicBlock) {
 	b.fn = blk.Func
 	b.blk = blk
 }
 
-func (b *Builder) emit(ins Instr) {
+func (b *Builder) emit(ins Instruction) {
 	ins.setBlock(b.blk)
 	b.blk.Instrs = append(b.blk.Instrs, ins)
 }
@@ -253,13 +253,13 @@ func (b *Builder) RunDefers() *RunDefers {
 	return ins
 }
 
-func (b *Builder) Jump(target *Block) *Jump {
+func (b *Builder) Jump(target *BasicBlock) *Jump {
 	ins := &Jump{Target: target}
 	b.emit(ins)
 	return ins
 }
 
-func (b *Builder) Branch(cond Value, trueBlk, falseBlk *Block) *Branch {
+func (b *Builder) Branch(cond Value, trueBlk, falseBlk *BasicBlock) *Branch {
 	ins := &Branch{Cond: cond, True: trueBlk, False: falseBlk}
 	b.emit(ins)
 	return ins

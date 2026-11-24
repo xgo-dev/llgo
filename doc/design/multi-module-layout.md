@@ -1,29 +1,53 @@
 # Multi-Module Layout & Incremental Cache Cutover Blueprint (Proposal #3215)
 
 This document records the concrete cutover plan for separating LLGo's pure-Go
-library surface from the LLVM/CGo compiler CLI—and pairing it with a binary
-package-summary cache—so third-party Go consumers can import LLGo packages
-without LLVM/CGo/`replace`/bleeding-edge Go while iterative builds skip
-whole-program frontend and LLVM re-materialization on cache hits.
+library surface—organized after `golang.org/x/tools/go/*`—from the LLVM/CGo
+compiler CLI, pairing it with a compact binary package-summary cache and a
+target-accurate stdlib `go/types` patch, so third-party Go consumers can import
+LLGo packages without LLVM/CGo/`replace`/bleeding-edge Go while iterative builds
+skip whole-program frontend and LLVM re-materialization on cache hits.
 
-## Target Module Graph
+## Target Module Graph (`golang.org/x/tools`-Aligned)
 
 ```text
 github.com/xgo-dev/llgo              (root go.mod — low Go baseline: go 1.20)
 ├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
 ├── target/                          Pure-Go target triple, arch, and config model
-├── types/                           Pure-Go LLGo type model (Closure, NativePtr, HostLayout, SIMD)
-├── ir/                              Pure-Go mid-level SSA IR, verifier, and package summary codec
-└── runtime/go.mod                   (existing separate module, unchanged)
+├── types/                           Pure-Go LLGo type model, Sizes (+ GoSizes), GC bitmaps
+│   └── typeutil/                    (planned) type-map & method-set helpers (mirrors x/tools/go/types/typeutil)
+├── ssa/                             Pure-Go mid-level SSA IR & verifier (mirrors x/tools/go/ssa)
+│   │                                [staged at ir/ during PRs 4–6; promoted atomically in PR 7]
+│   └── ssautil/                     (planned) SSA inspection & walk helpers (mirrors x/tools/go/ssa/ssautil)
+├── exportdata/                      (planned) compact binary codec for types.Package, PackageSummary,
+│                                    LinkSnapshot & PCLN (mirrors x/tools/go/gcexportdata)
+├── analysis/                        (planned) modular pure-Go analysis passes (mirrors x/tools/go/analysis)
+│   ├── callgraph/                   Call graph / RTA over llgo/ssa + exportdata
+│   ├── escape/                      Per-package & whole-program escape summaries
+│   ├── deadcode/                    Go-side reachability & DCE
+│   └── inline/                      Cross-package inlining summaries
+└── runtime/go.mod                   (existing separate module, go 1.20, unchanged)
 
 github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, e.g. go 1.27+)
 ├── llgo/                            CLI entrypoint (`llgo`)
 ├── llgen/                           IR generation tool
-├── internal/                        CLI subcommands and compiler-internal packages
-└── compiler/ (or cmd/internal/...)  x/tools + LLVM lowering (`cl`, `ssa`, `internal/build`, ...)
+└── internal/                        Compiler internals & CLI subcommands:
+    ├── build/                       Build driver, cache orchestration, linking
+    ├── cl/                          Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa)
+    ├── llvmgen/                     Relocated legacy CGo/LLVM codegen (formerly root ssa/)
+    └── ...                          CABI, debuggers, binary tools, etc.
 
 go.work                              Coordinates `.`, `./cmd`, and `./runtime` in local dev & CI
 ```
+
+### Package Taxonomy Mapping (`golang.org/x/tools` ↔ `llgo`)
+
+| `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role & Staging |
+|---|---|---|
+| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Physical/ABI type model (`Closure`, `Func`, `Pointer` with `GoPtr`/`NativePtr`, `HostLayout`, `SIMDVec`), `Sizes` + `GoSizes`, GC pointer bitmaps |
+| `x/tools/go/ssa` + `ssautil` | `llgo/ssa` *(+ `llgo/ssa/ssautil`)* | Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction`, `Value`). Staged at `ir/` during PRs 4–6; promoted atomically to `ssa/` in PR 7 |
+| `x/tools/go/gcexportdata` | `llgo/exportdata` | Compact binary package export codec (`types.Package`, `PackageSummary`, `LinkSnapshot`, `PCLN`) |
+| `x/tools/go/analysis` + `callgraph` | `llgo/analysis/{callgraph,escape,deadcode,inline}` | Reusable pure-Go analysis passes consuming `types`, `ssa`, and `exportdata` |
+| *(LLGo-specific)* | `llgo/directive`, `llgo/target` | Directive parsing & target/ABI spec model |
 
 ### Module Invariants
 
@@ -38,6 +62,8 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
      GOWORK=off CGO_ENABLED=0 go test ./...
      ! GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ir | grep -qE 'llvm|x/tools'
      ```
+     *(After PR 7 promotes `ir/` → `ssa/` and adds `exportdata/` + `analysis/`,
+     the same check covers `./...` across the entire root module.)*
 2. **Compiler `cmd/go.mod` (`github.com/xgo-dev/llgo/cmd`)**:
    - Declares the latest Go toolchain version matching `.go-version` so
      `golang.org/x/tools/go/ssa` parses the latest Go language syntax.
@@ -48,12 +74,34 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
    - Lists `use ( . ./cmd ./runtime )` so contributors run tests seamlessly
      across all three modules without manual `replace` edits.
 
+## Patched Standard Library `go/types` Contract
+
+When LLGo compiles the Go standard library `go/types` package itself (via
+`runtime/_patch/go/types/`, alongside existing `runtime/_patch/go/build` and
+`runtime/_patch/go/importer`), `go/types` is patched so that `SizesFor` (for
+`"llgo"` / `runtime.Compiler`) and default `Sizes` compute target-accurate
+`Sizeof`, `Alignof`, and `Offsetsof` matching LLGo's runtime layout rules:
+
+- 2-word Go function/closure values (`{codePtr, envPtr}` = `2 * wordSize`),
+- `structs.HostLayout` field alignment,
+- target word/alignment rules (64-bit, 32-bit, Wasm32/64 wide Go storage), and
+- Go's trailing zero-sized struct field padding.
+
+This patch strictly models standard Go types and does **not** attempt to expose
+LLGo-only extension attributes (`//llgo:cdecl`, `//llgo:stdcall`, `NativePtr`,
+`SIMDVec`, etc.), since `go/types` has no fields for those extensions. Full
+LLGo physical/ABI extensions live in `github.com/xgo-dev/llgo/types`, whose
+`Sizes.GoSizes(nil)` serves as the pure-Go reference implementation for standard
+Go layout rules (while `Sizes.GoSizes(lookup)` supplies directive-aware layout
+to the compiler frontend's `go/types.Config.Sizes`).
+
 ## Incremental Cache Sidecar Contract (PR 5–6 Prerequisite)
 
-Before the physical module cutover, Wave 2 of #3215 decouples **Dev
+Before the physical module cutover, PRs 5–6 of #3215 decouple **Dev
 Incremental Mode** (separate per-package compilation) from **Release
 Whole-Program Mode** (`-Os`/whole-program escape/RTA/`-deadcodedrop`/`-lto=full`)
-by persisting compact **binary** sidecars alongside each cached package `.a`:
+by persisting compact **binary** sidecars (via `exportdata`) alongside each
+cached package `.a`:
 
 1. **Depfile fingerprint sidecar (`LLGoFiles`)**: persist `-MMD -MF` header
    dependencies on first C-wrapper preprocess so warm builds validate headers
@@ -62,26 +110,31 @@ by persisting compact **binary** sidecars alongside each cached package `.a`:
    (`needAbiInit`, `methodByIndex`, `methodByName`, `abiSymbols`, `abiTypes`,
    `hasLocalExports`, `cExports`) and binary PCLN records so cache hits never
    invoke `cl.NewPackageEx` or allocate an LLVM context.
-3. **Binary frontend & `ir.PackageSummary` sidecar**: persist binary
-   `types.Package` export data (explicitly covering `pkg.Module == nil` stdlib
-   and runtime-patched effective scopes) plus binary `ir.PackageSummary`
-   (escape, inline, and call-graph summaries) so cache hits skip source parse,
-   `go/types`, `go/ssa`, and whole-program escape analysis.
+3. **Binary frontend & `PackageSummary` sidecar (`llgo/exportdata`)**: persist
+   binary `types.Package` export data (explicitly covering `pkg.Module == nil`
+   stdlib and runtime-patched effective scopes) plus binary `PackageSummary`
+   (escape, inline, and call-graph summaries consumed by `llgo/analysis/...`)
+   so cache hits skip source parse, `go/types`, `go/ssa`, and whole-program
+   escape analysis.
 
 ## Atomic Cutover Checklist (PR 7)
 
-Perform the physical package relocation in a single dedicated PR once the
-prerequisite PRs of #3215 (Wave 1 PRs 1–4 and Wave 2 incremental/IR PRs 5–6)
-have merged to `main`, avoiding wide cross-PR merge conflicts:
+Perform the physical package relocation and `ir/` → `ssa/` promotion in a single
+dedicated PR once PRs 1–6 of #3215 have merged to `main`, avoiding wide
+cross-PR merge conflicts:
 
-1. **Relocate LLVM/`x/tools`-dependent compiler packages** (`cl/`, `ssa/`,
-   `internal/`, `xtool/`, `chore/`) into the compiler module (`cmd/` or a
-   sibling `compiler/` module if an embeddable compiler API is desired alongside
-   `cmd/`). Update internal import paths accordingly.
+1. **Relocate LLVM/`x/tools`-dependent compiler packages & promote `ir/` → `ssa/`**:
+   - Move legacy CGo/LLVM `ssa/` → `cmd/internal/llvmgen` (and `cl/`,
+     `internal/`, `xtool/`, `chore/` into `cmd/internal/...`, or a sibling
+     `codegen/llvm` module if an embeddable LLVM backend API is desired).
+   - Promote pure-Go `ir/` → `ssa/` (with `ssa/ssautil`) atomically in the root
+     module so `github.com/xgo-dev/llgo/ssa` becomes the canonical pure-Go
+     mid-level SSA IR package matching `golang.org/x/tools/go/ssa`.
+   - Update internal import paths accordingly.
 2. **Create `cmd/go.mod` and `go.work`**:
    - Move compiler dependencies and `replace` directives from root `go.mod` into
      `cmd/go.mod`.
-   - Lower root `go.mod` `go` directive and prune root `go.sum` with
+   - Lower root `go.mod` to `go 1.20` and prune root `go.sum` with
      `GOWORK=off go mod tidy`.
 3. **Update release, install, and CI touchpoints**:
    - `.goreleaser.yaml`: set `dir: cmd` and `main: ./llgo` (updating `-X`
@@ -94,11 +147,12 @@ have merged to `main`, avoiding wide cross-PR merge conflicts:
      versioned `go install github.com/xgo-dev/llgo/cmd/llgo@<version>` only
      after all `replace` directives are removed from `cmd/go.mod`.
    - `.github/workflows/*.yml`: run `GOWORK=off CGO_ENABLED=0 go test ./...` at
-     the repo root to guard pure-Go library hygiene, and run compiler/LLVM test
-     matrices with `go.work` enabled (or `cd cmd && go test ./...`).
+     the repo root to guard pure-Go Go 1.20 library hygiene, and run
+     compiler/LLVM test matrices with `go.work` enabled (or
+     `cd cmd && go test ./...`).
    - Update `.github/scripts/test_pixi_env.py` (introduced in PR #3218) to
      validate `dev/pixi.toml` against `cmd/go.mod` and `.go-version`.
 4. **Verify end-to-end**:
-   - `GOWORK=off CGO_ENABLED=0 go test ./directive/... ./target/... ./types/... ./ir/...`
+   - `GOWORK=off CGO_ENABLED=0 go test ./...` (root module at Go 1.20)
    - `cd cmd && go build ./llgo && go test ./...`
    - Full CI matrix across Linux, macOS, and Windows (MSVC/MinGW).

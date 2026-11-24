@@ -18,6 +18,7 @@ package types
 
 import (
 	gotypes "go/types"
+	"sync"
 
 	"github.com/xgo-dev/llgo/target"
 )
@@ -182,6 +183,70 @@ func (s *Sizes) Alignof(t Type) int64 {
 func (s *Sizes) Offsetsof(st *Struct) []int64 {
 	_, _, offsets := s.structLayout(st)
 	return offsets
+}
+
+type goSizes struct {
+	sizes  *Sizes
+	mu     sync.Mutex
+	mapper *Mapper
+}
+
+// GoSizes returns a go/types.Sizes adapter backed by s and an optional
+// directive calling-convention lookup.
+//
+// Passing lookup == nil yields LLGo's standard-Go layout rules (2-word
+// closures, structs.HostLayout, Wasm32 wide Go storage, target word/alignment
+// and trailing zero-sized field padding) without LLGo-only directive
+// extensions—matching the contract for patched stdlib go/types compiled by
+// LLGo. Passing a directive lookup also accounts for //llgo:cdecl and
+// //llgo:stdcall declarations when used as go/types.Config.Sizes in the
+// compiler frontend.
+func (s *Sizes) GoSizes(lookup CallConvLookup) gotypes.Sizes {
+	return &goSizes{
+		sizes:  s,
+		mapper: NewMapper(lookup),
+	}
+}
+
+func (g *goSizes) Alignof(T gotypes.Type) int64 {
+	if T == nil {
+		return 1
+	}
+	g.mu.Lock()
+	lt := g.mapper.Map(T, GoDecl)
+	g.mu.Unlock()
+	return g.sizes.Alignof(lt)
+}
+
+func (g *goSizes) Sizeof(T gotypes.Type) int64 {
+	if T == nil {
+		return 0
+	}
+	g.mu.Lock()
+	lt := g.mapper.Map(T, GoDecl)
+	g.mu.Unlock()
+	return g.sizes.Sizeof(lt)
+}
+
+func (g *goSizes) Offsetsof(fields []*gotypes.Var) []int64 {
+	if len(fields) == 0 {
+		return []int64{}
+	}
+	host := false
+	llFields := make([]*Field, len(fields))
+	g.mu.Lock()
+	for i, f := range fields {
+		if IsHostLayoutMarker(f.Type()) {
+			host = true
+		}
+		llFields[i] = &Field{
+			Name:     f.Name(),
+			Type:     g.mapper.Map(f.Type(), GoDecl),
+			Embedded: f.Embedded(),
+		}
+	}
+	g.mu.Unlock()
+	return g.sizes.Offsetsof(&Struct{Fields: llFields, HostLayout: host})
 }
 
 // PtrOffsets returns the sorted byte offsets of every GC-traced pointer word

@@ -95,7 +95,9 @@ func Summarize(pkg *Package) PackageSummary {
 	return s
 }
 
-// MarshalSummary encodes summary deterministically as JSON for build caches.
+// MarshalSummary encodes summary deterministically as JSON as a bootstrap
+// helper. High-throughput incremental build caches use compact binary encoding
+// in the upcoming github.com/xgo-dev/llgo/exportdata package.
 func MarshalSummary(summary PackageSummary) ([]byte, error) {
 	return json.Marshal(summary)
 }

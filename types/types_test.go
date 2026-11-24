@@ -239,3 +239,100 @@ type GoStruct struct {
 		t.Fatal("pointer-free tuple must not report GC pointer data")
 	}
 }
+
+func TestGoSizesAdapter(t *testing.T) {
+	src := `package sample
+import (
+	"structs"
+	"unsafe"
+)
+type CFunc func(int) int
+type S struct {
+	a byte
+	f func()
+	c CFunc
+	b byte
+}
+type Host struct {
+	_ structs.HostLayout
+	a byte
+	b int64
+}
+const (
+	SizeGoFunc = unsafe.Sizeof((func())(nil))
+	SizeCFunc  = unsafe.Sizeof((CFunc)(nil))
+	OffSF      = unsafe.Offsetof(S{}.f)
+	OffSC      = unsafe.Offsetof(S{}.c)
+	OffSB      = unsafe.Offsetof(S{}.b)
+	SizeHost   = unsafe.Sizeof(Host{})
+	AlignHost  = unsafe.Alignof(Host{})
+)
+`
+	checkWithSizes := func(sizes gotypes.Sizes) *gotypes.Package {
+		t.Helper()
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "sizes.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := gotypes.Config{
+			Importer: testImporter{base: importer.Default()},
+			Sizes:    sizes,
+		}
+		pkg, err := conf.Check("example.com/sizes", fset, []*ast.File{file}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	}
+	constVal := func(pkg *gotypes.Package, name string) string {
+		return pkg.Scope().Lookup(name).(*gotypes.Const).Val().ExactString()
+	}
+
+	// Standard Go rules (lookup == nil): both func() and CFunc are 2-word closures.
+	amd64Std := NewSizes(target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})).GoSizes(nil)
+	pkgStd := checkWithSizes(amd64Std)
+	if got := constVal(pkgStd, "SizeGoFunc"); got != "16" {
+		t.Fatalf("amd64 GoSizes(nil) SizeGoFunc = %s, want 16", got)
+	}
+	if got := constVal(pkgStd, "SizeCFunc"); got != "16" {
+		t.Fatalf("amd64 GoSizes(nil) SizeCFunc = %s, want 16", got)
+	}
+	if got := constVal(pkgStd, "OffSF"); got != "8" {
+		t.Fatalf("amd64 GoSizes(nil) OffSF = %s, want 8", got)
+	}
+	if got := constVal(pkgStd, "OffSC"); got != "24" {
+		t.Fatalf("amd64 GoSizes(nil) OffSC = %s, want 24", got)
+	}
+	if got := constVal(pkgStd, "OffSB"); got != "40" {
+		t.Fatalf("amd64 GoSizes(nil) OffSB = %s, want 40", got)
+	}
+	if amd64Std.Alignof(nil) != 1 || amd64Std.Sizeof(nil) != 0 || len(amd64Std.Offsetsof(nil)) != 0 {
+		t.Fatalf("nil/empty GoSizes edge cases failed")
+	}
+
+	// Directive-aware lookup: CFunc becomes a 1-word native pointer.
+	amd64Dir := NewSizes(target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})).GoSizes(func(name string) (CallConv, bool) {
+		if name == "example.com/sizes.CFunc" {
+			return CDecl, true
+		}
+		return CallConvUnknown, false
+	})
+	pkgDir := checkWithSizes(amd64Dir)
+	if got := constVal(pkgDir, "SizeCFunc"); got != "8" {
+		t.Fatalf("amd64 GoSizes(lookup) SizeCFunc = %s, want 8", got)
+	}
+	if got := constVal(pkgDir, "OffSB"); got != "32" {
+		t.Fatalf("amd64 GoSizes(lookup) OffSB = %s, want 32", got)
+	}
+
+	// Windows/386 HostLayout aligns int64 to 8 bytes (size 16) via GoSizes(nil).
+	win386Std := NewSizes(target.ResolveSpec(target.Spec{GOOS: "windows", GOARCH: "386"})).GoSizes(nil)
+	pkg386 := checkWithSizes(win386Std)
+	if got := constVal(pkg386, "AlignHost"); got != "8" || constVal(pkg386, "SizeHost") != "16" {
+		t.Fatalf("win386 HostLayout = (align %s, size %s), want (8, 16)", constVal(pkg386, "AlignHost"), constVal(pkg386, "SizeHost"))
+	}
+	if got := constVal(pkg386, "SizeGoFunc"); got != "8" {
+		t.Fatalf("win386 SizeGoFunc = %s, want 8", got)
+	}
+}

@@ -35,12 +35,12 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		},
 		Results: []*lltypes.Var{{Type: i64}},
 	}
-	fn := pkg.NewFunc("cov.Run", sig)
-	entry := fn.NewBlock("")
-	thenBlk := fn.NewBlock("then")
-	elseBlk := fn.NewBlock("else")
-	mergeBlk := fn.NewBlock("merge")
-	deadBlk := fn.NewBlock("dead")
+	fn := pkg.NewFunction("cov.Run", sig)
+	entry := fn.NewBasicBlock("")
+	thenBlk := fn.NewBasicBlock("then")
+	elseBlk := fn.NewBasicBlock("else")
+	mergeBlk := fn.NewBasicBlock("merge")
+	deadBlk := fn.NewBasicBlock("dead")
 
 	b := NewBuilder(entry)
 	c1 := b.Const(i64, "1")
@@ -84,8 +84,11 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatalf("VerifyPackage() unexpected error: %v", err)
 	}
 
-	// Exercise Terminator, Block, ID, Name, Operands, Successors, and String on all instructions.
+	// Exercise Terminator, Block, Parent, ID, Name, Operands, Successors, and String on all instructions.
 	for _, blk := range fn.Blocks {
+		if blk.Parent() != fn {
+			t.Fatalf("block %s has wrong parent", blk.Label)
+		}
 		if term := blk.Terminator(); term == nil {
 			t.Fatalf("block %s missing terminator", blk.Label)
 		} else {
@@ -94,8 +97,8 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		}
 		for _, ins := range blk.Instrs {
 			ins.instrMarker()
-			if ins.Block() != blk {
-				t.Fatalf("instr %s has wrong block", ins.String())
+			if ins.Block() != blk || ins.Parent() != fn {
+				t.Fatalf("instr %s has wrong block/parent", ins.String())
 			}
 			_ = ins.Operands()
 			if ins.String() == "" {
@@ -107,6 +110,9 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 				_ = val.Name()
 			}
 		}
+	}
+	if (&RunDefers{}).Parent() != nil {
+		t.Fatal("detached instruction Parent() != nil")
 	}
 	for _, p := range fn.Params {
 		p.valMarker()
@@ -141,13 +147,13 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	if err := VerifyPackage(nil); err == nil {
 		t.Fatal("VerifyPackage(nil) succeeded")
 	}
-	if err := VerifyFunc(nil); err == nil {
-		t.Fatal("VerifyFunc(nil) succeeded")
+	if err := VerifyFunction(nil); err == nil {
+		t.Fatal("VerifyFunction(nil) succeeded")
 	}
 	badPkg := NewPackage("bad", "bad", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	badFn := badPkg.NewFunc("bad.EmptyBlock", &lltypes.Func{CallConv: lltypes.GoDecl})
-	_ = badFn.NewBlock("empty")
-	if err := VerifyFunc(badFn); err == nil {
-		t.Fatal("VerifyFunc accepted empty block")
+	badFn := badPkg.NewFunction("bad.EmptyBlock", &lltypes.Func{CallConv: lltypes.GoDecl})
+	_ = badFn.NewBasicBlock("empty")
+	if err := VerifyFunction(badFn); err == nil {
+		t.Fatal("VerifyFunction accepted empty block")
 	}
 }

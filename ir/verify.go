@@ -37,16 +37,16 @@ func VerifyPackage(pkg *Package) error {
 			return fmt.Errorf("ir: duplicate function %q in package %s", fn.Name, pkg.Path)
 		}
 		seenFuncs[fn.Name] = true
-		if err := VerifyFunc(fn); err != nil {
+		if err := VerifyFunction(fn); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// VerifyFunc verifies a single function's CFG, block terminators, Phi
+// VerifyFunction verifies a single function's CFG, block terminators, Phi
 // predecessors, SSA value ownership, and LLGo-specific instruction invariants.
-func VerifyFunc(fn *Func) error {
+func VerifyFunction(fn *Function) error {
 	if fn == nil {
 		return fmt.Errorf("ir: nil function")
 	}
@@ -56,7 +56,7 @@ func VerifyFunc(fn *Func) error {
 	if fn.IsDeclaration() {
 		return nil
 	}
-	blkSet := make(map[*Block]bool, len(fn.Blocks))
+	blkSet := make(map[*BasicBlock]bool, len(fn.Blocks))
 	for _, blk := range fn.Blocks {
 		if blk == nil {
 			return fmt.Errorf("ir: %s: nil basic block", fn.Name)
@@ -66,7 +66,7 @@ func VerifyFunc(fn *Func) error {
 		}
 		blkSet[blk] = true
 	}
-	paramSet := make(map[*Param]bool, len(fn.Params))
+	paramSet := make(map[*Parameter]bool, len(fn.Params))
 	for _, p := range fn.Params {
 		if p == nil {
 			return fmt.Errorf("ir: %s: nil parameter", fn.Name)
@@ -79,8 +79,8 @@ func VerifyFunc(fn *Func) error {
 
 	// Pass 1: validate block structure, build CFG predecessor map, and index
 	// value-producing instructions owned by fn.
-	preds := make(map[*Block]map[*Block]bool, len(fn.Blocks))
-	instrOwner := make(map[Value]*Block)
+	preds := make(map[*BasicBlock]map[*BasicBlock]bool, len(fn.Blocks))
+	instrOwner := make(map[Value]*BasicBlock)
 	for _, blk := range fn.Blocks {
 		if len(blk.Instrs) == 0 {
 			return fmt.Errorf("ir: %s.%s: empty basic block", fn.Name, blk.Label)
@@ -114,7 +114,7 @@ func VerifyFunc(fn *Func) error {
 						return fmt.Errorf("ir: %s.%s: invalid successor block in %T", fn.Name, blk.Label, ins)
 					}
 					if preds[succ] == nil {
-						preds[succ] = make(map[*Block]bool)
+						preds[succ] = make(map[*BasicBlock]bool)
 					}
 					preds[succ][blk] = true
 				}
@@ -145,9 +145,9 @@ func VerifyFunc(fn *Func) error {
 	return nil
 }
 
-func verifyValueOwner(fn *Func, blk *Block, op Value, paramSet map[*Param]bool, instrOwner map[Value]*Block) error {
+func verifyValueOwner(fn *Function, blk *BasicBlock, op Value, paramSet map[*Parameter]bool, instrOwner map[Value]*BasicBlock) error {
 	switch v := op.(type) {
-	case *Param:
+	case *Parameter:
 		if !paramSet[v] {
 			return fmt.Errorf("ir: %s.%s: operand param %s does not belong to function %s", fn.Name, blk.Label, v.Name(), fn.Name)
 		}
@@ -165,7 +165,7 @@ func verifyValueOwner(fn *Func, blk *Block, op Value, paramSet map[*Param]bool, 
 	return nil
 }
 
-func verifyInstr(fn *Func, blk *Block, ins Instr, blkSet map[*Block]bool, blkPreds map[*Block]bool) error {
+func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*BasicBlock]bool, blkPreds map[*BasicBlock]bool) error {
 	switch ins := ins.(type) {
 	case *Phi:
 		if len(ins.Edges) == 0 {
@@ -174,7 +174,7 @@ func verifyInstr(fn *Func, blk *Block, ins Instr, blkSet map[*Block]bool, blkPre
 		if len(ins.Edges) != len(blkPreds) {
 			return fmt.Errorf("ir: %s.%s: phi has %d incoming edges, want %d CFG predecessors", fn.Name, blk.Label, len(ins.Edges), len(blkPreds))
 		}
-		seenPred := make(map[*Block]bool, len(ins.Edges))
+		seenPred := make(map[*BasicBlock]bool, len(ins.Edges))
 		for _, edge := range ins.Edges {
 			if edge.Pred == nil || !blkSet[edge.Pred] {
 				return fmt.Errorf("ir: %s.%s: phi incoming block does not belong to function %s", fn.Name, blk.Label, fn.Name)
