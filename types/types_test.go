@@ -159,4 +159,59 @@ type GoStruct struct {
 	if got := amd64.PtrDataSize(smallArr); got != 40 {
 		t.Fatalf("PtrDataSize([3]struct) = %d, want 40", got)
 	}
+
+	// Tuple GC pointer maps must match Tuple layout (e.g. (int, *int) -> [8]).
+	intT := &Basic{Kind: gotypes.Int}
+	byteT := &Basic{Kind: gotypes.Uint8}
+	ptrInt := &Pointer{Elem: intT, Kind: GoPtr}
+	tup := &Tuple{
+		Elems: []*Var{
+			{Name: "a", Type: intT},
+			{Name: "b", Type: ptrInt},
+		},
+	}
+	if !tup.HasPtrData() {
+		t.Fatal("(int, *int) HasPtrData = false, want true")
+	}
+	if got := amd64.Sizeof(tup); got != 16 {
+		t.Fatalf("amd64 Sizeof((int, *int)) = %d, want 16", got)
+	}
+	if got := amd64.PtrOffsets(tup); !reflect.DeepEqual(got, []int64{8}) {
+		t.Fatalf("amd64 PtrOffsets((int, *int)) = %v, want [8]", got)
+	}
+	if got := amd64.PtrDataSize(tup); got != 16 {
+		t.Fatalf("amd64 PtrDataSize((int, *int)) = %d, want 16", got)
+	}
+
+	paddedTup := &Tuple{
+		Elems: []*Var{
+			{Name: "tag", Type: byteT},
+			{Name: "p", Type: ptrInt},
+			{Name: "tail", Type: intT},
+		},
+	}
+	if got := amd64.PtrOffsets(paddedTup); !reflect.DeepEqual(got, []int64{8}) {
+		t.Fatalf("amd64 PtrOffsets((byte, *int, int)) = %v, want [8]", got)
+	}
+	if got := amd64.PtrDataSize(paddedTup); got != 16 {
+		t.Fatalf("amd64 PtrDataSize((byte, *int, int)) = %d, want 16", got)
+	}
+
+	nestedTup := &Tuple{
+		Elems: []*Var{
+			{Name: "first", Type: ptrInt},
+			{Name: "inner", Type: &Tuple{Elems: []*Var{{Type: byteT}, {Type: ptrInt}}}},
+		},
+	}
+	if got := amd64.PtrOffsets(nestedTup); !reflect.DeepEqual(got, []int64{0, 16}) {
+		t.Fatalf("amd64 PtrOffsets((*int, (byte, *int))) = %v, want [0 16]", got)
+	}
+	if got := amd64.PtrDataSize(nestedTup); got != 24 {
+		t.Fatalf("amd64 PtrDataSize((*int, (byte, *int))) = %d, want 24", got)
+	}
+
+	noPtrTup := &Tuple{Elems: []*Var{{Type: intT}, {Type: &Basic{Kind: gotypes.Float64}}}}
+	if noPtrTup.HasPtrData() || len(amd64.PtrOffsets(noPtrTup)) != 0 || amd64.PtrDataSize(noPtrTup) != 0 {
+		t.Fatal("pointer-free tuple must not report GC pointer data")
+	}
 }

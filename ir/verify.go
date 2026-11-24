@@ -44,8 +44,8 @@ func VerifyPackage(pkg *Package) error {
 	return nil
 }
 
-// VerifyFunc verifies a single function's CFG, block terminators, and
-// LLGo-specific instruction invariants.
+// VerifyFunc verifies a single function's CFG, block terminators, Phi
+// predecessors, SSA value ownership, and LLGo-specific instruction invariants.
 func VerifyFunc(fn *Func) error {
 	if fn == nil {
 		return fmt.Errorf("ir: nil function")
@@ -58,17 +58,52 @@ func VerifyFunc(fn *Func) error {
 	}
 	blkSet := make(map[*Block]bool, len(fn.Blocks))
 	for _, blk := range fn.Blocks {
+		if blk == nil {
+			return fmt.Errorf("ir: %s: nil basic block", fn.Name)
+		}
+		if blkSet[blk] {
+			return fmt.Errorf("ir: %s: duplicate basic block %s", fn.Name, blk.Label)
+		}
 		blkSet[blk] = true
 	}
+	paramSet := make(map[*Param]bool, len(fn.Params))
+	for _, p := range fn.Params {
+		if p == nil {
+			return fmt.Errorf("ir: %s: nil parameter", fn.Name)
+		}
+		if p.Type() == nil {
+			return fmt.Errorf("ir: %s: parameter %s has nil type", fn.Name, p.Name())
+		}
+		paramSet[p] = true
+	}
+
+	// Pass 1: validate block structure, build CFG predecessor map, and index
+	// value-producing instructions owned by fn.
+	preds := make(map[*Block]map[*Block]bool, len(fn.Blocks))
+	instrOwner := make(map[Value]*Block)
 	for _, blk := range fn.Blocks {
 		if len(blk.Instrs) == 0 {
 			return fmt.Errorf("ir: %s.%s: empty basic block", fn.Name, blk.Label)
 		}
+		seenNonPhi := false
 		for idx, ins := range blk.Instrs {
+			if ins == nil {
+				return fmt.Errorf("ir: %s.%s: nil instruction at index %d", fn.Name, blk.Label, idx)
+			}
+			if _, isPhi := ins.(*Phi); isPhi {
+				if seenNonPhi {
+					return fmt.Errorf("ir: %s.%s: phi instruction after non-phi instruction", fn.Name, blk.Label)
+				}
+			} else {
+				seenNonPhi = true
+			}
+			if v, ok := ins.(Value); ok {
+				instrOwner[v] = blk
+			}
 			isLast := idx == len(blk.Instrs)-1
 			term, isTerm := ins.(Terminator)
 			if isTerm && !isLast {
-				return fmt.Errorf("ir: %s.%s: terminator %q before end of block", fn.Name, blk.Label, ins)
+				return fmt.Errorf("ir: %s.%s: terminator %T before end of block", fn.Name, blk.Label, ins)
 			}
 			if !isTerm && isLast {
 				return fmt.Errorf("ir: %s.%s: missing terminator at end of block", fn.Name, blk.Label)
@@ -76,10 +111,21 @@ func VerifyFunc(fn *Func) error {
 			if isTerm {
 				for _, succ := range term.Successors() {
 					if succ == nil || !blkSet[succ] {
-						return fmt.Errorf("ir: %s.%s: invalid successor block in %q", fn.Name, blk.Label, ins)
+						return fmt.Errorf("ir: %s.%s: invalid successor block in %T", fn.Name, blk.Label, ins)
 					}
+					if preds[succ] == nil {
+						preds[succ] = make(map[*Block]bool)
+					}
+					preds[succ][blk] = true
 				}
 			}
+		}
+	}
+
+	// Pass 2: validate operand ownership/typing, Phi predecessors, and
+	// instruction-specific invariants.
+	for _, blk := range fn.Blocks {
+		for _, ins := range blk.Instrs {
 			for _, op := range ins.Operands() {
 				if op == nil {
 					return fmt.Errorf("ir: %s.%s: nil operand in %T", fn.Name, blk.Label, ins)
@@ -87,8 +133,11 @@ func VerifyFunc(fn *Func) error {
 				if op.Type() == nil {
 					return fmt.Errorf("ir: %s.%s: untyped operand %q in %T", fn.Name, blk.Label, op.Name(), ins)
 				}
+				if err := verifyValueOwner(fn, blk, op, paramSet, instrOwner); err != nil {
+					return err
+				}
 			}
-			if err := verifyInstr(fn, blk, ins); err != nil {
+			if err := verifyInstr(fn, blk, ins, blkSet, preds[blk]); err != nil {
 				return err
 			}
 		}
@@ -96,8 +145,48 @@ func VerifyFunc(fn *Func) error {
 	return nil
 }
 
-func verifyInstr(fn *Func, blk *Block, ins Instr) error {
+func verifyValueOwner(fn *Func, blk *Block, op Value, paramSet map[*Param]bool, instrOwner map[Value]*Block) error {
+	switch v := op.(type) {
+	case *Param:
+		if !paramSet[v] {
+			return fmt.Errorf("ir: %s.%s: operand param %s does not belong to function %s", fn.Name, blk.Label, v.Name(), fn.Name)
+		}
+	case *Const:
+		// Compile-time constants are value literals with no owning function.
+	case *GlobalRef:
+		if v.Global == nil {
+			return fmt.Errorf("ir: %s.%s: global reference with nil Global", fn.Name, blk.Label)
+		}
+	default:
+		if _, ok := instrOwner[op]; !ok {
+			return fmt.Errorf("ir: %s.%s: operand %s does not belong to function %s", fn.Name, blk.Label, op.Name(), fn.Name)
+		}
+	}
+	return nil
+}
+
+func verifyInstr(fn *Func, blk *Block, ins Instr, blkSet map[*Block]bool, blkPreds map[*Block]bool) error {
 	switch ins := ins.(type) {
+	case *Phi:
+		if len(ins.Edges) == 0 {
+			return fmt.Errorf("ir: %s.%s: phi has no incoming edges", fn.Name, blk.Label)
+		}
+		if len(ins.Edges) != len(blkPreds) {
+			return fmt.Errorf("ir: %s.%s: phi has %d incoming edges, want %d CFG predecessors", fn.Name, blk.Label, len(ins.Edges), len(blkPreds))
+		}
+		seenPred := make(map[*Block]bool, len(ins.Edges))
+		for _, edge := range ins.Edges {
+			if edge.Pred == nil || !blkSet[edge.Pred] {
+				return fmt.Errorf("ir: %s.%s: phi incoming block does not belong to function %s", fn.Name, blk.Label, fn.Name)
+			}
+			if !blkPreds[edge.Pred] {
+				return fmt.Errorf("ir: %s.%s: phi incoming block %s is not a CFG predecessor", fn.Name, blk.Label, edge.Pred.Label)
+			}
+			if seenPred[edge.Pred] {
+				return fmt.Errorf("ir: %s.%s: duplicate phi predecessor %s", fn.Name, blk.Label, edge.Pred.Label)
+			}
+			seenPred[edge.Pred] = true
+		}
 	case *Alloc:
 		if ins.Elem == nil {
 			return fmt.Errorf("ir: %s.%s: alloc with nil element type", fn.Name, blk.Label)

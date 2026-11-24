@@ -165,7 +165,9 @@ func NewLoader(targetsDir string) *Loader {
 
 func validateTargetName(name string) error {
 	if name == "" || name == "." || name == ".." ||
-		strings.ContainsAny(name, `/\`) || filepath.IsAbs(name) {
+		filepath.IsAbs(name) ||
+		strings.ContainsAny(name, `/\`) ||
+		strings.Contains(name, "..") {
 		return fmt.Errorf("invalid target name %q", name)
 	}
 	return nil

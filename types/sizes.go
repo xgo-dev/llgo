@@ -118,19 +118,27 @@ func (s *Sizes) layout(t Type, host bool) (size, align int64) {
 		stSize, stAlign, _ := s.structLayout(u)
 		return stSize, stAlign
 	case *Tuple:
-		var off int64
-		maxA := int64(1)
-		for _, e := range u.Elems {
-			es, ea := s.layout(e.Type, false)
-			if ea > maxA {
-				maxA = ea
-			}
-			off = alignUp(off, ea) + es
-		}
-		return alignUp(off, maxA), maxA
+		tuSize, tuAlign, _ := s.tupleLayout(u)
+		return tuSize, tuAlign
 	default:
 		return 0, 1
 	}
+}
+
+func (s *Sizes) tupleLayout(tu *Tuple) (size, align int64, offsets []int64) {
+	offsets = make([]int64, len(tu.Elems))
+	var off int64
+	maxA := int64(1)
+	for i, e := range tu.Elems {
+		es, ea := s.layout(e.Type, false)
+		if ea > maxA {
+			maxA = ea
+		}
+		off = alignUp(off, ea)
+		offsets[i] = off
+		off += es
+	}
+	return alignUp(off, maxA), maxA, offsets
 }
 
 func (s *Sizes) structLayout(st *Struct) (size, align int64, offsets []int64) {
@@ -234,6 +242,14 @@ func (s *Sizes) PtrDataSize(t Type) int64 {
 			}
 		}
 		return 0
+	case *Tuple:
+		_, _, offs := s.tupleLayout(u)
+		for i := len(u.Elems) - 1; i >= 0; i-- {
+			if ep := s.PtrDataSize(u.Elems[i].Type); ep > 0 {
+				return offs[i] + ep
+			}
+		}
+		return 0
 	default:
 		return 0
 	}
@@ -293,6 +309,11 @@ func (s *Sizes) appendPtrOffsets(t Type, base int64, out *[]int64) {
 		_, _, offs := s.structLayout(u)
 		for i, f := range u.Fields {
 			s.appendPtrOffsets(f.Type, base+offs[i], out)
+		}
+	case *Tuple:
+		_, _, offs := s.tupleLayout(u)
+		for i, e := range u.Elems {
+			s.appendPtrOffsets(e.Type, base+offs[i], out)
 		}
 	}
 }

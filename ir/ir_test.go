@@ -141,4 +141,114 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			t.Fatalf("got %v, want missing terminator error", err)
 		}
 	})
+
+	t.Run("valid diamond phi passes", func(t *testing.T) {
+		boolT := &lltypes.Basic{Kind: gotypes.Bool}
+		sig := &lltypes.Func{
+			CallConv: lltypes.GoDecl,
+			Params:   []*lltypes.Var{{Name: "cond", Type: boolT}, {Name: "a", Type: i64}, {Name: "b", Type: i64}},
+			Results:  []*lltypes.Var{{Type: i64}},
+		}
+		pkg := NewPackage("p", "p", spec)
+		fn := pkg.NewFunc("p.select", sig)
+		entry := fn.NewBlock("entry")
+		thenBlk := fn.NewBlock("then")
+		elseBlk := fn.NewBlock("else")
+		merge := fn.NewBlock("merge")
+
+		NewBuilder(entry).Branch(fn.Params[0], thenBlk, elseBlk)
+		NewBuilder(thenBlk).Jump(merge)
+		NewBuilder(elseBlk).Jump(merge)
+		mb := NewBuilder(merge)
+		phi := mb.Phi(i64, PhiEdge{Pred: thenBlk, Val: fn.Params[1]}, PhiEdge{Pred: elseBlk, Val: fn.Params[2]})
+		mb.Return(phi)
+		if err := VerifyPackage(pkg); err != nil {
+			t.Fatalf("valid phi rejected: %v", err)
+		}
+	})
+
+	t.Run("phi referencing foreign function block and param rejected", func(t *testing.T) {
+		sig := &lltypes.Func{
+			CallConv: lltypes.GoDecl,
+			Params:   []*lltypes.Var{{Name: "x", Type: i64}},
+			Results:  []*lltypes.Var{{Type: i64}},
+		}
+		pkg := NewPackage("p", "p", spec)
+		other := pkg.NewFunc("p.other", sig)
+		otherEntry := other.NewBlock("entry")
+		NewBuilder(otherEntry).Return(other.Params[0])
+
+		fn := pkg.NewFunc("p.bad", sig)
+		entry := fn.NewBlock("entry")
+		merge := fn.NewBlock("merge")
+		NewBuilder(entry).Jump(merge)
+		mb := NewBuilder(merge)
+		// Foreign block + foreign param.
+		phi := mb.Phi(i64, PhiEdge{Pred: otherEntry, Val: other.Params[0]})
+		mb.Return(phi)
+		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
+			t.Fatalf("got %v, want cross-function ownership error", err)
+		}
+
+		// Valid local predecessor block, but foreign param value.
+		pkg2 := NewPackage("p", "p", spec)
+		other2 := pkg2.NewFunc("p.other", sig)
+		NewBuilder(other2.NewBlock("entry")).Return(other2.Params[0])
+		fn2 := pkg2.NewFunc("p.badparam", sig)
+		e2 := fn2.NewBlock("entry")
+		m2 := fn2.NewBlock("merge")
+		NewBuilder(e2).Jump(m2)
+		mb2 := NewBuilder(m2)
+		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: other2.Params[0]}))
+		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
+			t.Fatalf("got %v, want foreign param error", err)
+		}
+
+		// Valid local param, but foreign predecessor block.
+		pkg3 := NewPackage("p", "p", spec)
+		other3 := pkg3.NewFunc("p.other", sig)
+		oe3 := other3.NewBlock("entry")
+		NewBuilder(oe3).Return(other3.Params[0])
+		fn3 := pkg3.NewFunc("p.badpred", sig)
+		e3 := fn3.NewBlock("entry")
+		m3 := fn3.NewBlock("merge")
+		NewBuilder(e3).Jump(m3)
+		mb3 := NewBuilder(m3)
+		mb3.Return(mb3.Phi(i64, PhiEdge{Pred: oe3, Val: fn3.Params[0]}))
+		if err := VerifyPackage(pkg3); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
+			t.Fatalf("got %v, want foreign block error", err)
+		}
+	})
+
+	t.Run("phi non-predecessor and placement rejected", func(t *testing.T) {
+		sig := &lltypes.Func{
+			CallConv: lltypes.GoDecl,
+			Params:   []*lltypes.Var{{Name: "x", Type: i64}},
+			Results:  []*lltypes.Var{{Type: i64}},
+		}
+		pkg := NewPackage("p", "p", spec)
+		fn := pkg.NewFunc("p.badcfg", sig)
+		entry := fn.NewBlock("entry")
+		dead := fn.NewBlock("dead")
+		merge := fn.NewBlock("merge")
+		NewBuilder(entry).Jump(merge)
+		NewBuilder(dead).Return(fn.Params[0])
+		mb := NewBuilder(merge)
+		mb.Return(mb.Phi(i64, PhiEdge{Pred: dead, Val: fn.Params[0]}))
+		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "not a CFG predecessor") {
+			t.Fatalf("got %v, want non-predecessor error", err)
+		}
+
+		pkg2 := NewPackage("p", "p", spec)
+		fn2 := pkg2.NewFunc("p.latephi", sig)
+		e2 := fn2.NewBlock("entry")
+		m2 := fn2.NewBlock("merge")
+		NewBuilder(e2).Jump(m2)
+		mb2 := NewBuilder(m2)
+		_ = mb2.BinOp(token.ADD, i64, fn2.Params[0], mb2.Const(i64, "1"))
+		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: fn2.Params[0]}))
+		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "phi instruction after non-phi") {
+			t.Fatalf("got %v, want late-phi error", err)
+		}
+	})
 }

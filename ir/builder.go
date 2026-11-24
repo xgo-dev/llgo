@@ -121,6 +121,12 @@ func (b *Builder) Const(typ lltypes.Type, lit string) *Const {
 	return &Const{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Literal: lit}
 }
 
+func (b *Builder) Phi(typ lltypes.Type, edges ...PhiEdge) *Phi {
+	ins := &Phi{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Edges: edges}
+	b.emit(ins)
+	return ins
+}
+
 func (b *Builder) BinOp(op token.Token, typ lltypes.Type, x, y Value) *BinOp {
 	ins := &BinOp{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Op: op, X: x, Y: y}
 	b.emit(ins)
