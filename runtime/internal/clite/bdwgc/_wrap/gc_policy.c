@@ -197,6 +197,9 @@ void llgo_gc_init_policy(void)
 #if defined(__APPLE__)
 extern int GC_is_incremental_mode(void);
 static atomic_size_t llgo_gc_page_size;
+#if defined(MADV_ZERO)
+static atomic_int llgo_gc_madv_zero_unsupported;
+#endif
 
 static size_t llgo_gc_get_page_size(void)
 {
@@ -211,8 +214,16 @@ static size_t llgo_gc_get_page_size(void)
     return ps;
 }
 
+/* Minimum interior span for the MAP_FIXED fallback on older Darwin kernels
+ * without MADV_ZERO: replacing an interior range splits VM map entries and
+ * drops VM tags, so restrict it to larger blocks where avoiding eager page
+ * faults outweighs map-entry churn. */
+#define LLGO_GC_DARWIN_MMAP_FALLBACK_MIN_SPAN (256u << 10)
+
 static int llgo_gc_zero_pages_darwin_fallback(uintptr_t start, size_t span, size_t ps)
 {
+    if (span < LLGO_GC_DARWIN_MMAP_FALLBACK_MIN_SPAN)
+        return 0;
     /* Probe a single interior page rather than scanning the full span: on
      * Darwin arm64 a full-span mincore call costs more than mmap itself.
      * If the middle page is already resident (a hot reused block), fall back
@@ -233,9 +244,14 @@ static int llgo_gc_zero_pages_darwin(uintptr_t start, size_t span, size_t ps)
 #if defined(MADV_ZERO)
     /* Prefer Darwin's MADV_ZERO when supported: it zeroes resident/modified
      * pages in place without faulting untouched pages and without splitting
-     * VM map entries. Fall back when an older kernel rejects MADV_ZERO. */
-    if (madvise((void *)start, span, MADV_ZERO) == 0)
-        return 1;
+     * VM map entries. Remember EINVAL so older kernels without MADV_ZERO do
+     * not pay a failing syscall on every allocation. */
+    if (!atomic_load_explicit(&llgo_gc_madv_zero_unsupported, memory_order_relaxed)) {
+        if (madvise((void *)start, span, MADV_ZERO) == 0)
+            return 1;
+        if (errno == EINVAL)
+            atomic_store_explicit(&llgo_gc_madv_zero_unsupported, 1, memory_order_relaxed);
+    }
 #endif
     return llgo_gc_zero_pages_darwin_fallback(start, span, ps);
 }

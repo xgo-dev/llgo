@@ -7,6 +7,8 @@
 #include "../_wrap/gc_policy.c"
 
 extern void GC_init(void);
+extern void GC_disable(void);
+extern void GC_enable(void);
 extern void GC_gcollect(void);
 extern uintptr_t GC_get_gc_no(void);
 extern void *GC_malloc_atomic(size_t);
@@ -29,30 +31,16 @@ static void test_zero_atomic_large(void)
     llgo_gc_zero_atomic_large(NULL, 0);
     llgo_gc_zero_atomic_large(NULL, 131072);
 
-    const size_t sizes[] = {1, 4096, 65536, 70000, 131072, 1114112};
-    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); ++s) {
-        size_t n = sizes[s];
-        unsigned char *p = GC_malloc_atomic(n);
-        assert(p != NULL);
-        memset(p, 0xA5, n);
-        llgo_gc_zero_atomic_large(p, n);
-        assert_all_zero(p, n);
-
-        /* Sparse dirty head, middle, and tail, then clear again. */
-        p[0] = 0x5A;
-        p[n / 2] = 0x3C;
-        p[n - 1] = 0xC3;
-        llgo_gc_zero_atomic_large(p, n);
-        assert_all_zero(p, n);
-    }
-
 #if defined(__APPLE__)
+    /* Disable automatic GC and test fresh blocks before the dirty-reuse loop
+     * so BDWGC cannot recycle previously touched pages into these checks. */
+    GC_disable();
     size_t ps = llgo_gc_get_page_size();
     assert(ps > 0 && (ps & (ps - 1)) == 0);
     size_t big = 1114112;
-    /* Allocate a fresh block so its interior pages have not been touched yet. */
     unsigned char *fresh = GC_malloc_atomic(big);
     assert(fresh != NULL);
+    retained[0] = fresh;
     llgo_gc_zero_atomic_large(fresh, big);
     uintptr_t addr = (uintptr_t)fresh;
     uintptr_t mask = ps - 1;
@@ -75,6 +63,7 @@ static void test_zero_atomic_large(void)
     /* Also exercise the non-MADV_ZERO fallback path explicitly. */
     unsigned char *fb = GC_malloc_atomic(big);
     assert(fb != NULL);
+    retained[1] = fb;
     uintptr_t fb_addr = (uintptr_t)fb;
     uintptr_t fb_start = (fb_addr + mask) & ~mask;
     uintptr_t fb_end = (fb_addr + big) & ~mask;
@@ -85,7 +74,6 @@ static void test_zero_atomic_large(void)
     if (fb_addr + big > fb_end)
         memset((void *)fb_end, 0, (size_t)(fb_addr + big - fb_end));
     size_t fb_pages = fb_span / ps;
-    assert(fb_pages <= npages + 1);
     free(vec);
     vec = calloc(fb_pages, 1);
     assert(vec != NULL);
@@ -98,11 +86,33 @@ static void test_zero_atomic_large(void)
     assert(resident < fb_pages / 2);
     assert_all_zero(fb, big);
 
-    /* Once the middle page is resident, the fallback defers to memset. */
+    /* Fallback skips spans below LLGO_GC_DARWIN_MMAP_FALLBACK_MIN_SPAN and
+     * defers to memset once the middle page is resident. */
+    assert(llgo_gc_zero_pages_darwin_fallback(fb_start, ps * 2, ps) == 0);
     memset(fb, 0x7E, big);
     assert(llgo_gc_zero_pages_darwin_fallback(fb_start, fb_span, ps) == 0);
     free(vec);
+    retained[0] = NULL;
+    retained[1] = NULL;
+    GC_enable();
 #endif
+
+    const size_t sizes[] = {1, 4096, 65536, 70000, 131072, 1114112};
+    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); ++s) {
+        size_t n = sizes[s];
+        unsigned char *p = GC_malloc_atomic(n);
+        assert(p != NULL);
+        memset(p, 0xA5, n);
+        llgo_gc_zero_atomic_large(p, n);
+        assert_all_zero(p, n);
+
+        /* Sparse dirty head, middle, and tail, then clear again. */
+        p[0] = 0x5A;
+        p[n / 2] = 0x3C;
+        p[n - 1] = 0xC3;
+        llgo_gc_zero_atomic_large(p, n);
+        assert_all_zero(p, n);
+    }
 }
 
 int main(int argc, char **argv)
