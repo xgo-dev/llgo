@@ -35,3 +35,17 @@ uintptr_t llgo_windows_stdcall_go127_addr(void)
 {
     return (uintptr_t)llgo_windows_stdcall_go127;
 }
+
+/* The Go1.26 SDK block matches the six-word native syscall layout directly
+ * (fn, n, args, r1, r2, err) and enforces const MaxArgs = 42. */
+void llgo_windows_stdcall_go126(struct llgo_windows_syscall_info *info)
+{
+    if (info->n > 42)
+        __builtin_trap();
+    llgo_windows_syscall(info);
+}
+
+uintptr_t llgo_windows_stdcall_go126_addr(void)
+{
+    return (uintptr_t)llgo_windows_stdcall_go126;
+}

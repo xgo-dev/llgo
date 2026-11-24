@@ -1,4 +1,4 @@
-//go:build 386 && go1.27
+//go:build 386 && go1.26
 
 package atomic
 

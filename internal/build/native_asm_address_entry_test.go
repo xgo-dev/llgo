@@ -33,7 +33,7 @@ func nativeAddressFixtureFiles(t *testing.T) map[string]string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[name] = string(contents)
+		files[name] = strings.ReplaceAll(string(contents), "\r\n", "\n")
 	}
 	return files
 }
@@ -210,6 +210,9 @@ func TestPlan9AsmAddressOnlyNativeEntryRejectsUnprovedSources(t *testing.T) {
 		{"unowned sibling", base["main.go"], base["entry.s"] + "\nTEXT unknownEntry(SB), NOSPLIT|NOFRAME, $0-0\nRET\n"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
+			if row.name != "unselected cross-file relocation" && row.goSource == base["main.go"] && row.assembly == base["entry.s"] {
+				t.Fatalf("negative mutation %q produced an unchanged fixture", row.name)
+			}
 			files := map[string]string{"go.mod": base["go.mod"], "main.go": row.goSource, "entry.s": row.assembly}
 			if row.name == "pointer is not uintptr" {
 				files["main.go"] = strings.Replace(files["main.go"], "entry == 0", "entry == nil", 1)

@@ -111,10 +111,18 @@ func bindAMD64Frame(pkg *packages.Package, source []byte, filename, goos, goarch
 			return nil, nil, err
 		}
 	}
+	for _, key := range []string{"GOPATH", "GOMODCACHE", "GOCACHE"} {
+		if resolved, err := physicalFramePath(paths[key]); err == nil {
+			paths[key] = resolved
+		}
+	}
 	temporary, err := os.MkdirTemp("", "llgo-amd64-frame-")
 	if err != nil {
 		cancel()
 		return nil, nil, err
+	}
+	if resolved, err := physicalFramePath(temporary); err == nil {
+		temporary = resolved
 	}
 	paths["TMPDIR"], paths["GOTMPDIR"] = temporary, temporary
 	env = frameEnvironment(env, paths)

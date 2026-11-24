@@ -95,4 +95,23 @@ func TestStdlibAsmSourcePatchesApplyToGo127SDK(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("internal/runtime/atomic/windows/386/go1.26", func(t *testing.T) {
+		ctx := sourcePatchBuildContext{goos: "windows", goarch: "386", goversion: "go1.26.7"}
+		changed, overlay, _, err := applySourcePatchForPkg(nil, nil, runtimeDir, goroot, "internal/runtime/atomic", ctx)
+		if err != nil || !changed {
+			t.Fatalf("Go 1.26 386 atomic patch failed: changed=%v err=%v", changed, err)
+		}
+		got := string(overlay[filepath.Join(goroot, "src", "internal", "runtime", "atomic", "atomic_386.s")])
+		if got != "// replaced by LLGo source patch\n" {
+			t.Fatalf("atomic_386.s not replaced on go1.26.7: got %q", got)
+		}
+	})
+
+	t.Run("internal/runtime/syscall/windows/go1.26_rejects_go1.27_sources", func(t *testing.T) {
+		ctx := sourcePatchBuildContext{goos: "windows", goarch: "amd64", goversion: "go1.26.7"}
+		if _, _, _, err := applySourcePatchForPkg(nil, nil, runtimeDir, goroot, "internal/runtime/syscall/windows", ctx); err == nil {
+			t.Fatal("Go 1.26 Windows syscall patch unexpectedly accepted Go 1.27 SDK sources")
+		}
+	})
 }

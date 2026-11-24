@@ -299,11 +299,15 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 			if skipAll || len(patchSrcs) != 1 {
 				return false, nil, nil, fmt.Errorf("Windows syscall owner must retain the other SDK sources")
 			}
-			patch, ok := patchSrcs["syscall_windows_go127.go"]
-			if !ok {
-				return false, nil, nil, fmt.Errorf("missing complete Go1.27 Windows syscall owner")
+			var patchName string
+			var patchData []byte
+			for name, src := range patchSrcs {
+				patchName, patchData = name, src.data
 			}
-			view, err := windowsStdCallSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patch.data, skips)
+			if _, ok := windowsStdCallReviewedSourcesByPatch[patchName]; !ok {
+				return false, nil, nil, fmt.Errorf("missing complete Windows syscall owner for %s", patchName)
+			}
+			view, err := windowsStdCallSourcePatchView(srcDir, srcEntries, buildCtx, readOverlay, base, patchName, patchData, skips)
 			if err != nil {
 				return false, nil, nil, fmt.Errorf("Windows syscall complete source owner: %w", err)
 			}
