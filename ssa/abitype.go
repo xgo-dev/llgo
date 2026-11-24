@@ -863,7 +863,9 @@ func (b Builder) abiType(t types.Type) Expr {
 		b.Pkg.setODRLinkage(g.impl, llvm.WeakODRLinkage)
 		if prog.enableGoGlobalDCE {
 			meta := prog.addMethodTypeMetadata(g.impl, prog.Type(typ, GoDecl), methods)
-			b.Pkg.recordMethodTypeMetadata(g.impl.Name(), meta)
+			if prog.enableDeadcodeDrop {
+				b.Pkg.recordMethodTypeMetadata(g.impl.Name(), meta)
+			}
 		}
 		prog.abiSymbol[name] = &AbiSymbol{Name: name, PkgPath: pkg.Path(), Raw: t, Typ: g.Type, MSet: mset}
 	}

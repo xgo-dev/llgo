@@ -2940,29 +2940,28 @@ func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, t
 		rejectInterfaceType = analysis.CanRejectInterfaceType
 	}
 	mods := dceSourceModules(pkgs)
-	typeMeta := dceMethodTypeMetadata(pkgs)
+	var lookupMeta dcepass.TypeMetadataLookup
+	if entryPkg != nil && entryPkg.LPkg != nil && entryPkg.LPkg.Prog.GoGlobalDCEEnabled() {
+		lookupMeta = dceMethodTypeMetadataLookup(pkgs)
+	}
 	dcepass.EmitInterfaceUseOverrides(entryPkg.LPkg.Module(), mods, rejectInterfaceType)
-	dcepass.EmitStrongTypeOverridesWithMetadata(entryPkg.LPkg.Module(), mods, analysis.LiveSlots, typeMeta, dropMetadata, verbose)
+	if err := dcepass.EmitStrongTypeOverridesWithMetadata(entryPkg.LPkg.Module(), mods, analysis.LiveSlots, lookupMeta, dropMetadata, verbose); err != nil {
+		return err
+	}
 	if trimMethods {
 		dcepass.EmitRegularTypeFieldOverrides(entryPkg.LPkg.Module(), mods, analysis.CanDropTypeFields)
 	}
 	return nil
 }
 
-func dceMethodTypeMetadata(pkgs []Package) map[string]dcepass.GlobalTypeMetadata {
-	var out map[string]dcepass.GlobalTypeMetadata
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.LPkg == nil {
-			continue
-		}
-		for name, m := range pkg.LPkg.MethodTypeMetadata() {
-			if len(m.Entries) == 0 {
+func dceMethodTypeMetadataLookup(pkgs []Package) dcepass.TypeMetadataLookup {
+	return func(name string) (dcepass.GlobalTypeMetadata, bool) {
+		for _, pkg := range pkgs {
+			if pkg == nil || pkg.LPkg == nil {
 				continue
 			}
-			if out == nil {
-				out = make(map[string]dcepass.GlobalTypeMetadata)
-			}
-			if _, exists := out[name]; exists {
+			m, ok := pkg.LPkg.MethodTypeMetadata()[name]
+			if !ok || len(m.Entries) == 0 {
 				continue
 			}
 			entries := make([]dcepass.TypeMetadataEntry, len(m.Entries))
@@ -2972,13 +2971,13 @@ func dceMethodTypeMetadata(pkgs []Package) map[string]dcepass.GlobalTypeMetadata
 					TypeID: entry.TypeID,
 				}
 			}
-			out[name] = dcepass.GlobalTypeMetadata{
+			return dcepass.GlobalTypeMetadata{
 				VCallVisibility: m.VCallVisibility,
 				Entries:         entries,
-			}
+			}, true
 		}
+		return dcepass.GlobalTypeMetadata{}, false
 	}
-	return out
 }
 
 func dceSourceModules(pkgs []Package) []gllvm.Module {

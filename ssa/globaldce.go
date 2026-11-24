@@ -372,10 +372,15 @@ func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods
 	ifnOffset := p.OffsetOf(methodType, abiMethodIFnFieldIndex)
 	tfnOffset := p.OffsetOf(methodType, abiMethodTFnFieldIndex)
 	methodStride := p.SizeOf(methodType)
-	entries := make([]MethodTypeMetadataEntry, 0, len(methods)*5)
+	var entries []MethodTypeMetadataEntry
+	if p.enableDeadcodeDrop {
+		entries = make([]MethodTypeMetadataEntry, 0, len(methods)*5)
+	}
 	addEntry := func(offset uint64, typeID string) {
 		p.addTypeMetadata(global, offset, typeID)
-		entries = append(entries, MethodTypeMetadataEntry{Offset: offset, TypeID: typeID})
+		if p.enableDeadcodeDrop {
+			entries = append(entries, MethodTypeMetadataEntry{Offset: offset, TypeID: typeID})
+		}
 	}
 	for i, sel := range methods {
 		baseOffset := methodArrayOffset + uint64(i)*methodStride
@@ -387,6 +392,9 @@ func (p Program) addMethodTypeMetadata(global llvm.Value, fullType Type, methods
 			addEntry(baseOffset+tfnOffset, reflectTypeMethodTypeID)
 			addEntry(baseOffset+tfnOffset, reflectTypeMethodNameTypeID(name))
 		}
+	}
+	if !p.enableDeadcodeDrop {
+		return MethodTypeMeta{}
 	}
 	return MethodTypeMeta{
 		VCallVisibility: vcallVisibilityLinkageUnit,

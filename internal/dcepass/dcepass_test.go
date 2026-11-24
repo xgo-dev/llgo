@@ -678,6 +678,17 @@ func TestEmitStrongTypeOverridesPreservesVFEMetadata(t *testing.T) {
 				{Offset: 128, TypeID: "go.method.value.reflect.Run"},
 			},
 		},
+		ptrTaskTypeName: {
+			VCallVisibility: 1,
+			Entries: []TypeMetadataEntry{
+				{Offset: 88, TypeID: "go.method.Drop:func()"},
+				{Offset: 128, TypeID: "go.method.Run:func()"},
+			},
+		},
+	}
+	lookup := func(name string) (GlobalTypeMetadata, bool) {
+		m, ok := typeMeta[name]
+		return m, ok
 	}
 
 	t.Run("non-compacted preserves VFE metadata", func(t *testing.T) {
@@ -687,7 +698,9 @@ func TestEmitStrongTypeOverridesPreservesVFEMetadata(t *testing.T) {
 			taskTypeName:    {1},
 			ptrTaskTypeName: {1},
 		}
-		EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{src}, live, typeMeta, nil, false)
+		if err := EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{src}, live, lookup, nil, false); err != nil {
+			t.Fatalf("EmitStrongTypeOverridesWithMetadata failed: %v", err)
+		}
 		if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
 			t.Fatalf("verify failed: %v\n%s", err, dst.String())
 		}
@@ -713,6 +726,22 @@ func TestEmitStrongTypeOverridesPreservesVFEMetadata(t *testing.T) {
 		rt.Dispose()
 	})
 
+	t.Run("missing VFE metadata fails loudly", func(t *testing.T) {
+		dst := dstCtx.NewModule("dst-missing-vfe")
+		defer dst.Dispose()
+		live := map[string][]int{
+			taskTypeName:    {1},
+			ptrTaskTypeName: {1},
+		}
+		emptyLookup := func(string) (GlobalTypeMetadata, bool) {
+			return GlobalTypeMetadata{}, false
+		}
+		err := EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{src}, live, emptyLookup, nil, false)
+		if err == nil || !strings.Contains(err.Error(), "missing VFE type metadata") {
+			t.Fatalf("got err = %v, want missing VFE type metadata error", err)
+		}
+	})
+
 	t.Run("compacted zero-method override omits VFE metadata", func(t *testing.T) {
 		text := `
 %"github.com/xgo-dev/llgo/runtime/abi.UncommonType" = type { { ptr, i64 }, i16, i16, i32 }
@@ -732,7 +761,9 @@ declare void @drop()
 		defer compactSrc.Dispose()
 		dst := dstCtx.NewModule("dst-compact")
 		defer dst.Dispose()
-		EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{compactSrc}, nil, typeMeta, func(string) bool { return true }, false)
+		if err := EmitStrongTypeOverridesWithMetadata(dst, []llvm.Module{compactSrc}, nil, lookup, func(string) bool { return true }, false); err != nil {
+			t.Fatalf("EmitStrongTypeOverridesWithMetadata failed: %v", err)
+		}
 		if err := llvm.VerifyModule(dst, llvm.ReturnStatusAction); err != nil {
 			t.Fatalf("verify failed: %v\n%s", err, dst.String())
 		}

@@ -131,6 +131,10 @@ type GlobalTypeMetadata struct {
 	Entries         []TypeMetadataEntry
 }
 
+// TypeMetadataLookup resolves recorded VFE metadata for an ABI type global
+// symbol on demand without pre-copying every package's metadata table.
+type TypeMetadataLookup func(name string) (GlobalTypeMetadata, bool)
+
 // EmitStrongTypeOverrides emits method-pruned strong ABI type symbols into dst.
 // srcMods contains the original package modules. For each constant ABI type
 // global with a method array, it creates a same-name strong global in dst and
@@ -138,17 +142,22 @@ type GlobalTypeMetadata struct {
 // dropMetadata can remove method storage for types proven invisible to
 // interfaces and reflection; nil preserves them. verbose logs removed slots.
 func EmitStrongTypeOverrides(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, dropMetadata func(string) bool, verbose bool) {
-	EmitStrongTypeOverridesWithMetadata(dst, srcMods, liveSlots, nil, dropMetadata, verbose)
+	_ = EmitStrongTypeOverridesWithMetadata(dst, srcMods, liveSlots, nil, dropMetadata, verbose)
 }
 
 // EmitStrongTypeOverridesWithMetadata behaves like EmitStrongTypeOverrides and
 // additionally preserves LLVM VFE metadata (!vcall_visibility and !type) from
-// typeMeta on non-compacted strong overrides so Go-side deadcode drop composes
-// cleanly with LLVM Full-LTO GlobalDCE and LTO plugins.
-func EmitStrongTypeOverridesWithMetadata(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, typeMeta map[string]GlobalTypeMetadata, dropMetadata func(string) bool, verbose bool) {
+// lookupMeta on non-compacted strong overrides so Go-side deadcode drop
+// composes cleanly with LLVM Full-LTO GlobalDCE and LTO plugins.
+//
+// When lookupMeta is non-nil (Go GlobalDCE is enabled), every non-compacted,
+// non-in-place override carrying a non-empty method array must resolve VFE
+// metadata; missing metadata returns an error rather than emitting an
+// unannotated strong override that could miscompile under VFE.
+func EmitStrongTypeOverridesWithMetadata(dst llvm.Module, srcMods []llvm.Module, liveSlots map[string][]int, lookupMeta TypeMetadataLookup, dropMetadata func(string) bool, verbose bool) error {
 	emitted := make(map[string]bool)
 	emitter := newOverrideEmitter(dst)
-	emitter.typeMeta = typeMeta
+	emitter.lookupMeta = lookupMeta
 	type override struct {
 		src, dst, methods llvm.Value
 		elem              llvm.Type
@@ -197,7 +206,9 @@ func EmitStrongTypeOverridesWithMetadata(dst llvm.Module, srcMods []llvm.Module,
 	// Keep replaced globals alive until all initializers have been cloned: dst
 	// may also be a source module, and RAUW can invalidate source constants.
 	for _, o := range overrides {
-		emitter.emitTypeOverride(o.src, o.dst, o.methods, o.elem, o.keep, o.compact, verbose)
+		if err := emitter.emitTypeOverride(o.src, o.dst, o.methods, o.elem, o.keep, o.compact, verbose); err != nil {
+			return err
+		}
 	}
 	for _, pair := range replaced {
 		name := pair[0].Name()
@@ -205,13 +216,14 @@ func EmitStrongTypeOverridesWithMetadata(dst llvm.Module, srcMods []llvm.Module,
 		pair[0].EraseFromParentAsGlobal()
 		pair[1].SetName(name)
 	}
+	return nil
 }
 
 type overrideEmitter struct {
-	dst      llvm.Module
-	values   map[llvm.Value]llvm.Value
-	types    map[llvm.Type]llvm.Type
-	typeMeta map[string]GlobalTypeMetadata
+	dst        llvm.Module
+	values     map[llvm.Value]llvm.Value
+	types      map[llvm.Type]llvm.Type
+	lookupMeta TypeMetadataLookup
 }
 
 func newOverrideEmitter(dst llvm.Module) *overrideEmitter {
@@ -222,7 +234,7 @@ func newOverrideEmitter(dst llvm.Module) *overrideEmitter {
 	}
 }
 
-func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, compact, verbose bool) {
+func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Value, elemTy llvm.Type, keepIdx map[int]bool, compact, verbose bool) error {
 	init := srcType.Initializer()
 
 	fieldCount := init.OperandsCount()
@@ -248,7 +260,7 @@ func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Val
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[dce] drop unobserved method metadata %s\n", srcType.Name())
 		}
-		return
+		return nil
 	}
 
 	unreachableMethod := e.unreachableMethod()
@@ -279,20 +291,20 @@ func (e *overrideEmitter) emitTypeOverride(srcType, dstType, methodsVal llvm.Val
 	dstType.SetGlobalConstant(true)
 	dstType.SetLinkage(llvm.ExternalLinkage)
 	copyGlobalAttrs(dstType, srcType)
-	e.attachTypeMetadata(dstType, srcType)
+	return e.attachTypeMetadata(dstType, srcType, len(methods))
 }
 
 // attachTypeMetadata re-emits !vcall_visibility and !type metadata on dstType
 // in dst's LLVM Context so strong overrides stay visible to LLVM Full-LTO VFE
 // and LTO plugin passes. In-place overrides (dstType == srcType) already carry
 // their metadata and are left untouched.
-func (e *overrideEmitter) attachTypeMetadata(dstType, srcType llvm.Value) {
-	if len(e.typeMeta) == 0 || dstType.C == srcType.C {
-		return
+func (e *overrideEmitter) attachTypeMetadata(dstType, srcType llvm.Value, methodCount int) error {
+	if e.lookupMeta == nil || dstType.C == srcType.C || methodCount == 0 {
+		return nil
 	}
-	meta, ok := e.typeMeta[srcType.Name()]
+	meta, ok := e.lookupMeta(srcType.Name())
 	if !ok || len(meta.Entries) == 0 {
-		return
+		return fmt.Errorf("dcepass: missing VFE type metadata for strong override %s while Go GlobalDCE is enabled", srcType.Name())
 	}
 	ctx := e.dst.Context()
 	i64 := ctx.Int64Type()
@@ -307,6 +319,7 @@ func (e *overrideEmitter) attachTypeMetadata(dstType, srcType llvm.Value) {
 			ctx.MDString(entry.TypeID),
 		}))
 	}
+	return nil
 }
 
 func methodPointerName(v llvm.Value) string {

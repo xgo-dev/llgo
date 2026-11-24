@@ -1,3 +1,5 @@
+// Compatibility forwarders bridging internal/build callers and tests to the
+// pure-Go internal/build/sourcepatch package.
 package build
 
 import (

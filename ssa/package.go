@@ -448,6 +448,10 @@ func (p Program) EnableGoGlobalDCE(enable bool) {
 	p.enableGoGlobalDCE = enable
 }
 
+func (p Program) GoGlobalDCEEnabled() bool {
+	return p.enableGoGlobalDCE
+}
+
 func (p Program) EnableDeadcodeDrop(enable bool) {
 	p.enableDeadcodeDrop = enable
 }

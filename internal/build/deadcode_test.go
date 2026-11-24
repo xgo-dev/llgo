@@ -1,6 +1,9 @@
 package build
 
 import (
+	"debug/elf"
+	"debug/macho"
+	"debug/pe"
 	"go/types"
 	"os"
 	"os/exec"
@@ -389,18 +392,20 @@ type Task struct{ v int }
 func (t Task) Run() int         { return t.v + 1 }
 func (t Task) UnusedIface() int { return t.v + 2 }
 func (t Task) DeadDirect() int  { return t.v + 3 }
+func (t Task) deadPrivate() int { return t.v + 4 }
 
 type Refl struct{ v int }
 
-func (r Refl) LiveRefl() int { return r.v * 10 }
-func (r Refl) DeadRefl() int { return r.v * 20 }
+func (r Refl) LiveRefl() int        { return r.v * 10 }
+func (r Refl) DeadRefl() int        { return r.v * 20 }
+func (r Refl) NeverCalledRefl() int { return r.v * 30 }
 
 //go:noinline
 func pickName(flag bool) string {
 	if flag {
 		return "LiveRefl"
 	}
-	return "LiveRefl"
+	return "DeadRefl"
 }
 
 //go:noinline
@@ -458,6 +463,65 @@ func main() {
 			if got := strings.TrimSpace(string(out)); got != "42:30" {
 				t.Fatalf("output = %q, want %q", got, "42:30")
 			}
+			// Go-side deadcode drop must always prune unexported unused methods
+			// even when dynamic reflect.Value.MethodByName keeps exported ones.
+			if binaryContainsSymbol(t, outBin, "deadPrivate") {
+				t.Errorf("linked binary unexpectedly retained unexported dead method symbol %q", "deadPrivate")
+			}
+			// With the LTO plugin, preserved VFE metadata lets LLVM narrow the
+			// bounded reflect.MethodByName set to {"LiveRefl", "DeadRefl"} and
+			// additionally prune exported dead methods.
+			if tc.plugin != "" {
+				for _, dead := range []string{"DeadDirect", "UnusedIface", "NeverCalledRefl"} {
+					if binaryContainsSymbol(t, outBin, dead) {
+						t.Errorf("linked binary unexpectedly retained dead method symbol containing %q", dead)
+					}
+				}
+			}
 		})
 	}
+}
+
+func binaryContainsSymbol(t *testing.T, path, substr string) bool {
+	t.Helper()
+	if f, err := macho.Open(path); err == nil {
+		defer f.Close()
+		if f.Symtab != nil {
+			for _, sym := range f.Symtab.Syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if f, err := elf.Open(path); err == nil {
+		defer f.Close()
+		if syms, err := f.Symbols(); err == nil {
+			for _, sym := range syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		if syms, err := f.DynamicSymbols(); err == nil {
+			for _, sym := range syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if f, err := pe.Open(path); err == nil {
+		defer f.Close()
+		for _, sym := range f.Symbols {
+			if strings.Contains(sym.Name, substr) {
+				return true
+			}
+		}
+		return false
+	}
+	t.Fatalf("unsupported binary format for symbol inspection: %s", path)
+	return false
 }
