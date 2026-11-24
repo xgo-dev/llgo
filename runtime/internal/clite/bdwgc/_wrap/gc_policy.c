@@ -6,9 +6,14 @@
 #else
 #include <sched.h>
 #endif
+#if defined(__APPLE__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <stdatomic.h>
 
@@ -188,3 +193,90 @@ void llgo_gc_init_policy(void)
     llgo_gc_set_percent(percent);
     atomic_store(&llgo_gc_policy_initialized, 2);
 }
+
+#if defined(__APPLE__)
+extern int GC_is_incremental_mode(void);
+static atomic_size_t llgo_gc_page_size;
+
+static size_t llgo_gc_get_page_size(void)
+{
+    size_t ps = atomic_load_explicit(&llgo_gc_page_size, memory_order_relaxed);
+    if (ps != 0)
+        return ps;
+    long raw = sysconf(_SC_PAGESIZE);
+    ps = raw > 0 ? (size_t)raw : 0;
+    if (ps == 0 || (ps & (ps - 1)) != 0)
+        return 0;
+    atomic_store_explicit(&llgo_gc_page_size, ps, memory_order_relaxed);
+    return ps;
+}
+
+static int llgo_gc_zero_pages_darwin_fallback(uintptr_t start, size_t span, size_t ps)
+{
+    /* Probe a single interior page rather than scanning the full span: on
+     * Darwin arm64 a full-span mincore call costs more than mmap itself.
+     * If the middle page is already resident (a hot reused block), fall back
+     * to memset so dense reuse avoids tearing down and re-faulting PTEs.
+     * Otherwise replace whole interior pages with zero-fill-on-demand
+     * anonymous memory, which guarantees OS-enforced zeros even for
+     * compressed or paged-out dirty pages whose MINCORE_INCORE bit is 0. */
+    uintptr_t mid = start + ((span / 2) & ~(ps - 1));
+    char resident = 0;
+    if (mincore((const void *)mid, ps, &resident) == 0 && (resident & MINCORE_INCORE) != 0)
+        return 0;
+    return mmap((void *)start, span, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) != MAP_FAILED;
+}
+
+static int llgo_gc_zero_pages_darwin(uintptr_t start, size_t span, size_t ps)
+{
+#if defined(MADV_ZERO)
+    /* Prefer Darwin's MADV_ZERO when supported: it zeroes resident/modified
+     * pages in place without faulting untouched pages and without splitting
+     * VM map entries. Fall back when an older kernel rejects MADV_ZERO. */
+    if (madvise((void *)start, span, MADV_ZERO) == 0)
+        return 1;
+#endif
+    return llgo_gc_zero_pages_darwin_fallback(start, span, ps);
+}
+
+void llgo_gc_zero_atomic_large(void *p, size_t size)
+{
+    if (p == NULL || size == 0)
+        return;
+    size_t ps = llgo_gc_get_page_size();
+    if (ps == 0 || size < 4 * ps || GC_is_incremental_mode()) {
+        memset(p, 0, size);
+        return;
+    }
+    uintptr_t addr = (uintptr_t)p;
+    uintptr_t end_addr = addr + size;
+    if (end_addr < addr) {
+        memset(p, 0, size);
+        return;
+    }
+    uintptr_t mask = ps - 1;
+    uintptr_t start = (addr + mask) & ~mask;
+    uintptr_t end = end_addr & ~mask;
+    if (start < addr || end <= start || (end - start) < 2 * ps) {
+        memset(p, 0, size);
+        return;
+    }
+    size_t span = (size_t)(end - start);
+    if (!llgo_gc_zero_pages_darwin(start, span, ps)) {
+        memset(p, 0, size);
+        return;
+    }
+    if (start > addr)
+        memset(p, 0, (size_t)(start - addr));
+    if (end_addr > end)
+        memset((void *)end, 0, (size_t)(end_addr - end));
+}
+#else
+void llgo_gc_zero_atomic_large(void *p, size_t size)
+{
+    if (p == NULL || size == 0)
+        return;
+    memset(p, 0, size);
+}
+#endif

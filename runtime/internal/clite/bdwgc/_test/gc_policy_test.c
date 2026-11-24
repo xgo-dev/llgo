@@ -18,6 +18,93 @@ static void previous_event(int event) { if (event == 5) ++previous_callbacks; }
 static void *volatile sink;
 static void *volatile retained[2048];
 
+static void assert_all_zero(const unsigned char *p, size_t n)
+{
+    for (size_t i = 0; i < n; ++i)
+        assert(p[i] == 0);
+}
+
+static void test_zero_atomic_large(void)
+{
+    llgo_gc_zero_atomic_large(NULL, 0);
+    llgo_gc_zero_atomic_large(NULL, 131072);
+
+    const size_t sizes[] = {1, 4096, 65536, 70000, 131072, 1114112};
+    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); ++s) {
+        size_t n = sizes[s];
+        unsigned char *p = GC_malloc_atomic(n);
+        assert(p != NULL);
+        memset(p, 0xA5, n);
+        llgo_gc_zero_atomic_large(p, n);
+        assert_all_zero(p, n);
+
+        /* Sparse dirty head, middle, and tail, then clear again. */
+        p[0] = 0x5A;
+        p[n / 2] = 0x3C;
+        p[n - 1] = 0xC3;
+        llgo_gc_zero_atomic_large(p, n);
+        assert_all_zero(p, n);
+    }
+
+#if defined(__APPLE__)
+    size_t ps = llgo_gc_get_page_size();
+    assert(ps > 0 && (ps & (ps - 1)) == 0);
+    size_t big = 1114112;
+    /* Allocate a fresh block so its interior pages have not been touched yet. */
+    unsigned char *fresh = GC_malloc_atomic(big);
+    assert(fresh != NULL);
+    llgo_gc_zero_atomic_large(fresh, big);
+    uintptr_t addr = (uintptr_t)fresh;
+    uintptr_t mask = ps - 1;
+    uintptr_t start = (addr + mask) & ~mask;
+    uintptr_t end = (addr + big) & ~mask;
+    size_t npages = (size_t)((end - start) / ps);
+    assert(npages >= 64);
+    char *vec = calloc(npages, 1);
+    assert(vec != NULL);
+    assert(mincore((const void *)start, npages * ps, vec) == 0);
+    size_t resident = 0;
+    for (size_t i = 0; i < npages; ++i) {
+        if (vec[i] & MINCORE_INCORE)
+            ++resident;
+    }
+    /* Interior pages must remain unmaterialized rather than eagerly faulted. */
+    assert(resident < npages / 2);
+    assert_all_zero(fresh, big);
+
+    /* Also exercise the non-MADV_ZERO fallback path explicitly. */
+    unsigned char *fb = GC_malloc_atomic(big);
+    assert(fb != NULL);
+    uintptr_t fb_addr = (uintptr_t)fb;
+    uintptr_t fb_start = (fb_addr + mask) & ~mask;
+    uintptr_t fb_end = (fb_addr + big) & ~mask;
+    size_t fb_span = (size_t)(fb_end - fb_start);
+    assert(llgo_gc_zero_pages_darwin_fallback(fb_start, fb_span, ps) == 1);
+    if (fb_start > fb_addr)
+        memset(fb, 0, (size_t)(fb_start - fb_addr));
+    if (fb_addr + big > fb_end)
+        memset((void *)fb_end, 0, (size_t)(fb_addr + big - fb_end));
+    size_t fb_pages = fb_span / ps;
+    assert(fb_pages <= npages + 1);
+    free(vec);
+    vec = calloc(fb_pages, 1);
+    assert(vec != NULL);
+    assert(mincore((const void *)fb_start, fb_span, vec) == 0);
+    resident = 0;
+    for (size_t i = 0; i < fb_pages; ++i) {
+        if (vec[i] & MINCORE_INCORE)
+            ++resident;
+    }
+    assert(resident < fb_pages / 2);
+    assert_all_zero(fb, big);
+
+    /* Once the middle page is resident, the fallback defers to memset. */
+    memset(fb, 0x7E, big);
+    assert(llgo_gc_zero_pages_darwin_fallback(fb_start, fb_span, ps) == 0);
+    free(vec);
+#endif
+}
+
 int main(int argc, char **argv)
 {
     assert(llgo_gc_budget(0, 100) == 4u << 20);
@@ -29,6 +116,10 @@ int main(int argc, char **argv)
     assert(llgo_gc_budget(0, 0) == 1);
 
     GC_init();
+    if (argc == 2 && strcmp(argv[1], "lazy-zero") == 0) {
+        test_zero_atomic_large();
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "host-disabled") == 0) {
         GC_set_disable_automatic_collection(1);
         llgo_gc_init_policy();
