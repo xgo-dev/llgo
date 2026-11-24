@@ -186,10 +186,14 @@ func (c *Channel) Read(p []byte) (int, error) {
 }
 
 // Close frees the channel (i2s_del_channel). The channel must be disabled
-// first, or the driver returns an error.
+// first, or the driver reports an error. Idempotent, like the net
+// package's conn Close: the first call performs the delete and consumes
+// the channel (the handle is zeroed whether or not the driver reports an
+// error); any later call on the same Channel - and a Close on a nil or
+// zero-value Channel - reports ErrClosed (esperr.ErrClosed).
 func (c *Channel) Close() error {
 	if c == nil || c.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.ErrClosed
 	}
 	e := del(c.handle)
 	c.handle = 0

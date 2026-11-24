@@ -134,9 +134,14 @@ func (d *Device) WriteRead(write, read []byte) error {
 }
 
 // Close removes the device from its bus (i2c_master_bus_rm_device).
+// Idempotent, like the net package's conn Close: the first call performs
+// the rm and consumes the device (the handle is zeroed whether or not the
+// driver reports an error); any later call on the same Device - and a
+// Close on a nil or zero-value Device - reports ErrClosed
+// (esperr.ErrClosed).
 func (d *Device) Close() error {
 	if d == nil || d.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.ErrClosed
 	}
 	e := rmDevice(d.handle)
 	d.handle = 0
@@ -144,10 +149,16 @@ func (d *Device) Close() error {
 }
 
 // Close deletes the bus (i2c_del_master_bus). All its devices must have
-// been Closed first, or the driver returns an error.
+// been Closed first, or the driver reports an error. Idempotent, like the
+// net package's conn Close, with the zeroed handle as the per-Bus closed
+// mark: the first call consumes the handle (whether or not the driver
+// reports an error), and any later call on the same Bus - and a Close on
+// a nil or zero-value Bus - reports ErrClosed (esperr.ErrClosed). Other
+// Bus instances are unaffected: the mark lives in each value's own
+// handle field.
 func (b *Bus) Close() error {
 	if b == nil || b.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.ErrClosed
 	}
 	e := delBus(b.handle)
 	b.handle = 0
