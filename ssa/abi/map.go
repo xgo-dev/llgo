@@ -1,9 +1,9 @@
 package abi
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
-	"log"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
 )
@@ -80,47 +80,47 @@ func MapBucketType(t *types.Map, sizes types.Sizes) types.Type {
 
 	// Check invariants that map code depends on.
 	if !types.Comparable(t.Key()) {
-		log.Fatalf("unsupported map key type for %v", t)
+		panic(fmt.Sprintf("unsupported map key type for %v", t))
 	}
 	if BUCKETSIZE < 8 {
-		log.Fatalf("bucket size %d too small for proper alignment %d", BUCKETSIZE, 8)
+		panic(fmt.Sprintf("bucket size %d too small for proper alignment %d", BUCKETSIZE, 8))
 	}
 	if uint8(sizes.Alignof(keytype)) > BUCKETSIZE {
-		log.Fatalf("key align too big for %v", t)
+		panic(fmt.Sprintf("key align too big for %v", t))
 	}
 	if uint8(sizes.Alignof(elemtype)) > BUCKETSIZE {
-		log.Fatalf("elem align %d too big for %v, BUCKETSIZE=%d", sizes.Alignof(elemtype), t, BUCKETSIZE)
+		panic(fmt.Sprintf("elem align %d too big for %v, BUCKETSIZE=%d", sizes.Alignof(elemtype), t, BUCKETSIZE))
 	}
 	if sizes.Alignof(keytype) > MAXKEYSIZE {
-		log.Fatalf("key size too large for %v", t)
+		panic(fmt.Sprintf("key size too large for %v", t))
 	}
 	if sizes.Alignof(elemtype) > MAXELEMSIZE {
-		log.Fatalf("elem size too large for %v", t)
+		panic(fmt.Sprintf("elem size too large for %v", t))
 	}
 	if sizes.Alignof(t.Key()) > MAXKEYSIZE && !isPointer(keytype) {
-		log.Fatalf("key indirect incorrect for %v", t)
+		panic(fmt.Sprintf("key indirect incorrect for %v", t))
 	}
 	if sizes.Alignof(t.Elem()) > MAXELEMSIZE && !isPointer(elemtype) {
-		log.Fatalf("elem indirect incorrect for %v", t)
+		panic(fmt.Sprintf("elem indirect incorrect for %v", t))
 	}
 	if sizes.Sizeof(keytype)%sizes.Alignof(keytype) != 0 {
-		log.Fatalf("key size not a multiple of key align for %v", t)
+		panic(fmt.Sprintf("key size not a multiple of key align for %v", t))
 	}
 	if sizes.Sizeof(elemtype)%sizes.Alignof(elemtype) != 0 {
-		log.Fatalf("elem size not a multiple of elem align for %v", t)
+		panic(fmt.Sprintf("elem size not a multiple of elem align for %v", t))
 	}
 	if uint8(sizes.Alignof(bucket))%uint8(sizes.Alignof(keytype)) != 0 {
-		log.Fatalf("bucket align not multiple of key align %v", t)
+		panic(fmt.Sprintf("bucket align not multiple of key align %v", t))
 	}
 	if uint8(sizes.Alignof(bucket))%uint8(sizes.Alignof(elemtype)) != 0 {
-		log.Fatalf("bucket align not multiple of elem align %v", t)
+		panic(fmt.Sprintf("bucket align not multiple of elem align %v", t))
 	}
 	offs := sizes.Offsetsof(field)
 	if offs[1]%sizes.Alignof(keytype) != 0 {
-		log.Fatalf("bad alignment of keys in bmap for %v", t)
+		panic(fmt.Sprintf("bad alignment of keys in bmap for %v", t))
 	}
 	if offs[2]%sizes.Alignof(elemtype) != 0 {
-		log.Fatalf("bad alignment of elems in bmap for %v", t)
+		panic(fmt.Sprintf("bad alignment of elems in bmap for %v", t))
 	}
 
 	// // Double-check that overflow field is final memory in struct,
@@ -301,8 +301,7 @@ func HasPtrData(t types.Type) bool {
 		}
 		return false
 	default:
-		log.Fatalf("PtrDataSize: unexpected type, %v", t)
-		return false
+		panic(fmt.Sprintf("PtrDataSize: unexpected type, %v", t))
 	}
 }
 
@@ -398,8 +397,7 @@ func IsReflexive(t types.Type) bool {
 		}
 		return true
 	default:
-		log.Fatalf("bad type for map key: %v", t)
-		return false
+		panic(fmt.Sprintf("bad type for map key: %v", t))
 	}
 }
 
@@ -476,8 +474,7 @@ func needkeyupdate(t types.Type) bool {
 		}
 		return false
 	default:
-		log.Fatalf("bad type for map key: %v", t)
-		return true
+		panic(fmt.Sprintf("bad type for map key: %v", t))
 	}
 }
 
