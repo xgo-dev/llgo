@@ -3423,7 +3423,7 @@ func (c *context) archiver() string {
 		if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
 			return llvmAr
 		}
-		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+		if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 			return llvmAr
 		}
 	}
@@ -3446,7 +3446,7 @@ func (c *context) archiveMerger() (string, error) {
 	if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
-	if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+	if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
@@ -3475,14 +3475,14 @@ func (c *context) emscriptenArchiver() string {
 	if provider != crosscompile.WasmProviderGoJS && provider != crosscompile.WasmProviderEmscripten {
 		return ""
 	}
-	if cc, err := exec.LookPath(c.crossCompile.CC); err == nil {
+	if cc, err := c.commands.lookPath(c.crossCompile.CC); err == nil {
 		// LookPath handles the SDK's emar.bat via PATHEXT on Windows;
 		// siblingTool only handles native executables such as llvm-ar.exe.
-		if ar, err := exec.LookPath(filepath.Join(filepath.Dir(cc), "emar")); err == nil {
+		if ar, err := c.commands.lookPath(filepath.Join(filepath.Dir(cc), "emar")); err == nil {
 			return ar
 		}
 	}
-	if ar, err := exec.LookPath("emar"); err == nil {
+	if ar, err := c.commands.lookPath("emar"); err == nil {
 		return ar
 	}
 	return ""

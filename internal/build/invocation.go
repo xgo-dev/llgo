@@ -41,18 +41,91 @@ type commandEnv struct {
 
 func (e commandEnv) configure(cmd *exec.Cmd) *exec.Cmd {
 	cmd.Dir = e.dir
-	cmd.Env = slices.Clone(e.environ)
+	if e.environ != nil {
+		cmd.Env = slices.Clone(e.environ)
+		if len(cmd.Args) > 0 && !strings.ContainsAny(cmd.Args[0], `/\`) {
+			if pathVal, ok := e.lookupOK("PATH"); ok {
+				if resolved := lookupExecutableInPath(cmd.Args[0], pathVal, e.lookup("PATHEXT")); resolved != "" {
+					cmd.Path = resolved
+					cmd.Err = nil
+				} else {
+					cmd.Path = cmd.Args[0]
+					cmd.Err = &exec.Error{Name: cmd.Args[0], Err: exec.ErrNotFound}
+				}
+			}
+		}
+	}
 	return cmd
 }
 
-func (e commandEnv) lookup(name string) string {
+func (e commandEnv) lookPath(name string) (string, error) {
+	if e.environ == nil || strings.ContainsAny(name, `/\`) {
+		return exec.LookPath(name)
+	}
+	pathVal, ok := e.lookupOK("PATH")
+	if !ok {
+		return exec.LookPath(name)
+	}
+	if resolved := lookupExecutableInPath(name, pathVal, e.lookup("PATHEXT")); resolved != "" {
+		return resolved, nil
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
+func (e commandEnv) lookupOK(name string) (string, bool) {
 	for i := len(e.environ) - 1; i >= 0; i-- {
 		key, value, ok := strings.Cut(e.environ[i], "=")
 		if !ok {
 			continue
 		}
 		if key == name || runtime.GOOS == "windows" && strings.EqualFold(key, name) {
-			return value
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func (e commandEnv) lookup(name string) string {
+	v, _ := e.lookupOK(name)
+	return v
+}
+
+func lookupExecutableInPath(name, pathEnv, pathExtEnv string) string {
+	exts := []string{""}
+	if runtime.GOOS == "windows" {
+		if pathExtEnv == "" {
+			pathExtEnv = ".COM;.EXE;.BAT;.CMD"
+		}
+		exts = nil
+		if filepath.Ext(name) != "" {
+			exts = append(exts, "")
+		}
+		for _, raw := range strings.Split(pathExtEnv, ";") {
+			if raw == "" {
+				continue
+			}
+			if raw[0] != '.' {
+				raw = "." + raw
+			}
+			exts = append(exts, raw)
+		}
+		if len(exts) == 0 {
+			exts = []string{""}
+		}
+	}
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		for _, ext := range exts {
+			candidate := filepath.Join(dir, name+ext)
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if runtime.GOOS == "windows" || info.Mode()&0o111 != 0 {
+				return candidate
+			}
 		}
 	}
 	return ""
@@ -106,14 +179,23 @@ func withResolvedGoToolchain(environ []string, goversion string) []string {
 	return withEnv(environ, "GOTOOLCHAIN="+goversion)
 }
 
-// withLLVMPath returns a copy of environ whose PATH begins with binDir unless
-// binDir is empty or already present. It never mutates the process environment.
+// withLLVMPath returns a copy of environ whose PATH begins with binDir,
+// moving any later duplicate to the front so the LLVM installation selected
+// for this invocation takes precedence over ambient PATH entries. It never
+// mutates the process environment.
 func withLLVMPath(environ []string, binDir string) []string {
 	if binDir == "" {
 		return environ
 	}
 	isPathKey := func(k string) bool {
 		return k == "PATH" || (runtime.GOOS == "windows" && strings.EqualFold(k, "PATH"))
+	}
+	sameDir := func(a, b string) bool {
+		a, b = filepath.Clean(a), filepath.Clean(b)
+		if runtime.GOOS == "windows" {
+			return strings.EqualFold(a, b)
+		}
+		return a == b
 	}
 	pathKey := "PATH"
 	pathVal := ""
@@ -128,17 +210,19 @@ func withLLVMPath(environ []string, binDir string) []string {
 			break
 		}
 	}
-	cleanBin := filepath.Clean(binDir)
-	for _, dir := range filepath.SplitList(pathVal) {
-		cleanDir := filepath.Clean(dir)
-		if cleanDir == cleanBin || (runtime.GOOS == "windows" && strings.EqualFold(cleanDir, cleanBin)) {
-			return environ
+	dirs := filepath.SplitList(pathVal)
+	if len(dirs) > 0 && sameDir(dirs[0], binDir) {
+		return environ
+	}
+	filtered := make([]string, 0, len(dirs)+1)
+	filtered = append(filtered, binDir)
+	for _, dir := range dirs {
+		if dir != "" && sameDir(dir, binDir) {
+			continue
 		}
+		filtered = append(filtered, dir)
 	}
-	newPath := binDir
-	if pathVal != "" {
-		newPath += string(os.PathListSeparator) + pathVal
-	}
+	newPath := strings.Join(filtered, string(os.PathListSeparator))
 	ret := make([]string, 0, len(environ)+1)
 	for _, entry := range environ {
 		k, _, ok := strings.Cut(entry, "=")

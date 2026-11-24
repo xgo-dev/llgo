@@ -31,6 +31,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	xllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -486,6 +487,75 @@ func TestWithLLVMPathPrependsWithoutMutatingProcessEnv(t *testing.T) {
 	dedup := withLLVMPath(updated, llvmDir)
 	if got := (commandEnv{environ: dedup}).lookup("PATH"); got != want {
 		t.Fatalf("duplicate withLLVMPath PATH = %q, want %q", got, want)
+	}
+	// If llvmDir already exists later in PATH, withLLVMPath promotes it to front.
+	later := []string{"PATH=" + baseDir + string(os.PathListSeparator) + llvmDir}
+	promoted := withLLVMPath(later, llvmDir)
+	if got := (commandEnv{environ: promoted}).lookup("PATH"); got != want {
+		t.Fatalf("promoted withLLVMPath PATH = %q, want %q", got, want)
+	}
+}
+
+func TestBuildLinksUsingInvocationLLVMPathWhenProcessPathShadowsClang(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shadow scripts")
+	}
+	llvmBinDir := xllvm.New("").BinDir()
+	if llvmBinDir == "" {
+		t.Skip("no explicit LLVM BinDir configured via llvm-config")
+	}
+	if _, err := os.Stat(filepath.Join(llvmBinDir, "clang++")); err != nil {
+		t.Skipf("LLVM BinDir %s has no clang++: %v", llvmBinDir, err)
+	}
+
+	// Put failing clang/clang++ shadows first in the process-wide PATH and strip
+	// llvmBinDir from the process PATH so Build must resolve the real LLVM
+	// toolchain solely through its per-invocation commandEnv without mutating
+	// os.Getenv("PATH").
+	shadowDir := t.TempDir()
+	for _, tool := range []string{"clang", "clang++"} {
+		if err := os.WriteFile(filepath.Join(shadowDir, tool), []byte("#!/bin/sh\nexit 97\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var filtered []string
+	filtered = append(filtered, shadowDir)
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if filepath.Clean(dir) == filepath.Clean(llvmBinDir) {
+			continue
+		}
+		filtered = append(filtered, dir)
+	}
+	ambientPath := strings.Join(filtered, string(os.PathListSeparator))
+	t.Setenv("PATH", ambientPath)
+	t.Setenv(llgoBuildCache, "0")
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module example.com/shadowclang\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main\n\nfunc main() { println(\"ok\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outBin := filepath.Join(t.TempDir(), "shadowclang")
+	conf := NewDefaultConf(ModeBuild)
+	conf.ForceRebuild = true
+	conf.PCLNMode = PCLNNone
+	conf.OutFile = outBin
+
+	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: srcDir}); err != nil {
+		t.Fatalf("Build failed when process PATH shadowed clang++: %v", err)
+	}
+	if got := os.Getenv("PATH"); got != ambientPath {
+		t.Fatalf("Build mutated process PATH from %q to %q", ambientPath, got)
+	}
+	out, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run %s: %v\n%s", outBin, err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "ok" {
+		t.Fatalf("output = %q, want %q", got, "ok")
 	}
 }
 
