@@ -75,7 +75,7 @@ func cgoAssemblyInputs(ctx *context, pkg *packages.Package, explicit []llgoFileI
 	if err != nil {
 		return nil, err
 	}
-	cflags, _, _, err := cgoCompilationFlags(ctx.commands, preambles, decls)
+	cflags, _, _, err := cgoCompilationFlags(ctx.commands, preambles, decls, true)
 	if err != nil {
 		return nil, err
 	}

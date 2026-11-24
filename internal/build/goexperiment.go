@@ -20,6 +20,9 @@ type sourceGoConfig struct {
 	GOFLAGS      string
 	CGO_ENABLED  string
 	CGO_CPPFLAGS string
+	CGO_CFLAGS   string
+	CGO_CXXFLAGS string
+	CGO_LDFLAGS  string
 	GOPATH       string
 	GOMODCACHE   string
 	GOCACHE      string
@@ -33,7 +36,10 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 		commands.environ = withEnv(commands.environ, "GOEXPERIMENT="+experiment)
 	}
 	var cfg sourceGoConfig
-	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED", "CGO_CPPFLAGS", "GOPATH", "GOMODCACHE", "GOCACHE"))
+	cmd := commands.configure(exec.Command("go", "env", "-json",
+		"GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS",
+		"CGO_ENABLED", "CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS",
+		"GOPATH", "GOMODCACHE", "GOCACHE"))
 	output, err := cmd.Output()
 	if err != nil {
 		return cfg, sourceGoConfigError("resolve Go source configuration", err)
@@ -95,9 +101,16 @@ func sourceGoConfigError(action string, err error) error {
 
 func (cfg sourceGoConfig) apply(environ []string) []string {
 	environ = withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),
-		"GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+cfg.GOEXPERIMENT, "CGO_ENABLED="+cfg.CGO_ENABLED)
+		"GOROOT="+cfg.GOROOT,
+		"GOEXPERIMENT="+cfg.GOEXPERIMENT,
+		"CGO_ENABLED="+cfg.CGO_ENABLED,
+		"CGO_CPPFLAGS="+cfg.CGO_CPPFLAGS,
+		"CGO_CFLAGS="+cfg.CGO_CFLAGS,
+		"CGO_CXXFLAGS="+cfg.CGO_CXXFLAGS,
+		"CGO_LDFLAGS="+cfg.CGO_LDFLAGS,
+	)
 	for _, setting := range []struct{ key, value string }{
-		{"CGO_CPPFLAGS", cfg.CGO_CPPFLAGS}, {"GOPATH", cfg.GOPATH}, {"GOMODCACHE", cfg.GOMODCACHE}, {"GOCACHE", cfg.GOCACHE},
+		{"GOPATH", cfg.GOPATH}, {"GOMODCACHE", cfg.GOMODCACHE}, {"GOCACHE", cfg.GOCACHE},
 	} {
 		if setting.value != "" {
 			environ = withEnv(environ, setting.key+"="+setting.value)

@@ -168,6 +168,61 @@ func TestGOEXPERIMENTSnapshotFromGOENV(t *testing.T) {
 	}
 }
 
+func TestSourceGoCGOFlagsSnapshotFromGOENV(t *testing.T) {
+	goenv := filepath.Join(t.TempDir(), "env")
+	writeGoenv := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(goenv, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeGoenv("CGO_CPPFLAGS=-DENV_CPP=1\nCGO_CFLAGS=-DREVIEW_VALUE=30\nCGO_CXXFLAGS=-DENV_CXX=2\nCGO_LDFLAGS=-L/env/lib\n")
+
+	// Start with an environment that explicitly omits all CGO_* keys so values
+	// come strictly from the isolated GOENV file.
+	stripCgoEnv := func(env []string) []string {
+		out := make([]string, 0, len(env))
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "CGO_CPPFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CXXFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_LDFLAGS=") {
+				continue
+			}
+			out = append(out, kv)
+		}
+		return out
+	}
+
+	commands := experimentCommands(t, "")
+	commands.environ = withEnv(stripCgoEnv(commands.environ), "GOENV="+goenv)
+	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.CGO_CPPFLAGS != "-DENV_CPP=1" ||
+		cfg.CGO_CFLAGS != "-DREVIEW_VALUE=30" ||
+		cfg.CGO_CXXFLAGS != "-DENV_CXX=2" ||
+		cfg.CGO_LDFLAGS != "-L/env/lib" {
+		t.Fatalf("resolved GOENV cgo flags = (%q, %q, %q, %q)", cfg.CGO_CPPFLAGS, cfg.CGO_CFLAGS, cfg.CGO_CXXFLAGS, cfg.CGO_LDFLAGS)
+	}
+
+	// Non-empty process environment overrides GOENV, while empty process env
+	// falls back to GOENV (matching cmd/go's cfg.Getenv).
+	procOverride := commands
+	procOverride.environ = withEnv(commands.environ, "CGO_CFLAGS=-DREVIEW_VALUE=40", "CGO_CPPFLAGS=")
+	overrideCfg := mustResolveSourceGo(t, procOverride, "")
+	if overrideCfg.CGO_CFLAGS != "-DREVIEW_VALUE=40" || overrideCfg.CGO_CPPFLAGS != "-DENV_CPP=1" {
+		t.Fatalf("process env override = (CFLAGS=%q, CPPFLAGS=%q), want (-DREVIEW_VALUE=40, -DENV_CPP=1)", overrideCfg.CGO_CFLAGS, overrideCfg.CGO_CPPFLAGS)
+	}
+
+	// Mutating GOENV after cfg.apply must not change the pinned cgo flags.
+	writeGoenv("CGO_CPPFLAGS=-DMUTATED=1\nCGO_CFLAGS=-DMUTATED=2\nCGO_CXXFLAGS=-DMUTATED=3\nCGO_LDFLAGS=-DMUTATED=4\n")
+	commands.environ = cfg.apply(commands.environ)
+	after := mustResolveSourceGo(t, commands, "")
+	after.originalExperiment = cfg.originalExperiment
+	if !reflect.DeepEqual(cfg, after) {
+		t.Fatalf("GOENV mutation changed pinned cgo flags:\n%+v\n%+v", cfg, after)
+	}
+}
+
 func TestResolveSourceGoUsesInvocationDir(t *testing.T) {
 	commands := experimentCommands(t, "")
 	commands.environ = withEnv(commands.environ, "GOTOOLCHAIN=path")

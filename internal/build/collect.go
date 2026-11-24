@@ -334,7 +334,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	}
 
 	if !cgoDisabled(c.commands) {
-		usesCgo, err := c.packageUsesCgo(pkg)
+		usesCgo, err := c.packageUsesOriginalCgo(pkg)
 		if err != nil {
 			return fmt.Errorf("inspect cgo inputs: %w", err)
 		}

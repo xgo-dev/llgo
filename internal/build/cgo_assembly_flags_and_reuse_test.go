@@ -345,7 +345,7 @@ func TestCgoCompilationFlagsPreservesGroupOrder(t *testing.T) {
 			"CGO_LDFLAGS=-lenv",
 		},
 	}
-	cflags, cxxflags, ldflags, err := cgoCompilationFlags(commands, preambles, decls)
+	cflags, cxxflags, ldflags, err := cgoCompilationFlags(commands, preambles, decls, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,6 +373,20 @@ func TestCgoCompilationFlagsPreservesGroupOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ldflags, wantLD) {
 		t.Fatalf("ldflags = %#v, want %#v", ldflags, wantLD)
+	}
+
+	// When includeEnvFlags is false (non-cgo native preambles or CGO_ENABLED=0),
+	// #cgo directives and include dirs stay intact while CGO_* env vars are omitted.
+	noEnvC, noEnvCXX, noEnvLD, err := cgoCompilationFlags(commands, preambles, decls, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNoEnvC := []string{"-DREVIEW_VALUE=20", "-DCPP_DECL=1", "-DC_DECL=1", incFlag}
+	wantNoEnvCXX := []string{"-DREVIEW_VALUE=20", "-DCPP_DECL=1", "-DCXX_DECL=1", incFlag}
+	wantNoEnvLD := []string{"-ldecl"}
+	if !reflect.DeepEqual(noEnvC, wantNoEnvC) || !reflect.DeepEqual(noEnvCXX, wantNoEnvCXX) || !reflect.DeepEqual(noEnvLD, wantNoEnvLD) {
+		t.Fatalf("includeEnvFlags=false got (%#v, %#v, %#v), want (%#v, %#v, %#v)",
+			noEnvC, noEnvCXX, noEnvLD, wantNoEnvC, wantNoEnvCXX, wantNoEnvLD)
 	}
 }
 
@@ -661,6 +675,252 @@ func TestDigestNativeAssemblyObjectCleansTempOnFailure(t *testing.T) {
 			}
 			if len(leftovers) != 0 {
 				t.Fatalf("failed digestNativeAssemblyObject leaked temporary objects: %v", leftovers)
+			}
+		})
+	}
+}
+
+func unsetEnvForTest(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		prev, existed := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(key, prev)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}
+
+func TestCgoAssemblyGOENVFlagsBuildRunAndCacheInvalidation(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("native cgo assembly execution test targets darwin/linux")
+	}
+	if runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64" {
+		t.Skip("native cgo assembly fixture covers arm64/amd64")
+	}
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not found")
+	}
+
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	goenvPath := filepath.Join(t.TempDir(), "goenv")
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	writeFile := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("go.mod", "module example.com/cgogoenv\n\ngo 1.24\n")
+	writeFile("const_asm.S", strings.ReplaceAll(cgoConstTestAssembly(), "TEST_CONST", "REVIEW_VALUE"))
+	writeFile("main.go", `package main
+
+/*
+extern int asm_const(void);
+*/
+import "C"
+import "fmt"
+
+func main() {
+	fmt.Println(int(C.asm_const()))
+}
+`)
+
+	stripCgoVars := func(env []string) []string {
+		out := make([]string, 0, len(env))
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "CGO_CPPFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CXXFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_LDFLAGS=") {
+				continue
+			}
+			out = append(out, kv)
+		}
+		return out
+	}
+
+	runCase := func(name, goenvContent string, extraEnv ...string) (string, string) {
+		t.Helper()
+		if err := os.WriteFile(goenvPath, []byte(goenvContent), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		goCmd := exec.Command("go", "run", ".")
+		goCmd.Dir = dir
+		goCmd.Env = withEnv(stripCgoVars(os.Environ()), append([]string{
+			"GOWORK=off",
+			"CGO_ENABLED=1",
+			"GOENV=" + goenvPath,
+		}, extraEnv...)...)
+		var goOut, goErr bytes.Buffer
+		goCmd.Stdout = &goOut
+		goCmd.Stderr = &goErr
+		if err := goCmd.Run(); err != nil {
+			t.Fatalf("go run (%s) failed: %v\nstderr:\n%s", name, err, goErr.String())
+		}
+
+		// Ensure CGO_* are unset in the process environment unless explicitly
+		// supplied in extraEnv, so GOENV supplies them just as cmd/go sees them.
+		unsetEnvForTest(t, "CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS")
+		t.Setenv("GOWORK", "off")
+		t.Setenv("LLGO_BUILD_CACHE", "on")
+		t.Setenv("CGO_ENABLED", "1")
+		t.Setenv("GOENV", goenvPath)
+		for _, kv := range extraEnv {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				t.Fatalf("invalid env %q", kv)
+			}
+			t.Setenv(k, v)
+		}
+
+		outBin := filepath.Join(t.TempDir(), name)
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
+
+		if _, err := Do([]string{"."}, &Config{
+			Mode:    ModeBuild,
+			OutFile: outBin,
+			Goos:    runtime.GOOS,
+			Goarch:  runtime.GOARCH,
+		}); err != nil {
+			t.Fatalf("llgo build (%s) failed: %v", name, err)
+		}
+		llgoOut, err := exec.Command(outBin).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %s failed: %v\n%s", outBin, err, llgoOut)
+		}
+		return strings.TrimSpace(goOut.String()), strings.TrimSpace(string(llgoOut))
+	}
+
+	cases := []struct {
+		name         string
+		goenvContent string
+		extraEnv     []string
+		want         string
+	}{
+		{
+			name:         "goenv-cgo-cflags-30",
+			goenvContent: "CGO_CFLAGS=-DREVIEW_VALUE=30\n",
+			want:         "30",
+		},
+		{
+			name:         "goenv-empty-default-10",
+			goenvContent: "",
+			want:         "10",
+		},
+		{
+			name:         "process-env-overrides-goenv-40",
+			goenvContent: "CGO_CFLAGS=-DREVIEW_VALUE=30\n",
+			extraEnv:     []string{"CGO_CFLAGS=-DREVIEW_VALUE=40"},
+			want:         "40",
+		},
+		{
+			name:         "process-empty-falls-back-to-goenv-30",
+			goenvContent: "CGO_CFLAGS=-DREVIEW_VALUE=30\n",
+			extraEnv:     []string{"CGO_CFLAGS="},
+			want:         "30",
+		},
+		{
+			name:         "goenv-cgo-cflags-30-again",
+			goenvContent: "CGO_CFLAGS=-DREVIEW_VALUE=30\n",
+			want:         "30",
+		},
+	}
+	for _, tc := range cases {
+		gotGo, gotLLGo := runCase(tc.name, tc.goenvContent, tc.extraEnv...)
+		if gotGo != tc.want || gotLLGo != tc.want {
+			t.Fatalf("%s: go=%q llgo=%q, want both %q", tc.name, gotGo, gotLLGo, tc.want)
+		}
+	}
+}
+
+func TestLLGoUnsafePreambleWorksWithCgoDisabledAndEnabled(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("native execution test targets darwin/linux")
+	}
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not found")
+	}
+
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/unsafepreamble\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mainSrc := `package main
+
+/*
+int review_probe(void) { return 7; }
+*/
+import "unsafe"
+
+//go:linkname reviewProbe C.review_probe
+func reviewProbe() int32
+
+func main() {
+	_ = unsafe.Sizeof(int32(0))
+	println(reviewProbe())
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cgoEnabled := range []string{"0", "1"} {
+		t.Run("CGO_ENABLED="+cgoEnabled, func(t *testing.T) {
+			t.Setenv("GOWORK", "off")
+			t.Setenv("GOENV", "off")
+			t.Setenv("LLGO_BUILD_CACHE", "on")
+			t.Setenv("CGO_ENABLED", cgoEnabled)
+			// Non-import-"C" LLGo native preambles must compile and run under both
+			// CGO_ENABLED=0 and CGO_ENABLED=1 without inheriting CGO_LDFLAGS.
+			t.Setenv("CGO_LDFLAGS", "-lnonexistent_llgo_review_lib")
+
+			outBin := filepath.Join(t.TempDir(), "probe-"+cgoEnabled)
+			origDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(dir); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.Chdir(origDir) }()
+
+			if _, err := Do([]string{"."}, &Config{
+				Mode:    ModeBuild,
+				OutFile: outBin,
+				Goos:    runtime.GOOS,
+				Goarch:  runtime.GOARCH,
+			}); err != nil {
+				t.Fatalf("llgo build (unsafe preamble, CGO_ENABLED=%s) failed: %v", cgoEnabled, err)
+			}
+			out, err := exec.Command(outBin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run %s failed: %v\n%s", outBin, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != "7" {
+				t.Fatalf("llgo output (CGO_ENABLED=%s) = %q, want \"7\"", cgoEnabled, got)
 			}
 		})
 	}
