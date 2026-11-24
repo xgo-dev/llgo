@@ -25,8 +25,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llvm"
 )
 

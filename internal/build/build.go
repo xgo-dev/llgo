@@ -58,6 +58,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
@@ -69,12 +70,11 @@ import (
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
-	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
 
-	llruntime "github.com/xgo-dev/llgo/runtime"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	llruntime "github.com/xgo-dev/llgo/runtime"
 )
 
 type Mode int

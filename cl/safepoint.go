@@ -19,8 +19,8 @@ package cl
 import (
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/safepointplan"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/safepointplan"
 	"golang.org/x/tools/go/ssa"
 )
 

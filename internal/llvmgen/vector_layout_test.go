@@ -308,9 +308,9 @@ func TestVectorNativeFunctionFieldLayout(t *testing.T) {
 				types.NewField(token.NoPos, nil, "callback", NoArgsNoRet, false),
 				types.NewField(token.NoPos, nil, "byte", types.Typ[types.Byte], false),
 			}
-			layout, offsets, changed := (*goProgram)(prog).vectorStructLayout(fields, true)
+			layout, offsets, changed := prog.sourceSizes.VectorStructLayout(fields, true)
 			wantByte := int64(16 + prog.ptrSize)
-			if !changed || layout.size != 32 || layout.align != 16 || len(offsets) != 3 || offsets[0] != 0 || offsets[1] != 16 || offsets[2] != wantByte {
+			if !changed || layout.Size != 32 || layout.Align != 16 || len(offsets) != 3 || offsets[0] != 0 || offsets[1] != 16 || offsets[2] != wantByte {
 				t.Fatalf("native callback layout = %+v, offsets = %v, changed = %v", layout, offsets, changed)
 			}
 		})

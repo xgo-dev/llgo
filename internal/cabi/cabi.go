@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/abi"
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llvm"
 )
 

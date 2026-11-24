@@ -7,8 +7,8 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"

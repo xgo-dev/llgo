@@ -32,8 +32,8 @@ import (
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
-	"github.com/xgo-dev/llgo/internal/locality"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/locality"
 )
 
 // -----------------------------------------------------------------------------

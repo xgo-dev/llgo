@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"
 )
 

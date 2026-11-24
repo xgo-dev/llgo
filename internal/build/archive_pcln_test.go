@@ -14,9 +14,9 @@ import (
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestPackagePCLNArchive(t *testing.T) {

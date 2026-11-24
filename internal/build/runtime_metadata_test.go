@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestPlanMainLinkRuntimeMetadata(t *testing.T) {

@@ -27,9 +27,11 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	lltarget "github.com/xgo-dev/llgo/target"
+	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
 )
@@ -149,7 +151,8 @@ type aProgram struct {
 	goWordSize    int
 	// Immutable target ABI alignments, safe to read during concurrent type checking.
 	simdAlignments   [3]int64
-	hostBasicLayouts [types.UnsafePointer + 1]sourceLayout
+	hostBasicLayouts [types.UnsafePointer + 1]lltypes.LayoutPair
+	sourceSizes      *lltypes.SourceSizes
 	// Resolve the physical C ABI once, outside declaration/call lowering.
 	nativeIntegerExt nativeIntegerExtension
 
@@ -372,8 +375,36 @@ func NewProgram(target *Target) Program {
 		}
 		raw := types.Typ[kind]
 		ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
-		prog.hostBasicLayouts[kind] = sourceLayout{int64(td.TypeAllocSize(ll)), int64(td.ABITypeAlignment(ll))}
+		prog.hostBasicLayouts[kind] = lltypes.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
 	}
+	spec := lltarget.ResolveSpec(lltarget.Spec{
+		GOOS:         target.effectiveGOOS(),
+		GOARCH:       target.effectiveGOARCH(),
+		WasmProfile:  target.WasmProfile,
+		WasmProvider: target.WasmProvider,
+	})
+	spec.PtrSize = ptrSize
+	spec.WordSize = goWordSize
+	prog.sourceSizes = lltypes.NewSourceSizes(lltypes.SourceSizesConfig{
+		Spec:             spec,
+		BaseSizes:        func() types.Sizes { return prog.sizes },
+		HostBasicLayouts: prog.hostBasicLayouts,
+		SIMDAlignments:   prog.simdAlignments,
+		HasNativeMetadata: func() bool {
+			return prog.packageSyntax.hasNativeTypeMetadata.Load()
+		},
+		NativeTypeDirective: func(t types.Type) lltypes.CallConv {
+			return toLLCallConv(Program(prog).nativeTypeDirective(t))
+		},
+		HasLegacyNativeTypeLayout: func(raw types.Type) bool {
+			return Program(prog).hasLegacyNativeTypeLayout(raw)
+		},
+		NativeFields: func(fields []*types.Var) bool {
+			return Program(prog).nativeFields(fields)
+		},
+		IsClosureStruct: IsClosure,
+		IsClosureFields: abi.IsClosureFields,
+	})
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI

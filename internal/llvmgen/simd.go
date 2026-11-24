@@ -1,10 +1,10 @@
 package llvmgen
 
 import (
-	"fmt"
 	"go/types"
 	"strings"
 
+	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -173,92 +173,24 @@ const (
 // tag. Giving the tag native alignment propagates through defined types,
 // unnamed underlying structs, and every enclosing array or struct.
 func simdTagIndex(t types.Type) (int, bool) {
-	n, ok := types.Unalias(t).(*types.Named)
-	if !ok || n.Obj().Pkg() == nil || n.Obj().Pkg().Path() != "simd/archsimd" {
-		return 0, false
-	}
-	index := -1
-	switch n.Obj().Name() {
-	case "v128":
-		index = 0
-	case "v256":
-		index = 1
-	case "v512":
-		index = 2
-	}
-	if index < 0 {
-		return 0, false
-	}
-	st, ok := n.Underlying().(*types.Struct)
-	if !ok || st.NumFields() != 1 {
-		return 0, false
-	}
-	a, ok := st.Field(0).Type().(*types.Array)
-	return index, ok && a.Len() == 0
+	return lltypes.SIMDTagIndex(t)
 }
 
 // SIMDNumericShape validates the official numeric aggregate representation.
 // Keep storage knowledge here, separate from operation selection and features.
 func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
-	lanes, ok := SIMDVectorShape(typ)
-	return lanes, ok && !strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
+	return lltypes.SIMDNumericShape(typ)
 }
 
 // SIMDMaskShape recognizes fixed-width SIMD masks. Masks use canonical zero
 // or all-one integer lanes, preserving their public Go storage representation.
 func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
-	lanes, ok := SIMDVectorShape(typ)
-	return lanes, ok && strings.HasPrefix(types.Unalias(typ).(*types.Named).Obj().Name(), "Mask")
+	return lltypes.SIMDMaskShape(typ)
 }
 
 // SIMDVectorShape validates numeric and mask SIMD128/256/512 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
-	named, ok := types.Unalias(typ).(*types.Named)
-	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/archsimd" {
-		return nil, false
-	}
-	st, ok := named.Underlying().(*types.Struct)
-	if !ok || st.NumFields() != 2 {
-		return nil, false
-	}
-	lanes, ok := st.Field(1).Type().(*types.Array)
-	if !ok {
-		return nil, false
-	}
-	elem, ok := lanes.Elem().(*types.Basic)
-	if !ok {
-		return nil, false
-	}
-	var bits int64
-	switch elem.Kind() {
-	case types.Int8, types.Uint8:
-		bits = 8
-	case types.Int16, types.Uint16:
-		bits = 16
-	case types.Int32, types.Uint32, types.Float32:
-		bits = 32
-	case types.Int64, types.Uint64, types.Float64:
-		bits = 64
-	default:
-		return nil, false
-	}
-	name := elem.Name()
-	expected := fmt.Sprintf("%s%sx%d", strings.ToUpper(name[:1]), name[1:], lanes.Len())
-	if strings.HasPrefix(named.Obj().Name(), "Mask") && elem.Info()&types.IsInteger != 0 && elem.Info()&types.IsUnsigned == 0 {
-		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
-	}
-	width := lanes.Len() * bits
-	if named.Obj().Name() != expected || width != 128 && width != 256 && width != 512 {
-		return nil, false
-	}
-	tag, ok := st.Field(0).Type().(*types.Named)
-	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != fmt.Sprintf("v%d", width) {
-		return nil, false
-	}
-	if (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
-		return nil, false
-	}
-	return lanes, true
+	return lltypes.SIMDVectorShape(typ)
 }
 
 func simdLanes(typ types.Type) *types.Array {

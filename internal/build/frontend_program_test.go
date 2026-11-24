@@ -11,8 +11,8 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/goescape"
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 

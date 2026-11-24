@@ -12,8 +12,8 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llvm"
 
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 

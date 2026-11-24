@@ -25,12 +25,12 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 

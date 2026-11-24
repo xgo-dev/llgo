@@ -3,8 +3,8 @@ package build
 import (
 	"fmt"
 
-	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llvm "github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )

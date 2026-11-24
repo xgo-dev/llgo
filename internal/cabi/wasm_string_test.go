@@ -8,8 +8,8 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
-	"github.com/xgo-dev/llgo/internal/optlevel"
 	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 

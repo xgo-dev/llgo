@@ -33,9 +33,9 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/llgen"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 

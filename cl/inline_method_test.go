@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/typepatch"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llvm"
 	gossa "golang.org/x/tools/go/ssa"
 )

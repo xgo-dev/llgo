@@ -14,15 +14,23 @@
  * limitations under the License.
  */
 
-// Package types defines LLGo's physical and ABI type system mapped from
-// read-only go/types.Type without synthesizing fake go/types nodes or depending
-// on LLVM/CGo.
+// Package types defines LLGo's canonical pure-Go physical type, layout, SIMD,
+// and ABI engine mapped from read-only go/types.Type without synthesizing fake
+// go/types nodes or depending on LLVM/CGo.
 //
-// First-class LLGo representations—including Closure ({fn, env}), C/Stdcall
-// function pointers, GoPtr vs NativePtr pointer kinds, HostLayout structs,
-// Wasm32 wide Go storage, and SIMD vectors—are modeled explicitly so compiler
-// passes, static analyzers, and custom GC/ABI emitters share a single pure-Go
-// type model.
+// Rather than merely wrapping go/types, package types owns LLGo's physical
+// storage and ABI representation:
+//   - Context: canonical interning of physical types (Closure, NativeFunc,
+//     GoPtr vs NativePtr, SIMDVec, HostLayout structs) with cached immutable
+//     Layout values (Size, Align, per-field FieldLayout with padding/Wasm wide
+//     slots, PtrBytes, exact GCBitmap, and IsRegularMemory).
+//   - SourceSizes: LLGo's unified go/types.Sizes engine consolidating standard
+//     Go layout (2-word closures, trailing zero-sized field padding),
+//     structs.HostLayout, Wasm32 wide Go vs native C storage, and
+//     simd/archsimd vector alignment into one pure-Go source of truth.
+//   - ABI & FuncABI: direct-interface DataKind classification, GC pointer
+//     bitmaps, equality helper classification, and target-aware C/Go calling
+//     convention passing modes (AAPCS64 HFA, SysV AMD64, Win64, Wasm, 32-bit).
 package types
 
 import (
@@ -355,10 +363,11 @@ func (t *Tuple) String() string {
 	return b.String()
 }
 
-// SIMDVec represents a fixed-width SIMD vector value (e.g. <4 x float>).
+// SIMDVec represents a fixed-width SIMD vector value (e.g. <4 x float> or Mask32x4).
 type SIMDVec struct {
 	Elem   *Basic
 	Len    int
+	Mask   bool
 	goType gotypes.Type
 }
 

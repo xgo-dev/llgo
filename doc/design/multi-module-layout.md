@@ -13,7 +13,7 @@ skip whole-program frontend and LLVM re-materialization on cache hits.
 github.com/xgo-dev/llgo              (root go.mod — low Go baseline: go 1.20)
 ├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
 ├── target/                          Pure-Go target triple, arch, and config model
-├── types/                           Pure-Go LLGo type model, Sizes (+ GoSizes), GC bitmaps
+├── types/                           Pure-Go physical type, layout, SIMD & ABI engine (Context, Layout, SourceSizes, FuncABI, GCBitmap)
 │   └── typeutil/                    (planned) type-map & method-set helpers (mirrors x/tools/go/types/typeutil)
 ├── ssa/                             Pure-Go mid-level SSA IR & verifier (mirrors x/tools/go/ssa)
 │   └── ssautil/                     (planned) SSA inspection & walk helpers (mirrors x/tools/go/ssa/ssautil)
@@ -42,7 +42,7 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
 
 | `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
-| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Physical/ABI type model (`Closure`, `Func`, `Pointer` with `GoPtr`/`NativePtr`, `HostLayout`, `SIMDVec`), `Sizes` + `GoSizes`, GC pointer bitmaps |
+| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Canonical interned physical type universe (`Context`), immutable `Layout`/`FieldLayout` (`PtrBytes`, `GCBitmap`, `IsRegularMemory`, Wasm wide slots), unified `SourceSizes` (`go/types.Sizes` for closures/`HostLayout`/Wasm/SIMD), runtime ABI helpers, and target `FuncABI` classification |
 | `x/tools/go/ssa` + `ssautil` | `llgo/ssa` *(+ `llgo/ssa/ssautil`)* | Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction`, `Value`) |
 | `x/tools/go/gcexportdata` | `llgo/exportdata` | Compact binary package export codec (`types.Package`, `PackageSummary`, `LinkSnapshot`, `PCLN`) |
 | `x/tools/go/analysis` + `callgraph` | `llgo/analysis/{callgraph,escape,deadcode,inline}` | Reusable pure-Go analysis passes consuming `types`, `ssa`, and `exportdata` |

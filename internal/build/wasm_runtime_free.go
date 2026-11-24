@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"golang.org/x/tools/go/ssa"
 )
 

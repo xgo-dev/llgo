@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
+	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 const (
@@ -266,70 +267,7 @@ func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
 }
 
 func (b *Builder) IsRegularMemory(t types.Type) bool {
-	switch t := types.Unalias(t).(type) {
-	case *types.Basic:
-		switch t.Kind() {
-		case types.Float32, types.Float64, types.Complex64, types.Complex128:
-			return false
-		case types.String:
-			return false
-		}
-		return true
-	case *types.Pointer:
-		return true
-	case *types.Slice:
-		return false
-	case *types.Signature:
-		return false
-	case *types.Interface:
-		return false
-	case *types.Struct:
-		switch n := t.NumFields(); n {
-		case 0:
-			return true
-		case 1:
-			f := t.Field(0)
-			if f.Name() == "_" {
-				return false
-			}
-			return b.IsRegularMemory(f.Type())
-		default:
-			fields := make([]*types.Var, n)
-			for i := 0; i < n; i++ {
-				fields[i] = t.Field(i)
-			}
-			offsets := b.Sizes.Offsetsof(fields)
-			end := b.Size(t)
-			for i := 0; i < n; i++ {
-				f := fields[i]
-				if f.Name() == "_" || !b.IsRegularMemory(f.Type()) || b.ispaddedfield(t, i, f, end, offsets) {
-					return false
-				}
-			}
-		}
-	case *types.Map:
-		return false
-	case *types.Array:
-		if b.IsRegularMemory(t.Elem()) {
-			return true
-		}
-		if t.Len() == 0 {
-			return true
-		}
-		return false
-	case *types.Chan:
-		return true
-	case *types.Named:
-		return b.IsRegularMemory(t.Underlying())
-	}
-	return true
-}
-
-func (b *Builder) ispaddedfield(st *types.Struct, i int, field *types.Var, end uintptr, offsets []int64) bool {
-	if i+1 < len(offsets) {
-		end = uintptr(offsets[i+1])
-	}
-	return uintptr(offsets[i])+b.Size(field.Type()) != end
+	return lltypes.GoIsRegularMemory(t, int64(b.PtrSize), b.Sizes)
 }
 
 func (b *Builder) Kind(t types.Type) abi.Kind {
@@ -369,75 +307,11 @@ func (b *Builder) FieldAlign(t types.Type) uintptr {
 // HasPointers is equivalent to PtrBytes(t) != 0, without computing field offsets
 // or array sizes. Allocation selection only needs pointer presence.
 func (b *Builder) HasPointers(t types.Type) bool {
-	switch t := types.Unalias(t).(type) {
-	case *types.Basic:
-		return t.Kind() == types.String || t.Kind() == types.UnsafePointer
-	case *types.Pointer, *types.Slice, *types.Signature, *types.Interface, *types.Map, *types.Chan:
-		return true
-	case *types.Struct:
-		for i := 0; i < t.NumFields(); i++ {
-			if b.HasPointers(t.Field(i).Type()) {
-				return true
-			}
-		}
-		return false
-	case *types.Array:
-		return t.Len() != 0 && b.HasPointers(t.Elem())
-	case *types.Named:
-		return b.HasPointers(t.Underlying())
-	}
-	panic("unsupported pointer layout: " + t.String())
+	return lltypes.GoHasPointers(t)
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
-	switch t := types.Unalias(t).(type) {
-	case *types.Basic:
-		switch t.Kind() {
-		case types.String, types.UnsafePointer:
-			return b.PtrSize
-		}
-		return 0
-	case *types.Pointer:
-		return b.PtrSize
-	case *types.Slice:
-		return b.PtrSize
-	case *types.Signature:
-		return b.PtrSize
-	case *types.Interface:
-		return 2 * b.PtrSize
-	case *types.Struct:
-		var field int = -1
-		var bytes uintptr
-		n := t.NumFields()
-		fields := make([]*types.Var, n)
-		for i := 0; i < n; i++ {
-			f := t.Field(i)
-			fields[i] = f
-			if ptrBytes := b.PtrBytes(f.Type()); ptrBytes != 0 {
-				field = i
-				bytes = ptrBytes
-			}
-		}
-		if field == -1 {
-			return 0
-		}
-		return uintptr(b.Sizes.Offsetsof(fields)[field]) + bytes
-	case *types.Map:
-		return b.PtrSize
-	case *types.Array:
-		if t.Len() != 0 {
-			elem := t.Elem()
-			if bytes := b.PtrBytes(elem); bytes != 0 {
-				return b.Size(t) - b.Size(elem) + bytes
-			}
-		}
-		return 0
-	case *types.Chan:
-		return b.PtrSize
-	case *types.Named:
-		return b.PtrBytes(t.Underlying())
-	}
-	panic("unsupported ptrbytes: " + t.String())
+	return uintptr(lltypes.GoPtrBytes(t, int64(b.PtrSize), b.Sizes))
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
@@ -516,74 +390,5 @@ func (b *Builder) RuntimeName(t types.Type) string {
 }
 
 func (b *Builder) EqualName(t types.Type) string {
-	switch t := types.Unalias(t).(type) {
-	case *types.Basic:
-		switch t.Kind() {
-		case types.Bool:
-			return "memequal8"
-		case types.Int8, types.Uint8:
-			return "memequal8"
-		case types.Int16, types.Uint16:
-			return "memequal16"
-		case types.Int32, types.Uint32:
-			return "memequal32"
-		case types.Int64, types.Uint64:
-			return "memequal64"
-		case types.Int, types.Uint, types.Uintptr:
-			if b.PtrSize == 8 {
-				return "memequal64"
-			}
-			return "memequal32"
-		case types.Float32:
-			return "f32equal"
-		case types.Float64:
-			return "f64equal"
-		case types.Complex64:
-			return "c64equal"
-		case types.Complex128:
-			return "c128equal"
-		case types.String:
-			return "strequal"
-		case types.UnsafePointer:
-			return "memequalptr"
-		}
-	case *types.Pointer:
-		return "memequalptr"
-	case *types.Slice:
-		return ""
-	case *types.Signature:
-		return ""
-	case *types.Interface:
-		if t.NumMethods() == 0 {
-			return "nilinterequal"
-		}
-		return "interequal"
-	case *types.Struct:
-		n := t.NumFields()
-		if n == 0 {
-			return "memequal0"
-		}
-		for i := 0; i < n; i++ {
-			if b.EqualName(t.Field(i).Type()) == "" {
-				return ""
-			}
-		}
-		return "structequal"
-	case *types.Map:
-		return ""
-	case *types.Array:
-		elem := t.Elem()
-		if b.EqualName(elem) != "" {
-			if b.Size(elem) == 0 {
-				return "memequal0"
-			}
-			return "arrayequal"
-		}
-		return ""
-	case *types.Chan:
-		return "memequalptr"
-	case *types.Named:
-		return b.EqualName(t.Underlying())
-	}
-	panic("unsupported equal: " + t.String())
+	return lltypes.GoEqualName(t, int64(b.PtrSize), b.Sizes)
 }

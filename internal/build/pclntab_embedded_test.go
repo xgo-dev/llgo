@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestEmbeddedPCLNPruningScope(t *testing.T) {

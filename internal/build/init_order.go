@@ -21,8 +21,8 @@ import (
 	"sort"
 
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 // packageInitOrder returns the packages reachable from root in the order in

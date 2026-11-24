@@ -7,8 +7,8 @@ import (
 	"testing"
 	"unsafe"
 
-	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 )
 
 func TestBasic(t *testing.T) {

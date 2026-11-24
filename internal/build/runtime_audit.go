@@ -22,9 +22,9 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/directive"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/plan9asm"
 	llruntime "github.com/xgo-dev/llgo/runtime"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // RuntimeOwnership is a source inventory, before LLVM optimization or linking.

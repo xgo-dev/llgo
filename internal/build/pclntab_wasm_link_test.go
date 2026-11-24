@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/funcinfo"
-	"github.com/xgo-dev/llgo/internal/pclnmap"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/pclnmap"
 )
 
 func TestWasmPCLNLiveness(t *testing.T) {

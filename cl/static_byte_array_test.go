@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
-	"github.com/xgo-dev/llgo/internal/typepatch"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
+	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 )
 

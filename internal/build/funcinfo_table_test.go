@@ -31,9 +31,9 @@ import (
 	"github.com/xgo-dev/llvm"
 
 	"github.com/xgo-dev/llgo/internal/env"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) {

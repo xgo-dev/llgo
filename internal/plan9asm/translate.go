@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	archcfg "github.com/xgo-dev/llgo/internal/goarch"
+	llssaabi "github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/packages"
 	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
-	llssaabi "github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	gllvm "github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )

@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestWindowsNativeArtifacts(t *testing.T) {

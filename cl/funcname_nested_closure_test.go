@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
+	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )

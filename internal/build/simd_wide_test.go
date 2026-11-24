@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/lto"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llvm"
 )
 

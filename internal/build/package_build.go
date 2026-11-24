@@ -23,8 +23,8 @@ import (
 	"sync"
 
 	"github.com/xgo-dev/llgo/cl"
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 // packageLinkSnapshot is the LLVM-free part of an isolated package needed by

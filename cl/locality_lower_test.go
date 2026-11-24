@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/locality"
-	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
+	"github.com/xgo-dev/llgo/internal/locality"
+	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 	"golang.org/x/tools/go/ssa"
 )
 

@@ -3,8 +3,8 @@ package build
 import (
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 

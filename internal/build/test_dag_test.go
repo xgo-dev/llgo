@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestCanUseNativeTestDAG(t *testing.T) {
