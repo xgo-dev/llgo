@@ -16,7 +16,8 @@ for compiler in go "$LLGO"; do
     GODEBUG="${GODEBUG:+$GODEBUG,}simd=512" "$SDE" -spr -- "$output/test" -test.count=1 -test.timeout="${SDE_TIMEOUT:-60m}" -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
     cat "$output/result"
     if [[ "$package" == ./test/simd ]]; then
-      GODEBUG=cpu.avx512f=off "$SDE" -spr -- "$output/test" -test.count=1 -test.run='^TestSIMD512(VBMI2|EitherGuard)WideCall$' -test.v
+      GODEBUG="${GODEBUG:+$GODEBUG,}cpu.avx512f=off" "$SDE" -spr -- "$output/test" -test.count=1 -test.run='^TestSIMD512(VBMI2|EitherGuard)WideCall$' -test.v | tee "$output/result"
+      grep -q 'AVX2=true AVX512=false VBMI2=true' "$output/result"
     elif [[ "$package" == ./test/simd/portable ]]; then
       grep -q 'width=512 emulated=false AVX512=true' "$output/result"
     elif [[ "$package" == simd/archsimd/internal/simd_test ]]; then

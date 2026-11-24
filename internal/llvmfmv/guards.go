@@ -231,8 +231,8 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 	return work
 }
 
-// Keep common Go predicates at joins. For a ZMM call, A() || B() can also
-// establish the register width when either predicate independently supplies it.
+// Keep common Go predicates at joins. A() || B() can also specialize guarded
+// vector work when either predicate independently supplies ZMM registers.
 func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool, abi *wideABI) []uint64 {
 	entry := fn.EntryBasicBlock()
 	known := map[llvm.BasicBlock]guardFacts{entry: {}}
@@ -339,8 +339,10 @@ type guardRoot struct {
 	choices  []dispatchChoice
 }
 
-func (r *guardRoot) avx2Only() bool {
-	return len(r.masks) == 1 && r.masks[0] == featureAVX2
+// A direct call to a clone is valid when the caller covers every guard choice.
+// dispatchMasks places the union of all choices last, including at the budget limit.
+func (r *guardRoot) needsDispatch(known uint64) bool {
+	return r != nil && r.masks[len(r.masks)-1]&^known != 0
 }
 
 type guardKey struct {
@@ -425,6 +427,10 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		avx2.commit(mod, nil)
 		return nil
 	}
+	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
+	for i := range roots {
+		byFunction[roots[i].fn] = &roots[i]
+	}
 	ctx := mod.Context()
 	// Stage private bodies until every name needed by the simplified call
 	// graph is known. A collision can be discovered in a recursive callee.
@@ -497,7 +503,7 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
-				if !work[target] {
+				if !work[target] || byFunction[target].needsDispatch(mask) {
 					continue
 				}
 				callee, err := specializeLocal(target, mask)
@@ -532,22 +538,18 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		}
 		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base", 0)
 	}
-	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
-	for i := range roots {
-		byFunction[roots[i].fn] = &roots[i]
-	}
 	// Reuse existing local bodies in the canonical AVX2 call graph, including
 	// the externally callable AVX2 entries. Allocate no additional clones.
 	if avx2 != nil {
 		for key, body := range clones {
 			// A root with other choices must select its own best body.
 			root := byFunction[key.fn]
-			if key.mask == featureAVX2 && (root == nil || root.avx2Only()) {
+			if key.mask == featureAVX2 && !root.needsDispatch(featureAVX2) {
 				avx2.redirectStagedCalls(key.fn, body, avx2.variants)
 			}
 		}
 		for _, root := range roots {
-			if root.avx2Only() {
+			if !root.needsDispatch(featureAVX2) {
 				avx2.redirectStagedCalls(root.fn, root.base, avx2.baselines)
 			}
 		}

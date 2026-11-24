@@ -62,20 +62,38 @@ func vbmi2WideCall(dst, src *[16]int32) bool {
 	return false
 }
 
+//go:noinline
+func avx2CallsVBMI2(dst, src *[16]int32) bool {
+	if archsimd.X86.AVX2() {
+		return vbmi2WideCall(dst, src)
+	}
+	return false
+}
+
 func TestSIMD512VBMI2WideCall(t *testing.T) {
-	var src, dst, want [16]int32
+	avx2, avx512, vbmi2 := archsimd.X86.AVX2(), archsimd.X86.AVX512(), archsimd.X86.AVX512VBMI2()
+	t.Logf("AVX2=%t AVX512=%t VBMI2=%t", avx2, avx512, vbmi2)
+	var src, doubled [16]int32
 	for i := range src {
 		src[i] = int32(7*i + 1)
+		doubled[i] = 2 * src[i]
 	}
-	if archsimd.X86.AVX512VBMI2() {
-		for i, x := range src {
-			want[i] = 2 * x
+	for _, tc := range []struct {
+		name string
+		call func(*[16]int32, *[16]int32) bool
+		take bool
+	}{
+		{"direct", vbmi2WideCall, vbmi2},
+		{"via AVX2", avx2CallsVBMI2, avx2 && vbmi2},
+	} {
+		var dst, want [16]int32
+		if tc.take {
+			want = doubled
 		}
-	}
-	bundle := vbmi2WideCall(&dst, &src)
-	if bundle != (archsimd.X86.AVX512VBMI2() && archsimd.X86.AVX512()) || dst != want {
-		t.Fatalf("AVX512=%t VBMI2=%t: got bundle=%t lanes=%v, want lanes=%v",
-			archsimd.X86.AVX512(), archsimd.X86.AVX512VBMI2(), bundle, dst, want)
+		bundle := tc.call(&dst, &src)
+		if bundle != (tc.take && avx512) || dst != want {
+			t.Fatalf("%s: got bundle=%t lanes=%v, want bundle=%t lanes=%v", tc.name, bundle, dst, tc.take && avx512, want)
+		}
 	}
 }
 

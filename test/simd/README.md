@@ -362,8 +362,9 @@ Go predicates in its runtime mask. For example, VAES uses the VAES bit even
 when AVX has been independently disabled. AVXAES uses the combined AVX and
 AES result published by the runtime. A direct VBMI2 guard enables a 512-bit
 register call even when a CPU override disables the AVX512 bundle. An explicit
-AVX512 query in that body still observes its own runtime bit. Midway selects
-portable width independently.
+AVX512 query in that body still observes its own runtime bit. When the caller
+still needs a width dispatcher for a 512-bit call, that dispatcher checks the
+Go AVX512 bundle. Midway selects portable width independently.
 
 Run the native matrix with:
 
@@ -519,9 +520,9 @@ proven on every incoming path. Guarded vector operations, LLVM intrinsics
 returning vectors, and direct calls to local SIMD helpers can select an
 implementation with those features. A 256- or 512-bit register argument or
 result also counts as work at the call site, including external and indirect
-calls. If every path to the call checks a predicate that supplies ZMM registers
-(for example, `AVX512() || AVX512VBMI2()`), either effective predicate can
-select a wide implementation. Nested
+calls. If every path to the vector work checks a predicate that supplies ZMM
+registers (for example, `AVX512() || AVX512VBMI2()`), either effective predicate can
+select a specialized implementation, even for narrower operations. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
 GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
 the AVX512 predicate. LLGo folds these queries before generating guarded
@@ -544,8 +545,9 @@ their runtime checks. Local helpers share a copy for each distinct proven mask.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls
-reuse the same copy for a given feature combination. Indirect calls keep
-the ordinary entry.
+reuse the same copy when the caller covers all of the callee's guard choices.
+A callee with additional guard choices keeps its dispatcher. Indirect calls
+keep the ordinary entry.
 Calls to separately compiled functions can use their ordinary Go entries.
 Function values retain the public entry and its static calling convention.
 The baseline implementation serves calls before CPU feature publication. `TestLazyDispatcherPolicy` checks that this call does not cache
