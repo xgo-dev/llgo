@@ -371,10 +371,6 @@ static inline int usb_serial_jtag_ll_write_txfifo(const uint8_t *buf, uint32_t w
 #define ESP_MWDT_FEED_REG (0x6001F000u + 0x60)
 #define ESP_MWDT_WPROTECT_REG (0x6001F000u + 0x64)
 
-// RTC_CNTL_OPTIONS0.SW_SYS_RST: full system software reset.
-#define ESP_SOFT_RESET_REG (0x60008000u + 0x00)
-#define ESP_SOFT_RESET_BIT (1u << 31)
-
 // USB_SERIAL_JTAG base: ep1_conf.serial_in_ep_data_free lives at +0x4 bit 1.
 #define ESP_USB_SJ_BASE 0x60043000u
 
@@ -515,10 +511,11 @@ ssize_t _write(int fd, const void *buf, size_t count) {
 // On real hardware there is no semihosting host: the EBREAK raises a
 // breakpoint exception (mcause=3). This device file installs a chained trap
 // at boot that recognizes the semihosting sequence by the magic slli in
-// front of the faulting EBREAK and performs an RTC soft reset, instead of
-// falling into the ROM exception handler (which spins until a watchdog
-// reset). Every other exception/interrupt chains to the handler that was
-// in mtvec at boot, so ordinary traps keep their existing behavior.
+// front of the faulting EBREAK and parks the core in a clean WFI halt with
+// every watchdog disarmed, instead of falling into the ROM exception
+// handler (which spins until a watchdog reset reboots the program). Every
+// other exception/interrupt chains to the handler that was in mtvec at
+// boot, so ordinary traps keep their existing behavior.
 //
 // The link order puts the libc archives before the extra-file objects, so a
 // strong _exit here would collide with the archive's definition; the trap
@@ -535,6 +532,23 @@ ssize_t _write(int fd, const void *buf, size_t count) {
 // USB_SJ_FLUSH_SPIN: a few USB frames, and it never runs under esp-emu/QEMU
 // because the semihosting host terminates the process at the EBREAK).
 #define ESP_TRAP_DRAIN_SPIN 1500000
+
+// Clean halt on real hardware: the exit trap lands here once the last USB
+// packet has had its bounded drain window. Re-disarm every watchdog the
+// boot constructor disarmed and sleep the core with WFI, so the board
+// stays powered and quiet with its state intact instead of rebooting into
+// a reset loop. Emulator runs never reach it: their semihosting host ends
+// the process at the EBREAK itself.
+__attribute__((used, noreturn)) static void esp_baremetal_halt(void) {
+    esp_disable_hp_wdt();
+    // Commit the MMIO writes before sleeping: the WDT config registers
+    // latch asynchronously, and the WFI park must not be cut short by a
+    // watchdog that is still counting down.
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
+    for (;;) {
+        __asm__ volatile("wfi");
+    }
+}
 
 // Previous (ROM) mtvec, saved at boot for chaining. `used` keeps the
 // definition in the object: the only reader is the naked trap's assembly,
@@ -559,7 +573,7 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         "bne a1, a2, 2f\n" // not our semihosting exit: chain
         // Semihosting exit without a semihosting host. Give the USB host a
         // bounded window to drain the last flushed packet (ep1_conf
-        // serial_in_ep_data_free), then soft reset.
+        // serial_in_ep_data_free), then clean-halt the core.
         "li a0, %1\n"
         "li a3, %2\n"
         "3: lw a1, 4(a0)\n"
@@ -567,12 +581,9 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         "bnez a1, 4f\n"
         "addi a3, a3, -1\n"
         "bnez a3, 3b\n"
-        "4: li a0, %3\n"
-        "lw a1, 0(a0)\n"
-        "li a2, %4\n"
-        "or a1, a1, a2\n"
-        "sw a1, 0(a0)\n"
-        "1: wfi\n" // reset takes effect; park if it somehow does not
+        "4: andi sp, sp, -16\n" // the interrupted frame is never resumed
+        "call esp_baremetal_halt\n"
+        "1: wfi\n" // unreachable park, keeps the fallthrough defined
         "j 1b\n"
         "2: la t0, esp_prev_mtvec\n"
         "lw t0, 0(t0)\n"
@@ -586,8 +597,7 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         "addi sp, sp, 24\n"
         "jr t0\n"
         :
-        : "i"(ESP_SEMIHOST_SLII_HIGH), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN),
-          "i"(ESP_SOFT_RESET_REG), "i"(ESP_SOFT_RESET_BIT));
+        : "i"(ESP_SEMIHOST_SLII_HIGH), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN));
 }
 
 // Boot hook: disarm the ROM-armed watchdogs and install the exit trap.
