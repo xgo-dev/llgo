@@ -44,3 +44,7 @@ func poll(kind *int32, aux *int32, ip *uint32) int32 {
 }
 
 func vTaskDelay(ticks uint32) { _ = ticks }
+
+// gosched is a no-op on the host: the stub build never runs the subscriber
+// poller, and the host scheduler has no fibers to hand off to.
+func gosched() {}
