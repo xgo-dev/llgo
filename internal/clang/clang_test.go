@@ -845,6 +845,36 @@ func TestExecResolvesExecutableFromCmdEnvPath(t *testing.T) {
 	if err := emptyCmd.Compile("-v"); !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("Compile with isolated empty PATH = %v, want exec.ErrNotFound", err)
 	}
+
+	// Relative PATH entries must resolve against Cmd.Dir (not process cwd) and
+	// launch via an absolute executable path.
+	workDir := t.TempDir()
+	relBin := filepath.Join(workDir, "tool-bin")
+	if err := os.MkdirAll(relBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relMarker := filepath.Join(t.TempDir(), "rel-ran")
+	relScript := "#!/bin/sh\nprintf rel-ok > \"" + relMarker + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(relBin, "fake-clang"), []byte(relScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relCmd := New("fake-clang", Config{})
+	relCmd.Dir = workDir
+	relCmd.Env = []string{"PATH=tool-bin"}
+	resolved, err := ResolveExecutable("fake-clang", relCmd.Dir, relCmd.Env)
+	if err != nil {
+		t.Fatalf("ResolveExecutable(relative PATH) failed: %v", err)
+	}
+	if !filepath.IsAbs(resolved) || filepath.Clean(resolved) != filepath.Join(relBin, "fake-clang") {
+		t.Fatalf("ResolveExecutable = %q, want %q", resolved, filepath.Join(relBin, "fake-clang"))
+	}
+	if err := relCmd.Compile("-v"); err != nil {
+		t.Fatalf("Compile with relative Cmd.Env PATH anchored to Cmd.Dir failed: %v", err)
+	}
+	gotRel, err := os.ReadFile(relMarker)
+	if err != nil || string(gotRel) != "rel-ok" {
+		t.Fatalf("expected rel-bin fake-clang to run, got %q, err=%v", gotRel, err)
+	}
 }
 
 // Benchmark tests

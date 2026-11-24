@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/xgo-dev/llgo/internal/clang"
 )
 
 // Invocation contains the explicit inputs used by one build. An empty Dir
@@ -44,14 +46,13 @@ func (e commandEnv) configure(cmd *exec.Cmd) *exec.Cmd {
 	if e.environ != nil {
 		cmd.Env = slices.Clone(e.environ)
 		if len(cmd.Args) > 0 && !strings.ContainsAny(cmd.Args[0], `/\`) {
-			if pathVal, ok := e.lookupOK("PATH"); ok {
-				if resolved := lookupExecutableInPath(cmd.Args[0], pathVal, e.lookup("PATHEXT")); resolved != "" {
-					cmd.Path = resolved
-					cmd.Err = nil
-				} else {
-					cmd.Path = cmd.Args[0]
-					cmd.Err = &exec.Error{Name: cmd.Args[0], Err: exec.ErrNotFound}
-				}
+			resolved, err := clang.ResolveExecutable(cmd.Args[0], e.dir, e.environ)
+			if err != nil {
+				cmd.Path = cmd.Args[0]
+				cmd.Err = err
+			} else if resolved != cmd.Args[0] {
+				cmd.Path = resolved
+				cmd.Err = nil
 			}
 		}
 	}
@@ -62,14 +63,14 @@ func (e commandEnv) lookPath(name string) (string, error) {
 	if e.environ == nil || strings.ContainsAny(name, `/\`) {
 		return exec.LookPath(name)
 	}
-	pathVal, ok := e.lookupOK("PATH")
-	if !ok {
+	resolved, err := clang.ResolveExecutable(name, e.dir, e.environ)
+	if err != nil {
+		return "", err
+	}
+	if resolved == name {
 		return exec.LookPath(name)
 	}
-	if resolved := lookupExecutableInPath(name, pathVal, e.lookup("PATHEXT")); resolved != "" {
-		return resolved, nil
-	}
-	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	return resolved, nil
 }
 
 func (e commandEnv) lookupOK(name string) (string, bool) {
@@ -88,47 +89,6 @@ func (e commandEnv) lookupOK(name string) (string, bool) {
 func (e commandEnv) lookup(name string) string {
 	v, _ := e.lookupOK(name)
 	return v
-}
-
-func lookupExecutableInPath(name, pathEnv, pathExtEnv string) string {
-	exts := []string{""}
-	if runtime.GOOS == "windows" {
-		if pathExtEnv == "" {
-			pathExtEnv = ".COM;.EXE;.BAT;.CMD"
-		}
-		exts = nil
-		if filepath.Ext(name) != "" {
-			exts = append(exts, "")
-		}
-		for _, raw := range strings.Split(pathExtEnv, ";") {
-			if raw == "" {
-				continue
-			}
-			if raw[0] != '.' {
-				raw = "." + raw
-			}
-			exts = append(exts, raw)
-		}
-		if len(exts) == 0 {
-			exts = []string{""}
-		}
-	}
-	for _, dir := range filepath.SplitList(pathEnv) {
-		if dir == "" {
-			continue
-		}
-		for _, ext := range exts {
-			candidate := filepath.Join(dir, name+ext)
-			info, err := os.Stat(candidate)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if runtime.GOOS == "windows" || info.Mode()&0o111 != 0 {
-				return candidate
-			}
-		}
-	}
-	return ""
 }
 
 func resolveOutputs(dir string, out *OutFmtDetails) {

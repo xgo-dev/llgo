@@ -230,12 +230,12 @@ func findLibrary(baseDir string, dirs []string, name string) string {
 	return ""
 }
 
-func (c *Cmd) lookupEnv(key string) (string, bool) {
-	if c.Env == nil {
+func lookupEnvSlice(environ []string, key string) (string, bool) {
+	if environ == nil {
 		return os.LookupEnv(key)
 	}
-	for i := len(c.Env) - 1; i >= 0; i-- {
-		k, v, ok := strings.Cut(c.Env[i], "=")
+	for i := len(environ) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(environ[i], "=")
 		if !ok {
 			continue
 		}
@@ -246,39 +246,60 @@ func (c *Cmd) lookupEnv(key string) (string, bool) {
 	return "", false
 }
 
+func (c *Cmd) lookupEnv(key string) (string, bool) {
+	return lookupEnvSlice(c.Env, key)
+}
+
 func (c *Cmd) getenv(key string) string {
 	v, _ := c.lookupEnv(key)
 	return v
 }
 
-// resolveExecutable resolves a bare c.app command name against c.Env's PATH
-// before exec.Command runs, because os/exec.Command always looks up bare names
-// in the process-wide PATH prior to assigning cmd.Env.
-func (c *Cmd) resolveExecutable() (string, error) {
-	if c.Env == nil || c.app == "" || strings.ContainsAny(c.app, `/\`) {
-		return c.app, nil
+// ResolveExecutable resolves a bare executable name against environ's PATH
+// (and PATHEXT on Windows) before os/exec.Command runs, because exec.Command
+// otherwise resolves bare names against the process-wide PATH prior to
+// applying cmd.Env.
+//
+// Relative PATH entries are anchored to dir (or the process working directory
+// when dir is empty) and converted to absolute paths before execution so
+// commands with cmd.Dir set always launch the intended binary.
+//
+// When environ is nil, has no PATH entry, or name already contains a path
+// separator, name is returned unchanged.
+func ResolveExecutable(name, dir string, environ []string) (string, error) {
+	if environ == nil || name == "" || strings.ContainsAny(name, `/\`) {
+		return name, nil
 	}
-	pathVal, hasPath := c.lookupEnv("PATH")
+	pathVal, hasPath := lookupEnvSlice(environ, "PATH")
 	if !hasPath {
-		return c.app, nil
+		return name, nil
 	}
-	if resolved := lookupExecutableInPath(c.app, pathVal, c.getenv("PATHEXT")); resolved != "" {
+	pathExtVal, _ := lookupEnvSlice(environ, "PATHEXT")
+	if resolved := lookupExecutableInPath(name, dir, pathVal, pathExtVal); resolved != "" {
 		return resolved, nil
 	}
-	return "", &exec.Error{Name: c.app, Err: exec.ErrNotFound}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
-func lookupExecutableInPath(name, pathEnv, pathExtEnv string) string {
+func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string) string {
 	exts := []string{""}
 	if runtime.GOOS == "windows" {
 		exts = windowsPathExts(name, pathExtEnv)
 	}
-	for _, dir := range filepath.SplitList(pathEnv) {
-		if dir == "" {
-			continue
+	for _, entry := range filepath.SplitList(pathEnv) {
+		if entry == "" {
+			entry = "."
+		}
+		if !filepath.IsAbs(entry) {
+			if baseDir != "" {
+				entry = filepath.Join(baseDir, entry)
+			}
+			if abs, err := filepath.Abs(entry); err == nil {
+				entry = abs
+			}
 		}
 		for _, ext := range exts {
-			candidate := filepath.Join(dir, name+ext)
+			candidate := filepath.Join(entry, name+ext)
 			if isExecutableFile(candidate) {
 				return candidate
 			}
@@ -381,7 +402,7 @@ func (c *Cmd) exec(args ...string) error {
 		defer os.Remove(responseFile)
 		args = []string{"@" + responseFile}
 	}
-	app, err := c.resolveExecutable()
+	app, err := ResolveExecutable(c.app, c.Dir, c.Env)
 	if err != nil {
 		return err
 	}

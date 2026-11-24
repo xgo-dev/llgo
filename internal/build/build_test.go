@@ -494,6 +494,33 @@ func TestWithLLVMPathPrependsWithoutMutatingProcessEnv(t *testing.T) {
 	if got := (commandEnv{environ: promoted}).lookup("PATH"); got != want {
 		t.Fatalf("promoted withLLVMPath PATH = %q, want %q", got, want)
 	}
+
+	if runtime.GOOS != "windows" {
+		workDir := t.TempDir()
+		relBin := filepath.Join(workDir, "tool-bin")
+		if err := os.MkdirAll(relBin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		toolPath := filepath.Join(relBin, "rel-build-tool")
+		if err := os.WriteFile(toolPath, []byte("#!/bin/sh\necho rel-tool-ok\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		env := commandEnv{dir: workDir, environ: []string{"PATH=tool-bin"}}
+		resolved, err := env.lookPath("rel-build-tool")
+		if err != nil {
+			t.Fatalf("commandEnv.lookPath(relative PATH) failed: %v", err)
+		}
+		if !filepath.IsAbs(resolved) || filepath.Clean(resolved) != toolPath {
+			t.Fatalf("commandEnv.lookPath = %q, want %q", resolved, toolPath)
+		}
+		out, err := env.configure(exec.Command("rel-build-tool")).CombinedOutput()
+		if err != nil {
+			t.Fatalf("commandEnv.configure(relative PATH) failed: %v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != "rel-tool-ok" {
+			t.Fatalf("output = %q, want %q", got, "rel-tool-ok")
+		}
+	}
 }
 
 func TestBuildLinksUsingInvocationLLVMPathWhenProcessPathShadowsClang(t *testing.T) {
