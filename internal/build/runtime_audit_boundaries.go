@@ -113,6 +113,7 @@ C.clock_gettime_nsec_np`,
 		"target libc / platform SDK",
 		``,
 	},
+	{"C.esp_fill_random", "ESP-IDF esp_hw_support hardware TRNG (esp_random.h), resolved at the IDF link", ""},
 	{"stdcall.GetSystemDirectoryA", "Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64", ""},
 	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "ssa/eh.go"},
 	{
