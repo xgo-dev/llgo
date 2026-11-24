@@ -127,7 +127,7 @@ func TestUnsafeString(t *testing.T) {
 	b.Return()
 }
 
-func TestTooManyConditionalDefers(t *testing.T) {
+func TestConditionalDeferOverflowFallsBackToLoop(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

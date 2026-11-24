@@ -900,7 +900,9 @@ func structEqualNeedsShortCircuit(typ *types.Struct, fields []int) bool {
 // an operand address when it has proved that doing so preserves value semantics.
 // Non-regular structs remain field-wise so their semantic comparisons preserve
 // the established ordering and panic behavior; source addresses are used only
-// for regular-memory structs.
+// for regular-memory structs. When a non-first field can panic or call runtime
+// equality, StructBinOp lowers to a short-circuiting chain of basic blocks
+// joined by a phi and advances the builder's insertion block to the merge block.
 func (b Builder) StructBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
 	if x.kind != vkStruct || y.kind != vkStruct {
 		panic("StructBinOp requires struct operands")

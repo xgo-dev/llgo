@@ -704,7 +704,7 @@ func (p Program) llvmNameOf(named *types.Named) (name string) {
 	if obj := named.Obj(); obj != nil {
 		parent := obj.Parent()
 		pkg := obj.Pkg()
-		if parent != nil && pkg != nil && !isPkgScope(parent, pkg.Scope()) {
+		if parent != nil && pkg != nil && !isPackageLevelScope(parent) {
 			index := p.fnnamed[name]
 			p.fnnamed[name] = index + 1
 			name += fmt.Sprintf("#%v", index)
@@ -713,17 +713,10 @@ func (p Program) llvmNameOf(named *types.Named) (name string) {
 	return name
 }
 
-func isPkgScope(parent, pkgScope *types.Scope) bool {
-	if parent == pkgScope {
-		return true
-	}
-	if parent == nil || pkgScope == nil {
-		return false
-	}
-	// Some importer paths can materialize equivalent package scopes as distinct
-	// pointers. Package scopes are always direct children of types.Universe,
-	// whereas function and block scopes are nested beneath a package scope.
-	return parent.Parent() == types.Universe && pkgScope.Parent() == types.Universe
+// isPackageLevelScope reports whether scope is a package-level scope (a direct
+// child of types.Universe) rather than a function or block scope.
+func isPackageLevelScope(scope *types.Scope) bool {
+	return scope != nil && scope.Parent() == types.Universe
 }
 
 func (p Program) toNamed(raw *types.Named) Type {

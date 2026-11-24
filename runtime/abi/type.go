@@ -364,6 +364,10 @@ func (t *UncommonType) Method(i int) *Method {
 	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "0 <= i < t.Mcount"))
 }
 
+// Methods returns a view into t's method table without copying it.
+// Callers must treat the returned slice as read-only.
+// The table can be dynamically allocated; callers must keep its backing type
+// metadata alive for as long as they use the returned slice.
 func (t *UncommonType) Methods() []Method {
 	if t.Mcount == 0 {
 		return nil
@@ -372,6 +376,9 @@ func (t *UncommonType) Methods() []Method {
 	return unsafe.Slice((*Method)(methodsPtr), t.Mcount)
 }
 
+// ExportedMethods returns a view into the exported prefix of t's method table
+// without copying it. Callers must treat the returned slice as read-only and
+// keep the backing type metadata alive for as long as they use the slice.
 func (t *UncommonType) ExportedMethods() []Method {
 	if t.Xcount == 0 {
 		return nil
