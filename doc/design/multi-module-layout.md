@@ -64,8 +64,13 @@ cross-PR merge conflicts:
 3. **Update release, install, and CI touchpoints**:
    - `.goreleaser.yaml`: set `dir: cmd` and `main: ./llgo` (updating `-X`
      ldflags paths to match relocated `env` and `xtool/env/llvm` package paths).
-   - `install.sh` / `install.ps1`: update source-install commands to build from
-     `./cmd` (or `go install github.com/xgo-dev/llgo/cmd/llgo@<version>`).
+   - `install.sh` / `install.ps1`: update source-install commands to build from a
+     source checkout under `./cmd` (e.g., `cd cmd && go build ./llgo` or
+     `go install ./llgo` inside the checkout) while `cmd/go.mod` carries any
+     `replace` directive for `golang.org/x/tools`, since Go rejects versioned
+     `go install ...@<version>` on modules with `replace` directives. Enable
+     versioned `go install github.com/xgo-dev/llgo/cmd/llgo@<version>` only
+     after all `replace` directives are removed from `cmd/go.mod`.
    - `.github/workflows/*.yml`: run `GOWORK=off CGO_ENABLED=0 go test ./...` at
      the repo root to guard pure-Go library hygiene, and run compiler/LLVM test
      matrices with `go.work` enabled (or `cd cmd && go test ./...`).
