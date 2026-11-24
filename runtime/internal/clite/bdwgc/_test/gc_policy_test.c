@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #if defined(_WIN32)
 #define _CRT_SECURE_NO_WARNINGS 1
 #endif
@@ -12,6 +15,7 @@ extern uintptr_t GC_get_gc_no(void);
 extern void *GC_malloc_atomic(size_t);
 extern int GC_get_disable_automatic_collection(void);
 extern uintptr_t GC_get_free_space_divisor(void);
+extern int GC_get_parallel(void);
 
 static unsigned previous_callbacks;
 static void previous_event(int event) { if (event == 5) ++previous_callbacks; }
@@ -27,6 +31,37 @@ int main(int argc, char **argv)
     assert(llgo_gc_budget(SIZE_MAX, INT32_MAX) == SIZE_MAX);
     assert(llgo_gc_budget(SIZE_MAX, 100) == SIZE_MAX);
     assert(llgo_gc_budget(0, 0) == 1);
+
+    assert(llgo_gc_parse_gomaxprocs(NULL) == 0);
+    assert(llgo_gc_parse_gomaxprocs("") == 0);
+    assert(llgo_gc_parse_gomaxprocs("0") == 0);
+    assert(llgo_gc_parse_gomaxprocs("-1") == 0);
+    assert(llgo_gc_parse_gomaxprocs("+4") == 0);
+    assert(llgo_gc_parse_gomaxprocs(" 4") == 0);
+    assert(llgo_gc_parse_gomaxprocs("4 ") == 0);
+    assert(llgo_gc_parse_gomaxprocs("bad") == 0);
+    assert(llgo_gc_parse_gomaxprocs("2147483648") == 0);
+    assert(llgo_gc_parse_gomaxprocs("1") == 1);
+    assert(llgo_gc_parse_gomaxprocs("4") == 4);
+    assert(llgo_gc_parse_gomaxprocs("2147483647") == (unsigned)INT32_MAX);
+
+    assert(llgo_gc_target_markers(NULL, NULL, NULL, 16) == 0);
+    assert(llgo_gc_target_markers("1", NULL, NULL, 16) == 1);
+    assert(llgo_gc_target_markers("4", "", "", 16) == 4);
+    assert(llgo_gc_target_markers("64", NULL, NULL, 16) == 16);
+    assert(llgo_gc_target_markers("4", "8", NULL, 16) == 0);
+    assert(llgo_gc_target_markers("4", NULL, "8", 16) == 0);
+    assert(llgo_gc_target_markers("0", NULL, NULL, 16) == 0);
+    assert(llgo_gc_target_markers("bad", NULL, NULL, 16) == 0);
+
+    if (argc == 2 && strcmp(argv[1], "markers") == 0) {
+        llgo_gc_init_markers();
+        GC_init();
+        /* Calling after GC_init must be a safe no-op. */
+        llgo_gc_init_markers();
+        printf("parallel=%d cpus=%u\n", GC_get_parallel(), llgo_gc_cpu_count());
+        return 0;
+    }
 
     GC_init();
     if (argc == 2 && strcmp(argv[1], "host-disabled") == 0) {

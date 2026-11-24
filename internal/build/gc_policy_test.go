@@ -4,6 +4,7 @@ package build
 
 import (
 	stdctx "context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,4 +61,62 @@ func TestBDWGCAllocationPolicy(t *testing.T) {
 			run(test.input, test.want)
 		})
 	}
+
+	runMarkers := func(overrides map[string]string) (parallel, cpus int) {
+		t.Helper()
+		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, output, "markers")
+		var env []string
+		for _, kv := range os.Environ() {
+			key, _, _ := strings.Cut(kv, "=")
+			if strings.EqualFold(key, "GOMAXPROCS") ||
+				strings.EqualFold(key, "GC_MARKERS") ||
+				strings.EqualFold(key, "GC_NPROCS") {
+				continue
+			}
+			env = append(env, kv)
+		}
+		for k, v := range overrides {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("BDWGC markers %v: %v\n%s", overrides, err, out)
+		}
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "parallel=%d cpus=%d", &parallel, &cpus); err != nil {
+			t.Fatalf("parse BDWGC markers output %q: %v", string(out), err)
+		}
+		return parallel, cpus
+	}
+
+	t.Run("markers/GOMAXPROCS=1", func(t *testing.T) {
+		if parallel, _ := runMarkers(map[string]string{"GOMAXPROCS": "1"}); parallel != 0 {
+			t.Fatalf("GOMAXPROCS=1: GC_get_parallel() = %d, want 0", parallel)
+		}
+	})
+	t.Run("markers/GOMAXPROCS=2", func(t *testing.T) {
+		parallel, cpus := runMarkers(map[string]string{"GOMAXPROCS": "2"})
+		if parallel > 1 {
+			t.Fatalf("GOMAXPROCS=2: GC_get_parallel() = %d, want <= 1 (cpus=%d)", parallel, cpus)
+		}
+		if defaultParallel, _ := runMarkers(nil); defaultParallel >= 2 && parallel != 1 {
+			t.Fatalf("GOMAXPROCS=2: GC_get_parallel() = %d, want 1 (default=%d, cpus=%d)", parallel, defaultParallel, cpus)
+		}
+	})
+	t.Run("markers/GC_MARKERS_overrides_GOMAXPROCS", func(t *testing.T) {
+		want, _ := runMarkers(map[string]string{"GC_MARKERS": "2"})
+		got, _ := runMarkers(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": "2"})
+		if got != want {
+			t.Fatalf("GOMAXPROCS=1 GC_MARKERS=2: GC_get_parallel() = %d, want %d", got, want)
+		}
+	})
+	t.Run("markers/GC_NPROCS_overrides_GOMAXPROCS", func(t *testing.T) {
+		want, _ := runMarkers(map[string]string{"GC_NPROCS": "2"})
+		got, _ := runMarkers(map[string]string{"GOMAXPROCS": "1", "GC_NPROCS": "2"})
+		if got != want {
+			t.Fatalf("GOMAXPROCS=1 GC_NPROCS=2: GC_get_parallel() = %d, want %d", got, want)
+		}
+	})
 }
