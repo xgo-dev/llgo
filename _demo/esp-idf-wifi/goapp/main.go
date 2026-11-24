@@ -625,9 +625,16 @@ func tlsRound(c *tls.TLSConn, tag string) bool {
 //     ("[go] tls required ..."); SKIPped when no CA was compiled in (run
 //     idfproj/host/gencert.sh), like the scan-only wifi run;
 //  3. negative test: a dial with a CA that signed nothing must be rejected
-//     with CertVerifyFailed ("[go] tls bad-ca ...").
+//     with CertVerifyFailed ("[go] tls bad-ca ...");
+//  4. the Config+Dial probes the deprecated TLSDial never covered: correct
+//     ServerName + CA passes ("[go] tls sni ok"), wrong ServerName and
+//     wrong CA are rejected ("[go] tls sni reject-host / reject-ca"), and
+//     InsecureSkipVerify still completes ("[go] tls skip ok") - the four
+//     SNI acceptance lines; each passing dial is proven usable by a quiet
+//     echo round plus the exported ConnectionState.
 //
 // "[go] tls PASS" fires only when phase 1 passed AND phase 2 ran and passed
+// AND phase 4's four probes went the right direction
 // - that is the emu acceptance gate (--exit-on). Without a compiled-in CA
 // phase 2 is SKIPped and the probe ends at "[go] tls done" - PASS is never
 // printed, so a gate run in that shape cannot exit green by accident (it
@@ -702,8 +709,133 @@ func tlsProbe() {
 		}
 		heapMark("tls-badca")
 	}
+
+	// SNI/identity probes through the Config+Dial path - the checks the
+	// deprecated TLSDial never did. The TCP destination stays the NAT alias
+	// the whole run dials; the certificate gencert.sh made names the
+	// service behind it (SAN DNS:localhost, IP:127.0.0.1), so the verified
+	// name travels in Config.ServerName, not in the address. Four probes,
+	// one line each: the right name passes, the wrong name and the wrong CA
+	// are rejected inside the handshake, and the explicit skip shape still
+	// completes. Any other outcome prints a FAIL line and stops before
+	// PASS, so the emu acceptance gate covers these four directions too.
+	natPeer := "192.168.4.1:9443"
+
+	// Correct name + correct CA + a version floor: a fully verified
+	// session. ConnectionState is read while the session is live (State on
+	// a closed conn legitimately reports nothing), then the quiet echo
+	// round proves the session usable and closes it.
+	c, e = tls.Dial(natPeer, 15000, &tls.Config{
+		ServerName: "localhost",
+		RootCAs:    ca,
+		MinVersion: tls.VersionTLS12,
+	})
+	if e != 0 {
+		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL sni-ok")
+		return
+	}
+	if !tlsStateVerified(c) {
+		c.Close()
+		println("[go] tls FAIL sni-ok (ConnectionState)")
+		return
+	}
+	if !tlsRoundQuiet(c) {
+		println("[go] tls FAIL sni-ok (echo)")
+		return
+	}
+	println("[go] tls sni ok")
+
+	// Wrong name, right CA: the handshake must refuse the peer - this is
+	// the MITM shape TLSDial would have accepted (any cert of this CA).
+	c, e = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "nope.llgo.test", RootCAs: ca})
+	if e == tls.CertVerifyFailed {
+		println("[go] tls sni reject-host (", int(e), tls.ErrName(e), ")")
+	} else {
+		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL reject-host (want CertVerifyFailed)")
+		return
+	}
+
+	// Right name, wrong CA: the chain cannot be built to the anchor that
+	// signed nothing.
+	c, e = tls.Dial(natPeer, 15000, &tls.Config{ServerName: "localhost", RootCAs: caWrong})
+	if e == tls.CertVerifyFailed {
+		println("[go] tls sni reject-ca (", int(e), tls.ErrName(e), ")")
+	} else {
+		println("[go] tls sni dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL reject-ca (want CertVerifyFailed)")
+		return
+	}
+
+	// Explicit skip: no identity checking, session still fully usable
+	// (same live-State + quiet-round order as the sni-ok probe).
+	c, e = tls.Dial(natPeer, 15000, &tls.Config{InsecureSkipVerify: true})
+	if e != 0 {
+		println("[go] tls skip dial err =", int(e), tls.ErrName(e))
+		println("[go] tls FAIL skip-ok")
+		return
+	}
+	if !tlsStateVerified(c) {
+		c.Close()
+		println("[go] tls FAIL skip-ok (ConnectionState)")
+		return
+	}
+	if !tlsRoundQuiet(c) {
+		println("[go] tls FAIL skip-ok (echo)")
+		return
+	}
+	println("[go] tls skip ok")
+
 	println("[go] tls PASS")
 	println("[go] tls done")
+}
+
+// tlsRoundQuiet is tlsRound without the per-step prints (the sni probes
+// below report exactly one line each): the 256-byte pattern out, the echo
+// back in short reads, byte-compare, graceful close. Closes the conn on
+// every path; returns whether the round verified.
+func tlsRoundQuiet(c *tls.TLSConn) bool {
+	const patternLen = 256
+	var msg [patternLen]byte
+	s := uint32(0x9e3779b9)
+	for i := range msg {
+		s = s*1664525 + 1013904223
+		msg[i] = byte(s >> 24)
+	}
+	defer c.Close()
+	if e := c.SetDeadline(5000); e != 0 {
+		return false
+	}
+	if w := c.Write(msg[:]); w != patternLen {
+		return false
+	}
+	var got [patternLen]byte
+	total := int32(0)
+	for total < patternLen {
+		n, _ := c.Read(got[total:])
+		if n > 0 {
+			total += n
+			continue
+		}
+		return false // peer closed early (n == 0, e == 0) or a real error
+	}
+	for i := int32(0); i < total; i++ {
+		if got[i] != msg[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// tlsStateVerified checks ConnectionState's shape on a live session: the
+// negotiated version and cipher suite strings are present and the peer
+// certificate exported with content. No prints - the sni probes keep one
+// line per probe; a FAIL line only fires when the probe overall fails.
+func tlsStateVerified(c *tls.TLSConn) bool {
+	st := c.State()
+	return st.Version != "" && st.CipherSuite != "" &&
+		len(st.PeerCerts) == 1 && len(st.PeerCerts[0]) > 0
 }
 
 // wsRound exercises one live WebSocket session: send the 256-byte pattern

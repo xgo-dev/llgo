@@ -6,7 +6,8 @@
 #                                depends on the wall clock (the emulator
 #                                boots with an arbitrary RTC state)
 #   certs/tls.crt + tls.key      server certificate signed by that CA,
-#                                SAN IP:127.0.0.1, 100-year validity
+#                                SAN IP:127.0.0.1 + DNS:localhost, 100-year
+#                                validity
 #   certs/ca_wrong.crt + key     a second CA that signed nothing - the
 #                                negative test's "wrong CA": a dial with it
 #                                must fail with the certificate-verify error
@@ -62,8 +63,11 @@ keyUsage = critical,keyCertSign,cRLSign
 EOF
 )
 
-# Server certificate signed by the CA: SAN must name 127.0.0.1, the loopback
-# address the emulator's NAT forwards to.
+# Server certificate signed by the CA: SAN must name the identities the
+# acceptance dials verify against - IP:127.0.0.1 (the loopback address the
+# emulator's NAT forwards to; also the address a hosted curl against
+# tlssrv uses) and DNS:localhost (the name pkg/esp/tls's SNI probe sends
+# as its ServerName, and what a hosted https://localhost:9443 checks).
 openssl req -newkey rsa:2048 -nodes -keyout "$CERTS/tls.key" \
     -out "$CERTS/tls.csr" \
     -subj "/CN=127.0.0.1" \
@@ -81,7 +85,7 @@ openssl x509 -req -in "$CERTS/tls.csr" -CA "$CERTS/ca.crt" -CAkey "$CERTS/ca.key
 basicConstraints = critical,CA:FALSE
 keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
-subjectAltName = IP:127.0.0.1
+subjectAltName = IP:127.0.0.1,DNS:localhost
 EOF
 )
 rm -f "$CERTS/tls.csr"

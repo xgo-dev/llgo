@@ -14,7 +14,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/i2c`  | `driver/i2c_master.h` (new driver) | master bus + device handles, write/read/write-read |
 | `pkg/esp/i2s`  | `driver/i2s_std.h` (new driver) | std (Philips) mode TX/RX, 16/32-bit, mono/stereo |
 | `pkg/esp/net`  | `lwip/sockets.h` + `lwip/netdb.h` | TCP dial/listen/accept/read/write, DNS resolve, bounded quantum waits |
-| `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial (VERIFY_NONE/REQUIRED), record read/write, close_notify, bounded quantum waits |
+| `pkg/esp/tls`  | `mbedtls/ssl.h` + `mbedtls/x509_crt.h` (4.1.1, PSA crypto) | TLS client dial with SNI/host verification (Config: RootCAs/InsecureSkipVerify/MinVersion; deprecated VERIFY_NONE/REQUIRED TLSDial), record read/write, ConnectionState, close_notify, bounded quantum waits |
 | `pkg/esp/ws`   | — (no glue; pure Go RFC 6455 over a caller-supplied `net`/`tls` conn) | HTTP Upgrade handshake, masked frames, ping/pong, closing handshake; stdlib-free SHA-1/base64 |
 
 ## Package template
@@ -195,21 +195,33 @@ port on the host's loopback.
 ## pkg/esp/tls — TLS client sessions over the same bounded-quantum model
 
 `pkg/esp/tls` adds a record layer on top of a connected TCP socket:
-`TLSDial(ip, port, timeoutMs, caPEM)` connects, parses the optional CA PEM
-and handshakes as a client; `TLSConn.Read`/`Write`/`Close`/`SetDeadline`
-then speak plaintext. The glue inventory is deliberately thin:
-`llgo_tls_new` (config defaults, CA parse + authmode, BIO wiring,
-ssl_setup), `llgo_tls_handstep` (one `mbedtls_ssl_handshake_step`),
-`llgo_tls_read`/`llgo_tls_write` (one record attempt),
-`llgo_tls_close_notify`, `llgo_tls_free`. Each call is a single
+`Dial(addr, timeoutMs, cfg)` connects, resolves the addr host when it is a
+name, and handshakes as a client under cfg's policy (`Config{ServerName,
+RootCAs, InsecureSkipVerify, MinVersion}`); `TLSConn.Read`/`Write`/`Close`/
+`SetDeadline`/`State` then speak plaintext and report the session. The
+deprecated `TLSDial(ip, port, timeoutMs, caPEM)` keeps its two legacy
+modes (VERIFY_NONE on nil, chain+validity-only on non-nil - neither
+verifies the host name) while existing callers migrate. The glue
+inventory is deliberately thin:
+`llgo_tls_new` (config defaults, min version, CA parse + authmode,
+hostname, BIO wiring, ssl_setup), `llgo_tls_handstep` (one
+`mbedtls_ssl_handshake_step`), `llgo_tls_read`/`llgo_tls_write` (one
+record attempt), `llgo_tls_close_notify`, `llgo_tls_version`/
+`llgo_tls_ciphersuite` (static negotiated-name strings),
+`llgo_tls_peer_cert` (peer leaf DER: size query, then copy; needs the
+project's `CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=y` - IDF's default is
+off, mbedtls then drops the certificate after verification and State
+reports version/cipher with an empty PeerCerts),
+`llgo_tls_free`. Each call is a single
 non-blocking attempt; the Go side drives the quantum loops over
 `llgo_net_poll` exactly like the net package — the WANT_READ/WANT_WRITE
 mbedtls reports map onto the same socket quanta. The shared socket/clock
-primitives (`llgo_net_socket`, `llgo_net_connect`, `llgo_net_poll`,
-`llgo_net_sock_error`, `llgo_net_shutdown`, `llgo_net_close`,
-`llgo_net_now_ms`) are declared by linkname in BOTH packages and defined
-once in `net_glue.c`: a TLS program links both glues, but the packages
-stay mutually dependency-free at the Go level (each adopts independently).
+primitives (`llgo_net_socket`, `llgo_net_connect`, `llgo_net_resolve`,
+`llgo_net_poll`, `llgo_net_sock_error`, `llgo_net_shutdown`,
+`llgo_net_close`, `llgo_net_now_ms`) are declared by linkname in BOTH
+packages and defined once in `net_glue.c`: a TLS program links both
+glues, but the packages stay mutually dependency-free at the Go level
+(each adopts independently).
 
 **mbedtls 4.1 specifics** (IDF v6.3-dev): the SSL layer's randomness is
 PSA Crypto random (`psa_generate_random`), which IDF wires to the hardware
@@ -217,19 +229,28 @@ TRNG (`esp_fill_random`) and initializes at startup — no `conf_rng`, and
 the ctr_drbg of older mbedtls is a private header in 4.1.1. VERIFY_REQUIRED
 requires an explicit `mbedtls_ssl_set_hostname` call or the handshake
 fails with `MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME`
-(-0x5D80); the glue opts out with `set_hostname(NULL)` — chain + validity
-are still checked, no CN/SAN matching happens (the API has no hostname
-parameter). `mbedtls_x509_crt_parse`'s PEM path needs the NUL terminator
-counted INSIDE the length, so the glue parses a heap copy. And the first
+(-0x5D80). `Dial` always provides one (the ServerName, defaulting to the
+addr host) - the name drives both the SNI extension and the CN/SAN match,
+so a full-identity check is the default; only the deprecated TLSDial opts
+out with `set_hostname(NULL)`: chain + validity are still checked, the
+name match is dropped. `mbedtls_x509_crt_parse`'s PEM path needs the NUL
+terminator counted INSIDE the length, so the glue parses a heap copy; the
+hostname travels the same way. And the first
 `handshake_step` only advances HELLO_REQUEST → CLIENT_HELLO returning 0
 without network I/O — the glue wraps it so 0 always means "handshake over".
 
 **Error domain.** TLS-phase failures use the 0x7E00 segment
 (`HandshakeTimeout`/`CertVerifyFailed`/`CaParseFailed`/`WantPollExhausted`/
-`Handshake`/`PsaInitFailed`, named by `tls.ErrName`); the TCP phase surfaces
+`Handshake`/`PsaInitFailed`/`NoRootCAs`/`NoPeerCert`, named by
+`tls.ErrName`); the TCP phase surfaces
 lwip errnos exactly like `net.Dial`; failures inside mbedtls's own dial
 setup (config defaults, `ssl_setup`) and record-phase fatals pass the raw
-negative mbedtls code through. Read/Write honor the connection deadline
+negative mbedtls code through. The fail-closed dial rule: `RootCAs` nil
+with `InsecureSkipVerify` false is rejected with `NoRootCAs` before any
+bytes hit the network (bare metal has no system trust store to fall back
+on - verification without an explicit anchor cannot succeed and must not
+silently degrade to VERIFY_NONE); the glue refuses the same combination
+defensively. Read/Write honor the connection deadline
 with net.Conn semantics (EAGAIN poll-read without a deadline, ETIMEDOUT at
 expiry); TLS Write is all-or-nothing (no partial plaintext), so "nothing
 accepted" returns -EAGAIN and the caller retries the whole buffer. `Close`

@@ -12,8 +12,18 @@ package tls
 // shared convention for "no device here".)
 const errUnsupported = 0x7F00
 
-func tlsNew(fd int32, caPEM *byte, caLen int32, h *uintptr) int32 {
-	_, _, _, _ = fd, caPEM, caLen, h
+func tlsNew(fd int32, caPEM *byte, caLen int32, host *byte, hostLen int32,
+	verifyNone int32, minVersion int32, h *uintptr) int32 {
+	_, _, _, _, _, _, _, _ = fd, caPEM, caLen, host, hostLen, verifyNone, minVersion, h
+	return errUnsupported
+}
+
+func tlsVersion(h uintptr) *byte { _ = h; return nil }
+
+func tlsCiphersuite(h uintptr) *byte { _ = h; return nil }
+
+func tlsPeerCert(h uintptr, buf *byte, cap int32, outLen *int32) int32 {
+	_, _, _, _ = h, buf, cap, outLen
 	return errUnsupported
 }
 
@@ -37,6 +47,11 @@ func netSocket(fd *int32) int32 { _ = fd; return errUnsupported }
 
 func netConnect(fd int32, ip uint32, port int32) int32 {
 	_, _, _ = fd, ip, port
+	return errUnsupported
+}
+
+func netResolve(host *byte, length int32, ip *uint32) int32 {
+	_, _, _ = host, length, ip
 	return errUnsupported
 }
 
