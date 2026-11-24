@@ -356,9 +356,8 @@ func TestCrossPackageInlineRejectsUnownedGlobal(t *testing.T) {
 	global := dep.Members["State"].(*gossa.Global)
 	owner := global.Pkg
 	defer func() { global.Pkg = owner }()
-	missingTypes := *owner
-	missingTypes.Pkg = nil
-	for _, invalid := range []*gossa.Package{nil, &missingTypes} {
+	missingTypes := &gossa.Package{Prog: owner.Prog, Members: owner.Members}
+	for _, invalid := range []*gossa.Package{nil, missingTypes} {
 		global.Pkg = invalid
 		prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
 		defer prog.Dispose()

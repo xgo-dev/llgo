@@ -97,6 +97,7 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 	prog := p.Prog
 	routine := p.NewFunc(p.routineName(), prog.tyRoutine(), CDecl)
 	b := routine.MakeBody(1)
+	defer b.Dispose()
 	var localCtx, previousLocalCtx Expr
 	hasLocalContext := prog.NeedsLocalContext()
 	if hasLocalContext {
@@ -127,5 +128,6 @@ func (p Package) routine(t Type, fn Expr, buildCall func(Builder, Expr, ...Expr)
 		}
 		b.Return(prog.Nil(prog.VoidPtr()))
 	}
+	b.EndBuild()
 	return routine.Expr
 }

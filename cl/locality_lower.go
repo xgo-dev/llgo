@@ -376,6 +376,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 		}
 		b.Return()
 		b.EndBuild()
+		b.Dispose()
 	}
 	if !ret.ensure.HasBody() {
 		b := ret.ensure.MakeBody(3)
@@ -404,6 +405,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 		b.SetBlock(ret.ensure.Block(2))
 		b.Return()
 		b.EndBuild()
+		b.Dispose()
 	}
 	return ret
 }

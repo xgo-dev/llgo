@@ -369,13 +369,7 @@ func (t *UncommonType) Methods() []Method {
 		return nil
 	}
 	methodsPtr := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "t.mcount > 0")
-	methods := make([]Method, t.Mcount)
-	for i := 0; i < int(t.Mcount); i++ {
-		elemPtr := addChecked(methodsPtr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
-		elem := (*Method)(elemPtr)
-		methods[i] = *elem
-	}
-	return methods
+	return unsafe.Slice((*Method)(methodsPtr), t.Mcount)
 }
 
 func (t *UncommonType) ExportedMethods() []Method {
@@ -383,13 +377,7 @@ func (t *UncommonType) ExportedMethods() []Method {
 		return nil
 	}
 	mthdsPtr := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "t.xcount > 0")
-	mthds := make([]Method, t.Xcount)
-	for i := 0; i < int(t.Xcount); i++ {
-		elemPtr := addChecked(mthdsPtr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
-		elem := (*Method)(elemPtr)
-		mthds[i] = *elem
-	}
-	return mthds
+	return unsafe.Slice((*Method)(mthdsPtr), t.Xcount)
 }
 
 // Imethod represents a method on an interface type
@@ -649,7 +637,11 @@ func (t *Type) NumMethod() int {
 		tt := (*InterfaceType)(unsafe.Pointer(t))
 		return len(tt.Methods)
 	}
-	return len(t.ExportedMethods())
+	ut := t.Uncommon()
+	if ut == nil {
+		return 0
+	}
+	return int(ut.Xcount)
 }
 
 func (t *Type) GcSlice(begin, end uintptr) []byte {

@@ -20,7 +20,6 @@ import (
 	"go/token"
 	"go/types"
 	"strings"
-	"unsafe"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -324,6 +323,7 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 		var next, panicBlk BasicBlock
 		if kind != DeferAlways {
 			b, next = self.deferInitBuilder(b)
+			defer b.Dispose()
 		}
 
 		blks := self.MakeBlocks(2)
@@ -484,13 +484,16 @@ func (b Builder) DeferRecover(kind DoAction, mayRecover bool, fn Expr, buildCall
 	case DeferInCond:
 		prog = b.Prog
 		next := self.nextBit
-		if uintptr(next) >= unsafe.Sizeof(uintptr(0))*8 {
-			panic("too many conditional defers")
+		if next >= prog.GoWordSize()*8 {
+			// Fall back to dynamic linked-list defer tracking once the
+			// target-width condition bitmask is full.
+			kind = DeferInLoop
+		} else {
+			self.nextBit++
+			bits := b.Load(self.bitsPtr)
+			nextbit = prog.IntVal(uint64(1)<<next, prog.Uintptr())
+			b.Store(self.bitsPtr, b.BinOp(token.OR, bits, nextbit))
 		}
-		self.nextBit++
-		bits := b.Load(self.bitsPtr)
-		nextbit = prog.Val(uintptr(1 << next))
-		b.Store(self.bitsPtr, b.BinOp(token.OR, bits, nextbit))
 	case DeferAlways:
 		// nothing to do
 	case DeferInLoop:

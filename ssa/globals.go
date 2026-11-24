@@ -111,7 +111,7 @@ func (prog Program) constStructValueAs(t Type, structType llvm.Type, values []ll
 	elements := structType.StructElementTypes()
 	fields := make([]llvm.Value, len(elements))
 	for i, value := range values {
-		fields[i] = prog.wrapStructConstantAs(t, structType, i, value)
+		fields[i] = prog.wrapStructConstantElem(t, i, elements[i], value)
 	}
 	for i := len(values); i < len(fields); i++ {
 		fields[i] = llvm.ConstNull(elements[i])
@@ -123,21 +123,20 @@ func (prog Program) constStructValueAs(t Type, structType llvm.Type, values []ll
 }
 
 func (prog Program) wrapStructConstant(t Type, index int, value llvm.Value) llvm.Value {
-	return prog.wrapStructConstantAs(t, t.ll, index, value)
+	return prog.wrapStructConstantElem(t, index, t.ll.StructElementTypes()[index], value)
 }
 
-func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int, value llvm.Value) llvm.Value {
+func (prog Program) wrapStructConstantElem(t Type, index int, elem llvm.Type, value llvm.Value) llvm.Value {
 	if _, ok := simdTagIndex(t.RawType()); ok {
-		return llvm.ConstNull(structType.StructElementTypes()[index])
+		return llvm.ConstNull(elem)
 	}
-	if t.kind != vkTuple || structType.StructElementTypes()[index] != prog.Field(t, index).ll {
+	if t.kind != vkTuple || elem != prog.Field(t, index).ll {
 		value = prog.toStorageConstant(prog.Field(t, index), value)
 	}
 	layout, ok := prog.structLayout(t)
 	if !ok || index >= len(layout.wrapped) || !layout.wrapped[index] {
 		return value
 	}
-	elem := structType.StructElementTypes()[index]
 	parts := elem.StructElementTypes()
 	values := []llvm.Value{value}
 	if len(parts) == 2 {

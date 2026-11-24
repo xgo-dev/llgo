@@ -861,6 +861,41 @@ func CanInlineStructEqual(t *types.Struct, size uint64, pointerSize int) bool {
 	return t.NumFields() <= 4 && size <= uint64(4*pointerSize)
 }
 
+func typeEqualNeedsShortCircuit(t types.Type) bool {
+	switch u := types.Unalias(t).Underlying().(type) {
+	case *types.Basic:
+		return u.Kind() == types.String
+	case *types.Interface:
+		return true
+	case *types.Array:
+		return u.Len() > 0 && (!CanInlineArrayEqual(u) || typeEqualNeedsShortCircuit(u.Elem()))
+	case *types.Struct:
+		for i, n := 0, u.NumFields(); i < n; i++ {
+			if u.Field(i).Name() == "_" {
+				continue
+			}
+			if typeEqualNeedsShortCircuit(u.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func structEqualNeedsShortCircuit(typ *types.Struct, fields []int) bool {
+	if len(fields) <= 1 {
+		return false
+	}
+	for _, idx := range fields[1:] {
+		if typeEqualNeedsShortCircuit(typ.Field(idx).Type()) {
+			return true
+		}
+	}
+	return false
+}
+
 // StructBinOp compares two struct values while allowing the frontend to reuse
 // an operand address when it has proved that doing so preserves value semantics.
 // Non-regular structs remain field-wise so their semantic comparisons preserve
@@ -879,15 +914,49 @@ func (b Builder) StructBinOp(op token.Token, x, y, xaddr, yaddr Expr) Expr {
 	size := uint64(prog.abi.Size(typ))
 	regular := prog.abi.IsRegularMemory(typ)
 	if !regular || CanInlineStructEqual(typ, size, prog.GoWordSize()) {
-		ret := prog.BoolVal(true)
+		fieldIndices := make([]int, 0, typ.NumFields())
 		for i, n := 0, typ.NumFields(); i < n; i++ {
-			if typ.Field(i).Name() == "_" {
-				continue
+			if typ.Field(i).Name() != "_" {
+				fieldIndices = append(fieldIndices, i)
 			}
-			fx := b.getField(x, i)
-			fy := b.getField(y, i)
-			r := b.BinOp(token.EQL, fx, fy)
-			ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
+		}
+		var ret Expr
+		if structEqualNeedsShortCircuit(typ, fieldIndices) {
+			doneBlk := b.Func.MakeBlock()
+			incomingVals := make([]llvm.Value, 0, len(fieldIndices))
+			incomingBlks := make([]llvm.BasicBlock, 0, len(fieldIndices))
+			falseVal := prog.BoolVal(false).impl
+			for pos, idx := range fieldIndices {
+				fx := b.getField(x, idx)
+				fy := b.getField(y, idx)
+				r := b.BinOp(token.EQL, fx, fy)
+				if pos == len(fieldIndices)-1 {
+					incomingVals = append(incomingVals, r.impl)
+					incomingBlks = append(incomingBlks, b.impl.GetInsertBlock())
+					b.Jump(doneBlk)
+				} else {
+					nextBlk := b.Func.MakeBlock()
+					incomingVals = append(incomingVals, falseVal)
+					incomingBlks = append(incomingBlks, b.impl.GetInsertBlock())
+					b.If(r, nextBlk, doneBlk)
+					b.SetBlockEx(nextBlk, AtEnd, false)
+				}
+			}
+			b.SetBlockEx(doneBlk, AtEnd, false)
+			if b.blk != nil {
+				b.blk.last = doneBlk.last
+			}
+			phi := b.impl.CreatePHI(tret.ll, "")
+			phi.AddIncoming(incomingVals, incomingBlks)
+			ret = Expr{phi, tret}
+		} else {
+			ret = prog.BoolVal(true)
+			for _, idx := range fieldIndices {
+				fx := b.getField(x, idx)
+				fy := b.getField(y, idx)
+				r := b.BinOp(token.EQL, fx, fy)
+				ret = Expr{b.impl.CreateAnd(ret.impl, r.impl, ""), tret}
+			}
 		}
 		if op == token.NEQ {
 			ret.impl = llvm.CreateNot(b.impl, ret.impl)
@@ -1166,7 +1235,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 		}
 		ret.impl = b.aggregateValue(t, fields...).impl
 	} else {
-		if x.impl.Type().String() == t.ll.String() {
+		if x.impl.Type() == t.ll {
 			ret.impl = x.impl
 		} else {
 			ptr := b.AllocaT(t)

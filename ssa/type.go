@@ -721,9 +721,9 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 		return false
 	}
 	// Some importer paths can materialize equivalent package scopes as distinct
-	// pointers. Keep package-level names stable when scopes describe the same
-	// package scope textually.
-	return parent.String() == pkgScope.String()
+	// pointers. Package scopes are always direct children of types.Universe,
+	// whereas function and block scopes are nested beneath a package scope.
+	return parent.Parent() == types.Universe && pkgScope.Parent() == types.Universe
 }
 
 func (p Program) toNamed(raw *types.Named) Type {
@@ -821,7 +821,7 @@ func (p Program) namedStructLayoutEquivalent(existing Type, raw *types.Named) bo
 		return false
 	}
 	for i := range existingFields {
-		if existingFields[i].String() != rawFields[i].String() {
+		if existingFields[i] != rawFields[i] {
 			return false
 		}
 	}

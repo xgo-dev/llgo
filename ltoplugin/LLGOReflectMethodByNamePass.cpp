@@ -833,8 +833,10 @@ bool collectStringSetFromConstantSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
   if (!PtrLoad || !LenLoad || !PtrLoad->isSimple() || !LenLoad->isSimple())
     return false;
 
+  const uint64_t LenOffset = DL.getPointerSize();
   Value *StringSlot = PtrLoad->getPointerOperand()->stripPointerCasts();
-  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, 8, DL))
+  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, LenOffset,
+                        DL))
     return false;
 
   SmallVector<Constant *, 4> Slots;
@@ -844,7 +846,7 @@ bool collectStringSetFromConstantSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
   LLVMContext &Ctx = PtrLoad->getContext();
   for (Constant *Slot : Slots) {
     Constant *Ptr = foldLoadFromConstantPtr(Slot, PtrLoad->getType(), DL);
-    Constant *LenPtr = byteOffsetPointer(Slot, 8, Ctx);
+    Constant *LenPtr = byteOffsetPointer(Slot, LenOffset, Ctx);
     Constant *Len = foldLoadFromConstantPtr(LenPtr, LenLoad->getType(), DL);
     if (!Ptr || !Len || !collectStringSet(Ptr, Len, DL, Names, Depth + 1))
       return false;
@@ -859,8 +861,10 @@ bool collectStringSetFromLocalSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
   if (!PtrLoad || !LenLoad || !PtrLoad->isSimple() || !LenLoad->isSimple())
     return false;
 
+  const uint64_t LenOffset = DL.getPointerSize();
   Value *StringSlot = PtrLoad->getPointerOperand()->stripPointerCasts();
-  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, 8, DL))
+  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, LenOffset,
+                        DL))
     return false;
 
   SmallVector<LocalStringSlot, 4> Slots;
@@ -878,8 +882,8 @@ bool collectStringSetFromLocalSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
       return false;
     Constant *Ptr =
         findDominatingLocalConstant(Base, Slot.Offset, PtrLoad, DL, DT);
-    Constant *Len =
-        findDominatingLocalConstant(Base, Slot.Offset + 8, LenLoad, DL, DT);
+    Constant *Len = findDominatingLocalConstant(Base, Slot.Offset + LenOffset,
+                                                LenLoad, DL, DT);
     if (!Ptr || !Len || !collectStringSet(Ptr, Len, DL, Names, Depth + 1))
       return false;
   }

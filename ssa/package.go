@@ -284,22 +284,6 @@ type AbiTypeInfo struct {
 // A Program presents a program.
 type Program = *aProgram
 
-var arch32 = map[string]bool{
-	"386":    true,
-	"arm":    true,
-	"mips":   true,
-	"mipsle": true,
-	"s390x":  true,
-	"wasm":   true,
-}
-
-func is32Bits(arch string) bool {
-	if v, ok := arch32[arch]; ok {
-		return v
-	}
-	return false
-}
-
 // Dispose releases the LLVM resources owned by the program: the context
 // (and with it every module built in it), the target machine and the
 // target data. The Program and everything created from it must not be
