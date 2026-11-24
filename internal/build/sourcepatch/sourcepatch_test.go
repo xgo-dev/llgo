@@ -262,3 +262,235 @@ func TestApplyForPkgSkipAndSkipAll(t *testing.T) {
 		t.Fatalf("skipall stub = %q, want %q", string(out[origFile]), "package mypkg")
 	}
 }
+
+func TestSourcePatchFullCoverageEdges(t *testing.T) {
+	// ReleaseTagsForGoVersion error branches.
+	for _, bad := range []string{"bad", "x.2", "1.y", "2.1", "1.0"} {
+		if _, err := ReleaseTagsForGoVersion(bad); err == nil {
+			t.Fatalf("ReleaseTagsForGoVersion(%q) succeeded, want error", bad)
+		}
+	}
+
+	// BuildInjectedFile with spaced directive, no directives, and CRLF.
+	if got := string(BuildInjectedFile("/tmp/a.go", []byte("// llgo:skip Foo\r\npackage p\r\n"))); !strings.HasPrefix(got, "//line /tmp/a.go:1\r\n") || strings.Contains(got, "// llgo:skip") {
+		t.Fatalf("BuildInjectedFile(spaced+CRLF) = %q", got)
+	}
+	if got := string(BuildInjectedFile("/tmp/plain.go", []byte("package p\n"))); !strings.HasSuffix(got, "package p\n") {
+		t.Fatalf("BuildInjectedFile(plain) = %q", got)
+	}
+
+	// FilterFile edge cases: unchanged, parse error, blank import, single removed import,
+	// all-kept imports, mixed multi-name ValueSpec, untouched GenDecl, blank line inside removed func.
+	if _, _, err := FilterFile([]byte("package {"), map[string]struct{}{"A": {}}); err == nil {
+		t.Fatal("FilterFile accepted invalid syntax")
+	}
+	unchangedSrc := []byte("package p\n\nvar Keep = 1\n")
+	if _, changed, err := FilterFile(unchangedSrc, map[string]struct{}{"Missing": {}}); err != nil || changed {
+		t.Fatalf("FilterFile(unchanged) = (changed=%v, err=%v)", changed, err)
+	}
+	complexSrc := []byte(`package p
+
+import "fmt"
+import (
+	_ "unsafe"
+	"strings"
+)
+
+var Untouched = 1
+var DropA, KeepB = 1, 2
+
+func DropWithBlank() {
+	fmt.Println("hi")
+
+	_ = strings.TrimSpace
+}
+
+func Keep() string {
+	return strings.TrimSpace("x")
+}
+`)
+	filtered, changed, err := FilterFile(complexSrc, map[string]struct{}{"DropA": {}, "DropWithBlank": {}})
+	if err != nil || !changed {
+		t.Fatalf("FilterFile(complex) = (changed=%v, err=%v)", changed, err)
+	}
+	text := string(filtered)
+	if !strings.Contains(text, `// import "fmt"`) || strings.Contains(text, `// _ "unsafe"`) || !strings.Contains(text, "// var DropA, KeepB") {
+		t.Fatalf("unexpected FilterFile(complex) output:\n%s", text)
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "complex.go", filtered, parser.ParseComments); err != nil {
+		t.Fatalf("FilterFile(complex) unparseable: %v\n%s", err, text)
+	}
+
+	// Internal AST/span helper edge cases.
+	fset := token.NewFileSet()
+	tokFile := fset.AddFile("x.go", -1, 10)
+	if got, removed, _, err := filterDecl(tokFile, &ast.BadDecl{}, nil); err != nil || removed || got == nil {
+		t.Fatalf("filterDecl(BadDecl) = (%v, %v, %v)", got, removed, err)
+	}
+	if got, removed, _ := filterSpec(tokFile, &ast.ImportSpec{}, nil); removed || got == nil {
+		t.Fatalf("filterSpec(ImportSpec) = (%v, %v)", got, removed)
+	}
+	if spans := commentGroupsToSpans(tokFile, []*ast.CommentGroup{nil}); len(spans) != 0 {
+		t.Fatalf("commentGroupsToSpans([nil]) = %v", spans)
+	}
+	if got := collectSpecComments(&ast.ImportSpec{}); got != nil {
+		t.Fatalf("collectSpecComments(ImportSpec) = %v", got)
+	}
+	if got := string(commentSpans([]byte("abc"), nil)); got != "abc" {
+		t.Fatalf("commentSpans(nil) = %q", got)
+	}
+	// Exercise span sorting (same start, different end, equal), clamping, empty, and overlapping merge.
+	gotCommented := string(commentSpans([]byte("line1\nline2\n"), []byteSpan{
+		{start: 0, end: 5},
+		{start: -2, end: 3},
+		{start: 0, end: 5},
+		{start: 0, end: 8},
+		{start: 4, end: 4},
+		{start: 2, end: 99},
+	}))
+	if !strings.Contains(gotCommented, "// line1") || !strings.Contains(gotCommented, "// line2") {
+		t.Fatalf("commentSpans(merged) = %q", gotCommented)
+	}
+
+	// RecvKey panic on unsupported expression.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("RecvKey(BasicLit) did not panic")
+			}
+		}()
+		_ = RecvKey(&ast.BasicLit{})
+	}()
+
+	// packageStubSource error when package clause is absent.
+	if _, err := packageStubSource([]byte("// no package clause\n")); err == nil {
+		t.Fatal("packageStubSource succeeded without package clause")
+	}
+
+	// ApplyForPkg & BuildOverlayForGOROOT filesystem, asm replacement, Go 1.23 path mapping, and error paths.
+	tmp := t.TempDir()
+	goroot := filepath.Join(tmp, "goroot")
+	rtDir := filepath.Join(tmp, "runtime")
+
+	// Empty runtime/goroot: BuildOverlayForGOROOT returns base unchanged.
+	base := map[string][]byte{"existing.go": []byte("package e\n")}
+	gotOverlay, gotFiles, err := BuildOverlayForGOROOT(base, rtDir, goroot, BuildContext{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.24"})
+	if err != nil || gotFiles != nil || string(gotOverlay["existing.go"]) != "package e\n" {
+		t.Fatalf("BuildOverlayForGOROOT(empty) = (%v, %v, %v)", gotOverlay, gotFiles, err)
+	}
+
+	// Set up internal/bytealg (with asm replacement + baremetal tag), runtime/internal/atomic,
+	// runtime/internal/syscall, plus subdirs, non-go/test files, non-matching tags, and base/current overlays.
+	bytealgSrc := filepath.Join(goroot, "src", "internal", "bytealg")
+	bytealgPatch := filepath.Join(rtDir, "_patch", "internal", "bytealg")
+	for _, dir := range []string{
+		bytealgSrc,
+		filepath.Join(bytealgSrc, "subdir"),
+		bytealgPatch,
+		filepath.Join(bytealgPatch, "subdir"),
+		filepath.Join(goroot, "src", "runtime", "internal", "atomic"),
+		filepath.Join(rtDir, "_patch", "internal", "runtime", "atomic"),
+		filepath.Join(goroot, "src", "runtime", "internal", "syscall"),
+		filepath.Join(rtDir, "_patch", "internal", "runtime", "syscall"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(filepath.Join(bytealgSrc, "index.go"), "package bytealg\n\nfunc Index() int { return 0 }\n")
+	mustWrite(filepath.Join(bytealgSrc, "other.go"), "//go:build customtag\n\npackage bytealg\n\n// comment mentions Index\nfunc KeepOther() {}\n")
+	mustWrite(filepath.Join(bytealgSrc, "unrelated.go"), "package bytealg\n\nfunc Unrelated() {}\n")
+	mustWrite(filepath.Join(bytealgSrc, "index_test.go"), "package bytealg\n")
+	mustWrite(filepath.Join(bytealgSrc, "index_amd64.s"), "TEXT ·Index(SB),0,$0\n")
+	mustWrite(filepath.Join(bytealgSrc, "index_arm64.s"), "TEXT ·Index(SB),0,$0\n")
+	mustWrite(filepath.Join(bytealgSrc, "index_test.s"), "TEXT ·Test(SB),0,$0\n")
+	mustWrite(filepath.Join(bytealgPatch, "README.txt"), "ignore\n")
+	mustWrite(filepath.Join(bytealgPatch, "only_windows.go"), "//go:build windows\n\npackage bytealg\n")
+	mustWrite(filepath.Join(bytealgPatch, "patch.go"), "// plain comment\n//llgo:skip Index\npackage bytealg\n\nfunc Index() int { return 1 }\n")
+
+	mustWrite(filepath.Join(goroot, "src", "runtime", "internal", "atomic", "a.go"), "package atomic\n\nfunc Load() {}\n")
+	mustWrite(filepath.Join(rtDir, "_patch", "internal", "runtime", "atomic", "patch.go"), "//llgo:skipall\npackage atomic\n")
+	mustWrite(filepath.Join(goroot, "src", "runtime", "internal", "syscall", "s.go"), "package syscall\n")
+	mustWrite(filepath.Join(rtDir, "_patch", "internal", "runtime", "syscall", "only_windows.go"), "//go:build windows\n\npackage syscall\n")
+
+	ctx := BuildContext{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.24", TargetTags: []string{"baremetal"}}
+	gotOverlay, gotFiles, err = BuildOverlayForGOROOT(base, rtDir, goroot, ctx)
+	if err != nil {
+		t.Fatalf("BuildOverlayForGOROOT() error: %v", err)
+	}
+	if len(gotFiles["internal/bytealg"]) == 0 || gotOverlay[filepath.Join(bytealgSrc, "index_amd64.s")] == nil {
+		t.Fatalf("expected asm and go patch for internal/bytealg: files=%v", gotFiles)
+	}
+	if _, replacedArm := gotOverlay[filepath.Join(bytealgSrc, "index_arm64.s")]; replacedArm {
+		t.Fatal("non-matching arm64 asm should not be replaced on amd64")
+	}
+
+	// Exercise readOverlay hitting base and current maps, and runtime/internal/atomic + syscall mappings.
+	cur := map[string][]byte{filepath.Join(goroot, "src", "runtime", "internal", "atomic", "a.go"): []byte("package atomic\n")}
+	if changed, _, _, err := ApplyForPkg(base, cur, rtDir, goroot, "runtime/internal/atomic", ctx); err != nil || !changed {
+		t.Fatalf("ApplyForPkg(runtime/internal/atomic) = (%v, %v)", changed, err)
+	}
+	if changed, _, _, err := ApplyForPkg(base, nil, rtDir, goroot, "runtime/internal/syscall", ctx); err != nil || changed {
+		t.Fatalf("ApplyForPkg(runtime/internal/syscall unmatched) = (%v, %v)", changed, err)
+	}
+	// Missing stdlib srcDir when patchDir exists returns false, nil.
+	if changed, _, _, err := ApplyForPkg(nil, nil, rtDir, filepath.Join(tmp, "empty-goroot"), "internal/bytealg", ctx); err != nil || changed {
+		t.Fatalf("ApplyForPkg(missing srcDir) = (%v, %v)", changed, err)
+	}
+	// Base overlay read path for patch file.
+	patchPath := filepath.Join(bytealgPatch, "patch.go")
+	baseWithPatch := map[string][]byte{patchPath: []byte("//llgo:skip Index\npackage bytealg\nfunc Index() int { return 2 }\n")}
+	if changed, _, _, err := ApplyForPkg(baseWithPatch, nil, rtDir, goroot, "internal/bytealg", ctx); err != nil || !changed {
+		t.Fatalf("ApplyForPkg(baseWithPatch) = (%v, %v)", changed, err)
+	}
+
+	// Error branches in ApplyForPkg & BuildOverlayForGOROOT.
+	if _, _, err := BuildOverlayForGOROOT(nil, rtDir, goroot, BuildContext{GoVersion: "bad"}); err == nil {
+		t.Fatal("BuildOverlayForGOROOT accepted invalid GoVersion")
+	}
+	fileAsDir := filepath.Join(rtDir, "_patch", "notadir")
+	mustWrite(fileAsDir, "x")
+	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, "notadir", ctx); err == nil {
+		t.Fatal("ApplyForPkg accepted non-directory patchDir")
+	}
+	badSrcPatchDir := filepath.Join(rtDir, "_patch", "badsrc")
+	if err := os.MkdirAll(badSrcPatchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(filepath.Join(goroot, "src", "badsrc"), "not a dir")
+	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, "badsrc", ctx); err == nil {
+		t.Fatal("ApplyForPkg accepted non-directory srcDir")
+	}
+	badSyntaxPkg := "badsyntax"
+	for _, d := range []string{filepath.Join(goroot, "src", badSyntaxPkg), filepath.Join(rtDir, "_patch", badSyntaxPkg)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(filepath.Join(goroot, "src", badSyntaxPkg, "a.go"), "package badsyntax\n")
+	mustWrite(filepath.Join(rtDir, "_patch", badSyntaxPkg, "p.go"), "package {")
+	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, badSyntaxPkg, ctx); err == nil {
+		t.Fatal("ApplyForPkg accepted invalid patch syntax")
+	}
+	// Invalid stdlib file under skipAll (missing package clause) and under skips (syntax error).
+	mustWrite(filepath.Join(rtDir, "_patch", badSyntaxPkg, "p.go"), "//llgo:skipall\npackage badsyntax\n")
+	mustWrite(filepath.Join(goroot, "src", badSyntaxPkg, "a.go"), "// no package clause\n")
+	mustWrite(filepath.Join(goroot, "src", badSyntaxPkg, "ignore_test.go"), "package badsyntax\n")
+	if err := os.MkdirAll(filepath.Join(goroot, "src", badSyntaxPkg, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, badSyntaxPkg, ctx); err == nil {
+		t.Fatal("ApplyForPkg(skipall) accepted file without package clause")
+	}
+	mustWrite(filepath.Join(rtDir, "_patch", badSyntaxPkg, "p.go"), "//llgo:skip Bad\npackage badsyntax\n")
+	mustWrite(filepath.Join(goroot, "src", badSyntaxPkg, "a.go"), "package { // Bad\n")
+	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, badSyntaxPkg, ctx); err == nil {
+		t.Fatal("ApplyForPkg(skip) accepted unparseable stdlib file")
+	}
+}
