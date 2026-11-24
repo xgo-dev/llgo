@@ -848,6 +848,43 @@ func assertS31CacheSyncWrap(t *testing.T, elfPath string) {
 	t.Fatal("__wrap___clear_cache is outside any PROGBITS section")
 }
 
+// TestTinygogcAllocatorWrapSet pins the baremetal collector's C allocation
+// wrap set. llgo rewrites the Go-side references to malloc, calloc, realloc
+// and free into __wrap_* calls only for the names gc_link.go declares, so a
+// deallocator missing from the set splits an allocation pair across two
+// allocators: the buffer comes from the collector's heap and the release goes
+// to the platform's. On ESP-IDF the platform free then reads collector memory
+// as TLSF block metadata and aborts the chip (assert failed: block_next
+// (!block_is_last)); time.After inside a select was the first shape to reach
+// it, because the select state and chanWaiter records are the only
+// c.Malloc/c.Free pair in the runtime. The declared set and the exported
+// wrappers must therefore match exactly, and the set must keep free beside
+// the allocators.
+func TestTinygogcAllocatorWrapSet(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime", "tinygogc", "gc_link.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := func(pattern string) []string {
+		var names []string
+		for _, m := range regexp.MustCompile(pattern).FindAllStringSubmatch(string(data), -1) {
+			names = append(names, m[1])
+		}
+		slices.Sort(names)
+		return names
+	}
+	declared := wrapped(`--wrap=([A-Za-z_][A-Za-z0-9_]*)`)
+	exported := wrapped(`(?m)^//export __wrap_([A-Za-z0-9_]+)$`)
+	if !slices.Equal(declared, exported) {
+		t.Fatalf("gc_link.go declares --wrap names %v but exports wrappers %v; a name in one set and not the other keeps binding the platform symbol on that side", declared, exported)
+	}
+	for _, alloc := range []string{"malloc", "calloc", "realloc"} {
+		if slices.Contains(declared, alloc) && !slices.Contains(declared, "free") {
+			t.Fatalf("gc_link.go wraps %s but not free: a buffer allocated in the collector heap is then released by the platform allocator (declared: %v)", alloc, declared)
+		}
+	}
+}
+
 // buildESPEmuFlashImage writes the ESP image format esp-emu loads: a v1
 // image with the target's chip id and an appended SHA-256, merged into a
 // 4 MiB flash dump at the target's boot offset.
