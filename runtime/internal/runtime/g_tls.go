@@ -74,6 +74,11 @@ func getg() *g {
 	if gp := (*g)(unsafe.Pointer(currentG)); gp != nil {
 		return gp
 	}
+	return initForeignG()
+}
+
+//go:noinline
+func initForeignG() *g {
 	registerWasiGCThread()
 	gp := initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
 	if ret := setAutoG(gp); ret != 0 {
