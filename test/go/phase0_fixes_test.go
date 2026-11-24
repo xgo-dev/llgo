@@ -473,3 +473,280 @@ func TestManyConditionalDefers(t *testing.T) {
 		}
 	}
 }
+
+var (
+	mixedDeferLog []int
+)
+
+//go:noinline
+func logDeferLoop() { mixedDeferLog = append(mixedDeferLog, 0) }
+
+//go:noinline
+func logDeferC1() { mixedDeferLog = append(mixedDeferLog, 1) }
+
+//go:noinline
+func logDeferC2() { mixedDeferLog = append(mixedDeferLog, 2) }
+
+//go:noinline
+func logDeferC65() { mixedDeferLog = append(mixedDeferLog, 65) }
+
+//go:noinline
+func logDeferC66() { mixedDeferLog = append(mixedDeferLog, 66) }
+
+//go:noinline
+func logDeferNop() {}
+
+func TestLoopDeferFollowedByOver64ZeroArgConditionalDefersLIFO(t *testing.T) {
+	// Zero-argument loop defer followed by 66 zero-argument conditional defers
+	// must run in strict LIFO order: 66, 65, ..., 2, 1, loop, loop.
+	runMixed := func(cond, doPanicEarly, doPanicLate bool) (recovered any) {
+		mixedDeferLog = nil
+		defer func() {
+			recovered = recover()
+		}()
+		for i := 0; i < 2; i++ {
+			defer logDeferLoop()
+		}
+		if cond {
+			defer logDeferC1()
+		}
+		if cond {
+			defer logDeferC2()
+		}
+		if doPanicEarly {
+			panic("early")
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferNop()
+		}
+		if cond {
+			defer logDeferC65()
+		}
+		if cond {
+			defer logDeferC66()
+		}
+		if doPanicLate {
+			panic("late")
+		}
+		return nil
+	}
+
+	check := func(name string, got, want []int) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s: got %v, want %v", name, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s: got %v, want %v", name, got, want)
+			}
+		}
+	}
+
+	// Normal return: 66, 65, 2, 1, 0, 0
+	if r := runMixed(true, false, false); r != nil {
+		t.Fatalf("unexpected panic: %v", r)
+	}
+	check("normal", mixedDeferLog, []int{66, 65, 2, 1, 0, 0})
+
+	// Condition false: only loop defers run
+	if r := runMixed(false, false, false); r != nil {
+		t.Fatalf("unexpected panic: %v", r)
+	}
+	check("cond=false", mixedDeferLog, []int{0, 0})
+
+	// Panic after overflow defers: extra bitmask words must survive sigsetjmp/siglongjmp
+	if r := runMixed(true, false, true); r != "late" {
+		t.Fatalf("late panic recover = %v, want %q", r, "late")
+	}
+	check("late-panic", mixedDeferLog, []int{66, 65, 2, 1, 0, 0})
+
+	// Panic before overflow defers: zero-initialized extra bitmask words must skip 65 & 66
+	if r := runMixed(true, true, false); r != "early" {
+		t.Fatalf("early panic recover = %v, want %q", r, "early")
+	}
+	check("early-panic", mixedDeferLog, []int{2, 1, 0, 0})
+}

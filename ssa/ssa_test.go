@@ -127,7 +127,7 @@ func TestUnsafeString(t *testing.T) {
 	b.Return()
 }
 
-func TestConditionalDeferOverflowFallsBackToLoop(t *testing.T) {
+func TestConditionalDeferOverflowUsesExtraBitmask(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -154,12 +154,16 @@ func TestConditionalDeferOverflowFallsBackToLoop(t *testing.T) {
 	for i := 0; i < 65; i++ {
 		b.Defer(DeferInCond, target.Expr, Builder.Call)
 	}
-	wantBits := prog.GoWordSize() * 8
-	if fn.defer_.nextBit != wantBits {
-		t.Fatalf("nextBit = %d, want %d", fn.defer_.nextBit, wantBits)
+	wordBits := prog.GoWordSize() * 8
+	if fn.defer_.nextBit != 65 {
+		t.Fatalf("nextBit = %d, want 65", fn.defer_.nextBit)
 	}
-	if got, want := len(fn.defer_.loopCases), 65-wantBits; got != want {
-		t.Fatalf("fallback loopCases = %d, want %d", got, want)
+	wantExtra := (65 - 1) / wordBits
+	if got := len(fn.defer_.extraBits); got != wantExtra {
+		t.Fatalf("extraBits = %d, want %d", got, wantExtra)
+	}
+	if got := len(fn.defer_.loopCases); got != 0 {
+		t.Fatalf("loopCases = %d, want 0 (conditional defers must not spill into loop drainer)", got)
 	}
 }
 

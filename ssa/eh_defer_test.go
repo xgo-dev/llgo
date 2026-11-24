@@ -316,8 +316,11 @@ func TestConditionalDeferExceedsTargetWordBits(t *testing.T) {
 			if !strings.Contains(ir, tc.wantBitmaskW) {
 				t.Fatalf("expected target bitmask op %q in IR, got:\n%s", tc.wantBitmaskW, ir)
 			}
-			if !strings.Contains(ir, "FreeDeferNode") {
-				t.Fatalf("expected overflow conditional defers to fall back to linked-list defer storage, got:\n%s", ir)
+			if !strings.Contains(ir, "store volatile") || !strings.Contains(ir, "load volatile") {
+				t.Fatalf("expected overflow conditional defers to use volatile extra bitmask words, got:\n%s", ir)
+			}
+			if strings.Contains(ir, "FreeDeferNode") {
+				t.Fatalf("zero-arg overflow conditional defers should not spill to loop-defer heap nodes, got:\n%s", ir)
 			}
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("invalid IR for %s: %v\n%s", tc.name, err, ir)
