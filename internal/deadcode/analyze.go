@@ -33,6 +33,7 @@ type pass struct {
 	usedInIface       map[meta.Symbol]struct{}
 	processedIfaceTy  map[meta.Symbol]struct{}
 	workQueue         []meta.Symbol
+	workHead          int
 
 	ifaceMethod        map[ifaceMethodKey]struct{}
 	genericIfaceMethod map[meta.Name]struct{}
@@ -148,7 +149,7 @@ func deadcode(info *meta.GlobalSummary, roots []meta.Symbol) *pass {
 	for {
 		d.flood()
 		changed := d.methodMarkingLoop()
-		if len(d.workQueue) == 0 && !changed {
+		if !d.hasWork() && !changed {
 			return d
 		}
 	}
@@ -207,7 +208,7 @@ func (d *pass) computeMethodImplKeys(typ meta.Symbol, slots []meta.MethodSlot) {
 }
 
 func (d *pass) flood() {
-	for len(d.workQueue) > 0 {
+	for d.hasWork() {
 		sym := d.popWork()
 		if !d.info.HasFacts(sym) {
 			continue
@@ -344,9 +345,16 @@ func (d *pass) markUsedInIface(typ meta.Symbol) {
 	}
 }
 
+func (d *pass) hasWork() bool {
+	return d.workHead < len(d.workQueue)
+}
+
 func (d *pass) popWork() meta.Symbol {
-	sym := d.workQueue[0]
-	copy(d.workQueue, d.workQueue[1:])
-	d.workQueue = d.workQueue[:len(d.workQueue)-1]
+	sym := d.workQueue[d.workHead]
+	d.workHead++
+	if d.workHead == len(d.workQueue) {
+		d.workQueue = d.workQueue[:0]
+		d.workHead = 0
+	}
 	return sym
 }

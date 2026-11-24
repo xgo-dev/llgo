@@ -940,6 +940,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 			p.panicSitePos = token.NoPos
 			b.EndBuild()
+			b.Dispose()
 		})
 	}
 	return fn, nil, goFunc
@@ -1280,8 +1281,11 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 			instrs = instrs[:last]
 		} else if p.state != pkgHasPatch {
 			// TODO(xsw): confirm pyMod don't need to call AfterInit
+			initFn := p.fn
 			p.initAfter = func() {
-				pkg.AfterInit(b, ret)
+				afterB := initFn.NewBuilder()
+				defer afterB.Dispose()
+				pkg.AfterInit(afterB, ret)
 			}
 		}
 	}

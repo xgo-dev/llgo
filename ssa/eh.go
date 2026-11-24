@@ -20,7 +20,6 @@ import (
 	"go/token"
 	"go/types"
 	"strings"
-	"unsafe"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -256,7 +255,8 @@ func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 type aDefer struct {
 	nextBit     int        // next defer bit
 	data        Expr       // pointer to runtime.Defer
-	bitsPtr     Expr       // pointer to defer bits
+	bitsPtr     Expr       // pointer to primary defer bits (word 0, in runtime.Defer)
+	extraBits   []Expr     // extra volatile stack bitmask words (word 1, 2, ...) for >wordBits conditional defers
 	rethPtr     Expr       // native block address or wasm Rethrow selector
 	rundPtr     Expr       // native block address or wasm RunDefers selector
 	argsPtr     Expr       // func and args links
@@ -324,6 +324,7 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 		var next, panicBlk BasicBlock
 		if kind != DeferAlways {
 			b, next = self.deferInitBuilder(b)
+			defer b.Dispose()
 		}
 
 		blks := self.MakeBlocks(2)
@@ -469,11 +470,36 @@ func (b Builder) Defer(kind DoAction, fn Expr, buildCall func(Builder, Expr, ...
 	b.DeferRecover(kind, deferMayRecover(fn), fn, buildCall, args...)
 }
 
+// extraDeferBitsPtr returns the volatile entry-stack bitmask word for wordIdx >= 1
+// (word 0 lives in runtime.Defer.bits). Volatile accesses keep LLVM from promoting
+// or folding the bitmask across sigsetjmp/siglongjmp panic edges while preserving
+// strict LIFO ordering with DeferInLoop drainers.
+func (b Builder) extraDeferBitsPtr(self *aDefer, wordIdx int) Expr {
+	for len(self.extraBits) < wordIdx {
+		slot := b.uninitializedStackSlot(b.Prog.Uintptr())
+		initB := b.Func.NewBuilder()
+		inst := b.Func.impl.FirstBasicBlock().FirstInstruction()
+		for !inst.IsNil() && !inst.IsAAllocaInst().IsNil() {
+			inst = llvm.NextInstruction(inst)
+		}
+		if !inst.IsNil() {
+			initB.impl.SetInsertPointBefore(inst)
+		} else {
+			initB.impl.SetInsertPointAtEnd(b.Func.impl.FirstBasicBlock())
+		}
+		initB.Store(slot, b.Prog.Val(uintptr(0))).SetVolatile(true)
+		initB.Dispose()
+		self.extraBits = append(self.extraBits, slot)
+	}
+	return self.extraBits[wordIdx-1]
+}
+
 // DeferRecover emits a defer instruction with explicit recover capability.
 func (b Builder) DeferRecover(kind DoAction, mayRecover bool, fn Expr, buildCall func(Builder, Expr, ...Expr) Expr, args ...Expr) {
 	dbgInstrCall("Defer", fn, args)
 	var prog Program
 	var nextbit Expr
+	var extraBitsPtr Expr
 	var self = b.getDefer(kind)
 	if self == nil {
 		return
@@ -483,14 +509,20 @@ func (b Builder) DeferRecover(kind DoAction, mayRecover bool, fn Expr, buildCall
 	switch kind {
 	case DeferInCond:
 		prog = b.Prog
+		wordBits := prog.GoWordSize() * 8
 		next := self.nextBit
-		if uintptr(next) >= unsafe.Sizeof(uintptr(0))*8 {
-			panic("too many conditional defers")
-		}
 		self.nextBit++
-		bits := b.Load(self.bitsPtr)
-		nextbit = prog.Val(uintptr(1 << next))
-		b.Store(self.bitsPtr, b.BinOp(token.OR, bits, nextbit))
+		wordIdx := next / wordBits
+		bitIdx := next % wordBits
+		nextbit = prog.IntVal(uint64(1)<<bitIdx, prog.Uintptr())
+		if wordIdx == 0 {
+			bits := b.Load(self.bitsPtr)
+			b.Store(self.bitsPtr, b.BinOp(token.OR, bits, nextbit))
+		} else {
+			extraBitsPtr = b.extraDeferBitsPtr(self, wordIdx)
+			bits := b.Load(extraBitsPtr).SetVolatile(true)
+			b.Store(extraBitsPtr, b.BinOp(token.OR, bits, nextbit)).SetVolatile(true)
+		}
 	case DeferAlways:
 		// nothing to do
 	case DeferInLoop:
@@ -501,7 +533,7 @@ func (b Builder) DeferRecover(kind DoAction, mayRecover bool, fn Expr, buildCall
 		loopCase := loopDeferCase{id: id, typ: typ, mayRecover: mayRecover, fn: fn, args: args, buildCall: buildCall}
 		self.loopCases = append(self.loopCases, loopCase)
 	}
-	b.appendDeferStmt(self, kind, typ, mayRecover, buildCall, fn, args, nextbit)
+	b.appendDeferStmt(self, kind, typ, mayRecover, buildCall, fn, args, nextbit, extraBitsPtr)
 }
 
 // DeferTo emits a defer instruction into an explicit runtime defer stack.
@@ -539,7 +571,7 @@ func (b Builder) DeferToRecover(owner Function, stack Expr, mayRecover bool, fn 
 	self.loopCases = append(self.loopCases, loopCase)
 }
 
-func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit Expr) {
+func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ *deferArgsStorage, mayRecover bool, buildCall func(Builder, Expr, ...Expr) Expr, fn Expr, args []Expr, nextbit, extraBitsPtr Expr) {
 	self.stmts = append(self.stmts, func(bits Expr, resume deferTarget) {
 		switch kind {
 		case DeferInCond:
@@ -548,7 +580,11 @@ func (b Builder) appendDeferStmt(self *aDefer, kind DoAction, typ *deferArgsStor
 			self.loopDrainerGenerated = false
 			prog := b.Prog
 			zero := prog.Val(uintptr(0))
-			has := b.BinOp(token.NEQ, b.BinOp(token.AND, bits, nextbit), zero)
+			condBits := bits
+			if !extraBitsPtr.IsNil() {
+				condBits = b.Load(extraBitsPtr).SetVolatile(true)
+			}
+			has := b.BinOp(token.NEQ, b.BinOp(token.AND, condBits, nextbit), zero)
 			b.IfThen(has, func() {
 				b.callDefer(self, kind, typ, mayRecover, buildCall, fn, args)
 			})

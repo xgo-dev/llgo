@@ -68,27 +68,32 @@ func (b Builder) aggregateValue(t Type, flds ...llvm.Value) Expr {
 		return Expr{b.simdFromStorage(stored.impl, t), t}
 	}
 	agg := llvm.Undef(t.ll)
+	elems := t.ll.StructElementTypes()
 	for i, fld := range flds {
-		agg = b.impl.CreateInsertValue(agg, b.wrapStructField(t, i, fld), i, "")
+		agg = b.impl.CreateInsertValue(agg, b.wrapStructFieldElem(t, i, elems[i], fld), i, "")
 	}
 	return Expr{agg, t}
 }
 
 func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
+	elems := t.ll.StructElementTypes()
 	for i, fld := range flds {
-		fld = b.wrapStructField(t, i, fld)
+		fld = b.wrapStructFieldElem(t, i, elems[i], fld)
 		b.impl.CreateStore(fld, llvm.CreateStructGEP(b.impl, t.ll, ptr, i))
 	}
 }
 
 func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value {
+	return b.wrapStructFieldElem(t, index, t.ll.StructElementTypes()[index], value)
+}
+
+func (b Builder) wrapStructFieldElem(t Type, index int, elem llvm.Type, value llvm.Value) llvm.Value {
 	if _, ok := simdTagIndex(t.RawType()); ok {
-		return llvm.ConstNull(t.ll.StructElementTypes()[index])
+		return llvm.ConstNull(elem)
 	}
-	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
+	if t.kind == vkTuple && elem == b.Prog.aggregateElementType(t, index).ll {
 		return value
 	}
-	elem := t.ll.StructElementTypes()[index]
 	layout, ok := b.Prog.structLayout(t)
 	wrapped := ok && index < len(layout.wrapped) && layout.wrapped[index]
 	physical := elem

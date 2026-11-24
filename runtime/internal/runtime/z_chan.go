@@ -23,6 +23,9 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
 )
 
+//go:linkname keepAlive llgo.keepAlive
+func keepAlive(x any)
+
 // -----------------------------------------------------------------------------
 
 type Chan struct {
@@ -718,8 +721,10 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 			durable = false
 		}
 	}
+	var synctestWaiter *SynctestWaiter
 	if durable {
-		state.synctest = NewSynctestWaiter()
+		synctestWaiter = NewSynctestWaiter()
+		state.synctest = synctestWaiter
 	}
 
 	var waiters *chanWaiter
@@ -758,6 +763,10 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 	for w := waiters; w != nil; w = w.all {
 		cleanupSelectWaiter(w)
 	}
+	// selectState and chanWaiter live in unscanned C memory; keep GC-managed
+	// references alive until every channel queue has unlinked our waiters.
+	keepAlive(synctestWaiter)
+	keepAlive(ops)
 	freeSelectState(state)
 	freeSelectWaiters(waiters)
 	if status.panicOnWake() {

@@ -127,7 +127,7 @@ func TestUnsafeString(t *testing.T) {
 	b.Return()
 }
 
-func TestTooManyConditionalDefers(t *testing.T) {
+func TestConditionalDeferOverflowUsesExtraBitmask(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -148,18 +148,22 @@ func TestTooManyConditionalDefers(t *testing.T) {
 	fn := pkg.NewFunc("main", NoArgsNoRet, GoDecl)
 	fn.SetRecover(fn.MakeBlock())
 	b := fn.MakeBody(1)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic: too many conditional defers")
-		} else if r != "too many conditional defers" {
-			t.Fatalf("unexpected panic: %v", r)
-		}
-	}()
+	defer b.Dispose()
 
 	b.Return()
 	for i := 0; i < 65; i++ {
 		b.Defer(DeferInCond, target.Expr, Builder.Call)
+	}
+	wordBits := prog.GoWordSize() * 8
+	if fn.defer_.nextBit != 65 {
+		t.Fatalf("nextBit = %d, want 65", fn.defer_.nextBit)
+	}
+	wantExtra := (65 - 1) / wordBits
+	if got := len(fn.defer_.extraBits); got != wantExtra {
+		t.Fatalf("extraBits = %d, want %d", got, wantExtra)
+	}
+	if got := len(fn.defer_.loopCases); got != 0 {
+		t.Fatalf("loopCases = %d, want 0 (conditional defers must not spill into loop drainer)", got)
 	}
 }
 
@@ -2596,13 +2600,8 @@ func TestValFromDataKinds(t *testing.T) {
 }
 
 func TestPackageCoverageHelpers(t *testing.T) {
-	if !is32Bits("386") {
-		t.Fatal("is32Bits should return true for 386")
-	}
-	if is32Bits("amd64") {
-		t.Fatal("is32Bits should return false for amd64")
-	}
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	_ = prog.CIntPtr()
 	pkg := prog.NewPackage("bar", "foo/bar")
 	if len(pkg.ExportFuncs()) != 0 {
@@ -2611,7 +2610,9 @@ func TestPackageCoverageHelpers(t *testing.T) {
 
 	fn := pkg.NewFunc("noop", NoArgsNoRet, GoDecl)
 	b := fn.MakeBody(1)
+	defer b.Dispose()
 	b.Return()
+	b.EndBuild()
 }
 
 func TestExprCoverageHelpers(t *testing.T) {
@@ -3259,6 +3260,14 @@ func TestStructEqualLowering(t *testing.T) {
 	}, nil)
 	if CanInlineStructEqual(fiveFields, 5, prog.PointerSize()) {
 		t.Fatal("five-field struct comparison was inlined")
+	}
+
+	shortCircuit := compare("shortCircuitStruct", types.NewStruct([]*types.Var{
+		field("a", types.Typ[types.Int]),
+		field("b", types.NewInterfaceType(nil, nil).Complete()),
+	}, nil), token.EQL, 0, 0)
+	if !strings.Contains(shortCircuit, "br i1 ") || !strings.Contains(shortCircuit, "phi i1 ") {
+		t.Fatalf("struct comparison with interface field did not short-circuit:\n%s", shortCircuit)
 	}
 
 	sig := types.NewSignatureType(nil, nil, nil,

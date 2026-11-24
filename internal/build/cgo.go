@@ -108,21 +108,27 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	}
 	cgoSymbols := collectCgoSymbols(externs)
 	for _, preamble := range preambles {
-		tmpFile, err := os.CreateTemp("", "-cgo-*.c")
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create temp file: %v", err)
-		}
-		tmpName := tmpFile.Name()
-		defer os.Remove(tmpName)
-		code := cgoHeader + "\n\n" + preamble.src
-		externDecls, err := genExternDeclsByClang(ctx.compiler(), pkg, code, cflags, cgoSymbols, verbose)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to generate extern decls: %v", err)
-		}
-		if err = os.WriteFile(tmpName, []byte(code+"\n\n"+externDecls), 0644); err != nil {
-			return nil, nil, fmt.Errorf("failed to write temp file: %v", err)
-		}
-		linkFile, compileErr := clFile(ctx, cflags, tmpName, pkg.ExportFile, pkg.PkgPath, verbose)
+		linkFile, compileErr := func() (string, error) {
+			tmpFile, err := os.CreateTemp("", "-cgo-*.c")
+			if err != nil {
+				return "", fmt.Errorf("failed to create temp file: %v", err)
+			}
+			tmpName := tmpFile.Name()
+			if err := tmpFile.Close(); err != nil {
+				os.Remove(tmpName)
+				return "", fmt.Errorf("failed to close temp file: %v", err)
+			}
+			defer os.Remove(tmpName)
+			code := cgoHeader + "\n\n" + preamble.src
+			externDecls, err := genExternDeclsByClang(ctx.compiler(), pkg, code, cflags, cgoSymbols, verbose)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate extern decls: %v", err)
+			}
+			if err = os.WriteFile(tmpName, []byte(code+"\n\n"+externDecls), 0644); err != nil {
+				return "", fmt.Errorf("failed to write temp file: %v", err)
+			}
+			return clFile(ctx, cflags, tmpName, pkg.ExportFile, pkg.PkgPath, verbose)
+		}()
 		if compileErr != nil {
 			return nil, nil, compileErr
 		}

@@ -48,6 +48,7 @@ func (b Builder) LeaveLocalContext(ctx, previous Expr) {
 func (p Function) BuildLocalPackageAccessor(cache, size, align Expr) {
 	prog := p.Prog
 	b := p.MakeBody(3)
+	defer b.Dispose()
 	hit := p.Block(1)
 	slow := p.Block(2)
 	cached := b.Load(cache)
@@ -68,6 +69,7 @@ func (p Function) BuildLocalPackageAccessor(cache, size, align Expr) {
 // worker-specific address.
 func (p Function) BuildGoroutineLocalPackageAccessor(key, size, align Expr) {
 	b := p.MakeBody(1)
+	defer b.Dispose()
 	raw := b.Call(p.Pkg.rtFunc("GoroutineLocalPackage"), key, size, align)
 	result := p.raw.Type.(*types.Signature).Results().At(0).Type()
 	b.Return(b.Convert(p.Prog.rawType(result), raw))

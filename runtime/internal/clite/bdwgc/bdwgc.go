@@ -110,8 +110,8 @@ func RegisterFinalizer(
 //go:linkname RegisterFinalizerNoOrder C.GC_register_finalizer_no_order
 func RegisterFinalizerNoOrder(
 	obj c.Pointer,
-	fn func(c.Pointer, c.Pointer), cd c.Pointer,
-	oldFn *func(c.Pointer, c.Pointer), oldCd *c.Pointer)
+	fn FinalizerFunc, cd c.Pointer,
+	oldFn *FinalizerFunc, oldCd *c.Pointer)
 
 //go:linkname RegisterFinalizerIgnoreSelf C.GC_register_finalizer_ignore_self
 func RegisterFinalizerIgnoreSelf(

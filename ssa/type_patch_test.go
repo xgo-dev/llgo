@@ -70,11 +70,11 @@ func TestTypeStringWithPkgAndIsPkgScope(t *testing.T) {
 	}
 
 	pkg1 := types.NewPackage("example.com/p", "p")
-	if !isPkgScope(pkg1.Scope(), pkg1.Scope()) {
-		t.Fatalf("isPkgScope(scope, scope) should be true")
+	if !isPackageLevelScope(pkg1.Scope()) {
+		t.Fatalf("isPackageLevelScope(scope) should be true")
 	}
-	if isPkgScope(nil, pkg1.Scope()) {
-		t.Fatalf("isPkgScope(nil, scope) should be false")
+	if isPackageLevelScope(nil) {
+		t.Fatalf("isPackageLevelScope(nil) should be false")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestExplicitDeferStackIR(t *testing.T) {
@@ -260,6 +261,70 @@ func TestDeferContinuationDispatch(t *testing.T) {
 			eb.RunDefers()
 			eb.Return()
 			eb.EndBuild()
+		})
+	}
+}
+
+func TestConditionalDeferExceedsTargetWordBits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		target       *ssa.Target
+		count        int
+		wantBitmaskW string
+	}{
+		{
+			name:         "32bit-over-32-cond-defers",
+			target:       &ssa.Target{GOOS: "linux", GOARCH: "386"},
+			count:        40,
+			wantBitmaskW: "or i32",
+		},
+		{
+			name:         "64bit-over-64-cond-defers",
+			target:       &ssa.Target{GOOS: "linux", GOARCH: "amd64"},
+			count:        70,
+			wantBitmaskW: "or i64",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := ssatest.NewProgram(t, tc.target)
+			pkg := prog.NewPackage("deferpkg", "example.com/deferpkg")
+
+			callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+			cb := callee.MakeBody(1)
+			defer cb.Dispose()
+			cb.Return()
+			cb.EndBuild()
+
+			fn := pkg.NewFunc("manyCondDefers", ssa.NoArgsNoRet, ssa.GoDecl)
+			b := fn.MakeBody(1)
+			defer b.Dispose()
+			bodyBlk := fn.MakeBlock()
+			recovBlk := fn.MakeBlock()
+			fn.SetRecover(recovBlk)
+			b.Jump(bodyBlk)
+			b.SetBlock(bodyBlk)
+			for i := 0; i < tc.count; i++ {
+				b.Defer(ssa.DeferInCond, callee.Expr, ssa.Builder.Call)
+			}
+			b.RunDefers()
+			b.Return()
+			b.SetBlock(recovBlk)
+			b.Return()
+			b.EndBuild()
+
+			ir := pkg.Module().String()
+			if !strings.Contains(ir, tc.wantBitmaskW) {
+				t.Fatalf("expected target bitmask op %q in IR, got:\n%s", tc.wantBitmaskW, ir)
+			}
+			if !strings.Contains(ir, "store volatile") || !strings.Contains(ir, "load volatile") {
+				t.Fatalf("expected overflow conditional defers to use volatile extra bitmask words, got:\n%s", ir)
+			}
+			if strings.Contains(ir, "FreeDeferNode") {
+				t.Fatalf("zero-arg overflow conditional defers should not spill to loop-defer heap nodes, got:\n%s", ir)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid IR for %s: %v\n%s", tc.name, err, ir)
+			}
 		})
 	}
 }
