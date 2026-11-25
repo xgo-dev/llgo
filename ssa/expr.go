@@ -2072,15 +2072,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		}
 	case "append":
 		if len(args) == 2 && args[0].kind == vkSlice {
-			dst, src := args[0], args[1]
-			switch src.kind {
-			case vkSlice:
-				return b.appendSlice(dst, b.SliceData(src), b.SliceLen(src), b.Prog.SizeOf(b.Prog.Elem(src.Type)))
-			case vkString:
-				return b.appendSlice(dst, b.StringData(src), b.StringLen(src), b.Prog.SizeOf(b.Prog.Byte()))
-			default:
-				return b.appendSlice(dst, src, b.Prog.Val(1), b.Prog.SizeOf(src.Type))
-			}
+			return b.AppendSlice(args[0], args[1], b.PanicSite)
 		}
 	case "copy":
 		if len(args) == 2 && args[0].kind == vkSlice && (args[1].kind == vkSlice || args[1].kind == vkString) {

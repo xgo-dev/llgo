@@ -377,6 +377,14 @@ func (b Builder) memset(ptr, val, len, isvolatile Expr) Expr {
 	return ptr
 }
 
+// declare void @llvm.memmove.p0.p0.i32(ptr <dest>, ptr <src>, i32 <len>, i1 <isvolatile>)
+// declare void @llvm.memmove.p0.p0.i64(ptr <dest>, ptr <src>, i64 <len>, i1 <isvolatile>)
+func (b Builder) memmove(dst, src, length, isvolatile Expr) llvm.Value {
+	return b.impl.CreateIntrinsic(b.Prog.Void().ll, llvm.LookupIntrinsicID("llvm.memmove"), []llvm.Value{
+		dst.impl, src.impl, length.impl, isvolatile.impl,
+	}, "")
+}
+
 func (b Builder) zeroinit(ptr, size Expr) Expr {
 	return b.memset(ptr, b.Prog.IntVal(0, b.Prog.Byte()), size, b.Prog.Val(false))
 }
