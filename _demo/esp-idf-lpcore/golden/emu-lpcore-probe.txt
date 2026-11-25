@@ -1,0 +1,62 @@
+# Golden for the LP core probe ([go] lp ...) of _demo/esp-idf-lpcore,
+# captured from an acceptance run (esp-emu v1.2.0, esp32s31, IDF
+# espressif/idf:latest = v6.3-dev, esp-clang toolchain from llgo's cache).
+#
+# Scope: every [go] lp line the probe prints. The [c] lines (the heap marks
+# and app_main's own reports) are not part of the golden: the heap byte
+# counts legitimately vary between runs.
+#
+# Everything in this golden is exact - there is NO floater rule. The probe
+# prints no wall-clock values, no throughput counters and no addresses; the
+# only numbers on the wire are the protocol arguments (0..7 and their XOR
+# 0xA55A echoes, which this emu run does not even reach - see the skip line)
+# and the LP binary's size, which is a build fact (8192 = the LP RAM
+# reservation the sdkconfig pins, the size the ULP build pads its image to).
+#
+# The markers line is the run's fidelity statement, and it is exact:
+#   boot=0x00000000        the LP program's own first store (0xC0DEC0DE at
+#                          main() entry) never landed - the emulator does not
+#                          model the S31's LP RISC-V hart, so the loaded
+#                          program never executes. mbinit/poll/count stay at
+#                          their zero-initialized .bss values for the same
+#                          reason. (The LP RAM memory ITSELF is modeled: the
+#                          lpram line proves the load's memcpy lands and
+#                          reads back word-for-word.)
+#   echo skipped ...       the honest consequence: the mailbox echo phase
+#                          needs the LP core alive, so the probe reports the
+#                          skip instead of faking exchanges or failing on an
+#                          environment property. On hardware the markers line
+#                          reads boot=0xC0DEC0DE mbinit=0 poll=7 count=... and
+#                          the skip line is replaced by the eight echo lines
+#                          plus `echo 8/8 ok`.
+#   wakeup_cause=1 ...     the cold boot's cause bitmap (BIT(0) =
+#                          ESP_SLEEP_WAKEUP_UNDEFINED) - this acceptance run
+#                          is one boot: probeDeepSleep ships false because
+#                          the emulator also does not model S31 deep-sleep
+#                          entry (esp_deep_sleep_start spins in the PMU wait
+#                          loop until the interrupt watchdog aborts; measured,
+#                          see the README). With the phase enabled on
+#                          hardware, this golden grows a second boot's lines
+#                          (markers2 / wake ok / PASS) - appended, never
+#                          edited.
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] lp' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the probe's surface behavior changed. The golden only grows by
+# appending a phase (e.g. the deep-sleep wake boot), never by editing an
+# existing line.
+[go] lp: start
+[go] lp wakeup_cause=1 ESP_SLEEP_WAKEUP_UNDEFINED
+[go] lp prog bytes=8192
+[go] lp oversize rejected ESP_ERR_INVALID_SIZE ok
+[go] lp load ok
+[go] lp lpram ok
+[go] lp run ok
+[go] lp markers boot=0x00000000 mbinit=0 poll=0 count=0
+[go] lp settle ok
+[go] lp echo skipped lp-core-not-running
+[go] lp stop ok
+[go] lp stop twice ok
+[go] lp PASS
