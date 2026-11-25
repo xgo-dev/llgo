@@ -19,7 +19,29 @@ package types
 import (
 	gotypes "go/types"
 	"math"
+
+	"github.com/xgo-dev/llgo/target"
 )
+
+// Sizes specifies the sizing functions for LLGo Types (mirroring go/types.Sizes).
+type Sizes interface {
+	Alignof(T Type) int64
+	Offsetsof(fields []*Var) []int64
+	Sizeof(T Type) int64
+}
+
+// SizesFor returns a Sizes implementation (backed by *Context) for the given
+// compiler ("llgo" or "gc") and GOARCH (mirroring go/types.SizesFor).
+func SizesFor(compiler, arch string) Sizes {
+	if compiler != "llgo" && compiler != "gc" {
+		return nil
+	}
+	spec := target.ResolveSpec(target.Spec{GOARCH: arch})
+	if spec.WordSize == 0 {
+		return nil
+	}
+	return NewContext(spec)
+}
 
 // LayoutPair holds an overflow-aware (Size, Align) pair computed without LLVM
 // TargetData. Size == -1 signals int64 overflow matching go/types.Sizes.
@@ -114,6 +136,32 @@ const (
 	modeWasmNative
 )
 
+// Sizeof implements Sizes on *Context.
+func (c *Context) Sizeof(T Type) int64 { return c.Layout(T).Size }
+
+// Alignof implements Sizes on *Context.
+func (c *Context) Alignof(T Type) int64 { return c.Layout(T).Align }
+
+// Offsetsof implements Sizes on *Context.
+func (c *Context) Offsetsof(fields []*Var) []int64 {
+	if len(fields) == 0 {
+		return nil
+	}
+	st := NewStruct(fields, nil)
+	for _, f := range fields {
+		if TypeIsHostLayoutMarker(f.typ) {
+			st.hostLayout = true
+			break
+		}
+	}
+	lay := c.computeStructLayout(st, modeGo)
+	out := make([]int64, len(lay.Fields))
+	for i, f := range lay.Fields {
+		out[i] = f.Offset
+	}
+	return out
+}
+
 // HostUsesNativeGoLayout reports whether ordinary Go aggregates on this target
 // already use native C alignment for 64-bit scalars (e.g. 32-bit ARM/MIPS/RISC-V).
 func (c *Context) HostUsesNativeGoLayout() bool {
@@ -151,11 +199,24 @@ func (c *Context) Layout(t Type) *Layout {
 		return &Layout{Align: 1, IsRegularMemory: true}
 	}
 	c.mu.RLock()
-	if l, ok := c.layouts[t]; ok {
-		c.mu.RUnlock()
-		return l
+	needCheck := len(c.incompleteNamed) > 0
+	if !needCheck {
+		if l, ok := c.layouts[t]; ok {
+			c.mu.RUnlock()
+			return l
+		}
 	}
 	c.mu.RUnlock()
+
+	if needCheck {
+		c.mu.Lock()
+		c.checkIncompleteNamedLocked()
+		if l, ok := c.layouts[t]; ok {
+			c.mu.Unlock()
+			return l
+		}
+		c.mu.Unlock()
+	}
 
 	l := c.layoutInMode(t, modeGo)
 
@@ -235,6 +296,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 		return c.layoutInMode(u.rhs, mode)
 
 	case *Named:
+		u.resolve()
 		if u.simdTagIndex >= 0 {
 			return &Layout{
 				Size:            0,
@@ -387,7 +449,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				IsRegularMemory: false,
 			}
 		}
-		if u.callConv == GoClosure {
+		if u.callConv.IsClosure() {
 			l := &Layout{
 				Size:            2 * word,
 				Align:           c.alignForMode(word, mode),
@@ -489,20 +551,39 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 		}
 	}
 
+	// Legacy synthetic closure struct { $f func(...); $data unsafe.Pointer }:
+	// physical layout is always 2 words {codePtr, envPtr} without needing a
+	// synthetic non-Go CallConv.
+	if st.isClosureStruct {
+		word := int64(c.spec.WordSize)
+		al := c.alignForMode(word, mode)
+		ptrOff := []int64{word}
+		return &Layout{
+			Size:            2 * word,
+			Align:           al,
+			PtrBytes:        2 * word,
+			PtrOffsets:      ptrOff,
+			GCBitmap:        GCBitmap(ptrOff, 2*word, word),
+			IsRegularMemory: false,
+			Fields: []FieldLayout{
+				{Offset: 0, Size: word, Align: al, WasmWideSlot: c.spec.UsesWideGoStorage()},
+				{Offset: word, Size: word, Align: al, WasmWideSlot: c.spec.UsesWideGoStorage()},
+			},
+			HasWasmWideSlots: c.spec.UsesWideGoStorage(),
+		}
+	}
+
 	// Determine effective field layout mode and tail zero-sized field padding.
 	effectiveMode := mode
 	hasHost := st.hostLayout
 	padTail := true
 
 	switch {
-	case st.isClosureStruct:
-		padTail = false
 	case st.nativeLayout && c.spec.UsesWideGoStorage():
 		effectiveMode = modeWasmNative
 		padTail = false
 	case mode == modeWasmNative:
 		if !st.nativeLayout {
-			// Ordinary Go struct embedded inside a Wasm native struct still uses Go layout.
 			effectiveMode = modeGo
 			padTail = true
 		} else {
@@ -532,8 +613,6 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 		var fl *Layout
 		switch effectiveMode {
 		case modeHostField:
-			// Direct fields of a structs.HostLayout struct use modeHostField;
-			// nested non-HostLayout structs fall back to hostNested behavior.
 			fl = c.layoutHostField(ft)
 		case modeWasmNative:
 			fl = c.layoutInMode(ft, modeWasmNative)
@@ -561,7 +640,7 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 		padTail = false
 	}
 
-	return c.assembleAggregate(fieldLayouts, st.fields, padTail, hasHost, hasSIMD || false, wasmWide)
+	return c.assembleAggregate(fieldLayouts, st.fields, padTail, hasHost, hasSIMD, wasmWide)
 }
 
 func (c *Context) layoutHostField(t Type) *Layout {
@@ -570,6 +649,7 @@ func (c *Context) layoutHostField(t Type) *Layout {
 	}
 	switch u := Unalias(t).(type) {
 	case *Named:
+		u.resolve()
 		if u.simdTagIndex >= 0 || u.hasCallConv && u.callConv.IsNative() {
 			if _, isArr := u.Underlying().(*Array); isArr {
 				return c.layoutHostField(u.underlying)
@@ -666,9 +746,7 @@ func (c *Context) assembleAggregate(fieldLayouts []*Layout, fieldVars []*Var, pa
 				regular = false
 			} else if !fl.IsRegularMemory {
 				regular = false
-			} else if n > 1 && padAfter > 0 {
-				regular = false
-			} else if n == 1 && padAfter > 0 {
+			} else if padAfter > 0 {
 				regular = false
 			}
 		}
@@ -775,6 +853,11 @@ func (g *goSizesAdapter) Offsetsof(fields []*gotypes.Var) []int64 {
 	containsHost := false
 	for _, f := range fields {
 		ft := f.Type()
+		// Never call Underlying() on pointer/slice/map/chan/sig fields!
+		switch ft.(type) {
+		case *gotypes.Basic, *gotypes.Pointer, *gotypes.Slice, *gotypes.Map, *gotypes.Chan, *gotypes.Signature, *gotypes.Interface:
+			continue
+		}
 		if IsHostLayoutMarker(ft) {
 			host = true
 			containsHost = true

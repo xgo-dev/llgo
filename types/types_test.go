@@ -169,7 +169,7 @@ func Use() (int, string, *Node) {
 	}
 
 	pyFn := pkg.Lookup("pyMax").(*lltypes.Func)
-	if pyFn.LinkName() != "py.max" || pyFn.CallConv() != lltypes.PyFunc || !pyFn.IsPyList() || !pyFn.Signature().IsPyVariadic() {
+	if pyFn.LinkName() != "py.max" || pyFn.CallConv() != lltypes.Py || !pyFn.IsPyList() || !pyFn.Signature().IsPyVariadic() {
 		t.Fatalf("pyMax func metadata = link=%q cc=%v pylist=%v", pyFn.LinkName(), pyFn.CallConv(), pyFn.IsPyList())
 	}
 
@@ -179,13 +179,27 @@ func Use() (int, string, *Node) {
 	}
 
 	wasmImp := pkg.Lookup("hostLog").(*lltypes.Func)
-	if mod, name, ok := wasmImp.WasmImport(); !ok || mod != "env" || name != "log" || wasmImp.CallConv() != lltypes.WasmFunc {
+	if mod, name, ok := wasmImp.WasmImport(); !ok || mod != "env" || name != "log" || wasmImp.CallConv() != lltypes.Wasm {
 		t.Fatalf("hostLog wasmimport = (%q, %q, %v) cc=%v", mod, name, ok, wasmImp.CallConv())
 	}
 
 	wasmExp := pkg.Lookup("exportedRun").(*lltypes.Func)
 	if wasmExp.WasmExport() != "run" {
 		t.Fatalf("exportedRun.WasmExport() = %q", wasmExp.WasmExport())
+	}
+
+	// Verify Foo.Type() and Go function value types are Identical (matching go/types!).
+	useFn := pkg.Lookup("Use").(*lltypes.Func)
+	if useFn.CallConv() != lltypes.Go || !useFn.Signature().IsClosure() {
+		t.Fatalf("Use func CallConv = %v, want Go", useFn.CallConv())
+	}
+	wantUseSig := lltypes.NewSignature(nil, nil, lltypes.NewTuple(
+		lltypes.NewParam(0, nil, "", lltypes.Typ[lltypes.Int]),
+		lltypes.NewParam(0, nil, "", lltypes.Typ[lltypes.String]),
+		lltypes.NewParam(0, nil, "", lltypes.NewPointer(pkg.Lookup("Node").Type())),
+	), false)
+	if !lltypes.Identical(useFn.Type(), wantUseSig) {
+		t.Fatalf("Func.Type() not Identical to equivalent Go Signature: %s vs %s", useFn.Type(), wantUseSig)
 	}
 
 	extV := pkg.Lookup("extVar").(*lltypes.Var)
@@ -202,10 +216,10 @@ func Use() (int, string, *Node) {
 	if bi.Origin() != bs.Origin() {
 		t.Fatalf("Box[int].Origin() != Box[string].Origin(): %p vs %p", bi.Origin(), bs.Origin())
 	}
-	if len(bi.TypeArgs()) != 1 || !lltypes.Identical(bi.TypeArgs()[0], lltypes.Typ[lltypes.Int]) {
+	if bi.TypeArgs().Len() != 1 || !lltypes.Identical(bi.TypeArgs().At(0), lltypes.Typ[lltypes.Int]) {
 		t.Fatalf("Box[int].TypeArgs() = %v", bi.TypeArgs())
 	}
-	if len(bs.TypeArgs()) != 1 || !lltypes.Identical(bs.TypeArgs()[0], lltypes.Typ[lltypes.String]) {
+	if bs.TypeArgs().Len() != 1 || !lltypes.Identical(bs.TypeArgs().At(0), lltypes.Typ[lltypes.String]) {
 		t.Fatalf("Box[string].TypeArgs() = %v", bs.TypeArgs())
 	}
 	if ctx.Layout(bi).Size != 8 || ctx.Layout(bi).PtrBytes != 0 {
@@ -261,15 +275,83 @@ func TestPointerKindsAndIdentical(t *testing.T) {
 
 	// Signature identity distinguishes CallConv and Variadic.
 	params := lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i32))
-	sGo := lltypes.NewSignature(nil, params, nil, false, lltypes.GoClosure)
-	sDir := lltypes.NewSignature(nil, params, nil, false, lltypes.GoDirect)
-	sC := lltypes.NewSignature(nil, params, nil, false, lltypes.CDecl)
-	sCVar := lltypes.NewSignature(nil, params, nil, true, lltypes.CDecl)
-	if lltypes.Identical(sGo, sDir) || lltypes.Identical(sGo, sC) || lltypes.Identical(sC, sCVar) {
+	sGo := lltypes.NewSignature(nil, params, nil, false)
+	sC := lltypes.NewSignatureWithCallConv(nil, params, nil, false, lltypes.CDecl)
+	sStd := sGo.WithCallConv(lltypes.Stdcall)
+	sCVar := lltypes.NewSignatureWithCallConv(nil, params, nil, true, lltypes.CDecl)
+	if lltypes.Identical(sGo, sC) || lltypes.Identical(sC, sStd) || lltypes.Identical(sC, sCVar) {
 		t.Fatal("distinct Signatures treated as Identical")
 	}
-	if !lltypes.Identical(sC, lltypes.NewSignature(nil, params, nil, false, lltypes.CDecl)) {
+	if !lltypes.Identical(sC, lltypes.NewSignatureWithCallConv(nil, params, nil, false, lltypes.CDecl)) {
 		t.Fatal("identical CDecl Signatures not Identical")
+	}
+}
+
+// TestGoSizesMidCheckUnresolvedPointerTargets reproduces go/types checking
+// runtime/chan.go where unsafe.Sizeof(hchan{}) runs while *sudog / *g / *m
+// point to not-yet-checked Named types (preventing go/types/named.go:608 panic).
+func TestGoSizesMidCheckUnresolvedPointerTargets(t *testing.T) {
+	src := `package rtlike
+
+import "unsafe"
+
+const hchanSize = unsafe.Sizeof(hchan{})
+
+type hchan struct {
+	qcount uint
+	sendq  waitq
+	recvq  waitq
+	lock   mutex
+}
+
+type waitq struct {
+	first *sudog
+	last  *sudog
+}
+
+type sudog struct {
+	g    *g
+	next *sudog
+	prev *sudog
+	elem unsafe.Pointer
+}
+
+type g struct {
+	m      *m
+	waiter *sudog
+	iface  any
+	custom CustomIface
+}
+
+type CustomIface interface {
+	Next() *m
+}
+
+type m struct {
+	curg *g
+	c    *hchan
+}
+
+type mutex struct {
+	key uintptr
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "rtlike.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	pkg, _, err := ctx.Check("rtlike", fset, []*ast.File{file}, &gotypes.Config{
+		Importer: importer.Default(),
+	})
+	if err != nil {
+		t.Fatalf("Check failed on mutually-recursive runtime-like types: %v", err)
+	}
+	cObj := pkg.Lookup("hchanSize").(*lltypes.Const)
+	got, ok := constant.Int64Val(cObj.Val())
+	if !ok || got != 48 {
+		t.Fatalf("hchanSize = %v, want 48", cObj.Val())
 	}
 }
 
@@ -410,7 +492,7 @@ func TestFuncABIAndRuntimeMetadata(t *testing.T) {
 		lltypes.NewField(0, nil, "b", lltypes.Typ[lltypes.Int64], false),
 		lltypes.NewField(0, nil, "c", lltypes.Typ[lltypes.Int64], false),
 	}, nil)
-	sig := lltypes.NewSignature(
+	sig := lltypes.NewSignatureWithCallConv(
 		nil,
 		lltypes.NewTuple(
 			lltypes.NewParam(0, nil, "b", lltypes.Typ[lltypes.Int8]),
@@ -435,7 +517,7 @@ func TestFuncABIAndRuntimeMetadata(t *testing.T) {
 	// Win64 bool-only ZExt + 8B aggregate Coerce vs 24B SRet.
 	win64 := target.ResolveSpec(target.Spec{GOOS: "windows", GOARCH: "amd64"})
 	ctxWin := lltypes.NewContext(win64)
-	winSig := lltypes.NewSignature(
+	winSig := lltypes.NewSignatureWithCallConv(
 		nil,
 		lltypes.NewTuple(
 			lltypes.NewParam(0, nil, "flag", lltypes.Typ[lltypes.Bool]),

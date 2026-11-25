@@ -87,7 +87,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	}
 
 	// CallConv String() and predicates.
-	for _, cc := range []lltypes.CallConv{lltypes.GoClosure, lltypes.GoDirect, lltypes.CDecl, lltypes.Stdcall, lltypes.Fastcall, lltypes.PyFunc, lltypes.WasmFunc, lltypes.CallConv(99)} {
+	for _, cc := range []lltypes.CallConv{lltypes.Go, lltypes.CDecl, lltypes.Stdcall, lltypes.Fastcall, lltypes.Py, lltypes.Wasm, lltypes.CallConv(99)} {
 		if cc.String() == "" {
 			t.Fatalf("empty CallConv.String() for %d", cc)
 		}
@@ -140,14 +140,17 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 		lltypes.NewTuple(lltypes.NewParam(0, pkg, "v", sl)),
 		lltypes.NewTuple(lltypes.NewParam(0, pkg, "", i64), lltypes.NewParam(0, pkg, "", str)),
 		true,
-		lltypes.GoDirect,
 	)
-	if !mSig.IsGoVariadic() || mSig.IsCVariadic() || mSig.IsPyVariadic() || len(mSig.TypeParams()) != 1 || len(mSig.RecvTypeParams()) != 1 || mSig.String() == "" {
+	if !mSig.IsGoVariadic() || mSig.IsCVariadic() || mSig.IsPyVariadic() || mSig.TypeParams().Len() != 1 || mSig.RecvTypeParams().Len() != 1 || mSig.String() == "" {
 		t.Fatalf("Signature = %v", mSig)
 	}
 	mFn := lltypes.NewFunc(0, pkg, "Do", mSig)
+	mFn.SetFreeVars([]*lltypes.Var{p0})
+	if len(mFn.FreeVars()) != 1 || mFn.FreeVars()[0] != p0 {
+		t.Fatal("Func.FreeVars mismatch")
+	}
 	mFn.SetLinkName("cov.Do")
-	mFn.SetCallConv(lltypes.GoDirect)
+	mFn.SetCallConv(lltypes.Go)
 	mFn.SetExternal(false)
 	mFn.SetSkip(false)
 	mFn.SetPyList(false)
@@ -156,7 +159,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 		t.Fatalf("Named = %v", named)
 	}
 
-	// Alias & Unalias.
+	// Alias & Unalias & go/types-compatible helpers (TypeString, ObjectString, RelativeTo, SizesFor, Universe, NewMethodSet, Complete).
 	aliasObj := lltypes.NewTypeName(0, pkg, "RecAlias", nil)
 	alias := lltypes.NewAlias(aliasObj, named)
 	if !aliasObj.IsAlias() || alias.Obj() != aliasObj || alias.Rhs() != named || alias.Origin() != alias || alias.Underlying() != st || !alias.HasPtrData() || lltypes.Unalias(alias) != named || alias.String() == "" {
@@ -165,11 +168,45 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	if !lltypes.Identical(alias, named) {
 		t.Fatal("alias should be identical to target")
 	}
+	qf := lltypes.RelativeTo(pkg)
+	if got := lltypes.TypeString(named, qf); got != "Rec" {
+		t.Fatalf("TypeString(named, RelativeTo(pkg)) = %q, want Rec", got)
+	}
+	if got := lltypes.TypeString(lltypes.NewPointer(named), qf); got != "*Rec" {
+		t.Fatalf("TypeString(*named, qf) = %q", got)
+	}
+	_ = lltypes.TypeString(alias, qf)
+	_ = lltypes.TypeString(sl, qf)
+	_ = lltypes.TypeString(arr, qf)
+	_ = lltypes.TypeString(mp, qf)
+	_ = lltypes.TypeString(ch1, qf)
+	_ = lltypes.TypeString(ch2, qf)
+	_ = lltypes.TypeString(ch3, qf)
+	_ = lltypes.TypeString(cptr, qf)
+	_ = lltypes.ObjectString(mFn, qf)
+	_ = lltypes.ObjectString(namedObj, qf)
+	_ = lltypes.ObjectString(aliasObj, qf)
+	_ = lltypes.ObjectString(p0, qf)
+	_ = lltypes.ObjectString(nil, qf)
 
-	// Synthetic MethodSet on Named, *Named, Interface.
-	iface := lltypes.NewInterfaceType([]*lltypes.Func{mFn}, []lltypes.Type{anyT})
+	if sz := lltypes.SizesFor("llgo", "amd64"); sz == nil || sz.Sizeof(i64) != 8 || sz.Alignof(i64) != 8 || len(sz.Offsetsof([]*lltypes.Var{p0, p1})) != 2 {
+		t.Fatalf("SizesFor(llgo, amd64) failed")
+	}
+	if lltypes.SizesFor("unknown", "amd64") != nil {
+		t.Fatal("SizesFor(unknown) should be nil")
+	}
+	if lltypes.Universe.Lookup("error") == nil || lltypes.Universe.Lookup("any") == nil || lltypes.Universe.Lookup("byte") == nil || lltypes.Universe.Lookup("len") == nil {
+		t.Fatal("Universe missing predeclared objects")
+	}
+
+	// Synthetic MethodSet on Named, *Named, Interface (plus NewInterface & Complete).
+	iface := lltypes.NewInterfaceType([]*lltypes.Func{mFn}, []lltypes.Type{anyT}).Complete()
+	_ = lltypes.NewInterface([]*lltypes.Func{mFn}, []*lltypes.Named{named}).Complete()
 	if iface.NumMethods() != 1 || iface.Method(0) != mFn || iface.NumEmbeddeds() != 1 || iface.EmbeddedType(0) != anyT || iface.Empty() || iface.String() == "" {
 		t.Fatalf("Interface = %v", iface)
+	}
+	if lltypes.NewMethodSet(named).Len() != 1 {
+		t.Fatal("NewMethodSet(named) len != 1")
 	}
 	for _, recv := range []lltypes.Type{named, lltypes.NewPointer(named), iface} {
 		ms := ctx.MethodSet(recv)
@@ -263,7 +300,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	_ = ctx.HostFieldLayout(i64)
 	_ = ctx.HostFieldLayout(arr)
 	_ = ctx.HostFieldLayout(mSig)
-	_ = ctx.HostFieldLayout(lltypes.NewSignature(nil, nil, nil, false, lltypes.CDecl))
+	_ = ctx.HostFieldLayout(lltypes.NewSignatureWithCallConv(nil, nil, nil, false, lltypes.CDecl))
 	_ = ctx.HostFieldLayout(named)
 	_ = ctx.HostFieldLayout(nil)
 	_ = ctx.HostBasicLayout(lltypes.BasicKind(999))
@@ -340,8 +377,8 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 		{GOOS: "linux", GOARCH: "riscv32"},
 	} {
 		ctx := lltypes.NewContext(spec)
-		for _, cc := range []lltypes.CallConv{lltypes.GoClosure, lltypes.GoDirect, lltypes.CDecl} {
-			sig := lltypes.NewSignature(
+		for _, cc := range []lltypes.CallConv{lltypes.Go, lltypes.CDecl} {
+			sig := lltypes.NewSignatureWithCallConv(
 				lltypes.NewParam(0, nil, "r", lltypes.NewPointer(smallSt)),
 				lltypes.NewTuple(
 					lltypes.NewParam(0, nil, "z", emptySt),
@@ -365,8 +402,8 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 				t.Fatalf("FuncABI(%s, %s) failed", spec.GOARCH, cc)
 			}
 			// Zero-return & single-return variants.
-			_ = ctx.FuncABI(lltypes.NewSignature(nil, nil, nil, false, cc))
-			_ = ctx.FuncABI(lltypes.NewSignature(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", smallSt)), false, cc))
+			_ = ctx.FuncABI(lltypes.NewSignatureWithCallConv(nil, nil, nil, false, cc))
+			_ = ctx.FuncABI(lltypes.NewSignatureWithCallConv(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", smallSt)), false, cc))
 		}
 	}
 	if lltypes.ClassifyFuncABI(target.Spec{}, nil, nil) != nil {

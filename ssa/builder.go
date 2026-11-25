@@ -191,7 +191,7 @@ func (b *Builder) PtrCast(x Value, targetPtr *lltypes.Pointer) *PtrCast {
 func (b *Builder) MakeClosure(sig *lltypes.Signature, fnName string, env Value) *MakeClosure {
 	cloSig := sig
 	if sig != nil && !sig.IsClosure() {
-		cloSig = lltypes.NewSignature(sig.Recv(), sig.Params(), sig.Results(), sig.Variadic(), lltypes.GoClosure)
+		cloSig = sig.WithCallConv(lltypes.Go)
 	}
 	ins := &MakeClosure{
 		baseValue: baseValue{id: b.fn.allocID(), typ: cloSig},

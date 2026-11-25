@@ -15,16 +15,17 @@
  */
 
 // Package types provides LLGo's pure-Go semantic, physical layout, and ABI
-// type system.
+// type system, designed for source-level familiarity with go/types while
+// natively expressing LLGo's extensions.
 //
 // All Type, Object, Package, Scope, Selection, MethodSet, and Info models speak
 // LLGo types natively without leaking go/types.Type into downstream compiler
 // phases. Standard Go source checking and generic type inference are delegated
 // once to go/types at the Context.Check boundary, after which every LLGo
-// concept — calling conventions, 2-word Go closures vs 1-word native function
-// pointers, pointer kinds (GoPtr/UnsafePtr/CPtr), structs.HostLayout, Wasm32
-// wide Go vs native C storage, simd/archsimd vectors, generic instantiations,
-// and //llgo:* symbol bindings — is represented as first-class data.
+// concept — calling conventions (CallConv), pointer kinds (GoPtr/UnsafePtr/CPtr),
+// structs.HostLayout, Wasm32 wide Go vs native C storage, simd/archsimd
+// vectors, generic instantiations, Func.FreeVars, and //llgo:* symbol bindings —
+// is represented as first-class data.
 package types
 
 import (
@@ -33,40 +34,42 @@ import (
 	"strings"
 )
 
-// CallConv classifies the calling convention and physical representation of a
-// Signature or named function type.
+// CallConv classifies the calling convention, value representation, and
+// variadic ABI of a Signature or named function type (analogous to Swift's
+// @convention(...)).
+//
+// The zero value (Go) matches standard Go / go/types.Signature semantics: a
+// 2-word Go-GC closure {codePtr, envPtr} with Go slice variadics.
 type CallConv uint8
 
 const (
-	GoClosure CallConv = iota // Go function value: 2-word {fn, data} closure
-	GoDirect                  // Direct Go function symbol / non-closure code pointer (1-word)
-	CDecl                     // C cdecl function pointer (1-word; //llgo:cdecl or //llgo:type C)
-	Stdcall                   // Windows stdcall function pointer (1-word; //llgo:stdcall or //llgo:type stdcall)
-	Fastcall                  // Fastcall function pointer (1-word)
-	PyFunc                    // Python C-API bound function (//llgo:link ... py.*)
-	WasmFunc                  // WebAssembly host/export function (//go:wasmimport / //go:wasmexport)
+	Go       CallConv = iota // Standard Go ABI: 2-word Go-GC closure {fn, env}, Go slice variadic
+	CDecl                    // C cdecl function pointer: 1-word, non-GC, C va_list variadic (//llgo:cdecl / //llgo:type C)
+	Stdcall                  // Windows stdcall function pointer: 1-word, non-GC (//llgo:stdcall / //llgo:type stdcall)
+	Fastcall                 // Fastcall function pointer: 1-word, non-GC
+	Py                       // Python C-API bound function (//llgo:link ... py.*)
+	Wasm                     // WebAssembly host/export function (//go:wasmimport / //go:wasmexport)
 )
+
+// IsGo reports whether cc is the standard Go calling convention.
+func (cc CallConv) IsGo() bool {
+	return cc == Go
+}
 
 // IsNative reports whether cc uses a 1-word native (non-Go) calling convention.
 func (cc CallConv) IsNative() bool {
-	return cc == CDecl || cc == Stdcall || cc == Fastcall || cc == WasmFunc
+	return cc == CDecl || cc == Stdcall || cc == Fastcall || cc == Wasm
 }
 
-// IsGo reports whether cc is a Go calling convention (closure or direct).
-func (cc CallConv) IsGo() bool {
-	return cc == GoClosure || cc == GoDirect
-}
-
-// IsClosure reports whether cc uses LLGo's 2-word {fn, data} closure layout.
+// IsClosure reports whether values with calling convention cc carry a closure
+// environment representation (2-word {fn, env} for Go).
 func (cc CallConv) IsClosure() bool {
-	return cc == GoClosure
+	return cc == Go
 }
 
 func (cc CallConv) String() string {
 	switch cc {
-	case GoClosure:
-		return "closure"
-	case GoDirect:
+	case Go:
 		return "go"
 	case CDecl:
 		return "cdecl"
@@ -74,9 +77,9 @@ func (cc CallConv) String() string {
 		return "stdcall"
 	case Fastcall:
 		return "fastcall"
-	case PyFunc:
+	case Py:
 		return "py"
-	case WasmFunc:
+	case Wasm:
 		return "wasm"
 	default:
 		return fmt.Sprintf("CallConv(%d)", uint8(cc))
@@ -113,6 +116,151 @@ type Type interface {
 	GoType() gotypes.Type
 	llTypeMarker()
 }
+
+// Qualifier controls how named package-level objects are printed in TypeString
+// and ObjectString (mirroring go/types.Qualifier).
+type Qualifier func(*Package) string
+
+// RelativeTo returns a Qualifier that fully qualifies members of all packages
+// other than pkg (mirroring go/types.RelativeTo).
+func RelativeTo(pkg *Package) Qualifier {
+	if pkg == nil {
+		return nil
+	}
+	return func(other *Package) string {
+		if pkg == other {
+			return ""
+		}
+		return other.Path()
+	}
+}
+
+// TypeString returns the string representation of typ qualified by qf.
+func TypeString(typ Type, qf Qualifier) string {
+	if typ == nil {
+		return "<nil>"
+	}
+	return writeTypeString(typ, qf)
+}
+
+func writeTypeString(typ Type, qf Qualifier) string {
+	if typ == nil {
+		return "<nil>"
+	}
+	switch t := typ.(type) {
+	case *Named:
+		var b strings.Builder
+		if t.obj != nil {
+			writeQualPkg(&b, t.obj.pkg, qf)
+			b.WriteString(t.obj.name)
+		} else {
+			b.WriteString("<named>")
+		}
+		if args := t.TypeArgs(); args != nil && args.Len() > 0 {
+			b.WriteByte('[')
+			for i := 0; i < args.Len(); i++ {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(writeTypeString(args.At(i), qf))
+			}
+			b.WriteByte(']')
+		}
+		return b.String()
+	case *Alias:
+		if t.obj != nil {
+			var b strings.Builder
+			writeQualPkg(&b, t.obj.pkg, qf)
+			b.WriteString(t.obj.name)
+			return b.String()
+		}
+		return writeTypeString(t.rhs, qf)
+	case *Pointer:
+		if t.kind == GoPtr {
+			return "*" + writeTypeString(t.elem, qf)
+		}
+		return "*" + t.kind.String() + "(" + writeTypeString(t.elem, qf) + ")"
+	case *Slice:
+		return "[]" + writeTypeString(t.elem, qf)
+	case *Array:
+		return fmt.Sprintf("[%d]%s", t.length, writeTypeString(t.elem, qf))
+	case *Map:
+		return "map[" + writeTypeString(t.key, qf) + "]" + writeTypeString(t.elem, qf)
+	case *Chan:
+		switch t.dir {
+		case SendOnly:
+			return "chan<- " + writeTypeString(t.elem, qf)
+		case RecvOnly:
+			return "<-chan " + writeTypeString(t.elem, qf)
+		default:
+			return "chan " + writeTypeString(t.elem, qf)
+		}
+	default:
+		return typ.String()
+	}
+}
+
+func writeQualPkg(b *strings.Builder, pkg *Package, qf Qualifier) {
+	if pkg == nil {
+		return
+	}
+	var s string
+	if qf != nil {
+		s = qf(pkg)
+	} else {
+		s = pkg.path
+	}
+	if s != "" {
+		b.WriteString(s)
+		b.WriteByte('.')
+	}
+}
+
+// TypeList holds an immutable list of Types (mirroring go/types.TypeList).
+type TypeList struct {
+	types []Type
+}
+
+func newTypeList(list []Type) *TypeList {
+	if len(list) == 0 {
+		return nil
+	}
+	cp := make([]Type, len(list))
+	copy(cp, list)
+	return &TypeList{types: cp}
+}
+
+func (l *TypeList) Len() int {
+	if l == nil {
+		return 0
+	}
+	return len(l.types)
+}
+
+func (l *TypeList) At(i int) Type { return l.types[i] }
+
+// TypeParamList holds an immutable list of TypeParams (mirroring go/types.TypeParamList).
+type TypeParamList struct {
+	tparams []*TypeParam
+}
+
+func newTypeParamList(list []*TypeParam) *TypeParamList {
+	if len(list) == 0 {
+		return nil
+	}
+	cp := make([]*TypeParam, len(list))
+	copy(cp, list)
+	return &TypeParamList{tparams: cp}
+}
+
+func (l *TypeParamList) Len() int {
+	if l == nil {
+		return 0
+	}
+	return len(l.tparams)
+}
+
+func (l *TypeParamList) At(i int) *TypeParam { return l.tparams[i] }
 
 // Unalias resolves any *Alias chain and returns the underlying non-alias Type.
 func Unalias(t Type) Type {
@@ -179,7 +327,7 @@ type Pointer struct {
 	goType gotypes.Type
 }
 
-// NewPointer returns a GC-traced Go pointer (*elem).
+// NewPointer returns a GC-traced Go pointer (*elem), matching go/types.NewPointer.
 func NewPointer(elem Type) *Pointer {
 	return &Pointer{elem: elem, kind: GoPtr}
 }
@@ -212,7 +360,7 @@ type Tuple struct {
 	goType gotypes.Type
 }
 
-// NewTuple constructs a Tuple from variables.
+// NewTuple constructs a Tuple from variables (matching go/types.NewTuple).
 func NewTuple(x ...*Var) *Tuple {
 	if len(x) == 0 {
 		return nil
@@ -268,26 +416,52 @@ func (t *Tuple) String() string {
 	return b.String()
 }
 
-// Signature represents a unified Go closure, direct Go function, or native
-// (CDecl / Stdcall / Fastcall / PyFunc / WasmFunc) function type.
+// Signature represents a Go or foreign function type, mirroring
+// go/types.Signature with a single CallConv extension.
 //
 // Variadic semantics follow CallConv:
-//   - GoClosure / GoDirect: standard Go ...T slice variadic
-//   - CDecl / Stdcall / Fastcall / WasmFunc: C variadic (...)
-//   - PyFunc: Python variadic
+//   - Go: standard Go ...T slice variadic
+//   - CDecl / Stdcall / Fastcall / Wasm: C variadic (...)
+//   - Py: Python variadic
 type Signature struct {
 	callConv       CallConv
 	recv           *Var
-	recvTypeParams []*TypeParam
-	typeParams     []*TypeParam
+	recvTypeParams *TypeParamList
+	typeParams     *TypeParamList
 	params         *Tuple
 	results        *Tuple
 	variadic       bool
 	goType         gotypes.Type
 }
 
-// NewSignature constructs a non-generic Signature with the given CallConv.
-func NewSignature(recv *Var, params, results *Tuple, variadic bool, cc CallConv) *Signature {
+// NewSignature constructs a standard Go Signature (CallConv = Go),
+// matching go/types.NewSignature's 4-parameter form.
+func NewSignature(recv *Var, params, results *Tuple, variadic bool) *Signature {
+	return &Signature{
+		callConv: Go,
+		recv:     recv,
+		params:   params,
+		results:  results,
+		variadic: variadic,
+	}
+}
+
+// NewSignatureType constructs a (possibly generic) standard Go Signature
+// (CallConv = Go), matching go/types.NewSignatureType's 6-parameter form.
+func NewSignatureType(recv *Var, recvTypeParams, typeParams []*TypeParam, params, results *Tuple, variadic bool) *Signature {
+	return &Signature{
+		callConv:       Go,
+		recv:           recv,
+		recvTypeParams: newTypeParamList(recvTypeParams),
+		typeParams:     newTypeParamList(typeParams),
+		params:         params,
+		results:        results,
+		variadic:       variadic,
+	}
+}
+
+// NewSignatureWithCallConv constructs a Signature with an explicit CallConv.
+func NewSignatureWithCallConv(recv *Var, params, results *Tuple, variadic bool, cc CallConv) *Signature {
 	return &Signature{
 		callConv: cc,
 		recv:     recv,
@@ -297,40 +471,37 @@ func NewSignature(recv *Var, params, results *Tuple, variadic bool, cc CallConv)
 	}
 }
 
-// NewSignatureType constructs a (possibly generic) Signature.
-func NewSignatureType(recv *Var, recvTypeParams, typeParams []*TypeParam, params, results *Tuple, variadic bool, cc CallConv) *Signature {
-	return &Signature{
-		callConv:       cc,
-		recv:           recv,
-		recvTypeParams: recvTypeParams,
-		typeParams:     typeParams,
-		params:         params,
-		results:        results,
-		variadic:       variadic,
+// WithCallConv returns a shallow copy of s using cc.
+func (s *Signature) WithCallConv(cc CallConv) *Signature {
+	if s == nil {
+		return nil
 	}
+	cp := *s
+	cp.callConv = cc
+	return &cp
 }
 
-func (s *Signature) CallConv() CallConv           { return s.callConv }
-func (s *Signature) Recv() *Var                   { return s.recv }
-func (s *Signature) RecvTypeParams() []*TypeParam { return s.recvTypeParams }
-func (s *Signature) TypeParams() []*TypeParam     { return s.typeParams }
-func (s *Signature) Params() *Tuple               { return s.params }
-func (s *Signature) Results() *Tuple              { return s.results }
-func (s *Signature) Variadic() bool               { return s.variadic }
-func (s *Signature) IsClosure() bool              { return s.callConv == GoClosure }
-func (s *Signature) IsNative() bool               { return s.callConv.IsNative() }
-func (s *Signature) IsGoVariadic() bool           { return s.variadic && s.callConv.IsGo() }
-func (s *Signature) IsCVariadic() bool            { return s.variadic && s.callConv.IsNative() }
-func (s *Signature) IsPyVariadic() bool           { return s.variadic && s.callConv == PyFunc }
-func (s *Signature) Underlying() Type             { return s }
-func (s *Signature) GoType() gotypes.Type         { return s.goType }
-func (s *Signature) llTypeMarker()                {}
-func (s *Signature) HasPtrData() bool             { return s.callConv == GoClosure }
+func (s *Signature) CallConv() CallConv             { return s.callConv }
+func (s *Signature) Recv() *Var                     { return s.recv }
+func (s *Signature) RecvTypeParams() *TypeParamList { return s.recvTypeParams }
+func (s *Signature) TypeParams() *TypeParamList     { return s.typeParams }
+func (s *Signature) Params() *Tuple                 { return s.params }
+func (s *Signature) Results() *Tuple                { return s.results }
+func (s *Signature) Variadic() bool                 { return s.variadic }
+func (s *Signature) IsClosure() bool                { return s.callConv.IsClosure() }
+func (s *Signature) IsNative() bool                 { return s.callConv.IsNative() }
+func (s *Signature) IsGoVariadic() bool             { return s.variadic && s.callConv.IsGo() }
+func (s *Signature) IsCVariadic() bool              { return s.variadic && s.callConv.IsNative() }
+func (s *Signature) IsPyVariadic() bool             { return s.variadic && s.callConv == Py }
+func (s *Signature) Underlying() Type               { return s }
+func (s *Signature) GoType() gotypes.Type           { return s.goType }
+func (s *Signature) llTypeMarker()                  {}
+func (s *Signature) HasPtrData() bool               { return s.callConv.IsClosure() }
 
 func (s *Signature) String() string {
 	var b strings.Builder
 	b.WriteString("func")
-	if s.callConv != GoClosure {
+	if s.callConv != Go {
 		b.WriteByte('<')
 		b.WriteString(s.callConv.String())
 		b.WriteByte('>')
@@ -446,33 +617,83 @@ func (c *Chan) String() string {
 }
 
 // Interface represents an empty (any) or non-empty Go interface type.
+// Methods and embeddeds lowered from go/types are resolved lazily so that
+// referencing an unchecked interface behind a pointer during go/types.Check
+// never forces premature resolution.
 type Interface struct {
+	ctx        *Context
+	goIface    *gotypes.Interface
+	resolved   bool
 	methods    []*Func
 	embeddeds  []Type
 	comparable bool
 	goType     gotypes.Type
 }
 
+// NewInterfaceType constructs an Interface type (matching go/types.NewInterfaceType).
 func NewInterfaceType(methods []*Func, embeddeds []Type) *Interface {
 	return &Interface{
+		resolved:   true,
 		methods:    methods,
 		embeddeds:  embeddeds,
 		comparable: true,
 	}
 }
 
-func (t *Interface) NumMethods() int         { return len(t.methods) }
-func (t *Interface) Method(i int) *Func      { return t.methods[i] }
-func (t *Interface) NumEmbeddeds() int       { return len(t.embeddeds) }
-func (t *Interface) EmbeddedType(i int) Type { return t.embeddeds[i] }
-func (t *Interface) Empty() bool             { return len(t.methods) == 0 && len(t.embeddeds) == 0 }
-func (t *Interface) Comparable() bool        { return t.comparable }
-func (t *Interface) Underlying() Type        { return t }
-func (t *Interface) GoType() gotypes.Type    { return t.goType }
-func (t *Interface) llTypeMarker()           {}
-func (t *Interface) HasPtrData() bool        { return true }
+// NewInterface constructs an Interface from methods and embedded *Named types
+// (matching go/types.NewInterface).
+func NewInterface(methods []*Func, embeddeds []*Named) *Interface {
+	var embs []Type
+	if len(embeddeds) > 0 {
+		embs = make([]Type, len(embeddeds))
+		for i, e := range embeddeds {
+			embs[i] = e
+		}
+	}
+	return NewInterfaceType(methods, embs)
+}
+
+func (t *Interface) resolve() {
+	if t.resolved || t.ctx == nil || t.goIface == nil {
+		return
+	}
+	t.ctx.resolveInterface(t)
+}
+
+// Complete computes the interface's method set and returns t (matching go/types).
+func (t *Interface) Complete() *Interface {
+	t.resolve()
+	return t
+}
+
+func (t *Interface) NumMethods() int {
+	t.resolve()
+	return len(t.methods)
+}
+func (t *Interface) Method(i int) *Func {
+	t.resolve()
+	return t.methods[i]
+}
+func (t *Interface) NumEmbeddeds() int {
+	t.resolve()
+	return len(t.embeddeds)
+}
+func (t *Interface) EmbeddedType(i int) Type {
+	t.resolve()
+	return t.embeddeds[i]
+}
+func (t *Interface) Empty() bool {
+	t.resolve()
+	return len(t.methods) == 0 && len(t.embeddeds) == 0
+}
+func (t *Interface) Comparable() bool     { return t.comparable }
+func (t *Interface) Underlying() Type     { return t }
+func (t *Interface) GoType() gotypes.Type { return t.goType }
+func (t *Interface) llTypeMarker()        {}
+func (t *Interface) HasPtrData() bool     { return true }
 func (t *Interface) String() string {
-	if t.Empty() {
+	t.resolve()
+	if len(t.methods) == 0 && len(t.embeddeds) == 0 {
 		return "any"
 	}
 	var b strings.Builder
@@ -501,7 +722,7 @@ type Struct struct {
 	goType          gotypes.Type
 }
 
-// NewStruct constructs a standard Go Struct.
+// NewStruct constructs a standard Go Struct (matching go/types.NewStruct).
 func NewStruct(fields []*Var, tags []string) *Struct {
 	cp := make([]*Var, len(fields))
 	copy(cp, fields)
@@ -635,11 +856,23 @@ func (v *SIMDVec) String() string {
 // Named represents a defined (named) type, including instantiated generic types
 // (mirroring go/types.Named with Origin, TypeParams, and TypeArgs) plus
 // first-class LLGo directive/layout attributes.
+//
+// Named types lowered from go/types resolve their underlying type and method
+// list lazily on demand, mirroring go/types.Named so referencing an unchecked
+// Named type behind a pointer during go/types.Check never triggers premature
+// go/types resolution assertions.
 type Named struct {
+	ctx             *Context
+	goNamed         *gotypes.Named
+	overrideCC      CallConv
+	hasOverrideCC   bool
+	resolved        bool
+	methodsResolved bool
+
 	obj          *TypeName
 	origin       *Named
-	typeParams   []*TypeParam
-	typeArgs     []Type
+	typeParams   *TypeParamList
+	typeArgs     *TypeList
 	underlying   Type
 	methods      []*Func
 	callConv     CallConv
@@ -652,13 +885,15 @@ type Named struct {
 	goUnderlying gotypes.Type
 }
 
-// NewNamed constructs a defined type bound to obj.
+// NewNamed constructs a defined type bound to obj (matching go/types.NewNamed).
 func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 	n := &Named{
-		obj:          obj,
-		underlying:   underlying,
-		methods:      methods,
-		simdTagIndex: -1,
+		resolved:        true,
+		methodsResolved: true,
+		obj:             obj,
+		underlying:      underlying,
+		methods:         methods,
+		simdTagIndex:    -1,
 	}
 	if obj != nil {
 		obj.typ = n
@@ -666,32 +901,88 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 	return n
 }
 
+func (n *Named) resolve() {
+	if n.ctx == nil || n.goNamed == nil {
+		return
+	}
+	n.ctx.resolveNamed(n)
+}
+
+func (n *Named) resolveMethods() {
+	if n.methodsResolved || n.ctx == nil || n.goNamed == nil {
+		return
+	}
+	n.ctx.resolveNamedMethods(n)
+}
+
 func (n *Named) Obj() *TypeName { return n.obj }
+
 func (n *Named) Origin() *Named {
+	n.resolve()
 	if n.origin != nil {
 		return n.origin
 	}
 	return n
 }
-func (n *Named) TypeParams() []*TypeParam  { return n.typeParams }
-func (n *Named) TypeArgs() []Type          { return n.typeArgs }
-func (n *Named) NumMethods() int           { return len(n.methods) }
-func (n *Named) Method(i int) *Func        { return n.methods[i] }
-func (n *Named) AddMethod(m *Func)         { n.methods = append(n.methods, m) }
+
+func (n *Named) TypeParams() *TypeParamList {
+	n.resolve()
+	return n.typeParams
+}
+
+func (n *Named) TypeArgs() *TypeList {
+	n.resolve()
+	return n.typeArgs
+}
+
+func (n *Named) NumMethods() int {
+	n.resolveMethods()
+	return len(n.methods)
+}
+
+func (n *Named) Method(i int) *Func {
+	n.resolveMethods()
+	return n.methods[i]
+}
+
+func (n *Named) AddMethod(m *Func) {
+	n.resolveMethods()
+	n.methods = append(n.methods, m)
+}
+
 func (n *Named) CallConv() CallConv        { return n.callConv }
 func (n *Named) HasExplicitCallConv() bool { return n.hasCallConv }
-func (n *Named) HostLayout() bool          { return n.hostLayout }
-func (n *Named) NativeLayout() bool        { return n.nativeLayout }
-func (n *Named) SIMDTagIndex() int         { return n.simdTagIndex }
-func (n *Named) SIMDVec() *SIMDVec         { return n.simdVec }
-func (n *Named) GoType() gotypes.Type      { return n.goType }
-func (n *Named) llTypeMarker()             {}
+
+func (n *Named) HostLayout() bool {
+	n.resolve()
+	return n.hostLayout
+}
+
+func (n *Named) NativeLayout() bool {
+	n.resolve()
+	return n.nativeLayout
+}
+
+func (n *Named) SIMDTagIndex() int {
+	n.resolve()
+	return n.simdTagIndex
+}
+
+func (n *Named) SIMDVec() *SIMDVec {
+	n.resolve()
+	return n.simdVec
+}
+
+func (n *Named) GoType() gotypes.Type { return n.goType }
+func (n *Named) llTypeMarker()        {}
 
 func (n *Named) SetUnderlying(u Type) {
 	n.underlying = u
+	n.resolved = true
 }
 
 func (n *Named) Underlying() Type {
+	n.resolve()
 	if n.underlying == nil {
 		return n
 	}
@@ -699,6 +990,7 @@ func (n *Named) Underlying() Type {
 }
 
 func (n *Named) HasPtrData() bool {
+	n.resolve()
 	if n.underlying == nil {
 		return false
 	}
@@ -706,27 +998,7 @@ func (n *Named) HasPtrData() bool {
 }
 
 func (n *Named) String() string {
-	var b strings.Builder
-	if n.obj != nil {
-		if n.obj.pkg != nil && n.obj.pkg.path != "" {
-			b.WriteString(n.obj.pkg.path)
-			b.WriteByte('.')
-		}
-		b.WriteString(n.obj.name)
-	} else {
-		b.WriteString("<named>")
-	}
-	if len(n.typeArgs) > 0 {
-		b.WriteByte('[')
-		for i, arg := range n.typeArgs {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(arg.String())
-		}
-		b.WriteByte(']')
-	}
-	return b.String()
+	return writeTypeString(n, nil)
 }
 
 // Alias represents a type alias (type A = Rhs), preserving any LLGo calling
@@ -736,14 +1008,14 @@ type Alias struct {
 	obj         *TypeName
 	rhs         Type
 	origin      *Alias
-	typeParams  []*TypeParam
-	typeArgs    []Type
+	typeParams  *TypeParamList
+	typeArgs    *TypeList
 	callConv    CallConv
 	hasCallConv bool
 	goType      gotypes.Type
 }
 
-// NewAlias constructs a type alias.
+// NewAlias constructs a type alias (matching go/types.NewAlias).
 func NewAlias(obj *TypeName, rhs Type) *Alias {
 	a := &Alias{obj: obj, rhs: rhs}
 	if obj != nil {
@@ -761,12 +1033,12 @@ func (a *Alias) Origin() *Alias {
 	}
 	return a
 }
-func (a *Alias) TypeParams() []*TypeParam  { return a.typeParams }
-func (a *Alias) TypeArgs() []Type          { return a.typeArgs }
-func (a *Alias) CallConv() CallConv        { return a.callConv }
-func (a *Alias) HasExplicitCallConv() bool { return a.hasCallConv }
-func (a *Alias) GoType() gotypes.Type      { return a.goType }
-func (a *Alias) llTypeMarker()             {}
+func (a *Alias) TypeParams() *TypeParamList { return a.typeParams }
+func (a *Alias) TypeArgs() *TypeList        { return a.typeArgs }
+func (a *Alias) CallConv() CallConv         { return a.callConv }
+func (a *Alias) HasExplicitCallConv() bool  { return a.hasCallConv }
+func (a *Alias) GoType() gotypes.Type       { return a.goType }
+func (a *Alias) llTypeMarker()              {}
 
 func (a *Alias) Underlying() Type {
 	if a.rhs == nil {
@@ -783,16 +1055,7 @@ func (a *Alias) HasPtrData() bool {
 }
 
 func (a *Alias) String() string {
-	if a.obj != nil {
-		if a.obj.pkg != nil && a.obj.pkg.path != "" {
-			return a.obj.pkg.path + "." + a.obj.name
-		}
-		return a.obj.name
-	}
-	if a.rhs != nil {
-		return a.rhs.String()
-	}
-	return "<alias>"
+	return writeTypeString(a, nil)
 }
 
 // TypeParam represents a generic type parameter.
@@ -803,7 +1066,7 @@ type TypeParam struct {
 	goType     gotypes.Type
 }
 
-// NewTypeParam constructs a generic type parameter.
+// NewTypeParam constructs a generic type parameter (matching go/types.NewTypeParam).
 func NewTypeParam(obj *TypeName, constraint Type) *TypeParam {
 	tp := &TypeParam{obj: obj, constraint: constraint}
 	if obj != nil {
@@ -895,11 +1158,12 @@ func Identical(x, y Type) bool {
 		return true
 	case *Interface:
 		y, ok := y.(*Interface)
-		if !ok || len(x.methods) != len(y.methods) || len(x.embeddeds) != len(y.embeddeds) {
+		if !ok || x.NumMethods() != y.NumMethods() || x.NumEmbeddeds() != y.NumEmbeddeds() {
 			return false
 		}
-		for i, xm := range x.methods {
-			ym := y.methods[i]
+		for i := 0; i < x.NumMethods(); i++ {
+			xm := x.Method(i)
+			ym := y.Method(i)
 			if xm.name != ym.name || !Identical(xm.typ, ym.typ) {
 				return false
 			}
@@ -913,9 +1177,11 @@ func Identical(x, y Type) bool {
 		if !ok {
 			return false
 		}
-		if x.obj == y.obj && len(x.typeArgs) == len(y.typeArgs) {
-			for i := range x.typeArgs {
-				if !Identical(x.typeArgs[i], y.typeArgs[i]) {
+		xArgs := x.TypeArgs()
+		yArgs := y.TypeArgs()
+		if x.obj == y.obj && xArgs.Len() == yArgs.Len() {
+			for i := 0; i < xArgs.Len(); i++ {
+				if !Identical(xArgs.At(i), yArgs.At(i)) {
 					return false
 				}
 			}

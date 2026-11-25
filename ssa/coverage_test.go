@@ -15,7 +15,7 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	boolT := lltypes.Typ[lltypes.Bool]
 	ptrI64 := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
 	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
-	cFuncSig := lltypes.NewSignature(
+	cFuncSig := lltypes.NewSignatureWithCallConv(
 		nil,
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "a", i64)),
 		nil,
@@ -28,7 +28,6 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 		false,
-		lltypes.GoDirect,
 	))
 	ifaceT := lltypes.NewInterfaceType([]*lltypes.Func{doMeth}, nil)
 
@@ -46,7 +45,6 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		),
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 		false,
-		lltypes.GoDirect,
 	)
 	fn := pkg.NewFunction("cov.Run", sig)
 	entry := fn.NewBasicBlock("")
@@ -68,8 +66,8 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	b.GCRoot(alloc, false)
 	b.KeepAlive(alloc)
 	_ = b.PtrCast(alloc, cPtr)
-	clos := b.MakeClosure(lltypes.NewSignature(nil, nil, nil, false, lltypes.GoClosure), "cov.cb", alloc)
-	_ = b.CallDirect("cov.helper", lltypes.GoDirect, i64, loaded)
+	clos := b.MakeClosure(lltypes.NewSignature(nil, nil, nil, false), "cov.cb", alloc)
+	_ = b.CallDirect("cov.helper", lltypes.Go, i64, loaded)
 	_ = b.CallClosure(clos, nil)
 	_ = b.CallCFunc(fn.Params[3], lltypes.CDecl, nil, loaded)
 	_ = b.CallInterface(fn.Params[2], "Do", 0, i64, loaded)
@@ -162,7 +160,7 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatal("VerifyFunction(nil) succeeded")
 	}
 	badPkg := NewPackage("bad", "bad", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	badFn := badPkg.NewFunction("bad.EmptyBlock", lltypes.NewSignature(nil, nil, nil, false, lltypes.GoDirect))
+	badFn := badPkg.NewFunction("bad.EmptyBlock", lltypes.NewSignature(nil, nil, nil, false))
 	_ = badFn.NewBasicBlock("empty")
 	if err := VerifyFunction(badFn); err == nil {
 		t.Fatal("VerifyFunction accepted empty block")

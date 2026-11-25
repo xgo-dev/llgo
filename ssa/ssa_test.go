@@ -23,14 +23,12 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 		false,
-		lltypes.GoClosure,
 	)
 	entrySig := lltypes.NewSignature(
 		nil,
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "n", i64)),
 		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 		false,
-		lltypes.GoDirect,
 	)
 
 	fn := pkg.NewFunction("example.com/demo.Entry", entrySig)
@@ -50,7 +48,7 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	clo := b.MakeClosure(cbSig, "example.com/demo.helper", nil)
 	res := b.CallClosure(clo, i64, fn.Params[0])
 	_ = b.CallDirect("C.puts", lltypes.CDecl, nil)
-	readMeth := lltypes.NewFunc(0, nil, "Read", lltypes.NewSignature(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)), false, lltypes.GoDirect))
+	readMeth := lltypes.NewFunc(0, nil, "Read", lltypes.NewSignature(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)), false))
 	_ = b.CallInterface(b.Const(lltypes.NewInterfaceType([]*lltypes.Func{readMeth}, nil), "iface"), "Read", 0, i64)
 	b.KeepAlive(cell)
 	b.Return(res)
@@ -90,7 +88,7 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	i64 := lltypes.Typ[lltypes.Int64]
 	goPtr := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
 	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
-	voidSig := lltypes.NewSignature(nil, nil, nil, false, lltypes.GoDirect)
+	voidSig := lltypes.NewSignature(nil, nil, nil, false)
 
 	t.Run("noscan on pointer type", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
@@ -157,7 +155,6 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			),
 			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 			false,
-			lltypes.GoDirect,
 		)
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.select", sig)
@@ -183,7 +180,6 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
 			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 			false,
-			lltypes.GoDirect,
 		)
 		pkg := NewPackage("p", "p", spec)
 		other := pkg.NewFunction("p.other", sig)
@@ -235,7 +231,6 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
 			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
 			false,
-			lltypes.GoDirect,
 		)
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.badcfg", sig)

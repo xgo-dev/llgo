@@ -24,15 +24,15 @@ func containsHostLayout(t types.Type) bool {
 func toLLCallConv(cc CallConv) (lltypes.CallConv, bool) {
 	switch cc {
 	case GoDecl:
-		return lltypes.GoDirect, false
+		return lltypes.Go, false
 	case CDecl:
 		return lltypes.CDecl, true
 	case PyDecl:
-		return lltypes.PyFunc, true
+		return lltypes.Py, true
 	case Stdcall:
 		return lltypes.Stdcall, true
 	default:
-		return lltypes.GoClosure, false
+		return lltypes.Go, false
 	}
 }
 

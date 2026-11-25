@@ -199,11 +199,11 @@ func TypeContainsSIMDStorage(t Type) bool {
 	case *SIMDVec:
 		return true
 	case *Named:
-		if u.simdTagIndex >= 0 || u.simdVec != nil {
+		if u.SIMDTagIndex() >= 0 || u.SIMDVec() != nil {
 			return true
 		}
-		if u.underlying != nil && u.underlying != u {
-			return TypeContainsSIMDStorage(u.underlying)
+		if under := u.Underlying(); under != nil && under != u {
+			return TypeContainsSIMDStorage(under)
 		}
 	case *Array:
 		return TypeContainsSIMDStorage(u.elem)

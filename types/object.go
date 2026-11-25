@@ -41,6 +41,46 @@ type Object interface {
 	llObjectMarker()
 }
 
+// ObjectString returns the string representation of obj qualified by qf
+// (mirroring go/types.ObjectString).
+func ObjectString(obj Object, qf Qualifier) string {
+	if obj == nil {
+		return "<nil>"
+	}
+	switch o := obj.(type) {
+	case *Func:
+		var b strings.Builder
+		b.WriteString("func ")
+		if sig := o.Signature(); sig != nil && sig.recv != nil {
+			b.WriteByte('(')
+			b.WriteString(writeTypeString(sig.recv.typ, qf))
+			b.WriteString(").")
+		} else {
+			writeQualPkg(&b, o.pkg, qf)
+		}
+		b.WriteString(o.name)
+		if sig := o.Signature(); sig != nil {
+			b.WriteString(strings.TrimPrefix(sig.String(), "func"))
+		}
+		return b.String()
+	case *Var:
+		kind := "var "
+		if o.isField {
+			kind = "field "
+		}
+		return kind + o.name + " " + writeTypeString(o.typ, qf)
+	case *TypeName:
+		if o.isAlias {
+			return "type " + o.name + " = " + writeTypeString(o.typ, qf)
+		}
+		return "type " + o.name + " " + writeTypeString(o.typ, qf)
+	case *Const:
+		return "const " + o.name + " " + writeTypeString(o.typ, qf)
+	default:
+		return obj.String()
+	}
+}
+
 type object struct {
 	parent *Scope
 	pos    token.Pos
@@ -75,12 +115,14 @@ func Id(pkg *Package, name string) string {
 	return path + "." + name
 }
 
-// Func represents a declared function, method, or abstract interface method,
-// carrying first-class LLGo link/directive metadata directly on the symbol.
+// Func represents a declared function, method, or concrete closure body,
+// carrying FreeVars and first-class LLGo link/directive metadata directly on
+// the symbol.
 type Func struct {
 	object
 	origin     *Func
 	scope      *Scope
+	freeVars   []*Var
 	linkName   string
 	callConv   CallConv
 	isExternal bool
@@ -91,9 +133,9 @@ type Func struct {
 	wasmExport string
 }
 
-// NewFunc constructs a function or method object.
+// NewFunc constructs a function or method object (matching go/types.NewFunc).
 func NewFunc(pos token.Pos, pkg *Package, name string, sig *Signature) *Func {
-	cc := GoDirect
+	cc := Go
 	if sig != nil {
 		cc = sig.callConv
 	}
@@ -113,13 +155,15 @@ func (f *Func) Origin() *Func {
 	}
 	return f
 }
-func (f *Func) Scope() *Scope      { return f.scope }
-func (f *Func) LinkName() string   { return f.linkName }
-func (f *Func) CallConv() CallConv { return f.callConv }
-func (f *Func) IsExternal() bool   { return f.isExternal }
-func (f *Func) IsSkip() bool       { return f.isSkip }
-func (f *Func) IsPyList() bool     { return f.isPyList }
-func (f *Func) WasmExport() string { return f.wasmExport }
+func (f *Func) Scope() *Scope           { return f.scope }
+func (f *Func) FreeVars() []*Var        { return f.freeVars }
+func (f *Func) SetFreeVars(vars []*Var) { f.freeVars = vars }
+func (f *Func) LinkName() string        { return f.linkName }
+func (f *Func) CallConv() CallConv      { return f.callConv }
+func (f *Func) IsExternal() bool        { return f.isExternal }
+func (f *Func) IsSkip() bool            { return f.isSkip }
+func (f *Func) IsPyList() bool          { return f.isPyList }
+func (f *Func) WasmExport() string      { return f.wasmExport }
 func (f *Func) WasmImport() (string, string, bool) {
 	if f.wasmMod == "" && f.wasmName == "" {
 		return "", "", false
@@ -167,17 +211,17 @@ type Var struct {
 	isExternal bool
 }
 
-// NewVar constructs a variable object.
+// NewVar constructs a variable object (matching go/types.NewVar).
 func NewVar(pos token.Pos, pkg *Package, name string, typ Type) *Var {
 	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
 }
 
-// NewParam constructs a function parameter or result variable.
+// NewParam constructs a function parameter or result variable (matching go/types.NewParam).
 func NewParam(pos token.Pos, pkg *Package, name string, typ Type) *Var {
 	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
 }
 
-// NewField constructs a struct field variable.
+// NewField constructs a struct field variable (matching go/types.NewField).
 func NewField(pos token.Pos, pkg *Package, name string, typ Type, embedded bool) *Var {
 	return &Var{
 		object:   object{pos: pos, pkg: pkg, name: name, typ: typ},
@@ -220,7 +264,7 @@ type TypeName struct {
 	hostLayout   bool
 }
 
-// NewTypeName constructs a TypeName object.
+// NewTypeName constructs a TypeName object (matching go/types.NewTypeName).
 func NewTypeName(pos token.Pos, pkg *Package, name string, typ Type) *TypeName {
 	return &TypeName{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
 }
@@ -243,7 +287,7 @@ type Const struct {
 	val constant.Value
 }
 
-// NewConst constructs a Const object.
+// NewConst constructs a Const object (matching go/types.NewConst).
 func NewConst(pos token.Pos, pkg *Package, name string, typ Type, val constant.Value) *Const {
 	return &Const{object: object{pos: pos, pkg: pkg, name: name, typ: typ}, val: val}
 }
@@ -308,7 +352,7 @@ type Scope struct {
 	comment  string
 }
 
-// NewScope creates a new Scope nested in parent.
+// NewScope creates a new Scope nested in parent (matching go/types.NewScope).
 func NewScope(parent *Scope, pos, end token.Pos, comment string) *Scope {
 	s := &Scope{
 		parent:  parent,
@@ -392,6 +436,42 @@ func setObjParent(obj Object, s *Scope) {
 	}
 }
 
+// Universe is the predeclared Go universe scope speaking LLGo types natively
+// (mirroring go/types.Universe).
+var Universe = initUniverse()
+
+func initUniverse() *Scope {
+	u := NewScope(nil, token.NoPos, token.NoPos, "universe")
+	for k := Bool; k <= String; k++ {
+		b := Typ[k]
+		u.Insert(NewTypeName(token.NoPos, nil, b.name, b))
+	}
+	// Predeclared aliases: byte = uint8, rune = int32, any = interface{}.
+	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "byte", nil), Typ[Uint8]).Obj())
+	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "rune", nil), Typ[Int32]).Obj())
+	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "any", nil), NewInterfaceType(nil, nil)).Obj())
+	// Predeclared error interface.
+	errSig := NewSignature(nil, nil, NewTuple(NewParam(token.NoPos, nil, "", Typ[String])), false)
+	errIface := NewInterfaceType([]*Func{NewFunc(token.NoPos, nil, "Error", errSig)}, nil)
+	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "error", nil), errIface, nil).Obj())
+	// Predeclared comparable interface.
+	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), NewInterfaceType(nil, nil), nil).Obj())
+	// Predeclared constants & nil.
+	u.Insert(NewConst(token.NoPos, nil, "true", Typ[UntypedBool], constant.MakeBool(true)))
+	u.Insert(NewConst(token.NoPos, nil, "false", Typ[UntypedBool], constant.MakeBool(false)))
+	u.Insert(NewConst(token.NoPos, nil, "iota", Typ[UntypedInt], constant.MakeInt64(0)))
+	u.Insert(&Nil{object: object{name: "nil", typ: Typ[UntypedNil]}})
+	// Predeclared builtins.
+	for _, name := range []string{
+		"append", "cap", "clear", "close", "complex", "copy", "delete",
+		"imag", "len", "make", "max", "min", "new", "panic", "print",
+		"println", "real", "recover",
+	} {
+		u.Insert(&Builtin{object: object{name: name, typ: Typ[Invalid]}})
+	}
+	return u
+}
+
 // Package describes an LLGo-typed Go package.
 type Package struct {
 	path     string
@@ -402,7 +482,7 @@ type Package struct {
 	goPkg    *gotypes.Package
 }
 
-// NewPackage creates a new Package.
+// NewPackage creates a new Package (matching go/types.NewPackage).
 func NewPackage(path, name string) *Package {
 	scope := NewScope(nil, token.NoPos, token.NoPos, fmt.Sprintf("package %q", path))
 	return &Package{path: path, name: name, scope: scope}
@@ -446,6 +526,11 @@ func (s *Selection) Indirect() bool      { return s.indirect }
 // MethodSet represents the ordered set of methods of a Type.
 type MethodSet struct {
 	list []*Selection
+}
+
+// NewMethodSet returns the method set for LLGo type T (matching go/types.NewMethodSet).
+func NewMethodSet(T Type) *MethodSet {
+	return methodSetOf(nil, T)
 }
 
 func (m *MethodSet) Len() int {
@@ -498,9 +583,9 @@ type Initializer struct {
 }
 
 // Instance reports the LLGo type arguments and instantiated type for a generic
-// identifier use.
+// identifier use (mirroring go/types.Instance).
 type Instance struct {
-	TypeArgs []Type
+	TypeArgs *TypeList
 	Type     Type
 }
 

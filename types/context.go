@@ -17,7 +17,6 @@
 package types
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
@@ -85,7 +84,7 @@ type goTypeCacheKey struct {
 //   - Canonical Type interning and construction
 //   - One-shot and memoized lowering from go/types + //llgo:* directives
 //   - Single-source-of-truth Layout, GC bitmap, and FuncABI computation
-//   - go/types.Sizes adapter backed directly by Context.Layout
+//   - Sizes (on LLGo Type) and GoSizes() (go/types.Sizes adapter)
 //
 // All public methods are safe for concurrent use.
 type Context struct {
@@ -150,7 +149,7 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 	if simdAligns[0] == 0 {
 		simdAligns = DefaultSIMDAlignments(spec)
 	}
-	c := &Context{
+	return &Context{
 		spec:                      spec,
 		hostBasicLayouts:          hostLayouts,
 		simdAlignments:            simdAligns,
@@ -160,7 +159,7 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		hasLegacyNativeTypeLayout: cfg.HasLegacyNativeTypeLayout,
 		nativeFields:              cfg.NativeFields,
 		typeCallConvs:             make(map[string]CallConv),
-		anyType:                   &Interface{comparable: true},
+		anyType:                   &Interface{resolved: true, comparable: true},
 		ptrs:                      make(map[ptrInternKey]*Pointer),
 		slices:                    make(map[Type]*Slice),
 		maps:                      make(map[mapInternKey]*Map),
@@ -177,7 +176,6 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		layouts:                   make(map[Type]*Layout),
 		funcABIs:                  make(map[*Signature]*FuncABI),
 	}
-	return c
 }
 
 // Spec returns the resolved target specification of c.
@@ -234,7 +232,7 @@ func (c *Context) checkIncompleteNamedLocked() {
 		return
 	}
 	for _, n := range c.incompleteNamed {
-		if gt, ok := n.goType.(*gotypes.Named); ok && gt.Underlying() != n.goUnderlying {
+		if n.resolved && n.goNamed != nil && n.goNamed.Underlying() != n.goUnderlying {
 			c.resetGoCachesLocked()
 			return
 		}
@@ -431,7 +429,7 @@ func (c *Context) lookupTypeCallConvLocked(t gotypes.Type) (CallConv, bool) {
 			}
 		}
 		if !isAlias || next == cur {
-			return GoClosure, false
+			return Go, false
 		}
 		cur = next
 	}
@@ -469,16 +467,192 @@ func isGoClosureFields(fields []*gotypes.Var) bool {
 	return f1.Type() == gotypes.Typ[gotypes.UnsafePointer] && f1.Name() == "$data"
 }
 
+// --- Lazy Resolution for Named & Interface Types Lowered from go/types ---
+
+func (c *Context) resolveNamed(n *Named) {
+	c.mu.RLock()
+	if n.resolved && (n.goNamed == nil || n.goNamed.Underlying() == n.goUnderlying) {
+		c.mu.RUnlock()
+		return
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resolveNamedLocked(n)
+}
+
+func (c *Context) resolveNamedLocked(n *Named) {
+	gt := n.goNamed
+	if gt == nil {
+		n.resolved = true
+		return
+	}
+	under := gt.Underlying()
+	if n.resolved && under == n.goUnderlying {
+		return
+	}
+
+	// Mark resolved before recursing to support cyclic named types safely.
+	n.resolved = true
+	n.goUnderlying = under
+	if under == nil {
+		c.incompleteNamed = append(c.incompleteNamed, n)
+	} else if st, ok := under.(*gotypes.Struct); ok && st.NumFields() == 0 {
+		c.incompleteNamed = append(c.incompleteNamed, n)
+	}
+
+	tagIdx := -1
+	if idx, ok := SIMDTagIndex(gt); ok {
+		tagIdx = idx
+	}
+	var vec *SIMDVec
+	if lanes, ok := SIMDVectorShape(gt); ok {
+		if elem, ok := lanes.Elem().(*gotypes.Basic); ok {
+			isMask := strings.HasPrefix(gt.Obj().Name(), "Mask")
+			vec = c.internSIMDLocked(elem.Kind(), int(lanes.Len()), isMask, gt)
+		}
+	}
+
+	host := HasHostLayout(gt)
+	_, isUnderStruct := under.(*gotypes.Struct)
+	_, isUnderArray := under.(*gotypes.Array)
+	native := (isUnderStruct || isUnderArray) && ((n.hasCallConv && n.callConv.IsNative()) || c.hasLegacyNativeLayoutLocked(gt))
+	if !native && isUnderStruct {
+		if st := under.(*gotypes.Struct); st.NumFields() > 0 {
+			if c.hasNativeFieldsLocked([]*gotypes.Var{st.Field(0)}) {
+				native = true
+			}
+		}
+	}
+
+	n.hostLayout = host
+	n.nativeLayout = native
+	n.simdTagIndex = tagIdx
+	n.simdVec = vec
+	if n.obj != nil {
+		n.obj.nativeLayout = native
+		n.obj.hostLayout = host
+	}
+
+	if orig := gt.Origin(); orig != nil && orig != gt {
+		n.origin = c.fromGoNamedShellLocked(orig, Go, false)
+	}
+	if tps := gt.TypeParams(); tps != nil && tps.Len() > 0 {
+		list := make([]*TypeParam, tps.Len())
+		for i := 0; i < tps.Len(); i++ {
+			list[i] = c.fromGoTypeParamLocked(tps.At(i))
+		}
+		n.typeParams = newTypeParamList(list)
+	}
+	if tas := gt.TypeArgs(); tas != nil && tas.Len() > 0 {
+		list := make([]Type, tas.Len())
+		for i := 0; i < tas.Len(); i++ {
+			list[i] = c.fromGoLocked(tas.At(i), Go, false)
+		}
+		n.typeArgs = newTypeList(list)
+	}
+
+	effCC := n.callConv
+	effOverride := n.hasCallConv
+	if arr, ok := under.(*gotypes.Array); ok && native {
+		var elem Type
+		if effOverride && effCC.IsNative() {
+			elem = c.fromGoLocked(arr.Elem(), effCC, true)
+		} else {
+			elem = c.fromGoLocked(arr.Elem(), Go, false)
+		}
+		n.underlying = c.internArrayLocked(elem, arr.Len(), c.spec.UsesWideGoStorage(), arr)
+	} else if st, ok := under.(*gotypes.Struct); ok && (native || tagIdx >= 0) {
+		num := st.NumFields()
+		fields := make([]*gotypes.Var, num)
+		tags := make([]string, num)
+		hasTags := false
+		for i := 0; i < num; i++ {
+			fields[i] = st.Field(i)
+			tags[i] = st.Tag(i)
+			if tags[i] != "" {
+				hasTags = true
+			}
+		}
+		if !hasTags {
+			tags = nil
+		}
+		llSt := c.structFromGoFieldsLocked(fields, tags, native, st)
+		llSt.simdTagIndex = tagIdx
+		n.underlying = llSt
+	} else if effOverride {
+		n.underlying = c.fromGoLocked(under, effCC, true)
+	} else {
+		n.underlying = c.fromGoLocked(under, Go, false)
+	}
+}
+
+func (c *Context) resolveNamedMethods(n *Named) {
+	c.mu.RLock()
+	if n.methodsResolved || n.goNamed == nil {
+		c.mu.RUnlock()
+		return
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n.methodsResolved || n.goNamed == nil {
+		return
+	}
+	n.methodsResolved = true
+	gt := n.goNamed
+	if nm := gt.NumMethods(); nm > 0 {
+		n.methods = make([]*Func, nm)
+		for i := 0; i < nm; i++ {
+			n.methods[i] = c.fromGoFuncLocked(gt.Method(i))
+		}
+	}
+}
+
+func (c *Context) resolveInterface(iface *Interface) {
+	c.mu.RLock()
+	if iface.resolved || iface.goIface == nil {
+		c.mu.RUnlock()
+		return
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if iface.resolved || iface.goIface == nil {
+		return
+	}
+	iface.resolved = true
+	gt := iface.goIface
+	if n := gt.NumMethods(); n > 0 {
+		iface.methods = make([]*Func, n)
+		for i := 0; i < n; i++ {
+			iface.methods[i] = c.fromGoFuncLocked(gt.Method(i))
+		}
+	}
+	if n := gt.NumEmbeddeds(); n > 0 {
+		iface.embeddeds = make([]Type, n)
+		for i := 0; i < n; i++ {
+			iface.embeddeds[i] = c.fromGoLocked(gt.EmbeddedType(i), Go, false)
+		}
+	}
+}
+
 // --- go/types -> llgo/types Lowering (Single Conversion Boundary) ---
 
 // FromGo lowers a go/types.Type into its canonical LLGo Type (O(1) cached).
+// Named and Interface shells are resolved lazily so invoking FromGo during
+// go/types.Config.Check never triggers premature go/types assertions on
+// unresolved pointer targets.
 func (c *Context) FromGo(t gotypes.Type) Type {
 	if t == nil {
 		return nil
 	}
 	c.mu.RLock()
 	if len(c.incompleteNamed) == 0 {
-		if cached, ok := c.goTypes[goTypeCacheKey{typ: t, cc: GoClosure, hasOverride: false}]; ok {
+		if cached, ok := c.goTypes[goTypeCacheKey{typ: t, cc: Go, hasOverride: false}]; ok {
 			c.mu.RUnlock()
 			return cached
 		}
@@ -488,11 +662,11 @@ func (c *Context) FromGo(t gotypes.Type) Type {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.checkIncompleteNamedLocked()
-	return c.fromGoLocked(t, GoClosure, false)
+	return c.fromGoLocked(t, Go, false)
 }
 
 // FromGoWithCallConv lowers a go/types.Type with an explicit calling convention
-// override (for example CDecl or GoDirect on a signature).
+// override (for example CDecl or Stdcall on a signature).
 func (c *Context) FromGoWithCallConv(t gotypes.Type, cc CallConv) Type {
 	if t == nil {
 		return nil
@@ -504,7 +678,7 @@ func (c *Context) FromGoWithCallConv(t gotypes.Type, cc CallConv) Type {
 }
 
 // StructFromGoFields builds a transient LLGo *Struct from a bare go/types field
-// slice (used by GoSizes.Offsetsof and callers inspecting struct field slices).
+// slice (used by callers inspecting struct field slices).
 func (c *Context) StructFromGoFields(fields []*gotypes.Var, forceNative bool) *Struct {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -534,7 +708,7 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 			effCC = dirCC
 			effOverride = true
 		}
-		tn := c.fromGoTypeNameLocked(aObj)
+		tn := c.fromGoTypeNameShellLocked(aObj)
 		tn.isAlias = true
 		if hasDir {
 			tn.callConv = dirCC
@@ -545,6 +719,9 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 			callConv:    effCC,
 			hasCallConv: effOverride,
 			goType:      t,
+		}
+		if tn.typ == nil {
+			tn.typ = a
 		}
 		if !hasOverride {
 			c.goAliases[t] = a
@@ -564,13 +741,13 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		return b
 
 	case *gotypes.Pointer:
-		elem := c.fromGoLocked(gt.Elem(), GoClosure, false)
+		elem := c.fromGoLocked(gt.Elem(), Go, false)
 		res := c.internPtrLocked(elem, GoPtr, gt)
 		c.goTypes[key] = res
 		return res
 
 	case *gotypes.Slice:
-		elem := c.fromGoLocked(gt.Elem(), GoClosure, false)
+		elem := c.fromGoLocked(gt.Elem(), Go, false)
 		res := c.internSliceLocked(elem, gt)
 		c.goTypes[key] = res
 		return res
@@ -580,21 +757,21 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		if hasOverride && cc.IsNative() {
 			elem = c.fromGoLocked(gt.Elem(), cc, true)
 		} else {
-			elem = c.fromGoLocked(gt.Elem(), GoClosure, false)
+			elem = c.fromGoLocked(gt.Elem(), Go, false)
 		}
 		res := c.internArrayLocked(elem, gt.Len(), false, gt)
 		c.goTypes[key] = res
 		return res
 
 	case *gotypes.Map:
-		k := c.fromGoLocked(gt.Key(), GoClosure, false)
-		v := c.fromGoLocked(gt.Elem(), GoClosure, false)
+		k := c.fromGoLocked(gt.Key(), Go, false)
+		v := c.fromGoLocked(gt.Elem(), Go, false)
 		res := c.internMapLocked(k, v, gt)
 		c.goTypes[key] = res
 		return res
 
 	case *gotypes.Chan:
-		elem := c.fromGoLocked(gt.Elem(), GoClosure, false)
+		elem := c.fromGoLocked(gt.Elem(), Go, false)
 		res := c.internChanLocked(gt.Dir(), elem, gt)
 		c.goTypes[key] = res
 		return res
@@ -605,7 +782,7 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		return res
 
 	case *gotypes.Signature:
-		effCC := GoClosure
+		effCC := Go
 		if hasOverride {
 			effCC = cc
 		}
@@ -614,24 +791,13 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		return res
 
 	case *gotypes.Interface:
-		if gt.NumMethods() == 0 && gt.NumEmbeddeds() == 0 {
-			c.goTypes[key] = c.anyType
-			return c.anyType
+		iface := &Interface{
+			ctx:        c,
+			goIface:    gt,
+			comparable: true,
+			goType:     gt,
 		}
-		iface := &Interface{comparable: true, goType: gt}
 		c.goTypes[key] = iface
-		if n := gt.NumMethods(); n > 0 {
-			iface.methods = make([]*Func, n)
-			for i := 0; i < n; i++ {
-				iface.methods[i] = c.fromGoFuncLocked(gt.Method(i))
-			}
-		}
-		if n := gt.NumEmbeddeds(); n > 0 {
-			iface.embeddeds = make([]Type, n)
-			for i := 0; i < n; i++ {
-				iface.embeddeds[i] = c.fromGoLocked(gt.EmbeddedType(i), GoClosure, false)
-			}
-		}
 		return iface
 
 	case *gotypes.Struct:
@@ -659,13 +825,15 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		return res
 
 	case *gotypes.Named:
-		return c.fromGoNamedLocked(gt, cc, hasOverride)
+		return c.fromGoNamedShellLocked(gt, cc, hasOverride)
 	}
 
 	return Typ[Invalid]
 }
 
-func (c *Context) fromGoNamedLocked(gt *gotypes.Named, cc CallConv, hasOverride bool) *Named {
+// fromGoNamedShellLocked creates or returns the cached *Named shell for gt
+// without calling gt.Underlying() or gt.NumMethods().
+func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOverride bool) *Named {
 	if !hasOverride {
 		if cached, ok := c.goNamed[gt]; ok {
 			return cached
@@ -680,116 +848,31 @@ func (c *Context) fromGoNamedLocked(gt *gotypes.Named, cc CallConv, hasOverride 
 		effOverride = true
 	}
 
-	tn := c.fromGoTypeNameLocked(gt.Obj())
-	tagIdx := -1
-	if idx, ok := SIMDTagIndex(gt); ok {
-		tagIdx = idx
-	}
-	var vec *SIMDVec
-	if lanes, ok := SIMDVectorShape(gt); ok {
-		if elem, ok := lanes.Elem().(*gotypes.Basic); ok {
-			isMask := strings.HasPrefix(gt.Obj().Name(), "Mask")
-			vec = c.internSIMDLocked(elem.Kind(), int(lanes.Len()), isMask, gt)
-		}
-	}
-
-	host := HasHostLayout(gt)
-	under := gt.Underlying()
-	_, isUnderStruct := under.(*gotypes.Struct)
-	_, isUnderArray := under.(*gotypes.Array)
-	native := (isUnderStruct || isUnderArray) && ((hasDir && dirCC.IsNative()) || c.hasLegacyNativeLayoutLocked(gt))
-	if !native && isUnderStruct {
-		if st := under.(*gotypes.Struct); st.NumFields() > 0 {
-			if c.hasNativeFieldsLocked([]*gotypes.Var{st.Field(0)}) {
-				native = true
-			}
-		}
-	}
-
-	n := &Named{
-		obj:          tn,
-		callConv:     effCC,
-		hasCallConv:  effOverride,
-		hostLayout:   host,
-		nativeLayout: native,
-		simdTagIndex: tagIdx,
-		simdVec:      vec,
-		goType:       gt,
-		goUnderlying: under,
-	}
+	tn := c.fromGoTypeNameShellLocked(gt.Obj())
 	if hasDir {
 		tn.callConv = dirCC
 		tn.hasCallConv = true
 	}
-	tn.nativeLayout = native
-	tn.hostLayout = host
 
-	// Register before recursing to support cyclic named types and generic origins.
+	n := &Named{
+		ctx:           c,
+		goNamed:       gt,
+		overrideCC:    cc,
+		hasOverrideCC: hasOverride,
+		obj:           tn,
+		callConv:      effCC,
+		hasCallConv:   effOverride,
+		simdTagIndex:  -1,
+		goType:        gt,
+	}
+	if tn.typ == nil {
+		tn.typ = n
+	}
+
 	if !hasOverride {
 		c.goNamed[gt] = n
 	}
 	c.goTypes[goTypeCacheKey{typ: gt, cc: cc, hasOverride: hasOverride}] = n
-	if under == nil {
-		c.incompleteNamed = append(c.incompleteNamed, n)
-	} else if st, ok := under.(*gotypes.Struct); ok && st.NumFields() == 0 {
-		c.incompleteNamed = append(c.incompleteNamed, n)
-	}
-
-	if orig := gt.Origin(); orig != nil && orig != gt {
-		n.origin = c.fromGoNamedLocked(orig, GoClosure, false)
-	}
-	if tps := gt.TypeParams(); tps != nil && tps.Len() > 0 {
-		n.typeParams = make([]*TypeParam, tps.Len())
-		for i := 0; i < tps.Len(); i++ {
-			n.typeParams[i] = c.fromGoTypeParamLocked(tps.At(i))
-		}
-	}
-	if tas := gt.TypeArgs(); tas != nil && tas.Len() > 0 {
-		n.typeArgs = make([]Type, tas.Len())
-		for i := 0; i < tas.Len(); i++ {
-			n.typeArgs[i] = c.fromGoLocked(tas.At(i), GoClosure, false)
-		}
-	}
-
-	if arr, ok := under.(*gotypes.Array); ok && native {
-		var elem Type
-		if effOverride && effCC.IsNative() {
-			elem = c.fromGoLocked(arr.Elem(), effCC, true)
-		} else {
-			elem = c.fromGoLocked(arr.Elem(), GoClosure, false)
-		}
-		n.underlying = c.internArrayLocked(elem, arr.Len(), c.spec.UsesWideGoStorage(), arr)
-	} else if st, ok := under.(*gotypes.Struct); ok && (native || tagIdx >= 0) {
-		num := st.NumFields()
-		fields := make([]*gotypes.Var, num)
-		tags := make([]string, num)
-		hasTags := false
-		for i := 0; i < num; i++ {
-			fields[i] = st.Field(i)
-			tags[i] = st.Tag(i)
-			if tags[i] != "" {
-				hasTags = true
-			}
-		}
-		if !hasTags {
-			tags = nil
-		}
-		llSt := c.structFromGoFieldsLocked(fields, tags, native, st)
-		llSt.simdTagIndex = tagIdx
-		n.underlying = llSt
-	} else if effOverride {
-		n.underlying = c.fromGoLocked(under, effCC, true)
-	} else {
-		n.underlying = c.fromGoLocked(under, GoClosure, false)
-	}
-
-	if nm := gt.NumMethods(); nm > 0 {
-		n.methods = make([]*Func, nm)
-		for i := 0; i < nm; i++ {
-			n.methods[i] = c.fromGoFuncLocked(gt.Method(i))
-		}
-	}
-
 	return n
 }
 
@@ -797,7 +880,12 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 	isClosure := isGoClosureFields(fields)
 	host := false
 	for _, f := range fields {
-		if IsHostLayoutMarker(f.Type()) {
+		ft := f.Type()
+		switch ft.(type) {
+		case *gotypes.Basic, *gotypes.Pointer, *gotypes.Slice, *gotypes.Map, *gotypes.Chan, *gotypes.Signature, *gotypes.Interface:
+			continue
+		}
+		if IsHostLayoutMarker(ft) {
 			host = true
 			break
 		}
@@ -810,16 +898,14 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 	llFields := make([]*Var, len(fields))
 	for i, f := range fields {
 		var ft Type
-		if isClosure && i == 0 {
-			ft = c.fromGoLocked(f.Type(), GoDirect, true)
-		} else if native {
+		if native {
 			if _, isSig := f.Type().Underlying().(*gotypes.Signature); isSig {
 				ft = c.fromGoLocked(f.Type(), CDecl, true)
 			} else {
-				ft = c.fromGoLocked(f.Type(), GoClosure, false)
+				ft = c.fromGoLocked(f.Type(), Go, false)
 			}
 		} else {
-			ft = c.fromGoLocked(f.Type(), GoClosure, false)
+			ft = c.fromGoLocked(f.Type(), Go, false)
 		}
 		var pkg *Package
 		if f.Pkg() != nil {
@@ -870,16 +956,18 @@ func (c *Context) fromGoSignatureLocked(gt *gotypes.Signature, cc CallConv) *Sig
 		sig.recv = c.fromGoVarLocked(recv)
 	}
 	if rtps := gt.RecvTypeParams(); rtps != nil && rtps.Len() > 0 {
-		sig.recvTypeParams = make([]*TypeParam, rtps.Len())
+		list := make([]*TypeParam, rtps.Len())
 		for i := 0; i < rtps.Len(); i++ {
-			sig.recvTypeParams[i] = c.fromGoTypeParamLocked(rtps.At(i))
+			list[i] = c.fromGoTypeParamLocked(rtps.At(i))
 		}
+		sig.recvTypeParams = newTypeParamList(list)
 	}
 	if tps := gt.TypeParams(); tps != nil && tps.Len() > 0 {
-		sig.typeParams = make([]*TypeParam, tps.Len())
+		list := make([]*TypeParam, tps.Len())
 		for i := 0; i < tps.Len(); i++ {
-			sig.typeParams[i] = c.fromGoTypeParamLocked(tps.At(i))
+			list[i] = c.fromGoTypeParamLocked(tps.At(i))
 		}
+		sig.typeParams = newTypeParamList(list)
 	}
 	sig.params = c.fromGoTupleLocked(gt.Params())
 	sig.results = c.fromGoTupleLocked(gt.Results())
@@ -896,10 +984,14 @@ func (c *Context) fromGoTypeParamLocked(gt *gotypes.TypeParam) *TypeParam {
 	}
 	c.goTParams[gt] = tp
 	if gt.Obj() != nil {
-		tp.obj = c.fromGoTypeNameLocked(gt.Obj())
+		tn := c.fromGoTypeNameShellLocked(gt.Obj())
+		if tn.typ == nil {
+			tn.typ = tp
+		}
+		tp.obj = tn
 	}
 	if con := gt.Constraint(); con != nil {
-		tp.constraint = c.fromGoLocked(con, GoClosure, false)
+		tp.constraint = c.fromGoLocked(con, Go, false)
 	}
 	return tp
 }
@@ -941,7 +1033,7 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 			val: o.Val(),
 		}
 		c.goObjs[o] = res
-		res.typ = c.fromGoLocked(o.Type(), GoClosure, false)
+		res.typ = c.fromGoLocked(o.Type(), Go, false)
 		return res
 	case *gotypes.PkgName:
 		res := &PkgName{
@@ -1004,16 +1096,16 @@ func (c *Context) fromGoFuncLocked(o *gotypes.Func) *Func {
 			name:  o.Name(),
 			goObj: o,
 		},
-		callConv: GoDirect,
+		callConv: Go,
 	}
 	c.goObjs[o] = f
 	if orig := o.Origin(); orig != nil && orig != o {
 		f.origin = c.fromGoFuncLocked(orig)
 	}
 	if sig, ok := o.Type().(*gotypes.Signature); ok {
-		f.typ = c.fromGoSignatureLocked(sig, GoDirect)
+		f.typ = c.fromGoSignatureLocked(sig, Go)
 	} else if o.Type() != nil {
-		f.typ = c.fromGoLocked(o.Type(), GoDirect, true)
+		f.typ = c.fromGoLocked(o.Type(), Go, false)
 	}
 	return f
 }
@@ -1037,12 +1129,15 @@ func (c *Context) fromGoVarLocked(o *gotypes.Var) *Var {
 		v.origin = c.fromGoVarLocked(orig)
 	}
 	if o.Type() != nil {
-		v.typ = c.fromGoLocked(o.Type(), GoClosure, false)
+		v.typ = c.fromGoLocked(o.Type(), Go, false)
 	}
 	return v
 }
 
-func (c *Context) fromGoTypeNameLocked(o *gotypes.TypeName) *TypeName {
+func (c *Context) fromGoTypeNameShellLocked(o *gotypes.TypeName) *TypeName {
+	if o == nil {
+		return nil
+	}
 	if cached, ok := c.goObjs[o]; ok {
 		return cached.(*TypeName)
 	}
@@ -1056,8 +1151,13 @@ func (c *Context) fromGoTypeNameLocked(o *gotypes.TypeName) *TypeName {
 		isAlias: o.IsAlias(),
 	}
 	c.goObjs[o] = tn
-	if o.Type() != nil {
-		tn.typ = c.fromGoLocked(o.Type(), GoClosure, false)
+	return tn
+}
+
+func (c *Context) fromGoTypeNameLocked(o *gotypes.TypeName) *TypeName {
+	tn := c.fromGoTypeNameShellLocked(o)
+	if tn != nil && tn.typ == nil && o.Type() != nil {
+		tn.typ = c.fromGoLocked(o.Type(), Go, false)
 	}
 	return tn
 }
@@ -1105,34 +1205,40 @@ func (c *Context) fromGoSelectionLocked(gs *gotypes.Selection) *Selection {
 	copy(idx, gs.Index())
 	return &Selection{
 		kind:     gs.Kind(),
-		recv:     c.fromGoLocked(gs.Recv(), GoClosure, false),
+		recv:     c.fromGoLocked(gs.Recv(), Go, false),
 		obj:      c.fromGoObjectLocked(gs.Obj()),
-		typ:      c.fromGoLocked(gs.Type(), GoClosure, false),
+		typ:      c.fromGoLocked(gs.Type(), Go, false),
 		index:    idx,
 		indirect: gs.Indirect(),
 	}
 }
 
-// MethodSet returns the LLGo MethodSet of t (lowered from go/types when
-// provenance is present, or computed directly from t's Named/Interface methods).
+// MethodSet returns the LLGo MethodSet of t.
 func (c *Context) MethodSet(t Type) *MethodSet {
+	return methodSetOf(c, t)
+}
+
+func methodSetOf(c *Context, t Type) *MethodSet {
 	if t == nil {
 		return &MethodSet{}
 	}
-	if gt := t.GoType(); gt != nil {
-		gms := gotypes.NewMethodSet(gt)
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		list := make([]*Selection, gms.Len())
-		for i := 0; i < gms.Len(); i++ {
-			list[i] = c.fromGoSelectionLocked(gms.At(i))
+	if c != nil {
+		if gt := t.GoType(); gt != nil {
+			gms := gotypes.NewMethodSet(gt)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			list := make([]*Selection, gms.Len())
+			for i := 0; i < gms.Len(); i++ {
+				list[i] = c.fromGoSelectionLocked(gms.At(i))
+			}
+			return &MethodSet{list: list}
 		}
-		return &MethodSet{list: list}
 	}
 	var list []*Selection
 	switch u := Unalias(t).(type) {
 	case *Named:
-		for i, m := range u.methods {
+		for i := 0; i < u.NumMethods(); i++ {
+			m := u.Method(i)
 			if sig := m.Signature(); sig != nil && sig.recv != nil {
 				if _, ptrRecv := sig.recv.typ.(*Pointer); ptrRecv {
 					continue
@@ -1148,7 +1254,8 @@ func (c *Context) MethodSet(t Type) *MethodSet {
 		}
 	case *Pointer:
 		if n, ok := Unalias(u.elem).(*Named); ok {
-			for i, m := range n.methods {
+			for i := 0; i < n.NumMethods(); i++ {
+				m := n.Method(i)
 				list = append(list, &Selection{
 					kind:     MethodVal,
 					recv:     t,
@@ -1160,7 +1267,8 @@ func (c *Context) MethodSet(t Type) *MethodSet {
 			}
 		}
 	case *Interface:
-		for i, m := range u.methods {
+		for i := 0; i < u.NumMethods(); i++ {
+			m := u.Method(i)
 			list = append(list, &Selection{
 				kind:  MethodVal,
 				recv:  t,
@@ -1251,7 +1359,7 @@ func (c *Context) FromGoPackage(goPkg *gotypes.Package, goInfo *gotypes.Info, fs
 		}
 		for expr, tv := range goInfo.Types {
 			info.Types[expr] = TypeAndValue{
-				Type:        c.fromGoLocked(tv.Type, GoClosure, false),
+				Type:        c.fromGoLocked(tv.Type, Go, false),
 				Value:       tv.Value,
 				isType:      tv.IsType(),
 				isValue:     tv.IsValue(),
@@ -1283,12 +1391,12 @@ func (c *Context) FromGoPackage(goPkg *gotypes.Package, goInfo *gotypes.Info, fs
 			if inst.TypeArgs != nil && inst.TypeArgs.Len() > 0 {
 				args = make([]Type, inst.TypeArgs.Len())
 				for i := 0; i < inst.TypeArgs.Len(); i++ {
-					args[i] = c.fromGoLocked(inst.TypeArgs.At(i), GoClosure, false)
+					args[i] = c.fromGoLocked(inst.TypeArgs.At(i), Go, false)
 				}
 			}
 			info.Instances[id] = Instance{
-				TypeArgs: args,
-				Type:     c.fromGoLocked(inst.Type, GoClosure, false),
+				TypeArgs: newTypeList(args),
+				Type:     c.fromGoLocked(inst.Type, Go, false),
 			}
 		}
 	}
@@ -1358,7 +1466,7 @@ func parseTypeCallConvDirective(doc *ast.CommentGroup) (CallConv, bool) {
 			}
 		}
 	}
-	return GoClosure, false
+	return Go, false
 }
 
 func (c *Context) bindDeclDirectives(pkg *Package, info *Info, files []*ast.File) {
@@ -1408,10 +1516,10 @@ func (c *Context) bindDeclDirectives(pkg *Package, info *Info, files []*ast.File
 						if fields := strings.Fields(dir.Args); len(fields) >= 2 {
 							fn.wasmMod = fields[0]
 							fn.wasmName = fields[1]
-							fn.callConv = WasmFunc
+							fn.callConv = Wasm
 							fn.isExternal = true
 							if sig := fn.Signature(); sig != nil {
-								sig.callConv = WasmFunc
+								sig.callConv = Wasm
 							}
 						}
 					case "go:wasmexport":
@@ -1455,7 +1563,6 @@ func (c *Context) bindDeclDirectives(pkg *Package, info *Info, files []*ast.File
 		}
 	}
 	_ = pkg
-	_ = fmt.Sprintf // keep fmt available if diagnostics expand
 }
 
 func callConvFromLinkTarget(target string) (CallConv, bool) {
@@ -1463,8 +1570,8 @@ func callConvFromLinkTarget(target string) (CallConv, bool) {
 	case strings.HasPrefix(target, "C."):
 		return CDecl, true
 	case strings.HasPrefix(target, "py."):
-		return PyFunc, true
+		return Py, true
 	default:
-		return GoDirect, false
+		return Go, false
 	}
 }

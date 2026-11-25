@@ -60,7 +60,7 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
      GOWORK=off CGO_ENABLED=0 go test ./...
      ! GOWORK=off go list -f '{{join .Deps "\n"}}' ./directive ./target ./types ./ssa | grep -qE 'llvm|x/tools'
      ```
-     *(After PR 7 moves compiler packages into `cmd/` and adds `exportdata/` + `analysis/`,
+     *(After PR 6 moves compiler packages into `cmd/` and adds `exportdata/` + `analysis/`,
      the same check covers `./...` across the entire root module.)*
 2. **Compiler `cmd/go.mod` (`github.com/xgo-dev/llgo/cmd`)**:
    - Declares the latest Go toolchain version matching `.go-version` so
