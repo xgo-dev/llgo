@@ -206,13 +206,28 @@ func addItab(i *Itab) *Itab {
 	return i
 }
 
-// NewItab returns a new itab.
+// NewItab returns a cached or newly constructed itab for (inter, typ).
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {
 		return nil
 	}
 	if i := findItab(inter, typ); i != nil {
 		return i
+	}
+	return newItabSlow(inter, typ)
+}
+
+//go:noinline
+func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
+	u := typ.Uncommon()
+	if u == nil {
+		ptr := AllocU(itabHdrSize + pointerSize)
+		ret := (*itab)(ptr)
+		ret.inter = inter
+		ret._type = typ
+		ret.hash = typ.Hash
+		ret.fun[0] = 0
+		return addItab(ret)
 	}
 	n := len(inter.Methods)
 	size := itabHdrSize + uintptr(n)*pointerSize
@@ -223,35 +238,27 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	ret._type = typ
 	ret.hash = typ.Hash
 
-	u := typ.Uncommon()
-	if u == nil {
-		ret.fun[0] = 0
-	} else {
-		// Locate the variable tail in bytes, then index it as Go uintptr slots.
-		// On J32 C pointer arrays have four-byte elements while itab function
-		// slots follow Go's eight-byte word model.
-		data := c.Advance(ptr, int(itabHdrSize))
-		mthds := u.Methods()
-		for i, m := range inter.Methods {
-			fn, matched := findMethod(mthds, m)
-			if !matched {
-				ret.fun[0] = 0
-				break
-			}
-			if fn == nil {
-				// matched but no function pointer (e.g. stripped/unreachable after DCE);
-				// keep itab entry with a placeholder so the itab stays intact
-				// and only panics on call, not at assertion time.
-				fn = abi.Text(c.Func(unreachableMethod))
-			}
-			slot := unsafe.Add(data, uintptr(i)*unsafe.Sizeof(uintptr(0)))
-			*(*uintptr)(slot) = uintptr(fn)
+	// Locate the variable tail in bytes, then index it as Go uintptr slots.
+	// On J32 C pointer arrays have four-byte elements while itab function
+	// slots follow Go's eight-byte word model.
+	data := c.Advance(ptr, int(itabHdrSize))
+	mthds := u.Methods()
+	for i, m := range inter.Methods {
+		fn, matched := findMethod(mthds, m)
+		if !matched {
+			ret.fun[0] = 0
+			break
 		}
+		if fn == nil {
+			// matched but no function pointer (e.g. stripped/unreachable after DCE);
+			// keep itab entry with a placeholder so the itab stays intact
+			// and only panics on call, not at assertion time.
+			fn = abi.Text(c.Func(unreachableMethod))
+		}
+		slot := unsafe.Add(data, uintptr(i)*unsafe.Sizeof(uintptr(0)))
+		*(*uintptr)(slot) = uintptr(fn)
 	}
-	if ret.fun[0] != 0 {
-		return addItab(ret)
-	}
-	return ret
+	return addItab(ret)
 }
 
 // findMethod searches for an interface method in the type's method set.
@@ -426,6 +433,19 @@ func interfaceImplementation(T, V *abi.Type) (missing *abi.Imethod, ok bool) {
 
 // Implements reports whether the type V implements the interface type T.
 func Implements(T, V *abi.Type) bool {
+	if T == nil || V == nil || T.Kind() != abi.Interface {
+		return false
+	}
+	t := (*abi.InterfaceType)(unsafe.Pointer(T))
+	if len(t.Methods) == 0 {
+		return true
+	}
+	if V.Kind() != abi.Interface {
+		if V.TFlag&abi.TFlagUncommon == 0 {
+			return false
+		}
+		return NewItab(t, V).fun[0] != 0
+	}
 	_, ok := interfaceImplementation(T, V)
 	return ok
 }
