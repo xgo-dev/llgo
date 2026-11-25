@@ -241,6 +241,29 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 // -----------------------------------------------------------------------------
 
+func (b Builder) allocaDeferSigjmpBuf(inEntry bool) Expr {
+	if !inEntry {
+		return b.AllocaSigjmpBuf()
+	}
+	prog := b.Prog
+	sigjmpBufTy := prog.rtType("SigjmpBuf")
+	n := prog.SizeOf(sigjmpBufTy)
+	size := prog.IntVal(n, prog.Uintptr())
+	ab := b.Func.entryAllocaBuilder()
+	ptr := llvm.CreateArrayAlloca(ab, prog.tyInt8(), size.impl)
+	if prog.target.effectiveGOOS() == "windows" {
+		ptr.SetAlignment(16)
+	}
+	return Expr{ptr, prog.VoidPtr()}
+}
+
+func (p Function) deferInitTarget() BasicBlock {
+	if p.deferInitBlk != nil {
+		return p.deferInitBlk
+	}
+	return p.blks[0]
+}
+
 func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	b = p.NewBuilder()
 	// NewBuilder supplies a line-zero function location for generated code;
@@ -248,8 +271,10 @@ func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	if loc := from.diLocation; p.diFunc != nil && !loc.Scope.IsNil() {
 		b.setDebugLocation(loc)
 	}
-	next = b.setBlockMoveLast(p.blks[0])
-	p.blks[0].last = next.last
+	target := p.deferInitTarget()
+	b.blk = target
+	next = b.setBlockMoveLast(target)
+	target.last = next.last
 	return
 }
 
@@ -314,6 +339,17 @@ const (
 	deferArgs
 )
 
+func isTerminatorInst(v llvm.Value) bool {
+	if v.IsNil() {
+		return false
+	}
+	switch v.InstructionOpcode() {
+	case llvm.Ret, llvm.Br, llvm.Switch, llvm.IndirectBr, llvm.Invoke, llvm.Resume, llvm.Unreachable, llvm.CallBr:
+		return true
+	}
+	return false
+}
+
 func (b Builder) getDefer(kind DoAction) *aDefer {
 	if b.Func.recov == nil {
 		// b.Func.recov maybe nil in ssa.NaiveForm
@@ -322,6 +358,11 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 	self := b.Func
 	if self.defer_ == nil {
 		// TODO(xsw): check if in pkg.init
+		target := self.deferInitTarget()
+		if kind != DeferAlways && target != self.blks[0] && b.blk == target &&
+			!isTerminatorInst(b.blk.last.LastInstruction()) {
+			return b.getDeferInCurrentBlock()
+		}
 		var next, panicBlk BasicBlock
 		if kind != DeferAlways {
 			b, next = self.deferInitBuilder(b)
@@ -394,7 +435,8 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	zero := prog.Val(uintptr(0))
 	slot := b.Call(b.Pkg.rtFunc("ThreadDeferSlot"))
 	link := b.Load(slot)
-	jb := b.AllocaSigjmpBuf()
+	hoistSlot := b.impl.GetInsertBlock() != self.impl.FirstBasicBlock()
+	jb := b.allocaDeferSigjmpBuf(hoistSlot)
 	// Wasm Reth selector 0 is reserved for procBlk; Rund selector 0 is
 	// rethrowBlk. Native targets store the corresponding block addresses.
 	initialReth := deferTarget{index: 0, block: procBlk}
@@ -405,7 +447,11 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	} else {
 		// The thread chain borrows this frame until endDefer unlinks it.
 		// Managed fields are registered in the caller's typed root frame.
-		ptr = b.AllocaT(prog.Defer()).impl
+		if hoistSlot {
+			ptr = b.uninitializedStackSlot(prog.Defer()).impl
+		} else {
+			ptr = b.AllocaT(prog.Defer()).impl
+		}
 		b.aggregateInit(ptr, prog.Defer(), fields...)
 	}
 	deferData := Expr{ptr, prog.DeferPtr()}
