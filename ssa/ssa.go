@@ -16,23 +16,27 @@
 
 // Package ssa defines LLGo's pure-Go, backend-independent mid-level SSA IR.
 //
+// Status: Phase 1 foundational IR (experimental; instruction set will be
+// finalized as Phase 2 connects the Go frontend lowering and LLVM backend).
+//
 // Following golang.org/x/tools/go/ssa conventions (Package, Function,
-// BasicBlock, Parameter, Instruction, Value), package ssa sits between the Go
-// frontend and codegen backends (e.g. internal/llvmgen) and models
-// LLGo-specific concepts as first-class instructions and types: closures
-// (MakeClosure/CallClosure), native C/Stdcall calls (CallCFunc), explicit
-// GoPtr vs NativePtr pointer conversions (PtrCast), GC hooks (Alloc with
+// BasicBlock, Parameter, Instruction, Value, Pos, Extract, DebugRef), package
+// ssa sits between the Go frontend and codegen backends (e.g. internal/llvmgen)
+// and models LLGo-specific concepts as first-class instructions and types:
+// closures (MakeClosure/CallClosure), native C/Stdcall calls (CallCFunc),
+// explicit GoPtr vs CPtr pointer conversions (PtrCast), GC hooks (Alloc with
 // NoScan, WriteBarrier, Safepoint, GCRoot, KeepAlive), and Go
 // exception/concurrency primitives (Defer, RunDefers, Panic, Recover, Go).
 //
-// It requires only Go 1.20+ with zero CGo, LLVM, or x/tools dependencies and
-// is designed for third-party library consumption. PackageSummary provides a
-// deterministic bootstrap summary representation; compact binary encoding lives
-// in the upcoming github.com/xgo-dev/llgo/exportdata package.
+// It requires only Go 1.20+ with zero CGo, LLVM, or x/tools dependencies.
+// PackageSummary provides a deterministic bootstrap summary representation;
+// compact binary encoding lives in the upcoming github.com/xgo-dev/llgo/exportdata
+// package.
 package ssa
 
 import (
 	"fmt"
+	"go/constant"
 	"go/token"
 	"strings"
 
@@ -125,7 +129,9 @@ type Value interface {
 type Instruction interface {
 	Block() *BasicBlock
 	Parent() *Function
+	Pos() token.Pos
 	setBlock(*BasicBlock)
+	setPos(token.Pos)
 	Operands() []Value
 	String() string
 	instrMarker()
@@ -140,10 +146,13 @@ type Terminator interface {
 
 type baseInstr struct {
 	blk *BasicBlock
+	pos token.Pos
 }
 
 func (i *baseInstr) Block() *BasicBlock     { return i.blk }
+func (i *baseInstr) Pos() token.Pos         { return i.pos }
 func (i *baseInstr) setBlock(b *BasicBlock) { i.blk = b }
+func (i *baseInstr) setPos(pos token.Pos)   { i.pos = pos }
 func (i *baseInstr) Parent() *Function {
 	if i.blk == nil {
 		return nil
@@ -176,13 +185,22 @@ func (p *Parameter) Name() string {
 	return fmt.Sprintf("%%p%d", p.Index)
 }
 
-// Const is a typed compile-time constant value.
+// Const is a typed compile-time constant value (matching go/ssa.Const: a nil
+// Value represents the typed zero/nil value of Type()).
 type Const struct {
 	baseValue
-	Literal string // canonical textual representation (e.g. "0", "true", "nil", `"hi"`)
+	Value constant.Value
 }
 
-func (c *Const) Name() string { return c.Literal }
+func (c *Const) Name() string {
+	if c.Value != nil {
+		return c.Value.ExactString()
+	}
+	if c.typ != nil {
+		return "zero:" + c.typ.String()
+	}
+	return "nil"
+}
 
 // GlobalRef references the address of a package Global.
 type GlobalRef struct {
@@ -418,6 +436,41 @@ type IndexAddr struct {
 func (i *IndexAddr) Operands() []Value { return []Value{i.Base, i.Index} }
 func (i *IndexAddr) String() string {
 	return fmt.Sprintf("%s = indexaddr %s[%s] : %s", i.Name(), i.Base.Name(), i.Index.Name(), i.typ)
+}
+
+// Extract extracts element Index from a tuple-typed multi-result Value.
+type Extract struct {
+	baseInstr
+	baseValue
+	Tuple Value
+	Index int
+}
+
+func (i *Extract) Operands() []Value { return []Value{i.Tuple} }
+func (i *Extract) String() string {
+	return fmt.Sprintf("%s = extract %s #%d : %s", i.Name(), i.Tuple.Name(), i.Index, i.typ)
+}
+
+// DebugRef associates a source-level Object with its SSA Value (or address
+// when IsAddr is true) for DWARF debug info and GC stack maps.
+type DebugRef struct {
+	baseInstr
+	X      Value
+	Object types.Object
+	IsAddr bool
+}
+
+func (i *DebugRef) Operands() []Value { return []Value{i.X} }
+func (i *DebugRef) String() string {
+	name := "<anon>"
+	if i.Object != nil {
+		name = i.Object.Name()
+	}
+	kind := "val"
+	if i.IsAddr {
+		kind = "addr"
+	}
+	return fmt.Sprintf("debugref.%s %s = %s", kind, name, i.X.Name())
 }
 
 // MakeClosure constructs a first-class Closure value from a target function

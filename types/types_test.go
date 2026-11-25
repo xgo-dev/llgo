@@ -1035,3 +1035,129 @@ func Use() { Noop() }
 		t.Fatal("nil formatting helpers failed")
 	}
 }
+
+// TestPredicatesMatchStdlibGoTypes cross-checks llgo/types predicates against
+// stdlib go/types across a rich matrix of Go types (generics, union constraints,
+// recursive interfaces, aliases, tagged structs, directional channels, value vs
+// pointer methods) AND verifies LLGo-specific CallConv/PtrKind overrides are
+// preserved without being collapsed by go/types delegation.
+func TestPredicatesMatchStdlibGoTypes(t *testing.T) {
+	src := `package xcheck
+
+type Signed interface {
+	~int | ~int32 | ~int64
+}
+
+type Ordered interface {
+	Signed | ~string
+}
+
+type MyInt int
+type IntAlias = int
+type TaggedA struct { X int "a" }
+type TaggedB struct { X int "b" }
+type NonComp struct { S []int }
+
+type Reader interface { Read() int }
+type ReadCloser interface { Reader; Close() }
+type RecIface interface { Self() RecIface }
+
+type Impl struct{ V int }
+func (i Impl) Read() int { return i.V }
+func (i *Impl) Close() {}
+func (i Impl) Self() RecIface { return i }
+
+type ChBidir chan int
+type ChSend chan<- int
+type IntSlice []int
+type IntArr [2]int
+type IntArrPtr *[2]int
+
+//llgo:cdecl
+type CFn func(int32) int32
+type GoFn func(int32) int32
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "xcheck.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goPkg, err := (&gotypes.Config{}).Check("example.com/xcheck", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatalf("go/types.Check: %v", err)
+	}
+	ctx := newContextForSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	llPkg, err := (&types.Config{Context: ctx}).Check("example.com/xcheck", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatalf("llgo/types.Check: %v", err)
+	}
+
+	names := []string{
+		"Signed", "Ordered", "MyInt", "IntAlias", "TaggedA", "TaggedB",
+		"NonComp", "Reader", "ReadCloser", "RecIface", "Impl",
+		"ChBidir", "ChSend", "IntSlice", "IntArr", "IntArrPtr", "GoFn",
+	}
+	goTypes := make([]gotypes.Type, 0, len(names)+2)
+	llTypes := make([]types.Type, 0, len(names)+2)
+	for _, n := range names {
+		goTypes = append(goTypes, goPkg.Scope().Lookup(n).Type())
+		llTypes = append(llTypes, llPkg.Scope().Lookup(n).Type())
+	}
+	// Also include *Impl and builtin int.
+	goTypes = append(goTypes, gotypes.NewPointer(goPkg.Scope().Lookup("Impl").Type()), gotypes.Typ[gotypes.Int])
+	llTypes = append(llTypes, types.NewPointer(llPkg.Scope().Lookup("Impl").Type()), types.Typ[types.Int])
+
+	for i := range goTypes {
+		if got, want := types.Comparable(llTypes[i]), gotypes.Comparable(goTypes[i]); got != want {
+			t.Errorf("Comparable(%s): llgo=%v go=%v", llTypes[i], got, want)
+		}
+		for j := range goTypes {
+			if got, want := types.Identical(llTypes[i], llTypes[j]), gotypes.Identical(goTypes[i], goTypes[j]); got != want {
+				t.Errorf("Identical(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+			}
+			if got, want := types.IdenticalIgnoreTags(llTypes[i], llTypes[j]), gotypes.IdenticalIgnoreTags(goTypes[i], goTypes[j]); got != want {
+				t.Errorf("IdenticalIgnoreTags(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+			}
+			if got, want := types.AssignableTo(llTypes[i], llTypes[j]), gotypes.AssignableTo(goTypes[i], goTypes[j]); got != want {
+				t.Errorf("AssignableTo(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+			}
+			if got, want := types.ConvertibleTo(llTypes[i], llTypes[j]), gotypes.ConvertibleTo(goTypes[i], goTypes[j]); got != want {
+				t.Errorf("ConvertibleTo(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+			}
+			if gIface, ok := goTypes[j].Underlying().(*gotypes.Interface); ok {
+				lIface := llTypes[j].Underlying().(*types.Interface)
+				if got, want := types.Implements(llTypes[i], lIface), gotypes.Implements(goTypes[i], gIface); got != want {
+					t.Errorf("Implements(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+				}
+				if got, want := types.Satisfies(llTypes[i], lIface), gotypes.Satisfies(goTypes[i], gIface); got != want {
+					t.Errorf("Satisfies(%s, %s): llgo=%v go=%v", llTypes[i], llTypes[j], got, want)
+				}
+				if gIface.IsMethodSet() {
+					if got, want := types.AssertableTo(lIface, llTypes[i]), gotypes.AssertableTo(gIface, goTypes[i]); got != want {
+						t.Errorf("AssertableTo(%s, %s): llgo=%v go=%v", llTypes[j], llTypes[i], got, want)
+					}
+					lm, lwrong := types.MissingMethod(llTypes[i], lIface, true)
+					gm, gwrong := gotypes.MissingMethod(goTypes[i], gIface, true)
+					if (lm == nil) != (gm == nil) || lwrong != gwrong || (lm != nil && lm.Name() != gm.Name()) {
+						t.Errorf("MissingMethod(%s, %s): llgo=(%v,%v) go=(%v,%v)", llTypes[i], llTypes[j], lm, lwrong, gm, gwrong)
+					}
+				}
+			}
+		}
+	}
+
+	// Verify LLGo extensions (//llgo:cdecl CFn vs GoFn, CPtr vs GoPtr) are NOT collapsed by go/types delegation!
+	cFn := llPkg.Scope().Lookup("CFn").Type()
+	goFn := llPkg.Scope().Lookup("GoFn").Type()
+	if types.Identical(cFn.Underlying(), goFn.Underlying()) {
+		t.Fatal("CDecl signature should NOT be Identical to Go signature")
+	}
+	if types.AssignableTo(cFn.Underlying(), goFn.Underlying()) {
+		t.Fatal("CDecl signature should NOT be AssignableTo Go signature")
+	}
+	goPtr := types.NewPointerWithKind(types.Typ[types.Int], types.GoPtr)
+	cPtr := types.NewPointerWithKind(types.Typ[types.Int], types.CPtr)
+	if types.Identical(goPtr, cPtr) || types.AssignableTo(goPtr, cPtr) {
+		t.Fatal("GoPtr and CPtr should NOT be Identical or AssignableTo each other")
+	}
+}

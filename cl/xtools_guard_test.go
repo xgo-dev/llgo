@@ -27,12 +27,18 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/tools/go/ast/astutil"
+	"golang.org/x/tools/go/callgraph/rta"
+	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
+	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Compile-time assertions on the exact golang.org/x/tools/go/ssa surface
-// depended on by cl/. If an x/tools upgrade removes or changes any of these
-// types, interfaces, or constants, compilation fails immediately.
+// Compile-time assertions on the exact golang.org/x/tools surfaces depended on
+// by LLGo (go/ssa, go/packages, go/ssa/ssautil, go/types/typeutil,
+// go/callgraph/rta, go/ast/astutil). If an x/tools upgrade breaks or removes
+// any of these APIs, compilation fails immediately.
 var (
 	_ []ssa.Instruction = []ssa.Instruction{
 		(*ssa.Alloc)(nil),
@@ -88,12 +94,36 @@ var (
 		(*ssa.Type)(nil),
 	}
 	_ ssa.BuilderMode = ssa.SanityCheckFunctions | ssa.GlobalDebug | ssa.InstantiateGenerics
+
+	// golang.org/x/tools/go/packages surface relied on by internal/packages & internal/build.
+	_ packages.LoadMode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+		packages.NeedImports | packages.NeedDeps | packages.NeedTypes | packages.NeedSyntax |
+		packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule
+	_ func(*packages.Config, ...string) ([]*packages.Package, error) = packages.Load
+
+	// golang.org/x/tools/go/ssa/ssautil surface relied on by cl/ & internal/build.
+	_ func(*ssa.Program) map[*ssa.Function]bool                 = ssautil.AllFunctions
+	_ func([]*ssa.Package) []*ssa.Package                       = ssautil.MainPackages
+	_ func([]*packages.Package, ssa.BuilderMode) (*ssa.Program, []*ssa.Package) = ssautil.Packages
+
+	// golang.org/x/tools/go/types/typeutil surface relied on by internal/llvmgen & internal/build.
+	_ *typeutil.Map            = (*typeutil.Map)(nil)
+	_ *typeutil.MethodSetCache = (*typeutil.MethodSetCache)(nil)
+	_                          = typeutil.IntuitiveMethodSet
+	_                          = typeutil.Callee
+	_                          = typeutil.StaticCallee
+
+	// golang.org/x/tools/go/callgraph/rta surface relied on by internal/build/wasm_reflect.go.
+	_ func([]*ssa.Function, bool) *rta.Result = rta.Analyze
+
+	// golang.org/x/tools/go/ast/astutil surface relied on by internal/build & internal/midway.
+	_ func(ast.Node, astutil.ApplyFunc, astutil.ApplyFunc) ast.Node = astutil.Apply
 )
 
 // TestXToolsSSAVersionGuard inspects the active golang.org/x/tools/go/ssa
-// package from go.mod so any future x/tools version bump that introduces a new
-// concrete ssa.Instruction, ssa.Value, or ssa.Member (or removes one that cl/
-// handles) fails immediately with an actionable checklist.
+// package from go.mod AND cross-checks cl/compile.go's instruction handling so
+// any future x/tools version bump that introduces a new concrete ssa.Instruction,
+// ssa.Value, or ssa.Member (or drops handling in cl/compile.go) fails immediately.
 func TestXToolsSSAVersionGuard(t *testing.T) {
 	out, err := exec.Command("go", "list", "-json", "golang.org/x/tools/go/ssa").Output()
 	if err != nil {
@@ -107,8 +137,6 @@ func TestXToolsSSAVersionGuard(t *testing.T) {
 		t.Fatalf("unmarshal go list: %v", err)
 	}
 
-	// Collect all struct types (exported & unexported, e.g. anInstruction/register),
-	// their embedded struct names, and their direct method names across x/tools/go/ssa.
 	type structMeta struct {
 		exported bool
 		embedded []string
@@ -192,9 +220,6 @@ func TestXToolsSSAVersionGuard(t *testing.T) {
 		return false
 	}
 
-	// Concrete ssa.Instruction types implement Block() + Operands().
-	// Concrete non-Instruction ssa.Value types implement Referrers() + Type() without Block().
-	// Concrete ssa.Member types implement Package() + Token().
 	actualInstrs := make(map[string]bool)
 	actualNonInstrValues := make(map[string]bool)
 	actualMembers := make(map[string]bool)
@@ -238,6 +263,79 @@ func TestXToolsSSAVersionGuard(t *testing.T) {
 	compareSets(t, "x/tools/go/ssa concrete Instruction types (update cl/compile.go and llgo/ssa IR if x/tools added a new op)", knownInstrs, actualInstrs)
 	compareSets(t, "x/tools/go/ssa concrete non-Instruction Value types (update cl/compile.go and llgo/ssa IR if x/tools changed)", knownNonInstrValues, actualNonInstrValues)
 	compareSets(t, "x/tools/go/ssa concrete Member types", knownMembers, actualMembers)
+
+	// Cross-check cl/compile.go actually handles every known x/tools instruction
+	// except explicitly justified omissions (e.g. MultiConvert when generics are instantiated).
+	t.Run("CLCompileInstructionCoverage", func(t *testing.T) {
+		cf, err := parser.ParseFile(token.NewFileSet(), "compile.go", nil, 0)
+		if err != nil {
+			t.Fatalf("parse cl/compile.go: %v", err)
+		}
+		handled := make(map[string]bool)
+		ast.Inspect(cf, func(n ast.Node) bool {
+			// Match `case *ssa.<Name>:` in type switches and type assertions `.(*ssa.<Name>)`.
+			switch x := n.(type) {
+			case *ast.CaseClause:
+				for _, expr := range x.List {
+					if name := ssaPtrTypeName(expr); name != "" {
+						handled[name] = true
+					}
+				}
+			case *ast.TypeAssertExpr:
+				if name := ssaPtrTypeName(x.Type); name != "" {
+					handled[name] = true
+				}
+			}
+			return true
+		})
+
+		// Instructions intentionally not handled directly by cl/compile.go.
+		knownUnhandled := map[string]string{
+			"MultiConvert": "only emitted when ssa.InstantiateGenerics is disabled; LLGo enables ssa.InstantiateGenerics",
+		}
+
+		var missing, staleUnhandled []string
+		for instr := range actualInstrs {
+			if handled[instr] {
+				if _, listed := knownUnhandled[instr]; listed {
+					staleUnhandled = append(staleUnhandled, instr)
+				}
+				continue
+			}
+			if _, ok := knownUnhandled[instr]; !ok {
+				missing = append(missing, instr)
+			}
+		}
+		for instr := range knownUnhandled {
+			if !actualInstrs[instr] {
+				staleUnhandled = append(staleUnhandled, instr)
+			}
+		}
+		sort.Strings(missing)
+		sort.Strings(staleUnhandled)
+		if len(missing) > 0 {
+			t.Errorf("cl/compile.go does not handle x/tools/go/ssa instructions (implement or justify in knownUnhandled): %v", missing)
+		}
+		if len(staleUnhandled) > 0 {
+			t.Errorf("stale entries in knownUnhandled (now handled or removed): %v", staleUnhandled)
+		}
+	})
+}
+
+func ssaPtrTypeName(expr ast.Expr) string {
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return ""
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok || id.Name != "ssa" {
+		return ""
+	}
+	return sel.Sel.Name
 }
 
 // TestPureGoCoreDependencyIsolation guarantees the Phase 1 pure-Go core packages
@@ -280,7 +378,6 @@ func TestPureGoCoreDependencyIsolation(t *testing.T) {
 				t.Errorf("%s must not depend on go/types", p.ImportPath)
 			}
 		}
-		// llgo/ssa must not directly import go/types (types/ isolates it).
 		if p.ImportPath == "github.com/xgo-dev/llgo/ssa" {
 			for _, imp := range p.Imports {
 				if imp == "go/types" {

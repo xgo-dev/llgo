@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/constant"
 	"go/token"
 
 	"github.com/xgo-dev/llgo/target"
@@ -101,6 +102,7 @@ func (f *Function) NewBasicBlock(label string) *BasicBlock {
 type Builder struct {
 	fn  *Function
 	blk *BasicBlock
+	pos token.Pos
 }
 
 // NewBuilder creates a Builder positioned at blk.
@@ -114,13 +116,39 @@ func (b *Builder) SetBlock(blk *BasicBlock) {
 	b.blk = blk
 }
 
+// SetPos sets the source position stamped onto subsequently emitted instructions.
+func (b *Builder) SetPos(pos token.Pos) {
+	b.pos = pos
+}
+
 func (b *Builder) emit(ins Instruction) {
 	ins.setBlock(b.blk)
+	if b.pos.IsValid() {
+		ins.setPos(b.pos)
+	}
 	b.blk.Instrs = append(b.blk.Instrs, ins)
 }
 
-func (b *Builder) Const(typ types.Type, lit string) *Const {
-	return &Const{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Literal: lit}
+func (b *Builder) Const(typ types.Type, val constant.Value) *Const {
+	return &Const{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Value: val}
+}
+
+func (b *Builder) Extract(tuple Value, index int) *Extract {
+	var elemType types.Type
+	if tuple != nil && tuple.Type() != nil {
+		if tup, ok := tuple.Type().(*types.Tuple); ok && index >= 0 && index < tup.Len() {
+			elemType = tup.At(index).Type()
+		}
+	}
+	ins := &Extract{baseValue: baseValue{id: b.fn.allocID(), typ: elemType}, Tuple: tuple, Index: index}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) DebugRef(x Value, obj types.Object, isAddr bool) *DebugRef {
+	ins := &DebugRef{X: x, Object: obj, IsAddr: isAddr}
+	b.emit(ins)
+	return ins
 }
 
 func (b *Builder) Phi(typ types.Type, edges ...PhiEdge) *Phi {

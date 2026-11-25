@@ -1632,6 +1632,18 @@ func IdenticalIgnoreTags(x, y Type) bool {
 }
 
 func identical(x, y Type, ignoreTags bool) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return false
+	}
+	if gx, gy := x.goTypeRef(), y.goTypeRef(); gx != nil && gy != nil && !hasLLGoSemanticExt(x) && !hasLLGoSemanticExt(y) {
+		if ignoreTags {
+			return gotypes.IdenticalIgnoreTags(gx, gy)
+		}
+		return gotypes.Identical(gx, gy)
+	}
 	x = Unalias(x)
 	y = Unalias(y)
 	if x == y {

@@ -216,6 +216,14 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 		if !ins.CallConv.IsNative() {
 			return fmt.Errorf("ssa: %s.%s: call.cfunc requires CDecl or Stdcall, got %s", fn.Name, blk.Label, ins.CallConv)
 		}
+	case *Extract:
+		tup, ok := ins.Tuple.Type().(*types.Tuple)
+		if !ok {
+			return fmt.Errorf("ssa: %s.%s: extract operand %s has non-tuple type %s", fn.Name, blk.Label, ins.Tuple.Name(), ins.Tuple.Type())
+		}
+		if ins.Index < 0 || ins.Index >= tup.Len() {
+			return fmt.Errorf("ssa: %s.%s: extract index %d out of range [0,%d)", fn.Name, blk.Label, ins.Index, tup.Len())
+		}
 	case *Return:
 		if len(ins.Results) != fn.Sig.Results().Len() {
 			return fmt.Errorf("ssa: %s.%s: return arity %d != signature results %d", fn.Name, blk.Label, len(ins.Results), fn.Sig.Results().Len())

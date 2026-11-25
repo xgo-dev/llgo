@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"go/constant"
 	"go/token"
 	"strings"
 	"testing"
@@ -54,8 +55,10 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	deadBlk := fn.NewBasicBlock("dead")
 
 	b := NewBuilder(entry)
-	c1 := b.Const(i64, "1")
+	b.SetPos(token.Pos(42))
+	c1 := b.Const(i64, constant.MakeInt64(1))
 	alloc := b.Alloc(i64, true, false)
+	b.DebugRef(alloc, nil, false)
 	b.Store(alloc, c1)
 	loaded := b.Load(alloc, i64)
 	b.WriteBarrier(alloc, loaded, BarrierStore)
@@ -111,6 +114,7 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 				t.Fatalf("instr %s has wrong block/parent", ins.String())
 			}
 			_ = ins.Operands()
+			_ = ins.Pos()
 			if ins.String() == "" {
 				t.Fatalf("empty String() for %T", ins)
 			}

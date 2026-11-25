@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"go/constant"
 	"go/token"
 	"reflect"
 	"strings"
@@ -34,9 +35,14 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	fn := pkg.NewFunction("example.com/demo.Entry", entrySig)
 	entry := fn.NewBasicBlock("entry")
 	b := NewBuilder(entry)
+	b.SetPos(token.Pos(10))
 
 	// NoScan stack/heap allocation for pointer-free int64
 	slot := b.Alloc(i64, true, true)
+	if slot.Pos() != token.Pos(10) {
+		t.Fatalf("slot.Pos() = %v, want 10", slot.Pos())
+	}
+	b.DebugRef(slot, types.NewVar(token.Pos(10), nil, "slot", i64), true)
 	b.Store(slot, fn.Params[0])
 	// Pointer-bearing heap cell with explicit write barrier & safepoint
 	cell := b.Alloc(goPtrI64, true, false)
@@ -44,12 +50,17 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	b.Safepoint(cell)
 	_ = b.PtrCast(slot, cPtrI64)
 
+	// Multi-result call + Extract
+	pairT := types.NewTuple(types.NewParam(0, nil, "", i64), types.NewParam(0, nil, "", types.Typ[types.Bool]))
+	pairCall := b.CallDirect("example.com/demo.divmod", types.Go, pairT, fn.Params[0])
+	_ = b.Extract(pairCall, 0)
+
 	// First-class closure construction and call
 	clo := b.MakeClosure(cbSig, "example.com/demo.helper", nil)
 	res := b.CallClosure(clo, i64, fn.Params[0])
 	_ = b.CallDirect("C.puts", types.CDecl, nil)
 	readMeth := types.NewFunc(0, nil, "Read", types.NewSignature(nil, nil, types.NewTuple(types.NewParam(0, nil, "", i64)), false))
-	_ = b.CallInterface(b.Const(types.NewInterfaceType([]*types.Func{readMeth}, nil), "iface"), "Read", 0, i64)
+	_ = b.CallInterface(b.Const(types.NewInterfaceType([]*types.Func{readMeth}, nil), nil), "Read", 0, i64)
 	b.KeepAlive(cell)
 	b.Return(res)
 
@@ -57,7 +68,7 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 		t.Fatalf("VerifyPackage failed: %v\n%s", err, pkg.String())
 	}
 	text := pkg.String()
-	for _, want := range []string{"alloc.heap.noscan", "gc.writebarrier.store", "gc.safepoint", "makeclosure @example.com/demo.helper", "call.closure", "ptrcast"} {
+	for _, want := range []string{"alloc.heap.noscan", "debugref.addr slot", "extract ", "gc.writebarrier.store", "gc.safepoint", "makeclosure @example.com/demo.helper", "call.closure", "ptrcast"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("IR dump missing %q:\n%s", want, text)
 		}
@@ -76,7 +87,7 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 		t.Fatalf("summary round-trip mismatch: got %+v, want %+v", roundTrip, sum)
 	}
 	if !sum.HasSafepoints || !sum.HasWriteBarrier ||
-		!reflect.DeepEqual(sum.DirectCalls, []string{"C.puts"}) ||
+		!reflect.DeepEqual(sum.DirectCalls, []string{"C.puts", "example.com/demo.divmod"}) ||
 		!reflect.DeepEqual(sum.ClosureRefs, []string{"example.com/demo.helper"}) ||
 		!reflect.DeepEqual(sum.InterfaceCalls, []string{"Read"}) {
 		t.Fatalf("unexpected summary: %+v", sum)
@@ -105,8 +116,8 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.f", voidSig)
 		b := NewBuilder(fn.NewBasicBlock("entry"))
-		p := b.Const(cPtr, "null")
-		b.WriteBarrier(p, b.Const(i64, "0"), BarrierStore)
+		p := b.Const(cPtr, nil)
+		b.WriteBarrier(p, b.Const(i64, constant.MakeInt64(0)), BarrierStore)
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "GoPtr") {
 			t.Fatalf("got %v, want GoPtr write barrier error", err)
@@ -118,7 +129,7 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		fn := pkg.NewFunction("p.f", voidSig)
 		b := NewBuilder(fn.NewBasicBlock("entry"))
 		voidCall := b.CallDirect("C.nop", types.CDecl, nil)
-		b.WriteBarrier(voidCall, b.Const(i64, "0"), BarrierStore)
+		b.WriteBarrier(voidCall, b.Const(i64, constant.MakeInt64(0)), BarrierStore)
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "untyped operand") {
 			t.Fatalf("got %v, want untyped operand error", err)
@@ -127,10 +138,32 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		pkg2 := NewPackage("p", "p", spec)
 		fn2 := pkg2.NewFunction("p.f", voidSig)
 		b2 := NewBuilder(fn2.NewBasicBlock("entry"))
-		b2.CallClosure(b2.Const(nil, "bad"), nil)
+		b2.CallClosure(b2.Const(nil, nil), nil)
 		b2.Return()
 		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "untyped operand") {
 			t.Fatalf("got %v, want untyped operand error", err)
+		}
+	})
+
+	t.Run("invalid extract rejected", func(t *testing.T) {
+		pkg := NewPackage("p", "p", spec)
+		fn := pkg.NewFunction("p.f", voidSig)
+		b := NewBuilder(fn.NewBasicBlock("entry"))
+		b.Extract(b.Const(i64, constant.MakeInt64(1)), 0)
+		b.Return()
+		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "non-tuple") {
+			t.Fatalf("got %v, want non-tuple extract error", err)
+		}
+
+		pkg2 := NewPackage("p", "p", spec)
+		fn2 := pkg2.NewFunction("p.f", voidSig)
+		b2 := NewBuilder(fn2.NewBasicBlock("entry"))
+		tup := types.NewTuple(types.NewParam(0, nil, "", i64))
+		c := b2.CallDirect("p.one", types.Go, tup)
+		b2.Extract(c, 3)
+		b2.Return()
+		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "out of range") {
+			t.Fatalf("got %v, want out of range extract error", err)
 		}
 	})
 
@@ -138,7 +171,7 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.f", voidSig)
 		b := NewBuilder(fn.NewBasicBlock("entry"))
-		b.BinOp(token.ADD, i64, b.Const(i64, "1"), b.Const(i64, "2"))
+		b.BinOp(token.ADD, i64, b.Const(i64, constant.MakeInt64(1)), b.Const(i64, constant.MakeInt64(2)))
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "missing terminator") {
 			t.Fatalf("got %v, want missing terminator error", err)
 		}
@@ -251,7 +284,7 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		m2 := fn2.NewBasicBlock("merge")
 		NewBuilder(e2).Jump(m2)
 		mb2 := NewBuilder(m2)
-		_ = mb2.BinOp(token.ADD, i64, fn2.Params[0], mb2.Const(i64, "1"))
+		_ = mb2.BinOp(token.ADD, i64, fn2.Params[0], mb2.Const(i64, constant.MakeInt64(1)))
 		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: fn2.Params[0]}))
 		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "phi instruction after non-phi") {
 			t.Fatalf("got %v, want late-phi error", err)

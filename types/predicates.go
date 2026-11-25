@@ -23,9 +23,116 @@ import (
 	"go/ast"
 	"go/printer"
 	"go/token"
+	gotypes "go/types"
 	"hash/maphash"
 	"sort"
 )
+
+// hasLLGoSemanticExt reports whether t carries LLGo-specific type semantics
+// (non-Go CallConv, non-Go PtrKind, native struct/array layout, HostLayout, or
+// SIMD storage) that standard go/types predicates do not distinguish.
+func hasLLGoSemanticExt(t Type) bool {
+	return hasLLGoSemanticExtSeen(t, nil)
+}
+
+func hasLLGoSemanticExtSeen(t Type, seen map[Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	if seen != nil && seen[t] {
+		return false
+	}
+	switch u := t.(type) {
+	case *Basic:
+		return false
+	case *Pointer:
+		if u.kind != GoPtr {
+			return true
+		}
+		return hasLLGoSemanticExtSeen(u.elem, markSeen(seen, u))
+	case *Slice:
+		return hasLLGoSemanticExtSeen(u.elem, markSeen(seen, u))
+	case *Array:
+		if u.nativeStorage {
+			return true
+		}
+		return hasLLGoSemanticExtSeen(u.elem, markSeen(seen, u))
+	case *Map:
+		next := markSeen(seen, u)
+		return hasLLGoSemanticExtSeen(u.key, next) || hasLLGoSemanticExtSeen(u.elem, next)
+	case *Chan:
+		return hasLLGoSemanticExtSeen(u.elem, markSeen(seen, u))
+	case *Tuple:
+		next := markSeen(seen, u)
+		for i := 0; i < u.Len(); i++ {
+			if hasLLGoSemanticExtSeen(u.At(i).typ, next) {
+				return true
+			}
+		}
+		return false
+	case *Signature:
+		if u.callConv != Go {
+			return true
+		}
+		next := markSeen(seen, u)
+		return hasLLGoSemanticExtSeen(u.params, next) || hasLLGoSemanticExtSeen(u.results, next)
+	case *Struct:
+		if u.nativeLayout || u.hostLayout || u.isClosureStruct || u.simdTagIndex >= 0 {
+			return true
+		}
+		next := markSeen(seen, u)
+		for _, f := range u.fields {
+			if f != nil && hasLLGoSemanticExtSeen(f.typ, next) {
+				return true
+			}
+		}
+		return false
+	case *Interface:
+		u.resolve()
+		next := markSeen(seen, u)
+		for _, m := range u.methods {
+			if m != nil && hasLLGoSemanticExtSeen(m.typ, next) {
+				return true
+			}
+		}
+		for _, e := range u.embeddeds {
+			if hasLLGoSemanticExtSeen(e, next) {
+				return true
+			}
+		}
+		return false
+	case *Union:
+		next := markSeen(seen, u)
+		for _, term := range u.terms {
+			if term != nil && hasLLGoSemanticExtSeen(term.typ, next) {
+				return true
+			}
+		}
+		return false
+	case *Named:
+		u.resolve()
+		if u.callConv != Go || u.hasCallConv || u.nativeLayout || u.hostLayout || u.simdTagIndex >= 0 || u.simdVec != nil {
+			return true
+		}
+		next := markSeen(seen, u)
+		for i := 0; i < u.TypeArgs().Len(); i++ {
+			if hasLLGoSemanticExtSeen(u.TypeArgs().At(i), next) {
+				return true
+			}
+		}
+		return false
+	case *Alias:
+		if u.callConv != Go || u.hasCallConv {
+			return true
+		}
+		return hasLLGoSemanticExtSeen(u.rhs, markSeen(seen, u))
+	case *TypeParam:
+		return false
+	case *SIMDVec:
+		return true
+	}
+	return false
+}
 
 // IsInterface reports whether t is an interface type (mirroring go/types.IsInterface).
 func IsInterface(t Type) bool {
@@ -63,6 +170,9 @@ func Default(t Type) Type {
 func Comparable(T Type) bool {
 	if T == nil {
 		return false
+	}
+	if gT := T.goTypeRef(); gT != nil && !hasLLGoSemanticExt(T) {
+		return gotypes.Comparable(gT)
 	}
 	switch u := Unalias(T).(type) {
 	case *TypeParam:
@@ -367,6 +477,17 @@ func MissingMethod(V Type, T *Interface, static bool) (method *Func, wrongType b
 		return nil, false
 	}
 	T.resolve()
+	if T.ctx != nil && T.goIface != nil {
+		if gV := V.goTypeRef(); gV != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+			gm, wrong := gotypes.MissingMethod(gV, T.goIface, static)
+			if gm == nil {
+				return nil, wrong
+			}
+			if fn, ok := T.ctx.FromGoObject(gm).(*Func); ok {
+				return fn, wrong
+			}
+		}
+	}
 	if T.NumMethods() == 0 {
 		return nil, false
 	}
@@ -419,6 +540,11 @@ func Implements(V Type, T *Interface) bool {
 		return false
 	}
 	T.resolve()
+	if T.goIface != nil {
+		if gV := V.goTypeRef(); gV != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+			return gotypes.Implements(gV, T.goIface)
+		}
+	}
 	if !T.IsMethodSet() {
 		return false
 	}
@@ -433,6 +559,11 @@ func Satisfies(V Type, T *Interface) bool {
 		return false
 	}
 	T.resolve()
+	if T.goIface != nil {
+		if gV := V.goTypeRef(); gV != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+			return gotypes.Satisfies(gV, T.goIface)
+		}
+	}
 	if m, _ := MissingMethod(V, T, true); m != nil {
 		return false
 	}
@@ -486,6 +617,9 @@ func termMatches(V Type, term *Term) bool {
 func AssignableTo(V, T Type) bool {
 	if V == nil || T == nil {
 		return false
+	}
+	if gV, gT := V.goTypeRef(), T.goTypeRef(); gV != nil && gT != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+		return gotypes.AssignableTo(gV, gT)
 	}
 	Vu := Unalias(V)
 	Tu := Unalias(T)
@@ -545,6 +679,9 @@ func AssignableTo(V, T Type) bool {
 func ConvertibleTo(V, T Type) bool {
 	if V == nil || T == nil {
 		return false
+	}
+	if gV, gT := V.goTypeRef(), T.goTypeRef(); gV != nil && gT != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+		return gotypes.ConvertibleTo(gV, gT)
 	}
 	if AssignableTo(V, T) {
 		return true
@@ -626,6 +763,12 @@ func ConvertibleTo(V, T Type) bool {
 func AssertableTo(V *Interface, T Type) bool {
 	if V == nil || T == nil {
 		return false
+	}
+	V.resolve()
+	if V.goIface != nil {
+		if gT := T.goTypeRef(); gT != nil && !hasLLGoSemanticExt(V) && !hasLLGoSemanticExt(T) {
+			return gotypes.AssertableTo(V.goIface, gT)
+		}
 	}
 	if _, ok := T.Underlying().(*Interface); ok {
 		return true
