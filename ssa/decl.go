@@ -82,8 +82,23 @@ type Global = *aGlobal
 const (
 	moduleZeroName              = "__llgo.moduleZeroSizedAlloc$"
 	moduleMapZeroName           = "__llgo.map.zero"
+	directClosureNilEnvName     = "__llgo.directClosureNilEnv$"
 	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
 )
+
+func (p Package) directClosureNilEnv() Expr {
+	sentinel := p.mod.NamedGlobal(directClosureNilEnvName)
+	if sentinel.IsNil() {
+		byteTy := p.Prog.Byte()
+		sentinel = llvm.AddGlobal(p.mod, byteTy.ll, directClosureNilEnvName)
+		sentinel.SetInitializer(llvm.ConstNull(byteTy.ll))
+		// Keep a distinct non-unnamed_addr ODR global so its address can never
+		// collide with user pointers, zerobase, or another package's sentinel.
+		p.setODRLinkage(sentinel, llvm.WeakODRLinkage)
+		sentinel.SetAlignment(1)
+	}
+	return Expr{sentinel, p.Prog.VoidPtr()}
+}
 
 func (p Package) moduleZeroSizedAlloc(elem Type) Expr {
 	name := moduleZeroName
@@ -353,11 +368,13 @@ type aFunction struct {
 	nextDeferID      uintptr
 	recov            BasicBlock
 
-	params    []Type
-	freeVars  Expr
-	env       Type
-	envDirect bool
-	hasVArg   bool
+	params            []Type
+	freeVars          Expr
+	env               Type
+	envDirect         bool
+	envDirectNullable bool
+	directEnvVal      Expr
+	hasVArg           bool
 
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}
@@ -399,7 +416,7 @@ func (p Package) NewFuncEx(name string, sig *types.Signature, cc CallConv, hasFr
 	if hasFreeVars {
 		panic("ssa: NewFuncEx cannot represent an environment; use NewEnvFunc")
 	}
-	return p.newFunc(name, sig, cc, nil, false, instantiated)
+	return p.newFunc(name, sig, cc, nil, false, false, instantiated)
 }
 
 // NewEnvFunc creates a function whose Go signature is sig and whose physical
@@ -410,28 +427,30 @@ func (p Package) NewEnvFunc(
 	if env == nil {
 		panic("ssa: nil closure environment")
 	}
-	return p.newFunc(name, sig, cc, env, false, instantiated)
+	return p.newFunc(name, sig, cc, env, false, false, instantiated)
 }
 
 // NewDirectEnvFunc creates a function whose single pointer-typed captured value
 // is transported directly in the closure's environment slot without allocating
-// a heap wrapper struct.
+// a wrapper struct. When nullable is true, nil captures are encoded with the
+// shared non-nil sentinel so closure.env != nil stays invariant across all
+// env-bearing entries.
 func (p Package) NewDirectEnvFunc(
-	name string, sig *types.Signature, cc CallConv, env *types.Var, instantiated bool,
+	name string, sig *types.Signature, cc CallConv, env *types.Var, nullable bool, instantiated bool,
 ) Function {
 	if env == nil {
 		panic("ssa: nil direct closure environment")
 	}
-	return p.newFunc(name, sig, cc, env, true, instantiated)
+	return p.newFunc(name, sig, cc, env, true, nullable, instantiated)
 }
 
 func (p Package) newFunc(
-	name string, sig *types.Signature, cc CallConv, env *types.Var, directEnv bool, instantiated bool,
+	name string, sig *types.Signature, cc CallConv, env *types.Var, directEnv bool, directEnvNullable bool, instantiated bool,
 ) Function {
 	isLLVMName := strings.HasPrefix(name, "llvm.")
 	var cached Function
 	if v, ok := p.fns[name]; ok {
-		if v.NeedsEnv() != (env != nil) || v.DirectEnv() != directEnv {
+		if v.NeedsEnv() != (env != nil) || v.DirectEnv() != directEnv || v.DirectEnvNullable() != directEnvNullable {
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
@@ -485,7 +504,7 @@ func (p Package) newFunc(
 			if cached != nil {
 				return cached
 			}
-			ret := newFunction(fn, t, p, p.Prog, nil, false)
+			ret := newFunction(fn, t, p, p.Prog, nil, false, false)
 			p.fns[name] = ret
 			return ret
 		}
@@ -528,7 +547,7 @@ func (p Package) newFunc(
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, envType, directEnv)
+	ret := newFunction(fn, t, p, p.Prog, envType, directEnv, directEnvNullable)
 	p.fns[name] = ret
 	return ret
 }
@@ -538,18 +557,19 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool, envDirectNullable bool) Function {
 	params, hasVArg := newParams(t, prog)
 	return &aFunction{
-		Expr:       Expr{fn, t},
-		Pkg:        pkg,
-		Prog:       prog,
-		params:     params,
-		env:        env,
-		envDirect:  envDirect,
-		hasVArg:    hasVArg,
-		fakeUses:   make([]llvm.Value, 0, 4),
-		fakeUseSet: make(map[llvm.Value]struct{}),
+		Expr:              Expr{fn, t},
+		Pkg:               pkg,
+		Prog:              prog,
+		params:            params,
+		env:               env,
+		envDirect:         envDirect,
+		envDirectNullable: envDirectNullable,
+		hasVArg:           hasVArg,
+		fakeUses:          make([]llvm.Value, 0, 4),
+		fakeUseSet:        make(map[llvm.Value]struct{}),
 	}
 }
 
@@ -605,6 +625,44 @@ func (p Function) DirectEnv() bool {
 	return p.envDirect
 }
 
+// DirectEnvNullable reports whether a direct closure environment encodes nil
+// captures with the shared non-nil sentinel so closure.env != nil stays
+// invariant across all env-bearing entries.
+func (p Function) DirectEnvNullable() bool {
+	return p.envDirectNullable
+}
+
+// DirectEnvValue returns the decoded single captured pointer for a direct
+// closure environment. For nullable captures, the sentinel check is emitted
+// once in the function's entry block and reused.
+func (p Function) DirectEnvValue(b Builder) Expr {
+	if !p.envDirect {
+		panic("ssa: function does not have a direct closure environment")
+	}
+	if !p.envDirectNullable {
+		return p.Env()
+	}
+	if p.directEnvVal.IsNil() {
+		emit := func() Expr {
+			raw := p.Env()
+			sentinel := p.Pkg.directClosureNilEnv()
+			isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, raw.impl, sentinel.impl)
+			decoded := llvm.CreateSelect(b.impl, isNil, llvm.ConstNull(raw.impl.Type()), raw.impl)
+			return Expr{decoded, raw.Type}
+		}
+		if cur := b.impl.GetInsertBlock(); cur != p.blks[0].first {
+			blk := *b.blk
+			blk.last = cur
+			b.SetBlockEx(p.blks[0], AtStart, false)
+			p.directEnvVal = emit()
+			b.SetBlockEx(&blk, AtEnd, false)
+		} else {
+			p.directEnvVal = emit()
+		}
+	}
+	return p.directEnvVal
+}
+
 // EnvType returns the physical closure environment pointer type, or nil.
 func (p Function) EnvType() Type {
 	return p.env
@@ -644,7 +702,7 @@ func (p Function) FreeVar(b Builder, i int) Expr {
 		if i != 0 {
 			panic("ssa: direct closure environment only supports index 0")
 		}
-		return p.Env()
+		return p.DirectEnvValue(b)
 	}
 	ctx := p.closureCtx(b)
 	return b.getField(ctx, i)

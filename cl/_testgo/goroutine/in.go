@@ -10,7 +10,9 @@ package main
 // ARM64-LABEL: define void @"main.main$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
 // AMD64-LABEL: define void @"main.main$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
-// CHECK: call void @"{{.*}}ChanClose"(ptr %0)
+// CHECK: [[DONE_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[DONE_CH:%[0-9]+]] = select i1 [[DONE_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[DONE_CH]])
 // CHECK-LABEL: define ptr @"main._llgo_routine$1"(ptr
 // CHECK: [[ROUTINE1_ARGS:%[0-9]+]] = load { %"{{.*}}String" }, ptr [[ROUTINE1_ROOT:%[0-9]+]]
 // CHECK-NEXT: [[ROUTINE1_TEXT:%[0-9]+]] = extractvalue { %"{{.*}}String" } [[ROUTINE1_ARGS]], 0

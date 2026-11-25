@@ -82,8 +82,10 @@ import "C"
 
 // ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {
-// CHECK: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr %0, 1
-// CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr %0)
+// CHECK: [[FREE_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[FREE_PTR:%[0-9]+]] = select i1 [[FREE_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[FREE_PTR]], 1
+// CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr [[FREE_PTR]])
 
 //export go_callback
 func go_callback(value C.int) C.int {

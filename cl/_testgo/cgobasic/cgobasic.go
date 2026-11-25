@@ -60,7 +60,9 @@ import "unsafe"
 // CHECK-NEXT: ret ptr [[CBYTES_RESULT]]
 
 // CHECK-LABEL: define %"{{.*}}Slice" @"main.main$2"(ptr {{.*}}%0){{.*}} {
-// CHECK: [[GOBYTES_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}GoBytes"(ptr %0, i64 3)
+// CHECK: [[GOBYTES_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[GOBYTES_PTR:%[0-9]+]] = select i1 [[GOBYTES_IS_NIL]], ptr null, ptr %0
+// CHECK: [[GOBYTES_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}GoBytes"(ptr [[GOBYTES_PTR]], i64 3)
 // CHECK-NEXT: ret %"{{.*}}Slice" [[GOBYTES_RESULT]]
 func main() {
 	text := C.CString("llgo")

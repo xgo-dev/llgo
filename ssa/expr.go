@@ -1561,7 +1561,13 @@ func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 			if len(bindings) != 1 {
 				panic("ssa: direct closure environment requires exactly one binding")
 			}
-			data = b.Convert(prog.VoidPtr(), bindings[0]).impl
+			val := b.Convert(prog.VoidPtr(), bindings[0]).impl
+			if entry.DirectEnvNullable() {
+				sentinel := b.Pkg.directClosureNilEnv().impl
+				isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, val, llvm.ConstNull(val.Type()))
+				val = llvm.CreateSelect(b.impl, isNil, sentinel, val)
+			}
+			data = val
 		} else {
 			tctx := prog.Elem(entry.EnvType())
 			rawCtx := tctx.raw.Type.Underlying().(*types.Struct)

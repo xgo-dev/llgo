@@ -116,7 +116,9 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[S_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S]], i32 0, i32 0
 // CHECK-NEXT: store i64 5, ptr [[S_FIELD]]
-// CHECK: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[S]], 1
+// CHECK: [[S_NIL:%.*]] = icmp eq ptr [[S]], null
+// CHECK-NEXT: [[S_ENV:%.*]] = select i1 [[S_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[S]]
+// CHECK-NEXT: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[S_ENV]], 1
 // CHECK: [[METHOD_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 1
 // CHECK: [[METHOD_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 0
 // CHECK: [[METHOD_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[METHOD_CODE_RAW]])
@@ -175,7 +177,9 @@ func makeWithFree(base int) Fn {
 
 // ARM64-LABEL: define i64 @"main.(*S).Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.(*S).Add$bound"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[BOUND_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr %0, i64 %1)
+// CHECK: [[BOUND_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[BOUND_RECV:%[0-9]+]] = select i1 [[BOUND_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr [[BOUND_RECV]], i64 %1)
 // CHECK: ret i64 [[BOUND_RESULT]]
 
 // CHECK-LABEL: define i64 @"main.(*S).Add$thunk"(ptr %0, i64 %1){{.*}} {

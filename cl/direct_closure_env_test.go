@@ -142,8 +142,8 @@ func makeLoop(b *box) func(int) int {
 			if strings.Contains(fnIR, "alloca ptr") {
 				t.Fatalf("direct capture-by-value debug ref emitted unexpected pointer alloca:\n%s", fnIR)
 			}
-			if strings.Count(fnIR, "#dbg_value(ptr %0,") < 2 {
-				t.Fatalf("expected #dbg_value(ptr %%0, ...) for both $env and captured b:\n%s", fnIR)
+			if !strings.Contains(fnIR, "#dbg_value(ptr %0,") || strings.Count(fnIR, "#dbg_value(ptr %") < 2 {
+				t.Fatalf("expected #dbg_value for both $env and decoded captured b:\n%s", fnIR)
 			}
 		})
 	}

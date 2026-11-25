@@ -22,7 +22,9 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_CAP]])
 // CHECK: call void @"{{.*}}PrintEface"(%"{{.*}}eface" [[CH1_EFACE]])
 // CHECK: [[SEND_COPY:%.*]] = load ptr, ptr [[CH1_SLOT]]
-// CHECK-NEXT: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_COPY]], 1
+// CHECK-NEXT: [[SEND_NIL:%.*]] = icmp eq ptr [[SEND_COPY]], null
+// CHECK-NEXT: [[SEND_ENV:%.*]] = select i1 [[SEND_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[SEND_COPY]]
+// CHECK-NEXT: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_ENV]], 1
 // CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr {{%.*}})
 // CHECK: [[CH1_RECV:%.*]] = load ptr, ptr [[CH1_SLOT]]
@@ -36,7 +38,9 @@ package main
 // CHECK: [[CH2:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH2]], ptr [[CH2_SLOT]]
 // CHECK: [[CLOSE_COPY:%.*]] = load ptr, ptr [[CH2_SLOT]]
-// CHECK-NEXT: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_COPY]], 1
+// CHECK-NEXT: [[CLOSE_NIL:%.*]] = icmp eq ptr [[CLOSE_COPY]], null
+// CHECK-NEXT: [[CLOSE_ENV:%.*]] = select i1 [[CLOSE_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[CLOSE_COPY]]
+// CHECK-NEXT: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_ENV]], 1
 // CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%.*}})
 // CHECK: [[CH2_RECV:%.*]] = load ptr, ptr [[CH2_SLOT]]
@@ -55,13 +59,17 @@ package main
 // AMD64-LABEL: define void @"main.main$1"(ptr nest %0){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[SEND_BUF:%[0-9]+]] = alloca i64, align 8
+// CHECK-NEXT: [[SEND_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[SEND_CH:%[0-9]+]] = select i1 [[SEND_IS_NIL]], ptr null, ptr %0
 // CHECK: call void @llvm.memset.p0.i64(ptr [[SEND_BUF]], i8 0, i64 8, i1 false)
 // CHECK: store i64 100, ptr [[SEND_BUF]]
-// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr %0, ptr [[SEND_BUF]], i64 8)
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[SEND_CH]], ptr [[SEND_BUF]], i64 8)
 
 // ARM64-LABEL: define void @"main.main$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$2"(ptr nest %0){{.*}} {
-// CHECK: call void @"{{.*}}ChanClose"(ptr %0)
+// CHECK: [[CLOSE_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[CLOSE_CH:%[0-9]+]] = select i1 [[CLOSE_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[CLOSE_CH]])
 
 func main() {
 	ch := make(chan int, 10)

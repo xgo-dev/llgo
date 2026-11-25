@@ -22,9 +22,40 @@ func TestDirectSinglePtrClosureEnvExecution(t *testing.T) {
 	const source = `package main
 
 import (
+	"reflect"
 	"runtime"
 	"unsafe"
 )
+
+//llgo:cdecl
+type cIntCallback func(int) int
+
+//go:noinline
+func toNativeCallback(fn func(int) int) cIntCallback {
+	return cIntCallback(fn)
+}
+
+func assertPanics(label, want string, fn func()) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			panic(label + ": did not panic")
+		}
+		var got string
+		switch v := r.(type) {
+		case string:
+			got = v
+		case error:
+			got = v.Error()
+		default:
+			panic(label + ": unexpected panic type")
+		}
+		if got != want {
+			panic(label + ": panic = " + got + ", want " + want)
+		}
+	}()
+	fn()
+}
 
 type box struct {
 	v int
@@ -186,6 +217,39 @@ func main() {
 	runtime.ReadMemStats(&after)
 	if after.Mallocs != before.Mallocs {
 		panic("unexpected allocation for direct single-pointer closure")
+	}
+
+	// Direct-env closures capturing a nil pointer must still carry a non-nil
+	// environment sentinel so both closureToNative and reflect reject them as
+	// capturing C callbacks instead of misclassifying {fn, nil} as env-free.
+	cType := reflect.TypeOf(cIntCallback(nil))
+	for _, tc := range []struct {
+		name string
+		fn   func(int) int
+	}{
+		{"nil ptr closure", makeImmutablePtrClosure(nil)},
+		{"nil bound method", makeBoundMethod(nil)},
+		{"nil map closure", makeMapClosure(nil)},
+		{"non-nil ptr closure", makeImmutablePtrClosure(b)},
+	} {
+		assertPanics("closureToNative/"+tc.name, "runtime error: C callback must not capture variables", func() {
+			_ = toNativeCallback(tc.fn)
+		})
+		assertPanics("reflect.Convert/"+tc.name, "reflect.Value.Convert: C callback must not capture variables", func() {
+			_ = reflect.ValueOf(tc.fn).Convert(cType)
+		})
+		assertPanics("reflect.Set/"+tc.name, "reflect.Set: C callback must not capture variables", func() {
+			var slot cIntCallback
+			reflect.ValueOf(&slot).Elem().Set(reflect.ValueOf(tc.fn))
+		})
+	}
+	// A non-capturing closure must still convert cleanly.
+	plain := func(d int) int { return d + 1 }
+	if toNativeCallback(plain)(5) != 6 {
+		panic("plain closureToNative failed")
+	}
+	if reflect.ValueOf(plain).Convert(cType).Interface().(cIntCallback)(5) != 6 {
+		panic("plain reflect.Convert failed")
 	}
 	println("direct-closure-ok")
 }

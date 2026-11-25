@@ -56,12 +56,16 @@ package main
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @[[EXIT_TEXT]], i64 4 })
 // ARM64-LABEL: define void @"main.recv$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.recv$1"(ptr nest %0){{.*}} {
+// CHECK: [[RECV1_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[RECV1_CH:%[0-9]+]] = select i1 [[RECV1_NIL]], ptr null, ptr %0
 // CHECK: store %"{{.*}}String" { ptr @[[CH1_TEXT]], i64 3 }, ptr [[RECV1_VALUE:%[0-9]+]]
-// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr %0, ptr [[RECV1_VALUE]], i64 16)
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV1_CH]], ptr [[RECV1_VALUE]], i64 16)
 // ARM64-LABEL: define void @"main.recv$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.recv$2"(ptr nest %0){{.*}} {
+// CHECK: [[RECV2_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[RECV2_CH:%[0-9]+]] = select i1 [[RECV2_NIL]], ptr null, ptr %0
 // CHECK: store %"{{.*}}String" { ptr @[[CH2_TEXT]], i64 3 }, ptr [[RECV2_VALUE:%[0-9]+]]
-// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr %0, ptr [[RECV2_VALUE]], i64 16)
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[RECV2_CH]], ptr [[RECV2_VALUE]], i64 16)
 // CHECK-LABEL: define void @main.send(){{.*}} {
 // CHECK: [[SEND_CH1_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
 // CHECK: [[SEND_CH2_OBJ:%[0-9]+]] = call ptr @"{{.*}}NewChan"(i64 8, i64 0)
@@ -89,12 +93,16 @@ package main
 // CHECK: [[SEND_IS_CASE1:%[0-9]+]] = icmp eq i64 [[SEND_DISPATCH]], 1
 // ARM64-LABEL: define void @"main.send$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.send$1"(ptr nest %0){{.*}} {
-// CHECK: call i1 @"{{.*}}ChanRecv"(ptr %0, ptr [[SEND1_BUF:%[0-9]+]], i64 8)
+// CHECK: [[SEND1_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[SEND1_CH:%[0-9]+]] = select i1 [[SEND1_NIL]], ptr null, ptr %0
+// CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND1_CH]], ptr [[SEND1_BUF:%[0-9]+]], i64 8)
 // CHECK-NEXT: [[SEND1_VALUE:%[0-9]+]] = load volatile i64, ptr [[SEND1_BUF]]
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[SEND1_VALUE]])
 // ARM64-LABEL: define void @"main.send$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.send$2"(ptr nest %0){{.*}} {
-// CHECK: call i1 @"{{.*}}ChanRecv"(ptr %0, ptr [[SEND2_BUF:%[0-9]+]], i64 8)
+// CHECK: [[SEND2_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[SEND2_CH:%[0-9]+]] = select i1 [[SEND2_NIL]], ptr null, ptr %0
+// CHECK: call i1 @"{{.*}}ChanRecv"(ptr [[SEND2_CH]], ptr [[SEND2_BUF:%[0-9]+]], i64 8)
 // CHECK-NEXT: [[SEND2_VALUE:%[0-9]+]] = load volatile i64, ptr [[SEND2_BUF]]
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[SEND2_VALUE]])
 

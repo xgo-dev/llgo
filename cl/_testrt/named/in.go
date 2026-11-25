@@ -77,7 +77,9 @@ func main() {
 // CHECK-LABEL: define i64 @"main.main$1"(
 // ARM64-SAME: ptr swiftself %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
 // AMD64-SAME: ptr nest %[[CENV:[0-9]+]], i64 %[[ARG:[0-9]+]]){{.*}} {
-// CHECK: %[[VALUEFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %[[CENV]], i32 0, i32 4
+// CHECK: %[[CNIL:[0-9]+]] = icmp eq ptr %[[CENV]], @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: %[[CPTR:[0-9]+]] = select i1 %[[CNIL]], ptr null, ptr %[[CENV]]
+// CHECK-NEXT: %[[VALUEFIELD:[0-9]+]] = getelementptr inbounds nuw %main.mspan, ptr %[[CPTR]], i32 0, i32 4
 // CHECK: %[[VALUE:[0-9]+]] = load i64, ptr %[[VALUEFIELD]], align 8
 // CHECK: %[[PRODUCT:[0-9]+]] = mul i64 %[[VALUE]], %[[ARG]]
 // CHECK: ret i64 %[[PRODUCT]]
