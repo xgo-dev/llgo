@@ -241,6 +241,9 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 // -----------------------------------------------------------------------------
 
+// Keep in sync with runtime/internal/runtime/defer_longjmp_darwin_arm64.go and
+// z_setjmp_files_darwin_arm64.go, which bind Rethrow's deferLongjmp to
+// llgo_longjmp for the same native darwin/arm64 build configuration.
 func (b Builder) useFastDarwinArm64DeferSetjmp() bool {
 	t := b.Prog.target
 	return t.Target == "" && t.effectiveGOOS() == "darwin" && t.effectiveGOARCH() == "arm64"

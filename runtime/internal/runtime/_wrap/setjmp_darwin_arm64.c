@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-#if defined(__APPLE__) && defined(__aarch64__) && !defined(__arm64e__)
+#if defined(__APPLE__) && defined(__aarch64__)
+
+#if defined(__arm64e__)
+#error "llgo_setjmp/llgo_longjmp does not support arm64e pointer authentication"
+#endif
 
 /*
  * Fast ABI-only context save/restore for Go defer/panic unwinding on Darwin
@@ -22,6 +26,10 @@
  * with SA_NODEFER and sigsetjmp is always called with savemask=0). Preserving
  * the AAPCS64 callee-saved registers directly avoids the dynamic-linker stub,
  * sigsetjmp wrapper, and pointer-mangling sequence on every deferred frame.
+ *
+ * Security note: unlike Darwin's libc sigsetjmp, raw fp/lr/sp storage omits
+ * per-process pointer-mangling cookie hardening (matching LLGo's existing
+ * windows/arm64 llgo_setjmp implementation).
  *
  * Layout fits inside Darwin's 196-byte SigjmpBuf (176 bytes used, 16-byte
  * aligned pairs when env is 16-byte aligned).

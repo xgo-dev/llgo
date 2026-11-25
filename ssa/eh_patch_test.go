@@ -220,3 +220,57 @@ func TestDeferInLoopContiguousDrainerGeneration(t *testing.T) {
 		t.Fatalf("expected defer node drain/free in IR, got:\n%s", ir)
 	}
 }
+
+func TestDarwinArm64DeferSetjmpABI(t *testing.T) {
+	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+	pkg := prog.NewPackage("foo", "foo")
+
+	cleanup := pkg.NewFunc("cleanup", ssa.NoArgsNoRet, ssa.GoDecl)
+	cb := cleanup.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	// Defer frames on darwin/arm64 use 16-byte-aligned buffers and llgo_setjmp
+	// (marked returns_twice), while direct Sigsetjmp/Siglongjmp calls keep
+	// using libc sigsetjmp/siglongjmp because their buffer layouts differ.
+	deferFn := pkg.NewFunc("withDefer", ssa.NoArgsNoRet, ssa.GoDecl)
+	db := deferFn.MakeBody(1)
+	deferFn.SetRecover(deferFn.MakeBlock())
+	db.Defer(ssa.DeferAlways, cleanup.Expr, ssa.Builder.Call)
+	db.RunDefers()
+	db.Return()
+	db.EndBuild()
+
+	libcFn := pkg.NewFunc("directSigjmp", ssa.NoArgsNoRet, ssa.GoDecl)
+	lb := libcFn.MakeBody(1)
+	jb := lb.AllocaSigjmpBuf()
+	zero := prog.IntVal(0, prog.CInt())
+	one := prog.IntVal(1, prog.CInt())
+	_ = lb.Sigsetjmp(jb, zero)
+	lb.Siglongjmp(jb, one)
+	lb.Return()
+	lb.EndBuild()
+
+	modIR := pkg.Module().String()
+	deferIR := pkg.Module().NamedFunction("withDefer").String()
+	libcIR := pkg.Module().NamedFunction("directSigjmp").String()
+
+	if !strings.Contains(deferIR, "alloca i8") || !strings.Contains(deferIR, "align 16") {
+		t.Fatalf("darwin/arm64 defer jmpbuf missing 16-byte alignment:\n%s", deferIR)
+	}
+	if !strings.Contains(deferIR, "@llgo_setjmp") {
+		t.Fatalf("darwin/arm64 defer did not lower to @llgo_setjmp:\n%s", deferIR)
+	}
+	if strings.Contains(deferIR, "@sigsetjmp") {
+		t.Fatalf("darwin/arm64 defer unexpectedly called libc @sigsetjmp:\n%s", deferIR)
+	}
+	if !strings.Contains(modIR, "returns_twice") {
+		t.Fatalf("darwin/arm64 @llgo_setjmp declaration missing returns_twice:\n%s", modIR)
+	}
+	if !strings.Contains(libcIR, ".Sigsetjmp") || !strings.Contains(libcIR, ".Siglongjmp") {
+		t.Fatalf("darwin/arm64 direct Sigsetjmp/Siglongjmp did not preserve runtime libc ABI:\n%s", libcIR)
+	}
+	if strings.Contains(libcIR, "@llgo_setjmp") || strings.Contains(libcIR, "@llgo_longjmp") {
+		t.Fatalf("darwin/arm64 direct Sigsetjmp/Siglongjmp unexpectedly used defer ABI:\n%s", libcIR)
+	}
+}
