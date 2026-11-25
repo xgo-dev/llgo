@@ -14,9 +14,10 @@ func TestGuardedFeatureCombinations(t *testing.T) {
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx512() "llgo.cpu.query"="x86.avx512"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare <16 x float> @llvm.fma.v16f32(<16 x float>, <16 x float>, <16 x float>)
 define void @helper(ptr %p) "llgo.fmv.avx2-entry" {
  %v=load <16 x float>,ptr %p,align 4
- %r=fmul <16 x float> %v,%v
+ %r=call <16 x float> @llvm.fma.v16f32(<16 x float> %v, <16 x float> %v, <16 x float> %v)
  store <16 x float> %r,ptr %p,align 4
  ret void
 }
@@ -67,6 +68,7 @@ const guardedVectorFixture = `
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare <16 x float> @llvm.fma.v16f32(<16 x float>, <16 x float>, <16 x float>)
 define void @root(ptr %p) {
  %a = call i1 @wide()
  %b = call i1 @fma()
@@ -74,7 +76,7 @@ define void @root(ptr %p) {
  br i1 %both, label %vector, label %exit
 vector:
  %v = load <16 x float>, ptr %p, align 4
- %neg = fneg <16 x float> %v
+ %neg = call <16 x float> @llvm.fma.v16f32(<16 x float> %v, <16 x float> %v, <16 x float> %v)
  store <16 x float> %neg, ptr %p, align 4
  br label %exit
 exit:
@@ -86,7 +88,7 @@ define void @unrelated(ptr %p, i1 %flag) {
  br i1 %either, label %vector, label %exit
 vector:
  %v = load <16 x float>, ptr %p, align 4
- %neg = fneg <16 x float> %v
+ %neg = call <16 x float> @llvm.fma.v16f32(<16 x float> %v, <16 x float> %v, <16 x float> %v)
  store <16 x float> %neg, ptr %p, align 4
  br label %exit
 exit:
@@ -273,6 +275,7 @@ target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 declare i1 @sha() "llgo.cpu.query"="x86.sha"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
+declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
 define void @kernel(ptr %p) "llgo.fmv.avx2-entry" {
  %x = load <16 x i32>, ptr %p
  %y = add <16 x i32> %x, %x
@@ -292,6 +295,7 @@ slowcheck:
  %s = call i1 @sha()
  br i1 %s, label %slow, label %exit
 slow:
+ call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 128)
  call void @kernel(ptr %p)
  br label %exit
 exit:
@@ -359,6 +363,10 @@ no:
 
 func TestOptionalGuardAtV4(t *testing.T) {
 	ir := strings.ReplaceAll(guardedVectorFixture, `"x86.fma"`, `"x86.avx512vnni"`)
+	ir = strings.Replace(ir, "define void @root", `declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
+define void @root`, 1)
+	ir = strings.Replace(ir, "vector:", `vector:
+ call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 8192)`, 1)
 	m := parseModule(t, ir)
 	if err := Run(m, "v4"); err != nil {
 		t.Fatal(err)
@@ -412,6 +420,7 @@ func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
  target triple = "x86_64-unknown-linux-gnu"
  declare i1 @sha() "llgo.cpu.query"="x86.sha"
  declare i1 @fma() "llgo.cpu.query"="x86.fma"
+ declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
  define i1 @unrelated() {
   %b = call i1 @fma()
   ret i1 %b
@@ -422,9 +431,7 @@ func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
   %both = and i1 %s, %b
   br i1 %both, label %vector, label %out
  vector:
-  %x = load <4 x i32>, ptr %p
-  %y = add <4 x i32> %x, %x
-  store <4 x i32> %y, ptr %p
+  call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 128)
   br label %out
  out:
   ret void
@@ -459,12 +466,13 @@ func TestIndependentGuardResolver(t *testing.T) {
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @wide() "llgo.cpu.query"="x86.avx512"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
 define void @root(ptr %p, ptr %q) {
  %a = call i1 @fma()
  br i1 %a, label %first, label %next
 first:
  %x = load <4 x float>, ptr %p
- %nx = fneg <4 x float> %x
+ %nx = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
  store <4 x float> %nx, ptr %p
  br label %next
 next:
@@ -503,6 +511,53 @@ exit:
 	}
 }
 
+func TestGuardProjectsHelperMask(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @wide() "llgo.cpu.query"="x86.avx512vbmi2"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
+declare void @consume(<16 x i32>)
+define void @fmaOnly(ptr %p) {
+ %x = load <4 x float>, ptr %p
+ %y = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
+ store <4 x float> %y, ptr %p
+ ret void
+}
+define void @wideOnly() {
+ call void @consume(<16 x i32> zeroinitializer)
+ ret void
+}
+define void @root(ptr %p) {
+ %a = call i1 @fma()
+ br i1 %a, label %first, label %next
+first: call void @fmaOnly(ptr %p)
+ br label %next
+next: %b = call i1 @wide()
+ br i1 %b, label %second, label %exit
+second: call void @wideOnly()
+ br label %exit
+exit: ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	fma, wide := predicateBits[X86Query("FMA")], predicateBits[X86Query("AVX512VBMI2")]
+	both := guardSuffix(fma | wide)
+	root := m.NamedFunction("root" + both)
+	if root.IsNil() {
+		t.Fatal("missing combined root")
+	}
+	checkCachedGuard(t, m, fma|wide, root)
+	for helper, mask := range map[string]uint64{"fmaOnly": fma, "wideOnly": wide} {
+		if !m.NamedFunction(helper+both).IsNil() || !strings.Contains(root.String(), "call void @"+helper+guardSuffix(mask)+"(") {
+			t.Fatalf("%s should share its single-feature body:\n%s", helper, root.String())
+		}
+	}
+}
+
 func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value) {
 	t.Helper()
 	resolver := m.NamedFunction("root" + resolverSuffix)
@@ -535,16 +590,18 @@ func TestGuardRuntimePredicates(t *testing.T) {
 			for _, published := range masks {
 				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
 declare i1 @query() "llgo.cpu.query"="%s"
+declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
 define void @root(ptr %%p) {
  %%q = call i1 @query()
  br i1 %%q, label %%yes, label %%exit
 yes:
+ call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 %d)
  %%v = load <4 x i32>, ptr %%p
  store <4 x i32> %%v, ptr %%p
  br label %%exit
 exit:
  ret void
-}`, X86Query(p.method)))
+}`, X86Query(p.method), p.runtimeBit))
 				if err := Run(m, "v1"); err != nil {
 					t.Fatal(err)
 				}
@@ -671,16 +728,16 @@ func TestGuardVectorReturningCalls(t *testing.T) {
 		specializes bool
 	}{
 		{"opaque", false},
-		{"llvm.sqrt.v4f32", true},
+		{"llvm.fma.v4f32", true},
 	} {
 		m := parseModule(t, strings.ReplaceAll(`target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-declare <4 x float> @callee(<4 x float>)
+declare i1 @wide() "llgo.cpu.query"="x86.fma"
+declare <4 x float> @callee(<4 x float>, <4 x float>, <4 x float>)
 define <4 x float> @root(<4 x float> %x) {
  %q = call i1 @wide()
  br i1 %q, label %yes, label %no
 yes:
- %v = call <4 x float> @callee(<4 x float> %x)
+ %v = call <4 x float> @callee(<4 x float> %x, <4 x float> %x, <4 x float> %x)
  ret <4 x float> %v
 no:
  ret <4 x float> %x
@@ -748,11 +805,14 @@ func TestAVX2GuardExposedInSpecializedBody(t *testing.T) {
 target triple = "x86_64-unknown-linux-gnu"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
 define void @root(ptr %p) {
  %f = call i1 @fma()
  br i1 %f, label %first, label %check
 first:
- %x = load volatile <4 x i32>, ptr %p
+ %x = load volatile <4 x float>, ptr %p
+ %y1 = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
+ store <4 x float> %y1, ptr %p
  br label %check
 check:
  %a = call i1 @avx2()

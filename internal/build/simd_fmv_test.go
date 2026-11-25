@@ -63,6 +63,47 @@ func TestSIMDFMVLLVM(t *testing.T) {
 	})
 }
 
+// Independent guards decide how many times the same baseline kernel runs.
+func TestSIMDGuardedNarrowHelperSharesCode(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module fmvtest\n\ngo 1.27\n")
+	var src strings.Builder
+	src.WriteString(`package main
+import "simd/archsimd"
+//go:noinline
+func kernel(p *[4]int32) {
+ x := archsimd.LoadInt32x4Array(p)
+ x.Add(x).StoreArray(p)
+}
+//go:noinline
+func root(p *[4]int32) {
+ if !archsimd.X86.AVX() { return }
+`)
+	guards := []string{"FMA", "SHA", "AVXAES", "VAES", "AVXVNNI", "AVX512", "AVX512VBMI2", "AVX512GFNI", "AVX512VNNI", "AVX512BITALG"}
+	for _, guard := range guards {
+		src.WriteString("if archsimd.X86." + guard + "() { kernel(p) }\n")
+	}
+	src.WriteString("}\nfunc main() { var p [4]int32; root(&p) }\n")
+	writeFile(t, filepath.Join(dir, "main.go"), src.String())
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", "v1", "simd"
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	mod := pkgs[0].LPkg.Module()
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if strings.HasPrefix(fn.Name(), "main.kernel.__llgo_fmv_") || strings.HasPrefix(fn.Name(), "main.root.__llgo_fmv_") {
+			t.Fatalf("unexpected specialization %s", fn.Name())
+		}
+	}
+	root := mod.NamedFunction("main.root").String()
+	if got := strings.Count(root, "call void @main.kernel("); got != len(guards) {
+		t.Fatalf("expected %d conditional calls to the shared kernel, got %d:\n%s", len(guards), got, root)
+	}
+}
+
 func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 	conf := NewDefaultConf(ModeGen)
 	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", baseline, "simd"

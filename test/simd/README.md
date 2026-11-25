@@ -516,13 +516,15 @@ Reference boundaries:
 
 On AMD64 the compiler also recognizes positive branches on the official
 `archsimd.X86` predicates. At control-flow joins it retains the predicates
-proven on every incoming path. Guarded vector operations, LLVM intrinsics
-returning vectors, and direct calls to local SIMD helpers can select an
-implementation with those features. A 256- or 512-bit register argument or
+proven on every incoming path. The compiler selects a feature when it can benefit an
+operation in the guarded region or a directly called local helper. For
+example, an FMA guard can specialize a fused multiply-add. Independent
+guards that call the same helper to add two 128-bit integer vectors keep
+their ordinary branches and share the baseline helper. A 256- or 512-bit register argument or
 result also counts as work at the call site, including external and indirect
 calls. If every path to the vector work checks a predicate that supplies ZMM
 registers (for example, `AVX512() || AVX512VBMI2()`), either effective predicate can
-select a specialized implementation, even for narrower operations. Nested
+select an implementation for a call that needs ZMM registers. Nested
 AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
 GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
 the AVX512 predicate. LLGo folds these queries before generating guarded
@@ -534,9 +536,9 @@ compiled AVX2 callers can still use the canonical AVX2 entry. An AVX2-only
 guard reuses that entry when available. The wider
 clone specializes direct calls to the local AVX2 helper body.
 For independent guarded regions, the resolver selects the union of all
-matching masks. Overlapping guard combinations with the same effective
-mask share one body. Local helpers also share a copy for each distinct
-proven mask, including along long call chains.
+matching masks that affect the guarded work. Local helpers share a copy
+for each distinct subset of features they can use, including along long
+call chains.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls

@@ -179,11 +179,78 @@ func (a *wideABI) localVectorWork(inst llvm.Value) bool {
 	return inst.Type().TypeKind() == llvm.VectorTypeKind
 }
 
-// Collect evidence of vector work along direct calls in this module. Start
-// from functions with a feature query and propagate back from SIMD operations
-// to their callers. The two walks handle cycles without relying on DFS order.
-func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan, abi *wideABI) map[llvm.Value]bool {
-	work := make(map[llvm.Value]bool)
+// Generic LLVM intrinsics that can use an optional instruction even when the
+// vector fits the baseline. Instruction-specific x86 leaves already carry their
+// own target features; their caller emits SIMDRequireX86Features with its mask.
+func (a *wideABI) intrinsicGuards(fn llvm.Value) uint64 {
+	name := fn.Name()
+	switch {
+	case strings.HasPrefix(name, "llvm.fma."), strings.HasPrefix(name, "llvm.fmuladd."):
+		return predicateBits["x86.fma"]
+	case strings.HasPrefix(name, "llvm.clmul."):
+		return predicateBits["x86.avx512vpclmulqdq"]
+	case strings.HasPrefix(name, "llvm.experimental.vector.compress."), strings.HasPrefix(name, "llvm.masked.expandload."):
+		if a.data.TypeSizeInBits(fn.GlobalValueType().ReturnType().ElementType()) < 32 {
+			return predicateBits["x86.avx512vbmi2"]
+		}
+		return predicateBits["x86.avx512"]
+	case strings.HasPrefix(name, "llvm.ctpop."):
+		t := fn.GlobalValueType().ReturnType()
+		if t.TypeKind() == llvm.VectorTypeKind {
+			if t.ElementType().IntTypeWidth() < 32 {
+				return predicateBits["x86.avx512bitalg"]
+			}
+			return predicateBits["x86.avx512vpopcntdq"]
+		}
+	}
+	return 0
+}
+
+// instructionGuards identifies work that benefits from the guard. Ordinary
+// narrow vector arithmetic can use the baseline implementation on amd64.
+func (a *wideABI) instructionGuards(inst, callee llvm.Value, floor int) uint64 {
+	var needs uint64
+	typ := inst.Type()
+	switch inst.InstructionOpcode() {
+	case llvm.Call, llvm.Invoke:
+		if callee.IsNil() || callee.IntrinsicID() == 0 {
+			if !callee.IsNil() && callee.Name() == "github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features" && inst.ArgOperandsCount() == 1 {
+				if arg := inst.Operand(0).IsAConstantInt(); !arg.IsNil() && arg.Type().IntTypeWidth() == 64 {
+					return arg.ZExtValue()
+				}
+			}
+			width := a.callWidth(inst)
+			if width <= floor {
+				return 0
+			}
+			if width == 512 {
+				return zmmPredicates
+			}
+			return ymmPredicates
+		}
+		needs = a.intrinsicGuards(callee)
+		if typ.TypeKind() != llvm.VectorTypeKind && inst.ArgOperandsCount() != 0 {
+			typ = inst.Operand(0).Type()
+		}
+	case llvm.Store, llvm.ExtractElement, llvm.ICmp, llvm.FCmp:
+		typ = inst.Operand(0).Type()
+	}
+	if typ.TypeKind() == llvm.VectorTypeKind {
+		width := a.data.TypeSizeInBits(typ)
+		if width > 128 && floor < 256 {
+			needs |= featureAVX | featureAVX2
+		}
+		if width > 256 && floor < 512 {
+			needs |= zmmPredicates
+		}
+	}
+	return needs
+}
+
+// Summarize reachable local helpers before choosing root masks. Propagate newly
+// discovered requirements to a fixed point, including through recursive calls.
+func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan, abi *wideABI, baseline string) map[llvm.Value]uint64 {
+	work := make(map[llvm.Value]uint64)
 	seen := make(map[llvm.Value]bool)
 	callers := make(map[llvm.Value][]llvm.Value)
 	var visit []llvm.Value
@@ -200,18 +267,22 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 		if fn.IsDeclaration() || !supported(fn) || (avx2 != nil && !avx2.baselines[fn].IsNil()) {
 			continue
 		}
+		floor := targetWidth(fn, baseline)
+		var needs uint64
 		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if abi.localVectorWork(inst) {
-					work[fn] = true
-				}
-				if callee := directGuardCallee(inst); !callee.IsNil() {
+				callee := directGuardCallee(inst)
+				needs |= abi.instructionGuards(inst, callee, floor)
+				if !callee.IsNil() {
 					callers[callee] = append(callers[callee], fn)
 					if !seen[callee] {
 						visit = append(visit, callee)
 					}
 				}
 			}
+		}
+		if needs != 0 {
+			work[fn] = needs
 		}
 	}
 	for fn := range work {
@@ -221,8 +292,8 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 		fn := visit[len(visit)-1]
 		visit = visit[:len(visit)-1]
 		for _, caller := range callers[fn] {
-			if !work[caller] {
-				work[caller] = true
+			if work[fn]&^work[caller] != 0 {
+				work[caller] |= work[fn]
 				visit = append(visit, caller)
 			}
 		}
@@ -232,7 +303,7 @@ func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx
 
 // Keep common Go predicates at joins. A() || B() can also specialize guarded
 // vector work when either predicate independently supplies ZMM registers.
-func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.Value]bool, abi *wideABI) []uint64 {
+func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, requirements func(llvm.Value) uint64) []uint64 {
 	entry := fn.EntryBasicBlock()
 	known := map[llvm.BasicBlock]guardFacts{entry: {}}
 	queue := []llvm.BasicBlock{entry}
@@ -262,19 +333,17 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.V
 			continue
 		}
 		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if abi.localVectorWork(inst) || work[directGuardCallee(inst)] {
-				if f.common != 0 {
-					sets[f.common] = true
-				}
-				if f.zmm != 0 && f.common&zmmPredicates == 0 {
-					// Select each alternative by its own effective query.
-					for _, p := range x86Predicates {
-						if f.zmm&p.runtimeBit != 0 {
-							sets[f.common|p.runtimeBit] = true
-						}
+			needs := requirements(inst)
+			common := f.common & needs
+			if common != 0 {
+				sets[common] = true
+			}
+			if alternatives := f.zmm & needs; alternatives != 0 && common&zmmPredicates == 0 {
+				for _, p := range x86Predicates {
+					if alternatives&p.runtimeBit != 0 {
+						sets[common|p.runtimeBit] = true
 					}
 				}
-				break
 			}
 		}
 	}
@@ -373,13 +442,17 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		avx2.commit(mod, nil)
 		return nil
 	}
-	work := guardedWork(candidates, &folds, avx2, abi)
+	work := guardedWork(candidates, &folds, avx2, abi, baseline)
 	var roots []guardRoot
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
 		if !candidates[fn] {
 			continue
 		}
-		masks := guardContexts(folds.view(fn), queries, work, abi)
+		floor := targetWidth(fn, baseline)
+		masks := guardContexts(folds.view(fn), queries, func(inst llvm.Value) uint64 {
+			callee := directGuardCallee(inst)
+			return abi.instructionGuards(inst, callee, floor) | work[callee]
+		})
 		if len(masks) == 0 {
 			continue
 		}
@@ -462,10 +535,11 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 				target := directGuardCallee(inst)
-				if !work[target] || byFunction[target].needsDispatch(mask) {
+				calleeMask := mask & work[target]
+				if calleeMask == 0 || byFunction[target].needsDispatch(mask) {
 					continue
 				}
-				callee, err := specializeLocal(target, mask)
+				callee, err := specializeLocal(target, calleeMask)
 				if err != nil {
 					return llvm.Value{}, err
 				}

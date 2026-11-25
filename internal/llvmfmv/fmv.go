@@ -213,9 +213,15 @@ func stageAVX2(abi *wideABI) (*avx2Plan, error) {
 	}
 	// Only a direct guard over local vector work or a call to a promised AVX2
 	// entry needs canonical dispatch. Scalar-signature helper chains can use
-	// the ordinary guarded-feature pass and its bounded local clones.
+	// the ordinary guarded-feature pass.
+	avx2Work := func(inst llvm.Value) uint64 {
+		if abi.localVectorWork(inst) || entries[directGuardCallee(inst)] {
+			return featureAVX2
+		}
+		return 0
+	}
 	for fn := range roots {
-		if !supported(fn) || len(guardContexts(fn, queries, entries, abi)) == 0 {
+		if !supported(fn) || len(guardContexts(fn, queries, avx2Work)) == 0 {
 			delete(roots, fn)
 		}
 	}
