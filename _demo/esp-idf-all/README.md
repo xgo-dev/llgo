@@ -189,11 +189,13 @@ is NOT available for esp32s31 in IDF v6.3 — the lib set ships no flash
 variant (`libbtdm_app_flash.a` absent) and the Kconfig has no symbol for
 this target.
 
-Measured ledger (this firmware, final config): baseline 164 KB internal /
-81920 B DMA block → bt-init 80 KB / 31744 → a2dp-init 51 KB / 21504 →
-ap-start 13 KB / ~13 KB. The remaining margin covers one phone join + one
-HTTP session; heavier AP traffic would want the AMPDU windows back once a
-bigger flash (or the controller flash lib) relieves the budget.
+Measured ledger (this firmware, final config): baseline 167 KB internal /
+86016 B DMA block → bt-init 84 KB / 31744 → a2dp-init 54 KB / 25600 →
+ap-start 9.7 KB / 9216, settling at 9.3 KB with the DMA block moving between
+6400 and 8192 B as the AP serves. That margin covers one phone join plus one
+HTTP session - it is the floor, not slack: heavier AP traffic would want the
+AMPDU windows back once a bigger flash (or the controller flash lib) relieves
+the budget, and the periodic ledger line is the fastest way to see it go.
 
 ## Project layout
 
