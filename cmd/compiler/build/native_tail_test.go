@@ -24,7 +24,7 @@ func TestNativeTailTransferIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_ROOT", root)
-	dir := filepath.Join(root, "internal/build/testdata/native_tail")
+	dir := filepath.Join(root, "cmd/compiler/build/testdata/native_tail")
 	for _, tc := range []struct {
 		mode lto.Mode
 		tags string

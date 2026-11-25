@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !llgo && !wasm
 
 package sizereport_test
 

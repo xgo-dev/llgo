@@ -62,5 +62,9 @@ func (c Config) ValidateTarget(goos, goarch string, profile crosscompile.WasmPro
 }
 
 func PreJSPath(llgoRoot string) string {
-	return filepath.Join(llgoRoot, "internal", "wasmworkers", "worker_pre.js")
+	return filepath.Join(llgoRoot, "cmd", "compiler", "wasmworkers", "worker_pre.js")
+}
+
+func BrowserFSPath(llgoRoot string) string {
+	return filepath.Join(llgoRoot, "cmd", "compiler", "wasmworkers", "browser_fs.js")
 }

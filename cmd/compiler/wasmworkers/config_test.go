@@ -57,8 +57,15 @@ func TestValidateTarget(t *testing.T) {
 }
 
 func TestPreJSPath(t *testing.T) {
-	want := filepath.Join("llgo", "internal", "wasmworkers", "worker_pre.js")
+	want := filepath.Join("llgo", "cmd", "compiler", "wasmworkers", "worker_pre.js")
 	if got := PreJSPath("llgo"); got != want {
 		t.Fatalf("PreJSPath() = %q, want %q", got, want)
+	}
+}
+
+func TestBrowserFSPath(t *testing.T) {
+	want := filepath.Join("llgo", "cmd", "compiler", "wasmworkers", "browser_fs.js")
+	if got := BrowserFSPath("llgo"); got != want {
+		t.Fatalf("BrowserFSPath() = %q, want %q", got, want)
 	}
 }

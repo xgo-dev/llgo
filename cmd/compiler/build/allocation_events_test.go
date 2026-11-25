@@ -27,7 +27,7 @@ func TestNativeAllocationEventsExactIntegration(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				conf.OutFile += ".exe"
 			}
-			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join(root, "internal/build/testdata/allocation_events")}); err != nil {
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join(root, "cmd/compiler/build/testdata/allocation_events")}); err != nil {
 				t.Fatal(err)
 			}
 			for i := 0; i < 10; i++ {

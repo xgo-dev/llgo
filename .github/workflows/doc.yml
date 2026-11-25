@@ -50,6 +50,8 @@ jobs:
       - name: Test README Homebrew install
         if: startsWith(matrix.os, 'macos')
         working-directory: doc/_readme
+        env:
+          GOWORK: off
         run: |
           bash scripts/install_brew.sh
           brew_bin="$(brew --prefix llgo)/bin"
@@ -76,6 +78,8 @@ jobs:
 
       - name: Verify README installation
         working-directory: doc/_readme
+        env:
+          GOWORK: off
         run: |
           test "$(cd "$(llgo env LLGO_ROOT)" && pwd -P)" = \
             "$(cd "$RUNNER_TEMP/llgo-readme/current" && pwd -P)"
@@ -189,6 +193,8 @@ jobs:
         if: startsWith(matrix.os, 'windows')
         shell: bash
         working-directory: doc/_readme
+        env:
+          GOWORK: off
         run: |
           llgo env LLGO_ROOT LLGO_RUNTIME_DIR
           bash scripts/verify_install.sh

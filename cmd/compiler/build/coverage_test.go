@@ -568,7 +568,7 @@ func TestCoverageCgo(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	t.Setenv(llgoBuildCache, "1")
-	const fixture = "./internal/build/testdata/coveragecgo"
+	const fixture = "./cmd/compiler/build/testdata/coveragecgo"
 	for _, mode := range []string{"set", "count", "atomic"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
@@ -603,7 +603,7 @@ func TestCoverageAgainstGo(t *testing.T) {
 	for _, mode := range []string{"set", "count", "atomic"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			fixture := filepath.Join(root, "internal/build/testdata/coverage/basic")
+			fixture := filepath.Join(root, "cmd/compiler/build/testdata/coverage/basic")
 			goProfile := filepath.Join(dir, "go.out")
 			cmd := exec.Command("go", "test", "-count=1", "-covermode="+mode, "-coverprofile="+goProfile, ".")
 			cmd.Dir = fixture
@@ -671,7 +671,7 @@ func TestCoverageAgainstGo(t *testing.T) {
 	conf := coverageTestConfig(t, ModeTest)
 	conf.OutFile = filepath.Join(t.TempDir(), "plain.test")
 	pkgs, err := Build(Invocation{
-		Args:   []string{"./internal/build/testdata/coverage/basic"},
+		Args:   []string{"./cmd/compiler/build/testdata/coverage/basic"},
 		Dir:    root,
 		Config: conf,
 	})
@@ -764,7 +764,7 @@ func TestCoverageLTO(t *testing.T) {
 			conf.OptLevel = optlevel.O2
 			conf.OutFile = filepath.Join(t.TempDir(), "basic.test")
 			_, err := Build(Invocation{
-				Args:   []string{"./internal/build/testdata/coverage/basic"},
+				Args:   []string{"./cmd/compiler/build/testdata/coverage/basic"},
 				Dir:    root,
 				Config: conf,
 			})
@@ -785,7 +785,7 @@ func TestCoverageMultiPackage(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	t.Setenv(llgoBuildCache, "1")
-	pattern := "./internal/build/testdata/coverage/..."
+	pattern := "./cmd/compiler/build/testdata/coverage/..."
 	for _, selection := range []string{"", pattern} {
 		t.Run("coverpkg="+selection, func(t *testing.T) {
 			dir := t.TempDir()
@@ -899,7 +899,7 @@ func TestCoverageAPIsAndExit(t *testing.T) {
 				conf.OutFile += ".exe"
 			}
 			_, err := Build(Invocation{
-				Args:   []string{"./internal/build/testdata/coverage/api"},
+				Args:   []string{"./cmd/compiler/build/testdata/coverage/api"},
 				Dir:    root,
 				Config: conf,
 			})
@@ -954,7 +954,7 @@ func TestCoverageFailedPackage(t *testing.T) {
 			conf.RunArgs = []string{"-test.run=TestFailureProfile"}
 			output := captureCoverageOutput(t, func() {
 				_, err := Build(Invocation{
-					Args:   []string{"./internal/build/testdata/coverage/api"},
+					Args:   []string{"./cmd/compiler/build/testdata/coverage/api"},
 					Dir:    root,
 					Config: conf,
 				})
@@ -1011,7 +1011,7 @@ func TestCoverageStandardLibrary(t *testing.T) {
 		Profile:  profile,
 	}
 	_, err = Build(Invocation{
-		Args:   []string{"./internal/build/testdata/coverage/basic"},
+		Args:   []string{"./cmd/compiler/build/testdata/coverage/basic"},
 		Dir:    root,
 		Config: conf,
 	})

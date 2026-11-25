@@ -91,7 +91,7 @@ func TestRuntimeSourceBuildRejectsMissingHelpers(t *testing.T) {
 		filepath.Join(runtime.GOROOT(), "src/runtime/utf8.go"): []byte("package runtime\n"),
 	}
 	_, err = Build(Invocation{Args: []string{"."}, Config: conf,
-		Dir: filepath.Join(root, "internal/build/testdata/runtimecompiler")})
+		Dir: filepath.Join(root, "cmd/compiler/build/testdata/runtimecompiler")})
 	if err == nil || !strings.Contains(err.Error(), "missing helpers") {
 		t.Fatalf("build did not report incomplete upstream runtime source: %v", err)
 	}

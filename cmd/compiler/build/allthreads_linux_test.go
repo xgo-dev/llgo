@@ -134,7 +134,7 @@ func TestAllThreadsNativeProtocol(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			binary := filepath.Join(t.TempDir(), "protocol")
 			args := []string{"-Wall", "-Wextra", "-Werror", "-O2", "-pthread", "-o", binary,
-				filepath.Join(root, "internal/build/testdata/allthreads/protocol.c"),
+				filepath.Join(root, "cmd/compiler/build/testdata/allthreads/protocol.c"),
 				filepath.Join(root, "runtime/internal/stacktrace/_wrap/traceback_unix.c")}
 			if sanitize {
 				args = append(args, "-fsanitize=address,undefined")

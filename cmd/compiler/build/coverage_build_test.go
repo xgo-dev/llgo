@@ -24,7 +24,7 @@ func TestCoverageBuildAgainstGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_ROOT", root)
-	const fixture = "./internal/build/testdata/coverageapp"
+	const fixture = "./cmd/compiler/build/testdata/coverageapp"
 	const mainPackage = "github.com/xgo-dev/llgo/cmd/compiler/build/testdata/coverageapp"
 	for _, tc := range []struct {
 		name     string
@@ -198,7 +198,7 @@ func TestCoverageBuildUncoveredMain(t *testing.T) {
 	}
 	conf.Coverage = &CoverageConfig{Packages: dependency}
 	_, err = Build(Invocation{
-		Args:   []string{"./internal/build/testdata/coverageapp"},
+		Args:   []string{"./cmd/compiler/build/testdata/coverageapp"},
 		Dir:    root,
 		Config: conf,
 	})
@@ -245,7 +245,7 @@ func TestCoverageBuildAllFiles(t *testing.T) {
 	}
 	conf.Coverage = &CoverageConfig{Mode: "atomic", Packages: "all"}
 	_, err = Build(Invocation{
-		Args:   []string{"./internal/build/testdata/coveragefiles/main.go"},
+		Args:   []string{"./cmd/compiler/build/testdata/coveragefiles/main.go"},
 		Dir:    root,
 		Config: conf,
 	})
