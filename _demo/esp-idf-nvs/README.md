@@ -103,9 +103,9 @@ the C side's heap marks; one boot sequence of the three shown):
 [go] nvs roundtrip ok u8 i32 u64 str blob64
 [go] nvs wrong-type err = 0x1102 ESP_ERR_NVS_NOT_FOUND
 [go] nvs missing-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
-[go] nvs key-too-long err = 0x0102 ESP_ERR_INVALID_ARG
-[go] nvs key-empty err = 0x0102 ESP_ERR_INVALID_ARG
-[go] nvs value-nul err = 0x0102 ESP_ERR_INVALID_ARG
+[go] nvs key-too-long err = nvs: set u8: esp/nvs: invalid argument (code 258)
+[go] nvs key-empty err = nvs: set u8: esp/nvs: invalid argument (code 258)
+[go] nvs value-nul err = nvs: set string: esp/nvs: invalid argument (code 258)
 [go] nvs read-cap ok 600-in 512-max err = 0x7501 NVS_ERR_TOO_LONG
 [go] nvs deleted-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
 [go] nvs delete-absent err = 0x1102 ESP_ERR_NVS_NOT_FOUND

@@ -110,22 +110,16 @@ package wifi
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK), named through ErrName so a printed error reads like
-// the pre-error ErrName output.
-func errOf(code int32) error {
-	if code == 0 {
-		return nil
-	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
-}
-
-// ErrTimeout reports a bounded wifi wait that found nothing:
-// ESP_ERR_TIMEOUT (0x107) - Scan with no SCAN_DONE event inside
-// ScanOptions.TimeoutMs, or a Subscription.Next that saw no event inside
-// its bound. (The esp_err family keeps its own code for the condition;
-// the transports' ErrTimeout carries the lwip ETIMEDOUT value instead.)
-var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
+// ErrTimeout reports a bounded wifi wait that found nothing - a
+// Subscription.Next, or a Scan's wait for the SCAN_DONE event, whose bound
+// passed with no event. It is the package's semantic sentinel - match it
+// with errors.Is - and it keeps ESP_ERR_TIMEOUT (0x107) on Error.Code and
+// Error.Name as the diagnostic annotation, so code-style checks against the
+// esp_err value keep working. The wait call sites wrap it with esperr.Wrap
+// to name the operation that timed out. (The esp_err family keeps its own
+// code for the condition; the transports' ErrTimeout carries the lwip
+// ETIMEDOUT value instead.)
+var ErrTimeout = newSentinel("esp/wifi: timeout", 0x107, "ESP_ERR_TIMEOUT")
 
 // ErrGlueABI reports a glue/binding contract mismatch: the wifi_glue.c a
 // firmware links was written for a different version of this package. The C
@@ -133,8 +127,31 @@ var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
 // link - it would silently answer with zeros for the fields it does not know
 // (the soft-AP client's MAC and AID, for instance). Setup compares the glue's
 // version with glueABIVersion and refuses to run on a mismatch, so the failure
-// arrives as one named error instead of as empty data minutes later.
-var ErrGlueABI = &esperr.Error{Code: 0x7F01, Name: ErrName(0x7F01)}
+// arrives as one named error instead of as empty data minutes later. It is the
+// package's semantic sentinel - match it with errors.Is - and it keeps the
+// glue's 0x7F01 stub-segment code on Error.Code as the diagnostic annotation.
+var ErrGlueABI = newSentinel("esp/wifi: glue ABI mismatch", 0x7F01, "LLGO_ERR_GLUE_ABI")
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// pipeline code and ErrName name on Error.Code/Error.Name as the annotation
+// (esperr.New is text-only; the driver still reports the code, and the
+// demos' errText helpers read the fields off the bare value).
+func newSentinel(text string, code int32, name string) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	e.Name = name
+	return e
+}
+
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): every code forwards as a bare esperr.Coded value, named through
+// ErrName so a printed error reads like the driver's own name for the code.
+func errOf(code int32) error {
+	if code == 0 {
+		return nil
+	}
+	return esperr.Coded(code, ErrName(code))
+}
 
 // Event kinds delivered by the C mailbox (see on_event in wifi_glue.c).
 const (
@@ -292,11 +309,11 @@ func (s *Subscription) Next(timeoutMs int32) (Event, error) {
 		gosched()
 		vTaskDelay(pollQuantumMs / tickMs)
 	}
-	select {
+ select {
 	case ev := <-s.ch:
 		return ev, nil
 	default:
-		return Event{}, ErrTimeout
+		return Event{}, esperr.Wrap("wifi: wait event", ErrTimeout)
 	}
 }
 
@@ -387,7 +404,7 @@ const glueABIVersion = 2
 // is ErrGlueABI and nothing else runs.
 func Setup() error {
 	if v := glueABI(); v != glueABIVersion {
-		return ErrGlueABI
+		return esperr.Wrap("wifi: setup", ErrGlueABI)
 	}
 	return errOf(setup())
 }
@@ -515,7 +532,7 @@ func Scan(opts ScanOptions) ([]ScanResult, error) {
 		return nil, err
 	}
 	if ev, err := sub.Next(timeoutMs); err != nil || ev.Kind != EvScanDone {
-		return nil, ErrTimeout // no SCAN_DONE within the bound
+		return nil, esperr.Wrap("wifi: scan", ErrTimeout) // no SCAN_DONE within the bound
 	}
 	return ScanFetch(max)
 }

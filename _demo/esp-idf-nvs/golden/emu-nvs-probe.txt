@@ -23,8 +23,10 @@
 #                            hash-list indexes by (namespace, type, key),
 #                            so the mismatch misses the hash before the
 #                            type check could report TYPE_MISMATCH
-#   key-too-long / key-empty / value-nul = 0x0102   the Go-side guards
-#                            (ESP_ERR_INVALID_ARG), refused before the call
+#   key-too-long / key-empty / value-nul      the Go-side guards, refused
+#                            before the call under their operation's op
+#                            prefix ("nvs: set u8" / "nvs: set string"):
+#                            "op: esp/nvs: invalid argument (code 258)"
 #   read-cap ... 0x7501       the binding's own ErrTooLong: a 600-byte
 #                            string read over the 512-byte value buffer
 #   keys app n = 6 ...        the sorted key lists - sorted by the probe,
@@ -44,9 +46,9 @@
 [go] nvs roundtrip ok u8 i32 u64 str blob64
 [go] nvs wrong-type err = 0x1102 ESP_ERR_NVS_NOT_FOUND
 [go] nvs missing-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
-[go] nvs key-too-long err = 0x0102 ESP_ERR_INVALID_ARG
-[go] nvs key-empty err = 0x0102 ESP_ERR_INVALID_ARG
-[go] nvs value-nul err = 0x0102 ESP_ERR_INVALID_ARG
+[go] nvs key-too-long err = nvs: set u8: esp/nvs: invalid argument (code 258)
+[go] nvs key-empty err = nvs: set u8: esp/nvs: invalid argument (code 258)
+[go] nvs value-nul err = nvs: set string: esp/nvs: invalid argument (code 258)
 [go] nvs read-cap ok 600-in 512-max err = 0x7501 NVS_ERR_TOO_LONG
 [go] nvs deleted-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
 [go] nvs delete-absent err = 0x1102 ESP_ERR_NVS_NOT_FOUND
