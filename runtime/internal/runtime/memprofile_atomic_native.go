@@ -13,9 +13,10 @@ func memProfileCtlz64(x uint64, isZeroPoison bool) uint64 { return 0 }
 
 const memProfileShards = 64
 
-// Keep all size classes for one shard contiguous and padded to 256 bytes
-// (two 128-byte cache lines) so hot small allocations (16 B..2048 B) share a
-// single cache line per shard without false sharing across threads.
+// Keep all size classes for one shard contiguous and padded to 256 bytes to
+// avoid false sharing between shards while keeping hot small-allocation
+// buckets (16 B..2048 B) close together. memProfileAlignment guarantees 8-byte
+// alignment for 64-bit atomics on 32-bit targets.
 type memProfileShard struct {
 	_       memProfileAlignment
 	counts  [memProfileNumBuckets]uint64
@@ -34,13 +35,17 @@ func memProfileBucketIndex(size uintptr) int {
 	return 64 - int(memProfileCtlz64(uint64(size-1)>>4, true))
 }
 
-// Hash a stack address with Fibonacci multiplication to spread both
-// power-of-two (Linux) and guard-padded (macOS 0x84000) OS thread stacks
-// across shards without invoking TLS accessors or initializing G.
+// memProfileShardIndex hashes a stack address with Fibonacci multiplication to
+// spread both power-of-two (Linux) and guard-padded (macOS 0x84000) OS thread
+// stacks across shards without invoking TLS accessors or initializing G.
+func memProfileShardIndex(id uint64) uint64 {
+	return (((id >> 14) ^ (id >> 21)) * 0x9e3779b97f4a7c15) >> 58
+}
+
 func memProfileAddBucket(idx int) {
 	var anchor byte
 	id := uint64(uintptr(noescape(unsafe.Pointer(&anchor))))
-	shard := (((id >> 14) ^ (id >> 21)) * 0x9e3779b97f4a7c15) >> 58
+	shard := memProfileShardIndex(id)
 	atomic.AddRelaxed(&memProfileShardsData[shard].counts[idx], uint64(1))
 }
 

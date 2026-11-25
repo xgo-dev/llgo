@@ -6,7 +6,7 @@ func memProfileBucketIndex(size uintptr) int {
 	if size <= 16 {
 		return 0
 	}
-	if size > memProfileMaxSizeClass {
+	if size >= memProfileMaxSizeClass {
 		return memProfileNumBuckets - 1
 	}
 	x := uint64(size-1) >> 4
