@@ -121,8 +121,11 @@ var (
 )
 
 // errOf converts a pipeline code to the error the API returns (nil for 0).
-// The three sentinel codes map to the shared esperr values; anything else
-// becomes an *esperr.Error named through ErrName.
+// The transport sentinel codes map to the shared esperr values; anything
+// else forwards as a bare esperr.Coded value named through ErrName - a
+// forwarded code is its own diagnostic, and the bare *esperr.Error keeps
+// the field-level readers (.Code/.Name, as the demo's errText renders)
+// byte-identical.
 func errOf(code int32) error {
 	switch code {
 	case 0:
@@ -134,7 +137,7 @@ func errOf(code int32) error {
 	case etimedout:
 		return ErrTimeout
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // The default poll quantum: how long every retry loop waits in lwip_select
