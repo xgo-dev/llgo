@@ -7,7 +7,7 @@ use relative symlinks so the tar.gz writer preserves every tool/loader name
 without storing duplicate library or executable contents.
 
 All seven runtime payloads are pinned in
-[`espressif.json`](../../internal/crosscompile/espressif.json). The release setup
+[`espressif.json`](../../cmd/compiler/crosscompile/espressif.json). The release setup
 runs `esp-toolchain.py` to verify producer archives and stage their runtime files
 directly under `.release-toolchains`. GoReleaser's `stage-toolchains.sh` hook
 only generates the Linux system LLVM target-list overlays. LLGo is still built

@@ -17,12 +17,12 @@
 package ssatest
 
 import (
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 )
 
 func NewProgram(t *testing.T, target *llvmgen.Target) llvmgen.Program {

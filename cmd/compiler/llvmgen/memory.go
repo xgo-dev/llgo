@@ -17,8 +17,8 @@
 package llvmgen
 
 import (
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llvm"

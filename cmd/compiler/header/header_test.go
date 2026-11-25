@@ -3,16 +3,16 @@ package header
 import (
 	"bytes"
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llvm"
 )
 

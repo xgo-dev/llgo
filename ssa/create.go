@@ -9,13 +9,12 @@ package ssa
 
 import (
 	"fmt"
-	"go/ast"
-	"go/token"
 	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/token"
 	"os"
 	"sync"
-
 )
 
 // NewProgram returns a new SSA Program.

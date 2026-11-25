@@ -8,9 +8,9 @@ package ssa
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"io"
 	"os"
 	"sync"
@@ -404,5 +404,3 @@ func (canon *canonizer) instantiateMethod(m *types.Func, targs []types.Type, ctx
 	obj, _, _ := types.LookupFieldOrMethod(rep, true, m.Pkg(), m.Name())
 	return obj.(*types.Func)
 }
-
-

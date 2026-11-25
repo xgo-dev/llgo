@@ -19,8 +19,8 @@ package llvmgen
 import (
 	"crypto/sha256"
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"log"
 	"runtime"
 	"strconv"
@@ -30,8 +30,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/meta"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/target"
-	"github.com/xgo-dev/llvm"
 	"github.com/xgo-dev/llgo/types/typeutil"
+	"github.com/xgo-dev/llvm"
 )
 
 const (

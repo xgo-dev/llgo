@@ -20,8 +20,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile/compile/rtlib"
 	internalenv "github.com/xgo-dev/llgo/cmd/compiler/env"
-	"github.com/xgo-dev/llgo/target"
 	llvmenv "github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/target"
 )
 
 // Keep ordinary Go-only queries on the forwarding path, without inspecting

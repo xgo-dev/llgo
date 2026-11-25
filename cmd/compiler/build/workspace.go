@@ -2,13 +2,82 @@ package build
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/quoted"
+	"golang.org/x/mod/modfile"
 	gopackages "golang.org/x/tools/go/packages"
 )
+
+// isolateNestedModuleWorkspace disables implicit parent go.work discovery when
+// building inside a standalone nested Go module that is not listed in that
+// workspace's use directives. Explicit GOWORK settings are always respected.
+func isolateNestedModuleWorkspace(dir string, environ []string) []string {
+	if (commandEnv{environ: environ}).lookup("GOWORK") != "" {
+		return environ
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return environ
+	}
+	var modDir, workFile string
+	for cur := absDir; ; cur = filepath.Dir(cur) {
+		if modDir == "" {
+			if info, err := os.Stat(filepath.Join(cur, "go.mod")); err == nil && !info.IsDir() {
+				modDir = cur
+			}
+		}
+		if workFile == "" {
+			if info, err := os.Stat(filepath.Join(cur, "go.work")); err == nil && !info.IsDir() {
+				workFile = filepath.Join(cur, "go.work")
+			}
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || (modDir != "" && workFile != "") {
+			break
+		}
+	}
+	if modDir == "" || workFile == "" {
+		return environ
+	}
+	workDir := filepath.Dir(workFile)
+	rel, err := filepath.Rel(workDir, modDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return environ
+	}
+	data, err := os.ReadFile(workFile)
+	if err != nil {
+		return environ
+	}
+	wf, err := modfile.ParseWork(workFile, data, nil)
+	if err != nil {
+		return environ
+	}
+	canonDir := func(p string) string {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Clean(resolved)
+		}
+		return filepath.Clean(p)
+	}
+	wantMod := canonDir(modDir)
+	for _, u := range wf.Use {
+		if u == nil || u.Path == "" {
+			continue
+		}
+		useDir := u.Path
+		if !filepath.IsAbs(useDir) {
+			useDir = filepath.Join(workDir, filepath.FromSlash(useDir))
+		}
+		if canonDir(useDir) == wantMod {
+			return environ
+		}
+	}
+	return withEnv(environ, "GOWORK=off")
+}
 
 // go/packages queries release tags with GO111MODULE=off and no build flags.
 // A module flag in GOFLAGS breaks that query. Move effective GOFLAGS (including

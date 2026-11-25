@@ -1,8 +1,8 @@
 package goescape
 
 import (
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"strconv"
 
 	"github.com/xgo-dev/llgo/ssa"

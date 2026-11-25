@@ -41,19 +41,24 @@ modfile="${work_dir}/wasm-runtime.mod"
 cp .github/test-go.mod "${modfile}"
 cp .github/test-go.sum "${work_dir}/wasm-runtime.sum"
 GOTOOLCHAIN=local "${target_go}" mod edit -modfile="${modfile}" \
+	-module="github.com/xgo-dev/llgo/cmd" \
 	-go="${target_minor}" \
 	-replace="github.com/xgo-dev/llgo/runtime=${repo_root}/runtime"
 
 export PATH="${target_root}/bin:${PATH}"
 export GOTOOLCHAIN=local
+export GOWORK=off
 export GOENV=off
 export GOFLAGS=
 export LLGO_ROOT="${repo_root}"
 export LLGO_BUILD_CACHE="${LLGO_BUILD_CACHE:-off}"
 
 echo "Building wasm runtime with go${target_version}"
-GOOS=js GOARCH=wasm "${llgo_cmd}" build -modfile="${modfile}" \
-	-o "${work_dir}/runtime-js.wasm" ./internal/build/testdata/wasm-runtime
-GOOS=wasip1 GOARCH=wasm "${llgo_cmd}" build -modfile="${modfile}" \
-	-o "${work_dir}/runtime-wasip1.wasm" ./internal/build/testdata/wasm-runtime
+(
+	cd "${repo_root}/cmd"
+	GOOS=js GOARCH=wasm "${llgo_cmd}" build -modfile="${modfile}" \
+		-o "${work_dir}/runtime-js.wasm" ./compiler/build/testdata/wasm-runtime
+	GOOS=wasip1 GOARCH=wasm "${llgo_cmd}" build -modfile="${modfile}" \
+		-o "${work_dir}/runtime-wasip1.wasm" ./compiler/build/testdata/wasm-runtime
+)
 file "${work_dir}/runtime-js.wasm" "${work_dir}/runtime-wasip1.wasm"

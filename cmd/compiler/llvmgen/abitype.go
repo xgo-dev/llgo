@@ -19,9 +19,9 @@ package llvmgen
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"sort"
 	"strconv"
 

@@ -1,11 +1,11 @@
 package midway
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 )

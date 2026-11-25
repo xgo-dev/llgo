@@ -17,9 +17,9 @@
 package llvmgen
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"sort"
 	"strings"
 

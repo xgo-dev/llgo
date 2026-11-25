@@ -357,7 +357,7 @@ func (subst *subster) alias(t *types.Alias) types.Type {
 		// Copy and substitute type params.
 		var newTParams []*types.TypeParam
 		for _i := 0; _i < tparams.Len(); _i++ {
-		cur := tparams.At(_i)
+			cur := tparams.At(_i)
 			cobj := cur.Obj()
 			cname := types.NewTypeName(cobj.Pos(), cobj.Pkg(), cobj.Name(), nil)
 			ntp := types.NewTypeParam(cname, nil)
@@ -489,7 +489,7 @@ func (subst *subster) named(t *types.Named) types.Type {
 		fresh := types.NewNamed(obj, nil, nil)
 		var newTParams []*types.TypeParam
 		for _i := 0; _i < tparams.Len(); _i++ {
-		cur := tparams.At(_i)
+			cur := tparams.At(_i)
 			cobj := cur.Obj()
 			cname := types.NewTypeName(cobj.Pos(), cobj.Pkg(), cobj.Name(), nil)
 			ntp := types.NewTypeParam(cname, nil)

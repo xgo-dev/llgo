@@ -9,13 +9,12 @@ package ssa
 import (
 	"bytes"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"io"
 	"os"
 	"strings"
-
 )
 
 // Like ObjectOf, but panics instead of returning nil.

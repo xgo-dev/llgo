@@ -5,9 +5,9 @@ package midway
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"path/filepath"
 	"slices"
 	"strconv"

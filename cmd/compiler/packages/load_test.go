@@ -2,10 +2,10 @@ package packages
 
 import (
 	"errors"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"strconv"

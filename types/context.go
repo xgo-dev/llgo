@@ -107,9 +107,9 @@ type Context struct {
 	goPkgs            map[*gotypes.Package]*Package
 	llToGoPkgs        map[*Package]*gotypes.Package
 	goScopes          map[*gotypes.Scope]*Scope
-	goObjs          map[gotypes.Object]Object
-	goTypes         map[goTypeCacheKey]Type
-	goNamed         map[*gotypes.Named]*Named
+	goObjs            map[gotypes.Object]Object
+	goTypes           map[goTypeCacheKey]Type
+	goNamed           map[*gotypes.Named]*Named
 	goAliases         map[gotypes.Type]*Alias
 	goTParams         map[*gotypes.TypeParam]*TypeParam
 	incompleteNamed   []*Named

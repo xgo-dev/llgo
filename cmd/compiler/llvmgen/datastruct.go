@@ -20,8 +20,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"

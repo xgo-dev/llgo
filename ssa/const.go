@@ -8,11 +8,10 @@ package ssa
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"strconv"
-
 )
 
 // NewConst returns a new constant of the specified value and type.

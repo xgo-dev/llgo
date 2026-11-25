@@ -163,7 +163,11 @@ jobs:
             local output="$2"
             (
               cd "$source_root"
-              LLGO_ROOT="$PWD" go build -p=1 -o "$GITHUB_WORKSPACE/$output" ./cmd/llgo
+              local gowork=off
+              if [[ -f go.work ]]; then
+                gowork="$PWD/go.work"
+              fi
+              GOWORK="$gowork" LLGO_ROOT="$PWD" go build -p=1 -o "$GITHUB_WORKSPACE/$output" ./cmd/llgo
             )
           }
 

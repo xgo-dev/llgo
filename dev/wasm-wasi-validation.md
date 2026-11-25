@@ -83,7 +83,7 @@ features. Windows host directories still need explicit POSIX guest mappings.
 
 ```sh
 bash dev/install_wasmer.sh
-go test ./internal/build -run '^TestWASIGCWaitsSuspendGoAcrossMutexReacquisition$'
+go test ./cmd/compiler/build -run '^TestWASIGCWaitsSuspendGoAcrossMutexReacquisition$'
 LLGO="$PWD/.bin/llgo" WASMER=/path/to/wasmer python3 dev/test_wasm_wasi_threads.py
 LLGO_WASI_THREADS=1 go run ./dev/wasmstdlib -full -profile W32-WASI \
   -shard 9 -shards 16 -llgo "$PWD/.bin/llgo" -report w32-shard9.json

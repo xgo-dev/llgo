@@ -790,16 +790,26 @@ func compactCommentGroups(groups ...*ast.CommentGroup) []*ast.CommentGroup {
 func declPatchKeys(decl ast.Decl) []string {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
+		// Package init() and blank functions can be declared multiple times in
+		// Go without colliding with stdlib declarations. Only an explicit
+		// //llgo:skip init directive should suppress original init functions.
+		if decl.Recv == nil && (decl.Name.Name == "init" || decl.Name.Name == "_") {
+			return nil
+		}
 		return []string{declPatchKeyFunc(decl)}
 	case *ast.GenDecl:
 		var out []string
 		for _, spec := range decl.Specs {
 			switch spec := spec.(type) {
 			case *ast.TypeSpec:
-				out = append(out, spec.Name.Name)
+				if spec.Name.Name != "_" {
+					out = append(out, spec.Name.Name)
+				}
 			case *ast.ValueSpec:
 				for _, name := range spec.Names {
-					out = append(out, name.Name)
+					if name.Name != "_" {
+						out = append(out, name.Name)
+					}
 				}
 			}
 		}

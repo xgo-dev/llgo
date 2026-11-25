@@ -10,12 +10,11 @@ package ssa
 import (
 	"bytes"
 	"fmt"
-	"go/ast"
 	"github.com/xgo-dev/llgo/types"
+	"go/ast"
 	"io"
 	"os"
 	"strings"
-
 )
 
 type sanity struct {

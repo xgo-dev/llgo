@@ -2,11 +2,11 @@ package frontcache
 
 import (
 	"encoding/json"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
-	"github.com/xgo-dev/llgo/ssa"
 	"strconv"
 	"strings"
 	"testing"

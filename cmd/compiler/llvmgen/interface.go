@@ -19,8 +19,8 @@ package llvmgen
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"math"
 	"strconv"
 	"strings"

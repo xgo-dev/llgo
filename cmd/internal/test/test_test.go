@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/internal/flags"
 )
 
 func TestCoverageFlagsAfterPackages(t *testing.T) {

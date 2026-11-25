@@ -8,10 +8,9 @@ package ssa
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
-
 )
 
 // emitAlloc emits to f a new Alloc instruction allocating a variable

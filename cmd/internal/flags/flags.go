@@ -6,12 +6,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/cmd/internal/compat"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
 	"github.com/xgo-dev/llgo/cmd/compiler/compilerhash"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/cmd/internal/compat"
 )
 
 var OutputFile string

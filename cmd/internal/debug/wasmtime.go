@@ -11,11 +11,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/xgo-dev/llgo/cmd/internal/lldb"
-	"github.com/xgo-dev/llgo/cmd/internal/wasidebug"
 	"github.com/xgo-dev/llgo/cmd/compiler/browserdebug"
 	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"
+	"github.com/xgo-dev/llgo/cmd/internal/lldb"
+	"github.com/xgo-dev/llgo/cmd/internal/wasidebug"
 )
 
 // Wasmtime reads DWARF from its input module. For external packaging, use the

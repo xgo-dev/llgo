@@ -13,6 +13,44 @@ import (
 	gopackages "golang.org/x/tools/go/packages"
 )
 
+func TestIsolateNestedModuleWorkspace(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.work":           "go 1.27.0\nuse (\n\t.\n\t./member\n)\n",
+		"go.mod":            "module example.com/root\ngo 1.20\n",
+		"member/go.mod":     "module example.com/root/member\ngo 1.20\n",
+		"standalone/go.mod": "module example.com/standalone\ngo 1.20\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, content)
+	}
+	nestedSubdir := filepath.Join(root, "standalone", "sub")
+	if err := os.MkdirAll(nestedSubdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := isolateNestedModuleWorkspace(nestedSubdir, []string{"PATH=/bin"})
+	if (commandEnv{environ: got}).lookup("GOWORK") != "off" {
+		t.Fatalf("standalone nested module did not get GOWORK=off: %v", got)
+	}
+	gotExplicit := isolateNestedModuleWorkspace(nestedSubdir, []string{"PATH=/bin", "GOWORK=" + filepath.Join(root, "go.work")})
+	if (commandEnv{environ: gotExplicit}).lookup("GOWORK") != filepath.Join(root, "go.work") {
+		t.Fatalf("explicit GOWORK was overwritten: %v", gotExplicit)
+	}
+	gotMember := isolateNestedModuleWorkspace(filepath.Join(root, "member"), []string{"PATH=/bin"})
+	if (commandEnv{environ: gotMember}).lookup("GOWORK") != "" {
+		t.Fatalf("workspace member unexpectedly got GOWORK override: %v", gotMember)
+	}
+	gotRoot := isolateNestedModuleWorkspace(root, []string{"PATH=/bin"})
+	if (commandEnv{environ: gotRoot}).lookup("GOWORK") != "" {
+		t.Fatalf("workspace root unexpectedly got GOWORK override: %v", gotRoot)
+	}
+}
+
 func TestWorkspaceRuntimeConfig(t *testing.T) {
 	caller := &packages.Config{Dir: "app", Env: []string{"GOWORK=/app/go.work", "GOFLAGS=-mod=vendor"}, BuildFlags: []string{"-tags=llgo", "-modfile=/app/custom.mod"}}
 	if err := applyPackageLoadFlags(caller, "-mod=vendor '-tags=first second' -overlay=/app/overlay.json -pkgdir=/app/exports"); err != nil {

@@ -364,45 +364,45 @@ var allowedGoTypesBridgeMethods = map[string]bool{
 // intentionally omitted in llgo/types (strictly Go 1.24+ iter.Seq methods that
 // cannot compile under Go 1.20, plus stdlib's internal DefPredeclaredTestFuncs).
 var knownGoTypesOmissions = map[string]bool{
-	"func:DefPredeclaredTestFuncs":       true,
-	"method:Interface.EmbeddedTypes":     true, // Go 1.24 iter.Seq
-	"method:Interface.ExplicitMethods":   true, // Go 1.24 iter.Seq
-	"method:Interface.Methods":           true, // Go 1.24 iter.Seq
-	"method:MethodSet.Methods":           true, // Go 1.24 iter.Seq
-	"method:Named.Methods":               true, // Go 1.24 iter.Seq
-	"method:Scope.Children":              true, // Go 1.24 iter.Seq
-	"method:Struct.Fields":               true, // Go 1.24 iter.Seq
-	"method:Tuple.Variables":             true, // Go 1.24 iter.Seq
-	"method:TypeList.Types":              true, // Go 1.24 iter.Seq
-	"method:TypeParamList.TypeParams":    true, // Go 1.24 iter.Seq
-	"method:Union.Terms":                 true, // Go 1.24 iter.Seq
+	"func:DefPredeclaredTestFuncs":     true,
+	"method:Interface.EmbeddedTypes":   true, // Go 1.24 iter.Seq
+	"method:Interface.ExplicitMethods": true, // Go 1.24 iter.Seq
+	"method:Interface.Methods":         true, // Go 1.24 iter.Seq
+	"method:MethodSet.Methods":         true, // Go 1.24 iter.Seq
+	"method:Named.Methods":             true, // Go 1.24 iter.Seq
+	"method:Scope.Children":            true, // Go 1.24 iter.Seq
+	"method:Struct.Fields":             true, // Go 1.24 iter.Seq
+	"method:Tuple.Variables":           true, // Go 1.24 iter.Seq
+	"method:TypeList.Types":            true, // Go 1.24 iter.Seq
+	"method:TypeParamList.TypeParams":  true, // Go 1.24 iter.Seq
+	"method:Union.Terms":               true, // Go 1.24 iter.Seq
 }
 
 // goTypesForwardCompat lists standard go/types APIs introduced in Go 1.21-1.27
 // that llgo/types implements in pure Go 1.20 so the guard passes on older Go.
 var goTypesForwardCompat = map[string]bool{
-	"type:Alias":                  true,
-	"type:VarKind":                true,
-	"type:Hasher":                 true,
-	"type:HasherIgnoreTags":       true,
-	"func:NewAlias":               true,
-	"func:Unalias":                true,
-	"func:LookupSelection":        true,
-	"method:Package.GoVersion":    true,
-	"method:Info.PkgNameOf":       true,
-	"method:Var.Kind":             true,
-	"method:Var.SetKind":          true,
-	"method:Alias.Obj":            true,
-	"method:Alias.Origin":         true,
-	"method:Alias.Rhs":            true,
-	"method:Alias.SetTypeParams":  true,
-	"method:Alias.String":         true,
-	"method:Alias.TypeArgs":       true,
-	"method:Alias.TypeParams":     true,
-	"method:Alias.Underlying":     true,
-	"method:VarKind.String":       true,
-	"method:Hasher.Equal":         true,
-	"method:Hasher.Hash":          true,
+	"type:Alias":                    true,
+	"type:VarKind":                  true,
+	"type:Hasher":                   true,
+	"type:HasherIgnoreTags":         true,
+	"func:NewAlias":                 true,
+	"func:Unalias":                  true,
+	"func:LookupSelection":          true,
+	"method:Package.GoVersion":      true,
+	"method:Info.PkgNameOf":         true,
+	"method:Var.Kind":               true,
+	"method:Var.SetKind":            true,
+	"method:Alias.Obj":              true,
+	"method:Alias.Origin":           true,
+	"method:Alias.Rhs":              true,
+	"method:Alias.SetTypeParams":    true,
+	"method:Alias.String":           true,
+	"method:Alias.TypeArgs":         true,
+	"method:Alias.TypeParams":       true,
+	"method:Alias.Underlying":       true,
+	"method:VarKind.String":         true,
+	"method:Hasher.Equal":           true,
+	"method:Hasher.Hash":            true,
 	"method:HasherIgnoreTags.Equal": true,
 	"method:HasherIgnoreTags.Hash":  true,
 }
@@ -449,13 +449,13 @@ func buildVerifiedLLGoExtensions() map[string]bool {
 		"func:NativeIntExtForSpec":      true,
 
 		// Verified methods on shared types.
-		"method:Pointer.Kind":          true,
-		"method:Signature.CallConv":    true,
+		"method:Pointer.Kind":           true,
+		"method:Signature.CallConv":     true,
 		"method:Signature.WithCallConv": true,
-		"method:Signature.IsClosure":   true,
-		"method:Signature.IsNative":    true,
-		"method:Named.CallConv":        true,
-		"method:Alias.CallConv":        true,
+		"method:Signature.IsClosure":    true,
+		"method:Signature.IsNative":     true,
+		"method:Named.CallConv":         true,
+		"method:Alias.CallConv":         true,
 
 		// Verified *Context compiler/bridge/Sizes methods.
 		"method:Context.FromGo":                 true,

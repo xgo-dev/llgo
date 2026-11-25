@@ -5,8 +5,8 @@ package frontcache
 
 import (
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 )
 
 // Object preserves package identity for private fields/methods as well as names.

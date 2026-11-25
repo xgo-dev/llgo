@@ -6,23 +6,34 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
 
 go_list() {
-  if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
-    command go list "-modfile=${LLGO_TEST_MODFILE}" -tags=llgo "$@"
-  else
-    command go list -tags=llgo "$@"
-  fi
+  (
+    cd "${ROOT_DIR}/test"
+    if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
+      command go list "-modfile=${LLGO_TEST_MODFILE}" -tags=llgo "$@"
+    else
+      command go list -tags=llgo "$@"
+    fi
+  )
 }
 
 module_path="$(GOWORK=off go_list -m)"
 
 packages=()
 if [[ $# -eq 0 ]]; then
-  package_output="$(go_list ./test/std/... | sort)"
+  package_output="$(go_list ./std/... | sort)"
   while IFS= read -r pkg; do
     [[ -n "${pkg}" ]] && packages+=("${pkg}")
   done <<< "${package_output}"
 else
-  package_output="$(go_list "$@" | sort -u)"
+  norm_args=()
+  for arg in "$@"; do
+    case "${arg}" in
+      ./test/*) norm_args+=("./${arg#./test/}") ;;
+      test/*) norm_args+=("./${arg#test/}") ;;
+      *) norm_args+=("${arg}") ;;
+    esac
+  done
+  package_output="$(go_list "${norm_args[@]}" | sort -u)"
   while IFS= read -r pkg; do
     [[ -n "${pkg}" ]] && packages+=("${pkg}")
   done <<< "${package_output}"
@@ -37,10 +48,13 @@ args=()
 covered_packages=()
 for pkg in "${packages[@]}"; do
   rel_path="${pkg#"${module_path}"/}"
-  if [[ "${rel_path}" != test/std/* ]]; then
+  if [[ "${rel_path}" == std/* ]]; then
+    stdlib_pkg="${rel_path#std/}"
+  elif [[ "${rel_path}" == test/std/* ]]; then
+    stdlib_pkg="${rel_path#test/std/}"
+  else
     continue
   fi
-  stdlib_pkg="${rel_path#test/std/}"
   covered_packages+=("${stdlib_pkg}")
   # abicall contains supplemental LLGo runtime/host ABI regressions, rather
   # than tests for a public standard-library package named runtime/abicall.

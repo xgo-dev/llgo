@@ -17,8 +17,8 @@
 package layout
 
 import (
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"strings"
 	"testing"
 

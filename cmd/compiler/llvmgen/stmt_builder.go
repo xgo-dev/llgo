@@ -19,8 +19,8 @@ package llvmgen
 import (
 	"bytes"
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 	"log"
 	"strings"
 

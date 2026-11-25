@@ -620,7 +620,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	// Keep child Go invocations (notably cmptest's baseline) on the same
 	// architecture level as the LLVM build. GOOS/GOARCH retain their existing
 	// per-command handling.
-	commands := commandEnv{dir: dir, environ: withEnv(environ, goarchEnv(conf)...)}
+	commands := commandEnv{dir: dir, environ: isolateNestedModuleWorkspace(dir, withEnv(environ, goarchEnv(conf)...))}
 	conf.coverage, err = newCoverageBuild(conf, commands)
 	if err != nil {
 		return nil, err

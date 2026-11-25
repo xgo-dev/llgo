@@ -873,7 +873,7 @@ jobs:
 
       - name: Install llgo
         run: |
-          go install ./...
+          go install ./cmd/...
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Test Cross Compilation (wasm)

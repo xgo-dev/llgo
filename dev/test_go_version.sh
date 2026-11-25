@@ -92,7 +92,7 @@ requested_packages=("$@")
 if [[ "${#requested_packages[@]}" -eq 0 ]]; then
 	case "${LLGO_TEST_SUITE:-}" in
 		core)
-			requested_packages=(./test/...)
+			requested_packages=(./...)
 			;;
 		std)
 			case "${target_minor}" in
@@ -233,8 +233,19 @@ if [[ "${#requested_packages[@]}" -eq 0 ]]; then
 	esac
 fi
 
+normalized_packages=()
+for pkg in "${requested_packages[@]}"; do
+	case "${pkg}" in
+		./test) normalized_packages+=(.) ;;
+		./test/*) normalized_packages+=("./${pkg#./test/}") ;;
+		test) normalized_packages+=(.) ;;
+		test/*) normalized_packages+=("./${pkg#test/}") ;;
+		*) normalized_packages+=("${pkg}") ;;
+	esac
+done
+
 packages_file="${work_dir}/packages.txt"
-go list -modfile="${modfile}" -tags=llgo "${requested_packages[@]}" | sort -u >"${packages_file}"
+(cd "${root_dir}/test" && go list -modfile="${modfile}" -tags=llgo "${normalized_packages[@]}") | sort -u >"${packages_file}"
 packages=()
 while IFS= read -r package; do
 	if [[ "${LLGO_TEST_SUITE:-}" == "core" ]]; then
@@ -309,7 +320,11 @@ fi
 if [[ -n "${LLGO_TEST_COVERPROFILE:-}" ]]; then
 	# Reuse this invocation, including its package selection and worker budget.
 	# Atomic counters keep concurrent test execution accurately instrumented.
-	test_flags+=(-covermode=atomic "-coverprofile=${LLGO_TEST_COVERPROFILE}")
+	coverprofile="${LLGO_TEST_COVERPROFILE}"
+	if [[ "${coverprofile}" != /* && "${coverprofile}" != [A-Za-z]:* ]]; then
+		coverprofile="${root_dir}/${coverprofile}"
+	fi
+	test_flags+=(-covermode=atomic "-coverprofile=${coverprofile}")
 	if [[ -n "${LLGO_TEST_COVERPKG:-}" ]]; then
 		test_flags+=("-coverpkg=${LLGO_TEST_COVERPKG}")
 	fi
@@ -321,7 +336,7 @@ if [[ "${LLGO_TEST_BENCH_GO126:-}" == 1 && "${target_minor}" == 1.26 ]]; then
 	test_flags+=(-bench='^BenchmarkGo126' -benchtime=1x)
 fi
 SECONDS=0
-"${llgo_cmd}" test "${test_flags[@]}" "${selected[@]}"
+(cd "${root_dir}/test" && "${llgo_cmd}" test "${test_flags[@]}" "${selected[@]}")
 echo "llgo test completed in ${SECONDS}s"
 
 std_packages=()

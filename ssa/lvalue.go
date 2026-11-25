@@ -8,10 +8,9 @@ package ssa
 // expressions.
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
-
 )
 
 // An lvalue represents an assignable location that may appear on the

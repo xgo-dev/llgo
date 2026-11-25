@@ -9,12 +9,12 @@ package ssa
 
 import (
 	"fmt"
-	"go/ast"
-	"go/constant"
-	"go/token"
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/constant"
+	"go/token"
 	"reflect"
 	"strings"
 	"sync"
@@ -353,13 +353,13 @@ type Function struct {
 	info      *types.Info // type annotations (if syntax != nil)
 	goversion string      // Go version of syntax (NB: init is special)
 
-	parent *Function // enclosing function if anon; nil if global
+	parent     *Function             // enclosing function if anon; nil if global
 	Pkg        *Package              // enclosing package; nil for shared funcs (wrappers and error.Error)
 	LinkName   string                // LLGo extension: symbol linkname
 	ExportName string                // LLGo extension: symbol export name
 	NoInline   bool                  // LLGo extension: //go:noinline
 	WasmImport *directive.WasmImport // LLGo extension: //go:wasmimport
-	Prog   *Program  // enclosing program
+	Prog       *Program              // enclosing program
 
 	buildshared *task // wait for a shared function to be done building (may be nil if <=1 builder ever needs to wait)
 

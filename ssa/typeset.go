@@ -6,7 +6,6 @@ package ssa
 
 import (
 	"github.com/xgo-dev/llgo/types"
-
 )
 
 // Utilities for dealing with type sets.

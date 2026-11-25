@@ -15,8 +15,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/flash"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
-	"github.com/xgo-dev/llgo/target"
 	envllvm "github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/target"
 )
 
 type Export struct {

@@ -91,12 +91,12 @@ type object struct {
 	goObj  gotypes.Object
 }
 
-func (o *object) Parent() *Scope { return o.parent }
-func (o *object) Pos() token.Pos { return o.pos }
-func (o *object) Pkg() *Package  { return o.pkg }
-func (o *object) Name() string   { return o.name }
-func (o *object) Type() Type     { return o.typ }
-func (o *object) Exported() bool { return token.IsExported(o.name) }
+func (o *object) Parent() *Scope  { return o.parent }
+func (o *object) Pos() token.Pos  { return o.pos }
+func (o *object) Pkg() *Package   { return o.pkg }
+func (o *object) Name() string    { return o.name }
+func (o *object) Type() Type      { return o.typ }
+func (o *object) Exported() bool  { return token.IsExported(o.name) }
 func (o *object) llObjectMarker() {}
 
 func (o *object) Id() string {
@@ -233,11 +233,11 @@ func (v *Var) Origin() *Var {
 	}
 	return v
 }
-func (v *Var) Anonymous() bool       { return v.embedded }
-func (v *Var) Embedded() bool        { return v.embedded }
-func (v *Var) IsField() bool         { return v.isField }
-func (v *Var) Kind() VarKind         { return v.kind }
-func (v *Var) SetKind(kind VarKind)  { v.kind = kind }
+func (v *Var) Anonymous() bool      { return v.embedded }
+func (v *Var) Embedded() bool       { return v.embedded }
+func (v *Var) IsField() bool        { return v.isField }
+func (v *Var) Kind() VarKind        { return v.kind }
+func (v *Var) SetKind(kind VarKind) { v.kind = kind }
 func (v *Var) String() string {
 	kind := "var"
 	if v.isField {
@@ -358,8 +358,8 @@ func (s *Scope) Parent() *Scope     { return s.parent }
 func (s *Scope) Len() int           { return len(s.elems) }
 func (s *Scope) NumChildren() int   { return len(s.children) }
 func (s *Scope) Child(i int) *Scope { return s.children[i] }
-func (s *Scope) Pos() token.Pos { return s.pos }
-func (s *Scope) End() token.Pos { return s.end }
+func (s *Scope) Pos() token.Pos     { return s.pos }
+func (s *Scope) End() token.Pos     { return s.end }
 
 // Contains reports whether pos is within the scope's extent (mirroring go/types).
 func (s *Scope) Contains(pos token.Pos) bool {

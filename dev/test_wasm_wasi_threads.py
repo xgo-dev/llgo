@@ -27,7 +27,7 @@ def run_output_cache_probe(env, directory):
     module = pathlib.Path(directory) / "runner-output.wasm"
     cache = pathlib.Path(directory) / "runner-cache"
     subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
-                    str(ROOT / "internal/build/testdata/wasm-wasi-runner-output/main.wat"),
+                    str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-runner-output/main.wat"),
                     "-o", str(module)], check=True, timeout=30)
     command = wasmer_command(module)
     command[2:2] = ["--cache-dir", str(cache)]
@@ -52,7 +52,7 @@ def run_probe(env, directory, name, fixture, tags, marker, timeout,
     command = [LLGO, "build", "-target", "wasi"]
     if tags:
         command += ["-tags", tags]
-    command += ["-o", str(module), str(ROOT / "internal/build/testdata" / fixture)]
+    command += ["-o", str(module), str(ROOT / "cmd/compiler/build/testdata" / fixture)]
     subprocess.run(
         command,
         check=True,
@@ -92,7 +92,7 @@ def run_llgo(env, args, marker, timeout=180):
 def check_size_probe(env, module):
     if b"unusedFunctionMetadata" in module.read_bytes():
         raise SystemExit(f"{module.name}: dead function metadata survived")
-    source = ROOT / "internal/build/testdata/wasm-size/main.go"
+    source = ROOT / "cmd/compiler/build/testdata/wasm-size/main.go"
     panic_line = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
                       if line.startswith("func panicSite()"))
     for args, expected_exit, marker in (
@@ -114,7 +114,7 @@ def run_arena_boundaries(env, directory):
     module = pathlib.Path(directory) / "gc-arena.wasm"
     subprocess.run(
         [LLGO, "build", "-target", "wasi", "-o", str(module),
-         str(ROOT / "internal/build/testdata/wasm-wasi-gc-arena")],
+         str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-gc-arena")],
         check=True, env=env, timeout=180,
     )
     # Each size needs a fresh heap: an earlier oversized arena could mask
@@ -152,7 +152,7 @@ def run_memory_config_probe(env, directory):
             build_env = dict(probe_env, LDFLAGS="-Wl,--export=__stack_low,--export=__stack_high")
             subprocess.run([
                 LLGO, "build", "-target", target.stem,
-                "-o", str(module), str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup"),
+                "-o", str(module), str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-thread-startup"),
             ], check=True, env=build_env, timeout=180)
             wat = subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "print", str(module)],
                                  check=True, capture_output=True, text=True, timeout=30).stdout
@@ -183,7 +183,7 @@ def run_memory_config_probe(env, directory):
         result = subprocess.run([
             LLGO, "build", "-target", target.stem,
             "-o", str(pathlib.Path(directory) / "too-small.wasm"),
-            str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup"),
+            str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-thread-startup"),
         ], env=probe_env, capture_output=True, text=True, timeout=180)
         if result.returncode == 0 or "initial memory too small" not in result.stderr:
             raise SystemExit(f"WASI accepted an insufficient initial-memory budget: {result}")
@@ -212,7 +212,7 @@ def run_inherited_memory_overrides(env, directory, parent):
         ):
             module = pathlib.Path(directory) / f"memory-override-{name}.wasm"
             result = subprocess.run([LLGO, "build", "-target", child.stem,
-                                     "-o", str(module), str(ROOT / "internal/build/testdata/wasm-wasi-thread-startup")],
+                                     "-o", str(module), str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-thread-startup")],
                                     env=dict(env, LDFLAGS=flags), capture_output=True, text=True, timeout=180)
             if success:
                 if result.returncode != 0:
@@ -241,14 +241,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix="llgo-wasi-threads-") as directory:
         module = pathlib.Path(directory) / "size.wasm"
         subprocess.run([LLGO, "build", "-target", "wasi", "-o", str(module),
-                        str(ROOT / "internal/build/testdata/wasm-size")],
+                        str(ROOT / "cmd/compiler/build/testdata/wasm-size")],
                        check=True, env=env, timeout=300)
         check_size_probe(env, module)
         run_memory_config_probe(env, directory)
         run_output_cache_probe(env, directory)
         simd = pathlib.Path(directory) / "simd-threads-eh.wasm"
         subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
-                        str(ROOT / "internal/build/testdata/wasm-wasi-simd/threads.wat"),
+                        str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-simd/threads.wat"),
                         "-o", str(simd)], check=True, timeout=30)
         subprocess.run(wasmer_command(simd), env=env, check=True, timeout=30)
         print("wasi SIMD/thread/standard-EH boundary ok", flush=True)
@@ -282,7 +282,7 @@ def main():
         # unrecovered panic exits explicitly, so it cannot test this boundary.
         uncaught = pathlib.Path(directory) / "uncaught-eh.wasm"
         subprocess.run([os.environ.get("WASM_TOOLS", "wasm-tools"), "parse",
-                        str(ROOT / "internal/build/testdata/wasm-wasi-goexit-defer/uncaught.wat"),
+                        str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-goexit-defer/uncaught.wat"),
                         "-o", str(uncaught)], check=True, timeout=30)
         result = subprocess.run(wasmer_command(uncaught), env=env, capture_output=True,
                                 text=True, timeout=30)
@@ -317,10 +317,10 @@ def main():
                            str(ROOT / "test/wasm/reflect-method-value")],
                      "wasm reflect method values: 42 42 42 42 42")
         run_llgo(env, ["run", "-target", "wasi", "-emulator",
-                       str(ROOT / "internal/build/testdata/wasm-wasi-threads")],
+                       str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-threads")],
                  "wasi threads ok")
         run_llgo(env, ["run", "-target", "wasi", "-emulator",
-                       str(ROOT / "internal/build/testdata/wasm-wasi-threaded-fs")],
+                       str(ROOT / "cmd/compiler/build/testdata/wasm-wasi-threaded-fs")],
                  "wasi threaded filesystem ok")
         run_llgo(env, ["test", "-v", "-target", "wasi", "-emulator",
                        str(ROOT / "test/std/errors")], "PASS")

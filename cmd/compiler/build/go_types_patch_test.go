@@ -58,6 +58,16 @@ func TestRuntimePatchGoTypesOverlayAndSizes(t *testing.T) {
 	if strings.Contains(string(patchedStd), "\nfunc SizesFor(") {
 		t.Fatalf("original SizesFor was not commented out in patched %s", stdSizesPath)
 	}
+	// Patch files defining func init() must not strip stdlib go/types func init()
+	// declarations (for example universe.go's init that initializes types.Universe).
+	universePath := filepath.Join(goroot, "src", "go", "types", "universe.go")
+	if patchedUniverse, ok := overlay[universePath]; ok {
+		t.Fatalf("go/types/universe.go unexpectedly rewritten by source patch:\n%s", string(patchedUniverse))
+	}
+	exprPath := filepath.Join(goroot, "src", "go", "types", "expr.go")
+	if patchedExpr, ok := overlay[exprPath]; ok {
+		t.Fatalf("go/types/expr.go unexpectedly rewritten by source patch:\n%s", string(patchedExpr))
+	}
 
 	// Parse and type-check the entire patched GOROOT go/types package with the
 	// injected sizes.go patch to prove zero symbol/type mismatches against GOROOT.

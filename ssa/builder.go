@@ -74,15 +74,13 @@ package ssa
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"github.com/xgo-dev/llgo/types"
 	"os"
 	"runtime"
 	"sync"
-
-
 )
 
 var (

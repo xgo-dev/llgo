@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	cmdflags "github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
+	cmdflags "github.com/xgo-dev/llgo/cmd/internal/flags"
 )
 
 func TestRunCmdPassesGoBuildFlags(t *testing.T) {

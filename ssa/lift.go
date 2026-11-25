@@ -43,7 +43,6 @@ import (
 	"go/token"
 	"math/big"
 	"os"
-
 )
 
 // If true, show diagnostic information at each step of lifting.

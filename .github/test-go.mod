@@ -1,4 +1,4 @@
-module github.com/xgo-dev/llgo
+module github.com/xgo-dev/llgo/test
 
 go 1.20
 

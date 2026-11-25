@@ -319,8 +319,8 @@ Embedme treats a single-token `//` comment at the start of a fenced block as a f
 
 ## Repository tools
 
-- [gentests](chore/gentests): refresh runtime-output and package-metadata goldens.
-- [litgen](chore/litgen): maintain opted-in FileCheck snapshots in Go sources.
+- [gentests](cmd/chore/gentests): refresh runtime-output and package-metadata goldens.
+- [litgen](cmd/chore/litgen): maintain opted-in FileCheck snapshots in Go sources.
 
 For local workflows and test-golden refresh commands, see [dev/README.md](dev/README.md#refresh-test-goldens).
 

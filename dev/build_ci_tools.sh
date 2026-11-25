@@ -26,7 +26,7 @@ fi
 echo "Building LLGo tools with go${build_version} into ${output_dir}"
 (
 	cd "${repo_root}"
-	GOBIN="${output_dir}" GOTOOLCHAIN=local "${build_go}" install ./...
+	GOBIN="${output_dir}" GOTOOLCHAIN=local "${build_go}" install ./cmd/...
 	if [[ "${LLGO_BUILD_GOROOT_RUNNER:-}" == 1 ]]; then
 		GOTOOLCHAIN=local "${build_go}" build -tags=dev \
 			-o "${output_dir}/llgo${tool_suffix}" ./cmd/llgo

@@ -3,8 +3,8 @@ package llvmgen
 import (
 	"debug/dwarf"
 	"fmt"
-	"go/token"
 	"github.com/xgo-dev/llgo/types"
+	"go/token"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/debuginfo"
