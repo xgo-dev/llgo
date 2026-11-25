@@ -27,15 +27,16 @@ package gpio
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK). The Name stays empty - the esp_err naming table lives
-// in the wifi package - but the code itself is the stable, inspectable
-// identifier.
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): every code forwards as a bare esperr.Coded value - the driver's
+// esp_err is the diagnostic, and the esp_err naming table lives in the wifi
+// package. The package has no Go-side refusal of its own (the glue owns the
+// pin-range guard), so it declares no sentinel.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code}
+	return esperr.Coded(code, "")
 }
 
 // Mode selects a pin's direction.

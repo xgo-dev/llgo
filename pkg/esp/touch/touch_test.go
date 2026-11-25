@@ -129,13 +129,30 @@ func TestChanValidation(t *testing.T) {
 	}
 }
 
-// TestErrorSegment pins the binding's internal segment value: 0x7301 sits
-// outside every real esp_err range (the drivers' codes top out around
-// 0x10x/0x2xx/0x6xx), so a refusal made at the glue can never be mistaken
-// for one made by the IDF driver.
+// TestErrorSegment pins the binding's internal segment value through the
+// sentinel: 0x7301 sits outside every real esp_err range (the drivers'
+// codes top out around 0x10x/0x2xx/0x6xx), so a refusal made at the glue
+// can never be mistaken for one made by the IDF driver. The sentinel
+// carries the segment code as its Error.Code annotation, so both match
+// paths work: errors.Is against the sentinel (by identity) and against a
+// raw-code Error (by code), and the rendering is the human text with the
+// code annotation.
 func TestErrorSegment(t *testing.T) {
-	if ErrNotInit != 0x7301 {
-		t.Fatalf("ErrNotInit = 0x%X, want the touch segment value 0x7301", ErrNotInit)
+	if esperr.Code(ErrNotInit) != 0x7301 {
+		t.Fatalf("ErrNotInit carries code 0x%X, want the touch segment value 0x7301", esperr.Code(ErrNotInit))
+	}
+	if got, want := ErrNotInit.Error(), "esp/touch: not initialized (code 29441)"; got != want {
+		t.Fatalf("ErrNotInit.Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(errOf(errNotInit), ErrNotInit) {
+		t.Fatal("the glue's 0x7301 refusal did not match the ErrNotInit sentinel")
+	}
+	if !errors.Is(errOf(errNotInit), &esperr.Error{Code: 0x7301}) {
+		t.Fatal("the 0x7301 refusal did not match a raw-code Error (code path broken)")
+	}
+	var e *esperr.Error
+	if !errors.As(errOf(errNotInit), &e) || e.Code != 0x7301 {
+		t.Fatal("errors.As on the refusal did not surface the 0x7301 annotation")
 	}
 }
 

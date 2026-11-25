@@ -77,21 +77,42 @@ import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 // every real esp_err range so a refusal made here can never be mistaken
 // for one made there.
 //
-// The ErrNotInit reporting is the glue's job: before Init has run its
-// static controller handle is NULL and every glue entry returns 0x7301, so
-// a caller can tell "the package was never brought up" apart from the
-// driver's own ESP_ERR_INVALID_STATE (0x103, e.g. a second Start).
-const ErrNotInit = 0x7301
+// The not-init reporting is the glue's job: before Init has run its
+// static controller handle is NULL and every glue entry returns the
+// segment value below, so a caller can tell "the package was never brought
+// up" apart from the driver's own ESP_ERR_INVALID_STATE (0x103, e.g. a
+// second Start).
+const errNotInit = 0x7301
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK). The Name stays empty - the esp_err naming table lives
-// in the wifi package - but the code itself is the stable, inspectable
-// identifier.
+// ErrNotInit reports a touch call made before Init. It is the package's
+// semantic sentinel - match it with errors.Is - and it keeps the glue's
+// 0x7301 segment code on Error.Code as the diagnostic annotation, so
+// errors.As and esperr.Code still expose the number the C pipeline
+// reported and code-style checks against the segment value keep working.
+var ErrNotInit = newSentinel("esp/touch: not initialized", errNotInit)
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// segment code on Error.Code as the annotation (esperr.New is text-only;
+// the glue still reports the code, and the README segment table pins it).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
+
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): the not-init refusal becomes the ErrNotInit sentinel, every
+// other code forwards as a bare esperr.Coded value - the driver's esp_err
+// is the diagnostic, and the esp_err naming table lives in the wifi
+// package.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code}
+	if code == errNotInit {
+		return ErrNotInit
+	}
+	return esperr.Coded(code, "")
 }
 
 // ChannelID identifies a touch channel by its hardware index. The S31

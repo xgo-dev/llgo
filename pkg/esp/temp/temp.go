@@ -51,21 +51,41 @@ import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 // esp_err range so a refusal made at the glue can never be mistaken for one
 // made by the driver.
 //
-// The ErrNotInstalled reporting is the glue's job: before Install has run its
-// static handle is NULL and Start/Read/Stop/Uninstall return 0x7201, so a
-// caller can tell "the sensor was never installed" apart from the driver's
-// own ESP_ERR_INVALID_STATE (0x103, e.g. a second Start).
-const ErrNotInstalled = 0x7201
+// The not-installed reporting is the glue's job: before Install has run its
+// static handle is NULL and Start/Read/Stop/Uninstall return the segment
+// value below, so a caller can tell "the sensor was never installed" apart
+// from the driver's own ESP_ERR_INVALID_STATE (0x103, e.g. a second Start).
+const errNotInstalled = 0x7201
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK). The Name stays empty - the esp_err naming table lives
-// in the wifi package - but the code itself is the stable, inspectable
-// identifier.
+// ErrNotInstalled reports a sensor call made before Install. It is the
+// package's semantic sentinel - match it with errors.Is - and it keeps the
+// glue's 0x7201 segment code on Error.Code as the diagnostic annotation, so
+// errors.As and esperr.Code still expose the number the C pipeline reported
+// and code-style checks against the segment value keep working.
+var ErrNotInstalled = newSentinel("esp/temp: not installed", errNotInstalled)
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// segment code on Error.Code as the annotation (esperr.New is text-only;
+// the glue still reports the code, and the README segment table pins it).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
+
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): the not-installed refusal becomes the ErrNotInstalled sentinel,
+// every other code forwards as a bare esperr.Coded value - the driver's
+// esp_err is the diagnostic, and the esp_err naming table lives in the wifi
+// package.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code}
+	if code == errNotInstalled {
+		return ErrNotInstalled
+	}
+	return esperr.Coded(code, "")
 }
 
 // Opts configures the sensor at Install time. Use DefaultOpts for the
