@@ -133,6 +133,56 @@ func (b *Builder) Const(typ types.Type, val constant.Value) *Const {
 	return &Const{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Value: val}
 }
 
+func (b *Builder) GlobalRef(g *Global) *GlobalRef {
+	var ptrType types.Type
+	if g != nil && g.Type != nil {
+		ptrType = types.NewPointerWithKind(g.Type, types.GoPtr)
+	}
+	return &GlobalRef{baseValue: baseValue{id: b.fn.allocID(), typ: ptrType}, Global: g}
+}
+
+func (b *Builder) UnOp(op token.Token, typ types.Type, x Value) *UnOp {
+	ins := &UnOp{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Op: op, X: x}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) Convert(typ types.Type, x Value) *Convert {
+	ins := &Convert{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, X: x}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) FieldAddr(base Value, fieldIndex int, ptrType types.Type) *FieldAddr {
+	ins := &FieldAddr{baseValue: baseValue{id: b.fn.allocID(), typ: ptrType}, Base: base, FieldIndex: fieldIndex}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) IndexAddr(base, index Value, ptrType types.Type) *IndexAddr {
+	ins := &IndexAddr{baseValue: baseValue{id: b.fn.allocID(), typ: ptrType}, Base: base, Index: index}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) Go(callee Value, args ...Value) *Go {
+	ins := &Go{Callee: callee, Args: args}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) Panic(val Value) *Panic {
+	ins := &Panic{Val: val}
+	b.emit(ins)
+	return ins
+}
+
+func (b *Builder) Recover(typ types.Type) *Recover {
+	ins := &Recover{baseValue: baseValue{id: b.fn.allocID(), typ: typ}}
+	b.emit(ins)
+	return ins
+}
+
 func (b *Builder) Extract(tuple Value, index int) *Extract {
 	var elemType types.Type
 	if tuple != nil && tuple.Type() != nil {

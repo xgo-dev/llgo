@@ -42,6 +42,7 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/exportdata"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
@@ -4293,10 +4294,11 @@ type aPackage struct {
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
 	// Cache related fields
-	Fingerprint    string          // fingerprint digest
-	Manifest       string          // manifest text content
-	CacheHit       bool            // whether cache was hit
-	frontendOpaque *frontendExport // validated body-independent archive contract
+	Fingerprint    string                  // fingerprint digest
+	Manifest       string                  // manifest text content
+	CacheHit       bool                    // whether cache was hit
+	frontendOpaque *frontendExport         // validated body-independent archive contract
+	exportMeta     *exportdata.PackageMeta // binary llgo/exportdata summary sidecar
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {

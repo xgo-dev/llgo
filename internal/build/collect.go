@@ -541,6 +541,11 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 			pkg.linkSnapshot = snap
 		}
 	}
+	if pkg.exportMeta == nil {
+		if em, err := c.readExportMetaSidecar(paths.Export); err == nil && em != nil {
+			pkg.exportMeta = em
+		}
+	}
 	pkg.CacheHit = true
 
 	return true
@@ -696,6 +701,11 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	}
 	if pkg.linkSnapshot != nil {
 		_ = c.writeLinkSnapshotSidecar(paths.LinkSnap, pkg)
+	}
+	// Persist compact binary exportdata.PackageMeta sidecar for pure-Go
+	// incremental analysis (callgraph, escape, deadcode, inline).
+	if pkg.SSA != nil {
+		_ = c.writeExportMetaSidecar(paths.Export, pkg)
 	}
 
 	// Link a cache miss from the same stable archive path used by a cache hit.
