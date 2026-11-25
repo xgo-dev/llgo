@@ -26,9 +26,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/xgo-dev/llgo/analysis/deadcode"
-	"github.com/xgo-dev/llgo/exportdata"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	lltypes "github.com/xgo-dev/llgo/types"
 	"golang.org/x/tools/go/ssa"
 )
@@ -69,8 +68,6 @@ func Unused() int { return 42 }
 	ssaPkg := prog.CreatePackage(goPkg, []*ast.File{f}, info, true)
 	prog.Build()
 
-	// Explicitly verify Module == nil (stdlib / runtime-patched effective scope)
-	// works cleanly with both binary PackageMeta and binary llgo/types.Package sidecars.
 	pkg := &aPackage{
 		Package: &packages.Package{
 			ID:      "stdsim",
@@ -96,10 +93,10 @@ func Unused() int { return 42 }
 	if err != nil {
 		t.Fatalf("readExportMetaSidecar: %v", err)
 	}
-	if loadedMeta.Summary.Path != "stdsim" {
-		t.Fatalf("loaded meta path = %q, want stdsim", loadedMeta.Summary.Path)
+	if loadedMeta.PkgPath != "stdsim" {
+		t.Fatalf("loaded meta path = %q, want stdsim", loadedMeta.PkgPath)
 	}
-	dc := deadcode.Analyze(nil, []*exportdata.PackageMeta{loadedMeta}, nil, []string{"stdsim.Keep"})
+	dc := pkgmeta.AnalyzeDeadcode([]*pkgmeta.PackageMeta{loadedMeta}, []string{"stdsim.Keep"})
 	if !slices.Contains(dc.ReachableFuncs, "stdsim.Keep") || !slices.Contains(dc.DeadFuncs, "stdsim.Unused") {
 		t.Fatalf("unexpected deadcode result from cached sidecar: reachable=%v dead=%v", dc.ReachableFuncs, dc.DeadFuncs)
 	}
@@ -108,7 +105,7 @@ func Unused() int { return 42 }
 	if err := ctx.writePackageTypesSidecar(typesPath, pkg); err != nil {
 		t.Fatalf("writePackageTypesSidecar: %v", err)
 	}
-	decodedPkg, err := ctx.readPackageTypesSidecar(typesPath, make(map[string]*lltypes.Package))
+	decodedPkg, err := ctx.readPackageTypesSidecar(typesPath, "stdsim", make(map[string]*lltypes.Package))
 	if err != nil {
 		t.Fatalf("readPackageTypesSidecar: %v", err)
 	}

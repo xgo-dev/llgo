@@ -27,7 +27,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xgo-dev/llgo/exportdata"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -380,7 +379,7 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 				depKey = ctx.targetTriple() + "\x00" + cacheKey.path + "\x00" + cacheKey.compilerArgs
 				depPath = ctx.ensureCacheManager().DepfilePath(depKey)
 				if raw, err := os.ReadFile(depPath); err == nil {
-					if df, err := exportdata.UnmarshalDepfile(raw); err == nil && df.Key == depKey && exportdata.ValidateDepfile(df) {
+					if df, err := unmarshalDepfile(raw); err == nil && df.Key == depKey && validateDepfile(df) {
 						preprocessedHash = df.PreprocessedHash
 						ok = true
 					}
@@ -421,8 +420,8 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 					if depBytes, err := os.ReadFile(tmpDep); err == nil {
 						deps := parseMakeDepfile(string(depBytes))
 						deps = append(deps, input.path)
-						if stats, err := exportdata.StatFiles(deps); err == nil && len(stats) > 0 {
-							if raw, err := exportdata.MarshalDepfile(&exportdata.Depfile{
+						if stats, err := statDepfiles(deps); err == nil && len(stats) > 0 {
+							if raw, err := marshalDepfile(&depfileRecord{
 								Key:              depKey,
 								PreprocessedHash: preprocessedHash,
 								Files:            stats,

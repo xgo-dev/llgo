@@ -18,15 +18,10 @@ package cl
 
 import (
 	"fmt"
-	"go/constant"
-	"go/token"
 	gotypes "go/types"
 	"sort"
 
-	"github.com/xgo-dev/llgo/analysis/callgraph"
-	"github.com/xgo-dev/llgo/analysis/escape"
-	"github.com/xgo-dev/llgo/analysis/inline"
-	"github.com/xgo-dev/llgo/exportdata"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
@@ -36,7 +31,7 @@ import (
 // LowerGoPackageTypes converts a type-checked stdlib *go/types.Package
 // (including stdlib packages with Module == nil and runtime-patched effective
 // scopes) into a self-contained pure-Go *llgo/types.Package suitable for
-// deterministic binary exportdata.MarshalPackage persistence.
+// deterministic binary exportdata.Write persistence.
 func LowerGoPackageTypes(goPkg *gotypes.Package, tctx *lltypes.Context) *lltypes.Package {
 	if goPkg == nil {
 		return nil
@@ -84,95 +79,79 @@ func LowerGoPackageTypes(goPkg *gotypes.Package, tctx *lltypes.Context) *lltypes
 	return convert(goPkg)
 }
 
-// LowerPackage translates a built golang.org/x/tools/go/ssa.Package into
-// LLGo's pure-Go, backend-independent mid-level IR (*llgo/ssa.Package).
-// The resulting package passes llgo/ssa.VerifyPackage and feeds llgo/analysis/*
-// and exportdata.PackageMeta sidecar generation without LLVM or CGo.
-func LowerPackage(prog *ssa.Program, goPkg *ssa.Package, spec target.Spec, tctx *lltypes.Context) (*llssa.Package, error) {
-	if goPkg == nil || goPkg.Pkg == nil {
-		return nil, fmt.Errorf("cl.LowerPackage: nil ssa.Package")
-	}
+// LowerProgram translates a set of built golang.org/x/tools/go/ssa.Packages
+// into a unified pure-Go *llgo/ssa.Program (1:1 instruction and CFG parity),
+// returning the program and map from package path to *llgo/ssa.Package.
+func LowerProgram(prog *ssa.Program, goPkgs []*ssa.Package, spec target.Spec, tctx *lltypes.Context) (*llssa.Program, map[string]*llssa.Package, error) {
 	if spec.WordSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}
 	if tctx == nil {
 		tctx = lltypes.NewContextWithConfig(lltypes.ContextConfig{Spec: spec})
 	}
-	out := llssa.NewPackage(goPkg.Pkg.Path(), goPkg.Pkg.Name(), spec)
-	for _, imp := range goPkg.Pkg.Imports() {
-		if imp != nil {
-			out.Imports = append(out.Imports, imp.Path())
-		}
-	}
-	sort.Strings(out.Imports)
+	var fset = prog.Fset
+	llProg := llssa.NewProgram(fset, llssa.SanityCheckFunctions)
+	llProg.Target = spec
 
 	l := &ssaLowerer{
-		prog:       prog,
-		goPkg:      goPkg,
-		out:        out,
-		tctx:       tctx,
-		globals:    make(map[*ssa.Global]*llssa.Global),
-		funcs:      make(map[*ssa.Function]*llssa.Function),
-		globalByID: make(map[string]*llssa.Global),
+		prog:    prog,
+		llProg:  llProg,
+		tctx:    tctx,
+		pkgs:    make(map[*ssa.Package]*llssa.Package),
+		byPath:  make(map[string]*llssa.Package),
+		globals: make(map[*ssa.Global]*llssa.Global),
+		funcs:   make(map[*ssa.Function]*llssa.Function),
 	}
-	l.collectMembers()
+
+	for _, gp := range goPkgs {
+		if gp == nil || gp.Pkg == nil {
+			continue
+		}
+		l.ensurePackage(gp)
+	}
+	for _, gp := range goPkgs {
+		if gp == nil || gp.Pkg == nil {
+			continue
+		}
+		l.collectPackageMembers(gp)
+	}
 	for _, goFn := range l.orderedFuncs {
 		l.lowerFunction(goFn)
 	}
-	if err := llssa.VerifyPackage(out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// BuildPackageMeta runs LLGo's pure-Go analysis suite (Summarize, callgraph,
-// escape, inline) on a lowered llgo/ssa.Package to produce a compact binary
-// exportdata.PackageMeta sidecar.
-func BuildPackageMeta(llPkg *llssa.Package, importedEsc map[string]*exportdata.EscapeSummary, inlineBudget int) *exportdata.PackageMeta {
-	if llPkg == nil {
-		return nil
-	}
-	sum := llssa.Summarize(llPkg)
-	esc := escape.AnalyzePackage(llPkg, importedEsc)
-	inl := inline.AnalyzePackage(llPkg, inlineBudget)
-	edges := callgraph.ExtractEdges(llPkg)
-
-	globals := make([]string, 0, len(llPkg.Globals))
-	for _, g := range llPkg.Globals {
-		globals = append(globals, g.Name)
-	}
-	sort.Strings(globals)
-
-	var exportFuncs []string
-	for _, fn := range llPkg.Funcs {
-		if fn.ExportName != "" {
-			exportFuncs = append(exportFuncs, fn.Name)
+	llProg.Build()
+	for _, lp := range l.byPath {
+		if err := llssa.VerifyPackage(lp); err != nil {
+			return nil, nil, err
 		}
 	}
-	sort.Strings(exportFuncs)
+	return llProg, l.byPath, nil
+}
 
-	meta := &exportdata.PackageMeta{
-		Summary:        sum,
-		DefinedGlobals: globals,
-		CallEdges:      edges,
-		ExportFuncs:    exportFuncs,
+// LowerPackage translates a single golang.org/x/tools/go/ssa.Package into a
+// verified pure-Go *llgo/ssa.Package.
+func LowerPackage(prog *ssa.Program, goPkg *ssa.Package, spec target.Spec, tctx *lltypes.Context) (*llssa.Package, error) {
+	if goPkg == nil || goPkg.Pkg == nil {
+		return nil, fmt.Errorf("cl.LowerPackage: nil ssa.Package")
 	}
-	if esc != nil {
-		meta.Escape = *esc
+	_, pkgs, err := LowerProgram(prog, []*ssa.Package{goPkg}, spec, tctx)
+	if err != nil {
+		return nil, err
 	}
-	if inl != nil {
-		meta.Inline = *inl
-	}
-	return meta
+	return pkgs[goPkg.Pkg.Path()], nil
+}
+
+// BuildPackageMeta produces a compact binary compiler summary over llPkg.
+func BuildPackageMeta(llPkg *llssa.Package, importedEsc map[string]*pkgmeta.EscapeSummary, inlineBudget int) *pkgmeta.PackageMeta {
+	return pkgmeta.BuildPackageMeta(llPkg, nil, importedEsc, inlineBudget)
 }
 
 type ssaLowerer struct {
 	prog         *ssa.Program
-	goPkg        *ssa.Package
-	out          *llssa.Package
+	llProg       *llssa.Program
 	tctx         *lltypes.Context
+	pkgs         map[*ssa.Package]*llssa.Package
+	byPath       map[string]*llssa.Package
 	globals      map[*ssa.Global]*llssa.Global
-	globalByID   map[string]*llssa.Global
 	funcs        map[*ssa.Function]*llssa.Function
 	orderedFuncs []*ssa.Function
 }
@@ -188,93 +167,138 @@ func (l *ssaLowerer) lowerType(t gotypes.Type) lltypes.Type {
 	return res
 }
 
+func (l *ssaLowerer) lowerSig(sig *gotypes.Signature) *lltypes.Signature {
+	if sig == nil {
+		return lltypes.NewSignatureType(nil, nil, nil, nil, nil, false)
+	}
+	if s, ok := l.lowerType(sig).(*lltypes.Signature); ok && s != nil {
+		return s
+	}
+	return lltypes.NewSignatureType(nil, nil, nil, nil, nil, false)
+}
+
+func (l *ssaLowerer) ensurePackage(gp *ssa.Package) *llssa.Package {
+	if gp == nil || gp.Pkg == nil {
+		return nil
+	}
+	if lp, ok := l.pkgs[gp]; ok {
+		return lp
+	}
+	llGoPkg := LowerGoPackageTypes(gp.Pkg, l.tctx)
+	lp := l.llProg.CreatePackage(llGoPkg, nil, nil, true)
+	l.pkgs[gp] = lp
+	l.byPath[gp.Pkg.Path()] = lp
+	return lp
+}
+
 func (l *ssaLowerer) ensureGlobal(g *ssa.Global) *llssa.Global {
+	if g == nil {
+		return nil
+	}
 	if lg, ok := l.globals[g]; ok {
 		return lg
 	}
-	name := g.String()
-	if lg, ok := l.globalByID[name]; ok {
-		l.globals[g] = lg
-		return lg
+	lp := l.ensurePackage(g.Pkg)
+	var obj *lltypes.Var
+	if g.Object() != nil {
+		if v, ok := l.tctx.FromGoObject(g.Object()).(*lltypes.Var); ok {
+			obj = v
+		}
 	}
-	var elemType lltypes.Type
-	if ptr, ok := g.Type().Underlying().(*gotypes.Pointer); ok {
-		elemType = l.lowerType(ptr.Elem())
-	} else {
-		elemType = l.lowerType(g.Type())
-	}
-	lg := l.out.NewGlobal(name, elemType)
-	lg.LinkName = name
-	if g.Pkg != l.goPkg {
-		lg.External = true
-	}
+	lg := lp.AddGlobal(g.Name(), obj, l.lowerType(g.Type()))
+	lg.LinkName = g.String()
 	l.globals[g] = lg
-	l.globalByID[name] = lg
 	return lg
 }
 
-func (l *ssaLowerer) lowerFuncSig(goFn *ssa.Function) *lltypes.Signature {
-	params := make([]*lltypes.Var, 0, len(goFn.Params)+len(goFn.FreeVars))
-	for _, p := range goFn.Params {
-		params = append(params, lltypes.NewParam(p.Pos(), nil, p.Name(), l.lowerType(p.Type())))
+func (l *ssaLowerer) ensureFunc(goFn *ssa.Function, declareBody bool) *llssa.Function {
+	if goFn == nil {
+		return nil
 	}
-	for _, fv := range goFn.FreeVars {
-		params = append(params, lltypes.NewParam(fv.Pos(), nil, fv.Name(), l.lowerType(fv.Type())))
+	if lf, ok := l.funcs[goFn]; ok {
+		return lf
 	}
-	var results []*lltypes.Var
-	if goFn.Signature != nil && goFn.Signature.Results() != nil {
-		res := goFn.Signature.Results()
-		results = make([]*lltypes.Var, res.Len())
-		for i := 0; i < res.Len(); i++ {
-			r := res.At(i)
-			results[i] = lltypes.NewParam(r.Pos(), nil, r.Name(), l.lowerType(r.Type()))
+	sig := l.lowerSig(goFn.Signature)
+	lf := l.llProg.NewFunction(goFn.Name(), sig, goFn.Synthetic)
+	lf.LinkName = goFn.String()
+	var fnObj *lltypes.Func
+	if goFn.Object() != nil {
+		if f, ok := l.tctx.FromGoObject(goFn.Object()).(*lltypes.Func); ok {
+			fnObj = f
 		}
 	}
-	variadic := goFn.Signature != nil && goFn.Signature.Variadic()
-	return lltypes.NewSignatureType(nil, nil, nil, lltypes.NewTuple(params...), lltypes.NewTuple(results...), variadic)
+	if goFn.Pkg != nil {
+		lp := l.ensurePackage(goFn.Pkg)
+		if goFn.Parent() != nil {
+			parentFn := l.ensureFunc(goFn.Parent(), false)
+			parentFn.AddAnonFunc(lf)
+		} else {
+			lp.AddFunction(lf, fnObj)
+		}
+		if goFn.Signature != nil && goFn.Signature.Recv() != nil {
+			recvType := l.lowerType(goFn.Signature.Recv().Type())
+			var methodPkg *lltypes.Package
+			if lp.Pkg != nil {
+				methodPkg = lp.Pkg
+			}
+			l.llProg.RegisterMethod(recvType, methodPkg, goFn.Name(), lf)
+		}
+	}
+	for _, p := range goFn.Params {
+		var pObj lltypes.Object
+		if p.Object() != nil {
+			pObj = l.tctx.FromGoObject(p.Object())
+		}
+		lf.AddParam(p.Name(), pObj, l.lowerType(p.Type()))
+	}
+	for _, fv := range goFn.FreeVars {
+		lf.AddFreeVar(fv.Name(), l.lowerType(fv.Type()), fv.Pos())
+	}
+	l.funcs[goFn] = lf
+	if declareBody {
+		l.orderedFuncs = append(l.orderedFuncs, goFn)
+	}
+	return lf
 }
 
-func (l *ssaLowerer) collectMembers() {
-	memberNames := make([]string, 0, len(l.goPkg.Members))
-	for name := range l.goPkg.Members {
+func (l *ssaLowerer) collectPackageMembers(gp *ssa.Package) {
+	lp := l.ensurePackage(gp)
+	memberNames := make([]string, 0, len(gp.Members))
+	for name := range gp.Members {
 		memberNames = append(memberNames, name)
 	}
 	sort.Strings(memberNames)
 
 	seenFn := make(map[*ssa.Function]bool)
-	seenName := make(map[string]bool)
 	var addFn func(fn *ssa.Function)
 	addFn = func(fn *ssa.Function) {
-		if fn == nil || seenFn[fn] {
-			return
-		}
-		if fn.Pkg != l.goPkg {
+		if fn == nil || seenFn[fn] || fn.Pkg != gp {
 			return
 		}
 		if fn.TypeParams().Len() > 0 && len(fn.TypeArgs()) == 0 {
-			// Skip uninstantiated generic templates; instantiated concrete bodies
-			// are lowered when present.
-			return
-		}
-		name := fn.String()
-		if seenName[name] {
 			return
 		}
 		seenFn[fn] = true
-		seenName[name] = true
-		l.orderedFuncs = append(l.orderedFuncs, fn)
+		l.ensureFunc(fn, true)
 		for _, anon := range fn.AnonFuncs {
 			addFn(anon)
 		}
 	}
 
 	for _, name := range memberNames {
-		switch m := l.goPkg.Members[name].(type) {
+		switch m := gp.Members[name].(type) {
 		case *ssa.Global:
 			l.ensureGlobal(m)
 		case *ssa.Function:
 			addFn(m)
+		case *ssa.NamedConst:
+			if cObj, ok := l.tctx.FromGoObject(m.Object()).(*lltypes.Const); ok && m.Value != nil {
+				lp.AddConst(cObj, llssa.NewConst(m.Value.Value, l.lowerType(m.Value.Type())))
+			}
 		case *ssa.Type:
+			if tObj, ok := l.tctx.FromGoObject(m.Object()).(*lltypes.TypeName); ok {
+				lp.AddType(tObj)
+			}
 			if l.prog == nil {
 				continue
 			}
@@ -283,21 +307,14 @@ func (l *ssaLowerer) collectMembers() {
 				for i := 0; i < mset.Len(); i++ {
 					if mfn := l.prog.MethodValue(mset.At(i)); mfn != nil {
 						addFn(mfn)
+						// Ensure pointer/value receiver method is registered under typ.
+						if lf := l.funcs[mfn]; lf != nil {
+							l.llProg.RegisterMethod(l.lowerType(typ), lp.Pkg, mfn.Name(), lf)
+						}
 					}
 				}
 			}
 		}
-	}
-
-	sort.Slice(l.orderedFuncs, func(i, j int) bool {
-		return l.orderedFuncs[i].String() < l.orderedFuncs[j].String()
-	})
-	for _, goFn := range l.orderedFuncs {
-		sig := l.lowerFuncSig(goFn)
-		llFn := l.out.NewFunction(goFn.String(), sig)
-		llFn.LinkName = goFn.String()
-		llFn.HasEnv = len(goFn.FreeVars) > 0
-		l.funcs[goFn] = llFn
 	}
 }
 
@@ -307,8 +324,7 @@ func (l *ssaLowerer) lowerFunction(goFn *ssa.Function) {
 		return
 	}
 
-	// Collect blocks reachable from entry (goFn.Blocks[0]) so dead unreachable
-	// blocks cannot break Phi predecessor invariants in llgo/ssa.VerifyFunction.
+	// Keep CFG-reachable blocks from entry (goFn.Blocks[0]).
 	reachable := make([]*ssa.BasicBlock, 0, len(goFn.Blocks))
 	visited := make(map[*ssa.BasicBlock]bool, len(goFn.Blocks))
 	var dfs func(b *ssa.BasicBlock)
@@ -326,11 +342,20 @@ func (l *ssaLowerer) lowerFunction(goFn *ssa.Function) {
 
 	blkMap := make(map[*ssa.BasicBlock]*llssa.BasicBlock, len(reachable))
 	for _, gb := range reachable {
-		label := fmt.Sprintf("b%d", gb.Index)
-		if gb.Comment != "" {
-			label = fmt.Sprintf("b%d.%s", gb.Index, gb.Comment)
+		blkMap[gb] = llFn.NewBasicBlock(gb.Comment)
+	}
+	if goFn.Recover != nil {
+		llFn.Recover = blkMap[goFn.Recover]
+	}
+
+	// Wire CFG edges symmetrically before Phi resolution.
+	for _, gb := range reachable {
+		lb := blkMap[gb]
+		for _, gs := range gb.Succs {
+			if ls := blkMap[gs]; ls != nil {
+				lb.AddEdge(ls)
+			}
 		}
-		blkMap[gb] = llFn.NewBasicBlock(label)
 	}
 
 	valMap := make(map[ssa.Value]llssa.Value, len(goFn.Params)+len(goFn.FreeVars)+16)
@@ -340,9 +365,8 @@ func (l *ssaLowerer) lowerFunction(goFn *ssa.Function) {
 		}
 	}
 	for i, fv := range goFn.FreeVars {
-		idx := len(goFn.Params) + i
-		if idx < len(llFn.Params) {
-			valMap[fv] = llFn.Params[idx]
+		if i < len(llFn.FreeVars) {
+			valMap[fv] = llFn.FreeVars[i]
 		}
 	}
 
@@ -353,44 +377,40 @@ func (l *ssaLowerer) lowerFunction(goFn *ssa.Function) {
 	}
 	var phis []pendingPhi
 
-	// Pass 1: emit Phi placeholders at the start of each block (strictly before
-	// non-Phi instructions as required by SSA form).
-	b := llssa.NewBuilder(blkMap[reachable[0]])
+	// Pass 1: emit Phi placeholders at top of each block.
 	for _, gb := range reachable {
 		lb := blkMap[gb]
-		b.SetBlock(lb)
 		for _, ins := range gb.Instrs {
 			gp, ok := ins.(*ssa.Phi)
 			if !ok {
 				continue
 			}
-			b.SetPos(gp.Pos())
-			lp := b.Phi(l.lowerType(gp.Type()))
+			lp := &llssa.Phi{Comment: gp.Comment}
+			lb.Emit(lp, l.lowerType(gp.Type()), gp.Pos())
 			valMap[gp] = lp
 			phis = append(phis, pendingPhi{goPhi: gp, llPhi: lp, goBlk: gb})
 		}
 	}
 
-	// Pass 2: emit all non-Phi instructions and terminators.
 	resolveVal := func(v ssa.Value) llssa.Value {
 		if v == nil {
-			return b.Const(lltypes.Typ[lltypes.UntypedNil], nil)
+			return nil
 		}
 		if lv, ok := valMap[v]; ok {
 			return lv
 		}
 		switch v := v.(type) {
 		case *ssa.Const:
-			return b.Const(l.lowerType(v.Type()), v.Value)
+			return llssa.NewConst(v.Value, l.lowerType(v.Type()))
 		case *ssa.Global:
-			return b.GlobalRef(l.ensureGlobal(v))
+			return l.ensureGlobal(v)
 		case *ssa.Function:
-			sig := l.lowerType(v.Type())
-			return b.Const(sig, constant.MakeString(v.String()))
+			return l.ensureFunc(v, false)
 		case *ssa.Builtin:
-			return b.Const(l.lowerType(v.Type()), constant.MakeString("builtin."+v.Name()))
+			sig, _ := l.lowerType(v.Type()).(*lltypes.Signature)
+			return llssa.NewBuiltin(v.Name(), sig)
 		default:
-			return b.Const(l.lowerType(v.Type()), nil)
+			return llssa.NewConst(nil, l.lowerType(v.Type()))
 		}
 	}
 
@@ -405,245 +425,157 @@ func (l *ssaLowerer) lowerFunction(goFn *ssa.Function) {
 		return out
 	}
 
+	lowerCallCommon := func(c *ssa.CallCommon) llssa.CallCommon {
+		cc := llssa.CallCommon{
+			Value: resolveVal(c.Value),
+			Args:  resolveArgs(c.Args),
+		}
+		if c.Method != nil {
+			if mObj, ok := l.tctx.FromGoObject(c.Method).(*lltypes.Func); ok {
+				cc.Method = mObj
+			}
+		}
+		return cc
+	}
+
+	// Pass 2: lower all 37 standard x/tools/go/ssa instructions 1:1.
 	for _, gb := range reachable {
 		lb := blkMap[gb]
-		b.SetBlock(lb)
 		for _, ins := range gb.Instrs {
 			if _, isPhi := ins.(*ssa.Phi); isPhi {
 				continue
 			}
-			b.SetPos(ins.Pos())
+			var llIns llssa.Instruction
+			var insType lltypes.Type
+			if v, ok := ins.(ssa.Value); ok {
+				insType = l.lowerType(v.Type())
+			}
 			switch ins := ins.(type) {
 			case *ssa.Alloc:
-				var elem lltypes.Type
-				if ptr, ok := ins.Type().Underlying().(*gotypes.Pointer); ok {
-					elem = l.lowerType(ptr.Elem())
-				} else {
-					elem = l.lowerType(ins.Type())
+				noScan := false
+				if ptr, ok := insType.(*lltypes.Pointer); ok && ptr.Elem() != nil {
+					noScan = !ptr.Elem().HasPtrData()
 				}
-				valMap[ins] = b.Alloc(elem, ins.Heap, !elem.HasPtrData())
-
+				llIns = &llssa.Alloc{Comment: ins.Comment, Heap: ins.Heap, NoScan: noScan}
 			case *ssa.BinOp:
-				valMap[ins] = b.BinOp(ins.Op, l.lowerType(ins.Type()), resolveVal(ins.X), resolveVal(ins.Y))
-
+				llIns = &llssa.BinOp{Op: ins.Op, X: resolveVal(ins.X), Y: resolveVal(ins.Y)}
 			case *ssa.UnOp:
-				if ins.Op == token.MUL {
-					valMap[ins] = b.Load(resolveVal(ins.X), l.lowerType(ins.Type()))
-				} else {
-					valMap[ins] = b.UnOp(ins.Op, l.lowerType(ins.Type()), resolveVal(ins.X))
-				}
-
-			case *ssa.Store:
-				b.Store(resolveVal(ins.Addr), resolveVal(ins.Val))
-
-			case *ssa.Convert:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.ChangeType:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.ChangeInterface:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.MakeInterface:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.SliceToArrayPointer:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.MultiConvert:
-				valMap[ins] = b.Convert(l.lowerType(ins.Type()), resolveVal(ins.X))
-
-			case *ssa.FieldAddr:
-				valMap[ins] = b.FieldAddr(resolveVal(ins.X), ins.Field, l.lowerType(ins.Type()))
-			case *ssa.IndexAddr:
-				valMap[ins] = b.IndexAddr(resolveVal(ins.X), resolveVal(ins.Index), l.lowerType(ins.Type()))
-
-			case *ssa.Extract:
-				tupleVal := resolveVal(ins.Tuple)
-				if _, ok := tupleVal.Type().(*lltypes.Tuple); ok {
-					valMap[ins] = b.Extract(tupleVal, ins.Index)
-				} else {
-					valMap[ins] = b.CallDirect("runtime.extract", lltypes.Go, l.lowerType(ins.Type()), tupleVal)
-				}
-
-			case *ssa.MakeClosure:
-				var fnName string
-				var sig *lltypes.Signature
-				if fn, ok := ins.Fn.(*ssa.Function); ok {
-					fnName = fn.String()
-					if s, ok := l.lowerType(ins.Type()).Underlying().(*lltypes.Signature); ok {
-						sig = s
-					}
-				}
-				var env llssa.Value
-				if len(ins.Bindings) == 1 {
-					env = resolveVal(ins.Bindings[0])
-				} else if len(ins.Bindings) > 1 {
-					env = b.CallDirect("runtime.makeenv", lltypes.Go, lltypes.NewPointerWithKind(lltypes.Typ[lltypes.Uint8], lltypes.GoPtr), resolveArgs(ins.Bindings)...)
-				}
-				valMap[ins] = b.MakeClosure(sig, fnName, env)
-
+				llIns = &llssa.UnOp{Op: ins.Op, X: resolveVal(ins.X), CommaOk: ins.CommaOk}
 			case *ssa.Call:
-				valMap[ins] = l.lowerCallCommon(b, &ins.Call, l.lowerType(ins.Type()), resolveVal, resolveArgs)
-
-			case *ssa.Defer:
-				callee, args := l.lowerCallOperands(b, &ins.Call, resolveVal, resolveArgs)
-				b.Defer(callee, false, args...)
-
-			case *ssa.Go:
-				callee, args := l.lowerCallOperands(b, &ins.Call, resolveVal, resolveArgs)
-				b.Go(callee, args...)
-
-			case *ssa.RunDefers:
-				b.RunDefers()
-
+				llIns = &llssa.Call{Call: lowerCallCommon(&ins.Call)}
+			case *ssa.ChangeInterface:
+				llIns = &llssa.ChangeInterface{X: resolveVal(ins.X)}
+			case *ssa.ChangeType:
+				llIns = &llssa.ChangeType{X: resolveVal(ins.X)}
+			case *ssa.Convert:
+				llIns = &llssa.Convert{X: resolveVal(ins.X)}
+			case *ssa.MultiConvert:
+				llIns = &llssa.MultiConvert{X: resolveVal(ins.X)}
+			case *ssa.SliceToArrayPointer:
+				llIns = &llssa.SliceToArrayPointer{X: resolveVal(ins.X)}
 			case *ssa.DebugRef:
-				b.DebugRef(resolveVal(ins.X), nil, ins.IsAddr)
-
-			case *ssa.MakeSlice:
-				valMap[ins] = b.CallDirect("runtime.makeslice", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.Len), resolveVal(ins.Cap))
-			case *ssa.MakeMap:
-				var args []llssa.Value
-				if ins.Reserve != nil {
-					args = append(args, resolveVal(ins.Reserve))
-				}
-				valMap[ins] = b.CallDirect("runtime.makemap", lltypes.Go, l.lowerType(ins.Type()), args...)
-			case *ssa.MakeChan:
-				valMap[ins] = b.CallDirect("runtime.makechan", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.Size))
-			case *ssa.Slice:
-				args := []llssa.Value{resolveVal(ins.X)}
-				if ins.Low != nil {
-					args = append(args, resolveVal(ins.Low))
-				}
-				if ins.High != nil {
-					args = append(args, resolveVal(ins.High))
-				}
-				if ins.Max != nil {
-					args = append(args, resolveVal(ins.Max))
-				}
-				valMap[ins] = b.CallDirect("runtime.slice", lltypes.Go, l.lowerType(ins.Type()), args...)
-			case *ssa.Lookup:
-				valMap[ins] = b.CallDirect("runtime.lookup", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.X), resolveVal(ins.Index))
-			case *ssa.MapUpdate:
-				b.CallDirect("runtime.mapassign", lltypes.Go, nil, resolveVal(ins.Map), resolveVal(ins.Key), resolveVal(ins.Value))
+				llIns = &llssa.DebugRef{Expr: ins.Expr, IsAddr: ins.IsAddr, X: resolveVal(ins.X)}
+			case *ssa.Defer:
+				llIns = &llssa.Defer{Call: lowerCallCommon(&ins.Call), DeferStack: resolveVal(ins.DeferStack)}
+			case *ssa.Extract:
+				llIns = &llssa.Extract{Tuple: resolveVal(ins.Tuple), Index: ins.Index}
 			case *ssa.Field:
-				valMap[ins] = b.CallDirect("runtime.field", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.X))
+				llIns = &llssa.Field{X: resolveVal(ins.X), Field: ins.Field}
+			case *ssa.FieldAddr:
+				llIns = &llssa.FieldAddr{X: resolveVal(ins.X), Field: ins.Field}
+			case *ssa.Go:
+				llIns = &llssa.Go{Call: lowerCallCommon(&ins.Call)}
+			case *ssa.If:
+				llIns = &llssa.If{Cond: resolveVal(ins.Cond)}
 			case *ssa.Index:
-				valMap[ins] = b.CallDirect("runtime.index", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.X), resolveVal(ins.Index))
-			case *ssa.TypeAssert:
-				valMap[ins] = b.CallDirect("runtime.typeassert", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.X))
-			case *ssa.Range:
-				valMap[ins] = b.CallDirect("runtime.range", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.X))
+				llIns = &llssa.Index{X: resolveVal(ins.X), Index: resolveVal(ins.Index)}
+			case *ssa.IndexAddr:
+				llIns = &llssa.IndexAddr{X: resolveVal(ins.X), Index: resolveVal(ins.Index)}
+			case *ssa.Jump:
+				llIns = &llssa.Jump{}
+			case *ssa.Lookup:
+				llIns = &llssa.Lookup{X: resolveVal(ins.X), Index: resolveVal(ins.Index), CommaOk: ins.CommaOk}
+			case *ssa.MakeChan:
+				llIns = &llssa.MakeChan{Size: resolveVal(ins.Size)}
+			case *ssa.MakeClosure:
+				llIns = &llssa.MakeClosure{Fn: resolveVal(ins.Fn), Bindings: resolveArgs(ins.Bindings)}
+			case *ssa.MakeInterface:
+				x := resolveVal(ins.X)
+				if x != nil {
+					l.llProg.AddRuntimeType(x.Type())
+				}
+				llIns = &llssa.MakeInterface{X: x}
+			case *ssa.MakeMap:
+				llIns = &llssa.MakeMap{Reserve: resolveVal(ins.Reserve)}
+			case *ssa.MakeSlice:
+				llIns = &llssa.MakeSlice{Len: resolveVal(ins.Len), Cap: resolveVal(ins.Cap)}
+			case *ssa.MapUpdate:
+				llIns = &llssa.MapUpdate{Map: resolveVal(ins.Map), Key: resolveVal(ins.Key), Value: resolveVal(ins.Value)}
 			case *ssa.Next:
-				valMap[ins] = b.CallDirect("runtime.next", lltypes.Go, l.lowerType(ins.Type()), resolveVal(ins.Iter))
-			case *ssa.Send:
-				b.CallDirect("runtime.chansend", lltypes.Go, nil, resolveVal(ins.Chan), resolveVal(ins.X))
+				llIns = &llssa.Next{Iter: resolveVal(ins.Iter), IsString: ins.IsString}
+			case *ssa.Panic:
+				llIns = &llssa.Panic{X: resolveVal(ins.X)}
+			case *ssa.Range:
+				llIns = &llssa.Range{X: resolveVal(ins.X)}
+			case *ssa.Return:
+				llIns = &llssa.Return{Results: resolveArgs(ins.Results)}
+			case *ssa.RunDefers:
+				llIns = &llssa.RunDefers{}
 			case *ssa.Select:
-				args := make([]llssa.Value, 0, len(ins.States)*2)
-				for _, st := range ins.States {
-					args = append(args, resolveVal(st.Chan))
-					if st.Send != nil {
-						args = append(args, resolveVal(st.Send))
+				states := make([]*llssa.SelectState, len(ins.States))
+				for i, st := range ins.States {
+					states[i] = &llssa.SelectState{
+						Dir:       lltypes.ChanDir(st.Dir),
+						Chan:      resolveVal(st.Chan),
+						Send:      resolveVal(st.Send),
+						Pos:       st.Pos,
+						DebugNode: st.DebugNode,
 					}
 				}
-				valMap[ins] = b.CallDirect("runtime.select", lltypes.Go, l.lowerType(ins.Type()), args...)
-
-			case *ssa.Jump:
-				b.Jump(blkMap[gb.Succs[0]])
-			case *ssa.If:
-				b.Branch(resolveVal(ins.Cond), blkMap[gb.Succs[0]], blkMap[gb.Succs[1]])
-			case *ssa.Return:
-				b.Return(resolveArgs(ins.Results)...)
-			case *ssa.Panic:
-				b.Panic(resolveVal(ins.X))
+				llIns = &llssa.Select{States: states, Blocking: ins.Blocking}
+			case *ssa.Send:
+				llIns = &llssa.Send{Chan: resolveVal(ins.Chan), X: resolveVal(ins.X)}
+			case *ssa.Slice:
+				llIns = &llssa.Slice{X: resolveVal(ins.X), Low: resolveVal(ins.Low), High: resolveVal(ins.High), Max: resolveVal(ins.Max)}
+			case *ssa.Store:
+				llIns = &llssa.Store{Addr: resolveVal(ins.Addr), Val: resolveVal(ins.Val)}
+			case *ssa.TypeAssert:
+				llIns = &llssa.TypeAssert{X: resolveVal(ins.X), AssertedType: l.lowerType(ins.AssertedType), CommaOk: ins.CommaOk}
 			}
-		}
-		if lb.Terminator() == nil {
-			b.Unreachable()
-		}
-	}
-
-	// Pass 3: wire Phi incoming edges matching the exact unique CFG predecessors
-	// of each reachable block.
-	cfgPreds := make(map[*llssa.BasicBlock]map[*llssa.BasicBlock]bool, len(llFn.Blocks))
-	for _, lb := range llFn.Blocks {
-		if term := lb.Terminator(); term != nil {
-			for _, succ := range term.Successors() {
-				if cfgPreds[succ] == nil {
-					cfgPreds[succ] = make(map[*llssa.BasicBlock]bool)
+			if llIns != nil {
+				lb.Emit(llIns, insType, ins.Pos())
+				if lv, ok := llIns.(llssa.Value); ok {
+					if gv, ok := ins.(ssa.Value); ok {
+						valMap[gv] = lv
+					}
 				}
-				cfgPreds[succ][lb] = true
 			}
 		}
 	}
+
+	// Pass 3: populate Phi edges aligned strictly with lb.Preds order.
 	for _, pp := range phis {
 		lb := blkMap[pp.goBlk]
-		preds := cfgPreds[lb]
-		seenPred := make(map[*llssa.BasicBlock]bool, len(preds))
+		// Map each reachable Go predecessor -> its incoming value in goPhi.Edges.
+		predVal := make(map[*llssa.BasicBlock]llssa.Value, len(pp.goBlk.Preds))
 		for i, gPred := range pp.goBlk.Preds {
-			lPred, ok := blkMap[gPred]
-			if !ok || !preds[lPred] || seenPred[lPred] {
+			lPred := blkMap[gPred]
+			if lPred == nil {
 				continue
 			}
-			seenPred[lPred] = true
-			var incoming llssa.Value
 			if i < len(pp.goPhi.Edges) {
-				incoming = resolveVal(pp.goPhi.Edges[i])
+				predVal[lPred] = resolveVal(pp.goPhi.Edges[i])
 			} else {
-				incoming = b.Const(pp.llPhi.Type(), nil)
-			}
-			pp.llPhi.Edges = append(pp.llPhi.Edges, llssa.PhiEdge{Pred: lPred, Val: incoming})
-		}
-		for lPred := range preds {
-			if !seenPred[lPred] {
-				pp.llPhi.Edges = append(pp.llPhi.Edges, llssa.PhiEdge{Pred: lPred, Val: b.Const(pp.llPhi.Type(), nil)})
+				predVal[lPred] = llssa.NewConst(nil, pp.llPhi.Type())
 			}
 		}
-	}
-}
-
-func (l *ssaLowerer) lowerCallCommon(
-	b *llssa.Builder,
-	call *ssa.CallCommon,
-	retType lltypes.Type,
-	resolveVal func(ssa.Value) llssa.Value,
-	resolveArgs func([]ssa.Value) []llssa.Value,
-) llssa.Value {
-	args := resolveArgs(call.Args)
-	if call.IsInvoke() {
-		methodName := call.Method.Name()
-		methodIdx := 0
-		if iface, ok := call.Value.Type().Underlying().(*gotypes.Interface); ok {
-			for i := 0; i < iface.NumMethods(); i++ {
-				if iface.Method(i).Name() == methodName {
-					methodIdx = i
-					break
-				}
+		pp.llPhi.Edges = make([]llssa.Value, len(lb.Preds))
+		for i, lPred := range lb.Preds {
+			if v, ok := predVal[lPred]; ok && v != nil {
+				pp.llPhi.Edges[i] = v
+			} else {
+				pp.llPhi.Edges[i] = llssa.NewConst(nil, pp.llPhi.Type())
 			}
 		}
-		return b.CallInterface(resolveVal(call.Value), methodName, methodIdx, retType, args...)
 	}
-	if fn, ok := call.Value.(*ssa.Function); ok {
-		return b.CallDirect(fn.String(), lltypes.Go, retType, args...)
-	}
-	if bi, ok := call.Value.(*ssa.Builtin); ok {
-		if bi.Name() == "recover" {
-			return b.Recover(retType)
-		}
-		return b.CallDirect("builtin."+bi.Name(), lltypes.Go, retType, args...)
-	}
-	callee := resolveVal(call.Value)
-	if sig, ok := callee.Type().Underlying().(*lltypes.Signature); ok && sig.IsClosure() {
-		return b.CallClosure(callee, retType, args...)
-	}
-	return b.CallDirect("runtime.call", lltypes.Go, retType, append([]llssa.Value{callee}, args...)...)
-}
-
-func (l *ssaLowerer) lowerCallOperands(
-	b *llssa.Builder,
-	call *ssa.CallCommon,
-	resolveVal func(ssa.Value) llssa.Value,
-	resolveArgs func([]ssa.Value) []llssa.Value,
-) (llssa.Value, []llssa.Value) {
-	args := resolveArgs(call.Args)
-	if call.IsInvoke() {
-		return resolveVal(call.Value), args
-	}
-	return resolveVal(call.Value), args
 }

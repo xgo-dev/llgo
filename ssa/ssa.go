@@ -14,703 +14,918 @@
  * limitations under the License.
  */
 
-// Package ssa defines LLGo's pure-Go, backend-independent mid-level SSA IR.
-//
-// Status: Phase 1 foundational IR (experimental; instruction set will be
-// finalized as Phase 2 connects the Go frontend lowering and LLVM backend).
-//
-// Following golang.org/x/tools/go/ssa conventions (Package, Function,
-// BasicBlock, Parameter, Instruction, Value, Pos, Extract, DebugRef), package
-// ssa sits between the Go frontend and codegen backends (e.g. internal/llvmgen)
-// and models LLGo-specific concepts as first-class instructions and types:
-// closures (MakeClosure/CallClosure), native C/Stdcall calls (CallCFunc),
-// explicit GoPtr vs CPtr pointer conversions (PtrCast), GC hooks (Alloc with
-// NoScan, WriteBarrier, Safepoint, GCRoot, KeepAlive), and Go
-// exception/concurrency primitives (Defer, RunDefers, Panic, Recover, Go).
-//
-// It requires only Go 1.20+ with zero CGo, LLVM, or x/tools dependencies.
-// PackageSummary provides a deterministic bootstrap summary representation;
-// compact binary encoding lives in the upcoming github.com/xgo-dev/llgo/exportdata
-// package.
+// Package ssa defines a pure-Go SSA intermediate representation whose core
+// interfaces, types, methods, and 37 instruction kinds align 1:1 with
+// golang.org/x/tools/go/ssa while operating on github.com/xgo-dev/llgo/types
+// and requiring only Go 1.20+ with zero CGo, LLVM, or x/tools dependencies.
 package ssa
 
 import (
+	"bytes"
 	"fmt"
+	"go/ast"
 	"go/constant"
 	"go/token"
+	"io"
+	"sort"
 	"strings"
 
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types/typeutil"
 )
 
-// ValueID uniquely identifies an SSA value within a Function.
-type ValueID uint32
+// BuilderMode is a bitmask of options for diagnostics and checking, matching
+// golang.org/x/tools/go/ssa.BuilderMode.
+type BuilderMode uint
 
-// Package is the top-level compilation unit of LLGo mid-level SSA IR.
-type Package struct {
-	Path    string
-	Name    string
-	Target  target.Spec
-	Kind    directive.PackageKind
-	Imports []string
-	Exports map[string]string // go symbol -> exported C/Wasm symbol
-	Globals []*Global
-	Funcs   []*Function
+const (
+	PrintPackages BuilderMode = 1 << iota
+	PrintFunctions
+	LogSource
+	SanityCheckFunctions
+	NaiveForm
+	BuildSerially
+	GlobalDebug
+	BareInits
+	InstantiateGenerics
+)
+
+// BuilderModeDoc documents BuilderMode flag letters (matching x/tools/go/ssa).
+const BuilderModeDoc = `Options controlling the SSA builder.
+The value is a sequence of zero or more of these letters:
+C	perform sanity [C]hecking of the SSA form.
+D	include [D]ebug info for every function.
+P	print [P]ackage inventory.
+F	print [F]unction SSA code.
+S	log [S]ource locations as SSA builder progresses.
+L	build distinct packages seria[L]ly instead of in parallel.
+N	build [N]aive SSA form: don't replace local loads/stores with registers.
+I	build bare [I]nit functions: no init guards or calls to dependent inits.
+G	instantiate [G]eneric function bodies via monomorphization.
+`
+
+func (m BuilderMode) String() string {
+	var b strings.Builder
+	if m&GlobalDebug != 0 {
+		b.WriteByte('D')
+	}
+	if m&PrintPackages != 0 {
+		b.WriteByte('P')
+	}
+	if m&PrintFunctions != 0 {
+		b.WriteByte('F')
+	}
+	if m&LogSource != 0 {
+		b.WriteByte('S')
+	}
+	if m&SanityCheckFunctions != 0 {
+		b.WriteByte('C')
+	}
+	if m&NaiveForm != 0 {
+		b.WriteByte('N')
+	}
+	if m&BuildSerially != 0 {
+		b.WriteByte('L')
+	}
+	if m&BareInits != 0 {
+		b.WriteByte('I')
+	}
+	if m&InstantiateGenerics != 0 {
+		b.WriteByte('G')
+	}
+	return b.String()
 }
 
-// Global describes a package-level variable or constant symbol.
-type Global struct {
-	Name       string
-	LinkName   string
-	Type       types.Type
-	Locality   directive.Locality
-	Constant   bool
-	LinkOnce   bool
-	External   bool
-	HasPtrData bool
+func (m BuilderMode) Get() interface{} { return m }
+
+func (m *BuilderMode) Set(s string) error {
+	var mode BuilderMode
+	for _, c := range s {
+		switch c {
+		case 'D':
+			mode |= GlobalDebug
+		case 'P':
+			mode |= PrintPackages
+		case 'F':
+			mode |= PrintFunctions
+		case 'S':
+			mode |= LogSource
+		case 'C':
+			mode |= SanityCheckFunctions
+		case 'N':
+			mode |= NaiveForm
+		case 'L':
+			mode |= BuildSerially
+		case 'I':
+			mode |= BareInits
+		case 'G':
+			mode |= InstantiateGenerics
+		default:
+			return fmt.Errorf("unknown BuilderMode option: %q", c)
+		}
+	}
+	*m = mode
+	return nil
 }
 
-// Function describes a function or method in mid-level SSA IR.
-type Function struct {
-	Pkg        *Package
-	Name       string
-	LinkName   string
-	Sig        *types.Signature
-	Params     []*Parameter
-	Blocks     []*BasicBlock
-	LinkOnce   bool
-	NoInline   bool
-	HasEnv     bool
-	ExportName string
-	WasmImport *directive.WasmImport
-
-	nextID ValueID
+// Node is the common interface of Values and Instructions.
+type Node interface {
+	String() string
+	Pos() token.Pos
+	Parent() *Function
+	Operands(rands []*Value) []*Value
+	Referrers() *[]Instruction
 }
 
-// IsDeclaration reports whether the function has no basic blocks.
-func (f *Function) IsDeclaration() bool {
-	return len(f.Blocks) == 0
+// Value is an SSA value that can be referenced by an instruction.
+type Value interface {
+	Name() string
+	String() string
+	Type() types.Type
+	Parent() *Function
+	Referrers() *[]Instruction
+	Pos() token.Pos
 }
 
-// BasicBlock is a single basic block in a Function's CFG.
-type BasicBlock struct {
-	Func   *Function
-	Index  int
-	Label  string
-	Instrs []Instruction
+// Instruction is an SSA instruction that belongs to a BasicBlock.
+type Instruction interface {
+	String() string
+	Parent() *Function
+	Block() *BasicBlock
+	Operands(rands []*Value) []*Value
+	Pos() token.Pos
 }
 
-// Parent returns the Function to which b belongs.
-func (b *BasicBlock) Parent() *Function {
-	return b.Func
+// CallInstruction is the common interface of Call, Defer, and Go.
+type CallInstruction interface {
+	Instruction
+	Common() *CallCommon
+	Value() *Call
 }
 
-// Terminator returns the block's final instruction if it is a Terminator.
-func (b *BasicBlock) Terminator() Terminator {
-	if len(b.Instrs) == 0 {
+// Member is a member of a Go package (Function, Global, NamedConst, or Type).
+type Member interface {
+	Name() string
+	String() string
+	RelString(*types.Package) string
+	Object() types.Object
+	Pos() token.Pos
+	Type() types.Type
+	Token() token.Token
+	Package() *Package
+}
+
+// Program is a partial or complete Go program converted to SSA form.
+type Program struct {
+	Fset       *token.FileSet
+	MethodSets typeutil.MethodSetCache
+	Target     target.Spec // LLGo extension: target ABI specification
+
+	mode         BuilderMode
+	packages     map[*types.Package]*Package
+	imported     map[string]*Package
+	funcsByObj   map[*types.Func]*Function
+	methods      map[string]*Function // "<type>|<pkg>|<name>" -> *Function
+	runtimeTypes typeutil.Map
+	noReturn     func(*types.Func) bool
+}
+
+// NewProgram creates a new SSA Program (matching x/tools/go/ssa.NewProgram).
+func NewProgram(fset *token.FileSet, mode BuilderMode) *Program {
+	if fset == nil {
+		fset = token.NewFileSet()
+	}
+	return &Program{
+		Fset:       fset,
+		Target:     target.ResolveSpec(target.Spec{}),
+		mode:       mode,
+		packages:   make(map[*types.Package]*Package),
+		imported:   make(map[string]*Package),
+		funcsByObj: make(map[*types.Func]*Function),
+		methods:    make(map[string]*Function),
+	}
+}
+
+func (prog *Program) CreatePackage(pkg *types.Package, files []*ast.File, info *types.Info, importable bool) *Package {
+	if pkg == nil {
 		return nil
 	}
-	t, _ := b.Instrs[len(b.Instrs)-1].(Terminator)
+	if existing, ok := prog.packages[pkg]; ok {
+		return existing
+	}
+	p := &Package{
+		Prog:    prog,
+		Pkg:     pkg,
+		Members: make(map[string]Member),
+	}
+	prog.packages[pkg] = p
+	if importable && pkg.Path() != "" {
+		prog.imported[pkg.Path()] = p
+	}
+	return p
+}
+
+func (prog *Program) Package(pkg *types.Package) *Package {
+	if prog == nil || pkg == nil {
+		return nil
+	}
+	return prog.packages[pkg]
+}
+
+func (prog *Program) ImportedPackage(path string) *Package {
+	if prog == nil {
+		return nil
+	}
+	return prog.imported[path]
+}
+
+func (prog *Program) AllPackages() []*Package {
+	if prog == nil {
+		return nil
+	}
+	out := make([]*Package, 0, len(prog.packages))
+	for _, p := range prog.packages {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].String() < out[j].String()
+	})
+	return out
+}
+
+func (prog *Program) Build() {
+	for _, p := range prog.AllPackages() {
+		p.Build()
+	}
+}
+
+func (prog *Program) NewFunction(name string, sig *types.Signature, provenance string) *Function {
+	return &Function{
+		name:      name,
+		Signature: sig,
+		Synthetic: provenance,
+		Prog:      prog,
+	}
+}
+
+func (prog *Program) FuncValue(obj *types.Func) *Function {
+	if prog == nil || obj == nil {
+		return nil
+	}
+	return prog.funcsByObj[obj]
+}
+
+func methodKey(T types.Type, pkg *types.Package, name string) string {
+	pkgPath := ""
+	if pkg != nil && !token.IsExported(name) {
+		pkgPath = pkg.Path()
+	}
+	return T.String() + "|" + pkgPath + "|" + name
+}
+
+func (prog *Program) LookupMethod(T types.Type, pkg *types.Package, name string) *Function {
+	if prog == nil || T == nil {
+		return nil
+	}
+	if fn := prog.methods[methodKey(T, pkg, name)]; fn != nil {
+		return fn
+	}
+	if sel := prog.MethodSets.MethodSet(T).Lookup(pkg, name); sel != nil {
+		return prog.MethodValue(sel)
+	}
+	return nil
+}
+
+func (prog *Program) MethodValue(sel *types.Selection) *Function {
+	if prog == nil || sel == nil {
+		return nil
+	}
+	fnObj, _ := sel.Obj().(*types.Func)
+	if fnObj != nil {
+		if fn := prog.methods[methodKey(sel.Recv(), fnObj.Pkg(), fnObj.Name())]; fn != nil {
+			return fn
+		}
+		if fn := prog.funcsByObj[fnObj]; fn != nil {
+			return fn
+		}
+	}
+	return nil
+}
+
+func (prog *Program) ConstValue(obj *types.Const) *Const {
+	if obj == nil {
+		return nil
+	}
+	return NewConst(obj.Val(), obj.Type())
+}
+
+func (prog *Program) RuntimeTypes() []types.Type {
+	if prog == nil {
+		return nil
+	}
+	return prog.runtimeTypes.Keys()
+}
+
+func (prog *Program) SetNoReturn(noReturn func(*types.Func) bool) {
+	if prog != nil {
+		prog.noReturn = noReturn
+	}
+}
+
+func (prog *Program) VarValue(obj *types.Var, pkg *Package, ref []ast.Node) (value Value, isAddr bool) {
+	if obj == nil || pkg == nil {
+		return nil, false
+	}
+	if g := pkg.Var(obj.Name()); g != nil {
+		return g, true
+	}
+	return nil, false
+}
+
+// Package is a single analyzed Go package containing Members.
+type Package struct {
+	Prog    *Program
+	Pkg     *types.Package
+	Members map[string]Member
+	Kind    directive.PackageKind // LLGo extension: package linkage kind
+
+	debug bool
+}
+
+func (p *Package) Build() {
+	if p == nil {
+		return
+	}
+	for _, m := range p.Members {
+		if fn, ok := m.(*Function); ok {
+			fn.Finish()
+		}
+	}
+}
+
+func (p *Package) SetDebugMode(debug bool) {
+	if p != nil {
+		p.debug = debug
+	}
+}
+
+func (p *Package) Func(name string) *Function {
+	if p == nil {
+		return nil
+	}
+	f, _ := p.Members[name].(*Function)
+	return f
+}
+
+func (p *Package) Var(name string) *Global {
+	if p == nil {
+		return nil
+	}
+	g, _ := p.Members[name].(*Global)
+	return g
+}
+
+func (p *Package) Type(name string) *Type {
+	if p == nil {
+		return nil
+	}
+	t, _ := p.Members[name].(*Type)
 	return t
 }
 
-// Value is any typed SSA value usable as an operand (Parameter, Const,
-// GlobalRef, or value-producing Instruction).
-type Value interface {
-	ID() ValueID
-	Type() types.Type
-	Name() string
-	valMarker()
+func (p *Package) Const(name string) *NamedConst {
+	if p == nil {
+		return nil
+	}
+	c, _ := p.Members[name].(*NamedConst)
+	return c
 }
 
-// Instruction is an instruction inside a BasicBlock.
-type Instruction interface {
-	Block() *BasicBlock
-	Parent() *Function
-	Pos() token.Pos
-	setBlock(*BasicBlock)
-	setPos(token.Pos)
-	Operands() []Value
-	String() string
-	instrMarker()
+func (p *Package) String() string {
+	if p == nil || p.Pkg == nil {
+		return "package <nil>"
+	}
+	return "package " + p.Pkg.Path()
 }
 
-// Terminator marks instructions that end a basic block.
-type Terminator interface {
-	Instruction
-	Successors() []*BasicBlock
-	termMarker()
+func (p *Package) WriteTo(w io.Writer) (int64, error) {
+	var buf bytes.Buffer
+	WritePackage(&buf, p)
+	n, err := w.Write(buf.Bytes())
+	return int64(n), err
 }
 
-type baseInstr struct {
-	blk *BasicBlock
+// WritePackage writes a human-readable summary of p to buf.
+func WritePackage(buf *bytes.Buffer, p *Package) {
+	if p == nil || buf == nil {
+		return
+	}
+	fmt.Fprintf(buf, "%s:\n", p.String())
+	names := make([]string, 0, len(p.Members))
+	for name := range p.Members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		m := p.Members[name]
+		fmt.Fprintf(buf, "  %-6s %-32s %s\n", m.Token(), name, m.Type())
+	}
+}
+
+// WriteFunction writes a human-readable disassembly of f to buf.
+func WriteFunction(buf *bytes.Buffer, f *Function) {
+	if f == nil || buf == nil {
+		return
+	}
+	fmt.Fprintf(buf, "func %s %s:\n", f.String(), f.Signature)
+	for _, b := range f.Blocks {
+		if b.Comment != "" {
+			fmt.Fprintf(buf, "%d:                                                                # %s\n", b.Index, b.Comment)
+		} else {
+			fmt.Fprintf(buf, "%d:\n", b.Index)
+		}
+		for _, ins := range b.Instrs {
+			if v, ok := ins.(Value); ok {
+				fmt.Fprintf(buf, "\t%s = %s\n", v.Name(), ins.String())
+			} else {
+				fmt.Fprintf(buf, "\t%s\n", ins.String())
+			}
+		}
+	}
+}
+
+// Function represents the parameters, results, and code of a function or method.
+type Function struct {
+	Signature *types.Signature
+	Synthetic string
+	Pkg       *Package
+	Prog      *Program
+	Params    []*Parameter
+	FreeVars  []*FreeVar
+	Locals    []*Alloc
+	Blocks    []*BasicBlock
+	Recover   *BasicBlock
+	AnonFuncs []*Function
+
+	// LLGo extensions: symbol linkage and directive attributes.
+	LinkName   string
+	ExportName string
+	NoInline   bool
+	WasmImport *directive.WasmImport
+
+	name       string
+	object     types.Object
+	pos        token.Pos
+	parent     *Function
+	syntax     ast.Node
+	origin     *Function
+	typeParams *types.TypeParamList
+	typeArgs   []types.Type
+	referrers  []Instruction
+	nextReg    int
+}
+
+func (f *Function) Name() string        { return f.name }
+func (f *Function) Object() types.Object { return f.object }
+func (f *Function) Package() *Package   { return f.Pkg }
+func (f *Function) Parent() *Function   { return f.parent }
+func (f *Function) Pos() token.Pos      { return f.pos }
+func (f *Function) Syntax() ast.Node    { return f.syntax }
+func (f *Function) Token() token.Token  { return token.FUNC }
+func (f *Function) Type() types.Type    { return f.Signature }
+func (f *Function) Origin() *Function   { return f.origin }
+func (f *Function) TypeArgs() []types.Type {
+	return f.typeArgs
+}
+func (f *Function) TypeParams() *types.TypeParamList {
+	return f.typeParams
+}
+func (f *Function) Operands(rands []*Value) []*Value { return rands }
+func (f *Function) Referrers() *[]Instruction {
+	if f.parent != nil {
+		return &f.referrers
+	}
+	return nil
+}
+
+func (f *Function) String() string {
+	return f.RelString(nil)
+}
+
+func (f *Function) RelString(from *types.Package) string {
+	if f == nil {
+		return "<nil>"
+	}
+	if f.parent != nil {
+		return f.parent.RelString(from) + "$" + f.name
+	}
+	if f.Signature != nil && f.Signature.Recv() != nil {
+		recv := types.TypeString(f.Signature.Recv().Type(), types.RelativeTo(from))
+		return fmt.Sprintf("(%s).%s", recv, f.name)
+	}
+	if f.Pkg != nil && f.Pkg.Pkg != nil && f.Pkg.Pkg != from {
+		return f.Pkg.Pkg.Path() + "." + f.name
+	}
+	return f.name
+}
+
+func (f *Function) WriteTo(w io.Writer) (int64, error) {
+	var buf bytes.Buffer
+	WriteFunction(&buf, f)
+	n, err := w.Write(buf.Bytes())
+	return int64(n), err
+}
+
+func (f *Function) ValueForExpr(e ast.Expr) (value Value, isAddr bool) {
+	if f == nil || e == nil {
+		return nil, false
+	}
+	for _, b := range f.Blocks {
+		for _, ins := range b.Instrs {
+			if dr, ok := ins.(*DebugRef); ok && dr.Expr == e {
+				return dr.X, dr.IsAddr
+			}
+		}
+	}
+	return nil, false
+}
+
+func (f *Function) DomPreorder() []*BasicBlock {
+	if f == nil || len(f.Blocks) == 0 {
+		return nil
+	}
+	var out []*BasicBlock
+	var walk func(*BasicBlock)
+	walk = func(b *BasicBlock) {
+		out = append(out, b)
+		for _, child := range b.dominees {
+			walk(child)
+		}
+	}
+	walk(f.Blocks[0])
+	return out
+}
+
+func (f *Function) DomPostorder() []*BasicBlock {
+	if f == nil || len(f.Blocks) == 0 {
+		return nil
+	}
+	var out []*BasicBlock
+	var walk func(*BasicBlock)
+	walk = func(b *BasicBlock) {
+		for _, child := range b.dominees {
+			walk(child)
+		}
+		out = append(out, b)
+	}
+	walk(f.Blocks[0])
+	return out
+}
+
+// EnclosingFunction returns the Function enclosing path, if present.
+func EnclosingFunction(pkg *Package, path []ast.Node) *Function {
+	if pkg == nil {
+		return nil
+	}
+	for _, n := range path {
+		if fnDecl, ok := n.(*ast.FuncDecl); ok && fnDecl.Name != nil {
+			if fn := pkg.Func(fnDecl.Name.Name); fn != nil {
+				return fn
+			}
+		}
+	}
+	return nil
+}
+
+// HasEnclosingFunction reports whether path has an enclosing Function in pkg.
+func HasEnclosingFunction(pkg *Package, path []ast.Node) bool {
+	return EnclosingFunction(pkg, path) != nil
+}
+
+// BasicBlock represents an SSA basic block.
+type BasicBlock struct {
+	Index   int
+	Comment string
+	Instrs  []Instruction
+	Preds   []*BasicBlock
+	Succs   []*BasicBlock
+
+	parent   *Function
+	idom     *BasicBlock
+	dominees []*BasicBlock
+	domPre   int
+	domPost  int
+}
+
+func (b *BasicBlock) Parent() *Function       { return b.parent }
+func (b *BasicBlock) String() string          { return fmt.Sprintf("%d", b.Index) }
+func (b *BasicBlock) Idom() *BasicBlock       { return b.idom }
+func (b *BasicBlock) Dominees() []*BasicBlock { return b.dominees }
+func (b *BasicBlock) Dominates(c *BasicBlock) bool {
+	if b == nil || c == nil {
+		return false
+	}
+	if b == c {
+		return true
+	}
+	return b.domPre > 0 && b.domPre <= c.domPre && c.domPost <= b.domPost
+}
+
+// Global is a package-level variable whose SSA Value is its address (*T).
+type Global struct {
+	Pkg      *Package
+	LinkName string             // LLGo extension
+	Locality directive.Locality // LLGo extension
+
+	name   string
+	object types.Object
+	typ    types.Type
+	pos    token.Pos
+}
+
+func (g *Global) Name() string                      { return g.name }
+func (g *Global) Object() types.Object              { return g.object }
+func (g *Global) Package() *Package                 { return g.Pkg }
+func (g *Global) Parent() *Function                 { return nil }
+func (g *Global) Pos() token.Pos                    { return g.pos }
+func (g *Global) Referrers() *[]Instruction         { return nil }
+func (g *Global) Token() token.Token                { return token.VAR }
+func (g *Global) Type() types.Type                  { return g.typ }
+func (g *Global) Operands(rands []*Value) []*Value  { return rands }
+func (g *Global) String() string                    { return g.RelString(nil) }
+func (g *Global) RelString(from *types.Package) string {
+	if g.Pkg != nil && g.Pkg.Pkg != nil && g.Pkg.Pkg != from {
+		return g.Pkg.Pkg.Path() + "." + g.name
+	}
+	return g.name
+}
+
+// NamedConst is a package-level constant Member.
+type NamedConst struct {
+	Value *Const
+
+	pkg    *Package
+	object *types.Const
+}
+
+func (c *NamedConst) Name() string         { return c.object.Name() }
+func (c *NamedConst) Object() types.Object { return c.object }
+func (c *NamedConst) Package() *Package    { return c.pkg }
+func (c *NamedConst) Pos() token.Pos       { return c.object.Pos() }
+func (c *NamedConst) Token() token.Token   { return token.CONST }
+func (c *NamedConst) Type() types.Type     { return c.object.Type() }
+func (c *NamedConst) String() string       { return c.RelString(nil) }
+func (c *NamedConst) RelString(from *types.Package) string {
+	if c.pkg != nil && c.pkg.Pkg != nil && c.pkg.Pkg != from {
+		return c.pkg.Pkg.Path() + "." + c.Name()
+	}
+	return c.Name()
+}
+
+// Type is a package-level type Member.
+type Type struct {
+	pkg    *Package
+	object *types.TypeName
+}
+
+func (t *Type) Name() string         { return t.object.Name() }
+func (t *Type) Object() types.Object { return t.object }
+func (t *Type) Package() *Package    { return t.pkg }
+func (t *Type) Pos() token.Pos       { return t.object.Pos() }
+func (t *Type) Token() token.Token   { return token.TYPE }
+func (t *Type) Type() types.Type     { return t.object.Type() }
+func (t *Type) String() string       { return t.RelString(nil) }
+func (t *Type) RelString(from *types.Package) string {
+	if t.pkg != nil && t.pkg.Pkg != nil && t.pkg.Pkg != from {
+		return t.pkg.Pkg.Path() + "." + t.Name()
+	}
+	return t.Name()
+}
+
+// Parameter is an input parameter of a Function.
+type Parameter struct {
+	name      string
+	object    types.Object
+	typ       types.Type
+	parent    *Function
+	referrers []Instruction
+}
+
+func (p *Parameter) Name() string                      { return p.name }
+func (p *Parameter) Object() types.Object              { return p.object }
+func (p *Parameter) Parent() *Function                 { return p.parent }
+func (p *Parameter) Type() types.Type                  { return p.typ }
+func (p *Parameter) Referrers() *[]Instruction         { return &p.referrers }
+func (p *Parameter) Operands(rands []*Value) []*Value  { return rands }
+func (p *Parameter) Pos() token.Pos {
+	if p.object != nil {
+		return p.object.Pos()
+	}
+	return token.NoPos
+}
+func (p *Parameter) String() string { return fmt.Sprintf("parameter %s : %s", p.name, p.typ) }
+
+// FreeVar is a captured free variable of an anonymous Function.
+type FreeVar struct {
+	name      string
+	typ       types.Type
+	pos       token.Pos
+	parent    *Function
+	referrers []Instruction
+}
+
+func (v *FreeVar) Name() string                     { return v.name }
+func (v *FreeVar) Parent() *Function                { return v.parent }
+func (v *FreeVar) Pos() token.Pos                   { return v.pos }
+func (v *FreeVar) Type() types.Type                 { return v.typ }
+func (v *FreeVar) Referrers() *[]Instruction        { return &v.referrers }
+func (v *FreeVar) Operands(rands []*Value) []*Value { return rands }
+func (v *FreeVar) String() string                   { return fmt.Sprintf("freevar %s : %s", v.name, v.typ) }
+
+// Builtin represents a Go built-in function callee.
+type Builtin struct {
+	name string
+	sig  *types.Signature
+}
+
+func (b *Builtin) Name() string                     { return b.name }
+func (b *Builtin) Object() types.Object             { return types.Universe.Lookup(b.name) }
+func (b *Builtin) Parent() *Function                { return nil }
+func (b *Builtin) Pos() token.Pos                   { return token.NoPos }
+func (b *Builtin) Referrers() *[]Instruction        { return nil }
+func (b *Builtin) Type() types.Type                 { return b.sig }
+func (b *Builtin) Operands(rands []*Value) []*Value { return rands }
+func (b *Builtin) String() string                   { return "builtin " + b.name }
+
+// Const represents the value of a constant expression.
+type Const struct {
+	Value constant.Value
+	typ   types.Type
+}
+
+// NewConst returns a new Const of the specified value and type.
+func NewConst(val constant.Value, typ types.Type) *Const {
+	return &Const{Value: val, typ: typ}
+}
+
+func (c *Const) Type() types.Type                 { return c.typ }
+func (c *Const) Parent() *Function                { return nil }
+func (c *Const) Pos() token.Pos                   { return token.NoPos }
+func (c *Const) Referrers() *[]Instruction        { return nil }
+func (c *Const) Operands(rands []*Value) []*Value { return rands }
+func (c *Const) IsNil() bool                      { return c.Value == nil }
+func (c *Const) Name() string                     { return c.RelString(nil) }
+func (c *Const) String() string                   { return c.RelString(nil) }
+
+func (c *Const) RelString(from *types.Package) string {
+	var p string
+	if c.Value == nil {
+		p = "nil"
+	} else if c.Value.Kind() == constant.String {
+		p = constant.StringVal(c.Value)
+		if len(p) > 20 {
+			p = p[:17] + "..."
+		}
+		p = fmt.Sprintf("%q", p)
+	} else {
+		p = c.Value.String()
+	}
+	return fmt.Sprintf("%s:%s", p, types.TypeString(c.typ, types.RelativeTo(from)))
+}
+
+func (c *Const) Int64() int64 {
+	if c.Value == nil {
+		return 0
+	}
+	switch c.Value.Kind() {
+	case constant.Int:
+		if v, ok := constant.Int64Val(c.Value); ok {
+			return v
+		}
+		return 0
+	case constant.Float:
+		f, _ := constant.Float64Val(c.Value)
+		return int64(f)
+	}
+	return 0
+}
+
+func (c *Const) Uint64() uint64 {
+	if c.Value == nil {
+		return 0
+	}
+	switch c.Value.Kind() {
+	case constant.Int:
+		if v, ok := constant.Uint64Val(c.Value); ok {
+			return v
+		}
+		return 0
+	case constant.Float:
+		f, _ := constant.Float64Val(c.Value)
+		return uint64(f)
+	}
+	return 0
+}
+
+func (c *Const) Float64() float64 {
+	if c.Value == nil {
+		return 0
+	}
+	f, _ := constant.Float64Val(c.Value)
+	return f
+}
+
+func (c *Const) Complex128() complex128 {
+	if c.Value == nil {
+		return 0
+	}
+	re, _ := constant.Float64Val(constant.Real(c.Value))
+	im, _ := constant.Float64Val(constant.Imag(c.Value))
+	return complex(re, im)
+}
+
+// CallCommon is embedded by Call, Go, and Defer instructions.
+type CallCommon struct {
+	Value  Value
+	Method *types.Func
+	Args   []Value
+
 	pos token.Pos
 }
 
-func (i *baseInstr) Block() *BasicBlock     { return i.blk }
-func (i *baseInstr) Pos() token.Pos         { return i.pos }
-func (i *baseInstr) setBlock(b *BasicBlock) { i.blk = b }
-func (i *baseInstr) setPos(pos token.Pos)   { i.pos = pos }
-func (i *baseInstr) Parent() *Function {
-	if i.blk == nil {
+func (c *CallCommon) IsInvoke() bool { return c.Method != nil }
+func (c *CallCommon) Pos() token.Pos { return c.pos }
+
+func (c *CallCommon) Signature() *types.Signature {
+	if c.Method != nil {
+		sig, _ := c.Method.Type().(*types.Signature)
+		return sig
+	}
+	if c.Value != nil && c.Value.Type() != nil {
+		sig, _ := c.Value.Type().Underlying().(*types.Signature)
+		return sig
+	}
+	return nil
+}
+
+func (c *CallCommon) StaticCallee() *Function {
+	if c.Method != nil {
 		return nil
 	}
-	return i.blk.Func
-}
-func (*baseInstr) instrMarker() {}
-
-type baseValue struct {
-	id  ValueID
-	typ types.Type
+	fn, _ := c.Value.(*Function)
+	return fn
 }
 
-func (v *baseValue) ID() ValueID      { return v.id }
-func (v *baseValue) Type() types.Type { return v.typ }
-func (v *baseValue) Name() string     { return fmt.Sprintf("v%d", v.id) }
-func (*baseValue) valMarker()         {}
-
-// Parameter is a formal function parameter.
-type Parameter struct {
-	baseValue
-	ParamName string
-	Index     int
-}
-
-func (p *Parameter) Name() string {
-	if p.ParamName != "" {
-		return fmt.Sprintf("%%%s", p.ParamName)
-	}
-	return fmt.Sprintf("%%p%d", p.Index)
-}
-
-// Const is a typed compile-time constant value (matching go/ssa.Const: a nil
-// Value represents the typed zero/nil value of Type()).
-type Const struct {
-	baseValue
-	Value constant.Value
-}
-
-func (c *Const) Name() string {
-	if c.Value != nil {
-		return c.Value.ExactString()
-	}
-	if c.typ != nil {
-		return "zero:" + c.typ.String()
-	}
-	return "nil"
-}
-
-// GlobalRef references the address of a package Global.
-type GlobalRef struct {
-	baseValue
-	Global *Global
-}
-
-func (g *GlobalRef) Name() string { return "@" + g.Global.Name }
-
-// Phi merges SSA values from predecessor blocks.
-type Phi struct {
-	baseInstr
-	baseValue
-	Edges []PhiEdge
-}
-
-// PhiEdge pairs a predecessor block with its incoming SSA value.
-type PhiEdge struct {
-	Pred *BasicBlock
-	Val  Value
-}
-
-func (p *Phi) Operands() []Value {
-	ops := make([]Value, len(p.Edges))
-	for i, e := range p.Edges {
-		ops[i] = e.Val
-	}
-	return ops
-}
-
-func (p *Phi) String() string {
-	parts := make([]string, len(p.Edges))
-	for i, e := range p.Edges {
-		parts[i] = fmt.Sprintf("[%s: %s]", e.Pred.Label, e.Val.Name())
-	}
-	return fmt.Sprintf("%s = phi %s %s", p.Name(), p.typ.String(), strings.Join(parts, ", "))
-}
-
-// BinOp computes a binary arithmetic, bitwise, or comparison operation.
-type BinOp struct {
-	baseInstr
-	baseValue
-	Op   token.Token
-	X, Y Value
-}
-
-func (i *BinOp) Operands() []Value { return []Value{i.X, i.Y} }
-func (i *BinOp) String() string {
-	return fmt.Sprintf("%s = binop %s %s, %s : %s", i.Name(), i.Op, i.X.Name(), i.Y.Name(), i.typ)
-}
-
-// UnOp computes a unary operation (-, ^, !, etc.).
-type UnOp struct {
-	baseInstr
-	baseValue
-	Op token.Token
-	X  Value
-}
-
-func (i *UnOp) Operands() []Value { return []Value{i.X} }
-func (i *UnOp) String() string {
-	return fmt.Sprintf("%s = unop %s %s : %s", i.Name(), i.Op, i.X.Name(), i.typ)
-}
-
-// Convert converts X to target type.
-type Convert struct {
-	baseInstr
-	baseValue
-	X Value
-}
-
-func (i *Convert) Operands() []Value { return []Value{i.X} }
-func (i *Convert) String() string {
-	return fmt.Sprintf("%s = convert %s to %s", i.Name(), i.X.Name(), i.typ)
-}
-
-// PtrCast explicitly converts between GoPtr and NativePtr address spaces.
-type PtrCast struct {
-	baseInstr
-	baseValue
-	X Value
-}
-
-func (i *PtrCast) Operands() []Value { return []Value{i.X} }
-func (i *PtrCast) String() string {
-	return fmt.Sprintf("%s = ptrcast %s to %s", i.Name(), i.X.Name(), i.typ)
-}
-
-// Alloc allocates storage on the stack or heap with explicit GC NoScan metadata.
-type Alloc struct {
-	baseInstr
-	baseValue
-	Elem   types.Type
-	Heap   bool
-	NoScan bool
-	Align  int64
-}
-
-func (i *Alloc) Operands() []Value { return nil }
-func (i *Alloc) String() string {
-	space := "stack"
-	if i.Heap {
-		space = "heap"
-	}
-	scan := "scan"
-	if i.NoScan {
-		scan = "noscan"
-	}
-	return fmt.Sprintf("%s = alloc.%s.%s %s", i.Name(), space, scan, i.Elem)
-}
-
-// Load loads a value from pointer Addr.
-type Load struct {
-	baseInstr
-	baseValue
-	Addr   Value
-	Atomic bool
-}
-
-func (i *Load) Operands() []Value { return []Value{i.Addr} }
-func (i *Load) String() string {
-	return fmt.Sprintf("%s = load %s : %s", i.Name(), i.Addr.Name(), i.typ)
-}
-
-// Store writes Val to pointer Addr.
-type Store struct {
-	baseInstr
-	Addr   Value
-	Val    Value
-	Atomic bool
-}
-
-func (i *Store) Operands() []Value { return []Value{i.Addr, i.Val} }
-func (i *Store) String() string {
-	return fmt.Sprintf("store %s, %s", i.Val.Name(), i.Addr.Name())
-}
-
-// BarrierKind classifies a GC write barrier operation.
-type BarrierKind uint8
-
-const (
-	BarrierStore BarrierKind = iota
-	BarrierMove
-	BarrierBulk
-)
-
-func (k BarrierKind) String() string {
-	switch k {
-	case BarrierMove:
-		return "move"
-	case BarrierBulk:
-		return "bulk"
+func (c *CallCommon) Description() string {
+	switch {
+	case c.Method != nil:
+		return "dynamic method call"
+	case c.StaticCallee() != nil:
+		return "static function call"
 	default:
-		return "store"
+		return "dynamic function call"
 	}
 }
 
-// WriteBarrier records a GC pointer store through an explicit barrier hook,
-// allowing backends to lower to direct stores (BDWGC) or precise barriers
-// (future custom/moving/concurrent GC).
-type WriteBarrier struct {
-	baseInstr
-	Dst  Value
-	Val  Value
-	Kind BarrierKind
-}
-
-func (i *WriteBarrier) Operands() []Value { return []Value{i.Dst, i.Val} }
-func (i *WriteBarrier) String() string {
-	return fmt.Sprintf("gc.writebarrier.%s %s, %s", i.Kind, i.Dst.Name(), i.Val.Name())
-}
-
-// Safepoint marks a GC/preemption poll point with its live Go pointer roots.
-type Safepoint struct {
-	baseInstr
-	LiveRoots []Value
-}
-
-func (i *Safepoint) Operands() []Value { return i.LiveRoots }
-func (i *Safepoint) String() string {
-	names := make([]string, len(i.LiveRoots))
-	for idx, r := range i.LiveRoots {
-		names[idx] = r.Name()
+func (c *CallCommon) Operands(rands []*Value) []*Value {
+	rands = append(rands, &c.Value)
+	for i := range c.Args {
+		rands = append(rands, &c.Args[i])
 	}
-	return fmt.Sprintf("gc.safepoint [%s]", strings.Join(names, ", "))
+	return rands
 }
 
-// GCRoot registers or releases a stack slot as a precise GC root.
-type GCRoot struct {
-	baseInstr
-	Slot Value
-	Live bool
-}
-
-func (i *GCRoot) Operands() []Value { return []Value{i.Slot} }
-func (i *GCRoot) String() string {
-	if i.Live {
-		return fmt.Sprintf("gc.root.enter %s", i.Slot.Name())
-	}
-	return fmt.Sprintf("gc.root.leave %s", i.Slot.Name())
-}
-
-// KeepAlive prevents premature collection of Val before this program point.
-type KeepAlive struct {
-	baseInstr
-	Val Value
-}
-
-func (i *KeepAlive) Operands() []Value { return []Value{i.Val} }
-func (i *KeepAlive) String() string    { return fmt.Sprintf("gc.keepalive %s", i.Val.Name()) }
-
-// FieldAddr computes the address of struct field FieldIndex of Base.
-type FieldAddr struct {
-	baseInstr
-	baseValue
-	Base       Value
-	FieldIndex int
-}
-
-func (i *FieldAddr) Operands() []Value { return []Value{i.Base} }
-func (i *FieldAddr) String() string {
-	return fmt.Sprintf("%s = fieldaddr %s.#%d : %s", i.Name(), i.Base.Name(), i.FieldIndex, i.typ)
-}
-
-// IndexAddr computes the address of element Index of slice/array Base.
-type IndexAddr struct {
-	baseInstr
-	baseValue
-	Base  Value
-	Index Value
-}
-
-func (i *IndexAddr) Operands() []Value { return []Value{i.Base, i.Index} }
-func (i *IndexAddr) String() string {
-	return fmt.Sprintf("%s = indexaddr %s[%s] : %s", i.Name(), i.Base.Name(), i.Index.Name(), i.typ)
-}
-
-// Extract extracts element Index from a tuple-typed multi-result Value.
-type Extract struct {
-	baseInstr
-	baseValue
-	Tuple Value
-	Index int
-}
-
-func (i *Extract) Operands() []Value { return []Value{i.Tuple} }
-func (i *Extract) String() string {
-	return fmt.Sprintf("%s = extract %s #%d : %s", i.Name(), i.Tuple.Name(), i.Index, i.typ)
-}
-
-// DebugRef associates a source-level Object with its SSA Value (or address
-// when IsAddr is true) for DWARF debug info and GC stack maps.
-type DebugRef struct {
-	baseInstr
-	X      Value
-	Object types.Object
-	IsAddr bool
-}
-
-func (i *DebugRef) Operands() []Value { return []Value{i.X} }
-func (i *DebugRef) String() string {
-	name := "<anon>"
-	if i.Object != nil {
-		name = i.Object.Name()
-	}
-	kind := "val"
-	if i.IsAddr {
-		kind = "addr"
-	}
-	return fmt.Sprintf("debugref.%s %s = %s", kind, name, i.X.Name())
-}
-
-// MakeClosure constructs a first-class Closure value from a target function
-// symbol and optional heap/stack environment pointer.
-type MakeClosure struct {
-	baseInstr
-	baseValue
-	FnName string
-	Env    Value // nil for stateless closures
-}
-
-func (i *MakeClosure) Operands() []Value {
-	if i.Env == nil {
-		return nil
-	}
-	return []Value{i.Env}
-}
-func (i *MakeClosure) String() string {
-	env := "nil"
-	if i.Env != nil {
-		env = i.Env.Name()
-	}
-	return fmt.Sprintf("%s = makeclosure @%s, %s : %s", i.Name(), i.FnName, env, i.typ)
-}
-
-// CallDirect invokes a statically resolved symbol under an explicit CallConv.
-type CallDirect struct {
-	baseInstr
-	baseValue
-	Callee   string
-	CallConv types.CallConv
-	Args     []Value
-}
-
-func (i *CallDirect) Operands() []Value { return i.Args }
-func (i *CallDirect) String() string {
-	return fmt.Sprintf("%s = call.%s @%s(%s)", i.Name(), i.CallConv, i.Callee, formatValues(i.Args))
-}
-
-// CallClosure invokes a first-class Closure value ({codePtr, envPtr}).
-type CallClosure struct {
-	baseInstr
-	baseValue
-	Closure Value
-	Args    []Value
-}
-
-func (i *CallClosure) Operands() []Value {
-	ops := make([]Value, 0, 1+len(i.Args))
-	ops = append(ops, i.Closure)
-	return append(ops, i.Args...)
-}
-func (i *CallClosure) String() string {
-	return fmt.Sprintf("%s = call.closure %s(%s)", i.Name(), i.Closure.Name(), formatValues(i.Args))
-}
-
-// CallCFunc invokes a native C or Stdcall function pointer directly.
-type CallCFunc struct {
-	baseInstr
-	baseValue
-	Callee   Value
-	CallConv types.CallConv
-	Args     []Value
-}
-
-func (i *CallCFunc) Operands() []Value {
-	ops := make([]Value, 0, 1+len(i.Args))
-	ops = append(ops, i.Callee)
-	return append(ops, i.Args...)
-}
-func (i *CallCFunc) String() string {
-	return fmt.Sprintf("%s = call.%s %s(%s)", i.Name(), i.CallConv, i.Callee.Name(), formatValues(i.Args))
-}
-
-// CallInterface performs dynamic interface dispatch, preserving the interface
-// method name and slot index for Go-side DCE and LLVM VFE/LTO metadata.
-type CallInterface struct {
-	baseInstr
-	baseValue
-	Iface       Value
-	Method      string
-	MethodIndex int
-	Args        []Value
-}
-
-func (i *CallInterface) Operands() []Value {
-	ops := make([]Value, 0, 1+len(i.Args))
-	ops = append(ops, i.Iface)
-	return append(ops, i.Args...)
-}
-func (i *CallInterface) String() string {
-	return fmt.Sprintf("%s = call.iface %s.%s#%d(%s)", i.Name(), i.Iface.Name(), i.Method, i.MethodIndex, formatValues(i.Args))
-}
-
-// Go spawns a new OS-backed goroutine (1:1 threading model).
-type Go struct {
-	baseInstr
-	Callee Value
-	Args   []Value
-}
-
-func (i *Go) Operands() []Value {
-	ops := make([]Value, 0, 1+len(i.Args))
-	ops = append(ops, i.Callee)
-	return append(ops, i.Args...)
-}
-func (i *Go) String() string {
-	return fmt.Sprintf("go %s(%s)", i.Callee.Name(), formatValues(i.Args))
-}
-
-// Defer registers a deferred call.
-type Defer struct {
-	baseInstr
-	Callee Value
-	Args   []Value
-	InLoop bool
-}
-
-func (i *Defer) Operands() []Value {
-	ops := make([]Value, 0, 1+len(i.Args))
-	ops = append(ops, i.Callee)
-	return append(ops, i.Args...)
-}
-func (i *Defer) String() string {
-	return fmt.Sprintf("defer %s(%s)", i.Callee.Name(), formatValues(i.Args))
-}
-
-// RunDefers executes pending deferred calls before returning.
-type RunDefers struct {
-	baseInstr
-}
-
-func (i *RunDefers) Operands() []Value { return nil }
-func (i *RunDefers) String() string    { return "rundefers" }
-
-// Panic raises a Go panic value.
-type Panic struct {
-	baseInstr
-	Val Value
-}
-
-func (i *Panic) Operands() []Value         { return []Value{i.Val} }
-func (i *Panic) Successors() []*BasicBlock { return nil }
-func (i *Panic) termMarker()               {}
-func (i *Panic) String() string            { return fmt.Sprintf("panic %s", i.Val.Name()) }
-
-// Recover captures an active panic inside a deferred frame.
-type Recover struct {
-	baseInstr
-	baseValue
-}
-
-func (i *Recover) Operands() []Value { return nil }
-func (i *Recover) String() string    { return fmt.Sprintf("%s = recover : %s", i.Name(), i.typ) }
-
-// Jump unconditionally transfers control to Target.
-type Jump struct {
-	baseInstr
-	Target *BasicBlock
-}
-
-func (i *Jump) Operands() []Value         { return nil }
-func (i *Jump) Successors() []*BasicBlock { return []*BasicBlock{i.Target} }
-func (i *Jump) termMarker()               {}
-func (i *Jump) String() string            { return fmt.Sprintf("jump %s", i.Target.Label) }
-
-// Branch transfers control based on boolean Cond.
-type Branch struct {
-	baseInstr
-	Cond  Value
-	True  *BasicBlock
-	False *BasicBlock
-}
-
-func (i *Branch) Operands() []Value         { return []Value{i.Cond} }
-func (i *Branch) Successors() []*BasicBlock { return []*BasicBlock{i.True, i.False} }
-func (i *Branch) termMarker()               {}
-func (i *Branch) String() string {
-	return fmt.Sprintf("branch %s ? %s : %s", i.Cond.Name(), i.True.Label, i.False.Label)
-}
-
-// Return returns zero or more values from the current Function.
-type Return struct {
-	baseInstr
-	Results []Value
-}
-
-func (i *Return) Operands() []Value         { return i.Results }
-func (i *Return) Successors() []*BasicBlock { return nil }
-func (i *Return) termMarker()               {}
-func (i *Return) String() string {
-	if len(i.Results) == 0 {
-		return "return"
-	}
-	return fmt.Sprintf("return %s", formatValues(i.Results))
-}
-
-// Unreachable marks control flow that cannot be reached at runtime.
-type Unreachable struct {
-	baseInstr
-}
-
-func (i *Unreachable) Operands() []Value         { return nil }
-func (i *Unreachable) Successors() []*BasicBlock { return nil }
-func (i *Unreachable) termMarker()               {}
-func (i *Unreachable) String() string            { return "unreachable" }
-
-func formatValues(vals []Value) string {
-	parts := make([]string, len(vals))
-	for i, v := range vals {
-		parts[i] = v.Name()
-	}
-	return strings.Join(parts, ", ")
-}
-
-// String renders a readable textual dump of the package IR.
-func (p *Package) String() string {
+func (c *CallCommon) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "package %s (%s) target=%s\n", p.Name, p.Path, p.Target.Triple)
-	for _, g := range p.Globals {
-		fmt.Fprintf(&b, "global @%s : %s", g.Name, g.Type)
-		if g.Locality != directive.LocalityNone {
-			fmt.Fprintf(&b, " locality=%s", g.Locality)
-		}
-		b.WriteByte('\n')
+	if c.Method != nil {
+		fmt.Fprintf(&b, "invoke %s.%s(", valName(c.Value), c.Method.Name())
+	} else {
+		fmt.Fprintf(&b, "%s(", valName(c.Value))
 	}
-	for _, fn := range p.Funcs {
-		fmt.Fprintf(&b, "func @%s %s", fn.Name, fn.Sig)
-		if fn.IsDeclaration() {
-			b.WriteByte('\n')
-			continue
+	for i, a := range c.Args {
+		if i > 0 {
+			b.WriteString(", ")
 		}
-		b.WriteString(" {\n")
-		for _, blk := range fn.Blocks {
-			fmt.Fprintf(&b, "%s:\n", blk.Label)
-			for _, ins := range blk.Instrs {
-				fmt.Fprintf(&b, "  %s\n", ins.String())
-			}
-		}
-		b.WriteString("}\n")
+		b.WriteString(valName(a))
 	}
+	b.WriteByte(')')
 	return b.String()
+}
+
+// SelectState describes a single case of a Select instruction.
+type SelectState struct {
+	Dir       types.ChanDir
+	Chan      Value
+	Send      Value
+	Pos       token.Pos
+	DebugNode ast.Node
+}
+
+func valName(v Value) string {
+	if v == nil {
+		return "<nil>"
+	}
+	return v.Name()
 }

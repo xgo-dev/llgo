@@ -1,293 +1,134 @@
-package ssa
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package ssa_test
 
 import (
+	"bytes"
 	"go/constant"
 	"go/token"
-	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/target"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/types"
 )
 
-func TestBuildVerifyAndSummarizeIR(t *testing.T) {
-	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	pkg := NewPackage("example.com/demo", "demo", spec)
-	pkg.Exports["example.com/demo.Entry"] = "demo_entry"
+func TestProgramPackageFunctionDominatorsAndVerify(t *testing.T) {
+	fset := token.NewFileSet()
+	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.GlobalDebug)
+	goPkg := types.NewPackage("example.com/demo", "demo")
+	pkg := prog.CreatePackage(goPkg, nil, nil, true)
+	if prog.Package(goPkg) != pkg || prog.ImportedPackage("example.com/demo") != pkg {
+		t.Fatal("Program package lookup failed")
+	}
 
-	i64 := types.Typ[types.Int64]
-	goPtrI64 := types.NewPointerWithKind(i64, types.GoPtr)
-	cPtrI64 := types.NewPointerWithKind(i64, types.CPtr)
-	cbSig := types.NewSignature(
-		nil,
-		types.NewTuple(types.NewParam(0, nil, "x", i64)),
-		types.NewTuple(types.NewParam(0, nil, "", i64)),
+	gVar := types.NewVar(0, goPkg, "Counter", types.Typ[types.Int])
+	g := pkg.AddGlobal("Counter", gVar, types.NewPointer(types.Typ[types.Int]))
+	if pkg.Var("Counter") != g || g.String() != "example.com/demo.Counter" {
+		t.Fatalf("Global lookup mismatch: %v", g)
+	}
+
+	// func choose(cond bool, a, b int) int
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(0, goPkg, "cond", types.Typ[types.Bool]),
+			types.NewVar(0, goPkg, "a", types.Typ[types.Int]),
+			types.NewVar(0, goPkg, "b", types.Typ[types.Int]),
+		),
+		types.NewTuple(types.NewVar(0, goPkg, "", types.Typ[types.Int])),
 		false,
 	)
-	entrySig := types.NewSignature(
-		nil,
-		types.NewTuple(types.NewParam(0, nil, "n", i64)),
-		types.NewTuple(types.NewParam(0, nil, "", i64)),
-		false,
-	)
+	fnObj := types.NewFunc(0, goPkg, "choose", sig)
+	fn := prog.NewFunction("choose", sig, "")
+	pkg.AddFunction(fn, fnObj)
+	pCond := fn.AddParam("cond", nil, types.Typ[types.Bool])
+	pA := fn.AddParam("a", nil, types.Typ[types.Int])
+	pB := fn.AddParam("b", nil, types.Typ[types.Int])
 
-	fn := pkg.NewFunction("example.com/demo.Entry", entrySig)
 	entry := fn.NewBasicBlock("entry")
-	b := NewBuilder(entry)
-	b.SetPos(token.Pos(10))
+	thenBlk := fn.NewBasicBlock("then")
+	elseBlk := fn.NewBasicBlock("else")
+	mergeBlk := fn.NewBasicBlock("merge")
 
-	// NoScan stack/heap allocation for pointer-free int64
-	slot := b.Alloc(i64, true, true)
-	if slot.Pos() != token.Pos(10) {
-		t.Fatalf("slot.Pos() = %v, want 10", slot.Pos())
-	}
-	b.DebugRef(slot, types.NewVar(token.Pos(10), nil, "slot", i64), true)
-	b.Store(slot, fn.Params[0])
-	// Pointer-bearing heap cell with explicit write barrier & safepoint
-	cell := b.Alloc(goPtrI64, true, false)
-	b.WriteBarrier(cell, slot, BarrierStore)
-	b.Safepoint(cell)
-	_ = b.PtrCast(slot, cPtrI64)
+	entry.Emit(&ssa.If{Cond: pCond}, nil, token.Pos(1))
+	entry.AddEdge(thenBlk)
+	entry.AddEdge(elseBlk)
 
-	// Multi-result call + Extract
-	pairT := types.NewTuple(types.NewParam(0, nil, "", i64), types.NewParam(0, nil, "", types.Typ[types.Bool]))
-	pairCall := b.CallDirect("example.com/demo.divmod", types.Go, pairT, fn.Params[0])
-	_ = b.Extract(pairCall, 0)
+	one := ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
+	addA := &ssa.BinOp{Op: token.ADD, X: pA, Y: one}
+	thenBlk.Emit(addA, types.Typ[types.Int], token.Pos(2))
+	thenBlk.Emit(&ssa.Jump{}, nil, token.Pos(3))
+	thenBlk.AddEdge(mergeBlk)
 
-	// First-class closure construction and call
-	clo := b.MakeClosure(cbSig, "example.com/demo.helper", nil)
-	res := b.CallClosure(clo, i64, fn.Params[0])
-	_ = b.CallDirect("C.puts", types.CDecl, nil)
-	readMeth := types.NewFunc(0, nil, "Read", types.NewSignature(nil, nil, types.NewTuple(types.NewParam(0, nil, "", i64)), false))
-	_ = b.CallInterface(b.Const(types.NewInterfaceType([]*types.Func{readMeth}, nil), nil), "Read", 0, i64)
-	b.KeepAlive(cell)
-	b.Return(res)
+	elseBlk.Emit(&ssa.Store{Addr: g, Val: pB}, nil, token.Pos(4))
+	elseBlk.Emit(&ssa.Jump{}, nil, token.Pos(5))
+	elseBlk.AddEdge(mergeBlk)
 
-	if err := VerifyPackage(pkg); err != nil {
-		t.Fatalf("VerifyPackage failed: %v\n%s", err, pkg.String())
+	phi := &ssa.Phi{Comment: "res", Edges: []ssa.Value{addA, pB}}
+	mergeBlk.Emit(phi, types.Typ[types.Int], token.Pos(6))
+	mergeBlk.Emit(&ssa.Return{Results: []ssa.Value{phi}}, nil, token.Pos(7))
+
+	prog.Build()
+
+	if err := ssa.VerifyPackage(pkg); err != nil {
+		t.Fatalf("VerifyPackage: %v", err)
 	}
-	text := pkg.String()
-	for _, want := range []string{"alloc.heap.noscan", "debugref.addr slot", "extract ", "gc.writebarrier.store", "gc.safepoint", "makeclosure @example.com/demo.helper", "call.closure", "ptrcast"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("IR dump missing %q:\n%s", want, text)
-		}
+	if !entry.Dominates(mergeBlk) || thenBlk.Dominates(mergeBlk) || mergeBlk.Idom() != entry {
+		t.Fatalf("unexpected dominator tree: merge.Idom()=%v", mergeBlk.Idom())
+	}
+	if len(fn.DomPreorder()) != 4 || len(fn.DomPostorder()) != 4 {
+		t.Fatalf("unexpected dom traversal lengths: %d %d", len(fn.DomPreorder()), len(fn.DomPostorder()))
+	}
+	if refs := pA.Referrers(); refs == nil || len(*refs) != 1 || (*refs)[0] != addA {
+		t.Fatalf("pA.Referrers() = %v, want [%v]", refs, addA)
+	}
+	if prog.FuncValue(fnObj) != fn || pkg.Func("choose") != fn {
+		t.Fatal("Func lookup failed")
 	}
 
-	sum := Summarize(pkg)
-	raw, err := MarshalSummary(sum)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roundTrip, err := UnmarshalSummary(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(sum, roundTrip) {
-		t.Fatalf("summary round-trip mismatch: got %+v, want %+v", roundTrip, sum)
-	}
-	if !sum.HasSafepoints || !sum.HasWriteBarrier ||
-		!reflect.DeepEqual(sum.DirectCalls, []string{"C.puts", "example.com/demo.divmod"}) ||
-		!reflect.DeepEqual(sum.ClosureRefs, []string{"example.com/demo.helper"}) ||
-		!reflect.DeepEqual(sum.InterfaceCalls, []string{"Read"}) {
-		t.Fatalf("unexpected summary: %+v", sum)
+	var buf bytes.Buffer
+	ssa.WritePackage(&buf, pkg)
+	ssa.WriteFunction(&buf, fn)
+	if !strings.Contains(buf.String(), "phi [1: t0, 2: b]") {
+		t.Fatalf("unexpected disassembly:\n%s", buf.String())
 	}
 }
 
-func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
-	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	i64 := types.Typ[types.Int64]
-	goPtr := types.NewPointerWithKind(i64, types.GoPtr)
-	cPtr := types.NewPointerWithKind(i64, types.CPtr)
-	voidSig := types.NewSignature(nil, nil, nil, false)
+func TestVerifyCatchesErrors(t *testing.T) {
+	prog := ssa.NewProgram(token.NewFileSet(), 0)
+	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
+	fn := prog.NewFunction("bad", sig, "")
+	b := fn.NewBasicBlock("entry")
+	// Alloc.NoScan on pointer-bearing type must fail verification.
+	b.Emit(&ssa.Alloc{Heap: true, NoScan: true}, types.NewPointer(types.NewPointer(types.Typ[types.Int])), token.NoPos)
+	b.Emit(&ssa.Return{Results: []ssa.Value{ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])}}, nil, token.NoPos)
+	if err := ssa.VerifyFunction(fn); err == nil || !strings.Contains(err.Error(), "noscan") {
+		t.Fatalf("expected noscan verification error, got %v", err)
+	}
 
-	t.Run("noscan on pointer type", func(t *testing.T) {
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.f", voidSig)
-		b := NewBuilder(fn.NewBasicBlock("entry"))
-		b.Alloc(goPtr, true, true)
-		b.Return()
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "alloc.noscan") {
-			t.Fatalf("got %v, want alloc.noscan error", err)
-		}
-	})
-
-	t.Run("write barrier on C ptr", func(t *testing.T) {
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.f", voidSig)
-		b := NewBuilder(fn.NewBasicBlock("entry"))
-		p := b.Const(cPtr, nil)
-		b.WriteBarrier(p, b.Const(i64, constant.MakeInt64(0)), BarrierStore)
-		b.Return()
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "GoPtr") {
-			t.Fatalf("got %v, want GoPtr write barrier error", err)
-		}
-	})
-
-	t.Run("untyped operands rejected without panic", func(t *testing.T) {
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.f", voidSig)
-		b := NewBuilder(fn.NewBasicBlock("entry"))
-		voidCall := b.CallDirect("C.nop", types.CDecl, nil)
-		b.WriteBarrier(voidCall, b.Const(i64, constant.MakeInt64(0)), BarrierStore)
-		b.Return()
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "untyped operand") {
-			t.Fatalf("got %v, want untyped operand error", err)
-		}
-
-		pkg2 := NewPackage("p", "p", spec)
-		fn2 := pkg2.NewFunction("p.f", voidSig)
-		b2 := NewBuilder(fn2.NewBasicBlock("entry"))
-		b2.CallClosure(b2.Const(nil, nil), nil)
-		b2.Return()
-		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "untyped operand") {
-			t.Fatalf("got %v, want untyped operand error", err)
-		}
-	})
-
-	t.Run("invalid extract rejected", func(t *testing.T) {
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.f", voidSig)
-		b := NewBuilder(fn.NewBasicBlock("entry"))
-		b.Extract(b.Const(i64, constant.MakeInt64(1)), 0)
-		b.Return()
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "non-tuple") {
-			t.Fatalf("got %v, want non-tuple extract error", err)
-		}
-
-		pkg2 := NewPackage("p", "p", spec)
-		fn2 := pkg2.NewFunction("p.f", voidSig)
-		b2 := NewBuilder(fn2.NewBasicBlock("entry"))
-		tup := types.NewTuple(types.NewParam(0, nil, "", i64))
-		c := b2.CallDirect("p.one", types.Go, tup)
-		b2.Extract(c, 3)
-		b2.Return()
-		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "out of range") {
-			t.Fatalf("got %v, want out of range extract error", err)
-		}
-	})
-
-	t.Run("missing terminator", func(t *testing.T) {
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.f", voidSig)
-		b := NewBuilder(fn.NewBasicBlock("entry"))
-		b.BinOp(token.ADD, i64, b.Const(i64, constant.MakeInt64(1)), b.Const(i64, constant.MakeInt64(2)))
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "missing terminator") {
-			t.Fatalf("got %v, want missing terminator error", err)
-		}
-	})
-
-	t.Run("valid diamond phi passes", func(t *testing.T) {
-		boolT := types.Typ[types.Bool]
-		sig := types.NewSignature(
-			nil,
-			types.NewTuple(
-				types.NewParam(0, nil, "cond", boolT),
-				types.NewParam(0, nil, "a", i64),
-				types.NewParam(0, nil, "b", i64),
-			),
-			types.NewTuple(types.NewParam(0, nil, "", i64)),
-			false,
-		)
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.select", sig)
-		entry := fn.NewBasicBlock("entry")
-		thenBlk := fn.NewBasicBlock("then")
-		elseBlk := fn.NewBasicBlock("else")
-		merge := fn.NewBasicBlock("merge")
-
-		NewBuilder(entry).Branch(fn.Params[0], thenBlk, elseBlk)
-		NewBuilder(thenBlk).Jump(merge)
-		NewBuilder(elseBlk).Jump(merge)
-		mb := NewBuilder(merge)
-		phi := mb.Phi(i64, PhiEdge{Pred: thenBlk, Val: fn.Params[1]}, PhiEdge{Pred: elseBlk, Val: fn.Params[2]})
-		mb.Return(phi)
-		if err := VerifyPackage(pkg); err != nil {
-			t.Fatalf("valid phi rejected: %v", err)
-		}
-	})
-
-	t.Run("phi referencing foreign function block and param rejected", func(t *testing.T) {
-		sig := types.NewSignature(
-			nil,
-			types.NewTuple(types.NewParam(0, nil, "x", i64)),
-			types.NewTuple(types.NewParam(0, nil, "", i64)),
-			false,
-		)
-		pkg := NewPackage("p", "p", spec)
-		other := pkg.NewFunction("p.other", sig)
-		otherEntry := other.NewBasicBlock("entry")
-		NewBuilder(otherEntry).Return(other.Params[0])
-
-		fn := pkg.NewFunction("p.bad", sig)
-		entry := fn.NewBasicBlock("entry")
-		merge := fn.NewBasicBlock("merge")
-		NewBuilder(entry).Jump(merge)
-		mb := NewBuilder(merge)
-		phi := mb.Phi(i64, PhiEdge{Pred: otherEntry, Val: other.Params[0]})
-		mb.Return(phi)
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
-			t.Fatalf("got %v, want cross-function ownership error", err)
-		}
-
-		pkg2 := NewPackage("p", "p", spec)
-		other2 := pkg2.NewFunction("p.other", sig)
-		NewBuilder(other2.NewBasicBlock("entry")).Return(other2.Params[0])
-		fn2 := pkg2.NewFunction("p.badparam", sig)
-		e2 := fn2.NewBasicBlock("entry")
-		m2 := fn2.NewBasicBlock("merge")
-		NewBuilder(e2).Jump(m2)
-		mb2 := NewBuilder(m2)
-		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: other2.Params[0]}))
-		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
-			t.Fatalf("got %v, want foreign param error", err)
-		}
-
-		pkg3 := NewPackage("p", "p", spec)
-		other3 := pkg3.NewFunction("p.other", sig)
-		oe3 := other3.NewBasicBlock("entry")
-		NewBuilder(oe3).Return(other3.Params[0])
-		fn3 := pkg3.NewFunction("p.badpred", sig)
-		e3 := fn3.NewBasicBlock("entry")
-		m3 := fn3.NewBasicBlock("merge")
-		NewBuilder(e3).Jump(m3)
-		mb3 := NewBuilder(m3)
-		mb3.Return(mb3.Phi(i64, PhiEdge{Pred: oe3, Val: fn3.Params[0]}))
-		if err := VerifyPackage(pkg3); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
-			t.Fatalf("got %v, want foreign block error", err)
-		}
-	})
-
-	t.Run("phi non-predecessor and placement rejected", func(t *testing.T) {
-		sig := types.NewSignature(
-			nil,
-			types.NewTuple(types.NewParam(0, nil, "x", i64)),
-			types.NewTuple(types.NewParam(0, nil, "", i64)),
-			false,
-		)
-		pkg := NewPackage("p", "p", spec)
-		fn := pkg.NewFunction("p.badcfg", sig)
-		entry := fn.NewBasicBlock("entry")
-		dead := fn.NewBasicBlock("dead")
-		merge := fn.NewBasicBlock("merge")
-		NewBuilder(entry).Jump(merge)
-		NewBuilder(dead).Return(fn.Params[0])
-		mb := NewBuilder(merge)
-		mb.Return(mb.Phi(i64, PhiEdge{Pred: dead, Val: fn.Params[0]}))
-		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "not a CFG predecessor") {
-			t.Fatalf("got %v, want non-predecessor error", err)
-		}
-
-		pkg2 := NewPackage("p", "p", spec)
-		fn2 := pkg2.NewFunction("p.latephi", sig)
-		e2 := fn2.NewBasicBlock("entry")
-		m2 := fn2.NewBasicBlock("merge")
-		NewBuilder(e2).Jump(m2)
-		mb2 := NewBuilder(m2)
-		_ = mb2.BinOp(token.ADD, i64, fn2.Params[0], mb2.Const(i64, constant.MakeInt64(1)))
-		mb2.Return(mb2.Phi(i64, PhiEdge{Pred: e2, Val: fn2.Params[0]}))
-		if err := VerifyPackage(pkg2); err == nil || !strings.Contains(err.Error(), "phi instruction after non-phi") {
-			t.Fatalf("got %v, want late-phi error", err)
-		}
-	})
+	// BuilderMode flag round-trip (matching x/tools/go/ssa letter order DPFSCNLIG).
+	var mode ssa.BuilderMode
+	if err := mode.Set("DPFSCNLIG"); err != nil {
+		t.Fatalf("BuilderMode.Set: %v", err)
+	}
+	if mode.String() != "DPFSCNLIG" {
+		t.Fatalf("BuilderMode.String() = %q", mode.String())
+	}
+	if err := mode.Set("Z"); err == nil {
+		t.Fatal("expected error for unknown BuilderMode flag")
+	}
 }

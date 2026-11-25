@@ -17,6 +17,7 @@
 package cl_test
 
 import (
+	"bytes"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -25,11 +26,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/xgo-dev/llgo/analysis/callgraph"
-	"github.com/xgo-dev/llgo/analysis/deadcode"
-	"github.com/xgo-dev/llgo/analysis/escape"
-	"github.com/xgo-dev/llgo/analysis/inline"
+	"github.com/xgo-dev/llgo/callgraph"
+	"github.com/xgo-dev/llgo/callgraph/rta"
 	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/exportdata"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/target"
@@ -43,8 +43,10 @@ func buildTestSSAPackages(t *testing.T, sources map[string]string) (*ssa.Program
 	goPkgs := make(map[string]*gotypes.Package)
 	filesByPkg := make(map[string][]*ast.File)
 
-	// Parse in deterministic order; compile dependency "example.com/lib" before "example.com/app".
 	order := []string{"example.com/lib", "example.com/app"}
+	prog := ssa.NewProgram(fset, ssa.InstantiateGenerics|ssa.GlobalDebug)
+	ssaPkgs := make(map[string]*ssa.Package)
+
 	for _, path := range order {
 		src, ok := sources[path]
 		if !ok {
@@ -55,14 +57,6 @@ func buildTestSSAPackages(t *testing.T, sources map[string]string) (*ssa.Program
 			t.Fatalf("parse %s: %v", path, err)
 		}
 		filesByPkg[path] = []*ast.File{f}
-		conf := gotypes.Config{
-			Importer: importerFunc(func(impPath string) (*gotypes.Package, error) {
-				if p, ok := goPkgs[impPath]; ok {
-					return p, nil
-				}
-				return importer.Default().Import(impPath)
-			}),
-		}
 		info := &gotypes.Info{
 			Types:      make(map[ast.Expr]gotypes.TypeAndValue),
 			Defs:       make(map[*ast.Ident]gotypes.Object),
@@ -72,45 +66,20 @@ func buildTestSSAPackages(t *testing.T, sources map[string]string) (*ssa.Program
 			Scopes:     make(map[ast.Node]*gotypes.Scope),
 			Instances:  make(map[*ast.Ident]gotypes.Instance),
 		}
-		gp, err := conf.Check(path, fset, []*ast.File{f}, info)
+		conf := gotypes.Config{
+			Importer: importerFunc(func(impPath string) (*gotypes.Package, error) {
+				if p, ok := goPkgs[impPath]; ok {
+					return p, nil
+				}
+				return importer.Default().Import(impPath)
+			}),
+		}
+		gp, err := conf.Check(path, fset, filesByPkg[path], info)
 		if err != nil {
 			t.Fatalf("typecheck %s: %v", path, err)
 		}
 		goPkgs[path] = gp
-	}
-
-	prog := ssa.NewProgram(fset, ssa.InstantiateGenerics|ssa.GlobalDebug)
-	ssaPkgs := make(map[string]*ssa.Package)
-	for _, path := range order {
-		gp := goPkgs[path]
-		if gp == nil {
-			continue
-		}
-		info := &gotypes.Info{
-			Types:      make(map[ast.Expr]gotypes.TypeAndValue),
-			Defs:       make(map[*ast.Ident]gotypes.Object),
-			Uses:       make(map[*ast.Ident]gotypes.Object),
-			Implicits:  make(map[ast.Node]gotypes.Object),
-			Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
-			Scopes:     make(map[ast.Node]*gotypes.Scope),
-			Instances:  make(map[*ast.Ident]gotypes.Instance),
-		}
-		// Re-check into fresh info so prog.CreatePackage has complete TypesInfo.
-		conf := gotypes.Config{
-			Importer: importerFunc(func(impPath string) (*gotypes.Package, error) {
-				if p, ok := goPkgs[impPath]; ok {
-					return p, nil
-				}
-				return importer.Default().Import(impPath)
-			}),
-		}
-		gp2, err := conf.Check(path, fset, filesByPkg[path], info)
-		if err != nil {
-			t.Fatalf("re-typecheck %s: %v", path, err)
-		}
-		goPkgs[path] = gp2
-		sp := prog.CreatePackage(gp2, filesByPkg[path], info, true)
-		ssaPkgs[path] = sp
+		ssaPkgs[path] = prog.CreatePackage(gp, filesByPkg[path], info, true)
 	}
 	prog.Build()
 	return prog, ssaPkgs
@@ -120,7 +89,7 @@ type importerFunc func(path string) (*gotypes.Package, error)
 
 func (f importerFunc) Import(path string) (*gotypes.Package, error) { return f(path) }
 
-func TestLowerPackageAndPureGoAnalysisPipeline(t *testing.T) {
+func TestLowerProgramRTACallgraphAndExportDataPipeline(t *testing.T) {
 	prog, ssaPkgs := buildTestSSAPackages(t, map[string]string{
 		"example.com/lib": `package lib
 
@@ -183,30 +152,78 @@ func main() {
 	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
 	tctx := lltypes.NewContextWithConfig(lltypes.ContextConfig{Spec: spec})
 
-	// 1. Lower lib -> llgo/ssa -> Verify -> BuildPackageMeta -> MarshalMeta/UnmarshalMeta round-trip
-	libLL, err := cl.LowerPackage(prog, ssaPkgs["example.com/lib"], spec, tctx)
+	// 1. Lower both packages into a unified llgo/ssa.Program (1:1 x/tools/go/ssa parity).
+	llProg, llPkgs, err := cl.LowerProgram(prog, []*ssa.Package{ssaPkgs["example.com/lib"], ssaPkgs["example.com/app"]}, spec, tctx)
 	if err != nil {
-		t.Fatalf("LowerPackage(lib): %v", err)
+		t.Fatalf("LowerProgram: %v", err)
 	}
-	if err := llssa.VerifyPackage(libLL); err != nil {
-		t.Fatalf("VerifyPackage(lib): %v", err)
-	}
-	libMeta := cl.BuildPackageMeta(libLL, nil, inline.DefaultBudget)
-	rawMeta, err := exportdata.MarshalMeta(libMeta)
-	if err != nil {
-		t.Fatalf("MarshalMeta(lib): %v", err)
-	}
-	decodedLibMeta, err := exportdata.UnmarshalMeta(rawMeta)
-	if err != nil {
-		t.Fatalf("UnmarshalMeta(lib): %v", err)
+	libLL := llPkgs["example.com/lib"]
+	appLL := llPkgs["example.com/app"]
+	if libLL == nil || appLL == nil {
+		t.Fatalf("missing lowered packages: %v", llPkgs)
 	}
 
-	// Verify escape summary for lib.LeakPtr (param 0 escapes to return) vs lib.KeepLocal (no heap alloc).
+	// 2. Run 1:1 x/tools/go/callgraph/rta directly on llgo/ssa.Function roots!
+	mainFn := appLL.Func("main")
+	if mainFn == nil {
+		t.Fatal("missing app.main")
+	}
+	rtaRes := rta.Analyze([]*llssa.Function{mainFn}, true)
+	if rtaRes.CallGraph == nil {
+		t.Fatal("expected CallGraph from rta.Analyze")
+	}
+	addFn := libLL.Func("Add")
+	deadLibFn := libLL.Func("DeadHelper")
+	deadAppFn := appLL.Func("unusedAppFunc")
+	if _, ok := rtaRes.Reachable[mainFn]; !ok {
+		t.Fatal("expected main reachable in RTA")
+	}
+	if _, ok := rtaRes.Reachable[addFn]; !ok {
+		t.Errorf("expected lib.Add reachable via closure in RTA")
+	}
+	if _, ok := rtaRes.Reachable[deadLibFn]; ok {
+		t.Errorf("expected lib.DeadHelper unreachable in RTA")
+	}
+	if _, ok := rtaRes.Reachable[deadAppFn]; ok {
+		t.Errorf("expected app.unusedAppFunc unreachable in RTA")
+	}
+	// Verify *Dog.Speak() was discovered via MakeInterface + Invoke!
+	var foundSpeak bool
+	for fn := range rtaRes.Reachable {
+		if fn.Name() == "Speak" {
+			foundSpeak = true
+			break
+		}
+	}
+	if !foundSpeak {
+		t.Errorf("expected (*Dog).Speak reachable via RTA interface dispatch")
+	}
+	// Verify callgraph.PathSearch finds a path from Root -> lib.Add.
+	path := callgraph.PathSearch(rtaRes.CallGraph.Root, func(n *callgraph.Node) bool {
+		return n.Func == addFn
+	})
+	if len(path) == 0 {
+		t.Errorf("expected callgraph.PathSearch path from Root to lib.Add")
+	}
+	if len(llProg.RuntimeTypes()) == 0 {
+		t.Errorf("expected non-empty RuntimeTypes on llgo/ssa.Program")
+	}
+
+	// 3. Verify compiler-internal pkgmeta binary summary round-trip & deadcode.
+	libMeta := cl.BuildPackageMeta(libLL, nil, pkgmeta.DefaultBudget)
+	rawMeta, err := pkgmeta.Marshal(libMeta)
+	if err != nil {
+		t.Fatalf("pkgmeta.Marshal: %v", err)
+	}
+	decodedLibMeta, err := pkgmeta.Unmarshal(rawMeta)
+	if err != nil {
+		t.Fatalf("pkgmeta.Unmarshal: %v", err)
+	}
 	var foundLeak, foundAdd bool
 	for _, fe := range decodedLibMeta.Escape.Funcs {
 		if fe.Name == "example.com/lib.LeakPtr" {
 			foundLeak = true
-			if len(fe.Params) != 1 || fe.Params[0]&exportdata.ParamToReturn == 0 {
+			if len(fe.Params) != 1 || fe.Params[0]&pkgmeta.ParamToReturn == 0 {
 				t.Errorf("lib.LeakPtr param flags = %v, want ParamToReturn", fe.Params)
 			}
 		}
@@ -220,61 +237,30 @@ func main() {
 		}
 	}
 	if !foundLeak || !foundAdd {
-		t.Fatalf("missing expected lib summaries: foundLeak=%v foundAdd=%v", foundLeak, foundAdd)
+		t.Fatalf("missing lib summaries: foundLeak=%v foundAdd=%v", foundLeak, foundAdd)
 	}
 
-	// 2. Lower app using imported lib escape summary from binary exportdata sidecar!
-	appLL, err := cl.LowerPackage(prog, ssaPkgs["example.com/app"], spec, tctx)
+	appMeta := cl.BuildPackageMeta(appLL, map[string]*pkgmeta.EscapeSummary{"example.com/lib": &decodedLibMeta.Escape}, pkgmeta.DefaultBudget)
+	dc := pkgmeta.AnalyzeDeadcode([]*pkgmeta.PackageMeta{decodedLibMeta, appMeta}, []string{"example.com/app.main"})
+	if !slices.Contains(dc.ReachableFuncs, "example.com/lib.Add") || !slices.Contains(dc.DeadFuncs, "example.com/lib.DeadHelper") {
+		t.Fatalf("unexpected pkgmeta deadcode: reachable=%v dead=%v", dc.ReachableFuncs, dc.DeadFuncs)
+	}
+
+	// 4. Verify 1:1 gcexportdata-aligned exportdata.Write / Read / NewImporter!
+	var buf bytes.Buffer
+	if err := exportdata.Write(&buf, prog.Fset, libLL.Pkg); err != nil {
+		t.Fatalf("exportdata.Write: %v", err)
+	}
+	imports := make(map[string]*lltypes.Package)
+	decodedPkg, err := exportdata.Read(bytes.NewReader(buf.Bytes()), prog.Fset, imports, "example.com/lib")
 	if err != nil {
-		t.Fatalf("LowerPackage(app): %v", err)
+		t.Fatalf("exportdata.Read: %v", err)
 	}
-	appEsc := escape.AnalyzePackage(appLL, map[string]*exportdata.EscapeSummary{
-		"example.com/lib": &decodedLibMeta.Escape,
-	})
-	if appEsc == nil || len(appEsc.Funcs) == 0 {
-		t.Fatal("expected non-empty app escape summary")
+	if decodedPkg.Path() != "example.com/lib" || decodedPkg.Scope().Lookup("Dog") == nil {
+		t.Fatalf("decoded package missing expected symbols: %v", decodedPkg)
 	}
-
-	// 3. Verify hybrid live (appLL) + cached binary sidecar (decodedLibMeta) callgraph & deadcode!
-	dc := deadcode.Analyze(
-		[]*llssa.Package{appLL},
-		[]*exportdata.PackageMeta{decodedLibMeta},
-		nil,
-		[]string{"example.com/app.main"},
-	)
-	if !slices.Contains(dc.ReachableFuncs, "example.com/app.main") {
-		t.Fatalf("expected app.main reachable, got %v", dc.ReachableFuncs)
-	}
-	if !slices.Contains(dc.ReachableFuncs, "example.com/lib.Add") {
-		t.Errorf("expected lib.Add reachable through closure, got reachable=%v", dc.ReachableFuncs)
-	}
-	if !slices.Contains(dc.ReachableMethods, "Speak") {
-		t.Errorf("expected interface method Speak live, got %v", dc.ReachableMethods)
-	}
-	if !slices.Contains(dc.DeadFuncs, "example.com/lib.DeadHelper") {
-		t.Errorf("expected lib.DeadHelper dead, got dead=%v", dc.DeadFuncs)
-	}
-	if !slices.Contains(dc.DeadFuncs, "example.com/app.unusedAppFunc") {
-		t.Errorf("expected app.unusedAppFunc dead, got dead=%v", dc.DeadFuncs)
-	}
-
-	// 4. Verify callgraph captures closure & interface edges directly.
-	cg := callgraph.Analyze([]*llssa.Package{appLL}, []*exportdata.PackageMeta{decodedLibMeta}, []string{"example.com/app.main"})
-	if !cg.InterfaceCalls["Speak"] {
-		t.Errorf("expected callgraph InterfaceCalls[Speak]")
-	}
-
-	// 5. Verify binary llgo/types.Package exportdata round-trip via LowerGoPackageTypes.
-	libTypesPkg := cl.LowerGoPackageTypes(ssaPkgs["example.com/lib"].Pkg, tctx)
-	rawPkg, err := exportdata.MarshalPackage(libTypesPkg)
-	if err != nil {
-		t.Fatalf("MarshalPackage(lib): %v", err)
-	}
-	decodedPkg, err := exportdata.UnmarshalPackage(rawPkg, make(map[string]*lltypes.Package))
-	if err != nil {
-		t.Fatalf("UnmarshalPackage(lib): %v", err)
-	}
-	if decodedPkg.Path() != "example.com/lib" || decodedPkg.Scope().Lookup("Dog") == nil || decodedPkg.Scope().Lookup("Add") == nil {
-		t.Fatalf("decoded lib package missing symbols: %v", decodedPkg)
+	imp := exportdata.NewImporter(prog.Fset, imports)
+	if got, err := imp.Import("example.com/lib"); err != nil || got != decodedPkg {
+		t.Fatalf("exportdata.NewImporter.Import = (%v, %v)", got, err)
 	}
 }

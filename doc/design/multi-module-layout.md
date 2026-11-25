@@ -13,36 +13,34 @@ skip whole-program frontend and LLVM re-materialization on cache hits.
 github.com/xgo-dev/llgo              (root go.mod — strict Go baseline: go 1.20, zero external deps, zero replace)
 ├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
 ├── target/                          Pure-Go target triple, arch, and config model
-├── types/                           Pure-Go semantic, physical layout, GC, and ABI type engine (self-contained model + go/types lowering)
-│   └── typeutil/                    Pure-Go type-map helpers (mirrors x/tools/go/types/typeutil)
-├── ssa/                             Pure-Go mid-level SSA IR & verifier (mirrors x/tools/go/ssa core; omits ssautil wrapper)
-├── exportdata/                      Compact binary codec for types.Package, PackageMeta, LinkSnapshot, Depfile & PCLN
-├── analysis/                        Modular pure-Go analysis passes (mirrors x/tools/go/analysis)
-│   ├── callgraph/                   Call graph / RTA over llgo/ssa + exportdata
-│   ├── escape/                      Per-package & whole-program escape summaries
-│   ├── deadcode/                    Go-side reachability & DCE
-│   └── inline/                      Cross-package inlining summaries
+├── types/                           1:1 go/types + LLGo semantic/physical layout, GC, ABI, SIMD  [API-guarded]
+│   └── typeutil/                    1:1 golang.org/x/tools/go/types/typeutil                     [API-guarded]
+├── ssa/                             1:1 golang.org/x/tools/go/ssa core types, methods & 37 instrs [API-guarded]
+├── callgraph/                       1:1 golang.org/x/tools/go/callgraph                          [API-guarded]
+│   └── rta/                         1:1 golang.org/x/tools/go/callgraph/rta                      [API-guarded]
+├── exportdata/                      1:1 golang.org/x/tools/go/gcexportdata (Read/Write/Bundle/Importer) [API-guarded]
 └── runtime/go.mod                   (separate module, go 1.20)
 
 github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, go 1.27.0)
 ├── llgo/                            CLI entrypoint (`llgo`)
 ├── internal/                        CLI subcommands & flag handling
 ├── cl/                              Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa & LLVM)
-├── compiler/                        Compiler internals (build, llvmgen, cabi, crosscompile, env, packages, ...)
+├── compiler/                        Compiler internals (build, llvmgen, pkgmeta, cabi, crosscompile, env, packages, ...)
 ├── xtool/                           LLVM/C toolchain bindings
 └── chore/                           Repository maintenance utilities
 
 go.work                              Coordinates `.`, `./cmd`, `./runtime`, `./test`, `./dev`, `./benchmark`
 ```
 
-### Package Taxonomy Mapping (`golang.org/x/tools` ↔ `llgo`)
+### Package Taxonomy Mapping (`go/*` & `golang.org/x/tools/go/*` ↔ `llgo/*`)
 
-| `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role |
+| Upstream counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
-| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Complete pure-Go LLGo semantic & physical type model (`Type`, merged `Signature`, `Pointer` kinds, generic `Named`, `Object`/`Func`/`Var`/`Package`/`Scope`/`Selection`/`MethodSet`/`Info`/`Config`/`Checker`), single-source `Layout` (`PtrBytes`, `GCBitmap`, `IsRegularMemory`, `HostLayout`, Wasm32, SIMD), `NativeIntExtForSpec`, and `go/types` + `//llgo:*` lowering |
-| `x/tools/go/ssa` | `llgo/ssa` | *(Phase 1 foundational/experimental IR — finalized as Phase 2 connects `cl/` lowering)* Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction` with `Pos()`, typed `constant.Value`, `Extract`, `DebugRef`, `Value`, `Summarize`) — omits low-value `ssautil` wrappers |
-| `x/tools/go/gcexportdata` | `llgo/exportdata` | Compact binary package export codec (`types.Package`, `PackageSummary`, `LinkSnapshot`, `PCLN`) |
-| `x/tools/go/analysis` + `callgraph` | `llgo/analysis/{callgraph,escape,deadcode,inline}` | Reusable pure-Go analysis passes consuming `types`, `ssa`, and `exportdata` |
+| `go/types` | `llgo/types` | 1:1 non-deprecated `go/types` parity + LLGo ABI/layout/CallConv/SIMD extensions (`types/api_guard_test.go`) |
+| `x/tools/go/types/typeutil` | `llgo/types/typeutil` | 1:1 `Hasher`, `Map`, `MethodSetCache`, `Callee`, `StaticCallee`, `Dependencies`, `IntuitiveMethodSet` |
+| `x/tools/go/ssa` | `llgo/ssa` | 1:1 `Program`, `Package`, `Function`, `BasicBlock`, `Value`, `Instruction`, `CallInstruction`, `CallCommon`, `Member`, `Node`, and all 37 instructions |
+| `x/tools/go/callgraph` + `callgraph/rta` | `llgo/callgraph` + `llgo/callgraph/rta` | 1:1 `Graph`/`Node`/`Edge`/helpers and Rapid Type Analysis (`rta.Analyze`/`Result`) |
+| `x/tools/go/gcexportdata` | `llgo/exportdata` | 1:1 `Read`, `Write`, `ReadBundle`, `WriteBundle`, `NewImporter` (`types.ImporterFrom`) |
 | *(LLGo-specific)* | `llgo/directive`, `llgo/target` | Directive parsing & target/ABI spec model |
 
 ### Module Invariants

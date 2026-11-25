@@ -42,8 +42,8 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 
 	"github.com/xgo-dev/llgo/cmd/cl"
-	"github.com/xgo-dev/llgo/exportdata"
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
 	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/clang"
@@ -4298,7 +4298,7 @@ type aPackage struct {
 	Manifest       string                  // manifest text content
 	CacheHit       bool                    // whether cache was hit
 	frontendOpaque *frontendExport         // validated body-independent archive contract
-	exportMeta     *exportdata.PackageMeta // binary llgo/exportdata summary sidecar
+	exportMeta     *pkgmeta.PackageMeta // binary compiler summary sidecar
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {

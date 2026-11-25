@@ -17,17 +17,20 @@
 package build
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
 
-	"github.com/xgo-dev/llgo/exportdata"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )
+
+const linkSnapMagic = "LLGOLSN1"
 
 type linkSnapTypePayload struct {
 	Types    frontcache.TypeGraph `json:"types"`
@@ -40,40 +43,40 @@ func (c *context) writeLinkSnapshotSidecar(path string, pkg *aPackage) error {
 		return nil
 	}
 	snap := pkg.linkSnapshot
-	ed := &exportdata.LinkSnapshot{
-		PkgPath:          pkg.PkgPath,
-		PkgName:          pkg.Name,
-		NeedRuntime:      pkg.NeedRt,
-		NeedPyInit:       pkg.NeedPyInit,
-		NeedAbiInit:      snap.needAbiInit != 0,
-		NeedAbiInitCount: snap.needAbiInit,
-		HasLocalExports:  snap.hasLocalExports,
-		MethodByIndex:    len(snap.methodByIndex) > 0,
-	}
+	methodIndexes := make([]int, 0, len(snap.methodByIndex))
 	for idx := range snap.methodByIndex {
-		ed.MethodIndexes = append(ed.MethodIndexes, idx)
+		methodIndexes = append(methodIndexes, idx)
 	}
-	sort.Ints(ed.MethodIndexes)
-	for name := range snap.methodByName {
-		ed.MethodByName = append(ed.MethodByName, name)
-	}
-	for sym := range snap.abiSymbols {
-		ed.AbiSymbols = append(ed.AbiSymbols, sym)
-	}
+	sort.Ints(methodIndexes)
 
-	// Encode ABI type & CExport signature payloads only when needed.
+	methodByName := make([]string, 0, len(snap.methodByName))
+	for name := range snap.methodByName {
+		methodByName = append(methodByName, name)
+	}
+	sort.Strings(methodByName)
+
+	abiSymbols := make([]string, 0, len(snap.abiSymbols))
+	for sym := range snap.abiSymbols {
+		abiSymbols = append(abiSymbols, sym)
+	}
+	sort.Strings(abiSymbols)
+
 	var ownedABI []llvmgen.AbiTypeInfo
+	var abiTypeNames []string
 	for _, info := range snap.abiTypes {
 		if _, owned := snap.abiSymbols[info.Name]; owned && info.Raw != nil {
 			ownedABI = append(ownedABI, info)
-			ed.AbiTypes = append(ed.AbiTypes, info.Name)
+			abiTypeNames = append(abiTypeNames, info.Name)
 		}
 	}
+	var cExportNames []string
 	for _, ce := range snap.cExports {
 		if ce.cName != "" {
-			ed.CExports = append(ed.CExports, ce.cName)
+			cExportNames = append(cExportNames, ce.cName)
 		}
 	}
+
+	var typeGraphBlob []byte
 	if (len(ownedABI) > 0 || len(snap.cExports) > 0) && c.progSSA != nil {
 		ids := make(map[*types.Package]string, len(c.pkgByID))
 		for id, p := range c.pkgByID {
@@ -103,14 +106,35 @@ func (c *context) writeLinkSnapshotSidecar(path string, pkg *aPackage) error {
 		if err != nil {
 			return err
 		}
-		ed.TypeGraphBlob = blob
+		typeGraphBlob = blob
 	}
 
-	raw, err := exportdata.MarshalLinkSnapshot(ed)
-	if err != nil {
-		return err
+	var buf bytes.Buffer
+	buf.WriteString(linkSnapMagic)
+	writeBinVarint(&buf, int64(snap.needAbiInit))
+	writeBinBool(&buf, snap.hasLocalExports)
+	writeBinUvarint(&buf, uint64(len(methodIndexes)))
+	for _, idx := range methodIndexes {
+		writeBinVarint(&buf, int64(idx))
 	}
-	return writeFileAtomicBytes(path, raw)
+	writeBinUvarint(&buf, uint64(len(methodByName)))
+	for _, name := range methodByName {
+		writeBinStr(&buf, name)
+	}
+	writeBinUvarint(&buf, uint64(len(abiSymbols)))
+	for _, sym := range abiSymbols {
+		writeBinStr(&buf, sym)
+	}
+	writeBinUvarint(&buf, uint64(len(abiTypeNames)))
+	for _, name := range abiTypeNames {
+		writeBinStr(&buf, name)
+	}
+	writeBinUvarint(&buf, uint64(len(cExportNames)))
+	for _, name := range cExportNames {
+		writeBinStr(&buf, name)
+	}
+	writeBinBytes(&buf, typeGraphBlob)
+	return writeFileAtomicBytes(path, buf.Bytes())
 }
 
 func (c *context) readLinkSnapshotSidecar(path string) (*packageLinkSnapshot, error) {
@@ -118,36 +142,87 @@ func (c *context) readLinkSnapshotSidecar(path string) (*packageLinkSnapshot, er
 	if err != nil {
 		return nil, err
 	}
-	ed, err := exportdata.UnmarshalLinkSnapshot(raw)
+	if len(raw) < len(linkSnapMagic) || string(raw[:len(linkSnapMagic)]) != linkSnapMagic {
+		return nil, errors.New("invalid link snapshot magic")
+	}
+	r := &binReader{data: raw, pos: len(linkSnapMagic)}
+	needAbiInit, err := r.readVarint()
 	if err != nil {
 		return nil, err
 	}
+	hasLocalExports, err := r.readBool()
+	if err != nil {
+		return nil, err
+	}
+	nIdx, err := r.readUvarint()
+	if err != nil || nIdx > uint64(len(raw)) {
+		return nil, errors.New("corrupt link snapshot")
+	}
 	snap := &packageLinkSnapshot{
-		needAbiInit:     ed.NeedAbiInitCount,
-		hasLocalExports: ed.HasLocalExports,
-		methodByIndex:   make(map[int]none, len(ed.MethodIndexes)),
-		methodByName:    make(map[string]none, len(ed.MethodByName)),
-		abiSymbols:      make(map[string]none, len(ed.AbiSymbols)),
+		needAbiInit:     int(needAbiInit),
+		hasLocalExports: hasLocalExports,
+		methodByIndex:   make(map[int]none, nIdx),
+		methodByName:    make(map[string]none),
+		abiSymbols:      make(map[string]none),
 	}
-	for _, idx := range ed.MethodIndexes {
-		if idx < 0 {
-			return nil, fmt.Errorf("invalid cached method index %d", idx)
+	for i := uint64(0); i < nIdx; i++ {
+		v, err := r.readVarint()
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid cached method index %d", v)
 		}
-		snap.methodByIndex[idx] = none{}
+		snap.methodByIndex[int(v)] = none{}
 	}
-	for _, name := range ed.MethodByName {
+	nNames, err := r.readUvarint()
+	if err != nil || nNames > uint64(len(raw)) {
+		return nil, errors.New("corrupt link snapshot")
+	}
+	for i := uint64(0); i < nNames; i++ {
+		name, err := r.readStr()
+		if err != nil {
+			return nil, err
+		}
 		snap.methodByName[name] = none{}
 	}
-	for _, sym := range ed.AbiSymbols {
+	nSyms, err := r.readUvarint()
+	if err != nil || nSyms > uint64(len(raw)) {
+		return nil, errors.New("corrupt link snapshot")
+	}
+	for i := uint64(0); i < nSyms; i++ {
+		sym, err := r.readStr()
+		if err != nil {
+			return nil, err
+		}
 		snap.abiSymbols[sym] = none{}
 	}
+	nAbiTypes, err := r.readUvarint()
+	if err != nil || nAbiTypes > uint64(len(raw)) {
+		return nil, errors.New("corrupt link snapshot")
+	}
+	for i := uint64(0); i < nAbiTypes; i++ {
+		if _, err := r.readStr(); err != nil {
+			return nil, err
+		}
+	}
+	nCExports, err := r.readUvarint()
+	if err != nil || nCExports > uint64(len(raw)) {
+		return nil, errors.New("corrupt link snapshot")
+	}
+	for i := uint64(0); i < nCExports; i++ {
+		if _, err := r.readStr(); err != nil {
+			return nil, err
+		}
+	}
+	typeGraphBlob, err := r.readBytes()
+	if err != nil {
+		return nil, err
+	}
 
-	if len(ed.TypeGraphBlob) > 0 {
+	if len(typeGraphBlob) > 0 {
 		if c.progSSA == nil {
 			return nil, fmt.Errorf("missing SSA program for type graph import")
 		}
 		var payload linkSnapTypePayload
-		if err := json.Unmarshal(ed.TypeGraphBlob, &payload); err != nil {
+		if err := json.Unmarshal(typeGraphBlob, &payload); err != nil {
 			return nil, err
 		}
 		pkgs := make(map[string]*types.Package, len(c.pkgByID))
@@ -184,8 +259,7 @@ func (c *context) readLinkSnapshotSidecar(path string) (*packageLinkSnapshot, er
 			}
 			snap.cExports = append(snap.cExports, cExport{goName: ce.GoName, cName: ce.CName, sig: sig})
 		}
-	} else if len(ed.AbiTypes) > 0 || len(ed.CExports) > 0 {
-		// Sidecar declared ABI types or C exports without a type graph blob; fall back safely.
+	} else if nAbiTypes > 0 || nCExports > 0 {
 		return nil, fmt.Errorf("incomplete link snapshot sidecar")
 	}
 	return snap, nil

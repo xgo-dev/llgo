@@ -18,297 +18,159 @@ package exportdata_test
 
 import (
 	"bytes"
-	"errors"
-	"go/ast"
 	"go/constant"
-	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
-	"reflect"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/xgo-dev/llgo/exportdata"
-	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/types"
 )
 
-func TestPackageRoundTripAndDeterminism(t *testing.T) {
-	src := `package sample
+func buildRichTestPackage() (*types.Package, *types.Package) {
+	dep := types.NewPackage("example.com/dep", "dep")
+	depType := types.NewNamed(types.NewTypeName(0, dep, "Item", nil), types.Typ[types.Int64], nil)
+	dep.Scope().Insert(depType.Obj())
+	dep.MarkComplete()
 
-import "unsafe"
+	pkg := types.NewPackage("example.com/demo", "demo")
+	pkg.SetImports([]*types.Package{dep})
 
-//llgo:cdecl
-type CFn func(a int32, args ...any) int32
+	pkg.Scope().Insert(types.NewConst(0, pkg, "Answer", types.Typ[types.Int], constant.MakeInt64(42)))
+	pkg.Scope().Insert(types.NewConst(0, pkg, "Pi", types.Typ[types.Float64], constant.MakeFloat64(3.14)))
+	pkg.Scope().Insert(types.NewConst(0, pkg, "Flag", types.Typ[types.Bool], constant.MakeBool(true)))
+	pkg.Scope().Insert(types.NewConst(0, pkg, "Tag", types.Typ[types.String], constant.MakeString("llgo")))
 
-type Signed interface {
-	~int | ~int64
+	// Recursive struct with CPtr and dep reference.
+	nodeObj := types.NewTypeName(0, pkg, "Node", nil)
+	nodeNamed := types.NewNamed(nodeObj, nil, nil)
+	nodeStruct := types.NewStruct([]*types.Var{
+		types.NewField(0, pkg, "Next", types.NewPointerWithKind(nodeNamed, types.GoPtr), false),
+		types.NewField(0, pkg, "Raw", types.NewPointerWithKind(types.Typ[types.Uint8], types.CPtr), false),
+		types.NewField(0, pkg, "Item", depType, false),
+	}, []string{"", `json:"raw"`, ""})
+	nodeNamed.SetUnderlying(nodeStruct)
+	recv := types.NewVar(0, pkg, "n", types.NewPointer(nodeNamed))
+	methSig := types.NewSignatureType(recv, nil, nil, nil, types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])), false)
+	nodeNamed.AddMethod(types.NewFunc(0, pkg, "Len", methSig))
+	pkg.Scope().Insert(nodeObj)
+
+	// Generic type Box[T any].
+	tpName := types.NewTypeName(0, pkg, "T", nil)
+	tp := types.NewTypeParam(tpName, types.Universe.Lookup("any").Type())
+	boxObj := types.NewTypeName(0, pkg, "Box", nil)
+	boxNamed := types.NewNamed(boxObj, types.NewStruct([]*types.Var{
+		types.NewField(0, pkg, "Val", tp, false),
+	}, nil), nil)
+	boxNamed.SetTypeParams([]*types.TypeParam{tp})
+	pkg.Scope().Insert(boxObj)
+
+	// Native CDecl function.
+	cSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, pkg, "x", types.Typ[types.Int32])),
+		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int32])),
+		false,
+	).WithCallConv(types.CDecl)
+	pkg.Scope().Insert(types.NewFunc(0, pkg, "CFunc", cSig))
+
+	// Alias & Var.
+	aliasObj := types.NewTypeName(0, pkg, "MyInt", nil)
+	_ = types.NewAlias(aliasObj, types.Typ[types.Int32])
+	pkg.Scope().Insert(aliasObj)
+	pkg.Scope().Insert(types.NewVar(0, pkg, "GlobalCount", types.Typ[types.Int]))
+
+	pkg.MarkComplete()
+	return dep, pkg
 }
 
-type Node struct {
-	Val  int64 ` + "`json:\"val\"`" + `
-	Next *Node
-}
-
-func (n *Node) Value() int64 { return n.Val }
-
-type Box[T Signed] struct {
-	Item T
-}
-
-type AliasInt = int64
-
-const (
-	CBool  = true
-	CInt   = 123456789012345
-	CFloat = 3.25
-	CStr   = "hello"
-	CCmplx = 1 + 2i
-	CSize  = unsafe.Sizeof(CFn(nil))
-)
-
-var (
-	GMap  map[string][]int
-	GChan chan<- int32
-	GArr  [4]byte
-	GNode *Node
-)
-
-func Add(a, b int) (int, bool) { return a + b, true }
-`
+func TestWriteReadDeterministicAndImporter(t *testing.T) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
+	dep, pkg := buildRichTestPackage()
+
+	var buf1, buf2 bytes.Buffer
+	if err := exportdata.Write(&buf1, fset, pkg); err != nil {
+		t.Fatalf("Write 1: %v", err)
 	}
-	pkg, err := (&types.Config{
-		GoVersion: "go1.20",
-		Importer:  unsafeOnlyImporter{},
-	}).Check("example.com/sample", fset, []*ast.File{file}, nil)
-	if err != nil {
-		t.Fatalf("Check: %v", err)
+	if err := exportdata.Write(&buf2, fset, pkg); err != nil {
+		t.Fatalf("Write 2: %v", err)
+	}
+	if !bytes.Equal(buf1.Bytes(), buf2.Bytes()) {
+		t.Fatal("Write output is not deterministic")
 	}
 
-	raw1, err := exportdata.MarshalPackage(pkg)
+	imports := map[string]*types.Package{dep.Path(): dep}
+	got, err := exportdata.Read(bytes.NewReader(buf1.Bytes()), fset, imports, pkg.Path())
 	if err != nil {
-		t.Fatalf("MarshalPackage: %v", err)
+		t.Fatalf("Read: %v", err)
 	}
-	raw2, err := exportdata.MarshalPackage(pkg)
-	if err != nil {
-		t.Fatalf("MarshalPackage 2: %v", err)
+	if got.Path() != pkg.Path() || got.Name() != pkg.Name() || !got.Complete() {
+		t.Fatalf("decoded package header mismatch: %v", got)
 	}
-	if !bytes.Equal(raw1, raw2) {
-		t.Fatal("MarshalPackage is not deterministic")
+	if imports[pkg.Path()] != got {
+		t.Fatal("Read did not register package in imports map")
 	}
+
+	// Verify recursive Node struct + NativePtr + CDecl preserved.
+	nodeObj := got.Scope().Lookup("Node")
+	if nodeObj == nil {
+		t.Fatal("missing Node")
+	}
+	nodeNamed := nodeObj.Type().(*types.Named)
+	if nodeNamed.NumMethods() != 1 || nodeNamed.Method(0).Name() != "Len" {
+		t.Fatalf("Node methods mismatch: %d", nodeNamed.NumMethods())
+	}
+	st := nodeNamed.Underlying().(*types.Struct)
+	if ptr := st.Field(1).Type().(*types.Pointer); ptr.Kind() != types.CPtr {
+		t.Fatalf("Raw field PtrKind = %v, want CPtr", ptr.Kind())
+	}
+	cFunc := got.Scope().Lookup("CFunc").(*types.Func)
+	if sig := cFunc.Type().(*types.Signature); sig.CallConv() != types.CDecl {
+		t.Fatalf("CFunc CallConv = %v, want CDecl", sig.CallConv())
+	}
+
+	// Verify NewImporter (types.ImporterFrom) compatibility.
+	var imp types.ImporterFrom = exportdata.NewImporter(fset, imports)
+	resolved, err := imp.Import(pkg.Path())
+	if err != nil || resolved != got {
+		t.Fatalf("Import = (%v, %v), want %v", resolved, err, got)
+	}
+	resolvedUnsafe, err := imp.Import("unsafe")
+	if err != nil || resolvedUnsafe != types.Unsafe {
+		t.Fatalf("Import(unsafe) = (%v, %v)", resolvedUnsafe, err)
+	}
+	if _, err := imp.Import("example.com/missing"); err == nil {
+		t.Fatal("expected error for missing package")
+	}
+	if _, err := imp.ImportFrom(pkg.Path(), "", 1); err == nil {
+		t.Fatal("expected error for unsupported import mode")
+	}
+}
+
+func TestWriteReadBundleAndErrors(t *testing.T) {
+	fset := token.NewFileSet()
+	dep, pkg := buildRichTestPackage()
 
 	var buf bytes.Buffer
-	if err := exportdata.WritePackage(&buf, pkg); err != nil {
-		t.Fatal(err)
+	if err := exportdata.WriteBundle(&buf, fset, []*types.Package{dep, pkg}); err != nil {
+		t.Fatalf("WriteBundle: %v", err)
 	}
 	imports := make(map[string]*types.Package)
-	got, err := exportdata.ReadPackage(&buf, imports)
+	got, err := exportdata.ReadBundle(bytes.NewReader(buf.Bytes()), fset, imports)
 	if err != nil {
-		t.Fatalf("ReadPackage: %v", err)
+		t.Fatalf("ReadBundle: %v", err)
 	}
-	if got.Path() != "example.com/sample" || got.Name() != "sample" || !got.Complete() {
-		t.Fatalf("decoded pkg metadata mismatch: %v", got)
-	}
-	if imports["example.com/sample"] != got {
-		t.Fatal("decoded package not registered in imports map")
+	if len(got) != 2 || got[0].Path() != dep.Path() || got[1].Path() != pkg.Path() {
+		t.Fatalf("ReadBundle got %v", got)
 	}
 
-	// Verify CallConv preserved on CFn.
-	cFn := got.Scope().Lookup("CFn").Type().Underlying().(*types.Signature)
-	if cFn.CallConv() != types.CDecl || !cFn.Variadic() {
-		t.Fatalf("decoded CFn signature = %s (cc=%v variadic=%v)", cFn, cFn.CallConv(), cFn.Variadic())
+	// Corrupt/bad-magic/kind-mismatch checks.
+	if _, err := exportdata.Read(bytes.NewReader([]byte("BADMAGIC12345")), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "magic") {
+		t.Fatalf("expected invalid magic error, got %v", err)
 	}
-
-	// Verify cyclic Node struct + tag + method.
-	node := got.Scope().Lookup("Node").Type().(*types.Named)
-	st := node.Underlying().(*types.Struct)
-	if st.NumFields() != 2 || st.Tag(0) != `json:"val"` || st.Field(1).Type().(*types.Pointer).Elem() != node {
-		t.Fatalf("decoded cyclic Node mismatch: %v", st)
+	if _, err := exportdata.Read(bytes.NewReader(buf.Bytes()), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "kind") {
+		t.Fatalf("expected kind mismatch error, got %v", err)
 	}
-	if node.NumMethods() != 1 || node.Method(0).Name() != "Value" {
-		t.Fatalf("decoded Node methods = %d", node.NumMethods())
+	if _, err := exportdata.ReadBundle(bytes.NewReader([]byte("LL")), fset, nil); err == nil {
+		t.Fatal("expected corrupt error for truncated bundle")
 	}
-
-	// Verify generic Box[T Signed] & Union constraint.
-	box := got.Scope().Lookup("Box").Type().(*types.Named)
-	if box.TypeParams().Len() != 1 {
-		t.Fatalf("decoded Box TypeParams = %v", box.TypeParams())
-	}
-	signed := got.Scope().Lookup("Signed").Type().Underlying().(*types.Interface)
-	if signed.NumEmbeddeds() != 1 || signed.EmbeddedType(0).(*types.Union).Len() != 2 {
-		t.Fatalf("decoded Signed union mismatch: %v", signed)
-	}
-
-	// Verify Alias.
-	if aliasObj := got.Scope().Lookup("AliasInt").(*types.TypeName); !aliasObj.IsAlias() {
-		t.Fatal("decoded AliasInt lost IsAlias")
-	}
-
-	// Verify all constant kinds.
-	if !constant.BoolVal(got.Scope().Lookup("CBool").(*types.Const).Val()) {
-		t.Fatal("CBool mismatch")
-	}
-	if v, ok := constant.Int64Val(got.Scope().Lookup("CInt").(*types.Const).Val()); !ok || v != 123456789012345 {
-		t.Fatalf("CInt = %v", got.Scope().Lookup("CInt").(*types.Const).Val())
-	}
-	if v, _ := constant.Float64Val(got.Scope().Lookup("CFloat").(*types.Const).Val()); v != 3.25 {
-		t.Fatalf("CFloat = %v", v)
-	}
-	if constant.StringVal(got.Scope().Lookup("CStr").(*types.Const).Val()) != "hello" {
-		t.Fatal("CStr mismatch")
-	}
-	if got.Scope().Lookup("CCmplx").(*types.Const).Val().Kind() != constant.Complex {
-		t.Fatal("CCmplx kind mismatch")
-	}
-
-	// Verify CPtr preserved on synthetic package.
-	syn := types.NewPackage("example.com/syn", "syn")
-	syn.Scope().Insert(types.NewVar(0, syn, "CP", types.NewPointerWithKind(types.Typ[types.Int8], types.CPtr)))
-	synRaw, err := exportdata.MarshalPackage(syn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	synGot, err := exportdata.UnmarshalPackage(synRaw, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if synGot.Scope().Lookup("CP").Type().(*types.Pointer).Kind() != types.CPtr {
-		t.Fatal("CPtr PtrKind lost across exportdata round-trip")
-	}
-}
-
-func TestMetaLinkSnapshotDepfileAndErrors(t *testing.T) {
-	meta := &exportdata.PackageMeta{
-		Summary: ssa.PackageSummary{
-			Path:            "example.com/p",
-			TargetTriple:    "arm64-apple-macosx",
-			Exports:         map[string]string{"p.A": "p_a"},
-			DefinedFuncs:    []string{"p.A", "p.B"},
-			DirectCalls:     []string{"fmt.Println"},
-			ClosureRefs:     []string{"p.A$1"},
-			InterfaceCalls:  []string{"String"},
-			HasSafepoints:   true,
-			HasWriteBarrier: true,
-		},
-		DefinedGlobals: []string{"p.G"},
-		Escape: exportdata.EscapeSummary{
-			PkgPath: "example.com/p",
-			Funcs: []exportdata.FuncEscape{
-				{Name: "p.A", Params: []exportdata.ParamEscapeFlags{exportdata.ParamNoEscape, exportdata.ParamToHeap}, StackAllocs: 2, HeapAllocs: 1},
-			},
-		},
-		Inline: exportdata.InlineSummary{
-			PkgPath: "example.com/p",
-			Budget:  80,
-			Funcs: []exportdata.FuncInline{
-				{Name: "p.A", Cost: 12, Inlineable: true, Callees: []string{"p.B"}},
-			},
-		},
-		CallEdges: []exportdata.CallEdge{
-			{Caller: "p.A", Callee: "p.B", Kind: 0},
-		},
-		LiveTypes:   []string{"*p.T"},
-		ExportFuncs: []string{"p.A"},
-	}
-	var mbuf bytes.Buffer
-	if err := exportdata.WriteMeta(&mbuf, meta); err != nil {
-		t.Fatal(err)
-	}
-	metaGot, err := exportdata.ReadMeta(&mbuf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(meta, metaGot) {
-		t.Fatalf("PackageMeta round-trip mismatch:\ngot:  %+v\nwant: %+v", metaGot, meta)
-	}
-
-	snap := &exportdata.LinkSnapshot{
-		PkgPath:         "example.com/p",
-		PkgName:         "p",
-		NeedRuntime:     true,
-		NeedAbiInit:     true,
-		HasLocalExports: true,
-		MethodByIndex:   true,
-		MethodByName:    []string{"Read", "Write"},
-		AbiSymbols:      []string{"_llgo_p.T"},
-		AbiTypes:        []string{"p.T"},
-		CExports:        []string{"p_init"},
-		Imports:         []string{"runtime"},
-		PCLNFuncs: []exportdata.PCLNFunc{
-			{
-				Symbol: "p.A", Name: "example.com/p.A", File: "a.go", Line: 10, StartPC: 0x100, EndPC: 0x140,
-				Entries: []exportdata.PCLNEntry{{PC: 0, Line: 10, File: "a.go"}, {PC: 16, Line: 12, File: "a.go"}},
-			},
-		},
-	}
-	var sbuf bytes.Buffer
-	if err := exportdata.WriteLinkSnapshot(&sbuf, snap); err != nil {
-		t.Fatal(err)
-	}
-	snapGot, err := exportdata.ReadLinkSnapshot(&sbuf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(snap, snapGot) {
-		t.Fatalf("LinkSnapshot round-trip mismatch:\ngot:  %+v\nwant: %+v", snapGot, snap)
-	}
-
-	// Depfile stat validation.
-	dir := t.TempDir()
-	hFile := filepath.Join(dir, "foo.h")
-	if err := os.WriteFile(hFile, []byte("#define X 1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	stats, err := exportdata.StatFiles([]string{hFile, hFile})
-	if err != nil || len(stats) != 1 {
-		t.Fatalf("StatFiles = (%v, %v)", stats, err)
-	}
-	df := &exportdata.Depfile{Key: "demo", PreprocessedHash: "abc123", Files: stats}
-	dfRaw, err := exportdata.MarshalDepfile(df)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dfGot, err := exportdata.UnmarshalDepfile(dfRaw)
-	if err != nil || !exportdata.ValidateDepfile(dfGot) {
-		t.Fatalf("ValidateDepfile failed after round-trip: %+v err=%v", dfGot, err)
-	}
-	// Mutate header content + timestamp -> ValidateDepfile must return false.
-	future := time.Now().Add(2 * time.Second)
-	if err := os.WriteFile(hFile, []byte("#define X 200\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.Chtimes(hFile, future, future)
-	if exportdata.ValidateDepfile(dfGot) {
-		t.Fatal("ValidateDepfile should return false after header modification")
-	}
-
-	// Error cases: bad magic, wrong kind, bad version, truncated payload.
-	if _, err := exportdata.UnmarshalMeta([]byte("BADMAG\x02\x01\x00\x00\x00")); !errors.Is(err, exportdata.ErrInvalidMagic) {
-		t.Fatalf("expected ErrInvalidMagic, got %v", err)
-	}
-	if _, err := exportdata.UnmarshalLinkSnapshot(dfRaw); !errors.Is(err, exportdata.ErrKindMismatch) {
-		t.Fatalf("expected ErrKindMismatch, got %v", err)
-	}
-	badVer := append([]byte(nil), dfRaw...)
-	badVer[7] = 99
-	if _, err := exportdata.UnmarshalDepfile(badVer); !errors.Is(err, exportdata.ErrUnsupportedVer) {
-		t.Fatalf("expected ErrUnsupportedVer, got %v", err)
-	}
-	if _, err := exportdata.UnmarshalPackage([]byte("LL"), nil); !errors.Is(err, exportdata.ErrCorrupt) {
-		t.Fatalf("expected ErrCorrupt, got %v", err)
-	}
-}
-
-type unsafeOnlyImporter struct{}
-
-func (unsafeOnlyImporter) Import(path string) (*types.Package, error) {
-	if path == "unsafe" {
-		return types.Unsafe, nil
-	}
-	return nil, errors.New("not found")
 }

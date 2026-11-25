@@ -18,126 +18,37 @@ package ssa
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/xgo-dev/llgo/types"
 )
 
-// VerifyPackage checks structural, CFG, calling-convention, and GC-safety
-// invariants across every function in pkg.
+// VerifyPackage checks structural, CFG, SSA value ownership, and GC-safety
+// invariants across every Function reachable from pkg.Members.
 func VerifyPackage(pkg *Package) error {
 	if pkg == nil {
 		return fmt.Errorf("ssa: nil package")
 	}
-	seenFuncs := make(map[string]bool, len(pkg.Funcs))
-	for _, fn := range pkg.Funcs {
-		if fn.Name == "" {
-			return fmt.Errorf("ssa: unnamed function in package %s", pkg.Path)
-		}
-		if seenFuncs[fn.Name] {
-			return fmt.Errorf("ssa: duplicate function %q in package %s", fn.Name, pkg.Path)
-		}
-		seenFuncs[fn.Name] = true
+	names := make([]string, 0, len(pkg.Members))
+	for name := range pkg.Members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var verifyTree func(fn *Function) error
+	verifyTree = func(fn *Function) error {
 		if err := VerifyFunction(fn); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// VerifyFunction verifies a single function's CFG, block terminators, Phi
-// predecessors, SSA value ownership, and LLGo-specific instruction invariants.
-func VerifyFunction(fn *Function) error {
-	if fn == nil {
-		return fmt.Errorf("ssa: nil function")
-	}
-	if fn.Sig == nil {
-		return fmt.Errorf("ssa: function %s missing signature", fn.Name)
-	}
-	if fn.IsDeclaration() {
+		for _, anon := range fn.AnonFuncs {
+			if err := verifyTree(anon); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
-	blkSet := make(map[*BasicBlock]bool, len(fn.Blocks))
-	for _, blk := range fn.Blocks {
-		if blk == nil {
-			return fmt.Errorf("ssa: %s: nil basic block", fn.Name)
-		}
-		if blkSet[blk] {
-			return fmt.Errorf("ssa: %s: duplicate basic block %s", fn.Name, blk.Label)
-		}
-		blkSet[blk] = true
-	}
-	paramSet := make(map[*Parameter]bool, len(fn.Params))
-	for _, p := range fn.Params {
-		if p == nil {
-			return fmt.Errorf("ssa: %s: nil parameter", fn.Name)
-		}
-		if p.Type() == nil {
-			return fmt.Errorf("ssa: %s: parameter %s has nil type", fn.Name, p.Name())
-		}
-		paramSet[p] = true
-	}
-
-	// Pass 1: validate block structure, build CFG predecessor map, and index
-	// value-producing instructions owned by fn.
-	preds := make(map[*BasicBlock]map[*BasicBlock]bool, len(fn.Blocks))
-	instrOwner := make(map[Value]*BasicBlock)
-	for _, blk := range fn.Blocks {
-		if len(blk.Instrs) == 0 {
-			return fmt.Errorf("ssa: %s.%s: empty basic block", fn.Name, blk.Label)
-		}
-		seenNonPhi := false
-		for idx, ins := range blk.Instrs {
-			if ins == nil {
-				return fmt.Errorf("ssa: %s.%s: nil instruction at index %d", fn.Name, blk.Label, idx)
-			}
-			if _, isPhi := ins.(*Phi); isPhi {
-				if seenNonPhi {
-					return fmt.Errorf("ssa: %s.%s: phi instruction after non-phi instruction", fn.Name, blk.Label)
-				}
-			} else {
-				seenNonPhi = true
-			}
-			if v, ok := ins.(Value); ok {
-				instrOwner[v] = blk
-			}
-			isLast := idx == len(blk.Instrs)-1
-			term, isTerm := ins.(Terminator)
-			if isTerm && !isLast {
-				return fmt.Errorf("ssa: %s.%s: terminator %T before end of block", fn.Name, blk.Label, ins)
-			}
-			if !isTerm && isLast {
-				return fmt.Errorf("ssa: %s.%s: missing terminator at end of block", fn.Name, blk.Label)
-			}
-			if isTerm {
-				for _, succ := range term.Successors() {
-					if succ == nil || !blkSet[succ] {
-						return fmt.Errorf("ssa: %s.%s: invalid successor block in %T", fn.Name, blk.Label, ins)
-					}
-					if preds[succ] == nil {
-						preds[succ] = make(map[*BasicBlock]bool)
-					}
-					preds[succ][blk] = true
-				}
-			}
-		}
-	}
-
-	// Pass 2: validate operand ownership/typing, Phi predecessors, and
-	// instruction-specific invariants.
-	for _, blk := range fn.Blocks {
-		for _, ins := range blk.Instrs {
-			for _, op := range ins.Operands() {
-				if op == nil {
-					return fmt.Errorf("ssa: %s.%s: nil operand in %T", fn.Name, blk.Label, ins)
-				}
-				if op.Type() == nil {
-					return fmt.Errorf("ssa: %s.%s: untyped operand %q in %T", fn.Name, blk.Label, op.Name(), ins)
-				}
-				if err := verifyValueOwner(fn, blk, op, paramSet, instrOwner); err != nil {
-					return err
-				}
-			}
-			if err := verifyInstr(fn, blk, ins, blkSet, preds[blk]); err != nil {
+	for _, name := range names {
+		if fn, ok := pkg.Members[name].(*Function); ok {
+			if err := verifyTree(fn); err != nil {
 				return err
 			}
 		}
@@ -145,88 +56,167 @@ func VerifyFunction(fn *Function) error {
 	return nil
 }
 
-func verifyValueOwner(fn *Function, blk *BasicBlock, op Value, paramSet map[*Parameter]bool, instrOwner map[Value]*BasicBlock) error {
-	switch v := op.(type) {
-	case *Parameter:
-		if !paramSet[v] {
-			return fmt.Errorf("ssa: %s.%s: operand param %s does not belong to function %s", fn.Name, blk.Label, v.Name(), fn.Name)
+// VerifyFunction verifies a single function's CFG, block terminators, Phi
+// predecessors, SSA value ownership, and instruction invariants.
+func VerifyFunction(fn *Function) error {
+	if fn == nil {
+		return fmt.Errorf("ssa: nil function")
+	}
+	if fn.Signature == nil {
+		return fmt.Errorf("ssa: function %s missing signature", fn.String())
+	}
+	if len(fn.Blocks) == 0 {
+		return nil
+	}
+
+	blkSet := make(map[*BasicBlock]bool, len(fn.Blocks))
+	for i, blk := range fn.Blocks {
+		if blk == nil {
+			return fmt.Errorf("ssa: %s: nil basic block at %d", fn.String(), i)
 		}
-	case *Const:
-		// Compile-time constants are value literals with no owning function.
-	case *GlobalRef:
-		if v.Global == nil {
-			return fmt.Errorf("ssa: %s.%s: global reference with nil Global", fn.Name, blk.Label)
+		if blkSet[blk] {
+			return fmt.Errorf("ssa: %s: duplicate basic block %s", fn.String(), blk.String())
 		}
-	default:
-		if _, ok := instrOwner[op]; !ok {
-			return fmt.Errorf("ssa: %s.%s: operand %s does not belong to function %s", fn.Name, blk.Label, op.Name(), fn.Name)
+		blkSet[blk] = true
+	}
+
+	localValues := make(map[Value]bool, len(fn.Params)+len(fn.FreeVars)+len(fn.AnonFuncs)+32)
+	for _, p := range fn.Params {
+		if p == nil || p.Type() == nil {
+			return fmt.Errorf("ssa: %s: invalid parameter", fn.String())
+		}
+		localValues[p] = true
+	}
+	for _, fv := range fn.FreeVars {
+		if fv == nil || fv.Type() == nil {
+			return fmt.Errorf("ssa: %s: invalid freevar", fn.String())
+		}
+		localValues[fv] = true
+	}
+	for _, anon := range fn.AnonFuncs {
+		localValues[anon] = true
+	}
+
+	// Pass 1: validate block terminators, Succs/Preds symmetry, Phi placement,
+	// and collect all instruction-defined values.
+	for _, blk := range fn.Blocks {
+		if len(blk.Instrs) == 0 {
+			return fmt.Errorf("ssa: %s.%s: empty basic block", fn.String(), blk.String())
+		}
+		seenNonPhi := false
+		for idx, ins := range blk.Instrs {
+			if ins == nil {
+				return fmt.Errorf("ssa: %s.%s: nil instruction at %d", fn.String(), blk.String(), idx)
+			}
+			if _, isPhi := ins.(*Phi); isPhi {
+				if seenNonPhi {
+					return fmt.Errorf("ssa: %s.%s: phi instruction after non-phi instruction", fn.String(), blk.String())
+				}
+			} else {
+				seenNonPhi = true
+			}
+			if v, ok := ins.(Value); ok {
+				localValues[v] = true
+			}
+			isLast := idx == len(blk.Instrs)-1
+			term := isTerminator(ins)
+			if term && !isLast {
+				return fmt.Errorf("ssa: %s.%s: terminator %T before end of block", fn.String(), blk.String(), ins)
+			}
+			if !term && isLast {
+				return fmt.Errorf("ssa: %s.%s: missing terminator at end of block", fn.String(), blk.String())
+			}
+		}
+		for _, succ := range blk.Succs {
+			if !blkSet[succ] {
+				return fmt.Errorf("ssa: %s.%s: successor does not belong to function", fn.String(), blk.String())
+			}
+		}
+		for _, pred := range blk.Preds {
+			if !blkSet[pred] {
+				return fmt.Errorf("ssa: %s.%s: predecessor does not belong to function", fn.String(), blk.String())
+			}
+		}
+		switch blk.Instrs[len(blk.Instrs)-1].(type) {
+		case *Jump:
+			if len(blk.Succs) != 1 {
+				return fmt.Errorf("ssa: %s.%s: jump block has %d successors, want 1", fn.String(), blk.String(), len(blk.Succs))
+			}
+		case *If:
+			if len(blk.Succs) != 2 {
+				return fmt.Errorf("ssa: %s.%s: if block has %d successors, want 2", fn.String(), blk.String(), len(blk.Succs))
+			}
+		case *Return, *Panic:
+			if len(blk.Succs) != 0 {
+				return fmt.Errorf("ssa: %s.%s: return/panic block has %d successors, want 0", fn.String(), blk.String(), len(blk.Succs))
+			}
+		}
+	}
+
+	// Pass 2: validate operands and instruction-specific invariants.
+	var rands []*Value
+	for _, blk := range fn.Blocks {
+		for _, ins := range blk.Instrs {
+			rands = ins.Operands(rands[:0])
+			for _, opPtr := range rands {
+				if opPtr == nil || *opPtr == nil {
+					return fmt.Errorf("ssa: %s.%s: nil operand in %T", fn.String(), blk.String(), ins)
+				}
+				op := *opPtr
+				if op.Type() == nil {
+					return fmt.Errorf("ssa: %s.%s: untyped operand %q in %T", fn.String(), blk.String(), op.Name(), ins)
+				}
+				switch op.(type) {
+				case *Const, *Global, *Function, *Builtin:
+					// Package/program-level values are valid operands across functions.
+				default:
+					if !localValues[op] {
+						return fmt.Errorf("ssa: %s.%s: operand %s does not belong to function %s", fn.String(), blk.String(), op.Name(), fn.String())
+					}
+				}
+			}
+			if err := verifyInstr(fn, blk, ins); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*BasicBlock]bool, blkPreds map[*BasicBlock]bool) error {
+func isTerminator(ins Instruction) bool {
+	switch ins.(type) {
+	case *Jump, *If, *Return, *Panic:
+		return true
+	default:
+		return false
+	}
+}
+
+func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction) error {
 	switch ins := ins.(type) {
 	case *Phi:
-		if len(ins.Edges) == 0 {
-			return fmt.Errorf("ssa: %s.%s: phi has no incoming edges", fn.Name, blk.Label)
-		}
-		if len(ins.Edges) != len(blkPreds) {
-			return fmt.Errorf("ssa: %s.%s: phi has %d incoming edges, want %d CFG predecessors", fn.Name, blk.Label, len(ins.Edges), len(blkPreds))
-		}
-		seenPred := make(map[*BasicBlock]bool, len(ins.Edges))
-		for _, edge := range ins.Edges {
-			if edge.Pred == nil || !blkSet[edge.Pred] {
-				return fmt.Errorf("ssa: %s.%s: phi incoming block does not belong to function %s", fn.Name, blk.Label, fn.Name)
-			}
-			if !blkPreds[edge.Pred] {
-				return fmt.Errorf("ssa: %s.%s: phi incoming block %s is not a CFG predecessor", fn.Name, blk.Label, edge.Pred.Label)
-			}
-			if seenPred[edge.Pred] {
-				return fmt.Errorf("ssa: %s.%s: duplicate phi predecessor %s", fn.Name, blk.Label, edge.Pred.Label)
-			}
-			seenPred[edge.Pred] = true
+		if len(ins.Edges) != len(blk.Preds) {
+			return fmt.Errorf("ssa: %s.%s: phi has %d edges, want %d predecessors", fn.String(), blk.String(), len(ins.Edges), len(blk.Preds))
 		}
 	case *Alloc:
-		if ins.Elem == nil {
-			return fmt.Errorf("ssa: %s.%s: alloc with nil element type", fn.Name, blk.Label)
+		ptr, ok := ins.Type().(*types.Pointer)
+		if !ok || ptr.Elem() == nil {
+			return fmt.Errorf("ssa: %s.%s: alloc must have pointer type, got %v", fn.String(), blk.String(), ins.Type())
 		}
-		if ins.NoScan && ins.Elem.HasPtrData() {
-			return fmt.Errorf("ssa: %s.%s: alloc.noscan on GC-pointer-bearing type %s", fn.Name, blk.Label, ins.Elem)
-		}
-	case *WriteBarrier:
-		dstType := ins.Dst.Type()
-		if dstType == nil {
-			return fmt.Errorf("ssa: %s.%s: write barrier destination has nil type", fn.Name, blk.Label)
-		}
-		ptr, ok := dstType.Underlying().(*types.Pointer)
-		if !ok || ptr.Kind() != types.GoPtr {
-			return fmt.Errorf("ssa: %s.%s: write barrier destination %s must be a GoPtr", fn.Name, blk.Label, dstType)
-		}
-	case *CallClosure:
-		cloType := ins.Closure.Type()
-		if cloType == nil {
-			return fmt.Errorf("ssa: %s.%s: call.closure callee has nil type", fn.Name, blk.Label)
-		}
-		sig, ok := cloType.Underlying().(*types.Signature)
-		if !ok || !sig.IsClosure() {
-			return fmt.Errorf("ssa: %s.%s: call.closure callee %s is not a Closure", fn.Name, blk.Label, cloType)
-		}
-	case *CallCFunc:
-		if !ins.CallConv.IsNative() {
-			return fmt.Errorf("ssa: %s.%s: call.cfunc requires CDecl or Stdcall, got %s", fn.Name, blk.Label, ins.CallConv)
+		if ins.NoScan && ptr.Elem().HasPtrData() {
+			return fmt.Errorf("ssa: %s.%s: alloc.noscan on pointer-bearing type %s", fn.String(), blk.String(), ptr.Elem())
 		}
 	case *Extract:
 		tup, ok := ins.Tuple.Type().(*types.Tuple)
 		if !ok {
-			return fmt.Errorf("ssa: %s.%s: extract operand %s has non-tuple type %s", fn.Name, blk.Label, ins.Tuple.Name(), ins.Tuple.Type())
+			return fmt.Errorf("ssa: %s.%s: extract operand %s has non-tuple type %s", fn.String(), blk.String(), ins.Tuple.Name(), ins.Tuple.Type())
 		}
 		if ins.Index < 0 || ins.Index >= tup.Len() {
-			return fmt.Errorf("ssa: %s.%s: extract index %d out of range [0,%d)", fn.Name, blk.Label, ins.Index, tup.Len())
+			return fmt.Errorf("ssa: %s.%s: extract index %d out of range [0,%d)", fn.String(), blk.String(), ins.Index, tup.Len())
 		}
 	case *Return:
-		if len(ins.Results) != fn.Sig.Results().Len() {
-			return fmt.Errorf("ssa: %s.%s: return arity %d != signature results %d", fn.Name, blk.Label, len(ins.Results), fn.Sig.Results().Len())
+		if len(ins.Results) != fn.Signature.Results().Len() {
+			return fmt.Errorf("ssa: %s.%s: return arity %d != signature results %d", fn.String(), blk.String(), len(ins.Results), fn.Signature.Results().Len())
 		}
 	}
 	return nil

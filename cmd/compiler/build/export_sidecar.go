@@ -17,11 +17,13 @@
 package build
 
 import (
+	"bytes"
 	"fmt"
+	"go/token"
 	"os"
 
-	"github.com/xgo-dev/llgo/analysis/inline"
 	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/exportdata"
 	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
@@ -56,17 +58,13 @@ func (c *context) targetSpec() target.Spec {
 	return target.ResolveSpec(spec)
 }
 
-// writeExportMetaSidecar lowers pkg.SSA to pure-Go llgo/ssa IR, runs pure-Go
-// callgraph/escape/inline analysis using any already-loaded dependency
-// summaries, and persists the resulting compact binary exportdata.PackageMeta
-// alongside the cached .a archive.
 func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 	if pkg == nil || pkg.SSA == nil || pkg.Package == nil {
 		return nil
 	}
 	meta := pkg.exportMeta
 	if meta == nil {
-		importedEsc := make(map[string]*exportdata.EscapeSummary)
+		importedEsc := make(map[string]*pkgmeta.EscapeSummary)
 		for _, dep := range pkg.Imports {
 			if dep == nil {
 				continue
@@ -79,47 +77,55 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 		if err != nil {
 			return err
 		}
-		meta = cl.BuildPackageMeta(llPkg, importedEsc, inline.DefaultBudget)
+		meta = cl.BuildPackageMeta(llPkg, importedEsc, pkgmeta.DefaultBudget)
 		pkg.exportMeta = meta
 	}
 	if meta == nil {
 		return nil
 	}
-	raw, err := exportdata.MarshalMeta(meta)
+	raw, err := pkgmeta.Marshal(meta)
 	if err != nil {
 		return err
 	}
 	return writeFileAtomicBytes(path, raw)
 }
 
-func (c *context) readExportMetaSidecar(path string) (*exportdata.PackageMeta, error) {
+func (c *context) readExportMetaSidecar(path string) (*pkgmeta.PackageMeta, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return exportdata.UnmarshalMeta(raw)
+	return pkgmeta.Unmarshal(raw)
 }
 
 // writePackageTypesSidecar encodes a package's effective llgo/types.Package
-// into compact binary exportdata — explicitly supporting stdlib packages
-// (pkg.Module == nil) and runtime-patched effective scopes.
+// via exportdata.Write — explicitly supporting stdlib packages (pkg.Module == nil)
+// and runtime-patched effective scopes.
 func (c *context) writePackageTypesSidecar(path string, pkg *aPackage) error {
 	if pkg == nil || pkg.Package == nil || pkg.Types == nil {
 		return fmt.Errorf("missing types for package export sidecar")
 	}
 	tctx := lltypes.NewContextWithConfig(lltypes.ContextConfig{Spec: c.targetSpec()})
 	llPkg := cl.LowerGoPackageTypes(pkg.Types, tctx)
-	raw, err := exportdata.MarshalPackage(llPkg)
-	if err != nil {
+	var fset *token.FileSet
+	if c.progSSA != nil {
+		fset = c.progSSA.Fset
+	}
+	var buf bytes.Buffer
+	if err := exportdata.Write(&buf, fset, llPkg); err != nil {
 		return err
 	}
-	return writeFileAtomicBytes(path, raw)
+	return writeFileAtomicBytes(path, buf.Bytes())
 }
 
-func (c *context) readPackageTypesSidecar(path string, imports map[string]*lltypes.Package) (*lltypes.Package, error) {
+func (c *context) readPackageTypesSidecar(path, pkgPath string, imports map[string]*lltypes.Package) (*lltypes.Package, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return exportdata.UnmarshalPackage(raw, imports)
+	var fset *token.FileSet
+	if c.progSSA != nil {
+		fset = c.progSSA.Fset
+	}
+	return exportdata.Read(bytes.NewReader(raw), fset, imports, pkgPath)
 }

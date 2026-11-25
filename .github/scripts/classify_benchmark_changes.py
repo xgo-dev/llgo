@@ -54,7 +54,7 @@ COMPILER_DIRS = {
     "cmd/cl",
     "cmd/compiler",
     "cmd/xtool",
-    "analysis",
+    "callgraph",
     "exportdata",
     "cmd/internal/base",
     "cmd/internal/build",

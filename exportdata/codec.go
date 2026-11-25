@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-// Package exportdata implements compact, deterministic binary codecs for LLGo's
-// pure-Go compiler artifacts: types.Package, analysis/SSA PackageMeta,
-// LinkSnapshot (with binary PCLN records), and C header Depfiles.
+// Package exportdata implements compact, deterministic binary export data
+// reading and writing for llgo/types.Package.
 //
-// Analogous to golang.org/x/tools/go/gcexportdata, it requires only Go 1.20+
-// stdlib with zero CGo, LLVM, or x/tools dependencies.
+// Its API mirrors golang.org/x/tools/go/gcexportdata (Read, Write, ReadBundle,
+// WriteBundle, NewImporter) for LLGo's pure-Go type system while requiring only
+// Go 1.20+ stdlib with zero CGo, LLVM, or x/tools dependencies.
 package exportdata
 
 import (
@@ -37,17 +37,15 @@ const (
 )
 
 const (
-	kindPackage      byte = 1
-	kindMeta         byte = 2
-	kindLinkSnapshot byte = 3
-	kindDepfile      byte = 4
+	kindPackage byte = 1
+	kindBundle  byte = 2
 )
 
 var (
-	ErrInvalidMagic   = errors.New("exportdata: invalid binary header magic")
-	ErrUnsupportedVer = errors.New("exportdata: unsupported format version")
-	ErrKindMismatch   = errors.New("exportdata: artifact kind mismatch")
-	ErrCorrupt        = errors.New("exportdata: corrupt or truncated binary payload")
+	errInvalidMagic   = errors.New("exportdata: invalid binary header magic")
+	errUnsupportedVer = errors.New("exportdata: unsupported format version")
+	errKindMismatch   = errors.New("exportdata: artifact kind mismatch")
+	errCorrupt        = errors.New("exportdata: corrupt or truncated binary payload")
 )
 
 type encoder struct {
@@ -143,28 +141,28 @@ type decoder struct {
 
 func newDecoder(raw []byte, expectedKind byte) (*decoder, error) {
 	if len(raw) < len(magicHeader)+1+4 {
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 	if string(raw[:len(magicHeader)]) != magicHeader {
-		return nil, ErrInvalidMagic
+		return nil, errInvalidMagic
 	}
 	if raw[len(magicHeader)] != expectedKind {
-		return nil, fmt.Errorf("%w: got %d want %d", ErrKindMismatch, raw[len(magicHeader)], expectedKind)
+		return nil, fmt.Errorf("%w: got %d want %d", errKindMismatch, raw[len(magicHeader)], expectedKind)
 	}
 	ver := binary.LittleEndian.Uint32(raw[len(magicHeader)+1 : len(magicHeader)+5])
 	if ver != formatVersion {
-		return nil, fmt.Errorf("%w: version %d", ErrUnsupportedVer, ver)
+		return nil, fmt.Errorf("%w: version %d", errUnsupportedVer, ver)
 	}
 	d := &decoder{data: raw, pos: len(magicHeader) + 5}
 	strCount, err := d.readUvarint()
 	if err != nil || strCount > uint64(len(raw)) {
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 	d.strings = make([]string, strCount)
 	for i := uint64(0); i < strCount; i++ {
 		slen, err := d.readUvarint()
 		if err != nil || slen > uint64(len(d.data)-d.pos) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		d.strings[i] = string(d.data[d.pos : d.pos+int(slen)])
 		d.pos += int(slen)
@@ -174,7 +172,7 @@ func newDecoder(raw []byte, expectedKind byte) (*decoder, error) {
 
 func (d *decoder) readByte() (byte, error) {
 	if d.pos >= len(d.data) {
-		return 0, ErrCorrupt
+		return 0, errCorrupt
 	}
 	b := d.data[d.pos]
 	d.pos++
@@ -192,7 +190,7 @@ func (d *decoder) readBool() (bool, error) {
 func (d *decoder) readUvarint() (uint64, error) {
 	v, n := binary.Uvarint(d.data[d.pos:])
 	if n <= 0 {
-		return 0, ErrCorrupt
+		return 0, errCorrupt
 	}
 	d.pos += n
 	return v, nil
@@ -201,7 +199,7 @@ func (d *decoder) readUvarint() (uint64, error) {
 func (d *decoder) readVarint() (int64, error) {
 	v, n := binary.Varint(d.data[d.pos:])
 	if n <= 0 {
-		return 0, ErrCorrupt
+		return 0, errCorrupt
 	}
 	d.pos += n
 	return v, nil
@@ -209,7 +207,7 @@ func (d *decoder) readVarint() (int64, error) {
 
 func (d *decoder) readFloat64() (float64, error) {
 	if len(d.data)-d.pos < 8 {
-		return 0, ErrCorrupt
+		return 0, errCorrupt
 	}
 	v := math.Float64frombits(binary.LittleEndian.Uint64(d.data[d.pos : d.pos+8]))
 	d.pos += 8
@@ -219,7 +217,7 @@ func (d *decoder) readFloat64() (float64, error) {
 func (d *decoder) readStr() (string, error) {
 	idx, err := d.readUvarint()
 	if err != nil || idx >= uint64(len(d.strings)) {
-		return "", ErrCorrupt
+		return "", errCorrupt
 	}
 	return d.strings[idx], nil
 }
@@ -227,7 +225,7 @@ func (d *decoder) readStr() (string, error) {
 func (d *decoder) readStringSlice() ([]string, error) {
 	n, err := d.readUvarint()
 	if err != nil || n > uint64(len(d.data)-d.pos) {
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 	if n == 0 {
 		return nil, nil
@@ -246,7 +244,7 @@ func (d *decoder) readStringSlice() ([]string, error) {
 func (d *decoder) readBytes() ([]byte, error) {
 	n, err := d.readUvarint()
 	if err != nil || n > uint64(len(d.data)-d.pos) {
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 	if n == 0 {
 		return nil, nil
@@ -259,7 +257,7 @@ func (d *decoder) readBytes() ([]byte, error) {
 
 func readAll(r io.Reader) ([]byte, error) {
 	if r == nil {
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 	return io.ReadAll(r)
 }

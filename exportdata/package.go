@@ -61,10 +61,116 @@ const (
 	constTagComplex
 )
 
-// MarshalPackage encodes a self-contained llgo/types.Package into compact
-// deterministic binary export data (handling recursive types, generics,
-// CallConv, PtrKind, HostLayout markers, SIMD shapes, and stdlib/patched scopes).
-func MarshalPackage(pkg *types.Package) ([]byte, error) {
+// Write writes the binary export data for pkg to out, mirroring
+// golang.org/x/tools/go/gcexportdata.Write.
+func Write(out io.Writer, fset *token.FileSet, pkg *types.Package) error {
+	raw, err := marshalPackage(pkg)
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(raw)
+	return err
+}
+
+// Read reads export data from in, constructs the types.Package for path, and
+// inserts it into imports (mirroring golang.org/x/tools/go/gcexportdata.Read).
+func Read(in io.Reader, fset *token.FileSet, imports map[string]*types.Package, path string) (*types.Package, error) {
+	raw, err := readAll(in)
+	if err != nil {
+		return nil, err
+	}
+	pkg, err := unmarshalPackage(raw, imports)
+	if err != nil {
+		return nil, err
+	}
+	if path != "" && imports != nil {
+		if _, exists := imports[path]; !exists {
+			imports[path] = pkg
+		}
+	}
+	return pkg, nil
+}
+
+// WriteBundle writes the binary export data for a slice of packages to out,
+// mirroring golang.org/x/tools/go/gcexportdata.WriteBundle.
+func WriteBundle(out io.Writer, fset *token.FileSet, pkgs []*types.Package) error {
+	e := newEncoder()
+	e.writeUvarint(uint64(len(pkgs)))
+	for _, pkg := range pkgs {
+		raw, err := marshalPackage(pkg)
+		if err != nil {
+			return err
+		}
+		e.writeBytes(raw)
+	}
+	_, err := out.Write(e.finish(kindBundle))
+	return err
+}
+
+// ReadBundle reads a bundle of packages written by WriteBundle, reusing and
+// populating imports (mirroring golang.org/x/tools/go/gcexportdata.ReadBundle).
+func ReadBundle(in io.Reader, fset *token.FileSet, imports map[string]*types.Package) ([]*types.Package, error) {
+	raw, err := readAll(in)
+	if err != nil {
+		return nil, err
+	}
+	d, err := newDecoder(raw, kindBundle)
+	if err != nil {
+		return nil, err
+	}
+	n, err := d.readUvarint()
+	if err != nil || n > uint64(len(raw)) {
+		return nil, errCorrupt
+	}
+	if imports == nil {
+		imports = make(map[string]*types.Package)
+	}
+	pkgs := make([]*types.Package, n)
+	for i := uint64(0); i < n; i++ {
+		blob, err := d.readBytes()
+		if err != nil {
+			return nil, err
+		}
+		pkg, err := unmarshalPackage(blob, imports)
+		if err != nil {
+			return nil, err
+		}
+		pkgs[i] = pkg
+	}
+	return pkgs, nil
+}
+
+// NewImporter returns a new instance of the types.ImporterFrom interface that
+// resolves packages from imports (mirroring golang.org/x/tools/go/gcexportdata.NewImporter).
+func NewImporter(fset *token.FileSet, imports map[string]*types.Package) types.ImporterFrom {
+	return importer{fset: fset, imports: imports}
+}
+
+type importer struct {
+	fset    *token.FileSet
+	imports map[string]*types.Package
+}
+
+func (imp importer) Import(importPath string) (*types.Package, error) {
+	return imp.ImportFrom(importPath, "", 0)
+}
+
+func (imp importer) ImportFrom(importPath, srcDir string, mode types.ImportMode) (*types.Package, error) {
+	if mode != 0 {
+		return nil, fmt.Errorf("exportdata: unsupported import mode %d", mode)
+	}
+	if importPath == "unsafe" {
+		return types.Unsafe, nil
+	}
+	if imp.imports != nil {
+		if pkg := imp.imports[importPath]; pkg != nil && pkg.Complete() {
+			return pkg, nil
+		}
+	}
+	return nil, fmt.Errorf("exportdata: package %q not found in imports", importPath)
+}
+
+func marshalPackage(pkg *types.Package) ([]byte, error) {
 	if pkg == nil {
 		return nil, fmt.Errorf("exportdata: nil package")
 	}
@@ -80,20 +186,7 @@ func MarshalPackage(pkg *types.Package) ([]byte, error) {
 	return pw.enc.finish(kindPackage), nil
 }
 
-// WritePackage writes the binary encoding of pkg to w.
-func WritePackage(w io.Writer, pkg *types.Package) error {
-	raw, err := MarshalPackage(pkg)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(raw)
-	return err
-}
-
-// UnmarshalPackage decodes a binary llgo/types.Package, reusing any already
-// loaded packages in imports (keyed by package path) and registering the decoded
-// package into imports if non-nil.
-func UnmarshalPackage(raw []byte, imports map[string]*types.Package) (*types.Package, error) {
+func unmarshalPackage(raw []byte, imports map[string]*types.Package) (*types.Package, error) {
 	dec, err := newDecoder(raw, kindPackage)
 	if err != nil {
 		return nil, err
@@ -103,15 +196,6 @@ func UnmarshalPackage(raw []byte, imports map[string]*types.Package) (*types.Pac
 		imports: imports,
 	}
 	return pr.decode()
-}
-
-// ReadPackage reads and decodes a binary llgo/types.Package from r.
-func ReadPackage(r io.Reader, imports map[string]*types.Package) (*types.Package, error) {
-	raw, err := readAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return UnmarshalPackage(raw, imports)
 }
 
 type pkgWriter struct {
@@ -820,7 +904,7 @@ func (r *pkgReader) decode() (*types.Package, error) {
 				pkg.Scope().Insert(tn)
 			}
 		default:
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 	}
 
@@ -842,7 +926,7 @@ func (r *pkgReader) readTypeParams() ([]*types.TypeParam, error) {
 	for i := uint64(0); i < n; i++ {
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.tparams)) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		out[i] = r.tparams[idx]
 	}
@@ -899,7 +983,7 @@ func (r *pkgReader) readType() (types.Type, error) {
 	case typeTagBasic:
 		k, err := r.dec.readByte()
 		if err != nil || int(k) >= len(types.Typ) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		return types.Typ[types.BasicKind(k)], nil
 	case typeTagPointer:
@@ -1089,25 +1173,25 @@ func (r *pkgReader) readType() (types.Type, error) {
 	case typeTagNamedRef:
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.nameds)) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		return r.nameds[idx], nil
 	case typeTagAliasRef:
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.aliases)) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		return r.aliases[idx], nil
 	case typeTagTypeParamRef:
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.tparams)) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		return r.tparams[idx], nil
 	case typeTagSIMDVec:
 		k, err := r.dec.readByte()
 		if err != nil || int(k) >= len(types.Typ) {
-			return nil, ErrCorrupt
+			return nil, errCorrupt
 		}
 		n, err := r.dec.readUvarint()
 		if err != nil {
@@ -1119,7 +1203,7 @@ func (r *pkgReader) readType() (types.Type, error) {
 		}
 		return types.NewArray(types.Typ[types.BasicKind(k)], int64(n)), nil
 	default:
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 }
 
@@ -1174,7 +1258,7 @@ func (r *pkgReader) readConst() (constant.Value, error) {
 		iVal := constant.MakeImag(parseExactFloat(im))
 		return constant.BinaryOp(rVal, token.ADD, iVal), nil
 	default:
-		return nil, ErrCorrupt
+		return nil, errCorrupt
 	}
 }
 
