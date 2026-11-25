@@ -125,6 +125,11 @@ C.clock_gettime_nsec_np`,
 		`ssa/eh.go runtime/internal/runtime/_wrap/setjmp_windows_amd64.c
 runtime/internal/runtime/_wrap/setjmp_windows_arm64.c`,
 	},
+	{
+		`C.llgo_longjmp`,
+		"LLGo Darwin arm64 non-mask-saving defer unwind bridge",
+		`ssa/eh.go runtime/internal/runtime/_wrap/setjmp_darwin_arm64.c`,
+	},
 	{"C.__llgo_wasm_main", "compiler-generated Wasm scheduler entry", "internal/build/main_module.go"},
 	{"C.runtime.islibrary C.runtime.isarchive", "compiler-generated Go build-mode flags", "internal/build/main_module.go"},
 	{
