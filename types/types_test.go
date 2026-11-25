@@ -1354,4 +1354,19 @@ func TestSizesForIsStateless(t *testing.T) {
 	if _, isCtx := s1.(*types.Context); isCtx {
 		t.Fatal("SizesFor must not return a globally retained *types.Context")
 	}
+	pkg := types.NewPackage("example.com/stateless", "stateless")
+	integer := types.NewNamed(types.NewTypeName(0, pkg, "Integer", nil), types.Typ[types.Int64], nil)
+	record := types.NewNamed(types.NewTypeName(0, pkg, "Record", nil), types.NewStruct([]*types.Var{
+		types.NewField(0, pkg, "A", types.Typ[types.Byte], false),
+		types.NewField(0, pkg, "X", integer, false),
+	}, nil), nil)
+	nested := types.NewNamed(types.NewTypeName(0, pkg, "Nested", nil), types.NewArray(record, 8), nil)
+	for _, typ := range []types.Type{integer, record, nested} {
+		if allocs := testing.AllocsPerRun(100, func() { _ = s1.Alignof(typ) }); allocs != 0 {
+			t.Fatalf("SizesFor.Alignof(%s) allocs = %g, want 0", typ, allocs)
+		}
+		if allocs := testing.AllocsPerRun(100, func() { _ = s1.Sizeof(typ) }); allocs != 0 {
+			t.Fatalf("SizesFor.Sizeof(%s) allocs = %g, want 0", typ, allocs)
+		}
+	}
 }

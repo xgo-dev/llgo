@@ -57,36 +57,405 @@ func newArchSizes(spec target.Spec) *archSizes {
 	}
 }
 
-func (s *archSizes) statelessContext() Context {
-	return Context{
-		spec:             s.spec,
-		hostBasicLayouts: s.hostBasicLayouts,
-		simdAlignments:   s.simdAlignments,
+func (s *archSizes) clampAlign(a int64) int64 {
+	maxAlign := int64(s.spec.MaxAlign)
+	if maxAlign <= 0 {
+		maxAlign = int64(s.spec.WordSize)
 	}
+	if a > maxAlign {
+		return maxAlign
+	}
+	if a < 1 {
+		return 1
+	}
+	return a
+}
+
+func (s *archSizes) alignForMode(a int64, mode layoutMode) int64 {
+	if mode == modeWasmNative || mode == modeHostField || mode == modeHostNative {
+		if a < 1 {
+			return 1
+		}
+		return a
+	}
+	return s.clampAlign(a)
+}
+
+func (s *archSizes) hostUsesNativeGoLayout() bool {
+	arch := s.spec.GOARCH
+	return arch != "386" && arch != "wasm" && s.spec.WordSize == 4 && s.hostBasicLayouts[Int64].Align > 4
+}
+
+func (s *archSizes) simdAlignment(index int) int64 {
+	if index >= 0 && index < len(s.simdAlignments) {
+		return s.simdAlignments[index]
+	}
+	return 1
+}
+
+func (s *archSizes) basicLayoutGo(kind BasicKind) LayoutPair {
+	word := int64(s.spec.WordSize)
+	switch kind {
+	case Bool, Int8, Uint8:
+		return LayoutPair{Size: 1, Align: 1}
+	case Int16, Uint16:
+		return LayoutPair{Size: 2, Align: s.clampAlign(2)}
+	case Int32, Uint32, Float32:
+		return LayoutPair{Size: 4, Align: s.clampAlign(4)}
+	case Int64, Uint64, Float64:
+		return LayoutPair{Size: 8, Align: s.clampAlign(8)}
+	case Complex64:
+		return LayoutPair{Size: 8, Align: s.clampAlign(4)}
+	case Complex128:
+		return LayoutPair{Size: 16, Align: s.clampAlign(8)}
+	case Int, Uint, Uintptr, UnsafePointer:
+		return LayoutPair{Size: word, Align: s.clampAlign(word)}
+	case String:
+		return LayoutPair{Size: 2 * word, Align: s.clampAlign(word)}
+	default:
+		return LayoutPair{Size: 0, Align: 1}
+	}
+}
+
+func (s *archSizes) layoutPair(t Type, mode layoutMode) LayoutPair {
+	if t == nil {
+		return LayoutPair{Align: 1}
+	}
+	word := int64(s.spec.WordSize)
+	ptr := int64(s.spec.PtrSize)
+
+	switch u := t.(type) {
+	case *Alias:
+		if u.hasCallConv && u.callConv.IsNative() {
+			if _, ok := u.Underlying().(*Signature); ok {
+				sz := word
+				if mode == modeWasmNative {
+					sz = ptr
+				}
+				return LayoutPair{Size: sz, Align: s.alignForMode(sz, mode)}
+			}
+		}
+		if u.rhs == nil || u.rhs == u {
+			return LayoutPair{Align: 1}
+		}
+		return s.layoutPair(u.rhs, mode)
+
+	case *Named:
+		u.resolve()
+		if u.simdTagIndex >= 0 {
+			return LayoutPair{Size: 0, Align: s.simdAlignment(u.simdTagIndex)}
+		}
+		if isSyncAtomicAlign64(u) {
+			return LayoutPair{Size: 0, Align: 8}
+		}
+		nativeNamed := u.hasCallConv && u.callConv.IsNative()
+		if nativeNamed {
+			if _, ok := u.Underlying().(*Signature); ok {
+				sz := word
+				if mode == modeWasmNative {
+					sz = ptr
+				}
+				return LayoutPair{Size: sz, Align: s.alignForMode(sz, mode)}
+			}
+		}
+		if u.nativeLayout || nativeNamed {
+			if st, ok := u.underlying.(*Struct); ok {
+				return s.structLayoutPair(st, mode, true)
+			}
+			if arr, ok := u.underlying.(*Array); ok && s.spec.UsesWideGoStorage() {
+				return s.layoutPair(arr, modeWasmNative)
+			}
+		}
+		if u.underlying == nil || u.underlying == u {
+			return LayoutPair{Align: 1}
+		}
+		return s.layoutPair(u.underlying, mode)
+
+	case *Basic:
+		if mode == modeWasmNative && (u.kind == Uintptr || u.kind == UnsafePointer) {
+			return LayoutPair{Size: ptr, Align: ptr}
+		}
+		if mode == modeHostField {
+			if u.kind == Uintptr || u.kind == UnsafePointer {
+				return LayoutPair{Size: word, Align: word}
+			}
+			if u.kind != String && u.kind > Invalid && u.kind <= UnsafePointer {
+				return s.hostBasicLayouts[u.kind]
+			}
+		}
+		if mode == modeHostNative && u.kind != String && u.kind > Invalid && u.kind <= UnsafePointer {
+			return s.hostBasicLayouts[u.kind]
+		}
+		return s.basicLayoutGo(u.kind)
+
+	case *Pointer, *Map, *Chan:
+		sz := word
+		if mode == modeWasmNative {
+			sz = ptr
+		}
+		return LayoutPair{Size: sz, Align: s.alignForMode(sz, mode)}
+
+	case *Slice:
+		return LayoutPair{Size: 3 * word, Align: s.alignForMode(word, mode)}
+
+	case *Interface:
+		return LayoutPair{Size: 2 * word, Align: s.alignForMode(word, mode)}
+
+	case *Signature:
+		if mode == modeWasmNative {
+			return LayoutPair{Size: ptr, Align: ptr}
+		}
+		if u.callConv.IsClosure() {
+			return LayoutPair{Size: 2 * word, Align: s.alignForMode(word, mode)}
+		}
+		return LayoutPair{Size: word, Align: s.alignForMode(word, mode)}
+
+	case *SIMDVec:
+		bits := int64(basicBits(u.elem))
+		return LayoutPair{
+			Size:  (bits / 8) * int64(u.length),
+			Align: s.simdAlignment(u.tagIndex),
+		}
+
+	case *Array:
+		elemMode := mode
+		if u.nativeStorage && s.spec.UsesWideGoStorage() {
+			elemMode = modeWasmNative
+		}
+		return arrayLayout(s.layoutPair(u.elem, elemMode), u.length)
+
+	case *Struct:
+		return s.structLayoutPair(u, mode, false)
+
+	case *Tuple:
+		result := LayoutPair{Align: 1}
+		for i := 0; i < u.Len(); i++ {
+			field := s.layoutPair(u.At(i).typ, mode)
+			if field.Align > result.Align {
+				result.Align = field.Align
+			}
+			result.Size = alignSize(result.Size, field.Align)
+			if result.Size < 0 || field.Size < 0 || field.Size > math.MaxInt64-result.Size {
+				result.Size = -1
+			} else {
+				result.Size += field.Size
+			}
+		}
+		result.Size = alignSize(result.Size, result.Align)
+		return result
+
+	case *Union:
+		return LayoutPair{Align: 1}
+
+	case *TypeParam:
+		return LayoutPair{Size: word, Align: s.clampAlign(word)}
+	}
+
+	return LayoutPair{Align: 1}
+}
+
+func (s *archSizes) structLayoutPair(st *Struct, mode layoutMode, forceNative bool) LayoutPair {
+	if st.simdTagIndex >= 0 {
+		return LayoutPair{Size: 0, Align: s.simdAlignment(st.simdTagIndex)}
+	}
+	if st.isClosureStruct {
+		word := int64(s.spec.WordSize)
+		return LayoutPair{Size: 2 * word, Align: s.alignForMode(word, mode)}
+	}
+
+	native := forceNative || st.nativeLayout
+	effectiveMode := mode
+	padTail := true
+
+	switch {
+	case native && s.spec.UsesWideGoStorage():
+		effectiveMode = modeWasmNative
+		padTail = false
+	case mode == modeWasmNative:
+		if !native {
+			effectiveMode = modeGo
+			padTail = true
+		} else {
+			padTail = false
+		}
+	case st.hostLayout && !native:
+		effectiveMode = modeHostField
+		padTail = true
+	case mode == modeHostNative:
+		effectiveMode = modeHostNative
+		padTail = false
+	case !native && s.hostUsesNativeGoLayout() && st.ContainsHostLayout():
+		effectiveMode = modeHostNative
+		padTail = false
+	default:
+		if native && st.ContainsSIMDStorage() {
+			padTail = false
+		}
+	}
+
+	word := int64(s.spec.WordSize)
+	ptr := int64(s.spec.PtrSize)
+	result := LayoutPair{Align: 1}
+	n := len(st.fields)
+	for i := 0; i < n; i++ {
+		ft := st.fields[i].typ
+		var field LayoutPair
+		if native {
+			if sig, ok := Unalias(ft).(*Signature); ok && sig.callConv == Go {
+				if effectiveMode == modeWasmNative {
+					field = LayoutPair{Size: ptr, Align: ptr}
+				} else {
+					field = LayoutPair{Size: word, Align: s.alignForMode(word, effectiveMode)}
+				}
+				goto applyField
+			}
+		}
+		switch effectiveMode {
+		case modeHostField:
+			field = s.layoutHostFieldPair(ft)
+		case modeWasmNative:
+			field = s.layoutPair(ft, modeWasmNative)
+		case modeHostNative:
+			field = s.layoutPair(ft, modeHostNative)
+		default:
+			field = s.layoutPair(ft, modeGo)
+		}
+	applyField:
+		if field.Align > result.Align {
+			result.Align = field.Align
+		}
+		result.Size = alignSize(result.Size, field.Align)
+		if result.Size < 0 || field.Size < 0 || field.Size > math.MaxInt64-result.Size {
+			result.Size = -1
+		} else {
+			result.Size += field.Size
+			if padTail && i == n-1 && field.Size == 0 && result.Size > 0 {
+				if result.Size == math.MaxInt64 {
+					result.Size = -1
+				} else {
+					result.Size++
+				}
+			}
+		}
+	}
+	result.Size = alignSize(result.Size, result.Align)
+	return result
+}
+
+func (s *archSizes) layoutHostFieldPair(t Type) LayoutPair {
+	if t == nil {
+		return LayoutPair{Align: 1}
+	}
+	switch u := Unalias(t).(type) {
+	case *Named:
+		u.resolve()
+		if u.simdTagIndex >= 0 || (u.hasCallConv && u.callConv.IsNative()) {
+			if _, isArr := u.Underlying().(*Array); isArr {
+				return s.layoutHostFieldPair(u.underlying)
+			}
+			if _, isSt := u.Underlying().(*Struct); isSt {
+				return s.layoutHostNestedPair(t)
+			}
+			return s.layoutPair(t, modeHostField)
+		}
+		if _, ok := u.Underlying().(*Struct); ok {
+			return s.layoutHostNestedPair(t)
+		}
+		if _, ok := u.Underlying().(*Array); ok {
+			return s.layoutHostFieldPair(u.underlying)
+		}
+		return s.layoutPair(t, modeHostField)
+	case *Array:
+		return arrayLayout(s.layoutHostFieldPair(u.elem), u.length)
+	case *Basic, *Pointer, *Map, *Chan:
+		return s.layoutPair(t, modeHostField)
+	case *Signature:
+		if u.IsNative() {
+			return s.layoutPair(t, modeHostField)
+		}
+		return s.layoutHostNestedPair(t)
+	default:
+		return s.layoutHostNestedPair(t)
+	}
+}
+
+func (s *archSizes) layoutHostNestedPair(t Type) LayoutPair {
+	if !s.hostUsesNativeGoLayout() {
+		return s.layoutPair(t, modeGo)
+	}
+	return s.layoutPair(t, modeHostNative)
 }
 
 func (s *archSizes) Sizeof(T Type) int64 {
 	if T == nil {
 		return 0
 	}
-	ctx := s.statelessContext()
-	return ctx.layoutInMode(T, modeGo).Size
+	return s.layoutPair(T, modeGo).Size
 }
 
 func (s *archSizes) Alignof(T Type) int64 {
 	if T == nil {
 		return 1
 	}
-	ctx := s.statelessContext()
-	return ctx.layoutInMode(T, modeGo).Align
+	return s.layoutPair(T, modeGo).Align
 }
 
 func (s *archSizes) Offsetsof(fields []*Var) []int64 {
-	if len(fields) == 0 {
+	n := len(fields)
+	if n == 0 {
 		return nil
 	}
-	ctx := s.statelessContext()
-	return ctx.Offsetsof(fields)
+	if isLLClosureFields(fields) {
+		return []int64{0, int64(s.spec.WordSize)}
+	}
+	host := false
+	containsHost := false
+	checkNestedHost := s.hostUsesNativeGoLayout()
+	for _, f := range fields {
+		if f == nil || f.typ == nil {
+			continue
+		}
+		if f.typ.IsHostLayoutMarker() {
+			host = true
+			containsHost = true
+			break
+		}
+		if checkNestedHost && !containsHost && f.typ.ContainsHostLayout() {
+			containsHost = true
+		}
+	}
+	effectiveMode := modeGo
+	switch {
+	case host:
+		effectiveMode = modeHostField
+	case containsHost && checkNestedHost:
+		effectiveMode = modeHostNative
+	}
+	out := make([]int64, n)
+	var size int64
+	for i, f := range fields {
+		var ft Type
+		if f != nil {
+			ft = f.typ
+		}
+		var pair LayoutPair
+		switch effectiveMode {
+		case modeHostField:
+			pair = s.layoutHostFieldPair(ft)
+		case modeHostNative:
+			pair = s.layoutPair(ft, modeHostNative)
+		default:
+			pair = s.layoutPair(ft, modeGo)
+		}
+		size = alignSize(size, pair.Align)
+		out[i] = size
+		if size < 0 || pair.Size < 0 || pair.Size > math.MaxInt64-size {
+			size = -1
+		} else {
+			size += pair.Size
+		}
+	}
+	return out
 }
 
 // isSyncAtomicAlign64 reports whether t is sync/atomic.align64 or
@@ -402,17 +771,68 @@ func (c *Context) Alignof(T Type) int64 { return c.Layout(T).Align }
 
 // Offsetsof implements Sizes on *Context.
 func (c *Context) Offsetsof(fields []*Var) []int64 {
-	if len(fields) == 0 {
+	n := len(fields)
+	if n == 0 {
 		return nil
 	}
-	st := NewStruct(fields, nil)
-	if c.hasNativeLLFields(fields) {
-		st.nativeLayout = true
+	if isLLClosureFields(fields) {
+		return []int64{0, int64(c.spec.WordSize)}
 	}
-	lay := c.computeStructLayout(st, modeGo)
-	out := make([]int64, len(lay.Fields))
-	for i, f := range lay.Fields {
-		out[i] = f.Offset
+	native := c.hasNativeLLFields(fields)
+	host := false
+	containsHost := false
+	checkNestedHost := !native && c.HostUsesNativeGoLayout()
+	for _, f := range fields {
+		if f == nil || f.typ == nil {
+			continue
+		}
+		if f.typ.IsHostLayoutMarker() {
+			host = true
+			containsHost = true
+			break
+		}
+		if checkNestedHost && !containsHost && f.typ.ContainsHostLayout() {
+			containsHost = true
+		}
+	}
+	effectiveMode := modeGo
+	switch {
+	case native && c.spec.UsesWideGoStorage():
+		effectiveMode = modeWasmNative
+	case host && !native:
+		effectiveMode = modeHostField
+	case checkNestedHost && containsHost:
+		effectiveMode = modeHostNative
+	}
+
+	out := make([]int64, n)
+	var size int64
+	for i, f := range fields {
+		var ft Type
+		if f != nil {
+			ft = f.typ
+		}
+		if native && ft != nil {
+			if sig, ok := Unalias(ft).(*Signature); ok && sig.callConv == Go {
+				ft = sig.WithCallConv(CDecl)
+			}
+		}
+		var fl *Layout
+		switch effectiveMode {
+		case modeGo:
+			fl = c.Layout(ft)
+		case modeHostField:
+			fl = c.layoutHostField(ft)
+		default:
+			fl = c.layoutInMode(ft, effectiveMode)
+		}
+		size = alignSize(size, fl.Align)
+		out[i] = size
+		if size < 0 || fl.Size < 0 || fl.Size > math.MaxInt64-size {
+			size = -1
+		} else {
+			size += fl.Size
+		}
 	}
 	return out
 }
