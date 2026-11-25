@@ -45,15 +45,21 @@ esp-idf-wakenet/
 
 ## The architecture, in one paragraph
 
-WakeNet `detect` costs 3–6.4 ms per 32 ms audio chunk - thirty heavy
-synchronous C calls per second. The llgo fiber scheduler is single-task
-cooperative state, so none of those may run on a goroutine: the glue
-(`pkg/esp/wakenet/glue/wakenet_glue.c`) owns the whole audio path on its own
-FreeRTOS task (pinned to CPU1) - I2S RX or the test source → one chunk →
-detect (timed) → event ring - and Go only polls events and counters
-(`wakenet.Events()`, `wakenet.Stats()`). One model instance, no AEC/NS/VAD:
-a pure-WakeNet instance is ~16 KB internal RAM + ~330 KB PSRAM (weights,
-DET_MODE_95), the configuration the memory ledger says fits next to WiFi.
+WakeNet `detect` costs ~1.5 ms per 32 ms audio chunk measured on S31 (6.4 ms
+for the official wn10@3ch) - thirty heavy synchronous C calls per second -
+and the engine's compute path executes the S31's PIE (SIMD coprocessor)
+instructions, which exist on core 1 only. The llgo fiber scheduler is
+single-task cooperative state whose SP lives on swapped-out fiber stacks, so
+none of that may ever touch it (a PIE instruction on the scheduler task makes
+the FreeRTOS port migrate the task and abort on the swapped-out SP). The glue
+(`pkg/esp/wakenet/glue/wakenet_glue.c`) therefore owns everything on its own
+session task, pinned to core 1: Init maps the model partition and starts the
+task, the task creates the engine (wn9_hilexin, weights to PSRAM), then loops
+- I2S RX or the test source → one chunk → detect (timed) → event ring - and
+Go polls events and counters (`wakenet.Events()`, `wakenet.Stats()`). One
+model instance, no AEC/NS/VAD: a pure-WakeNet instance is ~21 KB internal RAM
++ the 12 KiB session-task stack and ~320 KB PSRAM, measured - the
+configuration the memory ledger says fits next to WiFi.
 
 ## Build and run
 
@@ -73,10 +79,11 @@ esp-emu --chip esp32s31 --firmware build/merged-binary.bin
 
 The probe gates on `[go] wakenet PASS`: the model loaded, the detect task
 processed ≥300 frames (~9.6 s of audio) next to the Go scheduler, and the
-final line carries the frames/avg/max numbers. `DETECTED` lines mean the
-emulator (or board) executed the model's compute well enough to trigger -
-end-to-end proof; their absence with a PASS still proves the loop (see the
-emu notes in the run log).
+final line carries the frames/avg/max numbers. On this esp-emu/IDF 6.3
+combination the run detects the injected utterance end to end - six
+detections in the 12 s window (golden/emu-wakenet-probe.txt) - and the
+remaining `[go] wakenet` lines (boot marks, heap run marks) carry the memory
+ledger.
 
 The P0 smoke build skips llgo entirely (first thing to run on a new
 esp-sr/IDF combination, and the reference for the numbers the Go probe
