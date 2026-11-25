@@ -1,8 +1,6 @@
 package main
 
 import (
-	"time"
-
 	"github.com/xgo-dev/llgo/pkg/esp/ble"
 )
 
@@ -105,9 +103,10 @@ func kbConnectStep(bleSub *ble.Subscription, op ble.OpID) (int, ble.ConnID) {
 	// Time-based deadline: backlog events return from Next instantly, so a
 	// count-based loop can exhaust in under a second without ever seeing
 	// the connect event. Bluedroid connects may also exceed 8 s.
-	connectStart := time.Now()
-	connectDeadline := connectStart.Add(20 * time.Second)
-	for time.Now().Before(connectDeadline) {
+	// (nowMs over time.Now: importing "time" drags reflect -> clite/ffi
+	// into the llgo.idf link, which has no libffi to link against.)
+	connectStart := nowMs()
+	for int32(nowMs()-connectStart) < 20000 {
 		ev, err := bleSub.Next(500)
 		if err != nil {
 			wifiPump()
@@ -124,8 +123,7 @@ func kbConnectStep(bleSub *ble.Subscription, op ble.OpID) (int, ble.ConnID) {
 			return 3, conn
 		}
 	}
-	println(tagl()+"connect timeout waited_ms =",
-		int(time.Since(connectStart).Milliseconds()))
+	println(tagl()+"connect timeout waited_ms =", int(nowMs()-connectStart))
 	return 0, 0
 }
 

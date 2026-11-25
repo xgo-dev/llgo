@@ -16,7 +16,10 @@ const (
 	doutPin  = 56 // I2S DSDIN -> ES8311 DSDIN (DAC data)
 	mclkPin  = 52 // I2S MCLK -> ES8311 MCLK (256 x fs)
 
-	dmaDescNum  = 12 // ~139 ms of jitter absorber at 44.1 kHz
+	dmaDescNum  = 6 // ~69 ms of jitter absorber at 44.1 kHz; 12 costed a
+	// further 12.3 KB of internal SRAM (2 KB per DMA descriptor) - in the
+	// WiFi + classic-BT coexistence budget that memory buys more headroom
+	// than the extra 70 ms of buffering
 	dmaFrameNum = 511
 )
 
