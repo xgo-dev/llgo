@@ -1,0 +1,53 @@
+# Golden for the BLE peripheral + GATT server probe ([go] blep ...) of
+# _demo/esp-idf-ble-periph, captured from an acceptance run (esp-emu v1.2.0,
+# esp32s31, 16 MiB PSRAM, Bluedroid host, host peer
+# idfproj/host/bumble_central.py on 127.0.0.1:9545).
+#
+# Scope: every [go] blep line the probe prints. The [c] lines (the glue's own
+# address/free-heap report and the heap marks) are not part of the golden: the
+# heap byte counts legitimately vary between runs, and the "own address" line
+# reports the address the host-side Bumble controller presents.
+#
+# Floater rule. Everything a `*` replaces is a value that comes from the peer
+# script, from the controller, or from the stack's attribute allocation, not
+# from the probe logic:
+#
+#   conn=                    the ConnID: the controller's connection handle (1
+#                            for the first connection on a Bumble LocalLink)
+#                            packed with this package's generation counter,
+#                            i.e. (generation << 16) | handle - and the
+#                            generation starts at 1, so the first peripheral
+#                            connection reads 65536
+#   addr=, addrtype=         the host peer's central address and its type
+#                            (1 = random static; the Bumble link synthesizes
+#                            it from the peer script's --address)
+#   echo=, notify=, wide=    the attribute handles the stack assigned while
+#                            building the table - Bluedroid numbers every
+#                            attribute the GAP/GATT services left below the
+#                            first declared service, so the values are a
+#                            property of the stack build, not of the probe
+#                            (only the deltas are probe-owned: notify =
+#                            echo + 2, the CCCD sits between them)
+#   reason=                  rendered by DisconnectReasonName: the peer
+#                            script disconnects, so "remote user terminated
+#                            the connection" (0x13)
+[go] blep: start
+[go] blep backend = bluedroid
+[go] blep init ok
+[go] blep security ok
+[go] blep registry svcs=2 chrs=3
+[go] blep commit ok echo=* notify=* wide=*
+[go] blep setvalue ok len=5
+[go] blep adv start op=2
+[go] blep adv ok
+[go] blep peer connected conn=* addr=* addrtype=*
+[go] blep subscribed handle=* cccd=1
+[go] blep write n=1 handle=* len=7 data=ping-00
+[go] blep notify n=1 handle=* len=7
+[go] blep write n=2 handle=* len=7 data=ping-01
+[go] blep notify n=2 handle=* len=7
+[go] blep unsubscribed cccd=0
+[go] blep disconnected conn=* reason=remote user terminated the connection
+[go] blep PASS
+[go] blep deinit ok
+[go] blep done

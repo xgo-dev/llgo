@@ -29,13 +29,22 @@
  *       task executes them on its own context (the pattern NimBLE itself
  *       uses for GAP procedures). The Go side only enqueues and returns.
  *
- * Mailbox design: three single-producer/single-consumer rings.
+ * Mailbox design: four single-producer/single-consumer rings.
  *
- *   ctrl ring  - sync, reset, scan-done, connect, disconnect, GATT procedure
- *                completions, MTU reports, command rejections; 8 slots, no
- *                payload beyond codes. These events are what a program's state
- *                machine depends on, so they never compete with a scan flood
- *                or a notification storm for space.
+ *   ctrl ring  - sync, reset, scan-done, connect, disconnect (both roles),
+ *                GATT procedure completions, advertising and service-
+ *                registration completions, MTU reports, command rejections;
+ *                8 slots, no payload beyond codes and a connect event's peer
+ *                address. These events are what a program's state machine
+ *                depends on, so they never compete with a scan flood or a
+ *                notification storm for space.
+ *   periph ring - what a central does to this device's attributes while we
+ *                serve it: characteristic writes and client-configuration
+ *                (CCCD) writes; 8 slots of connection id + handle + status +
+ *                up to BW_DATA_MAX bytes of payload. Its own ring keeps a
+ *                write flood off the control tier, and the poll drains ctrl
+ *                before periph, so an EV_PERIPH_CONNECT is never left queued
+ *                behind the payload records it makes actionable.
  *   notif ring - notifications and indications; 8 slots of connection handle +
  *                value handle + flags + up to BW_DATA_MAX bytes of payload.
  *                Their own ring keeps them off the control tier.
@@ -83,6 +92,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "esp_system.h"
@@ -111,6 +121,25 @@
  * hands work to the host task. */
 struct ble_npl_eventq *ble_hs_evq_get(void);
 
+#if !MYNEWT_VAL(BLE_GATTS)
+/* This firmware's NimBLE has no GATT server (CONFIG_BT_NIMBLE_GATT_SERVER
+ * off) and the stack library compiles ble_gatts_notify_custom out with it -
+ * while ble_gatts_indicate_custom stays in unconditionally (its own body
+ * refuses under !BLE_GATT_INDICATE). This definition carries the missing
+ * name with the honest refusal: the ABI stays complete for every NimBLE
+ * build shape, and a central-only firmware keeps working exactly as before.
+ * (The mbuf follows the real function's contract: the caller releases
+ * ownership.) */
+int ble_gatts_notify_custom(uint16_t conn_handle, uint16_t chr_val_handle,
+                            struct os_mbuf *txom)
+{
+    (void)conn_handle;
+    (void)chr_val_handle;
+    os_mbuf_free_chain(txom);
+    return BLE_HS_ENOTSUP;
+}
+#endif /* !MYNEWT_VAL(BLE_GATTS) */
+
 /* ---- mailbox ---- */
 
 enum {
@@ -127,6 +156,12 @@ enum {
     EV_WRITE_DONE = 10, /* a write finished */
     EV_NOTIFY = 11,    /* one notification or indication */
     EV_MTU = 12,       /* the negotiated ATT MTU changed */
+    EV_PERIPH_CONNECT = 13,    /* a central connected to our advertisement */
+    EV_PERIPH_DISCONNECT = 14, /* a served connection ended */
+    EV_CHAR_WRITE = 15,        /* a peer wrote a characteristic value */
+    EV_SUBSCRIBED = 16,        /* a peer wrote a CCCD; status = its value */
+    EV_ADV_DONE = 17,          /* a Start/StopAdvertising completed */
+    EV_SERVICES_DONE = 18,     /* the local GATT server registration finished */
     EV_OVERFLOW = -1,
 };
 
@@ -196,6 +231,9 @@ typedef struct {
     uint32_t op_id;
     uint32_t conn_id;
     int32_t status;
+    uint8_t addr[6];     /* the peer address an EV_PERIPH_CONNECT carries;
+                          * zero for every other kind */
+    uint8_t addr_type;
 } bw_ctrl_t;
 
 typedef struct {
@@ -240,9 +278,164 @@ typedef struct {
 } bw_notif_t;
 
 static bw_notif_t s_notif[BW_NOTIF_SLOTS];
-static uint32_t s_notif_wr, s_notif_rd; /* wr: producer-owned, rd: consumer-owned */
+static uint32_t s_notif_wr, s_notif_rd; /* wr: producer-owned (host task), rd: consumer-owned */
 static uint32_t s_notif_dropped;        /* producer-owned */
 static uint32_t s_notif_dropped_seen;   /* consumer-owned */
+
+/* The peripheral tier: what a central does to this device's attributes -
+ * characteristic writes and client-configuration (CCCD) writes. Its own ring
+ * keeps a write flood off the control tier (and off the notification ring,
+ * so a central and a peripheral peer cannot displace each other's payloads).
+ * Only the host task writes it: the access callback and the GAP subscribe
+ * event both run there. */
+#define BW_PERIPH_SLOTS 8
+
+typedef struct {
+    int32_t kind;        /* EV_CHAR_WRITE or EV_SUBSCRIBED */
+    uint16_t conn_handle;
+    uint16_t attr_handle;
+    int32_t status;      /* EV_SUBSCRIBED: the raw CCCD value; EV_CHAR_WRITE: 0 */
+    uint8_t len;
+    uint8_t data[BW_DATA_MAX];
+} bw_periph_t;
+
+static bw_periph_t s_periph[BW_PERIPH_SLOTS];
+static uint32_t s_periph_wr, s_periph_rd; /* wr: producer-owned (host task), rd: consumer-owned */
+static uint32_t s_periph_dropped;         /* producer-owned */
+static uint32_t s_periph_dropped_seen;    /* consumer-owned */
+
+/* Copies one peer action into the peripheral ring. The mbuf dies with the
+ * access callback, so the copy has to happen here; a payload larger than one
+ * slot is dropped whole (never truncated) and counted in the mailbox's
+ * overflow report. */
+static void bw_periph_push(int32_t kind, uint16_t conn_handle, uint16_t attr_handle,
+                           int32_t status, const uint8_t *value, uint16_t value_len)
+{
+    uint32_t w = s_periph_wr;                    /* producer-owned */
+    if ((uint32_t)(w - BW_ACQUIRE(s_periph_rd)) >= BW_PERIPH_SLOTS) {
+        __atomic_store_n(&s_periph_dropped, s_periph_dropped + 1, __ATOMIC_RELAXED);
+        return;
+    }
+    if (value_len > BW_DATA_MAX) {
+        __atomic_store_n(&s_periph_dropped, s_periph_dropped + 1, __ATOMIC_RELAXED);
+        return;
+    }
+    bw_periph_t *slot = &s_periph[w & (BW_PERIPH_SLOTS - 1)];
+    slot->kind = kind;
+    slot->conn_handle = conn_handle;
+    slot->attr_handle = attr_handle;
+    slot->status = status;
+    slot->len = (uint8_t)value_len;
+    if (value_len > 0 && value != NULL) {
+        memcpy(slot->data, value, value_len);
+    }
+    BW_PUBLISH(s_periph_wr, w + 1);              /* release: the slot is now visible */
+}
+
+/* ---- peripheral role: advertising, the local GATT server ----
+ *
+ * The same boundary rules as the central half, mirrored. The value model is
+ * the read answer: every characteristic owns a fixed value cache in this
+ * glue, the access callback (host task) answers a peer read straight from it
+ * - no Go involvement, no deferred response, because the ATT server must
+ * answer synchronously and the llgo scheduler cannot be entered from the
+ * host task. WriteCharValue fills the same cache from the Go task; the copy
+ * runs under the gatts critical section below, which is what keeps a cache
+ * write and a read the host task is serving serialized.
+ *
+ * Advertising is the legacy procedure set (raw advertising and scan-response
+ * payloads + start/stop), matching the scan path's legacy-only scope.
+ */
+
+/* Advertising state. The payloads live in static buffers: the Go task copies
+ * them in at submission, and the host task (which owns the gap procedure)
+ * hands the same buffers to ble_gap_adv_set_data when the command runs.
+ * s_adv_op owns the one start/stop operation in flight - the Go side refuses
+ * a second one with BLE_HS_EALREADY, so no claim protocol is needed here. */
+static uint8_t s_adv_data[BW_ADV_MAX];
+static uint16_t s_adv_data_len;
+static uint8_t s_scan_rsp[BW_ADV_MAX];
+static uint16_t s_scan_rsp_len;
+static uint8_t s_adv_conn;    /* connectable advertisement */
+static uint8_t s_adv_running;
+static uint16_t s_adv_itvl_ms;
+static uint32_t s_adv_op;
+
+/* The local GATT server: the declaration the Go side serialized once (the
+ * staging below), the attribute handles NimBLE assigned at registration (the
+ * tree's val_handle pointers aim straight into these records), and one value
+ * cache per characteristic. MaxLocalServices/MaxLocalChars in ble.go are
+ * these two bounds. */
+#define BW_GSVC_MAX 4
+#define BW_GCHR_MAX 8
+
+/* The declaration as the wire carries it (llgo_ble_gsvc_t / llgo_ble_gchr_t;
+ * the Go side mirrors them byte for byte, pinned by ble_test.go). */
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t _pad;
+    uint16_t n_chars;
+} llgo_ble_gsvc_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+} llgo_ble_gchr_t;
+
+_Static_assert(sizeof(llgo_ble_gsvc_t) == 20, "llgo_ble_gsvc_t ABI drifted");
+_Static_assert(__builtin_offsetof(llgo_ble_gsvc_t, n_chars) == 18, "gsvc n_chars offset");
+_Static_assert(sizeof(llgo_ble_gchr_t) == 18, "llgo_ble_gchr_t ABI drifted");
+_Static_assert(__builtin_offsetof(llgo_ble_gchr_t, props) == 17, "gchr props offset");
+
+/* The Go task fills the staging at llgo_ble_gatts_declare; the host task
+ * builds the ble_gatt_svc_def tree from it when the command runs. One writer
+ * per side, ordered by the command ring's release/acquire - the same shape
+ * as the write staging above. */
+static llgo_ble_gsvc_t s_decl_svcs[BW_GSVC_MAX];
+static int32_t s_decl_svc_n;
+static llgo_ble_gchr_t s_decl_chrs[BW_GCHR_MAX];
+static int32_t s_decl_chr_n;
+static uint32_t s_gatts_op;      /* the commit's operation id */
+static uint8_t s_gatts_declared; /* the attribute table is live */
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+    uint8_t subs;         /* the CCCD's current value (bit0 notify, bit1
+                           * indicate): what the SUBSCRIBE event reports */
+    uint16_t handle;      /* the value attribute handle, filled by NimBLE at
+                           * registration through the tree's val_handle */
+    uint16_t cccd_handle; /* value handle + 1: NimBLE places the auto CCCD
+                           * right after the value attribute */
+    uint16_t value_len;
+    uint8_t value[BW_DATA_MAX];
+} bw_gchr_t;
+
+static bw_gchr_t s_gchrs[BW_GCHR_MAX];
+static int32_t s_gchr_n;
+static uint8_t s_gatts_building; /* a registration is in flight */
+
+/* The critical section guarding the value caches and the CCCD states: the Go
+ * task writes them (llgo_ble_gatts_value), the host task reads and writes
+ * them (the access callback). Short memcpys only. */
+static portMUX_TYPE s_gatts_mux = portMUX_INITIALIZER_UNLOCKED;
+#define BW_GATTS_LOCK()   taskENTER_CRITICAL(&s_gatts_mux)
+#define BW_GATTS_UNLOCK() taskEXIT_CRITICAL(&s_gatts_mux)
+
+/* The ble_gatt_svc_def tree NimBLE registers, built once per commit, wholly
+ * static: the service and characteristic definition arrays, and the UUID
+ * storage the definitions point into. */
+static struct ble_gatt_svc_def s_gatt_defs[BW_GSVC_MAX + 1];
+/* One zeroed terminator per service: the services' characteristic arrays are
+ * slices of this one array, and each slice must end in its own zero entry or
+ * the next service's first characteristic reads as a continuation. */
+static struct ble_gatt_chr_def s_gatt_chrs[BW_GCHR_MAX + BW_GSVC_MAX];
+static ble_uuid16_t s_gatt_uuid16[BW_GSVC_MAX + BW_GCHR_MAX];
+static ble_uuid128_t s_gatt_uuid128[BW_GSVC_MAX + BW_GCHR_MAX];
+static int32_t s_gatt_uuid16_n, s_gatt_uuid128_n;
 
 /* GATT client state. One procedure runs at a time (the Go side serializes
  * them; NIMBLE's ATT bearer carries one outstanding request anyway), so the
@@ -293,21 +486,40 @@ static uint16_t s_read_len;
 static uint8_t s_wr_data[BW_DATA_MAX];
 static uint16_t s_wr_len;
 
+/* The payload of a server-side notification being submitted (CMD_GATTS_NOTIFY).
+ * Copied out of Go memory at submission; the host task reads it after
+ * acquiring the command's index - the same ownership pattern as s_wr_data. */
+static uint8_t s_push_data[BW_DATA_MAX];
+static uint16_t s_push_len;
+
 /* Written by the host task only (GAP callbacks and the command handler). */
 static volatile int s_inited, s_synced;
 static uint8_t s_own_type;
 static uint32_t s_disc_op; /* op id of the running discovery, 0 = none */
 static uint32_t s_conn_op; /* op id of the running connect attempt, 0 = none */
 
-static void bw_ctrl_push(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status)
+/* The address-carrying form, for the peripheral connect event. addr may be
+ * NULL; the plain form delegates here with a NULL addr. */
+static void bw_ctrl_push_addr(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status,
+                              const uint8_t *addr, uint8_t addr_type)
 {
     uint32_t w = s_ctrl_wr;                      /* producer-owned */
     if ((uint32_t)(w - BW_ACQUIRE(s_ctrl_rd)) >= BW_CTRL_SLOTS) {
         __atomic_store_n(&s_ctrl_dropped, s_ctrl_dropped + 1, __ATOMIC_RELAXED);
         return;
     }
-    s_ctrl[w & (BW_CTRL_SLOTS - 1)] = (bw_ctrl_t){ kind, op_id, conn_id, status };
+    s_ctrl[w & (BW_CTRL_SLOTS - 1)] = (bw_ctrl_t){ kind, op_id, conn_id, status,
+                                                   {0, 0, 0, 0, 0, 0}, 0 };
+    if (addr != NULL) {
+        memcpy(s_ctrl[w & (BW_CTRL_SLOTS - 1)].addr, addr, 6);
+        s_ctrl[w & (BW_CTRL_SLOTS - 1)].addr_type = addr_type;
+    }
     BW_PUBLISH(s_ctrl_wr, w + 1);                /* release: the slot is now visible */
+}
+
+static void bw_ctrl_push(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status)
+{
+    bw_ctrl_push_addr(kind, op_id, conn_id, status, NULL, 0);
 }
 
 static void bw_adv_push(const uint8_t *addr, uint8_t addr_type, int8_t rssi,
@@ -469,6 +681,82 @@ static uint32_t bw_conn_id_of(uint16_t handle)
     return handle;
 }
 
+/* ---- peripheral connections: handle + generation ----
+ *
+ * The same packing and the same shared generation counter as the central
+ * table, over the connections NimBLE's advertising accepted. Both roles can
+ * run in one firmware; each connection lives in exactly one table. */
+
+#define BW_PCONN_MAX 2
+
+typedef struct {
+    uint8_t used;
+    uint32_t gen;
+    uint16_t handle;
+} bw_pconn_t;
+
+static bw_pconn_t s_pconns[BW_PCONN_MAX];
+
+static uint32_t bw_pconn_add(uint16_t handle)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (!s_pconns[i].used) {
+            s_pconns[i].used = 1;
+            s_pconns[i].handle = handle;
+            s_pconns[i].gen = ++s_conn_gen;
+            return (s_pconns[i].gen << 16) | handle;
+        }
+    }
+    return 0;
+}
+
+static uint32_t bw_pconn_remove(uint16_t handle)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].handle == handle) {
+            uint32_t id = (s_pconns[i].gen << 16) | handle;
+            s_pconns[i].used = 0;
+            return id;
+        }
+    }
+    return handle;
+}
+
+static int bw_pconn_find(uint32_t conn_id)
+{
+    uint16_t handle = (uint16_t)(conn_id & 0xFFFF);
+    uint32_t gen = conn_id >> 16;
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].handle == handle && s_pconns[i].gen == gen) {
+            return (int)handle;
+        }
+    }
+    return -1;
+}
+
+/* The packed id a live handle is registered under, for the peripheral
+ * payload records (writes, subscriptions) that carry a bare handle - same
+ * shape and same visibility contract as bw_conn_id_of. */
+static uint32_t bw_pconn_id_of(uint16_t handle)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].handle == handle) {
+            return (s_pconns[i].gen << 16) | handle;
+        }
+    }
+    return handle;
+}
+
+static int s_pconn_any(void)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ---- GATT procedure context (host task) ---- */
 
 static void bw_gop_begin(uint8_t kind, uint32_t op_id, uint32_t conn_id)
@@ -503,6 +791,174 @@ static void bw_gop_submit_failed(int rc)
 {
     if (s_gop.active) {
         bw_gop_done(EV_ERROR, rc);
+    }
+}
+
+/* ---- peripheral callbacks (host task context) ---- */
+
+/* The gap event handler of the advertisement. Registered by CMD_ADV_START,
+ * it sees only the connections the advertisement accepted - the central
+ * side's procedures run through bw_on_gap below, so the two roles never
+ * share a callback's conn table. */
+static int bw_on_gap_periph(struct ble_gap_event *ev, void *arg)
+{
+    (void)arg;
+    switch (ev->type) {
+    case BLE_GAP_EVENT_CONNECT: {
+        /* A connectable advertisement's life ends here; a StopAdvertising
+         * after this reports its refusal honestly through EV_ADV_DONE. */
+        s_adv_running = 0;
+        if (ev->connect.status != 0) {
+            return 0;
+        }
+        uint32_t id = bw_pconn_add(ev->connect.conn_handle);
+        if (id == 0) {
+            /* Connection table full: drop the link rather than serve a
+             * connection the application cannot address. */
+            ble_gap_terminate(ev->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            return 0;
+        }
+        static struct ble_gap_conn_desc s_conn_desc; /* host task only */
+        if (ble_gap_conn_find(ev->connect.conn_handle, &s_conn_desc) == 0) {
+            bw_ctrl_push_addr(EV_PERIPH_CONNECT, 0, id, 0,
+                              s_conn_desc.peer_id_addr.val,
+                              s_conn_desc.peer_id_addr.type);
+        } else {
+            bw_ctrl_push_addr(EV_PERIPH_CONNECT, 0, id, 0, NULL, 0);
+        }
+        return 0;
+    }
+    case BLE_GAP_EVENT_DISCONNECT: {
+        uint32_t id = bw_pconn_remove(ev->disconnect.conn.conn_handle);
+        BW_GATTS_LOCK();
+        for (int i = 0; i < s_gchr_n; i++) {
+            s_gchrs[i].subs = 0;
+        }
+        BW_GATTS_UNLOCK();
+        bw_ctrl_push(EV_PERIPH_DISCONNECT, 0, id, ev->disconnect.reason);
+        return 0;
+    }
+    case BLE_GAP_EVENT_SUBSCRIBE: {
+        /* The CCCD gate of a notify/indicate characteristic. NimBLE manages
+         * the descriptor itself (the access callback never sees its writes);
+         * attr_handle is the characteristic's value handle - exactly what
+         * EvSubscribed carries. */
+        int idx = -1;
+        for (int i = 0; i < s_gchr_n; i++) {
+            if (s_gchrs[i].handle == ev->subscribe.attr_handle) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            return 0;
+        }
+        uint8_t cccd = (uint8_t)((ev->subscribe.cur_notify ? 1 : 0) |
+                                 (ev->subscribe.cur_indicate ? 2 : 0));
+        BW_GATTS_LOCK();
+        s_gchrs[idx].subs = cccd;
+        BW_GATTS_UNLOCK();
+        bw_periph_push(EV_SUBSCRIBED, ev->subscribe.conn_handle,
+                       ev->subscribe.attr_handle, (int32_t)cccd, NULL, 0);
+        return 0;
+    }
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        s_adv_running = 0;
+        return 0;
+    default:
+        /* MTU (the exchange the central starts is answered inside the stack),
+         * PHY updates, ... - nothing here carries a record the package's
+         * surface needs. */
+        return 0;
+    }
+}
+
+/* The access callback of every characteristic the tree declares. arg is the
+ * characteristic's table index; reads are answered from the value cache
+ * synchronously, writes land in the cache (and the peripheral ring) under
+ * the gatts critical section. NimBLE chunks long reads itself, so the
+ * callback only ever hands out the whole cached value. */
+static int bw_gatts_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctx, void *arg)
+{
+    int idx = (int)(intptr_t)arg;
+    if (idx < 0 || idx >= s_gchr_n || s_gchrs[idx].handle != attr_handle) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    if (ctx->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        BW_GATTS_LOCK();
+        uint16_t len = s_gchrs[idx].value_len;
+        int rc = os_mbuf_append(ctx->om, s_gchrs[idx].value, len);
+        BW_GATTS_UNLOCK();
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    if (ctx->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        if (OS_MBUF_PKTLEN(ctx->om) > BW_DATA_MAX) {
+            /* Truncation would invent data; the ATT error is the honest
+             * refusal (the Go-side bound is the same BW_DATA_MAX). */
+            return BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        static uint8_t s_write_buf[BW_DATA_MAX]; /* host task only */
+        uint16_t len = 0;
+        int rc = ble_hs_mbuf_to_flat(ctx->om, s_write_buf, BW_DATA_MAX, &len);
+        if (rc != 0) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        BW_GATTS_LOCK();
+        memcpy(s_gchrs[idx].value, s_write_buf, len);
+        s_gchrs[idx].value_len = len;
+        BW_GATTS_UNLOCK();
+        bw_periph_push(EV_CHAR_WRITE, conn_handle, attr_handle, 0, s_write_buf, len);
+        return 0;
+    }
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+/* The attribute table NimBLE registers: the ble_gatt_svc_def tree built from
+ * the declaration staging, wholly static - the service and characteristic
+ * definition arrays, the UUID storage they point into, and the zero
+ * terminators the memset below provides. */
+static const ble_uuid_t *bw_gatt_uuid_of(uint8_t len, const uint8_t *bytes)
+{
+    if (len == 2) {
+        ble_uuid16_t *u = &s_gatt_uuid16[s_gatt_uuid16_n++];
+        u->u.type = BLE_UUID_TYPE_16;
+        u->value = (uint16_t)(bytes[0] | (bytes[1] << 8));
+        return (const ble_uuid_t *)u;
+    }
+    ble_uuid128_t *u = &s_gatt_uuid128[s_gatt_uuid128_n++];
+    u->u.type = BLE_UUID_TYPE_128;
+    memcpy(u->value, bytes, 16); /* NimBLE keeps the wire byte order */
+    return (const ble_uuid_t *)u;
+}
+
+static void bw_gatts_build_tree(void)
+{
+    memset(s_gatt_defs, 0, sizeof s_gatt_defs);
+    memset(s_gatt_chrs, 0, sizeof s_gatt_chrs);
+    s_gatt_uuid16_n = 0;
+    s_gatt_uuid128_n = 0;
+    int32_t ci = 0;
+    int32_t chr_out = 0;
+    for (int32_t i = 0; i < s_decl_svc_n; i++) {
+        struct ble_gatt_svc_def *svc = &s_gatt_defs[i];
+        svc->type = BLE_GATT_SVC_TYPE_PRIMARY;
+        svc->uuid = bw_gatt_uuid_of(s_decl_svcs[i].uuid_len, s_decl_svcs[i].uuid);
+        svc->characteristics = &s_gatt_chrs[chr_out];
+        for (int32_t k = 0; k < (int32_t)s_decl_svcs[i].n_chars; k++, chr_out++, ci++) {
+            struct ble_gatt_chr_def *chr = &s_gatt_chrs[chr_out];
+            chr->uuid = bw_gatt_uuid_of(s_decl_chrs[ci].uuid_len, s_decl_chrs[ci].uuid);
+            chr->access_cb = bw_gatts_access;
+            /* arg and val_handle key on the REGISTRY index (ci): the
+             * definition array carries per-service terminator gaps the
+             * registry does not have. NimBLE fills the assigned value handle
+             * right here, through the definition - the same record
+             * llgo_ble_gatts_attr reads. */
+            chr->arg = (void *)(intptr_t)ci;
+            chr->flags = s_decl_chrs[ci].props; /* the ATT bits are NimBLE's flags */
+            chr->val_handle = &s_gchrs[ci].handle;
+        }
+        chr_out++; /* this service's slice ends in the memset-zeroed entry */
     }
 }
 
@@ -611,6 +1067,11 @@ enum {
     CMD_DISC_CHRS = 7,
     CMD_READ = 8,
     CMD_WRITE = 9,
+    CMD_ADV_START = 10,
+    CMD_ADV_STOP = 11,
+    CMD_GATTS_DECLARE = 12,
+    CMD_GATTS_NOTIFY = 13,
+    CMD_GATTS_CLOSE = 14,
 };
 
 #define BW_CMD_SLOTS 4
@@ -631,6 +1092,7 @@ typedef struct {
     uint16_t start_handle; /* service range of a characteristic discovery */
     uint16_t end_handle;
     uint8_t write_mode; /* BW_WRITE_* */
+    uint8_t indicate;   /* CMD_GATTS_NOTIFY: indication, not notification */
 } bw_cmd_t;
 
 /* The ATT write procedures: the Go side picks one from the characteristic's
@@ -907,6 +1369,134 @@ static void bw_exec(const bw_cmd_t *c)
         }
         break;
     }
+    case CMD_ADV_START: {
+        struct ble_gap_adv_params ap;
+        memset(&ap, 0, sizeof ap);
+        ap.conn_mode = s_adv_conn ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON;
+        ap.disc_mode = BLE_GAP_DISC_MODE_GEN;
+        uint32_t itvl = ((uint32_t)s_adv_itvl_ms * 8) / 5; /* 0.625 ms units */
+        if (itvl < 32) {
+            itvl = 32; /* 20 ms, the legacy minimum */
+        }
+        if (itvl > 16384) {
+            itvl = 16384; /* 10.24 s, the legacy maximum */
+        }
+        ap.itvl_min = (uint16_t)itvl;
+        ap.itvl_max = (uint16_t)itvl;
+        int rc = ble_gap_adv_set_data(s_adv_data, (int)s_adv_data_len);
+        if (rc == 0 && s_scan_rsp_len > 0) {
+            rc = ble_gap_adv_rsp_set_data(s_scan_rsp, (int)s_scan_rsp_len);
+        }
+        if (rc == 0) {
+            /* The advertisement runs until StopAdvertising or a connection;
+             * the Go side carries no duration - an expiry would be a silent
+             * end, and nothing in the API documents one. */
+            rc = ble_gap_adv_start(s_own_type, NULL, BLE_HS_FOREVER, &ap,
+                                   bw_on_gap_periph, NULL);
+        }
+        s_adv_running = rc == 0;
+        bw_ctrl_push(EV_ADV_DONE, c->op_id, 0, rc);
+        break;
+    }
+    case CMD_ADV_STOP:
+        /* Nothing advertising (never started, or a connect ended it): the
+         * operation completes here rather than dangling. */
+        bw_ctrl_push(EV_ADV_DONE, c->op_id, 0,
+                     s_adv_running ? ble_gap_adv_stop() : BLE_HS_EINVAL);
+        s_adv_running = 0;
+        break;
+    case CMD_GATTS_DECLARE: {
+        /* A connected peer or a running advertisement would have attributes
+         * pulled out from under it. One registration at a time is the Go
+         * side's s_gatts_building flag (set at submission); checking it here
+         * too would trip on this very command. */
+        int rc = 0;
+        if (s_pconn_any() || s_adv_running) {
+            rc = BLE_HS_EBUSY;
+        } else {
+            s_gatts_building = 1;
+            s_gchr_n = 0;
+            bw_gatts_build_tree();
+            /* Fresh value caches: the declaration is the only writer until a
+             * peer (or WriteCharValue) touches them. */
+            for (int32_t i = 0; i < s_decl_chr_n; i++) {
+                s_gchrs[i].value_len = 0;
+                s_gchrs[i].handle = 0;
+                s_gchrs[i].subs = 0;
+                s_gchrs[i].cccd_handle = 0;
+            }
+            s_gchr_n = s_decl_chr_n;
+#if MYNEWT_VAL(BLE_DYNAMIC_SERVICE)
+            /* Synchronous: NimBLE registers the tree (and fills the val
+             * handles through the definitions) before returning. This is the
+             * one after-sync registration entry point the host offers; a
+             * firmware without the option refuses the commit here instead of
+             * pretending. */
+            rc = ble_gatts_add_dynamic_svcs(s_gatt_defs);
+#else
+            rc = BLE_HS_ENOTSUP; /* firmware lacks CONFIG_BT_NIMBLE_DYNAMIC_SERVICE */
+#endif
+            if (rc == 0) {
+                s_gatts_declared = 1;
+                /* NimBLE places the auto-added CCCD right after the value
+                 * attribute - the layout the GATT specification mandates. */
+                for (int32_t i = 0; i < s_gchr_n; i++) {
+                    if (s_gchrs[i].props & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) {
+                        s_gchrs[i].cccd_handle = (uint16_t)(s_gchrs[i].handle + 1);
+                    }
+                }
+            }
+            s_gatts_building = 0;
+        }
+        bw_ctrl_push(EV_SERVICES_DONE, c->op_id, 0, rc);
+        break;
+    }
+    case CMD_GATTS_NOTIFY: {
+        int handle = bw_pconn_find(c->conn_id);
+        if (handle < 0) {
+            bw_ctrl_push(EV_ERROR, c->op_id, c->conn_id, BLE_HS_ENOENT);
+            break;
+        }
+        int rc;
+        if (c->indicate) {
+#if MYNEWT_VAL(BLE_GATTS)
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(s_push_data, s_push_len);
+            if (om == NULL) {
+                bw_ctrl_push(EV_ERROR, c->op_id, c->conn_id, BLE_HS_ENOMEM);
+                break;
+            }
+            rc = ble_gatts_indicate_custom((uint16_t)handle, c->att_handle, om);
+#else
+            /* No GATT server in this firmware: the real entry point would
+             * pull the ATT server's internals into the link. The refusal is
+             * the observable the fallback path would have produced. */
+            rc = BLE_HS_ENOTSUP;
+#endif
+        } else {
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(s_push_data, s_push_len);
+            if (om == NULL) {
+                bw_ctrl_push(EV_ERROR, c->op_id, c->conn_id, BLE_HS_ENOMEM);
+                break;
+            }
+            rc = ble_gatts_notify_custom((uint16_t)handle, c->att_handle, om);
+        }
+        if (rc != 0) {
+            bw_ctrl_push(EV_ERROR, c->op_id, c->conn_id, rc);
+        }
+        break;
+    }
+    case CMD_GATTS_CLOSE: {
+        int handle = bw_pconn_find(c->conn_id);
+        if (handle < 0) {
+            bw_ctrl_push(EV_ERROR, 0, c->conn_id, BLE_HS_ENOENT);
+        } else {
+            int rc = ble_gap_terminate((uint16_t)handle, BLE_ERR_REM_USER_CONN_TERM);
+            if (rc != 0) {
+                bw_ctrl_push(EV_ERROR, 0, c->conn_id, rc);
+            }
+        }
+        break;
+    }
     default:
         break;
     }
@@ -994,6 +1584,20 @@ int32_t llgo_ble_deinit(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_inited = 0;
+    /* The peripheral half's in-flight state: an advertising operation or a
+     * service registration that never completed has no stack left to complete
+     * on, the connections are gone, and a fresh Init must not inherit them. */
+    s_adv_op = 0;
+    s_adv_running = 0;
+    s_gatts_op = 0;
+    s_gatts_building = 0;
+    s_gatts_declared = 0;
+    s_decl_svc_n = 0;
+    s_decl_chr_n = 0;
+    s_gchr_n = 0;
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        s_pconns[i].used = 0;
+    }
     /* nimble_port_stop posts the stop event and waits for the host task to
      * service it; it must run on a task other than the host task (the Go
      * task), which is why the shutdown is a documented blocking call. */
@@ -1058,15 +1662,18 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
     uint32_t ctrl_d = BW_ACQUIRE(s_ctrl_dropped);
     uint32_t adv_d = BW_ACQUIRE(s_adv_dropped);
     uint32_t notif_d = BW_ACQUIRE(s_notif_dropped);
+    uint32_t periph_d = BW_ACQUIRE(s_periph_dropped);
     if (ctrl_d != s_ctrl_dropped_seen || adv_d != s_adv_dropped_seen ||
-        notif_d != s_notif_dropped_seen) {
+        notif_d != s_notif_dropped_seen || periph_d != s_periph_dropped_seen) {
         out->kind = EV_OVERFLOW;
         out->status = (int32_t)((ctrl_d - s_ctrl_dropped_seen) +
                                 (adv_d - s_adv_dropped_seen) +
-                                (notif_d - s_notif_dropped_seen));
+                                (notif_d - s_notif_dropped_seen) +
+                                (periph_d - s_periph_dropped_seen));
         s_ctrl_dropped_seen = ctrl_d;
         s_adv_dropped_seen = adv_d;
         s_notif_dropped_seen = notif_d;
+        s_periph_dropped_seen = periph_d;
         return 1;
     }
 
@@ -1078,6 +1685,13 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
         out->op_id = c.op_id;
         out->conn_id = c.conn_id;
         out->status = c.status;
+        if (c.kind == EV_PERIPH_CONNECT) {
+            /* The peer address of a peripheral connect: filled by the
+             * producer before the release publish, visible after the
+             * acquire above - the rings' standing contract. */
+            memcpy(out->addr, c.addr, 6);
+            out->addr_type = c.addr_type;
+        }
         if (c.kind == EV_READ_DONE && c.status == 0) {
             /* The value of the read: the callback filled s_read_data/s_read_len
              * before release-publishing this record, so the acquire above is
@@ -1090,6 +1704,23 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
             memcpy(out->data, s_read_data, len);
             out->data_len = (uint8_t)len;
         }
+        return 1;
+    }
+
+    if (BW_ACQUIRE(s_periph_wr) != s_periph_rd) {
+        /* The peripheral tier, drained right after the control tier: a peer
+         * action is actionable exactly when its connection record has been
+         * seen, so it outranks the central-side payload tiers. Read in place
+         * like the notification ring - a local copy would put a whole slot on
+         * the Go task's (fiber) stack. */
+        const bw_periph_t *p = &s_periph[s_periph_rd & (BW_PERIPH_SLOTS - 1)];
+        out->kind = p->kind;
+        out->conn_id = bw_pconn_id_of(p->conn_handle);
+        out->att_handle = p->attr_handle;
+        out->status = p->status;
+        out->data_len = p->len;
+        memcpy(out->data, p->data, p->len);
+        BW_PUBLISH(s_periph_rd, s_periph_rd + 1); /* release: the slot is free again */
         return 1;
     }
 
@@ -1360,6 +1991,231 @@ int32_t llgo_ble_mtu(uint32_t conn_id, int32_t *out)
     return 0;
 }
 
+/* ---- peripheral (Go task) ----
+ *
+ * Same contract as the central commands: 0 means the command was accepted
+ * into the host queue and the outcome arrives through the mailbox
+ * (EV_ADV_DONE, EV_SERVICES_DONE; a send the stack refused after queueing
+ * arrives as EV_ERROR). The value-cache write and the accessors run on the
+ * Go task against host-task-published state, under the gatts critical
+ * section. */
+
+int32_t llgo_ble_adv_start(const uint8_t *adv, int32_t adv_len, const uint8_t *rsp,
+                           int32_t rsp_len, int32_t itvl_ms, int32_t connectable,
+                           uint32_t op_id)
+{
+    bw_cmd_t c;
+    if (adv_len < 0 || adv_len > BW_ADV_MAX || rsp_len < 0 || rsp_len > BW_ADV_MAX) {
+        return BLE_HS_EMSGSIZE;
+    }
+    if ((adv_len > 0 && adv == NULL) || (rsp_len > 0 && rsp == NULL)) {
+        return BLE_HS_EINVAL;
+    }
+    if (itvl_ms <= 0) {
+        itvl_ms = 100;
+    }
+    if (itvl_ms < 20) {
+        itvl_ms = 20;
+    }
+    if (itvl_ms > 10240) {
+        itvl_ms = 10240;
+    }
+    if (s_adv_op != 0) {
+        return BLE_HS_EALREADY; /* one advertisement lifecycle at a time */
+    }
+    s_adv_op = op_id;
+    memcpy(s_adv_data, adv, (size_t)adv_len);
+    s_adv_data_len = (uint16_t)adv_len;
+    memcpy(s_scan_rsp, rsp, (size_t)rsp_len);
+    s_scan_rsp_len = (uint16_t)rsp_len;
+    s_adv_conn = connectable ? 1 : 0;
+    s_adv_itvl_ms = (uint16_t)itvl_ms;
+    memset(&c, 0, sizeof c);
+    c.op = CMD_ADV_START;
+    c.op_id = op_id;
+    int32_t rc = bw_submit(&c);
+    if (rc != 0) {
+        s_adv_op = 0;
+    }
+    return rc;
+}
+
+int32_t llgo_ble_adv_stop(uint32_t op_id)
+{
+    bw_cmd_t c;
+    if (s_adv_op != 0) {
+        return BLE_HS_EALREADY;
+    }
+    s_adv_op = op_id;
+    memset(&c, 0, sizeof c);
+    c.op = CMD_ADV_STOP;
+    c.op_id = op_id;
+    int32_t rc = bw_submit(&c);
+    if (rc != 0) {
+        s_adv_op = 0;
+    }
+    return rc;
+}
+
+int32_t llgo_ble_gatts_declare(const llgo_ble_gsvc_t *svcs, int32_t nsvc,
+                               const llgo_ble_gchr_t *chrs, int32_t nchr, uint32_t op_id)
+{
+    bw_cmd_t c;
+    if (svcs == NULL || chrs == NULL || nsvc <= 0 || nchr <= 0 ||
+        nsvc > BW_GSVC_MAX || nchr > BW_GCHR_MAX) {
+        return BLE_HS_EINVAL;
+    }
+    if (s_gatts_declared || s_gatts_building) {
+        /* The attribute table is built once per Init; rebuilding is a
+         * Deinit-and-restart operation (the Go side refuses a second commit
+         * the same way). */
+        return BLE_HS_EALREADY;
+    }
+    /* Serialize the declaration into the staging tables - the host task
+     * builds the registration tree from them when the command runs. The
+     * flat-array consistency check mirrors the Go side's own. */
+    s_decl_svc_n = 0;
+    s_decl_chr_n = 0;
+    int32_t ci = 0;
+    for (int32_t i = 0; i < nsvc; i++) {
+        if (s_decl_chr_n + (int32_t)svcs[i].n_chars > nchr) {
+            return BLE_HS_EINVAL;
+        }
+        s_decl_svcs[s_decl_svc_n++] = svcs[i];
+        for (int32_t k = 0; k < (int32_t)svcs[i].n_chars; k++, ci++) {
+            s_decl_chrs[s_decl_chr_n++] = chrs[ci];
+        }
+    }
+    if (ci != nchr) {
+        s_decl_svc_n = 0;
+        s_decl_chr_n = 0;
+        return BLE_HS_EINVAL;
+    }
+    s_gatts_building = 1;
+    memset(&c, 0, sizeof c);
+    c.op = CMD_GATTS_DECLARE;
+    c.op_id = op_id;
+    int32_t rc = bw_submit(&c);
+    if (rc != 0) {
+        s_gatts_building = 0;
+        s_decl_svc_n = 0;
+        s_decl_chr_n = 0;
+    }
+    return rc;
+}
+
+int32_t llgo_ble_gatts_attr(int32_t idx, uint16_t *out)
+{
+    if (out == NULL || idx < 0 || idx >= s_gchr_n) {
+        return 0;
+    }
+    *out = s_gchrs[idx].handle;
+    return 1;
+}
+
+/* Replaces a characteristic's cached value (WriteCharValue): the copy runs
+ * under the gatts critical section against the read the host task may be
+ * answering from the same cache right now. */
+int32_t llgo_ble_gatts_value(uint16_t handle, const uint8_t *data, int32_t len)
+{
+    if (handle == 0 || len < 0 || (len > 0 && data == NULL)) {
+        return BLE_HS_EINVAL;
+    }
+    if (len > BW_DATA_MAX) {
+        return BLE_HS_EMSGSIZE;
+    }
+    int idx = -1;
+    for (int i = 0; i < s_gchr_n; i++) {
+        if (s_gchrs[i].handle == handle) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        return BLE_HS_ENOENT;
+    }
+    BW_GATTS_LOCK();
+    if (len > 0) {
+        memcpy(s_gchrs[idx].value, data, (size_t)len);
+    }
+    s_gchrs[idx].value_len = (uint16_t)len;
+    BW_GATTS_UNLOCK();
+    return 0;
+}
+
+int32_t llgo_ble_gatts_notify(uint32_t conn_id, uint16_t handle, const uint8_t *data,
+                              int32_t len, int32_t indicate)
+{
+    bw_cmd_t c;
+    if (handle == 0 || len < 0 || (len > 0 && data == NULL)) {
+        return BLE_HS_EINVAL;
+    }
+    if (len > BW_DATA_MAX) {
+        return BLE_HS_EMSGSIZE;
+    }
+    int known = 0;
+    for (int i = 0; i < s_gchr_n; i++) {
+        if (s_gchrs[i].handle == handle) {
+            known = 1;
+            break;
+        }
+    }
+    if (!known) {
+        return BLE_HS_ENOENT;
+    }
+    /* Copy out of Go memory now: the host task runs the send later. */
+    if (len > 0) {
+        memcpy(s_push_data, data, (size_t)len);
+    }
+    s_push_len = (uint16_t)len;
+    memset(&c, 0, sizeof c);
+    c.op = CMD_GATTS_NOTIFY;
+    c.op_id = 0; /* fire-and-forget: the record carries no operation */
+    c.conn_id = conn_id;
+    c.att_handle = handle;
+    c.indicate = indicate ? 1 : 0;
+    return bw_submit(&c);
+}
+
+int32_t llgo_ble_gatts_close(uint32_t conn_id)
+{
+    bw_cmd_t c;
+    memset(&c, 0, sizeof c);
+    c.op = CMD_GATTS_CLOSE;
+    c.conn_id = conn_id;
+    return bw_submit(&c);
+}
+
+/* The pairing posture. NimBLE reads these fields when a pairing starts, so
+ * they are settable after sync as long as no pairing is in flight - the same
+ * call-once-after-Init contract the Go side documents. A fixed passkey has
+ * no static knob on this stack: NimBLE delivers passkey entry through the
+ * GAP passkey-action events, which this package does not expose yet - the
+ * refusal is the honest answer rather than a silently ignored passkey. */
+int32_t llgo_ble_security(int32_t io_cap, int32_t mitm, int32_t bond, uint32_t passkey,
+                          int32_t key_size)
+{
+    if (io_cap < 0 || io_cap > BLE_HS_IO_KEYBOARD_DISPLAY) {
+        return BLE_HS_EINVAL;
+    }
+    if (passkey != 0) {
+        return BLE_HS_ENOTSUP;
+    }
+    if (key_size != 0 && key_size != 16) {
+        /* NimBLE has no runtime key-size knob (the firmware's Kconfig owns
+         * it, default 16); refusing a smaller request is the honest answer
+         * rather than a silently ignored parameter. */
+        return BLE_HS_ENOTSUP;
+    }
+    ble_hs_cfg.sm_io_cap = (uint8_t)io_cap;
+    ble_hs_cfg.sm_bonding = bond ? 1 : 0;
+    ble_hs_cfg.sm_mitm = mitm ? 1 : 0;
+    ble_hs_cfg.sm_sc = 1; /* secure connections wherever the peer supports them */
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    return 0;
+}
+
 #else /* !(CONFIG_BT_ENABLED && CONFIG_BT_NIMBLE_ENABLED) */
 
 /* IDF build without the NimBLE host: every entry point exists (the Go side
@@ -1396,6 +2252,19 @@ typedef struct {
     uint16_t value_handle;
     uint16_t def_handle;
 } llgo_ble_chr_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t _pad;
+    uint16_t n_chars;
+} llgo_ble_gsvc_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+} llgo_ble_gchr_t;
 
 int32_t llgo_ble_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 int32_t llgo_ble_deinit(void) { return ESP_ERR_NOT_SUPPORTED; }
@@ -1456,6 +2325,47 @@ int32_t llgo_ble_chr_at(uint32_t conn_id, int32_t idx, llgo_ble_chr_t *out)
 int32_t llgo_ble_mtu(uint32_t conn_id, int32_t *out)
 {
     (void)conn_id; (void)out;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+/* The peripheral half: the same names the Go side links, all refusing
+ * honestly. */
+int32_t llgo_ble_adv_start(const uint8_t *adv, int32_t adv_len, const uint8_t *rsp,
+                           int32_t rsp_len, int32_t itvl_ms, int32_t connectable,
+                           uint32_t op_id)
+{
+    (void)adv; (void)adv_len; (void)rsp; (void)rsp_len;
+    (void)itvl_ms; (void)connectable; (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_adv_stop(uint32_t op_id) { (void)op_id; return ESP_ERR_NOT_SUPPORTED; }
+int32_t llgo_ble_gatts_declare(const llgo_ble_gsvc_t *svcs, int32_t nsvc,
+                               const llgo_ble_gchr_t *chrs, int32_t nchr, uint32_t op_id)
+{
+    (void)svcs; (void)nsvc; (void)chrs; (void)nchr; (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_attr(int32_t idx, uint16_t *out)
+{
+    (void)idx; (void)out;
+    return 0;
+}
+int32_t llgo_ble_gatts_value(uint16_t handle, const uint8_t *data, int32_t len)
+{
+    (void)handle; (void)data; (void)len;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_notify(uint32_t conn_id, uint16_t handle, const uint8_t *data,
+                              int32_t len, int32_t indicate)
+{
+    (void)conn_id; (void)handle; (void)data; (void)len; (void)indicate;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_close(uint32_t conn_id) { (void)conn_id; return ESP_ERR_NOT_SUPPORTED; }
+int32_t llgo_ble_security(int32_t io_cap, int32_t mitm, int32_t bond, uint32_t passkey,
+                          int32_t key_size)
+{
+    (void)io_cap; (void)mitm; (void)bond; (void)passkey; (void)key_size;
     return ESP_ERR_NOT_SUPPORTED;
 }
 

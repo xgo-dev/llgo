@@ -96,13 +96,23 @@
  *     timeout timer cancelled) - reuse the NimBLE numeric space so the Go
  *     contract docs stay true for both backends; they are marked inline.
  *
- * Mailbox design: three single-producer/single-consumer rings.
+ * Mailbox design: four single-producer/single-consumer rings (the ctrl ring
+ * is multi-writer inside its critical section - see below).
  *
- *   ctrl ring  - sync, scan-done, connect, disconnect, GATT procedure
+ *   ctrl ring  - sync, scan-done, connect, disconnect (both roles), GATT
+ *                procedure completions, advertising and service-registration
  *                completions, MTU reports, command rejections; 8 slots, no
- *                payload beyond codes. These events are what a program's state
- *                machine depends on, so they never compete with a scan flood
- *                or a notification storm for space.
+ *                payload beyond codes and a connect event's peer address.
+ *                These events are what a program's state machine depends on,
+ *                so they never compete with a scan flood or a notification
+ *                storm for space.
+ *   periph ring - what a central does to this device's attributes while we
+ *                serve it: characteristic writes and client-configuration
+ *                (CCCD) writes; 8 slots of connection id + handle + status +
+ *                up to BW_DATA_MAX bytes of payload. Its own ring keeps a
+ *                write flood off the control tier, and the poll drains ctrl
+ *                before periph, so an EV_PERIPH_CONNECT is never left queued
+ *                behind the payload records it makes actionable.
  *   notif ring - notifications and indications; 8 slots of connection id +
  *                value handle + flags + up to BW_DATA_MAX bytes of payload.
  *                Their own ring keeps them off the control tier.
@@ -183,6 +193,7 @@
 #include "esp_gatt_common_api.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
+#include "esp_gatts_api.h"
 
 /* ---- mailbox ---- */
 
@@ -200,6 +211,12 @@ enum {
     EV_WRITE_DONE = 10, /* a write finished */
     EV_NOTIFY = 11,    /* one notification or indication */
     EV_MTU = 12,       /* the negotiated ATT MTU changed */
+    EV_PERIPH_CONNECT = 13,    /* a central connected to our advertisement */
+    EV_PERIPH_DISCONNECT = 14, /* a served connection ended */
+    EV_CHAR_WRITE = 15,        /* a peer wrote a characteristic value */
+    EV_SUBSCRIBED = 16,        /* a peer wrote a CCCD; status = its value */
+    EV_ADV_DONE = 17,          /* a Start/StopAdvertising completed */
+    EV_SERVICES_DONE = 18,     /* the local GATT server registration finished */
     EV_OVERFLOW = -1,
 };
 
@@ -278,6 +295,29 @@ _Static_assert(sizeof(llgo_ble_chr_t) == 22, "llgo_ble_chr_t ABI drifted");
 _Static_assert(__builtin_offsetof(llgo_ble_chr_t, properties) == 17, "chr properties offset");
 _Static_assert(__builtin_offsetof(llgo_ble_chr_t, value_handle) == 18, "chr value offset");
 
+/* The local GATT server's declaration records, the wire form CommitServices
+ * passes to llgo_ble_gatts_declare. The Go side mirrors them byte for byte
+ * (gsvcWire/gchrWire in ble.go, pinned by ble_test.go): a UUID as width plus
+ * 16 little-endian bytes, the per-service characteristic count, the property
+ * bitmask. */
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t _pad;
+    uint16_t n_chars;
+} llgo_ble_gsvc_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+} llgo_ble_gchr_t;
+
+_Static_assert(sizeof(llgo_ble_gsvc_t) == 20, "llgo_ble_gsvc_t ABI drifted");
+_Static_assert(__builtin_offsetof(llgo_ble_gsvc_t, n_chars) == 18, "gsvc n_chars offset");
+_Static_assert(sizeof(llgo_ble_gchr_t) == 18, "llgo_ble_gchr_t ABI drifted");
+_Static_assert(__builtin_offsetof(llgo_ble_gchr_t, props) == 17, "gchr props offset");
+
 #define BW_CTRL_SLOTS 8
 #define BW_ADV_SLOTS 16
 #define BW_ADV_MAX 31
@@ -287,6 +327,9 @@ typedef struct {
     uint32_t op_id;
     uint32_t conn_id;
     int32_t status;
+    uint8_t addr[6];     /* the peer address an EV_PERIPH_CONNECT carries;
+                          * zero for every other kind */
+    uint8_t addr_type;
 } bw_ctrl_t;
 
 typedef struct {
@@ -335,6 +378,27 @@ static bw_notif_t s_notif[BW_NOTIF_SLOTS];
 static uint32_t s_notif_wr, s_notif_rd; /* wr: producer-owned (BTC task), rd: consumer-owned */
 static uint32_t s_notif_dropped;        /* producer-owned */
 static uint32_t s_notif_dropped_seen;   /* consumer-owned */
+
+/* The peripheral tier: what a central does to this device's attributes -
+ * characteristic writes and client-configuration (CCCD) writes. Its own ring
+ * keeps a write flood off the control tier (and off the notification ring,
+ * so a central and a peripheral peer cannot displace each other's payloads).
+ * Only the BTC task writes it: every GATTS event producer runs there. */
+#define BW_PERIPH_SLOTS 8
+
+typedef struct {
+    int32_t kind;        /* EV_CHAR_WRITE or EV_SUBSCRIBED */
+    uint16_t conn_handle;
+    uint16_t attr_handle;
+    int32_t status;      /* EV_SUBSCRIBED: the raw CCCD value; EV_CHAR_WRITE: 0 */
+    uint8_t len;
+    uint8_t data[BW_DATA_MAX];
+} bw_periph_t;
+
+static bw_periph_t s_periph[BW_PERIPH_SLOTS];
+static uint32_t s_periph_wr, s_periph_rd; /* wr: producer-owned (BTC task), rd: consumer-owned */
+static uint32_t s_periph_dropped;         /* producer-owned */
+static uint32_t s_periph_dropped_seen;    /* consumer-owned */
 
 /* GATT client state. One procedure runs at a time (the Go side serializes
  * them; an ATT bearer carries one outstanding request anyway), so the result
@@ -447,7 +511,18 @@ static portMUX_TYPE s_ctrl_mux = portMUX_INITIALIZER_UNLOCKED;
 #define BW_CTRL_LOCK()   taskENTER_CRITICAL(&s_ctrl_mux)
 #define BW_CTRL_UNLOCK() taskEXIT_CRITICAL(&s_ctrl_mux)
 
+/* The address-carrying form, for the peripheral connect event. addr may be
+ * NULL; the plain form delegates here with a NULL addr. */
+static void bw_ctrl_push_addr(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status,
+                              const uint8_t *addr, uint8_t addr_type);
+
 static void bw_ctrl_push(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status)
+{
+    bw_ctrl_push_addr(kind, op_id, conn_id, status, NULL, 0);
+}
+
+static void bw_ctrl_push_addr(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t status,
+                              const uint8_t *addr, uint8_t addr_type)
 {
     BW_CTRL_LOCK();
     uint32_t w = s_ctrl_wr;
@@ -456,7 +531,12 @@ static void bw_ctrl_push(int32_t kind, uint32_t op_id, uint32_t conn_id, int32_t
         BW_CTRL_UNLOCK();
         return;
     }
-    s_ctrl[w & (BW_CTRL_SLOTS - 1)] = (bw_ctrl_t){ kind, op_id, conn_id, status };
+    s_ctrl[w & (BW_CTRL_SLOTS - 1)] = (bw_ctrl_t){ kind, op_id, conn_id, status,
+                                                   {0, 0, 0, 0, 0, 0}, 0 };
+    if (addr != NULL) {
+        memcpy(s_ctrl[w & (BW_CTRL_SLOTS - 1)].addr, addr, 6);
+        s_ctrl[w & (BW_CTRL_SLOTS - 1)].addr_type = addr_type;
+    }
     BW_PUBLISH(s_ctrl_wr, w + 1);                /* release: the slot is now visible */
     BW_CTRL_UNLOCK();
 }
@@ -479,6 +559,34 @@ static void bw_adv_push(const uint8_t *addr, uint8_t addr_type, int8_t rssi,
     slot->len = len;
     memcpy(slot->data, data, len);
     BW_PUBLISH(s_adv_wr, w + 1);                 /* release: the slot is now visible */
+}
+
+/* Copies one peer action into the peripheral ring. The value buffer belongs
+ * to the BTC task and dies with this callback, so the copy has to happen
+ * here; a payload larger than one slot is dropped whole (never truncated)
+ * and counted in the mailbox's overflow report. */
+static void bw_periph_push(int32_t kind, uint16_t conn_id, uint16_t attr_handle,
+                           int32_t status, const uint8_t *value, uint16_t value_len)
+{
+    uint32_t w = s_periph_wr;                    /* producer-owned */
+    if ((uint32_t)(w - BW_ACQUIRE(s_periph_rd)) >= BW_PERIPH_SLOTS) {
+        __atomic_store_n(&s_periph_dropped, s_periph_dropped + 1, __ATOMIC_RELAXED);
+        return;
+    }
+    if (value_len > BW_DATA_MAX) {
+        __atomic_store_n(&s_periph_dropped, s_periph_dropped + 1, __ATOMIC_RELAXED);
+        return;
+    }
+    bw_periph_t *slot = &s_periph[w & (BW_PERIPH_SLOTS - 1)];
+    slot->kind = kind;
+    slot->conn_handle = conn_id;
+    slot->attr_handle = attr_handle;
+    slot->status = status;
+    slot->len = (uint8_t)value_len;
+    if (value_len > 0 && value != NULL) {
+        memcpy(slot->data, value, value_len);
+    }
+    BW_PUBLISH(s_periph_wr, w + 1);              /* release: the slot is now visible */
 }
 
 /* Copies one notification or indication into the notification ring. The value
@@ -687,6 +795,534 @@ static void bw_addr_swap(uint8_t *dst, const uint8_t *src)
 {
     for (int i = 0; i < 6; i++) {
         dst[i] = src[5 - i];
+    }
+}
+
+/* ---- peripheral role: advertising, the local GATT server ----
+ *
+ * The same boundary rules as the central half: the BTC task builds the
+ * attribute table (the esp_ble_gatts_* creation calls run through it) and
+ * answers the peer's reads straight from a static value cache, so a read is
+ * never deferred into Go - the GATT server cannot call into the llgo
+ * scheduler, and the read must be answered synchronously on the stack's own
+ * task. WriteCharValue fills the same cache from the Go task; the copy runs
+ * inside the ctrl ring's critical section, which is what keeps a cache write
+ * and a read the BTC task is serving serialized.
+ *
+ * Advertising is the legacy procedure set (raw advertising and scan-response
+ * payloads + start/stop), the same CONFIG_BT_BLE_42_FEATURES_SUPPORTED split
+ * the scan path already makes; a BLE 5.0-only build reports NOT_SUPPORTED
+ * for advertising rather than half-working.
+ */
+
+/* Advertising state. The payloads live in static buffers (the config calls
+ * deep-copy, but the chain of set-rsp-then-start events needs the bytes
+ * around after the submission returned); s_adv_op owns the one start/stop
+ * operation in flight, the same claim pattern the scan and connect ids use.
+ * s_adv_running tracks whether the controller is actually advertising (a
+ * connectable advertisement auto-stops on connection, with no stop event). */
+static uint8_t s_adv_data[BW_ADV_MAX];
+static uint8_t s_adv_data_len;
+static uint8_t s_scan_rsp[BW_ADV_MAX];
+static uint8_t s_scan_rsp_len;
+static uint8_t s_adv_conn;    /* connectable advertisement */
+static uint8_t s_adv_running;
+static uint16_t s_adv_itvl;   /* the interval in 0.625 ms units */
+static esp_ble_adv_params_t s_adv_params;
+/* The one start/stop operation in flight, claimed like the scan and connect
+ * ids: the completions arrive on the BTC task while the submission ran on
+ * the Go task, and a set must be atomic against their claims. */
+static uint32_t s_adv_op;
+
+/* The local GATT server: the declaration the Go side serialized once
+ * (llgo_ble_gatts_declare copies it here), and what the stack assigned while
+ * building it. One value cache per characteristic is the read answer: a peer
+ * read is served from it synchronously in the GATTS callback, a peer write
+ * overwrites it (and reports EV_CHAR_WRITE), and WriteCharValue fills it from
+ * Go. MaxLocalServices/MaxLocalChars in ble.go are these two bounds. */
+#define BW_GSVC_MAX 4
+#define BW_GCHR_MAX 8
+#define BW_CCCD_UUID16 0x2902
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint16_t n_chars;     /* characteristics this service declared */
+    uint16_t first_chr;   /* global index of its first characteristic */
+    uint16_t num_handles; /* the attribute budget the Go side declared */
+    uint16_t svc_handle;  /* the stack's service handle (0 until created) */
+} bw_gsvc_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+    uint8_t subs;         /* the CCCD's current value (bit0 notify, bit1
+                           * indicate): what a CCCD read answers with */
+    uint16_t handle;      /* the value attribute handle, 0 until assigned */
+    uint16_t cccd_handle; /* 0 = this characteristic has no CCCD */
+    uint16_t value_len;
+    uint8_t value[BW_DATA_MAX];
+} bw_gchr_t;  /* 154 bytes: 8 characteristics cost ~1.2 KiB of .bss */
+
+static bw_gsvc_t s_gsvcs[BW_GSVC_MAX];
+static int32_t s_gsvc_n;
+static bw_gchr_t s_gchrs[BW_GCHR_MAX];
+static int32_t s_gchr_n;
+static uint8_t s_gatts_building; /* a service registration is in flight */
+static uint32_t s_gatts_op;      /* the commit's operation id */
+
+/* The creation state machine's cursor. It runs on the BTC task: CREATE ->
+ * (ADD_CHAR <-> ADD_DESCR)* -> START per service, then the next service, then
+ * the one EV_SERVICES_DONE record. The static uuid/control staging keeps the
+ * esp_ble_gatts_add_* arguments out of the BTC task stack. */
+static int32_t s_gs_cur_svc; /* the service being built */
+static int32_t s_gs_cur_chr; /* the characteristic being added (-1 = none) */
+static esp_gatt_srvc_id_t s_gs_srvc_id;
+static esp_bt_uuid_t s_gs_uuid;
+static esp_bt_uuid_t s_gs_cccd_uuid;
+static esp_attr_control_t s_gs_ctrl; /* ESP_GATT_RSP_BY_APP: the glue answers */
+
+/* The stack's interface for the GATT server role, set by ESP_GATTS_REG_EVT.
+ * EV_SYNC now waits for both registrations (the central's and the server's):
+ * CommitServices immediately after Init would otherwise race the server
+ * interface's own asynchronous registration. A build that cannot register
+ * the server (GATTS compiled out) still syncs - the central half is then
+ * fully usable and CommitServices reports the refusal honestly. */
+static esp_gatt_if_t s_gatts_if;
+static uint8_t s_gattc_reg, s_gatts_reg, s_gatts_fail;
+
+static void bw_sync_if_ready(void)
+{
+    if (!s_synced && s_gattc_reg && (s_gatts_reg || s_gatts_fail)) {
+        s_synced = 1;
+        bw_ctrl_push(EV_SYNC, 0, 0, 0);
+    }
+}
+
+/* ---- peripheral connections: raw conn_id + generation ----
+ *
+ * The same packing the central side uses ((generation << 16) | raw conn_id,
+ * the generation counter shared with it, so an id is unique across both
+ * tables), with the GATTS interface's own connection ids. */
+
+#define BW_PCONN_MAX 2
+
+typedef struct {
+    uint8_t used;
+    uint32_t gen;
+    uint16_t conn_id;
+} bw_pconn_t;
+
+static bw_pconn_t s_pconns[BW_PCONN_MAX];
+
+static uint32_t bw_pconn_add(uint16_t conn_id)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (!s_pconns[i].used) {
+            s_pconns[i].used = 1;
+            s_pconns[i].conn_id = conn_id;
+            s_pconns[i].gen = ++s_conn_gen;
+            return (s_pconns[i].gen << 16) | conn_id;
+        }
+    }
+    return 0;
+}
+
+static uint32_t bw_pconn_remove(uint16_t conn_id)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].conn_id == conn_id) {
+            uint32_t id = (s_pconns[i].gen << 16) | conn_id;
+            s_pconns[i].used = 0;
+            return id;
+        }
+    }
+    return conn_id;
+}
+
+static int bw_pconn_find(uint32_t conn_id)
+{
+    uint16_t raw = (uint16_t)(conn_id & 0xFFFF);
+    uint32_t gen = conn_id >> 16;
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].conn_id == raw && s_pconns[i].gen == gen) {
+            return (int)raw;
+        }
+    }
+    return -1;
+}
+
+/* The packed id a live raw conn_id is registered under, for the peripheral
+ * payload records (writes, subscriptions) that carry a bare conn_id - same
+ * shape and same visibility contract as bw_conn_id_of. */
+static uint32_t bw_pconn_id_of(uint16_t conn_id)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used && s_pconns[i].conn_id == conn_id) {
+            return (s_pconns[i].gen << 16) | conn_id;
+        }
+    }
+    return conn_id;
+}
+
+static int s_pconn_any(void)
+{
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        if (s_pconns[i].used) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* The characteristic that owns an attribute handle: the value handle first,
+ * then the CCCD. Returns the table index, or -1. Runs on the BTC task (the
+ * GATTS callbacks) and on the Go task (WriteCharValue/Notify); the table is
+ * frozen between commits, so the answer is stable while a connection lives. */
+static int bw_gchr_by_handle(uint16_t handle)
+{
+    for (int i = 0; i < s_gchr_n; i++) {
+        if (s_gchrs[i].handle == handle) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int bw_gchr_by_cccd(uint16_t handle)
+{
+    for (int i = 0; i < s_gchr_n; i++) {
+        if (s_gchrs[i].cccd_handle == handle) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* ---- the service-creation state machine (BTC task) ---- */
+
+/* Ends a failed commit: the Go-side waiter is owed its completion record. */
+static void bw_gatts_fail(int32_t status)
+{
+    uint32_t op = s_gatts_op;
+    s_gatts_op = 0;
+    s_gatts_building = 0;
+    if (op != 0) {
+        bw_ctrl_push(EV_SERVICES_DONE, op, 0, status);
+    }
+}
+
+/* Submits the next esp_ble_gatts_add_char of the current service, or - when
+ * its characteristics are exhausted - starts the service. */
+static void bw_gatts_add_next_char(void)
+{
+    bw_gsvc_t *svc = &s_gsvcs[s_gs_cur_svc];
+    if (s_gs_cur_chr < 0 || s_gs_cur_chr >= svc->first_chr + svc->n_chars) {
+        /* The service's table is complete: make it discoverable. */
+        esp_err_t e = esp_ble_gatts_start_service(svc->svc_handle);
+        if (e != ESP_OK) {
+            bw_gatts_fail(e);
+        }
+        return;
+    }
+    bw_gchr_t *chr = &s_gchrs[s_gs_cur_chr];
+    if (chr->uuid_len == 2) {
+        s_gs_uuid.len = ESP_UUID_LEN_16;
+        s_gs_uuid.uuid.uuid16 = (uint16_t)(chr->uuid[0] | (chr->uuid[1] << 8));
+    } else {
+        s_gs_uuid.len = ESP_UUID_LEN_128;
+        memcpy(s_gs_uuid.uuid.uuid128, chr->uuid, 16);
+    }
+    esp_gatt_perm_t perm = 0;
+    if (chr->props & ESP_GATT_CHAR_PROP_BIT_READ) {
+        perm |= ESP_GATT_PERM_READ;
+    }
+    if (chr->props & (ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_WRITE_NR)) {
+        perm |= ESP_GATT_PERM_WRITE;
+    }
+    esp_err_t e = esp_ble_gatts_add_char(svc->svc_handle, &s_gs_uuid, perm,
+                                         (esp_gatt_char_prop_t)chr->props,
+                                         NULL /* value: the glue's cache answers reads */,
+                                         &s_gs_ctrl /* ESP_GATT_RSP_BY_APP: the glue answers */);
+    if (e != ESP_OK) {
+        bw_gatts_fail(e);
+    }
+}
+
+/* Submits esp_ble_gatts_create_service for the current service. */
+static void bw_gatts_create_next_svc(void)
+{
+    if (s_gs_cur_svc >= s_gsvc_n) {
+        /* Every service started: the commit is done. Handles stay assigned in
+         * s_gchrs, where llgo_ble_gatts_attr reads them. */
+        uint32_t op = s_gatts_op;
+        s_gatts_op = 0;
+        s_gatts_building = 0;
+        if (op != 0) {
+            bw_ctrl_push(EV_SERVICES_DONE, op, 0, 0);
+        }
+        return;
+    }
+    bw_gsvc_t *svc = &s_gsvcs[s_gs_cur_svc];
+    memset(&s_gs_srvc_id, 0, sizeof s_gs_srvc_id);
+    s_gs_srvc_id.is_primary = true;
+    s_gs_srvc_id.id.inst_id = (uint8_t)s_gs_cur_svc;
+    if (svc->uuid_len == 2) {
+        s_gs_srvc_id.id.uuid.len = ESP_UUID_LEN_16;
+        s_gs_srvc_id.id.uuid.uuid.uuid16 = (uint16_t)(svc->uuid[0] | (svc->uuid[1] << 8));
+    } else {
+        s_gs_srvc_id.id.uuid.len = ESP_UUID_LEN_128;
+        memcpy(s_gs_srvc_id.id.uuid.uuid.uuid128, svc->uuid, 16);
+    }
+    esp_err_t e = esp_ble_gatts_create_service(s_gatts_if, &s_gs_srvc_id, svc->num_handles);
+    if (e != ESP_OK) {
+        bw_gatts_fail(e);
+    }
+}
+
+/* ---- GATTS callback (BTC task) ---- */
+
+/* Answers one read request from the value cache, synchronously - this is the
+ * whole read model: no Go involvement, no deferred response, so a peer read
+ * costs one memcpy inside the callback. Long reads (an offset past the MTU)
+ * slice the cache; an offset past its end is the ATT invalid-offset error. */
+static void bw_gatts_respond_read(esp_gatt_if_t gatts_if, uint16_t conn_id,
+                                  uint32_t trans_id, uint16_t handle, uint16_t offset)
+{
+    int idx = bw_gchr_by_handle(handle);
+    static esp_gatt_rsp_t s_read_rsp; /* 517-byte value field: never on a stack */
+    if (idx < 0) {
+        idx = bw_gchr_by_cccd(handle);
+        if (idx < 0) {
+            esp_ble_gatts_send_response(gatts_if, conn_id, trans_id,
+                                        ESP_GATT_READ_NOT_PERMIT, NULL);
+            return;
+        }
+        /* A readable CCCD: answer the current subscription state. */
+        memset(&s_read_rsp, 0, sizeof s_read_rsp);
+        s_read_rsp.attr_value.handle = handle;
+        s_read_rsp.attr_value.len = 2;
+        s_read_rsp.attr_value.value[0] = s_gchrs[idx].subs;
+        esp_ble_gatts_send_response(gatts_if, conn_id, trans_id, ESP_GATT_OK,
+                                    &s_read_rsp);
+        return;
+    }
+    BW_CTRL_LOCK();
+    uint16_t len = s_gchrs[idx].value_len;
+    BW_CTRL_UNLOCK();
+    if (offset > len) {
+        esp_ble_gatts_send_response(gatts_if, conn_id, trans_id,
+                                    ESP_GATT_INVALID_OFFSET, NULL);
+        return;
+    }
+    memset(&s_read_rsp, 0, sizeof s_read_rsp);
+    s_read_rsp.attr_value.handle = handle;
+    BW_CTRL_LOCK();
+    s_read_rsp.attr_value.len = len - offset;
+    memcpy(s_read_rsp.attr_value.value, s_gchrs[idx].value + offset, len - offset);
+    BW_CTRL_UNLOCK();
+    esp_ble_gatts_send_response(gatts_if, conn_id, trans_id, ESP_GATT_OK, &s_read_rsp);
+}
+
+static void bw_gatts_cb(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
+                        esp_ble_gatts_cb_param_t *param)
+{
+    switch (event) {
+    case ESP_GATTS_REG_EVT:
+        /* The server interface is ready (or the build has no GATT server).
+         * Both registrations must settle before EV_SYNC - see the state
+         * block's comment. */
+        if (param->reg.status == ESP_GATT_OK) {
+            s_gatts_if = gatts_if;
+            s_gatts_reg = 1;
+        } else {
+            s_gatts_fail = 1;
+        }
+        bw_sync_if_ready();
+        break;
+    case ESP_GATTS_CREATE_EVT:
+        if (!s_gatts_building || s_gs_cur_svc >= s_gsvc_n) {
+            break; /* no commit in flight: nothing to attribute it to */
+        }
+        if (param->create.status != ESP_GATT_OK) {
+            bw_gatts_fail(param->create.status);
+            break;
+        }
+        s_gsvcs[s_gs_cur_svc].svc_handle = param->create.service_handle;
+        s_gs_cur_chr = s_gsvcs[s_gs_cur_svc].n_chars > 0 ? s_gsvcs[s_gs_cur_svc].first_chr : -1;
+        bw_gatts_add_next_char();
+        break;
+    case ESP_GATTS_ADD_CHAR_EVT:
+        if (!s_gatts_building || s_gs_cur_chr < 0) {
+            break;
+        }
+        if (param->add_char.status != ESP_GATT_OK) {
+            bw_gatts_fail(param->add_char.status);
+            break;
+        }
+        s_gchrs[s_gs_cur_chr].handle = param->add_char.attr_handle;
+        if (s_gchrs[s_gs_cur_chr].props & (ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE)) {
+            /* The subscription gate: the client configuration descriptor at
+             * its own handle. A CCCD write arrives as an ordinary WRITE_EVT. */
+            s_gs_cccd_uuid.len = ESP_UUID_LEN_16;
+            s_gs_cccd_uuid.uuid.uuid16 = BW_CCCD_UUID16;
+            esp_err_t e = esp_ble_gatts_add_char_descr(
+                s_gsvcs[s_gs_cur_svc].svc_handle, &s_gs_cccd_uuid,
+                (esp_gatt_perm_t)(ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE),
+                NULL, &s_gs_ctrl);
+            if (e != ESP_OK) {
+                bw_gatts_fail(e);
+            }
+            break;
+        }
+        s_gs_cur_chr++;
+        bw_gatts_add_next_char();
+        break;
+    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+        if (!s_gatts_building || s_gs_cur_chr < 0) {
+            break;
+        }
+        if (param->add_char_descr.status != ESP_GATT_OK) {
+            bw_gatts_fail(param->add_char_descr.status);
+            break;
+        }
+        s_gchrs[s_gs_cur_chr].cccd_handle = param->add_char_descr.attr_handle;
+        s_gs_cur_chr++;
+        bw_gatts_add_next_char();
+        break;
+    case ESP_GATTS_START_EVT:
+        if (!s_gatts_building || s_gs_cur_svc >= s_gsvc_n) {
+            break;
+        }
+        if (param->start.status != ESP_GATT_OK) {
+            bw_gatts_fail(param->start.status);
+            break;
+        }
+        s_gs_cur_svc++;
+        bw_gatts_create_next_svc();
+        break;
+    case ESP_GATTS_CONNECT_EVT: {
+        /* A central connected to this device's advertisement. Advertising is
+         * over by definition (the connect is the end - StopAdvertising after
+         * this reports its refusal honestly through EV_ADV_DONE). */
+        s_adv_running = 0;
+        uint32_t id = bw_pconn_add(param->connect.conn_id);
+        if (id == 0) {
+            /* Connection table full: drop the link rather than serve a
+             * connection the application cannot address. */
+            esp_ble_gatts_close(gatts_if, param->connect.conn_id);
+            break;
+        }
+        uint8_t addr[6];
+        bw_addr_swap(addr, param->connect.remote_bda);
+        bw_ctrl_push_addr(EV_PERIPH_CONNECT, 0, id, 0, addr,
+                          (uint8_t)param->connect.ble_addr_type);
+        break;
+    }
+    case ESP_GATTS_DISCONNECT_EVT: {
+        uint32_t id = bw_pconn_remove(param->disconnect.conn_id);
+        for (int i = 0; i < s_gchr_n; i++) {
+            s_gchrs[i].subs = 0;
+        }
+        bw_ctrl_push(EV_PERIPH_DISCONNECT, 0, id, (int32_t)param->disconnect.reason);
+        break;
+    }
+    case ESP_GATTS_READ_EVT:
+        if (param->read.need_rsp) {
+            bw_gatts_respond_read(gatts_if, param->read.conn_id, param->read.trans_id,
+                                  param->read.handle, param->read.offset);
+        }
+        break;
+    case ESP_GATTS_WRITE_EVT:
+        if (param->write.is_prep) {
+            /* Prepared writes are not part of this package's surface; each
+             * prepared write is refused with the ATT error the procedure
+             * defines, so a reliable-write client sees the refusal instead of
+             * an exec that silently drops data. */
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id,
+                                            ESP_GATT_REQ_NOT_SUPPORTED, NULL);
+            }
+            break;
+        }
+        {
+            int idx = bw_gchr_by_handle(param->write.handle);
+            if (idx >= 0) {
+                /* A value write: cache it (what the next read answers), then
+                 * report. A write longer than one cache is refused with the
+                 * attribute-length error - truncation would invent data. */
+                if (param->write.len > BW_DATA_MAX) {
+                    if (param->write.need_rsp) {
+                        esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                                    param->write.trans_id,
+                                                    ESP_GATT_INVALID_ATTR_LEN, NULL);
+                    }
+                    break;
+                }
+                BW_CTRL_LOCK();
+                memcpy(s_gchrs[idx].value, param->write.value, param->write.len);
+                s_gchrs[idx].value_len = param->write.len;
+                BW_CTRL_UNLOCK();
+                bw_periph_push(EV_CHAR_WRITE, param->write.conn_id, param->write.handle,
+                               0, param->write.value, param->write.len);
+            } else if ((idx = bw_gchr_by_cccd(param->write.handle)) >= 0) {
+                /* The subscription gate: report it with the characteristic's
+                 * value handle and the raw CCCD value as the status. */
+                uint16_t cccd = 0;
+                if (param->write.len >= 2) {
+                    cccd = (uint16_t)(param->write.value[0] | (param->write.value[1] << 8));
+                }
+                s_gchrs[idx].subs = (uint8_t)cccd;
+                bw_periph_push(EV_SUBSCRIBED, param->write.conn_id,
+                               s_gchrs[idx].handle, (int32_t)cccd, NULL, 0);
+            } else if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id,
+                                            ESP_GATT_WRITE_NOT_PERMIT, NULL);
+                break;
+            }
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                            param->write.trans_id, ESP_GATT_OK, NULL);
+            }
+        }
+        break;
+    case ESP_GATTS_EXEC_WRITE_EVT:
+        /* Nothing was ever stored from a prepared write (each one is refused
+         * above), so an execute is answered as a no-op - the honest reply to
+         * a procedure this server does not run. */
+        esp_ble_gatts_send_response(gatts_if, param->exec_write.conn_id,
+                                    param->exec_write.trans_id, ESP_GATT_OK, NULL);
+        break;
+    default:
+        /* Congestion, confirmation receipts, MTU (the exchange the central
+         * starts is answered inside the stack) - nothing here carries a
+         * record the package's surface needs; ignoring keeps the mailbox
+         * bounded. */
+        break;
+    }
+}
+
+/* Starts the advertisement with the payloads already staged. Runs on the BTC
+ * task, from the raw-data-set completions. */
+static void bw_adv_start_now(void)
+{
+    memset(&s_adv_params, 0, sizeof s_adv_params);
+    s_adv_params.adv_int_min = s_adv_itvl;
+    s_adv_params.adv_int_max = s_adv_itvl;
+    s_adv_params.adv_type = s_adv_conn ? ADV_TYPE_IND : ADV_TYPE_NONCONN_IND;
+    s_adv_params.own_addr_type = s_own_type;
+    s_adv_params.channel_map = ADV_CHNL_ALL;
+    s_adv_params.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+    esp_err_t e = esp_ble_gap_start_advertising(&s_adv_params);
+    if (e != ESP_OK) {
+        uint32_t op = s_adv_op;
+        s_adv_op = 0;
+        if (op != 0) {
+            bw_ctrl_push(EV_ADV_DONE, op, 0, e);
+        }
     }
 }
 
@@ -1011,6 +1647,64 @@ static void bw_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *para
             }
         }
         break;
+    /* The peripheral half of the legacy GAP event set: the raw-payload
+     * configuration completions chain into the start (the stack allows one
+     * pending configuration at a time, so the chain is also the ordering),
+     * and the start/stop completions claim the advertising operation and
+     * report it as EV_ADV_DONE. */
+    case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
+        if (param->adv_data_raw_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+            uint32_t op = s_adv_op;
+            s_adv_op = 0;
+            if (op != 0) {
+                bw_ctrl_push(EV_ADV_DONE, op, 0, param->adv_data_raw_cmpl.status);
+            }
+            break;
+        }
+        if (s_scan_rsp_len > 0) {
+            esp_err_t e = esp_ble_gap_config_scan_rsp_data_raw(s_scan_rsp, s_scan_rsp_len);
+            if (e != ESP_OK) {
+                uint32_t op = s_adv_op;
+                s_adv_op = 0;
+                if (op != 0) {
+                    bw_ctrl_push(EV_ADV_DONE, op, 0, e);
+                }
+            }
+            break;
+        }
+        bw_adv_start_now();
+        break;
+    case ESP_GAP_BLE_SCAN_RSP_DATA_RAW_SET_COMPLETE_EVT:
+        if (param->scan_rsp_data_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+            uint32_t op = s_adv_op;
+            s_adv_op = 0;
+            if (op != 0) {
+                bw_ctrl_push(EV_ADV_DONE, op, 0, param->scan_rsp_data_cmpl.status);
+            }
+            break;
+        }
+        bw_adv_start_now();
+        break;
+    case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+        {
+            uint32_t op = s_adv_op;
+            s_adv_op = 0;
+            if (op != 0) {
+                s_adv_running = param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS;
+                bw_ctrl_push(EV_ADV_DONE, op, 0, param->adv_start_cmpl.status);
+            }
+        }
+        break;
+    case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+        {
+            uint32_t op = s_adv_op;
+            s_adv_op = 0;
+            if (op != 0) {
+                s_adv_running = 0;
+                bw_ctrl_push(EV_ADV_DONE, op, 0, param->adv_stop_cmpl.status);
+            }
+        }
+        break;
     default:
         break;
     }
@@ -1069,15 +1763,18 @@ static void bw_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
 {
     switch (event) {
     case ESP_GATTC_REG_EVT:
-        /* The one asynchronous bring-up step: the client interface is ready.
-         * This is the Bluedroid counterpart of NimBLE's sync callback - GAP
-         * procedures may run from here on. A refused registration leaves the
-         * glue unusable; that failure surfaces as EV_ERROR (no EV_SYNC ever
-         * comes, so Init's bounded wait times out with the reason on record). */
+        /* The one asynchronous bring-up step of the central half: the client
+         * interface is ready. This is the Bluedroid counterpart of NimBLE's
+         * sync callback - but EV_SYNC now waits for the server interface's
+         * registration too (bw_sync_if_ready), so a CommitServices right
+         * after Init never races its own interface. A refused registration
+         * leaves the glue unusable; that failure surfaces as EV_ERROR (no
+         * EV_SYNC ever comes, so Init's bounded wait times out with the
+         * reason on record). */
         if (param->reg.status == ESP_GATT_OK) {
             s_gattc_if = gattc_if;
-            s_synced = 1;
-            bw_ctrl_push(EV_SYNC, 0, 0, 0);
+            s_gattc_reg = 1;
+            bw_sync_if_ready();
         } else {
             bw_ctrl_push(EV_ERROR, 0, 0, param->reg.status);
         }
@@ -1346,7 +2043,11 @@ int32_t llgo_ble_init(void)
 
     /* Callbacks and the client interface. app_register completes
      * asynchronously (ESP_GATTC_REG_EVT above), which is what turns
-     * s_synced on and publishes EV_SYNC. */
+     * s_synced on - together with the server interface's own registration,
+     * also asynchronous, so a CommitServices right after Init cannot race
+     * its interface. A build without the GATT server component refuses the
+     * server registration and still syncs: the central half is fully usable,
+     * CommitServices reports the refusal honestly. */
     e = esp_ble_gap_register_callback(bw_gap_cb);
     if (e != ESP_OK) {
         goto rollback;
@@ -1358,6 +2059,19 @@ int32_t llgo_ble_init(void)
     e = esp_ble_gattc_app_register(0);
     if (e != ESP_OK) {
         goto rollback;
+    }
+    e = esp_ble_gatts_register_callback(bw_gatts_cb);
+    if (e != ESP_OK) {
+        s_gatts_fail = 1;
+        bw_sync_if_ready();
+    } else {
+        e = esp_ble_gatts_app_register(0);
+        if (e != ESP_OK) {
+            /* Not a rollback: the central half is alive, only the server
+             * role is unavailable in this firmware. */
+            s_gatts_fail = 1;
+            bw_sync_if_ready();
+        }
     }
 
     /* The connect-timeout timer. One-shot, re-armed per attempt. */
@@ -1382,10 +2096,15 @@ rollback:
      * pushed while it was dying. Without this, a sync that arrived between
      * app_register and the timer failure would sit in the ring and
      * masquerade as the next Init's sync - a bring-up that failed would look
-     * like one that succeeded. s_synced/s_gattc_if go down with it: the
-     * interface the dying stack handed out is void. */
+     * like one that succeeded. s_synced/s_gattc_if and the server role's
+     * flags go down with it: the interfaces the dying stack handed out are
+     * void. */
     s_synced = 0;
     s_gattc_if = 0;
+    s_gattc_reg = 0;
+    s_gatts_reg = 0;
+    s_gatts_fail = 0;
+    s_gatts_if = 0;
     BW_CTRL_LOCK();
     s_ctrl_rd = BW_ACQUIRE(s_ctrl_wr); /* consumer-side write: this is the consumer task */
     BW_CTRL_UNLOCK();
@@ -1408,6 +2127,18 @@ int32_t llgo_ble_deinit(void)
     esp_timer_delete(s_conn_timer);
     s_conn_op = 0;
     s_disc_op = 0;
+    /* The peripheral half's in-flight state: an advertising operation or a
+     * service registration that never completed has no stack left to complete
+     * on, the connections are gone, and a fresh Init must not inherit them. */
+    s_adv_op = 0;
+    s_adv_running = 0;
+    s_gatts_op = 0;
+    s_gatts_building = 0;
+    s_gsvc_n = 0;
+    s_gchr_n = 0;
+    for (int i = 0; i < BW_PCONN_MAX; i++) {
+        s_pconns[i].used = 0;
+    }
     int32_t err = ESP_OK;
     esp_err_t e = esp_bluedroid_disable();
     if (e != ESP_OK) {
@@ -1477,15 +2208,18 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
     uint32_t ctrl_d = BW_ACQUIRE(s_ctrl_dropped);
     uint32_t adv_d = BW_ACQUIRE(s_adv_dropped);
     uint32_t notif_d = BW_ACQUIRE(s_notif_dropped);
+    uint32_t periph_d = BW_ACQUIRE(s_periph_dropped);
     if (ctrl_d != s_ctrl_dropped_seen || adv_d != s_adv_dropped_seen ||
-        notif_d != s_notif_dropped_seen) {
+        notif_d != s_notif_dropped_seen || periph_d != s_periph_dropped_seen) {
         out->kind = EV_OVERFLOW;
         out->status = (int32_t)((ctrl_d - s_ctrl_dropped_seen) +
                                 (adv_d - s_adv_dropped_seen) +
-                                (notif_d - s_notif_dropped_seen));
+                                (notif_d - s_notif_dropped_seen) +
+                                (periph_d - s_periph_dropped_seen));
         s_ctrl_dropped_seen = ctrl_d;
         s_adv_dropped_seen = adv_d;
         s_notif_dropped_seen = notif_d;
+        s_periph_dropped_seen = periph_d;
         return 1;
     }
 
@@ -1497,6 +2231,13 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
         out->op_id = c.op_id;
         out->conn_id = c.conn_id;
         out->status = c.status;
+        if (c.kind == EV_PERIPH_CONNECT) {
+            /* The peer address of a peripheral connect: filled by the
+             * producer before the release publish, visible after the
+             * acquire above - the rings' standing contract. */
+            memcpy(out->addr, c.addr, 6);
+            out->addr_type = c.addr_type;
+        }
         if (c.kind == EV_READ_DONE && c.status == 0) {
             /* The value of the read: the callback filled s_read_data/s_read_len
              * before release-publishing this record, so the acquire above is
@@ -1509,6 +2250,23 @@ int32_t llgo_ble_poll(llgo_ble_event_t *out)
             memcpy(out->data, s_read_data, len);
             out->data_len = (uint8_t)len;
         }
+        return 1;
+    }
+
+    if (BW_ACQUIRE(s_periph_wr) != s_periph_rd) {
+        /* The peripheral tier, drained right after the control tier: a peer
+         * action is actionable exactly when its connection record has been
+         * seen, so it outranks the central-side payload tiers. Read in place
+         * like the notification ring - a local copy would put a whole slot on
+         * the Go task's (fiber) stack. */
+        const bw_periph_t *p = &s_periph[s_periph_rd & (BW_PERIPH_SLOTS - 1)];
+        out->kind = p->kind;
+        out->conn_id = bw_pconn_id_of(p->conn_handle);
+        out->att_handle = p->attr_handle;
+        out->status = p->status;
+        out->data_len = p->len;
+        memcpy(out->data, p->data, p->len);
+        BW_PUBLISH(s_periph_rd, s_periph_rd + 1);
         return 1;
     }
 
@@ -2072,6 +2830,311 @@ int32_t llgo_ble_mtu(uint32_t conn_id, int32_t *out)
     return BW_ENOENT;
 }
 
+/* ---- peripheral (Go task) ----
+ *
+ * Same contract as the central commands: 0 means the stack accepted the call
+ * (the outcome arrives through the mailbox), a status means it was refused
+ * synchronously. The config/start chain of an advertisement, the service
+ * creation, and the connection teardown all complete on the BTC task through
+ * EV_ADV_DONE / EV_SERVICES_DONE / EV_PERIPH_DISCONNECT. */
+
+int32_t llgo_ble_adv_start(const uint8_t *adv, int32_t adv_len, const uint8_t *rsp,
+                           int32_t rsp_len, int32_t itvl_ms, int32_t connectable,
+                           uint32_t op_id)
+{
+#if defined(CONFIG_BT_BLE_42_FEATURES_SUPPORTED)
+    if (!s_inited || !s_synced) {
+        return BW_EINVAL;
+    }
+    if (adv_len < 0 || adv_len > BW_ADV_MAX || rsp_len < 0 || rsp_len > BW_ADV_MAX) {
+        return BW_EMSGSIZE;
+    }
+    if ((adv_len > 0 && adv == NULL) || (rsp_len > 0 && rsp == NULL)) {
+        return BW_EINVAL;
+    }
+    if (itvl_ms <= 0) {
+        itvl_ms = 100;
+    }
+    if (itvl_ms < 20) {
+        itvl_ms = 20;
+    }
+    if (itvl_ms > 10240) {
+        itvl_ms = 10240;
+    }
+    /* One advertisement lifecycle at a time: a second start while the first
+     * is still completing is refused, the same guard a scan start has. */
+    BW_CTRL_LOCK();
+    if (s_adv_op != 0) {
+        BW_CTRL_UNLOCK();
+        return BW_EALREADY;
+    }
+    s_adv_op = op_id;
+    BW_CTRL_UNLOCK();
+    memcpy(s_adv_data, adv, (size_t)adv_len);
+    s_adv_data_len = (uint8_t)adv_len;
+    memcpy(s_scan_rsp, rsp, (size_t)rsp_len);
+    s_scan_rsp_len = (uint8_t)rsp_len;
+    s_adv_conn = connectable ? 1 : 0;
+    s_adv_itvl = (uint16_t)((itvl_ms * 8) / 5); /* 0.625 ms units */
+    esp_err_t e = esp_ble_gap_config_adv_data_raw(s_adv_data, (uint32_t)adv_len);
+    if (e != ESP_OK) {
+        BW_CTRL_LOCK();
+        s_adv_op = 0;
+        BW_CTRL_UNLOCK();
+        return e;
+    }
+    return 0;
+#else
+    /* The legacy advertising procedures do not exist in a BLE 5.0-only
+     * feature build; this package's peripheral role is legacy-only, matching
+     * the scan path's scope. */
+    (void)adv; (void)adv_len; (void)rsp; (void)rsp_len;
+    (void)itvl_ms; (void)connectable; (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+int32_t llgo_ble_adv_stop(uint32_t op_id)
+{
+#if defined(CONFIG_BT_BLE_42_FEATURES_SUPPORTED)
+    if (!s_inited || !s_synced) {
+        return BW_EINVAL;
+    }
+    BW_CTRL_LOCK();
+    if (s_adv_op != 0) {
+        BW_CTRL_UNLOCK();
+        return BW_EALREADY;
+    }
+    if (!s_adv_running) {
+        BW_CTRL_UNLOCK();
+        /* Nothing is advertising (never started, or a connect ended it):
+         * the operation completes here rather than dangling. */
+        bw_ctrl_push(EV_ADV_DONE, op_id, 0, BW_EINVAL);
+        return 0;
+    }
+    s_adv_op = op_id;
+    BW_CTRL_UNLOCK();
+    esp_err_t e = esp_ble_gap_stop_advertising();
+    if (e != ESP_OK) {
+        BW_CTRL_LOCK();
+        s_adv_op = 0;
+        BW_CTRL_UNLOCK();
+        return e;
+    }
+    return 0;
+#else
+    (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+int32_t llgo_ble_gatts_declare(const llgo_ble_gsvc_t *svcs, int32_t nsvc,
+                               const llgo_ble_gchr_t *chrs, int32_t nchr, uint32_t op_id)
+{
+    if (!s_inited || !s_synced) {
+        return BW_EINVAL;
+    }
+    if (svcs == NULL || chrs == NULL || nsvc <= 0 || nchr <= 0 ||
+        nsvc > BW_GSVC_MAX || nchr > BW_GCHR_MAX) {
+        return BW_EINVAL;
+    }
+    if (s_gatts_fail || s_gatts_if == 0) {
+        /* This firmware has no GATT server (the registration failed or the
+         * component is compiled out); the refusal is the honest answer. */
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    BW_CTRL_LOCK();
+    if (s_gatts_building || s_pconn_any()) {
+        /* One registration at a time, and re-declaring under a connected
+         * peer would pull attributes out from under its reads. */
+        BW_CTRL_UNLOCK();
+        return BW_EALREADY;
+    }
+    s_gatts_building = 1;
+    s_gatts_op = op_id;
+    BW_CTRL_UNLOCK();
+
+    /* Serialize the declaration into the static tables. The characteristic
+     * count per service re-derives the attribute budget the Go side must
+     * have declared (1 + 2..3 per characteristic); a mismatch is refused
+     * here rather than left to strand the creation mid-build. */
+    s_gsvc_n = 0;
+    s_gchr_n = 0;
+    int32_t ci = 0;
+    for (int32_t i = 0; i < nsvc; i++) {
+        bw_gsvc_t *svc = &s_gsvcs[s_gsvc_n];
+        memset(svc, 0, sizeof *svc);
+        svc->uuid_len = svcs[i].uuid_len;
+        memcpy(svc->uuid, svcs[i].uuid, 16);
+        svc->n_chars = svcs[i].n_chars;
+        svc->first_chr = (uint16_t)s_gchr_n;
+        if (s_gchr_n + (int32_t)svc->n_chars > nchr || s_gchr_n + (int32_t)svc->n_chars > BW_GCHR_MAX) {
+            /* The flat characteristic array does not cover this service's
+             * count: the wire is inconsistent, refuse before anything is
+             * built (the Go side's own checkRegistry should have caught it). */
+            s_gsvc_n = 0;
+            s_gchr_n = 0;
+            s_gatts_building = 0;
+            s_gatts_op = 0;
+            return BW_EINVAL;
+        }
+        uint16_t need = 1;
+        for (int32_t k = 0; k < (int32_t)svc->n_chars; k++, ci++) {
+            bw_gchr_t *chr = &s_gchrs[s_gchr_n];
+            memset(chr, 0, sizeof *chr);
+            chr->uuid_len = chrs[ci].uuid_len;
+            memcpy(chr->uuid, chrs[ci].uuid, 16);
+            chr->props = chrs[ci].props;
+            need += 2;
+            if (chr->props & (ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE)) {
+                need += 1;
+            }
+            s_gchr_n++;
+        }
+        svc->num_handles = need;
+        s_gsvc_n++;
+    }
+    if (ci != nchr) {
+        s_gsvc_n = 0;
+        s_gchr_n = 0;
+        s_gatts_building = 0;
+        s_gatts_op = 0;
+        return BW_EINVAL;
+    }
+    /* The first create submission runs right here on the Go task; the
+     * ESP_GATTS_CREATE_EVT on the BTC task drives the rest of the chain. */
+    s_gs_cur_svc = 0;
+    s_gs_cur_chr = -1;
+    s_gs_ctrl.auto_rsp = ESP_GATT_RSP_BY_APP;
+    bw_gatts_create_next_svc();
+    return 0;
+}
+
+int32_t llgo_ble_gatts_attr(int32_t idx, uint16_t *out)
+{
+    if (out == NULL || idx < 0 || idx >= s_gchr_n) {
+        return 0;
+    }
+    *out = s_gchrs[idx].handle;
+    return 1;
+}
+
+/* Replaces a characteristic's cached value (WriteCharValue): the copy runs
+ * under the ctrl ring's critical section against the read the BTC task may
+ * be answering from the same cache right now. */
+int32_t llgo_ble_gatts_value(uint16_t handle, const uint8_t *data, int32_t len)
+{
+    if (!s_inited) {
+        return BW_EINVAL;
+    }
+    if (handle == 0 || len < 0 || (len > 0 && data == NULL)) {
+        return BW_EINVAL;
+    }
+    if (len > BW_DATA_MAX) {
+        return BW_EMSGSIZE;
+    }
+    int idx = bw_gchr_by_handle(handle);
+    if (idx < 0) {
+        return BW_ENOENT;
+    }
+    BW_CTRL_LOCK();
+    if (len > 0) {
+        memcpy(s_gchrs[idx].value, data, (size_t)len);
+    }
+    s_gchrs[idx].value_len = (uint16_t)len;
+    BW_CTRL_UNLOCK();
+    return 0;
+}
+
+int32_t llgo_ble_gatts_notify(uint32_t conn_id, uint16_t handle, const uint8_t *data,
+                              int32_t len, int32_t indicate)
+{
+    if (!s_inited || !s_synced) {
+        return BW_EINVAL;
+    }
+    if (handle == 0 || len < 0 || (len > 0 && data == NULL)) {
+        return BW_EINVAL;
+    }
+    if (len > BW_DATA_MAX) {
+        return BW_EMSGSIZE;
+    }
+    if (bw_gchr_by_handle(handle) < 0) {
+        return BW_ENOENT;
+    }
+    int raw = bw_pconn_find(conn_id);
+    if (raw < 0) {
+        return BW_ENOENT;
+    }
+    /* The value pointer goes straight through: the API deep-copies it into
+     * the BTC message before returning. A subscribed CCCD is the peer's own
+     * gate; this call is the wire-level send either way. */
+    esp_err_t e = esp_ble_gatts_send_indicate(s_gatts_if, (uint16_t)raw, handle,
+                                              (uint16_t)len, (uint8_t *)data,
+                                              indicate ? true : false);
+    return (int32_t)e;
+}
+
+int32_t llgo_ble_gatts_close(uint32_t conn_id)
+{
+    if (!s_inited || !s_synced) {
+        return BW_EINVAL;
+    }
+    int raw = bw_pconn_find(conn_id);
+    if (raw < 0) {
+        bw_ctrl_push(EV_ERROR, 0, conn_id, BW_ENOENT);
+        return 0;
+    }
+    esp_err_t e = esp_ble_gatts_close(s_gatts_if, (uint16_t)raw);
+    if (e != ESP_OK) {
+        bw_ctrl_push(EV_ERROR, 0, conn_id, e);
+    }
+    return 0;
+}
+
+/* The pairing posture. Every parameter is set explicitly - Bluedroid keeps
+ * no usable defaults, and a pairing left without them reports success while
+ * distributing no key (AUTH_CMPL key_present = 0), so nothing is stored and
+ * a bonded peer has to re-pair on every reconnect. MAX_KEY_SIZE in particular:
+ * unset, no key is distributed at all. */
+int32_t llgo_ble_security(int32_t io_cap, int32_t mitm, int32_t bond, uint32_t passkey,
+                          int32_t key_size)
+{
+    if (!s_inited) {
+        return BW_EINVAL;
+    }
+    if (io_cap < 0 || io_cap > ESP_IO_CAP_KBDISP) {
+        return BW_EINVAL;
+    }
+    uint8_t auth_req;
+    if (mitm) {
+        auth_req = bond ? ESP_LE_AUTH_REQ_SC_MITM_BOND : ESP_LE_AUTH_REQ_SC_MITM;
+    } else {
+        auth_req = bond ? ESP_LE_AUTH_REQ_SC_BOND : ESP_LE_AUTH_REQ_SC_ONLY;
+    }
+    uint8_t io = (uint8_t)io_cap;
+    uint8_t ks = (uint8_t)key_size;
+    uint8_t keys = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    esp_err_t e = esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req,
+                                                 sizeof auth_req);
+    if (e == ESP_OK) {
+        e = esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &io, sizeof io);
+    }
+    if (e == ESP_OK) {
+        e = esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &ks, sizeof ks);
+    }
+    if (e == ESP_OK) {
+        e = esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &keys, sizeof keys);
+    }
+    if (e == ESP_OK) {
+        e = esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &keys, sizeof keys);
+    }
+    if (e == ESP_OK && passkey != 0) {
+        uint32_t pk = passkey;
+        e = esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &pk, sizeof pk);
+    }
+    return (int32_t)e;
+}
+
 #else /* BT host configurations this glue does not implement */
 
 /* IDF build without the Bluedroid host: every entry point exists (the Go side
@@ -2108,6 +3171,19 @@ typedef struct {
     uint16_t value_handle;
     uint16_t def_handle;
 } llgo_ble_chr_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t _pad;
+    uint16_t n_chars;
+} llgo_ble_gsvc_t;
+
+typedef struct {
+    uint8_t uuid_len;
+    uint8_t uuid[16];
+    uint8_t props;
+} llgo_ble_gchr_t;
 
 int32_t llgo_ble_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 int32_t llgo_ble_deinit(void) { return ESP_ERR_NOT_SUPPORTED; }
@@ -2168,6 +3244,47 @@ int32_t llgo_ble_chr_at(uint32_t conn_id, int32_t idx, llgo_ble_chr_t *out)
 int32_t llgo_ble_mtu(uint32_t conn_id, int32_t *out)
 {
     (void)conn_id; (void)out;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+/* The peripheral half: the same names the Go side links, all refusing
+ * honestly. */
+int32_t llgo_ble_adv_start(const uint8_t *adv, int32_t adv_len, const uint8_t *rsp,
+                           int32_t rsp_len, int32_t itvl_ms, int32_t connectable,
+                           uint32_t op_id)
+{
+    (void)adv; (void)adv_len; (void)rsp; (void)rsp_len;
+    (void)itvl_ms; (void)connectable; (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_adv_stop(uint32_t op_id) { (void)op_id; return ESP_ERR_NOT_SUPPORTED; }
+int32_t llgo_ble_gatts_declare(const llgo_ble_gsvc_t *svcs, int32_t nsvc,
+                               const llgo_ble_gchr_t *chrs, int32_t nchr, uint32_t op_id)
+{
+    (void)svcs; (void)nsvc; (void)chrs; (void)nchr; (void)op_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_attr(int32_t idx, uint16_t *out)
+{
+    (void)idx; (void)out;
+    return 0;
+}
+int32_t llgo_ble_gatts_value(uint16_t handle, const uint8_t *data, int32_t len)
+{
+    (void)handle; (void)data; (void)len;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_notify(uint32_t conn_id, uint16_t handle, const uint8_t *data,
+                              int32_t len, int32_t indicate)
+{
+    (void)conn_id; (void)handle; (void)data; (void)len; (void)indicate;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+int32_t llgo_ble_gatts_close(uint32_t conn_id) { (void)conn_id; return ESP_ERR_NOT_SUPPORTED; }
+int32_t llgo_ble_security(int32_t io_cap, int32_t mitm, int32_t bond, uint32_t passkey,
+                          int32_t key_size)
+{
+    (void)io_cap; (void)mitm; (void)bond; (void)passkey; (void)key_size;
     return ESP_ERR_NOT_SUPPORTED;
 }
 

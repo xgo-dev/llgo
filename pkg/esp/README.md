@@ -511,10 +511,30 @@ fan-out) and `MTU` (the glue requests the exchange right after a connection
 comes up). `_demo/esp-idf-ble` drives the whole surface under esp-emu
 against a Bumble GATT server.
 
+The **peripheral role** shares the same package and ABI: advertising
+(`StartAdvertising` composes the AD payloads in Go - flags, complete or
+shortened local name, caller-supplied structures - and the glue pushes them
+through the stack's legacy raw-data chain), the local GATT server (a Go-side
+registry built by `AddService`/`AddCharacteristic` and pushed once by
+`CommitServices`; the glue holds static declaration tables and one value
+cache per characteristic), the pairing posture (`SetSecurityParams`), and
+the peer's actions as events - `EvPeriphConnect`/`EvPeriphDisconnect` on the
+control tier, `EvCharWrite`/`EvSubscribed` on the peripheral's own payload
+ring, so an advertising or write flood can never displace them. A peer's
+read is answered straight from the value cache in the glue's callback - the
+GATT server must answer synchronously on the stack's task, where the llgo
+scheduler cannot be entered - and `WriteCharValue` fills the same cache from
+Go. `Notify`/`Indicate` send server-side updates; `LocalHandle` maps a UUID
+to the handle the stack assigned. `_demo/esp-idf-ble-periph` drives the whole
+peripheral surface under esp-emu against a Bumble central (Bluedroid backend,
+the path whose server half is fully implemented; the NimBLE sibling
+implements the same ABI over `ble_gatts_add_dynamic_svcs` and needs
+`CONFIG_BT_NIMBLE_DYNAMIC_SERVICE=y`).
+
 **The Go API is backend-neutral; the sdkconfig picks the stack.** IDF ships
 two mutually exclusive BLE hosts and a firmware selects exactly one
-(`choice BT_HOST`). The package compiles against a single C ABI - the 21
-`llgo_ble_*` symbols, the 188-byte event record, the three-ring mailbox and
+(`choice BT_HOST`). The package compiles against a single C ABI - the
+`llgo_ble_*` symbols, the 188-byte event record, the four-ring mailbox and
 every event kind - and two glue files implement it:
 `glue/ble_glue_nimble.c` (NimBLE) and `glue/ble_glue_bluedroid.c`
 (Bluedroid; Classic Bluetooth needs Bluedroid, so BLE-only Bluedroid

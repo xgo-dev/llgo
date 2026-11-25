@@ -403,11 +403,11 @@ func TestErrNames(t *testing.T) {
 
 func TestDisconnectReasonName(t *testing.T) {
 	cases := map[int32]string{
-		0x00: "success",
-		0x08: "connection timeout (supervision timeout)",
-		0x13: "remote user terminated the connection",
-		0x16: "local host terminated the connection",
-		0x3b: "unacceptable connection interval",
+		0x00:  "success",
+		0x08:  "connection timeout (supervision timeout)",
+		0x13:  "remote user terminated the connection",
+		0x16:  "local host terminated the connection",
+		0x3b:  "unacceptable connection interval",
 		0x100: "connection establish failed",
 	}
 	for code, want := range cases {
@@ -417,5 +417,312 @@ func TestDisconnectReasonName(t *testing.T) {
 	}
 	if got := DisconnectReasonName(0x7e); got != "reason 0x7e" {
 		t.Errorf("unknown reason = %q, want the hex form", got)
+	}
+}
+
+// resetRegistry clears the peripheral registry between tests. The registry is
+// package state; every peripheral test starts from the same blank slate, and
+// the go test runner is serial within one package, so no locking is needed.
+func resetRegistry() {
+	gsvcs = nil
+	gchrs = nil
+	committed = false
+}
+
+// TestWirePeripheralLayout pins the layout of the peripheral declaration
+// records, the same contract the glue's _Static_asserts pin on the C side.
+func TestWirePeripheralLayout(t *testing.T) {
+	var s gsvcWire
+	if got, want := unsafe.Sizeof(s), uintptr(20); got != want {
+		t.Errorf("sizeof gsvcWire = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(s.NChars), uintptr(18); got != want {
+		t.Errorf("gsvcWire.NChars offset = %d, want %d", got, want)
+	}
+	var c gchrWire
+	if got, want := unsafe.Sizeof(c), uintptr(18); got != want {
+		t.Errorf("sizeof gchrWire = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(c.Props), uintptr(17); got != want {
+		t.Errorf("gchrWire.Props offset = %d, want %d", got, want)
+	}
+}
+
+// TestAdvPayloads walks the advertising payload composition: the default
+// flags packet, complete and shortened name placement, the scan-response
+// overflow, raw passthrough, and the refusals.
+func TestAdvPayloads(t *testing.T) {
+	// The zero value: general-discovery flags, no name, connectable by
+	// omission of NonConnectable.
+	adv, rsp, err := buildAdvPayloads(AdvParams{})
+	if err != nil {
+		t.Fatalf("buildAdvPayloads(zero) = %v", err)
+	}
+	if want := []byte{0x02, 0x01, advFlagsGeneral}; string(adv) != string(want) || rsp != nil {
+		t.Fatalf("zero params: adv = %v rsp = %v, want flags-only and nil rsp", adv, rsp)
+	}
+
+	// A short name rides the advertising payload as a Complete Local Name.
+	adv, rsp, err = buildAdvPayloads(AdvParams{Name: "llgo-periph"})
+	if err != nil {
+		t.Fatalf("buildAdvPayloads(name) = %v", err)
+	}
+	if want := []byte{0x02, 0x01, advFlagsGeneral, 0x0c, 0x09, 'l', 'l', 'g', 'o', '-', 'p', 'e', 'r', 'i', 'p', 'h'}; string(adv) != string(want) || rsp != nil {
+		t.Fatalf("short name: adv = %v rsp = %v, want name appended complete", adv, rsp)
+	}
+
+	// A raw payload the caller brought is used verbatim; the name is appended
+	// to it when it fits (adv-first is the rule - a passive scanner never
+	// fetches the scan response).
+	raw := []byte{0x03, 0x02, 0x12, 0x18}
+	adv, rsp, err = buildAdvPayloads(AdvParams{Name: "n", AdvData: raw})
+	if err != nil {
+		t.Fatalf("buildAdvPayloads(raw) = %v", err)
+	}
+	want := append(append([]byte{}, raw...), 0x02, 0x09, 'n')
+	if string(adv) != string(want) || rsp != nil {
+		t.Fatalf("raw adv: %v rsp = %v, want name appended to the raw payload", adv, rsp)
+	}
+
+	// A raw payload that leaves no room for even a short name sends it to the
+	// scan response, shortened to the packet size, complete there because the
+	// whole 30-character name fits one response packet.
+	nearly := make([]byte, MaxAdvData-4)
+	adv, rsp, err = buildAdvPayloads(AdvParams{Name: "012345678901234567890123456789", AdvData: nearly})
+	if err != nil {
+		t.Fatalf("buildAdvPayloads(long) = %v", err)
+	}
+	// The whole 30-character name cannot fit any packet (structure 32 > 31),
+	// so it travels shortened - and even the response packet only takes the
+	// 29-character prefix (1 length byte + 1 type byte + 29).
+	if string(adv) != string(nearly) || len(rsp) != 31 || rsp[1] != 0x08 || string(rsp[2:]) != "01234567890123456789012345678" {
+		t.Fatalf("long name: adv = %v rsp = %v, want the shortened name in the scan response", adv, rsp)
+	}
+
+	// A caller-owned scan response is respected: nothing is appended to it.
+	ownRsp := make([]byte, 30)
+	adv, rsp, err = buildAdvPayloads(AdvParams{Name: "0123456789", AdvData: raw, ScanRsp: ownRsp})
+	if err != nil {
+		t.Fatalf("buildAdvPayloads(own rsp) = %v", err)
+	}
+	if string(rsp) != string(ownRsp) || len(adv) != len(raw)+12 {
+		// the name structure rides the advertising packet: 2 + 10 bytes
+		t.Fatalf("own rsp rewritten or name misplaced: adv len %d rsp len %d", len(adv), len(rsp))
+	}
+
+	// Nothing fits: a full advertising packet plus a full scan response.
+	full := make([]byte, MaxAdvData)
+	if _, _, err := buildAdvPayloads(AdvParams{Name: "x", AdvData: full, ScanRsp: full}); err == nil {
+		t.Fatal("a name with nowhere to go was accepted")
+	}
+	// Nothing fits anywhere: a nearly-full advertising packet, a nearly-full
+	// caller-owned response, and a name of four characters.
+	tight := make([]byte, MaxAdvData-4)
+	if _, _, err := buildAdvPayloads(AdvParams{Name: "0123", AdvData: tight, ScanRsp: make([]byte, MaxAdvData-1)}); err == nil {
+		t.Fatal("a name with nowhere to go was accepted")
+	}
+	// More than one packet of raw data, on either side.
+	if _, _, err := buildAdvPayloads(AdvParams{AdvData: make([]byte, MaxAdvData+1)}); err != ErrTooMany {
+		t.Fatalf("oversized AdvData = %v, want ErrTooMany", err)
+	}
+	if _, _, err := buildAdvPayloads(AdvParams{ScanRsp: make([]byte, MaxAdvData+1)}); err != ErrTooMany {
+		t.Fatalf("oversized ScanRsp = %v, want ErrTooMany", err)
+	}
+}
+
+// TestRegistry walks the local GATT server's registry: the argument checks
+// both Add* functions run, the handle-budget check, and the refusal of a
+// registry beyond the static bounds.
+func TestRegistry(t *testing.T) {
+	resetRegistry()
+	svc := UUID16(0xfff0)
+	chr := UUID16(0xfff1)
+	not := UUID16(0xfff2)
+
+	if err := AddService(UUID{}, 4); !errors.Is(err, ErrBadUUID) {
+		t.Errorf("AddService(zero uuid) = %v, want ErrBadUUID", err)
+	}
+	if err := AddService(svc, 0); !errors.Is(err, ErrBadValue) {
+		t.Errorf("AddService(no handles) = %v, want ErrBadValue", err)
+	}
+	if err := AddService(svc, 8); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	if err := AddService(svc, 8); !errors.Is(err, ErrBadUUID) {
+		t.Errorf("duplicate AddService = %v, want ErrBadUUID", err)
+	}
+	if err := AddCharacteristic(UUID{}, chr, PropRead); !errors.Is(err, ErrBadUUID) {
+		t.Errorf("AddCharacteristic(zero svc) = %v, want ErrBadUUID", err)
+	}
+	if err := AddCharacteristic(svc, UUID{}, PropRead); !errors.Is(err, ErrBadUUID) {
+		t.Errorf("AddCharacteristic(zero chr) = %v, want ErrBadUUID", err)
+	}
+	if err := AddCharacteristic(svc, chr, PropBroadcast); !errors.Is(err, ErrBadProperty) {
+		t.Errorf("AddCharacteristic(broadcast) = %v, want ErrBadProperty", err)
+	}
+	if err := AddCharacteristic(UUID16(0x1111), chr, PropRead); !errors.Is(err, ErrNotFound) {
+		t.Errorf("AddCharacteristic(unknown svc) = %v, want ErrNotFound", err)
+	}
+	if err := AddCharacteristic(svc, chr, PropRead|PropWrite); err != nil {
+		t.Fatalf("AddCharacteristic = %v", err)
+	}
+	if err := AddCharacteristic(svc, chr, PropRead); !errors.Is(err, ErrBadUUID) {
+		t.Errorf("duplicate AddCharacteristic = %v, want ErrBadUUID", err)
+	}
+	// The budget the service declared is checked at commit time: one
+	// characteristic with a CCCD needs 4 handles; 8 covers it.
+	if err := checkRegistry(); err != nil {
+		t.Fatalf("checkRegistry = %v, want nil", err)
+	}
+	// Shrink the declared budget: the same registry must now be refused.
+	resetRegistry()
+	if err := AddService(svc, 2); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	if err := AddCharacteristic(svc, chr, PropNotify); err != nil {
+		t.Fatalf("AddCharacteristic = %v", err)
+	}
+	if err := checkRegistry(); !errors.Is(err, ErrBadValue) {
+		t.Errorf("checkRegistry(tight budget) = %v, want ErrBadValue", err)
+	}
+
+	// Static bounds.
+	resetRegistry()
+	for i := 0; i < MaxLocalServices; i++ {
+		if err := AddService(UUID16(uint16(0xffa0+i)), 2); err != nil {
+			t.Fatalf("AddService %d = %v", i, err)
+		}
+	}
+	if err := AddService(UUID16(0xbfff), 2); !errors.Is(err, ErrTooMany) {
+		t.Errorf("MaxLocalServices+1 = %v, want ErrTooMany", err)
+	}
+	resetRegistry()
+	if err := AddService(svc, 32); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	for i := 0; i < MaxLocalChars; i++ {
+		if err := AddCharacteristic(svc, UUID16(uint16(0xffc0+i)), PropRead); err != nil {
+			t.Fatalf("AddCharacteristic %d = %v", i, err)
+		}
+	}
+	if err := AddCharacteristic(svc, not, PropRead); !errors.Is(err, ErrTooMany) {
+		t.Errorf("MaxLocalChars+1 = %v, want ErrTooMany", err)
+	}
+}
+
+// TestPeriphStubUnsupported pins the hosted behaviour of the peripheral entry
+// points: before a commit every call is refused, and none forges success.
+func TestPeriphStubUnsupported(t *testing.T) {
+	resetRegistry()
+	// A valid registry gets past the caller-side checks and hits the
+	// stack-state refusal; an empty one is the caller's bug (ErrBadValue,
+	// pinned in TestCommitRefusals).
+	if err := AddService(UUID16(0xfff0), 4); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	if err := CommitServices(); !errors.Is(err, ErrNotReady) {
+		t.Errorf("CommitServices = %v, want ErrNotReady", err)
+	}
+	if _, err := LocalHandle(UUID16(0xfff1)); !errors.Is(err, ErrNotReady) {
+		t.Errorf("LocalHandle before commit = %v, want ErrNotReady", err)
+	}
+	if err := WriteCharValue(4, []byte("x")); !errors.Is(err, ErrNotReady) {
+		t.Errorf("WriteCharValue = %v, want ErrNotReady", err)
+	}
+	if err := Notify(ConnID(1), 4, []byte("x")); !errors.Is(err, ErrNotReady) {
+		t.Errorf("Notify = %v, want ErrNotReady", err)
+	}
+	if err := Indicate(ConnID(1), 4, []byte("x")); !errors.Is(err, ErrNotReady) {
+		t.Errorf("Indicate = %v, want ErrNotReady", err)
+	}
+	if err := DisconnectPeer(ConnID(1)); !errors.Is(err, ErrNotReady) {
+		t.Errorf("DisconnectPeer = %v, want ErrNotReady", err)
+	}
+	if err := SetSecurityParams(SecurityParams{}); !errors.Is(err, ErrNotReady) {
+		t.Errorf("SetSecurityParams = %v, want ErrNotReady", err)
+	}
+	if _, err := StartAdvertising(AdvParams{}); !errors.Is(err, ErrNotReady) {
+		t.Errorf("StartAdvertising = %v, want ErrNotReady", err)
+	}
+	if err := StopAdvertising(); !errors.Is(err, ErrNotReady) {
+		t.Errorf("StopAdvertising = %v, want ErrNotReady", err)
+	}
+
+	// Argument checks that run before the stack-state check: the oversized
+	// payloads and the bad handles are refused on the host exactly as on the
+	// device, and the advertising payload composition is exercised for real.
+	if _, err := StartAdvertising(AdvParams{AdvData: make([]byte, MaxAdvData+1)}); !errors.Is(err, ErrTooMany) {
+		t.Errorf("StartAdvertising(oversize) = %v, want ErrTooMany", err)
+	}
+	if err := WriteCharValue(0, []byte("x")); !errors.Is(err, ErrBadValue) {
+		t.Errorf("WriteCharValue(0) = %v, want ErrBadValue", err)
+	}
+	if err := WriteCharValue(4, make([]byte, MaxData+1)); !errors.Is(err, ErrTooLong) {
+		t.Errorf("WriteCharValue(too long) = %v, want ErrTooLong", err)
+	}
+	if err := Notify(ConnID(1), 0, []byte("x")); !errors.Is(err, ErrBadValue) {
+		t.Errorf("Notify(0) = %v, want ErrBadValue", err)
+	}
+	if err := Indicate(ConnID(1), 4, make([]byte, MaxData+1)); !errors.Is(err, ErrTooLong) {
+		t.Errorf("Indicate(too long) = %v, want ErrTooLong", err)
+	}
+	resetRegistry()
+}
+
+// TestCommitRegistryPins the commit path's registry-side refusals: an empty
+// registry, a double commit, and additions after the freeze. The commit
+// itself reports ErrNotReady on the host (no stack), so the freeze never
+// happens here - additions-after-commit are exercised by resetting the flag.
+func TestCommitRefusals(t *testing.T) {
+	resetRegistry()
+	if err := CommitServices(); !errors.Is(err, ErrBadValue) {
+		t.Errorf("CommitServices(empty) = %v, want ErrBadValue", err)
+	}
+	resetRegistry()
+	if err := AddService(UUID16(0xfff0), 8); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	committed = true // pretend the commit went through
+	if err := CommitServices(); !errors.Is(err, ErrBadValue) {
+		t.Errorf("CommitServices(twice) = %v, want ErrBadValue", err)
+	}
+	if err := AddService(UUID16(0xffe0), 4); !errors.Is(err, ErrBadValue) {
+		t.Errorf("AddService(after commit) = %v, want ErrBadValue", err)
+	}
+	if err := AddCharacteristic(UUID16(0xfff0), UUID16(0xfff1), PropRead); !errors.Is(err, ErrBadValue) {
+		t.Errorf("AddCharacteristic(after commit) = %v, want ErrBadValue", err)
+	}
+	resetRegistry()
+}
+
+// TestLocalHandle pins the handle lookup: unknown UUIDs after a (simulated)
+// commit, and the found case.
+func TestLocalHandle(t *testing.T) {
+	resetRegistry()
+	if err := AddService(UUID16(0xfff0), 8); err != nil {
+		t.Fatalf("AddService = %v", err)
+	}
+	if err := AddCharacteristic(UUID16(0xfff0), UUID16(0xfff1), PropRead|PropNotify); err != nil {
+		t.Fatalf("AddCharacteristic = %v", err)
+	}
+	committed = true
+	gchrs[0].handle = 16 // the assignment CommitServices pulls from the glue
+	if h, err := LocalHandle(UUID16(0xfff1)); err != nil || h != 16 {
+		t.Errorf("LocalHandle = %d, %v, want 16, nil", h, err)
+	}
+	if _, err := LocalHandle(UUID16(0x1234)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LocalHandle(unknown) = %v, want ErrNotFound", err)
+	}
+	resetRegistry()
+}
+
+// TestErrNamePeripheralTable pins the new sentinel's name in the ErrName
+// table - the two must not drift.
+func TestErrNamePeripheralTable(t *testing.T) {
+	if got := ErrName(codeTooMany); got != ErrTooMany.Name {
+		t.Errorf("ErrName(%#x) = %q, want %q", codeTooMany, got, ErrTooMany.Name)
+	}
+	if !errors.Is(error(ErrTooMany), ErrTooMany) {
+		t.Fatal("errors.Is does not match ErrTooMany")
 	}
 }
