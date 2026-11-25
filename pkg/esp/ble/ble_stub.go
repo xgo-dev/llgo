@@ -16,8 +16,9 @@ import (
 // be mistaken for a real code.
 const errUnsupported = 0x7F00
 
-func initHost() int32     { return errUnsupported }
-func deinitHost() int32   { return errUnsupported }
+func initHost() int32   { return errUnsupported }
+func deinitHost() int32 { return errUnsupported }
+
 // bondedPeers has no host-side counterpart: a hosted build has no bonds.
 func bondedPeers(out *uint8, maxPeers int32) int32 { return 0 }
 
@@ -72,7 +73,6 @@ func writeAttr(connID uint32, handle uint16, data *uint8, n, mode int32, opID ui
 }
 
 func svcCount(connID uint32) int32 { _ = connID; return 0 }
-
 func svcAt(connID uint32, idx int32, out *svcRec) int32 {
 	_, _, _ = connID, idx, out
 	return 0
@@ -87,6 +87,47 @@ func chrAt(connID uint32, idx int32, out *chrRec) int32 {
 
 func mtuGet(connID uint32, out *int32) int32 {
 	_, _ = connID, out
+	return errUnsupported
+}
+
+// ---- peripheral ----
+//
+// A host build has no stack, so every control call reports the unsupported
+// sentinel and the accessors report an empty assignment table. The pure-Go
+// registry functions (AddService, AddCharacteristic and the argument checks
+// they run) still run, which is what the tests exercise.
+
+func advStart(adv *uint8, advLen int32, rsp *uint8, rspLen, itvlMs, connectable int32, opID uint32) int32 {
+	_, _, _, _, _, _, _ = adv, advLen, rsp, rspLen, itvlMs, connectable, opID
+	return errUnsupported
+}
+
+func advStop(opID uint32) int32 { _ = opID; return errUnsupported }
+
+func gattsDeclare(svcs *gsvcWire, nsvc int32, chrs *gchrWire, nchr int32, opID uint32) int32 {
+	_, _, _, _, _ = svcs, nsvc, chrs, nchr, opID
+	return errUnsupported
+}
+
+func gattsAttr(idx int32, out *uint16) int32 {
+	_, _ = idx, out
+	return 0
+}
+
+func gattsValue(handle uint16, data *uint8, n int32) int32 {
+	_, _, _ = handle, data, n
+	return errUnsupported
+}
+
+func gattsNotify(connID uint32, handle uint16, data *uint8, n, indicate int32) int32 {
+	_, _, _, _, _ = connID, handle, data, n, indicate
+	return errUnsupported
+}
+
+func gattsClose(connID uint32) int32 { _ = connID; return errUnsupported }
+
+func securityParams(ioCap, mitm, bond int32, passkey uint32, keySize int32) int32 {
+	_, _, _, _, _ = ioCap, mitm, bond, passkey, keySize
 	return errUnsupported
 }
 

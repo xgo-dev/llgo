@@ -130,7 +130,8 @@
 //	               bounded wait found nothing), ErrNotReady (Init not done or
 //	               no host sync), ErrBusy (a GATT procedure is in flight),
 //	               ErrBadUUID/ErrBadValue/ErrBadProperty (an argument this
-//	               package refuses), ErrNotFound, ErrTooLong, ErrUnsupported.
+//	               package refuses), ErrNotFound, ErrTooLong, ErrTooMany,
+//	               ErrUnsupported.
 //
 // The offset matters: NimBLE's status 0x02 (BLE_HS_EALREADY) and an HCI error
 // 0x02 are different conditions in different namespaces, and an esp_err 0x02
@@ -139,10 +140,13 @@
 //
 // # Scope
 //
-// This is the central role: GAP scanning (legacy discovery), connect, cancel,
-// disconnect, and the GATT client. No peripheral role, no pairing/bonding, no
-// service discovery beyond primary services and their characteristics, no
-// descriptor discovery, no long read/write - those are separate stages; the
+// Both BLE roles share this package. The central side is GAP scanning (legacy
+// discovery), connect, cancel, disconnect and the GATT client; the peripheral
+// side is advertising, the local GATT server (a registry of services and
+// characteristics the glue builds once), the peer's writes and subscriptions
+// as events, and server-side notify/indicate. Pairing parameters are
+// configurable (SetSecurityParams) but no pairing state machine is exposed;
+// no descriptor discovery, no long read/write - those are separate stages; the
 // glue's mailbox has the shape they need (a control tier for results a state
 // machine depends on, payload tiers with a bounded copy).
 package ble
@@ -164,6 +168,7 @@ const (
 	codeBadProperty = 0x7B06
 	codeNotFound    = 0x7B07
 	codeTooLong     = 0x7B08
+	codeTooMany     = 0x7B09
 	codeUnsupported = 0x7F00
 )
 
@@ -212,6 +217,12 @@ var ErrNotFound = &esperr.Error{Code: codeNotFound, Name: "BLE_ERR_NOT_FOUND"}
 // ErrTooLong reports a payload larger than one event or one ATT write carries
 // (MaxData bytes). The value is refused rather than truncated.
 var ErrTooLong = &esperr.Error{Code: codeTooLong, Name: "BLE_ERR_TOO_LONG"}
+
+// ErrTooMany reports a registry or argument count beyond what this package
+// holds statically: more than MaxLocalServices services, MaxLocalChars
+// characteristics, or an advertising payload that does not fit one legacy
+// advertising packet even with the name moved to the scan response.
+var ErrTooMany = &esperr.Error{Code: codeTooMany, Name: "BLE_ERR_TOO_MANY"}
 
 // espErr wraps a raw esp_err code (0 = nil) - the esp domain of this package.
 func espErr(code int32) error {
@@ -338,6 +349,47 @@ const (
 	// connection comes up.
 	EvMtu = 12
 
+	// The peripheral-role kinds (13..18), delivered through the same mailbox.
+	// EvPeriphConnect and EvPeriphDisconnect travel on the control tier - the
+	// ring that a scan flood or a notification storm can never displace - and
+	// EvCharWrite and EvSubscribed travel on the peripheral's own payload tier,
+	// so an advertising flood on either side of the link cannot crowd them out
+	// either (see the glue's fourth ring).
+
+	// EvPeriphConnect reports that a central connected to this device's
+	// advertising: ConnID the connection to serve (packed like a central-side
+	// ConnID, from the same generation counter), Addr/AddrType the peer.
+	EvPeriphConnect = 13
+
+	// EvPeriphDisconnect reports that a served connection ended: ConnID the
+	// connection, Status the HCI disconnection reason (render it with
+	// DisconnectReasonName).
+	EvPeriphDisconnect = 14
+
+	// EvCharWrite reports that a peer wrote a characteristic's value: ConnID
+	// the connection, AttHandle the value handle, DataLen/Data the bytes
+	// written. The glue has already copied the bytes into the characteristic's
+	// value cache (what a later read returns), so this event is the program's
+	// notice - an echo, a command or a config write - not a data lifeline.
+	EvCharWrite = 15
+
+	// EvSubscribed reports a write to a characteristic's client configuration
+	// (CCCD): ConnID the connection, AttHandle the value handle of the
+	// characteristic the CCCD belongs to, Status the raw CCCD value - bit 0
+	// set when notifications are on, bit 1 when indications are.
+	EvSubscribed = 16
+
+	// EvAdvDone reports the outcome of a StartAdvertising or StopAdvertising
+	// operation: OpID the operation, Status the stack's result (0 = done).
+	// The advertising payload itself keeps running silently; this is the
+	// lifecycle event only.
+	EvAdvDone = 17
+
+	// EvServicesDone reports the outcome of CommitServices: OpID the
+	// operation, Status the stack's result (0 = the attribute table is live
+	// and the assigned handles are queryable with LocalHandle).
+	EvServicesDone = 18
+
 	// EvOverflow reports mailbox loss: Status is the number of records dropped
 	// since the last report (a record that did not fit its ring, or a
 	// notification payload larger than MaxData). Control records are dropped
@@ -421,6 +473,18 @@ const (
 	// peer has more, instead of silently dropping records.
 	MaxServices        = 16
 	MaxCharacteristics = 32
+
+	// MaxLocalServices and MaxLocalChars bound the local GATT server's
+	// registry - the tables the glue holds statically (and the Bluedroid
+	// creation state machine walks). A registry beyond them is refused with
+	// ErrTooMany before anything is submitted.
+	MaxLocalServices = 4
+	MaxLocalChars    = 8
+
+	// DefaultAdvIntervalMs is the advertising interval AdvParams leaves at
+	// zero: 100 ms, the slow end of the conventional 20 ms..10 s range, fine
+	// for a device a user or peer looks for once.
+	DefaultAdvIntervalMs = 100
 
 	// GattTimeoutMs bounds a GATT call's wait for its completion record:
 	// NimBLE's own unresponsive-procedure timeout, so a peer that stops
@@ -1374,6 +1438,556 @@ func MTU(conn ConnID) (int, error) {
 	return int(mtu), nil
 }
 
+// ---- peripheral: advertising, the local GATT server, security ----
+//
+// The same mailbox and the same conventions as the central half, mirrored:
+// StartAdvertising is a control call whose outcome arrives as EvAdvDone,
+// CommitServices is a synchronous procedure that waits for its completion
+// record, and what the peer does to this device's attributes arrives as
+// events. A characteristic's value is a fixed slot in the glue (one value
+// cache per characteristic): WriteCharValue fills it from Go, a peer's write
+// overwrites it (and reports EvCharWrite), and a peer's read is answered
+// straight from it by the glue - the GATT server never calls back into Go
+// for a value, because a read must be answered synchronously on the stack's
+// own task, and the llgo scheduler cannot be entered from there.
+
+// AdvParams configures StartAdvertising. The zero value is a usable,
+// connectable advertisement at DefaultAdvIntervalMs with no name.
+type AdvParams struct {
+	// Name is the local name the advertisement carries, as a Complete Local
+	// Name AD structure when it fits the advertising payload, otherwise (or
+	// when AdvData already fills it) as a Shortened one in the scan response.
+	// An empty name adds nothing.
+	Name string
+
+	// IntervalMs is the advertising interval; 0 means DefaultAdvIntervalMs.
+	// Values below the BLE minimum (20 ms) are clamped to it.
+	IntervalMs int32
+
+	// AdvData is a raw advertising payload (the AD-structure sequence a scan
+	// result reports), replacing the default one-structure payload (the
+	// general-discovery flags). The payload is copied into the glue's static
+	// staging buffer; more than MaxAdvData bytes is ErrTooMany. When AdvData
+	// already fills the packet, Name goes to the scan response.
+	AdvData []byte
+
+	// ScanRsp is a raw scan-response payload. When it is empty the package
+	// builds one if the name needs the space; when the caller supplies it,
+	// the name must fit the advertising payload (or it is refused: a passive
+	// scanner would never see it in a response the caller owns).
+	ScanRsp []byte
+
+	// NonConnectable suppresses the connectable flag: the advertisement
+	// announces presence only, and no central can connect to it.
+	NonConnectable bool
+}
+
+// advFlags is the flags AD structure StartAdvertising composes when the
+// caller did not bring one: general discovery, BR/EDR not supported (or, for
+// a non-connectable advertisement, discovery without the LE-limited bit).
+const advFlagsGeneral = 0x06
+
+// buildAdvPayloads composes the two wire payloads out of params: the
+// advertising packet (flags unless AdvData says otherwise, plus the name when
+// it fits) and the scan response (the caller's, or the name's overflow). The
+// composition is pure Go - the host tests walk it without a stack.
+func buildAdvPayloads(p AdvParams) (adv, rsp []byte, err error) {
+	if len(p.AdvData) > MaxAdvData || len(p.ScanRsp) > MaxAdvData {
+		return nil, nil, ErrTooMany
+	}
+	adv = p.AdvData
+	if adv == nil {
+		// The conventional minimal payload: general discovery + BR/EDR off.
+		adv = []byte{0x02, 0x01, advFlagsGeneral}
+	}
+	rsp = p.ScanRsp
+	if p.Name == "" {
+		return adv, rsp, nil
+	}
+	// The name becomes one AD structure: length byte, type byte, then the
+	// name. It goes into the advertising payload when the whole (Complete
+	// Local Name, 0x09) structure fits, else into the scan response, else as
+	// a Shortened Local Name (0x08) - the longest prefix either packet
+	// takes - and ErrTooMany when even that fits nowhere.
+	for _, complete := range [2]bool{true, false} {
+		n := len(p.Name)
+		if !complete && n > MaxAdvData-2 {
+			n = MaxAdvData - 2 // the longest prefix one packet can take
+		}
+		// The AD structure's Length field counts the type byte plus the name
+		// (everything after the length byte itself), so a structure is
+		// n+2 bytes on the wire with Length = n+1.
+		st := []byte{byte(1 + n), 0x09}
+		if !complete {
+			st[1] = 0x08
+		}
+		st = append(st, p.Name[:n]...)
+		if len(adv)+len(st) <= MaxAdvData {
+			return append(adv, st...), rsp, nil
+		}
+		if rsp == nil {
+			rsp = []byte{}
+		}
+		if len(rsp)+len(st) <= MaxAdvData {
+			return adv, append(rsp, st...), nil
+		}
+	}
+	return nil, nil, ErrTooMany
+}
+
+// StartAdvertising submits the advertisement and returns its OpID. The
+// outcome arrives as EvAdvDone carrying that OpID: Status 0 means the
+// controller is advertising with these payloads, anything else is the stack's
+// refusal (an advertising procedure already running reports it there, not
+// here - submission is asynchronous, like every control call).
+func StartAdvertising(p AdvParams) (OpID, error) {
+	// The argument checks run before the stack-state check, like Write's: a
+	// bad payload is the caller's bug, and a host build must report it the
+	// same way a device would.
+	adv, rsp, err := buildAdvPayloads(p)
+	if err != nil {
+		return 0, err
+	}
+	if !Ready() {
+		return 0, ErrNotReady
+	}
+	interval := p.IntervalMs
+	if interval <= 0 {
+		interval = DefaultAdvIntervalMs
+	}
+	if interval < 20 {
+		interval = 20 // the BLE minimum for a legacy connectable advertisement
+	}
+	if interval > 10240 {
+		interval = 10240 // the BLE maximum (10.24 s); the field is 16 bits of 0.625 ms
+	}
+	connectable := int32(1)
+	if p.NonConnectable {
+		connectable = 0
+	}
+	op := nextOp()
+	var pa, pr *uint8
+	if len(adv) > 0 {
+		pa = &adv[0]
+	}
+	if len(rsp) > 0 {
+		pr = &rsp[0]
+	}
+	if e := nimbleErr(advStart(pa, int32(len(adv)), pr, int32(len(rsp)), interval,
+		connectable, uint32(op))); e != nil {
+		return 0, e
+	}
+	return op, nil
+}
+
+// StopAdvertising stops the running advertisement. The outcome arrives as
+// EvAdvDone (OpID-tagged, like StartAdvertising); a refusal (nothing is
+// advertising) arrives there too. An advertisement that ended because a
+// central connected reports nothing - the connect is the end, and
+// EvPeriphConnect says so.
+func StopAdvertising() error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	return nimbleErr(advStop(uint32(nextOp())))
+}
+
+// The local GATT server's registry, Go-side: services in the order added,
+// characteristics in the order added per service. The registry is what
+// CommitServices serializes to the glue (once - the attribute table is built
+// from these two flat arrays and never changes shape at runtime).
+type gsvcReg struct {
+	uuid       UUID
+	numHandles int
+	first      int // index of the service's first characteristic in gchrs
+	nchars     int
+}
+
+type gchrReg struct {
+	svc    int // index into gsvcs
+	uuid   UUID
+	props  uint8
+	handle uint16 // the value attribute handle the stack assigned, 0 until CommitServices
+}
+
+var (
+	gsvcs     []gsvcReg
+	gchrs     []gchrReg
+	committed bool // the registry was serialized to the glue (and frozen)
+)
+
+// AddService declares one primary service of the local GATT server: its UUID
+// and the attribute-table size the stack should reserve (Bluedroid takes the
+// count up front; NimBLE derives it, and the two agree when the count covers
+// every attribute). The service holds 1 + (2, or 3 with a CCCD) handles per
+// characteristic: declare the characteristics first as AddCharacteristic
+// calls that follow, or leave headroom - CommitServices refuses a registry
+// that does not fit its declared counts.
+func AddService(uuid UUID, numHandles int) error {
+	if uuid.IsZero() {
+		return ErrBadUUID
+	}
+	if numHandles < 1 {
+		return ErrBadValue
+	}
+	if committed {
+		return ErrBadValue // the attribute table is already built
+	}
+	if len(gsvcs) >= MaxLocalServices {
+		return ErrTooMany
+	}
+	for i := range gsvcs {
+		if gsvcs[i].uuid == uuid {
+			return ErrBadUUID // one UUID, one service
+		}
+	}
+	gsvcs = append(gsvcs, gsvcReg{uuid: uuid, numHandles: numHandles, first: len(gchrs)})
+	return nil
+}
+
+// AddCharacteristic declares one characteristic of the service svc (a UUID an
+// AddService call added), with the ATT property bitmask the Prop* constants
+// compose - the same bits a discovery reports. Notify and Indicate each add a
+// client configuration descriptor (the stack's subscription gate), which is
+// part of the handle budget AddService declared. Call order is attribute
+// order: the characteristic appears in discovery results the way it was
+// added here.
+func AddCharacteristic(svc, chr UUID, props uint8) error {
+	if svc.IsZero() || chr.IsZero() {
+		return ErrBadUUID
+	}
+	if props&^(PropRead|PropWriteNoRsp|PropWrite|PropNotify|PropIndicate) != 0 {
+		return ErrBadProperty // the package builds no broadcast/signed/extended properties
+	}
+	if committed {
+		return ErrBadValue
+	}
+	if len(gchrs) >= MaxLocalChars {
+		return ErrTooMany
+	}
+	for i := range gsvcs {
+		if gsvcs[i].uuid != svc {
+			continue
+		}
+		for j := gsvcs[i].first; j < len(gchrs); j++ {
+			if gchrs[j].uuid == chr {
+				return ErrBadUUID // one UUID, one characteristic per service
+			}
+		}
+		gsvcs[i].nchars++
+		gchrs = append(gchrs, gchrReg{svc: i, uuid: chr, props: props})
+		return nil
+	}
+	return ErrNotFound // no such local service
+}
+
+// attrCount is the attribute count one characteristic costs: declaration,
+// value, and a CCCD when it notifies or indicates.
+func attrCount(props uint8) int {
+	n := 2
+	if props&(PropNotify|PropIndicate) != 0 {
+		n++
+	}
+	return n
+}
+
+// checkRegistry validates the whole registry against the declared handle
+// budgets, so a table that cannot fit its characteristics is refused in Go,
+// before the glue's state machine could strand mid-build.
+func checkRegistry() error {
+	for i := range gsvcs {
+		need := 1
+		for j := gsvcs[i].first; j < gsvcs[i].first+gsvcs[i].nchars; j++ {
+			need += attrCount(gchrs[j].props)
+		}
+		if need > gsvcs[i].numHandles {
+			return ErrBadValue
+		}
+	}
+	return nil
+}
+
+// gsvcWire and gchrWire mirror the glue's declaration records byte for byte
+// (llgo_ble_gsvc_t / llgo_ble_gchr_t in the glue files, whose
+// _Static_asserts pin the offsets): a UUID as width plus 16 little-endian
+// bytes, the per-service characteristic count, the property bitmask.
+type gsvcWire struct {
+	Len    uint8
+	UUID   [16]uint8
+	_      uint8
+	NChars uint16
+}
+
+type gchrWire struct {
+	Len   uint8
+	UUID  [16]uint8
+	Props uint8
+}
+
+// CommitServices builds the local GATT server from the registry: the two flat
+// arrays go to the glue once, the glue walks its stack's service-creation
+// procedure (asynchronous, on the stack's own task), and the call returns
+// when the attribute table is live - handles assigned, characteristics
+// discoverable, values servable. The registry freezes: further AddService or
+// AddCharacteristic calls are refused, and a second commit is ErrBadValue
+// (rebuilding a live table is a Deinit-and-restart operation, not a refresh).
+// A call whose wait expires (ErrTimeout) may still complete later; the
+// completion event carries the operation id either way.
+func CommitServices() error {
+	// The registry-side refusals run before the stack-state check: an empty
+	// or double commit is the caller's bug, reportable the same way on a
+	// host build as on a device.
+	if committed {
+		return ErrBadValue
+	}
+	if len(gsvcs) == 0 {
+		return ErrBadValue
+	}
+	if err := checkRegistry(); err != nil {
+		return err
+	}
+	if !Ready() {
+		return ErrNotReady
+	}
+	svcs := make([]gsvcWire, len(gsvcs))
+	chrs := make([]gchrWire, len(gchrs))
+	ci := 0
+	for i := range gsvcs {
+		svcs[i].Len = uint8(gsvcs[i].uuid.Len())
+		svcs[i].UUID = gsvcs[i].uuid.v
+		svcs[i].NChars = uint16(gsvcs[i].nchars)
+		for j := gsvcs[i].first; j < gsvcs[i].first+gsvcs[i].nchars; j++ {
+			chrs[ci].Len = uint8(gchrs[j].uuid.Len())
+			chrs[ci].UUID = gchrs[j].uuid.v
+			chrs[ci].Props = gchrs[j].props
+			ci++
+		}
+	}
+	op := nextOp()
+	sub := Subscribe(EvServicesDone, EvError)
+	defer sub.Close()
+	if e := nimbleErr(gattsDeclare(&svcs[0], int32(len(svcs)), &chrs[0], int32(len(chrs)), uint32(op))); e != nil {
+		return e
+	}
+	ev, err := waitOp(sub, op)
+	if err != nil {
+		return err
+	}
+	if ev.Status != 0 {
+		return nimbleErr(ev.Status)
+	}
+	committed = true
+	// The stack assigned a value handle per characteristic during creation;
+	// pull the whole assignment in registration order (the glue's table is
+	// indexed the same way).
+	for i := range gchrs {
+		var h uint16
+		if gattsAttr(int32(i), &h) == 1 {
+			gchrs[i].handle = h
+		}
+	}
+	return nil
+}
+
+// findLocalChr resolves a value handle to its registration (the reverse of
+// LocalHandle: what the write and subscribe events carry).
+func findLocalChr(handle uint16) (gchrReg, bool) {
+	for i := range gchrs {
+		if gchrs[i].handle == handle {
+			return gchrs[i], true
+		}
+	}
+	return gchrReg{}, false
+}
+
+// findLocalByUUID resolves a characteristic UUID to its registration.
+func findLocalByUUID(uuid UUID) (gchrReg, bool) {
+	for i := range gchrs {
+		if gchrs[i].uuid == uuid {
+			return gchrs[i], true
+		}
+	}
+	return gchrReg{}, false
+}
+
+// LocalHandle reports the value attribute handle the stack assigned to the
+// characteristic chr: the handle WriteCharValue takes, the one EvCharWrite
+// and EvSubscribed carry, and the one Notify addresses. It is meaningful only
+// after CommitServices (0 and ErrNotReady before - handles do not exist
+// before the attribute table is built). An unknown UUID is ErrNotFound.
+func LocalHandle(chr UUID) (uint16, error) {
+	if !committed {
+		return 0, ErrNotReady
+	}
+	reg, ok := findLocalByUUID(chr)
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return reg.handle, nil
+}
+
+// WriteCharValue sets a characteristic's local value: what the glue answers
+// a peer's read with, and what a peer sees before its first write. The call
+// copies the bytes into the glue's static cache and returns; a value larger
+// than MaxData is ErrTooLong (truncation would invent data), a handle that is
+// not a committed characteristic is ErrNotFound.
+func WriteCharValue(handle uint16, data []byte) error {
+	if handle == 0 {
+		return ErrBadValue
+	}
+	if len(data) > MaxData {
+		return ErrTooLong
+	}
+	if !committed {
+		return ErrNotReady
+	}
+	if _, ok := findLocalChr(handle); !ok {
+		return ErrNotFound
+	}
+	var p *uint8
+	if len(data) > 0 {
+		p = &data[0]
+	}
+	return nimbleErr(gattsValue(handle, p, int32(len(data))))
+}
+
+// Notify pushes data to every subscribed peer of the characteristic handle,
+// unacknowledged (the ATT notification procedure). The value travels to the
+// glue as an immediate copy, so the caller's buffer is free on return; the
+// returned error reports the submission only. On the NimBLE backend the send
+// itself runs later on the host task, and a send it refuses there (a peer
+// that is gone, out of mbufs) is reported as EvError - a plain Subscribe
+// watcher sees it. An unsubscribed peer stays silent either way: the ATT
+// notification has no failure report for it, which is what
+// "unacknowledged" means on the wire.
+func Notify(conn ConnID, handle uint16, data []byte) error {
+	return gattsPush(conn, handle, data, false)
+}
+
+// Indicate pushes data to every subscribed peer of the characteristic handle,
+// acknowledged (the ATT indication procedure): the stack waits for the
+// peer's confirmation and enforces the one-outstanding-indication rule
+// itself. Like Notify, the returned error reports the submission only.
+func Indicate(conn ConnID, handle uint16, data []byte) error {
+	return gattsPush(conn, handle, data, true)
+}
+
+// gattsPush is the shared body of Notify and Indicate.
+func gattsPush(conn ConnID, handle uint16, data []byte, indicate bool) error {
+	if handle == 0 {
+		return ErrBadValue
+	}
+	if len(data) > MaxData {
+		return ErrTooLong
+	}
+	if !Ready() {
+		return ErrNotReady
+	}
+	reg, ok := findLocalChr(handle)
+	if !ok {
+		return ErrNotFound
+	}
+	if indicate && reg.props&PropIndicate == 0 {
+		return ErrBadProperty
+	}
+	if !indicate && reg.props&PropNotify == 0 {
+		return ErrBadProperty
+	}
+	var p *uint8
+	if len(data) > 0 {
+		p = &data[0]
+	}
+	ind := int32(0)
+	if indicate {
+		ind = 1
+	}
+	return nimbleErr(gattsNotify(uint32(conn), handle, p, int32(len(data)), ind))
+}
+
+// DisconnectPeer terminates a peripheral-side connection (a central that
+// connected to this device's advertising). The teardown arrives as
+// EvPeriphDisconnect (Status carries the HCI reason); a ConnID that no longer
+// matches a live connection arrives as EvError with StatusENOENT.
+func DisconnectPeer(id ConnID) error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	return nimbleErr(gattsClose(uint32(id)))
+}
+
+// IoCap names the device's input/output capability for the pairing
+// procedure. The numeric values are the Bluetooth-assigned ones, identical in
+// both stacks' APIs.
+type IoCap uint8
+
+const (
+	IoCapDisplayOnly     IoCap = 0 // has a display, no input: show the passkey
+	IoCapYesNo           IoCap = 1 // has a display and yes/no input
+	IoCapKeyboardOnly    IoCap = 2 // has a keyboard, no display: enter the passkey
+	IoCapNoInputNoOutput IoCap = 3 // neither: just-works pairing (no MITM)
+	IoCapKeyboardDisplay IoCap = 4 // both
+)
+
+// SecurityParams configures the pairing posture (SetSecurityParams). The
+// zero value is the posture Init installs anyway: DisplayOnly, bonding with
+// MITM where the peer supports it. Passkey 0 means "no fixed passkey": MITM
+// then comes from the IO-capability exchange alone.
+type SecurityParams struct {
+	// IoCap is what this device can display and input (the constants above).
+	IoCap IoCap
+
+	// Passkey is a 6-digit fixed passkey (0..999999) for peers whose IO
+	// combination resolves to passkey entry. A fixed passkey plus MITM makes
+	// a phone's first-time pairing show the code this device displays.
+	Passkey uint32
+
+	// Bond stores the pairing keys (NVS) so a reconnecting peer skips pairing.
+	// Without it, every reconnection pairs again.
+	Bond bool
+
+	// MITM requires man-in-the-middle protection on the pairing - the
+	// property that makes an over-the-air passkey comparison meaningful. A
+	// NoInputNoOutput device cannot provide it, and pairing with a peer that
+	// demands it fails (the honest outcome: refusing silently would fake
+	// security).
+	MITM bool
+
+	// KeySize is the encryption key size in bytes (7..16). The zero value and
+	// every other value are clamped to 16, the BLE maximum: a smaller key
+	// ships no security this stack could not negotiate up to, and - the
+	// Bluedroid trap - a MAX_KEY_SIZE that was never set distributes no key
+	// at all while the pairing still reports success.
+	KeySize uint8
+}
+
+// SetSecurityParams installs the pairing posture. Call it once, after Init
+// and before the first connection: the parameters are read when a pairing
+// starts, and changing them mid-pairing is undefined in both stacks. This is
+// the knob the provisioning stage needs (a phone pairs and encrypts before it
+// writes WiFi credentials); without a call, Init's default posture stays
+// active.
+func SetSecurityParams(p SecurityParams) error {
+	if !Ready() {
+		return ErrNotReady
+	}
+	keySize := p.KeySize
+	if keySize < 7 || keySize > 16 {
+		keySize = 16
+	}
+	passkey := p.Passkey
+	if passkey > 999999 {
+		passkey = 0 // not a 6-digit value: refuse the fixed passkey silently
+	}
+	mitm, bond := int32(0), int32(0)
+	if p.MITM {
+		mitm = 1
+	}
+	if p.Bond {
+		bond = 1
+	}
+	return espErr(securityParams(int32(p.IoCap), mitm, bond, passkey, int32(keySize)))
+}
+
 // svcRec and chrRec mirror the glue's discovery records byte for byte
 // (llgo_ble_svc_t / llgo_ble_chr_t in glue/ble_glue_nimble.c, whose
 // _Static_asserts pin the offsets): the UUID travels as a width plus 16
@@ -1593,6 +2207,8 @@ func ErrName(code int32) string {
 		return "BLE_ERR_NOT_FOUND"
 	case codeTooLong:
 		return "BLE_ERR_TOO_LONG"
+	case codeTooMany:
+		return "BLE_ERR_TOO_MANY"
 	case codeUnsupported:
 		return "BLE_ERR_UNSUPPORTED"
 	}

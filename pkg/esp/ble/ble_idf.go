@@ -83,6 +83,39 @@ func chrAt(connID uint32, idx int32, out *chrRec) int32
 //go:linkname mtuGet C.llgo_ble_mtu
 func mtuGet(connID uint32, out *int32) int32
 
+// ---- peripheral ----
+//
+// Same contract as the GAP commands: a control call returns 0 when the stack
+// accepted it and a status when it did not, and the outcome arrives through
+// the mailbox (EvAdvDone, EvServicesDone, EvPeriphConnect, ...). The value
+// cache write and the registry accessors are plain copies into/from static
+// tables the stack task and the Go task share under the glue's critical
+// section.
+
+//go:linkname advStart C.llgo_ble_adv_start
+func advStart(adv *uint8, advLen int32, rsp *uint8, rspLen, itvlMs, connectable int32, opID uint32) int32
+
+//go:linkname advStop C.llgo_ble_adv_stop
+func advStop(opID uint32) int32
+
+//go:linkname gattsDeclare C.llgo_ble_gatts_declare
+func gattsDeclare(svcs *gsvcWire, nsvc int32, chrs *gchrWire, nchr int32, opID uint32) int32
+
+//go:linkname gattsAttr C.llgo_ble_gatts_attr
+func gattsAttr(idx int32, out *uint16) int32
+
+//go:linkname gattsValue C.llgo_ble_gatts_value
+func gattsValue(handle uint16, data *uint8, n int32) int32
+
+//go:linkname gattsNotify C.llgo_ble_gatts_notify
+func gattsNotify(connID uint32, handle uint16, data *uint8, n, indicate int32) int32
+
+//go:linkname gattsClose C.llgo_ble_gatts_close
+func gattsClose(connID uint32) int32
+
+//go:linkname securityParams C.llgo_ble_security
+func securityParams(ioCap, mitm, bond int32, passkey uint32, keySize int32) int32
+
 // vTaskDelay yields the CPU for ticks. The poller rests one tick per pass: a
 // busy loop would starve the idle tasks and trip the task watchdog.
 //

@@ -1,0 +1,25 @@
+[peer] virtual controller listening on tcp:9545
+[peer] central ready at C0:FF:EE:00:00:02, scanning for 'llgo-periph'
+[peer] scan found name=llgo-periph addr=00:11:22:33:44:55/P addrtype=0 rssi=-50
+[peer] connected handle=1 peer=00:11:22:33:44:55/P mtu=23
+[peer] discovering services...
+[peer] service uuid=UUID-16:1801 (Generic Attribute) chars=[UUID-16:2A05 (Service Changed)]
+[peer] service uuid=UUID-16:1800 (Generic Access) chars=[UUID-16:2A00 (Device Name) UUID-16:2A01 (Appearance) UUID-16:2AA6 (Central Address Resolution)]
+[peer] service uuid=UUID-16:FFF0 chars=[UUID-16:FFF1 UUID-16:FFF2]
+[peer] service uuid=6C6C676F-2222-3333-4444-556677889900 chars=[6C6C676F-2222-3333-4444-556677889901]
+[peer] discovered echo uuid=FFF1 props=<Properties.READ|WRITE_WITHOUT_RESPONSE|WRITE: 14>
+[peer] discovered notify uuid=FFF2 props=<Properties.NOTIFY: 16>
+[peer] discovered wide uuid=6c6c676f-2222-3333-4444-556677889901 props=<Properties.READ|WRITE: 10>
+[peer] read echo len=5 value=b'hello'
+[peer] subscribed notify
+[peer] echo write uuid=FFF1 len=7 value=b'ping-00'
+[peer] notify n=1 len=7 value=b'ping-00'
+[peer] echo write uuid=FFF1 len=7 value=b'ping-01'
+[peer] notify n=2 len=7 value=b'ping-01'
+[peer] read back len=7 value=b'ping-01'
+[peer] wide write len=4 value=b'u128'
+[peer] wide read back len=4 value=b'u128'
+[peer] unsubscribed notify
+[peer] disconnected reason=0x13
+[peer] PASS: scan, connect, discover, read, subscribe, write, echo, unsubscribe, disconnect
+[peer] done
