@@ -28,6 +28,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
 )
 
@@ -92,18 +93,36 @@ const (
 	BitCast           // store other value (need bitcast) directly in the interface value
 )
 
+var defaultDataKindCtx = lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+
 func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, int) {
-	dk, typ, depth := lltypes.GoDataKindOf(raw, lvl, is32Bits)
-	return DataKind(dk), typ, depth
+	switch raw.Underlying().(type) {
+	case *types.Basic, *types.Pointer, *types.Signature, *types.Map, *types.Chan,
+		*types.Struct, *types.Interface, *types.Slice, *types.Array:
+	default:
+		panic("unknown type")
+	}
+	llT := defaultDataKindCtx.FromGo(raw)
+	dk, inner, depth := lltypes.DataKindOf(llT, is32Bits)
+	goInner := raw
+	if inner != nil && inner.GoType() != nil {
+		goInner = inner.GoType()
+	}
+	return DataKind(dk), goInner, lvl + depth
 }
 
 // -----------------------------------------------------------------------------
+
+type llgoContextProvider interface {
+	LLGoContext() *lltypes.Context
+}
 
 // Builder is a helper for constructing ABI types.
 type Builder struct {
 	buf     []byte
 	PtrSize uintptr
 	Sizes   types.Sizes
+	typeCtx *lltypes.Context
 	// NativeFuncAliasABI reports the storage ABI of an alias to an unnamed function.
 	NativeFuncAliasABI func(*types.Alias) string
 }
@@ -119,6 +138,28 @@ func (b *Builder) Init(ptrSize uintptr, sizes types.Sizes) {
 	b.buf = make([]byte, sha256.Size)
 	b.PtrSize = ptrSize
 	b.Sizes = sizes
+	if p, ok := sizes.(llgoContextProvider); ok && p.LLGoContext() != nil {
+		b.typeCtx = p.LLGoContext()
+		return
+	}
+	maxAlign := int(ptrSize)
+	if sizes != nil {
+		if ma := int(sizes.Alignof(types.Typ[types.Complex128])); ma > 0 {
+			maxAlign = ma
+		}
+	}
+	b.typeCtx = lltypes.NewContext(target.Spec{
+		WordSize: int(ptrSize),
+		PtrSize:  int(ptrSize),
+		MaxAlign: maxAlign,
+	})
+}
+
+func (b *Builder) context() *lltypes.Context {
+	if b.typeCtx == nil {
+		b.Init(b.PtrSize, b.Sizes)
+	}
+	return b.typeCtx
 }
 
 // TypeName returns the ABI type name for the specified type.

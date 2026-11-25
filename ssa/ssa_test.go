@@ -2,7 +2,6 @@ package ssa
 
 import (
 	"go/token"
-	gotypes "go/types"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,19 +15,23 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	pkg := NewPackage("example.com/demo", "demo", spec)
 	pkg.Exports["example.com/demo.Entry"] = "demo_entry"
 
-	i64 := &lltypes.Basic{Kind: gotypes.Int64}
-	goPtrI64 := &lltypes.Pointer{Elem: i64, Kind: lltypes.GoPtr}
-	nativePtrI64 := &lltypes.Pointer{Elem: i64, Kind: lltypes.NativePtr}
-	cbSig := &lltypes.Func{
-		CallConv: lltypes.GoDecl,
-		Params:   []*lltypes.Var{{Name: "x", Type: i64}},
-		Results:  []*lltypes.Var{{Type: i64}},
-	}
-	entrySig := &lltypes.Func{
-		CallConv: lltypes.GoDecl,
-		Params:   []*lltypes.Var{{Name: "n", Type: i64}},
-		Results:  []*lltypes.Var{{Type: i64}},
-	}
+	i64 := lltypes.Typ[lltypes.Int64]
+	goPtrI64 := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
+	cPtrI64 := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
+	cbSig := lltypes.NewSignature(
+		nil,
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		false,
+		lltypes.GoClosure,
+	)
+	entrySig := lltypes.NewSignature(
+		nil,
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "n", i64)),
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		false,
+		lltypes.GoDirect,
+	)
 
 	fn := pkg.NewFunction("example.com/demo.Entry", entrySig)
 	entry := fn.NewBasicBlock("entry")
@@ -41,13 +44,14 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	cell := b.Alloc(goPtrI64, true, false)
 	b.WriteBarrier(cell, slot, BarrierStore)
 	b.Safepoint(cell)
-	_ = b.PtrCast(slot, nativePtrI64)
+	_ = b.PtrCast(slot, cPtrI64)
 
 	// First-class closure construction and call
 	clo := b.MakeClosure(cbSig, "example.com/demo.helper", nil)
 	res := b.CallClosure(clo, i64, fn.Params[0])
 	_ = b.CallDirect("C.puts", lltypes.CDecl, nil)
-	_ = b.CallInterface(b.Const(&lltypes.Interface{Empty: false}, "iface"), "Read", 0, i64)
+	readMeth := lltypes.NewFunc(0, nil, "Read", lltypes.NewSignature(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)), false, lltypes.GoDirect))
+	_ = b.CallInterface(b.Const(lltypes.NewInterfaceType([]*lltypes.Func{readMeth}, nil), "iface"), "Read", 0, i64)
 	b.KeepAlive(cell)
 	b.Return(res)
 
@@ -83,10 +87,10 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 
 func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	i64 := &lltypes.Basic{Kind: gotypes.Int64}
-	goPtr := &lltypes.Pointer{Elem: i64, Kind: lltypes.GoPtr}
-	nativePtr := &lltypes.Pointer{Elem: i64, Kind: lltypes.NativePtr}
-	voidSig := &lltypes.Func{CallConv: lltypes.GoDecl}
+	i64 := lltypes.Typ[lltypes.Int64]
+	goPtr := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
+	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
+	voidSig := lltypes.NewSignature(nil, nil, nil, false, lltypes.GoDirect)
 
 	t.Run("noscan on pointer type", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
@@ -99,11 +103,11 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		}
 	})
 
-	t.Run("write barrier on native ptr", func(t *testing.T) {
+	t.Run("write barrier on C ptr", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.f", voidSig)
 		b := NewBuilder(fn.NewBasicBlock("entry"))
-		p := b.Const(nativePtr, "null")
+		p := b.Const(cPtr, "null")
 		b.WriteBarrier(p, b.Const(i64, "0"), BarrierStore)
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "GoPtr") {
@@ -143,12 +147,18 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("valid diamond phi passes", func(t *testing.T) {
-		boolT := &lltypes.Basic{Kind: gotypes.Bool}
-		sig := &lltypes.Func{
-			CallConv: lltypes.GoDecl,
-			Params:   []*lltypes.Var{{Name: "cond", Type: boolT}, {Name: "a", Type: i64}, {Name: "b", Type: i64}},
-			Results:  []*lltypes.Var{{Type: i64}},
-		}
+		boolT := lltypes.Typ[lltypes.Bool]
+		sig := lltypes.NewSignature(
+			nil,
+			lltypes.NewTuple(
+				lltypes.NewParam(0, nil, "cond", boolT),
+				lltypes.NewParam(0, nil, "a", i64),
+				lltypes.NewParam(0, nil, "b", i64),
+			),
+			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			false,
+			lltypes.GoDirect,
+		)
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.select", sig)
 		entry := fn.NewBasicBlock("entry")
@@ -168,11 +178,13 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("phi referencing foreign function block and param rejected", func(t *testing.T) {
-		sig := &lltypes.Func{
-			CallConv: lltypes.GoDecl,
-			Params:   []*lltypes.Var{{Name: "x", Type: i64}},
-			Results:  []*lltypes.Var{{Type: i64}},
-		}
+		sig := lltypes.NewSignature(
+			nil,
+			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
+			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			false,
+			lltypes.GoDirect,
+		)
 		pkg := NewPackage("p", "p", spec)
 		other := pkg.NewFunction("p.other", sig)
 		otherEntry := other.NewBasicBlock("entry")
@@ -183,14 +195,12 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		merge := fn.NewBasicBlock("merge")
 		NewBuilder(entry).Jump(merge)
 		mb := NewBuilder(merge)
-		// Foreign block + foreign param.
 		phi := mb.Phi(i64, PhiEdge{Pred: otherEntry, Val: other.Params[0]})
 		mb.Return(phi)
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "does not belong to function") {
 			t.Fatalf("got %v, want cross-function ownership error", err)
 		}
 
-		// Valid local predecessor block, but foreign param value.
 		pkg2 := NewPackage("p", "p", spec)
 		other2 := pkg2.NewFunction("p.other", sig)
 		NewBuilder(other2.NewBasicBlock("entry")).Return(other2.Params[0])
@@ -204,7 +214,6 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 			t.Fatalf("got %v, want foreign param error", err)
 		}
 
-		// Valid local param, but foreign predecessor block.
 		pkg3 := NewPackage("p", "p", spec)
 		other3 := pkg3.NewFunction("p.other", sig)
 		oe3 := other3.NewBasicBlock("entry")
@@ -221,11 +230,13 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("phi non-predecessor and placement rejected", func(t *testing.T) {
-		sig := &lltypes.Func{
-			CallConv: lltypes.GoDecl,
-			Params:   []*lltypes.Var{{Name: "x", Type: i64}},
-			Results:  []*lltypes.Var{{Type: i64}},
-		}
+		sig := lltypes.NewSignature(
+			nil,
+			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
+			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			false,
+			lltypes.GoDirect,
+		)
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.badcfg", sig)
 		entry := fn.NewBasicBlock("entry")

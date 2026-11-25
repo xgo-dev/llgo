@@ -29,12 +29,15 @@ import (
 // disambiguate them. Empty structs need no positions.
 func (p Program) SetNativeStructFields(positions []token.Pos) {
 	p.packageSyntax.mu.Lock()
-	defer p.packageSyntax.mu.Unlock()
 	for _, pos := range positions {
 		if pos.IsValid() {
 			p.packageSyntax.nativeStructFields[pos] = true
 			p.packageSyntax.hasNativeTypeMetadata.Store(true)
 		}
+	}
+	p.packageSyntax.mu.Unlock()
+	if p.typeCtx != nil {
+		p.typeCtx.InvalidateGoCache()
 	}
 }
 

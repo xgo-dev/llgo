@@ -152,7 +152,8 @@ type aProgram struct {
 	// Immutable target ABI alignments, safe to read during concurrent type checking.
 	simdAlignments   [3]int64
 	hostBasicLayouts [types.UnsafePointer + 1]lltypes.LayoutPair
-	sourceSizes      *lltypes.SourceSizes
+	typeCtx          *lltypes.Context
+	typeSizes        types.Sizes
 	// Resolve the physical C ABI once, outside declaration/call lowering.
 	nativeIntegerExt nativeIntegerExtension
 
@@ -385,15 +386,14 @@ func NewProgram(target *Target) Program {
 	})
 	spec.PtrSize = ptrSize
 	spec.WordSize = goWordSize
-	prog.sourceSizes = lltypes.NewSourceSizes(lltypes.SourceSizesConfig{
+	prog.typeCtx = lltypes.NewContextWithConfig(lltypes.ContextConfig{
 		Spec:             spec,
-		BaseSizes:        func() types.Sizes { return prog.sizes },
 		HostBasicLayouts: prog.hostBasicLayouts,
 		SIMDAlignments:   prog.simdAlignments,
 		HasNativeMetadata: func() bool {
 			return prog.packageSyntax.hasNativeTypeMetadata.Load()
 		},
-		NativeTypeDirective: func(t types.Type) lltypes.CallConv {
+		NativeTypeDirective: func(t types.Type) (lltypes.CallConv, bool) {
 			return toLLCallConv(Program(prog).nativeTypeDirective(t))
 		},
 		HasLegacyNativeTypeLayout: func(raw types.Type) bool {
@@ -402,9 +402,8 @@ func NewProgram(target *Target) Program {
 		NativeFields: func(fields []*types.Var) bool {
 			return Program(prog).nativeFields(fields)
 		},
-		IsClosureStruct: IsClosure,
-		IsClosureFields: abi.IsClosureFields,
 	})
+	prog.typeSizes = prog.typeCtx.GoSizes()
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
 	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI
@@ -423,10 +422,14 @@ func (p Program) NewBackendProgram() Program {
 	}
 	backend := NewProgram(target)
 	backend.sizes = p.sizes
+	if p.sizes != nil {
+		backend.syncTypeCtxSizes(p.sizes)
+	}
 	backend.rt, backend.rtget = p.rt, p.rtget
 	backend.py, backend.pyget = p.py, p.pyget
 	backend.packageSyntax = p.packageSyntax
 	backend.gocvt.packageSyntax = p.packageSyntax
+	backend.typeCtx.InvalidateGoCache()
 	backend.localities = p.localities
 	backend.enableGoGlobalDCE = p.enableGoGlobalDCE
 	backend.enableDeadcodeDrop = p.enableDeadcodeDrop
@@ -571,6 +574,9 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*typ
 	syntax.mu.Lock()
 	syntax.setTypeCallConv(typFullName, cc, fields)
 	syntax.mu.Unlock()
+	if p.typeCtx != nil {
+		p.typeCtx.InvalidateGoCache()
+	}
 }
 
 func (p Program) SetLinkname(name, link string) {

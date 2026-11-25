@@ -200,7 +200,7 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 			return fmt.Errorf("ssa: %s.%s: write barrier destination has nil type", fn.Name, blk.Label)
 		}
 		ptr, ok := dstType.Underlying().(*lltypes.Pointer)
-		if !ok || ptr.Kind != lltypes.GoPtr {
+		if !ok || ptr.Kind() != lltypes.GoPtr {
 			return fmt.Errorf("ssa: %s.%s: write barrier destination %s must be a GoPtr", fn.Name, blk.Label, dstType)
 		}
 	case *CallClosure:
@@ -208,7 +208,8 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 		if cloType == nil {
 			return fmt.Errorf("ssa: %s.%s: call.closure callee has nil type", fn.Name, blk.Label)
 		}
-		if _, ok := cloType.Underlying().(*lltypes.Closure); !ok {
+		sig, ok := cloType.Underlying().(*lltypes.Signature)
+		if !ok || !sig.IsClosure() {
 			return fmt.Errorf("ssa: %s.%s: call.closure callee %s is not a Closure", fn.Name, blk.Label, cloType)
 		}
 	case *CallCFunc:
@@ -216,8 +217,8 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 			return fmt.Errorf("ssa: %s.%s: call.cfunc requires CDecl or Stdcall, got %s", fn.Name, blk.Label, ins.CallConv)
 		}
 	case *Return:
-		if len(ins.Results) != len(fn.Sig.Results) {
-			return fmt.Errorf("ssa: %s.%s: return arity %d != signature results %d", fn.Name, blk.Label, len(ins.Results), len(fn.Sig.Results))
+		if len(ins.Results) != fn.Sig.Results().Len() {
+			return fmt.Errorf("ssa: %s.%s: return arity %d != signature results %d", fn.Name, blk.Label, len(ins.Results), fn.Sig.Results().Len())
 		}
 	}
 	return nil

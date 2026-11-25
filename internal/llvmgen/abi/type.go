@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
-	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 const (
@@ -267,7 +266,8 @@ func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
 }
 
 func (b *Builder) IsRegularMemory(t types.Type) bool {
-	return lltypes.GoIsRegularMemory(t, int64(b.PtrSize), b.Sizes)
+	ctx := b.context()
+	return ctx.Layout(ctx.FromGo(t)).IsRegularMemory
 }
 
 func (b *Builder) Kind(t types.Type) abi.Kind {
@@ -307,11 +307,16 @@ func (b *Builder) FieldAlign(t types.Type) uintptr {
 // HasPointers is equivalent to PtrBytes(t) != 0, without computing field offsets
 // or array sizes. Allocation selection only needs pointer presence.
 func (b *Builder) HasPointers(t types.Type) bool {
-	return lltypes.GoHasPointers(t)
+	if _, ok := types.Unalias(t).(*types.Tuple); ok {
+		panic("unsupported pointer layout: " + t.String())
+	}
+	ctx := b.context()
+	return ctx.FromGo(t).HasPtrData()
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
-	return uintptr(lltypes.GoPtrBytes(t, int64(b.PtrSize), b.Sizes))
+	ctx := b.context()
+	return uintptr(ctx.Layout(ctx.FromGo(t)).PtrBytes)
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
@@ -390,5 +395,6 @@ func (b *Builder) RuntimeName(t types.Type) string {
 }
 
 func (b *Builder) EqualName(t types.Type) string {
-	return lltypes.GoEqualName(t, int64(b.PtrSize), b.Sizes)
+	ctx := b.context()
+	return ctx.EqualName(ctx.FromGo(t))
 }

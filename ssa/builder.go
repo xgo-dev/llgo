@@ -49,27 +49,29 @@ func (p *Package) NewGlobal(name string, typ lltypes.Type) *Global {
 }
 
 // NewFunction adds and returns a Function with formal parameters derived from sig.
-func (p *Package) NewFunction(name string, sig *lltypes.Func) *Function {
+func (p *Package) NewFunction(name string, sig *lltypes.Signature) *Function {
 	fn := &Function{
 		Pkg:    p,
 		Name:   name,
 		Sig:    sig,
-		HasEnv: sig != nil && sig.HasEnv,
+		HasEnv: sig != nil && sig.IsClosure(),
 	}
 	if sig != nil {
 		idx := 0
-		if sig.Recv != nil {
+		if recv := sig.Recv(); recv != nil {
 			fn.Params = append(fn.Params, &Parameter{
-				baseValue: baseValue{id: fn.allocID(), typ: sig.Recv.Type},
-				ParamName: sig.Recv.Name,
+				baseValue: baseValue{id: fn.allocID(), typ: recv.Type()},
+				ParamName: recv.Name(),
 				Index:     idx,
 			})
 			idx++
 		}
-		for _, param := range sig.Params {
+		params := sig.Params()
+		for i := 0; i < params.Len(); i++ {
+			param := params.At(i)
 			fn.Params = append(fn.Params, &Parameter{
-				baseValue: baseValue{id: fn.allocID(), typ: param.Type},
-				ParamName: param.Name,
+				baseValue: baseValue{id: fn.allocID(), typ: param.Type()},
+				ParamName: param.Name(),
 				Index:     idx,
 			})
 			idx++
@@ -134,9 +136,8 @@ func (b *Builder) BinOp(op token.Token, typ lltypes.Type, x, y Value) *BinOp {
 }
 
 func (b *Builder) Alloc(elem lltypes.Type, heap, noScan bool) *Alloc {
-	ptrKind := lltypes.GoPtr
 	ins := &Alloc{
-		baseValue: baseValue{id: b.fn.allocID(), typ: &lltypes.Pointer{Elem: elem, Kind: ptrKind}},
+		baseValue: baseValue{id: b.fn.allocID(), typ: lltypes.NewPointerWithKind(elem, lltypes.GoPtr)},
 		Elem:      elem,
 		Heap:      heap,
 		NoScan:    noScan,
@@ -187,9 +188,13 @@ func (b *Builder) PtrCast(x Value, targetPtr *lltypes.Pointer) *PtrCast {
 	return ins
 }
 
-func (b *Builder) MakeClosure(sig *lltypes.Func, fnName string, env Value) *MakeClosure {
+func (b *Builder) MakeClosure(sig *lltypes.Signature, fnName string, env Value) *MakeClosure {
+	cloSig := sig
+	if sig != nil && !sig.IsClosure() {
+		cloSig = lltypes.NewSignature(sig.Recv(), sig.Params(), sig.Results(), sig.Variadic(), lltypes.GoClosure)
+	}
 	ins := &MakeClosure{
-		baseValue: baseValue{id: b.fn.allocID(), typ: &lltypes.Closure{Sig: sig}},
+		baseValue: baseValue{id: b.fn.allocID(), typ: cloSig},
 		FnName:    fnName,
 		Env:       env,
 	}

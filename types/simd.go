@@ -24,6 +24,117 @@ import (
 	"github.com/xgo-dev/llgo/target"
 )
 
+// IsHostLayoutMarker reports whether goT is structs.HostLayout (including
+// aliases and defined types of structs.HostLayout). HostLayout deliberately
+// does not propagate across nested struct boundaries.
+func IsHostLayoutMarker(goT gotypes.Type) bool {
+	if goT == nil {
+		return false
+	}
+	// Standard Go structs.HostLayout is `struct { _ hostLayout }` where
+	// `hostLayout` is an unexported empty struct in package `structs`.
+	if st, ok := goT.Underlying().(*gotypes.Struct); ok && st.NumFields() == 1 && st.Field(0).Name() == "_" {
+		if n, ok := unaliasType(st.Field(0).Type()).(*gotypes.Named); ok && n.Obj().Pkg() != nil &&
+			(n.Obj().Pkg().Path() == "structs" || n.Obj().Pkg().Path() == "github.com/xgo-dev/llgo/runtime/internal/structs") &&
+			n.Obj().Name() == "hostLayout" {
+			if body, ok := n.Underlying().(*gotypes.Struct); ok && body.NumFields() == 0 {
+				return true
+			}
+		}
+	}
+	// Also accept synthetic test markers named structs.HostLayout directly.
+	if n, ok := unaliasType(goT).(*gotypes.Named); ok && n.Obj().Pkg() != nil &&
+		(n.Obj().Pkg().Path() == "structs" || n.Obj().Pkg().Path() == "github.com/xgo-dev/llgo/runtime/internal/structs") &&
+		n.Obj().Name() == "HostLayout" {
+		return true
+	}
+	return false
+}
+
+// HasHostLayout reports whether goT's underlying struct has a direct
+// structs.HostLayout marker field.
+func HasHostLayout(goT gotypes.Type) bool {
+	if goT == nil {
+		return false
+	}
+	st, ok := goT.Underlying().(*gotypes.Struct)
+	if !ok {
+		return false
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		if IsHostLayoutMarker(st.Field(i).Type()) {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainsHostLayout reports whether goT is or transitively contains a
+// structs.HostLayout struct through fields or array elements.
+func ContainsHostLayout(goT gotypes.Type) bool {
+	if goT == nil {
+		return false
+	}
+	switch u := goT.Underlying().(type) {
+	case *gotypes.Struct:
+		if HasHostLayout(u) {
+			return true
+		}
+		for i := 0; i < u.NumFields(); i++ {
+			if ContainsHostLayout(u.Field(i).Type()) {
+				return true
+			}
+		}
+	case *gotypes.Array:
+		return ContainsHostLayout(u.Elem())
+	}
+	return false
+}
+
+// TypeIsHostLayoutMarker reports whether t is LLGo's representation of
+// structs.HostLayout.
+func TypeIsHostLayoutMarker(t Type) bool {
+	if t == nil {
+		return false
+	}
+	cur := Unalias(t)
+	for {
+		n, ok := cur.(*Named)
+		if !ok {
+			return false
+		}
+		if n.obj != nil && n.obj.pkg != nil && n.obj.pkg.path == "structs" && n.obj.name == "HostLayout" {
+			return true
+		}
+		if n.underlying == nil || n.underlying == cur {
+			return false
+		}
+		cur = Unalias(n.underlying)
+	}
+}
+
+// TypeContainsHostLayout reports whether an LLGo Type is or transitively
+// contains a structs.HostLayout struct.
+func TypeContainsHostLayout(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch u := t.Underlying().(type) {
+	case *Struct:
+		if u.hostLayout {
+			return true
+		}
+		for _, f := range u.fields {
+			if f != nil && TypeContainsHostLayout(f.typ) {
+				return true
+			}
+		}
+	case *Array:
+		return TypeContainsHostLayout(u.elem)
+	}
+	return false
+}
+
 // SIMDTagIndex recognizes simd/archsimd zero-sized vector alignment markers
 // (v128 -> 0, v256 -> 1, v512 -> 2).
 func SIMDTagIndex(t gotypes.Type) (int, bool) {
@@ -78,6 +189,37 @@ func ContainsVectorStorage(t gotypes.Type) bool {
 	return false
 }
 
+// TypeContainsSIMDStorage reports whether an LLGo Type is or transitively
+// contains SIMD vector storage or a simd/archsimd alignment tag.
+func TypeContainsSIMDStorage(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch u := Unalias(t).(type) {
+	case *SIMDVec:
+		return true
+	case *Named:
+		if u.simdTagIndex >= 0 || u.simdVec != nil {
+			return true
+		}
+		if u.underlying != nil && u.underlying != u {
+			return TypeContainsSIMDStorage(u.underlying)
+		}
+	case *Array:
+		return TypeContainsSIMDStorage(u.elem)
+	case *Struct:
+		if u.simdTagIndex >= 0 {
+			return true
+		}
+		for _, f := range u.fields {
+			if f != nil && TypeContainsSIMDStorage(f.typ) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // SIMDVectorShape validates numeric and mask SIMD128/256/512 storage in
 // simd/archsimd and returns its underlying lane array.
 func SIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
@@ -118,85 +260,94 @@ func SIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	if strings.HasPrefix(named.Obj().Name(), "Mask") && elem.Info()&gotypes.IsInteger != 0 && elem.Info()&gotypes.IsUnsigned == 0 {
 		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.Len())
 	}
-	width := lanes.Len() * bits
-	if named.Obj().Name() != expected || (width != 128 && width != 256 && width != 512) {
+	if named.Obj().Name() != expected {
 		return nil, false
 	}
-	tag, ok := st.Field(0).Type().(*gotypes.Named)
-	if !ok || tag.Obj().Pkg() != named.Obj().Pkg() || tag.Obj().Name() != fmt.Sprintf("v%d", width) {
+	var wantTag int
+	switch bits * lanes.Len() {
+	case 128:
+		wantTag = 0
+	case 256:
+		wantTag = 1
+	case 512:
+		wantTag = 2
+	default:
 		return nil, false
 	}
-	if (&gotypes.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
+	tag, ok := SIMDTagIndex(st.Field(0).Type())
+	if !ok || tag != wantTag {
 		return nil, false
 	}
 	return lanes, true
 }
 
-// SIMDNumericShape validates a non-mask numeric simd/archsimd vector type.
+// SIMDNumericShape validates non-mask simd/archsimd numeric vectors.
 func SIMDNumericShape(typ gotypes.Type) (*gotypes.Array, bool) {
-	lanes, ok := SIMDVectorShape(typ)
-	if !ok {
+	if typ == nil {
 		return nil, false
 	}
-	named := unaliasType(typ).(*gotypes.Named)
-	return lanes, !strings.HasPrefix(named.Obj().Name(), "Mask")
+	named, ok := unaliasType(typ).(*gotypes.Named)
+	if !ok || strings.HasPrefix(named.Obj().Name(), "Mask") {
+		return nil, false
+	}
+	return SIMDVectorShape(typ)
 }
 
-// SIMDMaskShape validates a fixed-width simd/archsimd mask vector type.
+// SIMDMaskShape validates simd/archsimd mask vectors.
 func SIMDMaskShape(typ gotypes.Type) (*gotypes.Array, bool) {
-	lanes, ok := SIMDVectorShape(typ)
-	if !ok {
+	if typ == nil {
 		return nil, false
 	}
-	named := unaliasType(typ).(*gotypes.Named)
-	return lanes, strings.HasPrefix(named.Obj().Name(), "Mask")
+	named, ok := unaliasType(typ).(*gotypes.Named)
+	if !ok || !strings.HasPrefix(named.Obj().Name(), "Mask") {
+		return nil, false
+	}
+	return SIMDVectorShape(typ)
 }
 
-// DefaultSIMDAlignments returns pure-Go default ABI alignments (in bytes) for
-// v128, v256, and v512 vector storage on spec. Clang caps fixed-length AArch64
-// C vector alignment at 16 bytes.
+// DefaultSIMDAlignments returns target-accurate vector alignments for
+// v128, v256, and v512 without requiring LLVM TargetData.
 func DefaultSIMDAlignments(spec target.Spec) [3]int64 {
-	if spec.WordSize == 0 {
+	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}
+	// Clang caps fixed-length AArch64 C vector alignment at 128 bits.
 	if spec.GOARCH == "arm64" {
 		return [3]int64{16, 16, 16}
 	}
 	return [3]int64{16, 32, 64}
 }
 
-// DefaultHostBasicLayouts computes target-accurate scalar sizes and host C ABI
-// alignments for basic Go types from spec without requiring LLVM TargetData.
-func DefaultHostBasicLayouts(spec target.Spec) [gotypes.UnsafePointer + 1]LayoutPair {
+// DefaultHostBasicLayouts computes standard C ABI (size, align) for Go scalar
+// basic kinds on spec without requiring LLVM TargetData.
+func DefaultHostBasicLayouts(spec target.Spec) [UnsafePointer + 1]LayoutPair {
 	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}
 	word := int64(spec.WordSize)
 	ptr := int64(spec.PtrSize)
-	align64 := int64(spec.HostAlign64)
-	if align64 == 0 {
-		align64 = int64(spec.MaxAlign)
+	i64Align := int64(8)
+	if spec.GOARCH == "386" && spec.GOOS != "windows" {
+		// System V i386 ABI aligns 64-bit integers and float64 to 4 bytes.
+		i64Align = 4
 	}
-	if align64 == 0 {
-		align64 = word
+	return [UnsafePointer + 1]LayoutPair{
+		Bool:          {Size: 1, Align: 1},
+		Int:           {Size: word, Align: word},
+		Int8:          {Size: 1, Align: 1},
+		Int16:         {Size: 2, Align: 2},
+		Int32:         {Size: 4, Align: 4},
+		Int64:         {Size: 8, Align: i64Align},
+		Uint:          {Size: word, Align: word},
+		Uint8:         {Size: 1, Align: 1},
+		Uint16:        {Size: 2, Align: 2},
+		Uint32:        {Size: 4, Align: 4},
+		Uint64:        {Size: 8, Align: i64Align},
+		Uintptr:       {Size: ptr, Align: ptr},
+		Float32:       {Size: 4, Align: 4},
+		Float64:       {Size: 8, Align: i64Align},
+		Complex64:     {Size: 8, Align: 4},
+		Complex128:    {Size: 16, Align: i64Align},
+		UnsafePointer: {Size: ptr, Align: ptr},
 	}
-	var out [gotypes.UnsafePointer + 1]LayoutPair
-	out[gotypes.Bool] = LayoutPair{Size: 1, Align: 1}
-	out[gotypes.Int8] = LayoutPair{Size: 1, Align: 1}
-	out[gotypes.Uint8] = LayoutPair{Size: 1, Align: 1}
-	out[gotypes.Int16] = LayoutPair{Size: 2, Align: 2}
-	out[gotypes.Uint16] = LayoutPair{Size: 2, Align: 2}
-	out[gotypes.Int32] = LayoutPair{Size: 4, Align: 4}
-	out[gotypes.Uint32] = LayoutPair{Size: 4, Align: 4}
-	out[gotypes.Float32] = LayoutPair{Size: 4, Align: 4}
-	out[gotypes.Int64] = LayoutPair{Size: 8, Align: align64}
-	out[gotypes.Uint64] = LayoutPair{Size: 8, Align: align64}
-	out[gotypes.Float64] = LayoutPair{Size: 8, Align: align64}
-	out[gotypes.Complex64] = LayoutPair{Size: 8, Align: 4}
-	out[gotypes.Complex128] = LayoutPair{Size: 16, Align: align64}
-	out[gotypes.Int] = LayoutPair{Size: word, Align: word}
-	out[gotypes.Uint] = LayoutPair{Size: word, Align: word}
-	out[gotypes.Uintptr] = LayoutPair{Size: ptr, Align: ptr}
-	out[gotypes.UnsafePointer] = LayoutPair{Size: ptr, Align: ptr}
-	return out
 }

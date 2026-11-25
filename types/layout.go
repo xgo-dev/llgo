@@ -19,8 +19,6 @@ package types
 import (
 	gotypes "go/types"
 	"math"
-
-	"github.com/xgo-dev/llgo/target"
 )
 
 // LayoutPair holds an overflow-aware (Size, Align) pair computed without LLVM
@@ -107,611 +105,726 @@ type Layout struct {
 	HasSIMDStorage   bool
 }
 
-// SourceSizesConfig configures SourceSizes, the unified pure-Go layout engine
-// that implements go/types.Sizes across standard Go types, 2-word closures,
-// structs.HostLayout, Wasm32 wide Go vs native C storage, and simd/archsimd
-// vector alignment.
-type SourceSizesConfig struct {
-	Spec target.Spec
+type layoutMode uint8
 
-	// BaseSizes optionally supplies the underlying go/types.Sizes (evaluated
-	// dynamically so callers that swap sizes at runtime remain consistent).
-	// When nil or returning nil, a target-accurate StdSizes is used.
-	BaseSizes func() gotypes.Sizes
+const (
+	modeGo layoutMode = iota
+	modeHostField
+	modeHostNative
+	modeWasmNative
+)
 
-	// HostBasicLayouts overrides default host C basic scalar layouts when
-	// HostBasicLayouts[gotypes.Bool].Size != 0.
-	HostBasicLayouts [gotypes.UnsafePointer + 1]LayoutPair
-
-	// SIMDAlignments overrides v128/v256/v512 alignments when non-zero.
-	SIMDAlignments [3]int64
-
-	// CallConvLookup optionally resolves directive calling conventions by
-	// qualified type name ("pkg.Name"). Used when NativeTypeDirective is nil.
-	CallConvLookup CallConvLookup
-
-	// Optional fine-grained hooks used by compiler frontends/backends that
-	// carry per-package syntax metadata or legacy synthetic closure structs.
-	HasNativeMetadata         func() bool
-	NativeTypeDirective       func(gotypes.Type) CallConv
-	HasLegacyNativeTypeLayout func(gotypes.Type) bool
-	NativeFields              func([]*gotypes.Var) bool
-	IsClosureStruct           func(*gotypes.Struct) bool
-	IsClosureFields           func([]*gotypes.Var) bool
-}
-
-// SourceSizes is LLGo's canonical pure-Go implementation of go/types.Sizes.
-// It computes target-accurate sizes, alignments, and field offsets without
-// materializing LLVM types or mutating go/types nodes, and is safe for
-// concurrent reads once constructed.
-type SourceSizes struct {
-	spec             target.Spec
-	baseSizesFn      func() gotypes.Sizes
-	defaultBaseSizes gotypes.Sizes
-	hostBasicLayouts [gotypes.UnsafePointer + 1]LayoutPair
-	simdAlignments   [3]int64
-
-	hasNativeMetadata         func() bool
-	nativeTypeDirective       func(gotypes.Type) CallConv
-	hasLegacyNativeTypeLayout func(gotypes.Type) bool
-	nativeFields              func([]*gotypes.Var) bool
-	isClosureStruct           func(*gotypes.Struct) bool
-	isClosureFields           func([]*gotypes.Var) bool
-}
-
-// NewSourceSizes constructs a SourceSizes engine from cfg.
-func NewSourceSizes(cfg SourceSizesConfig) *SourceSizes {
-	spec := cfg.Spec
-	if spec.WordSize == 0 || spec.PtrSize == 0 {
-		spec = target.ResolveSpec(spec)
-	}
-	hostLayouts := cfg.HostBasicLayouts
-	if hostLayouts[gotypes.Bool].Size == 0 {
-		hostLayouts = DefaultHostBasicLayouts(spec)
-	}
-	simdAligns := cfg.SIMDAlignments
-	if simdAligns[0] == 0 {
-		simdAligns = DefaultSIMDAlignments(spec)
-	}
-	maxAlign := int64(spec.MaxAlign)
-	if maxAlign == 0 {
-		maxAlign = int64(spec.WordSize)
-	}
-	s := &SourceSizes{
-		spec:                      spec,
-		baseSizesFn:               cfg.BaseSizes,
-		defaultBaseSizes:          &gotypes.StdSizes{WordSize: int64(spec.WordSize), MaxAlign: maxAlign},
-		hostBasicLayouts:          hostLayouts,
-		simdAlignments:            simdAligns,
-		hasNativeMetadata:         cfg.HasNativeMetadata,
-		nativeTypeDirective:       cfg.NativeTypeDirective,
-		hasLegacyNativeTypeLayout: cfg.HasLegacyNativeTypeLayout,
-		nativeFields:              cfg.NativeFields,
-		isClosureStruct:           cfg.IsClosureStruct,
-		isClosureFields:           cfg.IsClosureFields,
-	}
-	if s.nativeTypeDirective == nil && cfg.CallConvLookup != nil {
-		lookup := cfg.CallConvLookup
-		s.nativeTypeDirective = func(t gotypes.Type) CallConv {
-			return lookupNativeCallConv(t, lookup)
-		}
-		if s.hasNativeMetadata == nil {
-			s.hasNativeMetadata = func() bool { return true }
-		}
-		if s.hasLegacyNativeTypeLayout == nil {
-			s.hasLegacyNativeTypeLayout = func(raw gotypes.Type) bool {
-				return hasLegacyNativeLayoutByLookup(raw, lookup)
-			}
-		}
-	}
-	return s
-}
-
-func lookupNativeCallConv(t gotypes.Type, lookup CallConvLookup) CallConv {
-	if lookup == nil {
-		return CallConvUnknown
-	}
-	for {
-		var obj *gotypes.TypeName
-		var next gotypes.Type
-		var isAlias bool
-		if n, ok := t.(*gotypes.Named); ok {
-			obj = n.Obj()
-		} else if aObj, rhs, ok := aliasObjAndRhs(t); ok {
-			obj = aObj
-			next = rhs
-			isAlias = true
-		}
-		if obj != nil {
-			if cc, ok := lookup(typeNameKey(obj)); ok && cc.IsNative() {
-				return cc
-			}
-		}
-		if !isAlias || next == t {
-			return CallConvUnknown
-		}
-		t = next
-	}
-}
-
-func hasLegacyNativeLayoutByLookup(raw gotypes.Type, lookup CallConvLookup) bool {
-	if lookup == nil {
-		return false
-	}
-	switch t := unaliasType(raw).(type) {
-	case *gotypes.Named:
-		cc, ok := lookup(typeNameKey(t.Obj()))
-		return ok && cc.IsNative()
-	case *gotypes.Array:
-		return hasLegacyNativeLayoutByLookup(t.Elem(), lookup)
-	}
-	return false
-}
-
-func (s *SourceSizes) baseSizes() gotypes.Sizes {
-	if s.baseSizesFn != nil {
-		if b := s.baseSizesFn(); b != nil {
-			return b
-		}
-	}
-	return s.defaultBaseSizes
-}
-
-// Spec returns the resolved target specification of s.
-func (s *SourceSizes) Spec() target.Spec {
-	return s.spec
+// HostUsesNativeGoLayout reports whether ordinary Go aggregates on this target
+// already use native C alignment for 64-bit scalars (e.g. 32-bit ARM/MIPS/RISC-V).
+func (c *Context) HostUsesNativeGoLayout() bool {
+	arch := c.spec.GOARCH
+	return arch != "386" && arch != "wasm" && c.spec.WordSize == 4 && c.hostBasicLayouts[Int64].Align > 4
 }
 
 // HostBasicLayout returns the target host C ABI (size, align) for basic kind.
-func (s *SourceSizes) HostBasicLayout(kind gotypes.BasicKind) LayoutPair {
-	if kind >= 0 && int(kind) < len(s.hostBasicLayouts) {
-		return s.hostBasicLayouts[kind]
+func (c *Context) HostBasicLayout(kind BasicKind) LayoutPair {
+	if kind >= 0 && int(kind) < len(c.hostBasicLayouts) {
+		return c.hostBasicLayouts[kind]
 	}
 	return LayoutPair{}
 }
 
 // SIMDAlignment returns the target ABI alignment for a simd/archsimd tag index
 // (0=v128, 1=v256, 2=v512).
-func (s *SourceSizes) SIMDAlignment(index int) int64 {
-	if index >= 0 && index < len(s.simdAlignments) {
-		return s.simdAlignments[index]
+func (c *Context) SIMDAlignment(index int) int64 {
+	if index >= 0 && index < len(c.simdAlignments) {
+		return c.simdAlignments[index]
 	}
 	return 1
 }
 
-func (s *SourceSizes) hasNativeMeta() bool {
-	return s.hasNativeMetadata != nil && s.hasNativeMetadata()
+// HostFieldLayout computes the target layout of a direct field inside a
+// structs.HostLayout struct using the single layout engine.
+func (c *Context) HostFieldLayout(t Type) LayoutPair {
+	l := c.layoutHostField(t)
+	return LayoutPair{Size: l.Size, Align: l.Align}
 }
 
-func (s *SourceSizes) nativeDirective(t gotypes.Type) CallConv {
-	if s.nativeTypeDirective == nil {
-		return CallConvUnknown
+// Layout computes and caches the full immutable Layout for t.
+func (c *Context) Layout(t Type) *Layout {
+	if t == nil {
+		return &Layout{Align: 1, IsRegularMemory: true}
 	}
-	return s.nativeTypeDirective(t)
+	c.mu.RLock()
+	if l, ok := c.layouts[t]; ok {
+		c.mu.RUnlock()
+		return l
+	}
+	c.mu.RUnlock()
+
+	l := c.layoutInMode(t, modeGo)
+
+	c.mu.Lock()
+	if existing, ok := c.layouts[t]; ok {
+		c.mu.Unlock()
+		return existing
+	}
+	c.layouts[t] = l
+	c.mu.Unlock()
+	return l
 }
 
-func (s *SourceSizes) hasNativeDirective(t gotypes.Type) bool {
-	return s.nativeDirective(t).IsNative()
+func (c *Context) clampAlign(a int64) int64 {
+	maxAlign := int64(c.spec.MaxAlign)
+	if maxAlign <= 0 {
+		maxAlign = int64(c.spec.WordSize)
+	}
+	if a > maxAlign {
+		return maxAlign
+	}
+	if a < 1 {
+		return 1
+	}
+	return a
 }
 
-func (s *SourceSizes) hasLegacyNativeLayout(raw gotypes.Type) bool {
-	if s.hasLegacyNativeTypeLayout == nil {
+func (c *Context) basicLayoutGo(kind BasicKind) LayoutPair {
+	word := int64(c.spec.WordSize)
+	switch kind {
+	case Bool, Int8, Uint8:
+		return LayoutPair{Size: 1, Align: 1}
+	case Int16, Uint16:
+		return LayoutPair{Size: 2, Align: c.clampAlign(2)}
+	case Int32, Uint32, Float32:
+		return LayoutPair{Size: 4, Align: c.clampAlign(4)}
+	case Int64, Uint64, Float64:
+		return LayoutPair{Size: 8, Align: c.clampAlign(8)}
+	case Complex64:
+		return LayoutPair{Size: 8, Align: c.clampAlign(4)}
+	case Complex128:
+		return LayoutPair{Size: 16, Align: c.clampAlign(8)}
+	case Int, Uint, Uintptr, UnsafePointer:
+		return LayoutPair{Size: word, Align: c.clampAlign(word)}
+	case String:
+		return LayoutPair{Size: 2 * word, Align: c.clampAlign(word)}
+	default:
+		return LayoutPair{Size: 0, Align: 1}
+	}
+}
+
+func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
+	if t == nil {
+		return &Layout{Align: 1, IsRegularMemory: true}
+	}
+	word := int64(c.spec.WordSize)
+	ptr := int64(c.spec.PtrSize)
+
+	switch u := t.(type) {
+	case *Alias:
+		if u.hasCallConv && u.callConv.IsNative() {
+			if _, ok := u.Underlying().(*Signature); ok {
+				sz := word
+				if mode == modeWasmNative {
+					sz = ptr
+				}
+				return &Layout{
+					Size:            sz,
+					Align:           c.alignForMode(sz, mode),
+					IsRegularMemory: false,
+				}
+			}
+		}
+		if u.rhs == nil || u.rhs == u {
+			return &Layout{Align: 1, IsRegularMemory: true}
+		}
+		return c.layoutInMode(u.rhs, mode)
+
+	case *Named:
+		if u.simdTagIndex >= 0 {
+			return &Layout{
+				Size:            0,
+				Align:           c.SIMDAlignment(u.simdTagIndex),
+				IsRegularMemory: true,
+				HasSIMDStorage:  true,
+			}
+		}
+		if u.hasCallConv && u.callConv.IsNative() {
+			if _, ok := u.Underlying().(*Signature); ok {
+				sz := word
+				if mode == modeWasmNative {
+					sz = ptr
+				}
+				return &Layout{
+					Size:            sz,
+					Align:           c.alignForMode(sz, mode),
+					IsRegularMemory: false,
+				}
+			}
+		}
+		if u.nativeLayout && c.spec.UsesWideGoStorage() {
+			return c.layoutInMode(u.underlying, modeWasmNative)
+		}
+		if u.underlying == nil || u.underlying == u {
+			return &Layout{Align: 1, IsRegularMemory: true}
+		}
+		return c.layoutInMode(u.underlying, mode)
+
+	case *Basic:
+		if mode == modeWasmNative && (u.kind == Uintptr || u.kind == UnsafePointer) {
+			l := &Layout{
+				Size:            ptr,
+				Align:           ptr,
+				IsRegularMemory: true,
+			}
+			if u.kind == UnsafePointer {
+				l.PtrOffsets = []int64{0}
+				l.PtrBytes = ptr
+				l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, ptr)
+			}
+			return l
+		}
+		if mode == modeHostField {
+			if u.kind == Uintptr || u.kind == UnsafePointer {
+				l := &Layout{Size: word, Align: word, IsRegularMemory: true}
+				if u.kind == UnsafePointer {
+					l.PtrOffsets = []int64{0}
+					l.PtrBytes = word
+					l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+				}
+				return l
+			}
+			if u.kind != String && u.kind > Invalid && u.kind <= UnsafePointer {
+				p := c.HostBasicLayout(u.kind)
+				return &Layout{
+					Size:            p.Size,
+					Align:           p.Align,
+					IsRegularMemory: isRegularBasic(u.kind),
+				}
+			}
+		}
+		if mode == modeHostNative && u.kind != String && u.kind > Invalid && u.kind <= UnsafePointer {
+			p := c.HostBasicLayout(u.kind)
+			l := &Layout{
+				Size:            p.Size,
+				Align:           p.Align,
+				IsRegularMemory: isRegularBasic(u.kind),
+			}
+			if u.kind == UnsafePointer {
+				l.PtrOffsets = []int64{0}
+				l.PtrBytes = p.Size
+				l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+			}
+			return l
+		}
+		p := c.basicLayoutGo(u.kind)
+		l := &Layout{
+			Size:            p.Size,
+			Align:           p.Align,
+			IsRegularMemory: isRegularBasic(u.kind),
+		}
+		if u.kind == String || u.kind == UnsafePointer {
+			l.PtrOffsets = []int64{0}
+			l.PtrBytes = word
+			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+		}
+		return l
+
+	case *Pointer:
+		sz := word
+		if mode == modeWasmNative {
+			sz = ptr
+		}
+		l := &Layout{
+			Size:            sz,
+			Align:           c.alignForMode(sz, mode),
+			IsRegularMemory: true,
+		}
+		if u.kind != CPtr {
+			l.PtrOffsets = []int64{0}
+			l.PtrBytes = sz
+			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, sz)
+		}
+		return l
+
+	case *Map, *Chan:
+		sz := word
+		if mode == modeWasmNative {
+			sz = ptr
+		}
+		_, isChan := u.(*Chan)
+		l := &Layout{
+			Size:            sz,
+			Align:           c.alignForMode(sz, mode),
+			PtrOffsets:      []int64{0},
+			PtrBytes:        sz,
+			IsRegularMemory: isChan,
+		}
+		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, sz)
+		return l
+
+	case *Slice:
+		l := &Layout{
+			Size:            3 * word,
+			Align:           c.alignForMode(word, mode),
+			PtrOffsets:      []int64{0},
+			PtrBytes:        word,
+			IsRegularMemory: false,
+		}
+		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+		return l
+
+	case *Interface:
+		l := &Layout{
+			Size:            2 * word,
+			Align:           c.alignForMode(word, mode),
+			PtrOffsets:      []int64{0, word},
+			PtrBytes:        2 * word,
+			IsRegularMemory: false,
+		}
+		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+		return l
+
+	case *Signature:
+		if mode == modeWasmNative {
+			return &Layout{
+				Size:            ptr,
+				Align:           ptr,
+				IsRegularMemory: false,
+			}
+		}
+		if u.callConv == GoClosure {
+			l := &Layout{
+				Size:            2 * word,
+				Align:           c.alignForMode(word, mode),
+				PtrOffsets:      []int64{word},
+				PtrBytes:        2 * word,
+				IsRegularMemory: false,
+			}
+			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+			return l
+		}
+		return &Layout{
+			Size:            word,
+			Align:           c.alignForMode(word, mode),
+			IsRegularMemory: false,
+		}
+
+	case *SIMDVec:
+		bits := int64(basicBits(u.elem))
+		sz := (bits / 8) * int64(u.length)
+		return &Layout{
+			Size:            sz,
+			Align:           c.SIMDAlignment(u.tagIndex),
+			IsRegularMemory: isRegularBasic(u.elem.kind),
+			HasSIMDStorage:  true,
+		}
+
+	case *Array:
+		elemMode := mode
+		if u.nativeStorage && c.spec.UsesWideGoStorage() {
+			elemMode = modeWasmNative
+		}
+		elemL := c.layoutInMode(u.elem, elemMode)
+		pair := ArrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
+		l := &Layout{
+			Size:             pair.Size,
+			Align:            pair.Align,
+			HasWasmWideSlots: elemL.HasWasmWideSlots,
+			HasHostLayout:    elemL.HasHostLayout,
+			HasSIMDStorage:   elemL.HasSIMDStorage,
+			IsRegularMemory:  elemL.IsRegularMemory || u.length == 0,
+		}
+		if u.length > 0 && elemL.PtrBytes > 0 && elemL.Size >= 0 && pair.Size >= 0 {
+			l.PtrBytes = (u.length-1)*elemL.Size + elemL.PtrBytes
+			if len(elemL.PtrOffsets) > 0 && u.length <= 1024 {
+				offsets := make([]int64, 0, int(u.length)*len(elemL.PtrOffsets))
+				for i := int64(0); i < u.length; i++ {
+					base := i * elemL.Size
+					for _, off := range elemL.PtrOffsets {
+						offsets = append(offsets, base+off)
+					}
+				}
+				l.PtrOffsets = offsets
+				l.GCBitmap = GCBitmap(offsets, l.PtrBytes, word)
+			}
+		}
+		return l
+
+	case *Struct:
+		return c.computeStructLayout(u, mode)
+
+	case *Tuple:
+		n := u.Len()
+		fieldLayouts := make([]*Layout, n)
+		for i := 0; i < n; i++ {
+			fieldLayouts[i] = c.layoutInMode(u.At(i).typ, mode)
+		}
+		return c.assembleAggregate(fieldLayouts, nil, false, false, false)
+
+	case *TypeParam:
+		return &Layout{
+			Size:            word,
+			Align:           c.clampAlign(word),
+			PtrOffsets:      []int64{0},
+			PtrBytes:        word,
+			IsRegularMemory: false,
+		}
+	}
+
+	return &Layout{Align: 1, IsRegularMemory: true}
+}
+
+func (c *Context) alignForMode(a int64, mode layoutMode) int64 {
+	if mode == modeWasmNative || mode == modeHostField || mode == modeHostNative {
+		if a < 1 {
+			return 1
+		}
+		return a
+	}
+	return c.clampAlign(a)
+}
+
+func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
+	if st.simdTagIndex >= 0 {
+		return &Layout{
+			Size:            0,
+			Align:           c.SIMDAlignment(st.simdTagIndex),
+			IsRegularMemory: true,
+			HasSIMDStorage:  true,
+		}
+	}
+
+	// Determine effective field layout mode and tail zero-sized field padding.
+	effectiveMode := mode
+	hasHost := st.hostLayout
+	padTail := true
+
+	switch {
+	case st.isClosureStruct:
+		padTail = false
+	case st.nativeLayout && c.spec.UsesWideGoStorage():
+		effectiveMode = modeWasmNative
+		padTail = false
+	case mode == modeWasmNative:
+		if !st.nativeLayout {
+			// Ordinary Go struct embedded inside a Wasm native struct still uses Go layout.
+			effectiveMode = modeGo
+			padTail = true
+		} else {
+			padTail = false
+		}
+	case st.hostLayout && !st.nativeLayout:
+		effectiveMode = modeHostField
+		padTail = true
+	case mode == modeHostNative:
+		effectiveMode = modeHostNative
+		padTail = false
+	case !st.nativeLayout && c.HostUsesNativeGoLayout() && TypeContainsHostLayout(st):
+		effectiveMode = modeHostNative
+		padTail = false
+	default:
+		if st.nativeLayout && TypeContainsSIMDStorage(st) {
+			padTail = false
+		}
+	}
+
+	n := len(st.fields)
+	fieldLayouts := make([]*Layout, n)
+	wasmWide := false
+	hasSIMD := false
+	for i := 0; i < n; i++ {
+		ft := st.fields[i].typ
+		var fl *Layout
+		switch effectiveMode {
+		case modeHostField:
+			// Direct fields of a structs.HostLayout struct use modeHostField;
+			// nested non-HostLayout structs fall back to hostNested behavior.
+			fl = c.layoutHostField(ft)
+		case modeWasmNative:
+			fl = c.layoutInMode(ft, modeWasmNative)
+		case modeHostNative:
+			fl = c.layoutInMode(ft, modeHostNative)
+		default:
+			fl = c.layoutInMode(ft, modeGo)
+			if c.spec.UsesWideGoStorage() && isWasmWideGoSlot(ft) {
+				wasmWide = true
+			}
+		}
+		fieldLayouts[i] = fl
+		if fl.HasHostLayout {
+			hasHost = true
+		}
+		if fl.HasSIMDStorage {
+			hasSIMD = true
+		}
+		if fl.HasWasmWideSlots {
+			wasmWide = true
+		}
+	}
+
+	if st.nativeLayout && hasSIMD {
+		padTail = false
+	}
+
+	return c.assembleAggregate(fieldLayouts, st.fields, padTail, hasHost, hasSIMD || false, wasmWide)
+}
+
+func (c *Context) layoutHostField(t Type) *Layout {
+	if t == nil {
+		return &Layout{Align: 1, IsRegularMemory: true}
+	}
+	switch u := Unalias(t).(type) {
+	case *Named:
+		if u.simdTagIndex >= 0 || u.hasCallConv && u.callConv.IsNative() {
+			if _, isArr := u.Underlying().(*Array); isArr {
+				return c.layoutHostField(u.underlying)
+			}
+			if _, isSt := u.Underlying().(*Struct); isSt {
+				return c.layoutHostNested(t)
+			}
+			return c.layoutInMode(t, modeHostField)
+		}
+		if _, ok := u.Underlying().(*Struct); ok {
+			return c.layoutHostNested(t)
+		}
+		if _, ok := u.Underlying().(*Array); ok {
+			return c.layoutHostField(u.underlying)
+		}
+		return c.layoutInMode(t, modeHostField)
+	case *Array:
+		elemL := c.layoutHostField(u.elem)
+		pair := ArrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
+		return &Layout{
+			Size:            pair.Size,
+			Align:           pair.Align,
+			HasHostLayout:   elemL.HasHostLayout,
+			HasSIMDStorage:  elemL.HasSIMDStorage,
+			IsRegularMemory: elemL.IsRegularMemory || u.length == 0,
+		}
+	case *Basic, *Pointer, *Map, *Chan:
+		return c.layoutInMode(t, modeHostField)
+	case *Signature:
+		if u.IsNative() {
+			return c.layoutInMode(t, modeHostField)
+		}
+		return c.layoutHostNested(t)
+	default:
+		return c.layoutHostNested(t)
+	}
+}
+
+func (c *Context) layoutHostNested(t Type) *Layout {
+	if !c.HostUsesNativeGoLayout() {
+		return c.layoutInMode(t, modeGo)
+	}
+	return c.layoutInMode(t, modeHostNative)
+}
+
+func (c *Context) assembleAggregate(fieldLayouts []*Layout, fieldVars []*Var, padTail, hasHost, hasSIMD bool, wasmWideOpt ...bool) *Layout {
+	n := len(fieldLayouts)
+	pair, offsets := AggregateLayout(n, func(i int) LayoutPair {
+		return LayoutPair{Size: fieldLayouts[i].Size, Align: fieldLayouts[i].Align}
+	}, padTail)
+
+	word := int64(c.spec.WordSize)
+	fields := make([]FieldLayout, n)
+	var ptrOffsets []int64
+	var ptrBytes int64
+	regular := true
+	wasmWide := len(wasmWideOpt) > 0 && wasmWideOpt[0]
+
+	for i := 0; i < n; i++ {
+		fl := fieldLayouts[i]
+		off := offsets[i]
+		var padAfter int64
+		if pair.Size >= 0 && off >= 0 && fl.Size >= 0 {
+			nextOff := pair.Size
+			if i+1 < n && offsets[i+1] >= 0 {
+				nextOff = offsets[i+1]
+			}
+			padAfter = nextOff - (off + fl.Size)
+			if padAfter < 0 {
+				padAfter = 0
+			}
+		}
+		slotWide := false
+		if fieldVars != nil && i < len(fieldVars) && c.spec.UsesWideGoStorage() && isWasmWideGoSlot(fieldVars[i].typ) {
+			slotWide = true
+		}
+		fields[i] = FieldLayout{
+			Offset:       off,
+			Size:         fl.Size,
+			Align:        fl.Align,
+			PaddingAfter: padAfter,
+			WasmWideSlot: slotWide,
+		}
+		if fl.PtrBytes > 0 && off >= 0 {
+			if end := off + fl.PtrBytes; end > ptrBytes {
+				ptrBytes = end
+			}
+			for _, po := range fl.PtrOffsets {
+				ptrOffsets = append(ptrOffsets, off+po)
+			}
+		}
+		if regular {
+			if fieldVars != nil && i < len(fieldVars) && fieldVars[i].name == "_" {
+				regular = false
+			} else if !fl.IsRegularMemory {
+				regular = false
+			} else if n > 1 && padAfter > 0 {
+				regular = false
+			} else if n == 1 && padAfter > 0 {
+				regular = false
+			}
+		}
+		if fl.HasHostLayout {
+			hasHost = true
+		}
+		if fl.HasSIMDStorage {
+			hasSIMD = true
+		}
+		if fl.HasWasmWideSlots {
+			wasmWide = true
+		}
+	}
+
+	return &Layout{
+		Size:             pair.Size,
+		Align:            pair.Align,
+		PtrBytes:         ptrBytes,
+		PtrOffsets:       ptrOffsets,
+		GCBitmap:         GCBitmap(ptrOffsets, ptrBytes, word),
+		Fields:           fields,
+		IsRegularMemory:  regular,
+		HasWasmWideSlots: wasmWide,
+		HasHostLayout:    hasHost,
+		HasSIMDStorage:   hasSIMD,
+	}
+}
+
+func isWasmWideGoSlot(t Type) bool {
+	if t == nil {
 		return false
 	}
-	return s.hasLegacyNativeTypeLayout(raw)
+	switch u := t.Underlying().(type) {
+	case *Basic:
+		return u.kind == Int || u.kind == Uint || u.kind == Uintptr || u.kind == UnsafePointer || u.kind == String
+	case *Pointer, *Signature, *Slice, *Interface, *Map, *Chan:
+		return true
+	}
+	return false
 }
 
-func (s *SourceSizes) hasNativeStructLayout(raw *gotypes.Named) bool {
-	return HasHostLayout(raw) || s.hasLegacyNativeLayout(raw)
+func isRegularBasic(k BasicKind) bool {
+	switch k {
+	case Float32, Float64, Complex64, Complex128, String:
+		return false
+	default:
+		return true
+	}
 }
 
-func (s *SourceSizes) hasNativeFields(fields []*gotypes.Var) bool {
-	return s.nativeFields != nil && s.nativeFields(fields)
+// GoSizes returns a go/types.Sizes adapter backed directly by Context.Layout
+// (single source of truth, zero duplicated layout logic).
+func (c *Context) GoSizes() gotypes.Sizes {
+	return &goSizesAdapter{ctx: c}
 }
 
-func (s *SourceSizes) isClosure(st *gotypes.Struct) bool {
-	return s.isClosureStruct != nil && s.isClosureStruct(st)
+type goSizesAdapter struct {
+	ctx *Context
 }
 
-func (s *SourceSizes) isClosureFieldSlice(fields []*gotypes.Var) bool {
-	return s.isClosureFields != nil && s.isClosureFields(fields)
+// LLGoContext allows callers holding a gotypes.Sizes (such as abi.Builder) to
+// recover the underlying *Context without allocating a second one.
+func (g *goSizesAdapter) LLGoContext() *Context {
+	return g.ctx
 }
 
-// HostUsesNativeGoLayout reports whether ordinary Go aggregates on this target
-// already use native C alignment for 64-bit scalars (e.g. 32-bit ARM/MIPS/RISC-V).
-func (s *SourceSizes) HostUsesNativeGoLayout() bool {
-	arch := s.spec.GOARCH
-	return arch != "386" && arch != "wasm" && s.spec.WordSize == 4 && s.hostBasicLayouts[gotypes.Int64].Align > 4
-}
-
-// Alignof implements go/types.Sizes.
-func (s *SourceSizes) Alignof(T gotypes.Type) int64 {
+func (g *goSizesAdapter) Alignof(T gotypes.Type) int64 {
 	if T == nil {
 		return 1
 	}
-	if layout, ok := s.WasmNativeLayout(T); ok {
-		return layout.Align
-	}
-	return s.goAlignof(T)
+	return g.ctx.Layout(g.ctx.FromGo(T)).Align
 }
 
-func (s *SourceSizes) goAlignof(T gotypes.Type) int64 {
-	if layout, ok := s.HostLayout(T); ok {
-		return layout.Align
-	}
-	if layout, ok := s.VectorLayout(T, false); ok {
-		return layout.Align
-	}
-	return s.baseSizes().Alignof(T)
-}
-
-// Sizeof implements go/types.Sizes.
-func (s *SourceSizes) Sizeof(T gotypes.Type) int64 {
+func (g *goSizesAdapter) Sizeof(T gotypes.Type) int64 {
 	if T == nil {
 		return 0
 	}
-	if layout, ok := s.WasmNativeLayout(T); ok {
-		return layout.Size
-	}
-	return s.goSizeof(T)
+	return g.ctx.Layout(g.ctx.FromGo(T)).Size
 }
 
-func (s *SourceSizes) goSizeof(T gotypes.Type) int64 {
-	if layout, ok := s.HostLayout(T); ok {
-		return layout.Size
+func (g *goSizesAdapter) Offsetsof(fields []*gotypes.Var) []int64 {
+	n := len(fields)
+	if n == 0 {
+		return nil
 	}
-	if layout, ok := s.VectorLayout(T, false); ok {
-		return layout.Size
+	c := g.ctx
+	c.mu.RLock()
+	needCheck := len(c.incompleteNamed) > 0
+	c.mu.RUnlock()
+	if needCheck {
+		c.mu.Lock()
+		c.checkIncompleteNamedLocked()
+		c.mu.Unlock()
 	}
-	base := s.baseSizes()
-	word := int64(s.spec.WordSize)
-	baseSize := base.Sizeof(T) + s.extraSize(T, word)
-	switch T.Underlying().(type) {
-	case *gotypes.Struct, *gotypes.Array:
-		return alignUp(baseSize, base.Alignof(T))
-	}
-	return baseSize
-}
 
-// Offsetsof implements go/types.Sizes.
-func (s *SourceSizes) Offsetsof(fields []*gotypes.Var) []int64 {
-	native := s.hasNativeFields(fields)
-	if s.spec.UsesWideGoStorage() {
-		if native {
-			_, offsets := s.WasmNativeFieldsLayout(len(fields), func(i int) *gotypes.Var { return fields[i] })
-			return offsets
-		}
-		if _, offsets, ok := s.WasmGoFieldsLayout(len(fields), func(i int) *gotypes.Var { return fields[i] }); ok {
-			return offsets
-		}
+	if isGoClosureFields(fields) {
+		return []int64{0, int64(c.spec.WordSize)}
 	}
-	if !native {
-		for _, f := range fields {
-			if IsHostLayoutMarker(f.Type()) || ContainsHostLayout(f.Type()) {
-				_, offsets := s.HostFieldsLayout(fields)
-				return offsets
-			}
-		}
+	native := c.hasNativeFieldsLocked(fields)
+	if !native && n > 0 && c.hasNativeFieldsLocked(fields[:1]) {
+		native = true
 	}
-	word := int64(s.spec.WordSize)
-	if s.isClosureFieldSlice(fields) {
-		return []int64{0, word}
-	}
-	if _, offsets, ok := s.VectorStructLayout(fields, native); ok {
-		return offsets
-	}
-	extra := int64(0)
-	ret := s.baseSizes().Offsetsof(fields)
-	for i, f := range fields {
-		ret[i] += extra
-		extra += s.extraSize(f.Type(), word)
-	}
-	return ret
-}
-
-func (s *SourceSizes) extraSize(typ gotypes.Type, word int64) (ret int64) {
-retry:
-	if _, rhs, ok := aliasObjAndRhs(typ); ok {
-		if s.hasNativeDirective(typ) {
-			return 0
-		}
-		typ = rhs
-		goto retry
-	}
-	switch t := typ.(type) {
-	case *gotypes.Named:
-		if s.hasNativeDirective(t) {
-			return 0
-		}
-		typ = t.Underlying()
-		goto retry
-	case *gotypes.Signature:
-		return word
-	case *gotypes.Struct:
-		if s.isClosure(t) {
-			return 0
-		}
-		n := t.NumFields()
-		for i := 0; i < n; i++ {
-			ret += s.extraSize(t.Field(i).Type(), word)
-		}
-		return ret
-	case *gotypes.Array:
-		return s.extraSize(t.Elem(), word) * t.Len()
-	}
-	return 0
-}
-
-// HostLayout computes the target layout of a struct or array containing a
-// structs.HostLayout marker without materializing LLVM types.
-func (s *SourceSizes) HostLayout(t gotypes.Type) (LayoutPair, bool) {
-	raw := t
-	switch u := t.Underlying().(type) {
-	case *gotypes.Struct:
-		if !ContainsHostLayout(u) {
-			return LayoutPair{}, false
-		}
-		if s.hasNativeMeta() && s.hasNativeDirective(raw) {
-			return LayoutPair{}, false
-		}
-		fields := make([]*gotypes.Var, u.NumFields())
-		for i := range fields {
-			fields[i] = u.Field(i)
-		}
-		if s.hasNativeFields(fields) {
-			return LayoutPair{}, false
-		}
-		layout, _ := s.HostFieldsLayout(fields)
-		return layout, true
-	case *gotypes.Array:
-		if elem, ok := s.HostLayout(u.Elem()); ok {
-			if s.hasNativeMeta() && s.hasNativeDirective(raw) {
-				return LayoutPair{}, false
-			}
-			return ArrayLayout(elem, u.Len()), true
-		}
-	}
-	return LayoutPair{}, false
-}
-
-// HostFieldsLayout computes the aggregate layout and field offsets for a struct
-// field slice containing or directly carrying structs.HostLayout.
-func (s *SourceSizes) HostFieldsLayout(fields []*gotypes.Var) (LayoutPair, []int64) {
 	host := false
+	containsHost := false
 	for _, f := range fields {
-		if IsHostLayoutMarker(f.Type()) {
+		ft := f.Type()
+		if IsHostLayoutMarker(ft) {
 			host = true
+			containsHost = true
 			break
 		}
-	}
-	fieldLayout := func(i int) LayoutPair {
-		t := fields[i].Type()
-		if host {
-			return s.HostFieldLayout(t, false)
+		if !containsHost && ContainsHostLayout(ft) {
+			containsHost = true
 		}
-		return s.hostNestedLayout(t)
 	}
-	return AggregateLayout(len(fields), fieldLayout, host || !s.HostUsesNativeGoLayout())
-}
 
-// HostFieldLayout computes the target layout of a direct field inside a
-// structs.HostLayout struct.
-func (s *SourceSizes) HostFieldLayout(t gotypes.Type, native bool) LayoutPair {
-	native = native || s.hasNativeDirective(t)
-	word := int64(s.spec.WordSize)
-	switch u := t.Underlying().(type) {
-	case *gotypes.Basic:
-		if u.Kind() == gotypes.Uintptr || u.Kind() == gotypes.UnsafePointer {
-			return LayoutPair{Size: word, Align: word}
-		}
-		if u.Kind() != gotypes.String {
-			return s.HostBasicLayout(u.Kind())
-		}
-	case *gotypes.Pointer, *gotypes.Map, *gotypes.Chan:
-		return LayoutPair{Size: word, Align: word}
-	case *gotypes.Signature:
+	mode := modeGo
+	switch {
+	case native && c.spec.UsesWideGoStorage():
+		mode = modeWasmNative
+	case host && !native:
+		mode = modeHostField
+	case !native && containsHost && c.HostUsesNativeGoLayout():
+		mode = modeHostNative
+	}
+
+	offsets := make([]int64, n)
+	var size int64
+	for i, f := range fields {
+		ft := f.Type()
+		var llT Type
 		if native {
-			return LayoutPair{Size: word, Align: word}
-		}
-	case *gotypes.Array:
-		return ArrayLayout(s.HostFieldLayout(u.Elem(), native), u.Len())
-	}
-	return s.hostNestedLayout(t)
-}
-
-func (s *SourceSizes) hostNestedLayout(t gotypes.Type) LayoutPair {
-	if !s.HostUsesNativeGoLayout() {
-		return LayoutPair{Size: s.Sizeof(t), Align: s.Alignof(t)}
-	}
-	return s.hostNativeLayout(t, false)
-}
-
-func (s *SourceSizes) hostNativeLayout(t gotypes.Type, native bool) LayoutPair {
-	native = native || s.hasNativeDirective(t)
-	if l, ok := s.HostLayout(t); ok {
-		return l
-	}
-	if l, ok := s.VectorLayout(t, native); ok {
-		return l
-	}
-	word := int64(s.spec.WordSize)
-	switch u := t.Underlying().(type) {
-	case *gotypes.Basic:
-		if u.Kind() == gotypes.String {
-			return LayoutPair{Size: 2 * word, Align: word}
-		}
-		if u.Kind() > gotypes.Invalid && u.Kind() <= gotypes.UnsafePointer {
-			return s.HostBasicLayout(u.Kind())
-		}
-	case *gotypes.Pointer, *gotypes.Chan, *gotypes.Map:
-		return LayoutPair{Size: word, Align: word}
-	case *gotypes.Interface:
-		return LayoutPair{Size: 2 * word, Align: word}
-	case *gotypes.Slice:
-		return LayoutPair{Size: 3 * word, Align: word}
-	case *gotypes.Signature:
-		if native {
-			return LayoutPair{Size: word, Align: word}
-		}
-		return LayoutPair{Size: 2 * word, Align: word}
-	case *gotypes.Array:
-		return ArrayLayout(s.hostNativeLayout(u.Elem(), native), u.Len())
-	case *gotypes.Struct:
-		native = native || s.isClosure(u)
-		fields := make([]*gotypes.Var, u.NumFields())
-		for i := range fields {
-			fields[i] = u.Field(i)
-		}
-		native = native || s.hasNativeFields(fields)
-		l, _ := AggregateLayout(len(fields), func(i int) LayoutPair { return s.hostNativeLayout(fields[i].Type(), native) }, false)
-		return l
-	}
-	base := s.baseSizes()
-	return LayoutPair{Size: base.Sizeof(t), Align: base.Alignof(t)}
-}
-
-// WasmNativeLayout computes explicit C/native storage layout on targets where
-// Go word size exceeds physical pointer size (e.g. Wasm32 Memory32).
-func (s *SourceSizes) WasmNativeLayout(t gotypes.Type) (LayoutPair, bool) {
-	if !s.spec.UsesWideGoStorage() || !s.hasNativeMeta() {
-		return LayoutPair{}, false
-	}
-	switch u := t.Underlying().(type) {
-	case *gotypes.Array:
-		if _, named := unaliasType(t).(*gotypes.Named); named && s.hasLegacyNativeLayout(t) {
-			return ArrayLayout(s.wasmNativeFieldLayout(u.Elem()), u.Len()), true
-		}
-		if elem, ok := s.WasmNativeLayout(u.Elem()); ok {
-			return ArrayLayout(elem, u.Len()), true
-		}
-	case *gotypes.Struct:
-		native := s.hasLegacyNativeLayout(t)
-		if !native && u.NumFields() > 0 {
-			native = s.hasNativeFields([]*gotypes.Var{u.Field(0)})
-		}
-		if native {
-			layout, _ := s.WasmNativeFieldsLayout(u.NumFields(), u.Field)
-			return layout, true
-		}
-		layout, _, ok := s.WasmGoFieldsLayout(u.NumFields(), u.Field)
-		return layout, ok
-	}
-	return LayoutPair{}, false
-}
-
-// WasmNativeFieldsLayout lays out fields of a native C struct on Wasm32.
-func (s *SourceSizes) WasmNativeFieldsLayout(n int, field func(int) *gotypes.Var) (LayoutPair, []int64) {
-	return AggregateLayout(n, func(i int) LayoutPair {
-		return s.wasmNativeFieldLayout(field(i).Type())
-	}, false)
-}
-
-func (s *SourceSizes) wasmGoFieldLayout(t gotypes.Type) LayoutPair {
-	if layout, ok := s.WasmNativeLayout(t); ok {
-		return layout
-	}
-	return LayoutPair{Size: s.goSizeof(t), Align: s.goAlignof(t)}
-}
-
-func (s *SourceSizes) wasmNativeFieldLayout(t gotypes.Type) LayoutPair {
-	ptr := int64(s.spec.PtrSize)
-	switch u := t.Underlying().(type) {
-	case *gotypes.Basic:
-		if u.Kind() == gotypes.Uintptr || u.Kind() == gotypes.UnsafePointer {
-			return LayoutPair{Size: ptr, Align: ptr}
-		}
-	case *gotypes.Pointer, *gotypes.Signature, *gotypes.Map, *gotypes.Chan:
-		return LayoutPair{Size: ptr, Align: ptr}
-	case *gotypes.Array:
-		return ArrayLayout(s.wasmNativeFieldLayout(u.Elem()), u.Len())
-	}
-	return s.wasmGoFieldLayout(t)
-}
-
-// WasmGoFieldsLayout lays out an ordinary Go struct containing at least one
-// native-storage field on Wasm32.
-func (s *SourceSizes) WasmGoFieldsLayout(n int, field func(int) *gotypes.Var) (LayoutPair, []int64, bool) {
-	for i := 0; i < n; i++ {
-		if known, ok := s.WasmNativeLayout(field(i).Type()); ok {
-			layout, offsets := AggregateLayout(n, func(j int) LayoutPair {
-				if j == i {
-					return known
-				}
-				return s.wasmGoFieldLayout(field(j).Type())
-			}, true)
-			return layout, offsets, true
-		}
-	}
-	return LayoutPair{}, nil, false
-}
-
-// VectorLayout computes target-aligned layout for simd/archsimd vector tags,
-// structs, and arrays without materializing LLVM types.
-func (s *SourceSizes) VectorLayout(t gotypes.Type, native bool) (LayoutPair, bool) {
-	if index, ok := SIMDTagIndex(t); ok {
-		return LayoutPair{Size: 0, Align: s.simdAlignments[index]}, true
-	}
-	switch u := unaliasType(t).(type) {
-	case *gotypes.Named:
-		if !ContainsVectorStorage(u) {
-			return LayoutPair{}, false
-		}
-		return s.VectorLayout(u.Underlying(), s.hasNativeStructLayout(u))
-	case *gotypes.Array:
-		elem, changed := s.VectorLayout(u.Elem(), false)
-		if !changed {
-			return LayoutPair{}, false
-		}
-		return ArrayLayout(elem, u.Len()), true
-	case *gotypes.Struct:
-		if !ContainsVectorStorage(u) {
-			return LayoutPair{}, false
-		}
-		fields := make([]*gotypes.Var, u.NumFields())
-		for i := range fields {
-			fields[i] = u.Field(i)
-		}
-		layout, _ := s.vectorFieldsLayout(fields, native)
-		return layout, true
-	}
-	return LayoutPair{}, false
-}
-
-// VectorStructLayout computes layout and offsets for a struct field slice when
-// at least one field contains simd/archsimd vector storage.
-func (s *SourceSizes) VectorStructLayout(fields []*gotypes.Var, native bool) (LayoutPair, []int64, bool) {
-	changed := false
-	for _, field := range fields {
-		if ContainsVectorStorage(field.Type()) {
-			changed = true
-			break
-		}
-	}
-	if !changed {
-		return LayoutPair{}, nil, false
-	}
-	layout, offsets := s.vectorFieldsLayout(fields, native)
-	return layout, offsets, true
-}
-
-func (s *SourceSizes) vectorFieldsLayout(fields []*gotypes.Var, native bool) (LayoutPair, []int64) {
-	layouts := make([]LayoutPair, len(fields))
-	changedFields := make([]bool, len(fields))
-	for i, field := range fields {
-		layout, ok := s.VectorLayout(field.Type(), native)
-		layouts[i], changedFields[i] = layout, ok
-	}
-	ptr := int64(s.spec.PtrSize)
-	for i, field := range fields {
-		if !changedFields[i] {
-			layout := LayoutPair{Size: s.Sizeof(field.Type()), Align: s.Alignof(field.Type())}
-			if native {
-				if _, ok := field.Type().Underlying().(*gotypes.Signature); ok {
-					layout.Size, layout.Align = ptr, ptr
-				}
+			if _, isSig := ft.Underlying().(*gotypes.Signature); isSig {
+				llT = c.FromGoWithCallConv(ft, CDecl)
+			} else {
+				llT = c.FromGo(ft)
 			}
-			layouts[i] = layout
+		} else {
+			llT = c.FromGo(ft)
+		}
+		var fl *Layout
+		switch mode {
+		case modeGo:
+			fl = c.Layout(llT)
+		case modeHostField:
+			fl = c.layoutHostField(llT)
+		default:
+			fl = c.layoutInMode(llT, mode)
+		}
+		size = AlignSize(size, fl.Align)
+		offsets[i] = size
+		if size < 0 || fl.Size < 0 || fl.Size > math.MaxInt64-size {
+			size = -1
+		} else {
+			size += fl.Size
 		}
 	}
-	return AggregateLayout(len(layouts), func(i int) LayoutPair { return layouts[i] }, !native)
+	return offsets
 }

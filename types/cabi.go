@@ -17,7 +17,7 @@
 package types
 
 import (
-	gotypes "go/types"
+	"strings"
 
 	"github.com/xgo-dev/llgo/target"
 )
@@ -49,22 +49,61 @@ func (m PassMode) String() string {
 	}
 }
 
+// NativeIntExt describes how a target's native C ABI requires narrow integer
+// arguments to carry signext / zeroext attributes at call boundaries.
+type NativeIntExt uint8
+
+const (
+	NativeIntNoExt     NativeIntExt = iota
+	NativeIntNarrowExt              // extend integers narrower than 32 bits (Darwin arm64, SysV amd64, x86, wasm, arm, riscv32)
+	NativeIntBoolExt                // zeroext bool only (Win64 amd64)
+	NativeIntRV64Ext                // signext both signed and unsigned 32-bit ints + narrow ints (riscv64)
+)
+
+// NativeIntExtForSpec determines the C ABI narrow-integer extension policy for
+// spec without inspecting LLVM IR.
+func NativeIntExtForSpec(spec target.Spec) NativeIntExt {
+	if spec.WordSize == 0 || spec.PtrSize == 0 {
+		spec = target.ResolveSpec(spec)
+	}
+	arch := strings.ToLower(spec.GOARCH)
+	goos := strings.ToLower(spec.GOOS)
+	switch arch {
+	case "arm64":
+		if goos == "darwin" || goos == "ios" {
+			return NativeIntNarrowExt
+		}
+		return NativeIntNoExt
+	case "amd64":
+		if goos == "windows" {
+			return NativeIntBoolExt
+		}
+		return NativeIntNarrowExt
+	case "riscv64":
+		return NativeIntRV64Ext
+	case "riscv32", "wasm", "386", "arm":
+		return NativeIntNarrowExt
+	}
+	return NativeIntNoExt
+}
+
 // ArgABI describes the ABI lowering decision for one parameter or return value.
 type ArgABI struct {
 	Mode     PassMode
 	Type     Type
 	Layout   *Layout
-	SRet     bool              // return value passed via hidden caller pointer
-	ByVal    bool              // argument passed by-value in stack memory
-	ZExt     bool              // small unsigned integer zero-extended by caller
-	SExt     bool              // small signed integer sign-extended by caller
-	HFACount int               // non-zero for AAPCS64/ARM HFA (1..4 homogeneous floats)
-	HFAElem  gotypes.BasicKind // Float32 or Float64 when HFACount > 0
+	SRet     bool      // return value passed via hidden caller pointer
+	ByVal    bool      // argument passed by-value in stack memory
+	ZExt     bool      // small unsigned integer zero-extended by caller
+	SExt     bool      // small signed integer sign-extended by caller
+	HFACount int       // non-zero for AAPCS64/ARM HFA (1..4 homogeneous floats)
+	HFAElem  BasicKind // Float32 or Float64 when HFACount > 0
 }
 
-// FuncABI holds the complete pure-Go ABI classification for a Func prototype.
+// FuncABI holds the complete pure-Go ABI classification for a Signature.
 type FuncABI struct {
 	CallConv CallConv
+	Variadic bool
 	HasEnv   bool
 	HasSRet  bool
 	Return   ArgABI
@@ -72,46 +111,41 @@ type FuncABI struct {
 }
 
 // ClassifyFuncABI computes target-accurate ABI passing modes directly from
-// LLGo's physical Types and Layouts without inspecting LLVM IR.
-func ClassifyFuncABI(spec target.Spec, sig *Func, layoutFn func(Type) *Layout) *FuncABI {
+// LLGo's canonical Types and Layouts without inspecting LLVM IR.
+func ClassifyFuncABI(spec target.Spec, sig *Signature, layoutFn func(Type) *Layout) *FuncABI {
 	if sig == nil {
 		return nil
 	}
 	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}
-	cc := sig.CallConv
-	if cc == CallConvUnknown {
-		cc = GoDecl
-	}
+	cc := sig.callConv
 	res := &FuncABI{
 		CallConv: cc,
-		HasEnv:   sig.HasEnv,
+		Variadic: sig.variadic,
+		HasEnv:   sig.IsClosure(),
 	}
 
-	// Build parameter list: receiver (if any) followed by formal params.
-	totalParams := len(sig.Params)
-	if sig.Recv != nil {
+	totalParams := sig.params.Len()
+	if sig.recv != nil {
 		totalParams++
 	}
 	res.Params = make([]ArgABI, 0, totalParams)
-	if sig.Recv != nil {
-		res.Params = append(res.Params, classifyArg(spec, cc, sig.Recv.Type, false, layoutFn))
+	if sig.recv != nil {
+		res.Params = append(res.Params, classifyArg(spec, cc, sig.recv.typ, false, layoutFn))
 	}
-	for _, p := range sig.Params {
-		res.Params = append(res.Params, classifyArg(spec, cc, p.Type, false, layoutFn))
+	for i := 0; i < sig.params.Len(); i++ {
+		res.Params = append(res.Params, classifyArg(spec, cc, sig.params.At(i).typ, false, layoutFn))
 	}
 
-	// Classify return value(s).
-	switch len(sig.Results) {
+	switch sig.results.Len() {
 	case 0:
 		res.Return = ArgABI{Mode: PassIgnore}
 	case 1:
-		res.Return = classifyArg(spec, cc, sig.Results[0].Type, true, layoutFn)
+		res.Return = classifyArg(spec, cc, sig.results.At(0).typ, true, layoutFn)
 		res.HasSRet = res.Return.SRet
 	default:
-		tup := &Tuple{Elems: sig.Results}
-		res.Return = classifyArg(spec, cc, tup, true, layoutFn)
+		res.Return = classifyArg(spec, cc, sig.results, true, layoutFn)
 		res.HasSRet = res.Return.SRet
 	}
 	return res
@@ -119,36 +153,35 @@ func ClassifyFuncABI(spec target.Spec, sig *Func, layoutFn func(Type) *Layout) *
 
 func classifyArg(spec target.Spec, cc CallConv, t Type, isReturn bool, layoutFn func(Type) *Layout) ArgABI {
 	l := layoutFn(t)
-	arg := ArgABI{Type: t, Layout: l}
-	if l.Size == 0 {
+	arg := ArgABI{
+		Mode:   PassDirect,
+		Type:   t,
+		Layout: l,
+	}
+	if l == nil || l.Size == 0 {
 		arg.Mode = PassIgnore
 		return arg
 	}
-	// Go internal ABI passes values directly (with backend register/tuple lowering).
-	if !cc.IsNative() {
-		arg.Mode = PassDirect
-		return arg
-	}
-	// Native C / Stdcall scalar integer extension flags (matching Clang C ABI).
-	if b, ok := t.Underlying().(*Basic); ok {
-		arg.Mode = PassDirect
-		if needsSmallIntExt(spec) {
-			switch b.Kind {
-			case gotypes.Bool, gotypes.Uint8, gotypes.Uint16:
-				arg.ZExt = true
-			case gotypes.Int8, gotypes.Int16:
-				arg.SExt = true
-			}
-		}
-		return arg
-	}
-	switch t.Underlying().(type) {
-	case *Pointer, *Func, *SIMDVec, *Map, *Chan:
-		arg.Mode = PassDirect
+	if cc.IsGo() {
 		return arg
 	}
 
-	// Aggregate C ABI classification by target architecture / OS.
+	if b, ok := t.Underlying().(*Basic); ok && b.kind != String {
+		if !isReturn {
+			applyNativeIntExt(NativeIntExtForSpec(spec), b.kind, &arg)
+		}
+		return arg
+	}
+
+	switch t.Underlying().(type) {
+	case *Pointer, *Signature, *Map, *Chan, *SIMDVec:
+		return arg
+	}
+
+	if spec.GOOS == "windows" && spec.GOARCH == "amd64" {
+		return classifyWindowsAggregate(arg, isReturn)
+	}
+
 	switch spec.GOARCH {
 	case "arm64":
 		if elem, count, ok := detectHFA(t); ok {
@@ -157,110 +190,132 @@ func classifyArg(spec target.Spec, cc CallConv, t Type, isReturn bool, layoutFn 
 			arg.HFAElem = elem
 			return arg
 		}
-		if spec.GOOS == "windows" {
-			return classifyWindowsAggregate(arg, isReturn)
-		}
-		// AAPCS64: aggregates <= 16 bytes coerced into up to 2 x i64; > 16 bytes indirect.
 		if l.Size <= 16 {
 			arg.Mode = PassCoerce
-		} else {
-			arg.Mode = PassIndirect
-			arg.SRet = isReturn
-			arg.ByVal = !isReturn
+			return arg
+		}
+		arg.Mode = PassIndirect
+		if isReturn {
+			arg.SRet = true
 		}
 		return arg
+
 	case "amd64":
-		if spec.GOOS == "windows" {
-			return classifyWindowsAggregate(arg, isReturn)
-		}
-		// SysV AMD64: aggregates <= 16 bytes coerced into up to 2 eightbytes; > 16 bytes indirect.
 		if l.Size <= 16 {
 			arg.Mode = PassCoerce
-		} else {
-			arg.Mode = PassIndirect
-			arg.SRet = isReturn
-			arg.ByVal = !isReturn
+			return arg
 		}
-		return arg
-	case "wasm":
-		// Wasm C ABI: single-scalar-like aggregates pass direct/coerce; multi-field indirect for return.
-		if isReturn && l.Size > int64(spec.PtrSize) {
-			arg.Mode = PassIndirect
+		arg.Mode = PassIndirect
+		if isReturn {
 			arg.SRet = true
 		} else {
+			arg.ByVal = true
+		}
+		return arg
+
+	case "wasm":
+		if l.Size <= int64(spec.PtrSize) {
 			arg.Mode = PassDirect
+			return arg
+		}
+		arg.Mode = PassIndirect
+		if isReturn {
+			arg.SRet = true
 		}
 		return arg
+
 	default:
-		// 32-bit / riscv64 / other targets.
-		maxDirect := int64(2 * spec.PtrSize)
-		if spec.GOOS == "windows" {
-			maxDirect = int64(spec.PtrSize)
-		}
-		if l.Size <= maxDirect {
+		if l.Size <= int64(spec.WordSize) {
 			arg.Mode = PassCoerce
+			return arg
+		}
+		arg.Mode = PassIndirect
+		if isReturn {
+			arg.SRet = true
 		} else {
-			arg.Mode = PassIndirect
-			arg.SRet = isReturn
-			arg.ByVal = !isReturn
+			arg.ByVal = true
 		}
 		return arg
+	}
+}
+
+func applyNativeIntExt(policy NativeIntExt, kind BasicKind, arg *ArgABI) {
+	switch policy {
+	case NativeIntNoExt:
+		return
+	case NativeIntBoolExt:
+		if kind == Bool {
+			arg.ZExt = true
+		}
+	case NativeIntNarrowExt:
+		switch kind {
+		case Bool, Uint8, Uint16:
+			arg.ZExt = true
+		case Int8, Int16:
+			arg.SExt = true
+		}
+	case NativeIntRV64Ext:
+		switch kind {
+		case Bool, Uint8, Uint16:
+			arg.ZExt = true
+		case Int8, Int16, Int32, Uint32:
+			arg.SExt = true
+		}
 	}
 }
 
 func classifyWindowsAggregate(arg ArgABI, isReturn bool) ArgABI {
-	sz := arg.Layout.Size
-	// Win64 ABI passes power-of-two aggregates (1, 2, 4, 8 bytes) directly in a single GPR.
-	if sz == 1 || sz == 2 || sz == 4 || sz == 8 {
+	switch arg.Layout.Size {
+	case 1, 2, 4, 8:
 		arg.Mode = PassCoerce
 		return arg
+	default:
+		arg.Mode = PassIndirect
+		if isReturn {
+			arg.SRet = true
+		}
+		return arg
 	}
-	arg.Mode = PassIndirect
-	arg.SRet = isReturn
-	arg.ByVal = !isReturn
-	return arg
 }
 
-func needsSmallIntExt(spec target.Spec) bool {
-	// Darwin/Linux arm64/amd64/wasm follow Clang signext/zeroext conventions on small integer params/returns.
-	return spec.GOOS != "windows"
-}
-
-// detectHFA detects an AAPCS64 Homogeneous Floating-point Aggregate (1 to 4
-// identically-typed float32 or float64 leaf fields).
-func detectHFA(t Type) (gotypes.BasicKind, int, bool) {
-	var kind gotypes.BasicKind
+// detectHFA checks whether t is a Homogeneous Floating-point Aggregate of
+// 1..4 float32 or float64 scalars (AAPCS64/ARM HFA rule).
+func detectHFA(t Type) (BasicKind, int, bool) {
+	var kind BasicKind
 	count := 0
 	var walk func(Type) bool
 	walk = func(cur Type) bool {
+		if cur == nil {
+			return false
+		}
 		switch u := cur.Underlying().(type) {
 		case *Basic:
-			if u.Kind != gotypes.Float32 && u.Kind != gotypes.Float64 {
+			if u.kind != Float32 && u.kind != Float64 {
 				return false
 			}
-			if kind == gotypes.Invalid {
-				kind = u.Kind
-			} else if kind != u.Kind {
+			if kind == Invalid {
+				kind = u.kind
+			} else if kind != u.kind {
 				return false
 			}
 			count++
 			return count <= 4
 		case *Array:
-			if u.Len <= 0 || u.Len > 4 {
+			if u.length <= 0 || u.length > 4 {
 				return false
 			}
-			for i := int64(0); i < u.Len; i++ {
-				if !walk(u.Elem) {
+			for i := int64(0); i < u.length; i++ {
+				if !walk(u.elem) {
 					return false
 				}
 			}
 			return true
 		case *Struct:
-			if len(u.Fields) == 0 {
+			if len(u.fields) == 0 {
 				return false
 			}
-			for _, f := range u.Fields {
-				if !walk(f.Type) {
+			for _, f := range u.fields {
+				if !walk(f.typ) {
 					return false
 				}
 			}
@@ -270,7 +325,7 @@ func detectHFA(t Type) (gotypes.BasicKind, int, bool) {
 		}
 	}
 	if !walk(t) || count == 0 || count > 4 {
-		return gotypes.Invalid, 0, false
+		return Invalid, 0, false
 	}
 	return kind, count, true
 }

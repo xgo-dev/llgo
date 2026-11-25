@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -89,25 +90,30 @@ retry:
 
 type goProgram aProgram
 
+// LLGoContext exposes the underlying canonical *lltypes.Context to abi.Builder.
+func (p *goProgram) LLGoContext() *lltypes.Context {
+	return Program(p).typeCtx
+}
+
 // Alignof returns the alignment of a variable of type T.
 // Alignof must implement the alignment guarantees required by the spec.
 // The result must be >= 1.
 func (p *goProgram) Alignof(T types.Type) int64 {
-	return Program(p).sourceSizes.Alignof(T)
+	return Program(p).typeSizes.Alignof(T)
 }
 
 // Offsetsof returns the offsets of the given struct fields, in bytes.
 // Offsetsof must implement the offset guarantees required by the spec.
 // A negative entry in the result indicates that the struct is too large.
 func (p *goProgram) Offsetsof(fields []*types.Var) []int64 {
-	return Program(p).sourceSizes.Offsetsof(fields)
+	return Program(p).typeSizes.Offsetsof(fields)
 }
 
 // Sizeof returns the size of a variable of type T.
 // Sizeof must implement the size guarantees required by the spec.
 // A negative result indicates that T is too large.
 func (p *goProgram) Sizeof(T types.Type) int64 {
-	return Program(p).sourceSizes.Sizeof(T)
+	return Program(p).typeSizes.Sizeof(T)
 }
 
 func align(x, a int64) int64 {
@@ -136,7 +142,19 @@ func (t Type) RawType() types.Type {
 // TypeSizes returns the sizes of the types.
 func (p Program) TypeSizes(sizes types.Sizes) types.Sizes {
 	p.sizes = sizes
+	if sizes != nil && p.typeCtx != nil {
+		p.syncTypeCtxSizes(sizes)
+	}
 	return (*goProgram)(unsafe.Pointer(p))
+}
+
+func (p Program) syncTypeCtxSizes(sizes types.Sizes) {
+	if sizes == nil || p.typeCtx == nil {
+		return
+	}
+	word := sizes.Sizeof(types.Typ[types.Int])
+	maxAlign := sizes.Alignof(types.Typ[types.Complex128])
+	p.typeCtx.SetSizes(word, maxAlign)
 }
 
 // TODO(xsw):

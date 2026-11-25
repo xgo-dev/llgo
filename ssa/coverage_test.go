@@ -2,7 +2,6 @@ package ssa
 
 import (
 	"go/token"
-	gotypes "go/types"
 	"strings"
 	"testing"
 
@@ -12,29 +11,43 @@ import (
 
 func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	pkg := NewPackage("example.com/cov", "cov", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	i64 := &lltypes.Basic{Kind: gotypes.Int64}
-	boolT := &lltypes.Basic{Kind: gotypes.Bool}
-	ptrI64 := &lltypes.Pointer{Elem: i64, Kind: lltypes.GoPtr}
-	nativePtr := &lltypes.Pointer{Elem: i64, Kind: lltypes.NativePtr}
-	cFuncSig := &lltypes.Func{CallConv: lltypes.CDecl, Params: []*lltypes.Var{{Name: "a", Type: i64}}}
-	cFuncPtr := &lltypes.Pointer{Elem: cFuncSig, Kind: lltypes.NativePtr}
-	ifaceT := &lltypes.Interface{Empty: false}
+	i64 := lltypes.Typ[lltypes.Int64]
+	boolT := lltypes.Typ[lltypes.Bool]
+	ptrI64 := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
+	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
+	cFuncSig := lltypes.NewSignature(
+		nil,
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "a", i64)),
+		nil,
+		false,
+		lltypes.CDecl,
+	)
+	cFuncPtr := lltypes.NewPointerWithKind(cFuncSig, lltypes.CPtr)
+	doMeth := lltypes.NewFunc(0, nil, "Do", lltypes.NewSignature(
+		nil,
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		false,
+		lltypes.GoDirect,
+	))
+	ifaceT := lltypes.NewInterfaceType([]*lltypes.Func{doMeth}, nil)
 
 	g := pkg.NewGlobal("cov.G", ptrI64)
 	if g == nil || !g.HasPtrData {
 		t.Fatalf("NewGlobal(ptrI64) = %+v", g)
 	}
 
-	sig := &lltypes.Func{
-		CallConv: lltypes.GoDecl,
-		Recv:     &lltypes.Var{Name: "r", Type: ptrI64},
-		Params: []*lltypes.Var{
-			{Name: "cond", Type: boolT},
-			{Name: "iface", Type: ifaceT},
-			{Name: "cfn", Type: cFuncPtr},
-		},
-		Results: []*lltypes.Var{{Type: i64}},
-	}
+	sig := lltypes.NewSignature(
+		lltypes.NewParam(0, nil, "r", ptrI64),
+		lltypes.NewTuple(
+			lltypes.NewParam(0, nil, "cond", boolT),
+			lltypes.NewParam(0, nil, "iface", ifaceT),
+			lltypes.NewParam(0, nil, "cfn", cFuncPtr),
+		),
+		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		false,
+		lltypes.GoDirect,
+	)
 	fn := pkg.NewFunction("cov.Run", sig)
 	entry := fn.NewBasicBlock("")
 	thenBlk := fn.NewBasicBlock("then")
@@ -54,9 +67,9 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	b.GCRoot(alloc, true)
 	b.GCRoot(alloc, false)
 	b.KeepAlive(alloc)
-	_ = b.PtrCast(alloc, nativePtr)
-	clos := b.MakeClosure(&lltypes.Func{CallConv: lltypes.GoDecl}, "cov.cb", alloc)
-	_ = b.CallDirect("cov.helper", lltypes.GoDecl, i64, loaded)
+	_ = b.PtrCast(alloc, cPtr)
+	clos := b.MakeClosure(lltypes.NewSignature(nil, nil, nil, false, lltypes.GoClosure), "cov.cb", alloc)
+	_ = b.CallDirect("cov.helper", lltypes.GoDirect, i64, loaded)
 	_ = b.CallClosure(clos, nil)
 	_ = b.CallCFunc(fn.Params[3], lltypes.CDecl, nil, loaded)
 	_ = b.CallInterface(fn.Params[2], "Do", 0, i64, loaded)
@@ -84,7 +97,6 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatalf("VerifyPackage() unexpected error: %v", err)
 	}
 
-	// Exercise Terminator, Block, Parent, ID, Name, Operands, Successors, and String on all instructions.
 	for _, blk := range fn.Blocks {
 		if blk.Parent() != fn {
 			t.Fatalf("block %s has wrong parent", blk.Label)
@@ -143,7 +155,6 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatalf("UnmarshalSummary = (%+v, %v)", roundtrip, err)
 	}
 
-	// Cover VerifyPackage error cases.
 	if err := VerifyPackage(nil); err == nil {
 		t.Fatal("VerifyPackage(nil) succeeded")
 	}
@@ -151,7 +162,7 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatal("VerifyFunction(nil) succeeded")
 	}
 	badPkg := NewPackage("bad", "bad", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	badFn := badPkg.NewFunction("bad.EmptyBlock", &lltypes.Func{CallConv: lltypes.GoDecl})
+	badFn := badPkg.NewFunction("bad.EmptyBlock", lltypes.NewSignature(nil, nil, nil, false, lltypes.GoDirect))
 	_ = badFn.NewBasicBlock("empty")
 	if err := VerifyFunction(badFn); err == nil {
 		t.Fatal("VerifyFunction accepted empty block")

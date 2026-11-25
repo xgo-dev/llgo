@@ -73,7 +73,7 @@ type Function struct {
 	Pkg        *Package
 	Name       string
 	LinkName   string
-	Sig        *lltypes.Func
+	Sig        *lltypes.Signature
 	Params     []*Parameter
 	Blocks     []*BasicBlock
 	LinkOnce   bool

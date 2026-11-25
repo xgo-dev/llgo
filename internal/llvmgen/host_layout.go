@@ -21,18 +21,18 @@ func containsHostLayout(t types.Type) bool {
 	return lltypes.ContainsHostLayout(t)
 }
 
-func toLLCallConv(cc CallConv) lltypes.CallConv {
+func toLLCallConv(cc CallConv) (lltypes.CallConv, bool) {
 	switch cc {
 	case GoDecl:
-		return lltypes.GoDecl
+		return lltypes.GoDirect, false
 	case CDecl:
-		return lltypes.CDecl
+		return lltypes.CDecl, true
 	case PyDecl:
-		return lltypes.PyDecl
+		return lltypes.PyFunc, true
 	case Stdcall:
-		return lltypes.Stdcall
+		return lltypes.Stdcall, true
 	default:
-		return lltypes.CallConvUnknown
+		return lltypes.GoClosure, false
 	}
 }
 
@@ -79,5 +79,5 @@ func (p Program) nativeTypeDirective(t types.Type) CallConv {
 }
 
 func (p Program) hostUsesNativeGoLayout() bool {
-	return p.sourceSizes.HostUsesNativeGoLayout()
+	return p.typeCtx.HostUsesNativeGoLayout()
 }
