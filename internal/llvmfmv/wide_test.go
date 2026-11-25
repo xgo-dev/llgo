@@ -82,8 +82,8 @@ exit:
 		mask   uint64
 		suffix string
 	}{
-		{"vbmi2", ext, "guard_avx512vbmi2"},
-		{"vbmi2", ext | bundle, "guard_avx512vbmi2"},
+		{"vbmi2", ext, "guard_zmm"},
+		{"vbmi2", ext | bundle, "guard_zmm"},
 		{"vbmi2", bundle, "guard_base"},
 		{"opaque", ext, "width_base"},
 		{"opaque", bundle, "zmm"},
@@ -105,7 +105,7 @@ exit:
 			if !strings.Contains(body.String(), "@llvm.trap(") {
 				t.Fatal(body.String())
 			}
-		case "guard_avx512vbmi2", "zmm":
+		case "guard_zmm", "zmm":
 			if !strings.Contains(body.String(), "call void @wide(") {
 				t.Fatal(body.String())
 			}
@@ -154,4 +154,39 @@ no:
 			}
 		}
 	}
+}
+
+// A separately compiled caller can enter with a fixed ZMM signature. A local
+// pointer helper inherits that width even in a module with no CPU queries.
+func TestWideSignatureSuppliesLocalHelper(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare void @consume(<16 x i32>)
+define void @entry(<16 x i32> %x, ptr %p) {
+ store <16 x i32> %x, ptr %p
+ call void @helper(ptr %p)
+ ret void
+}
+define void @helper(ptr %p) {
+ %x = load <16 x i32>, ptr %p
+ call void @consume(<16 x i32> %x)
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	entry := m.NamedFunction("entry")
+	for inst := entry.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+		if inst.IsACallInst().IsNil() {
+			continue
+		}
+		helper := inst.CalledValue().IsAFunction()
+		if helper.IsNil() || targetWidth(helper, "v1") != 512 || !strings.Contains(helper.String(), "call void @consume(") {
+			t.Fatalf("wide entry does not call the ZMM helper directly:\n%s", m.String())
+		}
+		return
+	}
+	t.Fatalf("missing direct call from wide entry:\n%s", entry.String())
 }

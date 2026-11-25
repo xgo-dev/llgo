@@ -1,7 +1,6 @@
 package llvmfmv
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -109,17 +108,21 @@ func (f *baselineFolds) commit() {
 
 type guardFacts struct {
 	common uint64 // every bit is known true
+	ymm    uint64 // alternative YMM witnesses on all incoming paths
 	zmm    uint64 // at least one of these ZMM guards is known true, or zero
 }
 
 func (a guardFacts) and(b guardFacts) guardFacts {
-	return guardFacts{common: a.common | b.common, zmm: a.zmm | b.zmm}
+	return guardFacts{common: a.common | b.common, ymm: a.ymm | b.ymm, zmm: a.zmm | b.zmm}
 }
 
 // At a join only common predicates can be folded. Alternate paths can still
 // establish the same register width with different effective Go predicates.
 func (a guardFacts) or(b guardFacts) guardFacts {
 	f := guardFacts{common: a.common & b.common}
+	if a.ymm != 0 && b.ymm != 0 {
+		f.ymm = a.ymm | b.ymm
+	}
 	if a.zmm != 0 && b.zmm != 0 {
 		f.zmm = a.zmm | b.zmm
 	}
@@ -131,7 +134,7 @@ func (a guardFacts) or(b guardFacts) guardFacts {
 func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) guardFacts {
 	if !cond.IsACallInst().IsNil() && taken {
 		mask := queries[cond.CalledValue()]
-		return guardFacts{common: mask, zmm: mask & zmmPredicates}
+		return guardFacts{common: mask, ymm: mask & ymmPredicates, zmm: mask & zmmPredicates}
 	}
 	if cond.IsAInstruction().IsNil() {
 		return guardFacts{}
@@ -182,7 +185,12 @@ func (a *wideABI) localVectorWork(inst llvm.Value) bool {
 // Generic LLVM intrinsics that can use an optional instruction even when the
 // vector fits the baseline. Instruction-specific x86 leaves already carry their
 // own target features; their caller emits SIMDRequireX86Features with its mask.
-func (a *wideABI) intrinsicGuards(fn llvm.Value) uint64 {
+func (a *wideABI) intrinsicGuards(inst, fn llvm.Value) uint64 {
+	if hint := inst.Metadata(a.mod.Context().MDKindID(PreferFeatureMD)); !hint.IsNil() {
+		if operands := hint.MDNodeOperands(); len(operands) == 1 && operands[0].IsAMDString() {
+			return predicateBits[operands[0].MDString()]
+		}
+	}
 	name := fn.Name()
 	switch {
 	case strings.HasPrefix(name, "llvm.fma."), strings.HasPrefix(name, "llvm.fmuladd."):
@@ -206,104 +214,7 @@ func (a *wideABI) intrinsicGuards(fn llvm.Value) uint64 {
 	return 0
 }
 
-// instructionGuards identifies work that benefits from the guard. Ordinary
-// narrow vector arithmetic can use the baseline implementation on amd64.
-func (a *wideABI) instructionGuards(inst, callee llvm.Value, floor int) uint64 {
-	var needs uint64
-	typ := inst.Type()
-	switch inst.InstructionOpcode() {
-	case llvm.Call, llvm.Invoke:
-		if callee.IsNil() || callee.IntrinsicID() == 0 {
-			if !callee.IsNil() && callee.Name() == "github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features" && inst.ArgOperandsCount() == 1 {
-				if arg := inst.Operand(0).IsAConstantInt(); !arg.IsNil() && arg.Type().IntTypeWidth() == 64 {
-					return arg.ZExtValue()
-				}
-			}
-			width := a.callWidth(inst)
-			if width <= floor {
-				return 0
-			}
-			if width == 512 {
-				return zmmPredicates
-			}
-			return ymmPredicates
-		}
-		needs = a.intrinsicGuards(callee)
-		if typ.TypeKind() != llvm.VectorTypeKind && inst.ArgOperandsCount() != 0 {
-			typ = inst.Operand(0).Type()
-		}
-	case llvm.Store, llvm.ExtractElement, llvm.ICmp, llvm.FCmp:
-		typ = inst.Operand(0).Type()
-	}
-	if typ.TypeKind() == llvm.VectorTypeKind {
-		width := a.data.TypeSizeInBits(typ)
-		if width > 128 && floor < 256 {
-			needs |= featureAVX | featureAVX2
-		}
-		if width > 256 && floor < 512 {
-			needs |= zmmPredicates
-		}
-	}
-	return needs
-}
-
-// Summarize reachable local helpers before choosing root masks. Propagate newly
-// discovered requirements to a fixed point, including through recursive calls.
-func guardedWork(candidates map[llvm.Value]bool, folds *baselineFolds, avx2 *avx2Plan, abi *wideABI, baseline string) map[llvm.Value]uint64 {
-	work := make(map[llvm.Value]uint64)
-	seen := make(map[llvm.Value]bool)
-	callers := make(map[llvm.Value][]llvm.Value)
-	var visit []llvm.Value
-	for fn := range candidates {
-		visit = append(visit, fn)
-	}
-	for len(visit) != 0 {
-		fn := visit[len(visit)-1]
-		visit = visit[:len(visit)-1]
-		if seen[fn] {
-			continue
-		}
-		seen[fn] = true
-		if fn.IsDeclaration() || !supported(fn) || (avx2 != nil && !avx2.baselines[fn].IsNil()) {
-			continue
-		}
-		floor := targetWidth(fn, baseline)
-		var needs uint64
-		for bb := folds.view(fn).FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				callee := directGuardCallee(inst)
-				needs |= abi.instructionGuards(inst, callee, floor)
-				if !callee.IsNil() {
-					callers[callee] = append(callers[callee], fn)
-					if !seen[callee] {
-						visit = append(visit, callee)
-					}
-				}
-			}
-		}
-		if needs != 0 {
-			work[fn] = needs
-		}
-	}
-	for fn := range work {
-		visit = append(visit, fn)
-	}
-	for len(visit) != 0 {
-		fn := visit[len(visit)-1]
-		visit = visit[:len(visit)-1]
-		for _, caller := range callers[fn] {
-			if work[fn]&^work[caller] != 0 {
-				work[caller] |= work[fn]
-				visit = append(visit, caller)
-			}
-		}
-	}
-	return work
-}
-
-// Keep common Go predicates at joins. A() || B() can also specialize guarded
-// vector work when either predicate independently supplies ZMM registers.
-func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, requirements func(llvm.Value) uint64) []uint64 {
+func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlock]guardFacts {
 	entry := fn.EntryBasicBlock()
 	known := map[llvm.BasicBlock]guardFacts{entry: {}}
 	queue := []llvm.BasicBlock{entry}
@@ -327,27 +238,7 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, requirements fu
 			queue = append(queue, next)
 		}
 	}
-	sets := map[uint64]bool{}
-	for block, f := range known {
-		if f.common == 0 && f.zmm == 0 {
-			continue
-		}
-		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			needs := requirements(inst)
-			common := f.common & needs
-			if common != 0 {
-				sets[common] = true
-			}
-			if alternatives := f.zmm & needs; alternatives != 0 && common&zmmPredicates == 0 {
-				for _, p := range x86Predicates {
-					if alternatives&p.runtimeBit != 0 {
-						sets[common|p.runtimeBit] = true
-					}
-				}
-			}
-		}
-	}
-	return dispatchMasks(sets)
+	return known
 }
 
 // Independent guarded regions can both execute. Build the distinct unions of
@@ -370,23 +261,6 @@ func dispatchMasks(sets map[uint64]bool) []uint64 {
 	return choices
 }
 
-type guardRoot struct {
-	fn, base llvm.Value
-	masks    []uint64
-	choices  []dispatchChoice
-}
-
-// A direct call to a clone is valid when the caller covers every guard choice.
-// dispatchMasks places the union of all choices last.
-func (r *guardRoot) needsDispatch(known uint64) bool {
-	return r != nil && r.masks[len(r.masks)-1]&^known != 0
-}
-
-type guardKey struct {
-	fn   llvm.Value
-	mask uint64
-}
-
 func guardSuffix(mask uint64) string {
 	var names []string
 	for _, p := range x86Predicates {
@@ -397,224 +271,85 @@ func guardSuffix(mask uint64) string {
 	return symbolPrefix + "guard_" + strings.Join(names, "_")
 }
 
-func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
-	mod := abi.mod
-	folds := baselineFolds{calls: make(map[llvm.Value][]llvm.Value), queries: make(map[llvm.Value]bool), views: make(map[llvm.Value]llvm.Value)}
-	defer func() {
-		for _, v := range folds.views {
-			v.EraseFromParentAsFunction()
-		}
-	}()
-	queries := make(map[llvm.Value]uint64)
-	candidates := make(map[llvm.Value]bool)
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		name := checkedQuery(fn)
-		bit := predicateBits[name]
-		guaranteed := guaranteedQuery(name, baseline)
-		if bit == 0 {
-			continue
-		}
-		if guaranteed {
-			folds.queries[fn] = true
-		} else {
-			queries[fn] = bit
-		}
-		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
-			call := use.User()
-			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
-				parent := call.InstructionParent().Parent()
-				if guaranteed {
-					folds.calls[parent] = append(folds.calls[parent], call)
-					continue
-				}
-				// An AVX2 root's staged baseline and variant now own its code.
-				if avx2 != nil && !avx2.baselines[parent].IsNil() {
-					continue
-				}
-				if supported(parent) {
-					candidates[parent] = true
-				}
-			}
-		}
+func isaWidth(bits uint64) int {
+	switch {
+	case bits&zmmPredicates != 0:
+		return 512
+	case bits&ymmPredicates != 0:
+		return 256
 	}
-	if len(candidates) == 0 {
-		folds.commit()
-		avx2.commit(mod, nil)
-		return nil
-	}
-	work := guardedWork(candidates, &folds, avx2, abi, baseline)
-	var roots []guardRoot
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if !candidates[fn] {
-			continue
-		}
-		floor := targetWidth(fn, baseline)
-		masks := guardContexts(folds.view(fn), queries, func(inst llvm.Value) uint64 {
-			callee := directGuardCallee(inst)
-			return abi.instructionGuards(inst, callee, floor) | work[callee]
-		})
-		if len(masks) == 0 {
-			continue
-		}
-		for _, suffix := range []string{symbolPrefix + "guard_base", slotSuffix, resolverSuffix} {
-			if !mod.NamedValue(fn.Name() + suffix).IsNil() {
-				return fmt.Errorf("SIMD FMV symbol collision: %s%s", fn.Name(), suffix)
-			}
-		}
-		roots = append(roots, guardRoot{fn: fn, masks: masks})
-	}
-	if len(roots) == 0 {
-		folds.commit()
-		avx2.commit(mod, nil)
-		return nil
-	}
-	byFunction := make(map[llvm.Value]*guardRoot, len(roots))
-	for i := range roots {
-		byFunction[roots[i].fn] = &roots[i]
-	}
-	ctx := mod.Context()
-	// Stage private bodies until every name needed by the simplified call
-	// graph is known. A collision can be discovered in a recursive callee.
-	var copies []struct{ original, body llvm.Value }
-	newBody := func(fn llvm.Value, name string, mask uint64) llvm.Value {
-		v := folds.view(fn).CloneFunction()
-		v.SetName(name)
-		v.SetLinkage(llvm.InternalLinkage)
-		v.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-		v.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-		copies = append(copies, struct{ original, body llvm.Value }{fn, v})
-		if mask == 0 {
-			return v
-		}
-		features := stringAttribute(fn, "target-features")
-		for _, p := range x86Predicates {
-			if mask&p.runtimeBit != 0 {
-				if features != "" {
-					features += ","
-				}
-				features += p.features
-			}
-		}
-		v.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
-		var fold []llvm.Value
-		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				if !inst.IsACallInst().IsNil() && queries[inst.CalledValue()]&mask != 0 {
-					fold = append(fold, inst)
-				}
-			}
-		}
-		foldTrue(v, fold)
-		return v
-	}
-	clones := make(map[guardKey]llvm.Value)
-	// Materialize all copies before replacing any public entry. Local helper
-	// copies are shared by callers with identical proven predicates.
-	var specializeLocal func(llvm.Value, uint64) (llvm.Value, error)
-	specializeLocal = func(fn llvm.Value, mask uint64) (llvm.Value, error) {
-		key := guardKey{fn, mask}
-		if v, ok := clones[key]; ok {
-			return v, nil
-		}
-		// A promised AVX2 entry is already staged and folded. Use it for
-		// this exact mask, including when reached through a local helper.
-		var v llvm.Value
-		if avx2 != nil && mask == featureAVX2 {
-			v = avx2.variants[fn]
-		}
-		canonical := !v.IsNil()
-		if !canonical {
-			name := fn.Name() + guardSuffix(mask)
-			if !mod.NamedValue(name).IsNil() {
-				return llvm.Value{}, fmt.Errorf("SIMD FMV symbol collision: %s", name)
-			}
-			v = newBody(fn, name, mask)
-		}
-		clones[key] = v
+	return 0
+}
 
-		for bb := v.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-				target := directGuardCallee(inst)
-				calleeMask := mask & work[target]
-				if calleeMask == 0 || byFunction[target].needsDispatch(mask) {
-					continue
+func (p profile) suffix() string {
+	if p.width == 0 {
+		return guardSuffix(p.isa)
+	}
+	name := "ymm"
+	if p.width == 512 {
+		name = "zmm"
+	}
+	names := strings.TrimPrefix(guardSuffix(p.isa), symbolPrefix+"guard_")
+	if names != "" {
+		name += "_" + names
+	}
+	return symbolPrefix + "guard_" + name
+}
+
+func (p profile) attributes(fn llvm.Value) {
+	if p.width != 0 {
+		enableWidth(fn, p.width)
+	}
+	if p.isa == 0 {
+		return
+	}
+	features := stringAttribute(fn, "target-features")
+	for _, pred := range x86Predicates {
+		if pred.runtimeBit&p.isa != 0 {
+			if features != "" {
+				features += ","
+			}
+			features += pred.features
+		}
+	}
+	fn.AddTargetDependentFunctionAttr("target-features", features)
+}
+
+func (a *wideABI) operation(inst, callee llvm.Value) profile {
+	typ := inst.Type()
+	var p profile
+	switch inst.InstructionOpcode() {
+	case llvm.Call, llvm.Invoke:
+		if callee.IsNil() || callee.IntrinsicID() == 0 {
+			if !callee.IsNil() && callee.Name() == "github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features" && inst.ArgOperandsCount() == 1 {
+				if arg := inst.Operand(0).IsAConstantInt(); !arg.IsNil() && arg.Type().IntTypeWidth() == 64 {
+					p.isa = arg.ZExtValue()
 				}
-				callee, err := specializeLocal(target, calleeMask)
-				if err != nil {
-					return llvm.Value{}, err
-				}
-				// Staged AVX2 callers are redirected together once all copies exist.
-				if !canonical {
-					inst.SetOperand(inst.OperandsCount()-1, callee)
-				}
 			}
+			p.width = a.callWidth(inst)
+			return p
 		}
-		return v, nil
+		p.isa = a.intrinsicGuards(inst, callee)
+		if typ.TypeKind() != llvm.VectorTypeKind && inst.ArgOperandsCount() != 0 {
+			typ = inst.Operand(0).Type()
+		}
+	case llvm.Store, llvm.ExtractElement, llvm.ICmp, llvm.FCmp:
+		typ = inst.Operand(0).Type()
 	}
-	for i := range roots {
-		root := &roots[i]
-		root.choices = make([]dispatchChoice, len(root.masks))
-		for j, mask := range root.masks {
-			v, err := specializeLocal(root.fn, mask)
-			if err != nil {
-				for _, staged := range copies {
-					discardStagedBody(staged.body)
-				}
-				return err
-			}
-			root.choices[j] = dispatchChoice{bits: mask, fn: v}
+	if typ.TypeKind() == llvm.VectorTypeKind {
+		switch w := a.data.TypeSizeInBits(typ); {
+		case w > 256:
+			p.width = 512
+		case w > 128:
+			p.width = 256
 		}
-		root.base = newBody(root.fn, root.fn.Name()+symbolPrefix+"guard_base", 0)
-	}
-	// Reuse existing local bodies in the canonical AVX2 call graph, including
-	// the externally callable AVX2 entries. Allocate no additional clones.
-	if avx2 != nil {
-		for key, body := range clones {
-			// A root with other choices must select its own best body.
-			root := byFunction[key.fn]
-			if key.mask == featureAVX2 && !root.needsDispatch(featureAVX2) {
-				avx2.redirectStagedCalls(key.fn, body, avx2.variants)
-			}
-		}
-		for _, root := range roots {
-			if !root.needsDispatch(featureAVX2) {
-				avx2.redirectStagedCalls(root.fn, root.base, avx2.baselines)
+		// AVX2 also supplies packed integer arithmetic for YMM registers.
+		if p.width != 0 && typ.ElementType().TypeKind() == llvm.IntegerTypeKind {
+			switch inst.InstructionOpcode() {
+			case llvm.Add, llvm.Sub, llvm.Mul, llvm.Shl, llvm.LShr, llvm.AShr, llvm.ICmp:
+				p.isa |= featureAVX2
 			}
 		}
 	}
-	folds.commit()
-	source := newSourceInfo(mod)
-	sites := avx2.commit(mod, source)
-	for _, staged := range copies {
-		original := staged.original
-		// The copy predates publication of its AVX2 parent's new PC-site IDs.
-		if avx2 != nil && !avx2.origins[original].IsNil() {
-			original = avx2.origins[original]
-		}
-		source.clone(original, staged.body)
-	}
-	// Keep the canonical AVX2 entry callable from separately compiled code.
-	// For public calls, cache the physical target directly in the outer slot.
-	builder := ctx.NewBuilder()
-	defer builder.Dispose()
-	for _, site := range sites {
-		builder.SetInsertPointBefore(site.selection)
-		// LLVM select operands are condition, true (AVX2), false (baseline).
-		for operand := 1; operand <= 2; operand++ {
-			root := byFunction[site.selection.Operand(operand)]
-			if root == nil {
-				continue
-			}
-			target := selectDispatchBody(builder, site.features, root.base, root.choices)
-			site.selection.SetOperand(operand, target)
-			if operand == 2 {
-				call := site.uninitializedCall
-				call.SetOperand(call.OperandsCount()-1, root.base)
-			}
-		}
-	}
-	for _, root := range roots {
-		dispatch(mod, source, root.fn, root.base, root.choices)
-	}
-	return nil
+	return p
 }

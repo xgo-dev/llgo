@@ -497,6 +497,14 @@ func sad(o *[8]uint64, a,b *[64]uint8) {
  if archsimd.X86.AVX512() { archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o) }
 }
 //go:noinline
+func sadUnguarded(o *[8]uint64, a,b *[64]uint8) {
+ archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o)
+}
+//go:noinline
+func sad128(o *[2]uint64, a,b *[16]uint8) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint8x16Array(a).SumOf8AbsDiff(archsimd.LoadUint8x16Array(b)).StoreArray(o) }
+}
+//go:noinline
 func bytes(o,a *[64]uint8, m uint64) {
  if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint8x64Array(a).Compress(archsimd.Mask8x64FromBits(m)).StoreArray(o) }
 }
@@ -526,6 +534,12 @@ func main() {}
 				t.Fatal(err)
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			for _, name := range []string{"main.sadUnguarded", "main.sad128"} {
+				if !mod.NamedGlobal(name + ".__llgo_fmv_slot").IsNil() {
+					t.Fatalf("%s unexpectedly acquired a dispatcher", name)
+				}
+			}
 			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 				for fn, mnemonic := range tc.ops {
 					for _, suffix := range []string{tc.guard, "base"} {

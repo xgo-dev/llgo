@@ -295,9 +295,9 @@ AVX2 versions, including across packages without LTO. Only functions with Go
 bodies or compiler-generated SIMD intrinsic bodies promise those entries;
 bodyless assembly declarations retain their original calls. Ordinary calls
 and indirect calls retain the original entry. The guard pass can specialize a
-scalar-signature local helper when it visits that call. A canonical AVX2 body
-can still call an ordinary helper. Calls from that body to a guard root with
-additional feature choices go through the root's dispatcher.
+scalar-signature local helper when it visits that call. Canonical AVX2 bodies can forward their known capability to direct helpers.
+If a helper has additional instruction choices, its entry can select among
+implementations that retain the caller's register floor.
 See [local guarded specializations](#guarded-x86-feature-combinations).
 
 Midway's 128-bit bridge types also qualify for these direct-call variants,
@@ -514,45 +514,36 @@ Reference boundaries:
 
 ### Guarded x86 feature combinations
 
-On AMD64 the compiler also recognizes positive branches on the official
-`archsimd.X86` predicates. At control-flow joins it retains the predicates
-proven on every incoming path. The compiler selects a feature when it can benefit an
-operation in the guarded region or a directly called local helper. For
-example, an FMA guard can specialize a fused multiply-add. Independent
-guards that call the same helper to add two 128-bit integer vectors keep
-their ordinary branches and share the baseline helper. A 256- or 512-bit register argument or
-result also counts as work at the call site, including external and indirect
-calls. If every path to the vector work checks a predicate that supplies ZMM
-registers (for example, `AVX512() || AVX512VBMI2()`), either effective predicate can
-select an implementation for a call that needs ZMM registers. Nested
-AVX512 and FMA guards can therefore produce a 512-bit fused implementation.
-GOAMD64 v3 guarantees AVX, AVX2 and FMA. The v4 baseline also guarantees
-the AVX512 predicate. LLGo folds these queries before generating guarded
-versions. Optional predicates continue to read the effective CPU state.
+The amd64 planner records the register width and optional instruction features
+used by operations and calls. It plans physical bodies and direct-call targets
+before rewriting the module. The fixed signature from ABI lowering and the
+compilation baseline establish the minimum width of each function. GOAMD64 v3
+also guarantees AVX, AVX2 and FMA. The v4 baseline guarantees AVX512.
 
-On v1/v2, the public resolver for a mixed AVX2 and AVX512 guard selects
-the physical body from both predicates and caches it in one slot. Separately
-compiled AVX2 callers can still use the canonical AVX2 entry. An AVX2-only
-guard reuses that entry when available. The wider
-clone specializes direct calls to the local AVX2 helper body.
-For independent guarded regions, the resolver selects the union of all
-matching masks that affect the guarded work. Local helpers share a copy
-for each distinct subset of features they can use, including along long
-call chains.
+Direct positive tests on `archsimd.X86` predicates can establish additional
+capabilities. For example, both arms of `AVX512() || AVX512VBMI2()` establish
+ZMM width. A ZMM body shared by these paths still evaluates independent Go
+queries. A guard for a specific operation, such as FMA for a fused multiply-add,
+can request that instruction feature for a physical body.
 
-Specializations follow direct calls through local helpers, including kernels
-that take array pointers and use vectors internally. Recursive helper calls
-reuse the same copy when the caller covers all of the callee's guard choices.
-A callee with additional guard choices keeps its dispatcher. Indirect calls
-keep the ordinary entry.
-Calls to separately compiled functions can use their ordinary Go entries.
-Function values retain the public entry and its static calling convention.
-The baseline implementation serves calls before CPU feature publication. `TestLazyDispatcherPolicy` checks that this call does not cache
-the baseline. `TestSIMD512ScalarSignatureHelpers` exercises the scalar fallback
-when AVX512 is unavailable. `TestSIMD512Guarded` checks the wide call on
-supported CPUs, and
-`TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
-local helper calls and that a second call to the pass leaves a completed module unchanged.
+When a scalar caller only passes a pointer to a local SIMD helper, it can
+call a shared implementation directly on a proven branch. Eight independent
+ZMM guards around calls to the same 512-bit addition helper keep all eight
+branches and share the same ZMM code. Direct local helper chains propagate
+these requirements, including through recursion. A helper with another
+optional instruction can dispatch from its known-width entry.
+
+When the caller itself issues a wide register call, its own body needs the
+corresponding static width. This applies to direct, external and indirect
+calls, including constant arguments and discarded results. The public entry
+caches a suitable implementation from the published CPU predicates. Ordinary
+calls through function values keep their public entry and fixed ABI. Before
+CPU feature publication, the resolver forwards to the baseline without caching.
+
+`TestGuardedCallsShareZMMImplementation` checks the eight guard branches.
+`TestKnownZMMEntryPreservesIndependentQuery` checks a nested query that changes
+the number of wide calls. `TestSIMD512VBMI2WideCall` exercises the wide ABI
+across package and function-value boundaries with the AVX512 bundle disabled.
 
 FMV processes each amd64 package module once, before target optimization.
 Guard specialization uses CPU queries visible directly in the branch condition.

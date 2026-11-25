@@ -311,3 +311,26 @@ func TestIncompleteAggregateABI(t *testing.T) {
 		t.Fatal("resolved nested SIMD128 aggregate rejected at the FMV boundary")
 	}
 }
+
+func TestDispatchRequiresFeatureAndWidth(t *testing.T) {
+	fma := predicateBits[X86Query("FMA")]
+	vbmi2 := predicateBits[X86Query("AVX512VBMI2")]
+	wide := predicateBits[X86Query("AVX512")]
+	for _, tc := range []struct {
+		mask uint64
+		impl string
+	}{
+		{0, "base"}, {fma, "base"}, {vbmi2 | wide, "base"},
+		{fma | vbmi2, "impl"}, {fma | wide, "impl"}, {fma | vbmi2 | wide, "impl"},
+	} {
+		m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+define void @root() { ret void }
+define void @base() { ret void }
+define void @impl() { ret void }
+`)
+		dispatch(m, newSourceInfo(m), m.NamedFunction("root"), m.NamedFunction("base"), []dispatchChoice{
+			{bits: fma, anyOf: wide | vbmi2, fn: m.NamedFunction("impl")},
+		})
+		checkCachedGuard(t, m, tc.mask, m.NamedFunction(tc.impl))
+	}
+}

@@ -43,20 +43,20 @@ out:
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	wide := m.NamedFunction("root.__llgo_fmv_guard_avx512")
-	both := m.NamedFunction("root.__llgo_fmv_guard_avx512_fma")
-	base := m.NamedFunction("root.__llgo_fmv_guard_base")
-	if wide.IsNil() || both.IsNil() || base.IsNil() {
-		t.Fatalf("missing guarded implementations:\n%s", m.String())
+	root := m.NamedFunction("root")
+	wide := m.NamedFunction("helper.__llgo_fmv_guard_zmm")
+	both := m.NamedFunction("helper.__llgo_fmv_guard_zmm_fma")
+	if wide.IsNil() || both.IsNil() || !m.NamedGlobal("root"+slotSuffix).IsNil() {
+		t.Fatalf("expected pointer calls specialized at their branch sites:\n%s", m.String())
 	}
-	if strings.Contains(wide.String(), "call i1 @avx512()") || !strings.Contains(wide.String(), "call i1 @fma()") {
-		t.Fatal(wide.String())
+	code := root.String()
+	if !strings.Contains(code, "call i1 @avx512()") || strings.Count(code, "call i1 @fma()") != 2 ||
+		!strings.Contains(code, "call void @"+wide.Name()+"(") || !strings.Contains(code, "call void @"+both.Name()+"(") {
+		t.Fatal(code)
 	}
-	if strings.Contains(both.String(), "call i1 @fma()") || !strings.Contains(both.String(), "@helper.__llgo_fmv_guard_avx512_fma") {
-		t.Fatal(both.String())
-	}
-	if !strings.Contains(base.String(), "call i1 @avx512()") || strings.Contains(stringAttribute(base, "target-features"), "+avx512f") {
-		t.Fatal(base.String())
+	if targetWidth(wide, "v1") != 512 || strings.Contains(stringAttribute(wide, "target-features"), "+fma") ||
+		targetWidth(both, "v1") != 512 || !strings.Contains(stringAttribute(both, "target-features"), "+fma") {
+		t.Fatal("incorrect requirements on the guarded helper bodies")
 	}
 	before := m.String()
 	if err := Run(m, "v1"); err != nil || m.String() != before {
@@ -104,7 +104,7 @@ func TestGuardedVectorConjunction(t *testing.T) {
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	both := m.NamedFunction("root.__llgo_fmv_guard_avx512_fma")
+	both := m.NamedFunction("root.__llgo_fmv_guard_zmm_fma")
 	if both.IsNil() || !strings.Contains(stringAttribute(both, "target-features"), "+fma") || !strings.Contains(stringAttribute(both, "target-features"), "+avx512f") {
 		t.Fatal("missing specialization for the conjunction")
 	}
@@ -121,7 +121,7 @@ func TestGuardedVectorDisjunction(t *testing.T) {
 		t.Fatal(err)
 	}
 	ext := predicateBits[X86Query("AVX512VBMI2")]
-	body := m.NamedFunction("root" + guardSuffix(ext))
+	body := m.NamedFunction("root" + symbolPrefix + "guard_zmm")
 	if body.IsNil() || !m.NamedGlobal("unrelated"+slotSuffix).IsNil() {
 		t.Fatal(m.String())
 	}
@@ -131,7 +131,7 @@ func TestGuardedVectorDisjunction(t *testing.T) {
 func TestGuardedSymbolCollision(t *testing.T) {
 	for _, symbol := range []string{
 		"root.__llgo_fmv_guard_base",
-		"root.__llgo_fmv_guard_avx512_fma",
+		"root.__llgo_fmv_guard_zmm_fma",
 		featureSymbol,
 	} {
 		t.Run(symbol, func(t *testing.T) {
@@ -197,8 +197,11 @@ exit:
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	suffix := ".__llgo_fmv_guard_" + feature
-	root, helper, kernel := m.NamedFunction("root"+suffix), m.NamedFunction("helper"+suffix), m.NamedFunction("kernel"+suffix)
+	suffix, width := symbolPrefix+"guard_zmm", 512
+	if feature == "avx2" {
+		suffix, width = symbolPrefix+"guard_avx2", 256
+	}
+	root, helper, kernel := m.NamedFunction("root"), m.NamedFunction("helper"+suffix), m.NamedFunction("kernel"+suffix)
 	if root.IsNil() || helper.IsNil() || kernel.IsNil() {
 		t.Fatalf("guard did not reach scalar-signature helper and kernel:\n%s", m.String())
 	}
@@ -210,7 +213,7 @@ exit:
 	if !strings.Contains(helper.String(), "call void @kernel"+suffix) || !strings.Contains(helper.String(), "call void @helper"+suffix) {
 		t.Fatal(helper.String())
 	}
-	if !m.NamedFunction("scalar"+suffix).IsNil() || !strings.Contains(stringAttribute(kernel, "target-features"), "+"+feature) {
+	if !m.NamedFunction("scalar"+suffix).IsNil() || targetWidth(kernel, "v1") != width {
 		t.Fatalf("incorrect specialization set:\n%s", m.String())
 	}
 	if strings.Contains(m.NamedFunction("helper").String(), suffix) {
@@ -310,20 +313,20 @@ func TestMixedAVX2GuardHelper(t *testing.T) {
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	suffix := variantSuffix + guardSuffix(predicateBits["x86.avx512"])
-	body, kernel := m.NamedFunction("root"+suffix), m.NamedFunction("kernel"+suffix)
-	if body.IsNil() || kernel.IsNil() || !strings.Contains(body.String(), "call void @kernel"+suffix+"(") || !strings.Contains(stringAttribute(kernel, "target-features"), "+avx512f") {
-		t.Fatal(m.String())
+	fast := m.NamedFunction("root" + variantSuffix)
+	if fast.IsNil() {
+		t.Fatal("missing canonical AVX2 body")
 	}
+	kernel := guardedCallTarget(t, fast, m.NamedFunction("wide"))
+	if targetWidth(kernel, "v1") != 512 || !strings.Contains(kernel.String(), "add <16 x i32>") {
+		t.Fatal("the AVX512 branch in the canonical AVX2 body must call the ZMM kernel")
+	}
+	// Before CPU initialization, enter the actual baseline implementation directly.
 	resolver := m.NamedFunction("root" + resolverSuffix).String()
-	if !strings.Contains(resolver, "ptr @root"+suffix+",") || strings.Contains(resolver, "ptr @root"+variantSuffix+",") {
-		t.Fatalf("public resolver points at a second dispatcher:\n%s", resolver)
+	if !strings.Contains(resolver, "musttail call void @root"+baselineSuffix+symbolPrefix+"guard_base(") {
+		t.Fatalf("pre-initialization call still dispatches:\n%s", resolver)
 	}
-	base := "root" + baselineSuffix
-	if !strings.Contains(resolver, "ptr @"+base+guardSuffix(predicateBits["x86.sha"])+",") ||
-		!strings.Contains(resolver, "musttail call void @"+base+symbolPrefix+"guard_base(") {
-		t.Fatalf("baseline arm or pre-initialization call still dispatches:\n%s", resolver)
-	}
+	checkCachedGuard(t, m, featureAVX2|predicateBits["x86.avx512"], fast)
 	before := m.String()
 	if err := Run(m, "v1"); err != nil || m.String() != before {
 		t.Fatalf("repeat: %v\n%s", err, m.String())
@@ -350,10 +353,10 @@ yes:
 no:
  ret void
 }
-@helper.__llgo_fmv_guard_avx512 = global i8 0
+@helper.__llgo_fmv_guard_zmm = global i8 0
 `)
 	before := m.String()
-	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "helper.__llgo_fmv_guard_avx512") {
+	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "helper.__llgo_fmv_guard_zmm") {
 		t.Fatalf("collision: %v", err)
 	}
 	if m.String() != before {
@@ -383,12 +386,10 @@ define void @root`, 1)
 func TestGuardBodyEntryAttributes(t *testing.T) {
 	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
-	abi := newWideABI(m)
-	defer abi.data.Dispose()
-	if err := runGuardedFeatures(abi, nil, "v1"); err != nil {
+	if err := Run(m, "v1"); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"guard_avx512_fma", "guard_base"} {
+	for _, suffix := range []string{"guard_zmm_fma", "guard_base"} {
 		v := m.NamedFunction("root" + symbolPrefix + suffix)
 		if v.IsNil() || hasAttribute(v, EntryAttribute) || hasAttribute(v, InlineEntryAttribute) {
 			t.Fatal(m.String())
@@ -397,7 +398,12 @@ func TestGuardBodyEntryAttributes(t *testing.T) {
 }
 
 func TestMixedGuardCollisionLeavesModuleIntact(t *testing.T) {
-	const collision = "kernel.__llgo_fmv_avx2.__llgo_fmv_guard_avx512"
+	reference := parseModule(t, mixedAVX2GuardFixture)
+	if err := Run(reference, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	fast := reference.NamedFunction("root" + variantSuffix)
+	collision := guardedCallTarget(t, fast, reference.NamedFunction("wide")).Name()
 	m := parseModule(t, mixedAVX2GuardFixture+"\n@"+collision+" = global i8 0\n")
 	before := m.String()
 	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), collision) {
@@ -490,7 +496,7 @@ exit:
 		bits   uint64
 		suffix string
 	}{
-		{0, "guard_base"}, {256, "guard_avx512"}, {260, "guard_avx512"}, {512, "guard_fma"}, {516, "guard_fma"}, {768, "guard_avx512_fma"}, {772, "guard_avx512_fma"},
+		{0, "guard_base"}, {256, "guard_zmm"}, {260, "guard_zmm"}, {512, "guard_fma"}, {516, "guard_fma"}, {768, "guard_zmm_fma"}, {772, "guard_zmm_fma"},
 	} {
 		m := parseModule(t, ir)
 		if err := Run(m, "v1"); err != nil {
@@ -503,7 +509,7 @@ exit:
 		if tc.bits == 772 {
 			body := want.String()
 			features := stringAttribute(want, "target-features")
-			if strings.Contains(body, "call i1") || !strings.Contains(body, "store <4 x float>") || !strings.Contains(body, "store <16 x float>") || !strings.Contains(features, "+fma") || !strings.Contains(features, "+avx512f") {
+			if !strings.Contains(body, "store <4 x float>") || !strings.Contains(body, "store <16 x float>") || !strings.Contains(features, "+fma") || !strings.Contains(features, "+avx512f") {
 				t.Fatal(body)
 			}
 		}
@@ -544,23 +550,37 @@ exit: ret void
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	fma, wide := predicateBits[X86Query("FMA")], predicateBits[X86Query("AVX512VBMI2")]
-	both := guardSuffix(fma | wide)
-	root := m.NamedFunction("root" + both)
-	if root.IsNil() {
-		t.Fatal("missing combined root")
-	}
-	checkCachedGuard(t, m, fma|wide, root)
-	for helper, mask := range map[string]uint64{"fmaOnly": fma, "wideOnly": wide} {
-		if !m.NamedFunction(helper+both).IsNil() || !strings.Contains(root.String(), "call void @"+helper+guardSuffix(mask)+"(") {
-			t.Fatalf("%s should share its single-feature body:\n%s", helper, root.String())
+	root := m.NamedFunction("root")
+	for _, tc := range []struct{ guard, helper, suffix string }{
+		{"fma", "fmaOnly", "guard_fma"},
+		{"wide", "wideOnly", "zmm"},
+	} {
+		got := guardedCallTarget(t, root, m.NamedFunction(tc.guard))
+		if got.Name() != tc.helper+symbolPrefix+tc.suffix {
+			t.Fatalf("%s calls %s, want a single-feature %s body", tc.guard, got.Name(), tc.helper)
 		}
 	}
 }
 
 func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value) {
 	t.Helper()
-	resolver := m.NamedFunction("root" + resolverSuffix)
+	checkEntryCachedGuard(t, m, "root", bits, want)
+}
+
+func checkEntryCachedGuard(t *testing.T, m llvm.Module, entry string, bits uint64, want llvm.Value) {
+	t.Helper()
+	target := cachedGuardTarget(t, m, entry, bits)
+	if want.IsNil() || target != want {
+		t.Fatalf("mask %d cached unexpected body %s for %s", bits, target.Name(), entry)
+	}
+}
+
+func cachedGuardTarget(t *testing.T, m llvm.Module, entry string, bits uint64) llvm.Value {
+	t.Helper()
+	resolver := m.NamedFunction(entry + resolverSuffix)
+	if resolver.IsNil() {
+		t.Fatalf("missing resolver for %s", entry)
+	}
 	// Substitute the published runtime mask and fold the actual select chain.
 	for inst := resolver.EntryBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 		if !inst.IsALoadInst().IsNil() && inst.Operand(0) == m.NamedGlobal(featureSymbol) {
@@ -569,17 +589,15 @@ func checkCachedGuard(t *testing.T, m llvm.Module, bits uint64, want llvm.Value)
 		}
 	}
 	simplifyGuards(resolver)
-	published := false
 	for bb := resolver.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal("root"+slotSuffix) {
-				published = inst.Operand(0) == want
+			if !inst.IsAStoreInst().IsNil() && inst.Operand(1) == m.NamedGlobal(entry+slotSuffix) {
+				return inst.Operand(0)
 			}
 		}
 	}
-	if !published {
-		t.Fatalf("mask %d did not cache %s:\n%s", bits, want.Name(), resolver.String())
-	}
+	t.Fatalf("mask %d did not publish a target:\n%s", bits, resolver.String())
+	return llvm.Value{}
 }
 
 func TestGuardRuntimePredicates(t *testing.T) {
@@ -605,7 +623,7 @@ exit:
 				if err := Run(m, "v1"); err != nil {
 					t.Fatal(err)
 				}
-				base, fast := symbolPrefix+"guard_base", guardSuffix(p.runtimeBit)
+				base, fast := symbolPrefix+"guard_base", symbolPrefix+"guard_"+strings.ToLower(p.method)
 				if p.runtimeBit == featureAVX2 {
 					base, fast = baselineSuffix, variantSuffix
 				} else if !strings.Contains(m.NamedFunction("root"+base).String(), "call i1 @query()") {
@@ -657,25 +675,24 @@ no:
 	if err := Run(m, "v1"); err != nil {
 		t.Fatal(err)
 	}
-	guard := guardSuffix(featureAVX2)
+	root := m.NamedFunction("root")
+	kernel := guardedCallTarget(t, root, m.NamedFunction("avx2"))
 	for _, call := range []struct{ from, to string }{
-		{"root" + variantSuffix, "kernel" + guard},
-		{"kernel" + guard, "leaf" + variantSuffix},
+		{"root" + variantSuffix, kernel.Name()},
 		{"caller" + variantSuffix, "root" + variantSuffix},
-		{"caller" + baselineSuffix, "root" + symbolPrefix + "guard_base"},
+		{"caller" + baselineSuffix, "root"},
 	} {
 		fn := m.NamedFunction(call.from)
 		if fn.IsNil() || !strings.Contains(fn.String(), "call void @"+call.to+"(") {
 			t.Fatalf("%s did not call %s directly:\n%s", call.from, call.to, m.String())
 		}
 	}
-	for _, name := range []string{"root", "leaf"} {
-		if !m.NamedFunction(name + guard).IsNil() {
-			t.Fatalf("duplicated canonical AVX2 implementation for %s", name)
-		}
+	if !m.NamedGlobal("root" + slotSuffix).IsNil() {
+		t.Fatal("guard over a scalar-signature helper needs no root dispatcher")
 	}
-	// The public dispatcher caches the same implementation used across packages.
-	checkCachedGuard(t, m, featureAVX2, m.NamedFunction("root"+variantSuffix))
+	if !strings.Contains(kernel.String(), "call void @leaf") || strings.Contains(kernel.String(), "call void @leaf(") {
+		t.Fatalf("known-width helper lost its specialized leaf:\n%s", kernel.String())
+	}
 }
 
 func TestGuardMaskUnions(t *testing.T) {
@@ -781,21 +798,23 @@ out: ret void
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	mask := predicateBits[X86Query("AVX512VBMI2")]
-	suffix := guardSuffix(mask)
-	body := m.NamedFunction("root" + suffix)
-	if body.IsNil() {
-		t.Fatal("missing VBMI2 root specialization")
+	suffix := symbolPrefix + "guard_zmm"
+	body := m.NamedFunction("root")
+	if !m.NamedGlobal("root" + slotSuffix).IsNil() {
+		t.Fatal("pointer-only root needs no dispatcher")
 	}
-	checkCachedGuard(t, m, mask, body)
 	for i := 0; i < depth; i++ {
+		if i == depth-1 {
+			// The leaf can reuse its ordinary wide ABI implementation.
+			suffix = symbolPrefix + "zmm"
+		}
 		name := fmt.Sprintf("kernel%d%s", i, suffix)
 		if !strings.Contains(body.String(), "call void @"+name+"(") {
 			t.Fatalf("expected a specialized call to %s in %s", name, body.String())
 		}
 		body = m.NamedFunction(name)
 	}
-	if !strings.Contains(body.String(), "call void @wide(") {
+	if !strings.Contains(body.String(), "call void @wide(") || targetWidth(body, "v1") != 512 {
 		t.Fatal(body.String())
 	}
 }
@@ -880,12 +899,11 @@ no:
 		t.Fatal(err)
 	}
 	caller := m.NamedFunction("caller" + variantSuffix)
-	if caller.IsNil() || !strings.Contains(caller.String(), "call void @root(ptr") {
-		t.Fatalf("AVX2 caller bypassed root dispatch:\n%s", m.String())
+	const knownEntry = "root.__llgo_fmv_guard_avx2_entry"
+	if caller.IsNil() || !strings.Contains(caller.String(), "call void @"+knownEntry+"(ptr") {
+		t.Fatalf("AVX2 caller lost its known-feature entry:\n%s", m.String())
 	}
-	both := m.NamedFunction("root" + symbolPrefix + "guard_avx2_avx512")
-	if both.IsNil() {
-		t.Fatal("missing combined guard body")
-	}
-	checkCachedGuard(t, m, featureAVX2|predicateBits[X86Query("AVX512")], both)
+	mask := featureAVX2 | predicateBits[X86Query("AVX512")]
+	checkEntryCachedGuard(t, m, knownEntry, mask, m.NamedFunction("root"+symbolPrefix+"guard_zmm_avx2"))
+	checkCachedGuard(t, m, mask, m.NamedFunction("root"+symbolPrefix+"guard_zmm"))
 }

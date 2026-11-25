@@ -14,7 +14,6 @@ type wideABI struct {
 	widths map[llvm.Type]int
 	data   llvm.TargetData
 	abi    x86ABI
-	source *sourceInfo
 }
 
 func (a *wideABI) signature(ft llvm.Type) int {
@@ -77,14 +76,18 @@ func (a *wideABI) calls(fn llvm.Value, visit func(llvm.Value, int)) {
 	}
 }
 
-func targetWidth(fn llvm.Value, baseline string) int {
-	width := 0
+func baselineWidth(baseline string) int {
 	switch baseline {
 	case "v3":
-		width = 256
+		return 256
 	case "v4":
-		width = 512
+		return 512
 	}
+	return 0
+}
+
+func targetWidth(fn llvm.Value, baseline string) int {
+	width := baselineWidth(baseline)
 	for _, f := range strings.Split(stringAttribute(fn, "target-features"), ",") {
 		switch f {
 		case "+avx", "+avx2":
@@ -147,74 +150,35 @@ func newWideABI(mod llvm.Module) *wideABI {
 	}
 }
 
-func (a *wideABI) lowerModule(baseline string) {
-	mod := a.mod
-	// Clones and dispatchers created below already have the finalized call ABI.
-	last := mod.LastFunction()
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if fn.IntrinsicID() == 0 {
-			a.lower(fn, baseline)
+// A wide argument or result is a caller/callee ABI contract. It establishes
+// the same register floor on every implementation reached through this entry.
+func (a *wideABI) registerFloor(fn llvm.Value, baseline string) int {
+	return max(targetWidth(fn, baseline), a.signature(fn.GlobalValueType()))
+}
+
+// Apply the fixed platform ABI independently of implementation selection.
+// CloneFunction preserves these conventions; new forwarding calls use the
+// enclosing function's convention in tailReturn.
+func (a *wideABI) applyRegisterABI(fn llvm.Value, baseline string) {
+	width := a.signature(fn.GlobalValueType())
+	if width != 0 {
+		if width > targetWidth(fn, baseline) {
+			enableWidth(fn, width)
 		}
-		if fn == last {
-			break
-		}
+		a.abi.applyWideCallingConvention(fn)
+	}
+	if a.abi == x86Win64 {
+		a.calls(fn, func(call llvm.Value, _ int) {
+			a.abi.applyWideCallingConvention(call)
+		})
 	}
 }
 
-func (a *wideABI) lower(fn llvm.Value, baseline string) {
-	width := a.signature(fn.GlobalValueType())
-	floor := targetWidth(fn, baseline)
-	if width > floor {
-		enableWidth(fn, width)
-		floor = width
+// Ordinary entries have no caller-proven register capability. Preserve their
+// existing runtime selection separately from proofs on direct guarded edges.
+func ordinaryWidthChoice(width int) dispatchChoice {
+	if width == 256 {
+		return dispatchChoice{anyOf: ymmPredicates}
 	}
-	if width != 0 {
-		a.abi.applyWideCallingConvention(fn)
-	}
-	var ymm, zmm bool
-	a.calls(fn, func(call llvm.Value, need int) {
-		a.abi.applyWideCallingConvention(call)
-		if need > floor {
-			switch need {
-			case 256:
-				ymm = true
-			case 512:
-				zmm = true
-			}
-		}
-	})
-	if !ymm && !zmm {
-		return
-	}
-
-	// A scalar caller can reach a wider call conditionally, including through
-	// a function value. Keep the caller's signature fixed in every version.
-	if a.source == nil {
-		a.source = newSourceInfo(a.mod)
-	}
-	body := func(suffix string) llvm.Value {
-		v := fn.CloneFunction()
-		v.SetName(fn.Name() + symbolPrefix + suffix)
-		v.SetLinkage(llvm.InternalLinkage)
-		a.source.clone(fn, v)
-		return v
-	}
-	var choices []dispatchChoice
-	if ymm {
-		v := body("ymm")
-		enableWidth(v, 256)
-		if zmm {
-			a.removeWiderCalls(v, 256)
-		}
-		choices = append(choices, dispatchChoice{bits: ymmPredicates, fn: v, anyBit: true})
-	}
-	if zmm {
-		v := body("zmm")
-		enableWidth(v, 512)
-		// Without a sufficient register floor, select ZMM using the Go AVX512 query.
-		choices = append(choices, dispatchChoice{bits: predicateBits[X86Query("AVX512")], fn: v})
-	}
-	base := body("width_base")
-	a.removeWiderCalls(base, floor)
-	dispatch(a.mod, a.source, fn, base, choices)
+	return dispatchChoice{bits: predicateBits[X86Query("AVX512")]}
 }

@@ -70,6 +70,22 @@ func avx2CallsVBMI2(dst, src *[16]int32) bool {
 	return false
 }
 
+//go:noinline
+func vbmi2CallsWideKernel(p *[16]int32) {
+	if archsimd.X86.AVX512VBMI2() {
+		wideKernel(p)
+	}
+}
+
+//go:noinline
+func wideKernel(p *[16]int32) {
+	x := archsimd.LoadInt32x16Array(p)
+	if archsimd.X86.AVX512() {
+		x = vectorcall.Add512(x, x)
+	}
+	vectorcall.Add512(x, x).StoreArray(p)
+}
+
 func TestSIMD512VBMI2WideCall(t *testing.T) {
 	avx2, avx512, vbmi2 := archsimd.X86.AVX2(), archsimd.X86.AVX512(), archsimd.X86.AVX512VBMI2()
 	t.Logf("AVX2=%t AVX512=%t VBMI2=%t", avx2, avx512, vbmi2)
@@ -95,6 +111,21 @@ func TestSIMD512VBMI2WideCall(t *testing.T) {
 			t.Fatalf("%s: got bundle=%t lanes=%v, want bundle=%t lanes=%v", tc.name, bundle, dst, tc.take && avx512, want)
 		}
 	}
+	t.Run("helper with independent query", func(t *testing.T) {
+		got, want := src, src
+		vbmi2CallsWideKernel(&got)
+		if vbmi2 {
+			want = doubled
+			if avx512 {
+				for i := range want {
+					want[i] *= 2
+				}
+			}
+		}
+		if got != want {
+			t.Fatalf("lanes = %v, want %v", got, want)
+		}
+	})
 }
 
 //go:noinline
